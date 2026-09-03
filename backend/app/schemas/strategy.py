@@ -348,6 +348,24 @@ class RiskManagement(BaseModel):
     # tiraba sin error ni log, y la estrategia guardada salia siempre con la
     # opcion desactivada. Ver la nota de las TRES CAPAS.
     size_by_sl: Optional[bool] = False
+    # STOP HIBRIDO (2026-09-03). Va por `size_by_sl` pero con techo de
+    # exposicion: `(hybrid_max_loss_pct% x capital) / hybrid_black_swan_pct%`
+    # da los DOLARES maximos de posicion, que se pasan a acciones al precio de
+    # la barra. Resuelve el punto ciego del modo por SL: con el stop muy cenido
+    # el tamano se dispara y un hueco brutal deja debiendo dinero.
+    #
+    # Los dos porcentajes viven AQUI, en la estrategia, y no solo en el panel
+    # del backtest — decision de Jaume: «afecta DIRECTAMENTE al resultado por
+    # backtest». Si vivieran fuera se podria backtestear con unos numeros y
+    # operar con otros sin que nada avisara.
+    #
+    # DECLARADOS AQUI A PROPOSITO (ver «TRES CAPAS» en docs/MEMORIA_MADRE.md
+    # §4): pydantic va con extra="ignore", asi que un campo sin declarar se
+    # tira SIN error, SIN log y SIN 422 — es justo lo que le paso a `size_by_sl`
+    # y por eso las estrategias salian con la opcion apagada.
+    hybrid_stop: Optional[bool] = False
+    hybrid_black_swan_pct: Optional[float] = None
+    hybrid_max_loss_pct: Optional[float] = None
     use_hard_stop: Optional[bool] = True
     use_take_profit: Optional[bool] = True
     take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL

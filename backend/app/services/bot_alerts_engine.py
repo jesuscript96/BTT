@@ -34,7 +34,9 @@ from typing import Any, Optional
 import numpy as np
 import pandas as pd
 
-from app.services.portfolio_sim import _structural_level, _sl_side_valid, simulate
+from app.services.portfolio_sim import (
+    _structural_level, _sl_side_valid, simulate, tope_hibrido,
+)
 from app.services.strategy_engine import compile_strategy_def, translate_strategy
 
 logger = logging.getLogger("btt.bot_alerts")
@@ -122,6 +124,12 @@ def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd:
         "risk_r": float(riesgo_usd),
         "risk_type": "FIXED",          # el riesgo del cuadro de mandos manda
         "size_by_sl": bool(rm.get("size_by_sl", False)),
+        # El hibrido tambien aqui: si el simulador dimensiona sin techo, el
+        # estado que el motor DEDUCE de sus trades (piramides, salidas) seria el
+        # de una posicion mas grande que la que se avisa.
+        "hybrid_stop": bool(rm.get("hybrid_stop", False)),
+        "hybrid_black_swan_pct": rm.get("hybrid_black_swan_pct"),
+        "hybrid_max_loss_pct": rm.get("hybrid_max_loss_pct"),
         "fees": 0.0,
         "slippage": 0.0,
         "locates_cost": 0.0,
@@ -205,20 +213,58 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
     return stop if _sl_side_valid(stop, precio, es_largo) else None
 
 
-def calcular_acciones(riesgo_usd: float, precio: float, stop: Optional[float], size_by_sl: bool) -> Optional[float]:
+def _hibrido_de(rm: dict, est: dict) -> Optional[dict]:
+    """Los tres numeros del techo hibrido, o None si no aplica.
+
+    Los porcentajes vienen de la ESTRATEGIA (viajan con ella para que backtest y
+    bot dimensionen igual) y el capital del CUADRO DE MANDOS (el bot no conoce
+    la cuenta). Si falta cualquiera de los tres se devuelve None y se dimensiona
+    por SL sin techo — no deberia pasar, porque `/watch` bloquea la activacion,
+    pero inventarse un capital seria peor que quedarse sin techo.
+    """
+    if not rm.get("hybrid_stop"):
+        return None
+    capital = est.get("capital_usd")
+    if not capital:
+        return None
+    return {
+        "capital": capital,
+        "black_swan_pct": rm.get("hybrid_black_swan_pct"),
+        "max_loss_pct": rm.get("hybrid_max_loss_pct"),
+    }
+
+
+def calcular_acciones(riesgo_usd: float, precio: float, stop: Optional[float],
+                      size_by_sl: bool, hibrido: Optional[dict] = None) -> Optional[float]:
     """Acciones del aviso. Sin redondear: 37,5 es una respuesta valida.
 
     Con `size_by_sl` el riesgo es la PERDIDA maxima y se divide por la distancia
     al stop en dolares. Sin el, el riesgo es capital a desplegar y se divide por
     el precio. Es la misma cuenta de `portfolio_sim` y de la calculadora de
     locates de la interfaz.
+
+    `hibrido` (opcional) es `{"capital", "black_swan_pct", "max_loss_pct"}` y
+    aplica el TECHO del stop hibrido: por SL, pero sin exponer mas de lo que se
+    acepta perder ante un evento de cola. **Solo con `size_by_sl`** — sin el ya
+    se va por valor de mercado y no hay nada que topar. Recorta, no anula.
+
+    El capital NO sale de la estrategia sino del cuadro de mandos: el bot no
+    conoce la cuenta real de Jaume, se la tiene que decir el.
     """
     if precio <= 0:
         return None
     if size_by_sl and stop is not None:
         distancia = abs(precio - stop)
         if distancia > 0:
-            return riesgo_usd / distancia
+            acciones = riesgo_usd / distancia
+            if hibrido:
+                tope = tope_hibrido(
+                    float(hibrido.get("capital") or 0.0),
+                    hibrido.get("black_swan_pct"),
+                    hibrido.get("max_loss_pct"), precio)
+                if tope is not None:
+                    acciones = min(acciones, tope)
+            return acciones
     return riesgo_usd / precio
 
 
@@ -247,6 +293,12 @@ class MotorAlertas:
                 "strategy_id": e["strategy_id"],
                 "name": e["name"],
                 "riesgo_usd": float(e["riesgo_usd"]),
+                # Del cuadro de mandos, no de la estrategia: el bot no conoce
+                # la cuenta real. Sin capital, el stop hibrido no puede calcular
+                # su techo — por eso `/watch` no deja activar una estrategia
+                # hibrida sin rellenarlo.
+                "capital_usd": e.get("capital_usd"),
+                "riesgo_piramide_usd": e.get("riesgo_piramide_usd"),
                 "definition": sdef,
                 "ventana": e.get("ventana") or {},
                 # Se compila UNA vez, no en cada vela: es lo caro del motor.
@@ -425,6 +477,7 @@ class MotorAlertas:
                     rm = sdef.get("risk_management") or {}
                     acciones = calcular_acciones(
                         est["riesgo_usd"], precio, stop, bool(rm.get("size_by_sl", False)),
+                        hibrido=_hibrido_de(rm, est),
                     )
                     eventos.append(Evento(
                         tipo="entrada", ticker=ticker,

@@ -45,6 +45,16 @@ def simulate(**kwargs) -> dict:
         return _legacy_simulate(**kwargs)
     kwargs.pop("pyramid_levels", None)
     kwargs.pop("pyramid_sequential", None)
+    # STOP HIBRIDO (2026-09-03): mismo trato que la piramidacion. El kernel no
+    # lo implementa, asi que una estrategia en hibrido va SIEMPRE al Python.
+    # Sin esto y con el JIT activo el tope se perderia EN SILENCIO — se
+    # dimensionaria por SL sin techo, que es justo el riesgo de cola que el
+    # modo existe para evitar.
+    if kwargs.get("hybrid_stop"):
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("hybrid_stop", None)
+    kwargs.pop("hybrid_black_swan_pct", None)
+    kwargs.pop("hybrid_max_loss_pct", None)
     if _numba_sim_enabled():
         return simulate_jit(**kwargs)
     return _legacy_simulate(**kwargs)

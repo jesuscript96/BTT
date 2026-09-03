@@ -935,6 +935,11 @@ def simulate_and_accumulate(signals_sorted, params):
     risk_type = params["risk_type"]
     fixed_ratio_delta = params["fixed_ratio_delta"]
     size_by_sl = params["size_by_sl"]
+    # `.get` a proposito, como el tope de locates: los callers que no manden el
+    # hibrido siguen funcionando sin techo, que es el comportamiento de siempre.
+    hybrid_stop = bool(params.get("hybrid_stop", False))
+    hybrid_black_swan_pct = params.get("hybrid_black_swan_pct")
+    hybrid_max_loss_pct = params.get("hybrid_max_loss_pct")
     fees = params["fees"]
     fee_type = params["fee_type"]
     slippage = params["slippage"]
@@ -1011,6 +1016,9 @@ def simulate_and_accumulate(signals_sorted, params):
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
                 size_by_sl=size_by_sl,
+                hybrid_stop=hybrid_stop,
+                hybrid_black_swan_pct=hybrid_black_swan_pct,
+                hybrid_max_loss_pct=hybrid_max_loss_pct,
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,

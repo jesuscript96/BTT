@@ -63,6 +63,44 @@ class WatchReq(BaseModel):
     # gt=0 y no ge=0: un riesgo de cero daria cero acciones en toda alerta, que
     # es un bot encendido que no sirve para nada. Mejor rechazarlo aqui.
     riesgo_usd: float = Field(gt=0)
+    # Riesgo del ANYADIDO, que no tiene por que ser el de la entrada. None = no
+    # dicho: se usa lo que diga la definicion de la estrategia.
+    riesgo_piramide_usd: Optional[float] = Field(default=None, gt=0)
+    # La cuenta real. Solo hace falta con stop hibrido, que sin ella no puede
+    # calcular su techo. El bot no la conoce por ningun otro sitio.
+    capital_usd: Optional[float] = Field(default=None, gt=0)
+
+
+def _faltan_datos(con, req: "WatchReq") -> list[str]:
+    """Que le falta a esta estrategia para poder vigilarse. Vacio = lista.
+
+    Se mira la definicion GUARDADA, no lo que crea el frontend: es la que va a
+    usar el bot, y el objetivo es que no se pueda activar algo que luego
+    calcularia mal en silencio.
+    """
+    fila = con.execute("SELECT definition FROM strategies WHERE id = ?",
+                       [req.strategy_id]).fetchone()
+    sdef = bas._parse_definition(fila[0]) if fila else {}
+    rm = sdef.get("risk_management") or {}
+
+    # ¿Alguna parte va en hibrido? La entrada, o cualquier nivel de piramide.
+    niveles = ((sdef.get("pyramiding") or {}).get("levels")) or []
+    hibrido = bool(rm.get("hybrid_stop")) or any(lv.get("hybrid_stop") for lv in niveles)
+
+    faltan: list[str] = []
+    if hibrido and not req.capital_usd:
+        faltan.append("capital total de la cuenta (lo pide el stop hibrido)")
+    if hibrido:
+        # Los porcentajes viven en la estrategia; si estan a medias, el techo
+        # tampoco sale.
+        if rm.get("hybrid_stop") and not (rm.get("hybrid_black_swan_pct")
+                                          and rm.get("hybrid_max_loss_pct")):
+            faltan.append("los porcentajes del stop hibrido en la estrategia")
+        for i, lv in enumerate(niveles, 1):
+            if lv.get("hybrid_stop") and not (lv.get("hybrid_black_swan_pct")
+                                              and lv.get("hybrid_max_loss_pct")):
+                faltan.append(f"los porcentajes del hibrido en el nivel {i} de piramide")
+    return faltan
 
 
 @router.post("/watch")
@@ -92,7 +130,22 @@ def guardar(req: WatchReq, user_id: Optional[str] = Depends(get_current_user_id)
                            "anyadela a uno de los dos antes de vigilarla",
                 )
 
-            return bas.set_watch(con, req.strategy_id, req.activa, req.riesgo_usd)
+            # NO SE DEJA ACTIVAR CON DATOS A MEDIAS (decision de Jaume,
+            # 2026-09-03: «que no deje activar y marque faltan datos por
+            # rellenar»). El stop hibrido sin capital no puede calcular su
+            # techo, y avisar sin techo daria justo la exposicion que el modo
+            # existe para evitar — sin que nada en el aviso lo distinguiera.
+            # Apagar, en cambio, se permite siempre: nunca se bloquea un frenazo.
+            if req.activa:
+                faltan = _faltan_datos(con, req)
+                if faltan:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Faltan datos por rellenar: " + ", ".join(faltan),
+                    )
+
+            return bas.set_watch(con, req.strategy_id, req.activa, req.riesgo_usd,
+                                 req.riesgo_piramide_usd, req.capital_usd)
         finally:
             con.close()
 

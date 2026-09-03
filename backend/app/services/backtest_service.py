@@ -152,6 +152,10 @@ def run_backtest(
     risk_type: str = "FIXED",
     fixed_ratio_delta: float = 500.0,
     size_by_sl: bool = False,
+    # Stop hibrido: por SL con techo de exposicion. Ver `portfolio_sim.tope_hibrido`.
+    hybrid_stop: bool = False,
+    hybrid_black_swan_pct: float | None = None,
+    hybrid_max_loss_pct: float | None = None,
     fees: float = 0.0,
     fee_type: str = "PERCENT",
     slippage: float = 0.0,
@@ -189,6 +193,15 @@ def run_backtest(
         rm = strategy_def.get("risk_management", {})
         if rm.get("size_by_sl") is not None:
             size_by_sl = size_by_sl or rm.get("size_by_sl", False)
+        # El hibrido y sus dos porcentajes viven en la estrategia (decision de
+        # Jaume, 2026-09-03): si no viajaran con ella, el backtest y el bot
+        # podrian dimensionar distinto sin que nada avisara.
+        if rm.get("hybrid_stop") is not None:
+            hybrid_stop = hybrid_stop or bool(rm.get("hybrid_stop", False))
+        if hybrid_black_swan_pct is None:
+            hybrid_black_swan_pct = rm.get("hybrid_black_swan_pct")
+        if hybrid_max_loss_pct is None:
+            hybrid_max_loss_pct = rm.get("hybrid_max_loss_pct")
 
     t_total = time.time()
 
@@ -431,6 +444,9 @@ def run_backtest(
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
+            "hybrid_stop": hybrid_stop,
+            "hybrid_black_swan_pct": hybrid_black_swan_pct,
+            "hybrid_max_loss_pct": hybrid_max_loss_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
             "max_locates": max_locates,
@@ -486,6 +502,9 @@ def run_backtest(
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
+            "hybrid_stop": hybrid_stop,
+            "hybrid_black_swan_pct": hybrid_black_swan_pct,
+            "hybrid_max_loss_pct": hybrid_max_loss_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
             "max_locates": max_locates,
@@ -964,6 +983,9 @@ def run_backtest(
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
                 size_by_sl=size_by_sl,
+                hybrid_stop=hybrid_stop,
+                hybrid_black_swan_pct=hybrid_black_swan_pct,
+                hybrid_max_loss_pct=hybrid_max_loss_pct,
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,

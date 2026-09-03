@@ -67,6 +67,20 @@ def ensure_watch_table(con) -> None:
             )
             """
         )
+        # MIGRACION (2026-09-03). Columnas nuevas para las tablas que ya
+        # existen; sin esto la fila vieja no tendria donde guardarlas y el
+        # INSERT fallaria. Son NULL a proposito: NULL = "no dicho", que no es lo
+        # mismo que 0 y permite caer a la definicion de la estrategia.
+        #   riesgo_piramide_usd: el anyadido puede arriesgar algo distinto de la
+        #     entrada, y hasta hoy solo se podia fijar el de la entrada.
+        #   capital_usd: la cuenta real de Jaume. El bot no la conoce, y el stop
+        #     hibrido no puede calcular su techo sin ella.
+        for columna, tipo in (("riesgo_piramide_usd", "DOUBLE"),
+                              ("capital_usd", "DOUBLE")):
+            try:
+                con.execute(f"ALTER TABLE bot_alert_watch ADD COLUMN {columna} {tipo}")
+            except Exception:
+                pass          # ya existe
         _DDL_DONE = True
 
 
@@ -375,27 +389,42 @@ def get_watch(con) -> dict[str, dict]:
     """{strategy_id: {activa, riesgo_usd, updated_at}} para TODAS las filas."""
     ensure_watch_table(con)
     rows = con.execute(
-        "SELECT strategy_id, activa, riesgo_usd, updated_at FROM bot_alert_watch"
+        "SELECT strategy_id, activa, riesgo_usd, updated_at, "
+        "riesgo_piramide_usd, capital_usd FROM bot_alert_watch"
     ).fetchall()
     return {
         r[0]: {
             "activa": bool(r[1]),
             "riesgo_usd": float(r[2]),
             "updated_at": str(r[3]) if r[3] else None,
+            # None = no dicho. Quien lo use decide si cae a la estrategia o si
+            # bloquea; aqui no se inventa un 0 que parezca una decision.
+            "riesgo_piramide_usd": float(r[4]) if r[4] is not None else None,
+            "capital_usd": float(r[5]) if r[5] is not None else None,
         }
         for r in rows
     }
 
 
-def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float) -> dict:
+def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
+              riesgo_piramide_usd: float | None = None,
+              capital_usd: float | None = None) -> dict:
     """Guarda (o actualiza) la vigilancia de una estrategia. Devuelve su fila."""
     ensure_watch_table(con)
     con.execute(
-        "INSERT OR REPLACE INTO bot_alert_watch (strategy_id, activa, riesgo_usd, updated_at) "
-        "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-        [strategy_id, bool(activa), float(riesgo_usd)],
+        "INSERT OR REPLACE INTO bot_alert_watch "
+        "(strategy_id, activa, riesgo_usd, updated_at, riesgo_piramide_usd, capital_usd) "
+        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)",
+        [strategy_id, bool(activa), float(riesgo_usd),
+         float(riesgo_piramide_usd) if riesgo_piramide_usd is not None else None,
+         float(capital_usd) if capital_usd is not None else None],
     )
-    return {"strategy_id": strategy_id, "activa": bool(activa), "riesgo_usd": float(riesgo_usd)}
+    return {
+        "strategy_id": strategy_id, "activa": bool(activa),
+        "riesgo_usd": float(riesgo_usd),
+        "riesgo_piramide_usd": riesgo_piramide_usd,
+        "capital_usd": capital_usd,
+    }
 
 
 def _parse_definition(raw: Any) -> dict:
@@ -516,7 +545,21 @@ def vigiladas(con, scope_sql: str = "", scope_params: Optional[list] = None) -> 
             "name": name,
             "origen": cubo,
             "riesgo_usd": float(riesgo),
+            # None = no dicho en el cuadro de mandos. El motor decide entonces:
+            # el riesgo de piramide cae a lo que diga la definicion, y sin
+            # capital el stop hibrido no se puede aplicar (por eso `/watch` no
+            # deja activar una estrategia hibrida sin el).
+            "riesgo_piramide_usd": cfg.get("riesgo_piramide_usd"),
+            "capital_usd": cfg.get("capital_usd"),
             "definition": definition,
             "ventana": ventana_operativa(definition),
+            # La de SESION. La de ENTRADAS es otra cosa y vive en
+            # `entry_logic.entry_time_windows`: el 2026-09-03 el bot anunciaba
+            # solo esta y hacia creer que se podia entrar hasta las 09:00
+            # cuando las entradas cerraban a las 08:00.
+            "ventana_entradas": [
+                {"inicio": w.get("from_time"), "fin": w.get("to_time")}
+                for w in ((definition.get("entry_logic") or {}).get("entry_time_windows") or [])
+            ],
         })
     return out

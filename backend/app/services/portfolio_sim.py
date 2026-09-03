@@ -48,6 +48,38 @@ def _sl_side_valid(stop_price, entry_price, is_long):
 
 
 
+def tope_hibrido(capital: float, black_swan_pct: float | None,
+                 max_loss_pct: float | None, precio: float) -> float | None:
+    """Acciones maximas para que un evento de cola no cueste mas de la cuenta.
+
+    Si el precio se mueve `black_swan_pct` en contra, una posicion que vale V
+    pierde `V x black_swan_pct/100`. Para que esa perdida no pase de
+    `max_loss_pct` del capital:
+
+        V <= (max_loss_pct/100 x capital) / (black_swan_pct/100)
+
+    El resultado son DOLARES de exposicion; las acciones salen de dividir por el
+    precio. Ejemplo de Jaume: capital 10.000, acepta perder el 50 % ante un
+    evento del 5.000 % -> V <= 5.000/50 = 100 $ de posicion. Con la accion a
+    1 $ son 100 acciones; a 0,50 $, 200. **El limite es de valor, no de
+    acciones** — confundirlo multiplica la exposicion por el precio.
+
+    Devuelve None si falta algun dato: sin capital o sin porcentajes no se puede
+    calcular un tope, y aplicar uno inventado seria peor que no aplicarlo. Quien
+    llama decide si eso significa "sin tope" o "no operar".
+    """
+    if not capital or capital <= 0:
+        return None
+    if not black_swan_pct or black_swan_pct <= 0:
+        return None
+    if max_loss_pct is None or max_loss_pct <= 0:
+        return None
+    if not precio or precio <= 0:
+        return None
+    valor_max = (max_loss_pct / 100.0) * capital / (black_swan_pct / 100.0)
+    return valor_max / precio
+
+
 def simulate(
     close: np.ndarray,
     open_: np.ndarray,
@@ -81,6 +113,18 @@ def simulate(
     # el trade. En largo no se aplica: los locates son cosa del corto.
     max_locates: int = 0,
     look_ahead_prevention: bool = True,
+    # STOP HIBRIDO (2026-09-03). Va por distancia al stop como `size_by_sl`,
+    # PERO topando la exposicion para que un evento de cola no se lleve mas de
+    # lo que se acepta perder. Nace de que los dos modos clasicos fallan en
+    # extremos opuestos: por SL, un stop muy cenido dispara el tamano y un hueco
+    # brutal te deja debiendo dinero; por MV escalas mal. El tope se calcula
+    # como `(% de cuenta que aceptas perder x capital) / % del evento`, y el
+    # resultado son DOLARES de exposicion, que se pasan a acciones al precio de
+    # la barra. Solo aplica con `size_by_sl`: sin el ya se va por valor de
+    # mercado y no hay nada que topar.
+    hybrid_stop: bool = False,
+    hybrid_black_swan_pct: float | None = None,
+    hybrid_max_loss_pct: float | None = None,
     partial_take_profits: list | None = None,
     pyramid_levels: list | None = None,
     pyramid_sequential: bool = False,
@@ -848,9 +892,34 @@ def simulate(
                     disponible = cash_now - comprometido
                     if disponible <= 0:
                         continue
-                    add_cash_pedido = add_cash
-                    add_cash = min(add_cash, disponible)
-                    add_size = add_cash / add_px
+                    # COMO SE CONVIERTE EL IMPORTE EN ACCIONES. Cada nivel
+                    # elige su modo, independiente del de la entrada: un
+                    # anyadido puede ir por distancia al stop aunque la entrada
+                    # vaya por valor de mercado, y al reves.
+                    if lv.get("size_by_sl"):
+                        # `add_cash` deja de ser capital y pasa a ser RIESGO: se
+                        # divide por la distancia al stop, igual que la entrada.
+                        dist_pyr = (abs(add_px - trade_sl_price)
+                                    if trade_sl_price and trade_sl_price > 0 else 0.0)
+                        add_size_pedido = (add_cash / dist_pyr if dist_pyr > 0
+                                           else add_cash / add_px)
+                        # Y con el tope hibrido del NIVEL, que tiene sus propios
+                        # porcentajes: Jaume los reparte entre entrada y
+                        # piramide para que la suma de las dos no pase de lo que
+                        # acepta perder.
+                        if lv.get("hybrid_stop"):
+                            tope_pyr = tope_hibrido(
+                                cash_now, lv.get("hybrid_black_swan_pct"),
+                                lv.get("hybrid_max_loss_pct"), add_px)
+                            if tope_pyr is not None:
+                                add_size_pedido = min(add_size_pedido, tope_pyr)
+                    else:
+                        add_size_pedido = add_cash / add_px
+                    # El tope de caja se aplica siempre sobre el VALOR, venga el
+                    # tamano de donde venga.
+                    add_size = min(add_size_pedido, disponible / add_px)
+                    add_cash_pedido = add_size_pedido * add_px
+                    add_cash = add_size * add_px
                     # TOPE DE LOCATES: un anadido en corto sube el maximo del
                     # dia y con el la factura, asi que el cupo cuenta entrada
                     # MAS anadidos. Se recorta igual que con el tope de caja.
@@ -1068,6 +1137,16 @@ def simulate(
                 else:
                     # Traditional sizing: deploy risk_amount into the position
                     size = risk_amount / entry_price
+
+                # TOPE HIBRIDO: por SL pero sin pasarse de la exposicion que
+                # un evento de cola convertiria en una perdida inasumible.
+                # RECORTA, no anula — igual que el tope de caja y el de locates.
+                if hybrid_stop and size_by_sl:
+                    tope = tope_hibrido(init_cash + realized_pnl,
+                                        hybrid_black_swan_pct,
+                                        hybrid_max_loss_pct, entry_price)
+                    if tope is not None:
+                        size = min(size, tope)
 
                 # Cap size by available cash
                 max_size = available_cash / entry_price
