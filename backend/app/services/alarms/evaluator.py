@@ -100,7 +100,7 @@ def describe(condition: Dict[str, Any]) -> str:
     """Frase legible de una condición, para el mensaje del aviso."""
     left = F.label_of(condition["left"])
     op_labels = {">": ">", ">=": "≥", "<": "<", "<=": "≤", "==": "=",
-                 "crosses_above": "cruza arriba", "crosses_below": "cruza abajo"}
+                 "crosses_above": "crosses above", "crosses_below": "crosses below"}
     op = op_labels.get(condition["op"], condition["op"])
     if condition.get("right_field"):
         right = F.label_of(condition["right_field"])

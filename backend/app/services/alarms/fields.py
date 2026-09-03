@@ -52,30 +52,33 @@ class Field:
 
 # ── Campos instantáneos ──────────────────────────────────────────────────────
 # Salen de TickerLiveState / _metrics del live screener.
+# Etiquetas en inglés, tomadas de la terminología del backtester (schemas/strategy
+# IndicatorType + INDICATOR_REGISTRY del frontend): «Accumulated Volume»,
+# «PM High Gap (%)», «High of Day», «Previous Close», «EMA»/«SMA» con «Period»…
 _INSTANT: List[Field] = [
-    Field("price", "Precio", INSTANT, "$", "Último precio negociado."),
-    Field("change_pct", "Change %", INSTANT, "%", "Variación sobre el cierre de ayer."),
-    Field("volume", "Volumen acumulado", INSTANT, "acciones", "Volumen acumulado de la sesión."),
-    Field("gap_pct", "Gap de apertura", INSTANT, "%", "Apertura de mercado contra el cierre de ayer."),
-    Field("pmh_gap_pct", "Gap del máximo de premarket", INSTANT, "%",
-          "Máximo de premarket contra el cierre de ayer. El filtro clásico de gapper."),
-    Field("prev_close", "Cierre de ayer", INSTANT, "$", "Cierre de la sesión anterior."),
-    Field("day_high", "Máximo del día", INSTANT, "$", "Máximo de toda la sesión."),
-    Field("day_low", "Mínimo del día", INSTANT, "$", "Mínimo de toda la sesión."),
+    Field("price", "Price", INSTANT, "$", "Last traded price."),
+    Field("change_pct", "Change %", INSTANT, "%", "Change vs. yesterday's close."),
+    Field("volume", "Accumulated Volume", INSTANT, "shares", "Session's accumulated volume."),
+    Field("gap_pct", "Open Gap %", INSTANT, "%", "Market open vs. yesterday's close."),
+    Field("pmh_gap_pct", "PM High Gap (%)", INSTANT, "%",
+          "Premarket high vs. yesterday's close. The classic gapper filter."),
+    Field("prev_close", "Previous Close", INSTANT, "$", "Previous session's close."),
+    Field("day_high", "High of Day", INSTANT, "$", "High of the whole session."),
+    Field("day_low", "Low of Day", INSTANT, "$", "Low of the whole session."),
 ]
 
 # ── Campos de barra ──────────────────────────────────────────────────────────
 _BAR: List[Field] = [
-    Field("dollar_volume", "Dollar volume", BAR, "$",
-          "Precio x volumen de la barra, en dólares."),
-    Field("vwap", "VWAP", BAR, "$", "Precio medio ponderado por volumen, desde las 4:00 ET."),
-    Field("dist_vwap_pct", "Distancia al VWAP", BAR, "%",
-          "Cuánto se separa el precio del VWAP, con signo."),
+    Field("dollar_volume", "Dollar Volume", BAR, "$",
+          "Price × volume of the bar, in dollars."),
+    Field("vwap", "VWAP", BAR, "$", "Volume-weighted average price, anchored at 4:00 AM ET."),
+    Field("dist_vwap_pct", "Distance to VWAP %", BAR, "%",
+          "How far price is from VWAP, signed."),
     # Medias configurables: se elige el periodo. En una condición se guardan como
     # `ema_<n>` / `sma_<n>`; estas dos entradas son solo la plantilla del formulario.
-    Field("ema", "EMA (M1)", BAR, "$", "Media exponencial. Escribe el periodo (velas de 1 minuto).",
+    Field("ema", "EMA", BAR, "$", "Exponential moving average. Enter the period (1-minute candles).",
           param="period", default_period=9),
-    Field("sma", "SMA (M1)", BAR, "$", "Media simple. Escribe el periodo (velas de 1 minuto).",
+    Field("sma", "SMA", BAR, "$", "Simple moving average. Enter the period (1-minute candles).",
           param="period", default_period=20),
 ]
 
@@ -168,12 +171,12 @@ def catalog() -> Dict[str, object]:
     return {
         "fields": [f.as_dict() for f in ALL_FIELDS],
         "operators": [
-            {"key": ">", "label": "es mayor que"},
-            {"key": ">=", "label": "es mayor o igual que"},
-            {"key": "<", "label": "es menor que"},
-            {"key": "<=", "label": "es menor o igual que"},
-            {"key": "==", "label": "es igual a"},
-            {"key": "crosses_above", "label": "cruza hacia arriba", "bar_only": True},
-            {"key": "crosses_below", "label": "cruza hacia abajo", "bar_only": True},
+            {"key": ">", "label": "Greater than"},
+            {"key": ">=", "label": "Greater or equal"},
+            {"key": "<", "label": "Less than"},
+            {"key": "<=", "label": "Less or equal"},
+            {"key": "==", "label": "Equal"},
+            {"key": "crosses_above", "label": "Crosses above", "bar_only": True},
+            {"key": "crosses_below", "label": "Crosses below", "bar_only": True},
         ],
     }

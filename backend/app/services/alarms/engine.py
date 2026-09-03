@@ -633,7 +633,7 @@ def _format_message(p: Dict[str, Any]) -> str:
     # Los <b>/<i> estructurales se ponen a mano sobre texto ya escapado.
     from html import escape as _esc
 
-    side = "corto" if str(p.get("side")).lower() == "short" else "largo"
+    side = "short" if str(p.get("side")).lower() == "short" else "long"
     price = p.get("price")
     lines = [f"🔔 <b>{_esc(str(p['ticker']))}</b> · {side}"]
     if price is not None:

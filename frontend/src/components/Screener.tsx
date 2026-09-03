@@ -546,8 +546,8 @@ interface AlarmConfig { soundEnabled: boolean; volume: number; rules: AlarmRule[
 
 const ALARM_FIELDS: { key: AlarmField; label: string }[] = [
   { key: "change_pct", label: "Change %" },
-  { key: "price", label: "Precio $" },
-  { key: "volume", label: "Volumen" },
+  { key: "price", label: "Price" },
+  { key: "volume", label: "Volume" },
   { key: "pmh_gap_pct", label: "PMH Gap %" },
   { key: "pre_pct", label: "Premarket High Gap" },
 ];

@@ -104,7 +104,7 @@ function ConditionRows({
                 ))}
               </Select>
               {paramField(catalog, c.left) && (
-                <Input type="number" min={1} title="periodo (nº de velas de 1 min)"
+                <Input type="number" min={1} title="Period (1-min candles)"
                        value={String(maPeriod(c.left) ?? "")}
                        onChange={(e) => set(i, { left: `${templateKey(c.left)}_${Math.max(1, Number(e.target.value) || 1)}` })}
                        style={{ fontSize: 11, width: 46, flexShrink: 0 }} />
@@ -123,8 +123,8 @@ function ConditionRows({
               })}
               style={{ fontSize: 11 }}
             >
-              <option value="__number__">número</option>
-              <option value="__field__">campo</option>
+              <option value="__number__">Number</option>
+              <option value="__field__">Field</option>
             </Select>
             {rightIsField ? (
               <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
@@ -136,7 +136,7 @@ function ConditionRows({
                   ))}
                 </Select>
                 {paramField(catalog, String(c.right)) && (
-                  <Input type="number" min={1} title="periodo (nº de velas de 1 min)"
+                  <Input type="number" min={1} title="Period (1-min candles)"
                          value={String(maPeriod(String(c.right)) ?? "")}
                          onChange={(e) => set(i, { right: `${templateKey(String(c.right))}_${Math.max(1, Number(e.target.value) || 1)}` })}
                          style={{ fontSize: 11, width: 46, flexShrink: 0 }} />
@@ -341,7 +341,7 @@ export function AlarmsPanel() {
                 {a.name}
               </span>
               <span style={HINT}>
-                {a.side === "short" ? "Corto" : "Largo"} · {a.definition?.conditions?.length ?? 0} condiciones · se evalúa {modeOf(a)}
+                {a.side === "short" ? "Short" : "Long"} · {a.definition?.conditions?.length ?? 0} condiciones · se evalúa {modeOf(a)}
               </span>
             </button>
             <button onClick={() => remove(a)} title="Borrar"
@@ -366,8 +366,8 @@ export function AlarmsPanel() {
                    style={{ flex: 1, fontSize: 12 }} />
             <Select value={draftSide} onChange={(e) => setDraftSide(e.target.value as "long" | "short")}
                     style={{ width: 92, fontSize: 11 }}>
-              <option value="short">Corto</option>
-              <option value="long">Largo</option>
+              <option value="short">Short</option>
+              <option value="long">Long</option>
             </Select>
           </div>
 
@@ -455,7 +455,7 @@ export function AlarmsPanel() {
                 ))}
               </Select>
               {paramField(catalog, draft.sizing?.stop_ref ?? "") && (
-                <Input type="number" min={1} title="periodo (nº de velas de 1 min)"
+                <Input type="number" min={1} title="Period (1-min candles)"
                        value={String(maPeriod(draft.sizing?.stop_ref ?? "") ?? "")}
                        onChange={(e) => setDraft({
                          ...draft,
