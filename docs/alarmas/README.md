@@ -260,8 +260,14 @@ status: max_connections → "Maximum number of websocket connections exceeded.
 cierre: 1008 (policy violation)
 ```
 
-O sea: apuntar QA al feed retrasado **sigue peleando con producción**. Y peor —
-cuál de las dos cae no es determinista: en una prueba se expulsó la primera
+O sea: apuntar QA al feed retrasado **sigue peleando con producción**.
+
+Comprobado también el caso mixto (una al feed normal + una al retrasado a la vez,
+misma clave): la conexión normal cae con `max_connections` / 1008 y la retrasada
+sobrevive. El cupo cuenta conexiones **de la cuenta**, dé igual el host — normal
+en prod y retrasado en dev son dos conexiones y una muere.
+
+Y peor — cuál de las dos cae no es determinista: en una prueba se expulsó la primera
 conexión y en otra la segunda. QA podría tirar el screener de producción en
 cualquier momento.
 
