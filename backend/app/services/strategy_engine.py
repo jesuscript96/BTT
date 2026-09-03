@@ -582,6 +582,9 @@ def translate_strategy(
     )
 
     time_windows = compiled.get("entry_time_windows", [])
+    # Se guarda para aplicarsela TAMBIEN a las piramides. Un anyadido es una
+    # entrada: si la ventana de entradas esta cerrada, no se puede piramidar.
+    entry_time_mask = None
     if time_windows:
         if precomputed_minutes is not None:
             minutes_since_midnight = precomputed_minutes
@@ -605,6 +608,7 @@ def translate_strategy(
                 logger.error(f"Error parsing entry time window {window}: {e}")
                 continue
         entries = entries & time_mask
+        entry_time_mask = time_mask
 
     exits = _evaluate_condition_group(
         compiled["exit_root"], df, exit_tf, daily_stats, exit_cache
@@ -626,13 +630,15 @@ def translate_strategy(
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
-        "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache),
+        "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache,
+                                                   entry_time_mask),
         "pyramid_sequential": compiled.get("pyramid_sequential", False),
     }
 
 
 def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
-                             daily_stats: dict | None, entry_cache: dict) -> list:
+                             daily_stats: dict | None, entry_cache: dict,
+                             entry_time_mask=None) -> list:
     """Señales de los niveles de piramidación (2026-08-22).
 
     Cada nivel se evalúa con EXACTAMENTE la misma maquinaria que la entrada y
@@ -643,6 +649,13 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
 
     Se comparte la caché de indicadores de la entrada cuando el timeframe
     coincide: un Darvas usado en la entrada y en un nivel se calcula una vez.
+
+    `entry_time_mask` es la ventana horaria de entrada (`entry_time_windows`) ya
+    resuelta a máscara, o None si la estrategia no la usa. **Se aplica también
+    aquí a propósito: un añadido es una entrada.** Hasta el 2026-09-03 no se
+    aplicaba y las pirámides se disparaban con la ventana cerrada — visto en
+    vivo con GELS, que piramidó a las 08:08 ET teniendo `entry_time_windows`
+    hasta las 08:00. Afectaba al backtest igual que al bot de alertas.
     """
     levels_def = compiled.get("pyramid_levels_def") or []
     if not levels_def:
@@ -654,8 +667,21 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
         try:
             sig = _evaluate_condition_group(lv["root_condition"], df, tf, daily_stats, cache)
             sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
+            sig_arr = sig_arr.astype(bool)
+            if entry_time_mask is not None:
+                m = entry_time_mask
+                m = m.values if hasattr(m, "values") else np.asarray(m)
+                if len(m) == len(sig_arr):
+                    sig_arr = sig_arr & m.astype(bool)
+                else:
+                    # Longitudes distintas: NO se aplica a medias. Silenciarlo
+                    # dejaria piramides fuera de ventana sin que nadie lo viera.
+                    logger.error(
+                        "[PYRAMID] la ventana horaria no cuadra con las senales "
+                        "(%d vs %d): el nivel se omite entero", len(m), len(sig_arr))
+                    continue
             out.append({
-                "signals": sig_arr.astype(bool),
+                "signals": sig_arr,
                 "action": lv["action"],
                 "capital_frac": lv["capital_frac"],
                 "max_fires": lv.get("max_fires", 1),

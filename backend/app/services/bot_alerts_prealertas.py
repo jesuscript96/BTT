@@ -33,6 +33,8 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+
 logger = logging.getLogger("btt.bot_alerts.prealertas")
 
 ET = ZoneInfo("America/New_York")
@@ -106,12 +108,43 @@ class ConstructorParcial:
 
     def __init__(self):
         self._curso: dict[str, VelaEnCurso] = {}
+        # Ultimo minuto CERRADO de cada ticker, en epoch. Sin esto se emiten
+        # prealertas de velas muertas — ver `marcar_cerrada`.
+        self._cerradas: dict[str, int] = {}
 
     def olvidar(self, ticker: str) -> None:
         self._curso.pop(ticker, None)
+        self._cerradas.pop(ticker, None)
 
     def reiniciar(self) -> None:
         self._curso.clear()
+        self._cerradas.clear()
+
+    def marcar_cerrada(self, ticker: str, ts) -> None:
+        """Avisa de que la vela de ese minuto YA CERRO. Llamar al recibir `AM`.
+
+        POR QUE HACE FALTA, y no es una optimizacion. Los agregados por segundo
+        tardan ~3 s en llegar, asi que el tick del segundo 59 se procesa DESPUES
+        de que su propia vela haya cerrado. Sin esta marca pasaba esto:
+
+            04:52:59  tick del segundo 59      (viaja 3 s)
+            04:53:00  llega la vela AM 04:52 -> se confirman o descartan las
+                      prealertas del minuto 04:52: no hay ninguna todavia
+            04:53:02  se procesa el tick      -> nace una prealerta del minuto
+                      04:52, que ya nadie va a confirmar ni descartar
+
+        La prealerta se quedaba en ambar PARA SIEMPRE (visto en vivo con MIMI el
+        2026-09-03), y ademas no daba ningun margen: su vela ya habia cerrado.
+        """
+        try:
+            t = pd.Timestamp(ts)
+            if t.tzinfo is None:
+                t = t.tz_localize(ET)
+            minuto = int(t.timestamp()) // 60 * 60
+        except (ValueError, TypeError):
+            return
+        if minuto > self._cerradas.get(ticker, -1):
+            self._cerradas[ticker] = minuto
 
     def aplicar(self, ev: dict) -> Optional[tuple[str, VelaEnCurso, datetime, int]]:
         """Un mensaje `A`. Devuelve el ticker y su vela si TOCA MIRAR.
@@ -158,6 +191,13 @@ class ConstructorParcial:
         # `evaluada` la pone el que llama, cuando de verdad ha avisado. Aqui solo
         # se comprueba la ventana: del segundo 50 al 59.
         if v.evaluada or not (SEGUNDO_DECISION <= t.second <= SEGUNDO_LIMITE):
+            return None
+        # LLEGO TARDE. Su vela ya cerro, asi que esto no es una prealerta: es un
+        # aviso sin margen que ademas nadie confirmaria ni descartaria despues.
+        # Mejor callarse — la alerta de verdad sale por su lado.
+        if minuto <= self._cerradas.get(tk, -1):
+            logger.debug("%s: tick del segundo %d descartado, la vela %s ya cerro",
+                         tk, t.second, minuto)
             return None
         # El instante que se le pone a la vela es el INICIO del minuto, igual
         # que hace el proveedor con las velas cerradas: asi la prealerta y su

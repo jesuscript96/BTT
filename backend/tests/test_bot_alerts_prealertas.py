@@ -88,3 +88,47 @@ def test_sin_av_el_volumen_es_cero_no_una_suma_aproximada():
     listo = c.aplicar(ev)
     assert listo is not None
     assert listo[1].volumen == 0.0
+
+
+def test_no_se_prealerta_una_vela_que_ya_cerro():
+    """EL BUG DEL 2026-09-03: la prealerta que nace huérfana.
+
+    Los agregados por segundo tardan ~3 s, así que el tick del segundo 59 se
+    procesa DESPUÉS de que su vela haya cerrado. Sin esta comprobación nacía una
+    prealerta de una vela muerta: nadie la confirmaba ni la descartaba (el
+    bloque que lo hace ya había pasado), se quedaba en ámbar para siempre en la
+    página, y encima no daba ni un segundo de margen. Visto en vivo con MIMI.
+    """
+    from datetime import datetime
+    from app.services.bot_alerts_prealertas import ET
+
+    c = ConstructorParcial()
+    inicio = datetime.fromtimestamp(MINUTO / 1000, tz=ET)
+
+    c.aplicar(_ev(30))                    # la vela se va formando
+    c.marcar_cerrada("TEST", inicio)      # llega su `AM`: el minuto se cierra
+    assert c.aplicar(_ev(59)) is None, "el tick tardío no puede prealertar"
+
+
+def test_cerrar_un_minuto_no_calla_los_siguientes():
+    """Callarse dura esa vela, no el resto del día."""
+    from datetime import datetime
+    from app.services.bot_alerts_prealertas import ET
+
+    c = ConstructorParcial()
+    c.marcar_cerrada("TEST", datetime.fromtimestamp(MINUTO / 1000, tz=ET))
+
+    siguiente = dict(_ev(SEGUNDO_DECISION))
+    siguiente["s"] = MINUTO + 60000 + SEGUNDO_DECISION * 1000
+    assert c.aplicar(siguiente) is not None
+
+
+def test_olvidar_un_ticker_borra_tambien_su_marca():
+    """Si se suelta y vuelve, no puede arrastrar el minuto cerrado de antes."""
+    from datetime import datetime
+    from app.services.bot_alerts_prealertas import ET
+
+    c = ConstructorParcial()
+    c.marcar_cerrada("TEST", datetime.fromtimestamp(MINUTO / 1000, tz=ET))
+    c.olvidar("TEST")
+    assert c.aplicar(_ev(SEGUNDO_DECISION)) is not None
