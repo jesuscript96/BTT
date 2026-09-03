@@ -206,6 +206,53 @@ def enviar_texto(texto: str) -> bool:
         return False
 
 
+def recibir(offset: int = 0, espera: int = 0) -> tuple[list[dict], int]:
+    """Mensajes nuevos del chat configurado. Devuelve (mensajes, offset nuevo).
+
+    PRIMERA VEZ QUE EL BOT ESCUCHA. Hasta ahora solo emitia, y eso lo hacia
+    inofensivo: nadie podia hacerle nada desde fuera. Al abrir esta puerta hay
+    UNA regla que no se salta — **solo se devuelven los mensajes del
+    `TELEGRAM_CHAT_ID` configurado**. Un bot de Telegram contesta a cualquiera
+    que le escriba si no se filtra, y este sabe precios y estrategias.
+
+    `espera` es el long polling de Telegram: el servidor aguanta la conexion
+    hasta que haya algo. 0 = pregunta y vuelve, que es lo que quiere una tarea
+    que corre junto al bucle de velas.
+
+    NUNCA lanza. Si Telegram no contesta, se devuelve lo mismo que habia.
+    """
+    if not envio_activo():
+        return [], offset
+    token, chat = _cfg()
+    try:
+        r = httpx.get(
+            f"{API}/bot{token}/getUpdates",
+            params={"offset": offset, "timeout": espera,
+                    "allowed_updates": '["message"]'},
+            timeout=TIMEOUT + espera,
+        )
+        r.raise_for_status()
+        datos = r.json()
+    except Exception as e:                                   # noqa: BLE001
+        logger.debug("[TELEGRAM] no se pudo leer: %s", e)
+        return [], offset
+
+    fuera: list[dict] = []
+    ultimo = offset
+    for u in (datos.get("result") or []):
+        ultimo = max(ultimo, int(u.get("update_id", 0)) + 1)
+        m = u.get("message") or {}
+        origen = str((m.get("chat") or {}).get("id") or "")
+        if origen != chat:
+            # No es del grupo configurado: ni se procesa ni se contesta.
+            logger.warning("[TELEGRAM] mensaje de un chat desconocido (%s), ignorado", origen)
+            continue
+        texto = (m.get("text") or "").strip()
+        if texto:
+            fuera.append({"texto": texto, "de": (m.get("from") or {}).get("first_name") or "?"})
+    return fuera, ultimo
+
+
 def enviar_eventos(eventos: Iterable["Evento"]) -> int:
     """Manda una tanda de avisos. Devuelve cuantos salieron."""
     return sum(1 for ev in eventos if enviar_texto(formatear(ev)))

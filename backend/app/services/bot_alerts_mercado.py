@@ -97,6 +97,17 @@ class MercadoEnVivo:
         self.mensajes = 0
         self._dia: Optional[str] = None
 
+    def precio_de(self, ticker: str) -> Optional[float]:
+        """Ultimo precio visto de un ticker, o None si no se esta siguiendo.
+
+        Lo usa el comando `/evf` de Telegram: sin precio no hay veredicto, y
+        devolver un precio viejo o inventado seria peor que decir que no se
+        sabe. Solo hay precio de lo que el radar ya vigila.
+        """
+        with self._lock:
+            st = self._estados.get((ticker or "").upper())
+            return st.precio if st else None
+
     # ── base: el cierre de ayer, del snapshot ────────────────────────────
     def sembrar_prev_close(self, datos: dict[str, float]) -> int:
         """Cierres de ayer de todo el mercado, de una foto REST.
