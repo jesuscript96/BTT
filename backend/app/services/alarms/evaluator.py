@@ -59,7 +59,7 @@ def normalize_condition(raw: Dict[str, Any]) -> Dict[str, Any]:
         # sería el último tick, que ni es reproducible ni auditable.
         if F.kind_of(left) != F.BAR:
             raise RuleError(
-                f"«{F.BY_KEY[left].label}» es un campo instantáneo y los cruces "
+                f"«{F.label_of(left)}» es un campo instantáneo y los cruces "
                 "solo se pueden usar sobre campos de barra."
             )
 
@@ -98,12 +98,12 @@ def mode_of(conditions: List[Dict[str, Any]]) -> str:
 
 def describe(condition: Dict[str, Any]) -> str:
     """Frase legible de una condición, para el mensaje del aviso."""
-    left = F.BY_KEY[condition["left"]].label
+    left = F.label_of(condition["left"])
     op_labels = {">": ">", ">=": "≥", "<": "<", "<=": "≤", "==": "=",
                  "crosses_above": "cruza arriba", "crosses_below": "cruza abajo"}
     op = op_labels.get(condition["op"], condition["op"])
     if condition.get("right_field"):
-        right = F.BY_KEY[condition["right_field"]].label
+        right = F.label_of(condition["right_field"])
     else:
         right = _fmt(condition.get("right_value"))
     return f"{left} {op} {right}"

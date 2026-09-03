@@ -185,6 +185,10 @@ class AlarmEngine:
         return {
             "conditions": conditions,
             "universe": universe,
+            # Medias configurables (ema_<n>/sma_<n>) que usan las condiciones. Se
+            # calculan a demanda desde la serie y se inyectan en el contexto antes
+            # de evaluar (no salen del snapshot como el resto de campos de barra).
+            "ma_keys": _collect_ma_keys(conditions, (d.get("sizing") or {}).get("stop_ref")),
             "mode": mode_of(conditions),
             "window_from": _minutes(window.get("from")),
             "window_to": _minutes(window.get("to")),
@@ -374,6 +378,13 @@ class AlarmEngine:
                         continue
                     if not _in_window(minute, plan["window_from"], plan["window_to"]):
                         continue
+                    # Medias configurables: se calculan a demanda y se meten en el
+                    # contexto (no vienen del snapshot como el resto de campos).
+                    for mk in plan["ma_keys"]:
+                        if mk not in ctx:
+                            ma = F.parse_ma(mk)
+                            if ma:
+                                ctx[mk] = series.ma(ma[0], ma[1])
                     ok, reasons = evaluate(plan["conditions"], ctx,
                                            prev_lookup=series.prev_snapshot_value)
                     if ok:
@@ -483,6 +494,19 @@ class AlarmEngine:
 
 
 # ── helpers de módulo ────────────────────────────────────────────────────────
+def _collect_ma_keys(conditions: List[Dict[str, Any]], stop_ref: Any = None) -> List[str]:
+    """Claves de media configurable (ema_<n>/sma_<n>) que aparecen en las
+    condiciones o como referencia del stop, para calcularlas a demanda al evaluar."""
+    keys = set()
+    for c in conditions:
+        for side in (c.get("left"), c.get("right_field")):
+            if side and F.parse_ma(side):
+                keys.add(side)
+    if stop_ref and F.parse_ma(str(stop_ref)):
+        keys.add(str(stop_ref))
+    return list(keys)
+
+
 def _instant_ctx(m: Dict[str, Any]) -> Dict[str, Optional[float]]:
     """Traduce una fila del screener al vocabulario de campos instantáneos."""
     if not m:
@@ -622,7 +646,7 @@ def _format_message(p: Dict[str, Any]) -> str:
     s = p.get("sizing") or {}
     if s.get("stop") is not None:
         ref = s.get("stop_ref")
-        ref_label = F.BY_KEY[ref].label.lower() if ref and ref in F.BY_KEY else "referencia"
+        ref_label = F.label_of(ref).lower() if ref else "referencia"
         off = s.get("stop_offset_pct") or 0
         lines.append(f"Stop <b>{s['stop']:.4g} $</b> ({_esc(ref_label)} {off:+g}%)")
     if s.get("shares"):

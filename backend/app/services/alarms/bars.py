@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
@@ -27,9 +27,6 @@ ET = ZoneInfo("America/New_York")
 PM_OPEN_MIN = 4 * 60      # 04:00 ET — ancla de la serie
 SESSION_END_MIN = 20 * 60  # 20:00 ET — fin de after-hours
 RTH_OPEN_MIN = 9 * 60 + 30
-
-EMA_PERIODS = (9, 15, 20, 50, 200)
-SMA_PERIODS = (20, 50)
 
 # El offset ET cambia dos veces al año; calcularlo por mensaje sería carísimo con
 # el firehose de `A.*`. Se cachea por fecha UTC.
@@ -54,29 +51,6 @@ def et_date_key(ts_ms: int) -> str:
     return datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).astimezone(ET).strftime("%Y-%m-%d")
 
 
-class _Rolling:
-    """Media móvil simple sobre una ventana pequeña, sin numpy ni deque de objetos."""
-
-    __slots__ = ("period", "buf", "idx", "count", "total")
-
-    def __init__(self, period: int):
-        self.period = period
-        self.buf = [0.0] * period
-        self.idx = 0
-        self.count = 0
-        self.total = 0.0
-
-    def push(self, v: float) -> Optional[float]:
-        if self.count == self.period:
-            self.total -= self.buf[self.idx]
-        else:
-            self.count += 1
-        self.buf[self.idx] = v
-        self.total += v
-        self.idx = (self.idx + 1) % self.period
-        return (self.total / self.count) if self.count == self.period else None
-
-
 class SessionBars:
     """Serie de 1 minuto de UN ticker en UNA sesión, con derivados incrementales."""
 
@@ -87,7 +61,7 @@ class SessionBars:
         "cum_tp_vol", "cum_vol",
         "pm_high", "pm_low",
         "session_max", "session_min", "max_at_min",
-        "_ema", "_sma",
+        "_closes",
         "last_close_min",
         "_prev_derived",
     )
@@ -108,8 +82,11 @@ class SessionBars:
         self.session_max: Optional[float] = None
         self.session_min: Optional[float] = None
         self.max_at_min: Optional[int] = None
-        self._ema: Dict[int, Optional[float]] = {p: None for p in EMA_PERIODS}
-        self._sma: Dict[int, _Rolling] = {p: _Rolling(p) for p in SMA_PERIODS}
+        # Cierres de cada barra cerrada, en orden. Las medias (EMA/SMA de periodo
+        # configurable) se calculan a demanda desde aquí; una sesión tiene ≤960
+        # minutos, así que la lista está acotada y solo existe para los tickers
+        # vigilados (pocos).
+        self._closes: List[float] = []
         self.last_close_min: Optional[int] = None
         # Snapshot derivado (VWAP, EMA, extremos…) tal como quedó al cierre de la
         # barra ANTERIOR. Es lo que hace posible «cierre cruza el VWAP»: el cruce
@@ -189,12 +166,7 @@ class SessionBars:
         if self.session_min is None or l < self.session_min:
             self.session_min = l
 
-        for p in EMA_PERIODS:
-            prev = self._ema[p]
-            k = 2.0 / (p + 1.0)
-            self._ema[p] = c if prev is None else (c - prev) * k + prev
-        for p in SMA_PERIODS:
-            self._sma[p].push(c)
+        self._closes.append(c)
 
         self.prev_bar = self.last_bar
         bar = {"minute": minute, "open": o, "high": h, "low": l, "close": c, "volume": v}
@@ -202,6 +174,26 @@ class SessionBars:
         self.bar_count += 1
         self.last_close_min = minute
         return bar
+
+    def ma(self, kind: str, period: int, offset: int = 0) -> Optional[float]:
+        """EMA o SMA de `period` sobre los cierres de la sesión (velas de 1 min).
+
+        `offset=1` la calcula como quedó al cierre de la barra ANTERIOR (para los
+        cruces). Devuelve None si aún no hay `period` barras — así una media que
+        todavía no existe hace que la condición no se cumpla, en vez de disparar
+        con un valor a medias."""
+        n = len(self._closes) - offset
+        if period < 1 or n < period:
+            return None
+        closes = self._closes[:n]
+        if kind == "sma":
+            return sum(closes[-period:]) / period
+        # EMA: se siembra con la SMA de las primeras `period` barras y se itera.
+        k = 2.0 / (period + 1.0)
+        ema = sum(closes[:period]) / period
+        for c in closes[period:]:
+            ema = (c - ema) * k + ema
+        return ema
 
     # ── derivados ────────────────────────────────────────────────────────────
     def vwap(self) -> Optional[float]:
@@ -237,20 +229,20 @@ class SessionBars:
             "previous_min": self.session_min,
             "mins_since_high": (b["minute"] - self.max_at_min) if self.max_at_min is not None else None,
         }
-        for p in EMA_PERIODS:
-            out[f"ema{p}"] = self._ema[p]
-        for p in SMA_PERIODS:
-            out[f"sma{p}"] = self._sma[p].total / self._sma[p].count if self._sma[p].count == p else None
         return out
 
     def prev_snapshot_value(self, key: str) -> Optional[float]:
         """Valor de un campo en la barra ANTERIOR, para los operadores de cruce.
 
-        Cubre TODOS los campos derivados (VWAP, EMA, SMA, extremos corridos,
-        distancia al VWAP…), no solo el precio crudo: `_prev_derived` es el
-        snapshot completo tal como quedó al cierre de la barra previa. Así
-        «cierre cruza el VWAP» funciona; antes solo había close/open/high/low y
-        un cruce contra un derivado no saltaba nunca."""
+        Cubre los derivados de sesión (VWAP, distancia al VWAP…) desde
+        `_prev_derived` —snapshot de la barra previa— y las medias configurables
+        (`ema_<n>`/`sma_<n>`) recalculándolas con un desfase de una barra. Así
+        «cierre cruza el VWAP» o «cruza la EMA 20» funcionan; antes solo había
+        close/open/high/low y un cruce contra un derivado no saltaba nunca."""
+        from . import fields as F
+        ma = F.parse_ma(key)
+        if ma:
+            return self.ma(ma[0], ma[1], offset=1)
         return self._prev_derived.get(key)
 
 

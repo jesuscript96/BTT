@@ -107,16 +107,16 @@ def test_varias_condiciones_se_combinan_con_and():
     """Cuatro condiciones, incluidas dos que comparan contra otro campo en vez de
     contra un número. Todas tienen que cumplirse."""
     conds = normalize_conditions([
-        {"left": "close", "op": ">", "right": 1.0},
+        {"left": "price", "op": ">", "right": 1.0},
         {"left": "dollar_volume", "op": ">", "right": 100_000},
-        {"left": "close", "op": "<", "right": "prev_bar_low"},
-        {"left": "close", "op": ">", "right": "vwap"},
+        {"left": "dist_vwap_pct", "op": "<", "right": 0},
+        {"left": "price", "op": ">", "right": "vwap"},
     ])
-    ctx = {"close": 10.0, "dollar_volume": 250_000, "prev_bar_low": 11.0, "vwap": 9.0}
+    ctx = {"price": 10.0, "dollar_volume": 250_000, "dist_vwap_pct": -2.0, "vwap": 9.0}
     ok, reasons = evaluate(conds, ctx)
     assert ok and len(reasons) == 4
 
-    ctx_malo = {**ctx, "close": 12.0}   # deja de cerrar bajo el mínimo anterior
+    ctx_malo = {**ctx, "dist_vwap_pct": 1.0}   # ya no está por debajo del VWAP
     assert evaluate(conds, ctx_malo)[0] is False
 
 
@@ -143,7 +143,7 @@ def test_el_modo_se_deduce_de_los_campos():
     assert mode_of(solo_instant) == F.INSTANT
     con_barra = normalize_conditions([
         {"left": "price", "op": ">", "right": 5},
-        {"left": "close", "op": ">", "right": "vwap"},
+        {"left": "price", "op": ">", "right": "vwap"},   # vwap es de barra
     ])
     assert mode_of(con_barra) == F.BAR
 
@@ -159,12 +159,12 @@ def test_campo_desconocido_se_rechaza():
 
 
 def test_cruce_usa_la_barra_anterior():
-    conds = normalize_conditions([{"left": "close", "op": "crosses_below", "right": "vwap"}])
-    ctx = {"close": 3.20, "vwap": 3.30}
-    prev = {"close": 3.40, "vwap": 3.30}
-    assert evaluate(conds, ctx, prev_lookup=prev.get)[0] is True
+    # «distancia al VWAP cruza por debajo de 0» = el precio cruza el VWAP a la baja.
+    conds = normalize_conditions([{"left": "dist_vwap_pct", "op": "crosses_below", "right": 0}])
+    ctx = {"dist_vwap_pct": -0.5}
+    assert evaluate(conds, ctx, prev_lookup={"dist_vwap_pct": 0.5}.get)[0] is True
     # Si ya venía por debajo, no hay cruce.
-    assert evaluate(conds, ctx, prev_lookup={"close": 3.10, "vwap": 3.30}.get)[0] is False
+    assert evaluate(conds, ctx, prev_lookup={"dist_vwap_pct": -0.8}.get)[0] is False
 
 
 # ── aislamiento por usuario ──────────────────────────────────────────────────
@@ -282,30 +282,69 @@ def test_la_reproduccion_no_promete_lo_que_no_sabe():
 
 # ── cruce contra un campo derivado (VWAP), regresión ─────────────────────────
 def test_cruce_del_vwap_dispara_en_la_barra_del_cruce():
-    """«cierre cruza arriba el VWAP» debe saltar en la barra donde el cierre pasa
-    de estar por debajo del VWAP a estar por encima — ni antes, ni después, ni
-    nunca. Antes no saltaba jamás: prev_snapshot_value solo tenía close/open/high/
-    low, así que el valor previo del VWAP era None y el cruce se descartaba."""
-    conds = normalize_conditions([{"left": "close", "op": "crosses_above", "right": "vwap"}])
+    """«distancia al VWAP cruza arriba 0» = el precio cruza el VWAP al alza. Debe
+    saltar en la barra del cruce, ni antes ni después ni nunca. Antes no saltaba
+    jamás: prev_snapshot_value solo tenía close/open/high/low, así que el valor
+    previo del derivado era None y el cruce se descartaba."""
+    conds = normalize_conditions([{"left": "dist_vwap_pct", "op": "crosses_above", "right": 0}])
 
     s = SessionBars("XYZ", "2026-08-31")
     # Barra 1: cierre por DEBAJO de su VWAP (típico = (h+l+c)/3 > c cuando c=low).
     _feed(s, 300, [10.0, 12.0, 8.0, 9.0])   # o=10 h=12 l=8 c=9 → vwap≈9.67, close 9 < vwap
     _feed(s, 301, [10.0])                    # cierra la 300
     snap1 = s.snapshot()
-    assert snap1["close"] < snap1["vwap"]    # de partida, por debajo
+    assert snap1["dist_vwap_pct"] < 0        # de partida, por debajo del VWAP
     assert evaluate(conds, s.snapshot(), prev_lookup=s.prev_snapshot_value)[0] is False
 
     # Barra siguiente que cierra CLARAMENTE por encima del VWAP acumulado → cruce.
     _feed(s, 302, [50.0])                     # cierra la 301, cierre muy por encima
     snap2 = s.snapshot()
-    assert snap2["close"] > snap2["vwap"]
+    assert snap2["dist_vwap_pct"] > 0
     assert evaluate(conds, snap2, prev_lookup=s.prev_snapshot_value)[0] is True
 
     # Mientras siga por encima, NO vuelve a disparar (no hay nuevo cruce).
     _feed(s, 303, [51.0])
     _feed(s, 304, [52.0])
     assert evaluate(conds, s.snapshot(), prev_lookup=s.prev_snapshot_value)[0] is False
+
+
+# ── medias configurables (EMA/SMA con periodo) ───────────────────────────────
+def test_media_configurable_se_calcula_y_compara():
+    """Las 7 medias fijas pasan a UNA ema y UNA sma con periodo. En una condición
+    van como `ema_<n>`/`sma_<n>` y el motor las calcula desde los cierres."""
+    assert F.is_known("ema_9") and F.kind_of("sma_20") == F.BAR
+    assert F.label_of("ema_9") == "EMA 9"
+
+    s = SessionBars("XYZ", "2026-08-31")
+    for i, px in enumerate([1, 2, 3, 4, 5, 6]):
+        _feed(s, 300 + i, [float(px)])
+    _feed(s, 306, [7.0])   # cierra la barra con cierre 6 → cierres = 1..6
+    assert s.ma("sma", 3) == pytest.approx((4 + 5 + 6) / 3)
+    assert s.ma("sma", 20) is None          # aún no hay 20 barras → None (no dispara)
+
+    # Cruce de medias: SMA rápida por encima de la lenta. Modo barra, se deduce.
+    conds = normalize_conditions([{"left": "sma_3", "op": ">", "right": "sma_5"}])
+    assert mode_of(conds) == F.BAR
+    ctx = {"sma_3": s.ma("sma", 3), "sma_5": s.ma("sma", 5)}
+    assert evaluate(conds, ctx)[0] is True
+
+
+def test_media_con_periodo_invalido_se_rechaza():
+    with pytest.raises(RuleError):
+        normalize_conditions([{"left": "ema_0", "op": ">", "right": 1}])   # periodo 0
+    with pytest.raises(RuleError):
+        normalize_conditions([{"left": "ema_x", "op": ">", "right": 1}])   # no es número
+    with pytest.raises(RuleError):
+        normalize_conditions([{"left": "ema_99999", "op": ">", "right": 1}])  # fuera de tope
+
+
+def test_los_campos_eliminados_ya_no_se_aceptan():
+    """El recorte de producto quitó close, prev_bar_low, previous_max, rvol… Ya no
+    son configurables: una condición que los use se rechaza."""
+    for muerto in ("close", "prev_bar_low", "previous_max", "rvol", "pm_high",
+                   "mins_since_high", "ema9", "sma20"):
+        with pytest.raises(RuleError):
+            normalize_conditions([{"left": muerto, "op": ">", "right": 1}])
 
 
 # ── el mensaje de Telegram no rompe con operadores < > & ─────────────────────

@@ -42,6 +42,30 @@ function newCondition(catalog: AlarmCatalog | null): AlarmCondition {
   return { left: catalog?.fields[0]?.key ?? "price", op: ">", right: 0 };
 }
 
+// ── Medias configurables (EMA/SMA con periodo) ──────────────────────────────
+// En el desplegable el campo es la plantilla `ema`/`sma`; en la condición se
+// guarda con periodo concreto: `ema_9`, `sma_20`. Estos helpers traducen entre
+// las dos formas para que el <Select> case y aparezca una casilla de periodo.
+const MA_RE = /^(ema|sma)_(\d+)$/;
+
+function templateKey(key: string): string {
+  const m = MA_RE.exec(key);
+  return m ? m[1] : key;
+}
+function maPeriod(key: string): number | null {
+  const m = MA_RE.exec(key);
+  return m ? Number(m[2]) : null;
+}
+function paramField(catalog: AlarmCatalog | null, key: string) {
+  const f = catalog?.fields.find((x) => x.key === templateKey(key));
+  return f && f.param === "period" ? f : null;
+}
+/** Al elegir un campo del desplegable: si es media, lo concreta con su periodo por defecto. */
+function concreteKey(catalog: AlarmCatalog | null, key: string): string {
+  const f = catalog?.fields.find((x) => x.key === key);
+  return f && f.param === "period" ? `${key}_${f.default_period ?? 9}` : key;
+}
+
 /** Filas de condiciones: campo · operador · (número o campo). */
 function ConditionRows({
   catalog, value, onChange, emptyHint,
@@ -71,12 +95,21 @@ function ConditionRows({
             gap: 6,
             alignItems: "center",
           }}>
-            <Select value={c.left} onChange={(e) => set(i, { left: e.target.value })}
-                    style={{ fontSize: 11 }}>
-              {catalog?.fields.map((f) => (
-                <option key={f.key} value={f.key}>{f.label}</option>
-              ))}
-            </Select>
+            <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
+              <Select value={templateKey(c.left)}
+                      onChange={(e) => set(i, { left: concreteKey(catalog, e.target.value) })}
+                      style={{ fontSize: 11, flex: 1, minWidth: 0 }}>
+                {catalog?.fields.map((f) => (
+                  <option key={f.key} value={f.key}>{f.label}</option>
+                ))}
+              </Select>
+              {paramField(catalog, c.left) && (
+                <Input type="number" min={1} title="periodo (nº de velas de 1 min)"
+                       value={String(maPeriod(c.left) ?? "")}
+                       onChange={(e) => set(i, { left: `${templateKey(c.left)}_${Math.max(1, Number(e.target.value) || 1)}` })}
+                       style={{ fontSize: 11, width: 46, flexShrink: 0 }} />
+              )}
+            </div>
             <Select value={c.op} onChange={(e) => set(i, { op: e.target.value })}
                     style={{ fontSize: 11 }}>
               {catalog?.operators.map((o) => (
@@ -94,12 +127,21 @@ function ConditionRows({
               <option value="__field__">campo</option>
             </Select>
             {rightIsField ? (
-              <Select value={String(c.right)} onChange={(e) => set(i, { right: e.target.value })}
-                      style={{ fontSize: 11 }}>
-                {catalog?.fields.map((f) => (
-                  <option key={f.key} value={f.key}>{f.label}</option>
-                ))}
-              </Select>
+              <div style={{ display: "flex", gap: 4, minWidth: 0 }}>
+                <Select value={templateKey(String(c.right))}
+                        onChange={(e) => set(i, { right: concreteKey(catalog, e.target.value) })}
+                        style={{ fontSize: 11, flex: 1, minWidth: 0 }}>
+                  {catalog?.fields.map((f) => (
+                    <option key={f.key} value={f.key}>{f.label}</option>
+                  ))}
+                </Select>
+                {paramField(catalog, String(c.right)) && (
+                  <Input type="number" min={1} title="periodo (nº de velas de 1 min)"
+                         value={String(maPeriod(String(c.right)) ?? "")}
+                         onChange={(e) => set(i, { right: `${templateKey(String(c.right))}_${Math.max(1, Number(e.target.value) || 1)}` })}
+                         style={{ fontSize: 11, width: 46, flexShrink: 0 }} />
+                )}
+              </div>
             ) : (
               <Input type="number" value={String(c.right ?? "")} step="any"
                      onChange={(e) => set(i, { right: Number(e.target.value) })}
@@ -209,8 +251,11 @@ export function AlarmsPanel() {
   const barFieldsUsed = useMemo(() => {
     if (!catalog) return false;
     const barKeys = new Set(catalog.fields.filter((f) => f.kind === "bar").map((f) => f.key));
+    // Una media configurable (`ema_9`/`sma_20`) es de barra aunque su clave lleve
+    // el periodo: se comprueba por la plantilla.
+    const isBar = (k: string) => barKeys.has(k) || barKeys.has(templateKey(k));
     return [...(draft.conditions ?? [])].some(
-      (c) => barKeys.has(c.left) || (typeof c.right === "string" && barKeys.has(c.right)),
+      (c) => isBar(c.left) || (typeof c.right === "string" && isBar(c.right)),
     );
   }, [catalog, draft.conditions]);
 
@@ -398,9 +443,9 @@ export function AlarmsPanel() {
             </span>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <Select
-                value={draft.sizing?.stop_ref ?? ""}
+                value={templateKey(draft.sizing?.stop_ref ?? "")}
                 onChange={(e) => setDraft({
-                  ...draft, sizing: { ...draft.sizing, stop_ref: e.target.value || undefined },
+                  ...draft, sizing: { ...draft.sizing, stop_ref: e.target.value ? concreteKey(catalog, e.target.value) : undefined },
                 })}
                 style={{ flex: 2, minWidth: 150, fontSize: 11 }}
               >
@@ -409,6 +454,15 @@ export function AlarmsPanel() {
                   <option key={f.key} value={f.key}>Stop en {f.label.toLowerCase()}</option>
                 ))}
               </Select>
+              {paramField(catalog, draft.sizing?.stop_ref ?? "") && (
+                <Input type="number" min={1} title="periodo (nº de velas de 1 min)"
+                       value={String(maPeriod(draft.sizing?.stop_ref ?? "") ?? "")}
+                       onChange={(e) => setDraft({
+                         ...draft,
+                         sizing: { ...draft.sizing, stop_ref: `${templateKey(draft.sizing?.stop_ref ?? "")}_${Math.max(1, Number(e.target.value) || 1)}` },
+                       })}
+                       style={{ width: 52, fontSize: 11 }} />
+              )}
               <Input type="number" step="any" placeholder="% offset"
                      value={String(draft.sizing?.stop_offset_pct ?? "")}
                      onChange={(e) => setDraft({

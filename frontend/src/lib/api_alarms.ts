@@ -16,6 +16,9 @@ export interface AlarmFieldDef {
   kind: AlarmFieldKind;
   unit: string;
   help: string;
+  /** Presente en las medias configurables (EMA/SMA): la condición lleva un periodo. */
+  param?: "period";
+  default_period?: number;
 }
 
 export interface AlarmOperatorDef {

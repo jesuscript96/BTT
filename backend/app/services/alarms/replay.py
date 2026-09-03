@@ -27,7 +27,7 @@ import httpx
 
 from . import fields as F
 from .bars import SessionBars, et_minute_of_day
-from .engine import _compute_sizing, _format_message, _in_window, _minutes, _f
+from .engine import _collect_ma_keys, _compute_sizing, _format_message, _in_window, _minutes, _f
 from .evaluator import evaluate, mode_of, normalize_conditions
 
 logger = logging.getLogger("btt.alarms.replay")
@@ -115,6 +115,7 @@ async def replay_alarm(alarm: Dict[str, Any], ticker: str, date: str,
     if watchlist and ticker not in watchlist:
         raise ReplayError(f"{ticker} no está en la watchlist de esta alarma.")
     sizing_cfg = d.get("sizing") or {}
+    ma_keys = _collect_ma_keys(conditions, sizing_cfg.get("stop_ref"))
     side = alarm.get("side", "long")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -150,6 +151,12 @@ async def replay_alarm(alarm: Dict[str, Any], ticker: str, date: str,
 
         instant = _instant_from_replay(series, bar, prev_close, day_high, day_low, day_volume)
         ctx = {**instant, **series.snapshot()}
+        # Medias configurables (ema_<n>/sma_<n>): se calculan a demanda, igual que
+        # en vivo, y se meten en el contexto (no salen del snapshot).
+        for mk in ma_keys:
+            ma = F.parse_ma(mk)
+            if ma:
+                ctx[mk] = series.ma(ma[0], ma[1])
         minute = bar["minute"]
 
         # Universo pegajoso, igual que en vivo: una vez dentro, dentro todo el día.
