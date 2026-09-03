@@ -45,7 +45,12 @@ import {
 } from "@/lib/api_bot_alerts";
 
 const SONIDO_KEY = "botAlertas.sonido.v1";
+/** Lo que se teclea en el radar (locate y EV por ticker). Se guarda en el
+ *  navegador para no volver a escribirlo en cada recarga: son datos de la
+ *  sesión de hoy, no configuración que deba viajar a ningún sitio. */
+const LOCATES_KEY = "botAlertas.locates.v1";
 const REFRESCO_MS = 2000;
+
 /** Sin latido en este tiempo, el bot se considera caido aunque figure encendido. */
 const LATIDO_VIVO_MS = 30_000;
 /** Cuanto tarda una fila en volver a su fondo normal. */
@@ -152,6 +157,32 @@ const fmt = (v: number | null | undefined, d = 2) =>
   });
 
 const hora = (m: string) => (m || "").slice(11, 16);
+
+/** ¿Compensa alquilar los locates de esta acción?
+ *
+ *      fade necesario (%) = coste por acción / precio × 100
+ *      compensa           ⟺  EV (%) > fade necesario (%)
+ *
+ * EL TAMAÑO NO ENTRA. Ganancia esperada y coste escalan los dos con el número
+ * de acciones, así que se cancela: si el fade no llega para un locate, tampoco
+ * para mil. Lo comprobó Jaume preguntándolo y es correcto.
+ *
+ * `paquete` sí cambia el resultado en posiciones pequeñas: los locates se
+ * cobran por lotes de 100 redondeando hacia ARRIBA, así que 150 acciones pagan
+ * 2 paquetes y el coste real por acción sube un 33 %. Con 1.600 es ruido.
+ */
+function ventajaLocates(precio: number | null, costeAccion: number, evPct: number,
+                        acciones?: number | null) {
+  if (!precio || precio <= 0 || !costeAccion || !evPct) return null;
+  let costeReal = costeAccion;
+  if (acciones && acciones > 0) {
+    const paquetes = Math.ceil(acciones / 100);
+    costeReal = (paquetes * 100 * costeAccion) / acciones;
+  }
+  const fade = (costeReal / precio) * 100;
+  return { fade, ev: evPct, margen: evPct - fade, compensa: evPct > fade };
+}
+
 
 /** Campo numérico de la tabla de configuración. Un solo sitio para el estilo,
  *  que si no cada columna acaba con su propio borde y su propio ancho.
@@ -293,7 +324,30 @@ export default function CuadroMandos() {
   /** Fila desplegada y su explicacion. Se pide al abrir, no al cargar la
    *  pagina: son datos que solo se miran cuando se duda de algo. */
   const [abierta, setAbierta] = useState<string | null>(null);
+  /** Coste del locate y EV por ticker, tecleados en el radar. Persisten en el
+   *  navegador: se escriben una vez y valen para toda la sesión. */
+  const [locates, setLocates] = useState<Record<string, { coste: string; ev: string }>>({});
+  /** Precio congelado por ticker: al pulsar OK el veredicto deja de moverse.
+   *  Jaume lo pidió así — «hasta que le diéramos a OK para que detuviera el
+   *  registro» — porque una vez decides, un número que sigue bailando estorba. */
+  const [congelados, setCongelados] = useState<Record<string, number>>({});
   const [explicacion, setExplicacion] = useState<Record<string, ExplicacionEstrategia>>({});
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LOCATES_KEY);
+      if (raw) setLocates(JSON.parse(raw));
+    } catch { /* navegador sin storage: se teclea y ya */ }
+  }, []);
+
+  const ponLocate = useCallback((ticker: string, campo: "coste" | "ev", valor: string) => {
+    setLocates((p) => {
+      const actual = p[ticker] || { coste: "", ev: "" };
+      const sig = { ...p, [ticker]: { ...actual, [campo]: valor } };
+      try { localStorage.setItem(LOCATES_KEY, JSON.stringify(sig)); } catch { /* da igual */ }
+      return sig;
+    });
+  }, []);
 
   const alternarDetalle = useCallback(async (id: string) => {
     if (abierta === id) { setAbierta(null); return; }
@@ -951,7 +1005,14 @@ export default function CuadroMandos() {
               <Th num ancho={96}>Valor</Th>
               <Th num ancho={100}>Precio</Th>
               <Th num ancho={100}>Cierre ayer</Th>
-              <Th num ancho={130}>Volumen</Th>
+              <Th num ancho={120}>Volumen</Th>
+              {/* ── ¿Compensan los locates? ──────────────────────────────
+                  Se teclean los dos (coste del locate y EV de la estrategia)
+                  y el veredicto se recalcula con cada tick, porque el precio
+                  llega por el mismo WebSocket que alimenta el radar. */}
+              <Th num ancho={86}>Locate $</Th>
+              <Th num ancho={78}>EV %</Th>
+              <Th ancho={230}>Ventaja matemática</Th>
             </tr>
           </thead>
           <tbody>
@@ -979,6 +1040,75 @@ export default function CuadroMandos() {
                 <Td num>{fmt(c.precio, 4)}</Td>
                 <Td num dim>{fmt(c.prev_close, 4)}</Td>
                 <Td num dim>{fmt(c.volumen, 0)}</Td>
+                {(() => {
+                  const cfg = locates[c.ticker] || { coste: "", ev: "" };
+                  // Congelado = el precio del momento en que se pulsó OK. Una
+                  // vez has decidido, un veredicto que sigue bailando estorba.
+                  const px = congelados[c.ticker] ?? c.precio;
+                  const v = ventajaLocates(px, Number(cfg.coste), Number(cfg.ev));
+                  const fijo = congelados[c.ticker] != null;
+                  return (
+                    <>
+                      <Td num>
+                        <CampoNum
+                          valor={cfg.coste} paso={0.005}
+                          onChange={(x) => ponLocate(c.ticker, "coste", x)}
+                          onBlur={() => {}}
+                          titulo="Coste del locate por acción."
+                        />
+                      </Td>
+                      <Td num>
+                        <CampoNum
+                          valor={cfg.ev} paso={0.1}
+                          onChange={(x) => ponLocate(c.ticker, "ev", x)}
+                          onBlur={() => {}}
+                          titulo="EV de la estrategia, en % del precio de entrada. Lo pones tú."
+                        />
+                      </Td>
+                      <Td>
+                        {!v ? (
+                          <span style={{ color: color.textMuted }}>
+                            pon locate y EV
+                          </span>
+                        ) : (
+                          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            <span style={{
+                              color: v.compensa ? color.profit : color.loss,
+                              fontWeight: 700, fontSize: 10.5,
+                              letterSpacing: "0.04em",
+                            }}>
+                              {v.compensa ? "VENTAJA POSITIVA" : "VENTAJA NEGATIVA"}
+                            </span>
+                            <span style={{
+                              fontFamily: font.mono, fontSize: 10,
+                              color: color.textMuted,
+                            }} title={`Fade necesario ${v.fade.toFixed(2)}% · EV ${v.ev.toFixed(2)}%`}>
+                              {v.margen >= 0 ? "+" : ""}{v.margen.toFixed(2)} pp
+                            </span>
+                            <button
+                              onClick={() => setCongelados((p) => {
+                                const s = { ...p };
+                                if (fijo) delete s[c.ticker];
+                                else if (c.precio) s[c.ticker] = c.precio;
+                                return s;
+                              })}
+                              title={fijo
+                                ? `Congelado a ${px?.toFixed(4)}. Pulsa para volver al precio en vivo.`
+                                : "Congelar el veredicto al precio de ahora."}
+                              style={{
+                                fontSize: 9, padding: "1px 6px", cursor: "pointer",
+                                background: fijo ? color.copper : "transparent",
+                                border: `0.5px solid ${fijo ? color.copper : color.border}`,
+                                borderRadius: 2, fontFamily: font.mono,
+                                color: fijo ? "#fff" : color.textMuted,
+                              }}
+                            >{fijo ? "FIJO" : "OK"}</button>
+                          </span>
+                        )}
+                      </Td>
+                    </>
+                  );
+                })()}
               </tr>
             ))}
           </tbody>
