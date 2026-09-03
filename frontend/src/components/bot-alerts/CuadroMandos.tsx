@@ -22,7 +22,7 @@
  *    bot debe vigilar; el bot vive en su propio proceso y lo consulta.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bell, BellOff, Radio, Trash2 } from "lucide-react";
 
 import { color, font, hairline, ErrorBox, Loading } from "@/components/ui";
@@ -36,6 +36,8 @@ import {
   listarFechas,
   limpiarEventos,
   leerEstado,
+  explicarEstrategia,
+  type ExplicacionEstrategia,
   type EstadoBot,
   type EstrategiaCandidata,
   type EventoAlerta,
@@ -177,6 +179,100 @@ function CampoNum({ valor, onChange, onBlur, paso = 50, aviso = false, titulo }:
   );
 }
 
+/** Lo que el motor VA A HACER con la estrategia, no lo que dice su JSON.
+ *
+ *  Nace del 2026-09-03: la 1B llevaba guardados dos take profit parciales que
+ *  el motor ignoraba (`take_profit_mode: "Full"`) y que se habrían encendido
+ *  cambiando OTRO campo, sin ningún aviso. El guardado es fiel —auditado con un
+ *  round-trip, 370 campos y 0 pérdidas—; lo que faltaba era poder VER qué parte
+ *  está viva. Por eso el bloque de abajo, el de lo inactivo, es el importante.
+ */
+function Detalle({ e }: { e?: ExplicacionEstrategia }) {
+  if (!e) return <span style={{ color: color.textMuted, fontSize: 11 }}>Leyendo…</span>;
+
+  const Bloque = ({ titulo, children }: { titulo: string; children: React.ReactNode }) => (
+    <div style={{ minWidth: 210 }}>
+      <div style={{
+        fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+        textTransform: "uppercase", color: color.textMuted, marginBottom: 4,
+      }}>{titulo}</div>
+      <div style={{ fontSize: 11, color: color.textSecondary, lineHeight: 1.55 }}>
+        {children}
+      </div>
+    </div>
+  );
+  const Lista = ({ xs }: { xs: string[] }) =>
+    xs.length === 0 ? <span style={{ color: color.textMuted }}>—</span> : (
+      <>{xs.map((x, i) => <div key={i} style={{ fontFamily: font.mono, fontSize: 10.5 }}>{x}</div>)}</>
+    );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 26 }}>
+        <Bloque titulo="Entradas">
+          <div style={{ color: color.textHigh, fontFamily: font.mono, fontSize: 10.5 }}>
+            {e.entradas.ventanas.length ? e.entradas.ventanas.join(", ")
+              : `sesión ${e.sesion.desde || "—"}→${e.sesion.hasta || "—"}`}
+          </div>
+          <Lista xs={e.entradas.condiciones} />
+        </Bloque>
+
+        <Bloque titulo="Salidas">
+          <Lista xs={e.salidas} />
+          <div style={{ marginTop: 3, color: color.textMuted }}>
+            reentradas: {e.reentradas}
+          </div>
+        </Bloque>
+
+        <Bloque titulo="Tamaño">
+          <div style={{ color: color.textHigh }}>{e.dimensionado.modo}</div>
+          {e.piramidacion.map((p, i) => (
+            <div key={i} style={{ marginTop: 4 }}>
+              <div style={{ fontFamily: font.mono, fontSize: 10.5 }}>
+                {p.accion === "add" ? "añade" : "reduce"} {p.cantidad}
+              </div>
+              <Lista xs={p.condiciones} />
+            </div>
+          ))}
+        </Bloque>
+
+        <Bloque titulo="Universo">
+          <Lista xs={e.universo} />
+          {e.no_vigilable_en_vivo.length > 0 && (
+            <div style={{ color: color.warning, marginTop: 4 }}>
+              el bot NO sabe vigilar en vivo: {e.no_vigilable_en_vivo.join(", ")}
+            </div>
+          )}
+        </Bloque>
+      </div>
+
+      {e.inactivo.length > 0 && (
+        <div style={{
+          borderTop: `0.5px dotted ${color.border}`, paddingTop: 8,
+        }}>
+          <div style={{
+            fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+            textTransform: "uppercase", color: color.warning, marginBottom: 4,
+          }}>
+            Guardado pero SIN aplicar ({e.inactivo.length})
+          </div>
+          {e.inactivo.map((x, i) => (
+            <div key={i} style={{ fontSize: 11, marginBottom: 3 }}>
+              <span style={{ color: color.textSecondary }}>{x.que}: </span>
+              <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>
+                {x.valor}
+              </span>
+              <div style={{ color: color.textMuted, fontSize: 10, marginLeft: 10 }}>
+                ↳ {x.por_que}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ── Componente ───────────────────────────────────────────────────────── */
 
 export default function CuadroMandos() {
@@ -194,6 +290,22 @@ export default function CuadroMandos() {
    *  backend no deja activar una estrategia con stop hibrido. */
   const [riesgosPir, setRiesgosPir] = useState<Record<string, string>>({});
   const [capitales, setCapitales] = useState<Record<string, string>>({});
+  /** Fila desplegada y su explicacion. Se pide al abrir, no al cargar la
+   *  pagina: son datos que solo se miran cuando se duda de algo. */
+  const [abierta, setAbierta] = useState<string | null>(null);
+  const [explicacion, setExplicacion] = useState<Record<string, ExplicacionEstrategia>>({});
+
+  const alternarDetalle = useCallback(async (id: string) => {
+    if (abierta === id) { setAbierta(null); return; }
+    setAbierta(id);
+    if (explicacion[id]) return;
+    try {
+      const e = await explicarEstrategia(id);
+      setExplicacion((p) => ({ ...p, [id]: e }));
+    } catch (err) {
+      setError((err as Error)?.message || "No se pudo leer la configuración");
+    }
+  }, [abierta, explicacion]);
   /** Ids iluminados ahora mismo. Solo entradas y piramides: son las que hay que
    *  ejecutar. Una salida tambien avisa, pero no compite por tu atencion. */
   const [destacados, setDestacados] = useState<Record<string, number>>({});
@@ -654,7 +766,7 @@ export default function CuadroMandos() {
             {estrategias.map((s) => {
               const n = eventos.filter((e) => e.strategy_id === s.strategy_id).length;
               const esIncubadora = s.origen === "incubadora";
-              return (
+              const fila = (
                 <tr key={s.strategy_id}>
                   <Td>
                     {/* BOTON, no un check (Jaume, 2026-09-03). Un check parece
@@ -677,7 +789,21 @@ export default function CuadroMandos() {
                       {s.activa ? "ACTIVA" : "Activar"}
                     </button>
                   </Td>
-                  <Td tono={s.activa ? color.textHigh : color.textMuted}>{s.name}</Td>
+                  <Td tono={s.activa ? color.textHigh : color.textMuted}>
+                    {/* Desplegable de condiciones: enseña lo que el motor VA A
+                        HACER, no lo que dice el JSON. Nace del susto del
+                        2026-09-03 con los take profit parciales muertos. */}
+                    <span
+                      onClick={() => alternarDetalle(s.strategy_id)}
+                      style={{ cursor: "pointer", userSelect: "none" }}
+                      title="Ver las condiciones que el motor aplica de verdad"
+                    >
+                      <span style={{ color: color.textMuted, marginRight: 5, fontSize: 9 }}>
+                        {abierta === s.strategy_id ? "▾" : "▸"}
+                      </span>
+                      {s.name}
+                    </span>
+                  </Td>
                   <Td tono={esIncubadora ? color.warning : color.textSecondary}>
                     {esIncubadora ? "Incubadora" : "Portfolio"}
                   </Td>
@@ -740,6 +866,20 @@ export default function CuadroMandos() {
                   <Td num dim>{n || "—"}</Td>
                 </tr>
               );
+              const detalle = abierta === s.strategy_id ? (
+                <tr key={`${s.strategy_id}-detalle`}>
+                  <td colSpan={10} style={{
+                    padding: "10px 14px 14px 26px",
+                    background: color.bgElevated,
+                    borderBottom: `0.5px solid ${color.border}`,
+                  }}>
+                    <Detalle e={explicacion[s.strategy_id]} />
+                  </td>
+                </tr>
+              ) : null;
+              return detalle
+                ? <React.Fragment key={s.strategy_id}>{fila}{detalle}</React.Fragment>
+                : fila;
             })}
           </tbody>
         </table>

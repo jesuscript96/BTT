@@ -66,6 +66,26 @@ export function guardarVigilancia(
   });
 }
 
+/** Lo que el motor hace DE VERDAD con una estrategia, frente a lo que dice su
+ *  JSON. `inactivo` es la parte que importa: configuracion guardada que NO se
+ *  aplica, y por que. */
+export interface ExplicacionEstrategia {
+  name: string;
+  sesion: { sesiones: string[]; desde?: string | null; hasta?: string | null };
+  entradas: { condiciones: string[]; timeframe: string | null; ventanas: string[] };
+  dimensionado: { modo: string; size_by_sl: boolean };
+  salidas: string[];
+  reentradas: string;
+  piramidacion: { accion: string; cantidad: string; veces: number; condiciones: string[] }[];
+  universo: string[];
+  no_vigilable_en_vivo: string[];
+  inactivo: { que: string; valor: string; por_que: string }[];
+}
+
+export function explicarEstrategia(id: string): Promise<ExplicacionEstrategia> {
+  return apiRequest<ExplicacionEstrategia>(`/bot-alerts/strategies/${id}/explicacion`);
+}
+
 /* ── Avisos ───────────────────────────────────────────────────────────── */
 
 export interface EventoAlerta {

@@ -57,6 +57,32 @@ def listar(user_id: Optional[str] = Depends(get_current_user_id)):
         con.close()
 
 
+@router.get("/strategies/{strategy_id}/explicacion")
+def explicacion(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Que hace DE VERDAD esta estrategia, frente a lo que dice su JSON.
+
+    Es la respuesta al susto del 2026-09-03: 1B lleva guardados dos take profit
+    parciales que el motor NO usa (`take_profit_mode` esta en "Full") y que se
+    encenderian cambiando OTRO campo, sin ningun aviso. El guardado es fiel
+    —auditado con un round-trip: 370 campos, 0 perdidos—; lo que faltaba era
+    poder VER que parte esta viva.
+    """
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    scope_sql, scope_params = scope_clause(user_id)
+    try:
+        fila = con.execute(
+            f"SELECT name, definition FROM strategies WHERE id = ?{scope_sql}",
+            [strategy_id, *scope_params],
+        ).fetchone()
+        if not fila:
+            raise HTTPException(status_code=404, detail="Estrategia no encontrada")
+        from app.services.strategy_explain import explicar_estrategia
+        return {"name": fila[0], **explicar_estrategia(bas._parse_definition(fila[1]))}
+    finally:
+        con.close()
+
+
 class WatchReq(BaseModel):
     strategy_id: str
     activa: bool

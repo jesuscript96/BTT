@@ -503,6 +503,22 @@ def listar_candidatas(con, scope_sql: str = "", scope_params: Optional[list] = N
             "size_by_sl": bool((definition.get("risk_management") or {}).get("size_by_sl", False)),
             "hard_stop": (definition.get("risk_management") or {}).get("hard_stop"),
             "ventana": ventana_operativa(definition),
+            # ── Stop hibrido ────────────────────────────────────────────
+            # Los porcentajes vienen de la estrategia; el capital, del cuadro
+            # de mandos. La pagina necesita los tres para saber que pedir y
+            # para no dejar activar con datos a medias.
+            "hybrid_stop": bool((definition.get("risk_management") or {}).get("hybrid_stop", False)),
+            "hybrid_black_swan_pct": (definition.get("risk_management") or {}).get("hybrid_black_swan_pct"),
+            "hybrid_max_loss_pct": (definition.get("risk_management") or {}).get("hybrid_max_loss_pct"),
+            "capital_usd": cfg.get("capital_usd"),
+            "riesgo_piramide_usd": cfg.get("riesgo_piramide_usd"),
+            # Si piramida, hay un segundo riesgo que fijar.
+            "piramida": bool(((definition.get("pyramiding") or {}).get("levels")) or []),
+            # La ventana de ENTRADAS, distinta de la de sesion.
+            "ventana_entradas": [
+                {"inicio": w.get("from_time"), "fin": w.get("to_time")}
+                for w in ((definition.get("entry_logic") or {}).get("entry_time_windows") or [])
+            ],
         })
     return out
 
