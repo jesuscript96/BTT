@@ -369,6 +369,148 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             }}>
                                 Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
                             </span>
+
+                            {/* ── STOP LOSS HÍBRIDO ────────────────────────────────
+                                Justo debajo del anterior y excluyente con él: los dos
+                                apagados = por valor de mercado; uno u otro encendido =
+                                ese manda.
+
+                                Va SIEMPRE por SL (por eso enciende `size_by_sl`), pero
+                                topa la exposición para que un evento de cola no cueste
+                                más de lo que aceptas perder. Los dos modos clásicos
+                                fallan en extremos opuestos: por SL escalas bien pero un
+                                stop muy ceñido dispara el tamaño y un hueco brutal deja
+                                debiendo dinero; por MV acotas el desastre pero no
+                                escalas igual. */}
+                            <div style={{
+                                marginTop: 10,
+                                paddingTop: 10,
+                                borderTop: '0.5px dotted var(--color-ec-border)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 4,
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
+                                        <span style={{
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.05em',
+                                            color: 'var(--color-ec-text-secondary)'
+                                        }}>
+                                            Stop Loss Híbrido
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span style={{
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            color: 'var(--color-ec-text-muted)',
+                                        }}>{risk.hybrid_stop ? 'YES' : 'NO'}</span>
+                                        <div
+                                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.hybrid_stop ? 'bg-ec-copper/70' : 'bg-muted'}`}
+                                            onClick={() => {
+                                                const on = !risk.hybrid_stop;
+                                                // Encenderlo implica ir por SL: el híbrido ES el
+                                                // modo por SL con techo. Apagarlo deja size_by_sl
+                                                // como estaba, para no cambiar el dimensionado
+                                                // sin que se haya pedido.
+                                                onChange({
+                                                    ...risk,
+                                                    hybrid_stop: on,
+                                                    size_by_sl: on ? true : risk.size_by_sl,
+                                                });
+                                            }}
+                                        >
+                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.hybrid_stop ? 'left-4.5' : 'left-0.5'}`}></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {risk.hybrid_stop && (
+                                    <div style={{ display: 'flex', gap: 10, marginLeft: 18, marginTop: 6 }}>
+                                        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            <span style={{
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                fontSize: 9.5,
+                                                color: 'var(--color-ec-text-secondary)',
+                                            }}>Evento adverso máx. (%)</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                step={100}
+                                                value={risk.hybrid_black_swan_pct ?? ''}
+                                                placeholder="5000"
+                                                title="El peor movimiento en contra que quieres contemplar."
+                                                onChange={(e) => onChange({
+                                                    ...risk,
+                                                    hybrid_black_swan_pct: e.target.value === '' ? null : Number(e.target.value),
+                                                })}
+                                                style={{
+                                                    width: 92,
+                                                    padding: '4px 6px',
+                                                    fontSize: 11,
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 4,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-mono)',
+                                                    textAlign: 'right',
+                                                }}
+                                            />
+                                        </label>
+                                        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            <span style={{
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                fontSize: 9.5,
+                                                color: 'var(--color-ec-text-secondary)',
+                                            }}>De mi cuenta, perder máx. (%)</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={100}
+                                                step={5}
+                                                value={risk.hybrid_max_loss_pct ?? ''}
+                                                placeholder="50"
+                                                title="Sobre tu CUENTA ENTERA, no sobre la posición."
+                                                onChange={(e) => onChange({
+                                                    ...risk,
+                                                    hybrid_max_loss_pct: e.target.value === '' ? null : Number(e.target.value),
+                                                })}
+                                                style={{
+                                                    width: 92,
+                                                    padding: '4px 6px',
+                                                    fontSize: 11,
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 4,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-mono)',
+                                                    textAlign: 'right',
+                                                }}
+                                            />
+                                        </label>
+                                    </div>
+                                )}
+
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 10,
+                                    color: 'var(--color-ec-text-secondary)',
+                                    fontStyle: 'italic',
+                                    marginLeft: 18,
+                                    marginTop: 4,
+                                    lineHeight: '1.3',
+                                }}>
+                                    {risk.hybrid_stop && risk.hybrid_black_swan_pct && risk.hybrid_max_loss_pct
+                                        ? `Nunca expone más del ${(risk.hybrid_max_loss_pct / risk.hybrid_black_swan_pct * 100).toFixed(2)}% del capital: si el precio se fuera un ${risk.hybrid_black_swan_pct}% en contra, perderías el ${risk.hybrid_max_loss_pct}% de la cuenta.`
+                                        : 'Va por distancia al stop, pero topando la exposición para que un evento extremo no cueste más de lo que aceptas perder.'}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 )}

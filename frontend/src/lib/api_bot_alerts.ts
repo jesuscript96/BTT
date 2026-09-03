@@ -25,8 +25,23 @@ export interface EstrategiaCandidata {
   bias: string | null;
   /** Decide que SIGNIFICA el riesgo: perdida maxima (true) o capital (false). */
   size_by_sl: boolean;
+  /** Stop hibrido: por SL pero con techo de exposicion ante un evento de cola. */
+  hybrid_stop?: boolean;
+  hybrid_black_swan_pct?: number | null;
+  hybrid_max_loss_pct?: number | null;
+  /** Riesgo del ANYADIDO. null = usa lo que diga la estrategia. */
+  riesgo_piramide_usd?: number | null;
+  /** La cuenta real. Solo hace falta con stop hibrido, que sin ella no puede
+   *  calcular su techo — y sin ella el backend no deja activar. */
+  capital_usd?: number | null;
+  /** Si la estrategia piramida: decide si se pide el riesgo del anyadido. */
+  piramida?: boolean;
   hard_stop: Record<string, unknown> | null;
   ventana: Ventana;
+  /** La ventana de ENTRADAS (`entry_time_windows`), que NO es la de sesion.
+   *  Son capas distintas: la sesion dice que velas existen, esta cuando se
+   *  puede ABRIR (entradas y piramides). */
+  ventana_entradas?: { inicio: string | null; fin: string | null }[];
 }
 
 export function listarEstrategias(): Promise<EstrategiaCandidata[]> {
@@ -37,10 +52,17 @@ export function guardarVigilancia(
   strategy_id: string,
   activa: boolean,
   riesgo_usd: number,
+  extra?: { riesgo_piramide_usd?: number | null; capital_usd?: number | null },
 ): Promise<{ strategy_id: string; activa: boolean; riesgo_usd: number }> {
   return apiRequest("/bot-alerts/watch", {
     method: "POST",
-    body: JSON.stringify({ strategy_id, activa, riesgo_usd }),
+    // Los opcionales solo se mandan si tienen valor: `null` y "no dicho" son
+    // cosas distintas en el backend, y mandar 0 pareceria una decision.
+    body: JSON.stringify({
+      strategy_id, activa, riesgo_usd,
+      ...(extra?.riesgo_piramide_usd ? { riesgo_piramide_usd: extra.riesgo_piramide_usd } : {}),
+      ...(extra?.capital_usd ? { capital_usd: extra.capital_usd } : {}),
+    }),
   });
 }
 

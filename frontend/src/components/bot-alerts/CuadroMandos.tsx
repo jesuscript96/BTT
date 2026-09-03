@@ -151,6 +151,32 @@ const fmt = (v: number | null | undefined, d = 2) =>
 
 const hora = (m: string) => (m || "").slice(11, 16);
 
+/** Campo numérico de la tabla de configuración. Un solo sitio para el estilo,
+ *  que si no cada columna acaba con su propio borde y su propio ancho.
+ *  `aviso` lo pinta en ámbar: el dato hace falta y está vacío. */
+function CampoNum({ valor, onChange, onBlur, paso = 50, aviso = false, titulo }: {
+  valor: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+  paso?: number;
+  aviso?: boolean;
+  titulo?: string;
+}) {
+  return (
+    <input
+      type="number" min={1} step={paso} value={valor} title={titulo}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onBlur}
+      style={{
+        width: 84, textAlign: "right", background: color.bgElevated,
+        border: `0.5px solid ${aviso ? color.warning : color.border}`,
+        borderRadius: 2, color: color.textPrimary,
+        fontFamily: font.mono, fontSize: 11.5, padding: "2px 6px",
+      }}
+    />
+  );
+}
+
 /* ── Componente ───────────────────────────────────────────────────────── */
 
 export default function CuadroMandos() {
@@ -163,6 +189,11 @@ export default function CuadroMandos() {
   const [error, setError] = useState<string | null>(null);
   const [sonido, setSonido] = useState(true);
   const [riesgos, setRiesgos] = useState<Record<string, string>>({});
+  /** Riesgo del ANYADIDO y capital de la cuenta, por estrategia. Vacio = no
+   *  dicho: el anyadido cae a lo que diga la estrategia, y sin capital el
+   *  backend no deja activar una estrategia con stop hibrido. */
+  const [riesgosPir, setRiesgosPir] = useState<Record<string, string>>({});
+  const [capitales, setCapitales] = useState<Record<string, string>>({});
   /** Ids iluminados ahora mismo. Solo entradas y piramides: son las que hay que
    *  ejecutar. Una salida tambien avisa, pero no compite por tu atencion. */
   const [destacados, setDestacados] = useState<Record<string, number>>({});
@@ -227,6 +258,12 @@ export default function CuadroMandos() {
         setFechas(f.fechas);
         setRiesgos(Object.fromEntries(
           s.map((x) => [x.strategy_id, x.riesgo_usd != null ? String(x.riesgo_usd) : ""]),
+        ));
+        setRiesgosPir(Object.fromEntries(
+          s.map((x) => [x.strategy_id, x.riesgo_piramide_usd != null ? String(x.riesgo_piramide_usd) : ""]),
+        ));
+        setCapitales(Object.fromEntries(
+          s.map((x) => [x.strategy_id, x.capital_usd != null ? String(x.capital_usd) : ""]),
         ));
       })
       .catch((e) => vivo && setError(e?.message || "No se pudo cargar el cuadro de mandos"))
@@ -363,14 +400,24 @@ export default function CuadroMandos() {
 
   const guardarEstrategia = async (s: EstrategiaCandidata, activa: boolean) => {
     const riesgo = Number(riesgos[s.strategy_id]);
-    if (!riesgo || riesgo <= 0) {
-      setError(`Pon un riesgo mayor que 0 para «${s.name}» antes de activarla.`);
+    // Apagar nunca se bloquea: un frenazo no puede depender de tener los
+    // campos bien puestos.
+    if (activa && (!riesgo || riesgo <= 0)) {
+      setError(`Faltan datos por rellenar en «${s.name}»: el riesgo por operación.`);
       return;
     }
+    const riesgoPir = Number(riesgosPir[s.strategy_id]) || null;
+    const capital = Number(capitales[s.strategy_id]) || null;
     try {
-      await guardarVigilancia(s.strategy_id, activa, riesgo);
+      // La comprobacion de verdad la hace el backend contra la definicion
+      // GUARDADA, que es la que va a usar el bot. Aqui solo se pilla lo obvio.
+      await guardarVigilancia(s.strategy_id, activa, riesgo, {
+        riesgo_piramide_usd: riesgoPir, capital_usd: capital,
+      });
       setEstrategias((prev) => prev.map((x) =>
-        x.strategy_id === s.strategy_id ? { ...x, activa, riesgo_usd: riesgo } : x));
+        x.strategy_id === s.strategy_id
+          ? { ...x, activa, riesgo_usd: riesgo, riesgo_piramide_usd: riesgoPir, capital_usd: capital }
+          : x));
       setError(null);
     } catch (err) {
       setError((err as Error)?.message || "No se pudo guardar");
@@ -585,13 +632,15 @@ export default function CuadroMandos() {
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 880 }}>
           <thead>
             <tr>
-              <Th ancho={40} />
+              <Th ancho={72} />
               <Th>Estrategia</Th>
               <Th ancho={96}>Origen</Th>
               <Th ancho={64}>Sesgo</Th>
-              <Th num ancho={110}>Riesgo €</Th>
+              <Th num ancho={100}>Riesgo €</Th>
+              <Th num ancho={100}>Riesgo pir. €</Th>
+              <Th num ancho={100}>Capital €</Th>
               <Th>El riesgo es</Th>
-              <Th ancho={130}>Ventana</Th>
+              <Th ancho={150}>Ventana entradas</Th>
               <Th num ancho={90}>Avisos hoy</Th>
             </tr>
           </thead>
@@ -608,11 +657,25 @@ export default function CuadroMandos() {
               return (
                 <tr key={s.strategy_id}>
                   <Td>
-                    <input
-                      type="checkbox" checked={s.activa}
-                      onChange={(e) => guardarEstrategia(s, e.target.checked)}
-                      style={{ accentColor: color.copper, cursor: "pointer" }}
-                    />
+                    {/* BOTON, no un check (Jaume, 2026-09-03). Un check parece
+                        que ya esta hecho en cuanto lo marcas; el boton deja que
+                        el backend valide primero y diga que falta. */}
+                    <button
+                      onClick={() => guardarEstrategia(s, !s.activa)}
+                      style={{
+                        width: 62, padding: "3px 0", cursor: "pointer",
+                        background: s.activa ? color.copper : color.bgElevated,
+                        border: `0.5px solid ${s.activa ? color.copper : color.border}`,
+                        borderRadius: 2, fontFamily: font.mono, fontSize: 10.5,
+                        color: s.activa ? "#fff" : color.textSecondary,
+                        letterSpacing: 0.3,
+                      }}
+                      title={s.activa
+                        ? "Vigilando. Pulsa para parar."
+                        : "Pulsa para activar. Si faltan datos, te lo dirá."}
+                    >
+                      {s.activa ? "ACTIVA" : "Activar"}
+                    </button>
                   </Td>
                   <Td tono={s.activa ? color.textHigh : color.textMuted}>{s.name}</Td>
                   <Td tono={esIncubadora ? color.warning : color.textSecondary}>
@@ -622,25 +685,58 @@ export default function CuadroMandos() {
                     {s.bias === "short" ? "Corto" : s.bias === "long" ? "Largo" : "—"}
                   </Td>
                   <Td num>
-                    <input
-                      type="number" min={1} step={50}
-                      value={riesgos[s.strategy_id] ?? ""}
-                      onChange={(e) => setRiesgos((p) => ({ ...p, [s.strategy_id]: e.target.value }))}
+                    <CampoNum
+                      valor={riesgos[s.strategy_id] ?? ""}
+                      onChange={(v) => setRiesgos((p) => ({ ...p, [s.strategy_id]: v }))}
                       onBlur={() => s.activa && guardarEstrategia(s, true)}
-                      style={{
-                        width: 84, textAlign: "right", background: color.bgElevated,
-                        border: `0.5px solid ${color.border}`, borderRadius: 2,
-                        color: color.textPrimary, fontFamily: font.mono, fontSize: 11.5,
-                        padding: "2px 6px",
-                      }}
+                      titulo="Riesgo por operación de la entrada."
                     />
                   </Td>
-                  <Td dim title={s.size_by_sl
+                  <Td num>
+                    {/* Solo si la estrategia piramida. Vacio = usa lo que diga
+                        su definicion, que es lo que pasaba hasta hoy. */}
+                    {s.piramida ? (
+                      <CampoNum
+                        valor={riesgosPir[s.strategy_id] ?? ""}
+                        onChange={(v) => setRiesgosPir((p) => ({ ...p, [s.strategy_id]: v }))}
+                        onBlur={() => s.activa && guardarEstrategia(s, true)}
+                        titulo="Riesgo del añadido. Vacío = el que diga la estrategia."
+                      />
+                    ) : <span style={{ color: color.textMuted }}>—</span>}
+                  </Td>
+                  <Td num>
+                    {/* Solo con stop hibrido: sin capital no se puede calcular
+                        el techo, y el backend no deja activar. */}
+                    {s.hybrid_stop ? (
+                      <CampoNum
+                        valor={capitales[s.strategy_id] ?? ""}
+                        onChange={(v) => setCapitales((p) => ({ ...p, [s.strategy_id]: v }))}
+                        onBlur={() => s.activa && guardarEstrategia(s, true)}
+                        paso={1000}
+                        aviso={!capitales[s.strategy_id]}
+                        titulo="Tu cuenta entera. El stop híbrido la necesita para el techo."
+                      />
+                    ) : <span style={{ color: color.textMuted }}>—</span>}
+                  </Td>
+                  <Td dim title={s.hybrid_stop
+                    ? "Híbrido: por distancia al stop, pero sin exponer más de lo que aceptas perder ante un evento de cola."
+                    : s.size_by_sl
                     ? "Se divide entre la distancia al stop: es la pérdida máxima si salta."
                     : "Se divide entre el precio: es el capital que se despliega."}>
-                    {s.size_by_sl ? "pérdida máxima" : "capital a desplegar"}
+                    {s.hybrid_stop
+                      ? <span style={{ color: color.copper }}>híbrido (SL con techo)</span>
+                      : s.size_by_sl ? "pérdida máxima" : "capital a desplegar"}
                   </Td>
-                  <Td dim mono>{s.ventana?.inicio || "—"} → {s.ventana?.fin || "—"}</Td>
+                  <Td dim mono title={`Sesión: ${s.ventana?.inicio || "?"} → ${s.ventana?.fin || "?"}`}>
+                    {/* La de ENTRADAS, no la de sesión. Son capas distintas y
+                        confundirlas hacía creer que se podía entrar una hora
+                        más tarde de lo que la estrategia permite. */}
+                    {s.ventana_entradas && s.ventana_entradas.length > 0
+                      ? s.ventana_entradas.map((w) => `${w.inicio}→${w.fin}`).join(", ")
+                      : <span style={{ color: color.textMuted }}>
+                          sesión {s.ventana?.inicio || "—"}→{s.ventana?.fin || "—"}
+                        </span>}
+                  </Td>
                   <Td num dim>{n || "—"}</Td>
                 </tr>
               );

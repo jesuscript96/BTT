@@ -119,3 +119,51 @@ def test_hibrido_sin_parametros_se_comporta_como_size_by_sl():
     con = _correr(hybrid_stop=True)["trades"]
     sin = _correr()["trades"]
     assert abs(con[0]["size"] - sin[0]["size"]) < 1e-9
+
+
+# ── Las TRES CAPAS ───────────────────────────────────────────────────────
+# Ver docs/MEMORIA_MADRE.md §4: la definición se reconstruye campo a campo en
+# tres sitios y NINGUNO avisa cuando se le cae algo. `size_by_sl` se perdió en
+# la capa del esquema y `pyramiding` en la del frontend; los dos, en silencio.
+
+def test_capa_esquema_declara_el_hibrido():
+    """Sin declararlo, pydantic (extra="ignore") lo tira SIN error ni 422."""
+    from app.schemas.strategy import RiskManagement
+    d = RiskManagement(size_by_sl=True, hybrid_stop=True,
+                       hybrid_black_swan_pct=5_000, hybrid_max_loss_pct=50).model_dump()
+    assert d["hybrid_stop"] is True
+    assert d["hybrid_black_swan_pct"] == 5_000
+    assert d["hybrid_max_loss_pct"] == 50
+
+
+def test_una_estrategia_vieja_no_cambia_de_comportamiento():
+    """Regla nº1: sin los campos nuevos, todo se compila como antes."""
+    from app.schemas.strategy import RiskManagement
+    d = RiskManagement(size_by_sl=True).model_dump()
+    assert d["hybrid_stop"] is False
+    assert d["hybrid_black_swan_pct"] is None
+
+
+def test_el_backtest_lee_el_hibrido_de_la_definicion():
+    """Los porcentajes viajan en la estrategia, no en los params del panel.
+
+    Si esto se rompe, un backtest de una estrategia híbrida se dimensionaría
+    por SL sin techo y NADA lo diría: los numeros saldrían, solo que mal.
+    """
+    import inspect
+    from app.services import backtest_service as bs
+    fichero = inspect.getsource(bs)
+    assert 'rm.get("hybrid_stop")' in fichero, (
+        "backtest_service ya no lee hybrid_stop de risk_management")
+    assert "hybrid_black_swan_pct" in fichero and "hybrid_max_loss_pct" in fichero
+
+
+def test_el_dispatcher_no_manda_el_hibrido_al_jit():
+    """El kernel Numba NO implementa el techo: una estrategia híbrida tiene que
+    ir al motor Python. Este equipo corre con BACKTEST_NUMBA_SIM=1, así que sin
+    esto el techo se perdería en silencio en todo backtest sin piramidación."""
+    import inspect
+    from app.services import sim_dispatch
+    src = inspect.getsource(sim_dispatch.simulate)
+    assert 'kwargs.get("hybrid_stop")' in src
+    assert "_legacy_simulate" in src

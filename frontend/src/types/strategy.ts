@@ -288,6 +288,16 @@ export interface RiskManagement {
         on_open_positions: 'LET_RUN' | 'CLOSE_ALL';
     };
     size_by_sl?: boolean;
+    /** STOP HÍBRIDO: va por distancia al stop, pero con techo de exposición.
+     *  `techo $ = (hybrid_max_loss_pct% × capital) / hybrid_black_swan_pct%`
+     *  Resuelve el punto ciego del modo por SL: con el stop muy ceñido el
+     *  tamaño se dispara y un hueco brutal deja debiendo dinero. Recorta,
+     *  no anula. Implica `size_by_sl`. */
+    hybrid_stop?: boolean;
+    /** El peor movimiento en contra que quieres contemplar, en %. */
+    hybrid_black_swan_pct?: number | null;
+    /** Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. */
+    hybrid_max_loss_pct?: number | null;
     swing_option?: {
         active: boolean;
         target_day: 'gap_1_day' | 'gap_2_day';
@@ -362,6 +372,9 @@ export const initialRiskManagement: RiskManagement = {
     ],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
     size_by_sl: false,
+    hybrid_stop: false,
+    hybrid_black_swan_pct: null,
+    hybrid_max_loss_pct: null,
     swing_option: { active: false, target_day: 'gap_1_day' },
     exclude_days: [],
     exclude_months: [],
