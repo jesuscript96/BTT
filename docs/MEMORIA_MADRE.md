@@ -3042,3 +3042,44 @@ se implementa de cero:
 - Verificado: `tsc --noEmit` 0 errores; la lógica exacta del builder ejecutada
   contra los 2.799 trades reales del run auto-guardado 3aff85df (Definitiva
   2.3): 2.799 filas, 22 columnas, 0 filas rotas.
+
+## 📣 2026-09-03 — Para Jaime: botón «CSV» en la pestaña Trades (REPORTE — solo en rama de Álvaro)
+
+> Petición de Álvaro. **NADA de esto está en `staging`**: ni pusheado a la rama
+> remota, ni PR, ni merge. Vive SOLO en `alvaro-rama-desarrollo`, commit
+> `0e14921`. La integración a `staging`, por PR, cuando Álvaro/Jaime lo decidan.
+> Este reporte viaja en la memoria para que quede constancia del cambio.
+
+**Qué se ha hecho.** Botón «CSV» (icono descarga) en la cabecera de la
+pestaña Trades del Backtester, junto a los totales. Exporta TODOS los trades
+del run en orden cronológico (no la ventana filtrada de la tabla), generado
+íntegramente en cliente — **sin cambios de backend**.
+
+**Por qué.** Álvaro recordaba una opción así pero nunca existió en la app: se
+buscó en todas las ramas (incluidas backups de Álvaro), reflog, commits
+colgantes, pre-borrado-del-Wizard, `develop` y `main` — nada. Lo que existía:
+su script propio `analisis/paso2_estrategia_fade_pm.py` (export con pandas) y
+el export de datos de mercado de la home, oculto desde la época MVP
+(`HIDDEN FOR MVP`, `page.tsx:232`). Así que se implementó de cero.
+
+**Ficheros tocados (solo 2 + esta memoria):**
+- `frontend/src/components/backtester/tabs/TradesTab.tsx` — builder del CSV,
+  botón y descarga (Blob en cliente).
+- `frontend/src/components/backtester/ResultsTabs.tsx` — pasa el nombre de la
+  estrategia para el nombre del fichero (una línea).
+
+**Formato del CSV** (pensado para analizar después): separador `;` + decimales
+con punto + BOM UTF-8 + CRLF → Excel-ES con doble clic, pandas con `sep=';'`.
+22 columnas con unidades en cabecera: nº, ticker, fecha ISO, día de la semana,
+dirección, hora entrada/salida, duración (min), tamaño, precio entrada (fill
+real Y precio medio ponderado — difieren con piramidación), precio salida,
+stop loss, PnL, comisiones, retorno %, R, MAE %, MFE %, gap %, motivo de
+salida, ejecuciones. Precios/tamaños a 4 decimales sin ceros de relleno
+(tickers subdólar). Fichero: `<estrategia>_trades_<n>_<fechahora>.csv`.
+
+**Verificación.** `tsc --noEmit` 0 errores. El builder exacto ejecutado contra
+los 2.799 trades reales del run auto-guardado `3aff85df` (Definitiva 2.3):
+2.799 filas, 22 columnas, 0 filas rotas.
+
+**Para revisar (Jaime):** `git show 0e14921` en la rama de Álvaro cuando esté
+pusheada — el diff es pequeño y autónomo (no toca motor ni backend).
