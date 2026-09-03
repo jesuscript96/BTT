@@ -248,27 +248,30 @@ servidor. Rotarlo es cambiar el valor y reiniciar.
 <a id="5"></a>
 ## 5 · Cómo validarlo
 
-### Opción A: el feed retrasado en QA
+### El feed retrasado NO sirve como segunda conexión — medido
 
-`MASSIVE_WS_URL=wss://delayed.massive.com/stocks` apunta el screener al feed con
-15 minutos de retraso en vez de al de tiempo real. La variable ya existe; no hace
-falta tocar código.
+`wss://delayed.massive.com/stocks` funciona: acepta la clave, manda datos y el
+retraso es exactamente 15,0 minutos. Pero **el cupo de conexiones es de la CUENTA,
+no del host**. Probado el 2026-09-03 abriendo dos conexiones al feed retrasado:
 
-**Sin confirmar:** que ese feed no consuma el mismo cupo de conexión que el de
-tiempo real. Si lo consume, QA seguiría expulsando a producción y no sirve.
-Compruébalo mirando los logs de producción mientras QA está conectado: si aparece
-`[LIVE] WS disconnected … reconnecting` en bucle, comparten cupo — quítalo.
+```
+status: max_connections → "Maximum number of websocket connections exceeded.
+        You have reached the connection limit for your account."
+cierre: 1008 (policy violation)
+```
 
-El motor sí está preparado para datos retrasados: el barrido de barras usa el
-reloj del **feed** (el minuto más alto visto en los datos), no el de pared. Con el
-reloj de pared, cada barra se habría cerrado tras su primer tick y VWAP, máximos y
-dollar volume habrían salido mal.
+O sea: apuntar QA al feed retrasado **sigue peleando con producción**. Y peor —
+cuál de las dos cae no es determinista: en una prueba se expulsó la primera
+conexión y en otra la segunda. QA podría tirar el screener de producción en
+cualquier momento.
 
-Ojo a una inconsistencia inherente: los campos instantáneos vienen del snapshot
-REST, que **no** va retrasado. Con el feed retrasado convives con dos relojes.
-Para validar mecánica da igual; para juzgar señales, no.
+**Conclusión: no uses el WebSocket fuera de producción.** Ni el de tiempo real ni
+el retrasado. Para desarrollo, `LIVE_SCREENER_ENABLED=0` + reproducción.
 
-### Opción B: reproducir un día real, sin WebSocket ninguno
+*(El motor sí quedó preparado para datos retrasados —el barrido de barras usa el
+reloj del feed y no el de pared— por si algún día se contrata un cupo mayor.)*
+
+### Reproducir un día real, sin WebSocket ninguno
 
 Massive admite **una conexión WS por API key**. Si QA y producción levantan las
 dos el screener con la misma clave, se expulsan en bucle (cierre 1008) y ninguno
