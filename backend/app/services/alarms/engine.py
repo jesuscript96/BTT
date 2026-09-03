@@ -603,22 +603,28 @@ def _compute_sizing(cfg: Dict[str, Any], side: str, price: Optional[float],
 
 
 def _format_message(p: Dict[str, Any]) -> str:
+    # El mensaje va en parse_mode HTML, así que TODO lo dinámico (motivos, nombre,
+    # ticker) se escapa: un operador «menor que» mete un «<» literal en el motivo
+    # y Telegram lo lee como una etiqueta a medio abrir → 400 y el aviso no llega.
+    # Los <b>/<i> estructurales se ponen a mano sobre texto ya escapado.
+    from html import escape as _esc
+
     side = "corto" if str(p.get("side")).lower() == "short" else "largo"
     price = p.get("price")
-    lines = [f"🔔 <b>{p['ticker']}</b> · {side}"]
+    lines = [f"🔔 <b>{_esc(str(p['ticker']))}</b> · {side}"]
     if price is not None:
         lines[0] += f" · ~{price:.4g} $"
     lines.append("")
     if p.get("reasons"):
         lines.append("<b>Por qué</b>")
-        lines.extend(f"• {r}" for r in p["reasons"][:8])
+        lines.extend(f"• {_esc(str(r))}" for r in p["reasons"][:8])
         lines.append("")
     s = p.get("sizing") or {}
     if s.get("stop") is not None:
         ref = s.get("stop_ref")
         ref_label = F.BY_KEY[ref].label.lower() if ref and ref in F.BY_KEY else "referencia"
         off = s.get("stop_offset_pct") or 0
-        lines.append(f"Stop <b>{s['stop']:.4g} $</b> ({ref_label} {off:+g}%)")
+        lines.append(f"Stop <b>{s['stop']:.4g} $</b> ({_esc(ref_label)} {off:+g}%)")
     if s.get("shares"):
         lines.append(f"{s['shares']} acciones · riesgo {s.get('risk_usd', 0):g} $")
     loc = s.get("locates") or {}
@@ -628,7 +634,7 @@ def _format_message(p: Dict[str, Any]) -> str:
         lines.append(f"{loc['paquetes']} paquete(s) de locates{extra}")
     lines.append("")
     when = p.get("fired_minute") or ""
-    lines.append(f"<i>{p['alarm_name']} · {when} ET</i>")
+    lines.append(f"<i>{_esc(str(p['alarm_name']))} · {when} ET</i>")
     return "\n".join(lines)
 
 

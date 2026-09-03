@@ -195,9 +195,10 @@ async def replay(alarm_id: str, payload: ReplayPayload,
         link = store.get_link(user_id)
         if link and not link.get("broken"):
             first = result["signals"][0]
+            from html import escape as _esc
             await telegram.send_message(
                 link["chat_id"],
-                f"🧪 <b>Reproducción</b> · {payload.ticker} {payload.date}\n"
+                f"🧪 <b>Reproducción</b> · {_esc(payload.ticker)} {_esc(payload.date)}\n"
                 f"<i>No es una señal en vivo</i>\n\n{first['message']}",
             )
             result["delivered"] = True

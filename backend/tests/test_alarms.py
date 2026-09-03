@@ -306,3 +306,23 @@ def test_cruce_del_vwap_dispara_en_la_barra_del_cruce():
     _feed(s, 303, [51.0])
     _feed(s, 304, [52.0])
     assert evaluate(conds, s.snapshot(), prev_lookup=s.prev_snapshot_value)[0] is False
+
+
+# ── el mensaje de Telegram no rompe con operadores < > & ─────────────────────
+def test_el_mensaje_escapa_los_operadores_para_telegram():
+    """Va en parse_mode HTML: un motivo con «<» (menor que) metía una etiqueta a
+    medio abrir y Telegram devolvía 400, así que el aviso NO llegaba. Regresión:
+    el «<» sale como &lt; y no queda ningún «<» crudo fuera de las etiquetas
+    estructurales <b>/<i>."""
+    from app.services.alarms.engine import _format_message
+
+    msg = _format_message({
+        "ticker": "A&B", "side": "short", "price": 1.99,
+        "reasons": ["Cierre de la barra < Mínimo de la barra anterior (1.99)",
+                    "Dollar volume > 500k & OK"],
+        "sizing": {}, "alarm_name": "Fade <test>", "fired_minute": "04:17",
+    })
+    assert "&lt;" in msg and "&amp;" in msg
+    # No debe quedar ningún «<» crudo salvo el de las etiquetas <b>/<i> conocidas.
+    sin_tags = msg.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
+    assert "<" not in sin_tags
