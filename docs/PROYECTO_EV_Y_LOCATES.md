@@ -143,14 +143,69 @@ puede saber qué backtest consideras válido.
 
 ---
 
-## 5. Resumen de decisiones para Jaume
+## 5. Decisiones — TODAS TOMADAS (2026-09-03, de noche)
 
-1. **¿Arreglo el modo «días» del gráfico?** Cambia los números que has visto
-   hasta ahora, a peor en las rachas de días flojos con pocas operaciones.
-2. ~~¿El EV% se calcula bruto de locates?~~ **Resuelto**: ya lo es, el `pnl`
-   del motor no los lleva dentro.
-3. **¿Precio de entrada medio del backtest, o tecleado?**
-4. **¿El EV para Telegram lo da el bot o lo escribes tú en el mensaje?**
+1. **Modo «días»: se arregla.** Jaume: «coger los últimos 30 días y usar el
+   cálculo en base a los trades que ha habido esos días, independientemente de
+   si han sido 1, 3 o 33». Es exactamente quitar la media de medias.
+2. ~~¿Bruto de locates?~~ Ya lo es.
+3. **El precio NO se teclea: entra en vivo.** Ver §6.
+4. **El EV se mete A MANO**, en la app y en el comando. El bot no puede saber
+   qué backtest consideras válido.
 
-Con esas cuatro respuestas, lo de §2 y §3 es media mañana y lo de §4 va junto
-con el otro comando de Telegram.
+---
+
+## 6. Lo que Jaume quiere de verdad: en vivo, sobre lo que el bot ya vigila
+
+No es una calculadora estática. Es una **decisión que se toma mientras la acción
+se mueve**, sobre los tickers que el radar ya está siguiendo (los que pasan el
+filtro de gap). El peor escenario es que el gap se quede en el 50 %, así que el
+candidato ya está identificado.
+
+**En la app**, junto a cada ticker vigilado:
+
+```
+MIMI   0,8422 $   locate [ 0,010 ] $   EV [ 2,4 ] %      ← se teclean los dos
+       fade necesario 1,19 %  ·  EV 2,40 %
+       ► VENTAJA MATEMÁTICA POSITIVA        (se actualiza con cada tick)
+                                             [ OK ] ← congela el seguimiento
+```
+
+El precio llega por el WebSocket que **ya alimenta el cuadro de mandos**, así
+que el veredicto se recalcula solo. El botón detiene el seguimiento cuando ya
+has decidido.
+
+**En Telegram** no puede ser continuo, así que el comando toma una foto:
+
+```
+/EVF MIMI
+→ MIMI a 0,8422 $ · locate 0,010 $ · EV 2,4 %
+  fade necesario 1,19 %
+  VENTAJA MATEMÁTICA POSITIVA — <frase desenfadada>
+```
+
+Jaume lo pidió con guasa («compra a mansalva, ándale wei», «quieto capitán, que
+están muy caras»), con **varias frases rotando**. Pero el veredicto en sí va
+SIEMPRE con las mismas palabras: `VENTAJA MATEMÁTICA POSITIVA` o `NEGATIVA`. La
+broma acompaña; no sustituye al dato.
+
+### El tamaño NO entra en la fórmula (y por qué)
+
+```
+compensa ⟺ N × precio × EV% > N × coste   →   precio × EV% > coste_por_acción
+```
+
+El número de acciones **se cancela**: si el fade no llega para un locate,
+tampoco para mil. Lo mismo con los pennies — salen más acciones, pero el coste
+sube en la misma proporción.
+
+**La excepción son los paquetes de 100**, que se cobran redondeando hacia
+arriba:
+
+| posición | paquetes | coste real por acción (locate a 1 $/paquete) |
+|---|---|---|
+| 150 acciones | 2 | `0,0133 $` (+33 % sobre el nominal) |
+| 1.647 acciones | 17 | `0,0103 $` (ruido) |
+
+Con las posiciones de Jaume (1.600-2.000 acciones) da igual, pero en una
+posición chica decide, así que el cálculo lo lleva.
