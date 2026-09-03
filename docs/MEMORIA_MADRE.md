@@ -3015,3 +3015,30 @@ alineando la rama con staging en este punto:
   endpoint de DATOS `/market/screener` lo siguen usando Ticker Analysis
   (`page.tsx` home) y `analysis/[ticker]/[date]` — NO tocar.
 - Verificado: `tsc --noEmit` 0 errores, `GET /screener` → 404, `/` → 200.
+
+## 2026-09-03 — Descarga de trades en CSV en la pestaña Trades del Backtester
+
+Petición de Álvaro: quería recuperar la "opción de descargar en CSV los trades
+de una estrategia". Investigado el historial completo (todas las ramas, reflog,
+commits colgantes, pre-Wizard, develop/main): esa opción NUNCA existió en la
+app — lo que existía era (a) su script propio `analisis/paso2_estrategia_fade_pm.py`
+que exporta trades con pandas, y (b) el export de datos de mercado de la home,
+llevaba oculto desde la época MVP (`HIDDEN FOR MVP`, `page.tsx:232`). Así que
+se implementa de cero:
+
+- Botón "CSV" (icono download) en la cabecera de la pestaña Trades, junto a
+  los totales. Exporta TODOS los trades del run en orden cronológico (no la
+  ventana filtrada de la tabla). Sin backend: serializa en cliente.
+- Formato pensado para analizar después: separador ';' + decimales con punto +
+  BOM UTF-8 + CRLF (Excel-ES con doble clic, pandas con `sep=';'`). Una sola
+  fila de cabecera, sin bloques de resumen.
+- 22 columnas: nº, ticker, fecha ISO, día de la semana, dirección, hora
+  entrada/salida, duración en minutos, tamaño, precio entrada (fill real y
+  precio medio — difieren con piramidación), precio salida, stop loss, PnL,
+  comisiones, retorno %, R, MAE %, MFE %, gap %, motivo de salida, ejecuciones.
+  Precios/tamaños a 4 decimales sin ceros de relleno (hay tickers subdólar).
+- Nombre de fichero: `<estrategia>_trades_<n>_<fecha-hora>.csv` (el nombre lo
+  pasa ResultsTabs desde `activeStrategy`).
+- Verificado: `tsc --noEmit` 0 errores; la lógica exacta del builder ejecutada
+  contra los 2.799 trades reales del run auto-guardado 3aff85df (Definitiva
+  2.3): 2.799 filas, 22 columnas, 0 filas rotas.

@@ -1,12 +1,114 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
+import { Download } from "lucide-react";
 import type { TradeRecord } from "@/lib/api_backtester";
 
 interface TradesTabProps {
   trades: TradeRecord[];
   onSelectTrade?: (ticker: string, date: string) => void;
+  /** Nombre de la estrategia, solo para bautizar el CSV descargado. */
+  strategyName?: string;
 }
+
+// ── Export CSV ──────────────────────────────────────────────────────────────
+// Separador ';' + decimales con punto + BOM UTF-8: Excel-ES lo abre con doble
+// clic sin romper columnas y pandas solo necesita `sep=';'`. Una única fila de
+// cabecera (sin bloques de resumen) para que el fichero sea directamente
+// analyzable. Se exportan TODOS los trades en orden cronológico, no la ventana
+// filtrada/ordenada de la tabla.
+
+const WEEKDAYS_ES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+
+const CSV_COLUMNS = [
+  "#",
+  "Ticker",
+  "Fecha",
+  "Día",
+  "Dirección",
+  "Hora entrada",
+  "Hora salida",
+  "Duración (min)",
+  "Tamaño (acciones)",
+  "Precio entrada ($)",
+  "Precio medio entrada ($)",
+  "Precio salida ($)",
+  "Stop loss ($)",
+  "PnL ($)",
+  "Comisiones ($)",
+  "Retorno (%)",
+  "R múltiplo",
+  "MAE (%)",
+  "MFE (%)",
+  "Gap (%)",
+  "Motivo de salida",
+  "Ejecuciones",
+];
+
+// Precios/tamaños: hasta 4 decimales sin ceros de relleno (hay tickers
+// subdólar donde 2 decimales pierden información); porcentajes: 2 decimales.
+const fmtNum = (n: number | null | undefined, dec: number): string =>
+  n == null || Number.isNaN(n) ? "" : String(+(n.toFixed(dec)));
+const fmtPct = (n: number | null | undefined): string =>
+  n == null || Number.isNaN(n) ? "" : n.toFixed(2);
+
+const csvCell = (v: string | number): string => {
+  const s = String(v);
+  return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+const buildTradesCsv = (trades: TradeRecord[]): string => {
+  const rows = [...trades].sort((a, b) => a.entry_time_epoch - b.entry_time_epoch);
+  const lines = [CSV_COLUMNS.join(";")];
+  rows.forEach((t, i) => {
+    lines.push(
+      [
+        i + 1,
+        t.ticker,
+        t.date,
+        WEEKDAYS_ES[t.entry_weekday] ?? "",
+        t.direction,
+        t.entry_time.split(" ").pop()?.slice(0, 8) ?? "",
+        t.exit_time.split(" ").pop()?.slice(0, 8) ?? "",
+        ((t.exit_time_epoch - t.entry_time_epoch) / 60).toFixed(1),
+        fmtNum(t.size, 4),
+        fmtNum(t.entry_price, 4),
+        // Con piramidación, entry_price es el fill REAL de la primera entrada
+        // y avg_entry_price el que gobierna el PnL — van ambas columnas.
+        fmtNum(t.avg_entry_price ?? t.entry_price, 4),
+        fmtNum(t.exit_price, 4),
+        t.stop_loss ? fmtNum(t.stop_loss, 4) : "",
+        fmtNum(t.pnl, 4),
+        t.fees != null ? fmtNum(t.fees, 4) : "",
+        fmtPct(t.return_pct),
+        t.r_multiple != null ? fmtNum(t.r_multiple, 3) : "",
+        t.mae != null ? fmtPct(t.mae) : "",
+        t.mfe != null ? fmtPct(t.mfe) : "",
+        t.gap_pct != null ? fmtPct(t.gap_pct) : "",
+        t.exit_reason,
+        t.n_executions ?? "",
+      ]
+        .map(csvCell)
+        .join(";")
+    );
+  });
+  // \r\n para que Excel también respete los saltos de fila.
+  return "\uFEFF" + lines.join("\r\n");
+};
+
+const downloadTradesCsv = (trades: TradeRecord[], strategyName?: string) => {
+  const blob = new Blob([buildTradesCsv(trades)], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const ts = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+  const slug = (strategyName ?? "").trim().replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  a.download = `${slug ? slug.toLowerCase() + "_" : ""}trades_${trades.length}_${ts}.csv`;
+  a.href = url;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+};
 
 type SortKey = keyof TradeRecord;
 type SortDir = "asc" | "desc";
@@ -43,7 +145,7 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
+export default function TradesTab({ trades, onSelectTrade, strategyName }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -121,24 +223,35 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
           className="px-2.5 py-1.5 text-[11px] font-mono border-none bg-transparent text-[var(--foreground)] focus:outline-none w-56"
           style={{ borderBottom: '1px solid var(--color-ec-border)' }}
         />
-        <div className="flex gap-5 text-[10px] text-[var(--color-ec-text-secondary)] font-mono">
-          <span>
-            total: <strong style={{ color: 'var(--color-ec-text-high)' }}>{summary.total}</strong>
-          </span>
-          {summary.avgR !== null && (
+        <div className="flex items-center gap-4">
+          <div className="flex gap-5 text-[10px] text-[var(--color-ec-text-secondary)] font-mono">
             <span>
-              avg R:{" "}
-              <strong className={summary.avgR >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
-                {summary.avgR.toFixed(2)}R
+              total: <strong style={{ color: 'var(--color-ec-text-high)' }}>{summary.total}</strong>
+            </span>
+            {summary.avgR !== null && (
+              <span>
+                avg R:{" "}
+                <strong className={summary.avgR >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
+                  {summary.avgR.toFixed(2)}R
+                </strong>
+              </span>
+            )}
+            <span>
+              pnl:{" "}
+              <strong className={summary.totalPnl >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
+                {summary.totalPnl >= 0 ? "+" : ""}${summary.totalPnl.toFixed(2)}
               </strong>
             </span>
-          )}
-          <span>
-            pnl:{" "}
-            <strong className={summary.totalPnl >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
-              {summary.totalPnl >= 0 ? "+" : ""}${summary.totalPnl.toFixed(2)}
-            </strong>
-          </span>
+          </div>
+          <button
+            onClick={() => downloadTradesCsv(trades, strategyName)}
+            title="Descargar todos los trades en CSV (orden cronológico, separador ';', decimales con punto)"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-mono uppercase tracking-wider cursor-pointer transition-colors hover:text-[var(--color-ec-text-high)]"
+            style={{ border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-secondary)', background: 'transparent' }}
+          >
+            <Download size={12} strokeWidth={1.5} />
+            CSV
+          </button>
         </div>
       </div>
 
