@@ -1912,6 +1912,21 @@ export default function Screener() {
         footer={<Button variant="primary" onClick={() => setAlarmModalOpen(false)}>Hecho</Button>}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Fase 1 (lo nuevo): alarmas de servidor — Telegram + estrategia.
+              Es el contenido principal del modal, va primero. Los avisos rápidos
+              client-side de siempre quedan plegados abajo para no competir con
+              esto ni hacer que el modal "parezca lo de antes". */}
+          <AlarmsPanel />
+
+          <div style={{ height: 1, background: "var(--color-ec-border)", margin: "4px 0" }} />
+
+          {/* Lo viejo: avisos rápidos del grid. Solo con el navegador abierto y
+              solo sobre la tabla visible. Plegado por defecto. */}
+          <details>
+            <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--color-ec-text-secondary)", userSelect: "none" }}>
+              Avisos rápidos del grid · solo con el navegador abierto
+            </summary>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 14 }}>
           {/* Sonido */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -1984,13 +1999,8 @@ export default function Screener() {
           <span style={{ fontSize: 10.5, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
             El navegador solo reproduce sonido tras un clic tuyo; al activar el sonido aquí ya queda desbloqueado para esta sesión.
           </span>
-
-          {/* Alarmas de servidor: AMPLÍAN los avisos rápidos de arriba, no los
-              sustituyen. Aquellos viven en el navegador y solo ven la tabla
-              abierta; estas viven en el servidor, ven el universo entero y
-              llegan a Telegram con el navegador cerrado. */}
-          <div style={{ height: 1, background: "var(--color-ec-border)", margin: "4px 0" }} />
-          <AlarmsPanel />
+            </div>
+          </details>
         </div>
       </Modal>
 
