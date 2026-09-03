@@ -17,6 +17,25 @@ interface RollingEVChartProps {
     isDarkMode?: boolean;
 }
 
+/** Esperanza matemática de un conjunto de operaciones, en R.
+ *
+ *      EV = P(gana) × media(R | gana) − P(pierde) × |media(R | pierde)|
+ *
+ * UNA SOLA definición para los dos modos del gráfico. Estaba duplicada, y esa
+ * duplicación es la que dejó pasar que el modo «días» promediara EV diarios en
+ * vez de operaciones — media de medias, con un día de una operación pesando
+ * igual que uno de diez.
+ */
+function ev(ts: TradeRecord[]): number {
+    if (!ts.length) return 0;
+    const wins = ts.filter((t) => t.pnl > 0);
+    const losses = ts.filter((t) => t.pnl <= 0);
+    const media = (xs: TradeRecord[]) =>
+        xs.length ? xs.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / xs.length : 0;
+    return (wins.length / ts.length) * media(wins)
+         - (losses.length / ts.length) * Math.abs(media(losses));
+}
+
 export default function RollingEVChart({ trades, riskR, isDarkMode = false }: RollingEVChartProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const chartRef = useRef<IChartApi | null>(null);
@@ -33,7 +52,16 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
         if (!trades.length) return [];
 
         if (basis === "days") {
-            // Group trades by day, compute daily EV, then rolling avg over days
+            // Ventana de N DÍAS, con TODAS las operaciones de esos días juntas.
+            //
+            // ANTES se sacaba el EV de cada día y luego se promediaban esos EV,
+            // o sea MEDIA DE MEDIAS: un día con una operación pesaba igual que
+            // uno con diez. Con 1 trade de +1,0R el lunes y 10 de −0,2R el
+            // martes daba +0,400 R cuando lo real es −0,091 R — cambiaba hasta
+            // el SIGNO, y un mes de días flojos con una ganadora suelta se
+            // pintaba como rentable. (Corregido el 2026-09-03 a petición de
+            // Jaume: «usar el cálculo en base a los trades que ha habido esos
+            // días, independientemente de si han sido 1, 3 o 33».)
             const dayTrades = new Map<string, TradeRecord[]>();
             for (const t of trades) {
                 const d = new Date(t.exit_time);
@@ -41,26 +69,16 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 if (!dayTrades.has(dateStr)) dayTrades.set(dateStr, []);
                 dayTrades.get(dateStr)!.push(t);
             }
-
-            const dailyEV: { date: string; ev: number }[] = [];
-            for (const [date, dayT] of dayTrades) {
-                const wins = dayT.filter((t) => t.pnl > 0);
-                const losses = dayT.filter((t) => t.pnl <= 0);
-                const pWin = wins.length / dayT.length;
-                const pLoss = losses.length / dayT.length;
-                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / wins.length : 0;
-                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / losses.length) : 0;
-                dailyEV.push({ date, ev: pWin * avgWin - pLoss * avgLoss });
-            }
-            dailyEV.sort((a, b) => a.date.localeCompare(b.date));
-            const reqDays = Math.min(rollingWindow, dailyEV.length);
+            const dias = Array.from(dayTrades.keys()).sort((a, b) => a.localeCompare(b));
+            const reqDays = Math.min(rollingWindow, dias.length);
             const result: { time: Time; value: number }[] = [];
-            for (let i = 0; i < dailyEV.length; i++) {
+            for (let i = 0; i < dias.length; i++) {
                 const start = Math.max(0, i - rollingWindow + 1);
-                const slice = dailyEV.slice(start, i + 1);
-                if (slice.length < reqDays) continue;
-                const avg = slice.reduce((s, d) => s + d.ev, 0) / slice.length;
-                result.push({ time: dailyEV[i].date as unknown as Time, value: avg });
+                const ventana = dias.slice(start, i + 1);
+                if (ventana.length < reqDays) continue;
+                // Todas las operaciones de la ventana, en un solo montón.
+                const delTramo = ventana.flatMap((d) => dayTrades.get(d)!);
+                result.push({ time: dias[i] as unknown as Time, value: ev(delTramo) });
             }
             return result;
         } else {
@@ -74,16 +92,9 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 const start = Math.max(0, i - rollingWindow + 1);
                 const slice = sorted.slice(start, i + 1);
                 if (slice.length < reqTrades) continue;
-                const wins = slice.filter((t) => t.pnl > 0);
-                const losses = slice.filter((t) => t.pnl <= 0);
-                const pWin = wins.length / slice.length;
-                const pLoss = losses.length / slice.length;
-                const avgWin = wins.length > 0 ? wins.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / wins.length : 0;
-                const avgLoss = losses.length > 0 ? Math.abs(losses.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / losses.length) : 0;
-                const ev = pWin * avgWin - pLoss * avgLoss;
                 const d = new Date(sorted[i].exit_time);
                 const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-                raw.push({ date: dateStr, value: ev });
+                raw.push({ date: dateStr, value: ev(slice) });
             }
             // Keep last per day, sorted
             const dayMap = new Map<string, number>();
