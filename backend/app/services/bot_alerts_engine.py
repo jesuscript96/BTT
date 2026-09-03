@@ -101,7 +101,27 @@ def _hard_stop(sdef: dict) -> dict:
     return (rm.get("hard_stop") or {}) if rm.get("use_hard_stop") else {}
 
 
-def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd: float) -> dict:
+def _niveles_con_riesgo(niveles, riesgo_usd: Optional[float]):
+    """Los niveles de piramide con la cantidad que diga el cuadro de mandos.
+
+    `None` = no dicho: se deja lo que traiga la estrategia, que es como se ha
+    comportado siempre. Con un valor, se fuerza `unit="usd"` porque lo que se
+    teclea son dolares, no un porcentaje del equity.
+    """
+    if not niveles or not riesgo_usd or riesgo_usd <= 0:
+        return niveles
+    fuera = []
+    for lv in niveles:
+        n = dict(lv)
+        n["unit"] = "usd"
+        n["amount_usd"] = float(riesgo_usd)
+        fuera.append(n)
+    return fuera
+
+
+def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd: float,
+                     riesgo_piramide_usd: Optional[float] = None,
+                     capital_usd: Optional[float] = None) -> dict:
     """Traduce frame + senales + estrategia a los argumentos de `simulate`.
 
     Los costes van todos a cero por decision de producto: el bot avisa, no
@@ -130,6 +150,11 @@ def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd:
         "hybrid_stop": bool(rm.get("hybrid_stop", False)),
         "hybrid_black_swan_pct": rm.get("hybrid_black_swan_pct"),
         "hybrid_max_loss_pct": rm.get("hybrid_max_loss_pct"),
+        # EL CAPITAL DE VERDAD, no `init_cash`. Aqui `init_cash` es
+        # CAPITAL_NOMINAL (1e9) para que el tope de caja no recorte el aviso; si
+        # el techo hibrido se calculara sobre eso, no recortaria nunca y el
+        # numero de acciones del aviso saldria sin topar.
+        "hybrid_capital": capital_usd,
         "fees": 0.0,
         "slippage": 0.0,
         "locates_cost": 0.0,
@@ -142,7 +167,16 @@ def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd:
         "accumulate": senales.get("accept_reentries", False),
         "max_reentries": senales.get("max_reentries", -1),
         "partial_take_profits": senales.get("partial_take_profits"),
-        "pyramid_levels": senales.get("pyramid_levels"),
+        # LOS NIVELES, con la cantidad del CUADRO DE MANDOS si se ha puesto.
+        # El anyadido puede arriesgar algo distinto de la entrada, y hasta hoy
+        # solo se podia fijar el de la entrada: el nivel usaba lo que dijera la
+        # estrategia y no habia forma de cambiarlo sin editarla.
+        #
+        # Que SIGNIFICA ese numero depende del modo del nivel, igual que en la
+        # entrada: por valor de mercado es capital a desplegar; por distancia al
+        # stop es la perdida maxima.
+        "pyramid_levels": _niveles_con_riesgo(senales.get("pyramid_levels"),
+                                              riesgo_piramide_usd),
         "pyramid_sequential": senales.get("pyramid_sequential", False),
         "hs_type": hs.get("type"),
         "hs_value": hs.get("value"),
@@ -397,7 +431,9 @@ class MotorAlertas:
         estado = self._par(ticker, est["strategy_id"])
 
         senales = translate_strategy(frame, sdef, daily_stats, compiled=est["compiled"])
-        res = simulate(**_kwargs_simulate(frame, senales, sdef, est["riesgo_usd"]))
+        res = simulate(**_kwargs_simulate(frame, senales, sdef, est["riesgo_usd"],
+                                          est.get("riesgo_piramide_usd"),
+                                          est.get("capital_usd")))
         trades = res.get("trades") or []
 
         es_largo = str(senales["direction"]).lower().startswith("long")

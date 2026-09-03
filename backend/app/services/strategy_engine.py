@@ -389,6 +389,15 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             # señal). 1 es el clasico; el tope de 100 es un cinturon contra
             # valores absurdos, no un limite de diseño.
             "max_fires": max(1, min(100, veces)),
+            # MODO DE TAMANO DEL NIVEL, independiente del de la entrada: un
+            # anyadido puede ir por distancia al stop aunque la entrada vaya
+            # por valor de mercado. Sin estas claves aqui, `portfolio_sim` lee
+            # None y el modo no se activa NUNCA — el patron de las TRES CAPAS
+            # (memoria madre §4), que ya se comio `size_by_sl` una vez.
+            "size_by_sl": bool(lv.get("size_by_sl", False)),
+            "hybrid_stop": bool(lv.get("hybrid_stop", False)),
+            "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
+            "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
         })
 
     compiled = {
@@ -690,6 +699,11 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 # pedia el 500% del equity.
                 "unit": lv.get("unit", "pct"),
                 "amount_usd": lv.get("amount_usd", 0.0),
+                # Idem: si no se pasan, el simulador no puede aplicarlos.
+                "size_by_sl": lv.get("size_by_sl", False),
+                "hybrid_stop": lv.get("hybrid_stop", False),
+                "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
+                "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel

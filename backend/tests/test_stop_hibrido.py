@@ -167,3 +167,113 @@ def test_el_dispatcher_no_manda_el_hibrido_al_jit():
     src = inspect.getsource(sim_dispatch.simulate)
     assert 'kwargs.get("hybrid_stop")' in src
     assert "_legacy_simulate" in src
+
+
+# ── La PIRÁMIDE tiene su propio modo de tamaño ───────────────────────────
+# Encontrado auditando el 2026-09-04: los campos del nivel se leían en
+# `portfolio_sim` pero NO se compilaban ni se entregaban, así que el modo no se
+# activaba nunca. Las tres capas otra vez, esta vez cayéndose en la primera.
+
+def _con_piramide(**nivel):
+    """Un short con un añadido en la vela 4. Stop al 2 % (distancia 2 $)."""
+    n = 12
+    sig = np.zeros(n, dtype=bool)
+    sig[4] = True
+    lv = {"signals": sig, "action": "add", "capital_frac": 0.0,
+          "max_fires": 1, "unit": "usd", "amount_usd": 300.0}
+    lv.update(nivel)
+    t = simulate(
+        close=np.array([100.0] * n), open_=np.array([100.0] * n),
+        high=np.array([101.0] * n), low=np.array([99.0] * n),
+        entries=np.array([False, True] + [False] * (n - 2)),
+        exits=np.array([False] * (n - 2) + [True, False]),
+        direction="shortonly", init_cash=100_000.0,
+        risk_r=1000.0, risk_type="FIXED", accumulate=True,
+        size_by_sl=True, sl_stop=0.02,
+        pyramid_levels=[lv],
+    )["trades"]
+    ex = (t[0].get("pyr_executions") or []) if t else []
+    return ex[0]["size"] if ex else 0.0
+
+
+def test_la_piramide_por_defecto_va_por_valor_de_mercado():
+    """Regla nº1: un nivel sin campos nuevos se comporta como siempre."""
+    # 300 $ / 100 $ por acción = 3 acciones.
+    assert abs(_con_piramide() - 3.0) < 1e-6
+
+
+def test_la_piramide_puede_ir_por_distancia_al_stop():
+    """LO QUE NO FUNCIONABA. 300 $ de riesgo / 2 $ de distancia = 150 acciones.
+
+    Cincuenta veces más que por valor de mercado: si esta clave no llega al
+    simulador, el añadido sale del tamaño equivocado y nada lo dice.
+    """
+    assert abs(_con_piramide(size_by_sl=True) - 150.0) < 1e-6
+
+
+def test_la_piramide_tiene_su_propio_techo_hibrido():
+    """Con sus propios porcentajes, distintos de los de la entrada.
+
+    Jaume los reparte (50 % y 50 %) para que entrada + añadido no pasen juntos
+    de lo que acepta perder.
+    """
+    # Techo: (5 % × 100.000) / 10 = 500 $ -> 5 acciones a 100 $.
+    assert abs(_con_piramide(size_by_sl=True, hybrid_stop=True,
+                             hybrid_black_swan_pct=1_000,
+                             hybrid_max_loss_pct=5) - 5.0) < 1e-6
+
+
+def test_los_campos_del_nivel_llegan_desde_la_definicion():
+    """De punta a punta: JSON -> compilar -> señales -> simulador.
+
+    El test de arriba llama a `simulate` con el nivel ya montado, así que no
+    veria que se pierda al compilar. Este si.
+    """
+    import sys
+    sys.path.insert(0, "tests")
+    from test_pyramid_entry_time_window import _definicion, _frame
+    from app.services.strategy_engine import compile_strategy_def, translate_strategy
+
+    d = _definicion([])
+    d["pyramiding"]["levels"][0].update({
+        "size_by_sl": True, "hybrid_stop": True,
+        "hybrid_black_swan_pct": 1_000, "hybrid_max_loss_pct": 50,
+    })
+    niveles = translate_strategy(_frame(), d, {},
+                                 compiled=compile_strategy_def(d)).get("pyramid_levels") or []
+    assert niveles, "la estrategia define un nivel"
+    lv = niveles[0]
+    assert lv.get("size_by_sl") is True
+    assert lv.get("hybrid_stop") is True
+    assert lv.get("hybrid_black_swan_pct") == 1_000
+    assert lv.get("hybrid_max_loss_pct") == 50
+
+
+def test_el_techo_puede_calcularse_sobre_un_capital_dado():
+    """`hybrid_capital` separa el techo del `init_cash` de la simulación.
+
+    LO NECESITA EL BOT DE ALERTAS. Allí `init_cash` es un capital NOMINAL
+    enorme (1e9), puesto a propósito para que el tope de caja no recorte nunca
+    el tamaño del aviso. Si el techo se calculara sobre ese número saldría
+    astronómico y **no recortaría jamás**: el aviso daría un tamaño sin topar y
+    nada lo indicaría.
+    """
+    n = 10
+    base = dict(
+        close=np.array([100.0] * n), open_=np.array([100.0] * n),
+        high=np.array([101.0] * n), low=np.array([99.0] * n),
+        entries=np.array([False, True] + [False] * (n - 2)),
+        exits=np.array([False] * (n - 2) + [True, False]),
+        direction="shortonly", init_cash=1e9,        # el nominal del bot
+        risk_r=300.0, risk_type="FIXED", accumulate=True,
+        size_by_sl=True, sl_stop=0.01,
+        hybrid_stop=True, hybrid_black_swan_pct=1_000, hybrid_max_loss_pct=50,
+    )
+    # Sin decir el capital: el techo sale de 1e9 y no recorta nada.
+    sin = simulate(**base)["trades"][0]["size"]
+    # Con el capital real: (0,5 × 10.000) / 10 = 500 $ -> 5 acciones a 100 $.
+    con = simulate(**{**base, "hybrid_capital": 10_000.0})["trades"][0]["size"]
+
+    assert abs(con - 5.0) < 1e-6
+    assert sin > con * 10, (
+        "sin capital explícito el techo se calcula sobre el nominal y no recorta")

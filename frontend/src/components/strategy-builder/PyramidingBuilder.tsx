@@ -255,12 +255,66 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     <option value="pct">%</option>
                                     <option value="usd">$</option>
                                 </select>
+                                {/* MODO DE TAMAÑO DEL AÑADIDO, independiente del de
+                                    la entrada. Hasta el 2026-09-04 la pirámide iba
+                                    SIEMPRE por valor de mercado y no había forma de
+                                    cambiarlo: con el mismo stop, el añadido acababa
+                                    arriesgando una fracción de lo que arriesga la
+                                    entrada (medido en vivo con MIMI: 146 $ frente a
+                                    300 $) sin que nada lo dijera. */}
+                                {lv.action === 'add' && (
+                                    <select
+                                        value={lv.hybrid_stop ? 'hibrido' : lv.size_by_sl ? 'sl' : 'mv'}
+                                        onChange={(e) => {
+                                            const m = e.target.value;
+                                            setLevel(idx, {
+                                                ...lv,
+                                                size_by_sl: m !== 'mv',
+                                                hybrid_stop: m === 'hibrido',
+                                            });
+                                        }}
+                                        style={selectStyle}
+                                        title={'Cómo se convierte la cantidad en acciones:\n'
+                                            + '· Valor de mercado — se divide por el precio (como siempre)\n'
+                                            + '· Distancia al stop — la cantidad es la PÉRDIDA máxima\n'
+                                            + '· Híbrido — por stop, pero con techo de exposición'}
+                                    >
+                                        <option value="mv">por valor de mercado</option>
+                                        <option value="sl">por distancia al stop</option>
+                                        <option value="hibrido">híbrido (stop + techo)</option>
+                                    </select>
+                                )}
+                                {lv.action === 'add' && lv.hybrid_stop && (
+                                    <>
+                                        <input
+                                            type="number" min={1} step={100}
+                                            value={lv.hybrid_black_swan_pct ?? ''}
+                                            placeholder="evento %"
+                                            title="El peor movimiento en contra que quieres contemplar, en %."
+                                            onChange={(e) => setLevel(idx, { ...lv, hybrid_black_swan_pct: e.target.value === '' ? null : Number(e.target.value) })}
+                                            style={{ ...selectStyle, width: 76, cursor: 'text' }}
+                                        />
+                                        <input
+                                            type="number" min={1} max={100} step={5}
+                                            value={lv.hybrid_max_loss_pct ?? ''}
+                                            placeholder="cuenta %"
+                                            title="Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. Repártelo con el de la entrada."
+                                            onChange={(e) => setLevel(idx, { ...lv, hybrid_max_loss_pct: e.target.value === '' ? null : Number(e.target.value) })}
+                                            style={{ ...selectStyle, width: 76, cursor: 'text' }}
+                                        />
+                                    </>
+                                )}
                                 {/* Texto corto: el detalle completo está en el
-                                    tooltip del campo de la cantidad. */}
+                                    tooltip del campo de la cantidad.
+                                    OJO: con el modo por stop la cantidad deja de
+                                    ser capital y pasa a ser PÉRDIDA MÁXIMA. Decir
+                                    "fijos" ahí engañaría sobre lo que se teclea. */}
                                 <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>
-                                    {(lv.unit ?? 'pct') === 'usd'
-                                        ? (lv.action === 'add' ? 'fijos' : 'de posición')
-                                        : (lv.action === 'add' ? 'del equity' : 'de la posición')}
+                                    {lv.action === 'add' && lv.size_by_sl
+                                        ? 'de pérdida máxima'
+                                        : (lv.unit ?? 'pct') === 'usd'
+                                            ? (lv.action === 'add' ? 'fijos' : 'de posición')
+                                            : (lv.action === 'add' ? 'del equity' : 'de la posición')}
                                 </span>
                                 <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', marginLeft: 4, whiteSpace: 'nowrap' }}>Veces:</span>
                                 <input

@@ -125,6 +125,16 @@ def simulate(
     hybrid_stop: bool = False,
     hybrid_black_swan_pct: float | None = None,
     hybrid_max_loss_pct: float | None = None,
+    # CAPITAL SOBRE EL QUE SE CALCULA EL TECHO. None (lo normal) = el equity de
+    # la simulacion, `init_cash + realized_pnl`, que es lo correcto en un
+    # backtest y escala con la cuenta.
+    #
+    # Hace falta poder darlo aparte por el BOT DE ALERTAS: alli `init_cash` es
+    # un capital NOMINAL enorme (1e9) puesto a proposito para que el tope de
+    # caja no recorte nunca el tamano del aviso. Con ese numero, el techo
+    # hibrido saldria astronomico y NO RECORTARIA JAMAS — el aviso diria un
+    # tamano sin topar y nada lo indicaria.
+    hybrid_capital: float | None = None,
     partial_take_profits: list | None = None,
     pyramid_levels: list | None = None,
     pyramid_sequential: bool = False,
@@ -909,7 +919,8 @@ def simulate(
                         # acepta perder.
                         if lv.get("hybrid_stop"):
                             tope_pyr = tope_hibrido(
-                                cash_now, lv.get("hybrid_black_swan_pct"),
+                                hybrid_capital if hybrid_capital else cash_now,
+                                lv.get("hybrid_black_swan_pct"),
                                 lv.get("hybrid_max_loss_pct"), add_px)
                             if tope_pyr is not None:
                                 add_size_pedido = min(add_size_pedido, tope_pyr)
@@ -1142,7 +1153,8 @@ def simulate(
                 # un evento de cola convertiria en una perdida inasumible.
                 # RECORTA, no anula — igual que el tope de caja y el de locates.
                 if hybrid_stop and size_by_sl:
-                    tope = tope_hibrido(init_cash + realized_pnl,
+                    tope = tope_hibrido(hybrid_capital if hybrid_capital
+                                        else init_cash + realized_pnl,
                                         hybrid_black_swan_pct,
                                         hybrid_max_loss_pct, entry_price)
                     if tope is not None:

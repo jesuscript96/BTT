@@ -201,11 +201,26 @@ def explicar_estrategia(definicion: dict) -> dict:
         cond: list = []
         _cond(lv.get("root_condition"), cond)
         unidad = str(lv.get("unit", "pct")).lower()
+        en_usd = unidad in ("usd", "$", "dollars")
+        cantidad = f"{lv.get('capital_pct')} $" if en_usd else f"{lv.get('capital_pct')}%"
+        # QUE SIGNIFICA esa cantidad depende del modo del nivel, no solo de la
+        # unidad. Decir «de valor de mercado» con el nivel en modo stop seria
+        # justo el enganyo que esta pantalla existe para evitar.
+        if lv.get("hybrid_stop"):
+            bs = lv.get("hybrid_black_swan_pct")
+            ml = lv.get("hybrid_max_loss_pct")
+            techo = (f", con techo del {ml / bs * 100:.2f}% del capital"
+                     if bs and ml else ", con techo SIN configurar")
+            cantidad += f" de pérdida máxima (híbrido{techo})"
+        elif lv.get("size_by_sl"):
+            cantidad += " de pérdida máxima (por distancia al stop)"
+        elif en_usd:
+            cantidad += " de valor de mercado"
+        else:
+            cantidad += " del equity"
         niveles.append({
             "accion": lv.get("action", "add"),
-            "cantidad": (f"{lv.get('capital_pct')} $ de valor de mercado"
-                         if unidad in ("usd", "$", "dollars")
-                         else f"{lv.get('capital_pct')}% del equity"),
+            "cantidad": cantidad,
             "veces": lv.get("times", 1),
             "condiciones": cond,
         })

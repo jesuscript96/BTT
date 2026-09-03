@@ -55,6 +55,7 @@ def simulate(**kwargs) -> dict:
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)
+    kwargs.pop("hybrid_capital", None)
     if _numba_sim_enabled():
         return simulate_jit(**kwargs)
     return _legacy_simulate(**kwargs)
