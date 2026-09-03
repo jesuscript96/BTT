@@ -1082,8 +1082,14 @@ export default function CuadroMandos() {
                             <span style={{
                               fontFamily: font.mono, fontSize: 10,
                               color: color.textMuted,
-                            }} title={`Fade necesario ${v.fade.toFixed(2)}% · EV ${v.ev.toFixed(2)}%`}>
-                              {v.margen >= 0 ? "+" : ""}{v.margen.toFixed(2)} pp
+                            }}
+                              /* CUATRO decimales a propósito (Jaume,
+                                 2026-09-03): con dos, un margen de +0,004 pp
+                                 se lee "+0,00" y no sabes de qué lado cae. En
+                                 una decisión de comprar o no comprar, el signo
+                                 no se puede perder en el formato. */
+                              title={`Fade necesario ${v.fade.toFixed(4)}% · EV ${v.ev.toFixed(4)}%`}>
+                              {v.margen >= 0 ? "+" : ""}{v.margen.toFixed(4)} pp
                             </span>
                             <button
                               onClick={() => setCongelados((p) => {

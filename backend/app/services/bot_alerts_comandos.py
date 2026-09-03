@@ -76,13 +76,26 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
     bien = margen > 0
     frase = random.choice(_FRASES_SI if bien else _FRASES_NO)
 
+    # CUATRO DECIMALES A PROPOSITO (Jaume, 2026-09-03: «mejor que no redondees,
+    # porque lo ideal es que intentemos no sobreestimar o infraestimar»). Con
+    # dos, un caso al filo salia asi:
+    #
+    #     fade necesario: 2,40 %   tu EV: 2,40 %   margen +0,00 pp
+    #     VENTAJA MATEMATICA POSITIVA
+    #
+    # …y no habia forma de saber de que lado caia. En una decision de comprar o
+    # no comprar, el signo no se puede perder en el formato.
+    #
+    # OJO, esto NO afecta al redondeo de los paquetes de 100 de mas arriba: ese
+    # no es formato, es el coste real que cobra el broker. Quitarlo si seria
+    # infraestimar.
     return (
         f"<b>{ticker}</b> a {precio:.4f} $\n"
-        f"fade necesario: <b>{fade:.2f} %</b>\n"
-        f"tu EV: <b>{ev_pct:.2f} %</b>\n\n"
+        f"fade necesario: <b>{fade:.4f} %</b>\n"
+        f"tu EV: <b>{ev_pct:.4f} %</b>\n\n"
         f"<b>{POSITIVA if bien else NEGATIVA}</b>\n"
         f"{frase}\n"
-        f"<i>margen {margen:+.2f} pp</i>{nota}"
+        f"<i>margen {margen:+.4f} pp</i>{nota}"
     )
 
 

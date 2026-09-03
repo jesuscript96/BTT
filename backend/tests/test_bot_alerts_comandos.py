@@ -20,7 +20,19 @@ def test_compensa_cuando_el_ev_supera_al_fade():
     # fade = 0,010 / 0,8422 × 100 = 1,19 % < EV 2,4 %
     r = veredicto_locates("MIMI", 0.8422, 0.010, 2.4)
     assert POSITIVA in r
-    assert "1.19" in r          # el fade se enseña, no solo el veredicto
+    assert "1.187" in r         # el fade se enseña, no solo el veredicto
+
+
+def test_no_se_redondea_el_veredicto_al_filo():
+    """CUATRO decimales. Con dos, este caso salía «margen +0,00 pp» y no había
+    forma de saber de qué lado caía — en una decisión de comprar o no comprar,
+    el signo no se puede perder en el formato (Jaume, 2026-09-03)."""
+    justo = veredicto_locates("MIMI", 0.8422, 0.0202, 2.4)     # +0,0015 pp
+    apenas = veredicto_locates("MIMI", 0.8422, 0.0203, 2.4)    # −0,0104 pp
+    assert POSITIVA in justo and NEGATIVA in apenas
+    # …y el margen se lee, no sale como 0,00 en los dos.
+    assert "+0.0015" in justo
+    assert "-0.0104" in apenas
 
 
 def test_no_compensa_con_el_locate_caro():
