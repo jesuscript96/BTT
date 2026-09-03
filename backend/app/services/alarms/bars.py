@@ -89,6 +89,7 @@ class SessionBars:
         "session_max", "session_min", "max_at_min",
         "_ema", "_sma",
         "last_close_min",
+        "_prev_derived",
     )
 
     def __init__(self, ticker: str, session_date: str):
@@ -110,6 +111,11 @@ class SessionBars:
         self._ema: Dict[int, Optional[float]] = {p: None for p in EMA_PERIODS}
         self._sma: Dict[int, _Rolling] = {p: _Rolling(p) for p in SMA_PERIODS}
         self.last_close_min: Optional[int] = None
+        # Snapshot derivado (VWAP, EMA, extremos…) tal como quedó al cierre de la
+        # barra ANTERIOR. Es lo que hace posible «cierre cruza el VWAP»: el cruce
+        # necesita el valor previo de AMBOS lados, y el del VWAP/EMA no está en la
+        # barra cruda. Sin esto, un cruce contra un campo derivado no salta nunca.
+        self._prev_derived: Dict[str, Optional[float]] = {}
 
     # ── ingesta ──────────────────────────────────────────────────────────────
     def ingest(self, ts_ms: int, o: Optional[float], h: Optional[float],
@@ -156,6 +162,12 @@ class SessionBars:
         return self._finalize()
 
     def _finalize(self) -> Dict[str, float]:
+        # ANTES de incorporar esta barra, snapshot() aún refleja la barra previa
+        # (mismo estado acumulado, mismo last_bar): se guarda como «valores de la
+        # barra anterior» para los operadores de cruce. En la primera barra no hay
+        # previa y queda {} (un cruce no dispara, que es lo correcto).
+        self._prev_derived = self.snapshot() if self.last_bar is not None else {}
+
         minute = int(self._cur_min or 0)
         o, h, l, c, v = self._o, self._h, self._l, self._c, self._v
         self._cur_min = None
@@ -234,14 +246,12 @@ class SessionBars:
     def prev_snapshot_value(self, key: str) -> Optional[float]:
         """Valor de un campo en la barra ANTERIOR, para los operadores de cruce.
 
-        Solo se soportan los campos de precio de barra: reconstruir un VWAP o una
-        EMA «de hace una barra» exigiría guardar historia, y el cruce contra esos
-        niveles se expresa igual comparando cierres consecutivos."""
-        pb = self.prev_bar
-        if pb is None:
-            return None
-        return {"close": pb.get("close"), "open": pb.get("open"),
-                "high": pb.get("high"), "low": pb.get("low")}.get(key)
+        Cubre TODOS los campos derivados (VWAP, EMA, SMA, extremos corridos,
+        distancia al VWAP…), no solo el precio crudo: `_prev_derived` es el
+        snapshot completo tal como quedó al cierre de la barra previa. Así
+        «cierre cruza el VWAP» funciona; antes solo había close/open/high/low y
+        un cruce contra un derivado no saltaba nunca."""
+        return self._prev_derived.get(key)
 
 
 class BarStore:

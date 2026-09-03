@@ -277,6 +277,28 @@ el retrasado. Para desarrollo, `LIVE_SCREENER_ENABLED=0` + reproducción.
 *(El motor sí quedó preparado para datos retrasados —el barrido de barras usa el
 reloj del feed y no el de pared— por si algún día se contrata un cupo mayor.)*
 
+### ¿Avisa en el momento exacto? — el trazador
+
+`replay` te dice a qué minuto y precio salta. Para verificar que salta en el
+minuto CORRECTO (ni tarde ni pronto), `scripts/trace_alarm.py` imprime la condición
+minuto a minuto sobre un día real, con los valores que ve la alarma marcados donde
+dispara. Cotéjalo contra un gráfico que ya conozcas: el minuto justo antes no debe
+cumplir, el del evento sí.
+
+```bash
+cd backend
+python -m scripts.trace_alarm LGHL 2026-07-27 "close crosses_above vwap" --from 04:05 --to 04:35
+python -m scripts.trace_alarm XYZ  2026-07-27 "close < prev_bar_low;close > vwap"
+```
+
+Condiciones separadas por `;` (AND). El valor es un número o el nombre de otro
+campo. Corre por el MISMO motor que en vivo, así que lo que ves aquí es lo que
+haría la alarma.
+
+Lo único que el trazador NO cubre es el retardo de 1-3 s con que el aviso llega
+DESPUÉS del cierre de la barra en vivo. Eso no es de timing de la señal (la señal
+es exacta), es el hueco de ejecución, y se mide en shadow mode (F3).
+
 ### Reproducir un día real, sin WebSocket ninguno
 
 Massive admite **una conexión WS por API key**. Si QA y producción levantan las

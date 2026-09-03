@@ -278,3 +278,31 @@ def test_la_reproduccion_no_promete_lo_que_no_sabe():
     _feed(s, 301, [2.0])
     ctx = _instant_from_replay(s, s.last_bar, 1.0, 1.5, 1.5, 1000)
     assert ctx["gap_pct"] is None and ctx["rvol"] is None
+
+
+# ── cruce contra un campo derivado (VWAP), regresión ─────────────────────────
+def test_cruce_del_vwap_dispara_en_la_barra_del_cruce():
+    """«cierre cruza arriba el VWAP» debe saltar en la barra donde el cierre pasa
+    de estar por debajo del VWAP a estar por encima — ni antes, ni después, ni
+    nunca. Antes no saltaba jamás: prev_snapshot_value solo tenía close/open/high/
+    low, así que el valor previo del VWAP era None y el cruce se descartaba."""
+    conds = normalize_conditions([{"left": "close", "op": "crosses_above", "right": "vwap"}])
+
+    s = SessionBars("XYZ", "2026-08-31")
+    # Barra 1: cierre por DEBAJO de su VWAP (típico = (h+l+c)/3 > c cuando c=low).
+    _feed(s, 300, [10.0, 12.0, 8.0, 9.0])   # o=10 h=12 l=8 c=9 → vwap≈9.67, close 9 < vwap
+    _feed(s, 301, [10.0])                    # cierra la 300
+    snap1 = s.snapshot()
+    assert snap1["close"] < snap1["vwap"]    # de partida, por debajo
+    assert evaluate(conds, s.snapshot(), prev_lookup=s.prev_snapshot_value)[0] is False
+
+    # Barra siguiente que cierra CLARAMENTE por encima del VWAP acumulado → cruce.
+    _feed(s, 302, [50.0])                     # cierra la 301, cierre muy por encima
+    snap2 = s.snapshot()
+    assert snap2["close"] > snap2["vwap"]
+    assert evaluate(conds, snap2, prev_lookup=s.prev_snapshot_value)[0] is True
+
+    # Mientras siga por encima, NO vuelve a disparar (no hay nuevo cruce).
+    _feed(s, 303, [51.0])
+    _feed(s, 304, [52.0])
+    assert evaluate(conds, s.snapshot(), prev_lookup=s.prev_snapshot_value)[0] is False
