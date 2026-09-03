@@ -199,6 +199,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[WARN] Live screener service failed to start: {e}")
 
+    # Motor de alarmas: se cuelga del stream del screener (no abre una segunda
+    # conexión a Massive). Best-effort — un fallo aquí no puede tumbar el arranque.
+    try:
+        import asyncio as _asyncio
+        from app.services.alarms.engine import alarm_engine
+        app.state.alarm_engine_task = _asyncio.create_task(alarm_engine.start())
+    except Exception as e:
+        print(f"[WARN] Alarm engine failed to start: {e}")
+
     start_scheduler()
     yield
     # Shutdown
@@ -207,6 +216,12 @@ async def lifespan(app: FastAPI):
     try:
         from app.services.live_screener_service import live_screener_service
         await live_screener_service.stop()
+    except Exception:
+        pass
+
+    try:
+        from app.services.alarms.engine import alarm_engine
+        await alarm_engine.stop()
     except Exception:
         pass
 
@@ -264,6 +279,7 @@ async def add_cors_headers_to_all_responses(request, call_next):
 from app.routers import data, strategies, backtest, query, market, market_adjusted, strategy_search, ticker_analysis
 from app.routers import optimization, users, edgie
 from app.routers import screener
+from app.routers import alarms
 from app.routers import assistant
 from app.routers import feedback
 import logging
@@ -283,6 +299,7 @@ app.include_router(market.router)
 app.include_router(market_adjusted.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(screener.router)
+app.include_router(alarms.router)
 from app.routers import news
 app.include_router(news.router, prefix="/api", tags=["News"])
 # Stocktwits social integration (Radar de Momentum, Sentiment Gauge, Why Trending,

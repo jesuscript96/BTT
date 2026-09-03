@@ -29,6 +29,8 @@ import { ChatBot } from "./ChatBot";
 import { LocatesCalculator } from "./LocatesCalculator";
 import { Pill, Badge, Modal, Button, Input, Select } from "@/components/ui";
 import { track, EVENTS } from "@/lib/analytics";
+import { AlarmsPanel } from "./screener/AlarmsPanel";
+import { openAlarmsSocket, type LiveAlarmEvent } from "@/lib/api_alarms";
 
 // ─── Types ──────────────────────────────────────────────────
 type TabKey = "premarket" | "gainers" | "losers" | "aftermarket";
@@ -544,8 +546,8 @@ interface AlarmConfig { soundEnabled: boolean; volume: number; rules: AlarmRule[
 
 const ALARM_FIELDS: { key: AlarmField; label: string }[] = [
   { key: "change_pct", label: "Change %" },
-  { key: "price", label: "Precio $" },
-  { key: "volume", label: "Volumen" },
+  { key: "price", label: "Price" },
+  { key: "volume", label: "Volume" },
   { key: "pmh_gap_pct", label: "PMH Gap %" },
   { key: "pre_pct", label: "Premarket High Gap" },
 ];
@@ -742,6 +744,41 @@ export default function Screener() {
       });
     }
   }, [records]);
+
+  // Canal de alarmas de servidor. Reutiliza el mismo toast y el mismo beep que
+  // los avisos rápidos del grid: para el usuario es «una alarma», venga de donde
+  // venga. Reconecta sola si la conexión se cae.
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    let closed = false;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = async () => {
+      if (closed) return;
+      ws = await openAlarmsSocket((event: LiveAlarmEvent) => {
+        if (event.type !== "alarm" || !event.ticker) return;
+        const ticker = event.ticker;
+        setAlarmToasts((prev) => [
+          ...prev,
+          { id: `${ticker}-${Date.now()}`, ticker, change: event.price ?? 0 },
+        ]);
+        const cfg = alarmConfigRef.current;
+        if (event.sound !== false && cfg.soundEnabled) playBeep(cfg.volume);
+      });
+      if (ws) {
+        ws.onclose = () => { if (!closed) retry = setTimeout(() => { void connect(); }, 5000); };
+      } else if (!closed) {
+        retry = setTimeout(() => { void connect(); }, 5000);
+      }
+    };
+    void connect();
+
+    return () => {
+      closed = true;
+      if (retry) clearTimeout(retry);
+      ws?.close();
+    };
+  }, []);
 
   // Auto-descartar los toasts de alarma (uno cada 4 s mientras haya).
   useEffect(() => {
@@ -1875,6 +1912,21 @@ export default function Screener() {
         footer={<Button variant="primary" onClick={() => setAlarmModalOpen(false)}>Hecho</Button>}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* Fase 1 (lo nuevo): alarmas de servidor — Telegram + estrategia.
+              Es el contenido principal del modal, va primero. Los avisos rápidos
+              client-side de siempre quedan plegados abajo para no competir con
+              esto ni hacer que el modal "parezca lo de antes". */}
+          <AlarmsPanel />
+
+          <div style={{ height: 1, background: "var(--color-ec-border)", margin: "4px 0" }} />
+
+          {/* Lo viejo: avisos rápidos del grid. Solo con el navegador abierto y
+              solo sobre la tabla visible. Plegado por defecto. */}
+          <details>
+            <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "var(--color-ec-text-secondary)", userSelect: "none" }}>
+              Avisos rápidos del grid · solo con el navegador abierto
+            </summary>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 14 }}>
           {/* Sonido */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -1947,6 +1999,8 @@ export default function Screener() {
           <span style={{ fontSize: 10.5, color: "var(--color-ec-text-muted)", lineHeight: 1.4 }}>
             El navegador solo reproduce sonido tras un clic tuyo; al activar el sonido aquí ya queda desbloqueado para esta sesión.
           </span>
+            </div>
+          </details>
         </div>
       </Modal>
 
