@@ -153,6 +153,60 @@ interface ChartProps {
   date: string;
 }
 
+/** Volumen de la vela y acumulados del día, sobre la franja del histograma.
+ *
+ *  V   volumen de la vela donde está el cursor
+ *  AV  volumen acumulado del día hasta ahí
+ *  ADV dollar volume acumulado — Σ(precio × volumen) barra a barra, que es la
+ *      cuenta del motor para `Accumulated Dollar Volume`, NO Σvolumen × último
+ *      precio (con el precio moviéndose no es lo mismo).
+ *
+ *  SIN CURSOR ENSEÑA LOS TOTALES DEL DÍA, no guiones: si hubiera que barrer
+ *  con el ratón hasta el final solo para saber cuánto se movió el día, la
+ *  etiqueta no serviría de nada al abrir el gráfico.
+ */
+function EtiquetaVolumen({ acum, totales }: {
+  acum: { v: number; av: number; adv: number } | null;
+  totales: { av: number; adv: number } | null;
+}) {
+  if (!acum && !totales) return null;
+  const n = (x: number) => x.toLocaleString("es-ES", { maximumFractionDigits: 0 });
+  const money = (x: number) =>
+    x >= 1e9 ? `${(x / 1e9).toFixed(2)} B`
+      : x >= 1e6 ? `${(x / 1e6).toFixed(2)} M`
+        : x >= 1e3 ? `${(x / 1e3).toFixed(1)} K`
+          : n(x);
+  const av = acum ? acum.av : totales!.av;
+  const adv = acum ? acum.adv : totales!.adv;
+
+  const Dato = ({ etiqueta, valor, tono }: { etiqueta: string; valor: string; tono?: string }) => (
+    <span style={{ display: "inline-flex", gap: 4, alignItems: "baseline" }}>
+      <span style={{ color: "var(--color-ec-text-muted)", fontSize: 9, fontWeight: 700, letterSpacing: "0.5px" }}>
+        {etiqueta}
+      </span>
+      <b style={{ color: tono || "var(--color-ec-text-primary)", fontWeight: 600 }}>{valor}</b>
+    </span>
+  );
+
+  return (
+    <div style={{
+      position: "absolute", left: 8, bottom: 6, pointerEvents: "none", zIndex: 3,
+      display: "flex", gap: 14, alignItems: "baseline",
+      padding: "3px 9px", borderRadius: 3,
+      background: "rgba(22,24,26,0.88)",
+      border: "0.5px solid var(--color-ec-border)",
+      fontFamily: "var(--color-ec-mono)", fontSize: 10.5,
+      whiteSpace: "nowrap",
+    }}>
+      {acum
+        ? <Dato etiqueta="V" valor={n(acum.v)} />
+        : <span style={{ color: "var(--color-ec-text-muted)", fontSize: 9, fontWeight: 700 }}>DÍA</span>}
+      <Dato etiqueta="AV" valor={n(av)} />
+      <Dato etiqueta="ADV" valor={`$${money(adv)}`} tono="var(--color-ec-copper)" />
+    </div>
+  );
+}
+
 export default function Chart({
   candles,
   multiDayCandles = null,
@@ -197,7 +251,11 @@ export default function Chart({
   /** Volumen y dollar volume ACUMULADOS del día hasta donde está el cursor.
    *  Etiqueta fija sobre la franja de volumen: no se pinta uno por vela (eso
    *  sería ilegible) sino un solo par de números que cambia al mover el ratón. */
-  const [acum, setAcum] = useState<{ vol: number; dv: number } | null>(null);
+  const [acum, setAcum] = useState<{ v: number; av: number; adv: number } | null>(null);
+  /** Totales del día. Es lo que se enseña cuando el cursor NO está sobre el
+   *  gráfico: dejar guiones obligaría a barrer con el ratón solo para saber
+   *  cuánto se movió el día. */
+  const [totales, setTotales] = useState<{ av: number; adv: number } | null>(null);
   const measureEnabledRef = useRef(false);
   const measureClearFnsRef = useRef<Array<() => void>>([]);
   const dayChartsRef = useRef<IChartApi[]>([]);
@@ -386,17 +444,22 @@ export default function Chart({
       // (Σvolumen × último precio): con el precio moviéndose no es lo mismo, y
       // es la misma cuenta que usa el motor para `Accumulated Dollar Volume`.
       {
-        const porTiempo = new Map<number, { vol: number; dv: number }>();
-        let vol = 0, dv = 0;
+        const porTiempo = new Map<number, { v: number; av: number; adv: number }>();
+        let av = 0, adv = 0;
         for (const c of deduped) {
-          vol += c.volume;
-          dv += c.close * c.volume;
-          porTiempo.set(c.time as number, { vol, dv });
+          av += c.volume;
+          adv += c.close * c.volume;
+          porTiempo.set(c.time as number, { v: c.volume, av, adv });
         }
+        setTotales({ av, adv });
         chart.subscribeCrosshairMove((param: any) => {
-          const t = param?.time as number | undefined;
+          const t = param?.time;
           if (t == null) { setAcum(null); return; }
-          setAcum(porTiempo.get(t) ?? null);
+          // El `time` puede llegar como número o como objeto de fecha según la
+          // escala; se prueban los dos antes de rendirse.
+          setAcum(porTiempo.get(t as number)
+            ?? porTiempo.get(Number(t))
+            ?? null);
         });
       }
 
@@ -1476,37 +1539,7 @@ export default function Chart({
               para no robarle el ratón al gráfico. */}
           <div style={{ position: "relative", width: "100%" }}>
             <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
-            <div style={{
-              position: "absolute", left: 8, bottom: 6, pointerEvents: "none",
-              display: "flex", gap: 12, alignItems: "baseline",
-              padding: "3px 8px", borderRadius: 3,
-              background: "rgba(22,24,26,0.82)",
-              border: "0.5px solid var(--color-ec-border)",
-              fontFamily: "var(--color-ec-mono)", fontSize: 10,
-              whiteSpace: "nowrap",
-              // Se atenúa en vez de desaparecer: si el hueco se vaciara, la
-              // franja de volumen daría un salto cada vez que sacas el ratón.
-              opacity: acum ? 1 : 0.35,
-              transition: "opacity 120ms ease",
-            }}>
-              <span style={{ color: "var(--color-ec-text-muted)" }}>ACUM.</span>
-              <span style={{ color: "var(--color-ec-text-secondary)" }}>
-                vol{" "}
-                <b style={{ color: "var(--color-ec-text-primary)" }}>
-                  {acum ? acum.vol.toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
-                </b>
-              </span>
-              <span style={{ color: "var(--color-ec-text-secondary)" }}>
-                $vol{" "}
-                <b style={{ color: "var(--color-ec-copper)" }}>
-                  {acum
-                    ? acum.dv >= 1e6
-                      ? `${(acum.dv / 1e6).toFixed(2)} M`
-                      : acum.dv.toLocaleString("es-ES", { maximumFractionDigits: 0 })
-                    : "—"}
-                </b>
-              </span>
-            </div>
+            <EtiquetaVolumen acum={acum} totales={totales} />
           </div>
           <div ref={panelContainerRef} />
         </>
@@ -1517,7 +1550,13 @@ export default function Chart({
             <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
               Día del Gap ({multiDayCandles?.gap_day?.date || ""})
             </div>
-            <div ref={chartContainerRef1} style={{ width: "100%", height: "400px" }} />
+            {/* Solo en el primer panel: los tres charts comparten el mismo
+                estado de acumulados, asi que repetirla en los otros dos
+                enseñaria el mismo numero tres veces. */}
+            <div style={{ position: "relative", width: "100%" }}>
+              <div ref={chartContainerRef1} style={{ width: "100%", height: "400px" }} />
+              <EtiquetaVolumen acum={acum} totales={totales} />
+            </div>
             <div ref={panelContainerRef1} />
           </div>
 
