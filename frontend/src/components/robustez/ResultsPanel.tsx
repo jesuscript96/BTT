@@ -1,7 +1,8 @@
 "use client";
 
 import React from "react";
-import { color, font, radius } from "@/components/ui/tokens";
+
+import { Panel, color, font } from "@/components/ui";
 import { MODULES, type ModuleId } from "./ModuleRail";
 
 interface Props {
@@ -9,41 +10,28 @@ interface Props {
   children: React.ReactNode;
 }
 
+/**
+ * El cuadro grande donde se pintan los resultados del módulo activo.
+ *
+ * Usa el primitivo `Panel` (el estilo denso que estrenó el Genético) en vez de
+ * una sección escrita a mano: antes tenía aquí sus propios px, su radio y su
+ * cabecera, que es justo como se llega a tener tres estilos de cuadro distintos
+ * dentro de la misma app.
+ */
 export default function ResultsPanel({ module, children }: Props) {
   const def = MODULES.find((m) => m.id === module);
   return (
-    <div
-      style={{
-        background: color.bgSurface,
-        border: `0.5px solid ${color.border}`,
-        borderRadius: radius.md,
-        overflow: "hidden",
-        minHeight: 380,
-      }}
-    >
-      <div
-        style={{
-          padding: "10px 18px",
-          borderBottom: `0.5px solid ${color.border}`,
-          display: "flex",
-          alignItems: "baseline",
-          gap: 10,
-        }}
-      >
-        <span
-          style={{
-            fontSize: 10,
-            letterSpacing: "0.11em",
-            textTransform: "uppercase",
-            color: color.copper,
-            fontFamily: font.sans,
-          }}
-        >
-          {def?.label ?? "Resultados"}
+    <Panel
+      titulo={def?.label ?? "Resultados"}
+      style={{ minHeight: 380, marginBottom: 0 }}
+      sinRelleno
+      extra={
+        <span style={{ fontSize: 11, color: color.textMuted, fontFamily: font.sans }}>
+          {def?.blurb}
         </span>
-        <span style={{ fontSize: 11, color: color.textMuted, fontFamily: font.sans }}>{def?.blurb}</span>
-      </div>
+      }
+    >
       <div style={{ padding: "18px 18px 22px" }}>{children}</div>
-    </div>
+    </Panel>
   );
 }
