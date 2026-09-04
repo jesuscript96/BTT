@@ -3096,3 +3096,8 @@ pusheada — el diff es pequeño y autónomo (no toca motor ni backend).
 - **Arreglo conocido:** adaptar `fdb0b7c` — quitar el gate y resetear SIEMPRE al abrir (el diff original refería modos `builder_choice`/`wizard` que ya no existen; hay que adaptarlo a `builder`/`config` actuales). Decisión de Álvaro: aplicarlo en su rama o pedirlo a Jaume para staging.
 - **Código tocado:** NINGUNO (confirmado)
 - **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-04 · 01 → FIX EN RAMA ÁLVARO] «Nueva Estrategia» heredaba el borrador anterior
+- **Aplica/cierra (en esta rama):** ZCode con OK explícito de Álvaro. Adaptación del fix original de Adrian `fdb0b7c`: fuera el gate `hadSavedOrLoaded` — al ABRIR «Nueva Estrategia» se resetea SIEMPRE (`activeStrategy`/`builderDraft`/`draftStrategy`/`loadedStrategyId` a null → modo `builder`); si ya estaba abierto, colapsa a `config` como antes. Mismos pasos que el fix de Adrian, sin las referencias a `builder_choice`/`wizard` (modos ya borrados).
+- **Verificación:** `tsc --noEmit` 0 errores. Repro visual no posible en esta sesión (navegador embebido inestable): verificada la lógica por lectura — el reset ya no depende de `loadedStrategyId`, así que el caso "borrador sin guardar" queda cubierto igual que el de estrategia guardada. Pendiente confirmación de Álvaro en uso normal.
+- **Sigue ABIERTO PARA `staging`** (y por tanto para producción vía develop→main si el fix no se recoge allí): la línea sailor/staging no contiene `fdb0b7c` ni este cambio. Que Jaume lo recoja de aquí o reaplique `fdb0b7c` adaptado.

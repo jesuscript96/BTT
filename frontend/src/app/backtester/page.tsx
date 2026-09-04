@@ -1291,20 +1291,21 @@ export default function Home() {
             <BacktestPanel
               onRun={handleRun}
               onNewStrategy={() => {
-                const hadSavedOrLoaded = !!loadedStrategyId;
-                if (hadSavedOrLoaded) {
+                // "Nueva Estrategia" arranca SIEMPRE en blanco. Adaptado de
+                // fdb0b7c (perdido en el reinicio de staging del 2026-09-01):
+                // antes el reset estaba tras el gate loadedStrategyId y un
+                // borrador SIN guardar sobrevivía — el constructor heredaba la
+                // estrategia anterior.
+                const isOpening = mode !== 'builder';
+                if (isOpening) {
                   setActiveStrategy(null);
                   setBuilderDraft(null);
                   setDraftStrategy(null);
+                  setLoadedStrategyId(null);
+                  setMode('builder');
+                } else {
+                  setMode('config');
                 }
-                setLoadedStrategyId(null);
-                setMode((prev) => {
-                  const isOpening = prev !== 'builder';
-                  if (isOpening) {
-                    return 'builder';
-                  }
-                  return 'config';
-                });
               }}
               onNewDataset={() => setMode((prev) => (prev === 'dataset' ? 'config' : 'dataset'))}
               onParamsChange={handlePanelParamsChange}
