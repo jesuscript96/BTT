@@ -301,6 +301,12 @@ export interface WhatIfResult {
   global_equity: GlobalEquityPoint[];
   global_drawdown: DrawdownPoint[];
   aggregate_metrics: AggregateMetrics;
+  /** Resultados por ticker-día reconstruidos con los trades que quedan, para
+   *  el calendario del What-if. Los arma el BACKEND y no la página para que el
+   *  calendario del What-if y el de siempre no puedan decir cosas distintas
+   *  del mismo día. Sharpe, sortino y el drawdown intradía vienen en `null`:
+   *  salen de la curva del día, que aquí ya no existe. */
+  day_results?: DayResult[];
 }
 
 export interface MonteCarloPercentileCurve {

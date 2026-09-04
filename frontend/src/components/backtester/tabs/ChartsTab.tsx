@@ -28,6 +28,7 @@ import type { TradeRecord, DayResult, GlobalEquityPoint, DrawdownPoint, Aggregat
 import { runWhatIf } from "@/lib/api_backtester";
 import RollingEVChart from "@/components/backtester/RollingEVChart";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
+import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import { Zap, Shield, Loader2 } from "lucide-react";
 
 interface ChartsTabProps {
@@ -126,6 +127,13 @@ export default function ChartsTab({
   const [randomMonthlyDays, setRandomMonthlyDays] = useState<number>(0);
   const [dailyMaxTrades, setDailyMaxTrades] = useState<number>(0);
   const [maxConcurrentTrades, setMaxConcurrentTrades] = useState<number>(0);
+  /** Céntimos que el precio tiene que recorrer para que la mesa de fondeo dé
+   *  el trade por bueno. Se teclea en CÉNTIMOS (10) y viaja al backend en
+   *  DÓLARES (0.10), que es la unidad de los precios de los trades. */
+  const [minMoveCents, setMinMoveCents] = useState<number>(0);
+  /** El calendario de debajo del gráfico. Plegado por defecto: es para mirar
+   *  qué días se cayeron, no para tenerlo siempre delante. */
+  const [verCalendarioWhatIf, setVerCalendarioWhatIf] = useState(false);
 
   const [skipTopPct, setSkipTopPct] = useState<number>(0);
   const [extraSlippage, setExtraSlippage] = useState<number>(0);
@@ -199,6 +207,9 @@ export default function ChartsTab({
         random_monthly_days: randomMonthlyDays,
         daily_max_trades: dailyMaxTrades,
         max_concurrent_trades: maxConcurrentTrades,
+        // Se teclea en céntimos, viaja en dólares: los precios de los trades
+        // van en dólares y allí se compara contra ellos.
+        min_move_cents: minMoveCents > 0 ? minMoveCents / 100 : 0,
         skip_top_pct: skipTopPct,
         extra_slippage: extraSlippage,
         black_swan_count: blackSwanCount,
@@ -568,6 +579,25 @@ export default function ChartsTab({
                         className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
                       />
                     </div>
+                    {/* La regla de las mesas de fondeo. Va aquí, con los
+                        límites, porque es eso: un trade que no llega no cuenta. */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium inline-flex items-center gap-1">
+                        Cts. mín. que debe moverse:
+                        <InfoTooltip
+                          position="right"
+                          text="Regla de las cuentas de fondeo: un trade solo cuenta si el precio recorrió al menos estos céntimos. Se aplica SOLO a los ganadores — un short de 1,00 a 0,90 con el mínimo en 10 no cuenta ni en equity ni en drawdown, y a 0,89 cuenta el beneficio ENTERO, no el sobrante. Las pérdidas se cuentan siempre, se hayan movido lo que se hayan movido, que es lo que hace que la regla duela. Déjalo en 0 para no aplicarla."
+                        />
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={minMoveCents}
+                        onChange={(e) => setMinMoveCents(Number(e.target.value))}
+                        className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
+                      />
+                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Excluir días aleatorios/mes:</span>
                       <input
@@ -686,6 +716,53 @@ export default function ChartsTab({
               riskType={riskType}
               metrics={metrics}
             />
+
+            {/* ── El calendario, con las condiciones del What-if ──────────
+                La curva dice CUÁNTO se degrada; el calendario dice DÓNDE. Con
+                la regla de los céntimos eso es justo lo que hace falta: ver
+                qué días se quedaron sin sus ganadores y cuáles aguantan.
+
+                Es el MISMO componente que la pestaña Calendario, alimentado
+                con los `day_results` que devuelve el What-if. Si se
+                recalculara aquí, los dos calendarios podrían decir cosas
+                distintas del mismo día — el peor fallo posible en una
+                pantalla que existe para compararlos. */}
+            {simResult && (
+              <div className="mt-4 border-t border-[var(--color-ec-border)] pt-3">
+                <button
+                  onClick={() => setVerCalendarioWhatIf((v) => !v)}
+                  className="w-full flex items-center justify-between px-1 py-1.5 text-[11px] font-mono uppercase tracking-[0.12em] text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-high)] transition-colors"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]" />
+                    Calendario con estas condiciones
+                    <span className="text-[var(--color-ec-text-muted)] normal-case tracking-normal">
+                      ({(simResult.day_results?.length ?? 0)} días · {simResult.trades.length} trades)
+                    </span>
+                  </span>
+                  <span>{verCalendarioWhatIf ? "▲" : "▼"}</span>
+                </button>
+                {verCalendarioWhatIf && (
+                  simResult.day_results && simResult.day_results.length > 0 ? (
+                    <div className="mt-2">
+                      <CalendarTab
+                        dayResults={simResult.day_results}
+                        trades={simResult.trades}
+                        isDarkMode={isDarkMode}
+                        // SIN GASTOS MENSUALES a propósito: ya van metidos en
+                        // la curva del What-if cuando se piden, y volver a
+                        // restarlos aquí los cobraría dos veces.
+                        monthlyExpenses={0}
+                      />
+                    </div>
+                  ) : (
+                    <p className="mt-2 px-1 text-[11px] text-[var(--color-ec-text-muted)]">
+                      No queda ningún día con estas condiciones.
+                    </p>
+                  )
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
