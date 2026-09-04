@@ -3083,3 +3083,16 @@ los 2.799 trades reales del run auto-guardado `3aff85df` (Definitiva 2.3):
 
 **Para revisar (Jaime):** `git show 0e14921` en la rama de Álvaro cuando esté
 pusheada — el diff es pequeño y autónomo (no toca motor ni backend).
+
+### [HALLAZGO · 2026-09-04 · 01] «Nueva Estrategia» hereda los parámetros del borrador anterior — el fix de Adrian (fdb0b7c) se perdió con el reinicio de staging
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/backtester/page.tsx`, handler `onNewStrategy` (~línea 1293): el reset de `activeStrategy`/`builderDraft`/`draftStrategy` está tras el gate `if (hadSavedOrLoaded)`.
+- **Qué observé:** con un BORRADOR sin guardar como estado previo, pulsar «Nueva Estrategia» NO limpia nada y el constructor abre con los parámetros de la estrategia anterior. Con una estrategia guardada cargada sí resetea (por eso en la verificación del 2026-09-03 no se vio: arrancó con «Estrategia 1B» auto-cargada).
+- **Cómo reproducir:** Backtester → crear/modificar una estrategia SIN guardar (borrador) → pulsar «Nueva Estrategia» → el constructor abre heredando los parámetros del borrador en vez de en blanco.
+- **Evidencia:** el código actual es idéntico (en lógica) al pre-fix de `fdb0b7c` (Adrian Garcia, 2026-08-21, «fix(backtester): "Nueva Estrategia" arranca siempre en blanco (Config. libre heredaba la anterior)», reportado por cliente). Ese commit está en `main` y `develop` pero NO en `staging` ni en `alvaro-rama-desarrollo` (verificado con `git merge-base --is-ancestor`): el reinicio de staging del 2026-09-01 (base sailor) no descendía de él.
+- **Hipótesis de causa:** la reconstrucción de staging desde `sailor-rama-desarrollo` dejó fuera fixes de la línea develop/main; este es uno (puede que no el único — merece un barrido `git log main ^staging` para ver qué más se perdió).
+- **Impacto:** UX confusa y riesgo de correr backtests con parámetros heredados sin querer. Afecta a staging y a la rama de Álvaro por igual.
+- **Arreglo conocido:** adaptar `fdb0b7c` — quitar el gate y resetear SIEMPRE al abrir (el diff original refería modos `builder_choice`/`wizard` que ya no existen; hay que adaptarlo a `builder`/`config` actuales). Decisión de Álvaro: aplicarlo en su rama o pedirlo a Jaume para staging.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
