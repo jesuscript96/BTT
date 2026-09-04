@@ -11,6 +11,7 @@ import {
     BarChart3,
     ShieldCheck,
     Radio,
+    Dna,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -209,6 +210,21 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     >
                         <BarChart3 style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>Market Analysis</span>
+                    </Link>
+                )}
+
+                {/* Genetico — solo local: gated por NEXT_PUBLIC_GENETICO_ENABLED,
+                    apagado por defecto para que produccion no vea la entrada. */}
+                {process.env.NEXT_PUBLIC_GENETICO_ENABLED === "true" && (
+                    <Link
+                        href="/genetico"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/genetico"),
+                        }}
+                    >
+                        <Dna style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Genético</span>
                     </Link>
                 )}
 

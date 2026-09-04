@@ -325,6 +325,12 @@ app.include_router(bot_alerts.router, prefix="/api/bot-alerts", tags=["Bot Alert
 # (default OFF): en prod el status dice que no esta disponible, el boton no se
 # pinta y el POST responde 503.
 app.include_router(local_control.router, prefix="/api/local-control", tags=["Local Control"])
+# Algoritmo genetico de estrategias (pagina /genetico). Gated por
+# GENETICO_ENABLED (default OFF): el router no se registra siquiera. El
+# genetico corre en un proceso aparte (<repo>/genetico/); aqui solo se lanza.
+if os.getenv("GENETICO_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
+    from app.routers import genetico as _genetico
+    app.include_router(_genetico.router)
 
 @app.get("/health")
 def read_health():
