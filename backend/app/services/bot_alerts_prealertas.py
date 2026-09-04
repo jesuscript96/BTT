@@ -39,11 +39,55 @@ logger = logging.getLogger("btt.bot_alerts.prealertas")
 
 ET = ZoneInfo("America/New_York")
 
-# A partir de que segundo se mira. NO antes: la fiabilidad cae, y Jaume no
-# necesita mas de diez segundos de margen.
-SEGUNDO_DECISION = 50
+# A partir de que segundo se mira.
+#
+# ERA EL 50 HASTA EL 2026-09-04. Se bajo al 44 tras medir dos cosas que no se
+# sabian cuando se eligio el 50:
+#
+# 1. LA SENYAL SE CUMPLE MUCHO ANTES DE LO QUE SE CREIA. Sobre 30 dias y 33
+#    entradas de tick data, el segundo en que la vela a medias YA cumple:
+#
+#        mediana en el segundo 17   ·   9 de 33 ya cumplian en el segundo 5
+#
+#    O sea que esperabamos al 50 para ver algo que en la mitad de los casos
+#    llevaba treinta segundos hecho.
+#
+# 2. LA LATENCIA SE COME EL MARGEN. El agregado por segundo tarda ~3,7 s en
+#    llegar (medido sobre 25.408 mensajes el 2026-09-04: mediana 3,8 s, p99
+#    4,1 s, y un pico de 9,8 s). Un aviso del segundo 50 no da 10 s de margen:
+#    da 7,8 s hasta que llega la alerta de verdad, y en el pico daba 0,2 s.
+#
+# QUE SE GANA Y QUE SE PAGA, del mismo estudio (margen = de la prealerta en el
+# movil a la alerta confirmada; «en balde» = avisos que no acaban en operacion):
+#
+#     ventana    margen mediana    de cada N avisos, 1 opera
+#     50-59            7,8 s                 2,3
+#     44-59           13,8 s                 3,6      <- elegida
+#     40-59           17,8 s                 3,8
+#     30-59           27,8 s                 4,5
+#     20-59           37,8 s                 8,0
+#
+# La captura NO cambia (32 de 33 en todas): lo unico que se compra es tiempo.
+# Jaume, 2026-09-04: «si estoy en la cocina, ir rapido al ordenador y que me de
+# el suficiente tiempo de estar preparado; si se cuela alguna que no va a nada
+# no pasa nada, pero alguna que otra, no una barbaridad». Por eso el 44 y no el
+# 30: el estudio dice que el optimo esta en el 30, pero la cuenta de falsas del
+# estudio no cuadro con el primer dia en vivo (predecia ~4, hubo 0), asi que se
+# baja un escalon y se mide antes de seguir.
+#
+# NO SE BAJA MAS sin medirlo en vivo. Y hay tres cosas que ninguna ventana
+# arregla: 4 de 33 senyales se cumplen de verdad tarde (segundos 54, 55 y 59) y
+# llegaran siempre con menos de 5 s; una de ellas llega despues que su propia
+# alerta y la descarta `marcar_cerrada`.
+SEGUNDO_DECISION = 44
 
-# Se mira CADA SEGUNDO del 50 al 59, no una sola vez.
+# Se mira CADA SEGUNDO hasta el 59, no una sola vez.
+#
+# EL FINAL NO SE TOCA aunque los ultimos segundos den margen negativo. Un aviso
+# del segundo 55 llega 2,8 s antes que la alerta, que no sirve para prepararse
+# — pero la alternativa no es «un aviso mejor», es NINGUNO: esas senyales no
+# existian antes. Y el que llega tarde de verdad ya lo descarta
+# `marcar_cerrada`, asi que cerrar antes solo perderia entradas.
 #
 # Mirar una sola vez pierde las senyales que se cumplen despues del 50, y esas
 # llegan al cierre con margen CERO. Medido sobre tick data (12 dias, 14
