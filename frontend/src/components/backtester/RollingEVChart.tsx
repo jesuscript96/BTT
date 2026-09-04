@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import {
     createChart,
     BaselineSeries,
+    LineSeries,
     ColorType,
     type IChartApi,
     type Time,
@@ -72,6 +73,15 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
      *  para decidir si compensan los locates: se compara con el fade, que
      *  también va en % del precio. */
     const [unidad, setUnidad] = useState<Unidad>("R");
+    /** «MEDIA MADRE»: media móvil SOBRE la curva del rolling, para ver la
+     *  tendencia de fondo sin el zigzag. 0 = apagada.
+     *
+     *  Es una media de una media, y eso está bien AQUÍ y mal en el cálculo del
+     *  EV: allí promediar EV diarios daba peso igual a un día de una operación
+     *  y a uno de diez (era el bug del modo «días»). Esta suaviza una curva ya
+     *  calculada, que es otra cosa — no cambia ningún EV, solo dibuja encima. */
+    const [mm, setMm] = useState(0);
+    const [mmInput, setMmInput] = useState("0");
 
     useEffect(() => {
         setInputValue(String(rollingWindow));
@@ -135,6 +145,18 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     }, [trades, rollingWindow, basis, unidad]);
 
 
+
+    /** La curva suavizada. Media móvil simple de los últimos `mm` puntos. */
+    const mmData = useMemo(() => {
+        if (mm < 2 || evData.length < mm) return [];
+        const out: { time: Time; value: number }[] = [];
+        for (let i = mm - 1; i < evData.length; i++) {
+            let suma = 0;
+            for (let j = i - mm + 1; j <= i; j++) suma += evData[j].value;
+            out.push({ time: evData[i].time, value: suma / mm });
+        }
+        return out;
+    }, [evData, mm]);
 
     useEffect(() => {
         if (!containerRef.current || !evData.length) return;
@@ -213,6 +235,19 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
         });
         series.setData(evData);
 
+        // La media madre, encima y en cobre: es una lectura de apoyo, no el
+        // dato. Línea fina para que no compita con la curva real.
+        if (mmData.length) {
+            const smm = chart.addSeries(LineSeries, {
+                color: "#D87A3D",
+                lineWidth: 1,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                crosshairMarkerVisible: false,
+            });
+            smm.setData(mmData);
+        }
+
         // Ensure the full history is visible
         chart.timeScale().fitContent();
 
@@ -236,7 +271,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
             chart.remove();
             chartRef.current = null;
         };
-    }, [evData, isDarkMode]);
+    }, [evData, mmData, isDarkMode]);
 
     return (
         <div className="flex flex-col h-full transition-colors">
@@ -289,6 +324,35 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                                 {label}
                             </button>
                         ))}
+                    </div>
+                    {/* MEDIA MADRE: media móvil SOBRE la curva del rolling,
+                        en cobre y fina. Sirve para ver la tendencia de fondo sin
+                        el zigzag — con ventanas cortas la curva baila y cuesta
+                        decidir si la estrategia va a mejor o a peor. 0 = apagada.
+
+                        Vale para los dos modos (T y D): suaviza la curva ya
+                        calculada, no vuelve a promediar operaciones. */}
+                    <div className="flex items-center gap-1">
+                        <span
+                            className="text-[8px] text-[var(--color-ec-copper)] font-mono font-bold"
+                            title="Media Madre: media móvil sobre la curva, para ver la tendencia sin el zigzag. 0 la apaga."
+                        >MM</span>
+                        <input
+                            type="number"
+                            value={mmInput}
+                            min={0}
+                            max={200}
+                            onChange={(e) => {
+                                const v = e.target.value;
+                                setMmInput(v);
+                                const n = parseInt(v);
+                                setMm(!isNaN(n) && n >= 2 && n <= 200 ? n : 0);
+                            }}
+                            onBlur={() => setMmInput(String(mm || 0))}
+                            title="Periodo de la media madre (0 = apagada)"
+                            className="w-9 text-[10px] border-none bg-transparent text-center font-mono text-[var(--foreground)] outline-none"
+                            style={{ borderBottom: '1px solid var(--color-ec-border)' }}
+                        />
                     </div>
                     <div className="flex items-center gap-1">
                         <span className="text-[8px] text-[var(--color-ec-text-secondary)] font-mono">W</span>

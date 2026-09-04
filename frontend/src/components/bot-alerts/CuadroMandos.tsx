@@ -161,7 +161,7 @@ const hora = (m: string) => (m || "").slice(11, 16);
 
 /** ¿Compensa alquilar los locates de esta acción?
  *
- *      fade necesario (%) = (coste de 100 acc / 100) / precio × 100
+ *      fade necesario (%) = coste por acción / precio × 100
  *      compensa           ⟺  EV (%) > fade necesario (%)
  *
  * EL TAMAÑO NO ENTRA. Ganancia esperada y coste escalan los dos con el número
@@ -172,17 +172,17 @@ const hora = (m: string) => (m || "").slice(11, 16);
  * cobran por lotes de 100 redondeando hacia ARRIBA, así que 150 acciones pagan
  * 2 paquetes y el coste real por acción sube un 33 %. Con 1.600 es ruido.
  */
-function ventajaLocates(precio: number | null, coste100: number, evPct: number,
+function ventajaLocates(precio: number | null, costeAccion: number, evPct: number,
                         acciones?: number | null) {
-  if (!precio || precio <= 0 || !coste100 || !evPct) return null;
-  // `coste100` son los DÓLARES QUE CUESTAN 100 ACCIONES — la misma unidad que
-  // el campo «$ Locate / 100 acc.» del backtester. Si aquí fuera por acción y
-  // allí por paquete, el mismo número en los dos sitios daría resultados CIEN
-  // veces distintos.
-  let costeReal = coste100 / 100;
+  if (!precio || precio <= 0 || !costeAccion || !evPct) return null;
+  // `costeAccion` es el precio del locate POR ACCIÓN — el que enseña el bróker,
+  // que es lo que tienes delante al decidir. (El campo del backtester pide el
+  // del PAQUETE de 100 porque allí el dato se rellena una vez: un locate de 1 $
+  // el paquete son 0,01 $ la acción.)
+  let costeReal = costeAccion;
   if (acciones && acciones > 0) {
     const paquetes = Math.ceil(acciones / 100);
-    costeReal = (paquetes * coste100) / acciones;
+    costeReal = (paquetes * 100 * costeAccion) / acciones;
   }
   const fade = (costeReal / precio) * 100;
   return { fade, ev: evPct, margen: evPct - fade, compensa: evPct > fade };
@@ -1087,7 +1087,7 @@ export default function CuadroMandos() {
                   Se teclean los dos (coste del locate y EV de la estrategia)
                   y el veredicto se recalcula con cada tick, porque el precio
                   llega por el mismo WebSocket que alimenta el radar. */}
-              <Th num ancho={96}>Locate $/100</Th>
+              <Th num ancho={96}>Locate $/acc</Th>
               <Th ancho={250}>Ventaja matemática</Th>
             </tr>
           </thead>
@@ -1133,10 +1133,10 @@ export default function CuadroMandos() {
                     <>
                       <Td num>
                         <CampoNum
-                          valor={cfg.coste} paso={0.5}
+                          valor={cfg.coste} paso={0.005}
                           onChange={(x) => ponLocate(c.ticker, "coste", x)}
                           onBlur={() => {}}
-                          titulo="Lo que cuestan 100 acciones, igual que en el backtester."
+                          titulo="Precio del locate POR ACCIÓN, el que da el bróker. Si el paquete de 100 vale 1 $, pon 0,01."
                         />
                       </Td>
                       <Td>

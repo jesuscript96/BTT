@@ -73,8 +73,10 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
                       ev_del_cuadro: bool = False) -> str:
     """El mensaje de `/evf`, listo para mandar.
 
-    `coste` son los DOLARES QUE CUESTAN 100 ACCIONES, la misma unidad que el
-    campo «$ Locate / 100 acc.» del backtester.
+    `coste` es el precio del locate POR ACCION — el que enseña el broker, que
+    es lo que tienes delante cuando decides. El campo del backtester pide el del
+    PAQUETE de 100 porque alli el dato se rellena una vez y viene de otro sitio:
+    un locate de 1 $ el paquete son 0,01 $ la accion.
 
     `acciones` es opcional y solo sirve para el redondeo a paquetes de 100: se
     cobran hacia ARRIBA, asi que 150 acciones pagan 2 paquetes y el coste real
@@ -88,20 +90,22 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
     if not precio or precio <= 0:
         return f"<b>{ticker}</b>: no tengo precio en vivo. ¿Esta en el radar?"
     if coste <= 0 or ev_pct <= 0:
-        return ("Faltan datos. Uso: <code>/evf TICKER COSTE_100 EV%</code>\n"
-                "El coste es el de 100 acciones, igual que en el backtester.\n"
-                "Ejemplo: <code>/evf MIMI 1.00 2.4</code>")
+        return ("Faltan datos. Uso: <code>/evf TICKER COSTE EV%</code>\n"
+                "COSTE = precio del locate POR ACCIÓN, el que da el bróker.\n"
+                "Ejemplo: <code>/evf MIMI 0.01 6.4</code>")
 
-    # `coste` son los DOLARES QUE CUESTAN 100 ACCIONES — la misma unidad que el
-    # campo «$ Locate / 100 acc.» del backtester. Se pide asi a proposito: si
-    # aqui fuera por accion y alli por paquete, el mismo numero en los dos
-    # sitios daria resultados CIEN VECES distintos.
-    coste_real = coste / 100.0
+    # `coste` es el precio del locate POR ACCIÓN — lo que enseña el broker en el
+    # momento de decidir, que es cuando se usa este comando. (El campo del
+    # backtester pide el del PAQUETE de 100: alli el dato viene de otra parte y
+    # se rellena una vez. Un locate de 1 $ el paquete son 0,01 $ la accion.)
+    coste_real = coste
     nota = ""
     if acciones and acciones > 0:
+        # Los paquetes se cobran enteros: 150 acciones pagan 2 paquetes, asi que
+        # el coste REAL por accion sube. Con posiciones grandes es ruido.
         paquetes = -(-int(acciones) // 100)          # techo
-        coste_real = (paquetes * coste) / acciones
-        if coste_real > (coste / 100.0) * 1.02:
+        coste_real = (paquetes * 100 * coste) / acciones
+        if coste_real > coste * 1.02:
             nota = (f"\n<i>({paquetes} paquetes para {int(acciones)} acciones: "
                     f"el locate real sale a {coste_real:.4f} $/acción)</i>")
 
@@ -126,7 +130,7 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
     origen = ("del cuadro de mandos" if ev_del_cuadro else "el que has escrito")
     return (
         f"<b>{ticker}</b> a {precio:.4f} $\n"
-        f"locate {coste:.2f} $/100 acc  →  fade necesario <b>{fade:.4f} %</b>\n\n"
+        f"locate {coste:.4f} $/acción  →  fade necesario <b>{fade:.4f} %</b>\n\n"
         f"<b>{POSITIVA if bien else NEGATIVA}</b>\n"
         f"{frase}\n"
         f"<i>margen {margen:+.4f} pp · basado en un EV del "
@@ -139,12 +143,14 @@ AYUDA = (
 
     "<code>/evf TICKER COSTE [EV%]</code>\n"
     "¿Compensa alquilar los locates de esa acción?\n\n"
-    "· <b>COSTE</b> = precio del locate por <b>cada 100 acciones</b>, en $.\n"
-    "  El mismo número del campo «$ Locate / 100 acc.» del backtester.\n"
-    "  Si te cobran 3 $ por cada 100 acciones, escribes <code>3</code>.\n"
+    "· <b>COSTE</b> = precio del locate <b>POR ACCIÓN</b>, tal cual te lo da\n"
+    "  el bróker. Si el locate entero (100 acciones) vale 1 $, escribes\n"
+    "  <code>0.01</code>.\n"
+    "  <i>Ojo: el campo del backtester pide el del paquete de 100 — allí\n"
+    "  ese mismo locate se mete como 1.</i>\n"
     "· <b>EV%</b> = opcional. Sin él uso el de la columna EV del cuadro de\n"
     "  mandos. Ponlo solo para probar otro valor.\n\n"
-    "  <code>/evf MIMI 3</code>   ·   <code>/evf MIMI 3 6.4</code>\n\n"
+    "  <code>/evf MIMI 0.01</code>   ·   <code>/evf MIMI 0.01 6.4</code>\n\n"
 
     "<code>/ayuda</code> — esto"
 )
