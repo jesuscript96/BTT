@@ -751,6 +751,8 @@ export default function ChartsTab({
                         isDarkMode={isDarkMode}
                         riskR={riskR}
                         riskType={riskType}
+                        globalEquity={simResult.global_equity}
+                        initCash={initCash}
                         // SIN GASTOS MENSUALES a propósito: ya van metidos en
                         // la curva del What-if cuando se piden, y volver a
                         // restarlos aquí los cobraría dos veces.

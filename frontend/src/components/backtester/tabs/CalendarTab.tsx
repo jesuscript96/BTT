@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { DayResult, TradeRecord } from "@/lib/api_backtester";
+import type { DayResult, GlobalEquityPoint, TradeRecord } from "@/lib/api_backtester";
 import { EXIT_COLORS } from "@/components/backtester/tabs/TradesTab";
 
 interface CalendarTabProps {
@@ -10,14 +10,15 @@ interface CalendarTabProps {
   isDarkMode?: boolean;
   monthlyExpenses?: number;
   onSelectTrade?: (ticker: string, date: string) => void;
-  /** Los dólares que vale 1 R: el «Riesgo fijo $» del panel de la izquierda.
-   *  Sin él (o a cero) el conmutador de unidad no aparece — no hay entre qué
-   *  convertir. */
+  /** El riesgo del panel de la izquierda. Con «Fixed Amount» son DÓLARES (1 R
+   *  vale eso siempre); con «Percentage» es el PORCENTAJE del balance que se
+   *  arriesga, y entonces 1 R vale distinto cada día. */
   riskR?: number;
-  /** El modo de riesgo del panel. Solo con «Fixed Amount» vale una R fija en
-   *  dólares; con porcentaje de equity, 1 R cambia con la cuenta y dividir por
-   *  un número único daría un resultado inventado. */
   riskType?: string;
+  /** La curva de equity diaria, para saber con qué balance empezó cada día.
+   *  Solo hace falta con riesgo porcentual. */
+  globalEquity?: GlobalEquityPoint[];
+  initCash?: number;
 }
 
 type ModoVista = "profits" | "gastos" | "net";
@@ -40,44 +41,80 @@ function formatPnl(pnl: number, isGastos = false): string {
   return `${sign} $${abs.toFixed(2)}`;
 }
 
-/** El valor de una casilla, en la unidad elegida.
+/** El valor de una casilla ya convertido, con su sufijo.
  *
  *  En R se escribe como múltiplo y NUNCA con el «$» delante: un «$1,50 R» es
  *  justo la confusión que haría leer el mes entero mal.
- *
- *  La conversión es dividir entre lo que vale 1 R, que es el riesgo fijo del
- *  panel. No se usa `r_multiple` del trade a propósito: ese solo existe para
- *  las operaciones, y así los GASTOS también se pueden leer en R —«este mes me
- *  he dejado 3,4 R en comisiones» dice bastante más que un número en dólares
- *  suelto—. Además `r_multiple` viene redondeado a dos decimales del motor, y
- *  sumarlo por días arrastraría ese redondeo.
  */
-function formatValor(v: number, modo: ModoVista, unidad: Unidad, valorR: number): string {
-  if (unidad === "dinero" || !valorR) return formatPnl(v, modo === "gastos");
-  const r = v / valorR;
-  if (modo === "gastos") return `${Math.abs(r).toFixed(2)} R`;
-  return `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)} R`;
+function formatValor(v: number, modo: ModoVista, unidad: Unidad): string {
+  if (unidad === "dinero") return formatPnl(v, modo === "gastos");
+  if (modo === "gastos") return `${Math.abs(v).toFixed(2)} R`;
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)} R`;
+}
+
+/** El día (YYYY-MM-DD) de un punto de la curva de equity.
+ *
+ *  Los puntos vienen en epoch de UTC a medianoche, así que se lee en UTC: con
+ *  `new Date(...).getDate()` en un huso al oeste, el 5 de enero se leería como
+ *  el 4 y la R se asignaría al día anterior.
+ */
+function diaDeEpoch(epoch: number): string {
+  return new Date(epoch * 1000).toISOString().slice(0, 10);
+}
+
+/** Lo que vale 1 R, en dólares, para cada día operado.
+ *
+ *  DOS CASOS, y el segundo es el que pidió Jaume (2026-09-04: «si pongo % de
+ *  equity no debería dar problema tampoco, simplemente evoluciona la R con la
+ *  cuenta»). Tenía razón: la R no desaparece, cambia.
+ *
+ *   · Riesgo fijo   → 1 R vale lo mismo todos los días.
+ *   · % de equity   → el motor arriesga ese % del balance de APERTURA del día,
+ *                     así que 1 R es constante DENTRO de un día y cambia de un
+ *                     día a otro. El balance de apertura es el punto ANTERIOR
+ *                     de la curva diaria; el del primer día es el capital
+ *                     inicial. Es la misma cuenta que hace `r_precise` en
+ *                     `robustness_service.py`, verificada allí contra una
+ *                     corrida real con un 0,000009 % de desvío.
+ *
+ *  Que 1 R sea constante dentro del día es lo que hace que esto encaje en un
+ *  calendario: se convierte cada día por su R y luego se suman las R para la
+ *  semana y el mes. Sumar dólares y dividir al final por una R «media» daría
+ *  otro número, y no el bueno.
+ */
+function valorRPorDia(
+  dias: string[], riskR: number, riskType: string | undefined,
+  globalEquity: GlobalEquityPoint[], initCash: number,
+): Map<string, number> {
+  const m = new Map<string, number>();
+  const esPct = riskType === "Percentage";
+  if (!esPct) {
+    for (const d of dias) m.set(d, riskR);
+    return m;
+  }
+  const frac = riskR / 100;
+  let previo = initCash;
+  for (const p of globalEquity) {
+    if (p?.time == null) continue;
+    m.set(diaDeEpoch(p.time), frac * previo);      // apertura = cierre del anterior
+    previo = Number(p.value) || previo;
+  }
+  return m;
 }
 
 export default function CalendarTab({
   dayResults, trades, monthlyExpenses = 0, onSelectTrade, riskR = 0, riskType,
+  globalEquity = [], initCash = 0,
 }: CalendarTabProps) {
   const [viewMode, setViewMode] = useState<ModoVista>("profits");
   /** Dinero o múltiplos de riesgo. Eje aparte del modo: los tres modos se
    *  pueden mirar en las dos unidades. */
   const [unidad, setUnidad] = useState<Unidad>("dinero");
 
-  /** Lo que vale 1 R en dólares. Cero = no se puede convertir, y entonces el
-   *  conmutador ni se enseña.
-   *
-   *  SOLO CON RIESGO FIJO. Con «% de equity» el valor de 1 R cambia con la
-   *  cuenta —y con composición, en cada operación—, así que dividir todo el
-   *  historial por un número único daría una cifra que parece una R y no lo
-   *  es. Antes que enseñar eso, no se ofrece. */
-  const valorR = (!riskType || riskType === "Fixed Amount") && riskR > 0 ? riskR : 0;
-  const puedeR = valorR > 0;
-  // Si el panel cambia a % de equity con «R» puesto, se vuelve a dinero solo:
-  // dejarlo en R pintaría dólares con una «R» detrás.
+  const esPct = riskType === "Percentage";
+  /** Con riesgo porcentual hace falta la curva para saber con qué balance
+   *  empezó cada día; sin ella no se puede convertir y no se ofrece. */
+  const puedeR = riskR > 0 && (!esPct || globalEquity.length > 0);
   const unidadReal: Unidad = puedeR ? unidad : "dinero";
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
@@ -141,8 +178,25 @@ export default function CalendarTab({
       }
     }
 
+    // 3. A múltiplos de riesgo, si toca.
+    //
+    // SE CONVIERTE AQUÍ, POR DÍA, y no al pintar. Con riesgo porcentual 1 R
+    // vale distinto cada día, así que la R de una semana es la SUMA de las R
+    // de sus días — no el dinero de la semana partido por una R «media», que
+    // daría otro número. Convirtiendo aquí, las sumas de semana y mes que
+    // vienen después salen bien solas y no hay que tocarlas.
+    if (unidadReal === "r") {
+      const rs = valorRPorDia([...map.keys()], riskR, riskType, globalEquity, initCash);
+      for (const [d, v] of map) {
+        const r = rs.get(d) || 0;
+        // Sin R para ese día (un hueco en la curva) se deja a 0 en vez de
+        // dividir por cero: mejor una casilla vacía que un Infinity.
+        map.set(d, { ...v, pnl: r > 0 ? v.pnl / r : 0 });
+      }
+    }
+
     return map;
-  }, [trades, viewMode, monthlyExpenses]);
+  }, [trades, viewMode, monthlyExpenses, unidadReal, riskR, riskType, globalEquity, initCash]);
 
   const months = useMemo(() => {
     const set = new Set<string>();
@@ -210,13 +264,15 @@ export default function CalendarTab({
         {puedeR && (
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, paddingBottom: 6 }}>
             <span
-              title={`1 R = ${valorR.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $, el riesgo fijo del panel de la izquierda.`}
+              title={esPct
+                ? `1 R = ${riskR} % del balance con el que empieza cada día, así que vale distinto cada día: el motor dimensiona así. La R de una semana es la suma de las R de sus días.`
+                : `1 R = ${riskR.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $, el riesgo fijo del panel de la izquierda.`}
               style={{
                 fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase",
                 fontFamily: "var(--font-sans)", color: "var(--color-ec-text-muted)",
                 cursor: "help",
               }}
-            >1 R = ${valorR.toFixed(0)}</span>
+            >{esPct ? `1 R = ${riskR} % diario` : `1 R = $${riskR.toFixed(0)}`}</span>
             <div style={{ display: "flex", border: "1px solid var(--color-ec-border)", borderRadius: 2 }}>
               {(["dinero", "r"] as const).map((u, i) => (
                 <button
@@ -311,7 +367,7 @@ export default function CalendarTab({
                       fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
                       color: mColor,
                     }}>
-                      {formatValor(monthPnl, viewMode, unidadReal, valorR)}
+                      {formatValor(monthPnl, viewMode, unidadReal)}
                     </span>
                   )}
                 </div>
@@ -435,7 +491,7 @@ export default function CalendarTab({
                                   fontSize: 9, fontWeight: 700, color: accentColor, letterSpacing: "-0.02em",
                                   fontFamily: "monospace", lineHeight: 1,
                                 }}>
-                                  {formatValor(day.pnl!, viewMode, unidadReal, valorR)}
+                                  {formatValor(day.pnl!, viewMode, unidadReal)}
                                 </span>
                                 <span style={{
                                   fontSize: 7.5, fontWeight: 600, color: accentColor, opacity: 0.75,
@@ -481,7 +537,7 @@ export default function CalendarTab({
                                 ? (wHasGastos ? "var(--color-ec-loss)" : "var(--color-ec-text-muted)")
                                 : (wIsWin ? "var(--color-ec-profit)" : "var(--color-ec-loss)"),
                             }}>
-                              {formatValor(wPnl, viewMode, unidadReal, valorR)}
+                              {formatValor(wPnl, viewMode, unidadReal)}
                             </span>
                             <span style={{
                               fontSize: 7, fontWeight: 600, lineHeight: 1, opacity: 0.7,

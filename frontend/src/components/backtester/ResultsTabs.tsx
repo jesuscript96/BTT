@@ -290,6 +290,8 @@ export default function ResultsTabs({
             onSelectTrade={handleSelectTrade}
             riskR={riskR}
             riskType={backtestParams?.risk_type as string}
+            globalEquity={result.global_equity}
+            initCash={initCash}
           />
           )}
         </div>
