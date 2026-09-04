@@ -637,6 +637,12 @@ export default function BacktestPanel({
     if (activeStrategy?.id && activeStrategy.id !== lastActiveStrategyRef.current) {
       setSelectedStrategy(activeStrategy.id);
       lastActiveStrategyRef.current = activeStrategy.id;
+    } else if (!activeStrategy?.id && lastActiveStrategyRef.current) {
+      // «Nueva Estrategia»: la página limpia el estado (activeStrategy y
+      // builderDraft a null) y el desplegable también vuelve a blanco —
+      // antes conservaba el último nombre seleccionado.
+      setSelectedStrategy("");
+      lastActiveStrategyRef.current = null;
     }
   }, [activeStrategy]);
 
@@ -899,6 +905,9 @@ export default function BacktestPanel({
                 cursor: 'pointer',
               }}
             >
+              {!selectedStrategy && (
+                <option value="">cargar estrategia guardada…</option>
+              )}
               {isDraft && activeStrategy && (
                 <option value={selectedStrategy}>
                   [Borrador] {activeStrategy.name}
