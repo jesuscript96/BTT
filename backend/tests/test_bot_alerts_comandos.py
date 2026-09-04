@@ -125,7 +125,12 @@ def test_el_veredicto_siempre_con_las_mismas_palabras():
     Es lo que se lee de un vistazo en el móvil; si cambiara de forma habría que
     leerse la frase entera para saber de qué lado cae.
     """
-    vistos = {veredicto_locates("MIMI", 0.8422, 0.010, 2.4).split("\n")[4]
+    # La línea del veredicto se busca por su CONTENIDO, no por su posición: el
+    # formato del mensaje cambia y el test no debe romperse por eso.
+    def linea_veredicto(t: str) -> str:
+        return next(l for l in t.split("\n") if POSITIVA in l or NEGATIVA in l)
+
+    vistos = {linea_veredicto(veredicto_locates("MIMI", 0.8422, 1.00, 2.4))
               for _ in range(40)}
     assert vistos == {f"<b>{POSITIVA}</b>"}
 
@@ -143,3 +148,18 @@ def test_el_coste_es_el_de_100_ACCIONES_como_en_el_backtester():
     # El ejemplo del propio backtester: 3 $ el locate.
     r = veredicto_locates("MIMI", 0.8422, 3.00, 2.4)
     assert "3.56" in r and NEGATIVA in r
+
+
+def test_la_respuesta_dice_de_donde_sale_el_ev():
+    """El veredicto depende POR COMPLETO de ese número, así que hay que poder
+    ver cuál se ha usado sin abrir la aplicación."""
+    del_cuadro = responder("/evf MIMI 1.00", precio_de, 2.4)
+    escrito = responder("/evf MIMI 1.00 5.0", precio_de, 2.4)
+    assert "del cuadro de mandos" in del_cuadro and "2.4000" in del_cuadro
+    assert "el que has escrito" in escrito and "5.0000" in escrito
+
+
+def test_la_ayuda_explica_la_unidad_del_locate():
+    """Es la que se confunde: 3 $ por CADA 100 acciones, no por acción."""
+    assert "100 acciones" in AYUDA
+    assert "Locate / 100 acc." in AYUDA      # el nombre del campo del backtester

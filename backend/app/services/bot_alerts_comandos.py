@@ -69,12 +69,21 @@ _FRASES_NO = [
 
 
 def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
-                      ev_pct: float, acciones: Optional[float] = None) -> str:
+                      ev_pct: float, acciones: Optional[float] = None,
+                      ev_del_cuadro: bool = False) -> str:
     """El mensaje de `/evf`, listo para mandar.
+
+    `coste` son los DOLARES QUE CUESTAN 100 ACCIONES, la misma unidad que el
+    campo «$ Locate / 100 acc.» del backtester.
 
     `acciones` es opcional y solo sirve para el redondeo a paquetes de 100: se
     cobran hacia ARRIBA, asi que 150 acciones pagan 2 paquetes y el coste real
     por accion sube un 33 %. Con posiciones grandes es ruido.
+
+    `ev_del_cuadro` dice si el EV venia del cuadro de mandos o lo escribio
+    Jaume en el mensaje. Se ENSENYA en la respuesta a proposito: el veredicto
+    depende por completo de ese numero, y hay que poder ver cual se ha usado
+    sin abrir la aplicacion.
     """
     if not precio or precio <= 0:
         return f"<b>{ticker}</b>: no tengo precio en vivo. ¿Esta en el radar?"
@@ -114,22 +123,29 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
     # OJO, esto NO afecta al redondeo de los paquetes de 100 de mas arriba: ese
     # no es formato, es el coste real que cobra el broker. Quitarlo si seria
     # infraestimar.
+    origen = ("del cuadro de mandos" if ev_del_cuadro else "el que has escrito")
     return (
         f"<b>{ticker}</b> a {precio:.4f} $\n"
-        f"fade necesario: <b>{fade:.4f} %</b>\n"
-        f"tu EV: <b>{ev_pct:.4f} %</b>\n\n"
+        f"locate {coste:.2f} $/100 acc  →  fade necesario <b>{fade:.4f} %</b>\n\n"
         f"<b>{POSITIVA if bien else NEGATIVA}</b>\n"
         f"{frase}\n"
-        f"<i>margen {margen:+.4f} pp</i>{nota}"
+        f"<i>margen {margen:+.4f} pp · basado en un EV del "
+        f"{ev_pct:.4f} % ({origen})</i>{nota}"
     )
 
 
 AYUDA = (
-    "<b>Comandos</b>\n"
-    "<code>/evf TICKER COSTE_100 [EV%]</code> — ¿compensan los locates?\n"
-    "   COSTE_100 = lo que cuestan 100 acciones, como en el backtester\n"
-    "   el EV sale del cuadro de mandos; escríbelo solo para probar otro\n"
-    "   ej. <code>/evf MIMI 1.00</code>  ·  <code>/evf MIMI 1.00 2.4</code>\n"
+    "<b>COMANDOS</b>\n\n"
+
+    "<code>/evf TICKER COSTE [EV%]</code>\n"
+    "¿Compensa alquilar los locates de esa acción?\n\n"
+    "· <b>COSTE</b> = precio del locate por <b>cada 100 acciones</b>, en $.\n"
+    "  El mismo número del campo «$ Locate / 100 acc.» del backtester.\n"
+    "  Si te cobran 3 $ por cada 100 acciones, escribes <code>3</code>.\n"
+    "· <b>EV%</b> = opcional. Sin él uso el de la columna EV del cuadro de\n"
+    "  mandos. Ponlo solo para probar otro valor.\n\n"
+    "  <code>/evf MIMI 3</code>   ·   <code>/evf MIMI 3 6.4</code>\n\n"
+
     "<code>/ayuda</code> — esto"
 )
 
@@ -171,7 +187,8 @@ def responder(texto: str, precio_de: Callable[[str], Optional[float]],
                 return ("No tengo EV. Ponlo en el cuadro de mandos (columna "
                         "<b>EV %</b> de la estrategia) o escríbelo aquí:\n"
                         "<code>/evf TICKER COSTE_100 EV%</code>")
-            return veredicto_locates(ticker, precio_de(ticker), coste, ev, acciones)
+            return veredicto_locates(ticker, precio_de(ticker), coste, ev,
+                                     acciones, ev_del_cuadro=len(partes) <= 3)
 
         return None      # comando desconocido: mejor callarse que dar la lata
     except (ValueError, IndexError):
