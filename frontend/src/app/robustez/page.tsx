@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { color, font, radius } from "@/components/ui/tokens";
+import { color, font } from "@/components/ui/tokens";
+import { Panel } from "@/components/ui";
 import StrategyPicker from "@/components/robustez/StrategyPicker";
 import ModuleRail, { type ModuleId } from "@/components/robustez/ModuleRail";
 import ResultsPanel from "@/components/robustez/ResultsPanel";
@@ -136,42 +137,20 @@ export default function RobustezPage() {
         </div>
       )}
 
-      {/* ── Cuadro 1: estrategias guardadas ── */}
-      <section
-        style={{
-          background: color.bgSurface,
-          border: `0.5px solid ${color.border}`,
-          borderRadius: radius.md,
-          overflow: "hidden",
-          marginBottom: 18,
-        }}
-      >
-        <div
-          style={{
-            padding: "10px 16px",
-            borderBottom: `0.5px solid ${color.border}`,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 12,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 10,
-              letterSpacing: "0.11em",
-              textTransform: "uppercase",
-              color: color.copper,
-              fontFamily: font.sans,
-            }}
-          >
-            Estrategias guardadas
-          </span>
+      {/* ── Cuadro 1: estrategias guardadas ──
+          Usa el primitivo `Panel` del sistema (el estilo denso que estrenó el
+          Genético): sin radio, cabecera propia y menos alto. Antes era una
+          sección escrita a mano aquí mismo, con sus px y su radio sueltos. */}
+      <Panel
+        titulo="Estrategias guardadas"
+        sinRelleno
+        style={{ marginBottom: 18 }}
+        extra={
           <span style={{ fontSize: 11, color: color.textMuted, fontFamily: font.sans }}>
             {loadingList ? "cargando…" : "pulsa una para ver sus condiciones y analizarla"}
           </span>
-        </div>
-
+        }
+      >
         {loadingList ? (
           <div style={{ padding: "26px 20px", textAlign: "center", fontSize: 13, color: color.textMuted, fontFamily: font.sans }}>
             Cargando estrategias…
@@ -185,7 +164,7 @@ export default function RobustezPage() {
             loadingRunFor={loadingRunFor}
           />
         )}
-      </section>
+      </Panel>
 
       {/* ── Cuadros 2 y 3: configuracion | visualizacion ── */}
       <div
