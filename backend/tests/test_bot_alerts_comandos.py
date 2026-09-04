@@ -17,8 +17,9 @@ precio_de = PRECIOS.get
 # ── El cálculo ───────────────────────────────────────────────────────────
 
 def test_compensa_cuando_el_ev_supera_al_fade():
-    # fade = 0,010 / 0,8422 × 100 = 1,19 % < EV 2,4 %
-    r = veredicto_locates("MIMI", 0.8422, 0.010, 2.4)
+    # El coste es el de 100 ACCIONES, como en el backtester.
+    # fade = (1,00/100) / 0,8422 × 100 = 1,19 % < EV 2,4 %
+    r = veredicto_locates("MIMI", 0.8422, 1.00, 2.4)
     assert POSITIVA in r
     assert "1.187" in r         # el fade se enseña, no solo el veredicto
 
@@ -27,8 +28,8 @@ def test_no_se_redondea_el_veredicto_al_filo():
     """CUATRO decimales. Con dos, este caso salía «margen +0,00 pp» y no había
     forma de saber de qué lado caía — en una decisión de comprar o no comprar,
     el signo no se puede perder en el formato (Jaume, 2026-09-03)."""
-    justo = veredicto_locates("MIMI", 0.8422, 0.0202, 2.4)     # +0,0015 pp
-    apenas = veredicto_locates("MIMI", 0.8422, 0.0203, 2.4)    # −0,0104 pp
+    justo = veredicto_locates("MIMI", 0.8422, 2.02, 2.4)     # +0,0015 pp
+    apenas = veredicto_locates("MIMI", 0.8422, 2.03, 2.4)    # −0,0104 pp
     assert POSITIVA in justo and NEGATIVA in apenas
     # …y el margen se lee, no sale como 0,00 en los dos.
     assert "+0.0015" in justo
@@ -36,25 +37,25 @@ def test_no_se_redondea_el_veredicto_al_filo():
 
 
 def test_no_compensa_con_el_locate_caro():
-    r = veredicto_locates("MIMI", 0.8422, 0.025, 2.4)
+    r = veredicto_locates("MIMI", 0.8422, 2.50, 2.4)
     assert NEGATIVA in r
 
 
 def test_el_tamano_no_cambia_el_veredicto():
     """Ganancia y coste escalan los dos con las acciones: se cancela."""
     for n in (1_000, 10_000, 100_000):
-        assert POSITIVA in veredicto_locates("MIMI", 0.8422, 0.010, 2.4, n)
+        assert POSITIVA in veredicto_locates("MIMI", 0.8422, 1.00, 2.4, n)
 
 
 def test_los_paquetes_de_100_encarecen_la_posicion_pequena():
     """150 acciones pagan 2 paquetes: el coste real por acción sube un 33 %."""
-    r = veredicto_locates("MIMI", 0.8422, 0.010, 2.4, 150)
+    r = veredicto_locates("MIMI", 0.8422, 1.00, 2.4, 150)
     assert "2 paquetes" in r     # se dice, no se esconde
 
 
 def test_sin_precio_no_se_inventa_un_veredicto():
     """Un ticker que el radar no vigila no tiene precio, y punto."""
-    r = veredicto_locates("ZZZZ", None, 0.010, 2.4)
+    r = veredicto_locates("ZZZZ", None, 1.00, 2.4)
     assert POSITIVA not in r and NEGATIVA not in r
 
 
@@ -72,7 +73,7 @@ def test_comando_desconocido_se_calla():
 
 def test_el_comando_admite_el_sufijo_del_bot():
     """En un grupo, Telegram manda `/evf@MiBot`."""
-    r = responder("/evf@Alertas_btt_bot MIMI 0.010 2.4", precio_de)
+    r = responder("/evf@Alertas_btt_bot MIMI 1.00 2.4", precio_de)
     assert r is not None and POSITIVA in r
 
 
@@ -84,7 +85,7 @@ def test_faltan_argumentos_devuelve_la_ayuda():
 
 def test_admite_coma_decimal():
     """Se teclea en el móvil y en español la coma sale sola."""
-    r = responder("/evf MIMI 0,010 2,4", precio_de)
+    r = responder("/evf MIMI 1,00 2,4", precio_de)
     assert r is not None and POSITIVA in r
 
 
@@ -105,3 +106,18 @@ def test_el_veredicto_siempre_con_las_mismas_palabras():
     vistos = {veredicto_locates("MIMI", 0.8422, 0.010, 2.4).split("\n")[4]
               for _ in range(40)}
     assert vistos == {f"<b>{POSITIVA}</b>"}
+
+
+def test_el_coste_es_el_de_100_ACCIONES_como_en_el_backtester():
+    """LA UNIDAD, que es fácil de confundir y sale 100 veces mal.
+
+    El backtester pide «$ Locate / 100 acc.» — lo que cuestan 100 acciones. Si
+    aquí se pidiera por acción, el mismo número en los dos sitios daría
+    resultados cien veces distintos, y el veredicto cambiaría de signo sin que
+    nada lo indicara.
+    """
+    # 1,00 $ por 100 acciones = 0,01 $/acción sobre 0,8422 -> fade 1,19 %
+    assert "1.187" in veredicto_locates("MIMI", 0.8422, 1.00, 2.4)
+    # El ejemplo del propio backtester: 3 $ el locate.
+    r = veredicto_locates("MIMI", 0.8422, 3.00, 2.4)
+    assert "3.56" in r and NEGATIVA in r

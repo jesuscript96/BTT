@@ -59,17 +59,22 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
     if not precio or precio <= 0:
         return f"<b>{ticker}</b>: no tengo precio en vivo. ¿Esta en el radar?"
     if coste <= 0 or ev_pct <= 0:
-        return ("Faltan datos. Uso: <code>/evf TICKER COSTE_LOCATE EV%</code>\n"
-                "Ejemplo: <code>/evf MIMI 0.010 2.4</code>")
+        return ("Faltan datos. Uso: <code>/evf TICKER COSTE_100 EV%</code>\n"
+                "El coste es el de 100 acciones, igual que en el backtester.\n"
+                "Ejemplo: <code>/evf MIMI 1.00 2.4</code>")
 
-    coste_real = coste
+    # `coste` son los DOLARES QUE CUESTAN 100 ACCIONES — la misma unidad que el
+    # campo «$ Locate / 100 acc.» del backtester. Se pide asi a proposito: si
+    # aqui fuera por accion y alli por paquete, el mismo numero en los dos
+    # sitios daria resultados CIEN VECES distintos.
+    coste_real = coste / 100.0
     nota = ""
     if acciones and acciones > 0:
         paquetes = -(-int(acciones) // 100)          # techo
-        coste_real = (paquetes * 100 * coste) / acciones
-        if coste_real > coste * 1.02:
+        coste_real = (paquetes * coste) / acciones
+        if coste_real > (coste / 100.0) * 1.02:
             nota = (f"\n<i>({paquetes} paquetes para {int(acciones)} acciones: "
-                    f"el locate real sale a {coste_real:.4f} $)</i>")
+                    f"el locate real sale a {coste_real:.4f} $/acción)</i>")
 
     fade = coste_real / precio * 100.0
     margen = ev_pct - fade
@@ -101,8 +106,9 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
 
 AYUDA = (
     "<b>Comandos</b>\n"
-    "<code>/evf TICKER COSTE EV%</code> — ¿compensan los locates?\n"
-    "   ej. <code>/evf MIMI 0.010 2.4</code>\n"
+    "<code>/evf TICKER COSTE_100 EV%</code> — ¿compensan los locates?\n"
+    "   COSTE_100 = lo que cuestan 100 acciones, como en el backtester\n"
+    "   ej. <code>/evf MIMI 1.00 2.4</code>\n"
     "<code>/ayuda</code> — esto"
 )
 
