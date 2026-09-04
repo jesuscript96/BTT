@@ -3111,3 +3111,23 @@ pusheada — el diff es pequeño y autónomo (no toca motor ni backend).
 - **Sigue ABIERTO PARA `staging`** junto al 01.
 - **Código tocado:** solo `BacktestPanel.tsx` (en rama de Álvaro, como el del 01)
 - **Estado:** ABIERTO (para staging) / arreglado en rama Álvaro
+
+## 📣 2026-09-04 — Para Jaime: modo «R» en el Calendar del Backtester (REPORTE — solo en rama de Álvaro)
+
+Petición de Álvaro: ver el calendario de resultados en múltiplos de R, no solo
+en dinero. **Solo en `alvaro-rama-desarrollo`** (sin push a staging/PR/merge
+por ahora); commit de referencia en la rama.
+
+**Qué se ha hecho.** Cuarto modo de vista «R» en la pestaña Calendar
+(`CalendarTab.tsx`, solo frontend): junto a Profits / Gastos / Profits−Gastos.
+Muestra la SUMA de `r_multiple` por día/semana/mes (mismo criterio que el pnl
+neto: sin locates, `r_multiple` del trade). Formato «+1.25R» / «-0.32R»,
+coloreado verde/rojo por signo igual que los modos monetarios, tooltips del
+día y de la semana con el valor en R, y totales mensuales en R. Los gastos
+fijos mensuales NO se mezclan en este modo (no tienen sentido en múltiplos de
+R). El modal de detalle del día sigue mostrando PnL $ y avg R por trade, que
+ya los tenía.
+
+**Verificación.** `tsc --noEmit` 0 errores. Cálculo replicado contra los 2.799
+trades reales del run `3aff85df`: 393 días con trades, suma por día = R total
+del run (150.57R), coherencia exacta.

@@ -27,9 +27,19 @@ function formatPnl(pnl: number, isGastos = false): string {
   return `${sign} $${abs.toFixed(2)}`;
 }
 
+function formatR(r: number): string {
+  const sign = r >= 0 ? "+" : "-";
+  return `${sign} ${Math.abs(r).toFixed(2)}R`;
+}
+
 export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, onSelectTrade }: CalendarTabProps) {
-  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net">("profits");
+  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net" | "r">("profits");
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
+  // Formatea el valor del modo activo (dinero en los tres modos monetarios,
+  // múltiplos de R en el modo "r").
+  const fmtVal = (v: number) =>
+    viewMode === "r" ? formatR(v) : formatPnl(v, viewMode === "gastos");
 
   // Cerrar el detalle de día con Escape
   useEffect(() => {
@@ -68,6 +78,8 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
         val = t.pnl + (t.fees || 0);
       } else if (viewMode === "gastos") {
         val = t.fees || 0;
+      } else if (viewMode === "r") {
+        val = t.r_multiple ?? 0; // suma de R del día (sin locates, como pnl)
       } else {
         val = t.pnl; // net
       }
@@ -114,9 +126,9 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
         borderBottom: "1px solid var(--color-ec-border)",
         paddingBottom: 0,
       }}>
-        {(["profits", "gastos", "net"] as const).map((mode) => {
+        {(["profits", "gastos", "net", "r"] as const).map((mode) => {
           const isActive = viewMode === mode;
-          const label = mode === "profits" ? "Profits" : mode === "gastos" ? "Gastos" : "Profits - Gastos";
+          const label = mode === "profits" ? "Profits" : mode === "gastos" ? "Gastos" : mode === "net" ? "Profits - Gastos" : "R";
           return (
             <button
               key={mode}
@@ -228,7 +240,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                       fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
                       color: mColor,
                     }}>
-                      {formatPnl(monthPnl, viewMode === "gastos")}
+                      {fmtVal(monthPnl)}
                     </span>
                   )}
                 </div>
@@ -300,7 +312,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                         return (
                           <div
                             key={day.date}
-                            title={hasData ? `${day.date}: ${day.count} trades · Valor: $${day.pnl?.toFixed(2)} — click para ver los trades` : day.date}
+                            title={hasData ? `${day.date}: ${day.count} trades · Valor: ${fmtVal(day.pnl || 0)} — click para ver los trades` : day.date}
                             onClick={hasData ? () => setSelectedDate(day.date) : undefined}
                             onMouseEnter={(e) => {
                               if (hasData) e.currentTarget.style.filter = "brightness(1.3)";
@@ -352,7 +364,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                                   fontSize: 9, fontWeight: 700, color: accentColor, letterSpacing: "-0.02em",
                                   fontFamily: "monospace", lineHeight: 1,
                                 }}>
-                                  {formatPnl(day.pnl!, viewMode === "gastos")}
+                                  {fmtVal(day.pnl!)}
                                 </span>
                                 <span style={{
                                   fontSize: 7.5, fontWeight: 600, color: accentColor, opacity: 0.75,
@@ -375,7 +387,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
 
                       {/* ── Weekly Summary ── */}
                       <div
-                        title={wHas ? `Sem ${weekIdx + 1}: ${wCount} trades · Valor: $${wPnl.toFixed(2)}` : `Sem ${weekIdx + 1}`}
+                        title={wHas ? `Sem ${weekIdx + 1}: ${wCount} trades · Valor: ${fmtVal(wPnl)}` : `Sem ${weekIdx + 1}`}
                         style={{
                           minHeight: 44,
                           borderRadius: 0,
@@ -398,7 +410,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                                 ? (wHasGastos ? "var(--color-ec-loss)" : "var(--color-ec-text-muted)")
                                 : (wIsWin ? "var(--color-ec-profit)" : "var(--color-ec-loss)"),
                             }}>
-                              {formatPnl(wPnl, viewMode === "gastos")}
+                              {fmtVal(wPnl)}
                             </span>
                             <span style={{
                               fontSize: 7, fontWeight: 600, lineHeight: 1, opacity: 0.7,
