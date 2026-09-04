@@ -180,27 +180,36 @@ function EtiquetaVolumen({ acum, totales }: {
   const adv = acum ? acum.adv : totales!.adv;
 
   const Dato = ({ etiqueta, valor, tono }: { etiqueta: string; valor: string; tono?: string }) => (
-    <span style={{ display: "inline-flex", gap: 4, alignItems: "baseline" }}>
-      <span style={{ color: "var(--color-ec-text-muted)", fontSize: 9, fontWeight: 700, letterSpacing: "0.5px" }}>
+    <span style={{ display: "inline-flex", gap: 5, alignItems: "baseline" }}>
+      {/* La sigla más pequeña y apagada que el número: es la referencia, no el
+          dato. Si pesaran igual, la fila se leería como texto en vez de como
+          una lectura de instrumento. */}
+      <span style={{ color: "var(--color-ec-text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.5px" }}>
         {etiqueta}
       </span>
-      <b style={{ color: tono || "var(--color-ec-text-primary)", fontWeight: 600 }}>{valor}</b>
+      <b style={{ color: tono || "var(--color-ec-text-primary)", fontWeight: 600, fontSize: 12 }}>{valor}</b>
     </span>
   );
 
   return (
+    // A LA ALTURA DEL EJE X, ocupando su grosor. La franja del eje temporal de
+    // `lightweight-charts` mide 26-28 px y está vacía a la izquierda (las
+    // primeras marcas de hora empiezan más adentro), así que la etiqueta cabe
+    // ahí sin tapar nada y se lee en la misma línea que las horas — que es
+    // donde el ojo ya está mirando cuando recorre el gráfico.
+    //
+    // Sin fondo ni borde: al ir sobre el eje y no sobre las velas, una caja
+    // flotando ahí parecería un elemento pegado por encima.
     <div style={{
-      position: "absolute", left: 8, bottom: 6, pointerEvents: "none", zIndex: 3,
-      display: "flex", gap: 14, alignItems: "baseline",
-      padding: "3px 9px", borderRadius: 3,
-      background: "rgba(22,24,26,0.88)",
-      border: "0.5px solid var(--color-ec-border)",
-      fontFamily: "var(--color-ec-mono)", fontSize: 10.5,
+      position: "absolute", left: 10, bottom: 0, height: 26,
+      pointerEvents: "none", zIndex: 3,
+      display: "flex", gap: 16, alignItems: "center",
+      fontFamily: "var(--color-ec-mono)", fontSize: 12,
       whiteSpace: "nowrap",
     }}>
       {acum
         ? <Dato etiqueta="V" valor={n(acum.v)} />
-        : <span style={{ color: "var(--color-ec-text-muted)", fontSize: 9, fontWeight: 700 }}>DÍA</span>}
+        : <span style={{ color: "var(--color-ec-text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.5px" }}>DÍA</span>}
       <Dato etiqueta="AV" valor={n(av)} />
       <Dato etiqueta="ADV" valor={`$${money(adv)}`} tono="var(--color-ec-copper)" />
     </div>
