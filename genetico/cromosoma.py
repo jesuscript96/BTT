@@ -105,13 +105,28 @@ def _parciales_aleatorios(rng: random.Random, modos: list[str],
         return []
     cuantos = rng.randint(0, C.TP_PARCIAL_MAX_NIVELES)
     niveles, cerrado = [], 0
+    vistos: set = set()
     for _ in range(cuantos):
         cierre = rng.choice([c for c in C.TP_PARCIAL_CIERRE_PCT if cerrado + c <= 100]
                             or [100 - cerrado])
         if cierre <= 0:
             break
+        # DOS PARCIALES EN EL MISMO SITIO NO SON DOS PARCIALES. El motor los
+        # aplica en orden, asi que un segundo nivel con el mismo objetivo salta
+        # justo detras del primero: cierra mas posicion de golpe y gasta un gen
+        # en algo que no anyade una decision. Salio en la primera corrida con
+        # esto puesto: «Parciales: 25% a las 12:00, 33% a las 12:00».
+        objetivo = None
+        for _intento in range(12):
+            cand = _tp_aleatorio(rng, modos, min_pct)
+            clave = (cand["modo"], cand["valor"])
+            if clave not in vistos:
+                objetivo, _ = cand, vistos.add(clave)
+                break
+        if objetivo is None:
+            break          # sin objetivos libres: mejor un nivel menos que uno repetido
         cerrado += cierre
-        niveles.append({**_tp_aleatorio(rng, modos, min_pct), "cierre_pct": cierre})
+        niveles.append({**objetivo, "cierre_pct": cierre})
     return niveles
 
 

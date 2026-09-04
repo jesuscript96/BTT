@@ -300,6 +300,30 @@ def test_los_parciales_se_sortean_incluyendo_NINGUNO():
     assert cuantos == {0, 1, 2}
 
 
+def test_dos_parciales_no_caen_en_EL_MISMO_SITIO():
+    """Salió en la primera corrida de verdad con esto puesto:
+
+        Parciales: 25% a las 12:00, 33% a las 12:00
+
+    Dos niveles con el mismo objetivo no son dos niveles. El motor los aplica
+    en orden, así que el segundo salta justo detrás del primero: cierra más
+    posición de golpe y gasta un gen en algo que no añade ninguna decisión.
+    """
+    cfg = _config(tps=["pct", "hora", "tiempo"], riesgo={"tp_parciales": True})
+    for i in _individuos(cfg, n=800):
+        claves = [(p["modo"], p["valor"]) for p in i["parciales"]]
+        assert len(claves) == len(set(claves)), f"parciales repetidos: {claves}"
+
+
+def test_con_un_solo_objetivo_posible_se_pone_UNO_y_no_dos():
+    """Con «hora» como único modo y la rejilla agotada, antes que repetir se
+    pone un nivel menos."""
+    cfg = _config(tps=["hora"], riesgo={"tp_parciales": True})
+    for i in _individuos(cfg, n=300):
+        horas = [p["valor"] for p in i["parciales"]]
+        assert len(horas) == len(set(horas))
+
+
 def test_los_parciales_no_cierran_mas_del_100():
     """Dos niveles al 75 % cerrarían más posición de la que hay."""
     cfg = _config(riesgo={"tp_parciales": True})
