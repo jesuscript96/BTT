@@ -566,11 +566,12 @@ def _today_key() -> str:
 
 def _compute_sizing(cfg: Dict[str, Any], side: str, price: Optional[float],
                     ctx: Dict[str, Optional[float]]) -> Dict[str, Any]:
-    """Stop, acciones y (si está configurado el coste del paquete) locates.
+    """Stop y acciones para el aviso.
 
-    Todo esto es calculable SIN saber si el usuario está dentro: el nivel del stop
-    es un dato de mercado y el riesgo es configuración. Por eso el aviso lo lleva
-    aunque en esta fase el sistema no siga posiciones."""
+    Es calculable SIN saber si el usuario está dentro: el nivel del stop es un dato
+    de mercado y el riesgo es configuración. El stop se define de dos formas
+    simples — un % desde la entrada, o un nivel (máximo previo, VWAP…) con margen —
+    y el tamaño con un único número: el riesgo en dólares por trade."""
     out: Dict[str, Any] = {}
     if not cfg or price is None or price <= 0:
         return out
@@ -593,36 +594,13 @@ def _compute_sizing(cfg: Dict[str, Any], side: str, price: Optional[float],
     out["stop_ref"] = ref_key
     out["stop_offset_pct"] = offset
 
-    # Dos formas de dimensionar, y no son intercambiables: «riesgo» reparte una
-    # cantidad fija de pérdida sobre la distancia al stop; «nominal» compra una
-    # cantidad fija de exposición. Con un stop cercano la primera da muchas más
-    # acciones que la segunda. Se soportan ambas de forma explícita en vez de
-    # elegir una en silencio y que el usuario descubra la diferencia operando.
+    # Tamaño: un solo número, el riesgo en $ por trade. Las acciones salen de
+    # repartir ese riesgo sobre la distancia de la entrada al stop.
     distance = abs(stop - price)
-    notional = _f(cfg.get("notional_usd"))
-    shares = 0
     if risk and distance > 0:
         shares = int(risk / distance)
         out["shares"] = shares
         out["risk_usd"] = risk
-        out["sizing_mode"] = "risk"
-    elif notional and price > 0:
-        shares = int(notional / price)
-        out["shares"] = shares
-        out["notional_usd"] = notional
-        out["risk_usd"] = round(shares * distance, 2)   # riesgo IMPLÍCITO del nominal
-        out["sizing_mode"] = "notional"
-    if shares > 0:
-        package_cost = _f(cfg.get("locate_package_cost"))
-        if is_short and package_cost is not None and shares > 0:
-            try:
-                from app.services.locates import calc_locates
-                loc = calc_locates(precio_entrada=price, precio_stop=stop,
-                                   coste_paquete=package_cost, shares=shares)
-                if not loc.get("error"):
-                    out["locates"] = loc
-            except Exception:  # noqa: BLE001
-                pass
     return out
 
 
@@ -651,11 +629,6 @@ def _format_message(p: Dict[str, Any]) -> str:
         lines.append(f"Stop <b>{s['stop']:.4g} $</b> ({_esc(ref_label)} {off:+g}%)")
     if s.get("shares"):
         lines.append(f"{s['shares']} acciones · riesgo {s.get('risk_usd', 0):g} $")
-    loc = s.get("locates") or {}
-    if loc.get("paquetes"):
-        be = loc.get("break_even") or loc.get("breakeven")
-        extra = f" · break-even {be:.4g} $" if isinstance(be, (int, float)) else ""
-        lines.append(f"{loc['paquetes']} paquete(s) de locates{extra}")
     lines.append("")
     when = p.get("fired_minute") or ""
     lines.append(f"<i>{_esc(str(p['alarm_name']))} · {when} ET</i>")
