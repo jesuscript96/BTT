@@ -27,7 +27,7 @@ import httpx
 
 from . import fields as F
 from .bars import SessionBars, et_minute_of_day
-from .engine import _collect_ma_keys, _compute_sizing, _format_message, _in_window, _minutes, _f
+from .engine import _collect_ma_keys, _format_message, _in_window, _minutes, _f
 from .evaluator import evaluate, mode_of, normalize_conditions
 
 logger = logging.getLogger("btt.alarms.replay")
@@ -114,8 +114,7 @@ async def replay_alarm(alarm: Dict[str, Any], ticker: str, date: str,
     watchlist = {str(t).upper() for t in (d.get("watchlist") or [])}
     if watchlist and ticker not in watchlist:
         raise ReplayError(f"{ticker} no está en la watchlist de esta alarma.")
-    sizing_cfg = d.get("sizing") or {}
-    ma_keys = _collect_ma_keys(conditions, sizing_cfg.get("stop_ref"))
+    ma_keys = _collect_ma_keys(conditions)
     side = alarm.get("side", "long")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -177,7 +176,6 @@ async def replay_alarm(alarm: Dict[str, Any], ticker: str, date: str,
         payload = {
             "alarm_name": alarm.get("name", "Alarma"), "ticker": ticker, "side": side,
             "price": ctx.get("close"), "reasons": reasons,
-            "sizing": _compute_sizing(sizing_cfg, side, ctx.get("close"), ctx),
             "fired_minute": f"{minute // 60:02d}:{minute % 60:02d}",
         }
         signals.append({**payload, "message": _format_message(payload)})

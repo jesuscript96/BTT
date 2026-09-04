@@ -45,14 +45,6 @@ export interface AlarmDefinition {
   watchlist?: string[];
   window?: { from?: string; to?: string } | null;
   cooldown?: { max_per_ticker_per_day?: number; min_minutes_between?: number } | null;
-  sizing?: {
-    stop_ref?: string;
-    stop_offset_pct?: number;
-    stop_pct?: number;
-    risk_usd?: number;
-    notional_usd?: number;
-    locate_package_cost?: number;
-  } | null;
   channels?: { browser?: boolean; telegram?: boolean; sound?: boolean } | null;
   /** Lo calcula el backend a partir de los campos usados; el usuario no lo elige. */
   mode?: AlarmFieldKind;
@@ -109,7 +101,6 @@ export interface ReplaySignal {
   price: number | null;
   fired_minute: string;
   reasons: string[];
-  sizing: Record<string, number | undefined>;
   message: string;
 }
 
@@ -157,7 +148,6 @@ export interface LiveAlarmEvent {
   side?: string;
   price?: number | null;
   reasons?: string[];
-  sizing?: Record<string, unknown>;
   mode?: string;
   fired_minute?: string;
   sound?: boolean;
