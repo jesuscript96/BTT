@@ -130,6 +130,10 @@ class WatchReq(BaseModel):
     # La cuenta real. Solo hace falta con stop hibrido, que sin ella no puede
     # calcular su techo. El bot no la conoce por ningun otro sitio.
     capital_usd: Optional[float] = Field(default=None, gt=0)
+    # Esperanza matematica de la estrategia, en % del precio de entrada. La
+    # teclea Jaume: el bot no puede saber que backtest considera valido. Se
+    # guarda aqui para que `/evf` no tenga que repetirla en cada mensaje.
+    ev_pct: Optional[float] = Field(default=None, gt=0)
 
 
 def _faltan_datos(con, req: "WatchReq") -> list[str]:
@@ -206,7 +210,8 @@ def guardar(req: WatchReq, user_id: Optional[str] = Depends(get_current_user_id)
                     )
 
             return bas.set_watch(con, req.strategy_id, req.activa, req.riesgo_usd,
-                                 req.riesgo_piramide_usd, req.capital_usd)
+                                 req.riesgo_piramide_usd, req.capital_usd,
+                                 req.ev_pct)
         finally:
             con.close()
 

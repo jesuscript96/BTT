@@ -17,21 +17,46 @@ interface RollingEVChartProps {
     isDarkMode?: boolean;
 }
 
-/** Esperanza matemática de un conjunto de operaciones, en R.
+type Unidad = "R" | "pct";
+
+/** Recorrido de UNA operación, en la unidad pedida.
  *
- *      EV = P(gana) × media(R | gana) − P(pierde) × |media(R | pierde)|
+ *  R    múltiplos de riesgo — «cuántos riesgos gano por operación»
+ *  pct  % del precio de entrada — «cuánto se movió el precio a mi favor»
+ *
+ * NO SON CONVERTIBLES ENTRE SÍ con un factor fijo: dependen de la distancia al
+ * stop de cada operación. 0,15 R puede ser un 6 % en una entrada con el stop
+ * lejos y un 1 % en otra con el stop pegado.
+ *
+ * El % se saca de `entry_price`/`exit_price` y NO de `r_multiple`: el motor
+ * guarda ese campo redondeado a dos decimales, y sobre operaciones de céntimos
+ * el redondeo se come justo el margen que se quiere medir (un fade de locates
+ * ronda el 1 %).
+ */
+function recorrido(t: TradeRecord, u: Unidad): number {
+    if (u === "R") return t.r_multiple ?? 0;
+    const entrada = t.avg_entry_price ?? t.entry_price;
+    if (!entrada) return 0;
+    const bruto = (t.exit_price - entrada) / entrada * 100;
+    // En corto se gana cuando el precio baja.
+    return String(t.direction).toLowerCase().startsWith("short") ? -bruto : bruto;
+}
+
+/** Esperanza matemática de un conjunto de operaciones.
+ *
+ *      EV = P(gana) × media(gana) − P(pierde) × |media(pierde)|
  *
  * UNA SOLA definición para los dos modos del gráfico. Estaba duplicada, y esa
  * duplicación es la que dejó pasar que el modo «días» promediara EV diarios en
  * vez de operaciones — media de medias, con un día de una operación pesando
  * igual que uno de diez.
  */
-function ev(ts: TradeRecord[]): number {
+function ev(ts: TradeRecord[], u: Unidad = "R"): number {
     if (!ts.length) return 0;
     const wins = ts.filter((t) => t.pnl > 0);
     const losses = ts.filter((t) => t.pnl <= 0);
     const media = (xs: TradeRecord[]) =>
-        xs.length ? xs.reduce((s, t) => s + (t.r_multiple ?? 0), 0) / xs.length : 0;
+        xs.length ? xs.reduce((s, t) => s + recorrido(t, u), 0) / xs.length : 0;
     return (wins.length / ts.length) * media(wins)
          - (losses.length / ts.length) * Math.abs(media(losses));
 }
@@ -43,6 +68,10 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
     const [inputValue, setInputValue] = useState("50");
     type RollingBasis = "trades" | "days";
     const [basis, setBasis] = useState<RollingBasis>("days");
+    /** R (múltiplos de riesgo) o % del precio de entrada. El % es el que sirve
+     *  para decidir si compensan los locates: se compara con el fade, que
+     *  también va en % del precio. */
+    const [unidad, setUnidad] = useState<Unidad>("R");
 
     useEffect(() => {
         setInputValue(String(rollingWindow));
@@ -78,7 +107,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 if (ventana.length < reqDays) continue;
                 // Todas las operaciones de la ventana, en un solo montón.
                 const delTramo = ventana.flatMap((d) => dayTrades.get(d)!);
-                result.push({ time: dias[i] as unknown as Time, value: ev(delTramo) });
+                result.push({ time: dias[i] as unknown as Time, value: ev(delTramo, unidad) });
             }
             return result;
         } else {
@@ -94,7 +123,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 if (slice.length < reqTrades) continue;
                 const d = new Date(sorted[i].exit_time);
                 const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-                raw.push({ date: dateStr, value: ev(slice) });
+                raw.push({ date: dateStr, value: ev(slice, unidad) });
             }
             // Keep last per day, sorted
             const dayMap = new Map<string, number>();
@@ -103,7 +132,7 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                 .sort((a, b) => a[0].localeCompare(b[0]))
                 .map(([date, value]) => ({ time: date as unknown as Time, value }));
         }
-    }, [trades, rollingWindow, basis]);
+    }, [trades, rollingWindow, basis, unidad]);
 
 
 
@@ -213,10 +242,14 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
         <div className="flex flex-col h-full transition-colors">
             <div className="px-3 py-2 flex items-center justify-between">
                 <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
-                    Rolling EV
+                    Rolling EV <span style={{ opacity: 0.6, fontWeight: 400 }}>
+                        ({unidad === "R" ? "en R" : "en % del precio"})
+                    </span>
                     <InfoTooltip
                         position="left"
-                        text="Esperanza Matemática (EV) móvil. Promedio continuo de la rentabilidad esperada por operación. Un EV positivo significa que el sistema genera beneficios a largo plazo."
+                        text={unidad === "R"
+                            ? "Esperanza Matemática (EV) móvil, en MÚLTIPLOS DE RIESGO: 0,15 significa que ganas de media 0,15 veces tu riesgo por operación. Con riesgo 300 $, son 45 $. OJO: no es un %, y no se puede copiar al campo EV del cuadro de mandos."
+                            : "Esperanza Matemática (EV) móvil, en % DEL PRECIO DE ENTRADA: cuánto se mueve el precio a tu favor de media. ESTE es el que se compara con el coste de los locates y el que va en el campo EV del cuadro de mandos."}
                     />
                 </span>
                 <div className="flex items-center gap-3">
@@ -226,6 +259,28 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                                 key={val}
                                 onClick={() => setBasis(val)}
                                 className={`px-2 py-0.5 rounded transition-colors ${basis === val
+                                    ? "text-[var(--color-ec-text-primary)] font-bold bg-[rgba(216,122,61,0.15)] border border-[rgba(216,122,61,0.3)]"
+                                    : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] border border-transparent"
+                                    }`}
+                                style={{ cursor: 'pointer' }}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    {/* UNIDAD. R y % NO son la misma medida escalada: dependen
+                        de la distancia al stop de cada operación. El % es el que
+                        sirve para decidir sobre locates, porque el coste del
+                        locate también es un % del precio. */}
+                    <div className="flex text-[10px] font-mono gap-2.5">
+                        {([["R", "R"], ["pct", "%"]] as const).map(([val, label]) => (
+                            <button
+                                key={val}
+                                onClick={() => setUnidad(val)}
+                                title={val === "R"
+                                    ? "En múltiplos de riesgo: cuántos riesgos ganas por operación"
+                                    : "En % del precio de entrada: cuánto se mueve el precio a tu favor. Es el que se compara con el coste de los locates."}
+                                className={`px-2 py-0.5 rounded transition-colors ${unidad === val
                                     ? "text-[var(--color-ec-text-primary)] font-bold bg-[rgba(216,122,61,0.15)] border border-[rgba(216,122,61,0.3)]"
                                     : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] border border-transparent"
                                     }`}

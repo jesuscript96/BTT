@@ -345,6 +345,10 @@ export default function CuadroMandos() {
    *  backend no deja activar una estrategia con stop hibrido. */
   const [riesgosPir, setRiesgosPir] = useState<Record<string, string>>({});
   const [capitales, setCapitales] = useState<Record<string, string>>({});
+  /** EV de cada estrategia, en % del precio de entrada. Lo tecleas tú: el bot
+   *  no puede saber qué backtest consideras válido. Lo usa el cálculo de
+   *  locates del radar y el comando /evf de Telegram. */
+  const [evs, setEvs] = useState<Record<string, string>>({});
   /** Fila desplegada y su explicacion. Se pide al abrir, no al cargar la
    *  pagina: son datos que solo se miran cuando se duda de algo. */
   const [abierta, setAbierta] = useState<string | null>(null);
@@ -480,6 +484,9 @@ export default function CuadroMandos() {
         ));
         setCapitales(Object.fromEntries(
           s.map((x) => [x.strategy_id, x.capital_usd != null ? String(x.capital_usd) : ""]),
+        ));
+        setEvs(Object.fromEntries(
+          s.map((x) => [x.strategy_id, x.ev_pct != null ? String(x.ev_pct) : ""]),
         ));
       })
       .catch((e) => vivo && setError(e?.message || "No se pudo cargar el cuadro de mandos"))
@@ -624,15 +631,17 @@ export default function CuadroMandos() {
     }
     const riesgoPir = Number(riesgosPir[s.strategy_id]) || null;
     const capital = Number(capitales[s.strategy_id]) || null;
+    const ev = Number(evs[s.strategy_id]) || null;
     try {
       // La comprobacion de verdad la hace el backend contra la definicion
       // GUARDADA, que es la que va a usar el bot. Aqui solo se pilla lo obvio.
       await guardarVigilancia(s.strategy_id, activa, riesgo, {
-        riesgo_piramide_usd: riesgoPir, capital_usd: capital,
+        riesgo_piramide_usd: riesgoPir, capital_usd: capital, ev_pct: ev,
       });
       setEstrategias((prev) => prev.map((x) =>
         x.strategy_id === s.strategy_id
-          ? { ...x, activa, riesgo_usd: riesgo, riesgo_piramide_usd: riesgoPir, capital_usd: capital }
+          ? { ...x, activa, riesgo_usd: riesgo, riesgo_piramide_usd: riesgoPir,
+              capital_usd: capital, ev_pct: ev }
           : x));
       setError(null);
     } catch (err) {
@@ -855,6 +864,7 @@ export default function CuadroMandos() {
               <Th num ancho={100}>Riesgo €</Th>
               <Th num ancho={100}>Riesgo pir. €</Th>
               <Th num ancho={100}>Capital €</Th>
+              <Th num ancho={78}>EV %</Th>
               <Th>El riesgo es</Th>
               <Th ancho={150}>Ventana entradas</Th>
               <Th num ancho={90}>Avisos hoy</Th>
@@ -948,6 +958,20 @@ export default function CuadroMandos() {
                       />
                     ) : <span style={{ color: color.textMuted }}>—</span>}
                   </Td>
+                  <Td num>
+                    {/* La esperanza de la estrategia, en % del precio de
+                        entrada. La usa el cálculo de locates del radar y el
+                        comando /evf de Telegram, para no repetirla en cada
+                        mensaje. La tecleas tú: el bot no puede saber qué
+                        backtest consideras válido. */}
+                    <CampoNum
+                      valor={evs[s.strategy_id] ?? ""}
+                      onChange={(v) => setEvs((p) => ({ ...p, [s.strategy_id]: v }))}
+                      onBlur={() => s.activa && guardarEstrategia(s, true)}
+                      paso={0.1}
+                      titulo="Esperanza matemática de la estrategia, en % del precio de entrada. Se usa para decidir si compensan los locates."
+                    />
+                  </Td>
                   <Td dim title={s.hybrid_stop
                     ? "Híbrido: por distancia al stop, pero sin exponer más de lo que aceptas perder ante un evento de cola."
                     : s.size_by_sl
@@ -972,7 +996,7 @@ export default function CuadroMandos() {
               );
               const detalle = abierta === s.strategy_id ? (
                 <tr key={`${s.strategy_id}-detalle`}>
-                  <td colSpan={10} style={{
+                  <td colSpan={11} style={{
                     padding: "10px 14px 14px 26px",
                     background: color.bgElevated,
                     borderBottom: `0.5px solid ${color.border}`,
@@ -1064,8 +1088,7 @@ export default function CuadroMandos() {
                   y el veredicto se recalcula con cada tick, porque el precio
                   llega por el mismo WebSocket que alimenta el radar. */}
               <Th num ancho={96}>Locate $/100</Th>
-              <Th num ancho={78}>EV %</Th>
-              <Th ancho={230}>Ventaja matemática</Th>
+              <Th ancho={250}>Ventaja matemática</Th>
             </tr>
           </thead>
           <tbody>
@@ -1098,7 +1121,13 @@ export default function CuadroMandos() {
                   // Congelado = el precio del momento en que se pulsó OK. Una
                   // vez has decidido, un veredicto que sigue bailando estorba.
                   const px = congelados[c.ticker] ?? c.precio;
-                  const v = ventajaLocates(px, Number(cfg.coste), Number(cfg.ev));
+                  // EL EV SALE DE LA ESTRATEGIA que trajo este candidato, no se
+                  // teclea por ticker: es una propiedad de la estrategia, y
+                  // repetirla en cada fila del radar era pedir el mismo número
+                  // una y otra vez. Es también el que usa /evf en Telegram.
+                  const dueña = estrategias.find((e) => e.name === c.estrategia);
+                  const evEstrategia = Number(evs[dueña?.strategy_id ?? ""]) || 0;
+                  const v = ventajaLocates(px, Number(cfg.coste), evEstrategia);
                   const fijo = congelados[c.ticker] != null;
                   return (
                     <>
@@ -1110,18 +1139,12 @@ export default function CuadroMandos() {
                           titulo="Lo que cuestan 100 acciones, igual que en el backtester."
                         />
                       </Td>
-                      <Td num>
-                        <CampoNum
-                          valor={cfg.ev} paso={0.1}
-                          onChange={(x) => ponLocate(c.ticker, "ev", x)}
-                          onBlur={() => {}}
-                          titulo="EV de la estrategia, en % del precio de entrada. Lo pones tú."
-                        />
-                      </Td>
                       <Td>
                         {!v ? (
                           <span style={{ color: color.textMuted }}>
-                            pon locate y EV
+                            {!evEstrategia
+                              ? "pon el EV en la estrategia"
+                              : "pon el coste del locate"}
                           </span>
                         ) : (
                           <span style={{ display: "flex", alignItems: "center", gap: 8 }}>

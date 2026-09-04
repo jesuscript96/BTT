@@ -126,18 +126,24 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
 
 AYUDA = (
     "<b>Comandos</b>\n"
-    "<code>/evf TICKER COSTE_100 EV%</code> — ¿compensan los locates?\n"
+    "<code>/evf TICKER COSTE_100 [EV%]</code> — ¿compensan los locates?\n"
     "   COSTE_100 = lo que cuestan 100 acciones, como en el backtester\n"
-    "   ej. <code>/evf MIMI 1.00 2.4</code>\n"
+    "   el EV sale del cuadro de mandos; escríbelo solo para probar otro\n"
+    "   ej. <code>/evf MIMI 1.00</code>  ·  <code>/evf MIMI 1.00 2.4</code>\n"
     "<code>/ayuda</code> — esto"
 )
 
 
-def responder(texto: str, precio_de: Callable[[str], Optional[float]]) -> Optional[str]:
+def responder(texto: str, precio_de: Callable[[str], Optional[float]],
+              ev_guardado: Optional[float] = None) -> Optional[str]:
     """Interpreta un mensaje y devuelve la respuesta, o None si no es para mi.
 
     `precio_de(ticker)` la pone el bot: es su estado de mercado en vivo. Asi
     este modulo no sabe nada del feed y se puede probar con una funcion falsa.
+
+    `ev_guardado` es el EV que Jaume tiene puesto en el cuadro de mandos, para
+    no tener que repetirlo en cada mensaje. Escribirlo en el comando lo pisa —
+    sirve para probar otro valor sin tocar la configuracion.
 
     NUNCA lanza. Un mensaje raro no puede tumbar el bucle que procesa velas.
     """
@@ -156,8 +162,15 @@ def responder(texto: str, precio_de: Callable[[str], Optional[float]]) -> Option
                 return AYUDA
             ticker = partes[1].upper()
             coste = float(partes[2].replace(",", ".")) if len(partes) > 2 else 0.0
-            ev = float(partes[3].replace(",", ".")) if len(partes) > 3 else 0.0
+            # El EV se puede omitir: se coge el del cuadro de mandos. Ponerlo en
+            # el mensaje lo pisa, para probar otro sin tocar la configuración.
+            ev = (float(partes[3].replace(",", ".")) if len(partes) > 3
+                  else (ev_guardado or 0.0))
             acciones = float(partes[4]) if len(partes) > 4 else None
+            if not ev:
+                return ("No tengo EV. Ponlo en el cuadro de mandos (columna "
+                        "<b>EV %</b> de la estrategia) o escríbelo aquí:\n"
+                        "<code>/evf TICKER COSTE_100 EV%</code>")
             return veredicto_locates(ticker, precio_de(ticker), coste, ev, acciones)
 
         return None      # comando desconocido: mejor callarse que dar la lata

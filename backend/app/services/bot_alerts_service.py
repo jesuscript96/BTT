@@ -75,8 +75,12 @@ def ensure_watch_table(con) -> None:
         #     entrada, y hasta hoy solo se podia fijar el de la entrada.
         #   capital_usd: la cuenta real de Jaume. El bot no la conoce, y el stop
         #     hibrido no puede calcular su techo sin ella.
+        #   ev_pct: la esperanza de la estrategia, en % del precio de entrada.
+        #     La teclea Jaume — el bot no puede saber que backtest considera
+        #     valido. La usa `/evf` para no tener que repetirla en cada mensaje.
         for columna, tipo in (("riesgo_piramide_usd", "DOUBLE"),
-                              ("capital_usd", "DOUBLE")):
+                              ("capital_usd", "DOUBLE"),
+                              ("ev_pct", "DOUBLE")):
             try:
                 con.execute(f"ALTER TABLE bot_alert_watch ADD COLUMN {columna} {tipo}")
             except Exception:
@@ -390,7 +394,7 @@ def get_watch(con) -> dict[str, dict]:
     ensure_watch_table(con)
     rows = con.execute(
         "SELECT strategy_id, activa, riesgo_usd, updated_at, "
-        "riesgo_piramide_usd, capital_usd FROM bot_alert_watch"
+        "riesgo_piramide_usd, capital_usd, ev_pct FROM bot_alert_watch"
     ).fetchall()
     return {
         r[0]: {
@@ -401,6 +405,7 @@ def get_watch(con) -> dict[str, dict]:
             # bloquea; aqui no se inventa un 0 que parezca una decision.
             "riesgo_piramide_usd": float(r[4]) if r[4] is not None else None,
             "capital_usd": float(r[5]) if r[5] is not None else None,
+            "ev_pct": float(r[6]) if r[6] is not None else None,
         }
         for r in rows
     }
@@ -408,22 +413,25 @@ def get_watch(con) -> dict[str, dict]:
 
 def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
               riesgo_piramide_usd: float | None = None,
-              capital_usd: float | None = None) -> dict:
+              capital_usd: float | None = None,
+              ev_pct: float | None = None) -> dict:
     """Guarda (o actualiza) la vigilancia de una estrategia. Devuelve su fila."""
     ensure_watch_table(con)
     con.execute(
         "INSERT OR REPLACE INTO bot_alert_watch "
-        "(strategy_id, activa, riesgo_usd, updated_at, riesgo_piramide_usd, capital_usd) "
-        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?)",
+        "(strategy_id, activa, riesgo_usd, updated_at, riesgo_piramide_usd, capital_usd, ev_pct) "
+        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)",
         [strategy_id, bool(activa), float(riesgo_usd),
          float(riesgo_piramide_usd) if riesgo_piramide_usd is not None else None,
-         float(capital_usd) if capital_usd is not None else None],
+         float(capital_usd) if capital_usd is not None else None,
+         float(ev_pct) if ev_pct is not None else None],
     )
     return {
         "strategy_id": strategy_id, "activa": bool(activa),
         "riesgo_usd": float(riesgo_usd),
         "riesgo_piramide_usd": riesgo_piramide_usd,
         "capital_usd": capital_usd,
+        "ev_pct": ev_pct,
     }
 
 
@@ -512,6 +520,7 @@ def listar_candidatas(con, scope_sql: str = "", scope_params: Optional[list] = N
             "hybrid_max_loss_pct": (definition.get("risk_management") or {}).get("hybrid_max_loss_pct"),
             "capital_usd": cfg.get("capital_usd"),
             "riesgo_piramide_usd": cfg.get("riesgo_piramide_usd"),
+            "ev_pct": cfg.get("ev_pct"),
             # Si piramida, hay un segundo riesgo que fijar.
             "piramida": bool(((definition.get("pyramiding") or {}).get("levels")) or []),
             # La ventana de ENTRADAS, distinta de la de sesion.
@@ -566,6 +575,7 @@ def vigiladas(con, scope_sql: str = "", scope_params: Optional[list] = None) -> 
             # capital el stop hibrido no se puede aplicar (por eso `/watch` no
             # deja activar una estrategia hibrida sin el).
             "riesgo_piramide_usd": cfg.get("riesgo_piramide_usd"),
+            "ev_pct": cfg.get("ev_pct"),
             "capital_usd": cfg.get("capital_usd"),
             "definition": definition,
             "ventana": ventana_operativa(definition),

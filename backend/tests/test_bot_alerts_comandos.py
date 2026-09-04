@@ -79,8 +79,30 @@ def test_el_comando_admite_el_sufijo_del_bot():
 
 def test_faltan_argumentos_devuelve_la_ayuda():
     assert responder("/evf", precio_de) == AYUDA
-    r = responder("/evf MIMI", precio_de)
+
+
+def test_sin_ev_dice_donde_ponerlo():
+    """Sin EV no hay veredicto posible, y hay que decir dónde se pone."""
+    r = responder("/evf MIMI 1.00", precio_de)          # sin EV guardado
+    assert r is not None and "cuadro de mandos" in r
+
+
+def test_sin_coste_pide_los_datos():
+    """Con EV guardado pero sin coste, falta la otra mitad."""
+    r = responder("/evf MIMI", precio_de, 2.4)
     assert r is not None and "Uso:" in r
+
+
+def test_el_ev_del_cuadro_de_mandos_se_usa_sin_repetirlo():
+    """Es lo que pidió Jaume: `/evf TICKER coste` a secas."""
+    r = responder("/evf MIMI 1.00", precio_de, 2.4)
+    assert r is not None and POSITIVA in r and "2.4000" in r
+
+
+def test_el_ev_escrito_pisa_al_guardado():
+    """Para probar otro valor sin tocar la configuración."""
+    r = responder("/evf MIMI 1.00 5.0", precio_de, 2.4)
+    assert r is not None and "5.0000" in r
 
 
 def test_admite_coma_decimal():

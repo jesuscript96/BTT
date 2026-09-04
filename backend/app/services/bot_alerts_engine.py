@@ -333,6 +333,9 @@ class MotorAlertas:
                 # hibrida sin rellenarlo.
                 "capital_usd": e.get("capital_usd"),
                 "riesgo_piramide_usd": e.get("riesgo_piramide_usd"),
+                # Para el comando /evf de Telegram: asi no hay que repetir el
+                # EV en cada mensaje.
+                "ev_pct": e.get("ev_pct"),
                 "definition": sdef,
                 "ventana": e.get("ventana") or {},
                 # Se compila UNA vez, no en cada vela: es lo caro del motor.

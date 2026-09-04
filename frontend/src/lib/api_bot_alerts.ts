@@ -34,6 +34,10 @@ export interface EstrategiaCandidata {
   /** La cuenta real. Solo hace falta con stop hibrido, que sin ella no puede
    *  calcular su techo — y sin ella el backend no deja activar. */
   capital_usd?: number | null;
+  /** Esperanza matematica de la estrategia, en % del precio de entrada. La
+   *  tecleas tu: el bot no puede saber que backtest consideras valido. La usa
+   *  el calculo de locates, aqui y en el comando `/evf` de Telegram. */
+  ev_pct?: number | null;
   /** Si la estrategia piramida: decide si se pide el riesgo del anyadido. */
   piramida?: boolean;
   hard_stop: Record<string, unknown> | null;
@@ -52,7 +56,11 @@ export function guardarVigilancia(
   strategy_id: string,
   activa: boolean,
   riesgo_usd: number,
-  extra?: { riesgo_piramide_usd?: number | null; capital_usd?: number | null },
+  extra?: {
+    riesgo_piramide_usd?: number | null;
+    capital_usd?: number | null;
+    ev_pct?: number | null;
+  },
 ): Promise<{ strategy_id: string; activa: boolean; riesgo_usd: number }> {
   return apiRequest("/bot-alerts/watch", {
     method: "POST",
@@ -62,6 +70,7 @@ export function guardarVigilancia(
       strategy_id, activa, riesgo_usd,
       ...(extra?.riesgo_piramide_usd ? { riesgo_piramide_usd: extra.riesgo_piramide_usd } : {}),
       ...(extra?.capital_usd ? { capital_usd: extra.capital_usd } : {}),
+      ...(extra?.ev_pct ? { ev_pct: extra.ev_pct } : {}),
     }),
   });
 }
