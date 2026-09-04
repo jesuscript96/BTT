@@ -10,7 +10,20 @@ interface CalendarTabProps {
   isDarkMode?: boolean;
   monthlyExpenses?: number;
   onSelectTrade?: (ticker: string, date: string) => void;
+  /** Los dólares que vale 1 R: el «Riesgo fijo $» del panel de la izquierda.
+   *  Sin él (o a cero) el conmutador de unidad no aparece — no hay entre qué
+   *  convertir. */
+  riskR?: number;
+  /** El modo de riesgo del panel. Solo con «Fixed Amount» vale una R fija en
+   *  dólares; con porcentaje de equity, 1 R cambia con la cuenta y dividir por
+   *  un número único daría un resultado inventado. */
+  riskType?: string;
 }
+
+type ModoVista = "profits" | "gastos" | "net";
+/** En qué se leen las cifras. Es un eje APARTE del modo de vista: los tres
+ *  modos se pueden mirar en dinero o en múltiplos de riesgo. */
+type Unidad = "dinero" | "r";
 
 function formatPnl(pnl: number, isGastos = false): string {
   const abs = Math.abs(pnl);
@@ -27,8 +40,45 @@ function formatPnl(pnl: number, isGastos = false): string {
   return `${sign} $${abs.toFixed(2)}`;
 }
 
-export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, onSelectTrade }: CalendarTabProps) {
-  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net">("profits");
+/** El valor de una casilla, en la unidad elegida.
+ *
+ *  En R se escribe como múltiplo y NUNCA con el «$» delante: un «$1,50 R» es
+ *  justo la confusión que haría leer el mes entero mal.
+ *
+ *  La conversión es dividir entre lo que vale 1 R, que es el riesgo fijo del
+ *  panel. No se usa `r_multiple` del trade a propósito: ese solo existe para
+ *  las operaciones, y así los GASTOS también se pueden leer en R —«este mes me
+ *  he dejado 3,4 R en comisiones» dice bastante más que un número en dólares
+ *  suelto—. Además `r_multiple` viene redondeado a dos decimales del motor, y
+ *  sumarlo por días arrastraría ese redondeo.
+ */
+function formatValor(v: number, modo: ModoVista, unidad: Unidad, valorR: number): string {
+  if (unidad === "dinero" || !valorR) return formatPnl(v, modo === "gastos");
+  const r = v / valorR;
+  if (modo === "gastos") return `${Math.abs(r).toFixed(2)} R`;
+  return `${r >= 0 ? "+" : "−"}${Math.abs(r).toFixed(2)} R`;
+}
+
+export default function CalendarTab({
+  dayResults, trades, monthlyExpenses = 0, onSelectTrade, riskR = 0, riskType,
+}: CalendarTabProps) {
+  const [viewMode, setViewMode] = useState<ModoVista>("profits");
+  /** Dinero o múltiplos de riesgo. Eje aparte del modo: los tres modos se
+   *  pueden mirar en las dos unidades. */
+  const [unidad, setUnidad] = useState<Unidad>("dinero");
+
+  /** Lo que vale 1 R en dólares. Cero = no se puede convertir, y entonces el
+   *  conmutador ni se enseña.
+   *
+   *  SOLO CON RIESGO FIJO. Con «% de equity» el valor de 1 R cambia con la
+   *  cuenta —y con composición, en cada operación—, así que dividir todo el
+   *  historial por un número único daría una cifra que parece una R y no lo
+   *  es. Antes que enseñar eso, no se ofrece. */
+  const valorR = (!riskType || riskType === "Fixed Amount") && riskR > 0 ? riskR : 0;
+  const puedeR = valorR > 0;
+  // Si el panel cambia a % de equity con «R» puesto, se vuelve a dinero solo:
+  // dejarlo en R pintaría dólares con una «R» detrás.
+  const unidadReal: Unidad = puedeR ? unidad : "dinero";
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   // Cerrar el detalle de día con Escape
@@ -71,7 +121,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
       } else {
         val = t.pnl; // net
       }
-      
+
       map.set(t.date, { pnl: cur.pnl + val, count: cur.count + 1 });
     }
 
@@ -113,6 +163,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
         marginBottom: 24,
         borderBottom: "1px solid var(--color-ec-border)",
         paddingBottom: 0,
+        alignItems: "center",
       }}>
         {(["profits", "gastos", "net"] as const).map((mode) => {
           const isActive = viewMode === mode;
@@ -151,6 +202,38 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
             </button>
           );
         })}
+
+        {/* ── Unidad: dinero o R ──────────────────────────────────────────
+            Va a la DERECHA y separado de los modos porque es otro eje: no se
+            elige «Profits o R», se elige «Profits, y en qué lo leo». Solo
+            aparece si hay una R fija que aplicar. */}
+        {puedeR && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, paddingBottom: 6 }}>
+            <span
+              title={`1 R = ${valorR.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $, el riesgo fijo del panel de la izquierda.`}
+              style={{
+                fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase",
+                fontFamily: "var(--font-sans)", color: "var(--color-ec-text-muted)",
+                cursor: "help",
+              }}
+            >1 R = ${valorR.toFixed(0)}</span>
+            <div style={{ display: "flex", border: "1px solid var(--color-ec-border)", borderRadius: 2 }}>
+              {(["dinero", "r"] as const).map((u, i) => (
+                <button
+                  key={u}
+                  onClick={() => setUnidad(u)}
+                  style={{
+                    padding: "3px 10px", fontSize: 10.5, fontFamily: "var(--font-mono, monospace)",
+                    border: "none", borderLeft: i ? "1px solid var(--color-ec-border)" : "none",
+                    background: unidadReal === u ? "var(--color-ec-copper)" : "transparent",
+                    color: unidadReal === u ? "#fff" : "var(--color-ec-text-muted)",
+                    cursor: "pointer",
+                  }}
+                >{u === "dinero" ? "$" : "R"}</button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Calendars Grid ── */}
@@ -228,7 +311,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                       fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
                       color: mColor,
                     }}>
-                      {formatPnl(monthPnl, viewMode === "gastos")}
+                      {formatValor(monthPnl, viewMode, unidadReal, valorR)}
                     </span>
                   )}
                 </div>
@@ -352,7 +435,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                                   fontSize: 9, fontWeight: 700, color: accentColor, letterSpacing: "-0.02em",
                                   fontFamily: "monospace", lineHeight: 1,
                                 }}>
-                                  {formatPnl(day.pnl!, viewMode === "gastos")}
+                                  {formatValor(day.pnl!, viewMode, unidadReal, valorR)}
                                 </span>
                                 <span style={{
                                   fontSize: 7.5, fontWeight: 600, color: accentColor, opacity: 0.75,
@@ -398,7 +481,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                                 ? (wHasGastos ? "var(--color-ec-loss)" : "var(--color-ec-text-muted)")
                                 : (wIsWin ? "var(--color-ec-profit)" : "var(--color-ec-loss)"),
                             }}>
-                              {formatPnl(wPnl, viewMode === "gastos")}
+                              {formatValor(wPnl, viewMode, unidadReal, valorR)}
                             </span>
                             <span style={{
                               fontSize: 7, fontWeight: 600, lineHeight: 1, opacity: 0.7,

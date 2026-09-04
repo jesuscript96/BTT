@@ -749,6 +749,8 @@ export default function ChartsTab({
                         dayResults={simResult.day_results}
                         trades={simResult.trades}
                         isDarkMode={isDarkMode}
+                        riskR={riskR}
+                        riskType={riskType}
                         // SIN GASTOS MENSUALES a propósito: ya van metidos en
                         // la curva del What-if cuando se piden, y volver a
                         // restarlos aquí los cobraría dos veces.
