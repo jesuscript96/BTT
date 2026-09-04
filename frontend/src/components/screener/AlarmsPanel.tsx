@@ -443,13 +443,19 @@ export function AlarmsPanel() {
             </span>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <Select
-                value={templateKey(draft.sizing?.stop_ref ?? "")}
-                onChange={(e) => setDraft({
-                  ...draft, sizing: { ...draft.sizing, stop_ref: e.target.value ? concreteKey(catalog, e.target.value) : undefined },
-                })}
-                style={{ flex: 2, minWidth: 150, fontSize: 11 }}
+                value={draft.sizing?.stop_pct != null ? "__pct__" : templateKey(draft.sizing?.stop_ref ?? "")}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const sizing = { ...draft.sizing };
+                  if (v === "") { sizing.stop_ref = undefined; sizing.stop_pct = undefined; sizing.stop_offset_pct = undefined; }
+                  else if (v === "__pct__") { sizing.stop_ref = undefined; sizing.stop_offset_pct = undefined; sizing.stop_pct = sizing.stop_pct ?? 10; }
+                  else { sizing.stop_pct = undefined; sizing.stop_ref = concreteKey(catalog, v); }
+                  setDraft({ ...draft, sizing });
+                }}
+                style={{ flex: 2, minWidth: 160, fontSize: 11 }}
               >
                 <option value="">Sin stop en el aviso</option>
+                <option value="__pct__">% desde la entrada</option>
                 {catalog?.fields.filter((f) => f.unit === "$").map((f) => (
                   <option key={f.key} value={f.key}>Stop en {f.label.toLowerCase()}</option>
                 ))}
@@ -463,44 +469,29 @@ export function AlarmsPanel() {
                        })}
                        style={{ width: 52, fontSize: 11 }} />
               )}
-              <Input type="number" step="any" placeholder="% offset"
-                     value={String(draft.sizing?.stop_offset_pct ?? "")}
-                     onChange={(e) => setDraft({
-                       ...draft,
-                       sizing: { ...draft.sizing, stop_offset_pct: Number(e.target.value) },
-                     })}
-                     style={{ width: 84, fontSize: 11 }} />
+              {draft.sizing?.stop_pct != null ? (
+                <Input type="number" step="any" placeholder="% desde la entrada"
+                       value={String(draft.sizing?.stop_pct ?? "")}
+                       onChange={(e) => setDraft({ ...draft, sizing: { ...draft.sizing, stop_pct: Number(e.target.value) } })}
+                       style={{ width: 110, fontSize: 11 }} />
+              ) : draft.sizing?.stop_ref ? (
+                <Input type="number" step="any" placeholder="% margen"
+                       value={String(draft.sizing?.stop_offset_pct ?? "")}
+                       onChange={(e) => setDraft({ ...draft, sizing: { ...draft.sizing, stop_offset_pct: Number(e.target.value) } })}
+                       style={{ width: 90, fontSize: 11 }} />
+              ) : null}
             </div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <Input type="number" step="any" placeholder="Riesgo $ por trade"
-                     value={String(draft.sizing?.risk_usd ?? "")}
-                     onChange={(e) => setDraft({
-                       ...draft,
-                       sizing: { ...draft.sizing, risk_usd: Number(e.target.value) || undefined },
-                     })}
-                     style={{ flex: 1, minWidth: 120, fontSize: 11 }} />
-              <Input type="number" step="any" placeholder="…o nominal $ por trade"
-                     value={String(draft.sizing?.notional_usd ?? "")}
-                     onChange={(e) => setDraft({
-                       ...draft,
-                       sizing: { ...draft.sizing, notional_usd: Number(e.target.value) || undefined },
-                     })}
-                     style={{ flex: 1, minWidth: 120, fontSize: 11 }} />
-            </div>
+            <Input type="number" step="any" placeholder="Riesgo $ por trade"
+                   value={String(draft.sizing?.risk_usd ?? "")}
+                   onChange={(e) => setDraft({
+                     ...draft,
+                     sizing: { ...draft.sizing, risk_usd: Number(e.target.value) || undefined },
+                   })}
+                   style={{ fontSize: 11 }} />
             <span style={HINT}>
-              Elige uno de los dos. <b>Riesgo</b> reparte esa pérdida sobre la
-              distancia al stop; <b>nominal</b> compra esa exposición. Con el stop
-              cerca, el primero da bastantes más acciones que el segundo.
+              Pones cuánto quieres arriesgar en el trade y el aviso calcula las
+              acciones repartiendo ese riesgo sobre la distancia de la entrada al stop.
             </span>
-            {draftSide === "short" && (
-              <Input type="number" step="any" placeholder="Coste por paquete de locates $ (opcional)"
-                     value={String(draft.sizing?.locate_package_cost ?? "")}
-                     onChange={(e) => setDraft({
-                       ...draft,
-                       sizing: { ...draft.sizing, locate_package_cost: Number(e.target.value) || undefined },
-                     })}
-                     style={{ fontSize: 11 }} />
-            )}
           </div>
 
           {error && (
