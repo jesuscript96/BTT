@@ -88,7 +88,8 @@ NIVELES_CON_PARAMS: dict[str, dict] = {
     "EMA": {"period": [9, 20, 50, 200]},
     # Las tres lineas de cada banda se sortean: probando solo la de arriba se
     # quedaria media herramienta sin usar.
-    "Bollinger Bands": {"period": [14, 20], "band_line": ["Upper", "Lower", "Basis"]},
+    "Bollinger Bands": {"period": [14, 20], "std_dev": [1.5, 2.0, 2.5],
+                        "band_line": ["Upper", "Lower", "Basis"]},
     "Donchian": {"period": [10, 20, 55], "band_line": ["Upper", "Lower", "Basis"]},
     # `period` = velas de confirmacion de la caja (3 es el Darvas clasico).
     "Darvas Box": {"period": [3, 5], "band_line": ["Upper", "Lower", "Basis"]},
@@ -132,6 +133,7 @@ CATALOGO: dict[str, Indicador] = {
     ),
     "MACD": Indicador(
         nombre="MACD", familia="momento",
+        params={"period": [8, 12], "period2": [21, 26]},
         objetivos=("MACD Signal",), valores=(0,),
         comparadores=(GT, LT, CRUZA_ARRIBA, CRUZA_ABAJO),
         ayuda="La línea MACD. Contra su Signal da el cruce clásico; contra 0, si "
@@ -139,12 +141,14 @@ CATALOGO: dict[str, Indicador] = {
     ),
     "MACD Signal": Indicador(
         nombre="MACD Signal", familia="momento",
+        params={"period": [8, 12], "period2": [21, 26], "period3": [5, 9]},
         valores=(0,), comparadores=(GT, LT),
         ayuda="La media de la MACD. Suele usarse como el nivel que la MACD cruza, "
               "pero también vale sola contra cero.",
     ),
     "MACD Histogram": Indicador(
         nombre="MACD Histogram", familia="momento",
+        params={"period": [8, 12], "period2": [21, 26], "period3": [5, 9]},
         valores=(0,), comparadores=(GT, LT, CRUZA_ARRIBA, CRUZA_ABAJO),
         ayuda="La diferencia entre MACD y Signal. Cruzar cero es el mismo cruce, "
               "pero se ve una vela antes de que las líneas se toquen.",

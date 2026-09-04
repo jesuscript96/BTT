@@ -165,6 +165,79 @@ def test_los_parametros_del_indicador_se_sortean():
     assert vistos == {"up", "down"}
 
 
+# ── Ramas del indicador que no se prueban ────────────────────────────────
+
+# Todos los parámetros que acepta `compute_indicator`, con dos valores lo
+# bastante distintos como para que se note si mueven la aguja.
+SONDAS = {
+    "period": [5, 50], "period2": [10, 40], "period3": [3, 20],
+    "std_dev": [1.0, 3.0], "band_line": ["Upper", "Lower"],
+    "ap_session": ["ap.PM", "ap.RTH"], "range_minutes": [3, 30],
+    "pivot_window": [2, 5], "tri_lookback": [15, 60],
+    "slope_tolerance": [0.01, 0.5], "min_r_squared": [0.3, 0.95],
+    "min_pivots": [2, 4], "session_ref": ["pm", "rth"],
+    "squeeze_direction": ["up", "down"],
+    "fade_ref": ["previous_max", "vwap_cross"],
+    "days_lookback": [1, 5], "orb_minutes": [5, 30], "time_hour": [5, 8],
+}
+
+# `multiplier` NO es una rama del indicador: `indicators.py` lo aplica al final
+# a CUALQUIERA (`result = result * multiplier`), así que cambia el resultado de
+# los 26 y saldría en todas las filas sin decir nada. Escalar un indicador es
+# lo mismo que mover el número contra el que se compara, y eso ya se busca.
+SIN_SONDAR = {"multiplier"}
+
+
+def _valores(nombre: str, **kw):
+    from app.services.indicators import compute_indicator
+    try:
+        s = compute_indicator(nombre, _velas(), daily_stats=STATS, **kw)
+        return pd.Series(s).astype(float).fillna(-1e18).values
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _ramas_perdidas(nombre: str, declarados: dict) -> list:
+    """Parámetros que CAMBIAN el resultado y el catálogo no sortea."""
+    perdidas = []
+    for p, (a, b) in SONDAS.items():
+        if p in declarados or p in SIN_SONDAR:
+            continue
+        sa, sb = _valores(nombre, **{p: a}), _valores(nombre, **{p: b})
+        if sa is None or sb is None:
+            continue
+        if not np.array_equal(sa, sb):
+            perdidas.append(p)
+    return perdidas
+
+
+@pytest.mark.parametrize("nombre", sorted(C.CATALOGO))
+def test_no_queda_ninguna_rama_del_indicador_sin_probar(nombre):
+    """LO QUE PREGUNTÓ JAUME (2026-09-04), y tenía razón en preguntarlo.
+
+    Al meter el Darvas salió que el lado derecho no sorteaba nada: ofrecer
+    «Darvas Box» era ofrecer «Darvas por arriba con 3 velas», una sola de sus
+    formas. Su pregunta fue si pasaba con más — y pasaba: el MACD iba siempre
+    con 12/26/9 y las Bollinger siempre con 2 desviaciones.
+
+    Esto lo detecta solo. Si mañana se añade un indicador y se olvida un
+    parámetro que cambia el resultado, salta aquí en vez de quedarse como una
+    rama muerta que el genético no explora nunca.
+    """
+    perdidas = _ramas_perdidas(nombre, C.CATALOGO[nombre].params)
+    assert not perdidas, (
+        f"{nombre}: {', '.join(perdidas)} cambian el resultado pero el genético "
+        f"prueba siempre el mismo valor. Añádelos a `params` o justifícalos.")
+
+
+@pytest.mark.parametrize("nombre", sorted(C.NIVELES_CON_PARAMS))
+def test_a_los_NIVELES_tampoco_les_falta_ninguna(nombre):
+    """El lado derecho, que es donde apareció el fallo del Darvas."""
+    perdidas = _ramas_perdidas(nombre, C.NIVELES_CON_PARAMS[nombre])
+    assert not perdidas, (
+        f"nivel {nombre}: {', '.join(perdidas)} no se sortean")
+
+
 # ── Gestión de riesgo ────────────────────────────────────────────────────
 
 def _config(**extra):
