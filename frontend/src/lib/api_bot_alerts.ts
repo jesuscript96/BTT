@@ -86,6 +86,13 @@ export function explicarEstrategia(id: string): Promise<ExplicacionEstrategia> {
   return apiRequest<ExplicacionEstrategia>(`/bot-alerts/strategies/${id}/explicacion`);
 }
 
+/** Borra la configuracion que el motor NO aplica. NO cambia el comportamiento:
+ *  se quita lo que ya se ignoraba. Lo que desaparece es la posibilidad de
+ *  resucitarla sin querer cambiando otro campo. */
+export function limpiarInactivo(id: string): Promise<{ quitado: string[]; detalle?: string }> {
+  return apiRequest(`/bot-alerts/strategies/${id}/limpiar-inactivo`, { method: "POST" });
+}
+
 /* ── Avisos ───────────────────────────────────────────────────────────── */
 
 export interface EventoAlerta {

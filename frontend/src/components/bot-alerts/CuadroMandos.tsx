@@ -37,6 +37,7 @@ import {
   limpiarEventos,
   leerEstado,
   explicarEstrategia,
+  limpiarInactivo,
   type ExplicacionEstrategia,
   type EstadoBot,
   type EstrategiaCandidata,
@@ -218,7 +219,10 @@ function CampoNum({ valor, onChange, onBlur, paso = 50, aviso = false, titulo }:
  *  round-trip, 370 campos y 0 pérdidas—; lo que faltaba era poder VER qué parte
  *  está viva. Por eso el bloque de abajo, el de lo inactivo, es el importante.
  */
-function Detalle({ e }: { e?: ExplicacionEstrategia }) {
+function Detalle({ e, onLimpiar }: {
+  e?: ExplicacionEstrategia;
+  onLimpiar?: () => void;
+}) {
   if (!e) return <span style={{ color: color.textMuted, fontSize: 11 }}>Leyendo…</span>;
 
   const Bloque = ({ titulo, children }: { titulo: string; children: React.ReactNode }) => (
@@ -282,10 +286,26 @@ function Detalle({ e }: { e?: ExplicacionEstrategia }) {
           borderTop: `0.5px dotted ${color.border}`, paddingTop: 8,
         }}>
           <div style={{
-            fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
-            textTransform: "uppercase", color: color.warning, marginBottom: 4,
+            display: "flex", alignItems: "center", gap: 10, marginBottom: 4,
           }}>
-            Guardado pero SIN aplicar ({e.inactivo.length})
+            <span style={{
+              fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+              textTransform: "uppercase", color: color.warning,
+            }}>
+              Guardado pero SIN aplicar ({e.inactivo.length})
+            </span>
+            {onLimpiar && (
+              <button
+                onClick={onLimpiar}
+                title="Borra lo que puede encenderse solo al cambiar otro campo. NO cambia el comportamiento: se quita lo que el motor ya ignoraba, así que los backtests dan lo mismo. Lo que tiene su propio interruptor (trailing, swing) se queda."
+                style={{
+                  fontSize: 9, padding: "1px 7px", cursor: "pointer",
+                  background: "transparent",
+                  border: `0.5px solid ${color.border}`, borderRadius: 2,
+                  fontFamily: font.mono, color: color.textMuted,
+                }}
+              >LIMPIAR</button>
+            )}
           </div>
           {e.inactivo.map((x, i) => (
             <div key={i} style={{ fontSize: 11, marginBottom: 3 }}>
@@ -347,6 +367,32 @@ export default function CuadroMandos() {
       try { localStorage.setItem(LOCATES_KEY, JSON.stringify(sig)); } catch { /* da igual */ }
       return sig;
     });
+  }, []);
+
+  const limpiarConfigMuerta = useCallback(async (id: string, nombre: string) => {
+    // Confirmación explícita: modifica la estrategia GUARDADA. No cambia cómo
+    // opera —se quita lo que el motor ya ignoraba— pero es un cambio en disco
+    // y conviene que sea una decisión, no un clic despistado.
+    const aviso = [
+      `Se borrará de «${nombre}» la configuración que el motor no aplica.`,
+      "",
+      "NO cambia cómo opera ni los resultados de los backtests: se quita",
+      "exactamente lo que ya se ignoraba. Lo que tiene su propio interruptor",
+      "(trailing, swing) se queda.",
+      "",
+      "¿Seguir?",
+    ].join("\n");
+    if (!window.confirm(aviso)) return;
+    try {
+      const r = await limpiarInactivo(id);
+      const e = await explicarEstrategia(id);
+      setExplicacion((p) => ({ ...p, [id]: e }));
+      setError(r.quitado.length
+        ? `Limpiado de «${nombre}»: ${r.quitado.join(", ")}.`
+        : `«${nombre}» no tenía nada que limpiar.`);
+    } catch (err) {
+      setError((err as Error)?.message || "No se pudo limpiar");
+    }
   }, []);
 
   const alternarDetalle = useCallback(async (id: string) => {
@@ -927,7 +973,10 @@ export default function CuadroMandos() {
                     background: color.bgElevated,
                     borderBottom: `0.5px solid ${color.border}`,
                   }}>
-                    <Detalle e={explicacion[s.strategy_id]} />
+                    <Detalle
+                      e={explicacion[s.strategy_id]}
+                      onLimpiar={() => limpiarConfigMuerta(s.strategy_id, s.name)}
+                    />
                   </td>
                 </tr>
               ) : null;

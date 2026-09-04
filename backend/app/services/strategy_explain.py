@@ -250,3 +250,47 @@ def explicar_estrategia(definicion: dict) -> dict:
         # Lo importante: qué hay guardado que el motor NO aplica.
         "inactivo": inactivo,
     }
+
+
+def limpiar_inactivo(definicion: dict) -> tuple[dict, list[str]]:
+    """Quita de la definicion la configuracion que el motor NO aplica.
+
+    NO CAMBIA EL COMPORTAMIENTO. Se borra exactamente lo que el motor ya
+    ignoraba, asi que la estrategia opera igual antes y despues; los backtests
+    dan lo mismo. Lo que se elimina es la posibilidad de resucitarlo sin querer.
+
+    POR QUE HACE FALTA. El caso de 1B: dos `partial_take_profits` (30 % a las
+    09:00, 70 % a las 12:20) que no se usan porque `take_profit_mode` esta en
+    "Full". **No tienen interruptor propio**: se encienden cambiando OTRO campo.
+    Bastaria con tocar ese desplegable para que volvieran unos parciales que
+    nadie recuerda haber puesto, en una estrategia que manda ordenes reales.
+
+    QUE NO SE TOCA. Lo que esta apagado por SU PROPIO interruptor —el trailing
+    con `active: false`, el swing igual— se deja: para encenderlo hay que darle
+    a su boton, asi que no hay despiste posible, y borrar el valor obligaria a
+    volver a teclearlo. Solo se limpia lo que puede despertar solo.
+
+    Devuelve (definicion nueva, lista de lo quitado). La original no se toca.
+    """
+    import copy
+
+    d = copy.deepcopy(definicion or {})
+    rm = d.get("risk_management") or {}
+    quitado: list[str] = []
+
+    # Parciales que no se aplican por el modo. El unico caso, hoy, de
+    # configuracion sin interruptor propio.
+    parciales = rm.get("partial_take_profits") or []
+    if parciales and rm.get("take_profit_mode", "Full") != "Partial":
+        quitado.append(f"{len(parciales)} take profit parciales")
+        rm["partial_take_profits"] = []
+
+    # Horario personalizado con la sesion en otra cosa: tampoco tiene
+    # interruptor propio — se activa cambiando `market_sessions`.
+    sesiones = [str(s).lower() for s in (d.get("market_sessions") or [])]
+    if "custom" not in sesiones and (d.get("custom_start_time") or d.get("custom_end_time")):
+        quitado.append(f"horario {d.get('custom_start_time')}-{d.get('custom_end_time')}")
+        d["custom_start_time"] = None
+        d["custom_end_time"] = None
+
+    return d, quitado

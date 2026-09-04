@@ -15,6 +15,7 @@ estrategias no se editan con el bot encendido, le basta con leerla al arrancar.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from typing import Optional
@@ -81,6 +82,40 @@ def explicacion(strategy_id: str, user_id: Optional[str] = Depends(get_current_u
         return {"name": fila[0], **explicar_estrategia(bas._parse_definition(fila[1]))}
     finally:
         con.close()
+
+
+@router.post("/strategies/{strategy_id}/limpiar-inactivo")
+def limpiar_inactivo(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Borra de la estrategia la configuracion que el motor NO aplica.
+
+    NO CAMBIA EL COMPORTAMIENTO: se quita lo que ya se ignoraba, asi que los
+    backtests dan lo mismo. Lo que desaparece es la posibilidad de resucitarla
+    sin querer — el caso de los `partial_take_profits` de 1B, que no tienen
+    interruptor propio y se encenderian cambiando `take_profit_mode`.
+    """
+    _guard()
+    from app.services.strategy_explain import limpiar_inactivo as _limpiar
+    with get_user_db_lock():
+        con = get_user_db_connection()
+        scope_sql, scope_params = scope_clause(user_id)
+        try:
+            fila = con.execute(
+                f"SELECT definition FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+            if not fila:
+                raise HTTPException(status_code=404, detail="Estrategia no encontrada")
+            nueva, quitado = _limpiar(bas._parse_definition(fila[0]))
+            if not quitado:
+                return {"quitado": [], "detalle": "No habia nada que limpiar"}
+            con.execute(
+                "UPDATE strategies SET definition = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                [json.dumps(nueva), strategy_id],
+            )
+            logger.info("[ALERTAS] limpiada config muerta de %s: %s", strategy_id, quitado)
+            return {"quitado": quitado}
+        finally:
+            con.close()
 
 
 class WatchReq(BaseModel):
