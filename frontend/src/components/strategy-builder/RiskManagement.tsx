@@ -401,7 +401,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             letterSpacing: '0.05em',
                                             color: 'var(--color-ec-text-secondary)'
                                         }}>
-                                            Stop Loss Híbrido
+                                            Cálculo de Shares por Stop Loss Híbrido
                                         </span>
                                     </div>
                                     <div className="flex items-center gap-2">
@@ -430,6 +430,18 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         </div>
                                     </div>
                                 </div>
+
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 10,
+                                    color: 'var(--color-ec-text-secondary)',
+                                    fontStyle: 'italic',
+                                    marginLeft: 18,
+                                    marginTop: 4,
+                                    lineHeight: '1.3',
+                                }}>
+                                    Calcula nº Shares por distancia al Stop Loss, pero sin exponer más de lo que aceptas perder ante un evento extremo
+                                </span>
 
                                 {risk.hybrid_stop && (
                                     <div style={{ display: 'flex', gap: 10, marginLeft: 18, marginTop: 6 }}>
@@ -508,7 +520,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 }}>
                                     {risk.hybrid_stop && risk.hybrid_black_swan_pct && risk.hybrid_max_loss_pct
                                         ? `Nunca expone más del ${(risk.hybrid_max_loss_pct / risk.hybrid_black_swan_pct * 100).toFixed(2)}% del capital: si el precio se fuera un ${risk.hybrid_black_swan_pct}% en contra, perderías el ${risk.hybrid_max_loss_pct}% de la cuenta.`
-                                        : 'Va por distancia al stop, pero topando la exposición para que un evento extremo no cueste más de lo que aceptas perder.'}
+                                        : ''}
                                 </span>
                             </div>
                         </div>

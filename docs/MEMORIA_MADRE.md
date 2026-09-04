@@ -2400,3 +2400,116 @@ que ya pasó, pasó» y no estaba implementado: el bot avisó a las 20:28 de
 operaciones de las 14:27 y salieron a Telegram. Está arreglado (se llama al
 motor con el frame hidratado y se descartan los eventos, para marcarlos como
 vistos), pero la lección es general.
+
+---
+
+## 2026-09-03 / 04
+
+Sesión larga: el bot operó en vivo por primera vez y de ahí salieron dos bugs
+del MOTOR (no del bot) que afectan a cualquier backtest con piramidación.
+
+### 1. ⚠️ BUG DEL MOTOR: las pirámides se saltaban `entry_time_windows`
+
+**Afecta a todo backtest con piramidación y ventana de entradas.** La ventana se
+aplicaba solo a `entries`; `_evaluate_pyramid_levels` no la miraba, así que un
+nivel podía disparar a cualquier hora de la sesión.
+
+Visto en vivo el 3-sep: GELS piramidó a las **08:08 ET** teniendo la ventana de
+entradas cerrada a las 08:00. Jaume confirmó que esa ventana es global —
+entradas **y** pirámides.
+
+Medido sobre un frame de prueba: **59 señales de pirámide fuera de ventana
+antes, 0 después**, y las 241 legítimas intactas. Sin `entry_time_windows` nada
+cambia.
+
+> **Los resultados guardados de estrategias con pirámide + ventana ya no
+> coinciden.** No es opinable: era un bug.
+
+### 2. Stop híbrido: tercer modo de dimensionado
+
+Además de valor de mercado y distancia al stop. Va por SL, pero topando la
+exposición:
+
+```
+techo en dólares = (% de cuenta asumible × capital) / % del evento
+```
+
+Resuelve el punto ciego del modo por SL: con el stop muy ceñido el tamaño se
+dispara. Medido — cuenta de 10.000 $, riesgo 300 $, stop al 1 %: **30.000
+acciones, tres veces la cuenta expuesta**; un hueco del 1.000 % en contra deja
+debiendo dinero. Con techo al 50 % ante un evento del 1.000 %, esas 30.000 se
+quedan en 500. **Recorta, no anula.**
+
+**El techo es de VALOR, no de acciones.** Con 100 $ de techo se compran 100
+acciones a 1 $ pero 200 a 0,50 $. Confundirlo multiplica la exposición por el
+precio.
+
+Los dos porcentajes viven en la **estrategia** (decisión de Jaume: afecta
+directamente al resultado del backtest); el **capital**, en el cuadro de mandos
+del bot, que no conoce la cuenta real. Se aplica por separado a entrada y a
+pirámide, cada una con sus porcentajes.
+
+**⚠️ Aviso para quien toque el motor: el kernel Numba NO implementa el techo.**
+Una estrategia híbrida se rutea SIEMPRE al motor Python, igual que se hace con
+la piramidación. Sin ese ruteo, y con `BACKTEST_NUMBA_SIM=1`, el techo se pierde
+**en silencio** en todo backtest sin pirámides.
+
+### 3. La pirámide tiene ahora su propio modo de tamaño
+
+Independiente del de la entrada: un añadido puede ir por distancia al stop
+aunque la entrada vaya por valor de mercado. **El mismo añadido sale a 3, 150 o
+5 acciones según el modo** — hasta ahora iba siempre por valor de mercado y no
+había forma de cambiarlo.
+
+Esto salió de una observación de Jaume en vivo: con el mismo stop, su pirámide
+arriesgaba **146 $ donde la entrada arriesgaba 300 $**, porque una se
+dimensionaba por stop y la otra por capital.
+
+### 4. Rolling EV: el modo «días» hacía MEDIA DE MEDIAS
+
+Sacaba el EV de cada día y promediaba esos EV, así que **un día con una
+operación pesaba igual que uno con diez**:
+
+| | |
+|---|---|
+| lunes: 1 trade que gana 1,0R | EV del día `+1,000 R` |
+| martes: 10 trades de −0,2R | EV del día `−0,200 R` |
+| modo DÍAS (media de medias) | **`+0,400 R`** |
+| modo TRADES (los 11 juntos) | **`−0,091 R`** ← el real |
+
+Cambiaba **el signo**: un mes de días flojos con una ganadora suelta se pintaba
+como rentable. Ahora la ventana de N días coge todas las operaciones de esos
+días. El modo por trades ya era correcto y no cambia (verificado: diferencia 0).
+
+### 5. Bot de alertas
+
+- **Prealertas del segundo 50 al 59** (antes solo el 50). Medido sobre tick
+  data: de 86 % a 100 % de captura, margen de 10 s a 9,4 s de media.
+- **Prealertas huérfanas arregladas**: los agregados por segundo tardan ~3 s, así
+  que el tick del segundo 59 llegaba DESPUÉS de cerrar su vela y nadie la
+  confirmaba ni descartaba — se quedaba en ámbar para siempre.
+- **El bot ya ESCUCHA**: `/evf TICKER COSTE EV%` por Telegram dice si compensan
+  los locates. Solo responde al chat configurado, los comandos solo LEEN, y
+  nada de lo que llegue puede tumbar el bucle de velas.
+- **Desplegable de condiciones** en el cuadro de mandos: lo que el motor aplica
+  DE VERDAD, incluida la configuración guardada que NO se usa y por qué. Sobre
+  la 1B real saca tres: trailing y swing (con su `active: false`, inofensivos) y
+  **dos take profit parciales que se encenderían cambiando OTRO campo**.
+
+### 6. Auditoría del guardado de estrategias: es FIEL
+
+A petición de Jaume. Round-trip sobre la 1B real: **370 campos, 0 perdidos, 0
+inventados, 0 alterados**. El guardado no corrompe nada. Lo que faltaba era
+poder **ver** qué parte de lo guardado está viva — de ahí el desplegable.
+
+### Dos cosas que valen para cualquiera en este repo
+
+**El patrón de las TRES CAPAS sigue mordiendo.** Se documentó en §4 de este
+mismo documento y aun así se volvió a caer en él el mismo día: se escribió el
+código que LEE cuatro campos nuevos y no el que los ESCRIBE. Un `lv.get("x")`
+que siempre devuelve `None` no falla, no avisa, y no sale en los tests que no lo
+cubren. Salió en una auditoría posterior, no en la suite.
+
+**`r_multiple` viene REDONDEADO A DOS DECIMALES.** Cualquier cálculo que
+compare márgenes finos (un fade del 1,19 % contra un EV del 2,4 %) tiene que
+salir de `entry_price`/`exit_price`, no de ahí.
