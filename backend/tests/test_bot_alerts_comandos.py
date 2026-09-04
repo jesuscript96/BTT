@@ -7,7 +7,8 @@ raro no pueda tumbar el bucle que procesa velas**. Una excepción ahí cuesta un
 vela, y una vela puede ser una entrada.
 """
 from app.services.bot_alerts_comandos import (
-    AYUDA, NEGATIVA, POSITIVA, responder, veredicto_locates,
+    AYUDA, NEGATIVA, POSITIVA, panel_radar, panel_ticker, responder,
+    veredicto_locates,
 )
 
 PRECIOS = {"MIMI": 0.8422, "GELS": 1.0498}
@@ -164,3 +165,143 @@ def test_la_ayuda_explica_la_unidad_del_locate():
     assert "POR ACCIÓN" in AYUDA
     # …y avisa de la otra unidad, que es donde está la trampa.
     assert "paquete de 100" in AYUDA
+
+
+# ── /estado ──────────────────────────────────────────────────────────────
+# Aquí no hay aritmética que fijar: lo que se fija es que NO SE INVENTE NADA.
+# Un panel que enseña un precio de hace media hora, o que llama «vigilada» a una
+# acción que el bot no está evaluando, es peor que no contestar — se decide con
+# él delante.
+
+FICHA = {
+    "ticker": "BAOS", "precio": 0.3722, "prev_close": 0.2389,
+    "pre_high": 0.3722, "pre_volume": 840_000, "day_volume": 1_240_000,
+    "visto_hace": 2.4, "estrategias": ["1B 50k"],
+    "metricas": {"PM High Gap %": 55.75, "Current Gap %": 48.10,
+                 "Open Gap %": None},
+}
+RADAR = [
+    {"ticker": "BAOS", "estrategia": "1B 50k", "metrica": "PM High Gap %",
+     "valor": 55.75, "precio": 0.3722, "volumen": 1_240_000, "seguido": True},
+    {"ticker": "MIMI", "estrategia": "1B 50k", "metrica": "PM High Gap %",
+     "valor": 52.10, "precio": 0.8422, "volumen": 3_400_000, "seguido": True},
+]
+
+
+def _estado(texto, ficha=FICHA, radar=RADAR):
+    return responder(texto, precio_de, None,
+                     estado_de=lambda _t: ficha, radar=lambda: radar)
+
+
+def test_la_ficha_lleva_lo_que_se_mira_al_decidir():
+    r = panel_ticker(FICHA)
+    assert "BAOS" in r and "0.3722" in r
+    assert "+55.75" in r            # el gap que la metió
+    assert "+48.10" in r            # y dónde está AHORA, que es otra cosa
+    assert "1.2 M" in r             # volumen legible, no 1240000
+    assert "1B 50k" in r            # por qué la vigilo
+
+
+def test_el_gap_de_apertura_no_sale_si_no_ha_abierto():
+    """None NO se pinta como 0. «Abrió plano» y «aún no ha abierto» deciden
+    distinto, y una fila con una raya invita a leerla como un cero."""
+    assert "Gap apertura" not in panel_ticker(FICHA)
+    abierta = {**FICHA, "metricas": {**FICHA["metricas"], "Open Gap %": 12.5}}
+    assert "Gap apertura" in panel_ticker(abierta) and "+12.50" in panel_ticker(abierta)
+
+
+def test_sin_datos_no_se_inventa_una_ficha():
+    """Mismo criterio que `/evf` sin precio: decirlo, no enseñar algo viejo."""
+    r = panel_ticker(None)
+    assert "no lo estoy vigilando" in r.lower() and "0.3" not in r
+
+
+def test_el_ticker_que_no_sigo_no_saca_la_ficha_de_otro():
+    r = responder("/estado ZZZZ", precio_de, None,
+                  estado_de=lambda _t: None, radar=lambda: RADAR)
+    assert r is not None and "BAOS" not in r
+
+
+def test_el_ultimo_tick_se_dice_pero_no_se_llama_dato_viejo():
+    """Un agregado solo llega si HA HABIDO OPERACIONES: 40 s sin tick no es el
+    feed caído, es una acción parada — y eso es información, no un fallo."""
+    assert "hace 2 s" in panel_ticker(FICHA)
+    assert "hace 4 min" in panel_ticker({**FICHA, "visto_hace": 260})
+
+
+# ── el radar ─────────────────────────────────────────────────────────────
+
+def test_el_radar_lista_lo_vigilado():
+    r = panel_radar(RADAR)
+    assert "BAOS" in r and "MIMI" in r
+    assert "2 vigiladas" in r
+    assert "PM High Gap %" in r      # sin esto la columna del % no dice nada
+
+
+def test_las_que_esperan_cupo_van_APARTE():
+    """LO IMPORTANTE DE ESTE PANEL.
+
+    Un ticker admitido por el radar pero fuera del cupo del socket NO se evalúa
+    y NO va a dar avisos. Meterlo en la misma lista y llamarlo «vigilado» sería
+    mentir justo donde más duele: te fías de que el bot avisará y no lo hará.
+    """
+    fuera = {**RADAR[1], "ticker": "GELS", "seguido": False}
+    r = panel_radar([*RADAR, fuera])
+    assert "2 vigiladas" in r          # las de dentro, GELS no cuenta
+    assert "1 esperando cupo" in r
+    assert "NO aviso" in r
+
+
+def test_sin_la_marca_se_dan_por_seguidas():
+    """Un radar que no ponga `seguido` sigue leyéndose igual."""
+    assert "2 vigiladas" in panel_radar([{**c, "seguido": None} | {"seguido": True}
+                                         for c in RADAR])
+    sin_marca = [{k: v for k, v in c.items() if k != "seguido"} for c in RADAR]
+    r = panel_radar(sin_marca)
+    assert "2 vigiladas" in r and "esperando cupo" not in r
+
+
+def test_se_cuentan_acciones_no_filas():
+    """Un ticker en dos estrategias son dos filas y UNA acción."""
+    dos_veces = [RADAR[0], {**RADAR[0], "estrategia": "2B", "metrica": "Current Gap %"}]
+    assert "1 vigilada" in panel_radar(dos_veces)
+
+
+def test_radar_vacio_lo_dice():
+    r = panel_radar([])
+    assert "vacío" in r and "vigilada" not in r
+
+
+def test_sin_radar_se_explica_por_que():
+    """Arrancar con tickers a mano es una opción del bot, no un fallo."""
+    assert "a mano" in panel_radar(None)
+
+
+def test_estado_a_secas_es_el_radar():
+    """Se teclea en el móvil: `/estado` sin más es lo que se quiere el 90 %."""
+    assert _estado("/estado") == _estado("/estado radar")
+    assert "RADAR" in _estado("/estado")
+
+
+def test_estado_admite_el_sufijo_del_bot_y_las_mayusculas():
+    assert "RADAR" in _estado("/estado@Alertas_btt_bot Radar")
+    assert "BAOS" in _estado("/Estado baos")
+
+
+def test_estado_sin_proveedores_no_revienta():
+    """El bot puede no tener mercado todavía al arrancar."""
+    assert responder("/estado radar", precio_de) is not None
+    assert responder("/estado BAOS", precio_de) is not None
+
+
+def test_el_html_del_ticker_se_escapa():
+    """Va en modo HTML: un `<` sin escapar rompe el mensaje entero y Telegram
+    lo rechaza con un 400 — el bot se quedaría mudo, no medio mudo."""
+    r = panel_radar([{**RADAR[0], "ticker": "<b>X", "estrategia": "a & b"}])
+    assert "&lt;b&gt;" in r and "a &amp; b" in r
+
+
+def test_una_basura_en_estado_tampoco_revienta():
+    for basura in ("/estado " + "x" * 5000, "/estado ../../etc/passwd",
+                   "/estado radar radar", "/estado\n\n/estado"):
+        _estado(basura)          # no debe lanzar

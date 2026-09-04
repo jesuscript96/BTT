@@ -18,6 +18,9 @@ si la estrategia gana lo suficiente para pagarlos:
 
 El TAMANO no entra: ganancia esperada y coste escalan los dos con el numero de
 acciones y se cancela. Si el fade no llega para un locate, tampoco para mil.
+
+QUE RESUELVE `/estado`. Ver lo que el bot sabe sin abrir el ordenador: la ficha
+de una accion, o la lista entera de lo que esta vigilando.
 """
 from __future__ import annotations
 
@@ -138,6 +141,154 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
     )
 
 
+# ── /estado ──────────────────────────────────────────────────────────────
+# Lo que el bot SABE ahora mismo, sin abrir el ordenador. De solo lectura, como
+# todo lo de aqui: contesta con su estado, no lo cambia.
+
+def _esc(t: str) -> str:
+    """Telegram en modo HTML: los tres de siempre."""
+    return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _vol(v: Optional[float]) -> str:
+    """Volumen legible en el movil. 1234567 -> «1.2 M»."""
+    if v is None:
+        return "—"
+    if v >= 1e6:
+        return f"{v / 1e6:.1f} M"
+    if v >= 1e3:
+        return f"{v / 1e3:.0f} K"
+    return f"{v:.0f}"
+
+
+def _n(v: Optional[float], dec: int = 2, signo: bool = False) -> str:
+    """Un numero, o una raya si no se sabe.
+
+    None NO se pinta como 0: la diferencia entre «el gap de apertura es 0 %» y
+    «aun no ha abierto» decidiria distinto, y es la misma regla que sigue
+    `EstadoTicker.metricas()`.
+    """
+    if v is None:
+        return "—"
+    return f"{v:+.{dec}f}" if signo else f"{v:.{dec}f}"
+
+
+def _hace(seg: Optional[float]) -> str:
+    """Cuanto hace del ultimo tick, en palabras.
+
+    NO se llama «dato viejo» a proposito. Un agregado solo llega si HA HABIDO
+    OPERACIONES: 40 s sin tick no es el feed caido, es una accion parada. Y eso
+    es informacion util por si sola — la liquidez secandose se ve aqui antes que
+    en el grafico. Se da el numero y que lo lea Jaume.
+    """
+    if seg is None:
+        return "—"
+    if seg < 90:
+        return f"hace {int(seg)} s"
+    return f"hace {int(seg // 60)} min"
+
+
+def panel_ticker(est: Optional[dict]) -> str:
+    """`/estado TICKER`: la ficha de una accion.
+
+    `est` lo arma el bot desde su mercado en vivo; este modulo no sabe nada del
+    feed. None = no se esta vigilando, y entonces NO HAY DATO: mejor decirlo que
+    ensenyar un precio de hace media hora como si fuera de ahora. Es la misma
+    regla que ya sigue `/evf` al no tener precio.
+    """
+    if not est:
+        return ("No lo estoy vigilando, así que no tengo datos suyos.\n"
+                "Solo sigo lo que entra en el radar — mira "
+                "<code>/estado radar</code>.")
+
+    tk = _esc(str(est.get("ticker", "?")))
+    m = est.get("metricas") or {}
+    filas = [
+        ("PM High Gap", f"{_n(m.get('PM High Gap %'), 2, True)} %"),
+        ("Gap ahora", f"{_n(m.get('Current Gap %'), 2, True)} %"),
+        ("Máx. premkt", f"{_n(est.get('pre_high'), 4)} $"),
+        ("Cierre ayer", f"{_n(est.get('prev_close'), 4)} $"),
+        ("Volumen", _vol(est.get("day_volume"))),
+        ("Vol. premkt", _vol(est.get("pre_volume"))),
+        ("Último tick", _hace(est.get("visto_hace"))),
+    ]
+    # El gap de apertura NO EXISTE antes de las 09:30, y por eso solo aparece
+    # cuando lo hay: una fila con una raya invita a leerla como un cero.
+    if m.get("Open Gap %") is not None:
+        filas.insert(2, ("Gap apertura", f"{_n(m['Open Gap %'], 2, True)} %"))
+
+    tabla = "\n".join(f"{k:<13}{v:>12}" for k, v in filas)
+    porque = est.get("estrategias") or []
+    cola = ("\n\n<i>vigilada por " + _esc(", ".join(porque)) + "</i>" if porque
+            else "\n\n<i>tengo sus datos pero no está en ningún radar</i>")
+    return (f"<b>{tk}</b> a {_n(est.get('precio'), 4)} $\n"
+            f"<pre>{tabla}</pre>{cola}")
+
+
+def _fila_radar(c: dict) -> str:
+    # CORTAR Y RELLENAR ANTES DE ESCAPAR, no al reves. Escapando primero, un
+    # ticker raro como `<b>X` se convierte en `&lt;b&gt;X` y el corte a 6 lo
+    # parte por la mitad de la entidad (`&lt;b&`): Telegram rechaza el mensaje
+    # ENTERO con un 400 y el bot se queda mudo, no medio mudo. Y de paso la
+    # columna cuadra, que se rellena por caracteres visibles.
+    return "{}{:>9}{:>10}{:>8}  {}".format(
+        _esc(f"{str(c.get('ticker', '?'))[:6]:<6}"),
+        f"{_n(c.get('valor'), 2, True)}%",
+        f"{_n(c.get('precio'), 4)}$",
+        _vol(c.get("volumen")),
+        _esc(str(c.get("estrategia", ""))),
+    )
+
+
+def _cuantos(cands: list) -> int:
+    """Tickers distintos, no filas.
+
+    Un ticker puede estar por VARIAS estrategias, con una fila cada una: «3
+    vigiladas» con 5 filas no es un error.
+    """
+    return len({str(c.get("ticker")) for c in cands})
+
+
+def panel_radar(cands: Optional[list]) -> str:
+    """`/estado radar`: todo lo vigilado, de un vistazo.
+
+    Llega ya ordenado por la metrica que las trajo — que es el orden en el que
+    interesan — asi que aqui no se reordena.
+    """
+    if cands is None:
+        return "No tengo radar: el bot arrancó con una lista de tickers a mano."
+    if not cands:
+        return ("<b>RADAR</b> — vacío ahora mismo.\n"
+                "<i>Nada ha cumplido todavía el filtro de ninguna estrategia.</i>")
+
+    # SEGUIDAS vs ESPERANDO CUPO. Un ticker admitido por el radar pero fuera del
+    # cupo del socket NO se evalua y NO va a dar avisos. Meterlo en la misma
+    # lista y llamarlo «vigilado» seria mentir justo donde mas duele: te fias de
+    # que el bot te avisara y no lo va a hacer. Sin la marca se dan por seguidas
+    # — asi un radar que no la ponga sigue leyendose igual.
+    seguidas = [c for c in cands if c.get("seguido", True)]
+    esperando = [c for c in cands if not c.get("seguido", True)]
+
+    n = _cuantos(seguidas)
+    cab = f"<b>RADAR</b> — {n} vigilada{'s' if n != 1 else ''}"
+    if esperando:
+        cab += f" · {_cuantos(esperando)} esperando cupo"
+
+    cuerpo = ""
+    if seguidas:
+        cuerpo += "\n<pre>" + "\n".join(_fila_radar(c) for c in seguidas) + "</pre>"
+    if esperando:
+        cuerpo += ("\n<i>sin seguir, el cupo está lleno — de estas NO aviso:</i>"
+                   "\n<pre>" + "\n".join(_fila_radar(c) for c in esperando) + "</pre>")
+
+    # La metrica se dice UNA VEZ al pie en vez de repetirla en cada fila: en el
+    # movil no cabe, y sin ella la columna del % no significa nada.
+    metricas = sorted({str(c.get("metrica")) for c in cands if c.get("metrica")})
+    pie = ("\n<i>la columna del % es " + _esc(" / ".join(metricas)) + "</i>"
+           if metricas else "")
+    return cab + cuerpo + pie
+
+
 AYUDA = (
     "<b>COMANDOS</b>\n\n"
 
@@ -152,12 +303,23 @@ AYUDA = (
     "  mandos. Ponlo solo para probar otro valor.\n\n"
     "  <code>/evf MIMI 0.01</code>   ·   <code>/evf MIMI 0.01 6.4</code>\n\n"
 
+    "<code>/estado radar</code>\n"
+    "Las que estoy vigilando ahora, con la métrica que las metió.\n"
+    "<i>(<code>/estado</code> a secas hace lo mismo)</i>\n\n"
+
+    "<code>/estado TICKER</code>\n"
+    "Su ficha: gap, máximo de premercado, volumen y hace cuánto fue su\n"
+    "última operación.\n\n"
+
     "<code>/ayuda</code> — esto"
 )
 
 
 def responder(texto: str, precio_de: Callable[[str], Optional[float]],
-              ev_guardado: Optional[float] = None) -> Optional[str]:
+              ev_guardado: Optional[float] = None,
+              estado_de: Optional[Callable[[str], Optional[dict]]] = None,
+              radar: Optional[Callable[[], Optional[list]]] = None
+              ) -> Optional[str]:
     """Interpreta un mensaje y devuelve la respuesta, o None si no es para mi.
 
     `precio_de(ticker)` la pone el bot: es su estado de mercado en vivo. Asi
@@ -166,6 +328,11 @@ def responder(texto: str, precio_de: Callable[[str], Optional[float]],
     `ev_guardado` es el EV que Jaume tiene puesto en el cuadro de mandos, para
     no tener que repetirlo en cada mensaje. Escribirlo en el comando lo pisa —
     sirve para probar otro valor sin tocar la configuracion.
+
+    `estado_de(ticker)` y `radar()` son lo mismo para `/estado`: las pone el bot
+    con su mercado en vivo, en forma de diccionarios sueltos. Sin ellas el
+    comando dice que no hay datos en vez de fallar — el bot puede arrancar con
+    una lista de tickers a mano, sin radar, y entonces `/estado radar` lo dice.
 
     NUNCA lanza. Un mensaje raro no puede tumbar el bucle que procesa velas.
     """
@@ -195,6 +362,14 @@ def responder(texto: str, precio_de: Callable[[str], Optional[float]],
                         "<code>/evf TICKER COSTE_100 EV%</code>")
             return veredicto_locates(ticker, precio_de(ticker), coste, ev,
                                      acciones, ev_del_cuadro=len(partes) <= 3)
+
+        if cmd == "estado":
+            # `/estado` a secas enseña el radar: es lo que se quiere ver casi
+            # siempre, y ahorra teclear en el móvil.
+            que = partes[1].lower() if len(partes) > 1 else "radar"
+            if que in ("radar", "todas", "todo"):
+                return panel_radar(radar() if radar else None)
+            return panel_ticker(estado_de(que.upper()) if estado_de else None)
 
         return None      # comando desconocido: mejor callarse que dar la lata
     except (ValueError, IndexError):
