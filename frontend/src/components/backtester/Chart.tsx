@@ -13,7 +13,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { createSeriesMarkers } from "lightweight-charts";
-import { Ruler } from "lucide-react";
+import { Ruler, Tag } from "lucide-react";
 import type { CandleData, TradeRecord, EquityPoint, MultiDayCandles, Strategy } from "@/lib/api_backtester";
 import {
   getIndicatorDef,
@@ -183,6 +183,21 @@ export default function Chart({
   // depende del toggle: los handlers leen el ref y el gráfico no se
   // reconstruye al activarla.
   const [measureEnabled, setMeasureEnabled] = useState(false);
+  /** Si los marcadores llevan su texto ("L $4,12", "+$83 (TP)"…) o solo el
+   *  símbolo. Con muchas entradas los textos se pisan unos a otros y tapan las
+   *  velas; apagarlos deja ver dónde entró y salió sin perder el gráfico. */
+  const [datosEntradas, setDatosEntradas] = useState(true);
+  const datosEntradasRef = useRef(true);
+  /** Los marcadores tal cual se calcularon, CON su texto. Se guardan para poder
+   *  repintarlos al pulsar el botón sin rehacer el gráfico entero — rehacerlo
+   *  perdería el zoom y la posición, que es justo lo que estás mirando cuando
+   *  decides quitar el texto porque no se lee. */
+  const marcadoresRef = useRef<any[]>([]);
+  const markersApiRef = useRef<any>(null);
+  /** Volumen y dollar volume ACUMULADOS del día hasta donde está el cursor.
+   *  Etiqueta fija sobre la franja de volumen: no se pinta uno por vela (eso
+   *  sería ilegible) sino un solo par de números que cambia al mover el ratón. */
+  const [acum, setAcum] = useState<{ vol: number; dv: number } | null>(null);
   const measureEnabledRef = useRef(false);
   const measureClearFnsRef = useRef<Array<() => void>>([]);
   const dayChartsRef = useRef<IChartApi[]>([]);
@@ -362,6 +377,28 @@ export default function Chart({
         wickDownColor: "#ef4444", wickUpColor: "#10b981",
       });
       candleSeries.setData(candleData);
+
+      // ACUMULADOS DEL DÍA, precalculados. Se recorren una vez aquí en vez de
+      // sumar en cada movimiento del ratón: con un día de premercado son cientos
+      // de velas y el crosshair dispara muchas veces por segundo.
+      //
+      // El dollar volume es Σ(precio × volumen) barra a barra, NO
+      // (Σvolumen × último precio): con el precio moviéndose no es lo mismo, y
+      // es la misma cuenta que usa el motor para `Accumulated Dollar Volume`.
+      {
+        const porTiempo = new Map<number, { vol: number; dv: number }>();
+        let vol = 0, dv = 0;
+        for (const c of deduped) {
+          vol += c.volume;
+          dv += c.close * c.volume;
+          porTiempo.set(c.time as number, { vol, dv });
+        }
+        chart.subscribeCrosshairMove((param: any) => {
+          const t = param?.time as number | undefined;
+          if (t == null) { setAcum(null); return; }
+          setAcum(porTiempo.get(t) ?? null);
+        });
+      }
 
       // Volume on main chart
       const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -657,7 +694,15 @@ export default function Chart({
         }
 
         markers.sort((a, b) => (a.time as number) - (b.time as number));
-        createSeriesMarkers(candleSeries, markers);
+        // Con el botón «Datos» apagado los marcadores van SIN texto: los
+        // símbolos se quedan —hay que seguir viendo dónde entró y salió— pero
+        // el texto desaparece, que es lo que se pisa cuando hay muchas
+        // operaciones seguidas y acaba tapando las velas.
+        marcadoresRef.current = markers;
+        markersApiRef.current = createSeriesMarkers(
+          candleSeries,
+          datosEntradasRef.current ? markers : markers.map(m => ({ ...m, text: "" })),
+        );
 
         // Líneas del Stop Loss de cada trade del día: discontinuas, en rojo
         // y con el precio en el eje. Antes el SL solo existía en la tabla y
@@ -1224,6 +1269,15 @@ export default function Chart({
     };
   }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay]);
 
+  // Botón «Datos»: repinta los marcadores con o sin texto, en el sitio.
+  useEffect(() => {
+    datosEntradasRef.current = datosEntradas;
+    const api = markersApiRef.current;
+    const ms = marcadoresRef.current;
+    if (!api || !ms.length) return;
+    api.setMarkers(datosEntradas ? ms : ms.map((m: any) => ({ ...m, text: "" })));
+  }, [datosEntradas]);
+
   // Toggle de la regla: sincroniza el ref, cambia el cursor y hace que el
   // arrastre mida (en vez de desplazar la escala) mientras esté activa.
   useEffect(() => {
@@ -1343,6 +1397,35 @@ export default function Chart({
           >
             <Ruler size={12} /> Regla
           </button>
+          <button
+            onClick={() => setDatosEntradas(v => !v)}
+            title="Muestra u oculta el texto de cada operación (precio de entrada, PnL, motivo de salida). Los símbolos de entrada, salida y pirámide se quedan siempre."
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '3px 10px',
+              height: '26px',
+              backgroundColor: datosEntradas ? 'var(--color-ec-copper)' : 'transparent',
+              border: '1.5px solid var(--color-ec-border)',
+              borderRadius: 5,
+              fontSize: 10,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              color: datosEntradas ? '#fff' : 'var(--color-ec-text-secondary)',
+              cursor: 'pointer',
+              transition: 'all 150ms ease',
+            }}
+            onMouseEnter={(e) => {
+              if (!datosEntradas) e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+            }}
+            onMouseLeave={(e) => {
+              if (!datosEntradas) e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+            }}
+          >
+            <Tag size={12} /> Datos
+          </button>
           {(applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive) && (
             <button
               onClick={() => setMultiDayEnabled(!multiDayEnabled)}
@@ -1387,7 +1470,44 @@ export default function Chart({
       {/* CHART CONTAINERS */}
       {!isMultiView ? (
         <>
-          <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
+          {/* La etiqueta va DENTRO del contenedor, abajo a la izquierda: ahí
+              está la franja del volumen (el histograma ocupa el 15 % inferior)
+              y no tapa ni las velas ni los marcadores. `pointerEvents: none`
+              para no robarle el ratón al gráfico. */}
+          <div style={{ position: "relative", width: "100%" }}>
+            <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
+            <div style={{
+              position: "absolute", left: 8, bottom: 6, pointerEvents: "none",
+              display: "flex", gap: 12, alignItems: "baseline",
+              padding: "3px 8px", borderRadius: 3,
+              background: "rgba(22,24,26,0.82)",
+              border: "0.5px solid var(--color-ec-border)",
+              fontFamily: "var(--color-ec-mono)", fontSize: 10,
+              whiteSpace: "nowrap",
+              // Se atenúa en vez de desaparecer: si el hueco se vaciara, la
+              // franja de volumen daría un salto cada vez que sacas el ratón.
+              opacity: acum ? 1 : 0.35,
+              transition: "opacity 120ms ease",
+            }}>
+              <span style={{ color: "var(--color-ec-text-muted)" }}>ACUM.</span>
+              <span style={{ color: "var(--color-ec-text-secondary)" }}>
+                vol{" "}
+                <b style={{ color: "var(--color-ec-text-primary)" }}>
+                  {acum ? acum.vol.toLocaleString("es-ES", { maximumFractionDigits: 0 }) : "—"}
+                </b>
+              </span>
+              <span style={{ color: "var(--color-ec-text-secondary)" }}>
+                $vol{" "}
+                <b style={{ color: "var(--color-ec-copper)" }}>
+                  {acum
+                    ? acum.dv >= 1e6
+                      ? `${(acum.dv / 1e6).toFixed(2)} M`
+                      : acum.dv.toLocaleString("es-ES", { maximumFractionDigits: 0 })
+                    : "—"}
+                </b>
+              </span>
+            </div>
+          </div>
           <div ref={panelContainerRef} />
         </>
       ) : (
