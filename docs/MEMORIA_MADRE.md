@@ -2636,3 +2636,61 @@ propósito.
 `jose` y revienta al importar, pero el error solo sale en stderr y parece que se
 cuelga. Y `--reload` no recoge los cambios de forma fiable si queda un proceso
 viejo con el puerto.
+
+### 7. Calendario del backtester: en dinero o en R
+
+Los tres modos de siempre (profits, gastos, profits−gastos) se pueden leer en
+dólares o en múltiplos de riesgo. Son DOS EJES, no un cuarto modo.
+
+Con riesgo FIJO, 1 R es el «Riesgo fijo $» del panel. Con riesgo PORCENTUAL —que
+al principio dejé fuera de más— la R no desaparece, cambia: el motor arriesga
+ese % del balance de **apertura del día**, así que 1 R es constante DENTRO de un
+día y solo cambia de un día a otro. Es la misma cuenta que ya hacía `r_precise`
+en `robustness_service.py`, verificada allí contra una corrida real.
+
+La conversión va POR DÍA, no al pintar: la R de una semana es la suma de las R
+de sus días. Con 10.000 $ al 2 % y tres días de +200/−100/+450 salen 2,738 R
+sumando por día y 2,750 R dividiendo al final, y esa diferencia crece con la
+cuenta.
+
+No se usa `r_multiple` del trade: así los GASTOS también se leen en R, y se
+evita arrastrar su redondeo a dos decimales.
+
+**Aviso:** Jaume pidió traer esto de la rama de Álvaro, pero NO está en el
+remoto — el `CalendarTab.tsx` es idéntico en `sailor`, `staging` y
+`alvaro-rama-desarrollo`. Lo tendrá en local. Esto está escrito de cero y puede
+quedar distinto a lo suyo.
+
+### 8. Dos parciales no pueden caer en el mismo sitio
+
+Primera corrida del genético con los take profits parciales puestos, y salió
+esto: `Parciales: 25% a las 12:00, 33% a las 12:00`. El motor los aplica en
+orden, así que el segundo salta justo detrás del primero: cierra más posición de
+golpe y gasta un gen en algo que no añade ninguna decisión. Corregido.
+
+---
+
+## Pendientes para el 2026-09-05
+
+1. **Ver la ventana 44-59 en vivo.** Es su primer premercado. Medir cuántas
+   prealertas se confirman y cuántas no: el estudio predice ~2,7 avisos en balde
+   por cada bueno, pero su cuenta de falsas NO cuadró con el día 4 (predecía ~4
+   y hubo 0), así que el número absoluto está por confirmar. Si el ruido es
+   tolerable, el siguiente escalón es 40-59 (17,8 s de margen).
+
+2. **Auditar el calendario en R** con datos reales. Quedó sin verificar en
+   pantalla —el genético tenía la máquina— y Jaume quiere repasarlo.
+
+3. **El aviso de cancelación de la prealerta.** Ahora una prealerta solo se
+   confirma o descarta al CERRAR la vela; si la señal se rompe en el segundo 50
+   se sigue mirando el gráfico sin saberlo. Avisar en el momento en que se cae
+   convertiría el ruido de adelantar la ventana en información, y es lo que
+   haría cómodo bajar al 40 o al 30.
+
+4. **Los 119 tests que fallan**, que siguen ahí y son de antes de esta sesión.
+
+5. **Del genético:** `parar_a_las` no venía configurada en la corrida de la
+   noche del 4 — con el bot de alertas arrancando a las 10:00 (hora española)
+   hay que ponerla siempre. Y con `min_trades` a 1.000 los individuos daban
+   fitness 0 con 729 trades: un suelo por encima de lo que el dataset da deja al
+   genético sin gradiente, todo a cero y cruzando al azar.
