@@ -394,6 +394,76 @@ def leer_radar():
     return bas.get_radar()
 
 
+class LineaDiario(BaseModel):
+    hora: str = ""
+    nivel: str = ""
+    texto: str = ""
+
+
+class IncidenciaDiario(BaseModel):
+    nivel: str = ""
+    origen: str = ""
+    mensaje: str = ""
+    veces: int = 1
+    primera: str = ""
+    ultima: str = ""
+    traza: Optional[str] = None
+
+
+class DiarioReq(BaseModel):
+    """El log del bot y lo que le ha saltado.
+
+    Se manda ENTERO cada vez y reemplaza al anterior, como el radar: son unos
+    kilobytes contra localhost, y una publicacion perdida no deja huecos que
+    haya que coser luego.
+    """
+    seq: int = 0
+    desde: str = ""
+    lineas: list[LineaDiario] = []
+    incidencias: list[IncidenciaDiario] = []
+
+
+@router.post("/diario")
+def publicar_diario(req: DiarioReq):
+    """El BOT publica su log. No lo llama la pagina."""
+    _guard()
+    bas.set_diario(req.model_dump())
+    return {"ok": True, "n": len(req.lineas), "incidencias": len(req.incidencias)}
+
+
+@router.get("/diario")
+def leer_diario(lineas: int = -1):
+    """Lo lee la pagina.
+
+    Va aparte del paquete del WebSocket a proposito: el log crece con cada
+    linea y no puede empujar el estado entero a la pagina cada vez que el bot
+    escribe «latencia» (ver la nota de `bas.set_diario`).
+
+    `lineas` recorta el log — `0` trae solo las incidencias. Con el cuadro
+    plegado la pagina pide asi: el contador de incidencias se tiene que ver
+    SIN abrirlo, porque si no, no se abre nunca y no se entera uno de nada,
+    pero para eso no hacen falta las 300 lineas.
+    """
+    _guard()
+    d = bas.get_diario()
+    if lineas >= 0:
+        d = {**d, "lineas": (d.get("lineas") or [])[-lineas:] if lineas else []}
+    return d
+
+
+@router.get("/diario/texto")
+def leer_diario_texto():
+    """El diario en texto plano, listo para pegar en un chat.
+
+    El formato se genera AQUI y no en la pagina para que haya una sola version
+    de el: es lo que Jaume copia y manda cuando algo falla, y dos formatos que
+    se van separando acaban en «pues a mi no me sale eso».
+    """
+    _guard()
+    from app.services.bot_alerts_diario import como_texto
+    return {"texto": como_texto(bas.get_diario())}
+
+
 @router.websocket("/live")
 async def live(websocket: WebSocket):
     """Empuja a la pagina en cuanto algo cambia.

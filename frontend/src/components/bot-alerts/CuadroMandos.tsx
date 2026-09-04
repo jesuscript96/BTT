@@ -36,8 +36,11 @@ import {
   listarFechas,
   limpiarEventos,
   leerEstado,
+  leerDiario,
+  leerDiarioTexto,
   explicarEstrategia,
   limpiarInactivo,
+  type Diario,
   type ExplicacionEstrategia,
   type EstadoBot,
   type EstrategiaCandidata,
@@ -1196,9 +1199,179 @@ export default function CuadroMandos() {
           </tbody>
         </table>
       </Seccion>
+
+      <DiarioBot />
     </div>
   );
 }
+
+/** El diario del bot: lo que le ha saltado y su log, al final de todo.
+ *
+ * PARA QUE. Hasta ahora, si al bot le pasaba algo, el único sitio donde se veía
+ * era la ventana de la consola o `bot_hoy.log`. Jaume, 2026-09-04: «si pasa
+ * algo y no te tengo conectado cuando te encienda te lo pongo directamente».
+ * De ahí el botón de copiar: esto está pensado para pegarlo en un chat.
+ *
+ * DOS DECISIONES QUE NO SE VEN:
+ *
+ * 1. PLEGADO, PERO EL CONTADOR SE VE SIEMPRE. Con el cuadro cerrado se piden
+ *    solo las incidencias (`lineas=0`), no las 300 del log. Si el contador no
+ *    se viera sin abrirlo, no se abriría nunca y no se enteraría uno de nada.
+ *
+ * 2. NO VA POR EL WEBSOCKET. El log crece con cada línea, y colgarlo del canal
+ *    del estado empujaría el paquete entero —estado, 500 avisos y radar— a la
+ *    página varias veces por minuto solo porque el bot escribió «latencia».
+ */
+function DiarioBot() {
+  const [d, setD] = useState<Diario | null>(null);
+  const [abierto, setAbierto] = useState(false);
+  const [copiado, setCopiado] = useState<"" | "ok" | "no">("");
+
+  useEffect(() => {
+    let vivo = true;
+    const pedir = async () => {
+      try {
+        // Plegado: solo las incidencias. Abierto: el log entero.
+        const v = await leerDiario(abierto ? undefined : 0);
+        if (vivo) setD(v);
+      } catch {
+        // El diario es informativo: si el backend no contesta, se deja lo
+        // último que se vio en vez de borrar la pantalla. Justo cuando algo
+        // va mal es cuando NO conviene perder lo que ya se tenía.
+      }
+    };
+    pedir();
+    const t = setInterval(pedir, abierto ? 5000 : 15000);
+    return () => { vivo = false; clearInterval(t); };
+  }, [abierto]);
+
+  const copiar = useCallback(async () => {
+    try {
+      // El texto lo arma el backend: una sola versión del formato.
+      const { texto } = await leerDiarioTexto();
+      await navigator.clipboard.writeText(texto);
+      setCopiado("ok");
+    } catch {
+      setCopiado("no");
+    }
+    setTimeout(() => setCopiado(""), 2000);
+  }, []);
+
+  const incidencias = d?.incidencias || [];
+  const lineas = d?.lineas || [];
+  // Un error pesa más que un aviso: si hay alguno, el contador va en rojo.
+  const hayError = incidencias.some((i) => i.nivel !== "WARNING");
+
+  return (
+    <Seccion
+      titulo="Diario del bot"
+      extra={
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{
+            fontFamily: font.mono, fontSize: 10,
+            color: incidencias.length === 0 ? color.textMuted
+                 : hayError ? color.loss : color.warning,
+          }}>
+            {d == null ? "…"
+              : incidencias.length === 0 ? "sin incidencias"
+              : `${incidencias.length} incidencia${incidencias.length !== 1 ? "s" : ""}`}
+            {d?.desde ? ` · desde ${d.desde}` : ""}
+          </span>
+          <button
+            onClick={copiar}
+            title="Copia las incidencias y el log en texto plano, para pegarlo."
+            style={botonDiario(copiado === "ok")}
+          >{copiado === "ok" ? "COPIADO" : copiado === "no" ? "NO SE PUDO" : "COPIAR"}</button>
+          <button
+            onClick={() => setAbierto((v) => !v)}
+            style={botonDiario(false)}
+          >{abierto ? "OCULTAR" : "VER"}</button>
+        </span>
+      }
+    >
+      {incidencias.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <Th ancho={64}>Nivel</Th>
+              <Th ancho={120}>Cuándo</Th>
+              <Th num ancho={44}>Veces</Th>
+              <Th ancho={110}>Origen</Th>
+              <Th>Qué pasó</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {incidencias.map((i, n) => (
+              <tr key={`${i.origen}-${i.mensaje}-${n}`}>
+                <Td mono tono={i.nivel === "WARNING" ? color.warning : color.loss}>
+                  {i.nivel}
+                </Td>
+                {/* Una sola vez: la hora. Repetida: desde cuándo lleva
+                    pasando, que es lo que dice si fue un momento malo o
+                    lleva toda la mañana. */}
+                <Td mono dim>
+                  {i.veces > 1 ? `${i.primera}→${i.ultima}` : i.ultima}
+                </Td>
+                <Td num mono fuerte={i.veces > 1}>{i.veces}</Td>
+                <Td dim>{i.origen}</Td>
+                <Td title={i.traza || undefined}>
+                  {i.mensaje}
+                  {i.traza && (
+                    <span style={{ color: color.textMuted, marginLeft: 6, fontSize: 9 }}>
+                      (con traza — está en el copiado)
+                    </span>
+                  )}
+                </Td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {abierto && (
+        <div style={{
+          maxHeight: 320, overflowY: "auto",
+          borderTop: incidencias.length > 0 ? hairline : undefined,
+          padding: "6px 10px", fontFamily: font.mono, fontSize: 10,
+          lineHeight: 1.55, whiteSpace: "pre-wrap",
+        }}>
+          {lineas.length === 0
+            ? <span style={{ color: color.textMuted }}>
+                El bot no ha publicado nada todavía. Si está apagado o acaba de
+                arrancar, es lo normal.
+              </span>
+            : lineas.map((l, n) => (
+                <div key={n} style={{
+                  color: l.nivel === "INFO" ? color.textSecondary
+                       : l.nivel === "WARNING" ? color.warning : color.loss,
+                }}>
+                  <span style={{ color: color.textMuted }}>{l.hora}</span>{"  "}{l.texto}
+                </div>
+              ))}
+        </div>
+      )}
+
+      {!abierto && incidencias.length === 0 && (
+        <div style={{
+          padding: "8px 10px", fontFamily: font.sans, fontSize: 10,
+          color: color.textMuted,
+        }}>
+          Nada que contar. Aquí sale cualquier cosa que le salte al bot — cortes
+          del feed, fallos al hablar con la página, errores sin capturar — y su
+          log, con un botón para copiarlo entero y pegarlo.
+        </div>
+      )}
+    </Seccion>
+  );
+}
+
+const botonDiario = (activo: boolean): React.CSSProperties => ({
+  fontFamily: font.mono, fontSize: 9, letterSpacing: "0.06em",
+  padding: "2px 8px", cursor: "pointer", borderRadius: 2,
+  background: activo ? color.copper : "transparent",
+  border: `0.5px solid ${activo ? color.copper : color.border}`,
+  color: activo ? "#fff" : color.textMuted,
+});
 
 function Dato({ etiqueta, valor, tono }: { etiqueta: string; valor: string; tono?: string }) {
   return (

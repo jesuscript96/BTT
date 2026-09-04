@@ -205,6 +205,59 @@ export function leerRadar(): Promise<Radar> {
   return apiRequest<Radar>("/bot-alerts/radar");
 }
 
+/* ── El diario del bot ────────────────────────────────────────────────── */
+
+export interface LineaDiario {
+  hora: string;
+  /** INFO es actividad normal; de WARNING para arriba sube a `incidencias`. */
+  nivel: string;
+  texto: string;
+}
+
+export interface IncidenciaDiario {
+  nivel: string;
+  /** Quién la registró: "bot", "httpx", "websockets.client"… */
+  origen: string;
+  /** El último texto formateado, que es el detalle de ahora. */
+  mensaje: string;
+  /** Cuántas veces ha saltado la misma. Un corte de feed se repite mucho. */
+  veces: number;
+  primera: string;
+  ultima: string;
+  traza: string | null;
+}
+
+export interface Diario {
+  /** Mensajes vistos desde que arrancó. Sirve para saber si hay algo nuevo. */
+  seq: number;
+  desde: string;
+  lineas: LineaDiario[];
+  incidencias: IncidenciaDiario[];
+  actualizado: string | null;
+}
+
+/** El log del bot y lo que le ha saltado.
+ *
+ * VA APARTE DEL WEBSOCKET a propósito: el log crece con cada línea y no puede
+ * empujar el estado entero a la página cada vez que el bot escribe «latencia».
+ *
+ * `lineas` recorta el log; `0` trae solo las incidencias, que es como pide la
+ * página con el cuadro plegado — el contador se tiene que ver sin abrirlo.
+ */
+export function leerDiario(lineas?: number): Promise<Diario> {
+  const q = lineas === undefined ? "" : `?lineas=${lineas}`;
+  return apiRequest<Diario>(`/bot-alerts/diario${q}`);
+}
+
+/** El diario en texto plano, para copiarlo y pegarlo.
+ *
+ * Lo arma el backend y no la página para que haya UNA sola versión del
+ * formato: es lo que se manda cuando algo falla.
+ */
+export function leerDiarioTexto(): Promise<{ texto: string }> {
+  return apiRequest<{ texto: string }>("/bot-alerts/diario/texto");
+}
+
 export function cambiarEstado(vigilando: boolean): Promise<EstadoBot> {
   return apiRequest("/bot-alerts/estado", {
     method: "POST",

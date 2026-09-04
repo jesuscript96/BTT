@@ -152,6 +152,19 @@ class ClienteBackend:
         except Exception:  # noqa: BLE001
             pass  # el radar de la pagina es informativo; no vale romper por el
 
+    def publicar_diario(self, diario: dict) -> None:
+        """El log del bot y lo que le ha saltado, para el cuadro de la pagina.
+
+        SE TRAGA EL FALLO IGUAL QUE EL RADAR, y aqui con mas motivo: esto es lo
+        que se mira JUSTO CUANDO ALGO VA MAL. Si el backend no responde y el
+        diario reventara por ello, se perderia el bot entero por intentar
+        contar que el backend no responde.
+        """
+        try:
+            self._cli.post(f"{self.base}/bot-alerts/diario", json=diario)
+        except Exception:  # noqa: BLE001
+            pass
+
     def latir(self, tickers: int, fuente: str, detalle: str = "") -> None:
         """Senyal de vida. Sin esto la pagina no distingue apagado de colgado."""
         try:

@@ -213,6 +213,32 @@ def get_radar() -> dict:
         return {"candidatos": list(_cache_radar), "actualizado": _radar_at}
 
 
+# El diario del bot: su log y lo que le ha saltado. Tambien SOLO EN MEMORIA, y
+# por el mismo motivo que el radar — se reemplaza entero cada pocos segundos.
+_cache_diario: dict = {}
+_diario_at: Optional[str] = None
+
+
+def set_diario(d: dict) -> None:
+    """Lo publica el BOT cada pocos segundos.
+
+    OJO: esto NO llama a `_marcar_cambio()`, a proposito. El log crece con cada
+    linea, y despertar al WebSocket por cada una empujaria el paquete entero
+    —estado, 500 eventos y radar— a la pagina varias veces por minuto solo
+    porque el bot ha escrito «latencia». El diario se lee con su propio GET y
+    solo cuando su cuadro esta abierto: si no lo miras, no cuesta nada.
+    """
+    global _cache_diario, _diario_at
+    with _CACHE_LOCK:
+        _cache_diario = dict(d)
+        _diario_at = str(datetime.datetime.now())
+
+
+def get_diario() -> dict:
+    with _CACHE_LOCK:
+        return {**_cache_diario, "actualizado": _diario_at}
+
+
 def _invalidar_cache_eventos() -> None:
     with _CACHE_LOCK:
         _cache_eventos.clear()
