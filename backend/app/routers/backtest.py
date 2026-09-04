@@ -154,13 +154,45 @@ def _run_backtest_in_background(req: BacktestRequest, job_id: str, user_id: Opti
         detail = he.detail if isinstance(he.detail, str) else str(he.detail)
         if he.status_code == 400 and "cancel" in detail.lower():
             backtest_jobs.set_job_state(job_id, req.dataset_id, "cancelled")
+            _liberar_dataset(req.dataset_id, "cancelled")
             logger.info(f"[JOB] {job_id} cancelled")
         else:
             backtest_jobs.set_job_state(job_id, req.dataset_id, "failed", error=detail)
+            _liberar_dataset(req.dataset_id, "failed", detail)
             logger.error(f"[JOB] {job_id} failed: {detail}")
     except Exception as e:  # pragma: no cover - safety net
         backtest_jobs.set_job_state(job_id, req.dataset_id, "failed", error=str(e))
+        _liberar_dataset(req.dataset_id, "failed", str(e))
         logger.error(f"[JOB] {job_id} crashed: {e}", exc_info=True)
+
+
+def _liberar_dataset(dataset_id: str, estado: str, error: str | None = None) -> None:
+    """Deja de considerar que hay un backtest corriendo en ese dataset.
+
+    HACE FALTA PORQUE SON DOS ALMACENES DISTINTOS. `set_job_state` escribe en
+    el suyo (Redis o `_MEM_STATE`), pero el guard anti-doble-run del POST mira
+    `backtest_progress`, que es otro diccionario — y que el propio POST siembra
+    en "running" ANTES de lanzar el hilo.
+
+    Si el job moria antes de que el orquestador tocara `backtest_progress` —una
+    definicion mal formada, falta de memoria, cualquier fallo temprano— esa
+    siembra se quedaba en "running" PARA SIEMPRE y el dataset quedaba
+    bloqueado: todo intento posterior devolvia "already_running" con el job ya
+    muerto, y solo se arreglaba reiniciando el backend. Visto el 2026-09-04
+    midiendo el consumo de RAM: un backtest con un campo mal puesto dejo el
+    dataset inservible.
+
+    Se escribe el estado REAL en vez de borrar la entrada: el guard solo
+    bloquea con "running", y asi el sondeo antiguo por dataset puede contar que
+    fallo en lugar de no encontrar nada.
+    """
+    try:
+        backtest_progress[dataset_id] = {
+            "status": estado, "current": 0, "total": 0, "percent": 0.0,
+            **({"error": error} if error else {}),
+        }
+    except Exception:                                        # noqa: BLE001
+        pass
 
 
 @router.post("/backtest")
