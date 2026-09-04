@@ -2513,3 +2513,126 @@ cubren. Salió en una auditoría posterior, no en la suite.
 **`r_multiple` viene REDONDEADO A DOS DECIMALES.** Cualquier cálculo que
 compare márgenes finos (un fade del 1,19 % contra un EV del 2,4 %) tiene que
 salir de `entry_price`/`exit_price`, no de ahí.
+
+---
+
+## 2026-09-04 (tarde/noche) — Prealertas medidas, dos bugs silenciosos y el genético ampliado
+
+Sesión de después del cierre. Lo importante son **tres bugs que no daban ningún
+error** y un estudio que cambia un parámetro que llevaba semanas puesto a ojo.
+
+### 1. La ventana de la prealerta pasa del segundo 50 al 44
+
+Medido sobre 30 días y 33 entradas de tick data, más 25.408 mensajes de latencia
+del feed en vivo. Dos cosas que no se sabían cuando se eligió el 50:
+
+- **La señal se cumple mucho antes de lo que se creía.** Mediana en el
+  **segundo 17**, y 9 de 33 ya cumplían en el 5. Se esperaba al 50 para ver algo
+  que en la mitad de los casos llevaba treinta segundos hecho.
+- **La latencia se come el margen.** El agregado por segundo tarda ~3,7 s de
+  mediana (p99 4,1 s, con un pico de **9,8 s**). Un aviso del segundo 50 no daba
+  los 10 s que prometía: daba **7,8 s** hasta la alerta de verdad, y 0,2 s en el
+  pico.
+
+| ventana | margen mediana | de cada N avisos, 1 opera |
+|---|---|---|
+| 50-59 | 7,8 s | 2,3 |
+| **44-59** | **13,8 s** | **3,6** |
+| 30-59 | 27,8 s | 4,5 |
+
+La captura NO cambia (32 de 33 en todas): lo único que se compra adelantando es
+tiempo. Se eligió el 44 y no el 30 —que es donde el estudio pone el óptimo—
+porque la cuenta de falsas del estudio no cuadró con el primer día en vivo
+(predecía ~4 y hubo 0), así que el número absoluto no es de fiar todavía.
+
+Tres cosas que ninguna ventana arregla: 4 de 33 señales se cumplen de verdad
+tarde (segundos 54, 55 y 59) y llegarán siempre con menos de 5 s; una de ellas
+llega después que su propia alerta y la descarta `marcar_cerrada`.
+
+El medidor quedó en `D:\bot_senales\medir_ventanas_comparadas.py`.
+
+### 2. `MACD Signal` y `MACD Histogram` eran SIEMPRE NaN
+
+`_ema_core` siembra con la media de los primeros `window` valores. Sobre precios
+está bien, pero también se aplica a la SALIDA de otro indicador: la señal del
+MACD es una EMA de la línea MACD, y esa empieza con `slow-1` NaN (25 con el 26
+por defecto). La suma salía NaN, la siembra salía NaN, y como cada valor depende
+del anterior se propagaba hasta el final:
+
+    MACD            -> 275 valores de 300
+    MACD Signal     ->   0 de 300
+    MACD Histogram  ->   0 de 300
+
+Una comparación contra NaN da False, así que **cualquier estrategia con «MACD
+Signal» o «MACD Histogram» no operaba nunca**, sin error ni log. Al DI+/DI− del
+ADX le pasaba lo mismo. Arreglado saltando los NaN de cabecera antes de sembrar;
+sin NaN el resultado es idéntico. Comprobado contra la batería entera: arregla 2
+tests y no rompe ninguno.
+
+### 3. El What-if recortaba trades sin que nadie se lo pidiera
+
+`dd_threshold` venía por defecto en 5 y `size_mgmt_type` en `"dd"`, y la página
+no manda ninguno de los dos. Resultado: **toda simulación, sin marcar nada,
+recortaba a la mitad el tamaño de cada trade abierto con más de un 5 % de
+drawdown encima**. Según dónde cayeran las pérdidas eso podía MEJORAR la curva —
+y entonces el What-if «sin filtros» salía mejor que el original, que es
+imposible. Lo detectó Jaume mirando la pantalla, no la suite.
+
+La regla que faltaba, ahora fijada con un test: **un What-if sin opciones
+devuelve la curva de partida**. Al apagarlo salió un segundo fallo que el
+default tapaba: la media del modo `sma` se calculaba también en modo `dd`, y con
+período 0 dividía entre cero.
+
+### 4. Un backtest que falla dejaba el dataset BLOQUEADO
+
+Son dos almacenes. El POST siembra `backtest_progress[dataset_id]` en `running`
+antes de lanzar el hilo, pero el estado del job vive en `backtest_jobs`, y al
+fallar solo se actualizaba ese. Si el job moría pronto —definición mal formada,
+falta de memoria— ese `running` se quedaba para siempre y todo intento posterior
+devolvía `already_running` apuntando a un job muerto. **Solo se arreglaba
+reiniciando el backend.** Encontrado por accidente midiendo el consumo de RAM.
+
+### 5. Genético: de 7 indicadores a 26, y las ramas que no se probaban
+
+Catálogo agrupado en seis familias con pestañas y ayuda por indicador. **Por
+defecto siguen marcados solo los siete de la v1**: los demás están para elegir,
+no para llevarlos todos.
+
+Y el hallazgo, que salió de una pregunta de Jaume: **el lado DERECHO de las
+condiciones se armaba con `params: {}`**, sin sortear nada. Mientras los niveles
+eran precios sueltos (VWAP, PM High) no se notaba; al meter Darvas, Donchian,
+Bollinger, SMA y EMA, todos habrían salido siempre con el periodo por defecto y
+la banda de arriba — ofrecer «Darvas Box» habría sido ofrecer «Darvas por arriba
+con 3 velas».
+
+Preguntó si pasaba con más, y pasaba: MACD iba siempre con 12/26/9 y las
+Bollinger con 2 desviaciones. Auditado indicador a indicador contra el motor y
+convertido en test permanente, que ahora lo detecta solo.
+
+**El test no lo caza todo, y conviene saberlo:** compara sobre una serie
+sintética, y los cinco parámetros de los triángulos salían «sin efecto» ahí
+porque esa serie no llega a formar triángulos. Los añadió Jaume de memoria.
+
+Nuevo en riesgo: stop híbrido, stop mínimo %, take profit mínimo % y take
+profits parciales con las tres variantes del motor. Ojo con `take_profit_mode`:
+el motor **ignora `partial_take_profits` en modo "Full" en silencio**.
+
+### 6. Bot de alertas: `/estado` y el diario
+
+`/estado radar` y `/estado TICKER` en Telegram, de solo lectura. Y un **diario**
+al final del cuadro de mandos con las incidencias y el log, con botón de copiar:
+va enganchado al logger RAÍZ, así que recoge lo que registre cualquiera —el
+socket, httpx, un error sin capturar— sin ir añadiendo llamadas.
+
+### Lo que vale para cualquiera en este repo
+
+**Tres de los cuatro bugs de hoy no daban ningún error.** Una condición contra
+NaN, un default que nadie manda, un `params: {}` vacío: ninguno lanza, ninguno
+aparece en un log, y los tres cambian resultados que se miran para decidir con
+dinero. El patrón se repite — lo que no falla ruidosamente hay que buscarlo a
+propósito.
+
+**El backend hay que arrancarlo con el venv**, no con el Python global: le falta
+`jose` y revienta al importar, pero el error solo sale en stderr y parece que se
+cuelga. Y `--reload` no recoge los cambios de forma fiable si queda un proceso
+viejo con el puerto.
