@@ -34,7 +34,6 @@ const EMPTY_DEFINITION: AlarmDefinition = {
   universe: [],
   window: null,
   cooldown: { max_per_ticker_per_day: 3, min_minutes_between: 5 },
-  sizing: null,
   channels: { browser: true, telegram: true, sound: true },
 };
 
@@ -435,65 +434,6 @@ export function AlarmsPanel() {
             </div>
           </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            <span style={LABEL}>Stop y tamaño en el aviso (opcional)</span>
-            <span style={HINT}>
-              Todo esto es calculable sin saber si estás dentro: el nivel del stop
-              es un dato de mercado y el riesgo es configuración.
-            </span>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <Select
-                value={draft.sizing?.stop_pct != null ? "__pct__" : templateKey(draft.sizing?.stop_ref ?? "")}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const sizing = { ...draft.sizing };
-                  if (v === "") { sizing.stop_ref = undefined; sizing.stop_pct = undefined; sizing.stop_offset_pct = undefined; }
-                  else if (v === "__pct__") { sizing.stop_ref = undefined; sizing.stop_offset_pct = undefined; sizing.stop_pct = sizing.stop_pct ?? 10; }
-                  else { sizing.stop_pct = undefined; sizing.stop_ref = concreteKey(catalog, v); }
-                  setDraft({ ...draft, sizing });
-                }}
-                style={{ flex: 2, minWidth: 160, fontSize: 11 }}
-              >
-                <option value="">Sin stop en el aviso</option>
-                <option value="__pct__">% desde la entrada</option>
-                {catalog?.fields.filter((f) => f.unit === "$").map((f) => (
-                  <option key={f.key} value={f.key}>Stop en {f.label.toLowerCase()}</option>
-                ))}
-              </Select>
-              {paramField(catalog, draft.sizing?.stop_ref ?? "") && (
-                <Input type="number" min={1} title="Period (1-min candles)"
-                       value={String(maPeriod(draft.sizing?.stop_ref ?? "") ?? "")}
-                       onChange={(e) => setDraft({
-                         ...draft,
-                         sizing: { ...draft.sizing, stop_ref: `${templateKey(draft.sizing?.stop_ref ?? "")}_${Math.max(1, Number(e.target.value) || 1)}` },
-                       })}
-                       style={{ width: 52, fontSize: 11 }} />
-              )}
-              {draft.sizing?.stop_pct != null ? (
-                <Input type="number" step="any" placeholder="% desde la entrada"
-                       value={String(draft.sizing?.stop_pct ?? "")}
-                       onChange={(e) => setDraft({ ...draft, sizing: { ...draft.sizing, stop_pct: Number(e.target.value) } })}
-                       style={{ width: 110, fontSize: 11 }} />
-              ) : draft.sizing?.stop_ref ? (
-                <Input type="number" step="any" placeholder="% margen"
-                       value={String(draft.sizing?.stop_offset_pct ?? "")}
-                       onChange={(e) => setDraft({ ...draft, sizing: { ...draft.sizing, stop_offset_pct: Number(e.target.value) } })}
-                       style={{ width: 90, fontSize: 11 }} />
-              ) : null}
-            </div>
-            <Input type="number" step="any" placeholder="Riesgo $ por trade"
-                   value={String(draft.sizing?.risk_usd ?? "")}
-                   onChange={(e) => setDraft({
-                     ...draft,
-                     sizing: { ...draft.sizing, risk_usd: Number(e.target.value) || undefined },
-                   })}
-                   style={{ fontSize: 11 }} />
-            <span style={HINT}>
-              Pones cuánto quieres arriesgar en el trade y el aviso calcula las
-              acciones repartiendo ese riesgo sobre la distancia de la entrada al stop.
-            </span>
-          </div>
-
           {error && (
             <span style={{ fontSize: 11.5, color: "var(--color-ec-loss)" }}>{error}</span>
           )}
@@ -539,8 +479,6 @@ export function AlarmsPanel() {
                     <span key={i} style={{ fontSize: 11, fontFamily: "monospace",
                                            color: "var(--color-ec-copper)" }}>
                       {sig.fired_minute} ET @ {sig.price}
-                      {sig.sizing?.stop ? ` · stop ${sig.sizing.stop}` : ""}
-                      {sig.sizing?.shares ? ` · ${sig.sizing.shares} acc.` : ""}
                     </span>
                   ))}
                   <span style={HINT}>{replayResult.note}</span>

@@ -188,14 +188,13 @@ class AlarmEngine:
             # Medias configurables (ema_<n>/sma_<n>) que usan las condiciones. Se
             # calculan a demanda desde la serie y se inyectan en el contexto antes
             # de evaluar (no salen del snapshot como el resto de campos de barra).
-            "ma_keys": _collect_ma_keys(conditions, (d.get("sizing") or {}).get("stop_ref")),
+            "ma_keys": _collect_ma_keys(conditions),
             "mode": mode_of(conditions),
             "window_from": _minutes(window.get("from")),
             "window_to": _minutes(window.get("to")),
             "max_per_ticker": int(cooldown.get("max_per_ticker_per_day") or DEFAULT_MAX_PER_TICKER_DAY),
             "min_minutes": float(cooldown.get("min_minutes_between") or DEFAULT_MIN_MINUTES_BETWEEN),
             "watchlist": {str(t).upper() for t in (d.get("watchlist") or [])},
-            "sizing": d.get("sizing") or {},
             "channels": d.get("channels") or {"browser": True, "telegram": True, "sound": True},
         }
 
@@ -413,10 +412,9 @@ class AlarmEngine:
             return
         self._fired[key] = (n + 1, now)
 
-        sizing = _compute_sizing(plan["sizing"], alarm.get("side", "long"), price, ctx)
         payload = {
             "alarm_name": alarm["name"], "ticker": ticker, "side": alarm.get("side", "long"),
-            "price": price, "reasons": reasons, "sizing": sizing,
+            "price": price, "reasons": reasons,
             "mode": plan["mode"], "fired_minute": _hhmm(_now_minute()),
             "change_pct": metrics.get("change_pct"), "pmh_gap_pct": metrics.get("pre_pct"),
         }
@@ -494,16 +492,14 @@ class AlarmEngine:
 
 
 # ── helpers de módulo ────────────────────────────────────────────────────────
-def _collect_ma_keys(conditions: List[Dict[str, Any]], stop_ref: Any = None) -> List[str]:
+def _collect_ma_keys(conditions: List[Dict[str, Any]]) -> List[str]:
     """Claves de media configurable (ema_<n>/sma_<n>) que aparecen en las
-    condiciones o como referencia del stop, para calcularlas a demanda al evaluar."""
+    condiciones, para calcularlas a demanda al evaluar."""
     keys = set()
     for c in conditions:
         for side in (c.get("left"), c.get("right_field")):
             if side and F.parse_ma(side):
                 keys.add(side)
-    if stop_ref and F.parse_ma(str(stop_ref)):
-        keys.add(str(stop_ref))
     return list(keys)
 
 
@@ -564,46 +560,6 @@ def _today_key() -> str:
     return et_date_key(int(time.time() * 1000))
 
 
-def _compute_sizing(cfg: Dict[str, Any], side: str, price: Optional[float],
-                    ctx: Dict[str, Optional[float]]) -> Dict[str, Any]:
-    """Stop y acciones para el aviso.
-
-    Es calculable SIN saber si el usuario está dentro: el nivel del stop es un dato
-    de mercado y el riesgo es configuración. El stop se define de dos formas
-    simples — un % desde la entrada, o un nivel (máximo previo, VWAP…) con margen —
-    y el tamaño con un único número: el riesgo en dólares por trade."""
-    out: Dict[str, Any] = {}
-    if not cfg or price is None or price <= 0:
-        return out
-    ref_key = cfg.get("stop_ref")
-    offset = _f(cfg.get("stop_offset_pct")) or 0.0
-    risk = _f(cfg.get("risk_usd"))
-    is_short = str(side).lower() == "short"
-
-    stop: Optional[float] = None
-    if ref_key:
-        ref = ctx.get(F.normalize_key(str(ref_key)))
-        if ref is not None and ref > 0:
-            stop = ref * (1 + offset / 100.0) if is_short else ref * (1 - offset / 100.0)
-    elif _f(cfg.get("stop_pct")) is not None:
-        p = _f(cfg.get("stop_pct")) or 0.0
-        stop = price * (1 + p / 100.0) if is_short else price * (1 - p / 100.0)
-    if stop is None:
-        return out
-    out["stop"] = round(stop, 4)
-    out["stop_ref"] = ref_key
-    out["stop_offset_pct"] = offset
-
-    # Tamaño: un solo número, el riesgo en $ por trade. Las acciones salen de
-    # repartir ese riesgo sobre la distancia de la entrada al stop.
-    distance = abs(stop - price)
-    if risk and distance > 0:
-        shares = int(risk / distance)
-        out["shares"] = shares
-        out["risk_usd"] = risk
-    return out
-
-
 def _format_message(p: Dict[str, Any]) -> str:
     # El mensaje va en parse_mode HTML, así que TODO lo dinámico (motivos, nombre,
     # ticker) se escapa: un operador «menor que» mete un «<» literal en el motivo
@@ -621,15 +577,6 @@ def _format_message(p: Dict[str, Any]) -> str:
         lines.append("<b>Por qué</b>")
         lines.extend(f"• {_esc(str(r))}" for r in p["reasons"][:8])
         lines.append("")
-    s = p.get("sizing") or {}
-    if s.get("stop") is not None:
-        ref = s.get("stop_ref")
-        ref_label = F.label_of(ref).lower() if ref else "referencia"
-        off = s.get("stop_offset_pct") or 0
-        lines.append(f"Stop <b>{s['stop']:.4g} $</b> ({_esc(ref_label)} {off:+g}%)")
-    if s.get("shares"):
-        lines.append(f"{s['shares']} acciones · riesgo {s.get('risk_usd', 0):g} $")
-    lines.append("")
     when = p.get("fired_minute") or ""
     lines.append(f"<i>{_esc(str(p['alarm_name']))} · {when} ET</i>")
     return "\n".join(lines)
