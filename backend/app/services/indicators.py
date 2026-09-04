@@ -122,11 +122,32 @@ def _ema_core(values, window):
     out = np.empty(n, dtype=np.float64)
     for k in range(n):
         out[k] = np.nan
-    first_valid = window - 1
+    # SE SALTAN LOS NaN DE CABECERA antes de sembrar.
+    #
+    # La siembra es la media de los primeros `window` valores. Sobre precios eso
+    # esta bien —no hay NaN—, pero esta funcion tambien se aplica a la SALIDA de
+    # otro indicador, y esa si empieza con NaN: la senal del MACD es una EMA de
+    # la linea MACD, cuyos primeros `slow-1` valores (25 con el 26 por defecto)
+    # son NaN. La suma salia NaN, la siembra salia NaN, y como cada valor
+    # depende del anterior se propagaba hasta el final:
+    #
+    #     MACD            -> 275 valores de 300
+    #     MACD Signal     ->   0 de 300     (todo NaN)
+    #     MACD Histogram  ->   0 de 300     (todo NaN)
+    #
+    # Una comparacion contra NaN da False siempre, asi que una estrategia con
+    # «MACD Signal» o «MACD Histogram» no operaba NUNCA, y lo hacia en silencio:
+    # sin error, sin log, sin nada. Al DI+/DI- del ADX le pasaba lo mismo.
+    #
+    # Sin NaN de cabecera esto se comporta exactamente igual que antes.
+    ini = 0
+    while ini < n and np.isnan(values[ini]):
+        ini += 1
+    first_valid = ini + window - 1
     if first_valid >= n:
         return out
     s = 0.0
-    for k in range(window):
+    for k in range(ini, ini + window):
         s += values[k]
     out[first_valid] = s / window
     for i in range(first_valid + 1, n):

@@ -102,6 +102,41 @@ def test_sin_la_opcion_no_cambia_nada():
     assert len(run_what_if(ts, {"min_move_cents": 0}, init_cash=10_000.0)["trades"]) == 1
 
 
+def test_SIN_NINGUN_FILTRO_LA_CURVA_ES_LA_ORIGINAL():
+    """LA PROPIEDAD QUE FALTABA, y que se estaba incumpliendo.
+
+    `dd_threshold` venía por defecto en 5 y `size_mgmt_type` en "dd", y la
+    página no manda ninguno de los dos: toda simulación, sin marcar nada,
+    recortaba a la mitad el tamaño de los trades abiertos con más de un 5 % de
+    drawdown encima. Según dónde cayeran las pérdidas, eso podía MEJORAR la
+    curva — y entonces el What-if «sin filtros» salía mejor que el original,
+    que es imposible y es lo que vio Jaume (2026-09-04).
+
+    Un What-if sin opciones tiene que devolver la curva de partida. Si no, no
+    hay contra qué comparar.
+    """
+    ts = []
+    for i, pnl in enumerate([300.0, -400.0, -350.0, 500.0, 250.0]):
+        d = f"2026-01-{5 + i:02d}"
+        ts.append(_t(fecha=d, pnl=pnl, entrada=1.0, salida=0.5))
+    r = run_what_if([dict(t) for t in ts], {}, init_cash=10_000.0)
+    assert len(r["trades"]) == len(ts)
+    assert [x["pnl"] for x in r["trades"]] == [t["pnl"] for t in ts]
+    assert sum(x["pnl"] for x in r["trades"]) == sum(t["pnl"] for t in ts)
+
+
+def test_la_gestion_de_tamano_sigue_funcionando_cuando_SE_PIDE():
+    """Apagarla por defecto no es quitarla: pedida, recorta como siempre."""
+    ts = []
+    for i, pnl in enumerate([300.0, -400.0, -350.0, 500.0, 250.0]):
+        d = f"2026-01-{5 + i:02d}"
+        ts.append(_t(fecha=d, pnl=pnl, entrada=1.0, salida=0.5))
+    r = run_what_if([dict(t) for t in ts],
+                    {"size_mgmt_type": "dd", "dd_threshold": 5, "dd_reduction": 50},
+                    init_cash=10_000.0)
+    assert sum(x["pnl"] for x in r["trades"]) != sum(t["pnl"] for t in ts)
+
+
 def test_la_curva_se_degrada_de_verdad():
     """El caso que quiere ver Jaume: cuánto se cae la cuenta con la regla."""
     ts = [

@@ -157,10 +157,21 @@ def run_what_if(
         filtered_trades.append(t.copy())
 
     # --- 3) Alternative Size Management (Dynamic Post-hoc) ---
+    #
+    # APAGADO POR DEFECTO. Estaba en `dd_threshold=5` y `sma_period=20`, y la
+    # pagina NUNCA manda esos dos parametros — asi que TODA simulacion, sin
+    # marcar nada, recortaba a la mitad el tamano de cada trade abierto con mas
+    # de un 5 % de drawdown encima. Segun donde cayeran las perdidas eso podia
+    # MEJORAR la curva, y entonces el What-if «sin filtros» salia mejor que el
+    # original: exactamente lo que vio Jaume el 2026-09-04 («la curva me sale
+    # en el what if mejor que la original, es imposible»).
+    #
+    # La regla es que una simulacion sin opciones devuelva la curva de partida.
+    # Si no, no hay contra que comparar.
     size_mgmt_type = params.get("size_mgmt_type", "dd")
-    dd_threshold = params.get("dd_threshold", 5)
+    dd_threshold = params.get("dd_threshold", 0)
     dd_reduction = params.get("dd_reduction", 50)
-    sma_period = params.get("sma_period", 20)
+    sma_period = params.get("sma_period", 0)
     sma_reduction = params.get("sma_reduction", 50)
 
     # We need to simulate the equity curve sequentially to calculate DD or SMA 
@@ -173,19 +184,23 @@ def run_what_if(
         for t in filtered_trades:
             # 1. Evaluate current conditions (Before applying trade)
             current_dd_pct = ((running_max - current_eq) / running_max * 100) if running_max > 0 else 0
-            
-            if len(eq_history) >= sma_period:
-                sma_val = sum(eq_history[-sma_period:]) / sma_period
-            else:
-                sma_val = sum(eq_history) / len(eq_history)
+
+            # LA MEDIA SOLO SI ES LA QUE MANDA. Se calculaba siempre, tambien en
+            # el modo «dd» donde no la mira nadie — y con `sma_period` en 0
+            # divide entre cero. No saltaba porque el default era 20; al
+            # apagarlo quedo a la vista.
+            sma_val = 0.0
+            if size_mgmt_type == "sma" and sma_period > 0:
+                ventana = eq_history[-sma_period:] if len(eq_history) >= sma_period else eq_history
+                sma_val = sum(ventana) / len(ventana)
 
             # 2. Decide size reduction factor
             reduce_factor = 1.0
             if size_mgmt_type == "dd":
-                if current_dd_pct > dd_threshold:
+                if dd_threshold > 0 and current_dd_pct > dd_threshold:
                     reduce_factor = max(0.0, 1.0 - (dd_reduction / 100.0))
             elif size_mgmt_type == "sma":
-                if current_eq < sma_val:
+                if sma_period > 0 and current_eq < sma_val:
                     reduce_factor = max(0.0, 1.0 - (sma_reduction / 100.0))
             
             # 3. Apply reduction to the trade PnL and Size
