@@ -221,7 +221,10 @@ def panel_ticker(est: Optional[dict]) -> str:
     porque = est.get("estrategias") or []
     cola = ("\n\n<i>vigilada por " + _esc(", ".join(porque)) + "</i>" if porque
             else "\n\n<i>tengo sus datos pero no está en ningún radar</i>")
-    return (f"<b>{tk}</b> a {_n(est.get('precio'), 4)} $\n"
+    # «AHORA a», no «a» a secas: el precio es el ultimo tick, no el de la
+    # entrada ni el del barrido del radar, y la ficha se lee con el broker
+    # delante. La fila de «Último tick» dice de cuando es ese «ahora».
+    return (f"<b>{tk}</b> ahora a {_n(est.get('precio'), 4)} $\n"
             f"<pre>{tabla}</pre>{cola}")
 
 
@@ -261,31 +264,33 @@ def panel_radar(cands: Optional[list]) -> str:
         return ("<b>RADAR</b> — vacío ahora mismo.\n"
                 "<i>Nada ha cumplido todavía el filtro de ninguna estrategia.</i>")
 
-    # SEGUIDAS vs ESPERANDO CUPO. Un ticker admitido por el radar pero fuera del
-    # cupo del socket NO se evalua y NO va a dar avisos. Meterlo en la misma
-    # lista y llamarlo «vigilado» seria mentir justo donde mas duele: te fias de
-    # que el bot te avisara y no lo va a hacer. Sin la marca se dan por seguidas
-    # — asi un radar que no la ponga sigue leyendose igual.
+    # LA LISTA ES LO QUE SE ESTA VIGILANDO AHORA, y nada mas (Jaume, 2026-09-04:
+    # «solo quiero que aparezca lo del radar en este momento»). Las de ayer no
+    # pueden colarse: el radar se vacia al cambiar de dia.
+    #
+    # Queda un caso raro: un ticker que HOY cumple el filtro pero no cabe en el
+    # cupo del socket (25 a la vez). Ese NO se evalua y NO va a dar avisos, asi
+    # que no puede ir en la lista como si se vigilara — pero tampoco merece una
+    # tabla aparte: harian falta 25 gappers del 50 % la misma manyana. Una linea
+    # al pie, y solo si pasa. Sin la marca se dan por seguidas, para que un
+    # radar que no la ponga se siga leyendo igual.
     seguidas = [c for c in cands if c.get("seguido", True)]
     esperando = [c for c in cands if not c.get("seguido", True)]
 
     n = _cuantos(seguidas)
     cab = f"<b>RADAR</b> — {n} vigilada{'s' if n != 1 else ''}"
-    if esperando:
-        cab += f" · {_cuantos(esperando)} esperando cupo"
-
-    cuerpo = ""
-    if seguidas:
-        cuerpo += "\n<pre>" + "\n".join(_fila_radar(c) for c in seguidas) + "</pre>"
-    if esperando:
-        cuerpo += ("\n<i>sin seguir, el cupo está lleno — de estas NO aviso:</i>"
-                   "\n<pre>" + "\n".join(_fila_radar(c) for c in esperando) + "</pre>")
+    cuerpo = ("\n<pre>" + "\n".join(_fila_radar(c) for c in seguidas) + "</pre>"
+              if seguidas else "\n<i>ninguna cabe en el cupo ahora mismo.</i>")
 
     # La metrica se dice UNA VEZ al pie en vez de repetirla en cada fila: en el
     # movil no cabe, y sin ella la columna del % no significa nada.
     metricas = sorted({str(c.get("metrica")) for c in cands if c.get("metrica")})
     pie = ("\n<i>la columna del % es " + _esc(" / ".join(metricas)) + "</i>"
            if metricas else "")
+    if esperando:
+        cuantas = _cuantos(esperando)
+        pie += (f"\n<i>(+{cuantas} más ha entrado hoy pero no cabe en el cupo: "
+                f"de {'esas' if cuantas != 1 else 'esa'} NO aviso)</i>")
     return cab + cuerpo + pie
 
 

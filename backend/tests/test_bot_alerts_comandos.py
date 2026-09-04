@@ -195,7 +195,9 @@ def _estado(texto, ficha=FICHA, radar=RADAR):
 
 def test_la_ficha_lleva_lo_que_se_mira_al_decidir():
     r = panel_ticker(FICHA)
-    assert "BAOS" in r and "0.3722" in r
+    # «AHORA a», no «a» a secas: el precio es el último tick, no el de la
+    # entrada ni el del barrido del radar (Jaume, 2026-09-04).
+    assert "BAOS</b> ahora a 0.3722" in r
     assert "+55.75" in r            # el gap que la metió
     assert "+48.10" in r            # y dónde está AHORA, que es otra cosa
     assert "1.2 M" in r             # volumen legible, no 1240000
@@ -238,27 +240,33 @@ def test_el_radar_lista_lo_vigilado():
     assert "PM High Gap %" in r      # sin esto la columna del % no dice nada
 
 
-def test_las_que_esperan_cupo_van_APARTE():
-    """LO IMPORTANTE DE ESTE PANEL.
+def test_la_lista_es_lo_vigilado_AHORA_y_nada_mas():
+    """LO IMPORTANTE DE ESTE PANEL (Jaume, 2026-09-04: «solo quiero que
+    aparezca lo del radar en este momento»).
 
-    Un ticker admitido por el radar pero fuera del cupo del socket NO se evalúa
-    y NO va a dar avisos. Meterlo en la misma lista y llamarlo «vigilado» sería
-    mentir justo donde más duele: te fías de que el bot avisará y no lo hará.
+    La que no cabe en el cupo del socket NO se evalúa y NO va a dar avisos, así
+    que no puede salir en la lista como si se vigilara — pero tampoco merece
+    una tabla aparte: harían falta 25 gappers del 50 % la misma mañana. Una
+    línea al pie, y solo si pasa.
     """
     fuera = {**RADAR[1], "ticker": "GELS", "seguido": False}
     r = panel_radar([*RADAR, fuera])
-    assert "2 vigiladas" in r          # las de dentro, GELS no cuenta
-    assert "1 esperando cupo" in r
-    assert "NO aviso" in r
+    assert "2 vigiladas" in r            # las de dentro; GELS no cuenta
+    assert "GELS" not in r.split("</pre>")[0]     # …ni sale en la tabla
+    assert "+1 más" in r and "NO aviso" in r      # pero se avisa en una línea
+
+
+def test_sin_nada_fuera_de_cupo_no_se_menciona_el_cupo():
+    """El caso normal: 2 en el radar y hueco de sobra. Ni una palabra de más."""
+    r = panel_radar(RADAR)
+    assert "cupo" not in r
 
 
 def test_sin_la_marca_se_dan_por_seguidas():
     """Un radar que no ponga `seguido` sigue leyéndose igual."""
-    assert "2 vigiladas" in panel_radar([{**c, "seguido": None} | {"seguido": True}
-                                         for c in RADAR])
     sin_marca = [{k: v for k, v in c.items() if k != "seguido"} for c in RADAR]
     r = panel_radar(sin_marca)
-    assert "2 vigiladas" in r and "esperando cupo" not in r
+    assert "2 vigiladas" in r and "cupo" not in r
 
 
 def test_se_cuentan_acciones_no_filas():
