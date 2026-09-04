@@ -33,18 +33,38 @@ POSITIVA = "VENTAJA MATEMATICA POSITIVA"
 NEGATIVA = "VENTAJA MATEMATICA NEGATIVA"
 
 _FRASES_SI = [
-    "compra a mansalva, andale wei!!!",
-    "luz verde, capitan.",
+    "compra a mansalva, ándale wei!!!",
+    "luz verde, capitán.",
     "esos locates se pagan solos.",
     "adelante, que la cuenta sale.",
     "vía libre: el fade da de sobra.",
+    "barato como el pan de ayer.",
+    "el bróker te está regalando el alquiler.",
+    "con ese precio, hasta mi abuela shortea.",
+    "los números dicen que sí y los números no beben.",
+    "alquila, alquila, que hay margen de sobra.",
+    "esto es de manual: paga los locates y a dormir.",
+    "el fade se los merienda sin despeinarse.",
+    "más claro, agua. Al ataque.",
+    "sale a cuenta hasta con resaca.",
+    "el locate es calderilla al lado del recorrido.",
 ]
 _FRASES_NO = [
-    "quieto capitan, no te flipes que estan muy caras.",
+    "quieto capitán, no te flipes que están muy caras.",
     "ni de broma: el alquiler se come la ventaja.",
     "deja pasar esta, que no compensa.",
-    "guarda la cartera, aqui no hay negocio.",
-    "el locate cuesta mas de lo que la estrategia saca.",
+    "guarda la cartera, aquí no hay negocio.",
+    "el locate cuesta más de lo que la estrategia saca.",
+    "eso no es un locate, es un secuestro.",
+    "pagas por el privilegio de perder, qué ganga.",
+    "el bróker se lleva tu edge y te dice gracias.",
+    "trabajas gratis para el que te presta las acciones.",
+    "por ese precio te compras la empresa entera.",
+    "ni con el viento a favor sale la cuenta.",
+    "el fade no llega ni para las cañas.",
+    "más caro que aparcar en el centro.",
+    "esa acción no te quiere, y el locate tampoco.",
+    "aquí el único que gana es el que alquila.",
 ]
 
 

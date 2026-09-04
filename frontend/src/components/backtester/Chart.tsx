@@ -201,9 +201,16 @@ function EtiquetaVolumen({ acum, totales }: {
     // Sin fondo ni borde: al ir sobre el eje y no sobre las velas, una caja
     // flotando ahí parecería un elemento pegado por encima.
     <div style={{
-      position: "absolute", left: 10, bottom: 0, height: 26,
+      position: "absolute", left: 10, bottom: 1, height: 24,
       pointerEvents: "none", zIndex: 3,
       display: "flex", gap: 16, alignItems: "center",
+      // FONDO OPACO, no traslúcido. Va sobre el eje temporal, y las horas de
+      // detrás son texto del mismo cuerpo y del mismo gris: con transparencia
+      // los dígitos se solapaban y no se leía ni una cosa ni la otra.
+      padding: "0 10px",
+      background: "var(--color-ec-bg-base)",
+      border: "0.5px solid var(--color-ec-border)",
+      borderRadius: 2,
       fontFamily: "var(--color-ec-mono)", fontSize: 12,
       whiteSpace: "nowrap",
     }}>
