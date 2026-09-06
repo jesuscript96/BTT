@@ -574,14 +574,14 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         n = i + 1
         unidad = "$" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "%"
         _add(f"pyr.{i}.capital_pct",
-             f"Piramide {n} ({'quita' if str(lv.get('action', 'add')).lower() == 'reduce' else 'anade'} {unidad})",
+             f"Pirámide {n} ({'quita' if str(lv.get('action', 'add')).lower() == 'reduce' else 'añade'} {unidad})",
              lv.get("capital_pct"), "Pyramid", f"pyramiding.levels.{i}.capital_pct",
              min_val=0.5, step=0.5)
         _add(f"pyr.{i}.times", f"Piramide {n} veces",
              lv.get("times"), "Pyramid", f"pyramiding.levels.{i}.times",
              min_val=1, max_val=10, step=1, is_int_param=True)
         _extract_from_condition_group(
-            lv.get("root_condition") or {}, f"Piramide {n}",
+            lv.get("root_condition") or {}, f"Pirámide {n}",
             f"pyramiding.levels.{i}.root_condition", params, _seen, _add)
 
     # --- Preconditions ---

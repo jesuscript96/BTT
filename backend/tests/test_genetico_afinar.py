@@ -454,3 +454,15 @@ def test_el_extractor_ve_los_parametros_de_la_piramide():
     rutas = {p["path"] for p in extract_parameters(SEMILLA_PYR)}
     assert "pyramiding.levels.0.capital_pct" in rutas
     assert "pyramiding.levels.0.times" in rutas
+
+
+def test_el_disparador_de_un_parcial_se_lee_en_cristiano():
+    """Viaja codificado («pct:6») para ordenarlo como rejilla, pero en la receta
+    y en la pantalla tiene que leerse. Jaume, 6-sep: «parcial 1, 2, 3 con
+    disparador no sé qué significa»."""
+    cfg = _cfgp()
+    txt = afinar.receta({"valores": {"n": 3, "p0": "pct:6", "p1": "hora:10:30",
+                                     "p2": "tiempo:30"}}, cfg)
+    assert "al +6 %" in txt
+    assert "a las 10:30" in txt
+    assert "a los 30 min" in txt

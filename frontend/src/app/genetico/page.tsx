@@ -187,10 +187,24 @@ function horaAMinutos(t: string): number {
   return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
 }
 
+/** Disparador de un parcial, en cristiano. El backend lo manda codificado
+ *  (`pct:6`, `hora:10:30`, `tiempo:30`) para poder ordenarlo como rejilla. */
+function leeDisparador(v: string): string | null {
+  const m = /^(pct|hora|tiempo):(.+)$/.exec(v);
+  if (!m) return null;
+  if (m[1] === "pct") return `al +${m[2]} %`;
+  if (m[1] === "hora") return `a las ${m[2]}`;
+  return `a los ${m[2]} min`;
+}
+
 /** El valor de un gen, en la unidad en la que se lee. */
 function leeValor(g: GenGenetico, v: unknown): string {
   if (v === null || v === undefined) return "—";
   if (typeof v === "boolean") return v ? "sí" : "no";
+  if (typeof v === "string") {
+    const d = leeDisparador(v);
+    if (d) return d;
+  }
   if (g.unit === "time_of_day") return minutosAHora(Number(v));
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(v);
   return String(v);

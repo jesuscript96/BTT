@@ -294,10 +294,10 @@ _BLOQUES = (
     ("horas",      "Horas de entrada"),
     ("stop",       "Stop loss"),
     ("tp",         "Take profit"),
-    ("parciales",  "Parciales (cuantos y de que tipo)"),
-    ("piramide",   "Piramidacion"),
+    ("parciales",  "Parciales (cuántos y de qué tipo)"),
+    ("piramide",   "Piramidación"),
     ("reentradas", "Reentradas"),
-    ("sesion",     "Sesion de mercado"),
+    ("sesion",     "Sesión de mercado"),
     ("guardas",    "Guardas / precondiciones"),
 )
 
@@ -375,20 +375,20 @@ def _genes_extra(d: dict) -> list[dict]:
     if tipo_hoy not in opciones_tipo:
         opciones_tipo = [tipo_hoy] + opciones_tipo
     out.append({
-        "id": "sesion.tipo", "label": "Tipo de sesion",
+        "id": "sesion.tipo", "label": "Tipo de sesión",
         "path": "__sesion_tipo__", "bloque": "sesion",
         "opciones": opciones_tipo, "current_value": tipo_hoy, "unit": None,
     })
     # Las horas SOLO mandan con sesion personalizada; marcar una de ellas sin
     # marcar el tipo pasa la sesion a personalizada sola (ver _aplicar_sesiones).
     out.append({
-        "id": "sesion.desde", "label": "Sesion: abre a las",
+        "id": "sesion.desde", "label": "Sesión: abre a las",
         "path": "__sesion_desde__", "bloque": "sesion", "unit": "time_of_day",
         "min": max(240, desde_hoy - 120), "max": min(1200, desde_hoy + 120),
         "step": 15, "is_int": True, "current_value": desde_hoy,
     })
     out.append({
-        "id": "sesion.hasta", "label": "Sesion: cierra a las",
+        "id": "sesion.hasta", "label": "Sesión: cierra a las",
         "path": "__sesion_hasta__", "bloque": "sesion", "unit": "time_of_day",
         "min": max(240, hasta_hoy - 120), "max": min(1200, hasta_hoy + 120),
         "step": 15, "is_int": True, "current_value": hasta_hoy,
@@ -403,7 +403,7 @@ def _genes_extra(d: dict) -> list[dict]:
     })
     mx = rm.get("max_reentries")
     out.append({
-        "id": "riesgo.max_reentries", "label": "Maximo de reentradas",
+        "id": "riesgo.max_reentries", "label": "Máximo de reentradas",
         "path": "risk_management.max_reentries", "bloque": "reentradas",
         "min": 0, "max": 10, "step": 1, "is_int": True,
         "current_value": int(mx) if mx is not None and int(mx) >= 0 else 0,
@@ -426,14 +426,14 @@ def _genes_extra(d: dict) -> list[dict]:
     modo_tp = str((d.get("risk_management") or {}).get("take_profit_mode", "Full"))
     n_hoy = len(previos) if modo_tp.strip().lower() == "partial" else 0
     out.append({
-        "id": "parciales.n", "label": "Cuantos parciales",
+        "id": "parciales.n", "label": "Cuántos parciales (0 = ninguno)",
         "path": "__parciales_n__", "bloque": "parciales",
         "min": 0, "max": 5, "step": 1, "is_int": True,
         "current_value": n_hoy, "unit": None,
     })
     for i in range(5):
         out.append({
-            "id": f"parciales.{i}.nivel", "label": f"Parcial {i + 1}: disparador",
+            "id": f"parciales.{i}.nivel", "label": f"Parcial {i + 1}: cuándo cierra",
             "path": f"__parcial__:{i}", "bloque": "parciales",
             "opciones": opciones_nivel,
             "current_value": _codifica_parcial(previos[i]) if i < len(previos) else opciones_nivel[0],
