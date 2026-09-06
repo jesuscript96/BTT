@@ -201,6 +201,299 @@ duración, % que vuelve, tiempo) para fijar la guarda y el tipo de stop.
 5. **VPS:** 1 semana en sombra + días de canario allí; simulacro completo del
    socio (pausa Telegram, reinicio panel, RDP).
 
+## 1 — 2026-09-06 · Estudio de cisnes negros: directrices de Jaume
+
+**Objetivo del estudio:** encontrar reglas para que el bot **NO cierre** un
+corto durante un pico absurdo (el cierre arriba «te arruina la vida») y sí lo
+haga cuando no es cisne negro. Con exposición adecuada se soporta un 100-200 %,
+quizá 500 %; jamás 1000-5000 %. Todos los observados hasta hoy **caen siempre**.
+La pregunta es «¿cuándo no cerrar?»: si sube más de X % en X s y no toca el
+stop limit, observar y reportar, no cerrar; salir después, cuando el precio se
+estabilice lo más cerca posible de la entrada y haya pasado X tiempo (perder
+50-100 % de la posición, no media cuenta).
+
+**Tipo 1 — premercado.** Libro vacío, sin contrapartida, el precio salta
+100…5000 % en menos de un minuto. Búsqueda: velas de 1 min en premercado con
+`(high - open) / open ≥ 50 %`, sin techo. Analizar en conjunto y por tramos
+(50-100, 100-500, 500-1000, >1000 %), y también en función de Dollar Volume,
+Dollar Volume acumulado y Premarket Volume acumulado. Estadística descriptiva
+de: cuánto tardan en caer, hasta dónde caen, disparadores. Luego spread y
+ticks antes/después con Massive; después Level 2 con Databento (y cualquier
+otro dato útil que Databento ofrezca).
+
+**Tipo 2 — RTH / halts.** Más comunes; basta una MUESTRA, no lista completa.
+Mayoría entre 09:30 y 11:00. Hipótesis de detección: velas RTH con volumen 0
+= halt (comprobar si Massive marca halts en el histórico). Analizar spread,
+liquidez (volumen medio por vela antes del halt y tras reabrir), si daría
+tiempo a salir y con qué tamaño. Quiere IDEAS de protección basadas en datos.
+
+**Orden:** primero lista de eventos (lago), luego Massive (spread, ticks),
+luego Databento (profundidad). La clave de Databento la da cuando se pida.
+
+### Fase A, paso 1 y 2 HECHOS (6-sep): barrido y contexto
+
+Scripts y datos en **`D:ot_senales\estudio_cisnes\`** (fuera del repo, como
+los demás del bot): `01_barrer_velas.py` → `candidatos_velas.parquet` (2.701
+velas de PM con (high-open)/open ≥ 50 %, 2019-2026, ~6 min de disco);
+`02_contexto_eventos.py` → `eventos.parquet` (2.343 eventos; agrupa velas a
+< 10 min; `velas_eventos.parquet` es la caché de los días, 4 min de lectura).
+
+Definiciones provisionales (parametrizadas arriba del script 02): nivel_pre =
+close de la vela anterior al evento; pico = high máximo en 10 min; vuelta_X =
+minutos desde el pico hasta el primer close ≤ nivel_pre·(1+X) dentro del PM
+(`_dia` = hasta el cierre); retención = open 09:30 vs nivel_pre.
+
+**Datos del lago que condicionan el estudio:**
+- Los ticks (`parquet/trades_premarket`, 21 GB, 2019-2026) solo cubren tickers
+  con `es_candidato` (gap día ≥ 10 %, RTH vol ≥ 400k, CS/ADR, sin warrants):
+  ~300 tickers/día. Muchos eventos no tendrán ticks.
+- El lago NO guarda velas con volumen 0: **un halt es un HUECO en los
+  timestamps**, no una vela vacía. Detección tipo 2 por huecos.
+- 520 eventos son warrants/rights/units y 383 tienen precio < 0,10 $: fuera
+  de la base principal (universo base: 1.776 eventos).
+
+**PRIMER HALLAZGO (cambia la pregunta):** «todos vuelven» NO es cierto en
+general; es cierto para los que YA estaban en juego. Con salto ≥ 100 %:
+- dollar volume acumulado antes del pico **> 1 M $**: 80 % vuelve a +50 % en
+  PM, mediana **1 minuto**, p90 8 min; retención mediana a las 09:30 **+5 %**.
+- **< 10 k $** antes del pico (48 % son la primera vela del día): solo 52 %
+  vuelve, retención mediana a las 09:30 **+67 %**. Eso es una noticia que
+  reprecia, no un libro vacío.
+- Los que no vuelven aun con > 1 M $ (21 de 104) abren a las 09:30 entre
+  +65 % y +427 %: hay que mirarlos uno a uno (¿noticia a mitad de PM?).
+
+### Fase A v2 (6-sep, tarde): referencia = OPEN de la vela del cisne
+
+Definiciones cerradas con Jaume: ref = open de la primera vela del evento;
+tipo A = vela única ≥ 50 %; tipo B = escalera (5 min, ≥ 50 % acumulado sin
+vela ≥ 50 %); base = sin warrants/rights/units y ref > 0,50 $; «en juego» =
+gap previo ≥ 20 % (máximo de PM antes del evento vs prev_close), que es lo que
+opera. Scripts `03_barrer_escalera.py` (12.370 filas) y `02_contexto_eventos.py`
+v2 → `eventos.parquet` (7.257 eventos: 2.337 A, 4.920 B; base 4.528).
+Ficheros: `top50_en_juego.csv` (44/50 con ticks en el lago),
+`no_vuelven_en_juego_triage.csv`.
+
+**Resultados, base, salto ≥ 100 %, en juego (386 eventos, ~50/año):**
+- Vuelve a +50 % sobre ref en PM: 72 %. Mediana 8-13 min, p90 110-140 min.
+- Camino mediano tras el pico: +81 % a 5 min, +60 % a 30 min, +45 % a 60 min,
+  +27 % (A) / +41 % (B) a las 09:30. p95 a 30 min: +200/+290 %. p99: +324/+468 %.
+- Mínimo de PM tras el pico (hasta dónde cae): mediana +16 % (100-200),
+  +26 % (200-500), +21 % (>500); p25 ≈ ref (−5/−2/−1 %); p95 +86/+136/+157 %.
+- 107 no vuelven a +50 % en PM: 62 sí en RTH, 6 sin tiempo (≥ 09:19), 1 split,
+  1 sufijo Z/V, y **37 se quedan arriba TODO el día** (10 % de los ≥ 100 %):
+  XHG, GRYP, HYFM, FCUV, SBET, MOVE, SPRB, WLDS… Son noticias que reprecian,
+  no libros vacíos. **«No cerrar» a ciegas habría sido catastrófico en 1 de
+  cada 10.** La regla tiene que distinguirlos; candidatos a discriminador:
+  ticks/volumen en el pico, si el precio se sostiene N min, dollar volume.
+- Tramo 50-100 % (A: 948, B: 2.438): benigno, 92-94 % vuelve, mediana 1 min.
+
+### Aclaración de Jaume (6-sep) y medida de «devolución» del salto
+
+Jaume: los peligrosos son los **flash BS** (open→high en UNA vela de 1 min);
+los **low BS** (escalera) suelen tener liquidez para salir. Centrarse en PM.
+Mi «se quedan arriba» le chirriaba: la métrica de vuelta a +50 % sobre el open
+del cisne mezclaba el fogonazo con el nivel al que reprecia la acción (XHG
+13-ago: 1,38 → 18,08 → cierra la vela en 2,66; el pico se deshizo en el
+minuto, la acción no volvió a 1,38). Nueva métrica: **% del salto devuelto**
+al cierre de la vela del pico y a los 5 min (`devolucion_en_juego.csv`).
+
+**Resultado, flash (A) en juego, salto ≥ 100 % (208 eventos):** al cierre de
+la vela del pico se devuelve de mediana solo el **21-25 %** del salto (>500 %:
+57 %); a los 5 min, el **50 %**. El cierre de la vela del pico queda de
+mediana a **+100 %** sobre el open del cisne (200-500: +188 %). 166 de 208
+devuelven < 50 % dentro de su vela. O sea: **el fogonazo que sube y baja en
+segundos es la EXCEPCIÓN en velas de 1 min**; lo típico es que el precio se
+quede arriba minutos y baje en decenas de minutos u horas (mínimo de PM
+mediana +16/+26 % sobre el open; p95 +86/+136 %). Escalera (B): 178 eventos,
+mediana 8 min y 7-11 velas hasta el máximo; devuelve 17 % en la vela, 33 % a
+5 min. **Falta la vista por ticks (segundos) de los 44 del top 50 con ticks,
+y la lista de ejemplos del estudio de Jaume para calibrar.**
+
+### Niveles a 5-120 min, ticks del top 50 y coste de Databento (6-sep, noche)
+
+Jaume: no hay regla fija de flash por segundos; flash = «se dispara una
+barbaridad dentro de un minuto». Lo que quiere para la EXPOSICIÓN: hasta dónde
+llegan y en qué nivel se quedan a 10-15-30-60-120 min desde la apertura del BS.
+Tabla completa en la respuesta del chat (script inline; reproducible con
+`eventos.parquet` + `velas_eventos.parquet`). Resumen flash en juego ≥ 100 %:
+tramo 100-200 → nivel mediano +69 % (10 min), +51 % (30), +38 % (60), +27 %
+(120); peor visto p95 +184/+236/+274/+315 %. Tramo 200-500 → +131/+101/+78/
++52 %; peor p95 +398/+500/+500/+543 %. Tramo > 500 (n = 12) → +177/+215/+163/
++124 %; peor p99 +4.010 %.
+
+**Ticks del top 50 (`04_ticks_top50.py` → `ticks_top50.csv`, 44 eventos):**
+aparecen DOS familias. (1) **Fogonazo de libro vacío**: CIIT, PLYX, XHG
+(2026), SLGB, ODP ×2, GLE: el precio está por encima del 50 % del salto
+**≤ 10 segundos**, con 75-1.200 operaciones, y devuelve el 83-98 % en 10-30 s.
+(2) **Movimiento real**: el resto (37): cientos de segundos por encima del
+50 % del salto, miles de operaciones, devuelve solo 20-50 % a los 5 min.
+Discriminador candidato para el bot: **segundos sostenidos por encima de X %
+del salto** (y operaciones); si lleva > N s arriba con volumen, es real y hay
+que salir; si no, esperar. Pendiente de fijar N con los datos y el L2.
+
+**Databento**: clave guardada en `backend/.env` (`DATABENTO_API_KEY`, ignorado
+por git). Coste medido con `metadata.get_cost` sin descargar: CIIT 1 día
+04:00-10:00 ET → XNAS.ITCH mbp-10 **0,0026 $** (6,9 MB), mbp-1 0,001 $,
+trades 0,001 $; EQUS.MINI (consolidado NBBO) mbp-1 0,0016 $. **Los 50 eventos
+con las tres capas ≈ 0,30 $ y ≈ 400 MB.** No se ha descargado nada: falta el
+OK de Jaume.
+
+### CORRECCIÓN DE JAUME (6-sep, noche): qué es el flash BS de verdad
+
+Los gráficos de «movimiento real» (BTOG, HYFM, POAI, CERO…) **NO son cisnes**:
+son el gap normal del día, el salto con el que la acción «salta» desde el
+cierre anterior y por el que se tradea. **El flash BS peligroso es el de
+PLYX, XHG, SLGB, CIIT: la acción YA había subido ≥ 20 % desde el cierre de
+ayer y en algún momento hace un fogonazo que se deshace en segundos.** Los
+escalonados de varias velas ≥ 50-100 % también cuentan, pero cree (a
+comprobar) que ahí hay liquidez para salir aunque sea con 30-50 % de
+slippage. Sugerencia suya: cruzar con las operaciones de 1B para localizar
+algunos (habría muchos más que 1B no tomó).
+
+Consecuencia: la vela de 1 min no basta; hay que barrer los TICKS
+(`trades_premarket`, universo es_candidato = gap ≥ 10 % y vol ≥ 400k, justo
+el universo tradeable) con definición por segundos: precio ya en gap ≥ 20 %,
+subida ≥ 50 % en ≤ 60 s sobre el último precio, y devolución ≥ 70 % del salto
+en ≤ 60 s tras el máximo. Script `07_barrer_ticks_flash.py`.
+
+### Barrido de ticks por segundos: crudo vs limpio (6-sep, noche)
+
+`07_barrer_ticks_flash.py` (12 min los 8 años; `--limpio` aplica la regla del
+lago: `delay_ns < 10 ms` y hora de EJECUCIÓN; la devolución se mide sobre el
+último precio de cada segundo, no sobre el low, para que un print bajo suelto
+no cuente). Salidas: `flash_ticks.parquet` (crudo, 5.360), `flash_ticks_limpio.parquet`
+(377), `flash_reales_limpio.csv` (352), `flash_prints_sueltos_limpio.csv` (25).
+
+**HALLAZGO GORDO: el 93 % de los «flash» del crudo son prints tardíos o
+dark pool** (delay > 10 ms) o un print bajo suelto. Jaume avisó de que los
+dark pool publican tarde. En el libro real hay **352 flash en 8 años**:
+
+| tramo | n | por año | s hasta máx (med) | s por encima de la mitad del salto (med/p75) | devuelto 60 s | nivel a 5 min med / p95 |
+|---|---|---|---|---|---|---|
+| 50-100 | 307 | 40 | 49 | 156 / 304 | 84 % | +15 % / +88 % |
+| 100-200 | 28 | 3,6 | 40 | 44 / 91 | 83 % | +10 % / +120 % |
+| 200-500 | 13 | 1,7 | 34 | 16 / 150 | 87 % | +26 % / +127 % |
+| > 500 | 4 | 0,5 | 39 | 4,5 / 66 | 99 % | +39 % / +273 % |
+
+Los > 500 %: ENSC 11-may-2026 (4.836 %, 4 s arriba), CIIT 9-mar-2026 (4.450 %,
+5 s), XHG 13-ago-2026 (811 %, 248 s), ODP 30-jun-2020 (537 %, 0 s). 2025-2026
+concentran el 65 % de los casos (más universo, más manía). Horas: 04:xx y 08:xx.
+
+**Implicación para el bot:** los prints tardíos NO están en el libro pero SÍ
+en la cinta (SIP): entran en el `high` de las velas `AM` de Massive y en el
+lago. Un stop que dispare por «último precio» o por `high` de vela se come
+esos prints; un stop que mire el libro (bid/ask) no. Pendiente ver cómo
+dispara DAS (pregunta del PDF).
+
+Databento: 150 ficheros descargados sin error, **coste real 1,25 $** (estimé
+0,30 $; los días activos pesan 70 MB). Cubren el top 50 por velas de 1 min,
+que NO coincide del todo con la lista de flash reales por ticks: faltan por
+descargar los flash limpios ≥ 100 % que no estén (~30 días, ~1 $).
+
+### Fase B: primer vistazo al LIBRO (6-sep, noche) — `08_libro_eventos.py`
+
+Databento descargado para el top 50 antiguo (1,25 $) y en descarga los 38
+flash limpios ≥ 100 % que faltaban (`05b_descargar_pendientes.py`, ~1 $, OK de
+Jaume). Libro por segundo en `libro/libro_<ticker>_<fecha>.csv` y resumen en
+`libro/libro_resumen.csv`. **Limitación: XNAS.ITCH es SOLO el libro de Nasdaq**,
+no el consolidado (ARCA, EDGX, etc.): la profundidad real es mayor.
+
+**Mecanismo visto en los 10 primeros:** el ask visible en 10 niveles era
+RIDÍCULO antes del fogonazo: ENSC 4-7 k$, CIIT 1,3 k$, GRYP 0,5-4,5 k$, PLYX
+5 k$ (29 k$ un minuto antes → se vació), en acciones que negociaban millones.
+Una compra a mercado de 10 k$ se come el libro entero y el precio salta hasta
+donde haya la siguiente orden. En el máximo: spread 40-190 %, 2-6 niveles. Los
+que NO son fogonazo puro (SCKT) tenían 17-18 k$ en el ask y 10 niveles.
+**Indicador candidato en vivo: dólares en el ask a 10 niveles** (DAS da L2).
+ODP 30-jun-2020: spread negativo constante = día de contrasplit 1:10, libro
+corrupto → EXCLUIR.
+
+### NBBO (lo que el bot verá) — `09_nbbo_eventos.py` → `libro/nbbo_resumen.csv`
+
+**Jaume: DAS NO da Level 2 por API, solo NBBO (bid/ask y su tamaño).** ODP
+30-jun-2020 excluido (contrasplit). Descarga extra: 0,60 $ (total Databento
+1,85 $). EQUS.MINI cubre 2023+ (FORG, PFIN, VACC, YELL sin NBBO) y en varios
+tickers no hay cotización antes de las 08:00 ET.
+
+Resultado sobre 21 flash ≥ 100 % con NBBO: el **spread** en los 60 s previos
+está en el percentil 70 del día (mediana 22 % vs 6 % el resto del día) y el
+**tamaño en dólares del mejor ask** en el percentil 14 (mediana 178 $ vs 229 $),
+pero con enorme dispersión: el mejor ask en estas acciones es casi siempre de
+100-200 acciones, con o sin fogonazo. **Conclusión: el NBBO avisa poco y
+tarde; no sirve como predictor fiable.** Lo que sí es robusto es lo
+posterior: segundos sostenidos por encima del salto + tope de exposición.
+La profundidad a 10 niveles (que sí discrimina) no estará en vivo.
+
+### 7-sep: barrido v2, stop limitado escalonado, halts e INFORME PDF
+
+- **Fallo corregido en `07_barrer_ticks_flash.py`**: un candidato que no
+  cumplía la devolución bloqueaba los 60 s siguientes y se saltaba el máximo
+  real (SLGB quedaba fuera). v2 limpio: **685 flash reales** (v1: 352).
+  Tramos: 50-100 → 590 (77/año); 100-200 → 67 (9/año); 200-500 → 22 (3/año);
+  > 500 → 6 (ENSC, CIIT, TNON, XHG, ODP-excluido, GRYP). `flash_ticks_limpio_v1.parquet` es la versión vieja.
+- **Stop limitado escalonado (`11_stop_limitado.py`)**: pregunta de Jaume
+  («¿3-4 limitados escalonados y si no los coge que corra?»). Resultado: el
+  precio CAMINA, no salta: en +20 % se ejecutaría en 654 de 678, en +100 % en
+  85 de 93; ENSC operó 27.000 acc en la banda +20 %. Y un limitado disparado
+  sin ejecutar queda colgado y se ejecuta a la vuelta. **Jaume: NO quiere
+  reglas para el bot todavía, solo investigar y sacar conclusiones.**
+- **Halts**: la detección por huecos de 1 min es mala (huecos de iliquidez).
+  **Databento `status` (XNAS.ITCH) da halt/reanudación exactos con motivo y
+  bandera SSR**: 0,03 $/día todo el mercado 09:00-12:00 ET. Pedido OK a Jaume
+  para ~2-3 $ (60-90 días). Sin respuesta aún.
+- **INFORME PDF ENTREGADO**: `D:ot_senales\estudio_cisnes\Informe_cisnes_negros_premercado.pdf`
+  (`12_informe_pdf.py`, venv propio `.venv_informe` con matplotlib+reportlab;
+  figuras en `informe_figs/`). Lenguaje llano, 7 secciones, 6 gráficos.
+- Coste total Databento hasta hoy: **1,85 $**.
+
+### 7-sep (tarde): informe del socio, cruce con 1B, halts en descarga
+
+- **Informe del socio** (`C:\Users\Famil\OneDrive\Escritorio\informe_blackswans.pdf`,
+  texto en `estudio_cisnes/informe_socio.txt`, fechado 3-sep): 2.799 shorts
+  reales del diario de Jaume (ene-2025→jul-2026) × 202 velas explosivas (high
+  ≥ 2× open en 1 min). COINCIDE con lo mío en lo esencial: «el spike no
+  teletransporta, sube printeando cientos de veces por peldaño» (= camina, no
+  salta); en PM no hay órdenes a mercado; discriminador squeeze vs re-rating =
+  % del spike devuelto a los 15 min (≥ 50 % → squeeze); PSTX/TLPH = mi familia
+  «noticia». Aporta además: el «segundo empujón» tras la vela (25 fades
+  perdedores), fills reales de stop-limit ×1,007 del trigger (95 % ≤ ×1,07), y
+  RECOMIENDA stop-limit con límite ancho ×1,4-2,0 + capa de reversión aparte al
+  0,10-0,25 % del equity. (Jaume no quiere reglas aún; es la propuesta del socio.)
+- **Cruce con 1B** (run guardado 4d1514df, 3.024 trades 2025-01→2026-08, leído
+  de una COPIA de users.duckdb; `cruce_1b_flash.csv`): 413 flash en el rango,
+  192 en ticker-días operados. **10 flash DENTRO de una posición** (todos
+  salieron por SL, retorno −22 a −65 %): SLGB 9-jun-2026 (pico ×6 la entrada),
+  GLE 10-sep-2025 (×5,3), PLYX, GURE, LGHL, TMDE, HCAI, NIVF, GVH, AEHL. Los
+  dos grandes coinciden con el informe del socio. **247 trades entran DESPUÉS
+  de un flash** (mediana 13 min): retorno mediano +15 % vs +8 % del total; con
+  flash de 100-500 % previo, +29/+35 %. Igual que la sección D del socio.
+- **Halts**: OK de Jaume. `13_descargar_halts.py` baja `status` de XNAS.ITCH
+  de todo el mercado, 92 días (27-abr→4-sep-2026), 0,03 $/día, a
+  `databento/status/<dia>.csv`. El mapa instrument_id→símbolo NO se pudo hacer
+  al vuelo (límite de símbolos por petición): hacerlo por lotes de 1.000 en el
+  análisis. Detección de huecos en velas (`10_halts_rth.py`) DESCARTADA.
+- **Backend colgado** el 7-sep: `/api/robustness/strategies` y `/vigiladas` no
+  responden en 20 s (`/estado` sí, va por caché). Había DOS uvicorn (uno con el
+  venv, otro con el Python global). Avisado a Jaume; no toqué nada.
+
+### 7-sep (noche): espera/exposición PM, halts a fondo, INFORME v3
+
+- **Exposición en PM: Jaume baraja 3-4 % de la cuenta por ticker en total
+  (entrada + pirámides). NO ES DECISIÓN: no se decide nada aún; el valor iría
+  al cuadro de mandos. No quiere reglas de múltiplos.** Tabla de
+  espera (`espera_perdida_cuenta.csv`, 93 flash ≥ 100 %): cerrar en el pico
+  con 3 % → media 8,8 %, peor 145 % (ENSC/CIIT ×49); esperando 30 s → media
+  2,1 %, peor 14 %; a 5 min → p95 5,2 %. Esperar más de 1 min no baja el p95.
+- **Halts a fondo (`15_halts_profundo.py`)**: regla «salir a X % de la banda»
+  es MALA como automatismo (10 % de margen: 69 % de halts avisados con 2 % de
+  acierto). Liquidez: mediana 725 k$ en el minuto de reapertura, p10 30 k$.
+  Cadenas: 6+ halts (21 ticker-días/92) llegan de mediana a ×2 y no vuelven;
+  PAVS 9-jun-2026: 7 halts, ×13. Exposición en halts con 3 %: media 1,1 %,
+  p95 3,8 %, peor 35 %. Cruce experimental con la estrategia RTH del disco
+  (run 02517fef): 23 halts dentro de 175 trades, 20 acabaron bien, 3 SL.
+- **Informe v3 entregado** con secciones 9 (espera) y 10 (halts). Coste total
+  Databento: 4,7 $.
+
 ---
 
 ## Estado y pendientes
@@ -209,7 +502,7 @@ duración, % que vuelve, tiempo) para fijar la guarda y el tipo de stop.
 |---|---|---|
 | P1 | Conseguir el PDF del API de DAS y activar el API en Sage | Esperando al bróker |
 | P2 | Decidir stop limitado vs mercado y la guarda «X % en segundos» | Abierto, recordárselo |
-| P3 | Estudio de picos de cola: Jaume YA LO TIENE; pedírselo con cifras al arrancar | Pendiente de recibirlo |
+| P3 | Estudio de cisnes (PM + halts): HECHO, informe v3 entregado el 7-sep. Exposición 3-4 % es idea, no decisión | Cerrado salvo retoques |
 | P4 | Dinámica de locates: pronto y barato vs en prealerta | Apuntado, se verá |
 | P5 | Protocolos por tipo de préstamo y regla sobre SSR | Depende del PDF |
 | P6 | Cuadro de mandos de exposición al riesgo | Diseño pendiente |
