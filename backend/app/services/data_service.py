@@ -814,8 +814,17 @@ def fetch_qualifying_data(
     req_end_date: str | None = None,
     preconditions: list = None,
     apply_day: str = 'gap_day',
+    filtros: dict | None = None,
 ) -> pd.DataFrame:
     """Cached wrapper around the qualifying computation.
+
+    `filtros` (2026-09-06): universo SIN dataset guardado. Se pasan las reglas
+    tal cual en vez de resolverlas desde `saved_queries`. Lo usa el genetico,
+    que construye el universo con sus propias guardas y fechas — Jaume: «yo
+    meto las guardas y el rango de fechas, que cargue un dataset en base a eso;
+    no hace falta ni quiero cargar ningun dataset aqui».
+
+    Sin `filtros` el comportamiento es EXACTAMENTE el de siempre.
 
     On a Redis hit returns the cached DataFrame; otherwise computes via
     `_fetch_qualifying_data_uncached` and caches the result (when <20 MB).
@@ -827,7 +836,8 @@ def fetch_qualifying_data(
     # fallback works even when Redis is unavailable. Resolving filters here is a
     # cheap local users.duckdb read, negligible next to the GCS qualifying query.
     try:
-        key_filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+        key_filters = filtros if filtros is not None else _resolve_filters(
+            dataset_id, req_start_date, req_end_date)
         if key_filters:
             cache_key = _qualifying_cache_key(
                 dataset_id, key_filters, req_start_date,
@@ -868,6 +878,7 @@ def fetch_qualifying_data(
         req_end_date=req_end_date,
         preconditions=preconditions,
         apply_day=apply_day,
+        filtros=filtros,
     )
 
     # Write-through: measure the REAL serialized size, then Redis (small) or the
@@ -903,6 +914,7 @@ def _fetch_qualifying_data_uncached(
     req_end_date: str | None = None,
     preconditions: list = None,
     apply_day: str = 'gap_day',
+    filtros: dict | None = None,
 ) -> pd.DataFrame:
     """
     Fetch qualifying rows from daily_metrics via hot cache RAM or direct GCS query.
@@ -912,7 +924,16 @@ def _fetch_qualifying_data_uncached(
     """
     import os
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
-    filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+    if filtros is not None:
+        # Universo sin dataset: las reglas vienen dadas. Se aplican los mismos
+        # overrides de fecha que la via normal, para que el rango pedido mande.
+        filters = dict(filtros)
+        if req_start_date:
+            filters["start_date"] = req_start_date
+        if req_end_date:
+            filters["end_date"] = req_end_date
+    else:
+        filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
     if not filters:
         return pd.DataFrame()
 

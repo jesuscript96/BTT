@@ -86,7 +86,9 @@ export interface RiesgoConfig {
 }
 
 export interface ConfigCorrida {
-  dataset_id: string;
+  /** Ya NO es obligatorio: sin él, el universo lo definen las guardas y las
+   *  fechas. Se mantiene por las corridas antiguas. */
+  dataset_id?: string;
   fecha_ini: string | null;
   fecha_fin: string | null;
   sesgo: "short" | "long";
@@ -224,6 +226,22 @@ export interface DatasetResumen {
 
 export const getCatalogo = () => apiRequest<CatalogoGenetico>("/genetico/catalogo");
 /** Qué se le puede mover a una estrategia, agrupado por bloque (modo «mejorar»). */
+export interface UniversoResp {
+  pares: number | null;
+  tope: number;
+  aviso?: string;
+  primer_dia?: string | null;
+  ultimo_dia?: string | null;
+  tickers?: number;
+}
+
+/** Cuántos ticker-días salen con estas guardas y fechas. Sustituye al selector
+ *  de dataset: enseña el tamaño del universo ANTES de lanzar. */
+export const getUniverso = (config: ConfigCorrida) =>
+  apiRequest<UniversoResp>("/genetico/universo", {
+    method: "POST", body: JSON.stringify({ config }), timeoutMs: 60_000,
+  });
+
 export const getGenesEstrategia = (strategy_id: string) =>
   apiRequest<BloquesGenesResp>("/genetico/genes", {
     method: "POST", body: JSON.stringify({ strategy_id }), timeoutMs: 20_000,

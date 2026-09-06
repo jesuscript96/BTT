@@ -16,6 +16,8 @@ import {
   borrarCorrida,
   crearCorrida,
   getGenesEstrategia,
+  getUniverso,
+  type UniversoResp,
   type BloqueGenes,
   type GenGenetico,
   getCatalogo,
@@ -263,7 +265,6 @@ export default function GeneticoPage() {
   const [genesSel, setGenesSel] = useState<Record<string, { on: boolean; min: number; max: number; step: number }>>({});
   const [agregacion, setAgregacion] = useState("valor");
   const [trozos, setTrozos] = useState(4);
-  const [datasetId, setDatasetId] = useState("");
   const [fechaIni, setFechaIni] = useState("2019-01-01");
   const [fechaFin, setFechaFin] = useState("2024-12-31");
   const [sesgo, setSesgo] = useState<"short" | "long">("short");
@@ -319,7 +320,7 @@ export default function GeneticoPage() {
       })
       .catch((e) => setError(`No cargó el catálogo: ${String(e)}`));
     listarDatasets()
-      .then((d) => { setDatasets(d); if (d.length && !datasetId) setDatasetId(d[0].id); })
+      .then((d) => setDatasets(d))
       .catch((e) => setError(`No cargaron los datasets: ${String(e)}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -359,16 +360,6 @@ export default function GeneticoPage() {
       .catch(() => setError("No pude cargar las estrategias guardadas"));
   }, [modo, estrategias.length]);
 
-  /* El dataset lo trae la estrategia. Elegirlo a mano era una forma facil de
-     acabar evaluando la estrategia sobre OTRO universo del que se construyo y
-     no enterarse: el numero sale, solo que no es el de esa estrategia.
-     Se puede cambiar después — solo se precarga al elegir. */
-  useEffect(() => {
-    if (modo !== "mejorar" || !estrategiaId) return;
-    const ds = estrategias.find((e) => e.id === estrategiaId)?.dataset_id;
-    if (ds) setDatasetId(ds);
-  }, [modo, estrategiaId, estrategias]);
-
   /* Los genes de la estrategia elegida. Se piden al backend, que los saca del
      mismo extractor que alimenta el optimizador 3D. */
   useEffect(() => {
@@ -398,6 +389,12 @@ export default function GeneticoPage() {
       .finally(() => { if (vivo) setCargandoGenes(false); });
     return () => { vivo = false; };
   }, [modo, estrategiaId]);
+
+  /* EL UNIVERSO, en vivo. Sustituye al selector de dataset: las guardas y las
+     fechas lo definen, y aquí se ve cuántos ticker-días salen ANTES de lanzar.
+     Con retardo, porque cada tecleo en una guarda dispararía una consulta. */
+  const [universo, setUniverso] = useState<UniversoResp | null>(null);
+  const [calculandoUniverso, setCalculandoUniverso] = useState(false);
 
   /* Los genes marcados, en el formato que espera el backend. */
   const genesMarcados: GenGenetico[] = useMemo(() => {
@@ -435,7 +432,7 @@ export default function GeneticoPage() {
       .filter((g) => guardas[g.clave]?.on)
       .map((g) => guardaMotor(g.indicador, g.comparador, guardas[g.clave].valor));
     return {
-      dataset_id: datasetId, fecha_ini: fechaIni || null, fecha_fin: fechaFin || null,
+      fecha_ini: fechaIni || null, fecha_fin: fechaFin || null,
       sesgo, sesiones: [sesion],
       hora_ini: sesion === "custom" ? horaIni : null, hora_fin: sesion === "custom" ? horaFin : null,
       ventana_entrada: ventanaOn ? [{ from_time: ventanaDe, to_time: ventanaA }] : null,
@@ -452,10 +449,28 @@ export default function GeneticoPage() {
         ? { modo, estrategia_id: estrategiaId, genes: genesMarcados, agregacion, trozos }
         : {}),
     };
-  }, [datasetId, fechaIni, fechaFin, sesgo, sesion, horaIni, horaFin, ventanaOn, ventanaDe, ventanaA,
+  }, [fechaIni, fechaFin, sesgo, sesion, horaIni, horaFin, ventanaOn, ventanaDe, ventanaA,
     catalogo, guardas, indicadores, nCond, stopPct, stopEstructura, tpPct, tpHora, tpTiempo, riesgo, fitness, minTrades,
     semilla, poblacion, generaciones, workers, paciencia, pararALas, pararALasOn,
     modo, estrategiaId, genesMarcados, agregacion, trozos]);
+
+  useEffect(() => {
+    if (!fechaIni || !fechaFin || (config.guardas ?? []).length === 0) {
+      setUniverso(null);
+      return;
+    }
+    let vivo = true;
+    setCalculandoUniverso(true);
+    const t = window.setTimeout(() => {
+      getUniverso(config)
+        .then((u) => { if (vivo) setUniverso(u); })
+        .catch(() => { if (vivo) setUniverso(null); })
+        .finally(() => { if (vivo) setCalculandoUniverso(false); });
+    }, 700);
+    return () => { vivo = false; window.clearTimeout(t); };
+    // Solo las claves que cambian el universo: guardas y fechas.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fechaIni, fechaFin, JSON.stringify(config.guardas ?? [])]);
 
   const estimacion = useMemo(() => {
     const elite = Math.max(1, Math.round(poblacion * 0.05));
@@ -464,7 +479,9 @@ export default function GeneticoPage() {
   }, [poblacion, generaciones]);
 
   const problemas: string[] = [];
-  if (!config.dataset_id) problemas.push("elige un dataset");
+  if (!fechaIni || !fechaFin) problemas.push("pon el rango de fechas (IS desde / hasta)");
+  if ((config.guardas ?? []).length === 0) problemas.push("marca al menos una guarda: son el filtro de universo");
+  if (universo?.pares != null && universo.pares > universo.tope) problemas.push("el universo se pasa del tope");
   if (modo === "mejorar") {
     if (!estrategiaId) problemas.push("elige la estrategia que quieres mejorar");
     if (genesMarcados.length === 0) problemas.push("marca al menos un parámetro que mover");
@@ -506,7 +523,12 @@ export default function GeneticoPage() {
     const nombreEst = window.prompt("Nombre de la estrategia", `GA ${detalle.config.nombre ?? detalle.id} #${i + 1} [${m.huella}]`);
     if (!nombreEst) return;
     const desc = `${m.receta} · fitness ${n(m.fitness)} · IS ${detalle.config.fecha_ini}→${detalle.config.fecha_fin} · riesgo ${JSON.stringify(detalle.config.riesgo)}`;
-    await accion(() => guardarComoEstrategia(nombreEst, desc, m.definicion, detalle.config.dataset_id), `Guardada «${nombreEst}»: ábrela en el Backtester.`);
+    // Sin dataset (el universo ahora son las guardas) la estrategia se
+    // guarda sin universo atado: se elige al abrirla en el Backtester.
+    const ds = detalle.config.dataset_id ?? "";
+    await accion(() => guardarComoEstrategia(nombreEst, desc, m.definicion, ds),
+      ds ? `Guardada «${nombreEst}»: ábrela en el Backtester.`
+         : `Guardada «${nombreEst}». Al abrirla en el Backtester elige el universo: esta corrida no usó dataset.`);
   };
 
   const est = detalle?.estado ?? {};
@@ -607,28 +629,6 @@ export default function GeneticoPage() {
           <Row label="Nombre" help="Solo para reconocer la corrida en la lista. Si lo dejas vacío se usa la fecha y hora.">
             <input style={{ ...control, fontFamily: font.sans }} value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="opcional" />
           </Row>
-          <Row label="Dataset" help="Universo de ticker-días sobre el que se evalúa cada candidato. Igual que elegirlo en el Backtester.">
-            <Sel value={datasetId} onChange={setDatasetId}
-              options={datasets.map((d) => ({ value: d.id, label: `${d.name}${d.pair_count ? ` (${entero(d.pair_count)})` : ""}` }))} />
-          </Row>
-          {modo === "mejorar" && estrategiaId && (() => {
-            const ds = estrategias.find((e) => e.id === estrategiaId)?.dataset_id;
-            if (!ds) return (
-              <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5, padding: "2px 0 6px" }}>
-                Esa estrategia no tiene dataset guardado (usa filtros de universo). Elige uno a mano.
-              </div>
-            );
-            if (ds !== datasetId) return (
-              <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5, padding: "2px 0 6px" }}>
-                Ojo: estás evaluando sobre un universo distinto del que se construyó la estrategia.
-              </div>
-            );
-            return (
-              <div style={{ fontSize: 11, color: color.textMuted, lineHeight: 1.5, padding: "2px 0 6px" }}>
-                Es el dataset de la estrategia.
-              </div>
-            );
-          })()}
           <Row label="IS desde / hasta" help="Periodo dentro de la muestra. Deja fuera el tramo más reciente (p. ej. 2025→hoy): es tu OOS y solo se usa UNA vez, al final, con los finalistas.">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               <input type="date" style={control} value={fechaIni} onChange={(e) => setFechaIni(e.target.value)} />
@@ -753,6 +753,34 @@ export default function GeneticoPage() {
         </Sec>
 
         )}
+
+        <Sec title="Universo" help="No hay que elegir dataset: el universo lo definen las GUARDAS y el rango de fechas de arriba. Cada guarda se traduce a un filtro sobre el día completo que nunca descarta un día que la guarda intradía habría dejado pasar — dentro de la estrategia siguen corriendo vela a vela.">
+          {(config.guardas ?? []).length === 0 ? (
+            <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5 }}>
+              Sin guardas el universo sería el lago entero. Marca al menos una arriba.
+            </div>
+          ) : calculandoUniverso ? (
+            <div style={{ fontSize: 11, color: color.textMuted }}>Contando ticker-días…</div>
+          ) : universo?.aviso ? (
+            <div style={{ fontSize: 11, color: color.warning }}>{universo.aviso}</div>
+          ) : universo?.pares != null ? (
+            <div style={{ fontSize: 12, color: color.textSecondary, lineHeight: 1.7 }}>
+              <span style={{ fontFamily: font.mono, fontSize: 15, color: universo.pares > universo.tope ? color.loss : color.textHigh }}>
+                {entero(universo.pares)}
+              </span>{" "}ticker-días
+              {universo.tickers ? <> · <span style={{ fontFamily: font.mono }}>{entero(universo.tickers)}</span> tickers</> : null}
+              {universo.primer_dia ? <> · {universo.primer_dia} → {universo.ultimo_dia}</> : null}
+              {universo.pares > universo.tope && (
+                <div style={{ color: color.loss, fontSize: 11, marginTop: 4 }}>
+                  Se pasa del tope de {entero(universo.tope)}. Sube el gap mínimo, el precio o el
+                  dollar volume, o acorta el periodo: con tantos días cada backtest tarda minutos.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: color.textMuted }}>Pon el rango de fechas para verlo.</div>
+          )}
+        </Sec>
 
         <Sec title="Riesgo" help="Los mismos ajustes que el panel de riesgo del Backtester. Para que la R media sea una R de verdad: riesgo fijo en $ con «shares por distancia al SL» activado. Nunca % de equity: con composición y liquidez infinita el genético aprende a apalancarse, no a operar.">
           <Row label="Capital"><Num value={riesgo.init_cash} onChange={(v) => setRiesgo({ ...riesgo, init_cash: v })} min={100} step={1000} /></Row>

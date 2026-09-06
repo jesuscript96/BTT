@@ -3090,3 +3090,44 @@ ocho que da error en vez de caerse en silencio.
 (`bot_alerts_universo.py`) tiene su propio mapa de nombres y es zona cerrada
 (AGENTS.md). Una estrategia que use «Open Gap (%)» funciona en el backtest pero
 **el bot todavía no la entiende**. Queda para Jaume y Sailor.
+
+### 17. El genético ya no pide dataset: lo definen las guardas y las fechas
+
+Jaume: «yo meto las guardas y el rango de fechas donde quiero analizar; que
+cargue un dataset en base a eso, no hace falta ni quiero que tengamos que
+cargar ningún dataset aquí… las guardas que fijamos son como filtros también de
+universo». Vale para los DOS modos.
+
+**Se pudo hacer porque el dataset solo servía para producir el `qualifying`**:
+`datos.preparar` lo usa y a partir de ahí el `dataset_id` es solo metadato; las
+velas salen de los pares del propio qualifying.
+
+`fetch_qualifying_data` acepta ahora `filtros` explícitos (sin ellos, se
+comporta exactamente igual que siempre). El router traduce cada guarda a una
+columna diaria, y **cada traducción es una COTA SUPERIOR de su guarda intradía,
+así que nunca quita un día que la guarda habría dejado pasar**:
+
+| guarda | columna | por qué es segura |
+|---|---|---|
+| `Bar Close > X` | `high > X` | si una vela cierra sobre X, el máximo del día también. **`open` NO valdría**: una acción abre a 0,05 y se va a 5 |
+| `Dollar Volume > X` | `volume * high > X` | Σ(precio·vol) ≤ high·Σvol |
+| `Accumulated Dollar Volume > X` | `volume * high > X` | igual |
+| `PM High Gap (%) > X` | `pmh_gap_pct > X` | el PMH final ≥ el acumulado |
+| `Open Gap (%) > X` | `gap_at_open_pct > X` | exacto, es constante |
+
+Las guardas **siguen corriendo vela a vela** dentro de la estrategia: esto solo
+evita cargar días que no pueden pasarlas nunca.
+
+**Tope de 60.000 ticker-días y contador en vivo.** Sin una guarda que acote, el
+universo es el lago entero: medido, precio > 0,7 y dollar volume > 1 M sobre
+2019-2024 dan **7.461.580 ticker-días**. Marcando además PM High Gap ≥ 50 bajan
+a **7.800**. La página lo enseña antes de lanzar y el backend lo rechaza por
+encima del tope — mejor un error que decir «lanzada» y dejarla muriendo sola.
+
+El contador es un `count` directo sobre el parquet materializado, con DuckDB en
+memoria: **4,7 s** frente a los más de 30 que tardaba construyendo el qualifying
+entero con sus 32 ventanas LAG/LEAD para dar un número.
+
+**Cabo suelto conocido:** al guardar un ganador desde la tabla, la estrategia se
+guarda SIN dataset atado (la corrida ya no tiene uno). El aviso lo dice y el
+universo se elige al abrirla en el Backtester.

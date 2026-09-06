@@ -14,6 +14,7 @@ El paquete vive en `<repo>/genetico/`, FUERA de `backend/`, a proposito.
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -178,6 +179,65 @@ def _escribir_pares(dataset_id: str, dir_datos: str) -> int:
     return len(df)
 
 
+
+# ── Universo SIN dataset: las guardas Y las fechas lo definen ───────────────
+#
+# Jaume, 6-sep-2026: «yo meto las guardas y el rango de fechas donde quiero
+# analizar; que cargue un dataset en base a eso, no hace falta ni quiero que
+# tengamos que cargar ningun dataset aqui». Vale para los DOS modos.
+#
+# CADA FILTRO DE AQUI ES UNA COTA SUPERIOR de su guarda intradia, o sea que
+# NUNCA quita un dia que la guarda habria dejado pasar:
+#
+#   Bar Close > X                -> high > X
+#       si alguna vela cierra por encima de X, el maximo del dia tambien.
+#       (OJO: `open` NO valdria — una accion abre a 0,05 y se va a 5.)
+#   Dollar Volume (vela) > X     -> volume * high > X
+#   Accumulated Dollar Volume > X-> volume * high > X
+#       sum(precio_i * vol_i) <= high * sum(vol_i) = high * volume.
+#   PM High Gap (%) > X          -> pmh_gap_pct > X
+#       el PMH final es >= el PMH acumulado de cualquier momento.
+#   Open Gap (%) > X             -> gap_at_open_pct > X   (exacto, es constante)
+#
+# Las guardas SIGUEN corriendo vela a vela dentro de la estrategia. Esto solo
+# evita cargar dias que no pueden pasarlas nunca.
+
+_GUARDA_A_COLUMNA = {
+    "Bar Close": "high",
+    "Accumulated Dollar Volume": "(volume * high)",
+    "Dollar Volume": "(volume * high)",
+    "PM High Gap (%)": "pmh_gap_pct",
+    "Open Gap (%)": "gap_at_open_pct",
+}
+
+# Techo de seguridad. Sin ninguna guarda que acote, el universo es el lago
+# entero (millones de ticker-dias) y la corrida no acabaria nunca. Mejor un
+# error que decir «lanzada» y dejarla muriendo sola tres horas.
+MAX_PARES_UNIVERSO = 60_000
+
+
+def _filtros_de_guardas(cfg: dict) -> dict:
+    """Las guardas + las fechas, traducidas a reglas de universo."""
+    reglas = []
+    for g in cfg.get("guardas") or []:
+        nombre = ((g or {}).get("source") or {}).get("name")
+        col = _GUARDA_A_COLUMNA.get(nombre)
+        if not col:
+            continue          # guarda sin equivalente diario: solo intradia
+        try:
+            valor = float(g.get("target"))
+        except (TypeError, ValueError):
+            continue
+        reglas.append({"field": col,
+                       "operator": g.get("comparator") or "GREATER_THAN",
+                       "value": valor})
+    return {
+        "start_date": cfg.get("fecha_ini") or None,
+        "end_date": cfg.get("fecha_fin") or None,
+        "rules": reglas,
+    }
+
+
 def _escribir_qualifying(cfg: dict, dir_datos: str) -> int:
     """El qualifying EXACTO del panel: misma funcion, mismos argumentos que el
     orquestador del backtest (fetch_qualifying_data con las fechas pedidas,
@@ -188,10 +248,26 @@ def _escribir_qualifying(cfg: dict, dir_datos: str) -> int:
     from app.services.data_service import fetch_qualifying_data
     import pandas as pd
     os.makedirs(dir_datos, exist_ok=True)
-    q = fetch_qualifying_data(cfg["dataset_id"], cfg.get("fecha_ini"), cfg.get("fecha_fin"),
-                              preconditions=[], apply_day="gap_day")
+    if cfg.get("dataset_id"):
+        # Corridas antiguas (y cualquiera que traiga dataset): via de siempre.
+        q = fetch_qualifying_data(cfg["dataset_id"], cfg.get("fecha_ini"), cfg.get("fecha_fin"),
+                                  preconditions=[], apply_day="gap_day")
+        vacio = "El dataset no tiene ticker-dias en ese periodo"
+    else:
+        # Universo construido con las guardas y las fechas de esta pagina.
+        q = fetch_qualifying_data("", cfg.get("fecha_ini"), cfg.get("fecha_fin"),
+                                  preconditions=[], apply_day="gap_day",
+                                  filtros=_filtros_de_guardas(cfg))
+        vacio = ("Ningun ticker-dia pasa las guardas en ese periodo. "
+                 "Afloja alguna guarda o amplia las fechas.")
     if q is None or q.empty:
-        raise HTTPException(400, "El dataset no tiene ticker-dias en ese periodo")
+        raise HTTPException(400, vacio)
+    if not cfg.get("dataset_id") and len(q) > MAX_PARES_UNIVERSO:
+        raise HTTPException(400, (
+            f"El universo son {len(q):,} ticker-dias y el tope es "
+            f"{MAX_PARES_UNIVERSO:,}. Con tantos, cada backtest tarda minutos y "
+            f"la corrida no acabaria. Sube el gap minimo, el precio o el dollar "
+            f"volume, o acorta el periodo.").replace(",", "."))
     q = q.copy()
     q["date"] = pd.to_datetime(q["date"]).dt.strftime("%Y-%m-%d")
     q = q.sort_values(["date", "ticker"]).reset_index(drop=True)
@@ -441,11 +517,86 @@ def genes_de_estrategia(req: GenesRequest):
                         for bid, lbl in _BLOQUES if por_bloque.get(bid)]}
 
 
+class UniversoRequest(BaseModel):
+    config: dict
+
+
+@router.post("/universo")
+def universo(req: UniversoRequest):
+    """Cuantos ticker-dias salen con estas guardas y estas fechas.
+
+    Es la sustitucion del selector de dataset: la pagina enseña el tamaño del
+    universo ANTES de lanzar, para que no se descubra al arrancar que son
+    200.000 dias y la corrida no acaba nunca.
+    """
+    cfg = dict(req.config or {})
+    if not (cfg.get("fecha_ini") and cfg.get("fecha_fin")):
+        return {"pares": None, "tope": MAX_PARES_UNIVERSO, "aviso": "Falta el rango de fechas"}
+    if not (cfg.get("guardas") or []):
+        return {"pares": None, "tope": MAX_PARES_UNIVERSO,
+                "aviso": "Sin guardas el universo seria el lago entero"}
+
+    from app.services.data_service import _build_where_clause
+    where = _build_where_clause(_filtros_de_guardas(cfg))
+
+    # UN COUNT, no el qualifying entero. `fetch_qualifying_data` materializa
+    # todas las columnas y las 32 ventanas LAG/LEAD: para 2019-2024 eso son
+    # minutos, y aqui solo hace falta un numero. Medido: el count sobre el
+    # mismo parquet responde en segundos.
+    #
+    # DuckDB EN MEMORIA a proposito: `local_data.duckdb` lo tiene abierto el
+    # backend y una segunda conexion se pelea con el (ver MEMORIA: «no hay
+    # lecturas baratas»). Sobre el parquet no hace falta base ninguna.
+    _win = (os.getenv("QUALIFYING_WINDOWED_PARQUET") or "").strip().replace("\\", "/")
+    if not _win or not glob.glob(_win):
+        # Sin el parquet materializado (produccion) se cae a la via lenta pero
+        # correcta, que ademas queda cacheada para el lanzamiento.
+        from app.services.data_service import fetch_qualifying_data
+        try:
+            q = fetch_qualifying_data("", cfg.get("fecha_ini"), cfg.get("fecha_fin"),
+                                      preconditions=[], apply_day="gap_day",
+                                      filtros=_filtros_de_guardas(cfg))
+        except Exception as e:                                # noqa: BLE001
+            raise HTTPException(500, f"No pude calcular el universo: {e}")
+        n = 0 if q is None else len(q)
+        return {"pares": n, "tope": MAX_PARES_UNIVERSO,
+                "primer_dia": (str(q["date"].min()) if n else None),
+                "ultimo_dia": (str(q["date"].max()) if n else None),
+                "tickers": (int(q["ticker"].nunique()) if n else 0)}
+
+    import duckdb
+    con = duckdb.connect()
+    try:
+        fila = con.execute(
+            f'SELECT count(*), count(DISTINCT ticker), '
+            f'  min(CAST("timestamp" AS DATE)), max(CAST("timestamp" AS DATE)) '
+            f"FROM read_parquet('{_win}') WHERE {where}"
+        ).fetchone()
+    except Exception as e:                                    # noqa: BLE001
+        raise HTTPException(500, f"No pude calcular el universo: {e}")
+    finally:
+        con.close()
+    n = int(fila[0] or 0)
+    return {
+        "pares": n, "tope": MAX_PARES_UNIVERSO,
+        "tickers": int(fila[1] or 0),
+        "primer_dia": (str(fila[2]) if n else None),
+        "ultimo_dia": (str(fila[3]) if n else None),
+    }
+
+
 @router.post("/corridas")
 def crear_corrida(req: NuevaCorrida):
     cfg = dict(req.config or {})
-    if not cfg.get("dataset_id"):
-        raise HTTPException(400, "Falta el dataset")
+    # El dataset ya NO es obligatorio: sin el, el universo lo definen las
+    # guardas y las fechas (_filtros_de_guardas). Se sigue aceptando por si
+    # viene de una corrida antigua o de la consola.
+    if not cfg.get("dataset_id") and not (cfg.get("fecha_ini") and cfg.get("fecha_fin")):
+        raise HTTPException(400, "Sin dataset hace falta el rango de fechas (IS desde / hasta)")
+    if not cfg.get("dataset_id") and not (cfg.get("guardas") or []):
+        raise HTTPException(400, (
+            "Sin dataset y sin guardas el universo seria el lago entero. "
+            "Marca al menos una guarda (gap, precio o dollar volume)."))
     if str(cfg.get("modo", "explorar")).lower() == "mejorar":
         # Modo MEJORAR: no hay catalogo que sortear, hay una estrategia que
         # afinar. Sin genes marcados la corrida evaluaria mil veces la misma
@@ -484,7 +635,14 @@ def crear_corrida(req: NuevaCorrida):
     corrida_id = time.strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]
     d = os.path.join(DIR_CORRIDAS, corrida_id)
     os.makedirs(d, exist_ok=True)
-    dir_datos = os.path.join(DIR_DATOS, f"{cfg['dataset_id']}_{cfg.get('fecha_ini')}_{cfg.get('fecha_fin')}")
+    if cfg.get("dataset_id"):
+        _firma = cfg["dataset_id"]
+    else:
+        # Misma firma = mismos datos = se reutiliza el feather ya preparado.
+        _firma = "guardas_" + hashlib.md5(
+            json.dumps(_filtros_de_guardas(cfg), sort_keys=True, default=str).encode()
+        ).hexdigest()[:10]
+    dir_datos = os.path.join(DIR_DATOS, f"{_firma}_{cfg.get('fecha_ini')}_{cfg.get('fecha_fin')}")
     cfg["dir_datos"] = dir_datos
     cfg["nombre"] = req.nombre or corrida_id
     n_pares = _escribir_qualifying(cfg, dir_datos)
