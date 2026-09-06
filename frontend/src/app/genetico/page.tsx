@@ -318,6 +318,23 @@ function valorGen(g: any, v: unknown): string {
   return Number.isInteger(num) ? String(num) : String(num);
 }
 
+/** Cuantos parciales usa de verdad un candidato. Los genes `parciales.i.nivel`
+ *  guardan un valor SIEMPRE, pero solo los `i < n` se escriben en la
+ *  estrategia: `a_definicion` ignora el resto. Pintarlos todos hacia creer que
+ *  el genetico habia elegido cerrar «al +3 %» cuando no cierra nada. */
+function parcialesActivos(ind: any, genes: any[]): number {
+  const g = genes.find((x) => x.id === "parciales.n");
+  const v = ind?.valores?.["parciales.n"];
+  const n = v !== undefined ? v : g?.current_value;
+  return Math.max(0, Number(n ?? 0));
+}
+
+/** Indice del gen `parciales.N.nivel`, o null. */
+function idxParcial(id: string): number | null {
+  const m = /^parciales\.(\d+)\.nivel$/.exec(String(id));
+  return m ? Number(m[1]) : null;
+}
+
 /** Lo que hace DISTINTO a este candidato, en una linea. Es lo que se ve con la
  *  fila plegada: en modo mejorar, los genes que cambiaron respecto a la
  *  estrategia original; en explorar, los indicadores de la entrada. */
@@ -325,9 +342,14 @@ function resumenCorto(mejor: Mejor, config: any): string {
   const ind: any = mejor.individuo;
   if (String(config?.modo ?? "explorar") === "mejorar" && ind?.valores) {
     const genes: any[] = config?.genes ?? [];
+    const nParc = parcialesActivos(ind, genes);
     const cambios = genes
-      .filter((g) => g.current_value !== undefined && ind.valores[g.id] !== undefined
-        && valorGen(g, ind.valores[g.id]) !== valorGen(g, g.current_value))
+      .filter((g) => {
+        const ip = idxParcial(g.id);
+        if (ip !== null && ip >= nParc) return false;   // parcial que no se usa
+        return g.current_value !== undefined && ind.valores[g.id] !== undefined
+          && valorGen(g, ind.valores[g.id]) !== valorGen(g, g.current_value);
+      })
       .map((g) => `${etiquetaCorta(g.label)} ${valorGen(g, g.current_value)}→${valorGen(g, ind.valores[g.id])}`);
     if (!cambios.length) return "igual que la original";
     return cambios.slice(0, 3).join("  ·  ") + (cambios.length > 3 ? `  ·  +${cambios.length - 3}` : "");
@@ -351,6 +373,7 @@ function RecetaEstructurada({ mejor, config }: { mejor: Mejor; config: any }) {
       porBloque.get(b)!.push(g);
     }
     const orden = BLOQUES_ORDEN.filter((b) => porBloque.has(b));
+    const nParciales = parcialesActivos(ind, genes);
     return (
       <div style={{ fontSize: 11, lineHeight: 1.5 }}>
         {orden.map((b) => (
@@ -358,12 +381,19 @@ function RecetaEstructurada({ mejor, config }: { mejor: Mejor; config: any }) {
             {porBloque.get(b)!.map((g) => {
               const v = ind.valores[g.id];
               if (v === undefined) return null;
+              const ip = idxParcial(g.id);
+              if (ip !== null && ip >= nParciales) return null;   // no se usa
               return (
                 <Linea key={g.id} etq={etiquetaCorta(g.label)}
                   val={valorGen(g, v)}
                   antes={g.current_value !== undefined ? valorGen(g, g.current_value) : undefined} />
               );
             })}
+            {b === "parciales" && nParciales === 0 && (
+              <div style={{ fontSize: 10, color: color.textMuted, fontStyle: "italic" }}>
+                sin parciales: cierra con el take profit entero
+              </div>
+            )}
           </Bloque>
         ))}
       </div>
