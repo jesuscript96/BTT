@@ -254,6 +254,159 @@ const COMPARADOR_CORTO: Record<string, string> = {
   GREATER_THAN_OR_EQUAL: "≥", LESS_THAN_OR_EQUAL: "≤", EQUAL: "=",
 };
 
+/* ── La receta, estructurada ──────────────────────────────────────────────────
+ *
+ * Antes era UNA cadena con todo pegado («Entrada: X > 8 AND Y > 5 AND Z < 1 ·
+ * Stop: … · TP: …») y con veinte filas no había forma de leerla. Jaume: «estaría
+ * bien que estuvieran más estructuradas las condiciones que elige, no todo
+ * apelotonado».
+ *
+ * Se pinta desde los DATOS, no parseando ese texto: `mejores.json` trae el
+ * individuo entero y el config con las etiquetas. Parsear la cadena habría sido
+ * frágil — cambia el formato y se rompe la tabla sin avisar.
+ *
+ * Dos formas de individuo, una por modo (ver genetico/especie.py). */
+
+function Linea({ etq, val, antes }: { etq: string; val: string; antes?: string }) {
+  const cambio = antes !== undefined && antes !== val;
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto", gap: 8, alignItems: "baseline" }}>
+      <span style={{ color: color.textMuted, overflow: "hidden", textOverflow: "ellipsis" }}>{etq}</span>
+      <span style={{ fontFamily: font.mono, color: cambio ? color.copper : color.textHigh, whiteSpace: "nowrap" }}>
+        {cambio && <span style={{ color: color.textMuted, textDecoration: "line-through", marginRight: 5 }}>{antes}</span>}
+        {val}
+      </span>
+    </div>
+  );
+}
+
+/** «Entry % Fade Target Value» dentro del bloque ENTRADA es ruido: el bloque ya
+ *  lo dice. Se quitan los prefijos que repiten. */
+function etiquetaCorta(label: string): string {
+  return String(label)
+    .replace(/^Entry\s+/i, "").replace(/^Exit\s+/i, "")
+    .replace(/\s*Target Value$/i, "").trim();
+}
+
+function Bloque({ titulo, children }: { titulo: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 5 }}>
+      <div style={{ fontSize: 9, textTransform: "uppercase", letterSpacing: "0.06em", color: color.textMuted, opacity: 0.7 }}>{titulo}</div>
+      {children}
+    </div>
+  );
+}
+
+const BLOQUES_ORDEN = ["entrada", "salida", "horas", "sesion", "stop", "tp", "parciales", "piramide", "reentradas", "guardas"];
+const BLOQUES_TITULO: Record<string, string> = {
+  entrada: "Entrada", salida: "Salida", horas: "Horas de entrada",
+  sesion: "Sesión", stop: "Stop", tp: "Take profit", parciales: "Parciales",
+  piramide: "Pirámide", reentradas: "Reentradas", guardas: "Guardas",
+};
+
+/** Valor de un gen tal y como se lee (hora, disparador, sí/no o número). */
+function valorGen(g: any, v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "boolean") return v ? "sí" : "no";
+  if (typeof v === "string") {
+    const d = leeDisparador(v);
+    if (d) return d;
+    return v;
+  }
+  if (g?.unit === "time_of_day") return minutosAHora(Number(v));
+  const num = Number(v);
+  return Number.isInteger(num) ? String(num) : String(num);
+}
+
+/** Lo que hace DISTINTO a este candidato, en una linea. Es lo que se ve con la
+ *  fila plegada: en modo mejorar, los genes que cambiaron respecto a la
+ *  estrategia original; en explorar, los indicadores de la entrada. */
+function resumenCorto(mejor: Mejor, config: any): string {
+  const ind: any = mejor.individuo;
+  if (String(config?.modo ?? "explorar") === "mejorar" && ind?.valores) {
+    const genes: any[] = config?.genes ?? [];
+    const cambios = genes
+      .filter((g) => g.current_value !== undefined && ind.valores[g.id] !== undefined
+        && valorGen(g, ind.valores[g.id]) !== valorGen(g, g.current_value))
+      .map((g) => `${etiquetaCorta(g.label)} ${valorGen(g, g.current_value)}→${valorGen(g, ind.valores[g.id])}`);
+    if (!cambios.length) return "igual que la original";
+    return cambios.slice(0, 3).join("  ·  ") + (cambios.length > 3 ? `  ·  +${cambios.length - 3}` : "");
+  }
+  if (ind?.condiciones) {
+    return ind.condiciones.map((c: any) => c.ind).join("  ·  ");
+  }
+  return mejor.receta.slice(0, 90);
+}
+
+function RecetaEstructurada({ mejor, config }: { mejor: Mejor; config: any }) {
+  const ind: any = mejor.individuo;
+
+  // ── Modo MEJORAR: genes por bloque, con lo que cambió respecto a la semilla
+  if (String(config?.modo ?? "explorar") === "mejorar" && ind?.valores) {
+    const genes: any[] = config?.genes ?? [];
+    const porBloque = new Map<string, any[]>();
+    for (const g of genes) {
+      const b = g.bloque ?? "stop";
+      if (!porBloque.has(b)) porBloque.set(b, []);
+      porBloque.get(b)!.push(g);
+    }
+    const orden = BLOQUES_ORDEN.filter((b) => porBloque.has(b));
+    return (
+      <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+        {orden.map((b) => (
+          <Bloque key={b} titulo={BLOQUES_TITULO[b] ?? b}>
+            {porBloque.get(b)!.map((g) => {
+              const v = ind.valores[g.id];
+              if (v === undefined) return null;
+              return (
+                <Linea key={g.id} etq={etiquetaCorta(g.label)}
+                  val={valorGen(g, v)}
+                  antes={g.current_value !== undefined ? valorGen(g, g.current_value) : undefined} />
+              );
+            })}
+          </Bloque>
+        ))}
+      </div>
+    );
+  }
+
+  // ── Modo EXPLORAR: condiciones, stop, take profit y parciales
+  if (ind?.condiciones) {
+    const s = ind.stop ?? {};
+    const leeTp = (t: any) => t?.modo === "hora" ? `a las ${t.valor}`
+      : t?.modo === "tiempo" ? `a los ${t.valor} min` : `${t?.valor}%`;
+    return (
+      <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+        <Bloque titulo={`Entrada · ${ind.condiciones.length} condiciones (AND)`}>
+          {ind.condiciones.map((c: any, i: number) => {
+            const ps = Object.entries(c.params ?? {}).filter(([, v]) => v !== null && v !== undefined)
+              .map(([, v]) => String(v)).join(", ");
+            const obj = typeof c.objetivo === "object" && c.objetivo
+              ? c.objetivo.ind : String(c.objetivo);
+            return <Linea key={i} etq={ps ? `${c.ind} (${ps})` : c.ind}
+              val={`${COMPARADOR_CORTO[c.comp] ?? c.comp} ${obj}`} />;
+          })}
+        </Bloque>
+        <Bloque titulo="Stop">
+          <Linea etq={s.modo === "pct" ? "Distancia" : `${s.nivel} ${s.operador}`}
+            val={s.modo === "pct" ? `${s.valor}%` : `+${s.offset_pct}%`} />
+        </Bloque>
+        <Bloque titulo="Take profit"><Linea etq="Objetivo" val={leeTp(ind.tp)} /></Bloque>
+        {(ind.parciales ?? []).length > 0 && (
+          <Bloque titulo="Parciales">
+            {ind.parciales.map((p: any, i: number) => (
+              <Linea key={i} etq={`Cierra ${p.cierre_pct}%`} val={leeTp(p)} />
+            ))}
+          </Bloque>
+        )}
+      </div>
+    );
+  }
+
+  // Forma desconocida: mejor el texto de siempre que una celda vacía.
+  return <span style={{ fontSize: 11 }}>{mejor.receta}</span>;
+}
+
 function guardaMotor(nombre: string, comparador: string, valor: number): CondicionMotor {
   return { type: "indicator_comparison", source: { name: nombre, offset: 0 }, comparator: comparador, target: valor, timeframe: "1m" };
 }
@@ -265,6 +418,9 @@ export default function GeneticoPage() {
   const [corridas, setCorridas] = useState<CorridaResumen[]>([]);
   const [seleccion, setSeleccion] = useState<string | null>(null);
   const [detalle, setDetalle] = useState<CorridaDetalle | null>(null);
+  /* Filas desplegadas de la tabla de mejores, por huella. Plegadas por defecto:
+     con 20 filas, la receta entera desplegada llena tres pantallas. */
+  const [abiertas, setAbiertas] = useState<Set<string>>(new Set());
   const [comparar, setComparar] = useState<string | null>(null);
   const [detalleB, setDetalleB] = useState<CorridaDetalle | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1094,7 +1250,42 @@ export default function GeneticoPage() {
                       {detalle.mejores.map((m, i) => (
                         <Tr key={m.huella} hoverable>
                           <Td style={{ ...tdNum, color: color.textMuted, textAlign: "left" }}>{i + 1}</Td>
-                          <Td style={tdTxt}>{m.receta}</Td>
+                          <Td style={{ ...tdTxt, minWidth: 320 }}>
+                            <button
+                              onClick={() => setAbiertas((p) => {
+                                const n = new Set(p);
+                                n.has(m.huella) ? n.delete(m.huella) : n.add(m.huella);
+                                return n;
+                              })}
+                              style={{
+                                background: "none", border: "none", padding: 0, cursor: "pointer",
+                                textAlign: "left", width: "100%", color: "inherit", font: "inherit",
+                                display: "grid", gridTemplateColumns: "auto 1fr", gap: 6, alignItems: "baseline",
+                              }}
+                              title={abiertas.has(m.huella) ? "Plegar" : "Ver todos los parámetros"}
+                            >
+                              <span style={{ color: color.textMuted, fontFamily: font.mono, fontSize: 10 }}>
+                                {abiertas.has(m.huella) ? "▾" : "▸"}
+                              </span>
+                              <span style={{ minWidth: 0 }}>
+                                {/* La HUELLA es el identificador de verdad: es la que
+                                    usa el genético por dentro y la que se cuela en el
+                                    nombre por defecto al guardar, así que se puede
+                                    casar una fila con la estrategia guardada. */}
+                                <span style={{ fontFamily: font.mono, fontSize: 10, color: color.copper }}>
+                                  #{i + 1} · {m.huella}
+                                </span>
+                                <div style={{ fontSize: 11, color: color.textSecondary, lineHeight: 1.4 }}>
+                                  {resumenCorto(m, detalle.config)}
+                                </div>
+                              </span>
+                            </button>
+                            {abiertas.has(m.huella) && (
+                              <div style={{ marginTop: 6, paddingTop: 6, borderTop: hairline }}>
+                                <RecetaEstructurada mejor={m} config={detalle.config} />
+                              </div>
+                            )}
+                          </Td>
                           <Td style={{ ...tdNum, color: m.fitness > 0 ? color.profit : color.loss }}>{n(m.fitness)}</Td>
                           <Td style={tdNum}>{entero(m.metricas.trades)}</Td>
                           <Td style={{ ...tdNum, color: (m.metricas.avg_r ?? 0) > 0 ? color.profit : color.loss }}>{n(m.metricas.avg_r, 3)}</Td>
