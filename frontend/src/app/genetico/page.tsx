@@ -28,7 +28,6 @@ import {
   getCatalogo,
   guardarComoEstrategia,
   listarCorridas,
-  listarDatasets,
   pararCorrida,
   reanudarCorrida,
   verCorrida,
@@ -37,7 +36,6 @@ import {
   type ConfigCorrida,
   type CorridaDetalle,
   type CorridaResumen,
-  type DatasetResumen,
   type Mejor,
 } from "@/lib/api_genetico";
 
@@ -264,7 +262,6 @@ function guardaMotor(nombre: string, comparador: string, valor: number): Condici
 
 export default function GeneticoPage() {
   const [catalogo, setCatalogo] = useState<CatalogoGenetico | null>(null);
-  const [datasets, setDatasets] = useState<DatasetResumen[]>([]);
   const [corridas, setCorridas] = useState<CorridaResumen[]>([]);
   const [seleccion, setSeleccion] = useState<string | null>(null);
   const [detalle, setDetalle] = useState<CorridaDetalle | null>(null);
@@ -345,9 +342,6 @@ export default function GeneticoPage() {
         setIndicadores(Object.fromEntries(c.indicadores.map((i) => [i.nombre, i.por_defecto])));
       })
       .catch((e) => setError(`No cargó el catálogo: ${String(e)}`));
-    listarDatasets()
-      .then((d) => setDatasets(d))
-      .catch((e) => setError(`No cargaron los datasets: ${String(e)}`));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
