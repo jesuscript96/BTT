@@ -62,6 +62,35 @@ function diaDeEpoch(epoch: number): string {
   return new Date(epoch * 1000).toISOString().slice(0, 10);
 }
 
+/** ¿El riesgo es un % del balance?
+ *
+ *  EL VALOR QUE MANDA EL MOTOR ES `"PERCENT"`. Esto nació comparando contra
+ *  `"Percentage"`, que no existe en ninguna parte: la comparación era siempre
+ *  falsa, el porcentual se trataba como riesgo fijo y el calendario dividía el
+ *  PnL del día entre el NÚMERO DEL PORCENTAJE (entre 1, con un 1 %) en vez de
+ *  entre los dólares de una R. O sea que enseñaba dólares con la etiqueta «R»
+ *  — números enormes, sin ningún error. Lo vio Jaume en pantalla el 5-sep-2026.
+ *
+ *  Se compara por prefijo y sin distinguir mayúsculas a propósito, para que
+ *  «PERCENT», «Percentage» o «percent» valgan igual: el precio de fallar aquí
+ *  es un número creíble y falso, no una pantalla rota.
+ */
+function esPorcentual(riskType: string | undefined): boolean {
+  return (riskType ?? "").trim().toUpperCase().startsWith("PERCENT");
+}
+
+/** ¿Es el «Fixed Ratio» de Ryan Jones?
+ *
+ *  Ahí 1 R NO es constante ni dentro del día: el motor la escala con
+ *  `n_units = 0.5 + 0.5·√(1 + 8·PnL/Δ)`, que se mueve con el PnL realizado
+ *  acumulado, operación a operación. Con la curva DIARIA no se puede
+ *  reconstruir, así que la unidad R no se ofrece — mejor no dar el número que
+ *  darlo mal.
+ */
+function esRatioFijo(riskType: string | undefined): boolean {
+  return (riskType ?? "").trim().toUpperCase().startsWith("FIXED_RATIO");
+}
+
 /** Lo que vale 1 R, en dólares, para cada día operado.
  *
  *  DOS CASOS, y el segundo es el que pidió Jaume (2026-09-04: «si pongo % de
@@ -77,6 +106,8 @@ function diaDeEpoch(epoch: number): string {
  *                     `robustness_service.py`, verificada allí contra una
  *                     corrida real con un 0,000009 % de desvío.
  *
+ *  (El tercer tipo, Fixed Ratio, no llega aquí: `puedeR` lo descarta antes.)
+ *
  *  Que 1 R sea constante dentro del día es lo que hace que esto encaje en un
  *  calendario: se convierte cada día por su R y luego se suman las R para la
  *  semana y el mes. Sumar dólares y dividir al final por una R «media» daría
@@ -87,8 +118,7 @@ function valorRPorDia(
   globalEquity: GlobalEquityPoint[], initCash: number,
 ): Map<string, number> {
   const m = new Map<string, number>();
-  const esPct = riskType === "Percentage";
-  if (!esPct) {
+  if (!esPorcentual(riskType)) {
     for (const d of dias) m.set(d, riskR);
     return m;
   }
@@ -111,10 +141,12 @@ export default function CalendarTab({
    *  pueden mirar en las dos unidades. */
   const [unidad, setUnidad] = useState<Unidad>("dinero");
 
-  const esPct = riskType === "Percentage";
+  const esPct = esPorcentual(riskType);
   /** Con riesgo porcentual hace falta la curva para saber con qué balance
-   *  empezó cada día; sin ella no se puede convertir y no se ofrece. */
-  const puedeR = riskR > 0 && (!esPct || globalEquity.length > 0);
+   *  empezó cada día; sin ella no se puede convertir y no se ofrece. Y con
+   *  Fixed Ratio no se ofrece nunca: la R se mueve operación a operación. */
+  const puedeR = riskR > 0 && !esRatioFijo(riskType)
+    && (!esPct || globalEquity.length > 0);
   const unidadReal: Unidad = puedeR ? unidad : "dinero";
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 

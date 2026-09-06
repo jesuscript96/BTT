@@ -64,13 +64,7 @@ def evaluar(individuo: dict, config: dict, qualifying_df, grupos) -> dict:
     )
     agg = res.get("aggregate_metrics", {}) or {}
     m = {k: agg.get(v) for k, v in METRICAS.items()}
-    # R media por operacion: solo tiene sentido con riesgo FIJO en $ (con % de
-    # equity el riesgo en $ cambia cada dia y la R media no es comparable).
-    r = config.get("riesgo", {})
-    if str(r.get("risk_type", "FIXED")) == "FIXED" and _f(r.get("risk_r"), 0) > 0:
-        m["avg_r"] = round(_f(m.get("expectancy")) / _f(r.get("risk_r"), 1), 4)
-    else:
-        m["avg_r"] = None
+    m["avg_r"] = _r_media(m.get("expectancy"), config.get("riesgo", {}))
     m["segundos"] = round(time.time() - t0, 1)
     m["fitness"] = fitness(m, config)
     return m
@@ -86,9 +80,49 @@ def _f(x, defecto=0.0) -> float:
         return defecto
 
 
+def _r_media(expectancy, riesgo: dict):
+    """R media por operacion = PnL medio en $ / lo que se arriesga en una R.
+
+    CON RIESGO FIJO la R son dolares y la division es exacta.
+
+    CON RIESGO PORCENTUAL la R en dolares cambia cada dia con la cuenta, asi que
+    aqui se usa la R del PRIMER dia (porcentaje x capital inicial). No es la R
+    real de cada operacion — pero es una CONSTANTE, y el fitness solo necesita
+    ORDENAR individuos: dividir a toda la poblacion por el mismo numero no
+    cambia el orden. Para leer la R de verdad esta `r_precise` del servicio de
+    robustez, que si la recalcula dia a dia.
+
+    ANTES DEVOLVIA None en el caso porcentual, y eso era una trampa de las que
+    no dan error: `_f(None)` es 0.0, asi que `avg_r` y `expR_sqrtN` habrian dado
+    CERO a la poblacion entera — sin excepcion, sin log y sin nada raro en la
+    pantalla, igual que un `min_trades` demasiado alto. Hoy la UI del genetico
+    fija riesgo FIJO, o sea que la trampa estaba armada pero sin disparar.
+    """
+    tipo = str(riesgo.get("risk_type", "FIXED"))
+    r_cfg = _f(riesgo.get("risk_r"), 0)
+    if r_cfg <= 0:
+        return None
+    if tipo == "PERCENT":
+        base = r_cfg / 100.0 * _f(riesgo.get("init_cash"), 0)
+        return round(_f(expectancy) / base, 4) if base > 0 else None
+    return round(_f(expectancy) / r_cfg, 4)
+
+
 def fitness(m: dict, config: dict) -> float:
     """La nota. Por debajo del suelo de operaciones, 0: sin eso el genetico
-    encuentra las seis operaciones perfectas de la historia."""
+    encuentra las seis operaciones perfectas de la historia.
+
+    EV y R MEDIA SON LA MISMA CURVA a escala distinta: la R es el EV dividido
+    por el riesgo, que es constante dentro de una corrida. Ordenan igual. Estan
+    las dos porque la R se compara entre corridas con riesgos distintos y el EV
+    se lee en dolares, que es como Jaume mira las cuentas.
+
+    LAS VERSIONES `xN` MULTIPLICAN POR LA RAIZ DEL NUMERO DE OPERACIONES. Sin
+    eso, una estrategia con 12 operaciones perfectas gana a una con 1.500
+    buenas; con la raiz, operar mas cuenta, pero 4.000 operaciones no valen 40
+    veces mas que 100. Es la diferencia entre premiar el edge y premiar el edge
+    que ademas ocurre a menudo.
+    """
     n = int(_f(m.get("trades")))
     if n < int(config.get("min_trades", 100)):
         return 0.0
@@ -97,6 +131,10 @@ def fitness(m: dict, config: dict) -> float:
         return _f(m.get("avg_r")) * math.sqrt(n)
     if modo == "avg_r":
         return _f(m.get("avg_r"))
+    if modo == "ev_sqrtN":
+        return _f(m.get("expectancy")) * math.sqrt(n)
+    if modo == "ev":
+        return _f(m.get("expectancy"))
     if modo == "pf":
         return _f(m.get("pf"))
     if modo == "dd_return":

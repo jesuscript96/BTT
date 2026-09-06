@@ -37,6 +37,20 @@ class FilterRequest(BaseModel):
     lod_before: Optional[str] = None
     rules: Optional[List[FilterRule]] = []
 
+# Etiqueta de la pagina -> columna de `daily_metrics`.
+#
+# LAS ETIQUETAS TIENEN QUE SER IDENTICAS A LAS DE `metricToParamMap` EN
+# frontend/src/app/page.tsx, LETRA POR LETRA. Se buscan con `.get()`, asi que
+# una que no case NO da error: la regla se descarta y la busqueda sale SIN
+# FILTRAR. Auditado el 5-sep-2026 y medido contra el backend en marcha: de 31
+# filtros de la pagina, 14 se caian asi y 5 reventaban por apuntar a columnas
+# inexistentes. Un filtro imposible («precio > 999.999») devolvia la lista
+# entera. Ejemplo real de como duele: la pagina decia "RTH Fade to Close %" y
+# aqui ponia "RTH Fade To Close %" — por esa T mayuscula, el filtro no existia.
+#
+# ANTES DE ANYADIR UNA ENTRADA, comprobar que la columna existe de verdad:
+#   DESCRIBE SELECT * FROM daily_metrics;
+# Y `test_filtros_metric_map.py` lo comprueba solo en cada corrida.
 METRIC_MAP = {
     "Open Price": "rth_open",
     "Close Price": "rth_close",
@@ -46,30 +60,39 @@ METRIC_MAP = {
     "Premarket Volume": "pm_volume",
     "Open Gap %": "gap_at_open_pct",
     "RTH Run %": "rth_run_pct",
-    "PMH Fade to Open %": "pmh_fade_to_open_pct",
-    "High Spike %": "high_spike_pct",
-    "Low Spike %": "low_spike_pct",
-    "RTH Fade To Close %": "rth_fade_to_close_pct",
     "M15 Return %": "m15_return_pct",
     "M30 Return %": "m30_return_pct",
     "M60 Return %": "m60_return_pct",
-    # NEW TIER 1 METRICS
     "Previous Close": "prev_close",
     "PMH Gap %": "pmh_gap_pct",
     "RTH Range %": "rth_range_pct",
     "Day Return %": "day_return_pct",
-    # NEW TIER 2 - M(x) High Spikes
-    "M15 High Spike %": "m15_high_spike_pct",
-    "M30 High Spike %": "m30_high_spike_pct",
-    "M60 High Spike %": "m60_high_spike_pct",
-    # NEW TIER 2 - M(x) Low Spikes
-    "M15 Low Spike %": "m15_low_spike_pct",
-    "M30 Low Spike %": "m30_low_spike_pct",
-    "M60 Low Spike %": "m60_low_spike_pct",
-    # NEW TIER 3 - Returns
-    "Return M15 to Close %": "return_m15_to_close",
-    "Return M30 to Close %": "return_m30_to_close",
-    "Return M60 to Close %": "return_m60_to_close",
+    # RECUPERADOS el 5-sep-2026: la pagina los ofrecia, el dato existe, y solo
+    # faltaba la entrada aqui (o casaba mal). Se ignoraban en silencio.
+    "Previous Day Close Price": "prev_close",
+    "Pre-Market High Price": "pm_high",
+    "High Spike Price": "rth_high",          # el maximo de la sesion regular
+    "Low Spike Price": "rth_low",            # el minimo de la sesion regular
+    "RTH Fade to Close %": "rth_fade_pct",   # ojo: la «to» va en minuscula
+    "PMH Fade to Open %": "pmh_fade_pct",
+    "M180 Return %": "m180_return_pct",      # existia el dato, faltaba la entrada
+    "HOD Time": "hod_time",
+    "LOD Time": "lod_time",
+    "PM High Time": "pm_high_time",
+    #
+    # RETIRADAS, y por que. Ninguna de estas columnas existe en el lago (38
+    # columnas, comprobadas una a una):
+    #
+    #   "High Spike %" / "Low Spike %"   -> la pagina ya las mandaba apuntando a
+    #       rth_run_pct y rth_range_pct, que YA estan aqui arriba con su nombre
+    #       correcto. Eran duplicados, y ademas enganyaban: como dice Jaume,
+    #       rth_range_pct es el RANGO de la sesion, no «el menor de los spikes».
+    #   "M15/M30/M60 High Spike %" y sus Low  -> nunca se calcularon.
+    #   "Return M15/M30/M60 to Close %"  -> hoy son m15/m30/m60_return_pct, que
+    #       ya estan arriba como "M15/M30/M60 Return %".
+    #   "M1..M180 Price"                 -> el precio a los X minutos no se
+    #       guarda; lo que hay son los retornos (mX_return_pct).
+    #   "Return at Close %"              -> hoy es "Day Return %".
 }
 
 @router.post("/filter")
@@ -147,15 +170,37 @@ def filter_daily_metrics(filters: FilterRequest):
 
         # 2. Handle Dynamic Rules
         if filters.rules:
+            # UN FILTRO QUE NO SE ENTIENDE ES UN ERROR, NO UN «SIGUIENTE».
+            #
+            # Esto era `continue` en los dos casos, y ahi estaba el fallo mas
+            # caro de esta pagina: una etiqueta que no casaba con METRIC_MAP se
+            # descartaba y la busqueda se ejecutaba SIN ESE FILTRO, devolviendo
+            # una lista que parecia filtrada y no lo estaba. Medido el
+            # 5-sep-2026: «Pre-Market High Price > 999999» devolvia las mismas 5
+            # filas que no filtrar nada. Catorce de los treinta y un filtros de
+            # la pagina se comportaban asi.
+            #
+            # Devolver 400 con el nombre del filtro es feo la primera vez y
+            # barato siempre: se ve al momento y se arregla anyadiendo la
+            # entrada al mapa. Un resultado sin filtrar no se ve NUNCA.
             for rule in filters.rules:
                 col = METRIC_MAP.get(rule.metric)
                 if not col:
-                    continue
-                    
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Filtro desconocido: «{rule.metric}». No existe en "
+                               f"METRIC_MAP, asi que no se puede aplicar. Si el dato "
+                               f"existe en daily_metrics, anyadelo al mapa; si no, "
+                               f"quita el filtro de la pagina.",
+                    )
+
                 op = rule.operator
                 if op not in ["=", "!=", ">", ">=", "<", "<="]:
-                    continue
-                    
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Operador no valido en el filtro «{rule.metric}»: «{op}».",
+                    )
+
                 if rule.valueType == "static":
                     try:
                         val = float(rule.value)
@@ -190,6 +235,11 @@ def filter_daily_metrics(filters: FilterRequest):
             "stats": stats,
             "aggregate_series": aggregate_series
         }
+    except HTTPException:
+        # Los 400 de arriba ya dicen QUE filtro falla y por que. Sin esta rama,
+        # el `except Exception` de abajo los reetiquetaria como 500 y el mensaje
+        # util se perderia entre los errores de servidor.
+        raise
     except Exception as e:
         print(f"Filter API Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

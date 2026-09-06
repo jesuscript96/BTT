@@ -129,13 +129,33 @@ def test_run_backtest_slab_equals_legacy(monkeypatch):
 
 
 def test_run_backtest_slab_fallback_month_without_slab(monkeypatch):
-    """Mes sin slab: el modo slab cae al path legacy por-mes y sigue idéntico."""
+    """Mes sin slab: el modo slab cae al path legacy por-mes y sigue idéntico.
+
+    LOS DOS CAMINOS TIENEN QUE LEER DE LA MISMA FUENTE, o no se compara nada.
+
+    `_setup_month` escribe tickers inventados (TK00..TK05) en el caché por
+    ticker de `local/intraday_1m_optimized`, que es de donde lee
+    `_CountingStream`. Pero el fallback del modo slab llama antes a
+    `_select_intraday_glob_for_month`, y esa hoy resuelve la ruta del LAGO REAL
+    — donde esos tickers no existen. Resultado: el camino legacy sacaba
+    operaciones y el de fallback cero, y el test llevaba meses en rojo
+    aparentando que los dos caminos del motor no coincidian.
+
+    NO ERA UN FALLO DEL MOTOR: preferir el lago es lo correcto, y con datos de
+    verdad el fallback los encuentra. El test se escribio cuando el fallback
+    usaba siempre el caché local. Se fuerza aqui esa fuente para que la
+    comparacion sea entre los dos caminos y no entre dos almacenes distintos.
+    """
+    monkeypatch.setattr(gcs_cache, "_select_intraday_glob_for_month",
+                        lambda conn, y, m: None)   # -> "local/intraday_1m_optimized"
+
     qualifying = _setup_month()
     res_legacy = _run(qualifying, _CountingStream(qualifying))
 
     monkeypatch.setenv("BTT_SLAB_STREAM_ENABLED", "1")  # sin construir slabs
     res_slab_fb = _run(qualifying, _CountingStream(qualifying))
     _assert_results_equal(res_legacy, res_slab_fb)
+    assert len(res_legacy["trades"]) > 0, "sin operaciones no se compara nada"
 
 
 def test_run_backtest_slab_with_workers(monkeypatch):

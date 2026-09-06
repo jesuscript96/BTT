@@ -38,15 +38,31 @@ const CATEGORIES = [
     { id: "gap_run", label: "Gap & Run", icon: Activity },
     { id: "volatility", label: "Volatility", icon: Zap },
     { id: "intraday_return", label: "Intraday Return", icon: RefreshCcw },
-    { id: "historical_return", label: "Historical Return", icon: BarChart2 },
     { id: "time", label: "Time", icon: Clock },
 ];
 
+// AQUI SOLO VA LO QUE EXISTE EN `daily_metrics`.
+//
+// Esta lista tenia 67 metricas y solo 22 podian dar resultados. Las otras 45 no
+// tenian columna detras, y lo peor no era que fallaran: es que NO fallaban. El
+// backend descartaba en silencio la regla que no reconocia y devolvia la
+// busqueda SIN FILTRAR — medido el 5-sep-2026, «Pre-Market High Price >
+// 999.999 $» devolvia la lista entera igual que no filtrar nada. Ofrecer un
+// filtro que no puede funcionar es peor que no ofrecerlo.
+//
+// SE RETIRARON (ninguna tiene dato en el lago): los 18 «Spike %», los 8 «MX
+// Price», los 8 «Return % From MX to Close», los 6 retornos historicos
+// (1D/1W/1M/3M/6M/1Y), M1/M5/M90/M120 Return % y «Close Direction». Con ellos
+// se fue la categoria «Historical Return» entera.
+//
+// PARA ANYADIR UNA: primero tiene que existir la columna en el lago, luego la
+// entrada en METRIC_MAP (backend/app/routers/data.py) con la etiqueta IDENTICA
+// letra por letra, y luego aqui. `test_filtros_metric_map.py` vigila que las
+// tres capas no se separen otra vez.
 const METRICS: Record<string, string[]> = {
     price: [
         "Open Price", "Close Price", "Previous Day Close Price", "Pre-Market High Price",
-        "High Spike Price", "Low Spike Price", "M1 Price", "M5 Price", "M15 Price",
-        "M30 Price", "M60 Price", "M90 Price", "M120 Price", "M180 Price"
+        "High Spike Price", "Low Spike Price"
     ],
     volume: [
         "EOD Volume", "Premarket Volume"
@@ -55,21 +71,10 @@ const METRICS: Record<string, string[]> = {
         "Open Gap %", "RTH Run %", "PMH Gap %", "PMH Fade to Open %", "RTH Fade to Close %"
     ],
     volatility: [
-        "RTH Range %", "High Spike %", "Low Spike %",
-        "M1 High Spike %", "M1 Low Spike %", "M5 High Spike %", "M5 Low Spike %",
-        "M15 High Spike %", "M15 Low Spike %", "M30 High Spike %", "M30 Low Spike %",
-        "M60 High Spike %", "M60 Low Spike %", "M90 High Spike %", "M90 Low Spike %",
-        "M120 High Spike %", "M120 Low Spike %", "M180 High Spike %", "M180 Low Spike %"
+        "RTH Range %"
     ],
     intraday_return: [
-        "Day Return %", "M1 Return %", "M5 Return %", "M15 Return %", "M30 Return %",
-        "M60 Return %", "M90 Return %", "M120 Return %", "M180 Return %",
-        "Return % From M1 to Close", "Return % From M5 to Close", "Return % From M15 to Close",
-        "Return % From M30 to Close", "Return % From M60 to Close", "Return % From M90 to Close",
-        "Return % From M120 to Close", "Return % From M180 to Close", "Close Direction"
-    ],
-    historical_return: [
-        "1D Return %", "1W Return %", "1M Return %", "3M Return %", "6M Return %", "1Y Return %"
+        "Day Return %", "M15 Return %", "M30 Return %", "M60 Return %", "M180 Return %"
     ],
     time: [
         "HOD Time", "LOD Time", "PM High Time"

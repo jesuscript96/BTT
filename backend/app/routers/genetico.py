@@ -42,7 +42,9 @@ PYTHON = os.getenv("GENETICO_PYTHON") or os.path.join(BACKEND, ".venv", "Scripts
 
 FITNESS = [
     {"id": "expR_sqrtN", "label": "R media × √operaciones (recomendado)"},
+    {"id": "ev_sqrtN", "label": "EV $ × √operaciones"},
     {"id": "avg_r", "label": "R media por operación"},
+    {"id": "ev", "label": "EV: $ medio por operación"},
     {"id": "pf", "label": "Profit factor"},
     {"id": "dd_return", "label": "Retorno / drawdown"},
     {"id": "sharpe", "label": "Sharpe"},

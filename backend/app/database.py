@@ -1,9 +1,12 @@
+import logging
 import os
 import duckdb
 import threading
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("backtester.db")
 
 _local = threading.local()
 _user_db_lock = threading.RLock()
@@ -107,14 +110,32 @@ def _establish_connection():
             con.execute("SET search_path = 'main'")
             return con
     except Exception as e:
-        print(f"[ERROR] Connection Error: {e}")
-        con = duckdb.connect()
-        try:
-            con.execute("SET enable_progress_bar = false;")
-            _apply_duckdb_limits(con)
-        except:
-            pass
-        return con
+        # SI NO SE PUEDE ABRIR LA BASE, SE FALLA. NO SE SIRVE UNA VACIA.
+        #
+        # Esto devolvia `duckdb.connect()` — una base EN MEMORIA Y VACIA — y
+        # seguia como si nada, dejando solo este `print` en una consola que
+        # nadie mira. La aplicacion arrancaba «bien» y respondia a todo... sin
+        # un solo dato. Un backtest salia con cero operaciones y parecia que la
+        # estrategia no entraba nunca, cuando lo que pasaba es que no habia nada
+        # que leer.
+        #
+        # Paso de verdad el 5-sep-2026: un `spawn_main` huerfano de un arranque
+        # anterior tenia tomado `local_data.duckdb` (DuckDB solo admite un
+        # escritor), el backend nuevo cayo aqui, y todo «funcionaba» vacio.
+        # Cuesta un rato darse cuenta incluso buscandolo.
+        #
+        # Reventar al arrancar es incomodo UNA vez; servir datos que no existen
+        # se paga en decisiones tomadas sobre resultados falsos.
+        logger.critical(
+            "No se pudo abrir la base de datos (%s): %s", provider, e)
+        raise RuntimeError(
+            f"No se pudo abrir la base de datos con DB_PROVIDER={provider!r}: {e}\n"
+            f"Lo mas comun en local: ya hay otro proceso con local_data.duckdb "
+            f"abierto (uvicorn o un 'spawn_main' huerfano de un arranque "
+            f"anterior). Matar todos los python de uvicorn/spawn_main y "
+            f"reintentar. NO se arranca con una base vacia a proposito: "
+            f"serviria la aplicacion entera sin datos y sin avisar."
+        ) from e
 
 def get_db_connection(read_only=False):
     if not hasattr(_local, "conn") or _local.conn is None:

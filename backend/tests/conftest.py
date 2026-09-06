@@ -1,29 +1,81 @@
 """
 Pytest configuration and shared fixtures for automated testing.
-Uses REAL data from MotherDuck (cloud database) - no mocks.
-Tests run LOCALLY but connect to REAL production database.
+Uses REAL data - no mocks. Los tests corren en LOCAL contra el lago de verdad.
+
+EL .ENV SE CARGA AQUI, Y NO ES UN DETALLE. Sin esto `DB_PROVIDER` cae a su
+valor por defecto (`motherduck`) en vez del `local` que usa la aplicacion, la
+conexion se va a una base que no existe, y CIENTO DIEZ tests fallan con «Table
+with name daily_metrics does not exist». Estuvieron asi meses, contados como
+fallos del programa cuando el programa estaba bien: al arreglarlo, la suite
+paso de 666 a 718 tests en verde (auditoria del 5-sep-2026).
 """
-import pytest
+import os
 import sys
-import duckdb
 from pathlib import Path
+
+import duckdb
+import pytest
 
 # Add backend to path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
+# ANTES de importar nada de `app`: el proveedor se lee al abrir la conexion.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(backend_dir / ".env")
+except ImportError:                                          # pragma: no cover
+    pass
+os.environ.setdefault("DB_PROVIDER", "local")
+
 from app.database import get_db_connection
+
+# Lo que los tests de datos dan por hecho que existe.
+_TABLAS = ("daily_metrics", "intraday_1m")
+
+
+def _falta(con, nombre: str) -> bool:
+    """¿Ni tabla ni vista con ese nombre?"""
+    for consulta in ("SELECT count(*) FROM duckdb_tables() WHERE table_name = ?",
+                     "SELECT count(*) FROM duckdb_views() WHERE view_name = ?"):
+        try:
+            if con.execute(consulta, [nombre]).fetchone()[0]:
+                return False
+        except Exception:                                    # noqa: BLE001
+            pass
+    return True
 
 
 @pytest.fixture(scope="session")
 def real_db():
+    """Conexion al lago real, en solo lectura, para los tests de validacion.
+
+    SI EL BACKEND ESTA EN MARCHA, ESTOS TESTS SE SALTAN. DuckDB admite un solo
+    escritor: con `local_data.duckdb` abierto por uvicorn no se puede abrir.
+
+    DOS CAMINOS, y hay que cubrir los dos:
+
+      * `get_db_connection` LANZA (comportamiento de hoy: se arreglo para que
+        reviente en vez de devolver una base vacia y servir la aplicacion sin
+        datos — ver el comentario largo en `app/database.py`).
+      * o devuelve una conexion SIN LAS TABLAS, que es lo que hacia antes y lo
+        que puede seguir pasando si la base existe pero esta a medias.
+
+    Saltar con el motivo escrito es mucho mejor que fallar: un `skip` que dice
+    «apaga el backend» se arregla en diez segundos, mientras que cien «Catalog
+    Error» se quedan meses sin que nadie sepa si el roto es el motor.
     """
-    Connection to the REAL MotherDuck cloud database (read-only).
-    Used for validation tests that query real data.
-    
-    Note: Requires MOTHERDUCK_TOKEN in .env file.
-    """
-    con = get_db_connection(read_only=True)
+    aviso = (f"El lago no responde. Casi siempre es que el BACKEND ESTA EN "
+             f"MARCHA y tiene local_data.duckdb abierto (DuckDB admite un solo "
+             f"escritor): parar uvicorn y repetir. "
+             f"DB_PROVIDER={os.getenv('DB_PROVIDER')}")
+    try:
+        con = get_db_connection(read_only=True)
+    except Exception as e:                                   # noqa: BLE001
+        pytest.skip(f"{aviso}\nMotivo: {e}")
+    faltan = [t for t in _TABLAS if _falta(con, t)]
+    if faltan:
+        pytest.skip(f"{aviso}\nFaltan las tablas: {', '.join(faltan)}")
     yield con
     con.close()
 

@@ -375,12 +375,36 @@ def _detect_triangles_numba(
         if close_t <= 0.0 or np.isnan(close_t):
             continue
             
-        start_idx = t - lookback
+        # EL `max(0, ...)` ES LO QUE IMPIDE QUE EL PROCESO SE ESFUME.
+        #
+        # Sin el, en las primeras velas del dia `start_idx` sale NEGATIVO
+        # (t=0, lookback=50 -> -50). La guarda de abajo compara `end_idx <
+        # start_idx`, o sea -5 < -50, que es falsa: la deja pasar. Y entonces el
+        # bucle indexa `is_sh[-50]` en un array que puede tener menos de 50
+        # elementos, porque `n` son las velas de ESE dia y un premercado corto
+        # tiene menos.
+        #
+        # En Python eso es un `IndexError` limpio. COMPILADO CON NUMBA NO: sin
+        # `boundscheck` (el defecto) lee memoria que no es suya, Windows lo corta
+        # con una violacion de acceso 0xC0000005 y el proceso DESAPARECE — sin
+        # traceback, sin excepcion y sin que ningun `except` se entere.
+        #
+        # Es lo que tumbaba las corridas del genetico cada ~24 minutos durante
+        # dos noches. Se cazo el 5-sep-2026 apuntando la receta del individuo
+        # antes de evaluarlo: `Triangle Symmetric(pivot_window=5,
+        # tri_lookback=50, ...)`. Reproducido con 30 velas y lookback 50:
+        #
+        #     velas=30,  lookback=50 -> IndexError: index -50 out of bounds
+        #     velas=100, lookback=50 -> ok
+        #
+        # Hace falta que coincidan un individuo con triangulos Y un dia mas
+        # corto que su lookback; de ahi que tardara en aparecer.
+        start_idx = max(0, t - lookback)
         end_idx = t - pivot_window
-        
+
         if end_idx < start_idx:
             continue
-            
+
         sh_indices = np.empty(lookback, dtype=np.float64)
         sh_prices = np.empty(lookback, dtype=np.float64)
         sh_count = 0
