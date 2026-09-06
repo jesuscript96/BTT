@@ -466,3 +466,27 @@ def test_el_disparador_de_un_parcial_se_lee_en_cristiano():
     assert "al +6 %" in txt
     assert "a las 10:30" in txt
     assert "a los 30 min" in txt
+
+
+def test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia():
+    """Reentradas, «shares por SL» y stop hibrido salen de la DEFINICION.
+
+    `run_backtest` los recibe por argumento y el argumento gana. Si se cogieran
+    del panel del explorador, la corrida evaluaria una gestion de riesgo que el
+    usuario no ha pedido, sin ningun error. Por eso en la pagina esos tres
+    controles no se pintan en modo mejorar: serian ajustes fantasma.
+    """
+    from genetico import evaluador as EV
+    definicion = {"market_sessions": ["rth"], "risk_management": {
+        "size_by_sl": True, "hybrid_stop": True,
+        "hybrid_black_swan_pct": 500, "hybrid_max_loss_pct": 2,
+    }}
+    # El config del panel dice lo CONTRARIO de la estrategia.
+    cfg = {"riesgo": {"size_by_sl": False, "hybrid_stop": False,
+                      "accept_reentries": True, "max_reentries": 99}}
+    p = EV.parametros_backtest(cfg, definicion)
+    assert p["size_by_sl"] is True
+    assert p["hybrid_stop"] is True
+    assert p["hybrid_black_swan_pct"] == 500
+    # Y las reentradas NO viajan como argumento: las lleva la definicion.
+    assert "accept_reentries" not in p and "max_reentries" not in p

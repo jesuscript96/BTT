@@ -3194,3 +3194,22 @@ una se quedaría corta y nadie lo notaría.
 Detalle: al añadir una condición que repite sección + métrica + signo, se
 SUSTITUYE la anterior. Dos reglas contradictorias sobre lo mismo dejarían el
 universo vacío sin decir por qué.
+
+### 20. Tres ajustes fantasma en el panel de riesgo del modo mejorar
+
+Jaume: «en riesgo veo la opción de reentradas y arriba también me deja
+activarlas. En modo estrategia la opción de riesgo para reentradas no debería
+estar».
+
+Tenía razón, y no era solo una. En modo mejorar, **reentradas, «shares por SL» y
+stop híbrido salen de la DEFINICIÓN de la estrategia**
+(`evaluador.parametros_backtest` los lee de ahí, ver §12). Los controles del
+panel del explorador seguían pintados y **no hacían nada**: se tocaban, no
+pasaba nada y nadie avisaba — el patrón del Max DD Diario.
+
+Ahora esos tres solo se pintan en modo explorar; en mejorar, una línea explica
+de dónde salen y recuerda que las reentradas se pueden mover como gen.
+
+Lo cubre `test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia`:
+con el panel diciendo lo contrario que la estrategia, mandan la estrategia y su
+híbrido, y las reentradas ni siquiera viajan como argumento.

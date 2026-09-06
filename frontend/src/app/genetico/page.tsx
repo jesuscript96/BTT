@@ -921,6 +921,14 @@ export default function GeneticoPage() {
           <Row label="Slippage %" help="Se aplica en la entrada y en cada salida. Con stops estrechos pesa mucho: coste en R ≈ 2 × slippage ÷ distancia al stop."><Num value={riesgo.slippage} onChange={(v) => setRiesgo({ ...riesgo, slippage: v })} min={0} step={0.05} /></Row>
           <Row label="Coste locates"><Num value={riesgo.locates_cost} onChange={(v) => setRiesgo({ ...riesgo, locates_cost: v })} min={0} step={0.01} /></Row>
           <Row label="Tope locates" help="Máximo de paquetes de 100 acciones en corto por ticker-día (0 = sin tope). Acota el tamaño y cierra el atajo del stop a distancia cero."><Num value={riesgo.max_locates} onChange={(v) => setRiesgo({ ...riesgo, max_locates: v })} min={0} step={10} /></Row>
+          {/* EN MODO MEJORAR ESTOS TRES NO PINTAN NADA. Reentradas, «shares por
+              SL» y el stop híbrido salen de la ESTRATEGIA
+              (`evaluador.parametros_backtest` los lee de la definición), así
+              que dejarlos aquí sería un ajuste fantasma: se tocan, no hacen
+              nada y nadie avisa — como el Max DD Diario. Las reentradas además
+              se pueden mover como gen, arriba. */}
+          {modo === "explorar" ? (
+            <>
           <Row label="Reentradas" help="Si se permite volver a entrar el mismo día tras cerrar, y cuántas veces (−1 = sin límite).">
             <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, alignItems: "center" }}>
               <input type="checkbox" checked={riesgo.accept_reentries} onChange={(e) => setRiesgo({ ...riesgo, accept_reentries: e.target.checked })} style={{ margin: 0 }} />
@@ -942,6 +950,13 @@ export default function GeneticoPage() {
                 <Num value={riesgo.hybrid_max_loss_pct ?? 3} onChange={(v) => setRiesgo({ ...riesgo, hybrid_max_loss_pct: v })} min={0.1} step={0.5} />
               </Row>
             </>
+          )}
+            </>
+          ) : (
+            <div style={{ fontSize: 11, color: color.textMuted, lineHeight: 1.6 }}>
+              Reentradas, «shares por SL» y stop híbrido salen de la estrategia que
+              estás mejorando. Las reentradas se pueden mover como parámetro, arriba.
+            </div>
           )}
         </Sec>
 
