@@ -3131,3 +3131,35 @@ entero con sus 32 ventanas LAG/LEAD para dar un número.
 **Cabo suelto conocido:** al guardar un ganador desde la tabla, la estrategia se
 guarda SIN dataset atado (la corrida ya no tiene uno). El aviso lo dice y el
 universo se elige al abrirla en el Backtester.
+
+### 18. Rectificación: las guardas NO son el universo
+
+Jaume, sobre §17: «una guarda puede ser una guarda, pero si te digo que el close
+sea mayor que 7 **no** te estoy diciendo que solo incluyamos acciones por encima
+de 7, te estoy diciendo que solo quiero ENTRAR cuando la estrategia supera 7…
+intenta no transformar nada, no hacer equivalencias ni cosas raras».
+
+Tenía razón. La traducción guarda→columna de §17 era matemáticamente segura
+(cotas superiores) pero conceptualmente equivocada: mezclaba dos cosas que el
+usuario tiene separadas en la cabeza, y le obligaba a razonar sobre
+equivalencias para saber qué iba a correr. **Retirada.**
+
+Ahora:
+
+- **Las guardas son guardas**: condiciones de entrada, vela a vela. Nada más.
+- **El universo se define aparte**, en su propio cuadro, con las MISMAS opciones
+  que al crear un dataset en el Backtester — se reutiliza `InlineDatasetBuilder`
+  entero, con una prop nueva `soloFiltros` que se salta el modal del nombre y no
+  crea ningún dataset. Cero divergencia de opciones y cero traducciones: los
+  filtros viajan en `cfg["universo"]` con la forma exacta que ya entiende
+  `_build_where_clause`.
+
+Se conservan de §17 el contador en vivo y el tope de 60.000, que sí eran útiles.
+
+**El contador cae a la vía lenta con reglas de Gap−1.** El parquet materializado
+no lleva `lag_pmh_gap_pct` ni sus hermanas — se calculan al vuelo en la vía
+completa. Un universo con Gap−1 reventaba el count rápido con un Binder Error y
+devolvía un 500; ahora se registra y se recalcula por la vía buena.
+
+**Lección:** cuando una simplificación exige explicarle al usuario una
+equivalencia para que entienda qué va a correr, la simplificación es el problema.

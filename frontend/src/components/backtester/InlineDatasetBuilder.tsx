@@ -9,6 +9,11 @@ interface Props {
   onBack: () => void;
   isSaving?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  /** Modo «solo filtros» (genético, 6-sep-2026): no se crea ningún dataset, solo
+   *  se devuelven los filtros. Se salta el modal del nombre y cambia la
+   *  etiqueta del botón. Sin la prop, el flujo es EXACTAMENTE el de siempre. */
+  soloFiltros?: boolean;
+  textoBoton?: string;
 }
 
 interface ParameterConfig {
@@ -76,6 +81,8 @@ export default function InlineDatasetBuilder({
   onBack,
   isSaving = false,
   onExpandedChange,
+  soloFiltros = false,
+  textoBoton,
 }: Props) {
   const [name, setName] = useState("Nuevo Dataset");
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
@@ -992,6 +999,11 @@ export default function InlineDatasetBuilder({
       >
         <button
           onClick={() => {
+            if (soloFiltros) {
+              // Sin dataset no hay nombre que pedir: se devuelven los filtros.
+              void handleSave("");
+              return;
+            }
             setTempName(name);
             setShowSaveModal(true);
           }}
@@ -1012,7 +1024,7 @@ export default function InlineDatasetBuilder({
             opacity: includedConditions.length === 0 || isSaving ? 0.5 : 1,
           }}
         >
-          {isSaving ? "Guardando..." : "Guardar y Probar"}
+          {isSaving ? "Guardando..." : (textoBoton ?? "Guardar y Probar")}
         </button>
       </div>
       {showSaveModal && (

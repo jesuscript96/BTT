@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { color, font, hairline } from "@/components/ui/tokens";
 import { Table, Th, Td, Tr } from "@/components/ui";
 import { Help } from "@/components/robustez/help";
+import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
 import {
   borrarCorrida,
   crearCorrida,
@@ -232,6 +233,11 @@ function RangoGen({ gen, sel, set }: {
   );
 }
 
+const COMPARADOR_CORTO: Record<string, string> = {
+  GREATER_THAN: ">", LESS_THAN: "<",
+  GREATER_THAN_OR_EQUAL: "≥", LESS_THAN_OR_EQUAL: "≤", EQUAL: "=",
+};
+
 function guardaMotor(nombre: string, comparador: string, valor: number): CondicionMotor {
   return { type: "indicator_comparison", source: { name: nombre, offset: 0 }, comparator: comparador, target: valor, timeframe: "1m" };
 }
@@ -395,6 +401,10 @@ export default function GeneticoPage() {
      Con retardo, porque cada tecleo en una guarda dispararía una consulta. */
   const [universo, setUniverso] = useState<UniversoResp | null>(null);
   const [calculandoUniverso, setCalculandoUniverso] = useState(false);
+  /* Los filtros de universo, con la MISMA forma y las MISMAS opciones que al
+     crear un dataset en el backtester. No se traduce nada: viajan tal cual. */
+  const [filtrosUniverso, setFiltrosUniverso] = useState<any>(null);
+  const [abriendoUniverso, setAbriendoUniverso] = useState(false);
 
   /* Los genes marcados, en el formato que espera el backend. */
   const genesMarcados: GenGenetico[] = useMemo(() => {
@@ -433,6 +443,7 @@ export default function GeneticoPage() {
       .map((g) => guardaMotor(g.indicador, g.comparador, guardas[g.clave].valor));
     return {
       fecha_ini: fechaIni || null, fecha_fin: fechaFin || null,
+      universo: filtrosUniverso,
       sesgo, sesiones: [sesion],
       hora_ini: sesion === "custom" ? horaIni : null, hora_fin: sesion === "custom" ? horaFin : null,
       ventana_entrada: ventanaOn ? [{ from_time: ventanaDe, to_time: ventanaA }] : null,
@@ -449,13 +460,13 @@ export default function GeneticoPage() {
         ? { modo, estrategia_id: estrategiaId, genes: genesMarcados, agregacion, trozos }
         : {}),
     };
-  }, [fechaIni, fechaFin, sesgo, sesion, horaIni, horaFin, ventanaOn, ventanaDe, ventanaA,
+  }, [filtrosUniverso, fechaIni, fechaFin, sesgo, sesion, horaIni, horaFin, ventanaOn, ventanaDe, ventanaA,
     catalogo, guardas, indicadores, nCond, stopPct, stopEstructura, tpPct, tpHora, tpTiempo, riesgo, fitness, minTrades,
     semilla, poblacion, generaciones, workers, paciencia, pararALas, pararALasOn,
     modo, estrategiaId, genesMarcados, agregacion, trozos]);
 
   useEffect(() => {
-    if (!fechaIni || !fechaFin || (config.guardas ?? []).length === 0) {
+    if (!fechaIni || !fechaFin || !filtrosUniverso?.rules?.length) {
       setUniverso(null);
       return;
     }
@@ -470,7 +481,7 @@ export default function GeneticoPage() {
     return () => { vivo = false; window.clearTimeout(t); };
     // Solo las claves que cambian el universo: guardas y fechas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fechaIni, fechaFin, JSON.stringify(config.guardas ?? [])]);
+  }, [fechaIni, fechaFin, JSON.stringify(filtrosUniverso ?? null)]);
 
   const estimacion = useMemo(() => {
     const elite = Math.max(1, Math.round(poblacion * 0.05));
@@ -480,7 +491,7 @@ export default function GeneticoPage() {
 
   const problemas: string[] = [];
   if (!fechaIni || !fechaFin) problemas.push("pon el rango de fechas (IS desde / hasta)");
-  if ((config.guardas ?? []).length === 0) problemas.push("marca al menos una guarda: son el filtro de universo");
+  if (!filtrosUniverso?.rules?.length) problemas.push("define el universo");
   if (universo?.pares != null && universo.pares > universo.tope) problemas.push("el universo se pasa del tope");
   if (modo === "mejorar") {
     if (!estrategiaId) problemas.push("elige la estrategia que quieres mejorar");
@@ -754,31 +765,62 @@ export default function GeneticoPage() {
 
         )}
 
-        <Sec title="Universo" help="No hay que elegir dataset: el universo lo definen las GUARDAS y el rango de fechas de arriba. Cada guarda se traduce a un filtro sobre el día completo que nunca descarta un día que la guarda intradía habría dejado pasar — dentro de la estrategia siguen corriendo vela a vela.">
-          {(config.guardas ?? []).length === 0 ? (
-            <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5 }}>
-              Sin guardas el universo sería el lago entero. Marca al menos una arriba.
-            </div>
-          ) : calculandoUniverso ? (
-            <div style={{ fontSize: 11, color: color.textMuted }}>Contando ticker-días…</div>
-          ) : universo?.aviso ? (
-            <div style={{ fontSize: 11, color: color.warning }}>{universo.aviso}</div>
-          ) : universo?.pares != null ? (
-            <div style={{ fontSize: 12, color: color.textSecondary, lineHeight: 1.7 }}>
-              <span style={{ fontFamily: font.mono, fontSize: 15, color: universo.pares > universo.tope ? color.loss : color.textHigh }}>
-                {entero(universo.pares)}
-              </span>{" "}ticker-días
-              {universo.tickers ? <> · <span style={{ fontFamily: font.mono }}>{entero(universo.tickers)}</span> tickers</> : null}
-              {universo.primer_dia ? <> · {universo.primer_dia} → {universo.ultimo_dia}</> : null}
-              {universo.pares > universo.tope && (
-                <div style={{ color: color.loss, fontSize: 11, marginTop: 4 }}>
-                  Se pasa del tope de {entero(universo.tope)}. Sube el gap mínimo, el precio o el
-                  dollar volume, o acorta el periodo: con tantos días cada backtest tarda minutos.
+        <Sec title="Universo" help="Qué ticker-días entran. Las MISMAS opciones que al crear un dataset en el Backtester — no hay desplegable de datasets guardados: se eligen aquí. Las guardas de arriba son otra cosa: condiciones de entrada, vela a vela.">
+          {!abriendoUniverso && (
+            <>
+              {filtrosUniverso?.rules?.length ? (
+                <div style={{ fontSize: 11, color: color.textSecondary, lineHeight: 1.7 }}>
+                  {filtrosUniverso.rules.map((r: any, i: number) => (
+                    <div key={i}>
+                      <span style={{ color: color.textMuted }}>{r.metric ?? r.field}</span>{" "}
+                      <span style={{ fontFamily: font.mono, color: color.textHigh }}>
+                        {COMPARADOR_CORTO[r.operator] ?? r.operator} {r.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5 }}>
+                  Sin reglas serían todos los ticker-días del lago (unos 7,4 millones).
                 </div>
               )}
+              <div style={{ paddingTop: 8 }}>
+                <Btn onClick={() => setAbriendoUniverso(true)}>
+                  {filtrosUniverso?.rules?.length ? "Cambiar universo" : "Definir universo"}
+                </Btn>
+              </div>
+              {calculandoUniverso ? (
+                <div style={{ fontSize: 11, color: color.textMuted, paddingTop: 8 }}>Contando ticker-días…</div>
+              ) : universo?.pares != null ? (
+                <div style={{ fontSize: 12, color: color.textSecondary, lineHeight: 1.7, paddingTop: 8 }}>
+                  <span style={{ fontFamily: font.mono, fontSize: 15, color: universo.pares > universo.tope ? color.loss : color.textHigh }}>
+                    {entero(universo.pares)}
+                  </span>{" "}ticker-días
+                  {universo.tickers ? <> · <span style={{ fontFamily: font.mono }}>{entero(universo.tickers)}</span> tickers</> : null}
+                  {universo.primer_dia ? <> · {universo.primer_dia} → {universo.ultimo_dia}</> : null}
+                  {universo.pares > universo.tope && (
+                    <div style={{ color: color.loss, fontSize: 11, marginTop: 4 }}>
+                      Se pasa del tope de {entero(universo.tope)}: con tantos días cada backtest tarda
+                      minutos y la corrida no acabaría. Aprieta alguna regla o acorta el periodo.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </>
+          )}
+          {abriendoUniverso && (
+            <div style={{ margin: "8px -14px -12px", borderTop: hairline }}>
+              <InlineDatasetBuilder
+                soloFiltros
+                textoBoton="Usar este universo"
+                isSaving={false}
+                onBack={() => setAbriendoUniverso(false)}
+                onSave={async (_nombre, filtros) => {
+                  setFiltrosUniverso(filtros);
+                  setAbriendoUniverso(false);
+                }}
+              />
             </div>
-          ) : (
-            <div style={{ fontSize: 11, color: color.textMuted }}>Pon el rango de fechas para verlo.</div>
           )}
         </Sec>
 

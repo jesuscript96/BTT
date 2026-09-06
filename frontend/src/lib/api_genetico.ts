@@ -119,6 +119,10 @@ export interface ConfigCorrida {
   /** Cómo se agrega la métrica elegida. Solo en «mejorar»; el explorador va a «valor». */
   agregacion?: string;
   trozos?: number;
+  /** Filtros de universo, con la MISMA forma que los de un dataset del
+   *  backtester (`rules`, `min_gap_pct`, `min_pm_volume`…). Viajan tal cual:
+   *  no se traduce nada. */
+  universo?: Record<string, unknown> | null;
 }
 
 /** Un parámetro de la estrategia que el genético puede mover. */
