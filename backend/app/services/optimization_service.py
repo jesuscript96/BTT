@@ -794,6 +794,12 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
         metric_val = agg.get(ctx["metric_key"], 0)
         detail = {
             "sharpe": agg.get("avg_sharpe", 0),
+            # PnL total del punto. Va aparte de `expectancy` a proposito: la
+            # expectancy del motor divide el PnL BRUTO de locates, asi que en
+            # una estrategia en corto con alquiler caro sobreestima. Con esto,
+            # quien pinta el punto puede elegir entre las dos lecturas
+            # (total_pnl / total_trades = EV neto de comisiones Y locates).
+            "total_pnl": agg.get("total_pnl", 0),
             "total_return": agg.get("total_return_pct", 0),
             "max_drawdown": agg.get("max_drawdown_pct", 0),
             "profit_factor": agg.get("avg_profit_factor", 0),

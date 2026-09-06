@@ -107,7 +107,7 @@ def test_el_buscador_usa_la_misma_funcion_que_el_universo():
     import re
     src = open("app/routers/data.py", encoding="utf-8").read()
     cuerpo = src[src.index("def filter_daily_metrics"):src.index("@router.get(\"/tickers\")")]
-    i_filtro = cuerpo.index("_filtrar_tipo_instrumento(df)")
+    i_filtro = cuerpo.index("_filtrar_universo(df)")
     i_stats = cuerpo.index("get_dashboard_stats(df)")
     i_serie = cuerpo.index("get_aggregate_time_series(ticker_date_pairs)")
     assert i_filtro < i_stats < i_serie
@@ -118,7 +118,68 @@ def test_los_pares_del_dataset_tambien_se_filtran():
     """La vista previa tiene que contar los dias que el backtest recorre."""
     src = open("app/routers/query.py", encoding="utf-8").read()
     cuerpo = src[src.index("def _compute_dataset_pairs"):src.index("def _insert_dataset_pairs")]
-    assert "_filtrar_tipo_instrumento(pairs_df)" in cuerpo
+    assert "_filtrar_universo(pairs_df)" in cuerpo
     # Y despues del drop_duplicates, no antes: filtrar primero solo haria mas
     # trabajo sobre filas repetidas.
-    assert cuerpo.index("drop_duplicates") < cuerpo.index("_filtrar_tipo_instrumento(pairs_df)")
+    assert cuerpo.index("drop_duplicates") < cuerpo.index("_filtrar_universo(pairs_df)")
+
+
+# ---------------------------------------------------------------------------
+# Suelo de precio: fuera lo que no vale practicamente nada
+# ---------------------------------------------------------------------------
+#
+# El 2026-09-06 una operacion en OPPr a $0,0005 se convirtio en 636.873 acciones
+# y 6.369 $ de locates sobre una posicion de 300 $: se llevo 7.000 $ de una
+# cuenta de 10.000. Jaume pidio un suelo de 0,10 $.
+#
+# `universe_filters.min_price` existia en el esquema desde siempre pero
+# `_build_where_clause` no lo leia: nunca filtro nada. Por eso el suelo va
+# aparte y siempre activo, no como un campo que hay que acordarse de rellenar.
+
+
+def _dfp(*pares):
+    """(ticker, open) -> DataFrame del universo."""
+    return pd.DataFrame({"ticker": [t for t, _ in pares],
+                         "open": [o for _, o in pares]})
+
+
+def test_fuera_lo_que_cotiza_por_debajo_del_suelo():
+    out = ds._filtrar_precio_minimo(_dfp(("AAPL", 190.0), ("OPPr", 0.0005),
+                                        ("PENNY", 0.09), ("JUSTO", 0.10)))
+    assert list(out["ticker"]) == ["AAPL", "JUSTO"]  # 0,10 entra: es >=
+
+
+def test_un_dia_sin_precio_se_queda():
+    """Mismo criterio que los tickers sin ficha: ante la duda no se descarta."""
+    out = ds._filtrar_precio_minimo(_dfp(("AAPL", 190.0), ("RARO", float("nan"))))
+    assert list(out["ticker"]) == ["AAPL", "RARO"]
+
+
+def test_el_suelo_se_puede_apagar_con_env():
+    import os
+    os.environ["BACKTEST_MIN_PRICE"] = "0"
+    try:
+        out = ds._filtrar_precio_minimo(_dfp(("OPPr", 0.0005)))
+        assert list(out["ticker"]) == ["OPPr"]
+    finally:
+        del os.environ["BACKTEST_MIN_PRICE"]
+
+
+def test_sin_columna_de_precio_no_se_filtra():
+    """Un frame que no trae `open` (p. ej. pares ya recortados) pasa de largo."""
+    sin_open = pd.DataFrame({"ticker": ["AAPL", "OPPr"]})
+    assert len(ds._filtrar_precio_minimo(sin_open)) == 2
+
+
+def test_el_universo_aplica_LAS_DOS_reglas():
+    """`_filtrar_universo` es el unico sitio que deben llamar las pantallas."""
+    df = pd.DataFrame({"ticker": ["AAPL", "ONMDW", "BARATA", "SAN"],
+                       "open": [190.0, 5.0, 0.02, 12.0]})
+    out = ds._filtrar_universo(df)
+    # AAPL y SAN sobreviven; ONMDW cae por warrant, BARATA por precio.
+    assert list(out["ticker"]) == ["AAPL", "SAN"]
+    assert list(out.index) == [0, 1]
+
+
+def test_el_suelo_por_defecto_es_diez_centimos():
+    assert ds._precio_minimo() == 0.10

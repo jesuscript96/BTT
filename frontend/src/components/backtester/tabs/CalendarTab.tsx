@@ -182,13 +182,29 @@ export default function CalendarTab({
       
       const cur = map.get(t.date) || { pnl: 0, count: 0 };
       
+      // EL COSTE DE LOCATES (6-sep-2026). `t.pnl` es el PnL ANTES del alquiler
+      // de acciones: el locate viaja aparte porque se cobra una vez por
+      // ticker-día, no por operación. Hasta hoy el calendario era la ÚNICA
+      // vista que lo ignoraba, y por eso discrepaba de la curva de equity con
+      // gastos: mayo de 2026 salía en verde con +195,82 $ mientras la curva
+      // decía −188,18 $, y esos 384 $ de diferencia eran justo los locates del
+      // mes. El desfase era el coste de locates al céntimo, mes a mes.
+      //
+      // OJO con la atribución: al repartir por operación, un día con varias
+      // entradas en el mismo ticker puede cargarle todo el alquiler a una de
+      // ellas. Los totales de día, semana y mes son EXACTOS; solo el reparto
+      // dentro de un mismo día es aproximado.
+      const locates = t.pnl - (t.pnl_with_locates ?? t.pnl);
+
       let val = 0;
       if (viewMode === "profits") {
+        // Bruto ANTES de costes. El locate no está dentro de `pnl`, así que
+        // aquí no hay nada que devolver: solo las comisiones.
         val = t.pnl + (t.fees || 0);
       } else if (viewMode === "gastos") {
-        val = t.fees || 0;
+        val = (t.fees || 0) + locates;
       } else {
-        val = t.pnl; // net
+        val = t.pnl - locates; // net
       }
 
       map.set(t.date, { pnl: cur.pnl + val, count: cur.count + 1 });

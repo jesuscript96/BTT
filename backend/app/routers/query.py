@@ -203,8 +203,11 @@ def _compute_dataset_pairs(filters: dict):
     # en todas: si una regla lag_* no estuviera aqui, la query cascaria con un
     # Binder Error y el dataset quedaria sin pares.
     subquery_lagged = dataset_pairs_subquery_lagged_sql()
+    # `open` viaja solo para poder aplicar el suelo de precio con la MISMA
+    # funcion que el universo del backtest; se descarta justo despues, porque
+    # dataset_pairs solo guarda (dataset_id, ticker, date).
     select_sql = f"""
-        SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date
+        SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date, open
         FROM {subquery_lagged}
         WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
     """
@@ -218,14 +221,16 @@ def _compute_dataset_pairs(filters: dict):
 
     if not pairs_df.empty:
         pairs_df = pairs_df.drop_duplicates(subset=["ticker", "date"])
-    # Fuera warrants y compania, con el mismo criterio que el universo del
-    # backtest (data_service._filtrar_tipo_instrumento). AQUI y no en la SQL
+    # Fuera warrants y penny junk, con el mismo criterio que el universo del
+    # backtest (data_service._filtrar_universo). AQUI y no en la SQL
     # para que la regla viva en UN solo sitio: si algun dia cambian los tipos
     # permitidos, no hay una segunda copia que se quede atras. Ademas hace que
     # el numero de dias de la vista previa sea el que el backtest recorre de
     # verdad — antes el dataset decia N y la corrida operaba menos.
-    from app.services.data_service import _filtrar_tipo_instrumento
-    pairs_df = _filtrar_tipo_instrumento(pairs_df)
+    from app.services.data_service import _filtrar_universo
+    pairs_df = _filtrar_universo(pairs_df)
+    if "open" in pairs_df.columns:
+        pairs_df = pairs_df.drop(columns=["open"])
     return pairs_df
 
 

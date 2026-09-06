@@ -755,6 +755,59 @@ def _filtrar_tipo_instrumento(df: pd.DataFrame) -> pd.DataFrame:
     return df[keep].reset_index(drop=True)
 
 
+# ---------------------------------------------------------------------------
+# Suelo de precio: fuera lo que no vale practicamente nada
+# ---------------------------------------------------------------------------
+#
+# `universe_filters` DECLARA `min_price`/`max_price` desde siempre y la interfaz
+# los enseña, pero `_build_where_clause` no los lee: nunca han filtrado nada.
+# (Misma familia que los 45 filtros del buscador que se caian en silencio.)
+#
+# El 2026-09-06 una sola operacion en OPPr a $0,0005 -> 636.873 acciones ->
+# 6.369 $ de locates sobre una posicion de 300 $, se llevo 7.000 $ de una cuenta
+# de 10.000. Jaume: «pon un minimo de 0,1, asi no cogemos acciones que no valgan
+# practicamente nada».
+#
+# SE MIDE SOBRE `open`, la primera cotizacion del dia (premercado incluido).
+# Es CAUSAL: se conoce antes de cualquier entrada. Usar `close` o `high` seria
+# mirar el futuro. Un dia sin precio se queda, igual que un ticker sin ficha.
+# BACKTEST_MIN_PRICE=0 desactiva el suelo (reproducir corridas viejas).
+
+_PRECIO_MINIMO_DEFECTO = 0.10
+
+
+def _precio_minimo() -> float:
+    try:
+        return max(0.0, float(os.getenv("BACKTEST_MIN_PRICE", _PRECIO_MINIMO_DEFECTO)))
+    except (TypeError, ValueError):
+        return _PRECIO_MINIMO_DEFECTO
+
+
+def _filtrar_precio_minimo(df: pd.DataFrame) -> pd.DataFrame:
+    """Deja fuera los dias cuya primera cotizacion no llega al suelo."""
+    suelo = _precio_minimo()
+    if suelo <= 0 or df is None or df.empty or "open" not in df.columns:
+        return df
+    precio = pd.to_numeric(df["open"], errors="coerce")
+    keep = precio.isna() | (precio >= suelo)
+    fuera = int((~keep).sum())
+    if fuera:
+        logger.info(f"[UNIVERSO] fuera {fuera} filas por precio < {suelo} "
+                    f"(de {len(df)})")
+    return df[keep].reset_index(drop=True)
+
+
+def _filtrar_universo(df: pd.DataFrame) -> pd.DataFrame:
+    """Las DOS reglas del universo, en el orden en que se explican.
+
+    Un solo sitio a propósito: el universo del backtest, el buscador de tickers
+    y los pares de un dataset tienen que ver EXACTAMENTE lo mismo. Cuando cada
+    pantalla llevaba su copia, el dataset anunciaba mas dias de los que la
+    corrida operaba.
+    """
+    return _filtrar_precio_minimo(_filtrar_tipo_instrumento(df))
+
+
 def fetch_qualifying_data(
     dataset_id: str,
     req_start_date: str | None = None,
@@ -790,7 +843,7 @@ def fetch_qualifying_data(
             cached = r.get(cache_key)
             if cached:
                 logger.info("[REDIS] qualifying hit")
-                return _filtrar_tipo_instrumento(_deserialize_qualifying_df(cached))
+                return _filtrar_universo(_deserialize_qualifying_df(cached))
         except Exception as e:
             logger.warning(f"[REDIS] qualifying cache read failed: {e}")
 
@@ -803,7 +856,7 @@ def fetch_qualifying_data(
                 if age < _QUALIFYING_REDIS_TTL:
                     df_disk = pd.read_feather(disk_path)
                     logger.info(f"[DISK] qualifying hit ({age:.0f}s old)")
-                    return _filtrar_tipo_instrumento(df_disk)
+                    return _filtrar_universo(df_disk)
                 else:
                     os.remove(disk_path)  # expired
         except Exception as e:
@@ -841,7 +894,7 @@ def fetch_qualifying_data(
     # El filtro va DESPUES de cachear: la cache guarda el universo crudo, asi
     # que la escotilla BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES sigue funcionando sin
     # invalidarla, y una cache escrita antes del 2026-09-06 tambien se filtra.
-    return _filtrar_tipo_instrumento(df)
+    return _filtrar_universo(df)
 
 
 def _fetch_qualifying_data_uncached(

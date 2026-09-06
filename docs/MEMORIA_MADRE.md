@@ -2845,3 +2845,71 @@ contando los días de warrant.** El backtest ya no los opera (lo filtra el
 qualifying), pero el número de días del selector no bajará hasta que el dataset
 se vuelva a crear. El genético no se ve afectado: usa `qualifying.feather`, que
 sale de `fetch_qualifying_data` (ver el comentario de `_escribir_qualifying`).
+
+---
+
+## 2026-09-06 (tarde) · Locates en el calendario, suelo de precio y lectura neta del barrido
+
+### 6. El calendario era la ÚNICA vista que ignoraba los locates
+
+Jaume: «veo que de mayo a junio he ganado dinero y en la curva de equity con
+gastos claramente estoy perdiendo». No era impresión suya. Medido sobre su
+corrida, el desfase entre el calendario y la curva era **exactamente el coste de
+locates, mes a mes y al céntimo**:
+
+| mes | calendario | curva c/gastos | desfase | locates |
+|---|---|---|---|---|
+| 2026-01 | +427,27 | +139,27 | 288,00 | 288 |
+| **2026-05** | **+195,82** | **−188,18** | **384,00** | **384** |
+| 2026-06 | +4.823,65 | +3.849,65 | 974,00 | 974 |
+| 2026-08 | +3.161,50 | +2.531,50 | 630,00 | 630 |
+
+Causa: `CalendarTab` construía sus casillas con `t.pnl`, que es el PnL **antes**
+del alquiler de acciones — el locate viaja aparte porque se cobra una vez por
+ticker-día, no por operación. La curva de equity con gastos sí lo descuenta, y
+el `total_pnl` que reporta el motor también (11.698,79 − 3.604 = 8.094,79). El
+calendario era el único sitio que no.
+
+**Los gastos fijos SÍ estaban** — si hubieran faltado, el desfase de mayo habría
+sido 684 y no 384.
+
+Ahora: «Gastos» = comisiones + locates + fijos; «Profits - Gastos» = pnl −
+locates − fijos; «Profits» sin tocar (bruto antes de costes). Verificado contra
+`global_equity_expenses`: **cuadra al céntimo en los nueve meses**.
+
+Matiz de atribución: al repartir el locate por operación, un día con varias
+entradas en el mismo ticker puede cargárselo entero a una de ellas. Los totales
+de día, semana y mes son exactos; el reparto intradía es aproximado.
+
+### 7. Suelo de precio en el universo: 0,10 $
+
+`universe_filters.min_price` / `max_price` están declarados en el esquema y la
+interfaz los enseña, pero **`_build_where_clause` nunca los ha leído**: no han
+filtrado nada jamás. Misma familia que los 45 filtros del buscador.
+
+Por eso el suelo va aparte y siempre activo (`_filtrar_precio_minimo`), medido
+sobre `open` — la primera cotización del día, que es **causal**; usar `close` o
+`high` sería mirar el futuro. Los días sin precio se quedan, igual que los
+tickers sin ficha. Escotilla `BACKTEST_MIN_PRICE=0`.
+
+Las dos reglas del universo viven ahora en `_filtrar_universo`, que usan el
+backtest, el buscador y los pares de un dataset. Para los pares, `open` viaja en
+el SELECT y se descarta después (`dataset_pairs` solo guarda ticker+date).
+
+Lo motivó la operación de OPPr a $0,0005: 636.873 acciones y 6.369 $ de locates
+sobre una posición de 300 $, que se llevó 7.000 $ de una cuenta de 10.000.
+
+### 8. Barrido de EV: lectura BRUTA y NETA
+
+`expectancy` del motor divide el PnL **antes** de locates: 46,42 $ frente a
+32,12 $ reales en la corrida de Jaume, un 45 % de más. Se añade `total_pnl` al
+detalle de cada punto de la rejilla y un conmutador **Bruto / Neto** en el
+gráfico. **El defecto se queda en Bruto** a propósito, por petición explícita de
+no cambiar lo que ya había; el globo enseña las dos lecturas más el dinero total
+de la franja. Ninguna de las dos lleva los gastos fijos del mes.
+
+### 9. Espaciado del barrido
+
+Los conmutadores `Trades / Barrido` y `15m/30m/60m/120m` estaban pegados entre sí
+y al borde de su caja, y los minutos se leían como un continuo. `gap-1`,
+`p-[3px]` y más ancho interior; `Barrer`/`Cancelar` con margen a los lados.

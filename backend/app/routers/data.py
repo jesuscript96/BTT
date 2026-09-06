@@ -224,8 +224,8 @@ def filter_daily_metrics(filters: FilterRequest):
         # operar nunca un warrant»). Va AQUI, antes de las stats y de la serie
         # agregada, para que los tres numeros cuadren entre si. La consulta no
         # lleva LIMIT, asi que filtrar sobre el resultado es exacto.
-        from app.services.data_service import _filtrar_tipo_instrumento
-        df = _filtrar_tipo_instrumento(df)
+        from app.services.data_service import _filtrar_universo
+        df = _filtrar_universo(df)
 
         # Convert date to string for JSON output
         if not df.empty:

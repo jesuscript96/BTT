@@ -811,12 +811,14 @@ export default function ChartsTab({
                 text="<b>Trades:</b> Esperanza Matemática (EV) promedio de los trades que hubo, agrupados por su hora de entrada (intervalos de 30 minutos).<br/><br/><b>Barrido:</b> lanza un backtest por cada franja horaria y compara su EV. Responde a «¿en qué franja debería dejar entrar?», que el modo Trades no puede contestar: si la estrategia tiene un límite horario de entrada, ahí no hay trades fuera de él."
               />
             </span>
-            <div className="ml-auto flex bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[20px] p-[2px] mr-1">
+            {/* gap-1 + p-[3px]: los dos botones estaban pegados uno a otro y al
+                borde de la caja, y se leian como un solo bloque. */}
+            <div className="ml-auto mr-2 flex items-center gap-1 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[22px] p-[3px]">
               {([["trades", "Trades"], ["barrido", "Barrido"]] as const).map(([id, txt]) => (
                 <button
                   key={id}
                   onClick={() => setEvTimeVista(id)}
-                  className={`px-2 text-[9px] font-mono rounded-sm transition-colors ${
+                  className={`px-2.5 text-[9px] font-mono rounded-sm transition-colors ${
                     evTimeVista === id
                       ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
                       : "text-[var(--color-ec-text-secondary)]"

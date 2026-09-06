@@ -88,6 +88,12 @@ export default function EntryWindowSweepChart({
   }, [strategyDefinition]);
 
   const [ancho, setAncho] = useState(anchoActual);
+  // BRUTO vs NETO (6-sep-2026). `expectancy` del motor divide el PnL ANTES del
+  // alquiler de acciones: en la corrida de Jaume eso eran 3.604 $ de 11.699 $,
+  // o sea un 45 % de EV de mas. `total_pnl` si lleva comisiones Y locates
+  // descontados. Se dejan las DOS lecturas y manda el usuario; el defecto se
+  // queda en «bruto» para no cambiarle el grafico que ya conocia.
+  const [metrica, setMetrica] = useState<"bruto" | "neto">("bruto");
   const [cargando, setCargando] = useState(false);
   const [progreso, setProgreso] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -212,14 +218,21 @@ export default function EntryWindowSweepChart({
     const valores = resultado.params?.[0]?.values || [];
     return valores.map((v: number, i: number) => {
       const det: any = resultado.details?.[i] || {};
+      const n = Number(det.total_trades ?? 0);
+      const bruto = Number(det.expectancy ?? 0);
+      // Sin operaciones no hay media que valga: 0, no una division por cero.
+      const neto = n > 0 ? Number(det.total_pnl ?? 0) / n : 0;
       return {
         franja: `${aHora(v)}-${aHora(v + ancho)}`,
-        ev: Number(det.expectancy ?? 0),
-        trades: Number(det.total_trades ?? 0),
+        ev: metrica === "neto" ? neto : bruto,
+        bruto,
+        neto,
+        total: Number(det.total_pnl ?? 0),
+        trades: n,
         pf: Number(det.profit_factor ?? 0),
       };
     });
-  }, [resultado, ancho]);
+  }, [resultado, ancho, metrica]);
 
   const gridColor = isDarkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
   const tickColor = isDarkMode ? "#8A8D92" : "#6A6D72";
@@ -229,15 +242,17 @@ export default function EntryWindowSweepChart({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-4 pb-2 flex items-center gap-2 flex-wrap">
+      <div className="px-4 pt-1 pb-3 flex items-center gap-3 flex-wrap">
         <span className="text-[9px] text-[var(--color-ec-text-muted)] uppercase tracking-wider">Ancho</span>
-        <div className="flex bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[22px] p-[2px]">
+        {/* `gap-1` entre botones y `p-[3px]` en la caja: sin eso los cuadros se
+            tocaban entre si y con el borde, y los minutos parecian un continuo. */}
+        <div className="flex items-center gap-1 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[24px] p-[3px]">
           {ANCHOS.map((a) => (
             <button
               key={a}
               onClick={() => setAncho(a)}
               disabled={cargando}
-              className={`px-2 text-[9px] font-mono rounded-sm transition-colors ${
+              className={`px-2.5 text-[9px] font-mono rounded-sm transition-colors ${
                 ancho === a
                   ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
                   : "text-[var(--color-ec-text-secondary)]"
@@ -247,20 +262,38 @@ export default function EntryWindowSweepChart({
             </button>
           ))}
         </div>
+        <div className="flex items-center gap-1 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[24px] p-[3px]">
+          {([["bruto", "Bruto"], ["neto", "Neto"]] as const).map(([id, txt]) => (
+            <button
+              key={id}
+              onClick={() => setMetrica(id)}
+              title={id === "neto"
+                ? "PnL total ÷ operaciones: comisiones y locates ya descontados"
+                : "Expectancy del motor: ANTES del coste de locates"}
+              className={`px-2.5 text-[9px] font-mono rounded-sm transition-colors ${
+                metrica === id
+                  ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
+                  : "text-[var(--color-ec-text-secondary)]"
+              }`}
+            >
+              {txt}
+            </button>
+          ))}
+        </div>
         <span className="text-[9px] text-[var(--color-ec-text-muted)] font-mono">
           {inicios.length} franjas · {aHora(desdeSesion)}-{aHora(hastaSesion)}
         </span>
         {!cargando ? (
           <button
             onClick={lanzar}
-            className="ml-auto inline-flex items-center gap-1 px-2 h-[22px] rounded text-[9px] font-bold uppercase tracking-wider bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
+            className="ml-auto mx-1 inline-flex items-center gap-1.5 px-3.5 h-[24px] rounded text-[9px] font-bold uppercase tracking-wider bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
           >
             <Play size={9} /> Barrer
           </button>
         ) : (
           <button
             onClick={cancelar}
-            className="ml-auto inline-flex items-center gap-1 px-2 h-[22px] rounded text-[9px] font-bold uppercase tracking-wider border border-[var(--color-ec-border)] text-[var(--color-ec-text-secondary)]"
+            className="ml-auto mx-1 inline-flex items-center gap-1.5 px-3.5 h-[24px] rounded text-[9px] font-bold uppercase tracking-wider border border-[var(--color-ec-border)] text-[var(--color-ec-text-secondary)]"
           >
             <X size={9} /> Cancelar
           </button>
@@ -285,6 +318,10 @@ export default function EntryWindowSweepChart({
               Lanza un backtest por cada franja horaria y compara su EV.
               El gráfico de al lado solo mide los trades que YA hubo; este mide
               los que habría con otro límite horario de entrada.
+              <br /><br />
+              <b>Neto</b> descuenta comisiones y locates; <b>Bruto</b> es la
+              expectancy del motor, que va antes del coste de locates. Ninguno
+              de los dos lleva los gastos fijos del mes.
             </p>
           </div>
         )}
@@ -306,10 +343,15 @@ export default function EntryWindowSweepChart({
                 contentStyle={{ fontSize: "10px", backgroundColor: tooltipBg, border: "1px solid var(--border)", borderRadius: 2, fontFamily: "monospace", color: "#fff" }}
                 itemStyle={{ color: "#fff" }}
                 labelStyle={{ color: "#aaa" }}
-                formatter={(value: any, _n: any, p: any) => [
-                  `$${Number(value).toFixed(2)}  ·  ${p?.payload?.trades ?? 0} trades  ·  PF ${Number(p?.payload?.pf ?? 0).toFixed(2)}`,
-                  "EV",
-                ]}
+                formatter={(_value: any, _n: any, p: any) => {
+                  const d = p?.payload || {};
+                  return [
+                    `neto $${Number(d.neto ?? 0).toFixed(2)} · bruto $${Number(d.bruto ?? 0).toFixed(2)}` +
+                    `  ·  ${d.trades ?? 0} trades  ·  total $${Number(d.total ?? 0).toFixed(0)}` +
+                    `  ·  PF ${Number(d.pf ?? 0).toFixed(2)}`,
+                    "EV",
+                  ];
+                }}
                 cursor={{ fill: "rgba(120,113,108,0.04)" }}
               />
               <ReferenceLine y={0} stroke="#6A6D72" strokeWidth={0.5} />
