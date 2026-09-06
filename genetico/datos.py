@@ -124,6 +124,14 @@ def preparar(dataset_id: str, dir_corrida: str, fecha_ini: str | None = None,
         q = pd.read_feather(rq)
         origen = "backend (fetch_qualifying_data)"
     else:
+        if not dataset_id:
+            # Sin dataset el universo son los filtros de la corrida, y el
+            # qualifying lo escribe el BACKEND antes de lanzar. Si no esta, no
+            # hay de donde sacarlo: mejor decirlo que construir otro distinto.
+            raise ValueError(
+                "No hay qualifying.feather y la corrida no tiene dataset: el "
+                "universo lo define el backend al lanzar. Relanzala desde la "
+                "pagina, o pasa un dataset_id si la lanzas a mano.")
         pares = _pares(dataset_id, dir_corrida, fecha_ini, fecha_fin)
         if pares.empty:
             raise ValueError("El dataset no tiene pares en ese periodo")

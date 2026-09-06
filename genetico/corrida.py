@@ -50,10 +50,17 @@ def main() -> None:
         f"· generaciones {config.get('generaciones')} · workers {workers} · RAM libre {entorno.ram_libre_gb():.1f} GB")
 
     # Datos del dataset (una vez; los workers los recargan del feather)
+    # `dataset_id` ES OPCIONAL desde el 2026-09-06: el universo puede venir de
+    # los filtros de la propia corrida, y entonces el qualifying lo escribe el
+    # backend antes de lanzar. Aqui solo se usa como etiqueta y como respaldo
+    # para la consola. Pedirlo con `config["dataset_id"]` mataba la corrida a
+    # los tres segundos con un KeyError — y como el proceso es externo, la
+    # pagina solo mostraba «sin avanzar».
+    dataset_id = config.get("dataset_id") or ""
     dir_datos = config.get("dir_datos") or os.path.join(
-        entorno.DIR_TRABAJO, "datos", f"{config['dataset_id']}_{config.get('fecha_ini')}_{config.get('fecha_fin')}")
+        entorno.DIR_TRABAJO, "datos", f"{dataset_id or 'universo'}_{config.get('fecha_ini')}_{config.get('fecha_fin')}")
     config["dir_datos"] = dir_datos
-    meta = datos.preparar(config["dataset_id"], dir_datos, config.get("fecha_ini"), config.get("fecha_fin"), log=log)
+    meta = datos.preparar(dataset_id, dir_datos, config.get("fecha_ini"), config.get("fecha_fin"), log=log)
     log(f"dataset: {meta}")
 
     corrida = motor.Corrida(config, args.dir, evaluar_lote=None, log=log)

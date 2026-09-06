@@ -3213,3 +3213,31 @@ de dónde salen y recuerda que las reentradas se pueden mover como gen.
 Lo cubre `test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia`:
 con el panel diciendo lo contrario que la estrategia, mandan la estrategia y su
 híbrido, y las reentradas ni siquiera viajan como argumento.
+
+### 21. El KeyError que la pantalla no podía enseñar
+
+Al quitar el dataset (§17-19) se cambió el router y la página, pero se quedó
+`genetico/corrida.py` haciendo `config["dataset_id"]`. Resultado: la corrida
+moría a los tres segundos con un `KeyError` y **en la pantalla no salía nada** —
+Jaume: «sigue en marcha no? parece que no haga nada».
+
+Es el modo de fallo propio de esta arquitectura: el genético es un **proceso
+externo**, así que su traceback acaba en `salida.txt` dentro del directorio de
+la corrida, y la página solo ve que `estado.json` no aparece. Sin abrir ese
+fichero no hay forma de saber que ha reventado.
+
+**Dónde mirar cuando una corrida «no hace nada»**, por este orden:
+
+    <corrida>/salida.txt   el traceback del proceso, si murió
+    <corrida>/log.txt      el avance; en la fase de velas escribe cada 12 meses
+    <corrida>/estado.json  lo que lee la página; NO existe hasta que arranca
+
+Ojo con confundir «muerta» con «cargando»: la preparación de datos es lo primero
+y lo más lento (medido en la corrida del 6-sep: 72 meses en ~3,5 min, una línea
+de log cada 12). Hasta que no acaba, `estado.json` no existe y la página está en
+blanco con todo funcionando.
+
+`corrida.py` usa ahora `config.get("dataset_id") or ""`, y `datos.preparar`
+lanza un error que se entiende si de verdad no hay ni qualifying ni dataset.
+`test_genetico_sin_dataset.py` vigila las dos mitades del contrato — y lee solo
+el CÓDIGO, porque el comentario que explica el fallo contiene el mismo literal.
