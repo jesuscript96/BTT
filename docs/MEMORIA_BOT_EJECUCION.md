@@ -494,15 +494,53 @@ La profundidad a 10 niveles (que sí discrimina) no estará en vivo.
 - **Informe v3 entregado** con secciones 9 (espera) y 10 (halts). Coste total
   Databento: 4,7 $.
 
+### 7-sep (noche, 2): barrido definitivo, sensibilidad, controles, informe v4
+
+- **Dos fallos más del barrido corregidos** (los detectó Jaume viendo PLYX a
+  10 $ en la tabla cuando llegó a 76 $): (a) los racimos de candidatos se
+  cortaban a 60 s y el máximo real venía después; (b) ENSC se perdía porque
+  el primer segundo del racimo no tenía «máximo previo». Ahora un racimo = un
+  evento, ref = primer segundo con máximo previo, pico = máximo hasta 60 s
+  tras el último candidato. `flash_ticks_limpio.parquet` es la versión final
+  (297; 276 reales sin ODP); v1/v2/v3a/v4 guardados con sufijo.
+- **Sensibilidad** (`flash_ticks_limpio_todos.parquet`, DEVUELTO=0 y el umbral
+  al analizar): con devolución ≥ 50 % → 633 eventos; ≥ 70 % → 274; ≥ 90 % → 74.
+  Los > 500 % son estables (8-10) y el precio a 5 min también (+16/+26 %
+  mediana, p95 ~+112 %). **El recuento es definicional; el comportamiento no.**
+- **Recuento final ≥ 100 %: 56 en 8 años, 35 en 2025-2026 (≈ 21/año ahora vs
+  7/año de media). > 500 %: 8, 6 de ellos en 2026.** Jaume pidió que el
+  informe dé siempre la media de 8 años Y la de los 2 últimos años.
+- **Controles** (`16_controles.py`, `17_libro_vs_controles.py`, 0,66 $): 21
+  pares fogonazo vs día parecido sin fogonazo (gap ≥ 50 %, 2023+, otro
+  ticker). Todo el PM: igual (fogonazo < control en 11/21). 2 min antes:
+  −36 % dólares, −25 % órdenes, spread ×5, pero solo en 12/21. **El día no es
+  raro; lo local es débil e inconsistente.**
+- **Tabla de espera rehecha** (56 eventos ≥ 100 %): en el pico con 3 % →
+  media 14 %, peor 145 %; a 30 s → media 2,6 %, p95 5,8 %; a 5 min → p95 7,2 %.
+- **Cruce 1B rehecho**: 7 flash dentro de posición (PLYX, SLGB, GLE, AEHL,
+  NIVF, LGHL, GVH), 97 antes de entrar.
+- **Informe v4 entregado** con sensibilidad, controles, recuento por años y
+  las dos aclaraciones de Jaume (no es «su estrategia», es cualquier corto; y
+  la media de 8 años engaña). Coste total Databento: ~5,4 $.
+
 ---
 
 ## Estado y pendientes
 
+**Estudio de cisnes negros: CERRADO el 7-sep-2026** (Jaume). Informe v4 en
+`D:\bot_senales\estudio_cisnes\Informe_cisnes_negros_premercado.pdf`; datos y
+scripts en esa carpeta (fuera del repo). Coste Databento total ≈ 5,4 $.
+**Nada del estudio es regla del bot**: son conclusiones; los valores irán al
+cuadro de mandos cuando se diseñe.
+
 | # | Pendiente | Estado |
 |---|---|---|
-| P1 | Conseguir el PDF del API de DAS y activar el API en Sage | Esperando al bróker |
-| P2 | Decidir stop limitado vs mercado y la guarda «X % en segundos» | Abierto, recordárselo |
-| P3 | Estudio de cisnes (PM + halts): HECHO, informe v3 entregado el 7-sep. Exposición 3-4 % es idea, no decisión | Cerrado salvo retoques |
-| P4 | Dinámica de locates: pronto y barato vs en prealerta | Apuntado, se verá |
-| P5 | Protocolos por tipo de préstamo y regla sobre SSR | Depende del PDF |
+| P1 | PDF del API de DAS + activación en Sage. Preguntas al bróker: client order id; stops de servidor y si disparan en PM; rutas con extendido; locates por API (inquire/accept/return, ETB/HTB); cómo llega halt/LULD/SSR en el L1; socket al reloguear; cuota, límite msg/s, demo; **un solo login por cuenta → segunda cuenta para el bot**; **qué hace Sage con una cuenta muy en negativo en PM** | Esperando al bróker |
+| P2 | Tipo de stop (limitado con qué límite / mercado) y guarda de fogonazo: SIN decidir. Conclusiones en el informe: el precio camina (un limitado se ejecuta en la subida); prints tardíos entran en último precio y velas; lo que separa fogonazo de subida real es cuánto se sostiene | Abierto, para el diseño de guardas |
+| P3 | Exposición por ticker: Jaume baraja 3-4 % en total (entrada + pirámides). NO decidido; iría al cuadro de mandos | Abierto |
+| P4 | Locates: dinámica «pronto y barato» vs en prealerta; apuntar precios 5 días | Apuntado, sin datos |
+| P5 | Protocolos por tipo de préstamo (HTB/ETB/un uso) y regla sobre SSR | Depende del PDF |
 | P6 | Cuadro de mandos de exposición al riesgo | Diseño pendiente |
+| P7 | Tareas de Jaume de la semana del 7-sep (lista en §0): fills reales de DAS, JSON de la estrategia de estreno, congelar el motor, Telegram propio, VPS con el socio, runbook | Sin empezar |
+| P8 | Backend colgado el 7-sep (dos uvicorn); lo lleva Jaume en el chat del genético. Bot de avisos: lo enciende Jaume el 8-sep | Fuera de este chat |
+| P9 | Halts: si algún día se quiere más, la capa `status` de Databento (0,03 $/día) y `15_halts_profundo.py` ya lo hacen; bandas LULD reconstruidas de forma aproximada | Cerrado salvo petición |
