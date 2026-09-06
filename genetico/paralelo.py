@@ -57,8 +57,8 @@ def _apuntar(dir_corrida, individuo: dict) -> None:
     except Exception:                                            # noqa: BLE001
         texto = repr(individuo)[:20000]
     try:
-        from genetico import cromosoma
-        receta = cromosoma.receta(individuo)
+        from genetico import especie
+        receta = especie.receta(_CONFIG or {}, individuo)
     except Exception as e:                                       # noqa: BLE001
         receta = f"(sin receta: {type(e).__name__})"
     try:

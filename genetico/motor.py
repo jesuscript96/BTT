@@ -18,7 +18,7 @@ import random
 import time
 
 from genetico import catalogo as C
-from genetico import cromosoma, evaluador
+from genetico import cromosoma, especie, evaluador
 
 TOP_N = 20
 
@@ -80,6 +80,10 @@ def _mutar_tp(t: dict, config: dict, rng: random.Random) -> dict:
 
 def mutar(ind: dict, config: dict, rng: random.Random) -> dict:
     """Cada gen muta con probabilidad p_mut; al menos uno muta siempre."""
+    # Modo «mejorar»: los genes son rutas de una definicion, no condiciones del
+    # catalogo. Ver genetico/especie.py.
+    if especie.es_mejorar(config):
+        return especie.modulo(config).mutar(ind, config, rng)
     p = float(config.get("p_mutacion", 0.25))
     nuevo = copy.deepcopy(ind)
     tocado = False
@@ -113,6 +117,8 @@ def mutar(ind: dict, config: dict, rng: random.Random) -> dict:
 def cruzar(a: dict, b: dict, config: dict, rng: random.Random) -> dict:
     """Hijo: condiciones cogidas de la union de los dos padres (sin repetir
     indicador), stop de uno y take profit del otro (a cara o cruz)."""
+    if especie.es_mejorar(config):
+        return especie.modulo(config).cruzar(a, b, config, rng)
     n = len(a["condiciones"])
     pool = [copy.deepcopy(c) for c in a["condiciones"] + b["condiciones"]]
     rng.shuffle(pool)
@@ -140,6 +146,7 @@ def torneo(poblacion: list[dict], rng: random.Random, k: int = 3) -> dict:
 class Corrida:
     def __init__(self, config: dict, dir_corrida: str, evaluar_lote, log=print):
         self.config = config
+        self._esp = especie.modulo(config)   # cromosoma (explorar) o afinar (mejorar)
         self.dir = dir_corrida
         self.evaluar_lote = evaluar_lote   # list[individuo] -> list[metricas]
         self.log = log
@@ -190,9 +197,9 @@ class Corrida:
             if "error" in m:
                 continue
             ind = self.individuos[h]
-            filas.append({"huella": h, "fitness": m.get("fitness", 0.0), "receta": cromosoma.receta(ind),
+            filas.append({"huella": h, "fitness": m.get("fitness", 0.0), "receta": especie.receta(self.config, ind),
                           "metricas": m, "individuo": ind,
-                          "definicion": cromosoma.a_definicion(ind, self.config)})
+                          "definicion": self._esp.a_definicion(ind, self.config)})
         filas.sort(key=lambda x: x["fitness"], reverse=True)
         return filas[:TOP_N]
 
@@ -220,7 +227,7 @@ class Corrida:
             "inicio": self.inicio, "actualizado": time.time(),
             "semilla": self.semilla,
             "mejor": None if mejor is None else {"huella": mejor["huella"], "fitness": mejor["fitness"],
-                                                 "receta": cromosoma.receta(mejor["individuo"]),
+                                                 "receta": especie.receta(self.config, mejor["individuo"]),
                                                  "metricas": mejor["metricas"]},
             "historial": self.historial,
         }))
@@ -280,10 +287,10 @@ class Corrida:
         """Evalua los que no esten en cache; devuelve filas de poblacion."""
         nuevos, huellas = [], []
         for ind in individuos:
-            h = cromosoma.huella(ind)
+            h = self._esp.huella(ind)
             self.individuos.setdefault(h, ind)
             huellas.append(h)
-            if h not in self.cache and h not in {cromosoma.huella(x) for x in nuevos}:
+            if h not in self.cache and h not in {self._esp.huella(x) for x in nuevos}:
                 nuevos.append(ind)
         # por lotes para volcar progreso y poder parar entre lotes
         lote = max(1, int(self.config.get("workers", 1)))
@@ -293,14 +300,56 @@ class Corrida:
             trozo = nuevos[i:i + lote]
             t = time.time()
             for ind, m in zip(trozo, self.evaluar_lote(trozo)):
-                self.cache[cromosoma.huella(ind)] = m
+                self.cache[self._esp.huella(ind)] = m
                 self.evaluadas += 1
             self.segundos_eval.append((time.time() - t) / len(trozo))
-            mejor_lote = max((self.cache[cromosoma.huella(x)].get("fitness", 0.0) for x in trozo), default=0.0)
+            mejor_lote = max((self.cache[self._esp.huella(x)].get("fitness", 0.0) for x in trozo), default=0.0)
             self.log(f"  gen {self.generacion} · {self.evaluadas} evaluadas · lote {len(trozo)} en "
                      f"{time.time()-t:.0f}s · mejor del lote {mejor_lote:.2f}")
             self.guardar()
+        self._aplicar_vecindario()
         return [self._fila(h) for h in huellas if h in self.cache]
+
+    def _aplicar_vecindario(self) -> None:
+        """Nota por VECINDARIO: la meseta en N dimensiones, gratis.
+
+        Puntua a cada individuo con la media de su propia nota y la de los
+        vecinos que YA estan evaluados (a un escalon de distancia en la
+        rejilla). Un pico aislado baja, una meseta se mantiene.
+
+        NO CUESTA NI UN BACKTEST MAS: el genetico ya evalua miles de
+        individuos y los cachea, asi que los vecinos salen de ahi. Es una
+        aproximacion — al principio de la corrida hay pocos vecinos y la nota
+        se parece a la propia — pero mejora sola segun avanza, que es justo
+        cuando importa. El sondeo exacto (mover cada gen a mano) costaria
+        1 + 2N backtests por individuo.
+        """
+        if str(self.config.get("agregacion", "valor")).lower() != "vecindario":
+            return
+        if not especie.es_mejorar(self.config):
+            return
+        radio = max(1, int(self.config.get("radio_vecindario", 1)))
+        puntos = {}
+        for h, m in self.cache.items():
+            ind = self.individuos.get(h)
+            if ind is None or "error" in m:
+                continue
+            puntos[self._esp.indices(ind, self.config)] = float(m.get("fitness_base") or 0.0)
+        if not puntos:
+            return
+        for h, m in self.cache.items():
+            ind = self.individuos.get(h)
+            if ind is None or "error" in m:
+                continue
+            propio = float(m.get("fitness_base") or 0.0)
+            if propio == 0.0:
+                m["fitness"] = 0.0      # bajo el suelo de operaciones: se queda
+                continue
+            idx = self._esp.indices(ind, self.config)
+            notas = [v for k, v in puntos.items()
+                     if sum(abs(a - b) for a, b in zip(idx, k)) <= radio]
+            m["fitness"] = sum(notas) / len(notas) if notas else propio
+            m["vecinos"] = len(notas) - 1
 
     # ── bucle principal ─────────────────────────────────────────────────────
     def correr(self) -> None:
@@ -311,11 +360,38 @@ class Corrida:
                 self.mensaje = "poblacion inicial"
                 self.guardar()
                 iniciales, vistos = [], set()
+                # MODO MEJORAR: la generacion 0 arranca con LA ESTRATEGIA TAL
+                # CUAL, y luego con mutaciones suyas de radio creciente antes de
+                # meter aleatorios. Dos motivos:
+                #   1. Es la LINEA BASE. Sin ella no se puede decir si el
+                #      genetico ha mejorado algo o solo ha encontrado otra cosa.
+                #   2. Sembrar solo con aleatorios tira a la basura el punto de
+                #      partida, que es justo lo que el usuario quiere afinar.
+                # Los aleatorios siguen entrando para no colapsar la diversidad
+                # alrededor de la semilla.
+                if especie.es_mejorar(self.config):
+                    semilla_ind = self._esp.desde_semilla(self.config)
+                    iniciales.append(semilla_ind)
+                    vistos.add(self._esp.huella(semilla_ind))
+                    cupo_mut = max(0, int(self.poblacion_n * 0.6))
+                    intentos_m = 0
+                    while len(iniciales) < 1 + cupo_mut and intentos_m < cupo_mut * 20:
+                        intentos_m += 1
+                        hijo = self._esp.mutar(semilla_ind, self.config, rng)
+                        # Radio creciente: cuanto mas avanza el cupo, mas
+                        # mutaciones encadenadas y mas lejos de la semilla.
+                        for _ in range(intentos_m // max(1, cupo_mut // 3)):
+                            hijo = self._esp.mutar(hijo, self.config, rng)
+                        h = self._esp.huella(hijo)
+                        if h in vistos:
+                            continue
+                        vistos.add(h)
+                        iniciales.append(hijo)
                 intentos = 0
                 while len(iniciales) < self.poblacion_n and intentos < self.poblacion_n * 20:
                     intentos += 1
-                    ind = cromosoma.aleatorio(self.config, rng)
-                    h = cromosoma.huella(ind)
+                    ind = self._esp.aleatorio(self.config, rng)
+                    h = self._esp.huella(ind)
                     if h in vistos:
                         continue
                     vistos.add(h)
@@ -342,7 +418,7 @@ class Corrida:
                     hijo = cruzar(p1["individuo"], p2["individuo"], self.config, rng) \
                         if rng.random() < self.p_cruce else copy.deepcopy(p1["individuo"])
                     hijo = mutar(hijo, self.config, rng)
-                    h = cromosoma.huella(hijo)
+                    h = self._esp.huella(hijo)
                     if h in huellas_vivas:
                         continue
                     huellas_vivas.add(h)
@@ -378,5 +454,5 @@ class Corrida:
                                "media": sum(fits) / len(fits), "unicas": len(self.cache),
                                "distintas_top": len({p["huella"] for p in self.poblacion[:TOP_N]})})
         self.log(f"gen {self.generacion}: mejor {mejor['fitness']:.2f} · media {sum(fits)/len(fits):.2f} · "
-                 f"{cromosoma.receta(mejor['individuo'])}")
+                 f"{especie.receta(self.config, mejor['individuo'])}")
         self.guardar()

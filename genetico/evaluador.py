@@ -13,7 +13,7 @@ from genetico import entorno
 
 entorno.preparar()
 
-from genetico import cromosoma  # noqa: E402
+from genetico import cromosoma, especie  # noqa: E402
 
 # Metricas del motor que se guardan por individuo (claves de aggregate_metrics).
 # OJO: `avg_r_ui` NO es la R media, es retorno anualizado / indice Ulcer.
@@ -31,8 +31,38 @@ METRICAS = {
 }
 
 
-def parametros_backtest(config: dict) -> dict:
+def parametros_backtest(config: dict, definicion: dict | None = None) -> dict:
+    """Los argumentos de `run_backtest` que NO viajan en la definicion.
+
+    OJO CON LA SESION Y EL MODO DE TAMANO. `run_backtest` los recibe por
+    ARGUMENTO y el argumento gana sobre lo que diga la definicion. En modo
+    EXPLORAR da igual, porque `cromosoma.a_definicion` los copia del mismo
+    config. En modo MEJORAR no: la sesion es de la estrategia (y puede ser un
+    gen), asi que pasarle la del panel del explorador la pisaria — la corrida
+    entera evaluaria un horario que el usuario no ha pedido, sin ningun error.
+    Por eso, con definicion, mandan la definicion y sus genes.
+    """
     r = config.get("riesgo", {})
+    if definicion:
+        rm = definicion.get("risk_management") or {}
+        return dict(
+            init_cash=float(r.get("init_cash", 50000)),
+            risk_r=float(r.get("risk_r", 100)),
+            risk_type=str(r.get("risk_type", "FIXED")),
+            size_by_sl=bool(rm.get("size_by_sl", False)) or bool(rm.get("hybrid_stop", False)),
+            hybrid_stop=bool(rm.get("hybrid_stop", False)),
+            hybrid_black_swan_pct=rm.get("hybrid_black_swan_pct"),
+            hybrid_max_loss_pct=rm.get("hybrid_max_loss_pct"),
+            fees=float(r.get("fees", 0)),
+            fee_type=str(r.get("fee_type", "PERCENT")),
+            slippage=float(r.get("slippage", 0)),
+            market_sessions=list(definicion.get("market_sessions") or ["rth"]),
+            custom_start_time=definicion.get("custom_start_time"),
+            custom_end_time=definicion.get("custom_end_time"),
+            locates_cost=float(r.get("locates_cost", 0)),
+            max_locates=int(r.get("max_locates", 0)),
+            look_ahead_prevention=True,
+        )
     return dict(
         init_cash=float(r.get("init_cash", 50000)),
         risk_r=float(r.get("risk_r", 100)),
@@ -52,7 +82,7 @@ def parametros_backtest(config: dict) -> dict:
 
 def evaluar(individuo: dict, config: dict, qualifying_df, grupos) -> dict:
     from app.services.backtest_service import run_backtest
-    definicion = cromosoma.a_definicion(individuo, config)
+    definicion = especie.modulo(config).a_definicion(individuo, config)
     t0 = time.time()
     res = run_backtest(
         qualifying_df=qualifying_df,
@@ -60,13 +90,17 @@ def evaluar(individuo: dict, config: dict, qualifying_df, grupos) -> dict:
         day_group_iter=iter(grupos),
         n_groups_hint=len(grupos),
         _signal_cache=None,
-        **parametros_backtest(config),
+        **parametros_backtest(config, definicion if especie.es_mejorar(config) else None),
     )
     agg = res.get("aggregate_metrics", {}) or {}
     m = {k: agg.get(v) for k, v in METRICAS.items()}
     m["avg_r"] = _r_media(m.get("expectancy"), config.get("riesgo", {}))
     m["segundos"] = round(time.time() - t0, 1)
-    m["fitness"] = fitness(m, config)
+    # `fitness_base` es la nota SIN agregacion de robustez; `fitness` es la que
+    # ordena. Con agregacion «valor» son la misma. Se guardan las dos para poder
+    # leer en la tabla cuanto ha costado la robustez.
+    m["fitness_base"] = fitness(m, config)
+    m["fitness"] = agregar(m, res, config)
     return m
 
 
@@ -142,3 +176,119 @@ def fitness(m: dict, config: dict) -> float:
     if modo == "sharpe":
         return _f(m.get("sharpe"))
     raise ValueError(f"fitness desconocido: {modo}")
+
+
+# ── Robustez: agregar la nota por TROZOS del periodo ────────────────────────
+#
+# Anadido el 2026-09-06 para el modo «mejorar». NO se aplica al explorador:
+# `agregacion` no viene en su config y el defecto es «valor», que es
+# exactamente lo de siempre.
+#
+# LA IDEA. Una combinacion que solo funciona en un trimestre concreto tiene una
+# nota estupenda y no vale nada. Trocear el periodo y puntuar con el PEOR trozo
+# (o con media − sigma) la penaliza sola.
+#
+# NO CUESTA NI UN BACKTEST MAS: una sola corrida ya devuelve los trades y el
+# dia a dia; los trozos salen de ahi.
+#
+# BASE DE CALCULO: se usa `t["pnl"]`, el MISMO que usa `expectancy` del motor —
+# o sea BRUTO de locates. Es deliberado, para que la nota sea comparable con la
+# del explorador. Si algun dia se pasa todo a neto, hay que cambiarlo aqui Y en
+# el motor a la vez, no solo aqui.
+
+TROZOS_DEFECTO = 4
+
+
+def _trozos_de_fechas(fechas: list[str], n: int) -> list[set]:
+    """Parte las fechas en `n` tramos contiguos con el MISMO numero de dias.
+
+    Por dias de mercado y no por trimestre natural: un trimestre flojo en dias
+    daria un trozo con cuatro operaciones y una nota de ruido.
+    """
+    unicas = sorted(set(fechas))
+    if not unicas or n <= 1:
+        return [set(unicas)] if unicas else []
+    tam = max(1, len(unicas) // n)
+    out = []
+    for i in range(n):
+        ini = i * tam
+        fin = len(unicas) if i == n - 1 else min(len(unicas), (i + 1) * tam)
+        if ini < fin:
+            out.append(set(unicas[ini:fin]))
+    return out
+
+
+def _nota_de_trozo(trades: list, dias: list, config: dict, modo: str) -> float:
+    """La metrica elegida, calculada SOLO con lo que cae en ese trozo."""
+    n = len(trades)
+    if n == 0:
+        return 0.0
+    pnls = [_f(t.get("pnl")) for t in trades]
+    ev = sum(pnls) / n
+    if modo in ("ev", "ev_sqrtN"):
+        return ev * (math.sqrt(n) if modo == "ev_sqrtN" else 1.0)
+    if modo in ("avg_r", "expR_sqrtN"):
+        r = _r_media(ev, config.get("riesgo", {}))
+        if r is None:
+            return 0.0
+        return r * (math.sqrt(n) if modo == "expR_sqrtN" else 1.0)
+    if modo == "pf":
+        gan = sum(p for p in pnls if p > 0)
+        per = abs(sum(p for p in pnls if p < 0))
+        # Sin perdidas el PF es infinito. Se acota para que un trozo de tres
+        # operaciones ganadoras no gane a uno de doscientas equilibradas.
+        return gan / per if per > 1e-9 else (10.0 if gan > 0 else 0.0)
+    if modo == "sharpe":
+        rets = [_f(d.get("total_return_pct")) for d in dias]
+        if len(rets) < 2:
+            return 0.0
+        med = sum(rets) / len(rets)
+        var = sum((x - med) ** 2 for x in rets) / (len(rets) - 1)
+        sd = math.sqrt(var)
+        return (med / sd * math.sqrt(252)) if sd > 1e-12 else 0.0
+    if modo == "dd_return":
+        acum, pico, peor = 0.0, 0.0, 0.0
+        for p in pnls:
+            acum += p
+            pico = max(pico, acum)
+            peor = min(peor, acum - pico)
+        return acum / abs(peor) if peor < -1e-9 else (acum if acum > 0 else 0.0)
+    return ev
+
+
+def agregar(m: dict, res: dict, config: dict) -> float:
+    """La nota que ORDENA. Con «valor» es la de siempre, sin tocar nada."""
+    modo_ag = str(config.get("agregacion", "valor")).strip().lower()
+    base = _f(m.get("fitness_base"))
+    if modo_ag in ("", "valor", "none"):
+        return base
+    # El suelo de operaciones manda por encima de todo: si el individuo no
+    # llega, ya vale 0 y no hay nada que agregar.
+    if base == 0.0:
+        return 0.0
+    if modo_ag == "vecindario":
+        # Se resuelve en el motor, que es quien tiene la cache de evaluados.
+        return base
+
+    trades = res.get("trades") or []
+    dias = res.get("day_results") or []
+    n_trozos = max(2, int(config.get("trozos", TROZOS_DEFECTO)))
+    trozos = _trozos_de_fechas([str(t.get("date")) for t in trades], n_trozos)
+    if len(trozos) < 2:
+        return base
+
+    modo = str(config.get("fitness", "expR_sqrtN"))
+    notas = []
+    for fechas in trozos:
+        tr = [t for t in trades if str(t.get("date")) in fechas]
+        dd = [d for d in dias if str(d.get("date")) in fechas]
+        notas.append(_nota_de_trozo(tr, dd, config, modo))
+
+    if modo_ag == "peor_trozo":
+        return min(notas)
+    if modo_ag == "media_menos_sigma":
+        med = sum(notas) / len(notas)
+        var = sum((x - med) ** 2 for x in notas) / len(notas)
+        lam = float(config.get("lambda_sigma", 1.0))
+        return med - lam * math.sqrt(var)
+    raise ValueError(f"agregacion desconocida: {modo_ag}")

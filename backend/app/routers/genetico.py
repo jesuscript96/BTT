@@ -50,6 +50,23 @@ FITNESS = [
     {"id": "sharpe", "label": "Sharpe"},
 ]
 
+# COMO se agrega la metrica de arriba. Es un eje APARTE: «PF con peor trozo» y
+# «PF a secas» son combinaciones validas de la misma metrica.
+# SOLO se ofrece en el modo «mejorar» — el explorador se queda con «valor»,
+# que es lo que ha hecho siempre.
+AGREGACION = [
+    {"id": "valor", "label": "Valor (lo de siempre)",
+     "ayuda": "La métrica tal cual sobre todo el periodo. Es lo que hace el explorador."},
+    {"id": "peor_trozo", "label": "Peor trozo del periodo",
+     "ayuda": "Parte el IS en tramos con el mismo número de días de mercado y puntúa con el PEOR. "
+              "Una combinación que solo funciona en un trimestre se cae sola. No cuesta ni un backtest más."},
+    {"id": "media_menos_sigma", "label": "Media − desviación entre trozos",
+     "ayuda": "Menos brutal que el peor trozo: premia la media y castiga que los tramos se parezcan poco entre sí."},
+    {"id": "vecindario", "label": "Vecindario (meseta)",
+     "ayuda": "Puntúa a cada candidato con la media de sus vecinos ya evaluados, a un escalón en la rejilla. "
+              "Un pico aislado baja; una meseta se mantiene. Es el «robust plateau» del 3D, en tantas dimensiones como genes."},
+]
+
 
 def _catalogo_modulo():
     if RAIZ_REPO not in sys.path:
@@ -64,6 +81,7 @@ def _catalogo_modulo():
 def catalogo():
     C = _catalogo_modulo()
     return {
+        "agregacion": AGREGACION,
         "indicadores": [
             {"nombre": i.nombre, "familia": i.familia, "ayuda": i.ayuda,
              "por_defecto": i.por_defecto,
@@ -206,15 +224,166 @@ def _lanzar(d: str, reanudar: bool = False) -> int:
     return proc.pid
 
 
+
+# ── Modo «mejorar»: que se le puede mover a UNA estrategia ──────────────────
+#
+# El explorador sortea condiciones del catalogo. El modo «mejorar» (6-sep-2026)
+# parte de una estrategia concreta y solo mueve las rutas que el usuario marque.
+# Este endpoint es el que llena esa lista de casillas.
+#
+# La mayoria de genes salen de `extract_parameters`, el mismo que alimenta el
+# optimizador 3D: ya sabe leer los indicadores y parametros de una estrategia
+# con su rango, su paso y su unidad. Aqui se le añaden los que ese extractor no
+# cubre porque no son numeros sueltos de la definicion: la sesion de mercado
+# (son tres claves a la vez) y las reentradas.
+
+_BLOQUES = (
+    ("entrada",    "Condiciones de entrada"),
+    ("salida",     "Condiciones de salida"),
+    ("horas",      "Horas de entrada"),
+    ("stop",       "Stop loss"),
+    ("tp",         "Take profit y parciales"),
+    ("reentradas", "Reentradas"),
+    ("sesion",     "Sesion de mercado"),
+    ("guardas",    "Guardas / precondiciones"),
+)
+
+
+def _bloque_de(p: dict) -> str:
+    ruta = str(p.get("path") or "")
+    if "entry_time_windows" in ruta:
+        return "horas"
+    if ruta.startswith("postgap_preconditions"):
+        return "guardas"
+    if ruta.startswith("entry_logic"):
+        return "entrada"
+    if ruta.startswith("exit_logic"):
+        return "salida"
+    if "hard_stop" in ruta or "trailing_stop" in ruta:
+        return "stop"
+    if "take_profit" in ruta:
+        return "tp"
+    return "stop"
+
+
+def _genes_extra(d: dict) -> list[dict]:
+    """Lo que `extract_parameters` no ve porque no son numeros de la definicion."""
+    out = []
+
+    # Sesion de mercado: UN gen categorico que escribe tres claves.
+    sesiones = list(d.get("market_sessions") or ["rth"])
+    opciones = ["pre", "rth", "post", "pre+rth", "rth+post", "pre+rth+post"]
+    actual = "+".join(sesiones)
+    if "custom" in sesiones:
+        actual = f"custom:{d.get('custom_start_time') or '09:30'}-{d.get('custom_end_time') or '16:00'}"
+        opciones = [actual] + opciones
+    elif actual not in opciones:
+        opciones = [actual] + opciones
+    out.append({
+        "id": "sesion.market_sessions", "label": "Sesion de mercado",
+        "path": "__sesiones__", "bloque": "sesion",
+        "opciones": opciones, "current_value": actual, "unit": None,
+    })
+
+    rm = d.get("risk_management") or {}
+    out.append({
+        "id": "riesgo.accept_reentries", "label": "Acepta reentradas",
+        "path": "risk_management.accept_reentries", "bloque": "reentradas",
+        "opciones": [False, True],
+        "current_value": bool(rm.get("accept_reentries", False)), "unit": None,
+    })
+    mx = rm.get("max_reentries")
+    out.append({
+        "id": "riesgo.max_reentries", "label": "Maximo de reentradas",
+        "path": "risk_management.max_reentries", "bloque": "reentradas",
+        "min": 0, "max": 10, "step": 1, "is_int": True,
+        "current_value": int(mx) if mx is not None and int(mx) >= 0 else 0,
+        "unit": None,
+    })
+    for clave, etiqueta, bloque in (("entry_logic", "Retardo de velas (entrada)", "entrada"),
+                                    ("exit_logic", "Retardo de velas (salida)", "salida")):
+        cd = ((d.get(clave) or {}).get("candle_delay"))
+        if cd is not None:
+            out.append({
+                "id": f"{clave}.candle_delay", "label": etiqueta,
+                "path": f"{clave}.candle_delay", "bloque": bloque,
+                "min": 1, "max": 10, "step": 1, "is_int": True,
+                "current_value": int(cd), "unit": None,
+            })
+    return out
+
+
+class GenesRequest(BaseModel):
+    strategy_id: Optional[str] = None
+    strategy_definition: Optional[dict] = None
+
+
+@router.post("/genes")
+def genes_de_estrategia(req: GenesRequest):
+    """Los genes que se le pueden mover a una estrategia, agrupados por bloque.
+
+    Cada gen llega con el valor que tiene HOY y un rango propuesto (±2 escalones,
+    lo mismo que el optimizador 3D). El usuario elige el rango final, igual que
+    alli — por eso esto solo PROPONE.
+    """
+    from app.services.optimization_service import extract_parameters
+
+    d = req.strategy_definition
+    if not d and req.strategy_id:
+        from app.services.data_service import get_strategy
+        st = get_strategy(req.strategy_id)
+        if not st:
+            raise HTTPException(404, "Estrategia no encontrada")
+        d = st["definition"]
+    if not isinstance(d, dict):
+        raise HTTPException(400, "Falta la estrategia")
+
+    genes = []
+    for p in extract_parameters(d):
+        g = dict(p)
+        g["bloque"] = _bloque_de(p)
+        genes.append(g)
+    genes += _genes_extra(d)
+
+    por_bloque: dict[str, list] = {}
+    for g in genes:
+        por_bloque.setdefault(g.get("bloque", "stop"), []).append(g)
+    return {"bloques": [{"id": bid, "label": lbl, "genes": por_bloque.get(bid, [])}
+                        for bid, lbl in _BLOQUES if por_bloque.get(bid)]}
+
+
 @router.post("/corridas")
 def crear_corrida(req: NuevaCorrida):
     cfg = dict(req.config or {})
     if not cfg.get("dataset_id"):
         raise HTTPException(400, "Falta el dataset")
-    if not cfg.get("catalogo"):
-        raise HTTPException(400, "Marca al menos un indicador")
-    if int(cfg.get("n_condiciones", 2)) not in (1, 2, 3):
-        raise HTTPException(400, "Condiciones: 1, 2 o 3")
+    if str(cfg.get("modo", "explorar")).lower() == "mejorar":
+        # Modo MEJORAR: no hay catalogo que sortear, hay una estrategia que
+        # afinar. Sin genes marcados la corrida evaluaria mil veces la misma
+        # definicion — que no da error, solo tira horas de CPU.
+        #
+        # La definicion se resuelve AQUI a partir del id y se CONGELA en el
+        # config.json de la corrida. Asi la corrida no depende de que la
+        # estrategia siga igual dentro de ocho horas: si el usuario la edita a
+        # media noche, los individuos ya evaluados y los que queden seguirian
+        # partiendo de bases distintas y la comparacion no valdria nada.
+        if not isinstance(cfg.get("estrategia_base"), dict):
+            sid = cfg.get("estrategia_id")
+            if not sid:
+                raise HTTPException(400, "Falta la estrategia que se quiere mejorar")
+            from app.services.data_service import get_strategy
+            st = get_strategy(str(sid))
+            if not st:
+                raise HTTPException(404, "Estrategia no encontrada")
+            cfg["estrategia_base"] = st["definition"]
+            cfg["estrategia_nombre"] = st.get("name") or str(sid)
+        if not cfg.get("genes"):
+            raise HTTPException(400, "Marca al menos un parametro que mover")
+    else:
+        if not cfg.get("catalogo"):
+            raise HTTPException(400, "Marca al menos un indicador")
+        if int(cfg.get("n_condiciones", 2)) not in (1, 2, 3):
+            raise HTTPException(400, "Condiciones: 1, 2 o 3")
     try:
         import psutil
         libre = psutil.virtual_memory().available / 1e9

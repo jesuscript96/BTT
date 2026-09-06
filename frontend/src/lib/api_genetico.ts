@@ -30,7 +30,10 @@ export interface GuardaCatalogo {
   ayuda: string;
 }
 
+export interface AgregacionOpcion { id: string; label: string; ayuda?: string }
+
 export interface CatalogoGenetico {
+  agregacion?: AgregacionOpcion[];
   indicadores: IndicadorCatalogo[];
   familias: Array<{ clave: string; etiqueta: string }>;
   guardas: GuardaCatalogo[];
@@ -104,7 +107,42 @@ export interface ConfigCorrida {
   generaciones: number;
   workers: number;
   paciencia: number;
+  /* ── Modo «mejorar» (6-sep-2026). Ausentes = modo explorar de siempre. ── */
+  modo?: "explorar" | "mejorar";
+  /** Id de la estrategia de partida. El backend resuelve y CONGELA su
+   *  definición en el config de la corrida, para que editarla luego no cambie
+   *  a mitad lo que se está evaluando. */
+  estrategia_id?: string | null;
+  genes?: GenGenetico[];
+  /** Cómo se agrega la métrica elegida. Solo en «mejorar»; el explorador va a «valor». */
+  agregacion?: string;
+  trozos?: number;
 }
+
+/** Un parámetro de la estrategia que el genético puede mover. */
+export interface GenGenetico {
+  id: string;
+  label: string;
+  /** Ruta dentro de la definición, o "__sesiones__" para el gen de sesión. */
+  path: string;
+  bloque?: string;
+  unit?: string | null;
+  is_int?: boolean;
+  current_value?: number | string | boolean | null;
+  min?: number;
+  max?: number;
+  step?: number;
+  /** Genes categóricos (sesión, sí/no): la lista cerrada de valores. */
+  opciones?: Array<string | number | boolean>;
+}
+
+export interface BloqueGenes {
+  id: string;
+  label: string;
+  genes: GenGenetico[];
+}
+
+export interface BloquesGenesResp { bloques: BloqueGenes[] }
 
 export interface MetricasIndividuo {
   trades: number | null;
@@ -185,6 +223,11 @@ export interface DatasetResumen {
 }
 
 export const getCatalogo = () => apiRequest<CatalogoGenetico>("/genetico/catalogo");
+/** Qué se le puede mover a una estrategia, agrupado por bloque (modo «mejorar»). */
+export const getGenesEstrategia = (strategy_id: string) =>
+  apiRequest<BloquesGenesResp>("/genetico/genes", {
+    method: "POST", body: JSON.stringify({ strategy_id }), timeoutMs: 20_000,
+  });
 export const listarDatasets = () => apiRequest<DatasetResumen[]>("/data/datasets");
 export const listarCorridas = () => apiRequest<CorridaResumen[]>("/genetico/corridas", { timeoutMs: 10_000 });
 export const verCorrida = (id: string) =>

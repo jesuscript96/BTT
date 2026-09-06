@@ -1,0 +1,299 @@
+"""Modo «MEJORAR» del genético: afinar UNA estrategia sin romperla.
+
+POR QUÉ ESTE FICHERO. El modo explorador construye la estrategia entera desde
+su cromosoma, así que lo que no sabe expresar simplemente no existe. El modo
+mejorar parte de una estrategia REAL — hecha a mano, con su lógica de salida,
+sus precondiciones y su temporalidad — y solo puede tocar lo que el usuario
+haya marcado. **Lo que no se marca tiene que quedar intacto**, y eso es
+exactamente lo que aquí se comprueba: si un día alguien reutiliza el traductor
+del explorador para esto, la estrategia perdería la mitad de su definición sin
+un solo error.
+"""
+import random
+import sys
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parents[2]
+if str(RAIZ) not in sys.path:
+    sys.path.insert(0, str(RAIZ))
+
+from genetico import afinar, especie  # noqa: E402
+from genetico import evaluador as EV  # noqa: E402
+
+
+# Una estrategia con TODO lo que el cromosoma del explorador no sabe expresar.
+SEMILLA = {
+    "bias": "short",
+    "apply_day": "gap_day",
+    "postgap_preconditions": [{"metric": "volume", "day": "gap_day", "value": 500000}],
+    "entry_logic": {
+        "timeframe": "5m",
+        "candle_delay": 2,
+        "root_condition": {"type": "group", "operator": "AND", "conditions": []},
+        "entry_time_windows": [{"from_time": "09:30", "to_time": "11:30"}],
+    },
+    "exit_logic": {
+        "timeframe": "1m",
+        "root_condition": {"type": "group", "operator": "OR", "conditions": []},
+    },
+    "risk_management": {
+        "hard_stop": {"type": "Percentage", "value": 15},
+        "take_profit": {"type": "Percentage", "value": 35},
+        "accept_reentries": True, "max_reentries": 5,
+        "trailing_stop": {"active": False, "type": "Percentage", "buffer_pct": 0.5},
+    },
+    "market_sessions": ["custom"],
+    "custom_start_time": "04:00",
+    "custom_end_time": "12:00",
+}
+
+GENES = [
+    {"id": "stop", "label": "Stop %", "path": "risk_management.hard_stop.value",
+     "min": 10, "max": 20, "step": 5, "current_value": 15},
+    {"id": "tp", "label": "TP %", "path": "risk_management.take_profit.value",
+     "min": 25, "max": 45, "step": 10, "current_value": 35},
+    {"id": "hasta", "label": "Ventana hasta", "unit": "time_of_day",
+     "path": "entry_logic.entry_time_windows.0.to_time",
+     "min": 630, "max": 750, "step": 30, "current_value": 690},
+]
+
+
+def _cfg(genes=None, **extra):
+    c = {"modo": "mejorar", "estrategia_base": SEMILLA, "genes": genes or GENES}
+    c.update(extra)
+    return c
+
+
+# ── La especie correcta ─────────────────────────────────────────────────────
+
+def test_sin_modo_se_usa_el_explorador_de_siempre():
+    """Regla nº1: una corrida antigua reanudada no lleva `modo` y no cambia."""
+    assert especie.modulo({}).__name__.endswith("cromosoma")
+    assert especie.modulo({"modo": "explorar"}).__name__.endswith("cromosoma")
+    assert not especie.es_mejorar({})
+
+
+def test_el_modo_mejorar_usa_el_cromosoma_nuevo():
+    assert especie.modulo({"modo": "mejorar"}).__name__.endswith("afinar")
+
+
+# ── La semilla y la rejilla ─────────────────────────────────────────────────
+
+def test_la_semilla_es_la_estrategia_tal_cual():
+    """La línea base. Sin ella no se sabe si el genético ha mejorado algo."""
+    ind = afinar.desde_semilla(_cfg())
+    assert ind["valores"] == {"stop": 15, "tp": 35, "hasta": 690}
+
+
+def test_un_valor_fuera_de_rejilla_cae_al_escalon_mas_cercano():
+    """El usuario elige el rango; el valor de hoy puede no caer en él."""
+    genes = [dict(GENES[0], min=10, max=20, step=5, current_value=17)]
+    ind = afinar.desde_semilla(_cfg(genes))
+    assert ind["valores"]["stop"] == 15   # 17 está más cerca de 15 que de 20
+
+
+def test_la_rejilla_de_una_hora_va_en_minutos_enteros():
+    rej = afinar._rejilla(GENES[2])
+    assert rej == [630, 660, 690, 720, 750]
+
+
+# ── Lo que NO se marca, no se toca ──────────────────────────────────────────
+
+def test_la_definicion_conserva_todo_lo_que_no_es_gen():
+    """EL PUNTO DE TODO ESTE MODO.
+
+    Salida, precondiciones, temporalidad y retardo de velas sobreviven. El
+    cromosoma del explorador los pondría a None y nadie se enteraría.
+    """
+    d = afinar.a_definicion(afinar.desde_semilla(_cfg()), _cfg())
+    assert d["exit_logic"]["root_condition"]["operator"] == "OR"
+    assert d["postgap_preconditions"][0]["metric"] == "volume"
+    assert d["entry_logic"]["timeframe"] == "5m"
+    assert d["entry_logic"]["candle_delay"] == 2
+    assert d["risk_management"]["max_reentries"] == 5
+
+
+def test_la_semilla_original_no_se_modifica():
+    """`a_definicion` trabaja sobre una copia: si mutara la semilla, el segundo
+    individuo partiría del primero y la corrida entera iría a la deriva."""
+    afinar.a_definicion({"valores": {"stop": 20, "tp": 25, "hasta": 750}}, _cfg())
+    assert SEMILLA["risk_management"]["hard_stop"]["value"] == 15
+
+
+def test_una_hora_se_escribe_como_texto():
+    """El gen viaja en minutos; la definición guarda «HH:MM». Si esto falla, el
+    motor recibe `to_time = 750.0`, la ventana se descarta entera y la corrida
+    sale como si no hubiera límite horario — sin error."""
+    d = afinar.a_definicion({"valores": {"stop": 15, "tp": 35, "hasta": 750}}, _cfg())
+    assert d["entry_logic"]["entry_time_windows"][0]["to_time"] == "12:30"
+    assert d["entry_logic"]["entry_time_windows"][0]["from_time"] == "09:30"
+
+
+def test_una_ruta_que_ya_no_existe_no_tumba_la_evaluacion():
+    """La estrategia se editó después de configurar la corrida."""
+    genes = GENES + [{"id": "fantasma", "label": "?", "path": "no.existe.nada",
+                      "min": 1, "max": 3, "step": 1, "current_value": 1}]
+    d = afinar.a_definicion(afinar.desde_semilla(_cfg(genes)), _cfg(genes))
+    assert d["risk_management"]["hard_stop"]["value"] == 15
+
+
+# ── El gen de sesión, que escribe tres claves ───────────────────────────────
+
+def test_la_sesion_personalizada_escribe_las_tres_claves():
+    g = [{"id": "ses", "label": "Sesion", "path": afinar.GEN_SESIONES,
+          "opciones": ["rth", "custom:09:30-11:00"], "current_value": "rth"}]
+    d = afinar.a_definicion({"valores": {"ses": "custom:09:30-11:00"}}, _cfg(g))
+    assert d["market_sessions"] == ["custom"]
+    assert d["custom_start_time"] == "09:30"
+    assert d["custom_end_time"] == "11:00"
+
+
+def test_al_salir_de_personalizada_se_borran_las_horas():
+    """Dejarlas puestas sembraría otra vez la unión de sesiones del 6-sep."""
+    g = [{"id": "ses", "label": "Sesion", "path": afinar.GEN_SESIONES,
+          "opciones": ["rth", "custom:09:30-11:00"], "current_value": "rth"}]
+    d = afinar.a_definicion({"valores": {"ses": "pre+rth"}}, _cfg(g))
+    assert d["market_sessions"] == ["pre", "rth"]
+    assert "custom_start_time" not in d
+
+
+# ── Operadores ──────────────────────────────────────────────────────────────
+
+def test_mutar_siempre_cambia_algo():
+    """Si devolviera un clon, ya está en la caché y la generación se queda sin
+    individuos nuevos que evaluar."""
+    cfg = _cfg()
+    base = afinar.desde_semilla(cfg)
+    rng = random.Random(7)
+    for _ in range(40):
+        assert afinar.mutar(base, cfg, rng)["valores"] != base["valores"]
+
+
+def test_mutar_se_queda_dentro_de_la_rejilla():
+    cfg = _cfg()
+    ind = afinar.desde_semilla(cfg)
+    rng = random.Random(1)
+    rejillas = {g["id"]: g["_rejilla"] for g in afinar.genes(cfg)}
+    for _ in range(200):
+        ind = afinar.mutar(ind, cfg, rng)
+        for k, v in ind["valores"].items():
+            assert v in rejillas[k], f"{k}={v} fuera de {rejillas[k]}"
+
+
+def test_cruzar_solo_mezcla_valores_de_los_padres():
+    cfg = _cfg()
+    a = {"valores": {"stop": 10, "tp": 25, "hasta": 630}}
+    b = {"valores": {"stop": 20, "tp": 45, "hasta": 750}}
+    rng = random.Random(3)
+    for _ in range(50):
+        h = afinar.cruzar(a, b, cfg, rng)
+        for k, v in h["valores"].items():
+            assert v in (a["valores"][k], b["valores"][k])
+
+
+def test_la_huella_no_depende_del_orden_de_los_genes():
+    x = {"valores": {"stop": 15, "tp": 35, "hasta": 690}}
+    y = {"valores": {"hasta": 690, "tp": 35, "stop": 15}}
+    assert afinar.huella(x) == afinar.huella(y)
+
+
+def test_los_indices_miden_escalones_de_rejilla():
+    """Es lo que permite puntuar por vecindario: la distancia entre individuos."""
+    cfg = _cfg()
+    a = afinar.indices({"valores": {"stop": 10, "tp": 25, "hasta": 630}}, cfg)
+    b = afinar.indices({"valores": {"stop": 15, "tp": 25, "hasta": 630}}, cfg)
+    assert sum(abs(x - y) for x, y in zip(a, b)) == 1
+
+
+def test_la_receta_lee_las_horas_como_horas():
+    txt = afinar.receta({"valores": {"stop": 15, "tp": 35, "hasta": 690}}, _cfg())
+    assert "11:30" in txt and "Stop %" in txt
+
+
+# ── Agregación de robustez ──────────────────────────────────────────────────
+
+def test_valor_es_exactamente_la_nota_de_siempre():
+    """Regla nº1: sin agregación, el explorador no nota nada."""
+    m = {"fitness_base": 12.5}
+    assert EV.agregar(m, {}, {}) == 12.5
+    assert EV.agregar(m, {}, {"agregacion": "valor"}) == 12.5
+
+
+def test_los_trozos_parten_por_dias_de_mercado():
+    fechas = [f"2026-01-{d:02d}" for d in range(1, 13)]
+    trozos = EV._trozos_de_fechas(fechas, 4)
+    assert len(trozos) == 4
+    assert all(len(t) == 3 for t in trozos)
+
+
+def test_peor_trozo_castiga_al_que_solo_funciona_un_trimestre():
+    """EL PUNTO DE LA ROBUSTEZ TEMPORAL."""
+    # Cuatro tramos: tres planos y uno espectacular.
+    trades = []
+    for d in range(1, 13):
+        pnl = 100.0 if d >= 10 else 1.0
+        trades.append({"date": f"2026-01-{d:02d}", "pnl": pnl})
+    res = {"trades": trades, "day_results": []}
+    cfg = {"fitness": "ev", "agregacion": "peor_trozo", "trozos": 4,
+           "riesgo": {"risk_r": 100, "risk_type": "FIXED"}}
+    m = {"fitness_base": 25.75}          # la media de todo el periodo
+    nota = EV.agregar(m, res, cfg)
+    assert nota == 1.0, "el peor tramo manda, no la media"
+
+
+def test_media_menos_sigma_castiga_al_irregular():
+    """Con tramos muy desiguales la nota puede caer POR DEBAJO del peor tramo,
+    y está bien: media − σ no es una media acotada, es un castigo por
+    irregularidad. Lo que importa es que ordene por debajo del regular."""
+    def nota(pnl_por_dia):
+        trades = [{"date": f"2026-01-{d:02d}", "pnl": pnl_por_dia(d)}
+                  for d in range(1, 13)]
+        cfg = {"fitness": "ev", "agregacion": "media_menos_sigma", "trozos": 4,
+               "riesgo": {"risk_r": 100, "risk_type": "FIXED"}}
+        return EV.agregar({"fitness_base": 1.0}, {"trades": trades, "day_results": []}, cfg)
+
+    irregular = nota(lambda d: 100.0 if d >= 10 else 1.0)   # todo en un tramo
+    regular = nota(lambda d: 25.75)                          # lo mismo, repartido
+    assert regular > irregular
+    assert regular == 25.75, "sin dispersión, la nota es la media"
+
+
+def test_bajo_el_suelo_de_operaciones_no_hay_agregacion_que_valga():
+    """`fitness_base` 0 significa que no llegó a `min_trades`."""
+    assert EV.agregar({"fitness_base": 0.0}, {"trades": []},
+                      {"agregacion": "peor_trozo"}) == 0.0
+
+
+# ── Guardas fijas, tambien en modo mejorar ──────────────────────────────────
+
+def test_las_guardas_se_meten_delante_de_la_entrada():
+    g = {"type": "indicator_comparison", "source": {"name": "Bar Close"},
+         "comparator": "GREATER_THAN", "target": 0.1}
+    cfg = _cfg(guardas=[g])
+    d = afinar.a_definicion(afinar.desde_semilla(cfg), cfg)
+    conds = d["entry_logic"]["root_condition"]["conditions"]
+    assert conds[0]["target"] == 0.1
+
+
+def test_con_un_OR_la_guarda_envuelve_en_vez_de_colarse():
+    """Meter una guarda DENTRO de un OR la convertiria en «o esto o la guarda»,
+    que es justo lo contrario de una guarda."""
+    semilla_or = {**SEMILLA, "entry_logic": {
+        "timeframe": "1m",
+        "root_condition": {"type": "group", "operator": "OR", "conditions": [{"x": 1}]},
+        "entry_time_windows": [{"from_time": "09:30", "to_time": "11:30"}],
+    }}
+    g = {"type": "indicator_comparison", "source": {"name": "Bar Close"},
+         "comparator": "GREATER_THAN", "target": 0.1}
+    cfg = {"modo": "mejorar", "estrategia_base": semilla_or, "genes": GENES, "guardas": [g]}
+    d = afinar.a_definicion({"valores": {"stop": 15, "tp": 35, "hasta": 690}}, cfg)
+    raiz = d["entry_logic"]["root_condition"]
+    assert raiz["operator"] == "AND"
+    assert raiz["conditions"][0]["target"] == 0.1
+    assert raiz["conditions"][1]["operator"] == "OR"
+
+
+def test_sin_guardas_la_entrada_no_se_toca():
+    cfg = _cfg()
+    d = afinar.a_definicion(afinar.desde_semilla(cfg), cfg)
+    assert d["entry_logic"]["root_condition"]["conditions"] == []

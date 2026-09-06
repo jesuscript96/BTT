@@ -15,6 +15,9 @@ import { Help } from "@/components/robustez/help";
 import {
   borrarCorrida,
   crearCorrida,
+  getGenesEstrategia,
+  type BloqueGenes,
+  type GenGenetico,
   getCatalogo,
   guardarComoEstrategia,
   listarCorridas,
@@ -170,6 +173,63 @@ const RIESGO_DEFECTO: ConfigCorrida["riesgo"] = {
   locates_cost: 0, max_locates: 0, size_by_sl: true, accept_reentries: true, max_reentries: -1,
 };
 
+/* ── Modo «mejorar»: leer y editar el rango de un gen ─────────────────────── */
+
+function minutosAHora(m: number): string {
+  const v = ((Math.round(m) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(v / 60)).padStart(2, "0")}:${String(v % 60).padStart(2, "0")}`;
+}
+function horaAMinutos(t: string): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : 0;
+}
+
+/** El valor de un gen, en la unidad en la que se lee. */
+function leeValor(g: GenGenetico, v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (typeof v === "boolean") return v ? "sí" : "no";
+  if (g.unit === "time_of_day") return minutosAHora(Number(v));
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(v);
+  return String(v);
+}
+
+/** Desde / hasta / paso de un gen. Las horas se editan como horas, no como
+ *  minutos desde medianoche — igual que en el optimizador 3D. */
+function RangoGen({ gen, sel, set }: {
+  gen: GenGenetico;
+  sel: { on: boolean; min: number; max: number; step: number };
+  set: (v: Partial<{ on: boolean; min: number; max: number; step: number }>) => void;
+}) {
+  const chico: React.CSSProperties = {
+    background: "transparent", border: hairline, color: color.textHigh,
+    fontFamily: font.mono, fontSize: 10, padding: "2px 4px", width: 62, outline: "none",
+  };
+  if (gen.unit === "time_of_day") {
+    return (
+      <>
+        <input type="time" style={chico} value={minutosAHora(sel.min)}
+          onChange={(e) => set({ min: horaAMinutos(e.target.value) })} />
+        <span style={{ color: color.textMuted, fontSize: 10 }}>→</span>
+        <input type="time" style={chico} value={minutosAHora(sel.max)}
+          onChange={(e) => set({ max: horaAMinutos(e.target.value) })} />
+        <input type="number" style={{ ...chico, width: 46 }} min={1} value={sel.step}
+          title="paso en minutos" onChange={(e) => set({ step: Number(e.target.value) })} />
+      </>
+    );
+  }
+  return (
+    <>
+      <input type="number" style={chico} value={sel.min}
+        onChange={(e) => set({ min: Number(e.target.value) })} />
+      <span style={{ color: color.textMuted, fontSize: 10 }}>→</span>
+      <input type="number" style={chico} value={sel.max}
+        onChange={(e) => set({ max: Number(e.target.value) })} />
+      <input type="number" style={{ ...chico, width: 46 }} step="any" value={sel.step}
+        title="paso" onChange={(e) => set({ step: Number(e.target.value) })} />
+    </>
+  );
+}
+
 function guardaMotor(nombre: string, comparador: string, valor: number): CondicionMotor {
   return { type: "indicator_comparison", source: { name: nombre, offset: 0 }, comparator: comparador, target: valor, timeframe: "1m" };
 }
@@ -190,6 +250,19 @@ export default function GeneticoPage() {
 
   // ── formulario ──
   const [nombre, setNombre] = useState("");
+  /* ── Modo «mejorar» (6-sep-2026) ──────────────────────────────────────────
+     El explorador se queda EXACTAMENTE como estaba; esto es un modo al lado.
+     `modo` decide qué secciones se pintan y qué config se manda. */
+  const [modo, setModo] = useState<"explorar" | "mejorar">("explorar");
+  const [estrategias, setEstrategias] = useState<Array<{ id: string; name: string; definition?: unknown }>>([]);
+  const [estrategiaId, setEstrategiaId] = useState("");
+  const [bloquesGenes, setBloquesGenes] = useState<BloqueGenes[]>([]);
+  const [cargandoGenes, setCargandoGenes] = useState(false);
+  /* Por gen: si se mueve y en qué rango. El rango lo elige el usuario, igual
+     que en el optimizador 3D — el backend solo PROPONE ±2 escalones. */
+  const [genesSel, setGenesSel] = useState<Record<string, { on: boolean; min: number; max: number; step: number }>>({});
+  const [agregacion, setAgregacion] = useState("valor");
+  const [trozos, setTrozos] = useState(4);
   const [datasetId, setDatasetId] = useState("");
   const [fechaIni, setFechaIni] = useState("2019-01-01");
   const [fechaFin, setFechaFin] = useState("2024-12-31");
@@ -275,6 +348,73 @@ export default function GeneticoPage() {
     verCorrida(comparar).then(setDetalleB).catch((e) => setError(String(e)));
   }, [comparar]);
 
+  /* Estrategias guardadas: solo hacen falta en el modo «mejorar». */
+  useEffect(() => {
+    if (modo !== "mejorar" || estrategias.length) return;
+    import("@/lib/api_backtester")
+      .then((m) => m.fetchStrategies())
+      .then((lista: any[]) => setEstrategias(lista.map((x) => ({ id: x.id, name: x.name }))))
+      .catch(() => setError("No pude cargar las estrategias guardadas"));
+  }, [modo, estrategias.length]);
+
+  /* Los genes de la estrategia elegida. Se piden al backend, que los saca del
+     mismo extractor que alimenta el optimizador 3D. */
+  useEffect(() => {
+    if (modo !== "mejorar" || !estrategiaId) { setBloquesGenes([]); return; }
+    let vivo = true;
+    setCargandoGenes(true);
+    getGenesEstrategia(estrategiaId)
+      .then((r) => {
+        if (!vivo) return;
+        setBloquesGenes(r.bloques || []);
+        /* Todo empieza DESMARCADO: marcar por defecto sería mover cosas que el
+           usuario no ha pedido. El rango propuesto sí se precarga. */
+        const inicial: Record<string, { on: boolean; min: number; max: number; step: number }> = {};
+        for (const b of r.bloques || []) {
+          for (const g of b.genes) {
+            inicial[g.id] = {
+              on: false,
+              min: Number(g.min ?? 0),
+              max: Number(g.max ?? 0),
+              step: Number(g.step ?? 1),
+            };
+          }
+        }
+        setGenesSel(inicial);
+      })
+      .catch(() => setError("No pude leer los parámetros de esa estrategia"))
+      .finally(() => { if (vivo) setCargandoGenes(false); });
+    return () => { vivo = false; };
+  }, [modo, estrategiaId]);
+
+  /* Los genes marcados, en el formato que espera el backend. */
+  const genesMarcados: GenGenetico[] = useMemo(() => {
+    const out: GenGenetico[] = [];
+    for (const b of bloquesGenes) {
+      for (const g of b.genes) {
+        const sel = genesSel[g.id];
+        if (!sel?.on) continue;
+        out.push(g.opciones
+          ? { ...g }                                   // categórico: la lista manda
+          : { ...g, min: sel.min, max: sel.max, step: sel.step });
+      }
+    }
+    return out;
+  }, [bloquesGenes, genesSel]);
+
+  /* Cuantas combinaciones hay en el espacio marcado. No es lo que el genetico
+     recorre — es la medida de si hace falta un genetico o basta el 3D. */
+  const combinaciones = useMemo(() => {
+    let n = 1;
+    for (const g of genesMarcados) {
+      if (g.opciones) { n *= g.opciones.length; continue; }
+      const paso = Number(g.step) || 1;
+      n *= Math.max(1, Math.floor((Number(g.max) - Number(g.min)) / paso) + 1);
+      if (n > 1e12) return 1e12;
+    }
+    return n;
+  }, [genesMarcados]);
+
   /* config que se manda */
   const config: ConfigCorrida & { parar_a_las?: string | null } = useMemo(() => {
     // Las guardas activas, en el orden del catálogo. Se arman desde la lista
@@ -294,10 +434,16 @@ export default function GeneticoPage() {
       tps: [...(tpPct ? ["pct"] : []), ...(tpHora ? ["hora"] : []), ...(tpTiempo ? ["tiempo"] : [])],
       riesgo, fitness, min_trades: minTrades, semilla, poblacion, generaciones, workers, paciencia,
       parar_a_las: pararALasOn ? pararALas : null,
+      // Modo «mejorar». En «explorar» estas claves no viajan y el backend se
+      // comporta exactamente igual que antes de existir el modo.
+      ...(modo === "mejorar"
+        ? { modo, estrategia_id: estrategiaId, genes: genesMarcados, agregacion, trozos }
+        : {}),
     };
   }, [datasetId, fechaIni, fechaFin, sesgo, sesion, horaIni, horaFin, ventanaOn, ventanaDe, ventanaA,
     catalogo, guardas, indicadores, nCond, stopPct, stopEstructura, tpPct, tpHora, tpTiempo, riesgo, fitness, minTrades,
-    semilla, poblacion, generaciones, workers, paciencia, pararALas, pararALasOn]);
+    semilla, poblacion, generaciones, workers, paciencia, pararALas, pararALasOn,
+    modo, estrategiaId, genesMarcados, agregacion, trozos]);
 
   const estimacion = useMemo(() => {
     const elite = Math.max(1, Math.round(poblacion * 0.05));
@@ -307,10 +453,20 @@ export default function GeneticoPage() {
 
   const problemas: string[] = [];
   if (!config.dataset_id) problemas.push("elige un dataset");
-  if (config.catalogo.length === 0) problemas.push("marca algún indicador");
-  if (config.catalogo.length < config.n_condiciones) problemas.push("más indicadores que condiciones");
-  if (config.stops.length === 0) problemas.push("marca algún tipo de stop");
-  if (config.tps.length === 0) problemas.push("marca algún tipo de take profit");
+  if (modo === "mejorar") {
+    if (!estrategiaId) problemas.push("elige la estrategia que quieres mejorar");
+    if (genesMarcados.length === 0) problemas.push("marca al menos un parámetro que mover");
+    for (const g of genesMarcados) {
+      if (g.opciones) continue;
+      if (Number(g.max) < Number(g.min)) problemas.push(`«${g.label}»: el máximo es menor que el mínimo`);
+      if (!Number(g.step)) problemas.push(`«${g.label}»: el paso no puede ser 0`);
+    }
+  } else {
+    if (config.catalogo.length === 0) problemas.push("marca algún indicador");
+    if (config.catalogo.length < config.n_condiciones) problemas.push("más indicadores que condiciones");
+    if (config.stops.length === 0) problemas.push("marca algún tipo de stop");
+    if (config.tps.length === 0) problemas.push("marca algún tipo de take profit");
+  }
 
   const lanzar = async () => {
     setLanzando(true); setError(null); setAviso(null);
@@ -366,6 +522,75 @@ export default function GeneticoPage() {
           <div style={{ borderLeft: `2px solid ${color.warning}`, padding: "6px 10px", marginBottom: 10, fontSize: 12 }}>No encuentro el Python del genético en {catalogo.python}.</div>
         )}
 
+        <Sec title="Modo" help="«Explorar» busca estrategias nuevas combinando indicadores del catálogo: es lo que ha hecho el genético siempre y no cambia. «Mejorar» parte de UNA estrategia tuya y solo mueve los parámetros que marques; todo lo demás de esa estrategia queda intacto.">
+          <Row label="Qué hace el genético">
+            <Toggle value={modo} onChange={setModo} options={[
+              { value: "explorar", label: "Explorar estrategias" },
+              { value: "mejorar", label: "Mejorar una estrategia" },
+            ]} />
+          </Row>
+          {modo === "mejorar" && (
+            <Row label="Estrategia" help="La de partida. Su definición se congela al lanzar, así que editarla después no cambia una corrida en marcha.">
+              <Sel value={estrategiaId} onChange={setEstrategiaId} options={[
+                { value: "", label: "— elige —" },
+                ...estrategias.map((e) => ({ value: e.id, label: e.name })),
+              ]} />
+            </Row>
+          )}
+        </Sec>
+
+        {modo === "mejorar" && (
+          <Sec title="Qué se le puede mover" help="Marca lo que quieres que el genético pruebe y en qué rango. Lo que NO marques se queda exactamente como está en la estrategia. El rango que ves propuesto son ±2 escalones alrededor del valor de hoy, igual que en el optimizador 3D: cámbialo a tu gusto.">
+            {!estrategiaId && <div style={{ fontSize: 11, color: color.textMuted, padding: "6px 0" }}>Elige antes una estrategia.</div>}
+            {cargandoGenes && <div style={{ fontSize: 11, color: color.textMuted, padding: "6px 0" }}>Leyendo sus parámetros…</div>}
+            {!cargandoGenes && estrategiaId && bloquesGenes.length === 0 && (
+              <div style={{ fontSize: 11, color: color.warning, padding: "6px 0" }}>
+                Esa estrategia no tiene ningún parámetro numérico que mover.
+              </div>
+            )}
+            {bloquesGenes.map((b) => (
+              <div key={b.id} style={{ padding: "8px 0", borderTop: hairline }}>
+                <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: color.textMuted, marginBottom: 6 }}>{b.label}</div>
+                {b.genes.map((g) => {
+                  const sel = genesSel[g.id] || { on: false, min: 0, max: 0, step: 1 };
+                  const set = (v: Partial<typeof sel>) => setGenesSel((p) => ({ ...p, [g.id]: { ...sel, ...v } }));
+                  return (
+                    <div key={g.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, alignItems: "center", padding: "3px 0" }}>
+                      <input type="checkbox" checked={sel.on} onChange={(e) => set({ on: e.target.checked })} style={{ margin: 0 }} />
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8, alignItems: "center" }}>
+                        <span style={{ fontSize: 11, color: sel.on ? color.textHigh : color.textSecondary }}>
+                          {g.label}
+                          <span style={{ color: color.textMuted, fontFamily: font.mono, marginLeft: 6 }}>
+                            (hoy: {leeValor(g, g.current_value)})
+                          </span>
+                        </span>
+                        {sel.on && !g.opciones && (
+                          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                            <RangoGen gen={g} sel={sel} set={set} />
+                          </div>
+                        )}
+                        {sel.on && g.opciones && (
+                          <span style={{ fontSize: 10, color: color.textMuted, fontFamily: font.mono }}>
+                            {g.opciones.length} opciones
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {genesMarcados.length > 0 && (
+              <div style={{ paddingTop: 8, fontSize: 11, color: color.textSecondary }}>
+                <span style={{ fontFamily: font.mono, color: color.textHigh }}>{genesMarcados.length}</span> parámetros marcados
+                {" · "}
+                <span style={{ fontFamily: font.mono, color: color.textHigh }}>{entero(combinaciones)}</span> combinaciones posibles
+                <Help title="Combinaciones">El producto de los valores de cada parámetro marcado. El genético no las recorre todas — por eso es un genético y no una rejilla — pero da la medida del espacio: si son cuatro, usa el optimizador 3D; si son millones, esto es lo que toca.</Help>
+              </div>
+            )}
+          </Sec>
+        )}
+
         <Sec title="Datos" help="Qué ticker-días se usan. El dataset es uno de los tuyos (mismos filtros de universo que en el Backtester). El periodo es el IS: lo que el genético puede ver.">
           <Row label="Nombre" help="Solo para reconocer la corrida en la lista. Si lo dejas vacío se usa la fecha y hora.">
             <input style={{ ...control, fontFamily: font.sans }} value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="opcional" />
@@ -382,6 +607,7 @@ export default function GeneticoPage() {
           </Row>
         </Sec>
 
+        {modo === "explorar" && (
         <Sec title="Operativa" help="Lo que define tu forma de operar y el genético no toca: lado, sesión y ventana de entradas.">
           <Row label="Sesgo" help="Short o long. Fijarlo ahorra la mitad del espacio de búsqueda. Con short, los stops de estructura van arriba (HOD, PMH, Previous Max); con long, abajo.">
             <Toggle<"short" | "long"> value={sesgo} onChange={setSesgo} options={[{ value: "short", label: "Short" }, { value: "long", label: "Long" }]} />
@@ -406,6 +632,8 @@ export default function GeneticoPage() {
           </Row>
         </Sec>
 
+        )}
+
         <Sec title="Guardas fijas" help="Condiciones que van SIEMPRE en la entrada y el genético no cambia ni cuenta como condiciones de lógica: son filtros de universo (precio mínimo, liquidez). Así no gasta búsqueda en redescubrir que no quieres acciones de 20 céntimos.">
           {/* La lista sale del catálogo del backend: añadir una guarda allí la
               hace aparecer aquí sola, sin tocar esta pantalla. */}
@@ -426,6 +654,7 @@ export default function GeneticoPage() {
           })}
         </Sec>
 
+        {modo === "explorar" && (
         <Sec title="Qué puede combinar" help="El vocabulario del genético. Tú pones los ingredientes; él escribe las recetas. Menos indicadores bien elegidos buscan mejor que el catálogo entero: cada uno que no aporta añade formas de encontrar casualidades.">
           <Row label="Indicadores" help="Cada condición de lógica compara uno de estos con un número de su rejilla o con otro nivel (Prev. Bar Low, VWAP, PM High, medias, bandas, Darvas…). Entre paréntesis, los parámetros que TAMBIÉN se buscan: no eliges uno, el genético prueba todos sus valores a lo largo de la población." wide>
             <div>
@@ -493,6 +722,8 @@ export default function GeneticoPage() {
           </Row>
         </Sec>
 
+        )}
+
         <Sec title="Riesgo" help="Los mismos ajustes que el panel de riesgo del Backtester. Para que la R media sea una R de verdad: riesgo fijo en $ con «shares por distancia al SL» activado. Nunca % de equity: con composición y liquidez infinita el genético aprende a apalancarse, no a operar.">
           <Row label="Capital"><Num value={riesgo.init_cash} onChange={(v) => setRiesgo({ ...riesgo, init_cash: v })} min={100} step={1000} /></Row>
           <Row label="Riesgo fijo $" help="Dólares que arriesga cada operación (distancia al stop × acciones). Es la unidad R de la tabla."><Num value={riesgo.risk_r} onChange={(v) => setRiesgo({ ...riesgo, risk_r: v })} min={1} step={10} /></Row>
@@ -528,6 +759,25 @@ export default function GeneticoPage() {
           <Row label="Nota (fitness)" help="La nota de cada estrategia. Por defecto R media × √operaciones: premia el edge por operación y que ocurra a menudo, sin que 4.000 operaciones valgan 40 veces más que 100. Nunca retorno total.">
             <Sel value={fitness} onChange={setFitness} options={(catalogo?.fitness ?? []).map((f) => ({ value: f.id, label: f.label }))} />
           </Row>
+          {modo === "mejorar" && (
+            <>
+              <Row label="Cómo se agrega" help="Un eje APARTE de la métrica: «Profit factor con peor trozo» y «Profit factor» a secas son la misma métrica agregada distinto. «Valor» es lo que hace el explorador. Solo aparece en modo mejorar.">
+                <Sel value={agregacion} onChange={setAgregacion} options={(catalogo?.agregacion ?? [
+                  { id: "valor", label: "Valor (lo de siempre)" },
+                ]).map((a) => ({ value: a.id, label: a.label }))} />
+              </Row>
+              {(agregacion === "peor_trozo" || agregacion === "media_menos_sigma") && (
+                <Row label="Trozos" help="En cuántos tramos con el mismo número de días de mercado se parte el IS. Más trozos afinan más, pero cada uno lleva menos operaciones y su nota es más ruidosa. 4 es un buen punto de partida.">
+                  <Num value={trozos} onChange={setTrozos} min={2} max={12} step={1} />
+                </Row>
+              )}
+              {catalogo?.agregacion?.find((a) => a.id === agregacion)?.ayuda && (
+                <div style={{ fontSize: 11, color: color.textMuted, lineHeight: 1.5, padding: "2px 0 6px" }}>
+                  {catalogo.agregacion.find((a) => a.id === agregacion)?.ayuda}
+                </div>
+              )}
+            </>
+          )}
           <Row label="Mín. operaciones" help="Por debajo de esto la nota es 0. Sin este suelo el genético encuentra las seis operaciones perfectas de la historia y descarta todo lo demás."><Num value={minTrades} onChange={setMinTrades} min={1} step={10} /></Row>
           <Row label="Población" help="Cuántas estrategias distintas viven a la vez. Es la ANCHURA de la búsqueda: con 80, cada generación prueba 80 combinaciones y las mejores se cruzan entre sí. Poca población (menos de ~30) se queda enganchada en la primera idea decente, porque no hay variedad de donde tirar; mucha explora más pero cada generación cuesta proporcionalmente más backtests. 60–100 es el rango razonable con este catálogo."><Num value={poblacion} onChange={setPoblacion} min={4} step={10} /></Row>
           <Row label="Generaciones" help="Cuántas rondas de probar, quedarse con las mejores, cruzarlas y mutarlas. Es la PROFUNDIDAD: cada ronda refina lo que encontró la anterior. Las primeras 10–15 hacen casi todo el trabajo y luego las mejoras se aplanan — por eso existe la paciencia, que corta sola si deja de mejorar. Muchas generaciones sobre poca población no compensa: pule unas pocas ideas en vez de buscar mejores."><Num value={generaciones} onChange={setGeneraciones} min={1} step={5} /></Row>

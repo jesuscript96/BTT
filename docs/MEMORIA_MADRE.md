@@ -2913,3 +2913,88 @@ de la franja. Ninguna de las dos lleva los gastos fijos del mes.
 Los conmutadores `Trades / Barrido` y `15m/30m/60m/120m` estaban pegados entre sí
 y al borde de su caja, y los minutos se leían como un continuo. `gap-1`,
 `p-[3px]` y más ancho interior; `Barrer`/`Cancelar` con margen a los lados.
+
+---
+
+## 2026-09-06 (noche) · El genético gana un segundo modo: MEJORAR una estrategia
+
+Petición de Jaume: «el genético busca estrategias, pero ¿podría optimizar UNA
+con todos sus parámetros? En el 3D optimizo uno o dos; ¿y si tiene cinco o
+seis? Quiero la combinación más ROBUSTA, no la que más dinero da». Y una
+condición: **el modo explorador no se toca, se le añade otro al lado.**
+
+### 10. Dos especies de cromosoma, un solo motor
+
+`genetico/especie.py` decide, según `config["modo"]`, qué módulo provee
+`aleatorio / mutar / cruzar / huella / receta / a_definicion`:
+
+    explorar (por defecto) -> cromosoma.py   el de siempre, intacto
+    mejorar                -> afinar.py      NUEVO
+
+**Por qué un cromosoma nuevo y no reutilizar el del explorador.**
+`cromosoma.a_definicion()` va en un solo sentido y hardcodea `exit_logic: None`,
+`postgap_preconditions: None`, `apply_day`, `timeframe: 1m` y trailing/swing
+apagados. Convertir una estrategia hecha a mano a ese cromosoma le arrancaría la
+mitad de su definición **en silencio**. En `afinar.py` el individuo ES la
+definición: se parte de la semilla intacta y solo se escriben las rutas
+marcadas. Hay un test por cada cosa que debe sobrevivir.
+
+Los genes salen de **`extract_parameters`**, el mismo del optimizador 3D — ya
+sabe leer los indicadores y sus parámetros con rango, paso y unidad — y se
+escriben con `_set_nested_value`, que reescribe "HH:MM" donde toca. Se le añaden
+los que ese extractor no cubre: **sesión de mercado** (un gen categórico que
+escribe tres claves) y **reentradas**. Comprobado sobre `RTH prueba 1`: saca el
+objetivo del % Fade, el del Elapsed Time, el periodo Y el objetivo del RVOL, las
+dos puntas de la ventana horaria, stop, take profit, reentradas y sesión.
+
+**El rango lo elige el usuario**, como en el 3D; el backend solo propone ±2
+escalones.
+
+### 11. La robustez es un EJE APARTE, no otra métrica
+
+Dos desplegables en vez de uno: **qué mides** (los mismos EV·√N, PF, Sharpe… del
+explorador) y **cómo lo agregas**:
+
+- `valor` — lo de siempre, y el defecto.
+- `peor_trozo` — parte el IS en tramos con el mismo número de días de mercado y
+  puntúa con el peor. **No cuesta ni un backtest más**: una corrida ya devuelve
+  el día a día.
+- `media_menos_sigma` — media − λ·σ entre tramos.
+- `vecindario` — el «robust plateau» del 3D en N dimensiones, usando los
+  individuos YA evaluados de la caché. También gratis.
+
+La agregación solo se ofrece en modo mejorar. El explorador no la ve y su
+`config` no la lleva, así que corre exactamente igual que antes.
+
+### 12. Tres trampas que se cerraron por el camino
+
+**La sesión la pisaba el panel.** `evaluador.parametros_backtest` pasa
+`market_sessions` a `run_backtest` **por argumento**, y el argumento gana sobre
+la definición. En modo mejorar eso habría hecho que la corrida entera evaluara
+el horario del explorador en vez del de la estrategia — y sin ningún error. Con
+definición, ahora mandan la definición y sus genes (también `size_by_sl` y el
+stop híbrido).
+
+**`mutar` podía devolver un clon.** El `tocado = True` marcaba «lo intenté», no
+«cambió», y `_vecino` sortea de toda la rejilla un 30 % de las veces. Un clon ya
+está en la caché, así que la generación se quedaba sin individuos nuevos que
+evaluar y el genético se estancaba sin dar ni un aviso. Lo cazó
+`test_mutar_siempre_cambia_algo`.
+
+**Las guardas y el operador OR.** En modo mejorar las guardas fijas se meten
+delante de la lógica de entrada, pero solo si la raíz es un AND: colarlas dentro
+de un OR las convertiría en «o esto o la guarda», lo contrario de una guarda. Si
+la raíz es OR, se envuelve en un AND.
+
+### 13. Otras decisiones
+
+- **La definición se CONGELA al lanzar** (`estrategia_base` en el `config.json`
+  de la corrida). Si el usuario edita la estrategia a media noche, los
+  individuos ya evaluados y los que quedan partirían de bases distintas.
+- **La generación 0 lleva la estrategia TAL CUAL** como línea base, más
+  mutaciones suyas de radio creciente (60 % del cupo) y luego aleatorios. Sin la
+  línea base no se puede saber si el genético ha mejorado algo.
+- Todos los genes empiezan **desmarcados**: marcar por defecto sería mover cosas
+  que nadie ha pedido.
+
+25 tests nuevos en `test_genetico_afinar.py`. 731 en total, `tsc` limpio.
