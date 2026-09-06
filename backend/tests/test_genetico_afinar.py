@@ -490,3 +490,56 @@ def test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia():
     assert p["hybrid_black_swan_pct"] == 500
     # Y las reentradas NO viajan como argumento: las lleva la definicion.
     assert "accept_reentries" not in p and "max_reentries" not in p
+
+
+# ── El usuario elige QUE disparadores puede probar cada parcial ──────────────
+# Jaume, 6-sep-2026: «no me deja elegir esos baremos el programa, solo me deja
+# elegir si quiero 1, 2, 3... hasta 5 parciales». La pagina ya deja recortar la
+# lista de `opciones` de un gen categorico; lo que se comprueba aqui es que ese
+# recorte MANDA de verdad. Si `aleatorio` o `mutar` se saltaran la lista, la
+# corrida probaria valores que el usuario ha quitado y no habria ningun error:
+# solo resultados con un parcial que dijo que no queria.
+
+def _cfg_recortado():
+    """Igual que GENES_PARC pero con el parcial 1 limitado a DOS opciones, y
+    ninguna de ellas es la que tiene hoy la estrategia."""
+    genes = [dict(g) for g in GENES_PARC]
+    genes[1] = {**genes[1], "opciones": ["hora:10:30", "tiempo:30"]}
+    return {"modo": "mejorar", "estrategia_base": SEMILLA, "genes": genes}
+
+
+def test_recortar_las_opciones_recorta_la_rejilla():
+    cfg = _cfg_recortado()
+    rej = {g["id"]: g["_rejilla"] for g in afinar.genes(cfg)}
+    assert rej["p0"] == ["hora:10:30", "tiempo:30"]
+    assert rej["p1"] == ["pct:3", "pct:6", "hora:10:30", "tiempo:30"], (
+        "recortar un parcial no puede tocar a los demas")
+
+
+def test_ni_el_azar_ni_la_mutacion_se_salen_de_lo_elegido():
+    cfg = _cfg_recortado()
+    permitidas = {"hora:10:30", "tiempo:30"}
+    rng = random.Random(11)
+    ind = afinar.desde_semilla(cfg)
+    assert ind["valores"]["p0"] in permitidas, (
+        "la semilla tenia 'pct:3', que el usuario ha quitado: hay que caer "
+        "dentro de la rejilla, no colar el valor de hoy")
+    for _ in range(300):
+        assert afinar.aleatorio(cfg, rng)["valores"]["p0"] in permitidas
+        ind = afinar.mutar(ind, cfg, rng)
+        assert ind["valores"]["p0"] in permitidas
+
+
+def test_una_sola_opcion_deja_el_gen_clavado():
+    """Dejar UN valor es legitimo: fija ese parcial sin que el genetico lo
+    mueva. La pagina lo permite a proposito (vaciarlo del todo, no)."""
+    genes = [dict(g) for g in GENES_PARC]
+    genes[1] = {**genes[1], "opciones": ["pct:6"]}
+    cfg = {"modo": "mejorar", "estrategia_base": SEMILLA, "genes": genes}
+    rng = random.Random(3)
+    ind = afinar.desde_semilla(cfg)
+    for _ in range(100):
+        ind = afinar.mutar(ind, cfg, rng)
+        assert ind["valores"]["p0"] == "pct:6"
+    d = afinar.a_definicion({"valores": {"n": 1, "p0": "pct:6"}}, cfg)
+    assert d["risk_management"]["partial_take_profits"][0]["distance_pct"] == 6.0

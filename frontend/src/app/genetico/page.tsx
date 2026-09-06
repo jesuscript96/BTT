@@ -469,7 +469,12 @@ export default function GeneticoPage() {
   const [cargandoGenes, setCargandoGenes] = useState(false);
   /* Por gen: si se mueve y en qué rango. El rango lo elige el usuario, igual
      que en el optimizador 3D — el backend solo PROPONE ±2 escalones. */
-  const [genesSel, setGenesSel] = useState<Record<string, { on: boolean; min: number; max: number; step: number }>>({});
+  /* Por gen: si se mueve, en qué rango (numéricos) o con qué opciones
+     (categóricos). `opciones` sin poner = todas, que es el defecto. */
+  const [genesSel, setGenesSel] = useState<Record<string, { on: boolean; min: number; max: number; step: number; opciones?: string[] }>>({});
+  /* Qué gen tiene abierto el selector de opciones. Uno cada vez: con cinco
+     parciales × 20 opciones, abrirlos todos llena la pantalla. */
+  const [genAbierto, setGenAbierto] = useState<string | null>(null);
   const [agregacion, setAgregacion] = useState("valor");
   const [trozos, setTrozos] = useState(4);
   /* Las fechas NO tienen control propio: son el «rango de fechas global» del
@@ -647,7 +652,9 @@ export default function GeneticoPage() {
         const ip = indiceParcial(g.id);
         if (ip !== null && ip >= maxParciales) continue;   // fuera del tope
         out.push(g.opciones
-          ? { ...g }                                   // categórico: la lista manda
+          // Categórico: van SOLO las opciones que el usuario deja. `afinar`
+          // usa esta lista tal cual como rejilla del gen.
+          ? { ...g, opciones: sel.opciones ?? g.opciones }
           : { ...g, min: sel.min, max: sel.max, step: sel.step });
       }
     }
@@ -859,12 +866,61 @@ export default function GeneticoPage() {
                             <RangoGen gen={g} sel={sel} set={set} />
                           </div>
                         )}
-                        {sel.on && g.opciones && (
-                          <span style={{ fontSize: 10, color: color.textMuted, fontFamily: font.mono }}>
-                            {g.opciones.length} opciones
-                          </span>
-                        )}
+                        {sel.on && g.opciones && (() => {
+                          const todas = g.opciones.map(String);
+                          const puestas = sel.opciones ?? todas;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setGenAbierto((a) => (a === g.id ? null : g.id))}
+                              style={{
+                                background: "none", border: hairline, borderRadius: 3,
+                                color: puestas.length === todas.length ? color.textMuted : color.copper,
+                                fontFamily: font.mono, fontSize: 10, padding: "1px 6px", cursor: "pointer",
+                              }}
+                              title="Elegir qué valores puede probar"
+                            >
+                              {puestas.length} de {todas.length}
+                            </button>
+                          );
+                        })()}
                       </div>
+                      {sel.on && g.opciones && genAbierto === g.id && (
+                        <div style={{ gridColumn: "1 / -1", display: "flex", flexWrap: "wrap", gap: 4, padding: "6px 0 8px 0" }}>
+                          {g.opciones.map((o) => {
+                            const v = String(o);
+                            const todas = g.opciones!.map(String);
+                            const puestas = sel.opciones ?? todas;
+                            const dentro = puestas.includes(v);
+                            return (
+                              <button
+                                key={v}
+                                type="button"
+                                onClick={() => {
+                                  const nuevas = dentro ? puestas.filter((x) => x !== v) : [...puestas, v];
+                                  // Dejar UNO es legitimo: fija ese valor sin
+                                  // que el genetico lo mueva. Vaciarlo del todo
+                                  // no, que dejaria el gen sin rejilla.
+                                  if (nuevas.length < 1) return;
+                                  set({ opciones: nuevas.length === todas.length ? undefined : nuevas });
+                                }}
+                                style={{
+                                  background: dentro ? "var(--color-ec-copper)" : "transparent",
+                                  color: dentro ? "var(--color-ec-copper-text)" : color.textMuted,
+                                  border: hairline, borderRadius: 3, fontFamily: font.mono,
+                                  fontSize: 10, padding: "2px 6px", cursor: "pointer",
+                                }}
+                              >
+                                {leeDisparador(v) ?? v}
+                              </button>
+                            );
+                          })}
+                          <button type="button" onClick={() => set({ opciones: undefined })}
+                            style={{ background: "none", border: "none", color: color.textMuted, fontSize: 10, cursor: "pointer", textDecoration: "underline" }}>
+                            todas
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
