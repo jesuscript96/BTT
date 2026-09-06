@@ -254,7 +254,7 @@ export default function GeneticoPage() {
      El explorador se queda EXACTAMENTE como estaba; esto es un modo al lado.
      `modo` decide qué secciones se pintan y qué config se manda. */
   const [modo, setModo] = useState<"explorar" | "mejorar">("explorar");
-  const [estrategias, setEstrategias] = useState<Array<{ id: string; name: string; definition?: unknown }>>([]);
+  const [estrategias, setEstrategias] = useState<Array<{ id: string; name: string; dataset_id?: string | null }>>([]);
   const [estrategiaId, setEstrategiaId] = useState("");
   const [bloquesGenes, setBloquesGenes] = useState<BloqueGenes[]>([]);
   const [cargandoGenes, setCargandoGenes] = useState(false);
@@ -353,9 +353,21 @@ export default function GeneticoPage() {
     if (modo !== "mejorar" || estrategias.length) return;
     import("@/lib/api_backtester")
       .then((m) => m.fetchStrategies())
-      .then((lista: any[]) => setEstrategias(lista.map((x) => ({ id: x.id, name: x.name }))))
+      .then((lista: any[]) => setEstrategias(lista.map((x) => ({
+        id: x.id, name: x.name, dataset_id: x.dataset_id ?? x.definition?.dataset_id ?? null,
+      }))))
       .catch(() => setError("No pude cargar las estrategias guardadas"));
   }, [modo, estrategias.length]);
+
+  /* El dataset lo trae la estrategia. Elegirlo a mano era una forma facil de
+     acabar evaluando la estrategia sobre OTRO universo del que se construyo y
+     no enterarse: el numero sale, solo que no es el de esa estrategia.
+     Se puede cambiar después — solo se precarga al elegir. */
+  useEffect(() => {
+    if (modo !== "mejorar" || !estrategiaId) return;
+    const ds = estrategias.find((e) => e.id === estrategiaId)?.dataset_id;
+    if (ds) setDatasetId(ds);
+  }, [modo, estrategiaId, estrategias]);
 
   /* Los genes de la estrategia elegida. Se piden al backend, que los saca del
      mismo extractor que alimenta el optimizador 3D. */
@@ -530,7 +542,7 @@ export default function GeneticoPage() {
             ]} />
           </Row>
           {modo === "mejorar" && (
-            <Row label="Estrategia" help="La de partida. Su definición se congela al lanzar, así que editarla después no cambia una corrida en marcha.">
+            <Row label="Estrategia" help="La de partida. Su definición se congela al lanzar, así que editarla después no cambia una corrida en marcha. Al elegirla se carga sola SU dataset: es el universo sobre el que la construiste.">
               <Sel value={estrategiaId} onChange={setEstrategiaId} options={[
                 { value: "", label: "— elige —" },
                 ...estrategias.map((e) => ({ value: e.id, label: e.name })),
@@ -599,6 +611,24 @@ export default function GeneticoPage() {
             <Sel value={datasetId} onChange={setDatasetId}
               options={datasets.map((d) => ({ value: d.id, label: `${d.name}${d.pair_count ? ` (${entero(d.pair_count)})` : ""}` }))} />
           </Row>
+          {modo === "mejorar" && estrategiaId && (() => {
+            const ds = estrategias.find((e) => e.id === estrategiaId)?.dataset_id;
+            if (!ds) return (
+              <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5, padding: "2px 0 6px" }}>
+                Esa estrategia no tiene dataset guardado (usa filtros de universo). Elige uno a mano.
+              </div>
+            );
+            if (ds !== datasetId) return (
+              <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5, padding: "2px 0 6px" }}>
+                Ojo: estás evaluando sobre un universo distinto del que se construyó la estrategia.
+              </div>
+            );
+            return (
+              <div style={{ fontSize: 11, color: color.textMuted, lineHeight: 1.5, padding: "2px 0 6px" }}>
+                Es el dataset de la estrategia.
+              </div>
+            );
+          })()}
           <Row label="IS desde / hasta" help="Periodo dentro de la muestra. Deja fuera el tramo más reciente (p. ej. 2025→hoy): es tu OOS y solo se usa UNA vez, al final, con los finalistas.">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               <input type="date" style={control} value={fechaIni} onChange={(e) => setFechaIni(e.target.value)} />

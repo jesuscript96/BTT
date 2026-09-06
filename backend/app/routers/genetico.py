@@ -242,7 +242,9 @@ _BLOQUES = (
     ("salida",     "Condiciones de salida"),
     ("horas",      "Horas de entrada"),
     ("stop",       "Stop loss"),
-    ("tp",         "Take profit y parciales"),
+    ("tp",         "Take profit"),
+    ("parciales",  "Parciales (cuantos y de que tipo)"),
+    ("piramide",   "Piramidacion"),
     ("reentradas", "Reentradas"),
     ("sesion",     "Sesion de mercado"),
     ("guardas",    "Guardas / precondiciones"),
@@ -253,6 +255,8 @@ def _bloque_de(p: dict) -> str:
     ruta = str(p.get("path") or "")
     if "entry_time_windows" in ruta:
         return "horas"
+    if ruta.startswith("pyramiding"):
+        return "piramide"
     if ruta.startswith("postgap_preconditions"):
         return "guardas"
     if ruta.startswith("entry_logic"):
@@ -261,9 +265,32 @@ def _bloque_de(p: dict) -> str:
         return "salida"
     if "hard_stop" in ruta or "trailing_stop" in ruta:
         return "stop"
+    if "partial_take_profits" in ruta:
+        return "parciales"
     if "take_profit" in ruta:
         return "tp"
     return "stop"
+
+
+def _codifica_parcial(nivel: dict) -> str:
+    """El `distance_pct` de un parcial, en la forma que usa el gen categorico.
+
+    6.0 -> "pct:6" · "HOUR:10:30" -> "hora:10:30" · "TIME:30" -> "tiempo:30"
+    """
+    raw = (nivel or {}).get("distance_pct")
+    txt = str(raw or "").strip()
+    up = txt.upper()
+    if up.startswith("HOUR:"):
+        return f"hora:{txt[5:]}"
+    if up.startswith("TIME:"):
+        return f"tiempo:{txt[5:]}"
+    if up == "EOD":
+        return "hora:15:30"      # el cierre no es barrible; se ancla al mas tardio
+    try:
+        v = float(txt)
+        return f"pct:{int(v) if v == int(v) else v}"
+    except ValueError:
+        return "pct:6"
 
 
 def _genes_extra(d: dict) -> list[dict]:
@@ -300,6 +327,37 @@ def _genes_extra(d: dict) -> list[dict]:
         "current_value": int(mx) if mx is not None and int(mx) >= 0 else 0,
         "unit": None,
     })
+    # PARCIALES COMO ESTRUCTURA: cuantos y de que tipo, no solo su distancia.
+    # Peticion de Jaume: «quiero probar que pasa si añado 3 o 5 parciales, ya
+    # sea por hora, minutos o distancia... aunque modifique la estrategia».
+    #
+    # Cada nivel es UN gen categorico con la lista completa de disparadores
+    # (mismas rejillas que usa el explorador, para que los dos modos hablen el
+    # mismo idioma). Encajarlo asi, y no como tres genes por nivel (tipo +
+    # valor% + valor hora + valor minutos), es lo que lo deja en 1 + N casillas
+    # en vez de 1 + 4N — y ademas hace que «un escalon» signifique algo.
+    C = _catalogo_modulo()
+    opciones_nivel = ([f"pct:{v}" for v in C.TP_PCT]
+                      + [f"hora:{v}" for v in C.TP_HORA]
+                      + [f"tiempo:{v}" for v in C.TP_TIEMPO_MIN])
+    previos = list((d.get("risk_management") or {}).get("partial_take_profits") or [])
+    modo_tp = str((d.get("risk_management") or {}).get("take_profit_mode", "Full"))
+    n_hoy = len(previos) if modo_tp.strip().lower() == "partial" else 0
+    out.append({
+        "id": "parciales.n", "label": "Cuantos parciales",
+        "path": "__parciales_n__", "bloque": "parciales",
+        "min": 0, "max": 5, "step": 1, "is_int": True,
+        "current_value": n_hoy, "unit": None,
+    })
+    for i in range(5):
+        out.append({
+            "id": f"parciales.{i}.nivel", "label": f"Parcial {i + 1}: disparador",
+            "path": f"__parcial__:{i}", "bloque": "parciales",
+            "opciones": opciones_nivel,
+            "current_value": _codifica_parcial(previos[i]) if i < len(previos) else opciones_nivel[0],
+            "unit": None,
+        })
+
     for clave, etiqueta, bloque in (("entry_logic", "Retardo de velas (entrada)", "entrada"),
                                     ("exit_logic", "Retardo de velas (salida)", "salida")):
         cd = ((d.get(clave) or {}).get("candle_delay"))

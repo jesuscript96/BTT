@@ -2998,3 +2998,46 @@ la raíz es OR, se envuelve en un AND.
   que nadie ha pedido.
 
 25 tests nuevos en `test_genetico_afinar.py`. 731 en total, `tsc` limpio.
+
+### 14. Modo mejorar, segunda tanda: parciales variables, pirámide y dataset
+
+**Parciales como ESTRUCTURA, no solo como número.** Petición de Jaume: «quiero
+probar qué pasa si añado 3 o 5 parciales, ya sea por hora, minutos o distancia…
+aunque modifique la estrategia». Se resuelve con dos tipos de gen:
+
+- `parciales.n` — cuántos niveles (0 a 5). Cero es una opción legítima: es la
+  comparación contra no ponerlos.
+- `parciales.{i}.nivel` — un gen CATEGÓRICO por nivel, con la lista completa de
+  disparadores (`pct:6`, `hora:10:30`, `tiempo:30`) construida con las mismas
+  rejillas que usa el explorador.
+
+Encajarlo así, y no como cuatro genes por nivel (tipo + valor% + valor hora +
+valor minutos), lo deja en 1 + N casillas en vez de 1 + 4N, y hace que «un
+escalón» signifique algo para la mutación.
+
+**El capital se reparte a partes iguales** y el último se lleva el resto: el
+motor exige que sumen exactamente 100 % o deja posición sin cerrar. Repartir así
+lo garantiza sin meter N dimensiones más de sobreajuste; para repartos
+desiguales están los genes de ruta `partial_take_profits.i.capital_pct`.
+
+**Si hay estructura, las rutas de parciales se ignoran.** No es solo evitar que
+dos genes se peleen: `_encode_tp_value` relee la forma NUEVA, así que escribir
+un 6 sobre un nivel recién puesto a `"HOUR:10:30"` daría `"HOUR:00:06"` — un
+disparador que nadie ha pedido, sin ningún error.
+
+**PIRAMIDACIÓN: `extract_parameters` no la miraba.** Una estrategia con pirámide
+tenía sus niveles congelados tanto en el genético como en el optimizador 3D. Se
+conservaban (la definición se copia entera) pero no había forma de moverlos, y
+el tamaño de un añadido pesa tanto como el de la entrada. Ahora salen tres
+cosas por nivel: `capital_pct`, `times` y los umbrales de SU condición, que van
+por la misma maquinaria que las de entrada y salida. **Esto también se lo lleva
+el optimizador 3D**, que hasta hoy tampoco podía tocar una pirámide.
+
+**El dataset lo trae la estrategia.** Al elegirla en modo mejorar se carga solo
+su `dataset_id`. Elegirlo a mano era una forma fácil de evaluar la estrategia
+sobre otro universo del que se construyó y no enterarse: el número sale, solo
+que no es el de esa estrategia. Se puede cambiar después, y si se cambia, la
+página avisa. Si la estrategia no tiene dataset guardado (usa filtros de
+universo), lo dice y no toca nada.
+
+740 tests (34 en `test_genetico_afinar.py`), `tsc` limpio.

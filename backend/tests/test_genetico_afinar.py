@@ -297,3 +297,120 @@ def test_sin_guardas_la_entrada_no_se_toca():
     cfg = _cfg()
     d = afinar.a_definicion(afinar.desde_semilla(cfg), cfg)
     assert d["entry_logic"]["root_condition"]["conditions"] == []
+
+
+# ── Parciales: cuantos y de que tipo (peticion de Jaume, 6-sep) ─────────────
+#
+# No es afinar un numero: cambia la estrategia. Se acepto a proposito — «quiero
+# probar que pasa si añado 3 o 5 parciales, ya sea por hora, minutos o
+# distancia». El capital se reparte a partes iguales para que sume 100 sin
+# meter N dimensiones mas de sobreajuste.
+
+GENES_PARC = [
+    {"id": "n", "label": "Cuantos", "path": afinar.GEN_PARCIALES_N,
+     "min": 0, "max": 3, "step": 1, "is_int": True, "current_value": 1},
+    {"id": "p0", "label": "Parcial 1", "path": "__parcial__:0",
+     "opciones": ["pct:3", "pct:6", "hora:10:30", "tiempo:30"], "current_value": "pct:3"},
+    {"id": "p1", "label": "Parcial 2", "path": "__parcial__:1",
+     "opciones": ["pct:3", "pct:6", "hora:10:30", "tiempo:30"], "current_value": "pct:6"},
+    {"id": "p2", "label": "Parcial 3", "path": "__parcial__:2",
+     "opciones": ["pct:3", "pct:6", "hora:10:30", "tiempo:30"], "current_value": "hora:10:30"},
+]
+
+
+def _cfgp(**extra):
+    c = {"modo": "mejorar", "estrategia_base": SEMILLA, "genes": GENES_PARC}
+    c.update(extra)
+    return c
+
+
+def test_puede_añadir_parciales_que_la_estrategia_no_tenia():
+    """La semilla no lleva parciales; el genetico prueba con tres."""
+    cfg = _cfgp()
+    d = afinar.a_definicion(
+        {"valores": {"n": 3, "p0": "pct:3", "p1": "pct:6", "p2": "hora:10:30"}}, cfg)
+    rm = d["risk_management"]
+    assert rm["take_profit_mode"] == "Partial"
+    assert [p["distance_pct"] for p in rm["partial_take_profits"]] == [3.0, 6.0, "HOUR:10:30"]
+
+
+def test_el_capital_de_los_parciales_suma_siempre_100():
+    """Si no suma 100 el motor deja posicion sin cerrar o cierra de mas."""
+    cfg = _cfgp()
+    for n in (1, 2, 3):
+        d = afinar.a_definicion(
+            {"valores": {"n": n, "p0": "pct:3", "p1": "pct:6", "p2": "tiempo:30"}}, cfg)
+        caps = [p["capital_pct"] for p in d["risk_management"]["partial_take_profits"]]
+        assert len(caps) == n
+        assert round(sum(caps), 6) == 100.0, f"con {n} niveles suma {sum(caps)}"
+
+
+def test_cero_parciales_vuelve_a_take_profit_completo():
+    """Es la comparacion contra NO ponerlos. En «Full» el motor ignora la lista
+    y manda `take_profit`, que la semilla conserva intacto."""
+    d = afinar.a_definicion({"valores": {"n": 0}}, _cfgp())
+    rm = d["risk_management"]
+    assert rm["take_profit_mode"] == "Full"
+    assert rm["partial_take_profits"] == []
+    assert rm["take_profit"]["value"] == 35
+
+
+def test_los_tres_tipos_de_disparador_se_escriben_como_los_espera_el_motor():
+    cfg = _cfgp()
+    d = afinar.a_definicion(
+        {"valores": {"n": 3, "p0": "pct:6", "p1": "hora:10:30", "p2": "tiempo:30"}}, cfg)
+    vals = [p["distance_pct"] for p in d["risk_management"]["partial_take_profits"]]
+    assert vals == [6.0, "HOUR:10:30", "TIME:30"]
+
+
+def test_con_estructura_las_rutas_de_parciales_se_ignoran():
+    """Dos genes por lo mismo se pelean. Y peor: `_encode_tp_value` releeria la
+    forma NUEVA, asi que escribir un 6 sobre un nivel «HOUR:10:30» daria
+    «HOUR:00:06» — un disparador que nadie ha pedido, sin error."""
+    genes = GENES_PARC + [{"id": "dist0", "label": "Distancia 1",
+                           "path": "risk_management.partial_take_profits.0.distance_pct",
+                           "min": 1, "max": 9, "step": 1, "current_value": 3}]
+    cfg = {"modo": "mejorar", "estrategia_base": SEMILLA, "genes": genes}
+    d = afinar.a_definicion(
+        {"valores": {"n": 1, "p0": "hora:10:30", "dist0": 6}}, cfg)
+    assert d["risk_management"]["partial_take_profits"][0]["distance_pct"] == "HOUR:10:30"
+
+
+def test_sin_genes_de_parciales_la_estrategia_no_se_toca():
+    """Regla nº1: si no marcas nada de parciales, ni se miran."""
+    d = afinar.a_definicion(afinar.desde_semilla(_cfg()), _cfg())
+    assert "partial_take_profits" not in d["risk_management"]
+
+
+# ── Piramidacion ───────────────────────────────────────────────────────────
+
+SEMILLA_PYR = {**SEMILLA, "pyramiding": {"timeframe": "1m", "mode": "individual", "levels": [
+    {"action": "add", "unit": "pct", "capital_pct": 25, "times": 2,
+     "root_condition": {"type": "group", "operator": "AND", "conditions": []}}]}}
+
+
+def test_la_piramide_sobrevive_aunque_no_se_toque():
+    cfg = {"modo": "mejorar", "estrategia_base": SEMILLA_PYR, "genes": GENES}
+    d = afinar.a_definicion(afinar.desde_semilla(cfg), cfg)
+    assert d["pyramiding"]["levels"][0]["capital_pct"] == 25
+    assert d["pyramiding"]["mode"] == "individual"
+
+
+def test_la_piramide_se_puede_mover():
+    g = [{"id": "pyr", "label": "Piramide 1 %",
+          "path": "pyramiding.levels.0.capital_pct",
+          "min": 10, "max": 40, "step": 5, "current_value": 25}]
+    cfg = {"modo": "mejorar", "estrategia_base": SEMILLA_PYR, "genes": g}
+    d = afinar.a_definicion({"valores": {"pyr": 40}}, cfg)
+    assert d["pyramiding"]["levels"][0]["capital_pct"] == 40
+    assert d["pyramiding"]["levels"][0]["times"] == 2   # lo no marcado, intacto
+
+
+def test_el_extractor_ve_los_parametros_de_la_piramide():
+    """Antes del 6-sep no los veia: ni el genetico ni el optimizador 3D podian
+    mover una piramide, aunque el tamaño de un añadido pesa como el de la
+    entrada."""
+    from app.services.optimization_service import extract_parameters
+    rutas = {p["path"] for p in extract_parameters(SEMILLA_PYR)}
+    assert "pyramiding.levels.0.capital_pct" in rutas
+    assert "pyramiding.levels.0.times" in rutas

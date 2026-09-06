@@ -559,6 +559,31 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                  val, "Risk", "risk_management.trailing_stop.buffer_pct",
                  min_val=0.1, max_val=5.0, step=0.1)
 
+    # --- Piramidacion ---
+    # No estaba (2026-09-06): una estrategia con piramide tenia sus niveles
+    # CONGELADOS tanto aqui como en el optimizador 3D. Se conservaban —
+    # la definicion se copia entera— pero no habia forma de moverlos, y el
+    # tamaño de un añadido pesa tanto como el de la entrada.
+    #
+    # Se sacan las tres cosas que definen un nivel: cuanto mete, cuantas veces
+    # puede dispararse y los umbrales de SU condicion (que van por la misma
+    # maquinaria que las de entrada y salida — un nivel es una condicion mas).
+    for i, lv in enumerate((strategy_def.get("pyramiding") or {}).get("levels") or []):
+        if not isinstance(lv, dict):
+            continue
+        n = i + 1
+        unidad = "$" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "%"
+        _add(f"pyr.{i}.capital_pct",
+             f"Piramide {n} ({'quita' if str(lv.get('action', 'add')).lower() == 'reduce' else 'anade'} {unidad})",
+             lv.get("capital_pct"), "Pyramid", f"pyramiding.levels.{i}.capital_pct",
+             min_val=0.5, step=0.5)
+        _add(f"pyr.{i}.times", f"Piramide {n} veces",
+             lv.get("times"), "Pyramid", f"pyramiding.levels.{i}.times",
+             min_val=1, max_val=10, step=1, is_int_param=True)
+        _extract_from_condition_group(
+            lv.get("root_condition") or {}, f"Piramide {n}",
+            f"pyramiding.levels.{i}.root_condition", params, _seen, _add)
+
     # --- Preconditions ---
     for i, precond in enumerate(strategy_def.get("postgap_preconditions") or []):
         if not precond or not isinstance(precond, dict):

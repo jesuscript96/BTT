@@ -38,6 +38,13 @@ import random
 # Gen categorico que NO es una ruta: la sesion de mercado son varias claves de
 # la definicion a la vez (`market_sessions` + las horas personalizadas).
 GEN_SESIONES = "__sesiones__"
+# Genes de ESTRUCTURA de los parciales: no afinan un numero, cambian la
+# estrategia (cuantos parciales hay y de que tipo es cada uno). Peticion
+# explicita de Jaume: «quiero probar que pasa si añado 3 o 5 parciales, ya sea
+# por hora, minutos o distancia... aunque modifique la estrategia».
+GEN_PARCIALES_N = "__parciales_n__"      # cuantos niveles
+GEN_PARCIAL = "__parcial__"              # "__parcial__:{i}" -> el nivel i
+PARCIALES_MAX = 5
 
 
 def _es_entero(gen: dict) -> bool:
@@ -245,7 +252,17 @@ def a_definicion(individuo: dict, config: dict) -> dict:
     base = copy.deepcopy(config.get("estrategia_base") or {})
     _meter_guardas(base, config.get("guardas") or [])
     gs = _por_id(config)
-    for gid, valor in (individuo.get("valores") or {}).items():
+    vals = individuo.get("valores") or {}
+
+    # LOS PARCIALES VAN PRIMERO, porque reconstruyen la lista entera. Si un gen
+    # de ruta (`partial_take_profits.0.distance_pct`) escribiera despues sobre
+    # una lista recien creada, `_encode_tp_value` releeria la forma NUEVA: un
+    # nivel puesto a "HOUR:10:30" al que luego se le escribe un 6 saldria como
+    # "HOUR:00:06". Por eso, si hay estructura, las rutas de parciales se
+    # ignoran — la estructura manda y no hay dos genes peleandose por lo mismo.
+    hay_estructura = _aplicar_parciales(base, vals, gs)
+
+    for gid, valor in vals.items():
         g = gs.get(gid)
         if not g or valor is None:
             continue
@@ -253,7 +270,9 @@ def a_definicion(individuo: dict, config: dict) -> dict:
             _aplicar_sesiones(base, valor)
             continue
         ruta = g.get("path")
-        if not ruta:
+        if not ruta or str(ruta).startswith(GEN_PARCIAL) or ruta == GEN_PARCIALES_N:
+            continue
+        if hay_estructura and "partial_take_profits" in ruta:
             continue
         v = int(round(float(valor))) if _es_entero(g) else valor
         try:
@@ -333,3 +352,98 @@ def _meter_guardas(base: dict, guardas: list) -> None:
     else:
         raiz = {"type": "group", "operator": "AND", "conditions": gs + [raiz]}
     el["root_condition"] = raiz
+
+
+# ── Parciales: cuantos y de que tipo ────────────────────────────────────────
+
+def _decodifica_parcial(txt: str):
+    """"pct:6" -> 6.0 · "hora:10:30" -> "HOUR:10:30" · "tiempo:30" -> "TIME:30"
+
+    Devuelve el `distance_pct` con la forma EXACTA que espera el motor (ver
+    `_decode_tp_value` en optimization_service). Una forma mal escrita no da
+    error: el parcial se descarta y la estrategia sale sin el.
+    """
+    tipo, _, valor = str(txt).partition(":")
+    tipo = tipo.strip().lower()
+    valor = valor.strip()
+    if tipo == "hora":
+        return f"HOUR:{valor}"
+    if tipo == "tiempo":
+        return f"TIME:{int(float(valor))}"
+    try:
+        return float(valor)
+    except ValueError:
+        return None
+
+
+def _reparto_capital(n: int) -> list[float]:
+    """A partes iguales, y el ULTIMO se lleva el resto.
+
+    El motor exige que los parciales sumen exactamente 100 % — si no, o deja
+    posicion sin cerrar o cierra de mas. Repartir a partes iguales lo garantiza
+    sin meter n dimensiones mas de sobreajuste. Para repartos desiguales estan
+    los genes de ruta `partial_take_profits.i.capital_pct`, que se usan cuando
+    NO se toca la estructura.
+    """
+    if n <= 0:
+        return []
+    base = round(100.0 / n, 2)
+    reparto = [base] * n
+    reparto[-1] = round(100.0 - base * (n - 1), 2)
+    return reparto
+
+
+def _aplicar_parciales(base: dict, vals: dict, gs: dict) -> bool:
+    """Reconstruye `partial_take_profits` si hay genes de estructura.
+
+    Devuelve True si ha tocado algo (y entonces las rutas de parciales se
+    ignoran aguas arriba).
+    """
+    id_n = next((gid for gid, g in gs.items()
+                 if g.get("path") == GEN_PARCIALES_N), None)
+    ids_nivel = sorted(
+        ((gid, g) for gid, g in gs.items()
+         if str(g.get("path", "")).startswith(GEN_PARCIAL + ":")),
+        key=lambda kv: int(str(kv[1]["path"]).split(":", 1)[1]))
+    if id_n is None and not ids_nivel:
+        return False
+
+    rm = base.setdefault("risk_management", {})
+    if id_n is not None and vals.get(id_n) is not None:
+        n = max(0, int(round(float(vals[id_n]))))
+    else:
+        n = len(rm.get("partial_take_profits") or [])
+    n = min(n, PARCIALES_MAX, max(1, len(ids_nivel)) if ids_nivel else PARCIALES_MAX)
+
+    niveles = []
+    reparto = _reparto_capital(n)
+    for i in range(n):
+        if i < len(ids_nivel):
+            crudo = vals.get(ids_nivel[i][0])
+        else:
+            crudo = None
+        distancia = _decodifica_parcial(crudo) if crudo is not None else None
+        if distancia is None:
+            # Sin gen para ese hueco se conserva el que ya tenia la estrategia;
+            # y si tampoco lo hay, el nivel no se inventa.
+            previos = rm.get("partial_take_profits") or []
+            if i < len(previos):
+                distancia = previos[i].get("distance_pct")
+            if distancia is None:
+                continue
+        niveles.append({"distance_pct": distancia, "capital_pct": reparto[i]})
+
+    if niveles:
+        # Reajuste por si algun nivel se cayo: los que quedan tienen que sumar
+        # 100, o el motor deja posicion abierta sin objetivo.
+        r = _reparto_capital(len(niveles))
+        for lv, cap in zip(niveles, r):
+            lv["capital_pct"] = cap
+        rm["partial_take_profits"] = niveles
+        rm["take_profit_mode"] = "Partial"
+    else:
+        # CERO parciales es una opcion legitima: es la comparacion contra no
+        # ponerlos. En «Full» el motor ignora la lista y manda `take_profit`.
+        rm["partial_take_profits"] = []
+        rm["take_profit_mode"] = "Full"
+    return True
