@@ -218,6 +218,14 @@ def _compute_dataset_pairs(filters: dict):
 
     if not pairs_df.empty:
         pairs_df = pairs_df.drop_duplicates(subset=["ticker", "date"])
+    # Fuera warrants y compania, con el mismo criterio que el universo del
+    # backtest (data_service._filtrar_tipo_instrumento). AQUI y no en la SQL
+    # para que la regla viva en UN solo sitio: si algun dia cambian los tipos
+    # permitidos, no hay una segunda copia que se quede atras. Ademas hace que
+    # el numero de dias de la vista previa sea el que el backtest recorre de
+    # verdad — antes el dataset decia N y la corrida operaba menos.
+    from app.services.data_service import _filtrar_tipo_instrumento
+    pairs_df = _filtrar_tipo_instrumento(pairs_df)
     return pairs_df
 
 

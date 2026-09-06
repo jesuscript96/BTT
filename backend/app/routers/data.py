@@ -218,7 +218,15 @@ def filter_daily_metrics(filters: FilterRequest):
         query += " ORDER BY CAST(timestamp AS VARCHAR)[:10] DESC"
         
         df = con.execute(query, params).fetch_df()
-        
+
+        # Fuera warrants, rights, units, ETFs y preferentes: el buscador enseña
+        # el mismo universo que opera el backtest (Jaume, 6-sep-2026 — «no voy a
+        # operar nunca un warrant»). Va AQUI, antes de las stats y de la serie
+        # agregada, para que los tres numeros cuadren entre si. La consulta no
+        # lleva LIMIT, asi que filtrar sobre el resultado es exacto.
+        from app.services.data_service import _filtrar_tipo_instrumento
+        df = _filtrar_tipo_instrumento(df)
+
         # Convert date to string for JSON output
         if not df.empty:
             df['date'] = df['date'].astype(str)

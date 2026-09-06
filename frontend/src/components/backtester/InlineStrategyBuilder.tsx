@@ -2017,11 +2017,18 @@ export default function InlineStrategyBuilder({
                 <div
                   key={session.id}
                   onClick={() => {
-                    setLocalMarketSessions(prev =>
-                      prev.includes(session.id)
-                        ? prev.filter(s => s !== session.id)
-                        : [...prev, session.id]
-                    );
+                    setLocalMarketSessions(prev => {
+                      if (prev.includes(session.id)) {
+                        return prev.filter(s => s !== session.id);
+                      }
+                      // «Horas personalizadas» es EXCLUYENTE con las tres
+                      // preajustadas. El motor hace la UNIÓN de todo lo
+                      // marcado, así que RTH + Personalizada 04:00-12:00 corría
+                      // de 04:00 a 16:00: la interfaz decía una cosa y el
+                      // backtest hacía otra, sin ningún aviso (Jaume, 6-sep-2026).
+                      if (session.id === "custom") return ["custom"];
+                      return [...prev.filter(s => s !== "custom"), session.id];
+                    });
                   }}
                   style={{
                     backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',

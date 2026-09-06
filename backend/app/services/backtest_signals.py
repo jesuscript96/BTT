@@ -30,7 +30,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_CO
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, translate_strategy_native, get_lowest_timeframe_mins
+from app.services.strategy_engine import (
+    translate_strategy, translate_strategy_native, get_lowest_timeframe_mins,
+    apply_entry_fill_window,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +106,7 @@ def _compute_signals_for_pair(
     custom_end_time,
     swing_active,
     pair_arrays=None,
+    look_ahead_prevention: bool = True,
 ):
     """Devuelve el contrato de senales (dict de arrays numpy) o None si el par no
     produce entradas. Optimizado N1e+N2a: timestamps parseados una vez, fast path
@@ -356,6 +360,26 @@ def _compute_signals_for_pair(
             except (ValueError, TypeError):
                 pass
 
+    # --- Ventana de entrada: también en la vela de RELLENO ---
+    # AQUI y no antes: es DESPUES del recorte de sesion y del candle_delay,
+    # el unico espacio de indices donde `i + 1` es la vela en la que el
+    # simulador compra de verdad. Ver apply_entry_fill_window.
+    if compiled_strategy:
+        _tw = compiled_strategy.get("entry_time_windows") or []
+        if _tw:
+            entries_arr = apply_entry_fill_window(
+                entries_arr, minutes_np[session_mask_np], _tw,
+                look_ahead_prevention=look_ahead_prevention,
+            )
+            if sig_pyramid_levels:
+                # Un anyadido es una entrada: mismo criterio que la de apertura.
+                sig_pyramid_levels = [
+                    {**lv, "signals": apply_entry_fill_window(
+                        lv["signals"], minutes_np[session_mask_np], _tw,
+                        look_ahead_prevention=look_ahead_prevention)}
+                    for lv in sig_pyramid_levels
+                ]
+
     if not np.any(entries_arr):
         return None
 
@@ -507,6 +531,7 @@ def _signal_chunk(idx_list):
                 ctx["strategy_def"], ctx["compiled_strategy"],
                 ctx["market_sessions"], ctx["custom_start_time"],
                 ctx["custom_end_time"], ctx["swing_active"],
+                look_ahead_prevention=ctx.get("look_ahead_prevention", True),
             )
         except Exception as e:
             logger.warning(f"[PARALLEL] signal gen failed {ticker} {date}: {e}")
@@ -588,6 +613,7 @@ def _signal_chunk_data(pairs_data):
                 ctx["strategy_def"], ctx["compiled_strategy"],
                 ctx["market_sessions"], ctx["custom_start_time"],
                 ctx["custom_end_time"], ctx["swing_active"],
+                look_ahead_prevention=ctx.get("look_ahead_prevention", True),
             )
         except Exception as e:
             logger.warning(f"[PIPELINE] signal gen failed {ticker} {date}: {e}")
@@ -737,6 +763,7 @@ def _signal_chunk_slab(chunk):
                 ctx["strategy_def"], ctx["compiled_strategy"],
                 ctx["market_sessions"], ctx["custom_start_time"],
                 ctx["custom_end_time"], ctx["swing_active"],
+                look_ahead_prevention=ctx.get("look_ahead_prevention", True),
                 pair_arrays=arrs,
             )
         except Exception as e:
@@ -772,6 +799,7 @@ def run_slab_signals(items_iter, ctx, n_workers, progress_callback=None,
                     ctx["strategy_def"], ctx["compiled_strategy"],
                     ctx["market_sessions"], ctx["custom_start_time"],
                     ctx["custom_end_time"], ctx["swing_active"],
+                look_ahead_prevention=ctx.get("look_ahead_prevention", True),
                     pair_arrays=arrs,
                 )
             except Exception as e:

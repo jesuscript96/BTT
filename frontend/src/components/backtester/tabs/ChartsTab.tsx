@@ -29,6 +29,7 @@ import { runWhatIf } from "@/lib/api_backtester";
 import RollingEVChart from "@/components/backtester/RollingEVChart";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
+import EntryWindowSweepChart from "@/components/backtester/EntryWindowSweepChart";
 import { Zap, Shield, Loader2 } from "lucide-react";
 
 interface ChartsTabProps {
@@ -43,6 +44,11 @@ interface ChartsTabProps {
   isDarkMode?: boolean;
   viewMode?: "charts" | "whatif";
   riskType?: string;
+  // Para el barrido de la ventana de entrada (lanza backtests nuevos).
+  strategyId?: string;
+  strategyDefinition?: Record<string, any>;
+  datasetId?: string;
+  backtestParams?: Record<string, unknown>;
 }
 
 const WEEKDAY_NAMES = ["Lun", "Mar", "Mie", "Jue", "Vie"];
@@ -108,7 +114,17 @@ export default function ChartsTab({
   isDarkMode = false,
   viewMode = "charts",
   riskType = "FIXED",
+  strategyId = "",
+  strategyDefinition,
+  datasetId = "",
+  backtestParams = {},
 }: ChartsTabProps) {
+
+  // «EV por Tiempo» tiene dos lecturas distintas y hasta el 6-sep-2026 solo
+  // existía la primera: (a) los trades que HUBO agrupados por su hora de
+  // entrada, y (b) qué EV daría cada franja si el límite horario de entrada
+  // fuese otro — que exige lanzar un backtest por franja.
+  const [evTimeVista, setEvTimeVista] = useState<"trades" | "barrido">("trades");
 
   const gridColor = "#2C2F33";
   const tickColor = "#ffffff";
@@ -787,15 +803,39 @@ export default function ChartsTab({
 
         {/* EV por Tiempo (30m) */}
         <div className="flex flex-col h-full" style={{ borderRight: '1px solid var(--border)' }}>
-          <div className="px-3 py-2 flex items-center">
+          <div className="px-3 py-2 flex items-center gap-2">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-8 inline-flex items-center gap-1">
-              EV por Tiempo (30m)
+              EV por Tiempo
               <InfoTooltip
                 position="left"
-                text="Esperanza Matemática (EV) promedio agrupada por la hora de entrada del trade (intervalos de 30 minutos). Sirve para identificar en qué franjas horarias las operaciones son rentables (barras verdes) o perdedoras (barras rojas) en promedio."
+                text="<b>Trades:</b> Esperanza Matemática (EV) promedio de los trades que hubo, agrupados por su hora de entrada (intervalos de 30 minutos).<br/><br/><b>Barrido:</b> lanza un backtest por cada franja horaria y compara su EV. Responde a «¿en qué franja debería dejar entrar?», que el modo Trades no puede contestar: si la estrategia tiene un límite horario de entrada, ahí no hay trades fuera de él."
               />
             </span>
+            <div className="ml-auto flex bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[20px] p-[2px] mr-1">
+              {([["trades", "Trades"], ["barrido", "Barrido"]] as const).map(([id, txt]) => (
+                <button
+                  key={id}
+                  onClick={() => setEvTimeVista(id)}
+                  className={`px-2 text-[9px] font-mono rounded-sm transition-colors ${
+                    evTimeVista === id
+                      ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
+                      : "text-[var(--color-ec-text-secondary)]"
+                  }`}
+                >
+                  {txt}
+                </button>
+              ))}
+            </div>
           </div>
+          {evTimeVista === "barrido" ? (
+            <EntryWindowSweepChart
+              strategyId={strategyId}
+              strategyDefinition={strategyDefinition}
+              datasetId={datasetId}
+              backtestParams={backtestParams}
+              isDarkMode={isDarkMode}
+            />
+          ) : (
           <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={evByTime30Min} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
@@ -822,6 +862,7 @@ export default function ChartsTab({
               </BarChart>
             </ResponsiveContainer>
           </div>
+          )}
         </div>
 
         {/* EV por Día */}

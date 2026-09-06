@@ -487,6 +487,10 @@ export default function ResultsTabs({
               isDarkMode={isDarkMode}
               viewMode="charts"
               riskType={backtestParams?.risk_type as string}
+              strategyId={strategyId}
+              strategyDefinition={strategyDefinition}
+              datasetId={datasetId}
+              backtestParams={backtestParams}
             />
             )}
           </div>

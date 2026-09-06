@@ -2694,3 +2694,154 @@ golpe y gasta un gen en algo que no añade ninguna decisión. Corregido.
    hay que ponerla siempre. Y con `min_trades` a 1.000 los individuos daban
    fitness 0 con 729 trades: un suelo por encima de lo que el dataset da deja al
    genético sin gradiente, todo a cero y cruzando al azar.
+
+---
+
+## 2026-09-06 — Sesión personalizada, ventana de entrada y barrido por franjas
+
+Reportado por Jaume sobre `RTH prueba 1`: «le pongo sesión personalizada y horas
+de entrada y no me hace caso — salen trades a las 15:30 y barras de EV hasta las
+13:30». Diagnosticado sobre la corrida real guardada (2.688 trades, 11:46).
+
+### 1. La sesión personalizada NO se ignoraba: se SUMABA
+
+La definición tenía `market_sessions: ['rth', 'custom']` con custom 04:00-12:00.
+El motor hace la **unión** de todas las sesiones marcadas
+(`_get_market_sessions_mask`, `mask |= ...`), así que la sesión efectiva era
+04:00-16:00. De ahí los 1.077 cierres en la hora de las 15: son EOD en la última
+vela de RTH.
+
+No era un bug del motor sino del selector: cuatro casillas independientes en las
+que «Horas personalizadas» convivía con «Regular Hours» sin que nada avisara.
+**Ahora «Horas personalizadas» es EXCLUYENTE** con pre/rth/post en
+`InlineStrategyBuilder`. Y para las estrategias ya guardadas con las dos
+marcadas, el resumen de `BacktestPanel` pinta un aviso rojo con la sesión REAL
+(«se suman: 04:00-16:00»), porque hasta ahora leía «Personalizado (04:00-12:00)»
+mientras el backtest corría hasta las 16:00.
+
+### 2. BUG DEL MOTOR: la ventana de entrada no miraba la vela de RELLENO
+
+`entry_time_windows` se aplicaba a la vela de la **señal**, pero con
+`look_ahead_prevention` el simulador compra en la apertura de la vela
+**siguiente** (`eff_entry_idx = i + 1`, `portfolio_sim`). Nadie comprobaba el
+reloj ahí.
+
+En un ticker líquido eso es un minuto de desfase. En los **warrants con velas
+dispersas** —una vela por minuto NEGOCIADO, no por minuto de reloj— la "vela
+siguiente" a las 11:29 podía ser la de las 13:45. Con ventana 09:30-11:30 la
+corrida tenía 41 entradas en el cubo de las 11:30 (casi todas las 11:31) y 5
+sueltas a las 12:11, 12:30, 13:01 y 13:45. Ninguna daba error ni salía en ningún
+log: el patrón de `btt-bugs-que-no-dan-error`.
+
+Corregido con `strategy_engine.apply_entry_fill_window`, llamada **después** del
+recorte de sesión y del `candle_delay` (el único espacio de índices en el que
+`i + 1` es de verdad la vela de compra), en los dos sitios que generan señales:
+`backtest_service` (secuencial) y `backtest_signals` (paralelo + slab). Se
+aplica también a las pirámides, por la misma regla de 2026-09-03: un añadido es
+una entrada.
+
+**Ventana ESTRICTA por decisión de Jaume:** si el límite está en 11:30 y la
+señal salta en la vela de 11:30, la compra caería en la de 11:31 y NO se coge.
+Esto retira también las entradas de 11:31. Impacto en PnL de aquella corrida:
+1,6 $ sobre 354 $ — corregirlo no cambia la estrategia, cambia que el gráfico
+deje de mentir sobre a qué hora se entra. **Las corridas anteriores al 6-sep no
+son comparables con las nuevas.**
+
+De paso, las tres copias del bucle que parseaba `from_time`/`to_time` (legacy,
+nativo N2a y la nueva) se unificaron en `build_entry_time_mask`.
+
+### 3. Los límites horarios ya se pueden OPTIMIZAR
+
+`entry_logic.entry_time_windows.N.from_time` / `.to_time` no aparecían en el
+optimizador 3D: los valores son texto («09:30»), `float()` revienta y `_add` los
+descartaba sin decir nada. Ahora se extraen como parámetros `time_of_day` (se
+barren en minutos desde medianoche, ±2 h recortado a 04:00-20:00, paso 5) y al
+escribir cada punto se devuelven como «HH:MM» — `_needs_hhmm_reencode` amplía lo
+que antes solo hacía el take profit por hora. El frontend no necesitó cambios:
+`unit === "time_of_day"` ya pintaba selectores de hora.
+
+### 4. EV barriendo la ventana de entrada (gráfico nuevo)
+
+El gráfico «EV por Tiempo» agrupa los trades QUE HUBO por su hora de entrada; si
+hay límite horario, fuera de él no hay nada que ver. Se añade un conmutador
+**Trades / Barrido**: el segundo lanza un backtest por franja (09:30-10:00,
+10:00-10:30…) y compara el EV de cada una — `EntryWindowSweepChart`.
+
+Va por el mismo motor que el optimizador, con un añadido general a `ParamConfig`:
+**`linked_paths` / `linked_offsets`**, un eje que escribe además en otras rutas
+sumándoles un desplazamiento. Así la ventana se mueve DE UNA PIEZA con una sola
+dimensión de rejilla: N corridas, no N². Sin esas claves el comportamiento de un
+eje es exactamente el de siempre.
+
+También se hizo **recursiva la limpieza de NaN** del resultado: solo se limpiaba
+la rejilla de 2 dimensiones, y con 1 eje los `NaN` salían crudos — `NaN` no es
+JSON válido y el navegador reventaba al parsear, sin ningún error en el backend.
+
+### 5. MEDIDO: el 29 % de los trades son WARRANTS, y pierden
+
+Los tickers de la fuga (ONMDW, ISPOW, GMBLW, RVSNW…) son warrants. Cruzando los
+2.688 trades contra `massive.tickers`:
+
+| tipo | trades | % | PnL |
+|---|---|---|---|
+| CS | 1.748 | 65,0 % | +426,79 |
+| **WARRANT** | **776** | **28,9 %** | **−62,14** |
+| ADRC | 119 | 4,4 % | +6,04 |
+| RIGHT / ETF / UNIT / PFD / ETS | 32 | 1,2 % | −12,14 |
+| sin referencia | 13 | 0,5 % | −4,09 |
+
+El 31,6 % de los trades NO son acción común, y entre todos restan ~77 $ de un
+resultado de 354 $. `daily_metrics` no lleva columna de tipo de instrumento, por
+eso entran; pero la vista `massive.tickers` (ticker, name, type) YA está
+registrada en el DuckDB del backend (`database.py`) y en el lago local, así que
+el filtro es viable sin infraestructura nueva. **Pendiente de decidir con Jaume**
+si va como filtro de universo opt-in o como default, y qué se hace con los
+tickers sin referencia. El screener en vivo y `bot_alerts_radar` ya filtran por
+`TIPOS = ("CS", "ADRC")`.
+
+### 5b. IMPLEMENTADO el mismo día: filtro de tipo de instrumento
+
+Decisión de Jaume: **por defecto para todas las estrategias**, tipos permitidos
+`CS` + `ADRC` (los mismos que el screener en vivo y `bot_alerts_radar`), y los
+tickers **sin fila en la referencia se QUEDAN** — la referencia es de hoy y un
+ticker legítimo deslistado en 2024 no tiene fila; excluirlos sería un sesgo de
+supervivencia al revés.
+
+`data_service._filtrar_tipo_instrumento`, aplicado en `fetch_qualifying_data` —
+el envoltorio cacheado — en sus **tres** salidas (acierto de Redis, acierto de
+disco y cálculo). Va DESPUÉS de cachear a propósito: la caché guarda el universo
+crudo, así que la escotilla `BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES=1` sigue
+funcionando sin invalidarla y una caché escrita antes de hoy también se filtra.
+
+La referencia se lee una vez y se cachea en proceso, con tres intentos:
+`massive.tickers` → `tickers` → el parquet del lago con una conexión DuckDB **en
+memoria propia** (si el fallo es que el lago está abierto por otro proceso,
+`get_db_connection` fallaría también en el respaldo). **Si no se puede leer, NO
+se filtra** y se loguea en ERROR: quedarse sin referencia no puede vaciar el
+universo en silencio.
+
+⚠️ Esto cambia el resultado de TODAS las corridas anteriores al 2026-09-06.
+
+### 5c. El filtro llega también al buscador y a los datasets
+
+Jaume: «que los oculten porque no voy a operar nunca un warrant». La MISMA
+función (`_filtrar_tipo_instrumento`) se aplica ahora en tres sitios, no en tres
+copias de la regla:
+
+1. `fetch_qualifying_data` — el universo del backtest.
+2. `routers/data.py` `/api/data/filter` — el buscador de tickers. Va **antes**
+   de `get_dashboard_stats` y de la serie agregada, para que la tabla y las
+   métricas de arriba cuadren entre sí. Esa consulta no lleva `LIMIT`, así que
+   filtrar sobre el resultado es exacto.
+3. `routers/query.py` `_compute_dataset_pairs` — los pares (ticker, día) de un
+   dataset, tras el `drop_duplicates`.
+
+**Lo que NO se tocó, a propósito:** `/api/data/tickers` (el autocompletado de la
+referencia) sigue devolviendo todo — se usa también para mirar un ticker suelto
+en Análisis, donde ver un warrant no molesta.
+
+⚠️ **Los datasets ya creados guardan sus pares en `dataset_pairs` y siguen
+contando los días de warrant.** El backtest ya no los opera (lo filtra el
+qualifying), pero el número de días del selector no bajará hasta que el dataset
+se vuelva a crear. El genético no se ve afectado: usa `qualifying.feather`, que
+sale de `fetch_qualifying_data` (ver el comentario de `_escribir_qualifying`).

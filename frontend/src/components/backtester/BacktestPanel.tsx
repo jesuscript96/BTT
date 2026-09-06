@@ -993,6 +993,27 @@ export default function BacktestPanel({
 
                     {(() => {
                       const sessions = stratDef?.market_sessions || ["rth"];
+                      // El motor hace la UNIÓN de todas las sesiones marcadas.
+                      // Con «custom» + una preajustada eso da un horario que no
+                      // es el que se lee arriba: RTH + 04:00-12:00 corre hasta
+                      // las 16:00. Desde el 6-sep-2026 la interfaz no deja
+                      // marcar las dos, pero las estrategias guardadas antes
+                      // siguen ahí y hay que decirles la verdad.
+                      const PRESETS: Record<string, [string, string]> = {
+                        pre: ['04:00', '09:30'], rth: ['09:30', '16:00'], post: ['16:00', '20:00'],
+                      };
+                      const mezcla = sessions.includes('custom') && sessions.some((s: string) => s in PRESETS);
+                      let efectiva = '';
+                      if (mezcla) {
+                        const rangos: [string, string][] = sessions.map((s: string) =>
+                          s === 'custom'
+                            ? [stratDef?.custom_start_time || '09:30', stratDef?.custom_end_time || '16:00'] as [string, string]
+                            : PRESETS[s]
+                        ).filter(Boolean);
+                        const desde = rangos.map(r => r[0]).sort()[0];
+                        const hasta = rangos.map(r => r[1]).sort().slice(-1)[0];
+                        efectiva = `${desde} - ${hasta}`;
+                      }
                       return (
                         <div>
                           <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>SESIÓN: </span>
@@ -1005,6 +1026,12 @@ export default function BacktestPanel({
                               return s;
                             }).join(' + ')}
                           </span>
+                          {mezcla && (
+                            <div style={{ color: 'var(--color-ec-loss)', fontWeight: 700, marginTop: 2 }}>
+                              ⚠️ Se SUMAN: la sesión real del backtest es {efectiva} ET.
+                              Desmarca una de las dos en la estrategia.
+                            </div>
+                          )}
                         </div>
                       );
                     })()}

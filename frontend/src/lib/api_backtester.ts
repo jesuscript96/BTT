@@ -544,6 +544,13 @@ export interface OptimizationParamConfig {
   min: number;
   max: number;
   steps: number;
+  /** Valores exactos del eje. Si va, manda sobre min/max/steps. */
+  values?: number[];
+  /** Ejes ENLAZADOS: el mismo punto se escribe también en estas rutas,
+   *  sumándoles `linked_offsets`. Es lo que mueve la ventana horaria de
+   *  entrada DE UNA PIEZA (09:30-10:00, 10:00-10:30, …) con un solo eje. */
+  linked_paths?: string[];
+  linked_offsets?: number[];
 }
 
 export interface PlateauAnalysis {

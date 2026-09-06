@@ -334,12 +334,29 @@ def _is_take_profit_path(path: str) -> bool:
     return "take_profit" in (path or "")
 
 
+def _is_entry_window_path(path: str) -> bool:
+    """`entry_logic.entry_time_windows.N.from_time` / `.to_time`.
+
+    Los limites horarios de ejecucion de las variables de entrada se guardan
+    como texto "HH:MM". El barrido mueve minutos desde medianoche y al escribir
+    el punto hay que devolver el texto — igual que el take profit por hora.
+    """
+    p = path or ""
+    return "entry_time_windows" in p and p.rsplit(".", 1)[-1] in ("from_time", "to_time")
+
+
+def _needs_hhmm_reencode(path: str) -> bool:
+    return _is_take_profit_path(path) or _is_entry_window_path(path)
+
+
 def _param_unit_from_def(base_def: dict, path: str) -> str | None:
     """'minutes' | 'time_of_day' | None, segun la forma que tiene HOY el valor.
 
     Es lo que permite barrer numeros y devolver texto al escribir, sin que el
     frontend tenga que mandar metadatos nuevos.
     """
+    if _is_entry_window_path(path):
+        return "time_of_day"
     if not _is_take_profit_path(path):
         return None
     raw = _get_nested_value(base_def or {}, path)
@@ -418,6 +435,25 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         root = logic.get("root_condition") or {}
         _extract_from_condition_group(root, logic_label, f"{logic_key}.root_condition",
                                       params, _seen, _add)
+
+    # --- Limites horarios de ejecucion de variables de entrada ---
+    # (`entry_logic.entry_time_windows`). Se barren en MINUTOS DESDE MEDIANOCHE
+    # y se reescriben como "HH:MM" (_needs_hhmm_reencode), igual que el take
+    # profit por hora. Antes no aparecian en la lista: `float("09:30")` revienta
+    # y `_add` los descartaba sin decir nada.
+    for _wi, _w in enumerate((strategy_def.get("entry_logic") or {}).get("entry_time_windows") or []):
+        for _campo, _etiqueta in (("from_time", "desde"), ("to_time", "hasta")):
+            _mins = _hhmm_to_minutes((_w or {}).get(_campo))
+            if _mins is None:
+                continue
+            _n = f" {_wi + 1}" if _wi else ""
+            _add(f"entry.window.{_wi}.{_campo}",
+                 f"Ventana de entrada{_n} ({_etiqueta})",
+                 _mins, "Entry",
+                 f"entry_logic.entry_time_windows.{_wi}.{_campo}",
+                 min_val=max(_SESSION_MIN_MINUTES, _mins - 120),
+                 max_val=min(_SESSION_MAX_MINUTES, _mins + 120),
+                 step=5, unit="time_of_day")
 
     # --- Risk management ---
     rm = strategy_def.get("risk_management") or {}
@@ -681,7 +717,7 @@ def _set_nested_value(obj, path: str, value):
     # hora se guardan como texto ("15:30", "HOUR:15:30", "TIME:30"). Se relee
     # lo que habia y se devuelve con la misma forma. Un valor original numerico
     # pasa de largo, asi que esto no toca ningun parametro de los de siempre.
-    reencode = _is_take_profit_path(path)
+    reencode = _needs_hhmm_reencode(path)
     if isinstance(current, list):
         idx = int(last_key)
         anterior = current[idx] if 0 <= idx < len(current) else None
@@ -690,6 +726,26 @@ def _set_nested_value(obj, path: str, value):
         current[last_key] = (
             _encode_tp_value(current.get(last_key), value) if reencode else value
         )
+
+
+def apply_point_to_def(modified_def: dict, param_configs: list, point) -> None:
+    """Escribe un punto de la rejilla en la definicion, EN SITIO.
+
+    Ejes ENLAZADOS (`linked_paths` / `linked_offsets`, 2026-09-06): un eje
+    normal escribe un numero en `path`; uno enlazado escribe ademas en otras
+    rutas sumandoles su desplazamiento. Es lo que mueve la ventana de entrada
+    DE UNA PIEZA (09:30-10:00, 10:00-10:30, ...) con una sola dimension de
+    rejilla — N corridas en vez de N**2. Sin esas claves el comportamiento es
+    exactamente el de siempre.
+    """
+    for dim, val in enumerate(point):
+        pc = param_configs[dim]
+        _set_nested_value(modified_def, pc["path"], val)
+        linked = pc.get("linked_paths") or []
+        offsets = pc.get("linked_offsets") or []
+        for j, ruta in enumerate(linked):
+            off = float(offsets[j]) if j < len(offsets) else 0.0
+            _set_nested_value(modified_def, ruta, val + off)
 
 
 def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
@@ -701,8 +757,7 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
     backtest_params = ctx["backtest_params"]
 
     modified_def = copy.deepcopy(ctx["base_def"])
-    for dim, val in enumerate(point):
-        _set_nested_value(modified_def, param_configs[dim]["path"], val)
+    apply_point_to_def(modified_def, param_configs, point)
 
     # If optimizing preconditions, we must re-evaluate them for this point
     if ctx["opt_preconds"]:
@@ -1166,6 +1221,14 @@ def run_optimization_grid(
 
     # Replace NaN with None for JSON serialization
     def clean(v):
+        # Recursivo desde el 2026-09-06: antes solo se limpiaba la rejilla de 2
+        # dimensiones. Con 1 eje (el barrido de la ventana de entrada) los NaN
+        # salian crudos y `NaN` no es JSON valido — el navegador reventaba al
+        # parsear, sin que el backend diera ningun error.
+        if isinstance(v, list):
+            return [clean(x) for x in v]
+        if isinstance(v, dict):
+            return {k: clean(x) for k, x in v.items()}
         if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
             return None
         return v
@@ -1178,11 +1241,10 @@ def run_optimization_grid(
              "unit": _param_unit_from_def(base_def, pc.get("path", ""))}
             for i, pc in enumerate(param_configs)
         ],
-        "grid": [[clean(v) for v in row] for row in results_grid.tolist()]
-                 if n_dims == 2 else results_grid.tolist(),
+        "grid": clean(results_grid.tolist()),
         "metric": metric,
         "metric_label": metric,
-        "details": [d if d else {} for d in details_flat],
+        "details": [clean(d) if d else {} for d in details_flat],
         "shape": list(shape),
         "plateau_analysis": plateau,
         "plateau_analyses": plateau_analyses,

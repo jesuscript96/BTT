@@ -17,7 +17,10 @@ import time
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
+from app.services.strategy_engine import (
+    translate_strategy, _parse_risk_management, compile_strategy_def,
+    get_lowest_timeframe_mins, apply_entry_fill_window,
+)
 # Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
 # especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
 from app.services.sim_dispatch import simulate
@@ -890,6 +893,31 @@ def run_backtest(
                                 exits_arr = np.zeros_like(exits_arr)
                 except (ValueError, TypeError):
                     pass
+
+        # --- Ventana de entrada: tambien en la vela de RELLENO ---
+        # AQUI y no antes, por el mismo motivo que el bloque de abajo: es
+        # DESPUES del recorte de sesion y del candle_delay, el unico espacio de
+        # indices donde `i + 1` es la vela en la que el simulador compra de
+        # verdad. Ver strategy_engine.apply_entry_fill_window.
+        if compiled_strategy:
+            _tw = compiled_strategy.get("entry_time_windows") or []
+            if _tw:
+                _mins_trim = (
+                    pd.to_datetime(mini_df["timestamp"]).dt.hour * 60
+                    + pd.to_datetime(mini_df["timestamp"]).dt.minute
+                ).values
+                entries_arr = apply_entry_fill_window(
+                    entries_arr, _mins_trim, _tw,
+                    look_ahead_prevention=look_ahead_prevention,
+                )
+                if sig_pyramid_levels:
+                    # Un anyadido es una entrada: mismo criterio.
+                    sig_pyramid_levels = [
+                        {**lv, "signals": apply_entry_fill_window(
+                            lv["signals"], _mins_trim, _tw,
+                            look_ahead_prevention=look_ahead_prevention)}
+                        for lv in sig_pyramid_levels
+                    ]
 
         # ── Modelos avanzados ─────────────────────────────────────────────
         # AQUI y no antes, y la posicion es parte de la correccion (31-ago,

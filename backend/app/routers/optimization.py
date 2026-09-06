@@ -36,6 +36,15 @@ class ParamConfig(BaseModel):
     max: float
     steps: int = 10
     values: list[float] | None = None
+    # Barrido de una VENTANA entera (2026-09-06). Un eje normal escribe un
+    # numero en `path`. Con `linked_paths` el mismo punto del barrido escribe
+    # ADEMAS en otras rutas, sumandole el desplazamiento de `linked_offsets`.
+    # Es lo que permite mover la ventana de entrada de una pieza:
+    #   path = ...0.from_time, linked_paths = [...0.to_time],
+    #   linked_offsets = [30]  ->  09:30-10:00, 10:00-10:30, ...
+    # Vacio = eje de siempre, sin cambio de comportamiento.
+    linked_paths: list[str] | None = None
+    linked_offsets: list[float] | None = None
 
 
 class SurfaceRequest(BaseModel):

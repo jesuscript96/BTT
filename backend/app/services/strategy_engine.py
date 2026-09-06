@@ -565,6 +565,87 @@ def _extract_indicator_plan(compiled: dict) -> dict:
     }
 
 
+# ── Ventanas horarias de entrada (`entry_time_windows`) ──────────────────
+
+def build_entry_time_mask(time_windows, minutes) -> np.ndarray | None:
+    """Máscara booleana "esta vela cae dentro de alguna ventana de entrada".
+
+    `minutes` son minutos desde medianoche (hora de Nueva York, que es en la
+    que viven los timestamps del lago). Sin ventanas devuelve None, que aguas
+    arriba significa "no filtres nada" — NO un array de ceros.
+
+    Existía copiada en tres sitios (legacy, nativo y el chequeo de relleno);
+    tenerla aquí es lo que garantiza que los tres decidan igual.
+    """
+    if not time_windows:
+        return None
+    minutes = np.asarray(minutes)
+    mask = np.zeros(len(minutes), dtype=bool)
+    for window in time_windows:
+        from_time = (window or {}).get("from_time", "")
+        to_time = (window or {}).get("to_time", "")
+        if not from_time or not to_time:
+            continue
+        try:
+            from_h, from_m = map(int, str(from_time).split(":"))
+            to_h, to_m = map(int, str(to_time).split(":"))
+            start_mins = from_h * 60 + from_m
+            end_mins = to_h * 60 + to_m
+            mask |= (minutes >= start_mins) & (minutes <= end_mins)
+        except Exception as e:
+            logger.error(f"Error parsing entry time window {window}: {e}")
+            continue
+    return mask
+
+
+def apply_entry_fill_window(entries_arr, minutes, time_windows,
+                            look_ahead_prevention: bool = True) -> np.ndarray:
+    """La ventana de entrada se comprueba TAMBIÉN en la vela de RELLENO.
+
+    EL BUG (2026-09-06, visto sobre 2.688 trades reales). La máscara horaria
+    se aplicaba solo a la vela de la SEÑAL, pero con `look_ahead_prevention`
+    el simulador compra en la apertura de la vela SIGUIENTE
+    (`eff_entry_idx = i + 1`, `portfolio_sim`). En un ticker líquido eso es un
+    minuto de desfase; en un warrant con velas dispersas la "vela siguiente" a
+    las 11:29 puede ser la de las 13:45. Con ventana 09:30-11:30 salían
+    entradas a las 12:11, 13:01 y 13:45 — y ninguna daba error.
+
+    Decisión de producto (Jaume, 2026-09-06): ventana ESTRICTA. Si el límite
+    está en 11:30 y la señal salta en la vela de 11:30, la compra caería en la
+    de 11:31 y por tanto NO se coge. Esto también retira las entradas de
+    11:31, que antes eran mayoría del último cubo.
+
+    Se aplica sobre el frame YA RECORTADO a la sesión y YA desplazado por
+    `candle_delay`: es el único espacio de índices en el que `i + 1` es de
+    verdad la vela en la que compra el simulador.
+
+    Sin `look_ahead_prevention` la compra es en el cierre de la propia vela de
+    la señal, así que la comprobación cae sobre `i` y no sobre `i + 1`.
+    """
+    mask = build_entry_time_mask(time_windows, minutes)
+    if mask is None:
+        return entries_arr
+    entries_arr = np.asarray(entries_arr, dtype=bool)
+    if len(mask) != len(entries_arr):
+        # Longitudes distintas: hay un bug de alineación aguas arriba. NO se
+        # filtra a medias — se avisa fuerte y se deja pasar lo que había, que
+        # es el comportamiento de siempre.
+        logger.error(
+            "[ENTRY_WINDOW] la ventana no cuadra con las señales (%d vs %d): "
+            "no se aplica el filtro de vela de relleno", len(mask), len(entries_arr))
+        return entries_arr
+    if not look_ahead_prevention:
+        return entries_arr & mask
+    fill_ok = np.zeros(len(mask), dtype=bool)
+    fill_ok[:-1] = mask[1:]
+    # Se exigen LAS DOS: la vela de la señal y la de la compra. Solo con la de
+    # la compra, un `candle_delay` que empuje la señal desde fuera de la
+    # ventana hasta justo antes de ella colaría una entrada que nunca se pidió.
+    # La última vela del día queda en False porque no tiene siguiente — el
+    # simulador ya la descartaba por su cuenta (`i < n - 1`).
+    return entries_arr & mask & fill_ok
+
+
 # ── Public API: translate_strategy (legacy path, backward compatible) ────
 
 def translate_strategy(
@@ -600,22 +681,10 @@ def translate_strategy(
         else:
             ts = pd.to_datetime(df["timestamp"])
             minutes_since_midnight = ts.dt.hour * 60 + ts.dt.minute
-        time_mask = pd.Series(False, index=df.index)
-        for window in time_windows:
-            from_time = window.get("from_time", "")
-            to_time = window.get("to_time", "")
-            if not from_time or not to_time:
-                continue
-            try:
-                from_h, from_m = map(int, from_time.split(":"))
-                to_h, to_m = map(int, to_time.split(":"))
-                start_mins = from_h * 60 + from_m
-                end_mins = to_h * 60 + to_m
-                window_mask = (minutes_since_midnight >= start_mins) & (minutes_since_midnight <= end_mins)
-                time_mask = time_mask | window_mask
-            except Exception as e:
-                logger.error(f"Error parsing entry time window {window}: {e}")
-                continue
+        time_mask = pd.Series(
+            build_entry_time_mask(time_windows, minutes_since_midnight),
+            index=df.index,
+        )
         entries = entries & time_mask
         entry_time_mask = time_mask
 
@@ -789,22 +858,7 @@ def translate_strategy_native(
         # a cualquier hora).
         time_windows = compiled.get("entry_time_windows", [])
         if time_windows and entries is not None and minutes_arr is not None:
-            time_mask = np.zeros(n_bars, dtype=bool)
-            for window in time_windows:
-                from_time = window.get("from_time", "")
-                to_time = window.get("to_time", "")
-                if not from_time or not to_time:
-                    continue
-                try:
-                    from_h, from_m = map(int, from_time.split(":"))
-                    to_h, to_m = map(int, to_time.split(":"))
-                    start_mins = from_h * 60 + from_m
-                    end_mins = to_h * 60 + to_m
-                    time_mask |= (minutes_arr >= start_mins) & (minutes_arr <= end_mins)
-                except Exception as e:
-                    logger.error(f"Error parsing entry time window {window}: {e}")
-                    continue
-            entries = entries & time_mask
+            entries = entries & build_entry_time_mask(time_windows, minutes_arr)
         # Guard de forma: si esto dispara hay un bug de alineación tf->1m (las
         # señales se PIERDEN). Nunca debe pasar tras el gate has_special de
         # _extract_indicator_plan — loguear FUERTE, no tragar en silencio.
