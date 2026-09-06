@@ -236,7 +236,17 @@ def _leer(gen: dict, valor) -> str:
         m = int(round(float(valor))) % 1440
         return f"{m // 60:02d}:{m % 60:02d}"
     if gen.get("opciones"):
-        return str(valor)
+        # Disparador de un parcial: "pct:6" -> "al +6 %". Viaja codificado para
+        # poder ordenarlo como rejilla, pero en la receta se lee en cristiano.
+        txt = str(valor)
+        tipo, _, resto = txt.partition(":")
+        if tipo == "pct" and resto:
+            return f"al +{resto} %"
+        if tipo == "hora" and resto:
+            return f"a las {resto}"
+        if tipo == "tiempo" and resto:
+            return f"a los {resto} min"
+        return txt
     v = float(valor)
     return str(int(v)) if abs(v - round(v)) < 1e-9 else f"{v:g}"
 

@@ -12,7 +12,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { color, font, hairline } from "@/components/ui/tokens";
 import { Table, Th, Td, Tr } from "@/components/ui";
 import { Help } from "@/components/robustez/help";
-import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
+import {
+  PARAMETROS_UNIVERSO, DESCRIPCIONES_UNIVERSO, SECCIONES_UNIVERSO,
+  construirFiltros, leeCondicion,
+  type CondicionUniverso, type SeccionUniverso, type OperadorUniverso,
+} from "@/lib/universoFiltros";
 import {
   borrarCorrida,
   crearCorrida,
@@ -285,8 +289,10 @@ export default function GeneticoPage() {
   const [genesSel, setGenesSel] = useState<Record<string, { on: boolean; min: number; max: number; step: number }>>({});
   const [agregacion, setAgregacion] = useState("valor");
   const [trozos, setTrozos] = useState(4);
-  const [fechaIni, setFechaIni] = useState("2019-01-01");
-  const [fechaFin, setFechaFin] = useState("2024-12-31");
+  /* Las fechas NO tienen control propio: son el «rango de fechas global» del
+     cuadro de universo. Tener dos sitios donde poner el periodo (aquí y allí)
+     era pedir que se contradijeran — Jaume: «no te compliques, ese rango de
+     fechas global es el IS». */
   const [sesgo, setSesgo] = useState<"short" | "long">("short");
   const [sesion, setSesion] = useState<"rth" | "pre" | "custom">("rth");
   const [horaIni, setHoraIni] = useState("04:00");
@@ -416,9 +422,40 @@ export default function GeneticoPage() {
   const [universo, setUniverso] = useState<UniversoResp | null>(null);
   const [calculandoUniverso, setCalculandoUniverso] = useState(false);
   /* Los filtros de universo, con la MISMA forma y las MISMAS opciones que al
-     crear un dataset en el backtester. No se traduce nada: viajan tal cual. */
-  const [filtrosUniverso, setFiltrosUniverso] = useState<any>(null);
-  const [abriendoUniverso, setAbriendoUniverso] = useState(false);
+     crear un dataset en el backtester. No se traduce nada: viajan tal cual.
+     Su rango de fechas ES el periodo IS de la corrida. */
+  const [condUniverso, setCondUniverso] = useState<CondicionUniverso[]>([]);
+  const [uDesde, setUDesde] = useState("2019-01-01");
+  const [uHasta, setUHasta] = useState("2024-12-31");
+  /* La fila para añadir una condición. */
+  const [uSec, setUSec] = useState<SeccionUniverso>("gap_day");
+  const [uParam, setUParam] = useState(PARAMETROS_UNIVERSO[4].key);   // Gap %
+  const [uOp, setUOp] = useState<OperadorUniverso>(">=");
+  const [uVal1, setUVal1] = useState(50);
+  const [uVal2, setUVal2] = useState(0);
+
+  const filtrosUniverso = useMemo(
+    () => (condUniverso.length ? construirFiltros(condUniverso, uDesde, uHasta) : null),
+    [condUniverso, uDesde, uHasta]);
+  const fechaIni = uDesde;
+  const fechaFin = uHasta;
+
+  /* Cuántos parciales como MUCHO va a haber. Manda sobre qué filas de
+     «Parcial N» tienen sentido: marcar el disparador del 4º cuando el rango
+     llega a 2 no haría nada — el gen viajaría y `a_definicion` lo ignoraría,
+     que es justo el tipo de ajuste fantasma que no da error. */
+  const maxParciales = useMemo(() => {
+    const gen = bloquesGenes.flatMap((b) => b.genes).find((g) => g.id === "parciales.n");
+    if (!gen) return 0;
+    const sel = genesSel["parciales.n"];
+    return sel?.on ? Number(sel.max) : Number(gen.current_value ?? 0);
+  }, [bloquesGenes, genesSel]);
+
+  /** Índice del gen «parciales.N.nivel», o null si no lo es. */
+  const indiceParcial = (id: string): number | null => {
+    const m = /^parciales\.(\d+)\.nivel$/.exec(id);
+    return m ? Number(m[1]) : null;
+  };
 
   /* Los genes marcados, en el formato que espera el backend. */
   const genesMarcados: GenGenetico[] = useMemo(() => {
@@ -427,13 +464,15 @@ export default function GeneticoPage() {
       for (const g of b.genes) {
         const sel = genesSel[g.id];
         if (!sel?.on) continue;
+        const ip = indiceParcial(g.id);
+        if (ip !== null && ip >= maxParciales) continue;   // fuera del tope
         out.push(g.opciones
           ? { ...g }                                   // categórico: la lista manda
           : { ...g, min: sel.min, max: sel.max, step: sel.step });
       }
     }
     return out;
-  }, [bloquesGenes, genesSel]);
+  }, [bloquesGenes, genesSel, maxParciales]);
 
   /* Cuantas combinaciones hay en el espacio marcado. No es lo que el genetico
      recorre — es la medida de si hace falta un genetico o basta el 3D. */
@@ -480,7 +519,7 @@ export default function GeneticoPage() {
     modo, estrategiaId, genesMarcados, agregacion, trozos]);
 
   useEffect(() => {
-    if (!fechaIni || !fechaFin || !filtrosUniverso?.rules?.length) {
+    if (!fechaIni || !fechaFin || condUniverso.length === 0) {
       setUniverso(null);
       return;
     }
@@ -495,7 +534,7 @@ export default function GeneticoPage() {
     return () => { vivo = false; window.clearTimeout(t); };
     // Solo las claves que cambian el universo: guardas y fechas.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fechaIni, fechaFin, JSON.stringify(filtrosUniverso ?? null)]);
+  }, [fechaIni, fechaFin, JSON.stringify(condUniverso)]);
 
   const estimacion = useMemo(() => {
     const elite = Math.max(1, Math.round(poblacion * 0.05));
@@ -504,8 +543,8 @@ export default function GeneticoPage() {
   }, [poblacion, generaciones]);
 
   const problemas: string[] = [];
-  if (!fechaIni || !fechaFin) problemas.push("pon el rango de fechas (IS desde / hasta)");
-  if (!filtrosUniverso?.rules?.length) problemas.push("define el universo");
+  if (!fechaIni || !fechaFin) problemas.push("pon el periodo IS");
+  if (condUniverso.length === 0) problemas.push("define el universo");
   if (universo?.pares != null && universo.pares > universo.tope) problemas.push("el universo se pasa del tope");
   if (modo === "mejorar") {
     if (!estrategiaId) problemas.push("elige la estrategia que quieres mejorar");
@@ -613,6 +652,18 @@ export default function GeneticoPage() {
                 {b.genes.map((g) => {
                   const sel = genesSel[g.id] || { on: false, min: 0, max: 0, step: 1 };
                   const set = (v: Partial<typeof sel>) => setGenesSel((p) => ({ ...p, [g.id]: { ...sel, ...v } }));
+                  const ip = indiceParcial(g.id);
+                  const fuera = ip !== null && ip >= maxParciales;
+                  if (fuera) {
+                    return (
+                      <div key={g.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, alignItems: "center", padding: "3px 0", opacity: 0.35 }}>
+                        <input type="checkbox" checked={false} disabled style={{ margin: 0 }} />
+                        <span style={{ fontSize: 11, color: color.textMuted }}>
+                          {g.label} <span style={{ fontStyle: "italic" }}>— por encima del máximo de parciales</span>
+                        </span>
+                      </div>
+                    );
+                  }
                   return (
                     <div key={g.id} style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8, alignItems: "center", padding: "3px 0" }}>
                       <input type="checkbox" checked={sel.on} onChange={(e) => set({ on: e.target.checked })} style={{ margin: 0 }} />
@@ -649,18 +700,6 @@ export default function GeneticoPage() {
             )}
           </Sec>
         )}
-
-        <Sec title="Datos" help="Qué ticker-días se usan. El dataset es uno de los tuyos (mismos filtros de universo que en el Backtester). El periodo es el IS: lo que el genético puede ver.">
-          <Row label="Nombre" help="Solo para reconocer la corrida en la lista. Si lo dejas vacío se usa la fecha y hora.">
-            <input style={{ ...control, fontFamily: font.sans }} value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="opcional" />
-          </Row>
-          <Row label="IS desde / hasta" help="Periodo dentro de la muestra. Deja fuera el tramo más reciente (p. ej. 2025→hoy): es tu OOS y solo se usa UNA vez, al final, con los finalistas.">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              <input type="date" style={control} value={fechaIni} onChange={(e) => setFechaIni(e.target.value)} />
-              <input type="date" style={control} value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} />
-            </div>
-          </Row>
-        </Sec>
 
         {modo === "explorar" && (
         <Sec title="Operativa" help="Lo que define tu forma de operar y el genético no toca: lado, sesión y ventana de entradas.">
@@ -779,63 +818,100 @@ export default function GeneticoPage() {
 
         )}
 
-        <Sec title="Universo" help="Qué ticker-días entran. Las MISMAS opciones que al crear un dataset en el Backtester — no hay desplegable de datasets guardados: se eligen aquí. Las guardas de arriba son otra cosa: condiciones de entrada, vela a vela.">
-          {!abriendoUniverso && (
-            <>
-              {filtrosUniverso?.rules?.length ? (
-                <div style={{ fontSize: 11, color: color.textSecondary, lineHeight: 1.7 }}>
-                  {filtrosUniverso.rules.map((r: any, i: number) => (
-                    <div key={i}>
-                      <span style={{ color: color.textMuted }}>{r.metric ?? r.field}</span>{" "}
-                      <span style={{ fontFamily: font.mono, color: color.textHigh }}>
-                        {COMPARADOR_CORTO[r.operator] ?? r.operator} {r.value}
-                      </span>
-                    </div>
-                  ))}
+        <Sec title="Universo" help="Qué ticker-días entran y en qué periodo. Las MISMAS opciones que al crear un dataset en el Backtester — no hay desplegable de datasets guardados: se eligen aquí. El «rango de fechas global» de ahí dentro ES el periodo IS de la corrida. Las guardas de arriba son otra cosa: condiciones de entrada, vela a vela.">
+          <Row label="Nombre" help="Solo para reconocer la corrida en la lista. Si lo dejas vacío se usa la fecha y hora.">
+            <input style={{ ...control, fontFamily: font.sans }} value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="opcional" />
+          </Row>
+          <Row label="Periodo (IS)" help="El tramo que el genético puede ver. Deja fuera lo más reciente: ese es tu OOS y se usa UNA vez, al final, con los finalistas.">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <input type="date" style={control} value={uDesde} onChange={(e) => setUDesde(e.target.value)} />
+              <input type="date" style={control} value={uHasta} onChange={(e) => setUHasta(e.target.value)} />
+            </div>
+          </Row>
+
+          <Row label="Añadir filtro" help="La misma lista de métricas que al crear un dataset en el Backtester: el día del gap, el anterior (GAP-1) y los dos siguientes.">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+              <Sel value={uSec} onChange={(v) => setUSec(v as SeccionUniverso)}
+                options={(Object.keys(SECCIONES_UNIVERSO) as SeccionUniverso[])
+                  .map((k) => ({ value: k, label: SECCIONES_UNIVERSO[k] }))} />
+              <Sel value={uParam} onChange={setUParam}
+                options={PARAMETROS_UNIVERSO.map((p) => ({ value: p.key, label: `${p.label} (${p.unit})` }))} />
+            </div>
+          </Row>
+          <Row label={DESCRIPCIONES_UNIVERSO[uParam] ? " " : ""}>
+            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 6, alignItems: "center" }}>
+              <Sel value={uOp} onChange={(v) => setUOp(v as OperadorUniverso)}
+                options={[
+                  { value: ">=", label: "≥" }, { value: ">", label: ">" },
+                  { value: "<=", label: "≤" }, { value: "<", label: "<" },
+                  { value: "between", label: "entre" },
+                ]} />
+              {uOp === "between" ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                  <Num value={uVal1} onChange={setUVal1} step={0.5} />
+                  <Num value={uVal2} onChange={setUVal2} step={0.5} />
                 </div>
               ) : (
-                <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5 }}>
-                  Sin reglas serían todos los ticker-días del lago (unos 7,4 millones).
-                </div>
+                <Num value={uVal1} onChange={setUVal1} step={0.5} />
               )}
-              <div style={{ paddingTop: 8 }}>
-                <Btn onClick={() => setAbriendoUniverso(true)}>
-                  {filtrosUniverso?.rules?.length ? "Cambiar universo" : "Definir universo"}
-                </Btn>
-              </div>
-              {calculandoUniverso ? (
-                <div style={{ fontSize: 11, color: color.textMuted, paddingTop: 8 }}>Contando ticker-días…</div>
-              ) : universo?.pares != null ? (
-                <div style={{ fontSize: 12, color: color.textSecondary, lineHeight: 1.7, paddingTop: 8 }}>
-                  <span style={{ fontFamily: font.mono, fontSize: 15, color: universo.pares > universo.tope ? color.loss : color.textHigh }}>
-                    {entero(universo.pares)}
-                  </span>{" "}ticker-días
-                  {universo.tickers ? <> · <span style={{ fontFamily: font.mono }}>{entero(universo.tickers)}</span> tickers</> : null}
-                  {universo.primer_dia ? <> · {universo.primer_dia} → {universo.ultimo_dia}</> : null}
-                  {universo.pares > universo.tope && (
-                    <div style={{ color: color.loss, fontSize: 11, marginTop: 4 }}>
-                      Se pasa del tope de {entero(universo.tope)}: con tantos días cada backtest tarda
-                      minutos y la corrida no acabaría. Aprieta alguna regla o acorta el periodo.
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </>
-          )}
-          {abriendoUniverso && (
-            <div style={{ margin: "8px -14px -12px", borderTop: hairline }}>
-              <InlineDatasetBuilder
-                soloFiltros
-                textoBoton="Usar este universo"
-                isSaving={false}
-                onBack={() => setAbriendoUniverso(false)}
-                onSave={async (_nombre, filtros) => {
-                  setFiltrosUniverso(filtros);
-                  setAbriendoUniverso(false);
-                }}
-              />
+              <Btn onClick={() => {
+                const nueva: CondicionUniverso = {
+                  section: uSec, paramKey: uParam, op: uOp,
+                  val1: uVal1, ...(uOp === "between" ? { val2: uVal2 } : {}),
+                };
+                setCondUniverso((p) => [
+                  // Una métrica repetida en la misma sección y con el mismo
+                  // signo se SUSTITUYE: dos reglas contradictorias sobre lo
+                  // mismo dejarían el universo vacío sin decir por qué.
+                  ...p.filter((c) => !(c.section === nueva.section && c.paramKey === nueva.paramKey && c.op === nueva.op)),
+                  nueva,
+                ]);
+              }}>Añadir</Btn>
+            </div>
+          </Row>
+          {DESCRIPCIONES_UNIVERSO[uParam] && (
+            <div style={{ fontSize: 11, color: color.textMuted, lineHeight: 1.5, padding: "0 0 6px" }}>
+              {DESCRIPCIONES_UNIVERSO[uParam]}
             </div>
           )}
+
+          {condUniverso.length === 0 ? (
+            <div style={{ fontSize: 11, color: color.warning, lineHeight: 1.5, paddingTop: 4 }}>
+              Sin filtros serían todos los ticker-días del lago (unos 7,4 millones).
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, paddingTop: 4 }}>
+              {condUniverso.map((c, i) => (
+                <span key={i} style={{
+                  display: "inline-flex", alignItems: "center", gap: 6,
+                  border: hairline, borderRadius: 3, padding: "3px 6px",
+                  fontSize: 11, fontFamily: font.mono, color: color.textHigh,
+                }}>
+                  {leeCondicion(c)}
+                  <button onClick={() => setCondUniverso((p) => p.filter((_, j) => j !== i))}
+                    style={{ background: "none", border: "none", color: color.textMuted, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {calculandoUniverso ? (
+            <div style={{ fontSize: 11, color: color.textMuted, paddingTop: 8 }}>Contando ticker-días…</div>
+          ) : universo?.pares != null ? (
+            <div style={{ fontSize: 12, color: color.textSecondary, lineHeight: 1.7, paddingTop: 8 }}>
+              <span style={{ fontFamily: font.mono, fontSize: 15, color: universo.pares > universo.tope ? color.loss : color.textHigh }}>
+                {entero(universo.pares)}
+              </span>{" "}ticker-días
+              {universo.tickers ? <> · <span style={{ fontFamily: font.mono }}>{entero(universo.tickers)}</span> tickers</> : null}
+              {universo.primer_dia ? <> · {universo.primer_dia} → {universo.ultimo_dia}</> : null}
+              {universo.pares > universo.tope && (
+                <div style={{ color: color.loss, fontSize: 11, marginTop: 4 }}>
+                  Se pasa del tope de {entero(universo.tope)}: con tantos días cada backtest tarda
+                  minutos y la corrida no acabaría. Aprieta algún filtro o acorta el periodo.
+                </div>
+              )}
+            </div>
+          ) : null}
         </Sec>
 
         <Sec title="Riesgo" help="Los mismos ajustes que el panel de riesgo del Backtester. Para que la R media sea una R de verdad: riesgo fijo en $ con «shares por distancia al SL» activado. Nunca % de equity: con composición y liquidez infinita el genético aprende a apalancarse, no a operar.">

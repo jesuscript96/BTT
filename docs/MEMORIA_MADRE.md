@@ -3163,3 +3163,34 @@ devolvía un 500; ahora se registra y se recalcula por la vía buena.
 
 **Lección:** cuando una simplificación exige explicarle al usuario una
 equivalencia para que entienda qué va a correr, la simplificación es el problema.
+
+### 19. Universo con el estilo de la página, y el tope de parciales
+
+Tres retoques pedidos por Jaume sobre el modo mejorar:
+
+**1. El nº de parciales manda sobre las filas.** Si el rango de «Cuántos
+parciales» llega a 2, marcar el disparador del 4º no haría nada: el gen viajaría
+y `a_definicion` lo ignoraría — un ajuste fantasma sin error, como el Max DD
+Diario. Ahora esas filas salen deshabilitadas («por encima del máximo de
+parciales») y además se filtran del config, por si el máximo baja después.
+
+**2. Se va la sección «Datos».** Tenía nombre + IS desde/hasta, y el cuadro de
+universo llevaba SU propio rango de fechas: dos sitios para el mismo periodo,
+pidiendo contradecirse. Ahora hay un solo cuadro, **Universo**, con el nombre de
+la corrida, el periodo IS y los filtros. Jaume: «no te compliques, ese rango de
+fechas global es el IS».
+
+**3. El selector, con el estilo de la página.** Estaba embebido
+`InlineDatasetBuilder` entero y desentonaba con el resto (`Sec`/`Row`/`Sel`/
+`Num`). Ahora es nativo: sección + métrica + operador + valor + «Añadir», y las
+condiciones puestas como fichas con «×».
+
+**Sin duplicar el catálogo.** Las métricas, sus descripciones, la traducción a
+columnas del lago y el armado del objeto de filtros se han sacado a
+`lib/universoFiltros.ts`, que ahora usan LAS DOS pantallas —
+`InlineDatasetBuilder` importa de ahí. Dos listas de métricas no darían error:
+una se quedaría corta y nadie lo notaría.
+
+Detalle: al añadir una condición que repite sección + métrica + signo, se
+SUSTITUYE la anterior. Dos reglas contradictorias sobre lo mismo dejarían el
+universo vacío sin decir por qué.
