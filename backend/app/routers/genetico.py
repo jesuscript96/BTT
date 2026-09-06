@@ -272,6 +272,15 @@ def _bloque_de(p: dict) -> str:
     return "stop"
 
 
+def _min_de(txt, defecto: int) -> int:
+    """"09:30" -> 570. El defecto si no tiene forma de hora."""
+    try:
+        h, _, m = str(txt).partition(":")
+        return int(h) * 60 + int(m)
+    except (TypeError, ValueError):
+        return defecto
+
+
 def _codifica_parcial(nivel: dict) -> str:
     """El `distance_pct` de un parcial, en la forma que usa el gen categorico.
 
@@ -297,19 +306,41 @@ def _genes_extra(d: dict) -> list[dict]:
     """Lo que `extract_parameters` no ve porque no son numeros de la definicion."""
     out = []
 
-    # Sesion de mercado: UN gen categorico que escribe tres claves.
+    # SESION DE MERCADO: tipo + las dos horas, en TRES genes. Con un solo
+    # categorico no se podian barrer las horas — Jaume: «quizas quiero ver si
+    # cerrando a las 11 es mejor que a las 12».
+    PRESETS = {"pre": (240, 570), "rth": (570, 960), "post": (960, 1200)}
     sesiones = list(d.get("market_sessions") or ["rth"])
-    opciones = ["pre", "rth", "post", "pre+rth", "rth+post", "pre+rth+post"]
-    actual = "+".join(sesiones)
     if "custom" in sesiones:
-        actual = f"custom:{d.get('custom_start_time') or '09:30'}-{d.get('custom_end_time') or '16:00'}"
-        opciones = [actual] + opciones
-    elif actual not in opciones:
-        opciones = [actual] + opciones
+        tipo_hoy = "custom"
+        desde_hoy = _min_de(d.get("custom_start_time"), 570)
+        hasta_hoy = _min_de(d.get("custom_end_time"), 960)
+    else:
+        tipo_hoy = "+".join(sesiones)
+        rangos = [PRESETS[x] for x in sesiones if x in PRESETS] or [(570, 960)]
+        desde_hoy = min(r[0] for r in rangos)
+        hasta_hoy = max(r[1] for r in rangos)
+    opciones_tipo = ["custom", "pre", "rth", "post", "pre+rth", "rth+post", "pre+rth+post"]
+    if tipo_hoy not in opciones_tipo:
+        opciones_tipo = [tipo_hoy] + opciones_tipo
     out.append({
-        "id": "sesion.market_sessions", "label": "Sesion de mercado",
-        "path": "__sesiones__", "bloque": "sesion",
-        "opciones": opciones, "current_value": actual, "unit": None,
+        "id": "sesion.tipo", "label": "Tipo de sesion",
+        "path": "__sesion_tipo__", "bloque": "sesion",
+        "opciones": opciones_tipo, "current_value": tipo_hoy, "unit": None,
+    })
+    # Las horas SOLO mandan con sesion personalizada; marcar una de ellas sin
+    # marcar el tipo pasa la sesion a personalizada sola (ver _aplicar_sesiones).
+    out.append({
+        "id": "sesion.desde", "label": "Sesion: abre a las",
+        "path": "__sesion_desde__", "bloque": "sesion", "unit": "time_of_day",
+        "min": max(240, desde_hoy - 120), "max": min(1200, desde_hoy + 120),
+        "step": 15, "is_int": True, "current_value": desde_hoy,
+    })
+    out.append({
+        "id": "sesion.hasta", "label": "Sesion: cierra a las",
+        "path": "__sesion_hasta__", "bloque": "sesion", "unit": "time_of_day",
+        "min": max(240, hasta_hoy - 120), "max": min(1200, hasta_hoy + 120),
+        "step": 15, "is_int": True, "current_value": hasta_hoy,
     })
 
     rm = d.get("risk_management") or {}

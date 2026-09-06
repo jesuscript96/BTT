@@ -46,6 +46,7 @@ export enum IndicatorType {
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",
     PM_HIGH_GAP = "PM High Gap (%)",
     CURRENT_GAP = "Current Gap (%)",
+    OPEN_GAP = "Open Gap (%)",
     // Caida de una sesion entera, congelada: del maximo de la sesion a la
     // apertura de la siguiente (PM -> open de mercado, RTH -> open del after).
     SESSION_FADE = "% Session Fade",

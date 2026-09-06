@@ -333,4 +333,9 @@ GUARDAS = (
     ("pm_high_gap", "PM High Gap (%)", "PM High Gap mín. (%)", GT,
      "Gap del máximo de premercado contra el cierre de ayer. Acota el universo "
      "al tipo de acción que se quiere operar."),
+    ("open_gap", "Open Gap (%)", "Gap de apertura mín. (%)", GT,
+     "Gap con el que ABRIÓ el mercado (apertura del RTH contra el cierre de "
+     "ayer). A diferencia del de premercado, no depende de dónde llegó el PM. "
+     "OJO: es NaN antes de las 09:30 — a las 08:00 nadie sabe todavía a cuánto "
+     "va a abrir, así que en premercado esta guarda no deja pasar nada."),
 )

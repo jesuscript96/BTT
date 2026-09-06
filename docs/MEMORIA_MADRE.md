@@ -3041,3 +3041,52 @@ página avisa. Si la estrategia no tiene dataset guardado (usa filtros de
 universo), lo dice y no toca nada.
 
 740 tests (34 en `test_genetico_afinar.py`), `tsc` limpio.
+
+### 15. La sesión, en tres genes (no en una casilla)
+
+Jaume, sobre la primera versión: «me refería a elegir entre qué horas quiero que
+mire, quizás quiero ver si cerrando a las 11 es mejor que a las 12; si solo
+puedo poner tick en sesión de mercado no sé qué baremos está usando». Tenía
+razón: con un solo gen categórico de sesión eso no se puede barrer.
+
+Ahora son tres: `__sesion_tipo__` (categórico), `__sesion_desde__` y
+`__sesion_hasta__` (horas, en minutos desde medianoche, con rango y paso como
+cualquier otro gen). Reglas, cada una tapando un agujero:
+
+1. Si el gen de TIPO está marcado, manda él.
+2. Si NO lo está pero sí alguna HORA, la sesión pasa a personalizada. Dejarla en
+   RTH haría que el barrido no cambiara nada: N corridas dando el mismo número,
+   sin error.
+3. La punta que no se barre se queda en la que tenga hoy la estrategia.
+4. Fuera de personalizada las horas se BORRAN (el lío de la unión de sesiones).
+5. Un cierre anterior a la apertura recorta el día a cero velas: el genético lo
+   descarta solo (nota 0), pero no se escribe una sesión imposible.
+
+### 16. Indicador nuevo: «Open Gap (%)», y las 8 capas que hizo falta tocar
+
+Pedido como guarda del genético: «añade también lo de gap de apertura mínimo,
+por si no quiero solo ver el de PM». No existía: el motor solo tenía
+«PM High Gap (%)» (máximo de premercado vs cierre de ayer) y «Current Gap (%)»
+(precio vivo vs cierre de ayer). El gap de apertura solo vivía como columna del
+lago, para filtrar universos.
+
+**Es CAUSAL a propósito: NaN antes de las 09:30.** El dato existe
+(`gap_at_open_pct`) y devolverlo constante todo el día habría sido trivial —
+pero es LOOKAHEAD: una estrategia que entra a las 08:00 estaría usando la
+apertura de las 09:30. El NaN de la mañana no es un fallo, es la corrección.
+Mismo criterio que «% Session Fade».
+
+Capas tocadas: `indicators.py` (legacy) · `strategy_engine.py`
+(`_ri_open_gap` + dispatch nativo, con test de paridad) · `schemas/strategy.py`
+(`IndicatorType`) · `api_public/.../catalog.py` · `types/strategy.ts` ·
+`indicatorValidation.ts` · `ConditionBuilder.tsx` (es-porcentaje, es-medida,
+desplegable, etiqueta y ayuda) · `genetico/catalogo.py` (la guarda, que sale en
+los DOS modos).
+
+De esas, **`indicatorValidation.ts` la cazó TypeScript** — es la única de las
+ocho que da error en vez de caerse en silencio.
+
+⚠️ **Una capa NO se ha tocado, a propósito:** el bot de avisos en vivo
+(`bot_alerts_universo.py`) tiene su propio mapa de nombres y es zona cerrada
+(AGENTS.md). Una estrategia que use «Open Gap (%)» funciona en el backtest pero
+**el bot todavía no la entiende**. Queda para Jaume y Sailor.

@@ -137,24 +137,64 @@ def test_una_ruta_que_ya_no_existe_no_tumba_la_evaluacion():
     assert d["risk_management"]["hard_stop"]["value"] == 15
 
 
-# ── El gen de sesión, que escribe tres claves ───────────────────────────────
+# ── La sesión: tipo + dos horas, barribles ─────────────────────────────────
 
-def test_la_sesion_personalizada_escribe_las_tres_claves():
-    g = [{"id": "ses", "label": "Sesion", "path": afinar.GEN_SESIONES,
-          "opciones": ["rth", "custom:09:30-11:00"], "current_value": "rth"}]
-    d = afinar.a_definicion({"valores": {"ses": "custom:09:30-11:00"}}, _cfg(g))
+def _cfg_ses(*genes):
+    return {"modo": "mejorar", "estrategia_base": SEMILLA, "genes": list(genes)}
+
+
+G_TIPO = {"id": "tipo", "label": "Tipo", "path": afinar.GEN_SESION_TIPO,
+          "opciones": ["custom", "rth", "pre+rth"], "current_value": "custom"}
+G_DESDE = {"id": "desde", "label": "Abre", "path": afinar.GEN_SESION_DESDE,
+           "unit": "time_of_day", "min": 240, "max": 660, "step": 15, "current_value": 240}
+G_HASTA = {"id": "hasta", "label": "Cierra", "path": afinar.GEN_SESION_HASTA,
+           "unit": "time_of_day", "min": 600, "max": 780, "step": 15, "current_value": 720}
+
+
+def test_se_puede_barrer_la_hora_de_cierre():
+    """EL CASO QUE PIDIO JAUME: «ver si cerrando a las 11 es mejor que a las 12».
+    Con un solo gen categórico de sesión esto no se podía."""
+    cfg = _cfg_ses(G_HASTA)
+    d11 = afinar.a_definicion({"valores": {"hasta": 660}}, cfg)
+    d12 = afinar.a_definicion({"valores": {"hasta": 720}}, cfg)
+    assert d11["custom_end_time"] == "11:00"
+    assert d12["custom_end_time"] == "12:00"
+    # La otra punta se queda en la que tenía la estrategia.
+    assert d11["custom_start_time"] == "04:00"
+
+
+def test_marcar_solo_una_hora_pasa_la_sesion_a_personalizada():
+    """Si se quedara en RTH, el barrido no cambiaría nada: N corridas dando el
+    mismo número, sin error."""
+    semilla_rth = {**SEMILLA, "market_sessions": ["rth"]}
+    semilla_rth.pop("custom_start_time", None)
+    semilla_rth.pop("custom_end_time", None)
+    cfg = {"modo": "mejorar", "estrategia_base": semilla_rth, "genes": [G_HASTA]}
+    d = afinar.a_definicion({"valores": {"hasta": 660}}, cfg)
     assert d["market_sessions"] == ["custom"]
-    assert d["custom_start_time"] == "09:30"
+    assert d["custom_start_time"] == "09:30"   # la apertura de RTH, sin tocar
     assert d["custom_end_time"] == "11:00"
 
 
-def test_al_salir_de_personalizada_se_borran_las_horas():
-    """Dejarlas puestas sembraría otra vez la unión de sesiones del 6-sep."""
-    g = [{"id": "ses", "label": "Sesion", "path": afinar.GEN_SESIONES,
-          "opciones": ["rth", "custom:09:30-11:00"], "current_value": "rth"}]
-    d = afinar.a_definicion({"valores": {"ses": "pre+rth"}}, _cfg(g))
+def test_el_tipo_manda_sobre_las_horas():
+    cfg = _cfg_ses(G_TIPO, G_DESDE, G_HASTA)
+    d = afinar.a_definicion({"valores": {"tipo": "pre+rth", "desde": 300, "hasta": 660}}, cfg)
     assert d["market_sessions"] == ["pre", "rth"]
-    assert "custom_start_time" not in d
+    assert "custom_start_time" not in d, "fuera de personalizada las horas se borran"
+
+
+def test_una_sesion_invertida_no_se_escribe():
+    """Cierre antes de la apertura recorta el día a cero velas. El genético lo
+    descarta solo (0 operaciones = nota 0), pero no se guarda un imposible."""
+    cfg = _cfg_ses(G_DESDE, G_HASTA)
+    d = afinar.a_definicion({"valores": {"desde": 660, "hasta": 600}}, cfg)
+    assert d["custom_start_time"] < d["custom_end_time"]
+
+
+def test_sin_genes_de_sesion_la_estrategia_conserva_la_suya():
+    d = afinar.a_definicion(afinar.desde_semilla(_cfg()), _cfg())
+    assert d["market_sessions"] == ["custom"]
+    assert d["custom_start_time"] == "04:00" and d["custom_end_time"] == "12:00"
 
 
 # ── Operadores ──────────────────────────────────────────────────────────────

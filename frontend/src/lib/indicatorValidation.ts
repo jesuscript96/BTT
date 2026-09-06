@@ -172,6 +172,9 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.SQUEEZE]: [],
     // Current Gap (%): porcentaje vivo vs cierre de ayer — solo cifra fija.
     [IndicatorType.CURRENT_GAP]: [],
+    // Gap de APERTURA: porcentaje, como sus dos hermanos. Solo contra una
+    // cifra fija. Es NaN antes de las 09:30 a proposito (causal).
+    [IndicatorType.OPEN_GAP]: [],
     // Los dos fades son PORCENTAJES DE CAIDA, no niveles de precio: enfrentarlos
     // a otro indicador no significaria nada. Solo contra una cifra.
     [IndicatorType.SESSION_FADE]: [],

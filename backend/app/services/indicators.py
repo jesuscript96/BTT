@@ -1445,6 +1445,29 @@ def _compute_raw(
             return pd.Series(np.nan, index=close.index)
         return (close - float(yest_close_val)) / float(yest_close_val) * 100.0
 
+    if name == "Open Gap (%)":
+        # GAP DE APERTURA: la apertura del RTH contra el cierre de ayer. A
+        # diferencia de «Current Gap (%)», que se mueve con el precio, este es
+        # el gap con el que abrio el mercado y ya no cambia en todo el dia.
+        #
+        # CAUSAL A PROPOSITO: NaN antes de las 09:30. Usar la constante del dia
+        # (gap_at_open_pct de daily_metrics) desde las 04:00 seria LOOKAHEAD —
+        # en premercado nadie sabe todavia a cuanto va a abrir el mercado, y una
+        # estrategia que entra a las 08:00 la estaria usando. El NaN de la
+        # manyana no es un fallo: cualquier condicion sobre el evalua False
+        # hasta que el mercado abre (mismo criterio que «% Session Fade»).
+        yest_close_val = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan))) if ds else np.nan
+        if yest_close_val is None or pd.isna(yest_close_val):
+            yest_close_val = df["close"].iloc[0] if len(df) > 0 else np.nan
+        if pd.isna(yest_close_val) or yest_close_val == 0:
+            return pd.Series(np.nan, index=close.index)
+        apertura = _rth_running_series(df, close.index, "open")
+        if apertura is None:
+            # Sin barras RTH en el frame: el fallback ya distingue si la sesion
+            # regular aun no ha llegado (NaN) o si ya paso (constante causal).
+            apertura = _rth_constant_fallback(df, close.index, ds, "rth_open")
+        return (apertura - float(yest_close_val)) / float(yest_close_val) * 100.0
+
     if name == "% Session Fade":
         # Cuánto se desinfló una sesión entera, en POSITIVO (10 = cayó un 10%):
         #   pm   -> (PM High        − apertura de mercado) / PM High        * 100

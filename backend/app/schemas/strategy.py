@@ -124,6 +124,10 @@ class IndicatorType(str, Enum):
     TRIANGLE_SYMMETRIC = "Triangle Symmetric"
     PM_HIGH_GAP = "PM High Gap (%)"
     CURRENT_GAP = "Current Gap (%)"
+    # Gap con el que ABRIO el mercado (apertura RTH vs cierre de ayer). Fijo
+    # todo el dia, y NaN antes de las 09:30 a proposito: en premercado todavia
+    # no se sabe a cuanto abre.
+    OPEN_GAP = "Open Gap (%)"
     # Caida de una sesion entera, congelada: del maximo de la sesion a la
     # apertura de la siguiente (PM->open de mercado, o RTH->open del after).
     SESSION_FADE = "% Session Fade"

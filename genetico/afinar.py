@@ -35,9 +35,23 @@ import hashlib
 import json
 import random
 
-# Gen categorico que NO es una ruta: la sesion de mercado son varias claves de
-# la definicion a la vez (`market_sessions` + las horas personalizadas).
-GEN_SESIONES = "__sesiones__"
+# La SESION DE MERCADO no es una ruta: son tres claves de la definicion a la vez
+# (`market_sessions` + las dos horas personalizadas). Y va en TRES genes, no en
+# uno:
+#
+#   __sesion_tipo__   categorico: "rth", "pre+rth", "custom"…
+#   __sesion_desde__  hora, en minutos desde medianoche
+#   __sesion_hasta__  hora, en minutos desde medianoche
+#
+# POR QUE TRES Y NO UNO. La primera version era un solo gen categorico con una
+# lista cerrada de sesiones, y Jaume dio con el agujero enseguida: «me refiero a
+# elegir entre que horas quiero que mire, quizas quiero ver si cerrando a las 11
+# es mejor que a las 12». Con una lista cerrada eso no se puede barrer. Con las
+# horas como genes numericos, si — y con el mismo tratamiento que la ventana de
+# entrada, que ya funcionaba asi.
+GEN_SESION_TIPO = "__sesion_tipo__"
+GEN_SESION_DESDE = "__sesion_desde__"
+GEN_SESION_HASTA = "__sesion_hasta__"
 # Genes de ESTRUCTURA de los parciales: no afinan un numero, cambian la
 # estrategia (cuantos parciales hay y de que tipo es cada uno). Peticion
 # explicita de Jaume: «quiero probar que pasa si añado 3 o 5 parciales, ya sea
@@ -261,15 +275,15 @@ def a_definicion(individuo: dict, config: dict) -> dict:
     # "HOUR:00:06". Por eso, si hay estructura, las rutas de parciales se
     # ignoran — la estructura manda y no hay dos genes peleandose por lo mismo.
     hay_estructura = _aplicar_parciales(base, vals, gs)
+    _aplicar_sesiones(base, vals, gs)
 
     for gid, valor in vals.items():
         g = gs.get(gid)
         if not g or valor is None:
             continue
-        if gid == GEN_SESIONES or g.get("path") == GEN_SESIONES:
-            _aplicar_sesiones(base, valor)
-            continue
         ruta = g.get("path")
+        if ruta in (GEN_SESION_TIPO, GEN_SESION_DESDE, GEN_SESION_HASTA):
+            continue          # se aplican juntos, mas abajo
         if not ruta or str(ruta).startswith(GEN_PARCIAL) or ruta == GEN_PARCIALES_N:
             continue
         if hay_estructura and "partial_take_profits" in ruta:
@@ -285,24 +299,81 @@ def a_definicion(individuo: dict, config: dict) -> dict:
     return base
 
 
-def _aplicar_sesiones(base: dict, valor) -> None:
-    """El gen de sesion toca TRES claves a la vez, por eso no es una ruta.
+PRESETS_SESION = {
+    "pre": (240, 570), "rth": (570, 960), "post": (960, 1200),
+}
 
-    Formato del valor: "rth", "pre+rth", o "custom:04:00-11:30".
+
+def _hora(mins) -> str:
+    m = int(round(float(mins))) % 1440
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _minutos(txt, defecto: int) -> int:
+    try:
+        h, _, mi = str(txt).partition(":")
+        return int(h) * 60 + int(mi)
+    except (TypeError, ValueError):
+        return defecto
+
+
+def _aplicar_sesiones(base: dict, vals: dict, gs: dict) -> None:
+    """La sesion de mercado: tipo + las dos horas, aplicadas JUNTAS.
+
+    Reglas, y estan escritas asi porque cada una tapa un agujero:
+
+    1. Si el gen de TIPO esta marcado, el manda.
+    2. Si NO lo esta pero si alguna HORA, la sesion pasa a personalizada: pedir
+       «prueba a cerrar a las 11 o a las 12» solo tiene sentido con horas
+       propias, y dejarla en RTH haria que el barrido no cambiara nada — sin
+       error, con las N corridas dando el mismo numero.
+    3. La punta que no se barre se queda en la que tenga hoy la estrategia.
+    4. Fuera de personalizada, las horas se BORRAN. Dejarlas puestas es el lio
+       de la union de sesiones del 6-sep.
     """
-    txt = str(valor)
-    if txt.startswith("custom:"):
-        rango = txt.split(":", 1)[1]
-        desde, _, hasta = rango.partition("-")
-        base["market_sessions"] = ["custom"]
-        base["custom_start_time"] = desde.strip()
-        base["custom_end_time"] = hasta.strip()
+    ids = {g.get("path"): gid for gid, g in gs.items()}
+    id_tipo = ids.get(GEN_SESION_TIPO)
+    id_desde = ids.get(GEN_SESION_DESDE)
+    id_hasta = ids.get(GEN_SESION_HASTA)
+    if not (id_tipo or id_desde or id_hasta):
         return
-    base["market_sessions"] = [s for s in txt.split("+") if s]
-    # Sin «custom» las horas personalizadas sobran: dejarlas puestas seria
-    # sembrar el mismo lio de la union de sesiones que se arreglo el 6-sep.
-    base.pop("custom_start_time", None)
-    base.pop("custom_end_time", None)
+
+    sesiones_hoy = list(base.get("market_sessions") or ["rth"])
+    if "custom" in sesiones_hoy:
+        d_hoy = _minutos(base.get("custom_start_time"), 570)
+        h_hoy = _minutos(base.get("custom_end_time"), 960)
+    else:
+        rangos = [PRESETS_SESION[s] for s in sesiones_hoy if s in PRESETS_SESION] or [(570, 960)]
+        d_hoy = min(r[0] for r in rangos)
+        h_hoy = max(r[1] for r in rangos)
+
+    tipo = str(vals.get(id_tipo)) if id_tipo and vals.get(id_tipo) is not None else None
+    hay_horas = (id_desde and vals.get(id_desde) is not None) or                 (id_hasta and vals.get(id_hasta) is not None)
+
+    if tipo is None and hay_horas:
+        tipo = "custom"
+    if tipo is None:
+        return
+
+    if tipo != "custom":
+        base["market_sessions"] = [x for x in tipo.split("+") if x]
+        base.pop("custom_start_time", None)
+        base.pop("custom_end_time", None)
+        return
+
+    desde = vals.get(id_desde) if id_desde is not None else None
+    hasta = vals.get(id_hasta) if id_hasta is not None else None
+    d = int(round(float(desde))) if desde is not None else d_hoy
+    h = int(round(float(hasta))) if hasta is not None else h_hoy
+    if h <= d:
+        # Una sesion invertida no da error: recorta el dia a CERO velas y el
+        # individuo sale con 0 operaciones, o sea nota 0. Se deja pasar a
+        # proposito (el genetico lo descarta solo) pero al menos no se escribe
+        # una sesion imposible: se le da un minuto.
+        h = d + 1
+    base["market_sessions"] = ["custom"]
+    base["custom_start_time"] = _hora(d)
+    base["custom_end_time"] = _hora(h)
 
 
 def indices(individuo: dict, config: dict) -> tuple:

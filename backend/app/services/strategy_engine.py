@@ -173,6 +173,19 @@ def _ri_current_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
     if pd.isna(yest_close) or yest_close == 0:
         return np.full(len(c), np.nan)
     return (np.asarray(c, dtype=np.float64) - float(yest_close)) / float(yest_close) * 100.0
+def _ri_open_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # Réplica de indicators."Open Gap (%)": la apertura del RTH contra el cierre
+    # de ayer. CAUSAL: NaN hasta las 09:30 — en premercado nadie sabe todavía a
+    # cuánto va a abrir el mercado.
+    yest_close = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan)))
+    if yest_close is None or pd.isna(yest_close):
+        yest_close = float(c[0]) if len(c) > 0 else np.nan
+    if pd.isna(yest_close) or yest_close == 0:
+        return np.full(len(c), np.nan)
+    apertura = _rth_running_native(o, ds.get("_mins"), o, "open")
+    if apertura is None:
+        apertura = _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_open")
+    return (np.asarray(apertura, dtype=np.float64) - float(yest_close)) / float(yest_close) * 100.0
 def _rth_running_native(vals, mins, o, which):
     """Réplica numpy de indicators._rth_running_series (RTH causal).
     None si no hay minutos o no hay barras RTH (el caller aplica el mismo
@@ -254,6 +267,7 @@ _RAW_INDICATOR_DISPATCH = {
     "Pre-Market High": _ri_pm_high, "Pre-Market Low": _ri_pm_low,
     "PM High Gap (%)": _ri_pm_high_gap,
     "Current Gap (%)": _ri_current_gap,
+    "Open Gap (%)": _ri_open_gap,
     "High of Day": _ri_hod, "Low of Day": _ri_lod,
     "Prev. Close Bar": _ri_prev_close_bar, "Prev. Bar Close": _ri_prev_close_bar,
     "Prev. Open Bar": _ri_prev_open_bar, "Prev. Bar Open": _ri_prev_open_bar,

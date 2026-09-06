@@ -40,6 +40,7 @@ export const isPercentIndicator = (name?: string): boolean => {
     return (
         name === IndicatorType.PM_HIGH_GAP ||
         name === IndicatorType.CURRENT_GAP ||
+        name === IndicatorType.OPEN_GAP ||
         name === IndicatorType.SQUEEZE ||
         name === IndicatorType.SESSION_FADE ||
         name === IndicatorType.FADE
@@ -55,6 +56,7 @@ export const isMeasureIndicator = (name?: string): boolean => {
     return (
         name === IndicatorType.PM_HIGH_GAP ||
         name === IndicatorType.CURRENT_GAP ||
+        name === IndicatorType.OPEN_GAP ||
         name === IndicatorType.SESSION_FADE ||
         name === IndicatorType.FADE
     );
@@ -164,6 +166,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.TRIANGLE_SYMMETRIC,
         IndicatorType.PM_HIGH_GAP,
         IndicatorType.CURRENT_GAP,
+        IndicatorType.OPEN_GAP,
         IndicatorType.SESSION_FADE,
         IndicatorType.FADE,
     ],
@@ -236,6 +239,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.TRIANGLE_SYMMETRIC]: "◇ Triangle Symmetric",
     [IndicatorType.PM_HIGH_GAP]: "PM High Gap (%)",
     [IndicatorType.CURRENT_GAP]: "Current Gap (%)",
+    [IndicatorType.OPEN_GAP]: "Open Gap (%)",
     [IndicatorType.SESSION_FADE]: "% Session Fade",
     [IndicatorType.FADE]: "% Fade",
     // Indicators
@@ -308,6 +312,7 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.TRIANGLE_DESCENDING]: "Patrón de triángulo descendente.",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
     [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre el cierre de ayer y el máximo del premarket high.",
+    [IndicatorType.OPEN_GAP]: "Gap con el que ABRIÓ el mercado: % de diferencia entre la apertura del RTH (09:30) y el cierre del día anterior. A diferencia del PM High Gap no depende de dónde llegó el premercado, y a diferencia del Current Gap no se mueve: una vez abre, se queda fijo todo el día. OJO: antes de las 09:30 vale NaN y cualquier condición sobre él es falsa — en premercado todavía no se sabe a cuánto va a abrir, y darlo por sabido sería mirar el futuro.",
     [IndicatorType.CURRENT_GAP]: "Gap vivo del precio respecto al cierre de ayer: % de diferencia entre el precio actual (cierre de la vela que se evalúa) y el cierre del día anterior. A diferencia del PM High Gap, sigue al precio durante todo el día (PM y RTH) y baja si el precio baja.",
     [IndicatorType.SESSION_FADE]: "Cuánto se desinfló una sesión ENTERA, en positivo (20 = cayó un 20%). Con «Premarket» mide del PM High a la apertura de mercado; con «Mercado (RTH)», del máximo de la sesión regular a la apertura del After. Es un número congelado: nace en el instante en que abre la sesión siguiente y ya no cambia en todo el día. Antes de ese instante NO existe, así que cualquier condición que lo use es falsa (no se puede saber el fade del premercado a las 07:00). Sale negativo si la apertura fue por encima del máximo.",
     [IndicatorType.FADE]: "Cuánto ha caído el precio AHORA desde una referencia, en positivo (20 = está un 20% por debajo). Con «Máximo previo» la referencia es el máximo hecho hasta la vela anterior, así que se reancla sola: cada nuevo máximo devuelve el fade a cero. Con «Cruce del VWAP» la referencia es el precio del VWAP en la vela en que el precio lo cruzó por última vez, y se mantiene fija hasta el cruce siguiente (por eso el fade sigue creciendo aunque el VWAP baje). Negativo = el precio está por encima de la referencia.",
