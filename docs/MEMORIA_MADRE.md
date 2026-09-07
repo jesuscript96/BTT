@@ -4163,3 +4163,13 @@ solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
 - **Arreglo propuesto (para Jaume):** validar frescura por mes contra el lago (p. ej. comparar max(date) del caché con el del parquet del mes, o su mtime) en el hit de `_fetch_and_cache_month`; e invalidar `_MONTH_CACHE` igual.
 - **Código tocado:** NINGUNO (confirmado) — solo ficheros de caché locales y `CACHE_DISK_QUOTA_GB=150` en el `.env` local (el default 40 GB además evictaba meses en corridas largas, otro modo de perder días)
 - **Estado:** ABIERTO
+
+### [VERIFICADO · 2026-09-07 · MAE] «MAX MAE 169,56%» en G&E RTH 2026 — NO es bug: excursión real, verificada contra velas (duda de Álvaro resuelta con evidencia)
+- **Plantea:** Álvaro («esto del MAE tiene que estar mal»)
+- **Verifica:** ZCode (para Álvaro)
+- **Qué se vio:** panel Aggregate con MAX MAE 169,56 % y avg 13,76 % en la corrida G&E RTH 2026 (autosave `6e53853b`, 518 trades; lanzada con risk_r=1 $, sin size_by_sl).
+- **Verificación:** el trade top (RGNT 2026-06-09, short a 2,4299 a las 09:37, stop estructural 7,33 = PM max, EOD) — consultado el parquet del lago: máximo ALTO entre 09:37-10:59 = 6,55 → (6,55−2,4299)/2,4299 = **169,56 % exacto**. La ventana es correcta: el máximo pre-entrada (7,33, premarket) NO cuenta. El motor (`portfolio_sim.py`, cota al precio de stop/TP solo en la vela de salida) calcula lo que dicen las velas.
+- **Por qué asusta:** la estrategia shortea fondos profundos tras fades del 60-70 % con el stop en el MÁXIMO VIEJO → stop al 150-200 % de la entrada. En % del precio la excursión parece apocalíptica; **en R todas las MAE grandes son ≤1 R** (RGNT 0,84 R; HKIT 0,84 R; PAVS/EHGO/SPHL 1,00 R = SL). 17/518 trades >50 %, 3 >100 %.
+- **MEJORA (opcional) para Jaume:** mostrar el MAE también en R (mae_r = mae_pct / distancia_al_stop_pct) junto al porcentual — en estrategias de stop lejano el porcentual solo engaña; en R se lee el riesgo real flotado.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** CERRADO (verificado, no bug)
