@@ -523,6 +523,28 @@ La profundidad a 10 niveles (que sí discrimina) no estará en vivo.
   las dos aclaraciones de Jaume (no es «su estrategia», es cualquier corto; y
   la media de 8 años engaña). Coste total Databento: ~5,4 $.
 
+### 7-sep (noche, 3): el stop de 1B — nivel, mercado vs limitado, tamaño (informe v5)
+
+Pregunta de Jaume: ¿stop 1 % bajo el Previous Max (más liquidez) o +30-40 %,
+mercado o limitado (bandas 10 %, ×1,5, ×2), y a partir de qué tamaño cambia?
+Marco: cuenta 10.000 $, 2-3 % por operación (= 300 $ de posición).
+`18_stops_1b.py` → `stops_1b_sim.parquet` (2.715 operaciones de 1B con ticks,
+4 niveles × 4 tipos × 6 tamaños; se consume la cinta al 50 % de cada print).
+Tablas `stops_A_niveles.csv`, `stops_B_resultado.csv`, `stops_C_liquidez_*.csv`,
+`stops_P_peor.csv`. OJO signo: en el parquet `perdida_pct` positivo = GANANCIA.
+
+- **Nivel:** +10 % (el actual) es el mejor: 4,3 % medio/op, 63 % ganadoras.
+  −1 % bajo el PM: salta el 50 % (vs 30 %), 3,6 % medio, 47 % ganadoras: NO
+  compensa. +30/+40 %: salta 1 %, pero cuesta 59/76 % de mediana (p95 99/179 %),
+  media 4,1 %.
+- **Tipo y tamaño:** hasta 3.000 $/posición (cuenta 100 k al 3 %) igual todo
+  (slip p95 < 1 %). A 10.000 $ el limitado 10 % deja 3/814 colgados; a 30.000 $
+  20 colgados, slip p95 2 %; a 100.000 $ 4-5 % sin cubrir. Con stop en +30 %
+  el mercado se dispara (slip p95 53 % a 100 k) y el limitado 10 % lo tapa (7 %).
+  **La única diferencia a tamaño pequeño es la cola: un stop a mercado de 300 $
+  se ejecutó una vez contra un print suelto a 5,6× el nivel; el limitado lo tapa.**
+- Informe v5 entregado con la sección 11. Sigue sin ser regla.
+
 ---
 
 ## Estado y pendientes
@@ -536,7 +558,7 @@ cuadro de mandos cuando se diseñe.
 | # | Pendiente | Estado |
 |---|---|---|
 | P1 | PDF del API de DAS + activación en Sage. Preguntas al bróker: client order id; stops de servidor y si disparan en PM; rutas con extendido; locates por API (inquire/accept/return, ETB/HTB); cómo llega halt/LULD/SSR en el L1; socket al reloguear; cuota, límite msg/s, demo; **un solo login por cuenta → segunda cuenta para el bot**; **qué hace Sage con una cuenta muy en negativo en PM** | Esperando al bróker |
-| P2 | Tipo de stop (limitado con qué límite / mercado) y guarda de fogonazo: SIN decidir. Conclusiones en el informe: el precio camina (un limitado se ejecuta en la subida); prints tardíos entran en último precio y velas; lo que separa fogonazo de subida real es cuánto se sostiene | Abierto, para el diseño de guardas |
+| P2 | Tipo de stop y guarda de fogonazo: SIN decidir. Datos de 1B en v5 §11: +10 % es el mejor nivel; limitado tapa el print suelto; tamaño importa desde 10 k$/posición. Conclusiones en el informe: el precio camina (un limitado se ejecuta en la subida); prints tardíos entran en último precio y velas; lo que separa fogonazo de subida real es cuánto se sostiene | Abierto, para el diseño de guardas |
 | P3 | Exposición por ticker: Jaume baraja 3-4 % en total (entrada + pirámides). NO decidido; iría al cuadro de mandos | Abierto |
 | P4 | Locates: dinámica «pronto y barato» vs en prealerta; apuntar precios 5 días | Apuntado, sin datos |
 | P5 | Protocolos por tipo de préstamo (HTB/ETB/un uso) y regla sobre SSR | Depende del PDF |
