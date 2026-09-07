@@ -4111,3 +4111,42 @@ una BD vacía y falla sin que nada esté roto; lanzar desde `backend/`.
 - **Impacto:** con velas M1 y `look_ahead_prevention=true`, los fills de velas consecutivas distan exactamente 60,0 s («at least 60.0» pasa), así que con la estrategia actual casi nunca dispararía. Relevante si algún día se opera con fills sub-minuto o datos más finos.
 - **Código tocado:** NINGUNO — decisión de Álvaro (2026-09-07): no modelarla por ahora.
 - **Estado:** ABIERTO (descartado por decisión de Álvaro; reabrir si cambia el estilo de ejecución)
+
+## 2026-09-07 (tarde) — INCIDENTE: `local_data.duckdb` corrompido y reconstruido — LECCIONES OPERATIVAS PARA CUALQUIER IA EN ESTE EQUIPO
+
+**Qué pasó.** El updater diario de cangrejo (`actualizar_diario.py`) para el
+backend del :8010 con `taskkill /F` antes de su `--load` (correcto por diseño:
+DuckDB es single-writer). Ese día (run 13:11) su paso `etl_edgecute` falló a
+mitad (13:30) dejando la BD «a medias» — y el propio script avisó de NO
+relanzar el backend. La IA (ZCode) relanzó el backend DOS veces más sin saberlo;
+el re-run del updater (13:48) volvió a matarlas con `/F` con la BD abierta en
+escritura. Tres kills sin checkpoint + una escritura a medias → bloque de
+metadatos inconsistente → `INTERNAL Error: Failed to load metadata pointer` en
+cada apertura. DuckDB no tiene herramienta de repair: solo backup o reconstruir.
+
+**Qué se salvó.** TODO lo de usuario: vive en `users.duckdb` (12 estrategias,
+75 datasets, 2,9M pares, autosaves), que quedó intacto. `local_data.duckdb`
+solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
+
+**Reparación** (verificada: backtest de control idéntico bit a bit al pre-incidente):
+1. Parar el backend (PID del `run_backend_safe.py` de cangrejo).
+2. Corrupto apartado como `local_data.duckdb.corrupto_20260907` (+ su .wal); NO borrado.
+3. Reconstrucción con el modo reparación NATIVO del ETL del propio cangrejo:
+   `datos/scripts/etl_to_edgecute.py --load-only` con su venv (`datos/.venv`) —
+   recarga DROP+CREATE+INSERT de las 5 tablas de mercado desde el parquet (866 s,
+   3.000M velas intraday + 19,35M daily_metrics + tickers/splits/registry).
+4. Backend arriba; `users.duckdb` intocado; backup `.prev_20260826_193508` intacto
+   como red de seguridad.
+
+**REGLAS PARA CUALQUIER IA (y para Álvaro) en este equipo:**
+- **Jamás arrancar/relanzar el backend mientras corra `actualizar_diario.py`**:
+  taskkillea lo que haya en el :8010 sin avisar. Si el backend "muere solo y sin
+  traceback", MIRAR PRIMERO `cangrejo_data/datos/logs/` — es el updater.
+- Tras un FALLO del updater (`FALLO_*.txt`), el backend queda deliberadamente
+  parado («BBDD potencialmente a medias»): no re-arrancarlo hasta revisar.
+- La fuente de verdad de mercado es el **parquet del lago** (`LOCAL_LAKE_DIR`);
+  `local_data.duckdb` es materialización reconstruible con `--load-only` (~15 min).
+- Con DuckDB corrompido, no intentar abrirlo en escritura «a ver si se arregla».
+
+**Pendiente de decisión de Álvaro** (espacio): `.corrupto_20260907` (58 GB) +
+`.prev_20260826` (57 GB) pueden borrarse cuando la BD nueva lleve días probada.
