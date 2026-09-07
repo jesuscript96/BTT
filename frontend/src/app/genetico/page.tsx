@@ -335,6 +335,22 @@ function idxParcial(id: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** Si un candidato acepta reentradas. Cuando NO, el gen `riesgo.max_reentries`
+ *  sigue llevando un numero —el genetico lo mueve igual, porque no sabe que ahi
+ *  no sirve de nada— pero el motor ni lo mira. Pintarlo dejaba la ficha
+ *  diciendo «Acepta reentradas: no  ·  Maximo de reentradas: 2», que es
+ *  exactamente lo que Jaume leyo y no cuadraba. Mismo caso que los parciales
+ *  con n = 0.
+ *  Si no hay gen de reentradas, manda la estrategia y aqui no se sabe: se
+ *  devuelve true para NO esconder algo que quiza si aplica. */
+function aceptaReentradas(ind: any, genes: any[]): boolean {
+  const g = genes.find((x) => x.id === "riesgo.accept_reentries");
+  const v = ind?.valores?.["riesgo.accept_reentries"];
+  const x = v !== undefined ? v : g?.current_value;
+  if (x === undefined || x === null) return true;
+  return !(x === false || x === 0 || String(x).toLowerCase() === "false" || String(x) === "no");
+}
+
 /** Lo que hace DISTINTO a este candidato, en una linea. Es lo que se ve con la
  *  fila plegada: en modo mejorar, los genes que cambiaron respecto a la
  *  estrategia original; en explorar, los indicadores de la entrada. */
@@ -343,10 +359,12 @@ function resumenCorto(mejor: Mejor, config: any): string {
   if (String(config?.modo ?? "explorar") === "mejorar" && ind?.valores) {
     const genes: any[] = config?.genes ?? [];
     const nParc = parcialesActivos(ind, genes);
+    const reent = aceptaReentradas(ind, genes);
     const cambios = genes
       .filter((g) => {
         const ip = idxParcial(g.id);
         if (ip !== null && ip >= nParc) return false;   // parcial que no se usa
+        if (g.id === "riesgo.max_reentries" && !reent) return false;   // no reentra
         return g.current_value !== undefined && ind.valores[g.id] !== undefined
           && valorGen(g, ind.valores[g.id]) !== valorGen(g, g.current_value);
       })
@@ -374,6 +392,7 @@ function RecetaEstructurada({ mejor, config }: { mejor: Mejor; config: any }) {
     }
     const orden = BLOQUES_ORDEN.filter((b) => porBloque.has(b));
     const nParciales = parcialesActivos(ind, genes);
+    const reentradas = aceptaReentradas(ind, genes);
     return (
       <div style={{ fontSize: 11, lineHeight: 1.5 }}>
         {orden.map((b) => (
@@ -383,6 +402,7 @@ function RecetaEstructurada({ mejor, config }: { mejor: Mejor; config: any }) {
               if (v === undefined) return null;
               const ip = idxParcial(g.id);
               if (ip !== null && ip >= nParciales) return null;   // no se usa
+              if (g.id === "riesgo.max_reentries" && !reentradas) return null;
               return (
                 <Linea key={g.id} etq={etiquetaCorta(g.label)}
                   val={valorGen(g, v)}
@@ -392,6 +412,11 @@ function RecetaEstructurada({ mejor, config }: { mejor: Mejor; config: any }) {
             {b === "parciales" && nParciales === 0 && (
               <div style={{ fontSize: 10, color: color.textMuted, fontStyle: "italic" }}>
                 sin parciales: cierra con el take profit entero
+              </div>
+            )}
+            {b === "reentradas" && !reentradas && (
+              <div style={{ fontSize: 10, color: color.textMuted, fontStyle: "italic" }}>
+                no reentra: el máximo de reentradas no se aplica
               </div>
             )}
           </Bloque>
