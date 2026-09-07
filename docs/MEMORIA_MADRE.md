@@ -4150,3 +4150,16 @@ solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
 
 **Pendiente de decisión de Álvaro** (espacio): `.corrupto_20260907` (58 GB) +
 `.prev_20260826` (57 GB) pueden borrarse cuando la BD nueva lleve días probada.
+
+### [HALLAZGO · 2026-09-07 · 05] La caché intraday por ticker no se invalida cuando el lago crece — días nuevos «no tienen intradía» y STRICT rechaza la corrida
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug (recurrente: aparece cada vez que un backtest pisa días más nuevos que la caché)
+- **Dónde:** `backend/app/db/gcs_cache.py` — `_fetch_and_cache_month`: la caché por ticker en disco se lee sin ninguna comprobación de frescura (`if os.path.exists(fp): parts.append(pd.read_parquet(fp))`); encima `_MONTH_CACHE` (en RAM, por proceso) congela el mes ensamblado hasta el reinicio del backend.
+- **Qué observé:** corridas sobre el dataset 65631af6 (rango → 2026-08-31) rechazadas por STRICT con SIEMPRE los mismos 46/2046 ticker-días, todos del 26-31 de agosto. Los parquet cacheados de esos tickers (`raw/2026/08/*.parquet`) contienen agosto SOLO hasta el 25 — se cachearon cuando el lago llegaba ahí (corridas del 4-sep); el lago ya tiene el 26-31 (verificado por query directa: p. ej. AEHL 2026-08-31, 912 velas en `month=8`). `/api/candles/multi` SÍ servía esos días (usa otro camino). Tras borrar `raw/2026/08`+`09` Y reiniciar el backend (la RAM servía la copia vieja igual): misma corrida → **100,0 % (2046/2046), 1.245 trades**.
+- **Cómo reproducir:** cachear un mes con el lago parcial (p. ej. backtest a mitad de mes), esperar a que el updater complete el mes en el lago, relanzar con rango que pise los días nuevos → rechazo por STRICT con los días del final. Sin STRICT: resultado silenciosamente parcial.
+- **Evidencia:** parquet cacheado AEHL agosto: 17 días, último 2026-08-25; lago `year=2026/month=8`: cubre 2026-08-03→31. Tres corridas idénticas → idénticos 46 faltantes. Post borrado+reinicio → 100 %.
+- **Hipótesis de causa:** HIPÓTESIS — la caché se diseñó contra un lago inmutable por mes (GCS frío) y la vida diaria del lago local (el updater carga días nuevos del mes en curso) la dejó sin historia de invalidación. Ni mtime del parquet del lago ni cobertura de fechas se comprueban.
+- **Impacto:** todo backtest cuyo rango incluya días más nuevos que la caché del mes. Con `BACKTEST_STRICT_COMPLETENESS=true` (el .env local de Álvaro) la corrida se rechaza; con false, sale parcial sin error. Paliativo local aplicado y documentado: borrar `.cache/intraday/raw/<año>/<mes>` afecto + reiniciar backend.
+- **Arreglo propuesto (para Jaume):** validar frescura por mes contra el lago (p. ej. comparar max(date) del caché con el del parquet del mes, o su mtime) en el hit de `_fetch_and_cache_month`; e invalidar `_MONTH_CACHE` igual.
+- **Código tocado:** NINGUNO (confirmado) — solo ficheros de caché locales y `CACHE_DISK_QUOTA_GB=150` en el `.env` local (el default 40 GB además evictaba meses en corridas largas, otro modo de perder días)
+- **Estado:** ABIERTO
