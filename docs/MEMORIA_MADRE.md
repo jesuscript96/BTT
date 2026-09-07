@@ -4030,3 +4030,15 @@ una BD vacía y falla sin que nada esté roto; lanzar desde `backend/`.
 - **Impacto:** el genético no puede ejecutarse en la máquina de Álvaro sin definir `BTT_GENETICO_DIR` (y la ruta del lago); 1 test rojo fuera de la máquina de Jaume. No afecta al arranque normal: router y página están gated OFF por defecto.
 - **Código tocado:** NINGUNO (confirmado) — el código llega verbatim del merge de staging; no se ha modificado para arreglarlo
 - **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-07 · 02] Warmup JIT de indicadores huérfano desde el merge del 2026-09-02 — main.py llama a una función que ya no existe
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug (menor; degrada con WARN, no rompe)
+- **Dónde:** `backend/app/main.py:195-196` (caller) frente a `backend/app/services/indicators.py` (la función ya no está)
+- **Qué observé:** al arrancar el backend tras el merge del 2026-09-07, el log saca `[JIT] warmup de indicadores falló (no crítico): cannot import name 'warmup_indicators' from 'app.services.indicators'`. El caller vive en `main.py` (introducido por `bcc75ba`, perf(jit)), pero `def warmup_indicators` NO existe ni en `indicators.py` del base `6db5a36`, ni del pre-merge `2f19fe7`, ni de staging `c8e1883` — solo en `bcc75ba` original. Ya faltaba en el merge anterior `13ce154` (2026-09-02): o sea, el warmup no ocurre desde entonces.
+- **Cómo reproducir:** arrancar el backend y mirar el log de arranque (WARN `[JIT] warmup de indicadores falló`).
+- **Evidencia:** `git grep -c "def warmup_indicators" bcc75ba -- backend/app/services/indicators.py` → 1; el mismo grep en `13ce154`, `6db5a36`, `2f19fe7` y `c8e1883` → 0. Caller presente en `main.py:195` en todos los HEAD recientes.
+- **Hipótesis de causa:** HIPÓTESIS — el merge del 2026-09-02 tomó el `indicators.py` de staging (que no descendía del warmup) y el caller de `main.py` sobrevivió al auto-merge. El WARN viene de ahí, no del merge del 2026-09-07 (pre y post-merge están iguales).
+- **Impacto:** el primer backtest de cada arranque paga el coste JIT de los indicadores en vez de calentarlo en background. Sin efecto en resultados.
+- **Código tocado:** NINGUNO (confirmado) — reportado, no arreglado (reintegrar el warmup o retirar el caller es decisión de Álvaro/Jaume, y habría que adaptarlo al catálogo nuevo de indicadores de staging)
+- **Estado:** ABIERTO
