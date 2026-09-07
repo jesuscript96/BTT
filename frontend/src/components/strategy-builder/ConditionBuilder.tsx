@@ -368,6 +368,48 @@ const isOffsetAllowed = (name: IndicatorType | string): boolean => {
     return ALLOWED_OFFSET_INDICATORS.includes(name as IndicatorType);
 };
 
+/**
+ * Ayuda de las OPCIONES de un parámetro, visible sin pasar el ratón.
+ *
+ * Jaume, 7-sep-2026: «lo del fade y este tipo de cosas, cuando pongas la
+ * descripción en los desplegables hay que ponerla para que lo vea, porque si
+ * no no sé cómo configurarlo en un backtest más tarde».
+ *
+ * Un `title=` no vale: solo sale al pasar el ratón por encima y nadie lo hace.
+ * El tooltip del indicador tampoco, porque describe el indicador entero y no
+ * cambia con la opción que tienes puesta. Esto se pinta DEBAJO del selector y
+ * dice lo que hace la opción elegida ahora mismo.
+ *
+ * Los textos salen de leer el motor, no de la intuición:
+ * `_ap_session_started` e `_vwap_cross_ref_series` en `indicators.py`.
+ */
+export const AYUDA_OPCION: Record<string, string> = {
+    // % Session Fade — qué sesión se desinfla
+    "session_ref.pm": "Del PM High a la apertura de mercado. Nace a las 09:30 y ya no cambia en todo el día; antes de esa hora NO existe y la condición es falsa.",
+    "session_ref.rth": "Del máximo de la sesión regular a la apertura del After (16:00). Nace a las 16:00; antes no existe.",
+    "session_ref.full": "Del máximo del día ENTERO (premercado y mercado juntos, el que sea más alto) a la apertura del After. En un gap que se muere el máximo suele ser el PM High, así que éste y el de RTH dan números muy distintos.",
+    // % Fade — desde dónde se mide la caída
+    "fade_ref.previous_max": "La referencia es el máximo hecho hasta la vela ANTERIOR — la actual no cuenta, así que comparar contra él no es circular. Cada máximo nuevo devuelve el fade a cero. Desde cuándo empieza a contar ese máximo lo eliges en el selector de al lado.",
+    "fade_ref.vwap_cross": "La referencia es el VWAP DE LA VELA en que el precio lo cruzó por última vez, y se queda fija hasta el cruce siguiente: por eso el fade sigue creciendo aunque el VWAP baje. Ese VWAP es acumulativo desde la primera vela del día (04:00, premercado incluido) y NO se reinicia al abrir el mercado. Antes del primer cruce del día no existe. Aquí la sesión de referencia no se usa.",
+    // ap_session — desde cuándo cuenta el máximo/mínimo
+    "ap_session.ap.PM": "Cuenta desde la primera vela del día (04:00): el máximo incluye el premercado.",
+    "ap_session.ap.RTH": "Empieza a contar a las 09:30: solo la sesión regular, sin premercado.",
+    "ap_session.ap.AM": "Empieza a contar a las 16:00: solo el after.",
+};
+
+const AyudaOpcion = ({ clave }: { clave: string }) => {
+    const texto = AYUDA_OPCION[clave];
+    if (!texto) return null;
+    return (
+        <span style={{
+            flexBasis: '100%', fontSize: 10, lineHeight: 1.4,
+            color: 'var(--color-ec-text-muted)',
+        }}>
+            {texto}
+        </span>
+    );
+};
+
 const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorType; customText?: string }) => {
     const context = React.useContext(TooltipContext);
     if (!context) return null;
@@ -863,6 +905,7 @@ export const IndicatorParams = ({
                         );
                     case IndicatorType.SESSION_FADE:
                         return (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, width: '100%' }}>
                             <select
                                 value={value.session_ref || 'pm'}
                                 onChange={(e) => onChange({ ...value, session_ref: e.target.value as "full" | "pm" | "rth" })}
@@ -885,6 +928,8 @@ export const IndicatorParams = ({
                                 <option value="rth">Mercado (RTH) → apertura del After</option>
                                 <option value="full">Día completo (PM + RTH) → apertura del After</option>
                             </select>
+                            <AyudaOpcion clave={`session_ref.${value.session_ref || 'pm'}`} />
+                            </div>
                         );
                     case IndicatorType.FADE:
                         return (
@@ -933,10 +978,14 @@ export const IndicatorParams = ({
                                         }}
                                         title="Desde cuándo empieza a contar el máximo, igual que en «Previous Max»."
                                     >
-                                        <option value="ap.PM">ap.PM</option>
-                                        <option value="ap.RTH">ap.RTH</option>
-                                        <option value="ap.AM">ap.AM</option>
+                                        <option value="ap.PM">ap.PM · 04:00</option>
+                                        <option value="ap.RTH">ap.RTH · 09:30</option>
+                                        <option value="ap.AM">ap.AM · 16:00</option>
                                     </select>
+                                )}
+                                <AyudaOpcion clave={`fade_ref.${value.fade_ref || 'previous_max'}`} />
+                                {(value.fade_ref || 'previous_max') === 'previous_max' && (
+                                    <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.RTH'}`} />
                                 )}
                             </div>
                         );
@@ -1000,7 +1049,7 @@ export const IndicatorParams = ({
                     case IndicatorType.PREVIOUS_MAX:
                     case IndicatorType.PREVIOUS_MIN:
                         return (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, width: '100%' }}>
                                 <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                                     Session:
                                 </span>
@@ -1021,10 +1070,11 @@ export const IndicatorParams = ({
                                         cursor: 'pointer',
                                     }}
                                 >
-                                    <option value="ap.PM">ap.PM</option>
-                                    <option value="ap.RTH">ap.RTH</option>
-                                    <option value="ap.AM">ap.AM</option>
+                                    <option value="ap.PM">ap.PM · 04:00</option>
+                                    <option value="ap.RTH">ap.RTH · 09:30</option>
+                                    <option value="ap.AM">ap.AM · 16:00</option>
                                 </select>
+                                <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.RTH'}`} />
                             </div>
                         );
                     default:
