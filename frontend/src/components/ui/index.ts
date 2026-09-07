@@ -10,6 +10,9 @@ export * from "./tokens";
 export * from "./Brand";
 export * from "./Button";
 export * from "./Card";
+// Panel: la sección densa, sin radio, para paneles de control (ver Panel.tsx
+// para cuándo usar Panel y cuándo Card).
+export * from "./Panel";
 export * from "./Input";
 export * from "./Badge";
 export * from "./Dropdown";

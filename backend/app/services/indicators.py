@@ -122,11 +122,32 @@ def _ema_core(values, window):
     out = np.empty(n, dtype=np.float64)
     for k in range(n):
         out[k] = np.nan
-    first_valid = window - 1
+    # SE SALTAN LOS NaN DE CABECERA antes de sembrar.
+    #
+    # La siembra es la media de los primeros `window` valores. Sobre precios eso
+    # esta bien —no hay NaN—, pero esta funcion tambien se aplica a la SALIDA de
+    # otro indicador, y esa si empieza con NaN: la senal del MACD es una EMA de
+    # la linea MACD, cuyos primeros `slow-1` valores (25 con el 26 por defecto)
+    # son NaN. La suma salia NaN, la siembra salia NaN, y como cada valor
+    # depende del anterior se propagaba hasta el final:
+    #
+    #     MACD            -> 275 valores de 300
+    #     MACD Signal     ->   0 de 300     (todo NaN)
+    #     MACD Histogram  ->   0 de 300     (todo NaN)
+    #
+    # Una comparacion contra NaN da False siempre, asi que una estrategia con
+    # «MACD Signal» o «MACD Histogram» no operaba NUNCA, y lo hacia en silencio:
+    # sin error, sin log, sin nada. Al DI+/DI- del ADX le pasaba lo mismo.
+    #
+    # Sin NaN de cabecera esto se comporta exactamente igual que antes.
+    ini = 0
+    while ini < n and np.isnan(values[ini]):
+        ini += 1
+    first_valid = ini + window - 1
     if first_valid >= n:
         return out
     s = 0.0
-    for k in range(window):
+    for k in range(ini, ini + window):
         s += values[k]
     out[first_valid] = s / window
     for i in range(first_valid + 1, n):
@@ -354,12 +375,36 @@ def _detect_triangles_numba(
         if close_t <= 0.0 or np.isnan(close_t):
             continue
             
-        start_idx = t - lookback
+        # EL `max(0, ...)` ES LO QUE IMPIDE QUE EL PROCESO SE ESFUME.
+        #
+        # Sin el, en las primeras velas del dia `start_idx` sale NEGATIVO
+        # (t=0, lookback=50 -> -50). La guarda de abajo compara `end_idx <
+        # start_idx`, o sea -5 < -50, que es falsa: la deja pasar. Y entonces el
+        # bucle indexa `is_sh[-50]` en un array que puede tener menos de 50
+        # elementos, porque `n` son las velas de ESE dia y un premercado corto
+        # tiene menos.
+        #
+        # En Python eso es un `IndexError` limpio. COMPILADO CON NUMBA NO: sin
+        # `boundscheck` (el defecto) lee memoria que no es suya, Windows lo corta
+        # con una violacion de acceso 0xC0000005 y el proceso DESAPARECE — sin
+        # traceback, sin excepcion y sin que ningun `except` se entere.
+        #
+        # Es lo que tumbaba las corridas del genetico cada ~24 minutos durante
+        # dos noches. Se cazo el 5-sep-2026 apuntando la receta del individuo
+        # antes de evaluarlo: `Triangle Symmetric(pivot_window=5,
+        # tri_lookback=50, ...)`. Reproducido con 30 velas y lookback 50:
+        #
+        #     velas=30,  lookback=50 -> IndexError: index -50 out of bounds
+        #     velas=100, lookback=50 -> ok
+        #
+        # Hace falta que coincidan un individuo con triangulos Y un dia mas
+        # corto que su lookback; de ahi que tardara en aparecer.
+        start_idx = max(0, t - lookback)
         end_idx = t - pivot_window
-        
+
         if end_idx < start_idx:
             continue
-            
+
         sh_indices = np.empty(lookback, dtype=np.float64)
         sh_prices = np.empty(lookback, dtype=np.float64)
         sh_count = 0
@@ -1399,6 +1444,29 @@ def _compute_raw(
         if pd.isna(yest_close_val) or yest_close_val == 0:
             return pd.Series(np.nan, index=close.index)
         return (close - float(yest_close_val)) / float(yest_close_val) * 100.0
+
+    if name == "Open Gap (%)":
+        # GAP DE APERTURA: la apertura del RTH contra el cierre de ayer. A
+        # diferencia de «Current Gap (%)», que se mueve con el precio, este es
+        # el gap con el que abrio el mercado y ya no cambia en todo el dia.
+        #
+        # CAUSAL A PROPOSITO: NaN antes de las 09:30. Usar la constante del dia
+        # (gap_at_open_pct de daily_metrics) desde las 04:00 seria LOOKAHEAD —
+        # en premercado nadie sabe todavia a cuanto va a abrir el mercado, y una
+        # estrategia que entra a las 08:00 la estaria usando. El NaN de la
+        # manyana no es un fallo: cualquier condicion sobre el evalua False
+        # hasta que el mercado abre (mismo criterio que «% Session Fade»).
+        yest_close_val = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan))) if ds else np.nan
+        if yest_close_val is None or pd.isna(yest_close_val):
+            yest_close_val = df["close"].iloc[0] if len(df) > 0 else np.nan
+        if pd.isna(yest_close_val) or yest_close_val == 0:
+            return pd.Series(np.nan, index=close.index)
+        apertura = _rth_running_series(df, close.index, "open")
+        if apertura is None:
+            # Sin barras RTH en el frame: el fallback ya distingue si la sesion
+            # regular aun no ha llegado (NaN) o si ya paso (constante causal).
+            apertura = _rth_constant_fallback(df, close.index, ds, "rth_open")
+        return (apertura - float(yest_close_val)) / float(yest_close_val) * 100.0
 
     if name == "% Session Fade":
         # Cuánto se desinfló una sesión entera, en POSITIVO (10 = cayó un 10%):

@@ -16,7 +16,7 @@ class TestSavedQueryReconstruction:
         test_value = 5.0
         
         # Simulate saved query reconstruction
-        query = "SELECT * FROM daily_metrics WHERE gap_at_open_pct >= ?"
+        query = "SELECT * FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000) WHERE gap_at_open_pct >= ?"
         df = execute_and_validate_query(real_db, query, [test_value])
         
         if not df.empty:
@@ -26,7 +26,7 @@ class TestSavedQueryReconstruction:
         """Test: Reconstruction of max_gap_pct filter"""
         test_value = 10.0
         
-        query = "SELECT * FROM daily_metrics WHERE gap_at_open_pct <= ?"
+        query = "SELECT * FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000) WHERE gap_at_open_pct <= ?"
         df = execute_and_validate_query(real_db, query, [test_value])
         
         if not df.empty:
@@ -36,7 +36,7 @@ class TestSavedQueryReconstruction:
         """Test: Reconstruction of min_rth_volume filter"""
         test_value = 1000000
         
-        query = "SELECT * FROM daily_metrics WHERE rth_volume >= ?"
+        query = "SELECT * FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000) WHERE rth_volume >= ?"
         df = execute_and_validate_query(real_db, query, [test_value])
         
         if not df.empty:
@@ -44,7 +44,7 @@ class TestSavedQueryReconstruction:
     
     def test_saved_query_dynamic_rules(self, real_db):
         """Test: Reconstruction of dynamic rules (variable comparisons)"""
-        query = "SELECT * FROM daily_metrics WHERE rth_close < rth_open"
+        query = "SELECT * FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000) WHERE rth_close < rth_open"
         df = execute_and_validate_query(real_db, query)
         
         if not df.empty:
@@ -52,10 +52,10 @@ class TestSavedQueryReconstruction:
 
 
 class TestJoinLogic:
-    """Tests for JOIN logic between daily_metrics and historical_data"""
+    """Tests for JOIN logic between daily_metrics and intraday_1m"""
     
     def test_daily_historical_join(self, real_db, sample_tickers):
-        """Test: Join between daily_metrics and historical_data"""
+        """Test: Join between daily_metrics and intraday_1m"""
         if not sample_tickers:
             pytest.skip("No sample tickers available")
         
@@ -63,8 +63,8 @@ class TestJoinLogic:
         
         query = """
             SELECT d.date, d.ticker, d.rth_open, h.timestamp, h.close
-            FROM daily_metrics d
-            JOIN historical_data h 
+            FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000) d
+            JOIN intraday_1m h 
                 ON d.ticker = h.ticker 
                 AND CAST(d.date AS TIMESTAMP) <= h.timestamp
                 AND h.timestamp < CAST(d.date AS TIMESTAMP) + INTERVAL 1 DAY
@@ -93,7 +93,7 @@ class TestJoinLogic:
         
         query = """
             SELECT CAST(d.date AS TIMESTAMP) as casted_date, d.date as original_date
-            FROM daily_metrics d
+            FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000) d
             WHERE d.ticker = ?
             LIMIT 10
         """
@@ -113,7 +113,7 @@ class TestJoinLogic:
         
         query = """
             SELECT date, CAST(date AS TIMESTAMP) + INTERVAL 1 DAY as next_day
-            FROM daily_metrics
+            FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000)
             WHERE ticker = ?
             LIMIT 10
         """
@@ -140,7 +140,7 @@ class TestDateFiltering:
         test_date = "2024-01-01"
         
         query = """
-            SELECT * FROM historical_data
+            SELECT * FROM intraday_1m
             WHERE ticker = ?
             AND timestamp >= CAST(? AS TIMESTAMP)
             LIMIT 100
@@ -162,7 +162,7 @@ class TestDateFiltering:
         test_date = "2025-12-31"
         
         query = """
-            SELECT * FROM historical_data
+            SELECT * FROM intraday_1m
             WHERE ticker = ?
             AND timestamp <= CAST(? AS TIMESTAMP)
             LIMIT 100
@@ -183,7 +183,7 @@ class TestDateFiltering:
         test_ticker = sample_tickers[0]
         
         query = """
-            SELECT * FROM historical_data
+            SELECT * FROM intraday_1m
             WHERE ticker = ?
             LIMIT 100
         """
@@ -201,7 +201,7 @@ class TestRowLimiting:
         """Test: LIMIT is applied correctly"""
         limit = 50
         
-        query = f"SELECT * FROM daily_metrics LIMIT {limit}"
+        query = f"SELECT * FROM (SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date FROM daily_metrics LIMIT 200000) LIMIT {limit}"
         df = execute_and_validate_query(real_db, query)
         
         assert len(df) <= limit, f"Should return at most {limit} rows"
@@ -215,7 +215,7 @@ class TestRowLimiting:
         default_limit = 100000
         
         query = f"""
-            SELECT * FROM historical_data
+            SELECT * FROM intraday_1m
             WHERE ticker = ?
             LIMIT {default_limit}
         """

@@ -334,12 +334,29 @@ def _is_take_profit_path(path: str) -> bool:
     return "take_profit" in (path or "")
 
 
+def _is_entry_window_path(path: str) -> bool:
+    """`entry_logic.entry_time_windows.N.from_time` / `.to_time`.
+
+    Los limites horarios de ejecucion de las variables de entrada se guardan
+    como texto "HH:MM". El barrido mueve minutos desde medianoche y al escribir
+    el punto hay que devolver el texto — igual que el take profit por hora.
+    """
+    p = path or ""
+    return "entry_time_windows" in p and p.rsplit(".", 1)[-1] in ("from_time", "to_time")
+
+
+def _needs_hhmm_reencode(path: str) -> bool:
+    return _is_take_profit_path(path) or _is_entry_window_path(path)
+
+
 def _param_unit_from_def(base_def: dict, path: str) -> str | None:
     """'minutes' | 'time_of_day' | None, segun la forma que tiene HOY el valor.
 
     Es lo que permite barrer numeros y devolver texto al escribir, sin que el
     frontend tenga que mandar metadatos nuevos.
     """
+    if _is_entry_window_path(path):
+        return "time_of_day"
     if not _is_take_profit_path(path):
         return None
     raw = _get_nested_value(base_def or {}, path)
@@ -365,7 +382,7 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
 
     def _add(param_id: str, label: str, value, category: str, path: str,
              min_val=None, max_val=None, step=None, is_int_param=False,
-             unit=None):
+             unit=None, allow_zero=False):
         if param_id in _seen or value is None:
             return
         _seen.add(param_id)
@@ -374,8 +391,11 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         except (TypeError, ValueError):
             return
         # Skip parameters with value 0 — they represent disabled features
-        # (e.g., SL=0 means no stop loss, TP=0 means no take profit)
-        if v == 0:
+        # (e.g., SL=0 means no stop loss, TP=0 means no take profit).
+        # `allow_zero` es para el caso contrario: el margen de un stop de
+        # estructura en 0 significa «el stop va CLAVADO en el nivel», que es
+        # una configuracion normal y perfectamente optimizable.
+        if v == 0 and not allow_zero:
             return
         
         if is_int_param:
@@ -384,8 +404,11 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
             v_max = float(int(v + 10)) if max_val is None else float(max_val)
         else:
             v_step = float(step or _auto_step(v))
-            v_min = float(min_val or max(0, v * 0.25))
-            v_max = float(max_val or max(v * 3, v + 10))
+            # `or` NO vale aqui: un min_val de 0 es falsy y se colaba el
+            # automatico. Lo cazo el test del margen del stop de estructura,
+            # que pide min 0 y recibia 2,5 sin decir nada.
+            v_min = float(min_val if min_val is not None else max(0, v * 0.25))
+            v_max = float(max_val if max_val is not None else max(v * 3, v + 10))
 
         params.append({
             "id": param_id,
@@ -419,6 +442,25 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         _extract_from_condition_group(root, logic_label, f"{logic_key}.root_condition",
                                       params, _seen, _add)
 
+    # --- Limites horarios de ejecucion de variables de entrada ---
+    # (`entry_logic.entry_time_windows`). Se barren en MINUTOS DESDE MEDIANOCHE
+    # y se reescriben como "HH:MM" (_needs_hhmm_reencode), igual que el take
+    # profit por hora. Antes no aparecian en la lista: `float("09:30")` revienta
+    # y `_add` los descartaba sin decir nada.
+    for _wi, _w in enumerate((strategy_def.get("entry_logic") or {}).get("entry_time_windows") or []):
+        for _campo, _etiqueta in (("from_time", "desde"), ("to_time", "hasta")):
+            _mins = _hhmm_to_minutes((_w or {}).get(_campo))
+            if _mins is None:
+                continue
+            _n = f" {_wi + 1}" if _wi else ""
+            _add(f"entry.window.{_wi}.{_campo}",
+                 f"Ventana de entrada{_n} ({_etiqueta})",
+                 _mins, "Entry",
+                 f"entry_logic.entry_time_windows.{_wi}.{_campo}",
+                 min_val=max(_SESSION_MIN_MINUTES, _mins - 120),
+                 max_val=min(_SESSION_MAX_MINUTES, _mins + 120),
+                 step=5, unit="time_of_day")
+
     # --- Risk management ---
     rm = strategy_def.get("risk_management") or {}
     
@@ -439,6 +481,30 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                          f"Stop Loss ({hs.get('type', 'Pct')})",
                          val, "Risk", "risk_management.hard_stop.value",
                          min_val=0.1, max_val=max(float_val * 4, 20) if val else 20, step=0.5)
+                else:
+                    # STOP DE ESTRUCTURA. Aqui `value` es TEXTO ("PMH",
+                    # "Previous Max"...), asi que el `float()` de arriba falla y
+                    # hasta hoy se caia el bloque ENTERO: una estrategia con
+                    # stop estructural no ofrecia ni una sola perilla del stop,
+                    # ni en el 3D, ni en el Walk Forward, ni en el genetico —
+                    # los tres beben de aqui. Y no avisaba: simplemente no
+                    # aparecia.
+                    #
+                    # El nivel no se puede mover (son seis columnas fijas en el
+                    # simulador, y son DOS simuladores en paridad), pero el
+                    # MARGEN si: es un numero, el motor ya lo aplica de punta a
+                    # punta (`hs_offset_pct` -> portfolio_sim / sim_dispatch) y
+                    # es lo mas interesante que hay ahi. Jaume, 7-sep-2026: «si
+                    # hay una estrategia de estructura con % por encima de PMH,
+                    # no podria medirme ese % de distancia e ir probando?».
+                    off = hs.get("offset_pct")
+                    if off is None:
+                        off = 0.0
+                    _add("risk.hard_stop.offset_pct",
+                         f"Margen del stop ({hs.get('value')})",
+                         off, "Risk", "risk_management.hard_stop.offset_pct",
+                         min_val=0.0, max_val=max(float(off) * 3, 15.0), step=0.5,
+                         allow_zero=True)
 
     # Take Profit & Partials
     if rm.get("use_take_profit") is not False:
@@ -522,6 +588,31 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                  "Trailing Buffer %",
                  val, "Risk", "risk_management.trailing_stop.buffer_pct",
                  min_val=0.1, max_val=5.0, step=0.1)
+
+    # --- Piramidacion ---
+    # No estaba (2026-09-06): una estrategia con piramide tenia sus niveles
+    # CONGELADOS tanto aqui como en el optimizador 3D. Se conservaban —
+    # la definicion se copia entera— pero no habia forma de moverlos, y el
+    # tamaño de un añadido pesa tanto como el de la entrada.
+    #
+    # Se sacan las tres cosas que definen un nivel: cuanto mete, cuantas veces
+    # puede dispararse y los umbrales de SU condicion (que van por la misma
+    # maquinaria que las de entrada y salida — un nivel es una condicion mas).
+    for i, lv in enumerate((strategy_def.get("pyramiding") or {}).get("levels") or []):
+        if not isinstance(lv, dict):
+            continue
+        n = i + 1
+        unidad = "$" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "%"
+        _add(f"pyr.{i}.capital_pct",
+             f"Pirámide {n} ({'quita' if str(lv.get('action', 'add')).lower() == 'reduce' else 'añade'} {unidad})",
+             lv.get("capital_pct"), "Pyramid", f"pyramiding.levels.{i}.capital_pct",
+             min_val=0.5, step=0.5)
+        _add(f"pyr.{i}.times", f"Piramide {n} veces",
+             lv.get("times"), "Pyramid", f"pyramiding.levels.{i}.times",
+             min_val=1, max_val=10, step=1, is_int_param=True)
+        _extract_from_condition_group(
+            lv.get("root_condition") or {}, f"Pirámide {n}",
+            f"pyramiding.levels.{i}.root_condition", params, _seen, _add)
 
     # --- Preconditions ---
     for i, precond in enumerate(strategy_def.get("postgap_preconditions") or []):
@@ -681,7 +772,7 @@ def _set_nested_value(obj, path: str, value):
     # hora se guardan como texto ("15:30", "HOUR:15:30", "TIME:30"). Se relee
     # lo que habia y se devuelve con la misma forma. Un valor original numerico
     # pasa de largo, asi que esto no toca ningun parametro de los de siempre.
-    reencode = _is_take_profit_path(path)
+    reencode = _needs_hhmm_reencode(path)
     if isinstance(current, list):
         idx = int(last_key)
         anterior = current[idx] if 0 <= idx < len(current) else None
@@ -690,6 +781,26 @@ def _set_nested_value(obj, path: str, value):
         current[last_key] = (
             _encode_tp_value(current.get(last_key), value) if reencode else value
         )
+
+
+def apply_point_to_def(modified_def: dict, param_configs: list, point) -> None:
+    """Escribe un punto de la rejilla en la definicion, EN SITIO.
+
+    Ejes ENLAZADOS (`linked_paths` / `linked_offsets`, 2026-09-06): un eje
+    normal escribe un numero en `path`; uno enlazado escribe ademas en otras
+    rutas sumandoles su desplazamiento. Es lo que mueve la ventana de entrada
+    DE UNA PIEZA (09:30-10:00, 10:00-10:30, ...) con una sola dimension de
+    rejilla — N corridas en vez de N**2. Sin esas claves el comportamiento es
+    exactamente el de siempre.
+    """
+    for dim, val in enumerate(point):
+        pc = param_configs[dim]
+        _set_nested_value(modified_def, pc["path"], val)
+        linked = pc.get("linked_paths") or []
+        offsets = pc.get("linked_offsets") or []
+        for j, ruta in enumerate(linked):
+            off = float(offsets[j]) if j < len(offsets) else 0.0
+            _set_nested_value(modified_def, ruta, val + off)
 
 
 def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
@@ -701,8 +812,7 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
     backtest_params = ctx["backtest_params"]
 
     modified_def = copy.deepcopy(ctx["base_def"])
-    for dim, val in enumerate(point):
-        _set_nested_value(modified_def, param_configs[dim]["path"], val)
+    apply_point_to_def(modified_def, param_configs, point)
 
     # If optimizing preconditions, we must re-evaluate them for this point
     if ctx["opt_preconds"]:
@@ -739,6 +849,12 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
         metric_val = agg.get(ctx["metric_key"], 0)
         detail = {
             "sharpe": agg.get("avg_sharpe", 0),
+            # PnL total del punto. Va aparte de `expectancy` a proposito: la
+            # expectancy del motor divide el PnL BRUTO de locates, asi que en
+            # una estrategia en corto con alquiler caro sobreestima. Con esto,
+            # quien pinta el punto puede elegir entre las dos lecturas
+            # (total_pnl / total_trades = EV neto de comisiones Y locates).
+            "total_pnl": agg.get("total_pnl", 0),
             "total_return": agg.get("total_return_pct", 0),
             "max_drawdown": agg.get("max_drawdown_pct", 0),
             "profit_factor": agg.get("avg_profit_factor", 0),
@@ -1166,6 +1282,14 @@ def run_optimization_grid(
 
     # Replace NaN with None for JSON serialization
     def clean(v):
+        # Recursivo desde el 2026-09-06: antes solo se limpiaba la rejilla de 2
+        # dimensiones. Con 1 eje (el barrido de la ventana de entrada) los NaN
+        # salian crudos y `NaN` no es JSON valido — el navegador reventaba al
+        # parsear, sin que el backend diera ningun error.
+        if isinstance(v, list):
+            return [clean(x) for x in v]
+        if isinstance(v, dict):
+            return {k: clean(x) for k, x in v.items()}
         if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
             return None
         return v
@@ -1178,11 +1302,10 @@ def run_optimization_grid(
              "unit": _param_unit_from_def(base_def, pc.get("path", ""))}
             for i, pc in enumerate(param_configs)
         ],
-        "grid": [[clean(v) for v in row] for row in results_grid.tolist()]
-                 if n_dims == 2 else results_grid.tolist(),
+        "grid": clean(results_grid.tolist()),
         "metric": metric,
         "metric_label": metric,
-        "details": [d if d else {} for d in details_flat],
+        "details": [clean(d) if d else {} for d in details_flat],
         "shape": list(shape),
         "plateau_analysis": plateau,
         "plateau_analyses": plateau_analyses,

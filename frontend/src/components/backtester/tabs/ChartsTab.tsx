@@ -28,6 +28,8 @@ import type { TradeRecord, DayResult, GlobalEquityPoint, DrawdownPoint, Aggregat
 import { runWhatIf } from "@/lib/api_backtester";
 import RollingEVChart from "@/components/backtester/RollingEVChart";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
+import CalendarTab from "@/components/backtester/tabs/CalendarTab";
+import EntryWindowSweepChart from "@/components/backtester/EntryWindowSweepChart";
 import { Zap, Shield, Loader2 } from "lucide-react";
 
 interface ChartsTabProps {
@@ -42,6 +44,11 @@ interface ChartsTabProps {
   isDarkMode?: boolean;
   viewMode?: "charts" | "whatif";
   riskType?: string;
+  // Para el barrido de la ventana de entrada (lanza backtests nuevos).
+  strategyId?: string;
+  strategyDefinition?: Record<string, any>;
+  datasetId?: string;
+  backtestParams?: Record<string, unknown>;
 }
 
 const WEEKDAY_NAMES = ["Lun", "Mar", "Mie", "Jue", "Vie"];
@@ -107,7 +114,17 @@ export default function ChartsTab({
   isDarkMode = false,
   viewMode = "charts",
   riskType = "FIXED",
+  strategyId = "",
+  strategyDefinition,
+  datasetId = "",
+  backtestParams = {},
 }: ChartsTabProps) {
+
+  // «EV por Tiempo» tiene dos lecturas distintas y hasta el 6-sep-2026 solo
+  // existía la primera: (a) los trades que HUBO agrupados por su hora de
+  // entrada, y (b) qué EV daría cada franja si el límite horario de entrada
+  // fuese otro — que exige lanzar un backtest por franja.
+  const [evTimeVista, setEvTimeVista] = useState<"trades" | "barrido">("trades");
 
   const gridColor = "#2C2F33";
   const tickColor = "#ffffff";
@@ -126,6 +143,13 @@ export default function ChartsTab({
   const [randomMonthlyDays, setRandomMonthlyDays] = useState<number>(0);
   const [dailyMaxTrades, setDailyMaxTrades] = useState<number>(0);
   const [maxConcurrentTrades, setMaxConcurrentTrades] = useState<number>(0);
+  /** Céntimos que el precio tiene que recorrer para que la mesa de fondeo dé
+   *  el trade por bueno. Se teclea en CÉNTIMOS (10) y viaja al backend en
+   *  DÓLARES (0.10), que es la unidad de los precios de los trades. */
+  const [minMoveCents, setMinMoveCents] = useState<number>(0);
+  /** El calendario de debajo del gráfico. Plegado por defecto: es para mirar
+   *  qué días se cayeron, no para tenerlo siempre delante. */
+  const [verCalendarioWhatIf, setVerCalendarioWhatIf] = useState(false);
 
   const [skipTopPct, setSkipTopPct] = useState<number>(0);
   const [extraSlippage, setExtraSlippage] = useState<number>(0);
@@ -199,6 +223,9 @@ export default function ChartsTab({
         random_monthly_days: randomMonthlyDays,
         daily_max_trades: dailyMaxTrades,
         max_concurrent_trades: maxConcurrentTrades,
+        // Se teclea en céntimos, viaja en dólares: los precios de los trades
+        // van en dólares y allí se compara contra ellos.
+        min_move_cents: minMoveCents > 0 ? minMoveCents / 100 : 0,
         skip_top_pct: skipTopPct,
         extra_slippage: extraSlippage,
         black_swan_count: blackSwanCount,
@@ -568,6 +595,25 @@ export default function ChartsTab({
                         className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
                       />
                     </div>
+                    {/* La regla de las mesas de fondeo. Va aquí, con los
+                        límites, porque es eso: un trade que no llega no cuenta. */}
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium inline-flex items-center gap-1">
+                        Cts. mín. que debe moverse:
+                        <InfoTooltip
+                          position="right"
+                          text="Regla de las cuentas de fondeo: un trade solo cuenta si el precio recorrió al menos estos céntimos. Se aplica SOLO a los ganadores — un short de 1,00 a 0,90 con el mínimo en 10 no cuenta ni en equity ni en drawdown, y a 0,89 cuenta el beneficio ENTERO, no el sobrante. Las pérdidas se cuentan siempre, se hayan movido lo que se hayan movido, que es lo que hace que la regla duela. Déjalo en 0 para no aplicarla."
+                        />
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={minMoveCents}
+                        onChange={(e) => setMinMoveCents(Number(e.target.value))}
+                        className="w-24 bg-[var(--color-ec-bg-elevated)] border border-[var(--color-ec-border)] rounded px-3 py-1.5 text-[11px] text-center text-[var(--color-ec-text-high)] outline-none focus:border-[var(--color-ec-copper)]"
+                      />
+                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-[11px] text-[var(--color-ec-text-secondary)] font-medium">Excluir días aleatorios/mes:</span>
                       <input
@@ -686,6 +732,57 @@ export default function ChartsTab({
               riskType={riskType}
               metrics={metrics}
             />
+
+            {/* ── El calendario, con las condiciones del What-if ──────────
+                La curva dice CUÁNTO se degrada; el calendario dice DÓNDE. Con
+                la regla de los céntimos eso es justo lo que hace falta: ver
+                qué días se quedaron sin sus ganadores y cuáles aguantan.
+
+                Es el MISMO componente que la pestaña Calendario, alimentado
+                con los `day_results` que devuelve el What-if. Si se
+                recalculara aquí, los dos calendarios podrían decir cosas
+                distintas del mismo día — el peor fallo posible en una
+                pantalla que existe para compararlos. */}
+            {simResult && (
+              <div className="mt-4 border-t border-[var(--color-ec-border)] pt-3">
+                <button
+                  onClick={() => setVerCalendarioWhatIf((v) => !v)}
+                  className="w-full flex items-center justify-between px-1 py-1.5 text-[11px] font-mono uppercase tracking-[0.12em] text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-high)] transition-colors"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-ec-copper)]" />
+                    Calendario con estas condiciones
+                    <span className="text-[var(--color-ec-text-muted)] normal-case tracking-normal">
+                      ({(simResult.day_results?.length ?? 0)} días · {simResult.trades.length} trades)
+                    </span>
+                  </span>
+                  <span>{verCalendarioWhatIf ? "▲" : "▼"}</span>
+                </button>
+                {verCalendarioWhatIf && (
+                  simResult.day_results && simResult.day_results.length > 0 ? (
+                    <div className="mt-2">
+                      <CalendarTab
+                        dayResults={simResult.day_results}
+                        trades={simResult.trades}
+                        isDarkMode={isDarkMode}
+                        riskR={riskR}
+                        riskType={riskType}
+                        globalEquity={simResult.global_equity}
+                        initCash={initCash}
+                        // SIN GASTOS MENSUALES a propósito: ya van metidos en
+                        // la curva del What-if cuando se piden, y volver a
+                        // restarlos aquí los cobraría dos veces.
+                        monthlyExpenses={0}
+                      />
+                    </div>
+                  ) : (
+                    <p className="mt-2 px-1 text-[11px] text-[var(--color-ec-text-muted)]">
+                      No queda ningún día con estas condiciones.
+                    </p>
+                  )
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -706,15 +803,41 @@ export default function ChartsTab({
 
         {/* EV por Tiempo (30m) */}
         <div className="flex flex-col h-full" style={{ borderRight: '1px solid var(--border)' }}>
-          <div className="px-3 py-2 flex items-center">
+          <div className="px-3 py-2 flex items-center gap-2">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-8 inline-flex items-center gap-1">
-              EV por Tiempo (30m)
+              EV por Tiempo
               <InfoTooltip
                 position="left"
-                text="Esperanza Matemática (EV) promedio agrupada por la hora de entrada del trade (intervalos de 30 minutos). Sirve para identificar en qué franjas horarias las operaciones son rentables (barras verdes) o perdedoras (barras rojas) en promedio."
+                text="<b>Trades:</b> Esperanza Matemática (EV) promedio de los trades que hubo, agrupados por su hora de entrada (intervalos de 30 minutos).<br/><br/><b>Barrido:</b> lanza un backtest por cada franja horaria y compara su EV. Responde a «¿en qué franja debería dejar entrar?», que el modo Trades no puede contestar: si la estrategia tiene un límite horario de entrada, ahí no hay trades fuera de él."
               />
             </span>
+            {/* gap-1 + p-[3px]: los dos botones estaban pegados uno a otro y al
+                borde de la caja, y se leian como un solo bloque. */}
+            <div className="ml-auto mr-2 flex items-center gap-1 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[22px] p-[3px]">
+              {([["trades", "Trades"], ["barrido", "Barrido"]] as const).map(([id, txt]) => (
+                <button
+                  key={id}
+                  onClick={() => setEvTimeVista(id)}
+                  className={`px-2.5 text-[9px] font-mono rounded-sm transition-colors ${
+                    evTimeVista === id
+                      ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
+                      : "text-[var(--color-ec-text-secondary)]"
+                  }`}
+                >
+                  {txt}
+                </button>
+              ))}
+            </div>
           </div>
+          {evTimeVista === "barrido" ? (
+            <EntryWindowSweepChart
+              strategyId={strategyId}
+              strategyDefinition={strategyDefinition}
+              datasetId={datasetId}
+              backtestParams={backtestParams}
+              isDarkMode={isDarkMode}
+            />
+          ) : (
           <div className="flex-1 px-4 pb-4 min-h-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={evByTime30Min} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
@@ -741,6 +864,7 @@ export default function ChartsTab({
               </BarChart>
             </ResponsiveContainer>
           </div>
+          )}
         </div>
 
         {/* EV por Día */}

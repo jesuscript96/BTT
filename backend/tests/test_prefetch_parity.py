@@ -119,8 +119,15 @@ def _candidate_caches(con) -> dict[str, pd.DataFrame]:
     return {t: ind._ticker_daily_ohlc_cache.get(t) for t in PROBE_TICKERS}
 
 
-def test_prefetch_parity():
-    con = get_db_connection()
+def test_prefetch_parity(real_db):
+    # USA EL FIXTURE, NO `get_db_connection()` A PELO.
+    #
+    # Llamando a la conexión por su cuenta se saltaba el guardián del conftest:
+    # con el backend en marcha, DuckDB no deja abrir la base (un solo escritor),
+    # `_establish_connection` cae a una base EN MEMORIA VACÍA y el test moría
+    # con «Table with name daily_metrics does not exist», que no dice nada de la
+    # causa. Con el fixture se salta explicando que hay que parar uvicorn.
+    con = real_db
 
     # Reference: independent full-history frames.
     reference = {t: _build_df_daily(con, t) for t in PROBE_TICKERS}

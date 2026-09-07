@@ -58,6 +58,7 @@ reproducible.
 """
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -150,10 +151,29 @@ def _run_case(case) -> tuple[str, list[str]]:
 
 
 def test_backtest_golden():
-    assert CONFIG.exists(), (
-        f"Missing {CONFIG}. Create it from the template:\n"
-        f"  python tests/test_backtest_golden.py --template"
-    )
+    # SOLO CORRE EN PRODUCCION, Y FUERA SE SALTA EN VEZ DE FALLAR.
+    #
+    # La cabecera de este fichero ya lo dice: «Run it inside the prod container
+    # (DB_PROVIDER=gcs already set there)». Su `golden_b_config.json` apunta a
+    # dataset_id y strategy_id que solo existen alli, asi que en local muere con
+    # «404: Strategy not found» — un rojo permanente que durante meses se mezclo
+    # con los otros cien fallos de la suite y no dejaba ver si el motor habia
+    # cambiado de resultados de verdad, que es justo lo unico que este test
+    # vigila. `DB_PROVIDER` es el mismo criterio que usa el propio docstring.
+    motivo = None
+    if not CONFIG.exists():
+        motivo = (f"falta {CONFIG.name}; generarlo con "
+                  f"`python tests/test_backtest_golden.py --template`")
+    elif os.getenv("DB_PROVIDER", "").lower() != "gcs":
+        motivo = (f"DB_PROVIDER={os.getenv('DB_PROVIDER') or '(sin definir)'}. "
+                  f"Este golden necesita los datasets y las cachés del SERVIDOR "
+                  f"(DB_PROVIDER=gcs); en local sus ids no existen")
+    if motivo:
+        aviso = f"Golden de PRODUCCION, aqui no aplica: {motivo}"
+        if pytest is not None:       # bajo pytest: saltar diciendo por que
+            pytest.skip(aviso)
+        print(f"[GOLDEN-B] SKIP — {aviso}")   # como script suelto: avisar y salir
+        return
     cfg = json.loads(CONFIG.read_text())
     cases = cfg.get("cases", [])
     assert cases, "golden_b_config.json has no cases"

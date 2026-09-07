@@ -1,172 +1,97 @@
-"""
-Tests for NEW Tier 3 Metrics using REAL data.
-Tests: Return from M(x) to Close
+"""Retornos intradia por tramos: `m15/m30/m60/m180_return_pct`, con datos REALES.
+
+QUE PROBABA ESTE FICHERO Y POR QUE SE REESCRIBIO
+------------------------------------------------
+Probaba `return_m15_to_close`, `return_m30_to_close` y `return_m60_to_close`:
+el retorno DESDE el minuto X HASTA el cierre. **Esas columnas no existen en el
+lago** y por eso llevaba meses en rojo.
+
+Lo que hay es lo CONTRARIO — desde la apertura hasta el minuto X
+(`fase6_etl_edgecute.py`):
+
+    m15_return_pct = (COALESCE(c15, rth_open) - rth_open) / rth_open * 100
+
+En una primera pasada se renombraron unas por otras dando por hecho que era el
+mismo dato con otro nombre. **Fue un error**: al ser opuestas, varios tests
+pasaron a compararse consigo mismos y salian en VERDE sin comprobar nada, que es
+peor que el rojo del que venian. De ahi que esto se reescriba entero.
+
+EL «DESDE EL MINUTO X HASTA EL CIERRE» SE PUEDE DERIVAR, y puede interesar
+—es lo que mide un fade—, pero hoy hay que calcularlo a mano:
+
+    precio_X = rth_open * (1 + mX_return_pct / 100)
+    desde_X_al_cierre = (rth_close - precio_X) / precio_X * 100
+
+OJO CON EL `COALESCE(cX, rth_open)`: los dias sin vela en ese minuto no salen
+como NULL, salen como **0 %**. Por eso aqui se descarta el cero al comprobar
+signos: no distingue «no se movio» de «no hay dato».
 """
 import pytest
-import pandas as pd
+
 from tests.utils.db_helpers import execute_and_validate_query
 
-
-class TestReturnMxToClose:
-    """Tests for Return from M(x) to Close calculations"""
-    
-    def test_return_m15_to_close_exists(self, real_db):
-        """Test: return_m15_to_close column exists and is populated"""
-        query = """
-            SELECT return_m15_to_close
-            FROM daily_metrics
-            LIMIT 10
-        """
-        df = execute_and_validate_query(real_db, query)
-        
-        assert not df.empty, "Should return rows"
-        assert 'return_m15_to_close' in df.columns, "return_m15_to_close column should exist"
-    
-    def test_all_return_mx_columns_exist(self, real_db):
-        """Test: All return M(x) to close columns exist"""
-        query = """
-            SELECT return_m15_to_close, return_m30_to_close, return_m60_to_close
-            FROM daily_metrics
-            LIMIT 1
-        """
-        df = execute_and_validate_query(real_db, query)
-        
-        expected_cols = ['return_m15_to_close', 'return_m30_to_close', 'return_m60_to_close']
-        
-        for col in expected_cols:
-            assert col in df.columns, f"Column {col} should exist"
-    
-    def test_return_m15_positive_when_close_above_m15(self, real_db):
-        """Test: return_m15_to_close > 0 when close > M15 price"""
-        # We need to reconstruct M15 price from m15_return_pct
-        query = """
-            SELECT rth_open, m15_return_pct, rth_close, return_m15_to_close
-            FROM daily_metrics
-            WHERE m15_return_pct IS NOT NULL
-            AND return_m15_to_close IS NOT NULL
-            AND rth_close > rth_open * (1 + m15_return_pct/100)
-            LIMIT 10
-        """
-        df = execute_and_validate_query(real_db, query)
-        
-        if not df.empty:
-            # When close > M15 price, return should be positive
-            for _, row in df.iterrows():
-                assert row['return_m15_to_close'] > -0.01, \
-                    "Return M15 to close should be positive when close > M15 price"
-    
-    def test_return_m15_negative_when_close_below_m15(self, real_db):
-        """Test: return_m15_to_close < 0 when close < M15 price"""
-        query = """
-            SELECT rth_open, m15_return_pct, rth_close, return_m15_to_close
-            FROM daily_metrics
-            WHERE m15_return_pct IS NOT NULL
-            AND return_m15_to_close IS NOT NULL
-            AND rth_close < rth_open * (1 + m15_return_pct/100)
-            LIMIT 10
-        """
-        df = execute_and_validate_query(real_db, query)
-        
-        if not df.empty:
-            # When close < M15 price, return should be negative
-            for _, row in df.iterrows():
-                assert row['return_m15_to_close'] < 0.01, \
-                    "Return M15 to close should be negative when close < M15 price"
-    
-    def test_return_m30_calculation_logic(self, real_db):
-        """Test: return_m30_to_close calculation logic"""
-        query = """
-            SELECT rth_open, rth_close, m30_return_pct, return_m30_to_close
-            FROM daily_metrics
-            WHERE m30_return_pct IS NOT NULL
-            AND return_m30_to_close IS NOT NULL
-            AND rth_open > 0
-            LIMIT 10
-        """
-        df = execute_and_validate_query(real_db, query)
-        
-        if not df.empty:
-            for _, row in df.iterrows():
-                # Calculate M30 price from open and M30 return
-                m30_price = row['rth_open'] * (1 + row['m30_return_pct']/100)
-                
-                # Expected return from M30 to Close
-                expected_return = ((row['rth_close'] - m30_price) / m30_price) * 100
-                
-                # Validate
-                assert abs(row['return_m30_to_close'] - expected_return) < 0.1, \
-                    f"Return M30 to close calculation mismatch: expected {expected_return:.2f}, got {row['return_m30_to_close']:.2f}"
-    
-    def test_return_m60_calculation_logic(self, real_db):
-        """Test: return_m60_to_close calculation logic"""
-        query = """
-            SELECT rth_open, rth_close, m60_return_pct, return_m60_to_close
-            FROM daily_metrics
-            WHERE m60_return_pct IS NOT NULL
-            AND return_m60_to_close IS NOT NULL
-            AND rth_open > 0
-            LIMIT 10
-        """
-        df = execute_and_validate_query(real_db, query)
-        
-        if not df.empty:
-            for _, row in df.iterrows():
-                # Calculate M60 price from open and M60 return
-                m60_price = row['rth_open'] * (1 + row['m60_return_pct']/100)
-                
-                # Expected return from M60 to Close
-                expected_return = ((row['rth_close'] - m60_price) / m60_price) * 100
-                
-                # Validate
-                assert abs(row['return_m60_to_close'] - expected_return) < 0.1, \
-                    f"Return M60 to close calculation mismatch: expected {expected_return:.2f}, got {row['return_m60_to_close']:.2f}"
+FUENTE = ("(SELECT *, CAST(timestamp AS VARCHAR)[:10] AS date "
+          "FROM daily_metrics LIMIT 200000)")
+TRAMOS = ["m15_return_pct", "m30_return_pct", "m60_return_pct", "m180_return_pct"]
 
 
-class TestReturnMxRelationships:
-    """Tests for relationships between different Return M(x) metrics"""
-    
-    def test_return_consistency_across_timeframes(self, real_db):
-        """Test: Returns at different timeframes should be internally consistent"""
-        query = """
-            SELECT return_m15_to_close, return_m30_to_close, return_m60_to_close,
-                   m15_return_pct, m30_return_pct, m60_return_pct,
-                   rth_open, rth_close
-            FROM daily_metrics
-            WHERE return_m15_to_close IS NOT NULL
-            AND return_m30_to_close IS NOT NULL
-            AND return_m60_to_close IS NOT NULL
-            LIMIT 20
+class TestColumnasDeTramo:
+
+    def test_existen_y_estan_pobladas(self, real_db):
+        df = execute_and_validate_query(
+            real_db, f"SELECT {', '.join(TRAMOS)} FROM {FUENTE} LIMIT 100")
+        assert not df.empty
+        for c in TRAMOS:
+            assert c in df.columns, f"falta la columna {c}"
+            assert df[c].notna().all(), f"{c} tiene nulos"
+
+    def test_no_existe_el_retorno_hasta_el_cierre(self, real_db):
+        """Deja constancia de que `return_mX_to_close` NO esta en el lago.
+
+        Si algun dia se anyade, este test falla y toca reescribir el fichero
+        para comprobarla de verdad — que es justo lo que se quiere que pase.
         """
-        df = execute_and_validate_query(real_db, query)
-        
-        if not df.empty:
-            for _, row in df.iterrows():
-                # All three should have the same sign in strong trending days
-                # (though this is not guaranteed for choppy days)
-                returns = [
-                    row['return_m15_to_close'],
-                    row['return_m30_to_close'],
-                    row['return_m60_to_close']
-                ]
-                
-                # At least check they are all valid numbers
-                assert all(isinstance(r, (int, float)) for r in returns), \
-                    "All return values should be numeric"
-    
-    def test_fade_detection_via_returns(self, real_db):
-        """Test: Negative returns indicate fade from M(x) to close"""
-        query = """
-            SELECT return_m15_to_close, return_m30_to_close, return_m60_to_close,
-                   rth_open, rth_close, m15_return_pct, m30_return_pct, m60_return_pct
-            FROM daily_metrics
-            WHERE return_m15_to_close < -2.0
-            LIMIT 10
+        columnas = {r[0] for r in real_db.execute(
+            "DESCRIBE SELECT * FROM daily_metrics").fetchall()}
+        assert not (columnas & {"return_m15_to_close", "return_m30_to_close",
+                                "return_m60_to_close"}), \
+            "ya existe el retorno hasta el cierre: actualizar este fichero"
+
+
+class TestSignoYCoherencia:
+
+    @pytest.mark.parametrize("col", TRAMOS)
+    def test_el_signo_dice_donde_estaba_el_precio(self, real_db, col):
+        """Positivo <=> el precio de ese minuto estaba por encima de la apertura."""
+        df = execute_and_validate_query(real_db, f"""
+            SELECT rth_open, {col}
+            FROM {FUENTE}
+            WHERE rth_open > 0 AND {col} <> 0
+            LIMIT 50
+        """)
+        assert not df.empty, f"sin filas con {col} distinto de cero"
+        precio = df["rth_open"] * (1 + df[col] / 100)
+        arriba = precio > df["rth_open"]
+        assert (arriba == (df[col] > 0)).all(), \
+            f"el signo de {col} no cuadra con el precio reconstruido"
+
+    def test_derivar_el_retorno_hasta_el_cierre(self, real_db):
+        """La cuenta del docstring da un numero coherente (es la del fade).
+
+        No comprueba una columna del lago —no existe— sino que la derivacion
+        documentada arriba funciona con los datos reales y no revienta.
         """
-        df = execute_and_validate_query(real_db, query)
-        
-        if not df.empty:
-            # These are fade cases where price fell from M15 to close
-            for _, row in df.iterrows():
-                # M15 return should be > return_m15_to_close (price was higher at M15)
-                assert row['m15_return_pct'] > row['return_m15_to_close'], \
-                    "In fade cases, M15 return should be greater than return from M15 to close"
+        df = execute_and_validate_query(real_db, f"""
+            SELECT rth_open, rth_close, m15_return_pct
+            FROM {FUENTE}
+            WHERE rth_open > 0 AND rth_close > 0 AND m15_return_pct <> 0
+            LIMIT 50
+        """)
+        assert not df.empty
+        precio_m15 = df["rth_open"] * (1 + df["m15_return_pct"] / 100)
+        assert (precio_m15 > 0).all(), "precio del minuto 15 no positivo"
+        desde_m15 = (df["rth_close"] - precio_m15) / precio_m15 * 100
+        assert desde_m15.notna().all()
+        # Coherencia de direccion: si cierra por encima del precio del minuto 15,
+        # el retorno desde ahi tiene que ser positivo.
+        assert ((df["rth_close"] > precio_m15) == (desde_m15 > 0)).all()

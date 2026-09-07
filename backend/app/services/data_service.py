@@ -662,14 +662,169 @@ def _deserialize_qualifying_df(payload: str) -> pd.DataFrame:
     return pd.read_feather(io.BytesIO(base64.b64decode(payload)))
 
 
+# ---------------------------------------------------------------------------
+# Tipo de instrumento: fuera warrants, rights, units, ETFs y preferentes
+# ---------------------------------------------------------------------------
+#
+# `daily_metrics` no lleva columna de tipo, asi que hasta el 2026-09-06 el
+# universo del backtest se tragaba TODO lo que hiciera gap. Medido sobre una
+# corrida real de 2.688 trades: 28,9 % eran WARRANT (y perdian 62 $), mas un
+# 1,2 % de RIGHT/ETF/UNIT/PFD. El 31,6 % de los trades no era accion comun y
+# entre todos restaban ~77 $ de un resultado de 354 $.
+#
+# El screener en vivo y `bot_alerts_radar` ya filtraban con estos mismos dos
+# tipos, pero sacandolos de la API de Massive. Aqui se usa la referencia del
+# lago (`massive.tickers`), que ya estaba registrada en el DuckDB del backend.
+#
+# Decision de Jaume (2026-09-06): por defecto para todas las estrategias, y los
+# tickers SIN fila en la referencia se QUEDAN — la referencia es de hoy y un
+# ticker legitimo deslistado en 2024 no tiene fila; excluirlos seria un sesgo de
+# supervivencia al reves.
+#
+# ⚠️ Esto cambia el resultado de cualquier corrida anterior al 2026-09-06.
+# Escotilla para reproducir una vieja: BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES=1.
+
+_TIPOS_INSTRUMENTO_PERMITIDOS = ("CS", "ADRC")
+_tipos_instrumento_cache: dict | None = None
+
+
+def _mapa_tipos_instrumento() -> dict | None:
+    """{ticker: type} de la referencia del lago. None si no se puede leer.
+
+    None significa NO FILTRAR. Es deliberado: quedarse sin referencia no puede
+    vaciar el universo en silencio, que es exactamente el modo de fallo que
+    este repo se ha comido ya varias veces.
+    """
+    global _tipos_instrumento_cache
+    if _tipos_instrumento_cache is not None:
+        return _tipos_instrumento_cache or None
+
+    from app.database import get_db_connection
+
+    intentos = [("db", "SELECT ticker, type FROM massive.tickers"),
+                ("db", "SELECT ticker, type FROM tickers")]
+    # Ultimo recurso: el parquet del lago leido con una conexion DuckDB EN
+    # MEMORIA. Tiene que ser propia: si el fallo es que el fichero del lago
+    # esta abierto por otro proceso, `get_db_connection` falla tambien aqui y
+    # el respaldo no respaldaria nada.
+    lake = (os.getenv("LOCAL_LAKE_DIR") or "").strip().replace("\\", "/")
+    if lake:
+        intentos.append((
+            "mem",
+            f"SELECT ticker, type FROM read_parquet('{lake}/cold_storage/tickers/*.parquet')"))
+
+    for origen, sql in intentos:
+        try:
+            if origen == "db":
+                con = get_db_connection()
+            else:
+                import duckdb
+                con = duckdb.connect()
+            filas = con.execute(sql).fetchall()
+            if filas:
+                _tipos_instrumento_cache = {t: ty for t, ty in filas if t}
+                logger.info(f"[UNIVERSO] referencia de tipos cargada ({origen}): "
+                            f"{len(_tipos_instrumento_cache)} tickers")
+                return _tipos_instrumento_cache
+        except Exception as e:
+            logger.debug(f"[UNIVERSO] referencia de tipos, intento fallido ({sql[:40]}...): {e}")
+
+    logger.error("[UNIVERSO] NO se pudo leer la referencia de tipos de instrumento: "
+                 "el universo NO se filtra (entran warrants). Revisar massive.tickers.")
+    _tipos_instrumento_cache = {}
+    return None
+
+
+def _filtrar_tipo_instrumento(df: pd.DataFrame) -> pd.DataFrame:
+    """Deja solo acciones comunes (CS) y ADR (ADRC). Ver el bloque de arriba."""
+    if df is None or df.empty or "ticker" not in df.columns:
+        return df
+    if (os.getenv("BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES", "0").strip().lower()
+            in ("1", "true", "yes", "on")):
+        return df
+    mapa = _mapa_tipos_instrumento()
+    if not mapa:
+        return df
+    tipos = df["ticker"].map(mapa)
+    # NaN = sin fila en la referencia -> se queda (deslistados).
+    keep = tipos.isna() | tipos.isin(_TIPOS_INSTRUMENTO_PERMITIDOS)
+    fuera = int((~keep).sum())
+    if fuera:
+        logger.info(f"[UNIVERSO] fuera {fuera} filas por tipo de instrumento "
+                    f"(de {len(df)}): {tipos[~keep].value_counts().to_dict()}")
+    return df[keep].reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Suelo de precio: fuera lo que no vale practicamente nada
+# ---------------------------------------------------------------------------
+#
+# `universe_filters` DECLARA `min_price`/`max_price` desde siempre y la interfaz
+# los enseña, pero `_build_where_clause` no los lee: nunca han filtrado nada.
+# (Misma familia que los 45 filtros del buscador que se caian en silencio.)
+#
+# El 2026-09-06 una sola operacion en OPPr a $0,0005 -> 636.873 acciones ->
+# 6.369 $ de locates sobre una posicion de 300 $, se llevo 7.000 $ de una cuenta
+# de 10.000. Jaume: «pon un minimo de 0,1, asi no cogemos acciones que no valgan
+# practicamente nada».
+#
+# SE MIDE SOBRE `open`, la primera cotizacion del dia (premercado incluido).
+# Es CAUSAL: se conoce antes de cualquier entrada. Usar `close` o `high` seria
+# mirar el futuro. Un dia sin precio se queda, igual que un ticker sin ficha.
+# BACKTEST_MIN_PRICE=0 desactiva el suelo (reproducir corridas viejas).
+
+_PRECIO_MINIMO_DEFECTO = 0.10
+
+
+def _precio_minimo() -> float:
+    try:
+        return max(0.0, float(os.getenv("BACKTEST_MIN_PRICE", _PRECIO_MINIMO_DEFECTO)))
+    except (TypeError, ValueError):
+        return _PRECIO_MINIMO_DEFECTO
+
+
+def _filtrar_precio_minimo(df: pd.DataFrame) -> pd.DataFrame:
+    """Deja fuera los dias cuya primera cotizacion no llega al suelo."""
+    suelo = _precio_minimo()
+    if suelo <= 0 or df is None or df.empty or "open" not in df.columns:
+        return df
+    precio = pd.to_numeric(df["open"], errors="coerce")
+    keep = precio.isna() | (precio >= suelo)
+    fuera = int((~keep).sum())
+    if fuera:
+        logger.info(f"[UNIVERSO] fuera {fuera} filas por precio < {suelo} "
+                    f"(de {len(df)})")
+    return df[keep].reset_index(drop=True)
+
+
+def _filtrar_universo(df: pd.DataFrame) -> pd.DataFrame:
+    """Las DOS reglas del universo, en el orden en que se explican.
+
+    Un solo sitio a propósito: el universo del backtest, el buscador de tickers
+    y los pares de un dataset tienen que ver EXACTAMENTE lo mismo. Cuando cada
+    pantalla llevaba su copia, el dataset anunciaba mas dias de los que la
+    corrida operaba.
+    """
+    return _filtrar_precio_minimo(_filtrar_tipo_instrumento(df))
+
+
 def fetch_qualifying_data(
     dataset_id: str,
     req_start_date: str | None = None,
     req_end_date: str | None = None,
     preconditions: list = None,
     apply_day: str = 'gap_day',
+    filtros: dict | None = None,
 ) -> pd.DataFrame:
     """Cached wrapper around the qualifying computation.
+
+    `filtros` (2026-09-06): universo SIN dataset guardado. Se pasan las reglas
+    tal cual en vez de resolverlas desde `saved_queries`. Lo usa el genetico,
+    que construye el universo con sus propias guardas y fechas — Jaume: «yo
+    meto las guardas y el rango de fechas, que cargue un dataset en base a eso;
+    no hace falta ni quiero cargar ningun dataset aqui».
+
+    Sin `filtros` el comportamiento es EXACTAMENTE el de siempre.
 
     On a Redis hit returns the cached DataFrame; otherwise computes via
     `_fetch_qualifying_data_uncached` and caches the result (when <20 MB).
@@ -681,7 +836,8 @@ def fetch_qualifying_data(
     # fallback works even when Redis is unavailable. Resolving filters here is a
     # cheap local users.duckdb read, negligible next to the GCS qualifying query.
     try:
-        key_filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+        key_filters = filtros if filtros is not None else _resolve_filters(
+            dataset_id, req_start_date, req_end_date)
         if key_filters:
             cache_key = _qualifying_cache_key(
                 dataset_id, key_filters, req_start_date,
@@ -697,7 +853,7 @@ def fetch_qualifying_data(
             cached = r.get(cache_key)
             if cached:
                 logger.info("[REDIS] qualifying hit")
-                return _deserialize_qualifying_df(cached)
+                return _filtrar_universo(_deserialize_qualifying_df(cached))
         except Exception as e:
             logger.warning(f"[REDIS] qualifying cache read failed: {e}")
 
@@ -710,7 +866,7 @@ def fetch_qualifying_data(
                 if age < _QUALIFYING_REDIS_TTL:
                     df_disk = pd.read_feather(disk_path)
                     logger.info(f"[DISK] qualifying hit ({age:.0f}s old)")
-                    return df_disk
+                    return _filtrar_universo(df_disk)
                 else:
                     os.remove(disk_path)  # expired
         except Exception as e:
@@ -722,6 +878,7 @@ def fetch_qualifying_data(
         req_end_date=req_end_date,
         preconditions=preconditions,
         apply_day=apply_day,
+        filtros=filtros,
     )
 
     # Write-through: measure the REAL serialized size, then Redis (small) or the
@@ -745,7 +902,10 @@ def fetch_qualifying_data(
         except Exception as e:
             logger.warning(f"[CACHE] qualifying cache write failed: {e}")
 
-    return df
+    # El filtro va DESPUES de cachear: la cache guarda el universo crudo, asi
+    # que la escotilla BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES sigue funcionando sin
+    # invalidarla, y una cache escrita antes del 2026-09-06 tambien se filtra.
+    return _filtrar_universo(df)
 
 
 def _fetch_qualifying_data_uncached(
@@ -754,6 +914,7 @@ def _fetch_qualifying_data_uncached(
     req_end_date: str | None = None,
     preconditions: list = None,
     apply_day: str = 'gap_day',
+    filtros: dict | None = None,
 ) -> pd.DataFrame:
     """
     Fetch qualifying rows from daily_metrics via hot cache RAM or direct GCS query.
@@ -763,7 +924,16 @@ def _fetch_qualifying_data_uncached(
     """
     import os
     provider = os.getenv("DB_PROVIDER", "motherduck").lower()
-    filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
+    if filtros is not None:
+        # Universo sin dataset: las reglas vienen dadas. Se aplican los mismos
+        # overrides de fecha que la via normal, para que el rango pedido mande.
+        filters = dict(filtros)
+        if req_start_date:
+            filters["start_date"] = req_start_date
+        if req_end_date:
+            filters["end_date"] = req_end_date
+    else:
+        filters = _resolve_filters(dataset_id, req_start_date, req_end_date)
     if not filters:
         return pd.DataFrame()
 

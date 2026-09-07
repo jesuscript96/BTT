@@ -46,6 +46,7 @@ export enum IndicatorType {
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",
     PM_HIGH_GAP = "PM High Gap (%)",
     CURRENT_GAP = "Current Gap (%)",
+    OPEN_GAP = "Open Gap (%)",
     // Caida de una sesion entera, congelada: del maximo de la sesion a la
     // apertura de la siguiente (PM -> open de mercado, RTH -> open del after).
     SESSION_FADE = "% Session Fade",
@@ -288,6 +289,16 @@ export interface RiskManagement {
         on_open_positions: 'LET_RUN' | 'CLOSE_ALL';
     };
     size_by_sl?: boolean;
+    /** STOP HÍBRIDO: va por distancia al stop, pero con techo de exposición.
+     *  `techo $ = (hybrid_max_loss_pct% × capital) / hybrid_black_swan_pct%`
+     *  Resuelve el punto ciego del modo por SL: con el stop muy ceñido el
+     *  tamaño se dispara y un hueco brutal deja debiendo dinero. Recorta,
+     *  no anula. Implica `size_by_sl`. */
+    hybrid_stop?: boolean;
+    /** El peor movimiento en contra que quieres contemplar, en %. */
+    hybrid_black_swan_pct?: number | null;
+    /** Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. */
+    hybrid_max_loss_pct?: number | null;
     swing_option?: {
         active: boolean;
         target_day: 'gap_1_day' | 'gap_2_day';
@@ -362,6 +373,9 @@ export const initialRiskManagement: RiskManagement = {
     ],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
     size_by_sl: false,
+    hybrid_stop: false,
+    hybrid_black_swan_pct: null,
+    hybrid_max_loss_pct: null,
     swing_option: { active: false, target_day: 'gap_1_day' },
     exclude_days: [],
     exclude_months: [],
@@ -397,6 +411,17 @@ export interface PyramidLevel {
     // Cuantas veces puede disparar por trade (flancos de su señal). 1 = el
     // clasico "una vez"; con Darvas, 3 = hasta tres cajas seguidas.
     times: number;
+    // MODO DE TAMAÑO DEL NIVEL, independiente del de la entrada: un añadido
+    // puede ir por distancia al stop aunque la entrada vaya por valor de
+    // mercado. Sin declarar = por valor de mercado, como siempre.
+    //   size_by_sl        -> `capital_pct` pasa a ser RIESGO, no capital
+    //   hybrid_stop       -> por SL, pero con techo de exposición propio
+    // Los porcentajes del híbrido son de este nivel y NO los de la entrada:
+    // se reparten entre las dos para que juntas no pasen de lo asumible.
+    size_by_sl?: boolean;
+    hybrid_stop?: boolean;
+    hybrid_black_swan_pct?: number | null;
+    hybrid_max_loss_pct?: number | null;
 }
 
 export interface PyramidingConfig {

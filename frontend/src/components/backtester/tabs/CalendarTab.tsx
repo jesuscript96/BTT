@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { DayResult, TradeRecord } from "@/lib/api_backtester";
+import type { DayResult, GlobalEquityPoint, TradeRecord } from "@/lib/api_backtester";
 import { EXIT_COLORS } from "@/components/backtester/tabs/TradesTab";
 
 interface CalendarTabProps {
@@ -10,7 +10,21 @@ interface CalendarTabProps {
   isDarkMode?: boolean;
   monthlyExpenses?: number;
   onSelectTrade?: (ticker: string, date: string) => void;
+  /** El riesgo del panel de la izquierda. Con «Fixed Amount» son DÓLARES (1 R
+   *  vale eso siempre); con «Percentage» es el PORCENTAJE del balance que se
+   *  arriesga, y entonces 1 R vale distinto cada día. */
+  riskR?: number;
+  riskType?: string;
+  /** La curva de equity diaria, para saber con qué balance empezó cada día.
+   *  Solo hace falta con riesgo porcentual. */
+  globalEquity?: GlobalEquityPoint[];
+  initCash?: number;
 }
+
+type ModoVista = "profits" | "gastos" | "net";
+/** En qué se leen las cifras. Es un eje APARTE del modo de vista: los tres
+ *  modos se pueden mirar en dinero o en múltiplos de riesgo. */
+type Unidad = "dinero" | "r";
 
 function formatPnl(pnl: number, isGastos = false): string {
   const abs = Math.abs(pnl);
@@ -27,19 +41,114 @@ function formatPnl(pnl: number, isGastos = false): string {
   return `${sign} $${abs.toFixed(2)}`;
 }
 
-function formatR(r: number): string {
-  const sign = r >= 0 ? "+" : "-";
-  return `${sign} ${Math.abs(r).toFixed(2)}R`;
+/** El valor de una casilla ya convertido, con su sufijo.
+ *
+ *  En R se escribe como múltiplo y NUNCA con el «$» delante: un «$1,50 R» es
+ *  justo la confusión que haría leer el mes entero mal.
+ */
+function formatValor(v: number, modo: ModoVista, unidad: Unidad): string {
+  if (unidad === "dinero") return formatPnl(v, modo === "gastos");
+  if (modo === "gastos") return `${Math.abs(v).toFixed(2)} R`;
+  return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)} R`;
 }
 
-export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, onSelectTrade }: CalendarTabProps) {
-  const [viewMode, setViewMode] = useState<"profits" | "gastos" | "net" | "r">("profits");
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+/** El día (YYYY-MM-DD) de un punto de la curva de equity.
+ *
+ *  Los puntos vienen en epoch de UTC a medianoche, así que se lee en UTC: con
+ *  `new Date(...).getDate()` en un huso al oeste, el 5 de enero se leería como
+ *  el 4 y la R se asignaría al día anterior.
+ */
+function diaDeEpoch(epoch: number): string {
+  return new Date(epoch * 1000).toISOString().slice(0, 10);
+}
 
-  // Formatea el valor del modo activo (dinero en los tres modos monetarios,
-  // múltiplos de R en el modo "r").
-  const fmtVal = (v: number) =>
-    viewMode === "r" ? formatR(v) : formatPnl(v, viewMode === "gastos");
+/** ¿El riesgo es un % del balance?
+ *
+ *  EL VALOR QUE MANDA EL MOTOR ES `"PERCENT"`. Esto nació comparando contra
+ *  `"Percentage"`, que no existe en ninguna parte: la comparación era siempre
+ *  falsa, el porcentual se trataba como riesgo fijo y el calendario dividía el
+ *  PnL del día entre el NÚMERO DEL PORCENTAJE (entre 1, con un 1 %) en vez de
+ *  entre los dólares de una R. O sea que enseñaba dólares con la etiqueta «R»
+ *  — números enormes, sin ningún error. Lo vio Jaume en pantalla el 5-sep-2026.
+ *
+ *  Se compara por prefijo y sin distinguir mayúsculas a propósito, para que
+ *  «PERCENT», «Percentage» o «percent» valgan igual: el precio de fallar aquí
+ *  es un número creíble y falso, no una pantalla rota.
+ */
+function esPorcentual(riskType: string | undefined): boolean {
+  return (riskType ?? "").trim().toUpperCase().startsWith("PERCENT");
+}
+
+/** ¿Es el «Fixed Ratio» de Ryan Jones?
+ *
+ *  Ahí 1 R NO es constante ni dentro del día: el motor la escala con
+ *  `n_units = 0.5 + 0.5·√(1 + 8·PnL/Δ)`, que se mueve con el PnL realizado
+ *  acumulado, operación a operación. Con la curva DIARIA no se puede
+ *  reconstruir, así que la unidad R no se ofrece — mejor no dar el número que
+ *  darlo mal.
+ */
+function esRatioFijo(riskType: string | undefined): boolean {
+  return (riskType ?? "").trim().toUpperCase().startsWith("FIXED_RATIO");
+}
+
+/** Lo que vale 1 R, en dólares, para cada día operado.
+ *
+ *  DOS CASOS, y el segundo es el que pidió Jaume (2026-09-04: «si pongo % de
+ *  equity no debería dar problema tampoco, simplemente evoluciona la R con la
+ *  cuenta»). Tenía razón: la R no desaparece, cambia.
+ *
+ *   · Riesgo fijo   → 1 R vale lo mismo todos los días.
+ *   · % de equity   → el motor arriesga ese % del balance de APERTURA del día,
+ *                     así que 1 R es constante DENTRO de un día y cambia de un
+ *                     día a otro. El balance de apertura es el punto ANTERIOR
+ *                     de la curva diaria; el del primer día es el capital
+ *                     inicial. Es la misma cuenta que hace `r_precise` en
+ *                     `robustness_service.py`, verificada allí contra una
+ *                     corrida real con un 0,000009 % de desvío.
+ *
+ *  (El tercer tipo, Fixed Ratio, no llega aquí: `puedeR` lo descarta antes.)
+ *
+ *  Que 1 R sea constante dentro del día es lo que hace que esto encaje en un
+ *  calendario: se convierte cada día por su R y luego se suman las R para la
+ *  semana y el mes. Sumar dólares y dividir al final por una R «media» daría
+ *  otro número, y no el bueno.
+ */
+function valorRPorDia(
+  dias: string[], riskR: number, riskType: string | undefined,
+  globalEquity: GlobalEquityPoint[], initCash: number,
+): Map<string, number> {
+  const m = new Map<string, number>();
+  if (!esPorcentual(riskType)) {
+    for (const d of dias) m.set(d, riskR);
+    return m;
+  }
+  const frac = riskR / 100;
+  let previo = initCash;
+  for (const p of globalEquity) {
+    if (p?.time == null) continue;
+    m.set(diaDeEpoch(p.time), frac * previo);      // apertura = cierre del anterior
+    previo = Number(p.value) || previo;
+  }
+  return m;
+}
+
+export default function CalendarTab({
+  dayResults, trades, monthlyExpenses = 0, onSelectTrade, riskR = 0, riskType,
+  globalEquity = [], initCash = 0,
+}: CalendarTabProps) {
+  const [viewMode, setViewMode] = useState<ModoVista>("profits");
+  /** Dinero o múltiplos de riesgo. Eje aparte del modo: los tres modos se
+   *  pueden mirar en las dos unidades. */
+  const [unidad, setUnidad] = useState<Unidad>("dinero");
+
+  const esPct = esPorcentual(riskType);
+  /** Con riesgo porcentual hace falta la curva para saber con qué balance
+   *  empezó cada día; sin ella no se puede convertir y no se ofrece. Y con
+   *  Fixed Ratio no se ofrece nunca: la R se mueve operación a operación. */
+  const puedeR = riskR > 0 && !esRatioFijo(riskType)
+    && (!esPct || globalEquity.length > 0);
+  const unidadReal: Unidad = puedeR ? unidad : "dinero";
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   // Cerrar el detalle de día con Escape
   useEffect(() => {
@@ -73,17 +182,31 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
       
       const cur = map.get(t.date) || { pnl: 0, count: 0 };
       
+      // EL COSTE DE LOCATES (6-sep-2026). `t.pnl` es el PnL ANTES del alquiler
+      // de acciones: el locate viaja aparte porque se cobra una vez por
+      // ticker-día, no por operación. Hasta hoy el calendario era la ÚNICA
+      // vista que lo ignoraba, y por eso discrepaba de la curva de equity con
+      // gastos: mayo de 2026 salía en verde con +195,82 $ mientras la curva
+      // decía −188,18 $, y esos 384 $ de diferencia eran justo los locates del
+      // mes. El desfase era el coste de locates al céntimo, mes a mes.
+      //
+      // OJO con la atribución: al repartir por operación, un día con varias
+      // entradas en el mismo ticker puede cargarle todo el alquiler a una de
+      // ellas. Los totales de día, semana y mes son EXACTOS; solo el reparto
+      // dentro de un mismo día es aproximado.
+      const locates = t.pnl - (t.pnl_with_locates ?? t.pnl);
+
       let val = 0;
       if (viewMode === "profits") {
+        // Bruto ANTES de costes. El locate no está dentro de `pnl`, así que
+        // aquí no hay nada que devolver: solo las comisiones.
         val = t.pnl + (t.fees || 0);
       } else if (viewMode === "gastos") {
-        val = t.fees || 0;
-      } else if (viewMode === "r") {
-        val = t.r_multiple ?? 0; // suma de R del día (sin locates, como pnl)
+        val = (t.fees || 0) + locates;
       } else {
-        val = t.pnl; // net
+        val = t.pnl - locates; // net
       }
-      
+
       map.set(t.date, { pnl: cur.pnl + val, count: cur.count + 1 });
     }
 
@@ -103,8 +226,25 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
       }
     }
 
+    // 3. A múltiplos de riesgo, si toca.
+    //
+    // SE CONVIERTE AQUÍ, POR DÍA, y no al pintar. Con riesgo porcentual 1 R
+    // vale distinto cada día, así que la R de una semana es la SUMA de las R
+    // de sus días — no el dinero de la semana partido por una R «media», que
+    // daría otro número. Convirtiendo aquí, las sumas de semana y mes que
+    // vienen después salen bien solas y no hay que tocarlas.
+    if (unidadReal === "r") {
+      const rs = valorRPorDia([...map.keys()], riskR, riskType, globalEquity, initCash);
+      for (const [d, v] of map) {
+        const r = rs.get(d) || 0;
+        // Sin R para ese día (un hueco en la curva) se deja a 0 en vez de
+        // dividir por cero: mejor una casilla vacía que un Infinity.
+        map.set(d, { ...v, pnl: r > 0 ? v.pnl / r : 0 });
+      }
+    }
+
     return map;
-  }, [trades, viewMode, monthlyExpenses]);
+  }, [trades, viewMode, monthlyExpenses, unidadReal, riskR, riskType, globalEquity, initCash]);
 
   const months = useMemo(() => {
     const set = new Set<string>();
@@ -125,10 +265,11 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
         marginBottom: 24,
         borderBottom: "1px solid var(--color-ec-border)",
         paddingBottom: 0,
+        alignItems: "center",
       }}>
-        {(["profits", "gastos", "net", "r"] as const).map((mode) => {
+        {(["profits", "gastos", "net"] as const).map((mode) => {
           const isActive = viewMode === mode;
-          const label = mode === "profits" ? "Profits" : mode === "gastos" ? "Gastos" : mode === "net" ? "Profits - Gastos" : "R";
+          const label = mode === "profits" ? "Profits" : mode === "gastos" ? "Gastos" : "Profits - Gastos";
           return (
             <button
               key={mode}
@@ -163,6 +304,40 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
             </button>
           );
         })}
+
+        {/* ── Unidad: dinero o R ──────────────────────────────────────────
+            Va a la DERECHA y separado de los modos porque es otro eje: no se
+            elige «Profits o R», se elige «Profits, y en qué lo leo». Solo
+            aparece si hay una R fija que aplicar. */}
+        {puedeR && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6, paddingBottom: 6 }}>
+            <span
+              title={esPct
+                ? `1 R = ${riskR} % del balance con el que empieza cada día, así que vale distinto cada día: el motor dimensiona así. La R de una semana es la suma de las R de sus días.`
+                : `1 R = ${riskR.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $, el riesgo fijo del panel de la izquierda.`}
+              style={{
+                fontSize: 9.5, letterSpacing: "0.08em", textTransform: "uppercase",
+                fontFamily: "var(--font-sans)", color: "var(--color-ec-text-muted)",
+                cursor: "help",
+              }}
+            >{esPct ? `1 R = ${riskR} % diario` : `1 R = $${riskR.toFixed(0)}`}</span>
+            <div style={{ display: "flex", border: "1px solid var(--color-ec-border)", borderRadius: 2 }}>
+              {(["dinero", "r"] as const).map((u, i) => (
+                <button
+                  key={u}
+                  onClick={() => setUnidad(u)}
+                  style={{
+                    padding: "3px 10px", fontSize: 10.5, fontFamily: "var(--font-mono, monospace)",
+                    border: "none", borderLeft: i ? "1px solid var(--color-ec-border)" : "none",
+                    background: unidadReal === u ? "var(--color-ec-copper)" : "transparent",
+                    color: unidadReal === u ? "#fff" : "var(--color-ec-text-muted)",
+                    cursor: "pointer",
+                  }}
+                >{u === "dinero" ? "$" : "R"}</button>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Calendars Grid ── */}
@@ -240,7 +415,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                       fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
                       color: mColor,
                     }}>
-                      {fmtVal(monthPnl)}
+                      {formatValor(monthPnl, viewMode, unidadReal)}
                     </span>
                   )}
                 </div>
@@ -312,7 +487,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                         return (
                           <div
                             key={day.date}
-                            title={hasData ? `${day.date}: ${day.count} trades · Valor: ${fmtVal(day.pnl || 0)} — click para ver los trades` : day.date}
+                            title={hasData ? `${day.date}: ${day.count} trades · Valor: $${day.pnl?.toFixed(2)} — click para ver los trades` : day.date}
                             onClick={hasData ? () => setSelectedDate(day.date) : undefined}
                             onMouseEnter={(e) => {
                               if (hasData) e.currentTarget.style.filter = "brightness(1.3)";
@@ -364,7 +539,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                                   fontSize: 9, fontWeight: 700, color: accentColor, letterSpacing: "-0.02em",
                                   fontFamily: "monospace", lineHeight: 1,
                                 }}>
-                                  {fmtVal(day.pnl!)}
+                                  {formatValor(day.pnl!, viewMode, unidadReal)}
                                 </span>
                                 <span style={{
                                   fontSize: 7.5, fontWeight: 600, color: accentColor, opacity: 0.75,
@@ -387,7 +562,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
 
                       {/* ── Weekly Summary ── */}
                       <div
-                        title={wHas ? `Sem ${weekIdx + 1}: ${wCount} trades · Valor: ${fmtVal(wPnl)}` : `Sem ${weekIdx + 1}`}
+                        title={wHas ? `Sem ${weekIdx + 1}: ${wCount} trades · Valor: $${wPnl.toFixed(2)}` : `Sem ${weekIdx + 1}`}
                         style={{
                           minHeight: 44,
                           borderRadius: 0,
@@ -410,7 +585,7 @@ export default function CalendarTab({ dayResults, trades, monthlyExpenses = 0, o
                                 ? (wHasGastos ? "var(--color-ec-loss)" : "var(--color-ec-text-muted)")
                                 : (wIsWin ? "var(--color-ec-profit)" : "var(--color-ec-loss)"),
                             }}>
-                              {fmtVal(wPnl)}
+                              {formatValor(wPnl, viewMode, unidadReal)}
                             </span>
                             <span style={{
                               fontSize: 7, fontWeight: 600, lineHeight: 1, opacity: 0.7,

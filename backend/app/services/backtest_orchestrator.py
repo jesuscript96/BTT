@@ -47,6 +47,9 @@ class BacktestRequest(BaseModel):
     risk_type: str = "FIXED"
     fixed_ratio_delta: float = 500.0
     size_by_sl: bool = False
+    hybrid_stop: bool = False
+    hybrid_black_swan_pct: float | None = None
+    hybrid_max_loss_pct: float | None = None
     fees: float = 0.0
     fee_type: str = "PERCENT"
     monthly_expenses: float = 0.0
@@ -157,6 +160,15 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
 
     strategy_rm = strategy.get("definition", {}).get("risk_management", {})
     size_by_sl = req.size_by_sl or strategy_rm.get("size_by_sl", False)
+    # El hibrido viaja en la estrategia; la peticion puede forzarlo pero no
+    # apagarlo, igual que con `size_by_sl`.
+    hybrid_stop = req.hybrid_stop or bool(strategy_rm.get("hybrid_stop", False))
+    hybrid_black_swan_pct = (req.hybrid_black_swan_pct
+                             if req.hybrid_black_swan_pct is not None
+                             else strategy_rm.get("hybrid_black_swan_pct"))
+    hybrid_max_loss_pct = (req.hybrid_max_loss_pct
+                           if req.hybrid_max_loss_pct is not None
+                           else strategy_rm.get("hybrid_max_loss_pct"))
 
     if size_by_sl:
         rm = strategy_rm
@@ -396,6 +408,9 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             risk_type=req.risk_type,
             fixed_ratio_delta=req.fixed_ratio_delta,
             size_by_sl=size_by_sl,
+            hybrid_stop=hybrid_stop,
+            hybrid_black_swan_pct=hybrid_black_swan_pct,
+            hybrid_max_loss_pct=hybrid_max_loss_pct,
             fees=req.fees,
             fee_type=req.fee_type,
             slippage=req.slippage,

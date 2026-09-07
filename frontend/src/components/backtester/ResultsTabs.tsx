@@ -288,6 +288,10 @@ export default function ResultsTabs({
             isDarkMode={isDarkMode}
             monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
             onSelectTrade={handleSelectTrade}
+            riskR={riskR}
+            riskType={backtestParams?.risk_type as string}
+            globalEquity={result.global_equity}
+            initCash={initCash}
           />
           )}
         </div>
@@ -483,6 +487,10 @@ export default function ResultsTabs({
               isDarkMode={isDarkMode}
               viewMode="charts"
               riskType={backtestParams?.risk_type as string}
+              strategyId={strategyId}
+              strategyDefinition={strategyDefinition}
+              datasetId={datasetId}
+              backtestParams={backtestParams}
             />
             )}
           </div>

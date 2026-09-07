@@ -33,7 +33,7 @@ _CATEGORY = {
         "Opening Range +", "Opening Range -", "Opening Range AM +", "Opening Range AM -",
         "Heikin-Ashi", "HA Close", "HA Open", "HA High", "HA Low", "Triangle Ascending",
         "Triangle Descending", "Triangle Symmetric", "Ret % AM", "Candle Range %",
-        "Elapsed time from last High", "Elapsed Time", "PM High Gap (%)", "Current Gap (%)",
+        "Elapsed time from last High", "Elapsed Time", "PM High Gap (%)", "Current Gap (%)", "Open Gap (%)",
         "% Session Fade", "% Fade",
     ],
     "Time": [

@@ -13,7 +13,7 @@ import {
   type Time,
 } from "lightweight-charts";
 import { createSeriesMarkers } from "lightweight-charts";
-import { Ruler } from "lucide-react";
+import { Ruler, Tag } from "lucide-react";
 import type { CandleData, TradeRecord, EquityPoint, MultiDayCandles, Strategy } from "@/lib/api_backtester";
 import {
   getIndicatorDef,
@@ -153,6 +153,76 @@ interface ChartProps {
   date: string;
 }
 
+/** Volumen de la vela y acumulados del día, sobre la franja del histograma.
+ *
+ *  V   volumen de la vela donde está el cursor
+ *  AV  volumen acumulado del día hasta ahí
+ *  ADV dollar volume acumulado — Σ(precio × volumen) barra a barra, que es la
+ *      cuenta del motor para `Accumulated Dollar Volume`, NO Σvolumen × último
+ *      precio (con el precio moviéndose no es lo mismo).
+ *
+ *  SIN CURSOR ENSEÑA LOS TOTALES DEL DÍA, no guiones: si hubiera que barrer
+ *  con el ratón hasta el final solo para saber cuánto se movió el día, la
+ *  etiqueta no serviría de nada al abrir el gráfico.
+ */
+function EtiquetaVolumen({ acum, totales }: {
+  acum: { v: number; av: number; adv: number } | null;
+  totales: { av: number; adv: number } | null;
+}) {
+  if (!acum && !totales) return null;
+  const n = (x: number) => x.toLocaleString("es-ES", { maximumFractionDigits: 0 });
+  const money = (x: number) =>
+    x >= 1e9 ? `${(x / 1e9).toFixed(2)} B`
+      : x >= 1e6 ? `${(x / 1e6).toFixed(2)} M`
+        : x >= 1e3 ? `${(x / 1e3).toFixed(1)} K`
+          : n(x);
+  const av = acum ? acum.av : totales!.av;
+  const adv = acum ? acum.adv : totales!.adv;
+
+  const Dato = ({ etiqueta, valor, tono }: { etiqueta: string; valor: string; tono?: string }) => (
+    <span style={{ display: "inline-flex", gap: 5, alignItems: "baseline" }}>
+      {/* La sigla más pequeña y apagada que el número: es la referencia, no el
+          dato. Si pesaran igual, la fila se leería como texto en vez de como
+          una lectura de instrumento. */}
+      <span style={{ color: "var(--color-ec-text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.5px" }}>
+        {etiqueta}
+      </span>
+      <b style={{ color: tono || "var(--color-ec-text-primary)", fontWeight: 600, fontSize: 12 }}>{valor}</b>
+    </span>
+  );
+
+  return (
+    // A LA ALTURA DEL EJE X, ocupando su grosor. La franja del eje temporal de
+    // `lightweight-charts` mide 26-28 px y está vacía a la izquierda (las
+    // primeras marcas de hora empiezan más adentro), así que la etiqueta cabe
+    // ahí sin tapar nada y se lee en la misma línea que las horas — que es
+    // donde el ojo ya está mirando cuando recorre el gráfico.
+    //
+    // Sin fondo ni borde: al ir sobre el eje y no sobre las velas, una caja
+    // flotando ahí parecería un elemento pegado por encima.
+    <div style={{
+      position: "absolute", left: 10, bottom: 1, height: 24,
+      pointerEvents: "none", zIndex: 3,
+      display: "flex", gap: 16, alignItems: "center",
+      // FONDO OPACO, no traslúcido. Va sobre el eje temporal, y las horas de
+      // detrás son texto del mismo cuerpo y del mismo gris: con transparencia
+      // los dígitos se solapaban y no se leía ni una cosa ni la otra.
+      padding: "0 10px",
+      background: "var(--color-ec-bg-base)",
+      border: "0.5px solid var(--color-ec-border)",
+      borderRadius: 2,
+      fontFamily: "var(--color-ec-mono)", fontSize: 12,
+      whiteSpace: "nowrap",
+    }}>
+      {acum
+        ? <Dato etiqueta="V" valor={n(acum.v)} />
+        : <span style={{ color: "var(--color-ec-text-muted)", fontSize: 10, fontWeight: 700, letterSpacing: "0.5px" }}>DÍA</span>}
+      <Dato etiqueta="AV" valor={n(av)} />
+      <Dato etiqueta="ADV" valor={`$${money(adv)}`} tono="var(--color-ec-copper)" />
+    </div>
+  );
+}
+
 export default function Chart({
   candles,
   multiDayCandles = null,
@@ -183,6 +253,25 @@ export default function Chart({
   // depende del toggle: los handlers leen el ref y el gráfico no se
   // reconstruye al activarla.
   const [measureEnabled, setMeasureEnabled] = useState(false);
+  /** Si los marcadores llevan su texto ("L $4,12", "+$83 (TP)"…) o solo el
+   *  símbolo. Con muchas entradas los textos se pisan unos a otros y tapan las
+   *  velas; apagarlos deja ver dónde entró y salió sin perder el gráfico. */
+  const [datosEntradas, setDatosEntradas] = useState(true);
+  const datosEntradasRef = useRef(true);
+  /** Los marcadores tal cual se calcularon, CON su texto. Se guardan para poder
+   *  repintarlos al pulsar el botón sin rehacer el gráfico entero — rehacerlo
+   *  perdería el zoom y la posición, que es justo lo que estás mirando cuando
+   *  decides quitar el texto porque no se lee. */
+  const marcadoresRef = useRef<any[]>([]);
+  const markersApiRef = useRef<any>(null);
+  /** Volumen y dollar volume ACUMULADOS del día hasta donde está el cursor.
+   *  Etiqueta fija sobre la franja de volumen: no se pinta uno por vela (eso
+   *  sería ilegible) sino un solo par de números que cambia al mover el ratón. */
+  const [acum, setAcum] = useState<{ v: number; av: number; adv: number } | null>(null);
+  /** Totales del día. Es lo que se enseña cuando el cursor NO está sobre el
+   *  gráfico: dejar guiones obligaría a barrer con el ratón solo para saber
+   *  cuánto se movió el día. */
+  const [totales, setTotales] = useState<{ av: number; adv: number } | null>(null);
   const measureEnabledRef = useRef(false);
   const measureClearFnsRef = useRef<Array<() => void>>([]);
   const dayChartsRef = useRef<IChartApi[]>([]);
@@ -362,6 +451,33 @@ export default function Chart({
         wickDownColor: "#ef4444", wickUpColor: "#10b981",
       });
       candleSeries.setData(candleData);
+
+      // ACUMULADOS DEL DÍA, precalculados. Se recorren una vez aquí en vez de
+      // sumar en cada movimiento del ratón: con un día de premercado son cientos
+      // de velas y el crosshair dispara muchas veces por segundo.
+      //
+      // El dollar volume es Σ(precio × volumen) barra a barra, NO
+      // (Σvolumen × último precio): con el precio moviéndose no es lo mismo, y
+      // es la misma cuenta que usa el motor para `Accumulated Dollar Volume`.
+      {
+        const porTiempo = new Map<number, { v: number; av: number; adv: number }>();
+        let av = 0, adv = 0;
+        for (const c of deduped) {
+          av += c.volume;
+          adv += c.close * c.volume;
+          porTiempo.set(c.time as number, { v: c.volume, av, adv });
+        }
+        setTotales({ av, adv });
+        chart.subscribeCrosshairMove((param: any) => {
+          const t = param?.time;
+          if (t == null) { setAcum(null); return; }
+          // El `time` puede llegar como número o como objeto de fecha según la
+          // escala; se prueban los dos antes de rendirse.
+          setAcum(porTiempo.get(t as number)
+            ?? porTiempo.get(Number(t))
+            ?? null);
+        });
+      }
 
       // Volume on main chart
       const volumeSeries = chart.addSeries(HistogramSeries, {
@@ -657,7 +773,15 @@ export default function Chart({
         }
 
         markers.sort((a, b) => (a.time as number) - (b.time as number));
-        createSeriesMarkers(candleSeries, markers);
+        // Con el botón «Datos» apagado los marcadores van SIN texto: los
+        // símbolos se quedan —hay que seguir viendo dónde entró y salió— pero
+        // el texto desaparece, que es lo que se pisa cuando hay muchas
+        // operaciones seguidas y acaba tapando las velas.
+        marcadoresRef.current = markers;
+        markersApiRef.current = createSeriesMarkers(
+          candleSeries,
+          datosEntradasRef.current ? markers : markers.map(m => ({ ...m, text: "" })),
+        );
 
         // Líneas del Stop Loss de cada trade del día: discontinuas, en rojo
         // y con el precio en el eje. Antes el SL solo existía en la tabla y
@@ -1224,6 +1348,15 @@ export default function Chart({
     };
   }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay]);
 
+  // Botón «Datos»: repinta los marcadores con o sin texto, en el sitio.
+  useEffect(() => {
+    datosEntradasRef.current = datosEntradas;
+    const api = markersApiRef.current;
+    const ms = marcadoresRef.current;
+    if (!api || !ms.length) return;
+    api.setMarkers(datosEntradas ? ms : ms.map((m: any) => ({ ...m, text: "" })));
+  }, [datosEntradas]);
+
   // Toggle de la regla: sincroniza el ref, cambia el cursor y hace que el
   // arrastre mida (en vez de desplazar la escala) mientras esté activa.
   useEffect(() => {
@@ -1343,6 +1476,35 @@ export default function Chart({
           >
             <Ruler size={12} /> Regla
           </button>
+          <button
+            onClick={() => setDatosEntradas(v => !v)}
+            title="Muestra u oculta el texto de cada operación (precio de entrada, PnL, motivo de salida). Los símbolos de entrada, salida y pirámide se quedan siempre."
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              padding: '3px 10px',
+              height: '26px',
+              backgroundColor: datosEntradas ? 'var(--color-ec-copper)' : 'transparent',
+              border: '1.5px solid var(--color-ec-border)',
+              borderRadius: 5,
+              fontSize: 10,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              color: datosEntradas ? '#fff' : 'var(--color-ec-text-secondary)',
+              cursor: 'pointer',
+              transition: 'all 150ms ease',
+            }}
+            onMouseEnter={(e) => {
+              if (!datosEntradas) e.currentTarget.style.borderColor = 'var(--color-ec-copper)';
+            }}
+            onMouseLeave={(e) => {
+              if (!datosEntradas) e.currentTarget.style.borderColor = 'var(--color-ec-border)';
+            }}
+          >
+            <Tag size={12} /> Datos
+          </button>
           {(applyDay === "gap_1_day" || applyDay === "gap_2_day" || swingActive) && (
             <button
               onClick={() => setMultiDayEnabled(!multiDayEnabled)}
@@ -1387,7 +1549,14 @@ export default function Chart({
       {/* CHART CONTAINERS */}
       {!isMultiView ? (
         <>
-          <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
+          {/* La etiqueta va DENTRO del contenedor, abajo a la izquierda: ahí
+              está la franja del volumen (el histograma ocupa el 15 % inferior)
+              y no tapa ni las velas ni los marcadores. `pointerEvents: none`
+              para no robarle el ratón al gráfico. */}
+          <div style={{ position: "relative", width: "100%" }}>
+            <div ref={chartContainerRef} style={{ width: "100%", height: "400px" }} />
+            <EtiquetaVolumen acum={acum} totales={totales} />
+          </div>
           <div ref={panelContainerRef} />
         </>
       ) : (
@@ -1397,7 +1566,13 @@ export default function Chart({
             <div style={{ padding: '6px 12px', backgroundColor: 'var(--color-ec-bg-sidebar)', fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', borderBottom: '1px solid var(--color-ec-border)', fontFamily: 'var(--color-ec-sans)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
               Día del Gap ({multiDayCandles?.gap_day?.date || ""})
             </div>
-            <div ref={chartContainerRef1} style={{ width: "100%", height: "400px" }} />
+            {/* Solo en el primer panel: los tres charts comparten el mismo
+                estado de acumulados, asi que repetirla en los otros dos
+                enseñaria el mismo numero tres veces. */}
+            <div style={{ position: "relative", width: "100%" }}>
+              <div ref={chartContainerRef1} style={{ width: "100%", height: "400px" }} />
+              <EtiquetaVolumen acum={acum} totales={totales} />
+            </div>
             <div ref={panelContainerRef1} />
           </div>
 

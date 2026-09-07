@@ -3131,3 +3131,902 @@ ya los tenía.
 **Verificación.** `tsc --noEmit` 0 errores. Cálculo replicado contra los 2.799
 trades reales del run `3aff85df`: 393 días con trades, suma por día = R total
 del run (150.57R), coherencia exacta.
+---
+
+## 2026-09-03 / 04
+
+Sesión larga: el bot operó en vivo por primera vez y de ahí salieron dos bugs
+del MOTOR (no del bot) que afectan a cualquier backtest con piramidación.
+
+### 1. ⚠️ BUG DEL MOTOR: las pirámides se saltaban `entry_time_windows`
+
+**Afecta a todo backtest con piramidación y ventana de entradas.** La ventana se
+aplicaba solo a `entries`; `_evaluate_pyramid_levels` no la miraba, así que un
+nivel podía disparar a cualquier hora de la sesión.
+
+Visto en vivo el 3-sep: GELS piramidó a las **08:08 ET** teniendo la ventana de
+entradas cerrada a las 08:00. Jaume confirmó que esa ventana es global —
+entradas **y** pirámides.
+
+Medido sobre un frame de prueba: **59 señales de pirámide fuera de ventana
+antes, 0 después**, y las 241 legítimas intactas. Sin `entry_time_windows` nada
+cambia.
+
+> **Los resultados guardados de estrategias con pirámide + ventana ya no
+> coinciden.** No es opinable: era un bug.
+
+### 2. Stop híbrido: tercer modo de dimensionado
+
+Además de valor de mercado y distancia al stop. Va por SL, pero topando la
+exposición:
+
+```
+techo en dólares = (% de cuenta asumible × capital) / % del evento
+```
+
+Resuelve el punto ciego del modo por SL: con el stop muy ceñido el tamaño se
+dispara. Medido — cuenta de 10.000 $, riesgo 300 $, stop al 1 %: **30.000
+acciones, tres veces la cuenta expuesta**; un hueco del 1.000 % en contra deja
+debiendo dinero. Con techo al 50 % ante un evento del 1.000 %, esas 30.000 se
+quedan en 500. **Recorta, no anula.**
+
+**El techo es de VALOR, no de acciones.** Con 100 $ de techo se compran 100
+acciones a 1 $ pero 200 a 0,50 $. Confundirlo multiplica la exposición por el
+precio.
+
+Los dos porcentajes viven en la **estrategia** (decisión de Jaume: afecta
+directamente al resultado del backtest); el **capital**, en el cuadro de mandos
+del bot, que no conoce la cuenta real. Se aplica por separado a entrada y a
+pirámide, cada una con sus porcentajes.
+
+**⚠️ Aviso para quien toque el motor: el kernel Numba NO implementa el techo.**
+Una estrategia híbrida se rutea SIEMPRE al motor Python, igual que se hace con
+la piramidación. Sin ese ruteo, y con `BACKTEST_NUMBA_SIM=1`, el techo se pierde
+**en silencio** en todo backtest sin pirámides.
+
+### 3. La pirámide tiene ahora su propio modo de tamaño
+
+Independiente del de la entrada: un añadido puede ir por distancia al stop
+aunque la entrada vaya por valor de mercado. **El mismo añadido sale a 3, 150 o
+5 acciones según el modo** — hasta ahora iba siempre por valor de mercado y no
+había forma de cambiarlo.
+
+Esto salió de una observación de Jaume en vivo: con el mismo stop, su pirámide
+arriesgaba **146 $ donde la entrada arriesgaba 300 $**, porque una se
+dimensionaba por stop y la otra por capital.
+
+### 4. Rolling EV: el modo «días» hacía MEDIA DE MEDIAS
+
+Sacaba el EV de cada día y promediaba esos EV, así que **un día con una
+operación pesaba igual que uno con diez**:
+
+| | |
+|---|---|
+| lunes: 1 trade que gana 1,0R | EV del día `+1,000 R` |
+| martes: 10 trades de −0,2R | EV del día `−0,200 R` |
+| modo DÍAS (media de medias) | **`+0,400 R`** |
+| modo TRADES (los 11 juntos) | **`−0,091 R`** ← el real |
+
+Cambiaba **el signo**: un mes de días flojos con una ganadora suelta se pintaba
+como rentable. Ahora la ventana de N días coge todas las operaciones de esos
+días. El modo por trades ya era correcto y no cambia (verificado: diferencia 0).
+
+### 5. Bot de alertas
+
+- **Prealertas del segundo 50 al 59** (antes solo el 50). Medido sobre tick
+  data: de 86 % a 100 % de captura, margen de 10 s a 9,4 s de media.
+- **Prealertas huérfanas arregladas**: los agregados por segundo tardan ~3 s, así
+  que el tick del segundo 59 llegaba DESPUÉS de cerrar su vela y nadie la
+  confirmaba ni descartaba — se quedaba en ámbar para siempre.
+- **El bot ya ESCUCHA**: `/evf TICKER COSTE EV%` por Telegram dice si compensan
+  los locates. Solo responde al chat configurado, los comandos solo LEEN, y
+  nada de lo que llegue puede tumbar el bucle de velas.
+- **Desplegable de condiciones** en el cuadro de mandos: lo que el motor aplica
+  DE VERDAD, incluida la configuración guardada que NO se usa y por qué. Sobre
+  la 1B real saca tres: trailing y swing (con su `active: false`, inofensivos) y
+  **dos take profit parciales que se encenderían cambiando OTRO campo**.
+
+### 6. Auditoría del guardado de estrategias: es FIEL
+
+A petición de Jaume. Round-trip sobre la 1B real: **370 campos, 0 perdidos, 0
+inventados, 0 alterados**. El guardado no corrompe nada. Lo que faltaba era
+poder **ver** qué parte de lo guardado está viva — de ahí el desplegable.
+
+### Dos cosas que valen para cualquiera en este repo
+
+**El patrón de las TRES CAPAS sigue mordiendo.** Se documentó en §4 de este
+mismo documento y aun así se volvió a caer en él el mismo día: se escribió el
+código que LEE cuatro campos nuevos y no el que los ESCRIBE. Un `lv.get("x")`
+que siempre devuelve `None` no falla, no avisa, y no sale en los tests que no lo
+cubren. Salió en una auditoría posterior, no en la suite.
+
+**`r_multiple` viene REDONDEADO A DOS DECIMALES.** Cualquier cálculo que
+compare márgenes finos (un fade del 1,19 % contra un EV del 2,4 %) tiene que
+salir de `entry_price`/`exit_price`, no de ahí.
+
+---
+
+## 2026-09-04 (tarde/noche) — Prealertas medidas, dos bugs silenciosos y el genético ampliado
+
+Sesión de después del cierre. Lo importante son **tres bugs que no daban ningún
+error** y un estudio que cambia un parámetro que llevaba semanas puesto a ojo.
+
+### 1. La ventana de la prealerta pasa del segundo 50 al 44
+
+Medido sobre 30 días y 33 entradas de tick data, más 25.408 mensajes de latencia
+del feed en vivo. Dos cosas que no se sabían cuando se eligió el 50:
+
+- **La señal se cumple mucho antes de lo que se creía.** Mediana en el
+  **segundo 17**, y 9 de 33 ya cumplían en el 5. Se esperaba al 50 para ver algo
+  que en la mitad de los casos llevaba treinta segundos hecho.
+- **La latencia se come el margen.** El agregado por segundo tarda ~3,7 s de
+  mediana (p99 4,1 s, con un pico de **9,8 s**). Un aviso del segundo 50 no daba
+  los 10 s que prometía: daba **7,8 s** hasta la alerta de verdad, y 0,2 s en el
+  pico.
+
+| ventana | margen mediana | de cada N avisos, 1 opera |
+|---|---|---|
+| 50-59 | 7,8 s | 2,3 |
+| **44-59** | **13,8 s** | **3,6** |
+| 30-59 | 27,8 s | 4,5 |
+
+La captura NO cambia (32 de 33 en todas): lo único que se compra adelantando es
+tiempo. Se eligió el 44 y no el 30 —que es donde el estudio pone el óptimo—
+porque la cuenta de falsas del estudio no cuadró con el primer día en vivo
+(predecía ~4 y hubo 0), así que el número absoluto no es de fiar todavía.
+
+Tres cosas que ninguna ventana arregla: 4 de 33 señales se cumplen de verdad
+tarde (segundos 54, 55 y 59) y llegarán siempre con menos de 5 s; una de ellas
+llega después que su propia alerta y la descarta `marcar_cerrada`.
+
+El medidor quedó en `D:\bot_senales\medir_ventanas_comparadas.py`.
+
+### 2. `MACD Signal` y `MACD Histogram` eran SIEMPRE NaN
+
+`_ema_core` siembra con la media de los primeros `window` valores. Sobre precios
+está bien, pero también se aplica a la SALIDA de otro indicador: la señal del
+MACD es una EMA de la línea MACD, y esa empieza con `slow-1` NaN (25 con el 26
+por defecto). La suma salía NaN, la siembra salía NaN, y como cada valor depende
+del anterior se propagaba hasta el final:
+
+    MACD            -> 275 valores de 300
+    MACD Signal     ->   0 de 300
+    MACD Histogram  ->   0 de 300
+
+Una comparación contra NaN da False, así que **cualquier estrategia con «MACD
+Signal» o «MACD Histogram» no operaba nunca**, sin error ni log. Al DI+/DI− del
+ADX le pasaba lo mismo. Arreglado saltando los NaN de cabecera antes de sembrar;
+sin NaN el resultado es idéntico. Comprobado contra la batería entera: arregla 2
+tests y no rompe ninguno.
+
+### 3. El What-if recortaba trades sin que nadie se lo pidiera
+
+`dd_threshold` venía por defecto en 5 y `size_mgmt_type` en `"dd"`, y la página
+no manda ninguno de los dos. Resultado: **toda simulación, sin marcar nada,
+recortaba a la mitad el tamaño de cada trade abierto con más de un 5 % de
+drawdown encima**. Según dónde cayeran las pérdidas eso podía MEJORAR la curva —
+y entonces el What-if «sin filtros» salía mejor que el original, que es
+imposible. Lo detectó Jaume mirando la pantalla, no la suite.
+
+La regla que faltaba, ahora fijada con un test: **un What-if sin opciones
+devuelve la curva de partida**. Al apagarlo salió un segundo fallo que el
+default tapaba: la media del modo `sma` se calculaba también en modo `dd`, y con
+período 0 dividía entre cero.
+
+### 4. Un backtest que falla dejaba el dataset BLOQUEADO
+
+Son dos almacenes. El POST siembra `backtest_progress[dataset_id]` en `running`
+antes de lanzar el hilo, pero el estado del job vive en `backtest_jobs`, y al
+fallar solo se actualizaba ese. Si el job moría pronto —definición mal formada,
+falta de memoria— ese `running` se quedaba para siempre y todo intento posterior
+devolvía `already_running` apuntando a un job muerto. **Solo se arreglaba
+reiniciando el backend.** Encontrado por accidente midiendo el consumo de RAM.
+
+### 5. Genético: de 7 indicadores a 26, y las ramas que no se probaban
+
+Catálogo agrupado en seis familias con pestañas y ayuda por indicador. **Por
+defecto siguen marcados solo los siete de la v1**: los demás están para elegir,
+no para llevarlos todos.
+
+Y el hallazgo, que salió de una pregunta de Jaume: **el lado DERECHO de las
+condiciones se armaba con `params: {}`**, sin sortear nada. Mientras los niveles
+eran precios sueltos (VWAP, PM High) no se notaba; al meter Darvas, Donchian,
+Bollinger, SMA y EMA, todos habrían salido siempre con el periodo por defecto y
+la banda de arriba — ofrecer «Darvas Box» habría sido ofrecer «Darvas por arriba
+con 3 velas».
+
+Preguntó si pasaba con más, y pasaba: MACD iba siempre con 12/26/9 y las
+Bollinger con 2 desviaciones. Auditado indicador a indicador contra el motor y
+convertido en test permanente, que ahora lo detecta solo.
+
+**El test no lo caza todo, y conviene saberlo:** compara sobre una serie
+sintética, y los cinco parámetros de los triángulos salían «sin efecto» ahí
+porque esa serie no llega a formar triángulos. Los añadió Jaume de memoria.
+
+Nuevo en riesgo: stop híbrido, stop mínimo %, take profit mínimo % y take
+profits parciales con las tres variantes del motor. Ojo con `take_profit_mode`:
+el motor **ignora `partial_take_profits` en modo "Full" en silencio**.
+
+### 6. Bot de alertas: `/estado` y el diario
+
+`/estado radar` y `/estado TICKER` en Telegram, de solo lectura. Y un **diario**
+al final del cuadro de mandos con las incidencias y el log, con botón de copiar:
+va enganchado al logger RAÍZ, así que recoge lo que registre cualquiera —el
+socket, httpx, un error sin capturar— sin ir añadiendo llamadas.
+
+### Lo que vale para cualquiera en este repo
+
+**Tres de los cuatro bugs de hoy no daban ningún error.** Una condición contra
+NaN, un default que nadie manda, un `params: {}` vacío: ninguno lanza, ninguno
+aparece en un log, y los tres cambian resultados que se miran para decidir con
+dinero. El patrón se repite — lo que no falla ruidosamente hay que buscarlo a
+propósito.
+
+**El backend hay que arrancarlo con el venv**, no con el Python global: le falta
+`jose` y revienta al importar, pero el error solo sale en stderr y parece que se
+cuelga. Y `--reload` no recoge los cambios de forma fiable si queda un proceso
+viejo con el puerto.
+
+### 7. Calendario del backtester: en dinero o en R
+
+Los tres modos de siempre (profits, gastos, profits−gastos) se pueden leer en
+dólares o en múltiplos de riesgo. Son DOS EJES, no un cuarto modo.
+
+Con riesgo FIJO, 1 R es el «Riesgo fijo $» del panel. Con riesgo PORCENTUAL —que
+al principio dejé fuera de más— la R no desaparece, cambia: el motor arriesga
+ese % del balance de **apertura del día**, así que 1 R es constante DENTRO de un
+día y solo cambia de un día a otro. Es la misma cuenta que ya hacía `r_precise`
+en `robustness_service.py`, verificada allí contra una corrida real.
+
+La conversión va POR DÍA, no al pintar: la R de una semana es la suma de las R
+de sus días. Con 10.000 $ al 2 % y tres días de +200/−100/+450 salen 2,738 R
+sumando por día y 2,750 R dividiendo al final, y esa diferencia crece con la
+cuenta.
+
+No se usa `r_multiple` del trade: así los GASTOS también se leen en R, y se
+evita arrastrar su redondeo a dos decimales.
+
+**Aviso:** Jaume pidió traer esto de la rama de Álvaro, pero NO está en el
+remoto — el `CalendarTab.tsx` es idéntico en `sailor`, `staging` y
+`alvaro-rama-desarrollo`. Lo tendrá en local. Esto está escrito de cero y puede
+quedar distinto a lo suyo.
+
+### 8. Dos parciales no pueden caer en el mismo sitio
+
+Primera corrida del genético con los take profits parciales puestos, y salió
+esto: `Parciales: 25% a las 12:00, 33% a las 12:00`. El motor los aplica en
+orden, así que el segundo salta justo detrás del primero: cierra más posición de
+golpe y gasta un gen en algo que no añade ninguna decisión. Corregido.
+
+---
+
+## Pendientes para el 2026-09-05
+
+1. **Ver la ventana 44-59 en vivo.** Es su primer premercado. Medir cuántas
+   prealertas se confirman y cuántas no: el estudio predice ~2,7 avisos en balde
+   por cada bueno, pero su cuenta de falsas NO cuadró con el día 4 (predecía ~4
+   y hubo 0), así que el número absoluto está por confirmar. Si el ruido es
+   tolerable, el siguiente escalón es 40-59 (17,8 s de margen).
+
+2. **Auditar el calendario en R** con datos reales. Quedó sin verificar en
+   pantalla —el genético tenía la máquina— y Jaume quiere repasarlo.
+
+3. **El aviso de cancelación de la prealerta.** Ahora una prealerta solo se
+   confirma o descarta al CERRAR la vela; si la señal se rompe en el segundo 50
+   se sigue mirando el gráfico sin saberlo. Avisar en el momento en que se cae
+   convertiría el ruido de adelantar la ventana en información, y es lo que
+   haría cómodo bajar al 40 o al 30.
+
+4. **Los 119 tests que fallan**, que siguen ahí y son de antes de esta sesión.
+
+5. **Del genético:** `parar_a_las` no venía configurada en la corrida de la
+   noche del 4 — con el bot de alertas arrancando a las 10:00 (hora española)
+   hay que ponerla siempre. Y con `min_trades` a 1.000 los individuos daban
+   fitness 0 con 729 trades: un suelo por encima de lo que el dataset da deja al
+   genético sin gradiente, todo a cero y cruzando al azar.
+
+---
+
+## 2026-09-06 — Sesión personalizada, ventana de entrada y barrido por franjas
+
+Reportado por Jaume sobre `RTH prueba 1`: «le pongo sesión personalizada y horas
+de entrada y no me hace caso — salen trades a las 15:30 y barras de EV hasta las
+13:30». Diagnosticado sobre la corrida real guardada (2.688 trades, 11:46).
+
+### 1. La sesión personalizada NO se ignoraba: se SUMABA
+
+La definición tenía `market_sessions: ['rth', 'custom']` con custom 04:00-12:00.
+El motor hace la **unión** de todas las sesiones marcadas
+(`_get_market_sessions_mask`, `mask |= ...`), así que la sesión efectiva era
+04:00-16:00. De ahí los 1.077 cierres en la hora de las 15: son EOD en la última
+vela de RTH.
+
+No era un bug del motor sino del selector: cuatro casillas independientes en las
+que «Horas personalizadas» convivía con «Regular Hours» sin que nada avisara.
+**Ahora «Horas personalizadas» es EXCLUYENTE** con pre/rth/post en
+`InlineStrategyBuilder`. Y para las estrategias ya guardadas con las dos
+marcadas, el resumen de `BacktestPanel` pinta un aviso rojo con la sesión REAL
+(«se suman: 04:00-16:00»), porque hasta ahora leía «Personalizado (04:00-12:00)»
+mientras el backtest corría hasta las 16:00.
+
+### 2. BUG DEL MOTOR: la ventana de entrada no miraba la vela de RELLENO
+
+`entry_time_windows` se aplicaba a la vela de la **señal**, pero con
+`look_ahead_prevention` el simulador compra en la apertura de la vela
+**siguiente** (`eff_entry_idx = i + 1`, `portfolio_sim`). Nadie comprobaba el
+reloj ahí.
+
+En un ticker líquido eso es un minuto de desfase. En los **warrants con velas
+dispersas** —una vela por minuto NEGOCIADO, no por minuto de reloj— la "vela
+siguiente" a las 11:29 podía ser la de las 13:45. Con ventana 09:30-11:30 la
+corrida tenía 41 entradas en el cubo de las 11:30 (casi todas las 11:31) y 5
+sueltas a las 12:11, 12:30, 13:01 y 13:45. Ninguna daba error ni salía en ningún
+log: el patrón de `btt-bugs-que-no-dan-error`.
+
+Corregido con `strategy_engine.apply_entry_fill_window`, llamada **después** del
+recorte de sesión y del `candle_delay` (el único espacio de índices en el que
+`i + 1` es de verdad la vela de compra), en los dos sitios que generan señales:
+`backtest_service` (secuencial) y `backtest_signals` (paralelo + slab). Se
+aplica también a las pirámides, por la misma regla de 2026-09-03: un añadido es
+una entrada.
+
+**Ventana ESTRICTA por decisión de Jaume:** si el límite está en 11:30 y la
+señal salta en la vela de 11:30, la compra caería en la de 11:31 y NO se coge.
+Esto retira también las entradas de 11:31. Impacto en PnL de aquella corrida:
+1,6 $ sobre 354 $ — corregirlo no cambia la estrategia, cambia que el gráfico
+deje de mentir sobre a qué hora se entra. **Las corridas anteriores al 6-sep no
+son comparables con las nuevas.**
+
+De paso, las tres copias del bucle que parseaba `from_time`/`to_time` (legacy,
+nativo N2a y la nueva) se unificaron en `build_entry_time_mask`.
+
+### 3. Los límites horarios ya se pueden OPTIMIZAR
+
+`entry_logic.entry_time_windows.N.from_time` / `.to_time` no aparecían en el
+optimizador 3D: los valores son texto («09:30»), `float()` revienta y `_add` los
+descartaba sin decir nada. Ahora se extraen como parámetros `time_of_day` (se
+barren en minutos desde medianoche, ±2 h recortado a 04:00-20:00, paso 5) y al
+escribir cada punto se devuelven como «HH:MM» — `_needs_hhmm_reencode` amplía lo
+que antes solo hacía el take profit por hora. El frontend no necesitó cambios:
+`unit === "time_of_day"` ya pintaba selectores de hora.
+
+### 4. EV barriendo la ventana de entrada (gráfico nuevo)
+
+El gráfico «EV por Tiempo» agrupa los trades QUE HUBO por su hora de entrada; si
+hay límite horario, fuera de él no hay nada que ver. Se añade un conmutador
+**Trades / Barrido**: el segundo lanza un backtest por franja (09:30-10:00,
+10:00-10:30…) y compara el EV de cada una — `EntryWindowSweepChart`.
+
+Va por el mismo motor que el optimizador, con un añadido general a `ParamConfig`:
+**`linked_paths` / `linked_offsets`**, un eje que escribe además en otras rutas
+sumándoles un desplazamiento. Así la ventana se mueve DE UNA PIEZA con una sola
+dimensión de rejilla: N corridas, no N². Sin esas claves el comportamiento de un
+eje es exactamente el de siempre.
+
+También se hizo **recursiva la limpieza de NaN** del resultado: solo se limpiaba
+la rejilla de 2 dimensiones, y con 1 eje los `NaN` salían crudos — `NaN` no es
+JSON válido y el navegador reventaba al parsear, sin ningún error en el backend.
+
+### 5. MEDIDO: el 29 % de los trades son WARRANTS, y pierden
+
+Los tickers de la fuga (ONMDW, ISPOW, GMBLW, RVSNW…) son warrants. Cruzando los
+2.688 trades contra `massive.tickers`:
+
+| tipo | trades | % | PnL |
+|---|---|---|---|
+| CS | 1.748 | 65,0 % | +426,79 |
+| **WARRANT** | **776** | **28,9 %** | **−62,14** |
+| ADRC | 119 | 4,4 % | +6,04 |
+| RIGHT / ETF / UNIT / PFD / ETS | 32 | 1,2 % | −12,14 |
+| sin referencia | 13 | 0,5 % | −4,09 |
+
+El 31,6 % de los trades NO son acción común, y entre todos restan ~77 $ de un
+resultado de 354 $. `daily_metrics` no lleva columna de tipo de instrumento, por
+eso entran; pero la vista `massive.tickers` (ticker, name, type) YA está
+registrada en el DuckDB del backend (`database.py`) y en el lago local, así que
+el filtro es viable sin infraestructura nueva. **Pendiente de decidir con Jaume**
+si va como filtro de universo opt-in o como default, y qué se hace con los
+tickers sin referencia. El screener en vivo y `bot_alerts_radar` ya filtran por
+`TIPOS = ("CS", "ADRC")`.
+
+### 5b. IMPLEMENTADO el mismo día: filtro de tipo de instrumento
+
+Decisión de Jaume: **por defecto para todas las estrategias**, tipos permitidos
+`CS` + `ADRC` (los mismos que el screener en vivo y `bot_alerts_radar`), y los
+tickers **sin fila en la referencia se QUEDAN** — la referencia es de hoy y un
+ticker legítimo deslistado en 2024 no tiene fila; excluirlos sería un sesgo de
+supervivencia al revés.
+
+`data_service._filtrar_tipo_instrumento`, aplicado en `fetch_qualifying_data` —
+el envoltorio cacheado — en sus **tres** salidas (acierto de Redis, acierto de
+disco y cálculo). Va DESPUÉS de cachear a propósito: la caché guarda el universo
+crudo, así que la escotilla `BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES=1` sigue
+funcionando sin invalidarla y una caché escrita antes de hoy también se filtra.
+
+La referencia se lee una vez y se cachea en proceso, con tres intentos:
+`massive.tickers` → `tickers` → el parquet del lago con una conexión DuckDB **en
+memoria propia** (si el fallo es que el lago está abierto por otro proceso,
+`get_db_connection` fallaría también en el respaldo). **Si no se puede leer, NO
+se filtra** y se loguea en ERROR: quedarse sin referencia no puede vaciar el
+universo en silencio.
+
+⚠️ Esto cambia el resultado de TODAS las corridas anteriores al 2026-09-06.
+
+### 5c. El filtro llega también al buscador y a los datasets
+
+Jaume: «que los oculten porque no voy a operar nunca un warrant». La MISMA
+función (`_filtrar_tipo_instrumento`) se aplica ahora en tres sitios, no en tres
+copias de la regla:
+
+1. `fetch_qualifying_data` — el universo del backtest.
+2. `routers/data.py` `/api/data/filter` — el buscador de tickers. Va **antes**
+   de `get_dashboard_stats` y de la serie agregada, para que la tabla y las
+   métricas de arriba cuadren entre sí. Esa consulta no lleva `LIMIT`, así que
+   filtrar sobre el resultado es exacto.
+3. `routers/query.py` `_compute_dataset_pairs` — los pares (ticker, día) de un
+   dataset, tras el `drop_duplicates`.
+
+**Lo que NO se tocó, a propósito:** `/api/data/tickers` (el autocompletado de la
+referencia) sigue devolviendo todo — se usa también para mirar un ticker suelto
+en Análisis, donde ver un warrant no molesta.
+
+⚠️ **Los datasets ya creados guardan sus pares en `dataset_pairs` y siguen
+contando los días de warrant.** El backtest ya no los opera (lo filtra el
+qualifying), pero el número de días del selector no bajará hasta que el dataset
+se vuelva a crear. El genético no se ve afectado: usa `qualifying.feather`, que
+sale de `fetch_qualifying_data` (ver el comentario de `_escribir_qualifying`).
+
+---
+
+## 2026-09-06 (tarde) · Locates en el calendario, suelo de precio y lectura neta del barrido
+
+### 6. El calendario era la ÚNICA vista que ignoraba los locates
+
+Jaume: «veo que de mayo a junio he ganado dinero y en la curva de equity con
+gastos claramente estoy perdiendo». No era impresión suya. Medido sobre su
+corrida, el desfase entre el calendario y la curva era **exactamente el coste de
+locates, mes a mes y al céntimo**:
+
+| mes | calendario | curva c/gastos | desfase | locates |
+|---|---|---|---|---|
+| 2026-01 | +427,27 | +139,27 | 288,00 | 288 |
+| **2026-05** | **+195,82** | **−188,18** | **384,00** | **384** |
+| 2026-06 | +4.823,65 | +3.849,65 | 974,00 | 974 |
+| 2026-08 | +3.161,50 | +2.531,50 | 630,00 | 630 |
+
+Causa: `CalendarTab` construía sus casillas con `t.pnl`, que es el PnL **antes**
+del alquiler de acciones — el locate viaja aparte porque se cobra una vez por
+ticker-día, no por operación. La curva de equity con gastos sí lo descuenta, y
+el `total_pnl` que reporta el motor también (11.698,79 − 3.604 = 8.094,79). El
+calendario era el único sitio que no.
+
+**Los gastos fijos SÍ estaban** — si hubieran faltado, el desfase de mayo habría
+sido 684 y no 384.
+
+Ahora: «Gastos» = comisiones + locates + fijos; «Profits - Gastos» = pnl −
+locates − fijos; «Profits» sin tocar (bruto antes de costes). Verificado contra
+`global_equity_expenses`: **cuadra al céntimo en los nueve meses**.
+
+Matiz de atribución: al repartir el locate por operación, un día con varias
+entradas en el mismo ticker puede cargárselo entero a una de ellas. Los totales
+de día, semana y mes son exactos; el reparto intradía es aproximado.
+
+### 7. Suelo de precio en el universo: 0,10 $
+
+`universe_filters.min_price` / `max_price` están declarados en el esquema y la
+interfaz los enseña, pero **`_build_where_clause` nunca los ha leído**: no han
+filtrado nada jamás. Misma familia que los 45 filtros del buscador.
+
+Por eso el suelo va aparte y siempre activo (`_filtrar_precio_minimo`), medido
+sobre `open` — la primera cotización del día, que es **causal**; usar `close` o
+`high` sería mirar el futuro. Los días sin precio se quedan, igual que los
+tickers sin ficha. Escotilla `BACKTEST_MIN_PRICE=0`.
+
+Las dos reglas del universo viven ahora en `_filtrar_universo`, que usan el
+backtest, el buscador y los pares de un dataset. Para los pares, `open` viaja en
+el SELECT y se descarta después (`dataset_pairs` solo guarda ticker+date).
+
+Lo motivó la operación de OPPr a $0,0005: 636.873 acciones y 6.369 $ de locates
+sobre una posición de 300 $, que se llevó 7.000 $ de una cuenta de 10.000.
+
+### 8. Barrido de EV: lectura BRUTA y NETA
+
+`expectancy` del motor divide el PnL **antes** de locates: 46,42 $ frente a
+32,12 $ reales en la corrida de Jaume, un 45 % de más. Se añade `total_pnl` al
+detalle de cada punto de la rejilla y un conmutador **Bruto / Neto** en el
+gráfico. **El defecto se queda en Bruto** a propósito, por petición explícita de
+no cambiar lo que ya había; el globo enseña las dos lecturas más el dinero total
+de la franja. Ninguna de las dos lleva los gastos fijos del mes.
+
+### 9. Espaciado del barrido
+
+Los conmutadores `Trades / Barrido` y `15m/30m/60m/120m` estaban pegados entre sí
+y al borde de su caja, y los minutos se leían como un continuo. `gap-1`,
+`p-[3px]` y más ancho interior; `Barrer`/`Cancelar` con margen a los lados.
+
+---
+
+## 2026-09-06 (noche) · El genético gana un segundo modo: MEJORAR una estrategia
+
+Petición de Jaume: «el genético busca estrategias, pero ¿podría optimizar UNA
+con todos sus parámetros? En el 3D optimizo uno o dos; ¿y si tiene cinco o
+seis? Quiero la combinación más ROBUSTA, no la que más dinero da». Y una
+condición: **el modo explorador no se toca, se le añade otro al lado.**
+
+### 10. Dos especies de cromosoma, un solo motor
+
+`genetico/especie.py` decide, según `config["modo"]`, qué módulo provee
+`aleatorio / mutar / cruzar / huella / receta / a_definicion`:
+
+    explorar (por defecto) -> cromosoma.py   el de siempre, intacto
+    mejorar                -> afinar.py      NUEVO
+
+**Por qué un cromosoma nuevo y no reutilizar el del explorador.**
+`cromosoma.a_definicion()` va en un solo sentido y hardcodea `exit_logic: None`,
+`postgap_preconditions: None`, `apply_day`, `timeframe: 1m` y trailing/swing
+apagados. Convertir una estrategia hecha a mano a ese cromosoma le arrancaría la
+mitad de su definición **en silencio**. En `afinar.py` el individuo ES la
+definición: se parte de la semilla intacta y solo se escriben las rutas
+marcadas. Hay un test por cada cosa que debe sobrevivir.
+
+Los genes salen de **`extract_parameters`**, el mismo del optimizador 3D — ya
+sabe leer los indicadores y sus parámetros con rango, paso y unidad — y se
+escriben con `_set_nested_value`, que reescribe "HH:MM" donde toca. Se le añaden
+los que ese extractor no cubre: **sesión de mercado** (un gen categórico que
+escribe tres claves) y **reentradas**. Comprobado sobre `RTH prueba 1`: saca el
+objetivo del % Fade, el del Elapsed Time, el periodo Y el objetivo del RVOL, las
+dos puntas de la ventana horaria, stop, take profit, reentradas y sesión.
+
+**El rango lo elige el usuario**, como en el 3D; el backend solo propone ±2
+escalones.
+
+### 11. La robustez es un EJE APARTE, no otra métrica
+
+Dos desplegables en vez de uno: **qué mides** (los mismos EV·√N, PF, Sharpe… del
+explorador) y **cómo lo agregas**:
+
+- `valor` — lo de siempre, y el defecto.
+- `peor_trozo` — parte el IS en tramos con el mismo número de días de mercado y
+  puntúa con el peor. **No cuesta ni un backtest más**: una corrida ya devuelve
+  el día a día.
+- `media_menos_sigma` — media − λ·σ entre tramos.
+- `vecindario` — el «robust plateau» del 3D en N dimensiones, usando los
+  individuos YA evaluados de la caché. También gratis.
+
+La agregación solo se ofrece en modo mejorar. El explorador no la ve y su
+`config` no la lleva, así que corre exactamente igual que antes.
+
+### 12. Tres trampas que se cerraron por el camino
+
+**La sesión la pisaba el panel.** `evaluador.parametros_backtest` pasa
+`market_sessions` a `run_backtest` **por argumento**, y el argumento gana sobre
+la definición. En modo mejorar eso habría hecho que la corrida entera evaluara
+el horario del explorador en vez del de la estrategia — y sin ningún error. Con
+definición, ahora mandan la definición y sus genes (también `size_by_sl` y el
+stop híbrido).
+
+**`mutar` podía devolver un clon.** El `tocado = True` marcaba «lo intenté», no
+«cambió», y `_vecino` sortea de toda la rejilla un 30 % de las veces. Un clon ya
+está en la caché, así que la generación se quedaba sin individuos nuevos que
+evaluar y el genético se estancaba sin dar ni un aviso. Lo cazó
+`test_mutar_siempre_cambia_algo`.
+
+**Las guardas y el operador OR.** En modo mejorar las guardas fijas se meten
+delante de la lógica de entrada, pero solo si la raíz es un AND: colarlas dentro
+de un OR las convertiría en «o esto o la guarda», lo contrario de una guarda. Si
+la raíz es OR, se envuelve en un AND.
+
+### 13. Otras decisiones
+
+- **La definición se CONGELA al lanzar** (`estrategia_base` en el `config.json`
+  de la corrida). Si el usuario edita la estrategia a media noche, los
+  individuos ya evaluados y los que quedan partirían de bases distintas.
+- **La generación 0 lleva la estrategia TAL CUAL** como línea base, más
+  mutaciones suyas de radio creciente (60 % del cupo) y luego aleatorios. Sin la
+  línea base no se puede saber si el genético ha mejorado algo.
+- Todos los genes empiezan **desmarcados**: marcar por defecto sería mover cosas
+  que nadie ha pedido.
+
+25 tests nuevos en `test_genetico_afinar.py`. 731 en total, `tsc` limpio.
+
+### 14. Modo mejorar, segunda tanda: parciales variables, pirámide y dataset
+
+**Parciales como ESTRUCTURA, no solo como número.** Petición de Jaume: «quiero
+probar qué pasa si añado 3 o 5 parciales, ya sea por hora, minutos o distancia…
+aunque modifique la estrategia». Se resuelve con dos tipos de gen:
+
+- `parciales.n` — cuántos niveles (0 a 5). Cero es una opción legítima: es la
+  comparación contra no ponerlos.
+- `parciales.{i}.nivel` — un gen CATEGÓRICO por nivel, con la lista completa de
+  disparadores (`pct:6`, `hora:10:30`, `tiempo:30`) construida con las mismas
+  rejillas que usa el explorador.
+
+Encajarlo así, y no como cuatro genes por nivel (tipo + valor% + valor hora +
+valor minutos), lo deja en 1 + N casillas en vez de 1 + 4N, y hace que «un
+escalón» signifique algo para la mutación.
+
+**El capital se reparte a partes iguales** y el último se lleva el resto: el
+motor exige que sumen exactamente 100 % o deja posición sin cerrar. Repartir así
+lo garantiza sin meter N dimensiones más de sobreajuste; para repartos
+desiguales están los genes de ruta `partial_take_profits.i.capital_pct`.
+
+**Si hay estructura, las rutas de parciales se ignoran.** No es solo evitar que
+dos genes se peleen: `_encode_tp_value` relee la forma NUEVA, así que escribir
+un 6 sobre un nivel recién puesto a `"HOUR:10:30"` daría `"HOUR:00:06"` — un
+disparador que nadie ha pedido, sin ningún error.
+
+**PIRAMIDACIÓN: `extract_parameters` no la miraba.** Una estrategia con pirámide
+tenía sus niveles congelados tanto en el genético como en el optimizador 3D. Se
+conservaban (la definición se copia entera) pero no había forma de moverlos, y
+el tamaño de un añadido pesa tanto como el de la entrada. Ahora salen tres
+cosas por nivel: `capital_pct`, `times` y los umbrales de SU condición, que van
+por la misma maquinaria que las de entrada y salida. **Esto también se lo lleva
+el optimizador 3D**, que hasta hoy tampoco podía tocar una pirámide.
+
+**El dataset lo trae la estrategia.** Al elegirla en modo mejorar se carga solo
+su `dataset_id`. Elegirlo a mano era una forma fácil de evaluar la estrategia
+sobre otro universo del que se construyó y no enterarse: el número sale, solo
+que no es el de esa estrategia. Se puede cambiar después, y si se cambia, la
+página avisa. Si la estrategia no tiene dataset guardado (usa filtros de
+universo), lo dice y no toca nada.
+
+740 tests (34 en `test_genetico_afinar.py`), `tsc` limpio.
+
+### 15. La sesión, en tres genes (no en una casilla)
+
+Jaume, sobre la primera versión: «me refería a elegir entre qué horas quiero que
+mire, quizás quiero ver si cerrando a las 11 es mejor que a las 12; si solo
+puedo poner tick en sesión de mercado no sé qué baremos está usando». Tenía
+razón: con un solo gen categórico de sesión eso no se puede barrer.
+
+Ahora son tres: `__sesion_tipo__` (categórico), `__sesion_desde__` y
+`__sesion_hasta__` (horas, en minutos desde medianoche, con rango y paso como
+cualquier otro gen). Reglas, cada una tapando un agujero:
+
+1. Si el gen de TIPO está marcado, manda él.
+2. Si NO lo está pero sí alguna HORA, la sesión pasa a personalizada. Dejarla en
+   RTH haría que el barrido no cambiara nada: N corridas dando el mismo número,
+   sin error.
+3. La punta que no se barre se queda en la que tenga hoy la estrategia.
+4. Fuera de personalizada las horas se BORRAN (el lío de la unión de sesiones).
+5. Un cierre anterior a la apertura recorta el día a cero velas: el genético lo
+   descarta solo (nota 0), pero no se escribe una sesión imposible.
+
+### 16. Indicador nuevo: «Open Gap (%)», y las 8 capas que hizo falta tocar
+
+Pedido como guarda del genético: «añade también lo de gap de apertura mínimo,
+por si no quiero solo ver el de PM». No existía: el motor solo tenía
+«PM High Gap (%)» (máximo de premercado vs cierre de ayer) y «Current Gap (%)»
+(precio vivo vs cierre de ayer). El gap de apertura solo vivía como columna del
+lago, para filtrar universos.
+
+**Es CAUSAL a propósito: NaN antes de las 09:30.** El dato existe
+(`gap_at_open_pct`) y devolverlo constante todo el día habría sido trivial —
+pero es LOOKAHEAD: una estrategia que entra a las 08:00 estaría usando la
+apertura de las 09:30. El NaN de la mañana no es un fallo, es la corrección.
+Mismo criterio que «% Session Fade».
+
+Capas tocadas: `indicators.py` (legacy) · `strategy_engine.py`
+(`_ri_open_gap` + dispatch nativo, con test de paridad) · `schemas/strategy.py`
+(`IndicatorType`) · `api_public/.../catalog.py` · `types/strategy.ts` ·
+`indicatorValidation.ts` · `ConditionBuilder.tsx` (es-porcentaje, es-medida,
+desplegable, etiqueta y ayuda) · `genetico/catalogo.py` (la guarda, que sale en
+los DOS modos).
+
+De esas, **`indicatorValidation.ts` la cazó TypeScript** — es la única de las
+ocho que da error en vez de caerse en silencio.
+
+⚠️ **Una capa NO se ha tocado, a propósito:** el bot de avisos en vivo
+(`bot_alerts_universo.py`) tiene su propio mapa de nombres y es zona cerrada
+(AGENTS.md). Una estrategia que use «Open Gap (%)» funciona en el backtest pero
+**el bot todavía no la entiende**. Queda para Jaume y Sailor.
+
+### 17. El genético ya no pide dataset: lo definen las guardas y las fechas
+
+Jaume: «yo meto las guardas y el rango de fechas donde quiero analizar; que
+cargue un dataset en base a eso, no hace falta ni quiero que tengamos que
+cargar ningún dataset aquí… las guardas que fijamos son como filtros también de
+universo». Vale para los DOS modos.
+
+**Se pudo hacer porque el dataset solo servía para producir el `qualifying`**:
+`datos.preparar` lo usa y a partir de ahí el `dataset_id` es solo metadato; las
+velas salen de los pares del propio qualifying.
+
+`fetch_qualifying_data` acepta ahora `filtros` explícitos (sin ellos, se
+comporta exactamente igual que siempre). El router traduce cada guarda a una
+columna diaria, y **cada traducción es una COTA SUPERIOR de su guarda intradía,
+así que nunca quita un día que la guarda habría dejado pasar**:
+
+| guarda | columna | por qué es segura |
+|---|---|---|
+| `Bar Close > X` | `high > X` | si una vela cierra sobre X, el máximo del día también. **`open` NO valdría**: una acción abre a 0,05 y se va a 5 |
+| `Dollar Volume > X` | `volume * high > X` | Σ(precio·vol) ≤ high·Σvol |
+| `Accumulated Dollar Volume > X` | `volume * high > X` | igual |
+| `PM High Gap (%) > X` | `pmh_gap_pct > X` | el PMH final ≥ el acumulado |
+| `Open Gap (%) > X` | `gap_at_open_pct > X` | exacto, es constante |
+
+Las guardas **siguen corriendo vela a vela** dentro de la estrategia: esto solo
+evita cargar días que no pueden pasarlas nunca.
+
+**Tope de 60.000 ticker-días y contador en vivo.** Sin una guarda que acote, el
+universo es el lago entero: medido, precio > 0,7 y dollar volume > 1 M sobre
+2019-2024 dan **7.461.580 ticker-días**. Marcando además PM High Gap ≥ 50 bajan
+a **7.800**. La página lo enseña antes de lanzar y el backend lo rechaza por
+encima del tope — mejor un error que decir «lanzada» y dejarla muriendo sola.
+
+El contador es un `count` directo sobre el parquet materializado, con DuckDB en
+memoria: **4,7 s** frente a los más de 30 que tardaba construyendo el qualifying
+entero con sus 32 ventanas LAG/LEAD para dar un número.
+
+**Cabo suelto conocido:** al guardar un ganador desde la tabla, la estrategia se
+guarda SIN dataset atado (la corrida ya no tiene uno). El aviso lo dice y el
+universo se elige al abrirla en el Backtester.
+
+### 18. Rectificación: las guardas NO son el universo
+
+Jaume, sobre §17: «una guarda puede ser una guarda, pero si te digo que el close
+sea mayor que 7 **no** te estoy diciendo que solo incluyamos acciones por encima
+de 7, te estoy diciendo que solo quiero ENTRAR cuando la estrategia supera 7…
+intenta no transformar nada, no hacer equivalencias ni cosas raras».
+
+Tenía razón. La traducción guarda→columna de §17 era matemáticamente segura
+(cotas superiores) pero conceptualmente equivocada: mezclaba dos cosas que el
+usuario tiene separadas en la cabeza, y le obligaba a razonar sobre
+equivalencias para saber qué iba a correr. **Retirada.**
+
+Ahora:
+
+- **Las guardas son guardas**: condiciones de entrada, vela a vela. Nada más.
+- **El universo se define aparte**, en su propio cuadro, con las MISMAS opciones
+  que al crear un dataset en el Backtester — se reutiliza `InlineDatasetBuilder`
+  entero, con una prop nueva `soloFiltros` que se salta el modal del nombre y no
+  crea ningún dataset. Cero divergencia de opciones y cero traducciones: los
+  filtros viajan en `cfg["universo"]` con la forma exacta que ya entiende
+  `_build_where_clause`.
+
+Se conservan de §17 el contador en vivo y el tope de 60.000, que sí eran útiles.
+
+**El contador cae a la vía lenta con reglas de Gap−1.** El parquet materializado
+no lleva `lag_pmh_gap_pct` ni sus hermanas — se calculan al vuelo en la vía
+completa. Un universo con Gap−1 reventaba el count rápido con un Binder Error y
+devolvía un 500; ahora se registra y se recalcula por la vía buena.
+
+**Lección:** cuando una simplificación exige explicarle al usuario una
+equivalencia para que entienda qué va a correr, la simplificación es el problema.
+
+### 19. Universo con el estilo de la página, y el tope de parciales
+
+Tres retoques pedidos por Jaume sobre el modo mejorar:
+
+**1. El nº de parciales manda sobre las filas.** Si el rango de «Cuántos
+parciales» llega a 2, marcar el disparador del 4º no haría nada: el gen viajaría
+y `a_definicion` lo ignoraría — un ajuste fantasma sin error, como el Max DD
+Diario. Ahora esas filas salen deshabilitadas («por encima del máximo de
+parciales») y además se filtran del config, por si el máximo baja después.
+
+**2. Se va la sección «Datos».** Tenía nombre + IS desde/hasta, y el cuadro de
+universo llevaba SU propio rango de fechas: dos sitios para el mismo periodo,
+pidiendo contradecirse. Ahora hay un solo cuadro, **Universo**, con el nombre de
+la corrida, el periodo IS y los filtros. Jaume: «no te compliques, ese rango de
+fechas global es el IS».
+
+**3. El selector, con el estilo de la página.** Estaba embebido
+`InlineDatasetBuilder` entero y desentonaba con el resto (`Sec`/`Row`/`Sel`/
+`Num`). Ahora es nativo: sección + métrica + operador + valor + «Añadir», y las
+condiciones puestas como fichas con «×».
+
+**Sin duplicar el catálogo.** Las métricas, sus descripciones, la traducción a
+columnas del lago y el armado del objeto de filtros se han sacado a
+`lib/universoFiltros.ts`, que ahora usan LAS DOS pantallas —
+`InlineDatasetBuilder` importa de ahí. Dos listas de métricas no darían error:
+una se quedaría corta y nadie lo notaría.
+
+Detalle: al añadir una condición que repite sección + métrica + signo, se
+SUSTITUYE la anterior. Dos reglas contradictorias sobre lo mismo dejarían el
+universo vacío sin decir por qué.
+
+### 20. Tres ajustes fantasma en el panel de riesgo del modo mejorar
+
+Jaume: «en riesgo veo la opción de reentradas y arriba también me deja
+activarlas. En modo estrategia la opción de riesgo para reentradas no debería
+estar».
+
+Tenía razón, y no era solo una. En modo mejorar, **reentradas, «shares por SL» y
+stop híbrido salen de la DEFINICIÓN de la estrategia**
+(`evaluador.parametros_backtest` los lee de ahí, ver §12). Los controles del
+panel del explorador seguían pintados y **no hacían nada**: se tocaban, no
+pasaba nada y nadie avisaba — el patrón del Max DD Diario.
+
+Ahora esos tres solo se pintan en modo explorar; en mejorar, una línea explica
+de dónde salen y recuerda que las reentradas se pueden mover como gen.
+
+Lo cubre `test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia`:
+con el panel diciendo lo contrario que la estrategia, mandan la estrategia y su
+híbrido, y las reentradas ni siquiera viajan como argumento.
+
+### 21. El KeyError que la pantalla no podía enseñar
+
+Al quitar el dataset (§17-19) se cambió el router y la página, pero se quedó
+`genetico/corrida.py` haciendo `config["dataset_id"]`. Resultado: la corrida
+moría a los tres segundos con un `KeyError` y **en la pantalla no salía nada** —
+Jaume: «sigue en marcha no? parece que no haga nada».
+
+Es el modo de fallo propio de esta arquitectura: el genético es un **proceso
+externo**, así que su traceback acaba en `salida.txt` dentro del directorio de
+la corrida, y la página solo ve que `estado.json` no aparece. Sin abrir ese
+fichero no hay forma de saber que ha reventado.
+
+**Dónde mirar cuando una corrida «no hace nada»**, por este orden:
+
+    <corrida>/salida.txt   el traceback del proceso, si murió
+    <corrida>/log.txt      el avance; en la fase de velas escribe cada 12 meses
+    <corrida>/estado.json  lo que lee la página; NO existe hasta que arranca
+
+Ojo con confundir «muerta» con «cargando»: la preparación de datos es lo primero
+y lo más lento (medido en la corrida del 6-sep: 72 meses en ~3,5 min, una línea
+de log cada 12). Hasta que no acaba, `estado.json` no existe y la página está en
+blanco con todo funcionando.
+
+`corrida.py` usa ahora `config.get("dataset_id") or ""`, y `datos.preparar`
+lanza un error que se entiende si de verdad no hay ni qualifying ni dataset.
+`test_genetico_sin_dataset.py` vigila las dos mitades del contrato — y lee solo
+el CÓDIGO, porque el comentario que explica el fallo contiene el mismo literal.
+
+## 2026-09-07 — Merge de `staging` en `alvaro-rama-desarrollo` SIN el bot de alertas (2º merge de exclusión)
+
+Merge de `origin/staging` (`c8e1883`; 62 commits de Jaume desde `6db5a36`).
+Trae: el paquete `genetico/` completo (optimizador genético de estrategias,
+con router `/api/genetico` y página `/genetico`, ambos APAGADOS por defecto
+vía `GENETICO_ENABLED` / `NEXT_PUBLIC_GENETICO_ENABLED`), stop híbrido con
+techo de parciales al 40 %, margen de stop de estructura en el optimizador
+(3D, WFO y genético), ventana de entrada estricta y sesión excluyente,
+parciales variables y piramidación con dimensionado propio, locates en el
+calendario, Rolling EV, `strategy_explain.py` (qué hace DE VERDAD una
+estrategia frente a su JSON), what-if de céntimos de las mesas de fondeo,
+primitivo UI `Panel`, y los docs `MEMORIA_BOT_EJECUCION.md`,
+`PROYECTO_EV_Y_LOCATES.md` y `PROYECTO_TELEGRAM_ESTADO.md`.
+
+**Bot de alertas: EXCLUIDO otra vez** (decisión fijada en la entrada del
+2026-09-02): los 14 ficheros de la zona cerrada que trae staging quedaron
+fuera (6 `bot_alerts_*.py` modificados, `bot_alerts_comandos.py` y
+`bot_alerts_diario.py` nuevos, sus tests, `CuadroMandos.tsx` y
+`api_bot_alerts.ts` y el router). Ni un fichero ni una referencia queda en
+la rama; `market_frame.py` ni se tocó (staging no lo modificó). Sin `.env`
+ni secretos trackeados en staging (verificado con `git ls-tree`).
+`strategy_explain.py` (nuevo de staging) importa `bot_alerts_universo`
+perezosamente DENTRO de un try/except puesto a propósito por Jaume («para
+no atar este módulo al bot»): sin el bot devuelve `{}` y no rompe nada;
+aquí solo lo invoca el router excluido, así que queda dormido e inofensivo.
+
+Conflictos resueltos:
+- `MEMORIA_MADRE.md` — ambos lados conservados (nuestras entradas + las de Jaume).
+- `Sidebar.tsx` — nuestro estado (sin Screener ni Alertas) + el link
+  «Genético» gated de staging (import `Dna`, sin `Radio` — era del link de
+  Alertas que aquí no existe).
+- `CalendarTab.tsx` — adoptada la versión de STAGING (lectura en dinero o en
+  R de los tres modos, riesgo porcentual y locates en el calendario). SUPERA
+  al modo «R» local del commit `2f19fe7`, que queda retirado en la práctica:
+  mantener las dos versiones re-conflictuaría cada merge y la de staging es
+  la que vive en la rama conjunta. El botón CSV de Trades y los fixes de
+  «Nueva Estrategia» (`2c4e5eb`, `e29652c`) SIGUEN: esos ficheros
+  auto-fusionaron y se comprobó que los cambios locales siguen presentes.
+
+Verificación: `tsc --noEmit` 0 errores; `compileall` de `backend/app` y
+`genetico` OK; pytest `test_stop_hibrido` + `test_genetico_*` 112/113 (el
+único fallo es ambiental, ver hallazgo de abajo); `test_strategy_api` +
+`test_backtest_dataset_bloqueado` 8/8. OJO al lanzar pytest: `database.py`
+abre `local_data.duckdb` RELATIVO al cwd — desde la raíz del repo conecta a
+una BD vacía y falla sin que nada esté roto; lanzar desde `backend/`.
+`backend/.env` intacto (des trackeado, el merge no lo toca).
+
+### [HALLAZGO · 2026-09-07 · 01] El paquete `genetico` tiene rutas por defecto en `D:/` — la suite falla en cualquier PC que no sea la de Jaume
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug (ambiental — en la máquina de Jaume no falla)
+- **Dónde:** `genetico/entorno.py:15` (`BTT_GENETICO_DIR` por defecto `D:/tmp/btt_genetico`, con `os.makedirs(DIR_TRABAJO)` dentro de `preparar()`) y `genetico/datos.py:35` (lago por defecto `D:/lago_backtester/parquet/...`)
+- **Qué observé:** al llegar por el merge de staging, `backend/tests/test_genetico_sin_dataset.py::test_sin_qualifying_y_sin_dataset_el_error_lo_explica` falla en este equipo con `FileNotFoundError: [WinError 3] El sistema no puede encontrar la ruta especificada: 'D:/'` — no hay unidad D:. Los otros 112 tests del mismo lote pasan.
+- **Cómo reproducir:** `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_genetico_sin_dataset.py -q` (desde la raíz del repo, sin `BTT_GENETICO_DIR` definido)
+- **Evidencia:** `1 failed, 112 passed in 6.47s`; el traceback termina en `os.makedirs(name='D:/', exist_ok=True)` alcanzado desde `genetico/entorno.py` (`DIR_TRABAJO`). Confirmed: ni `.env` ni variables del entorno definen `BTT_GENETICO_DIR` aquí.
+- **Hipótesis de causa:** HIPÓTESIS — Jaume desarrolla con el lago y el scratch en su unidad `D:`; el default del `os.getenv` apunta a SU máquina en vez de a una ruta portable (relativa al repo o temporal). `datos.py` además trae el lago `D:/lago_backtester/...` hardcodeado en el propio literal.
+- **Impacto:** el genético no puede ejecutarse en la máquina de Álvaro sin definir `BTT_GENETICO_DIR` (y la ruta del lago); 1 test rojo fuera de la máquina de Jaume. No afecta al arranque normal: router y página están gated OFF por defecto.
+- **Código tocado:** NINGUNO (confirmado) — el código llega verbatim del merge de staging; no se ha modificado para arreglarlo
+- **Estado:** ABIERTO

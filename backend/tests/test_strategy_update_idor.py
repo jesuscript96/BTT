@@ -87,12 +87,25 @@ def test_update_estrategia_propia_actualiza(users_db):
     assert _row(mine.id) == ("renombrada", "user_a")
 
 
-def test_update_fila_legacy_null_sigue_editable(users_db):
-    # Semántica NULL-tolerante intencional: filas pre-Clerk son de todos.
+def test_update_fila_legacy_null_ya_no_es_editable(users_db):
+    """CONTRATO CAMBIADO A PROPOSITO. Antes se llamaba
+    `test_update_fila_legacy_null_sigue_editable` y esperaba lo contrario.
+
+    La tolerancia a NULL (`user_id = ? OR user_id IS NULL`) existía para no
+    esconder las filas anteriores al scoping. Con varios usuarios reales eso es
+    una FUGA: cualquier fila huérfana queda visible —y editable, y borrable—
+    por cualquiera. Se cortó la tolerancia en `scope_clause` (app/auth/clerk.py),
+    revisando antes que lo único afectado eran 2 saved_queries y 2 datasets de
+    junio, chatarra de desarrollo. Siguen en la tabla; ya no los lista nadie.
+
+    Este test se quedó defendiendo la semántica retirada y llevaba meses en
+    rojo — o sea, EXIGIENDO el agujero que se acababa de tapar. Se invierte.
+    """
     legacy = create_strategy(_mk("legacy"), BackgroundTasks(), user_id=None)
-    out = update_strategy(legacy.id, _mk("editada"), BackgroundTasks(), user_id="user_b")
-    assert out.name == "editada"
-    assert _row(legacy.id)[0] == "editada"
+    with pytest.raises(HTTPException) as e:
+        update_strategy(legacy.id, _mk("editada"), BackgroundTasks(), user_id="user_b")
+    assert e.value.status_code == 404
+    assert _row(legacy.id)[0] == "legacy"      # y la fila NO se ha tocado
 
 
 def test_update_sin_auth_comportamiento_previo(users_db):

@@ -301,6 +301,12 @@ export interface WhatIfResult {
   global_equity: GlobalEquityPoint[];
   global_drawdown: DrawdownPoint[];
   aggregate_metrics: AggregateMetrics;
+  /** Resultados por ticker-día reconstruidos con los trades que quedan, para
+   *  el calendario del What-if. Los arma el BACKEND y no la página para que el
+   *  calendario del What-if y el de siempre no puedan decir cosas distintas
+   *  del mismo día. Sharpe, sortino y el drawdown intradía vienen en `null`:
+   *  salen de la curva del día, que aquí ya no existe. */
+  day_results?: DayResult[];
 }
 
 export interface MonteCarloPercentileCurve {
@@ -538,6 +544,13 @@ export interface OptimizationParamConfig {
   min: number;
   max: number;
   steps: number;
+  /** Valores exactos del eje. Si va, manda sobre min/max/steps. */
+  values?: number[];
+  /** Ejes ENLAZADOS: el mismo punto se escribe también en estas rutas,
+   *  sumándoles `linked_offsets`. Es lo que mueve la ventana horaria de
+   *  entrada DE UNA PIEZA (09:30-10:00, 10:00-10:30, …) con un solo eje. */
+  linked_paths?: string[];
+  linked_offsets?: number[];
 }
 
 export interface PlateauAnalysis {

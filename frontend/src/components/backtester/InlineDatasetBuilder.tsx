@@ -9,44 +9,25 @@ interface Props {
   onBack: () => void;
   isSaving?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
+  /** Modo «solo filtros» (genético, 6-sep-2026): no se crea ningún dataset, solo
+   *  se devuelven los filtros. Se salta el modal del nombre y cambia la
+   *  etiqueta del botón. Sin la prop, el flujo es EXACTAMENTE el de siempre. */
+  soloFiltros?: boolean;
+  textoBoton?: string;
 }
 
-interface ParameterConfig {
-  key: string;
-  label: string;
-  unit: string;
-  placeholder: string;
-  min?: number;
-}
-
-const SECTION_PARAMS: ParameterConfig[] = [
-  { key: "rth_close", label: "Open price", unit: "$", placeholder: "0.00" },
-  { key: "pm_open", label: "Open PM price", unit: "$", placeholder: "0.00" },
-  { key: "pmh_gap_pct", label: "PM High Gap", unit: "%", placeholder: "0.0" },
-  { key: "pm_volume", label: "Premarket total volume", unit: "M", placeholder: "0.0" },
-  { key: "gap_pct", label: "Gap", unit: "%", placeholder: "0.0" },
-  { key: "rth_volume", label: "RTH Total volume", unit: "M", placeholder: "0.0" },
-  { key: "rth_range_pct", label: "Bar RTH Range", unit: "%", placeholder: "0.0" },
-];
-
-const PARAM_DESCRIPTIONS: Record<string, string> = {
-  rth_close: "Precio de la acción en la apertura de mercado regular (Open price)",
-  pm_open: "Precio de la acción en la apertura del Premarket (Open PM price)",
-  pmh_gap_pct: "Porcentaje de cambio entre el precio de cierre de ayer (Previous Close) y el máximo alcanzado en el Premarket (Premarket High)",
-  pm_volume: "Volumen total acumulado durante la sesión de premarket",
-  gap_pct: "El porcentaje de Gap de apertura (Gap)",
-  rth_volume: "Volumen total durante la sesión de mercado regular (RTH Total volume) - Especificado en millones (M)",
-  rth_range_pct: "Rango de la vela en la sesión regular (máximo a mínimo o porcentaje de movimiento)",
-};
-
-type SectionId = "gap_prev_day" | "gap_day" | "gap_plus_1_day" | "gap_plus_2_day";
-
-const SECTION_LABELS: Record<SectionId, string> = {
-  gap_prev_day: "GAP-1 DAY",
-  gap_day: "GAP DAY",
-  gap_plus_1_day: "GAP+1 DAY",
-  gap_plus_2_day: "GAP+2 DAY",
-};
+/* El catálogo de métricas y su traducción a columnas viven en
+   `lib/universoFiltros`: los comparte con la página del Genético, que las
+   pinta con otro estilo. Una segunda lista no daría error — se quedaría corta
+   en una de las dos pantallas y nadie lo notaría. */
+import {
+  PARAMETROS_UNIVERSO as SECTION_PARAMS,
+  DESCRIPCIONES_UNIVERSO as PARAM_DESCRIPTIONS,
+  SECCIONES_UNIVERSO as SECTION_LABELS,
+  construirFiltros,
+  type ParametroUniverso as ParameterConfig,
+  type SeccionUniverso as SectionId,
+} from "@/lib/universoFiltros";
 
 interface IncludedCondition {
   section: SectionId;
@@ -76,6 +57,8 @@ export default function InlineDatasetBuilder({
   onBack,
   isSaving = false,
   onExpandedChange,
+  soloFiltros = false,
+  textoBoton,
 }: Props) {
   const [name, setName] = useState("Nuevo Dataset");
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
@@ -319,116 +302,9 @@ export default function InlineDatasetBuilder({
   };
 
   const handleSave = async (datasetName: string) => {
-    // Construct the filters object from the included conditions
-    const rules: any[] = [];
-    let min_gap_pct: number | undefined = undefined;
-    let max_gap_pct: number | undefined = undefined;
-    let min_pm_volume: number | undefined = undefined;
-    let min_rth_volume: number | undefined = undefined;
-
-    includedConditions.forEach((c) => {
-      let fieldName = "";
-
-      // Map to exact DuckDB/Parquet columns
-      if (c.section === "gap_prev_day") {
-        // Día anterior al gap (D-1): columnas lag_*_1
-        if (c.paramKey === "rth_close") fieldName = "lag_rth_close_1";
-        else if (c.paramKey === "pm_open") fieldName = "lag_open_1";
-        else if (c.paramKey === "pmh_gap_pct") fieldName = "lag_pmh_gap_pct_1";
-        else if (c.paramKey === "pm_volume") fieldName = "lag_pm_volume_1";
-        else if (c.paramKey === "gap_pct") fieldName = "lag_gap_pct_1";
-        else if (c.paramKey === "rth_volume") fieldName = "lag_rth_volume_1";
-        else if (c.paramKey === "rth_range_pct") fieldName = "lag_rth_range_pct_1";
-      } else if (c.section === "gap_day") {
-        if (c.paramKey === "rth_close") fieldName = "Close Price";
-        else if (c.paramKey === "pm_open") fieldName = "Min Open PM price";
-        else if (c.paramKey === "pmh_gap_pct") fieldName = "PMH Gap %";
-        else if (c.paramKey === "pm_volume") fieldName = "Premarket Volume";
-        else if (c.paramKey === "gap_pct") fieldName = "Open Gap %";
-        else if (c.paramKey === "rth_volume") fieldName = "EOD Volume";
-        else if (c.paramKey === "rth_range_pct") fieldName = "RTH Range %";
-      } else {
-        // GAP+1 or GAP+2
-        const lagSuffix = c.section === "gap_plus_1_day" ? "_1" : "_2";
-        if (c.paramKey === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
-        else if (c.paramKey === "pm_open") fieldName = `lead_open${lagSuffix}`;
-        else if (c.paramKey === "pmh_gap_pct") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
-        else if (c.paramKey === "pm_volume") fieldName = `lead_pm_volume${lagSuffix}`;
-        else if (c.paramKey === "gap_pct") fieldName = `lead_gap_pct${lagSuffix}`;
-        else if (c.paramKey === "rth_volume") fieldName = `lead_rth_volume${lagSuffix}`;
-        else if (c.paramKey === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
-      }
-
-      if (fieldName) {
-        const isVol = c.paramKey === "pm_volume" || c.paramKey === "rth_volume";
-        const val1_mapped = isVol ? c.val1 * 1000000 : c.val1;
-        const val2_mapped = (c.val2 !== undefined && isVol) ? c.val2 * 1000000 : c.val2;
-
-        if (c.op === "between") {
-          rules.push({
-            metric: fieldName,
-            operator: "GREATER_THAN_OR_EQUAL",
-            valueType: "static",
-            value: val1_mapped.toString(),
-          });
-          rules.push({
-            metric: fieldName,
-            operator: "LESS_THAN_OR_EQUAL",
-            valueType: "static",
-            value: val2_mapped!.toString(),
-          });
-
-          // Legacy filters (top-level properties)
-          if (c.section === "gap_day") {
-            if (c.paramKey === "gap_pct") {
-              min_gap_pct = val1_mapped;
-              max_gap_pct = val2_mapped;
-            } else if (c.paramKey === "pm_volume") {
-              min_pm_volume = val1_mapped;
-            } else if (c.paramKey === "rth_volume") {
-              min_rth_volume = val1_mapped;
-            }
-          }
-        } else {
-          let opName = "";
-          if (c.op === ">=") opName = "GREATER_THAN_OR_EQUAL";
-          else if (c.op === "<=") opName = "LESS_THAN_OR_EQUAL";
-          else if (c.op === ">") opName = "GREATER_THAN";
-          else if (c.op === "<") opName = "LESS_THAN";
-
-          rules.push({
-            metric: fieldName,
-            operator: opName,
-            valueType: "static",
-            value: val1_mapped.toString(),
-          });
-
-          // Legacy filters (top-level properties)
-          if (c.section === "gap_day") {
-            if (c.paramKey === "gap_pct") {
-              if (c.op === ">=" || c.op === ">") min_gap_pct = val1_mapped;
-              if (c.op === "<=" || c.op === "<") max_gap_pct = val1_mapped;
-            } else if (c.paramKey === "pm_volume" && (c.op === ">=" || c.op === ">")) {
-              min_pm_volume = val1_mapped;
-            } else if (c.paramKey === "rth_volume" && (c.op === ">=" || c.op === ">")) {
-              min_rth_volume = val1_mapped;
-            }
-          }
-        }
-      }
-    });
-
-    const filters = {
-      date_from: dateFrom,
-      date_to: dateTo,
-      start_date: dateFrom,
-      end_date: dateTo,
-      min_gap_pct,
-      max_gap_pct,
-      min_pm_volume,
-      min_rth_volume,
-      rules,
-    };
+    // Las reglas las arma `construirFiltros` (lib/universoFiltros), compartido
+    // con el Genético, para que las dos pantallas manden lo mismo.
+    const filters = construirFiltros(includedConditions as any, dateFrom, dateTo);
 
     await onSave(datasetName, filters);
   };
@@ -992,6 +868,11 @@ export default function InlineDatasetBuilder({
       >
         <button
           onClick={() => {
+            if (soloFiltros) {
+              // Sin dataset no hay nombre que pedir: se devuelven los filtros.
+              void handleSave("");
+              return;
+            }
             setTempName(name);
             setShowSaveModal(true);
           }}
@@ -1012,7 +893,7 @@ export default function InlineDatasetBuilder({
             opacity: includedConditions.length === 0 || isSaving ? 0.5 : 1,
           }}
         >
-          {isSaving ? "Guardando..." : "Guardar y Probar"}
+          {isSaving ? "Guardando..." : (textoBoton ?? "Guardar y Probar")}
         </button>
       </div>
       {showSaveModal && (
