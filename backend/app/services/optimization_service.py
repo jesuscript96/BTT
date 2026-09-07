@@ -382,7 +382,7 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
 
     def _add(param_id: str, label: str, value, category: str, path: str,
              min_val=None, max_val=None, step=None, is_int_param=False,
-             unit=None):
+             unit=None, allow_zero=False):
         if param_id in _seen or value is None:
             return
         _seen.add(param_id)
@@ -391,8 +391,11 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         except (TypeError, ValueError):
             return
         # Skip parameters with value 0 — they represent disabled features
-        # (e.g., SL=0 means no stop loss, TP=0 means no take profit)
-        if v == 0:
+        # (e.g., SL=0 means no stop loss, TP=0 means no take profit).
+        # `allow_zero` es para el caso contrario: el margen de un stop de
+        # estructura en 0 significa «el stop va CLAVADO en el nivel», que es
+        # una configuracion normal y perfectamente optimizable.
+        if v == 0 and not allow_zero:
             return
         
         if is_int_param:
@@ -401,8 +404,11 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
             v_max = float(int(v + 10)) if max_val is None else float(max_val)
         else:
             v_step = float(step or _auto_step(v))
-            v_min = float(min_val or max(0, v * 0.25))
-            v_max = float(max_val or max(v * 3, v + 10))
+            # `or` NO vale aqui: un min_val de 0 es falsy y se colaba el
+            # automatico. Lo cazo el test del margen del stop de estructura,
+            # que pide min 0 y recibia 2,5 sin decir nada.
+            v_min = float(min_val if min_val is not None else max(0, v * 0.25))
+            v_max = float(max_val if max_val is not None else max(v * 3, v + 10))
 
         params.append({
             "id": param_id,
@@ -475,6 +481,30 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                          f"Stop Loss ({hs.get('type', 'Pct')})",
                          val, "Risk", "risk_management.hard_stop.value",
                          min_val=0.1, max_val=max(float_val * 4, 20) if val else 20, step=0.5)
+                else:
+                    # STOP DE ESTRUCTURA. Aqui `value` es TEXTO ("PMH",
+                    # "Previous Max"...), asi que el `float()` de arriba falla y
+                    # hasta hoy se caia el bloque ENTERO: una estrategia con
+                    # stop estructural no ofrecia ni una sola perilla del stop,
+                    # ni en el 3D, ni en el Walk Forward, ni en el genetico —
+                    # los tres beben de aqui. Y no avisaba: simplemente no
+                    # aparecia.
+                    #
+                    # El nivel no se puede mover (son seis columnas fijas en el
+                    # simulador, y son DOS simuladores en paridad), pero el
+                    # MARGEN si: es un numero, el motor ya lo aplica de punta a
+                    # punta (`hs_offset_pct` -> portfolio_sim / sim_dispatch) y
+                    # es lo mas interesante que hay ahi. Jaume, 7-sep-2026: «si
+                    # hay una estrategia de estructura con % por encima de PMH,
+                    # no podria medirme ese % de distancia e ir probando?».
+                    off = hs.get("offset_pct")
+                    if off is None:
+                        off = 0.0
+                    _add("risk.hard_stop.offset_pct",
+                         f"Margen del stop ({hs.get('value')})",
+                         off, "Risk", "risk_management.hard_stop.offset_pct",
+                         min_val=0.0, max_val=max(float(off) * 3, 15.0), step=0.5,
+                         allow_zero=True)
 
     # Take Profit & Partials
     if rm.get("use_take_profit") is not False:
