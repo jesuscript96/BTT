@@ -3358,3 +3358,23 @@ no una opción del modo por SL.
 ACCIONES, con el mismo stop de siempre. En el desplegable de la pirámide ya se
 llama por su nombre (`mv` / `sl` / `híbrido`); en la entrada sigue siendo un
 interruptor por razones históricas.
+### [VERIFICADO · 2026-09-07 · MAE] «MAX MAE 169,56%» en G&E RTH 2026 — NO es bug: excursión real, verificada contra velas (duda de Álvaro resuelta con evidencia)
+- **Plantea:** Álvaro («esto del MAE tiene que estar mal»)
+- **Verifica:** ZCode (para Álvaro)
+- **Qué se vio:** panel Aggregate con MAX MAE 169,56 % y avg 13,76 % en la corrida G&E RTH 2026 (autosave `6e53853b`, 518 trades; lanzada con risk_r=1 $, sin size_by_sl).
+- **Verificación:** el trade top (RGNT 2026-06-09, short a 2,4299 a las 09:37, stop estructural 7,33 = PM max, EOD) — consultado el parquet del lago: máximo ALTO entre 09:37-10:59 = 6,55 → (6,55−2,4299)/2,4299 = **169,56 % exacto**. La ventana es correcta: el máximo pre-entrada (7,33, premarket) NO cuenta. El motor (`portfolio_sim.py`, cota al precio de stop/TP solo en la vela de salida) calcula lo que dicen las velas.
+- **Por qué asusta:** la estrategia shortea fondos profundos tras fades del 60-70 % con el stop en el MÁXIMO VIEJO → stop al 150-200 % de la entrada. En % del precio la excursión parece apocalíptica; **en R todas las MAE grandes son ≤1 R** (RGNT 0,84 R; HKIT 0,84 R; PAVS/EHGO/SPHL 1,00 R = SL). 17/518 trades >50 %, 3 >100 %.
+- **MEJORA (opcional) para Jaume:** mostrar el MAE también en R (mae_r = mae_pct / distancia_al_stop_pct) junto al porcentual — en estrategias de stop lejano el porcentual solo engaña; en R se lee el riesgo real flotado.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** CERRADO (verificado, no bug)
+
+### [FEATURE · 2026-09-07 · ESTILO CANGREJO] Nueva tarjeta de Risk Management: acotar cada trade "o por recorrido del SL, o por pérdida máxima" — para Jaume y su IA
+- **Propone/decide:** Álvaro (implementado por ZCode en SU rama, a la espera del flujo habitual)
+- **Qué es:** tarjeta "Estilo Cangrejo" en el builder, debajo de todo lo del Stop Loss, con DOS modos EXCLUYENTES ("debe ser o una u otra", decisión de Álvaro): **(A) Recorrido máx. del SL** — el stop estructural/% nunca queda a más de D% del entry: se aprieta y la salida real pasa a ser el stop apretado (cambia DÓNDE sales); **(B) Pérdida máx. por trade** — el stop no se toca, se encoge el tamaño para que llegar al SL no cueste más de X% de la cuenta (cambia CUÁNTO pones). Son techos: solo recortan, nunca agrandan, sobre el sizing activo (MV/por SL/híbrido). Exclusivos con el Stop Loss Híbrido de Jaume: la UI los apaga mutuamente y si un payload trae ambos, el motor arbitra a favor de Cangrejo. **La lógica del híbrido NO se ha tocado.**
+- **Por qué:** con SL por market structure la distancia cambia en cada entrada y con el mismo MV unos stops cuestan poco y otros muchísimo (el motivo original de Álvaro). La primera versión de la tarjeta (4 topes: distancia, pérdida, MV entrada, MV pirámide) resultó poco intuitiva en pruebas con la Estrategia 1B y se simplificó a estos dos modos por decisión de Álvaro.
+- **PRD completo (el porqué y los detalles):** `docs/PRD_ESTILO_CANGREJO.md` — subido también a staging con esta entrada para que se pueda leer sin esperar al merge.
+- **Dónde (código, en `alvaro-rama-desarrollo`):** `backend/app/schemas/strategy.py`, `backend/app/services/{portfolio_sim,sim_dispatch,backtest_signals,backtest_service,backtest_orchestrator}.py`, `backend/tests/test_estilo_cangrejo.py` (19 tests), `frontend/src/types/strategy.ts`, `frontend/src/components/strategy-builder/RiskManagement.tsx`. El bot de alertas: INTACTO (ningún fichero de su zona).
+- **Verificación:** suite completa backend 733 passed; auditoría independiente del 2026-09-07 contra el código anterior (123 comparaciones de invarianza en 25 escenarios + 400 configs fuzz, cero divergencias incl. JIT; recortes exactos; plumbing punta a punta con captura de kwargs reales; el incidente "backtest idéntico con Cangrejo ON" reproducido por HTTP y explicado: con riesgo 0,5% y topes al 5% no pueden morder — correcto, no bug).
+- **Avisos para el que integre:** (1) con Cangrejo activo la simulación va SIEMPRE al motor Python (kernel Numba no lo implementa, como el híbrido); (2) el fix del dispatcher del 2026-09-07 hace que `hybrid_capital` llegue al motor también con Cangrejo sin híbrido — relevante para el bot cuando lo use; (3) `cangrejo_max_mv_entry_pct`/`cangrejo_max_mv_pyr_pct` siguen admitidos por el motor pero INERTES (sin UI) por si vuelven.
+- **Código tocado:** solo lo listado arriba, en rama de Álvaro. Nada de staging salvo este documento y esta entrada.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
