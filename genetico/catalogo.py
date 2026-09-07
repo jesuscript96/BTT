@@ -301,7 +301,13 @@ STOP_NIVELES = {
     "short": (("HOD", ">="), ("PMH", ">="), ("Previous Max", ">=")),
     "long": (("LOD", "<="), ("PML", "<="), ("Previous Min", "<=")),
 }
-TP_PCT = (3, 5, 6, 8, 10, 15, 20, 30)
+# El techo era 30 y se subio a 40 el 7-sep-2026 a peticion de Jaume. El
+# motivo salio de la corrida de anoche: la estrategia llevaba el take
+# profit al 35 %, asi que NINGUN disparador de parcial podia colocarse por
+# encima — el genetico probaba parciales (58 de 156 individuos) y perdian
+# siempre, y no era que los parciales fueran malos: es que no cabian.
+# Se anyade el 40 sin quitar el 30, que sigue siendo un escalon util.
+TP_PCT = (3, 5, 6, 8, 10, 15, 20, 30, 40)
 TP_HORA = ("09:00", "09:30", "10:00", "10:30", "11:00", "12:00", "15:30")
 TP_TIEMPO_MIN = (15, 30, 60, 120, 240)
 
