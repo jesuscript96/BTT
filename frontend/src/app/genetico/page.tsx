@@ -1200,7 +1200,10 @@ export default function GeneticoPage() {
             <Check checked={riesgo.size_by_sl} onChange={(v) => setRiesgo({ ...riesgo, size_by_sl: v })} label="Activado" />
           </Row>
           <Row label="Stop híbrido" help="Va por distancia al stop, pero con TECHO de exposición: techo $ = (% de cuenta asumible × capital) ÷ % del evento. Resuelve el punto ciego del modo por SL, que es justo el que se come el genético: con el stop muy ceñido el tamaño se dispara y un hueco brutal deja debiendo dinero. Recorta, no anula. Implica «Shares por SL», así que lo activa solo.">
-            <Check checked={!!riesgo.hybrid_stop} onChange={(v) => setRiesgo({ ...riesgo, hybrid_stop: v })} label="Activado" />
+            {/* La ayuda promete que «lo activa solo» y hasta hoy no lo hacia:
+                se podia dejar el hibrido puesto con «Shares por SL» quitado y
+                correr un genetico entero sin techo, sin aviso. */}
+            <Check checked={!!riesgo.hybrid_stop} onChange={(v) => setRiesgo({ ...riesgo, hybrid_stop: v, size_by_sl: v ? true : riesgo.size_by_sl })} label="Activado" />
           </Row>
           {riesgo.hybrid_stop && (
             <>

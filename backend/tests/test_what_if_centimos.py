@@ -181,3 +181,23 @@ def test_no_se_inventan_las_metricas_que_no_se_pueden_reconstruir():
     assert d["sharpe_ratio"] is None and d["max_drawdown_pct"] is None
     # …y los locates tampoco se arrastran: no hay forma honesta de repartirlos.
     assert d["locates_fee"] == 0.0
+
+
+def test_el_ganador_descartado_SIGUE_OCUPANDO_su_hueco_del_dia():
+    """EL TRADE EXISTIO, aunque la mesa no lo abone.
+
+    El filtro estaba antes de los limites, asi que un ganador corto liberaba
+    su plaza y dejaba entrar en su lugar a un trade posterior que en la
+    realidad nunca se llego a operar. Con «Max. trades/dia = 1» y un primer
+    trade que no llega a los 10 centimos, el dia se queda VACIO — no se opera
+    el segundo.
+    """
+    corto = _t(entrada=1.00, salida=0.95, pnl=50.0)
+    corto["entry_time"] = "2026-01-05 08:00:00"
+    segundo = _t(entrada=1.00, salida=0.80, pnl=200.0)
+    segundo["entry_time"] = "2026-01-05 09:00:00"
+
+    r = run_what_if([corto, segundo],
+                    {"min_move_cents": 0.10, "daily_max_trades": 1},
+                    init_cash=10_000.0)
+    assert r["trades"] == []

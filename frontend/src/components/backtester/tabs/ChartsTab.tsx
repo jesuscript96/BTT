@@ -191,6 +191,11 @@ export default function ChartsTab({
         black_swan_count: 0,
         black_swan_pct: 500,
         monthly_expenses: 0,
+        // Con riesgo PORCENTUAL los dolares de un trade dependen del balance
+        // que hubiera ese dia, asi que quitar trades y re-sumar dolares da
+        // cifras imposibles. El backend recompone por dia solo si sabe esto.
+        risk_type: riskType,
+        locates_by_pair: locatesByPair,
       };
 
       localStorage.setItem("current_whatif_params", JSON.stringify(params));
@@ -210,6 +215,20 @@ export default function ChartsTab({
       setSimLoading(false);
     }
   };
+
+  // Los locates se cobran UNA VEZ por ticker-dia y no estan dentro del pnl de
+  // ningun trade: viajan en `day_results`. Sin mandarlos, el What-if construia
+  // su curva BRUTA y la comparaba contra la original, que va NETA — y salia
+  // mejor por el importe de la factura de alquiler, aunque solo se hubieran
+  // quitado operaciones.
+  const locatesByPair = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const d of dayResults || []) {
+      const fee = Number(d.locates_fee || 0);
+      if (fee > 0) m[`${d.ticker}|${d.date}`] = fee;
+    }
+    return m;
+  }, [dayResults]);
 
   const handleRunStressTest = async () => {
     if (!trades || trades.length === 0) return;
@@ -231,6 +250,10 @@ export default function ChartsTab({
         black_swan_count: blackSwanCount,
         black_swan_pct: blackSwanSize,
         monthly_expenses: includeExpensesInWhatIf ? (monthlyExpenses || 0) : 0,
+        // Ver el comentario de arriba: sin esto la regla de los centimos, que
+        // quita ganadores, hundia la curva mucho mas de lo que le toca.
+        risk_type: riskType,
+        locates_by_pair: locatesByPair,
       };
 
       localStorage.setItem("current_whatif_params", JSON.stringify(params));

@@ -30,6 +30,7 @@ interface StressCfg {
   dailyMaxTrades: number;
   maxConcurrentTrades: number;
   randomMonthlyDays: number;
+  minMoveCents: number;
   monthlyExpenses: number;
 }
 
@@ -41,6 +42,7 @@ const DEFAULT_STRESS: StressCfg = {
   dailyMaxTrades: 0,
   maxConcurrentTrades: 0,
   randomMonthlyDays: 0,
+  minMoveCents: 0,
   monthlyExpenses: 0,
 };
 
@@ -86,6 +88,9 @@ export function useBasico({ run, loading }: ModuleCtx): ModuleParts {
           random_monthly_days: cfg.randomMonthlyDays,
           daily_max_trades: cfg.dailyMaxTrades,
           max_concurrent_trades: cfg.maxConcurrentTrades,
+          // Se teclea en centimos y viaja en dolares: alli se compara contra
+          // los precios de los trades, que van en dolares.
+          min_move_cents: cfg.minMoveCents > 0 ? cfg.minMoveCents / 100 : 0,
           skip_top_pct: cfg.skipTopPct,
           extra_slippage: cfg.extraSlippage,
           black_swan_count: cfg.blackSwanCount,
@@ -142,6 +147,13 @@ export function useBasico({ run, loading }: ModuleCtx): ModuleParts {
           <NumberInput value={cfg.maxConcurrentTrades} onChange={(v) => set("maxConcurrentTrades", v)} min={0} step={1} />
         </Field>
       </div>
+
+      <Field
+        label="Cts. min. que debe moverse"
+        hint="Regla de las mesas de fondeo. Solo cae sobre los ganadores; las perdidas se cuentan siempre. 0 = no aplicar."
+      >
+        <NumberInput value={cfg.minMoveCents} onChange={(v) => set("minMoveCents", v)} min={0} step={1} />
+      </Field>
 
       <Field label="Dias perdidos al mes" hint="Vacaciones, cortes, despistes. 0 = ninguno.">
         <NumberInput value={cfg.randomMonthlyDays} onChange={(v) => set("randomMonthlyDays", v)} min={0} step={1} />

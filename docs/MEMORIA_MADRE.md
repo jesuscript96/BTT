@@ -3241,3 +3241,120 @@ blanco con todo funcionando.
 lanza un error que se entiende si de verdad no hay ni qualifying ni dataset.
 `test_genetico_sin_dataset.py` vigila las dos mitades del contrato — y lee solo
 el CÓDIGO, porque el comentario que explica el fallo contiene el mismo literal.
+
+## 2026-09-07 · La regla de los céntimos estaba en el motor equivocado
+
+Salió de una revisión de Álvaro (`PRD_MODULO_ROBUSTEZ.md` §2.2) que Jaume trajo
+al chat. **No era un problema del precio medio de entrada**, que es lo que se
+sospechaba: `mueve_bastante` usa `avg_entry_price` a propósito y está bien. El
+fallo era del dominio en el que se reconstruye la curva.
+
+### El fallo
+
+`min_move_cents` vivía SOLO en `what_if_service`, y ese servicio reconstruye la
+equity **sumando dólares**. Con `risk_type = PERCENT` —3 % del capital vivo—
+los dólares de cada trade dependen del balance que hubiera ese día: quitar
+trades y volver a sumar el resto rompe el vínculo con el capital. Medido por
+Álvaro sobre 3.544 trades: quitando el mejor 10 %, la curva aditiva acababa en
+**−84.411 $** (dinero negativo) donde la recompuesta da 2.617 $, o sea −73,8 %.
+
+La regla de la mesa es ese mismo caso y peor: **descarta ganadores de forma
+sistemática**, no un 10 % puntual. La dirección del error importa — pintaba la
+regla mucho más letal de lo que sería en la cuenta real.
+
+### Lo que se ha hecho
+
+1. **`_recomponer_por_dia` en `what_if_service`.** El PnL de cada día escala
+   por `capital_filtrado(día) / capital_original(día)`. Es recomponer en R sin
+   necesitar la distancia al stop: R = pnl/riesgo y el riesgo es un % del
+   capital, así que el % se cancela. Se escala **por día y no por trade**
+   porque el motor compone por día.
+2. **Solo se activa con `risk_type: "PERCENT"`,** que ahora manda la página
+   (lo tenía en un prop y no lo enviaba). Sin ese dato se asume riesgo fijo y
+   todo se comporta como siempre: la corrección no puede activarse sola.
+3. **El día que reventaría la cuenta se recorta hasta dejarla en cero** y el
+   recorte se reparte entre sus trades, para que el PnL de los trades cuadre
+   con la curva. Sin eso el equity se iba a negativo por detrás.
+4. **La regla se portó a `robustness_stress`**, que es el motor que ya
+   trabajaba en R, con su campo en el panel de Robustez. La función
+   `mueve_bastante` se **importa** del What-if: es una sola regla, y escribirla
+   dos veces es garantizar que un día las dos pantallas discrepen.
+5. **El filtro pasó a ir DESPUÉS de los límites de actividad** en los dos
+   motores. Iba antes, así que un ganador corto liberaba su hueco de
+   «Máx. trades/día» y dejaba entrar en su lugar a un trade posterior que nunca
+   se llegó a operar. El trade existió: ocupó su plaza aunque no lo abonen.
+
+**Invariante fijada con test:** sin ningún filtro los dos capitales coinciden
+día a día, el factor es 1,0 exacto y la curva sale idéntica a la de partida.
+Es la misma propiedad que se rompió el 4-sep con `dd_threshold`.
+
+`test_what_if_recomposicion.py`, `test_robustez_stress_centimos.py` y un caso
+nuevo en `test_what_if_centimos.py` (el hueco del día).
+
+### Lo que sigue sin cubrir
+
+- El `pnl > 0` que decide si un trade es ganador es el **bruto**, antes de
+  locates. Un trade de +8 $ con 20 $ de locate se juzga como ganador.
+- Los locates no se arrastran al What-if (ya estaba documentado en
+  `_day_results_de`), así que la lectura sigue siendo bruta.
+- Los parciales sí van bien: cada parcial es su propio trade con su
+  `exit_price`, o sea que la regla se aplica **por ejecución**, que es como la
+  aplica una mesa.
+
+### El What-if salía MEJOR que el original: los locates
+
+Jaume lo vio en pantalla el mismo día: con la regla de los 10 céntimos puesta,
+824 trades → 780, y el PnL **subía** de 5.000 $ a 6.724 $. Una regla que solo
+QUITA ganadores no puede mejorar nada.
+
+No era la regla ni la recomposición —las dos son monótonas: quitar un ganador
+no puede subir la curva—. Era que **las dos curvas no medían lo mismo**:
+
+    curva del backtest   NETA de locates  (`_compute_global_equity_and_drawdown`
+                                           recibe `locates_fee_by_date`)
+    curva del What-if    BRUTA            (el locate no está en el pnl de
+                                           ningún trade y no llegaba)
+
+La diferencia era la factura de alquiler entera: ~1.700 $ en esa corrida. Es el
+mismo fallo que tuvo el calendario en agosto, en otra pantalla.
+
+**Arreglado:** los locates viajan por par `TICKER|FECHA` (`locates_by_pair`,
+que la página saca de `day_results`) y se cobran **enteros si sobrevive algún
+trade de ese ticker ese día**, cero si no sobrevive ninguno. No es un reparto
+aproximado: el locate se cobra una vez por ticker-día, así que o se alquiló o no.
+No se reescalan con la recomposición —una curva más pequeña habría alquilado
+menos paquetes—, que es el lado conservador.
+
+**La pregunta que caza esta familia entera de fallos:** cuando dos curvas se
+pintan juntas para compararlas, ¿están hechas con los mismos costes? Aquí no lo
+estaban, y el error tenía signo — siempre a favor de la simulación.
+
+### HALLAZGO SIN ARREGLAR: el techo del híbrido depende del OTRO interruptor
+
+**No se ha tocado. Decisión de Jaume el 7-sep: nada de stops, distancias ni
+híbrido — el motor lo comparte el bot en vivo y se revalida con él.** Queda
+apuntado para cuando toque.
+
+`portfolio_sim` hace `if hybrid_stop and size_by_sl:`, y el nivel de pirámide
+tiene el techo **anidado dentro** de su rama `size_by_sl`. Consecuencia: una
+definición con el híbrido encendido y «Shares por SL» apagado se dimensiona
+**sin techo, sin error y sin log**.
+
+El builder impide esa combinación (encender el híbrido fuerza `size_by_sl`).
+**El panel del genético no la impedía**: su checkbox solo escribía
+`hybrid_stop`, y su ayuda prometía lo contrario — «Implica Shares por SL, así
+que lo activa solo». No saltaba porque el defecto viene en `true`; bastaba con
+desmarcar «Shares por SL» y dejar el híbrido puesto para correr un genético
+entero sin techo creyéndolo puesto. **Eso sí se ha arreglado** (el checkbox
+escribe los dos campos), que era el único sitio por donde entraba la
+combinación rota.
+
+`sim_dispatch` ya rutea mirando `hybrid_stop` a secas, así que la combinación
+llega al motor Python: el día que se arregle, el arreglo la alcanza. Sería
+cambiar las dos condiciones por `hybrid_stop` a secas — el techo es una GUARDA,
+no una opción del modo por SL.
+
+**Nota de nombre:** «stop híbrido» no es un stop — es un modo de calcular
+ACCIONES, con el mismo stop de siempre. En el desplegable de la pirámide ya se
+llama por su nombre (`mv` / `sl` / `híbrido`); en la entrada sigue siendo un
+interruptor por razones históricas.

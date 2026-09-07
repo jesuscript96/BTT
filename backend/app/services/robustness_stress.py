@@ -40,6 +40,11 @@ from typing import Any
 
 import numpy as np
 
+# La regla de los centimos se COMPARTE con el What-if a proposito: es una sola
+# regla de una mesa de fondeo, y tenerla escrita dos veces garantiza que algun
+# dia las dos pantallas digan cosas distintas del mismo historico.
+from app.services.what_if_service import mueve_bastante
+
 # Si no se puede deducir la distancia al stop de un trade se usa esta, para no
 # descartarlo del analisis. Es el orden de magnitud de un stop tipico aqui.
 _FALLBACK_STOP_PCT = 45.0
@@ -276,6 +281,15 @@ def run_stress(
                 active.append(end or start)
                 out.append(t)
         kept = out
+
+    # Recorrido minimo en centimos: la regla de las cuentas de fondeo. Solo
+    # cae sobre los GANADORES —la mesa no abona lo que no se movio, pero las
+    # perdidas las apunta enteras— y va despues de los limites porque el trade
+    # existio: ocupo su hueco del dia aunque no lo abonen. Ver `mueve_bastante`.
+    min_move = float(params.get("min_move_cents") or 0)
+    if min_move > 0:
+        kept = [t for t in kept
+                if float(t.get("_pnl") or 0.0) <= 0 or mueve_bastante(t, min_move)]
 
     # ── Castigos ────────────────────────────────────────────────────
     skip_top = float(params.get("skip_top_pct") or 0)
