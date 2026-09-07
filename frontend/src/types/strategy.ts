@@ -299,6 +299,25 @@ export interface RiskManagement {
     hybrid_black_swan_pct?: number | null;
     /** Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. */
     hybrid_max_loss_pct?: number | null;
+    /** ESTILO CANGREJO: dos maneras excluyentes de acotar el trade ("o una u
+     *  otra", Álvaro 2026-09-07). EXCLUSIVO con el híbrido: encender uno apaga
+     *  el otro. */
+    cangrejo_active?: boolean;
+    /** Modo elegido en el selector de la tarjeta. Se guarda con la estrategia
+     *  para que recuerde tu elección; el MOTOR LO IGNORA — lo que cuenta son
+     *  los valores de los campos. Va explícito (no derivado del valor) porque
+     *  derivándolo el selector no podía moverse a un modo con el campo vacío. */
+    cangrejo_mode?: 'recorrido' | 'perdida';
+    /** El SL nunca queda a más de este % del entry: se aprieta y el stop
+     *  REAL (la salida) pasa a ser el apretado. */
+    cangrejo_max_sl_dist_pct?: number | null;
+    /** Perder como mucho este % del equity en el recorrido al SL. */
+    cangrejo_max_loss_at_sl_pct?: number | null;
+    /** Market value máximo de cada entrada, en % del equity. */
+    cangrejo_max_mv_entry_pct?: number | null;
+    /** Market value máximo AÑADIDO por nivel de pirámide (presupuesto
+     *  independiente por nivel, se rearma con cada entrada). */
+    cangrejo_max_mv_pyr_pct?: number | null;
     swing_option?: {
         active: boolean;
         target_day: 'gap_1_day' | 'gap_2_day';
@@ -376,6 +395,12 @@ export const initialRiskManagement: RiskManagement = {
     hybrid_stop: false,
     hybrid_black_swan_pct: null,
     hybrid_max_loss_pct: null,
+    cangrejo_active: false,
+    cangrejo_mode: 'perdida',
+    cangrejo_max_sl_dist_pct: null,
+    cangrejo_max_loss_at_sl_pct: null,
+    cangrejo_max_mv_entry_pct: null,
+    cangrejo_max_mv_pyr_pct: null,
     swing_option: { active: false, target_day: 'gap_1_day' },
     exclude_days: [],
     exclude_months: [],

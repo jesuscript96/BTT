@@ -159,6 +159,13 @@ def run_backtest(
     hybrid_stop: bool = False,
     hybrid_black_swan_pct: float | None = None,
     hybrid_max_loss_pct: float | None = None,
+    # Estilo Cangrejo: cuatro techos de sizing (ver portfolio_sim.simulate).
+    # Exclusivo con el hibrido: con ambos on, gana Cangrejo.
+    cangrejo_active: bool = False,
+    cangrejo_max_sl_dist_pct: float | None = None,
+    cangrejo_max_loss_at_sl_pct: float | None = None,
+    cangrejo_max_mv_entry_pct: float | None = None,
+    cangrejo_max_mv_pyr_pct: float | None = None,
     fees: float = 0.0,
     fee_type: str = "PERCENT",
     slippage: float = 0.0,
@@ -205,6 +212,19 @@ def run_backtest(
             hybrid_black_swan_pct = rm.get("hybrid_black_swan_pct")
         if hybrid_max_loss_pct is None:
             hybrid_max_loss_pct = rm.get("hybrid_max_loss_pct")
+        # Lo mismo con el Estilo Cangrejo: los porcentajes viven en la
+        # estrategia (mismo criterio que el hibrido) para que backtest y bot no
+        # puedan dimensionar distinto sin que nada avise.
+        if rm.get("cangrejo_active") is not None:
+            cangrejo_active = cangrejo_active or bool(rm.get("cangrejo_active", False))
+        if cangrejo_max_sl_dist_pct is None:
+            cangrejo_max_sl_dist_pct = rm.get("cangrejo_max_sl_dist_pct")
+        if cangrejo_max_loss_at_sl_pct is None:
+            cangrejo_max_loss_at_sl_pct = rm.get("cangrejo_max_loss_at_sl_pct")
+        if cangrejo_max_mv_entry_pct is None:
+            cangrejo_max_mv_entry_pct = rm.get("cangrejo_max_mv_entry_pct")
+        if cangrejo_max_mv_pyr_pct is None:
+            cangrejo_max_mv_pyr_pct = rm.get("cangrejo_max_mv_pyr_pct")
 
     t_total = time.time()
 
@@ -450,6 +470,11 @@ def run_backtest(
             "hybrid_stop": hybrid_stop,
             "hybrid_black_swan_pct": hybrid_black_swan_pct,
             "hybrid_max_loss_pct": hybrid_max_loss_pct,
+            "cangrejo_active": cangrejo_active,
+            "cangrejo_max_sl_dist_pct": cangrejo_max_sl_dist_pct,
+            "cangrejo_max_loss_at_sl_pct": cangrejo_max_loss_at_sl_pct,
+            "cangrejo_max_mv_entry_pct": cangrejo_max_mv_entry_pct,
+            "cangrejo_max_mv_pyr_pct": cangrejo_max_mv_pyr_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
             "max_locates": max_locates,
@@ -508,6 +533,11 @@ def run_backtest(
             "hybrid_stop": hybrid_stop,
             "hybrid_black_swan_pct": hybrid_black_swan_pct,
             "hybrid_max_loss_pct": hybrid_max_loss_pct,
+            "cangrejo_active": cangrejo_active,
+            "cangrejo_max_sl_dist_pct": cangrejo_max_sl_dist_pct,
+            "cangrejo_max_loss_at_sl_pct": cangrejo_max_loss_at_sl_pct,
+            "cangrejo_max_mv_entry_pct": cangrejo_max_mv_entry_pct,
+            "cangrejo_max_mv_pyr_pct": cangrejo_max_mv_pyr_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
             "max_locates": max_locates,
@@ -1014,6 +1044,11 @@ def run_backtest(
                 hybrid_stop=hybrid_stop,
                 hybrid_black_swan_pct=hybrid_black_swan_pct,
                 hybrid_max_loss_pct=hybrid_max_loss_pct,
+                cangrejo_active=cangrejo_active,
+                cangrejo_max_sl_dist_pct=cangrejo_max_sl_dist_pct,
+                cangrejo_max_loss_at_sl_pct=cangrejo_max_loss_at_sl_pct,
+                cangrejo_max_mv_entry_pct=cangrejo_max_mv_entry_pct,
+                cangrejo_max_mv_pyr_pct=cangrejo_max_mv_pyr_pct,
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,

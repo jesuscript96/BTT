@@ -135,6 +135,28 @@ def simulate(
     # hibrido saldria astronomico y NO RECORTARIA JAMAS — el aviso diria un
     # tamano sin topar y nada lo indicaria.
     hybrid_capital: float | None = None,
+    # ESTILO CANGREJO (2026-09-07, Álvaro). Cuatro TECHOS de sizing que van
+    # sobre el modo que esté activo (MV clásico, por SL o híbrido): recortan,
+    # nunca agrandan. EXCLUSIVO con el híbrido por decisión de Álvaro: con
+    # ambos encendidos gana Cangrejo y el techo del híbrido NO se aplica.
+    #   max_sl_dist_pct    — el SL nunca queda a más de D% del entry: se
+    #                        aprieta a entry*(1±D%) y el stop REAL (la salida)
+    #                        pasa a ser el apretado.
+    #   max_loss_at_sl_pct — perder como mucho X% del equity en el recorrido
+    #                        al SL: encoge el MV si el SL queda lejos.
+    #   max_mv_entry_pct   — market value máximo de cada entrada (primera y
+    #                        reentradas: cada una es una posición nueva).
+    #   max_mv_pyr_pct     — market value máximo AÑADIDO por NIVEL de
+    #                        pirámide (presupuesto independiente por nivel,
+    #                        sumando sus disparos; se rearma con cada entrada).
+    # Base de equity de todos los topes: `hybrid_capital` si viene (lo usa el
+    # bot de alertas), si no el equity vivo de la simulación — mismo criterio
+    # que el techo híbrido.
+    cangrejo_active: bool = False,
+    cangrejo_max_sl_dist_pct: float | None = None,
+    cangrejo_max_loss_at_sl_pct: float | None = None,
+    cangrejo_max_mv_entry_pct: float | None = None,
+    cangrejo_max_mv_pyr_pct: float | None = None,
     partial_take_profits: list | None = None,
     pyramid_levels: list | None = None,
     pyramid_sequential: bool = False,
@@ -204,6 +226,10 @@ def simulate(
     # Estado de la señal de cada nivel DENTRO del trade (se rearma al entrar).
     pyr_prev_sig: list = []
     pyr_fired: list = []   # contador de disparos por nivel (int)
+    # ESTILO CANGREJO: MV (dólares de los fills reales) añadido por NIVEL de
+    # pirámide en la posición viva. Presupuesto independiente por nivel que
+    # se rearma con cada entrada, como `pyr_fired`.
+    pyr_mv_added_level: list = []
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
     # Risk amount tracking for reporting
@@ -263,14 +289,20 @@ def simulate(
                             exit_price = min(trade_sl_price, high[i])
                             exit_reason = "SL"
                 elif sl_stop is not None:
+                    # ESTILO CANGREJO: si el stop por porcentaje se apretó al
+                    # entrar (tope de distancia), el que manda en la salida es
+                    # el apretado. Sin cangrejo `trade_sl_price` ES
+                    # entry*(1±sl_stop) — bit a bit igual que la formula.
                     if is_long:
-                        hard_sl_price = entry_price * (1 - sl_stop)
+                        hard_sl_price = (trade_sl_price if trade_sl_price > 0.0
+                                         else entry_price * (1 - sl_stop))
                         if price_for_sl <= hard_sl_price:
                             exit_triggered = True
                             exit_price = max(hard_sl_price, low[i])
                             exit_reason = "SL"
                     else:
-                        hard_sl_price = entry_price * (1 + sl_stop)
+                        hard_sl_price = (trade_sl_price if trade_sl_price > 0.0
+                                         else entry_price * (1 + sl_stop))
                         if price_for_sl >= hard_sl_price:
                             exit_triggered = True
                             exit_price = min(hard_sl_price, high[i])
@@ -302,7 +334,10 @@ def simulate(
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
                                 else:
-                                    hard_sl_price = entry_price * (1 - sl_stop) if sl_stop is not None else -1e18
+                                    # Igual que el stop fijo de arriba: con
+                                    # cangrejo apretado manda el apretado.
+                                    hard_sl_price = (trade_sl_price if trade_sl_price > 0.0
+                                                     else (entry_price * (1 - sl_stop) if sl_stop is not None else -1e18))
                                 if trail_sl_price > hard_sl_price:
                                     exit_triggered = True
                                     exit_price = max(trail_sl_price, low[i])
@@ -325,7 +360,10 @@ def simulate(
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
                                 else:
-                                    hard_sl_price = entry_price * (1 + sl_stop) if sl_stop is not None else 1e18
+                                    # Igual que el stop fijo de arriba: con
+                                    # cangrejo apretado manda el apretado.
+                                    hard_sl_price = (trade_sl_price if trade_sl_price > 0.0
+                                                     else (entry_price * (1 + sl_stop) if sl_stop is not None else 1e18))
                                 if trail_sl_price < hard_sl_price:
                                     exit_triggered = True
                                     exit_price = min(trail_sl_price, high[i])
@@ -931,6 +969,34 @@ def simulate(
                     add_size = min(add_size_pedido, disponible / add_px)
                     add_cash_pedido = add_size_pedido * add_px
                     add_cash = add_size * add_px
+                    # Recorte por caja, anotado YA: los topes de abajo no deben
+                    # atribuirle su recorte a la caja. (Antes se calculaba al
+                    # final; ningun tope intermedio toca add_cash, mismo valor.)
+                    recortado = add_cash < add_cash_pedido - 1e-9
+                    # ESTILO CANGREJO — tope de MV por NIVEL: cada nivel puede
+                    # añadir en total (sumando sus disparos) como mucho este %
+                    # del equity. Presupuesto INDEPENDIENTE por nivel: que el
+                    # nivel 1 agote el suyo no merma el del 2 (decision de
+                    # Alvaro, 2026-09-07). Recorta o anula el añadido, no la
+                    # posición; se rearma con cada entrada, como pyr_fired.
+                    # Se aplica sobre los FILLS reales (tras el tope de caja),
+                    # que es lo que contabiliza pyr_mv_added_level.
+                    recortado_cangrejo = False
+                    if (cangrejo_active and cangrejo_max_mv_pyr_pct is not None
+                            and cangrejo_max_mv_pyr_pct > 0):
+                        capital_cangrejo_pyr = (hybrid_capital if hybrid_capital
+                                                else cash_now)
+                        if capital_cangrejo_pyr > 0:
+                            restante = ((cangrejo_max_mv_pyr_pct / 100.0)
+                                        * capital_cangrejo_pyr
+                                        - pyr_mv_added_level[lv_idx])
+                            if restante <= 0:
+                                continue
+                            tope_size_pyr = restante / add_px
+                            if add_size > tope_size_pyr:
+                                add_size = tope_size_pyr
+                                add_cash = add_size * add_px
+                                recortado_cangrejo = True
                     # TOPE DE LOCATES: un anadido en corto sube el maximo del
                     # dia y con el la factura, asi que el cupo cuenta entrada
                     # MAS anadidos. Se recorta igual que con el tope de caja.
@@ -944,7 +1010,6 @@ def simulate(
                             recortado_locates = True
                     if add_size <= 0:
                         continue
-                    recortado = add_cash < add_cash_pedido - 1e-9
                     avg_entry_price = (avg_entry_price * size + add_px * add_size) / (size + add_size)
                     size += add_size
                     # La base de los TP parciales sigue a la posicion: crece con
@@ -954,6 +1019,7 @@ def simulate(
                     # usuario, 2026-08-23).
                     pyr_base += add_size
                     pyr_fired[lv_idx] += 1
+                    pyr_mv_added_level[lv_idx] += add_size * add_px
                     pyr_exec.append({
                         "kind": "add",
                         "idx": exec_idx,
@@ -968,6 +1034,7 @@ def simulate(
                         # un añadido a medias no parezca uno normal.
                         **({"recortado_por_caja": round(add_cash_pedido, 2)} if recortado else {}),
                         **({"recortado_por_locates": int(max_locates)} if recortado_locates else {}),
+                        **({"recortado_por_cangrejo": round(cangrejo_max_mv_pyr_pct, 2)} if recortado_cangrejo else {}),
                     })
                     if not is_long:
                         max_short_size_today = max(max_short_size_today, size)
@@ -1139,6 +1206,22 @@ def simulate(
                 elif sl_stop is not None and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
 
+                # ESTILO CANGREJO — límite de distancia al SL: el stop nunca
+                # queda a más de D% del entry. Se aplica con el nivel ya
+                # resuelto (estructural con su offset y respaldo, o
+                # porcentaje) y ANTES de dimensionar, para que el sizing por
+                # SL use la distancia apretada. Apretar hacia el entry no
+                # invalida el lado del stop: sigue en el lado perdedor, solo
+                # que más cerca, así que no hace falta revalidar nada.
+                if (cangrejo_active and cangrejo_max_sl_dist_pct is not None
+                        and cangrejo_max_sl_dist_pct > 0 and stop_loss_price > 0.0):
+                    if is_long:
+                        techo_sl = entry_price * (1.0 - cangrejo_max_sl_dist_pct / 100.0)
+                        stop_loss_price = max(stop_loss_price, techo_sl)
+                    else:
+                        techo_sl = entry_price * (1.0 + cangrejo_max_sl_dist_pct / 100.0)
+                        stop_loss_price = min(stop_loss_price, techo_sl)
+
                 if size_by_sl:
                     dist = abs(entry_price - stop_loss_price) if stop_loss_price > 0.0 else 0.0
                     if dist > 0.0:
@@ -1152,13 +1235,38 @@ def simulate(
                 # TOPE HIBRIDO: por SL pero sin pasarse de la exposicion que
                 # un evento de cola convertiria en una perdida inasumible.
                 # RECORTA, no anula — igual que el tope de caja y el de locates.
-                if hybrid_stop and size_by_sl:
+                # Con Estilo Cangrejo activo NO se aplica: son estilos
+                # EXCLUSIVOS (decision de Alvaro) y Cangrejo manda.
+                if hybrid_stop and size_by_sl and not cangrejo_active:
                     tope = tope_hibrido(hybrid_capital if hybrid_capital
                                         else init_cash + realized_pnl,
                                         hybrid_black_swan_pct,
                                         hybrid_max_loss_pct, entry_price)
                     if tope is not None:
                         size = min(size, tope)
+
+                # ESTILO CANGREJO — topes de entrada. Recortan, no anulan.
+                # La base es `hybrid_capital` si viene (lo usa el bot), si no
+                # el equity vivo, igual que el techo hibrido. El tope de
+                # perdida usa la distancia FINAL (la que sea tras apretar el
+                # stop por max_sl_dist_pct); sin stop valido no hay recorrido
+                # que acotar y el tope se omite.
+                if cangrejo_active:
+                    capital_cangrejo = (hybrid_capital if hybrid_capital
+                                        else init_cash + realized_pnl)
+                    if (cangrejo_max_mv_entry_pct is not None
+                            and cangrejo_max_mv_entry_pct > 0
+                            and capital_cangrejo > 0):
+                        tope_mv = (cangrejo_max_mv_entry_pct / 100.0) * capital_cangrejo
+                        size = min(size, tope_mv / entry_price)
+                    if (cangrejo_max_loss_at_sl_pct is not None
+                            and cangrejo_max_loss_at_sl_pct > 0
+                            and capital_cangrejo > 0):
+                        dist_final = (abs(entry_price - stop_loss_price)
+                                      if stop_loss_price > 0.0 else 0.0)
+                        if dist_final > 0.0:
+                            perdida_max = (cangrejo_max_loss_at_sl_pct / 100.0) * capital_cangrejo
+                            size = min(size, perdida_max / dist_final)
 
                 # Cap size by available cash
                 max_size = available_cash / entry_price
@@ -1188,6 +1296,7 @@ def simulate(
                     # entrada (reentradas incluidas) rearma sus niveles.
                     pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
                     pyr_prev_sig = [False] * len(pyramid_levels) if pyramid_mode else []
+                    pyr_mv_added_level = [0.0] * len(pyramid_levels) if pyramid_mode else []
                     pyr_base = size
                     # Bitacora de las ejecuciones de piramide de ESTA posicion.
                     # Viaja pegada al trade de cierre (`pyr_executions`) para

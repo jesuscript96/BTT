@@ -50,6 +50,13 @@ class BacktestRequest(BaseModel):
     hybrid_stop: bool = False
     hybrid_black_swan_pct: float | None = None
     hybrid_max_loss_pct: float | None = None
+    # Estilo Cangrejo (2026-09-07, Álvaro): techos de sizing. Mismo trato que
+    # el híbrido — viaja en la estrategia, la petición puede forzarlo.
+    cangrejo_active: bool = False
+    cangrejo_max_sl_dist_pct: float | None = None
+    cangrejo_max_loss_at_sl_pct: float | None = None
+    cangrejo_max_mv_entry_pct: float | None = None
+    cangrejo_max_mv_pyr_pct: float | None = None
     fees: float = 0.0
     fee_type: str = "PERCENT"
     monthly_expenses: float = 0.0
@@ -169,6 +176,21 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
     hybrid_max_loss_pct = (req.hybrid_max_loss_pct
                            if req.hybrid_max_loss_pct is not None
                            else strategy_rm.get("hybrid_max_loss_pct"))
+    # Estilo Cangrejo: mismo patrón que el híbrido — la petición puede forzar
+    # pero no apagar, y los porcentajes caen atrás hacia la estrategia.
+    cangrejo_active = req.cangrejo_active or bool(strategy_rm.get("cangrejo_active", False))
+    cangrejo_max_sl_dist_pct = (req.cangrejo_max_sl_dist_pct
+                                if req.cangrejo_max_sl_dist_pct is not None
+                                else strategy_rm.get("cangrejo_max_sl_dist_pct"))
+    cangrejo_max_loss_at_sl_pct = (req.cangrejo_max_loss_at_sl_pct
+                                   if req.cangrejo_max_loss_at_sl_pct is not None
+                                   else strategy_rm.get("cangrejo_max_loss_at_sl_pct"))
+    cangrejo_max_mv_entry_pct = (req.cangrejo_max_mv_entry_pct
+                                 if req.cangrejo_max_mv_entry_pct is not None
+                                 else strategy_rm.get("cangrejo_max_mv_entry_pct"))
+    cangrejo_max_mv_pyr_pct = (req.cangrejo_max_mv_pyr_pct
+                               if req.cangrejo_max_mv_pyr_pct is not None
+                               else strategy_rm.get("cangrejo_max_mv_pyr_pct"))
 
     if size_by_sl:
         rm = strategy_rm
@@ -411,6 +433,11 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             hybrid_stop=hybrid_stop,
             hybrid_black_swan_pct=hybrid_black_swan_pct,
             hybrid_max_loss_pct=hybrid_max_loss_pct,
+            cangrejo_active=cangrejo_active,
+            cangrejo_max_sl_dist_pct=cangrejo_max_sl_dist_pct,
+            cangrejo_max_loss_at_sl_pct=cangrejo_max_loss_at_sl_pct,
+            cangrejo_max_mv_entry_pct=cangrejo_max_mv_entry_pct,
+            cangrejo_max_mv_pyr_pct=cangrejo_max_mv_pyr_pct,
             fees=req.fees,
             fee_type=req.fee_type,
             slippage=req.slippage,

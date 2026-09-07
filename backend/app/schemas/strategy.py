@@ -370,6 +370,33 @@ class RiskManagement(BaseModel):
     hybrid_stop: Optional[bool] = False
     hybrid_black_swan_pct: Optional[float] = None
     hybrid_max_loss_pct: Optional[float] = None
+    # ESTILO CANGREJO (2026-09-07, Álvaro). Cuatro TECHOS de sizing que viven
+    # con el SL, no un modo de dimensionado: recortan el tamaño que salga del
+    # modo activo (MV clásico, por SL o híbrido), nunca lo agrandan.
+    #   cangrejo_max_sl_dist_pct     — el SL nunca queda a más de D% del entry:
+    #                                   se aprieta a entry*(1±D%) y el stop REAL
+    #                                   (la salida) es el apretado.
+    #   cangrejo_max_loss_at_sl_pct  — perder como mucho X% del equity en el
+    #                                   recorrido al SL: encoge el MV si el SL
+    #                                   queda lejos.
+    #   cangrejo_max_mv_entry_pct    — market value máximo de cada entrada.
+    #   cangrejo_max_mv_pyr_pct      — market value máximo AÑADIDO por nivel de
+    #                                   pirámide (presupuesto independiente por
+    #                                   nivel, se reinicia con cada entrada).
+    # EXCLUSIVO con el híbrido (decisión de Álvaro): con ambos encendidos gana
+    # Cangrejo y el techo del híbrido NO se aplica. La UI los desactiva mutuamente.
+    # Declarados aquí por lo mismo que los híbridos: pydantic va con
+    # extra="ignore" y un campo sin declarar se tira SIN error (TRES CAPAS).
+    cangrejo_active: Optional[bool] = False
+    # Modo del selector de la tarjeta ('recorrido' = apretar el SL lejano,
+    # 'perdida' = encoger el tamaño para perder como mucho X% al SL). Es cosa
+    # de la UI: el motor NO lo lee, solo los valores. Va declarado para que
+    # sobreviva al guardar (extra="ignore" lo tiraria en silencio).
+    cangrejo_mode: Optional[Literal["recorrido", "perdida"]] = None
+    cangrejo_max_sl_dist_pct: Optional[float] = None
+    cangrejo_max_loss_at_sl_pct: Optional[float] = None
+    cangrejo_max_mv_entry_pct: Optional[float] = None
+    cangrejo_max_mv_pyr_pct: Optional[float] = None
     use_hard_stop: Optional[bool] = True
     use_take_profit: Optional[bool] = True
     take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL
