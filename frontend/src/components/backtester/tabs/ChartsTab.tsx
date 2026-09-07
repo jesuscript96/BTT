@@ -602,7 +602,7 @@ export default function ChartsTab({
                         Cts. mín. que debe moverse:
                         <InfoTooltip
                           position="right"
-                          text="Regla de las cuentas de fondeo: un trade solo cuenta si el precio recorrió al menos estos céntimos. Se aplica SOLO a los ganadores — un short de 1,00 a 0,90 con el mínimo en 10 no cuenta ni en equity ni en drawdown, y a 0,89 cuenta el beneficio ENTERO, no el sobrante. Las pérdidas se cuentan siempre, se hayan movido lo que se hayan movido, que es lo que hace que la regla duela. Déjalo en 0 para no aplicarla."
+                          text="Regla de las cuentas de fondeo (TTP): un ganador solo cuenta si el precio recorrió al menos estos céntimos entre el precio MEDIO de entrada y el MEDIO de salida (cada venta por sus acciones). Los 10¢ justos cuentan. El que no llega no se abona: se queda en la curva pagando solo sus comisiones. Las pérdidas se cuentan siempre, se hayan movido lo que se hayan movido, que es lo que hace que la regla duela. Déjalo en 0 para no aplicarla."
                         />
                       </span>
                       <input

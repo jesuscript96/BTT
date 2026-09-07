@@ -15,11 +15,24 @@ def mueve_bastante(trade: Dict[str, Any], min_cents: float) -> bool:
     """¿Recorrio el precio los centimos que exige la mesa de fondeo?
 
     LA REGLA. Las cuentas de fondeo no abonan un trade que no se haya movido un
-    minimo — tipicamente 10 centimos. Un short de 1,00 a 0,90 se movio 10
-    justos y NO cuenta; a 0,89 cuenta, y cuenta el beneficio ENTERO, no el
-    sobrante por encima de los 10. Por eso esto devuelve un si/no y no resta
-    nada. (Jaume, 2026-09-04: «si supera los 10 centimos entonces se cuenta el
-    beneficio de todo el trade».)
+    minimo — tipicamente 10 centamos. Al llegar al umbral cuenta el beneficio
+    ENTERO, no el sobrante por encima de los 10. Por eso esto devuelve un si/no
+    y no resta nada. (Jaume, 2026-09-04: «si supera los 10 centimos entonces se
+    cuenta el beneficio de todo el trade».)
+
+    EL RECORRIDO ES ENTRE MEDIAS (corregido 2026-09-07). TTP lo publica asi:
+    «10.0 cents difference between average entry and average exit price». Se
+    mide del precio MEDIO de entrada al precio MEDIO de salida: con parciales y
+    piramides cada venta cuenta por las acciones que cerro (`_salida_media`).
+    Mirar solo el precio de la ULTIMA venta (el `exit_price` del trade
+    agrupado) daba el veredicto equivocado en los dos sentidos: un trailing
+    final flojo haca parecer corto un recorrido que la mesa cuenta, y una
+    ultima venta alta haca pasar un trade cuya media no llega.
+
+    EL BORDE EXACTO CUENTA (corregido 2026-09-07). La norma dice «at least 10
+    price ticks» y su ejemplo canonico es compra 50.10 venta «50.20 (at
+    least)»: 10 centimos justos SI cuentan. Hasta hoy se exiga estrictamente
+    mayor por la lectura de «supera» del 2026-09-04.
 
     ES ASIMETRICA, y no es un descuido: quien llama la aplica SOLO a los trades
     ganadores. La mesa no te paga lo que no se movio, pero las perdidas te las
@@ -33,20 +46,40 @@ def mueve_bastante(trade: Dict[str, Any], min_cents: float) -> bool:
     Se usa el precio MEDIO de entrada cuando lo hay: con piramidacion el
     recorrido que cuenta es desde donde quedo la posicion, no desde el primer
     trozo.
+
+    Sin precios no se puede juzgar. Se deja pasar en vez de descartarlo: esta
+    regla quita trades ganadores, y quitarlos por falta de dato castigaria la
+    curva por un hueco nuestro, no por la regla de la mesa.
     """
     entrada = trade.get("avg_entry_price") or trade.get("entry_price")
-    salida = trade.get("exit_price")
+    salida = _salida_media(trade)
     if not entrada or salida is None:
-        # Sin precios no se puede juzgar. Se deja pasar en vez de descartarlo:
-        # esta regla quita trades ganadores, y quitarlos por falta de dato
-        # castigaria la curva por un hueco nuestro, no por la regla de la mesa.
         return True
-    # EPSILON. En coma flotante 1.00 - 0.90 sale 0.09999999999999998, asi que un
-    # short de 1,00 a 0,90 pasaria por «se movio menos de 0,10» tanto si la
-    # regla es estricta como si no. El caso del borde exacto es justo el del
-    # ejemplo de Jaume, asi que se compara con tolerancia y luego se exige
-    # estrictamente mayor.
-    return (abs(float(salida) - float(entrada)) - float(min_cents)) > 1e-9
+    # EPSILON. En coma flotante 50.20 - 50.10 sale 0.09999999999999998, asi que
+    # el caso del borde exacto (que SI cuenta) pasaria por «menos de 0,10» si
+    # se comparara a secas. Con tolerancia y mayor-o-igual.
+    return (abs(float(salida) - float(entrada)) - float(min_cents)) >= -1e-9
+
+
+def _salida_media(trade: Dict[str, Any]):
+    """Precio MEDIO de salida de la posicion; `exit_price` si no hay detalle.
+
+    La regla de la mesa mide contra la MEDIA de las ventas, no contra la
+    ultima: cada salida cuenta por las acciones que cerro. El detalle vive en
+    `executions[]` (kinds exit/reduce). Sin detalle —trade de una sola
+    salida— la media y el `exit_price` son el mismo numero, asi que el
+    fallback es exacto, no una aproximacion.
+    """
+    ventas = [
+        (float(e["price"]), float(e["size"]))
+        for e in (trade.get("executions") or [])
+        if e.get("kind") in ("exit", "reduce") and e.get("price") and e.get("size")
+    ]
+    if ventas:
+        total = sum(size for _, size in ventas)
+        if total > 0:
+            return sum(precio * size for precio, size in ventas) / total
+    return trade.get("exit_price")
 
 
 def run_what_if(
@@ -125,10 +158,18 @@ def run_what_if(
         if t["date"] in days_to_exclude: continue
 
         # Recorrido minimo en centimos: la regla de las cuentas de fondeo.
-        # ASIMETRICA A PROPOSITO — ver `mueve_bastante`.
+        # ASIMETRICA A PROPOSITO — ver `mueve_bastante`. El win invalidado NO
+        # se tira de la lista: la mesa no abona el beneficio pero SI cobra las
+        # comisiones (sus Program Terms las listan como deduccion siempre),
+        # asi que se queda en la curva pagando solo sus fees (decision de
+        # Alvaro, 2026-09-07). Sobre una copia: el trade de entrada no se muta.
         if (min_move_cents > 0 and t.get("pnl", 0) > 0
                 and not mueve_bastante(t, min_move_cents)):
-            continue
+            fees = float(t.get("fees", 0.0) or 0.0)
+            capital = (t.get("avg_entry_price") or t.get("entry_price") or 0) * float(t.get("size") or 0)
+            t = {**t,
+                 "pnl": -fees,
+                 "return_pct": round((-fees / capital) * 100, 4) if capital > 0 else 0.0}
 
         # Hour check
         if exclude_hour_start is not None and exclude_hour_end is not None:
