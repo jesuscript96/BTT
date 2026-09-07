@@ -98,6 +98,12 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         case IndicatorType.HIGH_X_DAYS:
         case IndicatorType.LOW_X_DAYS:
             return { days_lookback: 5 };
+        // Overhead: 20 dias (un mes de cotizacion), el dia del maximo y su High
+        // como nivel, sin condicion de volumen. Con estos defectos se comporta
+        // como el clasico "maximo de los ultimos X dias", pero ajustado por splits.
+        case IndicatorType.OVERHEAD_X_DAYS:
+            return { days_lookback: 20, overhead_extreme: "max",
+                     overhead_ref: "high", overhead_vol_rule: "none" };
         case IndicatorType.PREVIOUS_MAX:
         case IndicatorType.PREVIOUS_MIN:
             return { ap_session: "ap.RTH" };
@@ -151,6 +157,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.ELAPSED_TIME,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.OVERHEAD_X_DAYS,
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
         IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
         IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
@@ -160,6 +167,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.CONSEC_LOWER_HIGHS, IndicatorType.CONSEC_HIGHER_LOWS,
         IndicatorType.CONSEC_GREEN_CANDLES, IndicatorType.CONSEC_RED_CANDLES,
         IndicatorType.CANDLE_RANGE_PCT,
+        IndicatorType.RECORRIDO_PCT,
         IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
         IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
         IndicatorType.TRIANGLE_ASCENDING, IndicatorType.TRIANGLE_DESCENDING,
@@ -214,6 +222,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.YESTERDAY_CLOSE]: "Yesterday Close",
     [IndicatorType.YESTERDAY_HIGH]: "Yesterday High",
     [IndicatorType.YESTERDAY_LOW]: "Yesterday Low",
+    [IndicatorType.OVERHEAD_X_DAYS]: "Overhead last X days",
     [IndicatorType.HIGH_X_DAYS]: "High of last X days",
     [IndicatorType.LOW_X_DAYS]: "Low of last X days",
     [IndicatorType.PREV_BAR_CLOSE]: "Prev. Bar Close",
@@ -230,6 +239,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.CONSEC_GREEN_CANDLES]: "Consec Green Candles",
     [IndicatorType.CONSEC_RED_CANDLES]: "Consec Red Candles",
     [IndicatorType.CANDLE_RANGE_PCT]: "Candle Range %",
+    [IndicatorType.RECORRIDO_PCT]: "Recorrido (%)",
     [IndicatorType.OPENING_RANGE_PLUS]: "Opening Range +",
     [IndicatorType.OPENING_RANGE_MINUS]: "Opening Range -",
     [IndicatorType.OPENING_RANGE_AM_PLUS]: "Opening Range AM +",
@@ -289,8 +299,9 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.YESTERDAY_CLOSE]: "Precio de cierre de ayer.",
     [IndicatorType.YESTERDAY_HIGH]: "Precio máximo de ayer.",
     [IndicatorType.YESTERDAY_LOW]: "Precio mínimo de ayer.",
-    [IndicatorType.HIGH_X_DAYS]: "El máximo más alto de los últimos X días (diario).",
-    [IndicatorType.LOW_X_DAYS]: "El mínimo más bajo de los últimos X días (diario).",
+    [IndicatorType.OVERHEAD_X_DAYS]: "El nivel que dejó el día más extremo de los últimos X días de cotización, sobre velas DIARIAS de sesión regular (sin premercado ni after). Funciona en dos pasos: primero busca el día del máximo más alto (o el del mínimo más bajo) y después mira el volumen DE ESE DÍA. Ojo: si el máximo lo hizo un día flojo, la señal se descarta — no se baja al siguiente techo. «Nivel» elige qué precio de ese día usas: el High suele ser una mecha que nadie defendió, mientras que el Close del día del spike sí es resistencia de verdad. Todo va ajustado por splits, así que un contrasplit ya no deja el nivel 20 veces por debajo del precio. Si pones condición de volumen, el nivel puede aparecer o desaparecer durante el día, porque el volumen de hoy va creciendo.",
+    [IndicatorType.HIGH_X_DAYS]: "Versión antigua, se mantiene solo para estrategias ya guardadas: el máximo de los últimos X días SIN ajustar por splits. Usa «Overhead last X days».",
+    [IndicatorType.LOW_X_DAYS]: "Versión antigua, se mantiene solo para estrategias ya guardadas: el mínimo de los últimos X días SIN ajustar por splits. Usa «Overhead last X days» con «Día del mínimo».",
     [IndicatorType.PREV_BAR_CLOSE]: "El precio de cierre de la barra inmediatamente anterior",
     [IndicatorType.PREV_BAR_OPEN]: "El precio de apertura de la barra inmediatamente anterior",
     [IndicatorType.PREV_BAR_HIGH]: "El precio máximo de la barra inmediatamente anterior",
@@ -303,7 +314,8 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.CONSEC_HIGHER_LOWS]: "Número de velas consecutivas con mínimos más altos.",
     [IndicatorType.CONSEC_GREEN_CANDLES]: "Número de velas consecutivas alcistas (cierre > apertura).",
     [IndicatorType.CONSEC_RED_CANDLES]: "Número de velas consecutivas bajistas (cierre < apertura).",
-    [IndicatorType.CANDLE_RANGE_PCT]: "Rango de la vela actual en porcentaje (High vs Low).",
+    [IndicatorType.CANDLE_RANGE_PCT]: "Cuánto se mueve la vela de apertura a cierre, en %, SIN signo: da igual si subió o bajó. (La descripción anterior decía «High vs Low» y era falsa: el motor no mira las mechas.) Si necesitas saber la dirección, usa «Recorrido (%)».",
+    [IndicatorType.RECORRIDO_PCT]: "Recorrido de la vela CON SIGNO: lo que se mueve de apertura a cierre, en %. Positivo si subió, negativo si bajó, así que el signo te da la dirección y no hace falta elegirla aparte. «Recorrido (%) > 3» pide una vela que suba más de un 3%; «< -2», una que caiga más de un 2%. Mide el cuerpo, no las mechas: una vela que se dispara y lo devuelve todo cuenta como lo que cerró. Se compara solo contra una cifra, y respeta el timeframe del bloque (en 5m mide la vela de 5m).",
     [IndicatorType.OPENING_RANGE_PLUS]: "Rompimiento alcista del rango de apertura (ej. los primeros 5/15/30 mins).",
     [IndicatorType.OPENING_RANGE_MINUS]: "Rompimiento bajista del rango de apertura.",
     [IndicatorType.OPENING_RANGE_AM_PLUS]: "Rompimiento alcista en After Market.",
@@ -350,6 +362,7 @@ const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
     IndicatorType.CONSEC_GREEN_CANDLES,
     IndicatorType.CONSEC_RED_CANDLES,
     IndicatorType.CANDLE_RANGE_PCT,
+    IndicatorType.RECORRIDO_PCT,
     IndicatorType.SMA,
     IndicatorType.EMA,
     IndicatorType.VWAP,
@@ -391,10 +404,46 @@ export const AYUDA_OPCION: Record<string, string> = {
     // % Fade — desde dónde se mide la caída
     "fade_ref.previous_max": "La referencia es el máximo hecho hasta la vela ANTERIOR — la actual no cuenta, así que comparar contra él no es circular. Cada máximo nuevo devuelve el fade a cero. Desde cuándo empieza a contar ese máximo lo eliges en el selector de al lado.",
     "fade_ref.vwap_cross": "La referencia es el VWAP DE LA VELA en que el precio lo cruzó por última vez, y se queda fija hasta el cruce siguiente: por eso el fade sigue creciendo aunque el VWAP baje. Ese VWAP es acumulativo desde la primera vela del día (04:00, premercado incluido) y NO se reinicia al abrir el mercado. Antes del primer cruce del día no existe. Aquí la sesión de referencia no se usa.",
+    // Overhead — la regla de volumen y qué precio del día es el nivel
+    "overhead_vol_rule.none": "El nivel vale siempre, mire lo que mire el volumen.",
+    "overhead_vol_rule.gt": "Solo cuenta si AQUEL día movió MÁS volumen que el que llevas acumulado hoy hasta esta vela. Ojo: como el volumen de hoy va creciendo, por la mañana esto se cumple casi siempre y por la tarde casi nunca — si no quieres que acabe siendo un filtro horario encubierto, acótalo con tu filtro de volumen mínimo o con la ventana de entrada.",
+    "overhead_vol_rule.lt": "Solo cuenta si aquel día movió MENOS volumen que el acumulado de hoy: el techo se hizo con poca gente y hoy estás moviendo más. Por la mañana casi nunca se cumple.",
+    "overhead_ref.high": "El máximo de aquel día. Es el nivel clásico, pero muchas veces es una mecha que nadie defendió.",
+    "overhead_ref.low": "El mínimo de aquel día. En un día de spike, el suelo desde el que arrancó.",
+    "overhead_ref.open": "La apertura de aquel día.",
+    "overhead_ref.close": "El cierre de aquel día: donde se quedó el precio al cerrar el mercado. Suele aguantar mejor como resistencia que el máximo.",
     // ap_session — desde cuándo cuenta el máximo/mínimo
     "ap_session.ap.PM": "Cuenta desde la primera vela del día (04:00): el máximo incluye el premercado.",
     "ap_session.ap.RTH": "Empieza a contar a las 09:30: solo la sesión regular, sin premercado.",
     "ap_session.ap.AM": "Empieza a contar a las 16:00: solo el after.",
+};
+
+// Estilo comun de los cinco controles de "Overhead last X days". Van con
+// flexWrap: entran dos por fila y la regla de volumen ocupa la suya entera.
+const SELECT_OVERHEAD: React.CSSProperties = {
+    flex: '1 1 45%',
+    minWidth: 0,
+    backgroundColor: 'var(--color-ec-bg-sidebar)',
+    border: '0.5px solid var(--color-ec-border)',
+    borderRadius: 5,
+    padding: '5px 10px',
+    fontSize: 'var(--ec-fs-select)',
+    fontWeight: 500,
+    color: 'var(--color-ec-text-primary)',
+    fontFamily: 'var(--color-ec-sans)',
+    outline: 'none',
+};
+
+// El campo de dias con su etiqueta al lado: el `placeholder` desaparece en
+// cuanto tiene valor, y el indicador nace con 20 puesto, asi que sin etiqueta
+// se veria un numero pelado.
+const CAMPO_OVERHEAD: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 5, flex: '1 1 100%', minWidth: 0,
+};
+
+const ETIQUETA_OVERHEAD: React.CSSProperties = {
+    fontSize: 10, fontWeight: 700, letterSpacing: 0.4, whiteSpace: 'nowrap',
+    textTransform: 'uppercase', color: 'var(--color-ec-text-muted)',
 };
 
 const AyudaOpcion = ({ clave }: { clave: string }) => {
@@ -1044,6 +1093,51 @@ export const IndicatorParams = ({
                                     title="Number of Days Back"
                                 />
                                 <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>días</span>
+                            </div>
+                        );
+                    case IndicatorType.OVERHEAD_X_DAYS:
+                        return (
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, width: '100%' }}>
+                                <div style={CAMPO_OVERHEAD} title="Cuántos días de cotización se miran hacia atrás. Hoy nunca entra. 250 son aproximadamente un año.">
+                                    <span style={ETIQUETA_OVERHEAD}>Mirar</span>
+                                    <input
+                                        type="number"
+                                        value={value.days_lookback ?? ''}
+                                        onChange={(e) => onChange({ ...value, days_lookback: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                        onFocus={(e) => e.target.select()}
+                                        style={{ ...SELECT_OVERHEAD, flex: 1 }}
+                                    />
+                                    <span style={ETIQUETA_OVERHEAD}>días</span>
+                                </div>
+                                <select
+                                    value={value.overhead_extreme || 'max'}
+                                    onChange={(e) => onChange({ ...value, overhead_extreme: e.target.value as "max" | "min" })}
+                                    style={{ ...SELECT_OVERHEAD, cursor: 'pointer' }}
+                                >
+                                    <option value="max">Día del máximo</option>
+                                    <option value="min">Día del mínimo</option>
+                                </select>
+                                <select
+                                    value={value.overhead_ref || 'high'}
+                                    onChange={(e) => onChange({ ...value, overhead_ref: e.target.value as "high" | "low" | "open" | "close" })}
+                                    style={{ ...SELECT_OVERHEAD, cursor: 'pointer' }}
+                                >
+                                    <option value="high">Nivel: High</option>
+                                    <option value="low">Nivel: Low</option>
+                                    <option value="open">Nivel: Open</option>
+                                    <option value="close">Nivel: Close</option>
+                                </select>
+                                <select
+                                    value={value.overhead_vol_rule || 'none'}
+                                    onChange={(e) => onChange({ ...value, overhead_vol_rule: e.target.value as "none" | "gt" | "lt" })}
+                                    style={{ ...SELECT_OVERHEAD, flex: '1 1 100%', cursor: 'pointer' }}
+                                >
+                                    <option value="none">Volumen: sin condición</option>
+                                    <option value="gt">Volumen: aquel día MAYOR que hoy</option>
+                                    <option value="lt">Volumen: aquel día MENOR que hoy</option>
+                                </select>
+                                <AyudaOpcion clave={`overhead_vol_rule.${value.overhead_vol_rule || 'none'}`} />
+                                <AyudaOpcion clave={`overhead_ref.${value.overhead_ref || 'high'}`} />
                             </div>
                         );
                     case IndicatorType.PREVIOUS_MAX:

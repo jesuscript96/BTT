@@ -79,6 +79,10 @@ class IndicatorType(str, Enum):
     Y_VOLUME = "Yesterday Volume"
     MAX_X_DAYS = "High of last X days"
     MIN_X_DAYS = "Low of last X days"
+    # El de verdad, con los cuatro parametros. Los dos de arriba se quedan
+    # SOLO por compatibilidad con JSON antiguos: comparten motor, y unicamente
+    # fijan otros defectos.
+    OVERHEAD_X_DAYS = "Overhead last X days"
     PREVIOUS_MAX = "Previous max"
     PREVIOUS_MIN = "Previous min"
     PREV_BAR_CLOSE = "Prev. Bar Close"
@@ -117,6 +121,12 @@ class IndicatorType(str, Enum):
     PREV_CLOSE = "Previous Close"
     RET_PCT_AM = "Ret % AM"
     CANDLE_RANGE_PCT = "Candle Range %"
+    # Recorrido de la vela CON SIGNO: (cierre - apertura) / apertura * 100.
+    # Es `Candle Range %` sin el `abs()`: y el signo es justo el dato que hace
+    # falta para escalpear: `> 3` es "subio mas de un 3%" y `< -2` es "bajo mas
+    # de un 2%". Sin parametro de direccion a proposito (decision de Jaume,
+    # 7-sep-2026): el signo ya la lleva.
+    RECORRIDO_PCT = "Recorrido (%)"
     ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High"
     ELAPSED_TIME = "Elapsed Time"
     TRIANGLE_ASCENDING = "Triangle Ascending"
@@ -285,6 +295,18 @@ class IndicatorConfig(BaseModel):
     # (con la sesión de `ap_session`); "vwap_cross" usa el precio del VWAP en la
     # vela en que el precio lo cruzó por última vez.
     fade_ref: Optional[Literal["previous_max", "vwap_cross"]] = None
+    # "Overhead last X days". DECLARADOS AQUI A PROPOSITO: pydantic va con
+    # extra="ignore", asi que un campo sin declarar se tira SIN error, SIN log
+    # y SIN 422.
+    #   overhead_extreme   que dia se busca: el del maximo mas alto o el del
+    #                      minimo mas bajo.
+    #   overhead_ref       que precio DE ESE DIA es el nivel. El maximo suele
+    #                      ser una mecha; el cierre si es resistencia.
+    #   overhead_vol_rule  el volumen de ese dia frente al acumulado de hoy:
+    #                      "gt" mayor, "lt" menor, "none" sin condicion.
+    overhead_extreme: Optional[Literal["max", "min"]] = None
+    overhead_ref: Optional[Literal["high", "low", "open", "close"]] = None
+    overhead_vol_rule: Optional[Literal["none", "gt", "lt"]] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"

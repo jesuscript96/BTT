@@ -68,6 +68,9 @@ const IndicatorConfigSchema: JSONSchema = {
         elapsed_minutes: { type: 'number', description: 'Minutos transcurridos (Elapsed time from last High).' },
         ap_session: { type: 'string', enum: ['ap.PM', 'ap.RTH', 'ap.AM'], description: 'Sesión de referencia para variables PM/RTH/AM.' },
         session_ref: { type: 'string', enum: ['pm', 'rth', 'full'], description: '"% Session Fade": qué sesión se desinfla. "pm" = del PM High a la apertura de mercado; "rth" = del máximo del RTH a la apertura del After; "full" = del máximo del día entero (PM + RTH) a la apertura del After.' },
+        overhead_extreme: { type: 'string', enum: ['max', 'min'], description: '"Overhead last X days": qué día se busca, el del máximo más alto o el del mínimo más bajo.' },
+        overhead_ref: { type: 'string', enum: ['high', 'low', 'open', 'close'], description: '"Overhead last X days": qué precio DE ESE DÍA es el nivel.' },
+        overhead_vol_rule: { type: 'string', enum: ['none', 'gt', 'lt'], description: '"Overhead last X days": el volumen de ese día frente al acumulado de hoy. "gt" = aquel día movió más; "lt" = movió menos; "none" = sin condición.' },
         fade_ref: { type: 'string', enum: ['previous_max', 'vwap_cross'], description: '"% Fade": desde dónde se mide la caída. "previous_max" = el máximo previo (usa ap_session); "vwap_cross" = el VWAP de la vela en que el precio lo cruzó por última vez.' },
     },
 };

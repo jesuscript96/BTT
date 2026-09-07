@@ -21,6 +21,9 @@ export enum IndicatorType {
     YESTERDAY_LOW = "Yesterday Low",
     HIGH_X_DAYS = "High of last X days",
     LOW_X_DAYS = "Low of last X days",
+    // El de verdad. Los dos de arriba se quedan SOLO por compatibilidad con
+    // estrategias antiguas: comparten motor y solo fijan otros defectos.
+    OVERHEAD_X_DAYS = "Overhead last X days",
     PREV_BAR_CLOSE = "Prev. Bar Close",
     PREV_BAR_OPEN = "Prev. Bar Open",
     PREV_BAR_HIGH = "Prev. Bar High",
@@ -34,6 +37,10 @@ export enum IndicatorType {
     CONSEC_GREEN_CANDLES = "Consecutive green candles",
     CONSEC_RED_CANDLES = "Consecutive red candles",
     CANDLE_RANGE_PCT = "Candle Range %",
+    // Recorrido de la vela CON SIGNO. Es CANDLE_RANGE_PCT sin el abs():
+    // positivo = la vela subió, negativo = bajó. Sin selector de dirección a
+    // propósito — el signo ya la lleva.
+    RECORRIDO_PCT = "Recorrido (%)",
     RANGE_OF_TIME = "Range of Time",
     OPENING_RANGE_PLUS = "Opening range +",
     OPENING_RANGE_MINUS = "Opening range -",
@@ -151,7 +158,11 @@ export interface IndicatorConfig {
     time_hour?: number;
     time_minute?: number;
     time_condition?: "BEFORE" | "AFTER"; // To support 'before X hour' or 'after X hour'
-    days_lookback?: number;    // "Max/Min of last X days"
+    days_lookback?: number;    // "Max/Min of last X days" y "Overhead last X days"
+    // "Overhead last X days"
+    overhead_extreme?: "max" | "min";                  // que dia se busca
+    overhead_ref?: "high" | "low" | "open" | "close";  // que precio de ESE dia es el nivel
+    overhead_vol_rule?: "none" | "gt" | "lt";          // su volumen frente al acumulado de hoy
     calc_on_heikin?: boolean;
     ap_session?: "ap.PM" | "ap.RTH" | "ap.AM";
     elapsed_minutes?: number;

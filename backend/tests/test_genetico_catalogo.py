@@ -85,11 +85,21 @@ def test_el_motor_sabe_calcular_cada_indicador(nombre):
         f"{nombre}: todo NaN — probablemente el motor no reconoce el nombre"
 
 
+# El unico del catalogo que se apoya en una tabla EXTERNA (velas diarias por
+# ticker, OVERHEAD_DAILY_PARQUET). Con el ticker sintetico de STATS devuelve
+# NaN, y eso es CORRECTO: no significa que el motor no conozca el nombre. Se
+# comprueba entero en tests/test_overhead_last_x_days.py, que inyecta un ticker
+# en la cache y ademas verifica que el nombre esta dado de alta.
+NIVELES_CON_TABLA_EXTERNA = {"Overhead last X days"}
+
+
 @pytest.mark.parametrize("nombre", sorted(set(C.TODOS_LOS_NIVELES)))
 def test_el_motor_sabe_calcular_cada_NIVEL(nombre):
     """Lo mismo para los del lado derecho. Estos se olvidan más porque no salen
     en la lista de la pantalla: se usan como objetivo de un cruce y ya."""
     df_len = len(_velas())
+    if nombre in NIVELES_CON_TABLA_EXTERNA:
+        pytest.skip("se cubre en test_overhead_last_x_days.py (necesita tabla diaria)")
     s = _calcula(nombre, _utiles(nombre, C.NIVELES_CON_PARAMS.get(nombre, {})))
     assert s is not None and len(s) == df_len, f"{nombre}: el motor no lo conoce"
     assert pd.Series(s).notna().any(), f"{nombre}: todo NaN"

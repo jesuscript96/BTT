@@ -7,6 +7,8 @@ Supports the full IndicatorConfig schema (BTT March 2026):
   days_lookback, calc_on_heikin, time_hour, time_minute, time_condition
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 from numba import njit
@@ -31,73 +33,203 @@ def _safe_float(val) -> float:
         return np.nan
 
 
-# Per-ticker cache for "High/Low of last X days" lookups. Keyed by ticker ->
-# DataFrame indexed by date string with rth_high / rth_low columns.
-_ticker_daily_ohlc_cache = {}
+# -- Tabla diaria de "Overhead last X days" ---------------------------------
+# Velas DIARIAS de sesion regular (09:30-16:00), en un parquet APARTE que genera
+# `backend/scripts/construir_daily_overhead.py`. NO forma parte del lago ni lo
+# modifica, y se lee con `read_parquet` de DISCO: no abre `local_data.duckdb`,
+# asi que no compite por el cerrojo de DuckDB con el resto del backend.
+#
+# Cache por ticker: ticker -> dict con el indice de fechas y arrays numpy.
+_overhead_cache: dict = {}
+_overhead_aviso_dado = False
+_OVERHEAD_COLS = ("o", "h", "l", "c", "v", "cum_split")
+# Que columna de la vela diaria es el NIVEL, segun `overhead_ref`.
+_OVERHEAD_REF_COL = {"high": "h", "low": "l", "open": "o", "close": "c"}
 
-def prefetch_daily_ohlc(tickers: list[str]):
-    """
-    Prefetches daily historical metrics for the given tickers and stores them in
-    the process-global per-ticker cache _ticker_daily_ohlc_cache. This avoids
-    individual slow GCS queries during the backtest loop.
 
-    F1 (perf + correctness):
-      * The query is PRUNED to the requested tickers only — no full-table scan
-        (the old `SELECT ... FROM daily_metrics ORDER BY ticker, timestamp` over
-        the whole universe was the cold-start killer, ~minutes on GCS).
-      * NO year filter: 'High/Low of last X days' looks BACKWARD from the gap
-        date, so a `WHERE YEAR >= min_year` cut would truncate the lookback
-        across the year boundary and silently change results.
-      * The previous `_global_daily_metrics_df` full-table memo was removed:
-        combined with ticker pruning it caused cross-backtest cache poisoning (a
-        later run with different tickers reused a frame holding only the first
-        run's tickers). Per-ticker accumulation is correct across runs because
-        `tickers_to_fetch` already excludes anything cached.
+def _overhead_ruta() -> str:
+    return os.getenv("OVERHEAD_DAILY_PARQUET", "").strip()
+
+
+def _overhead_vacio() -> dict:
+    d = {"fechas": pd.Index([], dtype=object)}
+    d.update({k: np.empty(0, dtype=np.float64) for k in _OVERHEAD_COLS})
+    return d
+
+
+def _overhead_avisar_falta(ruta: str) -> None:
+    """Avisa UNA vez de que la tabla no esta.
+
+    Sin esto, un fichero que falta daria NaN en silencio en todos los
+    ticker-dias y pareceria que el indicador simplemente no encuentra niveles.
     """
-    global _ticker_daily_ohlc_cache
+    global _overhead_aviso_dado
+    if _overhead_aviso_dado:
+        return
+    _overhead_aviso_dado = True
+    if not ruta:
+        print("[ERROR] 'Overhead last X days' necesita OVERHEAD_DAILY_PARQUET en "
+              "backend/.env y no esta puesto. El indicador dara NaN.")
+    else:
+        print("[ERROR] 'Overhead last X days': no encuentro la tabla en "
+              + ruta + ". Generala con backend/scripts/construir_daily_overhead.py. "
+              "Mientras tanto el indicador dara NaN.")
+
+
+def prefetch_overhead_daily(tickers) -> None:
+    """Carga en memoria las velas diarias de los tickers pedidos.
+
+    Podado por ticker sobre un parquet ORDENADO por ticker, que es lo que le
+    permite a DuckDB podar row-groups en vez de escanear 19 M de filas. Medido
+    en el lago local: 1.200 tickers x historia completa en ~4,5 s en frio y
+    ~0,9 s en caliente, contra ~32 s leyendo `daily_metrics` particionado.
+
+    SIN filtro de fechas a proposito: el indicador mira HACIA ATRAS desde el dia
+    del trade, asi que recortar por ano truncaria la ventana al cruzar el cambio
+    de ano y cambiaria el resultado en silencio.
+    """
+    global _overhead_cache
     if not tickers:
         return
+    pendientes = [t for t in tickers if t and t not in _overhead_cache]
+    if not pendientes:
+        return
 
-    # Only fetch tickers that are not already cached
-    tickers_to_fetch = [t for t in tickers if t and t not in _ticker_daily_ohlc_cache]
-    if not tickers_to_fetch:
+    ruta = _overhead_ruta()
+    if not ruta or not os.path.exists(ruta):
+        _overhead_avisar_falta(ruta)
+        for t in pendientes:
+            _overhead_cache[t] = _overhead_vacio()
         return
 
     import time
-    from app.database import get_db_connection
-    con = get_db_connection()
+    t0 = time.time()
     try:
-        t0 = time.time()
-        placeholders = ",".join(["?"] * len(tickers_to_fetch))
-        df_all = con.execute(f"""
-            SELECT ticker, CAST("timestamp" AS DATE) as date, rth_high, rth_low
-            FROM daily_metrics
-            WHERE ticker IN ({placeholders})
-            ORDER BY ticker, "timestamp"
-        """, tickers_to_fetch).fetchdf()
-        # Convert date to string format
-        df_all["date"] = pd.to_datetime(df_all["date"]).dt.strftime("%Y-%m-%d")
-        print(f"[INFO] Prefetched {len(df_all):,} daily metrics for "
-              f"{len(tickers_to_fetch)} tickers in {time.time()-t0:.2f}s")
+        import duckdb
+        con = duckdb.connect()
+        try:
+            marcas = ",".join(["?"] * len(pendientes))
+            ruta_sql = ruta.replace("'", "''")
+            df_all = con.execute(
+                "SELECT ticker, d, o, h, l, c, v, cum_split "
+                "FROM read_parquet('" + ruta_sql + "') "
+                "WHERE ticker IN (" + marcas + ") ORDER BY ticker, d",
+                pendientes,
+            ).fetchdf()
+        finally:
+            con.close()
 
-        # Group by ticker and store in cache
-        for ticker_symbol, group in df_all.groupby("ticker"):
-            group_indexed = group.set_index("date")
-            group_indexed = group_indexed[~group_indexed.index.duplicated(keep='first')]
-            _ticker_daily_ohlc_cache[ticker_symbol] = group_indexed
-
-        # Ensure that any tickers that returned no data are cached as empty DataFrames
-        # to avoid repeated queries
-        for t in tickers_to_fetch:
-            if t not in _ticker_daily_ohlc_cache:
-                _ticker_daily_ohlc_cache[t] = pd.DataFrame(columns=["rth_high", "rth_low"])
+        df_all["d"] = pd.to_datetime(df_all["d"]).dt.strftime("%Y-%m-%d")
+        for tk, grupo in df_all.groupby("ticker", sort=False):
+            grupo = grupo[~grupo["d"].duplicated(keep="first")]
+            entrada = {"fechas": pd.Index(grupo["d"].values)}
+            for col in _OVERHEAD_COLS:
+                entrada[col] = grupo[col].to_numpy(dtype=np.float64)
+            _overhead_cache[tk] = entrada
+        print("[INFO] Overhead: {:,} velas diarias de {} tickers en {:.2f}s".format(
+            len(df_all), len(pendientes), time.time() - t0))
     except Exception as e:
-        print(f"[ERROR] Failed to prefetch daily ohlc: {e}")
-        # On error, make sure we populate them as empty so we don't block
-        for t in tickers_to_fetch:
-            if t not in _ticker_daily_ohlc_cache:
-                _ticker_daily_ohlc_cache[t] = pd.DataFrame(columns=["rth_high", "rth_low"])
+        print("[ERROR] Overhead: fallo al cargar la tabla diaria: " + str(e))
 
+    # Los que no devolvieron nada (o fallaron) se cachean vacios para no repetir
+    # la consulta en cada ticker-dia.
+    for t in pendientes:
+        if t not in _overhead_cache:
+            _overhead_cache[t] = _overhead_vacio()
+
+
+# Nombre historico: lo llaman `backtest_service` y `optimization_service`.
+prefetch_daily_ohlc = prefetch_overhead_daily
+
+
+def _overhead_nivel(name, close, volume, ds, lookback,
+                    extremo, ref, regla_volumen) -> pd.Series:
+    """"Overhead last X days": el nivel que dejo el dia mas extremo de la ventana.
+
+    DOS PASOS, EN ESTE ORDEN (semantica de Jaume, 7-sep-2026):
+      1. Se busca el dia MAS EXTREMO de los ultimos X dias de cotizacion: el del
+         maximo mas alto (`extremo="max"`) o el del minimo mas bajo (`"min"`).
+      2. Se mira el volumen DE ESE DIA y se compara con el volumen acumulado de
+         HOY hasta la vela actual. Si la regla no se cumple, el nivel no existe
+         (NaN) y la condicion es falsa.
+
+    **NO es** "filtrar los dias por volumen y quedarse con el maximo de los que
+    pasen": eso daria otro nivel. Si el maximo lo hizo un dia flojo, aqui la
+    senal se descarta, no se baja al siguiente techo. Es la semantica que pidio
+    Jaume, y la diferencia importa.
+
+    `ref` elige QUE PRECIO de ese dia es el nivel (high/low/open/close): el
+    maximo suele ser una mecha que nadie defiende, mientras que el cierre del
+    dia del spike si es resistencia de verdad.
+
+    AJUSTE POR SPLITS, relativo al DIA DEL TRADE:
+        precio  = precio[P] * cum[T]/cum[P]
+        volumen = volumen[P] / (cum[T]/cum[P])
+    Sin esto, tras un contrasplit 20:1 el nivel queda 20 veces por debajo del
+    precio y "cruza por encima" se cumple en la primera vela del dia, siempre,
+    sin error y sin log. Cae un split dentro de la ventana en el 4,3% de los
+    dias de gap con 30 dias de lookback, y en el 16,9% con un ano.
+
+    Como el volumen de hoy va creciendo, el nivel puede APARECER o DESAPARECER
+    durante el dia. Es a proposito.
+    """
+    vacio = pd.Series(np.nan, index=close.index)
+    ticker = ds.get("ticker") if ds else None
+    if not ticker:
+        return vacio
+    if not (ds and ds.get("date")):
+        return vacio
+    fecha = str(ds["date"])[:10]
+
+    es_min = name in ("Low of last X days", "Min of last X days")
+    if extremo not in ("max", "min"):
+        extremo = "min" if es_min else "max"
+    if ref not in _OVERHEAD_REF_COL:
+        ref = "low" if es_min else "high"
+
+    lookback = int(lookback) if lookback else 5
+    if lookback <= 0:
+        return vacio
+
+    global _overhead_cache
+    if ticker not in _overhead_cache:
+        prefetch_overhead_daily([ticker])
+    tabla = _overhead_cache.get(ticker) or _overhead_vacio()
+    fechas = tabla["fechas"]
+    if len(fechas) == 0:
+        return vacio
+    try:
+        pos = int(fechas.get_loc(fecha))
+    except KeyError:
+        # El dia del trade no esta en la tabla diaria: sin ancla no hay escala de
+        # splits fiable, asi que NO se inventa un nivel.
+        return vacio
+
+    fin = pos                            # exclusivo: hoy nunca entra
+    ini = max(0, fin - lookback)
+    if ini >= fin:
+        return vacio
+
+    cum = tabla["cum_split"]
+    factor = cum[pos] / cum[ini:fin]     # escala de cada dia -> escala de hoy
+    base = (tabla["h"] if extremo == "max" else tabla["l"])[ini:fin] * factor
+    if not np.isfinite(base).any():
+        return vacio
+    k = int(np.nanargmax(base) if extremo == "max" else np.nanargmin(base))
+
+    nivel = float(tabla[_OVERHEAD_REF_COL[ref]][ini + k] * factor[k])
+    if not np.isfinite(nivel):
+        return vacio
+
+    if regla_volumen not in ("gt", "lt"):
+        return pd.Series(nivel, index=close.index)
+
+    vol_dia = float(tabla["v"][ini + k] / factor[k])
+    if not np.isfinite(vol_dia):
+        return vacio
+    vol_hoy = volume.cumsum().to_numpy(dtype=np.float64)
+    cumple = (vol_dia > vol_hoy) if regla_volumen == "gt" else (vol_dia < vol_hoy)
+    return pd.Series(np.where(cumple, nivel, np.nan), index=close.index)
 
 
 # ---------------------------------------------------------------------------
@@ -902,6 +1034,8 @@ INDICATOR_NAME_MAP = {
     "Yesterday AM Low": "Yesterday AM Low",
     "High of last X days": "Max of last X days",
     "Low of last X days": "Min of last X days",
+    "Overhead last X days": "Overhead last X days",
+    "Overhead": "Overhead last X days",
     "Prev. Bar Close": "Prev. Close Bar",
     "Prev. Bar Open": "Prev. Open Bar",
     "Prev. Bar High": "Prev. High Bar",
@@ -923,6 +1057,12 @@ INDICATOR_NAME_MAP = {
     "Consec Green Candles": "Consecutive Green Candles",
     "Consec Red Candles": "Consecutive Red Candles",
     "Candle Range %": "Candle Range %",
+    "Recorrido (%)": "Recorrido (%)",
+    # Alias. Sin esto, un JSON que traiga cualquiera de estas formas
+    # normalizaria a nada y el indicador saldria NaN sin avisar.
+    "Recorrido": "Recorrido (%)",
+    "Recorrido %": "Recorrido (%)",
+    "Candle Move %": "Recorrido (%)",
     "Range of time": "Range of time",
     "Opening range +": "Opening Range +",
     "Opening range -": "Opening Range -",
@@ -987,11 +1127,16 @@ def compute_indicator(
     session_ref: str | None = None,
     squeeze_direction: str | None = None,
     fade_ref: str | None = None,
+    # "Overhead last X days". Los tres van en la CLAVE DE CACHE de abajo:
+    # si no entraran, dos configuraciones distintas compartirian resultado.
+    overhead_extreme: str | None = None,
+    overhead_ref: str | None = None,
+    overhead_vol_rule: str | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -1020,7 +1165,9 @@ def compute_indicator(
         days_lookback, time_hour, time_minute, time_condition,
         band_line, orb_minutes, ap_session, daily_stats, df, range_minutes,
         pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots,
-        session_ref, squeeze_direction, fade_ref
+        session_ref, squeeze_direction, fade_ref,
+        overhead_extreme=overhead_extreme, overhead_ref=overhead_ref,
+        overhead_vol_rule=overhead_vol_rule,
     )
 
     if offset and offset != 0:
@@ -1358,6 +1505,9 @@ def _compute_raw(
     session_ref: str | None = None,
     squeeze_direction: str | None = None,
     fade_ref: str | None = None,
+    overhead_extreme: str | None = None,
+    overhead_ref: str | None = None,
+    overhead_vol_rule: str | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -1538,57 +1688,17 @@ def _compute_raw(
         return high.cummax()
     if name == "Low of Day":
         return low.cummin()
-    if name in ("High of last X days", "Max of last X days", "Low of last X days", "Min of last X days"):
-        ticker = ds.get("ticker") if ds else None
-        if not ticker:
-            return pd.Series(np.nan, index=close.index)
-            
-        if ds and "date" in ds:
-            target_date_str = str(ds["date"])[:10]
-        elif len(df) > 0 and "timestamp" in df.columns:
-            target_date_str = str(df["timestamp"].iloc[0])[:10]
-        else:
-            target_date_str = None
-            
-        if not target_date_str:
-            return pd.Series(np.nan, index=close.index)
-            
-        lookback = days_lookback or period or 5
-        
-        global _ticker_daily_ohlc_cache
-        if ticker not in _ticker_daily_ohlc_cache:
-            from app.database import get_db_connection
-            con = get_db_connection()
-            try:
-                df_daily = con.execute(f"""
-                    SELECT CAST("timestamp" AS DATE) as date, rth_high, rth_low 
-                    FROM daily_metrics 
-                    WHERE ticker = '{ticker}' 
-                    ORDER BY "timestamp"
-                """).fetchdf()
-                df_daily["date"] = pd.to_datetime(df_daily["date"]).dt.strftime("%Y-%m-%d")
-                df_daily = df_daily.set_index("date")
-                df_daily = df_daily[~df_daily.index.duplicated(keep='first')]
-                _ticker_daily_ohlc_cache[ticker] = df_daily
-            except Exception as e:
-                print(f"[ERROR] Failed to load lookback metrics for {ticker}: {e}")
-                _ticker_daily_ohlc_cache[ticker] = pd.DataFrame(columns=["rth_high", "rth_low"])
-                
-        df_daily = _ticker_daily_ohlc_cache[ticker]
-        if df_daily.empty or target_date_str not in df_daily.index:
-            return pd.Series(np.nan, index=close.index)
-            
-        pos = df_daily.index.get_loc(target_date_str)
-        start_pos = max(0, pos - lookback)
-        if start_pos >= pos:
-            return pd.Series(np.nan, index=close.index)
-            
-        if name in ("High of last X days", "Max of last X days"):
-            val = df_daily["rth_high"].iloc[start_pos:pos].max()
-        else:
-            val = df_daily["rth_low"].iloc[start_pos:pos].min()
-            
-        return pd.Series(_safe_float(val), index=close.index)
+    if name in ("High of last X days", "Max of last X days",
+                "Low of last X days", "Min of last X days",
+                "Overhead last X days"):
+        # Los tres nombres comparten motor. Los dos historicos solo fijan los
+        # defectos (`Low/Min` -> el dia del minimo mas bajo, y su low como
+        # nivel); "Overhead" es el que expone los cuatro parametros.
+        return _overhead_nivel(
+            name, close, volume, ds,
+            days_lookback or period,
+            overhead_extreme, overhead_ref, overhead_vol_rule,
+        )
 
     if name == "Previous max":
         return _previous_extreme_series(df, close.index, high, ap_session, "max")
@@ -2083,6 +2193,13 @@ def _compute_raw(
     if name == "Candle Range %":
         candle_range = ((close - open_) / open_.abs()) * 100
         return candle_range.abs()
+
+    if name == "Recorrido (%)":
+        # Lo MISMO que `Candle Range %` pero SIN el `abs()`: el signo se
+        # conserva, que es el punto entero del indicador. Positivo = la vela
+        # subio; negativo = bajo. Mide apertura -> cierre (lo que se mueve la
+        # vela), no las mechas.
+        return ((close - open_) / open_.abs()) * 100
 
     if name in ("Elapsed Time from Last High", "Elapsed time from last High"):
         # session_ref — ancla del reloj:

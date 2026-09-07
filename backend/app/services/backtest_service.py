@@ -121,6 +121,7 @@ _sessions_mask_cache: dict = {}
 _DAILY_LOOKBACK_INDICATORS = (
     "High of last X days", "Low of last X days",
     "Max of last X days", "Min of last X days",
+    "Overhead last X days",
 )
 
 
