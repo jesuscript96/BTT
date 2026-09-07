@@ -4066,3 +4066,48 @@ una BD vacía y falla sin que nada esté roto; lanzar desde `backend/`.
 - **Impacto:** toda métrica en R de corridas con piramidación en dólares fijos es inservible (columna R de Trades, avg R del modal del calendario, ranking del genético si usa r_multiple). Con riesgo «normal» (100 $) los números parecen razonables pero mezclan la misma escala. Últimas pruebas no muestra R de ninguna corrida y su filtro por R no filtra.
 - **Código tocado:** NINGUNO (confirmado) — decidir el divisor correcto (riesgo acumulado real del trade, o excluir pirámides de la R) es decisión de diseño de Jaume/Álvaro
 - **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-07 · 05] La regla de céntimos del What-if media contra la ÚLTIMA venta, no contra la MEDIA de salidas — veredictos equivocados en ambos sentidos con parciales/pirámides
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `backend/app/services/what_if_service.py` (`mueve_bastante`, comparaba `avg_entry_price` contra `exit_price`) + `backend/app/services/backtest_service.py:1432` (`exit_price` del trade agrupado = precio del ÚLTIMO fill, por `_group_partial_exits`)
+- **Qué observé:** TTP publica la regla como «10.0 cents difference between average entry and **average exit** price» (tradethepool.com/program-terms). La implementación usaba la media ponderada en la entrada pero el precio de la última venta en la salida. Con TP parciales/pirámides eso se equivoca en los dos sentidos: invalida wins que la mesa paga y da por buenos wins que la mesa no abona.
+- **Cómo reproducir:** long con entrada media 1,00. Caso A: ventas de 900 acc @0,80 + 100 acc @0,98 → media 0,818 → recorrido 18,2¢ (la mesa LO cuenta); con `exit_price` (0,98) el código veía 2¢ y lo invalidaba. Caso B: 700 @0,95 + 300 @0,80 → media 0,905 → 9,5¢ (la mesa NO lo cuenta); con `exit_price` (0,80) el código veía 20¢ y lo daba por bueno.
+- **Evidencia:** docstring de `_group_partial_exits` («exit (hora/precio/razón) de la última»); corrida del usuario 2ee9c294 (1.217 trades, estrategia con parciales/pirámides): 71 wins invalidados bajo el criterio viejo. Tests nuevos en `backend/tests/test_what_if_centimos.py::test_la_salida_es_la_MEDIA_de_las_ventas` fijan los dos casos.
+- **Hipótesis de causa:** HIPÓTESIS — la regla se escribió pensando en trades de una sola salida (donde `exit_price` ES la media) y no se revisó al llegar los trades agrupados con `executions[]`.
+- **Impacto:** What-if con «Cts. mín.» activo sobre estrategias con parciales/pirámides. Estrategias sin parciales no cambian ni un céntimo.
+- **Código tocado:** fix aplicado por ZCode en `alvaro-rama-desarrollo` con OK explícito de Álvaro (2026-09-07): nueva `_salida_media()` que pondera cada venta (kinds exit/reduce de `executions[]`) por sus acciones; `exit_price` queda como fallback exacto para trades de una salida.
+- **Estado:** RESUELTO (commit 2b597cf)
+
+### [HALLAZGO · 2026-09-07 · 06] El borde exacto de la regla de céntimos estaba en «> estricto» y la norma de TTP dice «at least» — los 10¢ justos SÍ cuentan
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia (impacto pequeño, lado conservador)
+- **Dónde:** `backend/app/services/what_if_service.py` (`mueve_bastante`: `(recorrido − mínimo) > 1e-9`)
+- **Qué observé:** la implementación invalidaba el caso del borde exacto (un short de 1,00 a 0,90 con mínimo 10 «NO cuenta», por la lectura de «supera» — Jaume, 2026-09-04, documentada en el propio docstring). Los Program Terms oficiales dicen «**at least** 10 price ticks» y su ejemplo canónico es compra 50.10 → venta «50.20 **(at least)**»: 10,0¢ justos cuentan. FXEmpire lo corrobora: «any trade closed with a profit of **less than** 10 cents is not recognized as valid».
+- **Cómo reproducir:** `mueve_bastante` con entrada 1,00 y salida 0,90, mínimo 0.10 → devolvía False (invalidado).
+- **Evidencia:** tradethepool.com/program-terms (sección Consistency/Validity Rules) + fxempire.com/prop-firms/tradethepool. Test vuelto del revés: `test_el_borde_exacto_SI_cuenta`.
+- **Impacto:** trades con recorrido medio exactamente de 10,0¢ quedaban invalidados de más. Fills exactos raros, pero el ejemplo canónico de la propia mesa es ese caso.
+- **Código tocado:** fix aplicado por ZCode en `alvaro-rama-desarrollo` con OK de Álvaro (2026-09-07): comparación `>=` con tolerancia de coma flotante.
+- **Estado:** RESUELTO (commit 2b597cf)
+
+### [HALLAZGO · 2026-09-07 · 07] El win invalidado por la regla de céntimos DESAPARECÍA con sus comisiones — la mesa las cobra igual (Program Terms)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia (lado optimista, pequeño pero sistemático)
+- **Dónde:** `backend/app/services/what_if_service.py` (el filtro hacía `continue`: el trade salía de trades/equity/drawdown/calendario)
+- **Qué observé:** al invalidar un win, el What-if lo eliminaba entero → su PnL y también sus fees desaparecían de la curva. Los Program Terms de TTP listan las comisiones como deducción SIEMPRE («Deductions include… Commissions»): el beneficio no se abona, pero las comisiones se cobran. Además, al sacarlo del conteo, winrate/expectancy se recalculaban solo sobre los supervivientes y el día del trade invalidado se esfumaba del calendario del What-if.
+- **Cómo reproducir:** trade ganador pnl 100, fees 7, recorrido 5¢, mínimo 10 → antes: `run_what_if` devolvía `trades == []`; el día desaparecía de `day_results`.
+- **Evidencia:** tests reescritos `test_el_win_invalidado_se_queda_pagando_solo_sus_fees` y `test_los_dias_reflejan_el_filtro` (el día ya no se esfuma; expectancy del día = −fees).
+- **Impacto:** curva del What-if con la regla activa, ligeramente optimista (en +fees por cada win invalidado); conteo de trades/winrate.
+- **Código tocado:** fix aplicado por ZCode en `alvaro-rama-desarrollo` con decisión explícita de Álvaro (2026-09-07): el trade se queda con `pnl = −fees` sobre una copia (el trade de entrada no se muta) y `return_pct` recalculado.
+- **Estado:** RESUELTO (commit 2b597cf)
+
+### [HALLAZGO · 2026-09-07 · 08] TTP tiene una SEGUNDA regla de validez (60s/30s entre cada add y su primer reduce) que no está modelada
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** mejora (opcional)
+- **Dónde:** N/A (ausencia en `backend/app/services/what_if_service.py`)
+- **Qué observé:** los Program Terms exigen, además de los 10¢, «at least a 60.0-second range (30.0 seconds for MAX/FLEX) between each opening/adding execution and the next subsequent closing/reducing execution» de la posición. Si se incumple, el beneficio de TODA la posición no cuenta. No está implementada en ninguna parte — y la UI no la muestra, así que no hay botón que mienta.
+- **Cómo reproducir:** N/A (revisión de código).
+- **Evidencia:** tradethepool.com/program-terms, sección Consistency/Validity Rules.
+- **Impacto:** con velas M1 y `look_ahead_prevention=true`, los fills de velas consecutivas distan exactamente 60,0 s («at least 60.0» pasa), así que con la estrategia actual casi nunca dispararía. Relevante si algún día se opera con fills sub-minuto o datos más finos.
+- **Código tocado:** NINGUNO — decisión de Álvaro (2026-09-07): no modelarla por ahora.
+- **Estado:** ABIERTO (descartado por decisión de Álvaro; reabrir si cambia el estilo de ejecución)
