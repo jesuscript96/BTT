@@ -116,3 +116,44 @@ def test_el_genetico_tambien_lo_ve():
     d = _definicion({"type": "Market Structure", "value": "PMH", "offset_pct": 10})
     rutas = {p["path"] for p in extract_parameters(d)}
     assert "risk_management.hard_stop.offset_pct" in rutas
+
+
+# ── Y que llegue ENTERO hasta el genetico ───────────────────────────────────
+# Los tests de arriba comprueban el extractor. Estos dos cierran los dos
+# eslabones que quedan, que son justo donde este repo pierde cosas en silencio:
+# que el gen caiga en un bloque de la pagina, y que al escribirlo aterrice en la
+# definicion sin llevarse por delante el nivel.
+
+def test_el_gen_cae_en_el_bloque_del_stop():
+    """Si el bloque no se resolviera, el gen existiria pero no se pintaria en
+    ningun sitio de la pagina del genetico: imposible marcarlo."""
+    from app.routers.genetico import _bloque_de
+    d = _definicion({"type": "Market Structure", "value": "PMH", "offset_pct": 10})
+    p = _por_ruta(extract_parameters(d), "risk_management.hard_stop.offset_pct")
+    assert _bloque_de(p) == "stop"
+
+
+def test_el_genetico_lo_escribe_y_no_toca_el_nivel():
+    """El modo «mejorar» parte de la estrategia y escribe los genes encima. Lo
+    que NO puede pasar es que al mover el margen se cambie el nivel: el nivel es
+    texto y el simulador solo entiende seis."""
+    import sys
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parents[2]
+    if str(raiz) not in sys.path:
+        sys.path.insert(0, str(raiz))
+    from genetico import afinar
+
+    base = {"risk_management": {"hard_stop": {
+        "type": "Market Structure", "value": "PMH", "offset_pct": 10}}}
+    cfg = {"modo": "mejorar", "estrategia_base": base, "genes": [{
+        "id": "risk.hard_stop.offset_pct", "label": "Margen del stop (PMH)",
+        "path": "risk_management.hard_stop.offset_pct", "bloque": "stop",
+        "min": 0, "max": 30, "step": 0.5, "current_value": 10}]}
+
+    d = afinar.a_definicion({"valores": {"risk.hard_stop.offset_pct": 7.5}}, cfg)
+    hs = d["risk_management"]["hard_stop"]
+    assert hs["offset_pct"] == 7.5
+    assert hs["value"] == "PMH", "el nivel no se toca"
+    assert hs["type"] == "Market Structure"
+    assert base["risk_management"]["hard_stop"]["offset_pct"] == 10, "la semilla no se modifica"
