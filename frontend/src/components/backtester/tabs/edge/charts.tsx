@@ -521,8 +521,8 @@ export function Piruleta({ filas, sufijo, titulo }: {
 
 /* ---- 8. Envolvente de drawdown ---- */
 
-export function Histograma({ hist, actual, p95, unidad }: {
-  hist: { c: number; n: number }[]; actual: number; p95: number; unidad: string;
+export function Histograma({ hist, actual, p95, unidad, pie }: {
+  hist: { c: number; n: number }[]; actual: number; p95: number; unidad: string; pie?: string;
 }) {
   const W = 460, H = 244, L = 30, R = 16, Tp = 30, B = 44;
   if (!hist.length) return null;
@@ -554,7 +554,7 @@ export function Histograma({ hist, actual, p95, unidad }: {
       <circle cx={X(actual)} cy={Tp + 4} r={4} fill={T.cop} stroke={T.surf} strokeWidth={1.5} />
       <Txt x={X(actual)} y={Tp - 11} fs={9.5} mono fill={T.cop} w={600}>tú {f1(actual)}</Txt>
       <Txt x={L + (W - L - R) / 2} y={H - 6} fs={10} fill={T.mut}>
-        peor caída en {unidad} de 2.000 reordenaciones de tus operaciones
+        {pie ?? `peor caída en ${unidad} de 2.000 reordenaciones de tus operaciones`}
       </Txt>
     </Svg>
   );

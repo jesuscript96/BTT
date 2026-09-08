@@ -273,6 +273,7 @@ from app.routers import portfolio_lab
 from app.routers import bot_alerts
 from app.routers import local_control
 from app.routers import edge
+from app.routers import locates
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -329,6 +330,7 @@ app.include_router(local_control.router, prefix="/api/local-control", tags=["Loc
 # Edge: el recorrido minuto a minuto de la pestana Edge del backtester. Aditivo
 # y sin estado; relee velas de la cache y devuelve solo agregados.
 app.include_router(edge.router)
+app.include_router(locates.router)
 # Algoritmo genetico de estrategias (pagina /genetico). Gated por
 # GENETICO_ENABLED (default OFF): el router no se registra siquiera. El
 # genetico corre en un proceso aparte (<repo>/genetico/); aqui solo se lanza.
