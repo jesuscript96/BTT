@@ -277,7 +277,11 @@ def calcular_recorrido(
         if serie:
             curva[p] = serie
 
-    # ---- horas candidatas: cada 15 min donde ya hay muestra de sobra ----
+    # ---- horas candidatas: cada 15 min donde ya hay muestra suficiente ----
+    # El umbral es bajo (10 %) a proposito: cortar en el 25 % dejaba fuera las
+    # horas tempranas, que son justo las que se quieren comparar cuando el
+    # movimiento se adelanta. Cada fila lleva su `n`, asi que una hora con poca
+    # muestra se ve en la tabla y no engana a nadie.
     total = len(densos)
     horas = []
     for m in range(((m0 + 14) // 15) * 15, m1 + 1, 15):
@@ -285,10 +289,10 @@ def calcular_recorrido(
         if i is None:
             continue
         abiertos = sum(1 for _, f in densos if f[i] is not None)
-        if abiertos >= max(20, total * 0.25):
+        if abiertos >= max(15, total * 0.10):
             horas.append(m)
-    if len(horas) > 14:
-        salto = math.ceil(len(horas) / 14)
+    if len(horas) > 26:
+        salto = math.ceil(len(horas) / 26)
         horas = horas[::salto]
 
     # ---- delta PAREADO entre cada par de horas ----

@@ -37,6 +37,32 @@ const Txt = ({ x, y, children, fill = T.sec, fs = 10.5, ta = "middle" as const, 
     {children}
   </text>
 );
+/**
+ * Cada cuantas etiquetas se pinta una. Con agrupacion por trimestre puede haber
+ * 24 periodos en 460 px: sin esto las etiquetas se comen unas a otras y no se
+ * lee ninguna. Se cuenta DESDE EL FINAL para que la ultima —la que importa—
+ * salga siempre.
+ */
+function saltoEtiquetas(n: number, anchoPorItem: number, minPx = 32): number {
+  if (n <= 1 || anchoPorItem >= minPx) return 1;
+  return Math.ceil(minPx / Math.max(1, anchoPorItem));
+}
+const tocaEtiqueta = (i: number, n: number, salto: number) => (n - 1 - i) % salto === 0;
+
+/**
+ * Alto del viewBox de los dos graficos que van al lado de la tabla.
+ *
+ * Se acepta el alto que impone `useEncaje` (para que el eje X caiga en la ultima
+ * fila de la tabla) pero ACOTADO: en un panel estrecho la columna se queda en
+ * 90 px y la cuenta pedia un viewBox de 1.344 de alto, con el dibujo aplastado
+ * en una franja ilegible. Fuera de la horquilla manda el alto natural.
+ */
+function altoUtil(h: number | undefined, n: number): number {
+  const natural = Math.max(164, 60 + n * 30);
+  if (!h) return natural;
+  return Math.round(Math.min(natural * 1.9, Math.max(natural * 0.8, h)));
+}
+
 const Rejilla = ({ x1, x2, y, label, ta = "end" as const, lx }:
   { x1: number; x2: number; y: number; label: string; ta?: "start" | "end"; lx: number }) => (
   <>
@@ -47,15 +73,19 @@ const Rejilla = ({ x1, x2, y, label, ta = "end" as const, lx }:
 
 /* ---- 1. Forest: valor central con su intervalo ---- */
 
-export function Forest({ filas, unidad, leyenda, extremos }: {
+export function Forest({ filas, unidad, leyenda, extremos, h }: {
   filas: { etiqueta: string; v: number; lo: number; hi: number }[];
   unidad: string;
   /** Qué mide el eje. Por defecto, la expectancy. */
   leyenda?: string;
   /** Etiquetas de los dos lados del cero, cuando el signo significa algo. */
   extremos?: [string, string];
+  /** Alto del viewBox impuesto desde fuera para cuadrar con la tabla de al
+   *  lado. Ver `useAltoDe` en EdgeTab: un valor fijo no vale porque el alto
+   *  renderizado depende del ancho de la columna. */
+  h?: number;
 }) {
-  const W = 460, H = Math.max(150, 46 + filas.length * 30), L = 78, R = 20, Tp = 24, B = 32;
+  const W = 460, H = altoUtil(h, filas.length), L = 78, R = 20, Tp = 24, B = 46;
   const vals = filas.flatMap((f) => [f.lo, f.hi, 0]);
   const min = Math.min(...vals), max = Math.max(...vals);
   const pad = (max - min) * 0.12 || 0.1;
@@ -98,16 +128,70 @@ export function Forest({ filas, unidad, leyenda, extremos }: {
   );
 }
 
+/* ---- 1b. Expectancy descompuesta: de donde sale el numero ---- */
+
+/**
+ * De donde sale la expectancy, en la MISMA disposicion que el forest de al lado:
+ * un periodo por fila, en el mismo orden y a la misma altura. Asi se leen los
+ * dos de un vistazo — el forest dice si el cambio es distinguible del ruido y
+ * este dice por que lado viene.
+ *
+ * La geometria (H, Tp, B y la formula de la fila) es DELIBERADAMENTE identica a
+ * la de `Forest`: si se toca una hay que tocar la otra o las filas dejan de
+ * cuadrar entre los dos graficos.
+ */
+export function Descomposicion({ filas, h }: {
+  filas: { etiqueta: string; aporta: number; resta: number; v: number }[];
+  /** Igual que en `Forest`: alto del viewBox impuesto para cuadrar con la tabla. */
+  h?: number;
+}) {
+  const W = 460, H = altoUtil(h, filas.length), L = 26, R = 26, Tp = 24, B = 46;
+  if (!filas.length) return null;
+  const max = Math.max(...filas.flatMap((f) => [f.aporta, f.resta])) * 1.12 || 1;
+  const cx = L + (W - L - R) / 2;
+  const X = (v: number) => cx + (v / max) * ((W - L - R) / 2);
+  const alto = 13;
+  return (
+    <Svg w={W} h={H}>
+      {[-1, -0.5, 0.5, 1].map((k, i) => (
+        <React.Fragment key={i}>
+          <line x1={X(max * k)} y1={Tp} x2={X(max * k)} y2={H - B}
+                stroke={T.bd} strokeWidth={1} strokeDasharray="2 3" />
+          <Txt x={X(max * k)} y={H - B + 15} fs={9.5} mono>{f1(Math.abs(max * k))}</Txt>
+        </React.Fragment>
+      ))}
+      <line x1={cx} y1={Tp} x2={cx} y2={H - B} stroke={T.sec} strokeWidth={1.2} />
+      {filas.map((f, i) => {
+        const y = Tp + 15 + i * ((H - B - Tp - 18) / Math.max(1, filas.length - 1 || 1));
+        return (
+          <React.Fragment key={f.etiqueta}>
+            <rect x={X(-f.resta)} y={y - alto / 2} width={Math.max(1, cx - X(-f.resta))}
+                  height={alto} fill={T.dn} opacity={0.55} />
+            <rect x={cx} y={y - alto / 2} width={Math.max(1, X(f.aporta) - cx)}
+                  height={alto} fill={T.up} opacity={0.55} />
+          </React.Fragment>
+        );
+      })}
+      <Txt x={X(-max * 0.55)} y={Tp - 9} fs={9.5} fill={T.dn}>restan las perdedoras</Txt>
+      <Txt x={X(max * 0.55)} y={Tp - 9} fs={9.5} fill={T.up}>aportan las ganadoras</Txt>
+      <Txt x={cx} y={H - 6} fs={10} fill={T.mut}>
+        misma escala a los dos lados · lo que queda es la diferencia
+      </Txt>
+    </Svg>
+  );
+}
+
 /* ---- 2. Barras por periodo ---- */
 
 export function Barras({ filas, sufijo, titulo }: {
-  filas: { etiqueta: string; v: number }[]; sufijo: string; titulo: string;
+  filas: { etiqueta: string; v: number; nota?: string }[]; sufijo: string; titulo: string;
 }) {
-  const W = 460, H = 190, L = 40, R = 14, Tp = 24, B = 28;
+  const W = 460, H = 206, L = 40, R = 14, Tp = 24, B = 42;
   const max = Math.max(1, ...filas.map((f) => f.v)) * 1.15;
   const paso = (W - L - R) / Math.max(1, filas.length);
   const Y = (v: number) => H - B - (v / max) * (H - B - Tp);
   const ancho = Math.min(46, paso * 0.62);
+  const salto = saltoEtiquetas(filas.length, paso);
   return (
     <Svg w={W} h={H}>
       {[0, 0.25, 0.5, 0.75, 1].map((p, i) => (
@@ -118,12 +202,25 @@ export function Barras({ filas, sufijo, titulo }: {
       {filas.map((f, i) => {
         const x = L + paso * i + paso / 2, c = rampa(i, filas.length);
         const alto = Math.max(0, H - B - Y(f.v));
+        const conEtiqueta = tocaEtiqueta(i, filas.length, salto);
         return (
           <React.Fragment key={f.etiqueta}>
             <rect x={x - ancho / 2} y={Y(f.v)} width={ancho} height={alto} fill={c} />
-            <Txt x={x} y={Y(f.v) - 6} fs={10.5} mono fill={c} w={600}>{f1(f.v) + sufijo}</Txt>
-            <Txt x={x} y={H - B + 15} fs={10} mono
-                 fill={i === filas.length - 1 ? T.hi : T.mut}>{f.etiqueta}</Txt>
+            {paso >= 38 && (
+              <Txt x={x} y={Y(f.v) - 6} fs={10.5} mono fill={c} w={600}>{f1(f.v) + sufijo}</Txt>
+            )}
+            {conEtiqueta && (
+              <>
+                <Txt x={x} y={H - B + 15} fs={10} mono
+                     fill={i === filas.length - 1 ? T.hi : T.mut}>{f.etiqueta}</Txt>
+                {/* La segunda cifra es la que da sentido a la barra: sin ella no
+                    se sabe si bajar la concentracion es bueno, o es que se esta
+                    ganando menos y por eso depende de menos operaciones. */}
+                {f.nota && (
+                  <Txt x={x} y={H - B + 27} fs={9.5} mono fill={T.sec}>{f.nota}</Txt>
+                )}
+              </>
+            )}
           </React.Fragment>
         );
       })}
@@ -134,7 +231,8 @@ export function Barras({ filas, sufijo, titulo }: {
 /* ---- 3. Oportunidad vs edge ---- */
 
 export function Mensual({ serie, unidad }: { serie: PuntoMes[]; unidad: string }) {
-  const W = 620, H = 230, L = 40, R = 44, Tp = 18, B = 34;
+  // Igual que en Excursiones: abajo hay dos filas de texto, hace falta hueco.
+  const W = 620, H = 242, L = 40, R = 44, Tp = 18, B = 44;
   if (serie.length < 2) return null;
   const n = serie.length, bw = (W - L - R) / n;
   const maxO = Math.max(...serie.map((p) => p.ops)) * 1.15 || 1;
@@ -158,9 +256,12 @@ export function Mensual({ serie, unidad }: { serie: PuntoMes[]; unidad: string }
         return <Rejilla key={i} x1={L} x2={W - R} y={Y2r(v)} lx={W - R + 6} ta="start" label={f2(v)} />;
       })}
       {elo < 0 && ehi > 0 && <line x1={L} y1={Y2(0)} x2={W - R} y2={Y2(0)} stroke={T.mut} strokeWidth={1} />}
+      {/* `bgElevated` sobre `bgSurface` no se veia: son dos grises casi iguales.
+          El gris de texto al 45 % se lee sin competir con la linea de cobre. */}
       {serie.map((p, i) => (
         <rect key={p.mes} x={L + bw * i + 0.6} y={Y1(p.ops)}
-              width={Math.max(1, bw - 1.4)} height={Math.max(0, H - B - Y1(p.ops))} fill={T.elev} />
+              width={Math.max(1, bw - 1.4)} height={Math.max(0, H - B - Y1(p.ops))}
+              fill={T.mut} opacity={0.45} />
       ))}
       <path d={banda} fill={T.cop} opacity={0.13} />
       <path d={linea} fill="none" stroke={T.cop} strokeWidth={1.8} strokeLinejoin="round" />
@@ -186,44 +287,66 @@ export function Mensual({ serie, unidad }: { serie: PuntoMes[]; unidad: string }
 export function Excursiones({ filas }: {
   filas: { etiqueta: string; mfeP: number[]; maeP: number[] }[];
 }) {
-  const W = 460, H = 210, L = 40, R = 14, Tp = 18, B = 28;
+  // B grande a proposito: abajo van DOS filas de texto (los periodos y el pie),
+  // y con el margen de antes se pisaban.
+  const W = 460, H = 232, L = 40, R = 14, Tp = 18, B = 44;
   const max = Math.max(...filas.flatMap((f) => [f.mfeP[3], f.maeP[3]])) * 1.12 || 1;
   const paso = (W - L - R) / Math.max(1, filas.length);
   const Y = (v: number) => H - B - (v / max) * (H - B - Tp);
+  const salto = saltoEtiquetas(filas.length, paso);
+  const cx = (i: number) => L + paso * i + paso / 2;
+  // Las cajas sueltas no dejan ver la TENDENCIA, que es justo lo que se busca:
+  // dos lineas por las medianas y el encogimiento salta a la vista.
+  const linea = (sel: (f: typeof filas[number]) => number[], off: number) =>
+    "M" + filas.map((f, i) => `${cx(i) + off} ${Y(sel(f)[1])}`).join(" L ");
   return (
     <Svg w={W} h={H}>
       {[0, 0.25, 0.5, 0.75, 1].map((p, i) => (
         <Rejilla key={i} x1={L} x2={W - R} y={Y(max * p)} lx={L - 7} label={f1(max * p) + " %"} />
       ))}
-      {filas.map((f, i) => {
-        const cx = L + paso * i + paso / 2;
-        return (
-          <React.Fragment key={f.etiqueta}>
-            {([[f.mfeP, T.up, -9], [f.maeP, T.dn, 9]] as const).map(([p, c, off], k) => (
-              <React.Fragment key={k}>
-                <line x1={cx + off} y1={Y(p[0])} x2={cx + off} y2={Y(p[3])} stroke={c} strokeWidth={1.2} />
-                <rect x={cx + off - 6} y={Y(p[2])} width={12}
-                      height={Math.max(1, Y(p[0]) - Y(p[2]))} fill={c} opacity={0.34} />
-                <line x1={cx + off - 7} y1={Y(p[1])} x2={cx + off + 7} y2={Y(p[1])}
-                      stroke={T.hi} strokeWidth={1.8} />
-              </React.Fragment>
-            ))}
-            <Txt x={cx} y={H - B + 15} fs={10} mono
+      {filas.length > 1 && (
+        <>
+          <path d={linea((f) => f.mfeP, -9)} fill="none" stroke={T.up}
+                strokeWidth={1.6} strokeDasharray="4 3" opacity={0.85} />
+          <path d={linea((f) => f.maeP, 9)} fill="none" stroke={T.dn}
+                strokeWidth={1.6} strokeDasharray="4 3" opacity={0.85} />
+        </>
+      )}
+      {filas.map((f, i) => (
+        <React.Fragment key={f.etiqueta}>
+          {([[f.mfeP, T.up, -9], [f.maeP, T.dn, 9]] as const).map(([p, c, off], k) => (
+            <React.Fragment key={k}>
+              <line x1={cx(i) + off} y1={Y(p[0])} x2={cx(i) + off} y2={Y(p[3])} stroke={c} strokeWidth={1.2} />
+              <rect x={cx(i) + off - 6} y={Y(p[2])} width={12}
+                    height={Math.max(1, Y(p[0]) - Y(p[2]))} fill={c} opacity={0.34} />
+              <line x1={cx(i) + off - 7} y1={Y(p[1])} x2={cx(i) + off + 7} y2={Y(p[1])}
+                    stroke={T.hi} strokeWidth={1.8} />
+            </React.Fragment>
+          ))}
+          {tocaEtiqueta(i, filas.length, salto) && (
+            <Txt x={cx(i)} y={H - B + 15} fs={10} mono
                  fill={i === filas.length - 1 ? T.hi : T.mut}>{f.etiqueta}</Txt>
-          </React.Fragment>
-        );
-      })}
+          )}
+        </React.Fragment>
+      ))}
+      <Txt x={L + (W - L - R) / 2} y={H - 5} fs={10} fill={T.mut}>
+        la línea de puntos une las medianas: es donde se ve si se encoge
+      </Txt>
     </Svg>
   );
 }
 
 /* ---- 5. Barrido (TP o SL) ---- */
 
-export function Barrido({ series, unidad, ejeX, marcaActual }: {
+export function Barrido({ series, todas, unidad, ejeX, marcaActual }: {
   series: { etiqueta: string; puntos: PuntoBarrido[]; mejor: PuntoBarrido | null }[];
+  /** Todas las series, para que el color de cada periodo NO cambie al ocultar
+   *  otro: la rampa se calcula sobre la lista completa, no sobre la visible. */
+  todas?: string[];
   unidad: string; ejeX: string; marcaActual?: number | null;
 }) {
   const W = 460, H = 235, L = 46, R = 16, Tp = 20, B = 40;
+  const orden = todas ?? series.map((s) => s.etiqueta);
   const todos = series.flatMap((s) => s.puntos.map((p) => p.v));
   if (!todos.length) return null;
   const x0 = series[0].puntos[0].x, x1 = series[0].puntos[series[0].puntos.length - 1].x;
@@ -255,9 +378,10 @@ export function Barrido({ series, unidad, ejeX, marcaActual }: {
           <Txt x={X(marcaActual)} y={Tp - 9} fs={9.5} mono fill={T.wa} w={600}>ahora</Txt>
         </>
       )}
-      {series.map((s, i) => {
-        const c = rampa(i, series.length);
-        const ultimo = i === series.length - 1;
+      {series.map((s) => {
+        const j = orden.indexOf(s.etiqueta);
+        const c = rampa(j < 0 ? 0 : j, orden.length);
+        const ultimo = j === orden.length - 1;
         return (
           <React.Fragment key={s.etiqueta}>
             <path d={"M" + s.puntos.map((p) => `${X(p.x).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(" L ")}
@@ -280,11 +404,16 @@ export function Barrido({ series, unidad, ejeX, marcaActual }: {
 export const hhmm = (m: number) =>
   String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.round(m) % 60).padStart(2, "0");
 
-export function CurvaMarginal({ series, unidad, marcas }: {
+export function CurvaMarginal({ series, todas, unidad, marcas }: {
   series: { etiqueta: string; puntos: { m: number; media: number }[]; pico: number | null }[];
+  /** Lista completa de periodos: el color de cada uno no debe moverse porque se
+   *  oculte otro. */
+  todas?: string[];
   unidad: string; marcas: number[];
 }) {
-  const W = 900, H = 330, L = 54, R = 22, Tp = 30, B = 44;
+  // Tp deja hueco arriba para la cajita de A/B, que sube 17 px si se juntan.
+  // W grande y H contenido: es una serie temporal, necesita ancho, no alto.
+  const W = 1100, H = 300, L = 54, R = 22, Tp = 46, B = 44;
   const todos = series.flatMap((s) => s.puntos);
   if (todos.length < 2) return null;
   const m0 = Math.min(...todos.map((p) => p.m)), m1 = Math.max(...todos.map((p) => p.m));
@@ -309,16 +438,30 @@ export function CurvaMarginal({ series, unidad, marcas }: {
           <Txt x={X(m)} y={H - B + 16} fs={10.5} mono>{hhmm(m)}</Txt>
         </React.Fragment>
       ))}
-      {marcas.filter((m) => m >= m0 && m <= m1).map((m, i) => (
-        <React.Fragment key={`marca-${m}`}>
-          <line x1={X(m)} y1={Tp - 6} x2={X(m)} y2={H - B} stroke={T.cop} strokeWidth={1} strokeDasharray="3 3" />
-          <rect x={X(m) - 25} y={Tp - 20} width={50} height={15} fill={T.elev} stroke={T.cop} />
-          <Txt x={X(m)} y={Tp - 9} fs={10} mono fill={color.copperBright} w={600}>{hhmm(m)}</Txt>
-          <Txt x={X(m)} y={H - B + 29} fs={9.5} fill={T.mut}>{i === 0 ? "A" : "B"}</Txt>
-        </React.Fragment>
-      ))}
-      {series.map((s, i) => {
-        const c = rampa(i, series.length), ultimo = i === series.length - 1;
+      {(() => {
+        const vis = marcas.filter((m) => m >= m0 && m <= m1);
+        return vis.map((m, i) => {
+          // Con A y B pegadas las dos cajitas se pisaban: la segunda sube.
+          const juntas = i > 0 && Math.abs(X(m) - X(vis[i - 1])) < 70;
+          const dy = juntas ? -17 : 0;
+          // La letra va DENTRO de la cajita. Antes iba suelta bajo el eje y se
+          // chocaba con el pie del grafico.
+          return (
+            <React.Fragment key={`marca-${m}`}>
+              <line x1={X(m)} y1={Tp - 6 + dy} x2={X(m)} y2={H - B}
+                    stroke={T.cop} strokeWidth={1} strokeDasharray="3 3" />
+              <rect x={X(m) - 32} y={Tp - 20 + dy} width={64} height={15} fill={T.elev} stroke={T.cop} />
+              <Txt x={X(m)} y={Tp - 9 + dy} fs={10} mono fill={color.copperBright} w={600}>
+                {(i === 0 ? "A " : "B ") + hhmm(m)}
+              </Txt>
+            </React.Fragment>
+          );
+        });
+      })()}
+      {series.map((s) => {
+        const orden = todas ?? series.map((x) => x.etiqueta);
+        const j = orden.indexOf(s.etiqueta);
+        const c = rampa(j < 0 ? 0 : j, orden.length), ultimo = j === orden.length - 1;
         const pico = s.pico != null ? s.puntos.find((p) => p.m === s.pico) : null;
         return (
           <React.Fragment key={s.etiqueta}>
@@ -347,6 +490,7 @@ export function Piruleta({ filas, sufijo, titulo }: {
   const max = Math.max(...filas.flatMap((f) => f.p)) * 1.15 || 1;
   const paso = (W - L - R) / Math.max(1, filas.length);
   const Y = (v: number) => H - B - (v / max) * (H - B - Tp);
+  const salto = saltoEtiquetas(filas.length, paso);
   return (
     <Svg w={W} h={H}>
       {[0, 0.25, 0.5, 0.75, 1].map((k, i) => (
@@ -361,9 +505,13 @@ export function Piruleta({ filas, sufijo, titulo }: {
           <React.Fragment key={f.etiqueta}>
             <line x1={x} y1={Y(f.p[0])} x2={x} y2={Y(f.p[2])} stroke={c} strokeWidth={1.4} opacity={0.5} />
             <circle cx={x} cy={Y(f.p[1])} r={5} fill={c} stroke={T.surf} strokeWidth={1.5} />
-            <Txt x={x} y={Y(f.p[1]) - 11} fs={10.5} mono fill={c} w={600}>{f1(f.p[1]) + sufijo}</Txt>
-            <Txt x={x} y={H - B + 15} fs={10} mono
-                 fill={i === filas.length - 1 ? T.hi : T.mut}>{f.etiqueta}</Txt>
+            {paso >= 44 && (
+              <Txt x={x} y={Y(f.p[1]) - 11} fs={10.5} mono fill={c} w={600}>{f1(f.p[1]) + sufijo}</Txt>
+            )}
+            {tocaEtiqueta(i, filas.length, salto) && (
+              <Txt x={x} y={H - B + 15} fs={10} mono
+                   fill={i === filas.length - 1 ? T.hi : T.mut}>{f.etiqueta}</Txt>
+            )}
           </React.Fragment>
         );
       })}
@@ -376,7 +524,7 @@ export function Piruleta({ filas, sufijo, titulo }: {
 export function Histograma({ hist, actual, p95, unidad }: {
   hist: { c: number; n: number }[]; actual: number; p95: number; unidad: string;
 }) {
-  const W = 460, H = 235, L = 30, R = 16, Tp = 30, B = 34;
+  const W = 460, H = 244, L = 30, R = 16, Tp = 30, B = 44;
   if (!hist.length) return null;
   const min = hist[0].c, max = hist[hist.length - 1].c;
   const span = max - min || 1;

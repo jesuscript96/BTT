@@ -18,12 +18,12 @@ import type { TradeRecord } from "@/lib/api_backtester";
 import { Table, Th, Td, Tr, color, font } from "@/components/ui";
 import { Help } from "@/components/robustez/help";
 import {
-  agrupar, barridoSL, barridoTP, envolventeDD, f1, f2, mejorPunto,
+  agrupar, barridoSL, barridoTP, envolventeDD, f1, f2, media, mejorPunto,
   miles, percentil, periodKey, preparar, rangoBarrido, resumir, serieMensual, sgn, tocaBorde,
   unidadDisponible, type Modo, type Unidad,
 } from "./edge/calc";
 import {
-  Barras, Barrido, CurvaMarginal, Excursiones, Forest, Histograma, Mensual, Piruleta, hhmm, rampa,
+  Barras, Barrido, CurvaMarginal, Descomposicion, Excursiones, Forest, Histograma, Mensual, Piruleta, hhmm, rampa,
 } from "./edge/charts";
 import { pedirRecorrido, type Recorrido } from "@/lib/api_edge";
 
@@ -33,12 +33,19 @@ const num: React.CSSProperties = {
   fontFamily: font.mono, fontVariantNumeric: "tabular-nums", textAlign: "right",
 };
 
-function Ayuda({ titulo, ves, ejemplo, sirve, nota }: {
+function Ayuda({ titulo, ves, ejemplo, sirve, nota, escenarios }: {
   titulo: string; ves: string; ejemplo: React.ReactNode; sirve: string; nota?: string;
+  /** Pares «lo que ves» → «lo que significa». Es la parte que de verdad se usa:
+   *  una definición no te dice qué hacer, y una combinación concreta sí. */
+  escenarios?: [string, string][];
 }) {
   return (
-    <Help title={titulo} width={370}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+    // Ancho generoso y letra pequeña: con todos los escenarios, un globo
+    // estrecho se salía de la pantalla por abajo y no hay forma de recorrerlo
+    // (el globo va con `pointerEvents: none`). Ancho + dos columnas es lo que
+    // hace que quepa.
+    <Help title={titulo} width={escenarios ? 580 : 380}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 11.5, lineHeight: 1.45 }}>
         <div>
           <b style={{ color: color.textHigh }}>Qué estás viendo. </b>
           <span style={{ color: color.textSecondary }}>{ves}</span>
@@ -53,6 +60,29 @@ function Ayuda({ titulo, ves, ejemplo, sirve, nota }: {
           <b style={{ color: color.textHigh }}>Para qué sirve. </b>
           <span style={{ color: color.textSecondary }}>{sirve}</span>
         </div>
+        {escenarios && (
+          <div style={{
+            borderTop: `1px solid ${color.border}`, paddingTop: 7,
+            display: "flex", flexDirection: "column", gap: 5,
+          }}>
+            <div style={{
+              fontSize: "0.82em", letterSpacing: "0.1em", textTransform: "uppercase",
+              color: color.textMuted, marginBottom: 2,
+            }}>Cómo leerlo</div>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: escenarios.length > 4 ? "1fr 1fr" : "1fr",
+              gap: "6px 16px",
+            }}>
+              {escenarios.map(([si, entonces], i) => (
+                <div key={i} style={{ fontSize: "0.94em", lineHeight: 1.4 }}>
+                  <b style={{ color: color.copperBright }}>{si}</b>
+                  <span style={{ color: color.textSecondary }}> · {entonces}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {nota && (
           <div style={{ color: color.warning, fontSize: "0.92em" }}>Ojo: {nota}</div>
         )}
@@ -104,9 +134,14 @@ function Fase({ n }: { n: string }) {
   );
 }
 
-function Cifra({ k, v, s, tono }: { k: string; v: string; s?: string; tono?: string }) {
+function Cifra({ k, v, s, tono, ultima }: {
+  k: string; v: string; s?: string; tono?: string; ultima?: boolean;
+}) {
   return (
-    <div style={{ flex: 1, padding: "0 14px", borderRight: `0.5px solid ${color.border}`, minWidth: 0 }}>
+    <div style={{
+      flex: 1, padding: "0 14px", minWidth: 0,
+      borderRight: ultima ? undefined : `0.5px solid ${color.border}`,
+    }}>
       <div style={{ fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textMuted }}>{k}</div>
       <div style={{ ...num, textAlign: "left", fontSize: 20, color: tono || color.textHigh, marginTop: 2 }}>{v}</div>
       {s && <div style={{ fontSize: 11, color: color.textSecondary, marginTop: 1 }}>{s}</div>}
@@ -131,6 +166,80 @@ const Seg = <T extends string>({ valor, opciones, onChange }: {
   </div>
 );
 
+/**
+ * Alto de un elemento y ancho de otro, en vivo.
+ *
+ * Hace falta para que el eje X de los dos gráficos caiga justo en la última
+ * línea de la tabla de al lado. Un alto fijo no sirve: los SVG van a `width:
+ * 100%` con `height: auto`, así que su alto renderizado sale del ancho de su
+ * columna, y eso cambia con la ventana. Midiendo los dos se despeja el alto del
+ * viewBox que hace que coincidan.
+ */
+function useEncaje() {
+  const refTabla = React.useRef<HTMLDivElement>(null);
+  const refGrafico = React.useRef<HTMLDivElement>(null);
+  const [medidas, setMedidas] = useState<{ alto: number; ancho: number } | null>(null);
+
+  React.useLayoutEffect(() => {
+    const medir = () => {
+      const t = refTabla.current, g = refGrafico.current;
+      if (!t || !g) return;
+      const alto = t.offsetHeight, ancho = g.offsetWidth;
+      if (alto > 40 && ancho > 40) {
+        setMedidas((prev) =>
+          prev && Math.abs(prev.alto - alto) < 2 && Math.abs(prev.ancho - ancho) < 2
+            ? prev : { alto, ancho });
+      }
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    if (refTabla.current) ro.observe(refTabla.current);
+    if (refGrafico.current) ro.observe(refGrafico.current);
+    return () => ro.disconnect();
+  });
+
+  // Los SVG miden 460 de ancho en su viewBox: con este alto, el renderizado
+  // acaba midiendo exactamente lo que mide la tabla.
+  const h = medidas ? Math.max(150, Math.round((460 * medidas.alto) / medidas.ancho)) : undefined;
+  return { refTabla, refGrafico, h };
+}
+
+/**
+ * Chips para encender y apagar periodos. Con seis lineas encima del mismo
+ * grafico no se distingue ninguna; poder quedarse con dos es la diferencia
+ * entre un grafico bonito y uno que se pueda leer.
+ */
+function SelectorPeriodos({ periodos, ocultos, alternar }: {
+  periodos: string[]; ocultos: Set<string>; alternar: (p: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      <span style={{ fontSize: 11, color: color.textMuted, marginRight: 2 }}>Periodos:</span>
+      {periodos.map((p, i) => {
+        const on = !ocultos.has(p);
+        return (
+          <button key={p} onClick={() => alternar(p)}
+            title={on ? "Ocultar este periodo" : "Mostrar este periodo"}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+              background: on ? color.bgElevated : "transparent",
+              border: `1px solid ${on ? color.border : "transparent"}`,
+              color: on ? color.textHigh : color.textMuted,
+              fontFamily: font.mono, fontSize: 11, height: 24, padding: "0 8px",
+              opacity: on ? 1 : 0.5,
+            }}>
+            <i style={{
+              width: 12, height: on ? 3 : 1, display: "block",
+              background: on ? rampa(i, periodos.length) : color.textMuted,
+            }} />
+            {p}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ---- la pestaña ---- */
 
 const MIN_OPS = 100;
@@ -150,6 +259,15 @@ export default function EdgeTab({ trades, datasetId = "" }: {
   const [errorRec, setErrorRec] = useState<string | null>(null);
   const [horaA, setHoraA] = useState<number | null>(null);
   const [horaB, setHoraB] = useState<number | null>(null);
+  const { refTabla, refGrafico, h: altoViewBox } = useEncaje();
+  // Una sola selección para los tres gráficos de líneas: eliges los años que te
+  // interesan una vez y se aplica a la curva y a los dos barridos.
+  const [ocultos, setOcultos] = useState<Set<string>>(() => new Set());
+  const alternar = (p: string) => setOcultos((s) => {
+    const n = new Set(s);
+    if (n.has(p)) n.delete(p); else n.add(p);
+    return n;
+  });
 
   const datos = useMemo(() => {
     const filas = preparar(trades, modo, u);
@@ -248,7 +366,13 @@ export default function EdgeTab({ trades, datasetId = "" }: {
       const d1 = picos[1] - picos[0], d2 = picos[2] - picos[1];
       c3 = (d1 <= 0 && d2 <= 0 && d1 + d2 !== 0) || (d1 >= 0 && d2 >= 0 && d1 + d2 !== 0);
     }
-    return { c1, c2, c3, cambiar: c1 && c2 && c3, ult };
+    // Tres estados, no dos. Un cuadro amarillo que pone «MANTENER» te dice que
+    // no hagas nada y a la vez te pinta una alarma: o es verde y tranquilo, o es
+    // amarillo y entonces hay algo que vigilar y tiene que decirlo.
+    const cuantas = [c1, c2, c3].filter(Boolean).length;
+    const estado: "cambiar" | "cuidado" | "tranquilo" =
+      cuantas === 3 ? "cambiar" : cuantas === 0 ? "tranquilo" : "cuidado";
+    return { c1, c2, c3, cambiar: cuantas === 3, cuantas, estado, ult };
   }, [deltaFilas, curvaSeries]);
 
   // La salida anticipada va DESPUÉS de todos los hooks: si no, con un resultado
@@ -280,6 +404,11 @@ export default function EdgeTab({ trades, datasetId = "" }: {
             el de 12 no dice nada: con esa muestra, un solo día bueno cambia el resultado entero.
             Por eso se marcan los periodos con menos de {MIN_OPS} operaciones.</>}
           sirve="Es el filtro de entrada. Dos periodos solo se pueden comparar si salen del mismo motor y del mismo universo; si el rango cruza un cambio del programa, lo que verías abajo serían tus propios cambios de código, no el mercado."
+          escenarios={[
+            ["Un periodo con pocas operaciones", "No lo leas. Con esa muestra, un solo día bueno le cambia el signo a todo el año."],
+            ["Todos con muestra de sobra", "Puedes comparar. Lo que veas abajo es real o es azar, pero no es un artefacto de la muestra."],
+            ["Comparas contra una corrida guardada", "No lo hagas. Vuelve a lanzar el rango entero de una vez: si no, medirás mis cambios de código en vez del mercado."],
+          ]}
           nota="Las corridas guardadas antes del 27-ago-2026 (SL de estructura) y del 6-sep-2026 (universo y ventana de entrada) NO son comparables con las nuevas. Vuelve a lanzar el rango entero de una vez."
         />}
         pie={<>Todos los periodos vienen de <b style={{ color: color.textPrimary }}>esta misma corrida</b>, así
@@ -323,7 +452,7 @@ export default function EdgeTab({ trades, datasetId = "" }: {
         titulo="Expectancy descompuesta por periodo"
         ayuda={<Ayuda
           titulo="Expectancy descompuesta por periodo"
-          ves={`Lo que gana de media cada operación en cada periodo, partido en sus piezas: cuántas ganas, cuánto ganas cuando ganas y cuánto pierdes cuando pierdes. La barra del gráfico es el margen de error.`}
+          ves={`Dos gráficos con las mismas filas, un periodo cada una, para poder compararlos de un vistazo. El de la izquierda: el punto es lo que deja de media una operación y la barra hasta dónde podría estar de verdad. El de la derecha: de dónde sale ese número — hacia la derecha lo que APORTAN las ganadoras (cuántas aciertas por lo que ganas al acertar) y hacia la izquierda lo que RESTAN las perdedoras. La diferencia entre los dos lados es exactamente el punto del gráfico de al lado.`}
           ejemplo={ultimo && primero && res.length > 1 ? (
             <>En {primero.periodo} cada operación dejaba {sgn(primero.expectancy)} {uL} y en {ultimo.periodo} deja {sgn(ultimo.expectancy)} {uL}.
               Parece una caída — pero mira las barras: la de {ultimo.periodo} va de {sgn(ultimo.lo, 2)} a {sgn(ultimo.hi, 2)}.
@@ -332,7 +461,15 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                 : " NO se solapan, así que la diferencia es real y no casualidad."}</>
           ) : "Cada punto es la media y la barra es hasta dónde podría estar de verdad."}
           sirve="Es la pregunta madre de la pestaña. Si las barras de dos periodos se solapan, no ha pasado nada y tocar la estrategia sería perseguir ruido. Solo cuando dejan de solaparse tienes derecho a decir que el edge ha cambiado."
-          nota="Una media sin su barra de error es una trampa: con pocas operaciones siempre parece que hay tendencia."
+          escenarios={[
+            ["Se encoge la barra VERDE y la roja no", "Las ganadoras aportan menos: o aciertas menos veces o ganas menos cuando aciertas. Mira en la tabla cuál de las dos, y vete al bloque de MFE."],
+            ["Crece la barra ROJA y la verde no", "Las malas te cuestan más caro por el mismo premio. Mira «Pierde» en la tabla y baja al barrido del stop."],
+            ["Las dos se encogen a la vez", "Se está encogiendo todo el movimiento. Si el punto se queda donde estaba, no ha pasado nada malo: solo hay menos recorrido en ambos sentidos."],
+            ["Los márgenes de la tabla se solapan", "No hay ninguna prueba de que nada haya cambiado, por mucho que los números bajen. No toques la estrategia."],
+            ["El último margen no se solapa con el primero, pero sí con el anterior", "Deriva lenta, no un escalón. Vigilar en el próximo corte, no actuar todavía."],
+            ["El último no se solapa ni con el anterior", "Ha pasado algo concreto en ese periodo. Busca qué: el mercado, el universo o un cambio del programa."],
+          ]}
+          nota="El margen del punto es diez veces más pequeño que las barras, así que en el gráfico se ve diminuto: es real, no un fallo de dibujo. Para comprobar el solape usa la columna «Margen» de la tabla."
         />}
         pie={ultimo && primero && res.length > 1 ? (
           ultimo.hi >= primero.lo
@@ -342,21 +479,26 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                 diferencia es real. Mira abajo si el motivo es el objetivo, el stop o el entorno.</>
         ) : undefined}
       >
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
-          <div style={{ overflowX: "auto" }}>
+        {/* Tres columnas, y las dos graficas con la MISMA disposicion vertical:
+            cada periodo es la misma fila en las dos, asi se comparan de un
+            vistazo. Ver la nota de geometria en `Descomposicion`. */}
+        <div style={{
+          display: "grid", gridTemplateColumns: "minmax(0,1.05fr) minmax(0,1fr) minmax(0,1fr)",
+          gap: 14, alignItems: "start",
+        }}>
+          <div ref={refTabla} style={{ overflowX: "auto" }}>
             <Table>
               <thead><Tr>
                 <Th>Periodo</Th><Th style={{ textAlign: "right" }}>Ops</Th>
                 <Th style={{ textAlign: "right" }}>Aciertos</Th>
                 <Th style={{ textAlign: "right" }}>Gana</Th>
                 <Th style={{ textAlign: "right" }}>Pierde</Th>
-                <Th style={{ textAlign: "right" }}>Expectancy</Th>
-                <Th style={{ textAlign: "right" }}>PF</Th>
+                <Th style={{ textAlign: "right" }}>Expect.</Th>
               </Tr></thead>
               <tbody>
                 {res.map((r) => (
                   <Tr key={r.periodo}>
-                    <Td style={{ fontFamily: font.mono, color: color.textHigh }}>
+                    <Td style={{ fontFamily: font.mono, color: color.textHigh, whiteSpace: "nowrap" }}>
                       {r.periodo}{r.n < MIN_OPS && <span style={{ color: color.warning }}> ·poca</span>}
                     </Td>
                     <Td style={num}>{miles(r.n)}</Td>
@@ -364,13 +506,21 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                     <Td style={{ ...num, color: color.profit }}>+{f2(r.ganMedia)}</Td>
                     <Td style={{ ...num, color: color.loss }}>−{f2(r.perdMedia)}</Td>
                     <Td style={{ ...num, color: color.textHigh, fontWeight: 600 }}>{sgn(r.expectancy)}</Td>
-                    <Td style={num}>{Number.isFinite(r.pf) ? f2(r.pf) : "—"}</Td>
                   </Tr>
                 ))}
               </tbody>
             </Table>
           </div>
-          <Forest unidad={uL} filas={res.map((r) => ({ etiqueta: r.periodo, v: r.expectancy, lo: r.lo, hi: r.hi }))} />
+          <div ref={refGrafico} style={{ minWidth: 0 }}>
+            <Forest unidad={uL} h={altoViewBox}
+                    filas={res.map((r) => ({ etiqueta: r.periodo, v: r.expectancy, lo: r.lo, hi: r.hi }))} />
+          </div>
+          <Descomposicion h={altoViewBox} filas={res.map((r) => ({
+            etiqueta: r.periodo,
+            aporta: (r.wr / 100) * r.ganMedia,
+            resta: (1 - r.wr / 100) * r.perdMedia,
+            v: r.expectancy,
+          }))} />
         </div>
       </Bloque>
 
@@ -386,14 +536,27 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                 Si esa barra sube año a año, cada vez dependes más de que aparezcan cuatro monstruos.</>
             ) : ""}
             sirve="Detecta fragilidad, que es distinto de perder. Una estrategia puede ganar lo mismo cada año y ser mucho más frágil, porque el beneficio se apoya en menos operaciones. Cuando esa barra sube, la probabilidad de un año malo sube aunque el edge medio no se mueva."
+            escenarios={[
+              ["Barra SUBE · cifra BAJA", "El peor de todos: ganas menos y encima dependes de menos operaciones. El edge se está desmoronando y lo poco que queda son cuatro casos sueltos."],
+              ["Barra SUBE · cifra IGUAL", "Mismo dinero pero más frágil. La probabilidad de un año malo ha subido aunque el resultado medio no se haya movido."],
+              ["Barra SUBE · cifra SUBE", "Ganas más, pero gracias a un puñado de monstruos. No lo extrapoles: eso no se repite a voluntad."],
+              ["Barra BAJA · cifra SUBE", "La mejor combinación posible: más dinero y mejor repartido. Esto sí es una mejora de verdad."],
+              ["Barra BAJA · cifra IGUAL", "Mismo dinero con menos dependencia de los monstruos. Buena señal."],
+              ["Barra BAJA · cifra BAJA", "No te alegres: la concentración baja porque estás ganando menos, no porque estés más repartido."],
+              ["Las dos planas", "No ha cambiado nada por este lado."],
+              ["La barra pasa del 100 %", "El otro 90 % de operaciones, juntas, PIERDEN. Todo lo que te llevas sale de un puñado: si ese puñado no aparece, el año es negativo."],
+              ["«Sin el 1 % mejor» se queda en cero o negativo", "Tu resultado entero es un puñado de operaciones. Antes de tocar parámetros, piensa si eso es un negocio que quieras."],
+            ]}
             nota="Puede pasar del 100 %, y no es un fallo: significa que el otro 90 % de las operaciones, juntas, PIERDEN dinero, y que todo lo que ganas sale del 10 % mejor. Es el caso más frágil que hay."
           />}
           pie={ultimo && primero && res.length > 1
             ? <>El decil superior pasa del <b>{f1(primero.decilSup)} %</b> al <b>{f1(ultimo.decilSup)} %</b> del beneficio.</>
             : undefined}
         >
-          <Barras titulo="% del beneficio NETO que aporta el 10 % mejor · por encima de 100 % el resto pierde"
-                  sufijo=" %" filas={res.map((r) => ({ etiqueta: r.periodo, v: r.decilSup }))} />
+          <Barras titulo="% del beneficio NETO que aporta el 10 % mejor · debajo, la expectancy"
+                  sufijo=" %" filas={res.map((r) => ({
+                    etiqueta: r.periodo, v: r.decilSup, nota: `${sgn(r.expectancy, 2)} ${uL}`,
+                  }))} />
           <div style={{ overflowX: "auto", marginTop: 10 }}>
             <Table>
               <thead><Tr>
@@ -425,10 +588,40 @@ export default function EdgeTab({ trades, datasetId = "" }: {
               línea sigue plana, el problema es que hay menos días buenos: tu estrategia está intacta y no hay
               nada que tocar. Si las barras siguen igual y la línea baja, entonces sí: cada operación vale menos.</>}
             sirve="Separa «gano menos porque hay menos oportunidades» de «gano menos por operación». Son problemas distintos y solo el segundo se arregla cambiando parámetros; el primero se arregla esperando o buscando más universo."
+            escenarios={[
+              ["Barras BAJAN · línea IGUAL", "Menos días buenos pero cada operación vale lo mismo. La estrategia está intacta: no toques nada, espera a que vuelva el mercado."],
+              ["Barras IGUAL · línea BAJA", "Las mismas ocasiones pero valen menos. Aquí sí hay erosión de verdad: sigue por los bloques de abajo a buscar dónde."],
+              ["Barras BAJAN · línea BAJA", "Lo peor de los dos: menos ocasiones y peores. Suele ser cambio de régimen del mercado, no un fallo tuyo."],
+              ["Barras SUBEN · línea BAJA", "Estás entrando en más sitios de los que deberías. Se te ha aflojado un filtro o el universo ha cambiado."],
+              ["Barras SUBEN · línea IGUAL", "Más ocasiones igual de buenas. Sin más: es el mercado dándote más trabajo del mismo."],
+              ["Barras SUBEN · línea SUBE", "Todo a favor. Antes de subir tamaño, comprueba en el bloque de al lado que no venga de cuatro operaciones sueltas."],
+              ["Barras BAJAN · línea SUBE", "Menos ocasiones pero mejores. Suele pasar cuando el filtro se ha estrechado: ganas calidad y pierdes frecuencia."],
+              ["Barras IGUAL · línea SUBE", "Mejora limpia y sin truco, que es la más rara de ver."],
+              ["Las dos planas", "No ha pasado nada. Cualquier cambio que hagas ahora será por ruido."],
+            ]}
             nota="La banda es ancha a propósito. Un mes suelto no significa nada, y así se ve."
           />}
         >
           <Mensual serie={serie} unidad={uL} />
+          {serie.length > 1 && (() => {
+            const ult12 = media(serie.slice(-12).map((p) => p.ops));
+            const hist = media(serie.map((p) => p.ops));
+            const expAhora = serie[serie.length - 1].media;
+            const expIni = primero?.expectancy ?? 0;
+            const varOps = hist ? ((ult12 - hist) / hist) * 100 : 0;
+            const varExp = expIni ? ((expAhora - expIni) / Math.abs(expIni)) * 100 : 0;
+            return (
+              <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
+                <Cifra k="Ops al mes" v={f1(ult12)} s={`histórico ${f1(hist)}`} />
+                <Cifra k="Varía la oportunidad" v={`${varOps >= 0 ? "+" : "−"}${f1(Math.abs(varOps))} %`}
+                       s="últimos 12 meses" tono={varOps >= 0 ? color.profit : color.loss} />
+                <Cifra k={`Expectancy (${uL})`} v={sgn(expAhora)}
+                       s={`en ${primero?.periodo ?? "—"} era ${sgn(expIni)}`} />
+                <Cifra k="Varía el edge" v={`${varExp >= 0 ? "+" : "−"}${f1(Math.abs(varExp))} %`}
+                       s="por operación" tono={varExp >= 0 ? color.profit : color.loss} ultima />
+              </div>
+            );
+          })()}
         </Bloque>
       </div>
 
@@ -447,6 +640,13 @@ export default function EdgeTab({ trades, datasetId = "" }: {
           ) : <>Cada línea dice cuánto llevarías ganado de media si salieras a esa hora. Donde la línea deja de
               subir, aguantar más ya no te paga.</>}
           sirve="No compara dos horas: las evalúa TODAS a la vez y con todas las operaciones. Es de aquí de donde sale la hora de salida y el fin de sesión. Y si las líneas de los distintos años se pisan, es que no ha cambiado nada."
+          escenarios={[
+            ["El punto se adelanta año tras año, de forma ordenada", "El movimiento se agota antes que antes. Tu hora de salida se ha quedado tarde: baja al bloque de comparar dos horas y compruébalo con su margen."],
+            ["El punto salta sin orden (antes, después, antes)", "Eso es ruido, no un cambio de régimen. No muevas la hora."],
+            ["Las líneas se pisan unas con otras", "No ha cambiado nada. El óptimo que veas cada año es azar de muestra."],
+            ["La curva sigue subiendo hasta el final", "No te sobra tiempo: te falta. Se te está cortando el movimiento antes de que termine."],
+            ["La curva cae con fuerza al final", "Estás devolviendo beneficio por aguantar de más. Es el caso más claro para adelantar la salida."],
+          ]}
           nota="Solo se prolongan las operaciones que cerraron por hora (EOD o Time Limit): las que murieron por stop o por objetivo no se habrían salvado cambiando la hora. Y al prolongarlas el stop SIGUE puesto, que si no aguantar saldría gratis."
         />}
         pie={curvaSeries.length > 1 ? (() => {
@@ -460,15 +660,22 @@ export default function EdgeTab({ trades, datasetId = "" }: {
       >
         {rec ? (
           <>
-            <CurvaMarginal series={curvaSeries} unidad={rec.unidad}
+            <div style={{ marginBottom: 10 }}>
+              <SelectorPeriodos periodos={curvaSeries.map((s) => s.etiqueta)}
+                                ocultos={ocultos} alternar={alternar} />
+            </div>
+            <CurvaMarginal unidad={rec.unidad}
+                           todas={curvaSeries.map((s) => s.etiqueta)}
+                           series={curvaSeries.filter((s) => !ocultos.has(s.etiqueta))}
                            marcas={[horaA, horaB].filter((x): x is number => x != null)} />
             <div style={{ display: "flex", gap: 15, flexWrap: "wrap", marginTop: 9, fontSize: 11.5,
                           fontFamily: font.mono, color: color.textSecondary }}>
-              {curvaSeries.map((s, i) => (
+              {curvaSeries.filter((s) => !ocultos.has(s.etiqueta)).map((s) => (
                 <span key={s.etiqueta} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <i style={{ width: 14, height: i === curvaSeries.length - 1 ? 3 : 2,
-                              background: rampa(i, curvaSeries.length), display: "block" }} />
-                  {s.etiqueta} · {hhmm(s.pico)}
+                  <i style={{ width: 14, height: 3, display: "block",
+                              background: rampa(curvaSeries.findIndex((x) => x.etiqueta === s.etiqueta),
+                                                curvaSeries.length) }} />
+                  {s.etiqueta} · aplana a las {hhmm(s.pico)}
                 </span>
               ))}
             </div>
@@ -505,16 +712,24 @@ export default function EdgeTab({ trades, datasetId = "" }: {
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12, marginTop: 12 }}>
         <Bloque
+          ancho="1 / -1"
           titulo="Recorrido a favor y en contra (MFE / MAE)"
           ayuda={<Ayuda
             titulo="Recorrido a favor y en contra"
-            ves="Cuánto se movió el precio a tu favor (verde) y en tu contra (rojo) dentro de cada operación, en % sobre el precio de entrada. La caja es el grueso de las operaciones y la raya blanca es la mediana."
+            ves="Cuánto se movió el precio a tu favor (verde) y en tu contra (rojo) dentro de cada operación, en % sobre el precio de entrada. La caja es el grueso de las operaciones y la raya blanca es la mediana. Las dos líneas de puntos unen las medianas: son las que te dicen si esto se está encogiendo, que en cajas sueltas no se ve."
             ejemplo={ultimo ? (
               <>En {ultimo.periodo}, la operación típica llegó a ir {f1(ultimo.mfeP[1])} % a favor y {f1(ultimo.maeP[1])} % en contra.
                 Si el verde se encoge año a año y el rojo no, es que hay menos recorrido que capturar por el mismo
                 riesgo — la señal más temprana de que algo se está agotando.</>
             ) : ""}
             sirve="Es el aviso que llega ANTES que la caída del beneficio, y no depende de los parámetros que tengas puestos: es una propiedad del mercado. Además es de aquí de donde se decide dónde poner el objetivo y el stop, que es lo que ves en los dos gráficos de abajo."
+            escenarios={[
+              ["La línea verde baja y la roja no", "Menos recorrido a favor por el mismo riesgo. Es el aviso más temprano de que algo se agota: baja el objetivo. Míralo en «varía el ratio», ahí abajo."],
+              ["La línea roja sube y la verde no", "Te están doliendo más las malas por el mismo premio. Vete al barrido del stop."],
+              ["Las dos suben a la vez", "No es menos edge: es más volatilidad. Si el ratio de abajo no se mueve, sube stop y objetivo juntos o baja el tamaño; el edge está intacto."],
+              ["Las dos planas", "El mercado no ha cambiado. Si tu resultado ha caído, la causa está en la entrada o en el universo, no aquí."],
+              ["Las dos bajan pero el ratio aguanta", "Todo se ha encogido en la misma proporción. Reduce stop y objetivo a la vez y sigues igual de bien."],
+            ]}
           />}
           pie={ultimo && primero && res.length > 1 ? (
             <>Recorrido a favor típico: <b>{f1(primero.mfeP[1])} % → {f1(ultimo.mfeP[1])} %</b>.
@@ -527,6 +742,30 @@ export default function EdgeTab({ trades, datasetId = "" }: {
             <span style={{ color: color.loss }}>■ en contra (MAE)</span>
             <span>caja p25–p75 · bigote p90 · raya mediana</span>
           </div>
+          {ultimo && primero && res.length > 1 && (() => {
+            // El ratio es el resumen de verdad: cuánto recorrido a favor te dan
+            // por cada unidad de riesgo. Si cae, da igual que el MFE aguante.
+            const rAhora = ultimo.maeP[1] ? ultimo.mfeP[1] / ultimo.maeP[1] : 0;
+            const rAntes = primero.maeP[1] ? primero.mfeP[1] / primero.maeP[1] : 0;
+            const dMfe = primero.mfeP[1] ? ((ultimo.mfeP[1] - primero.mfeP[1]) / primero.mfeP[1]) * 100 : 0;
+            const dMae = primero.maeP[1] ? ((ultimo.maeP[1] - primero.maeP[1]) / primero.maeP[1]) * 100 : 0;
+            const dR = rAntes ? ((rAhora - rAntes) / rAntes) * 100 : 0;
+            return (
+              <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
+                <Cifra k="A favor" v={`${f1(ultimo.mfeP[1])} %`}
+                       s={`${dMfe >= 0 ? "+" : "−"}${f1(Math.abs(dMfe))} % desde ${primero.periodo}`}
+                       tono={dMfe >= 0 ? color.profit : color.loss} />
+                <Cifra k="En contra" v={`${f1(ultimo.maeP[1])} %`}
+                       s={`${dMae >= 0 ? "+" : "−"}${f1(Math.abs(dMae))} % desde ${primero.periodo}`}
+                       tono={dMae <= 0 ? color.profit : color.loss} />
+                <Cifra k="A favor por unidad de riesgo" v={f2(rAhora)}
+                       s={`en ${primero.periodo} era ${f2(rAntes)}`} />
+                <Cifra k="Varía el ratio" v={`${dR >= 0 ? "+" : "−"}${f1(Math.abs(dR))} %`}
+                       s={dR < 0 ? "menos premio por el mismo riesgo" : "más premio por el mismo riesgo"}
+                       tono={dR >= 0 ? color.profit : color.loss} ultima />
+              </div>
+            );
+          })()}
         </Bloque>
 
         <Bloque
@@ -544,6 +783,12 @@ export default function EdgeTab({ trades, datasetId = "" }: {
             })() : <>Si la operación típica tardaba 47 minutos en llegar a su mejor punto y ahora tarda 29, el
               movimiento se está completando antes.</>}
             sirve="Por sí solo no decide nada: es el MECANISMO. Si el punto bueno de la curva de arriba se ha adelantado Y aquí ves que el movimiento también se completa antes, entonces el cambio tiene una explicación y no es casualidad. Si el punto se mueve pero esto no, sospecha del ruido."
+            escenarios={[
+              ["Se adelanta, y el punto de la curva también", "Todo cuadra: hay más gente haciendo lo mismo y llegando antes. Adelantar la salida tiene fundamento, no es solo estadística."],
+              ["No se mueve, pero el punto de la curva sí", "No hay mecanismo que lo explique. Casi seguro que ese desplazamiento es ruido de muestra: no muevas nada."],
+              ["Se retrasa", "El movimiento tarda más en formarse que antes. Aguantar tiene MÁS sentido, no menos."],
+              ["La barra fina es muy larga", "Unas tardan mucho y otras nada: no hay un momento típico, y poner la salida por reloj te va a cortar la mitad de las buenas."],
+            ]}
           />}
           pie={rec && Object.keys(rec.tiempo_mfe).length > 1 ? (() => {
             const ps = rec.periodos.filter((p) => rec.tiempo_mfe[p]);
@@ -553,16 +798,31 @@ export default function EdgeTab({ trades, datasetId = "" }: {
           })() : undefined}
         >
           {rec && Object.keys(rec.tiempo_mfe).length
-            ? <Piruleta sufijo=" min" titulo="minutos desde la entrada hasta el mejor momento"
-                        filas={rec.periodos.filter((p) => rec.tiempo_mfe[p])
-                          .map((p) => ({ etiqueta: p, p: rec.tiempo_mfe[p].p }))} />
+            ? (() => {
+                const ps = rec.periodos.filter((p) => rec.tiempo_mfe[p]);
+                const a = rec.tiempo_mfe[ps[0]], b = rec.tiempo_mfe[ps[ps.length - 1]];
+                const d = b.p[1] - a.p[1];
+                return (
+                  <>
+                    <Piruleta sufijo=" min" titulo="minutos desde la entrada hasta el mejor momento"
+                              filas={ps.map((p) => ({ etiqueta: p, p: rec.tiempo_mfe[p].p }))} />
+                    <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
+                      <Cifra k="Ahora" v={`${f1(b.p[1])} min`} s={`la mitad tarda menos`} />
+                      <Cifra k={`En ${ps[0]}`} v={`${f1(a.p[1])} min`} s="mediana" />
+                      <Cifra k="Diferencia" v={`${d <= 0 ? "−" : "+"}${f1(Math.abs(d))} min`}
+                             s={d <= 0 ? "se adelanta" : "se retrasa"}
+                             tono={d <= 0 ? color.warning : color.info} />
+                      <Cifra k="Las lentas" v={`${f1(b.p[2])} min`} s="1 de cada 4 pasa de aquí" ultima />
+                    </div>
+                  </>
+                );
+              })()
             : <div style={{ color: color.textMuted, fontSize: 12, padding: "28px 0", textAlign: "center" }}>
                 Reconstruye el recorrido en el bloque de arriba para ver esto.
               </div>}
         </Bloque>
 
         <Bloque
-          ancho="1 / -1"
           titulo="¿Está rota? Envolvente de caída"
           ayuda={<Ayuda
             titulo="Envolvente de caída"
@@ -575,6 +835,12 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                   : " La tuya se ha salido de esa raya: ahí sí hay algo que mirar."}</>
             ) : "Hacen falta al menos 30 operaciones."}
             sirve="Es el freno contra apagar una estrategia sana por una mala racha. Toda estrategia con edge produce caídas grandes solo por el orden en que salen las operaciones; esto te dice si la tuya es una de esas o si de verdad se ha salido del guion."
+            escenarios={[
+              ["Tu raya cae en el montón", "Racha perfectamente normal. Ni apagar ni reoptimizar: es lo que tu propia estrategia produce sola."],
+              ["Tu raya está pasada la línea del 95 %", "Lo que has pasado no lo explica el azar de tus operaciones. Mira si cambió el universo, el mercado o el código."],
+              ["Tu raya está justo en la línea", "Zona gris. Espera más operaciones antes de decidir: hoy no puedes distinguir mala suerte de deterioro."],
+              ["El montón entero está muy a la izquierda", "Tu estrategia produce caídas enormes de por sí. El problema no es la racha, es el tamaño de posición."],
+            ]}
             nota="Baraja el orden, no inventa operaciones. Si el mercado ha cambiado, esto no lo detecta — para eso está el bloque de arriba."
           />}
           pie={env ? (
@@ -615,6 +881,13 @@ export default function EdgeTab({ trades, datasetId = "" }: {
           })() : <>Si aguantar media hora más sale a +0,18 y la barra va de +0,11 a +0,25, aguantar gana de
             verdad. Si sale a −0,05 pero la barra va de −0,13 a +0,04, no sabes nada.</>}
           sirve="Es la pregunta del millón hecha bien. Comparar dos resultados totales tiene una potencia malísima; comparar operación a operación solo el tramo entre las dos horas quita casi toda la varianza y detecta con muchísima menos muestra."
+          escenarios={[
+            ["La barra del último periodo NO toca el cero", "La diferencia es real. Si además el signo se repite en el periodo anterior, ya tienes caso para mover la hora."],
+            ["La barra cruza el cero", "No sabes nada: podría ser a favor o en contra. Cambiar aquí es tirar una moneda y llamarlo análisis."],
+            ["El signo se ha dado la vuelta y aguanta dos periodos", "Empieza a haber algo. Todavía falta que el margen deje de cruzar el cero — no te adelantes."],
+            ["Salen pocas operaciones en la columna Ops", "A esa hora quedaban abiertas muy pocas. El margen se dispara y no puedes leer nada: prueba con una hora más temprana."],
+            ["Todos los periodos dicen lo mismo y con margen limpio", "Eso ya no es régimen, es cómo funciona la estrategia. Cambia la hora y no lo vuelvas a mirar cada mes."],
+          ]}
           nota="Las operaciones que ya habían cerrado antes de la hora A no entran. Y las que cerraron entre A y B cuentan con su resultado final, no desaparecen."
         />}
       >
@@ -687,26 +960,34 @@ export default function EdgeTab({ trades, datasetId = "" }: {
               )}
             </div>
 
-            {llaves.ult && (
+            {llaves.ult && (() => {
+              const tono = llaves.estado === "cambiar"
+                ? { fondo: "rgba(74,157,127,.08)", borde: "rgba(74,157,127,.32)", chip: color.profit, texto: "#06140F", titulo: "CAMBIAR" }
+                : llaves.estado === "cuidado"
+                  ? { fondo: "rgba(201,162,63,.08)", borde: "rgba(201,162,63,.32)", chip: color.warning, texto: "#1A0A00", titulo: "CUIDADO" }
+                  : { fondo: "rgba(74,157,127,.05)", borde: color.border, chip: color.bgElevated, texto: color.textSecondary, titulo: "SIN CAMBIOS" };
+              return (
               <div style={{
                 marginTop: 16, padding: "13px 15px", display: "flex", gap: 14,
                 alignItems: "flex-start",
-                background: llaves.cambiar ? "rgba(74,157,127,.08)" : "rgba(201,162,63,.08)",
-                border: `1px solid ${llaves.cambiar ? "rgba(74,157,127,.32)" : "rgba(201,162,63,.32)"}`,
+                background: tono.fondo, border: `1px solid ${tono.borde}`,
               }}>
                 <span style={{
                   fontFamily: font.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
                   padding: "4px 10px", whiteSpace: "nowrap",
-                  background: llaves.cambiar ? color.profit : color.warning,
-                  color: llaves.cambiar ? "#06140F" : "#1A0A00",
-                }}>{llaves.cambiar ? "CAMBIAR" : "MANTENER"}</span>
+                  background: tono.chip, color: tono.texto,
+                }}>{tono.titulo}</span>
                 <div style={{ minWidth: 0 }}>
                   <p style={{ margin: "0 0 7px", fontSize: 13, color: color.textHigh }}>
-                    {llaves.cambiar
+                    {llaves.estado === "cambiar"
                       ? <>Mover la salida, y con encogimiento: a <b>{horaA != null && horaB != null
                           ? hhmm(Math.round((horaA + horaB) / 2)) : "—"}</b>, no de golpe al óptimo.</>
-                      : <>Dejar la salida donde está. No se cumplen las tres llaves, y cambiar aquí sería
-                          perseguir ruido.</>}
+                      : llaves.estado === "cuidado"
+                        ? <>Aún no se toca, pero <b>hay algo cociéndose</b>: se cumplen {llaves.cuantas} de
+                            las 3 llaves. Vuelve a mirarlo en el próximo corte, y si se cumple la que falta,
+                            ahí sí hay caso.</>
+                        : <>Nada que hacer por aquí. No se cumple ninguna de las tres llaves: mover la salida
+                            ahora sería perseguir ruido.</>}
                   </p>
                   <ul style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12.5, color: color.textSecondary }}>
                     {[
@@ -725,10 +1006,25 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                   </ul>
                 </div>
               </div>
-            )}
+              );
+            })()}
           </>
         )}
       </Bloque>
+
+      {series.length > 1 && (
+        <div style={{
+          marginTop: 12, padding: "9px 13px", background: color.bgSurface,
+          border: `1px solid ${color.border}`, display: "flex", alignItems: "center",
+          gap: 14, flexWrap: "wrap",
+        }}>
+          <SelectorPeriodos periodos={series.map((s) => s.etiqueta)}
+                            ocultos={ocultos} alternar={alternar} />
+          <span style={{ fontSize: 11, color: color.textMuted }}>
+            afecta a los dos barridos y a la curva de arriba
+          </span>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12, marginTop: 12 }}>
         <Bloque
@@ -743,6 +1039,12 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                 una respuesta.</>
             ) : mejorTP ? <>El mejor objetivo de este periodo está en {f1(mejorTP.x)} %.</> : ""}
             sirve="Es un barrido de objetivo GRATIS: no hay que lanzar ni un backtest más, sale del recorrido que ya midió el motor. Y como hay una línea por periodo, ves si el punto bueno se está moviendo con el tiempo o siempre estuvo donde está."
+            escenarios={[
+              ["El punto se estrecha año tras año", "Hay menos recorrido que capturar. Baja el objetivo, pero al centro de la zona buena, no al pico exacto."],
+              ["La curva es casi plana", "Da igual dónde lo pongas: no dediques tiempo a esto y vete a mirar la entrada o el stop."],
+              ["Sube hasta el borde del gráfico", "A esta estrategia le sienta mal ponerle objetivo. Deja correr y controla la salida por hora o por stop."],
+              ["Hay un pico estrecho y alto", "Ese óptimo es de la muestra, no del mercado: si lo pones, el año que viene estará en otro sitio. Elige meseta, nunca pico."],
+            ]}
             nota="Es por operación aislada: no simula reentradas, ni piramidación, ni el capital. Sirve para orientar dónde mirar, no como promesa de beneficio."
           />}
           pie={mejorTP ? (tpBorde
@@ -753,7 +1055,8 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                 Elige el centro de la meseta, no el pico exacto.</>) : undefined}
         >
           {series.length
-            ? <Barrido series={series.map((s) => s.tp)} unidad={hayR ? "R" : "%"}
+            ? <Barrido todas={series.map((s) => s.etiqueta)} unidad={hayR ? "R" : "%"}
+                       series={series.filter((s) => !ocultos.has(s.etiqueta)).map((s) => s.tp)}
                        ejeX={`take profit · resultado medio por operación en ${hayR ? "R" : "% de precio"}`} />
             : <div style={{ color: color.textMuted, fontSize: 12 }}>
                 Ningún periodo llega a {MIN_OPS} operaciones.
@@ -771,6 +1074,12 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                 {slActual != null && <> Ahora mismo llevas la mediana en {f1(slActual)} % — es la raya amarilla.</>}</>
             ) : ""}
             sirve="Te dice si el stop que llevas está en la zona buena o te has quedado descolgado. Y comparando las líneas de los distintos periodos ves si el stop bueno lleva años en el mismo sitio (lo normal) o se está moviendo."
+            escenarios={[
+              ["La raya «ahora» cae en la zona alta", "Nada que hacer, tu stop está donde debe."],
+              ["El pico está muy por debajo de tu raya", "Estás pagando caras las malas. Pero antes de apretarlo mira el MAE: un stop más corto salta más veces, y eso aquí no se ve del todo."],
+              ["La curva se hunde por la izquierda", "Los stops cortos te barren. Es lo normal en esto, y es la razón de que el barrido empiece en el 1 %."],
+              ["El pico salta mucho de un año a otro", "No hay un stop bueno estable. Quédate en el centro de la zona y no lo persigas cada año."],
+            ]}
             nota="En R obligatoriamente. Con «Shares por distancia al SL» encendido, acortar el stop agranda la posición, así que el resultado en dinero no se puede comparar entre stops distintos. En múltiplos de riesgo sí. Y el barrido empieza en el 1 % a propósito: por debajo, la vela de un minuto no tiene resolución para decir si el stop habría saltado o no, y saldrían R's imposibles."
           />}
           pie={mejorSL ? (slBorde
@@ -780,7 +1089,8 @@ export default function EdgeTab({ trades, datasetId = "" }: {
                 {slActual != null && <> · el que llevas: <b>{f1(slActual)} %</b></>}.</>) : undefined}
         >
           {series.length
-            ? <Barrido series={series.map((s) => s.sl)} unidad="R" marcaActual={slActual}
+            ? <Barrido todas={series.map((s) => s.etiqueta)} unidad="R" marcaActual={slActual}
+                       series={series.filter((s) => !ocultos.has(s.etiqueta)).map((s) => s.sl)}
                        ejeX="stop loss · resultado medio por operación en R" />
             : <div style={{ color: color.textMuted, fontSize: 12 }}>
                 Ningún periodo llega a {MIN_OPS} operaciones.
