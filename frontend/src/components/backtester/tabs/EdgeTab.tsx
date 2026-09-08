@@ -14,14 +14,18 @@
 
 import React, { useMemo, useState } from "react";
 import type { TradeRecord } from "@/lib/api_backtester";
-import { Table, Th, Td, Tr, color, font, radius } from "@/components/ui";
+// Sin `radius` a propósito: esta pestaña va cuadrada, estilo hoja de cálculo.
+import { Table, Th, Td, Tr, color, font } from "@/components/ui";
 import { Help } from "@/components/robustez/help";
 import {
   agrupar, barridoSL, barridoTP, envolventeDD, f1, f2, mejorPunto,
-  miles, percentil, preparar, rangoBarrido, resumir, serieMensual, sgn, tocaBorde,
+  miles, percentil, periodKey, preparar, rangoBarrido, resumir, serieMensual, sgn, tocaBorde,
   unidadDisponible, type Modo, type Unidad,
 } from "./edge/calc";
-import { Barras, Barrido, Excursiones, Forest, Histograma, Mensual } from "./edge/charts";
+import {
+  Barras, Barrido, CurvaMarginal, Excursiones, Forest, Histograma, Mensual, Piruleta, hhmm, rampa,
+} from "./edge/charts";
+import { pedirRecorrido, type Recorrido } from "@/lib/api_edge";
 
 /* ---- piezas de presentación ---- */
 
@@ -63,12 +67,12 @@ function Bloque({ titulo, ayuda, pie, children, ancho }: {
 }) {
   return (
     <div style={{
-      background: color.bgSurface, border: `0.5px solid ${color.border}`,
-      borderRadius: radius.md, overflow: "hidden", display: "flex",
+      background: color.bgSurface, border: `1px solid ${color.border}`,
+      overflow: "hidden", display: "flex",
       flexDirection: "column", minWidth: 0, gridColumn: ancho,
     }}>
       <div style={{
-        background: color.bgElevated, borderBottom: `0.5px solid ${color.border}`,
+        background: color.bgElevated, borderBottom: `1px solid ${color.border}`,
         padding: "8px 13px", display: "flex", alignItems: "center", gap: 9,
       }}>
         <h3 style={{
@@ -113,15 +117,15 @@ function Cifra({ k, v, s, tono }: { k: string; v: string; s?: string; tono?: str
 const Seg = <T extends string>({ valor, opciones, onChange }: {
   valor: T; opciones: { id: T; label: string }[]; onChange: (v: T) => void;
 }) => (
-  <div style={{ display: "flex", border: `0.5px solid ${color.border}`, borderRadius: radius.sm, overflow: "hidden" }}>
+  <div style={{ display: "flex", border: `1px solid ${color.border}`, overflow: "hidden" }}>
     {opciones.map((o, i) => (
       <button key={o.id} onClick={() => onChange(o.id)}
         style={{
           background: valor === o.id ? color.copper : color.bgBase,
           color: valor === o.id ? "var(--color-ec-copper-text)" : color.textSecondary,
           fontWeight: valor === o.id ? 600 : 400,
-          border: 0, borderLeft: i ? `0.5px solid ${color.border}` : undefined,
-          fontFamily: font.sans, fontSize: 11.5, padding: "5px 11px", cursor: "pointer",
+          border: 0, borderLeft: i ? `1px solid ${color.border}` : undefined,
+          fontFamily: font.sans, fontSize: 11.5, height: 28, padding: "0 12px", cursor: "pointer",
         }}>{o.label}</button>
     ))}
   </div>
@@ -131,11 +135,21 @@ const Seg = <T extends string>({ valor, opciones, onChange }: {
 
 const MIN_OPS = 100;
 
-export default function EdgeTab({ trades }: { trades: TradeRecord[] }) {
+export default function EdgeTab({ trades, datasetId = "" }: {
+  trades: TradeRecord[]; datasetId?: string;
+}) {
   const [modo, setModo] = useState<Modo>("anio");
   const unidadMax = useMemo(() => unidadDisponible(trades), [trades]);
   const [unidad, setUnidad] = useState<Unidad>(unidadMax);
   const u: Unidad = unidadMax === "$" ? "$" : unidad;
+
+  // El recorrido minuto a minuto es lo único que pide algo al backend, y relee
+  // las velas de cada ticker-día: se pide con un botón, nunca al abrir la tab.
+  const [rec, setRec] = useState<Recorrido | null>(null);
+  const [cargandoRec, setCargandoRec] = useState(false);
+  const [errorRec, setErrorRec] = useState<string | null>(null);
+  const [horaA, setHoraA] = useState<number | null>(null);
+  const [horaB, setHoraB] = useState<number | null>(null);
 
   const datos = useMemo(() => {
     const filas = preparar(trades, modo, u);
@@ -174,6 +188,71 @@ export default function EdgeTab({ trades }: { trades: TradeRecord[] }) {
   const primero = res[0];
   const flojos = res.filter((r) => r.n < MIN_OPS);
 
+  const pedir = () => {
+    setCargandoRec(true); setErrorRec(null);
+    pedirRecorrido(datasetId, trades, (t) => periodKey(t.date, modo), u === "R" ? "R" : "pct")
+      .then((r) => {
+        setRec(r);
+        // Por defecto se contrastan las dos horas que el propio gráfico señala:
+        // donde deja de compensar aguantar HOY contra donde dejaba antes.
+        const pico = (p: string) => {
+          const c = r.curva[p];
+          if (!c || !c.length) return null;
+          const mejor = c.reduce((a, b) => (b.media > a.media ? b : a));
+          return r.horas.reduce((a, h) =>
+            Math.abs(h - mejor.m) < Math.abs(a - mejor.m) ? h : a, r.horas[0] ?? 0);
+        };
+        const nuevo = pico(r.periodos[r.periodos.length - 1]);
+        const viejo = pico(r.periodos[0]);
+        setHoraA(nuevo ?? r.horas[0] ?? null);
+        setHoraB(viejo != null && viejo !== nuevo ? viejo : r.horas[r.horas.length - 1] ?? null);
+      })
+      .catch((e) => setErrorRec(e?.message || "No se pudo reconstruir el recorrido"))
+      .finally(() => setCargandoRec(false));
+  };
+
+  // Series de la curva + el minuto donde cada periodo deja de compensar.
+  const curvaSeries = useMemo(() => {
+    if (!rec) return [];
+    return rec.periodos
+      .filter((p) => rec.curva[p]?.length)
+      .map((p) => {
+        const puntos = rec.curva[p];
+        const pico = puntos.reduce((a, b) => (b.media > a.media ? b : a));
+        return { etiqueta: p, puntos, pico: pico.m };
+      });
+  }, [rec]);
+
+  const deltaFilas = useMemo(() => {
+    if (!rec || horaA == null || horaB == null) return [];
+    const out: { etiqueta: string; v: number; lo: number; hi: number; n: number }[] = [];
+    for (const p of rec.periodos) {
+      const d = rec.delta[p]?.[String(horaA)]?.[String(horaB)];
+      if (!d) continue;
+      out.push({ etiqueta: p, v: d.media, lo: d.media - 1.96 * d.ee, hi: d.media + 1.96 * d.ee, n: d.n });
+    }
+    return out;
+  }, [rec, horaA, horaB]);
+
+  // Las tres llaves. Sin las tres, no se toca.
+  const llaves = useMemo(() => {
+    const ult = deltaFilas[deltaFilas.length - 1];
+    const pen = deltaFilas[deltaFilas.length - 2];
+    const c1 = !!ult && (ult.lo > 0 || ult.hi < 0);
+    const c2 = !!ult && !!pen && Math.sign(ult.v) === Math.sign(pen.v);
+    // «Ordenado» = el punto bueno se desplaza siempre en el mismo sentido en los
+    // últimos tres periodos. Un vaivén es ruido, no un cambio de régimen.
+    const picos = curvaSeries.slice(-3).map((s) => s.pico);
+    let c3 = false;
+    if (picos.length >= 3) {
+      const d1 = picos[1] - picos[0], d2 = picos[2] - picos[1];
+      c3 = (d1 <= 0 && d2 <= 0 && d1 + d2 !== 0) || (d1 >= 0 && d2 >= 0 && d1 + d2 !== 0);
+    }
+    return { c1, c2, c3, cambiar: c1 && c2 && c3, ult };
+  }, [deltaFilas, curvaSeries]);
+
+  // La salida anticipada va DESPUÉS de todos los hooks: si no, con un resultado
+  // sin operaciones React vería un número distinto de hooks y reventaría.
   if (!trades.length) {
     return <div style={{ padding: 24, color: color.textMuted, fontFamily: font.sans }}>
       Este resultado no tiene operaciones que analizar.
@@ -355,7 +434,76 @@ export default function EdgeTab({ trades }: { trades: TradeRecord[] }) {
 
       {/* === FASE 3 === */}
       <Fase n="3 · ¿Dónde y por qué?" />
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
+      <Bloque
+        titulo="Curva de valor marginal: a qué hora deja de compensar aguantar"
+        ayuda={<Ayuda
+          titulo="Curva de valor marginal"
+          ves={`Cuánto habrías ganado de media por operación si tu hora de salida fuera esa, en vez de la que tienes. Una línea por periodo; el punto marca dónde deja de compensar aguantar más.`}
+          ejemplo={curvaSeries.length > 1 ? (
+            <>Mira {curvaSeries[curvaSeries.length - 1].etiqueta}: la curva deja de subir a
+              las {hhmm(curvaSeries[curvaSeries.length - 1].pico)}. En {curvaSeries[0].etiqueta} aguantaba
+              hasta las {hhmm(curvaSeries[0].pico)}. Si ese punto se ha ido adelantando año a año, el
+              movimiento se agota antes que antes — y tu hora de salida se ha quedado tarde.</>
+          ) : <>Cada línea dice cuánto llevarías ganado de media si salieras a esa hora. Donde la línea deja de
+              subir, aguantar más ya no te paga.</>}
+          sirve="No compara dos horas: las evalúa TODAS a la vez y con todas las operaciones. Es de aquí de donde sale la hora de salida y el fin de sesión. Y si las líneas de los distintos años se pisan, es que no ha cambiado nada."
+          nota="Solo se prolongan las operaciones que cerraron por hora (EOD o Time Limit): las que murieron por stop o por objetivo no se habrían salvado cambiando la hora. Y al prolongarlas el stop SIGUE puesto, que si no aguantar saldría gratis."
+        />}
+        pie={curvaSeries.length > 1 ? (() => {
+          const d = curvaSeries[curvaSeries.length - 1].pico - curvaSeries[0].pico;
+          return d === 0
+            ? <>El punto de aplanamiento <b>no se ha movido</b> entre el primer periodo y el último.</>
+            : <>El punto de aplanamiento se ha <b style={{ color: d < 0 ? color.warning : color.info }}>
+                {d < 0 ? "adelantado" : "retrasado"} {Math.abs(d)} minutos</b> desde {curvaSeries[0].etiqueta}.
+                Que se mueva de forma ordenada es la tercera de las tres llaves.</>;
+        })() : undefined}
+      >
+        {rec ? (
+          <>
+            <CurvaMarginal series={curvaSeries} unidad={rec.unidad}
+                           marcas={[horaA, horaB].filter((x): x is number => x != null)} />
+            <div style={{ display: "flex", gap: 15, flexWrap: "wrap", marginTop: 9, fontSize: 11.5,
+                          fontFamily: font.mono, color: color.textSecondary }}>
+              {curvaSeries.map((s, i) => (
+                <span key={s.etiqueta} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <i style={{ width: 14, height: i === curvaSeries.length - 1 ? 3 : 2,
+                              background: rampa(i, curvaSeries.length), display: "block" }} />
+                  {s.etiqueta} · {hhmm(s.pico)}
+                </span>
+              ))}
+            </div>
+            <div style={{ marginTop: 9, fontSize: 11, color: color.textMuted }}>
+              {miles(rec.trades_usados)} operaciones reconstruidas
+              {rec.sin_velas > 0 && <> · {miles(rec.sin_velas)} sin velas disponibles</>}
+              {" "}· se prolonga hasta {rec.horizonte} min después de la entrada
+            </div>
+          </>
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+            {/* El dataset NO es obligatorio: el backend resuelve las velas por
+                ticker/año/mes contra la caché de disco y solo lo usa para el
+                camino de respaldo. Exigirlo dejaba el botón muerto sin motivo. */}
+            <button onClick={pedir} disabled={cargandoRec}
+              style={{
+                background: cargandoRec ? color.bgElevated : color.copper,
+                color: cargandoRec ? color.textMuted : "var(--color-ec-copper-text)",
+                border: `1px solid ${color.border}`,
+                fontFamily: font.sans, fontSize: 12, fontWeight: 600, letterSpacing: "0.04em",
+                height: 30, padding: "0 18px", cursor: cargandoRec ? "wait" : "pointer",
+              }}>
+              {cargandoRec ? "RECONSTRUYENDO…" : "RECONSTRUIR EL RECORRIDO"}
+            </button>
+            <span style={{ fontSize: 11.5, color: color.textMuted, maxWidth: "60ch", lineHeight: 1.5 }}>
+              {cargandoRec
+                ? "Releyendo las velas de cada ticker-día. Con miles de operaciones tarda un rato; no recarga la página."
+                : "Estos tres bloques necesitan volver a leer las velas, así que no se calculan solos. Es la única parte de la pestaña que pide algo al servidor."}
+            </span>
+            {errorRec && <span style={{ fontSize: 11.5, color: color.loss }}>{errorRec}</span>}
+          </div>
+        )}
+      </Bloque>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12, marginTop: 12 }}>
         <Bloque
           titulo="Recorrido a favor y en contra (MFE / MAE)"
           ayuda={<Ayuda
@@ -382,6 +530,39 @@ export default function EdgeTab({ trades }: { trades: TradeRecord[] }) {
         </Bloque>
 
         <Bloque
+          titulo="Tiempo hasta el máximo a favor"
+          ayuda={<Ayuda
+            titulo="Tiempo hasta el máximo a favor"
+            ves="Cuántos minutos pasan, desde que entras, hasta que la operación alcanza su mejor momento. El punto es la mediana y la línea fina va del 25 % al 75 % de las operaciones."
+            ejemplo={rec && Object.keys(rec.tiempo_mfe).length > 1 ? (() => {
+              const ps = rec.periodos.filter((p) => rec.tiempo_mfe[p]);
+              const a = rec.tiempo_mfe[ps[0]], b = rec.tiempo_mfe[ps[ps.length - 1]];
+              return <>En {ps[0]} la operación típica tardaba {f1(a.p[1])} minutos en llegar a su mejor punto;
+                en {ps[ps.length - 1]} tarda {f1(b.p[1])}. {b.p[1] < a.p[1]
+                  ? "Se ha adelantado: el movimiento se completa antes que antes."
+                  : "No se ha adelantado, así que por este lado no hay nada raro."}</>;
+            })() : <>Si la operación típica tardaba 47 minutos en llegar a su mejor punto y ahora tarda 29, el
+              movimiento se está completando antes.</>}
+            sirve="Por sí solo no decide nada: es el MECANISMO. Si el punto bueno de la curva de arriba se ha adelantado Y aquí ves que el movimiento también se completa antes, entonces el cambio tiene una explicación y no es casualidad. Si el punto se mueve pero esto no, sospecha del ruido."
+          />}
+          pie={rec && Object.keys(rec.tiempo_mfe).length > 1 ? (() => {
+            const ps = rec.periodos.filter((p) => rec.tiempo_mfe[p]);
+            const d = rec.tiempo_mfe[ps[ps.length - 1]].p[1] - rec.tiempo_mfe[ps[0]].p[1];
+            return <>La mediana se ha <b style={{ color: d < 0 ? color.warning : color.info }}>
+              {d < 0 ? "adelantado" : "retrasado"} {f1(Math.abs(d))} minutos</b> desde {ps[0]}.</>;
+          })() : undefined}
+        >
+          {rec && Object.keys(rec.tiempo_mfe).length
+            ? <Piruleta sufijo=" min" titulo="minutos desde la entrada hasta el mejor momento"
+                        filas={rec.periodos.filter((p) => rec.tiempo_mfe[p])
+                          .map((p) => ({ etiqueta: p, p: rec.tiempo_mfe[p].p }))} />
+            : <div style={{ color: color.textMuted, fontSize: 12, padding: "28px 0", textAlign: "center" }}>
+                Reconstruye el recorrido en el bloque de arriba para ver esto.
+              </div>}
+        </Bloque>
+
+        <Bloque
+          ancho="1 / -1"
           titulo="¿Está rota? Envolvente de caída"
           ayuda={<Ayuda
             titulo="Envolvente de caída"
@@ -419,7 +600,137 @@ export default function EdgeTab({ trades }: { trades: TradeRecord[] }) {
 
       {/* === FASE 4 === */}
       <Fase n="4 · ¿Cambio algo?" />
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12 }}>
+      <Bloque
+        titulo="Comparar dos horas de salida"
+        ayuda={<Ayuda
+          titulo="Comparar dos horas de salida"
+          ves="De cada operación que ya estaba abierta a la hora A, cuánto suma o resta aguantar hasta la hora B. El punto es la media y la barra es hasta dónde podría estar de verdad."
+          ejemplo={deltaFilas.length ? (() => {
+            const x = deltaFilas[deltaFilas.length - 1];
+            const cruza = x.lo <= 0 && x.hi >= 0;
+            return <>En {x.etiqueta} aguantar sale a {sgn(x.v)} {rec?.unidad ?? uL} de media, y la barra va
+              de {sgn(x.lo, 2)} a {sgn(x.hi, 2)}. {cruza
+                ? "Como la barra cruza el cero, no puedes distinguirlo de la mala suerte: podría ser a favor o en contra."
+                : "Como la barra NO toca el cero, la diferencia es real."}</>;
+          })() : <>Si aguantar media hora más sale a +0,18 y la barra va de +0,11 a +0,25, aguantar gana de
+            verdad. Si sale a −0,05 pero la barra va de −0,13 a +0,04, no sabes nada.</>}
+          sirve="Es la pregunta del millón hecha bien. Comparar dos resultados totales tiene una potencia malísima; comparar operación a operación solo el tramo entre las dos horas quita casi toda la varianza y detecta con muchísima menos muestra."
+          nota="Las operaciones que ya habían cerrado antes de la hora A no entran. Y las que cerraron entre A y B cuentan con su resultado final, no desaparecen."
+        />}
+      >
+        {!rec ? (
+          <div style={{ color: color.textMuted, fontSize: 12, padding: "22px 0", textAlign: "center" }}>
+            Reconstruye el recorrido en la fase 3 para poder comparar horas.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11.5, color: color.textMuted }}>Salir a las</span>
+                <select value={horaA ?? ""} onChange={(e) => setHoraA(Number(e.target.value))}
+                  style={{ background: color.bgBase, border: `1px solid ${color.border}`,
+                           color: color.textHigh, fontFamily: font.mono,
+                           fontSize: 12.5, height: 28, padding: "0 8px" }}>
+                  {rec.horas.map((h) => <option key={h} value={h}>{hhmm(h)}</option>)}
+                </select>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 11.5, color: color.textMuted }}>frente a</span>
+                <select value={horaB ?? ""} onChange={(e) => setHoraB(Number(e.target.value))}
+                  style={{ background: color.bgBase, border: `1px solid ${color.border}`,
+                           color: color.textHigh, fontFamily: font.mono,
+                           fontSize: 12.5, height: 28, padding: "0 8px" }}>
+                  {rec.horas.map((h) => <option key={h} value={h}>{hhmm(h)}</option>)}
+                </select>
+              </div>
+              <span style={{ fontSize: 11, color: color.textMuted }}>
+                unidad: {rec.unidad} por operación abierta a las {horaA != null ? hhmm(horaA) : "—"}
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 16, alignItems: "start" }}>
+              <div style={{ overflowX: "auto" }}>
+                <Table>
+                  <thead><Tr>
+                    <Th>Periodo</Th>
+                    <Th style={{ textAlign: "right" }}>Aguantar</Th>
+                    <Th style={{ textAlign: "right" }}>Margen</Th>
+                    <Th style={{ textAlign: "right" }}>Ops</Th>
+                    <Th style={{ textAlign: "right" }}>Veredicto</Th>
+                  </Tr></thead>
+                  <tbody>
+                    {deltaFilas.map((d, i) => {
+                      const sig = d.lo > 0 || d.hi < 0;
+                      return (
+                        <Tr key={d.etiqueta}>
+                          <Td style={{ fontFamily: font.mono,
+                                       color: i === deltaFilas.length - 1 ? color.copperBright : color.textHigh }}>
+                            {d.etiqueta}</Td>
+                          <Td style={{ ...num, color: d.v >= 0 ? color.profit : color.loss, fontWeight: 600 }}>
+                            {sgn(d.v)}</Td>
+                          <Td style={{ ...num, color: color.textMuted, fontSize: 12 }}>
+                            [{sgn(d.lo, 2)}, {sgn(d.hi, 2)}]</Td>
+                          <Td style={num}>{miles(d.n)}</Td>
+                          <Td style={{ textAlign: "right", fontSize: 11.5,
+                                       color: sig ? (d.v > 0 ? color.profit : color.loss) : color.textMuted }}>
+                            {sig ? (d.v > 0 ? "Aguantar gana" : "Salir antes gana") : "No distinguible"}</Td>
+                        </Tr>
+                      );
+                    })}
+                  </tbody>
+                </Table>
+              </div>
+              {deltaFilas.length > 0 && (
+                <Forest filas={deltaFilas} unidad={rec.unidad}
+                        extremos={["← salir antes", "aguantar →"]}
+                        leyenda={`lo que suma aguantar de ${horaA != null ? hhmm(horaA) : "A"} a ${horaB != null ? hhmm(horaB) : "B"} (${rec.unidad})`} />
+              )}
+            </div>
+
+            {llaves.ult && (
+              <div style={{
+                marginTop: 16, padding: "13px 15px", display: "flex", gap: 14,
+                alignItems: "flex-start",
+                background: llaves.cambiar ? "rgba(74,157,127,.08)" : "rgba(201,162,63,.08)",
+                border: `1px solid ${llaves.cambiar ? "rgba(74,157,127,.32)" : "rgba(201,162,63,.32)"}`,
+              }}>
+                <span style={{
+                  fontFamily: font.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.08em",
+                  padding: "4px 10px", whiteSpace: "nowrap",
+                  background: llaves.cambiar ? color.profit : color.warning,
+                  color: llaves.cambiar ? "#06140F" : "#1A0A00",
+                }}>{llaves.cambiar ? "CAMBIAR" : "MANTENER"}</span>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ margin: "0 0 7px", fontSize: 13, color: color.textHigh }}>
+                    {llaves.cambiar
+                      ? <>Mover la salida, y con encogimiento: a <b>{horaA != null && horaB != null
+                          ? hhmm(Math.round((horaA + horaB) / 2)) : "—"}</b>, no de golpe al óptimo.</>
+                      : <>Dejar la salida donde está. No se cumplen las tres llaves, y cambiar aquí sería
+                          perseguir ruido.</>}
+                  </p>
+                  <ul style={{ listStyle: "none", margin: 0, padding: 0, fontSize: 12.5, color: color.textSecondary }}>
+                    {[
+                      [llaves.c1, "El margen del periodo más reciente no cruza el cero"],
+                      [llaves.c2, "El signo se repite en los dos últimos periodos"],
+                      [llaves.c3, "El punto bueno se desplaza siempre en el mismo sentido"],
+                    ].map(([ok, txt], i) => (
+                      <li key={i} style={{ padding: "2px 0 2px 26px", position: "relative" }}>
+                        <span style={{
+                          position: "absolute", left: 0, top: 3, fontFamily: font.mono, fontSize: 10,
+                          fontWeight: 700, color: ok ? color.profit : color.loss,
+                        }}>{ok ? "SÍ" : "NO"}</span>
+                        {txt as string}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </Bloque>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12, marginTop: 12 }}>
         <Bloque
           titulo="Barrido de Take Profit"
           ayuda={<Ayuda
@@ -478,8 +789,8 @@ export default function EdgeTab({ trades }: { trades: TradeRecord[] }) {
       </div>
 
       <div style={{
-        marginTop: 16, padding: "10px 13px", border: `0.5px solid ${color.border}`,
-        borderLeft: `2px solid ${color.copper}`, borderRadius: radius.sm,
+        marginTop: 16, padding: "10px 13px", border: `1px solid ${color.border}`,
+        borderLeft: `2px solid ${color.copper}`,
         background: color.bgSurface, fontSize: 11.5, color: color.textSecondary, lineHeight: 1.55,
       }}>
         <b style={{ color: color.textHigh }}>Antes de tocar un parámetro, las tres llaves.</b>{" "}

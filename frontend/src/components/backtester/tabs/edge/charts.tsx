@@ -47,9 +47,13 @@ const Rejilla = ({ x1, x2, y, label, ta = "end" as const, lx }:
 
 /* ---- 1. Forest: valor central con su intervalo ---- */
 
-export function Forest({ filas, unidad }: {
+export function Forest({ filas, unidad, leyenda, extremos }: {
   filas: { etiqueta: string; v: number; lo: number; hi: number }[];
   unidad: string;
+  /** Qué mide el eje. Por defecto, la expectancy. */
+  leyenda?: string;
+  /** Etiquetas de los dos lados del cero, cuando el signo significa algo. */
+  extremos?: [string, string];
 }) {
   const W = 460, H = Math.max(150, 46 + filas.length * 30), L = 78, R = 20, Tp = 24, B = 32;
   const vals = filas.flatMap((f) => [f.lo, f.hi, 0]);
@@ -81,8 +85,14 @@ export function Forest({ filas, unidad }: {
           </React.Fragment>
         );
       })}
+      {extremos && (
+        <>
+          <Txt x={X(lo + (hi - lo) * 0.22)} y={Tp - 9} fs={10} fill={T.mut}>{extremos[0]}</Txt>
+          <Txt x={X(lo + (hi - lo) * 0.78)} y={Tp - 9} fs={10} fill={T.mut}>{extremos[1]}</Txt>
+        </>
+      )}
       <Txt x={L + (W - L - R) / 2} y={H - 6} fs={10} fill={T.mut}>
-        expectancy por operación ({unidad}) · la barra es el intervalo de confianza del 95 %
+        {leyenda ?? `expectancy por operación (${unidad})`} · la barra es el intervalo de confianza del 95 %
       </Txt>
     </Svg>
   );
@@ -110,7 +120,7 @@ export function Barras({ filas, sufijo, titulo }: {
         const alto = Math.max(0, H - B - Y(f.v));
         return (
           <React.Fragment key={f.etiqueta}>
-            <rect x={x - ancho / 2} y={Y(f.v)} width={ancho} height={alto} fill={c} rx={2} />
+            <rect x={x - ancho / 2} y={Y(f.v)} width={ancho} height={alto} fill={c} />
             <Txt x={x} y={Y(f.v) - 6} fs={10.5} mono fill={c} w={600}>{f1(f.v) + sufijo}</Txt>
             <Txt x={x} y={H - B + 15} fs={10} mono
                  fill={i === filas.length - 1 ? T.hi : T.mut}>{f.etiqueta}</Txt>
@@ -193,7 +203,7 @@ export function Excursiones({ filas }: {
               <React.Fragment key={k}>
                 <line x1={cx + off} y1={Y(p[0])} x2={cx + off} y2={Y(p[3])} stroke={c} strokeWidth={1.2} />
                 <rect x={cx + off - 6} y={Y(p[2])} width={12}
-                      height={Math.max(1, Y(p[0]) - Y(p[2]))} fill={c} opacity={0.34} rx={1.5} />
+                      height={Math.max(1, Y(p[0]) - Y(p[2]))} fill={c} opacity={0.34} />
                 <line x1={cx + off - 7} y1={Y(p[1])} x2={cx + off + 7} y2={Y(p[1])}
                       stroke={T.hi} strokeWidth={1.8} />
               </React.Fragment>
@@ -265,7 +275,103 @@ export function Barrido({ series, unidad, ejeX, marcaActual }: {
   );
 }
 
-/* ---- 6. Envolvente de drawdown ---- */
+/* ---- 6. Curva de valor marginal (necesita el recorrido) ---- */
+
+export const hhmm = (m: number) =>
+  String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(Math.round(m) % 60).padStart(2, "0");
+
+export function CurvaMarginal({ series, unidad, marcas }: {
+  series: { etiqueta: string; puntos: { m: number; media: number }[]; pico: number | null }[];
+  unidad: string; marcas: number[];
+}) {
+  const W = 900, H = 330, L = 54, R = 22, Tp = 30, B = 44;
+  const todos = series.flatMap((s) => s.puntos);
+  if (todos.length < 2) return null;
+  const m0 = Math.min(...todos.map((p) => p.m)), m1 = Math.max(...todos.map((p) => p.m));
+  const vmin = Math.min(...todos.map((p) => p.media)), vmax = Math.max(...todos.map((p) => p.media));
+  const pad = (vmax - vmin) * 0.12 || 0.1;
+  const lo = vmin - pad, hi = vmax + pad;
+  const X = (m: number) => L + ((m - m0) / Math.max(1, m1 - m0)) * (W - L - R);
+  const Y = (v: number) => H - B - ((v - lo) / (hi - lo)) * (H - B - Tp);
+  const salto = Math.max(15, Math.round((m1 - m0) / 6 / 15) * 15);
+  const ticks: number[] = [];
+  for (let m = Math.ceil(m0 / salto) * salto; m <= m1; m += salto) ticks.push(m);
+  return (
+    <Svg w={W} h={H}>
+      {[0, 0.25, 0.5, 0.75, 1].map((k, i) => {
+        const v = lo + (hi - lo) * k;
+        return <Rejilla key={i} x1={L} x2={W - R} y={Y(v)} lx={L - 9} label={sgn(v, 2)} />;
+      })}
+      {lo < 0 && hi > 0 && <line x1={L} y1={Y(0)} x2={W - R} y2={Y(0)} stroke={T.mut} strokeWidth={1} />}
+      {ticks.map((m) => (
+        <React.Fragment key={m}>
+          <line x1={X(m)} y1={Tp} x2={X(m)} y2={H - B} stroke={T.bd} strokeWidth={1} />
+          <Txt x={X(m)} y={H - B + 16} fs={10.5} mono>{hhmm(m)}</Txt>
+        </React.Fragment>
+      ))}
+      {marcas.filter((m) => m >= m0 && m <= m1).map((m, i) => (
+        <React.Fragment key={`marca-${m}`}>
+          <line x1={X(m)} y1={Tp - 6} x2={X(m)} y2={H - B} stroke={T.cop} strokeWidth={1} strokeDasharray="3 3" />
+          <rect x={X(m) - 25} y={Tp - 20} width={50} height={15} fill={T.elev} stroke={T.cop} />
+          <Txt x={X(m)} y={Tp - 9} fs={10} mono fill={color.copperBright} w={600}>{hhmm(m)}</Txt>
+          <Txt x={X(m)} y={H - B + 29} fs={9.5} fill={T.mut}>{i === 0 ? "A" : "B"}</Txt>
+        </React.Fragment>
+      ))}
+      {series.map((s, i) => {
+        const c = rampa(i, series.length), ultimo = i === series.length - 1;
+        const pico = s.pico != null ? s.puntos.find((p) => p.m === s.pico) : null;
+        return (
+          <React.Fragment key={s.etiqueta}>
+            <path d={"M" + s.puntos.map((p) => `${X(p.m).toFixed(1)} ${Y(p.media).toFixed(1)}`).join(" L ")}
+                  fill="none" stroke={c} strokeWidth={ultimo ? 2.6 : 1.7}
+                  strokeLinejoin="round" strokeLinecap="round" />
+            {pico && <circle cx={X(pico.m)} cy={Y(pico.media)} r={ultimo ? 4.5 : 3.4}
+                             fill={c} stroke={T.surf} strokeWidth={1.5} />}
+          </React.Fragment>
+        );
+      })}
+      <Txt x={L - 9} y={Tp - 8} ta="end" fs={10} fill={T.mut}>{unidad}</Txt>
+      <Txt x={L + (W - L - R) / 2} y={H - 6} fs={10.5} fill={T.mut}>
+        hora de salida (ET) - el punto marca donde deja de compensar aguantar
+      </Txt>
+    </Svg>
+  );
+}
+
+/* ---- 7. Tiempo hasta el maximo a favor ---- */
+
+export function Piruleta({ filas, sufijo, titulo }: {
+  filas: { etiqueta: string; p: number[] }[]; sufijo: string; titulo: string;
+}) {
+  const W = 460, H = 205, L = 42, R = 16, Tp = 26, B = 30;
+  const max = Math.max(...filas.flatMap((f) => f.p)) * 1.15 || 1;
+  const paso = (W - L - R) / Math.max(1, filas.length);
+  const Y = (v: number) => H - B - (v / max) * (H - B - Tp);
+  return (
+    <Svg w={W} h={H}>
+      {[0, 0.25, 0.5, 0.75, 1].map((k, i) => (
+        <Rejilla key={i} x1={L} x2={W - R} y={Y(max * k)} lx={L - 7} label={f1(max * k)} />
+      ))}
+      <Txt x={L} y={Tp - 9} ta="start" fs={10} fill={T.mut}>{titulo}</Txt>
+      <path d={"M" + filas.map((f, i) => `${L + paso * i + paso / 2} ${Y(f.p[1])}`).join(" L ")}
+            fill="none" stroke={T.bd} strokeWidth={1.5} strokeDasharray="3 3" />
+      {filas.map((f, i) => {
+        const x = L + paso * i + paso / 2, c = rampa(i, filas.length);
+        return (
+          <React.Fragment key={f.etiqueta}>
+            <line x1={x} y1={Y(f.p[0])} x2={x} y2={Y(f.p[2])} stroke={c} strokeWidth={1.4} opacity={0.5} />
+            <circle cx={x} cy={Y(f.p[1])} r={5} fill={c} stroke={T.surf} strokeWidth={1.5} />
+            <Txt x={x} y={Y(f.p[1]) - 11} fs={10.5} mono fill={c} w={600}>{f1(f.p[1]) + sufijo}</Txt>
+            <Txt x={x} y={H - B + 15} fs={10} mono
+                 fill={i === filas.length - 1 ? T.hi : T.mut}>{f.etiqueta}</Txt>
+          </React.Fragment>
+        );
+      })}
+    </Svg>
+  );
+}
+
+/* ---- 8. Envolvente de drawdown ---- */
 
 export function Histograma({ hist, actual, p95, unidad }: {
   hist: { c: number; n: number }[]; actual: number; p95: number; unidad: string;
@@ -291,7 +397,7 @@ export function Histograma({ hist, actual, p95, unidad }: {
       })}
       {hist.map((h, i) => (
         <rect key={i} x={X(h.c) - bw / 2} y={Y(h.n)} width={Math.max(1, bw - 1.2)}
-              height={Math.max(0, H - B - Y(h.n))} rx={1}
+              height={Math.max(0, H - B - Y(h.n))}
               fill={h.c <= p95 ? T.wa : T.elev} opacity={h.c <= p95 ? 0.55 : 1} />
       ))}
       <line x1={X(p95)} y1={Tp - 8} x2={X(p95)} y2={H - B} stroke={T.wa} strokeWidth={1.5} strokeDasharray="4 3" />

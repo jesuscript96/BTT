@@ -394,7 +394,7 @@ export default function ResultsTabs({
         </div>
         <div style={{ display: activeTab === "edge" ? "block" : "none" }}>
           {mountedTabs.has("edge") && (
-          <EdgeTab trades={result.trades} />
+          <EdgeTab trades={result.trades} datasetId={datasetId} />
           )}
         </div>
          <div style={{ display: activeTab === "charts_optimization" ? "block" : "none" }}>
