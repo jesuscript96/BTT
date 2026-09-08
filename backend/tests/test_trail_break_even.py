@@ -20,6 +20,23 @@ import pytest
 
 from app.services.portfolio_sim import simulate
 
+# ─────────────────────────────────────────────────────────────────────────
+# SALTADO EN ESTA RAMA (8-sep-2026, decision de Jaume).
+#
+# Este fichero prueba el break-even desacoplado (`trail_activation`), que vive en la rama de Alvaro y NO esta en este
+# motor. Llego a `staging` porque la norma con el socio es que suba DOCUMENTOS
+# y no cambios de motor: los tests vinieron, el codigo que los hace pasar no.
+# O sea que el rojo no es deuda tecnica, es la huella de esa norma funcionando.
+#
+# NO SE BORRAN: documentan un hueco real entre ramas. Se saltan para que 27
+# rojos permanentes no acaben tapando el rojo numero 28, que si importara.
+# Si algun dia se integra ese `trail_activation`, se quita esta linea y tienen que pasar.
+# ─────────────────────────────────────────────────────────────────────────
+pytestmark = pytest.mark.skip(
+    reason="prueba el break-even desacoplado (`trail_activation`), que no esta en el motor de sailor "
+           "(vino de la rama de Alvaro; ver la cabecera)")
+
+
 
 def _ohlc(rows):
     """[(open, high, low, close), ...] -> arrays numpy float64."""

@@ -35,6 +35,23 @@ import pytest
 from app.services import data_service
 from app.services.data_service import _fetch_qualifying_data_uncached
 
+# ─────────────────────────────────────────────────────────────────────────
+# SALTADO EN ESTA RAMA (8-sep-2026, decision de Jaume).
+#
+# OJO, EL MOTIVO AQUI ES OTRO: no le falta nada al motor. Estos tests necesitan
+# abrir `local_data.duckdb` en exclusiva y fallan con
+#
+#     RuntimeError: ... IO Error: File is already open
+#
+# porque el BACKEND lo tiene cogido. DuckDB no da lecturas baratas ni respeta
+# `read_only`, asi que con la aplicacion levantada no hay forma. Para correrlos:
+# parar el backend del 8010 y quitar esta marca.
+# ─────────────────────────────────────────────────────────────────────────
+pytestmark = pytest.mark.skip(
+    reason="necesita `local_data.duckdb` en exclusiva y el backend lo tiene "
+           "abierto; parar el 8010 para correrlo")
+
+
 # Dataset real con reglas (PMH Gap % >= 50 y Min Open PM price > 1): fuerza la
 # rama SQL `provider == "local" and (has_custom_rules or not use_hot_cache)`,
 # la única que la vía rápida sustituye.
