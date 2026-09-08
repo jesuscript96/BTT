@@ -164,25 +164,38 @@ def _sdef(hard_stop, bias="short", size_by_sl=True):
                                 "size_by_sl": size_by_sl}}
 
 
-def test_el_stop_por_porcentaje_SI_se_resuelve_en_la_consulta():
-    """`nivel_stop` (el de los avisos) devuelve None con stop porcentual porque
-    alli lo lleva el simulador. En la consulta no hay simulador: si devolviera
-    None, el tamano saldria por precio y no por riesgo, que es otro numero."""
+def test_el_stop_por_porcentaje_SI_se_resuelve():
+    """`nivel_stop` devuelve None con stop porcentual porque en el backtest lo
+    resuelve el simulador a partir de `sl_stop`. `stop_estimado` SI lo resuelve,
+    usando esa misma fraccion: sin ella el tamano saldria por precio y no por
+    riesgo, que es otro numero (y por eso el aviso daba 57 acciones donde el
+    motor dimensiona 230).
+
+    LA FRACCION SE PASA, NO SE RECALCULA. Rehacerla a mano salia mal en «Fixed
+    Amount», donde el motor divide el importe entre el PRIMER CIERRE DEL DIA y
+    no entre el precio de ahora."""
     stop = stop_estimado(_sdef({"type": "Percentage", "value": 10}),
-                         None, 0, 2.0, es_largo=False)
+                         None, 0, 2.0, es_largo=False, sl_stop=0.10)
     assert stop == pytest.approx(2.2)        # short: 10 % por encima
 
 
 def test_el_stop_por_porcentaje_en_largo():
     stop = stop_estimado(_sdef({"type": "Percentage", "value": 10}, bias="long"),
-                         None, 0, 2.0, es_largo=True)
+                         None, 0, 2.0, es_largo=True, sl_stop=0.10)
     assert stop == pytest.approx(1.8)
+
+
+def test_sin_la_fraccion_no_se_inventa_el_stop():
+    """Sin `sl_stop` no hay de donde sacarlo, y devolver un numero a ojo seria
+    peor: acabaria en un tamano equivocado sin que nada avisara."""
+    assert stop_estimado(_sdef({"type": "Percentage", "value": 10}),
+                         None, 0, 2.0, es_largo=False) is None
 
 
 def test_un_stop_que_no_se_sabe_calcular_no_se_inventa():
     """ATR y compania necesitan el frame del simulador: mejor None que un
     numero falso que acabaria en un tamano falso."""
-    assert stop_estimado(_sdef({"type": "ATR", "value": 2}),
+    assert stop_estimado(_sdef({"type": "ATR Multiplier", "value": 2}),
                          None, 0, 2.0, es_largo=False) is None
 
 
@@ -192,7 +205,7 @@ def test_de_stop_a_acciones():
     filas = estimar_por_estrategia(
         [{"name": "X", "riesgo_usd": 300.0, "ev_pct": 2.4,
           "definition": _sdef({"type": "Percentage", "value": 10})}],
-        lambda e: e["definition"], None, 0, 2.0,
+        lambda e: e["definition"], None, 0, 2.0, lambda e: 0.10,
     )
     assert filas[0]["acciones"] == pytest.approx(1500.0)
     assert filas[0]["stop"] == pytest.approx(2.2)
@@ -202,7 +215,7 @@ def test_sin_size_by_sl_el_tamano_va_por_precio():
     filas = estimar_por_estrategia(
         [{"name": "X", "riesgo_usd": 300.0, "ev_pct": 2.4,
           "definition": _sdef({"type": "Percentage", "value": 10}, size_by_sl=False)}],
-        lambda e: e["definition"], None, 0, 2.0,
+        lambda e: e["definition"], None, 0, 2.0, lambda e: 0.10,
     )
     assert filas[0]["acciones"] == pytest.approx(150.0)   # 300 / 2,00
 
@@ -211,7 +224,7 @@ def test_una_estrategia_sin_riesgo_se_salta_pero_aparece():
     filas = estimar_por_estrategia(
         [{"name": "X", "riesgo_usd": None, "ev_pct": 2.4,
           "definition": _sdef({"type": "Percentage", "value": 10})}],
-        lambda e: e["definition"], None, 0, 2.0,
+        lambda e: e["definition"], None, 0, 2.0, lambda e: 0.10,
     )
     assert filas[0]["acciones"] is None
     assert "sin riesgo" in filas[0]["motivo"]

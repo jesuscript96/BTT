@@ -29,6 +29,7 @@ import pandas as pd
 from app.services.bot_alerts_engine import Evento, MotorAlertas
 from app.services.market_frame import build_market_frame
 from app.services.bot_alerts_engine import estimar_por_estrategia
+from app.services.strategy_engine import translate_strategy
 
 logger = logging.getLogger("btt.bot_alerts.runner")
 
@@ -161,9 +162,24 @@ class RunnerAlertas:
         frame = build_market_frame(
             pd.DataFrame(velas), ticker, self._stats.get(ticker, {}),
         )
+        # El `sl_stop` de cada estrategia sale de `translate_strategy`, igual
+        # que en el camino del aviso: es la fraccion que el simulador aplica
+        # sobre el precio de entrada, y cubre Percentage, Fixed Amount y ATR.
+        # Se recalcula aqui (y no se cachea) porque `/evf` es una consulta
+        # manual y ocasional; el coste no importa y asi no puede quedarse rancio.
+        stats = self._stats.get(ticker, {})
+
+        def _sl_stop_de(est):
+            try:
+                senales = translate_strategy(frame, est["definition"], stats,
+                                             compiled=est.get("compiled"))
+                return senales.get("sl_stop")
+            except Exception:          # noqa: BLE001
+                return None            # una consulta no puede tumbar nada
+
         return estimar_por_estrategia(
             self.motor.estrategias, lambda e: e["definition"],
-            frame, len(frame) - 1, precio,
+            frame, len(frame) - 1, precio, _sl_stop_de,
         )
 
     def tiene_posicion(self, ticker: str) -> bool:

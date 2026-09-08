@@ -369,46 +369,39 @@ def _tope_cangrejo_acciones(acciones: float, precio: float,
 
 
 def stop_estimado(sdef: dict, frame, i: int, precio: float,
-                  es_largo: bool) -> Optional[float]:
-    """El stop de una entrada HIPOTETICA al precio de ahora. Solo para `/evf`.
+                  es_largo: bool, sl_stop: float | None = None) -> Optional[float]:
+    """El precio del stop de una entrada AHORA, sea cual sea el tipo de stop.
 
-    NO SE USA EN LOS AVISOS y no debe usarse: los avisos van por `nivel_stop`,
-    que es lo que replica al simulador barra a barra. Esto es la version de
-    CONSULTA, y se diferencia en una cosa a proposito:
+    POR QUE EXISTE, ADEMAS DE `nivel_stop`. `nivel_stop` resuelve el nivel
+    ESTRUCTURAL y devuelve None para todo lo demas, porque en el camino del
+    backtest el resto lo aplica el simulador a partir de `sl_stop`. Pero para
+    dimensionar hace falta el numero, y sin el `calcular_acciones` se cae a
+    `riesgo / precio` — o sea, deja de dimensionar por riesgo AUNQUE la
+    estrategia tenga «Shares por SL» activado, sin error y sin log.
 
-    `nivel_stop` devuelve None con un stop por PORCENTAJE, porque en el camino
-    del aviso ese caso ya lo lleva el simulador por `sl_stop`. Aqui no hay
-    simulador: si devolviera None, una estrategia de stop porcentual saldria sin
-    distancia y el tamano se calcularia como si no tuviera stop. Asi que aqui SI
-    se resuelve, sobre el precio de consulta.
+    COMO SE RESUELVE CADA TIPO, calcado del simulador:
+
+      · Market Structure  -> `nivel_stop` (nivel del dia + offset).
+      · TODO LO DEMAS     -> `precio x (1 -/+ sl_stop)`.
+
+    `sl_stop` es la FRACCION que ya calculo `translate_strategy`, y es la misma
+    que el simulador aplica sobre el precio de entrada. Cubre Percentage, Fixed
+    Amount y ATR Multiplier de una vez y SIN REHACER LA CUENTA — que es la
+    gracia: rehacerla a mano salia mal en «Fixed Amount», donde el motor divide
+    el importe entre el PRIMER CIERRE DEL DIA y no entre el precio de ahora.
 
     Devuelve None solo cuando de verdad no hay stop que calcular.
     """
-    hs = _hard_stop(sdef)
-    tipo = hs.get("type")
-    if tipo == "Market Structure (HOD/LOD)":
+    if _hard_stop(sdef).get("type") == "Market Structure (HOD/LOD)":
         return nivel_stop(sdef, frame, i, precio, es_largo)
-    valor = hs.get("value")
-    if valor is None:
+    if not sl_stop or sl_stop <= 0 or not precio or precio <= 0:
         return None
-    try:
-        v = float(valor)
-    except (TypeError, ValueError):
-        return None
-    if v <= 0:
-        return None
-    if tipo == "Percentage":
-        stop = precio * ((1 - v / 100.0) if es_largo else (1 + v / 100.0))
-    elif tipo in ("Fixed Amount", "Fixed"):
-        stop = (precio - v) if es_largo else (precio + v)
-    else:
-        # ATR y compania necesitan el frame del simulador; no se inventa nada.
-        return None
+    stop = precio * ((1 - sl_stop) if es_largo else (1 + sl_stop))
     return stop if _sl_side_valid(stop, precio, es_largo) else None
 
 
 def estimar_por_estrategia(estrategias: list, sdef_de, frame, i: int,
-                           precio: float) -> list[dict]:
+                           precio: float, sl_stop_de=None) -> list[dict]:
     """Cuantas acciones pediria CADA estrategia si entrara ahora. Solo `/evf`.
 
     ES UNA ESTIMACION Y TIENE QUE SEGUIR SIENDOLO. Usa el precio del momento en
@@ -441,7 +434,8 @@ def estimar_por_estrategia(estrategias: list, sdef_de, frame, i: int,
             filas.append(fila)
             continue
 
-        stop = stop_estimado(sdef, frame, i, precio, es_largo)
+        stop = stop_estimado(sdef, frame, i, precio, es_largo,
+                             sl_stop_de(est) if sl_stop_de else None)
         cangrejo = _cangrejo_de(rm, est)
         # Modo A de Cangrejo: el stop que manda es el APRETADO, igual que en el
         # aviso; si no, la distancia (y con ella el tamano) saldria de otro sitio.
@@ -665,7 +659,19 @@ class MotorAlertas:
                 for t in trades
             )
             if not dentro and not fin_ventana and self._quedan_entradas(trades, senales):
-                stop = nivel_stop(sdef, frame, i, precio, es_largo)
+                # EL STOP DEL AVISO, PARA CUALQUIER TIPO. Antes iba por
+                # `nivel_stop`, que devuelve None con stop porcentual (o de
+                # importe fijo, o ATR) porque en el backtest eso lo resuelve el
+                # simulador. Consecuencia: `calcular_acciones` se caia a
+                # `riesgo / precio` y el aviso proponia un tamano que NO
+                # respetaba el riesgo fijado, aunque la estrategia tuviera
+                # «Shares por SL» encendido. Medido el 8-sep-2026 con la
+                # estrategia «RTH prueba 1» (stop 25 %, riesgo 300 $, WYHG a
+                # 5,22): el aviso daba 57 acciones arriesgando 75 $, cuando el
+                # backtest dimensiona 230 arriesgando los 300. Un factor 4,
+                # sin error y sin log.
+                stop = stop_estimado(sdef, frame, i, precio, es_largo,
+                                     senales.get("sl_stop"))
                 hs_estructural = _hard_stop(sdef).get("type") == "Market Structure (HOD/LOD)"
                 # Con stop estructural, un nivel del lado ganador anula la
                 # operacion en el simulador. Avisar seria avisar de algo que el
