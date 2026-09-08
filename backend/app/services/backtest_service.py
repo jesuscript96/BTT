@@ -11,6 +11,7 @@ import ctypes
 import datetime
 import gc
 import logging
+import math
 import sys
 import time
 
@@ -1729,6 +1730,10 @@ def _aggregate_metrics(
         "max_consecutive_losing_days": 0, "expectancy": 0, "payoff_ratio": 0,
         "avg_r_per_day": 0,
         "avg_r_ui": 0.0,
+        # PRD_METRICAS_Y_OOS (2026-09-08): ver notas en el dict de retorno.
+        "r_total": 0.0,
+        "total_return_net_pct": 0.0,
+        "calmar_ratio_annualized": 0.0,
     }
     if not day_results and not trades:
         return empty
@@ -1778,6 +1783,18 @@ def _aggregate_metrics(
     # PnL / Init Cash gives the actual Return % for the period on the account size
     total_pnl = total_pnl_trades
     total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
+
+    # Return NETO (PRD_METRICAS_Y_OOS P2.1): mismo criterio que el bruto de
+    # arriba pero restando los gastos mensuales (total_pnl_net). Clave nueva
+    # para no romper la comparabilidad de total_return_pct con corridas
+    # guardadas — decisión de Álvaro 2026-09-08.
+    total_return_net = (total_pnl_net / init_cash) * 100.0 if init_cash > 0 else 0.0
+
+    # ΣR de los trades (PRD_METRICAS_Y_OOS P3). Es el único comparador inmune
+    # a init_cash/risk_type: con riesgo FIXED el return % depende del capital
+    # que se ponga, y la columna total_return_r de backtest_results llevaba
+    # meses guardando 0 porque leía una clave que este dict no tenía.
+    r_total = float(sum(t.get("r_multiple") or 0.0 for t in trades))
 
     # Daily PnL timeline (net of locates), computed once: the dense
     # Sharpe/Sortino block below and the daily win/loss streaks must both see
@@ -1882,6 +1899,29 @@ def _aggregate_metrics(
     # Calmar = total return / abs(max dd) -> Using annualized return makes more sense, but simple total is standard here
     calmar_ratio = (total_return / abs(final_max_dd)) if final_max_dd != 0 else 0.0
 
+    # Calmar ANUALIZADO (PRD_METRICAS_Y_OOS P2.2): CAGR / |maxDD|. Clave
+    # nueva — calmar_ratio se queda con retorno total para no romper la
+    # comparabilidad de corridas guardadas (decisión de Álvaro 2026-09-08).
+    # CAGR sobre el lapso CALENDARIO entre primer y último trade (mismo
+    # criterio de ventana que el bloque denso de arriba), no sobre nº de
+    # sesiones. Si la cuenta queda en <=0 (arrasada), el CAGR no existe: 0.0.
+    calmar_ratio_annualized = 0.0
+    try:
+        trade_dates = sorted({str(t.get("date", ""))[:10] for t in trades if t.get("date")})
+        if trade_dates:
+            span_days = (pd.to_datetime(trade_dates[-1]) - pd.to_datetime(trade_dates[0])).days
+            final_equity = init_cash + total_pnl
+            if (
+                span_days > 0
+                and init_cash > 0
+                and final_equity > 0
+                and final_max_dd != 0
+            ):
+                cagr_pct = ((final_equity / init_cash) ** (365.0 / span_days) - 1.0) * 100.0
+                calmar_ratio_annualized = cagr_pct / abs(final_max_dd)
+    except Exception as e:  # fechas imposibles, overflow del CAGR, etc.
+        logger.warning(f"Error computing annualized calmar: {e}")
+
     # DD/Return ratio -> How much max DD to achieve Total Return
     dd_return_ratio = (abs(final_max_dd) / total_return) if total_return != 0 else 0.0
 
@@ -1981,6 +2021,112 @@ def _aggregate_metrics(
         "total_pnl_net": round(total_pnl_net, 2),
         "avg_r_per_day": round(sum(t.get("r_multiple") or 0.0 for t in trades) / total_days, 4) if total_days > 0 else 0,
         "avg_r_ui": round(avg_r_ui, 4),
+        # PRD_METRICAS_Y_OOS (2026-09-08, Álvaro): tres claves nuevas.
+        # · r_total — ΣR de los trades: comparador inmune a init_cash/risk_type
+        #   (alimenta la columna total_return_r de backtest_results, que leía
+        #   una clave inexistente y guardaba siempre 0).
+        # · total_return_net_pct — return restando monthly_expenses; el bruto
+        #   (total_return_pct) se queda como estaba por comparabilidad.
+        # · calmar_ratio_annualized — CAGR/|maxDD|; calmar_ratio sigue siendo
+        #   retorno total/|maxDD| por lo mismo.
+        "r_total": round(r_total, 2),
+        "total_return_net_pct": round(total_return_net, 4),
+        "calmar_ratio_annualized": round(calmar_ratio_annualized, 4),
+    }
+
+
+def compute_is_oos_metrics(result: dict, is_percent: float) -> dict | None:
+    """Métricas IS/OOS server-side a partir de un resultado completo (PRD P1).
+
+    Réplica EXACTA del recorte que hacía el frontend (page.tsx memo
+    `isFilteredResult`, 2026-09-08): cutoff por ÍNDICE de equity —
+    `cutoffIdx = max(1, floor(len(global_equity)·is/100))`,
+    `cutoffTime = eq[cutoffIdx-1].time` — y trades particionados por
+    `entry_time_epoch <= cutoffTime`. Esa partición mete los trades del día
+    límite en OOS aunque su punto de equity sea el del corte: así lo hace la
+    UI y aquí lo replicamos bit a bit para que lo persistido coincida con lo
+    que el usuario ya ve en la pestaña IS.
+
+    El bloque viaja como `results["is_oos"]` solo cuando is_percent < 100 y
+    hay curva de equity. No re-ejecuta nada ni toca aggregate_metrics.
+
+    Convención por segmento (misma que el global): total_pnl = Σpnl −
+    locates de los day_results del segmento; total_return_pct sobre
+    init_cash (no sobre la equity de arranque del segmento); maxDD relativo
+    al máximo DENTRO del slice de equity del segmento (IS: eq[:cutoffIdx];
+    OOS: eq[cutoffIdx-1:], arrancando del punto de corte como pico inicial).
+    """
+    try:
+        is_pct = float(is_percent)
+    except (TypeError, ValueError):
+        return None
+    if not is_pct or is_pct >= 100:
+        return None
+
+    eq = result.get("global_equity") or []
+    if len(eq) < 2:
+        return None
+
+    cutoff_idx = max(1, math.floor(len(eq) * is_pct / 100.0))
+    cutoff_time = int(eq[cutoff_idx - 1].get("time") or 0)
+
+    trades = result.get("trades") or []
+    is_trades = [t for t in trades if int(t.get("entry_time_epoch") or 0) <= cutoff_time]
+    oos_trades = [t for t in trades if int(t.get("entry_time_epoch") or 0) > cutoff_time]
+
+    # Locates por segmento: mismas fechas-medianochche-UTC que los puntos de
+    # equity (los day_results particionan igual que los trades del día límite).
+    day_results = result.get("day_results") or []
+    is_locates = 0.0
+    oos_locates = 0.0
+    for d in day_results:
+        d_str = str(d.get("date", ""))[:10]
+        if not d_str:
+            continue
+        try:
+            d_epoch = int(pd.Timestamp(d_str, tz="UTC").timestamp())
+        except Exception:
+            continue
+        fee = float(d.get("locates_fee", 0.0) or 0.0)
+        if d_epoch <= cutoff_time:
+            is_locates += fee
+        else:
+            oos_locates += fee
+
+    init_cash = float(result.get("aggregate_metrics", {}).get("_init_cash") or 0)
+    if init_cash <= 0:
+        # init_cash no viaja en el payload: lo inferimos del primer punto de la
+        # curva (punto 0 = capital antes de ningún trade, por construcción).
+        init_cash = float(eq[0].get("value") or 0)
+
+    def _seg_metrics(seg_trades: list[dict], seg_locates: float, seg_eq: list[dict]) -> dict:
+        pnls = [float(t.get("pnl", 0.0) or 0.0) for t in seg_trades]
+        wins = sum(1 for p in pnls if p > 0)
+        gross_profit = sum(p for p in pnls if p > 0)
+        gross_loss = abs(sum(p for p in pnls if p < 0))
+        seg_total_pnl = sum(pnls) - seg_locates
+        seg_r_total = float(sum(t.get("r_multiple") or 0.0 for t in seg_trades))
+        seg_max_dd = 0.0
+        if len(seg_eq) >= 2:
+            vals = np.array([p.get("value", 0.0) for p in seg_eq], dtype=np.float64)
+            running_max = np.maximum.accumulate(vals)
+            dd = np.where(running_max > 0, (vals / running_max - 1) * 100, 0.0)
+            seg_max_dd = float(dd.min())
+        return {
+            "total_trades": len(seg_trades),
+            "win_rate_pct": round(wins / len(pnls) * 100, 2) if pnls else 0.0,
+            "avg_profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else 0.0,
+            "r_total": round(seg_r_total, 2),
+            "total_pnl": round(seg_total_pnl, 2),
+            "total_return_pct": round(seg_total_pnl / init_cash * 100.0, 4) if init_cash > 0 else 0.0,
+            "max_drawdown_pct": round(seg_max_dd, 4),
+        }
+
+    return {
+        "is_percent": is_pct,
+        "cutoff_time": cutoff_time,
+        "is_metrics": _seg_metrics(is_trades, is_locates, eq[:cutoff_idx]),
+        "oos_metrics": _seg_metrics(oos_trades, oos_locates, eq[cutoff_idx - 1:] if cutoff_idx - 1 < len(eq) else []),
     }
 
 

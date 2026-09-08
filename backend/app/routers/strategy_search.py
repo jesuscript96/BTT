@@ -39,7 +39,11 @@ def _map_aggregate_metrics(results_json: dict) -> dict:
         "sharpe_ratio": aggregate.get("avg_sharpe", aggregate.get("sharpe_ratio", 0)) or 0,
         "avg_r_multiple": aggregate.get("avg_r_per_day", aggregate.get("avg_r_multiple", 0)) or 0,
         "total_return_pct": aggregate.get("total_return_pct", 0) or 0,
-        "total_return_r": aggregate.get("total_return_r", 0) or 0,
+        # PRD_METRICAS_Y_OOS P3 (2026-09-08): ΣR real. Durante meses esta
+        # columna guardó 0 porque leía "total_return_r", una clave que
+        # _aggregate_metrics nunca escribió. Ahora el motor expone r_total;
+        # las corridas viejas no la traen y siguen en 0 (no se reescriben).
+        "total_return_r": aggregate.get("r_total", aggregate.get("total_return_r", 0)) or 0,
         "max_drawdown_pct": aggregate.get("max_drawdown_pct", 0) or 0,
         "total_trades": aggregate.get("total_trades", 0) or 0,
     }

@@ -19,7 +19,7 @@ from app.services.data_service import (
     get_intraday_stream,
     _resolve_filters,
 )
-from app.services.backtest_service import run_backtest
+from app.services.backtest_service import run_backtest, compute_is_oos_metrics
 
 logger = logging.getLogger("backtester.orchestrator")
 
@@ -76,6 +76,13 @@ class BacktestRequest(BaseModel):
     # max_locates * 100 acciones (Jaume 2026-08-26).
     max_locates: int = 0
     look_ahead_prevention: bool = True
+    # Split IS/OOS (PRD_METRICAS_Y_OOS P1, 2026-09-08): el frontend ya lo
+    # enviaba pero este esquema no lo declaraba, así que Pydantic lo descartaba
+    # en silencio y el motor corría SIEMPRE el rango completo. Con <100, el
+    # motor sigue ejecutando el rango entero (una sola pasada, mismos trades)
+    # y añade results["is_oos"] con las métricas por segmento — hasta ahora
+    # ese recorte solo vivía en el navegador y se perdía al cerrar la página.
+    is_percent: int = 100
 
 
 def generate_mock_candles(ticker: str, date: str) -> dict:
@@ -261,6 +268,14 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             qualifying = qualifying[qualifying["date"].astype(str) >= req.start_date]
         if req.end_date:
             qualifying = qualifying[qualifying["date"].astype(str) <= req.end_date]
+
+        # Rango de fechas EJECUTADO de verdad (PRD_METRICAS_Y_OOS P4): lo que
+        # queda del qualifying tras filtrar por las fechas de la petición. Se
+        # añade al resultado para que backtest_params persista el rango real y
+        # no el del formulario — dos corridas de hoy guardaron 2026-01-02→
+        # 2026-09-04 con trades de 2025 (HALLAZGO 2026-09-08·01).
+        _exec_dates = qualifying["date"].astype(str).str[:10]
+        executed_date_range = {"start": _exec_dates.min(), "end": _exec_dates.max()}
 
         n_qualifying = len(qualifying)
         n_tickers = qualifying["ticker"].nunique()
@@ -571,6 +586,17 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         total_elapsed = round(t_end - t0, 2)
         n_trades = len(results.get("trades", []))
         n_days = len(results.get("day_results", []))
+
+        # Rango ejecutado y split IS/OOS (PRD_METRICAS_Y_OOS P1+P4): se añaden
+        # ANTES de sanitize_floats para que viajen limpios en el payload y en
+        # el results_json persistido. compute_is_oos_metrics devuelve None con
+        # is_percent>=100 → payload idéntico al de siempre (solo cambia si el
+        # usuario pidió split).
+        results["executed_date_range"] = executed_date_range
+        _is_oos = compute_is_oos_metrics(results, req.is_percent)
+        if _is_oos is not None:
+            results["is_oos"] = _is_oos
+
         print(f"[TIMING] total backtest: {total_elapsed}s")
         log_phase("total", (t_end - t0) * 1000, dataset=req.dataset_id,
                   pairs=n_qualifying, trades=n_trades, days=n_days)

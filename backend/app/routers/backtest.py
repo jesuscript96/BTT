@@ -105,12 +105,27 @@ def _autosave_success(req: BacktestRequest, job_id: str, result: dict, user_id):
         if isinstance(req.strategy_definition, dict)
         else None
     ) or "Borrador"
-    date_range = f"{req.start_date or '?'} → {req.end_date or '?'}"
+    # Rango de fechas para label y backtest_params (PRD_METRICAS_Y_OOS P4): se
+    # usa el EJECUTADO (del qualifying filtrado, calculado por el orquestador)
+    # cuando existe, y no el del formulario. Dos corridas del 2026-09-08
+    # guardaron 2026-01-02→2026-09-04 con trades de 2025 (HALLAZGO·01): se
+    # persistía req.model_dump() tal cual.
+    executed = result.get("executed_date_range") or {}
+    eff_start = executed.get("start") or req.start_date
+    eff_end = executed.get("end") or req.end_date
+    date_range = f"{eff_start or '?'} → {eff_end or '?'}"
     label = f"[auto] {strat_name} · {date_range} · {datetime.now():%Y-%m-%d %H:%M}"
+
+    backtest_params = req.model_dump()
+    # Ni executed_date_range ni is_oos son parámetros del formulario: son
+    # hechos del run. Van aparte en results_json (ya viajan en `light`); lo
+    # único que se sobreescribe aquí son las fechas efectivas.
+    backtest_params["start_date"] = eff_start
+    backtest_params["end_date"] = eff_end
 
     results_json = {
         **light,
-        "backtest_params": req.model_dump(),
+        "backtest_params": backtest_params,
         "strategy_definition": req.strategy_definition,
         "strategy_names": [strat_name],
         "label": label,
