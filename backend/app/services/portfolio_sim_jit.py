@@ -120,6 +120,14 @@ def _core_simulate_jit(
     # Tope de locates: maximo de paquetes de 100 acciones en corto (0 = sin
     # tope). Paridad exacta con portfolio_sim.py.
     max_locates,
+    # ESTILO CANGREJO (2026-09-08). Paridad exacta con portfolio_sim.py; ver
+    # alli el porque de cada modo. AQUI VAN COMO FLOATS CON CENTINELA 0.0 = OFF
+    # en vez de None: numba no admite Optional en un njit(cache=True) sin
+    # disparar una firma nueva por cada combinacion.
+    #   cangrejo_max_sl_dist    -> Modo A, % maximo entry->SL (0 = sin tope)
+    #   cangrejo_max_loss_pct   -> Modo B, % maximo de cuenta a perder (0 = sin)
+    #   cangrejo_capital        -> base del Modo B (0 = usar el equity vivo)
+    cangrejo_active, cangrejo_max_sl_dist, cangrejo_max_loss_pct, cangrejo_capital,
 ):
     n = len(close)
 
@@ -149,6 +157,10 @@ def _core_simulate_jit(
     entry_time = 0
     size = 0.0
     trade_sl_price = 0.0
+    # Stop APRETADO por el Modo A de Cangrejo (0.0 = no se apreto). Mismo papel
+    # y mismo nombre que en portfolio_sim.py: el SL porcentual se recalcula en
+    # cada barra desde `entry_price` y sin esto la salida ignoraria el apretado.
+    sl_cangrejo_px = 0.0
     trail_extreme = 0.0
     mae = 0.0
     mfe = 0.0
@@ -201,13 +213,20 @@ def _core_simulate_jit(
                             exit_reason_code = REASON_SL
                 elif has_sl_stop:
                     if is_long:
-                        hard_sl_price = entry_price * (1 - sl_stop)
+                        # Modo A de Cangrejo: la salida es el stop apretado.
+                        if sl_cangrejo_px > 0.0:
+                            hard_sl_price = sl_cangrejo_px
+                        else:
+                            hard_sl_price = entry_price * (1 - sl_stop)
                         if price_for_sl <= hard_sl_price:
                             exit_triggered = True
                             exit_price = max(hard_sl_price, low[i])
                             exit_reason_code = REASON_SL
                     else:
-                        hard_sl_price = entry_price * (1 + sl_stop)
+                        if sl_cangrejo_px > 0.0:
+                            hard_sl_price = sl_cangrejo_px
+                        else:
+                            hard_sl_price = entry_price * (1 + sl_stop)
                         if price_for_sl >= hard_sl_price:
                             exit_triggered = True
                             exit_price = min(hard_sl_price, high[i])
@@ -230,7 +249,10 @@ def _core_simulate_jit(
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price
                                 else:
-                                    hard_sl_price = entry_price * (1 - sl_stop) if has_sl_stop else -1e18
+                                    if sl_cangrejo_px > 0.0:
+                                        hard_sl_price = sl_cangrejo_px
+                                    else:
+                                        hard_sl_price = entry_price * (1 - sl_stop) if has_sl_stop else -1e18
                                 if trail_sl_price > hard_sl_price:
                                     exit_triggered = True
                                     exit_price = max(trail_sl_price, low[i])
@@ -248,7 +270,10 @@ def _core_simulate_jit(
                                 if hs_type_code == 1:
                                     hard_sl_price = trade_sl_price
                                 else:
-                                    hard_sl_price = entry_price * (1 + sl_stop) if has_sl_stop else 1e18
+                                    if sl_cangrejo_px > 0.0:
+                                        hard_sl_price = sl_cangrejo_px
+                                    else:
+                                        hard_sl_price = entry_price * (1 + sl_stop) if has_sl_stop else 1e18
                                 if trail_sl_price < hard_sl_price:
                                     exit_triggered = True
                                     exit_price = min(trail_sl_price, high[i])
@@ -719,6 +744,19 @@ def _core_simulate_jit(
                 elif has_sl_stop and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
 
+                # CANGREJO MODO A: apretar el stop lejano ANTES de dimensionar.
+                # Paridad exacta con `aprieta_stop_cangrejo` de portfolio_sim.py
+                # (inline: numba no llama funciones Python sueltas).
+                sl_apretado = False
+                if cangrejo_active and cangrejo_max_sl_dist > 0.0 and stop_loss_price > 0.0:
+                    dist_max_c = entry_price * (cangrejo_max_sl_dist / 100.0)
+                    if abs(entry_price - stop_loss_price) > dist_max_c:
+                        if is_long:
+                            stop_loss_price = entry_price - dist_max_c
+                        else:
+                            stop_loss_price = entry_price + dist_max_c
+                        sl_apretado = True
+
                 if size_by_sl:
                     dist = abs(entry_price - stop_loss_price) if stop_loss_price > 0.0 else 0.0
                     if dist > 0.0:
@@ -727,6 +765,18 @@ def _core_simulate_jit(
                         size = risk_amount / entry_price
                 else:
                     size = risk_amount / entry_price
+
+                # CANGREJO MODO B: el SL nunca cuesta mas de X % de la cuenta.
+                # Paridad exacta con `tope_cangrejo` de portfolio_sim.py, con la
+                # misma base de capital (`cangrejo_capital` si viene, si no el
+                # equity vivo) y la misma distancia FINAL (ya apretada).
+                if cangrejo_active and cangrejo_max_loss_pct > 0.0 and stop_loss_price > 0.0:
+                    dist_c = abs(entry_price - stop_loss_price)
+                    if dist_c > 0.0:
+                        base_c = cangrejo_capital if cangrejo_capital > 0.0 else available_cash
+                        if base_c > 0.0:
+                            tope_c = (cangrejo_max_loss_pct / 100.0) * base_c / dist_c
+                            size = min(size, tope_c)
 
                 max_size = available_cash / entry_price
                 size = min(size, max_size)
@@ -743,6 +793,7 @@ def _core_simulate_jit(
                     entry_idx = eff_entry_idx
                     entry_time = timestamps[entry_idx] if has_timestamps else 0
                     trade_sl_price = stop_loss_price
+                    sl_cangrejo_px = stop_loss_price if sl_apretado else 0.0
                     trail_extreme = entry_price
                     trail_activated = False
                     mae = 0.0

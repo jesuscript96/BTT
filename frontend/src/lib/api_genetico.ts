@@ -76,6 +76,14 @@ export interface RiesgoConfig {
   hybrid_black_swan_pct?: number | null;
   /** Cuánto de la cuenta entera aceptas perder si eso pasa, en %. */
   hybrid_max_loss_pct?: number | null;
+  /** ESTILO CANGREJO. NO son genes: se fijan para toda la corrida. Dejar que
+   *  el genético mueva el % del Modo A sería buscar en el histórico el recorte
+   *  que mejor queda — y ese número cambia DÓNDE se sale, así que el
+   *  sobreajuste sería inmediato. Excluyentes con el híbrido. */
+  cangrejo_active?: boolean;
+  cangrejo_mode?: 'recorrido' | 'perdida' | null;
+  cangrejo_max_sl_dist_pct?: number | null;
+  cangrejo_max_loss_at_sl_pct?: number | null;
   /** Suelo del stop en %. Solo afecta al modo porcentaje: en el de estructura
    *  la distancia la pone el mercado. 0 = sin suelo. */
   stop_min_pct?: number;

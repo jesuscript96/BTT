@@ -1203,7 +1203,7 @@ export default function GeneticoPage() {
             {/* La ayuda promete que «lo activa solo» y hasta hoy no lo hacia:
                 se podia dejar el hibrido puesto con «Shares por SL» quitado y
                 correr un genetico entero sin techo, sin aviso. */}
-            <Check checked={!!riesgo.hybrid_stop} onChange={(v) => setRiesgo({ ...riesgo, hybrid_stop: v, size_by_sl: v ? true : riesgo.size_by_sl })} label="Activado" />
+            <Check checked={!!riesgo.hybrid_stop} onChange={(v) => setRiesgo({ ...riesgo, hybrid_stop: v, size_by_sl: v ? true : riesgo.size_by_sl, cangrejo_active: v ? false : riesgo.cangrejo_active })} label="Activado" />
           </Row>
           {riesgo.hybrid_stop && (
             <>
@@ -1215,11 +1215,50 @@ export default function GeneticoPage() {
               </Row>
             </>
           )}
+          {/* ESTILO CANGREJO. NO es un gen y no debe serlo: el % del Modo A
+              cambia DÓNDE se sale, así que dejar que la corrida lo mueva sería
+              buscar en el histórico el recorte que mejor queda. Se fija para
+              toda la corrida, como el híbrido. */}
+          <Row label="Estilo Cangrejo" help="Acota cada operación con un techo: o limitando el recorrido hasta el stop (aprieta el stop lejano y cambia DÓNDE sales), o limitando lo que puede costarte (encoge el tamaño y cambia CUÁNTO pones). Solo recorta, nunca agranda. Excluyente con el stop híbrido. No es un gen: se fija para toda la corrida, porque optimizarlo sería sobreajustar el recorte al histórico.">
+            <Check checked={!!riesgo.cangrejo_active} onChange={(v) => setRiesgo({ ...riesgo, cangrejo_active: v, cangrejo_mode: v ? (riesgo.cangrejo_mode ?? "perdida") : riesgo.cangrejo_mode, hybrid_stop: v ? false : riesgo.hybrid_stop })} label="Activado" />
+          </Row>
+          {riesgo.cangrejo_active && (
+            <>
+              <Row label="Modo" help="«Recorrido máx. del SL» aprieta el stop lejano hasta ese % de tu entrada y sales AHÍ: cambia dónde sales, no cuánto pones. «Pérdida máx. por trade» deja el stop donde está y encoge el tamaño: cambia cuánto pones, no dónde sales. Son alternativas, no se pueden combinar.">
+                <Sel
+                  value={riesgo.cangrejo_mode ?? "perdida"}
+                  onChange={(v) => setRiesgo({
+                    ...riesgo,
+                    cangrejo_mode: v as "recorrido" | "perdida",
+                    // Cambiar de modo LIMPIA el del otro: si no, un número
+                    // escondido seguiría recortando desde un campo que ya no
+                    // se ve. El motor aplica lo que le llegue.
+                    cangrejo_max_sl_dist_pct: v === "recorrido" ? riesgo.cangrejo_max_sl_dist_pct : null,
+                    cangrejo_max_loss_at_sl_pct: v === "perdida" ? riesgo.cangrejo_max_loss_at_sl_pct : null,
+                  })}
+                  options={[
+                    { value: "perdida", label: "Pérdida máx. por trade" },
+                    { value: "recorrido", label: "Recorrido máx. del SL" },
+                  ]}
+                />
+              </Row>
+              {(riesgo.cangrejo_mode ?? "perdida") === "recorrido" ? (
+                <Row label="% máx. entrada → SL" help="Si la estructura deja el stop más lejos de ese porcentaje, se aprieta hasta ahí — y ahí se sale de verdad.">
+                  <Num value={riesgo.cangrejo_max_sl_dist_pct ?? 50} onChange={(v) => setRiesgo({ ...riesgo, cangrejo_max_sl_dist_pct: v })} min={0.1} step={5} />
+                </Row>
+              ) : (
+                <Row label="% máx. de cuenta por trade" help="Sobre la CUENTA ENTERA. El stop no se mueve: lo que se encoge es el tamaño para que, si salta, no cueste más de eso.">
+                  <Num value={riesgo.cangrejo_max_loss_at_sl_pct ?? 3} onChange={(v) => setRiesgo({ ...riesgo, cangrejo_max_loss_at_sl_pct: v })} min={0.1} step={0.5} />
+                </Row>
+              )}
+            </>
+          )}
             </>
           ) : (
             <div style={{ fontSize: 11, color: color.textMuted, lineHeight: 1.6 }}>
-              Reentradas, «shares por SL» y stop híbrido salen de la estrategia que
-              estás mejorando. Las reentradas se pueden mover como parámetro, arriba.
+              Reentradas, «shares por SL», stop híbrido y Estilo Cangrejo salen de la
+              estrategia que estás mejorando. Las reentradas se pueden mover como
+              parámetro, arriba.
             </div>
           )}
         </Sec>

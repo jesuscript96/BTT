@@ -29,6 +29,12 @@ export interface EstrategiaCandidata {
   hybrid_stop?: boolean;
   hybrid_black_swan_pct?: number | null;
   hybrid_max_loss_pct?: number | null;
+  /** Estilo Cangrejo: porcentajes de la estrategia, capital del cuadro de
+   *  mandos. El Modo B (pérdida máx.) no puede activarse sin capital. */
+  cangrejo_active?: boolean;
+  cangrejo_mode?: 'recorrido' | 'perdida' | null;
+  cangrejo_max_sl_dist_pct?: number | null;
+  cangrejo_max_loss_at_sl_pct?: number | null;
   /** Riesgo del ANYADIDO. null = usa lo que diga la estrategia. */
   riesgo_piramide_usd?: number | null;
   /** La cuenta real. Solo hace falta con stop hibrido, que sin ella no puede

@@ -310,6 +310,23 @@ export interface RiskManagement {
     hybrid_black_swan_pct?: number | null;
     /** Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. */
     hybrid_max_loss_pct?: number | null;
+    /** ESTILO CANGREJO (PRD de Álvaro, 8-sep-2026). Acota cada trade «o por
+     *  recorrido del SL, o por pérdida máxima». Dos modos EXCLUYENTES entre sí
+     *  y con el stop híbrido; son TECHOS sobre el sizing que ya haya, así que
+     *  solo recortan.
+     *   · `recorrido` → `cangrejo_max_sl_dist_pct`: el stop nunca a más de ese
+     *     % del entry. Aprieta el stop: cambia DÓNDE sales.
+     *   · `perdida`   → `cangrejo_max_loss_at_sl_pct`: el SL nunca cuesta más
+     *     de ese % de la cuenta. Encoge el tamaño: cambia CUÁNTO pones. */
+    cangrejo_active?: boolean;
+    cangrejo_mode?: 'recorrido' | 'perdida' | null;
+    cangrejo_max_sl_dist_pct?: number | null;
+    cangrejo_max_loss_at_sl_pct?: number | null;
+    /** INERTES, sin UI: la primera versión de la tarjeta tenía cuatro topes y
+     *  resultó poco intuitiva. Se admiten para que un borrador viejo no
+     *  reviente, pero ningún motor los lee. */
+    cangrejo_max_mv_entry_pct?: number | null;
+    cangrejo_max_mv_pyr_pct?: number | null;
     swing_option?: {
         active: boolean;
         target_day: 'gap_1_day' | 'gap_2_day';
@@ -387,6 +404,12 @@ export const initialRiskManagement: RiskManagement = {
     hybrid_stop: false,
     hybrid_black_swan_pct: null,
     hybrid_max_loss_pct: null,
+    cangrejo_active: false,
+    cangrejo_mode: null,
+    cangrejo_max_sl_dist_pct: null,
+    cangrejo_max_loss_at_sl_pct: null,
+    cangrejo_max_mv_entry_pct: null,
+    cangrejo_max_mv_pyr_pct: null,
     swing_option: { active: false, target_day: 'gap_1_day' },
     exclude_days: [],
     exclude_months: [],

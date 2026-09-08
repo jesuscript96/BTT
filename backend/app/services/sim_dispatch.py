@@ -50,12 +50,23 @@ def simulate(**kwargs) -> dict:
     # Sin esto y con el JIT activo el tope se perderia EN SILENCIO — se
     # dimensionaria por SL sin techo, que es justo el riesgo de cola que el
     # modo existe para evitar.
-    if kwargs.get("hybrid_stop"):
+    #
+    # ESTILO CANGREJO (2026-09-08): SI VA POR EL KERNEL. A diferencia del
+    # hibrido, los dos modos se han portado al JIT con paridad tol-0 (suite
+    # `test_estilo_cangrejo.py`), asi que una estrategia con Cangrejo NO paga el
+    # motor lento — que era la razon de ser del porte: el genetico evalua miles
+    # de individuos y con Cangrejo forzando Python la corrida se multiplicaba.
+    #
+    # ARBITRAJE (PRD 2): si un payload trae Cangrejo Y hibrido, gana Cangrejo.
+    # Por eso el hibrido solo desvia al Python cuando Cangrejo esta APAGADO; con
+    # los dos encendidos el hibrido esta muerto y el kernel es valido. El motor
+    # Python hace el mismo arbitraje, asi que las dos vias coinciden.
+    cangrejo = bool(kwargs.get("cangrejo_active"))
+    if kwargs.get("hybrid_stop") and not cangrejo:
         return _legacy_simulate(**kwargs)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)
-    kwargs.pop("hybrid_capital", None)
     if _numba_sim_enabled():
         return simulate_jit(**kwargs)
     return _legacy_simulate(**kwargs)
@@ -146,6 +157,17 @@ def simulate_jit(
     # Tope de locates (0 = sin tope). Ver portfolio_sim.simulate.
     max_locates: int = 0,
     look_ahead_prevention: bool = True,
+    # ESTILO CANGREJO. Ver portfolio_sim.simulate para la semantica de cada
+    # modo; aqui solo se traducen a los centinelas que entiende el kernel
+    # (None -> 0.0 = sin tope).
+    cangrejo_active: bool = False,
+    cangrejo_max_sl_dist_pct: float | None = None,
+    cangrejo_max_loss_at_sl_pct: float | None = None,
+    # Base de capital del Modo B. Se llama `hybrid_capital` porque es EL MISMO
+    # parametro que ya usaba el techo hibrido y lo manda el mismo sitio (el bot,
+    # con la cuenta de verdad, porque su `init_cash` es un nominal de 1e9). None
+    # = usar el equity vivo de la simulacion.
+    hybrid_capital: float | None = None,
     partial_take_profits: list | None = None,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
@@ -346,6 +368,10 @@ def simulate_jit(
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
         int(no_new_risk_after or 0), int(force_close_at or 0),
         float(max_locates or 0),
+        bool(cangrejo_active),
+        float(cangrejo_max_sl_dist_pct or 0.0),
+        float(cangrejo_max_loss_at_sl_pct or 0.0),
+        float(hybrid_capital or 0.0),
     )
 
     # --- rebuild the exact trade dicts (rounding in Python, as the original) ---

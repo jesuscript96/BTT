@@ -28,6 +28,7 @@ import pandas as pd
 
 from app.services.bot_alerts_engine import Evento, MotorAlertas
 from app.services.market_frame import build_market_frame
+from app.services.bot_alerts_engine import estimar_por_estrategia
 
 logger = logging.getLogger("btt.bot_alerts.runner")
 
@@ -142,6 +143,28 @@ class RunnerAlertas:
                     # Que falle Telegram no puede hacerle perder la vela siguiente.
                     logger.warning("[BOT] fallo al notificar %s: %s", ev.ticker, exc)
         return eventos
+
+    def estimacion_locates(self, ticker: str, precio: float) -> list[dict]:
+        """Para `/evf`: que pediria cada estrategia si entrara a `precio` ahora.
+
+        **NO TOCA NINGUN ESTADO.** Reconstruye el frame a partir de las velas que
+        ya tiene guardadas y no llama al motor de senales: no puede generar un
+        aviso, ni marcar una entrada como avisada, ni mover nada. Preguntar por
+        Telegram no puede tener efectos secundarios sobre el bot.
+
+        Lista vacia si no hay velas de ese ticker todavia (no esta en el radar,
+        o acaba de entrar).
+        """
+        velas = self._velas.get(ticker)
+        if not velas:
+            return []
+        frame = build_market_frame(
+            pd.DataFrame(velas), ticker, self._stats.get(ticker, {}),
+        )
+        return estimar_por_estrategia(
+            self.motor.estrategias, lambda e: e["definition"],
+            frame, len(frame) - 1, precio,
+        )
 
     def tiene_posicion(self, ticker: str) -> bool:
         """Si el motor cree que hay una posicion viva en ese ticker.

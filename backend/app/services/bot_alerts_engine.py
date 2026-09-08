@@ -36,6 +36,9 @@ import pandas as pd
 
 from app.services.portfolio_sim import (
     _structural_level, _sl_side_valid, simulate, tope_hibrido,
+    # Estilo Cangrejo: los dos modos del PRD de Alvaro. El bot los necesita
+    # para que el aviso (stop y acciones) coincida con lo que simula el motor.
+    aprieta_stop_cangrejo, tope_cangrejo,
 )
 from app.services.strategy_engine import compile_strategy_def, translate_strategy
 
@@ -155,6 +158,15 @@ def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd:
         # el techo hibrido se calculara sobre eso, no recortaria nunca y el
         # numero de acciones del aviso saldria sin topar.
         "hybrid_capital": capital_usd,
+        # ESTILO CANGREJO. El bot tiene que aplicarlo por el mismo motivo que el
+        # hibrido: el estado que DEDUCE de sus trades (si sigue dentro, si toca
+        # piramide, por donde sale) es el de una posicion con estos techos. Sin
+        # esto, el backtest saldria en un sitio y el aviso en otro, SIN ERROR.
+        # La base del Modo B es `hybrid_capital` (la cuenta de verdad), no
+        # `init_cash`, que aqui es el nominal de 1e9.
+        "cangrejo_active": bool(rm.get("cangrejo_active", False)),
+        "cangrejo_max_sl_dist_pct": rm.get("cangrejo_max_sl_dist_pct"),
+        "cangrejo_max_loss_at_sl_pct": rm.get("cangrejo_max_loss_at_sl_pct"),
         "fees": 0.0,
         "slippage": 0.0,
         "locates_cost": 0.0,
@@ -256,6 +268,11 @@ def _hibrido_de(rm: dict, est: dict) -> Optional[dict]:
     por SL sin techo — no deberia pasar, porque `/watch` bloquea la activacion,
     pero inventarse un capital seria peor que quedarse sin techo.
     """
+    # ARBITRAJE con Estilo Cangrejo, igual que en el motor: con Cangrejo
+    # encendido el hibrido esta muerto. Si no se apagara aqui, el aviso
+    # aplicaria los DOS techos y el backtest solo uno.
+    if rm.get("cangrejo_active"):
+        return None
     if not rm.get("hybrid_stop"):
         return None
     capital = est.get("capital_usd")
@@ -268,8 +285,33 @@ def _hibrido_de(rm: dict, est: dict) -> Optional[dict]:
     }
 
 
+def _cangrejo_de(rm: dict, est: dict) -> Optional[dict]:
+    """Los topes de Estilo Cangrejo del aviso, o None si no aplica.
+
+    Mismo reparto que el hibrido: los PORCENTAJES vienen de la estrategia (para
+    que backtest, genetico y bot dimensionen igual) y el CAPITAL del cuadro de
+    mandos, porque el bot no conoce la cuenta.
+
+    El Modo A (`max_sl_dist_pct`) no necesita capital: aprieta el stop y ya. El
+    Modo B (`max_loss_pct`) SI, y sin el se devuelve el Modo A a secas en vez de
+    inventarse una cuenta — `/watch` ya bloquea la activacion en ese caso.
+    """
+    if not rm.get("cangrejo_active"):
+        return None
+    dist = rm.get("cangrejo_max_sl_dist_pct")
+    perdida = rm.get("cangrejo_max_loss_at_sl_pct")
+    if not dist and not perdida:
+        return None
+    return {
+        "max_sl_dist_pct": dist,
+        "max_loss_pct": perdida,
+        "capital": est.get("capital_usd"),
+    }
+
+
 def calcular_acciones(riesgo_usd: float, precio: float, stop: Optional[float],
-                      size_by_sl: bool, hibrido: Optional[dict] = None) -> Optional[float]:
+                      size_by_sl: bool, hibrido: Optional[dict] = None,
+                      cangrejo: Optional[dict] = None) -> Optional[float]:
     """Acciones del aviso. Sin redondear: 37,5 es una respuesta valida.
 
     Con `size_by_sl` el riesgo es la PERDIDA maxima y se divide por la distancia
@@ -298,8 +340,125 @@ def calcular_acciones(riesgo_usd: float, precio: float, stop: Optional[float],
                     hibrido.get("max_loss_pct"), precio)
                 if tope is not None:
                     acciones = min(acciones, tope)
-            return acciones
-    return riesgo_usd / precio
+            return _tope_cangrejo_acciones(acciones, precio, stop, cangrejo)
+    # SIN `size_by_sl` el riesgo es capital a desplegar... pero el Modo B de
+    # Cangrejo TAMBIEN aplica aqui (a diferencia del hibrido): es un techo sobre
+    # el sizing que haya, y por valor de mercado es justo donde la perdida al
+    # stop se descontrola. Paridad exacta con `portfolio_sim`.
+    return _tope_cangrejo_acciones(riesgo_usd / precio, precio, stop, cangrejo)
+
+
+def _tope_cangrejo_acciones(acciones: float, precio: float,
+                            stop: Optional[float],
+                            cangrejo: Optional[dict]) -> float:
+    """Aplica el Modo B (perdida maxima) sobre unas acciones ya calculadas.
+
+    RECORTA, no anula. Sin stop no hay perdida definida que topar y se devuelve
+    lo que habia — el mismo criterio que `tope_cangrejo`. El `stop` que llega
+    aqui ya viene APRETADO por el Modo A si estaba activo, igual que en el
+    motor, donde el Modo B mide sobre la distancia final.
+    """
+    if not cangrejo or stop is None:
+        return acciones
+    tope = tope_cangrejo(float(cangrejo.get("capital") or 0.0),
+                         cangrejo.get("max_loss_pct"),
+                         abs(precio - stop))
+    if tope is not None:
+        return min(acciones, tope)
+    return acciones
+
+
+def stop_estimado(sdef: dict, frame, i: int, precio: float,
+                  es_largo: bool) -> Optional[float]:
+    """El stop de una entrada HIPOTETICA al precio de ahora. Solo para `/evf`.
+
+    NO SE USA EN LOS AVISOS y no debe usarse: los avisos van por `nivel_stop`,
+    que es lo que replica al simulador barra a barra. Esto es la version de
+    CONSULTA, y se diferencia en una cosa a proposito:
+
+    `nivel_stop` devuelve None con un stop por PORCENTAJE, porque en el camino
+    del aviso ese caso ya lo lleva el simulador por `sl_stop`. Aqui no hay
+    simulador: si devolviera None, una estrategia de stop porcentual saldria sin
+    distancia y el tamano se calcularia como si no tuviera stop. Asi que aqui SI
+    se resuelve, sobre el precio de consulta.
+
+    Devuelve None solo cuando de verdad no hay stop que calcular.
+    """
+    hs = _hard_stop(sdef)
+    tipo = hs.get("type")
+    if tipo == "Market Structure (HOD/LOD)":
+        return nivel_stop(sdef, frame, i, precio, es_largo)
+    valor = hs.get("value")
+    if valor is None:
+        return None
+    try:
+        v = float(valor)
+    except (TypeError, ValueError):
+        return None
+    if v <= 0:
+        return None
+    if tipo == "Percentage":
+        stop = precio * ((1 - v / 100.0) if es_largo else (1 + v / 100.0))
+    elif tipo in ("Fixed Amount", "Fixed"):
+        stop = (precio - v) if es_largo else (precio + v)
+    else:
+        # ATR y compania necesitan el frame del simulador; no se inventa nada.
+        return None
+    return stop if _sl_side_valid(stop, precio, es_largo) else None
+
+
+def estimar_por_estrategia(estrategias: list, sdef_de, frame, i: int,
+                           precio: float) -> list[dict]:
+    """Cuantas acciones pediria CADA estrategia si entrara ahora. Solo `/evf`.
+
+    ES UNA ESTIMACION Y TIENE QUE SEGUIR SIENDOLO. Usa el precio del momento en
+    que se pregunta, no el de la vela de entrada, asi que el numero no va a
+    coincidir con el del aviso — ni debe: el aviso es la orden que se teclea en
+    el broker y sale de su propia vela. Esto es una consulta rapida para decidir
+    si merece la pena alquilar los locates ANTES de que salte nada.
+
+    Lo que SI comparte con el aviso es la aritmetica: mismo `calcular_acciones`,
+    mismo techo hibrido, mismo Estilo Cangrejo. Si esa cuenta cambiara, las dos
+    cambian a la vez — que es justo lo que evita que la consulta y la orden
+    digan cosas distintas por motivos distintos.
+    """
+    filas = []
+    for est in estrategias:
+        sdef = sdef_de(est)
+        rm = sdef.get("risk_management") or {}
+        es_largo = (sdef.get("bias") or "short") == "long"
+        riesgo = est.get("riesgo_usd")
+        fila = {
+            "nombre": est.get("name") or est.get("nombre") or "?",
+            "riesgo_usd": riesgo,
+            "ev_pct": est.get("ev_pct"),
+            "acciones": None,
+            "stop": None,
+            "motivo": None,
+        }
+        if not riesgo or riesgo <= 0:
+            fila["motivo"] = "sin riesgo fijado en el cuadro de mandos"
+            filas.append(fila)
+            continue
+
+        stop = stop_estimado(sdef, frame, i, precio, es_largo)
+        cangrejo = _cangrejo_de(rm, est)
+        # Modo A de Cangrejo: el stop que manda es el APRETADO, igual que en el
+        # aviso; si no, la distancia (y con ella el tamano) saldria de otro sitio.
+        if cangrejo and cangrejo.get("max_sl_dist_pct") and stop is not None:
+            stop = aprieta_stop_cangrejo(precio, stop,
+                                         cangrejo["max_sl_dist_pct"], es_largo)
+        fila["stop"] = stop
+        fila["acciones"] = calcular_acciones(
+            float(riesgo), precio, stop, bool(rm.get("size_by_sl", False)),
+            hibrido=_hibrido_de(rm, est), cangrejo=cangrejo,
+        )
+        if fila["acciones"] and stop is None and rm.get("size_by_sl"):
+            # Se da el numero igual (riesgo/precio), pero diciendo de que pie
+            # cojea: sin stop el tamano NO es el de la estrategia.
+            fila["motivo"] = "sin stop resoluble ahora: tamaño por precio, no por riesgo"
+        filas.append(fila)
+    return filas
 
 
 @dataclass
@@ -514,9 +673,18 @@ class MotorAlertas:
                 if not (hs_estructural and stop is None):
                     estado.entradas_avisadas.add(i)
                     rm = sdef.get("risk_management") or {}
+                    cangrejo = _cangrejo_de(rm, est)
+                    # MODO A: el aviso tiene que dar el stop APRETADO, que es
+                    # donde el motor sale de verdad. Si se avisara del nivel
+                    # estructural original, Jaume pondria la orden en un sitio
+                    # y el backtest habria salido en otro.
+                    if cangrejo and cangrejo.get("max_sl_dist_pct") and stop is not None:
+                        stop = aprieta_stop_cangrejo(
+                            precio, stop, cangrejo["max_sl_dist_pct"], es_largo)
                     acciones = calcular_acciones(
                         est["riesgo_usd"], precio, stop, bool(rm.get("size_by_sl", False)),
                         hibrido=_hibrido_de(rm, est),
+                        cangrejo=cangrejo,
                     )
                     eventos.append(Evento(
                         tipo="entrada", ticker=ticker,

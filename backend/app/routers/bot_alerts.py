@@ -165,6 +165,18 @@ def _faltan_datos(con, req: "WatchReq") -> list[str]:
             if lv.get("hybrid_stop") and not (lv.get("hybrid_black_swan_pct")
                                               and lv.get("hybrid_max_loss_pct")):
                 faltan.append(f"los porcentajes del hibrido en el nivel {i} de piramide")
+
+    # ── Estilo Cangrejo ──────────────────────────────────────────────────
+    # El Modo B (perdida maxima por trade) es un % DE LA CUENTA, asi que sin
+    # capital no hay techo que calcular y el aviso saldria sin topar y sin que
+    # nada lo indicase. El Modo A (recorrido del SL) no lo necesita: aprieta el
+    # stop sobre el precio de entrada y no mira la cuenta.
+    if rm.get("cangrejo_active"):
+        if rm.get("cangrejo_max_loss_at_sl_pct") and not req.capital_usd:
+            faltan.append("capital total de la cuenta (lo pide el Modo B de Estilo Cangrejo)")
+        if not (rm.get("cangrejo_max_sl_dist_pct")
+                or rm.get("cangrejo_max_loss_at_sl_pct")):
+            faltan.append("el porcentaje del modo de Estilo Cangrejo en la estrategia")
     return faltan
 
 

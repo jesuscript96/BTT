@@ -392,6 +392,32 @@ class RiskManagement(BaseModel):
     hybrid_stop: Optional[bool] = False
     hybrid_black_swan_pct: Optional[float] = None
     hybrid_max_loss_pct: Optional[float] = None
+    # ESTILO CANGREJO (2026-09-08, PRD de Alvaro `docs/PRD_ESTILO_CANGREJO.md`).
+    # Acota cada trade "o por recorrido del SL, o por perdida maxima". Con SL
+    # por estructura la distancia entry->SL cambia en cada entrada, asi que con
+    # el mismo market value unos stops cuestan poco y otros muchisimo; estos dos
+    # modos le ponen techo, cada uno por un lado:
+    #   MODO A `cangrejo_max_sl_dist_pct`   -> el stop nunca a mas de ese % del
+    #     entry. Se APRIETA el stop: cambia DONDE se sale, no cuanto se pone.
+    #   MODO B `cangrejo_max_loss_at_sl_pct`-> el SL nunca cuesta mas de ese %
+    #     de la cuenta. Se encoge el TAMANO: cambia CUANTO se pone, no donde.
+    # Son EXCLUYENTES entre si en la UI (`cangrejo_mode` dice cual se ve) y
+    # EXCLUYENTES con el stop hibrido; si un payload trajera los dos, el motor
+    # arbitra a favor de Cangrejo. Son TECHOS: solo recortan, nunca agrandan.
+    #
+    # DECLARADOS AQUI DESDE EL DIA 1 por la leccion de las TRES CAPAS: pydantic
+    # va con extra="ignore" y un campo sin declarar se cae SIN error, SIN log y
+    # SIN 422 — es lo que le paso a `size_by_sl`.
+    cangrejo_active: Optional[bool] = False
+    cangrejo_mode: Optional[Literal['recorrido', 'perdida']] = None
+    cangrejo_max_sl_dist_pct: Optional[float] = None
+    cangrejo_max_loss_at_sl_pct: Optional[float] = None
+    # INERTES, sin UI. La primera version de la tarjeta tenia cuatro topes
+    # sueltos y resulto poco intuitiva (PRD 3); se dejan ADMITIDOS por si algun
+    # dia vuelven, para que un borrador viejo no reviente, pero NINGUN motor los
+    # lee. No anadir logica que dependa de ellos sin actualizar el PRD.
+    cangrejo_max_mv_entry_pct: Optional[float] = None
+    cangrejo_max_mv_pyr_pct: Optional[float] = None
     use_hard_stop: Optional[bool] = True
     use_take_profit: Optional[bool] = True
     take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL

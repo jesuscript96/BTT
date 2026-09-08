@@ -544,6 +544,15 @@ def listar_candidatas(con, scope_sql: str = "", scope_params: Optional[list] = N
             "hybrid_stop": bool((definition.get("risk_management") or {}).get("hybrid_stop", False)),
             "hybrid_black_swan_pct": (definition.get("risk_management") or {}).get("hybrid_black_swan_pct"),
             "hybrid_max_loss_pct": (definition.get("risk_management") or {}).get("hybrid_max_loss_pct"),
+            # -- Estilo Cangrejo -----------------------------------------
+            # Mismo reparto que el hibrido: porcentajes de la estrategia,
+            # capital del cuadro de mandos. La pagina los necesita para
+            # explicar el numero de acciones y para no dejar activar el Modo B
+            # sin capital.
+            "cangrejo_active": bool((definition.get("risk_management") or {}).get("cangrejo_active", False)),
+            "cangrejo_mode": (definition.get("risk_management") or {}).get("cangrejo_mode"),
+            "cangrejo_max_sl_dist_pct": (definition.get("risk_management") or {}).get("cangrejo_max_sl_dist_pct"),
+            "cangrejo_max_loss_at_sl_pct": (definition.get("risk_management") or {}).get("cangrejo_max_loss_at_sl_pct"),
             "capital_usd": cfg.get("capital_usd"),
             "riesgo_piramide_usd": cfg.get("riesgo_piramide_usd"),
             "ev_pct": cfg.get("ev_pct"),

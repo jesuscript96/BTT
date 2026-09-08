@@ -948,16 +948,18 @@ export default function CuadroMandos() {
                     ) : <span style={{ color: color.textMuted }}>—</span>}
                   </Td>
                   <Td num>
-                    {/* Solo con stop hibrido: sin capital no se puede calcular
-                        el techo, y el backend no deja activar. */}
-                    {s.hybrid_stop ? (
+                    {/* Con stop hibrido O con el Modo B de Estilo Cangrejo:
+                        los dos topan sobre un % DE LA CUENTA, y sin capital no
+                        se puede calcular el techo. El backend tampoco deja
+                        activar en ninguno de los dos casos. */}
+                    {(s.hybrid_stop || (s.cangrejo_active && s.cangrejo_max_loss_at_sl_pct)) ? (
                       <CampoNum
                         valor={capitales[s.strategy_id] ?? ""}
                         onChange={(v) => setCapitales((p) => ({ ...p, [s.strategy_id]: v }))}
                         onBlur={() => s.activa && guardarEstrategia(s, true)}
                         paso={1000}
                         aviso={!capitales[s.strategy_id]}
-                        titulo="Tu cuenta entera. El stop híbrido la necesita para el techo."
+                        titulo="Tu cuenta entera. La necesitan el stop híbrido y el Modo B de Estilo Cangrejo para calcular su techo."
                       />
                     ) : <span style={{ color: color.textMuted }}>—</span>}
                   </Td>
@@ -975,12 +977,23 @@ export default function CuadroMandos() {
                       titulo="Esperanza matemática de la estrategia, en % del precio de entrada. Se usa para decidir si compensan los locates."
                     />
                   </Td>
-                  <Td dim title={s.hybrid_stop
+                  {/* Estilo Cangrejo va PRIMERO porque, cuando está activo,
+                      el híbrido está muerto: el motor arbitra a su favor. Si se
+                      pintara el híbrido, la columna mentiría. */}
+                  <Td dim title={s.cangrejo_active && s.cangrejo_max_sl_dist_pct
+                    ? `Cangrejo: el stop nunca queda a más del ${s.cangrejo_max_sl_dist_pct}% de la entrada. Se aprieta y sales ahí.`
+                    : s.cangrejo_active && s.cangrejo_max_loss_at_sl_pct
+                    ? `Cangrejo: el tamaño se encoge para que el stop nunca cueste más del ${s.cangrejo_max_loss_at_sl_pct}% de la cuenta.`
+                    : s.hybrid_stop
                     ? "Híbrido: por distancia al stop, pero sin exponer más de lo que aceptas perder ante un evento de cola."
                     : s.size_by_sl
                     ? "Se divide entre la distancia al stop: es la pérdida máxima si salta."
                     : "Se divide entre el precio: es el capital que se despliega."}>
-                    {s.hybrid_stop
+                    {s.cangrejo_active && s.cangrejo_max_sl_dist_pct
+                      ? <span style={{ color: color.copper }}>cangrejo (SL apretado)</span>
+                      : s.cangrejo_active && s.cangrejo_max_loss_at_sl_pct
+                      ? <span style={{ color: color.copper }}>cangrejo (pérdida topada)</span>
+                      : s.hybrid_stop
                       ? <span style={{ color: color.copper }}>híbrido (SL con techo)</span>
                       : s.size_by_sl ? "pérdida máxima" : "capital a desplegar"}
                   </Td>

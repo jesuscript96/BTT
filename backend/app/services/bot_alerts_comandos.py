@@ -13,11 +13,29 @@ por eso hay dos reglas que no son opcionales:
 QUE RESUELVE `/evf`. Antes de alquilar los locates de una accion hay que saber
 si la estrategia gana lo suficiente para pagarlos:
 
-    fade necesario (%) = coste del locate por accion / precio x 100
+    fade necesario (%) = coste REAL del locate por accion / precio x 100
     compensa           <=>  EV (%) > fade necesario (%)
 
-El TAMANO no entra: ganancia esperada y coste escalan los dos con el numero de
-acciones y se cancela. Si el fade no llega para un locate, tampoco para mil.
+EL TAMANO SI ENTRA, y esto es lo que la primera version tenia mal. Decia: «la
+ganancia esperada y el coste escalan los dos con el numero de acciones, asi que
+se cancela; si el fade no llega para un locate, tampoco para mil». Eso solo es
+cierto si las acciones son multiplo exacto de 100.
+
+**LOS LOCATES SE ALQUILAN EN PAQUETES DE 100 Y SE PAGAN ENTEROS.** Con 150
+acciones se pagan DOS paquetes, o sea 200 acciones de alquiler, y el coste real
+por accion que se opera NO es el del broker:
+
+    coste real por accion = ceil(n/100) x 100 x coste_broker / n
+
+Es un diente de sierra que se dispara justo pasada cada frontera:
+
+    101 acciones -> se pagan 200 -> 1,98x el coste nominal
+    301 acciones -> se pagan 400 -> 1,33x
+   1001 acciones -> se pagan 1100 -> 1,10x
+
+Decae con el tamano, asi que muerde por debajo de unas 500 acciones — que es
+justo el rango de estas estrategias. Y solo cambia el veredicto cuando el margen
+ya era estrecho, que es exactamente cuando se hace la pregunta.
 
 QUE RESUELVE `/estado`. Ver lo que el bot sabe sin abrir el ordenador: la ficha
 de una accion, o la lista entera de lo que esta vigilando.
@@ -71,9 +89,83 @@ _FRASES_NO = [
 ]
 
 
+def _frasero():
+    """Reparte coletillas sin repetir dentro de un mismo mensaje.
+
+    Con `random.choice` a pelo, tres estrategias con el mismo veredicto podian
+    salir con la misma frase tres veces y el mensaje parecia roto. Se baraja
+    cada lista una vez por mensaje y se van sacando; si se agota (mas
+    estrategias que frases) se vuelve a barajar.
+    """
+    bolsas: dict = {}
+
+    def siguiente(bien: bool) -> str:
+        bolsa = bolsas.get(bien)
+        if not bolsa:
+            bolsa = list(_FRASES_SI if bien else _FRASES_NO)
+            random.shuffle(bolsa)
+            bolsas[bien] = bolsa
+        return bolsa.pop()
+
+    return siguiente
+
+
+def _bloque_estrategia(fila: dict, precio: float, coste: float,
+                       frase_de=None) -> str:
+    """Una estrategia: acciones estimadas, paquetes, coste real y veredicto.
+
+    LOS PAQUETES SE CUENTAN SOBRE LAS ACCIONES ESTIMADAS, que es de donde sale
+    todo el valor de esto: el coste por accion depende del tamano, y el tamano
+    no se sabe hasta que se sabe el riesgo y la distancia al stop.
+    """
+    nombre = _esc(fila.get("nombre") or "?")
+    riesgo = fila.get("riesgo_usd")
+    ev = fila.get("ev_pct")
+    acciones = fila.get("acciones")
+    motivo = fila.get("motivo")
+
+    cab = f"<b>{nombre}</b>"
+    if riesgo:
+        cab += f" · riesgo {riesgo:g} $"
+
+    if not acciones or acciones <= 0:
+        return f"{cab}\n<i>{_esc(motivo or 'no puedo estimar el tamaño')}</i>"
+    if not ev:
+        return (f"{cab}\n{int(round(acciones))} acciones · "
+                f"<i>sin EV en el cuadro de mandos, no hay veredicto</i>")
+
+    n = int(round(acciones))
+    paquetes = -(-n // 100)                       # techo: se pagan enteros
+    coste_real = (paquetes * 100 * coste) / n
+    fade = coste_real / precio * 100.0
+    margen = ev - fade
+    bien = margen > 0
+
+    lineas = [
+        cab,
+        f"{n} acciones → <b>{paquetes} paquete{'s' if paquetes != 1 else ''}</b> "
+        f"({paquetes * 100} alquiladas)",
+    ]
+    # Solo se dice cuando el redondeo cambia algo: con 400 acciones justas el
+    # coste real ES el del broker y repetirlo seria ruido.
+    if coste_real > coste * 1.001:
+        lineas.append(f"locate real <b>{coste_real:.4f}</b> $/acción "
+                      f"<i>(nominal {coste:.4f})</i>")
+    lineas.append(f"fade necesario <b>{fade:.4f} %</b> · EV {ev:.4f} %")
+    lineas.append(f"<b>{POSITIVA if bien else NEGATIVA}</b> · margen {margen:+.4f} pp")
+    # La coletilla va PEGADA a su veredicto y no al final del mensaje: con
+    # varias estrategias, una sola frase no sabria a cual se refiere.
+    if frase_de is not None:
+        lineas.append(f"<i>{frase_de(bien)}</i>")
+    if motivo:
+        lineas.append(f"<i>{_esc(motivo)}</i>")
+    return "\n".join(lineas)
+
+
 def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
                       ev_pct: float, acciones: Optional[float] = None,
-                      ev_del_cuadro: bool = False) -> str:
+                      ev_del_cuadro: bool = False,
+                      estrategias: Optional[list] = None) -> str:
     """El mensaje de `/evf`, listo para mandar.
 
     `coste` es el precio del locate POR ACCION — el que enseña el broker, que
@@ -92,10 +184,37 @@ def veredicto_locates(ticker: str, precio: Optional[float], coste: float,
     """
     if not precio or precio <= 0:
         return f"<b>{ticker}</b>: no tengo precio en vivo. ¿Esta en el radar?"
-    if coste <= 0 or ev_pct <= 0:
-        return ("Faltan datos. Uso: <code>/evf TICKER COSTE EV%</code>\n"
+    if coste <= 0:
+        return ("Faltan datos. Uso: <code>/evf TICKER COSTE [EV%]</code>\n"
                 "COSTE = precio del locate POR ACCIÓN, el que da el bróker.\n"
-                "Ejemplo: <code>/evf MIMI 0.01 6.4</code>")
+                "Ejemplo: <code>/evf MIMI 0.01</code>")
+
+    # ── Veredicto POR ESTRATEGIA ─────────────────────────────────────────
+    # Es la respuesta buena, y va primero. Cada estrategia tiene su riesgo y su
+    # EV en el cuadro de mandos, asi que cada una pide un numero de acciones
+    # distinto y paga un numero de paquetes distinto: el mismo locate puede
+    # compensar para una y no para otra. Un veredicto unico no podia decir eso.
+    #
+    # EL TAMANO ES UNA ESTIMACION AL PRECIO DE AHORA y no va a coincidir con el
+    # del aviso — ni debe. El aviso sale de su propia vela y es la orden que se
+    # teclea en el broker; esto es una consulta para decidir si alquilar ANTES
+    # de que salte nada. Igualarlos daria un tamano de entrada equivocado.
+    if estrategias:
+        frase_de = _frasero()
+        cuerpo = "\n\n".join(_bloque_estrategia(f, precio, coste, frase_de)
+                              for f in estrategias)
+        return (
+            f"<b>{ticker}</b> a {precio:.4f} $\n"
+            f"locate {coste:.4f} $/acción · paquetes de 100\n\n"
+            f"{cuerpo}\n\n"
+            f"<i>— tamaños estimados al precio de ahora; el aviso los recalcula "
+            f"con su vela —</i>"
+        )
+
+    if ev_pct <= 0:
+        return ("No tengo EV para ninguna estrategia. Ponlo en la columna "
+                "<b>EV %</b> del cuadro de mandos, o escríbelo aquí:\n"
+                "<code>/evf TICKER COSTE EV%</code>")
 
     # `coste` es el precio del locate POR ACCIÓN — lo que enseña el broker en el
     # momento de decidir, que es cuando se usa este comando. (El campo del
@@ -297,16 +416,23 @@ def panel_radar(cands: Optional[list]) -> str:
 AYUDA = (
     "<b>COMANDOS</b>\n\n"
 
-    "<code>/evf TICKER COSTE [EV%]</code>\n"
+    "<code>/evf TICKER COSTE [EV%] [ACCIONES]</code>\n"
     "¿Compensa alquilar los locates de esa acción?\n\n"
     "· <b>COSTE</b> = precio del locate <b>POR ACCIÓN</b>, tal cual te lo da\n"
     "  el bróker. Si el locate entero (100 acciones) vale 1 $, escribes\n"
     "  <code>0.01</code>.\n"
     "  <i>Ojo: el campo del backtester pide el del paquete de 100 — allí\n"
     "  ese mismo locate se mete como 1.</i>\n"
-    "· <b>EV%</b> = opcional. Sin él uso el de la columna EV del cuadro de\n"
-    "  mandos. Ponlo solo para probar otro valor.\n\n"
-    "  <code>/evf MIMI 0.01</code>   ·   <code>/evf MIMI 0.01 6.4</code>\n\n"
+    "· A secas te doy un veredicto <b>POR CADA ESTRATEGIA</b>: con su riesgo\n"
+    "  y su EV del cuadro de mandos calculo las acciones que pediría al\n"
+    "  precio de ahora, los <b>paquetes de 100</b> que hay que pagar (van\n"
+    "  enteros: 150 acciones son 2 paquetes) y el coste REAL por acción.\n"
+    "  <i>Los tamaños son estimados al precio del momento; el aviso los\n"
+    "  recalcula con su vela.</i>\n"
+    "· <b>EV%</b> = opcional. Si lo pones, doy un veredicto único con ese\n"
+    "  valor en vez del desglose por estrategia.\n"
+    "· <b>ACCIONES</b> = opcional, solo con EV%: fuerza el tamaño.\n\n"
+    "  <code>/evf MIMI 0.01</code>   ·   <code>/evf MIMI 0.01 6.4 150</code>\n\n"
 
     "<code>/estado radar</code>\n"
     "Las que estoy vigilando ahora, con la métrica que las metió.\n"
@@ -323,7 +449,8 @@ AYUDA = (
 def responder(texto: str, precio_de: Callable[[str], Optional[float]],
               ev_guardado: Optional[float] = None,
               estado_de: Optional[Callable[[str], Optional[dict]]] = None,
-              radar: Optional[Callable[[], Optional[list]]] = None
+              radar: Optional[Callable[[], Optional[list]]] = None,
+              estimacion_de: Optional[Callable[[str, float], Optional[list]]] = None
               ) -> Optional[str]:
     """Interpreta un mensaje y devuelve la respuesta, o None si no es para mi.
 
@@ -338,6 +465,13 @@ def responder(texto: str, precio_de: Callable[[str], Optional[float]],
     con su mercado en vivo, en forma de diccionarios sueltos. Sin ellas el
     comando dice que no hay datos en vez de fallar — el bot puede arrancar con
     una lista de tickers a mano, sin radar, y entonces `/estado radar` lo dice.
+
+    `estimacion_de(ticker, precio)` es lo que convierte `/evf` en util: devuelve,
+    por cada estrategia del cuadro de mandos, cuantas acciones pediria si entrara
+    ahora — y de ahi salen los PAQUETES de 100 y el coste real. La pone el bot
+    (es `RunnerAlertas.estimacion_locates`), y es de SOLO LECTURA: preguntar por
+    Telegram no puede mover el estado del bot. Sin ella, `/evf` se comporta como
+    siempre y usa un EV suelto.
 
     NUNCA lanza. Un mensaje raro no puede tumbar el bucle que procesa velas.
     """
@@ -361,12 +495,24 @@ def responder(texto: str, precio_de: Callable[[str], Optional[float]],
             ev = (float(partes[3].replace(",", ".")) if len(partes) > 3
                   else (ev_guardado or 0.0))
             acciones = float(partes[4]) if len(partes) > 4 else None
-            if not ev:
+            precio = precio_de(ticker)
+            # Con las estrategias del cuadro de mandos NO hace falta ni el EV ni
+            # el numero de acciones: los saca de ahi cada una por su cuenta. Se
+            # pide la estimacion solo si no se ha escrito un EV a mano, para que
+            # escribir uno siga sirviendo para probar un valor suelto.
+            estimadas = None
+            if estimacion_de is not None and precio and len(partes) <= 3:
+                try:
+                    estimadas = estimacion_de(ticker, precio)
+                except Exception:          # noqa: BLE001
+                    estimadas = None       # una consulta no puede tumbar nada
+            if not ev and not estimadas:
                 return ("No tengo EV. Ponlo en el cuadro de mandos (columna "
                         "<b>EV %</b> de la estrategia) o escríbelo aquí:\n"
-                        "<code>/evf TICKER COSTE_100 EV%</code>")
-            return veredicto_locates(ticker, precio_de(ticker), coste, ev,
-                                     acciones, ev_del_cuadro=len(partes) <= 3)
+                        "<code>/evf TICKER COSTE EV%</code>")
+            return veredicto_locates(ticker, precio, coste, ev,
+                                     acciones, ev_del_cuadro=len(partes) <= 3,
+                                     estrategias=estimadas)
 
         if cmd == "estado":
             # `/estado` a secas enseña el radar: es lo que se quiere ver casi
