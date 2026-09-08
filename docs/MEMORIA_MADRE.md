@@ -3475,5 +3475,5 @@ interruptor por razones históricas.
 - **Lectura de `RTH prueba 1` con 50 semillas:** acabas entre +1.067 y +1.363 $, mediana +1.195 $, peor +967 $, peor caída −15,2 %, factura media −10.605 $. La banda es estrecha (297 $, 2,5 %): la suerte con la semilla pesa poco; lo que pesa es la media, que se lleva el 89,7 % del edge bruto.
 - **Detalles de UI que pidió Jaume:** separador entre sub-pestañas (se coló detrás en vez de delante); cifras de millones desbordaban la casilla por un `nowrap` — ahora «acabas entre» va en dos líneas y el resto parte en vez de pisar. El reloader de uvicorn se volvió a quedar colgado al guardar el backend (worker de las 19:29 con código de las 21:21): matar padre e hijo y arrancar limpio.
 - **Pruebas:** 4 sintéticas (orden min≤p10≤p50≤p90≤max≤bruta, determinismo y semilla reproducible, solo cortos pagan y paquetes enteros sobre el máximo del día, 200 semillas). `tsc` limpio.
-- **Estado:** SUBIDO a `sailor` y `staging` (ver commit).
+- **Estado:** SUBIDO a `sailor` y `staging` en `a9066dc`.
 
