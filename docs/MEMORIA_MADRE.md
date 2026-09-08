@@ -4184,3 +4184,51 @@ solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
 - **Avisos para el que integre:** (1) con Cangrejo activo la simulación va SIEMPRE al motor Python (kernel Numba no lo implementa, como el híbrido); (2) el fix del dispatcher del 2026-09-07 hace que `hybrid_capital` llegue al motor también con Cangrejo sin híbrido — relevante para el bot cuando lo use; (3) `cangrejo_max_mv_entry_pct`/`cangrejo_max_mv_pyr_pct` siguen admitidos por el motor pero INERTES (sin UI) por si vuelven.
 - **Código tocado:** solo lo listado arriba, en rama de Álvaro. Nada de staging salvo este documento y esta entrada.
 - **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+### [HALLAZGO · 2026-09-08 · 01] backtest_params guarda fechas que no son las ejecutadas en dos corridas de la 1B Sobri (2026-01-02→2026-09-04 vs. trades reales 2025)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** tabla `backtest_results` de `backend/users.duckdb`, corridas `240d10bc` (Estrategia 1B - modelizacion Sobri, ejecutada 2026-09-08 17:21) y `fe1040b1` (Modelización Sobri 1, 16:54). Campo `backtest_params.start_date/end_date` dentro de `results_json`.
+- **Qué observé:** en esas dos corridas `backtest_params` dice `start_date=2026-01-02, end_date=2026-09-04`, pero los trades reales del JSON van de 2025-01-02 a 2025-12-31 (las otras tres corridas del mismo lote —Sobri 2/3/4— sí reportan 2025-01-02→2025-12-31 y coinciden con sus trades).
+- **Cómo reproducir:** abrir `users.duckdb` read_only, leer `results_json->backtest_params` y el rango de fechas de los trades de esas dos corridas; comparar.
+- **Evidencia:** corridas `240d10bc` y `fe1040b1`: params 2026-01-02→2026-09-04, trades 2025-01-02→2025-12-31; 1831 trades en las 5 corridas del lote, mismos días/tickers. Además ambas corridas dan resultados idénticos trade a trade (definiciones duplicadas en `strategies`).
+- **Hipótesis de causa:** HIPÓTESIS — la UI/editar estrategia conservó el date_to 2026-09-04 de la v0 original al duplicar, y los params guardados reflejan el formulario, no las fechas efectivamente ejecutadas por el orquestador.
+- **Impacto:** solo metadatos; los resultados (trades/métricas) parecen consistentes entre versiones. Pero cualquier filtro o reporte que confíe en `backtest_params` para segmentar por fechas (p. ej. OOS por IS/OOS) clasificaría mal estas corridas.
+- **Código tocado:** NINGUNO (confirmado; solo lectura de la BD)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-08 · 02] El split IS/OOS (is_percent) se descarta en el backend: el motor siempre corre el rango completo y lo persistido es IS+OOS mezclado
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** `frontend/src/components/backtester/BacktestPanel.tsx:712,815` (envía `is_percent`), `backend/app/services/backtest_orchestrator.py:41` (`BacktestRequest` NO declara `is_percent` — Pydantic lo descarta), `frontend/src/app/backtester/page.tsx:1076+` (memo `isFilteredResult` recalcula el IS solo en el cliente; el OOS no se guarda).
+- **Qué observé:** las 5 corridas del lote de hoy de la 1B Sobri se lanzaron con el slider OOS al 10 %, pero `backtest_results` guarda el backtest completo (IS+OOS mezclados) y ningún resultado OOS por ningún sitio (recorrido recursivo del JSON: solo existe `backtest_params.is_percent=90` como metadato).
+- **Cómo reproducir:** lanzar un backtest con is_percent<100 desde la UI; inspeccionar `results_json` guardado — no hay métricas IS ni OOS separadas.
+- **Evidencia:** grep recursivo con regex `oos|is_|train|test|walk|split|valid` (case-insensitive) sobre results_json de las 5 corridas de hoy: únicos matches `backtest_params` e `is_percent=90`. En código, `BacktestRequest` no tiene el campo.
+- **Hipótesis de causa:** HIPÓTESIS — el slider se añadió como feature de display del frontend y nunca se bajó al orquestador.
+- **Impacto:** cualquier análisis desde la BD (o desde la API de resultados) ve métricas mezcladas aunque el usuario crea que correó IS 90 %; el OOS se pierde al cerrar la página. Riesgo de sobreestimar robustez sin darse cuenta. El OOS real de motor solo está en los endpoints de robustez (`/api/robustness/wfo/*`), que no se usaron.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-08 · 03] Return/Calmar "locos" de la 1B Sobri: aritmética exacta, la escala la dispara la config (FIXED 300$ sobre 10k / PERCENT 5% compuesto) — más 3 problemas de presentación
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** duda (semántica/diseño) + mejora opcional de UI. NO es bug de cálculo.
+- **Dónde:** `backend/app/services/backtest_service.py:1779-1780` (return = total_pnl/init_cash, sin gastos, sin anualizar), `:1882-1883` (calmar = return TOTAL/|maxDD|), `:1760-1772` (monthly_expenses solo va a total_pnl_net), `frontend/src/components/backtester/MetricsCard.tsx:19,25` + tooltip Calmar ("anualizada" — falso), `frontend/src/app/backtester/page.tsx:1538` y `ResultsTabs.tsx:293,481,502` (curva principal pinta global_equity SIN gastos).
+- **Qué observé:** reconstruida la curva completa de las corridas 1B Sobri del 08-sep (249 días) desde los trades: return 919,31% == 91.930,93$/10.000$ EXACTO (descuadre máx 0,01$); calmar 60,05 == 919,31/15,31 EXACTO. El maxDD −15,31% ocurrió el DÍA 1 (2025-01-02, equity 8.469$: 5 pérdidas de 300$ con la cuenta en mínimo) y no volvió a repetirse. La causa de la escala: risk_type=FIXED con 300$/R y ~7,4 entradas/día (350,8R netos × 300$ ≈ 105k$ sobre cuenta de 10k$); el return es inversamente proporcional a init_cash. La corrida 17:58 (`bc7df3a6`, PERCENT 5%, 2.417 trades) da total_return_pct = 9,5 BILLONES % (PnL 954 billones $, nocional máx. 1,1×10¹⁵ $): compounding diario de 5% × 3,08R/día sin límites de liquidez/float — exponencial aritméticamente exacta dentro del modelo.
+- **Cómo reproducir:** corridas 16:41–17:31 y 17:58 del 2026-09-08 en backtest_results; recalcular Σpnl(trades)−locates vs total_pnl e init_cash.
+- **Evidencia:** riesgo@stop de 766 trades simples = 300,00$ exactos (p50=mean=p95); ΣR×300 = 105.231 vs Σpnl 105.107 (+0,1%); armA/armB de %TEMP%\ab_sobri coinciden bit a bit con BD. Sharpe √365, sortino 11,39, todo consistente.
+- **Impacto:** Return y Calmar no son comparables entre configs con distinto init_cash/risk_type; monthly_expenses (3.600$/año = 36% del inicial) NO restan del Return mostrado (neto real 883% vs 919%); tooltip del Calmar dice "anualizada" y no lo es; gráfico principal sin gastos. La corrida PERCENT 5% parece un bug del motor pero es limitación de diseño (sin constraints de mercado).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO (decisiones para Álvaro/Jaume: usar total_pnl_net o mostrar ambos; anualizar o retocar tooltip; pintar global_equity_expenses; capar nocional/liquidez en PERCENT)
+
+### [IMPLEMENTACIÓN · 2026-09-08 · PRD_METRICAS_Y_OOS] Métricas honestas + OOS persistido + ΣR + fechas ejecutadas — en rama `alvaro-rama-desarrollo`
+- **Implementa:** ZCode (para Álvaro, por petición explícita suya) — cierra los HALLAZGOS 2026-09-08·01, ·02 y la parte de presentación del ·03.
+- **Qué cambió (sin tocar NI UN trade — paridad verificada bit a bit contra la corrida canónica de la Sobri 3 de las 17:10):**
+  - `_aggregate_metrics`: claves nuevas `r_total` (ΣR), `total_return_net_pct` (neto de monthly_expenses) y `calmar_ratio_annualized` (CAGR/|maxDD|). Las viejas quedan intactas por comparabilidad (decisión de Álvaro: claves nuevas, UI dual).
+  - `BacktestRequest.is_percent` (antes Pydantic lo descartaba) + `compute_is_oos_metrics`: el motor ejecuta igual (una pasada) y añade `results["is_oos"]` con is/oos_metrics réplica exacta del cutoff del frontend (índice de equity; trades del día límite a OOS; locates del día límite a IS). Persistido gratis vía autosave.
+  - `results["executed_date_range"]` (del qualifying filtrado) y `_autosave_success` escribe `backtest_params.start_date/end_date` con el rango EJECUTADO, no el del formulario.
+  - `strategy_search._map_aggregate_metrics`: la columna `total_return_r` lee `r_total` (fallback a la clave legacy; corridas viejas siguen en 0, no se reescriben).
+  - Frontend: tipos+firmas `is_percent`; la ruta de borrador también lo envía; el memo IS usa `is_oos.is_metrics` del motor cuando existe (fallback cliente); al reabrir un run se restauran is_percent/init_cash/risk_r/monthly_expenses/risk_type (el split se perdía al recargar); MetricsCard con R Total / Return (neto) / Calmar (anual.) y tooltips corregidos; la curva de gastos usa `global_equity_expenses` del payload (antes se simulaba en cliente con meses de 30,44 días).
+- **Verificación:** suite backend 747 passed / 87 skipped (15 tests nuevos en `tests/test_prd_metricas_oos.py`); repro canónica Sobri 3: 1831 trades, PF 1.6239, ret 936.9092 %, DD −15.7417 %, sharpe 5.5428 idénticos + r_total 356.55, neto 900.9092 %, Calmar anual. 60.372, executed 2025-01-02→2025-12-31, IS 1713/318.07R/82.994 $, OOS 118/38.48R/10.697 $ — todo OK. `npm run build` limpio.
+- **Pendiente de coordinación:** `tests/test_backtest_golden.py` compara aggregate_metrics completo con igualdad exacta y solo corre en servidor → **hay que recapturar el golden-B allí** al desplegar (solo añade claves). P2.5 del PRD (topes de nocional/liquidez para PERCENT) queda fuera de este cambio, por decisión.
+- **Código tocado:** `backend/app/services/{backtest_service,backtest_orchestrator}.py`, `backend/app/routers/{backtest,strategy_search}.py`, `backend/tests/test_prd_metricas_oos.py` (nuevo), `frontend/src/lib/api_backtester.ts`, `frontend/src/app/backtester/page.tsx`, `frontend/src/components/backtester/{MetricsCard.tsx,tabs/EquityCurveTab.tsx}`, `docs/PRD_METRICAS_Y_OOS_BACKTESTER.md` (nuevo). Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
