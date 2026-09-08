@@ -7,14 +7,19 @@ import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import TradesTab from "@/components/backtester/tabs/TradesTab";
 import ChartsTab from "@/components/backtester/tabs/ChartsTab";
 import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSurfaceTab";
+import EdgeTab from "@/components/backtester/tabs/EdgeTab";
 import LockedFeature from "@/components/LockedFeature";
 import Chart from "@/components/backtester/Chart";
 
+// Edge va DESPUES de «Análisis por trade» y ANTES de Optimization a proposito:
+// el orden es un zoom hacia fuera (una operacion → el microscopio → agregado en
+// el tiempo → que valor pongo). Ver la cabecera de EdgeTab.tsx.
 const TABS = [
   { id: "performance", label: "Performance" },
   { id: "calendar", label: "Calendar" },
   { id: "trades", label: "Trades" },
   { id: "analysis", label: "Análisis por trade" },
+  { id: "edge", label: "Edge" },
   { id: "charts_optimization", label: "Charts + Optimization IS" },
 ] as const;
 
@@ -386,6 +391,11 @@ export default function ResultsTabs({
               </div>
             )}
           </div>
+        </div>
+        <div style={{ display: activeTab === "edge" ? "block" : "none" }}>
+          {mountedTabs.has("edge") && (
+          <EdgeTab trades={result.trades} />
+          )}
         </div>
          <div style={{ display: activeTab === "charts_optimization" ? "block" : "none" }}>
           {/* Sub-navigation tabs */}
