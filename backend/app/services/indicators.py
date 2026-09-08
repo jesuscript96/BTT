@@ -7,6 +7,8 @@ Supports the full IndicatorConfig schema (BTT March 2026):
   days_lookback, calc_on_heikin, time_hour, time_minute, time_condition
 """
 
+import os
+
 import numpy as np
 import pandas as pd
 from numba import njit
@@ -31,73 +33,203 @@ def _safe_float(val) -> float:
         return np.nan
 
 
-# Per-ticker cache for "High/Low of last X days" lookups. Keyed by ticker ->
-# DataFrame indexed by date string with rth_high / rth_low columns.
-_ticker_daily_ohlc_cache = {}
+# -- Tabla diaria de "Overhead last X days" ---------------------------------
+# Velas DIARIAS de sesion regular (09:30-16:00), en un parquet APARTE que genera
+# `backend/scripts/construir_daily_overhead.py`. NO forma parte del lago ni lo
+# modifica, y se lee con `read_parquet` de DISCO: no abre `local_data.duckdb`,
+# asi que no compite por el cerrojo de DuckDB con el resto del backend.
+#
+# Cache por ticker: ticker -> dict con el indice de fechas y arrays numpy.
+_overhead_cache: dict = {}
+_overhead_aviso_dado = False
+_OVERHEAD_COLS = ("o", "h", "l", "c", "v", "cum_split")
+# Que columna de la vela diaria es el NIVEL, segun `overhead_ref`.
+_OVERHEAD_REF_COL = {"high": "h", "low": "l", "open": "o", "close": "c"}
 
-def prefetch_daily_ohlc(tickers: list[str]):
-    """
-    Prefetches daily historical metrics for the given tickers and stores them in
-    the process-global per-ticker cache _ticker_daily_ohlc_cache. This avoids
-    individual slow GCS queries during the backtest loop.
 
-    F1 (perf + correctness):
-      * The query is PRUNED to the requested tickers only — no full-table scan
-        (the old `SELECT ... FROM daily_metrics ORDER BY ticker, timestamp` over
-        the whole universe was the cold-start killer, ~minutes on GCS).
-      * NO year filter: 'High/Low of last X days' looks BACKWARD from the gap
-        date, so a `WHERE YEAR >= min_year` cut would truncate the lookback
-        across the year boundary and silently change results.
-      * The previous `_global_daily_metrics_df` full-table memo was removed:
-        combined with ticker pruning it caused cross-backtest cache poisoning (a
-        later run with different tickers reused a frame holding only the first
-        run's tickers). Per-ticker accumulation is correct across runs because
-        `tickers_to_fetch` already excludes anything cached.
+def _overhead_ruta() -> str:
+    return os.getenv("OVERHEAD_DAILY_PARQUET", "").strip()
+
+
+def _overhead_vacio() -> dict:
+    d = {"fechas": pd.Index([], dtype=object)}
+    d.update({k: np.empty(0, dtype=np.float64) for k in _OVERHEAD_COLS})
+    return d
+
+
+def _overhead_avisar_falta(ruta: str) -> None:
+    """Avisa UNA vez de que la tabla no esta.
+
+    Sin esto, un fichero que falta daria NaN en silencio en todos los
+    ticker-dias y pareceria que el indicador simplemente no encuentra niveles.
     """
-    global _ticker_daily_ohlc_cache
+    global _overhead_aviso_dado
+    if _overhead_aviso_dado:
+        return
+    _overhead_aviso_dado = True
+    if not ruta:
+        print("[ERROR] 'Overhead last X days' necesita OVERHEAD_DAILY_PARQUET en "
+              "backend/.env y no esta puesto. El indicador dara NaN.")
+    else:
+        print("[ERROR] 'Overhead last X days': no encuentro la tabla en "
+              + ruta + ". Generala con backend/scripts/construir_daily_overhead.py. "
+              "Mientras tanto el indicador dara NaN.")
+
+
+def prefetch_overhead_daily(tickers) -> None:
+    """Carga en memoria las velas diarias de los tickers pedidos.
+
+    Podado por ticker sobre un parquet ORDENADO por ticker, que es lo que le
+    permite a DuckDB podar row-groups en vez de escanear 19 M de filas. Medido
+    en el lago local: 1.200 tickers x historia completa en ~4,5 s en frio y
+    ~0,9 s en caliente, contra ~32 s leyendo `daily_metrics` particionado.
+
+    SIN filtro de fechas a proposito: el indicador mira HACIA ATRAS desde el dia
+    del trade, asi que recortar por ano truncaria la ventana al cruzar el cambio
+    de ano y cambiaria el resultado en silencio.
+    """
+    global _overhead_cache
     if not tickers:
         return
+    pendientes = [t for t in tickers if t and t not in _overhead_cache]
+    if not pendientes:
+        return
 
-    # Only fetch tickers that are not already cached
-    tickers_to_fetch = [t for t in tickers if t and t not in _ticker_daily_ohlc_cache]
-    if not tickers_to_fetch:
+    ruta = _overhead_ruta()
+    if not ruta or not os.path.exists(ruta):
+        _overhead_avisar_falta(ruta)
+        for t in pendientes:
+            _overhead_cache[t] = _overhead_vacio()
         return
 
     import time
-    from app.database import get_db_connection
-    con = get_db_connection()
+    t0 = time.time()
     try:
-        t0 = time.time()
-        placeholders = ",".join(["?"] * len(tickers_to_fetch))
-        df_all = con.execute(f"""
-            SELECT ticker, CAST("timestamp" AS DATE) as date, rth_high, rth_low
-            FROM daily_metrics
-            WHERE ticker IN ({placeholders})
-            ORDER BY ticker, "timestamp"
-        """, tickers_to_fetch).fetchdf()
-        # Convert date to string format
-        df_all["date"] = pd.to_datetime(df_all["date"]).dt.strftime("%Y-%m-%d")
-        print(f"[INFO] Prefetched {len(df_all):,} daily metrics for "
-              f"{len(tickers_to_fetch)} tickers in {time.time()-t0:.2f}s")
+        import duckdb
+        con = duckdb.connect()
+        try:
+            marcas = ",".join(["?"] * len(pendientes))
+            ruta_sql = ruta.replace("'", "''")
+            df_all = con.execute(
+                "SELECT ticker, d, o, h, l, c, v, cum_split "
+                "FROM read_parquet('" + ruta_sql + "') "
+                "WHERE ticker IN (" + marcas + ") ORDER BY ticker, d",
+                pendientes,
+            ).fetchdf()
+        finally:
+            con.close()
 
-        # Group by ticker and store in cache
-        for ticker_symbol, group in df_all.groupby("ticker"):
-            group_indexed = group.set_index("date")
-            group_indexed = group_indexed[~group_indexed.index.duplicated(keep='first')]
-            _ticker_daily_ohlc_cache[ticker_symbol] = group_indexed
-
-        # Ensure that any tickers that returned no data are cached as empty DataFrames
-        # to avoid repeated queries
-        for t in tickers_to_fetch:
-            if t not in _ticker_daily_ohlc_cache:
-                _ticker_daily_ohlc_cache[t] = pd.DataFrame(columns=["rth_high", "rth_low"])
+        df_all["d"] = pd.to_datetime(df_all["d"]).dt.strftime("%Y-%m-%d")
+        for tk, grupo in df_all.groupby("ticker", sort=False):
+            grupo = grupo[~grupo["d"].duplicated(keep="first")]
+            entrada = {"fechas": pd.Index(grupo["d"].values)}
+            for col in _OVERHEAD_COLS:
+                entrada[col] = grupo[col].to_numpy(dtype=np.float64)
+            _overhead_cache[tk] = entrada
+        print("[INFO] Overhead: {:,} velas diarias de {} tickers en {:.2f}s".format(
+            len(df_all), len(pendientes), time.time() - t0))
     except Exception as e:
-        print(f"[ERROR] Failed to prefetch daily ohlc: {e}")
-        # On error, make sure we populate them as empty so we don't block
-        for t in tickers_to_fetch:
-            if t not in _ticker_daily_ohlc_cache:
-                _ticker_daily_ohlc_cache[t] = pd.DataFrame(columns=["rth_high", "rth_low"])
+        print("[ERROR] Overhead: fallo al cargar la tabla diaria: " + str(e))
 
+    # Los que no devolvieron nada (o fallaron) se cachean vacios para no repetir
+    # la consulta en cada ticker-dia.
+    for t in pendientes:
+        if t not in _overhead_cache:
+            _overhead_cache[t] = _overhead_vacio()
+
+
+# Nombre historico: lo llaman `backtest_service` y `optimization_service`.
+prefetch_daily_ohlc = prefetch_overhead_daily
+
+
+def _overhead_nivel(name, close, volume, ds, lookback,
+                    extremo, ref, regla_volumen) -> pd.Series:
+    """"Overhead last X days": el nivel que dejo el dia mas extremo de la ventana.
+
+    DOS PASOS, EN ESTE ORDEN (semantica de Jaume, 7-sep-2026):
+      1. Se busca el dia MAS EXTREMO de los ultimos X dias de cotizacion: el del
+         maximo mas alto (`extremo="max"`) o el del minimo mas bajo (`"min"`).
+      2. Se mira el volumen DE ESE DIA y se compara con el volumen acumulado de
+         HOY hasta la vela actual. Si la regla no se cumple, el nivel no existe
+         (NaN) y la condicion es falsa.
+
+    **NO es** "filtrar los dias por volumen y quedarse con el maximo de los que
+    pasen": eso daria otro nivel. Si el maximo lo hizo un dia flojo, aqui la
+    senal se descarta, no se baja al siguiente techo. Es la semantica que pidio
+    Jaume, y la diferencia importa.
+
+    `ref` elige QUE PRECIO de ese dia es el nivel (high/low/open/close): el
+    maximo suele ser una mecha que nadie defiende, mientras que el cierre del
+    dia del spike si es resistencia de verdad.
+
+    AJUSTE POR SPLITS, relativo al DIA DEL TRADE:
+        precio  = precio[P] * cum[T]/cum[P]
+        volumen = volumen[P] / (cum[T]/cum[P])
+    Sin esto, tras un contrasplit 20:1 el nivel queda 20 veces por debajo del
+    precio y "cruza por encima" se cumple en la primera vela del dia, siempre,
+    sin error y sin log. Cae un split dentro de la ventana en el 4,3% de los
+    dias de gap con 30 dias de lookback, y en el 16,9% con un ano.
+
+    Como el volumen de hoy va creciendo, el nivel puede APARECER o DESAPARECER
+    durante el dia. Es a proposito.
+    """
+    vacio = pd.Series(np.nan, index=close.index)
+    ticker = ds.get("ticker") if ds else None
+    if not ticker:
+        return vacio
+    if not (ds and ds.get("date")):
+        return vacio
+    fecha = str(ds["date"])[:10]
+
+    es_min = name in ("Low of last X days", "Min of last X days")
+    if extremo not in ("max", "min"):
+        extremo = "min" if es_min else "max"
+    if ref not in _OVERHEAD_REF_COL:
+        ref = "low" if es_min else "high"
+
+    lookback = int(lookback) if lookback else 5
+    if lookback <= 0:
+        return vacio
+
+    global _overhead_cache
+    if ticker not in _overhead_cache:
+        prefetch_overhead_daily([ticker])
+    tabla = _overhead_cache.get(ticker) or _overhead_vacio()
+    fechas = tabla["fechas"]
+    if len(fechas) == 0:
+        return vacio
+    try:
+        pos = int(fechas.get_loc(fecha))
+    except KeyError:
+        # El dia del trade no esta en la tabla diaria: sin ancla no hay escala de
+        # splits fiable, asi que NO se inventa un nivel.
+        return vacio
+
+    fin = pos                            # exclusivo: hoy nunca entra
+    ini = max(0, fin - lookback)
+    if ini >= fin:
+        return vacio
+
+    cum = tabla["cum_split"]
+    factor = cum[pos] / cum[ini:fin]     # escala de cada dia -> escala de hoy
+    base = (tabla["h"] if extremo == "max" else tabla["l"])[ini:fin] * factor
+    if not np.isfinite(base).any():
+        return vacio
+    k = int(np.nanargmax(base) if extremo == "max" else np.nanargmin(base))
+
+    nivel = float(tabla[_OVERHEAD_REF_COL[ref]][ini + k] * factor[k])
+    if not np.isfinite(nivel):
+        return vacio
+
+    if regla_volumen not in ("gt", "lt"):
+        return pd.Series(nivel, index=close.index)
+
+    vol_dia = float(tabla["v"][ini + k] / factor[k])
+    if not np.isfinite(vol_dia):
+        return vacio
+    vol_hoy = volume.cumsum().to_numpy(dtype=np.float64)
+    cumple = (vol_dia > vol_hoy) if regla_volumen == "gt" else (vol_dia < vol_hoy)
+    return pd.Series(np.where(cumple, nivel, np.nan), index=close.index)
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +254,32 @@ def _ema_core(values, window):
     out = np.empty(n, dtype=np.float64)
     for k in range(n):
         out[k] = np.nan
-    first_valid = window - 1
+    # SE SALTAN LOS NaN DE CABECERA antes de sembrar.
+    #
+    # La siembra es la media de los primeros `window` valores. Sobre precios eso
+    # esta bien —no hay NaN—, pero esta funcion tambien se aplica a la SALIDA de
+    # otro indicador, y esa si empieza con NaN: la senal del MACD es una EMA de
+    # la linea MACD, cuyos primeros `slow-1` valores (25 con el 26 por defecto)
+    # son NaN. La suma salia NaN, la siembra salia NaN, y como cada valor
+    # depende del anterior se propagaba hasta el final:
+    #
+    #     MACD            -> 275 valores de 300
+    #     MACD Signal     ->   0 de 300     (todo NaN)
+    #     MACD Histogram  ->   0 de 300     (todo NaN)
+    #
+    # Una comparacion contra NaN da False siempre, asi que una estrategia con
+    # «MACD Signal» o «MACD Histogram» no operaba NUNCA, y lo hacia en silencio:
+    # sin error, sin log, sin nada. Al DI+/DI- del ADX le pasaba lo mismo.
+    #
+    # Sin NaN de cabecera esto se comporta exactamente igual que antes.
+    ini = 0
+    while ini < n and np.isnan(values[ini]):
+        ini += 1
+    first_valid = ini + window - 1
     if first_valid >= n:
         return out
     s = 0.0
-    for k in range(window):
+    for k in range(ini, ini + window):
         s += values[k]
     out[first_valid] = s / window
     for i in range(first_valid + 1, n):
@@ -354,12 +507,36 @@ def _detect_triangles_numba(
         if close_t <= 0.0 or np.isnan(close_t):
             continue
             
-        start_idx = t - lookback
+        # EL `max(0, ...)` ES LO QUE IMPIDE QUE EL PROCESO SE ESFUME.
+        #
+        # Sin el, en las primeras velas del dia `start_idx` sale NEGATIVO
+        # (t=0, lookback=50 -> -50). La guarda de abajo compara `end_idx <
+        # start_idx`, o sea -5 < -50, que es falsa: la deja pasar. Y entonces el
+        # bucle indexa `is_sh[-50]` en un array que puede tener menos de 50
+        # elementos, porque `n` son las velas de ESE dia y un premercado corto
+        # tiene menos.
+        #
+        # En Python eso es un `IndexError` limpio. COMPILADO CON NUMBA NO: sin
+        # `boundscheck` (el defecto) lee memoria que no es suya, Windows lo corta
+        # con una violacion de acceso 0xC0000005 y el proceso DESAPARECE — sin
+        # traceback, sin excepcion y sin que ningun `except` se entere.
+        #
+        # Es lo que tumbaba las corridas del genetico cada ~24 minutos durante
+        # dos noches. Se cazo el 5-sep-2026 apuntando la receta del individuo
+        # antes de evaluarlo: `Triangle Symmetric(pivot_window=5,
+        # tri_lookback=50, ...)`. Reproducido con 30 velas y lookback 50:
+        #
+        #     velas=30,  lookback=50 -> IndexError: index -50 out of bounds
+        #     velas=100, lookback=50 -> ok
+        #
+        # Hace falta que coincidan un individuo con triangulos Y un dia mas
+        # corto que su lookback; de ahi que tardara en aparecer.
+        start_idx = max(0, t - lookback)
         end_idx = t - pivot_window
-        
+
         if end_idx < start_idx:
             continue
-            
+
         sh_indices = np.empty(lookback, dtype=np.float64)
         sh_prices = np.empty(lookback, dtype=np.float64)
         sh_count = 0
@@ -857,6 +1034,8 @@ INDICATOR_NAME_MAP = {
     "Yesterday AM Low": "Yesterday AM Low",
     "High of last X days": "Max of last X days",
     "Low of last X days": "Min of last X days",
+    "Overhead last X days": "Overhead last X days",
+    "Overhead": "Overhead last X days",
     "Prev. Bar Close": "Prev. Close Bar",
     "Prev. Bar Open": "Prev. Open Bar",
     "Prev. Bar High": "Prev. High Bar",
@@ -878,6 +1057,12 @@ INDICATOR_NAME_MAP = {
     "Consec Green Candles": "Consecutive Green Candles",
     "Consec Red Candles": "Consecutive Red Candles",
     "Candle Range %": "Candle Range %",
+    "Recorrido (%)": "Recorrido (%)",
+    # Alias. Sin esto, un JSON que traiga cualquiera de estas formas
+    # normalizaria a nada y el indicador saldria NaN sin avisar.
+    "Recorrido": "Recorrido (%)",
+    "Recorrido %": "Recorrido (%)",
+    "Candle Move %": "Recorrido (%)",
     "Range of time": "Range of time",
     "Opening range +": "Opening Range +",
     "Opening range -": "Opening Range -",
@@ -894,6 +1079,7 @@ INDICATOR_NAME_MAP = {
     "Darvas Box": "Darvas Box",
     "Darvas": "Darvas Box",
     "Caja Darvas": "Darvas Box",
+    "Squeeze": "Squeeze",
     "Donchian": "Donchian Channels",
     "Bollinger Bands": "Bollinger Bands",
     "Accumulated Volume": "Accumulated Volume",
@@ -939,11 +1125,18 @@ def compute_indicator(
     min_r_squared: float | None = None,
     min_pivots: int | None = None,
     session_ref: str | None = None,
+    squeeze_direction: str | None = None,
+    fade_ref: str | None = None,
+    # "Overhead last X days". Los tres van en la CLAVE DE CACHE de abajo:
+    # si no entraran, dos configuraciones distintas compartirian resultado.
+    overhead_extreme: str | None = None,
+    overhead_ref: str | None = None,
+    overhead_vol_rule: str | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -972,7 +1165,9 @@ def compute_indicator(
         days_lookback, time_hour, time_minute, time_condition,
         band_line, orb_minutes, ap_session, daily_stats, df, range_minutes,
         pivot_window, tri_lookback, slope_tolerance, min_r_squared, min_pivots,
-        session_ref
+        session_ref, squeeze_direction, fade_ref,
+        overhead_extreme=overhead_extreme, overhead_ref=overhead_ref,
+        overhead_vol_rule=overhead_vol_rule,
     )
 
     if offset and offset != 0:
@@ -1182,6 +1377,104 @@ def _rth_constant_fallback(df: pd.DataFrame, index, ds: dict | None, key: str) -
     return pd.Series(_safe_float(val if val is not None else np.nan), index=index)
 
 
+def _session_running_max(df: pd.DataFrame, index, from_minutes: int, to_minutes: int) -> pd.Series:
+    """Máximo del high ACUMULADO dentro de una ventana de reloj `[from, to)`.
+
+    Versión general de `_pm_running_series`/`_rth_running_series` para ventanas
+    que no son ni el premarket ni el RTH — la que usa "% Session Fade" en modo
+    "full" (04:00-16:00, premarket y sesión regular juntos). NaN antes de la
+    primera barra de la ventana; tras el cierre se queda en el valor final.
+    """
+    n = len(df) if df is not None else 0
+    if df is None or "timestamp" not in df or n == 0:
+        return pd.Series(np.nan, index=index)
+    timestamps = pd.to_datetime(df["timestamp"])
+    minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+    mask = (minutes >= from_minutes) & (minutes < to_minutes)
+    vals = np.asarray(df["high"], dtype=np.float64)
+    return pd.Series(np.fmax.accumulate(np.where(mask, vals, np.nan)), index=index)
+
+
+def _session_open_series(df: pd.DataFrame, index, from_minutes: int) -> pd.Series:
+    """Open de la PRIMERA barra a partir de `from_minutes` (minutos desde
+    medianoche), constante desde ahí y NaN antes.
+
+    Es la versión general del ramo "open" de `_rth_running_series`: 570 = 09:30
+    (apertura de mercado), 960 = 16:00 (apertura del after). El NaN previo es lo
+    que hace causal a "% Session Fade": la caída de una sesión no existe hasta
+    que abre la siguiente.
+    """
+    n = len(df) if df is not None else 0
+    vals = np.full(n, np.nan)
+    if df is None or "timestamp" not in df or n == 0:
+        return pd.Series(vals, index=index)
+    timestamps = pd.to_datetime(df["timestamp"])
+    minutes = timestamps.dt.hour.values * 60 + timestamps.dt.minute.values
+    mask = minutes >= from_minutes
+    if not mask.any():
+        return pd.Series(vals, index=index)
+    first_idx = int(np.argmax(mask))
+    vals[first_idx:] = float(np.asarray(df["open"], dtype=np.float64)[first_idx])
+    return pd.Series(vals, index=index)
+
+
+def _ap_session_started(df: pd.DataFrame, ap_session: str | None) -> np.ndarray:
+    """Máscara "la sesión de referencia ya ha empezado", para Previous max/min.
+
+    ap.RTH arranca a las 09:30, ap.AM a las 16:00 y ap.PM (defecto) desde la
+    primera barra del frame.
+    """
+    timestamps = pd.to_datetime(df["timestamp"])
+    hours = timestamps.dt.hour.values
+    minutes = timestamps.dt.minute.values
+    if ap_session == "ap.RTH":
+        start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
+    elif ap_session == "ap.AM":
+        start_mask = hours >= 16
+    else:  # ap.PM default
+        start_mask = np.ones(len(df), dtype=bool)
+    # "started" es pegajoso: una vez dentro, ya no se sale.
+    return np.maximum.accumulate(start_mask.astype(bool))
+
+
+def _previous_extreme_series(
+    df: pd.DataFrame, index, values: pd.Series, ap_session: str | None, which: str
+) -> pd.Series:
+    """Máximo/mínimo acumulado de la sesión de referencia, DESPLAZADO una barra.
+
+    El `.shift(1)` es lo que lo hace "previous": el nivel de la barra actual no
+    se incluye, así que comparar el precio contra él no es circular. Compartido
+    por "Previous max"/"Previous min" y por "% Fade" con referencia al máximo
+    previo, para que no puedan divergir.
+    """
+    started = _ap_session_started(df, ap_session)
+    vals = np.asarray(values, dtype=np.float64)
+    masked = np.where(started, vals, np.nan)
+    acc = np.fmax.accumulate(masked) if which == "max" else np.fmin.accumulate(masked)
+    return pd.Series(acc, index=index).shift(1)
+
+
+def _vwap_cross_ref_series(close: pd.Series, vwap_values: np.ndarray) -> pd.Series:
+    """Precio del VWAP en la vela en que el close lo cruzó por última vez.
+
+    Cruce = la vela cierra al otro lado del VWAP respecto de la anterior. Se
+    guarda el VWAP DE ESA VELA y se arrastra hasta el cruce siguiente, así que
+    "% Fade" se reancla solo cada vez que el precio vuelve a cruzar. NaN antes
+    del primer cruce del día: todavía no hay desde dónde medir.
+    """
+    c = np.asarray(close, dtype=np.float64)
+    v = np.asarray(vwap_values, dtype=np.float64)
+    valid = ~np.isnan(c) & ~np.isnan(v)
+    above = c > v
+    crossed = np.zeros(len(c), dtype=bool)
+    if len(c) > 1:
+        # Un NaN a cualquiera de los dos lados no es un cruce: sin esto, la
+        # primera vela con volumen (VWAP pasa de NaN a número) se contaría.
+        crossed[1:] = (above[1:] != above[:-1]) & valid[1:] & valid[:-1]
+    ref = np.where(crossed, v, np.nan)
+    return pd.Series(ref, index=close.index).ffill()
+
+
 def _compute_raw(
     name: str,
     close: pd.Series,
@@ -1210,6 +1503,11 @@ def _compute_raw(
     min_r_squared: float | None = None,
     min_pivots: int | None = None,
     session_ref: str | None = None,
+    squeeze_direction: str | None = None,
+    fade_ref: str | None = None,
+    overhead_extreme: str | None = None,
+    overhead_ref: str | None = None,
+    overhead_vol_rule: str | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -1285,6 +1583,87 @@ def _compute_raw(
             pm_high_val = ds.get("pm_high") if ds else None
             running = pd.Series(_safe_float(pm_high_val if pm_high_val is not None else np.nan), index=close.index)
         return (running - float(yest_close_val)) / float(yest_close_val) * 100.0
+    if name == "Current Gap (%)":
+        # Gap VIVO barra a barra: close de la barra actual vs cierre de ayer
+        # (misma cadena de fallback que "PM High Gap (%)"). A diferencia de
+        # aquel, mide dónde está el precio AHORA: sigue actualizándose durante
+        # el RTH y baja si el precio baja.
+        yest_close_val = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan))) if ds else np.nan
+        if yest_close_val is None or pd.isna(yest_close_val):
+            yest_close_val = df["close"].iloc[0] if len(df) > 0 else np.nan
+        if pd.isna(yest_close_val) or yest_close_val == 0:
+            return pd.Series(np.nan, index=close.index)
+        return (close - float(yest_close_val)) / float(yest_close_val) * 100.0
+
+    if name == "Open Gap (%)":
+        # GAP DE APERTURA: la apertura del RTH contra el cierre de ayer. A
+        # diferencia de «Current Gap (%)», que se mueve con el precio, este es
+        # el gap con el que abrio el mercado y ya no cambia en todo el dia.
+        #
+        # CAUSAL A PROPOSITO: NaN antes de las 09:30. Usar la constante del dia
+        # (gap_at_open_pct de daily_metrics) desde las 04:00 seria LOOKAHEAD —
+        # en premercado nadie sabe todavia a cuanto va a abrir el mercado, y una
+        # estrategia que entra a las 08:00 la estaria usando. El NaN de la
+        # manyana no es un fallo: cualquier condicion sobre el evalua False
+        # hasta que el mercado abre (mismo criterio que «% Session Fade»).
+        yest_close_val = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan))) if ds else np.nan
+        if yest_close_val is None or pd.isna(yest_close_val):
+            yest_close_val = df["close"].iloc[0] if len(df) > 0 else np.nan
+        if pd.isna(yest_close_val) or yest_close_val == 0:
+            return pd.Series(np.nan, index=close.index)
+        apertura = _rth_running_series(df, close.index, "open")
+        if apertura is None:
+            # Sin barras RTH en el frame: el fallback ya distingue si la sesion
+            # regular aun no ha llegado (NaN) o si ya paso (constante causal).
+            apertura = _rth_constant_fallback(df, close.index, ds, "rth_open")
+        return (apertura - float(yest_close_val)) / float(yest_close_val) * 100.0
+
+    if name == "% Session Fade":
+        # Cuánto se desinfló una sesión entera, en POSITIVO (10 = cayó un 10%):
+        #   pm   -> (PM High        − apertura de mercado) / PM High        * 100
+        #   rth  -> (máx. RTH       − apertura del after)  / máx. RTH       * 100
+        #   full -> (máx. PM + RTH  − apertura del after)  / máx. PM+RTH    * 100
+        # Causal sin necesidad de trucos: la apertura de la sesión siguiente es
+        # NaN hasta que esa sesión abre, y para entonces el máximo de referencia
+        # ya está cerrado y no puede cambiar. Antes de eso el indicador es NaN y
+        # cualquier condición evalúa False.
+        if session_ref == "rth":
+            peak = _rth_running_series(df, close.index, "high")
+            if peak is None:
+                peak = _rth_constant_fallback(df, close.index, ds, "rth_high")
+            nxt_open = _session_open_series(df, close.index, 960)
+        elif session_ref == "full":
+            # El día entero de negociación (04:00-16:00): mide el desinflado
+            # REAL, sin que importe si el máximo se hizo en premarket o en RTH.
+            peak = _session_running_max(df, close.index, 240, 960)
+            nxt_open = _session_open_series(df, close.index, 960)
+        else:  # "pm" por defecto
+            peak = _pm_running_series(df, close.index, "high")
+            if peak is None:
+                peak = pd.Series(_safe_float(ds.get("pm_high", np.nan)), index=close.index)
+            nxt_open = _rth_running_series(df, close.index, "open")
+            if nxt_open is None:
+                nxt_open = _rth_constant_fallback(df, close.index, ds, "rth_open")
+        peak = peak.where(peak != 0.0, np.nan)
+        return (peak - nxt_open) / peak * 100.0
+
+    if name == "% Fade":
+        # Caída VIVA desde una referencia que se reancla sola, en positivo. Si la
+        # referencia sube (nuevo máximo, nuevo cruce), el fade vuelve a ~0 y
+        # empieza a contar de nuevo. Negativo = el precio está por encima.
+        if fade_ref == "vwap_cross":
+            vwap_vals = _vwap(
+                high.values.astype(np.float64),
+                low.values.astype(np.float64),
+                close.values.astype(np.float64),
+                volume.values.astype(np.float64),
+            )
+            ref = _vwap_cross_ref_series(close, vwap_vals)
+        else:  # "previous_max" por defecto
+            ref = _previous_extreme_series(df, close.index, high, ap_session, "max")
+        ref = ref.where(ref != 0.0, np.nan)
+        return (ref - close) / ref * 100.0
+
     if name in ("RTH Open", "rth_open"):
         # Causal: NaN antes de la primera barra RTH (antes devolvía la constante
         # del día → una condición premarket "veía" el open de las 09:30).
@@ -1309,105 +1688,23 @@ def _compute_raw(
         return high.cummax()
     if name == "Low of Day":
         return low.cummin()
-    if name in ("High of last X days", "Max of last X days", "Low of last X days", "Min of last X days"):
-        ticker = ds.get("ticker") if ds else None
-        if not ticker:
-            return pd.Series(np.nan, index=close.index)
-            
-        if ds and "date" in ds:
-            target_date_str = str(ds["date"])[:10]
-        elif len(df) > 0 and "timestamp" in df.columns:
-            target_date_str = str(df["timestamp"].iloc[0])[:10]
-        else:
-            target_date_str = None
-            
-        if not target_date_str:
-            return pd.Series(np.nan, index=close.index)
-            
-        lookback = days_lookback or period or 5
-        
-        global _ticker_daily_ohlc_cache
-        if ticker not in _ticker_daily_ohlc_cache:
-            from app.database import get_db_connection
-            con = get_db_connection()
-            try:
-                df_daily = con.execute(f"""
-                    SELECT CAST("timestamp" AS DATE) as date, rth_high, rth_low 
-                    FROM daily_metrics 
-                    WHERE ticker = '{ticker}' 
-                    ORDER BY "timestamp"
-                """).fetchdf()
-                df_daily["date"] = pd.to_datetime(df_daily["date"]).dt.strftime("%Y-%m-%d")
-                df_daily = df_daily.set_index("date")
-                df_daily = df_daily[~df_daily.index.duplicated(keep='first')]
-                _ticker_daily_ohlc_cache[ticker] = df_daily
-            except Exception as e:
-                print(f"[ERROR] Failed to load lookback metrics for {ticker}: {e}")
-                _ticker_daily_ohlc_cache[ticker] = pd.DataFrame(columns=["rth_high", "rth_low"])
-                
-        df_daily = _ticker_daily_ohlc_cache[ticker]
-        if df_daily.empty or target_date_str not in df_daily.index:
-            return pd.Series(np.nan, index=close.index)
-            
-        pos = df_daily.index.get_loc(target_date_str)
-        start_pos = max(0, pos - lookback)
-        if start_pos >= pos:
-            return pd.Series(np.nan, index=close.index)
-            
-        if name in ("High of last X days", "Max of last X days"):
-            val = df_daily["rth_high"].iloc[start_pos:pos].max()
-        else:
-            val = df_daily["rth_low"].iloc[start_pos:pos].min()
-            
-        return pd.Series(_safe_float(val), index=close.index)
+    if name in ("High of last X days", "Max of last X days",
+                "Low of last X days", "Min of last X days",
+                "Overhead last X days"):
+        # Los tres nombres comparten motor. Los dos historicos solo fijan los
+        # defectos (`Low/Min` -> el dia del minimo mas bajo, y su low como
+        # nivel); "Overhead" es el que expone los cuatro parametros.
+        return _overhead_nivel(
+            name, close, volume, ds,
+            days_lookback or period,
+            overhead_extreme, overhead_ref, overhead_vol_rule,
+        )
 
     if name == "Previous max":
-        timestamps = pd.to_datetime(df["timestamp"])
-        hours = timestamps.dt.hour
-        minutes = timestamps.dt.minute
-        if ap_session == "ap.RTH":
-            start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
-        elif ap_session == "ap.AM":
-            start_mask = hours >= 16
-        else:  # ap.PM default
-            start_mask = pd.Series(True, index=df.index)
-        result = pd.Series(np.nan, index=close.index)
-        running_max = np.nan
-        started = False
-        for i in range(len(close)):
-            if not started and start_mask.iloc[i]:
-                started = True
-            if started:
-                if np.isnan(running_max):
-                    running_max = high.iloc[i]
-                else:
-                    running_max = max(running_max, high.iloc[i])
-                result.iloc[i] = running_max
-        return result.shift(1)
+        return _previous_extreme_series(df, close.index, high, ap_session, "max")
 
     if name == "Previous min":
-        timestamps = pd.to_datetime(df["timestamp"])
-        hours = timestamps.dt.hour
-        minutes = timestamps.dt.minute
-        if ap_session == "ap.RTH":
-            start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
-        elif ap_session == "ap.AM":
-            start_mask = hours >= 16
-        else:  # ap.PM default
-            start_mask = pd.Series(True, index=df.index)
-        result = pd.Series(np.nan, index=close.index)
-        running_min = np.nan
-        started = False
-        for i in range(len(close)):
-            if not started and start_mask.iloc[i]:
-                started = True
-            if started:
-                if np.isnan(running_min):
-                    running_min = low.iloc[i]
-                else:
-                    running_min = min(running_min, low.iloc[i])
-                result.iloc[i] = running_min
-        return result.shift(1)
+        return _previous_extreme_series(df, close.index, low, ap_session, "min")
 
     if name == "PM Open":
         timestamps = pd.to_datetime(df["timestamp"])
@@ -1744,6 +2041,65 @@ def _compute_raw(
                 return (minutes >= target_min).astype(float)
         return minutes
 
+    if name == "Squeeze":
+        # Squeeze — cuanto se ha DISPARADO el precio en una ventana de reloj.
+        #
+        # Mide punta a punta: cierre actual contra el cierre de hace
+        # `range_minutes` MINUTOS. Un zigzag dentro de la ventana no lo rompe
+        # (100 -> 110 -> 104,5 -> 114,95 sale +15%), pero una caida seguida de
+        # un disparo dentro de la MISMA ventana se compensa (100 -> 90 -> 105
+        # sale +5%, no +16,7%). Semantica fijada por el usuario el 2026-08-26.
+        #
+        # La ventana es de RELOJ, no de velas, y esto NO es un detalle: las
+        # velas del lago son dispersas (solo existe el minuto que tuvo
+        # operaciones), asi que "5 velas atras" seria una ventana distinta en
+        # cada ticker y en cada tramo del dia. La referencia se busca con un
+        # asof HACIA ATRAS: el ultimo cierre conocido en `t - X min`. Si el
+        # simbolo no cotizo en ese hueco, el precio no cambio — la referencia
+        # sigue siendo el ultimo print y el spike aparece entero en la primera
+        # vela nueva, que es justo lo que se ve en el grafico.
+        #
+        # Vale NaN mientras la ventana empieza antes de la primera vela del
+        # dia (no hay contra que comparar). Una comparacion contra NaN da
+        # False: sin referencia, no hay senal. Mismo convenio que Darvas.
+        win = int(range_minutes) if range_minutes else 5
+        if win < 1:
+            win = 1
+        c_vals = close.values.astype(np.float64)
+        n = len(c_vals)
+        out = np.full(n, np.nan)
+        if n > 0 and "timestamp" in df.columns:
+            t_ns = pd.to_datetime(df["timestamp"]).values.astype("datetime64[ns]").astype(np.int64)
+            order = None
+            if n > 1 and not np.all(t_ns[1:] >= t_ns[:-1]):
+                # El asof exige el eje de tiempo ordenado. El motor entrega las
+                # velas en orden, pero sobre datos desordenados searchsorted
+                # devolveria referencias arbitrarias SIN avisar.
+                order = np.argsort(t_ns, kind="stable")
+                t_ns = t_ns[order]
+                c_ord = c_vals[order]
+            else:
+                c_ord = c_vals
+            ref_ns = t_ns - int(win) * 60 * 1_000_000_000
+            idx = np.searchsorted(t_ns, ref_ns, side="right") - 1
+            ok = idx >= 0
+            if ok.any():
+                base = c_ord[idx[ok]]
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    pct = np.where(base > 0, (c_ord[ok] - base) / base * 100.0, np.nan)
+                res = np.full(n, np.nan)
+                res[ok] = pct
+                if order is not None:
+                    out[order] = res
+                else:
+                    out = res
+        if str(squeeze_direction or "up").lower() == "down":
+            # "Abajo" devuelve la CAIDA en positivo, para que la condicion se
+            # lea igual en las dos direcciones: "Squeeze > 10" es "se ha
+            # movido mas de un 10% en la direccion elegida".
+            out = -out
+        return pd.Series(out, index=close.index)
+
     if name == "Range of time" or name == "Range of Time":
         timestamps = pd.to_datetime(df["timestamp"])
         if len(timestamps) > 0:
@@ -1837,6 +2193,13 @@ def _compute_raw(
     if name == "Candle Range %":
         candle_range = ((close - open_) / open_.abs()) * 100
         return candle_range.abs()
+
+    if name == "Recorrido (%)":
+        # Lo MISMO que `Candle Range %` pero SIN el `abs()`: el signo se
+        # conserva, que es el punto entero del indicador. Positivo = la vela
+        # subio; negativo = bajo. Mide apertura -> cierre (lo que se mueve la
+        # vela), no las mechas.
+        return ((close - open_) / open_.abs()) * 100
 
     if name in ("Elapsed Time from Last High", "Elapsed time from last High"):
         # session_ref — ancla del reloj:

@@ -21,6 +21,13 @@ class IndicatorType(str, Enum):
     # Momentum
     RSI = "RSI"
     MACD = "MACD"
+    # Las tres lineas del MACD son NOMBRES distintos, no un parametro: asi las
+    # tiene `services/indicators.py` y asi las despacha la via rapida
+    # (`_RAW_INDICATOR_DISPATCH`). Faltaban en el enum, asi que guardar una
+    # estrategia con la Signal o el Histograma habria rebotado 422 — el mismo
+    # fallo que tuvo Darvas Box en su dia.
+    MACD_SIGNAL = "MACD Signal"
+    MACD_HISTOGRAM = "MACD Histogram"
     STOCHASTIC = "Stochastic"
     MOMENTUM = "Momentum"
     CCI = "CCI"
@@ -28,12 +35,20 @@ class IndicatorType(str, Enum):
     DMI_PLUS = "DMI+"
     DMI_MINUS = "DMI-"
     WILLIAMS_R = "Williams %R"
+    # Squeeze: % que ha movido el precio en una ventana de RELOJ (minutos).
+    # Solo se compara contra una cifra fija; no es un nivel de precio.
+    SQUEEZE = "Squeeze"
 
     # Volatility
     ATR = "ATR"
     ADX = "ADX"
     BOLLINGER_BANDS = "Bollinger Bands"
     DONCHIAN = "Donchian"
+    # Banda NIVEL (techo/suelo de la caja), mismo uso que Donchian; el nombre
+    # es el canonico de indicators.py ("Darvas Box", con alias "Darvas",
+    # "Caja Darvas"). El motor lo soporta desde 5fa80b9 pero faltaba aqui:
+    # guardar una estrategia con una condicion Darvas rebotaba en Pydantic.
+    DARVAS_BOX = "Darvas Box"
     PARABOLIC_SAR = "Parabolic SAR"
 
     # Volume
@@ -64,6 +79,10 @@ class IndicatorType(str, Enum):
     Y_VOLUME = "Yesterday Volume"
     MAX_X_DAYS = "High of last X days"
     MIN_X_DAYS = "Low of last X days"
+    # El de verdad, con los cuatro parametros. Los dos de arriba se quedan
+    # SOLO por compatibilidad con JSON antiguos: comparten motor, y unicamente
+    # fijan otros defectos.
+    OVERHEAD_X_DAYS = "Overhead last X days"
     PREVIOUS_MAX = "Previous max"
     PREVIOUS_MIN = "Previous min"
     PREV_BAR_CLOSE = "Prev. Bar Close"
@@ -102,13 +121,30 @@ class IndicatorType(str, Enum):
     PREV_CLOSE = "Previous Close"
     RET_PCT_AM = "Ret % AM"
     CANDLE_RANGE_PCT = "Candle Range %"
+    # Recorrido de la vela CON SIGNO: (cierre - apertura) / apertura * 100.
+    # Es `Candle Range %` sin el `abs()`: y el signo es justo el dato que hace
+    # falta para escalpear: `> 3` es "subio mas de un 3%" y `< -2` es "bajo mas
+    # de un 2%". Sin parametro de direccion a proposito (decision de Jaume,
+    # 7-sep-2026): el signo ya la lleva.
+    RECORRIDO_PCT = "Recorrido (%)"
     ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High"
     ELAPSED_TIME = "Elapsed Time"
     TRIANGLE_ASCENDING = "Triangle Ascending"
     TRIANGLE_DESCENDING = "Triangle Descending"
     TRIANGLE_SYMMETRIC = "Triangle Symmetric"
     PM_HIGH_GAP = "PM High Gap (%)"
-    
+    CURRENT_GAP = "Current Gap (%)"
+    # Gap con el que ABRIO el mercado (apertura RTH vs cierre de ayer). Fijo
+    # todo el dia, y NaN antes de las 09:30 a proposito: en premercado todavia
+    # no se sabe a cuanto abre.
+    OPEN_GAP = "Open Gap (%)"
+    # Caida de una sesion entera, congelada: del maximo de la sesion a la
+    # apertura de la siguiente (PM->open de mercado, o RTH->open del after).
+    SESSION_FADE = "% Session Fade"
+    # Caida viva desde una referencia que se reancla sola: el maximo previo o
+    # el VWAP en la vela en que el precio lo cruzo.
+    FADE = "% Fade"
+
     # Time / Others
     TIME_OF_DAY = "Time of Day"
     RANGE_OF_TIME = "Range of Time"
@@ -218,6 +254,11 @@ class IndicatorConfig(BaseModel):
     calc_on_heikin: Optional[bool] = False
 
     # Added specific parameters
+    # AJUSTE FANTASMA: nadie lee `macd_line`. No llega a `compute_indicator` ni
+    # existe alli como parametro. La linea del MACD se elige por el NOMBRE del
+    # indicador ("MACD" / "MACD Signal" / "MACD Histogram"). Se conserva el campo
+    # para no invalidar estrategias antiguas que lo lleven en su JSON, pero NO
+    # conectarle una UI: no haria nada.
     macd_line: Optional[Literal["Signal", "MACD Line", "Histogram"]] = None
     band_line: Optional[Literal["Upper", "Lower", "Basis"]] = None
     orb_minutes: Optional[int] = None
@@ -226,6 +267,10 @@ class IndicatorConfig(BaseModel):
     time_from_minute: Optional[int] = None
     range_minutes: Optional[int] = None
     return_pct: Optional[float] = None
+    # Squeeze: direccion del spike que se quiere medir. El indicador devuelve
+    # SIEMPRE positivo el movimiento en la direccion elegida, para que la
+    # condicion se lea igual arriba que abajo ("Squeeze > 10").
+    squeeze_direction: Optional[Literal["up", "down"]] = None
 
     # New indicator-specific parameters
     deviationLevel: Optional[int] = None       # Linear Regression deviation (1, 2, 3)
@@ -242,7 +287,26 @@ class IndicatorConfig(BaseModel):
     min_pivots: Optional[int] = None
     # "Elapsed time from last High": ancla del reloj — "full" (día completo,
     # comportamiento histórico), "pm" (PMH del día) o "rth" (máximo RTH).
+    # "% Session Fade" reutiliza este campo para elegir la sesión que se desinfla:
+    # "pm" (PM High -> apertura de mercado) o "rth" (máximo RTH -> apertura del
+    # after). "full" no aplica ahí y se trata como "pm".
     session_ref: Optional[Literal["full", "pm", "rth"]] = None
+    # "% Fade": desde dónde se mide la caída. "previous_max" usa el máximo previo
+    # (con la sesión de `ap_session`); "vwap_cross" usa el precio del VWAP en la
+    # vela en que el precio lo cruzó por última vez.
+    fade_ref: Optional[Literal["previous_max", "vwap_cross"]] = None
+    # "Overhead last X days". DECLARADOS AQUI A PROPOSITO: pydantic va con
+    # extra="ignore", asi que un campo sin declarar se tira SIN error, SIN log
+    # y SIN 422.
+    #   overhead_extreme   que dia se busca: el del maximo mas alto o el del
+    #                      minimo mas bajo.
+    #   overhead_ref       que precio DE ESE DIA es el nivel. El maximo suele
+    #                      ser una mecha; el cierre si es resistencia.
+    #   overhead_vol_rule  el volumen de ese dia frente al acumulado de hoy:
+    #                      "gt" mayor, "lt" menor, "none" sin condicion.
+    overhead_extreme: Optional[Literal["max", "min"]] = None
+    overhead_ref: Optional[Literal["high", "low", "open", "close"]] = None
+    overhead_vol_rule: Optional[Literal["none", "gt", "lt"]] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"
@@ -304,6 +368,56 @@ class PartialTakeProfit(BaseModel):
     capital_pct: float
 
 class RiskManagement(BaseModel):
+    # Dimensionar la posicion como riesgo / distancia real al stop ("Calculo de
+    # Shares por Distancia al SL" en la interfaz). NO estaba declarado, y
+    # pydantic va con extra="ignore": el frontend lo mandaba, el esquema lo
+    # tiraba sin error ni log, y la estrategia guardada salia siempre con la
+    # opcion desactivada. Ver la nota de las TRES CAPAS.
+    size_by_sl: Optional[bool] = False
+    # STOP HIBRIDO (2026-09-03). Va por `size_by_sl` pero con techo de
+    # exposicion: `(hybrid_max_loss_pct% x capital) / hybrid_black_swan_pct%`
+    # da los DOLARES maximos de posicion, que se pasan a acciones al precio de
+    # la barra. Resuelve el punto ciego del modo por SL: con el stop muy cenido
+    # el tamano se dispara y un hueco brutal deja debiendo dinero.
+    #
+    # Los dos porcentajes viven AQUI, en la estrategia, y no solo en el panel
+    # del backtest — decision de Jaume: «afecta DIRECTAMENTE al resultado por
+    # backtest». Si vivieran fuera se podria backtestear con unos numeros y
+    # operar con otros sin que nada avisara.
+    #
+    # DECLARADOS AQUI A PROPOSITO (ver «TRES CAPAS» en docs/MEMORIA_MADRE.md
+    # §4): pydantic va con extra="ignore", asi que un campo sin declarar se
+    # tira SIN error, SIN log y SIN 422 — es justo lo que le paso a `size_by_sl`
+    # y por eso las estrategias salian con la opcion apagada.
+    hybrid_stop: Optional[bool] = False
+    hybrid_black_swan_pct: Optional[float] = None
+    hybrid_max_loss_pct: Optional[float] = None
+    # ESTILO CANGREJO (2026-09-08, PRD de Alvaro `docs/PRD_ESTILO_CANGREJO.md`).
+    # Acota cada trade "o por recorrido del SL, o por perdida maxima". Con SL
+    # por estructura la distancia entry->SL cambia en cada entrada, asi que con
+    # el mismo market value unos stops cuestan poco y otros muchisimo; estos dos
+    # modos le ponen techo, cada uno por un lado:
+    #   MODO A `cangrejo_max_sl_dist_pct`   -> el stop nunca a mas de ese % del
+    #     entry. Se APRIETA el stop: cambia DONDE se sale, no cuanto se pone.
+    #   MODO B `cangrejo_max_loss_at_sl_pct`-> el SL nunca cuesta mas de ese %
+    #     de la cuenta. Se encoge el TAMANO: cambia CUANTO se pone, no donde.
+    # Son EXCLUYENTES entre si en la UI (`cangrejo_mode` dice cual se ve) y
+    # EXCLUYENTES con el stop hibrido; si un payload trajera los dos, el motor
+    # arbitra a favor de Cangrejo. Son TECHOS: solo recortan, nunca agrandan.
+    #
+    # DECLARADOS AQUI DESDE EL DIA 1 por la leccion de las TRES CAPAS: pydantic
+    # va con extra="ignore" y un campo sin declarar se cae SIN error, SIN log y
+    # SIN 422 — es lo que le paso a `size_by_sl`.
+    cangrejo_active: Optional[bool] = False
+    cangrejo_mode: Optional[Literal['recorrido', 'perdida']] = None
+    cangrejo_max_sl_dist_pct: Optional[float] = None
+    cangrejo_max_loss_at_sl_pct: Optional[float] = None
+    # INERTES, sin UI. La primera version de la tarjeta tenia cuatro topes
+    # sueltos y resulto poco intuitiva (PRD 3); se dejan ADMITIDOS por si algun
+    # dia vuelven, para que un borrador viejo no reviente, pero NINGUN motor los
+    # lee. No anadir logica que dependa de ellos sin actualizar el PRD.
+    cangrejo_max_mv_entry_pct: Optional[float] = None
+    cangrejo_max_mv_pyr_pct: Optional[float] = None
     use_hard_stop: Optional[bool] = True
     use_take_profit: Optional[bool] = True
     take_profit_mode: Optional[TakeProfitMode] = TakeProfitMode.FULL
@@ -357,6 +471,12 @@ class StrategyCreate(BaseModel):
     # pydantic lo descartaba en SILENCIO (extra="ignore" por defecto) y una
     # estrategia guardada no podia conservar su piramidacion.
     pyramiding: Optional[dict] = None
+    # Modelos avanzados (XGBoost / HMM). Dict opaco por el mismo motivo que
+    # `pyramiding`: la lista de features es el mismo tipo de arbol que las
+    # condiciones y ya lo valida `advanced_backtest.parse_config`. Sin este
+    # campo, pydantic lo descartaria en SILENCIO (extra="ignore" por defecto) y
+    # una estrategia guardada perderia su modelo sin dar ningun error.
+    advanced_model: Optional[dict] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

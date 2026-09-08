@@ -16,6 +16,7 @@ API:
   - pares sin datos en el slab simplemente no se emiten (como el groupby actual).
 """
 import datetime as _dt
+import gc
 import logging
 import os
 import threading
@@ -97,6 +98,38 @@ class MonthSlab:
                 self._index_df["row_start"], self._index_df["row_end"],
             )
         }
+
+    def close(self) -> None:
+        """Suelta el fichero. EN WINDOWS HAY QUE LLAMARLO ANTES DE RECONSTRUIR.
+
+        Windows no deja renombrar sobre un fichero que sigue mapeado: el
+        `os.replace` de `_atomic_publish` muere con «WinError 5: Acceso
+        denegado». En Linux no pasa —el mmap se queda con el inode viejo y el
+        rename funciona— asi que este fallo NO se ve en el servidor, solo en la
+        maquina de Jaume, que es donde se corren los backtests de verdad.
+
+        Efecto real del fallo: actualizas el lago despues de haber corrido un
+        backtest, el slab de ese mes queda mapeado, y la siguiente corrida
+        revienta al intentar reconstruirlo en vez de reconstruirlo.
+
+        HAY QUE SOLTAR LOS ARRAYS PRIMERO. Se crearon con
+        `to_numpy(zero_copy_only=True)`, o sea que apuntan a los buffers del
+        mmap: mientras exista uno, el fichero sigue abierto por mucho que se
+        llame a `close()`. De ahi el `gc.collect()` — pyarrow deja ciclos que el
+        contador de referencias solo no recoge a tiempo.
+
+        Despues de esto el slab NO se puede usar: quien lo cierra tiene que
+        haberlo sacado antes de `_OPEN_SLABS` (lo hace `ensure_slabs_*`).
+        """
+        self._ts = self._open = self._high = None
+        self._low = self._close = self._volume = None
+        self._pair_map = {}
+        self._index_df = None
+        try:
+            self._mmap.close()
+        except Exception:                                    # noqa: BLE001
+            pass                    # ya cerrado, o nunca llego a abrirse
+        gc.collect()
 
     @property
     def n_rows(self) -> int:
@@ -378,7 +411,12 @@ def ensure_slabs_from_ticker_cache(months, kind: str = "opt") -> int:
                 needs_build = True
         if needs_build:
             with _OPEN_LOCK:
-                _OPEN_SLABS.pop((kind, y, m), None)  # invalida el mmap cacheado
+                viejo = _OPEN_SLABS.pop((kind, y, m), None)  # invalida el cacheado
+            if viejo is not None:
+                # Sacarlo del diccionario NO suelta el fichero: hay que cerrarlo.
+                # En Windows, reconstruir sobre un slab aun mapeado muere con
+                # «WinError 5». Ver `MonthSlab.close`.
+                viejo.close()
             if build_month_from_ticker_cache(y, m, kind) is not None:
                 built += 1
     return built

@@ -164,6 +164,28 @@ def _ri_pm_high_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
         pm_high_val = ds.get("pm_high")
         running = np.full(len(c), _safe_float(pm_high_val if pm_high_val is not None else np.nan))
     return (running - float(yest_close)) / float(yest_close) * 100.0
+def _ri_current_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # Réplica de indicators."Current Gap (%)": gap vivo del close de la barra
+    # vs cierre de ayer (misma cadena de fallback que PM High Gap).
+    yest_close = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan)))
+    if yest_close is None or pd.isna(yest_close):
+        yest_close = float(c[0]) if len(c) > 0 else np.nan
+    if pd.isna(yest_close) or yest_close == 0:
+        return np.full(len(c), np.nan)
+    return (np.asarray(c, dtype=np.float64) - float(yest_close)) / float(yest_close) * 100.0
+def _ri_open_gap(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # Réplica de indicators."Open Gap (%)": la apertura del RTH contra el cierre
+    # de ayer. CAUSAL: NaN hasta las 09:30 — en premercado nadie sabe todavía a
+    # cuánto va a abrir el mercado.
+    yest_close = ds.get("previous_close", ds.get("prev_close", ds.get("lag_rth_close_1", np.nan)))
+    if yest_close is None or pd.isna(yest_close):
+        yest_close = float(c[0]) if len(c) > 0 else np.nan
+    if pd.isna(yest_close) or yest_close == 0:
+        return np.full(len(c), np.nan)
+    apertura = _rth_running_native(o, ds.get("_mins"), o, "open")
+    if apertura is None:
+        apertura = _rth_constant_fallback_native(len(c), ds.get("_mins"), ds, "rth_open")
+    return (np.asarray(apertura, dtype=np.float64) - float(yest_close)) / float(yest_close) * 100.0
 def _rth_running_native(vals, mins, o, which):
     """Réplica numpy de indicators._rth_running_series (RTH causal).
     None si no hay minutos o no hay barras RTH (el caller aplica el mismo
@@ -244,6 +266,8 @@ _RAW_INDICATOR_DISPATCH = {
     "Day Open": _ri_day_open, "Current Open": _ri_open,
     "Pre-Market High": _ri_pm_high, "Pre-Market Low": _ri_pm_low,
     "PM High Gap (%)": _ri_pm_high_gap,
+    "Current Gap (%)": _ri_current_gap,
+    "Open Gap (%)": _ri_open_gap,
     "High of Day": _ri_hod, "Low of Day": _ri_lod,
     "Prev. Close Bar": _ri_prev_close_bar, "Prev. Bar Close": _ri_prev_close_bar,
     "Prev. Open Bar": _ri_prev_open_bar, "Prev. Bar Open": _ri_prev_open_bar,
@@ -379,6 +403,15 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             # señal). 1 es el clasico; el tope de 100 es un cinturon contra
             # valores absurdos, no un limite de diseño.
             "max_fires": max(1, min(100, veces)),
+            # MODO DE TAMANO DEL NIVEL, independiente del de la entrada: un
+            # anyadido puede ir por distancia al stop aunque la entrada vaya
+            # por valor de mercado. Sin estas claves aqui, `portfolio_sim` lee
+            # None y el modo no se activa NUNCA — el patron de las TRES CAPAS
+            # (memoria madre §4), que ya se comio `size_by_sl` una vez.
+            "size_by_sl": bool(lv.get("size_by_sl", False)),
+            "hybrid_stop": bool(lv.get("hybrid_stop", False)),
+            "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
+            "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
         })
 
     compiled = {
@@ -546,6 +579,87 @@ def _extract_indicator_plan(compiled: dict) -> dict:
     }
 
 
+# ── Ventanas horarias de entrada (`entry_time_windows`) ──────────────────
+
+def build_entry_time_mask(time_windows, minutes) -> np.ndarray | None:
+    """Máscara booleana "esta vela cae dentro de alguna ventana de entrada".
+
+    `minutes` son minutos desde medianoche (hora de Nueva York, que es en la
+    que viven los timestamps del lago). Sin ventanas devuelve None, que aguas
+    arriba significa "no filtres nada" — NO un array de ceros.
+
+    Existía copiada en tres sitios (legacy, nativo y el chequeo de relleno);
+    tenerla aquí es lo que garantiza que los tres decidan igual.
+    """
+    if not time_windows:
+        return None
+    minutes = np.asarray(minutes)
+    mask = np.zeros(len(minutes), dtype=bool)
+    for window in time_windows:
+        from_time = (window or {}).get("from_time", "")
+        to_time = (window or {}).get("to_time", "")
+        if not from_time or not to_time:
+            continue
+        try:
+            from_h, from_m = map(int, str(from_time).split(":"))
+            to_h, to_m = map(int, str(to_time).split(":"))
+            start_mins = from_h * 60 + from_m
+            end_mins = to_h * 60 + to_m
+            mask |= (minutes >= start_mins) & (minutes <= end_mins)
+        except Exception as e:
+            logger.error(f"Error parsing entry time window {window}: {e}")
+            continue
+    return mask
+
+
+def apply_entry_fill_window(entries_arr, minutes, time_windows,
+                            look_ahead_prevention: bool = True) -> np.ndarray:
+    """La ventana de entrada se comprueba TAMBIÉN en la vela de RELLENO.
+
+    EL BUG (2026-09-06, visto sobre 2.688 trades reales). La máscara horaria
+    se aplicaba solo a la vela de la SEÑAL, pero con `look_ahead_prevention`
+    el simulador compra en la apertura de la vela SIGUIENTE
+    (`eff_entry_idx = i + 1`, `portfolio_sim`). En un ticker líquido eso es un
+    minuto de desfase; en un warrant con velas dispersas la "vela siguiente" a
+    las 11:29 puede ser la de las 13:45. Con ventana 09:30-11:30 salían
+    entradas a las 12:11, 13:01 y 13:45 — y ninguna daba error.
+
+    Decisión de producto (Jaume, 2026-09-06): ventana ESTRICTA. Si el límite
+    está en 11:30 y la señal salta en la vela de 11:30, la compra caería en la
+    de 11:31 y por tanto NO se coge. Esto también retira las entradas de
+    11:31, que antes eran mayoría del último cubo.
+
+    Se aplica sobre el frame YA RECORTADO a la sesión y YA desplazado por
+    `candle_delay`: es el único espacio de índices en el que `i + 1` es de
+    verdad la vela en la que compra el simulador.
+
+    Sin `look_ahead_prevention` la compra es en el cierre de la propia vela de
+    la señal, así que la comprobación cae sobre `i` y no sobre `i + 1`.
+    """
+    mask = build_entry_time_mask(time_windows, minutes)
+    if mask is None:
+        return entries_arr
+    entries_arr = np.asarray(entries_arr, dtype=bool)
+    if len(mask) != len(entries_arr):
+        # Longitudes distintas: hay un bug de alineación aguas arriba. NO se
+        # filtra a medias — se avisa fuerte y se deja pasar lo que había, que
+        # es el comportamiento de siempre.
+        logger.error(
+            "[ENTRY_WINDOW] la ventana no cuadra con las señales (%d vs %d): "
+            "no se aplica el filtro de vela de relleno", len(mask), len(entries_arr))
+        return entries_arr
+    if not look_ahead_prevention:
+        return entries_arr & mask
+    fill_ok = np.zeros(len(mask), dtype=bool)
+    fill_ok[:-1] = mask[1:]
+    # Se exigen LAS DOS: la vela de la señal y la de la compra. Solo con la de
+    # la compra, un `candle_delay` que empuje la señal desde fuera de la
+    # ventana hasta justo antes de ella colaría una entrada que nunca se pidió.
+    # La última vela del día queda en False porque no tiene siguiente — el
+    # simulador ya la descartaba por su cuenta (`i < n - 1`).
+    return entries_arr & mask & fill_ok
+
+
 # ── Public API: translate_strategy (legacy path, backward compatible) ────
 
 def translate_strategy(
@@ -572,29 +686,21 @@ def translate_strategy(
     )
 
     time_windows = compiled.get("entry_time_windows", [])
+    # Se guarda para aplicarsela TAMBIEN a las piramides. Un anyadido es una
+    # entrada: si la ventana de entradas esta cerrada, no se puede piramidar.
+    entry_time_mask = None
     if time_windows:
         if precomputed_minutes is not None:
             minutes_since_midnight = precomputed_minutes
         else:
             ts = pd.to_datetime(df["timestamp"])
             minutes_since_midnight = ts.dt.hour * 60 + ts.dt.minute
-        time_mask = pd.Series(False, index=df.index)
-        for window in time_windows:
-            from_time = window.get("from_time", "")
-            to_time = window.get("to_time", "")
-            if not from_time or not to_time:
-                continue
-            try:
-                from_h, from_m = map(int, from_time.split(":"))
-                to_h, to_m = map(int, to_time.split(":"))
-                start_mins = from_h * 60 + from_m
-                end_mins = to_h * 60 + to_m
-                window_mask = (minutes_since_midnight >= start_mins) & (minutes_since_midnight <= end_mins)
-                time_mask = time_mask | window_mask
-            except Exception as e:
-                logger.error(f"Error parsing entry time window {window}: {e}")
-                continue
+        time_mask = pd.Series(
+            build_entry_time_mask(time_windows, minutes_since_midnight),
+            index=df.index,
+        )
         entries = entries & time_mask
+        entry_time_mask = time_mask
 
     exits = _evaluate_condition_group(
         compiled["exit_root"], df, exit_tf, daily_stats, exit_cache
@@ -616,13 +722,15 @@ def translate_strategy(
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
-        "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache),
+        "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache,
+                                                   entry_time_mask),
         "pyramid_sequential": compiled.get("pyramid_sequential", False),
     }
 
 
 def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
-                             daily_stats: dict | None, entry_cache: dict) -> list:
+                             daily_stats: dict | None, entry_cache: dict,
+                             entry_time_mask=None) -> list:
     """Señales de los niveles de piramidación (2026-08-22).
 
     Cada nivel se evalúa con EXACTAMENTE la misma maquinaria que la entrada y
@@ -633,6 +741,13 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
 
     Se comparte la caché de indicadores de la entrada cuando el timeframe
     coincide: un Darvas usado en la entrada y en un nivel se calcula una vez.
+
+    `entry_time_mask` es la ventana horaria de entrada (`entry_time_windows`) ya
+    resuelta a máscara, o None si la estrategia no la usa. **Se aplica también
+    aquí a propósito: un añadido es una entrada.** Hasta el 2026-09-03 no se
+    aplicaba y las pirámides se disparaban con la ventana cerrada — visto en
+    vivo con GELS, que piramidó a las 08:08 ET teniendo `entry_time_windows`
+    hasta las 08:00. Afectaba al backtest igual que al bot de alertas.
     """
     levels_def = compiled.get("pyramid_levels_def") or []
     if not levels_def:
@@ -644,8 +759,21 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
         try:
             sig = _evaluate_condition_group(lv["root_condition"], df, tf, daily_stats, cache)
             sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
+            sig_arr = sig_arr.astype(bool)
+            if entry_time_mask is not None:
+                m = entry_time_mask
+                m = m.values if hasattr(m, "values") else np.asarray(m)
+                if len(m) == len(sig_arr):
+                    sig_arr = sig_arr & m.astype(bool)
+                else:
+                    # Longitudes distintas: NO se aplica a medias. Silenciarlo
+                    # dejaria piramides fuera de ventana sin que nadie lo viera.
+                    logger.error(
+                        "[PYRAMID] la ventana horaria no cuadra con las senales "
+                        "(%d vs %d): el nivel se omite entero", len(m), len(sig_arr))
+                    continue
             out.append({
-                "signals": sig_arr.astype(bool),
+                "signals": sig_arr,
                 "action": lv["action"],
                 "capital_frac": lv["capital_frac"],
                 "max_fires": lv.get("max_fires", 1),
@@ -654,6 +782,11 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 # pedia el 500% del equity.
                 "unit": lv.get("unit", "pct"),
                 "amount_usd": lv.get("amount_usd", 0.0),
+                # Idem: si no se pasan, el simulador no puede aplicarlos.
+                "size_by_sl": lv.get("size_by_sl", False),
+                "hybrid_stop": lv.get("hybrid_stop", False),
+                "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
+                "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel
@@ -739,22 +872,7 @@ def translate_strategy_native(
         # a cualquier hora).
         time_windows = compiled.get("entry_time_windows", [])
         if time_windows and entries is not None and minutes_arr is not None:
-            time_mask = np.zeros(n_bars, dtype=bool)
-            for window in time_windows:
-                from_time = window.get("from_time", "")
-                to_time = window.get("to_time", "")
-                if not from_time or not to_time:
-                    continue
-                try:
-                    from_h, from_m = map(int, from_time.split(":"))
-                    to_h, to_m = map(int, to_time.split(":"))
-                    start_mins = from_h * 60 + from_m
-                    end_mins = to_h * 60 + to_m
-                    time_mask |= (minutes_arr >= start_mins) & (minutes_arr <= end_mins)
-                except Exception as e:
-                    logger.error(f"Error parsing entry time window {window}: {e}")
-                    continue
-            entries = entries & time_mask
+            entries = entries & build_entry_time_mask(time_windows, minutes_arr)
         # Guard de forma: si esto dispara hay un bug de alineación tf->1m (las
         # señales se PIERDEN). Nunca debe pasar tras el gate has_special de
         # _extract_indicator_plan — loguear FUERTE, no tragar en silencio.
@@ -1263,6 +1381,14 @@ def _compute_from_config(
         min_r_squared=cfg.get("min_r_squared"),
         min_pivots=cfg.get("min_pivots"),
         session_ref=cfg.get("session_ref"),
+        squeeze_direction=cfg.get("squeeze_direction"),
+        fade_ref=cfg.get("fade_ref"),
+        # "Overhead last X days". Si estos cuatro no se reenviaran, el
+        # parametro se perderia MUDO y el indicador calcularia con el
+        # defecto: mismo fallo que ya tuvieron otros indicadores.
+        overhead_extreme=cfg.get("overhead_extreme"),
+        overhead_ref=cfg.get("overhead_ref"),
+        overhead_vol_rule=cfg.get("overhead_vol_rule"),
     )
 
 

@@ -6,6 +6,7 @@ import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
 import { PyramidingBuilder } from "@/components/strategy-builder/PyramidingBuilder";
+import { AdvancedModelBuilder, AdvancedModelConfig, initialAdvancedModel } from "@/components/strategy-builder/AdvancedModelBuilder";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import {
   initialEntryLogic,
@@ -24,7 +25,7 @@ import type {
   PostGapPrecondition,
   PyramidingConfig,
 } from "@/types/strategy";
-import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow } from "@/components/strategy-builder/ConditionBuilder";
+import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow, isPercentIndicator } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock, Save } from "lucide-react";
 import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
 
@@ -102,6 +103,13 @@ function getFriendlyMetricLabel(metric: string): string {
     "lead_gap_pct_1": "gap de apertura gap+1 %",
     "lead_rth_volume_1": "volumen rth gap+1",
     "lead_rth_range_pct_1": "rango rth gap+1 %",
+    "lag_rth_close_1": "cierre día anterior",
+    "lag_open_1": "apertura pm día anterior",
+    "lag_pmh_gap_pct_1": "gap pm high día anterior %",
+    "lag_pm_volume_1": "volumen premarket día anterior",
+    "lag_gap_pct_1": "gap de apertura día anterior %",
+    "lag_rth_volume_1": "volumen rth día anterior",
+    "lag_rth_range_pct_1": "rango rth día anterior %",
   };
   if (labelMap[m]) return labelMap[m];
   return m.replace(/_/g, " ").toLowerCase();
@@ -146,6 +154,8 @@ export interface Draft {
   universe_filters?: any;
   // Solo presente si la piramidación está activa con niveles (regla nº1).
   pyramiding?: { timeframe: string; mode?: 'individual' | 'sequential'; levels: any[] };
+  // Igual que pyramiding: solo viaja si el bloque está encendido.
+  advanced_model?: any;
 }
 
 function getGroupSummaryText(group: ConditionGroup): string {
@@ -210,7 +220,7 @@ function getLeafConditions(
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
-            if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+            if (isPercentIndicator(c.source.name)) {
               targetStr = `${c.target}%`;
             } else {
               targetStr = String(c.target);
@@ -422,6 +432,13 @@ export default function InlineStrategyBuilder({
       // se consideran "la misma" y el bloque no se repuebla al cambiar de una
       // a otra.
       pyramiding: stratObj.pyramiding,
+      // `advanced_model` NO va en la firma, y es a proposito. El bloque solo
+      // emite su clave cuando ya tiene features; mientras no las tenga, el
+      // borrador sale SIN ella. Si estuviera aqui, cada tecla cambiaria la
+      // firma -> se rehidrataria -> `else setAdvancedModel(initialAdvancedModel)`
+      // -> se borrarian las fechas recien escritas. Bucle de ida y vuelta:
+      // escribes, se emite, vuelve vacio y te lo limpia (2026-08-31).
+      // Para distinguir dos estrategias basta con el resto de campos.
     });
     if (str === lastLoadedStrategyRef.current) return;
     lastLoadedStrategyRef.current = str;
@@ -442,6 +459,11 @@ export default function InlineStrategyBuilder({
       setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) });
     } else {
       setPyramiding(initialPyramiding);
+    }
+    if ((stratObj as any).advanced_model) {
+      setAdvancedModel({ ...initialAdvancedModel, active: true, ...(stratObj as any).advanced_model });
+    } else {
+      setAdvancedModel(initialAdvancedModel);
     }
     if (stratObj.market_sessions) {
       setLocalMarketSessions(stratObj.market_sessions);
@@ -513,7 +535,7 @@ export default function InlineStrategyBuilder({
       alert("Universo guardado correctamente.");
     } catch (err) {
       console.error("Error saving universe:", err);
-      alert("Error al guardar el universo.");
+      alert(err instanceof Error && err.message ? err.message : "Error al guardar el universo.");
     } finally {
       setSavingUniv(false);
     }
@@ -529,7 +551,7 @@ export default function InlineStrategyBuilder({
   });
 
   // Custom Universe Rules Form States
-  const [tempUnivDay, setTempUnivDay] = useState<'gap_day' | 'gap_plus_1_day' | 'gap_plus_2_day'>('gap_day');
+  const [tempUnivDay, setTempUnivDay] = useState<'gap_prev_day' | 'gap_day' | 'gap_plus_1_day' | 'gap_plus_2_day'>('gap_day');
   const [tempUnivParam, setTempUnivParam] = useState<string>('gap_pct');
   const [tempUnivOp, setTempUnivOp] = useState<string>('>=');
   const [tempUnivVal1, setTempUnivVal1] = useState<string>('2.0');
@@ -576,6 +598,11 @@ export default function InlineStrategyBuilder({
   const [entryLogic, setEntryLogic] = useState<EntryLogicType>(stratObj?.entry_logic || initialEntryLogic);
   const [exitLogic, setExitLogic] = useState<ExitLogicType>(stratObj?.exit_logic || initialExitLogic);
   const [riskManagement, setRiskManagement] = useState<RiskManagementType>(stratObj?.risk_management || initialRiskManagement);
+  const [advancedModel, setAdvancedModel] = useState<AdvancedModelConfig>(
+    (stratObj as any)?.advanced_model
+      ? { ...initialAdvancedModel, active: true, ...(stratObj as any).advanced_model }
+      : initialAdvancedModel
+  );
   const [pyramiding, setPyramiding] = useState<PyramidingConfig>(
     stratObj?.pyramiding
       ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) }
@@ -694,11 +721,32 @@ export default function InlineStrategyBuilder({
       dataset_id: resolvedDatasetId,
       universe_filters: universeFilters,
       ...pyramidingForPayload(),
+      ...advancedModelForPayload(),
     });
-  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, pyramiding, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, pyramiding, advancedModel, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
 
   // La clave `pyramiding` solo viaja si el toggle está ON y hay niveles con
   // condiciones: sin piramidar, el draft queda EXACTAMENTE como siempre.
+  // Misma regla que la piramidacion: la clave solo viaja si el bloque esta
+  // encendido Y tiene con que trabajar. Apagado, la definicion queda
+  // byte-identica a las de siempre y el backtest corre por el camino normal.
+  const advancedModelForPayload = () =>
+    advancedModel.active && (advancedModel.features.length > 0 || advancedModel.hmm_enabled)
+      ? { advanced_model: {
+            enabled: true,
+            mode: advancedModel.mode,
+            train_from: advancedModel.train_from,
+            train_to: advancedModel.train_to,
+            test_from: advancedModel.test_from,
+            test_to: advancedModel.test_to,
+            threshold: advancedModel.threshold,
+            features: advancedModel.features,
+            hmm_enabled: advancedModel.hmm_enabled,
+            hmm_states: advancedModel.hmm_states,
+            compare_without_model: advancedModel.compare_without_model,
+          } }
+      : {};
+
   const pyramidingForPayload = () =>
     pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
       ? { pyramiding: {
@@ -720,6 +768,7 @@ export default function InlineStrategyBuilder({
     setExitLogic(initialExitLogic);
     setRiskManagement(initialRiskManagement);
     setPyramiding(initialPyramiding);
+    setAdvancedModel(initialAdvancedModel);
     setTempFromTime("09:30");
     setTempToTime("16:00");
   };
@@ -747,6 +796,7 @@ export default function InlineStrategyBuilder({
       dataset_id: resolvedDatasetId,
       universe_filters: universeFilters,
       ...pyramidingForPayload(),
+      ...advancedModelForPayload(),
     } as any;
   };
 
@@ -1096,6 +1146,7 @@ export default function InlineStrategyBuilder({
                           outline: 'none',
                         }}
                       >
+                        <option value="gap_prev_day">Gap -1</option>
                         <option value="gap_day">Gap Day</option>
                         <option value="gap_plus_1_day">Gap +1</option>
                         <option value="gap_plus_2_day">Gap +2</option>
@@ -1196,8 +1247,17 @@ export default function InlineStrategyBuilder({
 
                           let fieldName = "";
                           const lagSuffix = tempUnivDay === "gap_day" ? "" : tempUnivDay === "gap_plus_1_day" ? "_1" : "_2";
-                          
-                          if (tempUnivDay === "gap_day") {
+
+                          if (tempUnivDay === "gap_prev_day") {
+                            // Día anterior al gap (D-1): columnas lag_*_1
+                            if (tempUnivParam === "rth_close") fieldName = "lag_rth_close_1";
+                            else if (tempUnivParam === "pm_open") fieldName = "lag_open_1";
+                            else if (tempUnivParam === "pmh_gap_pct") fieldName = "lag_pmh_gap_pct_1";
+                            else if (tempUnivParam === "pm_volume") fieldName = "lag_pm_volume_1";
+                            else if (tempUnivParam === "gap_pct") fieldName = "lag_gap_pct_1";
+                            else if (tempUnivParam === "rth_volume") fieldName = "lag_rth_volume_1";
+                            else if (tempUnivParam === "rth_range_pct") fieldName = "lag_rth_range_pct_1";
+                          } else if (tempUnivDay === "gap_day") {
                             if (tempUnivParam === "rth_close") fieldName = "Close Price";
                             else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";
                             else if (tempUnivParam === "pmh_gap_pct") fieldName = "PMH Gap %";
@@ -1272,7 +1332,7 @@ export default function InlineStrategyBuilder({
                   {universeFilters.rules && universeFilters.rules.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                       {universeFilters.rules.map((r: any, idx: number) => {
-                        const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+                        const friendlyName = getFriendlyMetricLabel(r.metric);
                         const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
                         let friendlyVal = r.value;
                         const numVal = parseFloat(r.value);
@@ -1957,11 +2017,18 @@ export default function InlineStrategyBuilder({
                 <div
                   key={session.id}
                   onClick={() => {
-                    setLocalMarketSessions(prev =>
-                      prev.includes(session.id)
-                        ? prev.filter(s => s !== session.id)
-                        : [...prev, session.id]
-                    );
+                    setLocalMarketSessions(prev => {
+                      if (prev.includes(session.id)) {
+                        return prev.filter(s => s !== session.id);
+                      }
+                      // «Horas personalizadas» es EXCLUYENTE con las tres
+                      // preajustadas. El motor hace la UNIÓN de todo lo
+                      // marcado, así que RTH + Personalizada 04:00-12:00 corría
+                      // de 04:00 a 16:00: la interfaz decía una cosa y el
+                      // backtest hacía otra, sin ningún aviso (Jaume, 6-sep-2026).
+                      if (session.id === "custom") return ["custom"];
+                      return [...prev.filter(s => s !== "custom"), session.id];
+                    });
                   }}
                   style={{
                     backgroundColor: isSelected ? 'rgba(216, 122, 61, 0.08)' : 'transparent',
@@ -2326,8 +2393,10 @@ export default function InlineStrategyBuilder({
         {/* Piramidación: entre la salida lógica y el stop loss fijo (petición del usuario) */}
         <PyramidingBuilder config={pyramiding} onChange={setPyramiding} />
         <div data-helper="st-risk" style={{ display: 'contents' }}>
-        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
+        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} bias={bias} />
         </div>
+        {/* Modelos avanzados: el ultimo bloque, debajo de "Otros parametros". */}
+        <AdvancedModelBuilder config={advancedModel} onChange={setAdvancedModel} />
       </div>
 
       {/* Strategy Summary Panel */}
@@ -2495,7 +2564,7 @@ export default function InlineStrategyBuilder({
                     </span>
 
                     {(universeFilters.rules || []).map((r: any, idx: number) => {
-                      const friendlyName = r.metric.replace(/_/g, " ").toLowerCase();
+                      const friendlyName = getFriendlyMetricLabel(r.metric);
                       const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
                       let friendlyVal = r.value;
                       const numVal = parseFloat(r.value);

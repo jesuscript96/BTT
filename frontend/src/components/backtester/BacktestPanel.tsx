@@ -23,6 +23,7 @@ export interface BacktestPanelParams {
   custom_start_time: string;
   custom_end_time: string;
   locates_cost: number;
+  max_locates: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
   is_percent: number;
@@ -45,6 +46,7 @@ interface BacktestPanelProps {
     custom_end_time?: string;
     locates_cost?: number;
     locate_type?: "PERCENT" | "FLAT";
+    max_locates?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;
@@ -425,6 +427,9 @@ export default function BacktestPanel({
   const [customEndTime, setCustomEndTime] = useState("16:00");
   const [locatesCost, setLocatesCost] = useState(0);
   const [useLocates, setUseLocates] = useState(false);
+  // Tope de locates: cuantos paquetes de 100 acciones como maximo se esta
+  // dispuesto a alquilar por ticker-dia. 0 = sin tope (comportamiento previo).
+  const [maxLocates, setMaxLocates] = useState(0);
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -556,6 +561,7 @@ export default function BacktestPanel({
       if (savedState.isPercent !== undefined) setIsPercent(savedState.isPercent);
       if (savedState.useLocates !== undefined) setUseLocates(savedState.useLocates);
       if (savedState.locatesCost !== undefined) setLocatesCost(savedState.locatesCost);
+      if (savedState.maxLocates !== undefined) setMaxLocates(savedState.maxLocates);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -694,6 +700,7 @@ export default function BacktestPanel({
       custom_start_time: customStartTime,
       custom_end_time: customEndTime,
       locates_cost: useLocates ? locatesCost : 0,
+      max_locates: useLocates ? maxLocates : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       is_percent: isPercent,
@@ -702,7 +709,7 @@ export default function BacktestPanel({
   }, [
     selectedDataset, initCash, riskR, riskType, fixedRatioDelta,
     fees, feeType, slippage, startDate, endDate, marketSessions,
-    customStartTime, customEndTime, useLocates, locatesCost,
+    customStartTime, customEndTime, useLocates, locatesCost, maxLocates,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
     sizeBySl,
   ]);
@@ -728,6 +735,7 @@ export default function BacktestPanel({
         isPercent,
         useLocates,
         locatesCost,
+        maxLocates,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -739,7 +747,7 @@ export default function BacktestPanel({
     selectedDataset, selectedStrategy, initCash, riskR, fees, slippage,
     startDate, endDate, marketSessions, customStartTime, customEndTime,
     riskType, feeType, isPercent, loadingData,
-    useLocates, locatesCost, useMonthlyExpenses, monthlyExpenses
+    useLocates, locatesCost, maxLocates, useMonthlyExpenses, monthlyExpenses
   ]);
 
   // Synchronize dataset selection with the selected strategy's associated dataset
@@ -791,6 +799,8 @@ export default function BacktestPanel({
       // FLAT = coste en $ por cada 100 acciones (lo que cuesta un locate),
       // no % del riesgo (decisión de producto, Jaume 2026-07-07).
       locate_type: "FLAT",
+      // Tope de locates: 0 = sin tope. Solo aplica en corto.
+      max_locates: useLocates ? maxLocates : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -983,6 +993,27 @@ export default function BacktestPanel({
 
                     {(() => {
                       const sessions = stratDef?.market_sessions || ["rth"];
+                      // El motor hace la UNIÓN de todas las sesiones marcadas.
+                      // Con «custom» + una preajustada eso da un horario que no
+                      // es el que se lee arriba: RTH + 04:00-12:00 corre hasta
+                      // las 16:00. Desde el 6-sep-2026 la interfaz no deja
+                      // marcar las dos, pero las estrategias guardadas antes
+                      // siguen ahí y hay que decirles la verdad.
+                      const PRESETS: Record<string, [string, string]> = {
+                        pre: ['04:00', '09:30'], rth: ['09:30', '16:00'], post: ['16:00', '20:00'],
+                      };
+                      const mezcla = sessions.includes('custom') && sessions.some((s: string) => s in PRESETS);
+                      let efectiva = '';
+                      if (mezcla) {
+                        const rangos: [string, string][] = sessions.map((s: string) =>
+                          s === 'custom'
+                            ? [stratDef?.custom_start_time || '09:30', stratDef?.custom_end_time || '16:00'] as [string, string]
+                            : PRESETS[s]
+                        ).filter(Boolean);
+                        const desde = rangos.map(r => r[0]).sort()[0];
+                        const hasta = rangos.map(r => r[1]).sort().slice(-1)[0];
+                        efectiva = `${desde} - ${hasta}`;
+                      }
                       return (
                         <div>
                           <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>SESIÓN: </span>
@@ -995,6 +1026,12 @@ export default function BacktestPanel({
                               return s;
                             }).join(' + ')}
                           </span>
+                          {mezcla && (
+                            <div style={{ color: 'var(--color-ec-loss)', fontWeight: 700, marginTop: 2 }}>
+                              ⚠️ Se SUMAN: la sesión real del backtest es {efectiva} ET.
+                              Desmarca una de las dos en la estrategia.
+                            </div>
+                          )}
                         </div>
                       );
                     })()}
@@ -1580,7 +1617,7 @@ export default function BacktestPanel({
                 <InfoTooltip
                   position="left"
                   width={280}
-                  text="Coste en dólares de cada locate: lo que cuestan 100 acciones reutilizables en corto. Se cobra por cada bloque de 100 acciones del tamaño máximo en corto del día. Ejemplo: si el locate cuesta 3$ y controlas 1000 acciones (10 locates), pagas 30$ ese día."
+                  text="Coste en dólares de cada locate: lo que cuestan 100 acciones reutilizables en corto. Se cobra UNA sola vez por ticker y día (no al comprar y otra al vender), por cada bloque de 100 acciones del tamaño máximo en corto de ese día. Ejemplo: si el locate cuesta 3$ y controlas 1000 acciones (10 locates), pagas 30$ ese día."
                   style={{ display: 'inline-flex' }}
                 />
               </span>
@@ -1605,6 +1642,65 @@ export default function BacktestPanel({
               />
             )}
           </div>
+
+          {/* Tope de locates. Solo tiene sentido con los locates activos, asi
+              que se despliega debajo del precio. 0 = sin tope, que es el
+              comportamiento de siempre. */}
+          {useLocates && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              paddingLeft: 24,
+            }}>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 1,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
+              }}>
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-secondary)',
+                }}>Máx. locates</span>
+                <InfoTooltip
+                  position="left"
+                  width={300}
+                  text="Tope de paquetes de 100 acciones que se está dispuesto a alquilar por ticker y día. Limita dinámicamente el tamaño de la posición en CORTO a (máx. locates × 100) acciones: si con el riesgo configurado tocaría comprar más locates de los permitidos, se entra con menos acciones en vez de pagarlos. Ejemplo con tope 5: a 5$ y 1.000$ de exposición harían falta 2 locates y entra entero; a 0,50$ harían falta 20, así que entra con 500 acciones (250$) y paga 5 locates. 0 = sin tope. No afecta a las posiciones en largo."
+                  style={{ display: 'inline-flex' }}
+                />
+              </span>
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={maxLocates}
+                onChange={(e) => setMaxLocates(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                className="border border-[var(--color-ec-border)]"
+                style={{
+                  width: '55px',
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  borderRadius: 5,
+                  padding: '6px 8px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                }}
+              />
+              <span style={{
+                fontFamily: 'var(--color-ec-sans)',
+                fontSize: 10,
+                color: 'var(--color-ec-text-muted)',
+                whiteSpace: 'nowrap',
+              }}>
+                {maxLocates > 0 ? `máx. ${maxLocates * 100} acc.` : 'sin tope'}
+              </span>
+            </div>
+          )}
 
           <div style={{
             display: 'flex',

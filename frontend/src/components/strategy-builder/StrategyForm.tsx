@@ -1017,7 +1017,7 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
                             <span style={{ color: 'var(--color-ec-copper)', fontSize: 8, lineHeight: 1 }}>●</span>
                             <h2 style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 2, color: 'var(--color-ec-text-muted)' }}>Gestión de Riesgo</h2>
                         </div>
-                        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} />
+                        <RiskManagementComponent risk={riskManagement} onChange={setRiskManagement} applyDay={applyDay} bias={bias} />
                     </section>
 
                 </div>

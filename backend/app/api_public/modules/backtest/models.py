@@ -43,6 +43,9 @@ class Execution(BaseModel):
     fee_type: Literal["PERCENT", "FLAT"] = "PERCENT"
     slippage: float = 0.0
     locates_cost: float = 0.0
+    # Tope de locates: maximo de paquetes de 100 acciones en corto por
+    # ticker-dia. 0 = sin tope. Recorta el tamano, no anula el trade.
+    max_locates: int = 0
     monthly_expenses: float = 0.0
     market_sessions: list[str] = Field(default_factory=lambda: ["RTH"])
     custom_start_time: Optional[str] = None

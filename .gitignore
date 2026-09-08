@@ -107,3 +107,9 @@ backend/uvicorn*.log
 
 # Cache de intradia (regenerable; no debe viajar en el repo)
 backend/app/.cache/
+
+# Logs efimeros de sesiones locales
+/*.log
+
+# Memoria local de Alvaro (por diseno, no se commitea)
+.zcode/

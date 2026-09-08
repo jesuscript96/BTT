@@ -13,14 +13,17 @@ _CATEGORY = {
         "Linear Regression", "Zig Zag", "Ichimoku Clouds",
     ],
     "Momentum": [
-        "RSI", "MACD", "Stochastic", "Momentum", "CCI", "ROC", "DMI+", "DMI-", "Williams %R",
+        "RSI", "MACD", "MACD Signal", "MACD Histogram", "Stochastic", "Momentum",
+        "CCI", "ROC", "DMI+", "DMI-", "Williams %R",
+        "Squeeze",
     ],
     "Volatility": ["ATR", "ADX", "Bollinger Bands", "Donchian", "Parabolic SAR"],
     "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "Accumulated Dollar Volume", "Dollar Volume", "SMA Volume"],
     "Price": [
         "Bar Close", "Bar Open", "High Bar", "Low Bar", "PM High", "PM Low", "PM Open",
         "AM Open", "RTH High", "RTH Low", "RTH Open", "Yesterday High", "Yesterday Low",
-        "Yesterday Open", "Yesterday Close", "Yesterday Volume", "High of last X days",
+        "Yesterday Open", "Yesterday Close", "Yesterday Volume", "Overhead last X days",
+        "High of last X days",
         "Low of last X days", "Previous max", "Previous min", "Prev. Bar Close",
         "Prev. Bar Open", "Prev. Bar High", "Prev. Bar Low", "Day Open", "High of Day",
         "Low of Day", "Current Open", "Previous Close", "Max N Bars",
@@ -31,7 +34,9 @@ _CATEGORY = {
         "Opening Range +", "Opening Range -", "Opening Range AM +", "Opening Range AM -",
         "Heikin-Ashi", "HA Close", "HA Open", "HA High", "HA Low", "Triangle Ascending",
         "Triangle Descending", "Triangle Symmetric", "Ret % AM", "Candle Range %",
-        "Elapsed time from last High", "Elapsed Time", "PM High Gap (%)",
+        "Recorrido (%)",
+        "Elapsed time from last High", "Elapsed Time", "PM High Gap (%)", "Current Gap (%)", "Open Gap (%)",
+        "% Session Fade", "% Fade",
     ],
     "Time": [
         "Time of Day", "Range of Time", "High/Low from x time", "High/Low from hour-time",
@@ -42,7 +47,12 @@ _CATEGORY = {
 # Common parameters per indicator (hint for the LLM/dev).
 _PARAMS = {
     "SMA": ["period"], "EMA": ["period"], "WMA": ["period"], "SMA Volume": ["period"],
-    "RSI": ["period", "overbought", "oversold"], "MACD": ["period", "period2", "period3", "macd_line"],
+    "RSI": ["period", "overbought", "oversold"],
+    # period = media rapida (12), period2 = lenta (26), period3 = señal (9).
+    # `macd_line` NO se lee: la linea se elige por el nombre del indicador.
+    "MACD": ["period", "period2", "period3"],
+    "MACD Signal": ["period", "period2", "period3"],
+    "MACD Histogram": ["period", "period2", "period3"],
     "Stochastic": ["period"], "CCI": ["period"], "ROC": ["period"], "Williams %R": ["period"],
     "ATR": ["period", "multiplier"], "ADX": ["period"], "RVOL by bar": ["period"],
     "Bollinger Bands": ["period", "stdDev", "band_line"], "Donchian": ["period"],
@@ -50,7 +60,12 @@ _PARAMS = {
     "Zig Zag": ["reversionPercentage"], "Ichimoku Clouds": ["ichimoku_line"],
     "Time of Day": ["time_hour", "time_minute", "time_condition"],
     "High of last X days": ["days_lookback"], "Low of last X days": ["days_lookback"],
+    "Overhead last X days": ["days_lookback", "overhead_extreme",
+                              "overhead_ref", "overhead_vol_rule"],
     "Max N Bars": ["period"], "Opening Range +": ["orb_minutes"], "Opening Range -": ["orb_minutes"],
+    "Squeeze": ["range_minutes", "squeeze_direction"],
+    "% Session Fade": ["session_ref"],
+    "% Fade": ["fade_ref", "ap_session"],
 }
 
 

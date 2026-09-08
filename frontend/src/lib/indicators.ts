@@ -1021,6 +1021,122 @@ export function calculateDollarVolume(data: CandleData[]): IndicatorDataPoint[] 
 }
 
 // ---------------------------------------------------------------------------
+// 26d. % Session Fade — caida de una sesion entera hasta la apertura de la
+// siguiente. PARIDAD OBLIGATORIA con `_compute_raw("% Session Fade")` de
+// backend/app/services/indicators.py: este es el que se PINTA, aquel el que
+// DISPARA. Misma convencion de sesion que el resto del fichero (getUTC* sobre
+// time*1000 da los minutos ET) y misma causalidad: no se emite punto hasta que
+// abre la sesion siguiente.
+// ---------------------------------------------------------------------------
+export function calculateSessionFade(data: CandleData[], session: "pm" | "rth" | "full"): IndicatorDataPoint[] {
+    const sorted = sortAndDedup(data);
+    // pm: 04:00-09:30 → open de 09:30 | rth: 09:30-16:00 → open de 16:00
+    // full: 04:00-16:00 (el día entero de negociación) → open de 16:00
+    const peakFrom = session === "rth" ? 570 : 240;
+    const peakTo = session === "pm" ? 570 : 960;
+    const openFrom = session === "pm" ? 570 : 960;
+    const out: IndicatorDataPoint[] = [];
+    let day = "";
+    let peak = NaN;      // maximo acumulado de la sesion de referencia
+    let nextOpen = NaN;  // open de la PRIMERA vela de la sesion siguiente
+    for (const c of sorted) {
+        const d = new Date((c.time as number) * 1000);
+        const key = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
+        if (key !== day) { day = key; peak = NaN; nextOpen = NaN; }
+        const m = d.getUTCHours() * 60 + d.getUTCMinutes();
+        if (m >= peakFrom && m < peakTo) peak = isNaN(peak) ? c.high : Math.max(peak, c.high);
+        if (isNaN(nextOpen) && m >= openFrom) nextOpen = c.open;
+        if (!isNaN(peak) && !isNaN(nextOpen) && peak !== 0) {
+            out.push({ time: c.time as Time, value: (peak - nextOpen) / peak * 100 });
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 26e. % Fade — caida viva desde una referencia que se reancla sola.
+// PARIDAD OBLIGATORIA con `_compute_raw("% Fade")` del backend.
+//
+// OJO con "previous_max": aqui se ancla en el maximo del DIA (equivale a
+// ap.PM). La condicion por defecto usa ap.RTH, asi que si se compara el grafico
+// con una condicion en ap.RTH los numeros NO tienen por que coincidir antes de
+// las 09:30. La etiqueta del desplegable lo dice ("máx. del día").
+// ---------------------------------------------------------------------------
+export function calculateFade(data: CandleData[], ref: "previous_max" | "vwap_cross"): IndicatorDataPoint[] {
+    const sorted = sortAndDedup(data);
+    const out: IndicatorDataPoint[] = [];
+    let day = "";
+    let prevMax = NaN;                       // maximo hasta la vela ANTERIOR
+    let cumTpVol = 0, cumVol = 0;
+    let anchor = NaN, wasAbove = false, prevValid = false;
+    for (const c of sorted) {
+        const d = new Date((c.time as number) * 1000);
+        const key = `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
+        if (key !== day) {
+            day = key;
+            prevMax = NaN;
+            cumTpVol = 0; cumVol = 0; anchor = NaN; wasAbove = false; prevValid = false;
+        }
+        let refVal: number;
+        if (ref === "vwap_cross") {
+            cumTpVol += ((c.high + c.low + c.close) / 3) * c.volume;
+            cumVol += c.volume;
+            const vwap = cumVol !== 0 ? cumTpVol / cumVol : NaN;
+            const above = c.close > vwap;    // NaN => false, igual que en numpy
+            const valid = !isNaN(vwap) && !isNaN(c.close);
+            // Solo cuenta como cruce si las DOS velas tenian VWAP: sin esto, el
+            // arranque del VWAP (NaN -> numero) se contaria como cruce.
+            if (prevValid && valid && above !== wasAbove) anchor = vwap;
+            wasAbove = above;
+            prevValid = valid;
+            refVal = anchor;
+        } else {
+            refVal = prevMax;                // el de la vela anterior (shift 1)
+            prevMax = isNaN(prevMax) ? c.high : Math.max(prevMax, c.high);
+        }
+        if (!isNaN(refVal) && refVal !== 0) {
+            out.push({ time: c.time as Time, value: (refVal - c.close) / refVal * 100 });
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 26f. Squeeze — % que ha movido el precio en una ventana de RELOJ
+//
+// PARIDAD OBLIGATORIA con `_compute_raw("Squeeze")` de
+// backend/app/services/indicators.py. Si se toca una, hay que tocar la otra:
+// este calculo es el que se PINTA, y el del backend el que DISPARA. Si
+// divergen, el grafico miente justo en lo que se quiere verificar (es lo que
+// paso con Darvas, §8.5 de MEMORIA.md).
+//
+// La ventana va en MINUTOS DE RELOJ, no en velas: las velas del lago son
+// dispersas (solo existe el minuto que tuvo operaciones). La referencia es el
+// ultimo cierre CONOCIDO en `t - X min` (asof hacia atras). Sin referencia
+// (la ventana empieza antes de la primera vela) no se emite punto.
+//
+// Aqui se pinta el valor CON SIGNO (+ sube, - baja). En las condiciones el
+// desplegable de direccion lo devuelve siempre en positivo; es el mismo
+// numero con el signo cambiado cuando se elige "hacia abajo".
+// ---------------------------------------------------------------------------
+export function calculateSqueeze(data: CandleData[], minutes: number): IndicatorDataPoint[] {
+    const sorted = sortAndDedup(data);
+    const winSec = Math.max(1, Math.floor(minutes || 5)) * 60;
+    const out: IndicatorDataPoint[] = [];
+    let j = 0; // puntero del asof: solo avanza, igual que la ventana
+    for (let i = 0; i < sorted.length; i++) {
+        const ref = sorted[i].time - winSec;
+        while (j + 1 < sorted.length && sorted[j + 1].time <= ref) j++;
+        if (sorted[j].time > ref) continue; // todavia no hay contra que comparar
+        const base = sorted[j].close;
+        if (base > 0) {
+            out.push({ time: sorted[i].time as Time, value: (sorted[i].close - base) / base * 100 });
+        }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // 27. Heikin-Ashi
 // ---------------------------------------------------------------------------
 export function calculateHeikinAshi(data: CandleData[]): HeikinAshiDataPoint[] {

@@ -28,6 +28,8 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
     { label: "Max DD", value: `${(metrics.max_drawdown_pct ?? 0).toFixed(2)}%`, tooltip: "Drawdown Máximo. La mayor caída porcentual desde el punto más alto del capital hasta el más bajo antes de recuperarse. Representa la peor racha de pérdida temporal." },
     { label: "Max W Streak", value: String(metrics.max_consecutive_wins ?? 0), tooltip: "Número máximo de operaciones ganadoras consecutivas (racha de victorias)." },
     { label: "Max L Streak", value: String(metrics.max_consecutive_losses ?? 0), tooltip: "Número máximo de operaciones perdedoras consecutivas (racha de pérdidas)." },
+    { label: "Max W Day Streak", value: String(metrics.max_consecutive_winning_days ?? 0), tooltip: "Número máximo de días consecutivos (solo días con operaciones) cerrados en positivo, neto de locates. Un día sin operar no rompe la racha." },
+    { label: "Max L Day Streak", value: String(metrics.max_consecutive_losing_days ?? 0), tooltip: "Número máximo de días consecutivos (solo días con operaciones) cerrados en negativo, neto de locates. Un día sin operar no rompe la racha." },
   ];
 
   if (vertical) {

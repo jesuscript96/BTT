@@ -31,6 +31,37 @@ const isVolumeIndicator = (name?: string): boolean => {
     );
 };
 
+/** Indicadores cuyo valor ES un porcentaje: el resumen de la condicion escribe
+ *  "> 20%" en vez de "> 20". Antes esta lista estaba copiada literal en cinco
+ *  sitios (aqui dos veces, InlineStrategyBuilder, StrategiesTable y el wizard) y
+ *  ya se habian desincronizado: Squeeze solo llevaba el "%" en uno de ellos. */
+export const isPercentIndicator = (name?: string): boolean => {
+    if (!name) return false;
+    return (
+        name === IndicatorType.PM_HIGH_GAP ||
+        name === IndicatorType.CURRENT_GAP ||
+        name === IndicatorType.OPEN_GAP ||
+        name === IndicatorType.SQUEEZE ||
+        name === IndicatorType.SESSION_FADE ||
+        name === IndicatorType.FADE
+    );
+};
+
+/** Indicadores que solo admiten >, <, >= y <= contra una cifra fija: son una
+ *  medida, no un nivel de precio, asi que cruzarlos no significa nada. Squeeze
+ *  queda FUERA a proposito — su lista de destinos en indicatorValidation ya lo
+ *  deja standalone y no se le tocan los comparadores. */
+export const isMeasureIndicator = (name?: string): boolean => {
+    if (!name) return false;
+    return (
+        name === IndicatorType.PM_HIGH_GAP ||
+        name === IndicatorType.CURRENT_GAP ||
+        name === IndicatorType.OPEN_GAP ||
+        name === IndicatorType.SESSION_FADE ||
+        name === IndicatorType.FADE
+    );
+};
+
 const ALLOWED_CROSSES_INDICATORS: IndicatorType[] = [
     IndicatorType.BAR_CLOSE,
     IndicatorType.BAR_OPEN,
@@ -38,7 +69,14 @@ const ALLOWED_CROSSES_INDICATORS: IndicatorType[] = [
     IndicatorType.LOW_BAR,
     IndicatorType.SMA,
     IndicatorType.EMA,
-    IndicatorType.VWAP
+    IndicatorType.VWAP,
+    // El uso clasico del MACD ES un cruce (linea contra su señal, o el
+    // histograma contra cero), asi que sin esto el indicador queda a medias.
+    IndicatorType.MACD,
+    IndicatorType.MACD_SIGNAL,
+    IndicatorType.MACD_HISTOGRAM,
+    // Y el RSI se cruza contra sus niveles (70/30).
+    IndicatorType.RSI,
 ];
 
 export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<IndicatorConfig> => {
@@ -60,6 +98,12 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         case IndicatorType.HIGH_X_DAYS:
         case IndicatorType.LOW_X_DAYS:
             return { days_lookback: 5 };
+        // Overhead: 20 dias (un mes de cotizacion), el dia del maximo y su High
+        // como nivel, sin condicion de volumen. Con estos defectos se comporta
+        // como el clasico "maximo de los ultimos X dias", pero ajustado por splits.
+        case IndicatorType.OVERHEAD_X_DAYS:
+            return { days_lookback: 20, overhead_extreme: "max",
+                     overhead_ref: "high", overhead_vol_rule: "none" };
         case IndicatorType.PREVIOUS_MAX:
         case IndicatorType.PREVIOUS_MIN:
             return { ap_session: "ap.RTH" };
@@ -75,6 +119,27 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         case IndicatorType.TRIANGLE_DESCENDING:
         case IndicatorType.TRIANGLE_SYMMETRIC:
             return { pivot_window: 5, tri_lookback: 35, slope_tolerance: 1.5, min_r_squared: 0.65, min_pivots: 2 };
+        // Squeeze: 5 minutos de ventana y direccion "arriba" es el caso tipico
+        // (cazar el disparo). La ventana va en MINUTOS DE RELOJ, no en velas.
+        case IndicatorType.SQUEEZE:
+            return { range_minutes: 5, squeeze_direction: "up" };
+        case IndicatorType.RSI:
+            return { period: 14 };
+        // MACD: rapida 12, lenta 26, señal 9 — los periodos clasicos. Los tres
+        // se pasan igual para las tres lineas, porque las tres salen del mismo
+        // calculo; lo unico que cambia es cual de las tres se devuelve.
+        case IndicatorType.MACD:
+        case IndicatorType.MACD_SIGNAL:
+        case IndicatorType.MACD_HISTOGRAM:
+            return { period: 12, period2: 26, period3: 9 };
+        // Fade de premercado: es el caso que se mira a diario (cuanto se
+        // desinflo el PM antes de abrir el mercado).
+        case IndicatorType.SESSION_FADE:
+            return { session_ref: "pm" };
+        // Fade vivo contra el maximo previo, con la misma sesion por defecto que
+        // "Previous Max" para que los dos digan lo mismo cuando se combinan.
+        case IndicatorType.FADE:
+            return { fade_ref: "previous_max", ap_session: "ap.RTH" };
         default:
             return {};
     }
@@ -92,6 +157,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.ELAPSED_TIME,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.OVERHEAD_X_DAYS,
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
         IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
         IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
@@ -101,11 +167,16 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.CONSEC_LOWER_HIGHS, IndicatorType.CONSEC_HIGHER_LOWS,
         IndicatorType.CONSEC_GREEN_CANDLES, IndicatorType.CONSEC_RED_CANDLES,
         IndicatorType.CANDLE_RANGE_PCT,
+        IndicatorType.RECORRIDO_PCT,
         IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
         IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
         IndicatorType.TRIANGLE_ASCENDING, IndicatorType.TRIANGLE_DESCENDING,
         IndicatorType.TRIANGLE_SYMMETRIC,
         IndicatorType.PM_HIGH_GAP,
+        IndicatorType.CURRENT_GAP,
+        IndicatorType.OPEN_GAP,
+        IndicatorType.SESSION_FADE,
+        IndicatorType.FADE,
     ],
     "Indicators": [
         IndicatorType.SMA, IndicatorType.EMA, IndicatorType.VWAP,
@@ -115,6 +186,9 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.ACCUM_DOLLAR_VOLUME,
         IndicatorType.DOLLAR_VOLUME,
         IndicatorType.RVOL, IndicatorType.VOLUME, IndicatorType.ATR,
+        IndicatorType.SQUEEZE,
+        IndicatorType.RSI, IndicatorType.MACD,
+        IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM,
     ],
 };
 
@@ -148,6 +222,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.YESTERDAY_CLOSE]: "Yesterday Close",
     [IndicatorType.YESTERDAY_HIGH]: "Yesterday High",
     [IndicatorType.YESTERDAY_LOW]: "Yesterday Low",
+    [IndicatorType.OVERHEAD_X_DAYS]: "Overhead last X days",
     [IndicatorType.HIGH_X_DAYS]: "High of last X days",
     [IndicatorType.LOW_X_DAYS]: "Low of last X days",
     [IndicatorType.PREV_BAR_CLOSE]: "Prev. Bar Close",
@@ -164,6 +239,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.CONSEC_GREEN_CANDLES]: "Consec Green Candles",
     [IndicatorType.CONSEC_RED_CANDLES]: "Consec Red Candles",
     [IndicatorType.CANDLE_RANGE_PCT]: "Candle Range %",
+    [IndicatorType.RECORRIDO_PCT]: "Recorrido (%)",
     [IndicatorType.OPENING_RANGE_PLUS]: "Opening Range +",
     [IndicatorType.OPENING_RANGE_MINUS]: "Opening Range -",
     [IndicatorType.OPENING_RANGE_AM_PLUS]: "Opening Range AM +",
@@ -172,6 +248,10 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.TRIANGLE_DESCENDING]: "▼ Triangle Descending",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "◇ Triangle Symmetric",
     [IndicatorType.PM_HIGH_GAP]: "PM High Gap (%)",
+    [IndicatorType.CURRENT_GAP]: "Current Gap (%)",
+    [IndicatorType.OPEN_GAP]: "Open Gap (%)",
+    [IndicatorType.SESSION_FADE]: "% Session Fade",
+    [IndicatorType.FADE]: "% Fade",
     // Indicators
     [IndicatorType.SMA]: "SMA",
     [IndicatorType.EMA]: "EMA",
@@ -186,6 +266,11 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.RVOL]: "RVOL by bar",
     [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.ATR]: "ATR",
+    [IndicatorType.SQUEEZE]: "Squeeze",
+    [IndicatorType.RSI]: "RSI",
+    [IndicatorType.MACD]: "MACD",
+    [IndicatorType.MACD_SIGNAL]: "MACD Signal",
+    [IndicatorType.MACD_HISTOGRAM]: "MACD Histograma",
 };
 
 interface TooltipContextType {
@@ -214,8 +299,9 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.YESTERDAY_CLOSE]: "Precio de cierre de ayer.",
     [IndicatorType.YESTERDAY_HIGH]: "Precio máximo de ayer.",
     [IndicatorType.YESTERDAY_LOW]: "Precio mínimo de ayer.",
-    [IndicatorType.HIGH_X_DAYS]: "El máximo más alto de los últimos X días (diario).",
-    [IndicatorType.LOW_X_DAYS]: "El mínimo más bajo de los últimos X días (diario).",
+    [IndicatorType.OVERHEAD_X_DAYS]: "El nivel que dejó el día más extremo de los últimos X días de cotización, sobre velas DIARIAS de sesión regular (sin premercado ni after). Funciona en dos pasos: primero busca el día del máximo más alto (o el del mínimo más bajo) y después mira el volumen DE ESE DÍA. Ojo: si el máximo lo hizo un día flojo, la señal se descarta — no se baja al siguiente techo. «Nivel» elige qué precio de ese día usas: el High suele ser una mecha que nadie defendió, mientras que el Close del día del spike sí es resistencia de verdad. Todo va ajustado por splits, así que un contrasplit ya no deja el nivel 20 veces por debajo del precio. Si pones condición de volumen, el nivel puede aparecer o desaparecer durante el día, porque el volumen de hoy va creciendo.",
+    [IndicatorType.HIGH_X_DAYS]: "Versión antigua, se mantiene solo para estrategias ya guardadas: el máximo de los últimos X días SIN ajustar por splits. Usa «Overhead last X days».",
+    [IndicatorType.LOW_X_DAYS]: "Versión antigua, se mantiene solo para estrategias ya guardadas: el mínimo de los últimos X días SIN ajustar por splits. Usa «Overhead last X days» con «Día del mínimo».",
     [IndicatorType.PREV_BAR_CLOSE]: "El precio de cierre de la barra inmediatamente anterior",
     [IndicatorType.PREV_BAR_OPEN]: "El precio de apertura de la barra inmediatamente anterior",
     [IndicatorType.PREV_BAR_HIGH]: "El precio máximo de la barra inmediatamente anterior",
@@ -228,7 +314,8 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.CONSEC_HIGHER_LOWS]: "Número de velas consecutivas con mínimos más altos.",
     [IndicatorType.CONSEC_GREEN_CANDLES]: "Número de velas consecutivas alcistas (cierre > apertura).",
     [IndicatorType.CONSEC_RED_CANDLES]: "Número de velas consecutivas bajistas (cierre < apertura).",
-    [IndicatorType.CANDLE_RANGE_PCT]: "Rango de la vela actual en porcentaje (High vs Low).",
+    [IndicatorType.CANDLE_RANGE_PCT]: "Cuánto se mueve la vela de apertura a cierre, en %, SIN signo: da igual si subió o bajó. (La descripción anterior decía «High vs Low» y era falsa: el motor no mira las mechas.) Si necesitas saber la dirección, usa «Recorrido (%)».",
+    [IndicatorType.RECORRIDO_PCT]: "Recorrido de la vela CON SIGNO: lo que se mueve de apertura a cierre, en %. Positivo si subió, negativo si bajó, así que el signo te da la dirección y no hace falta elegirla aparte. «Recorrido (%) > 3» pide una vela que suba más de un 3%; «< -2», una que caiga más de un 2%. Mide el cuerpo, no las mechas: una vela que se dispara y lo devuelve todo cuenta como lo que cerró. Se compara solo contra una cifra, y respeta el timeframe del bloque (en 5m mide la vela de 5m).",
     [IndicatorType.OPENING_RANGE_PLUS]: "Rompimiento alcista del rango de apertura (ej. los primeros 5/15/30 mins).",
     [IndicatorType.OPENING_RANGE_MINUS]: "Rompimiento bajista del rango de apertura.",
     [IndicatorType.OPENING_RANGE_AM_PLUS]: "Rompimiento alcista en After Market.",
@@ -237,7 +324,11 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.TRIANGLE_DESCENDING]: "Patrón de triángulo descendente.",
     [IndicatorType.TRIANGLE_SYMMETRIC]: "Patrón de triángulo simétrico.",
     [IndicatorType.PM_HIGH_GAP]: "El máximo gap hecho durante la sesión de premercado, es decir, el % de diferencia entre el cierre de ayer y el máximo del premarket high.",
-    
+    [IndicatorType.OPEN_GAP]: "Gap con el que ABRIÓ el mercado: % de diferencia entre la apertura del RTH (09:30) y el cierre del día anterior. A diferencia del PM High Gap no depende de dónde llegó el premercado, y a diferencia del Current Gap no se mueve: una vez abre, se queda fijo todo el día. OJO: antes de las 09:30 vale NaN y cualquier condición sobre él es falsa — en premercado todavía no se sabe a cuánto va a abrir, y darlo por sabido sería mirar el futuro.",
+    [IndicatorType.CURRENT_GAP]: "Gap vivo del precio respecto al cierre de ayer: % de diferencia entre el precio actual (cierre de la vela que se evalúa) y el cierre del día anterior. A diferencia del PM High Gap, sigue al precio durante todo el día (PM y RTH) y baja si el precio baja.",
+    [IndicatorType.SESSION_FADE]: "Cuánto se desinfló una sesión ENTERA, en positivo (20 = cayó un 20%). Con «Premarket» mide del PM High a la apertura de mercado; con «Mercado (RTH)», del máximo de la sesión regular a la apertura del After. Es un número congelado: nace en el instante en que abre la sesión siguiente y ya no cambia en todo el día. Antes de ese instante NO existe, así que cualquier condición que lo use es falsa (no se puede saber el fade del premercado a las 07:00). Sale negativo si la apertura fue por encima del máximo.",
+    [IndicatorType.FADE]: "Cuánto ha caído el precio AHORA desde una referencia, en positivo (20 = está un 20% por debajo). Con «Máximo previo» la referencia es el máximo hecho hasta la vela anterior, así que se reancla sola: cada nuevo máximo devuelve el fade a cero. Con «Cruce del VWAP» la referencia es el precio del VWAP en la vela en que el precio lo cruzó por última vez, y se mantiene fija hasta el cruce siguiente (por eso el fade sigue creciendo aunque el VWAP baje). Negativo = el precio está por encima de la referencia.",
+
     // Technical Indicators
     [IndicatorType.SMA]: "Media Móvil Simple.",
     [IndicatorType.EMA]: "Media Móvil Exponencial.",
@@ -251,7 +342,12 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.YESTERDAY_VOLUME]: "Volumen total registrado el día de ayer.",
     [IndicatorType.RVOL]: "Volumen relativo de la barra respecto a su hora histórica.",
     [IndicatorType.VOLUME]: "Volumen individual de la barra actual.",
-    [IndicatorType.ATR]: "Rango Medio Verdadero."
+    [IndicatorType.ATR]: "Rango Medio Verdadero.",
+    [IndicatorType.RSI]: "Índice de Fuerza Relativa (0-100). Mide si el precio viene subiendo con más fuerza de la que baja en las últimas N velas. Por encima de 70 se considera sobrecomprado y por debajo de 30 sobrevendido, pero en un pump esos niveles se saturan durante horas: úsalo como medida de agotamiento, no como señal por sí solo.",
+    [IndicatorType.MACD]: "Línea MACD: diferencia entre la media exponencial rápida (12) y la lenta (26). Por encima de cero el impulso es alcista; por debajo, bajista. Lo clásico es cruzarla con su Señal.",
+    [IndicatorType.MACD_SIGNAL]: "Señal del MACD: media exponencial (9) de la propia línea MACD. Sola no dice mucho — su uso natural es que la línea MACD la cruce por arriba (impulso al alza) o por abajo (a la baja).",
+    [IndicatorType.MACD_HISTOGRAM]: "Histograma del MACD: la distancia entre la línea MACD y su Señal. Cuando cruza el cero es exactamente el cruce de las otras dos, y su tamaño dice cuánta fuerza tiene el movimiento. Es el más cómodo de los tres para una condición contra una cifra.",
+    [IndicatorType.SQUEEZE]: "Spike de precio: cuánto se ha movido el cierre respecto al de hace X MINUTOS DE RELOJ (no velas). Devuelve el porcentaje SIEMPRE en positivo en la dirección elegida, así que «Squeeze > 10» significa «se ha disparado más de un 10%» tanto arriba como abajo. Solo se compara contra una cifra. Ojo: mide punta a punta, así que un zigzag dentro de la ventana cuenta el neto (100→110→104,5→114,95 son +15%), pero una caída seguida de una subida dentro de la misma ventana se compensan."
 };
 
 const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
@@ -266,6 +362,7 @@ const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
     IndicatorType.CONSEC_GREEN_CANDLES,
     IndicatorType.CONSEC_RED_CANDLES,
     IndicatorType.CANDLE_RANGE_PCT,
+    IndicatorType.RECORRIDO_PCT,
     IndicatorType.SMA,
     IndicatorType.EMA,
     IndicatorType.VWAP,
@@ -282,6 +379,84 @@ const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
 
 const isOffsetAllowed = (name: IndicatorType | string): boolean => {
     return ALLOWED_OFFSET_INDICATORS.includes(name as IndicatorType);
+};
+
+/**
+ * Ayuda de las OPCIONES de un parámetro, visible sin pasar el ratón.
+ *
+ * Jaume, 7-sep-2026: «lo del fade y este tipo de cosas, cuando pongas la
+ * descripción en los desplegables hay que ponerla para que lo vea, porque si
+ * no no sé cómo configurarlo en un backtest más tarde».
+ *
+ * Un `title=` no vale: solo sale al pasar el ratón por encima y nadie lo hace.
+ * El tooltip del indicador tampoco, porque describe el indicador entero y no
+ * cambia con la opción que tienes puesta. Esto se pinta DEBAJO del selector y
+ * dice lo que hace la opción elegida ahora mismo.
+ *
+ * Los textos salen de leer el motor, no de la intuición:
+ * `_ap_session_started` e `_vwap_cross_ref_series` en `indicators.py`.
+ */
+export const AYUDA_OPCION: Record<string, string> = {
+    // % Session Fade — qué sesión se desinfla
+    "session_ref.pm": "Del PM High a la apertura de mercado. Nace a las 09:30 y ya no cambia en todo el día; antes de esa hora NO existe y la condición es falsa.",
+    "session_ref.rth": "Del máximo de la sesión regular a la apertura del After (16:00). Nace a las 16:00; antes no existe.",
+    "session_ref.full": "Del máximo del día ENTERO (premercado y mercado juntos, el que sea más alto) a la apertura del After. En un gap que se muere el máximo suele ser el PM High, así que éste y el de RTH dan números muy distintos.",
+    // % Fade — desde dónde se mide la caída
+    "fade_ref.previous_max": "La referencia es el máximo hecho hasta la vela ANTERIOR — la actual no cuenta, así que comparar contra él no es circular. Cada máximo nuevo devuelve el fade a cero. Desde cuándo empieza a contar ese máximo lo eliges en el selector de al lado.",
+    "fade_ref.vwap_cross": "La referencia es el VWAP DE LA VELA en que el precio lo cruzó por última vez, y se queda fija hasta el cruce siguiente: por eso el fade sigue creciendo aunque el VWAP baje. Ese VWAP es acumulativo desde la primera vela del día (04:00, premercado incluido) y NO se reinicia al abrir el mercado. Antes del primer cruce del día no existe. Aquí la sesión de referencia no se usa.",
+    // Overhead — la regla de volumen y qué precio del día es el nivel
+    "overhead_vol_rule.none": "El nivel vale siempre, mire lo que mire el volumen.",
+    "overhead_vol_rule.gt": "Solo cuenta si AQUEL día movió MÁS volumen que el que llevas acumulado hoy hasta esta vela. Ojo: como el volumen de hoy va creciendo, por la mañana esto se cumple casi siempre y por la tarde casi nunca — si no quieres que acabe siendo un filtro horario encubierto, acótalo con tu filtro de volumen mínimo o con la ventana de entrada.",
+    "overhead_vol_rule.lt": "Solo cuenta si aquel día movió MENOS volumen que el acumulado de hoy: el techo se hizo con poca gente y hoy estás moviendo más. Por la mañana casi nunca se cumple.",
+    "overhead_ref.high": "El máximo de aquel día. Es el nivel clásico, pero muchas veces es una mecha que nadie defendió.",
+    "overhead_ref.low": "El mínimo de aquel día. En un día de spike, el suelo desde el que arrancó.",
+    "overhead_ref.open": "La apertura de aquel día.",
+    "overhead_ref.close": "El cierre de aquel día: donde se quedó el precio al cerrar el mercado. Suele aguantar mejor como resistencia que el máximo.",
+    // ap_session — desde cuándo cuenta el máximo/mínimo
+    "ap_session.ap.PM": "Cuenta desde la primera vela del día (04:00): el máximo incluye el premercado.",
+    "ap_session.ap.RTH": "Empieza a contar a las 09:30: solo la sesión regular, sin premercado.",
+    "ap_session.ap.AM": "Empieza a contar a las 16:00: solo el after.",
+};
+
+// Estilo comun de los cinco controles de "Overhead last X days". Van con
+// flexWrap: entran dos por fila y la regla de volumen ocupa la suya entera.
+const SELECT_OVERHEAD: React.CSSProperties = {
+    flex: '1 1 45%',
+    minWidth: 0,
+    backgroundColor: 'var(--color-ec-bg-sidebar)',
+    border: '0.5px solid var(--color-ec-border)',
+    borderRadius: 5,
+    padding: '5px 10px',
+    fontSize: 'var(--ec-fs-select)',
+    fontWeight: 500,
+    color: 'var(--color-ec-text-primary)',
+    fontFamily: 'var(--color-ec-sans)',
+    outline: 'none',
+};
+
+// El campo de dias con su etiqueta al lado: el `placeholder` desaparece en
+// cuanto tiene valor, y el indicador nace con 20 puesto, asi que sin etiqueta
+// se veria un numero pelado.
+const CAMPO_OVERHEAD: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 5, flex: '1 1 100%', minWidth: 0,
+};
+
+const ETIQUETA_OVERHEAD: React.CSSProperties = {
+    fontSize: 10, fontWeight: 700, letterSpacing: 0.4, whiteSpace: 'nowrap',
+    textTransform: 'uppercase', color: 'var(--color-ec-text-muted)',
+};
+
+const AyudaOpcion = ({ clave }: { clave: string }) => {
+    const texto = AYUDA_OPCION[clave];
+    if (!texto) return null;
+    return (
+        <span style={{
+            flexBasis: '100%', fontSize: 10, lineHeight: 1.4,
+            color: 'var(--color-ec-text-muted)',
+        }}>
+            {texto}
+        </span>
+    );
 };
 
 const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorType; customText?: string }) => {
@@ -567,10 +742,54 @@ export const IndicatorParams = ({
             {/* Specific Params */}
             {(() => {
                 switch (value.name) {
+                    case IndicatorType.MACD:
+                    case IndicatorType.MACD_SIGNAL:
+                    case IndicatorType.MACD_HISTOGRAM: {
+                        // Tres periodos: rapida, lenta y señal. Las tres lineas
+                        // salen del MISMO calculo, asi que los tres campos
+                        // aparecen igual en las tres — lo unico que cambia es
+                        // cual de las tres series se devuelve.
+                        const campo = (
+                            clave: "period" | "period2" | "period3",
+                            etiqueta: string, defecto: number, ayuda: string,
+                        ) => (
+                            <input
+                                key={clave}
+                                type="number"
+                                min={1}
+                                value={value[clave] ?? ''}
+                                onChange={(e) => onChange({ ...value, [clave]: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                onFocus={(e) => e.target.select()}
+                                placeholder={etiqueta}
+                                title={`${ayuda} (por defecto ${defecto})`}
+                                style={{
+                                    flex: '1 1 60px',
+                                    minWidth: '60px',
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '5px 10px',
+                                    fontSize: 'var(--ec-fs-select)',
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                }}
+                            />
+                        );
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                {campo("period", "Rápida", 12, "Media exponencial rápida")}
+                                {campo("period2", "Lenta", 26, "Media exponencial lenta")}
+                                {campo("period3", "Señal", 9, "Media de la propia línea MACD")}
+                            </div>
+                        );
+                    }
                     case IndicatorType.SMA:
                     case IndicatorType.EMA:
                     case IndicatorType.ATR:
                     case IndicatorType.RVOL:
+                    case IndicatorType.RSI:
                         return (
                             <input
                                 type="number"
@@ -684,6 +903,141 @@ export const IndicatorParams = ({
                                 </select>
                             </div>
                         );
+                    case IndicatorType.SQUEEZE:
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={value.range_minutes ?? ''}
+                                    onChange={(e) => onChange({ ...value, range_minutes: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
+                                    placeholder="Minutos"
+                                    style={{
+                                        flex: '1 1 70px',
+                                        minWidth: '70px',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 10px',
+                                        fontSize: 'var(--ec-fs-select)',
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                    }}
+                                    title="Ventana en MINUTOS DE RELOJ: en cuánto tiempo se tiene que haber producido el movimiento. No son velas — con temporalidad de 5m, 15 minutos siguen siendo 15 minutos."
+                                />
+                                <select
+                                    value={value.squeeze_direction || 'up'}
+                                    onChange={(e) => onChange({ ...value, squeeze_direction: e.target.value as "up" | "down" })}
+                                    style={{
+                                        flex: '1 1 90px',
+                                        minWidth: '90px',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 10px',
+                                        fontSize: 'var(--ec-fs-select)',
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                    }}
+                                    title="Dirección del spike. El valor sale SIEMPRE positivo en la dirección elegida, así que la condición se escribe igual en las dos: «> 10» es «más de un 10%»."
+                                >
+                                    <option value="up">Hacia arriba</option>
+                                    <option value="down">Hacia abajo</option>
+                                </select>
+                            </div>
+                        );
+                    case IndicatorType.SESSION_FADE:
+                        return (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, width: '100%' }}>
+                            <select
+                                value={value.session_ref || 'pm'}
+                                onChange={(e) => onChange({ ...value, session_ref: e.target.value as "full" | "pm" | "rth" })}
+                                style={{
+                                    width: '100%',
+                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                    border: '0.5px solid var(--color-ec-border)',
+                                    borderRadius: 5,
+                                    padding: '5px 10px',
+                                    fontSize: 'var(--ec-fs-select)',
+                                    fontWeight: 500,
+                                    color: 'var(--color-ec-text-primary)',
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    outline: 'none',
+                                    cursor: 'pointer',
+                                }}
+                                title="Qué sesión se desinfla. Premarket: del PM High a la apertura de mercado (existe a partir de las 09:30). Mercado: del máximo del RTH a la apertura del After. Día completo: del máximo del día ENTERO (premarket y mercado juntos, el que sea más alto) a la apertura del After — el desinflado real del día."
+                            >
+                                <option value="pm">Premarket → apertura de mercado</option>
+                                <option value="rth">Mercado (RTH) → apertura del After</option>
+                                <option value="full">Día completo (PM + RTH) → apertura del After</option>
+                            </select>
+                            <AyudaOpcion clave={`session_ref.${value.session_ref || 'pm'}`} />
+                            </div>
+                        );
+                    case IndicatorType.FADE:
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <select
+                                    value={value.fade_ref || 'previous_max'}
+                                    onChange={(e) => onChange({ ...value, fade_ref: e.target.value as "previous_max" | "vwap_cross" })}
+                                    style={{
+                                        flex: '1 1 130px',
+                                        minWidth: '130px',
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 5,
+                                        padding: '5px 10px',
+                                        fontSize: 'var(--ec-fs-select)',
+                                        fontWeight: 500,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-sans)',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                    }}
+                                    title="Desde dónde se mide la caída. El máximo previo se reancla en cada máximo nuevo; el cruce del VWAP, en cada cruce."
+                                >
+                                    <option value="previous_max">Desde el máximo previo</option>
+                                    <option value="vwap_cross">Desde el cruce del VWAP</option>
+                                </select>
+                                {/* La sesión solo pinta con "máximo previo": el cruce del VWAP
+                                    se ancla en el cruce, no en el arranque de una sesión. */}
+                                {(value.fade_ref || 'previous_max') === 'previous_max' && (
+                                    <select
+                                        value={value.ap_session || 'ap.RTH'}
+                                        onChange={(e) => onChange({ ...value, ap_session: e.target.value as "ap.PM" | "ap.RTH" | "ap.AM" })}
+                                        style={{
+                                            flex: '1 1 90px',
+                                            minWidth: '90px',
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '5px 10px',
+                                            fontSize: 'var(--ec-fs-select)',
+                                            fontWeight: 500,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            cursor: 'pointer',
+                                        }}
+                                        title="Desde cuándo empieza a contar el máximo, igual que en «Previous Max»."
+                                    >
+                                        <option value="ap.PM">ap.PM · 04:00</option>
+                                        <option value="ap.RTH">ap.RTH · 09:30</option>
+                                        <option value="ap.AM">ap.AM · 16:00</option>
+                                    </select>
+                                )}
+                                <AyudaOpcion clave={`fade_ref.${value.fade_ref || 'previous_max'}`} />
+                                {(value.fade_ref || 'previous_max') === 'previous_max' && (
+                                    <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.RTH'}`} />
+                                )}
+                            </div>
+                        );
                     case IndicatorType.OPENING_RANGE_PLUS:
                     case IndicatorType.OPENING_RANGE_MINUS:
                     case IndicatorType.OPENING_RANGE_AM_PLUS:
@@ -741,10 +1095,55 @@ export const IndicatorParams = ({
                                 <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>días</span>
                             </div>
                         );
+                    case IndicatorType.OVERHEAD_X_DAYS:
+                        return (
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, width: '100%' }}>
+                                <div style={CAMPO_OVERHEAD} title="Cuántos días de cotización se miran hacia atrás. Hoy nunca entra. 250 son aproximadamente un año.">
+                                    <span style={ETIQUETA_OVERHEAD}>Mirar</span>
+                                    <input
+                                        type="number"
+                                        value={value.days_lookback ?? ''}
+                                        onChange={(e) => onChange({ ...value, days_lookback: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                        onFocus={(e) => e.target.select()}
+                                        style={{ ...SELECT_OVERHEAD, flex: 1 }}
+                                    />
+                                    <span style={ETIQUETA_OVERHEAD}>días</span>
+                                </div>
+                                <select
+                                    value={value.overhead_extreme || 'max'}
+                                    onChange={(e) => onChange({ ...value, overhead_extreme: e.target.value as "max" | "min" })}
+                                    style={{ ...SELECT_OVERHEAD, cursor: 'pointer' }}
+                                >
+                                    <option value="max">Día del máximo</option>
+                                    <option value="min">Día del mínimo</option>
+                                </select>
+                                <select
+                                    value={value.overhead_ref || 'high'}
+                                    onChange={(e) => onChange({ ...value, overhead_ref: e.target.value as "high" | "low" | "open" | "close" })}
+                                    style={{ ...SELECT_OVERHEAD, cursor: 'pointer' }}
+                                >
+                                    <option value="high">Nivel: High</option>
+                                    <option value="low">Nivel: Low</option>
+                                    <option value="open">Nivel: Open</option>
+                                    <option value="close">Nivel: Close</option>
+                                </select>
+                                <select
+                                    value={value.overhead_vol_rule || 'none'}
+                                    onChange={(e) => onChange({ ...value, overhead_vol_rule: e.target.value as "none" | "gt" | "lt" })}
+                                    style={{ ...SELECT_OVERHEAD, flex: '1 1 100%', cursor: 'pointer' }}
+                                >
+                                    <option value="none">Volumen: sin condición</option>
+                                    <option value="gt">Volumen: aquel día MAYOR que hoy</option>
+                                    <option value="lt">Volumen: aquel día MENOR que hoy</option>
+                                </select>
+                                <AyudaOpcion clave={`overhead_vol_rule.${value.overhead_vol_rule || 'none'}`} />
+                                <AyudaOpcion clave={`overhead_ref.${value.overhead_ref || 'high'}`} />
+                            </div>
+                        );
                     case IndicatorType.PREVIOUS_MAX:
                     case IndicatorType.PREVIOUS_MIN:
                         return (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, width: '100%' }}>
                                 <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                                     Session:
                                 </span>
@@ -765,10 +1164,11 @@ export const IndicatorParams = ({
                                         cursor: 'pointer',
                                     }}
                                 >
-                                    <option value="ap.PM">ap.PM</option>
-                                    <option value="ap.RTH">ap.RTH</option>
-                                    <option value="ap.AM">ap.AM</option>
+                                    <option value="ap.PM">ap.PM · 04:00</option>
+                                    <option value="ap.RTH">ap.RTH · 09:30</option>
+                                    <option value="ap.AM">ap.AM · 16:00</option>
                                 </select>
+                                <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.RTH'}`} />
                             </div>
                         );
                     default:
@@ -1030,7 +1430,7 @@ export const TargetInput = ({
     const isFixed = typeof value === 'number';
     const selectedKey = isFixed ? FIXED_VALUE_KEY : (value as IndicatorConfig).name;
     const isVol = isFixed && isVolumeIndicator(sourceIndicatorName);
-    const isPercent = isFixed && sourceIndicatorName === IndicatorType.PM_HIGH_GAP;
+    const isPercent = isFixed && isPercentIndicator(sourceIndicatorName);
 
     const [localText, setLocalText] = React.useState("");
     const [isFocused, setIsFocused] = React.useState(false);
@@ -1280,7 +1680,7 @@ export const ConditionRow = ({
                     comparator: Comparator.LT,
                     target: 30
                 });
-            } else if (newSource.name === IndicatorType.PM_HIGH_GAP) {
+            } else if (isMeasureIndicator(newSource.name)) {
                 const isValidComp = [Comparator.LT, Comparator.GT, Comparator.LTE, Comparator.GTE].includes(condition.comparator);
                 onChange({
                     ...condition,
@@ -1393,7 +1793,7 @@ export const ConditionRow = ({
                                     {Object.values(Comparator)
                                         .filter(c => {
                                             if (c.includes('DISTANCE')) return false;
-                                            if (condition.source.name === IndicatorType.PM_HIGH_GAP) {
+                                            if (isMeasureIndicator(condition.source.name)) {
                                                 return c === Comparator.LT || c === Comparator.GT || c === Comparator.LTE || c === Comparator.GTE;
                                             }
                                             if (c === Comparator.CROSSES_ABOVE || c === Comparator.CROSSES_BELOW) {
@@ -1610,13 +2010,25 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
             const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
             return { source: `${tfStr}Elapsed Time:`, target: `${opSymbol} ${mins} mins` };
         }
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        // Squeeze lleva la ventana y la direccion EN el resumen a proposito:
+        // dos condiciones de Squeeze con distinta direccion son estrategias
+        // opuestas, y sin esto se leerian identicas.
+        // Los fades llevan su modo EN el resumen por el mismo motivo que el
+        // Squeeze: «% Session Fade» de premercado y del dia completo son cosas
+        // distintas, y sin esto las dos condiciones se leerian identicas.
+        const sourceStr = c.source.name === IndicatorType.SQUEEZE
+            ? `Squeeze ${c.source.squeeze_direction === 'down' ? '↓' : '↑'} ${c.source.range_minutes ?? 5} min`
+            : c.source.name === IndicatorType.SESSION_FADE
+            ? `% Session Fade (${c.source.session_ref === 'rth' ? 'RTH' : c.source.session_ref === 'full' ? 'día completo' : 'PM'})`
+            : c.source.name === IndicatorType.FADE
+            ? `% Fade (${c.source.fade_ref === 'vwap_cross' ? 'cruce VWAP' : `máx. previo ${c.source.ap_session || 'ap.RTH'}`})`
+            : `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';
         if (typeof c.target === 'number') {
             if (isVolumeIndicator(c.source.name)) {
                 targetStr = `${(c.target / 1000000).toString()}M`;
-            } else if (c.source.name === IndicatorType.PM_HIGH_GAP) {
+            } else if (isPercentIndicator(c.source.name)) {
                 targetStr = `${c.target}%`;
             } else {
                 targetStr = String(c.target);

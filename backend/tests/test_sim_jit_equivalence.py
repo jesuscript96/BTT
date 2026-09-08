@@ -84,11 +84,15 @@ def _sample_config(rng):
     # hard stop Market Structure (todas las variantes de hs_value y alias)
     if rng.random() < 0.45:
         cfg["hs_type"] = "Market Structure (HOD/LOD)"
-        cfg["hs_value"] = rng.choice(
-            ["HOD", "LOD", "PMH", "PML", "Previous Max", "PrevMax",
-             "Previous Min", "PrevMin", "Previous Low", "PrevLow", "otro"])
+        _values = ["HOD", "LOD", "PMH", "PML", "Previous Max", "PrevMax",
+                   "Previous Min", "PrevMin", "Previous Low", "PrevLow", "otro"]
+        cfg["hs_value"] = rng.choice(_values)
         cfg["hs_operator"] = rng.choice([">=", "<=", ">", "<"])
         cfg["hs_offset_pct"] = float(rng.choice([0.0, 1.0, 2.5]))
+        # Nivel de respaldo en reentradas cuando el principal queda
+        # invalidado (guard de SL estructural, 2026-08-27)
+        if rng.random() < 0.5:
+            cfg["hs_fallback_value"] = rng.choice(_values)
     # partial TPs: 0-3 niveles de los 4 tipos
     if rng.random() < 0.4:
         n_pt = int(rng.integers(1, 4))

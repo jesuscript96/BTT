@@ -270,6 +270,7 @@ from app.routers import portfolio
 from app.routers import lake_update
 from app.routers import robustness
 from app.routers import portfolio_lab
+from app.routers import bot_alerts
 from app.routers import local_control
 import logging
 
@@ -317,10 +318,19 @@ app.include_router(robustness.router, prefix="/api/robustness", tags=["Robustnes
 # Portfolio (laboratorio local): gated por PORTFOLIO_LAB_ENABLED (apagado por
 # defecto, ver el router). No confundir con /api/portfolio, que es de produccion.
 app.include_router(portfolio_lab.router, prefix="/api/portfolio-lab", tags=["Portfolio Lab"])
+# Cuadro de mandos del bot de alertas: gated por BOT_ALERTS_ENABLED (apagado por
+# defecto). Solo configuracion; el bot vive en su propio proceso y consulta aqui.
+app.include_router(bot_alerts.router, prefix="/api/bot-alerts", tags=["Bot Alertas"])
 # Apagado limpio del entorno local desde la UI. Gated por LOCAL_SHUTDOWN_ENABLED
 # (default OFF): en prod el status dice que no esta disponible, el boton no se
 # pinta y el POST responde 503.
 app.include_router(local_control.router, prefix="/api/local-control", tags=["Local Control"])
+# Algoritmo genetico de estrategias (pagina /genetico). Gated por
+# GENETICO_ENABLED (default OFF): el router no se registra siquiera. El
+# genetico corre en un proceso aparte (<repo>/genetico/); aqui solo se lanza.
+if os.getenv("GENETICO_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
+    from app.routers import genetico as _genetico
+    app.include_router(_genetico.router)
 
 @app.get("/health")
 def read_health():

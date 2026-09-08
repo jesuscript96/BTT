@@ -205,6 +205,15 @@ export function deleteStrategy(id: string): Promise<void> {
   });
 }
 
+/** Renombra una estrategia sin tocar su definicion (usado desde el Baul de
+ *  Portfolio y desde el listado de Robustez). */
+export function renameStrategy(id: string, name: string): Promise<Strategy> {
+  return apiRequest<Strategy>(`/strategies/${encodeURIComponent(id)}/name`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export function toggleIncubator(
   id: string,
   monitoring: boolean,
@@ -451,6 +460,10 @@ export interface PortfolioRunRequest {
   slippage?: number;
   locates_cost?: number;
   locate_type?: string;
+  /** Tope de locates (paquetes de 100 acc.) por ticker-día. 0 = sin tope.
+   *  Solo lo usa source='rerun', que vuelve a simular; los portfolios de
+   *  trades guardados ya llevan el tope aplicado desde su corrida. */
+  max_locates?: number;
 }
 
 /** 202 async acceptance envelope */

@@ -12,7 +12,8 @@ Portfolio de estrategias — endpoints (PRD_portfolio_ANTIGRAVITY §4).
                                     (search_mode='portfolio') → aparece en el Baúl.
 
 Reutiliza el job store de backtest (backtest_jobs) y persist_backtest_row.
-NO toca BacktestEngine (muerto). Toda persistencia en try/except log-only.
+Toda persistencia en try/except log-only. (El viejo BacktestEngine, que este
+modulo nunca tocaba, se borro el 2026-08-31 por ser codigo muerto.)
 """
 import logging
 import threading
@@ -74,6 +75,8 @@ class PortfolioRunRequest(BaseModel):
     slippage: float = 0.0
     locates_cost: float = 0.0
     locate_type: str = "FLAT"
+    # Tope de locates (0 = sin tope). Ver portfolio_sim.simulate.
+    max_locates: int = 0
 
 
 class PortfolioRecombineRequest(BaseModel):
@@ -128,6 +131,7 @@ def _req_costs(req: PortfolioRunRequest) -> dict:
         "slippage": req.slippage,
         "locates_cost": req.locates_cost,
         "locate_type": req.locate_type,
+        "max_locates": req.max_locates,
     }
 
 
@@ -418,6 +422,7 @@ def _run_portfolio_in_background(
                 slippage=req.slippage,
                 locates_cost=req.locates_cost,
                 locate_type=req.locate_type,
+                max_locates=req.max_locates,
             )
             cache_keys[sid] = ckey  # ensure exact key stored
             per_strategy_trades[sid] = trades

@@ -1,0 +1,557 @@
+"""Cuadro de mandos del bot de alertas: que se vigila y con cuanto riesgo.
+
+    GET  /api/bot-alerts/strategies  -> estrategias del portfolio + su config
+    POST /api/bot-alerts/watch       -> activar/desactivar y fijar el riesgo
+    GET  /api/bot-alerts/vigiladas   -> lo que el BOT pide al arrancar el dia
+
+Gated por BOT_ALERTS_ENABLED, APAGADO por defecto (regla R7): sin la variable
+en el .env local los endpoints responden 503.
+
+POR QUE EL BOT PREGUNTA POR HTTP en vez de leer users.duckdb: el backend tiene
+ese fichero abierto en escritura y DuckDB no admite un segundo escritor. El bot
+corre en su PROPIO proceso, asi que pide la configuracion por aqui. Como las
+estrategias no se editan con el bot encendido, le basta con leerla al arrancar.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
+
+from app.auth import get_current_user_id, scope_clause
+from app.database import get_user_db_connection, get_user_db_lock
+from app.services import bot_alerts_service as bas
+from app.services import bot_alerts_telegram as tg
+
+router = APIRouter()
+logger = logging.getLogger("btt.bot_alerts")
+
+
+# Se lee EN CADA PETICION, no al importar: el import puede ocurrir antes de que
+# load_dotenv() haya poblado el entorno (leccion de lake_update.py).
+def _enabled() -> bool:
+    return os.getenv("BOT_ALERTS_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _guard() -> None:
+    if not _enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Bot de alertas desactivado (BOT_ALERTS_ENABLED)",
+        )
+
+
+@router.get("/strategies")
+def listar(user_id: Optional[str] = Depends(get_current_user_id)):
+    """Una fila por estrategia del cubo `portfolio`, con su interruptor."""
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    scope_sql, scope_params = scope_clause(user_id)
+    try:
+        return bas.listar_candidatas(con, scope_sql, scope_params)
+    finally:
+        con.close()
+
+
+@router.get("/strategies/{strategy_id}/explicacion")
+def explicacion(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Que hace DE VERDAD esta estrategia, frente a lo que dice su JSON.
+
+    Es la respuesta al susto del 2026-09-03: 1B lleva guardados dos take profit
+    parciales que el motor NO usa (`take_profit_mode` esta en "Full") y que se
+    encenderian cambiando OTRO campo, sin ningun aviso. El guardado es fiel
+    —auditado con un round-trip: 370 campos, 0 perdidos—; lo que faltaba era
+    poder VER que parte esta viva.
+    """
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    scope_sql, scope_params = scope_clause(user_id)
+    try:
+        fila = con.execute(
+            f"SELECT name, definition FROM strategies WHERE id = ?{scope_sql}",
+            [strategy_id, *scope_params],
+        ).fetchone()
+        if not fila:
+            raise HTTPException(status_code=404, detail="Estrategia no encontrada")
+        from app.services.strategy_explain import explicar_estrategia
+        return {"name": fila[0], **explicar_estrategia(bas._parse_definition(fila[1]))}
+    finally:
+        con.close()
+
+
+@router.post("/strategies/{strategy_id}/limpiar-inactivo")
+def limpiar_inactivo(strategy_id: str, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Borra de la estrategia la configuracion que el motor NO aplica.
+
+    NO CAMBIA EL COMPORTAMIENTO: se quita lo que ya se ignoraba, asi que los
+    backtests dan lo mismo. Lo que desaparece es la posibilidad de resucitarla
+    sin querer — el caso de los `partial_take_profits` de 1B, que no tienen
+    interruptor propio y se encenderian cambiando `take_profit_mode`.
+    """
+    _guard()
+    from app.services.strategy_explain import limpiar_inactivo as _limpiar
+    with get_user_db_lock():
+        con = get_user_db_connection()
+        scope_sql, scope_params = scope_clause(user_id)
+        try:
+            fila = con.execute(
+                f"SELECT definition FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+            if not fila:
+                raise HTTPException(status_code=404, detail="Estrategia no encontrada")
+            nueva, quitado = _limpiar(bas._parse_definition(fila[0]))
+            if not quitado:
+                return {"quitado": [], "detalle": "No habia nada que limpiar"}
+            con.execute(
+                "UPDATE strategies SET definition = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                [json.dumps(nueva), strategy_id],
+            )
+            logger.info("[ALERTAS] limpiada config muerta de %s: %s", strategy_id, quitado)
+            return {"quitado": quitado}
+        finally:
+            con.close()
+
+
+class WatchReq(BaseModel):
+    strategy_id: str
+    activa: bool
+    # gt=0 y no ge=0: un riesgo de cero daria cero acciones en toda alerta, que
+    # es un bot encendido que no sirve para nada. Mejor rechazarlo aqui.
+    riesgo_usd: float = Field(gt=0)
+    # Riesgo del ANYADIDO, que no tiene por que ser el de la entrada. None = no
+    # dicho: se usa lo que diga la definicion de la estrategia.
+    riesgo_piramide_usd: Optional[float] = Field(default=None, gt=0)
+    # La cuenta real. Solo hace falta con stop hibrido, que sin ella no puede
+    # calcular su techo. El bot no la conoce por ningun otro sitio.
+    capital_usd: Optional[float] = Field(default=None, gt=0)
+    # Esperanza matematica de la estrategia, en % del precio de entrada. La
+    # teclea Jaume: el bot no puede saber que backtest considera valido. Se
+    # guarda aqui para que `/evf` no tenga que repetirla en cada mensaje.
+    ev_pct: Optional[float] = Field(default=None, gt=0)
+
+
+def _faltan_datos(con, req: "WatchReq") -> list[str]:
+    """Que le falta a esta estrategia para poder vigilarse. Vacio = lista.
+
+    Se mira la definicion GUARDADA, no lo que crea el frontend: es la que va a
+    usar el bot, y el objetivo es que no se pueda activar algo que luego
+    calcularia mal en silencio.
+    """
+    fila = con.execute("SELECT definition FROM strategies WHERE id = ?",
+                       [req.strategy_id]).fetchone()
+    sdef = bas._parse_definition(fila[0]) if fila else {}
+    rm = sdef.get("risk_management") or {}
+
+    # ¿Alguna parte va en hibrido? La entrada, o cualquier nivel de piramide.
+    niveles = ((sdef.get("pyramiding") or {}).get("levels")) or []
+    hibrido = bool(rm.get("hybrid_stop")) or any(lv.get("hybrid_stop") for lv in niveles)
+
+    faltan: list[str] = []
+    if hibrido and not req.capital_usd:
+        faltan.append("capital total de la cuenta (lo pide el stop hibrido)")
+    if hibrido:
+        # Los porcentajes viven en la estrategia; si estan a medias, el techo
+        # tampoco sale.
+        if rm.get("hybrid_stop") and not (rm.get("hybrid_black_swan_pct")
+                                          and rm.get("hybrid_max_loss_pct")):
+            faltan.append("los porcentajes del stop hibrido en la estrategia")
+        for i, lv in enumerate(niveles, 1):
+            if lv.get("hybrid_stop") and not (lv.get("hybrid_black_swan_pct")
+                                              and lv.get("hybrid_max_loss_pct")):
+                faltan.append(f"los porcentajes del hibrido en el nivel {i} de piramide")
+
+    # ── Estilo Cangrejo ──────────────────────────────────────────────────
+    # El Modo B (perdida maxima por trade) es un % DE LA CUENTA, asi que sin
+    # capital no hay techo que calcular y el aviso saldria sin topar y sin que
+    # nada lo indicase. El Modo A (recorrido del SL) no lo necesita: aprieta el
+    # stop sobre el precio de entrada y no mira la cuenta.
+    if rm.get("cangrejo_active"):
+        if rm.get("cangrejo_max_loss_at_sl_pct") and not req.capital_usd:
+            faltan.append("capital total de la cuenta (lo pide el Modo B de Estilo Cangrejo)")
+        if not (rm.get("cangrejo_max_sl_dist_pct")
+                or rm.get("cangrejo_max_loss_at_sl_pct")):
+            faltan.append("el porcentaje del modo de Estilo Cangrejo en la estrategia")
+    return faltan
+
+
+@router.post("/watch")
+def guardar(req: WatchReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Activa o desactiva una estrategia y fija su riesgo por operacion."""
+    _guard()
+    with get_user_db_lock():
+        con = get_user_db_connection()
+        scope_sql, scope_params = scope_clause(user_id)
+        try:
+            existe = con.execute(
+                f"SELECT id FROM strategies WHERE id = ?{scope_sql}",
+                [req.strategy_id, *scope_params],
+            ).fetchone()
+            if not existe:
+                raise HTTPException(status_code=404, detail="Estrategia no encontrada")
+
+            # Solo se vigila lo que esta en el portfolio o en la incubadora. Sin
+            # esta comprobacion se podria activar cualquier estrategia del baul,
+            # y el bot la ignoraria luego en silencio (`vigiladas` refiltra).
+            from app.services import portfolio_lab_service as pls
+            cuadros = pls.get_assignments(con).get(req.strategy_id, [])
+            if not any(c in cuadros for c in bas.CUBOS):
+                raise HTTPException(
+                    status_code=400,
+                    detail="La estrategia no esta en el portfolio ni en la incubadora; "
+                           "anyadela a uno de los dos antes de vigilarla",
+                )
+
+            # NO SE DEJA ACTIVAR CON DATOS A MEDIAS (decision de Jaume,
+            # 2026-09-03: «que no deje activar y marque faltan datos por
+            # rellenar»). El stop hibrido sin capital no puede calcular su
+            # techo, y avisar sin techo daria justo la exposicion que el modo
+            # existe para evitar — sin que nada en el aviso lo distinguiera.
+            # Apagar, en cambio, se permite siempre: nunca se bloquea un frenazo.
+            if req.activa:
+                faltan = _faltan_datos(con, req)
+                if faltan:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Faltan datos por rellenar: " + ", ".join(faltan),
+                    )
+
+            return bas.set_watch(con, req.strategy_id, req.activa, req.riesgo_usd,
+                                 req.riesgo_piramide_usd, req.capital_usd,
+                                 req.ev_pct)
+        finally:
+            con.close()
+
+
+class EventoIn(BaseModel):
+    """Un aviso publicado por el bot.
+
+    El `id` lo pone el bot y es estable (ticker+estrategia+momento+tipo): asi,
+    si reintenta tras un fallo de red, no se duplican filas.
+    """
+    id: str
+    fecha: str
+    momento: str
+    tipo: str
+    ticker: str
+    strategy_id: str
+    estrategia: Optional[str] = None
+    direccion: Optional[str] = None
+    precio: Optional[float] = None
+    acciones: Optional[float] = None
+    stop: Optional[float] = None
+    riesgo_usd: Optional[float] = None
+    motivo: Optional[str] = None
+    nivel: Optional[int] = None
+    accion_piramide: Optional[str] = None
+    posicion_total: Optional[float] = None
+    origen: str = "portfolio"      # portfolio | incubadora
+    modo: str = "vivo"             # vivo | reproduccion
+    # prealerta = la vela aun se esta formando; alerta = ha cerrado y se
+    # confirma; descartada = la vela cerro y la senal se cayo. Los tres
+    # comparten id, asi que el siguiente ACTUALIZA la fila del anterior en vez
+    # de anyadir otra.
+    estado: str = "alerta"
+
+
+class EventosReq(BaseModel):
+    eventos: list[EventoIn]
+
+
+@router.post("/eventos")
+def publicar_eventos(req: EventosReq):
+    """El BOT publica aqui sus avisos. No lo llama la pagina.
+
+    El bot corre en otro proceso y no puede escribir en users.duckdb (el backend
+    lo tiene abierto y DuckDB no admite un segundo escritor), asi que los manda
+    por HTTP y el backend los guarda.
+    """
+    _guard()
+    with get_user_db_lock():
+        con = get_user_db_connection()
+        try:
+            n = bas.guardar_eventos(con, [e.model_dump() for e in req.eventos])
+            return {"guardados": n}
+        finally:
+            con.close()
+
+
+@router.get("/eventos")
+def leer_eventos(fecha: Optional[str] = None, limite: int = 500):
+    """Avisos de una fecha; sin fecha, los ultimos."""
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    try:
+        return {"eventos": bas.listar_eventos(con, fecha, limite)}
+    finally:
+        con.close()
+
+
+@router.get("/fechas")
+def leer_fechas():
+    """Dias con avisos guardados, para el selector del historico."""
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    try:
+        return {"fechas": bas.fechas_con_eventos(con)}
+    finally:
+        con.close()
+
+
+@router.delete("/eventos")
+def limpiar_eventos(antes_de: str):
+    """Borra los avisos anteriores a una fecha. Manual, nunca automatico."""
+    _guard()
+    with get_user_db_lock():
+        con = get_user_db_connection()
+        try:
+            return {"borrados": bas.borrar_eventos_antes(con, antes_de)}
+        finally:
+            con.close()
+
+
+@router.get("/estado")
+def leer_estado():
+    """Si el bot deberia estar vigilando y cuando dio senales de vida."""
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    try:
+        estado = bas.get_estado(con)
+        estado["telegram"] = tg.probar() if os.getenv("TELEGRAM_BOT_TOKEN") else {
+            "ok": False, "detalle": "sin token configurado", "enviando": False,
+        }
+        return estado
+    finally:
+        con.close()
+
+
+class EstadoReq(BaseModel):
+    vigilando: bool
+
+
+@router.post("/estado")
+def cambiar_estado(req: EstadoReq):
+    """El interruptor de la pagina.
+
+    NO arranca ni mata ningun proceso: solo deja escrito si el bot debe estar
+    vigilando. El bot lo consulta y actua. Asi la pagina no necesita hablar con
+    un proceso que vive aparte.
+    """
+    _guard()
+    with get_user_db_lock():
+        con = get_user_db_connection()
+        try:
+            return bas.set_vigilando(con, req.vigilando)
+        finally:
+            con.close()
+
+
+class LatidoReq(BaseModel):
+    tickers: int = 0
+    fuente: str = ""
+    detalle: str = ""
+
+
+@router.post("/latido")
+def latido(req: LatidoReq):
+    """El BOT dice que sigue vivo. Sin esto no se distingue apagado de colgado.
+
+    NI ABRE CONEXION NI TOMA EL CERROJO: el latido va a memoria. Llega cada 5 s
+    y en este proyecto cada escritura bloquea a las demas — asi montado era la
+    fuente de escritura mas frecuente de toda la aplicacion.
+    """
+    _guard()
+    bas.latido(None, req.tickers, req.fuente, req.detalle)
+    return {"ok": True}
+
+
+class CandidatoRadar(BaseModel):
+    ticker: str
+    # De QUE estrategia viene la vigilancia, y por que regla entro. Un mismo
+    # ticker puede aparecer por varias, cada una con su umbral.
+    estrategia: str = ""
+    metrica: str = ""
+    valor: float = 0.0
+    precio: float = 0.0
+    volumen: float = 0.0
+    prev_close: float = 0.0
+    # Si el bot lo esta siguiendo de verdad o solo lo ve pasar (cupo lleno).
+    seguido: bool = False
+
+
+class RadarReq(BaseModel):
+    candidatos: list[CandidatoRadar]
+
+
+@router.post("/radar")
+def publicar_radar(req: RadarReq):
+    """El BOT publica a quien esta mirando. No lo llama la pagina.
+
+    Va a memoria, no a la base: es una foto que se reemplaza cada 30 s y no
+    interesa guardarla. Y cada escritura en DuckDB compite con las demas.
+    """
+    _guard()
+    bas.set_radar([c.model_dump() for c in req.candidatos])
+    return {"ok": True, "n": len(req.candidatos)}
+
+
+@router.get("/radar")
+def leer_radar():
+    _guard()
+    return bas.get_radar()
+
+
+class LineaDiario(BaseModel):
+    hora: str = ""
+    nivel: str = ""
+    texto: str = ""
+
+
+class IncidenciaDiario(BaseModel):
+    nivel: str = ""
+    origen: str = ""
+    mensaje: str = ""
+    veces: int = 1
+    primera: str = ""
+    ultima: str = ""
+    traza: Optional[str] = None
+
+
+class DiarioReq(BaseModel):
+    """El log del bot y lo que le ha saltado.
+
+    Se manda ENTERO cada vez y reemplaza al anterior, como el radar: son unos
+    kilobytes contra localhost, y una publicacion perdida no deja huecos que
+    haya que coser luego.
+    """
+    seq: int = 0
+    desde: str = ""
+    lineas: list[LineaDiario] = []
+    incidencias: list[IncidenciaDiario] = []
+
+
+@router.post("/diario")
+def publicar_diario(req: DiarioReq):
+    """El BOT publica su log. No lo llama la pagina."""
+    _guard()
+    bas.set_diario(req.model_dump())
+    return {"ok": True, "n": len(req.lineas), "incidencias": len(req.incidencias)}
+
+
+@router.get("/diario")
+def leer_diario(lineas: int = -1):
+    """Lo lee la pagina.
+
+    Va aparte del paquete del WebSocket a proposito: el log crece con cada
+    linea y no puede empujar el estado entero a la pagina cada vez que el bot
+    escribe «latencia» (ver la nota de `bas.set_diario`).
+
+    `lineas` recorta el log — `0` trae solo las incidencias. Con el cuadro
+    plegado la pagina pide asi: el contador de incidencias se tiene que ver
+    SIN abrirlo, porque si no, no se abre nunca y no se entera uno de nada,
+    pero para eso no hacen falta las 300 lineas.
+    """
+    _guard()
+    d = bas.get_diario()
+    if lineas >= 0:
+        d = {**d, "lineas": (d.get("lineas") or [])[-lineas:] if lineas else []}
+    return d
+
+
+@router.get("/diario/texto")
+def leer_diario_texto():
+    """El diario en texto plano, listo para pegar en un chat.
+
+    El formato se genera AQUI y no en la pagina para que haya una sola version
+    de el: es lo que Jaume copia y manda cuando algo falla, y dos formatos que
+    se van separando acaban en «pues a mi no me sale eso».
+    """
+    _guard()
+    from app.services.bot_alerts_diario import como_texto
+    return {"texto": como_texto(bas.get_diario())}
+
+
+@router.websocket("/live")
+async def live(websocket: WebSocket):
+    """Empuja a la pagina en cuanto algo cambia.
+
+    POR QUE NO VALE QUE LA PAGINA PREGUNTE: consultando cada 2 s, un aviso tarda
+    hasta 2 s en aparecer. Telegram, que es un empujon directo, llega antes — y
+    en una prealerta el margen util son segundos. Aqui se vigila un contador en
+    memoria muchas veces por segundo (comparar un entero no cuesta nada y NO
+    toca la base de datos) y se emite solo cuando de verdad ha cambiado algo.
+
+    Se manda un primer paquete al conectar para que la pagina pinte sin esperar.
+    """
+    _guard()
+    await websocket.accept()
+
+    # El estado de Telegram se consulta UNA vez por conexion: es una llamada de
+    # red a la API de Telegram y no cambia mientras la pagina esta abierta.
+    # Meterla en cada envio anyadia medio segundo a cada aviso.
+    tg_estado = tg.probar() if os.getenv("TELEGRAM_BOT_TOKEN") else {
+        "ok": False, "detalle": "sin token configurado", "enviando": False,
+    }
+
+    def _paquete() -> dict:
+        """Camino CALIENTE: memoria pura mientras la cache este viva.
+
+        Solo se abre conexion si la cache esta fria (primer envio tras arrancar
+        o tras una limpieza). En este proyecto no existen las conexiones de solo
+        lectura, asi que abrir una en cada envio volveria a bloquear al bot.
+        """
+        estado = bas.estado_cacheado()
+        eventos = bas.eventos_cacheados(None)
+        if estado is None or eventos is None:
+            con = get_user_db_connection(read_only=True)
+            try:
+                estado = bas.get_estado(con)
+                eventos = bas.listar_eventos(con, None, 500)
+            finally:
+                con.close()
+        return {
+            "version": bas.version(),
+            "estado": {**estado, "telegram": tg_estado},
+            "eventos": eventos,
+            "radar": bas.get_radar(),
+        }
+
+    ultima = -1
+    try:
+        while True:
+            v = bas.version()
+            if v != ultima:
+                ultima = v
+                await websocket.send_json(await asyncio.to_thread(_paquete))
+            # 50 ms. Parece agresivo y no lo es: mientras no haya novedades esto
+            # solo compara un entero en memoria — no toca la base de datos ni la
+            # red. A 200 ms la latencia de punta a punta salia en 414 ms y el
+            # aviso llegaba antes a Telegram que a la pantalla.
+            await asyncio.sleep(0.05)
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("[BOT] ws cliente: %s", exc)
+
+
+@router.get("/vigiladas")
+def vigiladas(user_id: Optional[str] = Depends(get_current_user_id)):
+    """Definicion completa + riesgo de cada estrategia activa. Lo consume el bot.
+
+    Devuelve tambien la ventana operativa de cada una, que es lo que permite al
+    bot saber si un cierre "EOD" del simulador es el fin de dia de verdad o solo
+    el borde del frame que tiene hasta ahora.
+    """
+    _guard()
+    con = get_user_db_connection(read_only=True)
+    scope_sql, scope_params = scope_clause(user_id)
+    try:
+        items = bas.vigiladas(con, scope_sql, scope_params)
+        return {"total": len(items), "estrategias": items}
+    finally:
+        con.close()

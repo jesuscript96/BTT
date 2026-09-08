@@ -7,6 +7,9 @@ interface Props {
     risk: RiskManagement;
     onChange: (risk: RiskManagement) => void;
     applyDay?: 'gap_day' | 'gap_1_day' | 'gap_2_day';
+    /** Se sigue aceptando para no romper a los llamadores; ya no se usa
+     *  desde que se quitó el bloque de "nivel rebasado al entrar". */
+    bias?: 'long' | 'short' | null;
 }
 
 const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDay = 'gap_day' }) => {
@@ -70,6 +73,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
     };
 
     const totalPartialCapital = (risk.partial_take_profits || []).reduce((sum, p) => sum + p.capital_pct, 0);
+
 
 
 
@@ -166,7 +170,14 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             type: newType,
                                             value: newValue
                                         },
-                                        size_by_sl: newType === RiskType.MARKET_STRUCTURE ? risk.size_by_sl : false
+                                        // El calculo por distancia al SL sirve para CUALQUIER stop
+                                        // que de un nivel de precio, no solo el estructural: con "%"
+                                        // la distancia es entrada x pct (el dimensionado clasico de
+                                        // "arriesgo X con un stop del Y%"). Los dos motores ya lo
+                                        // hacen igual (portfolio_sim.py y portfolio_sim_jit.py:722:
+                                        // `size = risk_amount / abs(entrada - stop)`). Antes, cambiar
+                                        // de Market Structure a % apagaba el interruptor en silencio.
+                                        size_by_sl: risk.size_by_sl
                                     });
                                 }}
                                 style={{
@@ -308,6 +319,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             )}
                         </div>
 
+
                         {/* Size by SL Description block with Switch */}
                         <div style={{
                             marginTop: 4,
@@ -316,9 +328,6 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             display: 'flex',
                             flexDirection: 'column',
                             gap: 4,
-                            opacity: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 1 : 0.4,
-                            pointerEvents: risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? 'auto' : 'none',
-                            transition: 'opacity 150ms ease',
                         }}>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -360,9 +369,392 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             }}>
                                 Calcula nº Shares usando el Riesgo dividido por la distancia real al Stop Loss
                             </span>
+
+                            {/* ── STOP LOSS HÍBRIDO ────────────────────────────────
+                                Justo debajo del anterior y excluyente con él: los dos
+                                apagados = por valor de mercado; uno u otro encendido =
+                                ese manda.
+
+                                Va SIEMPRE por SL (por eso enciende `size_by_sl`), pero
+                                topa la exposición para que un evento de cola no cueste
+                                más de lo que aceptas perder. Los dos modos clásicos
+                                fallan en extremos opuestos: por SL escalas bien pero un
+                                stop muy ceñido dispara el tamaño y un hueco brutal deja
+                                debiendo dinero; por MV acotas el desastre pero no
+                                escalas igual. */}
+                            <div style={{
+                                marginTop: 10,
+                                paddingTop: 10,
+                                borderTop: '0.5px dotted var(--color-ec-border)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 4,
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
+                                        <span style={{
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.05em',
+                                            color: 'var(--color-ec-text-secondary)'
+                                        }}>
+                                            Cálculo de Shares por Stop Loss Híbrido
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span style={{
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            fontSize: 10,
+                                            fontWeight: 700,
+                                            color: 'var(--color-ec-text-muted)',
+                                        }}>{risk.hybrid_stop ? 'YES' : 'NO'}</span>
+                                        <div
+                                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.hybrid_stop ? 'bg-ec-copper/70' : 'bg-muted'}`}
+                                            onClick={() => {
+                                                const on = !risk.hybrid_stop;
+                                                // Encenderlo implica ir por SL: el híbrido ES el
+                                                // modo por SL con techo. Apagarlo deja size_by_sl
+                                                // como estaba, para no cambiar el dimensionado
+                                                // sin que se haya pedido.
+                                                // EXCLUYENTE con Estilo Cangrejo: son dos
+                                                // techos distintos sobre el mismo tamaño y
+                                                // tenerlos a la vez no dice nada al usuario
+                                                // sobre cuál recortó. El motor arbitra a
+                                                // favor de Cangrejo, así que aquí se apaga
+                                                // para que la UI diga la verdad.
+                                                onChange({
+                                                    ...risk,
+                                                    hybrid_stop: on,
+                                                    size_by_sl: on ? true : risk.size_by_sl,
+                                                    cangrejo_active: on ? false : risk.cangrejo_active,
+                                                });
+                                            }}
+                                        >
+                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.hybrid_stop ? 'left-4.5' : 'left-0.5'}`}></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 10,
+                                    color: 'var(--color-ec-text-secondary)',
+                                    fontStyle: 'italic',
+                                    marginLeft: 18,
+                                    marginTop: 4,
+                                    lineHeight: '1.3',
+                                }}>
+                                    Calcula nº Shares por distancia al Stop Loss, pero sin exponer más de lo que aceptas perder ante un evento extremo
+                                </span>
+
+                                {risk.hybrid_stop && (
+                                    <div style={{ display: 'flex', gap: 10, marginLeft: 18, marginTop: 6 }}>
+                                        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            <span style={{
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                fontSize: 9.5,
+                                                color: 'var(--color-ec-text-secondary)',
+                                            }}>Evento adverso máx. (%)</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                step={100}
+                                                value={risk.hybrid_black_swan_pct ?? ''}
+                                                placeholder="5000"
+                                                title="El peor movimiento en contra que quieres contemplar."
+                                                onChange={(e) => onChange({
+                                                    ...risk,
+                                                    hybrid_black_swan_pct: e.target.value === '' ? null : Number(e.target.value),
+                                                })}
+                                                style={{
+                                                    width: 92,
+                                                    padding: '4px 6px',
+                                                    fontSize: 11,
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 4,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-mono)',
+                                                    textAlign: 'right',
+                                                }}
+                                            />
+                                        </label>
+                                        <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            <span style={{
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                fontSize: 9.5,
+                                                color: 'var(--color-ec-text-secondary)',
+                                            }}>De mi cuenta, perder máx. (%)</span>
+                                            <input
+                                                type="number"
+                                                min={1}
+                                                max={100}
+                                                step={5}
+                                                value={risk.hybrid_max_loss_pct ?? ''}
+                                                placeholder="50"
+                                                title="Sobre tu CUENTA ENTERA, no sobre la posición."
+                                                onChange={(e) => onChange({
+                                                    ...risk,
+                                                    hybrid_max_loss_pct: e.target.value === '' ? null : Number(e.target.value),
+                                                })}
+                                                style={{
+                                                    width: 92,
+                                                    padding: '4px 6px',
+                                                    fontSize: 11,
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 4,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-mono)',
+                                                    textAlign: 'right',
+                                                }}
+                                            />
+                                        </label>
+                                    </div>
+                                )}
+
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 10,
+                                    color: 'var(--color-ec-text-secondary)',
+                                    fontStyle: 'italic',
+                                    marginLeft: 18,
+                                    marginTop: 4,
+                                    lineHeight: '1.3',
+                                }}>
+                                    {risk.hybrid_stop && risk.hybrid_black_swan_pct && risk.hybrid_max_loss_pct
+                                        ? `Nunca expone más del ${(risk.hybrid_max_loss_pct / risk.hybrid_black_swan_pct * 100).toFixed(2)}% del capital: si el precio se fuera un ${risk.hybrid_black_swan_pct}% en contra, perderías el ${risk.hybrid_max_loss_pct}% de la cuenta.`
+                                        : ''}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 )}
+            </div>
+
+
+            {/* ── ESTILO CANGREJO ──────────────────────────────────────────
+                PRD de Álvaro, 8-sep-2026 (`docs/PRD_ESTILO_CANGREJO.md`).
+
+                EL PROBLEMA: con SL por estructura (previous max + 10 %, p. ej.)
+                la distancia entry→SL cambia en cada entrada. Con el mismo
+                market value, unos stops cuestan poco y otros cuestan
+                muchísimo, y no había forma sencilla de ponerle techo.
+
+                DOS MODOS Y SE ELIGE UNO — decisión de Álvaro: «debe ser o una
+                u otra». La primera versión tenía cuatro topes sueltos y
+                resultó poco intuitiva: cuatro números no cuentan qué va a
+                pasar. Un modo visible cada vez sí. */}
+            <div style={{
+                marginTop: 12,
+                padding: 10,
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 6,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 4,
+            }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            color: 'var(--color-ec-text-secondary)'
+                        }}>
+                            Estilo Cangrejo
+                        </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span style={{
+                            fontFamily: 'var(--color-ec-sans)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: 'var(--color-ec-text-muted)',
+                        }}>{risk.cangrejo_active ? 'YES' : 'NO'}</span>
+                        <div
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.cangrejo_active ? 'bg-ec-copper/70' : 'bg-muted'}`}
+                            onClick={() => {
+                                const on = !risk.cangrejo_active;
+                                onChange({
+                                    ...risk,
+                                    cangrejo_active: on,
+                                    // Al encender hay que tener SIEMPRE un modo:
+                                    // sin él la tarjeta no enseñaría ningún campo
+                                    // y quedaría activa sin hacer nada.
+                                    cangrejo_mode: on ? (risk.cangrejo_mode ?? 'perdida') : risk.cangrejo_mode,
+                                    // Excluyente con el híbrido (el motor arbitra
+                                    // a favor de Cangrejo; aquí se refleja).
+                                    hybrid_stop: on ? false : risk.hybrid_stop,
+                                    // Los dos topes de market value son INERTES y
+                                    // no tienen UI. Se limpian al activar para que
+                                    // un borrador viejo no arrastre capas
+                                    // invisibles que nadie puede ver ni quitar.
+                                    cangrejo_max_mv_entry_pct: on ? null : risk.cangrejo_max_mv_entry_pct,
+                                    cangrejo_max_mv_pyr_pct: on ? null : risk.cangrejo_max_mv_pyr_pct,
+                                });
+                            }}
+                        >
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.cangrejo_active ? 'left-4.5' : 'left-0.5'}`}></div>
+                        </div>
+                    </div>
+                </div>
+
+                <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    color: 'var(--color-ec-text-secondary)',
+                    fontStyle: 'italic',
+                    marginLeft: 18,
+                    marginTop: 4,
+                    lineHeight: '1.3',
+                }}>
+                    Acota cada operación: o limitando el recorrido hasta el stop, o limitando lo que puede costarte. Es un techo — solo recorta, nunca agranda.
+                </span>
+
+                {risk.cangrejo_active && (
+                    <div style={{ marginLeft: 18, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {/* Selector de modo. Botones y no un desplegable: son
+                            dos y el usuario tiene que ver los dos a la vez para
+                            entender que son alternativas. */}
+                        <div style={{ display: 'flex', gap: 6 }}>
+                            {([
+                                { id: 'recorrido', label: 'Recorrido máx. del SL' },
+                                { id: 'perdida', label: 'Pérdida máx. por trade' },
+                            ] as const).map((m) => {
+                                const activo = (risk.cangrejo_mode ?? 'perdida') === m.id;
+                                return (
+                                    <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => onChange({
+                                            ...risk,
+                                            cangrejo_mode: m.id,
+                                            // Cambiar de modo LIMPIA el del otro. Si
+                                            // no, un número escondido seguiría
+                                            // recortando desde un campo que ya no se
+                                            // ve — el motor aplica lo que le llegue.
+                                            cangrejo_max_sl_dist_pct: m.id === 'recorrido' ? risk.cangrejo_max_sl_dist_pct : null,
+                                            cangrejo_max_loss_at_sl_pct: m.id === 'perdida' ? risk.cangrejo_max_loss_at_sl_pct : null,
+                                        })}
+                                        style={{
+                                            flex: 1,
+                                            padding: '5px 8px',
+                                            fontSize: 10,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            fontWeight: activo ? 700 : 400,
+                                            borderRadius: 4,
+                                            cursor: 'pointer',
+                                            border: activo
+                                                ? '0.5px solid var(--color-ec-copper)'
+                                                : '0.5px solid var(--color-ec-border)',
+                                            backgroundColor: activo
+                                                ? 'var(--color-ec-copper)'
+                                                : 'var(--color-ec-bg-sidebar)',
+                                            color: activo ? '#fff' : 'var(--color-ec-text-secondary)',
+                                        }}
+                                    >
+                                        {m.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {(risk.cangrejo_mode ?? 'perdida') === 'recorrido' ? (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9.5,
+                                    color: 'var(--color-ec-text-secondary)',
+                                }}>Distancia máx. entrada → SL (%)</span>
+                                <input
+                                    type="number"
+                                    min={0.1}
+                                    step={5}
+                                    value={risk.cangrejo_max_sl_dist_pct ?? ''}
+                                    placeholder="50"
+                                    title="Si la estructura deja el stop más lejos, se aprieta hasta este porcentaje — y ahí se sale de verdad."
+                                    onChange={(e) => onChange({
+                                        ...risk,
+                                        cangrejo_max_sl_dist_pct: e.target.value === '' ? null : Number(e.target.value),
+                                    })}
+                                    style={{
+                                        width: 92,
+                                        padding: '4px 6px',
+                                        fontSize: 11,
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 4,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-mono)',
+                                        textAlign: 'right',
+                                    }}
+                                />
+                            </label>
+                        ) : (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9.5,
+                                    color: 'var(--color-ec-text-secondary)',
+                                }}>De mi cuenta, perder máx. por trade (%)</span>
+                                <input
+                                    type="number"
+                                    min={0.1}
+                                    max={100}
+                                    step={0.5}
+                                    value={risk.cangrejo_max_loss_at_sl_pct ?? ''}
+                                    placeholder="3"
+                                    title="Sobre tu CUENTA ENTERA. El stop no se mueve: lo que se encoge es el tamaño."
+                                    onChange={(e) => onChange({
+                                        ...risk,
+                                        cangrejo_max_loss_at_sl_pct: e.target.value === '' ? null : Number(e.target.value),
+                                    })}
+                                    style={{
+                                        width: 92,
+                                        padding: '4px 6px',
+                                        fontSize: 11,
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 4,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-mono)',
+                                        textAlign: 'right',
+                                    }}
+                                />
+                            </label>
+                        )}
+                    </div>
+                )}
+
+                {/* La frase que traduce el número a lo que va a pasar. Es el
+                    motivo de simplificar a dos modos: cuatro topes sueltos no
+                    se podían explicar en una línea. */}
+                <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    color: 'var(--color-ec-text-secondary)',
+                    fontStyle: 'italic',
+                    marginLeft: 18,
+                    marginTop: 6,
+                    lineHeight: '1.3',
+                }}>
+                    {!risk.cangrejo_active
+                        ? ''
+                        : (risk.cangrejo_mode ?? 'perdida') === 'recorrido'
+                            ? (risk.cangrejo_max_sl_dist_pct
+                                ? `El stop nunca queda a más del ${risk.cangrejo_max_sl_dist_pct}% de tu entrada: si la estructura lo pone más lejos, se aprieta y SALES AHÍ. Cambia dónde sales, no cuánto pones.`
+                                : 'Cambia DÓNDE sales: aprieta el stop lejano hasta el porcentaje que pongas. El tamaño no se toca.')
+                            : (risk.cangrejo_max_loss_at_sl_pct
+                                ? `Si salta el stop no pierdes más del ${risk.cangrejo_max_loss_at_sl_pct}% de la cuenta: el stop se queda donde dice la estructura y lo que se encoge es el tamaño. Cambia cuánto pones, no dónde sales.`
+                                : 'Cambia CUÁNTO pones: encoge el tamaño para que el stop nunca cueste más de ese % de la cuenta. El stop no se mueve.')}
+                </span>
             </div>
 
 

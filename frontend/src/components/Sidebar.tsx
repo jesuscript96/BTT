@@ -5,12 +5,13 @@ import {
     LayoutDashboard,
     Play,
     Briefcase,
-    Radar,
     KeyRound,
     MessageSquarePlus,
     Flame,
     BarChart3,
     ShieldCheck,
+    Radio,
+    Dna,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -164,19 +165,13 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </div>
                 )}
 
-                {/* Screener */}
-                {allowed("screener.access") && (
-                    <Link
-                        href="/screener"
-                        style={{
-                            ...linkBase(isCollapsed),
-                            ...linkActive("/screener"),
-                        }}
-                    >
-                        <Radar style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
-                        <span style={labelFade(isCollapsed)}>Screener</span>
-                    </Link>
-                )}
+                {/* La pagina del Screener se retiro en esta rama (2026-09-01):
+                    es un proyecto propio y no se usa. El SERVICIO que la
+                    alimentaba (live_screener_service) SE CONSERVA a proposito:
+                    mantiene por ticker el cierre de ayer, el maximo de
+                    premercado y el volumen acumulado desde el WebSocket, que es
+                    justo lo que necesita el bot de alertas. Borrarlo obligaria
+                    a reescribirlo. El endpoint /api/screener/live tambien sigue. */}
 
                 {/* Market Analysis */}
                 <Link
@@ -215,6 +210,21 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     >
                         <BarChart3 style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>Market Analysis</span>
+                    </Link>
+                )}
+
+                {/* Genetico — solo local: gated por NEXT_PUBLIC_GENETICO_ENABLED,
+                    apagado por defecto para que produccion no vea la entrada. */}
+                {process.env.NEXT_PUBLIC_GENETICO_ENABLED === "true" && (
+                    <Link
+                        href="/genetico"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/genetico"),
+                        }}
+                    >
+                        <Dna style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Genético</span>
                     </Link>
                 )}
 
@@ -259,6 +269,21 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     >
                         <Briefcase style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
                         <span style={labelFade(isCollapsed)}>Portfolio</span>
+                    </Link>
+                )}
+
+                {/* Cuadro de mandos del bot de alertas — solo local, gated por
+                    NEXT_PUBLIC_BOT_ALERTS_ENABLED (apagado por defecto). */}
+                {process.env.NEXT_PUBLIC_BOT_ALERTS_ENABLED === "true" && (
+                    <Link
+                        href="/bot-alertas"
+                        style={{
+                            ...linkBase(isCollapsed),
+                            ...linkActive("/bot-alertas"),
+                        }}
+                    >
+                        <Radio style={{ width: 18, height: 18, strokeWidth: 1.5, flexShrink: 0, color: 'inherit' }} />
+                        <span style={labelFade(isCollapsed)}>Alertas</span>
                     </Link>
                 )}
 

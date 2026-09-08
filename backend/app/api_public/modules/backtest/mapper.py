@@ -46,6 +46,7 @@ def to_request_kwargs(body: BacktestCreate) -> dict:
         "custom_start_time": ex.custom_start_time,
         "custom_end_time": ex.custom_end_time,
         "locates_cost": ex.locates_cost,
+        "max_locates": ex.max_locates,
         "look_ahead_prevention": ex.look_ahead_prevention,
     }
 

@@ -45,6 +45,28 @@ def simulate(**kwargs) -> dict:
         return _legacy_simulate(**kwargs)
     kwargs.pop("pyramid_levels", None)
     kwargs.pop("pyramid_sequential", None)
+    # STOP HIBRIDO (2026-09-03): mismo trato que la piramidacion. El kernel no
+    # lo implementa, asi que una estrategia en hibrido va SIEMPRE al Python.
+    # Sin esto y con el JIT activo el tope se perderia EN SILENCIO — se
+    # dimensionaria por SL sin techo, que es justo el riesgo de cola que el
+    # modo existe para evitar.
+    #
+    # ESTILO CANGREJO (2026-09-08): SI VA POR EL KERNEL. A diferencia del
+    # hibrido, los dos modos se han portado al JIT con paridad tol-0 (suite
+    # `test_estilo_cangrejo.py`), asi que una estrategia con Cangrejo NO paga el
+    # motor lento — que era la razon de ser del porte: el genetico evalua miles
+    # de individuos y con Cangrejo forzando Python la corrida se multiplicaba.
+    #
+    # ARBITRAJE (PRD 2): si un payload trae Cangrejo Y hibrido, gana Cangrejo.
+    # Por eso el hibrido solo desvia al Python cuando Cangrejo esta APAGADO; con
+    # los dos encendidos el hibrido esta muerto y el kernel es valido. El motor
+    # Python hace el mismo arbitraje, asi que las dos vias coinciden.
+    cangrejo = bool(kwargs.get("cangrejo_active"))
+    if kwargs.get("hybrid_stop") and not cangrejo:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("hybrid_stop", None)
+    kwargs.pop("hybrid_black_swan_pct", None)
+    kwargs.pop("hybrid_max_loss_pct", None)
     if _numba_sim_enabled():
         return simulate_jit(**kwargs)
     return _legacy_simulate(**kwargs)
@@ -89,6 +111,24 @@ _REASON_STR = {
 _PARTIAL_REASONS = (6, 7, 8, 9)
 
 
+def _hs_value_to_code(hs_value):
+    """hs_value (string) -> codigo HS_* del kernel. Misma tabla para el nivel
+    principal y para `fallback_value`, para que no puedan divergir."""
+    if hs_value == "HOD":
+        return _pjit.HS_HOD
+    elif hs_value == "LOD":
+        return _pjit.HS_LOD
+    elif hs_value == "PMH":
+        return _pjit.HS_PMH
+    elif hs_value == "PML":
+        return _pjit.HS_PML
+    elif hs_value in ("Previous Max", "PrevMax"):
+        return _pjit.HS_PREVMAX
+    elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow"):
+        return _pjit.HS_PREVMIN
+    return _pjit.HS_NONE
+
+
 def simulate_jit(
     close: np.ndarray,
     open_: np.ndarray,
@@ -114,12 +154,29 @@ def simulate_jit(
     trail_pct: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
+    # Tope de locates (0 = sin tope). Ver portfolio_sim.simulate.
+    max_locates: int = 0,
     look_ahead_prevention: bool = True,
+    # ESTILO CANGREJO. Ver portfolio_sim.simulate para la semantica de cada
+    # modo; aqui solo se traducen a los centinelas que entiende el kernel
+    # (None -> 0.0 = sin tope).
+    cangrejo_active: bool = False,
+    cangrejo_max_sl_dist_pct: float | None = None,
+    cangrejo_max_loss_at_sl_pct: float | None = None,
+    # Base de capital del Modo B. Se llama `hybrid_capital` porque es EL MISMO
+    # parametro que ya usaba el techo hibrido y lo manda el mismo sitio (el bot,
+    # con la cuenta de verdad, porque su `init_cash` es un nominal de 1e9). None
+    # = usar el equity vivo de la simulacion.
+    hybrid_capital: float | None = None,
     partial_take_profits: list | None = None,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
     hs_offset_pct: float | None = 0.0,
+    # Ver portfolio_sim.simulate: rescate del SL estructural en reentradas
+    # (o tambien en primera entrada con fallback_first_entry).
+    hs_fallback_value: str | None = None,
+    hs_fallback_first: bool = False,
     hods: np.ndarray | None = None,
     lods: np.ndarray | None = None,
     pm_highs: np.ndarray | None = None,
@@ -156,20 +213,8 @@ def simulate_jit(
 
     hs_type_code = 1 if hs_type == "Market Structure (HOD/LOD)" else 0
 
-    if hs_value == "HOD":
-        hs_value_code = _pjit.HS_HOD
-    elif hs_value == "LOD":
-        hs_value_code = _pjit.HS_LOD
-    elif hs_value == "PMH":
-        hs_value_code = _pjit.HS_PMH
-    elif hs_value == "PML":
-        hs_value_code = _pjit.HS_PML
-    elif hs_value in ("Previous Max", "PrevMax"):
-        hs_value_code = _pjit.HS_PREVMAX
-    elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow"):
-        hs_value_code = _pjit.HS_PREVMIN
-    else:
-        hs_value_code = _pjit.HS_NONE
+    hs_value_code = _hs_value_to_code(hs_value)
+    hs_fallback_code = _hs_value_to_code(hs_fallback_value)
 
     # signed SL offset (constant per call; computed exactly as the original)
     offset_pct = float(hs_offset_pct) if hs_offset_pct is not None else 0.0
@@ -309,6 +354,8 @@ def simulate_jit(
         has_trail_pct, trail_pct_v,
         bool(look_ahead_prevention),
         hs_type_code, hs_value_code, sl_offset,
+        hs_fallback_code,
+        bool(hs_fallback_first),
         has_hods, hods_a,
         has_lods, lods_a,
         has_pm_high, pm_high_a,
@@ -320,6 +367,11 @@ def simulate_jit(
         float(elapsed_limit), elapsed_op_code,
         n_pt, pt_type, pt_value, pt_cap_frac, pt_hour, pt_min,
         int(no_new_risk_after or 0), int(force_close_at or 0),
+        float(max_locates or 0),
+        bool(cangrejo_active),
+        float(cangrejo_max_sl_dist_pct or 0.0),
+        float(cangrejo_max_loss_at_sl_pct or 0.0),
+        float(hybrid_capital or 0.0),
     )
 
     # --- rebuild the exact trade dicts (rounding in Python, as the original) ---

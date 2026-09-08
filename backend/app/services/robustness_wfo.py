@@ -34,7 +34,11 @@ import numpy as np
 import pandas as pd
 
 from app.services.backtest_service import run_backtest
-from app.services.optimization_service import _set_nested_value
+from app.services.optimization_service import (
+    _INT_PARAM_KEYS,
+    _param_unit_from_def,
+    _set_nested_value,
+)
 from app.services.robustness_grid import (
     Cancelled,
     _bt_kwargs,
@@ -247,7 +251,7 @@ def run_wfo_full(
     dates = sorted({str(d)[:10] for d in qdf["date"].astype(str)})
     windows = build_windows(dates, n_windows, oos_pct, anchored)
 
-    axes = [pc.get("values") or _axis(pc) for pc in param_configs]
+    axes = [pc.get("values") or _axis(pc, strategy_def) for pc in param_configs]
     combos = list(product(*axes))
     metric_key = METRIC_KEYS.get(metric, "avg_sharpe")
 
@@ -318,13 +322,34 @@ def run_wfo_full(
             "trials": trials,
         })
 
+    # Un analisis por parametro barrido. Antes solo se calculaba habiendo UNO y,
+    # con dos, la seccion entera de "que valor conviene usar de verdad"
+    # desaparecia de la pantalla: ni recomendado, ni meseta, ni estabilidad, ni
+    # el aviso de que el optimo cayo en el borde del rango. Para ninguno de los
+    # dos, no solo para el segundo.
+    analyses = [
+        _param_analysis(rows, ax, pc, dim)
+        for dim, (pc, ax) in enumerate(zip(param_configs, axes))
+    ]
+
     return {
         "kind": "wfo_full",
         "mode": "anchored" if anchored else "rolling",
         "metric": metric,
-        "param_analysis": _param_analysis(rows, axes[0], param_configs[0]) if len(param_configs) == 1 else None,
+        # El campo de siempre NO cambia de forma: sigue siendo el analisis unico
+        # con un solo parametro, y None con varios. Lo bueno esta en la lista.
+        "param_analysis": analyses[0] if len(analyses) == 1 else None,
+        "param_analyses": analyses,
         "param_configs": [
-            {"path": pc["path"], "label": pc.get("label") or pc["path"], "values": ax}
+            {
+                "path": pc["path"],
+                "label": pc.get("label") or pc["path"],
+                "values": ax,
+                # La unidad viaja con el RESULTADO. La pantalla la sacaba del
+                # formulario, que solo conoce la del parametro seleccionado: con
+                # dos, el segundo se pintaria con la unidad del primero.
+                "unit": _param_unit_from_def(strategy_def, pc["path"]),
+            }
             for pc, ax in zip(param_configs, axes)
         ],
         "windows": rows,
@@ -336,10 +361,46 @@ def run_wfo_full(
     }
 
 
-def _axis(pc: dict) -> list[float]:
+def _es_eje_entero(pc: dict, strategy_def: dict | None) -> bool:
+    """Un parametro que solo admite ENTEROS. La MISMA regla que el optimizador.
+
+    Dos fuentes, como en `run_optimization_grid`: el nombre del ultimo tramo de
+    la ruta (`period`, `lookback`, `orb_minutes`...) y la unidad del take
+    profit, que puede ser "a los N minutos" o "a las HH:MM".
+    """
+    path = str(pc.get("path", ""))
+    if path.split(".")[-1] in _INT_PARAM_KEYS:
+        return True
+    return _param_unit_from_def(strategy_def or {}, path) in ("minutes", "time_of_day")
+
+
+def _axis(pc: dict, strategy_def: dict | None = None) -> list[float | int]:
+    """Los valores que se van a probar de un parametro.
+
+    Los enteros se redondean **y se deduplican**, igual que el optimizador
+    normal. Sin eso, `linspace` sobre un rango estrecho con muchos pasos
+    devuelve valores que colapsan en el mismo minuto al escribirse
+    (`_encode_tp_value` -> `_minutos_a_hhmm` hace `int(round(...))`): barrer
+    15:30-15:35 en 10 pasos daba 10 combinaciones para 6 horas distintas, o
+    sea 4 backtests por ventana pagados para repetir lo mismo, y sin aviso
+    (la barra de progreso contaba los 10).
+
+    Y el efecto feo no era el gasto: los repetidos entraban en la tabla de
+    mesetas como filas separadas con puntuacion identica, y como la meseta es
+    una media movil de tres vecinos, cada valor tenia de vecino a su propio
+    gemelo -> la curva salia mas lisa de lo que era y aparentaba una meseta
+    que no existia.
+    """
     lo = float(pc.get("min", 1))
     hi = float(pc.get("max", 10))
     steps = max(1, int(pc.get("steps", 5)))
+
+    if _es_eje_entero(pc, strategy_def):
+        lo_i, hi_i = int(round(lo)), int(round(hi))
+        if steps == 1 or lo_i == hi_i:
+            return [lo_i]
+        return sorted({int(round(float(v))) for v in np.linspace(lo_i, hi_i, steps)})
+
     if steps == 1 or abs(hi - lo) < 1e-12:
         return [round(lo, 6)]
     return [round(float(v), 6) for v in np.linspace(lo, hi, steps)]
@@ -379,7 +440,17 @@ def _agg_to_metrics(agg: dict) -> dict:
     }
 
 
-def _param_analysis(rows: list[dict], values: list[float], cfg: dict) -> dict:
+def _nth(vals, dim: int):
+    """El valor de la dimension `dim` de una combinacion, o None si no esta."""
+    if not vals or dim >= len(vals):
+        return None
+    try:
+        return float(vals[dim])
+    except (TypeError, ValueError):
+        return None
+
+
+def _param_analysis(rows: list[dict], values: list[float], cfg: dict, dim: int = 0) -> dict:
     """Que valor del parametro conviene usar de verdad.
 
     El ganador de una ventana suelta no sirve: es el que mejor se ajusto a ESE
@@ -393,6 +464,17 @@ def _param_analysis(rows: list[dict], values: list[float], cfg: dict) -> dict:
       - `plateau`: media del valor y sus dos vecinos. Un pico aislado rodeado de
         malos resultados baja aqui; una meseta ancha aguanta. Es la cifra por la
         que se recomienda, no por la media a secas.
+
+    `dim` es la posicion del parametro dentro de la combinacion. Barriendo UNO
+    (el unico caso que ofrece hoy la pantalla) es 0 y el resultado es
+    exactamente el de siempre. Barriendo VARIOS se analiza cada eje
+    **marginalizando** sobre los demas: la puntuacion de un valor es la media de
+    todas las combinaciones que lo contienen. Es lo que permite dar una
+    recomendacion por parametro, pero tiene una lectura que conviene tener
+    presente: `std` ya no mide solo la dispersion entre ventanas, sino tambien
+    la que introduce el otro parametro al moverse. Un parametro que solo funciona
+    acompañado de cierto valor del otro (interaccion) no se ve aqui — para eso
+    hace falta mirar la rejilla entera, no una fila.
     """
     n_win = len(rows)
     per_value: list[dict] = []
@@ -401,10 +483,14 @@ def _param_analysis(rows: list[dict], values: list[float], cfg: dict) -> dict:
         scores = []
         for r in rows:
             for t in r.get("trials", []):
-                p = (t.get("params") or [None])[0]
+                p = _nth(t.get("params"), dim)
                 if p is not None and abs(p - v) < 1e-6 and t.get("score") is not None:
                     scores.append(float(t["score"]))
-        wins = sum(1 for r in rows if r.get("best_params") and abs(r["best_params"][0] - v) < 1e-6)
+        wins = 0
+        for r in rows:
+            ganador = _nth(r.get("best_params"), dim)
+            if ganador is not None and abs(ganador - v) < 1e-6:
+                wins += 1
         per_value.append({
             "value": v,
             "mean": round(float(np.mean(scores)), 4) if scores else None,
@@ -414,20 +500,37 @@ def _param_analysis(rows: list[dict], values: list[float], cfg: dict) -> dict:
             "windows_scored": len(scores),
         })
 
-    # Meseta: media movil de 3 sobre las medias. Los extremos usan los vecinos
-    # que tienen, para no penalizarlos por estar en el borde de la rejilla.
+    # Meseta: media movil de 3 sobre las medias. Fuera de la rejilla se supone
+    # que el eje sigue plano, o sea que el extremo se repite a si mismo. Antes
+    # los extremos promediaban solo los dos vecinos que tenian, y eso los hacia
+    # INCOMPARABLES con los de dentro (dos sumandos frente a tres): con un eje
+    # de dos valores las dos mesetas salian identicas y se recomendaba siempre
+    # el primero, fuese el mejor o el peor. Repetir el borde mantiene la
+    # intencion de no penalizarlo por estar en el borde, y ademas deja los
+    # numeros en la misma escala.
     means = [pv["mean"] for pv in per_value]
+
+    def _vecino(j: int):
+        return means[min(max(j, 0), len(means) - 1)]
+
     for i, pv in enumerate(per_value):
-        window = [means[j] for j in (i - 1, i, i + 1) if 0 <= j < len(means) and means[j] is not None]
+        window = [x for x in (_vecino(i - 1), means[i], _vecino(i + 1)) if x is not None]
         pv["plateau"] = round(float(np.mean(window)), 4) if window else None
 
+    # A igualdad de meseta gana el valor que de verdad puntua mejor. Sin este
+    # desempate, un eje corto y simetrico (`[0,2 · 1,0 · 0,2]`) empataba las
+    # tres mesetas y se recomendaba el primero, que es el peor de los tres.
     scored = [pv for pv in per_value if pv["plateau"] is not None]
-    best = max(scored, key=lambda pv: pv["plateau"]) if scored else None
+    best = (
+        max(scored, key=lambda pv: (pv["plateau"], pv["mean"] if pv["mean"] is not None else float("-inf")))
+        if scored
+        else None
+    )
 
     # Estabilidad del optimo: si el ganador salta mucho de ventana a ventana, la
     # rejilla esta midiendo ruido. Se normaliza por el ancho del barrido para
     # que la cifra sea comparable entre parametros de escalas distintas.
-    winners = [r["best_params"][0] for r in rows if r.get("best_params")]
+    winners = [w for w in (_nth(r.get("best_params"), dim) for r in rows) if w is not None]
     span = (max(values) - min(values)) or 1.0
     dispersion = float(np.std(winners)) / span if len(winners) > 1 else 0.0
 

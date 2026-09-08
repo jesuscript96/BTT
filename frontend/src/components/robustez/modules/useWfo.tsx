@@ -19,6 +19,7 @@ import {
 } from "../shared";
 import { Help, PlainStats, StaleNotice, Verdict } from "../help";
 import { WfoParamMatrix, WfoWindowBars } from "../charts/WfoCharts";
+
 import {
   cancelRobustezJob,
   getStrategyParameters,
@@ -29,6 +30,48 @@ import {
   type WfoOut,
 } from "@/lib/api_robustez";
 import type { ModuleCtx, ModuleParts } from "./types";
+
+/* ── Horas de cierre ──────────────────────────────────────────────────
+   Los parametros de hora se barren en MINUTOS DESDE MEDIANOCHE (08:30 = 510).
+   Estos dos ayudantes estan duplicados a proposito de
+   `OptimizationSurfaceTab`: importarlos de alli arrastraria Plotly (va con
+   `next/dynamic`) a un modulo de Robustez que no lo necesita. Son seis lineas;
+   si aparece un tercer sitio, toca moverlos a un util comun. */
+const minutosAHHMM = (mins: number) => {
+  const m = Math.max(0, Math.round(mins));
+  return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+};
+const hhmmAMinutos = (txt: string): number | null => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(txt.trim());
+  if (!m) return null;
+  return Number(m[1]) * 60 + Number(m[2]);
+};
+
+function HoraInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  return (
+    <input
+      type="time"
+      value={minutosAHHMM(value)}
+      onChange={(e) => {
+        const v = hhmmAMinutos(e.target.value);
+        if (v !== null) onChange(v);
+      }}
+      style={{
+        background: color.bgBase,
+        border: `0.5px solid ${color.border}`,
+        borderRadius: radius.sm,
+        color: color.textHigh,
+        fontFamily: font.mono,
+        fontSize: 12.5,
+        padding: "7px 9px",
+        width: "100%",
+        outline: "none",
+      }}
+      onFocus={(e) => (e.currentTarget.style.borderColor = color.copper)}
+      onBlur={(e) => (e.currentTarget.style.borderColor = color.border)}
+    />
+  );
+}
 
 type Mode = "rapido" | "completo";
 
@@ -197,11 +240,21 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
   const [pMin, setPMin] = useState(0);
   const [pMax, setPMax] = useState(0);
   const [pSteps, setPSteps] = useState(6);
+  // Segundo parametro, OPCIONAL. "" = ninguno, y entonces el barrido es el de
+  // siempre. Con dos, la rejilla es el PRODUCTO de los dos ejes: pasos1 x
+  // pasos2 backtests por ventana, que se dispara enseguida.
+  const [chosen2, setChosen2] = useState<string>("");
+  const [pMin2, setPMin2] = useState(0);
+  const [pMax2, setPMax2] = useState(0);
+  const [pSteps2, setPSteps2] = useState(4);
 
   const [out, setOut] = useState<WfoOut | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [taskId, setTaskId] = useState<string | null>(null);
+  // Los backtests que se van a correr DE VERDAD, que los devuelve el backend al
+  // lanzar: un parametro entero deduplica su eje y son menos que los pasos.
+  const [nBacktests, setNBacktests] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
   const [ranCfg, setRanCfg] = useState<string | null>(null);
@@ -210,7 +263,11 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
   // Huella de la configuracion. Si cambia y no se ha vuelto a ejecutar, lo que
   // se ve en pantalla es del barrido anterior — y sin avisarlo parece que
   // cambiar la metrica no hace nada (que es justo lo que se reporto).
-  const cfgKey = JSON.stringify({ mode, nWindows, oosPct, anchored, metric, chosen, pMin, pMax, pSteps });
+  const cfgKey = JSON.stringify({
+    mode, nWindows, oosPct, anchored, metric,
+    chosen, pMin, pMax, pSteps,
+    chosen2, pMin2, pMax2, pSteps2,
+  });
 
   /* Parametros optimizables de la estrategia (solo para el modo completo). */
   useEffect(() => {
@@ -228,6 +285,8 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
           setPMin(cheap.min);
           setPMax(cheap.max);
         }
+        // La ruta del segundo puede no existir en la estrategia nueva.
+        setChosen2("");
       })
       .catch((e) => alive && setErr(e?.message || "No se pudieron leer los parametros"));
     return () => {
@@ -244,6 +303,11 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
   useEffect(() => stopPolling, []);
 
   const sel = params.find((p) => p.path === chosen) || null;
+  const sel2 = chosen2 ? params.find((p) => p.path === chosen2) || null : null;
+  // Solo `time_of_day` es una hora de reloj. `minutes` (un TP a los N minutos
+  // de abrir) es un numero normal y se sigue pintando como tal.
+  const esHora = sel?.unit === "time_of_day";
+  const esHora2 = sel2?.unit === "time_of_day";
 
   const launchFast = async () => {
     if (!strategy) return;
@@ -277,15 +341,21 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
     setProgress(0);
     const t0 = performance.now();
     try {
-      const { task_id } = await startWfoFull({
+      const { task_id, n_backtests } = await startWfoFull({
         strategy_id: strategy.id,
-        params: [{ path: sel.path, label: sel.label, min: pMin, max: pMax, steps: pSteps }],
+        params: [
+          { path: sel.path, label: sel.label, min: pMin, max: pMax, steps: pSteps },
+          ...(sel2
+            ? [{ path: sel2.path, label: sel2.label, min: pMin2, max: pMax2, steps: pSteps2 }]
+            : []),
+        ],
         n_windows: nWindows,
         oos_pct: oosPct,
         anchored,
         metric,
       });
       setTaskId(task_id);
+      setNBacktests(n_backtests ?? null);
       stopPolling();
       pollRef.current = setInterval(async () => {
         try {
@@ -321,7 +391,10 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
     if (taskId) await cancelRobustezJob(taskId).catch(() => {});
   };
 
-  const nBacktests = nWindows * (pSteps + 1);
+  // Cota superior: los pasos que se piden. Un parametro entero deduplica su
+  // eje y corre MENOS (15:30-15:35 en 10 pasos son 6 horas distintas), asi que
+  // el numero exacto solo se sabe al lanzar — lo devuelve el backend.
+  const nBacktestsMax = nWindows * (pSteps * (sel2 ? pSteps2 : 1) + 1);
   /**
    * Estimacion medida en esta maquina: 3 ventanas x 4 pasos (15 backtests) sobre
    * el parametro barato tardaron 146,7 s en total — 88 s de carga de velas y
@@ -330,9 +403,24 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
    * La clave es que cada backtest solo cubre SU ventana, no el histórico entero:
    * el coste por punto baja al subir el numero de ventanas. Por eso se divide.
    */
-  const perBt = ((sel?.cheap ? 18 : 26) * 6) / Math.max(1, nWindows);
-  const estSec = 88 + nBacktests * perBt;
+  // La cache de señales solo sobrevive si NINGUNO de los dos toca indicadores.
+  const baratos = !!sel?.cheap && (!sel2 || sel2.cheap);
+  const perBt = ((baratos ? 18 : 26) * 6) / Math.max(1, nWindows);
+  const estSec = 88 + nBacktestsMax * perBt;
   const estLabel = estSec < 90 ? `${Math.round(estSec)} s` : `${(estSec / 60).toFixed(1)} min`;
+
+  // El mismo desplegable dos veces (los dos parametros): una sola definicion.
+  const estiloSelect: React.CSSProperties = {
+    background: color.bgBase,
+    border: `0.5px solid ${color.border}`,
+    borderRadius: radius.sm,
+    color: color.textHigh,
+    fontFamily: font.sans,
+    fontSize: 12,
+    padding: "7px 9px",
+    width: "100%",
+    outline: "none",
+  };
 
   /* ─────────────────── CONFIG ─────────────────── */
   const config = (
@@ -408,18 +496,12 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
                   setPMin(p.min);
                   setPMax(p.max);
                 }
+                // Si el nuevo primero es el que ya estaba de segundo, el
+                // segundo se suelta: barrer dos veces el mismo eje no tiene
+                // sentido y multiplicaria el coste por nada.
+                if (e.target.value === chosen2) setChosen2("");
               }}
-              style={{
-                background: color.bgBase,
-                border: `0.5px solid ${color.border}`,
-                borderRadius: radius.sm,
-                color: color.textHigh,
-                fontFamily: font.sans,
-                fontSize: 12,
-                padding: "7px 9px",
-                width: "100%",
-                outline: "none",
-              }}
+              style={estiloSelect}
             >
               {params.length === 0 && <option value="">(cargando…)</option>}
               {params.map((p) => (
@@ -432,16 +514,98 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
           </Field>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-            <Field label="min">
-              <NumberInput value={pMin} onChange={setPMin} step={1} />
-            </Field>
-            <Field label="max">
-              <NumberInput value={pMax} onChange={setPMax} step={1} />
-            </Field>
+            {/* Un parametro de HORA de cierre viaja en MINUTOS DESDE MEDIANOCHE
+                (08:30 = 510). Con NumberInput se veia el 510 crudo y habia que
+                hacer la cuenta a mano. Los de unidad `minutes` (un TP a los N
+                minutos de abrir) SI son un numero normal: esos no se tocan. */}
+            {esHora ? (
+              <>
+                <Field label="min (hora)">
+                  <HoraInput value={pMin} onChange={setPMin} />
+                </Field>
+                <Field label="max (hora)">
+                  <HoraInput value={pMax} onChange={setPMax} />
+                </Field>
+              </>
+            ) : (
+              <>
+                <Field label="min">
+                  <NumberInput value={pMin} onChange={setPMin} step={1} />
+                </Field>
+                <Field label="max">
+                  <NumberInput value={pMax} onChange={setPMax} step={1} />
+                </Field>
+              </>
+            )}
             <Field label="pasos">
               <NumberInput value={pSteps} onChange={setPSteps} min={2} max={20} step={1} />
             </Field>
           </div>
+
+          {params.length > 1 && (
+            <>
+              <Field
+                label="Segundo parametro (opcional)"
+                hint={
+                  sel2
+                    ? `Cada valor de uno se prueba contra cada valor del otro: ${pSteps} x ${pSteps2} = ${pSteps * pSteps2} combinaciones POR VENTANA.`
+                    : "Sin el se barre un solo eje, como hasta ahora. Con el, la rejilla es el producto de los dos."
+                }
+              >
+                <select
+                  value={chosen2}
+                  onChange={(e) => {
+                    const p = params.find((x) => x.path === e.target.value);
+                    setChosen2(e.target.value);
+                    if (p) {
+                      setPMin2(p.min);
+                      setPMax2(p.max);
+                    }
+                  }}
+                  style={estiloSelect}
+                >
+                  <option value="" style={{ background: color.bgSurface }}>
+                    (ninguno)
+                  </option>
+                  {params
+                    .filter((p) => p.path !== chosen)
+                    .map((p) => (
+                      <option key={p.path} value={p.path} style={{ background: color.bgSurface }}>
+                        {p.cheap ? "· " : ""}
+                        {p.label} (ahora {p.current_value})
+                      </option>
+                    ))}
+                </select>
+              </Field>
+
+              {sel2 && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                  {esHora2 ? (
+                    <>
+                      <Field label="min (hora)">
+                        <HoraInput value={pMin2} onChange={setPMin2} />
+                      </Field>
+                      <Field label="max (hora)">
+                        <HoraInput value={pMax2} onChange={setPMax2} />
+                      </Field>
+                    </>
+                  ) : (
+                    <>
+                      <Field label="min">
+                        <NumberInput value={pMin2} onChange={setPMin2} step={1} />
+                      </Field>
+                      <Field label="max">
+                        <NumberInput value={pMax2} onChange={setPMax2} step={1} />
+                      </Field>
+                    </>
+                  )}
+                  <Field label="pasos">
+                    <NumberInput value={pSteps2} onChange={setPSteps2} min={2} max={20} step={1} />
+                  </Field>
+                </div>
+              )}
+            </>
+          )}
 
           <div
             style={{
@@ -453,7 +617,7 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
               paddingLeft: 8,
             }}
           >
-            {nBacktests} backtests · unos {estLabel} estimados. Bloquea la maquina mientras corre.
+            Hasta {nBacktestsMax} backtests · unos {estLabel} estimados. Bloquea la maquina mientras corre.
           </div>
         </>
       )}
@@ -506,7 +670,7 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
     results = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <SectionHead title="Optimizando ventana a ventana" hint="Cada ventana barre la rejilla en su tramo pasado y valida en el futuro." />
-        <ProgressBar pct={progress} label={`${nBacktests} backtests`} />
+        <ProgressBar pct={progress} label={`${nBacktests ?? nBacktestsMax} backtests`} />
         <Placeholder>El primer 10% es la carga de velas. Puedes cancelar en cualquier momento.</Placeholder>
       </div>
     );
@@ -524,8 +688,24 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
   } else {
     const eff = readEfficiency(out.wfo_efficiency);
     const isFull = out.kind === "wfo_full";
-    const pc = out.param_configs?.[0];
-    const pa = out.param_analysis;
+    const cfgs = out.param_configs ?? [];
+    // Un analisis por parametro barrido. `param_analyses` es el campo nuevo;
+    // `param_analysis` es el de siempre y solo trae el caso de UNO — se lee
+    // como respaldo para no depender de que backend y frontend vayan a la par.
+    const analyses = out.param_analyses?.length
+      ? out.param_analyses
+      : out.param_analysis
+        ? [out.param_analysis]
+        : [];
+    // La unidad sale del RESULTADO. `sel` es lo que hay ahora en el formulario:
+    // solo conoce un parametro y puede haber cambiado desde que se ejecuto, asi
+    // que con dos el segundo se pintaba con la unidad del primero.
+    const esHoraDe = (i: number) =>
+      (cfgs[i]?.unit ?? (i === 0 ? sel?.unit : undefined)) === "time_of_day";
+    const fmtValor = (i: number) => (val: number) =>
+      esHoraDe(i) ? minutosAHHMM(val) : fmt.num(val, 2);
+    const actualDe = (i: number) =>
+      params.find((p) => p.path === cfgs[i]?.path)?.current_value ?? null;
     const v = verdict(out);
     const stale = ranCfg !== null && ranCfg !== cfgKey;
 
@@ -617,117 +797,137 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
           <WfoWindowBars windows={out.windows} metricKey="return_pct" metricLabel="Retorno %" />
         </section>
 
-        {isFull && pc && pc.values.length > 1 && (
-          <section>
-            <SectionHead
-              title="Matriz del walk-forward"
-              hint="Cada ventana contra cada valor del parametro, coloreado por la metrica optimizada."
-              right={
-                <div style={{ width: 210 }}>
-                  <Segmented
-                    value={matrixView}
-                    onChange={setMatrixView}
-                    options={[
-                      { value: "heatmap", label: "Mapa" },
-                      { value: "3d", label: "3D" },
-                    ]}
+        {isFull &&
+          cfgs.map((c, i) =>
+            c.values.length > 1 ? (
+              <section key={`matriz-${c.path}-${i}`}>
+                <SectionHead
+                  title={cfgs.length > 1 ? `Matriz del walk-forward · ${c.label}` : "Matriz del walk-forward"}
+                  hint={
+                    cfgs.length > 1
+                      ? "Cada ventana contra cada valor de ESTE parametro. Como se barren varios, cada celda es el MEJOR resultado alcanzable con ese valor, moviendo el otro."
+                      : "Cada ventana contra cada valor del parametro, coloreado por la metrica optimizada."
+                  }
+                  right={
+                    i === 0 ? (
+                      <div style={{ width: 210 }}>
+                        <Segmented
+                          value={matrixView}
+                          onChange={setMatrixView}
+                          options={[
+                            { value: "heatmap", label: "Mapa" },
+                            { value: "3d", label: "3D" },
+                          ]}
+                        />
+                      </div>
+                    ) : undefined
+                  }
+                />
+                <WfoParamMatrix
+                  windows={out.windows}
+                  paramValues={c.values}
+                  paramLabel={c.label}
+                  paramIndex={i}
+                  formatValue={esHoraDe(i) ? minutosAHHMM : undefined}
+                  metricLabel={METRICS.find((m) => m.value === out.metric)?.label ?? out.metric}
+                  view={matrixView}
+                />
+              </section>
+            ) : null,
+          )}
+
+        {isFull &&
+          analyses.map((pa, i) =>
+            pa.per_value.length > 1 ? (
+              <section key={`analisis-${pa.label}-${i}`}>
+                <SectionHead
+                  title={analyses.length > 1 ? `Que valor conviene usar de verdad · ${pa.label}` : "Que valor conviene usar de verdad"}
+                  hint={
+                    analyses.length > 1
+                      ? "El ganador de una ventana suelta es el que mejor se ajusto a ESE tramo. Lo que sirve es la meseta. Barriendo varios parametros, cada uno se lee promediando sobre los valores del otro."
+                      : "El ganador de una ventana suelta es el que mejor se ajusto a ESE tramo. Lo que sirve es la meseta: la zona de valores que va bien en todas."
+                  }
+                />
+                <TileGrid min={165}>
+                  <MetricTile
+                    label="Valor recomendado"
+                    value={pa.recommended == null ? "—" : fmtValor(i)(pa.recommended)}
+                    sub={pa.at_edge ? "en el borde del rango" : pa.label}
+                    tone={pa.at_edge ? color.warning : color.copper}
+                    hint="El de mejor meseta, no el que mas veces gano."
+                  />
+                  <MetricTile
+                    label="Estabilidad del optimo"
+                    value={pa.stability}
+                    sub={`dispersion ${fmt.pct(pa.winner_dispersion * 100, 0)} del rango`}
+                    tone={pa.stability === "estable" ? color.profit : pa.stability === "dudosa" ? color.warning : color.loss}
+                    hint="Cuanto se mueve el ganador de una ventana a otra."
+                  />
+                  {/* Con SU unidad: un parametro de hora vale 810 por dentro y
+                      hay que enseñar 13:30, como el resto de la tarjeta. */}
+                  <MetricTile
+                    label="Valor actual"
+                    value={actualDe(i) == null ? "—" : fmtValor(i)(actualDe(i) as number)}
+                    sub="el que tiene la estrategia"
+                  />
+                </TileGrid>
+
+                <div style={{ marginTop: 14 }}>
+                  <DataTable
+                    columns={["Valor", "Puntuacion media", "Meseta", "Peor ventana", "Veces ganador", "Dispersion"]}
+                    rows={pa.per_value.map((pv) => {
+                      const isBest = pa.recommended != null && Math.abs(pv.value - pa.recommended) < 1e-6;
+                      const mark = (n: React.ReactNode) =>
+                        isBest ? <span style={{ color: color.copper }}>{n}</span> : n;
+                      return [
+                        mark(fmtValor(i)(pv.value)),
+                        mark(fmt.num(pv.mean, 3)),
+                        mark(fmt.num(pv.plateau, 3)),
+                        mark(fmt.num(pv.min, 3)),
+                        mark(`${pv.wins} / ${pa.n_windows}`),
+                        mark(fmt.num(pv.std, 3)),
+                      ];
+                    })}
                   />
                 </div>
-              }
-            />
-            <WfoParamMatrix
-              windows={out.windows}
-              paramValues={pc.values}
-              paramLabel={pc.label}
-              metricLabel={METRICS.find((m) => m.value === out.metric)?.label ?? out.metric}
-              view={matrixView}
-            />
-          </section>
-        )}
 
-        {isFull && pa && pa.per_value.length > 1 && (
-          <section>
-            <SectionHead
-              title="Que valor conviene usar de verdad"
-              hint="El ganador de una ventana suelta es el que mejor se ajusto a ESE tramo. Lo que sirve es la meseta: la zona de valores que va bien en todas."
-            />
-            <TileGrid min={165}>
-              <MetricTile
-                label="Valor recomendado"
-                value={pa.recommended != null ? fmt.num(pa.recommended, 2) : "—"}
-                sub={pa.at_edge ? "en el borde del rango" : pa.label}
-                tone={pa.at_edge ? color.warning : color.copper}
-                hint="El de mejor meseta, no el que mas veces gano."
-              />
-              <MetricTile
-                label="Estabilidad del optimo"
-                value={pa.stability}
-                sub={`dispersion ${fmt.pct(pa.winner_dispersion * 100, 0)} del rango`}
-                tone={pa.stability === "estable" ? color.profit : pa.stability === "dudosa" ? color.warning : color.loss}
-                hint="Cuanto se mueve el ganador de una ventana a otra."
-              />
-              <MetricTile
-                label="Valor actual"
-                value={sel ? fmt.num(sel.current_value, 2) : "—"}
-                sub="el que tiene la estrategia"
-              />
-            </TileGrid>
-
-            <div style={{ marginTop: 14 }}>
-              <DataTable
-                columns={["Valor", "Puntuacion media", "Meseta", "Peor ventana", "Veces ganador", "Dispersion"]}
-                rows={pa.per_value.map((pv) => {
-                  const isBest = pa.recommended != null && Math.abs(pv.value - pa.recommended) < 1e-6;
-                  const mark = (n: React.ReactNode) =>
-                    isBest ? <span style={{ color: color.copper }}>{n}</span> : n;
-                  return [
-                    mark(fmt.num(pv.value, 2)),
-                    mark(fmt.num(pv.mean, 3)),
-                    mark(fmt.num(pv.plateau, 3)),
-                    mark(fmt.num(pv.min, 3)),
-                    mark(`${pv.wins} / ${pa.n_windows}`),
-                    mark(fmt.num(pv.std, 3)),
-                  ];
-                })}
-              />
-            </div>
-
-            {pa.at_edge && (
-              <div style={{ marginTop: 12 }}>
-                <ReadingNote>
-                  <strong>Ojo: el valor recomendado esta en el extremo del rango que barriste</strong>{" "}
-                  ({fmt.num(pa.range[0], 2)} a {fmt.num(pa.range[1], 2)}). Cuando eso pasa, casi siempre
-                  significa que el optimo de verdad queda FUERA y la rejilla se quedo corta: lo que ves
-                  no es un maximo, es donde dejaste de mirar. Amplia el rango y vuelve a ejecutar antes
-                  de tomarlo como conclusion.
-                </ReadingNote>
-              </div>
-            )}
-
-            <div style={{ marginTop: 12 }}>
-              <ReadingNote>
-                {pa.stability === "estable" ? (
-                  <>
-                    El optimo apenas se mueve entre ventanas: el parametro es <strong>robusto</strong>.
-                    Usar {pa.recommended != null ? fmt.num(pa.recommended, 2) : "el recomendado"} es una
-                    decision defendible.
-                  </>
-                ) : pa.stability === "dudosa" ? (
-                  <>
-                    El optimo se mueve algo entre ventanas. Quedate con la zona central de la meseta en
-                    vez de con un valor exacto, y no lo reajustes cada poco.
-                  </>
-                ) : (
-                  <>
-                    El optimo <strong>salta de un extremo a otro</strong> segun la ventana. Eso
-                    significa que este parametro no tiene un valor bueno estable: lo que se estaria
-                    optimizando es ruido. Mejor fijarlo por criterio propio y no tocarlo.
-                  </>
+                {pa.at_edge && (
+                  <div style={{ marginTop: 12 }}>
+                    <ReadingNote>
+                      <strong>Ojo: el valor recomendado esta en el extremo del rango que barriste</strong>{" "}
+                      ({fmtValor(i)(pa.range[0])} a {fmtValor(i)(pa.range[1])}). Cuando eso pasa, casi siempre
+                      significa que el optimo de verdad queda FUERA y la rejilla se quedo corta: lo que ves
+                      no es un maximo, es donde dejaste de mirar. Amplia el rango y vuelve a ejecutar antes
+                      de tomarlo como conclusion.
+                    </ReadingNote>
+                  </div>
                 )}
-              </ReadingNote>
-            </div>
-          </section>
-        )}
+
+                <div style={{ marginTop: 12 }}>
+                  <ReadingNote>
+                    {pa.stability === "estable" ? (
+                      <>
+                        El optimo apenas se mueve entre ventanas: el parametro es <strong>robusto</strong>.
+                        Usar {pa.recommended != null ? fmtValor(i)(pa.recommended) : "el recomendado"} es una
+                        decision defendible.
+                      </>
+                    ) : pa.stability === "dudosa" ? (
+                      <>
+                        El optimo se mueve algo entre ventanas. Quedate con la zona central de la meseta en
+                        vez de con un valor exacto, y no lo reajustes cada poco.
+                      </>
+                    ) : (
+                      <>
+                        El optimo <strong>salta de un extremo a otro</strong> segun la ventana. Eso
+                        significa que este parametro no tiene un valor bueno estable: lo que se estaria
+                        optimizando es ruido. Mejor fijarlo por criterio propio y no tocarlo.
+                      </>
+                    )}
+                  </ReadingNote>
+                </div>
+              </section>
+            ) : null,
+          )}
 
         <section>
           <SectionHead title="Detalle por ventana" />
@@ -744,7 +944,14 @@ export function useWfo({ run, strategy, loading }: ModuleCtx): ModuleParts {
                 `${w.is_from} → ${w.is_to}`,
                 `${w.oos_from} → ${w.oos_to}`,
               ];
-              if (isFull) cells.push(w.best_params?.map((v) => fmt.num(v, 2)).join(" / ") ?? "—");
+              // Un parametro de hora viaja en minutos: sin esto la columna
+              // "mejor valor" de cada ventana enseñaba 510 en vez de 08:30. Y
+              // cada posicion lleva SU unidad, que barriendo dos no tienen por
+              // que coincidir.
+              if (isFull)
+                cells.push(
+                  w.best_params?.map((valor, i) => fmtValor(i)(valor)).join(" / ") ?? "—",
+                );
               cells.push(
                 <span key="i" style={{ color: w.is.return_pct >= 0 ? color.profit : color.loss }}>
                   {fmt.num(w.is.return_pct, 1)}

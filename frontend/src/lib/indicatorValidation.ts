@@ -13,6 +13,7 @@ const ALL_PRICE_VARIABLES = [
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
 
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.OVERHEAD_X_DAYS,
     IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
     IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
 ];
@@ -35,6 +36,7 @@ const YESTERDAY_VARS = [
     IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.OVERHEAD_X_DAYS,
 ];
 
 const PM_RTH_YESTERDAY = [
@@ -44,6 +46,7 @@ const PM_RTH_YESTERDAY = [
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
 
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.OVERHEAD_X_DAYS,
     IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
     IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
 ];
@@ -54,6 +57,7 @@ const RTH_YESTERDAY_INDICATORS = [
     IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
 
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.OVERHEAD_X_DAYS,
     IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
     IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
     ...ALL_INDICATORS,
@@ -92,6 +96,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
     
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.OVERHEAD_X_DAYS,
         ...ALL_INDICATORS,
         IndicatorType.PREV_BAR_CLOSE,
         IndicatorType.PREV_BAR_OPEN,
@@ -108,6 +113,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.OVERHEAD_X_DAYS,
         IndicatorType.VWAP,
     ],
     [IndicatorType.PREVIOUS_MIN]: [
@@ -118,6 +124,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
         IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
         IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.OVERHEAD_X_DAYS,
         IndicatorType.VWAP,
     ],
     [IndicatorType.YESTERDAY_OPEN]: [],
@@ -126,6 +133,8 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.YESTERDAY_LOW]: [],
     [IndicatorType.HIGH_X_DAYS]: [],
     [IndicatorType.LOW_X_DAYS]: [],
+    // Es un NIVEL: se usa como objetivo, no como origen de un cruce.
+    [IndicatorType.OVERHEAD_X_DAYS]: [],
     [IndicatorType.PREV_BAR_CLOSE]: [],
     [IndicatorType.PREV_BAR_OPEN]: [],
     [IndicatorType.PREV_BAR_HIGH]: [],
@@ -139,6 +148,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.CONSEC_GREEN_CANDLES]: [],
     [IndicatorType.CONSEC_RED_CANDLES]: [],
     [IndicatorType.CANDLE_RANGE_PCT]: [],
+    [IndicatorType.RECORRIDO_PCT]: [],
     [IndicatorType.RANGE_OF_TIME]: [],
     [IndicatorType.OPENING_RANGE_PLUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.OPENING_RANGE_MINUS]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
@@ -167,6 +177,29 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.VOLUME]: [IndicatorType.VOLUME],
     [IndicatorType.ATR]: [IndicatorType.ATR],
     [IndicatorType.PM_HIGH_GAP]: [],
+    // Squeeze: es un PORCENTAJE, no un nivel de precio. Lista de destinos
+    // vacia = solo se puede enfrentar a una cifra fija (isStandalone()).
+    [IndicatorType.SQUEEZE]: [],
+    // Current Gap (%): porcentaje vivo vs cierre de ayer — solo cifra fija.
+    [IndicatorType.CURRENT_GAP]: [],
+    // Gap de APERTURA: porcentaje, como sus dos hermanos. Solo contra una
+    // cifra fija. Es NaN antes de las 09:30 a proposito (causal).
+    [IndicatorType.OPEN_GAP]: [],
+    // Los dos fades son PORCENTAJES DE CAIDA, no niveles de precio: enfrentarlos
+    // a otro indicador no significaria nada. Solo contra una cifra.
+    [IndicatorType.SESSION_FADE]: [],
+    [IndicatorType.FADE]: [],
+
+    // Momentum clasico. El RSI va de 0 a 100 y se compara contra sus niveles
+    // (70/30) o contra otro RSI de distinta temporalidad; contra un precio no
+    // significaria nada.
+    [IndicatorType.RSI]: [IndicatorType.RSI],
+    // El MACD sí se enfrenta a sus hermanos: el uso clasico es «la linea cruza
+    // su Señal», y el histograma contra cero (que es lo mismo dicho de otra
+    // forma). Contra un precio, tampoco.
+    [IndicatorType.MACD]: [IndicatorType.MACD, IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM],
+    [IndicatorType.MACD_SIGNAL]: [IndicatorType.MACD, IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM],
+    [IndicatorType.MACD_HISTOGRAM]: [IndicatorType.MACD, IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM],
 };
 
 const DISTANCE_ALLOWED_TARGETS = [
@@ -214,6 +247,7 @@ export function isStandalone(indicator: IndicatorType): boolean {
 
 const ONLY_TARGET_INDICATORS = new Set([
     IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+    IndicatorType.OVERHEAD_X_DAYS,
 ]);
 
 export function isOnlyTarget(indicator: IndicatorType): boolean {

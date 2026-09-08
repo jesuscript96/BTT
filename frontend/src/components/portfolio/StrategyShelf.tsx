@@ -9,6 +9,7 @@ import React, { useMemo, useState } from "react";
 import { CircleAlert, ChevronRight } from "lucide-react";
 import { color, font, radius } from "@/components/ui/tokens";
 import { Help } from "@/components/robustez/help";
+import { RenameableName } from "@/components/robustez/shared";
 import {
   ConditionList,
   KeyVals,
@@ -149,6 +150,7 @@ export function StrategyShelf({
   emptyText,
   actions,
   curves = {},
+  onRename,
 }: {
   title: string;
   hint?: string;
@@ -158,6 +160,8 @@ export function StrategyShelf({
   /** Curvas de equity PRECARGADAS por el contenedor (BaulTab): al desplegar
    *  una fila el minigrafico ya esta en memoria y sale al instante. */
   curves?: Record<string, CurveState>;
+  /** Renombrado inline. Si se omite, el nombre se pinta sin lapiz. */
+  onRename?: (s: PortfolioStrategy, newName: string) => Promise<void>;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
 
@@ -229,8 +233,14 @@ export function StrategyShelf({
                   }}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontFamily: font.sans, color: color.textHigh, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {s.name}
+                  <div style={{ fontSize: 13, fontFamily: font.sans, color: color.textHigh }}>
+                    {onRename ? (
+                      <RenameableName name={s.name} onRename={(n) => onRename(s, n)} />
+                    ) : (
+                      <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {s.name}
+                      </span>
+                    )}
                   </div>
                   <div style={{ fontSize: 10, fontFamily: font.sans, color: color.textMuted }}>
                     {r

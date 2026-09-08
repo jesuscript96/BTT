@@ -219,6 +219,159 @@ METRICS = {
 
 
 # ---------------------------------------------------------------------------
+# Take Profit por TIEMPO y por HORA
+# ---------------------------------------------------------------------------
+# El motor guarda estos dos con forma de TEXTO, no de numero:
+#
+#   TP completo tipo "Time"   -> take_profit.value = 30          (minutos, numero)
+#   TP completo tipo "Hour"   -> take_profit.value = "15:30"     (texto)
+#   Parcial por tiempo        -> distance_pct      = "TIME:30"
+#   Parcial por hora          -> distance_pct      = "HOUR:15:30"
+#   Parcial al cierre         -> distance_pct      = "EOD"       (no optimizable)
+#
+# El optimizador solo sabe barrer NUMEROS. Por eso:
+#   - "por tiempo" se barre en MINUTOS enteros,
+#   - "por hora" se barre en MINUTOS DESDE MEDIANOCHE (09:30 = 570),
+# y al escribir cada punto de la rejilla se devuelve la forma ORIGINAL
+# (_encode_tp_value). Antes de esto (2026-08-26) el TP por hora ni siquiera
+# aparecia en la lista: `float("15:30")` reventaba y el extractor lo descartaba
+# sin decir nada; y el TP por tiempo salia con rangos de porcentaje (paso 0,5,
+# o sea medios minutos).
+
+# Ventana de sesion del lago: 04:00 -> 20:00. Acota el barrido por hora para no
+# proponer cierres a las 3 de la manana.
+_SESSION_MIN_MINUTES = 4 * 60
+_SESSION_MAX_MINUTES = 20 * 60
+
+
+def _hhmm_to_minutes(txt) -> int | None:
+    """'15:30' -> 930. None si no tiene forma de hora."""
+    try:
+        parts = str(txt).strip().split(":")
+        h, m = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError, AttributeError):
+        return None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        return None
+    return h * 60 + m
+
+
+def _minutes_to_hhmm(mins) -> str:
+    """930 -> '15:30'."""
+    m = int(round(float(mins))) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _decode_tp_value(raw):
+    """(unidad, numero) de un valor de take profit.
+
+    unidad: 'pct' | 'minutes' | 'time_of_day' | None (no se puede barrer).
+    """
+    if raw is None or isinstance(raw, bool):
+        return None, None
+    if isinstance(raw, (int, float)):
+        return "pct", float(raw)
+    if isinstance(raw, str):
+        txt = raw.strip()
+        up = txt.upper()
+        if up == "EOD":
+            return None, None
+        if up.startswith("HOUR:"):
+            mins = _hhmm_to_minutes(txt[5:])
+            return ("time_of_day", float(mins)) if mins is not None else (None, None)
+        if up.startswith("TIME:"):
+            try:
+                return "minutes", float(txt[5:])
+            except ValueError:
+                return None, None
+        if ":" in txt:  # "15:30" pelado — el TP completo tipo Hour
+            mins = _hhmm_to_minutes(txt)
+            return ("time_of_day", float(mins)) if mins is not None else (None, None)
+        try:
+            return "pct", float(txt)
+        except ValueError:
+            return None, None
+    return None, None
+
+
+def _encode_tp_value(original, nuevo):
+    """Devuelve `nuevo` con la MISMA forma que tenia `original`.
+
+    Un original numerico pasa de largo: por eso esto se puede aplicar a TODOS
+    los parametros sin cambiar el comportamiento de los que ya funcionaban.
+    """
+    if isinstance(original, str):
+        txt = original.strip()
+        up = txt.upper()
+        if up.startswith("HOUR:"):
+            return f"HOUR:{_minutes_to_hhmm(nuevo)}"
+        if up.startswith("TIME:"):
+            return f"TIME:{int(round(float(nuevo)))}"
+        if up == "EOD":
+            return original
+        if ":" in txt:
+            return _minutes_to_hhmm(nuevo)
+    return nuevo
+
+
+def _get_nested_value(obj, path: str):
+    """Lee un valor por ruta separada por puntos. None si la ruta no existe."""
+    cur = obj
+    for k in path.split("."):
+        try:
+            cur = cur[int(k)] if isinstance(cur, list) else cur[k]
+        except (KeyError, IndexError, ValueError, TypeError):
+            return None
+    return cur
+
+
+def _is_take_profit_path(path: str) -> bool:
+    """Solo las rutas de take profit llevan valores con forma de texto.
+
+    Acota la reescritura de formato: cualquier otro parametro se escribe tal
+    cual, como siempre, aunque su valor de ahora fuese una cadena rara.
+    """
+    return "take_profit" in (path or "")
+
+
+def _is_entry_window_path(path: str) -> bool:
+    """`entry_logic.entry_time_windows.N.from_time` / `.to_time`.
+
+    Los limites horarios de ejecucion de las variables de entrada se guardan
+    como texto "HH:MM". El barrido mueve minutos desde medianoche y al escribir
+    el punto hay que devolver el texto — igual que el take profit por hora.
+    """
+    p = path or ""
+    return "entry_time_windows" in p and p.rsplit(".", 1)[-1] in ("from_time", "to_time")
+
+
+def _needs_hhmm_reencode(path: str) -> bool:
+    return _is_take_profit_path(path) or _is_entry_window_path(path)
+
+
+def _param_unit_from_def(base_def: dict, path: str) -> str | None:
+    """'minutes' | 'time_of_day' | None, segun la forma que tiene HOY el valor.
+
+    Es lo que permite barrer numeros y devolver texto al escribir, sin que el
+    frontend tenga que mandar metadatos nuevos.
+    """
+    if _is_entry_window_path(path):
+        return "time_of_day"
+    if not _is_take_profit_path(path):
+        return None
+    raw = _get_nested_value(base_def or {}, path)
+    if isinstance(raw, str):
+        unidad, _ = _decode_tp_value(raw)
+        return unidad if unidad in ("minutes", "time_of_day") else None
+    # El TP completo por TIEMPO guarda un numero pelado; quien lo dice es `type`.
+    if path == "risk_management.take_profit.value":
+        tp = ((base_def or {}).get("risk_management") or {}).get("take_profit") or {}
+        if str(tp.get("type", "") or "").strip().lower() == "time":
+            return "minutes"
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Parameter extraction
 # ---------------------------------------------------------------------------
 
@@ -228,7 +381,8 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
     _seen = set()
 
     def _add(param_id: str, label: str, value, category: str, path: str,
-             min_val=None, max_val=None, step=None, is_int_param=False):
+             min_val=None, max_val=None, step=None, is_int_param=False,
+             unit=None, allow_zero=False):
         if param_id in _seen or value is None:
             return
         _seen.add(param_id)
@@ -237,8 +391,11 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         except (TypeError, ValueError):
             return
         # Skip parameters with value 0 — they represent disabled features
-        # (e.g., SL=0 means no stop loss, TP=0 means no take profit)
-        if v == 0:
+        # (e.g., SL=0 means no stop loss, TP=0 means no take profit).
+        # `allow_zero` es para el caso contrario: el margen de un stop de
+        # estructura en 0 significa «el stop va CLAVADO en el nivel», que es
+        # una configuracion normal y perfectamente optimizable.
+        if v == 0 and not allow_zero:
             return
         
         if is_int_param:
@@ -247,8 +404,11 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
             v_max = float(int(v + 10)) if max_val is None else float(max_val)
         else:
             v_step = float(step or _auto_step(v))
-            v_min = float(min_val or max(0, v * 0.25))
-            v_max = float(max_val or max(v * 3, v + 10))
+            # `or` NO vale aqui: un min_val de 0 es falsy y se colaba el
+            # automatico. Lo cazo el test del margen del stop de estructura,
+            # que pide min 0 y recibia 2,5 sin decir nada.
+            v_min = float(min_val if min_val is not None else max(0, v * 0.25))
+            v_max = float(max_val if max_val is not None else max(v * 3, v + 10))
 
         params.append({
             "id": param_id,
@@ -259,6 +419,9 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
             "min": v_min,
             "max": v_max,
             "step": v_step,
+            # 'minutes' / 'time_of_day' para los take profit por tiempo y por
+            # hora; None para todo lo demas (que se pinta como numero pelado).
+            "unit": unit,
         })
 
     def _auto_step(v):
@@ -278,6 +441,25 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         root = logic.get("root_condition") or {}
         _extract_from_condition_group(root, logic_label, f"{logic_key}.root_condition",
                                       params, _seen, _add)
+
+    # --- Limites horarios de ejecucion de variables de entrada ---
+    # (`entry_logic.entry_time_windows`). Se barren en MINUTOS DESDE MEDIANOCHE
+    # y se reescriben como "HH:MM" (_needs_hhmm_reencode), igual que el take
+    # profit por hora. Antes no aparecian en la lista: `float("09:30")` revienta
+    # y `_add` los descartaba sin decir nada.
+    for _wi, _w in enumerate((strategy_def.get("entry_logic") or {}).get("entry_time_windows") or []):
+        for _campo, _etiqueta in (("from_time", "desde"), ("to_time", "hasta")):
+            _mins = _hhmm_to_minutes((_w or {}).get(_campo))
+            if _mins is None:
+                continue
+            _n = f" {_wi + 1}" if _wi else ""
+            _add(f"entry.window.{_wi}.{_campo}",
+                 f"Ventana de entrada{_n} ({_etiqueta})",
+                 _mins, "Entry",
+                 f"entry_logic.entry_time_windows.{_wi}.{_campo}",
+                 min_val=max(_SESSION_MIN_MINUTES, _mins - 120),
+                 max_val=min(_SESSION_MAX_MINUTES, _mins + 120),
+                 step=5, unit="time_of_day")
 
     # --- Risk management ---
     rm = strategy_def.get("risk_management") or {}
@@ -299,27 +481,98 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                          f"Stop Loss ({hs.get('type', 'Pct')})",
                          val, "Risk", "risk_management.hard_stop.value",
                          min_val=0.1, max_val=max(float_val * 4, 20) if val else 20, step=0.5)
+                else:
+                    # STOP DE ESTRUCTURA. Aqui `value` es TEXTO ("PMH",
+                    # "Previous Max"...), asi que el `float()` de arriba falla y
+                    # hasta hoy se caia el bloque ENTERO: una estrategia con
+                    # stop estructural no ofrecia ni una sola perilla del stop,
+                    # ni en el 3D, ni en el Walk Forward, ni en el genetico —
+                    # los tres beben de aqui. Y no avisaba: simplemente no
+                    # aparecia.
+                    #
+                    # El nivel no se puede mover (son seis columnas fijas en el
+                    # simulador, y son DOS simuladores en paridad), pero el
+                    # MARGEN si: es un numero, el motor ya lo aplica de punta a
+                    # punta (`hs_offset_pct` -> portfolio_sim / sim_dispatch) y
+                    # es lo mas interesante que hay ahi. Jaume, 7-sep-2026: «si
+                    # hay una estrategia de estructura con % por encima de PMH,
+                    # no podria medirme ese % de distancia e ir probando?».
+                    off = hs.get("offset_pct")
+                    if off is None:
+                        off = 0.0
+                    _add("risk.hard_stop.offset_pct",
+                         f"Margen del stop ({hs.get('value')})",
+                         off, "Risk", "risk_management.hard_stop.offset_pct",
+                         min_val=0.0, max_val=max(float(off) * 3, 15.0), step=0.5,
+                         allow_zero=True)
 
     # Take Profit & Partials
     if rm.get("use_take_profit") is not False:
         tp_mode = rm.get("take_profit_mode", "Full")
         
         if tp_mode == "Full":
-            tp = rm.get("take_profit")
-            if tp:
-                val = tp.get("value")
-                if val is not None:
-                    _add("risk.take_profit.value",
-                         f"Take Profit ({tp.get('type', 'Pct')})",
-                         val, "Risk", "risk_management.take_profit.value",
-                         min_val=0.5, max_val=max(float(val) * 4, 30) if val else 30, step=0.5)
+            tp = rm.get("take_profit") or {}
+            val = tp.get("value")
+            tp_type = str(tp.get("type", "") or "").strip().lower()
+            if val is not None:
+                if tp_type == "hour":
+                    # Hora de cierre. Se barren minutos desde medianoche y al
+                    # escribir el punto se devuelve "HH:MM".
+                    mins = _hhmm_to_minutes(val)
+                    if mins is not None:
+                        _add("risk.take_profit.value",
+                             "Take Profit (Hora de cierre)",
+                             mins, "Risk", "risk_management.take_profit.value",
+                             min_val=max(_SESSION_MIN_MINUTES, mins - 120),
+                             max_val=min(_SESSION_MAX_MINUTES, mins + 120),
+                             step=5, unit="time_of_day")
+                elif tp_type == "time":
+                    try:
+                        mins = float(val)
+                    except (TypeError, ValueError):
+                        mins = None
+                    if mins is not None:
+                        _add("risk.take_profit.value",
+                             "Take Profit (Tiempo, min)",
+                             mins, "Risk", "risk_management.take_profit.value",
+                             min_val=1, max_val=max(mins * 3, mins + 60),
+                             step=1, unit="minutes")
+                else:
+                    # Distancia en % (o cualquier tipo numerico): igual que antes.
+                    try:
+                        pct = float(val)
+                    except (TypeError, ValueError):
+                        pct = None
+                    if pct is not None:
+                        _add("risk.take_profit.value",
+                             f"Take Profit ({tp.get('type', 'Pct')})",
+                             pct, "Risk", "risk_management.take_profit.value",
+                             min_val=0.5, max_val=max(pct * 4, 30), step=0.5)
         elif tp_mode == "Partial":
             for i, ptp in enumerate(rm.get("partial_take_profits") or []):
-                _add(f"risk.partial_tp.{i}.distance_pct",
-                     f"Parcial {i+1} Distancia %",
-                     ptp.get("distance_pct") if ptp else None, "Risk",
-                     f"risk_management.partial_take_profits.{i}.distance_pct",
-                     min_val=0.5, step=0.5)
+                # El disparo de un parcial puede ser distancia (%), tiempo
+                # (TIME:min), hora (HOUR:HH:MM) o el cierre (EOD). Los tres
+                # primeros son barribles; EOD no tiene numero que mover.
+                unidad, num = _decode_tp_value((ptp or {}).get("distance_pct"))
+                ruta = f"risk_management.partial_take_profits.{i}.distance_pct"
+                if unidad == "time_of_day":
+                    _add(f"risk.partial_tp.{i}.distance_pct",
+                         f"Parcial {i+1} Hora de cierre",
+                         num, "Risk", ruta,
+                         min_val=max(_SESSION_MIN_MINUTES, num - 120),
+                         max_val=min(_SESSION_MAX_MINUTES, num + 120),
+                         step=5, unit="time_of_day")
+                elif unidad == "minutes":
+                    _add(f"risk.partial_tp.{i}.distance_pct",
+                         f"Parcial {i+1} Tiempo (min)",
+                         num, "Risk", ruta,
+                         min_val=1, max_val=max(num * 3, num + 60),
+                         step=1, unit="minutes")
+                elif unidad == "pct":
+                    _add(f"risk.partial_tp.{i}.distance_pct",
+                         f"Parcial {i+1} Distancia %",
+                         num, "Risk", ruta,
+                         min_val=0.5, step=0.5)
                 _add(f"risk.partial_tp.{i}.capital_pct",
                      f"Parcial {i+1} Capital %",
                      ptp.get("capital_pct") if ptp else None, "Risk",
@@ -335,6 +588,31 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
                  "Trailing Buffer %",
                  val, "Risk", "risk_management.trailing_stop.buffer_pct",
                  min_val=0.1, max_val=5.0, step=0.1)
+
+    # --- Piramidacion ---
+    # No estaba (2026-09-06): una estrategia con piramide tenia sus niveles
+    # CONGELADOS tanto aqui como en el optimizador 3D. Se conservaban —
+    # la definicion se copia entera— pero no habia forma de moverlos, y el
+    # tamaño de un añadido pesa tanto como el de la entrada.
+    #
+    # Se sacan las tres cosas que definen un nivel: cuanto mete, cuantas veces
+    # puede dispararse y los umbrales de SU condicion (que van por la misma
+    # maquinaria que las de entrada y salida — un nivel es una condicion mas).
+    for i, lv in enumerate((strategy_def.get("pyramiding") or {}).get("levels") or []):
+        if not isinstance(lv, dict):
+            continue
+        n = i + 1
+        unidad = "$" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "%"
+        _add(f"pyr.{i}.capital_pct",
+             f"Pirámide {n} ({'quita' if str(lv.get('action', 'add')).lower() == 'reduce' else 'añade'} {unidad})",
+             lv.get("capital_pct"), "Pyramid", f"pyramiding.levels.{i}.capital_pct",
+             min_val=0.5, step=0.5)
+        _add(f"pyr.{i}.times", f"Piramide {n} veces",
+             lv.get("times"), "Pyramid", f"pyramiding.levels.{i}.times",
+             min_val=1, max_val=10, step=1, is_int_param=True)
+        _extract_from_condition_group(
+            lv.get("root_condition") or {}, f"Pirámide {n}",
+            f"pyramiding.levels.{i}.root_condition", params, _seen, _add)
 
     # --- Preconditions ---
     for i, precond in enumerate(strategy_def.get("postgap_preconditions") or []):
@@ -447,7 +725,26 @@ def _extract_indicator_params(cfg, logic_label, path, add_fn):
         if val is not None:
             label = f"{logic_label} {name} {param_key}"
             param_id = f"{path}.{param_key}"
-            add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}", is_int_param=True)
+            # `offset` EN CERO ES UN VALOR, NO UNA OPCION APAGADA. Sin este
+            # `allow_zero`, `_add` lo tiraba por la regla general de "0 =
+            # desactivado" y el parametro no aparecia: ni en el 3D, ni en el
+            # Walk Forward, ni en el genetico, y sin avisar. Es el mismo fallo
+            # que tenia el margen del stop de estructura.
+            #
+            # Caso de Jaume (7-sep-2026): la condicion «Bar Close <
+            # Prev. Bar Low» lleva el objetivo con `offset: 0` y por eso no se
+            # podia optimizar, mientras que un «Low Bar» con `offset: 1` en la
+            # condicion de al lado si salia. Los dos son lo mismo escrito
+            # distinto, y solo uno era afinable.
+            #
+            # OJO A LA CUENTA: `Prev. Bar Low` YA es la vela anterior, asi que
+            # el offset suma ENCIMA. offset 0 = la vela anterior, offset 1 = dos
+            # velas atras, offset 9 = diez atras.
+            #
+            # Los demas enteros se quedan como estaban: un `period` o un
+            # `consecutive_count` en 0 no significan nada.
+            add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}",
+                   is_int_param=True, allow_zero=(param_key == "offset"))
 
     for param_key in float_keys:
         val = cfg.get(param_key)
@@ -461,16 +758,24 @@ def _extract_indicator_params(cfg, logic_label, path, add_fn):
 # Grid sweep
 # ---------------------------------------------------------------------------
 
+# Parametros que solo admiten enteros. Estaba escrito dos veces palabra por
+# palabra (al castear el valor y al construir el eje) y el walk-forward no lo
+# tenia en absoluto. Un unico sitio, para que no se separen.
+_INT_PARAM_KEYS = {
+    "period", "period2", "period3", "offset", "consecutive_count",
+    "time_hour", "time_minute", "days_lookback", "orb_minutes",
+    "time_from_hour", "time_from_minute", "range_minutes",
+    "deviationLevel", "sma_period", "lookback",
+}
+
+
 def _set_nested_value(obj, path: str, value):
     """Set a value in a nested dict/list given a dot-separated path."""
     keys = path.split(".")
     
     # Cast value to int if it's an integer parameter
     last_key = keys[-1]
-    if last_key in {"period", "period2", "period3", "offset", "consecutive_count", 
-                    "time_hour", "time_minute", "days_lookback", "orb_minutes", 
-                    "time_from_hour", "time_from_minute", "range_minutes", 
-                    "deviationLevel", "sma_period", "lookback"}:
+    if last_key in _INT_PARAM_KEYS:
         try:
             value = int(round(float(value)))
         except (TypeError, ValueError):
@@ -482,10 +787,39 @@ def _set_nested_value(obj, path: str, value):
             k = int(k)
         current = current[k] if isinstance(current, list) else current.get(k, {})
     last_key = keys[-1]
+    # El barrido siempre mueve NUMEROS, pero el take profit por tiempo y por
+    # hora se guardan como texto ("15:30", "HOUR:15:30", "TIME:30"). Se relee
+    # lo que habia y se devuelve con la misma forma. Un valor original numerico
+    # pasa de largo, asi que esto no toca ningun parametro de los de siempre.
+    reencode = _needs_hhmm_reencode(path)
     if isinstance(current, list):
-        current[int(last_key)] = value
+        idx = int(last_key)
+        anterior = current[idx] if 0 <= idx < len(current) else None
+        current[idx] = _encode_tp_value(anterior, value) if reencode else value
     else:
-        current[last_key] = value
+        current[last_key] = (
+            _encode_tp_value(current.get(last_key), value) if reencode else value
+        )
+
+
+def apply_point_to_def(modified_def: dict, param_configs: list, point) -> None:
+    """Escribe un punto de la rejilla en la definicion, EN SITIO.
+
+    Ejes ENLAZADOS (`linked_paths` / `linked_offsets`, 2026-09-06): un eje
+    normal escribe un numero en `path`; uno enlazado escribe ademas en otras
+    rutas sumandoles su desplazamiento. Es lo que mueve la ventana de entrada
+    DE UNA PIEZA (09:30-10:00, 10:00-10:30, ...) con una sola dimension de
+    rejilla — N corridas en vez de N**2. Sin esas claves el comportamiento es
+    exactamente el de siempre.
+    """
+    for dim, val in enumerate(point):
+        pc = param_configs[dim]
+        _set_nested_value(modified_def, pc["path"], val)
+        linked = pc.get("linked_paths") or []
+        offsets = pc.get("linked_offsets") or []
+        for j, ruta in enumerate(linked):
+            off = float(offsets[j]) if j < len(offsets) else 0.0
+            _set_nested_value(modified_def, ruta, val + off)
 
 
 def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
@@ -497,8 +831,7 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
     backtest_params = ctx["backtest_params"]
 
     modified_def = copy.deepcopy(ctx["base_def"])
-    for dim, val in enumerate(point):
-        _set_nested_value(modified_def, param_configs[dim]["path"], val)
+    apply_point_to_def(modified_def, param_configs, point)
 
     # If optimizing preconditions, we must re-evaluate them for this point
     if ctx["opt_preconds"]:
@@ -525,6 +858,7 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
             custom_start_time=backtest_params.get("custom_start_time"),
             custom_end_time=backtest_params.get("custom_end_time"),
             locates_cost=backtest_params.get("locates_cost", 0),
+            max_locates=backtest_params.get("max_locates", 0),
             look_ahead_prevention=backtest_params.get("look_ahead_prevention", True),
             day_group_iter=iter(point_groups),
             n_groups_hint=len(point_groups),
@@ -534,6 +868,12 @@ def _run_grid_point(idx: int, ctx: dict, signal_cache: dict | None):
         metric_val = agg.get(ctx["metric_key"], 0)
         detail = {
             "sharpe": agg.get("avg_sharpe", 0),
+            # PnL total del punto. Va aparte de `expectancy` a proposito: la
+            # expectancy del motor divide el PnL BRUTO de locates, asi que en
+            # una estrategia en corto con alquiler caro sobreestima. Con esto,
+            # quien pinta el punto puede elegir entre las dos lecturas
+            # (total_pnl / total_trades = EV neto de comisiones Y locates).
+            "total_pnl": agg.get("total_pnl", 0),
             "total_return": agg.get("total_return_pct", 0),
             "max_drawdown": agg.get("max_drawdown_pct", 0),
             "profit_factor": agg.get("avg_profit_factor", 0),
@@ -624,10 +964,11 @@ def run_optimization_grid(
             # Check if this is an integer parameter
             is_int = False
             last_key = pc.get("path", "").split(".")[-1]
-            if last_key in {"period", "period2", "period3", "offset", "consecutive_count", 
-                            "time_hour", "time_minute", "days_lookback", "orb_minutes", 
-                            "time_from_hour", "time_from_minute", "range_minutes", 
-                            "deviationLevel", "sma_period", "lookback"}:
+            if last_key in _INT_PARAM_KEYS:
+                is_int = True
+            # Take profit por tiempo (minutos) o por hora (minutos desde
+            # medianoche): no existen los medios minutos.
+            if _param_unit_from_def(base_def, pc.get("path", "")) in ("minutes", "time_of_day"):
                 is_int = True
 
             if is_int:
@@ -960,20 +1301,30 @@ def run_optimization_grid(
 
     # Replace NaN with None for JSON serialization
     def clean(v):
+        # Recursivo desde el 2026-09-06: antes solo se limpiaba la rejilla de 2
+        # dimensiones. Con 1 eje (el barrido de la ventana de entrada) los NaN
+        # salian crudos y `NaN` no es JSON valido — el navegador reventaba al
+        # parsear, sin que el backend diera ningun error.
+        if isinstance(v, list):
+            return [clean(x) for x in v]
+        if isinstance(v, dict):
+            return {k: clean(x) for k, x in v.items()}
         if isinstance(v, float) and (np.isnan(v) or np.isinf(v)):
             return None
         return v
 
     return {
         "params": [
-            {"id": pc["id"], "label": pc.get("label", pc["id"]), "values": axes[i]}
+            {"id": pc["id"], "label": pc.get("label", pc["id"]), "values": axes[i],
+             # 'time_of_day' hace que el eje se pinte como HH:MM en vez de como
+             # "570". None = numero pelado, como toda la vida.
+             "unit": _param_unit_from_def(base_def, pc.get("path", ""))}
             for i, pc in enumerate(param_configs)
         ],
-        "grid": [[clean(v) for v in row] for row in results_grid.tolist()]
-                 if n_dims == 2 else results_grid.tolist(),
+        "grid": clean(results_grid.tolist()),
         "metric": metric,
         "metric_label": metric,
-        "details": [d if d else {} for d in details_flat],
+        "details": [clean(d) if d else {} for d in details_flat],
         "shape": list(shape),
         "plateau_analysis": plateau,
         "plateau_analyses": plateau_analyses,

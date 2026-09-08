@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import BacktestPanel, { type BacktestPanelParams } from "@/components/backtester/BacktestPanel";
 import InlineStrategyBuilder, { type Draft } from "@/components/backtester/InlineStrategyBuilder";
 import InlineDatasetBuilder from "@/components/backtester/InlineDatasetBuilder";
-import StrategyModeSelector from "@/components/strategy-builder/StrategyModeSelector";
 import { GraduationCap } from "lucide-react";
 import { useUser } from "@/lib/authCompat";
 import { usePostHog } from "posthog-js/react";
@@ -17,9 +16,7 @@ import {
   RESET_CONFIG,
   FILL_CONFIG_EVENT,
   FILL_DATASET_EVENT,
-  WIZARD_SET_STEP_EVENT,
 } from "@/components/backtester/helper/exampleBacktest";
-import WizardStrategyBuilder from "@/components/strategy-builder/WizardStrategyBuilder";
 import MetricsCard from "@/components/backtester/MetricsCard";
 import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
@@ -37,6 +34,7 @@ import {
   fetchBacktestEquity,
   fetchDayCandles,
   fetchMultiDayCandles,
+  mensajeDeError,
   type BacktestResult,
   type BacktestJobResponse,
   type DayCandles,
@@ -66,7 +64,9 @@ function BacktestUsageIndicator() {
 }
 
 export default function Home() {
-  const [mode, setMode] = useState<"config" | "builder_choice" | "builder" | "wizard" | "dataset">("config");
+  // El wizard y su pantalla de eleccion se quitaron el 2026-08-31: solo se usaba
+  // el modo libre, asi que "Nueva Estrategia" y "Configurar" entran directos.
+  const [mode, setMode] = useState<"config" | "builder" | "dataset">("config");
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
   // ── Edgie assistant integration (AssistantBus) ───────────────
   useAssistantAction({
@@ -105,7 +105,7 @@ export default function Home() {
   const [strategySessionKey, setStrategySessionKey] = useState<string>("init");
 
   useEffect(() => {
-    if (mode !== 'builder' && mode !== 'wizard' && mode !== 'dataset') {
+    if (mode !== 'builder' && mode !== 'dataset') {
       setDrawerExpanded(false);
     }
   }, [mode]);
@@ -172,9 +172,6 @@ export default function Home() {
     fillConfig: () => {
       configFilledRef.current = true;
       window.dispatchEvent(new CustomEvent(FILL_CONFIG_EVENT, { detail: EXAMPLE_CONFIG }));
-    },
-    setWizardStep: (step: string) => {
-      window.dispatchEvent(new CustomEvent(WIZARD_SET_STEP_EVENT, { detail: { step } }));
     },
     // Telemetría del tour: PostHog sabe QUIÉN lo consume (user_id/email/tier) y
     // HASTA DÓNDE llega (eventos de inicio, paso visto y fin completado/saltado).
@@ -245,6 +242,7 @@ export default function Home() {
         custom_start_time: draftStrategy.custom_start_time || activeCustomStartTime,
         custom_end_time: draftStrategy.custom_end_time || activeCustomEndTime,
         ...((draftStrategy as any).pyramiding ? { pyramiding: (draftStrategy as any).pyramiding } : {}),
+        ...((draftStrategy as any).advanced_model ? { advanced_model: (draftStrategy as any).advanced_model } : {}),
       });
 
       if (isExisting) {
@@ -381,6 +379,8 @@ export default function Home() {
           market_sessions: def.market_sessions || ["rth"],
           custom_start_time: def.custom_start_time,
           custom_end_time: def.custom_end_time,
+          ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
         } as any;
       }
       return prev;
@@ -485,6 +485,7 @@ export default function Home() {
         // La clave solo viaja si el draft la trae: sin piramidar, la definicion
         // queda byte-identica a la de siempre (regla nº1).
         ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
+        ...((draft as any).advanced_model ? { advanced_model: (draft as any).advanced_model } : {}),
       }
     });
 
@@ -504,6 +505,7 @@ export default function Home() {
       custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time) : undefined,
       monthly_expenses: p?.monthly_expenses,
       locates_cost: p?.locates_cost,
+      max_locates: p?.max_locates,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -532,6 +534,7 @@ export default function Home() {
           // backend: strategy_engine hace strategy_def.get("pyramiding") y se
           // quedaba vacio, apagando pyramid_mode en SILENCIO (sin error).
           ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
+        ...((draft as any).advanced_model ? { advanced_model: (draft as any).advanced_model } : {}),
         },
         init_cash: p?.init_cash ?? 10000,
         risk_r: p?.risk_r ?? 100,
@@ -547,6 +550,7 @@ export default function Home() {
         custom_start_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_start_time || p?.custom_start_time || undefined) : undefined,
         custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time || undefined) : undefined,
         locates_cost: p?.locates_cost,
+        max_locates: p?.max_locates,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
       }));
@@ -563,8 +567,10 @@ export default function Home() {
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
-        const axiosErr = err as { response?: { data?: { detail?: string } } };
-        msg = axiosErr.response?.data?.detail || "Error del servidor";
+        // `detail` puede ser texto U OBJETO (el guardia de memoria manda
+        // {code, message, available_gb}). Antes se asumia texto y ese 503
+        // llegaba al usuario como un aviso vacio.
+        msg = mensajeDeError(err);
       } else if (err && typeof err === "object" && "message" in err) {
         const errMsg = (err as { message: string }).message;
         if (errMsg.includes("timeout")) {
@@ -680,6 +686,7 @@ export default function Home() {
             custom_start_time: def.custom_start_time || params.custom_start_time,
             custom_end_time: def.custom_end_time || params.custom_end_time,
             ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
           } as any;
           await handleRunWithDraft(draft);
           return;
@@ -723,6 +730,9 @@ export default function Home() {
         ...((targetDraft.definition?.pyramiding || targetDraft.pyramiding)
           ? { pyramiding: targetDraft.definition?.pyramiding || targetDraft.pyramiding }
           : {}),
+        ...((targetDraft.definition?.advanced_model || (targetDraft as any).advanced_model)
+          ? { advanced_model: targetDraft.definition?.advanced_model || (targetDraft as any).advanced_model }
+          : {}),
       } as any;
       await handleRunWithDraft(draft);
       return;
@@ -756,6 +766,7 @@ export default function Home() {
       custom_end_time: params.custom_end_time,
       monthly_expenses: params.monthly_expenses,
       locates_cost: (params as any).locates_cost,
+      max_locates: (params as any).max_locates,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,
@@ -821,6 +832,8 @@ export default function Home() {
             market_sessions: def.market_sessions || ["rth"],
             custom_start_time: def.custom_start_time,
             custom_end_time: def.custom_end_time,
+            ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
           } as any);
         } else {
           setDraftStrategy(null);
@@ -831,8 +844,10 @@ export default function Home() {
     } catch (err: unknown) {
       let msg = "Error desconocido";
       if (err && typeof err === "object" && "response" in err) {
-        const axiosErr = err as { response?: { data?: { detail?: string } } };
-        msg = axiosErr.response?.data?.detail || "Error del servidor";
+        // `detail` puede ser texto U OBJETO (el guardia de memoria manda
+        // {code, message, available_gb}). Antes se asumia texto y ese 503
+        // llegaba al usuario como un aviso vacio.
+        msg = mensajeDeError(err);
       } else if (err && typeof err === "object" && "message" in err) {
         const errMsg = (err as { message: string }).message;
         if (errMsg.includes("timeout")) {
@@ -932,7 +947,13 @@ export default function Home() {
           }
         }
         if (saved.selectedDay !== undefined) setSelectedDay(saved.selectedDay);
-        if (saved.mode) setMode(saved.mode);
+        // Sesiones guardadas ANTES de quitar el wizard pueden traer 'wizard' o
+        // 'builder_choice'; sin esto la pagina se quedaria en un modo que ya no
+        // existe y el cajon no se abriria nunca.
+        if (saved.mode) {
+          const m = (saved.mode === 'wizard' || saved.mode === 'builder_choice') ? 'builder' : saved.mode;
+          setMode(m);
+        }
         if (saved.builderDraft) setBuilderDraft(saved.builderDraft);
       }
     } catch (e) {
@@ -1144,6 +1165,21 @@ export default function Home() {
     const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
     const uniqueDays = new Set(isTrades.map(t => t.date)).size;
 
+    // Streaks (trades and days) recomputed for the IS window — before, they
+    // silently inherited the full-period values with the filter active.
+    // Same convention as the backend: pnl > 0 wins (flat counts as loss),
+    // days net of locates, only days with trades.
+    let isMaxW = 0, isMaxL = 0, curW = 0, curL = 0;
+    isTrades.forEach(t => {
+      if (t.pnl > 0) { curW += 1; curL = 0; isMaxW = Math.max(isMaxW, curW); }
+      else { curL += 1; curW = 0; isMaxL = Math.max(isMaxL, curL); }
+    });
+    let isMaxWDays = 0, isMaxLDays = 0, curWD = 0, curLD = 0;
+    Array.from(dailyPnls.keys()).sort().forEach(date => {
+      if ((dailyPnls.get(date) ?? 0) > 0) { curWD += 1; curLD = 0; isMaxWDays = Math.max(isMaxWDays, curWD); }
+      else { curLD += 1; curWD = 0; isMaxLDays = Math.max(isMaxLDays, curLD); }
+    });
+
     const isMetrics = {
       ...result.aggregate_metrics,
       total_days: uniqueDays,
@@ -1164,6 +1200,10 @@ export default function Home() {
         : 0,
       calmar_ratio: maxDd !== 0 ? totalReturnPct / Math.abs(maxDd) : 0,
       dd_return_ratio: totalReturnPct !== 0 ? Math.abs(maxDd) / totalReturnPct : 0,
+      max_consecutive_wins: isMaxW,
+      max_consecutive_losses: isMaxL,
+      max_consecutive_winning_days: isMaxWDays,
+      max_consecutive_losing_days: isMaxLDays,
     };
 
     // Filter global_equity_expenses if present
@@ -1259,9 +1299,9 @@ export default function Home() {
                 }
                 setLoadedStrategyId(null);
                 setMode((prev) => {
-                  const isOpening = !(prev === 'builder' || prev === 'builder_choice' || prev === 'wizard');
+                  const isOpening = prev !== 'builder';
                   if (isOpening) {
-                    return 'builder_choice';
+                    return 'builder';
                   }
                   return 'config';
                 });
@@ -1280,7 +1320,7 @@ export default function Home() {
 
                 let wasOpen = false;
                 setMode((prev) => {
-                  wasOpen = (prev === 'builder' || prev === 'wizard' || prev === 'builder_choice');
+                  wasOpen = (prev === 'builder');
                   if (wasOpen) {
                     return 'config';
                   }
@@ -1292,10 +1332,10 @@ export default function Home() {
                 }
 
                 if (strategyId === "draft" || strategyId.startsWith("draft_") || strategyId === "wizard_draft" || strategyId.startsWith("wizard_draft_")) {
-                  setMode('builder_choice');
+                  setMode('builder');
                 } else {
                   if (strategyId === loadedStrategyId && builderDraft) {
-                    setMode('builder_choice');
+                    setMode('builder');
                     return;
                   }
                   try {
@@ -1342,13 +1382,15 @@ export default function Home() {
                       market_sessions: def.market_sessions || ["rth"],
                       custom_start_time: def.custom_start_time,
                       custom_end_time: def.custom_end_time,
+                      ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
                     } as any);
                     
                     setActiveSessions(def.market_sessions || ["rth"]);
                     setActiveCustomStartTime(def.custom_start_time || "09:30");
                     setActiveCustomEndTime(def.custom_end_time || "16:00");
                     
-                    setMode('builder_choice');
+                    setMode('builder');
                   } catch (err) {
                     alert("Error al cargar la estrategia para configurar.");
                   }
@@ -1675,6 +1717,7 @@ export default function Home() {
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
                           ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
+                          ...((strategyToSave as any).advanced_model ? { advanced_model: (strategyToSave as any).advanced_model } : {}),
                         } as any);
                         const newStrategyId = savedStrategy.id;
 
@@ -1738,6 +1781,7 @@ export default function Home() {
                           custom_start_time: def.custom_start_time,
                           custom_end_time: def.custom_end_time,
                           ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
                         } as any;
                         setBuilderDraft(savedDraft);
 
@@ -1798,7 +1842,8 @@ export default function Home() {
                       ? <span>Se actualizará la configuración de la estrategia <strong>{strategyToSave?.name}</strong> con las nuevas variables y se asociará el nuevo dataset.</span>
                       : <span>Se actualizará la configuración de la estrategia <strong>{strategyToSave?.name}</strong> con las nuevas variables configuradas.</span>}
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       disabled={isSavingStrategy}
                       onClick={() => setShowRewriteModal(false)}
@@ -1859,6 +1904,7 @@ export default function Home() {
                           custom_start_time: strategyToSave.custom_start_time,
                           custom_end_time: strategyToSave.custom_end_time,
                           ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
+                          ...((strategyToSave as any).advanced_model ? { advanced_model: (strategyToSave as any).advanced_model } : {}),
                         } as any);
 
                         // Persist backtest results linked to this strategy
@@ -1920,6 +1966,8 @@ export default function Home() {
                           market_sessions: def.market_sessions || ["rth"],
                           custom_start_time: def.custom_start_time,
                           custom_end_time: def.custom_end_time,
+                          ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+          ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
                         } as any;
                         setBuilderDraft(updatedDraft);
 
@@ -1945,8 +1993,33 @@ export default function Home() {
                     }}
                   >
                     {isSavingStrategy ? "Guardando..." : "Sí"}
-                  </button>
-                </div>
+                    </button>
+                    </div>
+                    <button
+                      disabled={isSavingStrategy}
+                      onClick={() => {
+                        if (!strategyToSave || isSavingStrategy) return;
+                        // "Guardar como nueva": reabre el modal de guardado (que
+                        // CREA via createStrategy) con un nombre sugerido — la
+                        // estrategia original queda intacta en el baúl.
+                        setSaveName(strategyToSave.name ? `${strategyToSave.name} (copia)` : "");
+                        setShowRewriteModal(false);
+                        setShowSaveModal(true);
+                      }}
+                      style={{
+                        width: '100%', padding: '7px 0', borderRadius: 5,
+                        fontSize: 11, fontWeight: 700, letterSpacing: 1.2,
+                        textTransform: 'uppercase', cursor: 'pointer',
+                        backgroundColor: 'transparent',
+                        border: '0.5px solid var(--color-ec-copper)',
+                        color: 'var(--color-ec-copper)',
+                        fontFamily: 'var(--color-ec-sans)',
+                        opacity: isSavingStrategy ? 0.5 : 1,
+                      }}
+                    >
+                      Guardar como nueva estrategia
+                    </button>
+                  </div>
               </div>
             </div>
             );
@@ -1954,7 +2027,7 @@ export default function Home() {
         </main>
 
         {/* Backdrop blur overlay for the main content area */}
-        {(mode === 'builder_choice' || mode === 'builder' || mode === 'wizard' || mode === 'dataset') && (
+        {(mode === 'builder' || mode === 'dataset') && (
           <div
             onClick={() => { if (!helperActive) setMode('config'); }}
             style={{
@@ -1976,88 +2049,40 @@ export default function Home() {
           top: 0,
           left: 280,
           bottom: 0,
-          width: (mode === 'builder' || mode === 'wizard') && drawerExpanded ? 680 : 550,
+          width: mode === 'builder' && drawerExpanded ? 680 : 550,
           backgroundColor: 'var(--color-ec-bg-sidebar)',
           borderRight: '0.5px solid var(--color-ec-border)',
           zIndex: 40,
-          transform: (mode === 'builder_choice' || mode === 'builder' || mode === 'wizard') ? 'translateX(0)' : 'translateX(-100%)',
+          transform: mode === 'builder' ? 'translateX(0)' : 'translateX(-100%)',
           transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1), width 300ms cubic-bezier(0.4, 0, 0.2, 1)',
           boxShadow: '10px 0 30px rgba(0, 0, 0, 0.15)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
         }}>
-          <div
-            key={strategySessionKey}
-            style={{
-              display: 'flex',
-              width: '200%',
-              height: '100%',
-              transform: (mode === 'builder' || mode === 'wizard') ? 'translateX(-50%)' : 'translateX(0)',
-              transition: 'transform 350ms cubic-bezier(0.16, 1, 0.3, 1)',
-            }}
-          >
-            {/* Panel 1: Mode Selector */}
-            <div style={{
-              width: '50%',
-              height: '100%',
-              flexShrink: 0,
-              opacity: mode === 'builder_choice' ? 1 : 0,
-              transition: 'opacity 280ms ease-out',
-            }}>
-              <StrategyModeSelector
+          {/* Un solo panel. Hasta el 2026-08-31 esto era un carrusel de dos
+              (pantalla de eleccion + constructor) que se deslizaba; al quitar el
+              wizard sobra el deslizamiento y el constructor ocupa el cajon
+              entero. `onBack` ahora cierra el cajon, que antes volvia a la
+              pantalla de eleccion. */}
+          <div key={strategySessionKey} style={{ width: '100%', height: '100%' }}>
+            {mode === 'builder' && (
+              <InlineStrategyBuilder
                 onBack={() => setMode('config')}
-                onSelectFree={() => setMode('builder')}
-                onSelectWizard={() => setMode('wizard')}
+                onTest={async (draft) => {
+                  setDraftStrategy(draft);
+                  setMode('config');
+                  await handleRunWithDraft(draft);
+                }}
+                marketSessions={activeSessions}
+                customStartTime={activeCustomStartTime}
+                customEndTime={activeCustomEndTime}
+                onDraftChange={handleDraftChange}
+                initialStrategy={builderDraft || activeStrategy || undefined}
+                onExpandedChange={setDrawerExpanded}
+                defaultDatasetId={selectedDatasetId}
               />
-            </div>
-            {/* Panel 2: Strategy Builder OR Wizard */}
-            <div style={{
-              width: '50%',
-              height: '100%',
-              flexShrink: 0,
-              opacity: (mode === 'builder' || mode === 'wizard') ? 1 : 0,
-              transition: 'opacity 280ms ease-out',
-            }}>
-              {mode === 'wizard' && (
-                <div style={{ height: '100%' }}>
-                  <WizardStrategyBuilder
-                    onBack={() => setMode('builder_choice')}
-                    onTest={async (draft) => {
-                      setDraftStrategy(draft as Draft);
-                      setMode('config');
-                      await handleRunWithDraft(draft as Draft);
-                    }}
-                    onDraftChange={handleDraftChange}
-                    marketSessions={activeSessions}
-                    customStartTime={activeCustomStartTime}
-                    customEndTime={activeCustomEndTime}
-                    initialStrategy={builderDraft || activeStrategy || undefined}
-                    onExpandedChange={setDrawerExpanded}
-                    defaultDatasetId={selectedDatasetId}
-                  />
-                </div>
-              )}
-              {mode === 'builder' && (
-                <div style={{ height: '100%' }}>
-                  <InlineStrategyBuilder
-                    onBack={() => setMode('builder_choice')}
-                    onTest={async (draft) => {
-                      setDraftStrategy(draft);
-                      setMode('config');
-                      await handleRunWithDraft(draft);
-                    }}
-                    marketSessions={activeSessions}
-                    customStartTime={activeCustomStartTime}
-                    customEndTime={activeCustomEndTime}
-                    onDraftChange={handleDraftChange}
-                    initialStrategy={builderDraft || activeStrategy || undefined}
-                    onExpandedChange={setDrawerExpanded}
-                    defaultDatasetId={selectedDatasetId}
-                  />
-                </div>
-              )}
-            </div>
+            )}
           </div>
         </div>
 

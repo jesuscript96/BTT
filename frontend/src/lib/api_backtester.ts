@@ -36,6 +36,30 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+/** El texto legible de un error del backend, venga como venga.
+ *
+ * FastAPI permite `HTTPException(detail=...)` con texto O con un objeto, y aquí
+ * se usan las dos formas. El guardia de memoria del backtest, por ejemplo,
+ * manda `{code, message, available_gb}`. Todo el frontend daba por hecho que
+ * `detail` era texto, así que ese 503 llegaba como un objeto: la consola lo
+ * pintaba `Response Data: {}` y el aviso al usuario salía vacío. El backend
+ * SIEMPRE explicaba el motivo; era el frontend quien lo tiraba.
+ */
+export function mensajeDeError(error: unknown, porDefecto = "Error del servidor"): string {
+  const data = (error as { response?: { data?: unknown } })?.response?.data as
+    | { detail?: unknown; message?: unknown }
+    | undefined;
+  const detail = data?.detail;
+  if (typeof detail === "string" && detail) return detail;
+  if (detail && typeof detail === "object") {
+    const m = (detail as { message?: unknown }).message;
+    if (typeof m === "string" && m) return m;
+  }
+  if (typeof data?.message === "string" && data.message) return data.message;
+  const m = (error as { message?: unknown })?.message;
+  return typeof m === "string" && m ? m : porDefecto;
+}
+
 api.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -56,6 +80,9 @@ api.interceptors.response.use(
         `Method: ${error.config?.method?.toUpperCase() || "N/A"}\n` +
         `Status: ${error.response?.status || "N/A"}\n` +
         `Message: ${error.message || "N/A"}\n` +
+        // El motivo, en TEXTO. Como objeto la consola lo colapsaba a `{}` y
+        // parecia que el backend no habia dicho nada.
+        `Motivo: ${mensajeDeError(error, "(el backend no dio detalle)")}\n` +
         `Response Data:`,
         error.response?.data || "No data"
       );
@@ -123,6 +150,9 @@ export interface TradeRecord {
   // entry_price; con piramidación, entry_price es el fill REAL de la entrada
   // (lo que se pinta en el gráfico) y este es el que gobierna el PnL.
   avg_entry_price?: number;
+  /** Precio del Stop Loss (0 si el trade no llevaba). El gráfico de análisis
+   *  por trade lo pinta como línea discontinua sobre las velas. */
+  stop_loss?: number;
   // Detalle cronológico de cada ejecución de la posición: la entrada, los
   // añadidos y reducciones de piramidación, los take profit parciales y el
   // cierre. Solo viene cuando hubo MÁS que entrada + cierre; el gráfico lo usa
@@ -209,6 +239,8 @@ export interface AggregateMetrics {
   avg_loss: number;
   max_consecutive_wins: number;
   max_consecutive_losses: number;
+  max_consecutive_winning_days: number;
+  max_consecutive_losing_days: number;
   expectancy: number;
   payoff_ratio: number;
   avg_r_per_day: number;
@@ -250,6 +282,18 @@ export interface BacktestResult {
   global_drawdown: DrawdownPoint[];
   /** Sesiones cortadas por el limite diario. Vacio o ausente si esta apagado. */
   daily_limit_log?: DailyLimitHit[];
+  /** Reconciliación candidatos vs ejecutados. El motor la calcula SIEMPRE; si
+   *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
+   *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
+  data_completeness?: DataCompleteness;
+}
+
+export interface DataCompleteness {
+  expected_ticker_days: number;
+  executed_ticker_days: number;
+  missing_ticker_days: number;
+  completeness_pct: number;
+  missing_sample: string[];
 }
 
 export interface WhatIfResult {
@@ -257,6 +301,12 @@ export interface WhatIfResult {
   global_equity: GlobalEquityPoint[];
   global_drawdown: DrawdownPoint[];
   aggregate_metrics: AggregateMetrics;
+  /** Resultados por ticker-día reconstruidos con los trades que quedan, para
+   *  el calendario del What-if. Los arma el BACKEND y no la página para que el
+   *  calendario del What-if y el de siempre no puedan decir cosas distintas
+   *  del mismo día. Sharpe, sortino y el drawdown intradía vienen en `null`:
+   *  salen de la curva del día, que aquí ya no existe. */
+  day_results?: DayResult[];
 }
 
 export interface MonteCarloPercentileCurve {
@@ -341,6 +391,9 @@ export async function runBacktest(params: {
   custom_end_time?: string;
   locates_cost?: number;
   locate_type?: "PERCENT" | "FLAT";
+  // Tope de locates: máximo de paquetes de 100 acciones que se alquilan por
+  // ticker-día. 0 = sin tope. Recorta el tamaño en CORTO a max_locates * 100.
+  max_locates?: number;
   look_ahead_prevention?: boolean;
 }): Promise<BacktestResult> {
   const { data } = await api.post("/backtest", params);
@@ -364,6 +417,7 @@ export async function runBacktestWithDefinition(params: {
   custom_start_time?: string;
   custom_end_time?: string;
   locates_cost?: number;
+  max_locates?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
 }): Promise<BacktestResult> {
@@ -466,6 +520,11 @@ export async function fetchMultiDayCandles(
 
 // --- Optimization Surface ---
 
+/** Unidad de un parámetro optimizable. `minutes` = minutos de reloj (take
+ *  profit por tiempo); `time_of_day` = minutos desde medianoche, que se pintan
+ *  como HH:MM (take profit por hora de cierre). null = número pelado. */
+export type OptimizationParamUnit = "minutes" | "time_of_day" | null;
+
 export interface OptimizationParam {
   id: string;
   label: string;
@@ -475,6 +534,7 @@ export interface OptimizationParam {
   min: number;
   max: number;
   step: number;
+  unit?: OptimizationParamUnit;
 }
 
 export interface OptimizationParamConfig {
@@ -484,6 +544,13 @@ export interface OptimizationParamConfig {
   min: number;
   max: number;
   steps: number;
+  /** Valores exactos del eje. Si va, manda sobre min/max/steps. */
+  values?: number[];
+  /** Ejes ENLAZADOS: el mismo punto se escribe también en estas rutas,
+   *  sumándoles `linked_offsets`. Es lo que mueve la ventana horaria de
+   *  entrada DE UNA PIEZA (09:30-10:00, 10:00-10:30, …) con un solo eje. */
+  linked_paths?: string[];
+  linked_offsets?: number[];
 }
 
 export interface PlateauAnalysis {
@@ -509,7 +576,7 @@ export interface PlateauAnalysis {
 }
 
 export interface OptimizationResult {
-  params: { id: string; label: string; values: number[] }[];
+  params: { id: string; label: string; values: number[]; unit?: OptimizationParamUnit }[];
   grid: number[][];
   metric: string;
   metric_label: string;
@@ -547,6 +614,7 @@ export async function runOptimizationSurface(params: {
   custom_start_time?: string;
   custom_end_time?: string;
   locates_cost?: number;
+  max_locates?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;

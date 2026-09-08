@@ -93,6 +93,11 @@ export default function Home() {
     // Convert Advanced Rules to query parameters
     // Map metric names to database columns and parameter names
     // Map metric names to database columns and parameter names
+    // Las etiquetas tienen que ser IDENTICAS a las de METRIC_MAP en
+    // backend/app/routers/data.py, letra por letra: el backend las busca con
+    // `.get()`. Antes se limpiaban en silencio las que no casaban y la busqueda
+    // salia SIN FILTRAR; hoy responde 400, pero lo que no se ofrece no puede
+    // fallar. Ver el comentario largo en FilterBuilder.tsx.
     const metricToParamMap: Record<string, { column: string, paramPrefix: string }> = {
       // Price metrics
       "Open Price": { column: "open", paramPrefix: "open" },
@@ -101,14 +106,7 @@ export default function Home() {
       "Pre-Market High Price": { column: "pm_high", paramPrefix: "pm_high" },
       "High Spike Price": { column: "rth_high", paramPrefix: "high_spike_price" },
       "Low Spike Price": { column: "rth_low", paramPrefix: "low_spike_price" },
-      "M1 Price": { column: "m1_price", paramPrefix: "m1_price" }, // Assuming these exist if not, revert to close
-      "M5 Price": { column: "m5_price", paramPrefix: "m5_price" },
-      "M15 Price": { column: "m15_price", paramPrefix: "m15_price" },
-      "M30 Price": { column: "m30_price", paramPrefix: "m30_price" },
-      "M60 Price": { column: "m60_price", paramPrefix: "m60_price" },
-      "M90 Price": { column: "m90_price", paramPrefix: "m90_price" },
-      "M120 Price": { column: "m120_price", paramPrefix: "m120_price" },
-      "M180 Price": { column: "m180_price", paramPrefix: "m180_price" },
+      // Retirados los "M1..M180 Price": el precio a los X minutos no se guarda.
 
       // Volume metrics
       "EOD Volume": { column: "volume", paramPrefix: "volume" },
@@ -123,17 +121,24 @@ export default function Home() {
 
       // Volatility metrics
       "RTH Range %": { column: "rth_range_pct", paramPrefix: "rth_range_pct" },
-      "High Spike %": { column: "rth_run_pct", paramPrefix: "high_spike_pct" }, // Using rth_run_pct as proxy logic
-      "Low Spike %": { column: "rth_range_pct", paramPrefix: "low_spike_pct" }, // using rth_range_pct as proxy logic
-      "M15 High Spike %": { column: "m15_high_spike_pct", paramPrefix: "m15_high_spike_pct" },
-      "M15 Low Spike %": { column: "m15_low_spike_pct", paramPrefix: "m15_low_spike_pct" },
+      // Retirados "High Spike %" y "Low Spike %": apuntaban a rth_run_pct y
+      // rth_range_pct, que ya estan aqui con su nombre. Y engañaban — Jaume,
+      // 5-sep-2026: el «low spike» es el menor de los spikes del precio, NO el
+      // rango de la sesion, que es lo que mide rth_range_pct. Las MX Spike no
+      // se calcularon nunca.
 
       // Return metrics
       "Day Return %": { column: "day_return_pct", paramPrefix: "day_return_pct" },
       "M15 Return %": { column: "m15_return_pct", paramPrefix: "m15_return_pct" },
       "M30 Return %": { column: "m30_return_pct", paramPrefix: "m30_return_pct" },
       "M60 Return %": { column: "m60_return_pct", paramPrefix: "m60_return_pct" },
-      "Return at Close %": { column: "return_close_pct", paramPrefix: "return_close_pct" },
+      "M180 Return %": { column: "m180_return_pct", paramPrefix: "m180_return_pct" },
+      // "Return at Close %" retirado: hoy es "Day Return %".
+
+      // Time metrics
+      "HOD Time": { column: "hod_time", paramPrefix: "hod_time" },
+      "LOD Time": { column: "lod_time", paramPrefix: "lod_time" },
+      "PM High Time": { column: "pm_high_time", paramPrefix: "pm_high_time" },
     };
 
     // Process Advanced Rules

@@ -30,6 +30,19 @@ git push origin staging          # (tras confirmación)
 ## Prohibido
 - Tocar `main` (push / commit / merge). Es producción con clientes de pago.
 - Push / commit directo a `develop`.
+- **🚨 Tocar el bot de avisos en vivo o la página de Alertas.** Ni modificarlos,
+  ni arrancarlos, ni configurarlos, **ni descargarlos para probarlos**. Los
+  llevan Jaume y Sailor en exclusiva por ahora. Dos motivos que no se arreglan
+  teniendo cuidado: los avisos van a un Telegram con el que Jaume **opera de
+  verdad**, y la cuenta de datos en vivo **admite una sola conexión** — si
+  arrancas el bot en tu equipo dejas sordo el suyo y ninguno de los dos ve un
+  error. Ficheros afectados y la única excepción (`market_frame.py`, compartido
+  con el backtester): sección «Zona cerrada» de `AGENTS.md`.
+
+  Cuando te llegue trabajo de Sailor por `staging`, esos ficheros vendrán en el
+  merge — es normal y no hay que hacer nada con ellos. **Traerlos no es tocarlos:
+  no los arranques ni los configures.** Si algo de ahí te bloquea una tarea
+  legítima, díselo a Jaume; la decisión es suya, no del agente.
 
 ## Seguridad en local (imprescindible)
 - `backend/.env` con `DISABLE_GCS_SYNC=true` y `LIVE_SCREENER_ENABLED=false`.

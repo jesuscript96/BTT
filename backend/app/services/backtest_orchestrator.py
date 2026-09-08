@@ -9,6 +9,8 @@ import pandas as pd
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
+
+from app.services.advanced_backtest import AdvancedModelError
 from pydantic import BaseModel
 
 from app.services.data_service import (
@@ -45,6 +47,14 @@ class BacktestRequest(BaseModel):
     risk_type: str = "FIXED"
     fixed_ratio_delta: float = 500.0
     size_by_sl: bool = False
+    hybrid_stop: bool = False
+    hybrid_black_swan_pct: float | None = None
+    hybrid_max_loss_pct: float | None = None
+    # Estilo Cangrejo. Como el hibrido: normalmente viaja en la estrategia, pero
+    # la peticion puede forzarlo (nunca apagarlo).
+    cangrejo_active: bool = False
+    cangrejo_max_sl_dist_pct: float | None = None
+    cangrejo_max_loss_at_sl_pct: float | None = None
     fees: float = 0.0
     fee_type: str = "PERCENT"
     monthly_expenses: float = 0.0
@@ -59,6 +69,10 @@ class BacktestRequest(BaseModel):
     # cuesta un locate). Antes "PERCENT" (% del riesgo) — semántica corregida
     # por decisión de producto (Jaume 2026-07-07). backtest_service ya default FLAT.
     locate_type: str = "FLAT"
+    # Tope de locates: máximo de paquetes de 100 acciones que se está dispuesto
+    # a alquilar por ticker-día. 0 = sin tope. Limita el tamaño en CORTO a
+    # max_locates * 100 acciones (Jaume 2026-08-26).
+    max_locates: int = 0
     look_ahead_prevention: bool = True
 
 
@@ -151,6 +165,22 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
 
     strategy_rm = strategy.get("definition", {}).get("risk_management", {})
     size_by_sl = req.size_by_sl or strategy_rm.get("size_by_sl", False)
+    # El hibrido viaja en la estrategia; la peticion puede forzarlo pero no
+    # apagarlo, igual que con `size_by_sl`.
+    hybrid_stop = req.hybrid_stop or bool(strategy_rm.get("hybrid_stop", False))
+    hybrid_black_swan_pct = (req.hybrid_black_swan_pct
+                             if req.hybrid_black_swan_pct is not None
+                             else strategy_rm.get("hybrid_black_swan_pct"))
+    hybrid_max_loss_pct = (req.hybrid_max_loss_pct
+                           if req.hybrid_max_loss_pct is not None
+                           else strategy_rm.get("hybrid_max_loss_pct"))
+    cangrejo_active = req.cangrejo_active or bool(strategy_rm.get("cangrejo_active", False))
+    cangrejo_max_sl_dist_pct = (req.cangrejo_max_sl_dist_pct
+                                if req.cangrejo_max_sl_dist_pct is not None
+                                else strategy_rm.get("cangrejo_max_sl_dist_pct"))
+    cangrejo_max_loss_at_sl_pct = (req.cangrejo_max_loss_at_sl_pct
+                                   if req.cangrejo_max_loss_at_sl_pct is not None
+                                   else strategy_rm.get("cangrejo_max_loss_at_sl_pct"))
 
     if size_by_sl:
         rm = strategy_rm
@@ -174,6 +204,27 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         strategy_def = strategy["definition"]
         preconditions = strategy_def.get("postgap_preconditions", [])
         apply_day = strategy_def.get("apply_day", "gap_day")
+
+        # Modelos avanzados: se valida AQUI, antes de cargar un solo dato.
+        # Una configuracion imposible (fechas solapadas, sin features) tiene que
+        # fallar en un segundo, no despues de varios minutos de lago.
+        from app.services.advanced_backtest import parse_config as _parse_modelo
+        _sdef_modelo = strategy["definition"]
+        _cfg_modelo = _parse_modelo(_sdef_modelo.get("advanced_model")
+                                    if isinstance(_sdef_modelo, dict) else None)
+        if _cfg_modelo is not None:
+            # Y que la estrategia no se pise con el modelo: en modo «estrategia»
+            # las entradas las pone el, asi que una logica de entrada, la
+            # piramidacion o el swing serian dos sistemas compitiendo. Se para
+            # aqui, con el motivo escrito, antes de cargar nada.
+            from app.services.advanced_backtest import validate_strategy as _val_modelo
+            _val_modelo(_cfg_modelo, strategy_def)
+            # Las CUATRO fechas al log: si una ventana sale vacia, esto dice si
+            # el problema son las fechas o el rango global de la estrategia.
+            logger.info("[MODELO] modo=%s | entrena %s->%s | prueba %s->%s | umbral=%s | global %s->%s",
+                        _cfg_modelo["mode"], _cfg_modelo["train_from"], _cfg_modelo["train_to"],
+                        _cfg_modelo["test_from"], _cfg_modelo["test_to"],
+                        _cfg_modelo["threshold"], req.start_date, req.end_date)
 
         # ── PHASE 1: qualifying data (from local cache — fast) ──
         t_fetch = time.time()
@@ -362,14 +413,19 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         custom_start_time = req.custom_start_time or _sdef.get("custom_start_time")
         custom_end_time = req.custom_end_time or _sdef.get("custom_end_time")
 
-        results = run_backtest(
-            qualifying_df=qualifying,
+        _bt_kwargs = dict(
             strategy_def=strategy_def,
             init_cash=req.init_cash,
             risk_r=req.risk_r,
             risk_type=req.risk_type,
             fixed_ratio_delta=req.fixed_ratio_delta,
             size_by_sl=size_by_sl,
+            hybrid_stop=hybrid_stop,
+            hybrid_black_swan_pct=hybrid_black_swan_pct,
+            hybrid_max_loss_pct=hybrid_max_loss_pct,
+            cangrejo_active=cangrejo_active,
+            cangrejo_max_sl_dist_pct=cangrejo_max_sl_dist_pct,
+            cangrejo_max_loss_at_sl_pct=cangrejo_max_loss_at_sl_pct,
             fees=req.fees,
             fee_type=req.fee_type,
             slippage=req.slippage,
@@ -378,12 +434,49 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             custom_end_time=custom_end_time,
             locates_cost=req.locates_cost,
             locate_type=req.locate_type,
+            max_locates=req.max_locates,
             look_ahead_prevention=req.look_ahead_prevention,
-            day_group_iter=intraday_stream,
-            n_groups_hint=n_qualifying,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,
         )
+
+        # ── Modelos avanzados (2026-08-31) ────────────────────────────────
+        # Sin el bloque `advanced_model`, esto es EXACTAMENTE la llamada de
+        # siempre: mismos argumentos, mismo stream, mismo resultado.
+        if _cfg_modelo is None:
+            results = run_backtest(
+                qualifying_df=qualifying,
+                day_group_iter=intraday_stream,
+                n_groups_hint=n_qualifying,
+                **_bt_kwargs,
+            )
+        else:
+            # Cada pasada necesita su PROPIO stream: `intraday_stream` es un
+            # generador de un solo uso y el de arriba ya no sirve. Se crea uno
+            # por ventana, y acotado a las fechas de esa ventana — asi la pasada
+            # de entrenamiento no arrastra los meses de la de prueba ni al reves.
+            from app.services.advanced_backtest import run_with_model
+
+            def _pasada(qualifying_df=None, **extra):
+                if qualifying_df is None or qualifying_df.empty:
+                    return {"trades": [], "aggregate_metrics": {}, "day_results": [],
+                            "equity_curves": []}
+                _f = qualifying_df["date"].astype(str)
+                stream = _tracked_stream(
+                    get_intraday_stream(qualifying_df, _f.min(), _f.max()))
+                return run_backtest(
+                    qualifying_df=qualifying_df,
+                    day_group_iter=stream,
+                    n_groups_hint=len(qualifying_df),
+                    **_bt_kwargs,
+                    **extra,
+                )
+
+            logger.info("[MODELO] modo=%s entrena %s→%s, prueba %s→%s",
+                        _cfg_modelo["mode"], _cfg_modelo["train_from"],
+                        _cfg_modelo["train_to"], _cfg_modelo["test_from"],
+                        _cfg_modelo["test_to"])
+            results = run_with_model(_cfg_modelo, qualifying, _pasada, {})
 
         backtest_progress[req.dataset_id] = {
             "status": "completed",
@@ -457,6 +550,14 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         )
     except HTTPException:
         raise
+    except AdvancedModelError as e:
+        # Un modelo mal configurado (fechas que se solapan, sin features, un
+        # periodo de entrenamiento vacio) es culpa de la configuracion, no un
+        # fallo del servidor. Va como 400 y con el texto tal cual, porque el
+        # diagnostico del frontend pinta los 5xx como "Response Data: {}" y
+        # parece un error mudo.
+        logger.warning("[MODELO] configuracion invalida: %s", e)
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         if isinstance(e, RuntimeError) and str(e) == "BACKTEST_CANCELLED":
             from app.routers.backtest import backtest_progress

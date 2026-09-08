@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from uuid import uuid4
 from datetime import datetime
 import json
+import os
 import threading
 import time
 import pandas as pd
@@ -74,6 +75,21 @@ def _precache_dataset_intraday(pairs_df, date_from, date_to, dataset_id):
             return
 
         total = len(pairs_df)
+
+        # Guard (incidente 2026-08-29): un dataset sin reglas (o ultra laxo)
+        # materializa el mercado entero (~1,4M pares/anyo) y su pre-cache
+        # streamea el lago completo en background — frames BROAD de 3,3GB en
+        # el mismo proceso que los backtests. Skip: el dataset sigue siendo
+        # usable, los backtests simplemente traen los datos on demand.
+        max_pairs = int(os.getenv("PRECACHE_MAX_PAIRS", "50000"))
+        if total > max_pairs:
+            print(
+                f"[PRECACHE] Dataset {dataset_id}: {total:,} pairs > "
+                f"PRECACHE_MAX_PAIRS={max_pairs:,} — skipping pre-cache (too broad)"
+            )
+            _write_precache_state(dataset_id, "skipped_too_broad", 0.0)
+            return
+
         print(f"[PRECACHE] Starting for dataset {dataset_id}: {total} pairs, {date_from} -> {date_to}")
         _write_precache_state(dataset_id, "running", 0.0)
 
@@ -178,32 +194,20 @@ def _populate_dataset_pairs(query_id: str, filters: dict):
 def _compute_dataset_pairs(filters: dict):
     """Mitad cara: los pares (ticker, dia) que cumplen los filtros. No escribe."""
     from app.services.query_service import build_screener_query
+    from app.services.qualifying_windows import dataset_pairs_subquery_lagged_sql
 
     _, params, _, _, _, where_m_stats = build_screener_query(filters, limit=100000)
 
-    subquery_lagged = """
-                (
-                    SELECT *,
-                           LEAD(rth_close, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_1,
-                           LEAD(pmh_gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pmh_gap_pct_1,
-                           LEAD(pm_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pm_volume_1,
-                           LEAD(gap_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_1,
-                           LEAD(rth_volume, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_1,
-                           LEAD(rth_range_pct, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_1,
-                           LEAD(open, 1) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_open_1,
-                           
-                           LEAD(rth_close, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_close_2,
-                           LEAD(pmh_gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pmh_gap_pct_2,
-                           LEAD(pm_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_pm_volume_2,
-                           LEAD(gap_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_gap_pct_2,
-                           LEAD(rth_volume, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_volume_2,
-                           LEAD(rth_range_pct, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_rth_range_pct_2,
-                           LEAD(open, 2) OVER (PARTITION BY ticker ORDER BY timestamp) as lead_open_2
-                    FROM daily_metrics
-                ) dm_lagged
-                """
+    # LEAD 1/2 (Gap+1/+2) + LAG 1 (Gap -1). Definicion unica compartida con las
+    # vias qualifying (qualifying_windows) para que una metrica filtrable exista
+    # en todas: si una regla lag_* no estuviera aqui, la query cascaria con un
+    # Binder Error y el dataset quedaria sin pares.
+    subquery_lagged = dataset_pairs_subquery_lagged_sql()
+    # `open` viaja solo para poder aplicar el suelo de precio con la MISMA
+    # funcion que el universo del backtest; se descarta justo despues, porque
+    # dataset_pairs solo guarda (dataset_id, ticker, date).
     select_sql = f"""
-        SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date
+        SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date, open
         FROM {subquery_lagged}
         WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
     """
@@ -217,6 +221,16 @@ def _compute_dataset_pairs(filters: dict):
 
     if not pairs_df.empty:
         pairs_df = pairs_df.drop_duplicates(subset=["ticker", "date"])
+    # Fuera warrants y penny junk, con el mismo criterio que el universo del
+    # backtest (data_service._filtrar_universo). AQUI y no en la SQL
+    # para que la regla viva en UN solo sitio: si algun dia cambian los tipos
+    # permitidos, no hay una segunda copia que se quede atras. Ademas hace que
+    # el numero de dias de la vista previa sea el que el backtest recorre de
+    # verdad — antes el dataset decia N y la corrida operaba menos.
+    from app.services.data_service import _filtrar_universo
+    pairs_df = _filtrar_universo(pairs_df)
+    if "open" in pairs_df.columns:
+        pairs_df = pairs_df.drop(columns=["open"])
     return pairs_df
 
 
@@ -257,6 +271,17 @@ def _insert_dataset_pairs(query_id: str, pairs_df) -> int:
 
 @router.post("/", response_model=SavedQuery)
 def create_saved_query(query: SavedQuery, user_id: Optional[str] = Depends(get_current_user_id)):
+    # Guard (incidente 2026-08-29): un dataset sin reglas selecciona TODOS los
+    # ticker-dia del rango (mercado entero, ~1,4M pares/anyo) y su pre-cache
+    # streamea el lago completo. Rechazar aqui es un click de correccion para
+    # el usuario; limpiar un dataset BROAD despues no lo es.
+    rules = (query.filters or {}).get("rules", [])
+    if not rules:
+        raise HTTPException(
+            status_code=422,
+            detail="El universo necesita al menos una regla: sin reglas seleccionaría el mercado entero (~1,4M pares) y su pre-cache saturaría la máquina.",
+        )
+
     # Phase A — check for existing query with same filters
     existing_id = None
     existing_name = None
@@ -284,7 +309,10 @@ def create_saved_query(query: SavedQuery, user_id: Optional[str] = Depends(get_c
         status = state.get("status") if state else None
         
         # If already completed or running, just return it immediately!
-        if status in ("completed", "running"):
+        # "skipped_too_broad" also returns early: re-saving the same filters
+        # must NOT re-pay the heavy pairs materialization nor retry the lake-wide
+        # pre-cache that was already skipped by the PRECACHE_MAX_PAIRS guard.
+        if status in ("completed", "running", "skipped_too_broad"):
             print(f"[DEDUPLICATE] Reusing existing dataset {existing_id} (status: {status})")
             return {"id": existing_id, "name": existing_name, "filters": query.filters}
             

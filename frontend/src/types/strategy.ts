@@ -21,6 +21,9 @@ export enum IndicatorType {
     YESTERDAY_LOW = "Yesterday Low",
     HIGH_X_DAYS = "High of last X days",
     LOW_X_DAYS = "Low of last X days",
+    // El de verdad. Los dos de arriba se quedan SOLO por compatibilidad con
+    // estrategias antiguas: comparten motor y solo fijan otros defectos.
+    OVERHEAD_X_DAYS = "Overhead last X days",
     PREV_BAR_CLOSE = "Prev. Bar Close",
     PREV_BAR_OPEN = "Prev. Bar Open",
     PREV_BAR_HIGH = "Prev. Bar High",
@@ -34,6 +37,10 @@ export enum IndicatorType {
     CONSEC_GREEN_CANDLES = "Consecutive green candles",
     CONSEC_RED_CANDLES = "Consecutive red candles",
     CANDLE_RANGE_PCT = "Candle Range %",
+    // Recorrido de la vela CON SIGNO. Es CANDLE_RANGE_PCT sin el abs():
+    // positivo = la vela subió, negativo = bajó. Sin selector de dirección a
+    // propósito — el signo ya la lleva.
+    RECORRIDO_PCT = "Recorrido (%)",
     RANGE_OF_TIME = "Range of Time",
     OPENING_RANGE_PLUS = "Opening range +",
     OPENING_RANGE_MINUS = "Opening range -",
@@ -45,6 +52,14 @@ export enum IndicatorType {
     TRIANGLE_DESCENDING = "Triangle Descending",
     TRIANGLE_SYMMETRIC = "Triangle Symmetric",
     PM_HIGH_GAP = "PM High Gap (%)",
+    CURRENT_GAP = "Current Gap (%)",
+    OPEN_GAP = "Open Gap (%)",
+    // Caida de una sesion entera, congelada: del maximo de la sesion a la
+    // apertura de la siguiente (PM -> open de mercado, RTH -> open del after).
+    SESSION_FADE = "% Session Fade",
+    // Caida viva desde una referencia que se reancla sola: el maximo previo o
+    // el VWAP en la vela en que el precio lo cruzo.
+    FADE = "% Fade",
 
     // Indicators
     SMA = "SMA",
@@ -64,6 +79,18 @@ export enum IndicatorType {
     RVOL = "RVOL by bar",
     VOLUME = "Volume",
     ATR = "ATR",
+    // Squeeze: % que ha movido el precio en una ventana de RELOJ (minutos).
+    // No es un nivel: es una cifra, asi que solo se compara contra un numero.
+    SQUEEZE = "Squeeze",
+
+    // Momentum clasico. El backend ya los calculaba (y por la via rapida), pero
+    // no estaban en ESTE enum, asi que no se podian usar en las condiciones.
+    // Las tres lineas del MACD son nombres distintos, no un parametro: es como
+    // las tiene el motor. `macd_line` de IndicatorConfig no lo lee nadie.
+    RSI = "RSI",
+    MACD = "MACD",
+    MACD_SIGNAL = "MACD Signal",
+    MACD_HISTOGRAM = "MACD Histogram",
 }
 
 export enum Comparator {
@@ -131,7 +158,11 @@ export interface IndicatorConfig {
     time_hour?: number;
     time_minute?: number;
     time_condition?: "BEFORE" | "AFTER"; // To support 'before X hour' or 'after X hour'
-    days_lookback?: number;    // "Max/Min of last X days"
+    days_lookback?: number;    // "Max/Min of last X days" y "Overhead last X days"
+    // "Overhead last X days"
+    overhead_extreme?: "max" | "min";                  // que dia se busca
+    overhead_ref?: "high" | "low" | "open" | "close";  // que precio de ESE dia es el nivel
+    overhead_vol_rule?: "none" | "gt" | "lt";          // su volumen frente al acumulado de hoy
     calc_on_heikin?: boolean;
     ap_session?: "ap.PM" | "ap.RTH" | "ap.AM";
     elapsed_minutes?: number;
@@ -160,8 +191,20 @@ export interface IndicatorConfig {
     min_r_squared?: number;        // Min R² for trend line quality
     min_pivots?: number;           // Min swing highs required to fit lines
 
-    // "Elapsed time from last High": ancla del reloj
+    // "Elapsed time from last High": ancla del reloj.
+    // "% Session Fade" lo reutiliza para elegir la sesion que se desinfla:
+    // "pm" (PM High -> apertura de mercado) o "rth" (max. RTH -> open del after).
     session_ref?: "full" | "pm" | "rth";
+
+    // "% Fade": desde donde se mide la caida. "previous_max" usa el maximo previo
+    // (con la sesion de `ap_session`); "vwap_cross", el precio del VWAP en la
+    // vela en que el precio lo cruzo por ultima vez.
+    fade_ref?: "previous_max" | "vwap_cross";
+
+    // Squeeze: direccion del spike. El indicador devuelve SIEMPRE positivo el
+    // movimiento en la direccion elegida, para que la condicion se lea igual
+    // arriba que abajo ("Squeeze > 10"). La ventana va en `range_minutes`.
+    squeeze_direction?: "up" | "down";
 }
 
 export interface ComparisonCondition {
@@ -214,6 +257,13 @@ export interface RiskSettings {
     value: number | string;
     operator?: string;
     offset_pct?: number;
+    // Solo hard_stop: nivel de respaldo en REENTRADAS cuando el principal
+    // queda invalidado al entrar (ej. corto con el PMH ya roto). El motor lo
+    // lee del JSON; undefined = sin respaldo (nivel invalidado = no se entra).
+    fallback_value?: string;
+    // Con true, el respaldo rescata TAMBIEN la primera entrada con el nivel
+    // invalidado (no solo reentradas).
+    fallback_first_entry?: boolean;
 }
 
 export interface PartialTakeProfit {
@@ -250,6 +300,33 @@ export interface RiskManagement {
         on_open_positions: 'LET_RUN' | 'CLOSE_ALL';
     };
     size_by_sl?: boolean;
+    /** STOP HÍBRIDO: va por distancia al stop, pero con techo de exposición.
+     *  `techo $ = (hybrid_max_loss_pct% × capital) / hybrid_black_swan_pct%`
+     *  Resuelve el punto ciego del modo por SL: con el stop muy ceñido el
+     *  tamaño se dispara y un hueco brutal deja debiendo dinero. Recorta,
+     *  no anula. Implica `size_by_sl`. */
+    hybrid_stop?: boolean;
+    /** El peor movimiento en contra que quieres contemplar, en %. */
+    hybrid_black_swan_pct?: number | null;
+    /** Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. */
+    hybrid_max_loss_pct?: number | null;
+    /** ESTILO CANGREJO (PRD de Álvaro, 8-sep-2026). Acota cada trade «o por
+     *  recorrido del SL, o por pérdida máxima». Dos modos EXCLUYENTES entre sí
+     *  y con el stop híbrido; son TECHOS sobre el sizing que ya haya, así que
+     *  solo recortan.
+     *   · `recorrido` → `cangrejo_max_sl_dist_pct`: el stop nunca a más de ese
+     *     % del entry. Aprieta el stop: cambia DÓNDE sales.
+     *   · `perdida`   → `cangrejo_max_loss_at_sl_pct`: el SL nunca cuesta más
+     *     de ese % de la cuenta. Encoge el tamaño: cambia CUÁNTO pones. */
+    cangrejo_active?: boolean;
+    cangrejo_mode?: 'recorrido' | 'perdida' | null;
+    cangrejo_max_sl_dist_pct?: number | null;
+    cangrejo_max_loss_at_sl_pct?: number | null;
+    /** INERTES, sin UI: la primera versión de la tarjeta tenía cuatro topes y
+     *  resultó poco intuitiva. Se admiten para que un borrador viejo no
+     *  reviente, pero ningún motor los lee. */
+    cangrejo_max_mv_entry_pct?: number | null;
+    cangrejo_max_mv_pyr_pct?: number | null;
     swing_option?: {
         active: boolean;
         target_day: 'gap_1_day' | 'gap_2_day';
@@ -281,6 +358,9 @@ export interface Strategy {
     risk_management: RiskManagement;
     // Solo presente si la piramidación está activa y con niveles válidos.
     pyramiding?: { timeframe: Timeframe; mode?: 'individual' | 'sequential'; levels: PyramidLevel[] };
+    // Modelos avanzados (XGBoost / HMM). Solo presente si el bloque esta
+    // encendido; sin el, la estrategia es identica a las de siempre.
+    advanced_model?: any;
     is_wizard?: boolean;
     dataset_id?: string | null;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
@@ -321,6 +401,15 @@ export const initialRiskManagement: RiskManagement = {
     ],
     trailing_stop: { active: false, type: "Percentage", buffer_pct: 0.5 },
     size_by_sl: false,
+    hybrid_stop: false,
+    hybrid_black_swan_pct: null,
+    hybrid_max_loss_pct: null,
+    cangrejo_active: false,
+    cangrejo_mode: null,
+    cangrejo_max_sl_dist_pct: null,
+    cangrejo_max_loss_at_sl_pct: null,
+    cangrejo_max_mv_entry_pct: null,
+    cangrejo_max_mv_pyr_pct: null,
     swing_option: { active: false, target_day: 'gap_1_day' },
     exclude_days: [],
     exclude_months: [],
@@ -356,6 +445,17 @@ export interface PyramidLevel {
     // Cuantas veces puede disparar por trade (flancos de su señal). 1 = el
     // clasico "una vez"; con Darvas, 3 = hasta tres cajas seguidas.
     times: number;
+    // MODO DE TAMAÑO DEL NIVEL, independiente del de la entrada: un añadido
+    // puede ir por distancia al stop aunque la entrada vaya por valor de
+    // mercado. Sin declarar = por valor de mercado, como siempre.
+    //   size_by_sl        -> `capital_pct` pasa a ser RIESGO, no capital
+    //   hybrid_stop       -> por SL, pero con techo de exposición propio
+    // Los porcentajes del híbrido son de este nivel y NO los de la entrada:
+    // se reparten entre las dos para que juntas no pasen de lo asumible.
+    size_by_sl?: boolean;
+    hybrid_stop?: boolean;
+    hybrid_black_swan_pct?: number | null;
+    hybrid_max_loss_pct?: number | null;
 }
 
 export interface PyramidingConfig {

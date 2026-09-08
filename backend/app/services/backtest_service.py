@@ -17,13 +17,95 @@ import time
 import numpy as np
 import pandas as pd
 
-from app.services.strategy_engine import translate_strategy, _parse_risk_management, compile_strategy_def, get_lowest_timeframe_mins
+from app.services.strategy_engine import (
+    translate_strategy, _parse_risk_management, compile_strategy_def,
+    get_lowest_timeframe_mins, apply_entry_fill_window,
+)
 # Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
 # especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
 from app.services.sim_dispatch import simulate
-from app.backtester.engine import find_elapsed_time_minutes, find_elapsed_time_condition
+from app.services.market_frame import build_market_arrays
+# Lo usa `find_elapsed_time_condition`, que vino aqui al borrar el motor viejo.
+from app.schemas.strategy import IndicatorType
 
 logger = logging.getLogger("backtester.engine")
+
+
+# Estas dos vivian en `app/backtester/engine.py` junto al motor viejo. Al
+# borrar aquel (2026-08-31, era codigo muerto) se traen aqui tal cual: no
+# tienen nada que ver con el motor, solo leen la definicion de la estrategia
+# buscando una condicion de "Elapsed Time", y este fichero es su unico
+# consumidor.
+def find_elapsed_time_condition(group) -> tuple[float, str]:
+    if not group:
+        return -1.0, "GREATER_THAN_OR_EQUAL"
+    
+    conditions = []
+    if isinstance(group, dict):
+        conditions = group.get("conditions", [])
+    elif hasattr(group, "conditions"):
+        conditions = group.conditions or []
+    else:
+        return -1.0, "GREATER_THAN_OR_EQUAL"
+        
+    for cond in conditions:
+        cond_type = None
+        if isinstance(cond, dict):
+            cond_type = cond.get("type")
+        elif hasattr(cond, "type"):
+            cond_type = cond.type
+            
+        if cond_type == "group":
+            val, comp = find_elapsed_time_condition(cond)
+            if val > 0:
+                return val, comp
+        else:
+            source = None
+            if isinstance(cond, dict):
+                source = cond.get("source")
+            elif hasattr(cond, "source"):
+                source = cond.source
+                
+            if source:
+                name = None
+                if isinstance(source, dict):
+                    name = source.get("name")
+                elif hasattr(source, "name"):
+                    name = source.name
+                
+                name_val = name.value if hasattr(name, "value") else name
+                if name_val == "Elapsed Time" or name_val == IndicatorType.ELAPSED_TIME:
+                    target = None
+                    if isinstance(cond, dict):
+                        target = cond.get("target")
+                    elif hasattr(cond, "target"):
+                        target = cond.target
+                        
+                    comparator = "GREATER_THAN_OR_EQUAL"
+                    if isinstance(cond, dict):
+                        comparator = cond.get("comparator", "GREATER_THAN_OR_EQUAL")
+                    elif hasattr(cond, "comparator"):
+                        comparator = getattr(cond.comparator, "value", getattr(cond.comparator, "name", cond.comparator)) or "GREATER_THAN_OR_EQUAL"
+                    
+                    val = 60.0
+                    if target is not None:
+                        try:
+                            val = float(target)
+                        except (TypeError, ValueError):
+                            if isinstance(target, dict):
+                                val = float(target.get("elapsed_minutes", 60.0))
+                            elif hasattr(target, "elapsed_minutes"):
+                                val = float(target.elapsed_minutes or 60.0)
+                    
+                    if hasattr(comparator, "value"):
+                        comparator = comparator.value
+                    return val, str(comparator)
+    return -1.0, "GREATER_THAN_OR_EQUAL"
+
+
+def find_elapsed_time_minutes(group) -> float:
+    val, _ = find_elapsed_time_condition(group)
+    return val
 
 # Pre-computed time boundaries for patch mask (avoid recreating per iteration)
 _PATCH_START = datetime.time(8, 0)
@@ -39,6 +121,7 @@ _sessions_mask_cache: dict = {}
 _DAILY_LOOKBACK_INDICATORS = (
     "High of last X days", "Low of last X days",
     "Max of last X days", "Min of last X days",
+    "Overhead last X days",
 )
 
 
@@ -73,6 +156,15 @@ def run_backtest(
     risk_type: str = "FIXED",
     fixed_ratio_delta: float = 500.0,
     size_by_sl: bool = False,
+    # Stop hibrido: por SL con techo de exposicion. Ver `portfolio_sim.tope_hibrido`.
+    hybrid_stop: bool = False,
+    hybrid_black_swan_pct: float | None = None,
+    hybrid_max_loss_pct: float | None = None,
+    # Estilo Cangrejo: los dos modos de acotar el trade. Ver
+    # `portfolio_sim.aprieta_stop_cangrejo` / `tope_cangrejo`.
+    cangrejo_active: bool = False,
+    cangrejo_max_sl_dist_pct: float | None = None,
+    cangrejo_max_loss_at_sl_pct: float | None = None,
     fees: float = 0.0,
     fee_type: str = "PERCENT",
     slippage: float = 0.0,
@@ -81,17 +173,53 @@ def run_backtest(
     custom_end_time: str | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
+    # Tope de locates: maximo de paquetes de 100 acciones en corto por
+    # ticker-dia. 0 = sin tope. Ver portfolio_sim.simulate.
+    max_locates: int = 0,
     look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
     monthly_expenses: float = 0.0,
     _signal_cache: dict | None = None,
     progress_callback=None,
+    # ── Modelos avanzados (2026-08-31) ────────────────────────────────────
+    # Los dos son OPCIONALES y, en None, esta funcion se comporta EXACTAMENTE
+    # igual que siempre: ni una rama nueva se ejecuta.
+    #   · entry_model      — veta entradas que no superan el umbral del modelo.
+    #                        Es una mascara sobre `entries`, igual que el swing.
+    #   · feature_collector — recoge material de entrenamiento durante la
+    #                        pasada, para no tener que recorrer los datos dos
+    #                        veces.
+    entry_model=None,
+    feature_collector=None,
 ) -> dict:
+    # En modo «estrategia» las entradas las pone el modelo, asi que un dia
+    # sin señales de las reglas NO es un dia que saltarse.
+    _modelo_genera = bool(entry_model is not None and getattr(entry_model, 'generates', False))
+    _recoge_standalone = bool(feature_collector is not None and getattr(feature_collector, 'standalone', False))
+    _sin_reglas = _modelo_genera or _recoge_standalone
     if strategy_def:
         rm = strategy_def.get("risk_management", {})
         if rm.get("size_by_sl") is not None:
             size_by_sl = size_by_sl or rm.get("size_by_sl", False)
+        # El hibrido y sus dos porcentajes viven en la estrategia (decision de
+        # Jaume, 2026-09-03): si no viajaran con ella, el backtest y el bot
+        # podrian dimensionar distinto sin que nada avisara.
+        if rm.get("hybrid_stop") is not None:
+            hybrid_stop = hybrid_stop or bool(rm.get("hybrid_stop", False))
+        if hybrid_black_swan_pct is None:
+            hybrid_black_swan_pct = rm.get("hybrid_black_swan_pct")
+        if hybrid_max_loss_pct is None:
+            hybrid_max_loss_pct = rm.get("hybrid_max_loss_pct")
+        # Cangrejo, mismo criterio: vive en la estrategia para que backtest,
+        # genetico y bot dimensionen igual. El argumento puede FORZARLO pero no
+        # apagarlo, como `size_by_sl` y el hibrido.
+        if rm.get("cangrejo_active") is not None:
+            cangrejo_active = cangrejo_active or bool(rm.get("cangrejo_active", False))
+        if cangrejo_max_sl_dist_pct is None:
+            cangrejo_max_sl_dist_pct = rm.get("cangrejo_max_sl_dist_pct")
+        if cangrejo_max_loss_at_sl_pct is None:
+            cangrejo_max_loss_at_sl_pct = rm.get("cangrejo_max_loss_at_sl_pct")
 
     t_total = time.time()
 
@@ -103,6 +231,10 @@ def run_backtest(
         _bsig.slab_stream_enabled()
         and _signal_cache is None
         and qualifying_df is not None and not qualifying_df.empty
+        # Los hooks de modelos avanzados viven en el bucle secuencial. Si el
+        # slab corriera con modelo, lo IGNORARIA en silencio: el resultado
+        # saldria etiquetado como "filtrado" sin haber filtrado nada.
+        and entry_model is None and feature_collector is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -330,8 +462,15 @@ def run_backtest(
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
+            "hybrid_stop": hybrid_stop,
+            "hybrid_black_swan_pct": hybrid_black_swan_pct,
+            "hybrid_max_loss_pct": hybrid_max_loss_pct,
+            "cangrejo_active": cangrejo_active,
+            "cangrejo_max_sl_dist_pct": cangrejo_max_sl_dist_pct,
+            "cangrejo_max_loss_at_sl_pct": cangrejo_max_loss_at_sl_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
+            "max_locates": max_locates,
             "look_ahead_prevention": look_ahead_prevention,
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
@@ -360,7 +499,8 @@ def run_backtest(
     # intacto y, cuando se usa esta rama, opera sobre un group_source ya agotado
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
     _n_workers = _bsig.get_parallel_workers()
-    if (not _slab_mode) and _bsig.should_parallelize(_signal_cache, _n_workers):
+    if (not _slab_mode) and entry_model is None and feature_collector is None \
+            and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
             "strategy_def": strategy_def,
@@ -383,8 +523,15 @@ def run_backtest(
         _params = {
             "init_cash": init_cash, "risk_r": risk_r, "risk_type": risk_type,
             "fixed_ratio_delta": fixed_ratio_delta, "size_by_sl": size_by_sl,
+            "hybrid_stop": hybrid_stop,
+            "hybrid_black_swan_pct": hybrid_black_swan_pct,
+            "hybrid_max_loss_pct": hybrid_max_loss_pct,
+            "cangrejo_active": cangrejo_active,
+            "cangrejo_max_sl_dist_pct": cangrejo_max_sl_dist_pct,
+            "cangrejo_max_loss_at_sl_pct": cangrejo_max_loss_at_sl_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
+            "max_locates": max_locates,
             "look_ahead_prevention": look_ahead_prevention,
             "strategy_def": strategy_def,
             "elapsed_limit": elapsed_limit, "elapsed_operator": elapsed_operator,
@@ -610,64 +757,12 @@ def run_backtest(
         # Base cash for this sim run is initial + accumulated global PnL
         compounding_cash = init_cash + global_realized_pnl
         
-        # Compute market structure levels on the full day_df
-        high_series = day_df["high"]
-        low_series = day_df["low"]
-        hod_vals = high_series.cummax().values.astype(np.float64)
-        lod_vals = low_series.cummin().values.astype(np.float64)
-        
-        # Premarket High/Low
-        ts_series = pd.to_datetime(day_df["timestamp"])
-        pm_mask = (ts_series.dt.hour * 60 + ts_series.dt.minute >= 4 * 60) & (ts_series.dt.hour * 60 + ts_series.dt.minute < 9 * 60 + 30)
-        # PM High/Low ACUMULADOS hasta cada barra (causal). El valor final del día
-        # broadcast a todas las barras introducía lookahead en entradas premarket
-        # (condiciones PMH/PML y stops de estructura anclados a un máximo futuro).
-        # NaN antes de la primera barra PM; tras las 09:30 vale el PM completo.
-        # MISMA fórmula numpy que en backtest_signals._compute_signals_for_pair
-        # (paridad bit a bit secuencial↔paralelo).
-        pm_mask_np = pm_mask.values if hasattr(pm_mask, "values") else np.asarray(pm_mask)
-        _h64 = day_df["high"].values.astype(np.float64)
-        _l64 = day_df["low"].values.astype(np.float64)
-        if pm_mask_np.any():
-            pm_highs_vals = np.fmax.accumulate(np.where(pm_mask_np, _h64, np.nan))
-            pm_lows_vals = np.fmin.accumulate(np.where(pm_mask_np, _l64, np.nan))
-        else:
-            pm_highs_vals = np.full(len(day_df), np.nan, dtype=np.float64)
-            pm_lows_vals = np.full(len(day_df), np.nan, dtype=np.float64)
-        
-        # Previous Max / Previous Min (running high/low shifted by 1 bar)
-        prev_highs_vals = pd.Series(hod_vals).shift(1).fillna(high_series.iloc[0] if len(high_series) > 0 else 0.0).values.astype(np.float64)
-        prev_lows_vals = pd.Series(lod_vals).shift(1).fillna(low_series.iloc[0] if len(low_series) > 0 else 0.0).values.astype(np.float64)
-
-        # Yesterday's Close from daily_stats (from qualifying_df)
-        prev_close_val = daily_stats.get("prev_close")
-        if prev_close_val is None or pd.isna(prev_close_val):
-            prev_close_val = day_df["close"].iloc[0] if len(day_df) > 0 else np.nan
-        prev_closes_vals = np.full(len(day_df), prev_close_val, dtype=np.float64)
-
-        # Yesterday's Open from daily_stats (from qualifying_df)
-        yest_open_val = daily_stats.get("yesterday_open", daily_stats.get("lag_rth_open_1"))
-        if yest_open_val is None or pd.isna(yest_open_val):
-            yest_open_val = day_df["open"].iloc[0] if len(day_df) > 0 else np.nan
-        yest_opens_vals = np.full(len(day_df), yest_open_val, dtype=np.float64)
-
-        arrays = {
-            "ticker": np.full(len(day_df), ticker, dtype=object),
-            "open": day_df["open"].values.astype(np.float64),
-            "high": day_df["high"].values.astype(np.float64),
-            "low": day_df["low"].values.astype(np.float64),
-            "close": day_df["close"].values.astype(np.float64),
-            "volume": day_df["volume"].values,
-            "timestamp": day_df["timestamp"].values,
-            "hod": hod_vals,
-            "lod": lod_vals,
-            "pm_high": pm_highs_vals,
-            "pm_low": pm_lows_vals,
-            "prev_high": prev_highs_vals,
-            "prev_low": prev_lows_vals,
-            "prev_close": prev_closes_vals,
-            "yesterday_open": yest_opens_vals,
-        }
+        # Estructura de mercado (HOD/LOD, PM High/Low acumulados, Previous
+        # Max/Min) + OHLCV. La logica vive en market_frame porque el bot de
+        # senales necesita EL MISMO frame: tenerla copiada alli, fuera del repo,
+        # significaba que tocar este bloque desincronizaba el bot en silencio.
+        # Verificado identico bit a bit sobre 150 ticker-dias antes de extraer.
+        arrays = build_market_arrays(day_df, ticker, daily_stats)
         del day_df
 
         mini_df = pd.DataFrame(arrays)
@@ -686,7 +781,7 @@ def run_backtest(
             sig_pyramid_levels = cached.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
 
-            if not np.any(entries_arr):
+            if not np.any(entries_arr) and not _sin_reglas:
                 del mini_df
                 continue
 
@@ -700,7 +795,7 @@ def run_backtest(
             except Exception:
                 del mini_df
                 continue
-            if not signals["entries"].any():
+            if not signals["entries"].any() and not _sin_reglas:
                 del mini_df, signals
                 continue
 
@@ -741,6 +836,14 @@ def run_backtest(
                 entries_arr = entries_arr.copy()
                 entries_arr[is_subsequent_np] = False
 
+        # Para los modelos avanzados (hooks mas abajo): el frame COMPLETO del
+        # dia y la mascara de sesion. Los indicadores necesitan el dia entero
+        # (premarket incluido) para calcular con contexto, pero los indices de
+        # los trades del simulador viven en el frame RECORTADO — el modelo
+        # necesita las dos coordenadas para no descuadrarse.
+        _df_full = mini_df
+        _sess_mask_np = None
+
         # --- Trim DataFrame and signals to the selected market session window ---
         # This is done AFTER signal translation so indicators have full-day context.
         # This ensures that the simulator's "last candle" (n-1) IS the session
@@ -772,6 +875,7 @@ def run_backtest(
             
             # Apply mask to signals
             session_mask_np = session_mask.values if hasattr(session_mask, "values") else np.asarray(session_mask)
+            _sess_mask_np = session_mask_np
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
             if sig_pyramid_levels:
@@ -811,6 +915,82 @@ def run_backtest(
                 except (ValueError, TypeError):
                     pass
 
+        # --- Ventana de entrada: tambien en la vela de RELLENO ---
+        # AQUI y no antes, por el mismo motivo que el bloque de abajo: es
+        # DESPUES del recorte de sesion y del candle_delay, el unico espacio de
+        # indices donde `i + 1` es la vela en la que el simulador compra de
+        # verdad. Ver strategy_engine.apply_entry_fill_window.
+        if compiled_strategy:
+            _tw = compiled_strategy.get("entry_time_windows") or []
+            if _tw:
+                _mins_trim = (
+                    pd.to_datetime(mini_df["timestamp"]).dt.hour * 60
+                    + pd.to_datetime(mini_df["timestamp"]).dt.minute
+                ).values
+                entries_arr = apply_entry_fill_window(
+                    entries_arr, _mins_trim, _tw,
+                    look_ahead_prevention=look_ahead_prevention,
+                )
+                if sig_pyramid_levels:
+                    # Un anyadido es una entrada: mismo criterio.
+                    sig_pyramid_levels = [
+                        {**lv, "signals": apply_entry_fill_window(
+                            lv["signals"], _mins_trim, _tw,
+                            look_ahead_prevention=look_ahead_prevention)}
+                        for lv in sig_pyramid_levels
+                    ]
+
+        # ── Modelos avanzados ─────────────────────────────────────────────
+        # AQUI y no antes, y la posicion es parte de la correccion (31-ago,
+        # tarde): tiene que ser DESPUES del recorte de sesion y del
+        # candle_delay, porque a partir de este punto `entries_arr` esta en el
+        # MISMO espacio de indices que los trades que emitira el simulador. La
+        # primera version corria antes del recorte: con una estrategia RTH, la
+        # señal quedaba en el indice del dia completo (premarket incluido) y el
+        # trade en el del frame recortado — las etiquetas de entrenamiento se
+        # emparejaban con la vela equivocada, sin error y sin aviso.
+        #
+        # Las FEATURES se calculan sobre `_df_full` (el dia entero, para que
+        # PM High, % Fade, etc. tengan contexto) y `_sess_mask_np` traduce
+        # entre los dos espacios. Tambien va despues del swing: el modelo debe
+        # juzgar solo señales que podrian llegar a operarse.
+        if feature_collector is not None:
+            try:
+                if _recoge_standalone:
+                    # Sin reglas: se muestrea el dia y se etiqueta con TU stop y
+                    # TU take profit, los mismos que acaba de parsear el motor.
+                    # Las barreras se miden sobre el frame RECORTADO, que es el
+                    # que simula (la salida EOD es el fin de la sesion elegida).
+                    _horiz = int(sig_tp_time_limit) if isinstance(sig_tp_time_limit, (int, float)) and sig_tp_time_limit else 0
+                    feature_collector.collect_standalone(
+                        ticker, date, _df_full, daily_stats, sig_direction,
+                        sig_sl_stop, sig_tp_stop, _horiz,
+                        session_mask=_sess_mask_np, df_trimmed=mini_df)
+                elif np.any(entries_arr):
+                    feature_collector.collect(ticker, date, entries_arr, _df_full,
+                                              daily_stats, session_mask=_sess_mask_np)
+            except Exception:
+                logger.exception("[MODELO] fallo recogiendo features en %s %s", ticker, date)
+
+        if _modelo_genera:
+            try:
+                entries_arr = entry_model.generate(_df_full, daily_stats,
+                                                   session_mask=_sess_mask_np)
+            except Exception:
+                logger.exception("[MODELO] fallo generando entradas en %s %s", ticker, date)
+                entries_arr = np.zeros(len(mini_df), dtype=bool)
+        elif entry_model is not None and np.any(entries_arr):
+            try:
+                # El modelo solo QUITA entradas, nunca añade: el peor caso es
+                # operar menos, jamas operar algo que las reglas no encontraron.
+                entries_arr = entry_model.mask(entries_arr, _df_full, daily_stats,
+                                               session_mask=_sess_mask_np)
+            except Exception:
+                # Un fallo del modelo no puede inventar operaciones: este dia se
+                # queda sin entradas y el backtest sigue.
+                logger.exception("[MODELO] fallo aplicando el veto en %s %s", ticker, date)
+                entries_arr = np.zeros_like(entries_arr, dtype=bool)
+
         # If we have no entries, skip simulation
         if not np.any(entries_arr):
             del mini_df
@@ -824,6 +1004,11 @@ def run_backtest(
         hs_value = hs.get("value")
         hs_operator = hs.get("operator", ">=")
         hs_offset_pct = float(hs.get("offset_pct", 0.0))
+        # Nivel de respaldo si el stop estructural queda invalidado al entrar
+        # (solo reentradas, o tambien primera entrada con fallback_first_entry).
+        # Ver portfolio_sim.simulate.
+        hs_fallback = hs.get("fallback_value")
+        hs_fallback_first = bool(hs.get("fallback_first_entry", False))
 
         # Prepare timestamps array for elapsed time logic (numpy datetime64[ns] astype np.int64)
         ts_arr = arrays["timestamp"]
@@ -847,11 +1032,18 @@ def run_backtest(
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
                 size_by_sl=size_by_sl,
+                hybrid_stop=hybrid_stop,
+                hybrid_black_swan_pct=hybrid_black_swan_pct,
+                hybrid_max_loss_pct=hybrid_max_loss_pct,
+                cangrejo_active=cangrejo_active,
+                cangrejo_max_sl_dist_pct=cangrejo_max_sl_dist_pct,
+                cangrejo_max_loss_at_sl_pct=cangrejo_max_loss_at_sl_pct,
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,
                 locates_cost=locates_cost,
                 locate_type=locate_type,
+                max_locates=max_locates,
                 look_ahead_prevention=look_ahead_prevention,
                 sl_stop=sig_sl_stop,
                 sl_trail=sig_sl_trail,
@@ -867,6 +1059,8 @@ def run_backtest(
                 hs_value=hs_value,
                 hs_operator=hs_operator,
                 hs_offset_pct=hs_offset_pct,
+                hs_fallback_value=hs_fallback,
+                hs_fallback_first=hs_fallback_first,
                 hods=arrays.get("hod"),
                 lods=arrays.get("lod"),
                 pm_highs=arrays.get("pm_high"),
@@ -1136,11 +1330,32 @@ def _build_executions(run: list[dict]) -> list[dict]:
     if not run:
         return []
     first = run[0]
+    # Tamaño de la ENTRADA. `first["size"]` es el tamaño del PRIMER LEG (la
+    # cantidad del primer parcial), no la posición que se abrió: con parciales
+    # la marca de entrada del gráfico mostraba una cifra menor que la real
+    # (medido: entrada de 1.666,67 acciones pintada como 1.000, el 60 % que se
+    # llevó el primer parcial). El dinero nunca estuvo mal —esta función es
+    # informativa—, pero el número de acciones sí.
+    #
+    # Todos los legs juntos cierran lo que se abrió, y una reducción de pirámide
+    # también emite su leg, así que se cancela sola:
+    #     sum(legs) = inicial + añadidos   ->   inicial = sum(legs) - añadidos
+    _size_legs = sum(float(leg.get("size") or 0.0) for leg in run)
+    _size_adds = sum(
+        float(pe.get("size") or 0.0)
+        for leg in run
+        for pe in (leg.get("pyr_executions") or [])
+        if pe.get("kind") == "add"
+    )
+    _entry_size = _size_legs - _size_adds
+    if not (_entry_size > 0):  # sin legs utilizables, se deja lo de antes
+        _entry_size = first.get("size")
+
     execs: list[dict] = [{
         "kind": "entry",
         "time_epoch": first.get("entry_time_epoch"),
         "price": first.get("entry_price"),
-        "size": first.get("size"),
+        "size": round(_entry_size, 6) if isinstance(_entry_size, float) else _entry_size,
         "label": "Entrada",
     }]
     # Los añadidos/reducciones de pirámide van colgados de alguna de las legs.
@@ -1499,7 +1714,8 @@ def _aggregate_metrics(
         "sortino_ratio": 0, "calmar_ratio": 0, "dd_return_ratio": 0,
         "r_squared": 0, "avg_mae": 0, "max_profit_pct": 0,
         "avg_win": 0, "avg_loss": 0, "max_consecutive_wins": 0,
-        "max_consecutive_losses": 0, "expectancy": 0, "payoff_ratio": 0,
+        "max_consecutive_losses": 0, "max_consecutive_winning_days": 0,
+        "max_consecutive_losing_days": 0, "expectancy": 0, "payoff_ratio": 0,
         "avg_r_per_day": 0,
         "avg_r_ui": 0.0,
     }
@@ -1511,7 +1727,19 @@ def _aggregate_metrics(
         total_days = len(unique_dates)
         total_trades = len(trades)
     else:
-        total_days = len(day_results)
+        # "Days" cuenta SESIONES DE CALENDARIO, no ticker-dias. `day_results`
+        # trae una entrada por (fecha, ticker), asi que una sesion con 6
+        # candidatos sumaba 6 y un ano llegaba a mostrar "1460 dias". La rama
+        # de arriba (sin day_results) ya contaba fechas unicas: esto solo
+        # elimina la incoherencia entre las dos.
+        # Afecta a `total_days` y a `avg_r_per_day` (que divide por el), que
+        # pasan a ser POR SESION. `avg_return_per_day_pct` NO cambia: se
+        # calcula aparte sobre un rango de fechas denso.
+        # El [:10] normaliza por si la fecha llegara como timestamp completo.
+        # Misma implementacion que el fix del socio en staging (40920cc), para
+        # que las dos ramas converjan sin conflicto.
+        fechas = {str(d.get("date", ""))[:10] for d in day_results if d.get("date")}
+        total_days = len(fechas) or len(day_results)
         total_trades = sum(d.get("total_trades", 0) for d in day_results)
 
     # Re-calculate total expenses for the net profit metric
@@ -1540,6 +1768,19 @@ def _aggregate_metrics(
     total_pnl = total_pnl_trades
     total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
 
+    # Daily PnL timeline (net of locates), computed once: the dense
+    # Sharpe/Sortino block below and the daily win/loss streaks must both see
+    # the same definition of "day".
+    daily_pnls: dict[str, float] = {}
+    for t in trades:
+        d = t.get("date", "")
+        if d:
+            daily_pnls[d] = daily_pnls.get(d, 0.0) + t.get("pnl", 0.0)
+    if locates_fee_by_date:
+        for d, fee in locates_fee_by_date.items():
+            if d in daily_pnls:
+                daily_pnls[d] -= fee
+
     # Build a continuous daily equity curve for accurate annualized volatility
     avg_sharpe = 0.0
     sortino_ratio = 0.0
@@ -1547,17 +1788,6 @@ def _aggregate_metrics(
 
     if total_days > 0 and trades:
         try:
-            # Reconstruct daily PnL timeline
-            daily_pnls: dict[str, float] = {}
-            for t in trades:
-                d = t.get("date", "")
-                if d:
-                    daily_pnls[d] = daily_pnls.get(d, 0.0) + t.get("pnl", 0.0)
-            if locates_fee_by_date:
-                for d, fee in locates_fee_by_date.items():
-                    if d in daily_pnls:
-                        daily_pnls[d] -= fee
-
             sorted_dates = sorted(daily_pnls.keys())
             first_date = pd.to_datetime(sorted_dates[0])
             last_date = pd.to_datetime(sorted_dates[-1])
@@ -1690,6 +1920,23 @@ def _aggregate_metrics(
             curr_wins = 0
             max_cons_losses = max(max_cons_losses, curr_losses)
 
+    # Consecutive winning/losing DAYS. Only days WITH trades count (a no-trade
+    # day doesn't break a run); day PnL is net of locates; a flat day (pnl == 0)
+    # falls in the losing branch, same convention as trades above.
+    max_cons_winning_days = 0
+    max_cons_losing_days = 0
+    curr_win_days = 0
+    curr_loss_days = 0
+    for d in sorted(daily_pnls.keys()):
+        if daily_pnls[d] > 0:
+            curr_win_days += 1
+            curr_loss_days = 0
+            max_cons_winning_days = max(max_cons_winning_days, curr_win_days)
+        else:
+            curr_loss_days += 1
+            curr_win_days = 0
+            max_cons_losing_days = max(max_cons_losing_days, curr_loss_days)
+
     return {
         "total_days": total_days,
         "total_trades": total_trades,
@@ -1715,6 +1962,8 @@ def _aggregate_metrics(
         "avg_loss": round(avg_loss, 2),
         "max_consecutive_wins": max_cons_wins,
         "max_consecutive_losses": max_cons_losses,
+        "max_consecutive_winning_days": max_cons_winning_days,
+        "max_consecutive_losing_days": max_cons_losing_days,
         "expectancy": round(expectancy, 2),
         "payoff_ratio": round(payoff_ratio, 4),
         "total_expenses": round(total_expenses, 2),

@@ -20,10 +20,6 @@ import { HELPER_STEPS, type HelperMode, type HelperStep } from "./steps";
 const SEEN_KEY = "edgecute:bt-helper:v1:seen";
 /** ms de margen para que termine la transición del drawer (CSS 300ms). */
 const TRANSITION_MS = 380;
-/** ms para montar el Wizard y que cargue la estrategia de ejemplo. */
-const WIZARD_MOUNT_MS = 520;
-/** ms para que el contenido de un sub-paso del Wizard se pinte. */
-const STEP_SWAP_MS = 260;
 
 /** Avatar de Edgie — mismo robot que el botón flotante del ChatBot
  *  (RobotAvatar en ChatBot.tsx), en su variante "encendida" (cobre). */
@@ -59,8 +55,6 @@ export interface HelperController {
   loadExampleStrategy: () => void;
   fillDataset: () => void;
   fillConfig: () => void;
-  /** Posiciona el Wizard en uno de sus sub-pasos (universo, bias, entry…). */
-  setWizardStep: (step: string) => void;
   /** Telemetría (PostHog): quién consume el tour y hasta dónde llega. */
   track?: (event: string, props?: Record<string, unknown>) => void;
   setHelperActive: (active: boolean) => void;
@@ -76,7 +70,6 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
   ctrlRef.current = ctrl;
 
   const modeRef = useRef<HelperMode>("config");
-  const wizardStepRef = useRef<string | null>(null);
   const completedRef = useRef(false);
   /** Índice del paso más lejano alcanzado (para "hasta dónde llega"). */
   const lastStepRef = useRef(0);
@@ -84,18 +77,16 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
 
   /** Aplica el estado que un paso necesita ANTES de resaltarse.
    *  Devuelve los ms que conviene esperar a que el DOM se estabilice (montaje
-   *  del drawer / cambio de sub-paso del Wizard) antes de resaltar. */
+   *  del drawer) antes de resaltar. */
   const applyEnter = useCallback((enter: HelperStep["enter"]): number => {
     const c = ctrlRef.current;
-    // La estrategia debe precargarse antes de montar el wizard/builder.
+    // La estrategia debe precargarse antes de montar el constructor.
     if (enter.fill === "strategy") c.loadExampleStrategy();
 
     let wait = 0;
     if (enter.mode !== modeRef.current) {
       c.setMode(enter.mode);
-      // Montar el Wizard (componente pesado + carga de initialStrategy) tarda
-      // algo más que abrir un drawer ya montado.
-      wait = enter.mode === "wizard" ? WIZARD_MOUNT_MS : TRANSITION_MS;
+      wait = TRANSITION_MS;
     }
     modeRef.current = enter.mode;
 
@@ -103,16 +94,9 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
     if (enter.fill === "dataset") c.fillDataset();
     if (enter.fill === "config") c.fillConfig();
 
-    // Posicionar el Wizard en el sub-paso del guion.
-    if (enter.mode === "wizard" && enter.wizardStep) {
-      if (enter.wizardStep !== wizardStepRef.current) {
-        c.setWizardStep(enter.wizardStep);
-        wait = Math.max(wait, STEP_SWAP_MS);
-      }
-      wizardStepRef.current = enter.wizardStep;
-    } else {
-      wizardStepRef.current = null;
-    }
+    // Antes había aquí un tercer caso: posicionar el Wizard en uno de sus
+    // sub-pasos. El Wizard se borró el 2026-08-31 y el constructor libre lo
+    // enseña todo de una vez, así que no hace falta.
     return wait;
   }, []);
 
@@ -218,7 +202,6 @@ export function useBacktestHelper(ctrl: HelperController): { startHelper: () => 
     c.setHelperActive(true);
     c.setMode("config");
     modeRef.current = "config";
-    wizardStepRef.current = null;
     completedRef.current = false;
     lastStepRef.current = 0;
     c.track?.("bt_helper_started", { step_total: HELPER_STEPS.length });

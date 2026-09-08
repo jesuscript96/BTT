@@ -3,6 +3,7 @@
 import React from "react";
 import { ChevronDown, Activity, Dices, TrendingUp, Bird, Grid3x3 } from "lucide-react";
 import { color, font, radius } from "@/components/ui/tokens";
+import { Panel } from "@/components/ui";
 
 export type ModuleId = "basico" | "montecarlo" | "wfo" | "blackswan" | "locates";
 
@@ -74,29 +75,14 @@ export default function ModuleRail({ active, onChange, config, disabled }: Props
   };
 
   return (
-    <div
-      style={{
-        background: color.bgSurface,
-        border: `0.5px solid ${color.border}`,
-        borderRadius: radius.md,
-        overflow: "hidden",
-        position: "sticky",
-        top: 12,
-      }}
+    // `Panel` del sistema (el estilo denso del Genético). El `sticky` va aquí y
+    // no dentro del primitivo: es cosa de ESTA página —el rail acompaña al
+    // desplazamiento mientras lees los resultados—, no del componente.
+    <Panel
+      titulo="Motores de robustez"
+      sinRelleno
+      style={{ position: "sticky", top: 12, marginBottom: 0 }}
     >
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: `0.5px solid ${color.border}`,
-          fontSize: 10,
-          letterSpacing: "0.11em",
-          textTransform: "uppercase",
-          color: color.copper,
-          fontFamily: font.sans,
-        }}
-      >
-        Motores de robustez
-      </div>
 
       {MODULES.map((m, i) => {
         const isActive = m.id === active;
@@ -213,6 +199,6 @@ export default function ModuleRail({ active, onChange, config, disabled }: Props
           </div>
         );
       })}
-    </div>
+    </Panel>
   );
 }

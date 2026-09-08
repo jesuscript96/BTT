@@ -10,6 +10,134 @@ import numpy as np
 from datetime import datetime, timezone
 
 
+def _structural_level(
+    value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+):
+    """Nivel estructural de un hard stop en la barra i.
+
+    Devuelve el valor del nivel pedido (HOD/LOD/PMH/PML/Previous Max/
+    Previous Min) o 0.0 si no está disponible (array ausente o valor 0);
+    el caller decide el default cuando es 0.0.
+    """
+    if value == "HOD" and hods is not None:
+        return hods[i] if hods[i] > 0 else 0.0
+    if value == "LOD" and lods is not None:
+        return lods[i] if lods[i] > 0 else 0.0
+    if value == "PMH" and pm_highs is not None:
+        return pm_highs[i] if pm_highs[i] > 0 else 0.0
+    if value == "PML" and pm_lows is not None:
+        return pm_lows[i] if pm_lows[i] > 0 else 0.0
+    if value in ("Previous Max", "PrevMax") and prev_highs is not None:
+        return prev_highs[i] if prev_highs[i] > 0 else 0.0
+    if value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
+        return prev_lows[i] if prev_lows[i] > 0 else 0.0
+    return 0.0
+
+
+def _sl_side_valid(stop_price, entry_price, is_long):
+    """True si el stop queda en el lado perdedor de la entrada.
+
+    Corto: SL estrictamente por encima del precio de entrada. Largo:
+    estrictamente por debajo (y positivo). Un stop en el lado ganador
+    (o a distancia cero) no es un stop: la premisa del nivel ya está
+    invalidada al entrar.
+    """
+    if is_long:
+        return 0.0 < stop_price < entry_price
+    return stop_price > entry_price
+
+
+
+def tope_hibrido(capital: float, black_swan_pct: float | None,
+                 max_loss_pct: float | None, precio: float) -> float | None:
+    """Acciones maximas para que un evento de cola no cueste mas de la cuenta.
+
+    Si el precio se mueve `black_swan_pct` en contra, una posicion que vale V
+    pierde `V x black_swan_pct/100`. Para que esa perdida no pase de
+    `max_loss_pct` del capital:
+
+        V <= (max_loss_pct/100 x capital) / (black_swan_pct/100)
+
+    El resultado son DOLARES de exposicion; las acciones salen de dividir por el
+    precio. Ejemplo de Jaume: capital 10.000, acepta perder el 50 % ante un
+    evento del 5.000 % -> V <= 5.000/50 = 100 $ de posicion. Con la accion a
+    1 $ son 100 acciones; a 0,50 $, 200. **El limite es de valor, no de
+    acciones** — confundirlo multiplica la exposicion por el precio.
+
+    Devuelve None si falta algun dato: sin capital o sin porcentajes no se puede
+    calcular un tope, y aplicar uno inventado seria peor que no aplicarlo. Quien
+    llama decide si eso significa "sin tope" o "no operar".
+    """
+    if not capital or capital <= 0:
+        return None
+    if not black_swan_pct or black_swan_pct <= 0:
+        return None
+    if max_loss_pct is None or max_loss_pct <= 0:
+        return None
+    if not precio or precio <= 0:
+        return None
+    valor_max = (max_loss_pct / 100.0) * capital / (black_swan_pct / 100.0)
+    return valor_max / precio
+
+
+def aprieta_stop_cangrejo(entry_price: float, stop_price: float,
+                          max_dist_pct: float | None, is_long: bool) -> float:
+    """ESTILO CANGREJO - MODO A. Devuelve el stop, apretado si estaba lejos.
+
+    Con SL por estructura (p.ej. previous max + 10 %) la distancia entry->SL
+    cambia en cada entrada: con el mismo market value, unos stops cuestan poco y
+    otros cuestan muchisimo. Este modo pone TECHO A ESA DISTANCIA: si el nivel
+    estructural queda a mas de `max_dist_pct` % del precio de entrada, el stop se
+    trae hasta ese porcentaje exacto.
+
+    **CAMBIA DONDE SE SALE, NO CUANTO SE PONE** - el tamano no se toca. Y el
+    stop devuelto gobierna la SALIDA REAL: el motor sale ahi, no en el nivel
+    original. Ejemplo del PRD: entras a 1,00, la estructura pone el SL en 2,00
+    (100 % de recorrido); con tope al 50 % el SL pasa a 1,50 y ahi se sale.
+
+    Solo APRIETA, nunca afloja: un stop que ya esta mas cerca que el tope se
+    devuelve intacto. Sin tope, sin stop (0.0) o con el dato a None devuelve el
+    stop tal cual - un techo que no se puede calcular no debe inventarse.
+    """
+    if not max_dist_pct or max_dist_pct <= 0:
+        return stop_price
+    if not stop_price or stop_price <= 0.0:
+        return stop_price
+    if not entry_price or entry_price <= 0.0:
+        return stop_price
+    dist_max = entry_price * (max_dist_pct / 100.0)
+    if abs(entry_price - stop_price) <= dist_max:
+        return stop_price
+    return (entry_price - dist_max) if is_long else (entry_price + dist_max)
+
+
+def tope_cangrejo(capital: float, max_loss_pct: float | None,
+                  dist: float) -> float | None:
+    """ESTILO CANGREJO - MODO B. Acciones maximas para que el SL no cueste mas
+    de `max_loss_pct` % de la cuenta.
+
+    El stop NO se toca: se queda donde dice la estructura. Lo que se encoge es el
+    TAMANO, para que el recorrido hasta el SL no cueste mas de lo aceptado.
+
+        perdida_al_SL = acciones x dist   <=   max_loss_pct/100 x capital
+
+    **CAMBIA CUANTO SE PONE, NO DONDE SE SALE.** Ejemplo del PRD: cuenta de
+    10.000, tope 3 % (300 $) y SL al 100 % de distancia -> 300 acciones a 1,00 =
+    300 $ de market value. El stop sigue en 2,00; si salta, se pierden 300 $.
+
+    Devuelve None si falta cualquier dato (sin capital, sin porcentaje o SIN
+    STOP): sin distancia al stop no hay perdida definida que topar, igual que
+    `tope_hibrido` devuelve None sin sus tres numeros. Quien llama decide si eso
+    significa "sin tope".
+    """
+    if not capital or capital <= 0:
+        return None
+    if max_loss_pct is None or max_loss_pct <= 0:
+        return None
+    if not dist or dist <= 0:
+        return None
+    return (max_loss_pct / 100.0) * capital / dist
+
 
 def simulate(
     close: np.ndarray,
@@ -36,7 +164,52 @@ def simulate(
     trail_pct: float | None = None,
     locates_cost: float = 0.0,
     locate_type: str = "FLAT",
+    # TOPE DE LOCATES (2026-08-26). Maximo de paquetes de 100 acciones que se
+    # esta dispuesto a alquilar para un ticker-dia. 0 = sin tope (comportamiento
+    # de siempre). En CORTO limita el tamano a `max_locates * 100` acciones:
+    # como la factura del dia es ceil(max_corto_del_dia / 100) * coste, topar
+    # cada entrada topa el gasto del dia entero. Recorta la posicion, NO anula
+    # el trade. En largo no se aplica: los locates son cosa del corto.
+    max_locates: int = 0,
     look_ahead_prevention: bool = True,
+    # STOP HIBRIDO (2026-09-03). Va por distancia al stop como `size_by_sl`,
+    # PERO topando la exposicion para que un evento de cola no se lleve mas de
+    # lo que se acepta perder. Nace de que los dos modos clasicos fallan en
+    # extremos opuestos: por SL, un stop muy cenido dispara el tamano y un hueco
+    # brutal te deja debiendo dinero; por MV escalas mal. El tope se calcula
+    # como `(% de cuenta que aceptas perder x capital) / % del evento`, y el
+    # resultado son DOLARES de exposicion, que se pasan a acciones al precio de
+    # la barra. Solo aplica con `size_by_sl`: sin el ya se va por valor de
+    # mercado y no hay nada que topar.
+    hybrid_stop: bool = False,
+    hybrid_black_swan_pct: float | None = None,
+    hybrid_max_loss_pct: float | None = None,
+    # CAPITAL SOBRE EL QUE SE CALCULA EL TECHO. None (lo normal) = el equity de
+    # la simulacion, `init_cash + realized_pnl`, que es lo correcto en un
+    # backtest y escala con la cuenta.
+    #
+    # Hace falta poder darlo aparte por el BOT DE ALERTAS: alli `init_cash` es
+    # un capital NOMINAL enorme (1e9) puesto a proposito para que el tope de
+    # caja no recorte nunca el tamano del aviso. Con ese numero, el techo
+    # hibrido saldria astronomico y NO RECORTARIA JAMAS — el aviso diria un
+    # tamano sin topar y nada lo indicaria.
+    hybrid_capital: float | None = None,
+    # ESTILO CANGREJO (2026-09-08, PRD de Alvaro `docs/PRD_ESTILO_CANGREJO.md`).
+    # DOS MODOS, se elige UNO (la UI apaga el otro; si llegaran los dos en un
+    # payload se aplican ambos y el Modo B mide sobre la distancia YA apretada).
+    #   A - `cangrejo_max_sl_dist_pct`  -> el stop nunca a mas de ese % del
+    #       entry. Aprieta el stop y CAMBIA DONDE SE SALE.
+    #   B - `cangrejo_max_loss_at_sl_pct` -> el SL nunca cuesta mas de ese % de
+    #       la cuenta. Encoge el tamano y CAMBIA CUANTO SE PONE.
+    # Son TECHOS sobre el sizing que ya exista (MV clasico, por SL o hibrido):
+    # solo RECORTAN, nunca agrandan. EXCLUYENTES con el stop hibrido - si un
+    # payload trae los dos, el motor arbitra a favor de Cangrejo (apaga
+    # `hybrid_stop` mas abajo), tal y como fija el PRD.
+    # La base de capital del Modo B es `hybrid_capital` si viene (el bot manda
+    # ahi la cuenta de verdad) y si no el equity vivo `init_cash + realized`.
+    cangrejo_active: bool = False,
+    cangrejo_max_sl_dist_pct: float | None = None,
+    cangrejo_max_loss_at_sl_pct: float | None = None,
     partial_take_profits: list | None = None,
     pyramid_levels: list | None = None,
     pyramid_sequential: bool = False,
@@ -44,6 +217,16 @@ def simulate(
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
     hs_offset_pct: float | None = 0.0,
+    # Nivel de respaldo ("HOD"/"LOD"/"PMH"/"PML"/"Previous Max"/"Previous
+    # Min") para cuando el nivel principal del hard stop estructural queda
+    # invalidado al entrar (ej. corto con el PMH ya roto). Solo aplica en
+    # REENTRADAS (total_trades > 0): la primera entrada con el nivel roto
+    # no se hace. None (default) = sin respaldo, nivel invalidado = no se
+    # entra. Viaja en `hard_stop.fallback_value` del JSON de la estrategia.
+    hs_fallback_value: str | None = None,
+    # Con `fallback_first_entry: true` en el JSON, el respaldo rescata
+    # TAMBIEN la primera entrada con el nivel invalidado (no solo reentradas).
+    hs_fallback_first: bool = False,
     hods: np.ndarray | None = None,
     lods: np.ndarray | None = None,
     pm_highs: np.ndarray | None = None,
@@ -63,6 +246,14 @@ def simulate(
     n = len(close)
     is_long = direction == "longonly"
 
+    # EXCLUSIVIDAD CANGREJO / HIBRIDO. La UI ya apaga uno al encender el otro,
+    # pero un payload viejo o hecho a mano puede traer los dos. Se arbitra AQUI
+    # y a favor de Cangrejo (PRD 2), en vez de dejar que se apliquen los dos
+    # techos y nadie sepa cual recorto: dos topes silenciosos encadenados son
+    # justo el tipo de fallo que no da error.
+    if cangrejo_active:
+        hybrid_stop = False
+
     equity = np.empty(n, dtype=np.float64)
     trades: list[dict] = []
 
@@ -74,6 +265,13 @@ def simulate(
     entry_fee_amount = 0.0
     size = 0.0
     trade_sl_price = 0.0
+    # Precio del stop APRETADO por el Modo A (0.0 = no se apreto). Hace falta
+    # como estado del trade porque el stop porcentual se RECALCULA en cada barra
+    # a partir de `entry_price`, y sin esto la salida usaria el nivel original
+    # aunque el sizing hubiera usado el apretado: el motor saldria en un sitio y
+    # habria dimensionado para otro. Con el stop estructural no haria falta
+    # (`trade_sl_price` ya guarda el apretado), pero se rellena igual.
+    sl_cangrejo_px = 0.0
     trail_extreme = 0.0
     mae = 0.0  # Maximum Adverse Excursion
     mfe = 0.0  # Maximum Favorable Excursion
@@ -156,13 +354,17 @@ def simulate(
                             exit_reason = "SL"
                 elif sl_stop is not None:
                     if is_long:
-                        hard_sl_price = entry_price * (1 - sl_stop)
+                        # Con el Modo A de Cangrejo la salida es el stop
+                        # APRETADO, no el porcentaje original (PRD 4).
+                        hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
+                                         else entry_price * (1 - sl_stop))
                         if price_for_sl <= hard_sl_price:
                             exit_triggered = True
                             exit_price = max(hard_sl_price, low[i])
                             exit_reason = "SL"
                     else:
-                        hard_sl_price = entry_price * (1 + sl_stop)
+                        hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
+                                         else entry_price * (1 + sl_stop))
                         if price_for_sl >= hard_sl_price:
                             exit_triggered = True
                             exit_price = min(hard_sl_price, high[i])
@@ -194,7 +396,8 @@ def simulate(
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
                                 else:
-                                    hard_sl_price = entry_price * (1 - sl_stop) if sl_stop is not None else -1e18
+                                    hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
+                                                     else (entry_price * (1 - sl_stop) if sl_stop is not None else -1e18))
                                 if trail_sl_price > hard_sl_price:
                                     exit_triggered = True
                                     exit_price = max(trail_sl_price, low[i])
@@ -217,7 +420,8 @@ def simulate(
                                 if hs_type == "Market Structure (HOD/LOD)":
                                     hard_sl_price = trade_sl_price
                                 else:
-                                    hard_sl_price = entry_price * (1 + sl_stop) if sl_stop is not None else 1e18
+                                    hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
+                                                     else (entry_price * (1 + sl_stop) if sl_stop is not None else 1e18))
                                 if trail_sl_price < hard_sl_price:
                                     exit_triggered = True
                                     exit_price = min(trail_sl_price, high[i])
@@ -794,9 +998,69 @@ def simulate(
                     disponible = cash_now - comprometido
                     if disponible <= 0:
                         continue
-                    add_cash_pedido = add_cash
-                    add_cash = min(add_cash, disponible)
-                    add_size = add_cash / add_px
+                    # COMO SE CONVIERTE EL IMPORTE EN ACCIONES. Cada nivel
+                    # elige su modo, independiente del de la entrada: un
+                    # anyadido puede ir por distancia al stop aunque la entrada
+                    # vaya por valor de mercado, y al reves.
+                    if lv.get("size_by_sl"):
+                        # `add_cash` deja de ser capital y pasa a ser RIESGO: se
+                        # divide por la distancia al stop, igual que la entrada.
+                        dist_pyr = (abs(add_px - trade_sl_price)
+                                    if trade_sl_price and trade_sl_price > 0 else 0.0)
+                        add_size_pedido = (add_cash / dist_pyr if dist_pyr > 0
+                                           else add_cash / add_px)
+                        # Y con el tope hibrido del NIVEL, que tiene sus propios
+                        # porcentajes: Jaume los reparte entre entrada y
+                        # piramide para que la suma de las dos no pase de lo que
+                        # acepta perder.
+                        if lv.get("hybrid_stop"):
+                            tope_pyr = tope_hibrido(
+                                hybrid_capital if hybrid_capital else cash_now,
+                                lv.get("hybrid_black_swan_pct"),
+                                lv.get("hybrid_max_loss_pct"), add_px)
+                            if tope_pyr is not None:
+                                add_size_pedido = min(add_size_pedido, tope_pyr)
+                    else:
+                        add_size_pedido = add_cash / add_px
+                    # CANGREJO MODO B EN LA PIRAMIDE. El PRD solo habla de
+                    # entradas y reentradas, pero sin esto el techo se esquiva
+                    # entero en cuanto la estrategia piramida: se entra con 300 $
+                    # de riesgo topado y se anaden 5.000 $ sin mirar. Ese es
+                    # exactamente el fallo que no da error.
+                    #
+                    # La perdida al stop de la posicion entera es SEPARABLE, asi
+                    # que no hace falta recalcular el precio medio:
+                    #   perdida_total = |avg - stop| x size + |add_px - stop| x add
+                    # de donde sale el cupo que le queda al anadido. DIVERGENCIA
+                    # CONSCIENTE con el PRD de Alvaro: contrastar al integrar.
+                    if (cangrejo_active and cangrejo_max_loss_at_sl_pct
+                            and trade_sl_price and trade_sl_price > 0):
+                        base_cap = (hybrid_capital if hybrid_capital else cash_now)
+                        cupo_usd = (float(cangrejo_max_loss_at_sl_pct) / 100.0
+                                    * float(base_cap or 0.0))
+                        gastado = abs(avg_entry_price - trade_sl_price) * size
+                        dist_add = abs(add_px - trade_sl_price)
+                        if dist_add > 0:
+                            margen = (cupo_usd - gastado) / dist_add
+                            if margen <= 0:
+                                continue
+                            add_size_pedido = min(add_size_pedido, margen)
+                    # El tope de caja se aplica siempre sobre el VALOR, venga el
+                    # tamano de donde venga.
+                    add_size = min(add_size_pedido, disponible / add_px)
+                    add_cash_pedido = add_size_pedido * add_px
+                    add_cash = add_size * add_px
+                    # TOPE DE LOCATES: un anadido en corto sube el maximo del
+                    # dia y con el la factura, asi que el cupo cuenta entrada
+                    # MAS anadidos. Se recorta igual que con el tope de caja.
+                    recortado_locates = False
+                    if (not is_long) and max_locates > 0:
+                        cupo_locates = max_locates * 100.0 - size
+                        if cupo_locates <= 0:
+                            continue
+                        if add_size > cupo_locates:
+                            add_size = cupo_locates
+                            recortado_locates = True
                     if add_size <= 0:
                         continue
                     recortado = add_cash < add_cash_pedido - 1e-9
@@ -822,6 +1086,7 @@ def simulate(
                         # Queda anotado cuando el tope de caja recorta, para que
                         # un añadido a medias no parezca uno normal.
                         **({"recortado_por_caja": round(add_cash_pedido, 2)} if recortado else {}),
+                        **({"recortado_por_locates": int(max_locates)} if recortado_locates else {}),
                     })
                     if not is_long:
                         max_short_size_today = max(max_short_size_today, size)
@@ -953,28 +1218,59 @@ def simulate(
                 # Determine Stop Loss Price
                 stop_loss_price = 0.0
                 if hs_type == "Market Structure (HOD/LOD)":
-                    val_struct = entry_price * (0.95 if is_long else 1.05)
-                    if hs_value == "HOD" and hods is not None:
-                        val_struct = hods[i] if hods[i] > 0 else val_struct
-                    elif hs_value == "LOD" and lods is not None:
-                        val_struct = lods[i] if lods[i] > 0 else val_struct
-                    elif hs_value == "PMH" and pm_highs is not None:
-                        val_struct = pm_highs[i] if pm_highs[i] > 0 else val_struct
-                    elif hs_value == "PML" and pm_lows is not None:
-                        val_struct = pm_lows[i] if pm_lows[i] > 0 else val_struct
-                    elif hs_value in ("Previous Max", "PrevMax") and prev_highs is not None:
-                        val_struct = prev_highs[i] if prev_highs[i] > 0 else val_struct
-                    elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
-                        val_struct = prev_lows[i] if prev_lows[i] > 0 else val_struct
-                    
+                    val_struct = _structural_level(
+                        hs_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+                    )
+                    if val_struct <= 0.0:
+                        val_struct = entry_price * (0.95 if is_long else 1.05)
+
                     # Calculate sl_offset
                     offset_pct = float(hs_offset_pct) if hs_offset_pct is not None else 0.0
                     offset_op = hs_operator or ">="
                     sign = 1.0 if offset_op in (">", ">=") else -1.0
                     sl_offset = sign * offset_pct / 100.0
                     stop_loss_price = val_struct * (1.0 + sl_offset)
+
+                    # Un stop estructural que queda en el lado GANADOR de la
+                    # entrada no es un stop: el chequeo de corto `high >= SL`
+                    # dispararia en la propia vela y haria fill al precio del
+                    # nivel (fuera del rango de la vela), contando un
+                    # beneficio instantaneo imposible. Nivel invalidado =
+                    # premisa muerta: no se entra. Excepciones: en REENTRADAS
+                    # (tras un stop-out es normal quedar pasado el nivel) se
+                    # rescatera con `hs_fallback_value` aplicando el mismo
+                    # offset; con `hs_fallback_first` tambien la primera
+                    # entrada. Si el respaldo tambien queda invalidado, no se
+                    # entra.
+                    if not _sl_side_valid(stop_loss_price, entry_price, is_long):
+                        if hs_fallback_value and (hs_fallback_first or total_trades > 0):
+                            fb_level = _structural_level(
+                                hs_fallback_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+                            )
+                            if fb_level > 0:
+                                fb_stop = fb_level * (1.0 + sl_offset)
+                                if _sl_side_valid(fb_stop, entry_price, is_long):
+                                    stop_loss_price = fb_stop
+                        if not _sl_side_valid(stop_loss_price, entry_price, is_long):
+                            equity[i] = init_cash + realized_pnl
+                            prev_signal = current_signal
+                            continue
                 elif sl_stop is not None and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
+
+                # CANGREJO MODO A: apretar el stop lejano. VA AQUI, ANTES DE
+                # DIMENSIONAR, porque el stop apretado es el que manda tanto en
+                # el tamano (`size_by_sl` divide por esta distancia) como en la
+                # salida real. Si se apretara despues, el motor dimensionaria
+                # con un stop y saldria en otro.
+                sl_apretado = False
+                if cangrejo_active and cangrejo_max_sl_dist_pct:
+                    nuevo_sl = aprieta_stop_cangrejo(
+                        entry_price, stop_loss_price,
+                        cangrejo_max_sl_dist_pct, is_long)
+                    if nuevo_sl != stop_loss_price:
+                        stop_loss_price = nuevo_sl
+                        sl_apretado = True
 
                 if size_by_sl:
                     dist = abs(entry_price - stop_loss_price) if stop_loss_price > 0.0 else 0.0
@@ -986,9 +1282,41 @@ def simulate(
                     # Traditional sizing: deploy risk_amount into the position
                     size = risk_amount / entry_price
 
+                # TOPE HIBRIDO: por SL pero sin pasarse de la exposicion que
+                # un evento de cola convertiria en una perdida inasumible.
+                # RECORTA, no anula — igual que el tope de caja y el de locates.
+                if hybrid_stop and size_by_sl:
+                    tope = tope_hibrido(hybrid_capital if hybrid_capital
+                                        else init_cash + realized_pnl,
+                                        hybrid_black_swan_pct,
+                                        hybrid_max_loss_pct, entry_price)
+                    if tope is not None:
+                        size = min(size, tope)
+
+                # CANGREJO MODO B: el SL nunca cuesta mas de X % de la cuenta.
+                # A DIFERENCIA DEL HIBRIDO, NO EXIGE `size_by_sl`: es un techo
+                # sobre el sizing que haya (por MV, por SL o el que sea), y ahi
+                # esta la gracia — con sizing por valor de mercado es justo
+                # donde la perdida al stop se descontrola. La distancia es la
+                # FINAL, ya apretada por el Modo A si tambien viniera.
+                if cangrejo_active and cangrejo_max_loss_at_sl_pct:
+                    dist_cangrejo = (abs(entry_price - stop_loss_price)
+                                     if stop_loss_price > 0.0 else 0.0)
+                    tope_c = tope_cangrejo(
+                        hybrid_capital if hybrid_capital
+                        else init_cash + realized_pnl,
+                        cangrejo_max_loss_at_sl_pct, dist_cangrejo)
+                    if tope_c is not None:
+                        size = min(size, tope_c)
+
                 # Cap size by available cash
                 max_size = available_cash / entry_price
                 size = min(size, max_size)
+
+                # Tope de locates: en corto, nunca mas acciones de las que
+                # cubren los paquetes que se esta dispuesto a alquilar.
+                if (not is_long) and max_locates > 0:
+                    size = min(size, max_locates * 100.0)
 
                 if size > 0:
                     # Track Max Short Size for Locates
@@ -999,6 +1327,10 @@ def simulate(
                     entry_idx = eff_entry_idx
                     entry_time = timestamps[entry_idx] if timestamps is not None else 0
                     trade_sl_price = stop_loss_price
+                    # Solo si de verdad se apreto: a 0.0 las salidas usan el
+                    # calculo de siempre, bit a bit (regla n.1 del PRD - sin
+                    # campos, resultado identico).
+                    sl_cangrejo_px = stop_loss_price if sl_apretado else 0.0
                     trail_extreme = entry_price
                     trail_activated = False
                     mae = 0.0
