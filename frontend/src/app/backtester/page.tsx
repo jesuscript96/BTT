@@ -506,6 +506,15 @@ export default function Home() {
       monthly_expenses: p?.monthly_expenses,
       locates_cost: p?.locates_cost,
       max_locates: p?.max_locates,
+      locates_random: p?.locates_random,
+      locates_random_min: p?.locates_random_min,
+      locates_random_max: p?.locates_random_max,
+      locates_seed: p?.locates_seed,
+      ev_gate_enabled: p?.ev_gate_enabled,
+      ev_gate_window: p?.ev_gate_window,
+      ev_gate_by: p?.ev_gate_by,
+      ev_gate_default_pct: p?.ev_gate_default_pct,
+      ev_gate_min_trades: p?.ev_gate_min_trades,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -551,6 +560,15 @@ export default function Home() {
         custom_end_time: (draft.market_sessions || p?.market_sessions || []).includes("custom") ? (draft.custom_end_time || p?.custom_end_time || undefined) : undefined,
         locates_cost: p?.locates_cost,
         max_locates: p?.max_locates,
+        locates_random: p?.locates_random,
+        locates_random_min: p?.locates_random_min,
+        locates_random_max: p?.locates_random_max,
+        locates_seed: p?.locates_seed,
+        ev_gate_enabled: p?.ev_gate_enabled,
+        ev_gate_window: p?.ev_gate_window,
+        ev_gate_by: p?.ev_gate_by,
+        ev_gate_default_pct: p?.ev_gate_default_pct,
+        ev_gate_min_trades: p?.ev_gate_min_trades,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
       }));
@@ -767,6 +785,15 @@ export default function Home() {
       monthly_expenses: params.monthly_expenses,
       locates_cost: (params as any).locates_cost,
       max_locates: (params as any).max_locates,
+      locates_random: (params as any).locates_random,
+      locates_random_min: (params as any).locates_random_min,
+      locates_random_max: (params as any).locates_random_max,
+      locates_seed: (params as any).locates_seed,
+      ev_gate_enabled: (params as any).ev_gate_enabled,
+      ev_gate_window: (params as any).ev_gate_window,
+      ev_gate_by: (params as any).ev_gate_by,
+      ev_gate_default_pct: (params as any).ev_gate_default_pct,
+      ev_gate_min_trades: (params as any).ev_gate_min_trades,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,
@@ -1126,7 +1153,19 @@ export default function Home() {
     const isLocatesFee = isDayResults.reduce((s, d) => s + (d.locates_fee || 0), 0);
     const totalPnl = isTrades.reduce((s, t) => s + t.pnl, 0) - isLocatesFee;
     const initCash = initCashRef.current;
-    const totalReturnPct = initCash > 0 ? (totalPnl / initCash) * 100 : 0;
+    // Igual que el backend desde el PRD del 8-sep: el Return de la tarjeta va
+    // NETO de gastos fijos. La curva «con gastos» del tramo IS ya los lleva.
+    const isEqExpTmp = (result.global_equity_expenses || []).filter(p => p.time <= cutoffTime);
+    const netFinal = isEqExpTmp.length ? isEqExpTmp[isEqExpTmp.length - 1].value : null;
+    const totalReturnPctGross = initCash > 0 ? (totalPnl / initCash) * 100 : 0;
+    const totalReturnPct = netFinal != null && initCash > 0
+      ? ((netFinal - initCash) / initCash) * 100
+      : totalReturnPctGross;
+    const isRTotal = isTrades.reduce((s: number, t: any) => s + (t.r_multiple ?? 0), 0);
+    const isFechas = isTrades.map((t: any) => String(t.date).slice(0, 10)).sort();
+    const isSpanDays = isFechas.length >= 2
+      ? Math.round((new Date(isFechas[isFechas.length - 1]).getTime() - new Date(isFechas[0]).getTime()) / 86400000) + 1
+      : 1;
 
     // Daily returns for Sharpe/Sortino
     const dailyLocatesFee = new Map<string, number>();
@@ -1198,7 +1237,25 @@ export default function Home() {
       avg_r_per_day: uniqueDays > 0
         ? isTrades.reduce((sum: number, t: any) => sum + (t.r_multiple ?? 0), 0) / uniqueDays
         : 0,
-      calmar_ratio: maxDd !== 0 ? totalReturnPct / Math.abs(maxDd) : 0,
+      total_return_pct_gross: totalReturnPctGross,
+      total_return_r: isRTotal,
+      span_days: isSpanDays,
+      // Calmar anualizado (CAGR neto / |maxDD|), misma regla que el backend:
+      // por debajo de 30 dias no se anualiza.
+      cagr_pct: (() => {
+        const fin = initCash + (netFinal != null ? netFinal - initCash : totalPnl);
+        return initCash > 0 && isSpanDays >= 30 && fin > 0
+          ? (Math.pow(fin / initCash, 365 / isSpanDays) - 1) * 100
+          : totalReturnPct;
+      })(),
+      calmar_ratio_total: maxDd !== 0 ? totalReturnPct / Math.abs(maxDd) : 0,
+      calmar_ratio: (() => {
+        const fin = initCash + (netFinal != null ? netFinal - initCash : totalPnl);
+        const cagr = initCash > 0 && isSpanDays >= 30 && fin > 0
+          ? (Math.pow(fin / initCash, 365 / isSpanDays) - 1) * 100
+          : totalReturnPct;
+        return maxDd !== 0 ? cagr / Math.abs(maxDd) : 0;
+      })(),
       dd_return_ratio: totalReturnPct !== 0 ? Math.abs(maxDd) / totalReturnPct : 0,
       max_consecutive_wins: isMaxW,
       max_consecutive_losses: isMaxL,

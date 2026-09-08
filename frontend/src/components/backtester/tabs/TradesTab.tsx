@@ -1,4 +1,5 @@
 "use client";
+import type { EvGateSummary } from "@/lib/api_backtester";
 
 import { useState, useMemo, useEffect } from "react";
 import type { TradeRecord } from "@/lib/api_backtester";
@@ -6,6 +7,10 @@ import type { TradeRecord } from "@/lib/api_backtester";
 interface TradesTabProps {
   trades: TradeRecord[];
   onSelectTrade?: (ticker: string, date: string) => void;
+  /** Puerta por EV (locates aleatorios, fase 2): resumen de la segunda pasada. */
+  evGate?: EvGateSummary;
+  /** La primera pasada, sin puerta, para poder comparar. */
+  sinPuerta?: { total_trades: number };
 }
 
 type SortKey = keyof TradeRecord;
@@ -43,7 +48,7 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
+export default function TradesTab({ trades, onSelectTrade, evGate, sinPuerta }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -92,12 +97,37 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
     const rValues = trades
       .map((t) => t.r_multiple)
       .filter((r): r is number => r !== null);
+    // Locates sorteados: el precio es por TICKER-DÍA, no por trade, así que se
+    // deduplica por ticker|fecha antes de resumirlo o saldría sesgado hacia los
+    // días con más operaciones.
+    const porDia = new Map<string, { precio: number; factura: number }>();
+    for (const t of trades) {
+      if (t.locate_pkg_price != null) {
+        porDia.set(`${t.ticker}|${t.date}`, { precio: t.locate_pkg_price, factura: t.locates_fee_day || 0 });
+      }
+    }
+    const dias = [...porDia.values()];
+    const sorteos = dias.map((d) => d.precio).sort((a, b) => a - b);
+    const locates = sorteos.length
+      ? {
+          n: sorteos.length,
+          media: sorteos.reduce((a, b) => a + b, 0) / sorteos.length,
+          min: sorteos[0],
+          max: sorteos[sorteos.length - 1],
+          // La factura también es por ticker-día: sumarla por trade la contaría
+          // tantas veces como trades tuviera ese día.
+          factura: dias.reduce((a, d) => a + d.factura, 0),
+        }
+      : null;
     return {
       total: trades.length,
       avgR: rValues.length ? rValues.reduce((a, b) => a + b, 0) / rValues.length : null,
       totalPnl: trades.reduce((a, t) => a + t.pnl, 0),
+      locates,
     };
   }, [trades]);
+  const hayLocateSorteado = summary.locates !== null;
+  const hayPuerta = trades.some((t) => t.ev_gate_ev != null);
 
   const shown = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
@@ -133,6 +163,26 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
               </strong>
             </span>
           )}
+          {evGate && (
+            <span title="Puerta por EV: señales evaluadas en la segunda pasada, cuántas no compensaban el locate, y cuántos trades tenía la primera pasada (sin puerta)">
+              puerta:{" "}
+              <strong className="text-[var(--danger)]">{evGate.rechazadas} rechazadas</strong>
+              {" "}de {evGate.evaluadas}
+              {evGate.con_ev_por_defecto > 0 && ` (${evGate.con_ev_por_defecto} con EV por defecto)`}
+              {sinPuerta && <> · sin puerta: <strong style={{ color: 'var(--color-ec-text-high)' }}>{sinPuerta.total_trades}</strong> trades</>}
+            </span>
+          )}
+          {summary.locates && (
+            <span title="Locates sorteados por ticker-día: precio medio del paquete de 100, rango que salió, y factura total">
+              locates:{" "}
+              <strong style={{ color: 'var(--color-ec-text-high)' }}>
+                ${summary.locates.media.toFixed(2)}
+              </strong>
+              {" "}({summary.locates.min.toFixed(2)}–{summary.locates.max.toFixed(2)}, {summary.locates.n} días)
+              {" "}· factura{" "}
+              <strong className="text-[var(--danger)]">−${summary.locates.factura.toFixed(2)}</strong>
+            </span>
+          )}
           <span>
             pnl:{" "}
             <strong className={summary.totalPnl >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
@@ -157,6 +207,15 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
               <SortHeader label="R" field="r_multiple" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="MAE%" field="mae" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="MFE%" field="mfe" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              {hayLocateSorteado && (
+                <SortHeader label="Locate/100" field="locate_pkg_price" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              )}
+              {hayPuerta && (
+                <>
+                  <SortHeader label="EV%" field="ev_gate_ev" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                  <SortHeader label="Fade%" field="ev_gate_fade" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+                </>
+              )}
               <SortHeader label="Exit" field="exit_reason" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
@@ -204,6 +263,24 @@ export default function TradesTab({ trades, onSelectTrade }: TradesTabProps) {
                 <td className="px-4 py-1.5 text-[var(--success)]">
                   {t.mfe != null ? `${t.mfe.toFixed(2)}%` : "—"}
                 </td>
+                {hayLocateSorteado && (
+                  <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}
+                      title={t.locates_fee_day != null ? `factura del día: $${t.locates_fee_day.toFixed(2)}` : undefined}>
+                    {t.locate_pkg_price != null ? `$${t.locate_pkg_price.toFixed(2)}` : "—"}
+                  </td>
+                )}
+                {hayPuerta && (
+                  <>
+                    <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}
+                        title="EV en sombra con el que se decidió entrar (% del precio)">
+                      {t.ev_gate_ev != null ? `${t.ev_gate_ev.toFixed(2)}%` : "—"}
+                    </td>
+                    <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-secondary)' }}
+                        title={t.ev_gate_paquetes != null ? `${t.ev_gate_paquetes} paquete(s) de más` : undefined}>
+                      {t.ev_gate_fade != null ? `${t.ev_gate_fade.toFixed(2)}%` : "—"}
+                    </td>
+                  </>
+                )}
                 <td className="px-4 py-1.5">
                   {(() => {
                     const style = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };

@@ -213,6 +213,12 @@ def simulate(
     partial_take_profits: list | None = None,
     pyramid_levels: list | None = None,
     pyramid_sequential: bool = False,
+    # PUERTA POR EV (locates aleatorios, fase 2 — 2026-09-08). `ConfigPuerta` de
+    # `locates_gate.py` o None. Con None NO se ejecuta ni una rama nueva. Solo
+    # mira entradas en CORTO con locate: compara el EV en sombra con el fade que
+    # exige el locate MARGINAL de esta entrada y, si no compensa, no entra (la
+    # senal se consume igual que cuando el stop estructural invalida la entrada).
+    ev_gate=None,
     hs_type: str | None = None,
     hs_value: str | float | None = None,
     hs_operator: str | None = ">=",
@@ -301,6 +307,7 @@ def simulate(
 
     # Locates tracking (daily maximum short size)
     max_short_size_today = 0.0
+    ev_gate_log: list = []   # veredictos de la puerta por EV (vacio sin puerta)
 
     total_trades = 0
     prev_signal = False
@@ -1318,6 +1325,23 @@ def simulate(
                 if (not is_long) and max_locates > 0:
                     size = min(size, max_locates * 100.0)
 
+                # Puerta por EV: con el tamano YA final (todos los topes
+                # aplicados), ¿compensa pagar los paquetes de mas que exige?
+                if ev_gate is not None and (not is_long) and size > 0 and locates_cost > 0:
+                    from app.services.locates_gate import evaluar as _evaluar_puerta
+                    _ts_ent = int(timestamps[eff_entry_idx]) if timestamps is not None else 0
+                    _pkg = locates_cost if locate_type != "PERCENT" else (
+                        (init_cash * (risk_r / 100.0) if risk_type == "PERCENT" else risk_r)
+                        * (locates_cost / 100.0))
+                    _veredicto = _evaluar_puerta(ev_gate, _ts_ent, entry_price, size,
+                                                 max_short_size_today, _pkg)
+                    _veredicto["idx"] = int(eff_entry_idx)
+                    ev_gate_log.append(_veredicto)
+                    if not _veredicto["entra"]:
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
+
                 if size > 0:
                     # Track Max Short Size for Locates
                     if not is_long:
@@ -1415,6 +1439,8 @@ def simulate(
 
     # Finalize result
     results = {"equity": equity, "trades": trades, "locates_fee": daily_locates_fee}
+    if ev_gate is not None:
+        results["ev_gate"] = ev_gate_log
     if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
     else:

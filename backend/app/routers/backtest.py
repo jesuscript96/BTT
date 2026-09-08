@@ -106,9 +106,25 @@ def _autosave_success(req: BacktestRequest, job_id: str, result: dict, user_id):
     date_range = f"{req.start_date or '?'} → {req.end_date or '?'}"
     label = f"[auto] {strat_name} · {date_range} · {datetime.now():%Y-%m-%d %H:%M}"
 
+    # PRD Alvaro 2026-09-08 (P4): las fechas guardadas son las que se corrieron,
+    # no las del formulario (el dataset puede acortar el rango pedido). Lo pedido
+    # se conserva en `*_pedido` por si hace falta reconstruir la peticion.
+    _rango = result.get("rango_efectivo") or {}
+    _params = req.model_dump()
+    _params["start_date_pedido"] = req.start_date
+    _params["end_date_pedido"] = req.end_date
+    if _rango.get("primer_dia_ejecutado"):
+        _params["start_date"] = _rango["primer_dia_ejecutado"]
+    elif _rango.get("start_date"):
+        _params["start_date"] = _rango["start_date"]
+    if _rango.get("ultimo_dia_ejecutado"):
+        _params["end_date"] = _rango["ultimo_dia_ejecutado"]
+    elif _rango.get("end_date"):
+        _params["end_date"] = _rango["end_date"]
+
     results_json = {
         **light,
-        "backtest_params": req.model_dump(),
+        "backtest_params": _params,
         "strategy_definition": req.strategy_definition,
         "strategy_names": [strat_name],
         "label": label,

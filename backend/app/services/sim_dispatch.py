@@ -64,6 +64,14 @@ def simulate(**kwargs) -> dict:
     cangrejo = bool(kwargs.get("cangrejo_active"))
     if kwargs.get("hybrid_stop") and not cangrejo:
         return _legacy_simulate(**kwargs)
+    # PUERTA POR EV (locates aleatorios, fase 2 — 2026-09-08): mismo trato que
+    # la piramidacion. Solo la implementa el motor Python; con el kernel activo
+    # y sin este desvio, cada ticker-dia fallaba con «unexpected keyword
+    # argument 'ev_gate'» y la corrida acababa con CERO trades. Sin puerta, el
+    # kwarg se retira antes de llamar al JIT (no conoce el parametro).
+    if kwargs.get("ev_gate") is not None:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("ev_gate", None)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)

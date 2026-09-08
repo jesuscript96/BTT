@@ -176,6 +176,17 @@ def run_backtest(
     # Tope de locates: maximo de paquetes de 100 acciones en corto por
     # ticker-dia. 0 = sin tope. Ver portfolio_sim.simulate.
     max_locates: int = 0,
+    # Locates ALEATORIOS (2026-09-08): en vez de `locates_cost` fijo, un precio
+    # sorteado por ticker-dia dentro de [min, max], sesgado por el precio de la
+    # accion y determinista por semilla. Ver `locates_random.py`. Con el flag
+    # apagado esta funcion es EXACTAMENTE la de siempre. Fuerza la via
+    # SECUENCIAL: es la unica en la que el precio puede variar por ticker-dia.
+    locates_random: bool = False,
+    locates_random_min: float = 0.0,
+    locates_random_max: float = 0.0,
+    locates_seed: int = 0,
+    # Puerta por EV (fase 2): `ConfigPuerta` o None. Solo via secuencial.
+    ev_gate=None,
     look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
@@ -235,6 +246,9 @@ def run_backtest(
         # slab corriera con modelo, lo IGNORARIA en silencio: el resultado
         # saldria etiquetado como "filtrado" sin haber filtrado nada.
         and entry_model is None and feature_collector is None
+        # El sorteo de locates es por ticker-dia y el slab pasa UN solo
+        # `locates_cost` para todos: correria con el fijo en silencio.
+        and not locates_random and ev_gate is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -432,6 +446,11 @@ def run_backtest(
     # totals in _compute_global_equity_and_drawdown / _aggregate_metrics so
     # dollar totals stay unchanged while no trade's win/loss is skewed by it.
     locates_fee_by_date: dict[str, float] = {}
+    # Precios de locate sorteados (uno por ticker-dia con entradas), para el
+    # resumen del resultado. Vacio si el modo aleatorio esta apagado.
+    _sorteos: list[float] = []
+    # Veredictos de la puerta por EV de toda la corrida (vacio sin puerta).
+    _puerta: dict = {"evaluadas": 0, "aceptadas": 0, "rechazadas": 0, "con_ev_por_defecto": 0}
 
     # ── Fase 1-slab: stream desde slabs locales (refs mmap) + señales ───────
     # Sustituye fetch+ensamblado pandas por slices numpy del slab store. Los meses
@@ -500,6 +519,7 @@ def run_backtest(
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
     _n_workers = _bsig.get_parallel_workers()
     if (not _slab_mode) and entry_model is None and feature_collector is None \
+            and not locates_random and ev_gate is None \
             and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
@@ -571,6 +591,14 @@ def run_backtest(
         eq_vals = sim_r["equity"]
         raw_trades = sim_r["trades"]
         ticker_locates_fee = float(sim_r.get("locates_fee", 0.0) or 0.0)
+        # Puerta por EV: se cuentan TODOS los veredictos del dia, tambien los de
+        # un dia que acabo sin trades porque los rechazo todos.
+        _vered = sim_r.get("ev_gate") or []
+        for _v in _vered:
+            _puerta["evaluadas"] += 1
+            _puerta["aceptadas" if _v["entra"] else "rechazadas"] += 1
+            if _v.get("ev_por_defecto"):
+                _puerta["con_ev_por_defecto"] += 1
         if not raw_trades:
             return
 
@@ -598,6 +626,25 @@ def run_backtest(
             raw_trades, timestamps, ticker_e, date_e, strategy_def, risk_unit_dollar,
             gap_pct=e["gap_pct"],
         ))
+        # Con locates aleatorios el precio sorteado se pega a cada trade del
+        # ticker-dia: es la unica forma de ver DESPUES por que ese dia costo lo
+        # que costo. `locates_fee_day` es la factura del dia entero (se cobra
+        # una vez y la comparten todos los trades de ese ticker ese dia).
+        _sorteo = e.get("sorteo")
+        if _sorteo is not None or ticker_locates_fee > 0:
+            for _t in trades_records:
+                if _sorteo is not None:
+                    _t["locate_pkg_price"] = _sorteo["precio"]
+                    _t["locate_ref_price"] = _sorteo["precio_ref"]
+                _t["locates_fee_day"] = round(ticker_locates_fee, 4)
+        if _vered:
+            _por_idx = {v["idx"]: v for v in _vered if v.get("entra")}
+            for _t in trades_records:
+                _v = _por_idx.get(_t.get("entry_idx"))
+                if _v is not None:
+                    _t["ev_gate_ev"] = _v["ev_pct"]
+                    _t["ev_gate_fade"] = _v["fade_pct"]
+                    _t["ev_gate_paquetes"] = _v["paquetes"]
         equity = _extract_equity_from_values(eq_vals, timestamps)
         stats = _extract_day_stats_from_values(
             eq_vals, ticker_e, date_e, trades_records, e["gap_pct"], ticker_locates_fee
@@ -1017,6 +1064,27 @@ def run_backtest(
         else:
             timestamps_arr = pd.to_datetime(ts_arr).values.astype("datetime64[ns]").astype(np.int64)
 
+        # Locates aleatorios: el precio del paquete de ESTE ticker-dia. Sale de
+        # un hash de (semilla, ticker, fecha) — no de un generador que avanza —
+        # asi que no depende del orden de proceso. La referencia es la primera
+        # vela del frame (04:00): causal, y es lo que mira el broker esa manana.
+        _sorteo_dia = None
+        _locate_dia = locates_cost
+        _tipo_locate_dia = locate_type
+        if locates_random:
+            from app.services.locates_random import precio_locate
+            _opens = arrays["open"]
+            _precio_ref = float(_opens[0]) if len(_opens) else 0.0
+            _sorteo_dia = precio_locate(
+                _precio_ref, locates_random_min, locates_random_max,
+                locates_seed, ticker, date,
+            )
+            _locate_dia = _sorteo_dia["precio"]
+            # El sorteo es en $ por paquete de 100: la semantica PERCENT (% del
+            # riesgo) no tiene sentido aqui y se ignora a proposito.
+            _tipo_locate_dia = "FLAT"
+            _sorteos.append(_locate_dia)
+
         # Los kwargs van en un dict para poder RE-simular este mismo
         # ticker-dia con el corte del cortacircuitos diario (ver _flush_dia).
         _sim_kwargs = dict(
@@ -1041,9 +1109,10 @@ def run_backtest(
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,
-                locates_cost=locates_cost,
-                locate_type=locate_type,
+                locates_cost=_locate_dia,
+                locate_type=_tipo_locate_dia,
                 max_locates=max_locates,
+                ev_gate=ev_gate,
                 look_ahead_prevention=look_ahead_prevention,
                 sl_stop=sig_sl_stop,
                 sl_trail=sig_sl_trail,
@@ -1081,6 +1150,13 @@ def run_backtest(
         del mini_df
 
         if not sim_result["trades"]:
+            # Sin puerta es lo de siempre. Con puerta, un dia sin trades puede
+            # ser un dia en que la puerta lo rechazo todo: hay que contarlo.
+            if ev_gate is not None and sim_result.get("ev_gate"):
+                _emitir({"ticker": ticker, "date": date, "sim_result": sim_result,
+                         "sim_kwargs": _sim_kwargs, "ts_arr": arrays["timestamp"],
+                         "gap_pct": daily_stats.get("gap_pct"), "cash": compounding_cash,
+                         "sorteo": _sorteo_dia})
             del sim_result
             continue
 
@@ -1089,6 +1165,7 @@ def run_backtest(
             "sim_kwargs": _sim_kwargs, "ts_arr": arrays["timestamp"],
             "gap_pct": daily_stats.get("gap_pct"),
             "cash": compounding_cash,
+            "sorteo": _sorteo_dia,
         }
         if _tope_on:
             # Con el cortacircuitos activo no se puede emitir todavia: el corte
@@ -1145,6 +1222,16 @@ def run_backtest(
         f"total={round(time.time()-t_total, 2)}s"
     )
 
+    _resumen_locates = None
+    if locates_random:
+        from app.services.locates_random import resumen as _resumen_sorteo
+        _resumen_locates = {
+            "enabled": True,
+            "min": float(locates_random_min), "max": float(locates_random_max),
+            "seed": int(locates_seed),
+            **_resumen_sorteo(_sorteos),
+        }
+
     return {
         "aggregate_metrics": aggregate,
         "day_results": day_results,
@@ -1156,6 +1243,13 @@ def run_backtest(
         # Sesiones cortadas por el limite de perdida diaria. Lista vacia cuando
         # el limite esta apagado, que es el default.
         "daily_limit_log": daily_limit_log,
+        # Resumen del sorteo de locates. Solo con el modo aleatorio: sin el, el
+        # resultado no lleva la clave y es byte a byte el de siempre.
+        **({"locates_random": _resumen_locates} if locates_random else {}),
+        **({"ev_gate": {**_puerta, "ventana": int(ev_gate.ventana), "por": ev_gate.por,
+                        "ev_defecto_pct": float(ev_gate.ev_defecto_pct),
+                        "min_trades": int(ev_gate.min_trades),
+                        "n_sombra": int(ev_gate.sombra_cierre_ns.size)}} if ev_gate is not None else {}),
     }
 
 
@@ -1766,7 +1860,24 @@ def _aggregate_metrics(
     # Calculate Total Return against Initial Cash
     # PnL / Init Cash gives the actual Return % for the period on the account size
     total_pnl = total_pnl_trades
-    total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
+    # RETURN NETO (PRD Alvaro 2026-09-08, P2). Antes se dividia `total_pnl`,
+    # que descuenta locates pero NO los gastos fijos mensuales: con 300 $/mes
+    # sobre 10.000 $ la tarjeta inflaba un 36 % del capital que la curva
+    # punteada «con gastos» si descontaba. El bruto sigue viajando aparte
+    # (`total_return_pct_gross`) para poder comparar con corridas viejas.
+    total_return_gross = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
+    total_return = (total_pnl_net / init_cash) * 100.0 if init_cash > 0 else 0.0
+    # R TOTAL (P3): el buscador de estrategias leia `total_return_r` y esta
+    # clave no existia, asi que la columna y el filtro «beneficio neto minimo»
+    # iban siempre a 0.
+    total_return_r = float(sum((t.get("r_multiple") or 0.0) for t in trades))
+    # Dias de calendario que abarca la corrida, para anualizar el Calmar.
+    _fechas = sorted({str(t.get("date", ""))[:10] for t in trades if t.get("date")})
+    try:
+        span_days = (pd.to_datetime(_fechas[-1]) - pd.to_datetime(_fechas[0])).days + 1 \
+            if len(_fechas) >= 2 else 1
+    except Exception:
+        span_days = 1
 
     # Daily PnL timeline (net of locates), computed once: the dense
     # Sharpe/Sortino block below and the daily win/loss streaks must both see
@@ -1868,8 +1979,17 @@ def _aggregate_metrics(
     # Expectancy
     expectancy = avg_pnl
 
-    # Calmar = total return / abs(max dd) -> Using annualized return makes more sense, but simple total is standard here
-    calmar_ratio = (total_return / abs(final_max_dd)) if final_max_dd != 0 else 0.0
+    # CALMAR ANUALIZADO (P2): CAGR neto / |max DD|. El de siempre (retorno
+    # TOTAL / max DD) se conserva como `calmar_ratio_total`; en ventanas de un
+    # ano apenas cambia, en backtests largos el total mentia (y el tooltip de
+    # la UI decia «anualizada» sin serlo). Por debajo de 30 dias no se anualiza:
+    # elevar a 365/5 convertiria una semana buena en un numero absurdo.
+    calmar_ratio_total = (total_return / abs(final_max_dd)) if final_max_dd != 0 else 0.0
+    if init_cash > 0 and span_days >= 30 and (init_cash + total_pnl_net) > 0:
+        cagr_pct = (((init_cash + total_pnl_net) / init_cash) ** (365.0 / span_days) - 1.0) * 100.0
+    else:
+        cagr_pct = total_return
+    calmar_ratio = (cagr_pct / abs(final_max_dd)) if final_max_dd != 0 else 0.0
 
     # DD/Return ratio -> How much max DD to achieve Total Return
     dd_return_ratio = (abs(final_max_dd) / total_return) if total_return != 0 else 0.0
@@ -1968,6 +2088,12 @@ def _aggregate_metrics(
         "payoff_ratio": round(payoff_ratio, 4),
         "total_expenses": round(total_expenses, 2),
         "total_pnl_net": round(total_pnl_net, 2),
+        # PRD Alvaro 2026-09-08 (P2/P3): ver comentarios arriba.
+        "total_return_pct_gross": round(total_return_gross, 4),
+        "total_return_r": round(total_return_r, 4),
+        "cagr_pct": round(cagr_pct, 4),
+        "calmar_ratio_total": round(calmar_ratio_total, 4),
+        "span_days": int(span_days),
         "avg_r_per_day": round(sum(t.get("r_multiple") or 0.0 for t in trades) / total_days, 4) if total_days > 0 else 0,
         "avg_r_ui": round(avg_r_ui, 4),
     }

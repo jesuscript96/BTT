@@ -73,6 +73,28 @@ class BacktestRequest(BaseModel):
     # a alquilar por ticker-día. 0 = sin tope. Limita el tamaño en CORTO a
     # max_locates * 100 acciones (Jaume 2026-08-26).
     max_locates: int = 0
+    # Locates aleatorios (Jaume 2026-09-08): precio del paquete sorteado por
+    # ticker-dia dentro de [min, max], sesgado por el precio de la accion y
+    # determinista por semilla. Sustituye a `locates_cost` cuando esta activo.
+    # Ver backtest_service.run_backtest y locates_random.py.
+    locates_random: bool = False
+    locates_random_min: float = 0.0
+    locates_random_max: float = 0.0
+    locates_seed: int = 0
+    # Puerta por EV (fase 2 de los locates aleatorios). Dos pasadas: la primera
+    # sin puerta da el «EV en sombra»; la segunda decide trade a trade si el EV
+    # rodante cubre el fade que exige el locate. Ver locates_gate.py.
+    ev_gate_enabled: bool = False
+    ev_gate_window: int = 30
+    ev_gate_by: str = "trades"          # "trades" | "dias"
+    ev_gate_default_pct: float = 2.0
+    ev_gate_min_trades: int = 10
+    # Corte IS/OOS (PRD Alvaro 2026-09-08, P1). La UI lo mandaba desde siempre y
+    # Pydantic lo tiraba: ahora se persisten `is_metrics` y `oos_metrics`,
+    # calculados igual que los pinta el navegador. El motor sigue corriendo el
+    # rango ENTERO (decision de Jaume: quiere poder ver el OOS con las mismas
+    # condiciones); 100 = sin corte, y no cambia nada.
+    is_percent: float = 100.0
     look_ahead_prevention: bool = True
 
 
@@ -435,6 +457,10 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             locates_cost=req.locates_cost,
             locate_type=req.locate_type,
             max_locates=req.max_locates,
+            locates_random=bool(req.locates_random),
+            locates_random_min=req.locates_random_min,
+            locates_random_max=req.locates_random_max,
+            locates_seed=req.locates_seed,
             look_ahead_prevention=req.look_ahead_prevention,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,
@@ -450,6 +476,35 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                 n_groups_hint=n_qualifying,
                 **_bt_kwargs,
             )
+            # ── Puerta por EV: SEGUNDA pasada ────────────────────────────
+            # La primera (la de arriba, sin puerta) es la sombra: todas las
+            # senales con su resultado en % de precio. La segunda corre con la
+            # puerta y en cada entrada mira el EV rodante de la sombra cerrada
+            # antes de ese instante. El stream es de un solo uso: se crea otro.
+            if req.ev_gate_enabled and req.locates_random:
+                from app.services.locates_gate import ConfigPuerta, sombra_desde_trades
+                _c_ns, _m_pct = sombra_desde_trades(results.get("trades", []))
+                _cfg_puerta = ConfigPuerta(
+                    ventana=max(1, int(req.ev_gate_window)),
+                    por="dias" if str(req.ev_gate_by).lower().startswith("d") else "trades",
+                    ev_defecto_pct=float(req.ev_gate_default_pct),
+                    min_trades=max(1, int(req.ev_gate_min_trades)),
+                    sombra_cierre_ns=_c_ns, sombra_move_pct=_m_pct,
+                )
+                _sin_puerta = {
+                    "aggregate_metrics": results.get("aggregate_metrics"),
+                    "total_trades": len(results.get("trades", [])),
+                    "locates_random": results.get("locates_random"),
+                }
+                logger.info("[PUERTA EV] segunda pasada con %d senales en sombra", int(_c_ns.size))
+                _stream2 = _tracked_stream(get_intraday_stream(qualifying, date_from, date_to))
+                results = run_backtest(
+                    qualifying_df=qualifying,
+                    day_group_iter=_stream2,
+                    n_groups_hint=n_qualifying,
+                    **{**_bt_kwargs, "ev_gate": _cfg_puerta},
+                )
+                results["sin_puerta"] = _sin_puerta
         else:
             # Cada pasada necesita su PROPIO stream: `intraday_stream` es un
             # generador de un solo uso y el de arriba ya no sirve. Se crea uno
@@ -477,6 +532,25 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                         _cfg_modelo["train_to"], _cfg_modelo["test_from"],
                         _cfg_modelo["test_to"])
             results = run_with_model(_cfg_modelo, qualifying, _pasada, {})
+
+        # ── PRD Alvaro 2026-09-08: rango efectivo (P4) y segmentos IS/OOS (P1) ──
+        # `date_from/date_to` son los que resolvio `_resolve_filters` (el dataset
+        # puede acortar lo pedido) y `_executed_keys` lo que de verdad se simulo.
+        # El router guarda ESTO en `backtest_params`, no el formulario.
+        try:
+            _fechas_ejec = sorted(d for _, d in _executed_keys)
+            results["rango_efectivo"] = {
+                "start_date": str(date_from)[:10] if date_from else None,
+                "end_date": str(date_to)[:10] if date_to else None,
+                "primer_dia_ejecutado": _fechas_ejec[0] if _fechas_ejec else None,
+                "ultimo_dia_ejecutado": _fechas_ejec[-1] if _fechas_ejec else None,
+            }
+            from app.services.metricas_segmento import segmentos_is_oos
+            if isinstance(results.get("aggregate_metrics"), dict):
+                results["aggregate_metrics"].update(
+                    segmentos_is_oos(results, req.is_percent, float(req.init_cash)))
+        except Exception as _e_seg:
+            logger.warning("[IS/OOS] no se pudieron calcular los segmentos: %s", _e_seg)
 
         backtest_progress[req.dataset_id] = {
             "status": "completed",
