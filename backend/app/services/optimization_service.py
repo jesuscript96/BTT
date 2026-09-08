@@ -725,7 +725,26 @@ def _extract_indicator_params(cfg, logic_label, path, add_fn):
         if val is not None:
             label = f"{logic_label} {name} {param_key}"
             param_id = f"{path}.{param_key}"
-            add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}", is_int_param=True)
+            # `offset` EN CERO ES UN VALOR, NO UNA OPCION APAGADA. Sin este
+            # `allow_zero`, `_add` lo tiraba por la regla general de "0 =
+            # desactivado" y el parametro no aparecia: ni en el 3D, ni en el
+            # Walk Forward, ni en el genetico, y sin avisar. Es el mismo fallo
+            # que tenia el margen del stop de estructura.
+            #
+            # Caso de Jaume (7-sep-2026): la condicion «Bar Close <
+            # Prev. Bar Low» lleva el objetivo con `offset: 0` y por eso no se
+            # podia optimizar, mientras que un «Low Bar» con `offset: 1` en la
+            # condicion de al lado si salia. Los dos son lo mismo escrito
+            # distinto, y solo uno era afinable.
+            #
+            # OJO A LA CUENTA: `Prev. Bar Low` YA es la vela anterior, asi que
+            # el offset suma ENCIMA. offset 0 = la vela anterior, offset 1 = dos
+            # velas atras, offset 9 = diez atras.
+            #
+            # Los demas enteros se quedan como estaban: un `period` o un
+            # `consecutive_count` en 0 no significan nada.
+            add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}",
+                   is_int_param=True, allow_zero=(param_key == "offset"))
 
     for param_key in float_keys:
         val = cfg.get(param_key)

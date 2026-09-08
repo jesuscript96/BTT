@@ -274,7 +274,6 @@ def a_definicion(individuo: dict, config: dict) -> dict:
     from app.services.optimization_service import _set_nested_value
 
     base = copy.deepcopy(config.get("estrategia_base") or {})
-    _meter_guardas(base, config.get("guardas") or [])
     gs = _por_id(config)
     vals = individuo.get("valores") or {}
 
@@ -306,6 +305,22 @@ def a_definicion(individuo: dict, config: dict) -> dict:
             # edito despues de configurar la corrida) NO puede tumbar la
             # evaluacion entera: se ignora ese gen y el resto sigue.
             continue
+
+    # LAS GUARDAS VAN LAS ULTIMAS, DESPUES DE ESCRIBIR LOS GENES. No es una
+    # preferencia de estilo: `_meter_guardas` las mete DELANTE de la logica de
+    # entrada, asi que corre todos los indices del grupo raiz. Los genes traen
+    # rutas por POSICION (`...conditions.4.source.offset`) calculadas sobre la
+    # estrategia SIN guardas, en `extract_parameters`. Metiendolas antes, cada
+    # gen escribia en la condicion equivocada.
+    #
+    # Lo que pasaba de verdad (Jaume, 7-sep-2026, 4 guardas): el gen
+    # "PM High Gap (%) Target Value = 50" caia en `conditions.0`, que ya no era
+    # el PM High Gap sino la primera guarda `Bar Close > 0.7`, y la convertia en
+    # `Bar Close > 50`. En small caps de 1-7 $ eso no lo pasa casi nadie: la
+    # estrategia bajaba de 1.721 operaciones a 21, TODA la poblacion se quedaba
+    # por debajo del minimo de trades y la corrida entera daba fitness 0. Sin
+    # una sola excepcion y sin nada raro en la pantalla.
+    _meter_guardas(base, config.get("guardas") or [])
     return base
 
 
