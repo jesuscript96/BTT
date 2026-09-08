@@ -117,6 +117,9 @@ function computeSQN(trades: any[]): number {
 
 interface EquityCurveTabProps {
   globalEquity: GlobalEquityPoint[];
+  /** Curva con gastos calculada por el BACKEND (global_equity_expenses).
+   *  Opcional: payloads viejos no la traen y se simula en cliente. */
+  globalEquityExpenses?: GlobalEquityPoint[];
   globalDrawdown: DrawdownPoint[];
   trades: any[];
   metrics: Record<string, any> | null;
@@ -133,6 +136,7 @@ interface EquityCurveTabProps {
 
 export default function EquityCurveTab({
   globalEquity,
+  globalEquityExpenses,
   globalDrawdown,
   trades,
   metrics,
@@ -204,6 +208,26 @@ export default function EquityCurveTab({
     });
     return idx;
   }, [globalDrawdown]);
+
+  // PRD_METRICAS_Y_OOS P2.3 (2026-09-08): curva NETA (con gastos) unificada.
+  // Cuando el payload trae global_equity_expenses (calculada por el backend
+  // por cambio de MES REAL) es la que manda; la simulación en cliente con
+  // meses de 30,44 días queda como fallback para payloads viejos — dibujaba
+  // una línea ligeramente distinta de la que guarda el motor.
+  const netEquityPoints = useMemo<GlobalEquityPoint[] | null>(() => {
+    if (globalEquityExpenses && globalEquityExpenses.length > 0) {
+      return globalEquityExpenses;
+    }
+    if (!monthlyExpenses || monthlyExpenses <= 0 || globalEquity.length === 0) {
+      return null;
+    }
+    const startTs = globalEquity[0].time as number;
+    const sPerMonth = 30.436875 * 24 * 60 * 60;
+    return globalEquity.map((p) => ({
+      time: p.time,
+      value: p.value - (monthlyExpenses * (((p.time as number) - startTs) / sPerMonth)),
+    }));
+  }, [globalEquityExpenses, globalEquity, monthlyExpenses]);
 
   const [activeMainTab, setActiveMainTab] = useState<"equity" | "oos_degradation">("equity");
 
@@ -383,26 +407,21 @@ export default function EquityCurveTab({
     ).datos);
 
     // --- Monthly Expenses Curve ---
-    if (showEquityExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
+    // (netEquityPoints: payload del backend si existe, simulación si no.)
+    if (showEquityExpenses && netEquityPoints && netEquityPoints.length > 0) {
       const expensesSeries = chart.addSeries(LineSeries, {
         color: "#3b82f6",
         lineWidth: 2,
         lineStyle: LineStyle.Dotted,
       });
 
-      const startTs = globalEquity[0].time as number;
-      const sPerMonth = 30.436875 * 24 * 60 * 60; // Average seconds per month
-
       expensesSeries.setData(saneaSerie(
-        globalEquity.map((p) => {
-          const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
-          const netValue = p.value - (monthlyExpenses * monthsElapsed);
-          
-          let val = netValue;
+        netEquityPoints.map((p) => {
+          let val = p.value;
           if (viewMode === "%") {
-            val = ((netValue / initCash) - 1) * 100;
+            val = ((p.value / initCash) - 1) * 100;
           } else if (viewMode === "R") {
-            val = getRValue(netValue);
+            val = getRValue(p.value);
           }
           return { time: p.time as Time, value: val };
         })
@@ -483,24 +502,17 @@ export default function EquityCurveTab({
       ).datos);
 
       // --- Drawdown with Expenses Series ---
-      if (showDrawdownExpenses && monthlyExpenses && monthlyExpenses > 0 && globalEquity.length > 0) {
+      if (showDrawdownExpenses && netEquityPoints && netEquityPoints.length > 0) {
         const ddExpensesSeries = ddChart.addSeries(LineSeries, {
           color: "#ef4444",
           lineWidth: 2,
           lineStyle: LineStyle.Dotted,
         });
 
-        const startTs = globalEquity[0].time as number;
-        const sPerMonth = 30.436875 * 24 * 60 * 60; // Average seconds per month
-
-        const netEquityValues = globalEquity.map((p) => {
-          const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
-          const netValue = p.value - (monthlyExpenses * monthsElapsed);
-          return { time: p.time, value: netValue };
-        });
-
-        let netHighWaterMark = netEquityValues[0].value;
-        const netDrawdown = netEquityValues.map((p) => {
+        // Drawdown sobre la curva NETA: pico móvil de netEquityPoints (la del
+        // backend si llegó, la simulada si no), no una segunda simulación.
+        let netHighWaterMark = netEquityPoints[0].value;
+        const netDrawdown = netEquityPoints.map((p) => {
           if (p.value > netHighWaterMark) {
             netHighWaterMark = p.value;
           }
@@ -647,7 +659,7 @@ export default function EquityCurveTab({
       chartRef.current = null;
       ddChartRef.current = null;
     };
-  }, [globalEquity, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType]);
+  }, [globalEquity, netEquityPoints, globalDrawdown, openPositions, viewMode, initCash, riskR, monthlyExpenses, isDarkMode, activeMainTab, showEquityExpenses, showDrawdownExpenses, showMaxDDPeriod, maxDrawdownPeriod, riskType]);
 
   if (!trades || trades.length === 0) {
     return (
@@ -696,16 +708,11 @@ export default function EquityCurveTab({
     }))
     : 0;
 
-  const maxProfitWithExpenses = globalEquity && globalEquity.length > 0 && monthlyExpenses ? 
-    Math.max(...globalEquity.map((p) => {
-      const startTs = globalEquity[0].time as number;
-      const sPerMonth = 30.436875 * 24 * 60 * 60;
-      const monthsElapsed = ((p.time as number) - startTs) / sPerMonth;
-      const netValue = p.value - (monthlyExpenses * monthsElapsed);
-      
-      if (viewMode === "%") return ((netValue / initCash) - 1) * 100;
-      if (viewMode === "R") return getRValue(netValue);
-      return netValue - initCash;
+  const maxProfitWithExpenses = netEquityPoints && netEquityPoints.length > 0 ?
+    Math.max(...netEquityPoints.map((p) => {
+      if (viewMode === "%") return ((p.value / initCash) - 1) * 100;
+      if (viewMode === "R") return getRValue(p.value);
+      return p.value - initCash;
     }))
     : null;
 

@@ -11,18 +11,43 @@ interface MetricsCardProps {
 
 export default function MetricsCard({ metrics, vertical = false }: MetricsCardProps) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+  // PRD_METRICAS_Y_OOS (2026-09-08): las claves nuevas son opcionales (corridas
+  // viejas no las traen). Con neto disponible pasa a ser la cifra principal y
+  // el bruto queda como secundario; sin él, se muestra como siempre.
+  const hasNet = metrics.total_return_net_pct != null;
   const rows = [
     { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Número total de días que abarca el período del backtest." },
     { label: "Trades", value: String(metrics.total_trades ?? 0), tooltip: "Cantidad total de operaciones ejecutadas." },
     { label: "Win Rate", value: `${(metrics.win_rate_pct ?? 0).toFixed(1)}%`, tooltip: "Porcentaje de operaciones ganadas sobre el total de trades. Ej: 55% significa que ganas 55 de cada 100 operaciones." },
     { label: "PF", value: (metrics.avg_profit_factor ?? 0).toFixed(3), tooltip: "Profit Factor. Relación de beneficio bruto / pérdida bruta. Ej: PF de 1.8 significa que por cada $1 que pierdes, ganas $1.80. Valores > 1.0 son rentables." },
-    { label: "Return", value: `${(metrics.total_return_pct ?? 0).toFixed(2)}%`, tooltip: "Rentabilidad porcentual total acumulada en base al capital inicial." },
+    ...(metrics.r_total != null ? [{
+      label: "R Total",
+      value: `${metrics.r_total.toFixed(2)}R`,
+      tooltip: "Suma de los múltiplos de R de todos los trades. Es el único comparador inmune al capital inicial y al tipo de riesgo: dos corridas con distinto init_cash o risk_type tienen el mismo R Total si operaron igual.",
+    }] : []),
+    {
+      label: hasNet ? "Return (neto)" : "Return",
+      value: `${(hasNet ? metrics.total_return_net_pct! : metrics.total_return_pct ?? 0).toFixed(2)}%`,
+      tooltip: hasNet
+        ? "Rentabilidad total acumulada sobre el capital inicial, restando los gastos mensuales. El bruto (sin gastos) queda en la fila «Return (bruto)»."
+        : "Rentabilidad porcentual total acumulada en base al capital inicial.",
+    },
+    ...(hasNet ? [{
+      label: "Return (bruto)",
+      value: `${(metrics.total_return_pct ?? 0).toFixed(2)}%`,
+      tooltip: "Rentabilidad total acumulada sobre el capital inicial SIN restar los gastos mensuales.",
+    }] : []),
     { label: "Max MAE", value: `${(metrics.max_mae ?? 0).toFixed(2)}%`, tooltip: "Mínima excursión adversa máxima. La mayor pérdida flotante porcentual que llegó a registrar una sola operación antes de cerrarse." },
     { label: "Avg Ret/Day", value: `${(metrics.avg_return_per_day_pct ?? 0).toFixed(3)}%`, tooltip: "Retorno porcentual promedio por día." },
     { label: "Avg R/Day", value: `${(metrics.avg_r_per_day ?? 0).toFixed(3)}R`, tooltip: "Resultado promedio por día medido en múltiplos de tu riesgo inicial por operación (R)." },
     { label: "Sharpe", value: (metrics.avg_sharpe ?? 0).toFixed(3), tooltip: "Ratio de Sharpe. Muestra el rendimiento en relación al riesgo asumido (volatilidad). Cuanto más alto, más estable y seguro es el retorno. Sharpe > 1.0 es bueno, > 1.5 es excelente." },
     { label: "Sortino", value: (metrics.sortino_ratio ?? 0).toFixed(3), tooltip: "Ratio de Sortino. Similar al Sharpe, pero solo penaliza la volatilidad de los rendimientos negativos (las pérdidas reales), ignorando la volatilidad de las ganancias." },
-    { label: "Calmar", value: (metrics.calmar_ratio ?? 0).toFixed(3), tooltip: "Ratio de Calmar. Relación entre la rentabilidad anualizada y el drawdown máximo (peor caída). Mide la eficiencia retorno/riesgo de caída histórica. Calmar alto = más ganancias con menos sustos." },
+    { label: "Calmar", value: (metrics.calmar_ratio ?? 0).toFixed(3), tooltip: "Ratio de Calmar con retorno TOTAL del período (no anualizado): retorno acumulado / drawdown máximo. Mide la eficiencia retorno/riesgo de caída histórica." },
+    ...(metrics.calmar_ratio_annualized != null ? [{
+      label: "Calmar (anual.)",
+      value: metrics.calmar_ratio_annualized!.toFixed(3),
+      tooltip: "Ratio de Calmar anualizado: rentabilidad compuesta anual (CAGR) / drawdown máximo. Comparable entre backtests de distinta duración; el Calmar clásico de arriba no lo es.",
+    }] : []),
     { label: "Avg Y/U.index", value: (metrics.avg_r_ui ?? 0).toFixed(2), tooltip: "Rendimiento promedio en relación al Ulcer Index (profundidad y duración de las caídas). Cuanto más alto sea este valor, menor es el tiempo de sufrimiento (duración y severidad del drawdown) que experimenta la estrategia." },
     { label: "DD/Ret", value: (metrics.dd_return_ratio ?? 0).toFixed(3), tooltip: "Relación Drawdown vs Retorno. Cuanto menor sea, mejor es el sistema generando beneficios con bajas caídas temporales." },
     { label: "Max DD", value: `${(metrics.max_drawdown_pct ?? 0).toFixed(2)}%`, tooltip: "Drawdown Máximo. La mayor caída porcentual desde el punto más alto del capital hasta el más bajo antes de recuperarse. Representa la peor racha de pérdida temporal." },

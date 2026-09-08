@@ -553,6 +553,9 @@ export default function Home() {
         max_locates: p?.max_locates,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
+        // PRD_METRICAS_Y_OOS P1: la ruta de borrador tampoco enviaba el split
+        // IS/OOS al backend — solo lo guardaba para el filtro del cliente.
+        is_percent: p?.is_percent,
       }));
       setResult(data);
       if (data.trades && data.trades.length > 0) {
@@ -940,6 +943,29 @@ export default function Home() {
         const saved = JSON.parse(stored);
         if (saved.result) setResult(saved.result);
         if (saved.jobId) jobIdRef.current = saved.jobId;
+        // PRD_METRICAS_Y_OOS P1: el run reabierto trae su backtest_params
+        // dentro del results_json — sin esto, el split IS/OOS con el que se
+        // lanzó se perdía al recargar (currentIsPercent caía a 100). También
+        // se restauran init_cash/risk_r, que el recorte IS necesita para el
+        // return y que antes quedaban en los defaults (10k/100).
+        const savedParams = (saved.result as any)?.backtest_params;
+        if (savedParams && typeof savedParams === "object") {
+          if (savedParams.is_percent != null) {
+            panelParamsRef.current = {
+              ...(panelParamsRef.current ?? {}),
+              is_percent: savedParams.is_percent,
+            } as BacktestPanelParams;
+          }
+          if (savedParams.init_cash != null) initCashRef.current = savedParams.init_cash;
+          if (savedParams.risk_r != null) riskRRef.current = savedParams.risk_r;
+          // monthly_expenses/risk_type alimentan la curva de gastos y la vista
+          // en R del gráfico tras la reapertura.
+          backtestParamsRef.current = {
+            ...(backtestParamsRef.current ?? {}),
+            ...(savedParams.monthly_expenses != null ? { monthly_expenses: savedParams.monthly_expenses } : {}),
+            ...(savedParams.risk_type != null ? { risk_type: savedParams.risk_type } : {}),
+          };
+        }
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
           if (saved.activeStrategy.id && !saved.activeStrategy.id.startsWith("draft") && !saved.activeStrategy.id.startsWith("wizard_draft")) {
@@ -1180,6 +1206,28 @@ export default function Home() {
       else { curLD += 1; curWD = 0; isMaxLDays = Math.max(isMaxLDays, curLD); }
     });
 
+    // PRD_METRICAS_Y_OOS (2026-09-08): las tres claves nuevas también en el
+    // recorte IS. El neto usa los meses propios del segmento (heredar el del
+    // período completo mostraría el neto de TODO el backtest en la vista IS);
+    // sin monthly_expenses, neto == bruto. El Calmar anualizado replica la
+    // convención del backend sobre las cifras del IS.
+    const isMonths = new Set(isTrades.map(t => t.date?.slice(0, 7))).size;
+    const monthlyExpenses = (backtestParamsRef.current.monthly_expenses as number | undefined) ?? 0;
+    const isTotalPnlNet = totalPnl - isMonths * monthlyExpenses;
+    const isReturnNetPct = initCash > 0 ? (isTotalPnlNet / initCash) * 100 : 0;
+    let isCalmarAnn = 0;
+    try {
+      const isDates = Array.from(new Set(isTrades.map(t => t.date))).sort();
+      if (isDates.length >= 2) {
+        const spanDays = (new Date(isDates[isDates.length - 1]).getTime() - new Date(isDates[0]).getTime()) / 86400000;
+        const finalEq = initCash + totalPnl;
+        if (spanDays > 0 && initCash > 0 && finalEq > 0 && maxDd !== 0) {
+          const cagr = (Math.pow(finalEq / initCash, 365 / spanDays) - 1) * 100;
+          isCalmarAnn = cagr / Math.abs(maxDd);
+        }
+      }
+    } catch { /* fechas imposibles → 0 */ }
+
     const isMetrics = {
       ...result.aggregate_metrics,
       total_days: uniqueDays,
@@ -1204,7 +1252,27 @@ export default function Home() {
       max_consecutive_losses: isMaxL,
       max_consecutive_winning_days: isMaxWDays,
       max_consecutive_losing_days: isMaxLDays,
+      r_total: isTrades.reduce((sum: number, t: any) => sum + (t.r_multiple ?? 0), 0),
+      total_return_net_pct: isReturnNetPct,
+      calmar_ratio_annualized: isCalmarAnn,
     };
+
+    // PRD_METRICAS_Y_OOS P1: cuando el MOTOR calculó el split (is_oos en el
+    // payload, mismo is_percent), sus cifras son las canónicas — pisan las
+    // recalculadas aquí para que pantalla y persisted no puedan discrepar.
+    // El resto de métricas (sharpe, rachas…) sigue siendo del cliente, que es
+    // quien las calcula para corridas viejas sin is_oos.
+    const serverBlock = result.is_oos;
+    if (serverBlock && serverBlock.is_percent === currentIsPercent && serverBlock.is_metrics) {
+      const sm = serverBlock.is_metrics;
+      isMetrics.total_trades = sm.total_trades;
+      isMetrics.win_rate_pct = sm.win_rate_pct;
+      isMetrics.total_return_pct = sm.total_return_pct;
+      isMetrics.total_pnl = sm.total_pnl;
+      isMetrics.avg_profit_factor = sm.avg_profit_factor;
+      isMetrics.max_drawdown_pct = sm.max_drawdown_pct;
+      isMetrics.r_total = sm.r_total;
+    }
 
     // Filter global_equity_expenses if present
     const isEquityExpenses = result.global_equity_expenses
@@ -1536,6 +1604,7 @@ export default function Home() {
                 <div style={{ width: '66.666667%', height: 580 }}>
                   <EquityCurveTab
                     globalEquity={isFilteredResult!.global_equity}
+                    globalEquityExpenses={isFilteredResult!.global_equity_expenses}
                     globalDrawdown={isFilteredResult!.global_drawdown}
                     trades={isFilteredResult!.trades}
                     metrics={isFilteredResult!.aggregate_metrics}

@@ -245,6 +245,37 @@ export interface AggregateMetrics {
   payoff_ratio: number;
   avg_r_per_day: number;
   avg_r_ui: number;
+  // ── PRD_METRICAS_Y_OOS (2026-09-08): opcionales porque las corridas
+  // guardadas antes de esa fecha no los traen.
+  /** ΣR de todos los trades. Comparador inmune a init_cash/risk_type. */
+  r_total?: number;
+  /** Return restando monthly_expenses (el bruto es total_return_pct). */
+  total_return_net_pct?: number;
+  /** Calmar con CAGR anualizado (calmar_ratio sigue siendo retorno total). */
+  calmar_ratio_annualized?: number;
+  /** Gastos mensuales acumulados del período y PnL neto de ellos. */
+  total_expenses?: number;
+  total_pnl_net?: number;
+}
+
+/** Métricas de un segmento IS u OOS (compute_is_oos_metrics, backend). */
+export interface IsOosSegmentMetrics {
+  total_trades: number;
+  win_rate_pct: number;
+  avg_profit_factor: number;
+  r_total: number;
+  total_pnl: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+}
+
+/** Split IS/OOS calculado por el MOTOR (PRD P1): cutoff por índice de equity,
+ *  mismos números que la pestaña IS de la UI. Solo presente con is_percent<100. */
+export interface IsOosBlock {
+  is_percent: number;
+  cutoff_time: number;
+  is_metrics: IsOosSegmentMetrics;
+  oos_metrics: IsOosSegmentMetrics;
 }
 
 export interface GlobalEquityPoint {
@@ -286,6 +317,12 @@ export interface BacktestResult {
    *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
    *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
   data_completeness?: DataCompleteness;
+  /** Split IS/OOS calculado por el motor con el is_percent de la petición
+   *  (PRD_METRICAS_Y_OOS P1). Ausente en corridas viejas y con is_percent=100. */
+  is_oos?: IsOosBlock;
+  /** Rango de fechas EJECUTADO de verdad (del qualifying filtrado), que puede
+   *  diferir del formulario (PRD P4). */
+  executed_date_range?: { start: string; end: string };
 }
 
 export interface DataCompleteness {
@@ -395,6 +432,9 @@ export async function runBacktest(params: {
   // ticker-día. 0 = sin tope. Recorta el tamaño en CORTO a max_locates * 100.
   max_locates?: number;
   look_ahead_prevention?: boolean;
+  /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): el motor añade is_oos al resultado
+   *  cuando es < 100. Antes solo lo recortaba el navegador y se perdía. */
+  is_percent?: number;
 }): Promise<BacktestResult> {
   const { data } = await api.post("/backtest", params);
   return data;
@@ -420,6 +460,9 @@ export async function runBacktestWithDefinition(params: {
   max_locates?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
+  /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): mismo significado que en
+   *  runBacktest — la ruta de borrador tampoco lo enviaba. */
+  is_percent?: number;
 }): Promise<BacktestResult> {
   const { data } = await api.post("/backtest", params);
   return data;
