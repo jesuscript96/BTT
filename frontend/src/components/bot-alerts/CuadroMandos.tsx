@@ -1369,9 +1369,12 @@ function DiarioBot() {
           padding: "8px 10px", fontFamily: font.sans, fontSize: 10,
           color: color.textMuted,
         }}>
-          Nada que contar. Aquí sale cualquier cosa que le salte al bot — cortes
-          del feed, fallos al hablar con la página, errores sin capturar — y su
-          log, con un botón para copiarlo entero y pegarlo.
+          Sin incidencias: ningún corte del feed, ningún fallo al hablar con la
+          página, ningún error sin capturar.{" "}
+          <strong style={{ color: color.textSecondary }}>
+            El log del bot{(d?.total ?? 0) > 0 ? ` (${d?.total} líneas)` : ""} está
+            en VER.
+          </strong>
         </div>
       )}
     </Seccion>

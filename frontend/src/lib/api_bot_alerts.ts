@@ -238,6 +238,8 @@ export interface Diario {
   seq: number;
   desde: string;
   lineas: LineaDiario[];
+  /** Cuantas hay en total, aunque `lineas` venga recortado o vacio. */
+  total?: number;
   incidencias: IncidenciaDiario[];
   actualizado: string | null;
 }

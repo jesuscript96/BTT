@@ -554,9 +554,14 @@ def leer_diario(lineas: int = -1):
     """
     _guard()
     d = bas.get_diario()
+    # CUANTAS HAY, aunque no se manden. Con el cuadro plegado la pagina pedia
+    # `lineas=0` y entonces no tenia forma de saber que habia log detras: se
+    # limitaba a decir «nada que contar», que habla de las incidencias pero se
+    # lee como «no hay log». Jaume dio por hecho que el diario no funcionaba.
+    total = len(d.get("lineas") or [])
     if lineas >= 0:
         d = {**d, "lineas": (d.get("lineas") or [])[-lineas:] if lineas else []}
-    return d
+    return {**d, "total": total}
 
 
 @router.get("/diario/texto")
