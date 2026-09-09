@@ -41,6 +41,7 @@ import {
   type MultiDayCandles,
   type EquityPoint,
 } from "@/lib/api_backtester";
+import { computeDayStreaks } from "@/lib/day_streaks";
 
 
 // Shows "X / Y backtests hoy" only when the tier has a finite daily run limit.
@@ -1348,6 +1349,14 @@ export default function Home() {
     } as BacktestResult;
   }, [result, currentIsPercent]);
 
+  // Rachas de días (pestaña Rachas + fila «W Days» de la tarjeta). Se calcula
+  // sobre el resultado YA filtrado por el corte IS, con la misma receta que el
+  // recorte de arriba: por eso reacciona al slider IS/OOS sin código extra.
+  const dayStreaks = useMemo(
+    () => computeDayStreaks(isFilteredResult?.trades ?? [], isFilteredResult?.day_results ?? []),
+    [isFilteredResult],
+  );
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100dvh', overflow: 'hidden', backgroundColor: 'var(--color-ec-bg-base)' }}>
 
@@ -1656,9 +1665,11 @@ export default function Home() {
 
           {result && (
             <>
-              {/* TOP ROW: Equity Curve (2/3) + Metrics (1/3) */}
+              {/* TOP ROW: Equity Curve (2/3) + Metrics (1/3).
+                  610 (antes 580): la fila «W Days» de la tarjeta necesita ~25px
+                  más para no aplastar el botón de guardar ni el gráfico MAE. */}
               <div style={{ display: 'flex', gap: 16, alignItems: 'stretch' }}>
-                <div style={{ width: '66.666667%', height: 580 }}>
+                <div style={{ width: '66.666667%', height: 610 }}>
                   <EquityCurveTab
                     globalEquity={isFilteredResult!.global_equity}
                     globalEquityExpenses={isFilteredResult!.global_equity_expenses}
@@ -1676,9 +1687,9 @@ export default function Home() {
                     riskType={backtestParamsRef.current.risk_type as string}
                   />
                 </div>
-                <div style={{ width: '33.333333%', display: 'flex', flexDirection: 'column', height: 580, paddingBottom: 4, boxSizing: 'border-box' }}>
+                <div style={{ width: '33.333333%', display: 'flex', flexDirection: 'column', height: 610, paddingBottom: 4, boxSizing: 'border-box' }}>
                   <div style={{ flexShrink: 0 }}>
-                    <MetricsCard metrics={isFilteredResult!.aggregate_metrics} vertical />
+                    <MetricsCard metrics={isFilteredResult!.aggregate_metrics} dayStats={dayStreaks} vertical />
                   </div>
                   
                   <div style={{

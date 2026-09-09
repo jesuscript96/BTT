@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import type { BacktestResult, DayCandles, MultiDayCandles, Strategy, TradeRecord, EquityPoint } from "@/lib/api_backtester";
 import PerformanceTab from "@/components/backtester/tabs/PerformanceTab";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
+import RachasTab from "@/components/backtester/tabs/RachasTab";
 import TradesTab from "@/components/backtester/tabs/TradesTab";
 import ChartsTab from "@/components/backtester/tabs/ChartsTab";
 import BandaLocates from "./BandaLocates";
@@ -14,10 +15,12 @@ import Chart from "@/components/backtester/Chart";
 
 // Edge va DESPUES de «Análisis por trade» y ANTES de Optimization a proposito:
 // el orden es un zoom hacia fuera (una operacion → el microscopio → agregado en
-// el tiempo → que valor pongo). Ver la cabecera de EdgeTab.tsx.
+// el tiempo → que valor pongo). Ver la cabecera de EdgeTab.tsx. Rachas comparte
+// capa con Calendar (agregado por día), pero en orden cronológico puro.
 const TABS = [
   { id: "performance", label: "Performance" },
   { id: "calendar", label: "Calendar" },
+  { id: "rachas", label: "Rachas" },
   { id: "trades", label: "Trades" },
   { id: "analysis", label: "Análisis por trade" },
   { id: "edge", label: "Edge" },
@@ -298,6 +301,14 @@ export default function ResultsTabs({
             riskType={backtestParams?.risk_type as string}
             globalEquity={result.global_equity}
             initCash={initCash}
+          />
+          )}
+        </div>
+        <div style={{ display: activeTab === "rachas" ? "block" : "none" }}>
+          {mountedTabs.has("rachas") && (
+          <RachasTab
+            trades={result.trades}
+            dayResults={result.day_results}
           />
           )}
         </div>

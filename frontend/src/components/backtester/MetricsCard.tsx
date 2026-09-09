@@ -2,14 +2,18 @@
 
 import { useState } from "react";
 import type { AggregateMetrics } from "@/lib/api_backtester";
+import type { DayStreakStats } from "@/lib/day_streaks";
 import InfoTooltip from "./InfoTooltip";
 
 interface MetricsCardProps {
   metrics: AggregateMetrics;
+  /** Rachas de días: si llega, se pinta la fila «W Days». Se calcula en el
+   *  cliente (page.tsx) porque el backend no manda conteos por día. */
+  dayStats?: DayStreakStats;
   vertical?: boolean;
 }
 
-export default function MetricsCard({ metrics, vertical = false }: MetricsCardProps) {
+export default function MetricsCard({ metrics, dayStats, vertical = false }: MetricsCardProps) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
   const rows = [
     { label: "Days", value: String(metrics.total_days ?? 0), tooltip: "Número total de días que abarca el período del backtest." },
@@ -28,6 +32,11 @@ export default function MetricsCard({ metrics, vertical = false }: MetricsCardPr
     { label: "Max DD", value: `${(metrics.max_drawdown_pct ?? 0).toFixed(2)}%`, tooltip: "Drawdown Máximo. La mayor caída porcentual desde el punto más alto del capital hasta el más bajo antes de recuperarse. Representa la peor racha de pérdida temporal." },
     { label: "Max W Streak", value: String(metrics.max_consecutive_wins ?? 0), tooltip: "Número máximo de operaciones ganadoras consecutivas (racha de victorias)." },
     { label: "Max L Streak", value: String(metrics.max_consecutive_losses ?? 0), tooltip: "Número máximo de operaciones perdedoras consecutivas (racha de pérdidas)." },
+    ...(dayStats && dayStats.totalDays > 0 ? [{
+      label: "W Days",
+      value: `${dayStats.winDays}/${dayStats.totalDays} · ${dayStats.winDaysPct.toFixed(1)}%`,
+      tooltip: `Días cerrados en positivo sobre el total de días operados: ${dayStats.winDays} de ${dayStats.totalDays}. Neto de locates; un día plano cuenta como perdedor (misma convención que las rachas de días).`,
+    }] : []),
     { label: "Max W Day Streak", value: String(metrics.max_consecutive_winning_days ?? 0), tooltip: "Número máximo de días consecutivos (solo días con operaciones) cerrados en positivo, neto de locates. Un día sin operar no rompe la racha." },
     { label: "Max L Day Streak", value: String(metrics.max_consecutive_losing_days ?? 0), tooltip: "Número máximo de días consecutivos (solo días con operaciones) cerrados en negativo, neto de locates. Un día sin operar no rompe la racha." },
   ];
