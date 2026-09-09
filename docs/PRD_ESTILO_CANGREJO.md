@@ -106,3 +106,85 @@ Rama `alvaro-rama-desarrollo`: `schemas/strategy.py`, `portfolio_sim.py`,
 `sim_dispatch.py`, `backtest_signals.py`, `backtest_service.py`,
 `backtest_orchestrator.py`, `tests/test_estilo_cangrejo.py`,
 `frontend/types/strategy.ts` y `frontend/.../RiskManagement.tsx`.
+
+---
+
+## 7. Implementación en `sailor` (Claude, 2026-09-08) — LEER ANTES DE COMPARAR
+
+**El código de la rama `alvaro-rama-desarrollo` nunca llegó al remoto.** Un
+`git fetch --all --prune` el 2026-09-08 la deja en el **30-ago**, y el único
+objeto "cangrejo" de todo el repo es este `.md`. Así que lo de `sailor` es una
+implementación **desde este documento**, no un merge de la rama de Álvaro.
+
+La semántica de los dos modos es la del §2, sin cambios. Hay **tres
+divergencias deliberadas** que hay que contrastar antes de dar por buena
+ninguna comparación de resultados entre las dos ramas:
+
+### 7.1 Con Cangrejo activo NO se cae al motor Python
+
+El §4 dice que la simulación va siempre al Python. Aquí los dos modos están
+portados al kernel Numba (`portfolio_sim_jit.py`), con paridad verificada:
+**400 configuraciones aleatorias, cero divergencias**, más los casos dirigidos
+de `test_estilo_cangrejo.py`.
+
+El motivo es el genético: evalúa miles de individuos, y forzar el motor lento
+multiplicaba cada corrida. Medido, ×1,7 en un ticker-día de 390 velas — y sobre
+todo desaparece la caída al Python.
+
+El **híbrido sí sigue yendo al Python** (no se ha portado). Con los dos
+encendidos el híbrido está muerto por el arbitraje, así que el kernel es válido
+y el dispatcher no desvía; eso tiene test propio en las dos direcciones.
+
+Los parámetros llegan al kernel como floats con centinela `0.0 = sin tope`:
+numba no admite `Optional` en un `njit(cache=True)` sin disparar una firma nueva
+por cada combinación.
+
+### 7.2 El Modo B topa también los añadidos de pirámide
+
+El §2 solo habla de entradas y reentradas. Sin extenderlo a los añadidos, el
+techo se esquiva entero en cuanto la estrategia piramida: se entra con el tamaño
+topado y se añade sin mirar — sin error y sin log.
+
+La pérdida al stop de la posición completa es **separable**, así que el cupo del
+añadido sale sin recalcular el precio medio:
+
+    pérdida_total = |avg − stop| × size + |add_px − stop| × add
+
+y de ahí `margen = (cupo − gastado) / |add_px − stop|`. Si no queda margen, el
+añadido no se ejecuta. Tres tests.
+
+### 7.3 El Modo B no exige `size_by_sl`
+
+A diferencia del híbrido. Es un techo sobre el sizing que ya haya, y con sizing
+por valor de mercado es justo donde la pérdida al stop se descontrola.
+
+### 7.4 El bot de alertas SÍ se ha tocado
+
+El §4 lo dejaba intacto. Se ha extendido porque, si no, el aviso diría una cosa
+y el backtest haría otra sin que nada avisara:
+
+- `_kwargs_simulate` pasa los tres campos al simulador interno, con
+  `hybrid_capital` como base del Modo B (el `init_cash` del bot es el nominal de
+  1e9: sobre eso el techo no recortaría jamás).
+- El aviso da el stop **apretado** por el Modo A, que es donde el motor sale.
+- `calcular_acciones` aplica el Modo B en las dos ramas (con y sin `size_by_sl`).
+- `_hibrido_de` devuelve `None` con Cangrejo activo — el mismo arbitraje.
+- `/watch` no deja activar el Modo B sin capital de cuenta.
+
+**Un bot ya en marcha no lo coge:** importa del backend por `sys.path`, así que
+hay que reiniciarlo (y volver a encender el interruptor, que arranca en
+«Parado»).
+
+### 7.5 En el genético NO es un gen
+
+Va en el panel de la corrida (modo explorar) y sale de la estrategia (modo
+mejorar), igual que el híbrido. Dejar que la corrida mueva el `%` del Modo A
+sería buscar en el histórico el recorte que mejor queda, y ese número cambia
+DÓNDE se sale: el sobreajuste sería inmediato.
+
+### 7.6 Verificación
+
+36 tests propios en `backend/tests/test_estilo_cangrejo.py`; **855 passed /
+88 skipped** en `backend/tests`; `tsc --noEmit` limpio; 400 configuraciones
+aleatorias Python↔JIT sin divergencias y 94 comprobaciones de invarianza con
+Cangrejo apagado.

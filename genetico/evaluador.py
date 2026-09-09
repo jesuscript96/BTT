@@ -53,6 +53,11 @@ def parametros_backtest(config: dict, definicion: dict | None = None) -> dict:
             hybrid_stop=bool(rm.get("hybrid_stop", False)),
             hybrid_black_swan_pct=rm.get("hybrid_black_swan_pct"),
             hybrid_max_loss_pct=rm.get("hybrid_max_loss_pct"),
+            # Estilo Cangrejo: de la ESTRATEGIA, como el hibrido. En modo
+            # mejorar la definicion manda sobre el panel.
+            cangrejo_active=bool(rm.get("cangrejo_active", False)),
+            cangrejo_max_sl_dist_pct=rm.get("cangrejo_max_sl_dist_pct"),
+            cangrejo_max_loss_at_sl_pct=rm.get("cangrejo_max_loss_at_sl_pct"),
             fees=float(r.get("fees", 0)),
             fee_type=str(r.get("fee_type", "PERCENT")),
             slippage=float(r.get("slippage", 0)),
@@ -68,6 +73,13 @@ def parametros_backtest(config: dict, definicion: dict | None = None) -> dict:
         risk_r=float(r.get("risk_r", 100)),
         risk_type=str(r.get("risk_type", "FIXED")),
         size_by_sl=bool(r.get("size_by_sl", False)),
+        # Estilo Cangrejo en modo EXPLORAR: del panel de la corrida. Van
+        # tambien por argumento (ademas de dentro de la definicion que arma
+        # `cromosoma.a_definicion`) porque `run_backtest` da prioridad al
+        # argumento y asi las dos vias no pueden divergir.
+        cangrejo_active=bool(r.get("cangrejo_active", False)),
+        cangrejo_max_sl_dist_pct=r.get("cangrejo_max_sl_dist_pct"),
+        cangrejo_max_loss_at_sl_pct=r.get("cangrejo_max_loss_at_sl_pct"),
         fees=float(r.get("fees", 0)),
         fee_type=str(r.get("fee_type", "PERCENT")),
         slippage=float(r.get("slippage", 0)),

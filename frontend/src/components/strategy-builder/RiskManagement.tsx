@@ -418,8 +418,13 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                                 // Encenderlo implica ir por SL: el híbrido ES el
                                                 // modo por SL con techo. Apagarlo deja size_by_sl
                                                 // como estaba, para no cambiar el dimensionado
-                                                // sin que se haya pedido. Encenderlo apaga el
-                                                // Estilo Cangrejo: son EXCLUSIVOS (Álvaro, 2026-09-07).
+                                                // sin que se haya pedido.
+                                                // EXCLUYENTE con Estilo Cangrejo: son dos
+                                                // techos distintos sobre el mismo tamaño y
+                                                // tenerlos a la vez no dice nada al usuario
+                                                // sobre cuál recortó. El motor arbitra a
+                                                // favor de Cangrejo, así que aquí se apaga
+                                                // para que la UI diga la verdad.
                                                 onChange({
                                                     ...risk,
                                                     hybrid_stop: on,
@@ -530,60 +535,41 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 )}
             </div>
 
-            {/* ── ESTILO CANGREJO ─────────────────────────────────────────────
-                Dos maneras de acotar la pérdida de un trade (Álvaro, 2026-09-07),
-                EXCLUYENTES entre sí — o una u otra:
-                  · Recorrido máx. del SL  → se aprieta el stop lejano.
-                  · Pérdida máx. por trade → se encoge el tamaño para que el
-                    recorrido hasta el SL no cueste más de X% de la cuenta.
-                No es un modo de cálculo: se aplican SOBRE el que esté activo
-                (MV clásico, por distancia al SL o híbrido) y solo recortan,
-                nunca agrandan. EXCLUSIVO con el Stop Loss Híbrido de Jaume:
-                encender uno apaga el otro. Los topes de MV de entrada/pirámide
-                que hubo en la primera versión salieron de la UI (decisión de
-                Álvaro: "debe ser o una u otra"); el motor los sigue admitiendo
-                inertos por si vuelven. */}
+
+            {/* ── ESTILO CANGREJO ──────────────────────────────────────────
+                PRD de Álvaro, 8-sep-2026 (`docs/PRD_ESTILO_CANGREJO.md`).
+
+                EL PROBLEMA: con SL por estructura (previous max + 10 %, p. ej.)
+                la distancia entry→SL cambia en cada entrada. Con el mismo
+                market value, unos stops cuestan poco y otros cuestan
+                muchísimo, y no había forma sencilla de ponerle techo.
+
+                DOS MODOS Y SE ELIGE UNO — decisión de Álvaro: «debe ser o una
+                u otra». La primera versión tenía cuatro topes sueltos y
+                resultó poco intuitiva: cuatro números no cuentan qué va a
+                pasar. Un modo visible cada vez sí. */}
             <div style={{
+                marginTop: 12,
+                padding: 10,
+                border: '0.5px solid var(--color-ec-border)',
+                borderRadius: 6,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 16,
-                padding: '20px 0',
-                backgroundColor: 'transparent',
-                borderBottom: '0.5px solid var(--color-ec-border)',
+                gap: 4,
             }}>
-                {/* Header */}
-                <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    paddingBottom: (risk.cangrejo_active === true) ? 12 : 0,
-                    borderBottom: (risk.cangrejo_active === true) ? '0.5px solid var(--color-ec-border)' : 'none',
-                }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{
-                                width: 3,
-                                height: 14,
-                                borderRadius: 1,
-                                backgroundColor: 'var(--color-ec-copper)',
-                            }} />
-                            <h2 style={{
-                                fontFamily: 'var(--color-ec-sans)',
-                                fontSize: 13,
-                                fontWeight: 700,
-                                textTransform: 'uppercase',
-                                letterSpacing: '0.08em',
-                                color: 'var(--color-ec-text-high)',
-                                margin: 0,
-                            }}>Estilo Cangrejo</h2>
-                        </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <HelpCircle size={12} style={{ color: 'var(--color-ec-copper)' }} />
                         <span style={{
                             fontFamily: 'var(--color-ec-sans)',
                             fontSize: 10,
-                            fontWeight: 400,
-                            color: 'var(--color-ec-text-muted)',
-                            marginTop: 2,
-                        }}>Acota cada trade: apretando el stop lejano, o limitando la pérdida máxima</span>
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.05em',
+                            color: 'var(--color-ec-text-secondary)'
+                        }}>
+                            Estilo Cangrejo
+                        </span>
                     </div>
                     <div className="flex items-center gap-2">
                         <span style={{
@@ -591,243 +577,184 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             fontSize: 10,
                             fontWeight: 700,
                             color: 'var(--color-ec-text-muted)',
-                        }}>{risk.cangrejo_active === true ? 'ON' : 'OFF'}</span>
+                        }}>{risk.cangrejo_active ? 'YES' : 'NO'}</span>
                         <div
-                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.cangrejo_active === true ? 'bg-ec-copper/70' : 'bg-muted'}`}
+                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${risk.cangrejo_active ? 'bg-ec-copper/70' : 'bg-muted'}`}
                             onClick={() => {
                                 const on = !risk.cangrejo_active;
-                                // Encenderlo apaga el híbrido: son EXCLUSIVOS.
-                                // También limpia los topes de MV de la primera
-                                // versión (ya sin UI) y el campo del modo NO
-                                // activo — nunca capas invisibles.
-                                const _modo = risk.cangrejo_mode
-                                    ?? (risk.cangrejo_max_loss_at_sl_pct != null ? 'perdida' : 'recorrido');
                                 onChange({
                                     ...risk,
                                     cangrejo_active: on,
+                                    // Al encender hay que tener SIEMPRE un modo:
+                                    // sin él la tarjeta no enseñaría ningún campo
+                                    // y quedaría activa sin hacer nada.
+                                    cangrejo_mode: on ? (risk.cangrejo_mode ?? 'perdida') : risk.cangrejo_mode,
+                                    // Excluyente con el híbrido (el motor arbitra
+                                    // a favor de Cangrejo; aquí se refleja).
                                     hybrid_stop: on ? false : risk.hybrid_stop,
+                                    // Los dos topes de market value son INERTES y
+                                    // no tienen UI. Se limpian al activar para que
+                                    // un borrador viejo no arrastre capas
+                                    // invisibles que nadie puede ver ni quitar.
                                     cangrejo_max_mv_entry_pct: on ? null : risk.cangrejo_max_mv_entry_pct,
                                     cangrejo_max_mv_pyr_pct: on ? null : risk.cangrejo_max_mv_pyr_pct,
-                                    cangrejo_max_sl_dist_pct: (on && _modo === 'perdida')
-                                        ? null : risk.cangrejo_max_sl_dist_pct,
-                                    cangrejo_max_loss_at_sl_pct: (on && _modo === 'recorrido')
-                                        ? null : risk.cangrejo_max_loss_at_sl_pct,
                                 });
                             }}
                         >
-                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.cangrejo_active === true ? 'left-4.5' : 'left-0.5'}`}></div>
+                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${risk.cangrejo_active ? 'left-4.5' : 'left-0.5'}`}></div>
                         </div>
                     </div>
                 </div>
 
-                {/* Body */}
-                {(risk.cangrejo_active === true) && (() => {
-                    // "Debe ser o una u otra" (Álvaro): dos modos EXCLUYENTES.
-                    // El modo va GUARDADO y explícito (bug del 2026-09-07:
-                    // derivarlo de si el campo tenía valor hacía que el selector
-                    // rebotara — no se podía entrar en "Pérdida máx. por trade"
-                    // con el campo vacío, el botón "no iba"). Un borrador sin
-                    // modo guardado cae al que diga su valor rellenado, o a
-                    // 'recorrido'. Cambiar de modo limpia el campo del otro y
-                    // los topes de MV de la primera versión (ya sin UI).
-                    const modo: 'perdida' | 'recorrido' = risk.cangrejo_mode
-                        ?? (risk.cangrejo_max_loss_at_sl_pct != null ? 'perdida' : 'recorrido');
-                    const setModo = (m: 'perdida' | 'recorrido') => onChange({
-                        ...risk,
-                        cangrejo_mode: m,
-                        cangrejo_max_loss_at_sl_pct: m === 'perdida' ? risk.cangrejo_max_loss_at_sl_pct : null,
-                        cangrejo_max_sl_dist_pct: m === 'recorrido' ? risk.cangrejo_max_sl_dist_pct : null,
-                        cangrejo_max_mv_entry_pct: null,
-                        cangrejo_max_mv_pyr_pct: null,
-                    });
-                    return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }} className="animate-in fade-in duration-200">
-                            {/* Selector de modo (patrón de Completo/Parciales del TP) */}
-                            <div style={{
-                                display: 'flex',
-                                backgroundColor: 'var(--color-ec-bg-elevated)',
-                                border: '0.5px solid var(--color-ec-border)',
-                                borderRadius: 5,
-                                padding: 3,
-                                gap: 2,
-                            }}>
-                                <button
-                                    onClick={() => setModo('recorrido')}
-                                    style={modo === 'recorrido' ? {
-                                        flex: 1,
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        color: 'var(--color-ec-text-high)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        fontSize: 9,
-                                        fontWeight: 700,
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.12em',
-                                        padding: '6px 12px',
-                                        borderRadius: 4,
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        cursor: 'pointer',
-                                    } : {
-                                        flex: 1,
-                                        backgroundColor: 'transparent',
-                                        color: 'var(--color-ec-text-muted)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        fontSize: 9,
-                                        fontWeight: 700,
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.12em',
-                                        padding: '6px 12px',
-                                        borderRadius: 4,
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                    }}
-                                >
-                                    Recorrido máx. del SL
-                                </button>
-                                <button
-                                    onClick={() => setModo('perdida')}
-                                    style={modo === 'perdida' ? {
-                                        flex: 1,
-                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                        color: 'var(--color-ec-text-high)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        fontSize: 9,
-                                        fontWeight: 700,
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.12em',
-                                        padding: '6px 12px',
-                                        borderRadius: 4,
-                                        border: '0.5px solid var(--color-ec-border)',
-                                        cursor: 'pointer',
-                                    } : {
-                                        flex: 1,
-                                        backgroundColor: 'transparent',
-                                        color: 'var(--color-ec-text-muted)',
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        fontSize: 9,
-                                        fontWeight: 700,
-                                        textTransform: 'uppercase',
-                                        letterSpacing: '0.12em',
-                                        padding: '6px 12px',
-                                        borderRadius: 4,
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                    }}
-                                >
-                                    Pérdida máx. por trade
-                                </button>
-                            </div>
+                <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    color: 'var(--color-ec-text-secondary)',
+                    fontStyle: 'italic',
+                    marginLeft: 18,
+                    marginTop: 4,
+                    lineHeight: '1.3',
+                }}>
+                    Acota cada operación: o limitando el recorrido hasta el stop, o limitando lo que puede costarte. Es un techo — solo recorta, nunca agranda.
+                </span>
 
-                            {modo === 'recorrido' ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    <label style={{ display: 'flex', flexDirection: 'column', gap: 3, width: 130 }}>
-                                        <span style={{
-                                            fontFamily: 'var(--color-ec-sans)',
-                                            fontSize: 9.5,
-                                            color: 'var(--color-ec-text-secondary)',
-                                        }}>Distancia máx. entry → SL (%)</span>
-                                        <input
-                                            type="number"
-                                            min={0.1}
-                                            step={5}
-                                            value={risk.cangrejo_max_sl_dist_pct ?? ''}
-                                            title="El SL (estructural o %) nunca queda a más de este % del precio de entrada: se aprieta y la salida real pasa a ser el stop apretado."
-                                            onChange={(e) => onChange({
-                                                ...risk,
-                                                cangrejo_max_sl_dist_pct: e.target.value === '' ? null : Number(e.target.value),
-                                            })}
-                                            style={{
-                                                width: '100%',
-                                                padding: '4px 6px',
-                                                fontSize: 11,
-                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                border: '0.5px solid var(--color-ec-border)',
-                                                borderRadius: 4,
-                                                color: 'var(--color-ec-text-primary)',
-                                                fontFamily: 'var(--color-ec-mono)',
-                                                textAlign: 'right',
-                                            }}
-                                        />
-                                    </label>
-                                    <span style={{
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        fontSize: 10,
-                                        color: 'var(--color-ec-text-secondary)',
-                                        fontStyle: 'italic',
-                                        marginTop: 2,
-                                        lineHeight: '1.3',
-                                    }}>
-                                        El stop se queda donde dice la estructura (p. ej. previous max + 10%), pero si eso lo pone a más de este % del precio de entrada, se <strong>aprieta hasta aquí</strong> y la salida real pasa a ser el stop apretado. Cambia <strong>dónde sales</strong>, no cuánto pones.
-                                    </span>
-                                    {risk.cangrejo_max_sl_dist_pct != null && (
-                                        <span style={{
-                                            fontFamily: 'var(--color-ec-sans)',
+                {risk.cangrejo_active && (
+                    <div style={{ marginLeft: 18, marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {/* Selector de modo. Botones y no un desplegable: son
+                            dos y el usuario tiene que ver los dos a la vez para
+                            entender que son alternativas. */}
+                        <div style={{ display: 'flex', gap: 6 }}>
+                            {([
+                                { id: 'recorrido', label: 'Recorrido máx. del SL' },
+                                { id: 'perdida', label: 'Pérdida máx. por trade' },
+                            ] as const).map((m) => {
+                                const activo = (risk.cangrejo_mode ?? 'perdida') === m.id;
+                                return (
+                                    <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => onChange({
+                                            ...risk,
+                                            cangrejo_mode: m.id,
+                                            // Cambiar de modo LIMPIA el del otro. Si
+                                            // no, un número escondido seguiría
+                                            // recortando desde un campo que ya no se
+                                            // ve — el motor aplica lo que le llegue.
+                                            cangrejo_max_sl_dist_pct: m.id === 'recorrido' ? risk.cangrejo_max_sl_dist_pct : null,
+                                            cangrejo_max_loss_at_sl_pct: m.id === 'perdida' ? risk.cangrejo_max_loss_at_sl_pct : null,
+                                        })}
+                                        style={{
+                                            flex: 1,
+                                            padding: '5px 8px',
                                             fontSize: 10,
-                                            color: 'var(--color-ec-copper)',
-                                            fontStyle: 'italic',
-                                            lineHeight: '1.3',
-                                        }}>
-                                            El SL nunca quedará a más del {risk.cangrejo_max_sl_dist_pct}% del entry — se salga donde se salga la estructura.
-                                        </span>
-                                    )}
-                                </div>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    <label style={{ display: 'flex', flexDirection: 'column', gap: 3, width: 130 }}>
-                                        <span style={{
                                             fontFamily: 'var(--color-ec-sans)',
-                                            fontSize: 9.5,
-                                            color: 'var(--color-ec-text-secondary)',
-                                        }}>Pérdida máx. en 1 trade (% de mi cuenta)</span>
-                                        <input
-                                            type="number"
-                                            min={0.1}
-                                            max={100}
-                                            step={0.25}
-                                            value={risk.cangrejo_max_loss_at_sl_pct ?? ''}
-                                            title="Llegar al SL no puede costar más de este % de tu cuenta: el market value se encoge lo que haga falta si el stop queda lejos."
-                                            onChange={(e) => onChange({
-                                                ...risk,
-                                                cangrejo_max_loss_at_sl_pct: e.target.value === '' ? null : Number(e.target.value),
-                                            })}
-                                            style={{
-                                                width: '100%',
-                                                padding: '4px 6px',
-                                                fontSize: 11,
-                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
-                                                border: '0.5px solid var(--color-ec-border)',
-                                                borderRadius: 4,
-                                                color: 'var(--color-ec-text-primary)',
-                                                fontFamily: 'var(--color-ec-mono)',
-                                                textAlign: 'right',
-                                            }}
-                                        />
-                                    </label>
-                                    <span style={{
-                                        fontFamily: 'var(--color-ec-sans)',
-                                        fontSize: 10,
-                                        color: 'var(--color-ec-text-secondary)',
-                                        fontStyle: 'italic',
-                                        marginTop: 2,
-                                        lineHeight: '1.3',
-                                    }}>
-                                        El stop no se toca: se queda donde dice la estructura. Lo que se encoge es el <strong>tamaño de la posición</strong>, para que el recorrido hasta el SL no te cueste más de este % de tu cuenta. Cambia <strong>cuánto pones</strong>, no dónde sales.
-                                    </span>
-                                    {risk.cangrejo_max_loss_at_sl_pct != null && (
-                                        <span style={{
-                                            fontFamily: 'var(--color-ec-sans)',
-                                            fontSize: 10,
-                                            color: 'var(--color-ec-copper)',
-                                            fontStyle: 'italic',
-                                            lineHeight: '1.3',
-                                        }}>
-                                            Llegar al SL te costará como máximo el {risk.cangrejo_max_loss_at_sl_pct}% de tu cuenta — el tamaño se encoge lo que haga falta.
-                                        </span>
-                                    )}
-                                </div>
-                            )}
+                                            fontWeight: activo ? 700 : 400,
+                                            borderRadius: 4,
+                                            cursor: 'pointer',
+                                            border: activo
+                                                ? '0.5px solid var(--color-ec-copper)'
+                                                : '0.5px solid var(--color-ec-border)',
+                                            backgroundColor: activo
+                                                ? 'var(--color-ec-copper)'
+                                                : 'var(--color-ec-bg-sidebar)',
+                                            color: activo ? '#fff' : 'var(--color-ec-text-secondary)',
+                                        }}
+                                    >
+                                        {m.label}
+                                    </button>
+                                );
+                            })}
                         </div>
-                    );
-                })()}
+
+                        {(risk.cangrejo_mode ?? 'perdida') === 'recorrido' ? (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9.5,
+                                    color: 'var(--color-ec-text-secondary)',
+                                }}>Distancia máx. entrada → SL (%)</span>
+                                <input
+                                    type="number"
+                                    min={0.1}
+                                    step={5}
+                                    value={risk.cangrejo_max_sl_dist_pct ?? ''}
+                                    placeholder="50"
+                                    title="Si la estructura deja el stop más lejos, se aprieta hasta este porcentaje — y ahí se sale de verdad."
+                                    onChange={(e) => onChange({
+                                        ...risk,
+                                        cangrejo_max_sl_dist_pct: e.target.value === '' ? null : Number(e.target.value),
+                                    })}
+                                    style={{
+                                        width: 92,
+                                        padding: '4px 6px',
+                                        fontSize: 11,
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 4,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-mono)',
+                                        textAlign: 'right',
+                                    }}
+                                />
+                            </label>
+                        ) : (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    fontSize: 9.5,
+                                    color: 'var(--color-ec-text-secondary)',
+                                }}>De mi cuenta, perder máx. por trade (%)</span>
+                                <input
+                                    type="number"
+                                    min={0.1}
+                                    max={100}
+                                    step={0.5}
+                                    value={risk.cangrejo_max_loss_at_sl_pct ?? ''}
+                                    placeholder="3"
+                                    title="Sobre tu CUENTA ENTERA. El stop no se mueve: lo que se encoge es el tamaño."
+                                    onChange={(e) => onChange({
+                                        ...risk,
+                                        cangrejo_max_loss_at_sl_pct: e.target.value === '' ? null : Number(e.target.value),
+                                    })}
+                                    style={{
+                                        width: 92,
+                                        padding: '4px 6px',
+                                        fontSize: 11,
+                                        backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                        border: '0.5px solid var(--color-ec-border)',
+                                        borderRadius: 4,
+                                        color: 'var(--color-ec-text-primary)',
+                                        fontFamily: 'var(--color-ec-mono)',
+                                        textAlign: 'right',
+                                    }}
+                                />
+                            </label>
+                        )}
+                    </div>
+                )}
+
+                {/* La frase que traduce el número a lo que va a pasar. Es el
+                    motivo de simplificar a dos modos: cuatro topes sueltos no
+                    se podían explicar en una línea. */}
+                <span style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    color: 'var(--color-ec-text-secondary)',
+                    fontStyle: 'italic',
+                    marginLeft: 18,
+                    marginTop: 6,
+                    lineHeight: '1.3',
+                }}>
+                    {!risk.cangrejo_active
+                        ? ''
+                        : (risk.cangrejo_mode ?? 'perdida') === 'recorrido'
+                            ? (risk.cangrejo_max_sl_dist_pct
+                                ? `El stop nunca queda a más del ${risk.cangrejo_max_sl_dist_pct}% de tu entrada: si la estructura lo pone más lejos, se aprieta y SALES AHÍ. Cambia dónde sales, no cuánto pones.`
+                                : 'Cambia DÓNDE sales: aprieta el stop lejano hasta el porcentaje que pongas. El tamaño no se toca.')
+                            : (risk.cangrejo_max_loss_at_sl_pct
+                                ? `Si salta el stop no pierdes más del ${risk.cangrejo_max_loss_at_sl_pct}% de la cuenta: el stop se queda donde dice la estructura y lo que se encoge es el tamaño. Cambia cuánto pones, no dónde sales.`
+                                : 'Cambia CUÁNTO pones: encoge el tamaño para que el stop nunca cueste más de ese % de la cuenta. El stop no se mueve.')}
+                </span>
             </div>
 
 

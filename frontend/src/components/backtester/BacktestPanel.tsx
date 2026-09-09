@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import type { Dataset, Strategy } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
@@ -24,6 +24,15 @@ export interface BacktestPanelParams {
   custom_end_time: string;
   locates_cost: number;
   max_locates: number;
+  locates_random?: boolean;
+  locates_random_min?: number;
+  locates_random_max?: number;
+  locates_seed?: number;
+  ev_gate_enabled?: boolean;
+  ev_gate_window?: number;
+  ev_gate_by?: "trades" | "dias";
+  ev_gate_default_pct?: number;
+  ev_gate_min_trades?: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
   is_percent: number;
@@ -47,6 +56,15 @@ interface BacktestPanelProps {
     locates_cost?: number;
     locate_type?: "PERCENT" | "FLAT";
     max_locates?: number;
+    locates_random?: boolean;
+    locates_random_min?: number;
+    locates_random_max?: number;
+    locates_seed?: number;
+    ev_gate_enabled?: boolean;
+    ev_gate_window?: number;
+    ev_gate_by?: "trades" | "dias";
+    ev_gate_default_pct?: number;
+    ev_gate_min_trades?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;
@@ -430,6 +448,21 @@ export default function BacktestPanel({
   // Tope de locates: cuantos paquetes de 100 acciones como maximo se esta
   // dispuesto a alquilar por ticker-dia. 0 = sin tope (comportamiento previo).
   const [maxLocates, setMaxLocates] = useState(0);
+  // Locates aleatorios (Jaume 2026-09-08). "fijo" = el precio unico de siempre;
+  // "aleatorio" = sorteo por ticker-dia dentro de [min, max], sesgado por el
+  // precio de la accion y determinista por semilla.
+  const [locatesMode, setLocatesMode] = useState<"fijo" | "aleatorio">("fijo");
+  const [locatesMin, setLocatesMin] = useState(1);
+  const [locatesMax, setLocatesMax] = useState(10);
+  const [locatesSeed, setLocatesSeed] = useState(1);
+  const useLocatesRandom = useLocates && locatesMode === "aleatorio";
+  // Puerta por EV (fase 2). Solo tiene sentido con locates aleatorios.
+  const [evGate, setEvGate] = useState(false);
+  const [evGateWindow, setEvGateWindow] = useState(30);
+  const [evGateBy, setEvGateBy] = useState<"trades" | "dias">("trades");
+  const [evGateDefault, setEvGateDefault] = useState(2);
+  const [evGateMinTrades, setEvGateMinTrades] = useState(10);
+  const useEvGate = useLocatesRandom && evGate;
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -562,6 +595,15 @@ export default function BacktestPanel({
       if (savedState.useLocates !== undefined) setUseLocates(savedState.useLocates);
       if (savedState.locatesCost !== undefined) setLocatesCost(savedState.locatesCost);
       if (savedState.maxLocates !== undefined) setMaxLocates(savedState.maxLocates);
+      if (savedState.locatesMode !== undefined) setLocatesMode(savedState.locatesMode);
+      if (savedState.locatesMin !== undefined) setLocatesMin(savedState.locatesMin);
+      if (savedState.locatesMax !== undefined) setLocatesMax(savedState.locatesMax);
+      if (savedState.locatesSeed !== undefined) setLocatesSeed(savedState.locatesSeed);
+      if (savedState.evGate !== undefined) setEvGate(savedState.evGate);
+      if (savedState.evGateWindow !== undefined) setEvGateWindow(savedState.evGateWindow);
+      if (savedState.evGateBy !== undefined) setEvGateBy(savedState.evGateBy);
+      if (savedState.evGateDefault !== undefined) setEvGateDefault(savedState.evGateDefault);
+      if (savedState.evGateMinTrades !== undefined) setEvGateMinTrades(savedState.evGateMinTrades);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -705,8 +747,17 @@ export default function BacktestPanel({
       market_sessions: marketSessions,
       custom_start_time: customStartTime,
       custom_end_time: customEndTime,
-      locates_cost: useLocates ? locatesCost : 0,
+      locates_cost: useLocates && !useLocatesRandom ? locatesCost : 0,
       max_locates: useLocates ? maxLocates : 0,
+      locates_random: useLocatesRandom,
+      locates_random_min: useLocatesRandom ? locatesMin : 0,
+      locates_random_max: useLocatesRandom ? locatesMax : 0,
+      locates_seed: useLocatesRandom ? locatesSeed : 0,
+      ev_gate_enabled: useEvGate,
+      ev_gate_window: useEvGate ? evGateWindow : 0,
+      ev_gate_by: evGateBy,
+      ev_gate_default_pct: useEvGate ? evGateDefault : 0,
+      ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       is_percent: isPercent,
@@ -716,6 +767,8 @@ export default function BacktestPanel({
     selectedDataset, initCash, riskR, riskType, fixedRatioDelta,
     fees, feeType, slippage, startDate, endDate, marketSessions,
     customStartTime, customEndTime, useLocates, locatesCost, maxLocates,
+    useLocatesRandom, locatesMin, locatesMax, locatesSeed,
+    useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
     sizeBySl,
   ]);
@@ -742,6 +795,15 @@ export default function BacktestPanel({
         useLocates,
         locatesCost,
         maxLocates,
+        locatesMode,
+        locatesMin,
+        locatesMax,
+        locatesSeed,
+        evGate,
+        evGateWindow,
+        evGateBy,
+        evGateDefault,
+        evGateMinTrades,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -753,7 +815,9 @@ export default function BacktestPanel({
     selectedDataset, selectedStrategy, initCash, riskR, fees, slippage,
     startDate, endDate, marketSessions, customStartTime, customEndTime,
     riskType, feeType, isPercent, loadingData,
-    useLocates, locatesCost, maxLocates, useMonthlyExpenses, monthlyExpenses
+    useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
+    evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
+    useMonthlyExpenses, monthlyExpenses
   ]);
 
   // Synchronize dataset selection with the selected strategy's associated dataset
@@ -801,12 +865,22 @@ export default function BacktestPanel({
       market_sessions: marketSessions,
       custom_start_time: marketSessions.includes("custom") ? customStartTime : undefined,
       custom_end_time: marketSessions.includes("custom") ? customEndTime : undefined,
-      locates_cost: useLocates ? locatesCost : 0,
+      locates_cost: useLocates && !useLocatesRandom ? locatesCost : 0,
       // FLAT = coste en $ por cada 100 acciones (lo que cuesta un locate),
       // no % del riesgo (decisión de producto, Jaume 2026-07-07).
       locate_type: "FLAT",
       // Tope de locates: 0 = sin tope. Solo aplica en corto.
       max_locates: useLocates ? maxLocates : 0,
+      // Locates aleatorios: sustituyen al precio fijo cuando estan activos.
+      locates_random: useLocatesRandom,
+      locates_random_min: useLocatesRandom ? locatesMin : 0,
+      locates_random_max: useLocatesRandom ? locatesMax : 0,
+      locates_seed: useLocatesRandom ? locatesSeed : 0,
+      ev_gate_enabled: useEvGate,
+      ev_gate_window: useEvGate ? evGateWindow : 0,
+      ev_gate_by: evGateBy,
+      ev_gate_default_pct: useEvGate ? evGateDefault : 0,
+      ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -1592,167 +1666,279 @@ export default function BacktestPanel({
           </div>
         </div>
 
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          paddingTop: 16,
-          marginTop: 12,
-          borderTop: '0.5px solid var(--color-ec-border)',
-        }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}>
-            <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
-              <input
-                type="checkbox"
-                checked={useLocates}
-                onChange={() => setUseLocates(!useLocates)}
-                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-              />
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 1,
-              }}>
-                <span style={{
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-secondary)',
-                }}>$ Locate / 100 acc.</span>
-                <InfoTooltip
-                  position="left"
-                  width={280}
-                  text="Coste en dólares de cada locate: lo que cuestan 100 acciones reutilizables en corto. Se cobra UNA sola vez por ticker y día (no al comprar y otra al vender), por cada bloque de 100 acciones del tamaño máximo en corto de ese día. Ejemplo: si el locate cuesta 3$ y controlas 1000 acciones (10 locates), pagas 30$ ese día."
-                  style={{ display: 'inline-flex' }}
-                />
-              </span>
-            </label>
-            {useLocates && (
-              <input
-                type="number"
-                step="0.01"
-                value={locatesCost}
-                onChange={(e) => setLocatesCost(Number(e.target.value))}
-                className="border border-[var(--color-ec-border)]"
-                style={{
-                  width: '55px',
-                  backgroundColor: 'var(--color-ec-bg-elevated)',
-                  borderRadius: 5,
-                  padding: '6px 8px',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  color: 'var(--color-ec-text-primary)',
-                  outline: 'none',
-                }}
-              />
-            )}
-          </div>
+        {/* COSTES OPCIONALES. Un solo bloque ordenado: cada coste es una fila
+            «etiqueta | control» y lo que se despliega queda DENTRO del bloque.
+            Antes eran cuadros sueltos y el selector Fijo/Aleatorio se salía por
+            debajo del panel. Mismo criterio que el genético: borde de 1 px sin
+            radio, filas separadas por hairline, controles cuadrados. */}
+        {(() => {
+          const et: React.CSSProperties = {
+            fontFamily: 'var(--color-ec-sans)', fontSize: 11, fontWeight: 500,
+            color: 'var(--color-ec-text-secondary)', display: 'inline-flex',
+            alignItems: 'center', gap: 2, whiteSpace: 'nowrap',
+          };
+          const sub: React.CSSProperties = { ...et, color: 'var(--color-ec-text-muted)', paddingLeft: 22 };
+          const inp: React.CSSProperties = {
+            width: 62, height: 26, boxSizing: 'border-box', padding: '0 7px',
+            backgroundColor: 'var(--color-ec-bg-elevated)',
+            border: '1px solid var(--color-ec-border)', borderRadius: 0,
+            fontFamily: 'var(--color-ec-mono)', fontSize: 11,
+            color: 'var(--color-ec-text-primary)', outline: 'none', textAlign: 'right',
+          };
+          const nota: React.CSSProperties = {
+            fontFamily: 'var(--color-ec-sans)', fontSize: 10,
+            color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap',
+          };
+          const filas: React.ReactNode[] = [];
 
-          {/* Tope de locates. Solo tiene sentido con los locates activos, asi
-              que se despliega debajo del precio. 0 = sin tope, que es el
-              comportamiento de siempre. */}
-          {useLocates && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              paddingLeft: 24,
-            }}>
-              <span style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 1,
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}>
-                <span style={{
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-secondary)',
-                }}>Máx. locates</span>
-                <InfoTooltip
-                  position="left"
-                  width={300}
-                  text="Tope de paquetes de 100 acciones que se está dispuesto a alquilar por ticker y día. Limita dinámicamente el tamaño de la posición en CORTO a (máx. locates × 100) acciones: si con el riesgo configurado tocaría comprar más locates de los permitidos, se entra con menos acciones en vez de pagarlos. Ejemplo con tope 5: a 5$ y 1.000$ de exposición harían falta 2 locates y entra entero; a 0,50$ harían falta 20, así que entra con 500 acciones (250$) y paga 5 locates. 0 = sin tope. No afecta a las posiciones en largo."
-                  style={{ display: 'inline-flex' }}
+          filas.push(
+            <React.Fragment key="locates">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useLocates}
+                  onChange={() => setUseLocates(!useLocates)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                 />
-              </span>
-              <input
-                type="number"
-                min={0}
-                step="1"
-                value={maxLocates}
-                onChange={(e) => setMaxLocates(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-                className="border border-[var(--color-ec-border)]"
-                style={{
-                  width: '55px',
-                  backgroundColor: 'var(--color-ec-bg-elevated)',
-                  borderRadius: 5,
-                  padding: '6px 8px',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  color: 'var(--color-ec-text-primary)',
-                  outline: 'none',
-                }}
-              />
-              <span style={{
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 10,
-                color: 'var(--color-ec-text-muted)',
-                whiteSpace: 'nowrap',
+                <span style={et}>
+                  Loc. ($ / 100 acc.)
+                  <InfoTooltip
+                    position="left"
+                    width={280}
+                    text="Coste en dólares de cada locate: lo que cuestan 100 acciones reutilizables en corto. Se cobra UNA sola vez por ticker y día (no al comprar y otra al vender), por cada bloque de 100 acciones del tamaño máximo en corto de ese día. Ejemplo: si el locate cuesta 3$ y controlas 1000 acciones (10 locates), pagas 30$ ese día. «Fijo» usa el mismo precio toda la corrida; «Aleatorio» sortea uno distinto por ticker y día dentro de un rango."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+              </label>
+              {useLocates ? (
+                <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
+                  {(["fijo", "aleatorio"] as const).map((m, i) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setLocatesMode(m)}
+                      style={{
+                        background: locatesMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                        color: locatesMode === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                        fontWeight: locatesMode === m ? 600 : 400,
+                        border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                        fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                        padding: '0 9px', cursor: 'pointer',
+                      }}
+                    >
+                      {m === "fijo" ? "Fijo" : "Aleatorio"}
+                    </button>
+                  ))}
+                </div>
+              ) : <span />}
+            </React.Fragment>
+          );
+
+          if (useLocates && locatesMode === "fijo") {
+            filas.push(
+              <React.Fragment key="precio">
+                <span style={sub}>Precio del paquete</span>
+                <input type="number" step="0.01" value={locatesCost} style={inp}
+                       onChange={(e) => setLocatesCost(Number(e.target.value))} />
+              </React.Fragment>
+            );
+          }
+
+          if (useLocatesRandom) {
+            filas.push(
+              <React.Fragment key="rango">
+                <span style={sub}>
+                  Rango
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="En vez de un precio fijo, cada ticker y día recibe un precio de locate distinto, sorteado dentro de este rango (en dólares por paquete de 100 acciones). El sorteo NO es a ciegas: las acciones baratas caen hacia la parte baja del rango y las caras hacia la alta, porque así funcionan los brokers. Ejemplo con rango 1-10: una acción a 0,30 $ suele salir entre 2 y 4; una a 3 $ entre 4,5 y 9; una a 15 $ entre 6,5 y 10. El precio de referencia es la primera vela del día (04:00), así que no mira el futuro. Se cobra como siempre: paquetes enteros, una vez por ticker y día, sobre el máximo en corto de ese día."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <input type="number" step="0.1" min={0} value={locatesMin} style={{ ...inp, width: 46 }}
+                         onChange={(e) => setLocatesMin(Math.max(0, Number(e.target.value) || 0))} />
+                  <span style={nota}>a</span>
+                  <input type="number" step="0.1" min={0} value={locatesMax} style={{ ...inp, width: 46 }}
+                         onChange={(e) => setLocatesMax(Math.max(0, Number(e.target.value) || 0))} />
+                </span>
+              </React.Fragment>
+            );
+            filas.push(
+              <React.Fragment key="semilla">
+                <span style={sub}>
+                  Semilla
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="Un sorteo necesita un número de arranque: eso es la semilla. Con la MISMA semilla, la corrida saca exactamente los mismos precios de locate cada vez, así que si cambias otro parámetro y el resultado se mueve, sabes que es por el parámetro y no por la suerte del sorteo. Con OTRA semilla tienes otro «mundo» de precios de locate: los mismos días, pero a otros precios. Correr varias semillas y comparar es la forma de ver entre cuánto y cuánto puedes acabar según te toquen los locates, que es la pregunta de verdad. Cualquier número entero vale; 1, 2, 3… es lo normal."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  {locatesMax <= locatesMin && (
+                    <span style={{ ...nota, color: 'var(--color-ec-warning)' }}>máx. debe superar al mín.</span>
+                  )}
+                  <input type="number" step="1" min={0} value={locatesSeed} style={inp}
+                         onChange={(e) => setLocatesSeed(Math.max(0, Math.floor(Number(e.target.value) || 0)))} />
+                </span>
+              </React.Fragment>
+            );
+            filas.push(
+              <React.Fragment key="puerta">
+                <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap', paddingLeft: 22 }}>
+                  <input
+                    type="checkbox"
+                    checked={evGate}
+                    onChange={() => setEvGate(!evGate)}
+                    className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                  />
+                  <span style={et}>
+                    Puerta por EV
+                    <InfoTooltip
+                      position="left"
+                      width={340}
+                      text="Es la cuenta del /evf del bot, hecha dentro del backtest y trade a trade: con el locate sorteado de ese día, ¿cuánto tiene que moverse el precio a favor solo para pagarlo (el «fade necesario»)? Si el EV de la estrategia en ese momento no lo cubre, NO se entra. QUÉ EV MIRA: el «EV en sombra». El backtest corre DOS veces: la primera sin puerta, y de ahí sale lo que rinden TODAS las señales de la estrategia en % del precio (cortos, bruto de locates); la segunda corre con la puerta y, en cada entrada, mira el EV medio de las señales de la primera que ya habían CERRADO antes de ese instante — nunca el futuro. Es el EV de la estrategia, no el de lo que se ejecutó: es el que hoy le das a mano al /evf. En vivo tendrás el de tus resultados, que arrastra un sesgo (si rechazas, no entra información nueva); esa variante queda para más adelante. Solo mira cortos; las reentradas que caben en lo ya alquilado pasan gratis."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                </label>
+                {evGate ? (
+                  <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
+                    {(["trades", "dias"] as const).map((m, i) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setEvGateBy(m)}
+                        title="Sobre qué se calcula el EV rodante: los últimos N trades cerrados, o los trades cerrados en los últimos N días"
+                        style={{
+                          background: evGateBy === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                          color: evGateBy === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                          fontWeight: evGateBy === m ? 600 : 400,
+                          border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                          fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                          padding: '0 9px', cursor: 'pointer',
+                        }}
+                      >
+                        {m === "trades" ? "Trades" : "Días"}
+                      </button>
+                    ))}
+                  </div>
+                ) : <span />}
+              </React.Fragment>
+            );
+            if (evGate) {
+              filas.push(
+                <React.Fragment key="ventana">
+                  <span style={{ ...sub, paddingLeft: 44 }}>
+                    Ventana ({evGateBy === "trades" ? "trades" : "días"})
+                    <InfoTooltip
+                      position="left"
+                      width={300}
+                      text="Cuántos trades hacia atrás (o cuántos días hacia atrás) se miran para sacar el EV en cada entrada. Corta (10-20 trades) reacciona rápido pero se mueve mucho con la suerte; larga (50-100) es estable pero tarda en enterarse de que el edge ha cambiado. 30 trades es un punto medio razonable para empezar."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="1" min={1} value={evGateWindow} style={inp}
+                         onChange={(e) => setEvGateWindow(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+                </React.Fragment>
+              );
+              filas.push(
+                <React.Fragment key="evdef">
+                  <span style={{ ...sub, paddingLeft: 44 }}>
+                    EV por defecto (%)
+                    <InfoTooltip
+                      position="left"
+                      width={300}
+                      text="El EV que se asume mientras aún no hay historia suficiente (al principio de la corrida, o cuando en la ventana hay menos trades que el mínimo de abajo). En % del precio, como el fade: 2 significa que se da por hecho que la acción se mueve un 2 % a favor de media. Ponlo parecido al EV real que le das al /evf; si lo pones muy alto, al principio entra en todo; muy bajo, no entra en nada hasta que hay datos."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="0.1" min={0} value={evGateDefault} style={inp}
+                         onChange={(e) => setEvGateDefault(Math.max(0, Number(e.target.value) || 0))} />
+                </React.Fragment>
+              );
+              filas.push(
+                <React.Fragment key="mintr">
+                  <span style={{ ...sub, paddingLeft: 44 }}>
+                    Mín. trades
+                    <InfoTooltip
+                      position="left"
+                      width={300}
+                      text="Por debajo de este número de trades cerrados en la ventana, el EV rodante no se fía de sí mismo y usa el EV por defecto. Evita que dos trades sueltos decidan por toda una semana."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="1" min={1} value={evGateMinTrades} style={inp}
+                         onChange={(e) => setEvGateMinTrades(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+                </React.Fragment>
+              );
+            }
+          }
+
+          if (useLocates) {
+            filas.push(
+              <React.Fragment key="tope">
+                <span style={sub}>
+                  Máx. locates
+                  <InfoTooltip
+                    position="left"
+                    width={300}
+                    text="Tope de paquetes de 100 acciones que se está dispuesto a alquilar por ticker y día. Limita dinámicamente el tamaño de la posición en CORTO a (máx. locates × 100) acciones: si con el riesgo configurado tocaría comprar más locates de los permitidos, se entra con menos acciones en vez de pagarlos. Ejemplo con tope 5: a 5$ y 1.000$ de exposición harían falta 2 locates y entra entero; a 0,50$ harían falta 20, así que entra con 500 acciones (250$) y paga 5 locates. 0 = sin tope. No afecta a las posiciones en largo."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <span style={nota}>{maxLocates > 0 ? `máx. ${maxLocates * 100} acc.` : 'sin tope'}</span>
+                  <input type="number" min={0} step="1" value={maxLocates} style={inp}
+                         onChange={(e) => setMaxLocates(Math.max(0, Math.floor(Number(e.target.value) || 0)))} />
+                </span>
+              </React.Fragment>
+            );
+          }
+
+          filas.push(
+            <React.Fragment key="gastos">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useMonthlyExpenses}
+                  onChange={() => setUseMonthlyExpenses(!useMonthlyExpenses)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                />
+                <span style={et}>Gastos fijos / mes ($)</span>
+              </label>
+              {useMonthlyExpenses ? (
+                <input type="number" step="1" value={monthlyExpenses} style={inp}
+                       onChange={(e) => setMonthlyExpenses(Number(e.target.value))} />
+              ) : <span />}
+            </React.Fragment>
+          );
+
+          return (
+            <div style={{ paddingTop: 16, marginTop: 12, borderTop: '0.5px solid var(--color-ec-border)' }}>
+              <label style={{
+                display: 'block', fontFamily: 'var(--color-ec-sans)', fontSize: 9, fontWeight: 700,
+                textTransform: 'uppercase', letterSpacing: '0.12em',
+                color: 'var(--color-ec-text-muted)', marginBottom: 6,
               }}>
-                {maxLocates > 0 ? `máx. ${maxLocates * 100} acc.` : 'sin tope'}
-              </span>
+                Costes opcionales
+              </label>
+              <div style={{ border: '1px solid var(--color-ec-border)', background: 'var(--color-ec-bg-surface)' }}>
+                {filas.map((f, i) => (
+                  <div key={i} style={{
+                    display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto',
+                    alignItems: 'center', gap: 8, padding: '5px 9px', minHeight: 34,
+                    borderTop: i ? '0.5px solid var(--color-ec-border)' : undefined,
+                  }}>
+                    {f}
+                  </div>
+                ))}
+              </div>
             </div>
-          )}
-
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={useMonthlyExpenses}
-                onChange={() => setUseMonthlyExpenses(!useMonthlyExpenses)}
-                className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
-              />
-              <span style={{
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 11,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-secondary)',
-              }}>Gastos fijos/mes ($)</span>
-            </label>
-            {useMonthlyExpenses && (
-              <input
-                type="number"
-                step="1"
-                value={monthlyExpenses}
-                onChange={(e) => setMonthlyExpenses(Number(e.target.value))}
-                className="border border-[var(--color-ec-border)]"
-                style={{
-                  width: '55px',
-                  backgroundColor: 'var(--color-ec-bg-elevated)',
-                  borderRadius: 5,
-                  padding: '6px 8px',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 11,
-                  color: 'var(--color-ec-text-primary)',
-                  outline: 'none',
-                }}
-              />
-            )}
-          </div>
-
-
-        </div>
+          );
+        })()}
       </div>
 
       {/* RANGO DE FECHAS IS-OOS */}

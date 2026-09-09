@@ -131,6 +131,42 @@ def explicar_estrategia(definicion: dict) -> dict:
             "por_que": "no hay stop duro activo, así que se cae a valor de mercado",
         })
 
+    # ── Estilo Cangrejo ──────────────────────────────────────────────────
+    # Se explica AQUI y no en «salidas» aunque el Modo A mueva la salida:
+    # los dos modos son la misma decision (cuanto puede costar un trade) y
+    # separarlos haria pensar que se pueden combinar.
+    if rm.get("cangrejo_active"):
+        dist = rm.get("cangrejo_max_sl_dist_pct")
+        perdida = rm.get("cangrejo_max_loss_at_sl_pct")
+        if dist:
+            dimensionado["cangrejo"] = (
+                f"Estilo Cangrejo · recorrido máx. del SL {dist}% "
+                f"(aprieta el stop lejano y sale ahí)")
+        elif perdida:
+            dimensionado["cangrejo"] = (
+                f"Estilo Cangrejo · pérdida máx. {perdida}% de la cuenta por "
+                f"trade (encoge el tamaño; el stop no se mueve)")
+        else:
+            # Encendido y sin ningun porcentaje: no recorta nada. Es el caso que
+            # mas confunde («lo activé y da lo mismo»), asi que se dice.
+            inactivo.append({
+                "que": "Estilo Cangrejo",
+                "valor": "cangrejo_active: true",
+                "por_que": "no hay ningún porcentaje puesto, así que no recorta nada",
+            })
+        if (dist or perdida) and rm.get("hybrid_stop"):
+            inactivo.append({
+                "que": "Stop híbrido",
+                "valor": "hybrid_stop: true",
+                "por_que": "Estilo Cangrejo está activo y el motor arbitra a su favor",
+            })
+        if perdida and not (rm.get("use_hard_stop") and rm.get("hard_stop")):
+            inactivo.append({
+                "que": "Estilo Cangrejo · pérdida máxima",
+                "valor": f"{perdida}%",
+                "por_que": "sin stop duro no hay distancia que medir, así que no topa nada",
+            })
+
     # ── Salidas ──────────────────────────────────────────────────────────
     salidas: list[str] = []
     if rm.get("use_hard_stop") and rm.get("hard_stop"):

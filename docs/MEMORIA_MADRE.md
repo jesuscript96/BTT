@@ -588,127 +588,6 @@ Suite completa antes y despues de los tres cambios: **103 fallos / 321 pasan /
 13 errores en ambos casos, 0 rotos**. Los fallos son preexistentes de este
 entorno (sin acceso a GCS: 403). `tsc --noEmit` del frontend, 0 errores.
 
-## 2026-08-26 (tarde) — Fix de gaps por split en el lago + carga incremental del DuckDB + fix de "Days"
-
-### 1. Fix del gap diario por split (el dato, no la app)
-
-El universo del backtester leía el gap en crudo: cada split/reverse-split entraba
-como gap gigante falso (NVDA 2024-06-10 = -89,89%; 2.123 ticker-días falsos con
-`pmh>=50`, el 9,4% del universo short). Corregido en el lago (proyecto
-`cangrejo_data`, PRD_FIX_gaps_falsos_splits): los 3 gaps (`gap_pct`,
-`gap_at_open_pct`, `pmh_gap_pct`) dividen por `close_prev_adj = prev_close *
-product(split_from/split_to)` del día. `daily_metrics`, bygap y
-`local_data.duckdb` regenerados y verificados (NVDA pasa a +1,08; universo
-`pmh>=50` de 22.676 → 20.997).
-
-**Consecuencia para comparar backtests viejos/nuevos:** los candidatos fantasma
-por split ya no existen. Con el dataset típico (`pmh>=20`, `close>=$1`) en 2025
-eran 361 pares de 8.462 (-4,3%); en todo el histórico, 1.824 pares. Curvas
-antiguas con más trades incluían shorts contra gaps que nunca ocurrieron.
-
-En ESTE repo (commits `19979bc` + `6c05066` en `alvaro-rama-desarrollo`):
-`lake_db_loader._alinear_pmh_gap_pct` y la migración de arranque de `init_db.py`
-usan la misma fórmula ajustada (antes reescribían `pmh_gap_pct` en crudo en cada
-carga/arranque y re-corrompían la tabla). La tabla `splits` del DuckDB local
-pasa a 4 columnas (`split_from`/`split_to` incluidas): con eso arranca sin el
-`[WARN] Failed to load splits cache` y el filtro anti-reverse-split del
-screener vuelve a funcionar. OJO: anti-join con `NOT EXISTS`, no con
-`(a,b) NOT IN (SELECT x,y)` — el venv del backend lleva DuckDB 1.1.3 y no lo
-soporta.
-
-### 2. Carga incremental del DuckDB en el ETL diario (adiós a la reescritura de 58 GB)
-
-`etl_to_edgecute.py --incremental --load` ya no hace DROP+CREATE+INSERT de las
-~3.000 M de filas: carga SOLO los meses tocados (DELETE por rango + INSERT del
-parquet, transaccional, espejo de `cargar_meses_en_duckdb`). El paso ETL del
-diario pasa de 30-40 min a ~2 min (medido en la run manual del 26/08:
-pipeline completo 8/8 pasos en 18,2 min). La recarga completa queda como
-herramienta de reparación (`--full --load` o FASE 3 de `reparar_lago.py`).
-El bygap se regenera como paso final del diario (`regenerar_bygap.py`, 34 s).
-
-### 3. Fix de "Days" en Aggregate Results (el único cambio de código de esta tanda aparte de los de arriba)
-
-`Days` contaba **ticker-días** (`len(day_results)`), no sesiones: un año
-mostraba "1460 días" (≈5,8 candidatos/día). Ahora cuenta **fechas de calendario
-únicas** (`backtest_service.py`, `_aggregate_metrics`). Efecto lateral
-intencionado: `Avg Ret/Day` y `Avg R/Day` pasan a ser por SESIÓN (denominador
-correcto). Verificado sobre una estrategia con ventana de un año: Days
-1460 → 250. La pestaña "Dias" de la lista sigue listando ticker-días (es su
-naturaleza).
-
-### 4. PENDIENTES para coordinar (reportados, NO tocados)
-
-- **Cherry-pick del fix de fees `cd455ae`** ("cobra el lado de entrada en la 1ª
-  ejecución que liquida la posición" — ITEM 4 del reporte Sailor). NO está en
-  esta rama; vive en `alvaro-prereset-8b7959f`. La versión actual tiene ese bug
-  activo: cierres 100% vía parciales pagan un solo lado de comisión → resultados
-  ligeramente sobreestimados en estrategias con parciales. Con él van sus tests
-  (`test_fees.py`, `test_bygap_parity.py`, `test_fade_partials.py`,
-  `test_current_gap_semantics.py`, `test_trail_break_even.py` — 901 líneas,
-  tampoco están).
-- **`alvaro-prereset-8b7959f` además contiene** la `MEMORIA.md` antigua (981
-  líneas), la carpeta `ALVARO_CAMBIOS/`, el Darvas Box y 2 merges de staging
-  que la rama actual no tiene. Recuperación pendiente de acordar.
-
-### 5. PRD para Sailor con todo el paquete de hoy
-
-`docs/PRD_FIX_SPLITS_GAPS_Y_PIPELINE_20260826.md` — el fix de gaps por split
-(lago + backend), la carga incremental del DuckDB, el fix de "Days" y cómo
-verificar cada cosa en 5 minutos. Solo los arreglos que afectan a ambos;
-nada de estrategias ni curvas concretas. `BACKTEST_STRICT_COMPLETENESS=true`
-ya está activo en el `.env` local de Alvaro (recomendado en todos).
-
-### 6. PRÓXIMOS ARREGLOS (propuesta): tablas de precalculados para acelerar la carga
-
-Medido el 26/08 con los `[TIMING]` del motor: de una run de ~86 s, el
-**stream_build se lleva ~83 s (95 %)** — el bucle que por cada ticker-día lee
-las velas, las **resamplea** (1m→5m/15m según la estrategia) y **recalcula los
-indicadores en Python** (rolling/groupby) antes de simular. El qualifying ya no
-es el problema (3,5 s frío, ms en caché; el bygap materializado hizo su
-trabajo). La idea es aplicar el MISMO patrón del bygap a lo que se recalcula
-en cada run:
-
-1. **Velas 5m/15m precalculadas en el lago** — el resample 1m→Nmin se haría
-   una vez en el ETL (parquet por ticker-mes), no en cada backtest.
-2. **Indicadores estándar precalculados por (ticker, día)** — solo los de
-   parámetros FIJOS de uso común (EMA rápidas/lentas típicas, Accum Volume,
-   RVOL, PM high/low vs open...). Los de parámetros libres del usuario
-   (Squeeze con ventana variable, etc.) seguirían calculándose en vivo: la
-   tabla no puede llevar todas las combinaciones.
-3. **Precarga del universo** — extender el `[PRECACHE]` actual para que tras
-   cada actualización del lago queden en caché los ticker-días candidatos más
-   frecuentes (hoy solo calienta lo que acaba de usar cada dataset).
-
-**Puntos a decidir juntos:** qué indicadores entran (lista cerrada inicial),
-dónde viven (lago `cangrejo_data` vs caché del backend), la invalidación tras
-cada update del diario (el bygap ya lo resuelve regenerándose en 34 s — estas
-tablas seguirían el mismo paso final), y el coste de disco (estimación
-inicial: ~1,5-2× el intradía para velas 5m + indicadores).
-
-**Impacto esperado:** si el resample+indicadores son la mitad del stream_build
-(por medir con un profiler fino antes de empezar), una run típica pasaría de
-~3,5 min en frío a ~1,5 min, y las re-runs de optimización (que repiten el
-mismo cálculo decenas de veces por rejilla) serían el mayor beneficiado.
-Primer paso propuesto: medir con profiler 5-10 ticker-días para partir el
-stream_build en (lectura / resample / indicadores / simulación) y decidir con
-datos qué tabla paga su coste.
-
-### 7. Fix del padding de meses: agosto "no existía" para el loader y la caché
-
-Síntoma: un backtest rechazado por completitud — "10 de 4.977 ticker-días sin
-intradía", todos del 17-20/08, pese a que el lago tenía las velas. Causa raíz:
-**las particiones del lago van sin cero (`month=8`, como las escribe DuckDB) y
-los globs de `lake_db_loader` iban con cero (`month=08`)** → el mes no
-resolvía y tres cosas fallaban EN SILENCIO: `cargar_meses_en_duckdb` se saltaba
-la carga del mes, `anadir_dias_al_cache` reportaba "ya estaba al día" sin
-mirar nada (167 ficheros de caché de agosto quedados en el día 14 — residuo
-del incidente del 21/08), y la carga incremental nueva del ETL tampoco encontraba
-el parquet. Arreglado probando ambos paddings (igual que hacía el resolvedor de
-velas). Tras el fix: agosto cargado en `local_data.duckdb` (tabla al 25/08) y
-caché reparada (+224.279 velas en 167 ficheros). NOTA: si se invoca
-`anadir_dias_al_cache` fuera del backend, `CACHE_DIR=.cache/intraday` es
-RELATIVO al cwd de `backend/` — exportarlo absoluto.
-
 ## 2026-08-26 (noche) — Auditoría del reporte de splits/gaps de Álvaro
 
 **Origen:** Álvaro reporta desde `staging` que cada split entraba como gap falso
@@ -939,258 +818,6 @@ son comparables con resultados anteriores. `avg_return_per_day_pct` no cambia
 | Meses que falten en el lago | ✅ Ya no se saltan en silencio: se registran y salen en el resumen de la actualización |
 | Suite de tests | 103 fallos / 321 pasan / 13 errores — **idéntico al baseline**, 0 regresiones |
 | Divergencia con `staging` | `staging` lleva 7 commits suyos encima; **su fix de splits no se puede mergear tal cual** (ver arriba) |
-
-## Estado actual de la rama Álvaro respecto a los datos (2026-08-27)
-
-| Elemento | Estado |
-|---|---|
-| Gaps ajustados por split | ✅ Corregido (`19979bc`, `6c05066`). Nuestro `prev_close` es CRUDO y se ajusta al calcular en `_alinear_pmh_gap_pct`. **NO portar a Sailor**: su lago ya ajusta dentro de la columna → doble ajuste |
-| `init_db.py` / `_alinear_pmh_gap_pct` | Ajuste de split ACTIVO — necesario en este lago. Interruptor `LAKE_PREV_CLOSE_YA_AJUSTADO` (default off) para el otro lago — ver entrada del 27/08 (tarde) |
-| Tabla `splits` | ✅ Corregida a 4 columnas (tenía 2; daba `[WARN] split_from not found`) |
-| Junctions `cold_storage/splits` y `/tickers` | ✅ Creados (no existían; el reload se saltaba en silencio) |
-| Padding de meses en particiones | ✅ El glob prueba ambos (`month=8` y `month=08`) — `8777d17` |
-| "Days" / `avg_r_per_day` | ✅ Corregido a sesiones de calendario (converge con staging) |
-| Carga incremental del DuckDB | ✅ Propia: 30-40 min → 2,2 min |
-| `BACKTEST_STRICT_COMPLETENESS` | ✅ Encendido (`true`) en el `.env` local de Álvaro |
-| Perf al lanzar backtest | `stream_build` = 95% del run (medido 26/08). PRD en `docs/PRD_PERF_BACKTEST_STREAMBUILD_20260827.md`, pendiente de atacar |
-| Sync con `staging` | ✅ Mergeado (`347e127`): la rama contiene los 2 commits de Jaime |
-| Suite de tests | 103 fallos / 321 pasan / 15 errores (medido 27/08 en esta máquina, tal cual). NF/NP idénticos al baseline de Sailor; casi todos los fallos son `daily_metrics does not exist` (los tests esperan la BD remota, no el lago local). Los +2 errores vs sus 13: colección de 2 tests obsoletos (`test_backtest_engine.py` importa `Condition`, `test_backtest_integration.py` importa `filter_market_data_by_interval_and_dates` — nombres ya inexistentes). Sin cambios de código |
-
-Regla que se lleva de aquí: los dos lagos llegan al mismo resultado por caminos
-distintos (Álvaro ajusta el split al calcular, Sailor dentro de la columna del
-ETL). Antes de adoptar un fix de datos del otro lado, verificar en qué capa
-aplica cada lago el ajuste — los parches NO son intercambiables.
-
-> **2026-08-27**: divergencias rama Álvaro vs `staging` medidas y clasificadas
-> para triaje de Jaime (qué adoptar / no adoptar / ya convergido, con diffs) →
-> `docs/DIVERGENCIAS_ALVARO_VS_STAGING_20260827.md`.
-
-## 2026-08-27 (tarde) — `LAKE_PREV_CLOSE_YA_AJUSTADO`: el mismo backend para los dos lagos
-
-Implementada la propuesta textual de Sailor (§ "Por qué sus parches de splits
-NO se pueden adoptar aquí", alternativa conservadora): una variable de entorno
-que apaga el recálculo de `pmh_gap_pct` donde el ETL ya ajusta el split.
-
-- **Qué hace**: con `LAKE_PREV_CLOSE_YA_AJUSTADO=true`, los DOS sitios que
-  recalculan con factor de split se apagan enteros — la migración de arranque
-  de `init_db.py` (de paso desaparece el UPDATE de 19,2 M de filas no-op en
-  cada arranque de la máquina de Sailor) y `_alinear_pmh_gap_pct` en la carga
-  mensual. `pmh_gap_pct` se queda tal y como lo escribió el ETL, y ni se lee
-  ni se exige el parquet de splits en ese modo.
-- **Por qué así**: en el lago de Sailor la columna `prev_close` ya lleva el
-  factor horneado; recalcular ahí con factor es el doble ajuste (NVDA 1,08% →
-  910,77%) y recalcular sin factor es un no-op que reescribe 19 M de filas.
-  Confiar en el ETL era su propuesta PREFERIDA; esto es esa propuesta, pero
-  opt-in.
-- **Apagada por defecto (regla R7)**: en el lago de esta rama (`cangrejo_data`)
-  `prev_close` es CRUDO y el ajuste hace falta. Sin poner la variable, ni una
-  línea cambia de comportamiento en la máquina de Álvaro (los tests del camino
-  default lo fijan: el día de split sale 1,0% con factor, -89,9% sin).
-- **⚠️ COORDINAR**: cuando esto llegue a `staging`, **Sailor debe añadir
-  `LAKE_PREV_CLOSE_YA_AJUSTADO=true` a su `backend/.env`** — sin ella, su lago
-  sufriría el doble ajuste al primer arranque.
-- **Tests**: `tests/test_lake_prev_close_ya_ajustado.py` (nuevo, 5 casos: los
-  dos sitios × default/flag, y el contrato del `RuntimeError` sin parquet de
-  splits; todo con DuckDB en memoria + lago de mentira, nada de la BD remota).
-  Suite completa: **103 fallos / 326 pasan / 15 errores** — los mismos 103+15
-  del baseline, +5 verdes nuevos, 0 regresiones.
-
-Ficheros: `app/init_db.py`, `app/services/lake_db_loader.py`
-(`_alinear_pmh_gap_pct` gana un parámetro `log` opcional para avisar sin
-lanzar el mensaje al vacío).
-
-## 2026-08-27 (noche) — Profiler fino de `stream_build`: el PRD de perf cambia de alcance
-
-Ejecutado el §7 del `docs/PRD_PERF_BACKTEST_STREAMBUILD_20260827.md` (ver ahí
-las tablas completas). Instrumentación nueva: `backend/app/services/subphase_profiler.py`,
-gated tras `BACKTEST_PROFILE_SUBPHASES=1` (**apagado por defecto**, R7), con
-hooks de solo-medición en `backtest_service` / `strategy_engine` / `indicators`.
-Con la var en off, cero cambio de comportamiento.
-
-**Qué se midió** (3 runs, 9-10 ticker-días, estrategias y datasets de Álvaro
-sin tocar, completitud 100 %):
-
-- **El resample es barato**: ~3 ms/ticker-día (7 % del stream_build caliente)
-  en estrategia multi-tf; 0 en todo-1m. **Las "velas Nm precalculadas" dejan
-  de ser la v1 del PRD.**
-- **Los "indicadores" del run frío (2,35 s) eran compilación única del
-  proceso**, no cálculo: días siguientes 0,1 ms. En caliente el coste real es
-  overhead pandas por llamada (~1-2 ms), no el math → la tabla de indicadores
-  fijos tampoco paga sin cambiar el camino de consumo.
-- **`fetch` (lectura del stream) es recurrente por run y por mes**: ~0,33-0,9 s
-  por mes aunque el proceso ya lo haya leído. 24 meses ≈ 8-20 s por run.
-- **La simulación es irrelevante (0,1-0,8 %) y NO es Numba**: el default es
-  `BACKTEST_NUMBA_SIM=0` (kernel Python). La casuística "kernel Numba" del
-  PRD §2 era errónea para la config por defecto.
-- **Extrapolación verificada**: 4.855 pares × ~13 ms + 24 meses × ~0,35 s ≈
-  los 86 s medidos el 26/08. El modelo cierra.
-
-**Orden de ataque recomendado (todo ya existe en el repo, gated)**: 1) warmup
-de indicadores al arrancar (mata los 2,35 s del 1.er run), 2) `BTT_SLAB_STREAM_ENABLED`
-(fetch mensual), 3) path nativo N2a por defecto en estrategias simples (mata
-el overhead pandas de translate, ~7 ms/día). Precalculados: solo si tras eso
-sigue doliendo, y como columnas por (ticker, día), no como velas Nm.
-
-**De paso**: `origin/feat/resample-memo` YA está contenida en esta rama
-(`17fdec3` es ancestro de HEAD) — el PRD §5 lo daba como "candidata a mergear".
-Nada que hacer.
-
-Operativa de la sesión: el backend local de Álvaro (8010) se reinició para
-arrancarlo con la var del profiler (estaba idle, verificado; `DISABLE_GCS_SYNC=true`
-confirmado en el log de arranque). Al terminar se **restauró** el backend
-habitual (`--reload`, sin la var) y se verificó sano y sin líneas SUBPHASE.
-
-## 2026-08-27 (noche, 2ª parte) — «Últimas pruebas» en Portfolio: los runs ya no se pierden
-
-Pedida por Álvaro: "que las últimas pruebas se queden guardadas para darles al
-click". El diagnóstico: el backend YA auto-guardaba cada backtest exitoso en
-`backtest_results` (modo `auto`, retención 50, `f16dfd8`) — lo que se borró el
-21/08 (`48abb88`) fue solo la UI («Últimas pruebas» del antiguo Baúl
-`/database`). Lo que faltaba: endpoints ligeros y una pantalla.
-
-**Backend** (`strategy_search.py` + `backtest.py`):
-- `GET /api/strategy-search/recent` — listado LIGERO (sin `results_json`, que
-  en `/list` hace pesar respuestas decenas de MB): metadatos + métricas tipadas
-  + label por `json_extract`.
-- `GET /api/strategy-search/{id}` — payload completo de un run (incluye
-  `backtest_params` + snapshot de `strategy_definition` + `global_equity`).
-  Patrón rescatado del router legacy desmontado `_backtest_btt_legacy.py`.
-- `_autosave_success` ahora conserva `day_results` (solo dropea
-  `equity_curves`): la reapertura muestra calendario y selección de día. Los
-  runs guardados ANTES de este cambio no tienen day_results (calendario vacío).
-
-**Frontend**: 4ª sub-pestaña «Últimas pruebas» en `/portfolio`
-(`RecentRunsTab.tsx`). Al pulsar «abrir» se pide el payload por id y se
-escribe en `sessionStorage['backtester_results_state']` — la clave que
-`/backtester` YA restaura al montar — y se navega a `/backtester`: el run se
-repinta (métricas/trades/calendario/equity global) sin tocar su página.
-Degradación conocida: equity POR DÍA solo mientras el job viva (~1 h).
-Borrado con confirmación en dos pasos en la propia fila.
-
-**Fix de paso**: el 503 del guardián de memoria era invisible en la UI — el
-catch leía `detail` como string y el guard manda `{code, message}` (objeto).
-Nuevo helper `apiErrorMessage` en `backtester/page.tsx` para los dos catches.
-
-**Verificado** (navegador real): tabla con los runs del 27/08, «abrir» →
-backtester repinta exactamente las métricas del run (2281 trades / 56,5 % /
-PF 1,32 / Sharpe 3,29). Tests: `test_strategy_search_recent.py` (5) +
-regresión motor 116 pasan. Nota operativa: el `--reload` de uvicorn se colgó
-una vez al recargar con el backend cargado (worker viejo siguió sirviendo);
-reinicio limpio del backend si algún cambio no aparece.
-
-## 2026-08-27 (noche, 3ª parte) — Warmup de indicadores + A/B del pipeline slab: -37 % pero DIVERGE
-
-Álvaro pidió "que los backtests vayan más rápido" (su idea: precalcular
-gap%/PMH-gap). Con los números del profiler, su idea apuntaba a la fase ya
-materializada — el ataque real fue otro:
-
-**Hecho y commiteado — warmup de indicadores al arrancar**
-(`indicators.warmup_indicators` + hilo daemon en `main.py`, opt-out
-`BTT_INDICATOR_WARMUP=0`): mata los 2,35 s de compilación del primer
-ticker-día del primer backtest tras cada arranque. En frío mide 0,5-0,9 s y
-corre en background al arrancar.
-
-**A/B/C medido** (enero 2025 del dataset 8777, 81 pares, misma estrategia,
-backend reiniciado por condición; logs `ab_a|b|c.log`):
-
-| Condición | Señales | Trades |
-|---|---|---|
-| A secuencial (defaults) | 1.871 ms | **29** |
-| B `BTT_SLAB_STREAM_ENABLED=1` | 1.182 ms (**-37 %**) | **37** |
-| C B + `BTT_N2A_NATIVE_ENABLED=1` | 1.214 ms | **37** |
-
-- El pipeline slab (incluso con fetch legacy por no haber slabs construidos)
-  es un 37 % más rápido en señales… **pero produce 37 trades donde el
-  secuencial produce 29** — paridad rota entre caminos del MISMO motor.
-  Sospecha: reentradas/partial-TPs (días con 2 trades). El modo slab además
-  rompe el reconciliador de completitud (reporta 0 % porque `_tracked_stream`
-  nunca se consume) y con `BACKTEST_STRICT_COMPLETENESS=true` de Álvaro el
-  run se rechaza con 503 — el guardián funcionó como debe.
-- N2A no se pudo aislar (solo aplica dentro del pipeline slab); mismo 37.
-
-**Plan para staging en `docs/PRD_PERF_BACKTESTS_STAGING_SAILOR_20260827.md`**:
-warmup mergeable ya; slab/N2A bloqueados hasta arreglar la paridad (repro
-incluido en el PRD). Rechazado con números: velas Nm, tabla de indicadores
-fijos y Numba-sim por rendimiento.
-
-Operativa: los reinicios del backend durante el A/B dejaron un worker
-huérfano sirviendo con socket heredado (PID muerto en netstat) — matar el
-hijo `multiprocessing.spawn` lo libera. Backend restaurado al final
-(`--reload`, defaults) y verificado.
-
-## 2026-08-27 (noche, 4ª parte) — Guard de SL estructural invalidado + fallback "Previous Max" (Álvaro)
-
-**Bug grave del motor, corregido.** Un hard stop de Market Structure que al
-entrar quedaba en el lado GANADOR del precio (ej. corto con el PMH ya roto
-porque la acción saltó en RTH) disparaba `high >= SL` en la propia vela y
-hacía fill al precio del nivel — fuera del rango de la vela — contando un
-beneficio instantáneo imposible. Run manual de RTH 2.3: **540/1.261 trades
-eran fills fantasma y aportaban el 87 % del PnL** (WR 70,7 / PF 3,78 →
-real: ~49 % / ~1,36). Ejemplo: NITO 2025-01-03, tres cortos a ~3,1 con "SL"
-en 2,48 saliendo en 0 velas a 2,48.
-
-**Semántica nueva** (paridad Python↔JIT bit a bit, `dfa6e51`):
-
-- **Guard siempre activo**: nivel invalidado = premisa muerta = **no se
-  entra** (corto exige SL > entrada; largo 0 < SL < entrada). Stops
-  porcentuales intactos.
-- **`hard_stop.fallback_value`** (ej. "Previous Max" = último alto antes de
-  entrar, mismo offset): rescata el stop en **reentradas**.
-- **`hard_stop.fallback_first_entry: true`**: rescata también la primera
-  entrada.
-- Si el respaldo también queda invalidado → no se entra. `hard_stop` sigue
-  siendo dict libre: cero migraciones.
-- NO era look-ahead: `pm_high` ya era causal; el bug era stop en lado
-  inválido + fill imposible.
-
-Tocado: `portfolio_sim(_jit).py`, `sim_dispatch.py` (tabla de códigos HS_*
-compartida), `backtest_service.py` (secuencial) y `backtest_signals.py`
-(slab/paralelo). UI: apartado "Si el nivel ya está rebasado al entrar" en
-`RiskManagement.tsx` (desplegable + checkbox, textos por nivel y bias).
-`c79993d`: `stop_loss` pintado como línea en el chart de análisis por trade,
-regla de medición estilo TradingView, y fix de hidratación de fechas en
-`InlineDatasetBuilder` (fechas a nivel de módulo rompían SSR al cruzar
-medianoche).
-
-Tests: `test_hs_invalid_sl_guard.py` (30: semántica, espejo largo, paridad
-JIT, invariante de lado, 3 e2e por `run_backtest`) + grid de paridad
-ampliado con fallback → 37/37 ✓.
-
-**AVISO de comparabilidad**: todo run anterior a esta fecha con SL de Market
-Structure está inflado. No comparar curvas nuevas contra runs viejos. PRD
-completo para Jaime (con prompt para su IA incluido):
-`docs/PRD_GUARD_SL_ESTRUCTURAL_FALLBACK_20260827.md`.
-
-Operativa de esta sesión: el `--reload` de uvicorn VOLVIÓ a no disparar ni
-una recarga en todo un log de 9.000 líneas (misma sintomatología que la
-nota de la 3ª parte) — tras tocar código backend, reinicio manual
-obligatorio; el backend quedó arrancado y verificado
-(`DISABLE_GCS_SYNC=true` en el log).
-
-## 2026-08-27 (noche, 5ª parte) — Rescate del indicador Current Gap (%) (Álvaro)
-
-El indicador **Current Gap (%)** de la lógica de entrada (hecho el 18/08,
-`6631056`) se quedó huérfano en `alvaro-prereset-8b7959f` cuando la rama se
-recreó: no existía en `alvaro-rama-desarrollo`. Rescatado con cherry-pick
-(`e04d95e`, autoría y mensaje originales conservados).
-
-Semántica (recordatorio): `Current_Gap[t] = (close[t] − prev_close) /
-prev_close × 100` — gap VIVO vela a vela contra el cierre de ayer, a
-diferencia de PM High Gap (%) (máximo del premarket congelado a las 09:30)
-sigue al precio todo el día y baja si el precio baja. Condición `>= X` solo
-cierta en velas que están AHORA a X% sobre ayer. Misma cadena de fallback
-de `prev_close` que PM High Gap, evaluación por vela + fill en la apertura
-siguiente (look-ahead prevention), paridad legacy (`indicators.py`) ↔
-nativa (`strategy_engine._ri_current_gap`, no gatea a legacy).
-
-Conflictos del cherry-pick resueltos en `ConditionBuilder.tsx` e
-`indicatorValidation.ts`: HEAD había añadido Squeeze a los mismos checks de
-"indicador de porcentaje" donde el commit añadía Current Gap — conviven los
-tres (PM High Gap, Squeeze, Current Gap) como standalone con sufijo %.
-
-Verificado: 111 tests en verde (semántica original + paridad N2A del
-catálogo completo), tsc limpio, backend reiniciado y con la línea de
-seguridad en el log.
 
 ## Cambios de sesiones anteriores pendientes de coordinar
 
@@ -2335,66 +1962,1525 @@ explícito) e integración a staging por PR cuando él decida. El fix de fondo
 del hot-cache sigue ABIERTO (HALLAZGO 01); lo único tocado al respecto es el
 guard fail-safe descrito arriba.
 
-## 2026-08-29 (tarde) — Cambios entregados en `alvaro-rama-desarrollo` listos para revisión de Jaime → `staging`
+### 6. Adoptados los dos commits de Álvaro del 30-ago
 
-> Rama `alvaro-rama-desarrollo` pusheada a origin. NADA de esto está en
-> `staging` todavía: si Jaime lo ve adecuado, integra (merge/PR) y pushea.
-> El detalle local del incidente que motivó el fix 1 está en la memoria
-> local de Álvaro (`.zcode/`, fuera del repo por diseño); aquí solo lo que
-> afecta al equipo.
+Jaume da el visto bueno y entran por cherry-pick suelto (nunca merge de la rama:
+son 30 commits con conflicto seguro en el documento). Autoría de Álvaro
+conservada.
 
-### 1. Commit `9c0cb85` — fix(datasets): rechazar universos sin reglas y acotar pre-cache
+| Commit aquí | Original | Qué trae |
+|---|---|---|
+| `e872c70` | `9c0cb85` | rechazar universos sin reglas + cap de pre-cache |
+| `54186e2` | `8063e0a` | filtros Gap −1 compartidos por las tres vías + rachas por día |
 
-Protege la máquina (local y prod) de datasets "universo entero":
+**El único conflicto fue `docs/MEMORIA_MADRE.md`**, como estaba previsto. Se
+resolvió **conservando los dos lados**: las entradas de Álvaro del 29-ago están
+ahora al final, bajo una cabecera que explica que llegaron por cherry-pick y por
+eso van fuera de orden cronológico.
 
-- **`POST /api/queries/` con `rules: []` → 422** con mensaje accionable.
-  Antes, un dataset sin reglas materializaba TODO el mercado (~1,4M
-  pares/año) y su pre-cache streameaba el lago completo en background —
-  frames BROAD de 3,3GB por mes en el mismo proceso que los backtests.
-- **Cap de pre-cache**: `_precache_dataset_intraday` salta con estado
-  `skipped_too_broad` si el dataset supera `PRECACHE_MAX_PAIRS` (env,
-  default 50.000). El dataset sigue siendo usable; los backtests traen los
-  datos on demand.
-- La dedup de `create_saved_query` trata `skipped_too_broad` como
-  `completed`: re-guardar filtros idénticos no repaga la materialización.
-- `InlineStrategyBuilder`: el alert de error muestra el mensaje real del
-  backend (antes era genérico).
-- Verificado end-to-end: rules:[] → 422; dataset 1,38M pares → skip sin
-  stream; datasets válidos → dedup 200 OK.
+**Verificación de que no corrompe nada:**
+- Los 14 tests que traen sus commits (`test_prev_day_universe_filters.py` y
+  `test_daily_streak_metrics.py`): **14/14 en verde** aquí.
+- Suite completa antes y después de los cherry-picks: **el conjunto de fallos es
+  IDÉNTICO** (los mismos 103, todos dependientes del lago local y de GCS). Los
+  pases suben de 384 a 400 = sus 14 tests + 2 míos del modo `full`.
+- `tsc --noEmit`: 0 errores.
+- Comprobado en la app en marcha: la sección **«GAP-1 DAY»** aparece en el
+  configurador de dataset con sus siete métricas (Open price, Open PM price, PM
+  High Gap, Premarket total volume, Gap, RTH Total volume, Bar RTH Range).
 
-### 2. Commit `8063e0a` — feat(universo+metricas): filtros Gap -1 compartidos + rachas por día
+**Consecuencia que conviene tener presente:** cualquier dataset que use una regla
+`Gap −1` deja de pasar por el hot-cache y va por la vía autoritativa, más lenta.
+Es deliberado y es lo correcto — por el camino rápido ese filtro **se ignoraba en
+silencio** y el universo salía sin filtrar.
 
-- **`qualifying_windows.py` (nuevo)**: definición ÚNICA de columnas LAG 1
-  (Gap -1) y LEAD 1/2 (Gap +1/+2) compartida por las tres vías del universo:
-  materialización de datasets (`query.py`), qualifying local (`data_service.py`)
-  y qualifying GCS (`gcs_cache.py`). Antes una vía podía no materializar la
-  columna y la regla se ignoraba en silencio o mataba la query.
-- **Guard en `_can_use_hot_cache`** (`data_service.py`): las reglas
-  `lead_*`/`lag_*` ya no entran al hot-cache y caen a la vía autoritativa
-  (más lenta, correcta). Es el guard fail-safe del HALLAZGO 01 — el fix de
-  fondo (evaluar rules tras los shifts) sigue ABIERTO.
-- **Wizard/InlineDatasetBuilder**: sección GAP-1 DAY en el configurador
-  (métricas `lag_*_1` del día anterior al gap).
-- **Métricas nuevas**: `max_consecutive_winning_days` /
-  `max_consecutive_losing_days` — PnL diario neto de locates, solo días con
-  trades cuentan, día plano (pnl==0) cuenta como perdedor. Y el backtester
-  ahora recompute TODAS las rachas en la ventana IS (antes heredaba
-  silenciosamente los valores del periodo completo con el filtro activo).
-- **Tests**: `test_prev_day_universe_filters.py` +
-  `test_daily_streak_metrics.py` — 14/14 pasando.
-- `.gitignore`: `/*.log` y `.zcode/` (locales por diseño, dejan de ensuciar
-  el status).
+**Sigue ABIERTO el HALLAZGO 02 de Álvaro** («PM High Gap (%)» significa cosas
+distintas en `engine.py` y en la vía rápida). No se ha tocado: arreglarlo cambia
+los backtests viejos, y es una decisión de producto que Jaume no ha tomado.
 
-### 3. Pendientes conocidos, NO incluidos en estos commits (reportados, sin tocar)
+### 7. RSI y MACD, y dos borrados grandes
 
-- Cancel de backtest no interrumpe el mes en curso (job "cancelado" sigue y
-  compite con el relanzamiento).
-- Futures huérfanos del ThreadPool del stream intradía sobreviven al
-  abandono del generador (meses BROAD siguen masticando en background).
-- GCS listing HTTP 403 reintentado una vez por partición de mes (el fallo no
-  se cachea; fallback a disco funciona).
-- HALLAZGO 02 (abajo): inconsistencia de semántica de "PM High Gap (%)"
-  entre vías del motor.
+**RSI y las tres líneas del MACD, expuestos.** Sorpresa al mirarlo: el backend
+**ya los calculaba** —y hasta por la vía rápida— y el gráfico **ya los pintaba**.
+Lo único que faltaba era que aparecieran en el desplegable de condiciones. Y
+«MACD Signal» / «MACD Histogram» tampoco estaban en el enum del BACKEND, así que
+guardar una estrategia con ellos habría devuelto 422 (el fallo de Darvas otra
+vez). Las tres líneas son **nombres distintos, no un parámetro**: así las tiene
+el motor. `macd_line` de `IndicatorConfig` queda marcado como ajuste fantasma —
+no lo lee nadie, no conectarle UI.
+
+**Borrado `app/backtester/engine.py` (1.905 líneas).** Código muerto: nadie
+instanciaba `BacktestEngine`, y este documento y dos módulos ya lo decían. Se
+van con él siete scripts y dos tests. Lo único vivo que tenía —
+`find_elapsed_time_condition/minutes`, que solo leen la definición de la
+estrategia— se movió a `backtest_service.py`.
+
+> **Para Álvaro:** con esto, el **HALLAZGO 02** (el «PM High Gap (%)» divergente
+> entre vías) **queda cerrado por desaparición de una de las dos vías**. La que
+> tenía el look-ahead y el denominador raro era justo `engine.py`. Ya no hay dos
+> semánticas: solo queda la causal.
+>
+> **Aviso honesto:** `swing_option` se queda **sin ningún test**. El que había
+> probaba `engine.run()`, o sea una implementación que no se ejecuta — era
+> confianza falsa, pero conviene saber que ahora no hay red.
+
+**Borrado el modo Wizard (7.044 + 347 líneas).** Jaume solo usa el modo libre.
+«Nueva Estrategia» y «Configurar» entran directos al constructor; desaparecen la
+pantalla de elección y el modo `wizard`. Dos detalles que había que atar:
+
+1. Las sesiones guardadas con `mode: 'wizard'` se traducen a `'builder'` al
+   restaurar. Sin eso la página quedaría en un modo inexistente y el cajón no se
+   abriría nunca.
+2. **El tutorial guiado usaba el Wizard en 6 de sus 9 pasos.** No se ha perdido:
+   se rehízo sobre el constructor libre con las anclas que este **ya tenía**
+   (`st-bias`, `st-sessions`, `st-entry`, `st-risk`), comprobadas en el DOM.
+
+Total del día: **10.400 líneas menos**, sin una sola regresión (mismo conjunto
+de 103 fallos de entorno antes y después).
+
+## 2026-08-31 (tarde) — Bloque «Modelos avanzados»: XGBoost como filtro
+
+Petición de Jaume: poder aplicar un modelo a una estrategia existente y ver el
+resultado **fuera de muestra** como si fuera un backtest normal. Modo filtro
+terminado; el modo «estrategia» (el modelo decidiendo solo) queda declarado en
+la interfaz pero devuelve un aviso de que no está implementado.
+
+### Cómo está montado, y por qué así
+
+**Entrenar y probar son la MISMA `run_backtest`, llamada dos veces con
+universos distintos.** De ahí salen tres propiedades sin escribir código:
+
+- Lo que se devuelve —equity, trades, métricas, gráfico— es el periodo de
+  prueba y nada más: al motor simplemente no se le dan los días de
+  entrenamiento. No hay que filtrar métricas a posteriori.
+- El entrenamiento no puede contaminarse: literalmente no ha visto esos días.
+- Si alguien cambia el motor, las dos pasadas cambian igual.
+
+Por eso el bloque tiene **sus propias fechas** y no reutiliza el deslizador
+IS/OOS del panel: ese reparte UN backtest en dos tramos y las métricas que
+enseña son las del IS. La interfaz avisa de que hay que dejarlo al 100 % IS.
+
+**El punto de contacto con el motor es UNO:** una máscara sobre `entries_arr`,
+en el mismo sitio donde ya filtra el swing. El modelo solo QUITA entradas,
+nunca añade, así que el peor caso posible es operar menos. Simulador, gestión
+de riesgo, métricas, gráfico y Walk Forward quedan intactos.
+
+Va **después** del filtro de swing, a petición de Jaume: con swing el frame
+abarca varios días y es el swing quien impide abrir en los posteriores. Si el
+modelo corriera antes, juzgaría señales que el swing va a descartar igualmente.
+
+### El hallazgo: el HMM de librería tiene look-ahead
+
+`predict` (Viterbi) y `predict_proba` (forward-backward) de `hmmlearn` miran la
+secuencia **entera**: el estado que asignan a las 09:35 está calculado sabiendo
+lo que pasó a las 15:00 de ese mismo día. **Da igual con qué periodo se haya
+entrenado** — el futuro entra por la inferencia, no por el entrenamiento.
+
+Por eso la recursión hacia delante está escrita a mano. Hay un test que lo
+demuestra recalculando con el día cortado, y **otro que comprueba que la función
+de la librería SÍ falla esa prueba**, para que nadie la sustituya por comodidad
+dentro de seis meses.
+
+### Decisiones de diseño que no son evidentes
+
+- **Se eligen indicadores, no rangos.** Encontrar los cortes («RSI > 68 con
+  volumen alto») es exactamente lo que hace un árbol de decisión; dárselos
+  hechos es hacerle el trabajo peor y le impide encontrar uno mejor.
+- **Los niveles de precio entran como distancia en %.** Un VWAP crudo haría que
+  el modelo memorizara «18,40 dólares», que no se traslada a otro ticker.
+- **Las señales que no llegaron a operarse se descartan**, no se etiquetan como
+  perdedoras: «no se ejecutó» no es «salió mal».
+- **El recuento de señales vetadas lo lleva el propio modelo**, gratis. Correr
+  la prueba otra vez sin modelo solo para restar es un backtest entero más, así
+  que esa comparación va apagada por defecto.
+- **La configuración se valida antes de cargar un solo dato**, y sus errores van
+  como 400 con el texto: el diagnóstico del frontend pinta los 5xx como
+  `Response Data: {}` y parecen un error mudo.
+
+### Tiempos, medidos
+
+El modelo es prácticamente gratis; **el coste es el lago**. XGBoost con 1.000
+operaciones tarda 0,13 s; el HMM sobre un millón de velas, 15 s; la inferencia
+por vela, 0,2 ms. **Un backtest con modelo ≈ 2× uno normal**, por las dos
+pasadas.
+
+### Verificación y dependencias
+
+30 tests nuevos. Suite completa sin regresiones, `tsc` limpio, bloque
+comprobado en la app. **No se ha corrido todavía un backtest real de punta a
+punta** con el bloque activo (hace falta dataset y minutos de lago).
+
+Tres dependencias nuevas: `xgboost`, `scikit-learn`, `hmmlearn`. Comprobado con
+un simulacro previo que **no tocan numpy, pandas ni scipy** — solo añaden.
+
+### Lo que falta
+
+1. El modo «estrategia» (standalone).
+2. **Persistencia del modelo entrenado.** Hoy se entrena en cada backtest, así
+   que una estrategia guardada con modelo no puede reproducir un run viejo.
+   Haría falta versionar los binarios y que la estrategia guarde el id.
+
+### Modo «estrategia» completado, con guardas
+
+Jaume fijó la especificación y es la buena: **el stop lo pone él, no el modelo.**
+El etiquetado (`label_triple_barrier`) simula desde cada vela con **su** stop y
+**su** take profit —los mismos valores que `_parse_risk_management` le entrega
+al simulador, no una interpretación aparte— y mira qué pasa primero: toca
+objetivo (buena), toca stop (mala), o se acaba el plazo (el signo de lo que
+llevara). Empate en la misma vela: gana el stop, que es lo pesimista.
+
+**Por qué no el atajo fácil.** La tentación es etiquetar con «¿subió un X% en N
+minutos?». Eso **ignora el camino**: una vela desde la que el precio primero cae
+un 20% —stop saltado, estás fuera— y luego sube saldría marcada como BUENA. El
+modelo aprendería a buscar justo esas y en real comerías stop tras stop mientras
+el backtest presume de aciertos. Hay un test dedicado a ese caso concreto.
+
+**Las guardas, que también las pidió él.** En modo «estrategia» el backtest se
+para ANTES de cargar un solo dato si están activas la lógica de entrada, la de
+salida, la piramidación o el swing: todas ponen entradas, y el resultado sería
+una mezcla de dos sistemas de la que no se sabría de quién es el mérito. El
+mensaje dice cuál sobra y ofrece la alternativa. Y se exige un stop configurado.
+
+**Lo que sí se respeta, tal cual:** stop, take profit total y parcial, trailing,
+salida por hora, límite de pérdida diaria, reentradas, locates, comisiones y
+slippage. Lo aplica el simulador de siempre, exactamente igual que en cualquier
+otra estrategia.
+
+**Una decisión que se tomó sin preguntar, por si algún día chirría:** las
+SALIDAS no las da el modelo, vienen de la gestión de riesgo. Un modelo de salida
+necesitaría su propia etiqueta («¿fue bueno salir aquí?»), que es un segundo
+problema de modelado entero.
+
+**Dos detalles de implementación que no son evidentes:** el motor se salta los
+días sin señales, y en este modo no hay señales de las reglas — ese atajo se
+desactiva solo en este modo. Y el día se **muestrea** (~120 velas de las ~700)
+para entrenar: con miles de días, guardarlas todas son cientos de megas y la
+vela 301 no enseña nada que no enseñara la 300.
+
+## 2026-08-31 (noche) — Auditoría del bloque de modelos: DOS fugas, resultados inválidos
+
+Jaume corrió un backtest con el modelo y los números salieron «una auténtica
+locura». Pidió auditoría antes de creérselos. **Tenía razón: había dos fallos
+reales**, los dos introducidos con el bloque el mismo día. La auditoría se hizo
+primero en SOLO LECTURA (reproducciones contra el código instalado, sin tocar
+un fichero, con un backtest suyo aún en cola) y después se aplicaron los
+arreglos. Commit `09db5f7`.
+
+### Fuga 1 — el HMM sabía el volumen del futuro (la que infló la curva)
+
+`hmm_observations` normalizaba el volumen de cada vela por la **media del día
+entero** (`np.nanmean`). La vela de las 07:00 quedaba escalada por el volumen
+que llegaría por la tarde. Medido con dos días idénticos hasta la vela 330 (uno
+con spike de volumen posterior, otro sin él): **la probabilidad de estado que ve
+XGBoost en la misma vela difiere hasta en 0,86** de un máximo de 1.
+
+En este universo eso no es un matiz: el volumen total del día es LA información
+(¿va a ser un pump monstruo o va a morirse?). El modelo la explotaba y el
+backtest salía espectacular — e irreproducible en vivo, porque a las 07:00 ese
+dato no existe. Arreglo: volumen relativo a la **media acumulada hasta t**.
+
+### Fuga 2 — con sesión RTH, las etiquetas se emparejaban con la vela equivocada
+
+Los hooks del modelo corrían **antes** del recorte de sesión: la señal quedaba
+indexada sobre el día completo (premarket incluido) y el trade del simulador
+sobre el frame recortado — ~330 velas de desfase. Las parejas señal-trade no se
+encontraban nunca, **sin error y sin aviso**: el modelo entrenaba con parejas
+rotas o descartaba casi todo. Arreglo: los hooks van después del recorte y del
+`candle_delay` (mismo espacio de índices que los trades), las features se siguen
+calculando sobre el día completo, y la máscara de sesión traduce entre los dos
+espacios.
+
+### Blindaje adicional
+
+- **Slab y paralelo quedan excluidos cuando hay modelo**: sus caminos no tienen
+  los hooks y lo habrían ignorado en silencio (un resultado etiquetado como
+  «filtrado» sin haber filtrado nada).
+- Test de causalidad **de punta a punta**: el score completo (features + HMM +
+  XGBoost) del día cortado en la vela k coincide con el prefijo del score del
+  día entero. Más los dos tests de regresión de cada fuga.
+
+### La regla que queda
+
+> **Cualquier backtest con modelo anterior a `09db5f7` es inválido.** Con HMM
+> activado llevaba la fuga 1; con sesión recortada, la 2. Re-lanzar.
+
+### El motor principal, verificado intacto
+
+Sin el bloque, `parse_config` devuelve `None` y la llamada a `run_backtest` es
+idéntica a la de siempre. Suite completa: el mismo conjunto de 103 fallos de
+entorno que antes de que el bloque existiera (comparado en cada paso). Y en
+verde, nombrados: `sim_jit_equivalence`, `n2a_native`, `n2a_e2e`,
+`current_gap`, `fade_indicators`, `max_reentries`, `daily_loss_limit`,
+`daily_limit_sequential`, `locates`, `pm_lookahead` — **157 tests del camino
+secuencial de punta a punta**.
+
+---
+
+## 2026-09-01 — Bot de alertas en vivo, y `staging` igualada a `sailor`
+
+### 📣 Para Álvaro: `staging` se ha reiniciado hoy
+
+`staging` apunta ahora a `93da17d`, el mismo commit que
+`sailor-rama-desarrollo`. **No se ha perdido trabajo:** los 8 commits que
+`staging` tenía y `sailor` no (el borrado del motor viejo, RSI/MACD, «% Session
+Fade», los filtros Gap−1, el fix de datasets y los dos de memoria) **ya estaban
+en `sailor` con otro hash** — se habían subido por las dos vías. Se comprobó uno
+a uno por mensaje antes de forzar.
+
+Etiqueta de rescate en el remoto, por si acaso:
+`staging-antes-del-reinicio-2026-09-01` → `9ba2308`.
+
+### Lo que trae esta sesión: el bot de alertas
+
+Proyecto **propio de Sailor**, aislado del producto: un bot que lleva las
+estrategias del portfolio a avisos en tiempo real por Telegram y a una página
+nueva (`/bot-alertas`). Ejecución manual — el bot avisa, la orden la mete una
+persona.
+
+**Casi todo es código nuevo y separado** (`bot_alerts_*.py`, `market_frame.py`,
+`CuadroMandos.tsx`). Solo tres cosas tocan lo existente:
+
+1. **`backtest_service.py`, −58 líneas.** La fórmula que construye el frame
+   (HOD/LOD, máximos de premercado acumulados, Previous Max/Min) se extrajo a
+   `app/services/market_frame.py` porque el bot la necesita igual y la tenía
+   COPIADA fuera del repo. **El comportamiento no cambia**: verificado idéntico
+   bit a bit —los 15 arrays, 150 ticker-días, 76.385 barras— y con la suite
+   completa antes y después (455 pasan / 103 fallan / 13 errores, los mismos).
+
+   > `backtest_signals._compute_signals_for_pair` conserva SU versión en numpy
+   > puro. **No se unificaron a propósito**: son fórmulas distintas de lo mismo
+   > (`cummax` de pandas vs `np.maximum.accumulate`, que difieren ante NaN) con
+   > su paridad ya verificada aparte. Fundirlas sería un cambio de
+   > comportamiento disfrazado de limpieza.
+
+2. **`main.py` y `Sidebar.tsx`**: registrar la página nueva. Inocuo.
+
+3. **Borrado de la página del Screener** (`Screener.tsx` y su ruta, −2.078
+   líneas). ⚠️ **Ojo, Álvaro:** el screener figura en todos los planes de
+   `entitlements/policy.py`. Se retiró porque en esta línea de trabajo no se usa
+   y Sailor lo decidió así. **El SERVICIO se conserva**
+   (`live_screener_service.py` y `/api/screener/live`): mantiene por ticker el
+   cierre de ayer, el máximo de premercado y el volumen acumulado desde el
+   WebSocket, que es justo lo que necesita el bot. **Si esto llega a producción,
+   hay que reponer la página.**
+
+### Dos hallazgos que valen para todo el proyecto
+
+**El volumen del WebSocket por segundo se queda corto.** Construir velas sumando
+los agregados `A` da los precios bien pero **al volumen le falta entre un 1,5 %
+y un 4,6 %** (medido con AAPL/TSLA/NVDA/SPY): el proveedor cuenta operaciones
+—bloques fuera de secuencia, lotes sueltos— que no aparecen ahí. Hay que usar
+`AM`, el agregado por minuto, que llega ya cerrado y oficial: 20 velas, 20
+idénticas al REST. Importa para cualquier cosa que decida con volumen.
+
+**`get_user_db_connection(read_only=True)` ignora el parámetro** y abre todas
+las conexiones en escritura (`database.py:11-15`). Como DuckDB solo admite un
+escritor, **una página que consulta cada 2 s bloquea las escrituras**: medido,
+un POST esperando más de 60 s hasta agotar el tiempo, y con la página cerrada
+0,2 s. Y si se llenan los hilos del servidor esperando, **deja de responder a
+todo, incluido `/docs`**, aunque el proceso siga vivo — eso es lo que parecía
+que el backend «se caía». Aquí se resolvió con caché en memoria; **cualquier
+módulo nuevo que consulte a menudo se va a encontrar lo mismo.**
+
+### Documentación
+
+`docs/BOT_ALERTAS_MODOS_DE_FALLO.md` — mapa de caídas, decisiones de diseño y
+lo que hará falta antes de conectar la API de un bróker (reconciliación,
+idempotencia de órdenes, interruptor de emergencia). Se escribió pensando en esa
+conversación futura.
+
+---
+
+## 2026-09-02
+
+### 🚨 AVISO PARA ÁLVARO Y SU IA — Alertas es zona cerrada
+
+**El bot de avisos en vivo y la página de Alertas los llevan Jaume y Sailor en
+exclusiva por ahora. No se tocan, no se arrancan, no se configuran y no se
+descargan para probarlos.** Está también como regla de oro nº 6 en `AGENTS.md`,
+en `CLAUDE.md` y en `.agent/ALVARO_DEV_BRANCH.md`, con la lista de ficheros.
+
+No es celo de código. Son tres razones concretas y ninguna se arregla teniendo
+cuidado:
+
+1. **Opera con dinero real.** Los avisos salen a un grupo de Telegram y Jaume
+   pone las órdenes a mano con ellos. Un cambio que altere una condición no
+   rompe un test: le hace entrar en una operación que no era.
+2. **La cuenta de datos en vivo admite UNA sola conexión.** Arrancar el bot en
+   otra máquina **echa al de Jaume y lo deja sordo**, sin que ninguno de los dos
+   vea un error — el bot sigue diciendo «conectado». Pasó hoy mismo con una
+   prueba de nada.
+3. **Está en desarrollo activo** y sin cobertura suficiente. Lo que parece
+   código muerto o mejorable suele ser una decisión medida, y el porqué está en
+   los comentarios.
+
+**Traerlo por `staging` no es tocarlo**: esos ficheros llegarán en el merge y no
+hay que hacer nada con ellos. La única excepción de lectura/escritura es
+`backend/app/services/market_frame.py`, compartido a propósito con el backtester
+(fórmula verificada bit a bit sobre 150 ticker-días): leerlo, sin problema;
+**cambiarlo, avisando antes**, porque mueve las señales en vivo aunque los
+backtests sigan en verde. Si algo de Alertas bloquea una tarea legítima, se
+habla con Jaume — la decisión es suya, no del agente.
+
+### El radar vigila las condiciones de CADA estrategia, no un umbral inventado
+
+**Cómo estaba mal.** El radar filtraba por el precio ACTUAL contra el cierre de
+ayer, con un umbral puesto a ojo (30 %). Pero `PM High Gap %` —la condición de
+1B— es un **máximo acumulado que no baja**. Un ticker que hizo +80 % y retrocedió
+a +22 % sigue cumpliendo, y el radar lo descartaba. En gaps en corto retroceder
+tras el máximo es lo NORMAL: el fallo afectaba al caso típico, no a uno raro.
+
+**Cómo está ahora** (`bot_alerts_mercado.py`, `bot_alerts_universo.py`,
+`RadarPorEstrategia`): el bot se suscribe a `AM.*` (mercado entero), acumula por
+ticker máximo de premercado, volumen y precio, y evalúa **el filtro de universo
+de cada estrategia activa**. Admitido un ticker, no sale hasta cambiar de día.
+Cada candidato lleva de qué estrategia viene y por qué regla.
+
+**Lo que se puede y no se puede saber antes de las 09:30:** `PM High Gap %`,
+`Current Gap %`, `Premarket Volume`, `Volume`, `Price` y `Previous Close`, sí.
+**`Open Gap %` NO existe antes de la apertura**, así que 2.1B y 3B no son
+vigilables en premercado — y el bot lo dice al arrancar en vez de ignorarlas en
+silencio. Lo que no se sabe calcular se declara NO EVALUABLE y el ticker no
+entra: dar por cumplida una condición sin comprobarla haría avisar de lo que no
+toca.
+
+**Bug grave arreglado: el cierre de ayer.** El bot llamaba a
+`build_market_frame` con `daily_stats` VACÍO, y el código cae a un valor de
+emergencia: **usa el primer precio de hoy como cierre de ayer**. Sin error, sin
+log. Medido con SGLD: PM High Gap salía 50,4 % cuando el real era 525 %.
+Arreglado pidiendo el snapshot (`prevDay.c`). **Verificado que `prevDay.c` es el
+cierre RTH y no el after-hours**: SGLD cerró RTH en 5,08 y after-hours en 17,30;
+el campo da 5,08.
+
+### Prealertas: la vela se mira cada segundo del 50 al 59
+
+El backtest entra al `open` de la vela siguiente a la señal, o sea en el instante
+en que la vela de señal cierra. Avisar al cierre deja **margen cero** para poner
+la orden a mano. La prealerta evalúa la vela a medias y avisa antes.
+
+Estaba mirando **una sola vez**, en el segundo 50. Eso dejaba escapar las señales
+que se completan después, y ésas llegaban al cierre sin margen. Medido sobre el
+tick data del lago:
+
+| | captura | margen | falsas alarmas |
+|---|---|---|---|
+| solo el segundo 50 | 12/14 (86 %) | 10 s | 3 de 8 |
+| del 50 al 59 | **14/14 (100 %)** | 9,4 s de media, 6 s el peor | 3 de 9 |
+
+Captura todas, el margen apenas baja y **no añade falsas alarmas** — el riesgo
+era una condición que se cumple en el 52 y deja de cumplirse en el 58, y no pasó
+ni una vez en 2.959 velas de premercado. El máximo sigue siendo 10 s; el peor
+caso teórico es 1 s, pero medido ninguna bajó de 6.
+
+**Detalle de implementación que parece menor y no lo es:** el minuto se marca
+como avisado desde **el bot, al publicar**, no dentro de `aplicar()`. Marcarlo
+dentro haría volver a mirar una sola vez, y **no lo notaría nadie**: el bot
+seguiría avisando, solo que menos. Hay tests que lo fijan
+(`backend/tests/test_bot_alerts_prealertas.py`), incluido uno para que un mismo
+aviso no se repita ocho veces en el minuto.
+
+**El volumen de la vela parcial sale de `av`, no de sumar los `v`.** Sumar los
+agregados por segundo deja fuera operaciones (hasta un 4,6 % menos) y 1B decide
+con dollar volume acumulado. `av` es el volumen acumulado del día, ya oficial:
+restándole el que había al empezar el minuto sale el del minuto exacto. Si no
+viene `av` el volumen se declara 0 en vez de aproximarlo — un volumen corto haría
+cumplir la condición más tarde de lo que toca, y eso es peor que no prealertar.
+
+### Dos cosas que valen para cualquiera que trabaje en este repo
+
+**Editar código del backend con `--reload` puesto tumba lo que dependa de él.**
+Cada fichero guardado reinicia uvicorn; durante el reinicio devuelve 500 y luego
+deja de aceptar conexiones unos segundos. Los «cuelgues del backend» que se
+llevaban investigando días eran esto, provocado desde el propio editor.
+Confirmado por descarte: cuatro horas sin un solo error en cuanto se dejó de
+tocar código, con el bot procesando 528 velas.
+
+**Un comentario no es una garantía.** `hidratar()` decía «no genera avisos: lo
+que ya pasó, pasó» y no estaba implementado: el bot avisó a las 20:28 de
+operaciones de las 14:27 y salieron a Telegram. Está arreglado (se llama al
+motor con el frame hidratado y se descartan los eventos, para marcarlos como
+vistos), pero la lección es general.
+
+---
+
+## 2026-09-03 / 04
+
+Sesión larga: el bot operó en vivo por primera vez y de ahí salieron dos bugs
+del MOTOR (no del bot) que afectan a cualquier backtest con piramidación.
+
+### 1. ⚠️ BUG DEL MOTOR: las pirámides se saltaban `entry_time_windows`
+
+**Afecta a todo backtest con piramidación y ventana de entradas.** La ventana se
+aplicaba solo a `entries`; `_evaluate_pyramid_levels` no la miraba, así que un
+nivel podía disparar a cualquier hora de la sesión.
+
+Visto en vivo el 3-sep: GELS piramidó a las **08:08 ET** teniendo la ventana de
+entradas cerrada a las 08:00. Jaume confirmó que esa ventana es global —
+entradas **y** pirámides.
+
+Medido sobre un frame de prueba: **59 señales de pirámide fuera de ventana
+antes, 0 después**, y las 241 legítimas intactas. Sin `entry_time_windows` nada
+cambia.
+
+> **Los resultados guardados de estrategias con pirámide + ventana ya no
+> coinciden.** No es opinable: era un bug.
+
+### 2. Stop híbrido: tercer modo de dimensionado
+
+Además de valor de mercado y distancia al stop. Va por SL, pero topando la
+exposición:
+
+```
+techo en dólares = (% de cuenta asumible × capital) / % del evento
+```
+
+Resuelve el punto ciego del modo por SL: con el stop muy ceñido el tamaño se
+dispara. Medido — cuenta de 10.000 $, riesgo 300 $, stop al 1 %: **30.000
+acciones, tres veces la cuenta expuesta**; un hueco del 1.000 % en contra deja
+debiendo dinero. Con techo al 50 % ante un evento del 1.000 %, esas 30.000 se
+quedan en 500. **Recorta, no anula.**
+
+**El techo es de VALOR, no de acciones.** Con 100 $ de techo se compran 100
+acciones a 1 $ pero 200 a 0,50 $. Confundirlo multiplica la exposición por el
+precio.
+
+Los dos porcentajes viven en la **estrategia** (decisión de Jaume: afecta
+directamente al resultado del backtest); el **capital**, en el cuadro de mandos
+del bot, que no conoce la cuenta real. Se aplica por separado a entrada y a
+pirámide, cada una con sus porcentajes.
+
+**⚠️ Aviso para quien toque el motor: el kernel Numba NO implementa el techo.**
+Una estrategia híbrida se rutea SIEMPRE al motor Python, igual que se hace con
+la piramidación. Sin ese ruteo, y con `BACKTEST_NUMBA_SIM=1`, el techo se pierde
+**en silencio** en todo backtest sin pirámides.
+
+### 3. La pirámide tiene ahora su propio modo de tamaño
+
+Independiente del de la entrada: un añadido puede ir por distancia al stop
+aunque la entrada vaya por valor de mercado. **El mismo añadido sale a 3, 150 o
+5 acciones según el modo** — hasta ahora iba siempre por valor de mercado y no
+había forma de cambiarlo.
+
+Esto salió de una observación de Jaume en vivo: con el mismo stop, su pirámide
+arriesgaba **146 $ donde la entrada arriesgaba 300 $**, porque una se
+dimensionaba por stop y la otra por capital.
+
+### 4. Rolling EV: el modo «días» hacía MEDIA DE MEDIAS
+
+Sacaba el EV de cada día y promediaba esos EV, así que **un día con una
+operación pesaba igual que uno con diez**:
+
+| | |
+|---|---|
+| lunes: 1 trade que gana 1,0R | EV del día `+1,000 R` |
+| martes: 10 trades de −0,2R | EV del día `−0,200 R` |
+| modo DÍAS (media de medias) | **`+0,400 R`** |
+| modo TRADES (los 11 juntos) | **`−0,091 R`** ← el real |
+
+Cambiaba **el signo**: un mes de días flojos con una ganadora suelta se pintaba
+como rentable. Ahora la ventana de N días coge todas las operaciones de esos
+días. El modo por trades ya era correcto y no cambia (verificado: diferencia 0).
+
+### 5. Bot de alertas
+
+- **Prealertas del segundo 50 al 59** (antes solo el 50). Medido sobre tick
+  data: de 86 % a 100 % de captura, margen de 10 s a 9,4 s de media.
+- **Prealertas huérfanas arregladas**: los agregados por segundo tardan ~3 s, así
+  que el tick del segundo 59 llegaba DESPUÉS de cerrar su vela y nadie la
+  confirmaba ni descartaba — se quedaba en ámbar para siempre.
+- **El bot ya ESCUCHA**: `/evf TICKER COSTE EV%` por Telegram dice si compensan
+  los locates. Solo responde al chat configurado, los comandos solo LEEN, y
+  nada de lo que llegue puede tumbar el bucle de velas.
+- **Desplegable de condiciones** en el cuadro de mandos: lo que el motor aplica
+  DE VERDAD, incluida la configuración guardada que NO se usa y por qué. Sobre
+  la 1B real saca tres: trailing y swing (con su `active: false`, inofensivos) y
+  **dos take profit parciales que se encenderían cambiando OTRO campo**.
+
+### 6. Auditoría del guardado de estrategias: es FIEL
+
+A petición de Jaume. Round-trip sobre la 1B real: **370 campos, 0 perdidos, 0
+inventados, 0 alterados**. El guardado no corrompe nada. Lo que faltaba era
+poder **ver** qué parte de lo guardado está viva — de ahí el desplegable.
+
+### Dos cosas que valen para cualquiera en este repo
+
+**El patrón de las TRES CAPAS sigue mordiendo.** Se documentó en §4 de este
+mismo documento y aun así se volvió a caer en él el mismo día: se escribió el
+código que LEE cuatro campos nuevos y no el que los ESCRIBE. Un `lv.get("x")`
+que siempre devuelve `None` no falla, no avisa, y no sale en los tests que no lo
+cubren. Salió en una auditoría posterior, no en la suite.
+
+**`r_multiple` viene REDONDEADO A DOS DECIMALES.** Cualquier cálculo que
+compare márgenes finos (un fade del 1,19 % contra un EV del 2,4 %) tiene que
+salir de `entry_price`/`exit_price`, no de ahí.
+
+---
+
+## 2026-09-04 (tarde/noche) — Prealertas medidas, dos bugs silenciosos y el genético ampliado
+
+Sesión de después del cierre. Lo importante son **tres bugs que no daban ningún
+error** y un estudio que cambia un parámetro que llevaba semanas puesto a ojo.
+
+### 1. La ventana de la prealerta pasa del segundo 50 al 44
+
+Medido sobre 30 días y 33 entradas de tick data, más 25.408 mensajes de latencia
+del feed en vivo. Dos cosas que no se sabían cuando se eligió el 50:
+
+- **La señal se cumple mucho antes de lo que se creía.** Mediana en el
+  **segundo 17**, y 9 de 33 ya cumplían en el 5. Se esperaba al 50 para ver algo
+  que en la mitad de los casos llevaba treinta segundos hecho.
+- **La latencia se come el margen.** El agregado por segundo tarda ~3,7 s de
+  mediana (p99 4,1 s, con un pico de **9,8 s**). Un aviso del segundo 50 no daba
+  los 10 s que prometía: daba **7,8 s** hasta la alerta de verdad, y 0,2 s en el
+  pico.
+
+| ventana | margen mediana | de cada N avisos, 1 opera |
+|---|---|---|
+| 50-59 | 7,8 s | 2,3 |
+| **44-59** | **13,8 s** | **3,6** |
+| 30-59 | 27,8 s | 4,5 |
+
+La captura NO cambia (32 de 33 en todas): lo único que se compra adelantando es
+tiempo. Se eligió el 44 y no el 30 —que es donde el estudio pone el óptimo—
+porque la cuenta de falsas del estudio no cuadró con el primer día en vivo
+(predecía ~4 y hubo 0), así que el número absoluto no es de fiar todavía.
+
+Tres cosas que ninguna ventana arregla: 4 de 33 señales se cumplen de verdad
+tarde (segundos 54, 55 y 59) y llegarán siempre con menos de 5 s; una de ellas
+llega después que su propia alerta y la descarta `marcar_cerrada`.
+
+El medidor quedó en `D:\bot_senales\medir_ventanas_comparadas.py`.
+
+### 2. `MACD Signal` y `MACD Histogram` eran SIEMPRE NaN
+
+`_ema_core` siembra con la media de los primeros `window` valores. Sobre precios
+está bien, pero también se aplica a la SALIDA de otro indicador: la señal del
+MACD es una EMA de la línea MACD, y esa empieza con `slow-1` NaN (25 con el 26
+por defecto). La suma salía NaN, la siembra salía NaN, y como cada valor depende
+del anterior se propagaba hasta el final:
+
+    MACD            -> 275 valores de 300
+    MACD Signal     ->   0 de 300
+    MACD Histogram  ->   0 de 300
+
+Una comparación contra NaN da False, así que **cualquier estrategia con «MACD
+Signal» o «MACD Histogram» no operaba nunca**, sin error ni log. Al DI+/DI− del
+ADX le pasaba lo mismo. Arreglado saltando los NaN de cabecera antes de sembrar;
+sin NaN el resultado es idéntico. Comprobado contra la batería entera: arregla 2
+tests y no rompe ninguno.
+
+### 3. El What-if recortaba trades sin que nadie se lo pidiera
+
+`dd_threshold` venía por defecto en 5 y `size_mgmt_type` en `"dd"`, y la página
+no manda ninguno de los dos. Resultado: **toda simulación, sin marcar nada,
+recortaba a la mitad el tamaño de cada trade abierto con más de un 5 % de
+drawdown encima**. Según dónde cayeran las pérdidas eso podía MEJORAR la curva —
+y entonces el What-if «sin filtros» salía mejor que el original, que es
+imposible. Lo detectó Jaume mirando la pantalla, no la suite.
+
+La regla que faltaba, ahora fijada con un test: **un What-if sin opciones
+devuelve la curva de partida**. Al apagarlo salió un segundo fallo que el
+default tapaba: la media del modo `sma` se calculaba también en modo `dd`, y con
+período 0 dividía entre cero.
+
+### 4. Un backtest que falla dejaba el dataset BLOQUEADO
+
+Son dos almacenes. El POST siembra `backtest_progress[dataset_id]` en `running`
+antes de lanzar el hilo, pero el estado del job vive en `backtest_jobs`, y al
+fallar solo se actualizaba ese. Si el job moría pronto —definición mal formada,
+falta de memoria— ese `running` se quedaba para siempre y todo intento posterior
+devolvía `already_running` apuntando a un job muerto. **Solo se arreglaba
+reiniciando el backend.** Encontrado por accidente midiendo el consumo de RAM.
+
+### 5. Genético: de 7 indicadores a 26, y las ramas que no se probaban
+
+Catálogo agrupado en seis familias con pestañas y ayuda por indicador. **Por
+defecto siguen marcados solo los siete de la v1**: los demás están para elegir,
+no para llevarlos todos.
+
+Y el hallazgo, que salió de una pregunta de Jaume: **el lado DERECHO de las
+condiciones se armaba con `params: {}`**, sin sortear nada. Mientras los niveles
+eran precios sueltos (VWAP, PM High) no se notaba; al meter Darvas, Donchian,
+Bollinger, SMA y EMA, todos habrían salido siempre con el periodo por defecto y
+la banda de arriba — ofrecer «Darvas Box» habría sido ofrecer «Darvas por arriba
+con 3 velas».
+
+Preguntó si pasaba con más, y pasaba: MACD iba siempre con 12/26/9 y las
+Bollinger con 2 desviaciones. Auditado indicador a indicador contra el motor y
+convertido en test permanente, que ahora lo detecta solo.
+
+**El test no lo caza todo, y conviene saberlo:** compara sobre una serie
+sintética, y los cinco parámetros de los triángulos salían «sin efecto» ahí
+porque esa serie no llega a formar triángulos. Los añadió Jaume de memoria.
+
+Nuevo en riesgo: stop híbrido, stop mínimo %, take profit mínimo % y take
+profits parciales con las tres variantes del motor. Ojo con `take_profit_mode`:
+el motor **ignora `partial_take_profits` en modo "Full" en silencio**.
+
+### 6. Bot de alertas: `/estado` y el diario
+
+`/estado radar` y `/estado TICKER` en Telegram, de solo lectura. Y un **diario**
+al final del cuadro de mandos con las incidencias y el log, con botón de copiar:
+va enganchado al logger RAÍZ, así que recoge lo que registre cualquiera —el
+socket, httpx, un error sin capturar— sin ir añadiendo llamadas.
+
+### Lo que vale para cualquiera en este repo
+
+**Tres de los cuatro bugs de hoy no daban ningún error.** Una condición contra
+NaN, un default que nadie manda, un `params: {}` vacío: ninguno lanza, ninguno
+aparece en un log, y los tres cambian resultados que se miran para decidir con
+dinero. El patrón se repite — lo que no falla ruidosamente hay que buscarlo a
+propósito.
+
+**El backend hay que arrancarlo con el venv**, no con el Python global: le falta
+`jose` y revienta al importar, pero el error solo sale en stderr y parece que se
+cuelga. Y `--reload` no recoge los cambios de forma fiable si queda un proceso
+viejo con el puerto.
+
+### 7. Calendario del backtester: en dinero o en R
+
+Los tres modos de siempre (profits, gastos, profits−gastos) se pueden leer en
+dólares o en múltiplos de riesgo. Son DOS EJES, no un cuarto modo.
+
+Con riesgo FIJO, 1 R es el «Riesgo fijo $» del panel. Con riesgo PORCENTUAL —que
+al principio dejé fuera de más— la R no desaparece, cambia: el motor arriesga
+ese % del balance de **apertura del día**, así que 1 R es constante DENTRO de un
+día y solo cambia de un día a otro. Es la misma cuenta que ya hacía `r_precise`
+en `robustness_service.py`, verificada allí contra una corrida real.
+
+La conversión va POR DÍA, no al pintar: la R de una semana es la suma de las R
+de sus días. Con 10.000 $ al 2 % y tres días de +200/−100/+450 salen 2,738 R
+sumando por día y 2,750 R dividiendo al final, y esa diferencia crece con la
+cuenta.
+
+No se usa `r_multiple` del trade: así los GASTOS también se leen en R, y se
+evita arrastrar su redondeo a dos decimales.
+
+**Aviso:** Jaume pidió traer esto de la rama de Álvaro, pero NO está en el
+remoto — el `CalendarTab.tsx` es idéntico en `sailor`, `staging` y
+`alvaro-rama-desarrollo`. Lo tendrá en local. Esto está escrito de cero y puede
+quedar distinto a lo suyo.
+
+### 8. Dos parciales no pueden caer en el mismo sitio
+
+Primera corrida del genético con los take profits parciales puestos, y salió
+esto: `Parciales: 25% a las 12:00, 33% a las 12:00`. El motor los aplica en
+orden, así que el segundo salta justo detrás del primero: cierra más posición de
+golpe y gasta un gen en algo que no añade ninguna decisión. Corregido.
+
+---
+
+## Pendientes para el 2026-09-05
+
+1. **Ver la ventana 44-59 en vivo.** Es su primer premercado. Medir cuántas
+   prealertas se confirman y cuántas no: el estudio predice ~2,7 avisos en balde
+   por cada bueno, pero su cuenta de falsas NO cuadró con el día 4 (predecía ~4
+   y hubo 0), así que el número absoluto está por confirmar. Si el ruido es
+   tolerable, el siguiente escalón es 40-59 (17,8 s de margen).
+
+2. **Auditar el calendario en R** con datos reales. Quedó sin verificar en
+   pantalla —el genético tenía la máquina— y Jaume quiere repasarlo.
+
+3. **El aviso de cancelación de la prealerta.** Ahora una prealerta solo se
+   confirma o descarta al CERRAR la vela; si la señal se rompe en el segundo 50
+   se sigue mirando el gráfico sin saberlo. Avisar en el momento en que se cae
+   convertiría el ruido de adelantar la ventana en información, y es lo que
+   haría cómodo bajar al 40 o al 30.
+
+4. **Los 119 tests que fallan**, que siguen ahí y son de antes de esta sesión.
+
+5. **Del genético:** `parar_a_las` no venía configurada en la corrida de la
+   noche del 4 — con el bot de alertas arrancando a las 10:00 (hora española)
+   hay que ponerla siempre. Y con `min_trades` a 1.000 los individuos daban
+   fitness 0 con 729 trades: un suelo por encima de lo que el dataset da deja al
+   genético sin gradiente, todo a cero y cruzando al azar.
+
+---
+
+## 2026-09-06 — Sesión personalizada, ventana de entrada y barrido por franjas
+
+Reportado por Jaume sobre `RTH prueba 1`: «le pongo sesión personalizada y horas
+de entrada y no me hace caso — salen trades a las 15:30 y barras de EV hasta las
+13:30». Diagnosticado sobre la corrida real guardada (2.688 trades, 11:46).
+
+### 1. La sesión personalizada NO se ignoraba: se SUMABA
+
+La definición tenía `market_sessions: ['rth', 'custom']` con custom 04:00-12:00.
+El motor hace la **unión** de todas las sesiones marcadas
+(`_get_market_sessions_mask`, `mask |= ...`), así que la sesión efectiva era
+04:00-16:00. De ahí los 1.077 cierres en la hora de las 15: son EOD en la última
+vela de RTH.
+
+No era un bug del motor sino del selector: cuatro casillas independientes en las
+que «Horas personalizadas» convivía con «Regular Hours» sin que nada avisara.
+**Ahora «Horas personalizadas» es EXCLUYENTE** con pre/rth/post en
+`InlineStrategyBuilder`. Y para las estrategias ya guardadas con las dos
+marcadas, el resumen de `BacktestPanel` pinta un aviso rojo con la sesión REAL
+(«se suman: 04:00-16:00»), porque hasta ahora leía «Personalizado (04:00-12:00)»
+mientras el backtest corría hasta las 16:00.
+
+### 2. BUG DEL MOTOR: la ventana de entrada no miraba la vela de RELLENO
+
+`entry_time_windows` se aplicaba a la vela de la **señal**, pero con
+`look_ahead_prevention` el simulador compra en la apertura de la vela
+**siguiente** (`eff_entry_idx = i + 1`, `portfolio_sim`). Nadie comprobaba el
+reloj ahí.
+
+En un ticker líquido eso es un minuto de desfase. En los **warrants con velas
+dispersas** —una vela por minuto NEGOCIADO, no por minuto de reloj— la "vela
+siguiente" a las 11:29 podía ser la de las 13:45. Con ventana 09:30-11:30 la
+corrida tenía 41 entradas en el cubo de las 11:30 (casi todas las 11:31) y 5
+sueltas a las 12:11, 12:30, 13:01 y 13:45. Ninguna daba error ni salía en ningún
+log: el patrón de `btt-bugs-que-no-dan-error`.
+
+Corregido con `strategy_engine.apply_entry_fill_window`, llamada **después** del
+recorte de sesión y del `candle_delay` (el único espacio de índices en el que
+`i + 1` es de verdad la vela de compra), en los dos sitios que generan señales:
+`backtest_service` (secuencial) y `backtest_signals` (paralelo + slab). Se
+aplica también a las pirámides, por la misma regla de 2026-09-03: un añadido es
+una entrada.
+
+**Ventana ESTRICTA por decisión de Jaume:** si el límite está en 11:30 y la
+señal salta en la vela de 11:30, la compra caería en la de 11:31 y NO se coge.
+Esto retira también las entradas de 11:31. Impacto en PnL de aquella corrida:
+1,6 $ sobre 354 $ — corregirlo no cambia la estrategia, cambia que el gráfico
+deje de mentir sobre a qué hora se entra. **Las corridas anteriores al 6-sep no
+son comparables con las nuevas.**
+
+De paso, las tres copias del bucle que parseaba `from_time`/`to_time` (legacy,
+nativo N2a y la nueva) se unificaron en `build_entry_time_mask`.
+
+### 3. Los límites horarios ya se pueden OPTIMIZAR
+
+`entry_logic.entry_time_windows.N.from_time` / `.to_time` no aparecían en el
+optimizador 3D: los valores son texto («09:30»), `float()` revienta y `_add` los
+descartaba sin decir nada. Ahora se extraen como parámetros `time_of_day` (se
+barren en minutos desde medianoche, ±2 h recortado a 04:00-20:00, paso 5) y al
+escribir cada punto se devuelven como «HH:MM» — `_needs_hhmm_reencode` amplía lo
+que antes solo hacía el take profit por hora. El frontend no necesitó cambios:
+`unit === "time_of_day"` ya pintaba selectores de hora.
+
+### 4. EV barriendo la ventana de entrada (gráfico nuevo)
+
+El gráfico «EV por Tiempo» agrupa los trades QUE HUBO por su hora de entrada; si
+hay límite horario, fuera de él no hay nada que ver. Se añade un conmutador
+**Trades / Barrido**: el segundo lanza un backtest por franja (09:30-10:00,
+10:00-10:30…) y compara el EV de cada una — `EntryWindowSweepChart`.
+
+Va por el mismo motor que el optimizador, con un añadido general a `ParamConfig`:
+**`linked_paths` / `linked_offsets`**, un eje que escribe además en otras rutas
+sumándoles un desplazamiento. Así la ventana se mueve DE UNA PIEZA con una sola
+dimensión de rejilla: N corridas, no N². Sin esas claves el comportamiento de un
+eje es exactamente el de siempre.
+
+También se hizo **recursiva la limpieza de NaN** del resultado: solo se limpiaba
+la rejilla de 2 dimensiones, y con 1 eje los `NaN` salían crudos — `NaN` no es
+JSON válido y el navegador reventaba al parsear, sin ningún error en el backend.
+
+### 5. MEDIDO: el 29 % de los trades son WARRANTS, y pierden
+
+Los tickers de la fuga (ONMDW, ISPOW, GMBLW, RVSNW…) son warrants. Cruzando los
+2.688 trades contra `massive.tickers`:
+
+| tipo | trades | % | PnL |
+|---|---|---|---|
+| CS | 1.748 | 65,0 % | +426,79 |
+| **WARRANT** | **776** | **28,9 %** | **−62,14** |
+| ADRC | 119 | 4,4 % | +6,04 |
+| RIGHT / ETF / UNIT / PFD / ETS | 32 | 1,2 % | −12,14 |
+| sin referencia | 13 | 0,5 % | −4,09 |
+
+El 31,6 % de los trades NO son acción común, y entre todos restan ~77 $ de un
+resultado de 354 $. `daily_metrics` no lleva columna de tipo de instrumento, por
+eso entran; pero la vista `massive.tickers` (ticker, name, type) YA está
+registrada en el DuckDB del backend (`database.py`) y en el lago local, así que
+el filtro es viable sin infraestructura nueva. **Pendiente de decidir con Jaume**
+si va como filtro de universo opt-in o como default, y qué se hace con los
+tickers sin referencia. El screener en vivo y `bot_alerts_radar` ya filtran por
+`TIPOS = ("CS", "ADRC")`.
+
+### 5b. IMPLEMENTADO el mismo día: filtro de tipo de instrumento
+
+Decisión de Jaume: **por defecto para todas las estrategias**, tipos permitidos
+`CS` + `ADRC` (los mismos que el screener en vivo y `bot_alerts_radar`), y los
+tickers **sin fila en la referencia se QUEDAN** — la referencia es de hoy y un
+ticker legítimo deslistado en 2024 no tiene fila; excluirlos sería un sesgo de
+supervivencia al revés.
+
+`data_service._filtrar_tipo_instrumento`, aplicado en `fetch_qualifying_data` —
+el envoltorio cacheado — en sus **tres** salidas (acierto de Redis, acierto de
+disco y cálculo). Va DESPUÉS de cachear a propósito: la caché guarda el universo
+crudo, así que la escotilla `BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES=1` sigue
+funcionando sin invalidarla y una caché escrita antes de hoy también se filtra.
+
+La referencia se lee una vez y se cachea en proceso, con tres intentos:
+`massive.tickers` → `tickers` → el parquet del lago con una conexión DuckDB **en
+memoria propia** (si el fallo es que el lago está abierto por otro proceso,
+`get_db_connection` fallaría también en el respaldo). **Si no se puede leer, NO
+se filtra** y se loguea en ERROR: quedarse sin referencia no puede vaciar el
+universo en silencio.
+
+⚠️ Esto cambia el resultado de TODAS las corridas anteriores al 2026-09-06.
+
+### 5c. El filtro llega también al buscador y a los datasets
+
+Jaume: «que los oculten porque no voy a operar nunca un warrant». La MISMA
+función (`_filtrar_tipo_instrumento`) se aplica ahora en tres sitios, no en tres
+copias de la regla:
+
+1. `fetch_qualifying_data` — el universo del backtest.
+2. `routers/data.py` `/api/data/filter` — el buscador de tickers. Va **antes**
+   de `get_dashboard_stats` y de la serie agregada, para que la tabla y las
+   métricas de arriba cuadren entre sí. Esa consulta no lleva `LIMIT`, así que
+   filtrar sobre el resultado es exacto.
+3. `routers/query.py` `_compute_dataset_pairs` — los pares (ticker, día) de un
+   dataset, tras el `drop_duplicates`.
+
+**Lo que NO se tocó, a propósito:** `/api/data/tickers` (el autocompletado de la
+referencia) sigue devolviendo todo — se usa también para mirar un ticker suelto
+en Análisis, donde ver un warrant no molesta.
+
+⚠️ **Los datasets ya creados guardan sus pares en `dataset_pairs` y siguen
+contando los días de warrant.** El backtest ya no los opera (lo filtra el
+qualifying), pero el número de días del selector no bajará hasta que el dataset
+se vuelva a crear. El genético no se ve afectado: usa `qualifying.feather`, que
+sale de `fetch_qualifying_data` (ver el comentario de `_escribir_qualifying`).
+
+---
+
+## 2026-09-06 (tarde) · Locates en el calendario, suelo de precio y lectura neta del barrido
+
+### 6. El calendario era la ÚNICA vista que ignoraba los locates
+
+Jaume: «veo que de mayo a junio he ganado dinero y en la curva de equity con
+gastos claramente estoy perdiendo». No era impresión suya. Medido sobre su
+corrida, el desfase entre el calendario y la curva era **exactamente el coste de
+locates, mes a mes y al céntimo**:
+
+| mes | calendario | curva c/gastos | desfase | locates |
+|---|---|---|---|---|
+| 2026-01 | +427,27 | +139,27 | 288,00 | 288 |
+| **2026-05** | **+195,82** | **−188,18** | **384,00** | **384** |
+| 2026-06 | +4.823,65 | +3.849,65 | 974,00 | 974 |
+| 2026-08 | +3.161,50 | +2.531,50 | 630,00 | 630 |
+
+Causa: `CalendarTab` construía sus casillas con `t.pnl`, que es el PnL **antes**
+del alquiler de acciones — el locate viaja aparte porque se cobra una vez por
+ticker-día, no por operación. La curva de equity con gastos sí lo descuenta, y
+el `total_pnl` que reporta el motor también (11.698,79 − 3.604 = 8.094,79). El
+calendario era el único sitio que no.
+
+**Los gastos fijos SÍ estaban** — si hubieran faltado, el desfase de mayo habría
+sido 684 y no 384.
+
+Ahora: «Gastos» = comisiones + locates + fijos; «Profits - Gastos» = pnl −
+locates − fijos; «Profits» sin tocar (bruto antes de costes). Verificado contra
+`global_equity_expenses`: **cuadra al céntimo en los nueve meses**.
+
+Matiz de atribución: al repartir el locate por operación, un día con varias
+entradas en el mismo ticker puede cargárselo entero a una de ellas. Los totales
+de día, semana y mes son exactos; el reparto intradía es aproximado.
+
+### 7. Suelo de precio en el universo: 0,10 $
+
+`universe_filters.min_price` / `max_price` están declarados en el esquema y la
+interfaz los enseña, pero **`_build_where_clause` nunca los ha leído**: no han
+filtrado nada jamás. Misma familia que los 45 filtros del buscador.
+
+Por eso el suelo va aparte y siempre activo (`_filtrar_precio_minimo`), medido
+sobre `open` — la primera cotización del día, que es **causal**; usar `close` o
+`high` sería mirar el futuro. Los días sin precio se quedan, igual que los
+tickers sin ficha. Escotilla `BACKTEST_MIN_PRICE=0`.
+
+Las dos reglas del universo viven ahora en `_filtrar_universo`, que usan el
+backtest, el buscador y los pares de un dataset. Para los pares, `open` viaja en
+el SELECT y se descarta después (`dataset_pairs` solo guarda ticker+date).
+
+Lo motivó la operación de OPPr a $0,0005: 636.873 acciones y 6.369 $ de locates
+sobre una posición de 300 $, que se llevó 7.000 $ de una cuenta de 10.000.
+
+### 8. Barrido de EV: lectura BRUTA y NETA
+
+`expectancy` del motor divide el PnL **antes** de locates: 46,42 $ frente a
+32,12 $ reales en la corrida de Jaume, un 45 % de más. Se añade `total_pnl` al
+detalle de cada punto de la rejilla y un conmutador **Bruto / Neto** en el
+gráfico. **El defecto se queda en Bruto** a propósito, por petición explícita de
+no cambiar lo que ya había; el globo enseña las dos lecturas más el dinero total
+de la franja. Ninguna de las dos lleva los gastos fijos del mes.
+
+### 9. Espaciado del barrido
+
+Los conmutadores `Trades / Barrido` y `15m/30m/60m/120m` estaban pegados entre sí
+y al borde de su caja, y los minutos se leían como un continuo. `gap-1`,
+`p-[3px]` y más ancho interior; `Barrer`/`Cancelar` con margen a los lados.
+
+---
+
+## 2026-09-06 (noche) · El genético gana un segundo modo: MEJORAR una estrategia
+
+Petición de Jaume: «el genético busca estrategias, pero ¿podría optimizar UNA
+con todos sus parámetros? En el 3D optimizo uno o dos; ¿y si tiene cinco o
+seis? Quiero la combinación más ROBUSTA, no la que más dinero da». Y una
+condición: **el modo explorador no se toca, se le añade otro al lado.**
+
+### 10. Dos especies de cromosoma, un solo motor
+
+`genetico/especie.py` decide, según `config["modo"]`, qué módulo provee
+`aleatorio / mutar / cruzar / huella / receta / a_definicion`:
+
+    explorar (por defecto) -> cromosoma.py   el de siempre, intacto
+    mejorar                -> afinar.py      NUEVO
+
+**Por qué un cromosoma nuevo y no reutilizar el del explorador.**
+`cromosoma.a_definicion()` va en un solo sentido y hardcodea `exit_logic: None`,
+`postgap_preconditions: None`, `apply_day`, `timeframe: 1m` y trailing/swing
+apagados. Convertir una estrategia hecha a mano a ese cromosoma le arrancaría la
+mitad de su definición **en silencio**. En `afinar.py` el individuo ES la
+definición: se parte de la semilla intacta y solo se escriben las rutas
+marcadas. Hay un test por cada cosa que debe sobrevivir.
+
+Los genes salen de **`extract_parameters`**, el mismo del optimizador 3D — ya
+sabe leer los indicadores y sus parámetros con rango, paso y unidad — y se
+escriben con `_set_nested_value`, que reescribe "HH:MM" donde toca. Se le añaden
+los que ese extractor no cubre: **sesión de mercado** (un gen categórico que
+escribe tres claves) y **reentradas**. Comprobado sobre `RTH prueba 1`: saca el
+objetivo del % Fade, el del Elapsed Time, el periodo Y el objetivo del RVOL, las
+dos puntas de la ventana horaria, stop, take profit, reentradas y sesión.
+
+**El rango lo elige el usuario**, como en el 3D; el backend solo propone ±2
+escalones.
+
+### 11. La robustez es un EJE APARTE, no otra métrica
+
+Dos desplegables en vez de uno: **qué mides** (los mismos EV·√N, PF, Sharpe… del
+explorador) y **cómo lo agregas**:
+
+- `valor` — lo de siempre, y el defecto.
+- `peor_trozo` — parte el IS en tramos con el mismo número de días de mercado y
+  puntúa con el peor. **No cuesta ni un backtest más**: una corrida ya devuelve
+  el día a día.
+- `media_menos_sigma` — media − λ·σ entre tramos.
+- `vecindario` — el «robust plateau» del 3D en N dimensiones, usando los
+  individuos YA evaluados de la caché. También gratis.
+
+La agregación solo se ofrece en modo mejorar. El explorador no la ve y su
+`config` no la lleva, así que corre exactamente igual que antes.
+
+### 12. Tres trampas que se cerraron por el camino
+
+**La sesión la pisaba el panel.** `evaluador.parametros_backtest` pasa
+`market_sessions` a `run_backtest` **por argumento**, y el argumento gana sobre
+la definición. En modo mejorar eso habría hecho que la corrida entera evaluara
+el horario del explorador en vez del de la estrategia — y sin ningún error. Con
+definición, ahora mandan la definición y sus genes (también `size_by_sl` y el
+stop híbrido).
+
+**`mutar` podía devolver un clon.** El `tocado = True` marcaba «lo intenté», no
+«cambió», y `_vecino` sortea de toda la rejilla un 30 % de las veces. Un clon ya
+está en la caché, así que la generación se quedaba sin individuos nuevos que
+evaluar y el genético se estancaba sin dar ni un aviso. Lo cazó
+`test_mutar_siempre_cambia_algo`.
+
+**Las guardas y el operador OR.** En modo mejorar las guardas fijas se meten
+delante de la lógica de entrada, pero solo si la raíz es un AND: colarlas dentro
+de un OR las convertiría en «o esto o la guarda», lo contrario de una guarda. Si
+la raíz es OR, se envuelve en un AND.
+
+### 13. Otras decisiones
+
+- **La definición se CONGELA al lanzar** (`estrategia_base` en el `config.json`
+  de la corrida). Si el usuario edita la estrategia a media noche, los
+  individuos ya evaluados y los que quedan partirían de bases distintas.
+- **La generación 0 lleva la estrategia TAL CUAL** como línea base, más
+  mutaciones suyas de radio creciente (60 % del cupo) y luego aleatorios. Sin la
+  línea base no se puede saber si el genético ha mejorado algo.
+- Todos los genes empiezan **desmarcados**: marcar por defecto sería mover cosas
+  que nadie ha pedido.
+
+25 tests nuevos en `test_genetico_afinar.py`. 731 en total, `tsc` limpio.
+
+### 14. Modo mejorar, segunda tanda: parciales variables, pirámide y dataset
+
+**Parciales como ESTRUCTURA, no solo como número.** Petición de Jaume: «quiero
+probar qué pasa si añado 3 o 5 parciales, ya sea por hora, minutos o distancia…
+aunque modifique la estrategia». Se resuelve con dos tipos de gen:
+
+- `parciales.n` — cuántos niveles (0 a 5). Cero es una opción legítima: es la
+  comparación contra no ponerlos.
+- `parciales.{i}.nivel` — un gen CATEGÓRICO por nivel, con la lista completa de
+  disparadores (`pct:6`, `hora:10:30`, `tiempo:30`) construida con las mismas
+  rejillas que usa el explorador.
+
+Encajarlo así, y no como cuatro genes por nivel (tipo + valor% + valor hora +
+valor minutos), lo deja en 1 + N casillas en vez de 1 + 4N, y hace que «un
+escalón» signifique algo para la mutación.
+
+**El capital se reparte a partes iguales** y el último se lleva el resto: el
+motor exige que sumen exactamente 100 % o deja posición sin cerrar. Repartir así
+lo garantiza sin meter N dimensiones más de sobreajuste; para repartos
+desiguales están los genes de ruta `partial_take_profits.i.capital_pct`.
+
+**Si hay estructura, las rutas de parciales se ignoran.** No es solo evitar que
+dos genes se peleen: `_encode_tp_value` relee la forma NUEVA, así que escribir
+un 6 sobre un nivel recién puesto a `"HOUR:10:30"` daría `"HOUR:00:06"` — un
+disparador que nadie ha pedido, sin ningún error.
+
+**PIRAMIDACIÓN: `extract_parameters` no la miraba.** Una estrategia con pirámide
+tenía sus niveles congelados tanto en el genético como en el optimizador 3D. Se
+conservaban (la definición se copia entera) pero no había forma de moverlos, y
+el tamaño de un añadido pesa tanto como el de la entrada. Ahora salen tres
+cosas por nivel: `capital_pct`, `times` y los umbrales de SU condición, que van
+por la misma maquinaria que las de entrada y salida. **Esto también se lo lleva
+el optimizador 3D**, que hasta hoy tampoco podía tocar una pirámide.
+
+**El dataset lo trae la estrategia.** Al elegirla en modo mejorar se carga solo
+su `dataset_id`. Elegirlo a mano era una forma fácil de evaluar la estrategia
+sobre otro universo del que se construyó y no enterarse: el número sale, solo
+que no es el de esa estrategia. Se puede cambiar después, y si se cambia, la
+página avisa. Si la estrategia no tiene dataset guardado (usa filtros de
+universo), lo dice y no toca nada.
+
+740 tests (34 en `test_genetico_afinar.py`), `tsc` limpio.
+
+### 15. La sesión, en tres genes (no en una casilla)
+
+Jaume, sobre la primera versión: «me refería a elegir entre qué horas quiero que
+mire, quizás quiero ver si cerrando a las 11 es mejor que a las 12; si solo
+puedo poner tick en sesión de mercado no sé qué baremos está usando». Tenía
+razón: con un solo gen categórico de sesión eso no se puede barrer.
+
+Ahora son tres: `__sesion_tipo__` (categórico), `__sesion_desde__` y
+`__sesion_hasta__` (horas, en minutos desde medianoche, con rango y paso como
+cualquier otro gen). Reglas, cada una tapando un agujero:
+
+1. Si el gen de TIPO está marcado, manda él.
+2. Si NO lo está pero sí alguna HORA, la sesión pasa a personalizada. Dejarla en
+   RTH haría que el barrido no cambiara nada: N corridas dando el mismo número,
+   sin error.
+3. La punta que no se barre se queda en la que tenga hoy la estrategia.
+4. Fuera de personalizada las horas se BORRAN (el lío de la unión de sesiones).
+5. Un cierre anterior a la apertura recorta el día a cero velas: el genético lo
+   descarta solo (nota 0), pero no se escribe una sesión imposible.
+
+### 16. Indicador nuevo: «Open Gap (%)», y las 8 capas que hizo falta tocar
+
+Pedido como guarda del genético: «añade también lo de gap de apertura mínimo,
+por si no quiero solo ver el de PM». No existía: el motor solo tenía
+«PM High Gap (%)» (máximo de premercado vs cierre de ayer) y «Current Gap (%)»
+(precio vivo vs cierre de ayer). El gap de apertura solo vivía como columna del
+lago, para filtrar universos.
+
+**Es CAUSAL a propósito: NaN antes de las 09:30.** El dato existe
+(`gap_at_open_pct`) y devolverlo constante todo el día habría sido trivial —
+pero es LOOKAHEAD: una estrategia que entra a las 08:00 estaría usando la
+apertura de las 09:30. El NaN de la mañana no es un fallo, es la corrección.
+Mismo criterio que «% Session Fade».
+
+Capas tocadas: `indicators.py` (legacy) · `strategy_engine.py`
+(`_ri_open_gap` + dispatch nativo, con test de paridad) · `schemas/strategy.py`
+(`IndicatorType`) · `api_public/.../catalog.py` · `types/strategy.ts` ·
+`indicatorValidation.ts` · `ConditionBuilder.tsx` (es-porcentaje, es-medida,
+desplegable, etiqueta y ayuda) · `genetico/catalogo.py` (la guarda, que sale en
+los DOS modos).
+
+De esas, **`indicatorValidation.ts` la cazó TypeScript** — es la única de las
+ocho que da error en vez de caerse en silencio.
+
+⚠️ **Una capa NO se ha tocado, a propósito:** el bot de avisos en vivo
+(`bot_alerts_universo.py`) tiene su propio mapa de nombres y es zona cerrada
+(AGENTS.md). Una estrategia que use «Open Gap (%)» funciona en el backtest pero
+**el bot todavía no la entiende**. Queda para Jaume y Sailor.
+
+### 17. El genético ya no pide dataset: lo definen las guardas y las fechas
+
+Jaume: «yo meto las guardas y el rango de fechas donde quiero analizar; que
+cargue un dataset en base a eso, no hace falta ni quiero que tengamos que
+cargar ningún dataset aquí… las guardas que fijamos son como filtros también de
+universo». Vale para los DOS modos.
+
+**Se pudo hacer porque el dataset solo servía para producir el `qualifying`**:
+`datos.preparar` lo usa y a partir de ahí el `dataset_id` es solo metadato; las
+velas salen de los pares del propio qualifying.
+
+`fetch_qualifying_data` acepta ahora `filtros` explícitos (sin ellos, se
+comporta exactamente igual que siempre). El router traduce cada guarda a una
+columna diaria, y **cada traducción es una COTA SUPERIOR de su guarda intradía,
+así que nunca quita un día que la guarda habría dejado pasar**:
+
+| guarda | columna | por qué es segura |
+|---|---|---|
+| `Bar Close > X` | `high > X` | si una vela cierra sobre X, el máximo del día también. **`open` NO valdría**: una acción abre a 0,05 y se va a 5 |
+| `Dollar Volume > X` | `volume * high > X` | Σ(precio·vol) ≤ high·Σvol |
+| `Accumulated Dollar Volume > X` | `volume * high > X` | igual |
+| `PM High Gap (%) > X` | `pmh_gap_pct > X` | el PMH final ≥ el acumulado |
+| `Open Gap (%) > X` | `gap_at_open_pct > X` | exacto, es constante |
+
+Las guardas **siguen corriendo vela a vela** dentro de la estrategia: esto solo
+evita cargar días que no pueden pasarlas nunca.
+
+**Tope de 60.000 ticker-días y contador en vivo.** Sin una guarda que acote, el
+universo es el lago entero: medido, precio > 0,7 y dollar volume > 1 M sobre
+2019-2024 dan **7.461.580 ticker-días**. Marcando además PM High Gap ≥ 50 bajan
+a **7.800**. La página lo enseña antes de lanzar y el backend lo rechaza por
+encima del tope — mejor un error que decir «lanzada» y dejarla muriendo sola.
+
+El contador es un `count` directo sobre el parquet materializado, con DuckDB en
+memoria: **4,7 s** frente a los más de 30 que tardaba construyendo el qualifying
+entero con sus 32 ventanas LAG/LEAD para dar un número.
+
+**Cabo suelto conocido:** al guardar un ganador desde la tabla, la estrategia se
+guarda SIN dataset atado (la corrida ya no tiene uno). El aviso lo dice y el
+universo se elige al abrirla en el Backtester.
+
+### 18. Rectificación: las guardas NO son el universo
+
+Jaume, sobre §17: «una guarda puede ser una guarda, pero si te digo que el close
+sea mayor que 7 **no** te estoy diciendo que solo incluyamos acciones por encima
+de 7, te estoy diciendo que solo quiero ENTRAR cuando la estrategia supera 7…
+intenta no transformar nada, no hacer equivalencias ni cosas raras».
+
+Tenía razón. La traducción guarda→columna de §17 era matemáticamente segura
+(cotas superiores) pero conceptualmente equivocada: mezclaba dos cosas que el
+usuario tiene separadas en la cabeza, y le obligaba a razonar sobre
+equivalencias para saber qué iba a correr. **Retirada.**
+
+Ahora:
+
+- **Las guardas son guardas**: condiciones de entrada, vela a vela. Nada más.
+- **El universo se define aparte**, en su propio cuadro, con las MISMAS opciones
+  que al crear un dataset en el Backtester — se reutiliza `InlineDatasetBuilder`
+  entero, con una prop nueva `soloFiltros` que se salta el modal del nombre y no
+  crea ningún dataset. Cero divergencia de opciones y cero traducciones: los
+  filtros viajan en `cfg["universo"]` con la forma exacta que ya entiende
+  `_build_where_clause`.
+
+Se conservan de §17 el contador en vivo y el tope de 60.000, que sí eran útiles.
+
+**El contador cae a la vía lenta con reglas de Gap−1.** El parquet materializado
+no lleva `lag_pmh_gap_pct` ni sus hermanas — se calculan al vuelo en la vía
+completa. Un universo con Gap−1 reventaba el count rápido con un Binder Error y
+devolvía un 500; ahora se registra y se recalcula por la vía buena.
+
+**Lección:** cuando una simplificación exige explicarle al usuario una
+equivalencia para que entienda qué va a correr, la simplificación es el problema.
+
+### 19. Universo con el estilo de la página, y el tope de parciales
+
+Tres retoques pedidos por Jaume sobre el modo mejorar:
+
+**1. El nº de parciales manda sobre las filas.** Si el rango de «Cuántos
+parciales» llega a 2, marcar el disparador del 4º no haría nada: el gen viajaría
+y `a_definicion` lo ignoraría — un ajuste fantasma sin error, como el Max DD
+Diario. Ahora esas filas salen deshabilitadas («por encima del máximo de
+parciales») y además se filtran del config, por si el máximo baja después.
+
+**2. Se va la sección «Datos».** Tenía nombre + IS desde/hasta, y el cuadro de
+universo llevaba SU propio rango de fechas: dos sitios para el mismo periodo,
+pidiendo contradecirse. Ahora hay un solo cuadro, **Universo**, con el nombre de
+la corrida, el periodo IS y los filtros. Jaume: «no te compliques, ese rango de
+fechas global es el IS».
+
+**3. El selector, con el estilo de la página.** Estaba embebido
+`InlineDatasetBuilder` entero y desentonaba con el resto (`Sec`/`Row`/`Sel`/
+`Num`). Ahora es nativo: sección + métrica + operador + valor + «Añadir», y las
+condiciones puestas como fichas con «×».
+
+**Sin duplicar el catálogo.** Las métricas, sus descripciones, la traducción a
+columnas del lago y el armado del objeto de filtros se han sacado a
+`lib/universoFiltros.ts`, que ahora usan LAS DOS pantallas —
+`InlineDatasetBuilder` importa de ahí. Dos listas de métricas no darían error:
+una se quedaría corta y nadie lo notaría.
+
+Detalle: al añadir una condición que repite sección + métrica + signo, se
+SUSTITUYE la anterior. Dos reglas contradictorias sobre lo mismo dejarían el
+universo vacío sin decir por qué.
+
+### 20. Tres ajustes fantasma en el panel de riesgo del modo mejorar
+
+Jaume: «en riesgo veo la opción de reentradas y arriba también me deja
+activarlas. En modo estrategia la opción de riesgo para reentradas no debería
+estar».
+
+Tenía razón, y no era solo una. En modo mejorar, **reentradas, «shares por SL» y
+stop híbrido salen de la DEFINICIÓN de la estrategia**
+(`evaluador.parametros_backtest` los lee de ahí, ver §12). Los controles del
+panel del explorador seguían pintados y **no hacían nada**: se tocaban, no
+pasaba nada y nadie avisaba — el patrón del Max DD Diario.
+
+Ahora esos tres solo se pintan en modo explorar; en mejorar, una línea explica
+de dónde salen y recuerda que las reentradas se pueden mover como gen.
+
+Lo cubre `test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia`:
+con el panel diciendo lo contrario que la estrategia, mandan la estrategia y su
+híbrido, y las reentradas ni siquiera viajan como argumento.
+
+### 21. El KeyError que la pantalla no podía enseñar
+
+Al quitar el dataset (§17-19) se cambió el router y la página, pero se quedó
+`genetico/corrida.py` haciendo `config["dataset_id"]`. Resultado: la corrida
+moría a los tres segundos con un `KeyError` y **en la pantalla no salía nada** —
+Jaume: «sigue en marcha no? parece que no haga nada».
+
+Es el modo de fallo propio de esta arquitectura: el genético es un **proceso
+externo**, así que su traceback acaba en `salida.txt` dentro del directorio de
+la corrida, y la página solo ve que `estado.json` no aparece. Sin abrir ese
+fichero no hay forma de saber que ha reventado.
+
+**Dónde mirar cuando una corrida «no hace nada»**, por este orden:
+
+    <corrida>/salida.txt   el traceback del proceso, si murió
+    <corrida>/log.txt      el avance; en la fase de velas escribe cada 12 meses
+    <corrida>/estado.json  lo que lee la página; NO existe hasta que arranca
+
+Ojo con confundir «muerta» con «cargando»: la preparación de datos es lo primero
+y lo más lento (medido en la corrida del 6-sep: 72 meses en ~3,5 min, una línea
+de log cada 12). Hasta que no acaba, `estado.json` no existe y la página está en
+blanco con todo funcionando.
+
+`corrida.py` usa ahora `config.get("dataset_id") or ""`, y `datos.preparar`
+lanza un error que se entiende si de verdad no hay ni qualifying ni dataset.
+`test_genetico_sin_dataset.py` vigila las dos mitades del contrato — y lee solo
+el CÓDIGO, porque el comentario que explica el fallo contiene el mismo literal.
+
+## 2026-09-07 · La regla de los céntimos estaba en el motor equivocado
+
+Salió de una revisión de Álvaro (`PRD_MODULO_ROBUSTEZ.md` §2.2) que Jaume trajo
+al chat. **No era un problema del precio medio de entrada**, que es lo que se
+sospechaba: `mueve_bastante` usa `avg_entry_price` a propósito y está bien. El
+fallo era del dominio en el que se reconstruye la curva.
+
+### El fallo
+
+`min_move_cents` vivía SOLO en `what_if_service`, y ese servicio reconstruye la
+equity **sumando dólares**. Con `risk_type = PERCENT` —3 % del capital vivo—
+los dólares de cada trade dependen del balance que hubiera ese día: quitar
+trades y volver a sumar el resto rompe el vínculo con el capital. Medido por
+Álvaro sobre 3.544 trades: quitando el mejor 10 %, la curva aditiva acababa en
+**−84.411 $** (dinero negativo) donde la recompuesta da 2.617 $, o sea −73,8 %.
+
+La regla de la mesa es ese mismo caso y peor: **descarta ganadores de forma
+sistemática**, no un 10 % puntual. La dirección del error importa — pintaba la
+regla mucho más letal de lo que sería en la cuenta real.
+
+### Lo que se ha hecho
+
+1. **`_recomponer_por_dia` en `what_if_service`.** El PnL de cada día escala
+   por `capital_filtrado(día) / capital_original(día)`. Es recomponer en R sin
+   necesitar la distancia al stop: R = pnl/riesgo y el riesgo es un % del
+   capital, así que el % se cancela. Se escala **por día y no por trade**
+   porque el motor compone por día.
+2. **Solo se activa con `risk_type: "PERCENT"`,** que ahora manda la página
+   (lo tenía en un prop y no lo enviaba). Sin ese dato se asume riesgo fijo y
+   todo se comporta como siempre: la corrección no puede activarse sola.
+3. **El día que reventaría la cuenta se recorta hasta dejarla en cero** y el
+   recorte se reparte entre sus trades, para que el PnL de los trades cuadre
+   con la curva. Sin eso el equity se iba a negativo por detrás.
+4. **La regla se portó a `robustness_stress`**, que es el motor que ya
+   trabajaba en R, con su campo en el panel de Robustez. La función
+   `mueve_bastante` se **importa** del What-if: es una sola regla, y escribirla
+   dos veces es garantizar que un día las dos pantallas discrepen.
+5. **El filtro pasó a ir DESPUÉS de los límites de actividad** en los dos
+   motores. Iba antes, así que un ganador corto liberaba su hueco de
+   «Máx. trades/día» y dejaba entrar en su lugar a un trade posterior que nunca
+   se llegó a operar. El trade existió: ocupó su plaza aunque no lo abonen.
+
+**Invariante fijada con test:** sin ningún filtro los dos capitales coinciden
+día a día, el factor es 1,0 exacto y la curva sale idéntica a la de partida.
+Es la misma propiedad que se rompió el 4-sep con `dd_threshold`.
+
+`test_what_if_recomposicion.py`, `test_robustez_stress_centimos.py` y un caso
+nuevo en `test_what_if_centimos.py` (el hueco del día).
+
+### Lo que sigue sin cubrir
+
+- El `pnl > 0` que decide si un trade es ganador es el **bruto**, antes de
+  locates. Un trade de +8 $ con 20 $ de locate se juzga como ganador.
+- Los locates no se arrastran al What-if (ya estaba documentado en
+  `_day_results_de`), así que la lectura sigue siendo bruta.
+- Los parciales sí van bien: cada parcial es su propio trade con su
+  `exit_price`, o sea que la regla se aplica **por ejecución**, que es como la
+  aplica una mesa.
+
+### El What-if salía MEJOR que el original: los locates
+
+Jaume lo vio en pantalla el mismo día: con la regla de los 10 céntimos puesta,
+824 trades → 780, y el PnL **subía** de 5.000 $ a 6.724 $. Una regla que solo
+QUITA ganadores no puede mejorar nada.
+
+No era la regla ni la recomposición —las dos son monótonas: quitar un ganador
+no puede subir la curva—. Era que **las dos curvas no medían lo mismo**:
+
+    curva del backtest   NETA de locates  (`_compute_global_equity_and_drawdown`
+                                           recibe `locates_fee_by_date`)
+    curva del What-if    BRUTA            (el locate no está en el pnl de
+                                           ningún trade y no llegaba)
+
+La diferencia era la factura de alquiler entera: ~1.700 $ en esa corrida. Es el
+mismo fallo que tuvo el calendario en agosto, en otra pantalla.
+
+**Arreglado:** los locates viajan por par `TICKER|FECHA` (`locates_by_pair`,
+que la página saca de `day_results`) y se cobran **enteros si sobrevive algún
+trade de ese ticker ese día**, cero si no sobrevive ninguno. No es un reparto
+aproximado: el locate se cobra una vez por ticker-día, así que o se alquiló o no.
+No se reescalan con la recomposición —una curva más pequeña habría alquilado
+menos paquetes—, que es el lado conservador.
+
+**La pregunta que caza esta familia entera de fallos:** cuando dos curvas se
+pintan juntas para compararlas, ¿están hechas con los mismos costes? Aquí no lo
+estaban, y el error tenía signo — siempre a favor de la simulación.
+
+### HALLAZGO SIN ARREGLAR: el techo del híbrido depende del OTRO interruptor
+
+**No se ha tocado. Decisión de Jaume el 7-sep: nada de stops, distancias ni
+híbrido — el motor lo comparte el bot en vivo y se revalida con él.** Queda
+apuntado para cuando toque.
+
+`portfolio_sim` hace `if hybrid_stop and size_by_sl:`, y el nivel de pirámide
+tiene el techo **anidado dentro** de su rama `size_by_sl`. Consecuencia: una
+definición con el híbrido encendido y «Shares por SL» apagado se dimensiona
+**sin techo, sin error y sin log**.
+
+El builder impide esa combinación (encender el híbrido fuerza `size_by_sl`).
+**El panel del genético no la impedía**: su checkbox solo escribía
+`hybrid_stop`, y su ayuda prometía lo contrario — «Implica Shares por SL, así
+que lo activa solo». No saltaba porque el defecto viene en `true`; bastaba con
+desmarcar «Shares por SL» y dejar el híbrido puesto para correr un genético
+entero sin techo creyéndolo puesto. **Eso sí se ha arreglado** (el checkbox
+escribe los dos campos), que era el único sitio por donde entraba la
+combinación rota.
+
+`sim_dispatch` ya rutea mirando `hybrid_stop` a secas, así que la combinación
+llega al motor Python: el día que se arregle, el arreglo la alcanza. Sería
+cambiar las dos condiciones por `hybrid_stop` a secas — el techo es una GUARDA,
+no una opción del modo por SL.
+
+**Nota de nombre:** «stop híbrido» no es un stop — es un modo de calcular
+ACCIONES, con el mismo stop de siempre. En el desplegable de la pirámide ya se
+llama por su nombre (`mv` / `sl` / `híbrido`); en la entrada sigue siendo un
+interruptor por razones históricas.
+### [VERIFICADO · 2026-09-07 · MAE] «MAX MAE 169,56%» en G&E RTH 2026 — NO es bug: excursión real, verificada contra velas (duda de Álvaro resuelta con evidencia)
+- **Plantea:** Álvaro («esto del MAE tiene que estar mal»)
+- **Verifica:** ZCode (para Álvaro)
+- **Qué se vio:** panel Aggregate con MAX MAE 169,56 % y avg 13,76 % en la corrida G&E RTH 2026 (autosave `6e53853b`, 518 trades; lanzada con risk_r=1 $, sin size_by_sl).
+- **Verificación:** el trade top (RGNT 2026-06-09, short a 2,4299 a las 09:37, stop estructural 7,33 = PM max, EOD) — consultado el parquet del lago: máximo ALTO entre 09:37-10:59 = 6,55 → (6,55−2,4299)/2,4299 = **169,56 % exacto**. La ventana es correcta: el máximo pre-entrada (7,33, premarket) NO cuenta. El motor (`portfolio_sim.py`, cota al precio de stop/TP solo en la vela de salida) calcula lo que dicen las velas.
+- **Por qué asusta:** la estrategia shortea fondos profundos tras fades del 60-70 % con el stop en el MÁXIMO VIEJO → stop al 150-200 % de la entrada. En % del precio la excursión parece apocalíptica; **en R todas las MAE grandes son ≤1 R** (RGNT 0,84 R; HKIT 0,84 R; PAVS/EHGO/SPHL 1,00 R = SL). 17/518 trades >50 %, 3 >100 %.
+- **MEJORA (opcional) para Jaume:** mostrar el MAE también en R (mae_r = mae_pct / distancia_al_stop_pct) junto al porcentual — en estrategias de stop lejano el porcentual solo engaña; en R se lee el riesgo real flotado.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** CERRADO (verificado, no bug)
+
+### [FEATURE · 2026-09-07 · ESTILO CANGREJO] Nueva tarjeta de Risk Management: acotar cada trade "o por recorrido del SL, o por pérdida máxima" — para Jaume y su IA
+- **Propone/decide:** Álvaro (implementado por ZCode en SU rama, a la espera del flujo habitual)
+- **Qué es:** tarjeta "Estilo Cangrejo" en el builder, debajo de todo lo del Stop Loss, con DOS modos EXCLUYENTES ("debe ser o una u otra", decisión de Álvaro): **(A) Recorrido máx. del SL** — el stop estructural/% nunca queda a más de D% del entry: se aprieta y la salida real pasa a ser el stop apretado (cambia DÓNDE sales); **(B) Pérdida máx. por trade** — el stop no se toca, se encoge el tamaño para que llegar al SL no cueste más de X% de la cuenta (cambia CUÁNTO pones). Son techos: solo recortan, nunca agrandan, sobre el sizing activo (MV/por SL/híbrido). Exclusivos con el Stop Loss Híbrido de Jaume: la UI los apaga mutuamente y si un payload trae ambos, el motor arbitra a favor de Cangrejo. **La lógica del híbrido NO se ha tocado.**
+- **Por qué:** con SL por market structure la distancia cambia en cada entrada y con el mismo MV unos stops cuestan poco y otros muchísimo (el motivo original de Álvaro). La primera versión de la tarjeta (4 topes: distancia, pérdida, MV entrada, MV pirámide) resultó poco intuitiva en pruebas con la Estrategia 1B y se simplificó a estos dos modos por decisión de Álvaro.
+- **PRD completo (el porqué y los detalles):** `docs/PRD_ESTILO_CANGREJO.md` — subido también a staging con esta entrada para que se pueda leer sin esperar al merge.
+- **Dónde (código, en `alvaro-rama-desarrollo`):** `backend/app/schemas/strategy.py`, `backend/app/services/{portfolio_sim,sim_dispatch,backtest_signals,backtest_service,backtest_orchestrator}.py`, `backend/tests/test_estilo_cangrejo.py` (19 tests), `frontend/src/types/strategy.ts`, `frontend/src/components/strategy-builder/RiskManagement.tsx`. El bot de alertas: INTACTO (ningún fichero de su zona).
+- **Verificación:** suite completa backend 733 passed; auditoría independiente del 2026-09-07 contra el código anterior (123 comparaciones de invarianza en 25 escenarios + 400 configs fuzz, cero divergencias incl. JIT; recortes exactos; plumbing punta a punta con captura de kwargs reales; el incidente "backtest idéntico con Cangrejo ON" reproducido por HTTP y explicado: con riesgo 0,5% y topes al 5% no pueden morder — correcto, no bug).
+- **Avisos para el que integre:** (1) con Cangrejo activo la simulación va SIEMPRE al motor Python (kernel Numba no lo implementa, como el híbrido); (2) el fix del dispatcher del 2026-09-07 hace que `hybrid_capital` llegue al motor también con Cangrejo sin híbrido — relevante para el bot cuando lo use; (3) `cangrejo_max_mv_entry_pct`/`cangrejo_max_mv_pyr_pct` siguen admitidos por el motor pero INERTES (sin UI) por si vuelven.
+- **Código tocado:** solo lo listado arriba, en rama de Álvaro. Nada de staging salvo este documento y esta entrada.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+### [FEATURE · 2026-09-07/08 · OVERHEAD] «Overhead last X days»: el techo que dejó un día pasado, con su volumen y ajustado por splits — sustituye a «High/Low of last X days»
+- **Pide/decide:** Jaume (implementado por Claude en `sailor-rama-desarrollo`)
+- **Qué es:** el indicador busca el día MÁS EXTREMO de los últimos X días de cotización (el del máximo más alto o el del mínimo más bajo) y, **sobre ESE día**, se elige qué precio es el nivel (High/Low/Open/Close) y si su volumen tiene que ser mayor o menor que el **acumulado de hoy hasta la vela**. Dos pasos y en ese orden: primero el máximo, DESPUÉS su volumen — si el máximo lo hizo un día flojo la señal se descarta, **no** se baja al siguiente techo (decisión explícita de Jaume). Con la condición de volumen puesta, el nivel puede aparecer y desaparecer durante el día, porque el volumen de hoy va creciendo.
+- **Por qué el ajuste por splits no es opcional:** el lago guarda precios CRUDOS. Con un contrasplit 20:1 el nivel salía 20 veces por debajo del precio y «Close cruza por encima» se cumplía en la primera vela del día, siempre, sin error y sin log. Caso testigo GCTK (reverse 20:1 el 2026-02-04): máximo crudo 0,1115 → 2,23 en escala post-split. Medido sobre los días de gap ≥20 %: cae un split dentro de la ventana en el **4,3 % de los casos a 30 días, 11,0 % a 6 meses y 16,9 % a un año**. Se guarda precio crudo + factor acumulado y se ajusta AL LEER, relativo al día del trade; el volumen también, dividiendo.
+- **De dónde salen los datos:** tabla NUEVA y aparte, `D:/lago_backtester/overhead/daily_overhead.parquet` (268 MB, 19,3 M filas, 23.272 tickers, 2019→2026), que genera `backend/scripts/construir_daily_overhead.py` en 98 s. **No toca el lago ni `daily_metrics`.** Se lee con `read_parquet` de disco, así que no abre `local_data.duckdb` y no compite por el cerrojo de DuckDB. Solo se carga si la estrategia usa el indicador. Ruta en `OVERHEAD_DAILY_PARQUET` (backend/.env). Velas DIARIAS de sesión regular: **sin premercado ni after** — decisión de Jaume, con la consecuencia avisada y aceptada de que el techo de un runner que hizo su pico a las 08:00 no está.
+- **AVISO DE MANTENIMIENTO:** la tabla **no se regenera sola**. Al entrar días nuevos al lago hay que volver a lanzar el script o se queda vieja EN SILENCIO.
+- **También:** «Recorrido (%)» = `(cierre − apertura) / apertura × 100` **con signo** (`> 3` sube más de un 3 %, `< -2` cae más de un 2 %). Es «Candle Range %» sin el `abs()`. De paso se corrigen las dos descripciones de «Candle Range %» —la interfaz decía «High vs Low» y el genético «de máximo a mínimo»— que eran falsas: el motor calcula el CUERPO, sin mechas.
+- **Dónde (código):** `backend/app/{schemas/strategy.py, services/{indicators,strategy_engine,backtest_service,advanced_model,optimization_service}.py, api_public/modules/backtest/catalog.py}`, `genetico/catalogo.py`, `frontend/src/{types/strategy.ts, lib/{indicatorValidation.ts,assistant/schemas.ts}, components/strategy-builder/ConditionBuilder.tsx}`, `backend/scripts/construir_daily_overhead.py`, `backend/tests/test_overhead_last_x_days.py` (22 tests, no necesitan la tabla real: inyectan un ticker en la caché).
+- **Avisos para el que integre:** (1) el **bot de alertas NO puede usar el Overhead** hasta que tenga acceso a esa tabla — backtestearía bien y en vivo no daría señal, sin error; (2) `test_genetico_catalogo` se salta este nivel a propósito (su ticker sintético da todo-NaN, que ahí es lo correcto); (3) los nombres «High/Low of last X days» siguen existiendo por compatibilidad, comparten motor y solo fijan otros defectos.
+- **Verificación:** 819 tests backend en verde, `tsc --noEmit` limpio. Probado por la vía del motor real (`translate_strategy`) con datos del lago, no solo por `compute_indicator`. **Jaume lo probó el 2026-09-07 y lo dio por bueno.**
+- **Estado:** SUBIDO a `sailor-rama-desarrollo` (`b14a5c2`).
+
+### [BUG · 2026-09-08 · GENÉTICO] Modo «mejorar»: las guardas DESPLAZABAN los índices y cada gen escribía en la condición equivocada — 1.721 operaciones se quedaban en 21
+- **Detecta:** Jaume («todo a fitness 0,00 … has tocado algo del genético»). **Diagnostica y arregla:** Claude.
+- **Qué pasaba:** `afinar.a_definicion` metía las guardas al PRINCIPIO del grupo raíz y DESPUÉS escribía los genes. Pero las rutas de los genes son POSICIONALES (`entry_logic.root_condition.conditions.4.source.offset`) y salen de `extract_parameters` sobre la estrategia SIN guardas: con 4 guardas, cada gen caía 4 posiciones más allá. En la corrida de Jaume, el gen «PM High Gap (%) Target Value = 50» aterrizaba en la guarda `Bar Close > 0,7` y la dejaba en **`Bar Close > 50`**. Sus acciones valen 1-7 $: la estrategia pasaba de 1.721 operaciones a 21, toda la población caía por debajo del `min_trades` y la corrida entera daba fitness 0. **Sin excepción, sin log y sin nada raro en pantalla.**
+- **Arreglo:** `_meter_guardas` se llama al FINAL, tras el bucle de genes. **Las guardas siguen existiendo y aplicándose igual** — lo único que cambia es el orden. Verificado: la línea base pasa de 21 a **1.669** operaciones (los ~50 que faltan hasta 1.721 los filtran las guardas, que es su trabajo).
+- **CÓMO DESCARTAR QUE EL FALLO SEA DEL MOTOR (vale para cualquier duda futura):** correr `estrategia_base` del `config.json` de la corrida por `run_backtest` con `evaluador.parametros_backtest`, y comparar con lo que saca `afinar.a_definicion(afinar.desde_semilla(cfg), cfg)`. Si los dos números no coinciden, el fallo está en la traducción, no en el motor. Aquí dio 1.721 vs 21.
+- **Además, un `offset` en CERO ya es afinable.** `_add` lo tiraba por la regla general de «valor 0 = función desactivada», correcta para un stop pero no para un offset (0 = «esta misma vela»). Por eso «Bar Close < Prev. Bar Low» (objetivo con offset 0) no aparecía en el genético mientras que «Low Bar» con offset 1 sí, siendo el mismo dato escrito de dos maneras. **Lo ganan también el optimizador 3D y el Walk Forward**, que beben del mismo `extract_parameters`. Ojo a la cuenta: `Prev. Bar Low` YA es la vela anterior, así que el offset suma encima (0 = la anterior, 9 = diez atrás).
+- **Dónde (código):** `genetico/afinar.py`, `backend/app/services/optimization_service.py`, `backend/tests/{test_genetico_guardas_no_desplazan_los_genes.py, test_offset_cero_es_afinable.py}` (13 tests).
+- **Aviso de nombre:** el test se llama «no_desplazan» porque va de DESPLAZAR posiciones, **no** de quitar guardas. Se renombró desde «no_corren» porque Jaume lo leyó como «quitar».
+- **Verificación:** 819 tests backend en verde, `tsc` limpio.
+- **Estado:** SUBIDO a `sailor-rama-desarrollo` (`a9f6dd4`).
+
+### [FEATURE · 2026-09-08 · ESTILO CANGREJO] Implementado en `sailor` desde el PRD, + bot de alertas, + genético, + kernel Numba
+- **Pide:** Jaume («vamos a integrarlo nosotros también … que lo reconozca el bot de alertas y el genético … añadimos también la gestión con numba»). **Implementa:** Claude.
+- **EL CÓDIGO DE ÁLVARO NUNCA LLEGÓ.** `git fetch --all --prune` el 2026-09-08: `origin/alvaro-rama-desarrollo` está en el **30-ago** y el único objeto "cangrejo" de todo el repo es `docs/PRD_ESTILO_CANGREJO.md`. No había nada que mergear: esto es una **implementación desde el PRD**, no la integración de su rama. Cuando Álvaro suba la suya habrá que contrastarla (ver las tres divergencias de abajo).
+- **Qué hace:** lo del PRD §2, sin cambios de semántica. Modo A `cangrejo_max_sl_dist_pct` (aprieta el stop lejano y la salida real pasa a ser el apretado); Modo B `cangrejo_max_loss_at_sl_pct` (encoge el tamaño para que el SL no cueste más de ese % de la cuenta). Techos: solo recortan. Excluyentes con el híbrido y arbitraje a favor de Cangrejo en el motor.
+- **TRES DIVERGENCIAS CONSCIENTES con el PRD** — contrastarlas con Álvaro antes de dar por buena ninguna comparación de resultados:
+  1. **VA POR EL KERNEL NUMBA.** El PRD dice que con Cangrejo la simulación cae SIEMPRE al motor Python. Aquí los dos modos se han portado al JIT: `portfolio_sim_jit.py` recibe `cangrejo_active / cangrejo_max_sl_dist / cangrejo_max_loss_pct / cangrejo_capital` (floats con centinela `0.0 = off`, porque numba no admite `Optional` sin disparar una firma por combinación). Era el motivo del encargo: con Cangrejo forzando Python, una corrida del genético se multiplicaba. Medido: **×1,7 en un ticker-día de 390 velas**, y sobre todo ya no hay caída al motor lento. El híbrido SÍ sigue yendo al Python (no se ha portado); con los dos encendidos el híbrido está muerto, así que el kernel es válido y el dispatcher no desvía.
+  2. **El Modo B TAMBIÉN topa los añadidos de pirámide.** El PRD solo habla de entradas y reentradas. Sin esto el techo se esquiva entero en cuanto la estrategia piramida — se entra con 300 $ topados y se añaden 5.000 $ sin mirar, que es exactamente el fallo que no da error. La pérdida al stop de la posición completa es separable (`|avg−stop|×size + |add_px−stop|×add`), así que el cupo del añadido sale sin recalcular el precio medio. Tres tests.
+  3. **El Modo B no exige `size_by_sl`** (el híbrido sí). Es un techo sobre el sizing que haya, y con sizing por valor de mercado es justo donde la pérdida al stop se descontrola.
+- **BOT DE ALERTAS: SÍ SE HA TOCADO** (el PRD lo dejaba intacto). Tres cosas, y las tres hacían falta o el aviso habría dicho una cosa y el backtest otra, sin error: (a) `_kwargs_simulate` pasa los tres campos al simulador interno, con `hybrid_capital` como base del Modo B — su `init_cash` es el nominal de 1e9 y sobre eso el techo no recortaría nunca; (b) el aviso da el stop **APRETADO** por el Modo A, que es donde el motor sale de verdad; (c) `calcular_acciones` aplica el Modo B en las DOS ramas (con y sin `size_by_sl`). `_hibrido_de` devuelve `None` con Cangrejo activo: el mismo arbitraje que el motor. `/watch` no deja activar el Modo B sin capital.
+- **GENÉTICO: NO es un gen, y a propósito.** Va en el panel de la corrida (modo explorar) y sale de la estrategia (modo mejorar), como el híbrido. Dejar que la corrida mueva el % del Modo A sería buscar en el histórico el recorte que mejor queda — y ese número cambia DÓNDE se sale, así que el sobreajuste es inmediato.
+- **Dónde (código):** `backend/app/schemas/strategy.py`, `backend/app/services/{portfolio_sim,portfolio_sim_jit,sim_dispatch,backtest_signals,backtest_service,backtest_orchestrator,bot_alerts_engine,bot_alerts_service,strategy_explain}.py`, `backend/app/routers/bot_alerts.py`, `genetico/{cromosoma,evaluador}.py`, `backend/tests/test_estilo_cangrejo.py` (36 tests), `frontend/src/{types/strategy.ts, lib/{api_genetico,api_bot_alerts}.ts, components/{strategy-builder/RiskManagement.tsx, bot-alerts/CuadroMandos.tsx}, app/genetico/page.tsx}`.
+- **Verificación:** 36 tests propios; **855 passed / 88 skipped** en `backend/tests`; `tsc --noEmit` limpio; auditoría aleatoria de **400 configuraciones** Python↔JIT con los dos modos, series y parámetros al azar → **cero divergencias**, más 94 comprobaciones de invarianza con Cangrejo apagado. La regla nº1 del PRD (sin campos = resultado idéntico) tiene test propio, y también el caso «lo activé y da lo mismo»: con los topes por encima del sizing que ya hay, no muerden — es correcto, no un bug.
+- **PARA QUE EL BOT LO USE HAY QUE REINICIARLO.** `D:\bot_senales\bot.py` hace `sys.path.insert(0, BACKEND)` e importa del backend, así que un bot ya en marcha sigue con el código viejo. Y al relanzarlo, acordarse de volver a encender el interruptor: arranca en «Parado».
+- **Estado:** en `sailor-rama-desarrollo`, sin commitear todavía (pendiente de que Jaume lo pruebe).
+
+### [BUG + FEATURE · 2026-09-08 · BOT DE ALERTAS] El aviso dimensionaba SIN el stop, y `/evf` ignoraba que los locates van en paquetes de 100
+- **Detecta el de los locates:** Jaume («yo cuando pago locates no es por unidad, es por paquetes»). **Detecta el del tamaño:** Claude, al comprobar si `/evf` y el aviso daban lo mismo con la configuración real. No daban.
+- **EL BUG GORDO (el del tamaño).** El aviso sacaba su stop con `nivel_stop`, que devuelve `None` para todo lo que no sea `Market Structure` — a propósito, porque en el backtest ese caso lo resuelve el simulador desde `sl_stop`. Pero al llegar a `calcular_acciones` ese `None` hacía caer el tamaño a `riesgo / precio` en vez de `riesgo / distancia`: **el aviso dejaba de dimensionar por riesgo aunque la estrategia tuviera «Shares por SL» encendido**, sin error y sin log. Medido con «RTH prueba 1» (stop 25 %, riesgo 300 $) sobre WYHG a 5,22 $: el aviso daba **57 acciones arriesgando 75 $** donde el motor dimensiona **230 arriesgando 300**. Factor 4. Afectaba a CUALQUIER estrategia con «Shares por SL» y stop de porcentaje; con stop estructural no pasaba, y por eso «1B 50k» estaba bien y no se había visto.
+- **Arreglo:** `stop_estimado` resuelve todos los tipos y el aviso lo usa — estructura por `nivel_stop`, y todo lo demás como `precio × (1 ∓ sl_stop)`. **`sl_stop` SE PASA, NO SE RECALCULA**: es la fracción que ya calcula `translate_strategy` y la misma que aplica el simulador. Rehacerla a mano (lo que hacía la primera versión) sale mal en «Fixed Amount», donde el motor divide el importe entre el PRIMER CIERRE DEL DÍA y no entre el precio de ahora.
+- **`/EVF` CON PAQUETES DE 100.** Los locates se alquilan en paquetes de 100 y se pagan enteros, así que el coste real por acción operada es `ceil(n/100) × 100 × coste / n` y **no es lineal**. La cabecera del módulo justificaba ignorarlo («el tamaño no entra, se cancela»), cierto solo con múltiplos exactos de 100. La cuenta existía pero colgada de un 4º parámetro opcional y sin documentar: no se usaba nunca. Ahora `/evf TICKER COSTE` a secas da un veredicto **por estrategia**, con las acciones estimadas al precio del momento. Con WYHG a 5,22 y locate 0,258, pasar de **300 a 301 acciones da la vuelta al veredicto** (+1,06 pp → −0,57 pp).
+- **REGLA QUE NO SE PUEDE ROMPER:** el tamaño de `/evf` es una ESTIMACIÓN al precio de consulta y **no debe** coincidir con el del aviso — el aviso sale de su propia vela y es la orden que se teclea en el bróker. Igualarlos daría un tamaño de entrada equivocado (decisión explícita de Jaume). La consulta es de solo lectura y no llama al motor de señales.
+- **Los otros dos avisos no tenían el problema:** el de pirámide saca las acciones de `pyr_executions` y el de salida de los trades, o sea del propio simulador. La entrada era el único sitio con un cálculo PARALELO, y por eso el único que podía divergir.
+- **Dónde:** `bot_alerts_engine.py` (`stop_estimado`, `estimar_por_estrategia`, `_cangrejo_de`, `_tope_cangrejo_acciones`), `bot_alerts_runner.py` (`estimacion_locates`), `bot_alerts_comandos.py`, `bot_alerts_service.py`, `routers/bot_alerts.py`, y el cableado en `D:\bot_senales\bot.py` (fuera de git).
+- **Verificación:** `test_bot_tamano_todos_los_stops.py` (14 tests) cruza el tamaño del aviso contra el que abre `portfolio_sim` DE VERDAD, para cada tipo de stop (porcentaje, importe fijo, ATR, estructura) × cada modo (valor de mercado, por distancia al SL, híbrido, Cangrejo A y B). Más `test_evf_paquetes_de_100.py` (23). Suite: **904 passed, 115 skipped**.
+- **OJO AL AUDITAR:** la UI solo ofrece DOS tipos de stop (`%` y `Market Structure`). `Fixed Amount` y `ATR Multiplier` existen en el enum y en el motor pero **el desplegable no los ofrece**: son inalcanzables, otro ajuste fantasma como el «Max DD Diario».
+- **Los 27 tests saltados:** vinieron de `staging` al igualar las ramas. Tres ficheros prueban motor de Álvaro que aquí no está (`trail_activation`, parciales por fade, atribución de fees) — la huella de la norma «el socio sube documentos, no motor», funcionando. El cuarto (`test_bygap_parity`) NO es eso: necesita `local_data.duckdb` en exclusiva y falla con el backend levantado.
+- **Estado:** SUBIDO a `sailor-rama-desarrollo` y a `staging`, las dos en `356019d` e idénticas.
+
+### [FEATURE · 2026-09-08 · PESTAÑA EDGE] «¿Se está erosionando el edge?» — pestaña nueva en los resultados del backtester (Jaume + Claude)
+- **Origen:** en 1B, salir a las 08:30 gana más que a las 09:00 y hace un año era al revés. ¿Ruido o cambio de régimen? Con PF modesto hacen falta cientos o miles de operaciones para distinguirlo por el PnL; la pestaña mide cosas con más señal por observación.
+- **Dónde va:** entre «Análisis por trade» y «Charts + Optimization IS», y **NO dentro de Optimization** a propósito: aquella responde «¿cuál es el mejor valor?» y siempre devuelve uno; esta responde «¿debo cambiar algo?» y su respuesta correcta suele ser NO.
+- **Cuatro fases:** ¿se puede leer? (comparabilidad y muestra) → ¿ha cambiado el edge? (expectancy por periodo CON intervalo de confianza, descomposición ganadoras/perdedoras, concentración de la cola con la expectancy debajo, oportunidad contra edge) → ¿dónde y por qué? (curva de valor marginal por hora, MFE/MAE con líneas de tendencia y ratio, tiempo hasta el MFE, barridos de TP y SL sin correr nada, envolvente Monte Carlo del drawdown) → ¿cambio algo? (delta PAREADO entre dos horas con veredicto de tres estados: CAMBIAR / CUIDADO / SIN CAMBIOS, según cuántas de las tres llaves se cumplen).
+- **Decisiones de método:** todo en R; el barrido de SL empieza en el 1 % (por debajo la vela de un minuto no tiene resolución y salen R imposibles); `return_pct` NO es el % de precio (va sobre capital en riesgo) y se reconstruye `movePct` desde los precios; la comparación de horas es pareada (solo el tramo A→B, varianza mucho menor). Regla de las tres llaves para tocar un parámetro; al cambiar, con encogimiento (al punto medio).
+- **El recorrido minuto a minuto** (curva, delta y tiempo hasta MFE) va por un endpoint aditivo `POST /api/edge/recorrido` que relee la caché de velas — **no toca el motor**. Contrafactual: solo se prolongan las salidas por EOD/Time Limit; al prolongar, el stop original SIGUE puesto; el horizonte alarga, nunca recorta; tras cerrar el valor se arrastra. Devuelve solo agregados.
+- **Diseño (Jaume):** cuadrado y sobrio como el genético; cada «?» con Qué ves · Por ejemplo (con las cifras de la corrida abierta) · Para qué sirve · Cómo leerlo (TODAS las combinaciones) · Ojo. **Regla que se incumplió y se corrigió:** un escenario solo puede describir algo que se vea en SU gráfico. Selector de periodos compartido por los tres gráficos de líneas; la rampa de color se calcula sobre la lista completa o los colores bailan.
+- **Hallazgo en `RTH prueba 1`:** el punto donde deja de compensar aguantar se adelantó de las 14:05 (2021) a las 11:45 (2026) y el tiempo hasta el MFE bajó de 100 a 34 min; el delta 11:45→14:15 ganaba en 2021-23 y desde 2024 ya no — pero el margen de 2026 aún cruza el cero: veredicto CUIDADO, no CAMBIAR. Justo el caso para el que existe.
+- **Trampas:** los separadores `──` en comentarios .ts/.tsx tumban el dev server de Next (panic en `next-code-frame`); `API_BASE` ya termina en `/api`; la agregación del recorrido se densifica sobre rejilla de 5 min o es O(n³).
+- **Dónde:** `frontend/src/components/backtester/tabs/{EdgeTab.tsx, edge/calc.ts, edge/charts.tsx}`, `ResultsTabs.tsx`, `lib/api_edge.ts`; `backend/app/services/edge_service.py`, `routers/edge.py`, 2 líneas en `main.py`.
+- **Estado:** SUBIDO a `sailor` y `staging` (`1ee4ee9`, `b16356b`).
+
+### [FEATURE · 2026-09-08 · LOCATES] Locates ALEATORIOS por ticker-día + PUERTA DE ENTRADA POR EV en sombra (Jaume + Claude)
+- **Por qué:** el precio fijo por paquete no es la realidad; la cola es brutal (una sola operación se llevó 7.000 $). Y en vivo Jaume decide si entra según el `/evf`: fade necesario contra EV.
+- **Fase 1 — sorteo.** `locates_random.py`: precio del paquete de 100 sorteado **por ticker-día** (las reentradas y pirámides reutilizan el locate, como ya cobra el motor), **determinista por hash de (semilla, ticker, fecha)** — no depende del orden de proceso, dos corridas con la misma semilla dan lo mismo —, centro en escala log del precio de la acción entre 0,10 $ (suelo del universo) y 30 $, lognormal σ 0,35 recortado al rango. Sin anclas del usuario: solo el rango, «que se distribuya solo». Referencia: la primera vela del frame (04:00), causal. Fuerza la vía secuencial y no toca el motor. Medido con rango 1-10: 0,30 $ → 2-3,9; 3 $ → 4,6-9; 15 $ → 6,4-10. En `RTH prueba 1` los locates a 1-10 se comían casi todo el beneficio (stop al 25 % = muchos paquetes).
+- **Fase 2 — la puerta.** `locates_gate.py` + `simulate(ev_gate=None)`: la cuenta del `/evf` trade a trade con **paquetes enteros y coste MARGINAL** (la reentrada que cabe en lo alquilado pasa gratis). **EV «en sombra» a DOS PASADAS:** la primera sin puerta da lo que rinden TODAS las señales en % de precio (cortos, bruto de locates); la segunda solo entra si el EV rodante (N trades o N días, con EV por defecto mientras no hay historia) de la sombra cerrada ANTES de ese instante cubre el fade. Jaume lo eligió sabiendo que en vivo tendrá el EV de lo ejecutado (con su sesgo: si rechazas no entra información nueva); esa variante queda como conmutador futuro. Con `ev_gate=None` el motor es byte a byte el de siempre.
+- **E2E en `RTH prueba 1`** (rango 1-10, semilla 2, ventana 30 trades, EV defecto 2 %): 1.943 señales en sombra, 5.228 evaluaciones (una rechazada se consume y puede volver a saltar), 1.067 aceptadas / 4.161 rechazadas. **Con puerta +1.975 $ y maxDD −12,4 %; sin puerta +1.771 $ y −13,3 %, con un 45 % menos de operaciones.**
+- **TRAMPA QUE COSTÓ UNA CORRIDA: el kernel numba está ACTIVO en esta máquina** (`BACKTEST_NUMBA_SIM=1` en `backend/.env`). `sim_dispatch` mandaba al JIT, que no conoce `ev_gate`: cada ticker-día fallaba y la corrida acababa con CERO trades sin error en pantalla. Arreglado con el mismo desvío que la piramidación. **Todo parámetro nuevo de `simulate` necesita su desvío en `sim_dispatch` o su porte al JIT.**
+- **UI:** bloque «Costes opcionales» reorganizado (Fijo|Aleatorio, rango, semilla, puerta con Trades|Días, ventana, EV por defecto, mín. trades, todo con «?» largos); en Trades, columnas Locate/100, EV%, Fade% y resumen deduplicado por ticker-día. Con el modo activo el locate se pega a cada trade (`locate_pkg_price`, `locates_fee_day`, `ev_gate_*`).
+- **Fase 3:** la banda de N semillas quedó HECHA la misma noche (entrada siguiente); pendiente solo el conmutador «EV de lo ejecutado».
+- **Dónde:** `backend/app/services/{locates_random,locates_gate,backtest_service,backtest_orchestrator,portfolio_sim,sim_dispatch}.py`; `frontend/src/{components/backtester/{BacktestPanel,ResultsTabs,tabs/TradesTab}.tsx, lib/api_backtester.ts, app/backtester/page.tsx}`. Pruebas sintéticas: sorteo (8), puerta (6).
+- **Estado:** SUBIDO a `sailor` y `staging` en `d43133a`.
+
+### [PRD · 2026-09-08 · MÉTRICAS Y OOS] PRD de Álvaro revisado: las 4 cosas eran ciertas; Jaume aprobó las 4 y quedaron hechas
+- **Dos matices de Jaume que NO son bug:** correr todo el rango con IS < 100 es a propósito (quiere ver el OOS con las mismas condiciones; el navegador recorta al pintar); y la curva punteada «con gastos» SÍ existe — lo que iba bruto de gastos fijos eran los números de la tarjeta.
+- **P1 IS/OOS persistido:** `is_percent` entra en `BacktestRequest` (Pydantic lo tiraba) y `metricas_segmento.py` calcula `is_metrics`/`oos_metrics` con el MISMO corte que el navegador (índice de equity `floor(len·is/100)`, trades por `entry_time_epoch`, días por medianoche UTC, PnL neto de locates por día). Con IS 100, nulos. El motor sigue corriendo todo.
+- **P2 Return/Calmar:** `total_return_pct` pasa a NETO de gastos fijos (`total_return_pct_gross` conserva el bruto); `calmar_ratio` = CAGR neto / |maxDD| (sin anualizar por debajo de 30 días; `calmar_ratio_total` conserva el antiguo). Tooltips dicen lo que se calcula y enseñan los dos. El memo IS del navegador calcula lo mismo. `expectancy` sigue bruta de locates a propósito (decisión anterior).
+- **P3:** `total_return_r` (ΣR) en `aggregate_metrics`: la columna y el filtro «beneficio neto mínimo» del buscador iban siempre a 0.
+- **P4:** `backtest_params` guarda las fechas EJECUTADAS (`rango_efectivo`: lo resuelto por `_resolve_filters` y primer/último día simulado); lo tecleado queda en `*_pedido`.
+- **Para Álvaro (no está en su PRD):** el optimizador corta el IS por nº de fechas (`optimization_service.py:997`) y la UI/servidor por índice de equity — dos definiciones a unificar; las fechas raras del P4 vienen de que `_resolve_filters` sustituye el rango pedido; el Modo B de Cangrejo aplica también a pirámides (divergencia consciente).
+- **Verificación:** 3 pruebas sintéticas; Jaume lo vio funcionar por encima con IS 90 la noche del 8 y **quiere revisarlo con calma el 9**. Ni un trade cambia.
+- **Estado:** SUBIDO a `sailor` y `staging` en `d43133a`.
+
+### [VERIFICADO · 2026-09-08 · CANGREJO EN EL BOT] El bot de alertas SÍ aplica los dos modos en entrada y pirámides (solo lectura, nada que cambiar)
+- Entrada: `calcular_acciones` aprieta el stop (Modo A, el aviso da el APRETADO) y topa las acciones (Modo B) sobre la distancia ya apretada, con el capital del cuadro de mandos; también sin `size_by_sl`. Pirámides: el bot no dimensiona, toma `size` de `pyr_executions` del simulador Python, al que pasa los tres campos y `hybrid_capital` real → Modo B con el presupuesto que queda, Modo A por el stop apretado. `/watch` bloquea el Modo B sin capital; `limpiar_inactivo` no toca los campos. Bot y programa apagados la noche del 8: mañana arrancan de cero con todo lo de hoy.
+
+### [FEATURE · 2026-09-08 · BANDA DE LOCATES] Monte Carlo sobre la semilla de los locates, SIN volver a correr (Jaume + Claude)
+- **La pregunta:** «entre qué dos curvas voy a acabar según me toquen los locates». Respuesta en segundos gracias a un atajo: sin puerta por EV, cambiar la semilla NO cambia ni un trade, solo lo que cuesta cada ticker-día. Con la corrida abierta se recalcula la factura para N semillas (`ceil(máx. corto del día/100) × precio_locate(ref, min, max, semilla, ticker, fecha)`) y de ahí salen N curvas de equity por fecha (PnL de los cierres del día menos factura del día; neta de locates, bruta de gastos fijos, igual que la curva principal).
+- **Dónde va:** CUARTA sub-pestaña de «Charts + Optimization IS» (Charts | What if and Stress test | **Banda de locates** | Optimization Surface). Bloque propio, `BandaLocates.tsx`; la equity/drawdown de siempre NO se toca. Endpoint aditivo `POST /api/locates/banda` (`routers/locates.py` + `services/locates_banda.py`), recibe trades compactos + rango + N + semilla base + semilla actual; devuelve percentiles por fecha (p10/p50/p90/min/max), finales y peor caída por semilla, y la curva de la semilla de la corrida. Tope 200 semillas.
+- **Qué se ve:** abanico p10–p90, mediana, mejor/peor, tu semilla en blanco; curva «sin locates» en un check apagado por defecto (con +11.819 $ brutos aplastaba la banda); cifras «acabas entre / mediana / peor semilla / peor caída / factura media / tu semilla con su percentil»; histograma de la peor caída por semilla (reutiliza `Histograma` del Edge, que ahora admite un pie opcional); veredicto en texto por anchura relativa de la banda (<10 % poco, <40 % relevante, si no enorme) y por lo que se llevan de media.
+- **CUADRE con el motor:** la semilla de la corrida reproduce EXACTAMENTE lo que dio el motor (`RTH prueba 1`, semilla 2: +1.975 $ y −12,4 %). **Trampa que rompió el cuadre la primera vez:** `result.locates_random.min/max` es el resumen de lo SORTEADO (su min es el mínimo observado, 1,52), no el rango configurado (1,0): prerrellenar con él sobrecargaba 361 $. El rango sale de `backtest_params.locates_random_min/max`.
+- **Con puerta por EV es APROXIMACIÓN y la pantalla lo avisa:** la puerta dejó entrar los trades baratos BAJO ESA semilla; al mantenerlos y cambiar el precio, tu semilla sale arriba del todo (percentil 98 en la prueba). No es fallo. La versión exacta (una pasada por semilla, ~10 semillas) queda para más adelante si la quiere.
+- **Lectura de `RTH prueba 1` con 50 semillas:** acabas entre +1.067 y +1.363 $, mediana +1.195 $, peor +967 $, peor caída −15,2 %, factura media −10.605 $. La banda es estrecha (297 $, 2,5 %): la suerte con la semilla pesa poco; lo que pesa es la media, que se lleva el 89,7 % del edge bruto.
+- **Detalles de UI que pidió Jaume:** separador entre sub-pestañas (se coló detrás en vez de delante); cifras de millones desbordaban la casilla por un `nowrap` — ahora «acabas entre» va en dos líneas y el resto parte en vez de pisar. El reloader de uvicorn se volvió a quedar colgado al guardar el backend (worker de las 19:29 con código de las 21:21): matar padre e hijo y arrancar limpio.
+- **Pruebas:** 4 sintéticas (orden min≤p10≤p50≤p90≤max≤bruta, determinismo y semilla reproducible, solo cortos pagan y paquetes enteros sobre el máximo del día, 200 semillas). `tsc` limpio.
+- **Estado:** SUBIDO a `sailor` y `staging` en `a9066dc`.
+
+
+---
+
+<!-- merge(staging) 2026-09-08: entradas propias de alvaro-rama-desarrollo que staging no tenia, conservadas al fusionar. Append-only como siempre. -->
 
 ### [HALLAZGO · 2026-08-29 · 02] "PM High Gap (%)" significa cosas distintas según la vía del motor
 - **Reporta:** ZCode (para Álvaro; afecta a todo el equipo)
@@ -4164,27 +5250,6 @@ solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
 - **Código tocado:** NINGUNO (confirmado) — solo ficheros de caché locales y `CACHE_DISK_QUOTA_GB=150` en el `.env` local (el default 40 GB además evictaba meses en corridas largas, otro modo de perder días)
 - **Estado:** ABIERTO
 
-### [VERIFICADO · 2026-09-07 · MAE] «MAX MAE 169,56%» en G&E RTH 2026 — NO es bug: excursión real, verificada contra velas (duda de Álvaro resuelta con evidencia)
-- **Plantea:** Álvaro («esto del MAE tiene que estar mal»)
-- **Verifica:** ZCode (para Álvaro)
-- **Qué se vio:** panel Aggregate con MAX MAE 169,56 % y avg 13,76 % en la corrida G&E RTH 2026 (autosave `6e53853b`, 518 trades; lanzada con risk_r=1 $, sin size_by_sl).
-- **Verificación:** el trade top (RGNT 2026-06-09, short a 2,4299 a las 09:37, stop estructural 7,33 = PM max, EOD) — consultado el parquet del lago: máximo ALTO entre 09:37-10:59 = 6,55 → (6,55−2,4299)/2,4299 = **169,56 % exacto**. La ventana es correcta: el máximo pre-entrada (7,33, premarket) NO cuenta. El motor (`portfolio_sim.py`, cota al precio de stop/TP solo en la vela de salida) calcula lo que dicen las velas.
-- **Por qué asusta:** la estrategia shortea fondos profundos tras fades del 60-70 % con el stop en el MÁXIMO VIEJO → stop al 150-200 % de la entrada. En % del precio la excursión parece apocalíptica; **en R todas las MAE grandes son ≤1 R** (RGNT 0,84 R; HKIT 0,84 R; PAVS/EHGO/SPHL 1,00 R = SL). 17/518 trades >50 %, 3 >100 %.
-- **MEJORA (opcional) para Jaume:** mostrar el MAE también en R (mae_r = mae_pct / distancia_al_stop_pct) junto al porcentual — en estrategias de stop lejano el porcentual solo engaña; en R se lee el riesgo real flotado.
-- **Código tocado:** NINGUNO (confirmado)
-- **Estado:** CERRADO (verificado, no bug)
-
-### [FEATURE · 2026-09-07 · ESTILO CANGREJO] Nueva tarjeta de Risk Management: acotar cada trade "o por recorrido del SL, o por pérdida máxima" — para Jaume y su IA
-- **Propone/decide:** Álvaro (implementado por ZCode en SU rama, a la espera del flujo habitual)
-- **Qué es:** tarjeta "Estilo Cangrejo" en el builder, debajo de todo lo del Stop Loss, con DOS modos EXCLUYENTES ("debe ser o una u otra", decisión de Álvaro): **(A) Recorrido máx. del SL** — el stop estructural/% nunca queda a más de D% del entry: se aprieta y la salida real pasa a ser el stop apretado (cambia DÓNDE sales); **(B) Pérdida máx. por trade** — el stop no se toca, se encoge el tamaño para que llegar al SL no cueste más de X% de la cuenta (cambia CUÁNTO pones). Son techos: solo recortan, nunca agrandan, sobre el sizing activo (MV/por SL/híbrido). Exclusivos con el Stop Loss Híbrido de Jaume: la UI los apaga mutuamente y si un payload trae ambos, el motor arbitra a favor de Cangrejo. **La lógica del híbrido NO se ha tocado.**
-- **Por qué:** con SL por market structure la distancia cambia en cada entrada y con el mismo MV unos stops cuestan poco y otros muchísimo (el motivo original de Álvaro). La primera versión de la tarjeta (4 topes: distancia, pérdida, MV entrada, MV pirámide) resultó poco intuitiva en pruebas con la Estrategia 1B y se simplificó a estos dos modos por decisión de Álvaro.
-- **PRD completo (el porqué y los detalles):** `docs/PRD_ESTILO_CANGREJO.md` — subido también a staging con esta entrada para que se pueda leer sin esperar al merge.
-- **Dónde (código, en `alvaro-rama-desarrollo`):** `backend/app/schemas/strategy.py`, `backend/app/services/{portfolio_sim,sim_dispatch,backtest_signals,backtest_service,backtest_orchestrator}.py`, `backend/tests/test_estilo_cangrejo.py` (19 tests), `frontend/src/types/strategy.ts`, `frontend/src/components/strategy-builder/RiskManagement.tsx`. El bot de alertas: INTACTO (ningún fichero de su zona).
-- **Verificación:** suite completa backend 733 passed; auditoría independiente del 2026-09-07 contra el código anterior (123 comparaciones de invarianza en 25 escenarios + 400 configs fuzz, cero divergencias incl. JIT; recortes exactos; plumbing punta a punta con captura de kwargs reales; el incidente "backtest idéntico con Cangrejo ON" reproducido por HTTP y explicado: con riesgo 0,5% y topes al 5% no pueden morder — correcto, no bug).
-- **Avisos para el que integre:** (1) con Cangrejo activo la simulación va SIEMPRE al motor Python (kernel Numba no lo implementa, como el híbrido); (2) el fix del dispatcher del 2026-09-07 hace que `hybrid_capital` llegue al motor también con Cangrejo sin híbrido — relevante para el bot cuando lo use; (3) `cangrejo_max_mv_entry_pct`/`cangrejo_max_mv_pyr_pct` siguen admitidos por el motor pero INERTES (sin UI) por si vuelven.
-- **Código tocado:** solo lo listado arriba, en rama de Álvaro. Nada de staging salvo este documento y esta entrada.
-- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
-
 ### [HALLAZGO · 2026-09-08 · 01] backtest_params guarda fechas que no son las ejecutadas en dos corridas de la 1B Sobri (2026-01-02→2026-09-04 vs. trades reales 2025)
 - **Reporta:** ZCode (para Álvaro)
 - **Severidad:** inconsistencia
@@ -4232,3 +5297,11 @@ solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
 - **Pendiente de coordinación:** `tests/test_backtest_golden.py` compara aggregate_metrics completo con igualdad exacta y solo corre en servidor → **hay que recapturar el golden-B allí** al desplegar (solo añade claves). P2.5 del PRD (topes de nocional/liquidez para PERCENT) queda fuera de este cambio, por decisión.
 - **Código tocado:** `backend/app/services/{backtest_service,backtest_orchestrator}.py`, `backend/app/routers/{backtest,strategy_search}.py`, `backend/tests/test_prd_metricas_oos.py` (nuevo), `frontend/src/lib/api_backtester.ts`, `frontend/src/app/backtester/page.tsx`, `frontend/src/components/backtester/{MetricsCard.tsx,tabs/EquityCurveTab.tsx}`, `docs/PRD_METRICAS_Y_OOS_BACKTESTER.md` (nuevo). Zona bot-alerts: INTACTA.
 - **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+### [DECISIÓN PENDIENTE · 2026-09-08 · merge staging→álvaro] Regla de céntimos: ¿el win invalidado se QUITA o se QUEDA pagando solo sus fees?
+- **Plantea:** ZCode al fusionar staging en `alvaro-rama-desarrollo` (respetando el flujo de cada uno)
+- **El conflicto:** la variante de Álvaro (2b597cf, decisión 2026-09-07: «el win invalidado se queda en la curva pagando solo sus comisiones, la mesa las cobra igual») **nunca se subió a staging** — solo llegó allí el PRD de docs. La recomposición en R de staging (892b7fd) se construyó sobre la semántica contraria: **quitar el ganador invalidado** (ocupando su hueco del día), con tests propios (`test_el_ganador_descartado_SIGUE_OCUPANDO_su_hueco_del_dia`, `test_what_if_recomposicion.py`).
+- **Qué se ha hecho en el merge:** manda **staging** (quitar) para no romper su recomposición; las correcciones de Álvaro que SÍ viajan (no chocan con nadie): recorrido entre **MEDIAS** de salida y **borde de 10¢ inclusivo** (`_salida_media`, `>= -1e-9`). Los 3 tests de la variante fees quedan `xfail(strict)` con la razón apuntada aquí.
+- **Quién decide:** Álvaro con Jaume. Si gana la variante fees: re-aplicar el hunk (está en 2b597cf), adaptar los tests de recomposicion (la supervivencia del locate del día cambia: un día nunca «queda sin trades» por céntimos) y subirlo TODO junto a staging para que no vuelva a divergir.
+- **Código tocado:** merge en rama `alvaro-rama-desarrollo` (what_if_service.py con nota de merge inline; tests xfail). Nada en staging.
+- **Estado:** ABIERTO — pendiente de acuerdo.

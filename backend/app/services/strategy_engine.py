@@ -1393,6 +1393,12 @@ def _compute_from_config(
         session_ref=cfg.get("session_ref"),
         squeeze_direction=cfg.get("squeeze_direction"),
         fade_ref=cfg.get("fade_ref"),
+        # "Overhead last X days". Si estos cuatro no se reenviaran, el
+        # parametro se perderia MUDO y el indicador calcularia con el
+        # defecto: mismo fallo que ya tuvieron otros indicadores.
+        overhead_extreme=cfg.get("overhead_extreme"),
+        overhead_ref=cfg.get("overhead_ref"),
+        overhead_vol_rule=cfg.get("overhead_vol_rule"),
     )
 
 

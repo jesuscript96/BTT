@@ -11,7 +11,6 @@ import ctypes
 import datetime
 import gc
 import logging
-import math
 import sys
 import time
 
@@ -122,6 +121,7 @@ _sessions_mask_cache: dict = {}
 _DAILY_LOOKBACK_INDICATORS = (
     "High of last X days", "Low of last X days",
     "Max of last X days", "Min of last X days",
+    "Overhead last X days",
 )
 
 
@@ -160,13 +160,11 @@ def run_backtest(
     hybrid_stop: bool = False,
     hybrid_black_swan_pct: float | None = None,
     hybrid_max_loss_pct: float | None = None,
-    # Estilo Cangrejo: cuatro techos de sizing (ver portfolio_sim.simulate).
-    # Exclusivo con el hibrido: con ambos on, gana Cangrejo.
+    # Estilo Cangrejo: los dos modos de acotar el trade. Ver
+    # `portfolio_sim.aprieta_stop_cangrejo` / `tope_cangrejo`.
     cangrejo_active: bool = False,
     cangrejo_max_sl_dist_pct: float | None = None,
     cangrejo_max_loss_at_sl_pct: float | None = None,
-    cangrejo_max_mv_entry_pct: float | None = None,
-    cangrejo_max_mv_pyr_pct: float | None = None,
     fees: float = 0.0,
     fee_type: str = "PERCENT",
     slippage: float = 0.0,
@@ -178,6 +176,17 @@ def run_backtest(
     # Tope de locates: maximo de paquetes de 100 acciones en corto por
     # ticker-dia. 0 = sin tope. Ver portfolio_sim.simulate.
     max_locates: int = 0,
+    # Locates ALEATORIOS (2026-09-08): en vez de `locates_cost` fijo, un precio
+    # sorteado por ticker-dia dentro de [min, max], sesgado por el precio de la
+    # accion y determinista por semilla. Ver `locates_random.py`. Con el flag
+    # apagado esta funcion es EXACTAMENTE la de siempre. Fuerza la via
+    # SECUENCIAL: es la unica en la que el precio puede variar por ticker-dia.
+    locates_random: bool = False,
+    locates_random_min: float = 0.0,
+    locates_random_max: float = 0.0,
+    locates_seed: int = 0,
+    # Puerta por EV (fase 2): `ConfigPuerta` o None. Solo via secuencial.
+    ev_gate=None,
     look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
@@ -213,19 +222,15 @@ def run_backtest(
             hybrid_black_swan_pct = rm.get("hybrid_black_swan_pct")
         if hybrid_max_loss_pct is None:
             hybrid_max_loss_pct = rm.get("hybrid_max_loss_pct")
-        # Lo mismo con el Estilo Cangrejo: los porcentajes viven en la
-        # estrategia (mismo criterio que el hibrido) para que backtest y bot no
-        # puedan dimensionar distinto sin que nada avise.
+        # Cangrejo, mismo criterio: vive en la estrategia para que backtest,
+        # genetico y bot dimensionen igual. El argumento puede FORZARLO pero no
+        # apagarlo, como `size_by_sl` y el hibrido.
         if rm.get("cangrejo_active") is not None:
             cangrejo_active = cangrejo_active or bool(rm.get("cangrejo_active", False))
         if cangrejo_max_sl_dist_pct is None:
             cangrejo_max_sl_dist_pct = rm.get("cangrejo_max_sl_dist_pct")
         if cangrejo_max_loss_at_sl_pct is None:
             cangrejo_max_loss_at_sl_pct = rm.get("cangrejo_max_loss_at_sl_pct")
-        if cangrejo_max_mv_entry_pct is None:
-            cangrejo_max_mv_entry_pct = rm.get("cangrejo_max_mv_entry_pct")
-        if cangrejo_max_mv_pyr_pct is None:
-            cangrejo_max_mv_pyr_pct = rm.get("cangrejo_max_mv_pyr_pct")
 
     t_total = time.time()
 
@@ -241,6 +246,9 @@ def run_backtest(
         # slab corriera con modelo, lo IGNORARIA en silencio: el resultado
         # saldria etiquetado como "filtrado" sin haber filtrado nada.
         and entry_model is None and feature_collector is None
+        # El sorteo de locates es por ticker-dia y el slab pasa UN solo
+        # `locates_cost` para todos: correria con el fijo en silencio.
+        and not locates_random and ev_gate is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -438,6 +446,11 @@ def run_backtest(
     # totals in _compute_global_equity_and_drawdown / _aggregate_metrics so
     # dollar totals stay unchanged while no trade's win/loss is skewed by it.
     locates_fee_by_date: dict[str, float] = {}
+    # Precios de locate sorteados (uno por ticker-dia con entradas), para el
+    # resumen del resultado. Vacio si el modo aleatorio esta apagado.
+    _sorteos: list[float] = []
+    # Veredictos de la puerta por EV de toda la corrida (vacio sin puerta).
+    _puerta: dict = {"evaluadas": 0, "aceptadas": 0, "rechazadas": 0, "con_ev_por_defecto": 0}
 
     # ── Fase 1-slab: stream desde slabs locales (refs mmap) + señales ───────
     # Sustituye fetch+ensamblado pandas por slices numpy del slab store. Los meses
@@ -474,8 +487,6 @@ def run_backtest(
             "cangrejo_active": cangrejo_active,
             "cangrejo_max_sl_dist_pct": cangrejo_max_sl_dist_pct,
             "cangrejo_max_loss_at_sl_pct": cangrejo_max_loss_at_sl_pct,
-            "cangrejo_max_mv_entry_pct": cangrejo_max_mv_entry_pct,
-            "cangrejo_max_mv_pyr_pct": cangrejo_max_mv_pyr_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
             "max_locates": max_locates,
@@ -508,6 +519,7 @@ def run_backtest(
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
     _n_workers = _bsig.get_parallel_workers()
     if (not _slab_mode) and entry_model is None and feature_collector is None \
+            and not locates_random and ev_gate is None \
             and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
@@ -537,8 +549,6 @@ def run_backtest(
             "cangrejo_active": cangrejo_active,
             "cangrejo_max_sl_dist_pct": cangrejo_max_sl_dist_pct,
             "cangrejo_max_loss_at_sl_pct": cangrejo_max_loss_at_sl_pct,
-            "cangrejo_max_mv_entry_pct": cangrejo_max_mv_entry_pct,
-            "cangrejo_max_mv_pyr_pct": cangrejo_max_mv_pyr_pct,
             "fees": fees, "fee_type": fee_type, "slippage": slippage,
             "locates_cost": locates_cost, "locate_type": locate_type,
             "max_locates": max_locates,
@@ -581,6 +591,14 @@ def run_backtest(
         eq_vals = sim_r["equity"]
         raw_trades = sim_r["trades"]
         ticker_locates_fee = float(sim_r.get("locates_fee", 0.0) or 0.0)
+        # Puerta por EV: se cuentan TODOS los veredictos del dia, tambien los de
+        # un dia que acabo sin trades porque los rechazo todos.
+        _vered = sim_r.get("ev_gate") or []
+        for _v in _vered:
+            _puerta["evaluadas"] += 1
+            _puerta["aceptadas" if _v["entra"] else "rechazadas"] += 1
+            if _v.get("ev_por_defecto"):
+                _puerta["con_ev_por_defecto"] += 1
         if not raw_trades:
             return
 
@@ -608,6 +626,25 @@ def run_backtest(
             raw_trades, timestamps, ticker_e, date_e, strategy_def, risk_unit_dollar,
             gap_pct=e["gap_pct"],
         ))
+        # Con locates aleatorios el precio sorteado se pega a cada trade del
+        # ticker-dia: es la unica forma de ver DESPUES por que ese dia costo lo
+        # que costo. `locates_fee_day` es la factura del dia entero (se cobra
+        # una vez y la comparten todos los trades de ese ticker ese dia).
+        _sorteo = e.get("sorteo")
+        if _sorteo is not None or ticker_locates_fee > 0:
+            for _t in trades_records:
+                if _sorteo is not None:
+                    _t["locate_pkg_price"] = _sorteo["precio"]
+                    _t["locate_ref_price"] = _sorteo["precio_ref"]
+                _t["locates_fee_day"] = round(ticker_locates_fee, 4)
+        if _vered:
+            _por_idx = {v["idx"]: v for v in _vered if v.get("entra")}
+            for _t in trades_records:
+                _v = _por_idx.get(_t.get("entry_idx"))
+                if _v is not None:
+                    _t["ev_gate_ev"] = _v["ev_pct"]
+                    _t["ev_gate_fade"] = _v["fade_pct"]
+                    _t["ev_gate_paquetes"] = _v["paquetes"]
         equity = _extract_equity_from_values(eq_vals, timestamps)
         stats = _extract_day_stats_from_values(
             eq_vals, ticker_e, date_e, trades_records, e["gap_pct"], ticker_locates_fee
@@ -1027,6 +1064,27 @@ def run_backtest(
         else:
             timestamps_arr = pd.to_datetime(ts_arr).values.astype("datetime64[ns]").astype(np.int64)
 
+        # Locates aleatorios: el precio del paquete de ESTE ticker-dia. Sale de
+        # un hash de (semilla, ticker, fecha) — no de un generador que avanza —
+        # asi que no depende del orden de proceso. La referencia es la primera
+        # vela del frame (04:00): causal, y es lo que mira el broker esa manana.
+        _sorteo_dia = None
+        _locate_dia = locates_cost
+        _tipo_locate_dia = locate_type
+        if locates_random:
+            from app.services.locates_random import precio_locate
+            _opens = arrays["open"]
+            _precio_ref = float(_opens[0]) if len(_opens) else 0.0
+            _sorteo_dia = precio_locate(
+                _precio_ref, locates_random_min, locates_random_max,
+                locates_seed, ticker, date,
+            )
+            _locate_dia = _sorteo_dia["precio"]
+            # El sorteo es en $ por paquete de 100: la semantica PERCENT (% del
+            # riesgo) no tiene sentido aqui y se ignora a proposito.
+            _tipo_locate_dia = "FLAT"
+            _sorteos.append(_locate_dia)
+
         # Los kwargs van en un dict para poder RE-simular este mismo
         # ticker-dia con el corte del cortacircuitos diario (ver _flush_dia).
         _sim_kwargs = dict(
@@ -1048,14 +1106,13 @@ def run_backtest(
                 cangrejo_active=cangrejo_active,
                 cangrejo_max_sl_dist_pct=cangrejo_max_sl_dist_pct,
                 cangrejo_max_loss_at_sl_pct=cangrejo_max_loss_at_sl_pct,
-                cangrejo_max_mv_entry_pct=cangrejo_max_mv_entry_pct,
-                cangrejo_max_mv_pyr_pct=cangrejo_max_mv_pyr_pct,
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,
-                locates_cost=locates_cost,
-                locate_type=locate_type,
+                locates_cost=_locate_dia,
+                locate_type=_tipo_locate_dia,
                 max_locates=max_locates,
+                ev_gate=ev_gate,
                 look_ahead_prevention=look_ahead_prevention,
                 sl_stop=sig_sl_stop,
                 sl_trail=sig_sl_trail,
@@ -1093,6 +1150,13 @@ def run_backtest(
         del mini_df
 
         if not sim_result["trades"]:
+            # Sin puerta es lo de siempre. Con puerta, un dia sin trades puede
+            # ser un dia en que la puerta lo rechazo todo: hay que contarlo.
+            if ev_gate is not None and sim_result.get("ev_gate"):
+                _emitir({"ticker": ticker, "date": date, "sim_result": sim_result,
+                         "sim_kwargs": _sim_kwargs, "ts_arr": arrays["timestamp"],
+                         "gap_pct": daily_stats.get("gap_pct"), "cash": compounding_cash,
+                         "sorteo": _sorteo_dia})
             del sim_result
             continue
 
@@ -1101,6 +1165,7 @@ def run_backtest(
             "sim_kwargs": _sim_kwargs, "ts_arr": arrays["timestamp"],
             "gap_pct": daily_stats.get("gap_pct"),
             "cash": compounding_cash,
+            "sorteo": _sorteo_dia,
         }
         if _tope_on:
             # Con el cortacircuitos activo no se puede emitir todavia: el corte
@@ -1157,6 +1222,16 @@ def run_backtest(
         f"total={round(time.time()-t_total, 2)}s"
     )
 
+    _resumen_locates = None
+    if locates_random:
+        from app.services.locates_random import resumen as _resumen_sorteo
+        _resumen_locates = {
+            "enabled": True,
+            "min": float(locates_random_min), "max": float(locates_random_max),
+            "seed": int(locates_seed),
+            **_resumen_sorteo(_sorteos),
+        }
+
     return {
         "aggregate_metrics": aggregate,
         "day_results": day_results,
@@ -1168,6 +1243,13 @@ def run_backtest(
         # Sesiones cortadas por el limite de perdida diaria. Lista vacia cuando
         # el limite esta apagado, que es el default.
         "daily_limit_log": daily_limit_log,
+        # Resumen del sorteo de locates. Solo con el modo aleatorio: sin el, el
+        # resultado no lleva la clave y es byte a byte el de siempre.
+        **({"locates_random": _resumen_locates} if locates_random else {}),
+        **({"ev_gate": {**_puerta, "ventana": int(ev_gate.ventana), "por": ev_gate.por,
+                        "ev_defecto_pct": float(ev_gate.ev_defecto_pct),
+                        "min_trades": int(ev_gate.min_trades),
+                        "n_sombra": int(ev_gate.sombra_cierre_ns.size)}} if ev_gate is not None else {}),
     }
 
 
@@ -1730,10 +1812,6 @@ def _aggregate_metrics(
         "max_consecutive_losing_days": 0, "expectancy": 0, "payoff_ratio": 0,
         "avg_r_per_day": 0,
         "avg_r_ui": 0.0,
-        # PRD_METRICAS_Y_OOS (2026-09-08): ver notas en el dict de retorno.
-        "r_total": 0.0,
-        "total_return_net_pct": 0.0,
-        "calmar_ratio_annualized": 0.0,
     }
     if not day_results and not trades:
         return empty
@@ -1782,19 +1860,24 @@ def _aggregate_metrics(
     # Calculate Total Return against Initial Cash
     # PnL / Init Cash gives the actual Return % for the period on the account size
     total_pnl = total_pnl_trades
-    total_return = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
-
-    # Return NETO (PRD_METRICAS_Y_OOS P2.1): mismo criterio que el bruto de
-    # arriba pero restando los gastos mensuales (total_pnl_net). Clave nueva
-    # para no romper la comparabilidad de total_return_pct con corridas
-    # guardadas — decisión de Álvaro 2026-09-08.
-    total_return_net = (total_pnl_net / init_cash) * 100.0 if init_cash > 0 else 0.0
-
-    # ΣR de los trades (PRD_METRICAS_Y_OOS P3). Es el único comparador inmune
-    # a init_cash/risk_type: con riesgo FIXED el return % depende del capital
-    # que se ponga, y la columna total_return_r de backtest_results llevaba
-    # meses guardando 0 porque leía una clave que este dict no tenía.
-    r_total = float(sum(t.get("r_multiple") or 0.0 for t in trades))
+    # RETURN NETO (PRD Alvaro 2026-09-08, P2). Antes se dividia `total_pnl`,
+    # que descuenta locates pero NO los gastos fijos mensuales: con 300 $/mes
+    # sobre 10.000 $ la tarjeta inflaba un 36 % del capital que la curva
+    # punteada «con gastos» si descontaba. El bruto sigue viajando aparte
+    # (`total_return_pct_gross`) para poder comparar con corridas viejas.
+    total_return_gross = (total_pnl / init_cash) * 100.0 if init_cash > 0 else 0.0
+    total_return = (total_pnl_net / init_cash) * 100.0 if init_cash > 0 else 0.0
+    # R TOTAL (P3): el buscador de estrategias leia `total_return_r` y esta
+    # clave no existia, asi que la columna y el filtro «beneficio neto minimo»
+    # iban siempre a 0.
+    total_return_r = float(sum((t.get("r_multiple") or 0.0) for t in trades))
+    # Dias de calendario que abarca la corrida, para anualizar el Calmar.
+    _fechas = sorted({str(t.get("date", ""))[:10] for t in trades if t.get("date")})
+    try:
+        span_days = (pd.to_datetime(_fechas[-1]) - pd.to_datetime(_fechas[0])).days + 1 \
+            if len(_fechas) >= 2 else 1
+    except Exception:
+        span_days = 1
 
     # Daily PnL timeline (net of locates), computed once: the dense
     # Sharpe/Sortino block below and the daily win/loss streaks must both see
@@ -1896,31 +1979,17 @@ def _aggregate_metrics(
     # Expectancy
     expectancy = avg_pnl
 
-    # Calmar = total return / abs(max dd) -> Using annualized return makes more sense, but simple total is standard here
-    calmar_ratio = (total_return / abs(final_max_dd)) if final_max_dd != 0 else 0.0
-
-    # Calmar ANUALIZADO (PRD_METRICAS_Y_OOS P2.2): CAGR / |maxDD|. Clave
-    # nueva — calmar_ratio se queda con retorno total para no romper la
-    # comparabilidad de corridas guardadas (decisión de Álvaro 2026-09-08).
-    # CAGR sobre el lapso CALENDARIO entre primer y último trade (mismo
-    # criterio de ventana que el bloque denso de arriba), no sobre nº de
-    # sesiones. Si la cuenta queda en <=0 (arrasada), el CAGR no existe: 0.0.
-    calmar_ratio_annualized = 0.0
-    try:
-        trade_dates = sorted({str(t.get("date", ""))[:10] for t in trades if t.get("date")})
-        if trade_dates:
-            span_days = (pd.to_datetime(trade_dates[-1]) - pd.to_datetime(trade_dates[0])).days
-            final_equity = init_cash + total_pnl
-            if (
-                span_days > 0
-                and init_cash > 0
-                and final_equity > 0
-                and final_max_dd != 0
-            ):
-                cagr_pct = ((final_equity / init_cash) ** (365.0 / span_days) - 1.0) * 100.0
-                calmar_ratio_annualized = cagr_pct / abs(final_max_dd)
-    except Exception as e:  # fechas imposibles, overflow del CAGR, etc.
-        logger.warning(f"Error computing annualized calmar: {e}")
+    # CALMAR ANUALIZADO (P2): CAGR neto / |max DD|. El de siempre (retorno
+    # TOTAL / max DD) se conserva como `calmar_ratio_total`; en ventanas de un
+    # ano apenas cambia, en backtests largos el total mentia (y el tooltip de
+    # la UI decia «anualizada» sin serlo). Por debajo de 30 dias no se anualiza:
+    # elevar a 365/5 convertiria una semana buena en un numero absurdo.
+    calmar_ratio_total = (total_return / abs(final_max_dd)) if final_max_dd != 0 else 0.0
+    if init_cash > 0 and span_days >= 30 and (init_cash + total_pnl_net) > 0:
+        cagr_pct = (((init_cash + total_pnl_net) / init_cash) ** (365.0 / span_days) - 1.0) * 100.0
+    else:
+        cagr_pct = total_return
+    calmar_ratio = (cagr_pct / abs(final_max_dd)) if final_max_dd != 0 else 0.0
 
     # DD/Return ratio -> How much max DD to achieve Total Return
     dd_return_ratio = (abs(final_max_dd) / total_return) if total_return != 0 else 0.0
@@ -2019,114 +2088,14 @@ def _aggregate_metrics(
         "payoff_ratio": round(payoff_ratio, 4),
         "total_expenses": round(total_expenses, 2),
         "total_pnl_net": round(total_pnl_net, 2),
+        # PRD Alvaro 2026-09-08 (P2/P3): ver comentarios arriba.
+        "total_return_pct_gross": round(total_return_gross, 4),
+        "total_return_r": round(total_return_r, 4),
+        "cagr_pct": round(cagr_pct, 4),
+        "calmar_ratio_total": round(calmar_ratio_total, 4),
+        "span_days": int(span_days),
         "avg_r_per_day": round(sum(t.get("r_multiple") or 0.0 for t in trades) / total_days, 4) if total_days > 0 else 0,
         "avg_r_ui": round(avg_r_ui, 4),
-        # PRD_METRICAS_Y_OOS (2026-09-08, Álvaro): tres claves nuevas.
-        # · r_total — ΣR de los trades: comparador inmune a init_cash/risk_type
-        #   (alimenta la columna total_return_r de backtest_results, que leía
-        #   una clave inexistente y guardaba siempre 0).
-        # · total_return_net_pct — return restando monthly_expenses; el bruto
-        #   (total_return_pct) se queda como estaba por comparabilidad.
-        # · calmar_ratio_annualized — CAGR/|maxDD|; calmar_ratio sigue siendo
-        #   retorno total/|maxDD| por lo mismo.
-        "r_total": round(r_total, 2),
-        "total_return_net_pct": round(total_return_net, 4),
-        "calmar_ratio_annualized": round(calmar_ratio_annualized, 4),
-    }
-
-
-def compute_is_oos_metrics(result: dict, is_percent: float) -> dict | None:
-    """Métricas IS/OOS server-side a partir de un resultado completo (PRD P1).
-
-    Réplica EXACTA del recorte que hacía el frontend (page.tsx memo
-    `isFilteredResult`, 2026-09-08): cutoff por ÍNDICE de equity —
-    `cutoffIdx = max(1, floor(len(global_equity)·is/100))`,
-    `cutoffTime = eq[cutoffIdx-1].time` — y trades particionados por
-    `entry_time_epoch <= cutoffTime`. Esa partición mete los trades del día
-    límite en OOS aunque su punto de equity sea el del corte: así lo hace la
-    UI y aquí lo replicamos bit a bit para que lo persistido coincida con lo
-    que el usuario ya ve en la pestaña IS.
-
-    El bloque viaja como `results["is_oos"]` solo cuando is_percent < 100 y
-    hay curva de equity. No re-ejecuta nada ni toca aggregate_metrics.
-
-    Convención por segmento (misma que el global): total_pnl = Σpnl −
-    locates de los day_results del segmento; total_return_pct sobre
-    init_cash (no sobre la equity de arranque del segmento); maxDD relativo
-    al máximo DENTRO del slice de equity del segmento (IS: eq[:cutoffIdx];
-    OOS: eq[cutoffIdx-1:], arrancando del punto de corte como pico inicial).
-    """
-    try:
-        is_pct = float(is_percent)
-    except (TypeError, ValueError):
-        return None
-    if not is_pct or is_pct >= 100:
-        return None
-
-    eq = result.get("global_equity") or []
-    if len(eq) < 2:
-        return None
-
-    cutoff_idx = max(1, math.floor(len(eq) * is_pct / 100.0))
-    cutoff_time = int(eq[cutoff_idx - 1].get("time") or 0)
-
-    trades = result.get("trades") or []
-    is_trades = [t for t in trades if int(t.get("entry_time_epoch") or 0) <= cutoff_time]
-    oos_trades = [t for t in trades if int(t.get("entry_time_epoch") or 0) > cutoff_time]
-
-    # Locates por segmento: mismas fechas-medianochche-UTC que los puntos de
-    # equity (los day_results particionan igual que los trades del día límite).
-    day_results = result.get("day_results") or []
-    is_locates = 0.0
-    oos_locates = 0.0
-    for d in day_results:
-        d_str = str(d.get("date", ""))[:10]
-        if not d_str:
-            continue
-        try:
-            d_epoch = int(pd.Timestamp(d_str, tz="UTC").timestamp())
-        except Exception:
-            continue
-        fee = float(d.get("locates_fee", 0.0) or 0.0)
-        if d_epoch <= cutoff_time:
-            is_locates += fee
-        else:
-            oos_locates += fee
-
-    init_cash = float(result.get("aggregate_metrics", {}).get("_init_cash") or 0)
-    if init_cash <= 0:
-        # init_cash no viaja en el payload: lo inferimos del primer punto de la
-        # curva (punto 0 = capital antes de ningún trade, por construcción).
-        init_cash = float(eq[0].get("value") or 0)
-
-    def _seg_metrics(seg_trades: list[dict], seg_locates: float, seg_eq: list[dict]) -> dict:
-        pnls = [float(t.get("pnl", 0.0) or 0.0) for t in seg_trades]
-        wins = sum(1 for p in pnls if p > 0)
-        gross_profit = sum(p for p in pnls if p > 0)
-        gross_loss = abs(sum(p for p in pnls if p < 0))
-        seg_total_pnl = sum(pnls) - seg_locates
-        seg_r_total = float(sum(t.get("r_multiple") or 0.0 for t in seg_trades))
-        seg_max_dd = 0.0
-        if len(seg_eq) >= 2:
-            vals = np.array([p.get("value", 0.0) for p in seg_eq], dtype=np.float64)
-            running_max = np.maximum.accumulate(vals)
-            dd = np.where(running_max > 0, (vals / running_max - 1) * 100, 0.0)
-            seg_max_dd = float(dd.min())
-        return {
-            "total_trades": len(seg_trades),
-            "win_rate_pct": round(wins / len(pnls) * 100, 2) if pnls else 0.0,
-            "avg_profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else 0.0,
-            "r_total": round(seg_r_total, 2),
-            "total_pnl": round(seg_total_pnl, 2),
-            "total_return_pct": round(seg_total_pnl / init_cash * 100.0, 4) if init_cash > 0 else 0.0,
-            "max_drawdown_pct": round(seg_max_dd, 4),
-        }
-
-    return {
-        "is_percent": is_pct,
-        "cutoff_time": cutoff_time,
-        "is_metrics": _seg_metrics(is_trades, is_locates, eq[:cutoff_idx]),
-        "oos_metrics": _seg_metrics(oos_trades, oos_locates, eq[cutoff_idx - 1:] if cutoff_idx - 1 < len(eq) else []),
     }
 
 

@@ -15,24 +15,22 @@ def mueve_bastante(trade: Dict[str, Any], min_cents: float) -> bool:
     """¿Recorrio el precio los centimos que exige la mesa de fondeo?
 
     LA REGLA. Las cuentas de fondeo no abonan un trade que no se haya movido un
-    minimo — tipicamente 10 centamos. Al llegar al umbral cuenta el beneficio
+    minimo — tipicamente 10 centimos. Al llegar al umbral cuenta el beneficio
     ENTERO, no el sobrante por encima de los 10. Por eso esto devuelve un si/no
     y no resta nada. (Jaume, 2026-09-04: «si supera los 10 centimos entonces se
     cuenta el beneficio de todo el trade».)
 
-    EL RECORRIDO ES ENTRE MEDIAS (corregido 2026-09-07). TTP lo publica asi:
-    «10.0 cents difference between average entry and average exit price». Se
-    mide del precio MEDIO de entrada al precio MEDIO de salida: con parciales y
+    EL RECORRIDO ES ENTRE MEDIAS (corregido 2026-09-07, re-portado del
+    2b597cf de Álvaro en el merge del 08-sep). TTP lo publica asi: «10.0 cents
+    difference between average entry and average exit price». Se mide del
+    precio MEDIO de entrada al precio MEDIO de salida: con parciales y
     piramides cada venta cuenta por las acciones que cerro (`_salida_media`).
-    Mirar solo el precio de la ULTIMA venta (el `exit_price` del trade
-    agrupado) daba el veredicto equivocado en los dos sentidos: un trailing
-    final flojo haca parecer corto un recorrido que la mesa cuenta, y una
-    ultima venta alta haca pasar un trade cuya media no llega.
+    Mirar solo el precio de la ULTIMA venta daba el veredicto equivocado en
+    los dos sentidos.
 
     EL BORDE EXACTO CUENTA (corregido 2026-09-07). La norma dice «at least 10
     price ticks» y su ejemplo canonico es compra 50.10 venta «50.20 (at
-    least)»: 10 centimos justos SI cuentan. Hasta hoy se exiga estrictamente
-    mayor por la lectura de «supera» del 2026-09-04.
+    least)»: 10 centimos justos SI cuentan.
 
     ES ASIMETRICA, y no es un descuido: quien llama la aplica SOLO a los trades
     ganadores. La mesa no te paga lo que no se movio, pero las perdidas te las
@@ -46,14 +44,13 @@ def mueve_bastante(trade: Dict[str, Any], min_cents: float) -> bool:
     Se usa el precio MEDIO de entrada cuando lo hay: con piramidacion el
     recorrido que cuenta es desde donde quedo la posicion, no desde el primer
     trozo.
-
-    Sin precios no se puede juzgar. Se deja pasar en vez de descartarlo: esta
-    regla quita trades ganadores, y quitarlos por falta de dato castigaria la
-    curva por un hueco nuestro, no por la regla de la mesa.
     """
     entrada = trade.get("avg_entry_price") or trade.get("entry_price")
     salida = _salida_media(trade)
     if not entrada or salida is None:
+        # Sin precios no se puede juzgar. Se deja pasar en vez de descartarlo:
+        # esta regla quita trades ganadores, y quitarlos por falta de dato
+        # castigaria la curva por un hueco nuestro, no por la regla de la mesa.
         return True
     # EPSILON. En coma flotante 50.20 - 50.10 sale 0.09999999999999998, asi que
     # el caso del borde exacto (que SI cuenta) pasaria por «menos de 0,10» si
@@ -80,6 +77,122 @@ def _salida_media(trade: Dict[str, Any]):
         if total > 0:
             return sum(precio * size for precio, size in ventas) / total
     return trade.get("exit_price")
+
+
+def _locates_supervivientes(
+    locates_por_par: Dict[str, Any] | None,
+    filtrados: List[Dict[str, Any]],
+) -> Dict[str, float]:
+    """Locates que se siguen debiendo con los trades que quedan.
+
+    EL FALLO QUE ARREGLA. La curva del backtest va NETA de locates —
+    `_compute_global_equity_and_drawdown` los descuenta por fecha— y la del
+    What-if iba BRUTA, porque el locate no esta dentro del pnl de ningun trade
+    y aqui no llegaba por ningun sitio. Resultado: la simulacion salia mejor
+    que el original por el importe entero de la factura de alquiler, y una
+    regla que solo QUITA ganadores parecia mejorar la estrategia.
+
+    LA REGLA ES HONESTA, no un reparto aproximado: el locate se cobra UNA VEZ
+    por ticker-dia, asi que si sobrevive aunque sea un trade de ese ticker ese
+    dia, se sigue debiendo ENTERO. Si no sobrevive ninguno, no se alquilo nada
+    y no se paga. Por eso viaja por par (`TICKER|FECHA`) y no por fecha.
+
+    NO SE REESCALA con la recomposicion. Si la curva filtrada es mas pequena se
+    habrian alquilado menos paquetes, asi que cobrarlo entero es el lado
+    conservador — y el unico que no exige inventarse el tamano del paquete.
+    """
+    if not locates_por_par:
+        return {}
+    vivos = {f"{t.get('ticker', '')}|{t.get('date', '')}" for t in filtrados}
+    por_fecha: Dict[str, float] = {}
+    for clave, fee in locates_por_par.items():
+        if clave not in vivos:
+            continue
+        fecha = str(clave).split("|", 1)[-1]
+        por_fecha[fecha] = por_fecha.get(fecha, 0.0) + float(fee or 0.0)
+    return por_fecha
+
+
+def _recomponer_por_dia(
+    originales: List[Dict[str, Any]],
+    filtrados: List[Dict[str, Any]],
+    init_cash: float,
+) -> None:
+    """Reescala el PnL de los trades que quedan al capital que habrian tenido.
+
+    EL PROBLEMA. Con `risk_type = PERCENT` cada trade arriesga un % del capital
+    VIVO, asi que los dolares que gana dependen del balance que hubiera ese
+    dia. Quitar trades y volver a sumar los dolares del resto rompe el vinculo
+    con el capital y produce cifras imposibles. Medido sobre la corrida de
+    3.544 trades: quitando el mejor 10 %, la suma del top eran 152.578 $ —mas
+    que TODO el beneficio— y la curva aditiva acababa en -84.411 $, dinero
+    negativo. Recompuesta da 2.617 $, o sea -73,8 %, que es la respuesta util.
+
+    La regla de los centimos es justo ese caso, y peor: descarta ganadores de
+    forma sistematica, no un 10 % puntual.
+
+    LA CUENTA. El motor compone POR DIA, no por trade: dentro de una sesion
+    todas las posiciones se dimensionan sobre el balance de apertura y el PnL
+    se acumula al cerrar. Asi que el PnL de cada dia escala con la razon entre
+    los dos capitales de apertura de ESE dia:
+
+        factor(dia) = capital_filtrado(dia) / capital_original(dia)
+
+    Es exactamente recomponer en R-multiplos —R = pnl / riesgo, y el riesgo es
+    un % del capital, asi que el % se cancela—, pero sin necesitar la distancia
+    al stop de cada trade.
+
+    NO SE TOCA EL RIESGO FIJO. En aditivo los dolares de un trade no dependen
+    del balance y sumarlos ya es correcto; quien llama solo entra aqui con
+    PERCENT.
+
+    INVARIANTE. Sin ningun filtro los dos capitales coinciden dia a dia, el
+    factor es 1,0 exacto y la curva sale identica a la de partida. Hay un test.
+
+    LA CUENTA NO PUEDE IR A NEGATIVO. Si el capital recompuesto llega a cero se
+    queda ahi y los dias siguientes escalan por cero: no se puede perder mas de
+    lo que hay. Es lo contrario de lo que hacia la suma en dolares.
+    """
+    pnl_por_dia: Dict[str, float] = {}
+    for t in originales:
+        d = t.get("date") or ""
+        if d:
+            pnl_por_dia[d] = pnl_por_dia.get(d, 0.0) + float(t.get("pnl") or 0.0)
+
+    apertura: Dict[str, float] = {}
+    capital = init_cash
+    for d in sorted(pnl_por_dia):
+        apertura[d] = capital
+        capital += pnl_por_dia[d]
+
+    por_dia: Dict[str, List[Dict[str, Any]]] = {}
+    for t in filtrados:
+        por_dia.setdefault(t.get("date") or "", []).append(t)
+
+    capital = init_cash
+    for d in sorted(por_dia):
+        base = apertura.get(d, 0.0)
+        factor = (capital / base) if base > 0 else 1.0
+        del_dia = 0.0
+        for t in por_dia[d]:
+            t["pnl"] = float(t.get("pnl") or 0.0) * factor
+            if t.get("size") is not None:
+                t["size"] = float(t["size"]) * factor
+            del_dia += t["pnl"]
+
+        # El dia que reventaria la cuenta se recorta hasta dejarla en cero, y
+        # el recorte se reparte entre sus trades. Si no, el PnL en dolares que
+        # se llevan los trades no cuadraria con la curva y el equity acabaria
+        # en negativo por detras — que es el fallo que se venia a arreglar.
+        if capital + del_dia < 0.0 and del_dia < 0.0:
+            recorte = capital / abs(del_dia)
+            for t in por_dia[d]:
+                t["pnl"] = float(t["pnl"]) * recorte
+                if t.get("size") is not None:
+                    t["size"] = float(t["size"]) * recorte
+            del_dia = -capital
+
+        capital = max(capital + del_dia, 0.0)
 
 
 def run_what_if(
@@ -157,20 +270,6 @@ def run_what_if(
         if datetime.strptime(t["date"], "%Y-%m-%d").month in exclude_months_idx: continue
         if t["date"] in days_to_exclude: continue
 
-        # Recorrido minimo en centimos: la regla de las cuentas de fondeo.
-        # ASIMETRICA A PROPOSITO — ver `mueve_bastante`. El win invalidado NO
-        # se tira de la lista: la mesa no abona el beneficio pero SI cobra las
-        # comisiones (sus Program Terms las listan como deduccion siempre),
-        # asi que se queda en la curva pagando solo sus fees (decision de
-        # Alvaro, 2026-09-07). Sobre una copia: el trade de entrada no se muta.
-        if (min_move_cents > 0 and t.get("pnl", 0) > 0
-                and not mueve_bastante(t, min_move_cents)):
-            fees = float(t.get("fees", 0.0) or 0.0)
-            capital = (t.get("avg_entry_price") or t.get("entry_price") or 0) * float(t.get("size") or 0)
-            t = {**t,
-                 "pnl": -fees,
-                 "return_pct": round((-fees / capital) * 100, 4) if capital > 0 else 0.0}
-
         # Hour check
         if exclude_hour_start is not None and exclude_hour_end is not None:
             h = t["entry_hour"]
@@ -194,6 +293,24 @@ def run_what_if(
             if len(open_trades) >= max_concurrent:
                 continue
             open_trades.append(pd.to_datetime(t["exit_time"]))
+
+        # Recorrido minimo en centimos: la regla de las cuentas de fondeo.
+        # ASIMETRICA A PROPOSITO — ver `mueve_bastante`.
+        #
+        # VA LA ULTIMA, DESPUES DE LOS LIMITES, y no es indiferente: el trade
+        # EXISTIO. Ocupo su hueco del dia y su plaza de simultaneos aunque la
+        # mesa no lo abone. Filtrandolo antes —como estaba— un ganador corto
+        # liberaba un hueco que en la realidad estaba ocupado, y entraba en su
+        # lugar un trade posterior que nunca se llego a operar.
+        #
+        # NOTA DE MERGE (2026-09-08): la variante de Álvaro «el win invalidado
+        # se queda pagando solo sus fees» (2b597cf) NO llegó nunca a staging;
+        # su recomposición en R (892b7fd) está construida sobre QUITAR el
+        # ganador. Aquí manda staging hasta que Álvaro y Jaume acuerden cuál
+        # de las dos semánticas vale — ver MEMORIA_MADRE (pendiente de decidir).
+        if (min_move_cents > 0 and t.get("pnl", 0) > 0
+                and not mueve_bastante(t, min_move_cents)):
+            continue
 
         filtered_trades.append(t.copy())
 
@@ -295,13 +412,29 @@ def run_what_if(
             t["pnl"] = -abs(t["size"] * t["entry_price"] * (abs(t["return_pct"]) / 100.0))
             t["exit_reason"] = "BLACK SWAN"
 
+    # --- 4 bis) Recomposicion en R si el riesgo era PORCENTUAL ---
+    #
+    # Va DESPUES de todos los castigos —los castigos cambian el PnL, y lo que
+    # se recompone es el PnL final— y ANTES de construir la curva, para que
+    # equity, drawdown, metricas y calendario salgan todos del mismo numero.
+    #
+    # `risk_type` lo manda la pagina. Si no llega, se asume FIJO y todo se
+    # comporta como siempre: esta correccion no puede activarse sola.
+    if str(params.get("risk_type") or "FIXED").upper() == "PERCENT":
+        _recomponer_por_dia(sorted_trades, filtered_trades, init_cash)
+
     # --- 5) Rebuild Equity & Finalize ---
     # We use the helpers from backtest_service to ensure consistency
     # Note: we pass monthly_expenses=0 for what-if often, unless requested
     monthly_expenses = params.get("monthly_expenses", 0.0)
     
+    # Los locates de los ticker-dia que siguen vivos. Sin esto la simulacion
+    # se compara BRUTA contra un original NETO y sale mejor por la cara.
+    locates_por_par = params.get("locates_by_pair") or {}
+    locates_por_fecha = _locates_supervivientes(locates_por_par, filtered_trades)
+
     global_eq, global_dd, global_eq_exp = _compute_global_equity_and_drawdown(
-        filtered_trades, init_cash, monthly_expenses
+        filtered_trades, init_cash, monthly_expenses, locates_por_fecha
     )
     
     # For aggregate metrics, we need "day_results" but since it's a trade-level sim,
@@ -324,11 +457,14 @@ def run_what_if(
         "global_equity": global_eq,
         "global_drawdown": global_dd,
         "aggregate_metrics": aggregate,
-        "day_results": _day_results_de(filtered_trades),
+        "day_results": _day_results_de(filtered_trades, locates_por_par),
     }
 
 
-def _day_results_de(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _day_results_de(
+    trades: List[Dict[str, Any]],
+    locates_por_par: Dict[str, Any] | None = None,
+) -> List[Dict[str, Any]]:
     """Reconstruye los resultados por ticker-dia con los trades que quedan.
 
     PARA QUE. El calendario del What-if. Sin esto habria que rehacer la cuenta
@@ -342,10 +478,11 @@ def _day_results_de(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     numero de operaciones, que si salen de los trades; el resto de campos estan
     para cumplir la forma de `DayResult`, no para leerlos.
 
-    LOS LOCATES NO SE ARRASTRAN. Se cobran una vez por ticker-dia y no estan en
-    el pnl de ningun trade; si el What-if se ha quedado con la mitad de los
-    trades de ese dia, no hay forma honesta de decidir que parte del locate
-    sigue debiendose. Se deja a cero y se dice aqui.
+    LOS LOCATES SI SE ARRASTRAN desde el 2026-09-07. Se cobran una vez por
+    ticker-dia y no estan en el pnl de ningun trade, asi que llegan aparte
+    (`locates_by_pair`) y se cobran ENTEROS si sobrevive algun trade de ese
+    ticker ese dia. Antes se dejaban a cero, y el calendario del What-if
+    contaba en bruto contra un calendario neto.
     """
     por_dia: Dict[tuple, List[Dict[str, Any]]] = {}
     for t in trades:
@@ -377,6 +514,7 @@ def _day_results_de(trades: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "worst_trade_pct": min(retornos) if retornos else None,
             "init_value": None,
             "end_value": None,
-            "locates_fee": 0.0,
+            "locates_fee": float((locates_por_par or {}).get(
+                f"{ticker}|{fecha}", 0.0) or 0.0),
         })
     return salida

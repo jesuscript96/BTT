@@ -968,13 +968,11 @@ def simulate_and_accumulate(signals_sorted, params):
     hybrid_stop = bool(params.get("hybrid_stop", False))
     hybrid_black_swan_pct = params.get("hybrid_black_swan_pct")
     hybrid_max_loss_pct = params.get("hybrid_max_loss_pct")
-    # ESTILO CANGREJO. `.get` a proposito, igual que el hibrido: los callers
-    # que no lo manden siguen funcionando sin topes (comportamiento de siempre).
+    # Estilo Cangrejo, mismo `.get` defensivo: un caller viejo que no lo mande
+    # sigue corriendo sin techos, que es el comportamiento de siempre.
     cangrejo_active = bool(params.get("cangrejo_active", False))
     cangrejo_max_sl_dist_pct = params.get("cangrejo_max_sl_dist_pct")
     cangrejo_max_loss_at_sl_pct = params.get("cangrejo_max_loss_at_sl_pct")
-    cangrejo_max_mv_entry_pct = params.get("cangrejo_max_mv_entry_pct")
-    cangrejo_max_mv_pyr_pct = params.get("cangrejo_max_mv_pyr_pct")
     fees = params["fees"]
     fee_type = params["fee_type"]
     slippage = params["slippage"]
@@ -1057,8 +1055,6 @@ def simulate_and_accumulate(signals_sorted, params):
                 cangrejo_active=cangrejo_active,
                 cangrejo_max_sl_dist_pct=cangrejo_max_sl_dist_pct,
                 cangrejo_max_loss_at_sl_pct=cangrejo_max_loss_at_sl_pct,
-                cangrejo_max_mv_entry_pct=cangrejo_max_mv_entry_pct,
-                cangrejo_max_mv_pyr_pct=cangrejo_max_mv_pyr_pct,
                 fees=fees,
                 fee_type=fee_type,
                 slippage=slippage,

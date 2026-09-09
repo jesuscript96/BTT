@@ -96,8 +96,8 @@ def _autosave_success(req: BacktestRequest, job_id: str, result: dict, user_id):
 
     # Light payload: drop only the heavy per-ticker equity blobs. day_results
     # (stats por ticker-día, ~decenas de KB) se conserva para que la
-    # reapertura desde 'Últimas pruebas' tenga calendario y selección de día;
-    # equity_curves se sirve por job mientras el job viva (~1h TTL).
+    # reapertura desde 'Últimas pruebas' (feature de Álvaro) tenga calendario
+    # y selección de día; equity_curves se sirve por job mientras viva (~1h TTL).
     light = {k: v for k, v in result.items() if k != "equity_curves"}
 
     strat_name = (
@@ -105,27 +105,28 @@ def _autosave_success(req: BacktestRequest, job_id: str, result: dict, user_id):
         if isinstance(req.strategy_definition, dict)
         else None
     ) or "Borrador"
-    # Rango de fechas para label y backtest_params (PRD_METRICAS_Y_OOS P4): se
-    # usa el EJECUTADO (del qualifying filtrado, calculado por el orquestador)
-    # cuando existe, y no el del formulario. Dos corridas del 2026-09-08
-    # guardaron 2026-01-02→2026-09-04 con trades de 2025 (HALLAZGO·01): se
-    # persistía req.model_dump() tal cual.
-    executed = result.get("executed_date_range") or {}
-    eff_start = executed.get("start") or req.start_date
-    eff_end = executed.get("end") or req.end_date
-    date_range = f"{eff_start or '?'} → {eff_end or '?'}"
+    date_range = f"{req.start_date or '?'} → {req.end_date or '?'}"
     label = f"[auto] {strat_name} · {date_range} · {datetime.now():%Y-%m-%d %H:%M}"
 
-    backtest_params = req.model_dump()
-    # Ni executed_date_range ni is_oos son parámetros del formulario: son
-    # hechos del run. Van aparte en results_json (ya viajan en `light`); lo
-    # único que se sobreescribe aquí son las fechas efectivas.
-    backtest_params["start_date"] = eff_start
-    backtest_params["end_date"] = eff_end
+    # PRD Alvaro 2026-09-08 (P4): las fechas guardadas son las que se corrieron,
+    # no las del formulario (el dataset puede acortar el rango pedido). Lo pedido
+    # se conserva en `*_pedido` por si hace falta reconstruir la peticion.
+    _rango = result.get("rango_efectivo") or {}
+    _params = req.model_dump()
+    _params["start_date_pedido"] = req.start_date
+    _params["end_date_pedido"] = req.end_date
+    if _rango.get("primer_dia_ejecutado"):
+        _params["start_date"] = _rango["primer_dia_ejecutado"]
+    elif _rango.get("start_date"):
+        _params["start_date"] = _rango["start_date"]
+    if _rango.get("ultimo_dia_ejecutado"):
+        _params["end_date"] = _rango["ultimo_dia_ejecutado"]
+    elif _rango.get("end_date"):
+        _params["end_date"] = _rango["end_date"]
 
     results_json = {
         **light,
-        "backtest_params": backtest_params,
+        "backtest_params": _params,
         "strategy_definition": req.strategy_definition,
         "strategy_names": [strat_name],
         "label": label,

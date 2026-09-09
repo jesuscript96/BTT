@@ -93,6 +93,16 @@ NIVELES_CON_PARAMS: dict[str, dict] = {
     "Donchian": {"period": [10, 20, 55], "band_line": ["Upper", "Lower", "Basis"]},
     # `period` = velas de confirmacion de la caja (3 es el Darvas clasico).
     "Darvas Box": {"period": [3, 5], "band_line": ["Upper", "Lower", "Basis"]},
+    # "Overhead last X days": el techo (o suelo) que dejo un dia pasado, sobre
+    # velas DIARIAS. Se sortean los cuatro parametros: sin esto saldria siempre
+    # con 20 dias, el High y sin condicion de volumen, que es UNA de las 120
+    # combinaciones posibles.
+    "Overhead last X days": {
+        "days_lookback": [5, 20, 60, 120, 250],
+        "overhead_extreme": ["max", "min"],
+        "overhead_ref": ["high", "low", "open", "close"],
+        "overhead_vol_rule": ["none", "gt", "lt"],
+    },
 }
 
 TODOS_LOS_NIVELES = NIVELES + tuple(NIVELES_CON_PARAMS)
@@ -190,8 +200,19 @@ CATALOGO: dict[str, Indicador] = {
     "Candle Range %": Indicador(
         nombre="Candle Range %", familia="patrones", por_defecto=True,
         valores=(1, 2, 3, 5, 8), comparadores=(GT, LT),
-        ayuda="Cuánto abarca la vela de máximo a mínimo, en % del precio. Sirve "
-              "para exigir movimiento o para exigir calma.",
+        # OJO: la ayuda decía "de máximo a mínimo" y era FALSO. El motor calcula
+        # `abs((cierre - apertura) / apertura) * 100` — el CUERPO en valor
+        # absoluto, sin mechas y sin dirección (indicators.py::_compute_raw).
+        ayuda="Cuánto se mueve la vela de apertura a cierre, en %, SIN signo: da "
+              "igual si subió o bajó. Sirve para exigir movimiento o calma. Si "
+              "necesitas la dirección, usa «Recorrido (%)».",
+    ),
+    "Recorrido (%)": Indicador(
+        nombre="Recorrido (%)", familia="patrones", por_defecto=True,
+        valores=(-8, -5, -3, -2, -1, 1, 2, 3, 5, 8), comparadores=(GT, LT),
+        ayuda="Recorrido de la vela CON SIGNO: lo que se mueve de apertura a "
+              "cierre, en %. Positivo si subió, negativo si bajó. «> 3» pide una "
+              "vela que suba más de un 3%; «< -2» una que caiga más de un 2%.",
     ),
     "Squeeze": Indicador(
         nombre="Squeeze", familia="patrones", por_defecto=True,

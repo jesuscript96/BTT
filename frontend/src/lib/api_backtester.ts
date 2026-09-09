@@ -158,6 +158,31 @@ export interface TradeRecord {
   // cierre. Solo viene cuando hubo MÁS que entrada + cierre; el gráfico lo usa
   // para pintar un marcador por ejecución.
   executions?: TradeExecution[];
+  /** Locates aleatorios: precio del paquete de 100 sorteado para ese
+   *  ticker-día (el mismo para todos los trades del ticker ese día). */
+  locate_pkg_price?: number;
+  /** Precio de la acción que sirvió de referencia para el sorteo. */
+  locate_ref_price?: number;
+  /** Factura de locates del ticker-día entero. Se cobra una vez y la comparten
+   *  todos los trades del ticker ese día; NO está dentro de `pnl`. */
+  locates_fee_day?: number;
+  /** Puerta por EV: el EV en sombra y el fade con los que se decidió ENTRAR. */
+  ev_gate_ev?: number;
+  ev_gate_fade?: number;
+  ev_gate_paquetes?: number;
+}
+
+/** Resumen de la puerta por EV de la corrida (segunda pasada). */
+export interface EvGateSummary {
+  evaluadas: number; aceptadas: number; rechazadas: number; con_ev_por_defecto: number;
+  ventana: number; por: string; ev_defecto_pct: number; min_trades: number; n_sombra: number;
+}
+
+/** Resumen del sorteo de locates de la corrida. Solo con el modo aleatorio. */
+export interface LocatesRandomSummary {
+  enabled: boolean;
+  min: number; max: number; seed: number;
+  n: number; media?: number; p10?: number; p50?: number; p90?: number;
 }
 
 export interface TradeExecution {
@@ -218,8 +243,29 @@ export interface DayResult {
   locates_fee?: number | null;
 }
 
+/** Métricas de un tramo IS u OOS, calculadas y guardadas en el servidor. */
+export interface SegmentMetrics {
+  total_trades: number; total_days: number; win_rate_pct: number;
+  avg_profit_factor: number | null; total_pnl: number; total_return_pct: number;
+  total_return_r: number; max_drawdown_pct: number; locates_fee: number;
+  first_date: string | null; last_date: string | null;
+}
+
 export interface AggregateMetrics {
   total_days: number;
+  /** Return SIN descontar los gastos fijos (el de siempre). `total_return_pct` va neto. */
+  total_return_pct_gross?: number;
+  /** ΣR de todos los trades: el comparador inmune al capital inicial. */
+  total_return_r?: number;
+  /** Rentabilidad anualizada neta; `calmar_ratio` = cagr / |maxDD|. */
+  cagr_pct?: number;
+  calmar_ratio_total?: number;
+  span_days?: number;
+  /** Corte IS/OOS persistido. Nulos con IS = 100. */
+  is_percent?: number;
+  is_cutoff_time?: number;
+  is_metrics?: SegmentMetrics | null;
+  oos_metrics?: SegmentMetrics | null;
   total_trades: number;
   win_rate_pct: number;
   avg_return_per_day_pct: number;
@@ -313,6 +359,12 @@ export interface BacktestResult {
   global_drawdown: DrawdownPoint[];
   /** Sesiones cortadas por el limite diario. Vacio o ausente si esta apagado. */
   daily_limit_log?: DailyLimitHit[];
+  /** Resumen del sorteo de locates. Solo viene con el modo aleatorio. */
+  locates_random?: LocatesRandomSummary;
+  /** Puerta por EV: veredictos de la segunda pasada. */
+  ev_gate?: EvGateSummary;
+  /** La PRIMERA pasada (sin puerta), para comparar contra la segunda. */
+  sin_puerta?: { aggregate_metrics?: AggregateMetrics; total_trades: number; locates_random?: LocatesRandomSummary };
   /** Reconciliación candidatos vs ejecutados. El motor la calcula SIEMPRE; si
    *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
    *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
@@ -431,10 +483,25 @@ export async function runBacktest(params: {
   // Tope de locates: máximo de paquetes de 100 acciones que se alquilan por
   // ticker-día. 0 = sin tope. Recorta el tamaño en CORTO a max_locates * 100.
   max_locates?: number;
-  look_ahead_prevention?: boolean;
-  /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): el motor añade is_oos al resultado
-   *  cuando es < 100. Antes solo lo recortaba el navegador y se perdía. */
+  // Locates ALEATORIOS: en vez de `locates_cost` fijo, un precio sorteado por
+  // ticker-día dentro de [min, max], sesgado por el precio de la acción y
+  // determinista por semilla. Ver backend/app/services/locates_random.py.
+  locates_random?: boolean;
+  locates_random_min?: number;
+  locates_random_max?: number;
+  locates_seed?: number;
+  // Puerta por EV (fase 2): dos pasadas; la segunda solo entra si el EV en
+  // sombra cubre el fade que exige el locate. Ver locates_gate.py.
+  ev_gate_enabled?: boolean;
+  ev_gate_window?: number;
+  ev_gate_by?: "trades" | "dias";
+  ev_gate_default_pct?: number;
+  ev_gate_min_trades?: number;
+  /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): el motor corre todo y añade is_oos
+   *  al resultado cuando es < 100; el servidor guarda los dos bloques. Antes
+   *  solo lo recortaba el navegador y se perdía. */
   is_percent?: number;
+  look_ahead_prevention?: boolean;
 }): Promise<BacktestResult> {
   const { data } = await api.post("/backtest", params);
   return data;
@@ -458,6 +525,17 @@ export async function runBacktestWithDefinition(params: {
   custom_end_time?: string;
   locates_cost?: number;
   max_locates?: number;
+  locates_random?: boolean;
+  locates_random_min?: number;
+  locates_random_max?: number;
+  locates_seed?: number;
+  // Puerta por EV (fase 2): dos pasadas; la segunda solo entra si el EV en
+  // sombra cubre el fade que exige el locate. Ver locates_gate.py.
+  ev_gate_enabled?: boolean;
+  ev_gate_window?: number;
+  ev_gate_by?: "trades" | "dias";
+  ev_gate_default_pct?: number;
+  ev_gate_min_trades?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
   /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): mismo significado que en
@@ -658,6 +736,17 @@ export async function runOptimizationSurface(params: {
   custom_end_time?: string;
   locates_cost?: number;
   max_locates?: number;
+  locates_random?: boolean;
+  locates_random_min?: number;
+  locates_random_max?: number;
+  locates_seed?: number;
+  // Puerta por EV (fase 2): dos pasadas; la segunda solo entra si el EV en
+  // sombra cubre el fade que exige el locate. Ver locates_gate.py.
+  ev_gate_enabled?: boolean;
+  ev_gate_window?: number;
+  ev_gate_by?: "trades" | "dias";
+  ev_gate_default_pct?: number;
+  ev_gate_min_trades?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;

@@ -286,6 +286,20 @@ def a_definicion(individuo: dict, config: dict) -> dict:
             "hybrid_stop": bool(riesgo.get("hybrid_stop", False)),
             "hybrid_black_swan_pct": riesgo.get("hybrid_black_swan_pct"),
             "hybrid_max_loss_pct": riesgo.get("hybrid_max_loss_pct"),
+            # ESTILO CANGREJO. Los dos modos van en la definicion, NO en los
+            # genes: son una decision de gestion de riesgo del usuario, no algo
+            # que la corrida deba optimizar. Dejar que el genetico mueva el
+            # `%` del Modo A seria buscar en el historico el recorte que mejor
+            # queda — sobreajuste puro, porque ese numero cambia DONDE se sale.
+            #
+            # OJO: a diferencia del hibrido, Cangrejo NO implica `size_by_sl`.
+            # Son techos sobre el sizing que haya, y el Modo B tiene sentido
+            # justo con el sizing por valor de mercado. Por eso no se toca el
+            # `size_by_sl` de arriba.
+            "cangrejo_active": bool(riesgo.get("cangrejo_active", False)),
+            "cangrejo_mode": riesgo.get("cangrejo_mode"),
+            "cangrejo_max_sl_dist_pct": riesgo.get("cangrejo_max_sl_dist_pct"),
+            "cangrejo_max_loss_at_sl_pct": riesgo.get("cangrejo_max_loss_at_sl_pct"),
             "use_hard_stop": True,
             "use_take_profit": True,
             # «Partial» SOLO si de verdad hay niveles. El motor ignora

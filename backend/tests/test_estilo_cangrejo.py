@@ -1,411 +1,468 @@
-"""ESTILO CANGREJO: cuatro techos de sizing que viven con el SL (Álvaro, 2026-09-07).
+# -*- coding: utf-8 -*-
+"""Estilo Cangrejo — los dos modos del PRD de Álvaro (`docs/PRD_ESTILO_CANGREJO.md`).
 
-No es un modo de dimensionado: son TECHOS que recortan el tamaño que salga del
-modo activo (MV clásico, por SL o híbrido), nunca lo agrandan. Igual que el
-tope híbrido, el de caja y el de locates: recorta, no anula.
+QUÉ SE PRUEBA Y POR QUÉ ESTÁ ORDENADO ASÍ:
 
-    cangrejo_max_sl_dist_pct    — el SL nunca queda a más de D% del entry: se
-                                  aprieta a entry*(1±D%) y el stop REAL (la
-                                  salida) pasa a ser el apretado.
-    cangrejo_max_loss_at_sl_pct — perder como mucho X% del equity en el
-                                  recorrido al SL: encoge el MV si el SL queda
-                                  lejos.
-    cangrejo_max_mv_entry_pct   — market value máximo de cada entrada.
-    cangrejo_max_mv_pyr_pct     — market value máximo AÑADIDO por NIVEL de
-                                  pirámide (presupuesto independiente por nivel
-                                  — decisión de Álvaro 2026-09-07 — que suma
-                                  los disparos de ese nivel y se rearma con
-                                  cada entrada).
-
-EXCLUSIVO con el híbrido de Jaume: con ambos encendidos gana Cangrejo y el
-techo del híbrido NO se aplica. La UI los desactiva mutuamente; el motor
-arbitra por si un payload viejo trae los dos.
+  1. La matemática de cada modo aislada (los dos helpers).
+  2. Que el Modo A mueve la SALIDA REAL, no solo el sizing — ahí estaba el
+     riesgo: el stop porcentual se recalcula en cada barra desde `entry_price`,
+     así que era fácil dimensionar con un stop y salir por otro.
+  3. La REGLA Nº1 del PRD: sin campos, resultado idéntico bit a bit. Un techo
+     nuevo que cambie una corrida vieja invalidaría todo el histórico.
+  4. Exclusividad con el híbrido y el arbitraje a favor de Cangrejo.
+  5. PARIDAD Python ↔ kernel Numba. Es lo que permite que una estrategia con
+     Cangrejo NO caiga al motor lento, a diferencia del híbrido.
+  6. Las TRES CAPAS: el campo declarado en pydantic, o se cae sin error.
 """
+import os
+
 import numpy as np
+import pytest
 
-from app.services.portfolio_sim import simulate
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────
-
-def _plano(n=10, **extra):
-    """Precio plano a 100, entrada en la barra 1 (fill en la 2)."""
-    base = dict(
-        close=np.array([100.0] * n), open_=np.array([100.0] * n),
-        high=np.array([101.0] * n), low=np.array([99.0] * n),
-        entries=np.array([False, True] + [False] * (n - 2)),
-        exits=np.array([False] * (n - 2) + [True, False]),
-        direction="shortonly", init_cash=10_000.0,
-        risk_r=10_000.0, risk_type="FIXED", accumulate=True,
-        # Sin modo por SL: el tamaño base sale por MV (10000/100 = 100
-        # acciones, justo lo que deja la caja), y los topes Cangrejo recortan.
-        size_by_sl=False,
-    )
-    base.update(extra)
-    return base
+from app.services import sim_dispatch
+from app.services.portfolio_sim import (
+    aprieta_stop_cangrejo,
+    simulate,
+    tope_cangrejo,
+)
+from app.schemas.strategy import RiskManagement
 
 
-def _piramide(niveles, n=16, **extra):
-    """Short con entrada en la barra 1 (fill 2) y salida por señal al final.
+# ── material común ────────────────────────────────────────────────────────
+def _serie():
+    """Largo que entra a 1,00, se hunde hasta 0,45 y vuelve.
 
-    `niveles` son dicts de nivel YA compilados (unit/amount_usd/signals...).
+    Con SL al 50 % el stop está en 0,50 y la vela de 0,45 lo cruza: sirve para
+    ver dónde sale con y sin el Modo A.
     """
-    base = dict(
+    close = np.array([1.00, 1.00, 1.00, 0.90, 0.70, 0.45, 0.60, 0.80, 1.00, 1.00])
+    entries = np.zeros(10, dtype=bool)
+    entries[1] = True
+    return dict(
+        close=close, open_=close.copy(), high=close * 1.02, low=close * 0.98,
+        entries=entries, exits=np.zeros(10, dtype=bool),
+        timestamps=(np.arange(10) * 60_000_000_000
+                    + 1_700_000_000_000_000_000).astype(np.int64),
+    )
+
+
+BASE = dict(direction="longonly", init_cash=10_000.0, risk_r=100.0,
+            risk_type="PERCENT", sl_stop=0.50, look_ahead_prevention=True)
+
+
+def _correr(**extra):
+    return simulate(**_serie(), **{**BASE, **extra})
+
+
+# ══ 1. La matemática de cada modo ═════════════════════════════════════════
+def test_modo_a_apretar_el_ejemplo_del_prd():
+    """Entrada 1,00, SL estructural en 2,00 (corto), tope 50 % -> 1,50."""
+    assert aprieta_stop_cangrejo(1.00, 2.00, 50.0, is_long=False) == pytest.approx(1.50)
+
+
+def test_modo_a_en_largo():
+    assert aprieta_stop_cangrejo(1.00, 0.20, 50.0, is_long=True) == pytest.approx(0.50)
+
+
+def test_modo_a_solo_aprieta_nunca_afloja():
+    """Un stop que YA está más cerca que el tope se devuelve intacto."""
+    assert aprieta_stop_cangrejo(1.00, 0.90, 50.0, is_long=True) == 0.90
+
+
+def test_modo_a_sin_datos_devuelve_el_stop():
+    """Sin tope, sin stop o con entrada absurda no se inventa nada."""
+    assert aprieta_stop_cangrejo(1.00, 0.20, None, True) == 0.20
+    assert aprieta_stop_cangrejo(1.00, 0.20, 0.0, True) == 0.20
+    assert aprieta_stop_cangrejo(1.00, 0.0, 50.0, True) == 0.0
+    assert aprieta_stop_cangrejo(0.0, 0.20, 50.0, True) == 0.20
+
+
+def test_modo_b_el_ejemplo_del_prd():
+    """Cuenta 10.000, tope 3 % (300 $), SL al 100 % de distancia -> 300 acciones."""
+    assert tope_cangrejo(10_000.0, 3.0, 1.00) == pytest.approx(300.0)
+
+
+def test_modo_b_escala_con_la_distancia():
+    """Media distancia, doble tamaño: la PÉRDIDA es lo que queda fijo."""
+    assert tope_cangrejo(10_000.0, 3.0, 0.50) == pytest.approx(600.0)
+
+
+def test_modo_b_sin_datos_no_topa():
+    """SIN STOP no hay pérdida definida que topar: None, no un cero silencioso."""
+    assert tope_cangrejo(10_000.0, 3.0, 0.0) is None
+    assert tope_cangrejo(0.0, 3.0, 1.0) is None
+    assert tope_cangrejo(10_000.0, None, 1.0) is None
+    assert tope_cangrejo(10_000.0, 0.0, 1.0) is None
+
+
+# ══ 2. El Modo A mueve la SALIDA, no solo el tamaño ═══════════════════════
+def test_modo_a_cambia_donde_se_sale():
+    t = _correr(cangrejo_active=True, cangrejo_max_sl_dist_pct=20.0)["trades"][0]
+    assert t["stop_loss"] == pytest.approx(0.80)
+    assert t["exit_reason"] == "SL"
+    # LA CLAVE: sale en el stop APRETADO (0,80), no en el 50 % original (0,50).
+    assert t["exit_price"] == pytest.approx(0.80)
+
+
+def test_modo_a_no_toca_el_tamano():
+    sin = _correr()["trades"][0]
+    con = _correr(cangrejo_active=True, cangrejo_max_sl_dist_pct=20.0)["trades"][0]
+    assert con["size"] == pytest.approx(sin["size"])
+
+
+def test_modo_a_con_stop_estructural():
+    """Con SL de estructura el nivel viene de un array, no de un porcentaje."""
+    d = _serie()
+    lods = np.full(10, 0.30)   # nivel muy lejano: 70 % de recorrido
+    t = simulate(**d, direction="longonly", init_cash=10_000.0, risk_r=100.0,
+                 risk_type="PERCENT", look_ahead_prevention=True,
+                 hs_type="Market Structure (HOD/LOD)", hs_value="LOD",
+                 hs_operator="<", hs_offset_pct=0.0, lods=lods,
+                 cangrejo_active=True, cangrejo_max_sl_dist_pct=25.0)["trades"][0]
+    assert t["stop_loss"] == pytest.approx(0.75)
+    assert t["exit_price"] == pytest.approx(0.75)
+
+
+# ══ 3. El Modo B encoge el tamaño y NO toca el stop ═══════════════════════
+def test_modo_b_encoge_el_tamano():
+    t = _correr(size_by_sl=True, cangrejo_active=True,
+                cangrejo_max_loss_at_sl_pct=1.0)["trades"][0]
+    # 1 % de 10.000 = 100 $; distancia 1,00 - 0,50 = 0,50 -> 200 acciones.
+    assert t["size"] == pytest.approx(200.0)
+    assert t["stop_loss"] == pytest.approx(0.50)   # el stop NO se mueve
+
+
+def test_modo_b_tambien_sin_size_by_sl():
+    """A DIFERENCIA DEL HÍBRIDO, el Modo B no exige `size_by_sl`.
+
+    Es un techo sobre el sizing que haya, y por valor de mercado es justo donde
+    la pérdida al stop se descontrola.
+    """
+    t = _correr(size_by_sl=False, cangrejo_active=True,
+                cangrejo_max_loss_at_sl_pct=1.0)["trades"][0]
+    assert t["size"] == pytest.approx(200.0)
+
+
+def test_modo_b_la_perdida_real_respeta_el_tope():
+    t = _correr(size_by_sl=True, cangrejo_active=True,
+                cangrejo_max_loss_at_sl_pct=1.0)["trades"][0]
+    assert t["exit_reason"] == "SL"
+    assert abs(t["pnl"]) <= 100.0 + 1e-6
+
+
+def test_modo_b_usa_la_distancia_YA_apretada():
+    """Con los dos modos en el payload, B mide sobre el stop apretado por A."""
+    t = _correr(size_by_sl=True, cangrejo_active=True,
+                cangrejo_max_sl_dist_pct=20.0,
+                cangrejo_max_loss_at_sl_pct=1.0)["trades"][0]
+    # distancia apretada = 0,20 -> 100 $ / 0,20 = 500 acciones
+    assert t["size"] == pytest.approx(500.0)
+
+
+def test_modo_b_usa_hybrid_capital_si_viene():
+    """El bot manda ahí la cuenta de verdad: su `init_cash` es un nominal."""
+    t = _correr(size_by_sl=True, cangrejo_active=True,
+                cangrejo_max_loss_at_sl_pct=1.0,
+                hybrid_capital=1_000.0)["trades"][0]
+    assert t["size"] == pytest.approx(20.0)   # 1 % de 1.000 = 10 $ / 0,50
+
+
+# ══ 4. REGLA Nº1: sin campos, resultado idéntico ══════════════════════════
+def test_apagado_es_identico():
+    assert _correr()["trades"] == _correr(cangrejo_active=False)["trades"]
+
+
+def test_activo_sin_campos_es_identico():
+    """Encenderlo sin rellenar nada NO puede cambiar una corrida."""
+    assert _correr()["trades"] == _correr(cangrejo_active=True)["trades"]
+
+
+def test_un_tope_que_no_muerde_es_identico():
+    """Incidente reproducido por Álvaro: con los topes por encima del sizing
+    que ya hay, los resultados salen iguales. Es CORRECTO, no un bug."""
+    base = _correr()["trades"]
+    assert _correr(cangrejo_active=True, cangrejo_max_sl_dist_pct=90.0)["trades"] == base
+    assert _correr(cangrejo_active=True,
+                   cangrejo_max_loss_at_sl_pct=99.0)["trades"] == base
+
+
+# ══ 5. Exclusividad con el híbrido ════════════════════════════════════════
+def test_cangrejo_gana_al_hibrido():
+    """Un payload con los dos: manda Cangrejo (PRD §2)."""
+    t = _correr(size_by_sl=True,
+                hybrid_stop=True, hybrid_black_swan_pct=5_000.0,
+                hybrid_max_loss_pct=50.0,
+                cangrejo_active=True,
+                cangrejo_max_loss_at_sl_pct=1.0)["trades"][0]
+    assert t["size"] == pytest.approx(200.0)   # el del Modo B, no el del híbrido
+
+
+def test_el_hibrido_solo_manda_sin_cangrejo():
+    t = _correr(size_by_sl=True, hybrid_stop=True,
+                hybrid_black_swan_pct=5_000.0,
+                hybrid_max_loss_pct=50.0)["trades"][0]
+    # techo híbrido = 50/5000 x 10.000 = 100 $ de exposición / 1,00 = 100 acciones
+    assert t["size"] == pytest.approx(100.0)
+
+
+# ══ 6. Paridad con el kernel Numba ════════════════════════════════════════
+_CASOS_PARIDAD = [
+    dict(),
+    dict(cangrejo_active=True, cangrejo_max_sl_dist_pct=20.0),
+    dict(cangrejo_active=True, cangrejo_max_sl_dist_pct=5.0),
+    dict(cangrejo_active=True, cangrejo_max_loss_at_sl_pct=1.0, size_by_sl=True),
+    dict(cangrejo_active=True, cangrejo_max_loss_at_sl_pct=0.5),
+    dict(cangrejo_active=True, cangrejo_max_sl_dist_pct=30.0,
+         cangrejo_max_loss_at_sl_pct=2.0, size_by_sl=True),
+    dict(cangrejo_active=True, cangrejo_max_sl_dist_pct=15.0,
+         sl_trail=True, trail_pct=0.10),
+    dict(cangrejo_active=True, cangrejo_max_sl_dist_pct=25.0,
+         hybrid_capital=2_000.0, cangrejo_max_loss_at_sl_pct=1.0),
+]
+
+
+@pytest.mark.parametrize("extra", _CASOS_PARIDAD)
+def test_paridad_python_vs_numba(extra, monkeypatch):
+    """El kernel tiene que dar EXACTAMENTE lo mismo, o el JIT miente.
+
+    Es la prueba que sostiene la decisión de NO desviar Cangrejo al motor
+    Python: si diverge, el genético estaría optimizando otra cosa.
+    """
+    py = simulate(**_serie(), **{**BASE, **extra})
+    monkeypatch.setenv("BACKTEST_NUMBA_SIM", "1")
+    jit = sim_dispatch.simulate(**_serie(), **{**BASE, **extra})
+    assert py["trades"] == jit["trades"]
+    assert np.array_equal(py["equity"], jit["equity"])
+
+
+def test_el_dispatcher_no_desvia_cangrejo_al_python(monkeypatch):
+    """Con Cangrejo Y híbrido, el híbrido está muerto: el kernel es válido."""
+    monkeypatch.setenv("BACKTEST_NUMBA_SIM", "1")
+    llamadas = []
+    real = sim_dispatch._legacy_simulate
+    monkeypatch.setattr(sim_dispatch, "_legacy_simulate",
+                        lambda **kw: (llamadas.append(1), real(**kw))[1])
+    sim_dispatch.simulate(**_serie(), **BASE, size_by_sl=True,
+                          hybrid_stop=True, hybrid_black_swan_pct=5_000.0,
+                          hybrid_max_loss_pct=50.0,
+                          cangrejo_active=True, cangrejo_max_loss_at_sl_pct=1.0)
+    assert llamadas == [], "con Cangrejo activo NO debe caer al motor Python"
+
+
+def test_el_dispatcher_si_desvia_el_hibrido_solo(monkeypatch):
+    """Sin Cangrejo, el híbrido sigue yendo al Python: el kernel no lo tiene."""
+    monkeypatch.setenv("BACKTEST_NUMBA_SIM", "1")
+    llamadas = []
+    real = sim_dispatch._legacy_simulate
+    monkeypatch.setattr(sim_dispatch, "_legacy_simulate",
+                        lambda **kw: (llamadas.append(1), real(**kw))[1])
+    sim_dispatch.simulate(**_serie(), **BASE, size_by_sl=True,
+                          hybrid_stop=True, hybrid_black_swan_pct=5_000.0,
+                          hybrid_max_loss_pct=50.0)
+    assert llamadas == [1]
+
+
+# ══ 7. TRES CAPAS: pydantic tiene que aceptar los campos ══════════════════
+def test_los_campos_sobreviven_a_pydantic():
+    """Sin declararlos, `extra='ignore'` los tira SIN error, SIN log y SIN 422
+    — es lo que le pasó a `size_by_sl` y por eso salían estrategias con la
+    opción apagada."""
+    d = RiskManagement(cangrejo_active=True, cangrejo_mode="perdida",
+                       cangrejo_max_sl_dist_pct=50.0,
+                       cangrejo_max_loss_at_sl_pct=3.0).model_dump()
+    assert d["cangrejo_active"] is True
+    assert d["cangrejo_mode"] == "perdida"
+    assert d["cangrejo_max_sl_dist_pct"] == 50.0
+    assert d["cangrejo_max_loss_at_sl_pct"] == 3.0
+
+
+def test_los_campos_inertes_tambien_se_admiten():
+    """Sin UI y sin motor que los lea, pero un borrador viejo no debe reventar."""
+    d = RiskManagement(cangrejo_max_mv_entry_pct=10.0,
+                       cangrejo_max_mv_pyr_pct=5.0).model_dump()
+    assert d["cangrejo_max_mv_entry_pct"] == 10.0
+    assert d["cangrejo_max_mv_pyr_pct"] == 5.0
+
+
+def test_por_defecto_apagado():
+    d = RiskManagement().model_dump()
+    assert d["cangrejo_active"] is False
+    assert d["cangrejo_mode"] is None
+    assert d["cangrejo_max_sl_dist_pct"] is None
+    assert d["cangrejo_max_loss_at_sl_pct"] is None
+
+
+# ══ 8. Pirámide: el techo de pérdida cuenta la posición ENTERA ════════
+# DIVERGENCIA CONSCIENTE con el PRD, que solo habla de entradas y reentradas.
+# Sin esto, una estrategia que piramide esquiva el techo entero: entra con el
+# tamaño topado y añade sin mirar. La pérdida al stop de la posición COMPLETA
+# tiene que seguir cabiendo en el tope.
+
+def _con_piramide(**extra):
+    """Short a 100 con un añadido de 300 $ en la vela 4. Stop al 2 % (2 $).
+
+    Sin Cangrejo: entrada 1000 $ / 2 $ = 500 acciones, añadido 300/100 = 3.
+    """
+    n = 12
+    sig = np.zeros(n, dtype=bool)
+    sig[4] = True
+    lv = {"signals": sig, "action": "add", "capital_frac": 0.0,
+          "max_fires": 1, "unit": "usd", "amount_usd": 300.0}
+    t = simulate(
         close=np.array([100.0] * n), open_=np.array([100.0] * n),
         high=np.array([101.0] * n), low=np.array([99.0] * n),
         entries=np.array([False, True] + [False] * (n - 2)),
         exits=np.array([False] * (n - 2) + [True, False]),
         direction="shortonly", init_cash=100_000.0,
-        risk_r=1_000.0, risk_type="FIXED", accumulate=True,
-        size_by_sl=False,
-        pyramid_levels=niveles,
+        risk_r=1000.0, risk_type="FIXED", accumulate=True,
+        size_by_sl=True, sl_stop=0.02,
+        pyramid_levels=[lv], **extra,
+    )["trades"]
+    ex = (t[0].get("pyr_executions") or []) if t else []
+    # OJO: `size` del trade es la posicion FINAL (entrada + anadidos), no la
+    # entrada sola. Se devuelven las dos cosas: el total y lo que anadio la
+    # piramide, que es lo que este bloque vigila.
+    return (t[0]["size"] if t else 0.0), (ex[0]["size"] if ex else 0.0)
+
+
+def test_la_piramide_sin_cangrejo_no_cambia():
+    """Regla nº1 también aquí: sin campos, el añadido es el de siempre."""
+    total, anadido = _con_piramide()
+    assert anadido == pytest.approx(3.0)
+    assert total == pytest.approx(503.0)   # 500 de entrada + 3 del anadido
+
+
+def test_el_anadido_se_recorta_al_cupo_que_queda():
+    """La entrada gasta 1.000 $ del cupo de 1.002 $: al añadido le queda 1 acción."""
+    total, anadido = _con_piramide(cangrejo_active=True,
+                                   cangrejo_max_loss_at_sl_pct=1.002)
+    # La entrada (500 acciones x 2 $ = 1.000 $) no llega a topar; al añadido
+    # solo le quedan 2 $ de cupo, o sea 1 acción en vez de 3.
+    assert anadido == pytest.approx(1.0)
+    assert total == pytest.approx(501.0)
+
+
+def test_el_anadido_se_anula_si_no_queda_cupo():
+    """Cupo 1.000 $ y la entrada ya se lo lleva entero: no se añade nada."""
+    total, anadido = _con_piramide(cangrejo_active=True,
+                                   cangrejo_max_loss_at_sl_pct=1.0)
+    assert anadido == 0.0
+    assert total == pytest.approx(500.0)   # se queda solo la entrada
+
+
+# ══ 9. DE PUNTA A PUNTA: de `risk_management` a `simulate` ════════════════
+# Las TRES CAPAS otra vez, pero desde arriba: no basta con que el motor sepa
+# hacerlo, tiene que LLEGARLE. El patrón del cortacircuitos diario (la
+# funcionalidad vivía en un camino y el usuario corría por otro) y el de
+# `size_by_sl` (pydantic lo tiraba sin decir nada) son el mismo fallo visto
+# desde dos alturas. Se prueba por el camino SECUENCIAL, que es el que usa la
+# máquina de Jaume.
+import pandas as pd
+
+from app.db import gcs_cache, slab_store
+from app.services.backtest_service import run_backtest
+
+_STRAT_E2E = {
+    "bias": "short", "apply_day": "gap_day",
+    "entry_logic": {"timeframe": "1m", "root_condition": {"operator": "AND", "conditions": [
+        {"type": "indicator_comparison", "timeframe": "1m",
+         "source": {"name": "Bar Close"}, "comparator": "LESS_THAN", "target": {"name": "VWAP"}},
+        {"type": "indicator_comparison", "timeframe": "1m",
+         "source": {"name": "Bar Open"}, "comparator": "GREATER_THAN", "target": {"name": "VWAP"}},
+    ]}},
+    "risk_management": {"use_hard_stop": True,
+                        "hard_stop": {"type": "Percentage", "value": 15},
+                        "accept_reentries": True, "max_reentries": -1},
+}
+
+
+@pytest.fixture
+def _aislado(tmp_path, monkeypatch):
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    monkeypatch.setattr(gcs_cache, "LOCAL_CACHE_DIR", str(cache_dir))
+    monkeypatch.setenv("BTT_SLAB_DIR", str(tmp_path / "slabs"))
+    # Se borran para forzar el camino SECUENCIAL.
+    monkeypatch.delenv("BTT_SLAB_STREAM_ENABLED", raising=False)
+    monkeypatch.delenv("BACKTEST_PARALLEL_WORKERS", raising=False)
+    slab_store._OPEN_SLABS.clear()
+    with gcs_cache._MONTH_CACHE_LOCK:
+        gcs_cache._MONTH_CACHE.clear()
+        gcs_cache._MONTH_CACHE_SIZES.clear()
+    yield
+    slab_store._OPEN_SLABS.clear()
+
+
+def _dia(ticker, date, n=420, seed=0):
+    rng = np.random.default_rng(seed)
+    ts = pd.date_range(f"{date} 04:00", periods=n, freq="1min")
+    close = 8.0 * np.exp(np.cumsum(rng.normal(0, 0.004, n)))
+    open_ = close * np.exp(rng.normal(0, 0.004, n))
+    return pd.DataFrame({
+        "ticker": ticker, "date": date, "timestamp": ts,
+        "open": open_, "high": np.maximum(open_, close) * 1.004,
+        "low": np.minimum(open_, close) * 0.996, "close": close,
+        "volume": rng.integers(100, 50_000, n),
+    })
+
+
+def _corre_e2e(**rm_extra):
+    days = ["2025-09-01", "2025-09-02"]
+    qual_rows, trozos = [], []
+    for i in range(4):
+        tk = f"TK{i:02d}"
+        for j, d in enumerate(days):
+            trozos.append(_dia(tk, d, seed=i * 10 + j))
+        qual_rows.append({"ticker": tk, "date": days[0], "prev_close": 8.0,
+                          "gap_pct": 60.0, "yesterday_open": 7.7,
+                          "lag_rth_open_1": 7.7})
+    rm = {**_STRAT_E2E["risk_management"], "size_by_sl": True, **rm_extra}
+    return run_backtest(
+        qualifying_df=pd.DataFrame(qual_rows),
+        intraday_df=pd.concat(trozos, ignore_index=True),
+        strategy_def={**_STRAT_E2E, "risk_management": rm},
+        init_cash=10_000.0, risk_r=100.0, risk_type="FIXED",
+        market_sessions=["rth"], day_group_iter=None, n_groups_hint=None,
     )
-    base.update(extra)
-    return base
 
 
-def _nivel(n, barras, amount_usd=700.0, max_fires=1):
-    sig = np.zeros(n, dtype=bool)
-    for b in barras:
-        sig[b] = True
-    return {"signals": sig, "action": "add", "capital_frac": 0.0,
-            "max_fires": max_fires, "unit": "usd", "amount_usd": amount_usd}
+def _tam(res):
+    return sorted(round(t["size"], 4) for t in res.get("trades", []))
 
 
-def _adds(trades):
-    """Todos los 'add' de la bitácora de pirámide, en orden."""
-    out = []
-    for t in trades:
-        for pe in (t.get("pyr_executions") or []):
-            if pe.get("kind") == "add":
-                out.append(pe)
-    return out
+@pytest.mark.parametrize("numba", ["0", "1"])
+def test_e2e_el_modo_b_llega_desde_la_definicion(_aislado, monkeypatch, numba):
+    """Puesto SOLO en `risk_management`, sin tocar ningún argumento.
 
-
-# ── Opción 1: el SL nunca queda a más de D% del entry ─────────────────────
-
-def test_el_tope_de_distancia_mueve_el_stop_de_verdad():
-    """SL al 100% arriba (200) apretado al 50% (150): la SALIDA es en 150.
-
-    Sin cangrejo el high de 160 no toca el SL de 200 y el trade sale por
-    señal; con el tope, la misma vela de 160 SÍ toca el 150 y sale en SL.
+    Se corre con el JIT apagado Y encendido: el camino tiene que dar lo mismo
+    en los dos, o el genético (que corre con `BACKTEST_NUMBA_SIM=1`) estaría
+    evaluando otra cosa que el backtest de la pantalla.
     """
-    n = 10
-    high = np.array([101.0] * n)
-    high[5] = 160.0
-    con = simulate(**_plano(n=n, high=high, sl_stop=1.0,
-                            cangrejo_active=True,
-                            cangrejo_max_sl_dist_pct=50))["trades"]
-    assert con and con[0]["exit_reason"] == "SL"
-    assert abs(con[0]["exit_price"] - 150.0) < 1e-6
-    assert abs(con[0]["stop_loss"] - 150.0) < 1e-6
-
-    sin = simulate(**_plano(n=n, high=high, sl_stop=1.0))["trades"]
-    assert sin[0]["exit_reason"] != "SL"
-    assert abs(sin[0]["stop_loss"] - 200.0) < 1e-6
+    monkeypatch.setenv("BACKTEST_NUMBA_SIM", numba)
+    base = _corre_e2e()
+    assert _tam(base), "el fixture tiene que producir trades o el test es vacío"
+    con = _corre_e2e(cangrejo_active=True, cangrejo_max_loss_at_sl_pct=0.05)
+    assert _tam(con) != _tam(base), (
+        "el tope no llegó al motor: mismos tamaños con y sin Cangrejo")
+    # Es un TECHO: ninguna posición puede haber crecido.
+    for a, b in zip(_tam(base), _tam(con)):
+        assert b <= a + 1e-6
 
 
-# ── Opción 2: perder como mucho X% del equity en el recorrido al SL ───────
-
-def test_el_tope_de_perdida_encoge_el_mv():
-    """SL al 50% (150): 100 acciones perderían 5.000 (50% de la cuenta).
-
-    Con X=10% el tamaño baja a 1000/50 = 20 acciones. Recorta, no anula.
-    """
-    t = simulate(**_plano(sl_stop=0.5,
-                          cangrejo_active=True,
-                          cangrejo_max_loss_at_sl_pct=10))["trades"]
-    assert t, "el tope RECORTA, no anula la operación"
-    assert abs(t[0]["size"] - 20.0) < 1e-6
-    # Pérdida si salta el SL: 20 acciones x 50$ = 1.000 = el 10% de la cuenta.
-    assert abs(t[0]["size"] * 50.0 - 1_000.0) < 1e-6
+@pytest.mark.parametrize("numba", ["0", "1"])
+def test_e2e_el_modo_a_llega_desde_la_definicion(_aislado, monkeypatch, numba):
+    monkeypatch.setenv("BACKTEST_NUMBA_SIM", numba)
+    base = _corre_e2e()
+    con = _corre_e2e(cangrejo_active=True, cangrejo_max_sl_dist_pct=1.0)
+    # El stop apretado cambia la distancia, y con `size_by_sl` eso cambia el
+    # tamaño: si sale idéntico, el campo se cayó por el camino.
+    assert _tam(con) != _tam(base)
 
 
-def test_el_tope_de_perdida_no_toca_lo_que_ya_cabe():
-    """Un SL ceñido ya pierde menos de X: el tope no recorta nada."""
-    t = simulate(**_plano(sl_stop=0.05,
-                          cangrejo_active=True,
-                          cangrejo_max_loss_at_sl_pct=50))["trades"]
-    # 100 acciones x 5$ de recorrido = 500$ = 5% de la cuenta < 50%.
-    assert abs(t[0]["size"] - 100.0) < 1e-6
-
-
-def test_el_tope_de_perdida_usa_la_distancia_apretada():
-    """Orden: 1º se aprieta el SL (opción 1), 2º se acota la pérdida.
-
-    SL al 100% (dist 100) apretado al 25% (dist 25): con X=10% el tamaño es
-    1000/25 = 40. Si usara la distancia sin apretar daría 10.
-    """
-    t = simulate(**_plano(sl_stop=1.0,
-                          cangrejo_active=True,
-                          cangrejo_max_sl_dist_pct=25,
-                          cangrejo_max_loss_at_sl_pct=10))["trades"]
-    assert abs(t[0]["size"] - 40.0) < 1e-6
-
-
-# ── Tope de market value de la entrada ────────────────────────────────────
-
-def test_el_tope_de_mv_entrada_recorta_a_cualquier_modo():
-    """MV base del 100% de la cuenta, tope E=5% -> 500$ -> 5 acciones."""
-    t = simulate(**_plano(sl_stop=0.5,
-                          cangrejo_active=True,
-                          cangrejo_max_mv_entry_pct=5))["trades"]
-    assert abs(t[0]["size"] - 5.0) < 1e-6
-
-
-def test_gana_el_tope_mas_bajo_entre_mv_y_perdida():
-    """min(E%, X%/dist): E=5% (5 acciones) vs X=10%/dist50 (20) -> 5."""
-    t = simulate(**_plano(sl_stop=0.5,
-                          cangrejo_active=True,
-                          cangrejo_max_mv_entry_pct=5,
-                          cangrejo_max_loss_at_sl_pct=10))["trades"]
-    assert abs(t[0]["size"] - 5.0) < 1e-6
-
-
-# ── Tope de MV por NIVEL de pirámide ──────────────────────────────────────
-
-def test_el_tope_de_piramide_recorta_cada_add():
-    """Sin tope, cada nivel añadiría 990 acciones (lo que deja la caja).
-
-    Con P=1% (1.000$ de 100.000), cada nivel añade 10 acciones.
-    """
-    n = 14
-    niveles = [_nivel(n, [4], amount_usd=100_000.0),
-               _nivel(n, [8], amount_usd=100_000.0)]
-    t = simulate(**_piramide(niveles, n=n,
-                             cangrejo_active=True,
-                             cangrejo_max_mv_pyr_pct=1))["trades"]
-    adds = _adds(t)
-    assert len(adds) == 2
-    assert abs(adds[0]["size"] - 10.0) < 1e-6
-    assert abs(adds[1]["size"] - 10.0) < 1e-6
-
-
-def test_el_presupuesto_de_piramide_es_por_nivel_y_acumulado_en_el():
-    """La semántica "por nivel individual" (decisión de Álvaro).
-
-    Nivel 1 dispara DOS veces pidiendo 700$ cada una con P=1.000$: la primera
-    entra entera, la segunda se recorta al resto (300$) y queda anotada.
-    El nivel 2 pide los mismos 700$ y le entran ENTEROS: su presupuesto es
-    suyo, agotar el del nivel 1 no le merma.
-    """
-    n = 16
-    # Flancos del nivel 1 en las barras 4 y 7 (False->True, con False entre
-    # medias para que sea DOS disparos y no uno sostenido).
-    sig1 = np.zeros(n, dtype=bool)
-    sig1[4] = True
-    sig1[7] = True
-    lv1 = {"signals": sig1, "action": "add", "capital_frac": 0.0,
-           "max_fires": 2, "unit": "usd", "amount_usd": 700.0}
-    lv2 = _nivel(n, [10])
-    t = simulate(**_piramide([lv1, lv2], n=n,
-                             cangrejo_active=True,
-                             cangrejo_max_mv_pyr_pct=1))["trades"]
-    adds = _adds(t)
-    assert len(adds) == 3, "dos disparos del nivel 1 + uno del nivel 2"
-    assert adds[0]["level"] == 1 and abs(adds[0]["size"] - 7.0) < 1e-6
-    # El segundo disparo del nivel 1: presupuesto 1.000 - 700 = 300 -> 3 acc.
-    assert adds[1]["level"] == 1 and abs(adds[1]["size"] - 3.0) < 1e-6
-    assert "recortado_por_cangrejo" in adds[1]
-    # El nivel 2: presupuesto INTACTO (independiente) -> 7 acciones enteras.
-    assert adds[2]["level"] == 2 and abs(adds[2]["size"] - 7.0) < 1e-6
-    assert "recortado_por_cangrejo" not in adds[2]
-
-
-def test_el_presupuesto_de_piramide_se_rearma_con_cada_entrada():
-    """Una reentrada es una posición nueva: presupuesto de nivel a cero.
-
-    El mismo nivel añade 700$ en la primera posición y, tras salir y
-    reentrar, OTROS 700$ enteros. Sin reset, el segundo add saldría recortado
-    a los 300$ restantes.
-    """
-    n = 16
-    sig = np.zeros(n, dtype=bool)
-    sig[4] = True    # disparo dentro de la posición 1
-    sig[13] = True   # disparo dentro de la posición 2
-    lv = {"signals": sig, "action": "add", "capital_frac": 0.0,
-          "max_fires": 1, "unit": "usd", "amount_usd": 700.0}
-    entries = np.zeros(n, dtype=bool)
-    entries[1] = True
-    entries[9] = True     # reentrada tras la salida por señal
-    exits = np.zeros(n, dtype=bool)
-    exits[6] = True       # salida de la posición 1
-    t = simulate(**_piramide([lv], n=n, entries=entries, exits=exits,
-                             cangrejo_active=True,
-                             cangrejo_max_mv_pyr_pct=1))["trades"]
-    assert len(t) == 2, "dos posiciones (entrada + reentrada)"
-    adds = _adds(t)
-    assert len(adds) == 2
-    assert abs(adds[0]["size"] - 7.0) < 1e-6
-    assert abs(adds[1]["size"] - 7.0) < 1e-6, "el presupuesto se rearma al entrar"
-
-
-# ── Exclusividad con el híbrido ───────────────────────────────────────────
-
-def test_con_cangrejo_el_techo_del_hibrido_no_se_aplica():
-    """El caso del stop ceñido del test híbrido, pero con Cangrejo activo.
-
-    Sin cangrejo: híbrido (evento 1.000%, perder 50%) topa a 5 acciones.
-    Con cangrejo activo el híbrido queda SUPRIMIDO y manda la caja: 100.
-    """
-    base = dict(
-        close=np.array([100.0] * 10), open_=np.array([100.0] * 10),
-        high=np.array([101.0] * 10), low=np.array([99.0] * 10),
-        entries=np.array([False, True] + [False] * 8),
-        exits=np.array([False] * 8 + [True, False]),
-        direction="longonly", init_cash=10_000.0,
-        risk_r=100.0, risk_type="FIXED", accumulate=True,
-        size_by_sl=True, sl_stop=0.001,
-    )
-    hibrido = simulate(**base, hybrid_stop=True,
-                       hybrid_black_swan_pct=1_000,
-                       hybrid_max_loss_pct=50)["trades"]
-    assert abs(hibrido[0]["size"] - 5.0) < 1e-6   # control: el híbrido topa
-
-    ambos = simulate(**base, hybrid_stop=True,
-                     hybrid_black_swan_pct=1_000,
-                     hybrid_max_loss_pct=50,
-                     cangrejo_active=True)["trades"]
-    assert abs(ambos[0]["size"] - 100.0) < 1e-6   # manda la caja, no el híbrido
-
-
-# ── Regla nº1: sin campos, nada cambia ────────────────────────────────────
-
-def test_campos_inactivos_no_cambian_nada():
-    """Pasar los campos apagados/en None = resultado idéntico al de siempre."""
-    sin = simulate(**_plano(sl_stop=0.5, size_by_sl=True))["trades"]
-    con = simulate(**_plano(sl_stop=0.5, size_by_sl=True,
-                            cangrejo_active=False,
-                            cangrejo_max_sl_dist_pct=None,
-                            cangrejo_max_loss_at_sl_pct=None,
-                            cangrejo_max_mv_entry_pct=None,
-                            cangrejo_max_mv_pyr_pct=None))["trades"]
-    assert sin == con
-
-
-def test_porcentajes_sin_activar_son_inertes():
-    """Rellenar números sin encender la sección no puede cambiar el sizing."""
-    sin = simulate(**_plano(sl_stop=0.5))["trades"]
-    con = simulate(**_plano(sl_stop=0.5,
-                            cangrejo_max_sl_dist_pct=1,
-                            cangrejo_max_loss_at_sl_pct=1,
-                            cangrejo_max_mv_entry_pct=1,
-                            cangrejo_max_mv_pyr_pct=1))["trades"]
-    assert sin == con
-
-
-# ── Las TRES CAPAS ────────────────────────────────────────────────────────
-# Ver docs/MEMORIA_MADRE.md §4: la definición se reconstruye campo a campo en
-# varias capas y NINGUNA avisa cuando se le cae algo. `size_by_sl` se perdió
-# en la capa del esquema y `pyramiding` en la del frontend; los dos, en
-# silencio. El híbrido ya declaró esta batería; Cangrejo hereda el peligro.
-
-def test_capa_esquema_declara_el_cangrejo():
-    """Sin declararlo, pydantic (extra="ignore") lo tira SIN error ni 422."""
-    from app.schemas.strategy import RiskManagement
-    d = RiskManagement(cangrejo_active=True,
-                       cangrejo_max_sl_dist_pct=50,
-                       cangrejo_max_loss_at_sl_pct=10,
-                       cangrejo_max_mv_entry_pct=5,
-                       cangrejo_max_mv_pyr_pct=5).model_dump()
-    assert d["cangrejo_active"] is True
-    assert d["cangrejo_max_sl_dist_pct"] == 50
-    assert d["cangrejo_max_loss_at_sl_pct"] == 10
-    assert d["cangrejo_max_mv_entry_pct"] == 5
-    assert d["cangrejo_max_mv_pyr_pct"] == 5
-
-
-def test_una_estrategia_vieja_no_cambia_de_comportamiento():
-    """Regla nº1: sin los campos nuevos, todo se compila como antes."""
-    from app.schemas.strategy import RiskManagement
-    d = RiskManagement(size_by_sl=True).model_dump()
-    assert d["cangrejo_active"] is False
-    assert d["cangrejo_mode"] is None
-    assert d["cangrejo_max_sl_dist_pct"] is None
-    assert d["cangrejo_max_loss_at_sl_pct"] is None
-    assert d["cangrejo_max_mv_entry_pct"] is None
-    assert d["cangrejo_max_mv_pyr_pct"] is None
-
-
-def test_el_modo_de_la_tarjeta_se_guarda_con_la_estrategia():
-    """El modo del selector ('recorrido' | 'perdida') es estado de la UI, pero
-    viaja en la estrategia para recordar la elección. Sin declararlo, pydantic
-    lo tira en silencio y la tarjeta vuelve a rebotar entre modos (el bug del
-    botón que "no iba", 2026-09-07). El motor NO lo lee: solo los valores."""
-    from app.schemas.strategy import RiskManagement
-    d = RiskManagement(cangrejo_active=True, cangrejo_mode="perdida").model_dump()
-    assert d["cangrejo_mode"] == "perdida"
-    d2 = RiskManagement(cangrejo_active=True, cangrejo_mode="recorrido").model_dump()
-    assert d2["cangrejo_mode"] == "recorrido"
-
-
-def test_el_backtest_lee_el_cangrejo_de_la_definicion():
-    """Los porcentajes viajan en la estrategia, no solo en los kwargs.
-
-    Si esto se rompe, un backtest de una estrategia Cangrejo saldría sin
-    topes y NADA lo diría: los números saldrían, solo que mal (el mismo modo
-    de fallo silencioso que motivó declarar el híbrido en el esquema).
-    """
-    import inspect
-    from app.services import backtest_service as bs
-    src = inspect.getsource(bs)
-    assert 'rm.get("cangrejo_active")' in src, (
-        "backtest_service ya no lee cangrejo_active de risk_management")
-    for campo in ("cangrejo_max_sl_dist_pct", "cangrejo_max_loss_at_sl_pct",
-                  "cangrejo_max_mv_entry_pct", "cangrejo_max_mv_pyr_pct"):
-        assert campo in src, f"backtest_service ya no lee {campo}"
-
-
-def test_el_orquestador_lleva_el_cangrejo_a_run_backtest():
-    """El merge con la estrategia y el dict de kwargs los nombran campo a campo."""
-    import inspect
-    from app.services import backtest_orchestrator as orch
-    src = inspect.getsource(orch)
-    assert "cangrejo_active: bool = False" in src          # BacktestRequest
-    assert 'strategy_rm.get("cangrejo_active"' in src      # merge con la estrategia
-    assert "cangrejo_active=cangrejo_active" in src        # _bt_kwargs
-
-
-def test_el_dispatcher_no_manda_el_cangrejo_al_jit():
-    """El kernel Numba NO implementa los topes: una estrategia Cangrejo tiene
-    que ir al motor Python. Igual que el híbrido: sin esto, con
-    BACKTEST_NUMBA_SIM=1 el tope se perdería en silencio."""
-    import inspect
-    from app.services import sim_dispatch
-    src = inspect.getsource(sim_dispatch.simulate)
-    assert 'kwargs.get("cangrejo_active")' in src
-    assert "_legacy_simulate" in src
-    for campo in ("cangrejo_max_sl_dist_pct", "cangrejo_max_loss_at_sl_pct",
-                  "cangrejo_max_mv_entry_pct", "cangrejo_max_mv_pyr_pct"):
-        assert f'kwargs.pop("{campo}", None)' in src, (
-            f"sim_dispatch no limpia {campo} antes del JIT")
-
-
-def test_el_legacy_recibe_hybrid_capital_con_cangrejo(monkeypatch):
-    """`hybrid_capital` es la BASE de los topes Cangrejo: el dispatcher no
-    puede perdérselo por el camino (hallazgo de la auditoría 2026-09-07 —
-    el pop del path JIT se lo llevaba antes del check de Cangrejo)."""
-    from app.services import sim_dispatch
-
-    capturado = {}
-    real = sim_dispatch._legacy_simulate
-
-    def _espia(**kwargs):
-        capturado.update(kwargs)
-        return real(**kwargs)
-
-    monkeypatch.setattr(sim_dispatch, "_legacy_simulate", _espia)
-    n = 8
-    sim_dispatch.simulate(
-        close=np.array([100.0] * n), open_=np.array([100.0] * n),
-        high=np.array([101.0] * n), low=np.array([99.0] * n),
-        entries=np.array([False, True] + [False] * (n - 2)),
-        exits=np.array([False] * (n - 2) + [True, False]),
-        direction="shortonly", init_cash=10_000.0,
-        risk_r=50.0, risk_type="FIXED", accumulate=True,
-        hybrid_stop=False, hybrid_capital=1_000.0,
-        cangrejo_active=True, cangrejo_max_mv_entry_pct=5,
-    )
-    assert capturado.get("cangrejo_active") is True
-    assert capturado.get("hybrid_capital") == 1_000.0, (
-        "el motor Python tiene que recibir hybrid_capital con Cangrejo activo")
+def test_e2e_apagado_no_cambia_nada(_aislado, monkeypatch):
+    """Lo que protege el histórico: una corrida vieja sigue dando lo mismo."""
+    monkeypatch.setenv("BACKTEST_NUMBA_SIM", "0")
+    a = _corre_e2e()
+    b = _corre_e2e(cangrejo_active=False, cangrejo_max_sl_dist_pct=None,
+                   cangrejo_max_loss_at_sl_pct=None)
+    assert a["trades"] == b["trades"]

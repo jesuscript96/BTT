@@ -21,6 +21,9 @@ export enum IndicatorType {
     YESTERDAY_LOW = "Yesterday Low",
     HIGH_X_DAYS = "High of last X days",
     LOW_X_DAYS = "Low of last X days",
+    // El de verdad. Los dos de arriba se quedan SOLO por compatibilidad con
+    // estrategias antiguas: comparten motor y solo fijan otros defectos.
+    OVERHEAD_X_DAYS = "Overhead last X days",
     PREV_BAR_CLOSE = "Prev. Bar Close",
     PREV_BAR_OPEN = "Prev. Bar Open",
     PREV_BAR_HIGH = "Prev. Bar High",
@@ -34,6 +37,10 @@ export enum IndicatorType {
     CONSEC_GREEN_CANDLES = "Consecutive green candles",
     CONSEC_RED_CANDLES = "Consecutive red candles",
     CANDLE_RANGE_PCT = "Candle Range %",
+    // Recorrido de la vela CON SIGNO. Es CANDLE_RANGE_PCT sin el abs():
+    // positivo = la vela subió, negativo = bajó. Sin selector de dirección a
+    // propósito — el signo ya la lleva.
+    RECORRIDO_PCT = "Recorrido (%)",
     RANGE_OF_TIME = "Range of Time",
     OPENING_RANGE_PLUS = "Opening range +",
     OPENING_RANGE_MINUS = "Opening range -",
@@ -151,7 +158,11 @@ export interface IndicatorConfig {
     time_hour?: number;
     time_minute?: number;
     time_condition?: "BEFORE" | "AFTER"; // To support 'before X hour' or 'after X hour'
-    days_lookback?: number;    // "Max/Min of last X days"
+    days_lookback?: number;    // "Max/Min of last X days" y "Overhead last X days"
+    // "Overhead last X days"
+    overhead_extreme?: "max" | "min";                  // que dia se busca
+    overhead_ref?: "high" | "low" | "open" | "close";  // que precio de ESE dia es el nivel
+    overhead_vol_rule?: "none" | "gt" | "lt";          // su volumen frente al acumulado de hoy
     calc_on_heikin?: boolean;
     ap_session?: "ap.PM" | "ap.RTH" | "ap.AM";
     elapsed_minutes?: number;
@@ -299,24 +310,22 @@ export interface RiskManagement {
     hybrid_black_swan_pct?: number | null;
     /** Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. */
     hybrid_max_loss_pct?: number | null;
-    /** ESTILO CANGREJO: dos maneras excluyentes de acotar el trade ("o una u
-     *  otra", Álvaro 2026-09-07). EXCLUSIVO con el híbrido: encender uno apaga
-     *  el otro. */
+    /** ESTILO CANGREJO (PRD de Álvaro, 8-sep-2026). Acota cada trade «o por
+     *  recorrido del SL, o por pérdida máxima». Dos modos EXCLUYENTES entre sí
+     *  y con el stop híbrido; son TECHOS sobre el sizing que ya haya, así que
+     *  solo recortan.
+     *   · `recorrido` → `cangrejo_max_sl_dist_pct`: el stop nunca a más de ese
+     *     % del entry. Aprieta el stop: cambia DÓNDE sales.
+     *   · `perdida`   → `cangrejo_max_loss_at_sl_pct`: el SL nunca cuesta más
+     *     de ese % de la cuenta. Encoge el tamaño: cambia CUÁNTO pones. */
     cangrejo_active?: boolean;
-    /** Modo elegido en el selector de la tarjeta. Se guarda con la estrategia
-     *  para que recuerde tu elección; el MOTOR LO IGNORA — lo que cuenta son
-     *  los valores de los campos. Va explícito (no derivado del valor) porque
-     *  derivándolo el selector no podía moverse a un modo con el campo vacío. */
-    cangrejo_mode?: 'recorrido' | 'perdida';
-    /** El SL nunca queda a más de este % del entry: se aprieta y el stop
-     *  REAL (la salida) pasa a ser el apretado. */
+    cangrejo_mode?: 'recorrido' | 'perdida' | null;
     cangrejo_max_sl_dist_pct?: number | null;
-    /** Perder como mucho este % del equity en el recorrido al SL. */
     cangrejo_max_loss_at_sl_pct?: number | null;
-    /** Market value máximo de cada entrada, en % del equity. */
+    /** INERTES, sin UI: la primera versión de la tarjeta tenía cuatro topes y
+     *  resultó poco intuitiva. Se admiten para que un borrador viejo no
+     *  reviente, pero ningún motor los lee. */
     cangrejo_max_mv_entry_pct?: number | null;
-    /** Market value máximo AÑADIDO por nivel de pirámide (presupuesto
-     *  independiente por nivel, se rearma con cada entrada). */
     cangrejo_max_mv_pyr_pct?: number | null;
     swing_option?: {
         active: boolean;
@@ -396,7 +405,7 @@ export const initialRiskManagement: RiskManagement = {
     hybrid_black_swan_pct: null,
     hybrid_max_loss_pct: null,
     cangrejo_active: false,
-    cangrejo_mode: 'perdida',
+    cangrejo_mode: null,
     cangrejo_max_sl_dist_pct: null,
     cangrejo_max_loss_at_sl_pct: null,
     cangrejo_max_mv_entry_pct: null,

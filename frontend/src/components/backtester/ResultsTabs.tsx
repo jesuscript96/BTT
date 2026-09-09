@@ -6,15 +6,21 @@ import PerformanceTab from "@/components/backtester/tabs/PerformanceTab";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import TradesTab from "@/components/backtester/tabs/TradesTab";
 import ChartsTab from "@/components/backtester/tabs/ChartsTab";
+import BandaLocates from "./BandaLocates";
 import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSurfaceTab";
+import EdgeTab from "@/components/backtester/tabs/EdgeTab";
 import LockedFeature from "@/components/LockedFeature";
 import Chart from "@/components/backtester/Chart";
 
+// Edge va DESPUES de «Análisis por trade» y ANTES de Optimization a proposito:
+// el orden es un zoom hacia fuera (una operacion → el microscopio → agregado en
+// el tiempo → que valor pongo). Ver la cabecera de EdgeTab.tsx.
 const TABS = [
   { id: "performance", label: "Performance" },
   { id: "calendar", label: "Calendar" },
   { id: "trades", label: "Trades" },
   { id: "analysis", label: "Análisis por trade" },
+  { id: "edge", label: "Edge" },
   { id: "charts_optimization", label: "Charts + Optimization IS" },
 ] as const;
 
@@ -58,7 +64,7 @@ export default function ResultsTabs({
   onSelectDay,
 }: ResultsTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>("performance");
-  const [chartsSubTab, setChartsSubTab] = useState<"charts" | "whatif_stress" | "optimization">("charts");
+  const [chartsSubTab, setChartsSubTab] = useState<"charts" | "whatif_stress" | "banda_locates" | "optimization">("charts");
 
   // Montaje perezoso: un tab solo monta su contenido la PRIMERA vez que se abre y
   // luego se mantiene montado (se oculta con display:none). Así el render inicial
@@ -72,7 +78,7 @@ export default function ResultsTabs({
     setActiveTab(id);
     setMountedTabs((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   };
-  const selectChartsSub = (id: "charts" | "whatif_stress" | "optimization") => {
+  const selectChartsSub = (id: "charts" | "whatif_stress" | "banda_locates" | "optimization") => {
     setChartsSubTab(id);
     setMountedChartsSub((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   };
@@ -297,7 +303,9 @@ export default function ResultsTabs({
         </div>
         <div style={{ display: activeTab === "trades" ? "block" : "none" }}>
           {mountedTabs.has("trades") && (
-          <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade} strategyName={activeStrategy?.name} />
+          <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade}
+                     strategyName={activeStrategy?.name}
+                     evGate={result.ev_gate} sinPuerta={result.sin_puerta} />
           )}
         </div>
         <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>
@@ -387,6 +395,11 @@ export default function ResultsTabs({
             )}
           </div>
         </div>
+        <div style={{ display: activeTab === "edge" ? "block" : "none" }}>
+          {mountedTabs.has("edge") && (
+          <EdgeTab trades={result.trades} datasetId={datasetId} />
+          )}
+        </div>
          <div style={{ display: activeTab === "charts_optimization" ? "block" : "none" }}>
           {/* Sub-navigation tabs */}
           <div style={{
@@ -444,6 +457,31 @@ export default function ResultsTabs({
               onMouseLeave={(e) => { if (chartsSubTab !== "whatif_stress") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
             >
               What if and Stress test
+            </button>
+            <span style={{ width: 1, height: 12, backgroundColor: 'var(--color-ec-border)', opacity: 0.6, margin: '0 16px', transform: 'translateY(-4px)' }}></span>
+            <button
+              onClick={() => selectChartsSub("banda_locates")}
+              style={{
+                paddingBottom: 8,
+                paddingLeft: 4,
+                paddingRight: 4,
+                fontFamily: "var(--color-ec-sans)",
+                fontSize: 11,
+                fontWeight: 600,
+                color: chartsSubTab === "banda_locates" ? "var(--color-ec-text-high)" : "var(--color-ec-text-muted)",
+                borderBottom: chartsSubTab === "banda_locates" ? "2px solid var(--color-ec-copper)" : "2px solid transparent",
+                background: "transparent",
+                borderTop: "none",
+                borderLeft: "none",
+                borderRight: "none",
+                cursor: "pointer",
+                transition: "all 150ms ease",
+                marginBottom: -1,
+              }}
+              onMouseEnter={(e) => { if (chartsSubTab !== "banda_locates") e.currentTarget.style.color = "var(--color-ec-text-secondary)"; }}
+              onMouseLeave={(e) => { if (chartsSubTab !== "banda_locates") e.currentTarget.style.color = "var(--color-ec-text-muted)"; }}
+            >
+              Banda de locates
             </button>
             <span style={{ width: 1, height: 12, backgroundColor: 'var(--color-ec-border)', opacity: 0.6, margin: '0 16px', transform: 'translateY(-4px)' }}></span>
             <button
@@ -509,6 +547,11 @@ export default function ResultsTabs({
               viewMode="whatif"
               riskType={backtestParams?.risk_type as string}
             />
+            )}
+          </div>
+          <div style={{ display: chartsSubTab === "banda_locates" ? "block" : "none" }}>
+            {mountedTabs.has("charts_optimization") && mountedChartsSub.has("banda_locates") && (
+            <BandaLocates result={result} initCash={initCash} backtestParams={backtestParams} />
             )}
           </div>
           <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>

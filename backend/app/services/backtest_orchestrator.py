@@ -19,7 +19,7 @@ from app.services.data_service import (
     get_intraday_stream,
     _resolve_filters,
 )
-from app.services.backtest_service import run_backtest, compute_is_oos_metrics
+from app.services.backtest_service import run_backtest
 
 logger = logging.getLogger("backtester.orchestrator")
 
@@ -50,13 +50,11 @@ class BacktestRequest(BaseModel):
     hybrid_stop: bool = False
     hybrid_black_swan_pct: float | None = None
     hybrid_max_loss_pct: float | None = None
-    # Estilo Cangrejo (2026-09-07, Álvaro): techos de sizing. Mismo trato que
-    # el híbrido — viaja en la estrategia, la petición puede forzarlo.
+    # Estilo Cangrejo. Como el hibrido: normalmente viaja en la estrategia, pero
+    # la peticion puede forzarlo (nunca apagarlo).
     cangrejo_active: bool = False
     cangrejo_max_sl_dist_pct: float | None = None
     cangrejo_max_loss_at_sl_pct: float | None = None
-    cangrejo_max_mv_entry_pct: float | None = None
-    cangrejo_max_mv_pyr_pct: float | None = None
     fees: float = 0.0
     fee_type: str = "PERCENT"
     monthly_expenses: float = 0.0
@@ -75,14 +73,29 @@ class BacktestRequest(BaseModel):
     # a alquilar por ticker-día. 0 = sin tope. Limita el tamaño en CORTO a
     # max_locates * 100 acciones (Jaume 2026-08-26).
     max_locates: int = 0
+    # Locates aleatorios (Jaume 2026-09-08): precio del paquete sorteado por
+    # ticker-dia dentro de [min, max], sesgado por el precio de la accion y
+    # determinista por semilla. Sustituye a `locates_cost` cuando esta activo.
+    # Ver backtest_service.run_backtest y locates_random.py.
+    locates_random: bool = False
+    locates_random_min: float = 0.0
+    locates_random_max: float = 0.0
+    locates_seed: int = 0
+    # Puerta por EV (fase 2 de los locates aleatorios). Dos pasadas: la primera
+    # sin puerta da el «EV en sombra»; la segunda decide trade a trade si el EV
+    # rodante cubre el fade que exige el locate. Ver locates_gate.py.
+    ev_gate_enabled: bool = False
+    ev_gate_window: int = 30
+    ev_gate_by: str = "trades"          # "trades" | "dias"
+    ev_gate_default_pct: float = 2.0
+    ev_gate_min_trades: int = 10
+    # Corte IS/OOS (PRD Alvaro 2026-09-08, P1). La UI lo mandaba desde siempre y
+    # Pydantic lo tiraba: ahora se persisten `is_metrics` y `oos_metrics`,
+    # calculados igual que los pinta el navegador. El motor sigue corriendo el
+    # rango ENTERO (decision de Jaume: quiere poder ver el OOS con las mismas
+    # condiciones); 100 = sin corte, y no cambia nada.
+    is_percent: float = 100.0
     look_ahead_prevention: bool = True
-    # Split IS/OOS (PRD_METRICAS_Y_OOS P1, 2026-09-08): el frontend ya lo
-    # enviaba pero este esquema no lo declaraba, así que Pydantic lo descartaba
-    # en silencio y el motor corría SIEMPRE el rango completo. Con <100, el
-    # motor sigue ejecutando el rango entero (una sola pasada, mismos trades)
-    # y añade results["is_oos"] con las métricas por segmento — hasta ahora
-    # ese recorte solo vivía en el navegador y se perdía al cerrar la página.
-    is_percent: int = 100
 
 
 def generate_mock_candles(ticker: str, date: str) -> dict:
@@ -183,8 +196,6 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
     hybrid_max_loss_pct = (req.hybrid_max_loss_pct
                            if req.hybrid_max_loss_pct is not None
                            else strategy_rm.get("hybrid_max_loss_pct"))
-    # Estilo Cangrejo: mismo patrón que el híbrido — la petición puede forzar
-    # pero no apagar, y los porcentajes caen atrás hacia la estrategia.
     cangrejo_active = req.cangrejo_active or bool(strategy_rm.get("cangrejo_active", False))
     cangrejo_max_sl_dist_pct = (req.cangrejo_max_sl_dist_pct
                                 if req.cangrejo_max_sl_dist_pct is not None
@@ -192,12 +203,6 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
     cangrejo_max_loss_at_sl_pct = (req.cangrejo_max_loss_at_sl_pct
                                    if req.cangrejo_max_loss_at_sl_pct is not None
                                    else strategy_rm.get("cangrejo_max_loss_at_sl_pct"))
-    cangrejo_max_mv_entry_pct = (req.cangrejo_max_mv_entry_pct
-                                 if req.cangrejo_max_mv_entry_pct is not None
-                                 else strategy_rm.get("cangrejo_max_mv_entry_pct"))
-    cangrejo_max_mv_pyr_pct = (req.cangrejo_max_mv_pyr_pct
-                               if req.cangrejo_max_mv_pyr_pct is not None
-                               else strategy_rm.get("cangrejo_max_mv_pyr_pct"))
 
     if size_by_sl:
         rm = strategy_rm
@@ -268,14 +273,6 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             qualifying = qualifying[qualifying["date"].astype(str) >= req.start_date]
         if req.end_date:
             qualifying = qualifying[qualifying["date"].astype(str) <= req.end_date]
-
-        # Rango de fechas EJECUTADO de verdad (PRD_METRICAS_Y_OOS P4): lo que
-        # queda del qualifying tras filtrar por las fechas de la petición. Se
-        # añade al resultado para que backtest_params persista el rango real y
-        # no el del formulario — dos corridas de hoy guardaron 2026-01-02→
-        # 2026-09-04 con trades de 2025 (HALLAZGO 2026-09-08·01).
-        _exec_dates = qualifying["date"].astype(str).str[:10]
-        executed_date_range = {"start": _exec_dates.min(), "end": _exec_dates.max()}
 
         n_qualifying = len(qualifying)
         n_tickers = qualifying["ticker"].nunique()
@@ -451,8 +448,6 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             cangrejo_active=cangrejo_active,
             cangrejo_max_sl_dist_pct=cangrejo_max_sl_dist_pct,
             cangrejo_max_loss_at_sl_pct=cangrejo_max_loss_at_sl_pct,
-            cangrejo_max_mv_entry_pct=cangrejo_max_mv_entry_pct,
-            cangrejo_max_mv_pyr_pct=cangrejo_max_mv_pyr_pct,
             fees=req.fees,
             fee_type=req.fee_type,
             slippage=req.slippage,
@@ -462,6 +457,10 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             locates_cost=req.locates_cost,
             locate_type=req.locate_type,
             max_locates=req.max_locates,
+            locates_random=bool(req.locates_random),
+            locates_random_min=req.locates_random_min,
+            locates_random_max=req.locates_random_max,
+            locates_seed=req.locates_seed,
             look_ahead_prevention=req.look_ahead_prevention,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,
@@ -477,6 +476,35 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                 n_groups_hint=n_qualifying,
                 **_bt_kwargs,
             )
+            # ── Puerta por EV: SEGUNDA pasada ────────────────────────────
+            # La primera (la de arriba, sin puerta) es la sombra: todas las
+            # senales con su resultado en % de precio. La segunda corre con la
+            # puerta y en cada entrada mira el EV rodante de la sombra cerrada
+            # antes de ese instante. El stream es de un solo uso: se crea otro.
+            if req.ev_gate_enabled and req.locates_random:
+                from app.services.locates_gate import ConfigPuerta, sombra_desde_trades
+                _c_ns, _m_pct = sombra_desde_trades(results.get("trades", []))
+                _cfg_puerta = ConfigPuerta(
+                    ventana=max(1, int(req.ev_gate_window)),
+                    por="dias" if str(req.ev_gate_by).lower().startswith("d") else "trades",
+                    ev_defecto_pct=float(req.ev_gate_default_pct),
+                    min_trades=max(1, int(req.ev_gate_min_trades)),
+                    sombra_cierre_ns=_c_ns, sombra_move_pct=_m_pct,
+                )
+                _sin_puerta = {
+                    "aggregate_metrics": results.get("aggregate_metrics"),
+                    "total_trades": len(results.get("trades", [])),
+                    "locates_random": results.get("locates_random"),
+                }
+                logger.info("[PUERTA EV] segunda pasada con %d senales en sombra", int(_c_ns.size))
+                _stream2 = _tracked_stream(get_intraday_stream(qualifying, date_from, date_to))
+                results = run_backtest(
+                    qualifying_df=qualifying,
+                    day_group_iter=_stream2,
+                    n_groups_hint=n_qualifying,
+                    **{**_bt_kwargs, "ev_gate": _cfg_puerta},
+                )
+                results["sin_puerta"] = _sin_puerta
         else:
             # Cada pasada necesita su PROPIO stream: `intraday_stream` es un
             # generador de un solo uso y el de arriba ya no sirve. Se crea uno
@@ -505,6 +533,25 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                         _cfg_modelo["test_to"])
             results = run_with_model(_cfg_modelo, qualifying, _pasada, {})
 
+        # ── PRD Alvaro 2026-09-08: rango efectivo (P4) y segmentos IS/OOS (P1) ──
+        # `date_from/date_to` son los que resolvio `_resolve_filters` (el dataset
+        # puede acortar lo pedido) y `_executed_keys` lo que de verdad se simulo.
+        # El router guarda ESTO en `backtest_params`, no el formulario.
+        try:
+            _fechas_ejec = sorted(d for _, d in _executed_keys)
+            results["rango_efectivo"] = {
+                "start_date": str(date_from)[:10] if date_from else None,
+                "end_date": str(date_to)[:10] if date_to else None,
+                "primer_dia_ejecutado": _fechas_ejec[0] if _fechas_ejec else None,
+                "ultimo_dia_ejecutado": _fechas_ejec[-1] if _fechas_ejec else None,
+            }
+            from app.services.metricas_segmento import segmentos_is_oos
+            if isinstance(results.get("aggregate_metrics"), dict):
+                results["aggregate_metrics"].update(
+                    segmentos_is_oos(results, req.is_percent, float(req.init_cash)))
+        except Exception as _e_seg:
+            logger.warning("[IS/OOS] no se pudieron calcular los segmentos: %s", _e_seg)
+
         backtest_progress[req.dataset_id] = {
             "status": "completed",
             "current": n_qualifying,
@@ -518,28 +565,12 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         # es parcial y NO reproducible. Se reporta SIEMPRE en el payload; con
         # BACKTEST_STRICT_COMPLETENESS=true además se rechaza (503).
         try:
-            # Candidatos fantasma: filas del qualifying con ticker NULL/NaN del
-            # lago (HALLAZGO 2026-08-29·01: 1.032 filas ticker NULL desde
-            # 2022-07-12 en daily_metrics). Ningún stream de intradía puede
-            # emitirlas JAMÁS, así que no son un descarte de datos: son dato
-            # corrupto del origen. Se excluyen de la reconciliación (con
-            # STRICT activo tumbarían el backtest para siempre) y se reportan
-            # aparte para que sigan siendo visibles.
-            _t_str = qualifying["ticker"].astype(str).str.strip()
-            _d_str = pd.to_datetime(qualifying["date"]).dt.strftime("%Y-%m-%d")
-            _phantom_mask = (
-                qualifying["ticker"].isna()
-                | _t_str.isin(["", "None", "nan", "NULL", "<NA>"])
-            )
-            phantom_keys = set(zip(_t_str[_phantom_mask], _d_str[_phantom_mask]))
-            q_keys = set(zip(_t_str[~_phantom_mask], _d_str[~_phantom_mask]))
-            n_phantom = len(phantom_keys)
-            if n_phantom:
-                logger.warning(
-                    f"[COMPLETENESS] {n_phantom} ticker-días con ticker NULL/NaN "
-                    f"en el lago (fantasma) — excluidos de la reconciliación. "
-                    f"Muestra: {sorted(f'{t}:{d}' for t, d in phantom_keys)[:10]}"
+            q_keys = set(
+                zip(
+                    qualifying["ticker"].astype(str),
+                    pd.to_datetime(qualifying["date"]).dt.strftime("%Y-%m-%d"),
                 )
+            )
             n_expected = len(q_keys)
             missing = q_keys - _executed_keys
             n_missing = len(missing)
@@ -550,7 +581,6 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                 "expected_ticker_days": n_expected,
                 "executed_ticker_days": n_executed,
                 "missing_ticker_days": n_missing,
-                "phantom_ticker_days": n_phantom,
                 "completeness_pct": pct_complete,
                 "missing_sample": missing_sample,
             }
@@ -558,7 +588,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                 logger.error(
                     f"[COMPLETENESS] {n_missing}/{n_expected} ticker-días candidatos "
                     f"SIN intradía → descartados en silencio (completitud "
-                    f"{pct_complete:.2f}%). El resultado es PARCIAL y no reproducible "
+                    f"{pct_complete:.1f}%). El resultado es PARCIAL y no reproducible "
                     f"hasta que la caché intradía esté completa. Muestra: "
                     f"{missing_sample[:10]}"
                 )
@@ -568,7 +598,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                         detail=(
                             f"Backtest incompleto: {n_missing} de {n_expected} "
                             f"ticker-días candidatos no tienen intradía disponible "
-                            f"({pct_complete:.2f}% completo). Con "
+                            f"({pct_complete:.1f}% completo). Con "
                             f"BACKTEST_STRICT_COMPLETENESS=true el motor rechaza "
                             f"resultados parciales — calienta la caché o revisa el lago."
                         ),
@@ -586,17 +616,6 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         total_elapsed = round(t_end - t0, 2)
         n_trades = len(results.get("trades", []))
         n_days = len(results.get("day_results", []))
-
-        # Rango ejecutado y split IS/OOS (PRD_METRICAS_Y_OOS P1+P4): se añaden
-        # ANTES de sanitize_floats para que viajen limpios en el payload y en
-        # el results_json persistido. compute_is_oos_metrics devuelve None con
-        # is_percent>=100 → payload idéntico al de siempre (solo cambia si el
-        # usuario pidió split).
-        results["executed_date_range"] = executed_date_range
-        _is_oos = compute_is_oos_metrics(results, req.is_percent)
-        if _is_oos is not None:
-            results["is_oos"] = _is_oos
-
         print(f"[TIMING] total backtest: {total_elapsed}s")
         log_phase("total", (t_end - t0) * 1000, dataset=req.dataset_id,
                   pairs=n_qualifying, trades=n_trades, days=n_days)

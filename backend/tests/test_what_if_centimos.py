@@ -1,3 +1,4 @@
+import pytest
 """La regla de los céntimos mínimos de las cuentas de fondeo.
 
 QUÉ MODELA. Las mesas de fondeo no abonan un trade que no se haya movido un
@@ -107,6 +108,7 @@ def test_sin_precios_no_se_castiga_el_trade():
 
 # ── Cómo cae sobre la simulación ─────────────────────────────────────────
 
+@pytest.mark.xfail(reason="DECISION PENDIENTE (merge staging 2026-09-08): staging re-implemento «quitar el ganador» en su recomposicion en R (892b7fd) sin conocer la variante de fees de Alvaro (2b597cf), que nunca se subio a staging. Manda staging hasta acuerdo entre Alvaro y Jaume; ver MEMORIA_MADRE.", strict=True)
 def test_el_win_invalidado_se_queda_pagando_solo_sus_fees():
     """La mesa no abona el beneficio, pero las comisiones las cobra igual
     (sus Program Terms las listan como deducción siempre). El trade no
@@ -182,6 +184,7 @@ def test_la_gestion_de_tamano_sigue_funcionando_cuando_SE_PIDE():
     assert sum(x["pnl"] for x in r["trades"]) != sum(t["pnl"] for t in ts)
 
 
+@pytest.mark.xfail(reason="DECISION PENDIENTE (merge staging 2026-09-08): variante de Alvaro «el win invalidado paga solo sus fees» (2b597cf), nunca subida a staging; su recomposicion en R (892b7fd) se construyo sobre quitar el ganador. Manda staging hasta acuerdo Alvaro/Jaume; ver MEMORIA_MADRE.", strict=True)
 def test_la_curva_se_degrada_de_verdad():
     """El caso que quiere ver Jaume: cuánto se cae la cuenta con la regla."""
     ts = [
@@ -212,6 +215,7 @@ def test_devuelve_dias_para_el_calendario():
     assert dias[1]["total_trades"] == 1
 
 
+@pytest.mark.xfail(reason="DECISION PENDIENTE (merge staging 2026-09-08): variante de Alvaro «el win invalidado paga solo sus fees» (2b597cf), nunca subida a staging; su recomposicion en R (892b7fd) se construyo sobre quitar el ganador. Manda staging hasta acuerdo Alvaro/Jaume; ver MEMORIA_MADRE.", strict=True)
 def test_los_dias_reflejan_el_filtro():
     """El día del win invalidado NO desaparece del calendario: el trade se
     queda pagando solo sus fees. (Antes el trade se eliminaba entero y el día
@@ -233,3 +237,23 @@ def test_no_se_inventan_las_metricas_que_no_se_pueden_reconstruir():
     assert d["sharpe_ratio"] is None and d["max_drawdown_pct"] is None
     # …y los locates tampoco se arrastran: no hay forma honesta de repartirlos.
     assert d["locates_fee"] == 0.0
+
+
+def test_el_ganador_descartado_SIGUE_OCUPANDO_su_hueco_del_dia():
+    """EL TRADE EXISTIO, aunque la mesa no lo abone.
+
+    El filtro estaba antes de los limites, asi que un ganador corto liberaba
+    su plaza y dejaba entrar en su lugar a un trade posterior que en la
+    realidad nunca se llego a operar. Con «Max. trades/dia = 1» y un primer
+    trade que no llega a los 10 centimos, el dia se queda VACIO — no se opera
+    el segundo.
+    """
+    corto = _t(entrada=1.00, salida=0.95, pnl=50.0)
+    corto["entry_time"] = "2026-01-05 08:00:00"
+    segundo = _t(entrada=1.00, salida=0.80, pnl=200.0)
+    segundo["entry_time"] = "2026-01-05 09:00:00"
+
+    r = run_what_if([corto, segundo],
+                    {"min_move_cents": 0.10, "daily_max_trades": 1},
+                    init_cash=10_000.0)
+    assert r["trades"] == []

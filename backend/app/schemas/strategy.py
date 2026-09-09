@@ -79,6 +79,10 @@ class IndicatorType(str, Enum):
     Y_VOLUME = "Yesterday Volume"
     MAX_X_DAYS = "High of last X days"
     MIN_X_DAYS = "Low of last X days"
+    # El de verdad, con los cuatro parametros. Los dos de arriba se quedan
+    # SOLO por compatibilidad con JSON antiguos: comparten motor, y unicamente
+    # fijan otros defectos.
+    OVERHEAD_X_DAYS = "Overhead last X days"
     PREVIOUS_MAX = "Previous max"
     PREVIOUS_MIN = "Previous min"
     PREV_BAR_CLOSE = "Prev. Bar Close"
@@ -117,6 +121,12 @@ class IndicatorType(str, Enum):
     PREV_CLOSE = "Previous Close"
     RET_PCT_AM = "Ret % AM"
     CANDLE_RANGE_PCT = "Candle Range %"
+    # Recorrido de la vela CON SIGNO: (cierre - apertura) / apertura * 100.
+    # Es `Candle Range %` sin el `abs()`: y el signo es justo el dato que hace
+    # falta para escalpear: `> 3` es "subio mas de un 3%" y `< -2` es "bajo mas
+    # de un 2%". Sin parametro de direccion a proposito (decision de Jaume,
+    # 7-sep-2026): el signo ya la lleva.
+    RECORRIDO_PCT = "Recorrido (%)"
     ELAPSED_TIME_LAST_HIGH = "Elapsed time from last High"
     ELAPSED_TIME = "Elapsed Time"
     TRIANGLE_ASCENDING = "Triangle Ascending"
@@ -285,6 +295,18 @@ class IndicatorConfig(BaseModel):
     # (con la sesión de `ap_session`); "vwap_cross" usa el precio del VWAP en la
     # vela en que el precio lo cruzó por última vez.
     fade_ref: Optional[Literal["previous_max", "vwap_cross"]] = None
+    # "Overhead last X days". DECLARADOS AQUI A PROPOSITO: pydantic va con
+    # extra="ignore", asi que un campo sin declarar se tira SIN error, SIN log
+    # y SIN 422.
+    #   overhead_extreme   que dia se busca: el del maximo mas alto o el del
+    #                      minimo mas bajo.
+    #   overhead_ref       que precio DE ESE DIA es el nivel. El maximo suele
+    #                      ser una mecha; el cierre si es resistencia.
+    #   overhead_vol_rule  el volumen de ese dia frente al acumulado de hoy:
+    #                      "gt" mayor, "lt" menor, "none" sin condicion.
+    overhead_extreme: Optional[Literal["max", "min"]] = None
+    overhead_ref: Optional[Literal["high", "low", "open", "close"]] = None
+    overhead_vol_rule: Optional[Literal["none", "gt", "lt"]] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"
@@ -370,31 +392,30 @@ class RiskManagement(BaseModel):
     hybrid_stop: Optional[bool] = False
     hybrid_black_swan_pct: Optional[float] = None
     hybrid_max_loss_pct: Optional[float] = None
-    # ESTILO CANGREJO (2026-09-07, Álvaro). Cuatro TECHOS de sizing que viven
-    # con el SL, no un modo de dimensionado: recortan el tamaño que salga del
-    # modo activo (MV clásico, por SL o híbrido), nunca lo agrandan.
-    #   cangrejo_max_sl_dist_pct     — el SL nunca queda a más de D% del entry:
-    #                                   se aprieta a entry*(1±D%) y el stop REAL
-    #                                   (la salida) es el apretado.
-    #   cangrejo_max_loss_at_sl_pct  — perder como mucho X% del equity en el
-    #                                   recorrido al SL: encoge el MV si el SL
-    #                                   queda lejos.
-    #   cangrejo_max_mv_entry_pct    — market value máximo de cada entrada.
-    #   cangrejo_max_mv_pyr_pct      — market value máximo AÑADIDO por nivel de
-    #                                   pirámide (presupuesto independiente por
-    #                                   nivel, se reinicia con cada entrada).
-    # EXCLUSIVO con el híbrido (decisión de Álvaro): con ambos encendidos gana
-    # Cangrejo y el techo del híbrido NO se aplica. La UI los desactiva mutuamente.
-    # Declarados aquí por lo mismo que los híbridos: pydantic va con
-    # extra="ignore" y un campo sin declarar se tira SIN error (TRES CAPAS).
+    # ESTILO CANGREJO (2026-09-08, PRD de Alvaro `docs/PRD_ESTILO_CANGREJO.md`).
+    # Acota cada trade "o por recorrido del SL, o por perdida maxima". Con SL
+    # por estructura la distancia entry->SL cambia en cada entrada, asi que con
+    # el mismo market value unos stops cuestan poco y otros muchisimo; estos dos
+    # modos le ponen techo, cada uno por un lado:
+    #   MODO A `cangrejo_max_sl_dist_pct`   -> el stop nunca a mas de ese % del
+    #     entry. Se APRIETA el stop: cambia DONDE se sale, no cuanto se pone.
+    #   MODO B `cangrejo_max_loss_at_sl_pct`-> el SL nunca cuesta mas de ese %
+    #     de la cuenta. Se encoge el TAMANO: cambia CUANTO se pone, no donde.
+    # Son EXCLUYENTES entre si en la UI (`cangrejo_mode` dice cual se ve) y
+    # EXCLUYENTES con el stop hibrido; si un payload trajera los dos, el motor
+    # arbitra a favor de Cangrejo. Son TECHOS: solo recortan, nunca agrandan.
+    #
+    # DECLARADOS AQUI DESDE EL DIA 1 por la leccion de las TRES CAPAS: pydantic
+    # va con extra="ignore" y un campo sin declarar se cae SIN error, SIN log y
+    # SIN 422 — es lo que le paso a `size_by_sl`.
     cangrejo_active: Optional[bool] = False
-    # Modo del selector de la tarjeta ('recorrido' = apretar el SL lejano,
-    # 'perdida' = encoger el tamaño para perder como mucho X% al SL). Es cosa
-    # de la UI: el motor NO lo lee, solo los valores. Va declarado para que
-    # sobreviva al guardar (extra="ignore" lo tiraria en silencio).
-    cangrejo_mode: Optional[Literal["recorrido", "perdida"]] = None
+    cangrejo_mode: Optional[Literal['recorrido', 'perdida']] = None
     cangrejo_max_sl_dist_pct: Optional[float] = None
     cangrejo_max_loss_at_sl_pct: Optional[float] = None
+    # INERTES, sin UI. La primera version de la tarjeta tenia cuatro topes
+    # sueltos y resulto poco intuitiva (PRD 3); se dejan ADMITIDOS por si algun
+    # dia vuelven, para que un borrador viejo no reviente, pero NINGUN motor los
+    # lee. No anadir logica que dependa de ellos sin actualizar el PRD.
     cangrejo_max_mv_entry_pct: Optional[float] = None
     cangrejo_max_mv_pyr_pct: Optional[float] = None
     use_hard_stop: Optional[bool] = True
