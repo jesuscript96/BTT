@@ -201,6 +201,15 @@ async def lifespan(app: FastAPI):
             print(f"[WARN] Cache preload failed: {e}")
     except Exception as e:
         print(f"[WARN] DB not available at startup: {e}. App will start; first API request may fail or be slow.")
+        # Arranque local (scripts/run_backend_safe.py pone BTT_REQUIRE_DB=1):
+        # morir aqui es mejor que quedar sirviendo sin datos. En prod el flag
+        # no esta puesto y se conserva el comportamiento tolerante de siempre
+        # (un hipo de GCS no debe tumbar el despliegue).
+        if os.getenv("BTT_REQUIRE_DB", "").strip().lower() in ("1", "true", "yes", "on"):
+            raise RuntimeError(
+                "BTT_REQUIRE_DB=1: la base de datos no abre al arrancar; el "
+                "proceso se aborta en vez de servir sin datos."
+            ) from e
 
     # Live screener (internal, Admin-gated): warm the in-RAM state and connect
     # to Massive's WS in the background. Best-effort — a WS/account/network
@@ -394,4 +403,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     )
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    # NUNCA reload=True aqui: los workers de --reload quedan huerfanos
+    # reteniendo local_data.duckdb (bloqueos de la carga de las 09:00 y
+    # "Failed to load metadata pointer" = contencion; 2026-09-05 y 09-07).
+    # Para arrancar en local con todas las guardas (puerto + DuckDB + venv):
+    #   backend\scripts\arrancar_backend.bat
+    # Reglas: docs/REGLA_ARRANQUE_BACKEND_LOCAL.md
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8010, reload=False, workers=1)

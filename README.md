@@ -36,9 +36,14 @@ MASSIVE_API_KEY=your_api_key_here
 MASSIVE_API_BASE_URL=https://api.polygon.io
 ```
 
-Run the backend:
+Run the backend (always through the safe launcher — never `uvicorn --reload`,
+which leaves orphan workers holding `local_data.duckdb`; see
+`docs/REGLA_ARRANQUE_BACKEND_LOCAL.md`):
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Windows
+scripts\arrancar_backend.bat
+# macOS / Linux (venv activated)
+python scripts/run_backend_safe.py
 ```
 
 ### Frontend Setup

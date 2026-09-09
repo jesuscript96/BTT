@@ -14,6 +14,7 @@
 3. **En local, `DISABLE_GCS_SYNC=true` SIEMPRE.** Sin esto, tu instancia local puede **sobrescribir la base de datos de usuarios de producción** en la nube. Es el error más caro posible. Ver §5.
 4. **En local, `LIVE_SCREENER_ENABLED=false` SIEMPRE.** Si no, tu local pelea con producción por la conexión de datos en vivo y **degrada el servicio real**. Ver §5.
 5. **Nunca commitees secretos** ni datos: `.env`, `.env.local`, `gcs-key.json`, `users.duckdb`, `data/`, `.cache/`. Ya están en `.gitignore`; no los fuerces.
+6. **El backend local se arranca con `backend\scripts\arrancar_backend.bat` y NUNCA con `uvicorn --reload`.** `local_data.duckdb` admite **un solo proceso** con la base abierta; un `--reload` suelto deja workers huérfanos que bloquean la carga de datos y corrompen la sesión (errores tipo "Failed to load metadata pointer" = contención). Ver `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md`.
 
 ---
 
@@ -169,6 +170,14 @@ Necesitas **dos terminales**: una para el backend, otra para el frontend.
 
 ### 6.1 Backend (terminal 1)
 
+> **🚨 NUNCA arranques el backend con `uvicorn --reload`** mientras use `local_data.duckdb`.
+> El modo reload deja procesos hijo (`spawn_main`) huérfanos que retienen la base
+> con el puerto libre: bloquean la carga diaria de datos y producen errores de
+> contención ("Failed to load metadata pointer" = **contención**, no corrupción).
+> Arranca siempre con el launcher seguro, que comprueba puerto + DuckDB + venv
+> antes de levantar uvicorn (sin reload, 1 worker). Detalle completo en
+> `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md`.
+
 **Windows (PowerShell):**
 ```powershell
 cd backend
@@ -176,7 +185,8 @@ python -m venv .venv                 # solo la 1ª vez
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt      # solo la 1ª vez o si cambian deps
 # (coloca aquí backend\.env y backend\gcs-key.json — ver §4)
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
+scripts\arrancar_backend.bat
+# (equivalente directo: .\.venv\Scripts\python.exe scripts\run_backend_safe.py)
 ```
 
 **macOS / Linux:**
@@ -186,7 +196,7 @@ python3 -m venv .venv                # solo la 1ª vez
 source .venv/bin/activate
 pip install -r requirements.txt      # solo la 1ª vez o si cambian deps
 # (coloca aquí backend/.env y backend/gcs-key.json — ver §4)
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8010
+python scripts/run_backend_safe.py
 ```
 
 Backend listo cuando veas el log de Uvicorn en `http://0.0.0.0:8010` **y** este mensaje de seguridad:
@@ -309,6 +319,8 @@ git push
 | `ModuleNotFoundError` en backend | venv no activado o faltan deps | activa `.venv` y `pip install -r requirements.txt` |
 | Faltan datos / errores de auth GCS | falta `backend/gcs-key.json` o claves en `.env` | pídeselos a Adrian; colócalos como en §4 |
 | Auth de Clerk falla en frontend | faltan claves en `frontend/.env.local` | usa las de test que pasa Adrian |
+| "Failed to load metadata pointer" / error de lock de DuckDB | **contención** (otro proceso con `local_data.duckdb` abierto: huérfano de un `--reload`, segundo backend…) **o choque de versiones de duckdb** (la base fue tocada por otro intérprete con otra versión) | NO es corrupción física. `run_backend_safe.py --kill-orphans`, compara versiones de duckdb y revisa `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md` |
+| El backend "muere" sobre las 09:00 y luego vuelve | tarea programada "Edgecute Actualizar Datos Diario" (cangrejo_data): para el backend, carga datos y lo rearranca | **comportamiento normal**: no relances el backend en medio de la carga |
 
 ---
 
