@@ -44,6 +44,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -161,11 +162,13 @@ def _por_reglas(anyo: int) -> dict[date, tuple[str, str]]:
         # Si el dia cae en fin de semana no hay nada que acortar, y si ya es
         # festivo entero manda el festivo: cuando Navidad cae en sabado, el 24
         # es el festivo trasladado, no una media sesion.
+        #
+        # LA VISPERA DEL 4 DE JULIO YA QUEDA CUBIERTA POR LAS DOS CONDICIONES
+        # DE ARRIBA, y conviene verlo escrito para no anyadir una tercera que
+        # no haria nada: si el 4 cae en sabado, el festivo se traslada al 3 y lo
+        # para el `d in cal`; si cae en domingo, el 3 es sabado y lo para el
+        # `weekday() >= 5`. No hay ningun otro caso.
         if d.weekday() >= 5 or d in cal:
-            continue
-        # La vispera del 4 de Julio solo se acorta si el 4 es laborable. Si cae
-        # en fin de semana el festivo se traslada y el 3 es un dia normal.
-        if d.month == 7 and date(anyo, 7, 4).weekday() >= 5:
             continue
         cal[d] = ("media", nombre)
 
@@ -174,8 +177,15 @@ def _por_reglas(anyo: int) -> dict[date, tuple[str, str]]:
 
 # -- la lista oficial de Massive ------------------------------------------
 _cache: dict[int, dict[date, tuple[str, str]]] = {}
-_pedido_el: Optional[date] = None
+_pedido_el: Optional[date] = None      # el dia cuya lista oficial YA tenemos
+_ultimo_intento: float = 0.0
 _extra: dict[date, tuple[str, str]] = {}
+
+# Cada cuanto se puede reintentar la lista oficial cuando falla. Hace falta un
+# suelo porque `franja_de_mercado()` se llama en cada latido —cada 5 segundos—
+# y sin el, un backend caido o un corte de red dispararian una peticion por
+# latido en vez de una al dia.
+REINTENTO_MIN_SEG = 600
 
 
 def _de_massive() -> dict[date, tuple[str, str]]:
@@ -208,7 +218,7 @@ def _de_massive() -> dict[date, tuple[str, str]]:
         return {}
 
 
-def _refrescar_al_fondo() -> None:
+def _refrescar_al_fondo(dia: date) -> None:
     """Pide la lista oficial EN OTRO HILO y la incorpora cuando llegue.
 
     NO PUEDE BLOQUEAR. `franja_de_mercado()` se llama en cada latido del bot,
@@ -218,12 +228,23 @@ def _refrescar_al_fondo() -> None:
 
     Mientras el hilo no vuelve se responde con las reglas, que es justo para lo
     que estan. Si falla, se conserva lo que hubiera.
+
+    EL DIA SOLO SE DA POR PEDIDO SI LA PETICION SALE BIEN. Marcarlo antes de
+    saberlo dejaba el proceso 24 horas con las reglas a secas por un timeout de
+    un segundo malo, y sin decirlo en ningun sitio. Ahora un fallo se reintenta
+    pasado `REINTENTO_MIN_SEG`, y el exito deja una linea en el log: si el
+    calendario oficial no esta entrando, se ve.
     """
     def tarea() -> None:
+        global _pedido_el
         nuevos = _de_massive()
-        if nuevos:
-            _extra.update(nuevos)
-            _cache.clear()          # que se recalculen ya con lo nuevo
+        if not nuevos:
+            return                  # sin marcar: se reintenta mas tarde
+        _extra.update(nuevos)
+        _cache.clear()              # que se recalculen ya con lo nuevo
+        _pedido_el = dia
+        logger.info("[CALENDARIO] lista oficial de NYSE al dia: %d fechas",
+                    len(nuevos))
     threading.Thread(target=tarea, name="calendario-mercado", daemon=True).start()
 
 
@@ -233,11 +254,12 @@ def _calendario(anyo: int) -> dict[date, tuple[str, str]]:
     El bot puede estar semanas encendido, asi que la lista oficial se refresca
     al cambiar el dia. Si la peticion falla se conserva la anterior.
     """
-    global _pedido_el
+    global _ultimo_intento
     hoy = datetime.now(tz=ZoneInfo(ET)).date()
-    if _pedido_el != hoy:
-        _pedido_el = hoy
-        _refrescar_al_fondo()
+    ahora = time.monotonic()
+    if _pedido_el != hoy and (ahora - _ultimo_intento) >= REINTENTO_MIN_SEG:
+        _ultimo_intento = ahora
+        _refrescar_al_fondo(hoy)
     if anyo not in _cache:
         cal = _por_reglas(anyo)
         # Massive MANDA sobre las reglas: es la fuente oficial y la unica que

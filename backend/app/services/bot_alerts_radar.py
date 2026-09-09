@@ -298,6 +298,14 @@ class Radar:
         if not key:
             return {}
 
+        # SE EMPIEZA SIN ERROR. `ultimo_error` lo comparten el universo, el
+        # barrido y esto, y el bot lo imprime como «OJO con los cierres» justo
+        # despues de esta llamada. Sin limpiarlo, un aviso del universo salia
+        # etiquetado como problema de los cierres, y un aviso de los cierres se
+        # quedaba pegado dias despues de haberse arreglado. El log de cada uno
+        # sigue saliendo por su cuenta, asi que no se pierde nada.
+        self.ultimo_error = None
+
         hoy = datetime.now(tz=ZoneInfo(ET)).date()
         # LA SESION ANTERIOR SE SABE, NO SE TANTEA.
         #

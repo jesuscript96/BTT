@@ -362,14 +362,43 @@ def _bot_esta_vivo(estado: dict) -> bool:
         return False
 
 
+# La marca que distingue «te ha arrancado la pagina» de «te han lanzado a mano».
+#
+# HACE FALTA PORQUE EL BOT SE APAGA SOLO AL ARRANCAR. `bot.py` llama a
+# `dejar_parado()` nada mas empezar, para que dejar el interruptor encendido un
+# dia no haga que al dia siguiente se ponga a vigilar sin que nadie lo pida.
+#
+# Pero cuando es la PAGINA la que lo arranca, ese apagado pisa justo lo que el
+# usuario acaba de pedir: aqui se guarda vigilando=True, se lanza el .bat, y
+# entre 10 y 40 segundos despues —lo que tarda el bot en importar pandas y pedir
+# las estrategias— llega su POST poniendolo en False. El interruptor se volvia
+# solo a «Parado» y el bot se quedaba vivo pero mudo. Habia que pulsar DOS
+# VECES: la segunda funcionaba porque ya habia proceso y no se relanzaba.
+#
+# Era exactamente el «le doy y no se entera» que este endpoint venia a arreglar,
+# y no dejaba ni un error. Lo encontro una revision del 9-sep-2026, DESPUES de
+# que yo diera el arreglo por bueno.
+#
+# Va por variable de entorno y no por argumento del `.bat` para no tener que
+# tocar el lanzador, que es de Jaume y vive fuera del repo.
+MARCA_ARRANQUE = "BOT_ALERTS_ARRANCADO_POR_LA_PAGINA"
+
+
 def _arrancar_bot() -> bool:
-    """Lanza el bot con su .bat, en segundo plano y sin ventana."""
+    """Lanza el bot con su .bat, en segundo plano y sin ventana.
+
+    Se le pasa `MARCA_ARRANQUE` para que NO se apague el interruptor al
+    arrancar: si estamos aqui es porque alguien acaba de pedir que vigile.
+    """
     bat = os.getenv("BOT_ALERTS_BAT", r"D:\bot_senales\arrancar_bot.bat")
     if not os.path.exists(bat):
         logger.error("[BOT] no encuentro el lanzador: %s", bat)
         return False
     try:
-        subprocess.Popen(["cmd.exe", "/c", bat], creationflags=0x08000000)
+        entorno = dict(os.environ)
+        entorno[MARCA_ARRANQUE] = "1"
+        subprocess.Popen(["cmd.exe", "/c", bat], creationflags=0x08000000,
+                         env=entorno)
         return True
     except Exception as exc:                                 # noqa: BLE001
         logger.error("[BOT] no se pudo lanzar: %s", exc)

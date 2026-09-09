@@ -30,17 +30,19 @@ def sin_red(monkeypatch):
     El refresco se hace SIN hilo aqui: en produccion va al fondo para no
     congelar el bot, pero en las pruebas hace falta que sea determinista.
     """
-    def sincrono():
+    def sincrono(dia):
         nuevos = cal._de_massive()
         if nuevos:
             cal._extra.update(nuevos)
             cal._cache.clear()
+            cal._pedido_el = dia        # igual que el de verdad: solo si llega
 
     monkeypatch.setattr(cal, "_de_massive", lambda: {})
     monkeypatch.setattr(cal, "_refrescar_al_fondo", sincrono)
     monkeypatch.setattr(cal, "_cache", {})
     monkeypatch.setattr(cal, "_extra", {})
     monkeypatch.setattr(cal, "_pedido_el", None)
+    monkeypatch.setattr(cal, "_ultimo_intento", 0.0)
 
 
 # ── festivos ─────────────────────────────────────────────────────────────
@@ -133,11 +135,28 @@ def test_medias_sesiones(dia, motivo):
     assert cal.hay_sesion(dia) is True      # hay mercado, solo que mas corto
 
 
-def test_la_vispera_del_4_no_se_acorta_si_el_4_cae_en_fin_de_semana():
-    """2027: el 4 es domingo, el festivo se va al lunes 5 y el viernes 2 es un
-    dia normal y entero."""
-    assert cal.media_sesion(date(2027, 7, 2)) is None
-    assert cal.festivo(date(2027, 7, 5)) == "4 de Julio"
+@pytest.mark.parametrize("anyo,caso", [
+    (2025, "media"),      # el 4 es viernes  -> el 3 (jueves) es media sesion
+    (2026, "festivo"),    # el 4 es sabado   -> el 3 (viernes) ES el festivo
+    (2027, "finde"),      # el 4 es domingo  -> el 3 es sabado; el festivo va al 5
+])
+def test_la_vispera_del_4_segun_donde_caiga_el_4(anyo, caso):
+    """Los tres casos posibles del 3 de julio, que es la unica fecha que la
+    regla llega a mirar.
+
+    La version anterior de esta prueba comprobaba el 2 de julio — una fecha que
+    la regla NO genera nunca— asi que pasaba dijera lo que dijera el codigo."""
+    tres = date(anyo, 7, 3)
+    if caso == "media":
+        assert cal.media_sesion(tres) == "vispera del 4 de Julio"
+        assert cal.festivo(date(anyo, 7, 4)) == "4 de Julio"
+    elif caso == "festivo":
+        assert cal.festivo(tres) == "4 de Julio"
+        assert cal.media_sesion(tres) is None      # manda el festivo entero
+    else:
+        assert tres.weekday() >= 5
+        assert cal.media_sesion(tres) is None
+        assert cal.festivo(date(anyo, 7, 5)) == "4 de Julio"
 
 
 # ── la sesion anterior ───────────────────────────────────────────────────
@@ -250,6 +269,7 @@ def test_massive_puede_anyadir_un_cierre_que_ninguna_regla_predice(monkeypatch):
     monkeypatch.setattr(cal, "_de_massive", lambda: {imprevisto: ("cerrado", "Huracan")})
     monkeypatch.setattr(cal, "_pedido_el", None)
     monkeypatch.setattr(cal, "_cache", {})
+    monkeypatch.setattr(cal, "_ultimo_intento", 0.0)   # la consulta de arriba gasto el turno
     assert cal.festivo(imprevisto) == "Huracan"
     assert cal.hay_sesion(imprevisto) is False
 
@@ -301,3 +321,112 @@ def test_el_refresco_diario_no_congela_a_quien_pregunta(monkeypatch):
 
     assert arrancado.wait(2), "el refresco ni siquiera arranco"
     assert tardanza < 0.5, f"la respuesta tardo {tardanza:.1f}s: se esta bloqueando"
+
+
+# ── la traduccion del JSON de Massive ────────────────────────────────────
+#
+# NO TENIA NI UN TEST. El unico camino real que se ejercitaba era el de
+# excepcion, asi que romper el literal 'early-close' —o que Massive cambie el
+# nombre del campo— convertiria TODA media sesion en un cierre entero. Y como
+# la lista oficial MANDA sobre las reglas, el 27-nov-2026 el bot diria
+# «festivo» a las 10:00 con el mercado abierto. Sin excepcion y con los tests
+# en verde.
+RESPUESTA_DE_MASSIVE = [
+    {"date": "2026-11-26", "exchange": "NYSE", "name": "Thanksgiving",
+     "status": "closed"},
+    {"date": "2026-11-27", "exchange": "NYSE", "name": "Thanksgiving",
+     "status": "early-close", "open": "2026-11-27T14:30:00.000Z",
+     "close": "2026-11-27T18:00:00.000Z"},
+    {"date": "2026-12-25", "exchange": "NASDAQ", "name": "Christmas",
+     "status": "closed"},                      # otra bolsa: se ignora
+    {"date": "no-es-una-fecha", "exchange": "NYSE", "name": "Raro",
+     "status": "closed"},                      # ilegible: se salta, no revienta
+    {"date": "2027-01-01", "exchange": "NYSE", "status": "closed"},  # sin nombre
+]
+
+
+def _massive_responde(monkeypatch, cuerpo, estado=200):
+    import httpx
+    from app.services import bot_alerts_feed
+    monkeypatch.setattr(bot_alerts_feed, "clave_bot", lambda: "PRUEBA")
+    monkeypatch.setattr(bot_alerts_feed, "_ssl_ctx", lambda: False)
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: httpx.Response(
+        estado, json=cuerpo, request=httpx.Request("GET", url)))
+
+
+def test_la_respuesta_de_massive_se_traduce_bien(monkeypatch):
+    _massive_responde(monkeypatch, RESPUESTA_DE_MASSIVE)
+    assert _DE_MASSIVE_REAL() == {
+        date(2026, 11, 26): ("cerrado", "Thanksgiving"),
+        date(2026, 11, 27): ("media", "Thanksgiving"),
+        date(2027, 1, 1): ("cerrado", "festivo"),
+    }
+
+
+def test_early_close_es_lo_que_distingue_una_media_sesion(monkeypatch):
+    """Si ese literal deja de casar, una media sesion pasa a cierre entero y el
+    bot se calla una sesion viva."""
+    _massive_responde(monkeypatch, [
+        {"date": "2026-11-27", "exchange": "NYSE", "name": "X",
+         "status": "early-close"}])
+    assert _DE_MASSIVE_REAL()[date(2026, 11, 27)][0] == "media"
+    _massive_responde(monkeypatch, [
+        {"date": "2026-11-27", "exchange": "NYSE", "name": "X",
+         "status": "closed"}])
+    assert _DE_MASSIVE_REAL()[date(2026, 11, 27)][0] == "cerrado"
+
+
+def test_sin_clave_no_se_pide_la_lista(monkeypatch):
+    from app.services import bot_alerts_feed
+    monkeypatch.setattr(bot_alerts_feed, "clave_bot", lambda: "")
+    assert _DE_MASSIVE_REAL() == {}
+
+
+def test_un_http_500_no_tumba_el_calendario(monkeypatch):
+    _massive_responde(monkeypatch, {"error": "vaya"}, estado=500)
+    assert _DE_MASSIVE_REAL() == {}
+
+
+# ── cada cuanto se pide ──────────────────────────────────────────────────
+def test_no_se_pide_una_vez_por_latido(monkeypatch):
+    """`franja_de_mercado()` se llama cada 5 segundos. Sin suelo, un fallo
+    dispararia una peticion por latido en vez de una al dia."""
+    intentos = []
+    monkeypatch.setattr(cal, "_refrescar_al_fondo", lambda dia: intentos.append(dia))
+    monkeypatch.setattr(cal, "_pedido_el", None)
+    monkeypatch.setattr(cal, "_ultimo_intento", 0.0)
+    for _ in range(5):
+        cal.franja_de_mercado(datetime(2026, 9, 8, 10, 0, tzinfo=NY))
+    assert len(intentos) == 1
+
+
+def test_si_la_lista_no_llega_se_reintenta_pasado_el_suelo(monkeypatch):
+    """Marcar el dia ANTES de saber si la peticion sale bien dejaba el proceso
+    24 horas con las reglas a secas por un timeout de un segundo malo."""
+    intentos = []
+    monkeypatch.setattr(cal, "_refrescar_al_fondo", lambda dia: intentos.append(dia))
+    monkeypatch.setattr(cal, "_pedido_el", None)
+    monkeypatch.setattr(cal, "_ultimo_intento", 0.0)
+    cal.festivo(date(2026, 9, 8))
+    assert len(intentos) == 1
+    cal.festivo(date(2026, 9, 8))
+    assert len(intentos) == 1                    # dentro del suelo, no se repite
+    monkeypatch.setattr(cal, "_ultimo_intento",
+                        cal.time.monotonic() - cal.REINTENTO_MIN_SEG - 1)
+    cal.festivo(date(2026, 9, 8))
+    assert len(intentos) == 2                    # pasado el suelo, otra vez
+
+
+def test_cuando_la_lista_llega_ya_no_se_vuelve_a_pedir(monkeypatch):
+    """El fixture hace el refresco sincrono, igual que el de verdad: solo marca
+    el dia si la lista llega."""
+    monkeypatch.setattr(cal, "_de_massive",
+                        lambda: {date(2026, 10, 29): ("cerrado", "Huracan")})
+    assert cal.festivo(date(2026, 10, 29)) == "Huracan"
+    assert cal._pedido_el == datetime.now(tz=NY).date()
+
+    intentos = []
+    monkeypatch.setattr(cal, "_refrescar_al_fondo", lambda dia: intentos.append(dia))
+    monkeypatch.setattr(cal, "_ultimo_intento", 0.0)
+    cal.festivo(date(2026, 9, 8))
+    assert intentos == []
