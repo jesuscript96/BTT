@@ -164,14 +164,34 @@ def formatear(ev: "Evento") -> str:
     # Salida: el MISMO icono para todos los cierres, salte el stop o llegue el
     # objetivo. Distinguirlos con iconos de alarma (🛑) hacia parecer un problema
     # lo que es una orden mas que meter; el motivo ya lo dice la linea de abajo.
-    return "\n".join([
-        f"✅ <b>Ticker:</b> {tk}  (CIERRE POS.)",
+    #
+    # LLEVA LAS ACCIONES, y hasta el 9-sep-2026 no las llevaba. Con un cierre
+    # PARCIAL —un take profit del 25 %— saber el precio no basta: hay que saber
+    # CUANTAS se venden. Se dan las dos cosas, la cifra y el porcentaje, porque
+    # la estrategia se piensa en porcentaje («que cierre un 25 %») pero en el
+    # broker se teclea un numero de acciones.
+    total_ev = getattr(ev, "posicion_total", None)
+    cierre_entero = (ev.acciones is not None and total_ev
+                     and abs(ev.acciones - total_ev) < 0.5)
+    titulo = "CIERRE POS." if (cierre_entero or ev.acciones is None) else "CIERRE PARCIAL"
+    lineas = [
+        f"✅ <b>Ticker:</b> {tk}  ({titulo})",
         "",
         f"Precio: <b>{_num(ev.precio)}</b>",
+    ]
+    if ev.acciones is not None:
+        lineas.append(f"Acciones a cerrar: <b>{_num(ev.acciones, 0)}</b>")
+        if total_ev and not cierre_entero:
+            pct = ev.acciones / total_ev * 100
+            queda = total_ev - ev.acciones
+            lineas.append(f"<i>({pct:.0f} % de {_num(total_ev, 0)} · "
+                          f"quedan {_num(queda, 0)})</i>")
+    lineas += [
         f"⚫ Motivo: {_esc(ev.motivo or '?')}",
         "",
         f"<i>— {est} · {hora} —</i>",
-    ])
+    ]
+    return "\n".join(lineas)
 
 
 def enviar_texto(texto: str) -> bool:

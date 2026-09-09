@@ -18,6 +18,8 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
@@ -334,21 +336,86 @@ class EstadoReq(BaseModel):
     vigilando: bool
 
 
+LATIDO_VIVO_SEG = 150     # el bot late cada ~60 s; 150 tolera un hueco
+
+
+def _bot_esta_vivo(estado: dict) -> bool:
+    """¿Hay un bot vivo? Se mira POR EL LATIDO, no por la lista de procesos.
+
+    La primera version lanzaba un PowerShell para buscar `bot.py` entre los
+    procesos. **Bloqueaba el backend entero**: este endpoint es sincrono, arrancar
+    PowerShell tarda segundos, y con el navegador esperando la pagina daba «no se
+    puede conectar». Lo probo Jaume al minuto de estar hecho.
+
+    El latido es mejor por dos motivos, no solo por rapido: esta en la base (una
+    lectura de microsegundos) y mide **que el bot esta vivo Y hablando**, no solo
+    que existe un proceso. Un bot colgado tiene proceso y no late; para lo que
+    aqui se decide —si hace falta arrancar uno— eso es justo lo que importa.
+    """
+    ts = estado.get("latido_at")
+    if not ts:
+        return False
+    try:
+        ultimo = datetime.fromisoformat(str(ts))
+        return (datetime.now() - ultimo).total_seconds() < LATIDO_VIVO_SEG
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def _arrancar_bot() -> bool:
+    """Lanza el bot con su .bat, en segundo plano y sin ventana."""
+    bat = os.getenv("BOT_ALERTS_BAT", r"D:\bot_senales\arrancar_bot.bat")
+    if not os.path.exists(bat):
+        logger.error("[BOT] no encuentro el lanzador: %s", bat)
+        return False
+    try:
+        subprocess.Popen(["cmd.exe", "/c", bat], creationflags=0x08000000)
+        return True
+    except Exception as exc:                                 # noqa: BLE001
+        logger.error("[BOT] no se pudo lanzar: %s", exc)
+        return False
+
+
 @router.post("/estado")
 def cambiar_estado(req: EstadoReq):
-    """El interruptor de la pagina.
+    """El interruptor de la pagina. ENCIENDE DE VERDAD.
 
-    NO arranca ni mata ningun proceso: solo deja escrito si el bot debe estar
-    vigilando. El bot lo consulta y actua. Asi la pagina no necesita hablar con
-    un proceso que vive aparte.
+    ANTES SOLO APUNTABA LA INTENCION en la base y esperaba a que el bot la
+    leyera. Si el proceso no existia —porque se cayo, o porque arranco antes que
+    el backend y murio— darle a «Vigilar» NO HACIA NADA, y la pagina lo pintaba
+    igual: se empezaba la jornada creyendo que se estaba vigilando. Le paso a
+    Jaume varias veces, la ultima el 9-sep-2026 con el mercado ya abierto.
+
+    Ahora, al encender, se comprueba que haya proceso y si no lo hay se arranca.
+    Tarda unos segundos en cargar estrategias y conectarse, asi que la respuesta
+    dice QUE se ha hecho y la pagina puede contarlo, en vez de dar un «listo»
+    que no significa nada.
+
+    AL APAGAR NO SE MATA EL PROCESO. Apagar es «deja de operar», no «cierrate»:
+    el bot se queda escuchando por si se vuelve a encender, y asi conserva los
+    acumulados del dia — el maximo de premercado, que es la condicion de 1B, se
+    pierde en cada arranque y hay que volver a sembrarlo.
     """
     _guard()
     with get_user_db_lock():
         con = get_user_db_connection()
         try:
-            return bas.set_vigilando(con, req.vigilando)
+            estado = bas.set_vigilando(con, req.vigilando)
         finally:
             con.close()
+
+    estado["proceso_vivo"] = _bot_esta_vivo(estado)
+    estado["arrancado_ahora"] = False
+    if req.vigilando and not estado["proceso_vivo"]:
+        estado["arrancado_ahora"] = _arrancar_bot()
+        estado["aviso"] = (
+            "No habia ningun bot en marcha; lo he arrancado. Tarda unos "
+            "segundos en conectarse al mercado."
+            if estado["arrancado_ahora"] else
+            "No habia ningun bot en marcha y NO he podido arrancarlo. "
+            "Hay que lanzarlo a mano con arrancar_bot.bat."
+        )
+    return estado
 
 
 class LatidoReq(BaseModel):

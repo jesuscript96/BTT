@@ -637,12 +637,25 @@ class MotorAlertas:
             if sintetico:
                 continue
             estado.salidas_avisadas.add(entry_idx)
+            # CUANTAS ACCIONES SE CIERRAN. El aviso de salida no lo decia, y en
+            # un cierre PARCIAL —un take profit del 25 %, por ejemplo— eso deja
+            # la orden a medias: hay que saber cuantas se venden, no solo a que
+            # precio. El motor ya lo trae en `size` de cada trade; con parciales
+            # emite un trade por tramo, cada uno con SU tamanyo.
+            cierra = float(t.get("size") or 0.0)
+            # Y el porcentaje de la posicion, que es como Jaume piensa la
+            # salida («que cierre un 25 %»). El total es lo que se abrio: la
+            # suma de lo que cierran todos los tramos de esta misma entrada.
+            total = sum(float(x.get("size") or 0.0) for x in trades
+                        if int(x.get("entry_idx", -2)) == entry_idx) or None
             eventos.append(Evento(
                 tipo="salida", ticker=ticker,
                 strategy_id=est["strategy_id"], estrategia=est["name"],
                 momento=momento, precio=float(t.get("exit_price", precio)),
                 direccion=direccion, motivo=str(t.get("exit_reason") or "?"),
                 entrada_idx=entry_idx,
+                acciones=cierra or None,
+                posicion_total=total,
             ))
 
         # ── ENTRADA ─────────────────────────────────────────────────────────

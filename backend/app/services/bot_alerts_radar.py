@@ -25,15 +25,19 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from app.services.bot_alerts_feed import clave_bot, _ssl_ctx
+from app.services import bot_alerts_calendario as calendario
 
 logger = logging.getLogger("btt.bot_alerts.radar")
 
 REST = os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")
+ET = "America/New_York"     # el dia de mercado se cuenta en hora de Nueva York
 
 # Tipos de instrumento que pueden entrar. Igual que el screener: fuera ETFs,
 # warrants, unidades, derechos y preferentes — no son lo que opera la estrategia
@@ -208,10 +212,29 @@ class Radar:
                             if tk:
                                 simbolos.add(tk)
                         siguiente = datos.get("next_url")
-                        # next_url ya lleva el cursor y los filtros; solo falta
-                        # volver a poner la clave.
-                        url, params = ((siguiente, {"apiKey": key}) if siguiente
-                                       else (None, None))
+                        # LA CLAVE VA PEGADA A LA URL, NO EN `params`.
+                        #
+                        # `next_url` ya trae el cursor y los filtros en su query.
+                        # Pasarla con `params={"apiKey": ...}` funcionaba con el
+                        # httpx del venv, pero **httpx 0.28 SUSTITUYE la query
+                        # entera por `params`** en vez de fusionarla: se perdia
+                        # el cursor y la paginacion moria en la primera pagina.
+                        #
+                        # Y el bot arranca con el PYTHON GLOBAL (ver
+                        # `arrancar_bot.bat`), que es justo el que tiene httpx
+                        # 0.28.1. Resultado medido el 9-sep-2026, mismo codigo:
+                        #
+                        #     python del venv  ->  5.693 acciones
+                        #     python global    ->  1.457 acciones
+                        #
+                        # El bot vigilaba UNA CUARTA PARTE del mercado, sin un
+                        # solo error: los tickers fuera del universo recortado no
+                        # existian para el, y sus gaps no se miraban nunca.
+                        if siguiente:
+                            sep = "&" if "?" in siguiente else "?"
+                            url, params = f"{siguiente}{sep}apiKey={key}", None
+                        else:
+                            url, params = None, None
                         paginas += 1
         except Exception as exc:  # noqa: BLE001
             self.ultimo_error = f"universo: {exc}"
@@ -220,43 +243,139 @@ class Radar:
 
         if simbolos:
             self._universo = simbolos
-        return len(self._universo)
+
+        # SI SALE CORTO, QUE SE OIGA.
+        #
+        # El universo ronda las 5.700 acciones. Del 4 al 9-sep-2026 se cargaron
+        # 1.457 —una cuarta parte— y el bot estuvo cuatro dias de mercado sin
+        # ver el resto: las que quedaban fuera no existian para el por mucho que
+        # hicieran un gap del 200 %. No hubo ni un error; el numero salia en el
+        # log y nadie lo miraba porque nada decia que estuviera mal.
+        #
+        # Un aviso feo aqui cuesta un renglon; enterarse cuatro dias despues
+        # costo alertas perdidas.
+        n = len(self._universo)
+        if n < 3000:
+            self.ultimo_error = f"universo corto: {n} acciones (se esperan ~5.700)"
+            logger.error(
+                "[RADAR] UNIVERSO CORTO: %d acciones, se esperan ~5.700. El bot "
+                "NO vera el resto del mercado. Suele ser la paginacion: revisar "
+                "`cargar_universo`.", n)
+        return n
 
     def cierres_de_ayer(self) -> dict[str, float]:
-        """El cierre de ayer de TODO el mercado, en una llamada.
+        """El cierre OFICIAL de las 16:00 de la ultima sesion, para todo el mercado.
 
         Es la base de cualquier gap y el socket NO la trae: los agregados hablan
-        de hoy. Se pide una vez al arrancar y se refresca de tanto en tanto por
-        si aparecen tickers nuevos.
+        de hoy.
 
-        Es `prevDay.c`, el cierre de la sesion REGULAR — no el de after-hours.
-        Comprobado el 2026-09-02 con SGLD: prevDay.c = 5,08, que es el `close`
-        oficial del dia anterior; su after-hours fue 17,30 y NO es lo que se usa.
+        SE PIDE POR FECHA EXPLICITA, NO POR «prevDay». Antes se sacaba de
+        `prevDay.c` del snapshot del mercado, y ese campo **depende de la hora a
+        la que preguntes**. Medido el 9-sep-2026 con el bot arrancado a las 07:15
+        de Espanya (01:15 de Nueva York):
+
+            a las 01:15 NY  ->  prevDay.c de YQ = 2,92   (cierre del VIERNES 4)
+            a las 04:20 NY  ->  prevDay.c de YQ = 3,79   (cierre del MARTES 8)
+
+        O sea que arrancar de madrugada dejaba al bot con el cierre de TRES
+        SESIONES ATRAS toda la manyana, y como se pedia una sola vez al arrancar,
+        ahi se quedaba. Con ese cierre, YQ salia con un gap del 61 % y entraba en
+        1B; con el bueno salia 24 % y no debia entrar. Y al reves: gaps buenos
+        que no llegaban al umbral y se quedaban fuera. Sin un solo error.
+
+        El dato correcto SIEMPRE ha estado disponible —el cierre del martes
+        existe desde el martes a las 16:00—, solo que se pedia por la puerta
+        equivocada. `aggs/grouped` da los ~12.500 cierres de una fecha concreta
+        en UNA llamada y no depende de cuando preguntes.
+
+        QUE DIA SE PIDE lo decide `bot_alerts_calendario`, que conoce los
+        festivos de NYSE y las medias sesiones. Una media sesion SI vale como
+        cierre de ayer —es el cierre oficial, solo que a las 13:00— y pasa el
+        minimo de sobra: medido, el viernes de Accion de Gracias de 2025 trae
+        11.607 filas y Nochebuena 11.628, contra las ~12.500 de un dia entero.
         """
         key = clave_bot()
         if not key:
             return {}
+
+        hoy = datetime.now(tz=ZoneInfo(ET)).date()
+        # LA SESION ANTERIOR SE SABE, NO SE TANTEA.
+        #
+        # Antes se retrocedia dia a dia gastando una llamada en cada sabado y
+        # cada festivo. Peor: el aviso de «cierres viejos» saltaba con cualquier
+        # puente. El 8-sep-2026 la sesion anterior era el viernes 4 —el lunes 7
+        # fue Labor Day— y eso son 4 dias de salto, que disparaba un error rojo
+        # sin que pasara nada. Con el calendario se va directo al dia bueno y el
+        # aviso solo suena cuando de verdad falta la sesion de ayer.
+        esperado = calendario.ultima_sesion(hoy)
+        filas: list = []
+        usado: Optional[str] = None
+        candidato = esperado
         try:
-            with httpx.Client(timeout=30.0, verify=_ssl_ctx()) as cli:
-                r = cli.get(
-                    f"{REST}/v2/snapshot/locale/us/markets/stocks/tickers",
-                    params={"apiKey": key},
-                )
-                r.raise_for_status()
-                filas = r.json().get("tickers") or []
+            with httpx.Client(timeout=60.0, verify=_ssl_ctx()) as cli:
+                for _ in range(5):        # cinco sesiones atras: de sobra
+                    dia = candidato.strftime("%Y-%m-%d")
+                    r = cli.get(
+                        f"{REST}/v2/aggs/grouped/locale/us/market/stocks/{dia}",
+                        params={"apiKey": key, "adjusted": "true"},
+                    )
+                    r.raise_for_status()
+                    res = r.json().get("results") or []
+                    # NO BASTA CON QUE VENGA ALGO: TIENE QUE VENIR ENTERO.
+                    #
+                    # Este endpoint responde tambien para una sesion A MEDIAS.
+                    # Comprobado el 9-sep-2026 a las 11:53 de Nueva York, con el
+                    # mercado abierto: pedir «los cierres del 9» devolvia 11.149
+                    # filas y YQ a 4,20 — que no era su cierre sino el precio de
+                    # ese instante. Una sesion completa ronda las 12.500.
+                    #
+                    # Si se colara media sesion, los gaps saldrian contra un
+                    # precio intradia y nadie se enteraria. Por eso se exige un
+                    # minimo y, si no llega, se sigue retrocediendo: mejor un
+                    # cierre mas antiguo (y avisado abajo) que uno inventado.
+                    if len(res) >= 8000:
+                        filas, usado = res, dia
+                        break
+                    if res:
+                        logger.warning(
+                            "[RADAR] %s solo trae %d cierres (se esperan ~12.500): "
+                            "sesion incompleta, no la uso", dia, len(res))
+                    candidato = calendario.ultima_sesion(candidato)
         except Exception as exc:  # noqa: BLE001
             self.ultimo_error = f"cierres de ayer: {exc}"
             logger.warning("[RADAR] no se pudieron pedir los cierres de ayer: %s", exc)
             return {}
 
+        if not filas:
+            self.ultimo_error = "cierres de ayer: ninguna sesion completa en 5 sesiones"
+            logger.error("[RADAR] SIN CIERRES: ninguna sesion completa en las 5 "
+                         "ultimas. El bot NO puede calcular gaps.")
+            return {}
+
+        # SI HUBO QUE RETROCEDER MAS DE LA CUENTA, QUE SE OIGA.
+        #
+        # Un fin de semana o un festivo justifican saltar dias; mas de tres
+        # seguidos no, y significaria que la sesion de ayer no estaba publicada
+        # cuando arranco el bot. Es justo el caso que preocupaba a Jaume el
+        # 9-sep-2026: encender de madrugada y calcular los gaps contra una
+        # sesion vieja. Si pasa, el bot lo dice en su log en vez de operar con
+        # ello en silencio.
+        if datetime.strptime(usado, "%Y-%m-%d").date() != esperado:
+            self.ultimo_error = (f"los cierres son del {usado} y la ultima sesion "
+                                 f"fue el {esperado}")
+            logger.error(
+                "[RADAR] OJO: los cierres son del %s, pero la ultima sesion fue "
+                "el %s. La de ayer no estaba publicada al arrancar y los gaps "
+                "saldran contra un cierre viejo.", usado, esperado)
+        self.dia_de_los_cierres = usado
         out: dict[str, float] = {}
         for f in filas:
-            sym = str(f.get("ticker", "") or "")
+            sym = str(f.get("T", "") or "")   # en `grouped` el ticker es «T»
             if not sym:
                 continue
             if self._universo and sym not in self._universo:
                 continue
-            pc = _num((f.get("prevDay") or {}).get("c"))
+            pc = _num(f.get("c"))
             if pc and pc > 0:
                 out[sym] = pc
         return out

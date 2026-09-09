@@ -80,6 +80,71 @@ class ClienteBackend:
         except Exception:  # noqa: BLE001
             pass
 
+    # ── UN REINTENTO CUANDO LA CONEXION VENIA MUERTA ─────────────────────
+    #
+    # El cliente se crea UNA VEZ y guarda las conexiones abiertas para
+    # reaprovecharlas. El bot pregunta cada 5 segundos (`INTERVALO_ESTADO`) y
+    # **el keep-alive de uvicorn son tambien 5 segundos**, asi que cliente y
+    # servidor hacen las dos cosas a la vez: uno reutiliza la conexion justo
+    # cuando el otro la esta cerrando. La peticion sale por un socket que ya no
+    # existe y salta sin haber llegado nunca al backend.
+    #
+    # QUE EL INTERVALO COINCIDA CON EL KEEP-ALIVE ES TODO EL PROBLEMA, y por eso
+    # buscarlo mal no encuentra nada. Medido el 9-sep-2026 contra el backend
+    # real, 16 clientes en paralelo:
+    #
+    #     huecos de 12 s (pasado el limite)  ->   0 fallos de  18
+    #     huecos de  5 s (en el limite)      ->  29 fallos de 416   (7,0 %)
+    #     idem, con reintento                ->   0 fallos de 416
+    #
+    # Con 12 segundos no falla nunca: el cliente ve el socket cerrado y abre
+    # otro tan tranquilo. La carrera solo existe justo en el borde. En el log
+    # del bot son 1.371 fallos de este tipo, 28 de ellos en los 80 minutos
+    # siguientes al arranque de las 17:50.
+    #
+    # NO ERA COSMETICO. `debe_vigilar()` devuelve None cuando falla y el bot se
+    # queda como estaba, asi que si el fallo caia justo al pulsar «Vigilar», el
+    # interruptor tardaba otro ciclo entero en llegar. Es la queja de Jaume de
+    # «le doy y no se entera», y desde fuera no se distingue de un boton roto.
+    #
+    # SIEMPRE FALLA LA PRIMERA PETICION DESPUES DEL HUECO, que es la unica que
+    # se encuentra la conexion podrida. En el bot esa primera es el GET del
+    # estado, y el POST del latido va justo detras sobre una conexion recien
+    # abierta. Medido: de 832 peticiones, 19 fallos y **los 19 en el GET**,
+    # ninguno en el POST.
+    #
+    # AUN ASI SE REINTENTAN TAMBIEN LOS POST, porque el orden de las llamadas
+    # no es una garantia que quiera dejar escrita en un sitio y usada en otro:
+    # cualquier reordenacion futura dejaria el hueco delante de un POST. Es
+    # gratis y es seguro, comprobado uno por uno:
+    #
+    #   /eventos  ->  `INSERT OR REPLACE` con un id estable
+    #                 (ticker+estrategia+momento+tipo). Reenviar la misma tanda
+    #                 no duplica filas, y **ese endpoint no manda Telegram** —
+    #                 los avisos los manda el bot, no el backend.
+    #   /latido, /radar, /diario, /estado  ->  sobrescriben estado. Repetir es
+    #                 escribir lo mismo encima.
+    #
+    # LOS TIMEOUT NO SE REINTENTAN. Un corte de conexion falla al instante,
+    # pero un timeout ya ha esperado sus 8 segundos y repetirlo dejaria al bot
+    # parado 16 en una llamada que se hace en el hilo principal. Ademas eran 30
+    # de 6.114 fallos: no compensa.
+    _REINTENTABLES = (httpx.ConnectError, httpx.RemoteProtocolError,
+                      httpx.ReadError, httpx.WriteError)
+
+    def _pedir(self, metodo: str, ruta: str, **kw) -> httpx.Response:
+        try:
+            return self._cli.request(metodo, f"{self.base}{ruta}", **kw)
+        except self._REINTENTABLES:
+            # El pozo entero puede tener conexiones podridas, no solo la que
+            # acaba de fallar. Se tira y se empieza de cero.
+            try:
+                self._cli.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._cli = httpx.Client(timeout=TIMEOUT)
+            return self._cli.request(metodo, f"{self.base}{ruta}", **kw)
+
     # ── lo que el bot PREGUNTA ───────────────────────────────────────────
     def vigiladas(self) -> Optional[list[dict]]:
         """Estrategias activas con su definicion y su riesgo. Se pide al
@@ -92,7 +157,7 @@ class ClienteBackend:
         donde no es.
         """
         try:
-            r = self._cli.get(f"{self.base}/bot-alerts/vigiladas")
+            r = self._pedir("GET", "/bot-alerts/vigiladas")
             r.raise_for_status()
             return r.json().get("estrategias") or []
         except Exception as exc:  # noqa: BLE001
@@ -103,7 +168,7 @@ class ClienteBackend:
         """El interruptor de la pagina. None si no se pudo preguntar — que NO
         es lo mismo que 'apagado': ante la duda, el bot sigue como estaba."""
         try:
-            r = self._cli.get(f"{self.base}/bot-alerts/estado")
+            r = self._pedir("GET", "/bot-alerts/estado")
             r.raise_for_status()
             return bool(r.json().get("vigilando"))
         except Exception as exc:  # noqa: BLE001
@@ -115,7 +180,7 @@ class ClienteBackend:
         if not eventos:
             return 0
         try:
-            r = self._cli.post(f"{self.base}/bot-alerts/eventos", json={"eventos": eventos})
+            r = self._pedir("POST", "/bot-alerts/eventos", json={"eventos": eventos})
             r.raise_for_status()
             return int(r.json().get("guardados", 0))
         except Exception as exc:  # noqa: BLE001
@@ -135,7 +200,7 @@ class ClienteBackend:
         de la sesion.
         """
         try:
-            self._cli.post(f"{self.base}/bot-alerts/estado", json={"vigilando": False})
+            self._pedir("POST", "/bot-alerts/estado", json={"vigilando": False})
         except Exception as exc:  # noqa: BLE001
             logger.warning("[BOT] no se pudo dejar el interruptor en parado: %s", exc)
 
@@ -147,8 +212,8 @@ class ClienteBackend:
         estuvo a punto de salir.
         """
         try:
-            self._cli.post(f"{self.base}/bot-alerts/radar",
-                           json={"candidatos": candidatos})
+            self._pedir("POST", "/bot-alerts/radar",
+                        json={"candidatos": candidatos})
         except Exception:  # noqa: BLE001
             pass  # el radar de la pagina es informativo; no vale romper por el
 
@@ -161,15 +226,15 @@ class ClienteBackend:
         contar que el backend no responde.
         """
         try:
-            self._cli.post(f"{self.base}/bot-alerts/diario", json=diario)
+            self._pedir("POST", "/bot-alerts/diario", json=diario)
         except Exception:  # noqa: BLE001
             pass
 
     def latir(self, tickers: int, fuente: str, detalle: str = "") -> None:
         """Senyal de vida. Sin esto la pagina no distingue apagado de colgado."""
         try:
-            self._cli.post(
-                f"{self.base}/bot-alerts/latido",
+            self._pedir(
+                "POST", "/bot-alerts/latido",
                 json={"tickers": tickers, "fuente": fuente, "detalle": detalle},
             )
         except Exception:  # noqa: BLE001
