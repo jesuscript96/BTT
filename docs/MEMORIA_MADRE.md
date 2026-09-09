@@ -5305,3 +5305,29 @@ solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
 - **Quién decide:** Álvaro con Jaume. Si gana la variante fees: re-aplicar el hunk (está en 2b597cf), adaptar los tests de recomposicion (la supervivencia del locate del día cambia: un día nunca «queda sin trades» por céntimos) y subirlo TODO junto a staging para que no vuelva a divergir.
 - **Código tocado:** merge en rama `alvaro-rama-desarrollo` (what_if_service.py con nota de merge inline; tests xfail). Nada en staging.
 - **Estado:** ABIERTO — pendiente de acuerdo.
+
+## 2026-09-09 — Launcher de arranque seguro del backend y pestaña Rachas
+
+### [IMPLEMENTACIÓN · 2026-09-09 · 01] Arranque seguro del backend local: launcher con guardas, fin de los huérfanos de `--reload`
+- **Implementa:** ZCode (para Álvaro; trabajo de las sesiones del 07–09 sep, commiteado hoy) — parte operativa del INCIDENTE del 2026-09-07 (tarde).
+- **Qué cambió:**
+  - `backend/scripts/run_backend_safe.py` (nuevo): launcher que antes de arrancar verifica (en orden) intérprete del venv, `DISABLE_GCS_SYNC=true` + `LIVE_SCREENER_ENABLED=false`, puerto 8010 libre (dice quién lo tiene y sugiere no tocarlo si es el backend que rearranca cangrejo_data) y sonda de `local_data.duckdb` (abre/cierra en exclusiva; si falla, traduce el error críptico de DuckDB y lista procesos sospechosos/huérfanos con PID). Flags `--check-only` y `--kill-orphans`; códigos de salida 0 ok / 2 puerto / 3 DuckDB / 4 intérprete / 5 entorno. Arranca uvicorn SIN `--reload`, 1 worker, y exporta `BTT_REQUIRE_DB=1`.
+  - `backend/scripts/arrancar_backend.bat` (nuevo): envoltorio que localiza el python del venv.
+  - `backend/app/main.py`: con `BTT_REQUIRE_DB=1` (solo local) el proceso MUERE al arrancar si la BD no abre, en vez de quedar sirviendo sin datos; en prod el flag no está y se conserva el comportamiento tolerante. `__main__` sin reload, 1 worker, puerto 8010.
+  - `backend/scripts/run_backend_forever.bat` (watchdog): ya no lanza `uvicorn --reload` — delega en `arrancar_backend.bat`; sleeps con `ping` (`timeout` no espera sin consola: crash-loop del 05-sep).
+  - `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md` (nuevo) y guías (`README.md`, `GUIA_DEV_LOCAL…` raíz y docs) alineadas: se arranca con `scripts\arrancar_backend.bat`, JAMÁS `uvicorn --reload`; troubleshooting del lock/metadata y de la «muerte» normal sobre las 09:00 (carga de cangrejo_data).
+- **Verificación:** `py_compile` OK en `main.py` y `run_backend_safe.py`; `psutil>=5.9.0` ya estaba en `requirements.txt`.
+- **Pendiente (ya apuntado el 07-sep, no resuelto aquí):** `requirements.txt` sigue fijando `duckdb==1.1.3` mientras el venv local subió a 1.5.5 — decidir el salto juntos (prod/staging usan GCS/MotherDuck).
+- **Código tocado:** `backend/app/main.py`, `backend/scripts/{arrancar_backend.bat,run_backend_safe.py,run_backend_forever.bat}`, `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md` (nuevo), `README.md`, `GUIA_DEV_LOCAL_Y_DEVELOP_PARA_IA.md` y `docs/GUIA_DEV_LOCAL_Y_DEVELOP_PARA_IA.md`. Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+### [IMPLEMENTACIÓN · 2026-09-09 · 02] Pestaña «Rachas» + fila «W Days» en la tarjeta de métricas
+- **Implementa:** ZCode (para Álvaro).
+- **Qué cambió:**
+  - `frontend/src/lib/day_streaks.ts` (nuevo): `computeDayStreaks()` — MISMA receta que «Max W/L Day Streak» del backend: día = Σ pnl de sus trades − locates del día (neto), solo cuentan días con operaciones (un día sin operar no rompe la racha), día plano cuenta como perdedor; gastos fijos mensuales NO descuentados aquí.
+  - `frontend/src/components/backtester/tabs/RachasTab.tsx` (nuevo): tira cronológica de cuadraditos W/L agrupada por mes natural, cabecera de stats (días W/L, % ganadores, racha máx W/L, racha actual) e histograma de nº de rachas por longitud (W y L).
+  - `ResultsTabs`: pestaña «Rachas» entre Calendar y Trades (misma capa de agregado por día, en orden cronológico puro).
+  - `MetricsCard`: fila «W Days» (ganadores/total · %) cuando llegan dayStats. `page.tsx` calcula los dayStreaks sobre `isFilteredResult`, y `ResultsTabs` también recibe `isFilteredResult` → pestaña y fila reaccionan al slider IS/OOS sin código extra. Top row 580→610 px para la fila nueva.
+- **Verificación:** `npx tsc --noEmit` limpio. Cálculo 100% en cliente (el backend no manda conteos por día).
+- **Código tocado:** `frontend/src/lib/day_streaks.ts` (nuevo), `frontend/src/components/backtester/tabs/RachasTab.tsx` (nuevo), `frontend/src/components/backtester/{ResultsTabs.tsx,MetricsCard.tsx}`, `frontend/src/app/backtester/page.tsx`. Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
