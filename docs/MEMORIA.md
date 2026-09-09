@@ -30,6 +30,114 @@
 
 ---
 
+## 2026-09-09 (Sailor) — Ocho indicadores nuevos en el bloque «Alternativos» + el stop por ATR mira al futuro
+
+### Lo que entra (commit `f1a5764`, en `sailor-rama-desarrollo` y en `staging`)
+
+Ocho indicadores, todos **medidas** (solo se comparan contra una cifra) y todos
+disponibles en **entrada, salida y piramidación**. Van en un bloque propio del
+desplegable, `Alternativos`, a petición de Jaume: mezclados con SMA o RSI se
+esconden.
+
+| Indicador | Qué devuelve |
+|---|---|
+| `Reg. Slope` | Pendiente de la recta OLS sobre el precio, en **%/minuto** |
+| `Reg. R2` | Calidad del ajuste de esa misma recta, 0 a 1 |
+| `ATR Extension` | Distancia a una referencia, en ATRs |
+| `Time vs Level` | Minutos SEGUIDOS por encima/debajo de un nivel |
+| `Absorption` | Millones de $ por cada 1% de desplazamiento **neto** |
+| `Wick Ratio` | Fracción del recorrido devuelta en mecha, 0 a 1 |
+| `Absorption + Wick` | 1 si se cumplen los dos umbrales, 0 si no |
+| `Retroceso (%)` | Fracción del impulso ya devuelta, en % del impulso |
+
+### Las decisiones que no son obvias
+
+**La pendiente va sobre el PRECIO, no sobre una media.** Una EMA es un filtro
+causal y va retrasada (la pendiente de la EMA(20) cuenta lo de hace ~10 velas);
+la recta de mínimos cuadrados suaviza igual sin retraso, y de paso suelta el R2
+del mismo ajuste. Sale normalizada en %/minuto para que el mismo umbral valga en
+un ticker de 0,60 $ y en uno de 45 $.
+
+**La absorción divide por el desplazamiento NETO, no por el rango.** La primera
+versión usaba `high-low` y una vela de absorción **con mecha larga puntuaba
+BAJO** (0,272 frente a 0,305 de una vela normal), justo al revés de lo que se
+busca. Con el neto, el mismo muro pasó a **5,72**. Y así deja de pisarse con
+`Wick Ratio`: una mide el dinero y la otra la forma, que es lo que hace útil
+combinarlas.
+
+**El retroceso NO usa detección de pivotes, a propósito.** Un pivote clásico
+mira N barras a la DERECHA, así que en la barra `t` no se sabe todavía que `t-N`
+era un pivote: usarlo sería mirar al futuro. El impulso se define solo con
+pasado (máximo corrido + mínimo anterior a ese máximo) y se reinicia cada día.
+
+**Los umbrales por defecto están MEDIDOS, no inventados.** Reconstruidas 2.476
+velas de minuto desde las grabaciones del bot (10 tickers, 8-9 sep). Absorción:
+p50 = 0,26 · p90 = **2,62** · p95 = 5,08. Mecha superior: p50 = **0,21** ·
+p90 = 0,37 · p95 = 0,43. El dato que ahorra un error: **la mediana de la mecha
+es 0,21**, o sea que en un día normal siempre se devuelve una quinta parte del
+recorrido y eso no significa nada. Pedir «> 0,5» dejaría fuera al 97% de las
+lecturas y no dispararía casi nunca.
+
+### Verificación
+
+Vía del motor real (`_compute_from_config`), no solo el cálculo del gráfico ·
+clave de caché que separa configuraciones · `has_special=True` (van por la vía
+clásica, como Squeeze y los fades) · **paridad gráfico↔motor exacta**
+(0,00e+0 sobre 280-300 velas dispersas) · `tsc --noEmit` limpio · 83 tests.
+
+### ⚠️ Hallazgo sin arreglar: el stop `ATR Multiplier` mira al futuro
+
+```python
+avg_atr = pd.Series(atr_arr).dropna().mean()   # media del ATR de TODO el día
+sl_stop = (avg_atr * hs_value) / float(C[0])   # fracción FIJA para todo el día
+```
+
+La media incluye barras **posteriores a la entrada**. Medido sobre un día que
+explota en la barra 330: una entrada de la mañana recibe un stop **4,6× más
+ancho** del que le tocaría, y dentro de la explosión 5× más estrecho. Además no
+es un stop por ATR: es una constante diaria, igual entres a las 07:00 o a las
+09:31.
+
+**No se arregló en esta sesión a propósito**: toca `portfolio_sim.py`,
+`strategy_engine.py` y `market_frame.py`, que comparte el bot en vivo. Dos cosas
+que hay que saber antes de meterle mano:
+
+1. **No cabe en `sl_stop`**, que es un escalar. Un ATR por barra tiene que ir por
+   la vía del nivel, como el stop estructural (`_structural_level`).
+2. **El bot se rompería en silencio**: `bot_alerts_engine.py:399` resuelve todo
+   lo no estructural como `precio × (1 ∓ sl_stop)`. Cambiar el backtest sin
+   tocar el bot lo dejaría avisando con un stop distinto del que backtestea.
+   El test `tests/test_bot_tamano_todos_los_stops.py` existe justo para cazar eso.
+
+Jaume confirmó que **no usa ninguna estrategia con ATR ahora mismo**, así que se
+puede arreglar el tipo existente sin respetar compatibilidad hacia atrás.
+
+### Otro hallazgo menor, también sin arreglar
+
+`calculateATR` del gráfico usa el suavizado de **Wilder** (`1/n`) y el motor una
+**EMA** (`2/(n+1)`): coinciden en el primer valor y se separan desde el segundo.
+Arreglarlo cambiaría todos los gráficos que ya lo usan, así que se dejó y
+`calculateAtrExtensionVwap` replica las fórmulas del motor en local, con el
+porqué escrito al lado para que nadie lo «simplifique» luego.
+
+> Se dijo por el camino que el **VWAP** del gráfico también divergiía por
+> reiniciar en día UTC. **Era falso**: solo diverge cruzando medianoche UTC, y un
+> ticker-día real (04:00-20:00 NY) nunca la cruza. El VWAP está bien.
+
+### Pendientes que salen de aquí
+
+- **Stop por ATR de verdad** (lo importante). Receta arriba.
+- **Perfil de volumen intradía**: zonas de acumulación por franjas de precio, en
+  vez de puntos como PMH/LOD. Diseño hablado, sin cerrar.
+- **«Ultimo pivote» como nivel de stop**: distinto de `Previous max`, que es el
+  máximo corrido y nunca baja (10→15→12→14→11: previous max = 15 para siempre,
+  último pivote alto = 14, último pivote bajo = 12).
+- **Microestructura**: el tamaño medio de operación (campo `z` del canal `A`) ya
+  se graba solo cada día que corre el bot. El spread **no** sale de ahí ni a
+  posteriori: necesita otro canal, y a ser posible en un proceso aparte del bot.
+
+---
+
 ## 2026-08-23 (Sailor) — ⚠️ `staging` PASA A SER LA VERSIÓN DE SAILOR + piramidación y auditoría del motor
 
 > **LÉEME ENTERO ANTES DE TRABAJAR SOBRE `staging`.** Este push **sustituye el
