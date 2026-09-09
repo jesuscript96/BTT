@@ -3646,3 +3646,64 @@ sirve de verdad es la memoria, no el nombre del intérprete.
 **Estado:** 69 tests nuevos (59 del calendario, 10 del reintento). **973 pasan, 0
 fallan.** SUBIDO a `sailor` y `staging` en `8ca10fb`. `D:\bot_senales\bot.py` va
 aparte porque vive fuera de git y no entra en los commits.
+
+### [CORRECCIÓN · 2026-09-09 · EL BOTÓN] Seguía sin encender a la primera, y lo encontró una revisión posterior
+
+Una revisión multiagente del cambio de arriba sacó **26 hallazgos; 18 se
+refutaron y quedaron 8**. Uno era grave, y estaba justo en lo que yo había dado
+por arreglado y contado como resuelto.
+
+**`cambiar_estado` guarda `vigilando=True` y lanza el `.bat`. Pero `bot.py`
+llama a `dejar_parado()` nada más arrancar**, así que entre 10 y 40 segundos
+después de pulsar —lo que tarda en importar pandas y pedir las estrategias—
+llegaba su POST poniendo el interruptor en `False`. La página se volvía sola a
+«Parado» y el bot se quedaba **vivo pero mudo**. Había que pulsar **dos veces**;
+la segunda funcionaba porque ya había proceso y no se relanzaba.
+
+Ese apagado no sobra: existe para que dejar el interruptor encendido un día no
+haga que el bot se ponga a vigilar solo al día siguiente. Lo que fallaba es que
+no distinguía quién lo había lanzado.
+
+**Y explica lo que vi el 9-sep a las 17:50 y leí mal.** Jaume pulsó el botón, el
+bot arrancó, y cuando miré el estado el interruptor decía `False`. Lo interpreté
+como «todavía no le ha dado» y di el arreglo por bueno. Estaba viendo el bug.
+
+Arreglado con la variable de entorno `BOT_ALERTS_ARRANCADO_POR_LA_PAGINA`, que
+el backend pone al lanzar el `.bat` y `bot.py` mira antes de apagarse. Va por
+entorno y no por argumento del `.bat` para no tocar el lanzador, que es de Jaume
+y vive fuera del repo. Comprobado en el log real, los dos caminos.
+
+**Los otros tres de código:**
+
+- **La petición de cierres bloqueaba el bucle de eventos.** El refresco al
+  cambiar de día llamaba a `cierres_de_ayer()` de forma síncrona dentro de
+  `async def bucle()`: una petición HTTP de hasta un minuto congelando el
+  proceso entero, feed del websocket incluido. **Lo metí yo ese mismo día.**
+  Ahora va por `asyncio.to_thread`.
+- **La lista oficial se daba por pedida antes de llegar.** `_pedido_el` se
+  marcaba antes de lanzar la petición, así que un timeout dejaba el proceso 24
+  horas solo con las reglas y sin decirlo. Ahora se marca al llegar, con suelo
+  de 10 minutos entre intentos (`franja_de_mercado()` se llama en cada latido:
+  sin suelo sería una petición cada 5 segundos) y una línea de log cuando entra.
+- **Un error viejo se colaba como si fuera de los cierres.** `ultimo_error` lo
+  comparten el universo, el barrido y `cierres_de_ayer()`, y el bot lo imprime
+  como «OJO con los cierres» justo después de esa llamada.
+
+**Y cuatro huecos de tests**, que es donde más útil salió la revisión:
+`cierres_de_ayer()` —la mitad del cambio del día— **no tenía ninguno**; la
+traducción del JSON de Massive tampoco (romper el literal `early-close`
+convierte toda media sesión en cierre entero, y la lista oficial manda sobre las
+reglas); el ritmo del refresco diario no se comprobaba; y un test era
+tautológico —miraba el 2 de julio, una fecha que la regla no genera nunca—.
+
+También salió **código muerto mío**: una guarda para la víspera del 4 de Julio
+que no puede alcanzarse nunca, porque las dos condiciones anteriores ya cubren
+los dos casos posibles. Fuera, y escrito para que nadie añada una tercera.
+
+**Lo que hay que aprender:** el arreglo del botón lo di por bueno **mirando que
+el bot arrancara**, que es la misma clase de error que cometí por la mañana —
+comprobar que respira en vez de comprobar qué hace—. Y el estado que lo delataba
+lo tuve delante y lo leí como si fuera lo esperado.
+
+**Estado:** 992 tests pasan, 0 fallan (eran 973). `faca7d6` en `sailor` y
+`staging`.
