@@ -38,6 +38,16 @@ class IndicatorType(str, Enum):
     # Squeeze: % que ha movido el precio en una ventana de RELOJ (minutos).
     # Solo se compara contra una cifra fija; no es un nivel de precio.
     SQUEEZE = "Squeeze"
+    REG_SLOPE = "Reg. Slope"
+    REG_R2 = "Reg. R2"
+    ATR_EXTENSION = "ATR Extension"
+    # Absorcion: millones de $ por cada 1% de recorrido (profundidad).
+    # Profundidad del retroceso desde el maximo del impulso, en % del impulso.
+    RETRACEMENT = "Retroceso (%)"
+    ABSORPTION = "Absorption"
+    WICK_RATIO = "Wick Ratio"
+    ABSORPTION_WICK = "Absorption + Wick"
+    TIME_VS_LEVEL = "Time vs Level"
 
     # Volatility
     ATR = "ATR"
@@ -307,6 +317,32 @@ class IndicatorConfig(BaseModel):
     overhead_extreme: Optional[Literal["max", "min"]] = None
     overhead_ref: Optional[Literal["high", "low", "open", "close"]] = None
     overhead_vol_rule: Optional[Literal["none", "gt", "lt"]] = None
+
+    # "ATR Extension" y "Time vs Level": contra que nivel se mide.
+    #   ref_level  cual es el nivel. Si es "sma"/"ema", su periodo sale de
+    #              `period2` (en "ATR Extension" `period` es el del ATR).
+    #   level_dir  solo para "Time vs Level": si el reloj corre mientras el
+    #              precio esta POR ENCIMA ("above") o POR DEBAJO ("below").
+    # DECLARADOS AQUI A PROPOSITO: pydantic va con extra="ignore", asi que un
+    # campo sin declarar se tira SIN error, SIN log y SIN 422.
+    ref_level: Optional[Literal[
+        "vwap", "sma", "ema", "day_open", "rth_open", "pmh", "pml",
+        "prev_close", "previous_max", "previous_min", "hod", "lod",
+    ]] = None
+    level_dir: Optional[Literal["above", "below"]] = None
+
+    # "Wick Ratio": que mecha se mide, la de arriba (rechazo de las subidas) o
+    # la de abajo (rechazo de las caidas).
+    wick_side: Optional[Literal["upper", "lower"]] = None
+    # "Absorption + Wick": los dos umbrales van DENTRO del indicador porque la
+    # condicion solo tiene un `target`. Devuelve 1 si se cumplen los dos.
+    abs_op: Optional[Literal["gt", "lt"]] = None
+    abs_level: Optional[float] = None
+    wick_op: Optional[Literal["gt", "lt"]] = None
+    wick_level: Optional[float] = None
+    # "Retroceso (%)": si el impulso que se mide es al alza (retroceso desde el
+    # maximo, el caso de un gapper) o a la baja (rebote desde el minimo).
+    swing_dir: Optional[Literal["up", "down"]] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"

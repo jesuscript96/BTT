@@ -327,6 +327,61 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
     params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
     multi: true,
   },
+  {
+    id: "ABSORPTION",
+    label: "Absorci\u00f3n (M$ por 1%)",
+    category: "Volume",
+    displayMode: "panel",
+    params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
+    multi: true,
+  },
+  // La mecha va como DOS entradas planas en vez de una con selector: los params
+  // del registro son numeros y un selector de texto no cabe aqui. Mismo motivo
+  // por el que los fades acabaron con cuatro entradas.
+  {
+    id: "WICK_RATIO_UP",
+    label: "Ratio de mecha (arriba)",
+    category: "Volatility",
+    displayMode: "panel",
+    params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
+    multi: true,
+  },
+  {
+    id: "WICK_RATIO_DOWN",
+    label: "Ratio de mecha (abajo)",
+    category: "Volatility",
+    displayMode: "panel",
+    params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
+    multi: true,
+  },
+  {
+    id: "REG_SLOPE",
+    label: "Reg. Slope (%/min)",
+    category: "Trend",
+    displayMode: "panel",
+    // Minutos de RELOJ, no velas. `multi` para comparar dos ventanas.
+    params: [{ name: "minutes", label: "Minutos", default: 20, min: 1, max: 390 }],
+    multi: true,
+  },
+  {
+    id: "REG_R2",
+    label: "Reg. R²",
+    category: "Trend",
+    displayMode: "panel",
+    params: [{ name: "minutes", label: "Minutos", default: 20, min: 1, max: 390 }],
+    multi: true,
+  },
+  {
+    // SOLO la variante contra el VWAP: los params del registro son numeros y
+    // el selector de referencia de la condicion es texto, asi que si en la
+    // condicion se elige otra referencia este grafico NO la representa.
+    id: "ATR_EXTENSION_VWAP",
+    label: "ATR Extension (vs VWAP)",
+    category: "Volatility",
+    displayMode: "panel",
+    params: [{ name: "period", label: "ATR", default: 14, min: 1, max: 200 }],
+    multi: true,
+  },
   // Los fades van como entradas SEPARADAS por modo en vez de con un parametro
   // de tipo texto: los params del grafico son `Record<string, number>` y meter
   // un selector aqui obligaria a tocar el registro entero. Cuatro entradas

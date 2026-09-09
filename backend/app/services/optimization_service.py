@@ -717,7 +717,10 @@ def _extract_indicator_params(cfg, logic_label, path, add_fn):
     ]
     float_keys = [
         "stdDev", "multiplier", "overbought", "oversold", "return_pct",
-        "reversionPercentage", "min_af", "max_af"
+        "reversionPercentage", "min_af", "max_af",
+        # Umbrales de "Absorption + Wick": FLOAT, no int. Si entraran en
+        # _INT_PARAM_KEYS, un umbral de mecha de 0,5 se redondearia a 0 o 1.
+        "abs_level", "wick_level"
     ]
 
     for param_key in int_keys:

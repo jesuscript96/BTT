@@ -42,6 +42,13 @@ _CATEGORY = {
         "Time of Day", "Range of Time", "High/Low from x time", "High/Low from hour-time",
     ],
     "Returns": ["Ret % PM", "Ret % RTH"],
+    # Bloque aparte, igual que en la UI: medidas que no existen en las
+    # plataformas comerciales. Todas son standalone (solo contra una cifra).
+    "Alternativos": [
+        "Reg. Slope", "Reg. R2", "ATR Extension",
+        "Absorption", "Wick Ratio", "Absorption + Wick",
+        "Retroceso (%)", "Time vs Level",
+    ],
 }
 
 # Common parameters per indicator (hint for the LLM/dev).
@@ -66,6 +73,20 @@ _PARAMS = {
     "Squeeze": ["range_minutes", "squeeze_direction"],
     "% Session Fade": ["session_ref"],
     "% Fade": ["fade_ref", "ap_session"],
+    # range_minutes = ventana de RELOJ en minutos (no de velas).
+    "Reg. Slope": ["range_minutes"],
+    "Reg. R2": ["range_minutes"],
+    # period = ATR; period2 = periodo de la media si ref_level es sma/ema.
+    "ATR Extension": ["period", "period2", "ref_level"],
+    "Time vs Level": ["period2", "ref_level", "level_dir"],
+    # range_minutes = ventana de RELOJ. Los umbrales de "Absorption + Wick" van
+    # dentro del indicador porque la condicion solo tiene un `target`.
+    # range_minutes = 0 (o ausente) mide el impulso del DIA entero.
+    "Retroceso (%)": ["range_minutes", "swing_dir"],
+    "Absorption": ["range_minutes"],
+    "Wick Ratio": ["range_minutes", "wick_side"],
+    "Absorption + Wick": ["range_minutes", "wick_side", "abs_op", "abs_level",
+                           "wick_op", "wick_level"],
 }
 
 

@@ -54,6 +54,14 @@ export const isPercentIndicator = (name?: string): boolean => {
 export const isMeasureIndicator = (name?: string): boolean => {
     if (!name) return false;
     return (
+        name === IndicatorType.RETRACEMENT ||
+        name === IndicatorType.ABSORPTION ||
+        name === IndicatorType.WICK_RATIO ||
+        name === IndicatorType.ABSORPTION_WICK ||
+        name === IndicatorType.REG_SLOPE ||
+        name === IndicatorType.REG_R2 ||
+        name === IndicatorType.ATR_EXTENSION ||
+        name === IndicatorType.TIME_VS_LEVEL ||
         name === IndicatorType.PM_HIGH_GAP ||
         name === IndicatorType.CURRENT_GAP ||
         name === IndicatorType.OPEN_GAP ||
@@ -123,6 +131,31 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         // (cazar el disparo). La ventana va en MINUTOS DE RELOJ, no en velas.
         case IndicatorType.SQUEEZE:
             return { range_minutes: 5, squeeze_direction: "up" };
+        // 20 minutos de ventana: suficiente para que la recta tenga velas que
+        // ajustar en premercado y corto para no arrastrar el tramo anterior.
+        case IndicatorType.REG_SLOPE:
+        case IndicatorType.REG_R2:
+            return { range_minutes: 20 };
+        // ATR de 14 contra el VWAP: el caso que se mira a diario (cuanto se ha
+        // estirado el precio de su media ponderada del dia).
+        case IndicatorType.ATR_EXTENSION:
+            return { period: 14, ref_level: "vwap", period2: 20 };
+        case IndicatorType.TIME_VS_LEVEL:
+            return { ref_level: "vwap", level_dir: "above", period2: 20 };
+        // 5 minutos de ventana. Los umbrales por defecto son el PERCENTIL 90
+        // medido sobre el universo real del bot (absorcion 2,62 y mecha 0,374
+        // sobre 2.461 lecturas del 8-9 sep 2026): asi el defecto ya marca "esto
+        // es raro" en vez de disparar en cualquier vela.
+        // range_minutes 0 = el impulso del DIA entero, que es el caso normal.
+        case IndicatorType.RETRACEMENT:
+            return { range_minutes: 0, swing_dir: "up" };
+        case IndicatorType.ABSORPTION:
+            return { range_minutes: 5 };
+        case IndicatorType.WICK_RATIO:
+            return { range_minutes: 5, wick_side: "upper" };
+        case IndicatorType.ABSORPTION_WICK:
+            return { range_minutes: 5, wick_side: "upper", abs_op: "gt",
+                     abs_level: 2.5, wick_op: "gt", wick_level: 0.4 };
         case IndicatorType.RSI:
             return { period: 14 };
         // MACD: rapida 12, lenta 26, señal 9 — los periodos clasicos. Los tres
@@ -189,6 +222,19 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.SQUEEZE,
         IndicatorType.RSI, IndicatorType.MACD,
         IndicatorType.MACD_SIGNAL, IndicatorType.MACD_HISTOGRAM,
+    ],
+    // Bloque aparte a peticion de Jaume (9-sep-2026): son medidas que no
+    // existen en ninguna plataforma comercial, asi que mezclarlas con SMA o
+    // RSI las esconde. Todas son MEDIDAS (solo se comparan contra una cifra),
+    // todas resuelven sus ventanas por RELOJ y no por velas, y todas llevan el
+    // descriptivo largo con ejemplo y niveles medidos.
+    "Alternativos": [
+        IndicatorType.REG_SLOPE, IndicatorType.REG_R2,
+        IndicatorType.ATR_EXTENSION,
+        IndicatorType.ABSORPTION, IndicatorType.WICK_RATIO,
+        IndicatorType.ABSORPTION_WICK,
+        IndicatorType.RETRACEMENT,
+        IndicatorType.TIME_VS_LEVEL,
     ],
 };
 
@@ -267,6 +313,14 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.VOLUME]: "Volume",
     [IndicatorType.ATR]: "ATR",
     [IndicatorType.SQUEEZE]: "Squeeze",
+    [IndicatorType.REG_SLOPE]: "Reg. Slope (%/min)",
+    [IndicatorType.REG_R2]: "Reg. R²",
+    [IndicatorType.ATR_EXTENSION]: "ATR Extension",
+    [IndicatorType.RETRACEMENT]: "Retroceso (%)",
+    [IndicatorType.ABSORPTION]: "Absorción (M$ por 1%)",
+    [IndicatorType.WICK_RATIO]: "Ratio de mecha",
+    [IndicatorType.ABSORPTION_WICK]: "Absorción + Mecha",
+    [IndicatorType.TIME_VS_LEVEL]: "Time vs Level (min)",
     [IndicatorType.RSI]: "RSI",
     [IndicatorType.MACD]: "MACD",
     [IndicatorType.MACD_SIGNAL]: "MACD Signal",
@@ -347,8 +401,46 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.MACD]: "Línea MACD: diferencia entre la media exponencial rápida (12) y la lenta (26). Por encima de cero el impulso es alcista; por debajo, bajista. Lo clásico es cruzarla con su Señal.",
     [IndicatorType.MACD_SIGNAL]: "Señal del MACD: media exponencial (9) de la propia línea MACD. Sola no dice mucho — su uso natural es que la línea MACD la cruce por arriba (impulso al alza) o por abajo (a la baja).",
     [IndicatorType.MACD_HISTOGRAM]: "Histograma del MACD: la distancia entre la línea MACD y su Señal. Cuando cruza el cero es exactamente el cruce de las otras dos, y su tamaño dice cuánta fuerza tiene el movimiento. Es el más cómodo de los tres para una condición contra una cifra.",
-    [IndicatorType.SQUEEZE]: "Spike de precio: cuánto se ha movido el cierre respecto al de hace X MINUTOS DE RELOJ (no velas). Devuelve el porcentaje SIEMPRE en positivo en la dirección elegida, así que «Squeeze > 10» significa «se ha disparado más de un 10%» tanto arriba como abajo. Solo se compara contra una cifra. Ojo: mide punta a punta, así que un zigzag dentro de la ventana cuenta el neto (100→110→104,5→114,95 son +15%), pero una caída seguida de una subida dentro de la misma ventana se compensan."
+    [IndicatorType.SQUEEZE]: "Spike de precio: cuánto se ha movido el cierre respecto al de hace X MINUTOS DE RELOJ (no velas). Devuelve el porcentaje SIEMPRE en positivo en la dirección elegida, así que «Squeeze > 10» significa «se ha disparado más de un 10%» tanto arriba como abajo. Solo se compara contra una cifra. Ojo: mide punta a punta, así que un zigzag dentro de la ventana cuenta el neto (100→110→104,5→114,95 son +15%), pero una caída seguida de una subida dentro de la misma ventana se compensan.",
+    [IndicatorType.REG_SLOPE]: "Pendiente de la recta de mínimos cuadrados ajustada al PRECIO de los últimos X MINUTOS DE RELOJ (no velas). Se ajusta sobre el precio y no sobre una media a propósito: una EMA va retrasada y la recta no. Sale en % POR MINUTO y está normalizada por el precio medio de la ventana, así que el mismo umbral vale para un ticker de 0,60 $ y para uno de 45 $. Positiva = sube; negativa = baja, así que para cortos se busca NEGATIVA. Órdenes de magnitud con ventana de 20 minutos: por debajo de ±0,05 %/min está plano (un 1% en 20 min); de ±0,10 a ±0,25 es tendencia clara (2-5% en 20 min); ±0,50 es un movimiento fuerte (10% en 20 min); por encima de ±1,00 %/min es vertical y no suele durar. Ojo: la pendiente NO distingue una subida limpia de una sierra que sube dando bandazos — para eso está Reg. R², y lo normal es usar los dos juntos.",
+    [IndicatorType.REG_R2]: "Calidad del ajuste de esa MISMA recta, de 0 a 1: qué parte del movimiento explica la tendencia y qué parte es ruido. Dos tramos que suben exactamente lo mismo pueden ser una escalera (R² ≈ 0,95) o una sierra que va y viene cuatro veces (R² ≈ 0,15) — y esa segunda te saca del stop varias veces por el camino. Referencias: por encima de 0,80 el movimiento es muy limpio y admite un stop cerca; de 0,50 a 0,80 es una tendencia normal con ruido; por debajo de 0,30 no hay tendencia, es un rango agitado. No tiene unidades, así que el umbral vale igual en cualquier ticker y a cualquier hora. DOS AVISOS: un precio plano también da R² alto (la recta horizontal lo explica entero), así que hay que combinarlo SIEMPRE con Reg. Slope; y un R² que cae mientras la pendiente sigue positiva es el primer aviso de que el impulso se deshace — llega antes que el giro de la pendiente.",
+    [IndicatorType.ATR_EXTENSION]: "Cuántos ATR separan al precio de su referencia (el VWAP por defecto). Positivo = por encima de la referencia; negativo = por debajo. Es la versión comparable de «está un 8% sobre el VWAP»: un 8% es una barbaridad en un ticker que se mueve un 2% al día y es ruido en uno que se mueve un 30%, así que un umbral en % no vale para el universo entero y uno en ATR sí. Referencias con ATR de 14: de 0 a 1 ATR es la zona normal de trabajo; de 2 a 3 ATR ya está estirado; de 4 a 6 ATR es una extensión fuerte, que es el terreno clásico del fade; por encima de 8 ATR es un spike vertical. Para cortar un gap estirado se suele pedir > 3 o > 4. El primer campo es el periodo del ATR; el segundo, el periodo de la media SOLO si la referencia es SMA o EMA.",
+    [IndicatorType.TIME_VS_LEVEL]: "Minutos SEGUIDOS que el precio lleva por encima (o por debajo) del nivel elegido. Es la «aceptación», y es lo que una condición normal no puede decir: para «precio > PM High» son idénticos un precio que lleva 2 minutos arriba y uno que lleva 90, y son situaciones opuestas. Devuelve 0 cuando la condición no se cumple, y se reinicia en cada sesión — una racha nunca se arrastra de un día al siguiente. Cuenta MINUTOS DE RELOJ, no velas: si el ticker se queda media hora sin cotizar, esa media hora cuenta igual. Vale NaN mientras el nivel todavía no existe (antes de las 09:30 no hay RTH Open) y comparar contra NaN da falso, así que no hay señal sin referencia. Referencias: menos de 3 minutos es un pinchazo que puede ser solo una mecha; de 10 a 20 minutos ya es aceptación real; más de 45 minutos es un cambio de régimen.",
+    [IndicatorType.RETRACEMENT]: "Qué fracción del impulso se ha devuelto ya, en % del propio impulso (no del precio). EJEMPLO: el precio sube de 10,00 a 15,00 — ha ganado 5,00. Si baja a 14,00 ha devuelto 1 de 5, o sea 20. A 13,00 son 40. A 11,00 son 80 y el impulso está prácticamente roto. Por encima de 100 ha perforado la base de la que salió. Al hacer un máximo nuevo el impulso se reancla y vuelve casi a 0, igual que «Previous max» se actualiza vela a vela. CÓMO SE DEFINE EL IMPULSO, y esto importa: el máximo es el mayor high corrido y la base es el menor low ANTERIOR a la vela en que se hizo ese máximo. Todo pasado, así que NO mira al futuro — a diferencia de un pivote clásico, que necesita ver N velas por delante para confirmarse. POR QUÉ NO ES LO MISMO QUE «% Fade»: el fade mide la caída en % del PRECIO, así que un 8% significa cosas distintas en un ticker que se movió un 10% y en uno que se movió un 200%. Esto lo normaliza por el tamaño del impulso, y por eso el mismo umbral vale para todo el universo. NIVELES ORIENTATIVOS: por debajo de 30 el impulso aguanta y el comprador sigue ahí; entre 40 y 60 es un retroceso normal; por encima de 70 el que compró arriba está atrapado y la continuación es bastante menos probable. Los números de Fibonacci (38,2 y 61,8) no tienen ninguna evidencia detrás: mide dónde está el corte real en TU universo, que para eso tienes el lago. La ventana en minutos limita el impulso a ese tramo de reloj; déjala en 0 para medir el impulso del día entero. Vale NaN mientras no haya impulso que medir (primera vela del día, o precio plano).",
+    [IndicatorType.ABSORPTION]: "Cuántos MILLONES de dólares hicieron falta para mover el precio un 1%, en una ventana de X MINUTOS DE RELOJ. Es la profundidad del mercado y se lee al derecho: cuanto MÁS ALTO, más caro es moverlo, o sea más absorción. EJEMPLO: en 5 minutos se negocian 2 millones de dólares y el precio acaba un 0,35% por encima de donde empezó → 2 / 0,35 = 5,7. Eso no es calma, es que alguien está poniendo a la venta exactamente tanto como le compran; en una small cap suele ser un ATM, un insider o un fondo saliendo — gente sin prisa y con tamaño que colocar, y por eso el nivel aguanta. NIVELES MEDIDOS sobre 2.461 lecturas reales del universo del bot (8-9 sep 2026, ventana de 5 min): la mitad están por debajo de 0,26; el percentil 75 es 0,85; el 90 es 2,6; el 95 es 5,1 y el 99 es 17,5. Léelo así: por debajo de 0,3 el precio se mueve con nada (código de barras); a partir de 2,5 hay alguien al otro lado; por encima de 5 es un muro. OJO al denominador: es el desplazamiento NETO de la ventana, no el rango. Una vela que sube y vuelve al mismo sitio ha avanzado cero y por eso puntúa alto — que es justo lo que se busca. Vale NaN si la ventana solo tiene una vela.",
+    [IndicatorType.WICK_RATIO]: "Qué fracción de todo lo que recorrió el precio en la ventana se devolvió en forma de mecha, de 0 a 1. Con «arriba» mide el rechazo de las subidas (alguien vende cada empujón); con «abajo», el de las caídas (alguien compra cada hundimiento). EJEMPLO: una vela abre en 5,00, sube a 5,40 y cierra en 5,05, con mínimo en 4,98. Recorrido total 0,42, mecha superior 0,35 → 0,83: le devolvieron el 83% de lo que subió. Se suma sobre toda la ventana para no depender de una vela suelta, que puede ser un mal print. NIVELES MEDIDOS sobre 2.474 lecturas reales (8-9 sep 2026, ventana de 5 min, mecha superior): la MEDIANA es 0,21 — en un día normal siempre se devuelve una quinta parte del recorrido y eso no significa nada; el percentil 75 es 0,29; el 90 es 0,37; el 95 es 0,43 y el 99 es 0,58. Pedir «> 0,5» deja fuera al 97% de las lecturas y casi no dispara nunca: para un filtro que salte de vez en cuando, 0,40 es un punto de partida razonable.",
+    [IndicatorType.ABSORPTION_WICK]: "Devuelve 1 cuando se cumplen LAS DOS condiciones a la vez y 0 cuando no (se compara contra 0: «> 0» es «se cumplen las dos»). Existe porque por separado ninguna de las dos dice gran cosa — la lectura de una depende de cómo esté la otra: ▸ ABSORCIÓN ALTA + MECHA ALTA = hay un vendedor real y además defendido; ese nivel es el techo. Es la combinación que se busca para cortar. ▸ ABSORCIÓN ALTA + MECHA BAJA = alguien absorbe pero sin rechazo visible; puede ser acumulación, y ahí cortarse es peligroso. ▸ ABSORCIÓN BAJA + MECHA ALTA = mecha sin dinero detrás; es ruido de libro vacío y no significa nada. ▸ ABSORCIÓN BAJA + MECHA BAJA = sube sin encontrar resistencia, no hay nadie vendiendo; NO es sitio para cortos. Fíjate en que la cuarta combinación te evita más pérdidas de las que ganancias te da la primera, que suele ser el reparto real de este negocio. Los umbrales por defecto (2,5 y 0,40) son el percentil 90 de cada medida sobre el universo real del bot, así que de salida marcan «esto es raro» en vez de dispararse en cualquier vela."
 };
+
+const PARAM_FIELD_STYLE: React.CSSProperties = {
+    backgroundColor: 'var(--color-ec-bg-sidebar)',
+    border: '0.5px solid var(--color-ec-border)',
+    borderRadius: 5,
+    padding: '5px 10px',
+    fontSize: 'var(--ec-fs-select)',
+    fontWeight: 500,
+    color: 'var(--color-ec-text-primary)',
+    fontFamily: 'var(--color-ec-sans)',
+    outline: 'none',
+};
+
+/** Niveles de referencia de "ATR Extension" y "Time vs Level". El backend
+ *  resuelve cada uno llamando al indicador que ya existe, asi que no hay una
+ *  segunda formula del VWAP o del PM High que pueda divergir de la primera. */
+const REF_LEVEL_OPTIONS: { value: string; label: string }[] = [
+    { value: "vwap", label: "VWAP" },
+    { value: "sma", label: "SMA" },
+    { value: "ema", label: "EMA" },
+    { value: "day_open", label: "Apertura del día" },
+    { value: "rth_open", label: "Apertura RTH (09:30)" },
+    { value: "pmh", label: "PM High" },
+    { value: "pml", label: "PM Low" },
+    { value: "prev_close", label: "Cierre de ayer" },
+    { value: "previous_max", label: "Máximo previo" },
+    { value: "previous_min", label: "Mínimo previo" },
+    { value: "hod", label: "Máximo del día" },
+    { value: "lod", label: "Mínimo del día" },
+];
 
 const ALLOWED_OFFSET_INDICATORS: IndicatorType[] = [
     IndicatorType.BAR_CLOSE,
@@ -952,6 +1044,170 @@ export const IndicatorParams = ({
                                 </select>
                             </div>
                         );
+                    case IndicatorType.REG_SLOPE:
+                    case IndicatorType.REG_R2:
+                        return (
+                            <input
+                                type="number"
+                                min={1}
+                                value={value.range_minutes ?? ''}
+                                onChange={(e) => onChange({ ...value, range_minutes: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                onFocus={(e) => e.target.select()}
+                                placeholder="Minutos"
+                                style={{ ...PARAM_FIELD_STYLE, flex: '1 1 70px', minWidth: '70px' }}
+                                title="Ventana en MINUTOS DE RELOJ sobre la que se ajusta la recta. No son velas: con temporalidad de 5m, 20 minutos siguen siendo 20 minutos. Necesita al menos 3 velas dentro de la ventana; con menos vale NaN."
+                            />
+                        );
+                    case IndicatorType.RETRACEMENT:
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    type="number"
+                                    min={0}
+                                    value={value.range_minutes ?? ''}
+                                    onChange={(e) => onChange({ ...value, range_minutes: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
+                                    placeholder="0 = dia"
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 80px', minWidth: '80px' }}
+                                    title="Minutos de RELOJ a los que se limita el impulso. Deja 0 para medir el impulso del dia entero, que es el caso normal. El impulso nunca cruza de un dia al siguiente."
+                                />
+                                <select
+                                    value={value.swing_dir || 'up'}
+                                    onChange={(e) => onChange({ ...value, swing_dir: e.target.value as "up" | "down" })}
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 130px', minWidth: '130px', cursor: 'pointer' }}
+                                    title="Al alza mide el retroceso desde el maximo (el caso de un gapper que se desinfla); a la baja, el rebote desde el minimo."
+                                >
+                                    <option value="up">Impulso al alza</option>
+                                    <option value="down">Impulso a la baja</option>
+                                </select>
+                            </div>
+                        );
+                    case IndicatorType.ABSORPTION:
+                    case IndicatorType.WICK_RATIO:
+                    case IndicatorType.ABSORPTION_WICK: {
+                        const esCombi = value.name === IndicatorType.ABSORPTION_WICK;
+                        const llevaMecha = esCombi || value.name === IndicatorType.WICK_RATIO;
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={value.range_minutes ?? ''}
+                                    onChange={(e) => onChange({ ...value, range_minutes: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
+                                    placeholder="Minutos"
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 70px', minWidth: '70px' }}
+                                    title="Ventana en MINUTOS DE RELOJ, no en velas. Los percentiles de la descripcion son para una ventana de 5 minutos: si la cambias, cambian."
+                                />
+                                {llevaMecha && (
+                                    <select
+                                        value={value.wick_side || 'upper'}
+                                        onChange={(e) => onChange({ ...value, wick_side: e.target.value as "upper" | "lower" })}
+                                        style={{ ...PARAM_FIELD_STYLE, flex: '1 1 110px', minWidth: '110px', cursor: 'pointer' }}
+                                        title="Arriba mide el rechazo de las subidas (vendedor); abajo, el de las caidas (comprador)."
+                                    >
+                                        <option value="upper">Mecha arriba</option>
+                                        <option value="lower">Mecha abajo</option>
+                                    </select>
+                                )}
+                                {esCombi && (
+                                    <>
+                                        <select
+                                            value={value.abs_op || 'gt'}
+                                            onChange={(e) => onChange({ ...value, abs_op: e.target.value as "gt" | "lt" })}
+                                            style={{ ...PARAM_FIELD_STYLE, flex: '0 1 70px', minWidth: '70px', cursor: 'pointer' }}
+                                            title="Absorcion: mayor o menor que el umbral."
+                                        >
+                                            <option value="gt">Abs &gt;</option>
+                                            <option value="lt">Abs &lt;</option>
+                                        </select>
+                                        <input
+                                            type="number"
+                                            step={0.1}
+                                            value={value.abs_level ?? ''}
+                                            onChange={(e) => onChange({ ...value, abs_level: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                            onFocus={(e) => e.target.select()}
+                                            placeholder="2.5"
+                                            style={{ ...PARAM_FIELD_STYLE, flex: '0 1 65px', minWidth: '65px' }}
+                                            title="Umbral de absorcion, en millones de $ por cada 1%. Medido: p75=0,85 p90=2,6 p95=5,1 p99=17,5."
+                                        />
+                                        <select
+                                            value={value.wick_op || 'gt'}
+                                            onChange={(e) => onChange({ ...value, wick_op: e.target.value as "gt" | "lt" })}
+                                            style={{ ...PARAM_FIELD_STYLE, flex: '0 1 80px', minWidth: '80px', cursor: 'pointer' }}
+                                            title="Mecha: mayor o menor que el umbral."
+                                        >
+                                            <option value="gt">Mecha &gt;</option>
+                                            <option value="lt">Mecha &lt;</option>
+                                        </select>
+                                        <input
+                                            type="number"
+                                            step={0.05}
+                                            value={value.wick_level ?? ''}
+                                            onChange={(e) => onChange({ ...value, wick_level: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                            onFocus={(e) => e.target.select()}
+                                            placeholder="0.4"
+                                            style={{ ...PARAM_FIELD_STYLE, flex: '0 1 65px', minWidth: '65px' }}
+                                            title="Umbral de mecha, de 0 a 1. Medido: mediana=0,21 p75=0,29 p90=0,37 p95=0,43."
+                                        />
+                                    </>
+                                )}
+                            </div>
+                        );
+                    }
+                    case IndicatorType.ATR_EXTENSION:
+                    case IndicatorType.TIME_VS_LEVEL: {
+                        const needsPeriod = value.ref_level === 'sma' || value.ref_level === 'ema';
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                {value.name === IndicatorType.ATR_EXTENSION && (
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={value.period ?? ''}
+                                        onChange={(e) => onChange({ ...value, period: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                        onFocus={(e) => e.target.select()}
+                                        placeholder="ATR"
+                                        style={{ ...PARAM_FIELD_STYLE, flex: '1 1 60px', minWidth: '60px' }}
+                                        title="Periodo del ATR con el que se mide la distancia (14 por defecto)."
+                                    />
+                                )}
+                                <select
+                                    value={value.ref_level || 'vwap'}
+                                    onChange={(e) => onChange({ ...value, ref_level: e.target.value as IndicatorConfig['ref_level'] })}
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 110px', minWidth: '110px', cursor: 'pointer' }}
+                                    title="Nivel contra el que se mide."
+                                >
+                                    {REF_LEVEL_OPTIONS.map(o => (
+                                        <option key={o.value} value={o.value}>{o.label}</option>
+                                    ))}
+                                </select>
+                                {needsPeriod && (
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        value={value.period2 ?? ''}
+                                        onChange={(e) => onChange({ ...value, period2: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                        onFocus={(e) => e.target.select()}
+                                        placeholder="Media"
+                                        style={{ ...PARAM_FIELD_STYLE, flex: '1 1 60px', minWidth: '60px' }}
+                                        title="Periodo de la SMA/EMA de referencia. Va aparte del periodo del ATR a proposito: son dos cosas distintas."
+                                    />
+                                )}
+                                {value.name === IndicatorType.TIME_VS_LEVEL && (
+                                    <select
+                                        value={value.level_dir || 'above'}
+                                        onChange={(e) => onChange({ ...value, level_dir: e.target.value as "above" | "below" })}
+                                        style={{ ...PARAM_FIELD_STYLE, flex: '1 1 100px', minWidth: '100px', cursor: 'pointer' }}
+                                        title="Hacia que lado corre el reloj: cuenta los minutos que el precio lleva SEGUIDOS por encima o por debajo del nivel."
+                                    >
+                                        <option value="above">Por encima</option>
+                                        <option value="below">Por debajo</option>
+                                    </select>
+                                )}
+                            </div>
+                        );
+                    }
                     case IndicatorType.SESSION_FADE:
                         return (
                             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, width: '100%' }}>

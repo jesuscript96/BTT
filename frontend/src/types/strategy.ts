@@ -83,6 +83,25 @@ export enum IndicatorType {
     // No es un nivel: es una cifra, asi que solo se compara contra un numero.
     SQUEEZE = "Squeeze",
 
+    // Recta de minimos cuadrados sobre el PRECIO de una ventana de RELOJ.
+    // Las dos salen del MISMO ajuste: la pendiente dice cuanto se mueve, el R2
+    // si es una escalera o una sierra. Ninguna es un nivel de precio.
+    REG_SLOPE = "Reg. Slope",
+    REG_R2 = "Reg. R2",
+    // Distancia del precio a una referencia, medida en ATR (comparable entre
+    // tickers, que es lo que un umbral en % no consigue).
+    ATR_EXTENSION = "ATR Extension",
+    // Microestructura: cuanto dinero cuesta mover el precio, y cuanto de lo
+    // recorrido se devolvio. Ninguno es un nivel de precio.
+    // Que fraccion del impulso se ha devuelto ya. Causal: el impulso se define
+    // solo con pasado (maximo corrido + minimo anterior a ese maximo).
+    RETRACEMENT = "Retroceso (%)",
+    ABSORPTION = "Absorption",
+    WICK_RATIO = "Wick Ratio",
+    ABSORPTION_WICK = "Absorption + Wick",
+    // Minutos SEGUIDOS por encima (o por debajo) de un nivel: la "aceptacion".
+    TIME_VS_LEVEL = "Time vs Level",
+
     // Momentum clasico. El backend ya los calculaba (y por la via rapida), pero
     // no estaban en ESTE enum, asi que no se podian usar en las condiciones.
     // Las tres lineas del MACD son nombres distintos, no un parametro: es como
@@ -205,6 +224,26 @@ export interface IndicatorConfig {
     // movimiento en la direccion elegida, para que la condicion se lea igual
     // arriba que abajo ("Squeeze > 10"). La ventana va en `range_minutes`.
     squeeze_direction?: "up" | "down";
+
+    // "ATR Extension" y "Time vs Level": contra que nivel se mide.
+    //   ref_level  cual es el nivel. Si es "sma"/"ema", su periodo sale de
+    //              `period2` — en "ATR Extension" `period` es el del ATR.
+    //   level_dir  solo para "Time vs Level": si el reloj corre mientras el
+    //              precio esta POR ENCIMA ("above") o POR DEBAJO ("below").
+    ref_level?: "vwap" | "sma" | "ema" | "day_open" | "rth_open" | "pmh" | "pml"
+        | "prev_close" | "previous_max" | "previous_min" | "hod" | "lod";
+    level_dir?: "above" | "below";
+
+    // "Wick Ratio": que mecha se mide, la de arriba o la de abajo.
+    wick_side?: "upper" | "lower";
+    // "Absorption + Wick": los dos umbrales van DENTRO del indicador, porque la
+    // condicion solo tiene un `target`. El indicador devuelve 1 o 0.
+    abs_op?: "gt" | "lt";
+    abs_level?: number;
+    wick_op?: "gt" | "lt";
+    wick_level?: number;
+    // "Retroceso (%)": impulso al alza ("up") o a la baja ("down").
+    swing_dir?: "up" | "down";
 }
 
 export interface ComparisonCondition {
