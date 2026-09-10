@@ -3756,3 +3756,10 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Trampa que mordió al verificar:** el bucle de espera del arranque golpeaba `/api/lake/status` cada 2 s y tumbó el backend — es [[DuckDB: no hay lecturas baratas]] otra vez. Para esperar a que arranque, `\/openapi.json`, que no toca la base.
 - **Se mantiene de Álvaro:** compartir una tuya (escribe el JSON en tu subcarpeta) y quitar las tuyas. **Se quita:** «Importar copia».
 
+### [AÑADIDO · 2026-09-10 · COMPARTIDAS] Borrar cualquier compartida, también la del otro dev
+- **Por qué:** la lista se acumula y no había forma de limpiarla. Había un botón «Quitar», pero **solo aparecía en las tuyas** (`shared_by === owner`), así que con la única compartida siendo la de Álvaro no salía ninguno — parecía que la función no existía.
+- **Qué se hizo:** `delete_shared(filename, dev=None)` — sin `dev`, tu carpeta (comportamiento de siempre, intacto); con `dev`, la del otro. El router lo expone como query param opcional. El `dev` pasa por la MISMA regex que `shared_owner()` (`^[a-z0-9][a-z0-9-]*$`) y se mantiene la contención con `is_relative_to`: sin puntos ni barras no hay traversal.
+- **Es destructivo Y VIAJA:** al commitear y subir el borrado, el fichero le desaparece también al otro (recuperable por git). El `confirm` lo dice con esas palabras y distingue si la estrategia es tuya o suya; el botón se pone rojo al pasar por encima.
+- **Tests:** los 14 de Álvaro siguen pasando, +4 nuevos (borrar con `dev`, `dev` malformado incluido traversal, `dev` vacío, `dev` inexistente) → 24/24. **Hallazgo de los propios tests:** la cadena vacía NO es un `dev` malformado — significa «no me han dado dev» y cae en el propio owner, que es justo lo que manda el frontend (`entry.shared_by || undefined`).
+- **Nota de entorno:** `test_api_roundtrip_compartir_y_quitar` falló una vez con `IO Error: File is already open` de DuckDB por tener el backend levantado; al repetir, verde. No es del código — es [[DuckDB: no hay lecturas baratas]].
+
