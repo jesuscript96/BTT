@@ -5619,3 +5619,18 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Detalles técnicos (por si tu IA quiere verlo):** endpoints `GET/POST/DELETE /api/shared-strategies` (`backend/app/routers/shared_strategies.py`, lógica en `backend/app/services/shared_strategies.py`); el import reusa el `POST /api/strategies/` existente, no toca schema de BD; test de referencia `backend/tests/test_shared_strategies.py` (14/14). Formato del JSON: `format_version/shared_by/shared_at/source_strategy_id/name/description/definition`.
 - **Zona bot-alertas:** INTACTA y sin relación con esto — sigue sin tocarse.
 - **Estado:** IMPLEMENTADO Y EN STAGING (6c4c3a7 + 7e9fef6); primera estrategia compartida: «G&E GENETICO - 10k».
+
+### [PROTOCOLO · 2026-09-10] Compartir estrategias con Sailor — flujo desde el lado de Álvaro
+- **Escribe:** ZCode (para Álvaro; válido para cualquier IA que trabaje su rama)
+- **Qué es:** cómo se comparte una estrategia con Sailor usando la pestaña «Compartidas» del backtester. La guía de CONSUMO (lado Sailor) ya está en staging como [GUÍA · 2026-09-10]; esta entrada es el ciclo desde el lado de Álvaro.
+- **El ciclo (lo único que hay que recordar):**
+  1. Backtester → correr cualquier backtest → pestaña **«Compartidas»** (derecha de «Charts + Optimization IS»; solo existe con un resultado cargado) → sección *«Compartir una tuya»* → botón **«Compartir»**. Eso escribe el JSON en `estrategias_compartidas/alvaro/` **en el disco local — nada ha salido del ordenador**. Re-compartir la misma estrategia sobreescribe su mismo JSON (slug + 4 chars del id): el botón pasa a decir «Actualizar».
+  2. Commit en `alvaro-rama-desarrollo` de la carpeta `estrategias_compartidas/` y **cherry-pick de ese commit a `origin/staging`** (worktree temporal sobre staging; ver commits de ejemplo 7e9fef6/a302026). Quitar una compartida con «Quitar» + mismo proceso = le desaparece a Sailor en su próximo pull.
+  3. Sailor: pull de staging → «Refrescar» → «Importar copia» (copia nueva cada vez; no actualiza la anterior).
+- **Reglas fijadas por Álvaro esta sesión (NO saltárselas):**
+  - A **staging solo sube el paquete de compartidas** (feature + JSONs + su guía). Nada más de la rama de Álvaro sin estar auditado por Jaime. Los hallazgos y demás trabajo: **solo aquí en MEMORIA_MADRE** (rama de Álvaro), nunca a staging por la vía rápida.
+  - **Todo push (rama o staging) requiere confirmación explícita de Álvaro**, siempre.
+  - El botón NO publica nada: el viaje es git, y se decide commit a commit.
+- **Detalles que evitarán sustos:** staging quedó con la última estrategia compartida («G&E GENETICO - La Buena», a302026; la «10k» fue retirada al ser reemplazada). `.gitignore` necesita la negación `!estrategias_compartidas/**/*.json` (el repo ignora `*.json` global) — ya viene en la feature, no limpiarla. Sailor debe tener `SHARED_STRATEGIES_OWNER=sailor` en su `backend/.env`. Endpoints: `GET/POST/DELETE /api/shared-strategies`; el import reusa `POST /api/strategies/`.
+- **Código tocado:** NINGUNO (entrada de documentación).
+- **Estado:** VIGENTE — protocolo de uso diario.
