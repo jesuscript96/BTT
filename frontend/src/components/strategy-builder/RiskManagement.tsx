@@ -158,7 +158,13 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 {/* Body */}
                 {(risk.use_hard_stop === true) && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="animate-in fade-in duration-200">
-                        <div className={`flex gap-2 ${risk.hard_stop.type === RiskType.PERCENTAGE ? 'items-center justify-center' : ''}`}>
+                        {/* CON MARKET STRUCTURE hay hasta SEIS controles en fila
+                            (tipo, nivel, velas del pivote, operador, offset y
+                            respaldo) y no caben: el ultimo se salia por el borde
+                            derecho. Con `flex-wrap` bajan solos a una segunda
+                            linea en vez de desbordarse, y `items-start` evita
+                            que se estiren de alto al envolver. */}
+                        <div className={`flex flex-wrap items-start gap-2 ${risk.hard_stop.type === RiskType.PERCENTAGE ? 'items-center justify-center' : ''}`}>
                             <select
                                 value={risk.hard_stop.type}
                                 onChange={(e) => {
@@ -223,7 +229,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             fontFamily: 'var(--color-ec-sans)',
                                             outline: 'none',
                                             cursor: 'pointer',
-                                            flex: 2,
+                                            flex: '1 1 100%',
+                                            minWidth: 0,
                                             height: '36px',
                                         }}
                                     >
@@ -241,7 +248,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         demas no la usan. */}
                                     {(risk.hard_stop.value === 'Ultimo pivote alto'
                                       || risk.hard_stop.value === 'Ultimo pivote bajo') && (
-                                        <div className="relative" style={{ width: '92px' }}>
+                                        <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '92px' }}>
                                             <input
                                                 type="number"
                                                 min="1"
@@ -298,7 +305,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             fontFamily: 'var(--color-ec-sans)',
                                             outline: 'none',
                                             cursor: 'pointer',
-                                            width: '120px',
+                                            flex: '1 1 calc(50% - 4px)', minWidth: '104px',
                                             height: '36px',
                                         }}
                                     >
@@ -306,7 +313,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         <option value="<=">Por debajo</option>
                                     </select>
 
-                                    <div style={{ position: 'relative', width: '80px' }}>
+                                    <div style={{ position: 'relative', flex: '1 1 calc(50% - 4px)', minWidth: '78px' }}>
                                         <input
                                             type="number"
                                             step="0.1"
@@ -345,11 +352,24 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         </span>
                                     </div>
 
-                                    {/* RESPALDO cuando el nivel no se resuelve: el
-                                        pivote aun sin confirmar, un PMH que no
-                                        existe, un dia sin datos previos. Era un 5 %
-                                        clavado en el codigo. Vacio = 5 %. */}
-                                    <div className="relative" style={{ width: '116px' }}>
+                                    {/* EL RESPALDO SOLO DONDE PUEDE HACER FALTA.
+                                        Con HOD o LOD el nivel existe desde la
+                                        primera vela y con Previous Max/Min solo
+                                        falta en la primerisima, asi que ensenyar
+                                        el campo ahi es ruido (lo dijo Jaume).
+                                        Donde SI hace falta: el ultimo pivote, que
+                                        no existe hasta que se confirma uno, y
+                                        PMH/PML en un ticker que no cotizo en
+                                        premercado.
+                                        Se ensenya TAMBIEN si ya tiene un valor
+                                        puesto, aunque el nivel no lo necesite: un
+                                        ajuste guardado que sigue actuando y no se
+                                        ve por ningun lado es justo la clase de
+                                        cosa que luego nadie encuentra. */}
+                                    {(["Ultimo pivote alto", "Ultimo pivote bajo", "PMH", "PML"]
+                                        .includes(String(risk.hard_stop.value))
+                                        || risk.hard_stop.struct_fallback_pct != null) && (
+                                    <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '112px' }}>
                                         <input
                                             type="number"
                                             step="0.5"
@@ -391,9 +411,10 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             RESPALDO
                                         </span>
                                     </div>
+                                    )}
                                 </>
                             ) : (
-                                <div className="relative" style={{ width: '120px' }}>
+                                <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '104px' }}>
                                     <input
                                         type="number"
                                         step="0.1"
@@ -436,7 +457,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 A y B, hibrido y «Shares por SL»), porque todos miran el
                                 precio del stop y no la fraccion. */}
                             {risk.hard_stop.type === RiskType.ATR && (
-                                <div className="relative" style={{ width: '150px' }}>
+                                <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '128px' }}>
                                     <input
                                         type="number"
                                         step="0.5"
