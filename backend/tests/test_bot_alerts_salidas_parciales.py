@@ -149,3 +149,131 @@ def test_el_cierre_sintetico_del_borde_no_avisa_ni_gasta_el_tramo(motor):
     ev = _vela(motor, 5, [real])
     assert len(ev) == 1
     assert ev[0].acciones == 1000.0
+
+
+# ── lo que QUEDA abierto, que es lo que se teclea en el broker ───────────
+#
+# `posicion_total - acciones` solo vale para el PRIMER tramo. Con los tres de
+# 1B (25 %, 50 %, 25 % sobre 1.000) esa resta decia «quedan 500» en el segundo
+# (quedan 250) y «quedan 750» en el tercero, que es el que cierra del todo.
+#
+# El simulador deja SIEMPRE un EOD sintetico con lo que sigue abierto, asi que
+# la suma de tramos da la posicion original aunque aun no haya cerrado entera.
+def _eod(size, exit_idx=9):
+    return _tramo(size, motivo="EOD", exit_idx=exit_idx)
+
+
+def test_lo_que_queda_descuenta_los_tramos_ya_cerrados(motor):
+    ev = _vela(motor, 6, [_tramo(250.0), _eod(750.0)])
+    assert ev[0].posicion_total == 1000.0
+    assert ev[0].posicion_restante == 750.0
+
+    ev = _vela(motor, 7, [_tramo(250.0), _tramo(500.0, exit_idx=3), _eod(250.0)])
+    assert ev[0].acciones == 500.0
+    assert ev[0].posicion_total == 1000.0
+    assert ev[0].posicion_restante == 250.0, "antes decia 500: no descontaba el 1er tramo"
+
+
+def test_el_ultimo_tramo_deja_la_posicion_a_cero(motor):
+    _vela(motor, 6, [_tramo(250.0), _eod(750.0)])
+    _vela(motor, 7, [_tramo(250.0), _tramo(500.0, exit_idx=3), _eod(250.0)])
+    ev = _vela(motor, 8, [_tramo(250.0), _tramo(500.0, exit_idx=3),
+                          _tramo(250.0, exit_idx=4)])
+    assert ev[0].acciones == 250.0
+    assert ev[0].posicion_restante == 0.0
+
+
+def test_los_tres_mensajes_de_telegram_salen_bien(motor):
+    """La prueba que pidio Jaume: «todos los take profits, con la cantidad de
+    acciones y demas, todo como en el primer take profit»."""
+    from app.services import bot_alerts_telegram as tg
+    import re
+
+    def texto(evs):
+        return re.sub("<[^>]+>", "", tg.formatear(evs[0]))
+
+    t1 = texto(_vela(motor, 6, [_tramo(250.0), _eod(750.0)]))
+    assert "CIERRE PARCIAL" in t1
+    assert "Acciones a cerrar: 250" in t1
+    assert "25 % de 1.000" in t1 and "quedan 750" in t1
+
+    t2 = texto(_vela(motor, 7, [_tramo(250.0), _tramo(500.0, exit_idx=3), _eod(250.0)]))
+    assert "CIERRE PARCIAL" in t2
+    assert "Acciones a cerrar: 500" in t2
+    assert "50 % de 1.000" in t2 and "quedan 250" in t2
+
+    t3 = texto(_vela(motor, 8, [_tramo(250.0), _tramo(500.0, exit_idx=3),
+                                _tramo(250.0, exit_idx=4)]))
+    assert "CIERRE POS." in t3, "el ultimo tramo cierra del todo, no es parcial"
+    assert "Acciones a cerrar: 250" in t3
+
+
+# ── NO ES SOLO PARA 1B NI SOLO POR HORA ──────────────────────────────────
+#
+# Requisito de Jaume: «que el arreglo no sea exclusivo para esta estrategia,
+# debe tenerlo en cuenta para cualquiera, ya sea salir por % y hora, como por
+# minutos como cualquier cosa».
+#
+# El arreglo vive en el motor y NO mira `exit_reason` en ningun momento: opera
+# sobre los trades que emite el simulador, sean del tipo que sean. Esto lo
+# demuestra en vez de darlo por hecho. Los cuatro tipos que existen salen de
+# `portfolio_sim.py`:
+#
+#     Partial TP          (por distancia en %)
+#     Partial TP (Hour)   (a una hora del reloj)
+#     Partial TP (Time)   (a los N minutos de entrar)
+#     Partial TP (EOD)    (al cierre de la sesion)
+TIPOS = ["Partial TP", "Partial TP (Hour)", "Partial TP (Time)", "Partial TP (EOD)"]
+
+
+@pytest.mark.parametrize("motivo", TIPOS)
+def test_los_tramos_avisan_sea_cual_sea_el_tipo_de_salida(motor, motivo):
+    ev = _vela(motor, 6, [_tramo(300.0, motivo=motivo), _eod(700.0)])
+    assert len(ev) == 1 and ev[0].acciones == 300.0
+    assert ev[0].posicion_restante == 700.0
+
+    ev = _vela(motor, 7, [_tramo(300.0, motivo=motivo),
+                          _tramo(400.0, motivo=motivo, exit_idx=3), _eod(300.0)])
+    assert len(ev) == 1, f"el 2o tramo se perdia con {motivo}"
+    assert ev[0].acciones == 400.0
+    assert ev[0].posicion_restante == 300.0
+
+    ev = _vela(motor, 8, [_tramo(300.0, motivo=motivo),
+                          _tramo(400.0, motivo=motivo, exit_idx=3),
+                          _tramo(300.0, motivo=motivo, exit_idx=4)])
+    assert len(ev) == 1 and ev[0].posicion_restante == 0.0
+
+
+def test_tipos_MEZCLADOS_en_la_misma_posicion(motor):
+    """Una estrategia puede tener un tramo por % y otro por hora. Nada en el
+    motor los distingue, asi que la mezcla tiene que funcionar igual."""
+    ev = _vela(motor, 6, [_tramo(250.0, motivo="Partial TP"), _eod(750.0)])
+    assert ev[0].acciones == 250.0 and ev[0].posicion_restante == 750.0
+
+    ev = _vela(motor, 7, [_tramo(250.0, motivo="Partial TP"),
+                          _tramo(500.0, motivo="Partial TP (Hour)", exit_idx=3),
+                          _eod(250.0)])
+    assert ev[0].acciones == 500.0 and ev[0].posicion_restante == 250.0
+
+    # y el resto lo cierra un STOP, no un take profit
+    ev = _vela(motor, 8, [_tramo(250.0, motivo="Partial TP"),
+                          _tramo(500.0, motivo="Partial TP (Hour)", exit_idx=3),
+                          _tramo(250.0, motivo="Stop Loss", exit_idx=4)])
+    assert len(ev) == 1
+    assert ev[0].motivo == "Stop Loss"
+    assert ev[0].posicion_restante == 0.0
+
+
+def test_una_salida_normal_de_una_sola_pieza_no_cambia(motor):
+    """Sin parciales, un unico trade cierra la posicion entera: tiene que
+    seguir saliendo como CIERRE POS. y sin la linea de porcentajes."""
+    from app.services import bot_alerts_telegram as tg
+    import re
+    ev = _vela(motor, 5, [_tramo(1000.0, motivo="Take Profit", exit_idx=3)])
+    assert len(ev) == 1
+    assert ev[0].posicion_total == 1000.0
+    assert ev[0].posicion_restante == 0.0
+    t = re.sub("<[^>]+>", "", tg.formatear(ev[0]))
+    assert "CIERRE POS." in t
+    assert "quedan" not in t
+

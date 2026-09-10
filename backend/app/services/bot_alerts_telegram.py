@@ -171,8 +171,16 @@ def formatear(ev: "Evento") -> str:
     # la estrategia se piensa en porcentaje («que cierre un 25 %») pero en el
     # broker se teclea un numero de acciones.
     total_ev = getattr(ev, "posicion_total", None)
-    cierre_entero = (ev.acciones is not None and total_ev
-                     and abs(ev.acciones - total_ev) < 0.5)
+    queda_ev = getattr(ev, "posicion_restante", None)
+    # QUE CIERRE DEL TODO NO ES QUE CIERRE EL 100 % DE GOLPE. El tercer tramo de
+    # 1B es un 25 %, pero deja la posicion a cero: eso es un CIERRE POS., no un
+    # parcial. Manda lo que queda abierto; el tamanyo del tramo solo se mira si
+    # no lo sabemos (avisos viejos, sin el campo).
+    if queda_ev is not None:
+        cierre_entero = queda_ev < 0.5
+    else:
+        cierre_entero = (ev.acciones is not None and total_ev
+                         and abs(ev.acciones - total_ev) < 0.5)
     titulo = "CIERRE POS." if (cierre_entero or ev.acciones is None) else "CIERRE PARCIAL"
     lineas = [
         f"✅ <b>Ticker:</b> {tk}  ({titulo})",
@@ -182,8 +190,12 @@ def formatear(ev: "Evento") -> str:
     if ev.acciones is not None:
         lineas.append(f"Acciones a cerrar: <b>{_num(ev.acciones, 0)}</b>")
         if total_ev and not cierre_entero:
+            # El PORCENTAJE va sobre la posicion original —«que cierre un 25 %»
+            # es como lo piensa Jaume y como lo dice la estrategia— pero lo que
+            # QUEDA es lo que queda de verdad, descontando los tramos que ya se
+            # cerraron antes. Son dos bases distintas a proposito.
             pct = ev.acciones / total_ev * 100
-            queda = total_ev - ev.acciones
+            queda = queda_ev if queda_ev is not None else (total_ev - ev.acciones)
             lineas.append(f"<i>({pct:.0f} % de {_num(total_ev, 0)} · "
                           f"quedan {_num(queda, 0)})</i>")
     lineas += [

@@ -84,6 +84,14 @@ class Evento:
     # Solo en salidas:
     motivo: Optional[str] = None
     entrada_idx: Optional[int] = None
+    # LO QUE SIGUE ABIERTO DESPUES de cerrar este tramo.
+    #
+    # No se puede deducir de `posicion_total - acciones`: eso solo vale para el
+    # PRIMER tramo. Con los tres de 1B (25 %, 50 %, 25 % sobre 1.000) esa resta
+    # daba «quedan 500» en el segundo (quedan 250) y «quedan 750» en el tercero,
+    # que es el que cierra del todo. Y es justo el numero que se teclea en el
+    # broker.
+    posicion_restante: Optional[float] = None
     # Solo en piramides:
     nivel: Optional[int] = None
     accion_piramide: Optional[str] = None   # 'add' | 'reduce'
@@ -734,8 +742,15 @@ class MotorAlertas:
             # Y el porcentaje de la posicion, que es como Jaume piensa la
             # salida («que cierre un 25 %»). El total es lo que se abrio: la
             # suma de lo que cierran todos los tramos de esta misma entrada.
-            total = sum(float(x.get("size") or 0.0) for x in trades
-                        if int(x.get("entry_idx", -2)) == entry_idx) or None
+            tramos = [float(x.get("size") or 0.0) for x in trades
+                      if int(x.get("entry_idx", -2)) == entry_idx]
+            total = sum(tramos) or None
+            # Y LO QUE QUEDA ABIERTO: el total menos todo lo cerrado hasta aqui,
+            # este tramo incluido. `n_tramo` es su posicion en la lista, asi que
+            # los anteriores son los que van delante.
+            restante = None
+            if total is not None:
+                restante = max(0.0, total - sum(tramos[: n_tramo + 1]))
             eventos.append(Evento(
                 tipo="salida", ticker=ticker,
                 strategy_id=est["strategy_id"], estrategia=est["name"],
@@ -744,6 +759,7 @@ class MotorAlertas:
                 entrada_idx=entry_idx,
                 acciones=cierra or None,
                 posicion_total=total,
+                posicion_restante=restante,
             ))
 
         # ── ENTRADA ─────────────────────────────────────────────────────────
