@@ -526,7 +526,17 @@ def estimar_por_estrategia(estrategias: list, sdef_de, frame, i: int,
 class _EstadoPar:
     """Lo que el motor recuerda de un par (ticker, estrategia) durante el dia."""
     entradas_avisadas: set = field(default_factory=set)   # indices de vela ya avisados
-    salidas_avisadas: set = field(default_factory=set)    # entry_idx de salidas ya avisadas
+    # (entry_idx, n) del TRAMO de salida ya avisado — NO solo el entry_idx.
+    #
+    # Era `entry_idx` a secas, y eso se comia todas las salidas de una entrada
+    # menos la primera. Con take profits parciales una sola entrada cierra por
+    # tramos —1B tiene tres: 25 % a las 08:15, 50 % a las 08:30 y 25 % a las
+    # 08:45— y el simulador emite un trade por tramo. El bot avisaba del primero
+    # y descartaba los otros dos en silencio.
+    #
+    # Paso el 10-sep-2026: salto el TP de las 08:15 para siete tickers y el de
+    # las 08:30 no aviso a nadie, con el bot en marcha y sin un solo error.
+    salidas_avisadas: set = field(default_factory=set)
     piramides_avisadas: set = field(default_factory=set)  # (entry_idx, nivel, vela)
 
 
@@ -692,9 +702,20 @@ class MotorAlertas:
         # Un trade cuenta como cerrado de verdad salvo que sea el cierre
         # sintetico del borde del frame (motivo EOD en la ultima vela, sin haber
         # llegado al final de la ventana operativa).
+        # CADA TRAMO SE CUENTA APARTE. Con parciales, una entrada cierra en
+        # varios trades y hay que avisar de TODOS. La clave no puede ser el
+        # `exit_idx` —dos tramos pueden caer en la misma vela si el bot arranca
+        # con las dos horas ya pasadas— ni el tamanyo —el 1er y el 3er tramo de
+        # 1B son los dos del 25 %—, asi que se usa el ORDEN del tramo dentro de
+        # su entrada. El simulador recorre el frame entero en cada vela y emite
+        # los tramos siempre en el mismo orden, asi que es estable.
+        tramo_de: dict[int, int] = {}
         for t in trades:
             entry_idx = int(t.get("entry_idx", -1))
-            if entry_idx in estado.salidas_avisadas:
+            n_tramo = tramo_de.get(entry_idx, 0)
+            tramo_de[entry_idx] = n_tramo + 1
+            clave = (entry_idx, n_tramo)
+            if clave in estado.salidas_avisadas:
                 continue
             sintetico = (
                 t.get("exit_reason") == "EOD"
@@ -703,7 +724,7 @@ class MotorAlertas:
             )
             if sintetico:
                 continue
-            estado.salidas_avisadas.add(entry_idx)
+            estado.salidas_avisadas.add(clave)
             # CUANTAS ACCIONES SE CIERRAN. El aviso de salida no lo decia, y en
             # un cierre PARCIAL —un take profit del 25 %, por ejemplo— eso deja
             # la orden a medias: hay que saber cuantas se venden, no solo a que

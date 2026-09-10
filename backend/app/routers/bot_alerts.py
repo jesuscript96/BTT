@@ -184,8 +184,19 @@ def _faltan_datos(con, req: "WatchReq") -> list[str]:
 
 @router.post("/watch")
 def guardar(req: WatchReq, user_id: Optional[str] = Depends(get_current_user_id)):
-    """Activa o desactiva una estrategia y fija su riesgo por operacion."""
+    """Activa o desactiva una estrategia y fija su riesgo por operacion.
+
+    DEJA RASTRO EN EL LOG, y no es por gusto: el 10-sep-2026 las dos
+    estrategias de Jaume aparecieron destildadas por la manyana y el bot se
+    murio al arrancar. La fila decia `activa=false` con el riesgo intacto —la
+    firma exacta de un clic en la casilla— pero no habia forma de saber cuando
+    ni desde donde, porque esto no escribia nada. Con una linea por cambio, la
+    proxima vez se sabe en diez segundos.
+    """
     _guard()
+    logger.info("[ALERTAS] interruptor de %s -> %s (riesgo %s)",
+                req.strategy_id, "ACTIVA" if req.activa else "parada",
+                req.riesgo_usd)
     with get_user_db_lock():
         con = get_user_db_connection()
         scope_sql, scope_params = scope_clause(user_id)
