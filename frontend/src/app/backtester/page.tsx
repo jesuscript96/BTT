@@ -43,6 +43,26 @@ import {
 } from "@/lib/api_backtester";
 
 
+// PARA QUE. Al guardar con «incluir What-if» marcado, los parametros del
+// What-if se anotan en la descripcion de la estrategia. Algunos de esos
+// parametros no son un ajuste sino una TABLA: `locates_by_pair` lleva el coste
+// de locate de cada par ticker|fecha del backtest. Una estrategia real acabo
+// con una descripcion de 43.191 caracteres, que ademas viaja tal cual al JSON
+// de estrategias_compartidas/. Aqui se anotan los ajustes y se deja fuera
+// cualquier tabla gorda, diciendo cuantas entradas tenia en vez de listarlas.
+const WHATIF_TABLAS = new Set(["locates_by_pair"]);
+
+function describirWhatIf(parsed: Record<string, unknown>): string {
+  const partes = Object.entries(parsed).map(([k, v]) => {
+    if (WHATIF_TABLAS.has(k) || (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length > 12)) {
+      const n = v && typeof v === "object" ? Object.keys(v).length : 0;
+      return `${k}=<${n} entradas>`;
+    }
+    return `${k}=${JSON.stringify(v)}`;
+  });
+  return `[What-if: ${partes.join(", ")}]`;
+}
+
 // Shows "X / Y backtests hoy" only when the tier has a finite daily run limit.
 // MVP: limit is -1 (unlimited) so this renders nothing.
 function BacktestUsageIndicator() {
@@ -1751,10 +1771,13 @@ export default function Home() {
                           if (stored) {
                             try {
                               const parsed = JSON.parse(stored);
-                              const whatifDesc = `[What-if: ${Object.entries(parsed).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}]`;
+                              const whatifDesc = describirWhatIf(parsed);
                               description = description ? `${description}\n${whatifDesc}` : whatifDesc;
                             } catch {
-                              description = description ? `${description}\n[What-if: ${stored}]` : `[What-if: ${stored}]`;
+                              // Solo se llega aqui si el JSON esta corrupto: se
+                              // anota RECORTADO, no entero.
+                              const bruto = `[What-if: ${stored.slice(0, 300)}${stored.length > 300 ? "…" : ""}]`;
+                              description = description ? `${description}\n${bruto}` : bruto;
                             }
                           }
                         }
@@ -1937,10 +1960,13 @@ export default function Home() {
                           if (stored) {
                             try {
                               const parsed = JSON.parse(stored);
-                              const whatifDesc = `[What-if: ${Object.entries(parsed).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")}]`;
+                              const whatifDesc = describirWhatIf(parsed);
                               description = description ? `${description}\n${whatifDesc}` : whatifDesc;
                             } catch {
-                              description = description ? `${description}\n[What-if: ${stored}]` : `[What-if: ${stored}]`;
+                              // Solo se llega aqui si el JSON esta corrupto: se
+                              // anota RECORTADO, no entero.
+                              const bruto = `[What-if: ${stored.slice(0, 300)}${stored.length > 300 ? "…" : ""}]`;
+                              description = description ? `${description}\n${bruto}` : bruto;
                             }
                           }
                         }

@@ -245,7 +245,11 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <span style={{ fontSize: 13, fontWeight: 600, color: color.textHigh }}>{entry.name}</span>
         <span style={{ fontSize: 11, color: color.textMuted }}>de {nombreDev(entry.shared_by)}</span>
       </div>
-      {entry.description && <div style={{ fontSize: 11.5, color: color.textSecondary, marginTop: 4 }}>{entry.description}</div>}
+      {/* La descripcion NO se pinta aqui a proposito (DECISION DE JAUME,
+       *  10-sep-2026). Al guardar con «incluir What-if» marcado se le mete
+       *  dentro el volcado entero de parametros, `locates_by_pair` incluido:
+       *  una estrategia real traia 43.191 caracteres de pares ticker|fecha.
+       *  Esta pantalla quiere el NOMBRE y, al desplegar, la estrategia. */}
       <div style={{ fontSize: 10.5, color: color.textMuted, marginTop: 4 }}>
         Se muestra el fichero entero: lo que no esté desglosado abajo sale en «Otros ajustes», y siempre queda el JSON crudo.
       </div>
@@ -259,6 +263,19 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <Dato k="Pirámides" v={niveles.length ? `${niveles.length} nivel${niveles.length > 1 ? "es" : ""}` : "no"} />
         <Dato k="Filtros universo" v={String(reglas.length)} ultima />
       </div>
+
+      {/* Las condiciones van LAS PRIMERAS: es lo que se viene a mirar cuando
+       *  se despliega una compartida. El resto de la radiografia sigue
+       *  entero debajo. */}
+      <Apartado t="Condiciones de entrada">
+        {contarHojas(ent.root_condition)
+          ? <Arbol nodo={ent.root_condition} />
+          : <div style={{ fontSize: 11.5, color: color.textMuted }}>sin condiciones</div>}
+      </Apartado>
+
+      {contarHojas(sal.root_condition) > 0 && (
+        <Apartado t="Condiciones de salida"><Arbol nodo={sal.root_condition} /></Apartado>
+      )}
 
       <Apartado t="Cuándo puede entrar">
         <Fila k="Sesiones" v={sesiones} />
@@ -282,16 +299,6 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
           })}
           {resto(uni, USADAS_UNI).map(([k, v]) => <Fila key={k} k={k} v={<Generico v={v} />} />)}
         </Apartado>
-      )}
-
-      <Apartado t="Condiciones de entrada">
-        {contarHojas(ent.root_condition)
-          ? <Arbol nodo={ent.root_condition} />
-          : <div style={{ fontSize: 11.5, color: color.textMuted }}>sin condiciones</div>}
-      </Apartado>
-
-      {contarHojas(sal.root_condition) > 0 && (
-        <Apartado t="Condiciones de salida"><Arbol nodo={sal.root_condition} /></Apartado>
       )}
 
       <Apartado t="Riesgo y salidas">
@@ -471,7 +478,6 @@ Borra SU fichero del repo. Cuando subas el borrado, también desaparecerá para 
                     <td style={{ ...td, overflow: "hidden", textOverflow: "ellipsis" }}>
                       <span style={{ color: color.copperBright, marginRight: 6 }}>{activa ? "▾" : "▸"}</span>
                       {c.name}
-                      {c.description && <div style={{ fontSize: 10.5, color: color.textMuted, marginTop: 1 }}>{c.description}</div>}
                     </td>
                     <td style={{ ...td, color: mia ? color.copperBright : color.textSecondary }}>
                       {nombreDev(c.shared_by)}{mia ? " (tú)" : ""}
