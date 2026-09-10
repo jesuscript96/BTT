@@ -1,9 +1,9 @@
 {
   "format_version": 1,
   "shared_by": "alvaro",
-  "shared_at": "2026-09-10T13:53:19",
-  "source_strategy_id": "b70070a1-399a-4619-aeb8-1e63c923141b",
-  "name": "G&E GENETICO - 10k",
+  "shared_at": "2026-09-10T14:46:10",
+  "source_strategy_id": "61edfadd-25d3-4b09-8c70-8c0103d8f92d",
+  "name": "G&E GENETICO - La Buena",
   "description": "",
   "definition": {
     "bias": "short",
@@ -346,7 +346,7 @@
       "hybrid_stop": false,
       "hybrid_black_swan_pct": null,
       "hybrid_max_loss_pct": null,
-      "cangrejo_active": true,
+      "cangrejo_active": false,
       "cangrejo_mode": "perdida",
       "cangrejo_max_sl_dist_pct": null,
       "cangrejo_max_loss_at_sl_pct": 3.0,
@@ -395,6 +395,68 @@
       "custom"
     ],
     "custom_start_time": "09:30",
-    "custom_end_time": "11:30"
+    "custom_end_time": "11:30",
+    "pyramiding": {
+      "timeframe": "1m",
+      "mode": "individual",
+      "levels": [
+        {
+          "times": 1,
+          "root_condition": {
+            "type": "group",
+            "operator": "AND",
+            "conditions": [
+              {
+                "type": "indicator_comparison",
+                "source": {
+                  "name": "% Fade",
+                  "offset": 0,
+                  "fade_ref": "vwap_cross",
+                  "ap_session": "ap.RTH"
+                },
+                "comparator": "GREATER_THAN",
+                "target": 5,
+                "timeframe": "1m"
+              },
+              {
+                "type": "indicator_comparison",
+                "source": {
+                  "name": "Elapsed time from last High",
+                  "offset": 0,
+                  "session_ref": "rth"
+                },
+                "comparator": "GREATER_THAN_OR_EQUAL",
+                "target": 6,
+                "timeframe": "1m"
+              },
+              {
+                "type": "indicator_comparison",
+                "source": {
+                  "name": "RVOL by bar",
+                  "offset": 0,
+                  "period": 20
+                },
+                "comparator": "LESS_THAN",
+                "target": 1,
+                "timeframe": "1m"
+              },
+              {
+                "type": "indicator_comparison",
+                "source": {
+                  "name": "Bar Close",
+                  "offset": 0
+                },
+                "comparator": "GREATER_THAN",
+                "target": 0.5,
+                "timeframe": "1m"
+              }
+            ]
+          },
+          "action": "add",
+          "unit": "pct",
+          "capital_pct": 2
+        }
+      ]
+    }
   }
 }
