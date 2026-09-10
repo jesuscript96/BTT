@@ -8,6 +8,10 @@
 // 10-sep: al lado, el BOOTSTRAP. La banda de la izquierda fija las operaciones
 // y mueve el precio; la de la derecha mueve las dos cosas y contesta la
 // pregunta de verdad: «¿ganaría igual con otro histórico?».
+//
+// Las cifras van en DOS franjas numeradas igual que los gráficos y sin repetir
+// ninguna: Jaume no distinguía qué miraba cada una porque «Acabas entre» y
+// «Mediana» salían en las dos, y el p5 salía dos veces en la misma fila.
 
 import React, { useMemo, useState } from "react";
 import type { BacktestResult, TradeRecord } from "@/lib/api_backtester";
@@ -45,6 +49,18 @@ function Titulo({ n, t, s }: { n: string; t: string; s: string }) {
         <span style={{ color: color.copperBright }}>{n} · </span>{t}
       </div>
       <div style={{ fontSize: 11, color: color.textSecondary, marginTop: 1 }}>{s}</div>
+    </div>
+  );
+}
+
+/* Cabecera de cada franja de cifras: lleva el MISMO número que su gráfico, que
+   es lo único que deja claro de un vistazo qué mira cada cosa. */
+function Franja({ n, t, s }: { n: string; t: string; s: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap", padding: "0 0 5px 14px", borderBottom: `1px solid ${color.border}` }}>
+      <span style={{ ...num, fontSize: 12, fontWeight: 700, color: color.copperBright }}>{n}</span>
+      <span style={{ fontSize: 11, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textHigh, fontWeight: 600 }}>{t}</span>
+      <span style={{ fontSize: 11, color: color.textMuted }}>{s}</span>
     </div>
   );
 }
@@ -239,16 +255,19 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
         </h3>
         <Help title="Banda de locates" width={580}>
           <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 11.5, lineHeight: 1.45 }}>
-            <div><b style={{ color: color.textHigh }}>Qué estás viendo. </b><span style={{ color: color.textSecondary }}>Dos preguntas distintas, una al lado de la otra. <b style={{ color: color.copperBright }}>Izquierda:</b> se toma tu corrida tal cual y se le vuelve a poner precio a los locates N veces, cada vez con una semilla distinta. Las operaciones no cambian, solo lo que cuesta cada día. <b style={{ color: color.copperBright }}>Derecha:</b> además de sortear el precio, cada «historia» saca al azar y con repetición tantos ticker-días como tuviste, de la bolsa de los tuyos. Unos salen dos veces, otros no salen. Es tu estrategia jugando otra vez con otra racha.</span></div>
-            <div style={{ borderLeft: `2px solid ${color.copper}`, paddingLeft: 8 }}><b style={{ color: color.copperBright }}>Por ejemplo: </b>si la izquierda te dice que acabas entre +1.100 y +1.400 $, la suerte del alquiler te mueve 300 $. Si la derecha dice que solo 6 de cada 10 historias acaban ganando, entonces que tu histórico saliera en positivo fue en buena parte suerte del muestreo, y 300 $ eran la menor de tus preocupaciones.</div>
-            <div><b style={{ color: color.textHigh }}>Para qué sirve. </b><span style={{ color: color.textSecondary }}>La izquierda casi siempre sale estrecha, porque son cientos de sorteos independientes y al sumarlos se compensan. La de la derecha es la que decide: dice si el edge bruto da de verdad para pagar el alquiler, o si el resultado que ves depende de qué operaciones te tocaron.</span></div>
+            <div><b style={{ color: color.textHigh }}>Qué estás viendo. </b><span style={{ color: color.textSecondary }}>Dos preguntas distintas, una al lado de la otra, y cada una con su franja de cifras debajo marcada con el mismo número. <b style={{ color: color.copperBright }}>① Izquierda:</b> se toma tu corrida tal cual y se le vuelve a poner precio a los locates N veces, cada vez con una semilla distinta. Las operaciones no cambian, solo lo que cuesta cada día. <b style={{ color: color.copperBright }}>② Derecha:</b> además de sortear el precio, cada «historia» saca al azar y con repetición tantos ticker-días como tuviste, de la bolsa de los tuyos. Unos salen dos veces, otros no salen. Es tu estrategia jugando otra vez con otra racha.</span></div>
+            <div style={{ borderLeft: `2px solid ${color.copper}`, paddingLeft: 8 }}><b style={{ color: color.copperBright }}>Por ejemplo: </b>si la franja ① dice que acabas entre +1.100 y +1.400 $, la suerte del alquiler te mueve 300 $. Si la ② dice que solo 6 de cada 10 historias acaban ganando, entonces que tu histórico saliera en positivo fue en buena parte suerte del muestreo, y esos 300 $ eran la menor de tus preocupaciones.</div>
+            <div style={{ borderTop: `1px solid ${color.border}`, paddingTop: 6 }}>
+              <div style={{ fontSize: "0.82em", letterSpacing: "0.1em", textTransform: "uppercase", color: color.textMuted, marginBottom: 2 }}>Caída máxima ≠ pérdida final</div>
+              <div style={{ color: color.textSecondary }}>Son cosas distintas y por eso pueden parecer contradictorias. Una historia puede hundirse un 70 % por el camino — si le tocan juntos muchos días malos — y aun así acabar ganando, porque después le llegan los buenos. Verás caídas enormes junto a resultados en positivo: no es un error. Lo que significa de verdad es que <b style={{ color: color.textHigh }}>esa cuenta no habría llegado viva a la recuperación</b>. Además el simulador reparte el mismo dinero por operación de principio a fin: no encoge el tamaño cuando la cuenta baja, así que las caídas hondas son el escenario «si hubieras seguido apostando igual».</div>
+            </div>
             <div style={{ borderTop: `1px solid ${color.border}`, paddingTop: 6 }}>
               <div style={{ fontSize: "0.82em", letterSpacing: "0.1em", textTransform: "uppercase", color: color.textMuted, marginBottom: 2 }}>Cómo leerlo</div>
               <div><b style={{ color: color.copperBright }}>Más del 90 % de historias en positivo</b><span style={{ color: color.textSecondary }}> · la estrategia aguanta los locates; el histórico no fue suerte.</span></div>
               <div><b style={{ color: color.copperBright }}>Entre el 65 y el 90 %</b><span style={{ color: color.textSecondary }}> · aguanta por poco. Una racha mala normal te deja en pérdidas: o bajas paquetes o aprietas la puerta por EV.</span></div>
               <div><b style={{ color: color.copperBright }}>Por debajo del 65 %</b><span style={{ color: color.textSecondary }}> · no aguanta. Que tu corrida acabara ganando es a poco más que cara o cruz.</span></div>
               <div><b style={{ color: color.copperBright }}>Sin locates el 100 % y con locates la mitad</b><span style={{ color: color.textSecondary }}> · el edge existe pero se lo lleva entero el alquiler. El problema es el coste, no la señal.</span></div>
-              <div><b style={{ color: color.copperBright }}>Banda izquierda estrecha y derecha ancha</b><span style={{ color: color.textSecondary }}> · lo normal. Deja de preocuparte por la semilla y mira el porcentaje de la derecha.</span></div>
+              <div><b style={{ color: color.copperBright }}>Franja ① estrecha y ② ancha</b><span style={{ color: color.textSecondary }}> · lo normal. Deja de preocuparte por la semilla y mira el porcentaje de la ②.</span></div>
             </div>
             <div style={{ color: color.warning, fontSize: "0.92em" }}>Ojo (1): el bootstrap supone que todas tus operaciones salen de la misma bolsa. Si el edge se ha degradado con los años — y la pestaña Edge dice que sí — mezcla las buenas de 2021 con las malas de ahora y te da una respuesta OPTIMISTA. Ojo (2): con la puerta por EV activa esto es una aproximación, porque con otra semilla la puerta habría dejado entrar otros trades.</div>
           </div>
@@ -302,7 +321,7 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
 
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 18, marginTop: 12, alignItems: "start" }}>
               <div>
-                <Titulo n="1" t="Mismas operaciones, distinto precio" s="cuánto te mueve la suerte del alquiler" />
+                <Titulo n="①" t="Mismas operaciones, distinto precio" s="cuánto te mueve la suerte del alquiler" />
                 <Abanico b={banda} initCash={initCash} conBruta={conBruta} />
                 <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 6, fontSize: 10.5, fontFamily: font.mono, color: color.textSecondary }}>
                   <span><i style={{ display: "inline-block", width: 12, height: 8, background: color.copper, opacity: 0.3, verticalAlign: "middle" }} /> p10–p90</span>
@@ -316,7 +335,7 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
                 </div>
               </div>
               <div>
-                <Titulo n="2" t="Otro histórico: operaciones y precio sorteados" s="¿ganaría igual con otra racha? — bootstrap" />
+                <Titulo n="②" t="Otro histórico: operaciones y precio sorteados" s="¿ganaría igual con otra racha? — bootstrap" />
                 {mc ? (
                   <>
                     <AbanicoMC mc={mc} initCash={initCash} />
@@ -336,35 +355,46 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
               </div>
             </div>
 
-            <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 14, paddingTop: 12 }}>
-              <Cifra k="Acabas entre" v={<>{usd(r.final_p10)}<br />y {usd(r.final_p90)}</>} s="8 de cada 10 semillas" chico />
-              <Cifra k="Mediana" v={usd(r.final_p50)} s={`sin locates ${usd(r.bruta_final)}`} />
-              <Cifra k="Peor semilla" v={usd(r.final_min)} s={`mejor ${usd(r.final_max)}`} tono={color.loss} />
-              <Cifra k="Peor caída" v={`${f1(r.dd_peor)} %`} s={`mediana ${f1(r.dd_mediana)} %`} tono={color.warning} />
-              <Cifra k="Factura media" v={`−${Math.round(r.factura_media).toLocaleString("de-DE")} $`}
-                     s={`${banda.ticker_dias_con_locate} ticker-días con locate`} ultima={!banda.actual} />
-              {banda.actual && (
-                <Cifra k={`Tu semilla (${banda.actual.semilla})`} v={usd(banda.actual.final)}
-                       s={`percentil ${f1(banda.actual.percentil_final)} · caída ${f1(banda.actual.max_dd_pct)} %`} ultima />
-              )}
+            {/* Franja 1: solo cambia el precio del locate. */}
+            <div style={{ marginTop: 18 }}>
+              <Franja n="①" t="Solo cambia el precio del locate" s="tus 1.067 operaciones son las mismas y en el mismo orden" />
+              <div style={{ display: "flex", marginTop: 10 }}>
+                <Cifra k="Acabas entre" v={<>{usd(r.final_p10)}<br />y {usd(r.final_p90)}</>} s={`8 de cada 10 de las ${banda.n_semillas} semillas`} chico />
+                <Cifra k="Lo más probable" v={usd(r.final_p50)} s={`si no pagaras locates: ${usd(r.bruta_final)}`} />
+                <Cifra k="Lo que pagas de alquiler" v={`−${Math.round(r.factura_media).toLocaleString("de-DE")} $`}
+                       s={`de media, en ${banda.ticker_dias_con_locate} ticker-días`} tono={color.loss} />
+                {banda.actual ? (
+                  <Cifra k={`Lo que te tocó (semilla ${banda.actual.semilla})`} v={usd(banda.actual.final)}
+                         s={`mejor que el ${f1(banda.actual.percentil_final)} % de las semillas`} ultima />
+                ) : (
+                  <Cifra k="Semilla mejor y peor" v={<>{usd(r.final_max)}<br />y {usd(r.final_min)}</>} s="los dos extremos del abanico" chico ultima />
+                )}
+              </div>
             </div>
 
+            {/* Franja 2: cambian las operaciones Y el precio. */}
             {mc && (
-              <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
-                <Cifra k="Historias que ganan" v={`${f1(mc.positivo_pct)} %`} tono={tonoPos}
-                       s={`sin locates ${f1(mc.positivo_bruto_pct)} %`} />
-                <Cifra k="Acabas entre" v={<>{usd(mc.resumen.p5)}<br />y {usd(mc.resumen.p95)}</>} s="9 de cada 10 historias" chico />
-                <Cifra k="Mediana" v={usd(mc.resumen.p50)} s={`media ${usd(mc.resumen.media)}`} />
-                <Cifra k="Mala de verdad (p5)" v={usd(mc.resumen.p5)} s={`la peor de ${mc.n_replicas.toLocaleString("de-DE")}: ${usd(mc.resumen.peor)}`} tono={color.loss} />
-                <Cifra k="Peor caída (p95)" v={`${f1(mc.resumen.dd_p95)} %`} s={`mediana ${f1(mc.resumen.dd_p50)} %`} tono={color.warning} ultima />
+              <div style={{ marginTop: 16 }}>
+                <Franja n="②" t="Cambian las operaciones y el precio" s={`${mc.n_replicas.toLocaleString("de-DE")} historias, cada una con otras ${mc.n_unidades.toLocaleString("de-DE")} operaciones sacadas de las tuyas`} />
+                <div style={{ display: "flex", marginTop: 10 }}>
+                  <Cifra k="Historias que acaban ganando" v={`${f1(mc.positivo_pct)} %`} tono={tonoPos}
+                         s={`si no pagaras locates: ${f1(mc.positivo_bruto_pct)} %`} />
+                  <Cifra k="Acabas entre" v={<>{usd(mc.resumen.p5)}<br />y {usd(mc.resumen.p95)}</>} s="9 de cada 10 historias" chico />
+                  <Cifra k="Lo más probable" v={usd(mc.resumen.p50)} s={`la peor de todas: ${usd(mc.resumen.peor)}`} />
+                  <Cifra k="Caída máxima por el camino" v={`${f1(mc.resumen.dd_p50)} %`}
+                         s={`típica; 1 de cada 20 baja del ${f1(mc.resumen.dd_p95)} %`} tono={color.warning} ultima />
+                </div>
+                <div style={{ fontSize: 11, color: color.textMuted, marginTop: 6, paddingLeft: 14 }}>
+                  La caída máxima es lo que se hunde la cuenta <b>por el camino</b>, no lo que pierdes al final: una historia puede caer mucho y aun así acabar en positivo.
+                </div>
               </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 18, marginTop: 16, alignItems: "start" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 18, marginTop: 18, alignItems: "start" }}>
               {histDD && (
                 <div>
                   <div style={{ fontSize: 10.5, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textMuted, marginBottom: 6 }}>
-                    Peor caída por semilla
+                    <span style={{ color: color.copperBright }}>① </span>Tu histórico: peor caída según la semilla
                   </div>
                   <Histograma hist={histDD} actual={banda.actual?.max_dd_pct ?? r.dd_mediana} p95={r.dd_p95} unidad="%"
                               pie={`peor caída en % de cada una de las ${banda.n_semillas} semillas`} />
@@ -373,14 +403,14 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
               {mc && (
                 <div>
                   <div style={{ fontSize: 10.5, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textMuted, marginBottom: 6 }}>
-                    En cuánto acaba cada historia
+                    <span style={{ color: color.copperBright }}>② </span>En cuánto acaba cada historia
                   </div>
                   <HistoResultados mc={mc} real={banda.actual?.final ?? null} />
                 </div>
               )}
             </div>
 
-            <div style={{ fontSize: 12, color: color.textSecondary, lineHeight: 1.55, marginTop: 14, borderTop: `0.5px solid ${color.border}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 12, color: color.textSecondary, lineHeight: 1.55, marginTop: 16, borderTop: `0.5px solid ${color.border}`, paddingTop: 12 }}>
               {(() => {
                 const ancho = r.final_p90 - r.final_p10;
                 const rel = r.bruta_final !== 0 ? Math.abs(ancho / r.bruta_final) * 100 : 0;
@@ -389,7 +419,8 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
                   <>
                     {mc && (
                       <p style={{ margin: "0 0 8px" }}>
-                        De <b style={{ color: color.textHigh }}>{mc.n_replicas.toLocaleString("de-DE")}</b> historias alternativas,
+                        <b style={{ color: color.textHigh }}>Lo importante: </b>
+                        de <b style={{ color: color.textHigh }}>{mc.n_replicas.toLocaleString("de-DE")}</b> historias alternativas,
                         acaban ganando <b style={{ color: tonoPos }}>{f1(mc.positivo_pct)} de cada 100</b>
                         {mc.positivo_bruto_pct > mc.positivo_pct + 1 && <> (sin locates serían {f1(mc.positivo_bruto_pct)})</>}.
                         {mc.positivo_pct >= 90 ? " La estrategia aguanta los locates: lo que viste no fue suerte."
@@ -402,15 +433,21 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
                       {r.bruta_final !== 0 && <> (un {f1(rel)} % del resultado sin locates)</>}
                       {mc && <>, y la suerte con <b>qué operaciones te tocan</b> lo mueve en <b style={{ color: color.textHigh }}>{usd(anchoMC).replace("+", "")}</b>
                         {anchoMC > ancho * 2 && <>, unas <b style={{ color: color.textHigh }}>{Math.round(anchoMC / Math.max(1, ancho))} veces más</b></>}</>}.
-                      {mc && anchoMC > ancho * 2 && " Por eso la de la derecha es la que decide."}
+                      {mc && anchoMC > ancho * 2 && " Por eso la franja ② es la que decide."}
+                      {" "}Los locates se llevan de media <b style={{ color: color.textHigh }}>{r.bruta_final !== 0 ? f1(Math.abs(r.factura_media / r.bruta_final) * 100) : "—"} %</b> de
+                      lo que gana la estrategia sin ellos.
                     </p>
-                    <p style={{ margin: 0 }}>
-                      Los locates se llevan de media <b style={{ color: color.textHigh }}>{r.bruta_final !== 0 ? f1(Math.abs(r.factura_media / r.bruta_final) * 100) : "—"} %</b> de
-                      lo que gana la estrategia sin ellos. La peor caída {mc ? "del 95 % de las historias" : "de todas las semillas"} es{" "}
-                      <b style={{ color: color.warning }}>{f1(mc ? mc.resumen.dd_p95 : r.dd_peor)} %</b>: ese es el número con el que dimensionar la cuenta,
-                      no el de tu corrida.
-                      {mc && " Y recuerda que el bootstrap mezcla todos tus años: si el edge se ha degradado, este número es optimista."}
-                    </p>
+                    {mc && (
+                      <p style={{ margin: 0 }}>
+                        <b style={{ color: color.warning }}>Sobre las caídas: </b>
+                        la mitad de las historias llega a hundirse más de un <b style={{ color: color.warning }}>{f1(Math.abs(mc.resumen.dd_p50))} %</b> por el
+                        camino, y 1 de cada 20 pasa del <b style={{ color: color.warning }}>{f1(Math.abs(mc.resumen.dd_p95))} %</b>. Eso NO es lo que pierdes al final —
+                        una historia puede caer así y acabar ganando, porque los días buenos le llegan después. Lo que dice de verdad es que con una caída así
+                        <b style={{ color: color.textHigh }}> la cuenta no llega viva a la recuperación</b>, y que el simulador reparte el mismo dinero por
+                        operación de principio a fin (no encoge el tamaño cuando la cuenta baja). Compáralo con el <b style={{ color: color.warning }}>{f1(Math.abs(r.dd_peor))} %</b> de
+                        tu histórico real: la diferencia es lo que te ahorró el orden en que te llegaron las operaciones.
+                      </p>
+                    )}
                   </>
                 );
               })()}
