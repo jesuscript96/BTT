@@ -3707,3 +3707,21 @@ lo tuve delante y lo leí como si fuera lo esperado.
 
 **Estado:** 992 tests pasan, 0 fallan (eran 973). `faca7d6` en `sailor` y
 `staging`.
+
+### [GUÍA · 2026-09-10] Compartir estrategias entre devs — PARA SAILOR Y SU IA (traerse SOLO esta implementación)
+- **Escribe:** ZCode (para Álvaro, a petición suya; destinataria de la guía: la IA de Sailor)
+- **Qué es:** sistema para intercambiar estrategias del backtester entre Álvaro y Sailor vía JSON en el repo. Ya está en `origin/staging`. Los ficheros viven en `estrategias_compartidas/<dev>/` (un JSON por estrategia) y el transporte es **git** — nada se sube automáticamente, solo viaja lo que cada uno commitea.
+- **Cómo traerte SOLO esta implementación (sin los ~73 commits pendientes de la rama de Álvaro):**
+  ```
+  git fetch origin
+  git cherry-pick 6c4c3a7 7e9fef6
+  ```
+  (`6c4c3a7` = feature pestaña "Compartidas"; `7e9fef6` = la estrategia «G&E GENETICO - 10k» que Álvaro ya compartió). **NO merges `alvaro-rama-desarrollo`** para esto: arrastra el fix del stop ATR causal y todo lo demás que Álvaro aún no ha integrado.
+- **Setup una sola vez (tu local):**
+  1. Añade a `backend/.env` (NO se commitea): `SHARED_STRATEGIES_OWNER=sailor` — sin eso tus compartidas caen en `dev/`.
+  2. Rearranca el backend con tu script seguro y comprueba el log `DISABLE_GCS_SYNC=true` (regla del repo).
+- **Uso:** backtester → corre cualquier backtest → pestaña **«Compartidas»** (derecha de «Charts + Optimization IS»; solo existe con un resultado cargado). Sección *«En el repo»*: lista las de ambos → **«Importar copia»** crea una copia NUEVA en tus estrategias guardadas (re-importar no actualiza: crea otra). Sección *«Compartir una tuya»*: **«Compartir»** vuelca una tuya a `estrategias_compartidas/sailor/` (re-compartir sobreescribe el mismo JSON). Botón **«Refrescar»** tras un pull.
+- **Para que Álvaro reciba las tuyas:** el botón solo escribe el JSON en tu disco — tu IA debe commitear la carpeta `estrategias_compartidas/` y subir a `staging` **solo con tu confirmación explícita** (regla de oro del repo). Los `*.json` están ignorados globalmente; esta carpeta tiene la negación `!estrategias_compartidas/**/*.json` en `.gitignore` — viene en el cherry-pick, no la «limpies».
+- **Detalles técnicos (por si tu IA quiere verlo):** endpoints `GET/POST/DELETE /api/shared-strategies` (`backend/app/routers/shared_strategies.py`, lógica en `backend/app/services/shared_strategies.py`); el import reusa el `POST /api/strategies/` existente, no toca schema de BD; test de referencia `backend/tests/test_shared_strategies.py` (14/14). Formato del JSON: `format_version/shared_by/shared_at/source_strategy_id/name/description/definition`.
+- **Zona bot-alertas:** INTACTA y sin relación con esto — sigue sin tocarse.
+- **Estado:** IMPLEMENTADO Y EN STAGING (6c4c3a7 + 7e9fef6); primera estrategia compartida: «G&E GENETICO - 10k».
