@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import type { DayResult, GlobalEquityPoint, TradeRecord } from "@/lib/api_backtester";
 import { EXIT_COLORS } from "@/components/backtester/tabs/TradesTab";
 
@@ -9,7 +10,13 @@ interface CalendarTabProps {
   trades: TradeRecord[];
   isDarkMode?: boolean;
   monthlyExpenses?: number;
-  onSelectTrade?: (ticker: string, date: string) => void;
+  /** `modo` decide si el trade se abre en la pestaña «Analisis por trade» o
+   *  desplegado bajo su fila, aqui mismo dentro del dia. */
+  onSelectTrade?: (ticker: string, date: string, modo?: "pestana" | "desplegable") => void;
+  /** `ticker|fecha` del trade desplegado, o null. Lo lleva el padre. */
+  tradeDesplegado?: string | null;
+  /** El grafico de analisis, ya montado por el padre con sus datos. */
+  panelAnalisis?: ReactNode;
   /** El riesgo del panel de la izquierda. Con «Fixed Amount» son DÓLARES (1 R
    *  vale eso siempre); con «Percentage» es el PORCENTAJE del balance que se
    *  arriesga, y entonces 1 R vale distinto cada día. */
@@ -133,7 +140,8 @@ function valorRPorDia(
 }
 
 export default function CalendarTab({
-  dayResults, trades, monthlyExpenses = 0, onSelectTrade, riskR = 0, riskType,
+  dayResults, trades, monthlyExpenses = 0, onSelectTrade, tradeDesplegado,
+  panelAnalisis, riskR = 0, riskType,
   globalEquity = [], initCash = 0,
 }: CalendarTabProps) {
   const [viewMode, setViewMode] = useState<ModoVista>("profits");
@@ -717,22 +725,24 @@ export default function CalendarTab({
                   <tbody>
                     {dayTrades.map((t, i) => {
                       const exitStyle = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
+                      const abierto = tradeDesplegado === `${t.ticker}|${t.date}`;
+                      // Fragment CON key: el fragmento corto no la admite.
                       return (
+                        <Fragment key={i}>
                         <tr
-                          key={i}
                           className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
                           style={{ borderBottom: "1px solid color-mix(in srgb, var(--border) 30%, transparent)" }}
                         >
                           <td className="px-4 py-1.5 font-semibold">
                             <span
-                              onClick={() => {
-                                setSelectedDate(null);
-                                onSelectTrade?.(t.ticker, t.date);
-                              }}
+                              onClick={() => onSelectTrade?.(t.ticker, t.date, "desplegable")}
                               className="hover:text-[var(--color-ec-copper-bright)] hover:underline transition-colors cursor-pointer"
-                              style={{ color: "var(--color-ec-text-high)" }}
+                              style={{ color: tradeDesplegado === `${t.ticker}|${t.date}`
+                                ? "var(--color-ec-copper)" : "var(--color-ec-text-high)" }}
+                              title={tradeDesplegado === `${t.ticker}|${t.date}`
+                                ? "Cerrar el grafico" : "Ver el grafico aqui mismo, sin salir del dia"}
                             >
-                              {t.ticker}
+                              {tradeDesplegado === `${t.ticker}|${t.date}` ? "▾ " : "▸ "}{t.ticker}
                             </span>
                           </td>
                           <td className="px-4 py-1.5" style={{ color: "var(--color-ec-text-primary)" }}>
@@ -785,6 +795,14 @@ export default function CalendarTab({
                             </span>
                           </td>
                         </tr>
+                        {abierto && (
+                          <tr>
+                            <td colSpan={11} style={{ padding: "10px 12px 16px", background: "var(--color-ec-bg-sidebar)" }}>
+                              {panelAnalisis}
+                            </td>
+                          </tr>
+                        )}
+                        </Fragment>
                       );
                     })}
                   </tbody>
