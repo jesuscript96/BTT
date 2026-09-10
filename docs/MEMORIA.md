@@ -30,6 +30,117 @@
 
 ---
 
+## 2026-09-10 (Sailor) — Los stops dejan de mentir, último pivote y perfil de volumen
+
+Diez commits, del `1ed3d7e` al `5b77e52`, en `sailor-rama-desarrollo` y `staging`.
+
+### ⚠️ Tres stops que daban números equivocados sin avisar
+
+**`ATR Multiplier` miraba al futuro.** Calculaba la distancia como
+`media del ATR del DÍA ENTERO / primer cierre del día`, y esa media incluye
+barras POSTERIORES a la entrada. Medido sobre un día que explota por la tarde:
+
+| Entrada | Stop del motor | ATR real de esa barra | |
+|---|---|---|---|
+| barra 30 (mañana) | 3,88 % | 0,85 % | **4,6× más ancho** |
+| barra 350 (en la explosión) | 3,88 % | 19,29 % | 5× más estrecho |
+
+Ahora el nivel se resuelve en la barra de ENTRADA, `entrada ∓ k × ATR[i]`, por la
+misma vía que el estructural. Con ATR 1 salen 150 acciones y con ATR 6 salen 25;
+antes las dos entradas del día compartían fracción.
+
+**`Fixed Amount` dividía por el cierre de la primera vela del día.** Así que
+«15 centavos» solo eran 15 centavos si entrabas al precio de apertura. Con un
+día que abre en 70 y entrada en 100, pedir 5 $ daba un stop en 107,14 en vez de
+105 — un 43 % más ancho. Este NO está en la UI, así que no afectaba a nadie; se
+arregla ahora que la maquinaria de niveles existe.
+
+**El respaldo del stop estructural era un 5 % clavado**, y escrito TRES VECES por
+separado (portfolio_sim, el kernel JIT y el bot). Ahora es
+`hard_stop.struct_fallback_pct`, y sin él sigue siendo 5.
+
+Los tres pasan por `size_by_sl`, el techo híbrido y Cangrejo A y B, porque todos
+miran `stop_loss_price` y no la fracción. Portados al kernel JIT con paridad
+0,00e+0: sin eso, con `BACKTEST_NUMBA_SIM=1` se habrían ignorado EN SILENCIO por
+la vía rápida.
+
+**Y el bot los entiende.** `stop_estimado` resolvía todo lo no estructural como
+`precio × (1 ∓ sl_stop)`; sin tocarlo habría avisado con un stop distinto del que
+se backtestea, sin error — el mismo patrón que el factor 4 del 8-sep.
+
+### El ATR, unificado
+
+El motor suavizaba con EMA `2/(n+1)` y el gráfico con Wilder `1/n`: coincidían en
+el primer valor y se separaban desde el segundo. Los dos usan ya **Wilder**, que
+es el ATR canónico. Toca el indicador `ATR`, el stop y `ATR Extension` a la vez.
+
+> Se dijo también que el **VWAP** del gráfico divergía del motor. **Era falso**:
+> solo diverge cruzando medianoche UTC, y un ticker-día real nunca la cruza.
+
+### Indicadores nuevos
+
+**`Último pivote`** — el último sitio donde el precio giró de verdad, como
+indicador Y como nivel de stop. No es `Previous max`: aquel es el máximo corrido
+y nunca baja. Con 10 → 15 → 12 → 14 → 11, `Previous max` se queda en 15 para
+siempre; el pivote alto es 14 y el bajo es 12.
+
+Es causal aunque mire a la derecha: en la barra `i` se confirma el pivote
+centrado en `i - win`, así que el nivel aparece `win` velas DESPUÉS. Ese retardo
+es inevitable — hasta que no pasan velas no se sabe si un máximo era un techo.
+
+**Perfil de volumen intradia** — seis indicadores del mismo cálculo:
+`Vol. de la franja` (percentil, una medida) y cinco niveles: `Punto de control`,
+`Nodo de arriba`, `Nodo de abajo`, `Zona alta` y `Zona baja`.
+
+Franjas de ANCHURA FIJA (% del primer precio del día), no el rango partido en N:
+con bordes móviles habría que rehacer el histograma en cada vela. Y el LISTÓN
+(% del volumen del POC) en vez de fijar cuántas zonas hay — un perfil real suele
+tener dos crestas y el POC solo señala una.
+
+**La distinción que hay que tener clara**: los NODOS son relativos al precio (la
+primera zona por encima/debajo de donde estás), así que saltan cuando el precio
+cruza una franja. La ZONA DE VALOR no mira el precio: son las bandas del día.
+Medido en OLB: la zona alta cambia 22 veces en 223 velas y el nodo 43.
+
+Validado reconstruyendo OLB del 9-sep desde las grabaciones del bot: el nodo de
+abajo desaparece a las 13:33 y desde ahí el precio cae de 0,39 a 0,34.
+
+### Interfaz
+
+- El gráfico del trade se **despliega bajo su fila** en Trades y en Calendario,
+  sin salir de la pestaña. Dentro hay un botón para abrirlo en grande.
+- El desplegable de indicadores del gráfico enseña **una línea explicando qué
+  mide** cada uno.
+- El bloque del stop no cabía en el panel (seis controles en fila, ~230 px): pasa
+  a `flex-wrap` con anchos flexibles. Y el respaldo solo se enseña donde puede
+  hacer falta — con HOD o LOD el nivel existe siempre.
+- El desplegable de stops ofrece **`ATR`**, que nunca había estado pese a existir
+  en el enum desde siempre.
+
+### El bot, suelto del backend
+
+`_arrancar_bot()` lo lanzaba como HIJO del worker de uvicorn, así que un
+`taskkill /T` se lo llevaba y cada `--reload` lo dejaba en el aire. Con
+`DETACHED_PROCESS` tiene vida propia. Su feed no depende del backend.
+
+### ⚠️ HALLAZGO SIN ARREGLAR: el log filtra el token de Telegram
+
+`httpx` registra en INFO la URL completa, y la API de Telegram lleva el token
+DENTRO de la URL. Medido: **291 líneas con el token en claro** en un solo
+arranque redirigido a fichero. `bot.py:112` lo silencia; el backend no tiene nada
+equivalente. Se arregla con una línea en `app/main.py:281`, y cierra de paso el
+pendiente de rotar la clave de Massive — es el mismo mecanismo.
+
+### Tests
+
+De 992 a **1.076**, 115 saltados, 0 fallan. Lo nuevo cubre: los tres stops
+cruzando el tamaño del AVISO contra el del SIMULADOR, paridad Python↔JIT en cada
+uno, paridad gráfico↔motor de los seis del perfil (0,00e+0 sobre 320 velas
+dispersas) y **causalidad**: el valor en la barra `i` sale igual con el día
+entero que con la serie cortada ahí.
+
+---
+
 ## 2026-09-09 (Sailor) — Ocho indicadores nuevos en el bloque «Alternativos» + el stop por ATR mira al futuro
 
 ### Lo que entra (commit `f1a5764`, en `sailor-rama-desarrollo` y en `staging`)
