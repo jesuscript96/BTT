@@ -233,6 +233,15 @@ def simulate(
     # Con `fallback_first_entry: true` en el JSON, el respaldo rescata
     # TAMBIEN la primera entrada con el nivel invalidado (no solo reentradas).
     hs_fallback_first: bool = False,
+    # STOP POR ATR (2026-09-10). SERIE causal de ATR(14) por barra (la emite
+    # translate_strategy cuando hard_stop.type == "ATR Multiplier"). Con ella,
+    # el stop se fija EN la entrada: entry ∓ hs_value * ATR(vela de señal),
+    # por la via del NIVEL (igual que HOD/LOD), no por la fraccion `sl_stop`.
+    # La formula antigua usaba la MEDIA del ATR de todo el dia — barras
+    # posteriores a la entrada incluidas — y era look-ahead puro (hallazgo
+    # 9-sep, docs/MEMORIA.md). None = el ATR Multiplier cae a `sl_stop`
+    # (compatibilidad con callers que no emitan la serie).
+    atr_arr: np.ndarray | None = None,
     hods: np.ndarray | None = None,
     lods: np.ndarray | None = None,
     pm_highs: np.ndarray | None = None,
@@ -251,6 +260,13 @@ def simulate(
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
+
+    # El stop viaja como NIVEL fijado en la entrada (trade_sl_price) cuando es
+    # estructural O ATR-con-serie. En las salidas manda `trade_sl_price`, no la
+    # fraccion `sl_stop`. El guard `trade_sl_price > 0.0` deja vivo el caso
+    # "ATR con multiplicador invalido" (= sin stop), que antes era sl_stop=0.
+    sl_level_mode = hs_type == "Market Structure (HOD/LOD)" or (
+        hs_type == "ATR Multiplier" and atr_arr is not None)
 
     # EXCLUSIVIDAD CANGREJO / HIBRIDO. La UI ya apaga uno al encender el otro,
     # pero un payload viejo o hecho a mano puede traer los dos. Se arbitra AQUI
@@ -348,7 +364,7 @@ def simulate(
             # stop-loss / trailing stop
             if not skip_exits:
                 # 1. Hard Stop Logic
-                if hs_type == "Market Structure (HOD/LOD)":
+                if sl_level_mode and trade_sl_price > 0.0:
                     if is_long:
                         if price_for_sl <= trade_sl_price:
                             exit_triggered = True
@@ -400,7 +416,7 @@ def simulate(
                             # como salida en beneficio.
                             if price_for_sl <= trail_sl_price + 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
-                                if hs_type == "Market Structure (HOD/LOD)":
+                                if sl_level_mode and trade_sl_price > 0.0:
                                     hard_sl_price = trade_sl_price
                                 else:
                                     hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
@@ -424,7 +440,7 @@ def simulate(
                             # Mismo criterio que en long: el stop fijo manda.
                             if price_for_sl >= trail_sl_price - 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
-                                if hs_type == "Market Structure (HOD/LOD)":
+                                if sl_level_mode and trade_sl_price > 0.0:
                                     hard_sl_price = trade_sl_price
                                 else:
                                     hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
@@ -1258,6 +1274,34 @@ def simulate(
                                 fb_stop = fb_level * (1.0 + sl_offset)
                                 if _sl_side_valid(fb_stop, entry_price, is_long):
                                     stop_loss_price = fb_stop
+                        if not _sl_side_valid(stop_loss_price, entry_price, is_long):
+                            equity[i] = init_cash + realized_pnl
+                            prev_signal = current_signal
+                            continue
+                elif hs_type == "ATR Multiplier" and atr_arr is not None:
+                    # STOP POR ATR CAUSAL (2026-09-10). El nivel se fija AQUI,
+                    # con el ATR de la vela de SEÑAL (i): lo que se sabia al
+                    # entrar, no la media del dia entero que usaba antes (barras
+                    # futuras incluidas — look-ahead, hallazgo 9-sep en
+                    # docs/MEMORIA.md). Multiplicador <= 0 o no numerico = sin
+                    # stop, como cuando la formula antigua daba sl_stop == 0.
+                    try:
+                        atr_mult = float(hs_value)
+                    except (TypeError, ValueError):
+                        atr_mult = 0.0
+                    if atr_mult > 0:
+                        atr_i = float(atr_arr[i]) if i < len(atr_arr) else np.nan
+                        if not np.isfinite(atr_i) or atr_i <= 0.0:
+                            # ATR sin dato todavia (primeras velas del dia):
+                            # misma convencion que el nivel estructural
+                            # ausente — 5 % alrededor del precio de entrada.
+                            stop_loss_price = entry_price * (0.95 if is_long else 1.05)
+                        else:
+                            stop_loss_price = ((entry_price - atr_mult * atr_i) if is_long
+                                               else (entry_price + atr_mult * atr_i))
+                        # Misma regla que el estructural: un stop en el lado
+                        # ganador de la entrada no es un stop — premisa
+                        # invalidada, no se entra.
                         if not _sl_side_valid(stop_loss_price, entry_price, is_long):
                             equity[i] = init_cash + realized_pnl
                             prev_signal = current_signal

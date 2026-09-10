@@ -711,7 +711,7 @@ def translate_strategy(
     )
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
-    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps = \
+    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps, sl_atr = \
         _parse_risk_management(risk, df, daily_stats, risk_cache)
 
     return {
@@ -723,6 +723,7 @@ def translate_strategy(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
+        "sl_atr_arr": sl_atr,
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
@@ -911,6 +912,10 @@ def translate_strategy_native(
     tp_time_limit = None
     trail_pct = None
     partial_tps = None
+    # SERIE causal de ATR(14) 1m cuando el hard stop es "ATR Multiplier" (ver
+    # la rama de abajo): viaja al simulador como `atr_arr` y el stop se fija
+    # EN la entrada, por la via del nivel. None en cualquier otro caso.
+    sl_atr_arr = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
         hs = risk["hard_stop"]
@@ -922,14 +927,17 @@ def translate_strategy_native(
             first_close = float(C[0]) if n_bars > 0 else 1.0
             sl_stop = hs_value / first_close if first_close > 0 else None
         elif hs_type == "ATR Multiplier":
-            # Paridad con _parse_risk_management: ATR(14) 1m, media de los no-NaN
-            # vía pandas (mismo orden de acumulación → mismo float que el legacy).
+            # STOP POR ATR CAUSAL (2026-09-10). Antes: media del ATR de TODO el
+            # dia (barras posteriores a la entrada incluidas) convertida en una
+            # fraccion FIJA — miraba al futuro y ademas daba el mismo stop a una
+            # entrada de las 07:00 que a una de las 15:00 (hallazgo del 9-sep en
+            # docs/MEMORIA.md). Ahora se emite la SERIE y portfolio_sim fija el
+            # nivel EN la entrada con el ATR de la vela de señal, igual que hace
+            # con HOD/LOD. El multiplicador viaja aparte (`hs_value`).
             atr_arr = indicator_results.get("ATR|1m|14|None|None|None")
             if atr_arr is None:
                 atr_arr = _atr(H, L, C, 14)
-            avg_atr = pd.Series(atr_arr).dropna().mean()
-            first_close = float(C[0]) if n_bars > 0 else 1.0
-            sl_stop = (avg_atr * hs_value) / first_close if first_close > 0 else None
+            sl_atr_arr = np.asarray(atr_arr, dtype=np.float64)
 
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
@@ -960,6 +968,7 @@ def translate_strategy_native(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
+        "sl_atr_arr": sl_atr_arr,
         "accept_reentries": compiled.get("accept_reentries", False),
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
@@ -1493,6 +1502,9 @@ def _parse_risk_management(
     tp_time_limit = None
     trail_pct = None
     partial_tps = None
+    # SERIE causal de ATR(14) para el hard stop "ATR Multiplier" (ver la rama
+    # de abajo). None en cualquier otro caso. El septimo valor del tuple.
+    sl_atr = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
         hs = risk["hard_stop"]
@@ -1504,10 +1516,17 @@ def _parse_risk_management(
             first_close = df["close"].iloc[0] if not df.empty else 1
             sl_stop = hs_value / first_close if first_close > 0 else None
         elif hs_type == "ATR Multiplier":
+            # STOP POR ATR CAUSAL (2026-09-10). Antes: media del ATR de TODO el
+            # dia (incluidas barras POSTERIORES a la entrada) convertida en
+            # fraccion fija para el dia entero — look-ahead puro: una entrada
+            # matinal de un dia que explota tarde recibia un stop 4,6x mas
+            # ancho del que le corresponderia (hallazgo 9-sep, docs/MEMORIA.md).
+            # Ahora se emite la SERIE causal y el nivel se fija EN la entrada
+            # (via del nivel en portfolio_sim, como HOD/LOD). El multiplicador
+            # viaja aparte, en `hs_value` del hard_stop.
             atr = compute_indicator("ATR", df, period=14, daily_stats=daily_stats, cache=cache)
-            avg_atr = atr.dropna().mean()
-            first_close = df["close"].iloc[0] if not df.empty else 1
-            sl_stop = (avg_atr * hs_value) / first_close if first_close > 0 else None
+            sl_atr = (np.asarray(atr.values, dtype=np.float64)
+                      if hasattr(atr, "values") else np.asarray(atr, dtype=np.float64))
         elif hs_type == "Market Structure (HOD/LOD)":
             sl_stop = None
 
@@ -1531,4 +1550,4 @@ def _parse_risk_management(
             elif tp_type == "Hour":
                 tp_time_limit = f"HOUR:{tp.get('value', '15:30')}"
 
-    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps
+    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps, sl_atr

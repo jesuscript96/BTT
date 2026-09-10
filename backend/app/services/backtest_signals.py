@@ -205,6 +205,9 @@ def _compute_signals_for_pair(
         sig_tp_time_limit = signals.get("tp_time_limit")
         sig_trail_pct = signals.get("trail_pct")
         sig_partial_tps = signals.get("partial_take_profits")
+        # SERIE causal de ATR(14) del hard stop "ATR Multiplier" (stop fijado
+        # EN la entrada en portfolio_sim). None con cualquier otro tipo de stop.
+        sig_sl_atr = signals.get("sl_atr_arr")
         # El fast-path nativo no evalua piramide (con piramide, has_special
         # fuerza el camino clasico), pero la variable debe existir aguas abajo.
         sig_pyramid_levels = []
@@ -250,6 +253,8 @@ def _compute_signals_for_pair(
         sig_tp_time_limit = signals.get("tp_time_limit")
         sig_trail_pct = signals.get("trail_pct")
         sig_partial_tps = signals.get("partial_take_profits")
+        # Idem fast-path: serie causal del stop por ATR, si la estrategia lo usa.
+        sig_sl_atr = signals.get("sl_atr_arr")
         sig_pyramid_levels = signals.get("pyramid_levels") or []
         sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
 
@@ -312,6 +317,10 @@ def _compute_signals_for_pair(
         sig_pyramid_levels = [
             {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
         ]
+    # La serie del stop por ATR vive en el MISMO espacio de indices que las
+    # señales: si no se recorta igual, el simulador leeria el ATR de otra vela.
+    if sig_sl_atr is not None:
+        sig_sl_atr = sig_sl_atr[session_mask_np]
 
     arrays_out = {
         "open": O[session_mask_np],
@@ -406,6 +415,7 @@ def _compute_signals_for_pair(
         "sig_tp_time_limit": sig_tp_time_limit,
         "sig_trail_pct": sig_trail_pct,
         "sig_partial_tps": sig_partial_tps,
+        "sig_sl_atr": sig_sl_atr,
         "sig_pyramid_levels": sig_pyramid_levels,
         "sig_pyramid_sequential": sig_pyramid_sequential,
         "gap_pct": daily_stats.get("gap_pct"),
@@ -1074,6 +1084,9 @@ def simulate_and_accumulate(signals_sorted, params):
                 pyramid_sequential=bool(sig.get("sig_pyramid_sequential")),
                 hs_type=hs.get("type"),
                 hs_value=hs.get("value"),
+                # Serie causal del ATR(14): con ella el stop se fija EN la
+                # entrada (via del nivel). Ver portfolio_sim.simulate.
+                atr_arr=sig.get("sig_sl_atr"),
                 hs_operator=hs.get("operator", ">="),
                 hs_offset_pct=float(hs.get("offset_pct", 0.0)),
                 # Nivel de respaldo si el stop estructural queda invalidado al

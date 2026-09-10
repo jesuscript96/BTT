@@ -416,9 +416,16 @@ def test_atr_multiplier_stop():
     compiled = compile_strategy_def(strat)
     legacy = translate_strategy(df.copy(), strat, ds, compiled=compiled)
     native = translate_strategy_native(_make_arrays(df), compiled, ds)
-    assert legacy["sl_stop"] is not None and native["sl_stop"] is not None
-    assert legacy["sl_stop"] == native["sl_stop"], \
-        f"ATR sl_stop diverge: {legacy['sl_stop']!r} vs {native['sl_stop']!r}"
+    # 2026-09-10: el ATR Multiplier ya no fabrica `sl_stop` (un escalar salido
+    # de la media del ATR del dia entero = look-ahead). Los dos caminos emiten
+    # la SERIE causal ATR(14) y el nivel se fija EN la entrada (portfolio_sim,
+    # via del nivel). Paridad = mismas series.
+    assert legacy["sl_stop"] is None and native["sl_stop"] is None, (
+        f"ATR sl_stop debe ser None: {legacy['sl_stop']!r} vs {native['sl_stop']!r}"
+    )
+    leg_arr, nat_arr = legacy.get("sl_atr_arr"), native.get("sl_atr_arr")
+    assert leg_arr is not None and nat_arr is not None, "falta sl_atr_arr"
+    np.testing.assert_allclose(leg_arr, nat_arr, equal_nan=True)
 
 
 def test_partial_take_profits():

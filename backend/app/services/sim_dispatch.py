@@ -72,6 +72,13 @@ def simulate(**kwargs) -> dict:
     if kwargs.get("ev_gate") is not None:
         return _legacy_simulate(**kwargs)
     kwargs.pop("ev_gate", None)
+    # STOP POR ATR COMO NIVEL (2026-09-10): el kernel JIT no lo implementa, asi
+    # que un hard_stop "ATR Multiplier" CON serie causal va SIEMPRE al motor
+    # Python, como la piramidacion. Sin serie (callers viejos) cae a `sl_stop`
+    # y el kernel sigue siendo valido.
+    if kwargs.get("hs_type") == "ATR Multiplier" and kwargs.get("atr_arr") is not None:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("atr_arr", None)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)
