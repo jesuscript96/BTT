@@ -95,6 +95,10 @@ export enum IndicatorType {
     // recorrido se devolvio. Ninguno es un nivel de precio.
     // Que fraccion del impulso se ha devuelto ya. Causal: el impulso se define
     // solo con pasado (maximo corrido + minimo anterior a ese maximo).
+    // Ultimo techo (o suelo) que dejo el mercado. Es un NIVEL DE PRECIO, al
+    // contrario que el resto de los nuevos: se compara con otros indicadores y
+    // sirve de stop estructural.
+    LAST_PIVOT = "Ultimo pivote",
     RETRACEMENT = "Retroceso (%)",
     ABSORPTION = "Absorption",
     WICK_RATIO = "Wick Ratio",
@@ -310,6 +314,9 @@ export interface RiskSettings {
     // El respaldo produce un precio de stop normal, asi que pasa por los
     // MISMOS topes que el ATR: Cangrejo A y B, hibrido y `size_by_sl`.
     atr_fallback_pct?: number;
+    // SOLO con value = "Ultimo pivote alto"/"bajo". Velas de confirmacion a
+    // cada lado. Por defecto 3.
+    pivot_window?: number;
 }
 
 export interface PartialTakeProfit {

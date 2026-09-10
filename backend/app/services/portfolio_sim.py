@@ -41,8 +41,52 @@ def atr_para_stop(arrays: dict):
         return None
 
 
+# Velas de confirmacion por defecto del pivote como nivel de stop. Viaja en
+# `hard_stop.pivot_window`; 3 es el equilibrio entre pivotes de ruido (1-2) y
+# pivotes fiables pero tardios (8+).
+PIVOT_WINDOW_STOP = 3
+
+# Los `hs_value` que piden el pivote. En UNA lista para que el motor y quien
+# decide si hay que calcularlo miren lo mismo: si se desincronizaran, el stop
+# pediria un nivel que nadie calculo y caeria al respaldo del 5 % SIN AVISAR.
+VALORES_PIVOTE = ("Pivot High", "Pivot Low",
+                  "Ultimo pivote alto", "Ultimo pivote bajo",
+                  "\u00daltimo pivote alto", "\u00daltimo pivote bajo")
+
+
+def necesita_pivotes(hs: dict) -> bool:
+    """True si el hard stop (o su respaldo) pide un nivel de pivote."""
+    if not hs:
+        return False
+    return (str(hs.get("value") or "") in VALORES_PIVOTE
+            or str(hs.get("fallback_value") or "") in VALORES_PIVOTE)
+
+
+def pivotes_para_stop(arrays: dict, win: int | None = None):
+    """(pivotes altos, pivotes bajos) por barra, para el stop estructural.
+
+    UNA SOLA definicion, igual que `atr_para_stop`: la usan el backtest y el bot
+    de alertas. Devuelve (None, None) si faltan columnas — quien llama trata eso
+    como "nivel no disponible", que es el caso que el motor ya sabe manejar.
+    """
+    from app.services.indicators import _ultimo_pivote
+    try:
+        h = np.asarray(arrays["high"], dtype=np.float64)
+        l = np.asarray(arrays["low"], dtype=np.float64)
+        t_ns = np.asarray(arrays["timestamp"]).astype("datetime64[ns]").astype(np.int64)
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    day_id = (t_ns // 86_400_000_000_000).astype(np.int64)
+    w = int(win) if win else PIVOT_WINDOW_STOP
+    if w < 1:
+        w = 1
+    return (_ultimo_pivote(h, l, day_id, w, True),
+            _ultimo_pivote(h, l, day_id, w, False))
+
+
 def _structural_level(
     value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+    pivot_highs=None, pivot_lows=None,
 ):
     """Nivel estructural de un hard stop en la barra i.
 
@@ -62,6 +106,18 @@ def _structural_level(
         return prev_highs[i] if prev_highs[i] > 0 else 0.0
     if value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
         return prev_lows[i] if prev_lows[i] > 0 else 0.0
+    # ULTIMO PIVOTE (2026-09-10). A diferencia de HOD/Previous Max, que son
+    # extremos CORRIDOS y no bajan nunca, el pivote es el ultimo sitio donde el
+    # precio giro de verdad — asi que el stop queda pegado al nivel que el
+    # mercado acaba de dejar, no a un maximo del que ya se alejo.
+    # Vale NaN hasta que se confirma el primero del dia; el `> 0` lo filtra
+    # (NaN > 0 es False) y el caller aplica su respaldo.
+    if value in ("Pivot High", "Ultimo pivote alto") and pivot_highs is not None:
+        v = pivot_highs[i]
+        return v if v > 0 else 0.0
+    if value in ("Pivot Low", "Ultimo pivote bajo") and pivot_lows is not None:
+        v = pivot_lows[i]
+        return v if v > 0 else 0.0
     return 0.0
 
 
@@ -280,6 +336,9 @@ def simulate(
     # una entrada de la manana recibia un stop 4,6x mas ancho del que le tocaba,
     # y dentro de la explosion 5x mas estrecho. Ademas no era un stop por ATR:
     # era una constante diaria, igual entrases a las 07:00 o a las 09:31.
+    # Ultimo pivote confirmado por barra, para `hs_value` = "Pivot High"/"Pivot Low".
+    pivot_highs: np.ndarray | None = None,
+    pivot_lows: np.ndarray | None = None,
     atrs: np.ndarray | None = None,
     # RESPALDO DEL STOP POR ATR (2026-09-10). Durante las primeras barras del dia
     # el ATR es NaN porque le faltan velas para su periodo. Sin respaldo NO SE
@@ -1290,6 +1349,7 @@ def simulate(
                 if hs_type == "Market Structure (HOD/LOD)":
                     val_struct = _structural_level(
                         hs_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+                        pivot_highs, pivot_lows,
                     )
                     if val_struct <= 0.0:
                         val_struct = entry_price * (0.95 if is_long else 1.05)
@@ -1316,6 +1376,7 @@ def simulate(
                         if hs_fallback_value and (hs_fallback_first or total_trades > 0):
                             fb_level = _structural_level(
                                 hs_fallback_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
+                                pivot_highs, pivot_lows,
                             )
                             if fb_level > 0:
                                 fb_stop = fb_level * (1.0 + sl_offset)

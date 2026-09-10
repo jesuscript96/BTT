@@ -17,7 +17,9 @@ import time
 import numpy as np
 import pandas as pd
 
-from app.services.portfolio_sim import atr_para_stop
+from app.services.portfolio_sim import (
+    atr_para_stop, pivotes_para_stop, necesita_pivotes,
+)
 from app.services.strategy_engine import (
     translate_strategy, _parse_risk_management, compile_strategy_def,
     get_lowest_timeframe_mins, apply_entry_fill_window,
@@ -1140,6 +1142,11 @@ def run_backtest(
                 # no pagarlo en todos los ticker-dias. Periodo 14, como antes.
                 atrs=(atr_para_stop(arrays) if hs_type == "ATR Multiplier" else None),
                 hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
+                # Los pivotes SOLO se calculan si el stop los pide (o su
+                # respaldo): son O(n x ventana) y no valen nada en los demas.
+                **dict(zip(("pivot_highs", "pivot_lows"),
+                           pivotes_para_stop(arrays, hs.get("pivot_window"))
+                           if necesita_pivotes(hs) else (None, None))),
                 prev_lows=arrays.get("prev_low"),
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,

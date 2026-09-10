@@ -43,6 +43,10 @@ class IndicatorType(str, Enum):
     ATR_EXTENSION = "ATR Extension"
     # Absorcion: millones de $ por cada 1% de recorrido (profundidad).
     # Profundidad del retroceso desde el maximo del impulso, en % del impulso.
+    # Ultimo pivote confirmado: el ultimo techo (o suelo) que dejo el mercado.
+    # A DIFERENCIA de los otros indicadores nuevos, este SI es un nivel de
+    # precio: se compara con otros indicadores y sirve de stop estructural.
+    LAST_PIVOT = "Ultimo pivote"
     RETRACEMENT = "Retroceso (%)"
     ABSORPTION = "Absorption"
     WICK_RATIO = "Wick Ratio"

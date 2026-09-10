@@ -52,6 +52,8 @@ HS_PML = 4
 HS_PREVMAX = 5
 HS_PREVMIN = 6
 
+HS_PIVHIGH = 7
+HS_PIVLOW = 8
 # --- exit reason codes (each maps 1:1 to an exact exit_reason string) ---
 REASON_SL = 0            # "SL"
 REASON_TP = 1            # "TP"
@@ -110,6 +112,9 @@ def _core_simulate_jit(
     has_pm_low, pm_lows,
     has_prev_high, prev_highs,
     has_prev_low, prev_lows,
+    # Ultimo pivote confirmado por barra (codigos HS_PIVHIGH / HS_PIVLOW).
+    has_piv_high, pivot_highs,
+    has_piv_low, pivot_lows,
     # STOP POR ATR (2026-09-10): `hs_type_code == 2`. El ATR de CADA BARRA y el
     # multiplicador. Paridad exacta con la rama "ATR Multiplier" de
     # portfolio_sim.py — si esto no estuviera aqui, con BACKTEST_NUMBA_SIM=1 el
@@ -711,6 +716,10 @@ def _core_simulate_jit(
                         val_struct = pm_lows[i] if pm_lows[i] > 0 else val_struct
                     elif hs_value_code == HS_PREVMAX and has_prev_high:
                         val_struct = prev_highs[i] if prev_highs[i] > 0 else val_struct
+                    elif hs_value_code == HS_PIVHIGH and has_piv_high:
+                        val_struct = pivot_highs[i] if pivot_highs[i] > 0 else val_struct
+                    elif hs_value_code == HS_PIVLOW and has_piv_low:
+                        val_struct = pivot_lows[i] if pivot_lows[i] > 0 else val_struct
                     elif hs_value_code == HS_PREVMIN and has_prev_low:
                         val_struct = prev_lows[i] if prev_lows[i] > 0 else val_struct
                     stop_loss_price = val_struct * (1.0 + sl_offset)
@@ -735,6 +744,10 @@ def _core_simulate_jit(
                                 fb_level = pm_lows[i] if pm_lows[i] > 0 else 0.0
                             elif hs_fallback_code == HS_PREVMAX and has_prev_high:
                                 fb_level = prev_highs[i] if prev_highs[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PIVHIGH and has_piv_high:
+                                fb_level = pivot_highs[i] if pivot_highs[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PIVLOW and has_piv_low:
+                                fb_level = pivot_lows[i] if pivot_lows[i] > 0 else 0.0
                             elif hs_fallback_code == HS_PREVMIN and has_prev_low:
                                 fb_level = prev_lows[i] if prev_lows[i] > 0 else 0.0
                             if fb_level > 0:

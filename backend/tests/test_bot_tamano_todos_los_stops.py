@@ -416,3 +416,135 @@ def test_respaldo_solo_actua_donde_falta_el_atr():
     t = _sim_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT)
     assert t["stop_loss"] == pytest.approx(PRECIO + K_ATR * ATR_BARRA)
     assert t["size"] == pytest.approx(75.0)
+
+
+# ══ El ULTIMO PIVOTE como nivel de stop ═══════════════════════════════════
+#
+# A diferencia de HOD o «Previous Max», que son extremos CORRIDOS y nunca bajan,
+# el pivote es el último sitio donde el precio giró de verdad. Con la secuencia
+# 100 -> 110 -> 105 -> 100, «Previous Max» y el pivote alto valen los dos 110;
+# pero si luego el precio hace un techo más bajo, el pivote baja con él y el
+# «Previous Max» se queda arriba para siempre. Para un stop eso es la diferencia
+# entre estar pegado al nivel o a diez figuras de distancia.
+#
+# El pivote se confirma con RETARDO (N velas), y ese retardo es justo lo que lo
+# hace causal. Mientras no hay ninguno confirmado, el motor cae a su respaldo.
+
+
+def _serie_con_pivote():
+    """100, 110, 105, 100, 100... -> con ventana 1, pivote alto = 110."""
+    px = np.full(N, 100.0)
+    px[1] = 110.0
+    px[2] = 105.0
+    return px
+
+
+def _sim_pivote(valor="Ultimo pivote alto", win=1, entrada=5, **kw):
+    from app.services.portfolio_sim import pivotes_para_stop
+    px = _serie_con_pivote()
+    ts = (np.arange(N) * 60_000_000_000).astype(np.int64)
+    arrays = {"high": px, "low": px, "timestamp": ts.astype("datetime64[ns]")}
+    piv_h, piv_l = pivotes_para_stop(arrays, win)
+    entries = np.zeros(N, dtype=bool)
+    entries[entrada] = True
+    res = simulate(
+        close=px, open_=px.copy(), high=px, low=px,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0,
+        risk_r=300.0, risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=ts,
+        hs_type="Market Structure (HOD/LOD)", hs_value=valor,
+        hs_operator=">=", hs_offset_pct=0.0,
+        pivot_highs=piv_h, pivot_lows=piv_l, **kw,
+    )
+    return (res["trades"][0] if res["trades"] else None), piv_h, piv_l
+
+
+def test_pivote_el_stop_es_el_ultimo_techo():
+    t, piv_h, _ = _sim_pivote(size_by_sl=True)
+    assert piv_h[5] == pytest.approx(110.0)       # confirmado desde la vela 2
+    assert t is not None
+    assert t["stop_loss"] == pytest.approx(110.0)
+    assert t["size"] == pytest.approx(300.0 / 10.0)   # riesgo / distancia
+
+
+def test_pivote_sin_confirmar_cae_al_respaldo_del_5_por_ciento():
+    """QUE PASA MIENTRAS NO HAY NINGUN PIVOTE CONFIRMADO.
+
+    Con ventana 4 el pivote no llega a tiempo para una entrada en la vela 3. El
+    motor NO rechaza la operacion: cae al respaldo del 5 % que el stop
+    estructural aplica desde siempre cuando el nivel no se resuelve (mismo trato
+    que un HOD que todavia no existe). No es un caso especial del pivote.
+
+    OJO: es distinto del stop por ATR, donde sin ATR NO se entra salvo que se
+    ponga `atr_fallback_pct`. Si algun dia se quiere la misma politica aqui,
+    hay que cambiarla para TODOS los niveles estructurales, no solo el pivote.
+    """
+    t, piv_h, _ = _sim_pivote(win=4, entrada=3, size_by_sl=True)
+    assert np.isnan(piv_h[3])                      # no hay pivote todavia
+    assert t is not None
+    assert t["stop_loss"] == pytest.approx(105.0)  # 100 x 1,05 (corto)
+    assert t["size"] == pytest.approx(60.0)        # 300 / 5
+
+
+def test_pivote_paridad_python_jit():
+    from app.services.sim_dispatch import simulate_jit
+    from app.services.portfolio_sim import pivotes_para_stop
+    px = _serie_con_pivote()
+    ts = (np.arange(N) * 60_000_000_000).astype(np.int64)
+    piv_h, piv_l = pivotes_para_stop(
+        {"high": px, "low": px, "timestamp": ts.astype("datetime64[ns]")}, 1)
+    entries = np.zeros(N, dtype=bool)
+    entries[5] = True
+    base = dict(
+        close=px, open_=px.copy(), high=px, low=px,
+        entries=entries, exits=np.zeros(N, dtype=bool), direction="shortonly",
+        init_cash=1_000_000.0, risk_r=300.0, risk_type="FIXED",
+        look_ahead_prevention=True, timestamps=ts,
+        hs_type="Market Structure (HOD/LOD)", hs_value="Ultimo pivote alto",
+        hs_operator=">=", hs_offset_pct=0.0,
+        pivot_highs=piv_h, pivot_lows=piv_l, size_by_sl=True,
+    )
+    t_py = simulate(**base)["trades"][0]
+    t_jit = simulate_jit(**base)["trades"][0]
+    for campo in ("stop_loss", "size", "entry_price"):
+        assert t_py[campo] == pytest.approx(t_jit[campo]), campo
+
+
+def test_pivote_el_aviso_dice_lo_mismo_que_el_motor():
+    """El bot resuelve el pivote por su propio camino (`nivel_stop`), con la
+    MISMA función. Si alguna vez se separan, esto lo caza."""
+    import pandas as pd
+    from app.services.portfolio_sim import pivotes_para_stop
+    px = _serie_con_pivote()
+    ts = pd.to_datetime((np.arange(N) * 60_000_000_000).astype("datetime64[ns]"))
+    frame = pd.DataFrame({
+        "high": px, "low": px, "close": px, "timestamp": ts,
+        "hod": px, "lod": px, "pm_high": px, "pm_low": px,
+        "prev_high": np.zeros(N), "prev_low": np.zeros(N),
+    })
+    sdef = _sdef("Market Structure (HOD/LOD)", "Ultimo pivote alto")
+    sdef["risk_management"]["hard_stop"]["operator"] = ">="
+    sdef["risk_management"]["hard_stop"]["offset_pct"] = 0
+    sdef["risk_management"]["hard_stop"]["pivot_window"] = 1
+    stop = stop_estimado(sdef, frame, 5, 100.0, es_largo=False, sl_stop=None)
+    t, _, _ = _sim_pivote(size_by_sl=True)
+    assert stop == pytest.approx(110.0)
+    assert stop == pytest.approx(t["stop_loss"])
+    assert calcular_acciones(300.0, 100.0, stop, True) == pytest.approx(t["size"])
+
+
+def test_pivote_pasa_por_cangrejo_y_por_el_hibrido():
+    """Como cualquier otro nivel: los topes miran el precio del stop."""
+    t_a, _, _ = _sim_pivote(size_by_sl=True, cangrejo_active=True,
+                            cangrejo_max_sl_dist_pct=4.0)
+    assert t_a["stop_loss"] == pytest.approx(104.0)      # apretado del 10 % al 4 %
+    assert t_a["size"] == pytest.approx(75.0)            # 300 / 4
+
+    t_b, _, _ = _sim_pivote(size_by_sl=True, cangrejo_active=True,
+                            cangrejo_max_loss_at_sl_pct=0.01)
+    assert t_b["size"] == pytest.approx(10.0)            # 100 $ / 10 de distancia
+
+    t_h, _, _ = _sim_pivote(size_by_sl=True, hybrid_stop=True,
+                            hybrid_black_swan_pct=50.0, hybrid_max_loss_pct=0.05)
+    assert t_h["size"] == pytest.approx(10.0)            # 1.000 $ / 100 $ de precio

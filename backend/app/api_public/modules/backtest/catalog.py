@@ -27,6 +27,7 @@ _CATEGORY = {
         "Low of last X days", "Previous max", "Previous min", "Prev. Bar Close",
         "Prev. Bar Open", "Prev. Bar High", "Prev. Bar Low", "Day Open", "High of Day",
         "Low of Day", "Current Open", "Previous Close", "Max N Bars",
+        "Ultimo pivote",
     ],
     "Behavior": [
         "Consecutive Higher Highs", "Consecutive Lower Lows", "Consecutive Red Candles",
@@ -83,6 +84,8 @@ _PARAMS = {
     # dentro del indicador porque la condicion solo tiene un `target`.
     # range_minutes = 0 (o ausente) mide el impulso del DIA entero.
     "Retroceso (%)": ["range_minutes", "swing_dir"],
+    # pivot_window = velas de confirmacion a cada lado; swing_dir = techo o suelo.
+    "Ultimo pivote": ["pivot_window", "swing_dir"],
     "Absorption": ["range_minutes"],
     "Wick Ratio": ["range_minutes", "wick_side"],
     "Absorption + Wick": ["range_minutes", "wick_side", "abs_op", "abs_level",

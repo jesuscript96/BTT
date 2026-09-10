@@ -36,6 +36,9 @@ import pandas as pd
 
 from app.services.portfolio_sim import (
     _structural_level, _sl_side_valid, simulate, tope_hibrido,
+    # Ultimo pivote como nivel de stop: MISMA funcion que el backtest, para que
+    # el aviso y la simulacion no puedan separarse.
+    pivotes_para_stop, necesita_pivotes,
     # Estilo Cangrejo: los dos modos del PRD de Alvaro. El bot los necesita
     # para que el aviso (stop y acciones) coincida con lo que simula el motor.
     aprieta_stop_cangrejo, tope_cangrejo,
@@ -237,6 +240,16 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
     tipo = hs.get("type")
 
     if tipo == "Market Structure (HOD/LOD)":
+        # Los pivotes se calculan aqui y solo si el stop los pide: no son una
+        # columna del frame porque dependen de la VENTANA que elija la
+        # estrategia. Misma funcion que el backtest (`pivotes_para_stop`), que
+        # es lo unico que garantiza que el aviso y el backtest digan lo mismo.
+        piv_h = piv_l = None
+        if necesita_pivotes(hs):
+            piv_h, piv_l = pivotes_para_stop(
+                {"high": frame["high"].values, "low": frame["low"].values,
+                 "timestamp": frame["timestamp"].values},
+                hs.get("pivot_window"))
         nivel = _structural_level(
             hs.get("value"), i,
             frame["hod"].values.astype(np.float64),
@@ -245,6 +258,7 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
             frame["pm_low"].values.astype(np.float64),
             frame["prev_high"].values.astype(np.float64),
             frame["prev_low"].values.astype(np.float64),
+            piv_h, piv_l,
         )
         if nivel <= 0.0:
             # Mismo respaldo que el simulador: 5% cuando el nivel no se resuelve.

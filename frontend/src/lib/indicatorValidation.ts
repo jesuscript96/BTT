@@ -116,6 +116,20 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.OVERHEAD_X_DAYS,
         IndicatorType.VWAP,
     ],
+    // Es un NIVEL DE PRECIO: mismos destinos que "Previous max"/"Previous min",
+    // mas el propio pivote (comparar el techo con el suelo tiene sentido).
+    [IndicatorType.LAST_PIVOT]: [
+        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
+        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
+        IndicatorType.LAST_PIVOT,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.OVERHEAD_X_DAYS,
+        IndicatorType.VWAP,
+    ],
     [IndicatorType.PREVIOUS_MIN]: [
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
@@ -230,6 +244,7 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
     [IndicatorType.RTH_HIGH]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.RTH_LOW]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.AM_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
+    [IndicatorType.LAST_PIVOT]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.PREVIOUS_MAX]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.PREVIOUS_MIN]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.SMA]: [...DISTANCE_ALLOWED_TARGETS],

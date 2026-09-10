@@ -233,7 +233,56 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         <option value="PML">PML (Premarket Low)</option>
                                         <option value="Previous Max">Previous Max</option>
                                         <option value="Previous Min">Previous Min</option>
+                                        <option value="Ultimo pivote alto">\u00daltimo pivote alto</option>
+                                        <option value="Ultimo pivote bajo">\u00daltimo pivote bajo</option>
                                     </select>
+                                    {/* VELAS DE CONFIRMACION del pivote. Solo sale
+                                        con los dos niveles de pivote, porque los
+                                        demas no la usan. */}
+                                    {(risk.hard_stop.value === 'Ultimo pivote alto'
+                                      || risk.hard_stop.value === 'Ultimo pivote bajo') && (
+                                        <div className="relative" style={{ width: '92px' }}>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                step="1"
+                                                placeholder="3"
+                                                value={risk.hard_stop.pivot_window ?? ''}
+                                                onChange={(e) => updateRiskSetting('hard_stop', 'pivot_window', e.target.value === '' ? '' : e.target.value)}
+                                                onBlur={() => {
+                                                    const val = parseInt(String(risk.hard_stop.pivot_window), 10);
+                                                    updateRiskSetting('hard_stop', 'pivot_window', isNaN(val) ? 3 : val);
+                                                }}
+                                                onFocus={(e) => e.target.select()}
+                                                title={
+                                                    "Velas de CONFIRMACION a cada lado del pivote.\n\n" +
+                                                    "Un pivote alto es una vela cuyo maximo supera al de las N velas de su " +
+                                                    "izquierda y al de las N de su derecha. Con 1 o 2 salen pivotes de ruido; " +
+                                                    "con 8 o mas son fiables pero llegan tarde.\n\n" +
+                                                    "El nivel aparece N velas DESPUES de que ocurriera el giro, y ese retardo " +
+                                                    "es justo lo que hace que no mire al futuro. Mientras no haya ningun pivote " +
+                                                    "confirmado del dia, el motor aplica su respaldo."
+                                                }
+                                                style={{
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 5,
+                                                    padding: '7px 34px 7px 8px',
+                                                    fontSize: 12,
+                                                    fontWeight: 600,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                    outline: 'none',
+                                                    width: '100%',
+                                                    height: '36px',
+                                                    textAlign: 'center',
+                                                }}
+                                            />
+                                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                                VELAS
+                                            </span>
+                                        </div>
+                                    )}
                                     
                                     <select
                                         value={risk.hard_stop.operator || '>='}

@@ -134,6 +134,10 @@ def _hs_value_to_code(hs_value):
         return _pjit.HS_PREVMAX
     elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow"):
         return _pjit.HS_PREVMIN
+    elif hs_value in ("Pivot High", "Ultimo pivote alto", "Último pivote alto"):
+        return _pjit.HS_PIVHIGH
+    elif hs_value in ("Pivot Low", "Ultimo pivote bajo", "Último pivote bajo"):
+        return _pjit.HS_PIVLOW
     return _pjit.HS_NONE
 
 
@@ -192,6 +196,8 @@ def simulate_jit(
     prev_highs: np.ndarray | None = None,
     prev_lows: np.ndarray | None = None,
     # Stop por ATR: el ATR de cada barra (ver portfolio_sim.simulate).
+    pivot_highs: np.ndarray | None = None,
+    pivot_lows: np.ndarray | None = None,
     atrs: np.ndarray | None = None,
     # Respaldo en % para las barras sin ATR (ver portfolio_sim.simulate).
     hs_atr_fallback_pct: float | None = None,
@@ -309,6 +315,8 @@ def simulate_jit(
     has_pm_low, pm_low_a = _opt(pm_lows)
     has_prev_high, prev_high_a = _opt(prev_highs)
     has_prev_low, prev_low_a = _opt(prev_lows)
+    has_piv_high, piv_high_a = _opt(pivot_highs)
+    has_piv_low, piv_low_a = _opt(pivot_lows)
     has_atrs, atrs_a = _opt(atrs)
 
     if timestamps is None:
@@ -396,6 +404,8 @@ def simulate_jit(
         has_pm_low, pm_low_a,
         has_prev_high, prev_high_a,
         has_prev_low, prev_low_a,
+        has_piv_high, piv_high_a,
+        has_piv_low, piv_low_a,
         has_atrs, atrs_a, atr_mult, atr_fallback_pct,
         has_timestamps, timestamps_a,
         has_hours, row_hours, row_minutes,

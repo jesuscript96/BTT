@@ -1088,6 +1088,8 @@ INDICATOR_NAME_MAP = {
     "Darvas": "Darvas Box",
     "Caja Darvas": "Darvas Box",
     "Squeeze": "Squeeze",
+    "Ultimo pivote": "Ultimo pivote",
+    "\u00daltimo pivote": "Ultimo pivote",
     "Retroceso (%)": "Retroceso (%)",
     "Absorption": "Absorption",
     "Wick Ratio": "Wick Ratio",
@@ -1795,6 +1797,64 @@ def _retracement_clock(t_min, h, l, c, day_id, win_min, up):
     return out
 
 
+# Ultimo pivote confirmado: el ultimo sitio donde el precio GIRO de verdad.
+#
+# QUE ES UN PIVOTE. Un maximo local: una vela cuyo `high` es mayor que el de las
+# `win` velas de su izquierda Y el de las `win` de su derecha. El minimo local
+# es el espejo con `low`.
+#
+# POR QUE NO ES "Previous max". Aquel es el maximo CORRIDO del dia y NUNCA baja:
+# con 10 -> 15 -> 12 -> 14 -> 11 se queda en 15 para siempre. El ultimo pivote
+# alto es 14, que es el techo que el mercado acaba de dejar. Para un stop la
+# diferencia lo es todo: 15 esta lejisimos y 14 esta pegado.
+#
+# POR QUE ES CAUSAL AUNQUE MIRE A LA DERECHA. Un pivote necesita ver `win` velas
+# POSTERIORES para saber que lo era. Eso NO es mirar al futuro si se respeta el
+# retardo: en la barra `i` se confirma el pivote centrado en `i - win`, o sea que
+# el nivel solo esta disponible `win` velas DESPUES de haber ocurrido. Se mira
+# hacia atras, nunca hacia delante. El precio a pagar es ese retardo, y es
+# inevitable: hasta que no pasan velas no se sabe si un maximo era un techo.
+#
+# Vale NaN hasta que se confirma el primero del dia, y se reinicia cada dia.
+@njit(cache=True)
+def _ultimo_pivote(h, l, day_id, win, alto):
+    n = len(h)
+    out = np.full(n, np.nan)
+    cur_day = -1
+    day_start = 0
+    nivel = np.nan
+    for i in range(n):
+        if day_id[i] != cur_day:
+            cur_day = day_id[i]
+            day_start = i
+            nivel = np.nan
+        c = i - win                      # candidato: el centro de la ventana
+        if c - win >= day_start:         # con sus `win` velas a cada lado, del MISMO dia
+            es_pivote = True
+            # ESTRICTAMENTE mayor (o menor) que TODAS las de su ventana. Con
+            # `>` en vez de `>=` los empates contaban como pivote, y en un tramo
+            # de precio PLANO cada vela era su propio pivote: el nivel seguia al
+            # precio en vez de quedarse en el ultimo giro. Medido y corregido.
+            # Un doble techo exacto tampoco cuenta, y es lo correcto: si el
+            # precio volvio al mismo sitio no hubo un giro claro.
+            if alto:
+                for k in range(c - win, c + win + 1):
+                    if k != c and h[k] >= h[c]:
+                        es_pivote = False
+                        break
+                if es_pivote:
+                    nivel = h[c]
+            else:
+                for k in range(c - win, c + win + 1):
+                    if k != c and l[k] <= l[c]:
+                        es_pivote = False
+                        break
+                if es_pivote:
+                    nivel = l[c]
+        out[i] = nivel
+    return out
+
+
 # Nivel de referencia compartido por "ATR Extension" y "Time vs Level".
 _REF_LEVEL_MAP = {
     "vwap": "VWAP",
@@ -2492,6 +2552,29 @@ def _compute_raw(
             c_ord = c_vals[order] if order is not None else c_vals
             slope_arr, r2_arr = _rolling_reg_clock(t_min, c_ord, float(win), 3)
             res = slope_arr if name == "Reg. Slope" else r2_arr
+            if order is not None:
+                out[order] = res
+            else:
+                out = res
+        return pd.Series(out, index=close.index)
+
+    if name == "Ultimo pivote":
+        # Ver `_ultimo_pivote`. `pivot_window` son las velas de confirmacion a
+        # cada lado (las mismas que usan los triangulos), y `swing_dir` elige si
+        # se buscan techos ("up") o suelos ("down").
+        win = int(pivot_window) if pivot_window else 3
+        if win < 1:
+            win = 1
+        n = len(close)
+        out = np.full(n, np.nan)
+        t_min, day_id, order = _minutes_axis(df, n)
+        if t_min is not None:
+            h_v = high.values.astype(np.float64)
+            l_v = low.values.astype(np.float64)
+            if order is not None:
+                h_v, l_v = h_v[order], l_v[order]
+            res = _ultimo_pivote(h_v, l_v, day_id, win,
+                                 str(swing_dir or "up").lower() != "down")
             if order is not None:
                 out[order] = res
             else:
