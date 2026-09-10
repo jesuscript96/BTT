@@ -5583,3 +5583,39 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Impacto en resultados:** cualquier backtest con hard stop ATR Multiplier correrá a partir de ahora con stops MÁS ESTRECHOS en entradas mataneras de días de expansión tardía (los antiguos iban inflados por la fórmula con lookahead). Los runs guardados de antes NO se recalculan.
 - **Código tocado:** `backend/app/services/{strategy_engine,portfolio_sim,sim_dispatch,backtest_signals,backtest_service}.py`, `backend/tests/{test_stop_atr_causal.py nuevo,test_n2a_native_equivalence.py}`. Zona bot-alerts: INTACTA.
 - **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging (con el aviso del bot encima).
+
+### [HALLAZGO · 2026-09-10 · 02] El % de retorno NO es comparable entre capitales: el tope de locates (1.000 acciones) y los gastos fijos no escalan con el capital
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** duda
+- **Dónde:** `backend/app/services/portfolio_sim.py:1227-1370` (cadena de sizing: `risk_amount` → `size_by_sl` → tope cangrejo → tope caja → tope locates)
+- **Qué observé:** la MISMA estrategia (definiciones «G&E GENETICO - 10k» y «G&E GENETICO - 50k», byte-idénticas salvo el capital, en `users.duckdb → strategies`) con `init_cash` 10.000 vs 50.000 da **554,80 %** vs **304,69 %** de retorno total, con las MISMAS 1.198 operaciones y el mismo win rate (66,44 %). El capital pequeño rinde porcentualmente MÁS. No es un bug de cálculo: es que dos topes del sizing son ABSOLUTOS y no escalan con la cuenta, y estrangulan a la cuenta grande:
+  1. **Tope de locates** (`portfolio_sim.py:1369-1370`): en corto `size = min(size, max_locates × 100)` = **1.000 acciones fijas** (con `max_locates=10`). El objetivo de posición es el 5 % del cash (`risk_type=PERCENT`, `risk_r=5`, línea 1228), así que con 50 k el objetivo ya supera 1.000 acciones en todo ticker < 2,50 $ (y en cada vez más tickers conforme el equity compone: con 200 k de equity, en todo ticker < 10 $). Con 10 k el objetivo es 500 $ y el tope casi nunca ata.
+  2. **Gastos fijos** (`monthly_expenses=300`): los mismos 6.300 $ para las dos cuentas — 63 % del capital inicial en la de 10 k, 12,6 % en la de 50 k. Esta arrastra MÁS a la pequeña, pero pierde contra el efecto 1: en bruto la diferencia es aún mayor (617,80 % vs 317,29 %).
+- **Cómo reproducir:** en el backtester, cargar la estrategia guardada «G&E GENETICO - 10k» (id `2e194490-8f29-43c5-b22c-0c257a40989c`) y correr con Capital inicial 10.000 y luego 50.000 (resto igual: universo 2025-01-01→2026-09-04, `max_locates=10`, `risk_type=PERCENT`, `risk_r=5`, `size_by_sl=false`, cangrejo «perdida» 3 %, `monthly_expenses=300`, `look_ahead_prevention=true`). Corridas de referencia ya guardadas en `backtest_results`: `011823bb-67b3-4380-8621-ebfc34a80ab1` (10 k → 554,80 %) y `f3c1b1f5-d5cc-4f68-828b-43733f5c5f7b` (50 k → 304,69 %), ambas del 2026-09-10.
+- **Evidencia** (de los `results_json` guardados; volcados en `.tmp_capital_diff/`):
+  - Trade 1 (AEI 2025-01-02, corto a 2,21 $): 10 k → 226,24434 acciones = exactamente 500/2,21 (5 % del cash); 50 k → 1.000 acciones (objetivo 2.500/2,21 = 1.131 recortado por el tope de locates). Fórmula verificada bit a bit, incluido el tope cangrejo: ALCE 2025-01-02 a 1,345 con SL 2,54 → 251,046039 acciones = exactamente 300/1,195 (3 % de 10 k entre la distancia al SL).
+  - Trades recortados a 1.000 acciones por locates: **779/1.198 (65,0 %)** con 50 k vs **294/1.198 (24,5 %)** con 10 k.
+  - Despliegue medio (valor de posición / equity del día previo): 50 k → **2,71 %** (mediana 2,44 %) y CAE con el tiempo (3,22 % 1.ª mitad → 2,16 % 2.ª); 10 k → **4,04 %** (mediana 5,00 %, justo el objetivo) y se mantiene (4,38 % → 3,67 %). La cuenta grande compone cada vez más ahogada por un tope fijo.
+  - Direcciones: 1.198/1.198 cortas en ambas — el tope de locates aplica a TODO el universo.
+- **Hipótesis de causa:** N/A — verificado contra el código y los datos; el comportamiento es el diseñado (los locates son paquetes reales de 100 acciones y `max_locates` es cuántos se está dispuesto a alquilar).
+- **Impacto:** cualquier comparación de % de retorno, CAGR, Sharpe o Calmar entre corridas con distinto capital (o el mismo capital en momentos distintos de la curva) está sesgada por un parámetro operativo (`max_locates`) que no representa lo mismo en una cuenta de 10 k que en una de 50 k+. Con este universo (precio medio de entrada 6,69 $, 524 entradas < 2,50 $), el 5 % del cash de una cuenta ≥ 50 k supera el tope en la mayoría de trades. Decisión de diseño pendiente: ¿el tope de locates debe escalar con el capital, o se asume y se documenta que el % no es comparable entre capitales?
+- **Código tocado:** NINGUNO (confirmado — solo lecturas de `users.duckdb` en modo read-only y volcados JSON a `.tmp_capital_diff/`, mi scratchpad).
+- **Estado:** ABIERTO
+
+### [GUÍA · 2026-09-10] Compartir estrategias entre devs — PARA SAILOR Y SU IA (traerse SOLO esta implementación)
+- **Escribe:** ZCode (para Álvaro, a petición suya; destinataria de la guía: la IA de Sailor)
+- **Qué es:** sistema para intercambiar estrategias del backtester entre Álvaro y Sailor vía JSON en el repo. Ya está en `origin/staging`. Los ficheros viven en `estrategias_compartidas/<dev>/` (un JSON por estrategia) y el transporte es **git** — nada se sube automáticamente, solo viaja lo que cada uno commitea.
+- **Cómo traerte SOLO esta implementación (sin los ~73 commits pendientes de la rama de Álvaro):**
+  ```
+  git fetch origin
+  git cherry-pick 6c4c3a7 7e9fef6
+  ```
+  (`6c4c3a7` = feature pestaña "Compartidas"; `7e9fef6` = la estrategia «G&E GENETICO - 10k» que Álvaro ya compartió). **NO merges `alvaro-rama-desarrollo`** para esto: arrastra el fix del stop ATR causal y todo lo demás que Álvaro aún no ha integrado.
+- **Setup una sola vez (tu local):**
+  1. Añade a `backend/.env` (NO se commitea): `SHARED_STRATEGIES_OWNER=sailor` — sin eso tus compartidas caen en `dev/`.
+  2. Rearranca el backend con tu script seguro y comprueba el log `DISABLE_GCS_SYNC=true` (regla del repo).
+- **Uso:** backtester → corre cualquier backtest → pestaña **«Compartidas»** (derecha de «Charts + Optimization IS»; solo existe con un resultado cargado). Sección *«En el repo»*: lista las de ambos → **«Importar copia»** crea una copia NUEVA en tus estrategias guardadas (re-importar no actualiza: crea otra). Sección *«Compartir una tuya»*: **«Compartir»** vuelca una tuya a `estrategias_compartidas/sailor/` (re-compartir sobreescribe el mismo JSON). Botón **«Refrescar»** tras un pull.
+- **Para que Álvaro reciba las tuyas:** el botón solo escribe el JSON en tu disco — tu IA debe commitear la carpeta `estrategias_compartidas/` y subir a `staging` **solo con tu confirmación explícita** (regla de oro del repo). Los `*.json` están ignorados globalmente; esta carpeta tiene la negación `!estrategias_compartidas/**/*.json` en `.gitignore` — viene en el cherry-pick, no la «limpies».
+- **Detalles técnicos (por si tu IA quiere verlo):** endpoints `GET/POST/DELETE /api/shared-strategies` (`backend/app/routers/shared_strategies.py`, lógica en `backend/app/services/shared_strategies.py`); el import reusa el `POST /api/strategies/` existente, no toca schema de BD; test de referencia `backend/tests/test_shared_strategies.py` (14/14). Formato del JSON: `format_version/shared_by/shared_at/source_strategy_id/name/description/definition`.
+- **Zona bot-alertas:** INTACTA y sin relación con esto — sigue sin tocarse.
+- **Estado:** IMPLEMENTADO Y EN STAGING (6c4c3a7 + 7e9fef6); primera estrategia compartida: «G&E GENETICO - 10k».
