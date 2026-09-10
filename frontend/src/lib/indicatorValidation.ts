@@ -130,7 +130,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         // el destino con `_compute_from_config` (strategy_engine.py:1303).
         IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
         IndicatorType.AM_OPEN,
-        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
         IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
@@ -174,7 +174,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         // Ver el porque en VOL_POC, mas arriba.
         IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
         IndicatorType.AM_OPEN,
-        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
         IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
@@ -192,7 +192,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         // Ver el porque en VOL_POC, mas arriba.
         IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
         IndicatorType.AM_OPEN,
-        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
         IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
