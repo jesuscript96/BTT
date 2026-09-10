@@ -1,9 +1,16 @@
 # -*- coding: utf-8 -*-
 """Perfil de volumen intradía: el volumen del día repartido por franjas de precio.
 
-Cuatro indicadores del mismo cálculo: el percentil de la franja donde está el
-precio (una medida), y tres NIVELES — el punto de control y los nodos de arriba
-y de abajo, que son la resistencia y el soporte reales del día.
+Seis indicadores del mismo cálculo: el percentil de la franja donde está el
+precio (una medida) y cinco NIVELES de precio.
+
+Los niveles son de DOS clases, y confundirlas es la duda que salió al usarlo:
+
+  · RELATIVOS AL PRECIO — «Nodo de arriba» y «Nodo de abajo» son la primera zona
+    que hay por encima y por debajo de donde está el precio AHORA, así que
+    saltan cada vez que el precio cruza una franja y parece que le persiguen.
+  · DEL DÍA — «Punto de control», «Zona alta» y «Zona baja» no miran dónde está
+    el precio. Son el marco estable de la sesión.
 """
 import numpy as np
 import pandas as pd
@@ -129,3 +136,64 @@ def test_sin_volumen_no_hay_perfil():
     df = _df([100.0] * 10, [0.0] * 10)
     poc = _v("Punto de control", df)
     assert poc.isna().all()
+
+
+# ══ La zona de valor: las bandas del día ══════════════════════════════════
+#
+# A diferencia de los nodos, NO mira dónde está el precio: arranca en el punto
+# de control y va tragando la franja vecina más gorda hasta juntar el % de
+# volumen pedido. Por eso es estable — solo se mueve cuando cambia el reparto
+# del volumen, no cada vez que el precio cruza una franja.
+
+
+def test_la_zona_envuelve_al_punto_de_control():
+    precios = [100.0] * 10 + [104.0] * 4 + [96.0] * 4
+    df = _df(precios, [50_000.0] * 10 + [20_000.0] * 4 + [20_000.0] * 4)
+    alta = _v("Zona alta", df, zona_pct=70)
+    baja = _v("Zona baja", df, zona_pct=70)
+    poc = _v("Punto de control", df)
+    assert float(baja.iloc[-1]) <= float(poc.iloc[-1]) <= float(alta.iloc[-1])
+
+
+def test_mas_porcentaje_ensancha_la_zona():
+    rng = np.random.default_rng(3)
+    n = 40
+    precios = 100 + np.cumsum(rng.normal(0, 0.5, n))
+    df = _df(precios, rng.integers(1_000, 60_000, n).astype(float),
+             altos=precios * 1.004, bajos=precios * 0.996)
+    estrecha = float(_v("Zona alta", df, zona_pct=30).iloc[-1]) - float(_v("Zona baja", df, zona_pct=30).iloc[-1])
+    ancha = float(_v("Zona alta", df, zona_pct=95).iloc[-1]) - float(_v("Zona baja", df, zona_pct=95).iloc[-1])
+    assert ancha > estrecha
+
+
+def test_la_zona_es_mas_estable_que_los_nodos():
+    """La razón de ser de este indicador: los nodos saltan cada vez que el precio
+    cruza una franja porque son relativos a él; la zona no."""
+    rng = np.random.default_rng(9)
+    n = 120
+    precios = 50 + np.cumsum(rng.normal(0, 0.35, n))
+    df = _df(precios, rng.integers(1_000, 60_000, n).astype(float),
+             altos=precios * 1.006, bajos=precios * 0.994)
+    zona = _v("Zona alta", df, zona_pct=70).dropna()
+    nodo = _v("Nodo de arriba", df, liston_pct=60).dropna()
+    cambios_zona = int((zona.diff().abs() > 1e-9).sum())
+    cambios_nodo = int((nodo.diff().abs() > 1e-9).sum())
+    assert cambios_zona < cambios_nodo, (
+        f"la zona cambia {cambios_zona} veces y el nodo {cambios_nodo}: "
+        "la zona deberia ser la estable")
+
+
+def test_la_zona_tambien_es_causal():
+    rng = np.random.default_rng(17)
+    n = 50
+    precios = 30 + np.cumsum(rng.normal(0, 0.3, n))
+    completo = _df(precios, rng.integers(1_000, 50_000, n).astype(float),
+                   altos=precios * 1.008, bajos=precios * 0.992)
+    for nombre in ("Zona alta", "Zona baja"):
+        entero = _v(nombre, completo, zona_pct=70)
+        for i in (20, 35, 45):
+            cortado = _v(nombre, completo.iloc[:i + 1].copy(), zona_pct=70)
+            a, b = entero.iloc[i], cortado.iloc[i]
+            if pd.isna(a) and pd.isna(b):
+                continue
+            assert a == pytest.approx(b), f"{nombre} en la barra {i} mira al futuro"

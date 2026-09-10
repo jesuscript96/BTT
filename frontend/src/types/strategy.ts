@@ -104,6 +104,10 @@ export enum IndicatorType {
     VOL_POC = "Punto de control",
     VOL_NODE_UP = "Nodo de arriba",
     VOL_NODE_DOWN = "Nodo de abajo",
+    // La ZONA DE VALOR: los dos bordes de la banda donde se ha negociado casi
+    // todo. NO se mueve con el precio, al contrario que los nodos.
+    VOL_ZONE_HIGH = "Zona alta",
+    VOL_ZONE_LOW = "Zona baja",
     LAST_PIVOT = "Ultimo pivote",
     RETRACEMENT = "Retroceso (%)",
     ABSORPTION = "Absorption",
@@ -258,6 +262,10 @@ export interface IndicatorConfig {
     // liston para que una franja cuente como nodo (% del volumen del POC).
     bin_pct?: number;
     liston_pct?: number;
+    // "Zona alta"/"Zona baja": que % del volumen del dia abarca la banda (70 es
+    // lo clasico). Distinto de `liston_pct`, que es lo que necesita UNA franja
+    // para contar como nodo.
+    zona_pct?: number;
 }
 
 export interface ComparisonCondition {

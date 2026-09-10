@@ -1405,6 +1405,7 @@ def _compute_from_config(
         swing_dir=cfg.get("swing_dir"),
         bin_pct=cfg.get("bin_pct"),
         liston_pct=cfg.get("liston_pct"),
+        zona_pct=cfg.get("zona_pct"),
     )
 
 

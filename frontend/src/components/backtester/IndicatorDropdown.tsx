@@ -60,6 +60,8 @@ const INDICATOR_COLORS: Record<string, { bg: string; text: string; accent: strin
   DOLLAR_VOLUME: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
   SQUEEZE: { bg: "bg-fuchsia-50", text: "text-fuchsia-800", accent: "text-fuchsia-600", border: "border-fuchsia-200" },
   // Los dos salen del MISMO ajuste, asi que comparten familia de color.
+  VOL_ZONA_ALTA: { bg: "bg-violet-50", text: "text-violet-800", accent: "text-violet-600", border: "border-violet-200" },
+  VOL_ZONA_BAJA: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
   VOL_BIN_PCT: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
   VOL_POC: { bg: "bg-amber-50", text: "text-amber-800", accent: "text-amber-600", border: "border-amber-200" },
   VOL_NODE_UP: { bg: "bg-rose-50", text: "text-rose-800", accent: "text-rose-600", border: "border-rose-200" },
@@ -167,7 +169,7 @@ export default function IndicatorDropdown({
                           onAdd(def.id);
                           if (!def.multi) setIsOpen(false);
                         }}
-                        className="w-full text-left pl-3.5 pr-4 py-2 text-xs transition-all flex items-center justify-between cursor-pointer border-b"
+                        className="w-full text-left pl-3.5 pr-4 py-2 text-xs transition-all flex items-start justify-between gap-3 cursor-pointer border-b"
                         style={{
                           borderColor: 'rgba(255,255,255,0.03)',
                           backgroundColor: isActive ? 'rgba(216,122,61,0.12)' : 'transparent',
@@ -188,7 +190,25 @@ export default function IndicatorDropdown({
                           }
                         }}
                       >
-                        <span>{def.label}</span>
+                        {/* La descripcion va DEBAJO del nombre: sin ella hay
+                            que adivinar que mide cada indicador nuevo, que es lo
+                            que pidio Jaume. Los descriptivos largos siguen en las
+                            condiciones; aqui solo cabe el titular. */}
+                        <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
+                          <span>{def.label}</span>
+                          {def.descripcion && (
+                            <span style={{
+                              fontSize: 10,
+                              lineHeight: 1.35,
+                              fontWeight: 400,
+                              color: 'var(--color-ec-text-secondary)',
+                              opacity: 0.85,
+                              whiteSpace: 'normal',
+                            }}>
+                              {def.descripcion}
+                            </span>
+                          )}
+                        </span>
                         <span 
                           style={{
                             fontSize: '9px',

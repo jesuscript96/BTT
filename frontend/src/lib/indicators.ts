@@ -1336,15 +1336,19 @@ export function calculateWickRatio(data: CandleData[], minutes: number, side: "u
 // ---------------------------------------------------------------------------
 const PERFIL_MAX_FRANJAS = 4096;
 
-function perfilVolumen(data: CandleData[], binPct: number, listonPct: number): {
+function perfilVolumen(data: CandleData[], binPct: number, listonPct: number,
+                       zonaPct: number = 70): {
     pct: IndicatorDataPoint[]; poc: IndicatorDataPoint[];
     arriba: IndicatorDataPoint[]; abajo: IndicatorDataPoint[];
+    zonaAlta: IndicatorDataPoint[]; zonaBaja: IndicatorDataPoint[];
 } {
     const sorted = sortAndDedup(data);
     const pct: IndicatorDataPoint[] = [];
     const poc: IndicatorDataPoint[] = [];
     const arriba: IndicatorDataPoint[] = [];
     const abajo: IndicatorDataPoint[] = [];
+    const zonaAlta: IndicatorDataPoint[] = [];
+    const zonaBaja: IndicatorDataPoint[] = [];
 
     const hist = new Float64Array(PERFIL_MAX_FRANJAS);
     let dia = "";
@@ -1387,8 +1391,30 @@ function perfilVolumen(data: CandleData[], binPct: number, listonPct: number): {
         for (let k = j - 1; k >= 0; k--) {
             if (hist[k] >= umbral) { abajo.push({ time: b.time as Time, value: (k + 0.5) * ancho }); break; }
         }
+
+        // ZONA DE VALOR: desde el POC hacia fuera, tragando la vecina mas gorda
+        // hasta juntar `zonaPct` % del volumen. NO mira donde esta el precio,
+        // asi que es estable. Paridad con `_perfil_volumen` del backend.
+        let total = 0;
+        for (let k = 0; k < PERFIL_MAX_FRANJAS; k++) total += hist[k];
+        const objetivo = total * zonaPct / 100;
+        let acum = hist[iPoc], zLo = iPoc, zHi = iPoc;
+        while (acum < objetivo) {
+            const vArr = zHi + 1 < PERFIL_MAX_FRANJAS ? hist[zHi + 1] : -1;
+            const vAba = zLo - 1 >= 0 ? hist[zLo - 1] : -1;
+            if (vArr < 0 && vAba < 0) break;
+            if (vArr >= vAba) { zHi++; acum += hist[zHi]; } else { zLo--; acum += hist[zLo]; }
+        }
+        zonaAlta.push({ time: b.time as Time, value: (zHi + 0.5) * ancho });
+        zonaBaja.push({ time: b.time as Time, value: (zLo + 0.5) * ancho });
     }
-    return { pct, poc, arriba, abajo };
+    return { pct, poc, arriba, abajo, zonaAlta, zonaBaja };
+}
+
+export function calculateVolZona(data: CandleData[], binPct: number, zonaPct: number,
+                                 alta: boolean): IndicatorDataPoint[] {
+    const r = perfilVolumen(data, binPct || 1, 60, zonaPct || 70);
+    return alta ? r.zonaAlta : r.zonaBaja;
 }
 
 export function calculateVolBinPct(data: CandleData[], binPct: number): IndicatorDataPoint[] {

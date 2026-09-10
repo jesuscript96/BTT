@@ -1092,6 +1092,8 @@ INDICATOR_NAME_MAP = {
     "Punto de control": "Punto de control",
     "Nodo de arriba": "Nodo de arriba",
     "Nodo de abajo": "Nodo de abajo",
+    "Zona alta": "Zona alta",
+    "Zona baja": "Zona baja",
     "Ultimo pivote": "Ultimo pivote",
     "\u00daltimo pivote": "Ultimo pivote",
     "Retroceso (%)": "Retroceso (%)",
@@ -1171,11 +1173,13 @@ def compute_indicator(
     # liston para que una franja cuente como nodo (% del volumen del POC).
     bin_pct: float | None = None,
     liston_pct: float | None = None,
+    # "Zona alta"/"Zona baja": que % del volumen del dia abarca la banda.
+    zona_pct: float | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}|{bin_pct}|{liston_pct}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}|{bin_pct}|{liston_pct}|{zona_pct}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -1210,7 +1214,7 @@ def compute_indicator(
         ref_level=ref_level, level_dir=level_dir,
         wick_side=wick_side, abs_op=abs_op, abs_level=abs_level,
         wick_op=wick_op, wick_level=wick_level, swing_dir=swing_dir,
-        bin_pct=bin_pct, liston_pct=liston_pct,
+        bin_pct=bin_pct, liston_pct=liston_pct, zona_pct=zona_pct,
     )
 
     if offset and offset != 0:
@@ -1893,12 +1897,14 @@ _PERFIL_MAX_FRANJAS = 4096
 
 
 @njit(cache=True)
-def _perfil_volumen(h, l, c, v, day_id, bin_pct, liston_pct):
+def _perfil_volumen(h, l, c, v, day_id, bin_pct, liston_pct, zona_pct):
     n = len(c)
     out_pct = np.full(n, np.nan)
     out_poc = np.full(n, np.nan)
     out_arr = np.full(n, np.nan)
     out_aba = np.full(n, np.nan)
+    out_zalta = np.full(n, np.nan)
+    out_zbaja = np.full(n, np.nan)
 
     hist = np.zeros(_PERFIL_MAX_FRANJAS)
     cur_day = -1
@@ -1960,7 +1966,36 @@ def _perfil_volumen(h, l, c, v, day_id, bin_pct, liston_pct):
                 out_aba[i] = (k + 0.5) * ancho
                 break
 
-    return out_pct, out_poc, out_arr, out_aba
+        # ZONA DE VALOR. A diferencia de los nodos, NO mira donde esta el precio:
+        # arranca en el POC y va tragando la franja vecina mas gorda (arriba o
+        # abajo) hasta juntar `zona_pct` % del volumen del dia. Lo que sale son
+        # los dos bordes de la banda donde se ha negociado casi todo.
+        #
+        # Por eso es ESTABLE: solo se mueve cuando cambia el reparto del volumen,
+        # no cada vez que el precio cruza una franja. Es lo que se suele querer
+        # dibujar en el grafico.
+        total = 0.0
+        for k in range(_PERFIL_MAX_FRANJAS):
+            total += hist[k]
+        objetivo = total * zona_pct / 100.0
+        acum = hist[i_poc]
+        z_lo = i_poc
+        z_hi = i_poc
+        while acum < objetivo:
+            v_arr = hist[z_hi + 1] if z_hi + 1 < _PERFIL_MAX_FRANJAS else -1.0
+            v_aba = hist[z_lo - 1] if z_lo - 1 >= 0 else -1.0
+            if v_arr < 0.0 and v_aba < 0.0:
+                break
+            if v_arr >= v_aba:
+                z_hi += 1
+                acum += hist[z_hi]
+            else:
+                z_lo -= 1
+                acum += hist[z_lo]
+        out_zalta[i] = (z_hi + 0.5) * ancho
+        out_zbaja[i] = (z_lo + 0.5) * ancho
+
+    return out_pct, out_poc, out_arr, out_aba, out_zalta, out_zbaja
 
 
 # Nivel de referencia compartido por "ATR Extension" y "Time vs Level".
@@ -2043,6 +2078,7 @@ def _compute_raw(
     swing_dir: str | None = None,
     bin_pct: float | None = None,
     liston_pct: float | None = None,
+    zona_pct: float | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -2669,7 +2705,8 @@ def _compute_raw(
         return pd.Series(out, index=close.index)
 
     if name in ("Vol. de la franja", "Punto de control",
-                "Nodo de arriba", "Nodo de abajo"):
+                "Nodo de arriba", "Nodo de abajo",
+                "Zona alta", "Zona baja"):
         # Los cuatro salen del MISMO recorrido. Ver `_perfil_volumen`.
         n = len(close)
         out = np.full(n, np.nan)
@@ -2687,15 +2724,25 @@ def _compute_raw(
             lp = float(liston_pct) if liston_pct is not None else 60.0
             if lp < 0.0:
                 lp = 0.0
-            pct, poc, arr, aba = _perfil_volumen(h_v, l_v, c_v, v_v, day_id, bp, lp)
+            zp = float(zona_pct) if zona_pct is not None else 70.0
+            if zp <= 0.0:
+                zp = 70.0
+            if zp > 100.0:
+                zp = 100.0
+            pct, poc, arr, aba, zalta, zbaja = _perfil_volumen(
+                h_v, l_v, c_v, v_v, day_id, bp, lp, zp)
             if name == "Vol. de la franja":
                 res = pct
             elif name == "Punto de control":
                 res = poc
             elif name == "Nodo de arriba":
                 res = arr
-            else:
+            elif name == "Nodo de abajo":
                 res = aba
+            elif name == "Zona alta":
+                res = zalta
+            else:
+                res = zbaja
             if order is not None:
                 out[order] = res
             else:

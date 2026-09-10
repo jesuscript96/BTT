@@ -162,6 +162,10 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         case IndicatorType.VOL_NODE_UP:
         case IndicatorType.VOL_NODE_DOWN:
             return { bin_pct: 1.0, liston_pct: 60 };
+        // 70 % del volumen es el clasico de la zona de valor.
+        case IndicatorType.VOL_ZONE_HIGH:
+        case IndicatorType.VOL_ZONE_LOW:
+            return { bin_pct: 1.0, zona_pct: 70 };
         case IndicatorType.ABSORPTION:
             return { range_minutes: 5 };
         case IndicatorType.WICK_RATIO:
@@ -202,6 +206,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.LAST_PIVOT,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP,
         IndicatorType.VOL_NODE_DOWN,
+        IndicatorType.VOL_ZONE_HIGH, IndicatorType.VOL_ZONE_LOW,
         IndicatorType.ELAPSED_TIME_LAST_HIGH,
         IndicatorType.ELAPSED_TIME,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
@@ -337,6 +342,8 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.VOL_POC]: "Punto de control",
     [IndicatorType.VOL_NODE_UP]: "Nodo de arriba",
     [IndicatorType.VOL_NODE_DOWN]: "Nodo de abajo",
+    [IndicatorType.VOL_ZONE_HIGH]: "Zona alta (borde superior)",
+    [IndicatorType.VOL_ZONE_LOW]: "Zona baja (borde inferior)",
     [IndicatorType.LAST_PIVOT]: "\u00daltimo pivote",
     [IndicatorType.RETRACEMENT]: "Retroceso (%)",
     [IndicatorType.ABSORPTION]: "Absorción (M$ por 1%)",
@@ -428,6 +435,8 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.REG_R2]: "Calidad del ajuste de esa MISMA recta, de 0 a 1: qué parte del movimiento explica la tendencia y qué parte es ruido. Dos tramos que suben exactamente lo mismo pueden ser una escalera (R² ≈ 0,95) o una sierra que va y viene cuatro veces (R² ≈ 0,15) — y esa segunda te saca del stop varias veces por el camino. Referencias: por encima de 0,80 el movimiento es muy limpio y admite un stop cerca; de 0,50 a 0,80 es una tendencia normal con ruido; por debajo de 0,30 no hay tendencia, es un rango agitado. No tiene unidades, así que el umbral vale igual en cualquier ticker y a cualquier hora. DOS AVISOS: un precio plano también da R² alto (la recta horizontal lo explica entero), así que hay que combinarlo SIEMPRE con Reg. Slope; y un R² que cae mientras la pendiente sigue positiva es el primer aviso de que el impulso se deshace — llega antes que el giro de la pendiente.",
     [IndicatorType.ATR_EXTENSION]: "Cuántos ATR separan al precio de su referencia (el VWAP por defecto). Positivo = por encima de la referencia; negativo = por debajo. Es la versión comparable de «está un 8% sobre el VWAP»: un 8% es una barbaridad en un ticker que se mueve un 2% al día y es ruido en uno que se mueve un 30%, así que un umbral en % no vale para el universo entero y uno en ATR sí. Referencias con ATR de 14: de 0 a 1 ATR es la zona normal de trabajo; de 2 a 3 ATR ya está estirado; de 4 a 6 ATR es una extensión fuerte, que es el terreno clásico del fade; por encima de 8 ATR es un spike vertical. Para cortar un gap estirado se suele pedir > 3 o > 4. El primer campo es el periodo del ATR; el segundo, el periodo de la media SOLO si la referencia es SMA o EMA.",
     [IndicatorType.TIME_VS_LEVEL]: "Minutos SEGUIDOS que el precio lleva por encima (o por debajo) del nivel elegido. Es la «aceptación», y es lo que una condición normal no puede decir: para «precio > PM High» son idénticos un precio que lleva 2 minutos arriba y uno que lleva 90, y son situaciones opuestas. Devuelve 0 cuando la condición no se cumple, y se reinicia en cada sesión — una racha nunca se arrastra de un día al siguiente. Cuenta MINUTOS DE RELOJ, no velas: si el ticker se queda media hora sin cotizar, esa media hora cuenta igual. Vale NaN mientras el nivel todavía no existe (antes de las 09:30 no hay RTH Open) y comparar contra NaN da falso, así que no hay señal sin referencia. Referencias: menos de 3 minutos es un pinchazo que puede ser solo una mecha; de 10 a 20 minutos ya es aceptación real; más de 45 minutos es un cambio de régimen.",
+    [IndicatorType.VOL_ZONE_HIGH]: "El borde SUPERIOR de la zona de valor: la banda de precios donde se ha negociado la mayor parte del día. Es un PRECIO, así que se cruza, se compara y sirve de stop. CÓMO SE CONSTRUYE: se arranca en la franja con más volumen (el punto de control) y se van añadiendo las franjas vecinas más gordas, arriba o abajo, hasta juntar el % del volumen que le pidas (70 es lo clásico). Los dos extremos de esa banda son «Zona alta» y «Zona baja». EN QUÉ SE DIFERENCIA DE «Nodo de arriba», que es la duda habitual: el nodo es RELATIVO AL PRECIO — es la primera zona que hay por encima de donde estás ahora, así que salta cada vez que el precio cruza una franja y parece que te persigue. La zona de valor NO mira dónde está el precio: son las bandas del día, y solo se mueven cuando cambia el reparto del volumen. Medido en OLB (9-sep): la zona alta cambió 22 veces en 223 velas y el nodo de arriba 43, el doble. PARA QUÉ: para ver de un vistazo si el precio está DENTRO de la zona (movimiento pesado, hay gente) o se ha salido por arriba o por abajo. En OLB el precio acabó el día en 0,3394 con la zona en 0,3860-0,4403: fuera y por debajo, que es donde no hay nada que frene. Vale NaN en la primera vela del día y se reinicia cada sesión.",
+    [IndicatorType.VOL_ZONE_LOW]: "El borde INFERIOR de la misma banda. Todo lo dicho en «Zona alta» vale igual aquí: se construye desde el punto de control hacia fuera hasta juntar el % de volumen que pidas, y NO se mueve con el precio. USO NATURAL EN CORTO: mientras el precio esté por encima de este borde, sigue dentro de la zona negociada y cuesta que se caiga. Cuando lo pierde, entra en terreno donde casi nadie ha comprado — y ahí no hay soporte. La condición «Bar Close cruza por debajo de Zona baja» es exactamente ese momento. COMBINACIONES: con «Absorción» baja, la caída es limpia porque no hay nadie parando; con «Absorción» alta, alguien está recogiendo ahí abajo y el corto es más peligroso. Y con «Vol. de la franja» por debajo de 30 confirmas que estás en el vacío y no en otra cresta.",
     [IndicatorType.VOL_BIN_PCT]: "Qué porcentaje de las franjas de precio con volumen del día tienen MENOS volumen que la franja donde está el precio ahora mismo. De 0 a 100. QUÉ ES UNA FRANJA: el perfil de volumen reparte todo lo negociado del día por PRECIOS en vez de por tiempo — «a 0,42 se cruzaron 2 millones de acciones» en lugar de «a las 10:15 se cruzaron 40.000». Cada vela reparte su volumen entre todas las franjas que toca, de su mínimo a su máximo, porque una vela que recorre un 5% no dejó todo su volumen en un solo precio. PARA QUÉ SIRVE: donde se cruzó mucho volumen hay mucha gente con su coste, y esa gente vende cuando el precio vuelve a su break-even; por eso ahí el precio se mueve pesado. Donde no se cruzó nada no hay nadie, y el precio atraviesa esa zona rápido en cualquier dirección. EJEMPLO REAL (OLB, 9-sep-2026): a las 12:33 el precio estaba en el percentil 95, pegado a la zona más negociada del día, y llevaba horas dando vueltas ahí. A las 13:33 bajó al 39 y a las 14:33 al 27: había salido al vacío. Entre esos dos momentos se fue de 0,39 a 0,34 — un 20% — porque debajo no quedaba nadie que lo frenara. NIVELES: por encima de 80 estás en zona cargada (el corto tiene ayuda, pero cuesta que se mueva); de 40 a 70 es terreno normal; por debajo de 30 es un vacío, y ahí el precio se va rápido en cualquier dirección — bueno si corre a tu favor, malo si va en contra. COMBINACIONES: con «Absorción» alta, la zona tiene un vendedor de verdad detrás y no es solo estadística; con «Absorción» baja y percentil bajo, no hay nada que frene la caída. EL PARÁMETRO es la anchura de cada franja en % del precio: 1 es un punto de partida sensato; más pequeño da más detalle y más ruido. Se recalcula en cada vela con lo que va del día, y se reinicia cada sesión.",
     [IndicatorType.VOL_POC]: "El precio de la franja con MÁS volumen del día: el sitio donde más gente tiene su coste. Es un PRECIO, así que se puede cruzar contra el Bar Close, comparar con el VWAP o usarse de stop y de objetivo. Funciona como imán: cuanto más lejos está el precio, más tensión hay hacia volver, porque el que compró ahí y está en pérdidas vende en cuanto recupera. EJEMPLO REAL (OLB, 9-sep-2026): el punto de control estuvo todo el día entre 0,4194 y 0,4236, que es donde el precio pasó la mañana entera; cuando lo abandonó por abajo ya no volvió. USO NATURAL: como objetivo de un corto que entra estirado por arriba, y como referencia de «esto está caro o barato respecto a donde está la gente». Combinado con «ATR Extension» te dice esa distancia en unidades comparables entre tickers. OJO, Y ESTO IMPORTA: un día puede tener DOS zonas de volumen y el punto de control solo señala la más gorda. Si el precio está en la segunda cresta, el punto de control dirá que está «lejos» cuando en realidad está rodeado de gente. Para eso están «Nodo de arriba» y «Nodo de abajo», que no dan por hecho que el perfil tenga una sola joroba. Vale NaN en la primera vela del día y se reinicia cada sesión.",
     [IndicatorType.VOL_NODE_UP]: "El precio de la primera franja POR ENCIMA de la actual que tiene volumen suficiente para contar como zona: la resistencia real del día, la que sale del dinero cruzado y no de unir dos máximos con una regla. Es un PRECIO: se cruza, se compara y sirve de stop de estructura. EL LISTÓN es lo que decide qué cuenta como zona — una franja es nodo si tiene al menos ese % del volumen de la franja más gorda. Con 85 solo pasan las zonas grandes; con 60 salen las de verdad (dos o tres en un día normal); con 30 pasa casi todo y aparece ruido. Fíjate en que NO le dices cuántas zonas quieres: le dices cuánto tiene que pesar una franja para contar, y el número de zonas lo pone el día. Si hubo una zona sale una, si hubo tres salen tres. USO NATURAL EN CORTO: es el stop. Por encima hay oferta acumulada que te protege, así que el stop tiene una razón detrás en vez de ser una distancia inventada. EJEMPLO REAL (OLB, 9-sep-2026, listón 60): a las 14:33, con el precio en 0,3624, el nodo de arriba estaba en 0,4027 — todo el papel que se había acumulado por la mañana. VALE NaN cuando por encima no hay ninguna zona, y eso es un aviso en sí mismo: no hay techo conocido por delante. Comparar contra NaN da falso, así que una condición con este indicador no dispara mientras no haya nodo.",
@@ -1088,9 +1097,13 @@ export const IndicatorParams = ({
                     case IndicatorType.VOL_BIN_PCT:
                     case IndicatorType.VOL_POC:
                     case IndicatorType.VOL_NODE_UP:
-                    case IndicatorType.VOL_NODE_DOWN: {
+                    case IndicatorType.VOL_NODE_DOWN:
+                    case IndicatorType.VOL_ZONE_HIGH:
+                    case IndicatorType.VOL_ZONE_LOW: {
                         const llevaListon = value.name === IndicatorType.VOL_NODE_UP
                             || value.name === IndicatorType.VOL_NODE_DOWN;
+                        const llevaZona = value.name === IndicatorType.VOL_ZONE_HIGH
+                            || value.name === IndicatorType.VOL_ZONE_LOW;
                         return (
                             <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
                                 <div className="relative" style={{ flex: '1 1 96px', minWidth: '96px' }}>
@@ -1109,6 +1122,25 @@ export const IndicatorParams = ({
                                         FRANJA
                                     </span>
                                 </div>
+                                {llevaZona && (
+                                    <div className="relative" style={{ flex: '1 1 96px', minWidth: '96px' }}>
+                                        <input
+                                            type="number"
+                                            step={5}
+                                            min={10}
+                                            max={100}
+                                            value={value.zona_pct ?? ''}
+                                            onChange={(e) => onChange({ ...value, zona_pct: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                            onFocus={(e) => e.target.select()}
+                                            placeholder="70"
+                                            style={{ ...PARAM_FIELD_STYLE, width: '100%', paddingRight: 40 }}
+                                            title="Que % del volumen del dia abarca la banda. Se arranca en el punto de control y se van sumando las franjas vecinas mas gordas hasta llegar a ese porcentaje. 70 es lo clasico: mas alto ensancha la zona, mas bajo la aprieta alrededor del punto de control."
+                                        />
+                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                            ZONA
+                                        </span>
+                                    </div>
+                                )}
                                 {llevaListon && (
                                     <div className="relative" style={{ flex: '1 1 96px', minWidth: '96px' }}>
                                         <input

@@ -29,6 +29,7 @@ _CATEGORY = {
         "Low of Day", "Current Open", "Previous Close", "Max N Bars",
         "Ultimo pivote",
         "Punto de control", "Nodo de arriba", "Nodo de abajo",
+        "Zona alta", "Zona baja",
     ],
     "Behavior": [
         "Consecutive Higher Highs", "Consecutive Lower Lows", "Consecutive Red Candles",
@@ -94,6 +95,9 @@ _PARAMS = {
     "Punto de control": ["bin_pct"],
     "Nodo de arriba": ["bin_pct", "liston_pct"],
     "Nodo de abajo": ["bin_pct", "liston_pct"],
+    # zona_pct = % del volumen del dia que abarca la banda (70 clasico).
+    "Zona alta": ["bin_pct", "zona_pct"],
+    "Zona baja": ["bin_pct", "zona_pct"],
     "Absorption": ["range_minutes"],
     "Wick Ratio": ["range_minutes", "wick_side"],
     "Absorption + Wick": ["range_minutes", "wick_side", "abs_op", "abs_level",

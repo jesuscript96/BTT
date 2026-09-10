@@ -55,6 +55,7 @@ import {
   calculateVolBinPct,
   calculateVolPOC,
   calculateVolNode,
+  calculateVolZona,
   calculateAbsorption,
   calculateWickRatio,
   calculateRegSlope,
@@ -838,6 +839,22 @@ export default function Chart({
           case "WMA": {
             const d = calculateWMA(deduped, ai.params.period ?? 20);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "VOL_ZONA_ALTA":
+          case "VOL_ZONA_BAJA": {
+            // Las bandas del dia. Se pintan mas gruesas y continuas que los
+            // nodos: son el marco estable, no el nivel que persigue al precio.
+            const d = calculateVolZona(deduped, ai.params.bin ?? 1,
+                                       ai.params.zona ?? 70,
+                                       ai.indicatorId === "VOL_ZONA_ALTA");
+            if (d.length > 0) {
+              const s = chart.addSeries(LineSeries, {
+                color: ai.indicatorId === "VOL_ZONA_ALTA" ? "#7c3aed" : "#0891b2",
+                lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+              });
+              s.setData(d);
+            }
             break;
           }
           case "VOL_POC":

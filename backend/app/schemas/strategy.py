@@ -52,6 +52,10 @@ class IndicatorType(str, Enum):
     VOL_POC = "Punto de control"
     VOL_NODE_UP = "Nodo de arriba"
     VOL_NODE_DOWN = "Nodo de abajo"
+    # La ZONA DE VALOR: los dos bordes de la banda donde se ha negociado casi
+    # todo. NO depende de donde este el precio, al contrario que los nodos.
+    VOL_ZONE_HIGH = "Zona alta"
+    VOL_ZONE_LOW = "Zona baja"
     LAST_PIVOT = "Ultimo pivote"
     RETRACEMENT = "Retroceso (%)"
     ABSORPTION = "Absorption"
@@ -360,6 +364,10 @@ class IndicatorConfig(BaseModel):
     #               el DIA, no un parametro.
     bin_pct: Optional[float] = None
     liston_pct: Optional[float] = None
+    # "Zona alta"/"Zona baja": que % del volumen del dia abarca la banda (70 es
+    # lo clasico). OJO: es distinto de `liston_pct`, que es el % del volumen del
+    # POC que necesita UNA franja para contar como nodo.
+    zona_pct: Optional[float] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"
