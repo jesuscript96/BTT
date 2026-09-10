@@ -400,14 +400,24 @@ export default function SharedStrategiesTab() {
     finally { setOcupada(null); }
   };
 
-  const quitar = async (entry: SharedStrategyEntry) => {
-    if (!window.confirm(`¿Quitar "${entry.name}" de estrategias_compartidas?`)) return;
+  const borrar = async (entry: SharedStrategyEntry) => {
+    const mia = entry.shared_by === owner;
+    // Borrar la del otro es destructivo Y VIAJA: al commitear y subir, le
+    // desaparece a él también. Recuperable por git, pero hay que decirlo.
+    const aviso = mia
+      ? `¿Borrar "${entry.name}" de estrategias_compartidas?
+
+Se quita el fichero de tu carpeta. Cuando subas el borrado, dejará de verla el otro.`
+      : `¿Borrar "${entry.name}", que compartió ${nombreDev(entry.shared_by)}?
+
+Borra SU fichero del repo. Cuando subas el borrado, también desaparecerá para él (se puede recuperar por git).`;
+    if (!window.confirm(aviso)) return;
     setOcupada(entry.filename); setError(null);
     try {
-      await deleteSharedStrategy(entry.filename);
+      await deleteSharedStrategy(entry.filename, entry.shared_by || undefined);
       if (abierta === entry.filename) setAbierta(null);
       await cargar();
-    } catch (e) { setError(e instanceof Error ? e.message : "No se pudo quitar"); }
+    } catch (e) { setError(e instanceof Error ? e.message : "No se pudo borrar"); }
     finally { setOcupada(null); }
   };
 
@@ -417,7 +427,7 @@ export default function SharedStrategiesTab() {
     <div style={{ padding: 14, fontFamily: font.sans, color: color.textPrimary }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 280 }}>
-          <Titulo hint="Los JSON viven en estrategias_compartidas/ y viajan por git: nada se comparte hasta que commiteas esa carpeta. Aquí solo se MIRAN — pulsa una para ver cómo está montada y, si te convence, móntate la tuya con lo que ves.">
+          <Titulo hint="Los JSON viven en estrategias_compartidas/ y viajan por git: nada se comparte hasta que commiteas esa carpeta. Aquí solo se MIRAN — pulsa una para ver cómo está montada y, si te convence, móntate la tuya con lo que ves. Borrar quita el fichero del repo — también las del otro, para que la lista no se acumule.">
             En el repo
           </Titulo>
         </div>
@@ -470,11 +480,16 @@ export default function SharedStrategiesTab() {
                       {c.shared_at ? String(c.shared_at).slice(0, 16).replace("T", " ") : "—"}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      {mia && (
-                        <button onClick={(e) => { e.stopPropagation(); void quitar(c); }} style={btn} disabled={ocupada === c.filename}>
-                          {ocupada === c.filename ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Quitar
-                        </button>
-                      )}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void borrar(c); }}
+                        style={btn}
+                        disabled={ocupada === c.filename}
+                        title={mia ? "Borrar tu fichero compartido" : `Borrar el fichero que compartió ${nombreDev(c.shared_by)}`}
+                        onMouseEnter={(ev) => { ev.currentTarget.style.color = color.loss; ev.currentTarget.style.borderColor = color.loss; }}
+                        onMouseLeave={(ev) => { ev.currentTarget.style.color = color.textMuted; ev.currentTarget.style.borderColor = color.border; }}
+                      >
+                        {ocupada === c.filename ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Borrar
+                      </button>
                     </td>
                   </tr>
                   {activa && (

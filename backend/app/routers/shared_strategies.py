@@ -61,10 +61,12 @@ def share_strategy(body: ShareRequest, user_id: Optional[str] = Depends(get_curr
 
 
 @router.delete("/{filename}")
-def delete_shared(filename: str):
-    """Quita del repo uno de TUS ficheros compartidos (los del otro dev no)."""
+def delete_shared(filename: str, dev: Optional[str] = None):
+    """Quita del repo un fichero compartido. Sin `dev`, uno tuyo; con `dev`,
+    tambien el del otro (para poder limpiar la lista). Es destructivo y viaja
+    al otro cuando se sube: la UI lo avisa antes de llamar aqui."""
     try:
-        svc.delete_shared(filename)
+        svc.delete_shared(filename, dev)
     except svc.InvalidSharedFilename as e:
         raise HTTPException(status_code=400, detail=str(e))
     except FileNotFoundError as e:

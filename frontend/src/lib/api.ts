@@ -259,8 +259,11 @@ export function shareStrategy(strategyId: string): Promise<SharedStrategyEntry> 
   });
 }
 
-export function deleteSharedStrategy(filename: string): Promise<void> {
-  return apiRequest<void>(`/shared-strategies/${encodeURIComponent(filename)}`, {
+export function deleteSharedStrategy(filename: string, dev?: string): Promise<void> {
+  // `dev` permite borrar tambien la del otro (limpiar la lista). Destructivo:
+  // al subir el borrado, desaparece para los dos.
+  const q = dev ? `?dev=${encodeURIComponent(dev)}` : "";
+  return apiRequest<void>(`/shared-strategies/${encodeURIComponent(filename)}${q}`, {
     method: "DELETE",
   });
 }

@@ -110,6 +110,48 @@ def test_delete_rechaza_nombres_malformados(shared_tmp, mal):
         svc.delete_shared(mal)
 
 
+# Jaume, 10-sep-2026: la lista se acumulaba y no habia forma de limpiar las del
+# otro dev desde la UI. `delete_shared(filename, dev)` lo permite; sin `dev` el
+# comportamiento es el de siempre (lo cubre test_delete_solo_ficheros_propios).
+
+def test_delete_con_dev_borra_la_del_otro(shared_tmp, monkeypatch):
+    svc.write_shared(name="Suya", description=None, source_strategy_id="9f", definition=_definicion())
+    monkeypatch.setenv("SHARED_STRATEGIES_OWNER", "otro")
+    svc.write_shared(name="Mia", description=None, source_strategy_id="1a", definition=_definicion())
+    assert len(svc.list_shared()) == 2
+
+    # Siendo "otro", la de "tester" solo se alcanza nombrando su carpeta.
+    with pytest.raises(FileNotFoundError):
+        svc.delete_shared("suya--9f.json")
+    svc.delete_shared("suya--9f.json", "tester")
+
+    quedan = svc.list_shared()
+    assert [e["name"] for e in quedan] == ["Mia"]
+
+
+# "" NO entra aqui: cadena vacia significa «no me han dado dev» y cae en el
+# propio owner, que es exactamente lo que manda el frontend cuando no aplica.
+@pytest.mark.parametrize("mal_dev", ["../tester", "a/b", "tester/", ".", "..", "TES TER", "-x"])
+def test_delete_rechaza_dev_malformado(shared_tmp, mal_dev):
+    svc.write_shared(name="Mia", description=None, source_strategy_id="1a", definition=_definicion())
+    with pytest.raises(svc.InvalidSharedFilename):
+        svc.delete_shared("mia--1a.json", mal_dev)
+    assert len(list(shared_tmp.glob("*/*.json"))) == 1
+
+
+def test_delete_con_dev_vacio_usa_el_propio(shared_tmp):
+    svc.write_shared(name="Mia", description=None, source_strategy_id="1a", definition=_definicion())
+    svc.delete_shared("mia--1a.json", "")
+    assert svc.list_shared() == []
+
+
+def test_delete_con_dev_inexistente_no_revienta(shared_tmp):
+    svc.write_shared(name="Mia", description=None, source_strategy_id="1a", definition=_definicion())
+    with pytest.raises(FileNotFoundError):
+        svc.delete_shared("mia--1a.json", "nadie")
+    assert len(list(shared_tmp.glob("*/*.json"))) == 1
+
+
 # ── API roundtrip (montaje + flujo compartir/quitar) ────────────────────────
 
 def _payload(nombre):
