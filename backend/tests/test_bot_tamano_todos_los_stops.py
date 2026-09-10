@@ -59,14 +59,16 @@ def _sdef(tipo, valor, size_by_sl=True, **rm_extra):
 
 
 # ══ Cada tipo de stop, con «Shares por SL» ════════════════════════════════
-# `sl_stop` es la FRACCIÓN que `translate_strategy` calcula para cada tipo; el
-# simulador la aplica igual venga de un porcentaje o de un importe fijo, así que
-# basta con recorrer valores distintos para cubrir los dos.
+# `sl_stop` es la FRACCIÓN que `translate_strategy` calcula para el porcentaje;
+# el simulador la aplica sobre el precio de entrada. Los otros tres tipos de stop
+# (estructura, ATR e importe fijo) se resuelven como NIVEL y tienen sus tests
+# más abajo.
 @pytest.mark.parametrize("tipo,valor,sl_stop", [
     ("Percentage", 25, 0.25),        # el de «RTH prueba 1»
     ("Percentage", 2, 0.02),
     ("Percentage", 60, 0.60),
-    ("Fixed Amount", 5, 0.05),       # 5 $ sobre un primer cierre de 100
+    # «Fixed Amount» tampoco entra ya aqui: desde el 10-sep-2026 es un NIVEL
+    # (`entrada -/+ importe`), no una fraccion. Tiene sus tests abajo.
     # El ATR YA NO entra aquí: desde el 10-sep-2026 no se colapsa a fracción,
     # se resuelve como NIVEL con el ATR de la barra. Tiene sus tests abajo.
 ])
@@ -618,3 +620,84 @@ def test_respaldo_estructural_el_aviso_dice_lo_mismo():
                           hs_struct_fallback_pct=3.0)
     assert stop == pytest.approx(103.0)
     assert stop == pytest.approx(t["stop_loss"])
+
+
+# ══ IMPORTE FIJO: el bug del cierre de la primera vela ════════════════════
+#
+# EL FALLO (corregido el 10-sep-2026). «Fixed Amount» se convertía en fracción
+# dividiendo el importe entre el cierre de la PRIMERA VELA DEL DÍA, y esa
+# fracción se aplicaba luego al precio de entrada. O sea que «15 centavos» solo
+# eran 15 centavos si entrabas exactamente al precio de apertura; entrando más
+# arriba, el stop se ensanchaba solo y nada lo decía.
+#
+# Con un día que abre en 70 y una entrada en 100, un importe de 5 $ daba:
+#     fracción = 5 / 70 = 0,0714  ->  stop = 100 x 1,0714 = 107,14
+# cuando lo que se pidió eran 5 $, o sea 105.
+IMPORTE = 5.0
+
+
+def _sim_importe(primer_cierre=PRECIO, **kw):
+    """Serie que ABRE en `primer_cierre` y entra a 100, para destapar el bug."""
+    close = np.full(N, PRECIO)
+    close[0] = primer_cierre
+    entries = np.zeros(N, dtype=bool)
+    entries[3] = True
+    res = simulate(
+        close=close, open_=close.copy(), high=close * 1.001, low=close * 0.999,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0,
+        risk_r=300.0, risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="Fixed Amount", hs_value=IMPORTE, **kw,
+    )
+    return res["trades"][0] if res["trades"] else None
+
+
+@pytest.mark.parametrize("primer_cierre", [70.0, 100.0, 140.0])
+def test_importe_fijo_no_depende_de_la_primera_vela(primer_cierre):
+    """5 $ son 5 $, abra el día donde abra. Este es el test del bug."""
+    t = _sim_importe(primer_cierre, size_by_sl=True)
+    assert t["stop_loss"] == pytest.approx(PRECIO + IMPORTE)   # 105, siempre
+    assert t["size"] == pytest.approx(300.0 / IMPORTE)         # 60 acciones
+
+
+def test_importe_fijo_el_aviso_dice_lo_mismo():
+    sim = _sim_importe(70.0, size_by_sl=True)
+    stop = stop_estimado(_sdef("Fixed Amount", IMPORTE), None, 0, PRECIO,
+                         es_largo=False, sl_stop=None)
+    assert stop == pytest.approx(105.0)
+    assert stop == pytest.approx(sim["stop_loss"])
+    assert calcular_acciones(300.0, PRECIO, stop, True) == pytest.approx(sim["size"])
+
+
+def test_importe_fijo_paridad_python_jit():
+    from app.services.sim_dispatch import simulate_jit
+    close = np.full(N, PRECIO)
+    close[0] = 70.0
+    entries = np.zeros(N, dtype=bool)
+    entries[3] = True
+    base = dict(
+        close=close, open_=close.copy(), high=close * 1.001, low=close * 0.999,
+        entries=entries, exits=np.zeros(N, dtype=bool), direction="shortonly",
+        init_cash=1_000_000.0, risk_r=300.0, risk_type="FIXED",
+        look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="Fixed Amount", hs_value=IMPORTE, size_by_sl=True,
+    )
+    t_py = simulate(**base)["trades"][0]
+    t_jit = simulate_jit(**base)["trades"][0]
+    assert t_py["stop_loss"] == pytest.approx(105.0)
+    assert t_py["stop_loss"] == pytest.approx(t_jit["stop_loss"])
+    assert t_py["size"] == pytest.approx(t_jit["size"])
+
+
+def test_importe_fijo_pasa_por_cangrejo_y_el_hibrido():
+    t_a = _sim_importe(size_by_sl=True, cangrejo_active=True,
+                       cangrejo_max_sl_dist_pct=2.0)
+    assert t_a["stop_loss"] == pytest.approx(102.0)      # apretado de 5 $ a 2 %
+    t_b = _sim_importe(size_by_sl=True, cangrejo_active=True,
+                       cangrejo_max_loss_at_sl_pct=0.01)
+    assert t_b["size"] == pytest.approx(20.0)            # 100 $ / 5 de distancia
+    t_h = _sim_importe(size_by_sl=True, hybrid_stop=True,
+                       hybrid_black_swan_pct=50.0, hybrid_max_loss_pct=0.05)
+    assert t_h["size"] == pytest.approx(10.0)

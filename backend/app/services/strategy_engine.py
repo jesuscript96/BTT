@@ -915,8 +915,15 @@ def translate_strategy_native(
         if hs_type == "Percentage":
             sl_stop = hs_value / 100.0
         elif hs_type == "Fixed Amount":
-            first_close = float(C[0]) if n_bars > 0 else 1.0
-            sl_stop = hs_value / first_close if first_close > 0 else None
+            # NO se colapsa a una fraccion. El nivel es `entrada -/+ importe`, y
+            # lo resuelve el simulador en la barra de entrada.
+            #
+            # ANTES era `importe / cierre de la PRIMERA VELA DEL DIA`, y de ahi
+            # salia una fraccion que se aplicaba al precio de entrada. O sea que
+            # «15 centavos» solo eran 15 centavos si entrabas justo al precio de
+            # apertura del dia; entrando un 40 % mas arriba, el stop se
+            # convertia en 21 centavos sin que nada lo dijera.
+            sl_stop = None
         elif hs_type == "ATR Multiplier":
             # NO se colapsa a una fraccion. El nivel lo resuelve el simulador con
             # el ATR de la barra de ENTRADA (parametro `atrs`), que es lo unico
@@ -1490,8 +1497,15 @@ def _parse_risk_management(
         if hs_type == "Percentage":
             sl_stop = hs_value / 100.0
         elif hs_type == "Fixed Amount":
-            first_close = df["close"].iloc[0] if not df.empty else 1
-            sl_stop = hs_value / first_close if first_close > 0 else None
+            # NO se colapsa a una fraccion. El nivel es `entrada -/+ importe`, y
+            # lo resuelve el simulador en la barra de entrada.
+            #
+            # ANTES era `importe / cierre de la PRIMERA VELA DEL DIA`, y de ahi
+            # salia una fraccion que se aplicaba al precio de entrada. O sea que
+            # «15 centavos» solo eran 15 centavos si entrabas justo al precio de
+            # apertura del dia; entrando un 40 % mas arriba, el stop se
+            # convertia en 21 centavos sin que nada lo dijera.
+            sl_stop = None
         elif hs_type == "ATR Multiplier":
             # NO se colapsa a una fraccion. El nivel lo resuelve el simulador con
             # el ATR de la barra de ENTRADA (parametro `atrs`), que es lo unico

@@ -385,7 +385,8 @@ def simulate(
     # En una sola variable a proposito: la condicion se consulta en CUATRO
     # sitios (salida, los dos trailings y la entrada) y repetirla es justo como
     # se desincronizan las cosas aqui.
-    hs_por_nivel = hs_type in ("Market Structure (HOD/LOD)", "ATR Multiplier")
+    hs_por_nivel = hs_type in ("Market Structure (HOD/LOD)", "ATR Multiplier",
+                               "Fixed Amount")
 
     equity = np.empty(n, dtype=np.float64)
     trades: list[dict] = []
@@ -1402,6 +1403,23 @@ def simulate(
                             equity[i] = init_cash + realized_pnl
                             prev_signal = current_signal
                             continue
+                elif hs_type == "Fixed Amount":
+                    # El importe es en DOLARES y va sobre el precio de ENTRADA.
+                    try:
+                        imp = float(hs_value) if hs_value is not None else 0.0
+                    except (TypeError, ValueError):
+                        imp = 0.0
+                    if imp <= 0.0:
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
+                    stop_loss_price = (entry_price - imp) if is_long else (entry_price + imp)
+                    if not _sl_side_valid(stop_loss_price, entry_price, is_long):
+                        # Un importe mayor que el precio deja el stop de un largo
+                        # bajo cero.
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
                 elif hs_type == "ATR Multiplier":
                     # Nivel del stop con el ATR DE ESTA BARRA. Nada de medias
                     # del dia: solo pasado, y el que hubiera en el momento de

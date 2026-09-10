@@ -121,6 +121,8 @@ def _core_simulate_jit(
     # stop nuevo se ignoraria EN SILENCIO y el backtest daria otra cosa segun la
     # variable de entorno.
     has_atrs, atrs, atr_mult, atr_fallback_pct,
+    # «Fixed Amount» (hs_type_code 3): importe en dolares sobre la entrada.
+    fixed_amount,
     # Respaldo del stop estructural en %; 0 = el 5 % de siempre.
     struct_fallback_pct,
     has_timestamps, timestamps,
@@ -766,6 +768,20 @@ def _core_simulate_jit(
                             equity[i] = init_cash + realized_pnl
                             prev_signal = current_signal
                             continue
+                elif hs_type_code == 3:  # Fixed Amount
+                    if fixed_amount <= 0.0:
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
+                    if is_long:
+                        stop_loss_price = entry_price - fixed_amount
+                    else:
+                        stop_loss_price = entry_price + fixed_amount
+                    sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
+                    if not sl_valid:
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
                 elif hs_type_code == 2:  # ATR Multiplier
                     # Nivel con el ATR DE ESTA BARRA. Paridad exacta con
                     # portfolio_sim.py, incluido no entrar cuando no hay ATR.

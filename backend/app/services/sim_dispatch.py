@@ -230,13 +230,16 @@ def simulate_jit(
 
     fee_type_code = _pjit.FEE_FLAT if fee_type == "FLAT" else _pjit.FEE_PERCENT
 
-    # 0 = porcentaje / importe fijo (fraccion sobre el precio de entrada)
+    # 0 = porcentaje (fraccion sobre el precio de entrada)
     # 1 = Market Structure (nivel del dia)
     # 2 = ATR Multiplier (nivel con el ATR de la barra de entrada)
+    # 3 = Fixed Amount (importe en dolares sobre el precio de entrada)
     if hs_type == "Market Structure (HOD/LOD)":
         hs_type_code = 1
     elif hs_type == "ATR Multiplier":
         hs_type_code = 2
+    elif hs_type == "Fixed Amount":
+        hs_type_code = 3
     else:
         hs_type_code = 0
 
@@ -257,6 +260,11 @@ def simulate_jit(
         struct_fallback_pct = float(hs_struct_fallback_pct or 0.0)
     except (TypeError, ValueError):
         struct_fallback_pct = 0.0
+
+    try:
+        fixed_amount = float(hs_value) if hs_type_code == 3 and hs_value is not None else 0.0
+    except (TypeError, ValueError):
+        fixed_amount = 0.0
 
     hs_value_code = _hs_value_to_code(hs_value)
     hs_fallback_code = _hs_value_to_code(hs_fallback_value)
@@ -413,6 +421,7 @@ def simulate_jit(
         has_piv_high, piv_high_a,
         has_piv_low, piv_low_a,
         has_atrs, atrs_a, atr_mult, atr_fallback_pct,
+        fixed_amount,
         struct_fallback_pct,
         has_timestamps, timestamps_a,
         has_hours, row_hours, row_minutes,

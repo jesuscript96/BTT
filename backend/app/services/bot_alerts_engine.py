@@ -271,6 +271,16 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
             nivel = precio * ((1 - _fb_s / 100.0) if es_largo else (1 + _fb_s / 100.0))
         signo = 1.0 if hs.get("operator", ">=") in (">", ">=") else -1.0
         stop = nivel * (1.0 + signo * float(hs.get("offset_pct") or 0.0) / 100.0)
+    elif tipo == "Fixed Amount":
+        # El importe va sobre el precio de ENTRADA. Antes esto caia en el `else`
+        # y usaba una fraccion sacada del cierre de la primera vela del dia.
+        try:
+            imp = float(hs.get("value") or 0.0)
+        except (TypeError, ValueError):
+            return None
+        if imp <= 0.0:
+            return None
+        stop = (precio - imp) if es_largo else (precio + imp)
     elif tipo == "ATR Multiplier":
         # STOP POR ATR (2026-09-10). Va por AQUI y no por `sl_stop` porque ya no
         # es una fraccion: el nivel se resuelve con el ATR DE ESTA BARRA, igual
@@ -434,17 +444,21 @@ def stop_estimado(sdef: dict, frame, i: int, precio: float,
       · ATR Multiplier    -> `nivel_stop` (precio -/+ k x ATR de ESTA barra).
         Desde el 2026-09-10: antes caia en el caso de abajo con una fraccion
         sacada de la media del ATR del dia entero, que mira al futuro.
+      · Fixed Amount     -> `nivel_stop` (precio -/+ importe). Tambien desde el
+        10-sep: antes la fraccion salia de dividir el importe entre el cierre de
+        la PRIMERA vela del dia, asi que «15 centavos» dejaban de serlo en
+        cuanto entrabas a otro precio.
       · TODO LO DEMAS     -> `precio x (1 -/+ sl_stop)`.
 
     `sl_stop` es la FRACCION que ya calculo `translate_strategy`, y es la misma
     que el simulador aplica sobre el precio de entrada. Cubre Percentage y Fixed
-    Amount de una vez y SIN REHACER LA CUENTA — que es la gracia: rehacerla a
-    mano salia mal en «Fixed Amount», donde el motor divide el importe entre el
-    PRIMER CIERRE DEL DIA y no entre el precio de ahora.
+    Amount de una vez. Desde el 10-sep solo cubre PERCENTAGE: los otros tres se
+    resuelven como nivel, cada uno con su propia cuenta.
 
     Devuelve None solo cuando de verdad no hay stop que calcular.
     """
-    if _hard_stop(sdef).get("type") in ("Market Structure (HOD/LOD)", "ATR Multiplier"):
+    if _hard_stop(sdef).get("type") in ("Market Structure (HOD/LOD)", "ATR Multiplier",
+                                       "Fixed Amount"):
         # Los dos son un NIVEL que se resuelve en la barra, no una fraccion.
         return nivel_stop(sdef, frame, i, precio, es_largo)
     if not sl_stop or sl_stop <= 0 or not precio or precio <= 0:
