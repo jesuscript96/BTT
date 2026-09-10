@@ -5331,3 +5331,233 @@ solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
 - **Verificación:** `npx tsc --noEmit` limpio. Cálculo 100% en cliente (el backend no manda conteos por día).
 - **Código tocado:** `frontend/src/lib/day_streaks.ts` (nuevo), `frontend/src/components/backtester/tabs/RachasTab.tsx` (nuevo), `frontend/src/components/backtester/{ResultsTabs.tsx,MetricsCard.tsx}`, `frontend/src/app/backtester/page.tsx`. Zona bot-alerts: INTACTA.
 - **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+---
+
+## 2026-09-09 · La mañana que el bot no dio alertas: cinco fallos a la vez, ninguno con error
+
+Jaume se fue toda la mañana con el bot «funcionando» y perdió acciones que debían
+haber saltado. Su socio lo vio en un vistazo. **Yo le dije dos veces que todo iba
+bien mirando que el proceso estuviera vivo y el feed conectado, sin comprobar lo
+único que decidía si habría alertas: qué acciones miraba y contra qué cierre.**
+
+Los cinco fallos son independientes y ninguno daba excepción ni log. Están en
+`8ca10fb`, subido a `sailor` y `staging`.
+
+### [BUG · UNIVERSO] Se miraban 1.457 acciones de 5.693, desde el 4-sep
+
+`cargar_universo()` pagina la lista de tickers y el cursor de la página siguiente
+viene DENTRO de `next_url`. El código pasaba el cursor en la URL y la clave en
+`params`, y **httpx 0.28 SUSTITUYE la query de la URL por `params` en vez de
+fusionarla**: se perdía el cursor y la paginación moría en la primera página.
+
+    python del venv    ->  5.693 acciones
+    python global      ->  1.457 acciones
+
+**El bot arranca con el Python GLOBAL** (`arrancar_bot.bat`), que es el que tiene
+httpx 0.28.1. Empezó el 4-sep-2026 a las 11:52, la hora exacta a la que se cambió
+el `.bat` de intérprete. Cuatro días de mercado. **Lo rompí yo.**
+
+«Ayer funcionaba» era casualidad: ARBE, BNC y WYHG estaban dentro de esa cuarta
+parte; YMAT y FGL, fuera. Arreglado pegando la clave a la URL, **y con aviso**: si
+carga menos de 3.000 acciones ahora hace `logger.error`.
+
+### [BUG · CIERRE DE AYER] Era el de tres sesiones atrás
+
+`cierres_de_ayer()` usaba `prevDay.c` del snapshot del mercado, y **ese campo
+depende de la hora a la que preguntes**:
+
+    a las 01:15 NY  ->  prevDay.c de YQ = 2,92   (cierre del VIERNES 4)
+    a las 04:20 NY  ->  prevDay.c de YQ = 3,79   (cierre del MARTES 8)
+
+Y se pedía una sola vez al arrancar. Con 2,92 YQ daba un gap del 61 % y entraba en
+1B; con 3,79 daba 24 % y no debía. Y al revés: gaps buenos que no llegaban al
+umbral. **Jaume no se creyó la explicación y tenía razón**: el cierre del martes
+existe desde el martes a las 16:00; el dato no faltaba, se pedía por la puerta
+equivocada.
+
+Ahora se pide por fecha explícita con `aggs/grouped/locale/us/market/stocks/{fecha}`:
+~12.500 cierres oficiales en UNA llamada, y no depende de cuándo preguntes.
+
+**Trampa que costó encontrar:** ese endpoint responde también para una sesión A
+MEDIAS. El 9-sep a las 11:53 de Nueva York, con el mercado abierto, pedir «los
+cierres del 9» devolvía 11.149 filas y YQ a 4,20 — el precio de ese instante, no su
+cierre. Por eso se exige un mínimo de 8.000 filas antes de aceptar un día.
+
+### [BUG · BOTÓN] «Vigilar» no encendía nada
+
+Solo escribía `vigilando=True` en la base y esperaba a que el bot lo leyera. Si el
+proceso no existía, no pasaba nada — y la página lo pintaba igual. Ese día el bot
+murió al arrancar (07:01) porque el backend (06:58) todavía estaba abriendo los
+63 GB, y Jaume empezó la jornada creyendo que vigilaba.
+
+Ahora `POST /api/bot-alerts/estado` comprueba el latido y **arranca el bot** si no
+lo hay, devolviendo `proceso_vivo`, `arrancado_ahora` y un `aviso`. **Al apagar NO
+se mata el proceso**: apagar es «deja de operar», y matarlo perdería el máximo de
+premercado acumulado, que es la condición de 1B.
+
+Primera versión mal: lanzaba PowerShell con `subprocess.run` y timeout de 25 s en un
+endpoint síncrono, y **bloqueaba el backend entero**. Jaume lo detectó en minutos. Se
+mira por el latido, no por la lista de procesos.
+
+### [FEATURE · CALENDARIO] Festivos de NYSE, medias sesiones y horario de verano
+
+Lo pidió Jaume. El bot está pensado para no apagarse nunca, así que no le vale con
+«son las 10:30»: un jueves de Acción de Gracias decía «RTH» y se quedaba esperando
+velas que no iban a llegar, sin forma de distinguir ese silencio de una avería.
+
+**No hace falta copiar la lista de NYSE a mano.** Massive la expone en
+`/v1/marketstatus/upcoming`, con las medias sesiones y su hora exacta.
+
+`bot_alerts_calendario.py` usa **dos fuentes a propósito**: las reglas se calculan en
+el módulo, **sin red y para cualquier año** —porque el bot arranca con el Python
+global y cada dependencia nueva ahí es una que puede faltar, que es exactamente cómo
+se rompió el universo el día 4—, y Massive se pide **una vez al día en otro hilo** y
+solo puede añadir o corregir, para lo que ninguna regla predice (el huracán Sandy
+cerró el mercado dos días en 2012).
+
+**Cotejado: 12/12 en estado contra la lista oficial y 25/25 contra datos reales** del
+mercado (festivo = 0 filas, media sesión ≈ 11.600, día entero ≈ 12.500).
+
+**LA TRAMPA DEL 31 DE DICIEMBRE.** La regla general pasa un festivo en sábado al
+viernes anterior, **pero NYSE tiene la excepción de que ese viernes no sea el último
+día de negociación del año**. O sea que con Año Nuevo en sábado, el 31 SE NEGOCIA:
+
+    31-dic-2021 (viernes, 1-ene-2022 en sábado)  ->  11.151 cierres. HUBO SESIÓN.
+    31-dic-2010 (ídem)                           ->   7.401 cierres. HUBO SESIÓN.
+
+La tenía mal y la cazó un test. No es un detalle: ese 31 es justo el cierre contra el
+que se miden los gaps del primer día de enero.
+
+**El horario de verano ya estaba resuelto, pero no por donde parecía.** Todo se
+cuenta en hora de Nueva York, así que la apertura son las 09:30 haga el horario que
+haga y al bot no le afecta. A quien opera desde España sí: los cambios no caen el
+mismo día (EEUU 2º domingo de marzo → 1er domingo de noviembre; España último domingo
+de marzo → último domingo de octubre), y en 2026 quedan **dos ventanas —del 9 al 28
+de marzo y del 26 de octubre al 1 de noviembre— en que el mercado abre a las 14:30 de
+España y no a las 15:30**.
+
+Al engancharlo, `cierres_de_ayer()` va directo a la sesión buena en vez de tantear día
+a día, y eso arregló **un falso positivo**: con Labor Day el salto era de 4 días y
+saltaba un `logger.error` rojo sin que pasara nada.
+
+### [BUG · CONEXIÓN] Una de cada cuarenta peticiones al backend se perdía
+
+El cliente del bot reutiliza las conexiones. **Pregunta cada 5 segundos
+(`INTERVALO_ESTADO`) y el keep-alive de uvicorn son 5 segundos**: uno reutiliza la
+conexión justo cuando el otro la está cerrando.
+
+**El hueco lo es todo, y por eso buscarlo mal no encuentra nada.** Medido contra el
+backend real, 16 clientes en paralelo:
+
+    huecos de 12 s (pasado el límite)  ->   0 fallos de  18
+    huecos de  5 s (en el límite)      ->  19 fallos de 832   (2,3 %)
+    ídem, con reintento                ->   0 fallos de 832
+
+Mi primer intento usó 12 segundos, salió limpio, **y me hizo dar por buena una
+explicación equivocada delante de Jaume**. Con huecos cómodos el cliente ve el socket
+cerrado y abre otro tan tranquilo; la carrera solo existe justo en el borde.
+
+No era cosmético: `debe_vigilar()` devuelve `None` al fallar y el bot se queda como
+estaba, así que un fallo justo al pulsar «Vigilar» retrasaba el interruptor un ciclo
+entero. Es la queja de Jaume de «le doy y no se entera».
+
+Falla **siempre la primera petición después del hueco**, que en el bot es el GET del
+estado: de 832 peticiones, 19 fallos y los 19 en el GET. Se reintentan también los
+POST por prudencia (cualquier reordenación futura dejaría el hueco delante de uno), y
+es seguro: `/eventos` hace `INSERT OR REPLACE` con id estable **y no manda Telegram**
+—los avisos los manda el bot—; el resto sobrescribe estado. Los timeout NO se
+reintentan: ya han esperado 8 segundos y repetirlos dejaría al bot parado 16.
+
+### [FEATURE · TELEGRAM] Las señales de salida dicen cuántas acciones cerrar
+
+Lo pidió Jaume: «si solo cierro un 25 %, me gustaría que me dijera cuántas acciones
+son ese 25 %». Ahora el aviso distingue CIERRE POS. de CIERRE PARCIAL y añade:
+
+    Acciones a cerrar: 507
+    (25 % de 2.028 · quedan 1.521)
+
+Sin eso había que echar la cuenta a mano con el mercado abierto.
+
+### Lo que hay que aprender de esto
+
+**Comprobar el bot es mirar QUÉ mira, no si respira.** Proceso vivo + feed conectado +
+Telegram OK no significa nada. Lo que hay que mirar:
+
+    universo de N acciones     -> tiene que rondar 5.700
+    N cierres de ayer cargados -> tiene que rondar 5.500
+    del dia AAAA-MM-DD         -> tiene que ser la ULTIMA SESION
+
+Y **reproducir un fallo intermitente exige las condiciones exactas**, no unas
+parecidas: 12 segundos en vez de 5 convirtieron un 2,3 % en un 0 % y me llevaron a una
+conclusión falsa que tuve que retirar.
+
+**Falsa alarma que conviene no repetir:** al mirar los procesos vi dos uvicorn en el
+8010 y avisé de que se peleaban por el puerto. No era cierto — uno es de 4 MB y el
+otro de 392 MB con 49 hilos, padre e hijo, **un solo backend**. Lo que delata cuál
+sirve de verdad es la memoria, no el nombre del intérprete.
+
+**Estado:** 69 tests nuevos (59 del calendario, 10 del reintento). **973 pasan, 0
+fallan.** SUBIDO a `sailor` y `staging` en `8ca10fb`. `D:\bot_senales\bot.py` va
+aparte porque vive fuera de git y no entra en los commits.
+
+### [CORRECCIÓN · 2026-09-09 · EL BOTÓN] Seguía sin encender a la primera, y lo encontró una revisión posterior
+
+Una revisión multiagente del cambio de arriba sacó **26 hallazgos; 18 se
+refutaron y quedaron 8**. Uno era grave, y estaba justo en lo que yo había dado
+por arreglado y contado como resuelto.
+
+**`cambiar_estado` guarda `vigilando=True` y lanza el `.bat`. Pero `bot.py`
+llama a `dejar_parado()` nada más arrancar**, así que entre 10 y 40 segundos
+después de pulsar —lo que tarda en importar pandas y pedir las estrategias—
+llegaba su POST poniendo el interruptor en `False`. La página se volvía sola a
+«Parado» y el bot se quedaba **vivo pero mudo**. Había que pulsar **dos veces**;
+la segunda funcionaba porque ya había proceso y no se relanzaba.
+
+Ese apagado no sobra: existe para que dejar el interruptor encendido un día no
+haga que el bot se ponga a vigilar solo al día siguiente. Lo que fallaba es que
+no distinguía quién lo había lanzado.
+
+**Y explica lo que vi el 9-sep a las 17:50 y leí mal.** Jaume pulsó el botón, el
+bot arrancó, y cuando miré el estado el interruptor decía `False`. Lo interpreté
+como «todavía no le ha dado» y di el arreglo por bueno. Estaba viendo el bug.
+
+Arreglado con la variable de entorno `BOT_ALERTS_ARRANCADO_POR_LA_PAGINA`, que
+el backend pone al lanzar el `.bat` y `bot.py` mira antes de apagarse. Va por
+entorno y no por argumento del `.bat` para no tocar el lanzador, que es de Jaume
+y vive fuera del repo. Comprobado en el log real, los dos caminos.
+
+**Los otros tres de código:**
+
+- **La petición de cierres bloqueaba el bucle de eventos.** El refresco al
+  cambiar de día llamaba a `cierres_de_ayer()` de forma síncrona dentro de
+  `async def bucle()`: una petición HTTP de hasta un minuto congelando el
+  proceso entero, feed del websocket incluido. **Lo metí yo ese mismo día.**
+  Ahora va por `asyncio.to_thread`.
+- **La lista oficial se daba por pedida antes de llegar.** `_pedido_el` se
+  marcaba antes de lanzar la petición, así que un timeout dejaba el proceso 24
+  horas solo con las reglas y sin decirlo. Ahora se marca al llegar, con suelo
+  de 10 minutos entre intentos (`franja_de_mercado()` se llama en cada latido:
+  sin suelo sería una petición cada 5 segundos) y una línea de log cuando entra.
+- **Un error viejo se colaba como si fuera de los cierres.** `ultimo_error` lo
+  comparten el universo, el barrido y `cierres_de_ayer()`, y el bot lo imprime
+  como «OJO con los cierres» justo después de esa llamada.
+
+**Y cuatro huecos de tests**, que es donde más útil salió la revisión:
+`cierres_de_ayer()` —la mitad del cambio del día— **no tenía ninguno**; la
+traducción del JSON de Massive tampoco (romper el literal `early-close`
+convierte toda media sesión en cierre entero, y la lista oficial manda sobre las
+reglas); el ritmo del refresco diario no se comprobaba; y un test era
+tautológico —miraba el 2 de julio, una fecha que la regla no genera nunca—.
+
+También salió **código muerto mío**: una guarda para la víspera del 4 de Julio
+que no puede alcanzarse nunca, porque las dos condiciones anteriores ya cubren
+los dos casos posibles. Fuera, y escrito para que nadie añada una tercera.
+
+**Lo que hay que aprender:** el arreglo del botón lo di por bueno **mirando que
+el bot arrancara**, que es la misma clase de error que cometí por la mañana —
+comprobar que respira en vez de comprobar qué hace—. Y el estado que lo delataba
+lo tuve delante y lo leí como si fuera lo esperado.
+
+**Estado:** 992 tests pasan, 0 fallan (eran 973). `faca7d6` en `sailor` y
+`staging`.

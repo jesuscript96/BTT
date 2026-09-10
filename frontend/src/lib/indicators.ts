@@ -1137,6 +1137,188 @@ export function calculateSqueeze(data: CandleData[], minutes: number): Indicator
 }
 
 // ---------------------------------------------------------------------------
+// 26g. Reg. Slope y Reg. R2 — recta de minimos cuadrados sobre el PRECIO
+//
+// PARIDAD OBLIGATORIA con `_compute_raw("Reg. Slope"/"Reg. R2")` de
+// backend/app/services/indicators.py. Si se toca una, hay que tocar la otra:
+// este calculo es el que se PINTA y el del backend el que DISPARA; si divergen,
+// el grafico miente justo en lo que se quiere verificar.
+//
+// Ventana de RELOJ (minutos), no de velas. Minimo 3 puntos: con 2 la recta pasa
+// por los dos y el R2 seria 1 siempre. La pendiente sale en % POR MINUTO,
+// normalizada por el precio medio de la ventana.
+// ---------------------------------------------------------------------------
+function regClock(data: CandleData[], minutes: number): { slope: IndicatorDataPoint[]; r2: IndicatorDataPoint[] } {
+    const sorted = sortAndDedup(data);
+    const winSec = Math.max(1, Math.floor(minutes || 20)) * 60;
+    const slope: IndicatorDataPoint[] = [];
+    const r2: IndicatorDataPoint[] = [];
+    let start = 0;
+    for (let i = 0; i < sorted.length; i++) {
+        const limit = sorted[i].time - winSec;
+        while (start < i && sorted[start].time < limit) start++;
+        const cnt = i - start + 1;
+        if (cnt < 3) continue;
+
+        let xMean = 0, yMean = 0;
+        for (let k = start; k <= i; k++) { xMean += sorted[k].time / 60; yMean += sorted[k].close; }
+        xMean /= cnt; yMean /= cnt;
+
+        let num = 0, den = 0;
+        for (let k = start; k <= i; k++) {
+            const dx = sorted[k].time / 60 - xMean;
+            num += dx * (sorted[k].close - yMean);
+            den += dx * dx;
+        }
+        if (den === 0) continue;
+
+        const m = num / den;
+        const b = yMean - m * xMean;
+        let ssTot = 0, ssRes = 0;
+        for (let k = start; k <= i; k++) {
+            const pred = m * (sorted[k].time / 60) + b;
+            ssTot += (sorted[k].close - yMean) ** 2;
+            ssRes += (sorted[k].close - pred) ** 2;
+        }
+        const rr = ssTot <= 0 ? 1 : Math.max(0, 1 - ssRes / ssTot);
+
+        if (yMean > 0) slope.push({ time: sorted[i].time as Time, value: m / yMean * 100 });
+        r2.push({ time: sorted[i].time as Time, value: rr });
+    }
+    return { slope, r2 };
+}
+
+export function calculateRegSlope(data: CandleData[], minutes: number): IndicatorDataPoint[] {
+    return regClock(data, minutes).slope;
+}
+
+export function calculateRegR2(data: CandleData[], minutes: number): IndicatorDataPoint[] {
+    return regClock(data, minutes).r2;
+}
+
+// ---------------------------------------------------------------------------
+// 26h. ATR Extension — distancia del precio al VWAP, en ATR
+//
+// PARIDAD OBLIGATORIA con `_compute_raw("ATR Extension")` del backend.
+//
+// NO usa calculateVWAP() ni calculateATR() de este mismo fichero, y no es un
+// descuido: las dos DIVERGEN del backend, y ya lo hacian antes de existir este
+// indicador (medido sobre 300 velas dispersas: hasta 0,26 $ en el VWAP y
+// 8,5e-3 en el ATR).
+//
+//   ATR  — el motor suaviza con EMA de alpha = 2/(n+1); calculateATR() usa el
+//          suavizado de Wilder, alpha = 1/n. Coinciden en el primer valor y se
+//          separan a partir del segundo.
+//   VWAP — el motor acumula sobre todo el DataFrame que recibe (que es de UN
+//          ticker-dia); calculateVWAP() reinicia por dia UTC y ademas prefiere
+//          el `vwap` precalculado de la vela si viene en los datos.
+//
+// Arreglar esas dos funciones cambiaria TODOS los graficos que ya las usan, y
+// eso es una decision del usuario, no un efecto colateral de este indicador.
+// Asi que aqui se replican las formulas del motor en local. Si algun dia se
+// unifican, esto se puede borrar — pero antes hay que comprobar la paridad,
+// no darla por hecha.
+// ---------------------------------------------------------------------------
+export function calculateAtrExtensionVwap(data: CandleData[], period: number = 14): IndicatorDataPoint[] {
+    const sorted = sortAndDedup(data);
+    const n = sorted.length;
+    const win = Math.max(1, Math.floor(period || 14));
+    if (n === 0 || win > n) return [];
+
+    // VWAP del motor: precio tipico (h+l+c)/3, acumulado sin reinicio.
+    const vwap: number[] = new Array(n);
+    let cumTPV = 0, cumVol = 0;
+    for (let i = 0; i < n; i++) {
+        cumTPV += ((sorted[i].high + sorted[i].low + sorted[i].close) / 3) * sorted[i].volume;
+        cumVol += sorted[i].volume;
+        vwap[i] = cumVol !== 0 ? cumTPV / cumVol : NaN;
+    }
+
+    // ATR del motor: media simple de los `win` primeros TR y EMA 2/(win+1).
+    const tr: number[] = new Array(n);
+    tr[0] = sorted[0].high - sorted[0].low;
+    for (let i = 1; i < n; i++) {
+        tr[i] = Math.max(
+            sorted[i].high - sorted[i].low,
+            Math.abs(sorted[i].high - sorted[i - 1].close),
+            Math.abs(sorted[i].low - sorted[i - 1].close),
+        );
+    }
+    const alpha = 2 / (win + 1);
+    const atr: number[] = new Array(n).fill(NaN);
+    let acc = 0;
+    for (let k = 0; k < win; k++) acc += tr[k];
+    atr[win - 1] = acc / win;
+    for (let i = win; i < n; i++) atr[i] = alpha * tr[i] + (1 - alpha) * atr[i - 1];
+
+    const out: IndicatorDataPoint[] = [];
+    for (let i = 0; i < n; i++) {
+        if (!(atr[i] > 0) || Number.isNaN(vwap[i])) continue;
+        out.push({ time: sorted[i].time as Time, value: (sorted[i].close - vwap[i]) / atr[i] });
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// 26i. Absorcion y ratio de mecha
+//
+// PARIDAD OBLIGATORIA con `_compute_raw("Absorption"/"Wick Ratio")` del
+// backend. Los dos salen del mismo recorrido, asi que se calculan juntos.
+//
+// Absorcion = millones de $ por cada 1% de DESPLAZAMIENTO NETO de la ventana
+// (no del rango: una vela que sube y vuelve ha avanzado cero, y ese es
+// justamente el caso que se quiere detectar). Suelo de 0,05% para que un
+// precio que vuelve exacto a su sitio no de infinito. NaN si la ventana tiene
+// una sola vela: sin referencia previa no hay desplazamiento que medir.
+// ---------------------------------------------------------------------------
+function absorptionWickClock(data: CandleData[], minutes: number): {
+    absorption: IndicatorDataPoint[]; wickUp: IndicatorDataPoint[]; wickDown: IndicatorDataPoint[];
+} {
+    const sorted = sortAndDedup(data);
+    const n = sorted.length;
+    const winSec = Math.max(1, Math.floor(minutes || 5)) * 60;
+    const absorption: IndicatorDataPoint[] = [];
+    const wickUp: IndicatorDataPoint[] = [];
+    const wickDown: IndicatorDataPoint[] = [];
+    let start = 0;
+    for (let i = 0; i < n; i++) {
+        const limit = sorted[i].time - winSec;
+        while (start < i && sorted[start].time < limit) start++;
+
+        let dv = 0, sumRng = 0, sumUp = 0, sumDn = 0;
+        for (let k = start; k <= i; k++) {
+            const b = sorted[k];
+            dv += b.close * b.volume;
+            sumRng += b.high - b.low;
+            const bodyHi = Math.max(b.open, b.close);
+            const bodyLo = Math.min(b.open, b.close);
+            sumUp += b.high - bodyHi;
+            sumDn += bodyLo - b.low;
+        }
+
+        if (sorted[i].close > 0 && i > start) {
+            let netoPct = Math.abs((sorted[i].close - sorted[start].close) / sorted[i].close * 100);
+            if (netoPct < 0.05) netoPct = 0.05;
+            absorption.push({ time: sorted[i].time as Time, value: (dv / 1e6) / netoPct });
+        }
+        if (sumRng > 0) {
+            wickUp.push({ time: sorted[i].time as Time, value: sumUp / sumRng });
+            wickDown.push({ time: sorted[i].time as Time, value: sumDn / sumRng });
+        }
+    }
+    return { absorption, wickUp, wickDown };
+}
+
+export function calculateAbsorption(data: CandleData[], minutes: number): IndicatorDataPoint[] {
+    return absorptionWickClock(data, minutes).absorption;
+}
+
+export function calculateWickRatio(data: CandleData[], minutes: number, side: "upper" | "lower" = "upper"): IndicatorDataPoint[] {
+    const r = absorptionWickClock(data, minutes);
+    return side === "lower" ? r.wickDown : r.wickUp;
+}
+
+// ---------------------------------------------------------------------------
 // 27. Heikin-Ashi
 // ---------------------------------------------------------------------------
 export function calculateHeikinAshi(data: CandleData[]): HeikinAshiDataPoint[] {

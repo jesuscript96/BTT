@@ -52,6 +52,11 @@ import {
   calculateAccumDollarVolume,
   calculateDollarVolume,
   calculateSqueeze,
+  calculateAbsorption,
+  calculateWickRatio,
+  calculateRegSlope,
+  calculateRegR2,
+  calculateAtrExtensionVwap,
   calculateSessionFade,
   calculateFade,
   calculateHeikinAshi,
@@ -1194,6 +1199,59 @@ export default function Chart({
                 if (d.length > 0) {
                   const s = subChart.addSeries(HistogramSeries, { color: "#38bdf8" });
                   s.setData(d);
+                }
+                break;
+              }
+              case "ABSORPTION": {
+                // Sin linea de referencia en 0: aqui el 0 no significa nada.
+                // Lo que interesa son los picos (percentil 90 del universo
+                // real = 2,6; percentil 95 = 5,1).
+                const d = calculateAbsorption(deduped, inst.params.minutes ?? 5);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#ea580c", lineWidth: 2 });
+                  s.setData(d);
+                }
+                break;
+              }
+              case "WICK_RATIO_UP":
+              case "WICK_RATIO_DOWN": {
+                const arriba = inst.indicatorId === "WICK_RATIO_UP";
+                const d = calculateWickRatio(deduped, inst.params.minutes ?? 5, arriba ? "upper" : "lower");
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: arriba ? "#be123c" : "#15803d", lineWidth: 2 });
+                  s.setData(d);
+                  // La MEDIANA real es 0,21: por debajo de ahi no hay rechazo,
+                  // hay ruido de todos los dias.
+                  s.createPriceLine({ price: 0.21, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "REG_SLOPE": {
+                // Con signo y linea en 0: por encima sube, por debajo baja.
+                const d = calculateRegSlope(deduped, inst.params.minutes ?? 20);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "REG_R2": {
+                // De 0 a 1, con la linea del 0,5 como referencia visual.
+                const d = calculateRegR2(deduped, inst.params.minutes ?? 20);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#a78bfa", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0.5, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
+                }
+                break;
+              }
+              case "ATR_EXTENSION_VWAP": {
+                const d = calculateAtrExtensionVwap(deduped, inst.params.period ?? 14);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#0d9488", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 0, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
                 }
                 break;
               }

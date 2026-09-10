@@ -1399,6 +1399,14 @@ def _compute_from_config(
         overhead_extreme=cfg.get("overhead_extreme"),
         overhead_ref=cfg.get("overhead_ref"),
         overhead_vol_rule=cfg.get("overhead_vol_rule"),
+        ref_level=cfg.get("ref_level"),
+        level_dir=cfg.get("level_dir"),
+        wick_side=cfg.get("wick_side"),
+        abs_op=cfg.get("abs_op"),
+        abs_level=cfg.get("abs_level"),
+        wick_op=cfg.get("wick_op"),
+        wick_level=cfg.get("wick_level"),
+        swing_dir=cfg.get("swing_dir"),
     )
 
 

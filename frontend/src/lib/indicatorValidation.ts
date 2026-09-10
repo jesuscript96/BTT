@@ -180,6 +180,17 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // Squeeze: es un PORCENTAJE, no un nivel de precio. Lista de destinos
     // vacia = solo se puede enfrentar a una cifra fija (isStandalone()).
     [IndicatorType.SQUEEZE]: [],
+    // Los cuatro nuevos son MEDIDAS, no niveles de precio: una pendiente en
+    // %/min, un R2 de 0 a 1, una distancia en ATR y unos minutos. Enfrentarlos
+    // a otro indicador no significaria nada, asi que van standalone.
+    [IndicatorType.RETRACEMENT]: [],
+    [IndicatorType.ABSORPTION]: [],
+    [IndicatorType.WICK_RATIO]: [],
+    [IndicatorType.ABSORPTION_WICK]: [],
+    [IndicatorType.REG_SLOPE]: [],
+    [IndicatorType.REG_R2]: [],
+    [IndicatorType.ATR_EXTENSION]: [],
+    [IndicatorType.TIME_VS_LEVEL]: [],
     // Current Gap (%): porcentaje vivo vs cierre de ayer — solo cifra fija.
     [IndicatorType.CURRENT_GAP]: [],
     // Gap de APERTURA: porcentaje, como sus dos hermanos. Solo contra una

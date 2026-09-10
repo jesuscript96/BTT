@@ -1080,6 +1080,15 @@ INDICATOR_NAME_MAP = {
     "Darvas": "Darvas Box",
     "Caja Darvas": "Darvas Box",
     "Squeeze": "Squeeze",
+    "Retroceso (%)": "Retroceso (%)",
+    "Absorption": "Absorption",
+    "Wick Ratio": "Wick Ratio",
+    "Absorption + Wick": "Absorption + Wick",
+    "Reg. Slope": "Reg. Slope",
+    "Reg. R2": "Reg. R2",
+    "Reg. R²": "Reg. R2",
+    "ATR Extension": "ATR Extension",
+    "Time vs Level": "Time vs Level",
     "Donchian": "Donchian Channels",
     "Bollinger Bands": "Bollinger Bands",
     "Accumulated Volume": "Accumulated Volume",
@@ -1132,11 +1141,23 @@ def compute_indicator(
     overhead_extreme: str | None = None,
     overhead_ref: str | None = None,
     overhead_vol_rule: str | None = None,
+    # "ATR Extension" y "Time vs Level": contra QUE nivel se mide, y hacia que
+    # lado cuenta el reloj. Los dos van en la CLAVE DE CACHE de abajo.
+    ref_level: str | None = None,
+    level_dir: str | None = None,
+    # "Wick Ratio" y "Absorption + Wick". Los cinco van en la CLAVE DE CACHE.
+    wick_side: str | None = None,
+    abs_op: str | None = None,
+    abs_level: float | None = None,
+    wick_op: str | None = None,
+    wick_level: float | None = None,
+    # "Retroceso (%)": si el impulso que se mide es al alza o a la baja.
+    swing_dir: str | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -1168,6 +1189,9 @@ def compute_indicator(
         session_ref, squeeze_direction, fade_ref,
         overhead_extreme=overhead_extreme, overhead_ref=overhead_ref,
         overhead_vol_rule=overhead_vol_rule,
+        ref_level=ref_level, level_dir=level_dir,
+        wick_side=wick_side, abs_op=abs_op, abs_level=abs_level,
+        wick_op=wick_op, wick_level=wick_level, swing_dir=swing_dir,
     )
 
     if offset and offset != 0:
@@ -1475,6 +1499,331 @@ def _vwap_cross_ref_series(close: pd.Series, vwap_values: np.ndarray) -> pd.Seri
     return pd.Series(ref, index=close.index).ffill()
 
 
+# ---------------------------------------------------------------------------
+# Regresion lineal sobre el PRECIO en ventana de reloj -> pendiente y R2.
+#
+# Por que sobre el precio y no sobre una media: una EMA es un filtro CAUSAL,
+# va retrasada (la pendiente de la EMA(20) cuenta lo que paso hace ~10 velas).
+# La recta de minimos cuadrados sobre el precio suaviza igual pero SIN retraso.
+# De paso sale el R2 del mismo ajuste, que es justo lo que la pendiente sola no
+# dice: si el movimiento es una escalera o una sierra.
+#
+# La ventana es de RELOJ, no de velas — las velas del lago son dispersas y
+# "20 velas atras" es una ventana distinta en cada ticker. Ver el Squeeze.
+# Como el hueco nocturno mide horas, la ventana se vacia sola entre sesiones:
+# no hace falta un reset por dia.
+@njit(cache=True)
+def _rolling_reg_clock(t_min, y, win_min, min_points):
+    n = len(y)
+    slope_out = np.full(n, np.nan)
+    r2_out = np.full(n, np.nan)
+    start = 0
+    for i in range(n):
+        limit = t_min[i] - win_min
+        while start < i and t_min[start] < limit:
+            start += 1
+        cnt = i - start + 1
+        if cnt < min_points:
+            continue
+
+        # x centrado en la ventana: mismo ajuste, mejor condicionamiento.
+        x_mean = 0.0
+        y_mean = 0.0
+        for k in range(start, i + 1):
+            x_mean += t_min[k]
+            y_mean += y[k]
+        x_mean /= cnt
+        y_mean /= cnt
+
+        num = 0.0
+        den = 0.0
+        for k in range(start, i + 1):
+            dx = t_min[k] - x_mean
+            dy = y[k] - y_mean
+            num += dx * dy
+            den += dx * dx
+        if den == 0.0:
+            # Todas las velas en el mismo instante: no hay recta que ajustar.
+            continue
+
+        slope = num / den
+        intercept = y_mean - slope * x_mean
+
+        ss_tot = 0.0
+        ss_res = 0.0
+        for k in range(start, i + 1):
+            pred = slope * t_min[k] + intercept
+            ss_tot += (y[k] - y_mean) * (y[k] - y_mean)
+            ss_res += (y[k] - pred) * (y[k] - pred)
+
+        if ss_tot <= 0.0:
+            # Precio plano: la recta lo explica entero, pendiente 0.
+            r2 = 1.0
+        else:
+            r2 = 1.0 - (ss_res / ss_tot)
+            if r2 < 0.0:
+                r2 = 0.0
+
+        if y_mean > 0.0:
+            # $/min -> %/min sobre el precio medio de la ventana. SIN esto la
+            # pendiente no es comparable entre un ticker de 0,60 $ y uno de 45 $
+            # y ningun umbral fijo valdria para el universo entero.
+            slope_out[i] = slope / y_mean * 100.0
+        r2_out[i] = r2
+    return slope_out, r2_out
+
+
+# Minutos SEGUIDOS que el precio lleva por encima (o por debajo) de un nivel.
+# Es la "aceptacion": un precio que lleva 2 minutos sobre el PM High y otro que
+# lleva 90 son situaciones opuestas, y para una condicion `precio > PMH` son
+# identicas. Se cuenta por RELOJ y se reinicia en cada dia: una racha no puede
+# arrastrarse de una sesion a la siguiente.
+@njit(cache=True)
+def _time_vs_level_streak(t_min, price, level, day_id, above):
+    n = len(price)
+    out = np.full(n, np.nan)
+    t_start = 0.0
+    open_streak = False
+    cur_day = -1
+    for i in range(n):
+        if day_id[i] != cur_day:
+            cur_day = day_id[i]
+            open_streak = False
+        lv = level[i]
+        pr = price[i]
+        if np.isnan(lv) or np.isnan(pr):
+            # Sin referencia no hay medida. NaN, y la racha se cierra.
+            open_streak = False
+            continue
+        if above:
+            cond = pr > lv
+        else:
+            cond = pr < lv
+        if cond:
+            if not open_streak:
+                t_start = t_min[i]
+                open_streak = True
+            out[i] = t_min[i] - t_start
+        else:
+            open_streak = False
+            out[i] = 0.0
+    return out
+
+
+# Absorcion y ratio de mecha, sobre una ventana de RELOJ. Los dos salen del
+# mismo recorrido, asi que se calculan juntos y el indicador elige cual devuelve.
+#
+#   Absorcion = millones de $ negociados por cada 1% de recorrido. ALTO = hace
+#               falta mucho dinero para mover el precio: alguien esta vendiendo
+#               (o comprando) todo lo que le echan. Es la profundidad de mercado
+#               — el inverso de la lambda de Kyle. Se devuelve invertida a
+#               proposito para que se lea natural: "Absorcion > 2" es "hacen
+#               falta mas de 2 millones para moverlo un 1%".
+#   Mecha     = que fraccion del recorrido total se devolvio. Arriba o abajo.
+@njit(cache=True)
+def _absorption_wick_clock(t_min, o, h, l, c, v, win_min):
+    n = len(c)
+    absorp = np.full(n, np.nan)
+    wick_up = np.full(n, np.nan)
+    wick_dn = np.full(n, np.nan)
+    start = 0
+    for i in range(n):
+        limit = t_min[i] - win_min
+        while start < i and t_min[start] < limit:
+            start += 1
+        hi = -1.0e300
+        lo = 1.0e300
+        dv = 0.0
+        sum_rng = 0.0
+        sum_up = 0.0
+        sum_dn = 0.0
+        for k in range(start, i + 1):
+            if h[k] > hi:
+                hi = h[k]
+            if l[k] < lo:
+                lo = l[k]
+            dv += c[k] * v[k]
+            sum_rng += h[k] - l[k]
+            if o[k] > c[k]:
+                body_hi = o[k]
+                body_lo = c[k]
+            else:
+                body_hi = c[k]
+                body_lo = o[k]
+            sum_up += h[k] - body_hi
+            sum_dn += body_lo - l[k]
+
+        # El denominador es el DESPLAZAMIENTO NETO de la ventana, no el rango.
+        # Es la diferencia entre las dos preguntas:
+        #   rango -> "cuanto se movio" ; una vela que sube y vuelve recorrio mucho
+        #   neto  -> "cuanto AVANZO"   ; esa misma vela avanzo cero
+        # La absorcion es justamente "entro mucho dinero y el precio acabo donde
+        # empezo", asi que el neto es el que la detecta. Con el rango, una vela
+        # de absorcion con mecha larga puntuaba BAJO — medido y descartado.
+        # Ademas asi no se pisa con "Wick Ratio": una mide el dinero y la otra
+        # la forma, que es lo que hace util combinarlas.
+        if c[i] > 0.0 and i > start:
+            neto_pct = (c[i] - c[start]) / c[i] * 100.0
+            if neto_pct < 0.0:
+                neto_pct = -neto_pct
+            # Suelo de 0,05%: medio centimo en un ticker de 5 $. Un precio que
+            # vuelve EXACTO a su sitio es absorcion maxima, no un infinito que
+            # rompe las comparaciones.
+            if neto_pct < 0.05:
+                neto_pct = 0.05
+            absorp[i] = (dv / 1.0e6) / neto_pct
+        if sum_rng > 0.0:
+            wick_up[i] = sum_up / sum_rng
+            wick_dn[i] = sum_dn / sum_rng
+    return absorp, wick_up, wick_dn
+
+
+# Profundidad del retroceso: que fraccion del impulso se ha devuelto ya.
+#
+# CAUSAL POR CONSTRUCCION, y por eso no usa deteccion de pivotes. Un pivote
+# clasico mira N barras a la IZQUIERDA y N a la DERECHA, asi que en la barra t
+# no se puede saber todavia que t-N era un pivote: usarlo como senal seria
+# mirar al futuro. Aqui el impulso se define solo con pasado:
+#
+#   maximo  = el mayor high de la ventana hasta AHORA (como "High of Day")
+#   base    = el menor low ANTERIOR a la barra en que se hizo ese maximo
+#   impulso = maximo - base
+#   salida  = (maximo - close) / impulso * 100
+#
+# Se lee: 0 = esta en maximos, 40 = ha devuelto el 40% de lo que subio, 100 =
+# ha vuelto entero a la base del impulso, >100 = la ha perforado. Al hacer un
+# maximo nuevo el impulso se reancla y el retroceso vuelve casi a 0 — igual que
+# "Previous max" se actualiza vela a vela.
+#
+# La ventana se reinicia CADA DIA: un impulso no se arrastra de una sesion a la
+# siguiente. Con `win_min = 0` el impulso es el del dia entero (el caso normal);
+# con un valor > 0 se limita a esos MINUTOS DE RELOJ hacia atras.
+@njit(cache=True)
+def _retracement_clock(t_min, h, l, c, day_id, win_min, up):
+    n = len(c)
+    out = np.full(n, np.nan)
+    cur_day = -1
+    day_start = 0
+    ptr = 0
+    # Estado incremental para el caso de dia entero (win_min == 0): O(n).
+    ext = 0.0        # maximo (o minimo) corrido
+    base = 0.0       # extremo contrario ANTERIOR al extremo corrido
+    run_opp = 0.0    # extremo contrario corrido, candidato a base
+    tiene = False
+
+    for i in range(n):
+        if day_id[i] != cur_day:
+            cur_day = day_id[i]
+            day_start = i
+            ptr = i
+            tiene = False
+
+        if win_min > 0.0:
+            # Ventana de reloj: se recalcula el tramo. `w` es pequeno, asi que
+            # el coste es O(n*w) y no compensa complicarlo con un deque.
+            limit = t_min[i] - win_min
+            while ptr < i and t_min[ptr] < limit:
+                ptr += 1
+            w0 = ptr
+            if w0 < day_start:
+                w0 = day_start
+            idx = w0
+            if up:
+                best = h[w0]
+                for k in range(w0 + 1, i + 1):
+                    if h[k] > best:
+                        best = h[k]
+                        idx = k
+                opp = l[w0]
+                for k in range(w0 + 1, idx + 1):
+                    if l[k] < opp:
+                        opp = l[k]
+                imp = best - opp
+                if imp > 0.0:
+                    out[i] = (best - c[i]) / imp * 100.0
+            else:
+                best = l[w0]
+                for k in range(w0 + 1, i + 1):
+                    if l[k] < best:
+                        best = l[k]
+                        idx = k
+                opp = h[w0]
+                for k in range(w0 + 1, idx + 1):
+                    if h[k] > opp:
+                        opp = h[k]
+                imp = opp - best
+                if imp > 0.0:
+                    out[i] = (c[i] - best) / imp * 100.0
+            continue
+
+        # Dia entero, incremental.
+        if not tiene:
+            ext = h[i] if up else l[i]
+            base = l[i] if up else h[i]
+            run_opp = base
+            tiene = True
+        else:
+            if up:
+                if l[i] < run_opp:
+                    run_opp = l[i]
+                if h[i] > ext:
+                    # Maximo nuevo: la base es el minimo visto ANTES de el.
+                    ext = h[i]
+                    base = run_opp
+            else:
+                if h[i] > run_opp:
+                    run_opp = h[i]
+                if l[i] < ext:
+                    ext = l[i]
+                    base = run_opp
+        if up:
+            imp = ext - base
+            if imp > 0.0:
+                out[i] = (ext - c[i]) / imp * 100.0
+        else:
+            imp = base - ext
+            if imp > 0.0:
+                out[i] = (c[i] - ext) / imp * 100.0
+    return out
+
+
+# Nivel de referencia compartido por "ATR Extension" y "Time vs Level".
+_REF_LEVEL_MAP = {
+    "vwap": "VWAP",
+    "sma": "SMA",
+    "ema": "EMA",
+    "day_open": "Day Open",
+    "rth_open": "RTH Open",
+    "pmh": "PM High",
+    "pml": "PM Low",
+    "prev_close": "Previous Close",
+    "previous_max": "Previous max",
+    "previous_min": "Previous min",
+    "hod": "High of Day",
+    "lod": "Low of Day",
+}
+
+
+def _minutes_axis(df, n):
+    """Eje de tiempo en minutos + id de dia. Devuelve (t_min, day_id, order).
+
+    `order` no es None cuando las velas venian desordenadas: el asof y la
+    ventana deslizante EXIGEN el eje ordenado, y sobre datos desordenados
+    darian resultados arbitrarios sin avisar.
+    """
+    if n == 0 or "timestamp" not in df.columns:
+        return None, None, None
+    ts = pd.to_datetime(df["timestamp"])
+    t_ns = ts.values.astype("datetime64[ns]").astype(np.int64)
+    order = None
+    if n > 1 and not np.all(t_ns[1:] >= t_ns[:-1]):
+        order = np.argsort(t_ns, kind="stable")
+        t_ns = t_ns[order]
+    t_min = t_ns.astype(np.float64) / 6e10
+    day_id = (t_ns // 86_400_000_000_000).astype(np.int64)
+    return t_min, day_id, order
+
+
 def _compute_raw(
     name: str,
     close: pd.Series,
@@ -1508,6 +1857,14 @@ def _compute_raw(
     overhead_extreme: str | None = None,
     overhead_ref: str | None = None,
     overhead_vol_rule: str | None = None,
+    ref_level: str | None = None,
+    level_dir: str | None = None,
+    wick_side: str | None = None,
+    abs_op: str | None = None,
+    abs_level: float | None = None,
+    wick_op: str | None = None,
+    wick_level: float | None = None,
+    swing_dir: str | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -2098,6 +2455,175 @@ def _compute_raw(
             # lea igual en las dos direcciones: "Squeeze > 10" es "se ha
             # movido mas de un 10% en la direccion elegida".
             out = -out
+        return pd.Series(out, index=close.index)
+
+    if name in ("Reg. Slope", "Reg. R2"):
+        # Recta de minimos cuadrados sobre el PRECIO de los ultimos
+        # `range_minutes` MINUTOS (de reloj, no de velas).
+        #
+        #   Reg. Slope -> pendiente en % por minuto (normalizada por el precio
+        #                 medio de la ventana, asi que 0,25 significa lo mismo
+        #                 en un ticker de 0,60 $ que en uno de 45 $).
+        #   Reg. R2    -> de 0 a 1: que parte del movimiento explica la recta.
+        #
+        # Las dos salen del MISMO ajuste. La pendiente dice cuanto se mueve;
+        # el R2 dice si se puede uno montar encima. Dos series que suben lo
+        # mismo pueden ser una escalera (R2 ~ 0,99) o una sierra (R2 ~ 0,15).
+        #
+        # NaN mientras la ventana no tenga al menos 3 velas: con 2 puntos la
+        # recta pasa por los dos y el R2 seria 1 siempre — un 1 que no
+        # significa nada.
+        win = int(range_minutes) if range_minutes else 20
+        if win < 1:
+            win = 1
+        c_vals = close.values.astype(np.float64)
+        n = len(c_vals)
+        out = np.full(n, np.nan)
+        t_min, _day_id, order = _minutes_axis(df, n)
+        if t_min is not None:
+            c_ord = c_vals[order] if order is not None else c_vals
+            slope_arr, r2_arr = _rolling_reg_clock(t_min, c_ord, float(win), 3)
+            res = slope_arr if name == "Reg. Slope" else r2_arr
+            if order is not None:
+                out[order] = res
+            else:
+                out = res
+        return pd.Series(out, index=close.index)
+
+    if name == "Retroceso (%)":
+        # Ver `_retracement_clock` para la definicion y por que es causal.
+        win = float(range_minutes) if range_minutes else 0.0
+        if win < 0.0:
+            win = 0.0
+        n = len(close)
+        out = np.full(n, np.nan)
+        t_min, day_id, order = _minutes_axis(df, n)
+        if t_min is not None:
+            h_v = high.values.astype(np.float64)
+            l_v = low.values.astype(np.float64)
+            c_v = close.values.astype(np.float64)
+            if order is not None:
+                h_v, l_v, c_v = h_v[order], l_v[order], c_v[order]
+            up = str(swing_dir or "up").lower() != "down"
+            res = _retracement_clock(t_min, h_v, l_v, c_v, day_id, win, up)
+            if order is not None:
+                out[order] = res
+            else:
+                out = res
+        return pd.Series(out, index=close.index)
+
+    if name in ("Absorption", "Wick Ratio", "Absorption + Wick"):
+        # Los tres salen del MISMO recorrido de la ventana de reloj.
+        #
+        # "Absorption": millones de dolares negociados por cada 1% de recorrido.
+        #   Se devuelve INVERTIDA respecto a la lambda de Kyle para que la
+        #   condicion se lea natural: mas alto = mas dificil de mover = alguien
+        #   esta absorbiendo. "Absorption > 2" es "hicieron falta mas de 2
+        #   millones para moverlo un 1%".
+        #
+        # "Wick Ratio": que fraccion del recorrido total de la ventana se
+        #   devolvio en forma de mecha, arriba (`wick_side="upper"`) o abajo.
+        #   De 0 a 1. 0,5 = la mitad de lo que se recorrio se rechazo.
+        #
+        # "Absorption + Wick": 1 si se cumplen LAS DOS condiciones de umbral,
+        #   0 si no, NaN si falta cualquiera de las dos medidas. Existe para
+        #   poder pedir "mucho dinero Y mucho rechazo" en UNA condicion — que
+        #   es cuando la lectura significa algo. Por separado, cada una tiene
+        #   una interpretacion distinta segun como este la otra.
+        win = int(range_minutes) if range_minutes else 5
+        if win < 1:
+            win = 1
+        n = len(close)
+        out = np.full(n, np.nan)
+        t_min, _day_id, order = _minutes_axis(df, n)
+        if t_min is not None:
+            o_v = open_.values.astype(np.float64)
+            h_v = high.values.astype(np.float64)
+            l_v = low.values.astype(np.float64)
+            c_v = close.values.astype(np.float64)
+            v_v = volume.values.astype(np.float64)
+            if order is not None:
+                o_v, h_v, l_v, c_v, v_v = (o_v[order], h_v[order], l_v[order],
+                                           c_v[order], v_v[order])
+            absorp, wick_up, wick_dn = _absorption_wick_clock(
+                t_min, o_v, h_v, l_v, c_v, v_v, float(win))
+            wick = wick_dn if str(wick_side or "upper").lower() == "lower" else wick_up
+
+            if name == "Absorption":
+                res = absorp
+            elif name == "Wick Ratio":
+                res = wick
+            else:
+                a_lvl = float(abs_level) if abs_level is not None else 2.5
+                w_lvl = float(wick_level) if wick_level is not None else 0.4
+                a_gt = str(abs_op or "gt").lower() != "lt"
+                w_gt = str(wick_op or "gt").lower() != "lt"
+                ok_a = absorp > a_lvl if a_gt else absorp < a_lvl
+                ok_w = wick > w_lvl if w_gt else wick < w_lvl
+                res = np.where(np.isnan(absorp) | np.isnan(wick), np.nan,
+                               np.where(ok_a & ok_w, 1.0, 0.0))
+            if order is not None:
+                out[order] = res
+            else:
+                out = res
+        return pd.Series(out, index=close.index)
+
+    if name in ("ATR Extension", "Time vs Level"):
+        # Los dos miden contra un NIVEL de referencia (`ref_level`), y los dos
+        # lo resuelven llamando al indicador que ya existe para ese nivel: no
+        # hay una segunda formula del VWAP ni del PM High que pueda divergir.
+        #
+        # El periodo de la media de referencia (si `ref_level` es sma/ema) sale
+        # SIEMPRE de `period2`, nunca de `period` — en "ATR Extension" `period`
+        # es el del ATR.
+        ref_key = str(ref_level or "vwap").lower()
+        ref_name = normalize_indicator_name(_REF_LEVEL_MAP.get(ref_key, "VWAP"))
+        ref_period = int(period2) if period2 else 20
+        level = _compute_raw(
+            ref_name, close, high, low, open_, volume,
+            ref_period, None, None, std_dev, None,
+            days_lookback, time_hour, time_minute, time_condition,
+            band_line, orb_minutes, ap_session, ds, df,
+            range_minutes=range_minutes,
+            pivot_window=pivot_window, tri_lookback=tri_lookback,
+            slope_tolerance=slope_tolerance, min_r_squared=min_r_squared,
+            min_pivots=min_pivots, session_ref=session_ref,
+            squeeze_direction=squeeze_direction, fade_ref=fade_ref,
+        )
+        lvl_vals = np.asarray(level, dtype=np.float64)
+
+        if name == "ATR Extension":
+            # Cuantos ATR separan al precio de su referencia. Positivo = por
+            # encima. Es la version comparable de "esta un 8% sobre el VWAP":
+            # un 8% es una barbaridad en un ticker que se mueve un 2% al dia y
+            # es ruido en uno que se mueve un 30%, asi que un umbral en % no
+            # vale para el universo entero y uno en ATR si.
+            atr_vals = _atr(
+                high.values.astype(np.float64), low.values.astype(np.float64),
+                close.values.astype(np.float64), period or 14,
+            )
+            atr_vals = np.asarray(atr_vals, dtype=np.float64)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                out = np.where(atr_vals > 0, (close.values.astype(np.float64) - lvl_vals) / atr_vals, np.nan)
+            return pd.Series(out, index=close.index)
+
+        # "Time vs Level": minutos SEGUIDOS por encima (o por debajo) del nivel.
+        # 0 cuando la condicion no se cumple; NaN mientras el nivel no exista
+        # todavia (antes de las 09:30 no hay RTH Open, y comparar contra NaN da
+        # False: sin referencia, no hay senal).
+        n = len(close)
+        out = np.full(n, np.nan)
+        t_min, day_id, order = _minutes_axis(df, n)
+        if t_min is not None:
+            pr = close.values.astype(np.float64)
+            pr_ord = pr[order] if order is not None else pr
+            lv_ord = lvl_vals[order] if order is not None else lvl_vals
+            above = str(level_dir or "above").lower() != "below"
+            res = _time_vs_level_streak(t_min, pr_ord, lv_ord, day_id, above)
+            if order is not None:
+                out[order] = res
+            else:
+                out = res
         return pd.Series(out, index=close.index)
 
     if name == "Range of time" or name == "Range of Time":

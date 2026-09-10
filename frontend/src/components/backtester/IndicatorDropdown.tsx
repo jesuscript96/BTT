@@ -59,6 +59,13 @@ const INDICATOR_COLORS: Record<string, { bg: string; text: string; accent: strin
   ACCUM_DOLLAR_VOLUME: { bg: "bg-sky-50", text: "text-sky-800", accent: "text-sky-600", border: "border-sky-200" },
   DOLLAR_VOLUME: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
   SQUEEZE: { bg: "bg-fuchsia-50", text: "text-fuchsia-800", accent: "text-fuchsia-600", border: "border-fuchsia-200" },
+  // Los dos salen del MISMO ajuste, asi que comparten familia de color.
+  ABSORPTION: { bg: "bg-orange-50", text: "text-orange-800", accent: "text-orange-600", border: "border-orange-200" },
+  WICK_RATIO_UP: { bg: "bg-rose-50", text: "text-rose-800", accent: "text-rose-600", border: "border-rose-200" },
+  WICK_RATIO_DOWN: { bg: "bg-green-50", text: "text-green-800", accent: "text-green-600", border: "border-green-200" },
+  REG_SLOPE: { bg: "bg-violet-50", text: "text-violet-800", accent: "text-violet-600", border: "border-violet-200" },
+  REG_R2: { bg: "bg-violet-50", text: "text-violet-800", accent: "text-violet-600", border: "border-violet-200" },
+  ATR_EXTENSION_VWAP: { bg: "bg-teal-50", text: "text-teal-800", accent: "text-teal-600", border: "border-teal-200" },
   HEIKIN_ASHI: { bg: "bg-rose-50", text: "text-rose-800", accent: "text-rose-600", border: "border-rose-200" },
   // Los fades comparten familia de color (naranja los de sesion, rojo los
   // vivos) para que se distingan de un vistazo en el desplegable.
