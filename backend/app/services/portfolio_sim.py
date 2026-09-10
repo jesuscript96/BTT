@@ -281,6 +281,15 @@ def simulate(
     # y dentro de la explosion 5x mas estrecho. Ademas no era un stop por ATR:
     # era una constante diaria, igual entrases a las 07:00 o a las 09:31.
     atrs: np.ndarray | None = None,
+    # RESPALDO DEL STOP POR ATR (2026-09-10). Durante las primeras barras del dia
+    # el ATR es NaN porque le faltan velas para su periodo. Sin respaldo NO SE
+    # ENTRA en ese tramo (sin ATR no se sabe cuanto se mueve esto); con respaldo
+    # se usa un stop en % del precio de entrada SOLO en esas barras.
+    #
+    # El respaldo produce un `stop_loss_price` normal, asi que Cangrejo A/B, el
+    # techo hibrido y `size_by_sl` siguen aplicandose IGUAL que con el ATR: los
+    # tres consumen ese precio, no la fraccion.
+    hs_atr_fallback_pct: float | None = None,
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
@@ -1326,16 +1335,19 @@ def simulate(
                     except (TypeError, ValueError):
                         k_atr = 0.0
                     if not (a_val > 0.0) or k_atr <= 0.0:
-                        # NO SE ENTRA. Durante las primeras barras del dia el
-                        # ATR todavia es NaN (le faltan velas para su periodo) y
-                        # sin ATR no se sabe cuanto se mueve esto: poner un stop
-                        # inventado ahi es justo lo que hacia la version vieja.
-                        # Misma politica que el nivel estructural invalidado.
-                        equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
-                        continue
-                    stop_loss_price = (entry_price - k_atr * a_val) if is_long \
-                        else (entry_price + k_atr * a_val)
+                        # Sin ATR (las primeras barras del dia). Con respaldo se
+                        # entra con un stop en % del precio; sin el, no se entra:
+                        # inventarse un stop es lo que hacia la version vieja.
+                        fb = float(hs_atr_fallback_pct or 0.0)
+                        if fb <= 0.0:
+                            equity[i] = init_cash + realized_pnl
+                            prev_signal = current_signal
+                            continue
+                        stop_loss_price = (entry_price * (1.0 - fb / 100.0)) if is_long \
+                            else (entry_price * (1.0 + fb / 100.0))
+                    else:
+                        stop_loss_price = (entry_price - k_atr * a_val) if is_long \
+                            else (entry_price + k_atr * a_val)
                     if not _sl_side_valid(stop_loss_price, entry_price, is_long):
                         # Solo puede pasar si el ATR es tan grande que el stop de
                         # un largo se va por debajo de cero.

@@ -268,10 +268,18 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
         except (TypeError, ValueError, IndexError, KeyError):
             return None
         if not (a_val > 0.0) or k_atr <= 0.0:
-            # Sin ATR (las primeras barras del dia) NO hay stop, igual que en el
-            # simulador: alli la entrada directamente no se hace.
-            return None
-        stop = (precio - k_atr * a_val) if es_largo else (precio + k_atr * a_val)
+            # Sin ATR (las primeras barras del dia): respaldo en % si la
+            # estrategia lo lleva, y si no None — alli el simulador tampoco
+            # entra. Paridad con la rama de `portfolio_sim`.
+            try:
+                fb = float(hs.get("atr_fallback_pct") or 0.0)
+            except (TypeError, ValueError):
+                fb = 0.0
+            if fb <= 0.0:
+                return None
+            stop = (precio * (1 - fb / 100.0)) if es_largo else (precio * (1 + fb / 100.0))
+        else:
+            stop = (precio - k_atr * a_val) if es_largo else (precio + k_atr * a_val)
     else:
         # Porcentaje / importe fijo: el motor los deja en `sl_stop` como
         # fraccion y se aplican sobre el precio de entrada.

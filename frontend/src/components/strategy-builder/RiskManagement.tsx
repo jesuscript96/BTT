@@ -333,6 +333,56 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                     </span>
                                 </div>
                             )}
+                            {/* RESPALDO DEL ATR. Durante las primeras velas del dia el
+                                ATR(14) todavia no existe. Vacio o 0 = no se entra en ese
+                                tramo; con un numero, ahi se usa un stop en % del precio.
+                                El respaldo pasa por los MISMOS topes que el ATR (Cangrejo
+                                A y B, hibrido y «Shares por SL»), porque todos miran el
+                                precio del stop y no la fraccion. */}
+                            {risk.hard_stop.type === RiskType.ATR && (
+                                <div className="relative" style={{ width: '150px' }}>
+                                    <input
+                                        type="number"
+                                        step="0.5"
+                                        min="0"
+                                        placeholder="sin respaldo"
+                                        value={risk.hard_stop.atr_fallback_pct ?? ''}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'atr_fallback_pct', e.target.value === '' ? '' : e.target.value)}
+                                        onBlur={() => {
+                                            const val = parseFloat(String(risk.hard_stop.atr_fallback_pct));
+                                            updateRiskSetting('hard_stop', 'atr_fallback_pct', isNaN(val) ? undefined : val);
+                                        }}
+                                        onFocus={(e) => e.target.select()}
+                                        title={
+                                            "Stop de respaldo para las primeras velas del dia, cuando el ATR(14) " +
+                                            "todavia no existe (le faltan velas).\n\n" +
+                                            "Vacio o 0: en ese tramo NO se entra. Es lo mas conservador — sin ATR " +
+                                            "no se sabe cuanto se mueve el ticker.\n" +
+                                            "Con un numero: ahi se usa un stop a ese % del precio de entrada, y en " +
+                                            "cuanto el ATR existe se vuelve a el.\n\n" +
+                                            "El respaldo respeta los mismos topes que el ATR: Estilo Cangrejo (A y B), " +
+                                            "stop hibrido y «Shares por SL»."
+                                        }
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px dashed var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 58px 7px 10px',
+                                            fontSize: 12,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            width: '100%',
+                                            height: '36px',
+                                            textAlign: 'center',
+                                        }}
+                                    />
+                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                        % SIN ATR
+                                    </span>
+                                </div>
+                            )}
                         </div>
 
 

@@ -304,3 +304,115 @@ def test_atr_cangrejo_modo_b_topa_el_tamano():
     t = _sim_atr(size_by_sl=True, cangrejo_active=True,
                  cangrejo_max_loss_at_sl_pct=0.01)
     assert t["size"] == pytest.approx(25.0)
+
+
+# ══ Respaldo del stop por ATR ═════════════════════════════════════════════
+#
+# Durante las primeras velas del día el ATR(14) no existe todavía. Sin respaldo
+# no se entra; con `atr_fallback_pct` se entra con un stop en % del precio SOLO
+# en ese tramo. Lo que se guarda aquí es que el respaldo NO se salta ninguno de
+# los topes: pasa por Cangrejo A y B, por el híbrido y por «Shares por SL»
+# exactamente igual que el ATR, porque los tres miran el PRECIO del stop y no
+# la fracción.
+FB_PCT = 5.0     # respaldo del 5 % -> stop de un corto en 105, distancia 5
+
+
+def _sim_sin_atr(**kw):
+    """El simulador con el ATR en NaN, o sea en el tramo del respaldo."""
+    close = np.full(N, PRECIO)
+    entries = np.zeros(N, dtype=bool)
+    entries[1] = True
+    res = simulate(
+        close=close, open_=close.copy(), high=close * 1.001, low=close * 0.999,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0,
+        risk_r=300.0, risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="ATR Multiplier", hs_value=K_ATR,
+        atrs=np.full(N, np.nan), **kw,
+    )
+    return res["trades"][0] if res["trades"] else None
+
+
+def test_respaldo_sin_el_no_se_entra_con_el_si():
+    assert _sim_sin_atr(size_by_sl=True) is None
+    t = _sim_sin_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT)
+    assert t is not None
+    assert t["stop_loss"] == pytest.approx(PRECIO * (1 + FB_PCT / 100.0))   # 105
+
+
+def test_respaldo_por_distancia_al_stop():
+    """riesgo / distancia = 300 / 5 = 60 acciones."""
+    t = _sim_sin_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT)
+    assert t["size"] == pytest.approx(60.0)
+
+
+def test_respaldo_por_valor_de_mercado():
+    """Sin «Shares por SL» se dimensiona por precio, como cualquier otro stop."""
+    t = _sim_sin_atr(size_by_sl=False, hs_atr_fallback_pct=FB_PCT)
+    assert t["size"] == pytest.approx(3.0)          # 300 $ / 100 $
+
+
+def test_respaldo_pasa_por_el_hibrido():
+    """(0,05 % x 1.000.000) / 50 % = 1.000 $ -> 10 acciones, que topa las 60."""
+    t = _sim_sin_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT,
+                     hybrid_stop=True, hybrid_black_swan_pct=50.0,
+                     hybrid_max_loss_pct=0.05)
+    assert t["size"] == pytest.approx(10.0)
+
+
+def test_respaldo_pasa_por_cangrejo_modo_a():
+    """Modo A: el stop del respaldo (5 %) se aprieta al 3 % y el tamaño sube."""
+    t = _sim_sin_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT,
+                     cangrejo_active=True, cangrejo_max_sl_dist_pct=3.0)
+    assert t["stop_loss"] == pytest.approx(103.0)
+    assert t["size"] == pytest.approx(100.0)        # 300 / 3
+
+
+def test_respaldo_pasa_por_cangrejo_modo_b():
+    """Modo B: 0,01 % de 1.000.000 = 100 $ entre una distancia de 5 -> 20."""
+    t = _sim_sin_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT,
+                     cangrejo_active=True, cangrejo_max_loss_at_sl_pct=0.01)
+    assert t["size"] == pytest.approx(20.0)
+
+
+def test_respaldo_paridad_python_jit():
+    """El kernel tiene su propia copia de la rama: si divergen, el backtest da
+    una cosa u otra según BACKTEST_NUMBA_SIM, sin avisar."""
+    from app.services.sim_dispatch import simulate_jit
+    close = np.full(N, PRECIO)
+    entries = np.zeros(N, dtype=bool)
+    entries[1] = True
+    base = dict(
+        close=close, open_=close.copy(), high=close * 1.001, low=close * 0.999,
+        entries=entries, exits=np.zeros(N, dtype=bool), direction="shortonly",
+        init_cash=1_000_000.0, risk_r=300.0, risk_type="FIXED",
+        look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="ATR Multiplier", hs_value=K_ATR, atrs=np.full(N, np.nan),
+        hs_atr_fallback_pct=FB_PCT, size_by_sl=True,
+        cangrejo_active=True, cangrejo_max_sl_dist_pct=3.0,
+    )
+    t_py = simulate(**base)["trades"][0]
+    t_jit = simulate_jit(**base)["trades"][0]
+    for campo in ("stop_loss", "size", "entry_price"):
+        assert t_py[campo] == pytest.approx(t_jit[campo]), campo
+
+
+def test_respaldo_el_aviso_dice_lo_mismo_que_el_motor():
+    """Y el bot, que resuelve su stop por otro camino."""
+    sim = _sim_sin_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT)
+    sdef = _sdef("ATR Multiplier", K_ATR)
+    sdef["risk_management"]["hard_stop"]["atr_fallback_pct"] = FB_PCT
+    stop = stop_estimado(sdef, _frame_con_atr(float("nan")), 0, PRECIO,
+                         es_largo=False, sl_stop=None)
+    assert stop == pytest.approx(sim["stop_loss"])
+    assert calcular_acciones(300.0, PRECIO, stop, True) == pytest.approx(sim["size"])
+
+
+def test_respaldo_solo_actua_donde_falta_el_atr():
+    """Con ATR válido manda el ATR, no el respaldo: 2 x 2 = 4 de distancia
+    (75 acciones), no el 5 % del respaldo (60)."""
+    t = _sim_atr(size_by_sl=True, hs_atr_fallback_pct=FB_PCT)
+    assert t["stop_loss"] == pytest.approx(PRECIO + K_ATR * ATR_BARRA)
+    assert t["size"] == pytest.approx(75.0)

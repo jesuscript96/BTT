@@ -115,7 +115,7 @@ def _core_simulate_jit(
     # portfolio_sim.py — si esto no estuviera aqui, con BACKTEST_NUMBA_SIM=1 el
     # stop nuevo se ignoraria EN SILENCIO y el backtest daria otra cosa segun la
     # variable de entorno.
-    has_atrs, atrs, atr_mult,
+    has_atrs, atrs, atr_mult, atr_fallback_pct,
     has_timestamps, timestamps,
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
@@ -752,13 +752,17 @@ def _core_simulate_jit(
                     # portfolio_sim.py, incluido no entrar cuando no hay ATR.
                     a_val = atrs[i] if has_atrs else np.nan
                     if (not (a_val > 0.0)) or atr_mult <= 0.0:
-                        # Las primeras barras del dia el ATR es NaN (le faltan
-                        # velas). Sin ATR no se entra: inventarse uno es lo que
-                        # hacia la version vieja.
-                        equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
-                        continue
-                    if is_long:
+                        # Sin ATR: respaldo en % si lo hay, y si no no se entra.
+                        # Paridad exacta con portfolio_sim.py.
+                        if atr_fallback_pct <= 0.0:
+                            equity[i] = init_cash + realized_pnl
+                            prev_signal = current_signal
+                            continue
+                        if is_long:
+                            stop_loss_price = entry_price * (1.0 - atr_fallback_pct / 100.0)
+                        else:
+                            stop_loss_price = entry_price * (1.0 + atr_fallback_pct / 100.0)
+                    elif is_long:
                         stop_loss_price = entry_price - atr_mult * a_val
                     else:
                         stop_loss_price = entry_price + atr_mult * a_val

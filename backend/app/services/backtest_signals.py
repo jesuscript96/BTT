@@ -1089,6 +1089,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 prev_highs=sig["arrays"].get("prev_high"),
                 atrs=(atr_para_stop(sig["arrays"])
                       if hs.get("type") == "ATR Multiplier" else None),
+                hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
                 prev_lows=sig["arrays"].get("prev_low"),
                 timestamps=sig["timestamps_arr"],
                 elapsed_limit=elapsed_limit,

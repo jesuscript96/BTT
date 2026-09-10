@@ -303,6 +303,13 @@ export interface RiskSettings {
     // Con true, el respaldo rescata TAMBIEN la primera entrada con el nivel
     // invalidado (no solo reentradas).
     fallback_first_entry?: boolean;
+    // SOLO con type = "ATR Multiplier". Respaldo en % del precio de entrada
+    // para las primeras velas del dia, cuando el ATR(14) todavia no existe
+    // (le faltan velas). Ausente o 0 = en ese tramo NO se entra.
+    //
+    // El respaldo produce un precio de stop normal, asi que pasa por los
+    // MISMOS topes que el ATR: Cangrejo A y B, hibrido y `size_by_sl`.
+    atr_fallback_pct?: number;
 }
 
 export interface PartialTakeProfit {

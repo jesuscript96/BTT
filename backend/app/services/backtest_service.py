@@ -1139,6 +1139,7 @@ def run_backtest(
                 # STOP POR ATR: se calcula SOLO si la estrategia lo pide, para
                 # no pagarlo en todos los ticker-dias. Periodo 14, como antes.
                 atrs=(atr_para_stop(arrays) if hs_type == "ATR Multiplier" else None),
+                hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
                 prev_lows=arrays.get("prev_low"),
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,
