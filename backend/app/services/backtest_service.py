@@ -17,6 +17,7 @@ import time
 import numpy as np
 import pandas as pd
 
+from app.services.portfolio_sim import atr_para_stop
 from app.services.strategy_engine import (
     translate_strategy, _parse_risk_management, compile_strategy_def,
     get_lowest_timeframe_mins, apply_entry_fill_window,
@@ -1135,6 +1136,9 @@ def run_backtest(
                 pm_highs=arrays.get("pm_high"),
                 pm_lows=arrays.get("pm_low"),
                 prev_highs=arrays.get("prev_high"),
+                # STOP POR ATR: se calcula SOLO si la estrategia lo pide, para
+                # no pagarlo en todos los ticker-dias. Periodo 14, como antes.
+                atrs=(atr_para_stop(arrays) if hs_type == "ATR Multiplier" else None),
                 prev_lows=arrays.get("prev_low"),
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,

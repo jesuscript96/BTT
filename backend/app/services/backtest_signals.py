@@ -30,6 +30,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed, wait, FIRST_CO
 import numpy as np
 import pandas as pd
 
+from app.services.portfolio_sim import atr_para_stop
 from app.services.strategy_engine import (
     translate_strategy, translate_strategy_native, get_lowest_timeframe_mins,
     apply_entry_fill_window,
@@ -1086,6 +1087,8 @@ def simulate_and_accumulate(signals_sorted, params):
                 pm_highs=sig["arrays"].get("pm_high"),
                 pm_lows=sig["arrays"].get("pm_low"),
                 prev_highs=sig["arrays"].get("prev_high"),
+                atrs=(atr_para_stop(sig["arrays"])
+                      if hs.get("type") == "ATR Multiplier" else None),
                 prev_lows=sig["arrays"].get("prev_low"),
                 timestamps=sig["timestamps_arr"],
                 elapsed_limit=elapsed_limit,

@@ -23,6 +23,17 @@ import numpy as np
 import pandas as pd
 
 
+
+
+def _atr_barra(day_df):
+    """ATR por barra del dia, con la misma cuenta que usa el simulador."""
+    from app.services.portfolio_sim import atr_para_stop
+    return atr_para_stop({
+        "high": day_df["high"].values,
+        "low": day_df["low"].values,
+        "close": day_df["close"].values,
+    })
+
 def build_market_frame(
     day_df: pd.DataFrame,
     ticker: str,
@@ -107,4 +118,10 @@ def build_market_arrays(
         "prev_low": prev_lows_vals,
         "prev_close": prev_closes_vals,
         "yesterday_open": yest_opens_vals,
+        # ATR por barra, para el STOP POR ATR (2026-09-10). El bot lo necesita
+        # por la misma razon que necesita hod/lod: el nivel del stop se resuelve
+        # EN LA BARRA, no con una fraccion fija. Se calcula con la MISMA funcion
+        # que el backtest (`atr_para_stop`) — si cada uno tuviera la suya, el
+        # aviso y el backtest podrian separarse sin que nada avisara.
+        "atr": _atr_barra(day_df),
     }

@@ -60,14 +60,15 @@ def _sdef(tipo, valor, size_by_sl=True, **rm_extra):
 
 # ══ Cada tipo de stop, con «Shares por SL» ════════════════════════════════
 # `sl_stop` es la FRACCIÓN que `translate_strategy` calcula para cada tipo; el
-# simulador la aplica igual venga de un porcentaje, de un importe fijo o del
-# ATR, así que basta con recorrer valores distintos para cubrir los tres.
+# simulador la aplica igual venga de un porcentaje o de un importe fijo, así que
+# basta con recorrer valores distintos para cubrir los dos.
 @pytest.mark.parametrize("tipo,valor,sl_stop", [
     ("Percentage", 25, 0.25),        # el de «RTH prueba 1»
     ("Percentage", 2, 0.02),
     ("Percentage", 60, 0.60),
     ("Fixed Amount", 5, 0.05),       # 5 $ sobre un primer cierre de 100
-    ("ATR Multiplier", 2, 0.031),    # ATR medio x multiplicador, ya en fracción
+    # El ATR YA NO entra aquí: desde el 10-sep-2026 no se colapsa a fracción,
+    # se resuelve como NIVEL con el ATR de la barra. Tiene sus tests abajo.
 ])
 def test_por_distancia_al_stop(tipo, valor, sl_stop):
     sim = _tamano_del_simulador(sl_stop=sl_stop, size_by_sl=True)
@@ -180,3 +181,126 @@ def test_sin_stop_resoluble_no_se_inventa_uno():
     falso, que acabaría en un tamaño falso."""
     assert stop_estimado(_sdef("Percentage", 25), None, 0, PRECIO, False, None) is None
     assert stop_estimado(_sdef("Percentage", 25), None, 0, PRECIO, False, 0.0) is None
+
+
+# ══ Stop por ATR: es un NIVEL, no una fracción ════════════════════════════
+#
+# EL FALLO QUE ARREGLA ESTO (10-sep-2026). El «ATR Multiplier» calculaba su
+# `sl_stop` como `media del ATR del DÍA ENTERO / primer cierre del día`. Esa
+# media incluye barras POSTERIORES a la entrada, así que miraba al futuro; y
+# además daba la misma fracción a todas las entradas del día. Medido sobre un
+# día que explota por la tarde: una entrada de la mañana recibía un stop 4,6x
+# más ancho del que le tocaba, y dentro de la explosión 5x más estrecho.
+#
+# Ahora el nivel se resuelve en la barra, `entry -/+ k x ATR[i]`, y por eso el
+# ATR viaja al simulador como ARRAY y al bot como columna del frame. Aquí se
+# cruzan las dos vías, que es lo único que evita que se separen en silencio.
+ATR_BARRA = 2.0
+K_ATR = 2.0
+
+
+def _frame_con_atr(atr_val=ATR_BARRA):
+    import pandas as pd
+    return pd.DataFrame({"hod": [PRECIO], "lod": [PRECIO], "pm_high": [PRECIO],
+                         "pm_low": [PRECIO], "prev_high": [0.0], "prev_low": [0.0],
+                         "atr": [atr_val]})
+
+
+def _sim_atr(atr_val=ATR_BARRA, **kw):
+    """El simulador con el stop por ATR. Devuelve el trade entero."""
+    close = np.full(N, PRECIO)
+    entries = np.zeros(N, dtype=bool)
+    entries[1] = True
+    res = simulate(
+        close=close, open_=close.copy(), high=close * 1.001, low=close * 0.999,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0,
+        risk_r=300.0, risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="ATR Multiplier", hs_value=K_ATR,
+        atrs=np.full(N, atr_val), **kw,
+    )
+    return res["trades"][0] if res["trades"] else None
+
+
+@pytest.mark.parametrize("atr_val", [0.5, 2.0, 6.0])
+def test_atr_el_nivel_coincide_en_las_dos_vias(atr_val):
+    """El stop del aviso y el del simulador son el mismo precio."""
+    t = _sim_atr(atr_val, size_by_sl=True)
+    bot = stop_estimado(_sdef("ATR Multiplier", K_ATR), _frame_con_atr(atr_val),
+                        0, PRECIO, es_largo=False, sl_stop=None)
+    assert bot == pytest.approx(PRECIO + K_ATR * atr_val)
+    assert bot == pytest.approx(t["stop_loss"])
+
+
+@pytest.mark.parametrize("atr_val", [0.5, 2.0, 6.0])
+def test_atr_el_tamano_coincide_en_las_dos_vias(atr_val):
+    """Y con «Shares por SL», el mismo número de acciones."""
+    sim = _sim_atr(atr_val, size_by_sl=True)["size"]
+    stop = stop_estimado(_sdef("ATR Multiplier", K_ATR), _frame_con_atr(atr_val),
+                         0, PRECIO, es_largo=False, sl_stop=None)
+    bot = calcular_acciones(300.0, PRECIO, stop, True)
+    assert bot == pytest.approx(sim)
+    assert bot == pytest.approx(300.0 / (K_ATR * atr_val))
+
+
+def test_atr_el_stop_se_mueve_con_el_atr():
+    """Lo que la versión vieja NO hacía: dos ATR distintos, dos stops distintos.
+    Antes las dos entradas del día compartían la misma fracción."""
+    flojo = _sim_atr(0.5, size_by_sl=True)
+    fuerte = _sim_atr(6.0, size_by_sl=True)
+    assert flojo["stop_loss"] != fuerte["stop_loss"]
+    assert flojo["size"] > fuerte["size"]        # stop más cerca, más acciones
+
+
+def test_atr_sin_atr_no_se_entra():
+    """Durante las primeras barras del día el ATR es NaN. Sin ATR no se sabe
+    cuánto se mueve esto: no se entra, ni en el motor ni en el aviso."""
+    close = np.full(N, PRECIO)
+    entries = np.zeros(N, dtype=bool)
+    entries[1] = True
+    res = simulate(
+        close=close, open_=close.copy(), high=close * 1.001, low=close * 0.999,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0, risk_r=300.0,
+        risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="ATR Multiplier", hs_value=K_ATR,
+        atrs=np.full(N, np.nan), size_by_sl=True,
+    )
+    assert res["trades"] == []
+    import pandas as pd
+    frame = _frame_con_atr(float("nan"))
+    assert stop_estimado(_sdef("ATR Multiplier", K_ATR), frame, 0, PRECIO,
+                         es_largo=False, sl_stop=None) is None
+
+
+def test_atr_hibrido_recorta_igual_en_las_dos_vias():
+    """El techo híbrido muerde sobre el tamaño que salió del ATR."""
+    sim = _sim_atr(size_by_sl=True, hybrid_stop=True,
+                   hybrid_black_swan_pct=50.0, hybrid_max_loss_pct=0.05)["size"]
+    stop = stop_estimado(_sdef("ATR Multiplier", K_ATR, hybrid_stop=True,
+                               hybrid_black_swan_pct=50.0,
+                               hybrid_max_loss_pct=0.05),
+                         _frame_con_atr(), 0, PRECIO, es_largo=False, sl_stop=None)
+    bot = calcular_acciones(300.0, PRECIO, stop, True,
+                            hibrido={"black_swan_pct": 50.0, "max_loss_pct": 0.05,
+                                     "capital": 1_000_000.0})
+    assert bot == pytest.approx(sim)
+
+
+def test_atr_cangrejo_modo_a_aprieta_el_stop():
+    """Modo A: el stop nunca a más del X % del entry. Con ATR 6 el stop iría a
+    112 (12 %); con tope del 3 % pasa a 103."""
+    t = _sim_atr(6.0, size_by_sl=True, cangrejo_active=True,
+                 cangrejo_max_sl_dist_pct=3.0)
+    assert t["stop_loss"] == pytest.approx(103.0)
+    assert t["size"] == pytest.approx(300.0 / 3.0)
+
+
+def test_atr_cangrejo_modo_b_topa_el_tamano():
+    """Modo B: el SL nunca cuesta más del X % de la cuenta. Distancia 4 $ y
+    0,01 % de 1.000.000 = 100 $ -> 25 acciones, que topa las 75."""
+    t = _sim_atr(size_by_sl=True, cangrejo_active=True,
+                 cangrejo_max_loss_at_sl_pct=0.01)
+    assert t["size"] == pytest.approx(25.0)

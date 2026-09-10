@@ -10,6 +10,37 @@ import numpy as np
 from datetime import datetime, timezone
 
 
+# Periodo del ATR que alimenta el stop por ATR. Fijo en 14, como estaba antes:
+# el `hard_stop` de la estrategia solo lleva {type, value} y `value` es el
+# MULTIPLICADOR. Si algun dia se quiere configurable, hay que anadir el campo a
+# `RiskManagement` Y a las tres capas (esquema, UI y este modulo) o se caera en
+# silencio.
+ATR_PERIODO_STOP = 14
+
+
+def atr_para_stop(arrays: dict):
+    """El ATR por barra con el que se resuelve el nivel del stop por ATR.
+
+    UNA SOLA definicion a proposito: la usan el backtest (los dos llamadores de
+    `simulate`) y el bot de alertas. Si cada uno calculara el suyo, backtest y
+    aviso podrian separarse sin que nada avisara — que es exactamente lo que
+    paso con el tamano del aviso el 8-sep.
+
+    Devuelve None si faltan las columnas: quien llama ya trata `atrs=None` como
+    "no hay ATR", y sin ATR no se entra.
+    """
+    from app.services.indicators import _atr
+    try:
+        return _atr(
+            np.asarray(arrays["high"], dtype=np.float64),
+            np.asarray(arrays["low"], dtype=np.float64),
+            np.asarray(arrays["close"], dtype=np.float64),
+            ATR_PERIODO_STOP,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def _structural_level(
     value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
 ):
@@ -239,6 +270,17 @@ def simulate(
     pm_lows: np.ndarray | None = None,
     prev_highs: np.ndarray | None = None,
     prev_lows: np.ndarray | None = None,
+    # STOP POR ATR (2026-09-10). El ATR de CADA BARRA, para resolver el nivel
+    # del stop en la barra de entrada: `entry -/+ k * atrs[i]`.
+    #
+    # POR QUE UN ARRAY Y NO UNA FRACCION. Antes el "ATR Multiplier" se colapsaba
+    # a un `sl_stop` escalar hecho con la MEDIA DEL ATR DEL DIA ENTERO dividida
+    # entre el primer cierre. Eso MIRABA AL FUTURO: la media incluye barras
+    # posteriores a la entrada. Medido sobre un dia que explota por la tarde,
+    # una entrada de la manana recibia un stop 4,6x mas ancho del que le tocaba,
+    # y dentro de la explosion 5x mas estrecho. Ademas no era un stop por ATR:
+    # era una constante diaria, igual entrases a las 07:00 o a las 09:31.
+    atrs: np.ndarray | None = None,
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
@@ -259,6 +301,14 @@ def simulate(
     # justo el tipo de fallo que no da error.
     if cangrejo_active:
         hybrid_stop = False
+
+    # STOPS QUE SON UN NIVEL, no un porcentaje sobre el precio de entrada. Los
+    # dos (estructura y ATR) fijan un PRECIO al entrar y salen por
+    # `trade_sl_price`; el resto se recalcula como `entry * (1 -/+ sl_stop)`.
+    # En una sola variable a proposito: la condicion se consulta en CUATRO
+    # sitios (salida, los dos trailings y la entrada) y repetirla es justo como
+    # se desincronizan las cosas aqui.
+    hs_por_nivel = hs_type in ("Market Structure (HOD/LOD)", "ATR Multiplier")
 
     equity = np.empty(n, dtype=np.float64)
     trades: list[dict] = []
@@ -348,7 +398,11 @@ def simulate(
             # stop-loss / trailing stop
             if not skip_exits:
                 # 1. Hard Stop Logic
-                if hs_type == "Market Structure (HOD/LOD)":
+                # El ATR va con el estructural y NO con el porcentaje: los dos
+                # fijan un PRECIO en la entrada y salen por `trade_sl_price`. Si
+                # el ATR se recalculara en cada barra el stop se moveria solo,
+                # que es un trailing por ATR — otra cosa distinta y no lo pedido.
+                if hs_por_nivel:
                     if is_long:
                         if price_for_sl <= trade_sl_price:
                             exit_triggered = True
@@ -400,7 +454,7 @@ def simulate(
                             # como salida en beneficio.
                             if price_for_sl <= trail_sl_price + 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
-                                if hs_type == "Market Structure (HOD/LOD)":
+                                if hs_por_nivel:
                                     hard_sl_price = trade_sl_price
                                 else:
                                     hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
@@ -424,7 +478,7 @@ def simulate(
                             # Mismo criterio que en long: el stop fijo manda.
                             if price_for_sl >= trail_sl_price - 1e-9 and not exit_triggered:
                                 # Verify trailing stop doesn't override a better hard stop
-                                if hs_type == "Market Structure (HOD/LOD)":
+                                if hs_por_nivel:
                                     hard_sl_price = trade_sl_price
                                 else:
                                     hard_sl_price = (sl_cangrejo_px if sl_cangrejo_px > 0.0
@@ -1262,6 +1316,32 @@ def simulate(
                             equity[i] = init_cash + realized_pnl
                             prev_signal = current_signal
                             continue
+                elif hs_type == "ATR Multiplier":
+                    # Nivel del stop con el ATR DE ESTA BARRA. Nada de medias
+                    # del dia: solo pasado, y el que hubiera en el momento de
+                    # entrar.
+                    a_val = float(atrs[i]) if (atrs is not None and i < len(atrs)) else float("nan")
+                    try:
+                        k_atr = float(hs_value) if hs_value is not None else 0.0
+                    except (TypeError, ValueError):
+                        k_atr = 0.0
+                    if not (a_val > 0.0) or k_atr <= 0.0:
+                        # NO SE ENTRA. Durante las primeras barras del dia el
+                        # ATR todavia es NaN (le faltan velas para su periodo) y
+                        # sin ATR no se sabe cuanto se mueve esto: poner un stop
+                        # inventado ahi es justo lo que hacia la version vieja.
+                        # Misma politica que el nivel estructural invalidado.
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
+                    stop_loss_price = (entry_price - k_atr * a_val) if is_long \
+                        else (entry_price + k_atr * a_val)
+                    if not _sl_side_valid(stop_loss_price, entry_price, is_long):
+                        # Solo puede pasar si el ATR es tan grande que el stop de
+                        # un largo se va por debajo de cero.
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
                 elif sl_stop is not None and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
 

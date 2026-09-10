@@ -191,6 +191,8 @@ def simulate_jit(
     pm_lows: np.ndarray | None = None,
     prev_highs: np.ndarray | None = None,
     prev_lows: np.ndarray | None = None,
+    # Stop por ATR: el ATR de cada barra (ver portfolio_sim.simulate).
+    atrs: np.ndarray | None = None,
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
@@ -219,7 +221,23 @@ def simulate_jit(
 
     fee_type_code = _pjit.FEE_FLAT if fee_type == "FLAT" else _pjit.FEE_PERCENT
 
-    hs_type_code = 1 if hs_type == "Market Structure (HOD/LOD)" else 0
+    # 0 = porcentaje / importe fijo (fraccion sobre el precio de entrada)
+    # 1 = Market Structure (nivel del dia)
+    # 2 = ATR Multiplier (nivel con el ATR de la barra de entrada)
+    if hs_type == "Market Structure (HOD/LOD)":
+        hs_type_code = 1
+    elif hs_type == "ATR Multiplier":
+        hs_type_code = 2
+    else:
+        hs_type_code = 0
+
+    # El multiplicador del ATR viaja en `hs_value`, que para los demas tipos es
+    # texto. Si no es un numero, 0.0 -> el JIT no entra (misma politica que la
+    # via de Python).
+    try:
+        atr_mult = float(hs_value) if hs_type_code == 2 and hs_value is not None else 0.0
+    except (TypeError, ValueError):
+        atr_mult = 0.0
 
     hs_value_code = _hs_value_to_code(hs_value)
     hs_fallback_code = _hs_value_to_code(hs_fallback_value)
@@ -284,6 +302,7 @@ def simulate_jit(
     has_pm_low, pm_low_a = _opt(pm_lows)
     has_prev_high, prev_high_a = _opt(prev_highs)
     has_prev_low, prev_low_a = _opt(prev_lows)
+    has_atrs, atrs_a = _opt(atrs)
 
     if timestamps is None:
         has_timestamps = False
@@ -370,6 +389,7 @@ def simulate_jit(
         has_pm_low, pm_low_a,
         has_prev_high, prev_high_a,
         has_prev_low, prev_low_a,
+        has_atrs, atrs_a, atr_mult,
         has_timestamps, timestamps_a,
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,

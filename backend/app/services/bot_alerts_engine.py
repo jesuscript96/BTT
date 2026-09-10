@@ -251,9 +251,30 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
             nivel = precio * (0.95 if es_largo else 1.05)
         signo = 1.0 if hs.get("operator", ">=") in (">", ">=") else -1.0
         stop = nivel * (1.0 + signo * float(hs.get("offset_pct") or 0.0) / 100.0)
+    elif tipo == "ATR Multiplier":
+        # STOP POR ATR (2026-09-10). Va por AQUI y no por `sl_stop` porque ya no
+        # es una fraccion: el nivel se resuelve con el ATR DE ESTA BARRA, igual
+        # que hace el simulador. La columna `atr` la trae `market_frame`.
+        #
+        # Antes el ATR se colapsaba a una fraccion hecha con la media del ATR
+        # del dia entero, que mira al futuro. Si el backtest hubiera cambiado y
+        # esto no, el bot avisaria con un stop distinto del que se backtestea —
+        # sin error y sin log, como el factor 4 del tamano del 8-sep.
+        if frame is None or "atr" not in frame:
+            return None
+        try:
+            a_val = float(frame["atr"].values[i])
+            k_atr = float(hs.get("value") or 0.0)
+        except (TypeError, ValueError, IndexError, KeyError):
+            return None
+        if not (a_val > 0.0) or k_atr <= 0.0:
+            # Sin ATR (las primeras barras del dia) NO hay stop, igual que en el
+            # simulador: alli la entrada directamente no se hace.
+            return None
+        stop = (precio - k_atr * a_val) if es_largo else (precio + k_atr * a_val)
     else:
-        # Porcentaje / importe fijo / ATR: el motor ya los dejo en `sl_stop`
-        # como fraccion, y se aplican sobre el precio de entrada.
+        # Porcentaje / importe fijo: el motor los deja en `sl_stop` como
+        # fraccion y se aplican sobre el precio de entrada.
         return None
 
     return stop if _sl_side_valid(stop, precio, es_largo) else None
@@ -382,17 +403,21 @@ def stop_estimado(sdef: dict, frame, i: int, precio: float,
     COMO SE RESUELVE CADA TIPO, calcado del simulador:
 
       · Market Structure  -> `nivel_stop` (nivel del dia + offset).
+      · ATR Multiplier    -> `nivel_stop` (precio -/+ k x ATR de ESTA barra).
+        Desde el 2026-09-10: antes caia en el caso de abajo con una fraccion
+        sacada de la media del ATR del dia entero, que mira al futuro.
       · TODO LO DEMAS     -> `precio x (1 -/+ sl_stop)`.
 
     `sl_stop` es la FRACCION que ya calculo `translate_strategy`, y es la misma
-    que el simulador aplica sobre el precio de entrada. Cubre Percentage, Fixed
-    Amount y ATR Multiplier de una vez y SIN REHACER LA CUENTA — que es la
-    gracia: rehacerla a mano salia mal en «Fixed Amount», donde el motor divide
-    el importe entre el PRIMER CIERRE DEL DIA y no entre el precio de ahora.
+    que el simulador aplica sobre el precio de entrada. Cubre Percentage y Fixed
+    Amount de una vez y SIN REHACER LA CUENTA — que es la gracia: rehacerla a
+    mano salia mal en «Fixed Amount», donde el motor divide el importe entre el
+    PRIMER CIERRE DEL DIA y no entre el precio de ahora.
 
     Devuelve None solo cuando de verdad no hay stop que calcular.
     """
-    if _hard_stop(sdef).get("type") == "Market Structure (HOD/LOD)":
+    if _hard_stop(sdef).get("type") in ("Market Structure (HOD/LOD)", "ATR Multiplier"):
+        # Los dos son un NIVEL que se resuelve en la barra, no una fraccion.
         return nivel_stop(sdef, frame, i, precio, es_largo)
     if not sl_stop or sl_stop <= 0 or not precio or precio <= 0:
         return None

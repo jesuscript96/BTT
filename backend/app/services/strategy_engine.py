@@ -918,14 +918,13 @@ def translate_strategy_native(
             first_close = float(C[0]) if n_bars > 0 else 1.0
             sl_stop = hs_value / first_close if first_close > 0 else None
         elif hs_type == "ATR Multiplier":
-            # Paridad con _parse_risk_management: ATR(14) 1m, media de los no-NaN
-            # vía pandas (mismo orden de acumulación → mismo float que el legacy).
-            atr_arr = indicator_results.get("ATR|1m|14|None|None|None")
-            if atr_arr is None:
-                atr_arr = _atr(H, L, C, 14)
-            avg_atr = pd.Series(atr_arr).dropna().mean()
-            first_close = float(C[0]) if n_bars > 0 else 1.0
-            sl_stop = (avg_atr * hs_value) / first_close if first_close > 0 else None
+            # NO se colapsa a una fraccion. El nivel lo resuelve el simulador con
+            # el ATR de la barra de ENTRADA (parametro `atrs`), que es lo unico
+            # causal. Antes aqui se hacia `media del ATR del dia entero / primer
+            # cierre`, y esa media incluye barras POSTERIORES a la entrada:
+            # look-ahead puro. Medido, una entrada de la manana recibia un stop
+            # 4,6x mas ancho del que le tocaba.
+            sl_stop = None
 
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
@@ -1494,10 +1493,13 @@ def _parse_risk_management(
             first_close = df["close"].iloc[0] if not df.empty else 1
             sl_stop = hs_value / first_close if first_close > 0 else None
         elif hs_type == "ATR Multiplier":
-            atr = compute_indicator("ATR", df, period=14, daily_stats=daily_stats, cache=cache)
-            avg_atr = atr.dropna().mean()
-            first_close = df["close"].iloc[0] if not df.empty else 1
-            sl_stop = (avg_atr * hs_value) / first_close if first_close > 0 else None
+            # NO se colapsa a una fraccion. El nivel lo resuelve el simulador con
+            # el ATR de la barra de ENTRADA (parametro `atrs`), que es lo unico
+            # causal. Antes aqui se hacia `media del ATR del dia entero / primer
+            # cierre`, y esa media incluye barras POSTERIORES a la entrada:
+            # look-ahead puro. Medido, una entrada de la manana recibia un stop
+            # 4,6x mas ancho del que le tocaba.
+            sl_stop = None
         elif hs_type == "Market Structure (HOD/LOD)":
             sl_stop = None
 

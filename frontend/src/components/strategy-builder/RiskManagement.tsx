@@ -194,8 +194,17 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                     height: '36px',
                                     width: risk.hard_stop.type === RiskType.PERCENTAGE ? '52px' : 'auto',
                                 }}
+                                title={
+                                    "% — el stop a una distancia fija del precio de entrada.\n" +
+                                    "ATR — el stop a N veces el ATR(14) DE LA VELA DE ENTRADA, asi que se " +
+                                    "ensancha cuando el ticker se mueve mas y se estrecha cuando se calma. " +
+                                    "Durante las primeras velas del dia el ATR todavia no existe y ahi NO se " +
+                                    "entra: sin ATR no se sabe cuanto se mueve esto.\n" +
+                                    "Market Structure — el stop en un nivel del dia (HOD, PMH, maximo previo...)."
+                                }
                             >
                                 <option value={RiskType.PERCENTAGE}>%</option>
+                                <option value={RiskType.ATR}>ATR</option>
                                 <option value={RiskType.MARKET_STRUCTURE}>Market Structure</option>
                             </select>
                             {risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? (
@@ -299,11 +308,16 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             updateRiskSetting('hard_stop', 'value', isNaN(val) ? 2.0 : val);
                                         }}
                                         onFocus={(e) => e.target.select()}
+                                        title={risk.hard_stop.type === RiskType.ATR
+                                            ? "Cuantos ATR de distancia. Con 2, el stop de un corto va a entrada + 2 x ATR(14) de la vela en que se entra."
+                                            : "Distancia del stop en % del precio de entrada."}
                                         style={{
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
                                             borderRadius: 5,
-                                            padding: '7px 24px 7px 10px',
+                                            // Con ATR el sufijo es "xATR" y necesita mas hueco que "%".
+                                            padding: risk.hard_stop.type === RiskType.ATR
+                                                ? '7px 38px 7px 10px' : '7px 24px 7px 10px',
                                             fontSize: 13,
                                             fontWeight: 600,
                                             color: 'var(--color-ec-text-primary)',
@@ -314,7 +328,9 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             textAlign: 'center',
                                         }}
                                     />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                                        {risk.hard_stop.type === RiskType.ATR ? '\u00d7ATR' : '%'}
+                                    </span>
                                 </div>
                             )}
                         </div>

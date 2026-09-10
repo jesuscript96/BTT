@@ -1206,9 +1206,12 @@ export function calculateRegR2(data: CandleData[], minutes: number): IndicatorDa
 // indicador (medido sobre 300 velas dispersas: hasta 0,26 $ en el VWAP y
 // 8,5e-3 en el ATR).
 //
-//   ATR  — el motor suaviza con EMA de alpha = 2/(n+1); calculateATR() usa el
-//          suavizado de Wilder, alpha = 1/n. Coinciden en el primer valor y se
-//          separan a partir del segundo.
+//   ATR  — YA NO DIVERGE: el 2026-09-10 se unifico el motor al suavizado de
+//          Wilder (alpha = 1/n), que es el que usaba calculateATR(). Lo unico
+//          que queda es una diferencia de BORDE: calculateATR() devuelve []
+//          cuando hay exactamente `period` velas y el motor si emite un valor
+//          en la ultima. Por eso se sigue calculando aqui en local, que en
+//          premercado con velas dispersas ese borde se toca de verdad.
 //   VWAP — el motor acumula sobre todo el DataFrame que recibe (que es de UN
 //          ticker-dia); calculateVWAP() reinicia por dia UTC y ademas prefiere
 //          el `vwap` precalculado de la vela si viene en los datos.
@@ -1234,7 +1237,7 @@ export function calculateAtrExtensionVwap(data: CandleData[], period: number = 1
         vwap[i] = cumVol !== 0 ? cumTPV / cumVol : NaN;
     }
 
-    // ATR del motor: media simple de los `win` primeros TR y EMA 2/(win+1).
+    // ATR del motor: media simple de los `win` primeros TR y Wilder 1/win.
     const tr: number[] = new Array(n);
     tr[0] = sorted[0].high - sorted[0].low;
     for (let i = 1; i < n; i++) {
@@ -1244,7 +1247,7 @@ export function calculateAtrExtensionVwap(data: CandleData[], period: number = 1
             Math.abs(sorted[i].low - sorted[i - 1].close),
         );
     }
-    const alpha = 2 / (win + 1);
+    const alpha = 1 / win;   // Wilder, igual que el motor
     const atr: number[] = new Array(n).fill(NaN);
     let acc = 0;
     for (let k = 0; k < win; k++) acc += tr[k];

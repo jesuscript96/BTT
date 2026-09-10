@@ -368,8 +368,16 @@ def _atr_core(high, low, close, window):
             tr[i] = hc
         if lc > tr[i]:
             tr[i] = lc
-    # Inline EMA
-    alpha = 2.0 / (window + 1)
+    # SUAVIZADO DE WILDER (alpha = 1/n), que es el ATR canonico: el que usan
+    # las plataformas y el que ya usaba `calculateATR` del grafico.
+    #
+    # ANTES ERA UNA EMA (alpha = 2/(n+1)) y no coincidia con el grafico: los dos
+    # arrancan igual (media simple de los `window` primeros TR) y se separan
+    # desde el SEGUNDO valor. Medido: hasta 8,5e-3 de diferencia sobre 300 velas.
+    # Unificado el 2026-09-10 a peticion de Jaume, aprovechando que no habia
+    # ninguna estrategia suya usando el ATR. Toca el indicador "ATR", el stop por
+    # ATR y "ATR Extension" — los tres a la vez y en la misma direccion.
+    alpha = 1.0 / window
     out = np.empty(n, dtype=np.float64)
     for k in range(n):
         out[k] = np.nan
