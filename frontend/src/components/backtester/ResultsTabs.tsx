@@ -10,6 +10,7 @@ import ChartsTab from "@/components/backtester/tabs/ChartsTab";
 import BandaLocates from "./BandaLocates";
 import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSurfaceTab";
 import EdgeTab from "@/components/backtester/tabs/EdgeTab";
+import SharedStrategiesTab from "@/components/backtester/tabs/SharedStrategiesTab";
 import LockedFeature from "@/components/LockedFeature";
 import Chart from "@/components/backtester/Chart";
 
@@ -25,6 +26,9 @@ const TABS = [
   { id: "analysis", label: "Análisis por trade" },
   { id: "edge", label: "Edge" },
   { id: "charts_optimization", label: "Charts + Optimization IS" },
+  // Fuera del zoom analítico a propósito: no mira el resultado del backtest,
+  // es el intercambio de estrategias entre devs (Álvaro ↔ Sailor vía git).
+  { id: "shared", label: "Compartidas" },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
@@ -578,6 +582,11 @@ export default function ResultsTabs({
             </LockedFeature>
             )}
           </div>
+        </div>
+        <div style={{ display: activeTab === "shared" ? "block" : "none" }}>
+          {mountedTabs.has("shared") && (
+          <SharedStrategiesTab />
+          )}
         </div>
       </div>
     </div>

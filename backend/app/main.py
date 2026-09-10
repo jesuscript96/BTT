@@ -295,6 +295,8 @@ from app.routers import portfolio_lab
 from app.routers import local_control
 from app.routers import edge
 from app.routers import locates
+# Estrategias compartidas entre devs (Alvaro <-> Sailor) via JSON en el repo.
+from app.routers import shared_strategies
 import logging
 
 # Configure logging to show INFO level for backtester namespace
@@ -303,6 +305,8 @@ logging.getLogger("backtester").setLevel(logging.INFO)
 
 app.include_router(data.router, prefix="/api/data", tags=["Data"])
 app.include_router(strategies.router, prefix="/api/strategies", tags=["Strategies"])
+# Compartir estrategias entre devs: JSON en estrategias_compartidas/ (via git).
+app.include_router(shared_strategies.router, prefix="/api/shared-strategies", tags=["Shared Strategies"])
 app.include_router(backtest.router)
 app.include_router(optimization.router)
 app.include_router(query.router, prefix="/api/queries", tags=["Queries"])
