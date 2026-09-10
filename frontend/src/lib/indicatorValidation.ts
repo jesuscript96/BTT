@@ -123,6 +123,15 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        // Anadidos el 10-sep-2026 a peticion de Jaume: faltaban RTH, AM open y
+        // la vela anterior. Era un descuido y no una decision — para `Dist()`
+        // estos tres NIVELES ya tenian la lista entera (DISTANCE_TARGETS), solo
+        // se quedaban cortos al CRUZAR. El motor no restringe pares: resuelve
+        // el destino con `_compute_from_config` (strategy_engine.py:1303).
+        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
+        IndicatorType.AM_OPEN,
+        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP, IndicatorType.VOL_NODE_DOWN,
@@ -162,6 +171,11 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        // Ver el porque en VOL_POC, mas arriba.
+        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
+        IndicatorType.AM_OPEN,
+        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP, IndicatorType.VOL_NODE_DOWN,
@@ -175,6 +189,11 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        // Ver el porque en VOL_POC, mas arriba.
+        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
+        IndicatorType.AM_OPEN,
+        IndicatorType.PREV_BAR_CLOSE,
+        IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP, IndicatorType.VOL_NODE_DOWN,
