@@ -397,7 +397,18 @@ def _arrancar_bot() -> bool:
     try:
         entorno = dict(os.environ)
         entorno[MARCA_ARRANQUE] = "1"
-        subprocess.Popen(["cmd.exe", "/c", bat], creationflags=0x08000000,
+        # CREATE_NO_WINDOW (0x08000000) | DETACHED_PROCESS (0x00000008).
+        #
+        # EL DETACHED NO ES DECORATIVO. Sin el, el bot es HIJO del worker de
+        # uvicorn: un `taskkill /T` del backend se lo lleva por delante (paso el
+        # 9-sep a las 21:17), y cada `--reload` mientras se edita el backend lo
+        # deja en el aire. Con el detached el bot tiene su propia vida: ni los
+        # reinicios del backend ni los reload le tocan.
+        #
+        # Su feed no depende del backend para nada — abre su propio websocket —
+        # asi que una vez suelto puede seguir avisando aunque el 8010 se caiga.
+        subprocess.Popen(["cmd.exe", "/c", bat],
+                         creationflags=0x08000000 | 0x00000008,
                          env=entorno)
         return True
     except Exception as exc:                                 # noqa: BLE001
