@@ -81,6 +81,7 @@ interface BacktestPanelProps {
   pendingDatasetSelect?: string;
   onClearPendingDataset?: () => void;
   activeStrategy?: any;
+  builderActive?: boolean;
   onConfigureStrategy?: (strategyId: string) => void;
 }
 
@@ -314,6 +315,7 @@ export default function BacktestPanel({
   loading,
   isDarkMode = false,
   activeStrategy,
+  builderActive = false,
   onConfigureStrategy
 }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
@@ -486,7 +488,18 @@ export default function BacktestPanel({
 
   const getStratDef = () => {
     let rawDef: any = null;
-    if (isDraft && activeStrategy) {
+    const activeId = activeStrategy ? String(activeStrategy.id ?? "") : "";
+    const activeIsDraft =
+      activeId === "draft" ||
+      activeId.startsWith("draft_") ||
+      activeId.startsWith("wizard_draft");
+    if (activeStrategy && (builderActive || activeIsDraft || activeId === selectedStrategy)) {
+      // El builder emite su borrador vivo con id fija "draft" (o la id heredada
+      // de la guardada) y `strategies` solo se refresca al guardar: si la
+      // tarjeta leyera de la lista, describiría una copia vieja (fechas del
+      // universo incluidas) mientras lo que PROBAR ejecuta es el DRAFT con sus
+      // ediciones. Con el builder abierto manda el draft; cerrado, el draft del
+      // último run (ids draft_*) o el que coincide con el desplegable.
       rawDef = activeStrategy.definition || activeStrategy;
     } else {
       const strat = strategies.find((s) => s.id === selectedStrategy);
