@@ -239,18 +239,14 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.LOW_X_DAYS]: [],
     // Es un NIVEL: se usa como objetivo, no como origen de un cruce.
     [IndicatorType.OVERHEAD_X_DAYS]: [],
-    [IndicatorType.PREV_BAR_CLOSE]: [
-        ...PERFIL_VOLUMEN,
-    ],
-    [IndicatorType.PREV_BAR_OPEN]: [
-        ...PERFIL_VOLUMEN,
-    ],
-    [IndicatorType.PREV_BAR_HIGH]: [
-        ...PERFIL_VOLUMEN,
-    ],
-    [IndicatorType.PREV_BAR_LOW]: [
-        ...PERFIL_VOLUMEN,
-    ],
+    // Las cuatro de la vela anterior llevan la MISMA lista que «Bar Close»
+    // (peticion de Jaume, 10-sep-2026). Tenian la lista VACIA, que es por lo
+    // que el desplegable solo ofrecia «Fixed Value»: no es que faltaran
+    // destinos, es que no tenian ninguno.
+    [IndicatorType.PREV_BAR_CLOSE]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PREV_BAR_OPEN]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PREV_BAR_HIGH]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PREV_BAR_LOW]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
     // Behaviour & Patterns — standalone (sin cruces)
     [IndicatorType.CONSEC_HIGHER_HIGHS]: [],
