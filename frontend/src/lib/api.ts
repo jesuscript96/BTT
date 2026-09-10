@@ -227,6 +227,44 @@ export function toggleIncubator(
   );
 }
 
+// ─── Estrategias compartidas entre devs (Álvaro ↔ Sailor) ──
+// Los JSON viven en <repo>/estrategias_compartidas/<dev>/ y viajan por git:
+// nada se comparte hasta que el dev commitea esa carpeta. El "import" no tiene
+// endpoint propio: se llama a createStrategy con {name, description, ...definition}.
+export interface SharedStrategyEntry {
+  filename: string;
+  shared_by: string;
+  shared_at?: string | null;
+  source_strategy_id?: string | null;
+  name: string;
+  description?: string | null;
+  definition: Record<string, unknown>;
+}
+
+export interface SharedStrategiesResponse {
+  /** Subcarpeta propia del backend que responde ("alvaro"/"sailor") — las
+   *  entradas con ese shared_by son las que se pueden quitar. */
+  owner: string;
+  strategies: SharedStrategyEntry[];
+}
+
+export function getSharedStrategies(): Promise<SharedStrategiesResponse> {
+  return apiRequest<SharedStrategiesResponse>(`/shared-strategies/?t=${Date.now()}`);
+}
+
+export function shareStrategy(strategyId: string): Promise<SharedStrategyEntry> {
+  return apiRequest<SharedStrategyEntry>("/shared-strategies/", {
+    method: "POST",
+    body: JSON.stringify({ strategy_id: strategyId }),
+  });
+}
+
+export function deleteSharedStrategy(filename: string): Promise<void> {
+  return apiRequest<void>(`/shared-strategies/${encodeURIComponent(filename)}`, {
+    method: "DELETE",
+  });
+}
+
 // ─── Queries (Datasets) ─────────────────────────────────────
 export interface SavedQuery {
   id: string;

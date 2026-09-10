@@ -69,6 +69,9 @@ Thumbs.db
 backend/*.json
 # Golden-test fixtures must be committed (regression anchors, no secrets)
 !backend/tests/fixtures/*.json
+# Estrategias compartidas entre devs (Alvaro/Sailor): ficheros que SI se commitean,
+# cada uno solo los que decide compartir. Ver estrategias_compartidas/README.md
+!estrategias_compartidas/**/*.json
 backend/gcs-key*.json
 .env*
 
