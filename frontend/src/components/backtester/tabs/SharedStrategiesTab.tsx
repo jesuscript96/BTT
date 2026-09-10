@@ -86,7 +86,7 @@ function Generico({ v, nivel = 0 }: { v: Json; nivel?: number }) {
 // Lo que SÍ desglosa cada sección a mano; el resto cae en «Otros ajustes».
 const USADAS_DEF = new Set(["entry_logic", "exit_logic", "pyramiding", "risk_management",
   "universe_filters", "bias", "apply_day", "market_sessions", "custom_start_time",
-  "custom_end_time", "postgap_preconditions", "dataset_id", "is_wizard"]);
+  "custom_end_time", "postgap_preconditions"]);
 const USADAS_RM = new Set(["hard_stop", "take_profit", "take_profit_mode", "trailing_stop",
   "partial_take_profits", "swing_option", "size_by_sl", "risk_per_trade", "risk", "cangrejo_mode"]);
 const USADAS_ENT = new Set(["root_condition", "entry_time_windows", "timeframe"]);
@@ -105,6 +105,10 @@ const CANGREJO: Record<string, string> = { recorrido: "Cangrejo por recorrido", 
 
 /* Una condición, en una línea que se lee. Los extras del `source` (dirección
    del squeeze, sesión de anclaje, referencia del fade…) van detrás, apagados. */
+const CLAVES_COND = new Set(["source", "level", "metric", "type", "timeframe", "comparator",
+  "operator", "value", "target", "threshold", "unit", "position", "id", "conditions"]);
+const CLAVES_SRC = new Set(["name", "squeeze_direction", "ap_session", "session_ref", "fade_ref", "type", "id"]);
+
 function condicionTexto(c: Record<string, Json>): { txt: string; extra: string } {
   const src = O(c.source), lvl = O(c.level);
   const nombre = S(src.name) || S(lvl.name) || S(c.metric) || S(c.type) || "condición";
@@ -119,6 +123,8 @@ function condicionTexto(c: Record<string, Json>): { txt: string; extra: string }
     S(src.session_ref) && `sesión ${S(src.session_ref)}`,
     S(src.fade_ref) && `desde ${S(src.fade_ref)}`,
     S(c.position) && `precio ${S(c.position)}`,
+    ...resto(src, CLAVES_SRC).map(([k, v]) => `${k}=${S(v) || JSON.stringify(v)}`),
+    ...resto(c, CLAVES_COND).map(([k, v]) => `${k}=${S(v) || JSON.stringify(v)}`),
   ].filter(Boolean) as string[]);
   return {
     txt: `${nombre}${tf} ${cmp} ${val}${val ? unidad : ""}`.replace(/\s+/g, " ").trim(),
@@ -296,10 +302,17 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <Fila k="Take profit" v={S(rm.take_profit_mode) && `${S(rm.take_profit_mode)}${S(tp.type) ? ` · ${S(tp.type)} ${S(tp.value)}` : ""}`} />
         {parciales.map((p, i) => {
           const q = O(p);
-          return <Fila key={i} k={i === 0 ? "Parciales" : ""} v={`${S(q.size_pct) || S(q.qty_pct)}% a ${S(q.distance_pct)}`} />;
+          const extra = resto(q, new Set(["size_pct", "qty_pct", "distance_pct"]))
+            .map(([k, v]) => `${k}=${S(v) || JSON.stringify(v)}`).join(" · ");
+          return <Fila key={i} k={i === 0 ? "Parciales" : ""}
+                       v={`${S(q.size_pct) || S(q.qty_pct)}% a ${S(q.distance_pct)}${extra ? ` · ${extra}` : ""}`} />;
         })}
         <Fila k="Trailing" v={S(ts.type) && `${S(ts.type)} ${S(ts.value)}`} />
         <Fila k="Swing" v={S(sw.target_day) && (DIA[S(sw.target_day)] || S(sw.target_day))} />
+        {resto(hs, new Set(["type", "value", "operator"])).map(([k, v]) => <Fila key={`hs${k}`} k={`stop · ${k}`} v={<Generico v={v} />} />)}
+        {resto(tp, new Set(["type", "value"])).map(([k, v]) => <Fila key={`tp${k}`} k={`take profit · ${k}`} v={<Generico v={v} />} />)}
+        {resto(ts, new Set(["type", "value"])).map(([k, v]) => <Fila key={`ts${k}`} k={`trailing · ${k}`} v={<Generico v={v} />} />)}
+        {resto(sw, new Set(["target_day"])).map(([k, v]) => <Fila key={`sw${k}`} k={`swing · ${k}`} v={<Generico v={v} />} />)}
         {resto(rm, USADAS_RM).map(([k, v]) => <Fila key={k} k={k} v={<Generico v={v} />} />)}
       </Apartado>
 
@@ -312,6 +325,8 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
               <div key={i} style={{ padding: "6px 0", borderBottom: `0.5px solid ${color.border}` }}>
                 <div style={{ fontSize: 10.5, color: color.textMuted }}>
                   Nivel {i + 1} · {S(l.action) === "add" ? "añade" : S(l.action)} {S(l.size)}{S(l.unit) === "pct" ? "%" : S(l.unit)}
+                  {resto(l, new Set(["action", "size", "unit", "root_condition"]))
+                    .map(([k, v]) => ` · ${k}=${S(v) || JSON.stringify(v)}`).join("")}
                 </div>
                 <div style={{ marginTop: 3 }}><Arbol nodo={l.root_condition} /></div>
               </div>
