@@ -34,6 +34,8 @@ class PeticionBanda(BaseModel):
     n_semillas: int = Field(default=50, ge=1, le=locates_banda.MAX_SEMILLAS)
     semilla_base: int = 1
     semilla_actual: int | None = None
+    # 0 = no calcular el bootstrap (solo la banda de semillas).
+    n_replicas: int = Field(default=1000, ge=0, le=locates_banda.MAX_REPLICAS)
 
 
 @router.post("/banda")
@@ -52,4 +54,15 @@ def banda(pet: PeticionBanda):
         raise HTTPException(status_code=500, detail=f"No se pudo calcular la banda: {e}")
     if "error" in out:
         raise HTTPException(status_code=422, detail=out["error"])
+    if pet.n_replicas:
+        try:
+            out["bootstrap"] = locates_banda.bootstrap(
+                [t.model_dump() for t in pet.trades], pet.init_cash, pet.minimo, pet.maximo,
+                pet.n_semillas, pet.semilla_base, pet.n_replicas,
+            )
+        except Exception as e:
+            # El bootstrap es un extra: si falla, la banda se devuelve igual.
+            logger.exception("[locates] fallo calculando el bootstrap")
+            out["bootstrap"] = None
+            out["bootstrap_error"] = str(e)
     return out
