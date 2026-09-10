@@ -95,6 +95,16 @@ export enum IndicatorType {
     // recorrido se devolvio. Ninguno es un nivel de precio.
     // Que fraccion del impulso se ha devuelto ya. Causal: el impulso se define
     // solo con pasado (maximo corrido + minimo anterior a ese maximo).
+    // Ultimo techo (o suelo) que dejo el mercado. Es un NIVEL DE PRECIO, al
+    // contrario que el resto de los nuevos: se compara con otros indicadores y
+    // sirve de stop estructural.
+    // Perfil de volumen intradia. El primero es una MEDIDA (percentil 0-100);
+    // los otros tres son NIVELES DE PRECIO y sirven de stop estructural.
+    VOL_BIN_PCT = "Vol. de la franja",
+    VOL_POC = "Punto de control",
+    VOL_NODE_UP = "Nodo de arriba",
+    VOL_NODE_DOWN = "Nodo de abajo",
+    LAST_PIVOT = "Ultimo pivote",
     RETRACEMENT = "Retroceso (%)",
     ABSORPTION = "Absorption",
     WICK_RATIO = "Wick Ratio",
@@ -244,6 +254,10 @@ export interface IndicatorConfig {
     wick_level?: number;
     // "Retroceso (%)": impulso al alza ("up") o a la baja ("down").
     swing_dir?: "up" | "down";
+    // Perfil de volumen: anchura de franja (% del primer precio del dia) y
+    // liston para que una franja cuente como nodo (% del volumen del POC).
+    bin_pct?: number;
+    liston_pct?: number;
 }
 
 export interface ComparisonCondition {
@@ -303,6 +317,20 @@ export interface RiskSettings {
     // Con true, el respaldo rescata TAMBIEN la primera entrada con el nivel
     // invalidado (no solo reentradas).
     fallback_first_entry?: boolean;
+    // SOLO con type = "ATR Multiplier". Respaldo en % del precio de entrada
+    // para las primeras velas del dia, cuando el ATR(14) todavia no existe
+    // (le faltan velas). Ausente o 0 = en ese tramo NO se entra.
+    //
+    // El respaldo produce un precio de stop normal, asi que pasa por los
+    // MISMOS topes que el ATR: Cangrejo A y B, hibrido y `size_by_sl`.
+    atr_fallback_pct?: number;
+    // SOLO con value = "Ultimo pivote alto"/"bajo". Velas de confirmacion a
+    // cada lado. Por defecto 3.
+    pivot_window?: number;
+    // Respaldo en % cuando el nivel ESTRUCTURAL no se resuelve en esa vela (el
+    // pivote sin confirmar, un PMH inexistente...). Ausente = 5 %, que es lo
+    // que el motor usaba clavado en el codigo.
+    struct_fallback_pct?: number;
 }
 
 export interface PartialTakeProfit {

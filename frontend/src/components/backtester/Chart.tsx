@@ -52,6 +52,9 @@ import {
   calculateAccumDollarVolume,
   calculateDollarVolume,
   calculateSqueeze,
+  calculateVolBinPct,
+  calculateVolPOC,
+  calculateVolNode,
   calculateAbsorption,
   calculateWickRatio,
   calculateRegSlope,
@@ -837,6 +840,28 @@ export default function Chart({
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
             break;
           }
+          case "VOL_POC":
+          case "VOL_NODE_UP":
+          case "VOL_NODE_DOWN": {
+            // Escalonados a proposito: son niveles de franja, no una media. Si
+            // alguna vez se ven como una curva suave, el calculo esta mal — y
+            // eso es justo lo que permite comprobarlo de un vistazo.
+            const d = ai.indicatorId === "VOL_POC"
+              ? calculateVolPOC(deduped, ai.params.bin ?? 1)
+              : calculateVolNode(deduped, ai.params.bin ?? 1,
+                                 ai.params.liston ?? 60, ai.indicatorId === "VOL_NODE_UP");
+            if (d.length > 0) {
+              const col = ai.indicatorId === "VOL_POC" ? "#d97706"
+                : (ai.indicatorId === "VOL_NODE_UP" ? "#be123c" : "#15803d");
+              const s = chart.addSeries(LineSeries, {
+                color: col, lineWidth: 2,
+                lineStyle: ai.indicatorId === "VOL_POC" ? 0 : 2,
+                priceLineVisible: false, lastValueVisible: false,
+              });
+              s.setData(d);
+            }
+            break;
+          }
           case "VWAP": {
             const d = calculateVWAP(deduped);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color: "#d4a017", lineWidth: 2 }); s.setData(d); }
@@ -1199,6 +1224,16 @@ export default function Chart({
                 if (d.length > 0) {
                   const s = subChart.addSeries(HistogramSeries, { color: "#38bdf8" });
                   s.setData(d);
+                }
+                break;
+              }
+              case "VOL_BIN_PCT": {
+                // Percentil 0-100, con la linea del 50 de referencia.
+                const d = calculateVolBinPct(deduped, inst.params.bin ?? 1);
+                if (d.length > 0) {
+                  const s = subChart.addSeries(LineSeries, { color: "#0891b2", lineWidth: 2 });
+                  s.setData(d);
+                  s.createPriceLine({ price: 50, color: "#9ca3af", lineWidth: 1, lineStyle: 2 });
                 }
                 break;
               }

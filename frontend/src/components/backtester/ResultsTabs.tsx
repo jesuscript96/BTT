@@ -12,7 +12,7 @@ import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSur
 import EdgeTab from "@/components/backtester/tabs/EdgeTab";
 import SharedStrategiesTab from "@/components/backtester/tabs/SharedStrategiesTab";
 import LockedFeature from "@/components/LockedFeature";
-import Chart from "@/components/backtester/Chart";
+import PanelAnalisisTrade from "@/components/backtester/PanelAnalisisTrade";
 
 // Edge va DESPUES de «Análisis por trade» y ANTES de Optimization a proposito:
 // el orden es un zoom hacia fuera (una operacion → el microscopio → agregado en
@@ -90,19 +90,60 @@ export default function ResultsTabs({
     setMountedChartsSub((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   };
 
-  const handleSelectTrade = (ticker: string, date: string) => {
+  // Que trade esta desplegado en Trades/Calendario. `ticker|fecha`, o null.
+  const [tradeDesplegado, setTradeDesplegado] = useState<string | null>(null);
+
+  /**
+   * Un trade se puede abrir de DOS formas, y las dos cargan las mismas velas:
+   *   "pestana"     -> salta a «Analisis por trade», como se hacia siempre.
+   *   "desplegable" -> se queda donde esta y lo despliega bajo la fila.
+   * Volver a tocar el mismo trade desplegado lo cierra.
+   */
+  const handleSelectTrade = (
+    ticker: string,
+    date: string,
+    modo: "pestana" | "desplegable" = "pestana",
+  ) => {
     const dayIdx = result.day_results.findIndex(
       (d) => d.ticker === ticker && d.date === date
     );
-    if (dayIdx !== -1) {
-      if (onSelectDay) {
-        onSelectDay(dayIdx);
-      }
+    if (dayIdx === -1) return;
+
+    const clave = `${ticker}|${date}`;
+    if (modo === "desplegable" && tradeDesplegado === clave) {
+      setTradeDesplegado(null);
+      return;
+    }
+    if (onSelectDay) {
+      onSelectDay(dayIdx);
+    }
+    if (modo === "pestana") {
+      setTradeDesplegado(null);
       selectTab("analysis");
+    } else {
+      setTradeDesplegado(clave);
     }
   };
 
   const [loadProgress, setLoadProgress] = useState(0);
+
+  // El MISMO panel de la pestaña, en version compacta. Se define aqui porque
+  // los datos (velas, equity, trades del dia) son props de este componente:
+  // las tablas solo lo colocan donde toca.
+  const panelDesplegable = (
+    <PanelAnalisisTrade
+      dayCandles={dayCandles}
+      multiDayCandles={multiDayCandles}
+      activeStrategy={activeStrategy}
+      currentTrades={currentTrades}
+      currentEquity={currentEquity}
+      candlesLoading={candlesLoading}
+      equityLoading={equityLoading}
+      loadProgress={loadProgress}
+      compacto
+      onAbrirPestana={() => { setTradeDesplegado(null); selectTab("analysis"); }}
+    />
+  );
 
   useEffect(() => {
     if (candlesLoading) {
@@ -301,6 +342,8 @@ export default function ResultsTabs({
             isDarkMode={isDarkMode}
             monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
             onSelectTrade={handleSelectTrade}
+            tradeDesplegado={tradeDesplegado}
+            panelAnalisis={panelDesplegable}
             riskR={riskR}
             riskType={backtestParams?.risk_type as string}
             globalEquity={result.global_equity}
@@ -320,95 +363,21 @@ export default function ResultsTabs({
           {mountedTabs.has("trades") && (
           <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade}
                      strategyName={activeStrategy?.name}
+                     tradeDesplegado={tradeDesplegado} panelAnalisis={panelDesplegable}
                      evGate={result.ev_gate} sinPuerta={result.sin_puerta} />
           )}
         </div>
         <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>
-          <div style={{ minHeight: 520, display: 'flex', flexDirection: 'column', position: 'relative' }}>
-            {candlesLoading && (
-              <div 
-                style={{ 
-                  display: 'flex', 
-                  flexDirection: 'column', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  flex: 1,
-                  minHeight: 520,
-                  gap: 16 
-                }}
-              >
-                <div style={{ width: 240 }}>
-                  <div style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
-                    alignItems: 'center', 
-                    marginBottom: 6,
-                    fontFamily: 'var(--color-ec-sans)',
-                    fontSize: 10,
-                    fontWeight: 600,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.08em',
-                    color: 'var(--color-ec-text-secondary)'
-                  }}>
-                    <span>Cargando trade</span>
-                    <span style={{ fontFamily: 'var(--color-ec-mono)', color: 'var(--color-ec-copper)', fontWeight: 700 }}>
-                      {Math.round(loadProgress)}%
-                    </span>
-                  </div>
-                  <div style={{ 
-                    height: 4, 
-                    width: '100%', 
-                    backgroundColor: 'var(--color-ec-bg-elevated)', 
-                    border: '0.5px solid var(--color-ec-border)',
-                    borderRadius: 2,
-                    overflow: 'hidden'
-                  }}>
-                    <div 
-                      style={{ 
-                        height: '100%', 
-                        width: `${loadProgress}%`, 
-                        backgroundColor: 'var(--color-ec-copper)',
-                        borderRadius: 2,
-                        transition: 'width 150ms ease-out'
-                      }} 
-                    />
-                  </div>
-                </div>
-              </div>
-            )}
-            {!candlesLoading && equityLoading && (
-              <div style={{ fontSize: 10, color: 'var(--color-ec-text-muted)', fontFamily: 'var(--color-ec-sans)', marginBottom: 4, textAlign: 'center' }}>
-                Cargando equity…
-              </div>
-            )}
-            {!candlesLoading && dayCandles && dayCandles.candles.length > 0 && (
-              <Chart
-                candles={dayCandles.candles}
-                multiDayCandles={multiDayCandles}
-                activeStrategy={activeStrategy}
-                trades={currentTrades}
-                equity={currentEquity}
-                ticker={dayCandles.ticker}
-                date={dayCandles.date}
-              />
-            )}
-            {!candlesLoading && (!dayCandles || dayCandles.candles.length === 0) && (
-              <div 
-                style={{ 
-                  display: 'flex', 
-                  flexDirection: 'column', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  flex: 1, 
-                  minHeight: 520 
-                }}
-              >
-                <p className="text-[10px] text-[var(--muted)] text-center font-mono">
-                  Selecciona un dia en el panel lateral para ver el analisis del trade.
-                </p>
-              </div>
-            )}
-          </div>
+          <PanelAnalisisTrade
+            dayCandles={dayCandles}
+            multiDayCandles={multiDayCandles}
+            activeStrategy={activeStrategy}
+            currentTrades={currentTrades}
+            currentEquity={currentEquity}
+            candlesLoading={candlesLoading}
+            equityLoading={equityLoading}
+            loadProgress={loadProgress}
+          />
         </div>
         <div style={{ display: activeTab === "edge" ? "block" : "none" }}>
           {mountedTabs.has("edge") && (

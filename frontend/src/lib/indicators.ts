@@ -1206,9 +1206,12 @@ export function calculateRegR2(data: CandleData[], minutes: number): IndicatorDa
 // indicador (medido sobre 300 velas dispersas: hasta 0,26 $ en el VWAP y
 // 8,5e-3 en el ATR).
 //
-//   ATR  — el motor suaviza con EMA de alpha = 2/(n+1); calculateATR() usa el
-//          suavizado de Wilder, alpha = 1/n. Coinciden en el primer valor y se
-//          separan a partir del segundo.
+//   ATR  — YA NO DIVERGE: el 2026-09-10 se unifico el motor al suavizado de
+//          Wilder (alpha = 1/n), que es el que usaba calculateATR(). Lo unico
+//          que queda es una diferencia de BORDE: calculateATR() devuelve []
+//          cuando hay exactamente `period` velas y el motor si emite un valor
+//          en la ultima. Por eso se sigue calculando aqui en local, que en
+//          premercado con velas dispersas ese borde se toca de verdad.
 //   VWAP — el motor acumula sobre todo el DataFrame que recibe (que es de UN
 //          ticker-dia); calculateVWAP() reinicia por dia UTC y ademas prefiere
 //          el `vwap` precalculado de la vela si viene en los datos.
@@ -1234,7 +1237,7 @@ export function calculateAtrExtensionVwap(data: CandleData[], period: number = 1
         vwap[i] = cumVol !== 0 ? cumTPV / cumVol : NaN;
     }
 
-    // ATR del motor: media simple de los `win` primeros TR y EMA 2/(win+1).
+    // ATR del motor: media simple de los `win` primeros TR y Wilder 1/win.
     const tr: number[] = new Array(n);
     tr[0] = sorted[0].high - sorted[0].low;
     for (let i = 1; i < n; i++) {
@@ -1244,7 +1247,7 @@ export function calculateAtrExtensionVwap(data: CandleData[], period: number = 1
             Math.abs(sorted[i].low - sorted[i - 1].close),
         );
     }
-    const alpha = 2 / (win + 1);
+    const alpha = 1 / win;   // Wilder, igual que el motor
     const atr: number[] = new Array(n).fill(NaN);
     let acc = 0;
     for (let k = 0; k < win; k++) acc += tr[k];
@@ -1316,6 +1319,90 @@ export function calculateAbsorption(data: CandleData[], minutes: number): Indica
 export function calculateWickRatio(data: CandleData[], minutes: number, side: "upper" | "lower" = "upper"): IndicatorDataPoint[] {
     const r = absorptionWickClock(data, minutes);
     return side === "lower" ? r.wickDown : r.wickUp;
+}
+
+// ---------------------------------------------------------------------------
+// 26j. Perfil de volumen intradia
+//
+// PARIDAD OBLIGATORIA con `_perfil_volumen` del backend. Si se toca una hay que
+// tocar la otra: esta es la que se PINTA y la del backend la que DISPARA.
+//
+// Franjas de ANCHURA FIJA (% del primer precio del dia), no el rango partido en
+// N: asi los bordes no se mueven y el histograma es un acumulador incremental.
+// Cada vela reparte su volumen entre todas las franjas que toca.
+//
+// El LISTON decide que franja cuenta como nodo (% del volumen del POC), asi que
+// el numero de zonas lo pone el dia y no un parametro.
+// ---------------------------------------------------------------------------
+const PERFIL_MAX_FRANJAS = 4096;
+
+function perfilVolumen(data: CandleData[], binPct: number, listonPct: number): {
+    pct: IndicatorDataPoint[]; poc: IndicatorDataPoint[];
+    arriba: IndicatorDataPoint[]; abajo: IndicatorDataPoint[];
+} {
+    const sorted = sortAndDedup(data);
+    const pct: IndicatorDataPoint[] = [];
+    const poc: IndicatorDataPoint[] = [];
+    const arriba: IndicatorDataPoint[] = [];
+    const abajo: IndicatorDataPoint[] = [];
+
+    const hist = new Float64Array(PERFIL_MAX_FRANJAS);
+    let dia = "";
+    let ancho = 0;
+
+    for (const b of sorted) {
+        const d = new Date((b.time as number) * 1000).toISOString().slice(0, 10);
+        if (d !== dia) { dia = d; hist.fill(0); ancho = b.close * binPct / 100; }
+        if (!(ancho > 0)) continue;
+
+        let i0 = Math.floor(b.low / ancho);
+        let i1 = Math.floor(b.high / ancho);
+        if (i0 < 0) i0 = 0;
+        if (i1 >= PERFIL_MAX_FRANJAS) i1 = PERFIL_MAX_FRANJAS - 1;
+        if (i1 < i0) i1 = i0;
+        const reparto = b.volume / (i1 - i0 + 1);
+        for (let k = i0; k <= i1; k++) hist[k] += reparto;
+
+        let j = Math.floor(b.close / ancho);
+        if (j < 0) j = 0;
+        if (j >= PERFIL_MAX_FRANJAS) j = PERFIL_MAX_FRANJAS - 1;
+
+        let mx = 0, iPoc = -1, conVol = 0;
+        for (let k = 0; k < PERFIL_MAX_FRANJAS; k++) {
+            if (hist[k] > 0) { conVol++; if (hist[k] > mx) { mx = hist[k]; iPoc = k; } }
+        }
+        if (iPoc < 0 || conVol === 0) continue;
+
+        let menores = 0;
+        for (let k = 0; k < PERFIL_MAX_FRANJAS; k++) {
+            if (hist[k] > 0 && hist[k] < hist[j]) menores++;
+        }
+        pct.push({ time: b.time as Time, value: hist[j] > 0 ? menores * 100 / conVol : 0 });
+        poc.push({ time: b.time as Time, value: (iPoc + 0.5) * ancho });
+
+        const umbral = mx * listonPct / 100;
+        for (let k = j + 1; k < PERFIL_MAX_FRANJAS; k++) {
+            if (hist[k] >= umbral) { arriba.push({ time: b.time as Time, value: (k + 0.5) * ancho }); break; }
+        }
+        for (let k = j - 1; k >= 0; k--) {
+            if (hist[k] >= umbral) { abajo.push({ time: b.time as Time, value: (k + 0.5) * ancho }); break; }
+        }
+    }
+    return { pct, poc, arriba, abajo };
+}
+
+export function calculateVolBinPct(data: CandleData[], binPct: number): IndicatorDataPoint[] {
+    return perfilVolumen(data, binPct || 1, 60).pct;
+}
+
+export function calculateVolPOC(data: CandleData[], binPct: number): IndicatorDataPoint[] {
+    return perfilVolumen(data, binPct || 1, 60).poc;
+}
+
+export function calculateVolNode(data: CandleData[], binPct: number, listonPct: number,
+                                 arriba: boolean): IndicatorDataPoint[] {
+    const r = perfilVolumen(data, binPct || 1, listonPct || 60);
+    return arriba ? r.arriba : r.abajo;
 }
 
 // ---------------------------------------------------------------------------

@@ -54,6 +54,7 @@ export const isPercentIndicator = (name?: string): boolean => {
 export const isMeasureIndicator = (name?: string): boolean => {
     if (!name) return false;
     return (
+        name === IndicatorType.VOL_BIN_PCT ||
         name === IndicatorType.RETRACEMENT ||
         name === IndicatorType.ABSORPTION ||
         name === IndicatorType.WICK_RATIO ||
@@ -149,6 +150,18 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         // range_minutes 0 = el impulso del DIA entero, que es el caso normal.
         case IndicatorType.RETRACEMENT:
             return { range_minutes: 0, swing_dir: "up" };
+        // 3 velas de confirmacion: un equilibrio razonable entre pivotes de
+        // ruido (1-2) y pivotes fiables pero tardios (8+).
+        case IndicatorType.LAST_PIVOT:
+            return { pivot_window: 3, swing_dir: "up" };
+        // Franjas del 1 % del precio y liston al 60 % del POC: con eso salen
+        // las dos o tres zonas de verdad de un dia normal.
+        case IndicatorType.VOL_BIN_PCT:
+        case IndicatorType.VOL_POC:
+            return { bin_pct: 1.0 };
+        case IndicatorType.VOL_NODE_UP:
+        case IndicatorType.VOL_NODE_DOWN:
+            return { bin_pct: 1.0, liston_pct: 60 };
         case IndicatorType.ABSORPTION:
             return { range_minutes: 5 };
         case IndicatorType.WICK_RATIO:
@@ -186,6 +199,9 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
         IndicatorType.AM_OPEN,
         IndicatorType.PREVIOUS_MAX, IndicatorType.PREVIOUS_MIN,
+        IndicatorType.LAST_PIVOT,
+        IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP,
+        IndicatorType.VOL_NODE_DOWN,
         IndicatorType.ELAPSED_TIME_LAST_HIGH,
         IndicatorType.ELAPSED_TIME,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
@@ -229,6 +245,7 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
     // todas resuelven sus ventanas por RELOJ y no por velas, y todas llevan el
     // descriptivo largo con ejemplo y niveles medidos.
     "Alternativos": [
+        IndicatorType.VOL_BIN_PCT,
         IndicatorType.REG_SLOPE, IndicatorType.REG_R2,
         IndicatorType.ATR_EXTENSION,
         IndicatorType.ABSORPTION, IndicatorType.WICK_RATIO,
@@ -316,6 +333,11 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.REG_SLOPE]: "Reg. Slope (%/min)",
     [IndicatorType.REG_R2]: "Reg. R²",
     [IndicatorType.ATR_EXTENSION]: "ATR Extension",
+    [IndicatorType.VOL_BIN_PCT]: "Vol. de la franja (percentil)",
+    [IndicatorType.VOL_POC]: "Punto de control",
+    [IndicatorType.VOL_NODE_UP]: "Nodo de arriba",
+    [IndicatorType.VOL_NODE_DOWN]: "Nodo de abajo",
+    [IndicatorType.LAST_PIVOT]: "\u00daltimo pivote",
     [IndicatorType.RETRACEMENT]: "Retroceso (%)",
     [IndicatorType.ABSORPTION]: "Absorción (M$ por 1%)",
     [IndicatorType.WICK_RATIO]: "Ratio de mecha",
@@ -406,6 +428,11 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.REG_R2]: "Calidad del ajuste de esa MISMA recta, de 0 a 1: qué parte del movimiento explica la tendencia y qué parte es ruido. Dos tramos que suben exactamente lo mismo pueden ser una escalera (R² ≈ 0,95) o una sierra que va y viene cuatro veces (R² ≈ 0,15) — y esa segunda te saca del stop varias veces por el camino. Referencias: por encima de 0,80 el movimiento es muy limpio y admite un stop cerca; de 0,50 a 0,80 es una tendencia normal con ruido; por debajo de 0,30 no hay tendencia, es un rango agitado. No tiene unidades, así que el umbral vale igual en cualquier ticker y a cualquier hora. DOS AVISOS: un precio plano también da R² alto (la recta horizontal lo explica entero), así que hay que combinarlo SIEMPRE con Reg. Slope; y un R² que cae mientras la pendiente sigue positiva es el primer aviso de que el impulso se deshace — llega antes que el giro de la pendiente.",
     [IndicatorType.ATR_EXTENSION]: "Cuántos ATR separan al precio de su referencia (el VWAP por defecto). Positivo = por encima de la referencia; negativo = por debajo. Es la versión comparable de «está un 8% sobre el VWAP»: un 8% es una barbaridad en un ticker que se mueve un 2% al día y es ruido en uno que se mueve un 30%, así que un umbral en % no vale para el universo entero y uno en ATR sí. Referencias con ATR de 14: de 0 a 1 ATR es la zona normal de trabajo; de 2 a 3 ATR ya está estirado; de 4 a 6 ATR es una extensión fuerte, que es el terreno clásico del fade; por encima de 8 ATR es un spike vertical. Para cortar un gap estirado se suele pedir > 3 o > 4. El primer campo es el periodo del ATR; el segundo, el periodo de la media SOLO si la referencia es SMA o EMA.",
     [IndicatorType.TIME_VS_LEVEL]: "Minutos SEGUIDOS que el precio lleva por encima (o por debajo) del nivel elegido. Es la «aceptación», y es lo que una condición normal no puede decir: para «precio > PM High» son idénticos un precio que lleva 2 minutos arriba y uno que lleva 90, y son situaciones opuestas. Devuelve 0 cuando la condición no se cumple, y se reinicia en cada sesión — una racha nunca se arrastra de un día al siguiente. Cuenta MINUTOS DE RELOJ, no velas: si el ticker se queda media hora sin cotizar, esa media hora cuenta igual. Vale NaN mientras el nivel todavía no existe (antes de las 09:30 no hay RTH Open) y comparar contra NaN da falso, así que no hay señal sin referencia. Referencias: menos de 3 minutos es un pinchazo que puede ser solo una mecha; de 10 a 20 minutos ya es aceptación real; más de 45 minutos es un cambio de régimen.",
+    [IndicatorType.VOL_BIN_PCT]: "Qué porcentaje de las franjas de precio con volumen del día tienen MENOS volumen que la franja donde está el precio ahora mismo. De 0 a 100. QUÉ ES UNA FRANJA: el perfil de volumen reparte todo lo negociado del día por PRECIOS en vez de por tiempo — «a 0,42 se cruzaron 2 millones de acciones» en lugar de «a las 10:15 se cruzaron 40.000». Cada vela reparte su volumen entre todas las franjas que toca, de su mínimo a su máximo, porque una vela que recorre un 5% no dejó todo su volumen en un solo precio. PARA QUÉ SIRVE: donde se cruzó mucho volumen hay mucha gente con su coste, y esa gente vende cuando el precio vuelve a su break-even; por eso ahí el precio se mueve pesado. Donde no se cruzó nada no hay nadie, y el precio atraviesa esa zona rápido en cualquier dirección. EJEMPLO REAL (OLB, 9-sep-2026): a las 12:33 el precio estaba en el percentil 95, pegado a la zona más negociada del día, y llevaba horas dando vueltas ahí. A las 13:33 bajó al 39 y a las 14:33 al 27: había salido al vacío. Entre esos dos momentos se fue de 0,39 a 0,34 — un 20% — porque debajo no quedaba nadie que lo frenara. NIVELES: por encima de 80 estás en zona cargada (el corto tiene ayuda, pero cuesta que se mueva); de 40 a 70 es terreno normal; por debajo de 30 es un vacío, y ahí el precio se va rápido en cualquier dirección — bueno si corre a tu favor, malo si va en contra. COMBINACIONES: con «Absorción» alta, la zona tiene un vendedor de verdad detrás y no es solo estadística; con «Absorción» baja y percentil bajo, no hay nada que frene la caída. EL PARÁMETRO es la anchura de cada franja en % del precio: 1 es un punto de partida sensato; más pequeño da más detalle y más ruido. Se recalcula en cada vela con lo que va del día, y se reinicia cada sesión.",
+    [IndicatorType.VOL_POC]: "El precio de la franja con MÁS volumen del día: el sitio donde más gente tiene su coste. Es un PRECIO, así que se puede cruzar contra el Bar Close, comparar con el VWAP o usarse de stop y de objetivo. Funciona como imán: cuanto más lejos está el precio, más tensión hay hacia volver, porque el que compró ahí y está en pérdidas vende en cuanto recupera. EJEMPLO REAL (OLB, 9-sep-2026): el punto de control estuvo todo el día entre 0,4194 y 0,4236, que es donde el precio pasó la mañana entera; cuando lo abandonó por abajo ya no volvió. USO NATURAL: como objetivo de un corto que entra estirado por arriba, y como referencia de «esto está caro o barato respecto a donde está la gente». Combinado con «ATR Extension» te dice esa distancia en unidades comparables entre tickers. OJO, Y ESTO IMPORTA: un día puede tener DOS zonas de volumen y el punto de control solo señala la más gorda. Si el precio está en la segunda cresta, el punto de control dirá que está «lejos» cuando en realidad está rodeado de gente. Para eso están «Nodo de arriba» y «Nodo de abajo», que no dan por hecho que el perfil tenga una sola joroba. Vale NaN en la primera vela del día y se reinicia cada sesión.",
+    [IndicatorType.VOL_NODE_UP]: "El precio de la primera franja POR ENCIMA de la actual que tiene volumen suficiente para contar como zona: la resistencia real del día, la que sale del dinero cruzado y no de unir dos máximos con una regla. Es un PRECIO: se cruza, se compara y sirve de stop de estructura. EL LISTÓN es lo que decide qué cuenta como zona — una franja es nodo si tiene al menos ese % del volumen de la franja más gorda. Con 85 solo pasan las zonas grandes; con 60 salen las de verdad (dos o tres en un día normal); con 30 pasa casi todo y aparece ruido. Fíjate en que NO le dices cuántas zonas quieres: le dices cuánto tiene que pesar una franja para contar, y el número de zonas lo pone el día. Si hubo una zona sale una, si hubo tres salen tres. USO NATURAL EN CORTO: es el stop. Por encima hay oferta acumulada que te protege, así que el stop tiene una razón detrás en vez de ser una distancia inventada. EJEMPLO REAL (OLB, 9-sep-2026, listón 60): a las 14:33, con el precio en 0,3624, el nodo de arriba estaba en 0,4027 — todo el papel que se había acumulado por la mañana. VALE NaN cuando por encima no hay ninguna zona, y eso es un aviso en sí mismo: no hay techo conocido por delante. Comparar contra NaN da falso, así que una condición con este indicador no dispara mientras no haya nodo.",
+    [IndicatorType.VOL_NODE_DOWN]: "Lo mismo hacia abajo: el primer precio con volumen suficiente por DEBAJO del actual. El soporte real del día. Es un PRECIO y sirve de stop, de objetivo y de cruce. Y AQUÍ ESTÁ LA SEÑAL MÁS ÚTIL DE TODO EL PERFIL: cuando vale NaN significa que POR DEBAJO NO HAY NADIE. No queda gente con su coste ahí, así que no hay nada que frene una caída. EJEMPLO REAL (OLB, 9-sep-2026, listón 60): a las 12:33 el nodo de abajo estaba en 0,4194, justo debajo del precio. A las 13:33 desapareció. Entre ese momento y el cierre el precio se fue de 0,3895 a 0,3394. La DESAPARICIÓN del soporte llegó antes que la caída. USOS: como objetivo de un corto (ahí es donde se va a frenar), como stop de un largo, y sobre todo el cruce — «Bar Close cruza por debajo del Nodo de abajo» es literalmente «acaba de comerse el soporte real y entra en el vacío». COMBINACIONES: con «Absorción» baja no hay nadie que lo pare y la caída es limpia; con «Absorción» alta hay alguien recogiendo abajo y el corto es mucho más peligroso. El listón funciona igual que en «Nodo de arriba».",
+    [IndicatorType.LAST_PIVOT]: "El último techo (o suelo) que dejó el mercado, como PRECIO. Un techo es una vela cuyo máximo es mayor que el de las N velas de su izquierda Y el de las N de su derecha; el suelo es el espejo con los mínimos. NO ES LO MISMO QUE «Previous max», y la diferencia importa: aquel es el máximo corrido del día y NUNCA baja. Con la secuencia 10 → 15 → 12 → 14 → 11, «Previous max» se queda en 15 para siempre, mientras que el último pivote alto es 14 (el techo que el mercado acaba de dejar) y el último pivote bajo es 12 (el suelo, cuando «Previous min» daría 10). Para un stop eso lo cambia todo: 15 está lejísísimos y 14 está pegado. EL PARÁMETRO son las velas de CONFIRMACIÓN a cada lado, y es un intercambio real: con 1 o 2 salen pivotes de ruido; con 8 o más son fiables pero llegan tarde. 3 es un punto de partida razonable. OJO AL RETARDO, que no es un defecto sino la naturaleza de la cosa: un pivote no se puede confirmar hasta que pasan N velas sin superarlo, así que el nivel aparece N velas DESPUÉS de haber ocurrido. Eso es justo lo que lo hace causal: nunca se mira una vela que aún no existe. Vale NaN hasta que se confirma el primero del día, y se reinicia cada sesión. Como es un precio y no una medida, se puede comparar contra el precio y contra otros niveles, y también se puede elegir como stop de estructura.",
     [IndicatorType.RETRACEMENT]: "Qué fracción del impulso se ha devuelto ya, en % del propio impulso (no del precio). EJEMPLO: el precio sube de 10,00 a 15,00 — ha ganado 5,00. Si baja a 14,00 ha devuelto 1 de 5, o sea 20. A 13,00 son 40. A 11,00 son 80 y el impulso está prácticamente roto. Por encima de 100 ha perforado la base de la que salió. Al hacer un máximo nuevo el impulso se reancla y vuelve casi a 0, igual que «Previous max» se actualiza vela a vela. CÓMO SE DEFINE EL IMPULSO, y esto importa: el máximo es el mayor high corrido y la base es el menor low ANTERIOR a la vela en que se hizo ese máximo. Todo pasado, así que NO mira al futuro — a diferencia de un pivote clásico, que necesita ver N velas por delante para confirmarse. POR QUÉ NO ES LO MISMO QUE «% Fade»: el fade mide la caída en % del PRECIO, así que un 8% significa cosas distintas en un ticker que se movió un 10% y en uno que se movió un 200%. Esto lo normaliza por el tamaño del impulso, y por eso el mismo umbral vale para todo el universo. NIVELES ORIENTATIVOS: por debajo de 30 el impulso aguanta y el comprador sigue ahí; entre 40 y 60 es un retroceso normal; por encima de 70 el que compró arriba está atrapado y la continuación es bastante menos probable. Los números de Fibonacci (38,2 y 61,8) no tienen ninguna evidencia detrás: mide dónde está el corte real en TU universo, que para eso tienes el lago. La ventana en minutos limita el impulso a ese tramo de reloj; déjala en 0 para medir el impulso del día entero. Vale NaN mientras no haya impulso que medir (primera vela del día, o precio plano).",
     [IndicatorType.ABSORPTION]: "Cuántos MILLONES de dólares hicieron falta para mover el precio un 1%, en una ventana de X MINUTOS DE RELOJ. Es la profundidad del mercado y se lee al derecho: cuanto MÁS ALTO, más caro es moverlo, o sea más absorción. EJEMPLO: en 5 minutos se negocian 2 millones de dólares y el precio acaba un 0,35% por encima de donde empezó → 2 / 0,35 = 5,7. Eso no es calma, es que alguien está poniendo a la venta exactamente tanto como le compran; en una small cap suele ser un ATM, un insider o un fondo saliendo — gente sin prisa y con tamaño que colocar, y por eso el nivel aguanta. NIVELES MEDIDOS sobre 2.461 lecturas reales del universo del bot (8-9 sep 2026, ventana de 5 min): la mitad están por debajo de 0,26; el percentil 75 es 0,85; el 90 es 2,6; el 95 es 5,1 y el 99 es 17,5. Léelo así: por debajo de 0,3 el precio se mueve con nada (código de barras); a partir de 2,5 hay alguien al otro lado; por encima de 5 es un muro. OJO al denominador: es el desplazamiento NETO de la ventana, no el rango. Una vela que sube y vuelve al mismo sitio ha avanzado cero y por eso puntúa alto — que es justo lo que se busca. Vale NaN si la ventana solo tiene una vela.",
     [IndicatorType.WICK_RATIO]: "Qué fracción de todo lo que recorrió el precio en la ventana se devolvió en forma de mecha, de 0 a 1. Con «arriba» mide el rechazo de las subidas (alguien vende cada empujón); con «abajo», el de las caídas (alguien compra cada hundimiento). EJEMPLO: una vela abre en 5,00, sube a 5,40 y cierra en 5,05, con mínimo en 4,98. Recorrido total 0,42, mecha superior 0,35 → 0,83: le devolvieron el 83% de lo que subió. Se suma sobre toda la ventana para no depender de una vela suelta, que puede ser un mal print. NIVELES MEDIDOS sobre 2.474 lecturas reales (8-9 sep 2026, ventana de 5 min, mecha superior): la MEDIANA es 0,21 — en un día normal siempre se devuelve una quinta parte del recorrido y eso no significa nada; el percentil 75 es 0,29; el 90 es 0,37; el 95 es 0,43 y el 99 es 0,58. Pedir «> 0,5» deja fuera al 97% de las lecturas y casi no dispara nunca: para un filtro que salte de vez en cuando, 0,40 es un punto de partida razonable.",
@@ -1057,6 +1084,76 @@ export const IndicatorParams = ({
                                 style={{ ...PARAM_FIELD_STYLE, flex: '1 1 70px', minWidth: '70px' }}
                                 title="Ventana en MINUTOS DE RELOJ sobre la que se ajusta la recta. No son velas: con temporalidad de 5m, 20 minutos siguen siendo 20 minutos. Necesita al menos 3 velas dentro de la ventana; con menos vale NaN."
                             />
+                        );
+                    case IndicatorType.VOL_BIN_PCT:
+                    case IndicatorType.VOL_POC:
+                    case IndicatorType.VOL_NODE_UP:
+                    case IndicatorType.VOL_NODE_DOWN: {
+                        const llevaListon = value.name === IndicatorType.VOL_NODE_UP
+                            || value.name === IndicatorType.VOL_NODE_DOWN;
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <div className="relative" style={{ flex: '1 1 96px', minWidth: '96px' }}>
+                                    <input
+                                        type="number"
+                                        step={0.1}
+                                        min={0.05}
+                                        value={value.bin_pct ?? ''}
+                                        onChange={(e) => onChange({ ...value, bin_pct: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                        onFocus={(e) => e.target.select()}
+                                        placeholder="1"
+                                        style={{ ...PARAM_FIELD_STYLE, width: '100%', paddingRight: 44 }}
+                                        title="Anchura de cada franja de precio, en % del primer precio del dia. Con 1, un ticker de 0,40 $ tiene franjas de 0,004. Mas pequeno da mas detalle y mas ruido."
+                                    />
+                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                        FRANJA
+                                    </span>
+                                </div>
+                                {llevaListon && (
+                                    <div className="relative" style={{ flex: '1 1 96px', minWidth: '96px' }}>
+                                        <input
+                                            type="number"
+                                            step={5}
+                                            min={0}
+                                            max={100}
+                                            value={value.liston_pct ?? ''}
+                                            onChange={(e) => onChange({ ...value, liston_pct: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                            onFocus={(e) => e.target.select()}
+                                            placeholder="60"
+                                            style={{ ...PARAM_FIELD_STYLE, width: '100%', paddingRight: 44 }}
+                                            title="El LISTON: cuanto volumen tiene que tener una franja para contar como zona, en % del volumen de la franja mas gorda. 85 = solo las zonas grandes. 60 = las de verdad, dos o tres en un dia normal. 30 = casi todo, con ruido. No fijas CUANTAS zonas hay: fijas cuanto tienen que pesar, y el numero lo pone el dia."
+                                        />
+                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                            LIST\u00d3N
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    }
+                    case IndicatorType.LAST_PIVOT:
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={value.pivot_window ?? ''}
+                                    onChange={(e) => onChange({ ...value, pivot_window: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
+                                    placeholder="Velas"
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 80px', minWidth: '80px' }}
+                                    title="Velas de CONFIRMACION a cada lado. Con 1 o 2 salen pivotes de ruido; con 8 o mas son fiables pero llegan tarde. El nivel aparece estas velas DESPUES de que ocurriera el giro: ese retardo es lo que lo hace causal."
+                                />
+                                <select
+                                    value={value.swing_dir || 'up'}
+                                    onChange={(e) => onChange({ ...value, swing_dir: e.target.value as "up" | "down" })}
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 150px', minWidth: '150px', cursor: 'pointer' }}
+                                    title="Techo (maximo local) o suelo (minimo local)."
+                                >
+                                    <option value="up">Pivote alto (techo)</option>
+                                    <option value="down">Pivote bajo (suelo)</option>
+                                </select>
+                            </div>
                         );
                     case IndicatorType.RETRACEMENT:
                         return (

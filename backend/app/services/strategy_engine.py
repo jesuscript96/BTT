@@ -6,7 +6,6 @@ Optimized (N1+N2a): dict dispatch for comparators, pre-normalized indicator name
 unified timestamp parsing, and native numpy array evaluation path.
 """
 import logging
-import time
 import numpy as np
 import pandas as pd
 from app.services.indicators import (
@@ -16,9 +15,6 @@ from app.services.indicators import (
     _linear_regression, _consecutive_count,
     _hammer, _shooting_star, _pivot_points, _safe_float,
 )
-# Profiler de sub-fases de stream_build (PRD_PERF §7): apagado por defecto
-# (BACKTEST_PROFILE_SUBPHASES=1). Solo mide resample/align en el path legacy.
-from app.services.subphase_profiler import ENABLED as _SUBPHASE_ON, PROF as _SUBPROF
 
 logger = logging.getLogger("backtester.strategy_engine")
 
@@ -711,7 +707,7 @@ def translate_strategy(
     )
 
     risk_cache: dict = entry_cache if entry_tf == "1m" else {}
-    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps, sl_atr = \
+    sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps = \
         _parse_risk_management(risk, df, daily_stats, risk_cache)
 
     return {
@@ -723,7 +719,6 @@ def translate_strategy(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
-        "sl_atr_arr": sl_atr,
         "accept_reentries": compiled["accept_reentries"],
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
@@ -912,10 +907,6 @@ def translate_strategy_native(
     tp_time_limit = None
     trail_pct = None
     partial_tps = None
-    # SERIE causal de ATR(14) 1m cuando el hard stop es "ATR Multiplier" (ver
-    # la rama de abajo): viaja al simulador como `atr_arr` y el stop se fija
-    # EN la entrada, por la via del nivel. None en cualquier otro caso.
-    sl_atr_arr = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
         hs = risk["hard_stop"]
@@ -924,20 +915,23 @@ def translate_strategy_native(
         if hs_type == "Percentage":
             sl_stop = hs_value / 100.0
         elif hs_type == "Fixed Amount":
-            first_close = float(C[0]) if n_bars > 0 else 1.0
-            sl_stop = hs_value / first_close if first_close > 0 else None
+            # NO se colapsa a una fraccion. El nivel es `entrada -/+ importe`, y
+            # lo resuelve el simulador en la barra de entrada.
+            #
+            # ANTES era `importe / cierre de la PRIMERA VELA DEL DIA`, y de ahi
+            # salia una fraccion que se aplicaba al precio de entrada. O sea que
+            # «15 centavos» solo eran 15 centavos si entrabas justo al precio de
+            # apertura del dia; entrando un 40 % mas arriba, el stop se
+            # convertia en 21 centavos sin que nada lo dijera.
+            sl_stop = None
         elif hs_type == "ATR Multiplier":
-            # STOP POR ATR CAUSAL (2026-09-10). Antes: media del ATR de TODO el
-            # dia (barras posteriores a la entrada incluidas) convertida en una
-            # fraccion FIJA — miraba al futuro y ademas daba el mismo stop a una
-            # entrada de las 07:00 que a una de las 15:00 (hallazgo del 9-sep en
-            # docs/MEMORIA.md). Ahora se emite la SERIE y portfolio_sim fija el
-            # nivel EN la entrada con el ATR de la vela de señal, igual que hace
-            # con HOD/LOD. El multiplicador viaja aparte (`hs_value`).
-            atr_arr = indicator_results.get("ATR|1m|14|None|None|None")
-            if atr_arr is None:
-                atr_arr = _atr(H, L, C, 14)
-            sl_atr_arr = np.asarray(atr_arr, dtype=np.float64)
+            # NO se colapsa a una fraccion. El nivel lo resuelve el simulador con
+            # el ATR de la barra de ENTRADA (parametro `atrs`), que es lo unico
+            # causal. Antes aqui se hacia `media del ATR del dia entero / primer
+            # cierre`, y esa media incluye barras POSTERIORES a la entrada:
+            # look-ahead puro. Medido, una entrada de la manana recibia un stop
+            # 4,6x mas ancho del que le tocaba.
+            sl_stop = None
 
     trailing = risk.get("trailing_stop", {})
     if trailing.get("active"):
@@ -968,7 +962,6 @@ def translate_strategy_native(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
-        "sl_atr_arr": sl_atr_arr,
         "accept_reentries": compiled.get("accept_reentries", False),
         "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
         "partial_take_profits": partial_tps,
@@ -1181,10 +1174,7 @@ def _resample_if_needed(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     for col in df.columns:
         if col not in agg_dict:
             agg_dict[col] = "first"
-    _t_res0 = time.perf_counter() if _SUBPHASE_ON else None
     resampled = df.set_index(ts).resample(freq).agg(agg_dict).dropna(subset=["open"])
-    if _SUBPHASE_ON:
-        _SUBPROF.acc("resample", time.perf_counter() - _t_res0)
     return resampled
 
 
@@ -1205,7 +1195,6 @@ def _align_signals_to_1m(
     tf_map = {"5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "1d": "1D"}
     freq = tf_map.get(timeframe, "1min")
     delta = pd.to_timedelta(freq)
-    _t_al0 = time.perf_counter() if _SUBPHASE_ON else None
     t_shifted = ts_1m + pd.to_timedelta("1min")
     t_floored = t_shifted.dt.floor(freq)
     T_closed = t_floored - delta
@@ -1216,8 +1205,6 @@ def _align_signals_to_1m(
         primera = T_closed.ne(T_closed.shift(1))
         primera.iloc[0] = True
         result = result & primera.values
-    if _SUBPHASE_ON:
-        _SUBPROF.acc("align", time.perf_counter() - _t_al0)
     result.index = df_1m.index
     # Una condicion en timeframe DIARIO sobre un dia intradia no tiene ninguna
     # vela diaria cerrada dentro del frame: `T_closed` apunta al dia anterior,
@@ -1416,6 +1403,8 @@ def _compute_from_config(
         wick_op=cfg.get("wick_op"),
         wick_level=cfg.get("wick_level"),
         swing_dir=cfg.get("swing_dir"),
+        bin_pct=cfg.get("bin_pct"),
+        liston_pct=cfg.get("liston_pct"),
     )
 
 
@@ -1502,9 +1491,6 @@ def _parse_risk_management(
     tp_time_limit = None
     trail_pct = None
     partial_tps = None
-    # SERIE causal de ATR(14) para el hard stop "ATR Multiplier" (ver la rama
-    # de abajo). None en cualquier otro caso. El septimo valor del tuple.
-    sl_atr = None
 
     if risk.get("use_hard_stop") and risk.get("hard_stop"):
         hs = risk["hard_stop"]
@@ -1513,20 +1499,23 @@ def _parse_risk_management(
         if hs_type == "Percentage":
             sl_stop = hs_value / 100.0
         elif hs_type == "Fixed Amount":
-            first_close = df["close"].iloc[0] if not df.empty else 1
-            sl_stop = hs_value / first_close if first_close > 0 else None
+            # NO se colapsa a una fraccion. El nivel es `entrada -/+ importe`, y
+            # lo resuelve el simulador en la barra de entrada.
+            #
+            # ANTES era `importe / cierre de la PRIMERA VELA DEL DIA`, y de ahi
+            # salia una fraccion que se aplicaba al precio de entrada. O sea que
+            # «15 centavos» solo eran 15 centavos si entrabas justo al precio de
+            # apertura del dia; entrando un 40 % mas arriba, el stop se
+            # convertia en 21 centavos sin que nada lo dijera.
+            sl_stop = None
         elif hs_type == "ATR Multiplier":
-            # STOP POR ATR CAUSAL (2026-09-10). Antes: media del ATR de TODO el
-            # dia (incluidas barras POSTERIORES a la entrada) convertida en
-            # fraccion fija para el dia entero — look-ahead puro: una entrada
-            # matinal de un dia que explota tarde recibia un stop 4,6x mas
-            # ancho del que le corresponderia (hallazgo 9-sep, docs/MEMORIA.md).
-            # Ahora se emite la SERIE causal y el nivel se fija EN la entrada
-            # (via del nivel en portfolio_sim, como HOD/LOD). El multiplicador
-            # viaja aparte, en `hs_value` del hard_stop.
-            atr = compute_indicator("ATR", df, period=14, daily_stats=daily_stats, cache=cache)
-            sl_atr = (np.asarray(atr.values, dtype=np.float64)
-                      if hasattr(atr, "values") else np.asarray(atr, dtype=np.float64))
+            # NO se colapsa a una fraccion. El nivel lo resuelve el simulador con
+            # el ATR de la barra de ENTRADA (parametro `atrs`), que es lo unico
+            # causal. Antes aqui se hacia `media del ATR del dia entero / primer
+            # cierre`, y esa media incluye barras POSTERIORES a la entrada:
+            # look-ahead puro. Medido, una entrada de la manana recibia un stop
+            # 4,6x mas ancho del que le tocaba.
+            sl_stop = None
         elif hs_type == "Market Structure (HOD/LOD)":
             sl_stop = None
 
@@ -1550,4 +1539,4 @@ def _parse_risk_management(
             elif tp_type == "Hour":
                 tp_time_limit = f"HOUR:{tp.get('value', '15:30')}"
 
-    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps, sl_atr
+    return sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps

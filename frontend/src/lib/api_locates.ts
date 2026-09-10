@@ -2,6 +2,26 @@
 import { apiRequest } from "./api";
 import type { TradeRecord } from "./api_backtester";
 
+// Bootstrap: cada "historia" saca N ticker-días CON REEMPLAZO de la bolsa de N
+// y les sortea precio. Contesta «¿ganaría igual con otro histórico?», que es
+// distinto de «¿cuánto me mueve la suerte del alquiler?».
+export interface BootstrapLocates {
+  n_replicas: number;
+  n_unidades: number;
+  n_semillas_precio: number;
+  pasos: number[];
+  curvas: { p5: number[]; p25: number[]; p50: number[]; p75: number[]; p95: number[] };
+  hist: { c: number; n: number }[];
+  positivo_pct: number;
+  positivo_bruto_pct: number;
+  resumen: {
+    p5: number; p25: number; p50: number; p75: number; p95: number;
+    media: number; peor: number; mejor: number;
+    bruto_p50: number; factura_p50: number;
+    dd_p50: number; dd_p95: number; dd_peor: number;
+  };
+}
+
 export interface BandaLocates {
   fechas: string[];
   n_semillas: number;
@@ -19,6 +39,8 @@ export interface BandaLocates {
   actual: {
     semilla: number; curva: number[]; final: number; max_dd_pct: number; factura: number; percentil_final: number;
   } | null;
+  bootstrap?: BootstrapLocates | null;
+  bootstrap_error?: string;
 }
 
 export function pedirBandaLocates(
@@ -29,6 +51,7 @@ export function pedirBandaLocates(
   nSemillas: number,
   semillaBase: number,
   semillaActual: number | null,
+  nReplicas = 1000,
 ): Promise<BandaLocates> {
   const payload = trades.map((t) => ({
     ticker: t.ticker,
@@ -45,6 +68,7 @@ export function pedirBandaLocates(
     body: JSON.stringify({
       trades: payload, init_cash: initCash, minimo, maximo,
       n_semillas: nSemillas, semilla_base: semillaBase, semilla_actual: semillaActual,
+      n_replicas: nReplicas,
     }),
     timeoutMs: 300_000,
   });

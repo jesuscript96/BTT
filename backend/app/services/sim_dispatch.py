@@ -72,13 +72,6 @@ def simulate(**kwargs) -> dict:
     if kwargs.get("ev_gate") is not None:
         return _legacy_simulate(**kwargs)
     kwargs.pop("ev_gate", None)
-    # STOP POR ATR COMO NIVEL (2026-09-10): el kernel JIT no lo implementa, asi
-    # que un hard_stop "ATR Multiplier" CON serie causal va SIEMPRE al motor
-    # Python, como la piramidacion. Sin serie (callers viejos) cae a `sl_stop`
-    # y el kernel sigue siendo valido.
-    if kwargs.get("hs_type") == "ATR Multiplier" and kwargs.get("atr_arr") is not None:
-        return _legacy_simulate(**kwargs)
-    kwargs.pop("atr_arr", None)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)
@@ -141,6 +134,10 @@ def _hs_value_to_code(hs_value):
         return _pjit.HS_PREVMAX
     elif hs_value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow"):
         return _pjit.HS_PREVMIN
+    elif hs_value in ("Pivot High", "Ultimo pivote alto", "Último pivote alto"):
+        return _pjit.HS_PIVHIGH
+    elif hs_value in ("Pivot Low", "Ultimo pivote bajo", "Último pivote bajo"):
+        return _pjit.HS_PIVLOW
     return _pjit.HS_NONE
 
 
@@ -198,6 +195,13 @@ def simulate_jit(
     pm_lows: np.ndarray | None = None,
     prev_highs: np.ndarray | None = None,
     prev_lows: np.ndarray | None = None,
+    # Stop por ATR: el ATR de cada barra (ver portfolio_sim.simulate).
+    pivot_highs: np.ndarray | None = None,
+    pivot_lows: np.ndarray | None = None,
+    atrs: np.ndarray | None = None,
+    # Respaldo en % para las barras sin ATR (ver portfolio_sim.simulate).
+    hs_atr_fallback_pct: float | None = None,
+    hs_struct_fallback_pct: float | None = None,
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
@@ -226,7 +230,41 @@ def simulate_jit(
 
     fee_type_code = _pjit.FEE_FLAT if fee_type == "FLAT" else _pjit.FEE_PERCENT
 
-    hs_type_code = 1 if hs_type == "Market Structure (HOD/LOD)" else 0
+    # 0 = porcentaje (fraccion sobre el precio de entrada)
+    # 1 = Market Structure (nivel del dia)
+    # 2 = ATR Multiplier (nivel con el ATR de la barra de entrada)
+    # 3 = Fixed Amount (importe en dolares sobre el precio de entrada)
+    if hs_type == "Market Structure (HOD/LOD)":
+        hs_type_code = 1
+    elif hs_type == "ATR Multiplier":
+        hs_type_code = 2
+    elif hs_type == "Fixed Amount":
+        hs_type_code = 3
+    else:
+        hs_type_code = 0
+
+    # El multiplicador del ATR viaja en `hs_value`, que para los demas tipos es
+    # texto. Si no es un numero, 0.0 -> el JIT no entra (misma politica que la
+    # via de Python).
+    try:
+        atr_mult = float(hs_value) if hs_type_code == 2 and hs_value is not None else 0.0
+    except (TypeError, ValueError):
+        atr_mult = 0.0
+
+    try:
+        atr_fallback_pct = float(hs_atr_fallback_pct or 0.0)
+    except (TypeError, ValueError):
+        atr_fallback_pct = 0.0
+
+    try:
+        struct_fallback_pct = float(hs_struct_fallback_pct or 0.0)
+    except (TypeError, ValueError):
+        struct_fallback_pct = 0.0
+
+    try:
+        fixed_amount = float(hs_value) if hs_type_code == 3 and hs_value is not None else 0.0
+    except (TypeError, ValueError):
+        fixed_amount = 0.0
 
     hs_value_code = _hs_value_to_code(hs_value)
     hs_fallback_code = _hs_value_to_code(hs_fallback_value)
@@ -291,6 +329,9 @@ def simulate_jit(
     has_pm_low, pm_low_a = _opt(pm_lows)
     has_prev_high, prev_high_a = _opt(prev_highs)
     has_prev_low, prev_low_a = _opt(prev_lows)
+    has_piv_high, piv_high_a = _opt(pivot_highs)
+    has_piv_low, piv_low_a = _opt(pivot_lows)
+    has_atrs, atrs_a = _opt(atrs)
 
     if timestamps is None:
         has_timestamps = False
@@ -377,6 +418,11 @@ def simulate_jit(
         has_pm_low, pm_low_a,
         has_prev_high, prev_high_a,
         has_prev_low, prev_low_a,
+        has_piv_high, piv_high_a,
+        has_piv_low, piv_low_a,
+        has_atrs, atrs_a, atr_mult, atr_fallback_pct,
+        fixed_amount,
+        struct_fallback_pct,
         has_timestamps, timestamps_a,
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,

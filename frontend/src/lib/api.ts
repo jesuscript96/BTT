@@ -259,8 +259,11 @@ export function shareStrategy(strategyId: string): Promise<SharedStrategyEntry> 
   });
 }
 
-export function deleteSharedStrategy(filename: string): Promise<void> {
-  return apiRequest<void>(`/shared-strategies/${encodeURIComponent(filename)}`, {
+export function deleteSharedStrategy(filename: string, dev?: string): Promise<void> {
+  // `dev` permite borrar tambien la del otro (limpiar la lista). Destructivo:
+  // al subir el borrado, desaparece para los dos.
+  const q = dev ? `?dev=${encodeURIComponent(dev)}` : "";
+  return apiRequest<void>(`/shared-strategies/${encodeURIComponent(filename)}${q}`, {
     method: "DELETE",
   });
 }
@@ -337,6 +340,16 @@ export function getSavedBacktests(limit = 100): Promise<{ strategies: any[]; tot
   return apiRequest<{ strategies: any[]; total_count: number }>(`/strategy-search/list?limit=${limit}`);
 }
 
+export function saveBacktest(data: {
+  strategy_ids: string[];
+  results_json: Record<string, unknown>;
+}): Promise<{ id: string; status: string }> {
+  return apiRequest<{ id: string; status: string }>("/strategy-search/", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
 // ── 'Últimas pruebas' (panel de runs recientes en Portfolio) ──
 // /recent devuelve SOLO metadatos + métricas tipadas (sin results_json, que
 // en /list hace pesar la respuesta decenas de MB). El payload completo de un
@@ -373,16 +386,6 @@ export function getSavedRunById(id: string): Promise<{
   results_json: Record<string, any>;
 }> {
   return apiRequest(`/strategy-search/${encodeURIComponent(id)}`);
-}
-
-export function saveBacktest(data: {
-  strategy_ids: string[];
-  results_json: Record<string, unknown>;
-}): Promise<{ id: string; status: string }> {
-  return apiRequest<{ id: string; status: string }>("/strategy-search/", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
 }
 
 export function toggleBacktestValidation(

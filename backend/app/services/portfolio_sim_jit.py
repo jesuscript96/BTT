@@ -52,6 +52,8 @@ HS_PML = 4
 HS_PREVMAX = 5
 HS_PREVMIN = 6
 
+HS_PIVHIGH = 7
+HS_PIVLOW = 8
 # --- exit reason codes (each maps 1:1 to an exact exit_reason string) ---
 REASON_SL = 0            # "SL"
 REASON_TP = 1            # "TP"
@@ -110,6 +112,19 @@ def _core_simulate_jit(
     has_pm_low, pm_lows,
     has_prev_high, prev_highs,
     has_prev_low, prev_lows,
+    # Ultimo pivote confirmado por barra (codigos HS_PIVHIGH / HS_PIVLOW).
+    has_piv_high, pivot_highs,
+    has_piv_low, pivot_lows,
+    # STOP POR ATR (2026-09-10): `hs_type_code == 2`. El ATR de CADA BARRA y el
+    # multiplicador. Paridad exacta con la rama "ATR Multiplier" de
+    # portfolio_sim.py — si esto no estuviera aqui, con BACKTEST_NUMBA_SIM=1 el
+    # stop nuevo se ignoraria EN SILENCIO y el backtest daria otra cosa segun la
+    # variable de entorno.
+    has_atrs, atrs, atr_mult, atr_fallback_pct,
+    # «Fixed Amount» (hs_type_code 3): importe en dolares sobre la entrada.
+    fixed_amount,
+    # Respaldo del stop estructural en %; 0 = el 5 % de siempre.
+    struct_fallback_pct,
     has_timestamps, timestamps,
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
@@ -200,7 +215,7 @@ def _core_simulate_jit(
             # stop-loss / trailing stop
             if not skip_exits:
                 # 1. Hard Stop
-                if hs_type_code == 1:  # Market Structure (HOD/LOD)
+                if hs_type_code >= 1:  # 1 = estructura, 2 = ATR: los dos son NIVEL
                     if is_long:
                         if price_for_sl <= trade_sl_price:
                             exit_triggered = True
@@ -246,7 +261,7 @@ def _core_simulate_jit(
                             # trailing no lo pisa. EN PARIDAD con portfolio_sim.py
                             # (regla del usuario, 2026-08-23).
                             if price_for_sl <= trail_sl_price + 1e-9 and not exit_triggered:
-                                if hs_type_code == 1:
+                                if hs_type_code >= 1:
                                     hard_sl_price = trade_sl_price
                                 else:
                                     if sl_cangrejo_px > 0.0:
@@ -267,7 +282,7 @@ def _core_simulate_jit(
                             trail_sl_price = trail_extreme + (entry_price * trail_pct)
                             # Mismo criterio que en long: el stop fijo manda.
                             if price_for_sl >= trail_sl_price - 1e-9 and not exit_triggered:
-                                if hs_type_code == 1:
+                                if hs_type_code >= 1:
                                     hard_sl_price = trade_sl_price
                                 else:
                                     if sl_cangrejo_px > 0.0:
@@ -694,7 +709,11 @@ def _core_simulate_jit(
                 # Stop loss price
                 stop_loss_price = 0.0
                 if hs_type_code == 1:  # Market Structure (HOD/LOD)
-                    val_struct = entry_price * (0.95 if is_long else 1.05)
+                    _fb_s = struct_fallback_pct if struct_fallback_pct > 0.0 else 5.0
+                    if is_long:
+                        val_struct = entry_price * (1.0 - _fb_s / 100.0)
+                    else:
+                        val_struct = entry_price * (1.0 + _fb_s / 100.0)
                     if hs_value_code == HS_HOD and has_hods:
                         val_struct = hods[i] if hods[i] > 0 else val_struct
                     elif hs_value_code == HS_LOD and has_lods:
@@ -705,6 +724,10 @@ def _core_simulate_jit(
                         val_struct = pm_lows[i] if pm_lows[i] > 0 else val_struct
                     elif hs_value_code == HS_PREVMAX and has_prev_high:
                         val_struct = prev_highs[i] if prev_highs[i] > 0 else val_struct
+                    elif hs_value_code == HS_PIVHIGH and has_piv_high:
+                        val_struct = pivot_highs[i] if pivot_highs[i] > 0 else val_struct
+                    elif hs_value_code == HS_PIVLOW and has_piv_low:
+                        val_struct = pivot_lows[i] if pivot_lows[i] > 0 else val_struct
                     elif hs_value_code == HS_PREVMIN and has_prev_low:
                         val_struct = prev_lows[i] if prev_lows[i] > 0 else val_struct
                     stop_loss_price = val_struct * (1.0 + sl_offset)
@@ -729,6 +752,10 @@ def _core_simulate_jit(
                                 fb_level = pm_lows[i] if pm_lows[i] > 0 else 0.0
                             elif hs_fallback_code == HS_PREVMAX and has_prev_high:
                                 fb_level = prev_highs[i] if prev_highs[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PIVHIGH and has_piv_high:
+                                fb_level = pivot_highs[i] if pivot_highs[i] > 0 else 0.0
+                            elif hs_fallback_code == HS_PIVLOW and has_piv_low:
+                                fb_level = pivot_lows[i] if pivot_lows[i] > 0 else 0.0
                             elif hs_fallback_code == HS_PREVMIN and has_prev_low:
                                 fb_level = prev_lows[i] if prev_lows[i] > 0 else 0.0
                             if fb_level > 0:
@@ -741,6 +768,44 @@ def _core_simulate_jit(
                             equity[i] = init_cash + realized_pnl
                             prev_signal = current_signal
                             continue
+                elif hs_type_code == 3:  # Fixed Amount
+                    if fixed_amount <= 0.0:
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
+                    if is_long:
+                        stop_loss_price = entry_price - fixed_amount
+                    else:
+                        stop_loss_price = entry_price + fixed_amount
+                    sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
+                    if not sl_valid:
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
+                elif hs_type_code == 2:  # ATR Multiplier
+                    # Nivel con el ATR DE ESTA BARRA. Paridad exacta con
+                    # portfolio_sim.py, incluido no entrar cuando no hay ATR.
+                    a_val = atrs[i] if has_atrs else np.nan
+                    if (not (a_val > 0.0)) or atr_mult <= 0.0:
+                        # Sin ATR: respaldo en % si lo hay, y si no no se entra.
+                        # Paridad exacta con portfolio_sim.py.
+                        if atr_fallback_pct <= 0.0:
+                            equity[i] = init_cash + realized_pnl
+                            prev_signal = current_signal
+                            continue
+                        if is_long:
+                            stop_loss_price = entry_price * (1.0 - atr_fallback_pct / 100.0)
+                        else:
+                            stop_loss_price = entry_price * (1.0 + atr_fallback_pct / 100.0)
+                    elif is_long:
+                        stop_loss_price = entry_price - atr_mult * a_val
+                    else:
+                        stop_loss_price = entry_price + atr_mult * a_val
+                    sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
+                    if not sl_valid:
+                        equity[i] = init_cash + realized_pnl
+                        prev_signal = current_signal
+                        continue
                 elif has_sl_stop and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
 

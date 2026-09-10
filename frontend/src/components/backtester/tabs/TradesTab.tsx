@@ -1,13 +1,24 @@
 "use client";
 import type { EvGateSummary } from "@/lib/api_backtester";
 
-import { useState, useMemo, useEffect } from "react";
+import { Fragment, useState, useMemo, useEffect } from "react";
+import type { ReactNode } from "react";
 import { Download } from "lucide-react";
 import type { TradeRecord } from "@/lib/api_backtester";
 
 interface TradesTabProps {
   trades: TradeRecord[];
-  onSelectTrade?: (ticker: string, date: string) => void;
+  /**
+   * `modo` decide si el trade se abre en la pestaña «Analisis por trade» o
+   * desplegado bajo su propia fila. El padre carga las mismas velas en los dos
+   * casos; lo unico que cambia es donde se pinta.
+   */
+  onSelectTrade?: (ticker: string, date: string, modo?: "pestana" | "desplegable") => void;
+  /** `ticker|fecha` del trade desplegado ahora mismo, o null. Lo lleva el padre
+   *  para que Trades y Calendario no puedan tener dos abiertos a la vez. */
+  tradeDesplegado?: string | null;
+  /** El grafico de analisis, ya montado por el padre con sus datos. */
+  panelAnalisis?: ReactNode;
   /** Nombre de la estrategia, solo para bautizar el CSV descargado. */
   strategyName?: string;
   /** Puerta por EV (locates aleatorios, fase 2): resumen de la segunda pasada. */
@@ -151,7 +162,8 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, onSelectTrade, strategyName, evGate, sinPuerta }: TradesTabProps) {
+export default function TradesTab({ trades, onSelectTrade, tradeDesplegado,
+                                   panelAnalisis, strategyName, evGate, sinPuerta }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -332,19 +344,24 @@ export default function TradesTab({ trades, onSelectTrade, strategyName, evGate,
             </tr>
           </thead>
           <tbody>
-            {shown.map((t, i) => (
+            {shown.map((t, i) => {
+              const abierto = tradeDesplegado === `${t.ticker}|${t.date}`;
+              // Fragment CON key: el fragmento corto `<>` no la admite, y sin
+              // ella React llena la consola de warnings en cada render.
+              return (
+              <Fragment key={i}>
               <tr
-                key={i}
                 className="hover:bg-[color-mix(in_srgb,var(--foreground)_3%,transparent)] transition-colors"
                 style={{ borderBottom: '1px solid color-mix(in srgb, var(--border) 30%, transparent)' }}
               >
                 <td className="px-4 py-1.5 font-semibold">
                   <span
-                    onClick={() => onSelectTrade?.(t.ticker, t.date)}
+                    onClick={() => onSelectTrade?.(t.ticker, t.date, "desplegable")}
                     className="hover:text-[var(--color-ec-copper-bright)] hover:underline transition-colors cursor-pointer"
-                    style={{ color: 'var(--color-ec-text-high)' }}
+                    style={{ color: abierto ? 'var(--color-ec-copper)' : 'var(--color-ec-text-high)' }}
+                    title={abierto ? "Cerrar el grafico" : "Ver el grafico aqui mismo"}
                   >
-                    {t.ticker}
+                    {abierto ? "▾ " : "▸ "}{t.ticker}
                   </span>
                 </td>
                 <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}>{t.date}</td>
@@ -407,7 +424,16 @@ export default function TradesTab({ trades, onSelectTrade, strategyName, evGate,
                   })()}
                 </td>
               </tr>
-            ))}
+              {abierto && (
+                <tr>
+                  <td colSpan={15} style={{ padding: '10px 16px 18px', background: 'var(--color-ec-bg-sidebar)' }}>
+                    {panelAnalisis}
+                  </td>
+                </tr>
+              )}
+              </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

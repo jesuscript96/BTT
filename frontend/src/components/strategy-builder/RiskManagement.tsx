@@ -158,7 +158,13 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 {/* Body */}
                 {(risk.use_hard_stop === true) && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }} className="animate-in fade-in duration-200">
-                        <div className={`flex gap-2 ${risk.hard_stop.type === RiskType.PERCENTAGE ? 'items-center justify-center' : ''}`}>
+                        {/* CON MARKET STRUCTURE hay hasta SEIS controles en fila
+                            (tipo, nivel, velas del pivote, operador, offset y
+                            respaldo) y no caben: el ultimo se salia por el borde
+                            derecho. Con `flex-wrap` bajan solos a una segunda
+                            linea en vez de desbordarse, y `items-start` evita
+                            que se estiren de alto al envolver. */}
+                        <div className={`flex flex-wrap items-start gap-2 ${risk.hard_stop.type === RiskType.PERCENTAGE ? 'items-center justify-center' : ''}`}>
                             <select
                                 value={risk.hard_stop.type}
                                 onChange={(e) => {
@@ -194,8 +200,17 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                     height: '36px',
                                     width: risk.hard_stop.type === RiskType.PERCENTAGE ? '52px' : 'auto',
                                 }}
+                                title={
+                                    "% — el stop a una distancia fija del precio de entrada.\n" +
+                                    "ATR — el stop a N veces el ATR(14) DE LA VELA DE ENTRADA, asi que se " +
+                                    "ensancha cuando el ticker se mueve mas y se estrecha cuando se calma. " +
+                                    "Durante las primeras velas del dia el ATR todavia no existe y ahi NO se " +
+                                    "entra: sin ATR no se sabe cuanto se mueve esto.\n" +
+                                    "Market Structure — el stop en un nivel del dia (HOD, PMH, maximo previo...)."
+                                }
                             >
                                 <option value={RiskType.PERCENTAGE}>%</option>
+                                <option value={RiskType.ATR}>ATR</option>
                                 <option value={RiskType.MARKET_STRUCTURE}>Market Structure</option>
                             </select>
                             {risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? (
@@ -214,7 +229,8 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             fontFamily: 'var(--color-ec-sans)',
                                             outline: 'none',
                                             cursor: 'pointer',
-                                            flex: 2,
+                                            flex: '1 1 100%',
+                                            minWidth: 0,
                                             height: '36px',
                                         }}
                                     >
@@ -224,7 +240,56 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         <option value="PML">PML (Premarket Low)</option>
                                         <option value="Previous Max">Previous Max</option>
                                         <option value="Previous Min">Previous Min</option>
+                                        <option value="Ultimo pivote alto">\u00daltimo pivote alto</option>
+                                        <option value="Ultimo pivote bajo">\u00daltimo pivote bajo</option>
                                     </select>
+                                    {/* VELAS DE CONFIRMACION del pivote. Solo sale
+                                        con los dos niveles de pivote, porque los
+                                        demas no la usan. */}
+                                    {(risk.hard_stop.value === 'Ultimo pivote alto'
+                                      || risk.hard_stop.value === 'Ultimo pivote bajo') && (
+                                        <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '92px' }}>
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                step="1"
+                                                placeholder="3"
+                                                value={risk.hard_stop.pivot_window ?? ''}
+                                                onChange={(e) => updateRiskSetting('hard_stop', 'pivot_window', e.target.value === '' ? '' : e.target.value)}
+                                                onBlur={() => {
+                                                    const val = parseInt(String(risk.hard_stop.pivot_window), 10);
+                                                    updateRiskSetting('hard_stop', 'pivot_window', isNaN(val) ? 3 : val);
+                                                }}
+                                                onFocus={(e) => e.target.select()}
+                                                title={
+                                                    "Velas de CONFIRMACION a cada lado del pivote.\n\n" +
+                                                    "Un pivote alto es una vela cuyo maximo supera al de las N velas de su " +
+                                                    "izquierda y al de las N de su derecha. Con 1 o 2 salen pivotes de ruido; " +
+                                                    "con 8 o mas son fiables pero llegan tarde.\n\n" +
+                                                    "El nivel aparece N velas DESPUES de que ocurriera el giro, y ese retardo " +
+                                                    "es justo lo que hace que no mire al futuro. Mientras no haya ningun pivote " +
+                                                    "confirmado del dia, el motor aplica su respaldo."
+                                                }
+                                                style={{
+                                                    backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                    border: '0.5px solid var(--color-ec-border)',
+                                                    borderRadius: 5,
+                                                    padding: '7px 34px 7px 8px',
+                                                    fontSize: 12,
+                                                    fontWeight: 600,
+                                                    color: 'var(--color-ec-text-primary)',
+                                                    fontFamily: 'var(--color-ec-sans)',
+                                                    outline: 'none',
+                                                    width: '100%',
+                                                    height: '36px',
+                                                    textAlign: 'center',
+                                                }}
+                                            />
+                                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                                VELAS
+                                            </span>
+                                        </div>
+                                    )}
                                     
                                     <select
                                         value={risk.hard_stop.operator || '>='}
@@ -240,7 +305,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             fontFamily: 'var(--color-ec-sans)',
                                             outline: 'none',
                                             cursor: 'pointer',
-                                            width: '120px',
+                                            flex: '1 1 calc(50% - 4px)', minWidth: '104px',
                                             height: '36px',
                                         }}
                                     >
@@ -248,7 +313,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         <option value="<=">Por debajo</option>
                                     </select>
 
-                                    <div style={{ position: 'relative', width: '80px' }}>
+                                    <div style={{ position: 'relative', flex: '1 1 calc(50% - 4px)', minWidth: '78px' }}>
                                         <input
                                             type="number"
                                             step="0.1"
@@ -286,9 +351,70 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             %
                                         </span>
                                     </div>
+
+                                    {/* EL RESPALDO SOLO DONDE PUEDE HACER FALTA.
+                                        Con HOD o LOD el nivel existe desde la
+                                        primera vela y con Previous Max/Min solo
+                                        falta en la primerisima, asi que ensenyar
+                                        el campo ahi es ruido (lo dijo Jaume).
+                                        Donde SI hace falta: el ultimo pivote, que
+                                        no existe hasta que se confirma uno, y
+                                        PMH/PML en un ticker que no cotizo en
+                                        premercado.
+                                        Se ensenya TAMBIEN si ya tiene un valor
+                                        puesto, aunque el nivel no lo necesite: un
+                                        ajuste guardado que sigue actuando y no se
+                                        ve por ningun lado es justo la clase de
+                                        cosa que luego nadie encuentra. */}
+                                    {(["Ultimo pivote alto", "Ultimo pivote bajo", "PMH", "PML"]
+                                        .includes(String(risk.hard_stop.value))
+                                        || risk.hard_stop.struct_fallback_pct != null) && (
+                                    <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '112px' }}>
+                                        <input
+                                            type="number"
+                                            step="0.5"
+                                            min="0"
+                                            placeholder="5"
+                                            value={risk.hard_stop.struct_fallback_pct ?? ''}
+                                            onChange={(e) => updateRiskSetting('hard_stop', 'struct_fallback_pct', e.target.value === '' ? '' : e.target.value)}
+                                            onBlur={() => {
+                                                const val = parseFloat(String(risk.hard_stop.struct_fallback_pct));
+                                                updateRiskSetting('hard_stop', 'struct_fallback_pct', isNaN(val) ? undefined : val);
+                                            }}
+                                            onFocus={(e) => e.target.select()}
+                                            title={
+                                                "Stop de respaldo, en % del precio de entrada, para cuando el nivel " +
+                                                "elegido NO se puede resolver en esa vela.\n\n" +
+                                                "Pasa, por ejemplo, con el ultimo pivote mientras no hay ninguno " +
+                                                "confirmado del dia, o con un PMH en un ticker que no cotizo en " +
+                                                "premercado.\n\n" +
+                                                "Vacio = 5 %, que es lo que el motor lleva usando desde siempre. " +
+                                                "El respaldo pasa por los mismos topes que el nivel: Cangrejo A y B, " +
+                                                "hibrido y «Shares por SL»."
+                                            }
+                                            style={{
+                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                border: '0.5px dashed var(--color-ec-border)',
+                                                borderRadius: 5,
+                                                padding: '7px 46px 7px 8px',
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                color: 'var(--color-ec-text-primary)',
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                outline: 'none',
+                                                width: '100%',
+                                                height: '36px',
+                                                textAlign: 'center',
+                                            }}
+                                        />
+                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                            RESPALDO
+                                        </span>
+                                    </div>
+                                    )}
                                 </>
                             ) : (
-                                <div className="relative" style={{ width: '120px' }}>
+                                <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '104px' }}>
                                     <input
                                         type="number"
                                         step="0.1"
@@ -299,11 +425,16 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             updateRiskSetting('hard_stop', 'value', isNaN(val) ? 2.0 : val);
                                         }}
                                         onFocus={(e) => e.target.select()}
+                                        title={risk.hard_stop.type === RiskType.ATR
+                                            ? "Cuantos ATR de distancia. Con 2, el stop de un corto va a entrada + 2 x ATR(14) de la vela en que se entra."
+                                            : "Distancia del stop en % del precio de entrada."}
                                         style={{
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
                                             border: '0.5px solid var(--color-ec-border)',
                                             borderRadius: 5,
-                                            padding: '7px 24px 7px 10px',
+                                            // Con ATR el sufijo es "xATR" y necesita mas hueco que "%".
+                                            padding: risk.hard_stop.type === RiskType.ATR
+                                                ? '7px 38px 7px 10px' : '7px 24px 7px 10px',
                                             fontSize: 13,
                                             fontWeight: 600,
                                             color: 'var(--color-ec-text-primary)',
@@ -314,7 +445,59 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             textAlign: 'center',
                                         }}
                                     />
-                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">%</span>
+                                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-muted-foreground/40">
+                                        {risk.hard_stop.type === RiskType.ATR ? '\u00d7ATR' : '%'}
+                                    </span>
+                                </div>
+                            )}
+                            {/* RESPALDO DEL ATR. Durante las primeras velas del dia el
+                                ATR(14) todavia no existe. Vacio o 0 = no se entra en ese
+                                tramo; con un numero, ahi se usa un stop en % del precio.
+                                El respaldo pasa por los MISMOS topes que el ATR (Cangrejo
+                                A y B, hibrido y «Shares por SL»), porque todos miran el
+                                precio del stop y no la fraccion. */}
+                            {risk.hard_stop.type === RiskType.ATR && (
+                                <div className="relative" style={{ flex: '1 1 calc(50% - 4px)', minWidth: '128px' }}>
+                                    <input
+                                        type="number"
+                                        step="0.5"
+                                        min="0"
+                                        placeholder="sin respaldo"
+                                        value={risk.hard_stop.atr_fallback_pct ?? ''}
+                                        onChange={(e) => updateRiskSetting('hard_stop', 'atr_fallback_pct', e.target.value === '' ? '' : e.target.value)}
+                                        onBlur={() => {
+                                            const val = parseFloat(String(risk.hard_stop.atr_fallback_pct));
+                                            updateRiskSetting('hard_stop', 'atr_fallback_pct', isNaN(val) ? undefined : val);
+                                        }}
+                                        onFocus={(e) => e.target.select()}
+                                        title={
+                                            "Stop de respaldo para las primeras velas del dia, cuando el ATR(14) " +
+                                            "todavia no existe (le faltan velas).\n\n" +
+                                            "Vacio o 0: en ese tramo NO se entra. Es lo mas conservador — sin ATR " +
+                                            "no se sabe cuanto se mueve el ticker.\n" +
+                                            "Con un numero: ahi se usa un stop a ese % del precio de entrada, y en " +
+                                            "cuanto el ATR existe se vuelve a el.\n\n" +
+                                            "El respaldo respeta los mismos topes que el ATR: Estilo Cangrejo (A y B), " +
+                                            "stop hibrido y «Shares por SL»."
+                                        }
+                                        style={{
+                                            backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                            border: '0.5px dashed var(--color-ec-border)',
+                                            borderRadius: 5,
+                                            padding: '7px 58px 7px 10px',
+                                            fontSize: 12,
+                                            fontWeight: 600,
+                                            color: 'var(--color-ec-text-primary)',
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            outline: 'none',
+                                            width: '100%',
+                                            height: '36px',
+                                            textAlign: 'center',
+                                        }}
+                                    />
+                                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                        % SIN ATR
+                                    </span>
                                 </div>
                             )}
                         </div>

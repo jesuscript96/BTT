@@ -124,12 +124,27 @@ def write_shared(*, name: str, description, source_strategy_id: str, definition:
     return _entry_from_payload(filename, payload)
 
 
-def delete_shared(filename: str) -> None:
-    """Borra UNO de los ficheros del PROPIO owner (nunca los del otro dev)."""
+DEV_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def delete_shared(filename: str, dev: str | None = None) -> None:
+    """Borra UN fichero compartido. Sin `dev`, el del propio owner.
+
+    Con `dev` se puede borrar el del OTRO (decision de Jaume, 10-sep-2026: la
+    lista se acumulaba y no habia forma de limpiarla desde la UI). Es
+    destructivo y viaja: cuando se commitea y sube, desaparece tambien para el
+    otro dev — recuperable por git, pero hay que saberlo. La UI lo avisa.
+
+    El `dev` pasa por la MISMA regex que `shared_owner()`: sin puntos ni barras
+    no hay traversal, y la contencion con `is_relative_to` es la segunda barrera.
+    """
     if not FILENAME_RE.match(filename or ""):
         raise InvalidSharedFilename(f"nombre de fichero no valido: {filename!r}")
-    owner_dir = (shared_dir() / shared_owner()).resolve()
-    target = (owner_dir / filename).resolve()
-    if not target.is_relative_to(owner_dir) or not target.is_file():
-        raise FileNotFoundError(f"no hay fichero compartido propio con ese nombre: {filename}")
+    carpeta = (dev or shared_owner()).strip().lower()
+    if not DEV_RE.match(carpeta):
+        raise InvalidSharedFilename(f"nombre de dev no valido: {dev!r}")
+    root = shared_dir().resolve()
+    target = (root / carpeta / filename).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise FileNotFoundError(f"no hay fichero compartido con ese nombre: {carpeta}/{filename}")
     target.unlink()

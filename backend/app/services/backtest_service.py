@@ -17,6 +17,9 @@ import time
 import numpy as np
 import pandas as pd
 
+from app.services.portfolio_sim import (
+    atr_para_stop, pivotes_para_stop, necesita_pivotes,
+)
 from app.services.strategy_engine import (
     translate_strategy, _parse_risk_management, compile_strategy_def,
     get_lowest_timeframe_mins, apply_entry_fill_window,
@@ -834,7 +837,7 @@ def run_backtest(
 
             # Re-parse risk management with current (modified) strategy_def
             risk = strategy_def.get("risk_management", {})
-            sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_tp_time_limit, sig_trail_pct, sig_partial_tps, sig_sl_atr = \
+            sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_tp_time_limit, sig_trail_pct, sig_partial_tps = \
                 _parse_risk_management(risk, mini_df, daily_stats, {})
         else:
             try:
@@ -857,9 +860,6 @@ def run_backtest(
             sig_tp_time_limit = signals.get("tp_time_limit")
             sig_trail_pct = signals.get("trail_pct")
             sig_partial_tps = signals.get("partial_take_profits")
-            # Serie causal del ATR(14) del hard stop "ATR Multiplier" (stop
-            # fijado EN la entrada en portfolio_sim). None con otro stop.
-            sig_sl_atr = signals.get("sl_atr_arr")
             sig_pyramid_levels = signals.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
 
@@ -932,10 +932,6 @@ def run_backtest(
                 sig_pyramid_levels = [
                     {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
                 ]
-            # La serie del stop por ATR vive en el mismo espacio de indices que
-            # las señales: recortarla igual o el simulador lee el ATR de otra vela.
-            if sig_sl_atr is not None:
-                sig_sl_atr = sig_sl_atr[session_mask_np]
 
         # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays ---
         if compiled_strategy:
@@ -1133,9 +1129,6 @@ def run_backtest(
                 pyramid_sequential=sig_pyramid_sequential,
                 hs_type=hs_type,
                 hs_value=hs_value,
-                # Serie causal del ATR(14): con ella el stop se fija EN la
-                # entrada (via del nivel). Ver portfolio_sim.simulate.
-                atr_arr=sig_sl_atr,
                 hs_operator=hs_operator,
                 hs_offset_pct=hs_offset_pct,
                 hs_fallback_value=hs_fallback,
@@ -1145,6 +1138,16 @@ def run_backtest(
                 pm_highs=arrays.get("pm_high"),
                 pm_lows=arrays.get("pm_low"),
                 prev_highs=arrays.get("prev_high"),
+                # STOP POR ATR: se calcula SOLO si la estrategia lo pide, para
+                # no pagarlo en todos los ticker-dias. Periodo 14, como antes.
+                atrs=(atr_para_stop(arrays) if hs_type == "ATR Multiplier" else None),
+                hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
+                hs_struct_fallback_pct=hs.get("struct_fallback_pct"),
+                # Los pivotes SOLO se calculan si el stop los pide (o su
+                # respaldo): son O(n x ventana) y no valen nada en los demas.
+                **dict(zip(("pivot_highs", "pivot_lows"),
+                           pivotes_para_stop(arrays, hs.get("pivot_window"))
+                           if necesita_pivotes(hs) else (None, None))),
                 prev_lows=arrays.get("prev_low"),
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,
