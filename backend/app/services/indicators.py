@@ -1088,6 +1088,10 @@ INDICATOR_NAME_MAP = {
     "Darvas": "Darvas Box",
     "Caja Darvas": "Darvas Box",
     "Squeeze": "Squeeze",
+    "Vol. de la franja": "Vol. de la franja",
+    "Punto de control": "Punto de control",
+    "Nodo de arriba": "Nodo de arriba",
+    "Nodo de abajo": "Nodo de abajo",
     "Ultimo pivote": "Ultimo pivote",
     "\u00daltimo pivote": "Ultimo pivote",
     "Retroceso (%)": "Retroceso (%)",
@@ -1163,11 +1167,15 @@ def compute_indicator(
     wick_level: float | None = None,
     # "Retroceso (%)": si el impulso que se mide es al alza o a la baja.
     swing_dir: str | None = None,
+    # Perfil de volumen: anchura de franja (% del primer precio del dia) y
+    # liston para que una franja cuente como nodo (% del volumen del POC).
+    bin_pct: float | None = None,
+    liston_pct: float | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}|{bin_pct}|{liston_pct}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -1202,6 +1210,7 @@ def compute_indicator(
         ref_level=ref_level, level_dir=level_dir,
         wick_side=wick_side, abs_op=abs_op, abs_level=abs_level,
         wick_op=wick_op, wick_level=wick_level, swing_dir=swing_dir,
+        bin_pct=bin_pct, liston_pct=liston_pct,
     )
 
     if offset and offset != 0:
@@ -1855,6 +1864,105 @@ def _ultimo_pivote(h, l, day_id, win, alto):
     return out
 
 
+# Perfil de volumen intradia: el volumen del dia repartido por FRANJAS DE
+# PRECIO, en vez de por tiempo. Dice donde se ha cruzado el dinero, que es donde
+# esta la gente con su coste — y por tanto donde hay oferta esperando.
+#
+# FRANJAS DE ANCHURA FIJA, no "el rango del dia partido en N". Si las franjas
+# salieran de partir el rango, cada maximo nuevo moveria TODOS los bordes y
+# habria que rehacer el histograma entero en cada vela: O(n^2 x franjas). Con
+# anchura fija los bordes no se mueven y el histograma es un acumulador
+# incremental. La anchura va en % del primer precio del dia, asi que es
+# comparable entre un ticker de 0,40 $ y uno de 45 $.
+#
+# CADA VELA REPARTE su volumen entre TODAS las franjas que toca (de su minimo a
+# su maximo), no entero en el cierre: una vela de un minuto que recorre un 5% no
+# dejo todo su volumen en un solo precio.
+#
+# Los cuatro numeros que salen, todos con el dia hasta la barra i y nunca con
+# velas posteriores:
+#   pct   percentil de la franja del precio actual (0 = de las mas vacias)
+#   poc   precio de la franja con mas volumen (el punto de control)
+#   arr   primera franja POR ENCIMA que pasa el liston (la resistencia)
+#   aba   primera franja POR DEBAJO que pasa el liston (el soporte)
+#
+# EL LISTON, en vez de "dame las N zonas mas gordas": una franja es un nodo si
+# tiene al menos ese % del volumen del POC. Asi el numero de zonas lo pone el
+# DIA y no un parametro — si hubo una zona sale una, si hubo tres salen tres.
+_PERFIL_MAX_FRANJAS = 4096
+
+
+@njit(cache=True)
+def _perfil_volumen(h, l, c, v, day_id, bin_pct, liston_pct):
+    n = len(c)
+    out_pct = np.full(n, np.nan)
+    out_poc = np.full(n, np.nan)
+    out_arr = np.full(n, np.nan)
+    out_aba = np.full(n, np.nan)
+
+    hist = np.zeros(_PERFIL_MAX_FRANJAS)
+    cur_day = -1
+    ancho = 0.0
+
+    for i in range(n):
+        if day_id[i] != cur_day:
+            cur_day = day_id[i]
+            hist[:] = 0.0
+            ancho = c[i] * bin_pct / 100.0
+
+        if ancho <= 0.0:
+            continue
+
+        i0 = int(l[i] / ancho)
+        i1 = int(h[i] / ancho)
+        if i0 < 0:
+            i0 = 0
+        if i1 >= _PERFIL_MAX_FRANJAS:
+            i1 = _PERFIL_MAX_FRANJAS - 1
+        if i1 < i0:
+            i1 = i0
+        reparto = v[i] / (i1 - i0 + 1)
+        for k in range(i0, i1 + 1):
+            hist[k] += reparto
+
+        j = int(c[i] / ancho)
+        if j < 0:
+            j = 0
+        if j >= _PERFIL_MAX_FRANJAS:
+            j = _PERFIL_MAX_FRANJAS - 1
+
+        mx = 0.0
+        i_poc = -1
+        con_vol = 0
+        for k in range(_PERFIL_MAX_FRANJAS):
+            if hist[k] > 0.0:
+                con_vol += 1
+                if hist[k] > mx:
+                    mx = hist[k]
+                    i_poc = k
+        if i_poc < 0 or con_vol == 0:
+            continue
+
+        menores = 0
+        for k in range(_PERFIL_MAX_FRANJAS):
+            if hist[k] > 0.0 and hist[k] < hist[j]:
+                menores += 1
+        out_pct[i] = menores * 100.0 / con_vol if hist[j] > 0.0 else 0.0
+        out_poc[i] = (i_poc + 0.5) * ancho
+
+        umbral = mx * liston_pct / 100.0
+        for k in range(j + 1, _PERFIL_MAX_FRANJAS):
+            if hist[k] >= umbral:
+                out_arr[i] = (k + 0.5) * ancho
+                break
+        for k in range(j - 1, -1, -1):
+            if hist[k] >= umbral:
+                out_aba[i] = (k + 0.5) * ancho
+                break
+
+    return out_pct, out_poc, out_arr, out_aba
+
+
 # Nivel de referencia compartido por "ATR Extension" y "Time vs Level".
 _REF_LEVEL_MAP = {
     "vwap": "VWAP",
@@ -1933,6 +2041,8 @@ def _compute_raw(
     wick_op: str | None = None,
     wick_level: float | None = None,
     swing_dir: str | None = None,
+    bin_pct: float | None = None,
+    liston_pct: float | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -2552,6 +2662,40 @@ def _compute_raw(
             c_ord = c_vals[order] if order is not None else c_vals
             slope_arr, r2_arr = _rolling_reg_clock(t_min, c_ord, float(win), 3)
             res = slope_arr if name == "Reg. Slope" else r2_arr
+            if order is not None:
+                out[order] = res
+            else:
+                out = res
+        return pd.Series(out, index=close.index)
+
+    if name in ("Vol. de la franja", "Punto de control",
+                "Nodo de arriba", "Nodo de abajo"):
+        # Los cuatro salen del MISMO recorrido. Ver `_perfil_volumen`.
+        n = len(close)
+        out = np.full(n, np.nan)
+        t_min, day_id, order = _minutes_axis(df, n)
+        if t_min is not None:
+            h_v = high.values.astype(np.float64)
+            l_v = low.values.astype(np.float64)
+            c_v = close.values.astype(np.float64)
+            v_v = volume.values.astype(np.float64)
+            if order is not None:
+                h_v, l_v, c_v, v_v = h_v[order], l_v[order], c_v[order], v_v[order]
+            bp = float(bin_pct) if bin_pct else 1.0
+            if bp <= 0.0:
+                bp = 1.0
+            lp = float(liston_pct) if liston_pct is not None else 60.0
+            if lp < 0.0:
+                lp = 0.0
+            pct, poc, arr, aba = _perfil_volumen(h_v, l_v, c_v, v_v, day_id, bp, lp)
+            if name == "Vol. de la franja":
+                res = pct
+            elif name == "Punto de control":
+                res = poc
+            elif name == "Nodo de arriba":
+                res = arr
+            else:
+                res = aba
             if order is not None:
                 out[order] = res
             else:

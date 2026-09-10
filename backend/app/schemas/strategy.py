@@ -46,6 +46,12 @@ class IndicatorType(str, Enum):
     # Ultimo pivote confirmado: el ultimo techo (o suelo) que dejo el mercado.
     # A DIFERENCIA de los otros indicadores nuevos, este SI es un nivel de
     # precio: se compara con otros indicadores y sirve de stop estructural.
+    # Perfil de volumen intradia. El primero es una MEDIDA (percentil 0-100);
+    # los otros tres son NIVELES DE PRECIO y sirven de stop estructural.
+    VOL_BIN_PCT = "Vol. de la franja"
+    VOL_POC = "Punto de control"
+    VOL_NODE_UP = "Nodo de arriba"
+    VOL_NODE_DOWN = "Nodo de abajo"
     LAST_PIVOT = "Ultimo pivote"
     RETRACEMENT = "Retroceso (%)"
     ABSORPTION = "Absorption"
@@ -347,6 +353,13 @@ class IndicatorConfig(BaseModel):
     # "Retroceso (%)": si el impulso que se mide es al alza (retroceso desde el
     # maximo, el caso de un gapper) o a la baja (rebote desde el minimo).
     swing_dir: Optional[Literal["up", "down"]] = None
+    # Perfil de volumen:
+    #   bin_pct     anchura de cada franja, en % del primer precio del dia.
+    #   liston_pct  cuanto volumen tiene que tener una franja para contar como
+    #               nodo, en % del volumen del POC. El numero de zonas lo pone
+    #               el DIA, no un parametro.
+    bin_pct: Optional[float] = None
+    liston_pct: Optional[float] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"

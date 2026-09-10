@@ -28,6 +28,7 @@ _CATEGORY = {
         "Prev. Bar Open", "Prev. Bar High", "Prev. Bar Low", "Day Open", "High of Day",
         "Low of Day", "Current Open", "Previous Close", "Max N Bars",
         "Ultimo pivote",
+        "Punto de control", "Nodo de arriba", "Nodo de abajo",
     ],
     "Behavior": [
         "Consecutive Higher Highs", "Consecutive Lower Lows", "Consecutive Red Candles",
@@ -46,6 +47,7 @@ _CATEGORY = {
     # Bloque aparte, igual que en la UI: medidas que no existen en las
     # plataformas comerciales. Todas son standalone (solo contra una cifra).
     "Alternativos": [
+        "Vol. de la franja",
         "Reg. Slope", "Reg. R2", "ATR Extension",
         "Absorption", "Wick Ratio", "Absorption + Wick",
         "Retroceso (%)", "Time vs Level",
@@ -86,6 +88,12 @@ _PARAMS = {
     "Retroceso (%)": ["range_minutes", "swing_dir"],
     # pivot_window = velas de confirmacion a cada lado; swing_dir = techo o suelo.
     "Ultimo pivote": ["pivot_window", "swing_dir"],
+    # bin_pct = anchura de franja en % del precio; liston_pct = % del POC para
+    # que una franja cuente como nodo.
+    "Vol. de la franja": ["bin_pct"],
+    "Punto de control": ["bin_pct"],
+    "Nodo de arriba": ["bin_pct", "liston_pct"],
+    "Nodo de abajo": ["bin_pct", "liston_pct"],
     "Absorption": ["range_minutes"],
     "Wick Ratio": ["range_minutes", "wick_side"],
     "Absorption + Wick": ["range_minutes", "wick_side", "abs_op", "abs_level",

@@ -60,6 +60,10 @@ const INDICATOR_COLORS: Record<string, { bg: string; text: string; accent: strin
   DOLLAR_VOLUME: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
   SQUEEZE: { bg: "bg-fuchsia-50", text: "text-fuchsia-800", accent: "text-fuchsia-600", border: "border-fuchsia-200" },
   // Los dos salen del MISMO ajuste, asi que comparten familia de color.
+  VOL_BIN_PCT: { bg: "bg-cyan-50", text: "text-cyan-800", accent: "text-cyan-600", border: "border-cyan-200" },
+  VOL_POC: { bg: "bg-amber-50", text: "text-amber-800", accent: "text-amber-600", border: "border-amber-200" },
+  VOL_NODE_UP: { bg: "bg-rose-50", text: "text-rose-800", accent: "text-rose-600", border: "border-rose-200" },
+  VOL_NODE_DOWN: { bg: "bg-green-50", text: "text-green-800", accent: "text-green-600", border: "border-green-200" },
   ABSORPTION: { bg: "bg-orange-50", text: "text-orange-800", accent: "text-orange-600", border: "border-orange-200" },
   WICK_RATIO_UP: { bg: "bg-rose-50", text: "text-rose-800", accent: "text-rose-600", border: "border-rose-200" },
   WICK_RATIO_DOWN: { bg: "bg-green-50", text: "text-green-800", accent: "text-green-600", border: "border-green-200" },

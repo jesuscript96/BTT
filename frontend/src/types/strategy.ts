@@ -98,6 +98,12 @@ export enum IndicatorType {
     // Ultimo techo (o suelo) que dejo el mercado. Es un NIVEL DE PRECIO, al
     // contrario que el resto de los nuevos: se compara con otros indicadores y
     // sirve de stop estructural.
+    // Perfil de volumen intradia. El primero es una MEDIDA (percentil 0-100);
+    // los otros tres son NIVELES DE PRECIO y sirven de stop estructural.
+    VOL_BIN_PCT = "Vol. de la franja",
+    VOL_POC = "Punto de control",
+    VOL_NODE_UP = "Nodo de arriba",
+    VOL_NODE_DOWN = "Nodo de abajo",
     LAST_PIVOT = "Ultimo pivote",
     RETRACEMENT = "Retroceso (%)",
     ABSORPTION = "Absorption",
@@ -248,6 +254,10 @@ export interface IndicatorConfig {
     wick_level?: number;
     // "Retroceso (%)": impulso al alza ("up") o a la baja ("down").
     swing_dir?: "up" | "down";
+    // Perfil de volumen: anchura de franja (% del primer precio del dia) y
+    // liston para que una franja cuente como nodo (% del volumen del POC).
+    bin_pct?: number;
+    liston_pct?: number;
 }
 
 export interface ComparisonCondition {

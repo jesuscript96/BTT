@@ -328,6 +328,44 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
     multi: true,
   },
   {
+    id: "VOL_BIN_PCT",
+    label: "Vol. de la franja (percentil)",
+    category: "Volume",
+    displayMode: "panel",
+    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 }],
+    multi: true,
+  },
+  // Los tres niveles van SOBRE EL PRECIO: es la unica forma de comprobar de un
+  // vistazo que el indicador hace lo que dice. El punto de control tiene que
+  // caer donde el precio paso mas rato, y los nodos moverse a SALTOS de franja,
+  // nunca de forma continua — si se mueven suave, esta mal.
+  {
+    id: "VOL_POC",
+    label: "Punto de control",
+    category: "Volume",
+    displayMode: "overlay",
+    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 }],
+    multi: true,
+  },
+  {
+    id: "VOL_NODE_UP",
+    label: "Nodo de arriba",
+    category: "Volume",
+    displayMode: "overlay",
+    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 },
+             { name: "liston", label: "List\u00f3n %", default: 60, min: 0, max: 100 }],
+    multi: true,
+  },
+  {
+    id: "VOL_NODE_DOWN",
+    label: "Nodo de abajo",
+    category: "Volume",
+    displayMode: "overlay",
+    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 },
+             { name: "liston", label: "List\u00f3n %", default: 60, min: 0, max: 100 }],
+    multi: true,
+  },
+  {
     id: "ABSORPTION",
     label: "Absorci\u00f3n (M$ por 1%)",
     category: "Volume",

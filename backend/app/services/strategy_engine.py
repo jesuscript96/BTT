@@ -1403,6 +1403,8 @@ def _compute_from_config(
         wick_op=cfg.get("wick_op"),
         wick_level=cfg.get("wick_level"),
         swing_dir=cfg.get("swing_dir"),
+        bin_pct=cfg.get("bin_pct"),
+        liston_pct=cfg.get("liston_pct"),
     )
 
 

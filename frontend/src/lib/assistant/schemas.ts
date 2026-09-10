@@ -64,6 +64,8 @@ const IndicatorConfigSchema: JSONSchema = {
         time_condition: { type: 'string', enum: ['BEFORE', 'AFTER'], description: 'Antes o después de la hora indicada.' },
         orb_minutes: { type: 'number', description: 'Minutos del opening range (Opening range +/-).' },
         range_minutes: { type: 'number', description: 'Minutos de la ventana de RELOJ (Range of Time, Squeeze, Reg. Slope, Reg. R2, Absorption y Wick Ratio).' },
+        bin_pct: { type: 'number', description: 'Perfil de volumen: anchura de cada franja de precio, en % del primer precio del dia. 1 es el defecto.' },
+        liston_pct: { type: 'number', description: 'Perfil de volumen: cuanto volumen necesita una franja para contar como nodo, en % del volumen de la franja mas gorda. 85 = solo zonas grandes, 60 = las de verdad, 30 = con ruido. El numero de zonas lo pone el dia, no este parametro.' },
         pivot_window: { type: 'number', description: '"Ultimo pivote": velas de confirmacion a cada lado (y ventana de pivotes de los triangulos). Con 1-2 salen pivotes de ruido; con 8+ son fiables pero tardios.' },
         swing_dir: { type: 'string', enum: ['up', 'down'], description: '"Retroceso (%)": impulso al alza o a la baja. "Ultimo pivote": techo ("up") o suelo ("down").' },
         wick_side: { type: 'string', enum: ['upper', 'lower'], description: '"Wick Ratio": que mecha se mide, la de arriba (rechazo de las subidas) o la de abajo (rechazo de las caidas).' },
