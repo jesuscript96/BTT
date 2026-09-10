@@ -317,6 +317,10 @@ export interface RiskSettings {
     // SOLO con value = "Ultimo pivote alto"/"bajo". Velas de confirmacion a
     // cada lado. Por defecto 3.
     pivot_window?: number;
+    // Respaldo en % cuando el nivel ESTRUCTURAL no se resuelve en esa vela (el
+    // pivote sin confirmar, un PMH inexistente...). Ausente = 5 %, que es lo
+    // que el motor usaba clavado en el codigo.
+    struct_fallback_pct?: number;
 }
 
 export interface PartialTakeProfit {

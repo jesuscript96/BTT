@@ -121,6 +121,8 @@ def _core_simulate_jit(
     # stop nuevo se ignoraria EN SILENCIO y el backtest daria otra cosa segun la
     # variable de entorno.
     has_atrs, atrs, atr_mult, atr_fallback_pct,
+    # Respaldo del stop estructural en %; 0 = el 5 % de siempre.
+    struct_fallback_pct,
     has_timestamps, timestamps,
     has_hours, row_hours, row_minutes,
     elapsed_limit, elapsed_op_code,
@@ -705,7 +707,11 @@ def _core_simulate_jit(
                 # Stop loss price
                 stop_loss_price = 0.0
                 if hs_type_code == 1:  # Market Structure (HOD/LOD)
-                    val_struct = entry_price * (0.95 if is_long else 1.05)
+                    _fb_s = struct_fallback_pct if struct_fallback_pct > 0.0 else 5.0
+                    if is_long:
+                        val_struct = entry_price * (1.0 - _fb_s / 100.0)
+                    else:
+                        val_struct = entry_price * (1.0 + _fb_s / 100.0)
                     if hs_value_code == HS_HOD and has_hods:
                         val_struct = hods[i] if hods[i] > 0 else val_struct
                     elif hs_value_code == HS_LOD and has_lods:

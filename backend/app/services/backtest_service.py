@@ -1142,6 +1142,7 @@ def run_backtest(
                 # no pagarlo en todos los ticker-dias. Periodo 14, como antes.
                 atrs=(atr_para_stop(arrays) if hs_type == "ATR Multiplier" else None),
                 hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
+                hs_struct_fallback_pct=hs.get("struct_fallback_pct"),
                 # Los pivotes SOLO se calculan si el stop los pide (o su
                 # respaldo): son O(n x ventana) y no valen nada en los demas.
                 **dict(zip(("pivot_highs", "pivot_lows"),

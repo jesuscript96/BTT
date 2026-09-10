@@ -344,6 +344,53 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             %
                                         </span>
                                     </div>
+
+                                    {/* RESPALDO cuando el nivel no se resuelve: el
+                                        pivote aun sin confirmar, un PMH que no
+                                        existe, un dia sin datos previos. Era un 5 %
+                                        clavado en el codigo. Vacio = 5 %. */}
+                                    <div className="relative" style={{ width: '116px' }}>
+                                        <input
+                                            type="number"
+                                            step="0.5"
+                                            min="0"
+                                            placeholder="5"
+                                            value={risk.hard_stop.struct_fallback_pct ?? ''}
+                                            onChange={(e) => updateRiskSetting('hard_stop', 'struct_fallback_pct', e.target.value === '' ? '' : e.target.value)}
+                                            onBlur={() => {
+                                                const val = parseFloat(String(risk.hard_stop.struct_fallback_pct));
+                                                updateRiskSetting('hard_stop', 'struct_fallback_pct', isNaN(val) ? undefined : val);
+                                            }}
+                                            onFocus={(e) => e.target.select()}
+                                            title={
+                                                "Stop de respaldo, en % del precio de entrada, para cuando el nivel " +
+                                                "elegido NO se puede resolver en esa vela.\n\n" +
+                                                "Pasa, por ejemplo, con el ultimo pivote mientras no hay ninguno " +
+                                                "confirmado del dia, o con un PMH en un ticker que no cotizo en " +
+                                                "premercado.\n\n" +
+                                                "Vacio = 5 %, que es lo que el motor lleva usando desde siempre. " +
+                                                "El respaldo pasa por los mismos topes que el nivel: Cangrejo A y B, " +
+                                                "hibrido y «Shares por SL»."
+                                            }
+                                            style={{
+                                                backgroundColor: 'var(--color-ec-bg-sidebar)',
+                                                border: '0.5px dashed var(--color-ec-border)',
+                                                borderRadius: 5,
+                                                padding: '7px 46px 7px 8px',
+                                                fontSize: 12,
+                                                fontWeight: 600,
+                                                color: 'var(--color-ec-text-primary)',
+                                                fontFamily: 'var(--color-ec-sans)',
+                                                outline: 'none',
+                                                width: '100%',
+                                                height: '36px',
+                                                textAlign: 'center',
+                                            }}
+                                        />
+                                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-muted-foreground/40">
+                                            RESPALDO
+                                        </span>
+                                    </div>
                                 </>
                             ) : (
                                 <div className="relative" style={{ width: '120px' }}>

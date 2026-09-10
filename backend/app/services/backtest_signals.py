@@ -1092,6 +1092,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 atrs=(atr_para_stop(sig["arrays"])
                       if hs.get("type") == "ATR Multiplier" else None),
                 hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
+                hs_struct_fallback_pct=hs.get("struct_fallback_pct"),
                 **dict(zip(("pivot_highs", "pivot_lows"),
                            pivotes_para_stop(sig["arrays"], hs.get("pivot_window"))
                            if necesita_pivotes(hs) else (None, None))),

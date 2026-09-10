@@ -349,6 +349,15 @@ def simulate(
     # techo hibrido y `size_by_sl` siguen aplicandose IGUAL que con el ATR: los
     # tres consumen ese precio, no la fraccion.
     hs_atr_fallback_pct: float | None = None,
+    # RESPALDO DEL STOP ESTRUCTURAL, en % del precio de entrada, para cuando el
+    # nivel no se resuelve. Era un 5 % clavado en el codigo. None = 5 %, que es
+    # el comportamiento de siempre.
+    #
+    # OJO A LA DIFERENCIA con `hs_atr_fallback_pct`: alli, sin respaldo NO SE
+    # ENTRA; aqui, sin respaldo se usa el 5 %. Son politicas distintas a
+    # proposito — el estructural lleva anos entrando con ese 5 % y cambiarlo
+    # movería resultados de estrategias que ya funcionan.
+    hs_struct_fallback_pct: float | None = None,
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
@@ -1352,7 +1361,14 @@ def simulate(
                         pivot_highs, pivot_lows,
                     )
                     if val_struct <= 0.0:
-                        val_struct = entry_price * (0.95 if is_long else 1.05)
+                        # RESPALDO cuando el nivel no se resuelve (el pivote aun
+                        # sin confirmar, un PMH que no existe, un dia sin datos
+                        # previos...). Era un 5 % CLAVADO en el codigo; desde el
+                        # 2026-09-10 se puede ajustar con
+                        # `hard_stop.struct_fallback_pct`, y sin el sigue siendo 5.
+                        _fb = float(hs_struct_fallback_pct) if hs_struct_fallback_pct else 5.0
+                        val_struct = entry_price * ((1.0 - _fb / 100.0) if is_long
+                                                    else (1.0 + _fb / 100.0))
 
                     # Calculate sl_offset
                     offset_pct = float(hs_offset_pct) if hs_offset_pct is not None else 0.0

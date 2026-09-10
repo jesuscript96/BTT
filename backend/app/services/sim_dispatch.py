@@ -201,6 +201,7 @@ def simulate_jit(
     atrs: np.ndarray | None = None,
     # Respaldo en % para las barras sin ATR (ver portfolio_sim.simulate).
     hs_atr_fallback_pct: float | None = None,
+    hs_struct_fallback_pct: float | None = None,
     timestamps: np.ndarray | None = None,
     elapsed_limit: float = -1.0,
     elapsed_operator: str = "GREATER_THAN_OR_EQUAL",
@@ -251,6 +252,11 @@ def simulate_jit(
         atr_fallback_pct = float(hs_atr_fallback_pct or 0.0)
     except (TypeError, ValueError):
         atr_fallback_pct = 0.0
+
+    try:
+        struct_fallback_pct = float(hs_struct_fallback_pct or 0.0)
+    except (TypeError, ValueError):
+        struct_fallback_pct = 0.0
 
     hs_value_code = _hs_value_to_code(hs_value)
     hs_fallback_code = _hs_value_to_code(hs_fallback_value)
@@ -407,6 +413,7 @@ def simulate_jit(
         has_piv_high, piv_high_a,
         has_piv_low, piv_low_a,
         has_atrs, atrs_a, atr_mult, atr_fallback_pct,
+        struct_fallback_pct,
         has_timestamps, timestamps_a,
         has_hours, row_hours, row_minutes,
         float(elapsed_limit), elapsed_op_code,

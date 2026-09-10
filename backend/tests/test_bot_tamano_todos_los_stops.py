@@ -548,3 +548,73 @@ def test_pivote_pasa_por_cangrejo_y_por_el_hibrido():
     t_h, _, _ = _sim_pivote(size_by_sl=True, hybrid_stop=True,
                             hybrid_black_swan_pct=50.0, hybrid_max_loss_pct=0.05)
     assert t_h["size"] == pytest.approx(10.0)            # 1.000 $ / 100 $ de precio
+
+
+# ══ El respaldo del stop estructural, ahora ajustable ═════════════════════
+#
+# Cuando el nivel no se resuelve (el pivote sin confirmar, un PMH que no existe)
+# el motor cae a un respaldo en % del precio. Era un 5 % CLAVADO en el código, y
+# estaba escrito tres veces: en portfolio_sim, en el kernel JIT y en el bot. Se
+# hace ajustable con `hard_stop.struct_fallback_pct`, y sin él sigue siendo 5.
+
+
+@pytest.mark.parametrize("pct,stop_esperado,size_esperado", [
+    (None, 105.0, 60.0),      # el 5 % de siempre
+    (2.0, 102.0, 150.0),      # más ceñido -> más acciones
+    (12.0, 112.0, 25.0),      # más ancho  -> menos acciones
+])
+def test_respaldo_estructural_es_ajustable(pct, stop_esperado, size_esperado):
+    kw = {} if pct is None else {"hs_struct_fallback_pct": pct}
+    t, piv_h, _ = _sim_pivote(win=4, entrada=3, size_by_sl=True, **kw)
+    assert np.isnan(piv_h[3])                       # no hay pivote todavía
+    assert t["stop_loss"] == pytest.approx(stop_esperado)
+    assert t["size"] == pytest.approx(size_esperado)
+
+
+def test_respaldo_estructural_paridad_python_jit():
+    """El 5 % estaba escrito por separado en el kernel: si uno se ajusta y el
+    otro no, el backtest da una cosa u otra según BACKTEST_NUMBA_SIM."""
+    from app.services.sim_dispatch import simulate_jit
+    from app.services.portfolio_sim import pivotes_para_stop
+    px = _serie_con_pivote()
+    ts = (np.arange(N) * 60_000_000_000).astype(np.int64)
+    piv_h, piv_l = pivotes_para_stop(
+        {"high": px, "low": px, "timestamp": ts.astype("datetime64[ns]")}, 4)
+    entries = np.zeros(N, dtype=bool)
+    entries[3] = True
+    base = dict(
+        close=px, open_=px.copy(), high=px, low=px,
+        entries=entries, exits=np.zeros(N, dtype=bool), direction="shortonly",
+        init_cash=1_000_000.0, risk_r=300.0, risk_type="FIXED",
+        look_ahead_prevention=True, timestamps=ts,
+        hs_type="Market Structure (HOD/LOD)", hs_value="Ultimo pivote alto",
+        hs_operator=">=", hs_offset_pct=0.0,
+        pivot_highs=piv_h, pivot_lows=piv_l, size_by_sl=True,
+        hs_struct_fallback_pct=3.0,
+    )
+    t_py = simulate(**base)["trades"][0]
+    t_jit = simulate_jit(**base)["trades"][0]
+    assert t_py["stop_loss"] == pytest.approx(103.0)
+    assert t_py["stop_loss"] == pytest.approx(t_jit["stop_loss"])
+    assert t_py["size"] == pytest.approx(t_jit["size"])
+
+
+def test_respaldo_estructural_el_aviso_dice_lo_mismo():
+    """El bot tenía su propia copia del 5 %."""
+    import pandas as pd
+    px = _serie_con_pivote()
+    ts = pd.to_datetime((np.arange(N) * 60_000_000_000).astype("datetime64[ns]"))
+    frame = pd.DataFrame({
+        "high": px, "low": px, "close": px, "timestamp": ts,
+        "hod": np.zeros(N), "lod": np.zeros(N), "pm_high": np.zeros(N),
+        "pm_low": np.zeros(N), "prev_high": np.zeros(N), "prev_low": np.zeros(N),
+    })
+    sdef = _sdef("Market Structure (HOD/LOD)", "Ultimo pivote alto")
+    sdef["risk_management"]["hard_stop"].update(
+        {"operator": ">=", "offset_pct": 0, "pivot_window": 4,
+         "struct_fallback_pct": 3.0})
+    stop = stop_estimado(sdef, frame, 3, 100.0, es_largo=False, sl_stop=None)
+    t, _, _ = _sim_pivote(win=4, entrada=3, size_by_sl=True,
+                          hs_struct_fallback_pct=3.0)
+    assert stop == pytest.approx(103.0)
+    assert stop == pytest.approx(t["stop_loss"])

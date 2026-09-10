@@ -262,7 +262,13 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
         )
         if nivel <= 0.0:
             # Mismo respaldo que el simulador: 5% cuando el nivel no se resuelve.
-            nivel = precio * (0.95 if es_largo else 1.05)
+            try:
+                _fb_s = float(hs.get("struct_fallback_pct") or 0.0)
+            except (TypeError, ValueError):
+                _fb_s = 0.0
+            if _fb_s <= 0.0:
+                _fb_s = 5.0
+            nivel = precio * ((1 - _fb_s / 100.0) if es_largo else (1 + _fb_s / 100.0))
         signo = 1.0 if hs.get("operator", ">=") in (">", ">=") else -1.0
         stop = nivel * (1.0 + signo * float(hs.get("offset_pct") or 0.0) / 100.0)
     elif tipo == "ATR Multiplier":
