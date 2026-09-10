@@ -18,6 +18,17 @@ const ALL_PRICE_VARIABLES = [
     IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
 ];
 
+// Los tres NIVELES del perfil de volumen. Van como DESTINO de cualquier
+// variable de precio: Jaume quiere cruzar «bar close», «prev bar close», RTH,
+// PM, etc. CONTRA la zona de valor y el punto de control (peticion del
+// 10-sep-2026). El motor no restringe pares — resuelve el destino con
+// `_compute_from_config` (strategy_engine.py:1303) — asi que el unico tope
+// estaba aqui.
+const PERFIL_VOLUMEN = [
+    IndicatorType.VOL_POC,
+    IndicatorType.VOL_ZONE_HIGH, IndicatorType.VOL_ZONE_LOW,
+];
+
 const ALL_BEHAVIOUR = [
     IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
     IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
@@ -67,29 +78,40 @@ const RTH_YESTERDAY_INDICATORS = [
 
 export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // Price Variables — Full
-    [IndicatorType.BAR_CLOSE]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.BAR_OPEN]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.HIGH_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.LOW_BAR]: [...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.BAR_CLOSE]: [
+        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.BAR_OPEN]: [
+        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.HIGH_BAR]: [
+        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.LOW_BAR]: [
+        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
     // PM variables
     [IndicatorType.PM_OPEN]: [
+        ...PERFIL_VOLUMEN,
         ...YESTERDAY_VARS,
         IndicatorType.PREV_BAR_CLOSE,
         IndicatorType.PREV_BAR_OPEN,
         IndicatorType.PREV_BAR_HIGH,
         IndicatorType.PREV_BAR_LOW,
     ],
-    [IndicatorType.PM_HIGH]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
-    [IndicatorType.PM_LOW]: [...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
+    [IndicatorType.PM_HIGH]: [
+        ...PERFIL_VOLUMEN, ...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
+    [IndicatorType.PM_LOW]: [
+        ...PERFIL_VOLUMEN, ...PM_RTH_YESTERDAY, ...ALL_BEHAVIOUR],
 
     // RTH variables
-    [IndicatorType.RTH_OPEN]: [...RTH_YESTERDAY_INDICATORS],
-    [IndicatorType.RTH_HIGH]: [...RTH_YESTERDAY_INDICATORS],
-    [IndicatorType.RTH_LOW]: [...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.RTH_OPEN]: [
+        ...PERFIL_VOLUMEN, ...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.RTH_HIGH]: [
+        ...PERFIL_VOLUMEN, ...RTH_YESTERDAY_INDICATORS],
+    [IndicatorType.RTH_LOW]: [
+        ...PERFIL_VOLUMEN, ...RTH_YESTERDAY_INDICATORS],
 
     // AM Open
     [IndicatorType.AM_OPEN]: [
+        ...PERFIL_VOLUMEN,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
         IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
         IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
@@ -106,6 +128,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
 
     // Solo aparecen como targets, no como source con cruces
     [IndicatorType.PREVIOUS_MAX]: [
+        ...PERFIL_VOLUMEN,
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
@@ -123,15 +146,6 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
-        // Anadidos el 10-sep-2026 a peticion de Jaume: faltaban RTH, AM open y
-        // la vela anterior. Era un descuido y no una decision — para `Dist()`
-        // estos tres NIVELES ya tenian la lista entera (DISTANCE_TARGETS), solo
-        // se quedaban cortos al CRUZAR. El motor no restringe pares: resuelve
-        // el destino con `_compute_from_config` (strategy_engine.py:1303).
-        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
-        IndicatorType.AM_OPEN,
-        IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
-        IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP, IndicatorType.VOL_NODE_DOWN,
@@ -171,11 +185,6 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
-        // Ver el porque en VOL_POC, mas arriba.
-        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
-        IndicatorType.AM_OPEN,
-        IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
-        IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP, IndicatorType.VOL_NODE_DOWN,
@@ -189,11 +198,6 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
-        // Ver el porque en VOL_POC, mas arriba.
-        IndicatorType.RTH_OPEN, IndicatorType.RTH_HIGH, IndicatorType.RTH_LOW,
-        IndicatorType.AM_OPEN,
-        IndicatorType.PREV_BAR_CLOSE, IndicatorType.PREV_BAR_OPEN,
-        IndicatorType.PREV_BAR_HIGH, IndicatorType.PREV_BAR_LOW,
         IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
         IndicatorType.LAST_PIVOT,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP, IndicatorType.VOL_NODE_DOWN,
@@ -216,6 +220,7 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.VWAP,
     ],
     [IndicatorType.PREVIOUS_MIN]: [
+        ...PERFIL_VOLUMEN,
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
         IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
         IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
@@ -234,10 +239,18 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.LOW_X_DAYS]: [],
     // Es un NIVEL: se usa como objetivo, no como origen de un cruce.
     [IndicatorType.OVERHEAD_X_DAYS]: [],
-    [IndicatorType.PREV_BAR_CLOSE]: [],
-    [IndicatorType.PREV_BAR_OPEN]: [],
-    [IndicatorType.PREV_BAR_HIGH]: [],
-    [IndicatorType.PREV_BAR_LOW]: [],
+    [IndicatorType.PREV_BAR_CLOSE]: [
+        ...PERFIL_VOLUMEN,
+    ],
+    [IndicatorType.PREV_BAR_OPEN]: [
+        ...PERFIL_VOLUMEN,
+    ],
+    [IndicatorType.PREV_BAR_HIGH]: [
+        ...PERFIL_VOLUMEN,
+    ],
+    [IndicatorType.PREV_BAR_LOW]: [
+        ...PERFIL_VOLUMEN,
+    ],
 
     // Behaviour & Patterns — standalone (sin cruces)
     [IndicatorType.CONSEC_HIGHER_HIGHS]: [],
