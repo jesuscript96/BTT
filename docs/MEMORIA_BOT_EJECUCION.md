@@ -668,6 +668,19 @@ padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
   conclusiones, y una página por riesgo (fogonazo, salida/stop, halts RTH,
   T1/T12, predictores). Figuras nuevas `r1_mapa.png`, `r2_espera.png`.
 
+- **Los halts de volatilidad avisaron del T12 (11-sep, noche; informe v9 y
+  resumen)**: de los 27 T12 reales CS/ADRC, 22 cayeron en días sin ningún LULD
+  (valores parados sin gap ni volumen, sin posición posible). Los cuatro
+  peligrosos llegaron todos tras una cadena de LULD ese mismo día, en sesión:
+  GATE 5 halts (09:41→10:27, T12 12:02, 95 min desde la última reanudación),
+  GGAA 16 (11:53→15:29, T12 15:35, 6 min), ASPA 7 (09:30→13:09, T12 14:13,
+  64 min), NOVV 14 (09:33→13:07, T12 13:43, 36 min). Ninguno en premercado
+  (vale para 2B, no para 1B). Tasa base: 1.947 días con ≥5 LULD en un valor
+  en 8 años (≈250/año) y solo 4 acabaron en T12: 1 de cada 500. Condición
+  necesaria, no suficiente. Jaume: «podría servir como regla para el bot al
+  final, solo por tenerlo en cuenta» → P10. Datos: `32_luld_antes_t12.py`,
+  `luld_antes_t12.csv`, `luld_cadena_tasa_base.csv`.
+
 ---
 
 ## Estado y pendientes
@@ -689,3 +702,4 @@ cuadro de mandos cuando se diseñe.
 | P7 | Tareas de Jaume de la semana del 7-sep (lista en §0): fills reales de DAS, JSON de la estrategia de estreno, congelar el motor, Telegram propio, VPS con el socio, runbook | Sin empezar |
 | P8 | Backend colgado el 7-sep (dos uvicorn); lo lleva Jaume en el chat del genético. Bot de avisos: lo enciende Jaume el 8-sep | Fuera de este chat |
 | P9 | Halts largos 2019-2026: HECHO con Databento status (50,61 $). 5 suspensiones T12 en valores en gap en 8 años; ninguna con posición dentro | Cerrado |
+| P10 | Cadena de LULD como aviso de T12 (en sesión): los 4 T12 peligrosos llevaban ≥5 halts de volatilidad ese día; 1 de cada 500 días así acaba en T12. Candidata a regla/aviso del bot cuando se diseñe el cuadro de mandos (no ampliar / vigilar con ≥5 LULD). No decidido | Apuntado |
