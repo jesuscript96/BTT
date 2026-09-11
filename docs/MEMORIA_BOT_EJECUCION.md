@@ -614,13 +614,18 @@ padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
   corporativas (T1 = contrasplit → «reabre» ×100; T12 = baja por fusión). Los
   reales son los de PM/sesión. `29_t12_detalle.py` → `t12_reales.csv`,
   `t1_sin_reabrir_detalle.csv`.
-- **T12 reales**: 106 en 8 años, 33 en el lago ese día (3 PM, 30 sesión,
+- **REGLA (Jaume): excluir contrasplits y fusiones, y solo CS/ADRC** (tabla
+  `tickers` del lago; `t12_reales_cs_adrc.csv`, `t1_sin_reabrir_cs_adrc.csv`;
+  REED 25-ene-2023 es un contrasplit que la tabla de splits no tiene).
+- **T12 reales CS/ADRC**: 27 en el lago (2 PM, 25 sesión); 11 volvieron
+  (mediana 10 días, máx 142), 16 nunca, 9 de ellos SPAC liquidados. Sin filtro
+  de tipo: 106 en 8 años, 33 en el lago ese día (3 PM, 30 sesión,
   08:24-15:35, grueso 11-15h). 16 volvieron (mediana 2 días, máx 142; reabren
   mediana 0 %, p95 +75 %, máx NEXI +201 %). **17 no volvieron nunca** (ONCR,
   ASPA, NOVV, HYZN, GATE, GGAA, XOG…). 7 en gap ≥ 20 ese día + 3 con gap en
   los 30 días previos (mediana 4 días antes). Ninguno reabrió > 500 %.
-- **T1 en sesión sin reabrir ese día**: 22; ninguno > 500 % al volver; peor
-  SMAP +261 % (309 días fuera), AMLX +79 % (1 día); 5 no volvieron.
+- **T1 en sesión sin reabrir ese día, CS/ADRC**: 20; ninguno > 500 %; peor
+  AMLX +79 % (1 día), SRDX +49 %; 4 no volvieron (LBPS, DUNE, OPT, KRON).
 - Fuentes para halts en vivo: Nasdaq Trader Trade Halts (RSS, códigos y
   reanudación), NYSE halts, SEC trading suspensions, Nasdaq Daily List (splits
   con antelación). No hay lista previa de T1/T12; señales: 8-K de
