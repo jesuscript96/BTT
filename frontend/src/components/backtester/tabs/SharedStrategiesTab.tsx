@@ -88,7 +88,30 @@ const USADAS_DEF = new Set(["entry_logic", "exit_logic", "pyramiding", "risk_man
   "universe_filters", "bias", "apply_day", "market_sessions", "custom_start_time",
   "custom_end_time", "postgap_preconditions"]);
 const USADAS_RM = new Set(["hard_stop", "take_profit", "take_profit_mode", "trailing_stop",
-  "partial_take_profits", "swing_option", "size_by_sl", "risk_per_trade", "risk", "cangrejo_mode"]);
+  "partial_take_profits", "swing_option", "size_by_sl", "risk_per_trade", "risk", "cangrejo_mode",
+  "accept_reentries", "max_reentries"]);
+
+/** Fila «Reentradas» de la radiografía, con la semántica de NUESTRO motor
+ *  (portfolio_sim: `if max_reentries >= 0` manda el tope numérico; con -1
+ *  decide `accept_reentries`). Idea tomada de la rama de Álvaro (1214180,
+ *  11-sep-2026), que la pinta con la semántica de su motor: allí -1 se lee
+ *  como ilimitadas sin mirar el interruptor. Aquí:
+ *    · interruptor apagado y -1 (o sin campo)  → «no» (valor de fábrica)
+ *    · tope numérico 0                          → «no»
+ *    · tope numérico N > 0                      → «máx N»
+ *    · interruptor encendido y -1               → ILIMITADAS, y se avisa:
+ *      es la trampa de encender reentradas dejando el -1. */
+function describirReentradas(rm: Record<string, unknown>): React.ReactNode {
+  const activas = rm.accept_reentries === true;
+  const bruto = rm.max_reentries;
+  const n = bruto === null || bruto === undefined || bruto === "" ? NaN : Number(bruto);
+  if (Number.isFinite(n) && n >= 0) {
+    if (n === 0) return "no";
+    return activas ? `máx ${n}` : `máx ${n} (tope numérico: el motor lo respeta aunque el interruptor esté apagado)`;
+  }
+  if (!activas) return "no";
+  return <span style={{ color: color.loss }}>⚠ ilimitadas (reentradas activas sin tope: max_reentries = -1)</span>;
+}
 const USADAS_ENT = new Set(["root_condition", "entry_time_windows", "timeframe"]);
 const USADAS_UNI = new Set(["rules", "date_from", "date_to"]);
 const USADAS_PIR = new Set(["levels", "mode"]);
@@ -306,6 +329,7 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <Fila k="Tamaño por stop" v={rm.size_by_sl ? "sí" : ""} />
         <Fila k="Riesgo por operación" v={S(rm.risk_per_trade) || S(rm.risk)} />
         <Fila k="Estilo Cangrejo" v={CANGREJO[S(rm.cangrejo_mode)] || S(rm.cangrejo_mode)} />
+        <Fila k="Reentradas" v={describirReentradas(rm)} />
         <Fila k="Take profit" v={S(rm.take_profit_mode) && `${S(rm.take_profit_mode)}${S(tp.type) ? ` · ${S(tp.type)} ${S(tp.value)}` : ""}`} />
         {parciales.map((p, i) => {
           const q = O(p);
