@@ -38,7 +38,7 @@ export interface BacktestPanelParams {
   bswan_mode?: "mercado" | "manual";
   bswan_threshold_pct?: number;
   bswan_slippage_pct?: number;
-  bswan_partition_shares?: number;
+  bswan_partition_pct?: number;
   bswan_minutes?: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
@@ -76,7 +76,7 @@ interface BacktestPanelProps {
     bswan_mode?: "mercado" | "manual";
     bswan_threshold_pct?: number;
     bswan_slippage_pct?: number;
-    bswan_partition_shares?: number;
+    bswan_partition_pct?: number;
     bswan_minutes?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
@@ -785,7 +785,7 @@ export default function BacktestPanel({
       bswan_mode: bswanMode,
       bswan_threshold_pct: useBswan ? bswanThreshold : 0,
       bswan_slippage_pct: useBswan ? bswanSlippage : 0,
-      bswan_partition_shares: useBswan ? bswanPartition : 0,
+      bswan_partition_pct: useBswan ? bswanPartition : 0,
       bswan_minutes: useBswan ? bswanMinutes : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
@@ -923,7 +923,7 @@ export default function BacktestPanel({
       bswan_mode: bswanMode,
       bswan_threshold_pct: useBswan ? bswanThreshold : 0,
       bswan_slippage_pct: useBswan ? bswanSlippage : 0,
-      bswan_partition_shares: useBswan ? bswanPartition : 0,
+      bswan_partition_pct: useBswan ? bswanPartition : 0,
       bswan_minutes: useBswan ? bswanMinutes : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
@@ -1955,7 +1955,7 @@ export default function BacktestPanel({
                   <InfoTooltip
                     position="left"
                     width={360}
-                    text="Simula qué habría pasado si, en cada trade que estuvo dentro durante una «mecha Black Swan» (una vela de 1 minuto cuyo máximo se dispara sobre su apertura más del umbral de abajo; en largo, el mínimo), el mechazo te hubiera sacado. Es un coste opcional: NO cambia qué se opera, solo cómo salen esos trades, y vale para saber cuántos te habrías comido de verdad. A MERCADO: el motor cierra en esa misma vela a un precio peor que donde debía salir (el stop si la vela lo cruza; si no, la apertura de la vela), penalizado con el slippage BS y, si la posición supera el umbral de partición, por tramos cada vez peores. MANUAL: no cierra en la vela (modela un stop mental, sin orden puesta que la barrida pueda ejecutar): suspende stop, TP y parciales y cierra toda la posición N minutos después. Solo mira mientras se está dentro. Fuerza el motor Python (más lento que el kernel). La mecha se mide sobre las velas del lago, que a veces esconden el pico real: el resultado es un suelo, no un techo. En Trades las salidas afectadas llevan la etiqueta BS."
+                    text="Simula qué habría pasado si, en cada trade que estuvo dentro durante una «mecha Black Swan», el mechazo te hubiera sacado. Una mecha cuenta como Black Swan cuando la vela de 1 minuto se dispara sobre su apertura más del umbral de abajo (en largo, hacia abajo) Y ADEMÁS cruza tu stop: un fogonazo que ni llega al stop no barre ninguna orden y el trade sigue abierto. Sin stop configurado no hay Black Swan. Es un coste opcional: NO cambia qué se opera, solo cómo salen esos trades, y vale para saber cuántos te habrías comido de verdad. A MERCADO: el motor cierra en esa misma vela a un precio peor que el stop, penalizado con el slippage BS y, si pones una partición, por tramos de ese % de la posición cada vez peores. MANUAL: no cierra en la vela (modela un stop mental, sin orden puesta que la barrida pueda ejecutar): suspende stop, TP y parciales y cierra toda la posición N minutos después. Solo mira mientras se está dentro. Fuerza el motor Python (más lento que el kernel). La mecha se mide sobre las velas del lago, que a veces esconden el pico real: el resultado es un suelo, no un techo. En Trades las salidas afectadas llevan la etiqueta BS."
                     style={{ display: 'inline-flex' }}
                   />
                 </span>
@@ -1968,7 +1968,7 @@ export default function BacktestPanel({
                       type="button"
                       onClick={() => setBswanMode(m)}
                       title={m === "mercado"
-                        ? "Cierra en la vela del mechazo, a un precio penalizado con el slippage BS (por tramos si hay partición)"
+                        ? "Cierra en la vela del mechazo (si además cruza tu stop), a un precio penalizado con el slippage BS (por tramos si hay partición)"
                         : "No cierra en la vela: cierra toda la posición N minutos después, con el stop suspendido entre medias"}
                       style={{
                         background: bswanMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
@@ -1995,7 +1995,7 @@ export default function BacktestPanel({
                   <InfoTooltip
                     position="left"
                     width={320}
-                    text="Tamaño mínimo de la mecha para contarla como Black Swan: distancia de la apertura al máximo de la vela de 1 minuto (al mínimo, en largo), en % de la apertura. 100 = el precio se duplicó dentro del minuto; 200 = se triplicó. Solo se miran las velas en las que la posición estaba abierta. Cuanto más bajo, más trades se cierran por BS."
+                    text="Tamaño mínimo de la mecha para contarla como Black Swan: distancia de la apertura al máximo de la vela de 1 minuto (al mínimo, en largo), en % de la apertura. 100 = el precio se duplicó dentro del minuto; 200 = se triplicó. Solo se miran las velas en las que la posición estaba abierta, y solo cuenta si esa vela además cruza tu stop (fijo, estructural, ATR o trailing): si la mecha se queda por debajo del stop, no es Black Swan y el trade sigue. Cuanto más bajo el umbral, más trades se cierran por BS."
                     style={{ display: 'inline-flex' }}
                   />
                 </span>
@@ -2011,7 +2011,7 @@ export default function BacktestPanel({
                     <InfoTooltip
                       position="left"
                       width={320}
-                      text="Cuánto peor que el precio de salida «debido» se ejecuta el cierre, en % de ese precio. Ejemplo: corto en 1 $ con stop al 20 % (debías salir en 1,20 $); con 100 % sales a 2,40 $. Si la vela no llega a cruzar el stop, la base es la apertura de la vela. No se recorta al máximo de la vela: es una penalización, no un fill, y las velas de minuto esconden los picos. Sustituye al slippage normal en esa salida."
+                      text="Cuánto peor que el stop se ejecuta el cierre, en % del nivel del stop que la vela cruzó (o del trailing, si era el que mandaba). Ejemplo: corto en 1 $ con stop al 20 % (debías salir en 1,20 $); con 100 % sales a 2,40 $. No se recorta al máximo de la vela: es una penalización, no un fill, y las velas de minuto esconden los picos. Sustituye al slippage normal en esa salida."
                       style={{ display: 'inline-flex' }}
                     />
                   </span>
@@ -2022,19 +2022,21 @@ export default function BacktestPanel({
               filas.push(
                 <React.Fragment key="bs-particion">
                   <span style={sub}>
-                    Partición (acc.)
+                    Partición (% posición)
                     <InfoTooltip
                       position="left"
-                      width={320}
-                      text="A partir de cuántas acciones se supone que no hay liquidez para salir de golpe. La posición se saca en tramos de este tamaño y cada tramo paga un escalón más de slippage: con 1.000 y slippage del 100 %, de 900 acciones salen todas al +100 %, pero de 1.500 salen 1.000 al +100 % y las otras 500 al +200 %. 0 = todo en un solo tramo. En Trades cada tramo aparece como una ejecución («BS 1/2 +100%»)."
+                      width={330}
+                      text="Qué parte de la posición sale en cada tramo, en % de la posición que haya en ese momento, para que valga igual con 300 acciones que con 30.000. Cada tramo paga un escalón más de slippage BS: con 50 % y slippage del 100 %, la mitad sale al +100 % y la otra mitad al +200 %; con 30 %, sale un 30 % al +100 %, otro 30 % al +200 %, otro 30 % al +300 % y el 10 % restante al +400 %. 0 (o 100) = toda la posición en un solo tramo. En Trades cada tramo aparece como una ejecución («BS 1/2 +100%»)."
                       style={{ display: 'inline-flex' }}
                     />
                   </span>
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    {bswanPartition > 0 && <span style={nota}>tramos de {bswanPartition}</span>}
-                    <input type="number" step="100" min={0} value={bswanPartition} style={inp}
-                           title="0 = toda la posición sale en un solo tramo"
-                           onChange={(e) => setBswanPartition(Math.max(0, Math.floor(Number(e.target.value) || 0)))} />
+                    {bswanPartition > 0 && bswanPartition < 100 && (
+                      <span style={nota}>{Math.ceil(100 / bswanPartition)} tramos</span>
+                    )}
+                    <input type="number" step="10" min={0} max={100} value={bswanPartition} style={inp}
+                           title="0 (o 100) = toda la posición sale en un solo tramo"
+                           onChange={(e) => setBswanPartition(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} />
                   </span>
                 </React.Fragment>
               );

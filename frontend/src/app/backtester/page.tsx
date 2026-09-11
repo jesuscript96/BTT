@@ -539,7 +539,7 @@ export default function Home() {
       bswan_mode: p?.bswan_mode,
       bswan_threshold_pct: p?.bswan_threshold_pct,
       bswan_slippage_pct: p?.bswan_slippage_pct,
-      bswan_partition_shares: p?.bswan_partition_shares,
+      bswan_partition_pct: p?.bswan_partition_pct,
       bswan_minutes: p?.bswan_minutes,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
@@ -601,7 +601,7 @@ export default function Home() {
         bswan_mode: p?.bswan_mode,
         bswan_threshold_pct: p?.bswan_threshold_pct,
         bswan_slippage_pct: p?.bswan_slippage_pct,
-        bswan_partition_shares: p?.bswan_partition_shares,
+        bswan_partition_pct: p?.bswan_partition_pct,
         bswan_minutes: p?.bswan_minutes,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
@@ -666,7 +666,7 @@ export default function Home() {
     bswan_mode?: "mercado" | "manual";
     bswan_threshold_pct?: number;
     bswan_slippage_pct?: number;
-    bswan_partition_shares?: number;
+    bswan_partition_pct?: number;
     bswan_minutes?: number;
   }) => {
     const isDraftId = params.strategy_id === "draft" ||
@@ -840,7 +840,7 @@ export default function Home() {
       bswan_mode: params.bswan_mode,
       bswan_threshold_pct: params.bswan_threshold_pct,
       bswan_slippage_pct: params.bswan_slippage_pct,
-      bswan_partition_shares: params.bswan_partition_shares,
+      bswan_partition_pct: params.bswan_partition_pct,
       bswan_minutes: params.bswan_minutes,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,

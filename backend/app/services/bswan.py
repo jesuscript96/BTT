@@ -25,13 +25,16 @@ DOS USOS, separados a proposito:
    MAE/MFE: cuantas veces estuvo la estrategia expuesta a un mechazo.
 
 2. COSTE OPCIONAL (`ConfigBSwan`): el motor cierra la posicion cuando una vela
-   supera el umbral. Dos modos:
-     - «mercado»: cierra EN ESA VELA a un precio peor que donde se habria
-       salido (el stop si esa vela lo cruza; si no, la apertura de la vela),
-       penalizado un `slippage_pct`, y por TRAMOS de `particion` acciones si la
-       posicion es mayor: el tramo k paga k x slippage (1.000 acciones al
-       +100 %, las 500 siguientes al +200 %...). NO se recorta al maximo de
-       la vela: es una penalizacion, no un fill, y las velas esconden picos.
+   supera el umbral Y ADEMAS CRUZA EL STOP vigente (regla de Jaume: un
+   fogonazo que no llega al stop no barre ninguna orden, el trade sigue
+   abierto; sin stop configurado no hay Black Swan). Dos modos:
+     - «mercado»: cierra EN ESA VELA a un precio peor que el fill del stop
+       (fijo, estructural, ATR, apretado por Cangrejo, o el trailing),
+       penalizado un `slippage_pct`, y por TRAMOS del `particion` % de la
+       posicion: el tramo k paga k x slippage (con 50 %, la mitad al +100 % y
+       la otra mitad al +200 %; con 30 %, 30/30/30 y el 10 % restante al
+       +400 %). NO se recorta al maximo de la vela: es una penalizacion, no un
+       fill, y las velas esconden picos.
      - «manual»: NO cierra en la vela (modela un stop mental, sin orden en el
        mercado, que la barrida no puede ejecutar): suspende stop, TP, parciales
        y salida por senal, y cierra TODA la posicion al cierre de la primera
@@ -68,7 +71,11 @@ class ConfigBSwan:
     # Modo «mercado»: penalizacion del tramo 1, en % del precio base. El tramo
     # k paga k x este valor.
     slippage_pct: float = 100.0
-    # Modo «mercado»: acciones por tramo. 0 = todo en un tramo.
+    # Modo «mercado»: tamano de cada tramo en % DE LA POSICION que haya en ese
+    # momento (Jaume, 11-sep: en % y no en acciones, para que valga igual con
+    # 300 acciones que con 30.000). 0 o 100 = todo en un tramo. 50 = la mitad
+    # al +1 x slippage y la otra mitad al +2 x; 30 = 30/30/30 y el 10 % que
+    # queda al +4 x.
     particion: float = 0.0
     # Modo «manual»: minutos desde la vela de deteccion hasta el cierre.
     minutos: float = 15.0
@@ -80,8 +87,8 @@ class ConfigBSwan:
             raise ValueError("el umbral de Black Swan debe ser > 0")
         if float(self.slippage_pct) < 0.0:
             raise ValueError("el slippage de Black Swan no puede ser negativo")
-        if float(self.particion) < 0.0:
-            raise ValueError("la particion no puede ser negativa")
+        if not (0.0 <= float(self.particion) <= 100.0):
+            raise ValueError("la particion va en % de la posicion, entre 0 y 100")
         if self.modo == "manual" and float(self.minutos) <= 0.0:
             raise ValueError("los minutos del modo manual deben ser > 0")
 
@@ -139,6 +146,11 @@ def anotar_mechas(raw_trades: list, open_, high, low, is_long: bool,
     Es puramente descriptivo: no cambia PnL, salidas ni metricas. Con
     parciales/piramide cada leg mide su propia ventana [entry, exit del leg] y
     el agrupador se queda con el maximo, que es el de la leg de cierre.
+
+    Ademas, si el trade llevaba stop (`stop_loss` > 0), anota en
+    `bs_wick_hit_stop` si el extremo EN CRUDO de esa vela sobrepaso el nivel
+    del stop: es la regla de Jaume para que una mecha cuente como Black Swan
+    (un fogonazo que ni llega al stop no barre nada). Sin stop no se anota.
     """
     if not raw_trades:
         return
@@ -146,6 +158,7 @@ def anotar_mechas(raw_trades: list, open_, high, low, is_long: bool,
     n = len(m)
     if n == 0:
         return
+    ext = np.asarray(low if is_long else high, dtype=np.float64)
     for t in raw_trades:
         a = min(max(int(t.get("entry_idx", 0)), 0), n - 1)
         b = min(max(ultima_vela_expuesta(t, look_ahead_prevention), a), n - 1)
@@ -153,31 +166,40 @@ def anotar_mechas(raw_trades: list, open_, high, low, is_long: bool,
         k = int(np.argmax(tramo))
         t["bs_wick_pct"] = round(float(tramo[k]), 4)
         t["bs_wick_idx"] = a + k
+        try:
+            sl = float(t.get("stop_loss") or 0.0)
+        except (TypeError, ValueError):
+            sl = 0.0
+        if sl > 0.0:
+            e = float(ext[a + k])
+            t["bs_wick_hit_stop"] = bool(e <= sl) if is_long else bool(e >= sl)
 
 
-def tramos_bs(size: float, particion: float, slippage_pct: float) -> list[tuple[float, float]]:
-    """Reparte `size` acciones en tramos de `particion` y asigna a cada tramo
-    su penalizacion: el tramo k paga k x `slippage_pct`.
+def tramos_bs(size: float, particion_pct: float, slippage_pct: float) -> list[tuple[float, float]]:
+    """Reparte `size` acciones en tramos del `particion_pct` % de la posicion
+    y asigna a cada tramo su penalizacion: el tramo k paga k x `slippage_pct`.
 
     Devuelve [(acciones, slippage_pct_del_tramo), ...] en orden. Con
-    particion 0 (o >= size) sale un unico tramo al slippage base. El ultimo
-    tramo puede ser mas pequeno (1.500 con particion 1.000 -> 1.000 y 500).
+    particion 0 (o >= 100) sale un unico tramo al slippage base. El ultimo
+    tramo es el resto: 30 % -> 30/30/30 y un 10 % al cuarto escalon.
     """
     size = float(size)
     if size <= 0.0:
         return []
-    p = float(particion or 0.0)
-    if p <= 0.0 or p >= size:
+    p = float(particion_pct or 0.0)
+    if p <= 0.0 or p >= 100.0:
         return [(size, float(slippage_pct))]
-    n_tramos = int(math.ceil(size / p - 1e-12))
+    paso = size * p / 100.0
+    # Tope de tramos por si el resto flotante no llegara a cero exacto.
+    n_max = int(math.ceil(100.0 / p)) + 1
     out: list[tuple[float, float]] = []
     restante = size
-    for k in range(1, n_tramos + 1):
-        sz = min(p, restante)
+    for k in range(1, n_max + 1):
+        if restante <= size * 1e-9:
+            break
+        sz = min(paso, restante)
         out.append((sz, float(slippage_pct) * k))
         restante -= sz
-        if restante <= 1e-12:
-            break
     return out
 
 

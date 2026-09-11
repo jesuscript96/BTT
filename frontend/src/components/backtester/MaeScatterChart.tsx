@@ -93,10 +93,14 @@ const CustomTooltip = ({ active, payload, isDarkMode, vista }: { active?: boolea
 
         if (vista === "bs") {
             const hora = horaDe(t.bs_wick_time_epoch);
+            // Regla de Jaume: solo es Black Swan si la mecha sobrepasó el stop.
+            const stop = t.bs_wick_hit_stop == null
+                ? "sin stop"
+                : (t.bs_wick_hit_stop ? "sobrepasó el stop" : "no llegó al stop");
             return (
                 <div className="p-2 rounded text-[10px] font-mono" style={caja}>
                     <p className="font-semibold mb-0.5">{t.ticker} · {t.date}</p>
-                    <p style={{ color: '#22c55e' }}>mecha: {data.y.toFixed(0)}%{hora ? ` a las ${hora}` : ''}</p>
+                    <p style={{ color: '#22c55e' }}>mecha: {data.y.toFixed(0)}%{hora ? ` a las ${hora}` : ''} · {stop}</p>
                     <p>ret: {data.x.toFixed(2)}%</p>
                     <p>pnl: ${t.pnl.toFixed(2)}</p>
                     <p>salida: {t.exit_reason}{t.bs_modo ? ` · cerrado por BS${t.bs_slip_pct != null ? ` (+${t.bs_slip_pct.toFixed(0)}%)` : ''}` : ''}</p>
@@ -197,18 +201,25 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
         const puntos: { x: number, y: number, trade: TradeRecord }[] = [];
         let conDato = 0;
         let expuestas = 0;
+        // De las expuestas, cuántas sobrepasaron además el stop: esas son las
+        // Black Swan de verdad según la regla de Jaume (la línea del 100 % es
+        // solo el tamaño de la mecha).
+        let barrenStop = 0;
         let max = 0;
         let cerradas = 0;
         for (const t of trades) {
             const w = t.bs_wick_pct;
             if (w == null) continue;
             conDato++;
-            if (w >= BS_UMBRAL) expuestas++;
+            if (w >= BS_UMBRAL) {
+                expuestas++;
+                if (t.bs_wick_hit_stop) barrenStop++;
+            }
             if (w > max) max = w;
             if (t.bs_modo) cerradas++;
             puntos.push({ x: t.return_pct || 0, y: w, trade: t });
         }
-        return { puntos, conDato, expuestas, max, cerradas };
+        return { puntos, conDato, expuestas, barrenStop, max, cerradas };
     }, [trades]);
 
     const tooltipContent = useMemo(() => {
@@ -238,7 +249,7 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
                     <InfoTooltip
                         position="left"
                         text={esBS
-                            ? `Mecha Black Swan: la mayor distancia entre la apertura y el máximo (el mínimo, en largo) de una vela de 1 minuto mientras el trade estuvo dentro, en % de la apertura. Cruzada contra el retorno final de cada trade. La línea verde marca el ${BS_UMBRAL} % (el precio se duplica en un minuto): los puntos por encima son las veces que la estrategia estuvo expuesta a un mechazo. Es descriptivo: el motor no ha cambiado nada; el coste de BSwan del panel es lo que simula comérselos. Se mide sobre las velas del lago, que a veces esconden el pico real.`
+                            ? `Mecha Black Swan: la mayor distancia entre la apertura y el máximo (el mínimo, en largo) de una vela de 1 minuto mientras el trade estuvo dentro, en % de la apertura. Cruzada contra el retorno final de cada trade. La línea verde marca el ${BS_UMBRAL} % (el precio se duplica en un minuto): los puntos por encima son las veces que la estrategia estuvo expuesta a un mechazo, y el recuento «sobre el stop» dice cuántos de esos además sobrepasaron el stop del trade, que es lo que de verdad barre la orden. Es descriptivo: el motor no ha cambiado nada; el coste de BSwan del panel es lo que simula comérselos. Se mide sobre las velas del lago, que a veces esconden el pico real.`
                             : "MAE (Maximum Adverse Excursion): Máxima pérdida flotante temporal que sufrió cada operación durante su vida. MFE (Maximum Favorable Excursion): Máxima ganancia flotante temporal alcanzada. Este gráfico cruza el MAE/MFE contra el Retorno final (%) de cada trade. Ayuda a ver si cortamos las ganancias muy rápido (MFE alto y retorno bajo) o si dejamos correr demasiado las pérdidas (MAE alto)."}
                     />
                 </span>
@@ -255,8 +266,9 @@ export default function MaeScatterChart({ trades, isDarkMode }: MaeScatterChartP
                     </div>
                     {esBS ? (
                         <div className="flex gap-3">
-                            <span title="Trades cuya mecha máxima estando dentro llegó al umbral, sobre los que traen el dato">
+                            <span title="Trades cuya mecha máxima estando dentro llegó al umbral, sobre los que traen el dato; y de ellos, cuántos sobrepasaron además su stop (los Black Swan de verdad: los que habrían barrido la orden)">
                                 expuestas ≥{BS_UMBRAL}%: <strong className="text-[#ffffff]">{bs.expuestas}</strong> de {bs.conDato}
+                                {bs.expuestas > 0 && <> · sobre el stop: <strong className="text-[#ffffff]">{bs.barrenStop}</strong></>}
                             </span>
                             <span>máx: <strong className="text-[#ffffff]">{bs.max.toFixed(0)}%</strong></span>
                             {bs.cerradas > 0 && (

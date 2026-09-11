@@ -130,34 +130,58 @@ def test_mercado_cierra_en_la_vela_al_stop_penalizado():
     assert r["equity"][-1] == pytest.approx(100_000.0 + (1.0 - 2.4) * 1000.0)
 
 
-def test_mercado_sin_stop_cruzado_penaliza_desde_la_apertura():
-    """Mecha del 120 % que no llega al stop (1,20): la base es la apertura de
-    la vela (0,50), el ultimo precio cuerdo antes de la barrida."""
+def test_mecha_que_no_cruza_el_stop_no_es_black_swan():
+    """REGLA DE JAUME: un fogonazo del 120 % que no llega al stop (1,20) no
+    barre ninguna orden. El trade sigue abierto y acaba igual que sin coste."""
     v = _velas()
     _mechazo(v, 6, 0.5, 1.1)
+    base = sim_py(**v, **KW)
     r = sim_py(**v, **KW, bswan=ConfigBSwan(umbral_pct=100.0, slippage_pct=100.0))
+    assert base["trades"][0]["exit_reason"] == "EOD"
+    assert r["trades"] == base["trades"]
+    assert r["bswan"] == []
+
+
+def test_sin_stop_configurado_no_hay_black_swan():
+    """Sin stop no hay nada que barrer: ni con una mecha del 4.900 %."""
+    v = _velas()
+    _mechazo(v, 6, 0.5, 25.0)
+    kw = {**KW, "sl_stop": None}
+    base = sim_py(**v, **kw)
+    r = sim_py(**v, **kw, bswan=ConfigBSwan(umbral_pct=100.0, slippage_pct=100.0))
+    assert base["trades"][0]["exit_reason"] == "EOD"
+    assert r["trades"] == base["trades"]
+    assert r["bswan"] == []
+
+
+def test_manual_no_se_arma_si_la_mecha_no_cruza_el_stop():
+    """En manual la regla es la misma: sin stop cruzado no se suspende nada,
+    y un stop cruzado DESPUES sale como SL normal."""
+    v = _velas()
+    _mechazo(v, 6, 0.5, 1.1)          # 120 %, no llega a 1,20
+    v["high"][8] = 1.5                 # este si cruza, y no hay espera armada
+    r = sim_py(**v, **KW, bswan=ConfigBSwan(modo="manual", umbral_pct=100.0, minutos=3.0))
     t = r["trades"][0]
-    assert t["exit_reason"] == "BS"
-    assert t["bs_base_price"] == pytest.approx(0.5)
-    assert t["exit_price"] == pytest.approx(1.0)
-    assert t["pnl"] == pytest.approx(0.0)
+    assert t["exit_reason"] == "SL" and t["exit_idx"] == 8
+    assert "bs_modo" not in t
+    assert r["bswan"] == []
 
 
 def test_mercado_particiona_y_escalona_el_slippage():
-    """1.500 acciones con particion de 1.000 y slippage del 100 %: 1.000 salen
-    un 100 % peor y las 500 restantes un 200 % peor (ejemplo de Jaume)."""
+    """1.500 acciones con particion del 50 % y slippage del 100 %: la mitad
+    sale un 100 % peor y la otra mitad un 200 % peor (ejemplo de Jaume)."""
     v = _velas()
     _mechazo(v, 6, 0.5, 25.0)
     kw = {**KW, "risk_r": 1500.0}
-    cfg = ConfigBSwan(umbral_pct=200.0, slippage_pct=100.0, particion=1000.0)
+    cfg = ConfigBSwan(umbral_pct=200.0, slippage_pct=100.0, particion=50.0)
     r = sim_py(**v, **kw, bswan=cfg)
     t = r["trades"]
     assert [x["exit_reason"] for x in t] == ["BS", "BS"]
-    assert [x["size"] for x in t] == [pytest.approx(1000.0), pytest.approx(500.0)]
+    assert [x["size"] for x in t] == [pytest.approx(750.0), pytest.approx(750.0)]
     assert [x["exit_price"] for x in t] == [pytest.approx(2.4), pytest.approx(3.6)]
     assert [x["bs_tramo"] for x in t] == [1, 2] and all(x["bs_tramos"] == 2 for x in t)
     assert [x["bs_slip_pct"] for x in t] == [pytest.approx(100.0), pytest.approx(200.0)]
-    assert r["bswan"][0]["penalizacion"] == pytest.approx(1200.0 + 1200.0)
+    assert r["bswan"][0]["penalizacion"] == pytest.approx((2.4 - 1.2) * 750 + (3.6 - 1.2) * 750)
 
     # Agrupado como lo ve la UI: UN trade con dos ejecuciones etiquetadas.
     ts = pd.Series(pd.to_datetime(v["timestamps"]))
@@ -166,10 +190,23 @@ def test_mercado_particiona_y_escalona_el_slippage():
     assert g[0]["n_executions"] == 2
     assert g[0]["size"] == pytest.approx(1500.0)
     assert g[0]["bs_slip_pct"] == pytest.approx(200.0)
-    assert g[0]["bs_penalty"] == pytest.approx(2400.0)
+    assert g[0]["bs_penalty"] == pytest.approx(2700.0)
     assert g[0]["bs_tramos"] == 2 and "bs_tramo" not in g[0]
     etiquetas = [e["label"] for e in g[0]["executions"] if e["kind"] == "exit"]
     assert etiquetas == ["BS 1/2 +100%", "BS 2/2 +200%"]
+
+
+def test_mercado_particion_del_30_deja_el_resto_en_el_cuarto_escalon():
+    """30 % -> 30/30/30 y el 10 % que queda al +400 % (ejemplo de Jaume)."""
+    v = _velas()
+    _mechazo(v, 6, 0.5, 25.0)
+    cfg = ConfigBSwan(umbral_pct=200.0, slippage_pct=100.0, particion=30.0)
+    r = sim_py(**v, **KW, bswan=cfg)
+    t = r["trades"]
+    assert [x["size"] for x in t] == [pytest.approx(300.0)] * 3 + [pytest.approx(100.0)]
+    assert [x["bs_slip_pct"] for x in t] == [100.0, 200.0, 300.0, 400.0]
+    assert [x["exit_price"] for x in t] == [pytest.approx(p) for p in (2.4, 3.6, 4.8, 6.0)]
+    assert all(x["bs_tramos"] == 4 for x in t)
 
 
 def test_mercado_en_largo_mira_la_mecha_hacia_abajo():
@@ -233,7 +270,11 @@ def test_manual_no_cierra_en_la_vela_y_cierra_a_los_n_minutos():
     assert t[0]["exit_price"] == pytest.approx(v["close"][9])
     assert t[0]["bs_modo"] == "manual"
     assert t[0]["bs_trigger_pct"] == pytest.approx(4900.0)
-    assert r["bswan"] == [{"idx": 6, "mecha_pct": 4900.0, "modo": "manual"}]
+    assert len(r["bswan"]) == 1
+    ev = r["bswan"][0]
+    assert (ev["idx"], ev["modo"]) == (6, "manual")
+    assert ev["mecha_pct"] == pytest.approx(4900.0)
+    assert ev["stop"] == pytest.approx(1.2)      # el stop que la mecha cruzo
 
 
 def test_manual_eod_sigue_mandando_durante_la_espera():
@@ -272,14 +313,39 @@ def test_anotar_mechas_solo_mientras_se_esta_dentro():
     anotar_mechas(t, v["open_"], v["high"], v["low"], is_long=False, look_ahead_prevention=True)
     assert t[0]["bs_wick_pct"] == pytest.approx(60.0)
     assert t[0]["bs_wick_idx"] == 5
+    assert "bs_wick_hit_stop" not in t[0]      # sin stop no se anota
+
+
+def test_anotar_mechas_dice_si_la_mecha_sobrepaso_el_stop():
+    """`bs_wick_hit_stop`: el extremo en crudo de la vela de la mecha maxima
+    contra el nivel del stop del trade (regla de Jaume, en la vista
+    descriptiva). Con stop del 20 % (1,20): 1,60 lo sobrepasa, 1,10 no."""
+    v = _velas()
+    v["high"][5] = 1.6
+    r = sim_py(**v, **KW)
+    t = r["trades"]
+    assert t[0]["exit_reason"] == "SL" and t[0]["exit_idx"] == 5
+    anotar_mechas(t, v["open_"], v["high"], v["low"], is_long=False)
+    assert t[0]["bs_wick_idx"] == 5 and t[0]["bs_wick_hit_stop"] is True
+
+    v2 = _velas()
+    v2["high"][5] = 1.1
+    r2 = sim_py(**v2, **KW)
+    t2 = r2["trades"]
+    anotar_mechas(t2, v2["open_"], v2["high"], v2["low"], is_long=False)
+    assert t2[0]["bs_wick_idx"] == 5 and t2[0]["bs_wick_hit_stop"] is False
 
 
 def test_helpers_puros():
-    assert tramos_bs(900, 1000, 100) == [(900.0, 100.0)]
-    assert tramos_bs(1500, 1000, 100) == [(1000.0, 100.0), (500.0, 200.0)]
-    assert tramos_bs(3000, 1000, 50) == [(1000.0, 50.0), (1000.0, 100.0), (1000.0, 150.0)]
+    assert tramos_bs(1500, 50, 100) == [(750.0, 100.0), (750.0, 200.0)]
+    assert tramos_bs(1000, 30, 100) == [(300.0, 100.0), (300.0, 200.0), (300.0, 300.0), (100.0, 400.0)]
+    assert tramos_bs(3000, 100 / 3, 50) == [pytest.approx((1000.0, 50.0)), pytest.approx((1000.0, 100.0)),
+                                            pytest.approx((1000.0, 150.0))]
     assert tramos_bs(1000, 0, 100) == [(1000.0, 100.0)]
-    assert tramos_bs(0, 100, 100) == []
+    assert tramos_bs(1000, 100, 100) == [(1000.0, 100.0)]
+    assert tramos_bs(0, 50, 100) == []
+    with pytest.raises(ValueError):
+        ConfigBSwan(particion=150.0)
     assert precio_bs(1.2, 100, is_long=False) == pytest.approx(2.4)
     assert precio_bs(0.8, 50, is_long=True) == pytest.approx(0.4)
     assert precio_bs(0.8, 150, is_long=True) == 0.0
@@ -379,6 +445,7 @@ def test_e2e_descriptivo_siempre_y_sin_cambiar_nada(_secuencial):
     expuestos = [t for t in tr if t["bs_wick_pct"] >= 100.0]
     assert expuestos, "algun trade debe haber estado dentro durante un mechazo"
     assert all(t["exit_reason"] == "SL" for t in expuestos)
+    assert all(t.get("bs_wick_hit_stop") is True for t in expuestos)
 
 
 def test_e2e_mercado_cierra_por_bs_y_cuenta(_secuencial):

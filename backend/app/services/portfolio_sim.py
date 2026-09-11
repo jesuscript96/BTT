@@ -370,9 +370,11 @@ def simulate(
     # COSTE DE BLACK SWAN (2026-09-11). `ConfigBSwan` de `bswan.py` o None.
     # Con None NO se ejecuta ni una rama nueva. Con el, una vela cuya mecha
     # adversa (open -> high en corto, open -> low en largo) supere el umbral
-    # cierra la posicion: en modo «mercado» en esa misma vela, a un precio
-    # penalizado por tramos; en modo «manual», al cierre de la vela que este
-    # a N minutos de la deteccion, con los stops suspendidos entre medias.
+    # Y CRUCE EL STOP vigente cierra la posicion: en modo «mercado» en esa
+    # misma vela, al fill del stop penalizado por tramos; en modo «manual»,
+    # al cierre de la vela que este a N minutos de la deteccion, con los
+    # stops suspendidos entre medias. Una mecha que no llega al stop no es
+    # Black Swan (regla de Jaume): el trade sigue abierto.
     # Solo lo implementa este motor: `sim_dispatch` lo desvia del kernel JIT.
     bswan=None,
 ) -> dict:
@@ -501,7 +503,45 @@ def simulate(
                 _mecha = ((_o_bs - low[i]) if is_long else (high[i] - _o_bs)) / _o_bs * 100.0
             else:
                 _mecha = 0.0
+            # REGLA DE JAUME (11-sep, matiz de la tarde): una mecha solo es
+            # Black Swan si ADEMAS cruza el stop vigente (fijo, estructural,
+            # ATR, apretado por Cangrejo, o el trailing). Un fogonazo que no
+            # llega al stop no barre ninguna orden: el trade sigue abierto y
+            # aqui no pasa nada. Sin stop configurado no hay Black Swan.
+            #
+            # `_base` = el fill que el stop habria dado en esta vela (0.0 = no
+            # cruzado). Es la base de la penalizacion en modo mercado y la
+            # condicion de armado en modo manual.
+            _base = 0.0
             if _mecha >= bs_umbral:
+                if hs_por_nivel:
+                    _hard = trade_sl_price
+                elif sl_stop is not None:
+                    _hard = (sl_cangrejo_px if sl_cangrejo_px > 0.0
+                             else (entry_price * (1 - sl_stop) if is_long
+                                   else entry_price * (1 + sl_stop)))
+                else:
+                    _hard = 0.0
+                if _hard > 0.0 and ((low[i] <= _hard) if is_long else (high[i] >= _hard)):
+                    _base = max(_hard, low[i]) if is_long else min(_hard, high[i])
+                elif sl_trail and trail_pct is not None:
+                    # Replica del bloque de trailing de abajo: activacion y
+                    # extremo con ESTA vela. Solo llega aqui si el fijo no
+                    # ha disparado, que es cuando el trailing puede mandar.
+                    _act = trail_activated
+                    _ext = trail_extreme
+                    if not _act:
+                        if is_long and high[i] >= entry_price * (1 + trail_pct) - 1e-9:
+                            _act, _ext = True, max(entry_price, high[i])
+                        elif (not is_long) and low[i] <= entry_price * (1 - trail_pct) + 1e-9:
+                            _act, _ext = True, min(entry_price, low[i])
+                    if _act:
+                        _ext = max(_ext, high[i]) if is_long else min(_ext, low[i])
+                        _t_px = ((_ext - entry_price * trail_pct) if is_long
+                                 else (_ext + entry_price * trail_pct))
+                        if (low[i] <= _t_px + 1e-9) if is_long else (high[i] >= _t_px - 1e-9):
+                            _base = max(_t_px, low[i]) if is_long else min(_t_px, high[i])
+            if _base > 0.0:
                 if bs_manual:
                     # Deteccion: se arma el cierre diferido y se deja correr.
                     # `skip_exits` se decidio al principio de la iteracion,
@@ -515,40 +555,11 @@ def simulate(
                         bs_wait_ns = int(timestamps[i]) + int(round(float(bswan.minutos) * 60e9))
                     else:
                         bs_wait_bar = i + int(_math_bs.ceil(float(bswan.minutos)))
-                    bs_eventos.append({"idx": int(i), "mecha_pct": round(_mecha, 4), "modo": "manual"})
+                    bs_eventos.append({"idx": int(i), "mecha_pct": round(_mecha, 4), "modo": "manual",
+                                       "stop": round(_base, 6)})
                 else:
-                    # PRECIO BASE = donde se habria salido en esta vela: el stop
-                    # (fijo, apretado por Cangrejo, o el trailing vigente) si la
-                    # vela lo cruza; si no lo cruza, la apertura de la vela, el
-                    # ultimo precio "cuerdo" antes de la barrida.
-                    _base = _o_bs
-                    if hs_por_nivel:
-                        _hard = trade_sl_price
-                    elif sl_stop is not None:
-                        _hard = (sl_cangrejo_px if sl_cangrejo_px > 0.0
-                                 else (entry_price * (1 - sl_stop) if is_long
-                                       else entry_price * (1 + sl_stop)))
-                    else:
-                        _hard = 0.0
-                    if _hard > 0.0 and ((low[i] <= _hard) if is_long else (high[i] >= _hard)):
-                        _base = max(_hard, low[i]) if is_long else min(_hard, high[i])
-                    elif sl_trail and trail_pct is not None:
-                        # Replica del bloque de trailing de abajo: activacion y
-                        # extremo con ESTA vela. Solo llega aqui si el fijo no
-                        # ha disparado, que es cuando el trailing puede mandar.
-                        _act = trail_activated
-                        _ext = trail_extreme
-                        if not _act:
-                            if is_long and high[i] >= entry_price * (1 + trail_pct) - 1e-9:
-                                _act, _ext = True, max(entry_price, high[i])
-                            elif (not is_long) and low[i] <= entry_price * (1 - trail_pct) + 1e-9:
-                                _act, _ext = True, min(entry_price, low[i])
-                        if _act:
-                            _ext = max(_ext, high[i]) if is_long else min(_ext, low[i])
-                            _t_px = ((_ext - entry_price * trail_pct) if is_long
-                                     else (_ext + entry_price * trail_pct))
-                            if (low[i] <= _t_px + 1e-9) if is_long else (high[i] >= _t_px - 1e-9):
-                                _base = max(_t_px, low[i]) if is_long else min(_t_px, high[i])
+                    # PRECIO BASE = el fill del stop en esta vela (`_base`), que
+                    # es donde se habria salido. La penalizacion va sobre el.
                     # MAE/MFE de la vela con el extremo REAL de la vela: el fill
                     # penalizado es un coste, no una excursion del precio.
                     if is_long:

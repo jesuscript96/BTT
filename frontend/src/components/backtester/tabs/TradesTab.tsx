@@ -170,6 +170,12 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswa
     () => trades.reduce((n, t) => n + ((t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA ? 1 : 0), 0),
     [trades],
   );
+  // De esos, los que ademas sobrepasaron su stop (regla de Jaume): los que
+  // habrian barrido la orden de verdad.
+  const nBarrenStop = useMemo(
+    () => trades.reduce((n, t) => n + (((t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA && t.bs_wick_hit_stop) ? 1 : 0), 0),
+    [trades],
+  );
 
   const shown = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
@@ -225,9 +231,10 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswa
             </span>
           )}
           {!bswan && hayMecha && (
-            <span title={`Trades que estuvieron dentro durante una mecha Black Swan (apertura→máximo de una vela de 1 min ≥ ${BS_UMBRAL_VISTA}%). Es descriptivo: el motor no ha cerrado nada por ello`}>
+            <span title={`Trades que estuvieron dentro durante una mecha Black Swan (apertura→máximo de una vela de 1 min ≥ ${BS_UMBRAL_VISTA}%), y cuántos de ellos sobrepasaron además su stop (los que habrían barrido la orden). Es descriptivo: el motor no ha cerrado nada por ello`}>
               mechas ≥{BS_UMBRAL_VISTA}%:{" "}
               <strong style={{ color: '#22c55e' }}>{nExpuestos}</strong>
+              {" "}({nBarrenStop} sobre el stop)
             </span>
           )}
           {summary.locates && (
@@ -333,9 +340,11 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswa
                   <td className="px-4 py-1.5"
                       style={{ color: (t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA ? '#22c55e' : 'var(--color-ec-text-secondary)',
                                fontWeight: (t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA ? 600 : 400 }}
-                      title={t.bs_wick_time_epoch != null
-                        ? `Mecha adversa máxima estando dentro (apertura→extremo de una vela de 1 min), a las ${new Date(t.bs_wick_time_epoch * 1000).toISOString().slice(11, 16)}`
-                        : "Mecha adversa máxima estando dentro (apertura→extremo de una vela de 1 min)"}>
+                      title={[
+                        "Mecha adversa máxima estando dentro (apertura→extremo de una vela de 1 min)",
+                        t.bs_wick_time_epoch != null ? `a las ${new Date(t.bs_wick_time_epoch * 1000).toISOString().slice(11, 16)}` : null,
+                        t.bs_wick_hit_stop == null ? "sin stop" : (t.bs_wick_hit_stop ? "sobrepasó el stop" : "no llegó al stop"),
+                      ].filter(Boolean).join(" · ")}>
                     {t.bs_wick_pct != null ? `${t.bs_wick_pct.toFixed(0)}%` : "—"}
                   </td>
                 )}

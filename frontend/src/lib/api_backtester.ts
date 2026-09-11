@@ -178,6 +178,10 @@ export interface TradeRecord {
   bs_wick_pct?: number;
   bs_wick_idx?: number;
   bs_wick_time_epoch?: number;
+  /** ¿El extremo en crudo de esa vela sobrepasó el nivel del stop del trade?
+   *  Es la regla de Jaume para que una mecha cuente como Black Swan. Solo
+   *  viene si el trade llevaba stop. */
+  bs_wick_hit_stop?: boolean;
   /** Coste de Black Swan (solo con el coste activo): cómo cerró el motor este
    *  trade. `mercado` = cerró en la vela del mechazo a `bs_base_price`
    *  penalizado; `manual` = cerró N minutos después. */
@@ -204,6 +208,7 @@ export interface EvGateSummary {
 export interface BSwanSummary {
   enabled: boolean;
   modo: "mercado" | "manual";
+  /** `particion` va en % de la posición por tramo (0 o 100 = un solo tramo). */
   umbral_pct: number; slippage_pct: number; particion: number; minutos: number;
   /** Velas que superaron el umbral estando dentro. */
   detecciones: number;
@@ -503,7 +508,7 @@ export async function runBacktest(params: {
   bswan_mode?: "mercado" | "manual";
   bswan_threshold_pct?: number;
   bswan_slippage_pct?: number;
-  bswan_partition_shares?: number;
+  bswan_partition_pct?: number;
   bswan_minutes?: number;
   /** Corte IS/OOS (0-100). El motor corre todo; el servidor guarda los dos bloques. */
   is_percent?: number;
@@ -547,7 +552,7 @@ export async function runBacktestWithDefinition(params: {
   bswan_mode?: "mercado" | "manual";
   bswan_threshold_pct?: number;
   bswan_slippage_pct?: number;
-  bswan_partition_shares?: number;
+  bswan_partition_pct?: number;
   bswan_minutes?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
@@ -763,7 +768,7 @@ export async function runOptimizationSurface(params: {
   bswan_mode?: "mercado" | "manual";
   bswan_threshold_pct?: number;
   bswan_slippage_pct?: number;
-  bswan_partition_shares?: number;
+  bswan_partition_pct?: number;
   bswan_minutes?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
