@@ -658,6 +658,11 @@ padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
   las 12:02: escapó por 36 minutos.** 1B 50k también lo operó en PM (06:26 →
   08:48, +20 %). Ninguna otra posición de 1B/2B en los casos peligrosos (GGAA,
   ASPA, NOVV, HYZN, ONCR, NEXI, LBPS, DUNE, OPT, KRON).
+- **Revisión visual de los PDFs (11-sep, noche)**: renderizados con pypdfium2
+  y revisados página a página. Fallos corregidos: variable `peor` pisada por
+  el parche v5 (una tabla volcada como texto en la sección 3), `r.name` en
+  iterrows (SPAC etiquetados CS), NEXI reabrió el mismo día, solapes en
+  figuras del resumen. Regla: no enviar PDF sin renderizar y mirar.
 - **Resumen ejecutivo entregado**: `Resumen_ejecutivo_riesgos.pdf`
   (`31_resumen_ejecutivo.py`): 1 página de cifras + mapa de riesgos + 5
   conclusiones, y una página por riesgo (fogonazo, salida/stop, halts RTH,
