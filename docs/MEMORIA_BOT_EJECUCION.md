@@ -631,6 +631,26 @@ padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
   con antelación). No hay lista previa de T1/T12; señales: 8-K de
   incumplimiento, cuentas atrasadas, T1 reciente.
 
+### 11-sep (noche, 2): fichas de los T12/T1 peligrosos (`30_fichas_t12_t1.py` → `fichas_t12_t1.csv`)
+
+- **Cadena T1→T12 NO existe**: en 194 T12 reales, 0 con T1 el mismo día, 4 con
+  T1 en los 10 días previos. Nasdaq marca el T12 directamente (verificado en
+  los mensajes brutos). NEXI: T12 en PM (08:24, gap +438 %) que REABRIÓ el
+  mismo día a las 14:26 a 7,47 (bajo el máximo de PM 13,35).
+- **T1 sin vuelta (LBPS, DUNE, OPT, KRON)**: ninguno en gap, todos cierres de
+  empresa (concurso, baja de SPAC, salida de Nasdaq, adquisición). No es cola.
+- **T12 sin vuelta, riesgo de cola REAL para un corto (gap ese día, con
+  volumen, no volvieron a Nasdaq)**: GATE 1-abr-2025 (SPAC, +170 %, 21→53→36,
+  5 LULD, T12 12:02), GGAA 13-jul-2023 (SPAC, 12→49→22, 16 LULD, 15:35), ASPA
+  25-oct-2023 (SPAC, +138 %, 13→38→27, 7 LULD, 14:13), NOVV 13-sep-2024 (SPAC,
+  +127 %, 21→55→37, 14 LULD, 13:43). Patrón: cascarón ilíquido que se dispara
+  ×2-4 con cadena de LULD y Nasdaq lo para por la tarde. HYZN y ONCR están
+  en/bajo el suelo de 0,50 $. Los otros 5 T12 sin vuelta son SPAC liquidados a
+  10 $ sin gap (REVH, PCX, DTRT, AFAR, GLST): cero peligro.
+- **Conclusión**: con CS/ADRC, gap ese día y precio > 0,50 $: 4 T12 sin salida
+  en 8 años, todos SPAC, todos con cadena de LULD antes, todos 12:00-15:35,
+  ninguno en PM; 0 T1 peligrosos.
+
 ---
 
 ## Estado y pendientes
