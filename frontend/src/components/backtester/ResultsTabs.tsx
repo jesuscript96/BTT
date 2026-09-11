@@ -10,6 +10,7 @@ import BandaLocates from "./BandaLocates";
 import OptimizationSurfaceTab from "@/components/backtester/tabs/OptimizationSurfaceTab";
 import EdgeTab from "@/components/backtester/tabs/EdgeTab";
 import SharedStrategiesTab from "@/components/backtester/tabs/SharedStrategiesTab";
+import type { SharedStrategyEntry } from "@/lib/api";
 import LockedFeature from "@/components/LockedFeature";
 import PanelAnalisisTrade from "@/components/backtester/PanelAnalisisTrade";
 
@@ -49,6 +50,9 @@ interface ResultsTabsProps {
   /** La peticion entera de la corrida (para relanzarla con otros rangos de locates). */
   ultimaPeticion?: Record<string, unknown> | null;
   onSelectDay?: (idx: number) => void;
+  /** Pestaña Compartidas: abrir una compartida como BORRADOR en el builder,
+   *  para revisarla y ajustarla antes de correr nada. */
+  onOpenSharedDraft?: (entry: SharedStrategyEntry) => void;
 }
 
 export default function ResultsTabs({
@@ -69,6 +73,7 @@ export default function ResultsTabs({
   backtestParams = {},
   ultimaPeticion = null,
   onSelectDay,
+  onOpenSharedDraft,
 }: ResultsTabsProps) {
   const [activeTab, setActiveTab] = useState<TabId>("performance");
   const [chartsSubTab, setChartsSubTab] = useState<"charts" | "whatif_stress" | "banda_locates" | "optimization">("charts");
@@ -549,7 +554,7 @@ export default function ResultsTabs({
         </div>
         <div style={{ display: activeTab === "shared" ? "block" : "none" }}>
           {mountedTabs.has("shared") && (
-          <SharedStrategiesTab />
+          <SharedStrategiesTab onOpenDraft={onOpenSharedDraft} />
           )}
         </div>
       </div>

@@ -11,11 +11,15 @@
 // tu base, y cualquier campo de su rama que la nuestra no conozca se caería en
 // SILENCIO (la trampa de las listas blancas en tres capas).
 //
+// EXTENSIÓN (Álvaro, 11-sep-2026): «Abrir borrador» carga el definition en el
+// builder como BORRADOR. No contradice lo de arriba: nada entra en la BD de
+// estrategias y el dataset no se hereda — se revisa, se ajusta y se decide.
+//
 // El formato de fichero y el backend son los de Álvaro a propósito: si
 // cambiáramos el formato, dejaríais de leeros.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Check, Loader2, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
 import {
   deleteSharedStrategy,
   getSharedStrategies,
@@ -377,7 +381,7 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <button onClick={() => setCrudo((v) => !v)} style={btn}>{crudo ? "Ocultar JSON" : "Ver JSON crudo"}</button>
         <button onClick={copiar} style={btn}>{copiado ? "Copiado" : "Copiar JSON"}</button>
         <span style={{ fontSize: 10.5, color: color.textMuted }}>
-          Para replicarla, móntala en tu panel: el <code>dataset_id</code> del JSON es de quien la compartió y no existe en tu base.
+          «Abrir borrador» la carga en el builder para revisarla y ajustarla — no se guarda nada y el dataset lo eliges tú en el panel (el <code>dataset_id</code> del JSON es de quien la compartió y no existe en tu base).
         </span>
       </div>
       {crudo && (
@@ -401,7 +405,7 @@ function Titulo({ children, hint }: { children: React.ReactNode; hint?: string }
 }
 
 /* ---- la pestaña ---- */
-export default function SharedStrategiesTab() {
+export default function SharedStrategiesTab({ onOpenDraft }: { onOpenDraft?: (entry: SharedStrategyEntry) => void }) {
   const [owner, setOwner] = useState("");
   const [compartidas, setCompartidas] = useState<SharedStrategyEntry[]>([]);
   const [mias, setMias] = useState<Strategy[]>([]);
@@ -458,7 +462,7 @@ Borra SU fichero del repo. Cuando subas el borrado, también desaparecerá para 
     <div style={{ padding: 14, fontFamily: font.sans, color: color.textPrimary }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 280 }}>
-          <Titulo hint="Los JSON viven en estrategias_compartidas/ y viajan por git: nada se comparte hasta que commiteas esa carpeta. Aquí solo se MIRAN — pulsa una para ver cómo está montada y, si te convence, móntate la tuya con lo que ves. Borrar quita el fichero del repo — también las del otro, para que la lista no se acumule.">
+          <Titulo hint="Los JSON viven en estrategias_compartidas/ y viajan por git: nada se comparte hasta que commiteas esa carpeta. Pulsa una para ver cómo está montada y, si te convence, ábrela como borrador en el builder para revisarla y ajustarla antes de correr. Borrar quita el fichero del repo — también las del otro, para que la lista no se acumule.">
             En el repo
           </Titulo>
         </div>
@@ -510,16 +514,29 @@ Borra SU fichero del repo. Cuando subas el borrado, también desaparecerá para 
                       {c.shared_at ? String(c.shared_at).slice(0, 16).replace("T", " ") : "—"}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); void borrar(c); }}
-                        style={btn}
-                        disabled={ocupada === c.filename}
-                        title={mia ? "Borrar tu fichero compartido" : `Borrar el fichero que compartió ${nombreDev(c.shared_by)}`}
-                        onMouseEnter={(ev) => { ev.currentTarget.style.color = color.loss; ev.currentTarget.style.borderColor = color.loss; }}
-                        onMouseLeave={(ev) => { ev.currentTarget.style.color = color.textMuted; ev.currentTarget.style.borderColor = color.border; }}
-                      >
-                        {ocupada === c.filename ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Borrar
-                      </button>
+                      <div style={{ display: "inline-flex", gap: 6 }}>
+                        {onOpenDraft && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onOpenDraft(c); }}
+                            style={btn}
+                            title="La abre como BORRADOR en el builder para revisar criterios, universo y riesgo antes de correr. No guarda nada en tus estrategias."
+                            onMouseEnter={(ev) => { ev.currentTarget.style.color = color.copperBright; ev.currentTarget.style.borderColor = color.copperBright; }}
+                            onMouseLeave={(ev) => { ev.currentTarget.style.color = color.textMuted; ev.currentTarget.style.borderColor = color.border; }}
+                          >
+                            <Pencil size={11} /> Abrir borrador
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void borrar(c); }}
+                          style={btn}
+                          disabled={ocupada === c.filename}
+                          title={mia ? "Borrar tu fichero compartido" : `Borrar el fichero que compartió ${nombreDev(c.shared_by)}`}
+                          onMouseEnter={(ev) => { ev.currentTarget.style.color = color.loss; ev.currentTarget.style.borderColor = color.loss; }}
+                          onMouseLeave={(ev) => { ev.currentTarget.style.color = color.textMuted; ev.currentTarget.style.borderColor = color.border; }}
+                        >
+                          {ocupada === c.filename ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Borrar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {activa && (

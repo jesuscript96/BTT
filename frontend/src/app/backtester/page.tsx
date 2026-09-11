@@ -22,7 +22,7 @@ import MaeScatterChart from "@/components/backtester/MaeScatterChart";
 import ResultsTabs from "@/components/backtester/ResultsTabs";
 import DaySelector from "@/components/backtester/DaySelector";
 import EquityCurveTab from "@/components/backtester/tabs/EquityCurveTab";
-import { createStrategy, createQuery, getStrategy, saveBacktest, updateStrategy } from "@/lib/api";
+import { createStrategy, createQuery, getStrategy, saveBacktest, updateStrategy, type SharedStrategyEntry } from "@/lib/api";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import { useEntitlements } from "@/lib/entitlements";
 import LakeUpdateLogo from "@/components/LakeUpdateLogo";
@@ -456,6 +456,65 @@ export default function Home() {
 
   const handleDraftChange = useCallback((draft: any) => {
     setBuilderDraft(draft);
+  }, []);
+
+  // Pestaña Compartidas → «Abrir borrador»: carga el `definition` compartido
+  // como BORRADOR en el builder. Respeta la decisión de Jaume de NO importar
+  // copias (nada entra en la BD de estrategias), pero permite revisar y
+  // ajustar TODO (criterios, universo, riesgo) antes de correr. El dataset_id
+  // del JSON NO se hereda a propósito: es de quien la compartió y no existe en
+  // esta base; al correr, si el borrador trae universe_filters, el dataset se
+  // auto-crea (handleRunWithDraft), o se elige en el panel como siempre.
+  const abrirCompartidaComoBorrador = useCallback((entry: SharedStrategyEntry) => {
+    let rawDef: any = entry.definition;
+    if (typeof rawDef === "string") {
+      try { rawDef = JSON.parse(rawDef); } catch { rawDef = {}; }
+    }
+    const def = (rawDef && typeof rawDef === "object") ? rawDef : {};
+    const draftId = `draft_shared_${Date.now().toString(36)}`;
+    setActiveStrategy({ id: draftId, name: entry.name, definition: def });
+    setBuilderDraft({
+      id: draftId,
+      name: entry.name || "",
+      bias: def.bias || "long",
+      apply_day: def.apply_day || "gap_day",
+      postgap_preconditions: def.postgap_preconditions || [],
+      entry_logic: def.entry_logic || {
+        root_condition: { type: "group", operator: "AND", conditions: [] },
+        entry_time_windows: []
+      },
+      exit_logic: def.exit_logic || {
+        root_condition: { type: "group", operator: "AND", conditions: [] }
+      },
+      risk_management: {
+        size_by_sl: false,
+        use_take_profit: false,
+        take_profit_mode: "Fixed",
+        fixed_take_profit_pct: 1.0,
+        partial_take_profits: [],
+        use_stop_loss: true,
+        stop_loss_mode: "Fixed",
+        fixed_stop_loss_pct: 1.0,
+        trail_stop_loss_pct: 1.0,
+        use_time_exit: false,
+        time_exit_session: "rth",
+        time_exit_value: "15:58",
+        swing_option: { active: false, target_day: "gap_1_day" },
+        ...(def.risk_management || {})
+      },
+      universe_filters: def.universe_filters,
+      is_wizard: def.is_wizard || false,
+      market_sessions: def.market_sessions || ["rth"],
+      custom_start_time: def.custom_start_time,
+      custom_end_time: def.custom_end_time,
+      ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
+      ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
+    } as any);
+    setLoadedStrategyId(null);
+    setActiveSessions(def.market_sessions || ["rth"]);
+    setActiveCustomStartTime(def.custom_start_time || "09:30");
+    setActiveCustomEndTime(def.custom_end_time || "16:00");
+    setMode('builder');
   }, []);
 
   const [dayCandles, setDayCandles] = useState<DayCandles | null>(null);
@@ -1803,6 +1862,7 @@ export default function Home() {
                 backtestParams={backtestParamsRef.current}
                 ultimaPeticion={ultimaPeticionRef.current}
                 onSelectDay={setSelectedDay}
+                onOpenSharedDraft={abrirCompartidaComoBorrador}
               />
             </>
           )}
