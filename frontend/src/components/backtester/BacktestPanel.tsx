@@ -5,7 +5,12 @@ import type { Dataset, Strategy } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
-import { Plus, Settings } from "lucide-react";
+import { Plus, Settings, Trash2 } from "lucide-react";
+import {
+  deletePortfolioStrategy,
+  previewStrategyDeletion,
+  type DeletionPreview,
+} from "@/lib/api_portfolio_lab";
 
 export interface BacktestPanelParams {
   dataset_id: string;
@@ -476,6 +481,13 @@ export default function BacktestPanel({
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
   const [loadError, setLoadError] = useState(false);
+  // Borrado desde el propio desplegable: confirmación en dos pasos, como el
+  // Baúl de Portfolio. Usa el MISMO endpoint que el Baúl (portfolio-lab) para
+  // que "borrar" siempre signifique estrategia + corridas + asignaciones.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<DeletionPreview | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const selectedStrat = strategies.find((s) => s.id === selectedStrategy);
   const selectedDs = datasets.find((d) => d.id === selectedDataset);
 
@@ -485,6 +497,46 @@ export default function BacktestPanel({
     selectedStrategy.startsWith("draft_") ||
     selectedStrategy.startsWith("wizard_draft_")
   );
+
+  // Solo las estrategias GUARDADAS existen en la BD y se pueden borrar; los
+  // borradores (id draft_*) viven solo en memoria del builder.
+  const deletableStrategy = !isDraft ? selectedStrat : undefined;
+
+  const cerrarConfirmBorrado = () => {
+    setConfirmDelete(false);
+    setDeletePreview(null);
+    setDeleteError(null);
+  };
+
+  const abrirConfirmBorrado = () => {
+    if (!deletableStrategy?.id) return;
+    setConfirmDelete(true);
+    setDeletePreview(null);
+    setDeleteError(null);
+    previewStrategyDeletion(deletableStrategy.id)
+      .then((p) => setDeletePreview(p))
+      .catch(() => setDeletePreview(null)); // sin números, pero la confirmación sigue
+  };
+
+  const ejecutarBorrado = async () => {
+    if (!deletableStrategy?.id || deleting) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deletePortfolioStrategy(deletableStrategy.id);
+      const restantes = await fetchStrategies();
+      setStrategies(restantes);
+      setSelectedStrategy((prev) =>
+        prev === deletableStrategy.id ? (restantes[0]?.id ?? "") : prev,
+      );
+      cerrarConfirmBorrado();
+    } catch (e) {
+      console.error("Error deleting strategy:", e);
+      setDeleteError("No se pudo borrar la estrategia. Reintenta o usa el Baúl de Portfolio.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const getStratDef = () => {
     let rawDef: any = null;
@@ -975,38 +1027,131 @@ export default function BacktestPanel({
           {loadingData ? (
             <div className="h-9 bg-gray-100 rounded animate-pulse" />
           ) : (
-            <select
-              value={selectedStrategy}
-              onChange={(e) => setSelectedStrategy(e.target.value)}
-              style={{
-                backgroundColor: 'var(--color-ec-bg-elevated)',
-                border: '0.5px solid var(--color-ec-border)',
-                borderRadius: 5,
-                padding: '7px 10px',
-                fontFamily: 'var(--color-ec-sans)',
-                fontSize: 12,
-                fontWeight: 500,
-                color: 'var(--color-ec-text-primary)',
-                outline: 'none',
-                width: '100%',
-                cursor: 'pointer',
-              }}
-            >
-              {!selectedStrategy && (
-                <option value="">cargar estrategia guardada…</option>
+            <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+              <select
+                value={selectedStrategy}
+                onChange={(e) => {
+                  setSelectedStrategy(e.target.value);
+                  cerrarConfirmBorrado();
+                }}
+                style={{
+                  backgroundColor: 'var(--color-ec-bg-elevated)',
+                  border: '0.5px solid var(--color-ec-border)',
+                  borderRadius: 5,
+                  padding: '7px 10px',
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 12,
+                  fontWeight: 500,
+                  color: 'var(--color-ec-text-primary)',
+                  outline: 'none',
+                  flex: 1,
+                  minWidth: 0,
+                  cursor: 'pointer',
+                }}
+              >
+                {!selectedStrategy && (
+                  <option value="">cargar estrategia guardada…</option>
+                )}
+                {isDraft && activeStrategy && (
+                  <option value={selectedStrategy}>
+                    [Borrador] {activeStrategy.name}
+                  </option>
+                )}
+                {strategies.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+              {deletableStrategy && (
+                <button
+                  type="button"
+                  title="Borrar esta estrategia guardada"
+                  disabled={deleting}
+                  onClick={abrirConfirmBorrado}
+                  onMouseEnter={() => setHoveredBtn("delete_strat")}
+                  onMouseLeave={() => { setHoveredBtn(null); setActiveBtn(null); }}
+                  onMouseDown={() => setActiveBtn("delete_strat")}
+                  onMouseUp={() => setActiveBtn(null)}
+                  style={{
+                    padding: '0 10px',
+                    borderRadius: 5,
+                    cursor: deleting ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    border: hoveredBtn === "delete_strat"
+                      ? '0.5px solid var(--color-ec-loss)'
+                      : '0.5px solid var(--color-ec-border)',
+                    backgroundColor: hoveredBtn === "delete_strat"
+                      ? 'color-mix(in srgb, var(--color-ec-loss) 10%, transparent)'
+                      : 'var(--color-ec-bg-elevated)',
+                    color: hoveredBtn === "delete_strat" ? 'var(--color-ec-loss)' : 'var(--color-ec-text-muted)',
+                    fontFamily: 'var(--color-ec-sans)',
+                    transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
+                  }}
+                >
+                  <Trash2 size={13} strokeWidth={2} />
+                </button>
               )}
-              {isDraft && activeStrategy && (
-                <option value={selectedStrategy}>
-                  [Borrador] {activeStrategy.name}
-                </option>
-              )}
-              {strategies.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            </div>
           )}
+          {confirmDelete && deletableStrategy && (() => {
+            const piezas: string[] = [];
+            if (deletePreview) {
+              if (deletePreview.runs_own) piezas.push(`${deletePreview.runs_own} corrida${deletePreview.runs_own === 1 ? "" : "s"} propia${deletePreview.runs_own === 1 ? "" : "s"}`);
+              if (deletePreview.runs_portfolio) piezas.push(`${deletePreview.runs_portfolio} de cartera`);
+            }
+            const aviso = deletePreview
+              ? piezas.length
+                ? `arrastro ${piezas.join(" + ")}`
+                : "sin corridas guardadas"
+              : "";
+            return (
+              <div style={{
+                marginTop: 8,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+                backgroundColor: 'color-mix(in srgb, var(--color-ec-loss) 10%, transparent)',
+                border: '0.5px solid color-mix(in srgb, var(--color-ec-loss) 30%, transparent)',
+                borderRadius: 5,
+                padding: '8px 12px',
+              }}>
+                <span style={{
+                  fontFamily: 'var(--color-ec-sans)',
+                  fontSize: 11,
+                  lineHeight: '1.4',
+                  color: 'var(--color-ec-loss)',
+                  flex: 1,
+                  minWidth: 180,
+                }}>
+                  {deleteError
+                    ? deleteError
+                    : `¿Borrar «${deletableStrategy.name}» para siempre?${aviso ? ` (${aviso})` : ''} Sin vuelta atrás.`}
+                </span>
+                <button
+                  type="button"
+                  onClick={cerrarConfirmBorrado}
+                  disabled={deleting}
+                  className="text-xs font-medium underline hover:no-underline cursor-pointer"
+                  style={{ color: 'var(--color-ec-text-muted)' }}
+                >
+                  cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={ejecutarBorrado}
+                  disabled={deleting}
+                  className="text-xs font-bold underline hover:no-underline cursor-pointer"
+                  style={{ color: 'var(--color-ec-loss)' }}
+                >
+                  {deleting ? 'borrando…' : 'sí, borrar'}
+                </button>
+              </div>
+            );
+          })()}
           {selectedStrategy && (() => {
             const currentStrat = isDraft ? activeStrategy : strategies.find((s) => s.id === selectedStrategy);
             if (!currentStrat) return null;
