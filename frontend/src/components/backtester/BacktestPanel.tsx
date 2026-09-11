@@ -1961,25 +1961,27 @@ export default function BacktestPanel({
                 </span>
               </label>
               {useBswan ? (
-                <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
+                // Mas estrecho que el selector de locates y con margen a la
+                // izquierda: el «?» de la etiqueta quedaba pegado a los botones.
+                <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)', marginLeft: 10 }}>
                   {(["mercado", "manual"] as const).map((m, i) => (
                     <button
                       key={m}
                       type="button"
                       onClick={() => setBswanMode(m)}
                       title={m === "mercado"
-                        ? "Cierra en la vela del mechazo (si además cruza tu stop), a un precio penalizado con el slippage BS (por tramos si hay partición)"
-                        : "No cierra en la vela: cierra toda la posición N minutos después, con el stop suspendido entre medias"}
+                        ? "A mercado: cierra en la vela del mechazo (si además cruza tu stop), a un precio penalizado con el slippage BS (por tramos si hay partición)"
+                        : "Manual: no cierra en la vela; cierra toda la posición N minutos después, con el stop suspendido entre medias"}
                       style={{
                         background: bswanMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
                         color: bswanMode === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
                         fontWeight: bswanMode === m ? 600 : 400,
                         border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
                         fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
-                        padding: '0 9px', cursor: 'pointer',
+                        padding: '0 6px', cursor: 'pointer',
                       }}
                     >
-                      {m === "mercado" ? "A mercado" : "Manual"}
+                      {m === "mercado" ? "Mercado" : "Manual"}
                     </button>
                   ))}
                 </div>
