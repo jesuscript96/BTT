@@ -651,6 +651,18 @@ padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
   en 8 años, todos SPAC, todos con cadena de LULD antes, todos 12:00-15:35,
   ninguno en PM; 0 T1 peligrosos.
 
+### 11-sep (noche, 3): ¿pillaron 1B/2B algún T12? + RESUMEN EJECUTIVO
+
+- **2B TTP SÍ operó GATE el 1-abr-2025**: corto a las 09:46 a 38,5 (en plena
+  cadena de LULD), salida por hora a las 11:26 a 38,0 (−0,6 %). **El T12 fue a
+  las 12:02: escapó por 36 minutos.** 1B 50k también lo operó en PM (06:26 →
+  08:48, +20 %). Ninguna otra posición de 1B/2B en los casos peligrosos (GGAA,
+  ASPA, NOVV, HYZN, ONCR, NEXI, LBPS, DUNE, OPT, KRON).
+- **Resumen ejecutivo entregado**: `Resumen_ejecutivo_riesgos.pdf`
+  (`31_resumen_ejecutivo.py`): 1 página de cifras + mapa de riesgos + 5
+  conclusiones, y una página por riesgo (fogonazo, salida/stop, halts RTH,
+  T1/T12, predictores). Figuras nuevas `r1_mapa.png`, `r2_espera.png`.
+
 ---
 
 ## Estado y pendientes
