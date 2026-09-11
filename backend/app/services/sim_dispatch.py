@@ -72,6 +72,13 @@ def simulate(**kwargs) -> dict:
     if kwargs.get("ev_gate") is not None:
         return _legacy_simulate(**kwargs)
     kwargs.pop("ev_gate", None)
+    # COSTE DE BLACK SWAN (2026-09-11): mismo trato que la puerta por EV. Solo
+    # lo implementa el motor Python; sin este desvio, con el kernel activo cada
+    # ticker-dia moriria con «unexpected keyword argument 'bswan'» y la corrida
+    # acabaria con CERO trades. Sin coste, el kwarg se retira antes del JIT.
+    if kwargs.get("bswan") is not None:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("bswan", None)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)

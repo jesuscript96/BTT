@@ -33,6 +33,13 @@ export interface BacktestPanelParams {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_shares?: number;
+  bswan_minutes?: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
   is_percent: number;
@@ -65,6 +72,12 @@ interface BacktestPanelProps {
     ev_gate_by?: "trades" | "dias";
     ev_gate_default_pct?: number;
     ev_gate_min_trades?: number;
+    bswan_enabled?: boolean;
+    bswan_mode?: "mercado" | "manual";
+    bswan_threshold_pct?: number;
+    bswan_slippage_pct?: number;
+    bswan_partition_shares?: number;
+    bswan_minutes?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;
@@ -463,6 +476,16 @@ export default function BacktestPanel({
   const [evGateDefault, setEvGateDefault] = useState(2);
   const [evGateMinTrades, setEvGateMinTrades] = useState(10);
   const useEvGate = useLocatesRandom && evGate;
+  // COSTE DE BLACK SWAN (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  // "mercado" = el motor cierra en la vela del mechazo a un precio penalizado
+  // (por tramos si la posicion supera la particion); "manual" = cierra N
+  // minutos despues, con el stop suspendido entre medias.
+  const [useBswan, setUseBswan] = useState(false);
+  const [bswanMode, setBswanMode] = useState<"mercado" | "manual">("mercado");
+  const [bswanThreshold, setBswanThreshold] = useState(200);
+  const [bswanSlippage, setBswanSlippage] = useState(100);
+  const [bswanPartition, setBswanPartition] = useState(0);
+  const [bswanMinutes, setBswanMinutes] = useState(15);
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -604,6 +627,12 @@ export default function BacktestPanel({
       if (savedState.evGateBy !== undefined) setEvGateBy(savedState.evGateBy);
       if (savedState.evGateDefault !== undefined) setEvGateDefault(savedState.evGateDefault);
       if (savedState.evGateMinTrades !== undefined) setEvGateMinTrades(savedState.evGateMinTrades);
+      if (savedState.useBswan !== undefined) setUseBswan(savedState.useBswan);
+      if (savedState.bswanMode !== undefined) setBswanMode(savedState.bswanMode);
+      if (savedState.bswanThreshold !== undefined) setBswanThreshold(savedState.bswanThreshold);
+      if (savedState.bswanSlippage !== undefined) setBswanSlippage(savedState.bswanSlippage);
+      if (savedState.bswanPartition !== undefined) setBswanPartition(savedState.bswanPartition);
+      if (savedState.bswanMinutes !== undefined) setBswanMinutes(savedState.bswanMinutes);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -752,6 +781,12 @@ export default function BacktestPanel({
       ev_gate_by: evGateBy,
       ev_gate_default_pct: useEvGate ? evGateDefault : 0,
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
+      bswan_enabled: useBswan,
+      bswan_mode: bswanMode,
+      bswan_threshold_pct: useBswan ? bswanThreshold : 0,
+      bswan_slippage_pct: useBswan ? bswanSlippage : 0,
+      bswan_partition_shares: useBswan ? bswanPartition : 0,
+      bswan_minutes: useBswan ? bswanMinutes : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       is_percent: isPercent,
@@ -763,6 +798,7 @@ export default function BacktestPanel({
     customStartTime, customEndTime, useLocates, locatesCost, maxLocates,
     useLocatesRandom, locatesMin, locatesMax, locatesSeed,
     useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
+    useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
     sizeBySl,
   ]);
@@ -798,6 +834,12 @@ export default function BacktestPanel({
         evGateBy,
         evGateDefault,
         evGateMinTrades,
+        useBswan,
+        bswanMode,
+        bswanThreshold,
+        bswanSlippage,
+        bswanPartition,
+        bswanMinutes,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -811,6 +853,7 @@ export default function BacktestPanel({
     riskType, feeType, isPercent, loadingData,
     useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
     evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
+    useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
     useMonthlyExpenses, monthlyExpenses
   ]);
 
@@ -875,6 +918,13 @@ export default function BacktestPanel({
       ev_gate_by: evGateBy,
       ev_gate_default_pct: useEvGate ? evGateDefault : 0,
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
+      // Coste de Black Swan. Apagado = el backend ni lo mira.
+      bswan_enabled: useBswan,
+      bswan_mode: bswanMode,
+      bswan_threshold_pct: useBswan ? bswanThreshold : 0,
+      bswan_slippage_pct: useBswan ? bswanSlippage : 0,
+      bswan_partition_shares: useBswan ? bswanPartition : 0,
+      bswan_minutes: useBswan ? bswanMinutes : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -1887,6 +1937,124 @@ export default function BacktestPanel({
                 </span>
               </React.Fragment>
             );
+          }
+
+          // COSTE DE BLACK SWAN (Jaume 2026-09-11). Fila madre con el selector
+          // A mercado | Manual, y debajo lo que pide cada modo.
+          filas.push(
+            <React.Fragment key="bswan">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useBswan}
+                  onChange={() => setUseBswan(!useBswan)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                />
+                <span style={et}>
+                  Coste de BSwan
+                  <InfoTooltip
+                    position="left"
+                    width={360}
+                    text="Simula qué habría pasado si, en cada trade que estuvo dentro durante una «mecha Black Swan» (una vela de 1 minuto cuyo máximo se dispara sobre su apertura más del umbral de abajo; en largo, el mínimo), el mechazo te hubiera sacado. Es un coste opcional: NO cambia qué se opera, solo cómo salen esos trades, y vale para saber cuántos te habrías comido de verdad. A MERCADO: el motor cierra en esa misma vela a un precio peor que donde debía salir (el stop si la vela lo cruza; si no, la apertura de la vela), penalizado con el slippage BS y, si la posición supera el umbral de partición, por tramos cada vez peores. MANUAL: no cierra en la vela (modela un stop mental, sin orden puesta que la barrida pueda ejecutar): suspende stop, TP y parciales y cierra toda la posición N minutos después. Solo mira mientras se está dentro. Fuerza el motor Python (más lento que el kernel). La mecha se mide sobre las velas del lago, que a veces esconden el pico real: el resultado es un suelo, no un techo. En Trades las salidas afectadas llevan la etiqueta BS."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+              </label>
+              {useBswan ? (
+                <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
+                  {(["mercado", "manual"] as const).map((m, i) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setBswanMode(m)}
+                      title={m === "mercado"
+                        ? "Cierra en la vela del mechazo, a un precio penalizado con el slippage BS (por tramos si hay partición)"
+                        : "No cierra en la vela: cierra toda la posición N minutos después, con el stop suspendido entre medias"}
+                      style={{
+                        background: bswanMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                        color: bswanMode === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                        fontWeight: bswanMode === m ? 600 : 400,
+                        border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                        fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                        padding: '0 9px', cursor: 'pointer',
+                      }}
+                    >
+                      {m === "mercado" ? "A mercado" : "Manual"}
+                    </button>
+                  ))}
+                </div>
+              ) : <span />}
+            </React.Fragment>
+          );
+
+          if (useBswan) {
+            filas.push(
+              <React.Fragment key="bs-umbral">
+                <span style={sub}>
+                  Umbral BS (%)
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="Tamaño mínimo de la mecha para contarla como Black Swan: distancia de la apertura al máximo de la vela de 1 minuto (al mínimo, en largo), en % de la apertura. 100 = el precio se duplicó dentro del minuto; 200 = se triplicó. Solo se miran las velas en las que la posición estaba abierta. Cuanto más bajo, más trades se cierran por BS."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <input type="number" step="10" min={1} value={bswanThreshold} style={inp}
+                       onChange={(e) => setBswanThreshold(Math.max(1, Number(e.target.value) || 1))} />
+              </React.Fragment>
+            );
+            if (bswanMode === "mercado") {
+              filas.push(
+                <React.Fragment key="bs-slip">
+                  <span style={sub}>
+                    Slippage BS (%)
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="Cuánto peor que el precio de salida «debido» se ejecuta el cierre, en % de ese precio. Ejemplo: corto en 1 $ con stop al 20 % (debías salir en 1,20 $); con 100 % sales a 2,40 $. Si la vela no llega a cruzar el stop, la base es la apertura de la vela. No se recorta al máximo de la vela: es una penalización, no un fill, y las velas de minuto esconden los picos. Sustituye al slippage normal en esa salida."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="10" min={0} value={bswanSlippage} style={inp}
+                         onChange={(e) => setBswanSlippage(Math.max(0, Number(e.target.value) || 0))} />
+                </React.Fragment>
+              );
+              filas.push(
+                <React.Fragment key="bs-particion">
+                  <span style={sub}>
+                    Partición (acc.)
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="A partir de cuántas acciones se supone que no hay liquidez para salir de golpe. La posición se saca en tramos de este tamaño y cada tramo paga un escalón más de slippage: con 1.000 y slippage del 100 %, de 900 acciones salen todas al +100 %, pero de 1.500 salen 1.000 al +100 % y las otras 500 al +200 %. 0 = todo en un solo tramo. En Trades cada tramo aparece como una ejecución («BS 1/2 +100%»)."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    {bswanPartition > 0 && <span style={nota}>tramos de {bswanPartition}</span>}
+                    <input type="number" step="100" min={0} value={bswanPartition} style={inp}
+                           title="0 = toda la posición sale en un solo tramo"
+                           onChange={(e) => setBswanPartition(Math.max(0, Math.floor(Number(e.target.value) || 0)))} />
+                  </span>
+                </React.Fragment>
+              );
+            } else {
+              filas.push(
+                <React.Fragment key="bs-minutos">
+                  <span style={sub}>
+                    Minutos hasta cerrar
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="En modo manual, cuántos minutos después de la vela del mechazo se cierra TODA la posición: al cierre de la primera vela que esté a esa distancia, con el slippage normal. Entre medias no actúan el stop, el TP, los parciales ni la salida por señal (es lo que modela: no había orden en el mercado). Si antes llega el fin de sesión, el límite de tiempo o el cortacircuitos diario, mandan ellos."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="1" min={1} value={bswanMinutes} style={inp}
+                         onChange={(e) => setBswanMinutes(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+                </React.Fragment>
+              );
+            }
           }
 
           filas.push(

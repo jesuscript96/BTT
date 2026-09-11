@@ -352,7 +352,8 @@ export default function ResultsTabs({
           {mountedTabs.has("trades") && (
           <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade}
             tradeDesplegado={tradeDesplegado} panelAnalisis={panelDesplegable}
-                     evGate={result.ev_gate} sinPuerta={result.sin_puerta} />
+                     evGate={result.ev_gate} sinPuerta={result.sin_puerta}
+                     bswan={result.bswan} />
           )}
         </div>
         <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>

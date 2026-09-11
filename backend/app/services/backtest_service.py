@@ -190,6 +190,12 @@ def run_backtest(
     locates_seed: int = 0,
     # Puerta por EV (fase 2): `ConfigPuerta` o None. Solo via secuencial.
     ev_gate=None,
+    # Coste de Black Swan (2026-09-11): `ConfigBSwan` de `bswan.py` o None.
+    # Con None esta funcion es EXACTAMENTE la de siempre salvo por dos claves
+    # descriptivas nuevas en cada trade (`bs_wick_pct`, `bs_wick_idx`), que se
+    # calculan siempre y no tocan ningun numero. Con el, fuerza la via
+    # SECUENCIAL, como los locates aleatorios.
+    bswan=None,
     look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
@@ -252,6 +258,8 @@ def run_backtest(
         # El sorteo de locates es por ticker-dia y el slab pasa UN solo
         # `locates_cost` para todos: correria con el fijo en silencio.
         and not locates_random and ev_gate is None
+        # El coste de Black Swan solo lo pasa el bucle secuencial al simulador.
+        and bswan is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -454,6 +462,9 @@ def run_backtest(
     _sorteos: list[float] = []
     # Veredictos de la puerta por EV de toda la corrida (vacio sin puerta).
     _puerta: dict = {"evaluadas": 0, "aceptadas": 0, "rechazadas": 0, "con_ev_por_defecto": 0}
+    # Recuento del coste de Black Swan de toda la corrida (solo con el coste).
+    _bs_stats: dict = {"detecciones": 0, "trades": 0, "tramos": 0,
+                       "cierres_mercado": 0, "cierres_manual": 0, "penalizacion_usd": 0.0}
 
     # ── Fase 1-slab: stream desde slabs locales (refs mmap) + señales ───────
     # Sustituye fetch+ensamblado pandas por slices numpy del slab store. Los meses
@@ -522,7 +533,7 @@ def run_backtest(
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
     _n_workers = _bsig.get_parallel_workers()
     if (not _slab_mode) and entry_model is None and feature_collector is None \
-            and not locates_random and ev_gate is None \
+            and not locates_random and ev_gate is None and bswan is None \
             and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
@@ -625,10 +636,34 @@ def run_backtest(
         else:
             risk_unit_dollar = risk_r
 
+        # Mecha adversa maxima de cada registro mientras estuvo dentro
+        # (DESCRIPTIVO, siempre; ver bswan.anotar_mechas). Sale de los MISMOS
+        # arrays que simularon el dia, en el mismo espacio de indices que los
+        # trades. No cambia ningun numero: alimenta la vista «BS» del grafico
+        # de MAE/MFE y la columna de mecha de la tabla.
+        from app.services.bswan import anotar_mechas as _anotar_mechas
+        _sk = e["sim_kwargs"]
+        _anotar_mechas(raw_trades, _sk["open_"], _sk["high"], _sk["low"],
+                       _sk["direction"] == "longonly", look_ahead_prevention)
+
         trades_records = _group_partial_exits(_enrich_trades(
             raw_trades, timestamps, ticker_e, date_e, strategy_def, risk_unit_dollar,
             gap_pct=e["gap_pct"],
         ))
+        # Coste de Black Swan: recuento de la corrida (detecciones del motor,
+        # trades cerrados por el, tramos y penalizacion en dolares).
+        _bs_ev = sim_r.get("bswan") or []
+        if _bs_ev:
+            _bs_stats["detecciones"] += len(_bs_ev)
+            _bs_stats["tramos"] += sum(int(v.get("tramos") or 0) for v in _bs_ev)
+            _bs_stats["penalizacion_usd"] += sum(float(v.get("penalizacion") or 0.0) for v in _bs_ev)
+            for _t in trades_records:
+                if _t.get("bs_modo"):
+                    _bs_stats["trades"] += 1
+                    if _t.get("exit_reason") == "BS":
+                        _bs_stats["cierres_mercado"] += 1
+                    elif _t.get("exit_reason") == "BS Manual":
+                        _bs_stats["cierres_manual"] += 1
         # Con locates aleatorios el precio sorteado se pega a cada trade del
         # ticker-dia: es la unica forma de ver DESPUES por que ese dia costo lo
         # que costo. `locates_fee_day` es la factura del dia entero (se cobra
@@ -1152,6 +1187,9 @@ def run_backtest(
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,
                 elapsed_operator=elapsed_operator,
+                # Coste de Black Swan (None = apagado). `sim_dispatch` lo desvia
+                # del kernel JIT; sin el, el kwarg se retira alli.
+                bswan=bswan,
         )
         try:
             sim_result = simulate(**_sim_kwargs)
@@ -1263,6 +1301,11 @@ def run_backtest(
                         "ev_defecto_pct": float(ev_gate.ev_defecto_pct),
                         "min_trades": int(ev_gate.min_trades),
                         "n_sombra": int(ev_gate.sombra_cierre_ns.size)}} if ev_gate is not None else {}),
+        # Resumen del coste de Black Swan. Solo con el coste activo: sin el, el
+        # resultado no lleva la clave.
+        **({"bswan": {"enabled": True, **bswan.resumen(), **_bs_stats,
+                      "penalizacion_usd": round(float(_bs_stats["penalizacion_usd"]), 2)}}
+           if bswan is not None else {}),
     }
 
 
@@ -1420,6 +1463,13 @@ def _enrich_trades(
             # añadidos existían —el tamaño de la posición crecía— pero no
             # dejaban ni un rastro visible.
             **({"pyr_executions": t["pyr_executions"]} if t.get("pyr_executions") else {}),
+            # Black Swan: TODO lo que empiece por `bs_` viaja tal cual (la mecha
+            # maxima descriptiva y, si el coste esta activo, el rastro del
+            # cierre). Sin listarlas una a una para que una clave nueva del
+            # motor no se caiga aqui en silencio (MEMORIA §10, tres capas).
+            **{k: v for k, v in t.items() if k.startswith("bs_")},
+            **({"bs_wick_time_epoch": int(ts_epoch[min(int(t["bs_wick_idx"]), max_idx)])}
+               if t.get("bs_wick_idx") is not None else {}),
         })
     return result
 
@@ -1486,13 +1536,22 @@ def _build_executions(run: list[dict]) -> list[dict]:
     for leg in run:
         if (leg.get("exit_time_epoch"), leg.get("exit_price")) in ya:
             continue
+        # Un cierre por Black Swan lleva su penalizacion en la etiqueta, y el
+        # numero de tramo si la salida se particiono: es lo que distingue en
+        # el grafico una salida normal de una barrida.
+        if leg.get("bs_slip_pct") is not None:
+            _lbl = f"BS +{float(leg['bs_slip_pct']):g}%"
+            if int(leg.get("bs_tramos") or 1) > 1 and leg.get("bs_tramo"):
+                _lbl = f"BS {int(leg['bs_tramo'])}/{int(leg['bs_tramos'])} +{float(leg['bs_slip_pct']):g}%"
+        else:
+            _lbl = leg.get("exit_reason")
         execs.append({
             "kind": "exit",
             "time_epoch": leg.get("exit_time_epoch"),
             "price": leg.get("exit_price"),
             "size": leg.get("size"),
             "pnl": leg.get("pnl"),
-            "label": leg.get("exit_reason"),
+            "label": _lbl,
         })
     # Sin marca de tiempo no se puede pintar; y el orden es el cronológico.
     execs = [e for e in execs if e.get("time_epoch") is not None]
@@ -1567,6 +1626,26 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
             "r_multiple": round(sum(r_values), 2) if r_values else None,
             "n_executions": len(run),
         })
+        # Black Swan. La mecha maxima de la posicion es la mayor de las legs
+        # (la de cierre cubre toda la vida del trade); el rastro del cierre por
+        # BS viene de la ultima leg; la penalizacion se suma y el tramo mas
+        # caro es el que se muestra. `bs_tramo` solo tiene sentido por leg.
+        _legs_bs = [t for t in run if t.get("bs_wick_pct") is not None]
+        if _legs_bs:
+            _peor = max(_legs_bs, key=lambda t: float(t.get("bs_wick_pct") or 0.0))
+            for k in ("bs_wick_pct", "bs_wick_idx", "bs_wick_time_epoch"):
+                if _peor.get(k) is not None:
+                    trade[k] = _peor[k]
+        for k in ("bs_modo", "bs_trigger_pct", "bs_base_price", "bs_tramos"):
+            if last.get(k) is not None:
+                trade[k] = last[k]
+        _slips = [float(t["bs_slip_pct"]) for t in run if t.get("bs_slip_pct") is not None]
+        if _slips:
+            trade["bs_slip_pct"] = max(_slips)
+        _pen = [float(t["bs_penalty"]) for t in run if t.get("bs_penalty") is not None]
+        if _pen:
+            trade["bs_penalty"] = round(sum(_pen), 4)
+        trade.pop("bs_tramo", None)
         # Detalle de cada ejecucion (entrada, añadidos de piramide, parciales,
         # reducciones y cierre) para poder pintarlas TODAS en el grafico. Antes
         # la fusion tiraba estos datos y solo dejaba el recuento `n_executions`.

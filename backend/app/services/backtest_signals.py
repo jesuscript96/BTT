@@ -919,6 +919,11 @@ def _enrich_trades_arr(raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_do
             "entry_weekday": entry_ts.weekday(),
             "gap_pct": float(gap_pct) if gap_pct is not None else None,
             "stop_loss": t.get("stop_loss", 0.0),
+            # Black Swan (en paridad con _enrich_trades): todo `bs_*` tal cual
+            # mas la hora de la mecha maxima.
+            **{k: v for k, v in t.items() if k.startswith("bs_")},
+            **({"bs_wick_time_epoch": int(ts_epoch[min(int(t["bs_wick_idx"]), max_idx)])}
+               if t.get("bs_wick_idx") is not None else {}),
         })
     return result
 
@@ -1238,6 +1243,13 @@ def simulate_and_accumulate(signals_sorted, params):
                 risk_unit_dollar = compounding_cash * (risk_r / 100.0)
             else:
                 risk_unit_dollar = risk_r
+
+            # Mecha adversa maxima de cada registro (descriptivo; la MISMA
+            # funcion y los mismos arrays que el camino secuencial, para que
+            # los dos caminos sigan dando dicts identicos).
+            from app.services.bswan import anotar_mechas as _anotar_mechas
+            _anotar_mechas(raw_trades, arrays["open"], arrays["high"], arrays["low"],
+                           sig["sig_direction"] == "longonly", look_ahead_prevention)
 
             trades_records = _enrich_trades_arr(
                 raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct,

@@ -535,6 +535,12 @@ export default function Home() {
       ev_gate_by: p?.ev_gate_by,
       ev_gate_default_pct: p?.ev_gate_default_pct,
       ev_gate_min_trades: p?.ev_gate_min_trades,
+      bswan_enabled: p?.bswan_enabled,
+      bswan_mode: p?.bswan_mode,
+      bswan_threshold_pct: p?.bswan_threshold_pct,
+      bswan_slippage_pct: p?.bswan_slippage_pct,
+      bswan_partition_shares: p?.bswan_partition_shares,
+      bswan_minutes: p?.bswan_minutes,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -589,6 +595,14 @@ export default function Home() {
         ev_gate_by: p?.ev_gate_by,
         ev_gate_default_pct: p?.ev_gate_default_pct,
         ev_gate_min_trades: p?.ev_gate_min_trades,
+        // Coste de Black Swan: sin declararlo aqui se caeria en silencio
+        // (lista blanca, MEMORIA §10 / tres capas).
+        bswan_enabled: p?.bswan_enabled,
+        bswan_mode: p?.bswan_mode,
+        bswan_threshold_pct: p?.bswan_threshold_pct,
+        bswan_slippage_pct: p?.bswan_slippage_pct,
+        bswan_partition_shares: p?.bswan_partition_shares,
+        bswan_minutes: p?.bswan_minutes,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
       }));
@@ -646,8 +660,16 @@ export default function Home() {
     custom_end_time?: string;
     monthly_expenses?: number;
     is_percent?: number;
+    // Coste de Black Swan: tipado aqui para no pasar por `as any` como el
+    // resto de costes (que los lee asi por herencia).
+    bswan_enabled?: boolean;
+    bswan_mode?: "mercado" | "manual";
+    bswan_threshold_pct?: number;
+    bswan_slippage_pct?: number;
+    bswan_partition_shares?: number;
+    bswan_minutes?: number;
   }) => {
-    const isDraftId = params.strategy_id === "draft" || 
+    const isDraftId = params.strategy_id === "draft" ||
                       params.strategy_id === "wizard_draft" || 
                       params.strategy_id.startsWith("draft_") || 
                       params.strategy_id.startsWith("wizard_draft_");
@@ -814,6 +836,12 @@ export default function Home() {
       ev_gate_by: (params as any).ev_gate_by,
       ev_gate_default_pct: (params as any).ev_gate_default_pct,
       ev_gate_min_trades: (params as any).ev_gate_min_trades,
+      bswan_enabled: params.bswan_enabled,
+      bswan_mode: params.bswan_mode,
+      bswan_threshold_pct: params.bswan_threshold_pct,
+      bswan_slippage_pct: params.bswan_slippage_pct,
+      bswan_partition_shares: params.bswan_partition_shares,
+      bswan_minutes: params.bswan_minutes,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,

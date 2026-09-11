@@ -1,5 +1,5 @@
 "use client";
-import type { EvGateSummary } from "@/lib/api_backtester";
+import type { EvGateSummary, BSwanSummary } from "@/lib/api_backtester";
 
 import { Fragment, useState, useMemo, useEffect } from "react";
 import type { ReactNode } from "react";
@@ -22,10 +22,15 @@ interface TradesTabProps {
   evGate?: EvGateSummary;
   /** La primera pasada, sin puerta, para poder comparar. */
   sinPuerta?: { total_trades: number };
+  /** Coste de Black Swan: resumen de la corrida (solo con el coste activo). */
+  bswan?: BSwanSummary;
 }
 
 type SortKey = keyof TradeRecord;
 type SortDir = "asc" | "desc";
+
+/** Mecha (%) a partir de la cual una vela cuenta como Black Swan en la vista descriptiva. */
+const BS_UMBRAL_VISTA = 100;
 
 export const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
   SL:           { bg: "rgba(239,68,68,0.1)",  text: "#ef4444" },
@@ -34,7 +39,24 @@ export const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
   Trailing:     { bg: "rgba(217,119,6,0.1)",  text: "#d97706" },
   Signal:       { bg: "rgba(59,130,246,0.1)", text: "#3b82f6" },
   EOD:          { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" },
+  // Cierres por el coste de Black Swan: morado, que no se confunda con un stop.
+  BS:           { bg: "rgba(168,85,247,0.14)", text: "#a855f7" },
+  "BS Manual":  { bg: "rgba(168,85,247,0.14)", text: "#c084fc" },
 };
+
+/** Texto del tooltip de un cierre afectado por el coste de Black Swan. */
+function describeBS(t: TradeRecord): string | undefined {
+  if (!t.bs_modo) return undefined;
+  const mecha = t.bs_trigger_pct != null ? `mecha del ${t.bs_trigger_pct.toFixed(0)}%` : "mecha";
+  if (t.bs_modo === "manual") {
+    return `Black Swan (manual): ${mecha} detectada dentro del trade; cerró después por «${t.exit_reason}» con el stop suspendido`;
+  }
+  const partes = [`Black Swan (a mercado): ${mecha}`];
+  if (t.bs_base_price != null) partes.push(`base $${t.bs_base_price.toFixed(4)}`);
+  if (t.bs_slip_pct != null) partes.push(`hasta +${t.bs_slip_pct.toFixed(0)}% peor${(t.bs_tramos || 1) > 1 ? ` en ${t.bs_tramos} tramos` : ""}`);
+  if (t.bs_penalty != null) partes.push(`penalización $${t.bs_penalty.toFixed(2)}`);
+  return partes.join(" · ");
+}
 
 interface SortHeaderProps {
   label: string;
@@ -59,7 +81,7 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, onSelectTrade, tradeDesplegado,
+export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswan,
                                    panelAnalisis, evGate, sinPuerta }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
@@ -140,6 +162,14 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado,
   }, [trades]);
   const hayLocateSorteado = summary.locates !== null;
   const hayPuerta = trades.some((t) => t.ev_gate_ev != null);
+  // La columna de mecha solo aparece cuando hay algo que ver: el coste activo,
+  // o algun trade que estuvo dentro durante un mechazo (>= 100 %). Asi una
+  // corrida normal se ve exactamente como siempre.
+  const hayMecha = !!bswan || trades.some((t) => (t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA);
+  const nExpuestos = useMemo(
+    () => trades.reduce((n, t) => n + ((t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA ? 1 : 0), 0),
+    [trades],
+  );
 
   const shown = useMemo(() => filtered.slice(0, visibleCount), [filtered, visibleCount]);
 
@@ -184,6 +214,22 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado,
               {sinPuerta && <> · sin puerta: <strong style={{ color: 'var(--color-ec-text-high)' }}>{sinPuerta.total_trades}</strong> trades</>}
             </span>
           )}
+          {bswan && (
+            <span title={`Coste de Black Swan (${bswan.modo === "manual" ? "manual" : "a mercado"}, umbral ${bswan.umbral_pct}%): velas que superaron el umbral estando dentro, trades cerrados por ello y dólares perdidos de más respecto a haber salido en la base`}>
+              BS:{" "}
+              <strong style={{ color: '#a855f7' }}>{bswan.trades} cerrados</strong>
+              {" "}de {bswan.detecciones} mechazos
+              {bswan.modo === "mercado" && bswan.penalizacion_usd > 0 && (
+                <> · penalización <strong className="text-[var(--danger)]">−${bswan.penalizacion_usd.toFixed(2)}</strong></>
+              )}
+            </span>
+          )}
+          {!bswan && hayMecha && (
+            <span title={`Trades que estuvieron dentro durante una mecha Black Swan (apertura→máximo de una vela de 1 min ≥ ${BS_UMBRAL_VISTA}%). Es descriptivo: el motor no ha cerrado nada por ello`}>
+              mechas ≥{BS_UMBRAL_VISTA}%:{" "}
+              <strong style={{ color: '#22c55e' }}>{nExpuestos}</strong>
+            </span>
+          )}
           {summary.locates && (
             <span title="Locates sorteados por ticker-día: precio medio del paquete de 100, rango que salió, y factura total">
               locates:{" "}
@@ -219,6 +265,9 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado,
               <SortHeader label="R" field="r_multiple" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="MAE%" field="mae" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="MFE%" field="mfe" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              {hayMecha && (
+                <SortHeader label="Mecha%" field="bs_wick_pct" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              )}
               {hayLocateSorteado && (
                 <SortHeader label="Locate/100" field="locate_pkg_price" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               )}
@@ -280,6 +329,16 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado,
                 <td className="px-4 py-1.5 text-[var(--success)]">
                   {t.mfe != null ? `${t.mfe.toFixed(2)}%` : "—"}
                 </td>
+                {hayMecha && (
+                  <td className="px-4 py-1.5"
+                      style={{ color: (t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA ? '#22c55e' : 'var(--color-ec-text-secondary)',
+                               fontWeight: (t.bs_wick_pct ?? 0) >= BS_UMBRAL_VISTA ? 600 : 400 }}
+                      title={t.bs_wick_time_epoch != null
+                        ? `Mecha adversa máxima estando dentro (apertura→extremo de una vela de 1 min), a las ${new Date(t.bs_wick_time_epoch * 1000).toISOString().slice(11, 16)}`
+                        : "Mecha adversa máxima estando dentro (apertura→extremo de una vela de 1 min)"}>
+                    {t.bs_wick_pct != null ? `${t.bs_wick_pct.toFixed(0)}%` : "—"}
+                  </td>
+                )}
                 {hayLocateSorteado && (
                   <td className="px-4 py-1.5" style={{ color: 'var(--color-ec-text-primary)' }}
                       title={t.locates_fee_day != null ? `factura del día: $${t.locates_fee_day.toFixed(2)}` : undefined}>
@@ -301,12 +360,20 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado,
                 <td className="px-4 py-1.5">
                   {(() => {
                     const style = EXIT_COLORS[t.exit_reason] || { bg: "rgba(148,163,184,0.12)", text: "var(--color-ec-text-primary)" };
+                    // Un trade que cerro por EOD/limite mientras esperaba el
+                    // cierre manual del Black Swan tambien lleva el distintivo.
+                    const bsInfo = describeBS(t);
+                    const esBS = t.exit_reason.startsWith("BS");
                     return (
                       <span
                         className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
-                        style={{ backgroundColor: style.bg, color: style.text }}
+                        style={{ backgroundColor: style.bg, color: style.text,
+                                 outline: bsInfo && !esBS ? '1px solid #a855f7' : undefined }}
+                        title={bsInfo}
                       >
                         {t.exit_reason}
+                        {esBS && (t.bs_tramos || 1) > 1 ? ` ×${t.bs_tramos}` : ""}
+                        {bsInfo && !esBS ? " ·BS" : ""}
                       </span>
                     );
                   })()}

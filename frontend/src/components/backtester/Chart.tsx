@@ -663,11 +663,14 @@ export default function Chart({
             if (exitDate === dayDateStr && t.status === "Closed") {
               const exitSnap = snapToCandle(t.exit_time_epoch, candleTimes);
               if (exitSnap && candleTimeSet.has(exitSnap)) {
+                // Un cierre por Black Swan va en morado y cuadrado: que se
+                // distinga de un stop normal de un vistazo.
+                const esBS = String(t.exit_reason || "").startsWith("BS");
                 rawMarkers.push({
                   time: exitSnap,
                   position: "aboveBar",
-                  color: t.pnl >= 0 ? "#10b981" : "#ef4444",
-                  shape: "circle",
+                  color: esBS ? "#a855f7" : (t.pnl >= 0 ? "#10b981" : "#ef4444"),
+                  shape: esBS ? "square" : "circle",
                   text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
                   isEntry: false,
                 });
@@ -689,11 +692,12 @@ export default function Chart({
               });
             }
             if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed" && Math.abs(t.exit_time_epoch - exitSnap) < 43200) {
+              const esBS = String(t.exit_reason || "").startsWith("BS");
               rawMarkers.push({
                 time: exitSnap,
                 position: "aboveBar",
-                color: t.pnl >= 0 ? "#10b981" : "#ef4444",
-                shape: "circle",
+                color: esBS ? "#a855f7" : (t.pnl >= 0 ? "#10b981" : "#ef4444"),
+                shape: esBS ? "square" : "circle",
                 text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
                 isEntry: false,
               });

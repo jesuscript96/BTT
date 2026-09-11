@@ -89,6 +89,17 @@ class BacktestRequest(BaseModel):
     ev_gate_by: str = "trades"          # "trades" | "dias"
     ev_gate_default_pct: float = 2.0
     ev_gate_min_trades: int = 10
+    # COSTE DE BLACK SWAN (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+    # Apagado = nada cambia. `bswan_mode`: "mercado" (cierra en la vela del
+    # mechazo a precio penalizado por tramos) o "manual" (cierra N minutos
+    # despues, sin stops entre medias). El umbral y el slippage van en % del
+    # precio; la particion en acciones por tramo (0 = sin partir).
+    bswan_enabled: bool = False
+    bswan_mode: str = "mercado"
+    bswan_threshold_pct: float = 100.0
+    bswan_slippage_pct: float = 100.0
+    bswan_partition_shares: float = 0.0
+    bswan_minutes: float = 15.0
     # Corte IS/OOS (PRD Alvaro 2026-09-08, P1). La UI lo mandaba desde siempre y
     # Pydantic lo tiraba: ahora se persisten `is_metrics` y `oos_metrics`,
     # calculados igual que los pinta el navegador. El motor sigue corriendo el
@@ -435,6 +446,24 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         custom_start_time = req.custom_start_time or _sdef.get("custom_start_time")
         custom_end_time = req.custom_end_time or _sdef.get("custom_end_time")
 
+        # Coste de Black Swan: se valida AQUI, con un 400 legible, en vez de
+        # dejar que un umbral a cero o un modo mal escrito revienten dentro
+        # del bucle (donde cada ticker-dia fallaria en silencio y la corrida
+        # acabaria con cero trades).
+        _cfg_bswan = None
+        if req.bswan_enabled:
+            from app.services.bswan import ConfigBSwan
+            try:
+                _cfg_bswan = ConfigBSwan(
+                    modo="manual" if str(req.bswan_mode or "").lower().startswith("man") else "mercado",
+                    umbral_pct=float(req.bswan_threshold_pct),
+                    slippage_pct=float(req.bswan_slippage_pct or 0.0),
+                    particion=float(req.bswan_partition_shares or 0.0),
+                    minutos=float(req.bswan_minutes or 0.0),
+                )
+            except (TypeError, ValueError) as _e_bs:
+                raise HTTPException(status_code=400, detail=f"Coste de Black Swan: {_e_bs}")
+
         _bt_kwargs = dict(
             strategy_def=strategy_def,
             init_cash=req.init_cash,
@@ -461,6 +490,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             locates_random_min=req.locates_random_min,
             locates_random_max=req.locates_random_max,
             locates_seed=req.locates_seed,
+            bswan=_cfg_bswan,
             look_ahead_prevention=req.look_ahead_prevention,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,

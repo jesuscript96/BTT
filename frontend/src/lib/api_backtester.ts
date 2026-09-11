@@ -170,12 +170,48 @@ export interface TradeRecord {
   ev_gate_ev?: number;
   ev_gate_fade?: number;
   ev_gate_paquetes?: number;
+  /** Black Swan, DESCRIPTIVO (viene siempre en las corridas nuevas): la mecha
+   *  adversa máxima que sufrió el trade mientras estuvo dentro — distancia de
+   *  la apertura al máximo de la vela de 1 min (al mínimo, en largo), en % de
+   *  la apertura — y cuándo fue. Alimenta la vista «BS» del gráfico MAE/MFE.
+   *  No cambia ningún número. Ver backend/app/services/bswan.py. */
+  bs_wick_pct?: number;
+  bs_wick_idx?: number;
+  bs_wick_time_epoch?: number;
+  /** Coste de Black Swan (solo con el coste activo): cómo cerró el motor este
+   *  trade. `mercado` = cerró en la vela del mechazo a `bs_base_price`
+   *  penalizado; `manual` = cerró N minutos después. */
+  bs_modo?: "mercado" | "manual";
+  /** La mecha (%) que disparó el cierre. */
+  bs_trigger_pct?: number;
+  /** Precio del que parte la penalización (el stop si la vela lo cruzó; si no, la apertura). */
+  bs_base_price?: number;
+  /** Peor tramo ejecutado, en % sobre la base. */
+  bs_slip_pct?: number;
+  /** Número de tramos en que se partió la salida. */
+  bs_tramos?: number;
+  /** Dólares perdidos de más respecto a haber salido en la base. */
+  bs_penalty?: number;
 }
 
 /** Resumen de la puerta por EV de la corrida (segunda pasada). */
 export interface EvGateSummary {
   evaluadas: number; aceptadas: number; rechazadas: number; con_ev_por_defecto: number;
   ventana: number; por: string; ev_defecto_pct: number; min_trades: number; n_sombra: number;
+}
+
+/** Resumen del coste de Black Swan de la corrida. Solo viene con el coste activo. */
+export interface BSwanSummary {
+  enabled: boolean;
+  modo: "mercado" | "manual";
+  umbral_pct: number; slippage_pct: number; particion: number; minutos: number;
+  /** Velas que superaron el umbral estando dentro. */
+  detecciones: number;
+  /** Trades cerrados por el coste (a mercado o manual). */
+  trades: number;
+  tramos: number; cierres_mercado: number; cierres_manual: number;
+  /** Suma de `bs_penalty` de toda la corrida, en dólares. */
+  penalizacion_usd: number;
 }
 
 /** Resumen del sorteo de locates de la corrida. Solo con el modo aleatorio. */
@@ -334,6 +370,8 @@ export interface BacktestResult {
   ev_gate?: EvGateSummary;
   /** La PRIMERA pasada (sin puerta), para comparar contra la segunda. */
   sin_puerta?: { aggregate_metrics?: AggregateMetrics; total_trades: number; locates_random?: LocatesRandomSummary };
+  /** Coste de Black Swan: resumen de la corrida. Solo con el coste activo. */
+  bswan?: BSwanSummary;
   /** Reconciliación candidatos vs ejecutados. El motor la calcula SIEMPRE; si
    *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
    *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
@@ -460,6 +498,13 @@ export async function runBacktest(params: {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_shares?: number;
+  bswan_minutes?: number;
   /** Corte IS/OOS (0-100). El motor corre todo; el servidor guarda los dos bloques. */
   is_percent?: number;
   look_ahead_prevention?: boolean;
@@ -497,6 +542,13 @@ export async function runBacktestWithDefinition(params: {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_shares?: number;
+  bswan_minutes?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
 }): Promise<BacktestResult> {
@@ -705,6 +757,14 @@ export async function runOptimizationSurface(params: {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan. La optimización lo acepta por coherencia de tipos; el
+  // barrido no lo aplica hoy (solo el backtest del panel).
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_shares?: number;
+  bswan_minutes?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;
