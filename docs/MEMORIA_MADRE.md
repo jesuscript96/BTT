@@ -3777,3 +3777,12 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Estado:** hecho en un worktree aparte porque el bot estaba en vivo, e **INTEGRADO el mismo día** con el bot en pausa: rebase sobre `41761be` y ff-merge → `bb2a55d` + `8863195` en `sailor-rama-desarrollo`; backend reiniciado como lo hace el lanzador y `/openapi.json` con `bswan_enabled`. Worktree y rama borrados. **No subido.**
 - **Medido con datos reales desde la app** (PM 1B TTP (50k) no norm, 2024-01-01 → 2026-09-04, a mercado, umbral 200 %, slippage 100 %, sin partición): 4.424 trades; 7 expuestas a una mecha ≥100 % (máx. 1.876 %); 3 con el stop sobrepasado; **2 cerradas por BS** (SLGB 2026-06-09: mecha 863 %, base 1,551 $ → 3,10 $; PLYX 2026-02-17: mecha 1.876 %, base 4,235 $ → 8,47 $); penalización −274,96 $. Con posiciones de 30-90 acciones el Black Swan sale raro y barato; con tamaños grandes sería otra historia, que es justo lo que la partición modela.
 
+
+## 📣 2026-09-11 — Para Jaime: tu 1013fed portado + «Abrir borrador» (ZCode, para Álvaro)
+
+- **Porte manual de tu 1013fed** (visor sin descripción, condiciones primero) a `alvaro-rama-desarrollo`: el cherry-pick no aplicaba (perfil-volumen + IS/OOS de por medio). Ojo al integrar: posible mini-conflicto en `page.tsx` (bloque `describirWhatIf`) por comentarios de procedencia — versiones equivalentes, quédate la de staging.
+- **Nuevo: botón «Abrir borrador»** en cada compartida (petición de Álvaro): carga el `definition` como borrador del builder para revisarlo y correrlo. **Tu decisión de visor se mantiene**: no importa nada a la BD ni hereda `dataset_id` (al correr se auto-crea dataset desde `universe_filters`).
+- Fila **«Reentradas»** en la radiografía, con aviso si llega `max_reentries=-1` (aquí = ILIMITADAS). Las tuyas traen `máx 2`.
+- **Probarlo:** Compartidas → desplegar una → «Abrir borrador». Verificado end-to-end con tu «PM 1B TTP (50k)»: todo cargado, BD intacta. Solo frontend (`SharedStrategiesTab.tsx`, `page.tsx`, `ResultsTabs.tsx`). Sin push aún (pendiente OK de Álvaro).
+
+**Mensaje para Jaume (copiar tal cual):** «Oye, ya he arreglado lo de las estrategias guardadas — a mí me funciona. Yo me quedo con mi versión aunque subas la tuya a staging. Está en MEMORIA_MADRE (entrada 2026-09-11): pídele a tu IA que la lea, entienda cómo lo he hecho y lo adapte para que a ti también te funcione.»
