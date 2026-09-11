@@ -545,6 +545,35 @@ Tablas `stops_A_niveles.csv`, `stops_B_resultado.csv`, `stops_C_liquidez_*.csv`,
   se ejecutó una vez contra un print suelto a 5,6× el nivel; el limitado lo tapa.**
 - Informe v5 entregado con la sección 11. Sigue sin ser regla.
 
+### 11-sep: cierre forzado, stop a mercado contra el libro, halts largos (informe v6)
+
+Tres análisis pedidos por Jaume; scripts 19-24 en `D:\bot_senales\estudio_cisnes`.
+- **Cierre forzado (`19_cierre_forzado.py` → `cierre_forzado.csv`)**: corto a ref,
+  stop mental +50/+100 %, cierre a 30/60 min. En ≥ 100 % vuelve al +50 % el 86 %
+  y al +100 % el 96 %. En ≥ 500 %: 5 de 8 vuelven en < 2 min; TNON, XHG y GRYP no.
+  Con 3 %: peor 22 % (30 min) / 29 % (60 min), siempre TNON. Esperar más no ayuda.
+- **Stop a mercado ADITIVO contra el libro (`20_stop_mercado_libro.py`)**: nuestras
+  acciones consumen el ask de 10 niveles de Nasdaq en el disparo (+50/+100 %); el
+  resto al VWAP de 10 s (opt) o al máximo de 30 s (pes). Libro mediano 2.500 $:
+  1.000 $ cabe entero 61 %, 5.000 $ 32 %, 30.000 $ 4 %. Pérdida mediana sobre la
+  posición al +50 %: 68 % (1 k$) → 88/144 % (10 k$). **7 de 56 disparos tenían una
+  orden basura (25 $, 10.000 $, 199.999 $) dentro de los 10 niveles** — un mercado
+  sin protección se la come. Solo libro Nasdaq.
+- **Halts largos**: la detección por huecos en velas (`21_halts_largos.py`, 8 años,
+  49.668 candidatos) **NO VALE** — calibrada contra status 2026: recall 11 %,
+  precisión 10 % (medias sesiones, iliquidez). Massive no lleva halts. Fuente
+  exacta: Databento `status`. 2026 (92 días, 09-12h): 11 T1, 66 T2, 3 T12.
+  **Estrategias con status exacto (`24_status_estrategias.py`, ~0 $)**: PM 1B TTP
+  (4.424 ops, run 8b773d84) → 5 posiciones con T1 de 25-50 min, todas reabren,
+  peor −30 % (COMM). RTH 2B TTP (1.323 ops, run 6023ec78) → 404 posiciones (30 %)
+  con LULD dentro, 76 con ≥ 3 encadenados; peores RGC −169 % (6 halts), PAVS
+  −156 %, HKIT −126 %. **Ningún T12 ni baja dentro de posición; ninguna salida
+  atrapada.** OJO MOTOR: 77 de 256 SL de 2B saltan en la vela de reapertura y el
+  motor los llena AL NIVEL; real = open de reapertura (mediana −3 %, p90 +4,8 %,
+  máx +14,5 %); en conjunto el backtest sale algo pesimista, no optimista.
+- Cubrir TODO el mercado 2019-2026 con status exacto cuesta **51 $** (0,027 $/día
+  × 1.930). Pendiente de OK de Jaume. Informe v6 entregado (secciones 12-14).
+
 ---
 
 ## Estado y pendientes
@@ -565,4 +594,4 @@ cuadro de mandos cuando se diseñe.
 | P6 | Cuadro de mandos de exposición al riesgo | Diseño pendiente |
 | P7 | Tareas de Jaume de la semana del 7-sep (lista en §0): fills reales de DAS, JSON de la estrategia de estreno, congelar el motor, Telegram propio, VPS con el socio, runbook | Sin empezar |
 | P8 | Backend colgado el 7-sep (dos uvicorn); lo lleva Jaume en el chat del genético. Bot de avisos: lo enciende Jaume el 8-sep | Fuera de este chat |
-| P9 | Halts: si algún día se quiere más, la capa `status` de Databento (0,03 $/día) y `15_halts_profundo.py` ya lo hacen; bandas LULD reconstruidas de forma aproximada | Cerrado salvo petición |
+| P9 | Halts largos 2019-2026 en TODO el mercado: solo con Databento `status` (51 $); huecos en velas NO sirven. Estrategias ya cruzadas con status exacto (11-sep) | Esperando OK de los 51 $ |
