@@ -73,6 +73,10 @@ class ClienteBackend:
     def __init__(self, base: Optional[str] = None):
         self.base = base or _base()
         self._cli = httpx.Client(timeout=TIMEOUT)
+        # La version de las estrategias que vino en el ultimo `/estado`. El bot
+        # la compara con la que tiene cargada y, si cambio, vuelve a pedir la
+        # lista. None = todavia no se ha leido ninguna.
+        self.version_estrategias: Optional[int] = None
 
     def cerrar(self) -> None:
         try:
@@ -170,7 +174,11 @@ class ClienteBackend:
         try:
             r = self._pedir("GET", "/bot-alerts/estado")
             r.raise_for_status()
-            return bool(r.json().get("vigilando"))
+            d = r.json()
+            v = d.get("estrategias_version")
+            if v is not None:
+                self.version_estrategias = int(v)
+            return bool(d.get("vigilando"))
         except Exception as exc:  # noqa: BLE001
             logger.warning("[BOT] no se pudo leer el estado: %s", exc)
             return None

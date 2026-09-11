@@ -67,6 +67,11 @@ class RunnerAlertas:
         self._hidratados.clear()
         self.motor.reiniciar()
 
+    def actualizar(self, estrategias: list[dict]) -> dict:
+        """Cambia las estrategias vigiladas sin tocar frames ni avisos dados.
+        Ver `MotorAlertas.actualizar`."""
+        return self.motor.actualizar(estrategias)
+
     @property
     def tickers(self) -> list[str]:
         return sorted(self._velas)

@@ -335,6 +335,9 @@ def leer_estado():
     con = get_user_db_connection(read_only=True)
     try:
         estado = bas.get_estado(con)
+        # Para que el bot sepa si tiene que recargar las estrategias, sin una
+        # peticion mas: ya pide esto cada 5 segundos.
+        estado["estrategias_version"] = bas.version_estrategias()
         estado["telegram"] = tg.probar() if os.getenv("TELEGRAM_BOT_TOKEN") else {
             "ok": False, "detalle": "sin token configurado", "enviando": False,
         }
@@ -347,7 +350,11 @@ class EstadoReq(BaseModel):
     vigilando: bool
 
 
-LATIDO_VIVO_SEG = 150     # el bot late cada ~60 s; 150 tolera un hueco
+# El bot late cada 5 s (INTERVALO_ESTADO), no cada 60 como decia aqui: 20
+# tolera tres latidos perdidos. Con 150, un bot matado desde fuera (sin su
+# «terminado») dejaba el boton creyendo que habia bot durante dos minutos y
+# medio, y Vigilar no arrancaba nada. Paso el 11-sep-2026.
+LATIDO_VIVO_SEG = 20
 
 
 def _bot_esta_vivo(estado: dict) -> bool:
@@ -365,6 +372,12 @@ def _bot_esta_vivo(estado: dict) -> bool:
     """
     ts = estado.get("latido_at")
     if not ts:
+        return False
+    # EL ULTIMO LATIDO DE UN BOT QUE SE CIERRA DICE «terminado». Desde el
+    # 11-sep-2026 «Parado» cierra el proceso, y al salir manda ese latido. Sin
+    # esta linea, darle a Vigilar en los 150 segundos siguientes veria un
+    # latido reciente, creeria que hay bot, y no arrancaria ninguno.
+    if str(estado.get("detalle") or "").strip() == "terminado":
         return False
     try:
         ultimo = datetime.fromisoformat(str(ts))
@@ -442,10 +455,19 @@ def cambiar_estado(req: EstadoReq):
     dice QUE se ha hecho y la pagina puede contarlo, en vez de dar un «listo»
     que no significa nada.
 
-    AL APAGAR NO SE MATA EL PROCESO. Apagar es «deja de operar», no «cierrate»:
-    el bot se queda escuchando por si se vuelve a encender, y asi conserva los
-    acumulados del dia — el maximo de premercado, que es la condicion de 1B, se
-    pierde en cada arranque y hay que volver a sembrarlo.
+    AL APAGAR, EL BOT SE CIERRA (desde el 11-sep-2026). Lo hace el propio bot:
+    lee el interruptor cada 5 segundos y, si pasa de encendido a apagado, sale
+    limpio y manda un ultimo latido «terminado». Aqui no se mata nada — no hace
+    falta, y matar por PID desde otro proceso es como se acaba matando lo que no
+    es.
+
+    Antes apagar era «deja de operar» y el proceso seguia vivo en pausa, para
+    conservar el maximo de premercado acumulado. Esa razon murio el dia que este
+    endpoint empezo a ARRANCAR el bot: reiniciar cuesta ~30 segundos de siembra
+    por REST, y a cambio el proceso en pausa producia justo lo contrario de lo
+    que se ve — «Parado» con un bot vivo que se despierta con el codigo y la
+    lista de estrategias de por la manyana. Jaume: «lo suyo es que si le doy a
+    parado es porque PARO todo… si doy a vigilar INICIO todo».
     """
     _guard()
     with get_user_db_lock():

@@ -126,6 +126,12 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
                     *scope_params,
                 )
             )
+            # QUE EL BOT SE ENTERE. Si esta estrategia esta vigilada, el bot en
+            # marcha tiene que recargarla: el 10-sep-2026 se cambio el modo de la
+            # piramide con el bot encendido y siguio con la definicion de la
+            # manyana toda la sesion.
+            from app.services import bot_alerts_service as _bas
+            _bas.marcar_cambio_estrategias()
         finally:
             con.close()
 

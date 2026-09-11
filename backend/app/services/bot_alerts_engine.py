@@ -558,28 +558,87 @@ class MotorAlertas:
 
     def __init__(self, estrategias: list[dict]):
         """`estrategias` es lo que devuelve /api/bot-alerts/vigiladas."""
-        self.estrategias = []
-        for e in estrategias:
-            sdef = e["definition"]
-            self.estrategias.append({
-                "strategy_id": e["strategy_id"],
-                "name": e["name"],
-                "riesgo_usd": float(e["riesgo_usd"]),
-                # Del cuadro de mandos, no de la estrategia: el bot no conoce
-                # la cuenta real. Sin capital, el stop hibrido no puede calcular
-                # su techo — por eso `/watch` no deja activar una estrategia
-                # hibrida sin rellenarlo.
-                "capital_usd": e.get("capital_usd"),
-                "riesgo_piramide_usd": e.get("riesgo_piramide_usd"),
-                # Para el comando /evf de Telegram: asi no hay que repetir el
-                # EV en cada mensaje.
-                "ev_pct": e.get("ev_pct"),
-                "definition": sdef,
-                "ventana": e.get("ventana") or {},
-                # Se compila UNA vez, no en cada vela: es lo caro del motor.
-                "compiled": compile_strategy_def(sdef),
-            })
+        self.estrategias = [self._compilar(e) for e in estrategias]
         self._estado: dict[tuple[str, str], _EstadoPar] = {}
+
+    @staticmethod
+    def _firma(e: dict) -> str:
+        """Lo que, si cambia, obliga a recompilar la estrategia."""
+        import json as _json
+        return _json.dumps({
+            "d": e.get("definition"), "r": e.get("riesgo_usd"),
+            "rp": e.get("riesgo_piramide_usd"), "c": e.get("capital_usd"),
+            "ev": e.get("ev_pct"), "v": e.get("ventana"), "n": e.get("name"),
+        }, sort_keys=True, default=str)
+
+    def _compilar(self, e: dict) -> dict:
+        sdef = e["definition"]
+        # LA FIRMA SE CALCULA ANTES DE COMPILAR. `compile_strategy_def` modifica
+        # la definicion EN SITIO (normaliza nombres de indicadores), asi que
+        # firmarla despues daba una firma que nunca coincidia con la que trae
+        # el backend: cada recarga marcaba todas las estrategias como
+        # «cambiadas» y las recompilaba. Visto en vivo el 11-sep-2026.
+        firma = self._firma(e)
+        return {
+            "strategy_id": e["strategy_id"],
+            "name": e["name"],
+            "riesgo_usd": float(e["riesgo_usd"]),
+            # Del cuadro de mandos, no de la estrategia: el bot no conoce
+            # la cuenta real. Sin capital, el stop hibrido no puede calcular
+            # su techo — por eso `/watch` no deja activar una estrategia
+            # hibrida sin rellenarlo.
+            "capital_usd": e.get("capital_usd"),
+            "riesgo_piramide_usd": e.get("riesgo_piramide_usd"),
+            # Para el comando /evf de Telegram: asi no hay que repetir el
+            # EV en cada mensaje.
+            "ev_pct": e.get("ev_pct"),
+            "definition": sdef,
+            "ventana": e.get("ventana") or {},
+            # Se compila UNA vez, no en cada vela: es lo caro del motor.
+            "compiled": compile_strategy_def(sdef),
+            "_firma": firma,
+        }
+
+    def actualizar(self, estrategias: list[dict]) -> dict:
+        """Sustituye la lista de estrategias EN CALIENTE, sin perder el dia.
+
+        Devuelve {"anyadidas", "quitadas", "cambiadas"} con los nombres, para
+        que el bot lo cuente en el log.
+
+        POR QUE EXISTE. Hasta el 11-sep-2026 la lista se cargaba una vez al
+        arrancar. Con el bot esperando a que se marcara alguna estrategia,
+        Jaume marco dos seguidas: salio de la espera con la primera y nunca
+        supo de la segunda — una estrategia RTH entera sin vigilar, sin un
+        error. Y editar una estrategia con el bot en marcha tampoco le llegaba.
+
+        LA MEMORIA DEL DIA SE CONSERVA. `_estado` va por (ticker, estrategia)
+        y no se toca: lo que ya se aviso sigue avisado, asi que actualizar no
+        duplica alertas. Una estrategia que se quita y se vuelve a poner
+        recupera su memoria, que es lo que se quiere — la entrada de las 10:02
+        no debe volver a avisar a las 10:30 porque alguien toco la casilla.
+
+        SOLO SE RECOMPILA LO QUE CAMBIO. Compilar es lo caro; la firma
+        (definicion + riesgos + ventana) decide si hace falta.
+        """
+        viejas = {e["strategy_id"]: e for e in self.estrategias}
+        resultado = {"anyadidas": [], "quitadas": [], "cambiadas": []}
+        lista: list[dict] = []
+        vistas: set = set()
+        for e in estrategias:
+            sid = e["strategy_id"]
+            vistas.add(sid)
+            prev = viejas.get(sid)
+            if prev is not None and prev.get("_firma") == self._firma(e):
+                lista.append(prev)
+                continue
+            lista.append(self._compilar(e))
+            (resultado["cambiadas"] if prev is not None
+             else resultado["anyadidas"]).append(e["name"])
+        for sid, prev in viejas.items():
+            if sid not in vistas:
+                resultado["quitadas"].append(prev["name"])
+        self.estrategias = lista
+        return resultado
 
     def reiniciar(self) -> None:
         """Nuevo dia: se olvida todo lo avisado."""

@@ -192,6 +192,35 @@ def _marcar_cambio() -> None:
     _version += 1
 
 
+# ── VERSION DE LAS ESTRATEGIAS VIGILADAS ─────────────────────────────────
+#
+# Sube cada vez que cambia algo que el bot tiene que recargar: marcar o
+# desmarcar una estrategia, cambiar su riesgo, o editar su definicion en el
+# constructor. El bot la lee en el mismo `/estado` que ya pide cada 5 segundos
+# —no cuesta una peticion mas— y solo cuando la ve cambiar pide la lista entera.
+#
+# POR QUE EXISTE. Hasta el 11-sep-2026 el bot leia la lista UNA vez al
+# arrancar y no volvia a mirarla. Con el bot esperando a que se marcara alguna
+# estrategia, Jaume marco dos seguidas: el bot salio de la espera con la
+# primera y nunca se entero de la segunda. Una estrategia RTH entera sin
+# vigilar, sin un solo error. Y editar una estrategia con el bot en marcha
+# tampoco le llegaba (el `size_by_sl` de la piramide, el 10-sep).
+#
+# Va aparte de `_version`, que sube con cada latido y cada aviso y no sirve
+# para saber si las ESTRATEGIAS cambiaron.
+_version_estrategias = 0
+
+
+def version_estrategias() -> int:
+    return _version_estrategias
+
+
+def marcar_cambio_estrategias() -> None:
+    global _version_estrategias
+    _version_estrategias += 1
+    _marcar_cambio()          # que la pagina tambien se entere
+
+
 # Lo que el radar esta mirando ahora mismo. SOLO EN MEMORIA, sin tabla: es una
 # foto que se reemplaza cada 30 s y no interesa guardarla — y cada escritura en
 # DuckDB compite con las demas (ver la nota de arriba).
@@ -452,6 +481,7 @@ def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
          float(capital_usd) if capital_usd is not None else None,
          float(ev_pct) if ev_pct is not None else None],
     )
+    marcar_cambio_estrategias()
     return {
         "strategy_id": strategy_id, "activa": bool(activa),
         "riesgo_usd": float(riesgo_usd),
