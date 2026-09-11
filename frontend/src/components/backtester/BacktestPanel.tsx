@@ -1951,7 +1951,7 @@ export default function BacktestPanel({
                   className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                 />
                 <span style={et}>
-                  Coste de BSwan
+                  Coste BSwan
                   <InfoTooltip
                     position="left"
                     width={360}
