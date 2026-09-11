@@ -11,11 +11,15 @@
 // tu base, y cualquier campo de su rama que la nuestra no conozca se caería en
 // SILENCIO (la trampa de las listas blancas en tres capas).
 //
+// EXTENSIÓN (Álvaro, 11-sep-2026): «Abrir borrador» carga el definition en el
+// builder como BORRADOR. No contradice lo de arriba: nada entra en la BD de
+// estrategias y el dataset no se hereda — se revisa, se ajusta y se decide.
+//
 // El formato de fichero y el backend son los de Álvaro a propósito: si
 // cambiáramos el formato, dejaríais de leeros.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Loader2, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Check, Loader2, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
 import {
   deleteSharedStrategy,
   getSharedStrategies,
@@ -88,7 +92,8 @@ const USADAS_DEF = new Set(["entry_logic", "exit_logic", "pyramiding", "risk_man
   "universe_filters", "bias", "apply_day", "market_sessions", "custom_start_time",
   "custom_end_time", "postgap_preconditions"]);
 const USADAS_RM = new Set(["hard_stop", "take_profit", "take_profit_mode", "trailing_stop",
-  "partial_take_profits", "swing_option", "size_by_sl", "risk_per_trade", "risk", "cangrejo_mode"]);
+  "partial_take_profits", "swing_option", "size_by_sl", "risk_per_trade", "risk", "cangrejo_mode",
+  "accept_reentries", "max_reentries"]);
 const USADAS_ENT = new Set(["root_condition", "entry_time_windows", "timeframe"]);
 const USADAS_UNI = new Set(["rules", "date_from", "date_to"]);
 const USADAS_PIR = new Set(["levels", "mode"]);
@@ -245,7 +250,11 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <span style={{ fontSize: 13, fontWeight: 600, color: color.textHigh }}>{entry.name}</span>
         <span style={{ fontSize: 11, color: color.textMuted }}>de {nombreDev(entry.shared_by)}</span>
       </div>
-      {entry.description && <div style={{ fontSize: 11.5, color: color.textSecondary, marginTop: 4 }}>{entry.description}</div>}
+      {/* La descripcion NO se pinta aqui a proposito (DECISION DE JAUME,
+       *  10-sep-2026). Al guardar con «incluir What-if» marcado se le mete
+       *  dentro el volcado entero de parametros, `locates_by_pair` incluido:
+       *  una estrategia real traia 43.191 caracteres de pares ticker|fecha.
+       *  Esta pantalla quiere el NOMBRE y, al desplegar, la estrategia. */}
       <div style={{ fontSize: 10.5, color: color.textMuted, marginTop: 4 }}>
         Se muestra el fichero entero: lo que no esté desglosado abajo sale en «Otros ajustes», y siempre queda el JSON crudo.
       </div>
@@ -259,6 +268,19 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <Dato k="Pirámides" v={niveles.length ? `${niveles.length} nivel${niveles.length > 1 ? "es" : ""}` : "no"} />
         <Dato k="Filtros universo" v={String(reglas.length)} ultima />
       </div>
+
+      {/* Las condiciones van LAS PRIMERAS: es lo que se viene a mirar cuando
+       *  se despliega una compartida. El resto de la radiografia sigue
+       *  entero debajo. */}
+      <Apartado t="Condiciones de entrada">
+        {contarHojas(ent.root_condition)
+          ? <Arbol nodo={ent.root_condition} />
+          : <div style={{ fontSize: 11.5, color: color.textMuted }}>sin condiciones</div>}
+      </Apartado>
+
+      {contarHojas(sal.root_condition) > 0 && (
+        <Apartado t="Condiciones de salida"><Arbol nodo={sal.root_condition} /></Apartado>
+      )}
 
       <Apartado t="Cuándo puede entrar">
         <Fila k="Sesiones" v={sesiones} />
@@ -284,21 +306,22 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         </Apartado>
       )}
 
-      <Apartado t="Condiciones de entrada">
-        {contarHojas(ent.root_condition)
-          ? <Arbol nodo={ent.root_condition} />
-          : <div style={{ fontSize: 11.5, color: color.textMuted }}>sin condiciones</div>}
-      </Apartado>
-
-      {contarHojas(sal.root_condition) > 0 && (
-        <Apartado t="Condiciones de salida"><Arbol nodo={sal.root_condition} /></Apartado>
-      )}
-
       <Apartado t="Riesgo y salidas">
         <Fila k="Stop" v={S(hs.type) && `${S(hs.type)}${S(hs.value) ? ` · ${S(hs.value)}` : ""}${S(hs.operator) ? ` (${COMPARADOR[S(hs.operator)] || S(hs.operator)})` : ""}`} />
         <Fila k="Tamaño por stop" v={rm.size_by_sl ? "sí" : ""} />
         <Fila k="Riesgo por operación" v={S(rm.risk_per_trade) || S(rm.risk)} />
         <Fila k="Estilo Cangrejo" v={CANGREJO[S(rm.cangrejo_mode)] || S(rm.cangrejo_mode)} />
+        {/* Las reentradas se explicitan (antes caían en crudo en «Otros ajustes»)
+         * porque son una trampa clásica al cruzar formatos: aquí max_reentries=-1
+         * con accept_reentries activo son reentradas ILIMITADAS, no «ninguna». */}
+        <Fila k="Reentradas" v={(() => {
+          if (rm.accept_reentries === false) return "no";
+          const mx = rm.max_reentries;
+          if (mx === null || mx === undefined || mx === "" || S(mx) === "-1") {
+            return <span style={{ color: color.loss }}>⚠ ILIMITADAS aquí (max_reentries={S(mx) || "—"} = sin límite en este motor)</span>;
+          }
+          return `máx ${S(mx)}`;
+        })()} />
         <Fila k="Take profit" v={S(rm.take_profit_mode) && `${S(rm.take_profit_mode)}${S(tp.type) ? ` · ${S(tp.type)} ${S(tp.value)}` : ""}`} />
         {parciales.map((p, i) => {
           const q = O(p);
@@ -346,7 +369,7 @@ function Detalle({ entry }: { entry: SharedStrategyEntry }) {
         <button onClick={() => setCrudo((v) => !v)} style={btn}>{crudo ? "Ocultar JSON" : "Ver JSON crudo"}</button>
         <button onClick={copiar} style={btn}>{copiado ? "Copiado" : "Copiar JSON"}</button>
         <span style={{ fontSize: 10.5, color: color.textMuted }}>
-          Para replicarla, móntala en tu panel: el <code>dataset_id</code> del JSON es de quien la compartió y no existe en tu base.
+          «Abrir borrador» la carga en el builder para revisarla y ajustarla — no se guarda nada y el dataset lo eliges tú en el panel (el <code>dataset_id</code> del JSON es de quien la compartió y no existe en tu base).
         </span>
       </div>
       {crudo && (
@@ -370,7 +393,7 @@ function Titulo({ children, hint }: { children: React.ReactNode; hint?: string }
 }
 
 /* ---- la pestaña ---- */
-export default function SharedStrategiesTab() {
+export default function SharedStrategiesTab({ onOpenDraft }: { onOpenDraft?: (entry: SharedStrategyEntry) => void }) {
   const [owner, setOwner] = useState("");
   const [compartidas, setCompartidas] = useState<SharedStrategyEntry[]>([]);
   const [mias, setMias] = useState<Strategy[]>([]);
@@ -427,7 +450,7 @@ Borra SU fichero del repo. Cuando subas el borrado, también desaparecerá para 
     <div style={{ padding: 14, fontFamily: font.sans, color: color.textPrimary }}>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 280 }}>
-          <Titulo hint="Los JSON viven en estrategias_compartidas/ y viajan por git: nada se comparte hasta que commiteas esa carpeta. Aquí solo se MIRAN — pulsa una para ver cómo está montada y, si te convence, móntate la tuya con lo que ves. Borrar quita el fichero del repo — también las del otro, para que la lista no se acumule.">
+          <Titulo hint="Los JSON viven en estrategias_compartidas/ y viajan por git: nada se comparte hasta que commiteas esa carpeta. Pulsa una para ver cómo está montada y, si te convence, ábrela como borrador en el builder para revisarla y ajustarla antes de correr. Borrar quita el fichero del repo — también las del otro, para que la lista no se acumule.">
             En el repo
           </Titulo>
         </div>
@@ -471,7 +494,6 @@ Borra SU fichero del repo. Cuando subas el borrado, también desaparecerá para 
                     <td style={{ ...td, overflow: "hidden", textOverflow: "ellipsis" }}>
                       <span style={{ color: color.copperBright, marginRight: 6 }}>{activa ? "▾" : "▸"}</span>
                       {c.name}
-                      {c.description && <div style={{ fontSize: 10.5, color: color.textMuted, marginTop: 1 }}>{c.description}</div>}
                     </td>
                     <td style={{ ...td, color: mia ? color.copperBright : color.textSecondary }}>
                       {nombreDev(c.shared_by)}{mia ? " (tú)" : ""}
@@ -480,16 +502,29 @@ Borra SU fichero del repo. Cuando subas el borrado, también desaparecerá para 
                       {c.shared_at ? String(c.shared_at).slice(0, 16).replace("T", " ") : "—"}
                     </td>
                     <td style={{ ...td, textAlign: "right" }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); void borrar(c); }}
-                        style={btn}
-                        disabled={ocupada === c.filename}
-                        title={mia ? "Borrar tu fichero compartido" : `Borrar el fichero que compartió ${nombreDev(c.shared_by)}`}
-                        onMouseEnter={(ev) => { ev.currentTarget.style.color = color.loss; ev.currentTarget.style.borderColor = color.loss; }}
-                        onMouseLeave={(ev) => { ev.currentTarget.style.color = color.textMuted; ev.currentTarget.style.borderColor = color.border; }}
-                      >
-                        {ocupada === c.filename ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Borrar
-                      </button>
+                      <div style={{ display: "inline-flex", gap: 6 }}>
+                        {onOpenDraft && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onOpenDraft(c); }}
+                            style={btn}
+                            title="La abre como BORRADOR en el builder para revisar criterios, universo y riesgo antes de correr. No guarda nada en tus estrategias."
+                            onMouseEnter={(ev) => { ev.currentTarget.style.color = color.copperBright; ev.currentTarget.style.borderColor = color.copperBright; }}
+                            onMouseLeave={(ev) => { ev.currentTarget.style.color = color.textMuted; ev.currentTarget.style.borderColor = color.border; }}
+                          >
+                            <Pencil size={11} /> Abrir borrador
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void borrar(c); }}
+                          style={btn}
+                          disabled={ocupada === c.filename}
+                          title={mia ? "Borrar tu fichero compartido" : `Borrar el fichero que compartió ${nombreDev(c.shared_by)}`}
+                          onMouseEnter={(ev) => { ev.currentTarget.style.color = color.loss; ev.currentTarget.style.borderColor = color.loss; }}
+                          onMouseLeave={(ev) => { ev.currentTarget.style.color = color.textMuted; ev.currentTarget.style.borderColor = color.border; }}
+                        >
+                          {ocupada === c.filename ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Borrar
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {activa && (
