@@ -574,6 +574,40 @@ Tres análisis pedidos por Jaume; scripts 19-24 en `D:\bot_senales\estudio_cisne
 - Cubrir TODO el mercado 2019-2026 con status exacto cuesta **51 $** (0,027 $/día
   × 1.930). Pendiente de OK de Jaume. Informe v6 entregado (secciones 12-14).
 
+### Convención (Jaume, 11-sep): los datos de estos estudios van FUERA del lago
+
+Todo lo descargado para el estudio (Databento: libro MBP-10, NBBO, cintas,
+`status` de 2026, de las estrategias y de TODO el mercado 2019-2026; y cualquier
+extracto de Massive) vive en `D:\bot_senales\estudio_cisnes\databento\<tipo>\`,
+nunca en `D:\lago_backtester`. Los scripts numerados (01-28) en la carpeta
+padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
+
+### 11-sep (tarde): halts de TODO el mercado 2019-2026 y predictores del fogonazo (informe v7)
+
+- **Databento `status` completo**: 1.930 días, 0 errores, **50,61 $** (presupuesto
+  exacto pedido antes con get_cost; descarga con tope 55 $). 3,7 GB en
+  `databento/status_mercado/`. `25_status_mercado.py`, análisis `28_*.py`,
+  parquet `halts_mercado_2019_2026.parquet` (277.645 halts, 20.994 símbolos).
+  OJO: el mapa instrument_id→símbolo es POR DÍA (Nasdaq reasigna); se resuelve
+  solo para los ids con halt (1 lote/día). Símbolos reutilizados y cambios de
+  ticker generan reaperturas falsas (SMR, GOLD ×70): filtrar px_antes ≥ 0,5 y
+  coherencia con prev_close. Muchos T12 a las 19:55 son bajas por fusión, no
+  suspensiones.
+- Resultados: 61.287 LULD, 4.542 T1, 747 T12. T1 reabre mediana +1,7 %, p95
+  +64 %, máx +475 % (ABVX 22-jul-2025). LULD ≥ 30 min: mediana +20 %, p95 +307 %,
+  máx +2.795 % (INHD 8-jun-2026), QMMM +1.395 %, PGHL +858 %. **Suspensiones
+  reales en valores operables (gap ≥ 20 o vol ≥ 200k) sin cotizar 90 días: 8
+  en 8 años; 5 en gap ese día (ONCR, ASPA, NOVV, HYZN, GATE), todos T12 a
+  partir de las 11:50.** Ninguna con posición de 1B/2B dentro.
+- **Predictores (`26_*`, `27_*`)**: nivel día tiene fuga (gap y volumen del
+  día incluyen el fogonazo). Nivel instante (253 fogonazos vs 13.620 controles
+  a la misma hora): lo que separa es la DELGADEZ: < 14k acciones acumuladas
+  (7,8 % vs 1,8 % base), < 107 operaciones, vol medio 20d < 88k, primera media
+  hora. Gap previo y precio apenas. Logístico in-sample: top 1 % de instantes →
+  19 % de los fogonazos con 34 % de acierto; top 5 % → 46 % con 16 %. Sirve
+  como aviso, no como filtro. Sin validación fuera de muestra.
+- Informe v7 entregado (secciones 15 y 16).
+
 ---
 
 ## Estado y pendientes
@@ -594,4 +628,4 @@ cuadro de mandos cuando se diseñe.
 | P6 | Cuadro de mandos de exposición al riesgo | Diseño pendiente |
 | P7 | Tareas de Jaume de la semana del 7-sep (lista en §0): fills reales de DAS, JSON de la estrategia de estreno, congelar el motor, Telegram propio, VPS con el socio, runbook | Sin empezar |
 | P8 | Backend colgado el 7-sep (dos uvicorn); lo lleva Jaume en el chat del genético. Bot de avisos: lo enciende Jaume el 8-sep | Fuera de este chat |
-| P9 | Halts largos 2019-2026 en TODO el mercado: solo con Databento `status` (51 $); huecos en velas NO sirven. Estrategias ya cruzadas con status exacto (11-sep) | Esperando OK de los 51 $ |
+| P9 | Halts largos 2019-2026: HECHO con Databento status (50,61 $). 5 suspensiones T12 en valores en gap en 8 años; ninguna con posición dentro | Cerrado |
