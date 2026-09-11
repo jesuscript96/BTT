@@ -3795,3 +3795,81 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Formato del fichero y backend: idénticos en las dos ramas** (cero diferencias en `shared_strategies.py`, el router, los tests y `estrategias_compartidas/`). Nos seguimos leyendo.
 - **Para integrar en tu rama:** solo cambia `SharedStrategiesTab.tsx` (la función `describirReentradas` y la fila que la usa, más los dos nombres en `USADAS_RM`). Chocará textualmente con tu fila de reentradas, que ocupa el mismo sitio: quédate la tuya si prefieres tu semántica, o la nuestra si alineáis el motor. Nada más de este commit os afecta.
 - **Estado:** en `sailor` y `staging`.
+
+---
+
+## 2026-09-11 · El bot: «Parado» cierra, «Vigilar» arranca limpio, y las estrategias se recargan en caliente
+
+Segunda sesión con los arreglos del 9-sep. Lo de ayer aguantó; lo de hoy fue
+**una estrategia entera sin vigilar** y la confusión de qué proceso corre.
+
+### [BUG · 2026-09-11 · UNA ESTRATEGIA SIN VIGILAR] El bot salía de la espera con la primera casilla que se marcaba
+
+El bot leía la lista de estrategias **una sola vez**, al arrancar (*«no se
+vuelve a mirar, porque las estrategias no se editan con el bot encendido»*).
+Con el bucle de espera del día anterior —el bot se queda esperando a que haya
+alguna estrategia marcada—, Jaume marcó dos seguidas: **el bot salió de la
+espera con la primera y nunca se enteró de la segunda.** 2B (RTH) sin vigilar
+toda la sesión, sin un solo error. Antes del bucle de espera esto no podía
+pasar (el bot moría con cero y se relanzaba con las dos ya marcadas): fue un
+efecto secundario de mi arreglo, y no lo vi.
+
+**Arreglo: recarga en caliente.** El backend lleva `estrategias_version`, que
+sube al marcar/desmarcar, cambiar el riesgo o **editar la definición en el
+constructor**. Viaja en el `/estado` que el bot ya pide cada 5 s, así que no
+cuesta una petición más. `MotorAlertas.actualizar()` añade, quita y recompila
+solo lo que cambió, **conservando la memoria del día** (lo ya avisado sigue
+avisado: tocar una casilla no repite las alertas de la mañana).
+
+**Verificado en vivo**: 2B activada con el bot en marcha → `ANYADIDA en
+caliente` a las 16:27:13 → **su primera prealerta 37 segundos después**.
+
+Trampa dentro del arreglo: `compile_strategy_def` **modifica la definición en
+sitio** (normaliza nombres). Firmarla después de compilar marcaba todo como
+«cambiada» en cada recarga. La firma se calcula antes; lo cazó un test con un
+compilador falso que también muta.
+
+### [DISEÑO · 2026-09-11 · PARADO = CERRAR] El interruptor deja de ser una pausa
+
+Jaume: *«lo suyo es que si le doy a parado es porque PARO todo; si reinicio el
+backend, después doy a vigilar INICIO todo… ¿hay alguna razón por la que no es
+así?»*. No la había. La pausa existía para no perder el máximo de premercado;
+esa razón murió el 9-sep cuando el botón empezó a arrancar el bot (reiniciar
+cuesta ~30 s de siembra por REST). A cambio producía justo lo contrario de lo
+que se veía: **«Parado» con un bot vivo** que al darle a Vigilar despertaba con
+el código y la lista de estrategias de por la mañana.
+
+Ahora el bot, al ver el interruptor apagarse, **sale limpio** y manda un último
+latido `terminado`; el botón no lo cuenta como vivo y el siguiente Vigilar
+arranca uno nuevo. **No se mata nada desde el backend** — matar por PID desde
+otro proceso es como se acaba matando lo que no es. `LATIDO_VIVO_SEG` pasa de
+150 a **20** (el bot late cada 5 s, no cada 60 como decía el comentario).
+
+### [TRAMPA · 2026-09-11 · UN BOT FANTASMA] Un proceso vivo desde las 07:54 que di por muerto dos veces
+
+El lanzador del escritorio pone la ruta **entre comillas**
+(`"D:\bot_senales\bot.py" --vivo`); el `.bat`, no. Mi filtro de procesos
+buscaba `bot.py --vivo` seguido y la comilla lo rompía. Resultado: **un bot del
+lanzador estuvo vivo todo el día**, en pausa desde las 14:40, y mi Vigilar de
+las 16:2x lo despertó con una sola estrategia y sin ninguno de los arreglos.
+Filtro bueno: `python.exe` con `*bot.py*` **y** `*--vivo*` por separado.
+
+### [OPERACIÓN · 2026-09-11 · --reload] Tres recargas, tres atascos
+
+Cada guardado de un fichero del backend disparó una recarga, y **las tres se
+atascaron**: el worker (3,8 GB, hijo de `multiprocessing`) no vuelve y el
+reloader acepta conexiones sin contestar (`HTTP 000` a los 10 s). Remedio cada
+vez: matar todo y relanzar limpio (36-48 s). **El backend quedó relanzado SIN
+`--reload`**, para que los guardados de los otros chats no lo tumben mientras
+Jaume trabaja. Recomendación: quitar `--reload` del lanzador del escritorio.
+
+### Y las estrategias aparecieron destildadas por tercera vez
+
+Activas a las 10:03, las dos a `false` a las 16:2x. Sigue sin saberse quién ni
+cuándo; `POST /watch` ya deja una línea por cambio en la consola del backend.
+
+**Estado:** 15 tests nuevos, **1113 pasan, 0 fallan**. Commit `e0e7518` en
+local. Bot en marcha con las dos estrategias, recibiendo. `bot.py` va aparte
+(fuera de git). Vigentes las cuatro normas del análisis de halts de otro chat:
+no actualizar el lago, no tocar `estudio_cisnes`/`databento`, no usar la clave
+de Databento, no copiar `users.duckdb`.
