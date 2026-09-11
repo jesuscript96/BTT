@@ -3763,3 +3763,12 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Tests:** los 14 de Álvaro siguen pasando, +4 nuevos (borrar con `dev`, `dev` malformado incluido traversal, `dev` vacío, `dev` inexistente) → 24/24. **Hallazgo de los propios tests:** la cadena vacía NO es un `dev` malformado — significa «no me han dado dev» y cae en el propio owner, que es justo lo que manda el frontend (`entry.shared_by || undefined`).
 - **Nota de entorno:** `test_api_roundtrip_compartir_y_quitar` falló una vez con `IO Error: File is already open` de DuckDB por tener el backend levantado; al repetir, verde. No es del código — es [[DuckDB: no hay lecturas baratas]].
 
+
+## 📣 2026-09-11 — Para Jaime: tu 1013fed portado + «Abrir borrador» (ZCode, para Álvaro)
+
+- **Porte manual de tu 1013fed** (visor sin descripción, condiciones primero) a `alvaro-rama-desarrollo`: el cherry-pick no aplicaba (perfil-volumen + IS/OOS de por medio). Ojo al integrar: posible mini-conflicto en `page.tsx` (bloque `describirWhatIf`) por comentarios de procedencia — versiones equivalentes, quédate la de staging.
+- **Nuevo: botón «Abrir borrador»** en cada compartida (petición de Álvaro): carga el `definition` como borrador del builder para revisarlo y correrlo. **Tu decisión de visor se mantiene**: no importa nada a la BD ni hereda `dataset_id` (al correr se auto-crea dataset desde `universe_filters`).
+- Fila **«Reentradas»** en la radiografía, con aviso si llega `max_reentries=-1` (aquí = ILIMITADAS). Las tuyas traen `máx 2`.
+- **Probarlo:** Compartidas → desplegar una → «Abrir borrador». Verificado end-to-end con tu «PM 1B TTP (50k)»: todo cargado, BD intacta. Solo frontend (`SharedStrategiesTab.tsx`, `page.tsx`, `ResultsTabs.tsx`). Sin push aún (pendiente OK de Álvaro).
+
+**Mensaje para Jaume (copiar tal cual):** «Oye, ya he arreglado lo de las estrategias guardadas — a mí me funciona. Yo me quedo con mi versión aunque subas la tuya a staging. Está en MEMORIA_MADRE (entrada 2026-09-11): pídele a tu IA que la lea, entienda cómo lo he hecho y lo adapte para que a ti también te funcione.»
