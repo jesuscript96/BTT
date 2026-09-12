@@ -1918,13 +1918,25 @@ def _perfil_volumen(h, l, c, v, day_id, bin_pct, liston_pct, zona_pct):
             hist[:] = 0.0
             ancho = c[i] * bin_pct / 100.0
 
-        if ancho <= 0.0:
+        # `not (ancho > 0)` y no `ancho <= 0`: un primer cierre NaN daria un
+        # ancho NaN que pasa el `<= 0` y convierte los indices en basura.
+        if not (ancho > 0.0):
             continue
 
+        # LOS DOS INDICES ACOTADOS POR ARRIBA. Hasta el 12-sep-2026 solo se
+        # acotaba `i1`, y con `i1 < i0 -> i1 = i0` un minimo que se saliera del
+        # histograma (low > 4096 franjas: OCTO 2025-09-08 hizo 32x el primer
+        # precio del dia, con franjas del 0,5 % son 6.400) escribia FUERA del
+        # array. numba no comprueba limites: no hay IndexError, se corrompe el
+        # heap y el proceso muere mas tarde con 0xC0000005 en ntdll, sin
+        # traceback. Tumbo dos veces la corrida del genetico de esa noche.
+        # Lo que se sale por arriba se acumula en la ultima franja.
         i0 = int(l[i] / ancho)
         i1 = int(h[i] / ancho)
         if i0 < 0:
             i0 = 0
+        if i0 >= _PERFIL_MAX_FRANJAS:
+            i0 = _PERFIL_MAX_FRANJAS - 1
         if i1 >= _PERFIL_MAX_FRANJAS:
             i1 = _PERFIL_MAX_FRANJAS - 1
         if i1 < i0:

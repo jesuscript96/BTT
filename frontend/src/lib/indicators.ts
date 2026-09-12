@@ -1362,6 +1362,10 @@ function perfilVolumen(data: CandleData[], binPct: number, listonPct: number,
         let i0 = Math.floor(b.low / ancho);
         let i1 = Math.floor(b.high / ancho);
         if (i0 < 0) i0 = 0;
+        // i0 tambien acotado por arriba (paridad con `_perfil_volumen`): un
+        // minimo fuera del histograma se acumula en la ultima franja. En JS
+        // escribir fuera de un Float64Array no revienta, pero divergia del motor.
+        if (i0 >= PERFIL_MAX_FRANJAS) i0 = PERFIL_MAX_FRANJAS - 1;
         if (i1 >= PERFIL_MAX_FRANJAS) i1 = PERFIL_MAX_FRANJAS - 1;
         if (i1 < i0) i1 = i0;
         const reparto = b.volume / (i1 - i0 + 1);

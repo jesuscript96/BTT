@@ -277,7 +277,62 @@ class Corrida:
         self.poblacion = [self._fila(h) for h in d["poblacion"] if h in self.cache]
         self.poblacion.sort(key=lambda x: x["fitness"], reverse=True)
         self.log(f"reanudada en la generacion {self.generacion} con {len(self.cache)} evaluados")
+        self._amnistiar_crashes()
         return True
+
+    def _amnistiar_crashes(self) -> None:
+        """El individuo que tumbo el proceso queda como ERROR, no se reevalua.
+
+        POR QUE. Un crash nativo (numba, 0xC0000005) no es una excepcion: mata
+        el proceso sin traceback y sin pasar por ningun `except`. Si el fallo
+        es determinista para un individuo —y lo es: el 12-sep-2026 el mismo
+        individuo tumbo la corrida dos veces seguidas, a los 10 s de reanudar—
+        reanudar a secas es un bucle: crash, reanudar, mismo individuo, crash.
+        La noche entera perdida sin que nadie se entere.
+
+        `paralelo._apuntar` deja escrito en `dir_datos/evaluando_<pid>.txt` QUE
+        se estaba evaluando antes de evaluarlo. Al reanudar, cada uno de esos
+        ficheros cuyo pid ya no existe es un cadaver: su individuo entra en la
+        cache con fitness 0 y `error`, y el fichero se renombra a `crash_<pid>`
+        para que quede la prueba y no se cuente dos veces. Si el individuo YA
+        esta en la cache (se evaluo bien y el crash fue de otro), no se toca.
+        """
+        dir_datos = self.config.get("dir_datos") or ""
+        if not dir_datos or not os.path.isdir(dir_datos):
+            return
+        try:
+            import psutil
+        except ImportError:                                      # noqa
+            psutil = None
+        for nombre in sorted(os.listdir(dir_datos)):
+            if not (nombre.startswith("evaluando_") and nombre.endswith(".txt")):
+                continue
+            ruta = os.path.join(dir_datos, nombre)
+            try:
+                pid = int(nombre[len("evaluando_"):-4])
+            except ValueError:
+                continue
+            if psutil is not None and psutil.pid_exists(pid) and pid != os.getpid():
+                continue                     # otro worker vivo (varias corridas a la vez)
+            try:
+                texto = open(ruta, encoding="utf-8").read()
+                ind = json.loads(texto[texto.index("{"):])
+                h = self._esp.huella(ind)
+            except Exception as e:                                # noqa: BLE001
+                self.log(f"  aviso: no pude leer {nombre} ({type(e).__name__}); lo dejo")
+                continue
+            if h not in self.cache:
+                self.individuos.setdefault(h, ind)
+                self.cache[h] = {"error": f"crash del proceso (pid {pid}) evaluando este individuo; "
+                                          f"ver crash_{pid}.txt", "fitness": 0.0, "trades": 0,
+                                 "segundos": 0.0}
+                self.evaluadas += 1
+                self.log(f"  CRASH amnistiado: el individuo que mato al pid {pid} queda con fitness 0 "
+                         f"y no se reevalua ({especie.receta(self.config, ind)[:120]})")
+            try:
+                os.replace(ruta, os.path.join(dir_datos, f"crash_{pid}.txt"))
+            except OSError:
+                pass
 
     # ── evaluacion ──────────────────────────────────────────────────────────
     def _fila(self, h: str) -> dict:

@@ -197,3 +197,28 @@ def test_la_zona_tambien_es_causal():
             if pd.isna(a) and pd.isna(b):
                 continue
             assert a == pytest.approx(b), f"{nombre} en la barra {i} mira al futuro"
+
+
+def test_un_precio_fuera_del_histograma_no_revienta():
+    """EL BUG QUE TUMBO EL GENETICO LA NOCHE DEL 12-SEP-2026, dos veces, con el
+    mismo individuo. El histograma tiene 4.096 franjas de anchura fija (% del
+    primer precio del dia): OCTO 2025-09-08 hizo 32x el primer precio, y con
+    franjas del 0,5 % eso son 6.400. `i1` se acotaba, pero `i0` no, y con
+    `i1 < i0 -> i1 = i0` se escribia FUERA del array. numba no comprueba
+    limites: no hay IndexError, se corrompe el heap y el proceso muere mas
+    tarde con 0xC0000005 en ntdll, sin traceback ni `except`. Reproducido
+    con NUMBA_BOUNDSCHECK=1 sobre el dia real. Ahora lo que se sale por
+    arriba se acumula en la ultima franja."""
+    n = 40
+    # con bin 0.1 % basta con 5x el primer precio para salirse (5.000 franjas)
+    precios = np.concatenate([np.full(10, 1.0), np.linspace(1.0, 6.0, 30)])
+    df = _df(precios, altos=precios * 1.02, bajos=precios * 0.98)
+    for nombre, kw in (("Vol. de la franja", {}), ("Punto de control", {}),
+                       ("Nodo de arriba", {"liston_pct": 60}), ("Nodo de abajo", {"liston_pct": 60}),
+                       ("Zona alta", {"zona_pct": 70}), ("Zona baja", {"zona_pct": 70})):
+        s = compute_indicator(nombre, df, bin_pct=0.1, **kw)
+        assert len(s) == n
+        assert np.isfinite(s.dropna().values).all(), f"{nombre}: valores no finitos"
+    # y el dia en que TODO cabe sigue dando exactamente lo mismo que antes
+    poc = compute_indicator("Punto de control", df.iloc[:10].copy(), bin_pct=1.0)
+    assert 0.98 <= float(poc.iloc[-1]) <= 1.02      # dentro del rango de esas velas
