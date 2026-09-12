@@ -681,6 +681,20 @@ padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
   final, solo por tenerlo en cuenta» → P10. Datos: `32_luld_antes_t12.py`,
   `luld_antes_t12.csv`, `luld_cadena_tasa_base.csv`.
 
+- **T12 por franja y after-hours (12-sep; informe v10 y resumen)**: quitando
+  los 414 T12 de 19:45+ (fusiones/bajas: ninguno hizo gap ese día, mediana 0 %,
+  máx +6 %, ninguno con LULD → la exclusión es correcta), quedan 68 en PM, 38
+  en sesión y 17 en after-hours. Los de PM y AH son casi todos empresas paradas
+  sin gap. Pero dos de AH repiten el patrón: INHD 8-jun-2026 (sin gap por la
+  mañana, +7,6 %; en sesión de 1,08 a 66,69 con 278 M acciones y 8 LULD, uno de
+  2 h; T12 17:18; volvió a los 53 días) y TENK 7-ago-2024 (gap +217 % dos días
+  antes; ese día +18 %, 4 LULD; T12 18:24; no volvió). Sin posición en ninguno.
+  Total: 6 T12 peligrosos en 8 años, los 6 con cadena de LULD antes; tasa base
+  1 de cada 300 días con ≥5 LULD. Trampa de tiempo: quien aguanta al cierre se
+  lleva el T12 a casa (no aplica: 1B y 2B cierran antes). INHD se hizo candidato
+  en sesión, no por gap de apertura. Datos: `33_t12_after_hours.py`,
+  `t12_por_franja.csv`, `t12_after_hours.csv`.
+
 ---
 
 ## Estado y pendientes
@@ -702,4 +716,4 @@ cuadro de mandos cuando se diseñe.
 | P7 | Tareas de Jaume de la semana del 7-sep (lista en §0): fills reales de DAS, JSON de la estrategia de estreno, congelar el motor, Telegram propio, VPS con el socio, runbook | Sin empezar |
 | P8 | Backend colgado el 7-sep (dos uvicorn); lo lleva Jaume en el chat del genético. Bot de avisos: lo enciende Jaume el 8-sep | Fuera de este chat |
 | P9 | Halts largos 2019-2026: HECHO con Databento status (50,61 $). 5 suspensiones T12 en valores en gap en 8 años; ninguna con posición dentro | Cerrado |
-| P10 | Cadena de LULD como aviso de T12 (en sesión): los 4 T12 peligrosos llevaban ≥5 halts de volatilidad ese día; 1 de cada 500 días así acaba en T12. Candidata a regla/aviso del bot cuando se diseñe el cuadro de mandos (no ampliar / vigilar con ≥5 LULD). No decidido | Apuntado |
+| P10 | Cadena de LULD como aviso de T12: los 6 T12 peligrosos (4 en sesión + INHD y TENK en after-hours) llevaban ≥4 halts de volatilidad ese día; 1 de cada 300 días con ≥5 LULD acaba en T12. Si algún día se mantienen posiciones al cierre, el after-hours entra en juego. Candidata a regla/aviso del bot cuando se diseñe el cuadro de mandos (no ampliar / vigilar con ≥5 LULD). No decidido | Apuntado |
