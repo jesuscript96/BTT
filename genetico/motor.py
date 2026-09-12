@@ -47,33 +47,53 @@ def _mutar_condicion(c: dict, config: dict, rng: random.Random) -> dict:
     else:
         obj = c["objetivo"]
         if isinstance(obj, dict):
-            c["objetivo"] = {"ind": rng.choice(ind.objetivos), "params": {}}
+            # Con los parametros del nivel sorteados, como al nacer: antes se
+            # ponia `params: {}` y un Darvas mutado perdia la linea y el
+            # periodo (volvia a los defectos del motor, sin avisar). Y solo
+            # entre los destinos permitidos en esta corrida: los niveles
+            # opcionales (perfil, pivote) no se cuelan si no estan marcados.
+            c["objetivo"] = cromosoma.objetivo_aleatorio(rng, ind, config.get("catalogo"))
         else:
             c["objetivo"] = _vecino(obj, ind.valores, rng)
     return c
 
 
+def _suelo(config: dict, clave: str) -> float:
+    return float((config.get("riesgo") or {}).get(clave, 0) or 0)
+
+
 def _mutar_stop(s: dict, config: dict, rng: random.Random) -> dict:
     sesgo = config.get("sesgo", "short")
     modos = list(config.get("stops", ["pct"]))
+    marcados = config.get("catalogo") or ()
+    # LOS SUELOS TAMBIEN VALEN AL MUTAR. Hasta el 12-sep-2026 solo se
+    # respetaban al nacer: un stop del 8 % podia bajar al 5 y luego al 3 a
+    # base de vecinos, y al saltar de estructura a porcentaje se sorteaba
+    # sin suelo. El `stop_min_pct` de la pagina parecia puesto y no lo estaba.
+    suelo = _suelo(config, "stop_min_pct")
     if len(modos) > 1 and rng.random() < 0.2:
-        return cromosoma._stop_aleatorio(rng, [m for m in modos if m != s["modo"]], sesgo)
+        return cromosoma._stop_aleatorio(rng, [m for m in modos if m != s["modo"]],
+                                         sesgo, suelo, marcados)
     s = copy.deepcopy(s)
     if s["modo"] == "pct":
-        s["valor"] = _vecino(s["valor"], C.STOP_PCT, rng)
+        rejilla = tuple(v for v in C.STOP_PCT if v >= suelo) or (max(C.STOP_PCT),)
+        s["valor"] = _vecino(s["valor"], rejilla, rng)
     elif rng.random() < 0.5:
         s["offset_pct"] = _vecino(s["offset_pct"], C.STOP_OFFSET_PCT, rng)
     else:
-        s["nivel"], s["operador"] = rng.choice(C.STOP_NIVELES[sesgo])
+        s["nivel"], s["operador"] = rng.choice(C.stop_niveles(sesgo, marcados))
     return s
 
 
 def _mutar_tp(t: dict, config: dict, rng: random.Random) -> dict:
     modos = list(config.get("tps", ["pct"]))
+    suelo = _suelo(config, "tp_min_pct")
     if len(modos) > 1 and rng.random() < 0.2:
-        return cromosoma._tp_aleatorio(rng, [m for m in modos if m != t["modo"]])
+        return cromosoma._tp_aleatorio(rng, [m for m in modos if m != t["modo"]], suelo)
     t = copy.deepcopy(t)
     rejilla = {"pct": C.TP_PCT, "hora": C.TP_HORA, "tiempo": C.TP_TIEMPO_MIN}[t["modo"]]
+    if t["modo"] == "pct":
+        rejilla = tuple(v for v in C.TP_PCT if v >= suelo) or (max(C.TP_PCT),)
     t["valor"] = _vecino(t["valor"], rejilla, rng)
     return t
 
@@ -90,9 +110,13 @@ def mutar(ind: dict, config: dict, rng: random.Random) -> dict:
     for i, c in enumerate(nuevo["condiciones"]):
         if rng.random() < p:
             if rng.random() < 0.25:  # cambiar el indicador entero
-                otros = [n for n in config["catalogo"] if n not in {x["ind"] for x in nuevo["condiciones"]}]
+                # Solo los que pueden ir a la izquierda: un nivel opcional
+                # marcado (Punto de control...) no es un indicador de recambio.
+                otros = C.lado_izquierdo(
+                    [n for n in config["catalogo"] if n not in {x["ind"] for x in nuevo["condiciones"]}])
                 if otros:
-                    nuevo["condiciones"][i] = cromosoma._condicion_aleatoria(rng, otros)
+                    nuevo["condiciones"][i] = cromosoma._condicion_aleatoria(
+                        rng, otros, config["catalogo"])
                     tocado = True
                     continue
             nuevo["condiciones"][i] = _mutar_condicion(c, config, rng)

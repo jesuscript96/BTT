@@ -30,6 +30,27 @@
 
 ---
 
+## 2026-09-12 (Sailor, noche) — Los «Alternativos» entran en el genético, sin cambiar las corridas de siempre
+
+Jaume vio que los indicadores del 9 y 10-sep (regresión, absorción, mecha, retroceso, pivote, perfil de volumen) no estaban en el catálogo del genético y quería lanzar una corrida con ellos esa misma noche. **Premisa suya: no romper nada de lo que ya funciona.**
+
+**Qué hay.** Familia nueva «Alternativos» en `genetico/catalogo.py`:
+- **Ocho medidas** con rejilla de valores y parámetros sorteados: `Reg. Slope` (ventana), `Reg. R2` (ventana), `ATR Extension` (periodo del ATR y referencia: VWAP / PMH / cierre de ayer / HOD), `Time vs Level` (referencia y lado), `Absorption` (ventana), `Wick Ratio` (ventana y lado), `Retroceso (%)` (ventana 0/30/60 y dirección del impulso), `Vol. de la franja` (detalle). Las rejillas de absorción y mecha son los **percentiles medidos** el 9-sep (2.476 velas reales): 0,25 / 0,85 / 2,5 / 5 / 10 y 0,2 / 0,3 / 0,4 / 0,5.
+- **Cuatro niveles opcionales**: `Ultimo pivote` (velas y dirección), `Punto de control` (detalle), `Zona alta` y `Zona baja` (detalle y % de volumen). Son precios: entran como **destino** de `Bar Close` / `High Bar` / `Low Bar`, y el pivote además como **stop de estructura** («Ultimo pivote alto» / «bajo», los mismos valores que `VALORES_PIVOTE` del motor; ventana 3 y respaldo 5 % por defecto).
+- **Fuera a propósito:** «Absorption + Wick» (es `Absorption > a AND Wick Ratio > w`, y el genético ya busca 2-3 condiciones en AND: como dos genes sueltos prueba más). Y **los dos nodos**: son relativos al precio (la primera zona por encima / por debajo del cierre), así que el cierre está SIEMPRE al otro lado y **nunca los cruza** — medido: `Bar Close` cruza el nodo 0 veces en 600 velas; solo la mecha de su lado lo pincha (`High Bar` contra el de arriba, `Low Bar` contra el de abajo). En el genético serían dos de cada tres condiciones muertas de nacimiento. Esto vale también para el constructor de condiciones: «Bar Close cruza Nodo» no dispara nunca.
+
+**Cómo se cumple la premisa: los niveles son OPT-IN.** `Indicador.solo_destino=True` + `NIVELES_OPCIONALES` + `objetivos_permitidos(ind, marcados)` / `stop_niveles(sesgo, marcados)`: un nivel solo entra como destino (y el pivote como stop) si está **marcado en la página**. Sin marcar, la lista de destinos de `Bar Close` es la de siempre, **en el mismo orden**, así que con la misma semilla y la misma config nacen exactamente los mismos individuos: comprobado contra HEAD, 300 individuos × 3 semillas × 2 configs idénticos. Y permite comparar una corrida CON el perfil y otra SIN, que es la única forma de saber si aporta. `lado_izquierdo(nombres)` quita los niveles del sorteo de la izquierda; si solo hay niveles marcados salta un `ValueError` que dice qué falta (y la página lo avisa antes de lanzar). En la página los niveles llevan «↳» y una nota; la validación no los cuenta como condiciones y avisa si hay un nivel marcado sin `Bar Close` / `High Bar` / `Low Bar` que lo use (el pivote se salva si el stop de estructura está activo).
+
+**Dos fallos de la mutación que salieron de paso (no daban error):**
+- Al mutar el destino se ponía `params: {}`: un Darvas o un Donchian mutados **volvían a los defectos del motor** (línea de arriba, periodo por defecto) en silencio. Ahora `cromosoma.objetivo_aleatorio` sortea los parámetros como al nacer, y solo entre los destinos permitidos en la corrida.
+- **Los suelos `stop_min_pct` / `tp_min_pct` solo valían al NACER.** Un stop del 8 % podía bajar al 5 y al 3 a base de vecinos, y al saltar de estructura a porcentaje se sorteaba sin suelo. El suelo de la página parecía puesto y no lo estaba. Ahora `_mutar_stop` / `_mutar_tp` los aplican (rejilla acotada, y `_stop_aleatorio` / `_tp_aleatorio` los reciben).
+
+**Comprobado:** `test_genetico_catalogo.py` (143 pasan: el motor calcula cada nombre nuevo, las sondas de `ref_level` / `level_dir` / `wick_side` / `swing_dir` / `bin_pct` / `liston_pct` / `zona_pct` no encuentran ramas sin sortear, los opcionales solo entran marcados, el pivote solo entra al stop marcado, `necesita_pivotes(hard_stop)` es True, los suelos valen al mutar, el destino mutado conserva parámetros); y por la vía REAL del motor (`a_definicion` → `compile_strategy_def` → `_evaluate_condition_group`): cada alternativo da señal en alguna combinación de su rejilla, y **los parámetros viajan** (la misma condición con `wick_side` upper/lower, `swing_dir` up/down, `ref_level` vwap/prev_close, `bin_pct` 0,5/2 da series distintas). `tsc` limpio.
+
+**Ojo:** el endpoint `/api/genetico/catalogo` importa `genetico.catalogo` **una vez por proceso**: hasta reiniciar el backend, la página sigue enseñando el catálogo viejo (el proceso del genético, que es aparte, sí importa el nuevo). Y **`git add -A` no; ficheros uno a uno** (había trabajo ajeno sin commitear en `docs/BOT_EJECUCION_*.md`).
+
+---
+
 ## 2026-09-12 (Sailor) — Modo Scalping: la entrada abre una ventana, la salida la cierra, y dentro cada gatillo es una operación
 
 **Qué es.** Un bloque opcional `scalping` en la definición de la estrategia (en la UI, entre «Salida lógica» y «Piramidación»). Con él encendido:

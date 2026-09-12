@@ -139,9 +139,98 @@ def test_todos_tienen_ayuda():
 
 def test_ninguno_se_queda_sin_lado_derecho():
     """Un indicador sin `valores` ni `objetivos` no puede formar ninguna
-    condición: `_condicion_aleatoria` se quedaría sin opciones y reventaría."""
+    condición: `_condicion_aleatoria` se quedaría sin opciones y reventaría.
+
+    Salvo los NIVELES OPCIONALES (`solo_destino`): esos no van a la izquierda
+    nunca, entran como destino de Bar Close / High / Low. Que no tengan lado
+    derecho es la definición, no un despiste."""
     for nombre, ind in C.CATALOGO.items():
+        if ind.solo_destino:
+            assert nombre in C.NIVELES_OPCIONALES, f"{nombre}: solo_destino sin rejilla de nivel"
+            continue
         assert ind.valores or ind.objetivos, f"{nombre}: no se puede comparar con nada"
+
+
+# ── Los niveles opcionales (12-sep-2026) ─────────────────────────────────
+#
+# El perfil de volumen y el último pivote son precios, así que van como
+# DESTINO de los cruces. Pero no de serie: solo si se marcan en la página. La
+# premisa fue «no romper nada de lo que ya funciona»: una corrida configurada
+# como siempre tiene que sortear exactamente lo mismo que antes.
+
+_DE_SIEMPRE = C.NIVELES + tuple(n for n in C.NIVELES_CON_PARAMS if n not in C.NIVELES_OPCIONALES)
+
+
+def test_sin_marcar_nada_los_destinos_son_los_de_siempre():
+    """La lista de destinos de Bar Close sin niveles opcionales marcados es la
+    de antes, en el mismo orden — el mismo orden importa porque `rng.choice`
+    sobre la misma lista da el mismo individuo con la misma semilla."""
+    for nombre in ("Bar Close", "High Bar", "Low Bar"):
+        assert C.objetivos_permitidos(C.CATALOGO[nombre], [nombre, "RSI"]) == _DE_SIEMPRE
+
+
+def test_los_niveles_opcionales_solo_entran_marcados():
+    import random
+    sin = {c["objetivo"]["ind"]
+           for c in (X._condicion_aleatoria(random.Random(1), ["Bar Close"], ["Bar Close"])
+                     for _ in range(400)) if isinstance(c["objetivo"], dict)}
+    assert not (sin & set(C.NIVELES_OPCIONALES)), f"se colaron sin marcar: {sin & set(C.NIVELES_OPCIONALES)}"
+
+    marcados = ["Bar Close", "Punto de control", "Ultimo pivote"]
+    con = {}
+    rng = random.Random(2)
+    for _ in range(600):
+        c = X._condicion_aleatoria(rng, ["Bar Close"], marcados)
+        if isinstance(c["objetivo"], dict):
+            con.setdefault(c["objetivo"]["ind"], set()).add(str(sorted(c["objetivo"]["params"].items())))
+    assert "Punto de control" in con and "Ultimo pivote" in con, sorted(con)
+    assert "Zona alta" not in con, "un nivel SIN marcar salió como destino"
+    # y con sus parámetros sorteados, no siempre los mismos
+    assert len(con["Ultimo pivote"]) > 1 and len(con["Punto de control"]) > 1
+
+
+def test_un_nivel_opcional_nunca_va_a_la_izquierda():
+    import random
+    cfg = {"catalogo": ["RSI", "Punto de control", "Zona alta", "Ultimo pivote"],
+           "n_condiciones": 1, "sesgo": "short", "stops": ["pct"], "tps": ["pct"]}
+    rng = random.Random(4)
+    izq = {c["ind"] for i in (X.aleatorio(cfg, rng) for _ in range(200)) for c in i["condiciones"]}
+    assert izq == {"RSI"}, izq
+
+
+def test_solo_niveles_marcados_falla_con_un_mensaje_claro():
+    """Sin nada que poner a la izquierda, mejor un ValueError que diga qué
+    falta que un `rng.choice([])` críptico en la primera generación."""
+    import random
+    cfg = {"catalogo": ["Punto de control"], "n_condiciones": 1, "sesgo": "short"}
+    with pytest.raises(ValueError, match="Punto de control"):
+        X.aleatorio(cfg, random.Random(1))
+
+
+def test_el_pivote_entra_al_stop_solo_si_esta_marcado():
+    """El mismo interruptor que lo mete como destino lo mete como stop de
+    estructura, con los valores que entiende el motor (VALORES_PIVOTE)."""
+    import random
+    from app.services.portfolio_sim import VALORES_PIVOTE
+    for sesgo, esperado in (("short", "Ultimo pivote alto"), ("long", "Ultimo pivote bajo")):
+        assert esperado in VALORES_PIVOTE
+        rng = random.Random(9)
+        con = {X._stop_aleatorio(rng, ["estructura"], sesgo, 0.0, ["Ultimo pivote"])["nivel"]
+               for _ in range(200)}
+        assert esperado in con, con
+        rng = random.Random(9)
+        sin = {X._stop_aleatorio(rng, ["estructura"], sesgo, 0.0, ["RSI"])["nivel"]
+               for _ in range(200)}
+        assert esperado not in sin, sin
+        assert sin == {n for n, _ in C.STOP_NIVELES[sesgo]}
+
+
+def test_el_hard_stop_del_pivote_es_lo_que_espera_el_motor():
+    from app.services.portfolio_sim import necesita_pivotes
+    hs = X._hard_stop({"modo": "estructura", "nivel": "Ultimo pivote alto",
+                       "operador": ">=", "offset_pct": 5})
+    assert hs["type"] == "Market Structure (HOD/LOD)"
+    assert necesita_pivotes(hs), "el motor no calcularía los pivotes y caería al 5 % sin avisar"
 
 
 # ── Que los parámetros se sorteen de verdad ──────────────────────────────
@@ -189,6 +278,10 @@ SONDAS = {
     "squeeze_direction": ["up", "down"],
     "fade_ref": ["previous_max", "vwap_cross"],
     "days_lookback": [1, 5], "orb_minutes": [5, 30], "time_hour": [5, 8],
+    # Los de los alternativos (9 y 10-sep-2026).
+    "ref_level": ["vwap", "pmh"], "level_dir": ["above", "below"],
+    "wick_side": ["upper", "lower"], "swing_dir": ["up", "down"],
+    "bin_pct": [0.5, 2.0], "liston_pct": [30, 90], "zona_pct": [50, 85],
 }
 
 # `multiplier` NO es una rama del indicador: `indicators.py` lo aplica al final
@@ -295,6 +388,44 @@ def test_un_suelo_imposible_no_deja_al_genetico_sin_opciones():
     ind = _individuos(cfg, n=5)[0]
     assert ind["stop"]["valor"] == max(C.STOP_PCT)
     assert ind["tp"]["valor"] == max(C.TP_PCT)
+
+
+def test_los_suelos_tambien_valen_al_mutar():
+    """Hasta el 12-sep-2026 el suelo solo se aplicaba al NACER: un stop del 8 %
+    bajaba al 5 y al 3 a base de vecinos, y al saltar de estructura a
+    porcentaje se sorteaba sin suelo. El `stop_min_pct` de la página parecía
+    puesto y no lo estaba."""
+    import random
+    from genetico import motor as M
+    cfg = _config(stops=["pct", "estructura"], tps=["pct", "hora"],
+                  riesgo={"stop_min_pct": 8, "tp_min_pct": 10}, p_mutacion=0.6)
+    rng = random.Random(21)
+    pob = _individuos(cfg, n=60)
+    stops, tps = set(), set()
+    for _ in range(40):
+        pob = [M.mutar(i, cfg, rng) for i in pob]
+        stops |= {i["stop"]["valor"] for i in pob if i["stop"]["modo"] == "pct"}
+        tps |= {i["tp"]["valor"] for i in pob if i["tp"]["modo"] == "pct"}
+    assert stops and min(stops) >= 8, stops
+    assert tps and min(tps) >= 10, tps
+
+
+def test_el_destino_mutado_conserva_sus_parametros():
+    """Al mutar el destino se ponía `params: {}` y un Darvas mutado volvía a
+    los defectos del motor en silencio. Ahora se sortean como al nacer, y
+    solo entre los destinos permitidos en la corrida."""
+    import random
+    from genetico import motor as M
+    cfg = _config(catalogo=["Bar Close", "Ultimo pivote"], n_condiciones=1)
+    rng = random.Random(5)
+    vistos = {}
+    for _ in range(600):
+        c = M._mutar_condicion(X._condicion_aleatoria(rng, ["Bar Close"], cfg["catalogo"]), cfg, rng)
+        if isinstance(c["objetivo"], dict) and c["objetivo"]["ind"] in C.NIVELES_CON_PARAMS:
+            assert c["objetivo"]["params"], f"destino con params vacíos: {c}"
+            vistos.setdefault(c["objetivo"]["ind"], set()).add(str(sorted(c["objetivo"]["params"].items())))
+    assert "Ultimo pivote" in vistos and len(vistos["Ultimo pivote"]) > 1
+    assert "Punto de control" not in vistos       # no estaba marcado
 
 
 def test_sin_parciales_no_se_ponen():
