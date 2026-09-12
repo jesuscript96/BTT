@@ -1413,6 +1413,7 @@ export default function BacktestPanel({
                         `gatillo con ${sc.root_condition.conditions.length} condición${sc.root_condition.conditions.length === 1 ? '' : 'es'}`,
                         sc.max_minutes > 0 ? `salida a los ${sc.max_minutes} min` : 'sin salida por tiempo propia',
                         sc.cooldown_bars > 0 ? `pausa de ${sc.cooldown_bars} vela${sc.cooldown_bars === 1 ? '' : 's'}` : 'sin pausa',
+                        `${sc.capital_pct ?? 100}% de la cifra del panel por entrada`,
                       ];
                       return (
                         <div>

@@ -882,6 +882,7 @@ def run_backtest(
             sig_pyramid_levels = cached.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
             sig_cooldown = int(cached.get("reentry_cooldown_bars", 0))
+            sig_risk_scale = float(cached.get("risk_scale", 1.0))
 
             if not np.any(entries_arr) and not _sin_reglas:
                 del mini_df
@@ -918,6 +919,7 @@ def run_backtest(
             sig_pyramid_levels = signals.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
             sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
+            sig_risk_scale = float(signals.get("risk_scale", 1.0) or 1.0)
 
             # Populate cache for subsequent optimization iterations
             if _signal_cache is not None:
@@ -932,6 +934,7 @@ def run_backtest(
                     ],
                     "pyramid_sequential": sig_pyramid_sequential,
                     "reentry_cooldown_bars": sig_cooldown,
+                    "risk_scale": sig_risk_scale,
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -1168,7 +1171,9 @@ def run_backtest(
                 exits=exits_arr,
                 direction=sig_direction,
                 init_cash=compounding_cash,
-                risk_r=risk_r,
+                # Scalping: cada entrada usa una fraccion de la cifra del
+                # panel (`capital_pct`). 1.0 en todo lo demas.
+                risk_r=risk_r * sig_risk_scale,
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
                 size_by_sl=size_by_sl,

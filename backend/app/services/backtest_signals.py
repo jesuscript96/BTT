@@ -214,6 +214,7 @@ def _compute_signals_for_pair(
         sig_pyramid_sequential = False
         # Idem scalping: nunca llega aqui (has_special), pausa 0.
         sig_cooldown = 0
+        sig_risk_scale = 1.0
     else:
         # ═══ LEGACY PATH (backward compatible) ═══
         pm_highs_vals = pm_high_run
@@ -258,6 +259,7 @@ def _compute_signals_for_pair(
         sig_pyramid_levels = signals.get("pyramid_levels") or []
         sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
         sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
+        sig_risk_scale = float(signals.get("risk_scale", 1.0) or 1.0)
 
     # Fast return if no entries (only for legacy; fast path already returns arrays)
     if indicator_plan is None and not np.any(entries_arr):
@@ -415,6 +417,7 @@ def _compute_signals_for_pair(
         "sig_pyramid_levels": sig_pyramid_levels,
         "sig_pyramid_sequential": sig_pyramid_sequential,
         "sig_cooldown": sig_cooldown,
+        "sig_risk_scale": sig_risk_scale,
         "gap_pct": daily_stats.get("gap_pct"),
     }
 
@@ -1058,7 +1061,8 @@ def simulate_and_accumulate(signals_sorted, params):
                 exits=sig["exits_arr"],
                 direction=sig["sig_direction"],
                 init_cash=cash,
-                risk_r=risk_r,
+                # Scalping: fraccion de la cifra del panel por entrada; 1.0 si no.
+                risk_r=risk_r * float(sig.get("sig_risk_scale", 1.0) or 1.0),
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
                 size_by_sl=size_by_sl,

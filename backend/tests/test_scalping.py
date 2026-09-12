@@ -230,6 +230,21 @@ class TestTranslate:
         assert not np.any(s["entries"].values & fuera)
         assert np.any(s["entries"].values)
 
+    def test_capital_por_entrada_escala_el_riesgo(self):
+        df = _frame_zigzag()
+        d = _definicion(scalping={"timeframe": "1m", "root_condition": _gatillo_vela_verde(),
+                                  "max_minutes": 3, "cooldown_bars": 0, "capital_pct": 10})
+        s = translate_strategy(df, d, {}, compiled=compile_strategy_def(d))
+        assert s["risk_scale"] == pytest.approx(0.10)
+        # Sin capital_pct → la cifra entera; sin scalping → 1.0 también.
+        d2 = _definicion(scalping={"timeframe": "1m", "root_condition": _gatillo_vela_verde()})
+        assert translate_strategy(df, d2, {}, compiled=compile_strategy_def(d2))["risk_scale"] == 1.0
+        d3 = _definicion()
+        assert translate_strategy(df, d3, {}, compiled=compile_strategy_def(d3))["risk_scale"] == 1.0
+        # Un 0 o un valor no numérico no anulan el tamaño: vuelven al 100 %.
+        d4 = _definicion(scalping={"timeframe": "1m", "root_condition": _gatillo_vela_verde(), "capital_pct": 0})
+        assert compile_strategy_def(d4)["scalping"]["capital_frac"] == 1.0
+
     def test_valores_raros_no_rompen(self):
         d = _definicion(scalping={"timeframe": "1m", "root_condition": _gatillo_vela_verde(),
                                   "max_minutes": "abc", "cooldown_bars": None})
@@ -348,3 +363,12 @@ def test_run_backtest_normal_vs_scalping(monkeypatch):
     # como mucho, contando la vela de entrada).
     for t in scalp["trades"]:
         assert t["exit_idx"] - t["entry_idx"] <= 3
+
+    # Capital por entrada: con el 10 % de la cifra del panel (100 $ fijos por
+    # valor de mercado) cada scalp mueve un 10 % de las acciones.
+    con_capital = dict(con_scalp, scalping=dict(con_scalp["scalping"], capital_pct=10))
+    diez = _run(con_capital, monkeypatch)
+    assert len(diez["trades"]) == len(scalp["trades"])
+    for a, b in zip(scalp["trades"], diez["trades"]):
+        assert a["entry_idx"] == b["entry_idx"]
+        assert b["size"] == pytest.approx(a["size"] * 0.10, rel=1e-6)

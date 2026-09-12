@@ -582,6 +582,9 @@ export interface ScalpingBlock {
     max_minutes: number;
     // Velas que hay que esperar tras una salida para volver a entrar. 0 = ninguna.
     cooldown_bars: number;
+    // % de la cifra de capital/riesgo del panel que usa CADA scalp. 100 = la
+    // cifra entera (como una entrada normal). Se aplica escalando `risk_r`.
+    capital_pct: number;
 }
 
 export interface ScalpingConfig extends ScalpingBlock {
@@ -595,4 +598,5 @@ export const initialScalping: ScalpingConfig = {
     root_condition: { type: "group", operator: "AND", conditions: [] },
     max_minutes: 5,
     cooldown_bars: 1,
+    capital_pct: 100,
 };

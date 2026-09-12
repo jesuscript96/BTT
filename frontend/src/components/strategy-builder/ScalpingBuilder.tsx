@@ -161,6 +161,23 @@ export const ScalpingBuilder = React.memo(({ config, onChange }: Props) => {
                             />
                             <span style={labelStyle}>velas</span>
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={labelStyle}>Capital por entrada:</span>
+                            <input
+                                type="number"
+                                min={1}
+                                max={100}
+                                step={1}
+                                value={config.capital_pct ?? ''}
+                                onChange={(e) => onChange({ ...config, capital_pct: e.target.value === '' ? 100 : Math.max(0.01, Math.min(100, Number(e.target.value))) })}
+                                onFocus={(e) => e.target.select()}
+                                style={{ ...selectStyle, width: 58, cursor: 'text' }}
+                                title={'% de la cifra de capital / riesgo del panel de la izquierda que usa CADA scalp.\n'
+                                    + '100 = la cifra entera, como cualquier entrada normal. Si el panel dice 100 $ fijos y aquí pones 10, cada scalp va con 10 $;\n'
+                                    + 'si el panel dice 1 % de la cuenta, cada scalp va con el 10 % de ese 1 %. Vale igual por valor de mercado, por distancia al stop o híbrido.'}
+                            />
+                            <span style={labelStyle}>% de la cifra del panel</span>
+                        </div>
                     </div>
 
                     {/* El gatillo */}

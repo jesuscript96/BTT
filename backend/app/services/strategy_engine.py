@@ -437,7 +437,20 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             cooldown = int(scalping.get("cooldown_bars") or 0)
         except (TypeError, ValueError):
             cooldown = 0
+        # Capital de CADA scalp, en % de la cifra del panel (el `risk_r` que
+        # se teclea a la izquierda, sea fija o % de la cuenta, y vaya por
+        # valor de mercado, por distancia al stop o hibrido). 100 = la cifra
+        # entera, que es lo que usa cualquier entrada normal. Se aplica
+        # ESCALANDO `risk_r` al simular: asi vale para los tres modos de
+        # tamanyo sin tocar el simulador.
+        try:
+            capital_pct = float(scalping.get("capital_pct", 100) or 100)
+        except (TypeError, ValueError):
+            capital_pct = 100.0
+        if capital_pct <= 0:
+            capital_pct = 100.0
         scalp_def = {
+            "capital_frac": capital_pct / 100.0,
             "root_condition": scalp_root,
             "timeframe": scalping.get("timeframe", "1m"),
             # 0 = sin salida por tiempo propia (manda el take profit "Time"
@@ -809,6 +822,7 @@ def translate_strategy(
     accept_reentries = compiled["accept_reentries"]
     max_reentries = compiled.get("max_reentries", -1 if accept_reentries else 0)
     cooldown_bars = 0
+    risk_scale = 1.0
 
     # Scalping: SOLO si la definición trae el bloque con gatillo. Sin él, todo
     # lo de arriba sale tal cual llevaba saliendo.
@@ -827,6 +841,7 @@ def translate_strategy(
         accept_reentries = True
         max_reentries = -1
         cooldown_bars = int(scalp.get("cooldown_bars", 0))
+        risk_scale = float(scalp.get("capital_frac", 1.0))
 
     return {
         "entries": entries.astype(bool),
@@ -845,6 +860,9 @@ def translate_strategy(
         "pyramid_sequential": compiled.get("pyramid_sequential", False),
         # Pausa entre operaciones (scalping). 0 = como siempre.
         "reentry_cooldown_bars": cooldown_bars,
+        # Fraccion del `risk_r` del panel que usa cada entrada (scalping).
+        # 1.0 = como siempre.
+        "risk_scale": risk_scale,
     }
 
 

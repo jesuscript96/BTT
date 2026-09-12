@@ -785,6 +785,7 @@ export default function InlineStrategyBuilder({
             root_condition: scalping.root_condition,
             max_minutes: scalping.max_minutes || 0,
             cooldown_bars: scalping.cooldown_bars || 0,
+            capital_pct: scalping.capital_pct || 100,
           } }
       : {};
 
