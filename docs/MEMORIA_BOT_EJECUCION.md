@@ -695,15 +695,52 @@ padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
   en sesión, no por gap de apertura. Datos: `33_t12_after_hours.py`,
   `t12_por_franja.csv`, `t12_after_hours.csv`.
 
+## 2 — 2026-09-12 · Arranque de las REGLAS del bot: banco de preguntas
+
+Jaume retoma el bot con el estudio de cisnes cerrado y sin PDF todavía. Pide:
+(a) los pendientes bien ordenados, (b) empezar a crear reglas «ordenadas y bien
+claras de cara al futuro», y (c) una lista de preguntas para pensarlas él por
+su cuenta, centrada en lo que puede salir mal (precio que se mueve al enviar,
+halts, luz o comunicación, VPS, take profit de una estrategia y pirámide de
+otra, precio que se dispara, locates que no compensan, compra de locates…).
+Trabajo de varios días, por partes. Lo que dependa del API se marca y se repasa
+cuando llegue el PDF.
+
+Dos ficheros nuevos en `docs/`:
+
+- **`BOT_EJECUCION_REGLAS.md`**: el libro de reglas. Formato de regla
+  (`R-<ÁREA>-<nn>` con situación, detección, acción, quién la ejecuta,
+  parámetros, plan B, prueba, estado y origen), cinco criterios de validez, los
+  13 principios marco M1-M13 (las decisiones firmes del 5-sep), los cinco puntos
+  abiertos que condicionan varias reglas y el índice de 17 áreas vacío.
+  **Ninguna regla escrita aún.**
+- **`BOT_EJECUCION_PREGUNTAS.md`**: banco de 200 preguntas en 17 áreas (A señal,
+  B entrada, C stop, D salidas, E capital compartido, F halts, G disparos, H
+  locates, I riesgo, J infraestructura, K reconciliación, L calendario, M
+  control humano, N registro, O pruebas, P backtester vs vivo, Q seguridad), con
+  marca **[API]** (37, consolidadas en el apartado R para el día del PDF) y
+  **[dato]** (cifra del estudio o del backtester al lado). Cada respuesta se
+  convierte en una regla numerada del otro fichero.
+
+Orden de ataque propuesto, por riesgo: C y G (stop y disparos) → F (halts) →
+I (cortacircuitos) → B (entrada) → H (locates) → J y K (infraestructura y
+reconciliación) → resto. Un área por día.
+
+Coste real de Databento: Jaume lo comprobó en el panel el 12-sep y fue MENOR
+que los ≈ 56 $ estimados con `get_cost` (la estimación cobra por rango pedido).
+
 ---
 
 ## Estado y pendientes
 
-**Estudio de cisnes negros: CERRADO el 7-sep-2026** (Jaume). Informe v4 en
-`D:\bot_senales\estudio_cisnes\Informe_cisnes_negros_premercado.pdf`; datos y
-scripts en esa carpeta (fuera del repo). Coste Databento total ≈ 5,4 $.
-**Nada del estudio es regla del bot**: son conclusiones; los valores irán al
-cuadro de mandos cuando se diseñe.
+**Estudio de cisnes negros: CERRADO** (informe v10 y resumen ejecutivo del
+12-sep en `D:ot_senales\estudio_cisnes\`; datos fuera del lago; Databento
+≈ 56 $ estimados, cobrado menos). **Nada del estudio es regla del bot** hasta
+que esté escrito con número en `docs/BOT_EJECUCION_REGLAS.md`.
+
+**Fase actual (desde el 12-sep): diseño de reglas.** Banco de preguntas en
+`docs/BOT_EJECUCION_PREGUNTAS.md`; se contesta por áreas y cada respuesta pasa
+al libro de reglas. Orden: C, G, F, I, B, H, J, K, resto.
 
 | # | Pendiente | Estado |
 |---|---|---|
@@ -717,3 +754,4 @@ cuadro de mandos cuando se diseñe.
 | P8 | Backend colgado el 7-sep (dos uvicorn); lo lleva Jaume en el chat del genético. Bot de avisos: lo enciende Jaume el 8-sep | Fuera de este chat |
 | P9 | Halts largos 2019-2026: HECHO con Databento status (50,61 $). 5 suspensiones T12 en valores en gap en 8 años; ninguna con posición dentro | Cerrado |
 | P10 | Cadena de LULD como aviso de T12: los 6 T12 peligrosos (4 en sesión + INHD y TENK en after-hours) llevaban ≥4 halts de volatilidad ese día; 1 de cada 300 días con ≥5 LULD acaba en T12. Si algún día se mantienen posiciones al cierre, el after-hours entra en juego. Candidata a regla/aviso del bot cuando se diseñe el cuadro de mandos (no ampliar / vigilar con ≥5 LULD). No decidido | Apuntado |
+| P11 | **Libro de reglas** (`BOT_EJECUCION_REGLAS.md`) a partir del banco de preguntas (`BOT_EJECUCION_PREGUNTAS.md`, 200 preguntas, 37 [API]). Jaume las piensa por su cuenta y se contestan por áreas; cada respuesta → regla numerada. Las [API] se repasan con el PDF (apartado R del banco) | Empezado el 12-sep, 0 reglas |
