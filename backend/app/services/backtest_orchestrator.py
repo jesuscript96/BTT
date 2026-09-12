@@ -101,6 +101,14 @@ class BacktestRequest(BaseModel):
     bswan_slippage_pct: float = 100.0
     bswan_partition_pct: float = 0.0
     bswan_minutes: float = 15.0
+    # COSTE DE HALTS (Jaume 2026-09-12). Ver backend/app/services/halts.py.
+    # `halts_mode`: "primero" (sale al primer halt que pille la posicion) o
+    # "n" (al halt numero `halts_n` del dia). Sale en la reapertura, un
+    # `halts_slippage_pct` % peor; no vuelve a operar ese ticker-dia.
+    halts_enabled: bool = False
+    halts_mode: str = "primero"
+    halts_n: int = 1
+    halts_slippage_pct: float = 5.0
     # Corte IS/OOS (PRD Alvaro 2026-09-08, P1). La UI lo mandaba desde siempre y
     # Pydantic lo tiraba: ahora se persisten `is_metrics` y `oos_metrics`,
     # calculados igual que los pinta el navegador. El motor sigue corriendo el
@@ -465,6 +473,29 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             except (TypeError, ValueError) as _e_bs:
                 raise HTTPException(status_code=400, detail=f"Coste de Black Swan: {_e_bs}")
 
+        # Coste de halts: config validada (400 legible) + la tabla del rango,
+        # cargada UNA vez por corrida. Si la tabla esta vacia se avisa en el
+        # resultado en vez de fallar: el backtest sale igual, sin cierres.
+        _cfg_halts = None
+        _aviso_halts = None
+        if req.halts_enabled:
+            from app.services.halts import ConfigHalts, cargar_halts
+            try:
+                _cfg_h = ConfigHalts(
+                    modo="n" if str(req.halts_mode or "").lower().startswith("n") else "primero",
+                    n_halts=int(req.halts_n or 1),
+                    slippage_pct=float(req.halts_slippage_pct or 0.0),
+                )
+            except (TypeError, ValueError) as _e_h:
+                raise HTTPException(status_code=400, detail=f"Coste de halts: {_e_h}")
+            _tabla_h = cargar_halts(date_from, date_to)
+            if _tabla_h.n_halts == 0:
+                _aviso_halts = ("La tabla de halts esta vacia para ese rango: ejecuta "
+                                "«Actualizar datos» (fase 8) o revisa HALTS_DIR.")
+                logger.warning("[HALTS] %s", _aviso_halts)
+            _cfg_halts = (_cfg_h, _tabla_h)
+            logger.info("[HALTS] tabla: %d halts en %d dias", _tabla_h.n_halts, _tabla_h.n_dias_fichero)
+
         _bt_kwargs = dict(
             strategy_def=strategy_def,
             init_cash=req.init_cash,
@@ -492,6 +523,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             locates_random_max=req.locates_random_max,
             locates_seed=req.locates_seed,
             bswan=_cfg_bswan,
+            halts=_cfg_halts,
             look_ahead_prevention=req.look_ahead_prevention,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,
@@ -570,6 +602,8 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         # El router guarda ESTO en `backtest_params`, no el formulario.
         try:
             _fechas_ejec = sorted(d for _, d in _executed_keys)
+            if _aviso_halts and isinstance(results.get("halts"), dict):
+                results["halts"]["aviso"] = _aviso_halts
             results["rango_efectivo"] = {
                 "start_date": str(date_from)[:10] if date_from else None,
                 "end_date": str(date_to)[:10] if date_to else None,

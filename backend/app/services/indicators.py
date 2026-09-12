@@ -1110,6 +1110,8 @@ INDICATOR_NAME_MAP = {
     "Accumulated Volume": "Accumulated Volume",
     "Accumulated Dollar Volume": "Accumulated Dollar Volume",
     "Dollar Volume": "Dollar Volume",
+    "Halt Down": "Halt Down",
+    "Halt Up": "Halt Up",
     "Yesterday Volume": "Yesterday Volume",
     "RVOL": "RVOL",
 
@@ -2513,6 +2515,24 @@ def _compute_raw(
         # Dollar Volume: el valor en dolares de ESTA vela, volumen x cierre. Sin
         # acumular.
         return (volume.astype(float) * close.astype(float))
+
+    if name in ("Halt Down", "Halt Up"):
+        # HALT DOWN / HALT UP (Jaume, 12-sep-2026): cuantos halts lleva HOY el
+        # ticker cuya vela de entrada al halt fue bajista / alcista. Sale de la
+        # tabla exacta de Nasdaq que baja la fase 8 del lago (Databento), NO de
+        # las velas: en las velas un halt es un hueco, y un hueco tambien es
+        # iliquidez. Sin fichero para ese dia, o sin ticker/fecha, vale 0 en
+        # todas las velas (la condicion nunca se cumple, sin error).
+        # EN VIVO EL BOT NO LO VE: no tiene tabla de halts del dia; una
+        # estrategia con este indicador solo sirve en el backtester.
+        from app.services.halts import serie_halts_direccion
+        ts_col = df["timestamp"] if (df is not None and "timestamp" in df.columns) else None
+        if ts_col is None:
+            return pd.Series(np.zeros(len(close)), index=close.index)
+        return serie_halts_direccion(
+            open_, close, ts_col, ds.get("ticker"), str(ds.get("date") or "")[:10],
+            "down" if name == "Halt Down" else "up",
+        )
 
     if name == "RVOL by bar" or name == "RVOL":
         # Relative Volume: current cumulative volume / average cumulative volume at same time

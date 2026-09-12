@@ -79,6 +79,10 @@ def simulate(**kwargs) -> dict:
     if kwargs.get("bswan") is not None:
         return _legacy_simulate(**kwargs)
     kwargs.pop("bswan", None)
+    # COSTE DE HALTS (2026-09-12): idem. Solo el motor Python.
+    if kwargs.get("halts") is not None:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("halts", None)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)

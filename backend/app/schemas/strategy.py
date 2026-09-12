@@ -83,6 +83,10 @@ class IndicatorType(str, Enum):
     ADVOLUME = "Accumulated Dollar Volume"
     DVOLUME = "Dollar Volume"
     SMA_VOLUME = "SMA Volume"
+    # Halts (12-sep-2026): contador de halts del dia cuya vela de entrada fue
+    # bajista / alcista. Solo backtester (el bot no tiene tabla de halts).
+    HALT_DOWN = "Halt Down"
+    HALT_UP = "Halt Up"
 
     # Price Variables
     BAR_CLOSE = "Bar Close"

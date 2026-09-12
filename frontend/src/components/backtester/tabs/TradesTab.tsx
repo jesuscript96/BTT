@@ -1,5 +1,5 @@
 "use client";
-import type { EvGateSummary, BSwanSummary } from "@/lib/api_backtester";
+import type { EvGateSummary, BSwanSummary, HaltsSummary } from "@/lib/api_backtester";
 
 import { Fragment, useState, useMemo, useEffect } from "react";
 import type { ReactNode } from "react";
@@ -24,6 +24,8 @@ interface TradesTabProps {
   sinPuerta?: { total_trades: number };
   /** Coste de Black Swan: resumen de la corrida (solo con el coste activo). */
   bswan?: BSwanSummary;
+  /** Coste de halts: resumen de la corrida (solo con el coste activo). */
+  halts?: HaltsSummary;
 }
 
 type SortKey = keyof TradeRecord;
@@ -42,7 +44,22 @@ export const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
   // Cierres por el coste de Black Swan: morado, que no se confunda con un stop.
   BS:           { bg: "rgba(168,85,247,0.14)", text: "#a855f7" },
   "BS Manual":  { bg: "rgba(168,85,247,0.14)", text: "#c084fc" },
+  // Cierres por el coste de halts: cian.
+  Halt:             { bg: "rgba(6,182,212,0.14)",  text: "#06b6d4" },
+  "Halt (atrapado)": { bg: "rgba(6,182,212,0.14)", text: "#22d3ee" },
 };
+
+/** Texto del tooltip de un cierre por halt. */
+function describeHalt(t: TradeRecord): string | undefined {
+  if (t.halt_n == null) return undefined;
+  const partes = [`Halt n.º ${t.halt_n} del día${t.halt_motivo ? ` (${t.halt_motivo})` : ""}`];
+  if (t.halt_minutos != null) partes.push(`${Number(t.halt_minutos).toFixed(0)} min parado`);
+  if (t.halt_atrapado) partes.push("no reabrió ese día: cerrado al último precio antes de parar");
+  else if (t.halt_base_price != null) partes.push(`reabrió a $${t.halt_base_price.toFixed(4)}`);
+  if (t.halt_slip_pct != null) partes.push(`+${t.halt_slip_pct.toFixed(0)}% peor`);
+  if (t.halt_penalty != null) partes.push(`penalización $${t.halt_penalty.toFixed(2)}`);
+  return partes.join(" · ");
+}
 
 /** Texto del tooltip de un cierre afectado por el coste de Black Swan. */
 function describeBS(t: TradeRecord): string | undefined {
@@ -81,7 +98,7 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswan,
+export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswan, halts,
                                    panelAnalisis, evGate, sinPuerta }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
@@ -230,6 +247,18 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswa
               )}
             </span>
           )}
+          {halts && (
+            <span title={`Coste de halts (${halts.modo === "n" ? `al ${halts.n_halts}.º halt del día` : "al primer halt"}, +${halts.slippage_pct}%): trades cerrados por halt, cuántos no reabrieron ese día, y dólares perdidos de más respecto a la reapertura. Tabla: ${halts.tabla_halts} halts en ${halts.tabla_dias} días${halts.aviso ? ` · ${halts.aviso}` : ""}`}>
+              halts:{" "}
+              <strong style={{ color: '#06b6d4' }}>{halts.trades} cerrados</strong>
+              {halts.atrapados > 0 && <> ({halts.atrapados} atrapados)</>}
+              {" "}en {halts.dias_con_halts} días con halt
+              {halts.penalizacion_usd > 0 && (
+                <> · penalización <strong className="text-[var(--danger)]">−${halts.penalizacion_usd.toFixed(2)}</strong></>
+              )}
+              {halts.aviso && <strong className="text-[var(--danger)]"> · tabla vacía</strong>}
+            </span>
+          )}
           {!bswan && hayMecha && (
             <span title={`Trades que estuvieron dentro durante una mecha Black Swan (apertura→máximo de una vela de 1 min ≥ ${BS_UMBRAL_VISTA}%), y cuántos de ellos sobrepasaron además su stop (los que habrían barrido la orden). Es descriptivo: el motor no ha cerrado nada por ello`}>
               mechas ≥{BS_UMBRAL_VISTA}%:{" "}
@@ -373,12 +402,13 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswa
                     // cierre manual del Black Swan tambien lleva el distintivo.
                     const bsInfo = describeBS(t);
                     const esBS = t.exit_reason.startsWith("BS");
+                    const haltInfo = describeHalt(t);
                     return (
                       <span
                         className="inline-block px-1.5 py-0.5 rounded-sm text-[10px] font-medium"
                         style={{ backgroundColor: style.bg, color: style.text,
                                  outline: bsInfo && !esBS ? '1px solid #a855f7' : undefined }}
-                        title={bsInfo}
+                        title={haltInfo || bsInfo}
                       >
                         {t.exit_reason}
                         {esBS && (t.bs_tramos || 1) > 1 ? ` ×${t.bs_tramos}` : ""}

@@ -377,6 +377,13 @@ def simulate(
     # Black Swan (regla de Jaume): el trade sigue abierto.
     # Solo lo implementa este motor: `sim_dispatch` lo desvia del kernel JIT.
     bswan=None,
+    # COSTE DE HALTS (2026-09-12). None = nada. Si no, una tupla
+    # (ConfigHalts, [halts del ticker-dia ya traducidos a indices de vela por
+    # `halts.halts_a_indices`]). Al halt del dia numero >= umbral que pille la
+    # posicion abierta, se sale en la reapertura (open de `resume_idx`)
+    # penalizado; si no reabre ese dia, al ultimo precio antes del halt. Y no
+    # se vuelve a entrar en el resto del dia. Solo lo implementa este motor.
+    halts=None,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -462,6 +469,21 @@ def simulate(
         import math as _math_bs
         from app.services.bswan import tramos_bs as _tramos_bs, precio_bs as _precio_bs
 
+    # ── COSTE DE HALTS (2026-09-12). Ver app/services/halts.py. Con
+    # `halts=None` (el defecto) NADA de esto se ejecuta.
+    ht_on = halts is not None and len(halts) == 2 and halts[1]
+    ht_cfg = halts[0] if ht_on else None
+    # Halts del dia ordenados por vela: (halt_idx -> evento). Un mismo indice de
+    # vela puede tener mas de un halt (reaperturas de segundos): se queda el
+    # ULTIMO, que es el que manda para la reapertura.
+    ht_por_vela: dict = {}
+    if ht_on:
+        for _h in halts[1]:
+            ht_por_vela[int(_h["halt_idx"])] = _h
+    ht_bloqueado = False     # tras salir por halt no se vuelve a entrar ese dia
+    ht_saltar = -1           # velas a consumir sin evaluar tras un cierre por halt
+    ht_eventos: list = []    # halts que pillaron la posicion (vacio sin coste)
+
     total_trades = 0
     prev_signal = False
 
@@ -471,6 +493,11 @@ def simulate(
         # Kept as constants so the (now inert) restriction branches below fold away.
         is_restricted = False
         skip_exits = False
+        # Halts: velas entre la parada y la reapertura de un cierre por halt ya
+        # resuelto (equity escrita al cerrar). Nada que evaluar en ellas.
+        if ht_on and i <= ht_saltar:
+            prev_signal = bool(entries[i])
+            continue
         # Black Swan en modo manual: mientras se espera al cierre diferido no
         # hay stop, TP, parciales ni salida por senal (modela un stop MENTAL,
         # sin orden en el mercado que la barrida pueda ejecutar). EOD, limite
@@ -488,6 +515,107 @@ def simulate(
             and timestamps is not None
             and timestamps[i] >= no_new_risk_after
         )
+
+        # ── COSTE DE HALTS (2026-09-12). Va ANTES del Black Swan y de las
+        # salidas normales: durante un halt no hay mercado, asi que ninguna
+        # orden (stop, TP, parcial, senal) puede ejecutarse en la vela en la
+        # que la accion paro. Solo estando dentro.
+        if ht_on and in_position and i in ht_por_vela:
+            _h = ht_por_vela[i]
+            _orden = int(_h.get("orden") or 1)
+            if _orden >= ht_cfg.umbral:
+                _ri = _h.get("resume_idx")
+                _atrapado = _ri is None
+                if _atrapado:
+                    # No reabrio ese dia (T12, suspension): decision de Jaume,
+                    # se cierra al ULTIMO precio antes del halt, con el
+                    # slippage, y queda marcado para verlo en la tabla.
+                    _base_h = close[i]
+                    _xi = i
+                else:
+                    _base_h = open_[_ri]
+                    _xi = int(_ri)
+                _f = float(ht_cfg.slippage_pct) / 100.0
+                _px = (max(0.0, _base_h * (1.0 - _f)) if is_long else _base_h * (1.0 + _f))
+                # MAE/MFE con el extremo real hasta la vela de reapertura
+                # (el fill penalizado es coste, no excursion).
+                for _k in range(i, _xi + 1):
+                    if is_long:
+                        _mae_h = (entry_price - low[_k]) / entry_price * 100
+                        _mfe_h = (high[_k] - entry_price) / entry_price * 100
+                    else:
+                        _mae_h = (high[_k] - entry_price) / entry_price * 100
+                        _mfe_h = (entry_price - low[_k]) / entry_price * 100
+                    if _mae_h > mae:
+                        mae = _mae_h
+                    if _mfe_h > mfe:
+                        mfe = _mfe_h
+                if is_long:
+                    gross_pnl = (_px - avg_entry_price) * size
+                    _penal = (_base_h - _px) * size
+                else:
+                    gross_pnl = (avg_entry_price - _px) * size
+                    _penal = (_px - _base_h) * size
+                if fee_type == "FLAT":
+                    fee_amount = fees * size * 2
+                else:
+                    fee_amount = (avg_entry_price + _px) * size * fees
+                pnl = gross_pnl - fee_amount
+                realized_pnl += pnl
+                capital_at_risk = avg_entry_price * size
+                ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                trades.append({
+                    "entry_idx": entry_idx,
+                    "exit_idx": _xi,
+                    "entry_price": round(entry_price, 6),
+                    "avg_entry_price": round(avg_entry_price, 6),
+                    "exit_price": round(_px, 6),
+                    "pnl": round(pnl, 4),
+                    "fees": round(fee_amount, 4),
+                    "return_pct": round(ret_pct, 4),
+                    "direction": "Long" if is_long else "Short",
+                    "status": "Closed",
+                    "size": round(size, 6),
+                    "exit_reason": "Halt" if not _atrapado else "Halt (atrapado)",
+                    "mae": round(mae, 4),
+                    "mfe": round(mfe, 4),
+                    "stop_loss": round(trade_sl_price, 6),
+                    # Rastro del halt, para la tabla y el grafico.
+                    "halt_n": _orden,
+                    "halt_reason": int(_h.get("reason") or 0),
+                    "halt_motivo": str(_h.get("motivo") or ""),
+                    "halt_minutos": _h.get("minutos"),
+                    "halt_base_price": round(float(_base_h), 6),
+                    "halt_slip_pct": round(float(ht_cfg.slippage_pct), 4),
+                    "halt_penalty": round(float(_penal), 4),
+                    "halt_atrapado": bool(_atrapado),
+                    "halt_idx": int(i),
+                })
+                if pyramid_mode and pyr_exec:
+                    trades[-1]["pyr_executions"] = pyr_exec
+                    pyr_exec = []
+                ht_eventos.append({"idx": int(i), "orden": _orden, "reason": int(_h.get("reason") or 0),
+                                   "atrapado": bool(_atrapado), "penalizacion": round(float(_penal), 4)})
+                in_position = False
+                size = 0.0
+                ht_bloqueado = True
+                # La posicion ya no existe: se salta hasta la vela de
+                # reapertura sin evaluar nada mas (ni entradas: bloqueadas).
+                # La equity de las velas saltadas se rellena abajo.
+                for _k in range(i, _xi + 1):
+                    equity[_k] = init_cash + realized_pnl
+                if _xi > i:
+                    # Mantener el flanco de la senal coherente al reanudar.
+                    prev_signal = bool(entries[_xi]) if _xi < n else prev_signal
+                    _saltar_hasta = _xi
+                else:
+                    _saltar_hasta = -1
+                if _saltar_hasta > i:
+                    # Consumir velas intermedias (equity ya escrita).
+                    # No hay `continue` multi-vela en Python: se marca y las
+                    # iteraciones siguientes salen al principio.
+                    ht_saltar = _saltar_hasta
+                    continue
 
         # ── COSTE DE BLACK SWAN (2026-09-11). `bswan` es None por defecto y
         # entonces esto no ejecuta ni una rama. Se mira ANTES de las salidas
@@ -1499,7 +1627,8 @@ def simulate(
         current_signal = bool(entries[i])
         is_signal_trigger = current_signal and not prev_signal
         
-        if not in_position and is_signal_trigger and i < n - 1 and not is_restricted and not riesgo_bloqueado:
+        if not in_position and is_signal_trigger and i < n - 1 and not is_restricted and not riesgo_bloqueado \
+                and not ht_bloqueado:
             # Re-entry logic:
             can_enter = True
             if max_reentries >= 0:
@@ -1825,6 +1954,8 @@ def simulate(
         results["ev_gate"] = ev_gate_log
     if bs_on:
         results["bswan"] = bs_eventos
+    if ht_on:
+        results["halts"] = ht_eventos
     if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
     else:

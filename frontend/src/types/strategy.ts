@@ -75,6 +75,12 @@ export enum IndicatorType {
     ACCUMULATED_VOLUME = "Accumulated Volume",
     ACCUM_DOLLAR_VOLUME = "Accumulated Dollar Volume",
     DOLLAR_VOLUME = "Dollar Volume",
+    // Halts (12-sep-2026): cuantos halts lleva HOY el ticker cuya vela de
+    // entrada al halt fue bajista (Down) o alcista (Up). Contador que se queda:
+    // «Halt Down >= 1» se hace verdad en la vela del primer halt bajista. Sale
+    // de la tabla de halts del lago; el bot en vivo NO lo ve.
+    HALT_DOWN = "Halt Down",
+    HALT_UP = "Halt Up",
     YESTERDAY_VOLUME = "Yesterday Volume",
     RVOL = "RVOL by bar",
     VOLUME = "Volume",

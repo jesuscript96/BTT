@@ -541,6 +541,10 @@ export default function Home() {
       bswan_slippage_pct: p?.bswan_slippage_pct,
       bswan_partition_pct: p?.bswan_partition_pct,
       bswan_minutes: p?.bswan_minutes,
+      halts_enabled: p?.halts_enabled,
+      halts_mode: p?.halts_mode,
+      halts_n: p?.halts_n,
+      halts_slippage_pct: p?.halts_slippage_pct,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -603,6 +607,10 @@ export default function Home() {
         bswan_slippage_pct: p?.bswan_slippage_pct,
         bswan_partition_pct: p?.bswan_partition_pct,
         bswan_minutes: p?.bswan_minutes,
+      halts_enabled: p?.halts_enabled,
+      halts_mode: p?.halts_mode,
+      halts_n: p?.halts_n,
+      halts_slippage_pct: p?.halts_slippage_pct,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
       }));
@@ -668,6 +676,10 @@ export default function Home() {
     bswan_slippage_pct?: number;
     bswan_partition_pct?: number;
     bswan_minutes?: number;
+    halts_enabled?: boolean;
+    halts_mode?: "primero" | "n";
+    halts_n?: number;
+    halts_slippage_pct?: number;
   }) => {
     const isDraftId = params.strategy_id === "draft" ||
                       params.strategy_id === "wizard_draft" || 
@@ -842,6 +854,10 @@ export default function Home() {
       bswan_slippage_pct: params.bswan_slippage_pct,
       bswan_partition_pct: params.bswan_partition_pct,
       bswan_minutes: params.bswan_minutes,
+      halts_enabled: params.halts_enabled,
+      halts_mode: params.halts_mode,
+      halts_n: params.halts_n,
+      halts_slippage_pct: params.halts_slippage_pct,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,

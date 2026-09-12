@@ -40,6 +40,11 @@ export interface BacktestPanelParams {
   bswan_slippage_pct?: number;
   bswan_partition_pct?: number;
   bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12). Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
   is_percent: number;
@@ -78,6 +83,10 @@ interface BacktestPanelProps {
     bswan_slippage_pct?: number;
     bswan_partition_pct?: number;
     bswan_minutes?: number;
+    halts_enabled?: boolean;
+    halts_mode?: "primero" | "n";
+    halts_n?: number;
+    halts_slippage_pct?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;
@@ -486,6 +495,14 @@ export default function BacktestPanel({
   const [bswanSlippage, setBswanSlippage] = useState(100);
   const [bswanPartition, setBswanPartition] = useState(0);
   const [bswanMinutes, setBswanMinutes] = useState(15);
+  // COSTE DE HALTS (Jaume 2026-09-12). Ver backend/app/services/halts.py.
+  // "primero" = sale al primer halt que pille la posicion; "n" = al halt
+  // numero N del dia (contando desde la apertura). Sale en la reapertura,
+  // penalizado; no vuelve a operar ese ticker-dia.
+  const [useHalts, setUseHalts] = useState(false);
+  const [haltsMode, setHaltsMode] = useState<"primero" | "n">("primero");
+  const [haltsN, setHaltsN] = useState(2);
+  const [haltsSlippage, setHaltsSlippage] = useState(5);
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -633,6 +650,10 @@ export default function BacktestPanel({
       if (savedState.bswanSlippage !== undefined) setBswanSlippage(savedState.bswanSlippage);
       if (savedState.bswanPartition !== undefined) setBswanPartition(savedState.bswanPartition);
       if (savedState.bswanMinutes !== undefined) setBswanMinutes(savedState.bswanMinutes);
+      if (savedState.useHalts !== undefined) setUseHalts(savedState.useHalts);
+      if (savedState.haltsMode !== undefined) setHaltsMode(savedState.haltsMode);
+      if (savedState.haltsN !== undefined) setHaltsN(savedState.haltsN);
+      if (savedState.haltsSlippage !== undefined) setHaltsSlippage(savedState.haltsSlippage);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -787,6 +808,10 @@ export default function BacktestPanel({
       bswan_slippage_pct: useBswan ? bswanSlippage : 0,
       bswan_partition_pct: useBswan ? bswanPartition : 0,
       bswan_minutes: useBswan ? bswanMinutes : 0,
+      halts_enabled: useHalts,
+      halts_mode: haltsMode,
+      halts_n: useHalts ? haltsN : 0,
+      halts_slippage_pct: useHalts ? haltsSlippage : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       is_percent: isPercent,
@@ -799,6 +824,7 @@ export default function BacktestPanel({
     useLocatesRandom, locatesMin, locatesMax, locatesSeed,
     useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
+    useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
     sizeBySl,
   ]);
@@ -840,6 +866,10 @@ export default function BacktestPanel({
         bswanSlippage,
         bswanPartition,
         bswanMinutes,
+        useHalts,
+        haltsMode,
+        haltsN,
+        haltsSlippage,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -854,6 +884,7 @@ export default function BacktestPanel({
     useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
     evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
+    useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses
   ]);
 
@@ -925,6 +956,11 @@ export default function BacktestPanel({
       bswan_slippage_pct: useBswan ? bswanSlippage : 0,
       bswan_partition_pct: useBswan ? bswanPartition : 0,
       bswan_minutes: useBswan ? bswanMinutes : 0,
+      // Coste de halts. Apagado = el backend ni lo mira.
+      halts_enabled: useHalts,
+      halts_mode: haltsMode,
+      halts_n: useHalts ? haltsN : 0,
+      halts_slippage_pct: useHalts ? haltsSlippage : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -2059,6 +2095,89 @@ export default function BacktestPanel({
                 </React.Fragment>
               );
             }
+          }
+
+          // COSTE DE HALTS (Jaume 2026-09-12). Fila madre con el selector
+          // Primero | N halts, y debajo el N (si toca) y el slippage.
+          filas.push(
+            <React.Fragment key="halts">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useHalts}
+                  onChange={() => setUseHalts(!useHalts)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                />
+                <span style={et}>
+                  Coste Halts
+                  <InfoTooltip
+                    position="left"
+                    width={360}
+                    text="Simula qué habría pasado si un halt de cotización (LULD, noticia, regulatorio) te hubiera pillado dentro. Los halts salen de la tabla exacta de Nasdaq que baja «Actualizar datos» (hora de parada, reanudación y motivo), no de las velas. PRIMERO: al primer halt que pille la posición abierta, el motor cierra TODA la posición al precio de apertura de la primera vela tras la reanudación, un % peor (el slippage de abajo). N HALTS: igual, pero solo cuando el halt es el N-ésimo del día para ese ticker, contando desde la apertura (si entras después del 3.º y N=3, el siguiente que te pille dispara). En los dos casos no se vuelve a operar ese ticker ese día. Durante el halt no se ejecuta nada: un stop cruzado en la vela de la parada no se llena. Si el halt no reabre ese día (T12, suspensión), cierra al último precio antes de parar con el mismo slippage y el trade queda marcado «atrapado». En Trades las salidas afectadas llevan la etiqueta Halt. Fuerza el motor Python."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+              </label>
+              {useHalts ? (
+                <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)', marginLeft: 10 }}>
+                  {(["primero", "n"] as const).map((m, i) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setHaltsMode(m)}
+                      title={m === "primero"
+                        ? "Primero: sale en la reapertura del primer halt que pille la posición"
+                        : "N halts: sale en la reapertura del halt número N del día (contando desde la apertura)"}
+                      style={{
+                        background: haltsMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                        color: haltsMode === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                        fontWeight: haltsMode === m ? 600 : 400,
+                        border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                        fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                        padding: '0 6px', cursor: 'pointer',
+                      }}
+                    >
+                      {m === "primero" ? "Primero" : "N halts"}
+                    </button>
+                  ))}
+                </div>
+              ) : <span />}
+            </React.Fragment>
+          );
+
+          if (useHalts) {
+            if (haltsMode === "n") {
+              filas.push(
+                <React.Fragment key="halts-n">
+                  <span style={sub}>
+                    N.º de halt que saca
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="A partir de qué halt del día se sale. Se cuentan TODOS los halts del ticker ese día desde la apertura, no solo los que ocurren estando dentro: con 3, el primer halt que te pille dentro siendo el 3.º o posterior del día es el que te saca. 1 equivale al modo «Primero»."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="1" min={1} value={haltsN} style={inp}
+                         onChange={(e) => setHaltsN(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+                </React.Fragment>
+              );
+            }
+            filas.push(
+              <React.Fragment key="halts-slip">
+                <span style={sub}>
+                  Slippage halt (%)
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="Cuánto peor que el precio de reapertura se ejecuta el cierre, en % de ese precio (para un corto, más arriba; para un largo, más abajo). Ejemplo: la acción reabre a 1,50 $ tras el halt y con 5 % un corto sale a 1,575 $. Sustituye al slippage normal en esa salida. Ojo: el estudio de halts midió reaperturas de mediana +2 % pero con cola larga; el precio de reapertura real ya lleva el salto, esto es solo el coste de ejecutar."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <input type="number" step="1" min={0} value={haltsSlippage} style={inp}
+                       onChange={(e) => setHaltsSlippage(Math.max(0, Number(e.target.value) || 0))} />
+              </React.Fragment>
+            );
           }
 
           filas.push(

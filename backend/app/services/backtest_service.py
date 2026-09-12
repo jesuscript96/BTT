@@ -196,6 +196,10 @@ def run_backtest(
     # calculan siempre y no tocan ningun numero. Con el, fuerza la via
     # SECUENCIAL, como los locates aleatorios.
     bswan=None,
+    # Coste de Halts (2026-09-12): (ConfigHalts, TablaHalts) o None. Con None
+    # nada cambia. Con el, fuerza la via SECUENCIAL y pasa a `simulate` los
+    # halts de cada ticker-dia ya traducidos a indices de vela.
+    halts=None,
     look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
@@ -259,7 +263,7 @@ def run_backtest(
         # `locates_cost` para todos: correria con el fijo en silencio.
         and not locates_random and ev_gate is None
         # El coste de Black Swan solo lo pasa el bucle secuencial al simulador.
-        and bswan is None
+        and bswan is None and halts is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -463,6 +467,8 @@ def run_backtest(
     # Veredictos de la puerta por EV de toda la corrida (vacio sin puerta).
     _puerta: dict = {"evaluadas": 0, "aceptadas": 0, "rechazadas": 0, "con_ev_por_defecto": 0}
     # Recuento del coste de Black Swan de toda la corrida (solo con el coste).
+    # Recuento del coste de halts de toda la corrida (solo con el coste).
+    _ht_stats: dict = {"dias_con_halts": 0, "trades": 0, "atrapados": 0, "penalizacion_usd": 0.0}
     _bs_stats: dict = {"detecciones": 0, "trades": 0, "tramos": 0,
                        "cierres_mercado": 0, "cierres_manual": 0, "penalizacion_usd": 0.0}
 
@@ -533,7 +539,7 @@ def run_backtest(
     # (no-op). Resultados bit-idénticos al secuencial (ver Golden B tol-0).
     _n_workers = _bsig.get_parallel_workers()
     if (not _slab_mode) and entry_model is None and feature_collector is None \
-            and not locates_random and ev_gate is None and bswan is None \
+            and not locates_random and ev_gate is None and bswan is None and halts is None \
             and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
@@ -664,6 +670,15 @@ def run_backtest(
                         _bs_stats["cierres_mercado"] += 1
                     elif _t.get("exit_reason") == "BS Manual":
                         _bs_stats["cierres_manual"] += 1
+        # Coste de halts: recuento de la corrida.
+        _ht_ev = sim_r.get("halts") or []
+        if _ht_ev:
+            _ht_stats["penalizacion_usd"] += sum(float(v.get("penalizacion") or 0.0) for v in _ht_ev)
+            for _t in trades_records:
+                if _t.get("halt_n") is not None:
+                    _ht_stats["trades"] += 1
+                    if _t.get("halt_atrapado"):
+                        _ht_stats["atrapados"] += 1
         # Con locates aleatorios el precio sorteado se pega a cada trade del
         # ticker-dia: es la unica forma de ver DESPUES por que ese dia costo lo
         # que costo. `locates_fee_day` es la factura del dia entero (se cobra
@@ -1102,6 +1117,18 @@ def run_backtest(
         else:
             timestamps_arr = pd.to_datetime(ts_arr).values.astype("datetime64[ns]").astype(np.int64)
 
+        # Coste de halts: los del ticker-dia traducidos a indices del frame que
+        # va a simular (ya recortado a la sesion). El orden del dia viene de la
+        # tabla, asi que un halt de premercado cuenta para «el N-esimo» aunque
+        # la sesion empiece a las 09:30.
+        _halts_dia = None
+        if halts is not None:
+            from app.services.halts import halts_a_indices as _halts_a_indices
+            _lista_h = _halts_a_indices(halts[1].de(ticker, date), timestamps_arr)
+            if _lista_h:
+                _halts_dia = (halts[0], _lista_h)
+                _ht_stats["dias_con_halts"] += 1
+
         # Locates aleatorios: el precio del paquete de ESTE ticker-dia. Sale de
         # un hash de (semilla, ticker, fecha) — no de un generador que avanza —
         # asi que no depende del orden de proceso. La referencia es la primera
@@ -1190,6 +1217,10 @@ def run_backtest(
                 # Coste de Black Swan (None = apagado). `sim_dispatch` lo desvia
                 # del kernel JIT; sin el, el kwarg se retira alli.
                 bswan=bswan,
+                # Coste de halts: los del ticker-dia, ya en indices de vela del
+                # frame recortado. None si el dia no tuvo (el simulador no
+                # ejecuta ni una rama).
+                halts=_halts_dia,
         )
         try:
             sim_result = simulate(**_sim_kwargs)
@@ -1306,6 +1337,12 @@ def run_backtest(
         **({"bswan": {"enabled": True, **bswan.resumen(), **_bs_stats,
                       "penalizacion_usd": round(float(_bs_stats["penalizacion_usd"]), 2)}}
            if bswan is not None else {}),
+        # Resumen del coste de halts. Solo con el coste activo.
+        **({"halts": {"enabled": True, **halts[0].resumen(), **_ht_stats,
+                      "penalizacion_usd": round(float(_ht_stats["penalizacion_usd"]), 2),
+                      "tabla_halts": int(halts[1].n_halts),
+                      "tabla_dias": int(halts[1].n_dias_fichero)}}
+           if halts is not None else {}),
     }
 
 
@@ -1470,6 +1507,10 @@ def _enrich_trades(
             **{k: v for k, v in t.items() if k.startswith("bs_")},
             **({"bs_wick_time_epoch": int(ts_epoch[min(int(t["bs_wick_idx"]), max_idx)])}
                if t.get("bs_wick_idx") is not None else {}),
+            # Halts: todo `halt_*` tal cual, mas la hora de la parada.
+            **{k: v for k, v in t.items() if k.startswith("halt_")},
+            **({"halt_time_epoch": int(ts_epoch[min(int(t["halt_idx"]), max_idx)])}
+               if t.get("halt_idx") is not None else {}),
         })
     return result
 
@@ -1543,6 +1584,10 @@ def _build_executions(run: list[dict]) -> list[dict]:
             _lbl = f"BS +{float(leg['bs_slip_pct']):g}%"
             if int(leg.get("bs_tramos") or 1) > 1 and leg.get("bs_tramo"):
                 _lbl = f"BS {int(leg['bs_tramo'])}/{int(leg['bs_tramos'])} +{float(leg['bs_slip_pct']):g}%"
+        elif leg.get("halt_n") is not None:
+            _lbl = (f"Halt #{int(leg['halt_n'])}"
+                    f"{' atrapado' if leg.get('halt_atrapado') else ''}"
+                    f" +{float(leg.get('halt_slip_pct') or 0):g}%")
         else:
             _lbl = leg.get("exit_reason")
         execs.append({
@@ -1646,6 +1691,12 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         if _pen:
             trade["bs_penalty"] = round(sum(_pen), 4)
         trade.pop("bs_tramo", None)
+        # Halts: el rastro viene de la leg de cierre (la unica que puede
+        # llevarlo: tras un halt no hay mas legs).
+        for k in ("halt_n", "halt_reason", "halt_motivo", "halt_minutos", "halt_base_price",
+                  "halt_slip_pct", "halt_penalty", "halt_atrapado", "halt_idx", "halt_time_epoch"):
+            if last.get(k) is not None:
+                trade[k] = last[k]
         # Detalle de cada ejecucion (entrada, añadidos de piramide, parciales,
         # reducciones y cierre) para poder pintarlas TODAS en el grafico. Antes
         # la fusion tiraba estos datos y solo dejaba el recuento `n_executions`.

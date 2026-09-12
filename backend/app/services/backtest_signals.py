@@ -922,6 +922,7 @@ def _enrich_trades_arr(raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_do
             # Black Swan (en paridad con _enrich_trades): todo `bs_*` tal cual
             # mas la hora de la mecha maxima.
             **{k: v for k, v in t.items() if k.startswith("bs_")},
+            **{k: v for k, v in t.items() if k.startswith("halt_")},
             **({"bs_wick_time_epoch": int(ts_epoch[min(int(t["bs_wick_idx"]), max_idx)])}
                if t.get("bs_wick_idx") is not None else {}),
         })

@@ -280,6 +280,9 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     [IndicatorType.ACCUMULATED_VOLUME]: [],
     [IndicatorType.ACCUM_DOLLAR_VOLUME]: [],
     [IndicatorType.DOLLAR_VOLUME]: [],
+    // Halt Down / Halt Up son CONTADORES (halts del dia): solo contra una cifra.
+    [IndicatorType.HALT_DOWN]: [],
+    [IndicatorType.HALT_UP]: [],
     [IndicatorType.YESTERDAY_VOLUME]: [],
     [IndicatorType.RVOL]: [],
     [IndicatorType.VOLUME]: [IndicatorType.VOLUME],

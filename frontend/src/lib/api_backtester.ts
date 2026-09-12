@@ -182,6 +182,18 @@ export interface TradeRecord {
    *  Es la regla de Jaume para que una mecha cuente como Black Swan. Solo
    *  viene si el trade llevaba stop. */
   bs_wick_hit_stop?: boolean;
+  /** Coste de halts (solo con el coste activo): el trade cerró por un halt.
+   *  `halt_n` = qué halt del día fue; `halt_atrapado` = no reabrió ese día y
+   *  se cerró al último precio antes de parar. */
+  halt_n?: number;
+  halt_reason?: number;
+  halt_motivo?: string;
+  halt_minutos?: number | null;
+  halt_base_price?: number;
+  halt_slip_pct?: number;
+  halt_penalty?: number;
+  halt_atrapado?: boolean;
+  halt_time_epoch?: number;
   /** Coste de Black Swan (solo con el coste activo): cómo cerró el motor este
    *  trade. `mercado` = cerró en la vela del mechazo a `bs_base_price`
    *  penalizado; `manual` = cerró N minutos después. */
@@ -217,6 +229,22 @@ export interface BSwanSummary {
   tramos: number; cierres_mercado: number; cierres_manual: number;
   /** Suma de `bs_penalty` de toda la corrida, en dólares. */
   penalizacion_usd: number;
+}
+
+/** Resumen del coste de halts de la corrida. Solo viene con el coste activo. */
+export interface HaltsSummary {
+  enabled: boolean;
+  modo: "primero" | "n";
+  n_halts: number; slippage_pct: number;
+  /** Ticker-días simulados que tenían halts en la tabla. */
+  dias_con_halts: number;
+  /** Trades cerrados por halt, y cuántos de ellos no reabrieron ese día. */
+  trades: number; atrapados: number;
+  penalizacion_usd: number;
+  /** Tamaño de la tabla de halts cargada para el rango. */
+  tabla_halts: number; tabla_dias: number;
+  /** Solo si la tabla estaba vacía para el rango. */
+  aviso?: string;
 }
 
 /** Resumen del sorteo de locates de la corrida. Solo con el modo aleatorio. */
@@ -377,6 +405,8 @@ export interface BacktestResult {
   sin_puerta?: { aggregate_metrics?: AggregateMetrics; total_trades: number; locates_random?: LocatesRandomSummary };
   /** Coste de Black Swan: resumen de la corrida. Solo con el coste activo. */
   bswan?: BSwanSummary;
+  /** Coste de halts: resumen de la corrida. Solo con el coste activo. */
+  halts?: HaltsSummary;
   /** Reconciliación candidatos vs ejecutados. El motor la calcula SIEMPRE; si
    *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
    *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
@@ -510,6 +540,12 @@ export async function runBacktest(params: {
   bswan_slippage_pct?: number;
   bswan_partition_pct?: number;
   bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12): "primero" sale al primer halt que pille
+  // la posición, "n" al halt número `halts_n` del día. Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   /** Corte IS/OOS (0-100). El motor corre todo; el servidor guarda los dos bloques. */
   is_percent?: number;
   look_ahead_prevention?: boolean;
@@ -554,6 +590,12 @@ export async function runBacktestWithDefinition(params: {
   bswan_slippage_pct?: number;
   bswan_partition_pct?: number;
   bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12): "primero" sale al primer halt que pille
+  // la posición, "n" al halt número `halts_n` del día. Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
 }): Promise<BacktestResult> {
@@ -770,6 +812,12 @@ export async function runOptimizationSurface(params: {
   bswan_slippage_pct?: number;
   bswan_partition_pct?: number;
   bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12): "primero" sale al primer halt que pille
+  // la posición, "n" al halt número `halts_n` del día. Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;
