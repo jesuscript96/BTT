@@ -391,9 +391,26 @@ def simulate(
     # `max_reentries` bloquea. Solo lo implementa este motor: `sim_dispatch`
     # lo desvia del kernel JIT.
     reentry_cooldown_bars: int = 0,
+    # ESCALERA DEL SCALPING «COMPLEJO» (2026-09-12). `ConfigEscalera` de
+    # `escalera.py` o None. Con None NO se ejecuta ni una rama nueva. Con ella,
+    # dentro de cada posicion, por cada paso de X % desde el ultimo nivel se
+    # añade o se quita una cantidad (a favor / en contra, cada uno lo suyo),
+    # entre un suelo (core) y un techo (tope), hasta un recorrido maximo; el
+    # stop y el take profit en % pasan a medirse sobre el precio MEDIO. Solo lo
+    # implementa este motor: `sim_dispatch` lo desvia del kernel JIT.
+    ladder=None,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
+    esc_on = ladder is not None
+    if esc_on:
+        from app.services.escalera import (a_acciones, nivel_precio, nivel_tocado,
+                                           orden_lados)
+    esc_k = 0            # ultimo nivel de la malla alcanzado (0 = el de entrada)
+    esc_done: set = set()
+    esc_entry0 = 0.0     # precio de la PRIMERA entrada del scalp (ancla de la malla)
+    esc_size0 = 0.0      # acciones de la entrada (base de las cantidades en %)
+    esc_exec: list = []  # bitacora de la escalera de ESTA posicion
 
     # EXCLUSIVIDAD CANGREJO / HIBRIDO. La UI ya apaga uno al encender el otro,
     # pero un payload viejo o hecho a mano puede traer los dos. Se arbitra AQUI
@@ -601,6 +618,9 @@ def simulate(
                 if pyramid_mode and pyr_exec:
                     trades[-1]["pyr_executions"] = pyr_exec
                     pyr_exec = []
+                if esc_on and esc_exec:
+                    trades[-1]["escalera_executions"] = esc_exec
+                    esc_exec = []
                 ht_eventos.append({"idx": int(i), "orden": _orden, "reason": int(_h.get("reason") or 0),
                                    "atrapado": bool(_atrapado), "penalizacion": round(float(_penal), 4)})
                 in_position = False
@@ -1339,6 +1359,9 @@ def simulate(
                 if pyramid_mode and pyr_exec:
                     trades[-1]["pyr_executions"] = pyr_exec
                     pyr_exec = []
+                if esc_on and esc_exec:
+                    trades[-1]["escalera_executions"] = esc_exec
+                    esc_exec = []
                 if bs_wait:
                     # Cerro mientras esperaba al cierre diferido del Black Swan
                     # (por el propio diferido, o por EOD / limite de tiempo /
@@ -1350,6 +1373,128 @@ def simulate(
                 in_position = False
                 size = 0.0
 
+
+        # --- Escalera del scalping complejo (2026-09-12) ---
+        # Mismo sitio y mismas condiciones que la piramide: despues de las
+        # salidas, con la posicion viva y nunca en la vela de entrada. Con
+        # `ladder=None` este bloque no existe.
+        if esc_on and in_position and i > entry_idx and not bs_wait:
+            _esc_cerro = False
+            _max_k = ladder.max_k
+            for _lado in orden_lados(open_[i], close[i], is_long):
+                _pasos = 0
+                while not _esc_cerro and _pasos < 1000:
+                    _pasos += 1
+                    _k_next = esc_k + 1 if _lado == "favor" else esc_k - 1
+                    if _max_k and abs(_k_next) > _max_k:
+                        break            # fuera del recorrido: la escalera no actua
+                    _px_nivel = nivel_precio(esc_entry0, is_long, _k_next, ladder.step_pct)
+                    if _px_nivel <= 0 or not nivel_tocado(_lado, is_long, _px_nivel, high[i], low[i]):
+                        break
+                    esc_k = _k_next
+                    # Opcion A: cada nivel se ejecuta una vez POR DIRECCION en
+                    # este scalp (añadir al bajar a 9,90 no gasta el «quitar»
+                    # al volver a subir a 9,90). Gastado: mueve el estado, no opera.
+                    if (not ladder.rearm) and (_k_next, _lado) in esc_done:
+                        continue
+                    esc_done.add((_k_next, _lado))
+                    _accion = ladder.favor_action if _lado == "favor" else ladder.contra_action
+                    _cant = ladder.favor_amount if _lado == "favor" else ladder.contra_amount
+                    _unit = ladder.favor_unit if _lado == "favor" else ladder.contra_unit
+                    if _accion == "none":
+                        continue
+                    _q = a_acciones(_cant, _unit, esc_size0, _px_nivel)
+                    if _q <= 0:
+                        continue
+                    _slip = _px_nivel * slippage
+                    if _accion == "add":
+                        # Añadir es riesgo nuevo: mismos topes que la piramide
+                        # (cortacircuitos, caja, locates) y ademas el techo propio.
+                        if riesgo_bloqueado:
+                            continue
+                        _add_px = (_px_nivel + _slip) if is_long else (_px_nivel - _slip)
+                        if _add_px <= 0:
+                            continue
+                        _cash_now = init_cash + realized_pnl
+                        _disp = _cash_now - avg_entry_price * size
+                        if _disp <= 0:
+                            continue
+                        _q = min(_q, _disp / _add_px)
+                        if ladder.cap_amount > 0:
+                            _techo = a_acciones(ladder.cap_amount, ladder.cap_unit, esc_size0, _px_nivel)
+                            _q = min(_q, _techo - size)
+                        if (not is_long) and max_locates > 0:
+                            _q = min(_q, max_locates * 100.0 - size)
+                        if _q <= 1e-9:
+                            continue
+                        avg_entry_price = (avg_entry_price * size + _add_px * _q) / (size + _q)
+                        size += _q
+                        pyr_base += _q
+                        # Stop y take profit en % sobre el precio MEDIO
+                        # (decision de Jaume): las formulas de salida leen
+                        # `entry_price`, asi que aqui pasa a ser la media.
+                        entry_price = avg_entry_price
+                        if not is_long:
+                            max_short_size_today = max(max_short_size_today, size)
+                        esc_exec.append({
+                            "kind": "add", "idx": int(i), "nivel": int(_k_next), "lado": _lado,
+                            "time_epoch": int(timestamps[i] // 1_000_000_000) if timestamps is not None else None,
+                            "price": round(_add_px, 6), "size": round(_q, 6),
+                            "position_size": round(size, 6), "avg_entry_price": round(avg_entry_price, 6),
+                        })
+                    else:
+                        # Quitar: hasta el suelo (core). Si lo que queda no llega
+                        # a nada, se cierra entero y el scalp acaba aqui.
+                        _suelo = (a_acciones(ladder.core_amount, ladder.core_unit, esc_size0, _px_nivel)
+                                  if ladder.core_amount > 0 else 0.0)
+                        _q = min(_q, max(0.0, size - _suelo))
+                        if _q <= 1e-9:
+                            continue
+                        if size - _q <= 1e-6:
+                            _q = size
+                        _net = (_px_nivel - _slip) if is_long else (_px_nivel + _slip)
+                        _gross = (_net - avg_entry_price) * _q if is_long else (avg_entry_price - _net) * _q
+                        _fee = fees * _q * 2 if fee_type == "FLAT" else (avg_entry_price + _net) * _q * fees
+                        _pnl = _gross - _fee
+                        realized_pnl += _pnl
+                        _car = avg_entry_price * _q
+                        trades.append({
+                            "entry_idx": entry_idx,
+                            "exit_idx": int(i),
+                            "entry_price": round(entry_price, 6),
+                            "avg_entry_price": round(avg_entry_price, 6),
+                            "exit_price": round(_net, 6),
+                            "pnl": round(_pnl, 4),
+                            "return_pct": round((_pnl / _car) * 100 if _car > 0 else 0.0, 4),
+                            "direction": "Long" if is_long else "Short",
+                            "status": "Closed",
+                            "size": round(_q, 6),
+                            "exit_reason": "Escalera",
+                            "fees": round(_fee, 4),
+                            "mae": round(mae, 4),
+                            "mfe": round(mfe, 4),
+                            "stop_loss": round(trade_sl_price, 6),
+                        })
+                        size -= _q
+                        pyr_base = max(0.0, pyr_base - _q)
+                        esc_exec.append({
+                            "kind": "reduce", "idx": int(i), "nivel": int(_k_next), "lado": _lado,
+                            "time_epoch": int(timestamps[i] // 1_000_000_000) if timestamps is not None else None,
+                            "price": round(_net, 6), "size": round(_q, 6),
+                            "position_size": round(size, 6), "pnl": round(_pnl, 4),
+                        })
+                        if size <= 1e-6:
+                            # Vaciada por la escalera: no habra trade de cierre.
+                            trades[-1]["escalera_executions"] = esc_exec
+                            if pyramid_mode and pyr_exec:
+                                trades[-1]["pyr_executions"] = pyr_exec
+                                pyr_exec = []
+                            esc_exec = []
+                            in_position = False
+                            size = 0.0
+                            _esc_cerro = True
+                if _esc_cerro:
+                    break
 
         # --- Piramidacion: condiciones logicas POST-entrada (2026-08-22) ---
         # Orden dentro de la barra: DESPUES de todas las salidas y solo si la
@@ -1887,6 +2032,14 @@ def simulate(
                     bs_wait = False
                     original_size = size
                     avg_entry_price = entry_price
+                    if esc_on:
+                        # La escalera se rearma con cada scalp: malla anclada a
+                        # este fill, nivel 0 ya «ejecutado» (es la entrada).
+                        esc_k = 0
+                        esc_done = set()   # (nivel, lado) ya ejecutados en este scalp
+                        esc_entry0 = entry_price
+                        esc_size0 = size
+                        esc_exec = []
                     # La piramide va SIEMPRE asociada a la entrada: cada
                     # entrada (reentradas incluidas) rearma sus niveles.
                     pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []

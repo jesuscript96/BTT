@@ -57,7 +57,20 @@
 - El NBBO (spread real) queda para más adelante por decisión de Jaume; Massive SÍ da quotes (`Q.*` y `/v3/quotes`) si el plan es el «Advanced»; no comprobado.
 - Primeras estrategias que se quieren probar: ORB de 5 minutos (hay literatura: Zarattini & Aziz 2023-24) y «caja tras el spike con fallo de ruptura» en corto. El indicador **Darvas Box ya existe** en el repo (`indicators.py`, 22-ago) y sirve de gatillo.
 
-**Estado.** Commit `9e11fa8` en la rama `scalping-dev` (worktree `D:\Backtester-scalping`), desarrollado con el bot vivo sin tocar `D:\Backtester`. Pendiente de fusionar en `sailor-rama-desarrollo` (fast-forward) con el bot parado o fuera de horario, porque el `--reload` del backend recarga al fusionar.
+**Estado.** Fusionado en `sailor-rama-desarrollo` (`9e11fa8` motor+UI, `0d630d1` docs, `0f4a61f` capital por entrada) con permiso de Jaume, con el bot vivo; el `--reload` tardó ~1 min y el bot sobrevivió. Sin subir.
+
+### Modo «Complejo»: la escalera (misma tarde)
+
+Jaume separó claramente «piramidación = reglas sueltas por condiciones» de «scalping = siempre lo mismo, mecánico». Con `scalping.mode = "complex"` y un bloque `ladder`, dentro de cada scalp actúa una **escalera** (`backend/app/services/escalera.py` + `portfolio_sim.simulate(ladder=None)`):
+- **Paso** X %: desde el **último nivel ejecutado** (malla entera sobre el precio de la primera entrada: nivel k = entrada0 × (1 ± k·paso), k>0 a favor). Lo que se hace depende de la **dirección del movimiento**, no del signo de k (volver de +2 a +1 es «en contra»).
+- **A favor** y **en contra**, cada uno: añadir | quitar | nada, con cantidad en **$ fijos** o **% de la posición INICIAL** (fijo: cada escalón el mismo tamaño).
+- **Core** (suelo, $ o %): al quitar nunca se baja de ahí; 0 = puede vaciarse → el scalp queda cerrado y el siguiente gatillo abre otro. **Tope** (techo, $ o %): al añadir nunca se pasa; 0 = manda la caja. **Recorrido máximo** desde la entrada: fuera de él la escalera no actúa y manda la salida principal. La salida principal (salida lógica, stop, TP, tiempo) siempre cierra todo.
+- **Rearmar niveles** (opción B de Jaume): OFF = cada (nivel, dirección) se ejecuta una vez por scalp (añadir al bajar a 9,90 no gasta el quitar al volver a subir por 9,90; una segunda bajada a 9,90 ya no añade); ON = grid, cada cruce opera.
+- **Stop y take profit en % sobre el precio MEDIO** (decisión de Jaume): tras cada añadido `entry_price` pasa a ser la media (las fórmulas de salida leen `entry_price`); añadir en contra ALEJA el stop. En el trade el `entry_price` registrado es la media, no el fill (la piramidación clásica ancla al fill; aquí no, por diseño).
+- **Relleno** al precio del nivel (limitada que descansa ahí) con slippage adverso, en la vela cuyo high/low lo toca; una vela grande procesa varios niveles, primero el lado que la vela visitó antes (`orden_lados`). Añadidos respetan cortacircuitos diario, tope de caja y locates como la piramidación; las quitas son legs `exit_reason="Escalera"`; la bitácora viaja en `escalera_executions` del trade de cierre (y `_enrich_trades` la propaga).
+- **Regla nº1:** `ladder=None` (modo simple o sin bloque) → ni una rama nueva; `parse_escalera` devuelve None si el paso no es positivo o las dos direcciones son «nada». `sim_dispatch` desvía al Python. Se lleva por `translate_strategy["ladder"]` → `sig_ladder` en los dos bucles y en la caché de señales.
+- **UI:** «Modo: Simple | Complejo (escalera)» en el bloque Scalping; el panel de la escalera con un «?» explicativo en cada campo (petición de Jaume); resumen del BacktestPanel con la línea ESCALERA. Tests: `test_escalera.py` (19: regla nº1, cálculos puros, ejemplo de Jaume, A vs B, core, vaciado + reentrada, tope y recorrido, $ fijos, stop sobre la media, corto, salida principal, dispatch, `run_backtest`). Suite 1.171 pasan.
+- **No hecho:** el bot ignora la escalera (decisión de Jaume: el bot no usará scalping). El gráfico no pinta las ejecuciones de la escalera (solo las legs como trades). Sin probar escalera + piramidación + parciales a la vez.
 
 ---
 

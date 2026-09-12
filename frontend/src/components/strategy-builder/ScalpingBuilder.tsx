@@ -1,5 +1,5 @@
 import React from 'react';
-import { ScalpingConfig, Timeframe } from '@/types/strategy';
+import { ScalpingConfig, ScalpingLadder, Timeframe, initialScalpingLadder } from '@/types/strategy';
 import { GroupDisplay } from './ConditionBuilder';
 
 /**
@@ -178,7 +178,125 @@ export const ScalpingBuilder = React.memo(({ config, onChange }: Props) => {
                             />
                             <span style={labelStyle}>% de la cifra del panel</span>
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={labelStyle}>Modo:</span>
+                            <select
+                                value={config.mode || 'simple'}
+                                onChange={(e) => onChange({ ...config, mode: e.target.value as 'simple' | 'complex', ladder: config.ladder || initialScalpingLadder })}
+                                style={selectStyle}
+                                title={'Simple: entra-sale-entra-sale, siempre con la cantidad de «Capital por entrada».\n'
+                                    + 'Complejo: dentro de cada scalp actúa una ESCALERA: por cada paso de X % que se mueve el precio, añade o quita una cantidad, entre un suelo (core) y un techo (tope).'}
+                            >
+                                <option value="simple">Simple</option>
+                                <option value="complex">Complejo (escalera)</option>
+                            </select>
+                        </div>
                     </div>
+
+                    {/* La escalera del modo complejo */}
+                    {config.mode === 'complex' && (() => {
+                        const l = config.ladder || initialScalpingLadder;
+                        const setL = (patch: Partial<ScalpingLadder>) => onChange({ ...config, ladder: { ...l, ...patch } });
+                        const num = (v: string, min = 0) => (v === '' ? 0 : Math.max(min, Number(v)));
+                        const Q = ({ text }: { text: string }) => (
+                            <span title={text} style={{
+                                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                                width: 13, height: 13, borderRadius: 7, fontSize: 9, fontWeight: 700,
+                                border: '0.5px solid var(--color-ec-border)', color: 'var(--color-ec-text-muted)',
+                                cursor: 'help', marginLeft: 2, fontFamily: 'var(--color-ec-sans)',
+                            }}>?</span>
+                        );
+                        const lado = (titulo: string, ayuda: string, action: 'add' | 'reduce' | 'none', amount: number, unit: 'usd' | 'pct',
+                                      patch: (a: 'add' | 'reduce' | 'none', n: number, u: 'usd' | 'pct') => void) => (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <span style={{ ...labelStyle, width: 92 }}>{titulo}<Q text={ayuda} /></span>
+                                <select value={action} onChange={(e) => patch(e.target.value as any, amount, unit)} style={selectStyle}
+                                    title="Qué hace la escalera en cada paso en esta dirección">
+                                    <option value="add">Añadir</option>
+                                    <option value="reduce">Quitar</option>
+                                    <option value="none">Nada</option>
+                                </select>
+                                {action !== 'none' && (
+                                    <>
+                                        <input type="number" min={0} step={1} value={amount ?? ''}
+                                            onChange={(e) => patch(action, num(e.target.value), unit)}
+                                            onFocus={(e) => e.target.select()}
+                                            style={{ ...selectStyle, width: 64, cursor: 'text' }}
+                                            title="Cuánto se añade o se quita en cada paso" />
+                                        <select value={unit} onChange={(e) => patch(action, amount, e.target.value as any)} style={selectStyle}
+                                            title="$ = cantidad fija en dólares · % = porcentaje de la posición INICIAL del scalp (fijo: cada escalón el mismo tamaño)">
+                                            <option value="pct">% de la inicial</option>
+                                            <option value="usd">$ fijos</option>
+                                        </select>
+                                    </>
+                                )}
+                            </div>
+                        );
+                        return (
+                            <div style={{
+                                border: '0.5px solid var(--color-ec-border)', borderLeft: '2px solid var(--color-ec-copper)',
+                                borderRadius: 6, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8,
+                            }}>
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 700,
+                                    color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
+                                }}>Escalera</span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={labelStyle}>Paso<Q text="Cada cuánto actúa la escalera: % de movimiento del precio desde el ÚLTIMO nivel ejecutado (no desde la entrada), así los escalones son regulares. Ejemplo: 1 = cada 1 %." /></span>
+                                        <input type="number" min={0.01} step={0.1} value={l.step_pct ?? ''}
+                                            onChange={(e) => setL({ step_pct: num(e.target.value) })} onFocus={(e) => e.target.select()}
+                                            style={{ ...selectStyle, width: 58, cursor: 'text' }} />
+                                        <span style={labelStyle}>%</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={labelStyle}>Recorrido máx.<Q text="Hasta qué % desde el precio de la PRIMERA entrada del scalp actúa la escalera. Más allá no añade ni quita: la posición queda en manos de la salida principal (salida lógica, stop, take profit, tiempo). Manda sobre el paso. 0 = sin límite." /></span>
+                                        <input type="number" min={0} step={0.5} value={l.max_travel_pct ?? ''}
+                                            onChange={(e) => setL({ max_travel_pct: num(e.target.value) })} onFocus={(e) => e.target.select()}
+                                            style={{ ...selectStyle, width: 58, cursor: 'text' }} />
+                                        <span style={labelStyle}>%</span>
+                                    </div>
+                                    <label style={{ ...labelStyle, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+                                        <input type="checkbox" checked={!!l.rearm} onChange={(e) => setL({ rearm: e.target.checked })} />
+                                        Rearmar niveles<Q text="Apagado (opción A): cada nivel de precio se ejecuta UNA vez por scalp y por dirección (añadir al bajar a un nivel no gasta el quitar al volver a subir por él, pero una segunda bajada al mismo nivel ya no añade). Encendido (opción B, grid): cada nivel opera CADA VEZ que el precio lo cruza de nuevo (vende al subir, recompra al bajar...), siempre entre el core y el tope. Ojo: en small caps con spread y locates, aquí es donde se ven los costes." />
+                                    </label>
+                                </div>
+                                {lado('A favor:', 'Qué hacer por cada paso que el precio se mueve A FAVOR de la posición (arriba en largo, abajo en corto), medido desde el último nivel ejecutado. «Quitar» = tomar parciales a favor; «Añadir» = piramidar a favor.',
+                                    l.favor_action, l.favor_amount, l.favor_unit, (a, n, u) => setL({ favor_action: a, favor_amount: n, favor_unit: u }))}
+                                {lado('En contra:', 'Qué hacer por cada paso que el precio se mueve EN CONTRA (abajo en largo, arriba en corto), medido desde el último nivel ejecutado. «Añadir» = promediar / martingala (ojo: el stop en % se mide sobre el precio medio, así que cada añadido en contra ALEJA el stop y el riesgo en $ crece); «Quitar» = reducir en contra.',
+                                    l.contra_action, l.contra_amount, l.contra_unit, (a, n, u) => setL({ contra_action: a, contra_amount: n, contra_unit: u }))}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={labelStyle}>Core (suelo)<Q text="Capital que SIEMPRE se conserva: al quitar, la posición nunca baja de aquí. 0 = se puede quitar todo; entonces el scalp queda cerrado y el siguiente gatillo abre otro desde cero. Lo que quede lo cierra la salida principal." /></span>
+                                        <input type="number" min={0} step={1} value={l.core_amount ?? ''}
+                                            onChange={(e) => setL({ core_amount: num(e.target.value) })} onFocus={(e) => e.target.select()}
+                                            style={{ ...selectStyle, width: 64, cursor: 'text' }} />
+                                        <select value={l.core_unit} onChange={(e) => setL({ core_unit: e.target.value as any })} style={selectStyle}
+                                            title="$ = valor de posición en dólares · % = porcentaje de la posición INICIAL del scalp">
+                                            <option value="pct">% de la inicial</option>
+                                            <option value="usd">$</option>
+                                        </select>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={labelStyle}>Tope (techo)<Q text="Capital máximo de la posición: al añadir, nunca se pasa de aquí. 0 = sin techo propio (manda la caja disponible, como siempre). Con «añadir a favor» y core > 0, el core no interviene: solo manda este tope." /></span>
+                                        <input type="number" min={0} step={1} value={l.cap_amount ?? ''}
+                                            onChange={(e) => setL({ cap_amount: num(e.target.value) })} onFocus={(e) => e.target.select()}
+                                            style={{ ...selectStyle, width: 64, cursor: 'text' }} />
+                                        <select value={l.cap_unit} onChange={(e) => setL({ cap_unit: e.target.value as any })} style={selectStyle}
+                                            title="$ = valor de posición en dólares · % = porcentaje de la posición INICIAL del scalp">
+                                            <option value="pct">% de la inicial</option>
+                                            <option value="usd">$</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9.5, color: 'var(--color-ec-text-muted)', lineHeight: 1.5 }}>
+                                    Cada nivel se ejecuta al precio del nivel (como una orden limitada que descansa ahí) en la vela cuyo máximo o mínimo lo toca.
+                                    El stop loss y el take profit en % se miden sobre el <b>precio medio</b> de la posición. La salida principal
+                                    (salida lógica, stop, take profit, tiempo) siempre cierra todo lo que haya.
+                                </span>
+                            </div>
+                        );
+                    })()}
 
                     {/* El gatillo */}
                     <div style={{

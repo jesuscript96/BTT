@@ -1414,6 +1414,16 @@ export default function BacktestPanel({
                         sc.max_minutes > 0 ? `salida a los ${sc.max_minutes} min` : 'sin salida por tiempo propia',
                         sc.cooldown_bars > 0 ? `pausa de ${sc.cooldown_bars} vela${sc.cooldown_bars === 1 ? '' : 's'}` : 'sin pausa',
                         `${sc.capital_pct ?? 100}% de la cifra del panel por entrada`,
+                        ...(sc.mode === 'complex' && sc.ladder ? [(() => {
+                          const l = sc.ladder;
+                          const u = (x: string) => (x === 'usd' ? '$' : '% inicial');
+                          const acc = (a: string, n: number, un: string) =>
+                            a === 'add' ? `añade ${n}${u(un)}` : a === 'reduce' ? `quita ${n}${u(un)}` : 'nada';
+                          return `ESCALERA paso ${l.step_pct}%: a favor ${acc(l.favor_action, l.favor_amount, l.favor_unit)}, `
+                            + `en contra ${acc(l.contra_action, l.contra_amount, l.contra_unit)}, `
+                            + `core ${l.core_amount}${u(l.core_unit)}, tope ${l.cap_amount ? l.cap_amount + u(l.cap_unit) : 'sin'}, `
+                            + `recorrido ${l.max_travel_pct ? l.max_travel_pct + '%' : 'sin límite'}${l.rearm ? ', rearma niveles' : ''}`;
+                        })()] : []),
                       ];
                       return (
                         <div>

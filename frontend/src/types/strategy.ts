@@ -585,7 +585,41 @@ export interface ScalpingBlock {
     // % de la cifra de capital/riesgo del panel que usa CADA scalp. 100 = la
     // cifra entera (como una entrada normal). Se aplica escalando `risk_r`.
     capital_pct: number;
+    // simple (por defecto): entra-sale-entra-sale con la cantidad de arriba.
+    // complex: dentro de cada scalp actua la escalera (`ladder`).
+    mode?: 'simple' | 'complex';
+    ladder?: ScalpingLadder;
 }
+
+// Escalera del modo complejo. Por cada paso de X % desde el ultimo nivel
+// ejecutado, a favor o en contra, se anyade o se quita una cantidad, entre un
+// suelo (core) y un techo (tope), hasta un recorrido maximo desde la entrada.
+// El stop y el take profit en % pasan a medirse sobre el precio medio.
+export interface ScalpingLadder {
+    step_pct: number;                       // paso, % del precio
+    favor_action: 'add' | 'reduce' | 'none';
+    favor_amount: number;
+    favor_unit: 'usd' | 'pct';              // pct = % de la posicion INICIAL
+    contra_action: 'add' | 'reduce' | 'none';
+    contra_amount: number;
+    contra_unit: 'usd' | 'pct';
+    core_amount: number;                    // suelo; 0 = puede vaciarse
+    core_unit: 'usd' | 'pct';
+    cap_amount: number;                     // techo; 0 = sin techo propio
+    cap_unit: 'usd' | 'pct';
+    max_travel_pct: number;                 // recorrido; 0 = sin limite
+    rearm: boolean;                         // B: cada nivel opera cada vez que se cruza
+}
+
+export const initialScalpingLadder: ScalpingLadder = {
+    step_pct: 1,
+    favor_action: 'reduce', favor_amount: 50, favor_unit: 'pct',
+    contra_action: 'add', contra_amount: 50, contra_unit: 'pct',
+    core_amount: 0, core_unit: 'pct',
+    cap_amount: 300, cap_unit: 'pct',
+    max_travel_pct: 5,
+    rearm: false,
+};
 
 export interface ScalpingConfig extends ScalpingBlock {
     active: boolean;       // toggle de la UI; si esta OFF, la definicion NO
@@ -599,4 +633,6 @@ export const initialScalping: ScalpingConfig = {
     max_minutes: 5,
     cooldown_bars: 1,
     capital_pct: 100,
+    mode: 'simple',
+    ladder: initialScalpingLadder,
 };

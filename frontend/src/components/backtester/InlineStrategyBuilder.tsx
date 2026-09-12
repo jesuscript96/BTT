@@ -786,6 +786,11 @@ export default function InlineStrategyBuilder({
             max_minutes: scalping.max_minutes || 0,
             cooldown_bars: scalping.cooldown_bars || 0,
             capital_pct: scalping.capital_pct || 100,
+            // La escalera solo viaja en modo complejo; en simple la
+            // definicion es la misma de antes de que existiera el modo.
+            ...(scalping.mode === 'complex' && scalping.ladder
+              ? { mode: 'complex' as const, ladder: scalping.ladder }
+              : {}),
           } }
       : {};
 

@@ -449,7 +449,13 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             capital_pct = 100.0
         if capital_pct <= 0:
             capital_pct = 100.0
+        # Modo complejo: la escalera. `parse_escalera` devuelve None si el
+        # bloque no hace nada, y con None el simulador no enciende ni una rama.
+        from app.services.escalera import parse_escalera
+        modo = str(scalping.get("mode", "simple")).lower()
+        ladder_cfg = parse_escalera(scalping.get("ladder")) if modo in ("complex", "complejo") else None
         scalp_def = {
+            "ladder": ladder_cfg,
             "capital_frac": capital_pct / 100.0,
             "root_condition": scalp_root,
             "timeframe": scalping.get("timeframe", "1m"),
@@ -823,6 +829,7 @@ def translate_strategy(
     max_reentries = compiled.get("max_reentries", -1 if accept_reentries else 0)
     cooldown_bars = 0
     risk_scale = 1.0
+    ladder_cfg = None
 
     # Scalping: SOLO si la definición trae el bloque con gatillo. Sin él, todo
     # lo de arriba sale tal cual llevaba saliendo.
@@ -842,6 +849,7 @@ def translate_strategy(
         max_reentries = -1
         cooldown_bars = int(scalp.get("cooldown_bars", 0))
         risk_scale = float(scalp.get("capital_frac", 1.0))
+        ladder_cfg = scalp.get("ladder")
 
     return {
         "entries": entries.astype(bool),
@@ -863,6 +871,8 @@ def translate_strategy(
         # Fraccion del `risk_r` del panel que usa cada entrada (scalping).
         # 1.0 = como siempre.
         "risk_scale": risk_scale,
+        # Escalera del scalping complejo (ConfigEscalera) o None = como siempre.
+        "ladder": ladder_cfg,
     }
 
 

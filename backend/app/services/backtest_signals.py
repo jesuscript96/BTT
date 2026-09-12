@@ -215,6 +215,7 @@ def _compute_signals_for_pair(
         # Idem scalping: nunca llega aqui (has_special), pausa 0.
         sig_cooldown = 0
         sig_risk_scale = 1.0
+        sig_ladder = None
     else:
         # ═══ LEGACY PATH (backward compatible) ═══
         pm_highs_vals = pm_high_run
@@ -260,6 +261,7 @@ def _compute_signals_for_pair(
         sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
         sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
         sig_risk_scale = float(signals.get("risk_scale", 1.0) or 1.0)
+        sig_ladder = signals.get("ladder")
 
     # Fast return if no entries (only for legacy; fast path already returns arrays)
     if indicator_plan is None and not np.any(entries_arr):
@@ -418,6 +420,7 @@ def _compute_signals_for_pair(
         "sig_pyramid_sequential": sig_pyramid_sequential,
         "sig_cooldown": sig_cooldown,
         "sig_risk_scale": sig_risk_scale,
+        "sig_ladder": sig_ladder,
         "gap_pct": daily_stats.get("gap_pct"),
     }
 
@@ -1090,6 +1093,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 pyramid_levels=sig.get("sig_pyramid_levels") or [],
                 pyramid_sequential=bool(sig.get("sig_pyramid_sequential")),
                 reentry_cooldown_bars=int(sig.get("sig_cooldown", 0) or 0),
+                ladder=sig.get("sig_ladder"),
                 hs_type=hs.get("type"),
                 hs_value=hs.get("value"),
                 hs_operator=hs.get("operator", ">="),

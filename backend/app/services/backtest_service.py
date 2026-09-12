@@ -883,6 +883,7 @@ def run_backtest(
             sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
             sig_cooldown = int(cached.get("reentry_cooldown_bars", 0))
             sig_risk_scale = float(cached.get("risk_scale", 1.0))
+            sig_ladder = cached.get("ladder")
 
             if not np.any(entries_arr) and not _sin_reglas:
                 del mini_df
@@ -920,6 +921,7 @@ def run_backtest(
             sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
             sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
             sig_risk_scale = float(signals.get("risk_scale", 1.0) or 1.0)
+            sig_ladder = signals.get("ladder")
 
             # Populate cache for subsequent optimization iterations
             if _signal_cache is not None:
@@ -935,6 +937,7 @@ def run_backtest(
                     "pyramid_sequential": sig_pyramid_sequential,
                     "reentry_cooldown_bars": sig_cooldown,
                     "risk_scale": sig_risk_scale,
+                    "ladder": sig_ladder,
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -1202,6 +1205,7 @@ def run_backtest(
                 pyramid_levels=sig_pyramid_levels,
                 pyramid_sequential=sig_pyramid_sequential,
                 reentry_cooldown_bars=sig_cooldown,
+                ladder=sig_ladder,
                 hs_type=hs_type,
                 hs_value=hs_value,
                 hs_operator=hs_operator,
@@ -1513,6 +1517,8 @@ def _enrich_trades(
             # añadidos existían —el tamaño de la posición crecía— pero no
             # dejaban ni un rastro visible.
             **({"pyr_executions": t["pyr_executions"]} if t.get("pyr_executions") else {}),
+            # Escalera del scalping complejo: misma razon, mismo trato.
+            **({"escalera_executions": t["escalera_executions"]} if t.get("escalera_executions") else {}),
             # Black Swan: TODO lo que empiece por `bs_` viaja tal cual (la mecha
             # maxima descriptiva y, si el coste esta activo, el rastro del
             # cierre). Sin listarlas una a una para que una clave nueva del

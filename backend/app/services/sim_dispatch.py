@@ -88,6 +88,10 @@ def simulate(**kwargs) -> dict:
     if kwargs.get("reentry_cooldown_bars"):
         return _legacy_simulate(**kwargs)
     kwargs.pop("reentry_cooldown_bars", None)
+    # ESCALERA DEL SCALPING COMPLEJO (2026-09-12): idem. Solo el motor Python.
+    if kwargs.get("ladder") is not None:
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("ladder", None)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)
