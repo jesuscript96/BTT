@@ -414,6 +414,38 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
         })
 
+    # ── Scalping (2026-09-12) ──
+    # Bloque opcional `scalping`: la entrada lógica deja de ser LA entrada y
+    # pasa a ABRIR una ventana; la salida lógica la CIERRA (y cierra lo que
+    # haya abierto). Dentro de la ventana, cada flanco del `root_condition`
+    # de aquí (el "gatillo", mismo árbol que entrada/salida) es una entrada,
+    # con reentradas ilimitadas, la salida por tiempo `max_minutes` y una
+    # pausa de `cooldown_bars` velas tras cada salida. Stop loss y take
+    # profit son los de la estrategia, sin cambios.
+    # Sin bloque (o sin condiciones en el gatillo) → None → NADA cambia: la
+    # regla nº1 de este repo, igual que con la piramidación.
+    scalping = strategy_def.get("scalping") or {}
+    scalp_root = scalping.get("root_condition") or {}
+    scalp_def = None
+    if scalp_root.get("conditions"):
+        _normalize_tree(scalp_root)
+        try:
+            max_minutes = float(scalping.get("max_minutes") or 0)
+        except (TypeError, ValueError):
+            max_minutes = 0.0
+        try:
+            cooldown = int(scalping.get("cooldown_bars") or 0)
+        except (TypeError, ValueError):
+            cooldown = 0
+        scalp_def = {
+            "root_condition": scalp_root,
+            "timeframe": scalping.get("timeframe", "1m"),
+            # 0 = sin salida por tiempo propia (manda el take profit "Time"
+            # de la estrategia, si lo tiene).
+            "max_minutes": max_minutes if max_minutes > 0 else 0.0,
+            "cooldown_bars": max(0, cooldown),
+        }
+
     compiled = {
         "bias": bias,
         "direction": "longonly" if bias == "long" else "shortonly",
@@ -434,6 +466,8 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         # paralelo. sequential: cada una se arma cuando la anterior disparo.
         "pyramid_sequential": str(pyramiding.get("mode", "individual")).lower() == "sequential",
         "pyramid_levels_def": pyr_levels_def,
+        # None si la estrategia no scalpea. Lo consume translate_strategy.
+        "scalping": scalp_def,
     }
 
     # N2a: generate indicator plan for native evaluation
@@ -445,8 +479,70 @@ def compile_strategy_def(strategy_def: dict) -> dict:
     # ignorado en silencio.
     if pyr_levels_def:
         compiled["_indicator_plan"]["has_special"] = True
+    # Scalping: misma regla. Solo translate_strategy (el clásico) evalúa el
+    # gatillo y arma la ventana; el nativo no sabe del bloque, y por esta
+    # puerta no lo verá nunca.
+    if scalp_def:
+        compiled["_indicator_plan"]["has_special"] = True
 
     return compiled
+
+
+# ── Scalping: la ventana y el gatillo ────────────────────────────────────
+
+def ventana_scalping(entries: np.ndarray, exits: np.ndarray) -> np.ndarray:
+    """Vela a vela, si la ventana de scalping está ABIERTA.
+
+    Se abre en la vela en que la entrada lógica se cumple (esa vela incluida:
+    si el gatillo también se cumple ahí, se entra en la siguiente, igual que
+    entraría una estrategia normal) y se cierra en la vela en que se cumple
+    la salida lógica (esa vela excluida: la salida manda, y el simulador
+    cierra ahí lo que hubiera abierto). Si la entrada vuelve a cumplirse
+    después, se reabre. Es un barrido hacia delante sin mirar el futuro.
+    """
+    n = len(entries)
+    ventana = np.zeros(n, dtype=bool)
+    abierta = False
+    for i in range(n):
+        if exits[i]:
+            abierta = False
+        elif entries[i]:
+            abierta = True
+        ventana[i] = abierta
+    return ventana
+
+
+def aplicar_scalping(entries, exits, gatillo, time_mask=None):
+    """Sustituye las entradas por «gatillo dentro de la ventana».
+
+    `time_mask` es la ventana horaria de entradas, si la estrategia la tiene:
+    un scalp es una entrada, así que la respeta (mismo criterio que se fijó
+    para las pirámides el 2026-09-03). Devuelve una Series con el índice de
+    `entries` para que aguas abajo no cambie nada.
+    """
+    e = np.asarray(entries, dtype=bool)
+    x = np.asarray(exits, dtype=bool)
+    g = np.asarray(gatillo, dtype=bool)
+    nuevas = ventana_scalping(e, x) & g
+    if time_mask is not None:
+        nuevas = nuevas & np.asarray(time_mask, dtype=bool)
+    if hasattr(entries, "index"):
+        return pd.Series(nuevas, index=entries.index)
+    return nuevas
+
+
+def scalping_tp_time_limit(compiled: dict | None, tp_time_limit):
+    """La salida por tiempo del scalping, si la hay, PISA la de la estrategia.
+
+    Existe como función aparte porque `run_backtest` re-parsea el riesgo en
+    su caché de señales (optimización) y ahí volvería a salir el límite de la
+    estrategia: sin este mismo desvío en ese sitio el scalping perdería su
+    salida por tiempo en silencio, solo en la segunda iteración.
+    """
+    scalp = (compiled or {}).get("scalping")
+    if scalp and scalp.get("max_minutes", 0) > 0:
+        return float(scalp["max_minutes"])
+    return tp_time_limit
 
 
 # ── N2a: Indicator plan extraction ───────────────────────────────────────
@@ -710,6 +806,28 @@ def translate_strategy(
     sl_stop, sl_trail, tp_stop, tp_time_limit, trail_pct, partial_tps = \
         _parse_risk_management(risk, df, daily_stats, risk_cache)
 
+    accept_reentries = compiled["accept_reentries"]
+    max_reentries = compiled.get("max_reentries", -1 if accept_reentries else 0)
+    cooldown_bars = 0
+
+    # Scalping: SOLO si la definición trae el bloque con gatillo. Sin él, todo
+    # lo de arriba sale tal cual llevaba saliendo.
+    scalp = compiled.get("scalping")
+    if scalp:
+        scalp_tf = scalp.get("timeframe", "1m")
+        scalp_cache = entry_cache if scalp_tf == entry_tf else {}
+        gatillo = _evaluate_condition_group(
+            scalp["root_condition"], df, scalp_tf, daily_stats, scalp_cache
+        )
+        entries = aplicar_scalping(entries, exits, gatillo, entry_time_mask)
+        tp_time_limit = scalping_tp_time_limit(compiled, tp_time_limit)
+        # Reentradas ilimitadas dentro de la ventana: el límite lo pone la
+        # propia ventana (la salida lógica). Ver btt-reentradas-menos-uno:
+        # con accumulate=True el -1 es «sin tope».
+        accept_reentries = True
+        max_reentries = -1
+        cooldown_bars = int(scalp.get("cooldown_bars", 0))
+
     return {
         "entries": entries.astype(bool),
         "exits": exits.astype(bool),
@@ -719,12 +837,14 @@ def translate_strategy(
         "tp_stop": tp_stop,
         "tp_time_limit": tp_time_limit,
         "trail_pct": trail_pct,
-        "accept_reentries": compiled["accept_reentries"],
-        "max_reentries": compiled.get("max_reentries", -1 if compiled.get("accept_reentries", False) else 0),
+        "accept_reentries": accept_reentries,
+        "max_reentries": max_reentries,
         "partial_take_profits": partial_tps,
         "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache,
                                                    entry_time_mask),
         "pyramid_sequential": compiled.get("pyramid_sequential", False),
+        # Pausa entre operaciones (scalping). 0 = como siempre.
+        "reentry_cooldown_bars": cooldown_bars,
     }
 
 

@@ -6,6 +6,7 @@ import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
 import { PyramidingBuilder } from "@/components/strategy-builder/PyramidingBuilder";
+import { ScalpingBuilder } from "@/components/strategy-builder/ScalpingBuilder";
 import { AdvancedModelBuilder, AdvancedModelConfig, initialAdvancedModel } from "@/components/strategy-builder/AdvancedModelBuilder";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
 import {
@@ -13,6 +14,7 @@ import {
   initialExitLogic,
   initialRiskManagement,
   initialPyramiding,
+  initialScalping,
   IndicatorType,
   Comparator,
   Timeframe,
@@ -24,6 +26,8 @@ import type {
   ConditionGroup,
   PostGapPrecondition,
   PyramidingConfig,
+  ScalpingBlock,
+  ScalpingConfig,
 } from "@/types/strategy";
 import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow, isPercentIndicator } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock, Save } from "lucide-react";
@@ -156,6 +160,8 @@ export interface Draft {
   pyramiding?: { timeframe: string; mode?: 'individual' | 'sequential'; levels: any[] };
   // Igual que pyramiding: solo viaja si el bloque está encendido.
   advanced_model?: any;
+  // Scalping: solo viaja si el bloque está encendido y el gatillo tiene condiciones.
+  scalping?: ScalpingBlock;
 }
 
 function getGroupSummaryText(group: ConditionGroup): string {
@@ -432,6 +438,9 @@ export default function InlineStrategyBuilder({
       // se consideran "la misma" y el bloque no se repuebla al cambiar de una
       // a otra.
       pyramiding: stratObj.pyramiding,
+      // Scalping: mismo motivo que pyramiding (si no, al cambiar entre dos
+      // estrategias que solo difieren en el scalping no se repoblaria).
+      scalping: stratObj.scalping,
       // `advanced_model` NO va en la firma, y es a proposito. El bloque solo
       // emite su clave cuando ya tiene features; mientras no las tenga, el
       // borrador sale SIN ella. Si estuviera aqui, cada tecla cambiaria la
@@ -459,6 +468,11 @@ export default function InlineStrategyBuilder({
       setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) });
     } else {
       setPyramiding(initialPyramiding);
+    }
+    if (stratObj.scalping) {
+      setScalping({ ...initialScalping, ...stratObj.scalping, active: true });
+    } else {
+      setScalping(initialScalping);
     }
     if ((stratObj as any).advanced_model) {
       setAdvancedModel({ ...initialAdvancedModel, active: true, ...(stratObj as any).advanced_model });
@@ -608,6 +622,11 @@ export default function InlineStrategyBuilder({
       ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) }
       : initialPyramiding
   );
+  const [scalping, setScalping] = useState<ScalpingConfig>(
+    stratObj?.scalping
+      ? { ...initialScalping, ...stratObj.scalping, active: true }
+      : initialScalping
+  );
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [tempDay, setTempDay] = useState<'gap_day' | 'gap_1_day'>('gap_day');
   const [tempSource, setTempSource] = useState<'cierre' | 'volume' | 'candle_range_pct' | 'candle_range_ratio_gap_1_vs_gap'>('cierre');
@@ -722,8 +741,9 @@ export default function InlineStrategyBuilder({
       universe_filters: universeFilters,
       ...pyramidingForPayload(),
       ...advancedModelForPayload(),
+      ...scalpingForPayload(),
     });
-  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, pyramiding, advancedModel, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
+  }, [name, bias, applyDay, postgapPreconditions, entryLogic, exitLogic, riskManagement, pyramiding, advancedModel, scalping, localMarketSessions, localCustomStartTime, localCustomEndTime, universeFilters, onDraftChange]);
 
   // La clave `pyramiding` solo viaja si el toggle está ON y hay niveles con
   // condiciones: sin piramidar, el draft queda EXACTAMENTE como siempre.
@@ -756,6 +776,18 @@ export default function InlineStrategyBuilder({
           } }
       : {};
 
+  // Scalping: misma regla. Sin gatillo no viaja nada, y el backend tampoco
+  // haria nada con un bloque sin condiciones (compile_strategy_def lo ignora).
+  const scalpingForPayload = () =>
+    scalping.active && scalping.root_condition.conditions.length > 0
+      ? { scalping: {
+            timeframe: scalping.timeframe,
+            root_condition: scalping.root_condition,
+            max_minutes: scalping.max_minutes || 0,
+            cooldown_bars: scalping.cooldown_bars || 0,
+          } }
+      : {};
+
   const resetForm = () => {
     setName("Nueva Estrategia");
     setBias("long");
@@ -768,6 +800,7 @@ export default function InlineStrategyBuilder({
     setExitLogic(initialExitLogic);
     setRiskManagement(initialRiskManagement);
     setPyramiding(initialPyramiding);
+    setScalping(initialScalping);
     setAdvancedModel(initialAdvancedModel);
     setTempFromTime("09:30");
     setTempToTime("16:00");
@@ -797,6 +830,7 @@ export default function InlineStrategyBuilder({
       universe_filters: universeFilters,
       ...pyramidingForPayload(),
       ...advancedModelForPayload(),
+      ...scalpingForPayload(),
     } as any;
   };
 
@@ -2390,6 +2424,9 @@ export default function InlineStrategyBuilder({
         </div>
 
         <ExitLogicBuilder logic={exitLogic} onChange={setExitLogic} />
+        {/* Scalping: justo debajo de la salida lógica, porque redefine lo que
+            hacen la entrada y la salida (abren y cierran la ventana). */}
+        <ScalpingBuilder config={scalping} onChange={setScalping} />
         {/* Piramidación: entre la salida lógica y el stop loss fijo (petición del usuario) */}
         <PyramidingBuilder config={pyramiding} onChange={setPyramiding} />
         <div data-helper="st-risk" style={{ display: 'contents' }}>

@@ -44,6 +44,8 @@ def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks,
                 **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
                 # Igual con el modelo avanzado: sin el, la definicion no cambia.
                 **({"advanced_model": strategy.advanced_model} if strategy.advanced_model else {}),
+                # Y con el scalping: la clave solo viaja si la estrategia scalpea.
+                **({"scalping": strategy.scalping} if strategy.scalping else {}),
             })
 
             con.execute(
@@ -109,6 +111,8 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
                 **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
                 # Igual con el modelo avanzado: sin el, la definicion no cambia.
                 **({"advanced_model": strategy.advanced_model} if strategy.advanced_model else {}),
+                # Y con el scalping: la clave solo viaja si la estrategia scalpea.
+                **({"scalping": strategy.scalping} if strategy.scalping else {}),
             })
 
             con.execute(

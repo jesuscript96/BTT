@@ -542,6 +542,11 @@ class StrategyCreate(BaseModel):
     # campo, pydantic lo descartaria en SILENCIO (extra="ignore" por defecto) y
     # una estrategia guardada perderia su modelo sin dar ningun error.
     advanced_model: Optional[dict] = None
+    # Scalping (2026-09-12). Dict opaco por el mismo motivo que `pyramiding`:
+    # el gatillo es el mismo arbol de condiciones que entrada/salida y lo
+    # normaliza strategy_engine. Sin este campo, pydantic lo descartaria en
+    # SILENCIO y la estrategia guardada volveria a ser una estrategia normal.
+    scalping: Optional[dict] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

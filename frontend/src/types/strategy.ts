@@ -442,6 +442,9 @@ export interface Strategy {
     // Modelos avanzados (XGBoost / HMM). Solo presente si el bloque esta
     // encendido; sin el, la estrategia es identica a las de siempre.
     advanced_model?: any;
+    // Scalping. Solo presente si el bloque esta encendido y el gatillo tiene
+    // condiciones; sin el, la estrategia es identica a las de siempre.
+    scalping?: ScalpingBlock;
     is_wizard?: boolean;
     dataset_id?: string | null;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
@@ -564,4 +567,32 @@ export const initialPyramiding: PyramidingConfig = {
     timeframe: Timeframe.M1,
     mode: 'individual',
     levels: [],
+};
+
+// ── Scalping (2026-09-12) ──
+// La entrada logica ABRE una ventana y la salida logica la CIERRA. Dentro,
+// cada cumplimiento nuevo del gatillo es una entrada (reentradas ilimitadas),
+// con el stop y el take profit de la estrategia, una salida por tiempo propia
+// y una pausa de N velas tras cada salida.
+export interface ScalpingBlock {
+    timeframe: Timeframe;
+    // El gatillo: el MISMO arbol de condiciones que entrada/salida.
+    root_condition: ConditionGroup;
+    // Salida por tiempo, en minutos desde la entrada. 0 = sin salida propia.
+    max_minutes: number;
+    // Velas que hay que esperar tras una salida para volver a entrar. 0 = ninguna.
+    cooldown_bars: number;
+}
+
+export interface ScalpingConfig extends ScalpingBlock {
+    active: boolean;       // toggle de la UI; si esta OFF, la definicion NO
+                           // lleva la clave `scalping` (regla nº1)
+}
+
+export const initialScalping: ScalpingConfig = {
+    active: false,
+    timeframe: Timeframe.M1,
+    root_condition: { type: "group", operator: "AND", conditions: [] },
+    max_minutes: 5,
+    cooldown_bars: 1,
 };

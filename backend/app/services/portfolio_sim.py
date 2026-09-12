@@ -384,6 +384,13 @@ def simulate(
     # penalizado; si no reabre ese dia, al ultimo precio antes del halt. Y no
     # se vuelve a entrar en el resto del dia. Solo lo implementa este motor.
     halts=None,
+    # PAUSA ENTRE OPERACIONES (scalping, 2026-09-12). Tras una salida, no se
+    # acepta ninguna entrada hasta que hayan pasado N velas desde la vela del
+    # fill de salida. 0 = como siempre (ni una rama nueva se ejecuta). La
+    # senal que caiga dentro de la pausa se CONSUME, igual que cuando
+    # `max_reentries` bloquea. Solo lo implementa este motor: `sim_dispatch`
+    # lo desvia del kernel JIT.
+    reentry_cooldown_bars: int = 0,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -1636,7 +1643,15 @@ def simulate(
                     can_enter = False
             elif not accumulate and total_trades > 0:
                 can_enter = False
-            
+            # Pausa tras la ultima salida (scalping). `trades[-1]` es el ultimo
+            # cierre: estando fuera de posicion, cualquier leg anterior (parcial,
+            # reduccion de piramide) ya quedo atras y la ultima fila es la que
+            # vacio la posicion. Todas las salidas graban `exit_idx`.
+            if can_enter and reentry_cooldown_bars > 0 and trades:
+                _ultima_salida = trades[-1].get("exit_idx")
+                if _ultima_salida is not None and (i - int(_ultima_salida)) < reentry_cooldown_bars:
+                    can_enter = False
+
             if can_enter:
                 available_cash = init_cash + realized_pnl
                 if available_cash <= 0:

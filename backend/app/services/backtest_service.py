@@ -22,6 +22,7 @@ from app.services.portfolio_sim import (
 )
 from app.services.strategy_engine import (
     translate_strategy, _parse_risk_management, compile_strategy_def,
+    scalping_tp_time_limit,
     get_lowest_timeframe_mins, apply_entry_fill_window,
 )
 # Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
@@ -880,6 +881,7 @@ def run_backtest(
             sig_max_reentries = cached.get("max_reentries", -1)
             sig_pyramid_levels = cached.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(cached.get("pyramid_sequential"))
+            sig_cooldown = int(cached.get("reentry_cooldown_bars", 0))
 
             if not np.any(entries_arr) and not _sin_reglas:
                 del mini_df
@@ -889,6 +891,9 @@ def run_backtest(
             risk = strategy_def.get("risk_management", {})
             sig_sl_stop, sig_sl_trail, sig_tp_stop, sig_tp_time_limit, sig_trail_pct, sig_partial_tps = \
                 _parse_risk_management(risk, mini_df, daily_stats, {})
+            # Scalping: su salida por tiempo pisa la de la estrategia tambien
+            # aqui, o la segunda iteracion de la optimizacion la perderia.
+            sig_tp_time_limit = scalping_tp_time_limit(compiled_strategy, sig_tp_time_limit)
         else:
             try:
                 signals = translate_strategy(mini_df, strategy_def, daily_stats, compiled=compiled_strategy)
@@ -912,6 +917,7 @@ def run_backtest(
             sig_partial_tps = signals.get("partial_take_profits")
             sig_pyramid_levels = signals.get("pyramid_levels") or []
             sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
+            sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
 
             # Populate cache for subsequent optimization iterations
             if _signal_cache is not None:
@@ -925,6 +931,7 @@ def run_backtest(
                         {**lv, "signals": lv["signals"].copy()} for lv in sig_pyramid_levels
                     ],
                     "pyramid_sequential": sig_pyramid_sequential,
+                    "reentry_cooldown_bars": sig_cooldown,
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -1189,6 +1196,7 @@ def run_backtest(
                 partial_take_profits=sig_partial_tps,
                 pyramid_levels=sig_pyramid_levels,
                 pyramid_sequential=sig_pyramid_sequential,
+                reentry_cooldown_bars=sig_cooldown,
                 hs_type=hs_type,
                 hs_value=hs_value,
                 hs_operator=hs_operator,

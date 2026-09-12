@@ -212,6 +212,8 @@ def _compute_signals_for_pair(
         # fuerza el camino clasico), pero la variable debe existir aguas abajo.
         sig_pyramid_levels = []
         sig_pyramid_sequential = False
+        # Idem scalping: nunca llega aqui (has_special), pausa 0.
+        sig_cooldown = 0
     else:
         # ═══ LEGACY PATH (backward compatible) ═══
         pm_highs_vals = pm_high_run
@@ -255,6 +257,7 @@ def _compute_signals_for_pair(
         sig_partial_tps = signals.get("partial_take_profits")
         sig_pyramid_levels = signals.get("pyramid_levels") or []
         sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
+        sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
 
     # Fast return if no entries (only for legacy; fast path already returns arrays)
     if indicator_plan is None and not np.any(entries_arr):
@@ -411,6 +414,7 @@ def _compute_signals_for_pair(
         "sig_partial_tps": sig_partial_tps,
         "sig_pyramid_levels": sig_pyramid_levels,
         "sig_pyramid_sequential": sig_pyramid_sequential,
+        "sig_cooldown": sig_cooldown,
         "gap_pct": daily_stats.get("gap_pct"),
     }
 
@@ -1081,6 +1085,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 partial_take_profits=sig["sig_partial_tps"],
                 pyramid_levels=sig.get("sig_pyramid_levels") or [],
                 pyramid_sequential=bool(sig.get("sig_pyramid_sequential")),
+                reentry_cooldown_bars=int(sig.get("sig_cooldown", 0) or 0),
                 hs_type=hs.get("type"),
                 hs_value=hs.get("value"),
                 hs_operator=hs.get("operator", ">="),

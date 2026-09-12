@@ -1403,6 +1403,28 @@ export default function BacktestPanel({
                       );
                     })()}
 
+                    {/* Scalping. Mismo motivo que la piramidación: con el
+                        bloque, la entrada y la salida lógicas significan otra
+                        cosa (abren y cierran la ventana), y eso hay que verlo. */}
+                    {(() => {
+                      const sc = stratDef?.scalping;
+                      if (!sc?.root_condition?.conditions?.length) return null;
+                      const partes = [
+                        `gatillo con ${sc.root_condition.conditions.length} condición${sc.root_condition.conditions.length === 1 ? '' : 'es'}`,
+                        sc.max_minutes > 0 ? `salida a los ${sc.max_minutes} min` : 'sin salida por tiempo propia',
+                        sc.cooldown_bars > 0 ? `pausa de ${sc.cooldown_bars} vela${sc.cooldown_bars === 1 ? '' : 's'}` : 'sin pausa',
+                      ];
+                      return (
+                        <div>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-copper)' }}>SCALPING: </span>
+                          <span style={{ color: 'var(--color-ec-text-primary)' }}>
+                            {partes.join(' · ')}{sc.timeframe ? ` · ${sc.timeframe}` : ''}
+                            {' (la entrada lógica abre la ventana y la salida lógica la cierra)'}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
                     {entryLogic?.entry_time_windows && entryLogic.entry_time_windows.length > 0 && (
                       <div>
                         <span style={{ fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>HORAS ENTRADA (ET): </span>
