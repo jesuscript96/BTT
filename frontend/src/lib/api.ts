@@ -630,6 +630,46 @@ export function getTickerGapStats(
   );
 }
 
+/** Un día de gap del ticker (fila de daily_metrics con gap_pct ≥ 10 %).
+ *  Precios crudos, sin ajustar por splits. */
+export interface TickerGapDay {
+  date: string;
+  gap_pct?: number | null;
+  gap_at_open_pct?: number | null;
+  pmh_gap_pct?: number | null;
+  pmh_fade_pct?: number | null;
+  rth_fade_pct?: number | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  close?: number | null;
+  prev_close?: number | null;
+  pm_high?: number | null;
+  pm_low?: number | null;
+  rth_open?: number | null;
+  rth_high?: number | null;
+  rth_low?: number | null;
+  rth_close?: number | null;
+  volume?: number | null;
+  pm_volume?: number | null;
+  rth_volume?: number | null;
+  day_return_pct?: number | null;
+  rth_run_pct?: number | null;
+  rth_range_pct?: number | null;
+}
+
+/** Los días de gap del ticker desde 2019, del hot cache diario del backend
+ *  (no toca DuckDB). Alimenta la lista de la página de análisis de ticker. */
+export function getTickerGapDays(
+  ticker: string,
+  options?: { signal?: AbortSignal },
+): Promise<{ ticker: string; min_gap: number; days: TickerGapDay[] }> {
+  return apiRequest<{ ticker: string; min_gap: number; days: TickerGapDay[] }>(
+    `/ticker-analysis/${encodeURIComponent(ticker)}/gap-days`,
+    options,
+  );
+}
+
 export function getTickerFinvizNews(
   ticker: string,
   options?: { signal?: AbortSignal },

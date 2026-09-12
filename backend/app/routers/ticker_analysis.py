@@ -1682,6 +1682,59 @@ def _validate_gap_stats(p: dict) -> bool:
     return "gap_dates" in p
 
 
+@router.get("/{ticker}/gap-days")
+def get_ticker_gap_days(ticker: str, min_gap: float = 10.0):
+    """Los dias de gap del ticker desde 2019 (Jaume, 12-sep-2026): una fila
+    por dia con gap_pct >= `min_gap`, para la lista de la pagina de analisis
+    de ticker, que despliega bajo cada fila el grafico intradia del backtester.
+
+    Sale del hot cache diario en RAM (daily_metrics con gap_pct >= 10 %), asi
+    que no toca DuckDB: en esta maquina cada lectura de la base compite con
+    las escrituras y una pagina que consulte a menudo cuelga el backend. Sin
+    el ticker en la cache devuelve lista vacia, no error. Los precios son los
+    CRUDOS de daily_metrics (sin ajustar por splits), igual que en el resto de
+    la pagina.
+    """
+    ticker = ticker.upper()
+    try:
+        from app.services.cache_service import get_hot_daily_cache
+        cache_df = get_hot_daily_cache()
+    except Exception as e:
+        print(f"[GAP-DAYS] hot cache no disponible para {ticker}: {e}")
+        cache_df = None
+    if cache_df is None or cache_df.empty or "ticker" not in cache_df.columns:
+        return {"ticker": ticker, "min_gap": min_gap, "days": []}
+    df = cache_df[cache_df["ticker"] == ticker]
+    if df.empty:
+        return {"ticker": ticker, "min_gap": min_gap, "days": []}
+    if "gap_pct" in df.columns:
+        df = df[df["gap_pct"] >= float(min_gap)]
+    df = df.copy()
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df = df.sort_values("timestamp", ascending=False)
+
+    def _f(v):
+        try:
+            if v is None or pd.isna(v):
+                return None
+            return round(float(v), 4)
+        except (TypeError, ValueError):
+            return None
+
+    cols = ("gap_pct", "gap_at_open_pct", "pmh_gap_pct", "pmh_fade_pct", "rth_fade_pct",
+            "open", "high", "low", "close", "prev_close", "pm_high", "pm_low",
+            "rth_open", "rth_high", "rth_low", "rth_close",
+            "volume", "pm_volume", "rth_volume", "day_return_pct", "rth_run_pct", "rth_range_pct")
+    days = []
+    for r in df.itertuples(index=False):
+        fila = {"date": r.timestamp.strftime("%Y-%m-%d")}
+        for c in cols:
+            if c in df.columns:
+                fila[c] = _f(getattr(r, c))
+        days.append(fila)
+    return {"ticker": ticker, "min_gap": min_gap, "days": days}
+
+
 @router.get("/{ticker}/gap-stats")
 def get_ticker_gap_stats(ticker: str):
     ticker = ticker.upper()
