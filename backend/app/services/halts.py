@@ -205,18 +205,26 @@ def halts_a_indices(halts: list, timestamps: np.ndarray) -> list:
       resume_idx = primera vela con ts >= resume_ts, o None si no reabrio ese
                    dia o no quedan velas despues
 
-    Halts anteriores a la primera vela del frame se descartan: si el frame
-    esta recortado a la sesion, un halt de premercado no puede pillar dentro,
-    pero SI cuenta para el orden del dia (el orden viene de la tabla).
+    Halts FUERA del frame se descartan por los dos lados: si el frame esta
+    recortado a la sesion, un halt de premercado (antes de la primera vela) o
+    de la tarde (despues del ultimo minuto) no puede pillar dentro, pero SI
+    cuenta para el orden del dia (el orden viene de la tabla).
+
+    El corte por arriba es `ts[-1] + 1 min`, no `ts[-1]`: un halt dentro del
+    ultimo minuto si es de ese minuto. Sin este corte, TODOS los halts de la
+    sesion regular de una estrategia de premercado (04:00-08:45) caian en la
+    ultima vela del frame como «atrapados»: 451 de 453 en la primera corrida
+    real (12-sep-2026).
     """
     out = []
     if halts is None or len(halts) == 0 or timestamps is None or len(timestamps) == 0:
         return out
     ts = np.asarray(timestamps, dtype=np.int64)
     n = len(ts)
+    fin = int(ts[-1]) + 60_000_000_000
     for h in halts:
         hn = h["halt_ns"]
-        if hn < ts[0]:
+        if hn < ts[0] or hn >= fin:
             continue
         hi = int(np.searchsorted(ts, hn, side="right") - 1)
         if hi < 0 or hi >= n:

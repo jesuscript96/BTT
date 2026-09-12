@@ -93,6 +93,13 @@ def test_halts_a_indices():
     assert [(h["halt_idx"], h["resume_idx"]) for h in out] == [(3, 6), (8, None), (9, None)]
     # Un halt anterior a la primera vela del frame se descarta.
     assert halts_a_indices([{"halt_ns": T0 - 1, "resume_ns": None, "orden": 1}], ts) == []
+    # Y uno POSTERIOR al ultimo minuto tambien (el bug de la primera corrida
+    # real: los halts de RTH de una estrategia de premercado caian en la
+    # ultima vela como «atrapados»). Dentro del ultimo minuto si cuenta.
+    assert halts_a_indices([{"halt_ns": T0 + 10 * NS_MIN, "resume_ns": None, "orden": 1}], ts) == []
+    assert halts_a_indices([{"halt_ns": T0 + 60 * NS_MIN, "resume_ns": None, "orden": 1}], ts) == []
+    dentro = halts_a_indices([{"halt_ns": T0 + 9 * NS_MIN + 30 * 10**9, "resume_ns": None, "orden": 1}], ts)
+    assert [(h["halt_idx"], h["resume_idx"]) for h in dentro] == [(9, None)]
     assert halts_a_indices([], ts) == [] and halts_a_indices(None, ts) == []
 
 
@@ -311,11 +318,16 @@ def test_e2e_sin_coste_intacto(_secuencial):
 
 def test_e2e_primero_cierra_y_cuenta(_secuencial, tmp_path):
     base = _corre(None)
-    # Un halt en cada ticker-dia a las 10:00 (reabre 10:05) y otro a las 12:00.
+    # El frame RTH del fixture va de 09:30 a 10:59 (420 velas desde las 04:00).
+    # Un halt cada 10 minutos de 09:40 a 10:50 en cada ticker-dia: cualquier
+    # posicion abierta en la sesion acaba pillada. Y uno a las 12:00, FUERA
+    # del frame, que debe descartarse (el bug de la primera corrida real).
     filas = []
     for tk in ("TK00", "TK01", "TK02", "TK03"):
         for d in ("2025-09-01", "2025-09-02"):
-            filas.append((1, d, pd.Timestamp(f"{d} 10:00"), pd.Timestamp(f"{d} 10:05"), 50, "N", tk, 5.0, "LULD"))
+            for hh, mm in ((9, 40), (9, 50), (10, 0), (10, 10), (10, 20), (10, 30), (10, 40), (10, 50)):
+                filas.append((1, d, pd.Timestamp(f"{d} {hh:02d}:{mm:02d}:30"),
+                              pd.Timestamp(f"{d} {hh:02d}:{mm + 5:02d}:30"), 50, "N", tk, 5.0, "LULD"))
             filas.append((1, d, pd.Timestamp(f"{d} 12:00"), pd.Timestamp(f"{d} 12:05"), 50, "N", tk, 5.0, "LULD"))
     _escribe_tabla(tmp_path / "dias", filas)
     tabla = cargar_halts("2025-09-01", "2025-09-02", str(tmp_path / "dias"))
@@ -323,13 +335,17 @@ def test_e2e_primero_cierra_y_cuenta(_secuencial, tmp_path):
     tr = con["trades"]
     h = [t for t in tr if t["exit_reason"].startswith("Halt")]
     assert h, "con el coste debe haber cierres por halt"
-    assert all(t["halt_n"] in (1, 2) and t["halt_slip_pct"] == 5.0 for t in h)
+    assert all(1 <= t["halt_n"] <= 8 and t["halt_slip_pct"] == 5.0 for t in h)
     assert all(t["exit_price"] == pytest.approx(t["halt_base_price"] * 1.05, rel=1e-6) for t in h)
+    # Ninguno «atrapado»: los halts de dentro reabren en el frame, y el de las
+    # 12:00 (fuera) no puede pegarse a la ultima vela.
+    assert not any(t.get("halt_atrapado") for t in h)
+    assert all(t["exit_time"][-8:] != "10:59:00" for t in h)
     res = con["halts"]
     assert res["enabled"] and res["modo"] == "primero" and res["n_halts"] == 1
     # `dias_con_halts` cuenta ticker-dias SIMULADOS (con senal) que tenian
     # halts en la tabla; los dias sin senal se saltan antes.
-    assert res["trades"] == len(h) and 1 <= res["dias_con_halts"] <= 8 and res["tabla_halts"] == 16
+    assert res["trades"] == len(h) and 1 <= res["dias_con_halts"] <= 8 and res["tabla_halts"] == 72
     assert res["penalizacion_usd"] == pytest.approx(sum(t["halt_penalty"] for t in h), abs=0.05)
     # Tras un halt no se reentra ese dia: ningun trade del ticker-dia empieza
     # despues del que cerro por halt.
