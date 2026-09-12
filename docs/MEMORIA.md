@@ -30,6 +30,37 @@
 
 ---
 
+## 2026-09-12 (Sailor) — Modo Scalping: la entrada abre una ventana, la salida la cierra, y dentro cada gatillo es una operación
+
+**Qué es.** Un bloque opcional `scalping` en la definición de la estrategia (en la UI, entre «Salida lógica» y «Piramidación»). Con él encendido:
+- La **Entrada Lógica ya no entra: abre la ventana** de scalping en ese ticker-día. La **Salida Lógica la cierra** (y cierra la operación que hubiera abierta). Si la entrada vuelve a cumplirse después, se reabre.
+- Dentro de la ventana, **cada flanco del gatillo** (`root_condition`, el mismo árbol de condiciones que entrada/salida, con su timeframe) es una entrada, con **reentradas ilimitadas** (`accept_reentries=True, max_reentries=-1` forzados).
+- **Stop loss y take profit son los de la estrategia**, sin cambios. Además: `max_minutes` (salida por tiempo, pisa el take profit «Time» si lo hay; 0 = no pisa) y `cooldown_bars` (pausa tras cada salida; 0 = ninguna).
+- La ventana horaria de entradas (`entry_time_windows`) vale también para cada operación, como con las pirámides.
+
+**Regla nº1, cumplida y probada.** Sin la clave, o con el gatillo sin condiciones, `compile_strategy_def` deja `scalping=None`, `translate_strategy` devuelve lo de siempre, y en `simulate` no se ejecuta ni una rama nueva (`reentry_cooldown_bars=0` por defecto). Suite completa: 1.151 pasan; los 2 fallos son los del backend levantado (DuckDB).
+
+**Dónde vive (para no perderlo en las tres capas).**
+- Motor: `strategy_engine.compile_strategy_def` (parsea el bloque, `has_special=True` → va SIEMPRE por el traductor clásico, el nativo no sabe del bloque), `ventana_scalping`, `aplicar_scalping`, `scalping_tp_time_limit`, y `translate_strategy` (sustituye `entries`, pisa `tp_time_limit`, fuerza reentradas, devuelve `reentry_cooldown_bars`).
+- Simulador: `portfolio_sim.simulate(reentry_cooldown_bars=0)`: un `if` en la puerta de entrada que mira `trades[-1]["exit_idx"]`. `sim_dispatch` desvía al Python si es > 0 y retira el kwarg antes del JIT.
+- Tres caminos: `backtest_service` (secuencial, con la caché de señales de la optimización: ahí se re-parsea el riesgo y hay que volver a pisar el `tp_time_limit`, por eso existe `scalping_tp_time_limit`) y `backtest_signals` (paralelo y slab). El what-if de la pérdida diaria re-simula con copia de los kwargs, así que le llega solo.
+- Persistencia: `schemas/strategy.py::StrategyCreate.scalping` (dict opaco) y los dos sitios de `routers/strategies.py`.
+- UI: `ScalpingBuilder.tsx` (nuevo, calcado de `PyramidingBuilder`), `InlineStrategyBuilder` (estado, firma, rehidratación, `scalpingForPayload`, reset, render), `page.tsx` (12 sitios, los mismos que `advanced_model`), `types/strategy.ts` (`ScalpingBlock`, `ScalpingConfig`, `initialScalping`), y el resumen del `BacktestPanel` («SCALPING: gatillo con N condiciones · salida a los M min · pausa de K velas»).
+- Tests: `backend/tests/test_scalping.py` (21): regla nº1, ventana, translate, pausa + dispatch, esquema y `run_backtest` entero (normal = 1 operación/día; scalping = varias, ninguna más larga que la salida por tiempo).
+
+**Decisiones tomadas con Jaume (12-sep).** Todo en %, no en centavos (el motor ya trabaja así; el spread se mira por tramos de precio en los resultados). Relleno al open de la vela siguiente, como siempre (no se expuso `mid`/`worst`). Locates y costes como están: «los costes son los costes». Va vela a vela de 1 minuto; nada por tick (sin quotes no hay spread, y sin spread un backtest sub-segundo se inventa el edge: Roll 1984). Un gatillo que se cumpla varias velas seguidas cuenta UNA vez (flanco), como cualquier entrada del motor.
+
+**Lo que NO está hecho / avisos.**
+- **El bot en vivo** usa `translate_strategy`, así que una estrategia con `scalping` marcada para el bot avisaría en cada gatillo dentro de la ventana, pero **sin salida por tiempo ni pausa** (su `_kwargs_simulate` no pasa `reentry_cooldown_bars`; no se ha tocado nada de `bot_alerts_*`). Hasta adaptarlo: **no marcar estrategias de scalping para el bot.**
+- `StrategyForm.tsx` (la página `/strategies/new`) no tiene el bloque; solo el constructor del backtester.
+- `strategy_explain.py` («qué hace esta estrategia») no describe el bloque; `SharedStrategiesTab` lo vuelca en «Otros ajustes».
+- El NBBO (spread real) queda para más adelante por decisión de Jaume; Massive SÍ da quotes (`Q.*` y `/v3/quotes`) si el plan es el «Advanced»; no comprobado.
+- Primeras estrategias que se quieren probar: ORB de 5 minutos (hay literatura: Zarattini & Aziz 2023-24) y «caja tras el spike con fallo de ruptura» en corto. El indicador **Darvas Box ya existe** en el repo (`indicators.py`, 22-ago) y sirve de gatillo.
+
+**Estado.** Commit `9e11fa8` en la rama `scalping-dev` (worktree `D:\Backtester-scalping`), desarrollado con el bot vivo sin tocar `D:\Backtester`. Pendiente de fusionar en `sailor-rama-desarrollo` (fast-forward) con el bot parado o fuera de horario, porque el `--reload` del backend recarga al fusionar.
+
+---
+
 ## 2026-09-10 (Sailor) — Los stops dejan de mentir, último pivote y perfil de volumen
 
 Diez commits, del `1ed3d7e` al `5b77e52`, en `sailor-rama-desarrollo` y `staging`.
