@@ -635,6 +635,10 @@ export default function Chart({
           shape: "circle" | "square" | "arrowUp" | "arrowDown";
           text: string;
           isEntry: boolean;
+          // Tamaño del símbolo (1 = el normal). La escalera del scalping va
+          // más pequeña: son muchos eventos seguidos y a tamaño normal tapan
+          // las velas.
+          size?: number;
         }
 
         const rawMarkers: RawMarker[] = [];
@@ -724,18 +728,29 @@ export default function Chart({
             if (!snap || !candleTimeSet.has(snap)) continue;
             const isAdd = ex.kind === "add";
             const isLong = t.direction.toLowerCase().includes("long");
+            // Escalera del scalping complejo: triángulos pequeños, añadido
+            // debajo de la vela y quita encima, con la flecha en el sentido de
+            // la orden (compra arriba, venta abajo; al revés en corto). Son
+            // muchos y muy seguidos, y a tamaño normal taparían las velas.
+            const esEscalera = !!ex.escalera;
+            const compra = isAdd === isLong;   // añadir en largo o quitar en corto = comprar
             rawMarkers.push({
               time: snap,
-              position: isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar",
+              position: esEscalera
+                ? (isAdd ? "belowBar" : "aboveBar")
+                : (isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar"),
               // Cobre para los añadidos (aumentan la posición) y ámbar para
               // las salidas parciales, para no confundirlos con la entrada ni
               // con el cierre.
               color: isAdd ? "#c87941" : "#d9a441",
-              shape: isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square",
+              shape: esEscalera
+                ? (compra ? "arrowUp" : "arrowDown")
+                : (isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square"),
               text: isAdd
-                ? `+${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}`
+                ? `+${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${esEscalera && ex.label ? ` (${ex.label})` : ""}`
                 : `−${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
               isEntry: false,
+              ...(esEscalera ? { size: 0.6 } : {}),
             });
           }
         }
@@ -759,6 +774,7 @@ export default function Chart({
               color: m.color,
               shape: m.shape,
               text: m.text,
+              ...(m.size ? { size: m.size } : {}),
             });
           } else {
             // Sort: entries before exits

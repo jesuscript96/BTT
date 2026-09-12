@@ -261,6 +261,8 @@ export interface TradeExecution {
   size?: number;
   pnl?: number | null;
   label?: string;
+  // Ejecución de la escalera del scalping complejo (el gráfico la pinta más pequeña).
+  escalera?: boolean;
 }
 
 export interface CandleData {

@@ -282,3 +282,8 @@ def test_run_backtest_complejo(monkeypatch):
     # Con la escalera hay trades con añadidos registrados; en simple, ninguno.
     assert any(t.get("escalera_executions") for t in res["trades"])
     assert not any(t.get("escalera_executions") for t in simple["trades"])
+    # Y el detalle para el gráfico (`executions`) lleva los de la escalera
+    # marcados, para pintarlos pequeños.
+    ex_esc = [e for t in res["trades"] for e in (t.get("executions") or []) if e.get("escalera")]
+    assert ex_esc and all(e["kind"] in ("add", "reduce") and "Escalera" in e["label"] for e in ex_esc)
+    assert not any(e.get("escalera") for t in simple["trades"] for e in (t.get("executions") or []))

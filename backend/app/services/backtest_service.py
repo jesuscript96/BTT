@@ -1561,7 +1561,7 @@ def _build_executions(run: list[dict]) -> list[dict]:
     _size_adds = sum(
         float(pe.get("size") or 0.0)
         for leg in run
-        for pe in (leg.get("pyr_executions") or [])
+        for pe in ((leg.get("pyr_executions") or []) + (leg.get("escalera_executions") or []))
         if pe.get("kind") == "add"
     )
     _entry_size = _size_legs - _size_adds
@@ -1586,6 +1586,19 @@ def _build_executions(run: list[dict]) -> list[dict]:
                 "pnl": pe.get("pnl"),
                 "label": (f"Pirámide {pe.get('level')}: "
                           f"{'añade' if pe.get('kind') == 'add' else 'reduce'}"),
+            })
+        # Y los de la escalera del scalping complejo, marcados para que el
+        # gráfico los pinte más pequeños (son muchos y muy seguidos).
+        for pe in (leg.get("escalera_executions") or []):
+            execs.append({
+                "kind": pe.get("kind"),          # add | reduce
+                "time_epoch": pe.get("time_epoch"),
+                "price": pe.get("price"),
+                "size": pe.get("size"),
+                "pnl": pe.get("pnl"),
+                "escalera": True,
+                "label": (f"Escalera nivel {pe.get('nivel')}: "
+                          f"{'añade' if pe.get('kind') == 'add' else 'quita'}"),
             })
     # Una reducción de pirámide sale por PARTIDA DOBLE: como leg (el simulador
     # le emite un trade propio) y en `pyr_executions`. Se queda la segunda, que
