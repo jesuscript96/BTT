@@ -30,6 +30,39 @@
 
 ---
 
+## 2026-09-13 (Sailor) — La noche de vigilante: el perfil de volumen tumbaba el proceso, y la primera corrida con los alternativos
+
+Jaume lanzó «Genético variado 1» (`20260912_220222_31c6`: semilla 50, 80×40, 3 condiciones, los 25 indicadores marcados incluidos los alternativos, ventana 04:00-08:00, IS 2024-01-01 → 2026-01-01, `min_trades` 1200, **fees 0 y slippage 0**, `size_by_sl` apagado) y me dejó de vigilante toda la noche con el bot apagado. Subido a sailor y staging (`b972a32`, `3fb783a`).
+
+### ⚠️ El bug: `_perfil_volumen` escribía fuera del array
+
+La corrida murió a las 22:11 y otra vez a las 22:21, **con el mismo individuo** (`Bar Close cruza abajo Zona baja(0.5, 85) AND Absorption(10) AND Elapsed time(pm)`), sin traceback: el visor de sucesos de Windows la apunta como APPCRASH `0xC0000005` en `ntdll.dll`. `paralelo._apuntar` deja el individuo en `dir_datos/evaluando_<pid>.txt` (OJO: en el directorio de DATOS, no en el de la corrida), y con eso se reprodujo.
+
+La causa: el histograma del perfil tiene 4.096 franjas de anchura fija (% del primer precio del día). `i1` (el máximo) se acotaba; `i0` (el mínimo) NO, y con `i1 < i0 → i1 = i0` un mínimo fuera del histograma escribía fuera del array. numba no comprueba límites: se corrompe el heap y el proceso muere más tarde. OCTO 2025-09-08 hizo **32× el primer precio del día**; con franjas del 0,5 % son 6.400 franjas. En el dataset de la corrida hay 5 días así con bin 0,5 (OCTO, HOLO, CWD, SPRB, TNON); con bin 0,1 —que la UI permite— basta con 4×, o sea el 1 % de los días. **Este bug tumbaba también el backend** en un backtest normal con el perfil y «Detalle %» bajo.
+
+Reproducido con `NUMBA_BOUNDSCHECK=1` sobre el día real: la función de HEAD → `IndexError`; con el arreglo → OK. Lo que se sale por arriba se acumula en la última franja. Test `test_un_precio_fuera_del_histograma_no_revienta`; paridad en `lib/indicators.ts`.
+
+### Amnistía de crashes en el motor del genético
+
+`motor.reanudar()` lee los `evaluando_<pid>.txt` cuyo pid ya no existe, mete al individuo en la caché con fitness 0 y `error`, y renombra el fichero a `crash_<pid>.txt`. Sin esto, un crash determinista es un bucle: crash → reanudar → mismo individuo → crash. Con el vigilante reanudando cada 18 min, la noche aguanta cualquier crash nativo que quede (el «muere sola cada pocas horas» del docstring de `paralelo` sigue sin causa conocida; esta noche no apareció).
+
+### Lo operativo que se aprendió
+
+- **Reanudar recalcula los workers** con la RAM libre del momento (`config.json` guarda `workers: 0`). Tras parar el backend (su hijo `multiprocessing` ES el servidor, con la caché RAM del universo: 3,9 GB), la reanudación cogió 3 workers: 5 s/evaluación frente a 10. Toda la corrida, 232 min.
+- Un vigilante en el scratchpad (`vigilante.py`, foto cada 15-20 min: estado, pid vivo, CPU del árbol, RAM, backend; reanuda por API o directo como `_lanzar`; `--backend` relanza el 8010 como el lanzador). Temporal, fuera del repo.
+- Escribir en `backend/tests/` dispara el `--reload` igual que `backend/app/`.
+
+### El resultado (BRUTO)
+
+Mejor 56,89 = expectancy 1,55 $ (sobre 100 $ de nocional) × √1.347. PF 1,37, WR 41,6 %, DD −2,8 %, +15 % en 2 años. `Recorrido (%) > -2 AND Vol. de la franja(2.0) > 80 AND Wick Ratio(5, lower) < 0.3 · Stop: Último pivote alto +0 % · TP 15 %`. En cristiano: cortar un gapper de premercado cuando se estanca en el escalón de mayor volumen y nadie compra las caídas, stop pegado al último máximo confirmado, objetivo 15 %.
+
+- **El top 20 es UNA familia**: `Vol. de la franja(2.0) > 80` en los 20, pivote alto como stop en 17; la tercera pata es `Wick Ratio lower < 0,3` o `ATR Extension(hod)`. Ningún clásico entró. Son dos estrategias, no veinte.
+- **1,55 % del nocional por operación en premercado está dentro del spread.** No es edge hasta pasar el 2026 (OOS) con costes.
+- **74 % de los individuos a fitness 0** por el suelo de 1.200 operaciones. Para la próxima: 500-800 o ventana más ancha.
+- La curva de mejora fue sana (15 → 24 → 37 → 54 → 57, meseta desde la gen 36).
+
+---
+
 ## 2026-09-12 (Sailor, noche) — Los «Alternativos» entran en el genético, sin cambiar las corridas de siempre
 
 Jaume vio que los indicadores del 9 y 10-sep (regresión, absorción, mecha, retroceso, pivote, perfil de volumen) no estaban en el catálogo del genético y quería lanzar una corrida con ellos esa misma noche. **Premisa suya: no romper nada de lo que ya funciona.**
