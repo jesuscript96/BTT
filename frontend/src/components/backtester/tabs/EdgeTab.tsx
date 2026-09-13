@@ -285,13 +285,17 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
   const u = useMemo(() => umbrales(b, capital, riesgoPct, gastos, th), [b, capital, riesgoPct, gastos, th]);
   const riesgoActual = capital * riesgoPct / 100;
 
+  // La clave de cada fila es el valor de la REJILLA (unico por construccion),
+  // no el riesgo en $: con el capital a 0 —mientras se borra la casilla para
+  // escribir otra cifra— todas las filas daban 0 $ y React avisaba de claves
+  // repetidas.
   const filasRiesgo = useMemo(() => {
     const ps = Array.from(new Set([...RIESGOS_PCT, riesgoPct])).sort((a, c) => a - c);
-    return ps.map((p) => escenario(b, capital * p / 100, capital, gastos));
+    return ps.map((p) => ({ clave: `r${p}`, p, e: escenario(b, capital * p / 100, capital, gastos) }));
   }, [b, capital, gastos, riesgoPct]);
   const filasCapital = useMemo(() => {
     const cs = Array.from(new Set([...CAPITALES, capital])).sort((a, c) => a - c);
-    return cs.map((c) => escenario(b, c * riesgoPct / 100, c, gastos));
+    return cs.map((c) => ({ clave: `c${c}`, e: escenario(b, c * riesgoPct / 100, c, gastos) }));
   }, [b, gastos, riesgoPct, capital]);
 
   const eur = (x: number) => `${miles(Math.round(x))} $`;
@@ -300,7 +304,8 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
     e.parteGastos <= th ? color.profit : e.parteGastos >= 1 ? color.loss : color.warning;
   const celdaGastos = (e: Escenario) =>
     !Number.isFinite(e.parteGastos) ? "—" : e.parteGastos > 9.99 ? ">999 %" : pct(e.parteGastos * 100);
-  const esActual = (e: Escenario) => Math.abs(e.riesgo - riesgoActual) < 1e-6;
+  const esActual = (e: Escenario) =>
+    riesgoActual > 0 && Math.abs(e.riesgo - riesgoActual) < 1e-6 && e.capital === capital;
 
   const cabecera = (
     <Tr>
@@ -396,7 +401,7 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
           </div>
           <Table>
             <thead>{cabecera}</thead>
-            <tbody>{filasRiesgo.map((e) => fila(e, `${f2(e.riesgoPct)} %`, `r${e.riesgo}`))}</tbody>
+            <tbody>{filasRiesgo.map(({ clave, p, e }) => fila(e, `${f2(p)} %`, clave))}</tbody>
           </Table>
         </div>
         <div style={{ minWidth: 0, overflowX: "auto" }}>
@@ -405,7 +410,7 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
           </div>
           <Table>
             <thead>{cabecera}</thead>
-            <tbody>{filasCapital.map((e) => fila(e, eur(e.capital), `c${e.capital}`))}</tbody>
+            <tbody>{filasCapital.map(({ clave, e }) => fila(e, eur(e.capital), clave))}</tbody>
           </Table>
         </div>
       </div>
