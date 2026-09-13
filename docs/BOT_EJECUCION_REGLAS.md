@@ -138,6 +138,82 @@ y reconciliación), después el resto.)*
 - Estado: BORRADOR (12-sep). Depende de F (halts) y de la cuota del API.
 - Origen: C7. Directriz de Jaume del 12-sep.
 
+### R-C-05 · Stop que se mueve (trailing, break-even)
+- Situación: una estrategia recalcula el nivel del stop mientras la posición está abierta. Hoy NINGUNA estrategia lo hace; la regla queda escrita para cuando exista una.
+- Detección: nuevo nivel calculado por el motor al cierre de cada vela de 1 minuto (el stop se mueve como mucho una vez por minuto y por posición).
+- Acción: (1) poner primero el stop nuevo y después quitar el viejo (un instante con dos stops). (2) Si DAS no permite dos stops sobre la misma posición [API], quitar el viejo y poner el nuevo inmediatamente después, aceptando un instante sin stop, que queda cubierto por R-C-03 (posición sin stop) si el nuevo no se acepta.
+- Quién la ejecuta: ejecutor.
+- Parámetros: frecuencia = 1 vela de 1 min. Ninguno más.
+- Si la acción falla: el nuevo no se acepta → R-C-03; el viejo no se puede quitar teniendo el nuevo → aviso, y nunca dejar dos stops activos más de un instante (riesgo de cubrir el doble).
+- Prueba: tabla de casos (nuevo aceptado / rechazado; viejo cancelado / no) y sombra con una estrategia de trailing.
+- Estado: BORRADOR (13-sep). Sin uso hasta que haya una estrategia que mueva el stop. Depende del PDF: dos stops a la vez en DAS.
+- Origen: C8. Directriz de Jaume del 13-sep.
+
+### R-C-06 · Stop al piramidar (una sola estrategia)
+- Situación: la estrategia añade un lote a una posición abierta (p. ej. 1.000 → 1.500 acciones).
+- Detección: fill del lote nuevo confirmado por DAS.
+- Acción: UN solo stop para toda la posición: se MODIFICA el existente para que cubra las 1.500 acciones (procedimiento de R-C-05: primero el nuevo, luego el viejo; si no se puede, viejo y nuevo). El nivel lo dice la estrategia; lo más probable es que sea sobre el precio de la primera entrada. Los tres triggers de R-C-01 se recalculan sobre ese nivel.
+- Quién la ejecuta: ejecutor.
+- Parámetros: nivel del stop tras piramidar = el que defina la estrategia (por defecto, sobre la entrada).
+- Si la acción falla: mientras el stop no cubra las 1.500, hay acciones sin stop → R-C-03 sobre el lote descubierto.
+- Prueba: tabla de casos con 1, 2 y 3 lotes; sombra con una estrategia con pirámide.
+- Estado: BORRADOR (13-sep). AVISO: esta regla vale para UNA estrategia. Con dos o más estrategias sobre el mismo ticker puede haber niveles de stop distintos y cambia; se aborda en el área E.
+- Origen: C9. Directriz de Jaume del 13-sep.
+
+### R-C-07 · Stop al cerrar una parte por take profit
+- Situación: un take profit parcial cierra parte de la posición (p. ej. 1.500 → 1.000 acciones) y el stop sigue puesto para 1.500.
+- Detección: fill del parcial confirmado por DAS.
+- Acción: reducir el stop a las acciones que quedan (1.000) nada más confirmarse el cierre parcial. Un stop mayor que la posición, si salta, compra de más y deja la cuenta LARGA sin querer: eso se evita siempre. El nivel del stop NO se mueve: se queda donde estaba salvo que la estrategia diga otra cosa.
+- Quién la ejecuta: ejecutor.
+- Parámetros: ninguno.
+- Si la acción falla (DAS no acepta la reducción): POR DECIDIR tras el PDF. Las dos opciones son posibles: (a) dejar el stop grande un momento, (b) quitar el stop y aplicar R-C-03. Jaume cree que no hará falta quitarlo: probablemente DAS deja cambiar solo la cantidad del stop [API].
+- Prueba: tabla de casos (parcial 1 de 2, 2 de 2; reducción aceptada / rechazada).
+- Estado: BORRADOR (13-sep). Pendiente post-PDF: el plan B cuando la reducción falla.
+- Origen: C10. Directriz de Jaume del 13-sep.
+
+**Pendiente para meditar con el PDF (Jaume, 13-sep), no es regla:** en una emergencia en la que la posición está «al descubierto» (sin stop, por un problema con el stop u órdenes que no se ejecutan) y el precio se acerca al nivel que tenía el stop, cerrar a partir de un X % de distancia hacia ese nivel. Choca con la lógica de cisne negro (no cerrar cuando se dispara); hay que meditarlo con toda la información del PDF. Enlaza con C12 (stop mental) y con las contingencias del área G.
+
+### R-C-08 · Vigilancia constante del precio: el «vigilante» (segundo proceso)
+- Situación: siempre que haya una posición abierta, con o sin stop puesto en DAS.
+- Detección: un proceso APARTE del ejecutor (el «jefe» o vigilante) mira de forma continua: (a) el precio de DAS (no el de Massive) contra los niveles de cada posición; (b) que el stop siga puesto en DAS (R-C-04); (c) que el ejecutor esté vivo (latido). No participa en las órdenes normales, así que no añade latencia.
+- Acción: si el precio pasa del nivel y DAS no ha ejecutado, o la posición está al descubierto, el vigilante ACTÚA (manda él la orden) según criterios por fijar: habrá situaciones en las que cierra y otras en las que NO debe cerrar (p. ej. el precio ha pasado los tres triggers incluido el de emergencia y se asume cisne negro: no ejecutar). Siempre avisa por Telegram.
+- Quién la ejecuta: vigilante (proceso propio).
+- Parámetros: por fijar: frecuencia de lectura del precio; criterios cerrar / no cerrar; distancia X % al nivel para el caso «al descubierto» (pendiente de C10).
+- Si la acción falla: el vigilante no puede mandar la orden → aviso urgente, humano. Si el vigilante muere, el ejecutor lo detecta y avisa (y viceversa).
+- Prueba: matar el ejecutor con posición abierta en sombra/demo y comprobar que el vigilante ve, actúa y avisa; simulacro de precio que pasa el nivel sin fill.
+- Estado: BORRADOR (13-sep). Decidido: vigilancia constante y proceso aparte. Pendiente: los criterios de cuándo cierra y cuándo no (con el PDF y las contingencias). Dos requisitos [API]: (1) que DAS admita DOS conexiones a la vez con el mismo login (ejecutor y vigilante); si no, el vigilante depende del ejecutor y pierde sentido en el caso de que el ejecutor sea el roto; (2) cerrojo por posición para que vigilante y ejecutor no se pisen (cuando el vigilante toma el mando de una posición, el ejecutor no la toca).
+- Origen: C12. Directriz de Jaume del 13-sep. Nota de Jaume: cree que DAS solo admite UNA conexión al API; se confirma con la clave y el PDF.
+
+### R-C-09 · Stop de estructura: quién calcula el nivel y con qué datos
+- Situación: la estrategia usa un stop de estructura (máximo del premercado, máximo de N velas, etc.), que en el backtester es un texto que el motor traduce a un nivel.
+- Detección: el nivel lo calcula el MOTOR COMPARTIDO con el backtester, con los datos de Massive (igual que el bot de alertas, que funciona bien así); el ejecutor recibe un número. Paridad con el backtest: lo que hace el bot es lo que se midió.
+- Acción: (1) entradas, señales y niveles: datos de Massive. (2) Vigilancia del precio, posiciones y órdenes: datos de DAS. (3) Caso extremo: si al ir a entrar el nivel de estructura queda por DEBAJO del precio actual (no debería pasar: el nivel se actualiza solo y subiría), NO se entra.
+- Quién la ejecuta: motor (nivel) + guarda (caso extremo) + ejecutor.
+- Parámetros: ninguno.
+- Si la acción falla: sin nivel calculable (datos incompletos) → no se entra (enlaza con A12).
+- Prueba: comparar en sombra el nivel calculado en vivo con el que da el backtester para el mismo ticker-día (paridad, como se hizo con las alertas: 73 ticker-días, cero divergencias).
+- Estado: BORRADOR (13-sep). Aviso conocido: Massive incluye prints tardíos y de dark pool; un máximo de PM puede venir de un print que no estuvo en el libro. No se filtra (paridad con el backtester), pero es una fuente de diferencia entre nivel y precio real que se medirá en sombra.
+- Origen: C13. Directriz de Jaume del 13-sep.
+
+**Prints tardíos y dark pool (Jaume preguntó cómo se solventa, 13-sep):** no en el cálculo del nivel (paridad), sino en el DISPARO: (1) stop de DAS que dispare por bid/ask, no por último precio, si DAS lo permite [API, C6]; (2) el vigilante exige que el precio se sostenga N segundos / N prints por encima del nivel antes de actuar; (3) medir en sombra cuántos niveles de estructura los fija un print tardío; solo si es frecuente se plantearía filtrarlos en lago y backtester a la vez.
+
+### R-C-10 · Stop al arrancar el bot con posiciones ya abiertas
+- Situación: el bot arranca (reinicio, caída y relanzamiento) y DAS tiene posiciones abiertas.
+- Detección: reconciliación al arrancar: posiciones y órdenes de DAS contra el diario del bot.
+- Acción, por casos:
+  1. Posición conocida con stop en DAS que COINCIDE con el que calcula el bot: nada.
+  2. Posición conocida con stop en DAS que DIFIERE: manda el que calcula el bot AHORA (si difiere es porque durante la caída no se pudo mover). Se sustituye con R-C-05.
+  3. Posición conocida SIN stop: R-C-03 con el stop que corresponda a la estrategia y a la cantidad, y aviso del incidente para rastrear el fallo.
+  4. Posición que el bot NO reconoce (no está en su diario, p. ej. abierta a mano): aviso INMEDIATO de que hay una posición flotante desconocida sobre la que hay que actuar, y stop de protección a cierta distancia: por encima si es corta, por debajo si es larga (orientativo 20-30 %, parámetro).
+- Quién la ejecuta: reconciliación + ejecutor.
+- Parámetros: distancia del stop de protección para posiciones desconocidas (20-30 %).
+- Si la acción falla: R-C-03.
+- Prueba: arrancar el bot en sombra/demo con cada uno de los cuatro casos preparados.
+- Estado: BORRADOR (13-sep).
+- Origen: C14. Directriz de Jaume del 13-sep.
+
+**PENDIENTE (Jaume, 13-sep): traspaso humano ↔ bot.** Cuando actuamos nosotros sobre una posición (cerrarla a mano a mercado, quitar el stop de protección que puso el bot), hace falta una forma de decirle al bot «esto lo he hecho yo, sigue con lo tuyo» para que no lo trate como incidente ni lo deshaga. Sin resolver; enlaza con K5 y M6.
+
 ### Área G · El precio se dispara
 
 ### Área F · Halts
