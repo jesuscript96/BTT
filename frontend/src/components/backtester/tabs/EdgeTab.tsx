@@ -26,6 +26,9 @@ import {
   Barras, Barrido, CurvaMarginal, Descomposicion, Excursiones, Forest, Histograma, Mensual, Piruleta, hhmm, rampa,
 } from "./edge/charts";
 import { pedirRecorrido, type Recorrido } from "@/lib/api_edge";
+import {
+  CAPITALES, RIESGOS_PCT, base as baseGastos, escenario, umbrales, type Escenario,
+} from "./edge/gastos";
 
 /* ---- piezas de presentación ---- */
 
@@ -244,8 +247,174 @@ function SelectorPeriodos({ periodos, ocultos, alternar }: {
 
 const MIN_OPS = 100;
 
-export default function EdgeTab({ trades, datasetId = "" }: {
-  trades: TradeRecord[]; datasetId?: string;
+
+/* ---- Fase 5: gastos fijos, capital y riesgo ------------------------------ */
+
+const Entrada = ({ etiqueta, valor, onChange, sufijo, paso, ancho }: {
+  etiqueta: string; valor: number; onChange: (v: number) => void; sufijo?: string; paso?: number; ancho?: number;
+}) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <span style={{ fontSize: 11.5, color: color.textMuted, whiteSpace: "nowrap" }}>{etiqueta}</span>
+    <input type="number" value={Number.isFinite(valor) ? valor : 0} step={paso ?? 1} min={0}
+      onChange={(e) => onChange(Number(e.target.value))}
+      style={{ background: color.bgBase, border: `1px solid ${color.border}`, color: color.textHigh,
+               fontFamily: font.mono, fontSize: 12.5, height: 28, padding: "0 8px", width: ancho ?? 92,
+               textAlign: "right" }} />
+    {sufijo && <span style={{ fontSize: 11.5, color: color.textMuted }}>{sufijo}</span>}
+  </div>
+);
+
+function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
+  trades: TradeRecord[]; riskR: number; initCash: number; gastosPanel: number; riskType?: string;
+}) {
+  // Lo que vino del panel es el punto de partida; aqui se puede jugar sin
+  // relanzar nada, porque todo es una escala sobre los meses ya corridos.
+  // Con riesgo en % del equity, `riskR` ES el porcentaje: el riesgo en $ del
+  // primer dia es capital x %, y el PnL de la corrida hay que descomponerlo
+  // (ver gastos.ts). Con riesgo fijo, `riskR` son los $ por operacion.
+  const enPct = riskType === "PERCENT";
+  const riesgo0 = enPct ? initCash * riskR / 100 : riskR;
+  const [gastos, setGastos] = useState(gastosPanel > 0 ? gastosPanel : 300);
+  const [capital, setCapital] = useState(initCash > 0 ? initCash : 10_000);
+  const [riesgoPct, setRiesgoPct] = useState(
+    enPct ? riskR : initCash > 0 && riskR > 0 ? Math.round((riskR / initCash) * 10000) / 100 : 1);
+  const [theta, setTheta] = useState<"5" | "10" | "20">("10");
+  const th = Number(theta) / 100;
+
+  const b = useMemo(() => baseGastos(trades, riesgo0, enPct), [trades, riesgo0, enPct]);
+  const u = useMemo(() => umbrales(b, capital, riesgoPct, gastos, th), [b, capital, riesgoPct, gastos, th]);
+  const riesgoActual = capital * riesgoPct / 100;
+
+  const filasRiesgo = useMemo(() => {
+    const ps = Array.from(new Set([...RIESGOS_PCT, riesgoPct])).sort((a, c) => a - c);
+    return ps.map((p) => escenario(b, capital * p / 100, capital, gastos));
+  }, [b, capital, gastos, riesgoPct]);
+  const filasCapital = useMemo(() => {
+    const cs = Array.from(new Set([...CAPITALES, capital])).sort((a, c) => a - c);
+    return cs.map((c) => escenario(b, c * riesgoPct / 100, c, gastos));
+  }, [b, gastos, riesgoPct, capital]);
+
+  const eur = (x: number) => `${miles(Math.round(x))} $`;
+  const pct = (x: number) => `${f1(x)} %`;
+  const tonoGastos = (e: Escenario) =>
+    e.parteGastos <= th ? color.profit : e.parteGastos >= 1 ? color.loss : color.warning;
+  const celdaGastos = (e: Escenario) =>
+    !Number.isFinite(e.parteGastos) ? "—" : e.parteGastos > 9.99 ? ">999 %" : pct(e.parteGastos * 100);
+  const esActual = (e: Escenario) => Math.abs(e.riesgo - riesgoActual) < 1e-6;
+
+  const cabecera = (
+    <Tr>
+      <Th>Riesgo</Th><Th style={{ textAlign: "right" }}>$ / op.</Th>
+      <Th style={{ textAlign: "right" }}>Bruto / mes</Th>
+      <Th style={{ textAlign: "right" }}>Gastos</Th>
+      <Th style={{ textAlign: "right" }}>Neto / mes</Th>
+      <Th style={{ textAlign: "right" }}>Meses en pérdida</Th>
+      <Th style={{ textAlign: "right" }}>Caída máx.</Th>
+      <Th style={{ textAlign: "right" }}>Posición</Th>
+    </Tr>
+  );
+  const fila = (e: Escenario, primera: React.ReactNode, key: string) => (
+    <Tr key={key} style={esActual(e) ? { background: "rgba(184,115,51,0.12)" } : undefined}>
+      <Td style={{ fontFamily: font.mono, color: color.textHigh, whiteSpace: "nowrap" }}>
+        {primera}{esActual(e) && <span style={{ color: color.copperBright }}> ·ahora</span>}
+      </Td>
+      <Td style={num}>{eur(e.riesgo)}</Td>
+      <Td style={{ ...num, color: e.brutoMes >= 0 ? color.textHigh : color.loss }}>{eur(e.brutoMes)}</Td>
+      <Td style={{ ...num, color: tonoGastos(e), fontWeight: 600 }}>{celdaGastos(e)}</Td>
+      <Td style={{ ...num, color: e.netoMes >= 0 ? color.profit : color.loss, fontWeight: 600 }}>{eur(e.netoMes)}</Td>
+      <Td style={num}>{pct(e.mesesPerdida * 100)}</Td>
+      <Td style={{ ...num, color: e.ddPct > 25 ? color.loss : e.ddPct > 12 ? color.warning : color.textHigh }}>{pct(e.ddPct)}</Td>
+      <Td style={{ ...num, color: e.posicion > 25_000 ? color.warning : color.textSecondary }}>{eur(e.posicion)}</Td>
+    </Tr>
+  );
+
+  const sinBruto = b.brutoMedio <= 0;
+  return (
+    <Bloque
+      titulo="Gastos fijos: punto de equilibrio y umbral de ruido"
+      ayuda={<Ayuda
+        titulo="Gastos fijos: punto de equilibrio y umbral de ruido"
+        ves="Qué pasa con el beneficio mensual de esta misma corrida si cambias el capital o el riesgo por operación, descontando una cifra fija de gastos al mes. No se relanza nada: como el riesgo es fijo en dólares, el resultado de cada mes escala en proporción, y los meses son los reales de la corrida."
+        ejemplo={u
+          ? <>Con {eur(gastos)} al mes de gastos y {eur(capital)} de capital, el equilibrio está en un riesgo
+              del <b>{f2(u.riesgoEquilibrioPct)} %</b> por operación (por debajo, pierdes aunque la estrategia gane).
+              Para que los gastos sean ruido ({theta} % del bruto o menos) hace falta un <b>{f2(u.riesgoRuidoPct)} %</b>,
+              y ese riesgo implica una caída máxima del <b>{f1(u.ddEnRuidoPct)} %</b> del capital. Al revés: con tu
+              riesgo actual del {f2(riesgoPct)} %, el capital para que sean ruido es <b>{eur(u.capitalRuido)}</b>.</>
+          : <>Con 300 $ de gastos, 1 % de riesgo y una estrategia que hace 5 R al mes, el equilibrio son 6.000 $
+              de capital y el «ruido» (10 %) llega a los 60.000 $.</>}
+        sirve="Es la pregunta de si te puedes permitir la estrategia con tu cuenta. El edge es un porcentaje y escala con el capital; los gastos son una cifra y no. Con poco capital el bruto de un mes es del orden de los gastos, y un mes flojo es un mes en pérdidas aunque la estrategia sea buena: la columna «meses en pérdida» lo cuenta sobre los meses reales, no sobre la media."
+        escenarios={[
+          ["Tu fila «ahora» tiene los gastos en verde", "Ya son ruido: la estrategia es la que manda en tu resultado, no la factura."],
+          ["Están en ámbar (entre el umbral y el 100 %)", "Ganas, pero los gastos se llevan un trozo grande. Subir el riesgo lo arregla si la caída máxima de esa fila te la puedes permitir; si no, hace falta más capital."],
+          ["Están en rojo (100 % o más)", "Los gastos se comen todo el beneficio: con esta cuenta y este riesgo, la estrategia trabaja para la factura."],
+          ["La fila que cumple el umbral tiene una caída máxima que no aguantarías", "Entonces el problema no es el riesgo, es el capital: mira la tabla de la derecha."],
+          ["La posición se pone en ámbar", "A ese tamaño, en small caps, el backtest deja de ser creíble: no se llena al precio del histórico."],
+        ]}
+        nota={enPct
+          ? `la corrida usa riesgo en % del equity (${f2(riskR)} %), así que su PnL en $ compone y no sirve tal cual: aquí cada operación se pasa a lo que habría dado con un riesgo fijo de ${miles(Math.round(riesgo0))} $ (el del primer día) usando su retorno sobre el capital en riesgo. La escala es lineal desde ahí; en small caps deja de serlo con posiciones grandes.`
+          : riskType && riskType !== "FIXED"
+            ? `la corrida usa riesgo «${riskType}»: se toma como fijo de ${miles(Math.round(riskR))} $ por operación, y es una aproximación.`
+            : "los meses son los de la corrida (del primero al último con operaciones, contando los vacíos), y la escala es lineal: en small caps deja de serlo con posiciones grandes."}
+      />}
+      pie={sinBruto
+        ? <>La estrategia <b style={{ color: color.loss }}>no gana ni sin gastos</b> (bruto medio {eur(b.brutoMedio)} al mes): no hay punto de equilibrio que buscar.</>
+        : u && <>
+            Con <b>{eur(gastos)}</b>/mes y <b>{eur(capital)}</b>: equilibrio en el <b style={{ color: color.warning }}>{f2(u.riesgoEquilibrioPct)} %</b> de riesgo;
+            ruido (≤ {theta} %) a partir del <b style={{ color: color.copperBright }}>{f2(u.riesgoRuidoPct)} %</b>, que cuesta una caída máxima
+            del <b>{f1(u.ddEnRuidoPct)} %</b>. Con tu <b>{f2(riesgoPct)} %</b>: equilibrio con <b>{eur(u.capitalEquilibrio)}</b> y ruido con <b style={{ color: color.copperBright }}>{eur(u.capitalRuido)}</b>.
+            Bruto medio de la corrida: {eur(b.brutoMedio)}/mes a {eur(riesgo0)} por operación, {b.meses.length} meses.
+          </>}
+    >
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+        <Entrada etiqueta="Gastos fijos" valor={gastos} onChange={setGastos} sufijo="$/mes" paso={10} />
+        <Entrada etiqueta="Capital" valor={capital} onChange={setCapital} sufijo="$" paso={1000} ancho={104} />
+        <Entrada etiqueta="Riesgo" valor={riesgoPct} onChange={setRiesgoPct} sufijo="% por op." paso={0.25} ancho={72} />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11.5, color: color.textMuted }}>Son «ruido» si se llevan ≤</span>
+          <Seg<"5" | "10" | "20"> valor={theta} onChange={setTheta}
+               opciones={[{ id: "5", label: "5 %" }, { id: "10", label: "10 %" }, { id: "20", label: "20 %" }]} />
+          <span style={{ fontSize: 11.5, color: color.textMuted }}>del bruto</span>
+        </div>
+      </div>
+
+      {!sinBruto && u && (
+        <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, borderBottom: `0.5px solid ${color.border}`, padding: "10px 0", marginBottom: 12 }}>
+          <Cifra k="Bruto / mes en la corrida" v={eur(b.brutoMedio)} s={`a ${eur(riesgo0)} por operación${enPct ? " (descompuesto)" : ""}`} />
+          <Cifra k="Riesgo de equilibrio" v={`${f2(u.riesgoEquilibrioPct)} %`} s="neto = 0 con este capital" tono={color.warning} />
+          <Cifra k="Riesgo para que sean ruido" v={`${f2(u.riesgoRuidoPct)} %`} s={`caída máxima ${f1(u.ddEnRuidoPct)} %`} tono={color.copperBright} />
+          <Cifra k={`Capital para ruido al ${f2(riesgoPct)} %`} v={eur(u.capitalRuido)} s={`equilibrio con ${eur(u.capitalEquilibrio)}`} tono={color.copperBright} ultima />
+        </div>
+      )}
+
+      {/* Una tabla debajo de la otra: ocho columnas por dos no caben en una
+          fila y se cortaban las de la derecha. */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr)", gap: 14 }}>
+        <div style={{ minWidth: 0, overflowX: "auto" }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textMuted, marginBottom: 6 }}>
+            Por riesgo · capital {eur(capital)}
+          </div>
+          <Table>
+            <thead>{cabecera}</thead>
+            <tbody>{filasRiesgo.map((e) => fila(e, `${f2(e.riesgoPct)} %`, `r${e.riesgo}`))}</tbody>
+          </Table>
+        </div>
+        <div style={{ minWidth: 0, overflowX: "auto" }}>
+          <div style={{ fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textMuted, marginBottom: 6 }}>
+            Por capital · riesgo {f2(riesgoPct)} %
+          </div>
+          <Table>
+            <thead>{cabecera}</thead>
+            <tbody>{filasCapital.map((e) => fila(e, eur(e.capital), `c${e.capital}`))}</tbody>
+          </Table>
+        </div>
+      </div>
+    </Bloque>
+  );
+}
+
+export default function EdgeTab({ trades, datasetId = "", riskR = 0, initCash = 0, monthlyExpenses = 0, riskType }: {
+  trades: TradeRecord[]; datasetId?: string; riskR?: number; initCash?: number; monthlyExpenses?: number; riskType?: string;
 }) {
   const [modo, setModo] = useState<Modo>("anio");
   const unidadMax = useMemo(() => unidadDisponible(trades), [trades]);
@@ -1097,6 +1266,10 @@ export default function EdgeTab({ trades, datasetId = "" }: {
               </div>}
         </Bloque>
       </div>
+
+      {/* === FASE 5 === */}
+      <Fase n="5 · ¿Con cuánto capital y a qué riesgo?" />
+      <GastosFijos trades={trades} riskR={riskR} initCash={initCash} gastosPanel={monthlyExpenses} riskType={riskType} />
 
       <div style={{
         marginTop: 16, padding: "10px 13px", border: `1px solid ${color.border}`,

@@ -370,7 +370,10 @@ export default function ResultsTabs({
         </div>
         <div style={{ display: activeTab === "edge" ? "block" : "none" }}>
           {mountedTabs.has("edge") && (
-          <EdgeTab trades={result.trades} datasetId={datasetId} />
+          <EdgeTab trades={result.trades} datasetId={datasetId}
+                   riskR={riskR} initCash={initCash}
+                   monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
+                   riskType={backtestParams?.risk_type as string | undefined} />
           )}
         </div>
          <div style={{ display: activeTab === "charts_optimization" ? "block" : "none" }}>
