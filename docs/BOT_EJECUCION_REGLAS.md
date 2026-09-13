@@ -63,8 +63,11 @@ Cualquiera se puede rebajar, pero por escrito y con fecha.
 - **M8.** Telegram solo para lo que importa: entradas, salidas, datos concretos
   y errores. Las prealertas no van a Telegram (sirven para procesos internos).
 - **M9.** Tamaño por fracción del volumen reciente desde el principio.
-- **M10.** Premercado = órdenes límite. Para salir, asegurar la salida aunque
-  sea a peor precio.
+- **M10.** Premercado = órdenes límite (en PM no hay órdenes a mercado).
+  Matiz de Jaume (12-sep): la idea de «asegurar la salida aunque sea a peor
+  precio» NO es un principio: depende de si es PM o RTH, puede no interesar, y
+  choca con el fogonazo, donde a veces se quiere NO cerrar. Cómo se sale y a
+  qué precio se decide regla a regla en las áreas C, D y G.
 - **M11.** La exposición al riesgo viaja en el JSON de la estrategia y tiene
   cuadro de mandos propio.
 - **M12.** Producción en VPS Windows con DAS dentro; desarrollo en el PC de
@@ -90,6 +93,50 @@ F (halts), I (cortacircuitos), B (entrada), H (locates), J y K (infraestructura
 y reconciliación), después el resto.)*
 
 ### Área C · Stop y protección
+
+### R-C-01 · Stop en tres niveles con límite, y cuarto nivel «cisne negro»
+- Situación: el bot abre un corto. Aplica desde el fill de entrada hasta el cierre.
+- Detección: el precio toca cada nivel (trigger). Cómo detecta DAS o el bot el toque (último precio, bid/ask) → C6 [API].
+- Acción: tres triggers escalonados por encima de la entrada (N1 < N2 < N3), cada uno con orden de compra LIMITADA (cubrir = comprar, se paga el ask). El límite se pone por encima del ask para asegurar la salida: en N1 y N2 muy poco por encima; en N3 (emergencia, el precio ya se ha disparado mucho) bastante más por encima. Si N1 no consigue cerrar, entra N2; si N2 no, N3. Si el precio pasa de largo N3 sin llenarse, y se cumplen unas condiciones por definir (área G), se considera cisne negro y el bot NO cierra: espera del orden de media hora y se reevalúa.
+- Quién la ejecuta: ejecutor (colocar y sustituir órdenes) + guarda (condiciones de cisne negro).
+- Parámetros: N1, N2, N3 en % sobre la entrada (o según estructura); margen del límite sobre el ask en cada nivel, en % (pequeño en N1/N2, grande en N3); espera tras pasar N3 (≈ 30 min). Nunca precios fijos: todo en % porque depende del precio de cada acción. Valores: los da Jaume, van al cuadro de mandos.
+- Si la acción falla: N3 sin llenar y sin condiciones de cisne negro → por definir (C5).
+- Prueba: tabla de casos con precio caminando por N1, N2, N3 y pasando de largo; réplica en sombra.
+- Estado: BORRADOR (12-sep). Pendiente: (a) confirmar con el socio; (b) RTH: Jaume cree que igual, no lo tiene claro; (c) [API, PRIORITARIO] la idea de Jaume es UN solo stop con varios triggers (los tres niveles dentro de la misma orden), porque un evento así va muy rápido y no da tiempo a que el bot cancele y reponga tres stops; hay que confirmar con el PDF si DAS lo admite. Si no lo admite, se decide entonces cómo hacerlo; (d) cómo se define «no consigue cerrar» en cada nivel (tiempo o precio que supera el límite) → C5; (e) condiciones de cisne negro → G1/G2.
+- Origen: C1. Directriz de Jaume del 12-sep.
+
+### R-C-02 · Paso de un nivel de stop al siguiente
+- Situación: el precio ha tocado un trigger (N1 o N2) y la orden limitada de ese nivel no ha comprado todo.
+- Detección: por PRECIO: el precio supera el trigger siguiente. Si no se compró nada, o se compró solo una parte (p. ej. 300 de 1.000), es porque el precio ha pasado por encima; lo que queda en corto pasa a intentar cerrar en el siguiente nivel. No hay criterio de tiempo.
+- Acción: lo no cubierto se cierra con las condiciones del siguiente nivel (su trigger y su margen sobre el ask). Tras N3, aplica lo de R-C-01 (cisne negro, espera).
+- Quién la ejecuta: idealmente DAS (un stop con varios triggers); si no, el ejecutor.
+- Parámetros: los de R-C-01.
+- Si la acción falla: por definir con el PDF.
+- Prueba: tabla de casos (se compra todo / nada / parte) en cada nivel.
+- Estado: BORRADOR (12-sep). NO SE PUEDE CERRAR hasta saber cómo funcionan los stops en DAS [API]: si admite varios triggers en un stop, si hacen falta varios stops, o si el bot tiene que vigilar el precio y cerrar a mercado él mismo.
+- Origen: C5. Directriz de Jaume del 12-sep. Aclaración: el ÚNICO criterio de tiempo en los stops es el de después del tercer nivel (cisne negro, espera de media hora), y se especifica en el bloque de contingencias, no aquí.
+
+### R-C-03 · Posición sin stop puesto en DAS
+- Situación: hay posición abierta y DAS no tiene el stop aceptado: justo tras la entrada, o porque DAS lo ha rechazado o cancelado.
+- Detección: el ejecutor no recibe la confirmación del stop, o la reconciliación ve posición sin stop.
+- Acción: (1) volver a intentar poner el stop, hasta 5 intentos; (2) avisar al humano (Telegram o lo que se decida) si no se consigue; (3) si tras los 5 intentos sigue sin stop, cerrar la posición en ese momento, SIEMPRE QUE el precio no haya subido más de un 100 % desde que se intentó poner el primer stop (ventana de 5 minutos). Si ha subido más del 100 %, no se cierra: se trata como cisne negro (contingencias).
+- Quién la ejecuta: ejecutor (reintentos y cierre) + supervisión (aviso).
+- Parámetros: intentos = 5; ventana = 5 min; subida máxima para cerrar = 100 %. Separación entre intentos: por definir.
+- Si la acción falla: el cierre tampoco se ejecuta → aviso urgente, humano.
+- Prueba: simulacro con DAS rechazando el stop (demo o sombra).
+- Estado: BORRADOR (12-sep). El punto (3) (cerrar tras 5 intentos con el tope del 100 %) NO está claro para Jaume: volver a preguntárselo cuando llegue el PDF.
+- Origen: C4. Directriz de Jaume del 12-sep.
+
+### R-C-04 · El stop desaparece a mitad de la posición
+- Situación: el stop estaba aceptado en DAS y deja de estarlo (cancelado por halt, rechazo tardío, error).
+- Detección: dos vías a la vez: (a) el aviso de cancelación que envíe DAS; (b) comprobación activa cada segundo de que el stop sigue puesto, si no resulta costosa para el API [API: cuota de mensajes].
+- Acción: la misma lógica de R-C-03 (reintentar hasta 5 veces, avisar al humano, cierre condicionado). Excepción: si la causa es un HALT, no se puede hacer nada hasta la reapertura y entra la regla de halts (área F): con dos halts seguidos se cierra a mercado en cuanto reabra, con rutas concretas por definir; y habrá un protocolo aparte para cuando el precio se acerque a una banda LULD (limit up / limit down).
+- Quién la ejecuta: reconciliación (detección) + ejecutor (R-C-03).
+- Parámetros: intervalo de comprobación = 1 s (ajustable si el API lo penaliza).
+- Si la acción falla: igual que R-C-03.
+- Prueba: cancelar el stop a mano en demo/sombra y medir cuánto tarda el bot en verlo y reponerlo.
+- Estado: BORRADOR (12-sep). Depende de F (halts) y de la cuota del API.
+- Origen: C7. Directriz de Jaume del 12-sep.
 
 ### Área G · El precio se dispara
 

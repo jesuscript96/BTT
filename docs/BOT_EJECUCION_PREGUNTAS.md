@@ -57,13 +57,13 @@
 
 ## C. Stop y protección de la posición
 
-- [ ] C1. Tipo de stop por defecto: ¿mercado, limitado o limitado con banda ancha? ¿Distinto en premercado y en sesión? **[dato]** el precio camina: un limitado a +20 % se ejecutó en 654 de 678 casos; un stop a mercado de 300 $ se ejecutó una vez contra un print suelto a 5,6× el nivel; el limitado lo tapa. (P2, PUNTO ABIERTO)
+- [x] C1. → R-C-01 (borrador; RTH y socio pendientes). Tipo de stop por defecto: ¿mercado, limitado o limitado con banda ancha? ¿Distinto en premercado y en sesión? **[dato]** el precio camina: un limitado a +20 % se ejecutó en 654 de 678 casos; un stop a mercado de 300 $ se ejecutó una vez contra un print suelto a 5,6× el nivel; el limitado lo tapa. (P2, PUNTO ABIERTO)
 - [ ] C2. ¿El stop vive en el servidor de DAS o en el bot? Si vive en el bot, ¿qué protege la posición cuando el bot muere? **[API]**
 - [ ] C3. ¿Los stops de DAS disparan en premercado? ¿Con qué precio: último, bid/ask, print tardío? **[API]**
-- [ ] C4. ¿Cuánto tiempo puede estar una posición sin stop residente? Pasados N s, ¿se cierra a mercado?
-- [ ] C5. Stop limitado disparado y no ejecutado en N s porque el precio siguió subiendo: ¿se recoloca más arriba, se convierte a mercado o se aplica la espera de fogonazo?
+- [x] C4. → R-C-03 (borrador; el cierre tras 5 intentos se repregunta con el PDF). ¿Cuánto tiempo puede estar una posición sin stop residente? Pasados N s, ¿se cierra a mercado?
+- [x] C5. → R-C-02 (borrador, bloqueado por el PDF: triggers en DAS). Stop limitado disparado y no ejecutado en N s porque el precio siguió subiendo: ¿se recoloca más arriba, se convierte a mercado o se aplica la espera de fogonazo?
 - [ ] C6. Stop disparado por un print suelto tardío: ¿se puede pedir un stop que mire bid/ask en vez del último precio? ¿Lo permite DAS? **[API]**
-- [ ] C7. Si DAS rechaza o cancela el stop (por ejemplo tras un halt), ¿quién se entera, en cuánto tiempo y qué hace?
+- [x] C7. → R-C-04 (borrador; depende de F). Si DAS rechaza o cancela el stop (por ejemplo tras un halt), ¿quién se entera, en cuánto tiempo y qué hace?
 - [ ] C8. Stop que se mueve (trailing, break-even): ¿lo mueve el bot cancelando y reponiendo, o DAS? Si entre cancelar y reponer el precio cruza el nivel, ¿qué pasa?
 - [ ] C9. Pirámide: ¿un stop por lote o uno único para la posición? ¿Cómo se actualiza al añadir?
 - [ ] C10. Take profit parcial: ¿se reduce el stop a las acciones restantes en el mismo instante? ¿Y si la reducción falla?
