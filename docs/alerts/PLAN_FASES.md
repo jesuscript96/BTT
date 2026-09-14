@@ -211,8 +211,13 @@ crear-alarma→redeploy→sigue-ahí = opcional (necesita un redeploy manual de 
 - **Observer de premarket** montado (`/root/alarms_premarket_observer.py` + cron host, checkpoints
   02:00–07:00 GT / 04:00–09:00 ET del 2026-09-15) → postea a Discord el estado del motor + Top PM
   High Gap en vivo. Lee el snapshot por el WS `/api/screener/live` (sin auth en servidor).
+- **✅ DISPARO EN VIVO EN PROD (2026-09-14 13:32 ET):** alarma canary creada DESDE EL NAVEGADOR
+  (admin) sobre FTFT (tickers concretos) con condición `Change % > 30`; FTFT iba +100% → disparó →
+  **llegó el aviso a Telegram del bot de prod `@Edgiethebot`** (@AgarciaDigital). Verificado por los
+  dos lados: API (active_alarms=1, FTFT chg=100 en el WS) + recepción en el teléfono. Nota:
+  `watched_tickers` queda `[]` con alarmas de *tickers concretos* (esa lista es solo para universo).
 - **Falta para cerrar F6:** validar el premarket real del 2026-09-15 (que los gappers salen con su
-  PM High Gap correcto). El canary de disparo+Telegram en prod se puede hacer en RTH o dejarlo a F7.
+  PM High Gap correcto) vía observer. El camino en vivo detecta→dispara→avisa YA está probado.
 
 ---
 
@@ -220,13 +225,15 @@ crear-alarma→redeploy→sigue-ahí = opcional (necesita un redeploy manual de 
 **Objetivo:** abrir la feature a los admins, con el camino en vivo ya probado.
 
 **Qué hay que hacer (concreto):**
-1. **Frontend en prod (Vercel):** el push a `main` ya re-desplegó el UI (admin-gated) — confirmar que
-   el panel de Alarmas **abre y pinta** en `app.edgecute.com` para un admin, y que apunta al backend
-   de prod (no da 404 en `/api/alarms/*`).
-2. **E2E desde el navegador (el criterio final de Jesús):** un admin **crea una alarma**, la guarda,
-   la apaga/enciende, recarga y **persiste**; conecta Telegram (Start al bot de prod `@Edgiethebot`)
-   y llega el «✅ conectado» + el botón *Probar*; y una alarma real **dispara en vivo** y llega el
-   aviso en un par de segundos.
+1. ✅ **Frontend en prod (Vercel):** el panel de Alarmas **abre y pinta** en `app.edgecute.com` (admin)
+   y llega al backend de prod (2026-09-14).
+2. ✅ **E2E desde el navegador (criterio final de Jesús) — HECHO 2026-09-14:** admin creó una alarma,
+   conectó Telegram y **disparó en vivo** con aviso a Telegram (@Edgiethebot). *Pendiente menor:*
+   probar recarga+persistencia del panel y el apagar/encender.
+   - ⚠️ **BUG D (frontend):** el botón *Conectar Telegram* abre `tg://resolve?...` → falla en máquinas
+     sin la app de escritorio ("scheme does not have a registered handler"). **Fix:** usar el enlace
+     universal `https://t.me/<bot>?start=<token>` (funciona en navegador y móvil). Workaround usado:
+     abrir el `https://t.me/...` a mano.
 3. **Reactivar las alarmas de verdad:** las 3 de prueba siguen `enabled=FALSE` desde F0 — decidir si
    se borran o se dejan; a partir de aquí las alarmas de usuarios reales quedan activas.
 4. **Vigía a las 04:00 ET** (item abierto de Jesús §9): un cron/monitor que garantice **backend vivo +
