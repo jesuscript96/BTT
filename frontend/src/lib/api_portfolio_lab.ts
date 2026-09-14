@@ -470,3 +470,199 @@ export function runPortfolioMc(body: PortfolioMcIn): Promise<MonteCarloOut> {
     timeoutMs: 120_000,
   });
 }
+
+/* ── Portfolio EN CRUDO (sin normalizar, con tope de exposicion) ──── */
+
+/** Ejecucion de UNA estrategia dentro del portfolio: lo del panel izquierdo
+ *  del backtester, fijado aqui (lo de la corrida se resetea). */
+export interface RawExec {
+  /** auto: el modo lo decide la ESTRATEGIA (su «Tamaño por SL»: riesgo al stop
+   *  o capital metido); aqui solo se pone el R. capital/risk lo fuerzan;
+   *  as_saved deja el trade tal cual la corrida. */
+  sizing: "auto" | "capital" | "risk" | "as_saved";
+  size_value: number;
+  size_unit: "usd" | "pct";
+  /** $ por accion (FLAT) o % del valor operado (PERCENT), en los dos lados. */
+  fees: number;
+  fee_type: "FLAT" | "PERCENT";
+  /** % del precio en cada lado. */
+  slippage_pct: number;
+  locates: "none" | "fixed" | "random";
+  /** $ por paquete de 100 acciones (fixed). */
+  locates_cost: number;
+  locates_min: number;
+  locates_max: number;
+  locates_seed: number;
+}
+
+export const RAW_EXEC_DEFAULT: RawExec = {
+  sizing: "auto",
+  // 1 % del capital del dia: con varios trades al dia y PF > 1, un 5 %
+  // compuesto cada dia explota a cifras de 10^25 (la trampa de «1B»).
+  size_value: 1,
+  size_unit: "pct",
+  fees: 0,
+  fee_type: "FLAT",
+  slippage_pct: 0,
+  locates: "none",
+  locates_cost: 0,
+  locates_min: 1,
+  locates_max: 10,
+  locates_seed: 1,
+};
+
+export interface RawConfigIn {
+  strategy_ids: string[];
+  /** Capital del portfolio: base del compound (% por trade), del retorno y
+   *  del Monte Carlo. El capital con el que se guardo cada corrida NO interviene. */
+  capital: number;
+  per_strategy: Record<string, RawExec>;
+  default_exec?: RawExec;
+  /** Tope de nocional abierto a la vez entre TODAS las estrategias (0 = sin tope). */
+  max_exposure_usd: number;
+  /** Lo mismo en % del capital DEL DIA; si viene > 0 manda sobre el de $. */
+  max_exposure_pct?: number;
+  cap_mode: "skip" | "trim";
+  /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
+  monthly_expenses: number;
+  start_date?: string | null;
+  end_date?: string | null;
+}
+
+/** Con que se corrio la corrida guardada (para la fila del selector). */
+export interface RawConditions {
+  init_cash: number;
+  risk_type: string;
+  risk_r: number;
+  fees: number;
+  fee_type: string;
+  slippage: number;
+  locates_cost: number;
+  locate_type: string;
+  monthly_expenses: number;
+  locates_random?: boolean;
+  locates_random_min?: number;
+  locates_random_max?: number;
+  locates_seed?: number;
+  size_by_sl: boolean;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+export interface RawCapReport {
+  taken: number;
+  skipped: number;
+  trimmed: number;
+  unsized: number;
+  notional_usd?: number;
+}
+
+export interface RawPerStrategy {
+  strategy_id: string;
+  run_id: string;
+  name: string;
+  alive_from: string | null;
+  alive_to: string | null;
+  conditions: RawConditions;
+  /** La ejecucion con la que se ha calculado (la fijada aqui). */
+  exec?: RawExec;
+  capital_base?: number;
+  pnl_daily: number[];
+  trades_daily: number[];
+  locates_daily: number[];
+  /** Gastos fijos de la propia corrida, el primer dia operado de cada mes vivo. */
+  expenses_daily?: number[];
+  metrics: CombineMetrics | null;
+  totals: {
+    pnl_net: number;
+    gross?: number;
+    expenses?: number;
+    n_trades: number;
+    win_rate: number;
+    profit_factor: number;
+    fees: number;
+    slippage?: number;
+    locates: number;
+    avg_notional: number;
+    /** Trades sin stop guardado (R = 0) y con stop aproximado (el ultimo, no el inicial). */
+    sin_stop?: number;
+    stop_aprox?: number;
+  };
+  cap_report: RawCapReport;
+}
+
+export interface RawKelly {
+  ok: boolean;
+  reason?: string;
+  mu_daily_pct?: number[];
+  sigma_daily_pct?: number[];
+  days?: number[];
+  /** Veces el tamano ACTUAL de cada estrategia (1 = dejarla igual). */
+  f?: number[];
+  f_half?: number[];
+  f_quarter?: number[];
+  growth_daily_pct_full?: number;
+  growth_daily_pct_half?: number;
+}
+
+/** Trades aceptados, en columnas (ver portfolio_lab_raw.simulate). */
+export interface RawTrades {
+  date: string[];
+  si: number[];
+  ticker: string[];
+  dir: string[];
+  entry: string[];
+  exit: string[];
+  entry_px: number[];
+  exit_px: number[];
+  size: number[];
+  notional: number[];
+  pnl: number[];
+  fees: number[];
+  /** Locate cobrado a este trade (tal cual la corrida; 0 si re-dimensionado). */
+  locate?: number[];
+  r: number[];
+  reason: string[];
+}
+
+export interface RawOut {
+  config: {
+    capital: number;
+    default_exec?: RawExec;
+    max_exposure_usd: number;
+    max_exposure_pct?: number;
+    cap_mode: "skip" | "trim";
+    monthly_expenses: number;
+    start_date: string | null;
+    end_date: string | null;
+  };
+  ruined?: boolean;
+  /** Percentiles del sorteo de locates aleatorios de esta llamada. */
+  locates_random?: { n: number; media?: number; p10?: number; p50?: number; p90?: number; min?: number; max?: number } | null;
+  calendar: string[];
+  equity: number[];
+  daily_pnl: number[];
+  exposure: {
+    peak_daily: number[];
+    max_open_daily: number[];
+    max_usd: number;
+    cap_usd: number;
+  };
+  cap_report: RawCapReport;
+  metrics: CombineMetrics;
+  costs: { fees: number; slippage?: number; locates: number; expenses: number };
+  var: CombineVar | null;
+  correlation: CombineCorrelation | null;
+  kelly: RawKelly | null;
+  per_strategy: RawPerStrategy[];
+  trades_seq: { dates: string[]; strategy_idx: number[]; pnl_net: number[] };
+  trades: RawTrades;
+}
+
+export function runPortfolioRaw(body: RawConfigIn): Promise<RawOut> {
+  return apiRequest<RawOut>("/portfolio-lab/raw", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 120_000,
+  });
+}

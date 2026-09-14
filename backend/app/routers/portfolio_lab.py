@@ -4,6 +4,7 @@
     POST /api/portfolio-lab/assignments   -> añadir/quitar de portfolio o incubadora
     POST /api/portfolio-lab/combine       -> imagen general lineal (F1)
     POST /api/portfolio-lab/montecarlo    -> bootstrap sobre la serie diaria combinada
+    POST /api/portfolio-lab/raw           -> portfolio EN CRUDO con tope de exposicion
 
 Gated por PORTFOLIO_LAB_ENABLED, APAGADO por defecto (regla R7): en produccion
 los endpoints responden 503 y el modulo no existe. La variable solo esta puesta
@@ -25,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.auth import get_current_user_id, scope_clause
 from app.database import get_user_db_connection, get_user_db_lock
 from app.services import portfolio_lab_engine as ple
+from app.services import portfolio_lab_raw as plr
 from app.services import portfolio_lab_scaling as plsc
 from app.services import portfolio_lab_service as pls
 from app.services import robustness_service as rs
@@ -168,15 +170,18 @@ def strategy_equity(strategy_id: str, user_id: Optional[str] = Depends(get_curre
         ).fetchone()
         if not owned:
             raise HTTPException(status_code=404, detail="Estrategia no encontrada")
-        metas = rs.list_runs_for_strategies(con, {strategy_id})
-        meta = metas.get(strategy_id)
-        if not meta:
+        # Sin `list_runs_for_strategies`: su `_attach_params` parseaba el JSON
+        # entero de la corrida solo para descartar los parametros, ~1 s por
+        # llamada, y el baul lanzaba trece a la vez (era el timeout de 20 s del
+        # listado, 14-sep-2026). El escaneo tipado + la cache de portfolio_lab_raw
+        # dejan la primera llamada en decimas y las siguientes en nada.
+        wanted = plr.latest_run_ids(con, {strategy_id})
+        if strategy_id not in wanted:
             raise HTTPException(status_code=404, detail="Sin backtest guardado")
-        row = con.execute(
-            "SELECT json_extract(results_json, '$.global_equity') FROM backtest_results WHERE id = ?",
-            [meta["run_id"]],
-        ).fetchone()
-        return {"run_id": meta["run_id"], "equity": rs._as_list(row[0] if row else None)}
+        run = plr.load_runs(con, wanted).get(strategy_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="La corrida ya no existe")
+        return {"run_id": run["run_id"], "equity": run["equity"]}
     finally:
         con.close()
 
@@ -399,6 +404,95 @@ def scaling_compare(req: ScalingCompareReq, user_id: Optional[str] = Depends(get
     runs = _load_runs_for(req.strategy_ids, user_id)
     variants = [v.model_dump(exclude_none=True) for v in req.variants]
     return {"results": plsc.run_scaling_compare(runs, _scaling_cfg(req), variants)}
+
+
+class ExecIn(BaseModel):
+    """Ejecucion de UNA estrategia dentro del portfolio (lo del panel izquierdo
+    del backtester, fijado aqui). Unidades de la interfaz: `size_value` en $ o
+    en % del capital del dia segun `size_unit`; `fees` en $ por accion (FLAT)
+    o en % del valor (PERCENT); `slippage_pct` en %; locates en $ por paquete
+    de 100 (fixed) o rango del sorteo (random)."""
+    # auto = el modo de la estrategia (su «Tamaño por SL»); aqui solo el R.
+    sizing: Literal["auto", "capital", "risk", "as_saved"] = "auto"
+    size_value: float = Field(default=5.0, ge=0)
+    size_unit: Literal["usd", "pct"] = "pct"
+    fees: float = Field(default=0.0, ge=0)
+    fee_type: Literal["FLAT", "PERCENT"] = "FLAT"
+    slippage_pct: float = Field(default=0.0, ge=0)
+    locates: Literal["none", "fixed", "random"] = "none"
+    locates_cost: float = Field(default=0.0, ge=0)
+    locates_min: float = Field(default=1.0, ge=0)
+    locates_max: float = Field(default=10.0, ge=0)
+    locates_seed: int = 1
+
+
+class RawReq(BaseModel):
+    """Portfolio EN CRUDO (ver portfolio_lab_raw): las corridas guardadas
+    sumadas con la ejecucion fijada AQUI, estrategia por estrategia; lo que
+    tenia cada corrida se resetea. Gastos fijos y tope, del portfolio."""
+    strategy_ids: list[str]
+    capital: float = Field(default=50000.0, gt=0)
+    per_strategy: dict[str, ExecIn] = {}
+    default_exec: ExecIn = ExecIn()
+    max_exposure_usd: float = Field(default=0.0, ge=0)
+    # En % del capital DEL DIA; si viene > 0 manda sobre el tope en $.
+    max_exposure_pct: float = Field(default=0.0, ge=0)
+    cap_mode: Literal["skip", "trim"] = "skip"
+    monthly_expenses: float = Field(default=0.0, ge=0)
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+@router.post("/raw")
+def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Portfolio en crudo: N corridas con la ejecucion fijada por estrategia y
+    la exposicion medida al minuto. Milisegundos sobre trades guardados."""
+    _guard()
+    if not req.strategy_ids:
+        raise HTTPException(status_code=400, detail="Elige al menos una estrategia")
+    con = get_user_db_connection(read_only=True)
+    scope_sql, scope_params = scope_clause(user_id)
+    try:
+        placeholders = ", ".join("?" for _ in req.strategy_ids)
+        rows = con.execute(
+            f"SELECT id, name FROM strategies WHERE id IN ({placeholders}){scope_sql}",
+            [*req.strategy_ids, *scope_params],
+        ).fetchall()
+        names = {r[0]: r[1] for r in rows}
+        missing = [sid for sid in req.strategy_ids if sid not in names]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Estrategias no encontradas: {missing}")
+        wanted = plr.latest_run_ids(con, set(req.strategy_ids))
+        without_run = [names[sid] for sid in req.strategy_ids if sid not in wanted]
+        if without_run:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sin backtest guardado: {', '.join(without_run)}.",
+            )
+        loaded = plr.load_runs(con, wanted)
+    finally:
+        con.close()
+
+    runs = []
+    for sid in req.strategy_ids:
+        run = loaded.get(sid)
+        if not run:
+            raise HTTPException(status_code=404, detail=f"La corrida de {names[sid]} ya no existe")
+        runs.append({"strategy_id": sid, "name": names[sid], **run})
+    try:
+        return plr.simulate(runs, {
+            "capital": req.capital,
+            "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
+            "default_exec": req.default_exec.model_dump(),
+            "max_exposure_usd": req.max_exposure_usd,
+            "max_exposure_pct": req.max_exposure_pct,
+            "cap_mode": req.cap_mode,
+            "monthly_expenses": req.monthly_expenses,
+            "start_date": req.start_date,
+            "end_date": req.end_date,
+        })
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ── Monitorizacion (F3) ────────────────────────────────────────────────
