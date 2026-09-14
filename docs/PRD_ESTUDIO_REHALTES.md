@@ -2,7 +2,25 @@
 
 > **Para:** la IA que ejecute este estudio (probablemente una conversación nueva).
 > **Pidió:** Álvaro (2026-09-14). Plan redactado por ZCode y aceptado por Álvaro.
-> **Estado:** ⏸️ BLOQUEADO esperando datos de Jaime (ver §0). Todo lo demás está listo.
+> **Estado:** ✅ DATOS DISPONIBLES (2026-09-14, commit de Jaume `8357ff3` en la
+> rama de Álvaro): `docs/datos/halts_databento/halts_mercado_2019_2026.parquet`
+> — verificado al abrir: 278.976 filas, 2019-01-02 → 2026-09-04, 1.930 días;
+> columnas `instrument_id, date, halt_ts, resume_ts, reason, ssr, symbol`;
+> reason 50=LULD (61.290), 30=T1 (4.542), 70=T12 (747), 120=MWCB (14.170).
+> El `LEEME.md` junto al parquet es OBLIGATORIO leerlo (trampas + códigos).
+
+## 0. Datos — estado y contexto (ACTUALIZADO 14-sep-2026)
+
+Jaume subió los datos **commiteados directamente en la rama de Álvaro**
+(merge local `a3dcf78`). Es `XNAS.ITCH` esquema `status` de Databento (solo
+Nasdaq; sin NYSE/AMEX). El parquet trae `ssr` (restricción de cortos activa)
+e `instrument_id` además de lo previsto en la primera versión de este PRD.
+
+**OJO — faltan dos CSV que el LEEME describe pero NO llegaron en el commit:**
+`tras_reapertura_t1.csv` y `tras_reapertura_luld.csv` (precio antes/reapertura
+y recorrido post-reapertura por halt). No son bloqueantes: todo es derivable
+del parquet + velas M1 del lago (y derivarlo ES parte de la Fase 2), pero si
+Jaume los sube, ahorran un paso. Se lo recordamos.
 
 ---
 
@@ -25,27 +43,16 @@ la CADENA (halt k+1 dado halt k). Las cadenas existen y son graves: GGAA llegó
 a 16 LULD en un día, GATE 5; GATE acabó en T12 36 min después de que una
 posición de 2B saliera por hora (`docs/MEMORIA_BOT_EJECUCION.md`, 11-sep noche 3).
 
-## 0. Datos — QUÉ FALTA Y DÓNDE SE BUSCÓ (14-sep-2026)
+## 0b. Notas de contexto histórico (cómo llegó el dato)
 
-**Falta el parquet de halts de Jaime** (`halts_mercado_2019_2026.parquet`,
-277.645 halts, ~21k símbolos, 2019–2026; esquema por fila: symbol, date,
-halt_ts, resume_ts, reason, motivo, minutos). Jaime dijo que lo subiría
-commiteado; **a fecha 14-sep aún no está**. Buscado sin éxito en:
+El parquet llegó por git (rama de Álvaro), no por GCS ni por el lago. El lago
+local (`LOCAL_DATA_ROOT` en `backend/.env`) sigue SIN carpeta `halts/`, y el
+`HALTS_DIR` de `backend/app/services/halts.py` apunta por defecto a
+`D:/lago_backtester/...` (ruta de la máquina de Jaime, inexistente aquí) — si
+algún día se quiere usar el coste de halts del backtester en local, hará falta
+definir `HALTS_DIR` en `backend/.env` apuntando a un derivado de este parquet.
 
-- git (`origin/staging`, `origin/sailor-rama-desarrollo`, `jaumen`): sin commits
-  nuevos tras `3b60650` y sin parquet/CSV de halts en el árbol.
-- Disco local: Downloads (también `Telegram Desktop/`), Desktop, repo, lago
-  `cangrejo_data` y sus carpetas hermanas (`_lago_prueba, day_aggs, edgecute,
-  minute_aggs, trades_premarket`). Nada.
-- El lago local de Álvaro (`LOCAL_DATA_ROOT` en `backend/.env`) NO tiene carpeta
-  `halts/`. El `HALTS_DIR` de `backend/app/services/halts.py` apunta por defecto
-  a `D:/lago_backtester/...` (ruta de la máquina de Jaime, inexistente aquí).
-
-**Primer paso de la sesión nueva:** `git fetch` y re-buscar (git + disco). Si
-aparece por otra vía (Telegram, GCS…), basta con dejarlo accesible y anotar la
-ruta aquí. Mientras tanto NO se puede ejecutar nada de las fases 1–5.
-
-**Qué sí hay ya:**
+**Qué hay además:**
 - Velas M1 del lago GCS 2019+ (acceso igual que el backtester; `intraday_1m`).
 - `backend/app/services/halts.py` (recién mergeado): define el formato del
   parquet por día y cómo se traduce a índices de vela. El estudio NO necesita
