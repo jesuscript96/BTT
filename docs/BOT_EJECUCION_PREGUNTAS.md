@@ -62,7 +62,7 @@
 - [ ] C3. ¿Los stops de DAS disparan en premercado? ¿Con qué precio: último, bid/ask, print tardío? **[API]**
 - [x] C4. → R-C-03 (borrador; el cierre tras 5 intentos se repregunta con el PDF). ¿Cuánto tiempo puede estar una posición sin stop residente? Pasados N s, ¿se cierra a mercado?
 - [x] C5. → R-C-02 (borrador, bloqueado por el PDF: triggers en DAS). Stop limitado disparado y no ejecutado en N s porque el precio siguió subiendo: ¿se recoloca más arriba, se convierte a mercado o se aplica la espera de fogonazo?
-- [ ] C6. Stop disparado por un print suelto tardío: ¿se puede pedir un stop que mire bid/ask en vez del último precio? ¿Lo permite DAS? **[API]**
+- [x] C6. → decidido (nota bajo R-C-09): el stop dispara por ask/bid («Ask + 0,01»); pendiente solo la sintaxis en el API. Stop disparado por un print suelto tardío: ¿se puede pedir un stop que mire bid/ask en vez del último precio? ¿Lo permite DAS? **[API]**
 - [x] C7. → R-C-04 (borrador; depende de F). Si DAS rechaza o cancela el stop (por ejemplo tras un halt), ¿quién se entera, en cuánto tiempo y qué hace?
 - [x] C8. → R-C-05 (borrador; sin estrategia que lo use aún). Stop que se mueve (trailing, break-even): ¿lo mueve el bot cancelando y reponiendo, o DAS? Si entre cancelar y reponer el precio cruza el nivel, ¿qué pasa?
 - [x] C9. → R-C-06 (borrador; con varias estrategias cambia, área E). Pirámide: ¿un stop por lote o uno único para la posición? ¿Cómo se actualiza al añadir?
@@ -83,7 +83,7 @@
 - [ ] D5. Ejemplo de Jaume: se reduce por take profit y luego OTRA estrategia añade capital al mismo ticker. ¿Se permite? ¿Es nueva posición con su stop? ¿Se prohíbe añadir durante X min tras una reducción?
 - [ ] D6. Reentradas: ¿cuántas por ticker y día? ¿Cuenta como el backtester (−1 es trampa)? ¿Reutiliza el locate?
 - [ ] D7. Salida por deterioro de datos (feed caído): ¿cerrar todo o mantener con el stop residente?
-- [ ] D8. Salida anticipada por aviso de halts (cadena de LULD) o por acercarse a la banda: **[dato]** salir a X % de la banda no vale como automatismo (2 % de acierto); una cadena de ≥ 5 LULD acaba en T12 1 de cada 300.
+- [x] D8. → R-F-01 caso 4 (con 2 halts, salir a 2-3 % de la banda). Salida anticipada por aviso de halts (cadena de LULD) o por acercarse a la banda: **[dato]** salir a X % de la banda no vale como automatismo (2 % de acierto); una cadena de ≥ 5 LULD acaba en T12 1 de cada 300.
 - [ ] D9. Salida rechazada (ruta cerrada, sin liquidez): ¿cambio de ruta automático y cuántos intentos? **[API]**
 - [ ] D10. Salida por tramos por liquidez: ¿se acepta cerrar en varios trozos y cuánto se espera entre ellos?
 - [ ] D11. ¿El bot puede cerrar una posición que abrió Jaume a mano? (ver K5)
@@ -106,18 +106,18 @@
 ## F. Halts
 
 - [ ] F1. ¿Cómo sabe el bot que hay halt: L1 de DAS, ausencia de prints, fuente externa (Nasdaq Trader)? ¿Con qué latencia? **[API]**
-- [ ] F2. Halt con posición dentro: ¿DAS cancela el stop residente? ¿Se prepara orden para la reapertura, límite o mercado en la subasta? **[API]**
-- [ ] F3. Halt con orden de entrada en vuelo: ¿se cancela siempre?
+- [x] F2. → R-F-01 (borrador; ruta de salida pendiente PDF). Halt con posición dentro: ¿DAS cancela el stop residente? ¿Se prepara orden para la reapertura, límite o mercado en la subasta? **[API]**
+- [x] F3. → R-F-04 (cancelar y reevaluar al reabrir). Halt con orden de entrada en vuelo: ¿se cancela siempre?
 - [ ] F4. Reapertura: ¿precio de referencia para decidir si salir (stop saltado, reabre por encima)? ¿Se sale en el primer print o se espera N s? **[dato]** el SL en la vela de reapertura se llena de mediana −3 % y p90 +4,8 % peor que el nivel, máx +14,5 %.
-- [ ] F5. Cadena de LULD (≥ 5 en el día): ¿no ampliar, reducir o cerrar? **[dato]** 6+ halts llegan de mediana a ×2 y no vuelven; PAVS 7 halts ×13.
+- [x] F5. → R-F-01 (3 halts up seguidos = cierre a mercado al reabrir) y R-F-03 (sin reentrada). Cadena de LULD (≥ 5 en el día): ¿no ampliar, reducir o cerrar? **[dato]** 6+ halts llegan de mediana a ×2 y no vuelven; PAVS 7 halts ×13.
 - [ ] F6. T1 (noticia pendiente) con posición: puede durar horas. ¿Aviso y esperar? ¿Y si dura hasta el cierre?
 - [ ] F7. T12 con posición: capital bloqueado días, locate que sigue corriendo, posible buy-in. ¿Cómo se contabiliza y quién avisa al socio?
 - [ ] F8. Halt en premercado (raro, existe: NEXI): ¿mismas reglas que en sesión?
 - [ ] F9. ¿Tratamiento distinto para LULD, T1, T12 y halts de otras bolsas? **[API: códigos que entrega DAS]**
 - [ ] F10. SSR activado a mitad de sesión: no afecta a cubrir, sí a abrir cortos nuevos. ¿Cómo se sabe y cuál es la regla? **[API]**
-- [ ] F11. Bandas LULD: ¿DAS las da? Si no, ¿se calculan (5/10/20 % según precio y hora)? **[API]**
+- [x] F11. → R-F-02 (stop 1-2 % bajo la banda si queda por encima; la banda llega como dato, confirmar [API]). Bandas LULD: ¿DAS las da? Si no, ¿se calculan (5/10/20 % según precio y hora)? **[API]**
 - [ ] F12. Media sesión o cierre anticipado: ¿el bot lo sabe y adelanta el cierre forzoso?
-- [ ] F13. Halt en el minuto de la señal (la señal se generó con la vela anterior al halt): ¿se ejecuta a la reapertura o se anula?
+- [x] F13. → R-F-04 (se guarda; X % de la primera vela pendiente de estudio). Halt en el minuto de la señal (la señal se generó con la vela anterior al halt): ¿se ejecuta a la reapertura o se anula?
 
 ## G. El precio se dispara
 

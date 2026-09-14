@@ -195,7 +195,11 @@ y reconciliación), después el resto.)*
 - Estado: BORRADOR (13-sep). Aviso conocido: Massive incluye prints tardíos y de dark pool; un máximo de PM puede venir de un print que no estuvo en el libro. No se filtra (paridad con el backtester), pero es una fuente de diferencia entre nivel y precio real que se medirá en sombra.
 - Origen: C13. Directriz de Jaume del 13-sep.
 
-**Prints tardíos y dark pool (Jaume preguntó cómo se solventa, 13-sep):** no en el cálculo del nivel (paridad), sino en el DISPARO: (1) stop de DAS que dispare por bid/ask, no por último precio, si DAS lo permite [API, C6]; (2) el vigilante exige que el precio se sostenga N segundos / N prints por encima del nivel antes de actuar; (3) medir en sombra cuántos niveles de estructura los fija un print tardío; solo si es frecuente se plantearía filtrarlos en lago y backtester a la vez.
+**Prints tardíos y dark pool (cerrado con Jaume, 13-sep).** Qué son: operaciones hechas fuera del libro que la cinta publica más tarde (de 20 ms a segundos); llegan en tiempo real como un print más, con hora de ejecución vieja. Nuestra orden nunca se ejecuta contra ellos; el único riesgo es que un stop que dispare por «último precio» se dispare por uno. Solución, sin esperar nada (prioridad: ejecutar en milisegundos, mínimo slippage):
+1. **El stop residente en DAS dispara por el ASK (corto) / BID (largo), no por último precio.** DECIDIDO: Jaume recuerda que DAS admite stops del tipo «Ask + 0,01», que obligan a reconocer el ask. Un print de dark pool no mueve el ask. PENDIENTE de contrastar con el PDF: cómo se escribe ese disparo en el comando del API (no si existe, sino la sintaxis) → C6.
+2. **El vigilante** mira el ask/bid de DAS (lo más simple) o, si lee el feed de operaciones de Massive, aplica el filtro del lago: ignorar prints con más de 10 ms entre ejecución y publicación (el feed trae las dos horas; las velas de 1 min no). Filtro por print, instantáneo.
+3. NO se espera N segundos ni N prints para disparar (idea retirada: sube el slippage). La única espera es la decisión de cisne negro DESPUÉS del tercer trigger.
+4. El nivel de estructura se sigue calculando con Massive sin filtrar (paridad con el backtester).
 
 ### R-C-10 · Stop al arrancar el bot con posiciones ya abiertas
 - Situación: el bot arranca (reinicio, caída y relanzamiento) y DAS tiene posiciones abiertas.
@@ -217,6 +221,54 @@ y reconciliación), después el resto.)*
 ### Área G · El precio se dispara
 
 ### Área F · Halts
+
+### R-F-01 · Halt con posición dentro: qué se hace al reabrir
+- Situación: el bot está en corto y la acción entra en halt de subida (limit up). Cuentan los halts UP del mismo ticker, ACUMULADOS en todo el RTH del día (también los anteriores a la entrada del bot); los halts DOWN no cuentan para esta regla.
+- Detección: estado de halt, precio de reapertura y bandas limit up / limit down. Massive NO da las bandas; se cree que DAS sí [API F1, F11: confirmar].
+- Acción, por casos:
+  1. **Stop por debajo del precio del halt** (el precio ya ha pasado el stop al pararse): salir a MERCADO inmediatamente en cuanto reabra, sea el halt que sea.
+  2. **Primer o segundo halt up con el stop por encima**: la posición sigue abierta. Al reabrir, si el precio abre POR ENCIMA del stop, cierre a MERCADO, independientemente del número de halts. Si abre por debajo, se sigue con el stop donde estaba.
+  3. **Tercer halt up acumulado del día** (con el stop aún por encima): cierre a MERCADO en cuanto reabra.
+  4. **Con dos halts up ya acumulados**, si el precio se mueve hacia el limit up y llega a estar a un 2-3 % de la banda, se SALE antes de que pare (evitar el tercer halt).
+- Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento de halts y distancia a la banda).
+- Parámetros: halts up acumulados para cierre = 3; distancia a la banda para salir con 2 halts = 2-3 %; ruta de salida en reapertura (pendiente PDF: hay rutas mejores que otras).
+- Si la acción falla: la orden de cierre en la reapertura no se llena → R-C-01/R-C-02 (niveles) y R-C-03 (sin stop, si DAS lo canceló en el halt).
+- Prueba: replicar sobre los halts de 2B con status exacto (24_status_estrategias.py) y tabla de casos con 1, 2 y 3 halts, stop encima/debajo, reapertura encima/debajo.
+- Estado: BORRADOR (14-sep). TODO el área F se repasa y se confirma cuando llegue el PDF (fuente de halts y bandas, rutas de salida en reapertura, qué hace DAS con los stops en un halt).
+- Origen: F2, F5, D8. Directriz de Jaume del 14-sep.
+
+### R-F-02 · Stop por encima del limit up: bajar el stop bajo la banda
+- Situación: al colocar (o recalcular) el stop, el nivel queda POR ENCIMA del precio de limit up (la banda LULD superior, que se recibe como dato [API F11]).
+- Detección: comparar el nivel del stop con la banda superior vigente cada vez que se coloca o se mueve el stop y cada vez que la banda cambia.
+- Acción: si el stop está por debajo de la banda, nada. Si está por encima o coincide, colocar el stop un 1-2 % POR DEBAJO de la banda, para evitar a toda costa entrar en el halt con la posición abierta.
+- Quién la ejecuta: guarda (cálculo) + ejecutor (recolocar con R-C-05).
+- Parámetros: margen bajo la banda = 1-2 % (cuadro de mandos).
+- Si la acción falla: no se puede recolocar → R-C-03.
+- Prueba: tabla de casos con bandas de 5/10/20 % y stops a distintas distancias; comprobar en sombra cuántas veces actúa.
+- Estado: BORRADOR (14-sep). Depende de que DAS entregue la banda [API].
+- Origen: F11 (y decisión del 5-sep sobre bandas LULD). Directriz de Jaume del 14-sep.
+
+### R-F-03 · Sin reentrada tras salir por stop y halt
+- Situación: la posición se cerró por stop y la acción entró en halt (antes o después de la salida).
+- Detección: salida por stop registrada en el diario + halt detectado en el mismo ticker.
+- Acción: la estrategia NO vuelve a entrar en ese ticker hasta un momento por decidir (más adelante).
+- Quién la ejecuta: guarda.
+- Parámetros: tiempo o condición de reentrada: POR DECIDIR.
+- Si la acción falla: —
+- Prueba: tabla de casos.
+- Estado: BORRADOR (14-sep). Falta la condición de reentrada.
+- Origen: F5 / D6. Directriz de Jaume del 14-sep.
+
+### R-F-04 · Orden de entrada y halt
+- Situación: (a) hay una orden de entrada enviada y sin ejecutar cuando la acción se para; (b) la señal se genera con la vela justo anterior al halt y la acción ya está parada cuando el bot va a enviar.
+- Detección: estado de halt (DAS) + orden viva en DAS / señal pendiente en el diario.
+- Acción: (a) se CANCELA la entrada; al reabrir se reevalúa la estrategia y, si en ese momento manda estar dentro, se entra. (b) la señal se GUARDA y se ejecuta al reabrir si las condiciones de la estrategia siguen valiendo Y la primera vela tras la reapertura no ha subido más de un X % (X por decidir con un estudio).
+- Quién la ejecuta: ejecutor (cancelar) + motor/guarda (reevaluar).
+- Parámetros: X % de subida máxima de la primera vela tras reabrir: PENDIENTE (estudio).
+- Si la acción falla: la cancelación no se confirma antes de la reapertura → tratar como posición nueva si se llena (R-F-01 aplica desde ese momento).
+- Prueba: tabla de casos; sombra.
+- Estado: BORRADOR (14-sep). Pendiente: X % (estudio) y confirmación con el PDF.
+- Origen: F3 y F13. Directriz de Jaume del 14-sep.
 
 ### Área I · Riesgo y cortacircuitos
 
