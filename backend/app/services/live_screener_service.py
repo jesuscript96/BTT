@@ -56,6 +56,15 @@ MAX_CHANGE_PCT = 500.0       # outlier ceiling: a "move" beyond this is bad data
 SNAPSHOT_POLL_SECONDS = 20   # REST fallback cadence while WS is down / market closed
 TOP_CACHE_TTL = 1.0          # recompute a tab's leaderboard at most once per second
 
+# Session-state backfill (fix de BUG A, docs/alerts). Los acumuladores de sesión
+# (pre_high/pre_volume/after_*/day_*) son solo-memoria del WS y se pierden en cada
+# reinicio; el snapshot REST NO los recupera. Al arrancar/reset/reconexión se
+# reconstruyen desde barras de minuto por REST. DESACTIVADO por defecto: se activa
+# en staging/canary (SESSION_BACKFILL_ENABLED=1) antes del go-live.
+SESSION_BACKFILL_ENABLED = os.getenv("SESSION_BACKFILL_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on")
+SESSION_BACKFILL_MOVER_PCT = float(os.getenv("SESSION_BACKFILL_MOVER_PCT", "20"))   # capa 1: |cambio actual| ≥ esto = mover
+SESSION_BACKFILL_CONCURRENCY = int(os.getenv("SESSION_BACKFILL_CONCURRENCY", "12")) # llamadas REST en paralelo
+
 # Allow-list: only these instrument types reach the screener (PRD §02). The set
 # is built from the Massive reference API and refreshed daily at this ET time.
 ALLOWED_TYPES = ("CS", "ADRC")
@@ -146,6 +155,10 @@ class LiveScreenerService:
         # invocan FUERA del lock y con el evento crudo; cualquier trabajo pesado
         # es responsabilidad del consumidor, no de este hilo.
         self._agg_listeners: List[Any] = []
+        # Fix de BUG A: backfill del estado de sesión desde REST.
+        self._loop: Optional["asyncio.AbstractEventLoop"] = None
+        self._seeding = False       # guard anti-solapamiento del seed (capa 1)
+        self._ws_seen = False       # ¿ya hubo un connect? (re-sembrar solo en reconexión)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
     async def start(self) -> None:
@@ -163,12 +176,16 @@ class LiveScreenerService:
             logger.warning("[LIVE] initial snapshot failed: %s", e)
         self._bootstrapped = True
         loop = asyncio.get_running_loop()
+        self._loop = loop
         self._tasks = [
             loop.create_task(self._consume_massive_ws()),
             loop.create_task(self._poll_snapshot_loop()),
             loop.create_task(self._session_watch_loop()),
             loop.create_task(self._allowlist_refresh_loop()),
             loop.create_task(asyncio.to_thread(self._load_avg_volume)),
+            # Fix de BUG A: reconstruye el estado de sesión (pre_high/…) desde REST,
+            # porque el estado del WS es solo-memoria y se pierde al reiniciar.
+            loop.create_task(self._seed_session_state("startup")),
         ]
         logger.info("[LIVE] screener service started (%d tickers in universe)", len(self._states))
 
@@ -404,6 +421,123 @@ class LiveScreenerService:
             except Exception as e:  # noqa: BLE001
                 logger.debug("[LIVE] snapshot poll error: %s", e)
 
+    # ── Session-state backfill (fix de BUG A) ────────────────────────────────
+    def _fold_bars_into_state(self, ticker: str, bars: List[Dict[str, Any]]) -> bool:
+        """Reconstruye los acumuladores de sesión de un ticker desde barras de
+        minuto (REST), con la MISMA lógica de `_apply_aggregate` (clasificación
+        pre/rth/after por timestamp + max/min/suma) pero SIN disparar listeners y
+        con **merge** (max/min; el volumen por max de la suma, nunca acumulando)
+        para no perder lo que el WS ya tiene ni duplicar. Devuelve True si tocó."""
+        pre_h = 0.0; pre_v = 0.0; pre_seen = False
+        aft_h = aft_l = None; aft_v = 0.0; aft_seen = False
+        day_h = day_l = None; day_v = 0.0; seen = False
+        for b in bars:
+            win = _ts_window(b.get("t") or b.get("s") or b.get("e"))
+            if win is None:
+                continue
+            h = _f(b.get("h")); l = _f(b.get("l")); v = _f(b.get("v")) or 0.0
+            seen = True
+            if h is not None:
+                day_h = h if day_h is None else max(day_h, h)
+            if l is not None:
+                day_l = l if day_l is None else min(day_l, l)
+            day_v += v
+            if win == "pre":
+                pre_seen = True; pre_v += v
+                if h is not None:
+                    pre_h = max(pre_h, h)
+            elif win == "after":
+                aft_seen = True; aft_v += v
+                if h is not None:
+                    aft_h = h if aft_h is None else max(aft_h, h)
+                if l is not None:
+                    aft_l = l if aft_l is None else min(aft_l, l)
+        if not seen:
+            return False
+        with self._lock:
+            if ticker not in self._allowlist:
+                return False
+            st = self._states.get(ticker)
+            if st is None:
+                st = TickerLiveState(ticker=ticker)
+                self._states[ticker] = st
+            if day_h is not None:
+                st.day_high = day_h if st.day_high is None else max(st.day_high, day_h)
+            if day_l is not None:
+                st.day_low = day_l if st.day_low is None else min(st.day_low, day_l)
+            st.day_volume = max(st.day_volume or 0.0, day_v)
+            if pre_seen:
+                st.pre_volume = max(st.pre_volume or 0.0, pre_v)
+                if pre_h > 0:
+                    st.pre_high = pre_h if st.pre_high is None else max(st.pre_high, pre_h)
+            if aft_seen:
+                st.after_volume = max(st.after_volume or 0.0, aft_v)
+                if aft_h is not None:
+                    st.after_high = aft_h if st.after_high is None else max(st.after_high, aft_h)
+                if aft_l is not None:
+                    st.after_low = aft_l if st.after_low is None else min(st.after_low, aft_l)
+            st.updated_at = time.time()
+        return True
+
+    async def _backfill_session_state(self, ticker: str, client, sem) -> None:
+        """Una llamada REST de minutos del día para un ticker → fold al estado."""
+        day_str = datetime.now(ET).strftime("%Y-%m-%d")
+        url = f"{REST_BASE}/v2/aggs/ticker/{ticker}/range/1/minute/{day_str}/{day_str}"
+        async with sem:
+            try:
+                r = await client.get(url, params={"apiKey": API_KEY, "limit": 50000,
+                                                  "adjusted": "true", "sort": "asc"})
+                if r.status_code != 200:
+                    return
+                bars = r.json().get("results") or []
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[LIVE] backfill %s falló: %s", ticker, e)
+                return
+        if bars:
+            self._fold_bars_into_state(ticker, bars)
+
+    async def _backfill_many(self, tickers: List[str]) -> int:
+        if not tickers:
+            return 0
+        sem = asyncio.Semaphore(SESSION_BACKFILL_CONCURRENCY)
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            await asyncio.gather(*[self._backfill_session_state(t, client, sem) for t in tickers])
+        return len(tickers)
+
+    async def _seed_session_state(self, reason: str, full: bool = True) -> None:
+        """Fix de BUG A. Capa 1: backfill de los movers de AHORA (rápido, cubre lo
+        que se mueve). Capa 2 (solo si `full`): el resto del allowlist en segundo
+        plano (cubre el caso 'picó a las 04:00 y se desinfló'). No-op si el mercado
+        está cerrado o el fix está desactivado por env."""
+        if not SESSION_BACKFILL_ENABLED or not API_KEY or self._session == "closed":
+            return
+        if self._seeding:
+            return
+        self._seeding = True
+        try:
+            with self._lock:
+                allow = list(self._allowlist)
+                movers = [
+                    tk for tk in allow
+                    if (st := self._states.get(tk)) and st.prev_close and st.last_price is not None
+                    and abs(st.last_price / st.prev_close - 1.0) * 100.0 >= SESSION_BACKFILL_MOVER_PCT
+                ]
+            n = await self._backfill_many(movers)
+            logger.info("[LIVE] session backfill (%s) capa1 movers=%d", reason, n)
+            if full:
+                mset = set(movers)
+                asyncio.create_task(self._seed_rest_bg([tk for tk in allow if tk not in mset], reason))
+        finally:
+            self._seeding = False
+
+    async def _seed_rest_bg(self, tickers: List[str], reason: str) -> None:
+        """Capa 2 en segundo plano: barre el resto del allowlist sin bloquear."""
+        try:
+            n = await self._backfill_many(tickers)
+            logger.info("[LIVE] session backfill (%s) capa2 allowlist=%d", reason, n)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("[LIVE] session backfill capa2 falló: %s", e)
+
     async def _session_watch_loop(self) -> None:
         """Watch market-session boundaries and freeze/reset state as needed."""
         while not self._stop:
@@ -470,6 +604,13 @@ class LiveScreenerService:
             self._refresh_from_snapshot()
         except Exception as e:  # noqa: BLE001
             logger.warning("[LIVE] day reset snapshot refresh failed: %s", e)
+        # Fix de BUG A: nuevo día → reconstruye el estado de sesión desde REST.
+        # _reset_day corre en un hilo; programa el seed async en el loop del servicio.
+        if self._loop is not None:
+            try:
+                asyncio.run_coroutine_threadsafe(self._seed_session_state("reset"), self._loop)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("[LIVE] no se pudo programar el seed de sesión: %s", e)
 
     async def _allowlist_refresh_loop(self) -> None:
         """Rebuild the CS+ADRC allow-list once a day at ~4:00 AM ET (pre-market).
@@ -511,6 +652,12 @@ class LiveScreenerService:
                     await ws.send(json.dumps({"action": "subscribe", "params": "A.*"}))
                     self._ws_connected = True
                     connected_at = time.monotonic()
+                    # Tras una RECONEXIÓN (no el primer connect) el WS pudo perder
+                    # barras: re-siembra los movers desde REST para no dejar huecos.
+                    if self._ws_seen:
+                        asyncio.get_running_loop().create_task(
+                            self._seed_session_state("ws-reconnect", full=False))
+                    self._ws_seen = True
                     logger.info("[LIVE] Massive WS connected, subscribed A.*")
                     async for raw in ws:
                         self._handle_ws_message(raw)
