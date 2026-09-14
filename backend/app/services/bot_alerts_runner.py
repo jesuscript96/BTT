@@ -22,7 +22,9 @@ backtest. El pasado hay que traerlo entero antes de evaluar nada.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Callable, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -35,6 +37,7 @@ logger = logging.getLogger("btt.bot_alerts.runner")
 
 # Columnas minimas de una vela.
 COLUMNAS = ("timestamp", "open", "high", "low", "close", "volume")
+ET = "America/New_York"     # los frames van en hora de Nueva York, sin zona
 
 
 class RunnerAlertas:
@@ -80,30 +83,54 @@ class RunnerAlertas:
         return ticker in self._hidratados
 
     # ── entrada de datos ─────────────────────────────────────────────────────
-    def hidratar(self, ticker: str, day_df: pd.DataFrame, daily_stats: dict | None = None) -> None:
+    def hidratar(self, ticker: str, day_df: pd.DataFrame, daily_stats: dict | None = None,
+                 ahora: Optional[pd.Timestamp] = None) -> list[Evento]:
         """Carga de golpe el pasado del dia. Se llama UNA vez, al entrar al radar.
 
-        NO GENERA AVISOS, y hacerlo bien no es no llamar al motor: es llamarlo y
-        TIRAR lo que salga.
+        Devuelve los avisos de la ULTIMA VELA COMPLETA, que son de verdad.
 
-        El motor recuerda lo que ya aviso. Si el pasado no se le ensenya, la
-        primera vela nueva le hace descubrir de golpe todas las salidas y
-        piramides del dia y las avisa como si acabaran de pasar. Medido en vivo
-        el 2026-09-01 a las 20:28: el bot aviso de una piramide y una salida de
-        FLYE ocurridas por la manyana, y salieron a Telegram.
+        EL PASADO SE SELLA, NO SE AVISA. El motor recuerda lo que ya aviso. Si
+        el pasado no se le ensenya, la primera vela nueva le hace descubrir de
+        golpe todas las salidas y piramides del dia y las avisa como si acabaran
+        de pasar. Medido en vivo el 2026-09-01 a las 20:28: el bot aviso de una
+        piramide y una salida de FLYE ocurridas por la manyana, y salieron a
+        Telegram. Pasandole el pasado una vez y tirando lo que salga, todo eso
+        queda marcado como visto.
 
-        Pasandole el frame hidratado una vez y descartando los eventos, todo eso
-        queda marcado como visto y solo se avisa de lo que pase A PARTIR de
-        ahora, que es lo unico operable.
+        PERO LA ULTIMA VELA COMPLETA NO ES PASADO: ES AHORA. El radar admite un
+        ticker cuando su metrica cruza el umbral, y eso pasa en una vela
+        concreta —la ultima cerrada—. Si la senyal de entrada cae en esa misma
+        vela, sellarla la tira. Paso el 14-sep-2026 con ELMT: la vela de las
+        06:59 NY hizo el maximo nuevo (gap 49,4 % -> 51,1 %) Y cerro por debajo
+        del minimo anterior. El radar lo admitio a las 13:00:07 (7 segundos
+        despues del cierre), hidrato 104 velas y el aviso de entrada salio como
+        «1 avisos del pasado descartados». Jaume se quedo sin la senyal, y el
+        simulador con una posicion abierta cuyas salidas SI iban a avisar.
+
+        Es sistematico, no mala suerte: el filtro del radar y la entrada de 1B
+        comparten el umbral (gap >= 50), asi que la vela que admite es a menudo
+        la vela que entra.
+
+        Y LA VELA EN CURSO NO ES NI UNA COSA NI OTRA: Massive la devuelve por
+        REST a medias. Se aparta; el feed la traera entera cuando cierre.
+
+            filas del REST  =  [ pasado ... ] [ ultima completa ] [ en curso ]
+                                   sellar        evaluar HOY        fuera
         """
         self._stats[ticker] = daily_stats or {}
         filas = day_df[list(COLUMNAS)].to_dict("records") if not day_df.empty else []
-        self._velas[ticker] = filas
+        corte = (ahora if ahora is not None
+                 else pd.Timestamp(datetime.now(tz=ZoneInfo(ET)).replace(tzinfo=None))).floor("min")
+        completas = [f for f in filas if pd.Timestamp(f["timestamp"]) < corte]
+        en_curso = len(filas) - len(completas)
+        pasado, ultima = (completas[:-1], completas[-1]) if completas else ([], None)
+
+        self._velas[ticker] = pasado
         self._hidratados.add(ticker)
 
         sellados = 0
-        if len(filas) >= 2:
-            frame = build_market_frame(pd.DataFrame(filas), ticker, self._stats[ticker])
+        if len(pasado) >= 2:
+            frame = build_market_frame(pd.DataFrame(pasado), ticker, self._stats[ticker])
             try:
                 sellados = len(self.motor.procesar_vela(ticker, frame, self._stats[ticker]))
             except Exception as exc:  # noqa: BLE001
@@ -111,10 +138,19 @@ class RunnerAlertas:
                 # arriesgarse a avisar de su manyana entera.
                 logger.warning("[BOT] %s: fallo al sellar el pasado (%s); se descarta", ticker, exc)
                 self.soltar(ticker)
-                return
+                return []
 
-        logger.info("[BOT] %s hidratado con %d velas (%d avisos del pasado descartados)",
-                    ticker, len(filas), sellados)
+        eventos: list[Evento] = []
+        if ultima is not None:
+            eventos = self.nueva_vela(ticker, ultima, self._stats[ticker])
+
+        logger.info("[BOT] %s hidratado: %d velas de pasado selladas (%d avisos tirados), "
+                    "la de las %s evaluada como ACTUAL (%d avisos)%s",
+                    ticker, len(pasado), sellados,
+                    pd.Timestamp(ultima["timestamp"]).strftime("%H:%M") if ultima else "-",
+                    len(eventos),
+                    f", {en_curso} en curso apartada" if en_curso else "")
+        return eventos
 
     def nueva_vela(self, ticker: str, vela: dict, daily_stats: dict | None = None) -> list[Evento]:
         """Anyade una vela cerrada y devuelve los avisos que produzca.
