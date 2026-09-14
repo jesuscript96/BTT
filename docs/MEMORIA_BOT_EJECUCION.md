@@ -740,7 +740,10 @@ que esté escrito con número en `docs/BOT_EJECUCION_REGLAS.md`.
 
 **Fase actual (desde el 12-sep): diseño de reglas.** Banco de preguntas en
 `docs/BOT_EJECUCION_PREGUNTAS.md`; se contesta por áreas y cada respuesta pasa
-al libro de reglas. Orden: C, G, F, I, B, H, J, K, resto.
+al libro de reglas. Al 14-sep: área C hecha (R-C-01..11, salvo lo del PDF), F hecha
+(R-F-01..06), I hecha (R-I-01..03, sin cortacircuito diario), G3 pendiente con
+propuesta, B1 abierta a la espera del estudio P12. Siguiente: resto de B, D, H, J, K.
+Datos de halts subidos a `alvaro-rama-desarrollo` (8357ff3) por petición de Jaume.
 
 | # | Pendiente | Estado |
 |---|---|---|
@@ -755,3 +758,4 @@ al libro de reglas. Orden: C, G, F, I, B, H, J, K, resto.
 | P9 | Halts largos 2019-2026: HECHO con Databento status (50,61 $). 5 suspensiones T12 en valores en gap en 8 años; ninguna con posición dentro | Cerrado |
 | P10 | Cadena de LULD como aviso de T12: los 6 T12 peligrosos (4 en sesión + INHD y TENK en after-hours) llevaban ≥4 halts de volatilidad ese día; 1 de cada 300 días con ≥5 LULD acaba en T12. Si algún día se mantienen posiciones al cierre, el after-hours entra en juego. Candidata a regla/aviso del bot cuando se diseñe el cuadro de mandos (no ampliar / vigilar con ≥5 LULD). No decidido | Apuntado |
 | P11 | **Libro de reglas** (`BOT_EJECUCION_REGLAS.md`) a partir del banco de preguntas (`BOT_EJECUCION_PREGUNTAS.md`, 200 preguntas, 37 [API]). Jaume las piensa por su cuenta y se contestan por áreas; cada respuesta → regla numerada. Las [API] se repasan con el PDF (apartado R del banco) | Empezado el 12-sep, 0 reglas |
+| P12 | **Estudio del libro en entradas normales vs no normales** (NBBO Databento, 1-3 $, OK dado): margen y tolerancia de B1, márgenes de N1/N2/N3 y slippage asumible. Receta completa en `BOT_EJECUCION_REGLAS.md` área B. Jaume avisa para arrancarlo (previsto 15-sep a primera hora) | Pendiente de arrancar |

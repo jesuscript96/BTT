@@ -350,6 +350,10 @@ y reconciliación), después el resto.)*
 
 ### Área B · Entrada
 
+**B1 (precio que se mueve al enviar), ABIERTA el 14-sep, forma decidida y números en blanco.** Forma: entrada en corto con orden LÍMITE al bid menos un margen (remover liquidez con techo), en PM y en RTH; a mercado solo en casos contados por definir. Si el bid sube (a favor), se recoloca al nuevo bid tantas veces como haga falta mientras la señal siga vigente. Si baja (en contra), se persigue hasta una tolerancia sobre el precio de la señal y luego se abandona. Variante SSR: un tick por encima del bid (agrega liquidez) [API: cómo indica DAS el SSR]. Margen y tolerancia en % con suelo de 1 céntimo, distintos por sesión, al cuadro de mandos. Los VALORES salen del estudio de abajo, no a ojo: el spread del 6 % y los libros de 1-7 k$ del estudio de cisnes son de días de fogonazo, no de entradas normales.
+
+**ESTUDIO PENDIENTE (Jaume avisa, previsto 15-sep a primera hora): libro en entradas normales vs no normales.** Muestra: 300-500 ticker-días al azar de las entradas reales de 1B (PM, run 8b773d84) y 2B (RTH, run 6023ec78) + los ticker-días de fogonazo y de cadena de halts como grupo «no normal». Datos: NBBO consolidado de Databento (EQUS.MINI mbp-1, 2023+) con operaciones, 1-3 $ (OK de Jaume dado el 14-sep). Medir: (1) en el segundo de la señal y los 10 siguientes: spread (cts y %), acciones en el bid, movimiento a 1/5/10 s, probabilidad de ejecución y coste de un límite al bid, bid −0,3 %, bid −0,7 %, y en el ask → margen y tolerancia de B1, y de rebote el slippage «asumible»; (2) en el cruce del stop: segundos de +0 a +1/+3/+5/+10 % sobre el nivel y margen sobre el ask que habría bastado para ejecutar el 90/95/99 % de los stop limit, normal y fogonazo por separado → márgenes de N1, N2, N3. Contrastar con los fills reales del socio (stop-limit ×1,007 del trigger, 95 % ≤ ×1,07) y con los fills de DAS de Jaume (tarea P7). Script nuevo en `D:ot_senales\estudio_cisnes\`.
+
 ### Área H · Locates
 
 ### Área J · Infraestructura
