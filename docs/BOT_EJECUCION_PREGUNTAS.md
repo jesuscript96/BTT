@@ -110,13 +110,13 @@
 - [x] F3. → R-F-04 (cancelar y reevaluar al reabrir). Halt con orden de entrada en vuelo: ¿se cancela siempre?
 - [ ] F4. Reapertura: ¿precio de referencia para decidir si salir (stop saltado, reabre por encima)? ¿Se sale en el primer print o se espera N s? **[dato]** el SL en la vela de reapertura se llena de mediana −3 % y p90 +4,8 % peor que el nivel, máx +14,5 %.
 - [x] F5. → R-F-01 (3 halts up seguidos = cierre a mercado al reabrir) y R-F-03 (sin reentrada). Cadena de LULD (≥ 5 en el día): ¿no ampliar, reducir o cerrar? **[dato]** 6+ halts llegan de mediana a ×2 y no vuelven; PAVS 7 halts ×13.
-- [ ] F6. T1 (noticia pendiente) con posición: puede durar horas. ¿Aviso y esperar? ¿Y si dura hasta el cierre?
-- [ ] F7. T12 con posición: capital bloqueado días, locate que sigue corriendo, posible buy-in. ¿Cómo se contabiliza y quién avisa al socio?
-- [ ] F8. Halt en premercado (raro, existe: NEXI): ¿mismas reglas que en sesión?
+- [x] F6. → R-F-05. T1 (noticia pendiente) con posición: puede durar horas. ¿Aviso y esperar? ¿Y si dura hasta el cierre?
+- [x] F7. → R-F-05 (aviso y control humano). T12 con posición: capital bloqueado días, locate que sigue corriendo, posible buy-in. ¿Cómo se contabiliza y quién avisa al socio?
+- [x] F8. → R-F-06 (límite removiendo liquidez, ruta rápida pendiente PDF). Halt en premercado (raro, existe: NEXI): ¿mismas reglas que en sesión?
 - [ ] F9. ¿Tratamiento distinto para LULD, T1, T12 y halts de otras bolsas? **[API: códigos que entrega DAS]**
-- [ ] F10. SSR activado a mitad de sesión: no afecta a cubrir, sí a abrir cortos nuevos. ¿Cómo se sabe y cuál es la regla? **[API]**
+- [x] F10. → decidido: sí se entra en SSR; sin regla de salida por SSR. SSR activado a mitad de sesión: no afecta a cubrir, sí a abrir cortos nuevos. ¿Cómo se sabe y cuál es la regla? **[API]**
 - [x] F11. → R-F-02 (stop 1-2 % bajo la banda si queda por encima; la banda llega como dato, confirmar [API]). Bandas LULD: ¿DAS las da? Si no, ¿se calculan (5/10/20 % según precio y hora)? **[API]**
-- [ ] F12. Media sesión o cierre anticipado: ¿el bot lo sabe y adelanta el cierre forzoso?
+- [x] F12. → decidido: se opera normal; el calendario ya está en el sistema. Media sesión o cierre anticipado: ¿el bot lo sabe y adelanta el cierre forzoso?
 - [x] F13. → R-F-04 (se guarda; X % de la primera vela pendiente de estudio). Halt en el minuto de la señal (la señal se generó con la vela anterior al halt): ¿se ejecuta a la reapertura o se anula?
 
 ## G. El precio se dispara

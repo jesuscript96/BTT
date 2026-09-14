@@ -227,7 +227,7 @@ y reconciliación), después el resto.)*
 - Detección: estado de halt, precio de reapertura y bandas limit up / limit down. Massive NO da las bandas; se cree que DAS sí [API F1, F11: confirmar].
 - Acción, por casos:
   1. **Stop por debajo del precio del halt** (el precio ya ha pasado el stop al pararse): salir a MERCADO inmediatamente en cuanto reabra, sea el halt que sea.
-  2. **Primer o segundo halt up con el stop por encima**: la posición sigue abierta. Al reabrir, si el precio abre POR ENCIMA del stop, cierre a MERCADO, independientemente del número de halts. Si abre por debajo, se sigue con el stop donde estaba.
+  2. **Primer o segundo halt up con el stop por encima**: la posición sigue abierta. Al reabrir, si el precio abre POR ENCIMA del stop, cierre a MERCADO, independientemente del número de halts, SIEMPRE QUE la subida no supere el 500 %; si reabre más de un 500 % arriba, NO se cierra y se manda ALERTA MÁXIMA por Telegram para que cierre un humano. Si abre por debajo del stop, no se hace nada, la estrategia sigue.
   3. **Tercer halt up acumulado del día** (con el stop aún por encima): cierre a MERCADO en cuanto reabra.
   4. **Con dos halts up ya acumulados**, si el precio se mueve hacia el limit up y llega a estar a un 2-3 % de la banda, se SALE antes de que pare (evitar el tercer halt).
 - Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento de halts y distancia a la banda).
@@ -269,6 +269,34 @@ y reconciliación), después el resto.)*
 - Prueba: tabla de casos; sombra.
 - Estado: BORRADOR (14-sep). Pendiente: X % (estudio) y confirmación con el PDF.
 - Origen: F3 y F13. Directriz de Jaume del 14-sep.
+
+### R-F-05 · Halts largos: T1 (noticia) y T12 (Nasdaq pide información)
+- Situación: la posición está dentro cuando la acción entra en un halt que no es de volatilidad.
+- Detección: motivo del halt (T1 / T12) por DAS o fuente externa [API F9].
+- Acción: (a) **T1**: misma lógica de reapertura que R-F-01: reabre por debajo del stop → nada; por encima → mercado, salvo que la subida supere el 500 %, en cuyo caso no se cierra y se manda alerta máxima por Telegram para que cierre un humano. (b) **T12**: el bot AVISA y el control pasa al humano; el bot no hace nada más con esa posición.
+- Quién la ejecuta: ejecutor + vigilante (aviso); humano en T12 y en el caso > 1.000 %.
+- Parámetros: subida máxima para cierre automático = 500 % (Jaume lo bajó de 1.000 a 500 el 14-sep). Puede acabar con umbral distinto para T1 y para halts de volatilidad (estudio en curso).
+- Si la acción falla: —
+- Prueba: replicar sobre los T1/T12 del histórico (fichas_t12_t1.csv, t1_sin_reabrir_detalle.csv).
+- Estado: BORRADOR (14-sep). Datos de referencia (8 años, todo el mercado, `34_tras_reapertura.py`, 14-sep):
+  - T1 que reabren ≥ +70 % sobre el precio de parada (32 casos en horario 04:00-16:00; el mayor CAPR 3-dic-2025 +329 %; ABVX 22-jul-2025 +475 % fue en after-hours: paró a las 16:01 y reabrió a las 18:30, fuera del horario del bot): DESPUÉS de reabrir suben de mediana un +5 % más (p90 +62 %); 11 de 32 subieron más de un 20 % adicional y 13 cerraron por debajo de la reapertura. La mayor subida adicional tras un T1 fue SMMT 30-may-2024, +113 % (en 60 min), luego BGXX +104 % y BENEW +90 %. Ninguna llegó a doblar y media la reapertura. Un umbral del 500 % en T1 no habría dejado ninguna posición sin cerrar.
+  - LULD: la reapertura en sí casi no salta (mediana +0,1 %, p99 +34 %, máx +309 % MKD 2020). El peligro es la CADENA después: entre los que reabren ≥ +100 % (26), la subida adicional mediana es +25 %, p90 +274 %, máx +673 % (CCG 18-sep-2023); AIRE 23-oct-2023 reabrió +100 % y subió otro +1.151 %. Y los que más subieron tras reabrir lo hicieron desde reaperturas PLANAS: ATXG 31-ago-2022 (+4.449 % tras un halt que reabrió −23 %), QMMM 9-sep-2025 (+3.305 %), INHD 8-jun-2026 (+2.451 %), ZJYL, LTRPB. Conclusión: para T1 el umbral de «no cerrar» puede ser bajo (nada continuó más de ×2,1); para LULD lo que manda es el recuento de halts (R-F-01), no el salto de reapertura.
+- Origen: F6 y F7. Directriz de Jaume del 14-sep.
+
+### R-F-06 · Halt en premercado
+- Situación: la posición está dentro y la acción entra en halt (T1/T12; en PM no hay LULD) y reabre en premercado.
+- Detección: igual que R-F-05.
+- Acción: misma lógica que R-F-01/R-F-05, con una diferencia: en PM no existen órdenes a mercado. Si el bot tiene que cerrar, pone una orden LÍMITE en la ruta más rápida (lista de rutas preferibles: PDF), REMOVIENDO liquidez (límite que cruza el ask) para salir lo antes posible. Si ya hay un stop limit puesto y se entra en T1/T12 en PM, ese stop se cambia por otro que remueva más liquidez (límite más alejado sobre el ask) para poder salir en cuanto reabra. Si el halt reabre ya en RTH, aplica lo de R-F-01/R-F-05 tal cual.
+- Quién la ejecuta: ejecutor.
+- Parámetros: margen sobre el ask del límite de salida en PM tras halt (más ancho que el de N1/N2); ruta rápida (PDF).
+- Si la acción falla: R-C-02 (siguiente nivel) / R-C-03.
+- Prueba: caso NEXI 2026 (T12 en PM que reabrió el mismo día) y tabla de casos.
+- Estado: BORRADOR (14-sep). Rutas pendientes del PDF.
+- Origen: F8. Directriz de Jaume del 14-sep.
+
+**F10 (SSR), decidido el 14-sep:** SÍ se entra en acciones en SSR. No hay regla de seguridad por SSR de momento (el área F fija criterios de salida, no de entrada). Queda B19 para el área B.
+
+**F12 (medias sesiones), decidido el 14-sep:** se opera normal. El calendario ya está en las estrategias, en la actualización de datos y en el sistema; el bot hereda la hora de cierre de ese día sin regla aparte.
 
 ### Área I · Riesgo y cortacircuitos
 
