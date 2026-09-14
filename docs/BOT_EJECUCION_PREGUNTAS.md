@@ -156,14 +156,14 @@
 - [ ] I2. Pérdida máxima por operación y por ticker-día.
 - [ ] I3. Racha: ¿N pérdidas seguidas paran el día? ¿Una semana en negativo reduce el tamaño?
 - [ ] I4. Exposición total y por ticker (P3: 3-4 % barajado): ¿sobre qué capital, el equity del día, el inicial o un mínimo fijado?
-- [ ] I5. Número máximo de posiciones simultáneas y de órdenes vivas.
+- [x] I5. → R-I-01 (lo limita el capital; se entra con lo que quede). Número máximo de posiciones simultáneas y de órdenes vivas.
 - [ ] I6. Fracción máxima del volumen reciente (M9): ¿de qué ventana y qué múltiplo? ¿Se aplica también a la salida?
 - [ ] I7. Cuenta muy en negativo en premercado: ¿qué hace Sage? (P1) ¿Y el bot: deja de abrir por debajo de X de equity?
 - [ ] I8. PDT y mínimos de cuenta: ¿el bot vigila el número de day trades y el equity mínimo?
 - [ ] I9. Llamada de margen: ¿reacciona el bot o es humano? **[API]**
-- [ ] I10. Escalón inicial (canario): ¿1 acción, 100 $, 1 % del tamaño final? ¿Quién autoriza subir y con qué criterio?
+- [x] I10. → R-I-02 (tamaños y escalones en el cuadro de mandos, no el bot). Escalón inicial (canario): ¿1 acción, 100 $, 1 % del tamaño final? ¿Quién autoriza subir y con qué criterio?
 - [ ] I11. ¿Reducción automática del tamaño tras días malos o tamaño fijo hasta que un humano lo cambie?
-- [ ] I12. Los topes viven en el JSON de la estrategia y en el cuadro de mandos: si difieren, ¿cuál manda? ¿Se pueden cambiar en caliente y desde dónde?
+- [x] I12. → R-I-03 (siguiente señal; cuadro de mandos manda). Los topes viven en el JSON de la estrategia y en el cuadro de mandos: si difieren, ¿cuál manda? ¿Se pueden cambiar en caliente y desde dónde?
 - [ ] I13. Un tope que se supera por un fill peor de lo esperado (no por decisión): ¿se corrige al instante o se tolera hasta la salida?
 - [ ] I14. ¿Los cortacircuitos se prueban cada día en seco (simulacro) o solo cuando saltan?
 

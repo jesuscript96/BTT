@@ -313,6 +313,39 @@ y reconciliación), después el resto.)*
 
 **I1 (pérdida diaria máxima), decidido el 14-sep: NO HAY cortacircuito de pérdida diaria en el bot, de momento.** No habrá reglas de pérdida máxima diaria más allá de lo que marque cada estrategia y de las reglas de proceso de este libro. Si algún día se pone, se contaría realizado + latente. El bot no se apaga «por que sí»: se controla por Telegram, pero no hay apagado automático por pérdida. Datos: Sage ofrece autoliquidación en RTH, no en PM. Pendiente de volver a preguntar más adelante.
 
+### R-I-01 · Capital disponible manda: entrar con lo que quede
+- Situación: llega una señal de entrada y hay que dimensionarla.
+- Detección: capital libre de la cuenta (DAS, buying power [API E6]) frente al tamaño que pide la estrategia (riesgo fijo del cuadro de mandos).
+- Acción: no hay tope de número de posiciones: lo limita el capital. Si no queda capital libre, no se entra. Si queda solo una parte (la estrategia pide el 2 % y queda el 1 %), se entra con lo que quede (el 1 %).
+- Quién la ejecuta: guarda (dimensionado).
+- Parámetros: ninguno propio; el tamaño por estrategia y por pirámide viene del cuadro de mandos.
+- Si la acción falla: capital libre no se puede leer de DAS → no se entra (enlaza con K11).
+- Prueba: tabla de casos (libre ≥ pedido / parcial / cero).
+- Estado: BORRADOR (14-sep).
+- Origen: I5. Directriz de Jaume del 14-sep.
+
+### R-I-02 · El tamaño lo fija el cuadro de mandos, nunca el bot
+- Situación: cualquier decisión de tamaño: entrada, cada nivel de pirámide, capital por estrategia, escalón del canario.
+- Detección: valores del cuadro de mandos.
+- Acción: el bot aplica el riesgo fijo que Jaume ponga en el cuadro de mandos para cada estrategia y cada piramidación. El bot NO decide tamaños ni escalones; subir o bajar el escalón del canario lo hace Jaume cambiando el valor.
+- Quién la ejecuta: guarda.
+- Parámetros: todos en el cuadro de mandos.
+- Si la acción falla: sin valor en el cuadro de mandos → no se entra.
+- Prueba: tabla de casos.
+- Estado: BORRADOR (14-sep).
+- Origen: I10. Directriz de Jaume del 14-sep.
+
+### R-I-03 · Cambios en caliente: el cuadro de mandos manda siempre
+- Situación: se cambia un parámetro (riesgo, tope, margen) a media sesión.
+- Detección: nuevo valor en el cuadro de mandos.
+- Acción: el bot lo aplica en la SIGUIENTE señal (no reabre ni recalcula lo ya abierto salvo que otra regla lo diga). Si el JSON de la estrategia y el cuadro de mandos difieren, manda el cuadro de mandos, siempre.
+- Quién la ejecuta: guarda.
+- Parámetros: —
+- Si la acción falla: el bot no puede leer el cuadro de mandos → sigue con el último valor conocido y avisa.
+- Prueba: cambiar un valor en sombra y comprobar que la siguiente señal lo usa; registrar quién cambió qué (M9).
+- Estado: BORRADOR (14-sep).
+- Origen: I12. Directriz de Jaume del 14-sep.
+
 **Nota de Jaume (14-sep) para las áreas C/D/E:** la gestión de stops y posiciones habrá que hacerla bien por ESTRATEGIA, porque cada una meterá cantidades distintas a mercado. Se irá viendo.
 
 ### Área B · Entrada
