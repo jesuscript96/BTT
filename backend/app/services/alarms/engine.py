@@ -234,6 +234,7 @@ class AlarmEngine:
         # 1 s no llegaba. Ahora el coste lo acota el mercado, no cuánta gente use
         # el sistema.
         ctx_by_ticker = {tk: _instant_ctx(m) for tk, m in by_ticker.items()}
+        now_minute = _now_minute()   # BUG B fix: minuto ET actual, para la franja
 
         new_watch: Set[str] = set()
         for alarm in self._alarms:
@@ -265,6 +266,11 @@ class AlarmEngine:
                 new_watch |= candidates
 
             if plan["mode"] != F.INSTANT:
+                continue
+            # BUG B fix: las instantáneas también respetan la franja horaria. El
+            # camino de barra ya lo hace (_bar_worker, _in_window); aquí faltaba,
+            # así que una alarma instantánea con ventana avisaba fuera de ella.
+            if not _in_window(now_minute, plan["window_from"], plan["window_to"]):
                 continue
             for tk in candidates:
                 m = by_ticker.get(tk)
