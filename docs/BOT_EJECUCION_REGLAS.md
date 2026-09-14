@@ -222,20 +222,18 @@ y reconciliación), después el resto.)*
 
 ### Área F · Halts
 
-### R-F-01 · Halt con posición dentro: qué se hace al reabrir
-- Situación: el bot está en corto y la acción entra en halt de subida (limit up). Cuentan los halts UP del mismo ticker, ACUMULADOS en todo el RTH del día (también los anteriores a la entrada del bot); los halts DOWN no cuentan para esta regla.
-- Detección: estado de halt, precio de reapertura y bandas limit up / limit down. Massive NO da las bandas; se cree que DAS sí [API F1, F11: confirmar].
-- Acción, por casos:
-  1. **Stop por debajo del precio del halt** (el precio ya ha pasado el stop al pararse): salir a MERCADO inmediatamente en cuanto reabra, sea el halt que sea.
-  2. **Primer o segundo halt up con el stop por encima**: la posición sigue abierta. Al reabrir, si el precio abre POR ENCIMA del stop, cierre a MERCADO, independientemente del número de halts, SIEMPRE QUE la subida no supere el 500 %; si reabre más de un 500 % arriba, NO se cierra y se manda ALERTA MÁXIMA por Telegram para que cierre un humano. Si abre por debajo del stop, no se hace nada, la estrategia sigue.
-  3. **Tercer halt up acumulado del día** (con el stop aún por encima): cierre a MERCADO en cuanto reabra.
-  4. **Con dos halts up ya acumulados**, si el precio se mueve hacia el limit up y llega a estar a un 2-3 % de la banda, se SALE antes de que pare (evitar el tercer halt).
-- Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento de halts y distancia a la banda).
-- Parámetros: halts up acumulados para cierre = 3; distancia a la banda para salir con 2 halts = 2-3 %; ruta de salida en reapertura (pendiente PDF: hay rutas mejores que otras).
+### R-F-01 · Halt de volatilidad (LULD) con posición dentro
+- Situación: el bot está en corto y la acción entra en halt de subida (limit up). k = halts UP del mismo ticker ACUMULADOS en todo el RTH del día (también los anteriores a la entrada del bot); los halts DOWN no cuentan.
+- Detección: estado de halt, precio de reapertura, bandas limit up / limit down y primera vela de 1 min tras reabrir. Massive NO da las bandas; se cree que DAS sí [API F1, F11: confirmar].
+- Acción, dos escenarios:
+  1. **Reabre con el stop POR ENCIMA del precio**: se MANTIENE la posición mientras k < 3. Con k = 3, cierre a MERCADO en cuanto reabra. Con k = 2, si el precio se acerca a un 2-3 % del limit up, se SALE antes de que pare (evitar el tercer halt).
+  2. **Stop POR DEBAJO del precio** (se lo ha saltado o por cualquier otra causa): se SALE sí o sí, a MERCADO al reabrir, sin tope de subida. Solo se REENTRA si la estrategia lo dice Y la primera vela de 1 min tras la reapertura sube menos de un 6 % Y k < 3. (Dato de Jaume: si la primera vela tras reabrir supera el 6 %, la probabilidad de que encadene otro halt es > 80 %.)
+- Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento k y distancia a la banda) + guarda (reentrada).
+- Parámetros: k máximo = 3; distancia a la banda para salir con k = 2: 2-3 %; primera vela máxima para reentrar: 6 %; ruta de salida en reapertura (pendiente PDF).
 - Si la acción falla: la orden de cierre en la reapertura no se llena → R-C-01/R-C-02 (niveles) y R-C-03 (sin stop, si DAS lo canceló en el halt).
-- Prueba: replicar sobre los halts de 2B con status exacto (24_status_estrategias.py) y tabla de casos con 1, 2 y 3 halts, stop encima/debajo, reapertura encima/debajo.
-- Estado: BORRADOR (14-sep). TODO el área F se repasa y se confirma cuando llegue el PDF (fuente de halts y bandas, rutas de salida en reapertura, qué hace DAS con los stops en un halt).
-- Origen: F2, F5, D8. Directriz de Jaume del 14-sep.
+- Prueba: replicar sobre los halts de 2B con status exacto (24_status_estrategias.py) y tabla de casos (k = 1, 2, 3; stop encima/debajo; primera vela < / ≥ 6 %).
+- Estado: BORRADOR (14-sep, reescrita tras los datos de `34_tras_reapertura.py`). TODO el área F se repasa con el PDF (fuente de halts y bandas, rutas, qué hace DAS con los stops en un halt). Nota: los máximos de ×10-×44 del histórico son de días con 7-40 halts encadenados, no de lo que pasa tras el tercero; con salida en k = 3 el 90 % de los días con ≥ 3 halts queda por debajo de +144 % sobre el primer halt.
+- Origen: F2, F5, D8. Directrices de Jaume del 14-sep.
 
 ### R-F-02 · Stop por encima del limit up: bajar el stop bajo la banda
 - Situación: al colocar (o recalcular) el stop, el nivel queda POR ENCIMA del precio de limit up (la banda LULD superior, que se recibe como dato [API F11]).
@@ -251,12 +249,12 @@ y reconciliación), después el resto.)*
 ### R-F-03 · Sin reentrada tras salir por stop y halt
 - Situación: la posición se cerró por stop y la acción entró en halt (antes o después de la salida).
 - Detección: salida por stop registrada en el diario + halt detectado en el mismo ticker.
-- Acción: la estrategia NO vuelve a entrar en ese ticker hasta un momento por decidir (más adelante).
+- Acción: la estrategia NO vuelve a entrar en ese ticker salvo que se cumplan las tres condiciones de R-F-01 escenario 2: la estrategia lo pide, la primera vela de 1 min tras la reapertura sube < 6 %, y k < 3.
 - Quién la ejecuta: guarda.
-- Parámetros: tiempo o condición de reentrada: POR DECIDIR.
+- Parámetros: primera vela máxima 6 %; k < 3.
 - Si la acción falla: —
 - Prueba: tabla de casos.
-- Estado: BORRADOR (14-sep). Falta la condición de reentrada.
+- Estado: BORRADOR (14-sep). Condición fijada el 14-sep.
 - Origen: F5 / D6. Directriz de Jaume del 14-sep.
 
 ### R-F-04 · Orden de entrada y halt
@@ -273,13 +271,13 @@ y reconciliación), después el resto.)*
 ### R-F-05 · Halts largos: T1 (noticia) y T12 (Nasdaq pide información)
 - Situación: la posición está dentro cuando la acción entra en un halt que no es de volatilidad.
 - Detección: motivo del halt (T1 / T12) por DAS o fuente externa [API F9].
-- Acción: (a) **T1**: misma lógica de reapertura que R-F-01: reabre por debajo del stop → nada; por encima → mercado, salvo que la subida supere el 500 %, en cuyo caso no se cierra y se manda alerta máxima por Telegram para que cierre un humano. (b) **T12**: el bot AVISA y el control pasa al humano; el bot no hace nada más con esa posición.
+- Acción: (a) **T1**: misma lógica de reapertura que R-F-01: reabre por debajo del stop → nada; por encima → mercado, salvo que la subida supere el 250 %, en cuyo caso no se cierra y se manda alerta máxima por Telegram para que cierre un humano. (b) **T12**: el bot AVISA y el control pasa al humano; el bot no hace nada más con esa posición.
 - Quién la ejecuta: ejecutor + vigilante (aviso); humano en T12 y en el caso > 1.000 %.
-- Parámetros: subida máxima para cierre automático = 500 % (Jaume lo bajó de 1.000 a 500 el 14-sep). Puede acabar con umbral distinto para T1 y para halts de volatilidad (estudio en curso).
+- Parámetros: subida máxima de reapertura para cierre automático en T1 = 250 % (Jaume: 1.000 → 500 → 250 el 14-sep, a la vista de los datos: ningún T1 continuó más de ×2,2 tras reabrir). En LULD no hay tope: manda k (R-F-01).
 - Si la acción falla: —
 - Prueba: replicar sobre los T1/T12 del histórico (fichas_t12_t1.csv, t1_sin_reabrir_detalle.csv).
 - Estado: BORRADOR (14-sep). Datos de referencia (8 años, todo el mercado, `34_tras_reapertura.py`, 14-sep):
-  - T1 que reabren ≥ +70 % sobre el precio de parada (32 casos en horario 04:00-16:00; el mayor CAPR 3-dic-2025 +329 %; ABVX 22-jul-2025 +475 % fue en after-hours: paró a las 16:01 y reabrió a las 18:30, fuera del horario del bot): DESPUÉS de reabrir suben de mediana un +5 % más (p90 +62 %); 11 de 32 subieron más de un 20 % adicional y 13 cerraron por debajo de la reapertura. La mayor subida adicional tras un T1 fue SMMT 30-may-2024, +113 % (en 60 min), luego BGXX +104 % y BENEW +90 %. Ninguna llegó a doblar y media la reapertura. Un umbral del 500 % en T1 no habría dejado ninguna posición sin cerrar.
+  - T1 que reabren ≥ +70 % sobre el precio de parada (32 casos en horario 04:00-16:00; el mayor CAPR 3-dic-2025 +329 %; ABVX 22-jul-2025 +475 % fue en after-hours: paró a las 16:01 y reabrió a las 18:30, fuera del horario del bot): DESPUÉS de reabrir suben de mediana un +5 % más (p90 +62 %); 11 de 32 subieron más de un 20 % adicional y 13 cerraron por debajo de la reapertura. La mayor subida adicional tras un T1 fue SMMT 30-may-2024, +113 % (en 60 min), luego BGXX +104 % y BENEW +90 %. Ninguna llegó a doblar y media la reapertura. Un umbral del 250 % en T1 solo habría dejado sin cerrar automáticamente CAPR 3-dic-2025 (+329 %), que después cerró un 2 % por debajo de la reapertura.
   - LULD: la reapertura en sí casi no salta (mediana +0,1 %, p99 +34 %, máx +309 % MKD 2020). El peligro es la CADENA después: entre los que reabren ≥ +100 % (26), la subida adicional mediana es +25 %, p90 +274 %, máx +673 % (CCG 18-sep-2023); AIRE 23-oct-2023 reabrió +100 % y subió otro +1.151 %. Y los que más subieron tras reabrir lo hicieron desde reaperturas PLANAS: ATXG 31-ago-2022 (+4.449 % tras un halt que reabrió −23 %), QMMM 9-sep-2025 (+3.305 %), INHD 8-jun-2026 (+2.451 %), ZJYL, LTRPB. Conclusión: para T1 el umbral de «no cerrar» puede ser bajo (nada continuó más de ×2,1); para LULD lo que manda es el recuento de halts (R-F-01), no el salto de reapertura.
 - Origen: F6 y F7. Directriz de Jaume del 14-sep.
 
@@ -294,7 +292,7 @@ y reconciliación), después el resto.)*
 - Estado: BORRADOR (14-sep). Rutas pendientes del PDF.
 - Origen: F8. Directriz de Jaume del 14-sep.
 
-**F10 (SSR), decidido el 14-sep:** SÍ se entra en acciones en SSR. No hay regla de seguridad por SSR de momento (el área F fija criterios de salida, no de entrada). Queda B19 para el área B.
+**F10 (SSR), decidido el 14-sep:** SÍ se entra en acciones en SSR. No hay regla de seguridad por SSR (el área F fija criterios de salida, no de entrada). Matiz de Jaume para el área H: habrá acciones cuyos locates sean de UN SOLO USO (cada corto obliga a comprar otro paquete); ahí el cálculo del fade / EV frente al coste del locate se repite CADA VEZ que se piden locates, no una vez por día. Queda B19 y el área H.
 
 **F12 (medias sesiones), decidido el 14-sep:** se opera normal. El calendario ya está en las estrategias, en la actualización de datos y en el sistema; el bot hereda la hora de cierre de ese día sin regla aparte.
 
