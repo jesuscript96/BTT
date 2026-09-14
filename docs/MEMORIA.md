@@ -30,6 +30,113 @@
 
 ---
 
+## 2026-09-14 (Sailor) — Portfolio: el Baúl en filas finas, el timeout del listado, y la sub-pestaña «En crudo» con tope de exposición
+
+Jaume quería tres cosas en la página de Portfolio: (1) el Baúl con «celdas finas alargadas estilo excel» y scroll, sin tocar su lógica (es de donde el bot de alertas saca las estrategias); (2) mirar el `Request timed out after 20s: /portfolio-lab/strategies`; (3) una sub-sub-página para estudiar un portfolio con las corridas **tal cual se guardaron** —cada una con sus comisiones y condiciones— en vez de normalizadas, y encima pesos, Kelly, Monte Carlo y un calendario como el del Backtester. La pestaña normalizada («Imagen general») no se toca: sigue siendo la fuente del bot.
+
+### El timeout: trece llamadas a la vez que se serializaban
+
+Medido con el backend en marcha: el listado solo tarda 1,5-2,5 s en caliente (11,8 s en frío, disco mecánico + `json_extract` de `backtest_params`). Pero nada más llegar, el Baúl lanzaba **13 llamadas en paralelo** a `/strategies/{id}/equity` para precargar los minigráficos; cada una hacía `list_runs_for_strategies` + `_attach_params` (parsear el JSON entero de la corrida para tirar los parámetros, ~1 s) y **se serializaban: las 13 acababan a los 12 s a la vez**, y un listado pedido mientras tanto tardaba 11 s más. Con la caché fría, > 20 s.
+
+Arreglo en dos capas:
+- **Frontend:** la curva se pide **al desplegar** la fila (`onOpen` de `StrategyShelf`, `cargarCurva` en `BaulTab`), no las trece al abrir.
+- **Backend:** `strategy_equity` ya no pasa por `_attach_params`; usa `portfolio_lab_raw.latest_run_ids` (escaneo tipado) y `load_runs` (una consulta con `json_extract(results_json, ['$.trades','$.backtest_params','$.global_equity','$.aggregate_metrics'])` que parsea cada documento **una vez**) con **caché en proceso por `(run_id, executed_at)`** (las corridas son inmutables; un re-guardado del mismo job renueva `executed_at`). Medido: 1,5 s la primera vez, 0,02 s después.
+
+### El motor en crudo (`backend/app/services/portfolio_lab_raw.py`, nuevo; `POST /api/portfolio-lab/raw`)
+
+Decisión de Jaume sobre qué es «peso»: **no** un multiplicador ni un reparto de un capital común. La página debe **ignorar el capital con el que se guardó cada corrida**, poner aquí «la cantidad de capital asignado por trade» (global, o por estrategia) y simular «un portfolio en el cual mi exposición máxima por la suma de los trades de todas las estrategias en un momento dado sea menor que la que le pongamos».
+
+Cómo se hace, y por qué es exacto salvo un detalle:
+- Un trade guardado lleva `size`, `avg_entry_price`, `pnl` (neto de comisiones y slippage, **limpio de locates**) y `fees`. Comisiones (por acción o % del valor) y slippage (fracción del precio) son **lineales en el número de acciones**, así que `pnl_nuevo = pnl × size_nuevo / size` conserva las condiciones de la corrida. Los locates se **recalculan** por paquetes de 100 sobre el mayor corto del ticker-día, con `locates_cost`/`locate_type` de la propia corrida (misma regla que `portfolio_sim`).
+- `sizing = "notional"`: `size_nuevo = nocional / avg_entry_price` (el nocional es lo que cuenta contra el tope). `sizing = "as_saved"`: el tamaño guardado, para ver la cruda pura.
+- **Tope de exposición:** todos los trades de todas las estrategias, por orden de `entry_time`, con un heap de posiciones abiertas por `exit_time` (al minuto). Un trade que llevaría la suma de nocionales por encima del tope se **salta** o se **recorta al hueco libre** (`cap_mode`). Se devuelve la exposición máxima y el máximo de posiciones abiertas de cada día. Con nocionales iguales «recortar» nunca actúa (el hueco libre es 0 o ≥ un nocional): no es un bug.
+- El capital es el del portfolio (base del retorno, del Kelly y del MC). Los gastos fijos de las corridas **no se arrastran** (tres corridas con 300 $/mes serían tres cuentas): se piden aparte, a 0 por defecto, y se cargan el primer día operado de cada mes.
+- Reutiliza `compute_stats`, `var_stats` y `correlation_stats` de `portfolio_lab_engine`. La «R» de `expectancy_r` en crudo es PnL/nocional del trade (no hay una R común); la UI lo dice.
+- **Kelly multi-estrategia** sobre el retorno diario (PnL/capital): `f* = Σ⁻¹ μ`, media de cada una sobre sus días vivos y covarianza de cada pareja sobre los días en que ambas existen. `f*_i` = **cuántas veces el tamaño actual** de la estrategia i. Se devuelven f, ½f y ¼f y el crecimiento esperado; con < 60 días vivos no se calcula. En la UI, «Aplicar ½ Kelly» rellena el $/trade por estrategia (`base × f_half`) y desmarca las que salen ≤ 0; luego hay que Calcular, y el tope sigue mandando. Ojo: con estas corridas (Sharpe diario > 4 sin costes reales) f* sale 10-20×; es lo que dice la muestra, no un bug.
+- Los trades aceptados vuelven en **columnas** (`trades`: date, si, ticker, dir, entry, exit, entry_px, exit_px, size, notional, pnl, fees, r, reason): 18.951 trades ≈ 2,5 MB. La `r_multiple` de la corrida es **invariante al tamaño** (PnL y riesgo escalan igual), por eso vale tal cual.
+
+Probado contra la base real (solo lectura, con `importlib` desde el scratchpad, sin tocar el árbol): 13 estrategias, 33.625 trades, carga 1,5 s en frío / 0 en caché, simulación 0,1-0,4 s; suma de trades − locates − gastos = curva al céntimo (0,32 $ de redondeo sobre 18.951 trades). Con 5.000 $/trade y sin tope, las 4 del cuadro Portfolio llegan a **165.000 $ abiertos a la vez** (33 posiciones) sobre 50.000 de capital; con tope de 15.000 se saltan 4.080 de 7.868 trades y el DD pasa de −19 % a −12 %.
+
+### La vista (`frontend/src/components/portfolio/crudo/`)
+
+Cuarta sub-pestaña de Portfolio, «En crudo», estilo hoja de datos del Genético (primitivos copiados en `hoja.tsx`: `Sec`, `Row`, `Num`, `Toggle`, `Btn`, `Stat`; formato propio sin ICU). Su selector son **todas** las estrategias con corrida, no solo las del cuadro Portfolio, y se pinta aunque el cuadro esté vacío (`PortfolioTab` lo despacha antes del `Placeholder`).
+
+Bloques: (1) tabla de estrategias con **con qué se corrió cada una** (capital, riesgo, comisiones —`fees` PERCENT va en fracción, se pinta ×100—, slippage ×100, locates, gastos, periodo) y la casilla $/trade por estrategia; (2) capital, tamaño, nocional, tope, «si no cabe», gastos fijos, periodo, Calcular; (3) cifras grandes; (4) `LineChart` (PnL acumulado por estrategia y el portfolio en cobre, $ o % del capital, ejes, rejilla, leyenda con valor final y cursor con lectura de todas las series) + `ExposureChart` (área de exposición máxima diaria, línea del tope en rojo, marcas ámbar en la base los días en que mordió, línea del capital) + `DrawdownRibbon`; (5) tabla por estrategia con fila Portfolio; (6) `CorrelationMatrix` + tabla Kelly con botones; (7) **`CalendarioCrudo`**: Profits / Gastos / Profits − Gastos en $ o R, meses con columna de semana, y al pulsar un día sus trades **agrupados por estrategia** con subtotales; (8) Monte Carlo por día con el endpoint y los gráficos existentes (`mode: "additive"`; `risk_pct` tiene que ir > 0 aunque no se use). La paleta de series **no lleva cobre ni naranjas** para que ninguna estrategia se confunda con la línea del portfolio.
+
+La R del calendario: como cada corrida tiene su propio riesgo por trade, no hay un «1 R» común. La R neta del día es la suma de las R de sus trades; el bruto se pasa a R trade a trade (riesgo = |PnL| / |R|); locates y gastos fijos, que no son de ningún trade, con el riesgo medio del día (gastos_R = bruto_R − neto_R, así cuadra).
+
+### El Baúl
+
+`StrategyShelf`: filas de **una línea de 28 px** en `grid` con las columnas compartidas entre cabecera y filas (`COLS`), etiquetas de las métricas **una vez** en la cabecera (sticky), altura tope de 12 filas con scroll interno; con una fila desplegada el cuadro crece para que el detalle no se lea con scroll. El distintivo «se normalizará (aprox.)» pasa a «se normalizará ≈» para caber en 132 px. Sin cambios de lógica.
+
+### Trampas del día
+
+- **`git stash` con el backend en `--reload` es un reload doble** (stash y pop tocan `backend/app/`): lo hice para comparar el lint del fichero original y dejé el 8010 sin responder 09:24 → 09:25. Comparar con `git show HEAD:ruta` a un fichero temporal, nunca con stash.
+- Un heredoc **sin comillas** en bash ejecuta los backticks del texto (`` `list_runs_for_strategies` `` se convirtió en una orden y el comentario quedó vacío). Los parches en Python van a fichero con el `Write` y se ejecutan; nunca inline.
+- Un `{/* comentario JSX */}` justo detrás de `) : (` en un ternario es un error de sintaxis (posición de expresión): ahí va `//`.
+- El backend se tocó **con el bot vivo pero antes de las 10:00** (decisión de Jaume): dos ficheros copiados de golpe, 8010 caído 09:07 → 09:09, verificado. El bot lo arrancó el lanzador (no es hijo del backend) y no se enteró.
+
+### Segunda vuelta (misma mañana): «me salen todas perdedoras» y «ningún trade entra»
+
+Reproducido: **el tope estaba solo en dólares**. Un «30» puesto pensando en un 30 % es un tope de 30 $, ningún trade de 5.000 $ cabe («ningún trade entra» en «saltar») y en «recortar» cada trade entra con 30 $, los PnL son céntimos, el portfolio con gastos fijos queda en negativo y la columna «Aporta» (PnL de cada una / total negativo) sale roja para todas. Ni el motor ni las corridas tenían nada mal; la página sí: unidades sin elegir, mensaje mudo y una columna que engaña.
+
+Arreglado en el frontend (con el bot encendido, sin tocar backend):
+- **Por defecto «tal cual la corrida»** (la suma literal de lo que hizo cada backtest, que es la pregunta base de Jaume: «simplemente sumar cada estrategia, ver cuánto ganaría o perdería») y **capital = suma de los capitales de las corridas marcadas** (editable; «usar la suma» para volver). El nocional por trade y el tope son capas opcionales.
+- **Nocional y tope en $ o en % del capital** (`aUsd`), con la equivalencia en $ debajo; la casilla por estrategia sigue la unidad del global; Kelly escribe los overrides en esa unidad.
+- **Validación antes de Calcular** con números: «El tope (30 $) es menor que el nocional de un trade (5.000 $): no cabría ninguno. Súbelo, ponlo en % del capital o elige recortar». Calcular se desactiva.
+- «Aporta» solo cuando el total es positivo; si no, «—» con el porqué en el `title`.
+- Ayudas reescritas en cristiano: qué es el nocional (acciones × precio de entrada, con ejemplo), qué es el tope (lo que puedes tener abierto a la vez), qué es recortar al hueco (con ejemplo de 20.000/17.000/3.000), y que recortar no cambia nada con tamaños iguales.
+
+### Tercera vuelta: «simplemente es sumar estrategias sin más»
+
+Jaume, al ver nocional / tope / saltar-recortar: «no entiendo para qué sirve... simplemente es sumar estrategias sin más. Al final tan solo es ver el gráfico cómo quedaría si hubiera aplicado ambas estrategias y se sumaran; después añadiremos algo para el tema de si hubiéramos escalado de X o Y manera». Y una observación buena sobre el tope en %: «si pongo 7 % me pone 700 abiertos como máximo, pero si el portfolio escala esos 700 ya no son el 7 %» → **cuando se haga la capa de escalado, el tope en % va sobre el capital del día, no sobre el inicial** (como el riesgo PERCENT del motor).
+
+`CrudoTab.tsx` reescrito en simple: selector (con las condiciones de cada corrida y su retorno), «La suma» (capital = suma de las corridas, gastos fijos, periodo, Calcular), cifras, curvas por estrategia + suma, «Abierto a la vez, día a día» (informativo: lo que las corridas tuvieron abierto juntas; es el dato para la capa de escalado), drawdown, tabla por estrategia, correlación, calendario, Monte Carlo. **Fuera de la vista**: tamaño por trade, nocional, tope, saltar/recortar y Kelly (el motor lo conserva todo; la petición va siempre con `sizing: "as_saved"` y tope 0). El `Toggle` de `hoja.tsx` lleva ahora `nowrap + ellipsis + padding` porque «% del capital» se salía del botón.
+
+Lo que enseña la suma «tal cual» con las corridas que hay: las guardadas **normalizadas** (riesgo 1 $ sobre 50.000) suman céntimos (92 $ abiertos a la vez, +0,5 %); solo tiene sentido con corridas guardadas con tamaño real. Es la razón de ser de la capa de escalado.
+
+### Cuarta vuelta: la ejecución se fija AQUÍ, por estrategia (el planteamiento definitivo)
+
+Jaume: «vamos a fijar nosotros aquí en el portfolio el slippage, el capital a apostar por trade en fijo o en %, los locates (y sus tipos) tal y como se usan en el backtester, black swans, halts y comisiones en % o en $ POR ESTRATEGIA... la resetearemos para esta visualización». Gastos fijos aparte (del portfolio; los de las corridas no cuentan). Y que no se sobreescriba nada guardado bajo ningún concepto.
+
+**Qué se reconstruye desde los trades guardados sin rehacer backtests (exacto):** tamaño (capital/trade o riesgo/trade, en $ o en % del capital *del día*), comisiones ($/acción o % del valor), slippage, locates fijos y **aleatorios** (cada trade guarda `locate_ref_price` y `locate_pkg_price`: se re-sortea con `locates_random.precio_locate`, determinista por semilla-ticker-fecha), gastos fijos. **Lo que NO:** Black Swan y Halts (dependen de las velas dentro del trade): fase aparte con backtest efímero, y Jaume dijo que quizá no hagan falta aquí.
+
+**Cómo se resetea un trade** (`portfolio_lab_raw.simulate`, reescrito): bruto = pnl + fees + slippage estimado; bruto por acción = bruto / acciones; tamaño nuevo como dimensiona `portfolio_sim` (`risk_amount / precio` o `/ distancia al stop`) sobre la **primera ejecución** (`executions[0]`) y conservando la proporción de las pirámides; distancia inicial al stop = riesgo de la corrida / acciones de la entrada cuando dimensionó por stop (exacta), si no el último `stop_loss` (aprox., `stop_aprox`); costes nuevos lineales en las acciones; locates por ticker-día sobre el mayor corto. Dos trampas que costaron una vuelta: el `size` guardado es la posición ENTERA con pirámides, y el `stop_loss` guardado es el ÚLTIMO stop, no el de la entrada.
+
+**Verificación:** `tal cual` reproduce las 13 corridas al céntimo; reaplicando a cada corrida su propia ejecución, 11 de 13 exactas y las dos con locates aleatorios a +1,5 % (los topes de caja del backtester no se reproducen: es lo que se resetea). Script: `scratchpad/test_exec.py` de la sesión.
+
+**Tope de exposición en % del capital DEL DÍA** (`max_exposure_pct`, manda sobre el de $): tope del día = pct × capital de apertura del día. Efecto de segundo orden sin afinar (la recomposición tras saltar trades mueve el capital de los días siguientes).
+
+**Interfaz:** tabla de estrategias con la ejecución por fila (tamaño con modo/valor/unidad, comisiones con unidad, slippage, locates con tipo y parámetros), fila «por defecto» con «→ todas», botón «= corrida» que rellena la fila con lo que tenía su corrida, y vista «cómo se corrió» de solo lectura. Portfolio: capital, gastos fijos, tope (% del día o $), periodo. Panel PnL + drawdown (técnico, con tabla al lado), exposición en % del capital del día, tabla por estrategia con comisiones/slippage/locates/«stop ≈», correlación, calendario, Monte Carlo. La UI reconoce el motor nuevo por `config.default_exec` y avisa si el backend es el viejo.
+
+**Diferencia capital/trade vs riesgo/trade (explicada a Jaume):** capital = valor fijo por trade, la pérdida al stop depende de la distancia; riesgo = pérdida fija al stop, el tamaño sale de la distancia (la R significa lo mismo en todas).
+
+**Posiciones a la vez:** es la suma de nocionales de todos los trades abiertos en el mismo instante, de todas las estrategias, en % del capital del día; **al minuto**, así que PM y RTH solo cuentan juntas si se solapan (Jaume lo preguntó).
+
+**PENDIENTE DE APLICAR (bot Vigilando, Jaume dijo «cuando pare el bot»):** los tres ficheros están en `docs/pendiente_backend_crudo/` con la receta en `APLICAR.md` (copiar, esperar el 8010, borrar la carpeta). Incluyen también los arreglos anteriores (pico del DD en el capital en `compute_stats`, tramos por trades, locates aleatorios).
+
+**Bug real encontrado de paso (motor, PENDIENTE de aplicar, parche listo y probado en el scratchpad):** el tramo «vivo» de cada estrategia salía de `backtest_params.start_date/end_date`, y «RTH prueba 1» tiene trades desde 2021 con `start_date = 2026-01-01`: el PnL sumaba los cinco años (2,22 M, correcto) pero el retorno por estrategia (418 % en vez de 694 %), la correlación y Kelly solo contaban los días de 2026. El parche toma el tramo de **los trades** (min/max de las fechas en el rango) y deja los parámetros solo de respaldo sin trades. Probado con `importlib` contra la base en solo lectura: 694,5 % = esperado. **No aplicado porque el bot estaba encendido**; es una edición en `backend/app/services/portfolio_lab_raw.py` (reload de ~1 min).
+
+### Noche: backend aplicado, el R lo pone la estrategia, desplegable por fila
+
+- **Backend aplicado a las 20:06** (Jaume apagó el bot): copié los tres ficheros y NO pasó nada — el 8010 corría **sin `--reload`** desde las 13:29 (lo relanzó así otra sesión: ventana «BTT backend (sin reload)»). Maté el árbol (9600/20924/17340) y lo relancé con la misma línea de comando (`cmd /k title BTT backend (sin reload)&& ... uvicorn app.main:app --host 0.0.0.0 --port 8010`, sin reload); 95 s hasta servir. Verificado: `/raw` devuelve `config.default_exec` y `exec.sizing` resuelto por estrategia. Carpeta `docs/pendiente_backend_crudo/` borrada: los buenos son los del árbol.
+- **El modo de tamaño lo decide la estrategia** (Jaume: «si va por SL o no ya está en la estrategia; aquí solo el R, fijo o en %, como en el panel del backtester»). `sizing: "auto"` en el motor (= `size_by_sl` de la corrida), la fila solo tiene R + `$`/`%` y una etiqueta «por SL» / «por capital». «= corrida» manda `auto`. Verificado: 10/13 exactas, 3 dentro del 1,6 %.
+- **Desplegable por fila** (pedido): `StrategyDetail.tsx` extraído del Baúl (mismo bloque: universo, entrada, salida, riesgo, con qué se corrió, curva) y usado en el Baúl y en «En crudo» (chevron o nombre; la curva se pide al abrir).
+- **Defecto 1 %** por trade (con 5 % y miles de trades el compound daba 10^25 %); números ≥ 10^12 en notación científica; aviso en la tarjeta cuando el retorno pasa de 100.000 %. **DD por estrategia** = pérdida desde su máximo relativa al capital de ESE DÍA (compartiendo cuenta, medirlo contra una base fija daba −33.000 %).
+- Explicado a Jaume capital/trade vs riesgo/trade (= el interruptor «Tamaño por SL»: 1R es lo que se mete o lo que se pierde al stop) y que nada de la pestaña escribe (ni estrategia, ni corrida, ni cuadros).
+
+### Compartidas y push (mediodía)
+
+Jaume: «mi socio no ve mis 4 compartidas». Diagnóstico: 2 estaban en `staging` (commit `89322f8`, 10-sep); las otras 2 (Cruce con media prueba, Gen. Debilidad (PM Top), compartidas el 13-sep 10:44) se quedaron en disco sin commitear — «Compartir» solo escribe el JSON, nada viaja sin push (README de la carpeta). Por orden suya («las dos, rama entera»): commit `3b60650` solo con esos dos JSON y push de la rama a `sailor` y a `staging` (sin divergencia: staging no tenía nada fuera de sailor). Con ella subieron los 4 commits pendientes de días anteriores. El trabajo de hoy sigue sin commitear.
+
+### Dónde lo dejamos
+
+- **PENDIENTE PARA MAÑANA (Jaume, 14-sep noche): AUDITAR EL PORTFOLIO «En crudo».** Lo probó al final del día y «encontró alguna cosilla»; no dijo cuál. Recordárselo al empezar y repasar con él, uno a uno: el R por trade (fijo/%) por estrategia y la etiqueta por SL/por capital, comisiones/slippage/locates reaplicados, el desplegable por fila, las cifras (el compound del % por trade dispara el retorno con estas corridas sin costes), el drawdown por estrategia relativo al capital del día, la exposición al minuto, el calendario y el Monte Carlo.
+- Subido todo a `sailor-rama-desarrollo` y `staging` por orden suya (ver commits de esta noche).
+- Hecho y probado en el navegador: Baúl fino, curva perezosa, `/raw`, la sub-pestaña entera, Kelly aplicado, MC, calendario con día abierto. `tsc` y `eslint` limpios en lo nuevo (los avisos que quedan en `PortfolioTab`/`BaulTab` son anteriores).
+- **Sin commit ni push** (el trabajo del Portfolio de hoy): `backend/app/routers/portfolio_lab.py`, `backend/app/services/portfolio_lab_raw.py` (nuevo), `backend/app/services/portfolio_lab_engine.py` (pico del DD), `frontend/src/lib/api_portfolio_lab.ts`, `frontend/src/components/portfolio/{StrategyShelf,BaulTab,PortfolioTab,StrategyDetail}.tsx`, `frontend/src/components/portfolio/crudo/*` (nuevo), `docs/MEMORIA.md`. Lo subido hoy fue solo el commit de las compartidas (`3b60650`).
+- Pendiente de decidir con Jaume: si el Kelly debería toparse por el tope de exposición antes de proponer el $/trade.
+
 ## 2026-09-13 (Sailor) — La noche de vigilante: el perfil de volumen tumbaba el proceso, y la primera corrida con los alternativos
 
 Jaume lanzó «Genético variado 1» (`20260912_220222_31c6`: semilla 50, 80×40, 3 condiciones, los 25 indicadores marcados incluidos los alternativos, ventana 04:00-08:00, IS 2024-01-01 → 2026-01-01, `min_trades` 1200, **fees 0 y slippage 0**, `size_by_sl` apagado) y me dejó de vigilante toda la noche con el bot apagado. Subido a sailor y staging (`b972a32`, `3fb783a`).
