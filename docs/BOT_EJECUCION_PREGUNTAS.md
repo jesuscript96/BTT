@@ -152,7 +152,7 @@
 
 ## I. Capital, riesgo y cortacircuitos
 
-- [ ] I1. Pérdida diaria máxima: ¿valor, se cuenta realizada + latente, quién corta (bot, ajustes de riesgo de DAS, ambos), y qué se hace al cortar (cerrar todo, cancelar todo, bloquear hasta mañana)? **[API: ajustes de riesgo de la cuenta]**
+- [x] I1. → decidido: SIN cortacircuito diario de momento (solo lo que marque la estrategia); repreguntar más adelante. Pérdida diaria máxima: ¿valor, se cuenta realizada + latente, quién corta (bot, ajustes de riesgo de DAS, ambos), y qué se hace al cortar (cerrar todo, cancelar todo, bloquear hasta mañana)? **[API: ajustes de riesgo de la cuenta]**
 - [ ] I2. Pérdida máxima por operación y por ticker-día.
 - [ ] I3. Racha: ¿N pérdidas seguidas paran el día? ¿Una semana en negativo reduce el tamaño?
 - [ ] I4. Exposición total y por ticker (P3: 3-4 % barajado): ¿sobre qué capital, el equity del día, el inicial o un mínimo fijado?

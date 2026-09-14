@@ -311,6 +311,10 @@ y reconciliación), después el resto.)*
 
 ### Área I · Riesgo y cortacircuitos
 
+**I1 (pérdida diaria máxima), decidido el 14-sep: NO HAY cortacircuito de pérdida diaria en el bot, de momento.** No habrá reglas de pérdida máxima diaria más allá de lo que marque cada estrategia y de las reglas de proceso de este libro. Si algún día se pone, se contaría realizado + latente. El bot no se apaga «por que sí»: se controla por Telegram, pero no hay apagado automático por pérdida. Datos: Sage ofrece autoliquidación en RTH, no en PM. Pendiente de volver a preguntar más adelante.
+
+**Nota de Jaume (14-sep) para las áreas C/D/E:** la gestión de stops y posiciones habrá que hacerla bien por ESTRATEGIA, porque cada una meterá cantidades distintas a mercado. Se irá viendo.
+
 ### Área B · Entrada
 
 ### Área H · Locates
