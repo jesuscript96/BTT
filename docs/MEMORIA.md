@@ -30,6 +30,32 @@
 
 ---
 
+## 2026-09-14 (Sailor, bot de alertas) — ELMT sin señal, un aviso perdido en silencio, y el `--reload` fuera del lanzador
+
+Jaume: «¿Puedes mirarme por qué no ha dado señal de ELMT?». Luego, al parar el bot a las 20:01: «haz una auditoría rápida de hoy».
+
+### ELMT: la vela que acababa de cerrar se sellaba como «pasado»
+
+Al admitir un ticker, `RunnerAlertas.hidratar()` traía el día por REST y lo pasaba entero por el motor **tirando lo que saliera** (para no reavisar la mañana; el caso FLYE del 1-sep). Pero la última fila del REST era la vela cerrada **7 segundos antes**, y el radar y la entrada de 1B comparten umbral (gap ≥ 50 %): la vela que admite es a menudo la vela que entra. ELMT, 06:59 NY: PMH gap 49,4 → 51,1 % **y** cierre por debajo del mínimo anterior → «1 avisos del pasado descartados» = la entrada. Segundo orden: el simulador sí abrió la posición, así que 07:03/07:09/07:12 no eran entradas nuevas, y sus salidas sí iban a avisar.
+
+Arreglo (`09fa852`, subido): las filas del REST se parten en **pasado** (sellar y tirar) / **última completa** (evaluar como AHORA; sus avisos vuelven a `bot.py` y salen por `al_avisar`) / **minuto en curso** (fuera: Massive lo da a medias, llega por el feed al cerrar). `hidratar()` devuelve `list[Evento]`; 7 tests en `test_bot_alerts_hidratar_ultima_vela.py`. El log ahora dice «N velas de pasado selladas (M avisos tirados), la de las HH:MM evaluada como ACTUAL (K avisos)». **Entra en vigor con el bot de mañana**; comprobar esa línea con el primer ticker que entre al radar.
+
+### Auditoría del día: 23 avisos en Telegram, 22 en la base
+
+Parado cerró el proceso; las dos estrategias marcadas; universo 5.696, cierres del 11-sep, calendario OK; 7 tickers en el radar; los **tres tramos** del take profit de 1B salieron para ELMT/SCNI/HAIN (el arreglo del 10-sep funciona en vivo); 14 prealertas; dos `1011 keepalive ping timeout` del feed, reconectados solos.
+
+**Un aviso perdido sin error**: el 3.er tramo de SCNI (08:45 NY) llegó a Telegram y al diario pero no a la base. En `bot.py`, `await to_thread(cliente.publicar, pendientes)` seguido de `pendientes.clear()`: httpx serializa la lista al empezar el envío, y lo que se añade DURANTE el envío (los tres cierres de las 08:45 fueron en el mismo segundo) se borra sin salir. Con los tramos saliendo a la vez para todas las posiciones, iba a pasar casi cada día. Arreglo en `bot.py` (fuera de git): copiar el lote, enviar la copia, `del pendientes[:len(lote)]`. Probado con una simulación fiel (antes pierde SCNI, ahora queda en cola). Receta de auditoría: contar avisos del diario (hora ES) contra `/api/bot-alerts/eventos?fecha=` (hora NY).
+
+### El `--reload` tumbó el backend en sesión (4 de 4) → quitado del lanzador
+
+Guardar `bot_alerts_runner.py` con el backend en `--reload` lo dejó ~8 min sin responder con el mercado abierto (13:22–13:30; el worker no volvía). Cuarta recarga atascada en tres días. El bot no se enteró (no es hijo del backend desde `2036971`; Telegram lo manda él). **Con el visto bueno de Jaume, `D:\lanzador_btt\arrancar_btt.ps1` ya arranca uvicorn SIN `--reload`.** Consecuencia para el siguiente chat: **tocar el backend no llega al backend que corre; hay que reiniciarlo a mano** (matar el cmd «BTT backend» + sus python sin `/T`, relanzar sin reload, fuera de sesión) y verificar el efecto. Ojo con el sandbox de PowerShell: `Stop-Process` se bloquea; usar `powershell -NoProfile -Command` desde Bash.
+
+### Desde el 9-sep, para quien retome el bot (todo en commits y en la memoria de Claude)
+
+9-sep: festivos NYSE y horario de verano (`bot_alerts_calendario.py`); el botón Vigilar no encendía (env `BOT_ALERTS_ARRANCADO_POR_LA_PAGINA`). 10-sep: solo avisaba el primer tramo de un TP parcial → dedup por `(entry_idx, n_tramo)`, para cualquier tipo de parcial; fuga del token de Telegram en los logs de httpx **aplazada por decisión de Jaume** (no replantearla). 11-sep: Parado CIERRA el proceso, Vigilar arranca limpio, y recarga en caliente de estrategias (`estrategias_version` en `/estado`, `MotorAlertas.actualizar()` conserva la memoria del día). Pendientes conocidos: el bucle «sin estrategias activas» no publica el diario mientras espera; `posicion_restante` no se guarda en la base (solo va en Telegram, a propósito).
+
+---
+
 ## 2026-09-14 (Sailor) — Portfolio: el Baúl en filas finas, el timeout del listado, y la sub-pestaña «En crudo» con tope de exposición
 
 Jaume quería tres cosas en la página de Portfolio: (1) el Baúl con «celdas finas alargadas estilo excel» y scroll, sin tocar su lógica (es de donde el bot de alertas saca las estrategias); (2) mirar el `Request timed out after 20s: /portfolio-lab/strategies`; (3) una sub-sub-página para estudiar un portfolio con las corridas **tal cual se guardaron** —cada una con sus comisiones y condiciones— en vez de normalizadas, y encima pesos, Kelly, Monte Carlo y un calendario como el del Backtester. La pestaña normalizada («Imagen general») no se toca: sigue siendo la fuente del bot.
