@@ -212,6 +212,10 @@ def _compute_signals_for_pair(
         # fuerza el camino clasico), pero la variable debe existir aguas abajo.
         sig_pyramid_levels = []
         sig_pyramid_sequential = False
+        # Idem scalping: nunca llega aqui (has_special), pausa 0.
+        sig_cooldown = 0
+        sig_risk_scale = 1.0
+        sig_ladder = None
     else:
         # ═══ LEGACY PATH (backward compatible) ═══
         pm_highs_vals = pm_high_run
@@ -255,6 +259,9 @@ def _compute_signals_for_pair(
         sig_partial_tps = signals.get("partial_take_profits")
         sig_pyramid_levels = signals.get("pyramid_levels") or []
         sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
+        sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
+        sig_risk_scale = float(signals.get("risk_scale", 1.0) or 1.0)
+        sig_ladder = signals.get("ladder")
 
     # Fast return if no entries (only for legacy; fast path already returns arrays)
     if indicator_plan is None and not np.any(entries_arr):
@@ -411,6 +418,9 @@ def _compute_signals_for_pair(
         "sig_partial_tps": sig_partial_tps,
         "sig_pyramid_levels": sig_pyramid_levels,
         "sig_pyramid_sequential": sig_pyramid_sequential,
+        "sig_cooldown": sig_cooldown,
+        "sig_risk_scale": sig_risk_scale,
+        "sig_ladder": sig_ladder,
         "gap_pct": daily_stats.get("gap_pct"),
     }
 
@@ -919,6 +929,12 @@ def _enrich_trades_arr(raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_do
             "entry_weekday": entry_ts.weekday(),
             "gap_pct": float(gap_pct) if gap_pct is not None else None,
             "stop_loss": t.get("stop_loss", 0.0),
+            # Black Swan (en paridad con _enrich_trades): todo `bs_*` tal cual
+            # mas la hora de la mecha maxima.
+            **{k: v for k, v in t.items() if k.startswith("bs_")},
+            **{k: v for k, v in t.items() if k.startswith("halt_")},
+            **({"bs_wick_time_epoch": int(ts_epoch[min(int(t["bs_wick_idx"]), max_idx)])}
+               if t.get("bs_wick_idx") is not None else {}),
         })
     return result
 
@@ -1048,7 +1064,8 @@ def simulate_and_accumulate(signals_sorted, params):
                 exits=sig["exits_arr"],
                 direction=sig["sig_direction"],
                 init_cash=cash,
-                risk_r=risk_r,
+                # Scalping: fraccion de la cifra del panel por entrada; 1.0 si no.
+                risk_r=risk_r * float(sig.get("sig_risk_scale", 1.0) or 1.0),
                 risk_type=risk_type,
                 fixed_ratio_delta=fixed_ratio_delta,
                 size_by_sl=size_by_sl,
@@ -1075,6 +1092,8 @@ def simulate_and_accumulate(signals_sorted, params):
                 partial_take_profits=sig["sig_partial_tps"],
                 pyramid_levels=sig.get("sig_pyramid_levels") or [],
                 pyramid_sequential=bool(sig.get("sig_pyramid_sequential")),
+                reentry_cooldown_bars=int(sig.get("sig_cooldown", 0) or 0),
+                ladder=sig.get("sig_ladder"),
                 hs_type=hs.get("type"),
                 hs_value=hs.get("value"),
                 hs_operator=hs.get("operator", ">="),
@@ -1238,6 +1257,13 @@ def simulate_and_accumulate(signals_sorted, params):
                 risk_unit_dollar = compounding_cash * (risk_r / 100.0)
             else:
                 risk_unit_dollar = risk_r
+
+            # Mecha adversa maxima de cada registro (descriptivo; la MISMA
+            # funcion y los mismos arrays que el camino secuencial, para que
+            # los dos caminos sigan dando dicts identicos).
+            from app.services.bswan import anotar_mechas as _anotar_mechas
+            _anotar_mechas(raw_trades, arrays["open"], arrays["high"], arrays["low"],
+                           sig["sig_direction"] == "longonly", look_ahead_prevention)
 
             trades_records = _enrich_trades_arr(
                 raw_trades, ts_dt64, ts_epoch, ticker, date, risk_unit_dollar, gap_pct,

@@ -51,7 +51,6 @@ import { computeDayStreaks } from "@/lib/day_streaks";
 // con una descripcion de 43.191 caracteres, que ademas viaja tal cual al JSON
 // de estrategias_compartidas/. Aqui se anotan los ajustes y se deja fuera
 // cualquier tabla gorda, diciendo cuantas entradas tenia en vez de listarlas.
-// (Porte del commit 1013fed de Jaume, 10-sep-2026.)
 const WHATIF_TABLAS = new Set(["locates_by_pair"]);
 
 function describirWhatIf(parsed: Record<string, unknown>): string {
@@ -265,6 +264,7 @@ export default function Home() {
         custom_end_time: draftStrategy.custom_end_time || activeCustomEndTime,
         ...((draftStrategy as any).pyramiding ? { pyramiding: (draftStrategy as any).pyramiding } : {}),
         ...((draftStrategy as any).advanced_model ? { advanced_model: (draftStrategy as any).advanced_model } : {}),
+        ...((draftStrategy as any).scalping ? { scalping: (draftStrategy as any).scalping } : {}),
       });
 
       if (isExisting) {
@@ -403,6 +403,7 @@ export default function Home() {
           custom_end_time: def.custom_end_time,
           ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
+          ...(def.scalping ? { scalping: def.scalping } : {}),
         } as any;
       }
       return prev;
@@ -567,6 +568,7 @@ export default function Home() {
         // queda byte-identica a la de siempre (regla nº1).
         ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
         ...((draft as any).advanced_model ? { advanced_model: (draft as any).advanced_model } : {}),
+        ...((draft as any).scalping ? { scalping: (draft as any).scalping } : {}),
       }
     });
 
@@ -596,6 +598,16 @@ export default function Home() {
       ev_gate_by: p?.ev_gate_by,
       ev_gate_default_pct: p?.ev_gate_default_pct,
       ev_gate_min_trades: p?.ev_gate_min_trades,
+      bswan_enabled: p?.bswan_enabled,
+      bswan_mode: p?.bswan_mode,
+      bswan_threshold_pct: p?.bswan_threshold_pct,
+      bswan_slippage_pct: p?.bswan_slippage_pct,
+      bswan_partition_pct: p?.bswan_partition_pct,
+      bswan_minutes: p?.bswan_minutes,
+      halts_enabled: p?.halts_enabled,
+      halts_mode: p?.halts_mode,
+      halts_n: p?.halts_n,
+      halts_slippage_pct: p?.halts_slippage_pct,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -625,6 +637,7 @@ export default function Home() {
           // quedaba vacio, apagando pyramid_mode en SILENCIO (sin error).
           ...((draft as any).pyramiding ? { pyramiding: (draft as any).pyramiding } : {}),
         ...((draft as any).advanced_model ? { advanced_model: (draft as any).advanced_model } : {}),
+        ...((draft as any).scalping ? { scalping: (draft as any).scalping } : {}),
         },
         init_cash: p?.init_cash ?? 10000,
         risk_r: p?.risk_r ?? 100,
@@ -650,6 +663,18 @@ export default function Home() {
         ev_gate_by: p?.ev_gate_by,
         ev_gate_default_pct: p?.ev_gate_default_pct,
         ev_gate_min_trades: p?.ev_gate_min_trades,
+        // Coste de Black Swan: sin declararlo aqui se caeria en silencio
+        // (lista blanca, MEMORIA §10 / tres capas).
+        bswan_enabled: p?.bswan_enabled,
+        bswan_mode: p?.bswan_mode,
+        bswan_threshold_pct: p?.bswan_threshold_pct,
+        bswan_slippage_pct: p?.bswan_slippage_pct,
+        bswan_partition_pct: p?.bswan_partition_pct,
+        bswan_minutes: p?.bswan_minutes,
+      halts_enabled: p?.halts_enabled,
+      halts_mode: p?.halts_mode,
+      halts_n: p?.halts_n,
+      halts_slippage_pct: p?.halts_slippage_pct,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
         // PRD_METRICAS_Y_OOS P1: la ruta de borrador tampoco enviaba el split
@@ -710,8 +735,20 @@ export default function Home() {
     custom_end_time?: string;
     monthly_expenses?: number;
     is_percent?: number;
+    // Coste de Black Swan: tipado aqui para no pasar por `as any` como el
+    // resto de costes (que los lee asi por herencia).
+    bswan_enabled?: boolean;
+    bswan_mode?: "mercado" | "manual";
+    bswan_threshold_pct?: number;
+    bswan_slippage_pct?: number;
+    bswan_partition_pct?: number;
+    bswan_minutes?: number;
+    halts_enabled?: boolean;
+    halts_mode?: "primero" | "n";
+    halts_n?: number;
+    halts_slippage_pct?: number;
   }) => {
-    const isDraftId = params.strategy_id === "draft" || 
+    const isDraftId = params.strategy_id === "draft" ||
                       params.strategy_id === "wizard_draft" || 
                       params.strategy_id.startsWith("draft_") || 
                       params.strategy_id.startsWith("wizard_draft_");
@@ -789,6 +826,7 @@ export default function Home() {
             custom_end_time: def.custom_end_time || params.custom_end_time,
             ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
+          ...(def.scalping ? { scalping: def.scalping } : {}),
           } as any;
           await handleRunWithDraft(draft);
           return;
@@ -835,6 +873,9 @@ export default function Home() {
         ...((targetDraft.definition?.advanced_model || (targetDraft as any).advanced_model)
           ? { advanced_model: targetDraft.definition?.advanced_model || (targetDraft as any).advanced_model }
           : {}),
+        ...((targetDraft.definition?.scalping || (targetDraft as any).scalping)
+          ? { scalping: targetDraft.definition?.scalping || (targetDraft as any).scalping }
+          : {}),
       } as any;
       await handleRunWithDraft(draft);
       return;
@@ -878,6 +919,16 @@ export default function Home() {
       ev_gate_by: (params as any).ev_gate_by,
       ev_gate_default_pct: (params as any).ev_gate_default_pct,
       ev_gate_min_trades: (params as any).ev_gate_min_trades,
+      bswan_enabled: params.bswan_enabled,
+      bswan_mode: params.bswan_mode,
+      bswan_threshold_pct: params.bswan_threshold_pct,
+      bswan_slippage_pct: params.bswan_slippage_pct,
+      bswan_partition_pct: params.bswan_partition_pct,
+      bswan_minutes: params.bswan_minutes,
+      halts_enabled: params.halts_enabled,
+      halts_mode: params.halts_mode,
+      halts_n: params.halts_n,
+      halts_slippage_pct: params.halts_slippage_pct,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,
@@ -945,6 +996,7 @@ export default function Home() {
             custom_end_time: def.custom_end_time,
             ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
+          ...(def.scalping ? { scalping: def.scalping } : {}),
           } as any);
         } else {
           setDraftStrategy(null);
@@ -1600,6 +1652,7 @@ export default function Home() {
                       custom_end_time: def.custom_end_time,
                       ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
+          ...(def.scalping ? { scalping: def.scalping } : {}),
                     } as any);
                     
                     setActiveSessions(def.market_sessions || ["rth"]);
@@ -1918,7 +1971,7 @@ export default function Home() {
                               description = description ? `${description}\n${whatifDesc}` : whatifDesc;
                             } catch {
                               // Solo se llega aqui si el JSON esta corrupto: se
-                              // anota RECORTADO, no entero. (Porte 1013fed.)
+                              // anota RECORTADO, no entero.
                               const bruto = `[What-if: ${stored.slice(0, 300)}${stored.length > 300 ? "…" : ""}]`;
                               description = description ? `${description}\n${bruto}` : bruto;
                             }
@@ -1941,6 +1994,7 @@ export default function Home() {
                           custom_end_time: strategyToSave.custom_end_time,
                           ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
                           ...((strategyToSave as any).advanced_model ? { advanced_model: (strategyToSave as any).advanced_model } : {}),
+                          ...((strategyToSave as any).scalping ? { scalping: (strategyToSave as any).scalping } : {}),
                         } as any);
                         const newStrategyId = savedStrategy.id;
 
@@ -2005,6 +2059,7 @@ export default function Home() {
                           custom_end_time: def.custom_end_time,
                           ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
+          ...(def.scalping ? { scalping: def.scalping } : {}),
                         } as any;
                         setBuilderDraft(savedDraft);
 
@@ -2107,7 +2162,7 @@ export default function Home() {
                               description = description ? `${description}\n${whatifDesc}` : whatifDesc;
                             } catch {
                               // Solo se llega aqui si el JSON esta corrupto: se
-                              // anota RECORTADO, no entero. (Porte 1013fed.)
+                              // anota RECORTADO, no entero.
                               const bruto = `[What-if: ${stored.slice(0, 300)}${stored.length > 300 ? "…" : ""}]`;
                               description = description ? `${description}\n${bruto}` : bruto;
                             }
@@ -2131,6 +2186,7 @@ export default function Home() {
                           custom_end_time: strategyToSave.custom_end_time,
                           ...(strategyToSave.pyramiding ? { pyramiding: strategyToSave.pyramiding } : {}),
                           ...((strategyToSave as any).advanced_model ? { advanced_model: (strategyToSave as any).advanced_model } : {}),
+                          ...((strategyToSave as any).scalping ? { scalping: (strategyToSave as any).scalping } : {}),
                         } as any);
 
                         // Persist backtest results linked to this strategy
@@ -2194,6 +2250,7 @@ export default function Home() {
                           custom_end_time: def.custom_end_time,
                           ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
           ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
+          ...(def.scalping ? { scalping: def.scalping } : {}),
                         } as any;
                         setBuilderDraft(updatedDraft);
 

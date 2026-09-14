@@ -42,6 +42,10 @@ FAMILIAS = (
     ("caidas", "Caídas y gaps"),
     ("volumen", "Volumen"),
     ("tiempo", "Tiempo"),
+    # Los del 9 y 10-sep-2026: regresion, absorcion, mecha, retroceso, pivote y
+    # perfil de volumen. Mismo bloque aparte que en el constructor de
+    # condiciones, y por la misma razon: mezclados con RSI y SMA se esconden.
+    ("alternativos", "Alternativos"),
 )
 
 
@@ -65,6 +69,12 @@ class Indicador:
     # indicadores bien elegidos buscan mejor que el catalogo entero, cada
     # uno que no aporta anyade formas de encontrar casualidades».
     por_defecto: bool = False
+    # NIVEL OPCIONAL: no forma condiciones por si mismo («Punto de control > 3»
+    # no dice nada). Marcarlo en la pagina lo mete como DESTINO de Bar Close /
+    # High Bar / Low Bar; sin marcar, no aparece en ninguna receta. Asi los
+    # niveles del perfil de volumen y el pivote no cambian las corridas de
+    # quien no los pida — la lista de destinos de siempre sigue igual.
+    solo_destino: bool = False
 
     def etiqueta(self, params: dict) -> str:
         if not params:
@@ -105,7 +115,54 @@ NIVELES_CON_PARAMS: dict[str, dict] = {
     },
 }
 
+# NIVELES OPCIONALES (10-sep-2026): el ultimo pivote y el perfil de volumen.
+# Son precios como los de arriba, pero NO entran de serie como destino: solo
+# si se marcan en la pagina (ver `Indicador.solo_destino` y
+# `objetivos_permitidos`). Dos razones. Una, no cambiar las corridas de quien
+# no los pida: con cuatro destinos mas, uno de cada cinco «Bar Close cruza…»
+# saldrian contra el perfil aunque nadie lo quisiera. Dos, que se pueda
+# comparar una corrida CON el perfil y otra SIN, que es la unica forma de
+# saber si aporta.
+#
+# Los parametros se sortean igual que los de SMA o Darvas:
+#   · `bin_pct` («Detalle %»): anchura de la franja, % del primer precio del
+#     dia. Acotado a 5 en la UI desde que un 90 dio un POC fuera del rango.
+#   · `zona_pct`: % del volumen del dia que encierra la zona de valor.
+#   · `pivot_window`: velas de confirmacion a cada lado; `swing_dir` techos o suelos.
+#
+# «Nodo de arriba» y «Nodo de abajo» NO estan, y es a proposito: son RELATIVOS
+# al precio (la primera zona por encima / por debajo de donde esta el cierre),
+# asi que el cierre esta SIEMPRE al otro lado y nunca los cruza. Medido en un
+# dia sintetico de 600 velas: Bar Close cruza el nodo 0 veces; solo la mecha
+# de su lado lo pincha (High Bar contra el de arriba, Low Bar contra el de
+# abajo). En el genetico serian dos de cada tres condiciones muertas de
+# nacimiento. El punto de control y la zona de valor llevan la misma
+# informacion y si se cruzan.
+NIVELES_OPCIONALES: dict[str, dict] = {
+    "Ultimo pivote": {"pivot_window": [2, 3, 5], "swing_dir": ["up", "down"]},
+    "Punto de control": {"bin_pct": [0.5, 1.0, 2.0]},
+    "Zona alta": {"bin_pct": [0.5, 1.0, 2.0], "zona_pct": [50, 70, 85]},
+    "Zona baja": {"bin_pct": [0.5, 1.0, 2.0], "zona_pct": [50, 70, 85]},
+}
+NIVELES_CON_PARAMS.update(NIVELES_OPCIONALES)
+
 TODOS_LOS_NIVELES = NIVELES + tuple(NIVELES_CON_PARAMS)
+
+
+def lado_izquierdo(nombres) -> list[str]:
+    """Los marcados que pueden ir a la izquierda de una condicion: todo menos
+    los niveles opcionales. Si Jaume marca solo «Punto de control», esto
+    devuelve vacio y quien llama tiene que quejarse, no sortear un nivel a la
+    izquierda de un «>» sin nada contra lo que comparar."""
+    return [n for n in nombres if not CATALOGO[n].solo_destino]
+
+
+def objetivos_permitidos(ind: "Indicador", marcados) -> tuple:
+    """Los destinos de `ind` que valen en ESTA corrida: los de siempre, mas los
+    niveles opcionales que esten marcados. `marcados` es el catalogo elegido en
+    la pagina (config["catalogo"])."""
+    m = set(marcados or ())
+    return tuple(o for o in ind.objetivos if o not in NIVELES_OPCIONALES or o in m)
 
 
 CATALOGO: dict[str, Indicador] = {
@@ -308,7 +365,132 @@ CATALOGO: dict[str, Indicador] = {
         ayuda="Minutos desde el último máximo. Mucho tiempo sin hacer máximos es la "
               "definición operativa de que la subida murió.",
     ),
+
+    # ── Alternativos (9 y 10-sep-2026) ──────────────────────────────────
+    #
+    # Las rejillas de valores NO son inventadas: absorcion y mecha salen de los
+    # percentiles medidos sobre 2.476 velas reales del bot (8-9 sep 2026,
+    # ventana de 5 min); pendiente, R2, retroceso y extension salen de los
+    # ordenes de magnitud del descriptivo del constructor de condiciones.
+    #
+    # «Absorption + Wick» NO esta a proposito: es «Absorption > a AND Wick
+    # Ratio > w» sobre la misma ventana, y el genetico ya busca 2-3 condiciones
+    # en AND. Como dos genes sueltos prueba mas combinaciones que el combinado.
+    "Reg. Slope": Indicador(
+        nombre="Reg. Slope", familia="alternativos",
+        params={"range_minutes": [5, 10, 20, 30]},
+        valores=(-0.5, -0.25, -0.1, -0.05, 0.05, 0.1, 0.25, 0.5),
+        comparadores=(GT, LT),
+        ayuda="Pendiente de la recta ajustada al precio en los últimos X minutos "
+              "de RELOJ, en % por minuto y normalizada por el precio, así que el "
+              "mismo umbral vale para un ticker de 0,60 $ y uno de 45 $. Negativa "
+              "= cae. Con 20 min: ±0,05 es plano, ±0,10 a ±0,25 tendencia clara, "
+              "±0,5 un desplome o un spike.",
+    ),
+    "Reg. R2": Indicador(
+        nombre="Reg. R2", familia="alternativos",
+        params={"range_minutes": [10, 20, 30]},
+        valores=(0.3, 0.5, 0.7, 0.85), comparadores=(GT, LT),
+        ayuda="Calidad del ajuste de esa misma recta, de 0 a 1: escalera (cerca de "
+              "1) o sierra (cerca de 0). Un tramo limpio admite un stop cerca; una "
+              "sierra te saca varias veces por el camino. Va bien EMPAREJADO con "
+              "Reg. Slope: pendiente dice hacia dónde, R² dice si es de fiar.",
+    ),
+    "ATR Extension": Indicador(
+        nombre="ATR Extension", familia="alternativos",
+        # `period` es el del ATR; 14 es el canónico y 7 uno rápido. La referencia
+        # se sortea: al VWAP es el clásico del fade, a PMH y al cierre de ayer
+        # miden si el gap se está deshaciendo, y al máximo del día (siempre ≤ 0)
+        # cuántos ATR lleva caídos desde el techo.
+        params={"period": [7, 14], "ref_level": ["vwap", "pmh", "prev_close", "hod"]},
+        valores=(-4, -3, -2, -1, 1, 2, 3, 4, 6), comparadores=(GT, LT),
+        ayuda="Cuántos ATR separan al precio de la referencia (VWAP, PM High, cierre "
+              "de ayer o máximo del día; se sortea). Positivo = por encima. De 0 a 1 "
+              "es la zona normal; 2-3 estirado; 4-6 la extensión fuerte del fade "
+              "clásico. Es el «está un 8 % sobre el VWAP» hecho comparable entre "
+              "tickers.",
+    ),
+    "Time vs Level": Indicador(
+        nombre="Time vs Level", familia="alternativos",
+        params={"ref_level": ["vwap", "pmh", "pml", "prev_close", "rth_open"],
+                "level_dir": ["above", "below"]},
+        valores=(5, 10, 15, 30, 60), comparadores=(GT, LT),
+        ayuda="Minutos SEGUIDOS por encima (o por debajo) del nivel: la aceptación. "
+              "Para «precio > PM High» son iguales 2 minutos arriba y 90, y son "
+              "situaciones opuestas. 0 cuando no se cumple; se reinicia cada sesión. "
+              "Se sortean el nivel y el lado.",
+    ),
+    "Absorption": Indicador(
+        nombre="Absorption", familia="alternativos",
+        params={"range_minutes": [3, 5, 10]},
+        # p50 = 0,26 · p75 = 0,85 · p90 = 2,62 · p95 = 5,08 · p99 = 17,5
+        valores=(0.25, 0.85, 2.5, 5, 10), comparadores=(GT, LT),
+        ayuda="Millones de $ que hicieron falta para mover el precio un 1 % neto en "
+              "la ventana. Alto = alguien absorbe (un ATM, un insider colocando "
+              "papel). Medido en el universo real con 5 min: la mediana es 0,25 y "
+              "solo 1 de cada 10 velas pasa de 2,5.",
+    ),
+    "Wick Ratio": Indicador(
+        nombre="Wick Ratio", familia="alternativos",
+        params={"range_minutes": [3, 5, 10], "wick_side": ["upper", "lower"]},
+        # mecha arriba: p50 = 0,21 · p75 = 0,29 · p90 = 0,37 · p95 = 0,43
+        valores=(0.2, 0.3, 0.4, 0.5), comparadores=(GT, LT),
+        ayuda="Fracción del recorrido de la ventana devuelta en mecha, de 0 a 1. "
+              "Arriba = rechazo de las subidas; abajo = de las caídas. OJO A LA "
+              "ESCALA: en un día normal siempre se devuelve una quinta parte (0,2), "
+              "eso no significa nada; 0,4 ya es el 10 % más rechazado.",
+    ),
+    "Retroceso (%)": Indicador(
+        nombre="Retroceso (%)", familia="alternativos",
+        # 0 = el impulso del día entero (lo normal); 30 y 60 = solo lo que se
+        # movió en la última media hora u hora. `swing_dir` up mide cuánto se
+        # ha devuelto de la SUBIDA; down, cuánto ha rebotado de la CAÍDA.
+        params={"range_minutes": [0, 30, 60], "swing_dir": ["up", "down"]},
+        valores=(10, 20, 38, 50, 62, 80, 100), comparadores=(GT, LT),
+        ayuda="Qué parte del impulso se ha devuelto ya, en % del impulso (no del "
+              "precio): de 10 a 15 y luego a 13 es un 40. Cerca de 0 está en "
+              "máximos; 100 ha vuelto a la base; más de 100 la ha perforado. Se "
+              "reancla al hacer un máximo nuevo. No confundir con «Recorrido (%)», "
+              "que es el cuerpo de UNA vela.",
+    ),
+    "Vol. de la franja": Indicador(
+        nombre="Vol. de la franja", familia="alternativos",
+        params={"bin_pct": [0.5, 1.0, 2.0]},
+        valores=(20, 50, 80, 95), comparadores=(GT, LT),
+        ayuda="Qué porcentaje de las franjas de precio del día tienen MENOS volumen "
+              "que la franja donde está el precio ahora, de 0 a 100. Alto = está "
+              "en una zona muy negociada (freno); bajo = en el vacío, donde el "
+              "precio se mueve rápido porque nadie compró ahí.",
+    ),
 }
+
+# Los niveles opcionales (cuatro: el pivote, el punto de control y la zona de
+# valor), como entradas del catalogo para que salgan en la pagina con su casilla. No forman condiciones solos (`solo_destino`): marcarlos
+# los anyade a los destinos de Bar Close / High Bar / Low Bar, y «Ultimo pivote»
+# ademas al sorteo del stop de estructura.
+_AYUDA_NIVELES = {
+    "Ultimo pivote":
+        "El último techo (o suelo) CONFIRMADO, como precio. No es «Previous max»: "
+        "aquel es el máximo corrido y nunca baja; con 10 → 15 → 12 → 14 → 11 el "
+        "pivote alto es 14 y el bajo 12. Aparece N velas después de ocurrir (es lo "
+        "que lo hace causal). Marcado, entra como destino de los cruces del precio "
+        "Y como nivel del stop de estructura (con 3 velas de confirmación).",
+    "Punto de control":
+        "El precio donde más volumen se ha cruzado hoy. No es una media: salta a "
+        "saltos de franja. Cruzarlo hacia abajo es perder el precio que el mercado "
+        "aceptó como justo.",
+    "Zona alta":
+        "Borde superior de la banda donde se negoció casi todo el día. NO se mueve "
+        "con el precio: es el marco estable de la sesión (cambia la mitad de "
+        "veces que los nodos).",
+    "Zona baja":
+        "Borde inferior de esa misma banda. Perderlo es entrar donde casi nadie "
+        "compró.",
+}
+for _n, _rejilla in NIVELES_OPCIONALES.items():
+    CATALOGO[_n] = Indicador(nombre=_n, familia="alternativos", params=dict(_rejilla),
+                             comparadores=(), ayuda=_AYUDA_NIVELES[_n], solo_destino=True)
+del _n, _rejilla
 
 
 # ── Gestion de riesgo ───────────────────────────────────────────────────────
@@ -322,6 +504,25 @@ STOP_NIVELES = {
     "short": (("HOD", ">="), ("PMH", ">="), ("Previous Max", ">=")),
     "long": (("LOD", "<="), ("PML", "<="), ("Previous Min", "<=")),
 }
+# El ultimo pivote como stop de estructura (10-sep-2026), SOLO si «Ultimo
+# pivote» esta marcado en el catalogo: es el mismo interruptor que lo mete como
+# destino, para que una corrida sin el se sortee exactamente como antes. Los
+# valores son los mismos que ofrece RiskManagement.tsx (VALORES_PIVOTE en
+# portfolio_sim.py); sin `pivot_window` en el hard_stop el motor usa 3, y si
+# aun no hay pivote confirmado cae al respaldo del 5 %.
+STOP_NIVELES_OPCIONALES = {
+    "short": (("Ultimo pivote alto", ">="),),
+    "long": (("Ultimo pivote bajo", "<="),),
+}
+STOP_NIVEL_INTERRUPTOR = "Ultimo pivote"
+
+
+def stop_niveles(sesgo: str, marcados=()) -> tuple:
+    """Niveles de estructura sorteables en ESTA corrida."""
+    base = STOP_NIVELES[sesgo]
+    if STOP_NIVEL_INTERRUPTOR in set(marcados or ()):
+        return base + STOP_NIVELES_OPCIONALES[sesgo]
+    return base
 # El techo era 30 y se subio a 40 el 7-sep-2026 a peticion de Jaume. El
 # motivo salio de la corrida de anoche: la estrategia llevaba el take
 # profit al 35 %, asi que NINGUN disparador de parcial podia colocarse por

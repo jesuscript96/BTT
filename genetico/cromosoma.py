@@ -26,8 +26,35 @@ from genetico import catalogo as C
 
 # ── Nacimiento al azar ──────────────────────────────────────────────────────
 
-def _condicion_aleatoria(rng: random.Random, nombres: list[str]) -> dict:
-    ind = C.CATALOGO[rng.choice(nombres)]
+def objetivo_aleatorio(rng: random.Random, ind, marcados=None) -> dict:
+    """Un nivel del lado derecho, CON sus parametros sorteados.
+
+    Sin esto, un Donchian o una Darvas saldrian siempre con el periodo por
+    defecto y con la linea de arriba: se ofreceria el indicador y se probaria
+    UNA sola de sus formas. Es justo lo que preguntaba Jaume del Darvas — asi
+    prueba por arriba, por abajo y por el centro.
+
+    `marcados` es el catalogo elegido en la pagina: los niveles OPCIONALES (el
+    perfil de volumen, el pivote) solo entran si estan marcados. None = solo
+    los de siempre.
+    """
+    nivel = rng.choice(C.objetivos_permitidos(ind, marcados))
+    rejilla = C.NIVELES_CON_PARAMS.get(nivel, {})
+    return {"ind": nivel, "params": {k: rng.choice(v) for k, v in rejilla.items()}}
+
+
+def _condicion_aleatoria(rng: random.Random, nombres: list[str],
+                         marcados: list[str] | None = None) -> dict:
+    """`nombres`: candidatos al lado IZQUIERDO. `marcados`: todo lo marcado en
+    la pagina (decide que niveles opcionales valen como destino); si no viene,
+    se usan los mismos `nombres`."""
+    izq = C.lado_izquierdo(nombres)
+    if not izq:
+        raise ValueError(
+            "solo hay niveles marcados (" + ", ".join(marcados or nombres) + "): hace "
+            "falta al menos un indicador que pueda ir a la izquierda de la condicion "
+            "(Bar Close, RSI, % Fade...)")
+    ind = C.CATALOGO[rng.choice(izq)]
     params = {k: rng.choice(v) for k, v in ind.params.items()}
     comp = rng.choice(ind.comparadores)
     opciones = []
@@ -39,21 +66,15 @@ def _condicion_aleatoria(rng: random.Random, nombres: list[str]) -> dict:
     if tipo == "numero":
         objetivo = rng.choice(ind.valores)
     else:
-        # EL LADO DERECHO TAMBIEN LLEVA PARAMETROS SORTEADOS. Sin esto, un
-        # Donchian o una Darvas saldrian siempre con el periodo por defecto y
-        # con la linea de arriba: se ofreceria el indicador y se probaria UNA
-        # sola de sus formas. Es justo lo que preguntaba Jaume del Darvas —
-        # asi prueba por arriba, por abajo y por el centro.
-        nivel = rng.choice(ind.objetivos)
-        rejilla = C.NIVELES_CON_PARAMS.get(nivel, {})
-        objetivo = {"ind": nivel,
-                    "params": {k: rng.choice(v) for k, v in rejilla.items()}}
+        objetivo = objetivo_aleatorio(rng, ind, nombres if marcados is None else marcados)
     return {"ind": ind.nombre, "params": params, "comp": comp, "objetivo": objetivo}
 
 
 def _stop_aleatorio(rng: random.Random, modos: list[str], sesgo: str,
-                    min_pct: float = 0.0) -> dict:
+                    min_pct: float = 0.0, marcados=()) -> dict:
     """`min_pct` es el suelo del stop en % — solo afecta al modo porcentaje.
+    `marcados` es el catalogo de la corrida: con «Ultimo pivote» marcado, el
+    pivote entra tambien en el sorteo del stop de estructura.
 
     PARA QUE (Jaume, 2026-09-04). Un stop del 2 % en una accion que se mueve un
     50 % al dia no es un stop: es ruido, y el genetico lo elige porque con
@@ -68,7 +89,7 @@ def _stop_aleatorio(rng: random.Random, modos: list[str], sesgo: str,
     if modo == "pct":
         rejilla = tuple(v for v in C.STOP_PCT if v >= min_pct) or (max(C.STOP_PCT),)
         return {"modo": "pct", "valor": rng.choice(rejilla)}
-    nivel, operador = rng.choice(C.STOP_NIVELES[sesgo])
+    nivel, operador = rng.choice(C.stop_niveles(sesgo, marcados))
     return {"modo": "estructura", "nivel": nivel, "operador": operador,
             "offset_pct": rng.choice(C.STOP_OFFSET_PCT)}
 
@@ -131,14 +152,17 @@ def _parciales_aleatorios(rng: random.Random, modos: list[str],
 
 
 def aleatorio(config: dict, rng: random.Random) -> dict:
-    nombres = list(config["catalogo"])
+    # `marcados` es todo lo elegido en la pagina; a la izquierda solo van los
+    # que no son niveles opcionales (esos entran como destino y como stop).
+    marcados = list(config["catalogo"])
+    nombres = C.lado_izquierdo(marcados)
     n = int(config.get("n_condiciones", 2))
     conds = []
     usados = set()
     intentos = 0
     while len(conds) < n and intentos < 50:
         intentos += 1
-        c = _condicion_aleatoria(rng, nombres)
+        c = _condicion_aleatoria(rng, nombres, marcados)
         if c["ind"] in usados:
             continue  # un indicador por condicion: dos Squeeze no aportan, ensucian
         usados.add(c["ind"])
@@ -150,7 +174,8 @@ def aleatorio(config: dict, rng: random.Random) -> dict:
         "condiciones": conds,
         "stop": _stop_aleatorio(rng, list(config.get("stops", ["pct"])),
                                 config.get("sesgo", "short"),
-                                float(riesgo.get("stop_min_pct", 0) or 0)),
+                                float(riesgo.get("stop_min_pct", 0) or 0),
+                                marcados),
         "tp": _tp_aleatorio(rng, tps, tp_min),
         "parciales": _parciales_aleatorios(
             rng, tps, bool(riesgo.get("tp_parciales", False)), tp_min),

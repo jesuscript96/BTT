@@ -55,6 +55,7 @@ import {
   calculateVolBinPct,
   calculateVolPOC,
   calculateVolNode,
+  calculateVolZona,
   calculateAbsorption,
   calculateWickRatio,
   calculateRegSlope,
@@ -634,6 +635,10 @@ export default function Chart({
           shape: "circle" | "square" | "arrowUp" | "arrowDown";
           text: string;
           isEntry: boolean;
+          // Tamaño del símbolo (1 = el normal). La escalera del scalping va
+          // más pequeña: son muchos eventos seguidos y a tamaño normal tapan
+          // las velas.
+          size?: number;
         }
 
         const rawMarkers: RawMarker[] = [];
@@ -662,11 +667,16 @@ export default function Chart({
             if (exitDate === dayDateStr && t.status === "Closed") {
               const exitSnap = snapToCandle(t.exit_time_epoch, candleTimes);
               if (exitSnap && candleTimeSet.has(exitSnap)) {
+                // Un cierre por Black Swan va en morado y cuadrado: que se
+                // distinga de un stop normal de un vistazo.
+                const esBS = String(t.exit_reason || "").startsWith("BS");
+                // Un cierre por halt va en cian y cuadrado.
+                const esHalt = String(t.exit_reason || "").startsWith("Halt");
                 rawMarkers.push({
                   time: exitSnap,
                   position: "aboveBar",
-                  color: t.pnl >= 0 ? "#10b981" : "#ef4444",
-                  shape: "circle",
+                  color: esBS ? "#a855f7" : (esHalt ? "#06b6d4" : (t.pnl >= 0 ? "#10b981" : "#ef4444")),
+                  shape: (esBS || esHalt) ? "square" : "circle",
                   text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
                   isEntry: false,
                 });
@@ -688,11 +698,13 @@ export default function Chart({
               });
             }
             if (exitSnap && candleTimeSet.has(exitSnap) && t.status === "Closed" && Math.abs(t.exit_time_epoch - exitSnap) < 43200) {
+              const esBS = String(t.exit_reason || "").startsWith("BS");
+              const esHalt = String(t.exit_reason || "").startsWith("Halt");
               rawMarkers.push({
                 time: exitSnap,
                 position: "aboveBar",
-                color: t.pnl >= 0 ? "#10b981" : "#ef4444",
-                shape: "circle",
+                color: esBS ? "#a855f7" : (esHalt ? "#06b6d4" : (t.pnl >= 0 ? "#10b981" : "#ef4444")),
+                shape: (esBS || esHalt) ? "square" : "circle",
                 text: `${t.pnl >= 0 ? "+" : ""}$${t.pnl.toFixed(2)} (${t.exit_reason})`,
                 isEntry: false,
               });
@@ -716,18 +728,29 @@ export default function Chart({
             if (!snap || !candleTimeSet.has(snap)) continue;
             const isAdd = ex.kind === "add";
             const isLong = t.direction.toLowerCase().includes("long");
+            // Escalera del scalping complejo: triángulos pequeños, añadido
+            // debajo de la vela y quita encima, con la flecha en el sentido de
+            // la orden (compra arriba, venta abajo; al revés en corto). Son
+            // muchos y muy seguidos, y a tamaño normal taparían las velas.
+            const esEscalera = !!ex.escalera;
+            const compra = isAdd === isLong;   // añadir en largo o quitar en corto = comprar
             rawMarkers.push({
               time: snap,
-              position: isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar",
+              position: esEscalera
+                ? (isAdd ? "belowBar" : "aboveBar")
+                : (isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar"),
               // Cobre para los añadidos (aumentan la posición) y ámbar para
               // las salidas parciales, para no confundirlos con la entrada ni
               // con el cierre.
               color: isAdd ? "#c87941" : "#d9a441",
-              shape: isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square",
+              shape: esEscalera
+                ? (compra ? "arrowUp" : "arrowDown")
+                : (isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square"),
               text: isAdd
-                ? `+${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}`
+                ? `+${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${esEscalera && ex.label ? ` (${ex.label})` : ""}`
                 : `−${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
               isEntry: false,
+              ...(esEscalera ? { size: 0.6 } : {}),
             });
           }
         }
@@ -751,6 +774,7 @@ export default function Chart({
               color: m.color,
               shape: m.shape,
               text: m.text,
+              ...(m.size ? { size: m.size } : {}),
             });
           } else {
             // Sort: entries before exits
@@ -838,6 +862,22 @@ export default function Chart({
           case "WMA": {
             const d = calculateWMA(deduped, ai.params.period ?? 20);
             if (d.length > 0) { const s = chart.addSeries(LineSeries, { color, lineWidth: 2 }); s.setData(d); }
+            break;
+          }
+          case "VOL_ZONA_ALTA":
+          case "VOL_ZONA_BAJA": {
+            // Las bandas del dia. Se pintan mas gruesas y continuas que los
+            // nodos: son el marco estable, no el nivel que persigue al precio.
+            const d = calculateVolZona(deduped, ai.params.bin ?? 1,
+                                       ai.params.zona ?? 70,
+                                       ai.indicatorId === "VOL_ZONA_ALTA");
+            if (d.length > 0) {
+              const s = chart.addSeries(LineSeries, {
+                color: ai.indicatorId === "VOL_ZONA_ALTA" ? "#7c3aed" : "#0891b2",
+                lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+              });
+              s.setData(d);
+            }
             break;
           }
           case "VOL_POC":

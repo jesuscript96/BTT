@@ -38,6 +38,18 @@ export interface BacktestPanelParams {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_pct?: number;
+  bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12). Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
   is_percent: number;
@@ -70,6 +82,16 @@ interface BacktestPanelProps {
     ev_gate_by?: "trades" | "dias";
     ev_gate_default_pct?: number;
     ev_gate_min_trades?: number;
+    bswan_enabled?: boolean;
+    bswan_mode?: "mercado" | "manual";
+    bswan_threshold_pct?: number;
+    bswan_slippage_pct?: number;
+    bswan_partition_pct?: number;
+    bswan_minutes?: number;
+    halts_enabled?: boolean;
+    halts_mode?: "primero" | "n";
+    halts_n?: number;
+    halts_slippage_pct?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;
@@ -470,6 +492,24 @@ export default function BacktestPanel({
   const [evGateDefault, setEvGateDefault] = useState(2);
   const [evGateMinTrades, setEvGateMinTrades] = useState(10);
   const useEvGate = useLocatesRandom && evGate;
+  // COSTE DE BLACK SWAN (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  // "mercado" = el motor cierra en la vela del mechazo a un precio penalizado
+  // (por tramos si la posicion supera la particion); "manual" = cierra N
+  // minutos despues, con el stop suspendido entre medias.
+  const [useBswan, setUseBswan] = useState(false);
+  const [bswanMode, setBswanMode] = useState<"mercado" | "manual">("mercado");
+  const [bswanThreshold, setBswanThreshold] = useState(200);
+  const [bswanSlippage, setBswanSlippage] = useState(100);
+  const [bswanPartition, setBswanPartition] = useState(0);
+  const [bswanMinutes, setBswanMinutes] = useState(15);
+  // COSTE DE HALTS (Jaume 2026-09-12). Ver backend/app/services/halts.py.
+  // "primero" = sale al primer halt que pille la posicion; "n" = al halt
+  // numero N del dia (contando desde la apertura). Sale en la reapertura,
+  // penalizado; no vuelve a operar ese ticker-dia.
+  const [useHalts, setUseHalts] = useState(false);
+  const [haltsMode, setHaltsMode] = useState<"primero" | "n">("primero");
+  const [haltsN, setHaltsN] = useState(2);
+  const [haltsSlippage, setHaltsSlippage] = useState(5);
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -669,6 +709,16 @@ export default function BacktestPanel({
       if (savedState.evGateBy !== undefined) setEvGateBy(savedState.evGateBy);
       if (savedState.evGateDefault !== undefined) setEvGateDefault(savedState.evGateDefault);
       if (savedState.evGateMinTrades !== undefined) setEvGateMinTrades(savedState.evGateMinTrades);
+      if (savedState.useBswan !== undefined) setUseBswan(savedState.useBswan);
+      if (savedState.bswanMode !== undefined) setBswanMode(savedState.bswanMode);
+      if (savedState.bswanThreshold !== undefined) setBswanThreshold(savedState.bswanThreshold);
+      if (savedState.bswanSlippage !== undefined) setBswanSlippage(savedState.bswanSlippage);
+      if (savedState.bswanPartition !== undefined) setBswanPartition(savedState.bswanPartition);
+      if (savedState.bswanMinutes !== undefined) setBswanMinutes(savedState.bswanMinutes);
+      if (savedState.useHalts !== undefined) setUseHalts(savedState.useHalts);
+      if (savedState.haltsMode !== undefined) setHaltsMode(savedState.haltsMode);
+      if (savedState.haltsN !== undefined) setHaltsN(savedState.haltsN);
+      if (savedState.haltsSlippage !== undefined) setHaltsSlippage(savedState.haltsSlippage);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -823,6 +873,16 @@ export default function BacktestPanel({
       ev_gate_by: evGateBy,
       ev_gate_default_pct: useEvGate ? evGateDefault : 0,
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
+      bswan_enabled: useBswan,
+      bswan_mode: bswanMode,
+      bswan_threshold_pct: useBswan ? bswanThreshold : 0,
+      bswan_slippage_pct: useBswan ? bswanSlippage : 0,
+      bswan_partition_pct: useBswan ? bswanPartition : 0,
+      bswan_minutes: useBswan ? bswanMinutes : 0,
+      halts_enabled: useHalts,
+      halts_mode: haltsMode,
+      halts_n: useHalts ? haltsN : 0,
+      halts_slippage_pct: useHalts ? haltsSlippage : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       is_percent: isPercent,
@@ -834,6 +894,8 @@ export default function BacktestPanel({
     customStartTime, customEndTime, useLocates, locatesCost, maxLocates,
     useLocatesRandom, locatesMin, locatesMax, locatesSeed,
     useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
+    useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
+    useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
     sizeBySl,
   ]);
@@ -869,6 +931,16 @@ export default function BacktestPanel({
         evGateBy,
         evGateDefault,
         evGateMinTrades,
+        useBswan,
+        bswanMode,
+        bswanThreshold,
+        bswanSlippage,
+        bswanPartition,
+        bswanMinutes,
+        useHalts,
+        haltsMode,
+        haltsN,
+        haltsSlippage,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -882,6 +954,8 @@ export default function BacktestPanel({
     riskType, feeType, isPercent, loadingData,
     useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
     evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
+    useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
+    useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses
   ]);
 
@@ -946,6 +1020,18 @@ export default function BacktestPanel({
       ev_gate_by: evGateBy,
       ev_gate_default_pct: useEvGate ? evGateDefault : 0,
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
+      // Coste de Black Swan. Apagado = el backend ni lo mira.
+      bswan_enabled: useBswan,
+      bswan_mode: bswanMode,
+      bswan_threshold_pct: useBswan ? bswanThreshold : 0,
+      bswan_slippage_pct: useBswan ? bswanSlippage : 0,
+      bswan_partition_pct: useBswan ? bswanPartition : 0,
+      bswan_minutes: useBswan ? bswanMinutes : 0,
+      // Coste de halts. Apagado = el backend ni lo mira.
+      halts_enabled: useHalts,
+      halts_mode: haltsMode,
+      halts_n: useHalts ? haltsN : 0,
+      halts_slippage_pct: useHalts ? haltsSlippage : 0,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -1479,6 +1565,39 @@ export default function BacktestPanel({
                           <span style={{ color: 'var(--color-ec-text-primary)' }}>
                             {txt}{pyr?.mode === 'sequential' ? ' · secuencial' : ''}
                             {pyr?.timeframe ? ` · ${pyr.timeframe}` : ''}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Scalping. Mismo motivo que la piramidación: con el
+                        bloque, la entrada y la salida lógicas significan otra
+                        cosa (abren y cierran la ventana), y eso hay que verlo. */}
+                    {(() => {
+                      const sc = stratDef?.scalping;
+                      if (!sc?.root_condition?.conditions?.length) return null;
+                      const partes = [
+                        `gatillo con ${sc.root_condition.conditions.length} condición${sc.root_condition.conditions.length === 1 ? '' : 'es'}`,
+                        sc.max_minutes > 0 ? `salida a los ${sc.max_minutes} min` : 'sin salida por tiempo propia',
+                        sc.cooldown_bars > 0 ? `pausa de ${sc.cooldown_bars} vela${sc.cooldown_bars === 1 ? '' : 's'}` : 'sin pausa',
+                        `${sc.capital_pct ?? 100}% de la cifra del panel por entrada`,
+                        ...(sc.mode === 'complex' && sc.ladder ? [(() => {
+                          const l = sc.ladder;
+                          const u = (x: string) => (x === 'usd' ? '$' : '% inicial');
+                          const acc = (a: string, n: number, un: string) =>
+                            a === 'add' ? `añade ${n}${u(un)}` : a === 'reduce' ? `quita ${n}${u(un)}` : 'nada';
+                          return `ESCALERA paso ${l.step_pct}%: a favor ${acc(l.favor_action, l.favor_amount, l.favor_unit)}, `
+                            + `en contra ${acc(l.contra_action, l.contra_amount, l.contra_unit)}, `
+                            + `core ${l.core_amount}${u(l.core_unit)}, tope ${l.cap_amount ? l.cap_amount + u(l.cap_unit) : 'sin'}, `
+                            + `recorrido ${l.max_travel_pct ? l.max_travel_pct + '%' : 'sin límite'}${l.rearm ? ', rearma niveles' : ''}`;
+                        })()] : []),
+                      ];
+                      return (
+                        <div>
+                          <span style={{ fontWeight: 600, color: 'var(--color-ec-copper)' }}>SCALPING: </span>
+                          <span style={{ color: 'var(--color-ec-text-primary)' }}>
+                            {partes.join(' · ')}{sc.timeframe ? ` · ${sc.timeframe}` : ''}
+                            {' (la entrada lógica abre la ventana y la salida lógica la cierra)'}
                           </span>
                         </div>
                       );
@@ -2052,6 +2171,211 @@ export default function BacktestPanel({
                   <input type="number" min={0} step="1" value={maxLocates} style={inp}
                          onChange={(e) => setMaxLocates(Math.max(0, Math.floor(Number(e.target.value) || 0)))} />
                 </span>
+              </React.Fragment>
+            );
+          }
+
+          // COSTE DE BLACK SWAN (Jaume 2026-09-11). Fila madre con el selector
+          // A mercado | Manual, y debajo lo que pide cada modo.
+          filas.push(
+            <React.Fragment key="bswan">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useBswan}
+                  onChange={() => setUseBswan(!useBswan)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                />
+                <span style={et}>
+                  Coste BSwan
+                  <InfoTooltip
+                    position="left"
+                    width={360}
+                    text="Simula qué habría pasado si, en cada trade que estuvo dentro durante una «mecha Black Swan», el mechazo te hubiera sacado. Una mecha cuenta como Black Swan cuando la vela de 1 minuto se dispara sobre su apertura más del umbral de abajo (en largo, hacia abajo) Y ADEMÁS cruza tu stop: un fogonazo que ni llega al stop no barre ninguna orden y el trade sigue abierto. Sin stop configurado no hay Black Swan. Es un coste opcional: NO cambia qué se opera, solo cómo salen esos trades, y vale para saber cuántos te habrías comido de verdad. A MERCADO: el motor cierra en esa misma vela a un precio peor que el stop, penalizado con el slippage BS y, si pones una partición, por tramos de ese % de la posición cada vez peores. MANUAL: no cierra en la vela (modela un stop mental, sin orden puesta que la barrida pueda ejecutar): suspende stop, TP y parciales y cierra toda la posición N minutos después. Solo mira mientras se está dentro. Fuerza el motor Python (más lento que el kernel). La mecha se mide sobre las velas del lago, que a veces esconden el pico real: el resultado es un suelo, no un techo. En Trades las salidas afectadas llevan la etiqueta BS."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+              </label>
+              {useBswan ? (
+                // Mas estrecho que el selector de locates y con margen a la
+                // izquierda: el «?» de la etiqueta quedaba pegado a los botones.
+                <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)', marginLeft: 10 }}>
+                  {(["mercado", "manual"] as const).map((m, i) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setBswanMode(m)}
+                      title={m === "mercado"
+                        ? "A mercado: cierra en la vela del mechazo (si además cruza tu stop), a un precio penalizado con el slippage BS (por tramos si hay partición)"
+                        : "Manual: no cierra en la vela; cierra toda la posición N minutos después, con el stop suspendido entre medias"}
+                      style={{
+                        background: bswanMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                        color: bswanMode === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                        fontWeight: bswanMode === m ? 600 : 400,
+                        border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                        fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                        padding: '0 6px', cursor: 'pointer',
+                      }}
+                    >
+                      {m === "mercado" ? "Mercado" : "Manual"}
+                    </button>
+                  ))}
+                </div>
+              ) : <span />}
+            </React.Fragment>
+          );
+
+          if (useBswan) {
+            filas.push(
+              <React.Fragment key="bs-umbral">
+                <span style={sub}>
+                  Umbral BS (%)
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="Tamaño mínimo de la mecha para contarla como Black Swan: distancia de la apertura al máximo de la vela de 1 minuto (al mínimo, en largo), en % de la apertura. 100 = el precio se duplicó dentro del minuto; 200 = se triplicó. Solo se miran las velas en las que la posición estaba abierta, y solo cuenta si esa vela además cruza tu stop (fijo, estructural, ATR o trailing): si la mecha se queda por debajo del stop, no es Black Swan y el trade sigue. Cuanto más bajo el umbral, más trades se cierran por BS."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <input type="number" step="10" min={1} value={bswanThreshold} style={inp}
+                       onChange={(e) => setBswanThreshold(Math.max(1, Number(e.target.value) || 1))} />
+              </React.Fragment>
+            );
+            if (bswanMode === "mercado") {
+              filas.push(
+                <React.Fragment key="bs-slip">
+                  <span style={sub}>
+                    Slippage BS (%)
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="Cuánto peor que el stop se ejecuta el cierre, en % del nivel del stop que la vela cruzó (o del trailing, si era el que mandaba). Ejemplo: corto en 1 $ con stop al 20 % (debías salir en 1,20 $); con 100 % sales a 2,40 $. No se recorta al máximo de la vela: es una penalización, no un fill, y las velas de minuto esconden los picos. Sustituye al slippage normal en esa salida."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="10" min={0} value={bswanSlippage} style={inp}
+                         onChange={(e) => setBswanSlippage(Math.max(0, Number(e.target.value) || 0))} />
+                </React.Fragment>
+              );
+              filas.push(
+                <React.Fragment key="bs-particion">
+                  <span style={sub}>
+                    Partición (% posición)
+                    <InfoTooltip
+                      position="left"
+                      width={330}
+                      text="Qué parte de la posición sale en cada tramo, en % de la posición que haya en ese momento, para que valga igual con 300 acciones que con 30.000. Cada tramo paga un escalón más de slippage BS: con 50 % y slippage del 100 %, la mitad sale al +100 % y la otra mitad al +200 %; con 30 %, sale un 30 % al +100 %, otro 30 % al +200 %, otro 30 % al +300 % y el 10 % restante al +400 %. 0 (o 100) = toda la posición en un solo tramo. En Trades cada tramo aparece como una ejecución («BS 1/2 +100%»)."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    {bswanPartition > 0 && bswanPartition < 100 && (
+                      <span style={nota}>{Math.ceil(100 / bswanPartition)} tramos</span>
+                    )}
+                    <input type="number" step="10" min={0} max={100} value={bswanPartition} style={inp}
+                           title="0 (o 100) = toda la posición sale en un solo tramo"
+                           onChange={(e) => setBswanPartition(Math.min(100, Math.max(0, Number(e.target.value) || 0)))} />
+                  </span>
+                </React.Fragment>
+              );
+            } else {
+              filas.push(
+                <React.Fragment key="bs-minutos">
+                  <span style={sub}>
+                    Minutos hasta cerrar
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="En modo manual, cuántos minutos después de la vela del mechazo se cierra TODA la posición: al cierre de la primera vela que esté a esa distancia, con el slippage normal. Entre medias no actúan el stop, el TP, los parciales ni la salida por señal (es lo que modela: no había orden en el mercado). Si antes llega el fin de sesión, el límite de tiempo o el cortacircuitos diario, mandan ellos."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="1" min={1} value={bswanMinutes} style={inp}
+                         onChange={(e) => setBswanMinutes(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+                </React.Fragment>
+              );
+            }
+          }
+
+          // COSTE DE HALTS (Jaume 2026-09-12). Fila madre con el selector
+          // Primero | N halts, y debajo el N (si toca) y el slippage.
+          filas.push(
+            <React.Fragment key="halts">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useHalts}
+                  onChange={() => setUseHalts(!useHalts)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                />
+                <span style={et}>
+                  Coste Halts
+                  <InfoTooltip
+                    position="left"
+                    width={360}
+                    text="Simula qué habría pasado si un halt de cotización (LULD, noticia, regulatorio) te hubiera pillado dentro. Los halts salen de la tabla exacta de Nasdaq que baja «Actualizar datos» (hora de parada, reanudación y motivo), no de las velas. PRIMERO: al primer halt que pille la posición abierta, el motor cierra TODA la posición al precio de apertura de la primera vela tras la reanudación, un % peor (el slippage de abajo). N HALTS: igual, pero solo cuando el halt es el N-ésimo del día para ese ticker, contando desde la apertura (si entras después del 3.º y N=3, el siguiente que te pille dispara). En los dos casos no se vuelve a operar ese ticker ese día. Durante el halt no se ejecuta nada: un stop cruzado en la vela de la parada no se llena. Si el halt no reabre ese día (T12, suspensión), cierra al último precio antes de parar con el mismo slippage y el trade queda marcado «atrapado». En Trades las salidas afectadas llevan la etiqueta Halt. Fuerza el motor Python."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+              </label>
+              {useHalts ? (
+                <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)', marginLeft: 10 }}>
+                  {(["primero", "n"] as const).map((m, i) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setHaltsMode(m)}
+                      title={m === "primero"
+                        ? "Primero: sale en la reapertura del primer halt que pille la posición"
+                        : "N halts: sale en la reapertura del halt número N del día (contando desde la apertura)"}
+                      style={{
+                        background: haltsMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                        color: haltsMode === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                        fontWeight: haltsMode === m ? 600 : 400,
+                        border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                        fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                        padding: '0 6px', cursor: 'pointer',
+                      }}
+                    >
+                      {m === "primero" ? "Primero" : "N halts"}
+                    </button>
+                  ))}
+                </div>
+              ) : <span />}
+            </React.Fragment>
+          );
+
+          if (useHalts) {
+            if (haltsMode === "n") {
+              filas.push(
+                <React.Fragment key="halts-n">
+                  <span style={sub}>
+                    N.º de halt que saca
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="A partir de qué halt del día se sale. Se cuentan TODOS los halts del ticker ese día desde la apertura, no solo los que ocurren estando dentro: con 3, el primer halt que te pille dentro siendo el 3.º o posterior del día es el que te saca. 1 equivale al modo «Primero»."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <input type="number" step="1" min={1} value={haltsN} style={inp}
+                         onChange={(e) => setHaltsN(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+                </React.Fragment>
+              );
+            }
+            filas.push(
+              <React.Fragment key="halts-slip">
+                <span style={sub}>
+                  Slippage halt (%)
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="Cuánto peor que el precio de reapertura se ejecuta el cierre, en % de ese precio (para un corto, más arriba; para un largo, más abajo). Ejemplo: la acción reabre a 1,50 $ tras el halt y con 5 % un corto sale a 1,575 $. Sustituye al slippage normal en esa salida. Ojo: el estudio de halts midió reaperturas de mediana +2 % pero con cola larga; el precio de reapertura real ya lleva el salto, esto es solo el coste de ejecutar."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <input type="number" step="1" min={0} value={haltsSlippage} style={inp}
+                       onChange={(e) => setHaltsSlippage(Math.max(0, Number(e.target.value) || 0))} />
               </React.Fragment>
             );
           }

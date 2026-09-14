@@ -23,6 +23,10 @@ export interface ParamDef {
 export interface IndicatorDef {
   id: string;
   label: string;
+  /** Una linea explicando QUE mide, para el desplegable del grafico. Los
+   *  descriptivos largos viven en ConditionBuilder (los de las condiciones);
+   *  aqui solo cabe el titular. */
+  descripcion?: string;
   category: IndicatorCategory;
   displayMode: DisplayMode;
   params: ParamDef[];
@@ -330,9 +334,10 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
   {
     id: "VOL_BIN_PCT",
     label: "Vol. de la franja (percentil)",
+    descripcion: "Como de concurrida esta la franja de precio donde esta el precio ahora, de 0 a 100.",
     category: "Volume",
     displayMode: "panel",
-    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 }],
+    params: [{ name: "bin", label: "Detalle %", default: 1, min: 0.1, max: 5 }],
     multi: true,
   },
   // Los tres niveles van SOBRE EL PRECIO: es la unica forma de comprobar de un
@@ -342,32 +347,36 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
   {
     id: "VOL_POC",
     label: "Punto de control",
+    descripcion: "El precio donde mas volumen se ha cruzado hoy. Salta a saltos de franja, no es una media.",
     category: "Volume",
     displayMode: "overlay",
-    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 }],
+    params: [{ name: "bin", label: "Detalle %", default: 1, min: 0.1, max: 5 }],
     multi: true,
   },
   {
     id: "VOL_NODE_UP",
     label: "Nodo de arriba",
+    descripcion: "La primera zona con volumen POR ENCIMA del precio: la resistencia. Se mueve con el precio.",
     category: "Volume",
     displayMode: "overlay",
-    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 },
+    params: [{ name: "bin", label: "Detalle %", default: 1, min: 0.1, max: 5 },
              { name: "liston", label: "List\u00f3n %", default: 60, min: 0, max: 100 }],
     multi: true,
   },
   {
     id: "VOL_NODE_DOWN",
     label: "Nodo de abajo",
+    descripcion: "La primera zona POR DEBAJO: el soporte. Si desaparece, no hay nada que frene la caida.",
     category: "Volume",
     displayMode: "overlay",
-    params: [{ name: "bin", label: "Franja %", default: 1, min: 0.05, max: 20 },
+    params: [{ name: "bin", label: "Detalle %", default: 1, min: 0.1, max: 5 },
              { name: "liston", label: "List\u00f3n %", default: 60, min: 0, max: 100 }],
     multi: true,
   },
   {
     id: "ABSORPTION",
     label: "Absorci\u00f3n (M$ por 1%)",
+    descripcion: "Millones de $ que hacen falta para mover el precio un 1%. Alto = alguien esta absorbiendo.",
     category: "Volume",
     displayMode: "panel",
     params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
@@ -379,6 +388,7 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
   {
     id: "WICK_RATIO_UP",
     label: "Ratio de mecha (arriba)",
+    descripcion: "Que fraccion de lo recorrido se devolvio en mecha superior: rechazo de las subidas.",
     category: "Volatility",
     displayMode: "panel",
     params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
@@ -387,14 +397,36 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
   {
     id: "WICK_RATIO_DOWN",
     label: "Ratio de mecha (abajo)",
+    descripcion: "Lo mismo por abajo: rechazo de las caidas, alguien comprando cada hundimiento.",
     category: "Volatility",
     displayMode: "panel",
     params: [{ name: "minutes", label: "Minutos", default: 5, min: 1, max: 390 }],
     multi: true,
   },
   {
+    id: "VOL_ZONA_ALTA",
+    label: "Zona alta",
+    descripcion: "Borde superior de la banda donde se ha negociado casi todo. NO se mueve con el precio.",
+    category: "Volume",
+    displayMode: "overlay",
+    params: [{ name: "bin", label: "Detalle %", default: 1, min: 0.1, max: 5 },
+             { name: "zona", label: "Zona %", default: 70, min: 10, max: 100 }],
+    multi: true,
+  },
+  {
+    id: "VOL_ZONA_BAJA",
+    label: "Zona baja",
+    descripcion: "Borde inferior de esa misma banda. Perderlo es entrar donde casi nadie compro.",
+    category: "Volume",
+    displayMode: "overlay",
+    params: [{ name: "bin", label: "Detalle %", default: 1, min: 0.1, max: 5 },
+             { name: "zona", label: "Zona %", default: 70, min: 10, max: 100 }],
+    multi: true,
+  },
+  {
     id: "REG_SLOPE",
     label: "Reg. Slope (%/min)",
+    descripcion: "Pendiente de la recta ajustada al precio, en % por minuto. Negativa = cae.",
     category: "Trend",
     displayMode: "panel",
     // Minutos de RELOJ, no velas. `multi` para comparar dos ventanas.
@@ -404,6 +436,7 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
   {
     id: "REG_R2",
     label: "Reg. R²",
+    descripcion: "Si ese movimiento es una escalera (cerca de 1) o una sierra (cerca de 0).",
     category: "Trend",
     displayMode: "panel",
     params: [{ name: "minutes", label: "Minutos", default: 20, min: 1, max: 390 }],
@@ -415,6 +448,7 @@ export const INDICATOR_REGISTRY: IndicatorDef[] = [
     // condicion se elige otra referencia este grafico NO la representa.
     id: "ATR_EXTENSION_VWAP",
     label: "ATR Extension (vs VWAP)",
+    descripcion: "Cuantos ATR separan al precio del VWAP. Comparable entre tickers.",
     category: "Volatility",
     displayMode: "panel",
     params: [{ name: "period", label: "ATR", default: 14, min: 1, max: 200 }],

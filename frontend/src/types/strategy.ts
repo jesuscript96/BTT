@@ -75,6 +75,12 @@ export enum IndicatorType {
     ACCUMULATED_VOLUME = "Accumulated Volume",
     ACCUM_DOLLAR_VOLUME = "Accumulated Dollar Volume",
     DOLLAR_VOLUME = "Dollar Volume",
+    // Halts (12-sep-2026): cuantos halts lleva HOY el ticker cuya vela de
+    // entrada al halt fue bajista (Down) o alcista (Up). Contador que se queda:
+    // «Halt Down >= 1» se hace verdad en la vela del primer halt bajista. Sale
+    // de la tabla de halts del lago; el bot en vivo NO lo ve.
+    HALT_DOWN = "Halt Down",
+    HALT_UP = "Halt Up",
     YESTERDAY_VOLUME = "Yesterday Volume",
     RVOL = "RVOL by bar",
     VOLUME = "Volume",
@@ -104,6 +110,10 @@ export enum IndicatorType {
     VOL_POC = "Punto de control",
     VOL_NODE_UP = "Nodo de arriba",
     VOL_NODE_DOWN = "Nodo de abajo",
+    // La ZONA DE VALOR: los dos bordes de la banda donde se ha negociado casi
+    // todo. NO se mueve con el precio, al contrario que los nodos.
+    VOL_ZONE_HIGH = "Zona alta",
+    VOL_ZONE_LOW = "Zona baja",
     LAST_PIVOT = "Ultimo pivote",
     RETRACEMENT = "Retroceso (%)",
     ABSORPTION = "Absorption",
@@ -258,6 +268,10 @@ export interface IndicatorConfig {
     // liston para que una franja cuente como nodo (% del volumen del POC).
     bin_pct?: number;
     liston_pct?: number;
+    // "Zona alta"/"Zona baja": que % del volumen del dia abarca la banda (70 es
+    // lo clasico). Distinto de `liston_pct`, que es lo que necesita UNA franja
+    // para contar como nodo.
+    zona_pct?: number;
 }
 
 export interface ComparisonCondition {
@@ -428,6 +442,9 @@ export interface Strategy {
     // Modelos avanzados (XGBoost / HMM). Solo presente si el bloque esta
     // encendido; sin el, la estrategia es identica a las de siempre.
     advanced_model?: any;
+    // Scalping. Solo presente si el bloque esta encendido y el gatillo tiene
+    // condiciones; sin el, la estrategia es identica a las de siempre.
+    scalping?: ScalpingBlock;
     is_wizard?: boolean;
     dataset_id?: string | null;
     // The API sometimes returns the strategy wrapped as `{ id, name, definition: {...} }`
@@ -550,4 +567,72 @@ export const initialPyramiding: PyramidingConfig = {
     timeframe: Timeframe.M1,
     mode: 'individual',
     levels: [],
+};
+
+// ── Scalping (2026-09-12) ──
+// La entrada logica ABRE una ventana y la salida logica la CIERRA. Dentro,
+// cada cumplimiento nuevo del gatillo es una entrada (reentradas ilimitadas),
+// con el stop y el take profit de la estrategia, una salida por tiempo propia
+// y una pausa de N velas tras cada salida.
+export interface ScalpingBlock {
+    timeframe: Timeframe;
+    // El gatillo: el MISMO arbol de condiciones que entrada/salida.
+    root_condition: ConditionGroup;
+    // Salida por tiempo, en minutos desde la entrada. 0 = sin salida propia.
+    max_minutes: number;
+    // Velas que hay que esperar tras una salida para volver a entrar. 0 = ninguna.
+    cooldown_bars: number;
+    // % de la cifra de capital/riesgo del panel que usa CADA scalp. 100 = la
+    // cifra entera (como una entrada normal). Se aplica escalando `risk_r`.
+    capital_pct: number;
+    // simple (por defecto): entra-sale-entra-sale con la cantidad de arriba.
+    // complex: dentro de cada scalp actua la escalera (`ladder`).
+    mode?: 'simple' | 'complex';
+    ladder?: ScalpingLadder;
+}
+
+// Escalera del modo complejo. Por cada paso de X % desde el ultimo nivel
+// ejecutado, a favor o en contra, se anyade o se quita una cantidad, entre un
+// suelo (core) y un techo (tope), hasta un recorrido maximo desde la entrada.
+// El stop y el take profit en % pasan a medirse sobre el precio medio.
+export interface ScalpingLadder {
+    step_pct: number;                       // paso, % del precio
+    favor_action: 'add' | 'reduce' | 'none';
+    favor_amount: number;
+    favor_unit: 'usd' | 'pct';              // pct = % de la posicion INICIAL
+    contra_action: 'add' | 'reduce' | 'none';
+    contra_amount: number;
+    contra_unit: 'usd' | 'pct';
+    core_amount: number;                    // suelo; 0 = puede vaciarse
+    core_unit: 'usd' | 'pct';
+    cap_amount: number;                     // techo; 0 = sin techo propio
+    cap_unit: 'usd' | 'pct';
+    max_travel_pct: number;                 // recorrido; 0 = sin limite
+    rearm: boolean;                         // B: cada nivel opera cada vez que se cruza
+}
+
+export const initialScalpingLadder: ScalpingLadder = {
+    step_pct: 1,
+    favor_action: 'reduce', favor_amount: 50, favor_unit: 'pct',
+    contra_action: 'add', contra_amount: 50, contra_unit: 'pct',
+    core_amount: 0, core_unit: 'pct',
+    cap_amount: 300, cap_unit: 'pct',
+    max_travel_pct: 5,
+    rearm: false,
+};
+
+export interface ScalpingConfig extends ScalpingBlock {
+    active: boolean;       // toggle de la UI; si esta OFF, la definicion NO
+                           // lleva la clave `scalping` (regla nº1)
+}
+
+export const initialScalping: ScalpingConfig = {
+    active: false,
+    timeframe: Timeframe.M1,
+    root_condition: { type: "group", operator: "AND", conditions: [] },
+    max_minutes: 5,
+    cooldown_bars: 1,
+    capital_pct: 100,
+    mode: 'simple',
+    ladder: initialScalpingLadder,
 };

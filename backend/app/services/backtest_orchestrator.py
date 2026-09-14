@@ -89,6 +89,26 @@ class BacktestRequest(BaseModel):
     ev_gate_by: str = "trades"          # "trades" | "dias"
     ev_gate_default_pct: float = 2.0
     ev_gate_min_trades: int = 10
+    # COSTE DE BLACK SWAN (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+    # Apagado = nada cambia. `bswan_mode`: "mercado" (cierra en la vela del
+    # mechazo a precio penalizado por tramos) o "manual" (cierra N minutos
+    # despues, sin stops entre medias). El umbral y el slippage van en % del
+    # precio; la particion en % de la posicion por tramo (0 o 100 = sin
+    # partir). Solo es Black Swan si la vela ademas cruza el stop.
+    bswan_enabled: bool = False
+    bswan_mode: str = "mercado"
+    bswan_threshold_pct: float = 100.0
+    bswan_slippage_pct: float = 100.0
+    bswan_partition_pct: float = 0.0
+    bswan_minutes: float = 15.0
+    # COSTE DE HALTS (Jaume 2026-09-12). Ver backend/app/services/halts.py.
+    # `halts_mode`: "primero" (sale al primer halt que pille la posicion) o
+    # "n" (al halt numero `halts_n` del dia). Sale en la reapertura, un
+    # `halts_slippage_pct` % peor; no vuelve a operar ese ticker-dia.
+    halts_enabled: bool = False
+    halts_mode: str = "primero"
+    halts_n: int = 1
+    halts_slippage_pct: float = 5.0
     # Corte IS/OOS (PRD Alvaro 2026-09-08, P1). La UI lo mandaba desde siempre y
     # Pydantic lo tiraba: ahora se persisten `is_metrics` y `oos_metrics`,
     # calculados igual que los pinta el navegador. El motor sigue corriendo el
@@ -435,6 +455,47 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         custom_start_time = req.custom_start_time or _sdef.get("custom_start_time")
         custom_end_time = req.custom_end_time or _sdef.get("custom_end_time")
 
+        # Coste de Black Swan: se valida AQUI, con un 400 legible, en vez de
+        # dejar que un umbral a cero o un modo mal escrito revienten dentro
+        # del bucle (donde cada ticker-dia fallaria en silencio y la corrida
+        # acabaria con cero trades).
+        _cfg_bswan = None
+        if req.bswan_enabled:
+            from app.services.bswan import ConfigBSwan
+            try:
+                _cfg_bswan = ConfigBSwan(
+                    modo="manual" if str(req.bswan_mode or "").lower().startswith("man") else "mercado",
+                    umbral_pct=float(req.bswan_threshold_pct),
+                    slippage_pct=float(req.bswan_slippage_pct or 0.0),
+                    particion=float(req.bswan_partition_pct or 0.0),
+                    minutos=float(req.bswan_minutes or 0.0),
+                )
+            except (TypeError, ValueError) as _e_bs:
+                raise HTTPException(status_code=400, detail=f"Coste de Black Swan: {_e_bs}")
+
+        # Coste de halts: config validada (400 legible) + la tabla del rango,
+        # cargada UNA vez por corrida. Si la tabla esta vacia se avisa en el
+        # resultado en vez de fallar: el backtest sale igual, sin cierres.
+        _cfg_halts = None
+        _aviso_halts = None
+        if req.halts_enabled:
+            from app.services.halts import ConfigHalts, cargar_halts
+            try:
+                _cfg_h = ConfigHalts(
+                    modo="n" if str(req.halts_mode or "").lower().startswith("n") else "primero",
+                    n_halts=int(req.halts_n or 1),
+                    slippage_pct=float(req.halts_slippage_pct or 0.0),
+                )
+            except (TypeError, ValueError) as _e_h:
+                raise HTTPException(status_code=400, detail=f"Coste de halts: {_e_h}")
+            _tabla_h = cargar_halts(date_from, date_to)
+            if _tabla_h.n_halts == 0:
+                _aviso_halts = ("La tabla de halts esta vacia para ese rango: ejecuta "
+                                "«Actualizar datos» (fase 8) o revisa HALTS_DIR.")
+                logger.warning("[HALTS] %s", _aviso_halts)
+            _cfg_halts = (_cfg_h, _tabla_h)
+            logger.info("[HALTS] tabla: %d halts en %d dias", _tabla_h.n_halts, _tabla_h.n_dias_fichero)
+
         _bt_kwargs = dict(
             strategy_def=strategy_def,
             init_cash=req.init_cash,
@@ -461,6 +522,8 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             locates_random_min=req.locates_random_min,
             locates_random_max=req.locates_random_max,
             locates_seed=req.locates_seed,
+            bswan=_cfg_bswan,
+            halts=_cfg_halts,
             look_ahead_prevention=req.look_ahead_prevention,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,
@@ -539,6 +602,8 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         # El router guarda ESTO en `backtest_params`, no el formulario.
         try:
             _fechas_ejec = sorted(d for _, d in _executed_keys)
+            if _aviso_halts and isinstance(results.get("halts"), dict):
+                results["halts"]["aviso"] = _aviso_halts
             results["rango_efectivo"] = {
                 "start_date": str(date_from)[:10] if date_from else None,
                 "end_date": str(date_to)[:10] if date_to else None,

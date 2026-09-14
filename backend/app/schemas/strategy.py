@@ -52,6 +52,10 @@ class IndicatorType(str, Enum):
     VOL_POC = "Punto de control"
     VOL_NODE_UP = "Nodo de arriba"
     VOL_NODE_DOWN = "Nodo de abajo"
+    # La ZONA DE VALOR: los dos bordes de la banda donde se ha negociado casi
+    # todo. NO depende de donde este el precio, al contrario que los nodos.
+    VOL_ZONE_HIGH = "Zona alta"
+    VOL_ZONE_LOW = "Zona baja"
     LAST_PIVOT = "Ultimo pivote"
     RETRACEMENT = "Retroceso (%)"
     ABSORPTION = "Absorption"
@@ -79,6 +83,10 @@ class IndicatorType(str, Enum):
     ADVOLUME = "Accumulated Dollar Volume"
     DVOLUME = "Dollar Volume"
     SMA_VOLUME = "SMA Volume"
+    # Halts (12-sep-2026): contador de halts del dia cuya vela de entrada fue
+    # bajista / alcista. Solo backtester (el bot no tiene tabla de halts).
+    HALT_DOWN = "Halt Down"
+    HALT_UP = "Halt Up"
 
     # Price Variables
     BAR_CLOSE = "Bar Close"
@@ -360,6 +368,10 @@ class IndicatorConfig(BaseModel):
     #               el DIA, no un parametro.
     bin_pct: Optional[float] = None
     liston_pct: Optional[float] = None
+    # "Zona alta"/"Zona baja": que % del volumen del dia abarca la banda (70 es
+    # lo clasico). OJO: es distinto de `liston_pct`, que es el % del volumen del
+    # POC que necesita UNA franja para contar como nodo.
+    zona_pct: Optional[float] = None
 
 class ComparisonCondition(BaseModel):
     type: Literal["indicator_comparison"] = "indicator_comparison"
@@ -530,6 +542,11 @@ class StrategyCreate(BaseModel):
     # campo, pydantic lo descartaria en SILENCIO (extra="ignore" por defecto) y
     # una estrategia guardada perderia su modelo sin dar ningun error.
     advanced_model: Optional[dict] = None
+    # Scalping (2026-09-12). Dict opaco por el mismo motivo que `pyramiding`:
+    # el gatillo es el mismo arbol de condiciones que entrada/salida y lo
+    # normaliza strategy_engine. Sin este campo, pydantic lo descartaria en
+    # SILENCIO y la estrategia guardada volveria a ser una estrategia normal.
+    scalping: Optional[dict] = None
 
 class Strategy(StrategyCreate):
     id: str = Field(default_factory=lambda: str(uuid4()))

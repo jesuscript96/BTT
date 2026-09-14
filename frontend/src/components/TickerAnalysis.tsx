@@ -19,6 +19,9 @@ import {
     type TickerLogoData
 } from '@/lib/api';
 import { ChatBot } from './ChatBot';
+// Gaps del ticker desde 2019 con el grafico intradia del backtester debajo
+// de cada fila (Jaume, 12-sep-2026). Solo visualizacion.
+import GapsDelTicker from '@/components/ticker/GapsDelTicker';
 
 interface TickerAnalysisProps {
     ticker?: string;
@@ -2947,6 +2950,11 @@ export default function TickerAnalysis({ ticker: initialTicker, availableTickers
             </div>
 
                 <>
+                    {/* Gaps del ticker desde 2019, en primera plana: desplaza
+                        hacia abajo lo demas. Cada fila despliega el grafico
+                        intradia del backtester con sus indicadores. */}
+                    {selectedTicker && <GapsDelTicker key={selectedTicker} ticker={selectedTicker} />}
+
                     {/* Market Metrics Row */}
                     {loadingAnalysis && !data?.market ? (
                         <div style={{

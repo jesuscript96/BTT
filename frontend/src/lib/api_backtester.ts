@@ -170,12 +170,81 @@ export interface TradeRecord {
   ev_gate_ev?: number;
   ev_gate_fade?: number;
   ev_gate_paquetes?: number;
+  /** Black Swan, DESCRIPTIVO (viene siempre en las corridas nuevas): la mecha
+   *  adversa máxima que sufrió el trade mientras estuvo dentro — distancia de
+   *  la apertura al máximo de la vela de 1 min (al mínimo, en largo), en % de
+   *  la apertura — y cuándo fue. Alimenta la vista «BS» del gráfico MAE/MFE.
+   *  No cambia ningún número. Ver backend/app/services/bswan.py. */
+  bs_wick_pct?: number;
+  bs_wick_idx?: number;
+  bs_wick_time_epoch?: number;
+  /** ¿El extremo en crudo de esa vela sobrepasó el nivel del stop del trade?
+   *  Es la regla de Jaume para que una mecha cuente como Black Swan. Solo
+   *  viene si el trade llevaba stop. */
+  bs_wick_hit_stop?: boolean;
+  /** Coste de halts (solo con el coste activo): el trade cerró por un halt.
+   *  `halt_n` = qué halt del día fue; `halt_atrapado` = no reabrió ese día y
+   *  se cerró al último precio antes de parar. */
+  halt_n?: number;
+  halt_reason?: number;
+  halt_motivo?: string;
+  halt_minutos?: number | null;
+  halt_base_price?: number;
+  halt_slip_pct?: number;
+  halt_penalty?: number;
+  halt_atrapado?: boolean;
+  halt_time_epoch?: number;
+  /** Coste de Black Swan (solo con el coste activo): cómo cerró el motor este
+   *  trade. `mercado` = cerró en la vela del mechazo a `bs_base_price`
+   *  penalizado; `manual` = cerró N minutos después. */
+  bs_modo?: "mercado" | "manual";
+  /** La mecha (%) que disparó el cierre. */
+  bs_trigger_pct?: number;
+  /** Precio del que parte la penalización (el stop si la vela lo cruzó; si no, la apertura). */
+  bs_base_price?: number;
+  /** Peor tramo ejecutado, en % sobre la base. */
+  bs_slip_pct?: number;
+  /** Número de tramos en que se partió la salida. */
+  bs_tramos?: number;
+  /** Dólares perdidos de más respecto a haber salido en la base. */
+  bs_penalty?: number;
 }
 
 /** Resumen de la puerta por EV de la corrida (segunda pasada). */
 export interface EvGateSummary {
   evaluadas: number; aceptadas: number; rechazadas: number; con_ev_por_defecto: number;
   ventana: number; por: string; ev_defecto_pct: number; min_trades: number; n_sombra: number;
+}
+
+/** Resumen del coste de Black Swan de la corrida. Solo viene con el coste activo. */
+export interface BSwanSummary {
+  enabled: boolean;
+  modo: "mercado" | "manual";
+  /** `particion` va en % de la posición por tramo (0 o 100 = un solo tramo). */
+  umbral_pct: number; slippage_pct: number; particion: number; minutos: number;
+  /** Velas que superaron el umbral estando dentro. */
+  detecciones: number;
+  /** Trades cerrados por el coste (a mercado o manual). */
+  trades: number;
+  tramos: number; cierres_mercado: number; cierres_manual: number;
+  /** Suma de `bs_penalty` de toda la corrida, en dólares. */
+  penalizacion_usd: number;
+}
+
+/** Resumen del coste de halts de la corrida. Solo viene con el coste activo. */
+export interface HaltsSummary {
+  enabled: boolean;
+  modo: "primero" | "n";
+  n_halts: number; slippage_pct: number;
+  /** Ticker-días simulados que tenían halts en la tabla. */
+  dias_con_halts: number;
+  /** Trades cerrados por halt, y cuántos de ellos no reabrieron ese día. */
+  trades: number; atrapados: number;
+  penalizacion_usd: number;
+  /** Tamaño de la tabla de halts cargada para el rango. */
+  tabla_halts: number; tabla_dias: number;
+  /** Solo si la tabla estaba vacía para el rango. */
+  aviso?: string;
 }
 
 /** Resumen del sorteo de locates de la corrida. Solo con el modo aleatorio. */
@@ -192,6 +261,8 @@ export interface TradeExecution {
   size?: number;
   pnl?: number | null;
   label?: string;
+  // Ejecución de la escalera del scalping complejo (el gráfico la pinta más pequeña).
+  escalera?: boolean;
 }
 
 export interface CandleData {
@@ -365,6 +436,10 @@ export interface BacktestResult {
   ev_gate?: EvGateSummary;
   /** La PRIMERA pasada (sin puerta), para comparar contra la segunda. */
   sin_puerta?: { aggregate_metrics?: AggregateMetrics; total_trades: number; locates_random?: LocatesRandomSummary };
+  /** Coste de Black Swan: resumen de la corrida. Solo con el coste activo. */
+  bswan?: BSwanSummary;
+  /** Coste de halts: resumen de la corrida. Solo con el coste activo. */
+  halts?: HaltsSummary;
   /** Reconciliación candidatos vs ejecutados. El motor la calcula SIEMPRE; si
    *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
    *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
@@ -497,6 +572,19 @@ export async function runBacktest(params: {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_pct?: number;
+  bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12): "primero" sale al primer halt que pille
+  // la posición, "n" al halt número `halts_n` del día. Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): el motor corre todo y añade is_oos
    *  al resultado cuando es < 100; el servidor guarda los dos bloques. Antes
    *  solo lo recortaba el navegador y se perdía. */
@@ -536,6 +624,19 @@ export async function runBacktestWithDefinition(params: {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_pct?: number;
+  bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12): "primero" sale al primer halt que pille
+  // la posición, "n" al halt número `halts_n` del día. Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
   /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): mismo significado que en
@@ -747,6 +848,20 @@ export async function runOptimizationSurface(params: {
   ev_gate_by?: "trades" | "dias";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  // Coste de Black Swan. La optimización lo acepta por coherencia de tipos; el
+  // barrido no lo aplica hoy (solo el backtest del panel).
+  bswan_enabled?: boolean;
+  bswan_mode?: "mercado" | "manual";
+  bswan_threshold_pct?: number;
+  bswan_slippage_pct?: number;
+  bswan_partition_pct?: number;
+  bswan_minutes?: number;
+  // Coste de halts (Jaume 2026-09-12): "primero" sale al primer halt que pille
+  // la posición, "n" al halt número `halts_n` del día. Ver backend/app/services/halts.py.
+  halts_enabled?: boolean;
+  halts_mode?: "primero" | "n";
+  halts_n?: number;
+  halts_slippage_pct?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;

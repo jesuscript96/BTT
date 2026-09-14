@@ -5685,6 +5685,22 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Verificación:** suite backend completa dos veces (antes y después de restaurar los 3 archivos del motor): **841 passed / 115 skipped / 3 xfailed / 0 fallos**, con el backend local levantado (sin el flake DuckDB de la nota de Jaume). `npx tsc --noEmit` limpio. Paridad Numba cubierta por `test_n2a_native_equivalence` (verde).
 - **Lo nuestro que NO se pierde:** Rachas (`RachasTab`, `day_streaks`), launcher seguro (`run_backend_safe.py`), tarjeta DRAFT vivo, botón CSV, «Últimas pruebas» de Portfolio, hallazgo del tope de locates (abierto más arriba) — todo presente y testeado.
 - **Estado:** INTEGRADO EN RAMA ÁLVARO (`e96cd2a`), sin push. Consecuencia operativa: a partir de aquí, cualquier backtest con stop ATR Multiplier usa la semántica de Jaume (sin entrada sin ATR, respaldo % configurable) — los runs guardados anteriores no se recalculan.
+
+### [FEATURE · 2026-09-11 · BLACK SWAN] Coste de Black Swan y vista «BS» en el gráfico MAE/MFE (Jaume + Claude)
+- **Qué pidió Jaume:** saber cuántas veces una estrategia ha estado expuesta a una «mecha Black Swan» (vela de 1 minuto cuyo máximo se dispara sobre su apertura más de un 100 %, tipo PLYX ~5.000 % en segundos) y poder simular, como coste opcional, que ese mechazo te saca del trade.
+- **La definición que fija todo:** `mecha (%) = (extremo adverso − open) / open × 100`, por vela; el `high` en corto y el `low` en largo. Solo cuenta **mientras se está dentro**: desde la vela del fill de entrada hasta la del fill de salida; una salida por señal se ejecuta en la apertura de la siguiente y esa vela ya no expone (mismo criterio que el MAE del motor).
+- **Vista descriptiva (siempre, sin cambiar ningún número):** cada trade lleva `bs_wick_pct` / `bs_wick_idx` / `bs_wick_time_epoch` (mecha máxima estando dentro y cuándo). Se calcula en los DOS caminos (secuencial y slab) con la misma función (`bswan.anotar_mechas`), sobre los mismos arrays que simularon el día. El gráfico MAE/MFE gana un conmutador **MAE | BS** en la cabecera: puntos verdes con la mecha máxima contra el retorno, línea al 100 % y el recuento «expuestas ≥100 %: N de M». El tooltip dice ticker, fecha, hora de la mecha y salida. La pestaña Trades enseña la columna «Mecha%» solo si hay algo que ver (coste activo o algún trade ≥100 %).
+- **Coste opcional («Coste de BSwan», en costes opcionales):** umbral (%), y dos modos. **Regla de Jaume:** una mecha solo es Black Swan si ADEMÁS cruza el stop vigente (fijo, estructural, ATR, Cangrejo o trailing); si se queda por debajo no barre ninguna orden y el trade sigue abierto; sin stop no hay BS. **A mercado:** el motor cierra EN LA VELA del mechazo a un precio peor que el fill del stop, penalizado un `slippage %`, y por TRAMOS del «partición» % de la posición flotante (Jaume: en %, no en acciones, «así normalizamos»): el tramo k paga k × slippage (50 % → mitad al +100 % y mitad al +200 %; 30 % → 30/30/30 y el 10 % restante al +400 %). **Manual:** modela un stop MENTAL: no cierra en la vela, suspende stop/TP/parciales/señal y cierra toda la posición al cierre de la primera vela a ≥ N minutos; EOD, límite de tiempo y cortacircuitos siguen mandando.
+- **Vista descriptiva, además:** cada trade con stop lleva `bs_wick_hit_stop` (¿el extremo en crudo de la vela de su mecha máxima sobrepasó el stop?); el gráfico cuenta «expuestas ≥100 %: N · sobre el stop: K» y la tabla «mechas ≥100 %: N (K sobre el stop)».
+- **Decisiones tomadas sin Jaume, a contrastar si un número le extraña:** (1) la base es el fill del stop en esa vela (`min(stop, high)` en corto; el trailing si era el que mandaba); (2) el fill penalizado NO se recorta al máximo de la vela (es una penalización, y las velas de minuto esconden los picos: ENSC, MEMORIA §3.1); (3) el slippage normal no se suma encima; (4) el MAE de esa vela se mide con el extremo real, no con el fill; (5) en manual, durante la espera tampoco actúa la salida por señal.
+- **Dónde:** `backend/app/services/bswan.py` (nuevo: `ConfigBSwan`, `mechas_adversas`, `anotar_mechas`, `tramos_bs`, `precio_bs`); `portfolio_sim.simulate(bswan=None)` — 9 inserciones, todas detrás de `bs_on`, **la detección va ANTES del bloque de salidas** (si no, el stop dispara limpio en esa vela); `sim_dispatch` desvía al Python (el kernel no lo conoce; sin coste retira el kwarg); `run_backtest(bswan=None)` fuerza secuencial, anota mechas en `_emitir`, cuenta y devuelve `results["bswan"]`; `_enrich_trades` y `_enrich_trades_arr` propagan **todo `bs_*`** sin listar claves; `_group_partial_exits` agrega (máximo de mecha, suma de penalización, peor tramo) y `_build_executions` etiqueta «BS 1/2 +100%»; `backtest_orchestrator` (`bswan_enabled/mode/threshold_pct/slippage_pct/partition_pct/minutes`, 400 si no valida). Frontend: `api_backtester.ts` (TradeRecord, `BSwanSummary`, tres interfaces de parámetros), `page.tsx` (tres listas blancas), `BacktestPanel` (estado, sessionStorage, dos payloads, filas con «?»), `TradesTab` (columna, badge BS morado, resumen), `Chart.tsx` (marcador morado cuadrado), `MaeScatterChart`.
+- **Pruebas:** `backend/tests/test_bswan.py`, 22 casos: sin coste no hay claves ni resultado distinto y `bswan=None` pasa por el dispatcher al JIT; el ejemplo de Jaume (1 → stop 1,20 → sale a 2,40); una mecha que no cruza el stop NO es BS y sin stop no hay BS (en los dos modos); partición 50 % (750/750) y 30 % (30/30/30/10) con etiquetas; largo; trailing; reentrada tras BS; manual (no cierra en la vela aunque cruce el stop, cierra a los N minutos, EOD manda, sin timestamps cuenta velas); descriptivo (la vela del fill de una salida por señal no cuenta; `bs_wick_hit_stop`); y **3 E2E por `run_backtest` con `BACKTEST_NUMBA_SIM=1`**. Suite completa: 1.095 pasan; 4 fallan por DuckDB con el backend levantado (`test_shared_strategies`, `test_universo_tipo_instrumento` ×2, `test_strategy_api`) y **fallan igual en el árbol sin tocar**. `tsc` limpio; eslint sin hallazgos nuevos.
+- **Trampa que mordió:** `skip_exits` se decide al principio de la iteración; la detección manual armaba la espera después y el stop disparaba con la propia mecha. Un test lo cazó. Y otra: Turbopack rechaza un `node_modules` enlazado por junction («points out of the filesystem root»); el `next dev` del worktree va con `--webpack`.
+- **Para el servidor (Adrián/Álvaro):** el golden de producción (`test_backtest_golden`) compara los dicts de los trades enteros: dirá «missing in golden» por las dos claves descriptivas nuevas. No cambia ningún número; hay que recapturarlo.
+- **Estado:** hecho en un worktree aparte porque el bot estaba en vivo, e **INTEGRADO el mismo día** con el bot en pausa: rebase sobre `41761be` y ff-merge → `bb2a55d` + `8863195` en `sailor-rama-desarrollo`; backend reiniciado como lo hace el lanzador y `/openapi.json` con `bswan_enabled`. Worktree y rama borrados. **No subido.**
+- **Medido con datos reales desde la app** (PM 1B TTP (50k) no norm, 2024-01-01 → 2026-09-04, a mercado, umbral 200 %, slippage 100 %, sin partición): 4.424 trades; 7 expuestas a una mecha ≥100 % (máx. 1.876 %); 3 con el stop sobrepasado; **2 cerradas por BS** (SLGB 2026-06-09: mecha 863 %, base 1,551 $ → 3,10 $; PLYX 2026-02-17: mecha 1.876 %, base 4,235 $ → 8,47 $); penalización −274,96 $. Con posiciones de 30-90 acciones el Black Swan sale raro y barato; con tamaños grandes sería otra historia, que es justo lo que la partición modela.
+
+
 ## 📣 2026-09-11 — Para Jaime: tu 1013fed portado + «Abrir borrador» (ZCode, para Álvaro)
 
 - **Porte manual de tu 1013fed** (visor sin descripción, condiciones primero) a `alvaro-rama-desarrollo`: el cherry-pick no aplicaba (perfil-volumen + IS/OOS de por medio). Ojo al integrar: posible mini-conflicto en `page.tsx` (bloque `describirWhatIf`) por comentarios de procedencia — versiones equivalentes, quédate la de staging.
@@ -5693,3 +5709,120 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Probarlo:** Compartidas → desplegar una → «Abrir borrador». Verificado end-to-end con tu «PM 1B TTP (50k)»: todo cargado, BD intacta. Solo frontend (`SharedStrategiesTab.tsx`, `page.tsx`, `ResultsTabs.tsx`). Sin push aún (pendiente OK de Álvaro).
 
 **Mensaje para Jaume (copiar tal cual):** «Oye, ya he arreglado lo de las estrategias guardadas — a mí me funciona. Yo me quedo con mi versión aunque subas la tuya a staging. Está en MEMORIA_MADRE (entrada 2026-09-11): pídele a tu IA que la lea, entienda cómo lo he hecho y lo adapte para que a ti también te funcione.»
+
+### [RESPUESTA · 2026-09-11 · COMPARTIDAS] Leído tu `1214180`: se toma la fila de reentradas, no el botón (Jaume + Claude, para Álvaro y ZCode)
+- **Leído en `alvaro-rama-desarrollo`** (`1214180`, 11-sep). Tu porte de nuestro `1013fed` es idéntico al nuestro: el diff neto de `SharedStrategiesTab.tsx` entre las dos ramas no lo muestra, así que ahí no hay conflicto posible.
+- **Decisión de Jaume, repetida hoy con estas palabras:** «no quiero poder cargar su estrategia, solo visualizar sus stats y que él visualice las mías al cargarlo, nada más». Por eso **no adoptamos «Abrir borrador»** ni el `onOpenSharedDraft` de `page.tsx`/`ResultsTabs.tsx`. En tu rama tiene sentido; en la nuestra Compartidas es un visor y nada carga nada. No es un juicio sobre tu implementación: es el alcance que ha fijado Jaume para su lado.
+- **Sí adoptamos la fila «Reentradas»** (buena idea: el campo caía en crudo en «Otros ajustes»), **pero con la semántica de nuestro motor**, que no es la de tu nota. Tu fila dice «ILIMITADAS» siempre que `max_reentries` es -1 (o falta), sin mirar el interruptor. En `portfolio_sim` de sailor/staging el -1 es un centinela: `if max_reentries >= 0` manda el tope numérico; con -1 decide `accept_reentries`. Es decir: interruptor apagado y -1 → **no** reentra (es el valor de fábrica de una estrategia que nunca tocó el interruptor); interruptor encendido y -1 → **ilimitadas**, y eso es lo que se avisa en rojo. Y un tope numérico se respeta aunque el interruptor esté apagado (el motor mira el número primero). Si vuestro motor lee el -1 de otra forma, es una divergencia real entre ramas y conviene fijarla, porque una estrategia compartida se leería distinto en cada lado.
+- **Verificado en la app con las tres compartidas reales:** tu «G&E GENETICO - La Buena» → «no»; nuestra PM 1B TTP (50k) → «máx 2»; nuestra RTH 2B TTP (50k) → «no». `accept_reentries`/`max_reentries` ya no salen en «Otros ajustes».
+- **Formato del fichero y backend: idénticos en las dos ramas** (cero diferencias en `shared_strategies.py`, el router, los tests y `estrategias_compartidas/`). Nos seguimos leyendo.
+- **Para integrar en tu rama:** solo cambia `SharedStrategiesTab.tsx` (la función `describirReentradas` y la fila que la usa, más los dos nombres en `USADAS_RM`). Chocará textualmente con tu fila de reentradas, que ocupa el mismo sitio: quédate la tuya si prefieres tu semántica, o la nuestra si alineáis el motor. Nada más de este commit os afecta.
+- **Estado:** en `sailor` y `staging`.
+
+---
+
+## 2026-09-11 · El bot: «Parado» cierra, «Vigilar» arranca limpio, y las estrategias se recargan en caliente
+
+Segunda sesión con los arreglos del 9-sep. Lo de ayer aguantó; lo de hoy fue
+**una estrategia entera sin vigilar** y la confusión de qué proceso corre.
+
+### [BUG · 2026-09-11 · UNA ESTRATEGIA SIN VIGILAR] El bot salía de la espera con la primera casilla que se marcaba
+
+El bot leía la lista de estrategias **una sola vez**, al arrancar (*«no se
+vuelve a mirar, porque las estrategias no se editan con el bot encendido»*).
+Con el bucle de espera del día anterior —el bot se queda esperando a que haya
+alguna estrategia marcada—, Jaume marcó dos seguidas: **el bot salió de la
+espera con la primera y nunca se enteró de la segunda.** 2B (RTH) sin vigilar
+toda la sesión, sin un solo error. Antes del bucle de espera esto no podía
+pasar (el bot moría con cero y se relanzaba con las dos ya marcadas): fue un
+efecto secundario de mi arreglo, y no lo vi.
+
+**Arreglo: recarga en caliente.** El backend lleva `estrategias_version`, que
+sube al marcar/desmarcar, cambiar el riesgo o **editar la definición en el
+constructor**. Viaja en el `/estado` que el bot ya pide cada 5 s, así que no
+cuesta una petición más. `MotorAlertas.actualizar()` añade, quita y recompila
+solo lo que cambió, **conservando la memoria del día** (lo ya avisado sigue
+avisado: tocar una casilla no repite las alertas de la mañana).
+
+**Verificado en vivo**: 2B activada con el bot en marcha → `ANYADIDA en
+caliente` a las 16:27:13 → **su primera prealerta 37 segundos después**.
+
+Trampa dentro del arreglo: `compile_strategy_def` **modifica la definición en
+sitio** (normaliza nombres). Firmarla después de compilar marcaba todo como
+«cambiada» en cada recarga. La firma se calcula antes; lo cazó un test con un
+compilador falso que también muta.
+
+### [DISEÑO · 2026-09-11 · PARADO = CERRAR] El interruptor deja de ser una pausa
+
+Jaume: *«lo suyo es que si le doy a parado es porque PARO todo; si reinicio el
+backend, después doy a vigilar INICIO todo… ¿hay alguna razón por la que no es
+así?»*. No la había. La pausa existía para no perder el máximo de premercado;
+esa razón murió el 9-sep cuando el botón empezó a arrancar el bot (reiniciar
+cuesta ~30 s de siembra por REST). A cambio producía justo lo contrario de lo
+que se veía: **«Parado» con un bot vivo** que al darle a Vigilar despertaba con
+el código y la lista de estrategias de por la mañana.
+
+Ahora el bot, al ver el interruptor apagarse, **sale limpio** y manda un último
+latido `terminado`; el botón no lo cuenta como vivo y el siguiente Vigilar
+arranca uno nuevo. **No se mata nada desde el backend** — matar por PID desde
+otro proceso es como se acaba matando lo que no es. `LATIDO_VIVO_SEG` pasa de
+150 a **20** (el bot late cada 5 s, no cada 60 como decía el comentario).
+
+### [TRAMPA · 2026-09-11 · UN BOT FANTASMA] Un proceso vivo desde las 07:54 que di por muerto dos veces
+
+El lanzador del escritorio pone la ruta **entre comillas**
+(`"D:\bot_senales\bot.py" --vivo`); el `.bat`, no. Mi filtro de procesos
+buscaba `bot.py --vivo` seguido y la comilla lo rompía. Resultado: **un bot del
+lanzador estuvo vivo todo el día**, en pausa desde las 14:40, y mi Vigilar de
+las 16:2x lo despertó con una sola estrategia y sin ninguno de los arreglos.
+Filtro bueno: `python.exe` con `*bot.py*` **y** `*--vivo*` por separado.
+
+### [OPERACIÓN · 2026-09-11 · --reload] Tres recargas, tres atascos
+
+Cada guardado de un fichero del backend disparó una recarga, y **las tres se
+atascaron**: el worker (3,8 GB, hijo de `multiprocessing`) no vuelve y el
+reloader acepta conexiones sin contestar (`HTTP 000` a los 10 s). Remedio cada
+vez: matar todo y relanzar limpio (36-48 s). **El backend quedó relanzado SIN
+`--reload`**, para que los guardados de los otros chats no lo tumben mientras
+Jaume trabaja. Recomendación: quitar `--reload` del lanzador del escritorio.
+
+### Y las estrategias aparecieron destildadas por tercera vez
+
+Activas a las 10:03, las dos a `false` a las 16:2x. Sigue sin saberse quién ni
+cuándo; `POST /watch` ya deja una línea por cambio en la consola del backend.
+
+**Estado:** 15 tests nuevos, **1113 pasan, 0 fallan**. Commit `e0e7518` en
+local. Bot en marcha con las dos estrategias, recibiendo. `bot.py` va aparte
+(fuera de git). Vigentes las cuatro normas del análisis de halts de otro chat:
+no actualizar el lago, no tocar `estudio_cisnes`/`databento`, no usar la clave
+de Databento, no copiar `users.duckdb`.
+
+### [FEATURE · 2026-09-12 · HALTS] Los halts entran en el lago (fase 8, Databento) y en el backtester: «Coste Halts» + indicadores Halt Down / Halt Up (Jaume + Claude)
+- **Por qué Databento y no Massive:** Massive no lleva halts. Ni en las velas (detectarlos por huecos: recall 11 %, precisión 10 %, calibrado por el estudio de cisnes) ni en los ticks (los códigos de reapertura 18/28 aparecen 18 veces en todo junio-2026 contra cientos de halts reales). El `status` de Nasdaq vía Databento da hora de parada, reanudación y motivo; medido **50,61 $ por 1.930 días → unos 8 $/año**. Las normas del análisis de halts de otro chat quedaron levantadas por Jaume ese mismo día.
+- **Fase 8 del lago** (`Base de datos Backtester/scripts/fase8_halts.py`, fuera del repo BTT): la llama `actualizar_diario.py` como último paso, **fuera de `correr()`**, así que nunca aborta la actualización (sin clave, sin red o tope de gasto superado → aviso y código 0). Deja `D:\lago_backtester\parquet\halts\dias\AAAA-MM-DD.parquet`, un halt por fila, horas en Nueva York sin zona como las velas. **Tabla completa: 279.218 halts, 1.934 días, 2019-01-02 → 2026-09-11.** Trampa del primer día: 422 por pedir hasta la 01:00 UTC cuando el dataset acaba a las 00:00; ahora consulta el fin disponible y recorta.
+- **«Coste Halts»** (costes opcionales, `backend/app/services/halts.py` + `portfolio_sim.simulate(halts=None)`): dos modos, **Primero** (al primer halt que pille la posición) y **N halts** (al halt número N del día, contando desde la apertura: los anteriores a la entrada cuentan). Sale al **open de la primera vela tras la reanudación** penalizado un %; durante el halt NO se ejecuta nada (un stop cruzado en la vela de la parada no se llena); tras salir no se vuelve a operar ese ticker-día; si no reabre ese día (T12, suspensión) cierra al último precio antes del halt, con el slippage, marcado «Halt (atrapado)». Cuentan todos los tipos. Solo motor Python (`sim_dispatch` desvía) y vía secuencial; `halts=None` no ejecuta ni una rama. Badge cian `Halt` en Trades con tooltip, marcador cian cuadrado en el gráfico, resumen «halts: N cerrados (K atrapados) en D días con halt · penalización».
+- **Halt Down / Halt Up** (condición de entrada o salida): contador de halts del día cuya vela de entrada al halt fue bajista / alcista; como el motor dispara en el flanco, «Halt Down >= 1» = entrar en el primer halt bajista, con la orden llenándose en la vela de reapertura. Capa de indicadores (`_compute_raw` lee ticker/fecha de `daily_stats`), sin tocar el motor. **El bot en vivo NO lo ve** (no tiene tabla de halts): solo backtester, y lo dice el «?».
+- **Pruebas:** `test_halts.py` (16) + `test_halts_indicador.py` (3), 3 E2E por `run_backtest` con el JIT activo; suite completa 1.127 pasan (2 fallos de DuckDB con el backend abierto, los de siempre). `tsc` limpio. Desarrollado en un worktree mientras el botón de actualizar corría en el backend (editar `backend/app` en caliente habría matado la actualización).
+- **Para el servidor:** las claves nuevas por trade solo aparecen con el coste activo; el golden no cambia. `HALTS_DIR` (defecto `D:/lago_backtester/parquet/halts/dias`) para apuntar la tabla en otra máquina.
+- **Estado:** `26b2a48` en `sailor-rama-desarrollo`; arreglo `78e5d4b` (un halt posterior al último minuto del frame no cuenta: la primera corrida real con una estrategia de premercado pegaba los LULD de sesión a la última vela como «atrapados», 451 de 453). **Subido a sailor y staging.**
+
+### [FEATURE · 2026-09-12 · TICKER ANÁLISIS] Los gaps del ticker desde 2019, con el gráfico intradía del backtester bajo cada fila (Jaume + Claude)
+- **Qué es:** al buscar un ticker en «Ticker análisis», antes de toda la información aparece la lista de sus días de gap desde 2019 (fecha, gap %, PMH gap %, cierre de ayer, PM High, OHLC, día %, fade PMH, volúmenes PM y RTH), ordenable, con filtro por fecha y cabecera plegable con resumen. Al pulsar una fila se despliega debajo el `PanelAnalisisTrade` de siempre (el gráfico de «Análisis por trade», con su desplegable de indicadores), en grande. Solo visualización.
+- **Datos:** endpoint nuevo `GET /api/ticker-analysis/{ticker}/gap-days`, que lee el **hot cache diario en RAM** (`daily_metrics` con gap ≥ 10 %) y **no toca DuckDB**; velas por el `/candles` del backtester (el `dataset_id` solo importa en el mock: se pasa `ticker-analysis`). Precios crudos, sin ajustar por splits, como el resto de la página.
+- **Dónde:** `frontend/src/components/ticker/GapsDelTicker.tsx` (nuevo), dos líneas en `TickerAnalysis.tsx` (import + `<GapsDelTicker key={ticker}>` antes de «Market Metrics Row»), `getTickerGapDays` en `lib/api.ts`. Nada del motor ni de los datos cambia.
+- **Estado:** commit en `sailor-rama-desarrollo`, sin subir.
+
+### [FEATURE · 2026-09-12 · SCALPING] Modo scalping: la entrada lógica abre una ventana, la salida la cierra y dentro cada flanco del gatillo es una operación (Jaume + Claude)
+- **Por qué así y no un motor nuevo:** el scalping por tick o sub-segundo no se puede backtestear con lo que hay (velas de 1 min; los ticks del bot son trades sin quotes → sin spread, y a ese horizonte el spread ES el coste; Roll 1984: sin quotes el rebote bid-ask se lee como reversión y el backtest se inventa el edge). El de velas de 1 minuto sí, y no necesita datos nuevos: solo cambia QUÉ significan la entrada y la salida lógicas. Diseño cerrado con Jaume: cinco campos (gatillo, objetivo y stop —los de la estrategia—, salida a N minutos, pausa de K velas), todo en %, relleno al open de la vela siguiente como siempre, locates y costes sin tocar («los costes son los costes»).
+- **Semántica:** bloque `scalping {timeframe, root_condition, max_minutes, cooldown_bars, capital_pct}` (`capital_pct` = % de la cifra del panel por scalp, 100 por defecto, aplicado escalando `risk_r`; sin techo de exposición aparte porque nunca hay dos scalps abiertos). Entrada lógica = abre la ventana (esa vela incluida); salida lógica = la cierra (esa vela excluida; si entrada y salida coinciden, gana la salida) y cierra la posición; se reabre si la entrada vuelve. Dentro, cada flanco del gatillo entra (reentradas ilimitadas forzadas), respeta `entry_time_windows`, `max_minutes` pisa el take profit «Time», `cooldown_bars` bloquea entradas hasta N velas después del `exit_idx` del último cierre (la señal que cae dentro se consume). Un gatillo que se cumpla seguido cuenta una vez (flanco, como todo el motor).
+- **Regla nº1:** sin la clave o con gatillo vacío, `scalping=None` y NADA cambia (ni una rama nueva en `simulate`, `reentry_cooldown_bars=0`). Probado: `test_scalping.py` (21) y la suite completa, 1.151 pasan (los 2 fallos son los de DuckDB con el backend abierto). `tsc` limpio. Comprobado en el navegador desde el worktree (`next dev --webpack -p 3001` sí acepta la junction de `node_modules`; Turbopack no).
+- **Las cuatro trampas, cubiertas:** listas blancas (esquema `StrategyCreate.scalping`, router ×2, `page.tsx` ×12, `InlineStrategyBuilder`), tres caminos (`backtest_service` secuencial + caché de señales con `scalping_tp_time_limit`, `backtest_signals` paralelo/slab), JIT (`sim_dispatch` desvía si `reentry_cooldown_bars > 0` y retira el kwarg), y `has_special=True` para que el traductor nativo nunca vea el bloque.
+- **Lo que queda:** el **bot** (`bot_alerts_engine`, sin tocar) usaría el gatillo como entrada pero sin salida por tiempo ni pausa → **no marcar estrategias de scalping para el bot** hasta adaptarlo. `StrategyForm.tsx` y `strategy_explain.py` no conocen el bloque. NBBO aplazado por Jaume (Massive sí da quotes si el plan es Advanced, sin comprobar). Primeras pruebas sugeridas: ORB de 5 min y caja tras spike con fallo de ruptura (el indicador Darvas Box ya existe desde el 22-ago).
+- **Estado:** fusionado en `sailor-rama-desarrollo` (`0f4a61f`) con permiso de Jaume y el bot vivo (el reload tardó ~1 min, el bot sobrevivió). Sin subir.
+
+### [FEATURE · 2026-09-12 · SCALPING COMPLEJO] La escalera: por cada paso de X % añade o quita, entre core y tope, con stop sobre el precio medio (Jaume + Claude)
+- **Por qué aparte de la piramidación:** Jaume lo separó: la piramidación son reglas sueltas por condiciones; el scalping «siempre es lo mismo y de la misma forma». Con `scalping.mode="complex"` + `ladder`, dentro de cada scalp actúa una escalera mecánica (`escalera.py` + `portfolio_sim.simulate(ladder=None)`, bloque justo antes de la piramidación, mismas condiciones).
+- **Semántica cerrada con Jaume:** paso X % desde el ÚLTIMO nivel ejecutado (malla sobre la primera entrada); a favor / en contra cada uno añadir|quitar|nada con $ fijos o % de la posición inicial; core = suelo ($ o %, 0 = puede vaciarse y el siguiente gatillo reabre); tope = techo ($ o %, 0 = manda la caja); recorrido máximo desde la entrada (fuera, manda la salida principal, que siempre cierra todo); rearmar niveles OFF = cada (nivel, dirección) una vez por scalp, ON = grid; **stop y TP en % sobre el precio medio** (añadir en contra aleja el stop; `entry_price` pasa a ser la media, también en el registro del trade). Relleno al precio del nivel con slippage adverso, en la vela que lo toca; varios niveles por vela en el orden que la vela los visitó. Jaume pidió un techo de exposición aparte y lo retiró: nunca hay dos scalps abiertos.
+- **Regla nº1:** `ladder=None` → ni una rama nueva; `sim_dispatch` desvía; `parse_escalera` → None si no hace nada. `test_escalera.py` (19) + suite 1.171 pasan; `tsc` limpio; visto en el navegador desde el worktree.
+- **Gráfico y diseño (después):** las ejecuciones de la escalera se pintan como triángulos pequeños (añadido debajo, quita encima, flecha en el sentido de la orden) vía `executions[].escalera`; y el bloque se rehizo sobrio (filas etiqueta | control, `InfoTooltip` estándar, sin cajas) porque a Jaume el primero le «parecía hecho con IA». Lección: calcar el patrón de Stop Loss / Take Profit, no el de la piramidación (cajas con borde cobre).
+- **Lo que queda:** sin probar con piramidación y parciales a la vez; el bot no lo usará (decisión de Jaume).

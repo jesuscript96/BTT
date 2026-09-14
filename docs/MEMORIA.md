@@ -30,6 +30,216 @@
 
 ---
 
+## 2026-09-13 (Sailor) — La noche de vigilante: el perfil de volumen tumbaba el proceso, y la primera corrida con los alternativos
+
+Jaume lanzó «Genético variado 1» (`20260912_220222_31c6`: semilla 50, 80×40, 3 condiciones, los 25 indicadores marcados incluidos los alternativos, ventana 04:00-08:00, IS 2024-01-01 → 2026-01-01, `min_trades` 1200, **fees 0 y slippage 0**, `size_by_sl` apagado) y me dejó de vigilante toda la noche con el bot apagado. Subido a sailor y staging (`b972a32`, `3fb783a`).
+
+### ⚠️ El bug: `_perfil_volumen` escribía fuera del array
+
+La corrida murió a las 22:11 y otra vez a las 22:21, **con el mismo individuo** (`Bar Close cruza abajo Zona baja(0.5, 85) AND Absorption(10) AND Elapsed time(pm)`), sin traceback: el visor de sucesos de Windows la apunta como APPCRASH `0xC0000005` en `ntdll.dll`. `paralelo._apuntar` deja el individuo en `dir_datos/evaluando_<pid>.txt` (OJO: en el directorio de DATOS, no en el de la corrida), y con eso se reprodujo.
+
+La causa: el histograma del perfil tiene 4.096 franjas de anchura fija (% del primer precio del día). `i1` (el máximo) se acotaba; `i0` (el mínimo) NO, y con `i1 < i0 → i1 = i0` un mínimo fuera del histograma escribía fuera del array. numba no comprueba límites: se corrompe el heap y el proceso muere más tarde. OCTO 2025-09-08 hizo **32× el primer precio del día**; con franjas del 0,5 % son 6.400 franjas. En el dataset de la corrida hay 5 días así con bin 0,5 (OCTO, HOLO, CWD, SPRB, TNON); con bin 0,1 —que la UI permite— basta con 4×, o sea el 1 % de los días. **Este bug tumbaba también el backend** en un backtest normal con el perfil y «Detalle %» bajo.
+
+Reproducido con `NUMBA_BOUNDSCHECK=1` sobre el día real: la función de HEAD → `IndexError`; con el arreglo → OK. Lo que se sale por arriba se acumula en la última franja. Test `test_un_precio_fuera_del_histograma_no_revienta`; paridad en `lib/indicators.ts`.
+
+### Amnistía de crashes en el motor del genético
+
+`motor.reanudar()` lee los `evaluando_<pid>.txt` cuyo pid ya no existe, mete al individuo en la caché con fitness 0 y `error`, y renombra el fichero a `crash_<pid>.txt`. Sin esto, un crash determinista es un bucle: crash → reanudar → mismo individuo → crash. Con el vigilante reanudando cada 18 min, la noche aguanta cualquier crash nativo que quede (el «muere sola cada pocas horas» del docstring de `paralelo` sigue sin causa conocida; esta noche no apareció).
+
+### Lo operativo que se aprendió
+
+- **Reanudar recalcula los workers** con la RAM libre del momento (`config.json` guarda `workers: 0`). Tras parar el backend (su hijo `multiprocessing` ES el servidor, con la caché RAM del universo: 3,9 GB), la reanudación cogió 3 workers: 5 s/evaluación frente a 10. Toda la corrida, 232 min.
+- Un vigilante en el scratchpad (`vigilante.py`, foto cada 15-20 min: estado, pid vivo, CPU del árbol, RAM, backend; reanuda por API o directo como `_lanzar`; `--backend` relanza el 8010 como el lanzador). Temporal, fuera del repo.
+- Escribir en `backend/tests/` dispara el `--reload` igual que `backend/app/`.
+
+### El resultado (BRUTO)
+
+Mejor 56,89 = expectancy 1,55 $ (sobre 100 $ de nocional) × √1.347. PF 1,37, WR 41,6 %, DD −2,8 %, +15 % en 2 años. `Recorrido (%) > -2 AND Vol. de la franja(2.0) > 80 AND Wick Ratio(5, lower) < 0.3 · Stop: Último pivote alto +0 % · TP 15 %`. En cristiano: cortar un gapper de premercado cuando se estanca en el escalón de mayor volumen y nadie compra las caídas, stop pegado al último máximo confirmado, objetivo 15 %.
+
+- **El top 20 es UNA familia**: `Vol. de la franja(2.0) > 80` en los 20, pivote alto como stop en 17; la tercera pata es `Wick Ratio lower < 0,3` o `ATR Extension(hod)`. Ningún clásico entró. Son dos estrategias, no veinte.
+- **1,55 % del nocional por operación en premercado está dentro del spread.** No es edge hasta pasar el 2026 (OOS) con costes.
+- **74 % de los individuos a fitness 0** por el suelo de 1.200 operaciones. Para la próxima: 500-800 o ventana más ancha.
+- La curva de mejora fue sana (15 → 24 → 37 → 54 → 57, meseta desde la gen 36).
+
+---
+
+## 2026-09-12 (Sailor, noche) — Los «Alternativos» entran en el genético, sin cambiar las corridas de siempre
+
+Jaume vio que los indicadores del 9 y 10-sep (regresión, absorción, mecha, retroceso, pivote, perfil de volumen) no estaban en el catálogo del genético y quería lanzar una corrida con ellos esa misma noche. **Premisa suya: no romper nada de lo que ya funciona.**
+
+**Qué hay.** Familia nueva «Alternativos» en `genetico/catalogo.py`:
+- **Ocho medidas** con rejilla de valores y parámetros sorteados: `Reg. Slope` (ventana), `Reg. R2` (ventana), `ATR Extension` (periodo del ATR y referencia: VWAP / PMH / cierre de ayer / HOD), `Time vs Level` (referencia y lado), `Absorption` (ventana), `Wick Ratio` (ventana y lado), `Retroceso (%)` (ventana 0/30/60 y dirección del impulso), `Vol. de la franja` (detalle). Las rejillas de absorción y mecha son los **percentiles medidos** el 9-sep (2.476 velas reales): 0,25 / 0,85 / 2,5 / 5 / 10 y 0,2 / 0,3 / 0,4 / 0,5.
+- **Cuatro niveles opcionales**: `Ultimo pivote` (velas y dirección), `Punto de control` (detalle), `Zona alta` y `Zona baja` (detalle y % de volumen). Son precios: entran como **destino** de `Bar Close` / `High Bar` / `Low Bar`, y el pivote además como **stop de estructura** («Ultimo pivote alto» / «bajo», los mismos valores que `VALORES_PIVOTE` del motor; ventana 3 y respaldo 5 % por defecto).
+- **Fuera a propósito:** «Absorption + Wick» (es `Absorption > a AND Wick Ratio > w`, y el genético ya busca 2-3 condiciones en AND: como dos genes sueltos prueba más). Y **los dos nodos**: son relativos al precio (la primera zona por encima / por debajo del cierre), así que el cierre está SIEMPRE al otro lado y **nunca los cruza** — medido: `Bar Close` cruza el nodo 0 veces en 600 velas; solo la mecha de su lado lo pincha (`High Bar` contra el de arriba, `Low Bar` contra el de abajo). En el genético serían dos de cada tres condiciones muertas de nacimiento. Esto vale también para el constructor de condiciones: «Bar Close cruza Nodo» no dispara nunca.
+
+**Cómo se cumple la premisa: los niveles son OPT-IN.** `Indicador.solo_destino=True` + `NIVELES_OPCIONALES` + `objetivos_permitidos(ind, marcados)` / `stop_niveles(sesgo, marcados)`: un nivel solo entra como destino (y el pivote como stop) si está **marcado en la página**. Sin marcar, la lista de destinos de `Bar Close` es la de siempre, **en el mismo orden**, así que con la misma semilla y la misma config nacen exactamente los mismos individuos: comprobado contra HEAD, 300 individuos × 3 semillas × 2 configs idénticos. Y permite comparar una corrida CON el perfil y otra SIN, que es la única forma de saber si aporta. `lado_izquierdo(nombres)` quita los niveles del sorteo de la izquierda; si solo hay niveles marcados salta un `ValueError` que dice qué falta (y la página lo avisa antes de lanzar). En la página los niveles llevan «↳» y una nota; la validación no los cuenta como condiciones y avisa si hay un nivel marcado sin `Bar Close` / `High Bar` / `Low Bar` que lo use (el pivote se salva si el stop de estructura está activo).
+
+**Dos fallos de la mutación que salieron de paso (no daban error):**
+- Al mutar el destino se ponía `params: {}`: un Darvas o un Donchian mutados **volvían a los defectos del motor** (línea de arriba, periodo por defecto) en silencio. Ahora `cromosoma.objetivo_aleatorio` sortea los parámetros como al nacer, y solo entre los destinos permitidos en la corrida.
+- **Los suelos `stop_min_pct` / `tp_min_pct` solo valían al NACER.** Un stop del 8 % podía bajar al 5 y al 3 a base de vecinos, y al saltar de estructura a porcentaje se sorteaba sin suelo. El suelo de la página parecía puesto y no lo estaba. Ahora `_mutar_stop` / `_mutar_tp` los aplican (rejilla acotada, y `_stop_aleatorio` / `_tp_aleatorio` los reciben).
+
+**Comprobado:** `test_genetico_catalogo.py` (143 pasan: el motor calcula cada nombre nuevo, las sondas de `ref_level` / `level_dir` / `wick_side` / `swing_dir` / `bin_pct` / `liston_pct` / `zona_pct` no encuentran ramas sin sortear, los opcionales solo entran marcados, el pivote solo entra al stop marcado, `necesita_pivotes(hard_stop)` es True, los suelos valen al mutar, el destino mutado conserva parámetros); y por la vía REAL del motor (`a_definicion` → `compile_strategy_def` → `_evaluate_condition_group`): cada alternativo da señal en alguna combinación de su rejilla, y **los parámetros viajan** (la misma condición con `wick_side` upper/lower, `swing_dir` up/down, `ref_level` vwap/prev_close, `bin_pct` 0,5/2 da series distintas). `tsc` limpio.
+
+**Ojo:** el endpoint `/api/genetico/catalogo` importa `genetico.catalogo` **una vez por proceso**: hasta reiniciar el backend, la página sigue enseñando el catálogo viejo (el proceso del genético, que es aparte, sí importa el nuevo). Y **`git add -A` no; ficheros uno a uno** (había trabajo ajeno sin commitear en `docs/BOT_EJECUCION_*.md`).
+
+---
+
+## 2026-09-12 (Sailor) — Modo Scalping: la entrada abre una ventana, la salida la cierra, y dentro cada gatillo es una operación
+
+**Qué es.** Un bloque opcional `scalping` en la definición de la estrategia (en la UI, entre «Salida lógica» y «Piramidación»). Con él encendido:
+- La **Entrada Lógica ya no entra: abre la ventana** de scalping en ese ticker-día. La **Salida Lógica la cierra** (y cierra la operación que hubiera abierta). Si la entrada vuelve a cumplirse después, se reabre.
+- Dentro de la ventana, **cada flanco del gatillo** (`root_condition`, el mismo árbol de condiciones que entrada/salida, con su timeframe) es una entrada, con **reentradas ilimitadas** (`accept_reentries=True, max_reentries=-1` forzados).
+- **Stop loss y take profit son los de la estrategia**, sin cambios. Además: `max_minutes` (salida por tiempo, pisa el take profit «Time» si lo hay; 0 = no pisa), `cooldown_bars` (pausa tras cada salida; 0 = ninguna) y `capital_pct` (% de la cifra de capital/riesgo del panel que usa CADA scalp; 100 = la cifra entera, como una entrada normal; se aplica escalando `risk_r` al simular, así que vale para los tres modos de tamaño y no toca el simulador). No hay techo de exposición aparte: nunca hay dos scalps abiertos a la vez, así que el expuesto ES la cifra por entrada (Jaume lo pidió y lo retiró él mismo al verlo).
+- La ventana horaria de entradas (`entry_time_windows`) vale también para cada operación, como con las pirámides.
+
+**Regla nº1, cumplida y probada.** Sin la clave, o con el gatillo sin condiciones, `compile_strategy_def` deja `scalping=None`, `translate_strategy` devuelve lo de siempre, y en `simulate` no se ejecuta ni una rama nueva (`reentry_cooldown_bars=0` por defecto). Suite completa: 1.151 pasan; los 2 fallos son los del backend levantado (DuckDB).
+
+**Dónde vive (para no perderlo en las tres capas).**
+- Motor: `strategy_engine.compile_strategy_def` (parsea el bloque, `has_special=True` → va SIEMPRE por el traductor clásico, el nativo no sabe del bloque), `ventana_scalping`, `aplicar_scalping`, `scalping_tp_time_limit`, y `translate_strategy` (sustituye `entries`, pisa `tp_time_limit`, fuerza reentradas, devuelve `reentry_cooldown_bars`).
+- Simulador: `portfolio_sim.simulate(reentry_cooldown_bars=0)`: un `if` en la puerta de entrada que mira `trades[-1]["exit_idx"]`. `sim_dispatch` desvía al Python si es > 0 y retira el kwarg antes del JIT.
+- Tres caminos: `backtest_service` (secuencial, con la caché de señales de la optimización: ahí se re-parsea el riesgo y hay que volver a pisar el `tp_time_limit`, por eso existe `scalping_tp_time_limit`) y `backtest_signals` (paralelo y slab). El what-if de la pérdida diaria re-simula con copia de los kwargs, así que le llega solo.
+- Persistencia: `schemas/strategy.py::StrategyCreate.scalping` (dict opaco) y los dos sitios de `routers/strategies.py`.
+- UI: `ScalpingBuilder.tsx` (nuevo, calcado de `PyramidingBuilder`), `InlineStrategyBuilder` (estado, firma, rehidratación, `scalpingForPayload`, reset, render), `page.tsx` (12 sitios, los mismos que `advanced_model`), `types/strategy.ts` (`ScalpingBlock`, `ScalpingConfig`, `initialScalping`), y el resumen del `BacktestPanel` («SCALPING: gatillo con N condiciones · salida a los M min · pausa de K velas»).
+- Tests: `backend/tests/test_scalping.py` (21): regla nº1, ventana, translate, pausa + dispatch, esquema y `run_backtest` entero (normal = 1 operación/día; scalping = varias, ninguna más larga que la salida por tiempo).
+
+**Decisiones tomadas con Jaume (12-sep).** Todo en %, no en centavos (el motor ya trabaja así; el spread se mira por tramos de precio en los resultados). Relleno al open de la vela siguiente, como siempre (no se expuso `mid`/`worst`). Locates y costes como están: «los costes son los costes». Va vela a vela de 1 minuto; nada por tick (sin quotes no hay spread, y sin spread un backtest sub-segundo se inventa el edge: Roll 1984). Un gatillo que se cumpla varias velas seguidas cuenta UNA vez (flanco), como cualquier entrada del motor.
+
+**Lo que NO está hecho / avisos.**
+- **El bot en vivo** usa `translate_strategy`, así que una estrategia con `scalping` marcada para el bot avisaría en cada gatillo dentro de la ventana, pero **sin salida por tiempo ni pausa** (su `_kwargs_simulate` no pasa `reentry_cooldown_bars`; no se ha tocado nada de `bot_alerts_*`). Hasta adaptarlo: **no marcar estrategias de scalping para el bot.**
+- `StrategyForm.tsx` (la página `/strategies/new`) no tiene el bloque; solo el constructor del backtester.
+- `strategy_explain.py` («qué hace esta estrategia») no describe el bloque; `SharedStrategiesTab` lo vuelca en «Otros ajustes».
+- El NBBO (spread real) queda para más adelante por decisión de Jaume; Massive SÍ da quotes (`Q.*` y `/v3/quotes`) si el plan es el «Advanced»; no comprobado.
+- Primeras estrategias que se quieren probar: ORB de 5 minutos (hay literatura: Zarattini & Aziz 2023-24) y «caja tras el spike con fallo de ruptura» en corto. El indicador **Darvas Box ya existe** en el repo (`indicators.py`, 22-ago) y sirve de gatillo.
+
+**Estado.** Fusionado en `sailor-rama-desarrollo` (`9e11fa8` motor+UI, `0d630d1` docs, `0f4a61f` capital por entrada) con permiso de Jaume, con el bot vivo; el `--reload` tardó ~1 min y el bot sobrevivió. Sin subir.
+
+### Modo «Complejo»: la escalera (misma tarde)
+
+Jaume separó claramente «piramidación = reglas sueltas por condiciones» de «scalping = siempre lo mismo, mecánico». Con `scalping.mode = "complex"` y un bloque `ladder`, dentro de cada scalp actúa una **escalera** (`backend/app/services/escalera.py` + `portfolio_sim.simulate(ladder=None)`):
+- **Paso** X %: desde el **último nivel ejecutado** (malla entera sobre el precio de la primera entrada: nivel k = entrada0 × (1 ± k·paso), k>0 a favor). Lo que se hace depende de la **dirección del movimiento**, no del signo de k (volver de +2 a +1 es «en contra»).
+- **A favor** y **en contra**, cada uno: añadir | quitar | nada, con cantidad en **$ fijos** o **% de la posición INICIAL** (fijo: cada escalón el mismo tamaño).
+- **Core** (suelo, $ o %): al quitar nunca se baja de ahí; 0 = puede vaciarse → el scalp queda cerrado y el siguiente gatillo abre otro. **Tope** (techo, $ o %): al añadir nunca se pasa; 0 = manda la caja. **Recorrido máximo** desde la entrada: fuera de él la escalera no actúa y manda la salida principal. La salida principal (salida lógica, stop, TP, tiempo) siempre cierra todo.
+- **Rearmar niveles** (opción B de Jaume): OFF = cada (nivel, dirección) se ejecuta una vez por scalp (añadir al bajar a 9,90 no gasta el quitar al volver a subir por 9,90; una segunda bajada a 9,90 ya no añade); ON = grid, cada cruce opera.
+- **Stop y take profit en % sobre el precio MEDIO** (decisión de Jaume): tras cada añadido `entry_price` pasa a ser la media (las fórmulas de salida leen `entry_price`); añadir en contra ALEJA el stop. En el trade el `entry_price` registrado es la media, no el fill (la piramidación clásica ancla al fill; aquí no, por diseño).
+- **Relleno** al precio del nivel (limitada que descansa ahí) con slippage adverso, en la vela cuyo high/low lo toca; una vela grande procesa varios niveles, primero el lado que la vela visitó antes (`orden_lados`). Añadidos respetan cortacircuitos diario, tope de caja y locates como la piramidación; las quitas son legs `exit_reason="Escalera"`; la bitácora viaja en `escalera_executions` del trade de cierre (y `_enrich_trades` la propaga).
+- **Regla nº1:** `ladder=None` (modo simple o sin bloque) → ni una rama nueva; `parse_escalera` devuelve None si el paso no es positivo o las dos direcciones son «nada». `sim_dispatch` desvía al Python. Se lleva por `translate_strategy["ladder"]` → `sig_ladder` en los dos bucles y en la caché de señales.
+- **UI:** «Modo: Simple | Complejo (escalera)» en el bloque Scalping; el panel de la escalera con un «?» explicativo en cada campo (petición de Jaume); resumen del BacktestPanel con la línea ESCALERA. Tests: `test_escalera.py` (19: regla nº1, cálculos puros, ejemplo de Jaume, A vs B, core, vaciado + reentrada, tope y recorrido, $ fijos, stop sobre la media, corto, salida principal, dispatch, `run_backtest`). Suite 1.171 pasan.
+- **Gráfico y diseño (misma tarde, a petición de Jaume):** `_build_executions` incluye las `escalera_executions` con `escalera: True` y el gráfico las pinta como **triángulos pequeños** (`size: 0.6`): añadido debajo de la vela, quita encima, flecha en el sentido de la orden (compra arriba, venta abajo; al revés en corto), cobre/ámbar como la piramidación. Y el bloque Scalping se rehizo **sobrio**: filas «etiqueta (150 px) | control», sin cajas dentro de cajas, altura 32 px, el `InfoTooltip` «(?)» estándar de la app en cada campo y subtítulos de sección (ESCALERA, GATILLO) con línea inferior; Jaume dijo que el anterior «parecía hecho con IA».
+- **No hecho:** el bot ignora la escalera (decisión de Jaume: el bot no usará scalping). Sin probar escalera + piramidación + parciales a la vez.
+
+---
+
+## 2026-09-10 (Sailor) — Los stops dejan de mentir, último pivote y perfil de volumen
+
+Diez commits, del `1ed3d7e` al `5b77e52`, en `sailor-rama-desarrollo` y `staging`.
+
+### ⚠️ Tres stops que daban números equivocados sin avisar
+
+**`ATR Multiplier` miraba al futuro.** Calculaba la distancia como
+`media del ATR del DÍA ENTERO / primer cierre del día`, y esa media incluye
+barras POSTERIORES a la entrada. Medido sobre un día que explota por la tarde:
+
+| Entrada | Stop del motor | ATR real de esa barra | |
+|---|---|---|---|
+| barra 30 (mañana) | 3,88 % | 0,85 % | **4,6× más ancho** |
+| barra 350 (en la explosión) | 3,88 % | 19,29 % | 5× más estrecho |
+
+Ahora el nivel se resuelve en la barra de ENTRADA, `entrada ∓ k × ATR[i]`, por la
+misma vía que el estructural. Con ATR 1 salen 150 acciones y con ATR 6 salen 25;
+antes las dos entradas del día compartían fracción.
+
+**`Fixed Amount` dividía por el cierre de la primera vela del día.** Así que
+«15 centavos» solo eran 15 centavos si entrabas al precio de apertura. Con un
+día que abre en 70 y entrada en 100, pedir 5 $ daba un stop en 107,14 en vez de
+105 — un 43 % más ancho. Este NO está en la UI, así que no afectaba a nadie; se
+arregla ahora que la maquinaria de niveles existe.
+
+**El respaldo del stop estructural era un 5 % clavado**, y escrito TRES VECES por
+separado (portfolio_sim, el kernel JIT y el bot). Ahora es
+`hard_stop.struct_fallback_pct`, y sin él sigue siendo 5.
+
+Los tres pasan por `size_by_sl`, el techo híbrido y Cangrejo A y B, porque todos
+miran `stop_loss_price` y no la fracción. Portados al kernel JIT con paridad
+0,00e+0: sin eso, con `BACKTEST_NUMBA_SIM=1` se habrían ignorado EN SILENCIO por
+la vía rápida.
+
+**Y el bot los entiende.** `stop_estimado` resolvía todo lo no estructural como
+`precio × (1 ∓ sl_stop)`; sin tocarlo habría avisado con un stop distinto del que
+se backtestea, sin error — el mismo patrón que el factor 4 del 8-sep.
+
+### El ATR, unificado
+
+El motor suavizaba con EMA `2/(n+1)` y el gráfico con Wilder `1/n`: coincidían en
+el primer valor y se separaban desde el segundo. Los dos usan ya **Wilder**, que
+es el ATR canónico. Toca el indicador `ATR`, el stop y `ATR Extension` a la vez.
+
+> Se dijo también que el **VWAP** del gráfico divergía del motor. **Era falso**:
+> solo diverge cruzando medianoche UTC, y un ticker-día real nunca la cruza.
+
+### Indicadores nuevos
+
+**`Último pivote`** — el último sitio donde el precio giró de verdad, como
+indicador Y como nivel de stop. No es `Previous max`: aquel es el máximo corrido
+y nunca baja. Con 10 → 15 → 12 → 14 → 11, `Previous max` se queda en 15 para
+siempre; el pivote alto es 14 y el bajo es 12.
+
+Es causal aunque mire a la derecha: en la barra `i` se confirma el pivote
+centrado en `i - win`, así que el nivel aparece `win` velas DESPUÉS. Ese retardo
+es inevitable — hasta que no pasan velas no se sabe si un máximo era un techo.
+
+**Perfil de volumen intradia** — seis indicadores del mismo cálculo:
+`Vol. de la franja` (percentil, una medida) y cinco niveles: `Punto de control`,
+`Nodo de arriba`, `Nodo de abajo`, `Zona alta` y `Zona baja`.
+
+Franjas de ANCHURA FIJA (% del primer precio del día), no el rango partido en N:
+con bordes móviles habría que rehacer el histograma en cada vela. Y el LISTÓN
+(% del volumen del POC) en vez de fijar cuántas zonas hay — un perfil real suele
+tener dos crestas y el POC solo señala una.
+
+**La distinción que hay que tener clara**: los NODOS son relativos al precio (la
+primera zona por encima/debajo de donde estás), así que saltan cuando el precio
+cruza una franja. La ZONA DE VALOR no mira el precio: son las bandas del día.
+Medido en OLB: la zona alta cambia 22 veces en 223 velas y el nodo 43.
+
+Validado reconstruyendo OLB del 9-sep desde las grabaciones del bot: el nodo de
+abajo desaparece a las 13:33 y desde ahí el precio cae de 0,39 a 0,34.
+
+### Interfaz
+
+- El gráfico del trade se **despliega bajo su fila** en Trades y en Calendario,
+  sin salir de la pestaña. Dentro hay un botón para abrirlo en grande.
+- El desplegable de indicadores del gráfico enseña **una línea explicando qué
+  mide** cada uno.
+- El bloque del stop no cabía en el panel (seis controles en fila, ~230 px): pasa
+  a `flex-wrap` con anchos flexibles. Y el respaldo solo se enseña donde puede
+  hacer falta — con HOD o LOD el nivel existe siempre.
+- El desplegable de stops ofrece **`ATR`**, que nunca había estado pese a existir
+  en el enum desde siempre.
+
+### El bot, suelto del backend
+
+`_arrancar_bot()` lo lanzaba como HIJO del worker de uvicorn, así que un
+`taskkill /T` se lo llevaba y cada `--reload` lo dejaba en el aire. Con
+`DETACHED_PROCESS` tiene vida propia. Su feed no depende del backend.
+
+### ⚠️ HALLAZGO SIN ARREGLAR: el log filtra el token de Telegram
+
+`httpx` registra en INFO la URL completa, y la API de Telegram lleva el token
+DENTRO de la URL. Medido: **291 líneas con el token en claro** en un solo
+arranque redirigido a fichero. `bot.py:112` lo silencia; el backend no tiene nada
+equivalente. Se arregla con una línea en `app/main.py:281`, y cierra de paso el
+pendiente de rotar la clave de Massive — es el mismo mecanismo.
+
+### Tests
+
+De 992 a **1.076**, 115 saltados, 0 fallan. Lo nuevo cubre: los tres stops
+cruzando el tamaño del AVISO contra el del SIMULADOR, paridad Python↔JIT en cada
+uno, paridad gráfico↔motor de los seis del perfil (0,00e+0 sobre 320 velas
+dispersas) y **causalidad**: el valor en la barra `i` sale igual con el día
+entero que con la serie cortada ahí.
+
+---
+
 ## 2026-09-09 (Sailor) — Ocho indicadores nuevos en el bloque «Alternativos» + el stop por ATR mira al futuro
 
 ### Lo que entra (commit `f1a5764`, en `sailor-rama-desarrollo` y en `staging`)

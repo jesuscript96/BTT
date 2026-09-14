@@ -545,15 +545,202 @@ Tablas `stops_A_niveles.csv`, `stops_B_resultado.csv`, `stops_C_liquidez_*.csv`,
   se ejecutó una vez contra un print suelto a 5,6× el nivel; el limitado lo tapa.**
 - Informe v5 entregado con la sección 11. Sigue sin ser regla.
 
+### 11-sep: cierre forzado, stop a mercado contra el libro, halts largos (informe v6)
+
+Tres análisis pedidos por Jaume; scripts 19-24 en `D:\bot_senales\estudio_cisnes`.
+- **Cierre forzado (`19_cierre_forzado.py` → `cierre_forzado.csv`)**: corto a ref,
+  stop mental +50/+100 %, cierre a 30/60 min. En ≥ 100 % vuelve al +50 % el 86 %
+  y al +100 % el 96 %. En ≥ 500 %: 5 de 8 vuelven en < 2 min; TNON, XHG y GRYP no.
+  Con 3 %: peor 22 % (30 min) / 29 % (60 min), siempre TNON. Esperar más no ayuda.
+- **Stop a mercado ADITIVO contra el libro (`20_stop_mercado_libro.py`)**: nuestras
+  acciones consumen el ask de 10 niveles de Nasdaq en el disparo (+50/+100 %); el
+  resto al VWAP de 10 s (opt) o al máximo de 30 s (pes). Libro mediano 2.500 $:
+  1.000 $ cabe entero 61 %, 5.000 $ 32 %, 30.000 $ 4 %. Pérdida mediana sobre la
+  posición al +50 %: 68 % (1 k$) → 88/144 % (10 k$). **7 de 56 disparos tenían una
+  orden basura (25 $, 10.000 $, 199.999 $) dentro de los 10 niveles** — un mercado
+  sin protección se la come. Solo libro Nasdaq.
+- **Halts largos**: la detección por huecos en velas (`21_halts_largos.py`, 8 años,
+  49.668 candidatos) **NO VALE** — calibrada contra status 2026: recall 11 %,
+  precisión 10 % (medias sesiones, iliquidez). Massive no lleva halts. Fuente
+  exacta: Databento `status`. 2026 (92 días, 09-12h): 11 T1, 66 T2, 3 T12.
+  **Estrategias con status exacto (`24_status_estrategias.py`, ~0 $)**: PM 1B TTP
+  (4.424 ops, run 8b773d84) → 5 posiciones con T1 de 25-50 min, todas reabren,
+  peor −30 % (COMM). RTH 2B TTP (1.323 ops, run 6023ec78) → 404 posiciones (30 %)
+  con LULD dentro, 76 con ≥ 3 encadenados; peores RGC −169 % (6 halts), PAVS
+  −156 %, HKIT −126 %. **Ningún T12 ni baja dentro de posición; ninguna salida
+  atrapada.** OJO MOTOR: 77 de 256 SL de 2B saltan en la vela de reapertura y el
+  motor los llena AL NIVEL; real = open de reapertura (mediana −3 %, p90 +4,8 %,
+  máx +14,5 %); en conjunto el backtest sale algo pesimista, no optimista.
+- Cubrir TODO el mercado 2019-2026 con status exacto cuesta **51 $** (0,027 $/día
+  × 1.930). Pendiente de OK de Jaume. Informe v6 entregado (secciones 12-14).
+
+### Convención (Jaume, 11-sep): los datos de estos estudios van FUERA del lago
+
+Todo lo descargado para el estudio (Databento: libro MBP-10, NBBO, cintas,
+`status` de 2026, de las estrategias y de TODO el mercado 2019-2026; y cualquier
+extracto de Massive) vive en `D:\bot_senales\estudio_cisnes\databento\<tipo>\`,
+nunca en `D:\lago_backtester`. Los scripts numerados (01-28) en la carpeta
+padre regeneran cada fichero. Es documentación aparte para pruebas futuras.
+
+### 11-sep (tarde): halts de TODO el mercado 2019-2026 y predictores del fogonazo (informe v7)
+
+- **Databento `status` completo**: 1.930 días, 0 errores, **50,61 $** (presupuesto
+  exacto pedido antes con get_cost; descarga con tope 55 $). 3,7 GB en
+  `databento/status_mercado/`. `25_status_mercado.py`, análisis `28_*.py`,
+  parquet `halts_mercado_2019_2026.parquet` (277.645 halts, 20.994 símbolos).
+  OJO: el mapa instrument_id→símbolo es POR DÍA (Nasdaq reasigna); se resuelve
+  solo para los ids con halt (1 lote/día). Símbolos reutilizados y cambios de
+  ticker generan reaperturas falsas (SMR, GOLD ×70): filtrar px_antes ≥ 0,5 y
+  coherencia con prev_close. Muchos T12 a las 19:55 son bajas por fusión, no
+  suspensiones.
+- Resultados: 61.287 LULD, 4.542 T1, 747 T12. T1 reabre mediana +1,7 %, p95
+  +64 %, máx +475 % (ABVX 22-jul-2025). LULD ≥ 30 min: mediana +20 %, p95 +307 %,
+  máx +2.795 % (INHD 8-jun-2026), QMMM +1.395 %, PGHL +858 %. **Suspensiones
+  reales en valores operables (gap ≥ 20 o vol ≥ 200k) sin cotizar 90 días: 8
+  en 8 años; 5 en gap ese día (ONCR, ASPA, NOVV, HYZN, GATE), todos T12 a
+  partir de las 11:50.** Ninguna con posición de 1B/2B dentro.
+- **Predictores (`26_*`, `27_*`)**: nivel día tiene fuga (gap y volumen del
+  día incluyen el fogonazo). Nivel instante (253 fogonazos vs 13.620 controles
+  a la misma hora): lo que separa es la DELGADEZ: < 14k acciones acumuladas
+  (7,8 % vs 1,8 % base), < 107 operaciones, vol medio 20d < 88k, primera media
+  hora. Gap previo y precio apenas. Logístico in-sample: top 1 % de instantes →
+  19 % de los fogonazos con 34 % de acierto; top 5 % → 46 % con 16 %. Sirve
+  como aviso, no como filtro. Sin validación fuera de muestra.
+- Informe v7 entregado (secciones 15 y 16).
+
+### 11-sep (noche): T12 y T1 reales, uno a uno (informe v8)
+
+- **TRAMPA DE DATOS**: los T1/T12 de Nasdaq a las 19:50/19:55 son acciones
+  corporativas (T1 = contrasplit → «reabre» ×100; T12 = baja por fusión). Los
+  reales son los de PM/sesión. `29_t12_detalle.py` → `t12_reales.csv`,
+  `t1_sin_reabrir_detalle.csv`.
+- **REGLA (Jaume): excluir contrasplits y fusiones, y solo CS/ADRC** (tabla
+  `tickers` del lago; `t12_reales_cs_adrc.csv`, `t1_sin_reabrir_cs_adrc.csv`;
+  REED 25-ene-2023 es un contrasplit que la tabla de splits no tiene).
+- **T12 reales CS/ADRC**: 27 en el lago (2 PM, 25 sesión); 11 volvieron
+  (mediana 10 días, máx 142), 16 nunca, 9 de ellos SPAC liquidados. Sin filtro
+  de tipo: 106 en 8 años, 33 en el lago ese día (3 PM, 30 sesión,
+  08:24-15:35, grueso 11-15h). 16 volvieron (mediana 2 días, máx 142; reabren
+  mediana 0 %, p95 +75 %, máx NEXI +201 %). **17 no volvieron nunca** (ONCR,
+  ASPA, NOVV, HYZN, GATE, GGAA, XOG…). 7 en gap ≥ 20 ese día + 3 con gap en
+  los 30 días previos (mediana 4 días antes). Ninguno reabrió > 500 %.
+- **T1 en sesión sin reabrir ese día, CS/ADRC**: 20; ninguno > 500 %; peor
+  AMLX +79 % (1 día), SRDX +49 %; 4 no volvieron (LBPS, DUNE, OPT, KRON).
+- Fuentes para halts en vivo: Nasdaq Trader Trade Halts (RSS, códigos y
+  reanudación), NYSE halts, SEC trading suspensions, Nasdaq Daily List (splits
+  con antelación). No hay lista previa de T1/T12; señales: 8-K de
+  incumplimiento, cuentas atrasadas, T1 reciente.
+
+### 11-sep (noche, 2): fichas de los T12/T1 peligrosos (`30_fichas_t12_t1.py` → `fichas_t12_t1.csv`)
+
+- **Cadena T1→T12 NO existe**: en 194 T12 reales, 0 con T1 el mismo día, 4 con
+  T1 en los 10 días previos. Nasdaq marca el T12 directamente (verificado en
+  los mensajes brutos). NEXI: T12 en PM (08:24, gap +438 %) que REABRIÓ el
+  mismo día a las 14:26 a 7,47 (bajo el máximo de PM 13,35).
+- **T1 sin vuelta (LBPS, DUNE, OPT, KRON)**: ninguno en gap, todos cierres de
+  empresa (concurso, baja de SPAC, salida de Nasdaq, adquisición). No es cola.
+- **T12 sin vuelta, riesgo de cola REAL para un corto (gap ese día, con
+  volumen, no volvieron a Nasdaq)**: GATE 1-abr-2025 (SPAC, +170 %, 21→53→36,
+  5 LULD, T12 12:02), GGAA 13-jul-2023 (SPAC, 12→49→22, 16 LULD, 15:35), ASPA
+  25-oct-2023 (SPAC, +138 %, 13→38→27, 7 LULD, 14:13), NOVV 13-sep-2024 (SPAC,
+  +127 %, 21→55→37, 14 LULD, 13:43). Patrón: cascarón ilíquido que se dispara
+  ×2-4 con cadena de LULD y Nasdaq lo para por la tarde. HYZN y ONCR están
+  en/bajo el suelo de 0,50 $. Los otros 5 T12 sin vuelta son SPAC liquidados a
+  10 $ sin gap (REVH, PCX, DTRT, AFAR, GLST): cero peligro.
+- **Conclusión**: con CS/ADRC, gap ese día y precio > 0,50 $: 4 T12 sin salida
+  en 8 años, todos SPAC, todos con cadena de LULD antes, todos 12:00-15:35,
+  ninguno en PM; 0 T1 peligrosos.
+
+### 11-sep (noche, 3): ¿pillaron 1B/2B algún T12? + RESUMEN EJECUTIVO
+
+- **2B TTP SÍ operó GATE el 1-abr-2025**: corto a las 09:46 a 38,5 (en plena
+  cadena de LULD), salida por hora a las 11:26 a 38,0 (−0,6 %). **El T12 fue a
+  las 12:02: escapó por 36 minutos.** 1B 50k también lo operó en PM (06:26 →
+  08:48, +20 %). Ninguna otra posición de 1B/2B en los casos peligrosos (GGAA,
+  ASPA, NOVV, HYZN, ONCR, NEXI, LBPS, DUNE, OPT, KRON).
+- **Revisión visual de los PDFs (11-sep, noche)**: renderizados con pypdfium2
+  y revisados página a página. Fallos corregidos: variable `peor` pisada por
+  el parche v5 (una tabla volcada como texto en la sección 3), `r.name` en
+  iterrows (SPAC etiquetados CS), NEXI reabrió el mismo día, solapes en
+  figuras del resumen. Regla: no enviar PDF sin renderizar y mirar.
+- **Resumen ejecutivo entregado**: `Resumen_ejecutivo_riesgos.pdf`
+  (`31_resumen_ejecutivo.py`): 1 página de cifras + mapa de riesgos + 5
+  conclusiones, y una página por riesgo (fogonazo, salida/stop, halts RTH,
+  T1/T12, predictores). Figuras nuevas `r1_mapa.png`, `r2_espera.png`.
+
+- **Los halts de volatilidad avisaron del T12 (11-sep, noche; informe v9 y
+  resumen)**: de los 27 T12 reales CS/ADRC, 22 cayeron en días sin ningún LULD
+  (valores parados sin gap ni volumen, sin posición posible). Los cuatro
+  peligrosos llegaron todos tras una cadena de LULD ese mismo día, en sesión:
+  GATE 5 halts (09:41→10:27, T12 12:02, 95 min desde la última reanudación),
+  GGAA 16 (11:53→15:29, T12 15:35, 6 min), ASPA 7 (09:30→13:09, T12 14:13,
+  64 min), NOVV 14 (09:33→13:07, T12 13:43, 36 min). Ninguno en premercado
+  (vale para 2B, no para 1B). Tasa base: 1.947 días con ≥5 LULD en un valor
+  en 8 años (≈250/año) y solo 4 acabaron en T12: 1 de cada 500. Condición
+  necesaria, no suficiente. Jaume: «podría servir como regla para el bot al
+  final, solo por tenerlo en cuenta» → P10. Datos: `32_luld_antes_t12.py`,
+  `luld_antes_t12.csv`, `luld_cadena_tasa_base.csv`.
+
+- **T12 por franja y after-hours (12-sep; informe v10 y resumen)**: quitando
+  los 414 T12 de 19:45+ (fusiones/bajas: ninguno hizo gap ese día, mediana 0 %,
+  máx +6 %, ninguno con LULD → la exclusión es correcta), quedan 68 en PM, 38
+  en sesión y 17 en after-hours. Los de PM y AH son casi todos empresas paradas
+  sin gap. Pero dos de AH repiten el patrón: INHD 8-jun-2026 (sin gap por la
+  mañana, +7,6 %; en sesión de 1,08 a 66,69 con 278 M acciones y 8 LULD, uno de
+  2 h; T12 17:18; volvió a los 53 días) y TENK 7-ago-2024 (gap +217 % dos días
+  antes; ese día +18 %, 4 LULD; T12 18:24; no volvió). Sin posición en ninguno.
+  Total: 6 T12 peligrosos en 8 años, los 6 con cadena de LULD antes; tasa base
+  1 de cada 300 días con ≥5 LULD. Trampa de tiempo: quien aguanta al cierre se
+  lleva el T12 a casa (no aplica: 1B y 2B cierran antes). INHD se hizo candidato
+  en sesión, no por gap de apertura. Datos: `33_t12_after_hours.py`,
+  `t12_por_franja.csv`, `t12_after_hours.csv`.
+
+## 2 — 2026-09-12 · Arranque de las REGLAS del bot: banco de preguntas
+
+Jaume retoma el bot con el estudio de cisnes cerrado y sin PDF todavía. Pide:
+(a) los pendientes bien ordenados, (b) empezar a crear reglas «ordenadas y bien
+claras de cara al futuro», y (c) una lista de preguntas para pensarlas él por
+su cuenta, centrada en lo que puede salir mal (precio que se mueve al enviar,
+halts, luz o comunicación, VPS, take profit de una estrategia y pirámide de
+otra, precio que se dispara, locates que no compensan, compra de locates…).
+Trabajo de varios días, por partes. Lo que dependa del API se marca y se repasa
+cuando llegue el PDF.
+
+Dos ficheros nuevos en `docs/`:
+
+- **`BOT_EJECUCION_REGLAS.md`**: el libro de reglas. Formato de regla
+  (`R-<ÁREA>-<nn>` con situación, detección, acción, quién la ejecuta,
+  parámetros, plan B, prueba, estado y origen), cinco criterios de validez, los
+  13 principios marco M1-M13 (las decisiones firmes del 5-sep), los cinco puntos
+  abiertos que condicionan varias reglas y el índice de 17 áreas vacío.
+  **Ninguna regla escrita aún.**
+- **`BOT_EJECUCION_PREGUNTAS.md`**: banco de 200 preguntas en 17 áreas (A señal,
+  B entrada, C stop, D salidas, E capital compartido, F halts, G disparos, H
+  locates, I riesgo, J infraestructura, K reconciliación, L calendario, M
+  control humano, N registro, O pruebas, P backtester vs vivo, Q seguridad), con
+  marca **[API]** (37, consolidadas en el apartado R para el día del PDF) y
+  **[dato]** (cifra del estudio o del backtester al lado). Cada respuesta se
+  convierte en una regla numerada del otro fichero.
+
+Orden de ataque propuesto, por riesgo: C y G (stop y disparos) → F (halts) →
+I (cortacircuitos) → B (entrada) → H (locates) → J y K (infraestructura y
+reconciliación) → resto. Un área por día.
+
+Coste real de Databento: Jaume lo comprobó en el panel el 12-sep y fue MENOR
+que los ≈ 56 $ estimados con `get_cost` (la estimación cobra por rango pedido).
+
 ---
 
 ## Estado y pendientes
 
-**Estudio de cisnes negros: CERRADO el 7-sep-2026** (Jaume). Informe v4 en
-`D:\bot_senales\estudio_cisnes\Informe_cisnes_negros_premercado.pdf`; datos y
-scripts en esa carpeta (fuera del repo). Coste Databento total ≈ 5,4 $.
-**Nada del estudio es regla del bot**: son conclusiones; los valores irán al
-cuadro de mandos cuando se diseñe.
+**Estudio de cisnes negros: CERRADO** (informe v10 y resumen ejecutivo del
+12-sep en `D:ot_senales\estudio_cisnes\`; datos fuera del lago; Databento
+≈ 56 $ estimados, cobrado menos). **Nada del estudio es regla del bot** hasta
+que esté escrito con número en `docs/BOT_EJECUCION_REGLAS.md`.
+
+**Fase actual (desde el 12-sep): diseño de reglas.** Banco de preguntas en
+`docs/BOT_EJECUCION_PREGUNTAS.md`; se contesta por áreas y cada respuesta pasa
+al libro de reglas. Orden: C, G, F, I, B, H, J, K, resto.
 
 | # | Pendiente | Estado |
 |---|---|---|
@@ -565,4 +752,6 @@ cuadro de mandos cuando se diseñe.
 | P6 | Cuadro de mandos de exposición al riesgo | Diseño pendiente |
 | P7 | Tareas de Jaume de la semana del 7-sep (lista en §0): fills reales de DAS, JSON de la estrategia de estreno, congelar el motor, Telegram propio, VPS con el socio, runbook | Sin empezar |
 | P8 | Backend colgado el 7-sep (dos uvicorn); lo lleva Jaume en el chat del genético. Bot de avisos: lo enciende Jaume el 8-sep | Fuera de este chat |
-| P9 | Halts: si algún día se quiere más, la capa `status` de Databento (0,03 $/día) y `15_halts_profundo.py` ya lo hacen; bandas LULD reconstruidas de forma aproximada | Cerrado salvo petición |
+| P9 | Halts largos 2019-2026: HECHO con Databento status (50,61 $). 5 suspensiones T12 en valores en gap en 8 años; ninguna con posición dentro | Cerrado |
+| P10 | Cadena de LULD como aviso de T12: los 6 T12 peligrosos (4 en sesión + INHD y TENK en after-hours) llevaban ≥4 halts de volatilidad ese día; 1 de cada 300 días con ≥5 LULD acaba en T12. Si algún día se mantienen posiciones al cierre, el after-hours entra en juego. Candidata a regla/aviso del bot cuando se diseñe el cuadro de mandos (no ampliar / vigilar con ≥5 LULD). No decidido | Apuntado |
+| P11 | **Libro de reglas** (`BOT_EJECUCION_REGLAS.md`) a partir del banco de preguntas (`BOT_EJECUCION_PREGUNTAS.md`, 200 preguntas, 37 [API]). Jaume las piensa por su cuenta y se contestan por áreas; cada respuesta → regla numerada. Las [API] se repasan con el PDF (apartado R del banco) | Empezado el 12-sep, 0 reglas |

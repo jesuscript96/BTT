@@ -32,12 +32,21 @@ import {
   reanudarCorrida,
   verCorrida,
   type CatalogoGenetico,
+  type IndicadorCatalogo,
   type CondicionMotor,
   type ConfigCorrida,
   type CorridaDetalle,
   type CorridaResumen,
   type Mejor,
 } from "@/lib/api_genetico";
+
+/* ── catalogo ────────────────────────────────────────────────────────── */
+
+// Un NIVEL opcional del catalogo (perfil de volumen, ultimo pivote): no se
+// compara con nada por si mismo, entra como destino de Bar Close / High / Low.
+// Se reconoce por la forma —sin rejilla de valores ni destinos— para no tener
+// que anyadir un campo mas a la API del backend.
+const esNivel = (i: IndicadorCatalogo) => i.valores.length === 0 && i.objetivos.length === 0;
 
 /* ── formato ─────────────────────────────────────────────────────────── */
 
@@ -767,8 +776,25 @@ export default function GeneticoPage() {
       if (!Number(g.step)) problemas.push(`«${g.label}»: el paso no puede ser 0`);
     }
   } else {
-    if (config.catalogo.length === 0) problemas.push("marca algún indicador");
-    if (config.catalogo.length < config.n_condiciones) problemas.push("más indicadores que condiciones");
+    // Los niveles opcionales no cuentan: son destinos, no condiciones. Con
+    // solo «Punto de control» marcado el genetico no tendria nada que poner a
+    // la izquierda del «>» y reventaria en la primera generacion.
+    const conCondicion = config.catalogo.filter((n) => {
+      const i = catalogo?.indicadores.find((x) => x.nombre === n);
+      return !i || !esNivel(i);
+    });
+    if (conCondicion.length === 0) problemas.push("marca algún indicador (los niveles ↳ solos no forman condiciones)");
+    if (conCondicion.length < config.n_condiciones) problemas.push("más indicadores que condiciones (los niveles ↳ no cuentan)");
+    // Un nivel marcado sin nada que lo use se quedaria muerto sin avisar. El
+    // pivote tiene una segunda salida: el stop de estructura.
+    const hayPrecio = config.catalogo.some((n) => ["Bar Close", "High Bar", "Low Bar"].includes(n));
+    const nivelesMuertos = config.catalogo.filter((n) => {
+      const i = catalogo?.indicadores.find((x) => x.nombre === n);
+      if (!i || !esNivel(i)) return false;
+      if (n === "Ultimo pivote" && config.stops.includes("estructura")) return false;
+      return !hayPrecio;
+    });
+    if (nivelesMuertos.length) problemas.push(`${nivelesMuertos.join(", ")}: es un nivel y no hay Bar Close / High Bar / Low Bar que lo use`);
     if (config.stops.length === 0) problemas.push("marca algún tipo de stop");
     if (config.tps.length === 0) problemas.push("marca algún tipo de take profit");
   }
@@ -1044,16 +1070,23 @@ export default function GeneticoPage() {
                 {(catalogo?.indicadores ?? []).filter((i) => i.familia === familia).map((i) => (
                   <Check key={i.nombre} checked={!!indicadores[i.nombre]}
                     onChange={(v) => setIndicadores((s) => ({ ...s, [i.nombre]: v }))}
-                    help={i.ayuda}
-                    label={`${i.nombre}${Object.keys(i.params).length ? ` (${Object.keys(i.params).join(", ")})` : ""}`} />
+                    help={esNivel(i)
+                      ? <>{i.ayuda}<br /><br /><b>Es un NIVEL, no una condición.</b> Marcarlo no crea «{i.nombre} &gt; 3»: lo mete como destino de los cruces de Bar Close / High Bar / Low Bar{i.nombre === "Ultimo pivote" ? " y como nivel del stop de estructura" : ""}. Sin marcar, no aparece en ninguna receta.</>
+                      : i.ayuda}
+                    label={`${esNivel(i) ? "↳ " : ""}${i.nombre}${Object.keys(i.params).length ? ` (${Object.keys(i.params).join(", ")})` : ""}`} />
                 ))}
               </div>
+              {familia === "alternativos" && (
+                <div style={{ fontFamily: font.sans, fontSize: 11, color: color.textSecondary, marginTop: 6, lineHeight: 1.4 }}>
+                  Los marcados con ↳ son niveles (precios): entran como destino de Bar Close / High Bar / Low Bar, no como condición propia. Para que se usen, marca también alguno de esos tres en «Precio y niveles».
+                </div>
+              )}
             </div>
           </Row>
           <Row label="Condiciones" help="Cuántas condiciones de lógica lleva cada estrategia (las guardas aparte). Cada una son ~4 parámetros libres; con ~1.500 operaciones, el techo estadístico son 2–3. Empieza por 2.">
             <Toggle<"1" | "2" | "3"> value={nCond} onChange={setNCond} options={[{ value: "1", label: "1" }, { value: "2", label: "2" }, { value: "3", label: "3" }]} />
           </Row>
-          <Row label="Stop" help={`Tipos de stop que puede elegir. En %: rejilla ${catalogo?.stops.pct.join(", ") ?? ""}. De estructura: HOD / PMH / Previous Max (short) o LOD / PML / Previous Min (long) con un margen de ${catalogo?.stops.offset_pct.join(", ") ?? ""} %. Un stop de estructura a +0 % con «shares por distancia» significa posición máxima: pon tope de locates.`}>
+          <Row label="Stop" help={`Tipos de stop que puede elegir. En %: rejilla ${catalogo?.stops.pct.join(", ") ?? ""}. De estructura: HOD / PMH / Previous Max (short) o LOD / PML / Previous Min (long) —y el último pivote alto/bajo si marcas «Ultimo pivote» en Alternativos— con un margen de ${catalogo?.stops.offset_pct.join(", ") ?? ""} %. Un stop de estructura a +0 % con «shares por distancia» significa posición máxima: pon tope de locates.`}>
             <div style={{ display: "flex", gap: 16 }}>
               <Check checked={stopPct} onChange={setStopPct} label="Porcentaje" />
               <Check checked={stopEstructura} onChange={setStopEstructura} label="Estructura + margen" />

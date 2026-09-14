@@ -367,9 +367,50 @@ def simulate(
     # de la sesion; aqui solo se obedece.
     no_new_risk_after: int = 0,
     force_close_at: int = 0,
+    # COSTE DE BLACK SWAN (2026-09-11). `ConfigBSwan` de `bswan.py` o None.
+    # Con None NO se ejecuta ni una rama nueva. Con el, una vela cuya mecha
+    # adversa (open -> high en corto, open -> low en largo) supere el umbral
+    # Y CRUCE EL STOP vigente cierra la posicion: en modo «mercado» en esa
+    # misma vela, al fill del stop penalizado por tramos; en modo «manual»,
+    # al cierre de la vela que este a N minutos de la deteccion, con los
+    # stops suspendidos entre medias. Una mecha que no llega al stop no es
+    # Black Swan (regla de Jaume): el trade sigue abierto.
+    # Solo lo implementa este motor: `sim_dispatch` lo desvia del kernel JIT.
+    bswan=None,
+    # COSTE DE HALTS (2026-09-12). None = nada. Si no, una tupla
+    # (ConfigHalts, [halts del ticker-dia ya traducidos a indices de vela por
+    # `halts.halts_a_indices`]). Al halt del dia numero >= umbral que pille la
+    # posicion abierta, se sale en la reapertura (open de `resume_idx`)
+    # penalizado; si no reabre ese dia, al ultimo precio antes del halt. Y no
+    # se vuelve a entrar en el resto del dia. Solo lo implementa este motor.
+    halts=None,
+    # PAUSA ENTRE OPERACIONES (scalping, 2026-09-12). Tras una salida, no se
+    # acepta ninguna entrada hasta que hayan pasado N velas desde la vela del
+    # fill de salida. 0 = como siempre (ni una rama nueva se ejecuta). La
+    # senal que caiga dentro de la pausa se CONSUME, igual que cuando
+    # `max_reentries` bloquea. Solo lo implementa este motor: `sim_dispatch`
+    # lo desvia del kernel JIT.
+    reentry_cooldown_bars: int = 0,
+    # ESCALERA DEL SCALPING «COMPLEJO» (2026-09-12). `ConfigEscalera` de
+    # `escalera.py` o None. Con None NO se ejecuta ni una rama nueva. Con ella,
+    # dentro de cada posicion, por cada paso de X % desde el ultimo nivel se
+    # añade o se quita una cantidad (a favor / en contra, cada uno lo suyo),
+    # entre un suelo (core) y un techo (tope), hasta un recorrido maximo; el
+    # stop y el take profit en % pasan a medirse sobre el precio MEDIO. Solo lo
+    # implementa este motor: `sim_dispatch` lo desvia del kernel JIT.
+    ladder=None,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
+    esc_on = ladder is not None
+    if esc_on:
+        from app.services.escalera import (a_acciones, nivel_precio, nivel_tocado,
+                                           orden_lados)
+    esc_k = 0            # ultimo nivel de la malla alcanzado (0 = el de entrada)
+    esc_done: set = set()
+    esc_entry0 = 0.0     # precio de la PRIMERA entrada del scalp (ancla de la malla)
+    esc_size0 = 0.0      # acciones de la entrada (base de las cantidades en %)
+    esc_exec: list = []  # bitacora de la escalera de ESTA posicion
 
     # EXCLUSIVIDAD CANGREJO / HIBRIDO. La UI ya apaga uno al encender el otro,
     # pero un payload viejo o hecho a mano puede traer los dos. Se arbitra AQUI
@@ -437,6 +478,36 @@ def simulate(
     max_short_size_today = 0.0
     ev_gate_log: list = []   # veredictos de la puerta por EV (vacio sin puerta)
 
+    # ── COSTE DE BLACK SWAN (2026-09-11). Ver app/services/bswan.py. Con
+    # `bswan=None` (el defecto) NADA de esto se ejecuta: ni una rama nueva.
+    bs_on = bswan is not None
+    bs_umbral = float(bswan.umbral_pct) if bs_on else 0.0
+    bs_manual = bool(bs_on and bswan.modo == "manual")
+    bs_wait = False          # manual: esperando al cierre diferido
+    bs_wait_ns = 0           # manual: instante (ns) a partir del cual se cierra
+    bs_wait_bar = 0          # manual sin timestamps: vela a partir de la cual se cierra
+    bs_trigger_pct = 0.0     # manual: la mecha que armo el cierre diferido
+    bs_eventos: list = []    # detecciones del ticker-dia (vacio sin coste)
+    if bs_on:
+        # Import perezoso a proposito: el camino sin coste no depende del modulo.
+        import math as _math_bs
+        from app.services.bswan import tramos_bs as _tramos_bs, precio_bs as _precio_bs
+
+    # ── COSTE DE HALTS (2026-09-12). Ver app/services/halts.py. Con
+    # `halts=None` (el defecto) NADA de esto se ejecuta.
+    ht_on = halts is not None and len(halts) == 2 and halts[1]
+    ht_cfg = halts[0] if ht_on else None
+    # Halts del dia ordenados por vela: (halt_idx -> evento). Un mismo indice de
+    # vela puede tener mas de un halt (reaperturas de segundos): se queda el
+    # ULTIMO, que es el que manda para la reapertura.
+    ht_por_vela: dict = {}
+    if ht_on:
+        for _h in halts[1]:
+            ht_por_vela[int(_h["halt_idx"])] = _h
+    ht_bloqueado = False     # tras salir por halt no se vuelve a entrar ese dia
+    ht_saltar = -1           # velas a consumir sin evaluar tras un cierre por halt
+    ht_eventos: list = []    # halts que pillaron la posicion (vacio sin coste)
+
     total_trades = 0
     prev_signal = False
 
@@ -446,6 +517,17 @@ def simulate(
         # Kept as constants so the (now inert) restriction branches below fold away.
         is_restricted = False
         skip_exits = False
+        # Halts: velas entre la parada y la reapertura de un cierre por halt ya
+        # resuelto (equity escrita al cerrar). Nada que evaluar en ellas.
+        if ht_on and i <= ht_saltar:
+            prev_signal = bool(entries[i])
+            continue
+        # Black Swan en modo manual: mientras se espera al cierre diferido no
+        # hay stop, TP, parciales ni salida por senal (modela un stop MENTAL,
+        # sin orden en el mercado que la barrida pueda ejecutar). EOD, limite
+        # de tiempo y cortacircuitos siguen mandando: no pasan por este flag.
+        if bs_wait:
+            skip_exits = True
 
         # Cortacircuitos diario: pasado T no entra riesgo NUEVO de ningun tipo
         # —ni entradas, ni reentradas, ni añadidos de piramide—. Se compara con
@@ -457,6 +539,251 @@ def simulate(
             and timestamps is not None
             and timestamps[i] >= no_new_risk_after
         )
+
+        # ── COSTE DE HALTS (2026-09-12). Va ANTES del Black Swan y de las
+        # salidas normales: durante un halt no hay mercado, asi que ninguna
+        # orden (stop, TP, parcial, senal) puede ejecutarse en la vela en la
+        # que la accion paro. Solo estando dentro.
+        if ht_on and in_position and i in ht_por_vela:
+            _h = ht_por_vela[i]
+            _orden = int(_h.get("orden") or 1)
+            if _orden >= ht_cfg.umbral:
+                _ri = _h.get("resume_idx")
+                _atrapado = _ri is None
+                if _atrapado:
+                    # No reabrio ese dia (T12, suspension): decision de Jaume,
+                    # se cierra al ULTIMO precio antes del halt, con el
+                    # slippage, y queda marcado para verlo en la tabla.
+                    _base_h = close[i]
+                    _xi = i
+                else:
+                    _base_h = open_[_ri]
+                    _xi = int(_ri)
+                _f = float(ht_cfg.slippage_pct) / 100.0
+                _px = (max(0.0, _base_h * (1.0 - _f)) if is_long else _base_h * (1.0 + _f))
+                # MAE/MFE con el extremo real hasta la vela de reapertura
+                # (el fill penalizado es coste, no excursion).
+                for _k in range(i, _xi + 1):
+                    if is_long:
+                        _mae_h = (entry_price - low[_k]) / entry_price * 100
+                        _mfe_h = (high[_k] - entry_price) / entry_price * 100
+                    else:
+                        _mae_h = (high[_k] - entry_price) / entry_price * 100
+                        _mfe_h = (entry_price - low[_k]) / entry_price * 100
+                    if _mae_h > mae:
+                        mae = _mae_h
+                    if _mfe_h > mfe:
+                        mfe = _mfe_h
+                if is_long:
+                    gross_pnl = (_px - avg_entry_price) * size
+                    _penal = (_base_h - _px) * size
+                else:
+                    gross_pnl = (avg_entry_price - _px) * size
+                    _penal = (_px - _base_h) * size
+                if fee_type == "FLAT":
+                    fee_amount = fees * size * 2
+                else:
+                    fee_amount = (avg_entry_price + _px) * size * fees
+                pnl = gross_pnl - fee_amount
+                realized_pnl += pnl
+                capital_at_risk = avg_entry_price * size
+                ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                trades.append({
+                    "entry_idx": entry_idx,
+                    "exit_idx": _xi,
+                    "entry_price": round(entry_price, 6),
+                    "avg_entry_price": round(avg_entry_price, 6),
+                    "exit_price": round(_px, 6),
+                    "pnl": round(pnl, 4),
+                    "fees": round(fee_amount, 4),
+                    "return_pct": round(ret_pct, 4),
+                    "direction": "Long" if is_long else "Short",
+                    "status": "Closed",
+                    "size": round(size, 6),
+                    "exit_reason": "Halt" if not _atrapado else "Halt (atrapado)",
+                    "mae": round(mae, 4),
+                    "mfe": round(mfe, 4),
+                    "stop_loss": round(trade_sl_price, 6),
+                    # Rastro del halt, para la tabla y el grafico.
+                    "halt_n": _orden,
+                    "halt_reason": int(_h.get("reason") or 0),
+                    "halt_motivo": str(_h.get("motivo") or ""),
+                    "halt_minutos": _h.get("minutos"),
+                    "halt_base_price": round(float(_base_h), 6),
+                    "halt_slip_pct": round(float(ht_cfg.slippage_pct), 4),
+                    "halt_penalty": round(float(_penal), 4),
+                    "halt_atrapado": bool(_atrapado),
+                    "halt_idx": int(i),
+                })
+                if pyramid_mode and pyr_exec:
+                    trades[-1]["pyr_executions"] = pyr_exec
+                    pyr_exec = []
+                if esc_on and esc_exec:
+                    trades[-1]["escalera_executions"] = esc_exec
+                    esc_exec = []
+                ht_eventos.append({"idx": int(i), "orden": _orden, "reason": int(_h.get("reason") or 0),
+                                   "atrapado": bool(_atrapado), "penalizacion": round(float(_penal), 4)})
+                in_position = False
+                size = 0.0
+                ht_bloqueado = True
+                # La posicion ya no existe: se salta hasta la vela de
+                # reapertura sin evaluar nada mas (ni entradas: bloqueadas).
+                # La equity de las velas saltadas se rellena abajo.
+                for _k in range(i, _xi + 1):
+                    equity[_k] = init_cash + realized_pnl
+                if _xi > i:
+                    # Mantener el flanco de la senal coherente al reanudar.
+                    prev_signal = bool(entries[_xi]) if _xi < n else prev_signal
+                    _saltar_hasta = _xi
+                else:
+                    _saltar_hasta = -1
+                if _saltar_hasta > i:
+                    # Consumir velas intermedias (equity ya escrita).
+                    # No hay `continue` multi-vela en Python: se marca y las
+                    # iteraciones siguientes salen al principio.
+                    ht_saltar = _saltar_hasta
+                    continue
+
+        # ── COSTE DE BLACK SWAN (2026-09-11). `bswan` es None por defecto y
+        # entonces esto no ejecuta ni una rama. Se mira ANTES de las salidas
+        # normales porque en esa misma vela el stop dispararia con un fill
+        # limpio al nivel del stop, y lo que se quiere modelar es justo lo
+        # contrario: que ese stop se ejecuta a un precio de pesadilla. Solo se
+        # mira ESTANDO DENTRO: la vela del fill de entrada ya cuenta (se entro
+        # en su apertura y el mechazo viene despues) y la de una salida por
+        # senal no (se salio en su apertura, `in_position` ya es False).
+        if bs_on and in_position and not bs_wait:
+            _o_bs = open_[i]
+            if _o_bs > 0.0:
+                _mecha = ((_o_bs - low[i]) if is_long else (high[i] - _o_bs)) / _o_bs * 100.0
+            else:
+                _mecha = 0.0
+            # REGLA DE JAUME (11-sep, matiz de la tarde): una mecha solo es
+            # Black Swan si ADEMAS cruza el stop vigente (fijo, estructural,
+            # ATR, apretado por Cangrejo, o el trailing). Un fogonazo que no
+            # llega al stop no barre ninguna orden: el trade sigue abierto y
+            # aqui no pasa nada. Sin stop configurado no hay Black Swan.
+            #
+            # `_base` = el fill que el stop habria dado en esta vela (0.0 = no
+            # cruzado). Es la base de la penalizacion en modo mercado y la
+            # condicion de armado en modo manual.
+            _base = 0.0
+            if _mecha >= bs_umbral:
+                if hs_por_nivel:
+                    _hard = trade_sl_price
+                elif sl_stop is not None:
+                    _hard = (sl_cangrejo_px if sl_cangrejo_px > 0.0
+                             else (entry_price * (1 - sl_stop) if is_long
+                                   else entry_price * (1 + sl_stop)))
+                else:
+                    _hard = 0.0
+                if _hard > 0.0 and ((low[i] <= _hard) if is_long else (high[i] >= _hard)):
+                    _base = max(_hard, low[i]) if is_long else min(_hard, high[i])
+                elif sl_trail and trail_pct is not None:
+                    # Replica del bloque de trailing de abajo: activacion y
+                    # extremo con ESTA vela. Solo llega aqui si el fijo no
+                    # ha disparado, que es cuando el trailing puede mandar.
+                    _act = trail_activated
+                    _ext = trail_extreme
+                    if not _act:
+                        if is_long and high[i] >= entry_price * (1 + trail_pct) - 1e-9:
+                            _act, _ext = True, max(entry_price, high[i])
+                        elif (not is_long) and low[i] <= entry_price * (1 - trail_pct) + 1e-9:
+                            _act, _ext = True, min(entry_price, low[i])
+                    if _act:
+                        _ext = max(_ext, high[i]) if is_long else min(_ext, low[i])
+                        _t_px = ((_ext - entry_price * trail_pct) if is_long
+                                 else (_ext + entry_price * trail_pct))
+                        if (low[i] <= _t_px + 1e-9) if is_long else (high[i] >= _t_px - 1e-9):
+                            _base = max(_t_px, low[i]) if is_long else min(_t_px, high[i])
+            if _base > 0.0:
+                if bs_manual:
+                    # Deteccion: se arma el cierre diferido y se deja correr.
+                    # `skip_exits` se decidio al principio de la iteracion,
+                    # cuando aun no se esperaba: hay que apagarlo TAMBIEN en
+                    # esta vela, o el stop dispararia con la propia mecha y el
+                    # modo manual no modelaria nada.
+                    bs_wait = True
+                    skip_exits = True
+                    bs_trigger_pct = _mecha
+                    if timestamps is not None:
+                        bs_wait_ns = int(timestamps[i]) + int(round(float(bswan.minutos) * 60e9))
+                    else:
+                        bs_wait_bar = i + int(_math_bs.ceil(float(bswan.minutos)))
+                    bs_eventos.append({"idx": int(i), "mecha_pct": round(_mecha, 4), "modo": "manual",
+                                       "stop": round(_base, 6)})
+                else:
+                    # PRECIO BASE = el fill del stop en esta vela (`_base`), que
+                    # es donde se habria salido. La penalizacion va sobre el.
+                    # MAE/MFE de la vela con el extremo REAL de la vela: el fill
+                    # penalizado es un coste, no una excursion del precio.
+                    if is_long:
+                        _mae_bs = (entry_price - low[i]) / entry_price * 100
+                        _mfe_bs = (high[i] - entry_price) / entry_price * 100
+                    else:
+                        _mae_bs = (high[i] - entry_price) / entry_price * 100
+                        _mfe_bs = (entry_price - low[i]) / entry_price * 100
+                    if _mae_bs > mae:
+                        mae = _mae_bs
+                    if _mfe_bs > mfe:
+                        mfe = _mfe_bs
+                    # TRAMOS: el tramo k sale k x slippage peor que la base. El
+                    # slippage normal NO se suma encima: la penalizacion ES el
+                    # slippage de esta salida. Y no se recorta al maximo de la
+                    # vela: es una penalizacion, y las velas esconden los picos.
+                    _tramos = _tramos_bs(size, bswan.particion, bswan.slippage_pct)
+                    _n_tr = len(_tramos)
+                    _penal_total = 0.0
+                    for _k, (_sz, _slip_k) in enumerate(_tramos, 1):
+                        _px = _precio_bs(_base, _slip_k, is_long)
+                        if is_long:
+                            gross_pnl = (_px - avg_entry_price) * _sz
+                            _penal = (_base - _px) * _sz
+                        else:
+                            gross_pnl = (avg_entry_price - _px) * _sz
+                            _penal = (_px - _base) * _sz
+                        if fee_type == "FLAT":
+                            fee_amount = fees * _sz * 2
+                        else:
+                            fee_amount = (avg_entry_price + _px) * _sz * fees
+                        pnl = gross_pnl - fee_amount
+                        realized_pnl += pnl
+                        _penal_total += _penal
+                        capital_at_risk = avg_entry_price * _sz
+                        ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                        trades.append({
+                            "entry_idx": entry_idx,
+                            "exit_idx": i,
+                            "entry_price": round(entry_price, 6),
+                            "avg_entry_price": round(avg_entry_price, 6),
+                            "exit_price": round(_px, 6),
+                            "pnl": round(pnl, 4),
+                            "fees": round(fee_amount, 4),
+                            "return_pct": round(ret_pct, 4),
+                            "direction": "Long" if is_long else "Short",
+                            "status": "Closed",
+                            "size": round(_sz, 6),
+                            "exit_reason": "BS",
+                            "mae": round(mae, 4),
+                            "mfe": round(mfe, 4),
+                            "stop_loss": round(trade_sl_price, 6),
+                            # Rastro del Black Swan, para la tabla y el grafico.
+                            "bs_modo": "mercado",
+                            "bs_trigger_pct": round(_mecha, 4),
+                            "bs_base_price": round(_base, 6),
+                            "bs_slip_pct": round(_slip_k, 4),
+                            "bs_tramo": _k,
+                            "bs_tramos": _n_tr,
+                            "bs_penalty": round(_penal, 4),
+                        })
+                    if pyramid_mode and pyr_exec and trades:
+                        trades[-1]["pyr_executions"] = pyr_exec
+                        pyr_exec = []
+                    bs_eventos.append({"idx": int(i), "mecha_pct": round(_mecha, 4), "modo": "mercado",
+                                       "base": round(_base, 6), "tramos": _n_tr,
+                                       "penalizacion": round(_penal_total, 4)})
+                    in_position = False
+                    size = 0.0
 
         # ... existing logic ...
         # --- check exits before entries ---
@@ -913,6 +1240,20 @@ def simulate(
                 if mfe_pct > mfe:
                     mfe = mfe_pct
 
+            # Black Swan manual: el cierre diferido. Cierra TODA la posicion al
+            # cierre de la primera vela a `minutos` o mas de la deteccion. Va
+            # antes del limite de tiempo: si coinciden en la vela, manda el
+            # cierre por Black Swan, que es lo que se esta midiendo.
+            if not exit_triggered and bs_wait:
+                if timestamps is not None:
+                    _bs_vence = timestamps[i] >= bs_wait_ns
+                else:
+                    _bs_vence = i >= bs_wait_bar
+                if _bs_vence:
+                    exit_triggered = True
+                    exit_price = close[i]
+                    exit_reason = "BS Manual"
+
             # elapsed time exit
             if not exit_triggered and elapsed_limit > 0 and timestamps is not None:
                 elapsed_mins = (timestamps[i] - entry_time) / 6e10
@@ -1018,9 +1359,142 @@ def simulate(
                 if pyramid_mode and pyr_exec:
                     trades[-1]["pyr_executions"] = pyr_exec
                     pyr_exec = []
+                if esc_on and esc_exec:
+                    trades[-1]["escalera_executions"] = esc_exec
+                    esc_exec = []
+                if bs_wait:
+                    # Cerro mientras esperaba al cierre diferido del Black Swan
+                    # (por el propio diferido, o por EOD / limite de tiempo /
+                    # cortacircuitos, que siguen mandando). Queda anotado con
+                    # la mecha que lo armo; `exit_reason` dice quien cerro.
+                    trades[-1]["bs_modo"] = "manual"
+                    trades[-1]["bs_trigger_pct"] = round(bs_trigger_pct, 4)
+                    bs_wait = False
                 in_position = False
                 size = 0.0
 
+
+        # --- Escalera del scalping complejo (2026-09-12) ---
+        # Mismo sitio y mismas condiciones que la piramide: despues de las
+        # salidas, con la posicion viva y nunca en la vela de entrada. Con
+        # `ladder=None` este bloque no existe.
+        if esc_on and in_position and i > entry_idx and not bs_wait:
+            _esc_cerro = False
+            _max_k = ladder.max_k
+            for _lado in orden_lados(open_[i], close[i], is_long):
+                _pasos = 0
+                while not _esc_cerro and _pasos < 1000:
+                    _pasos += 1
+                    _k_next = esc_k + 1 if _lado == "favor" else esc_k - 1
+                    if _max_k and abs(_k_next) > _max_k:
+                        break            # fuera del recorrido: la escalera no actua
+                    _px_nivel = nivel_precio(esc_entry0, is_long, _k_next, ladder.step_pct)
+                    if _px_nivel <= 0 or not nivel_tocado(_lado, is_long, _px_nivel, high[i], low[i]):
+                        break
+                    esc_k = _k_next
+                    # Opcion A: cada nivel se ejecuta una vez POR DIRECCION en
+                    # este scalp (añadir al bajar a 9,90 no gasta el «quitar»
+                    # al volver a subir a 9,90). Gastado: mueve el estado, no opera.
+                    if (not ladder.rearm) and (_k_next, _lado) in esc_done:
+                        continue
+                    esc_done.add((_k_next, _lado))
+                    _accion = ladder.favor_action if _lado == "favor" else ladder.contra_action
+                    _cant = ladder.favor_amount if _lado == "favor" else ladder.contra_amount
+                    _unit = ladder.favor_unit if _lado == "favor" else ladder.contra_unit
+                    if _accion == "none":
+                        continue
+                    _q = a_acciones(_cant, _unit, esc_size0, _px_nivel)
+                    if _q <= 0:
+                        continue
+                    _slip = _px_nivel * slippage
+                    if _accion == "add":
+                        # Añadir es riesgo nuevo: mismos topes que la piramide
+                        # (cortacircuitos, caja, locates) y ademas el techo propio.
+                        if riesgo_bloqueado:
+                            continue
+                        _add_px = (_px_nivel + _slip) if is_long else (_px_nivel - _slip)
+                        if _add_px <= 0:
+                            continue
+                        _cash_now = init_cash + realized_pnl
+                        _disp = _cash_now - avg_entry_price * size
+                        if _disp <= 0:
+                            continue
+                        _q = min(_q, _disp / _add_px)
+                        if ladder.cap_amount > 0:
+                            _techo = a_acciones(ladder.cap_amount, ladder.cap_unit, esc_size0, _px_nivel)
+                            _q = min(_q, _techo - size)
+                        if (not is_long) and max_locates > 0:
+                            _q = min(_q, max_locates * 100.0 - size)
+                        if _q <= 1e-9:
+                            continue
+                        avg_entry_price = (avg_entry_price * size + _add_px * _q) / (size + _q)
+                        size += _q
+                        pyr_base += _q
+                        # Stop y take profit en % sobre el precio MEDIO
+                        # (decision de Jaume): las formulas de salida leen
+                        # `entry_price`, asi que aqui pasa a ser la media.
+                        entry_price = avg_entry_price
+                        if not is_long:
+                            max_short_size_today = max(max_short_size_today, size)
+                        esc_exec.append({
+                            "kind": "add", "idx": int(i), "nivel": int(_k_next), "lado": _lado,
+                            "time_epoch": int(timestamps[i] // 1_000_000_000) if timestamps is not None else None,
+                            "price": round(_add_px, 6), "size": round(_q, 6),
+                            "position_size": round(size, 6), "avg_entry_price": round(avg_entry_price, 6),
+                        })
+                    else:
+                        # Quitar: hasta el suelo (core). Si lo que queda no llega
+                        # a nada, se cierra entero y el scalp acaba aqui.
+                        _suelo = (a_acciones(ladder.core_amount, ladder.core_unit, esc_size0, _px_nivel)
+                                  if ladder.core_amount > 0 else 0.0)
+                        _q = min(_q, max(0.0, size - _suelo))
+                        if _q <= 1e-9:
+                            continue
+                        if size - _q <= 1e-6:
+                            _q = size
+                        _net = (_px_nivel - _slip) if is_long else (_px_nivel + _slip)
+                        _gross = (_net - avg_entry_price) * _q if is_long else (avg_entry_price - _net) * _q
+                        _fee = fees * _q * 2 if fee_type == "FLAT" else (avg_entry_price + _net) * _q * fees
+                        _pnl = _gross - _fee
+                        realized_pnl += _pnl
+                        _car = avg_entry_price * _q
+                        trades.append({
+                            "entry_idx": entry_idx,
+                            "exit_idx": int(i),
+                            "entry_price": round(entry_price, 6),
+                            "avg_entry_price": round(avg_entry_price, 6),
+                            "exit_price": round(_net, 6),
+                            "pnl": round(_pnl, 4),
+                            "return_pct": round((_pnl / _car) * 100 if _car > 0 else 0.0, 4),
+                            "direction": "Long" if is_long else "Short",
+                            "status": "Closed",
+                            "size": round(_q, 6),
+                            "exit_reason": "Escalera",
+                            "fees": round(_fee, 4),
+                            "mae": round(mae, 4),
+                            "mfe": round(mfe, 4),
+                            "stop_loss": round(trade_sl_price, 6),
+                        })
+                        size -= _q
+                        pyr_base = max(0.0, pyr_base - _q)
+                        esc_exec.append({
+                            "kind": "reduce", "idx": int(i), "nivel": int(_k_next), "lado": _lado,
+                            "time_epoch": int(timestamps[i] // 1_000_000_000) if timestamps is not None else None,
+                            "price": round(_net, 6), "size": round(_q, 6),
+                            "position_size": round(size, 6), "pnl": round(_pnl, 4),
+                        })
+                        if size <= 1e-6:
+                            # Vaciada por la escalera: no habra trade de cierre.
+                            trades[-1]["escalera_executions"] = esc_exec
+                            if pyramid_mode and pyr_exec:
+                                trades[-1]["pyr_executions"] = pyr_exec
+                                pyr_exec = []
+                            esc_exec = []
+                            in_position = False
+                            size = 0.0
+                            _esc_cerro = True
+                if _esc_cerro:
+                    break
 
         # --- Piramidacion: condiciones logicas POST-entrada (2026-08-22) ---
         # Orden dentro de la barra: DESPUES de todas las salidas y solo si la
@@ -1038,7 +1512,7 @@ def simulate(
         # dispararia en 3 barras seguidas. Con señales de cruce (eventos de una
         # barra) el flanco es identico al comportamiento anterior. Todo se
         # rearma con cada entrada nueva; TP/SL/parciales corren en paralelo.
-        if pyramid_mode and in_position and i > entry_idx:
+        if pyramid_mode and in_position and i > entry_idx and not bs_wait:
             # SECUENCIAL: la piramide avanza EN LINEA y no vuelve atras. Solo
             # vigila el primer nivel que aun no haya agotado sus veces; cuando
             # las agota se pasa al siguiente y el anterior ya no dispara mas en
@@ -1305,7 +1779,8 @@ def simulate(
         current_signal = bool(entries[i])
         is_signal_trigger = current_signal and not prev_signal
         
-        if not in_position and is_signal_trigger and i < n - 1 and not is_restricted and not riesgo_bloqueado:
+        if not in_position and is_signal_trigger and i < n - 1 and not is_restricted and not riesgo_bloqueado \
+                and not ht_bloqueado:
             # Re-entry logic:
             can_enter = True
             if max_reentries >= 0:
@@ -1313,7 +1788,15 @@ def simulate(
                     can_enter = False
             elif not accumulate and total_trades > 0:
                 can_enter = False
-            
+            # Pausa tras la ultima salida (scalping). `trades[-1]` es el ultimo
+            # cierre: estando fuera de posicion, cualquier leg anterior (parcial,
+            # reduccion de piramide) ya quedo atras y la ultima fila es la que
+            # vacio la posicion. Todas las salidas graban `exit_idx`.
+            if can_enter and reentry_cooldown_bars > 0 and trades:
+                _ultima_salida = trades[-1].get("exit_idx")
+                if _ultima_salida is not None and (i - int(_ultima_salida)) < reentry_cooldown_bars:
+                    can_enter = False
+
             if can_enter:
                 available_cash = init_cash + realized_pnl
                 if available_cash <= 0:
@@ -1546,8 +2029,17 @@ def simulate(
                     trail_activated = False
                     mae = 0.0
                     mfe = 0.0
+                    bs_wait = False
                     original_size = size
                     avg_entry_price = entry_price
+                    if esc_on:
+                        # La escalera se rearma con cada scalp: malla anclada a
+                        # este fill, nivel 0 ya «ejecutado» (es la entrada).
+                        esc_k = 0
+                        esc_done = set()   # (nivel, lado) ya ejecutados en este scalp
+                        esc_entry0 = entry_price
+                        esc_size0 = size
+                        esc_exec = []
                     # La piramide va SIEMPRE asociada a la entrada: cada
                     # entrada (reentradas incluidas) rearma sus niveles.
                     pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
@@ -1628,6 +2120,10 @@ def simulate(
     results = {"equity": equity, "trades": trades, "locates_fee": daily_locates_fee}
     if ev_gate is not None:
         results["ev_gate"] = ev_gate_log
+    if bs_on:
+        results["bswan"] = bs_eventos
+    if ht_on:
+        results["halts"] = ht_eventos
     if risk_type == "PERCENT":
         results["last_risk_amount"] = risk_amount
     else:
