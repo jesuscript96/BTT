@@ -102,7 +102,7 @@ y reconciliación), después el resto.)*
 - Parámetros: N1, N2, N3 en % sobre la entrada (o según estructura); margen del límite sobre el ask en cada nivel, en % (pequeño en N1/N2, grande en N3); espera tras pasar N3 (≈ 30 min). Nunca precios fijos: todo en % porque depende del precio de cada acción. Valores: los da Jaume, van al cuadro de mandos.
 - Si la acción falla: N3 sin llenar y sin condiciones de cisne negro → por definir (C5).
 - Prueba: tabla de casos con precio caminando por N1, N2, N3 y pasando de largo; réplica en sombra.
-- Estado: BORRADOR (12-sep). Pendiente: (a) confirmar con el socio; (b) RTH: Jaume cree que igual, no lo tiene claro; (c) [API, PRIORITARIO] la idea de Jaume es UN solo stop con varios triggers (los tres niveles dentro de la misma orden), porque un evento así va muy rápido y no da tiempo a que el bot cancele y reponga tres stops; hay que confirmar con el PDF si DAS lo admite. Si no lo admite, se decide entonces cómo hacerlo; (d) cómo se define «no consigue cerrar» en cada nivel (tiempo o precio que supera el límite) → C5; (e) condiciones de cisne negro → G1/G2.
+- Estado: BORRADOR (12-sep). Pendiente: (a) confirmar con el socio; (b) RTH: Jaume cree que igual, no lo tiene claro; (c) RESUELTO el 14-sep (Jaume lo ha comprobado): un stop NO puede llevar tres triggers, pero SÍ se pueden dejar puestos TRES stop limit a la vez, cada uno con su trigger y su límite (el de arriba con más margen). Los tres residen en DAS desde la entrada: no hay que cancelar y reponer nada durante el evento. Consecuencia: R-C-11 (limpieza de stops sobrantes); (d) cómo se define «no consigue cerrar» en cada nivel (tiempo o precio que supera el límite) → C5; (e) condiciones de cisne negro → G1/G2.
 - Origen: C1. Directriz de Jaume del 12-sep.
 
 ### R-C-02 · Paso de un nivel de stop al siguiente
@@ -115,6 +115,17 @@ y reconciliación), después el resto.)*
 - Prueba: tabla de casos (se compra todo / nada / parte) en cada nivel.
 - Estado: BORRADOR (12-sep). NO SE PUEDE CERRAR hasta saber cómo funcionan los stops en DAS [API]: si admite varios triggers en un stop, si hacen falta varios stops, o si el bot tiene que vigilar el precio y cerrar a mercado él mismo.
 - Origen: C5. Directriz de Jaume del 12-sep. Aclaración: el ÚNICO criterio de tiempo en los stops es el de después del tercer nivel (cisne negro, espera de media hora), y se especifica en el bloque de contingencias, no aquí.
+
+### R-C-11 · Tres stops residentes: ajuste de cantidades y limpieza (no quedarse largo)
+- Situación: hay tres stop limit puestos a la vez (N1, N2, N3) sobre un corto. Si cada uno lleva la cantidad completa y se ejecutan varios, se compraría de más y la cuenta quedaría LARGA sin querer.
+- Detección: cada fill de cualquiera de los tres stops, confirmado por DAS.
+- Acción: (1) con cada fill, reducir la cantidad de los stops que quedan a las acciones que siguen en corto (procedimiento de R-C-07); (2) en cuanto la posición quede a cero (se ha salido entera por N1, o por N1 + N2), CANCELAR inmediatamente todos los stops pendientes; (3) si pese a todo se ejecuta un stop de más y aparece una posición LARGA, cerrarla a mercado inmediatamente y avisar.
+- Quién la ejecuta: ejecutor + vigilante (comprobar que no hay stops huérfanos ni posición larga).
+- Parámetros: ninguno.
+- Si la acción falla: la cancelación no se confirma → vigilante vigila el fill de más y aplica (3). Aviso en todo caso.
+- Prueba: tabla de casos (sale todo en N1 / en N1+N2 / parcial en cada uno; carrera fill-cancelación) y demo.
+- Estado: BORRADOR (14-sep). [API]: si DAS permite ligar los tres stops (OCO) para que se cancelen solos, mejor; si no, lo hace el bot.
+- Origen: C1 (aclaración de Jaume del 14-sep tras comprobar DAS).
 
 ### R-C-03 · Posición sin stop puesto en DAS
 - Situación: hay posición abierta y DAS no tiene el stop aceptado: justo tras la entrada, o porque DAS lo ha rechazado o cancelado.
@@ -220,14 +231,16 @@ y reconciliación), después el resto.)*
 
 ### Área G · El precio se dispara
 
+**PENDIENTE G3 (14-sep), decisión importante, volver a preguntar:** tope de pérdida por posición y cómo distinguir cisne negro de squeeze. Lo que hay: (1) el tercer trigger N3 hace de tope por posición; no habrá una capa más por posición. (2) Lo que distingue cisne negro de squeeze es el TIEMPO, no el tamaño: si pasados 5-10 minutos de superar N3 el precio sigue arriba (y con volumen), no es fogonazo, es squeeze y se cierra a mercado; si ha vuelto, era fogonazo y se espera (Jaume prefiere 5-10 min a segundos). (3) Un tope de CUENTA como último cinturón («nunca más de X % de la cuenta en una posición, pase lo que pase»), que cierra aunque parezca fogonazo; se gestiona desde el cuadro de mandos. Riesgo que Jaume quiere meditar: un tope del 20 % de la cuenta y el bot confundiendo cisne negro con squeeze normal.
+
 ### Área F · Halts
 
 ### R-F-01 · Halt de volatilidad (LULD) con posición dentro
 - Situación: el bot está en corto y la acción entra en halt de subida (limit up). k = halts UP del mismo ticker ACUMULADOS en todo el RTH del día (también los anteriores a la entrada del bot); los halts DOWN no cuentan.
 - Detección: estado de halt, precio de reapertura, bandas limit up / limit down y primera vela de 1 min tras reabrir. Massive NO da las bandas; se cree que DAS sí [API F1, F11: confirmar].
 - Acción, dos escenarios:
-  1. **Reabre con el stop POR ENCIMA del precio**: se MANTIENE la posición mientras k < 3. Con k = 3, cierre a MERCADO en cuanto reabra. Con k = 2, si el precio se acerca a un 2-3 % del limit up, se SALE antes de que pare (evitar el tercer halt).
-  2. **Stop POR DEBAJO del precio** (se lo ha saltado o por cualquier otra causa): se SALE sí o sí, a MERCADO al reabrir, sin tope de subida. Solo se REENTRA si la estrategia lo dice Y la primera vela de 1 min tras la reapertura sube menos de un 6 % Y k < 3. (Dato de Jaume: si la primera vela tras reabrir supera el 6 %, la probabilidad de que encadene otro halt es > 80 %.)
+  1. **Reabre con el stop POR ENCIMA del precio**: se MANTIENE la posición mientras k < 3. Con k = 3, cierre a MERCADO en cuanto reabra. Siempre que k = 2 (ya ha habido dos halts, da igual cuándo entramos), si el precio se acerca a un 2-3 % del limit up, se SALE antes de que pare para evitar el tercero; si no da tiempo y para, se aplica lo anterior: mercado al reabrir.
+  2. **Stop POR DEBAJO del precio** (se lo ha saltado o por cualquier otra causa): se SALE sí o sí, a MERCADO al reabrir, sin tope de subida. Solo se REENTRA si la estrategia lo dice Y la primera vela de 1 min tras la reapertura sube menos de un 6 % Y k < 3. (Dato de Jaume: si la primera vela tras reabrir supera el 6 %, la probabilidad de que encadene otro halt es > 80 %.) Tras reentrar se aplica la misma lógica con el nuevo stop: con k = 1, escenario 1 normal; con k = 2, la salida a 2-3 % de la banda y mercado al reabrir si para.
 - Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento k y distancia a la banda) + guarda (reentrada).
 - Parámetros: k máximo = 3; distancia a la banda para salir con k = 2: 2-3 %; primera vela máxima para reentrar: 6 %; ruta de salida en reapertura (pendiente PDF).
 - Si la acción falla: la orden de cierre en la reapertura no se llena → R-C-01/R-C-02 (niveles) y R-C-03 (sin stop, si DAS lo canceló en el halt).
