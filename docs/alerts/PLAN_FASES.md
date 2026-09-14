@@ -15,14 +15,14 @@
 ## Estado de fases
 | Fase | Título | Estado |
 |---|---|---|
-| 0 | Terreno y seguridad | 🟡 en curso |
+| 0 | Terreno y seguridad | ✅ hecha |
 | 1 | Reproducir el fallo (BUG A) | ✅ hecha (`F1_BUG_A_REPRODUCCION.md`) |
-| 2 | Simulador de WS | 🟡 en curso (F2.1+F2.2 ✅; falta F2.3 Telegram) |
+| 2 | Simulador de WS | ✅ hecha (F2.1+F2.2 ✅; F2.3 Telegram cerrado en F5) |
 | 3 | Arreglar BUG A (pre_high backfill) | ✅ hecha (F3.0 análisis · F3.1 código+verificado · F3.3 tests 10✅) |
-| 4 | Arreglar BUG B + barrido en vivo | ✅ BUG B hecho (tests 4✅) · barrido en vivo → F5 |
-| 5 | Validación end-to-end en staging | ⬜ pendiente |
-| 6 | Canary en prod | ⬜ pendiente |
-| 7 | Go-live 100 % (destape frontend) | ⬜ pendiente |
+| 4 | Arreglar BUG B + barrido en vivo | ✅ hecha (BUG B tests 4✅ · barrido en F5) |
+| 5 | Validación end-to-end en QA (develop) | ✅ hecha (backend en verde sobre `6f03987`) |
+| 6 | Canary en prod | 🟡 arrancada 2026-09-14 (desplegado `99f6ae5`, WS ok, backfill confirmado; falta validar premarket real 2026-09-15 vía observer) |
+| 7 | Go-live 100 % (destape frontend) | ⬜ pendiente (UI ya re-expuesto por Vercel; falta E2E navegador + vigía 04:00 ET) |
 
 *(Marcar 🟡 en curso / ✅ hecha a medida que avanzamos.)*
 
@@ -30,13 +30,14 @@
 
 ## Fase 0 — Terreno y seguridad  *(no se toca código)*
 **Objetivo:** dejar el campo claro y seguro antes de nada.
-- ✅ Jesús confirma que **él arrancó el backend** el 9-sep 06:14. *(Pendiente: ¿sigue el rollback de Vercel?)*
+- ✅ Jesús confirma que **él arrancó el backend** el 9-sep 06:14. El rollback del frontend NO fue git
+  (main conservaba el UI); era un "promote" de Vercel → un push a main lo re-expone (asumido en F6).
 - ✅ **Estado seguro:** las 3 alarmas (de prueba) **desactivadas** (`enabled=FALSE`, `active_alarms:0`). Reversible; backup en `scratchpad/alarms_backup_2026-09-09.json`.
-- ⬜ Confirmar que **staging corre con `LIVE_SCREENER_ENABLED=false`** → no le roba el WS a prod.
-- ✅ Build/commit vivo anotado para rollback: `5608136` (=main).
-- ⬜ Fijar **ventana de deploy fuera de premarket** como regla operativa.
+- ✅ QA (develop, no "staging" de Jaume/Álvaro) corre con `LIVE_SCREENER_ENABLED=false` → no le roba el WS a prod.
+- ✅ Build/commit vivo anotado para rollback: `5608136` (=main antes del fix).
+- ✅ Regla operativa fijada: **no desplegar en premarket** (borra `pre_high`); el backfill lo mitiga pero la regla se mantiene.
 
-**🚪 Puerta:** ~~respuestas de Jesús~~ (falta rollback Vercel) + ✅ estado seguro + ⬜ staging aislado verificado.
+**🚪 Puerta:** ✅ respuestas de Jesús + estado seguro + QA aislado verificado.
 
 ---
 
@@ -73,7 +74,8 @@ reproduce el bug.
   2026-09-04: [A] arranca 04:00 → `pre_high`=0,4372, `pmh_gap`=55,75 → universo **PASA**; [B]
   arranca 05:00 → `pre_high`=0,3749, `pmh_gap`=33,56 → universo **CAE**. Mismo código y datos; solo
   cambia la hora de arranque.
-- **F2.3 ⬜** camino completo (motor + disparo → Telegram dev `@Edgecute_dev_alerts_bot`).
+- **F2.3 ✅** (cerrado en F5) camino completo motor → disparo → Telegram dev; entrega confirmada al
+  teléfono de Adrian con el bot de dev del QA `@edgiethetradingbot`.
 
 ---
 
@@ -152,12 +154,39 @@ simulador, cazar otros fallos que solo aparecen en vivo (el "riesgo transversal"
 
 ---
 
-## Fase 5 — Validación end-to-end en STAGING  *(sin tocar prod)*
-**Objetivo:** desplegar los fixes a staging y correr los criterios de aceptación de Jesús
+## Fase 5 — Validación end-to-end en QA (develop)  *(sin tocar prod)*
+**Objetivo:** desplegar los fixes al QA de **develop** y correr los criterios de aceptación de Jesús
 (`README.md` §6) de forma offline: persistencia tras redeploy, aislamiento entre usuarios, franja
 horaria, Telegram a bot DEV.
 
-**🚪 Puerta:** suite completa en verde en staging.
+**🚪 Puerta:** suite completa en verde en QA.
+
+**Aclaración de entorno (Jesús 2026-09-14):** "staging" = rama de Jaume/Álvaro/Sailor (no se toca).
+Adrian+Jesús usan **`develop`** como QA. Backend QA = contenedor Coolify `x2u32befrq2181gmym43yfhn`
+(`DISABLE_GCS_SYNC=true`, `LIVE_SCREENER_ENABLED=false`). Prod = `main`.
+
+**Progreso (2026-09-14) — ✅ backend en verde sobre `6f03987` desplegado:**
+- **B1 sanity ✅** — `/health` ok; `/api/alarms/status` → `running:true`, `telegram_configured:true`;
+  imagen del contenedor = `6f03987`; env verificadas en el proceso (`SESSION_BACKFILL_ENABLED=1`,
+  `LIVE_SCREENER_ENABLED=false`, `DISABLE_GCS_SYNC=true`).
+- **B2 BUG A (escenario C, datos reales) ✅** — `sim_ws_alarms BAOS 2026-09-04` dentro del
+  contenedor: [A] 04:00→pre_high 0,4372 gap 55,75 PASA; [B] 05:00→0,37489 gap 33,56 CAE (bug);
+  [C] 05:00+fix→0,4372 gap 55,75 **PASA (recuperado)**.
+- **B3 BUG B (reloj real) ✅** — guard presente en `engine.py:237/270-273`; `_tick_instant` real
+  contra reloj de pared (ET 11:18): franja que cubre ahora→dispara; pasada/futura→no dispara;
+  sin franja→dispara.
+- **B4 cadena Telegram ✅** — envío real del motor (`telegram.send_message`+`_format_message`) con el
+  bot de dev del QA `@edgiethetradingbot` (id 8514608420, ≠ prod `@Edgiethebot`); `send_message→True`,
+  aviso recibido en el teléfono de Adrian (09:41). Poller vivo (respondió al `/start`).
+- **B5 criterios de Jesús ✅ (los de backend):** `screener_ws_connected:false` es lo ESPERADO en QA
+  (aislado; modo barra no evalúa en vivo aquí→lo cubre el simulador). Persistencia = `users.duckdb`
+  es **mount del host** (`/data/btt_staging/users.duckdb`→`/app/users.duckdb`) + `DISABLE_GCS_SYNC` →
+  sobrevive a redeploy por construcción. Aislamiento por usuario verificado en código (`store.py`
+  `WHERE user_id`, chat_id en la misma fila). "Dispara/no dispara" cubierto por B2+B3.
+
+**Pendiente (no de backend, van en sus fases):** panel/modal en navegador (checklist §5 puntos
+2-3-5) → **F7**; comportamiento con mercado abierto y WS real → **F6**. Round-trip real
+crear-alarma→redeploy→sigue-ahí = opcional (necesita un redeploy manual de Adrian en Coolify).
 
 ---
 
@@ -171,13 +200,42 @@ horaria, Telegram a bot DEV.
 
 **🚪 Puerta:** el camino en vivo real funciona en prod, medido, sin usuarios afectados.
 
+**Progreso (2026-09-14) — 🟡 arrancada, desplegado a prod:**
+- Merge `develop→main` = `99f6ae5` (solo `6f03987`, sin terceros). Prod contenedor
+  `kvcfvkb3e9plgdcwgeq67w24-161706549052` en `99f6ae5`.
+- Verificado por API pública: `running:true`, **`screener_ws_connected:true`**,
+  `telegram_configured:true`. `SESSION_BACKFILL_ENABLED=1` confirmado por `docker inspect`.
+- **Evidencia en vivo del fix BUG A:** el backend reinició a mediodía ET (post-premarket) y aun así
+  el screener muestra `pre_pct` poblado (SCNI 100,6 %, BMGL 93,89 %, NCT 89,59 %) → sin backfill
+  serían `None` → el backfill reconstruye los `pre_high` en prod. Cruce fino vs PM high real = pendiente.
+- **Observer de premarket** montado (`/root/alarms_premarket_observer.py` + cron host, checkpoints
+  02:00–07:00 GT / 04:00–09:00 ET del 2026-09-15) → postea a Discord el estado del motor + Top PM
+  High Gap en vivo. Lee el snapshot por el WS `/api/screener/live` (sin auth en servidor).
+- **Falta para cerrar F6:** validar el premarket real del 2026-09-15 (que los gappers salen con su
+  PM High Gap correcto). El canary de disparo+Telegram en prod se puede hacer en RTH o dejarlo a F7.
+
 ---
 
 ## Fase 7 — Go-live 100 %  *(destape)*
-**Objetivo:** abrir la feature a los admins.
-- **Frontend:** quitar el rollback de Vercel (redeploy con el UI de Alarmas). E2E desde el navegador.
-- **Vigía a las 04:00 ET** (item abierto de Jesús §9): backend vivo + WS conectado antes del
-  premarket, o el `pre_high` depende de uptime perfecto.
-- Documentación final + handoff en `docs/alerts/`.
+**Objetivo:** abrir la feature a los admins, con el camino en vivo ya probado.
+
+**Qué hay que hacer (concreto):**
+1. **Frontend en prod (Vercel):** el push a `main` ya re-desplegó el UI (admin-gated) — confirmar que
+   el panel de Alarmas **abre y pinta** en `app.edgecute.com` para un admin, y que apunta al backend
+   de prod (no da 404 en `/api/alarms/*`).
+2. **E2E desde el navegador (el criterio final de Jesús):** un admin **crea una alarma**, la guarda,
+   la apaga/enciende, recarga y **persiste**; conecta Telegram (Start al bot de prod `@Edgiethebot`)
+   y llega el «✅ conectado» + el botón *Probar*; y una alarma real **dispara en vivo** y llega el
+   aviso en un par de segundos.
+3. **Reactivar las alarmas de verdad:** las 3 de prueba siguen `enabled=FALSE` desde F0 — decidir si
+   se borran o se dejan; a partir de aquí las alarmas de usuarios reales quedan activas.
+4. **Vigía a las 04:00 ET** (item abierto de Jesús §9): un cron/monitor que garantice **backend vivo +
+   WS conectado antes del premarket**. Aunque el backfill ya recupera el `pre_high` tras un reinicio,
+   este vigía avisa si el proceso o el WS se caen justo antes de las 04:00 (cuando más importa). El
+   observer temporal de F6 es el germen de esto (hacerlo permanente y con alerta de caída).
+5. **Cerrar decisiones abiertas:** alcance del backfill (**movers vs todos** — solo "todos" es 100 %
+   correcto para el gapper que picó a las 04:00 y se desinfló) y el **BUG C** (regla "PMH Gap %" del
+   aviso rápido client-side que apaga la alarma en silencio; fix de 1 línea, consultar con Jesús).
+6. **Documentación final + handoff** en `docs/alerts/`.
 
 **🚪 Puerta:** un admin crea una alarma desde el navegador, dispara en vivo y llega el aviso. **100 %.**
