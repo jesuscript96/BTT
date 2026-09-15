@@ -30,6 +30,32 @@
 
 ---
 
+## 2026-09-15 (Sailor, tarde) — El VWAP como nivel del stop de estructura, y la simulación interna del bot iba sin niveles
+
+Pedido de Jaume: «como tenemos Previous Max y demás, lo mismo respecto al VWAP», dentro de Market Structure. Commit `6ae48ab` en `sailor-rama-desarrollo`, sin subir al escribir esto. Backend relanzado a mano (sin `--reload`) con el bot parado por él.
+
+### El VWAP como stop (misma receta que el pivote, `194e41e`)
+
+Nueve niveles ya: HOD, LOD, PMH, PML, Previous Max/Min, **VWAP**, Último pivote alto/bajo. El VWAP se fija en la vela de la SEÑAL como todos los demás (no persigue al VWAP después), con operador y margen, pasa por Cangrejo A/B, híbrido y «Shares por SL», paridad Python/JIT (`HS_VWAP`), en los dos caminos del backtest y en el bot por la misma `_structural_level`. Un corto entrado POR ENCIMA del VWAP tiene el nivel del lado ganador y no entra — igual que un Previous Max ya roto.
+
+**La decisión de diseño que importa: ES EL MISMO VWAP que el de las condiciones y el gráfico** (`indicators._vwap`, precio típico ponderado por volumen, acumulado desde la primera vela del día). Por eso viaja como columna `vwap` de `market_frame` sobre el **día entero** y se recorta con la sesión, como hod/pm_high — y NO se calcula sobre los arrays recortados, que es lo que hacen el ATR y los pivotes (esos solo miran N velas atrás). Un VWAP que arrancara a las 09:30 sería «el VWAP de RTH», otro indicador. `test_stop_vwap_run_backtest.py` pasa por `run_backtest` entero con sesión RTH y comprueba que el stop es el VWAP del día completo y no el de la sesión, y que secuencial = slab = pool = JIT. Cruzado además sobre datos reales (APLM, LGCL, NCRA del 2025-11-03): el stop coincide al céntimo con el `vwap` que devuelve `/api/candles` (el del gráfico) en la vela de la señal.
+
+Detalle que costó un rato: el `time` de `/api/candles` lleva la hora ET como si fuera UTC (así la pinta lightweight-charts); convertirlo a ET otra vez desplaza 5 h y parece que el VWAP «no cuadra».
+
+### El fallo del bot que salió de paso (no daba error)
+
+El bot tiene DOS vías: `nivel_stop` (el precio del aviso) y `simulate(**_kwargs_simulate(...))` (la simulación interna de la que deduce pirámides y salidas). El 10-sep se actualizó la primera con el ATR por barra, el pivote y el respaldo ajustable; la segunda no recibía `atrs`, `pivot_highs/lows`, `hs_atr_fallback_pct` ni `hs_struct_fallback_pct`. **Medido con el código viejo: con stop por ATR la simulación interna daba 0 trades** (el motor no entra sin ATR ni respaldo), **con el pivote el stop era 105 en vez de 110** (respaldo del 5 %). El aviso salía bien y las salidas se deducían de otra operación. Arreglado: `_kwargs_simulate` pasa los mismos niveles que el aviso, y los tests nuevos pasan por `_kwargs_simulate` de verdad con un frame de `market_frame`. Regla: todo nivel nuevo va en los dos sitios.
+
+**Pendiente relacionado, no tocado:** el ATR del stop en el backtest se calcula sobre los arrays recortados a la sesión; el bot usa `frame["atr"]` del día entero. En premercado desde las 04:00 da igual; en RTH con stop por ATR divergen las primeras 14 velas. Decidir cuál es el bueno y unificar.
+
+### Menudencias
+
+- El texto de las opciones «Último pivote» del desplegable llevaba un `\u00da` literal (JSX no interpreta escapes en texto): se leía «\u00daltimo».
+- Metedura de pata mía: reinicié el backend a las 17:42 creyendo que el bot estaba apagado, y estaba vigilando (mi filtro de procesos exigía `bot_senales` en la línea de comando; el bot se lanza como `python bot.py --vivo` desde su carpeta). 50 s sin backend en RTH; el bot siguió latiendo y conectado. El filtro bueno es `CommandLine -match 'bot\.py'`.
+- Suite: 1.236 pasados, 0 fallos.
+
+---
+
 ## 2026-09-14 (Sailor, bot de alertas) — ELMT sin señal, un aviso perdido en silencio, y el `--reload` fuera del lanzador
 
 Jaume: «¿Puedes mirarme por qué no ha dado señal de ELMT?». Luego, al parar el bot a las 20:01: «haz una auditoría rápida de hoy».
