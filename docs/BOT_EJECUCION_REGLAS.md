@@ -127,6 +127,8 @@ y reconciliación), después el resto.)*
 - Estado: BORRADOR (14-sep). [API]: si DAS permite ligar los tres stops (OCO) para que se cancelen solos, mejor; si no, lo hace el bot.
 - Origen: C1 (aclaración de Jaume del 14-sep tras comprobar DAS).
 
+**MEDIDO el 15-sep (libro NBBO, `libro_entradas`): el riesgo de que dos stops residentes se compren encima.** Tras tocar el trigger 1, el ask llega a un segundo trigger situado a +1,1 % en menos de 0,2 s en el 55 % (1B) / 65 % (2B) de los stops normales, y en el 92 % de los fogonazos: ningún bot cancela tan rápido. Con el segundo trigger más lejos baja: a +5 %, 14 % / 24 % en 0,5 s; a +10 %, 6 % / 8 %; a +20-30 %, 2-6 % (en fogonazos 40-70 %). Consecuencia: tres stops residentes con la posición entera y triggers pegados (0,1 / 3 / 50 % de margen a +0 / +1,1 / +3,1 %) dejarían la cuenta LARGA más de la mitad de las veces. Propuesta (no decidida): UNA orden residente (trigger N1, límite +1-3 %) y la escalada al 50 % la hace el vigilante sustituyendo la orden colgada (1-2 % de los casos; no hay carrera porque la orden colgada no se está ejecutando); o DOS residentes solo si la segunda está a ≥ +20-30 % y con R-C-11 activa; o TRES si DAS ofrece OCO/bracket o «solo cerrar posición» [API, prioritario]. Nota de Jaume: en DAS estas órdenes limitadas son las «limitP» (confirmar en el PDF).
+
 ### R-C-03 · Posición sin stop puesto en DAS
 - Situación: hay posición abierta y DAS no tiene el stop aceptado: justo tras la entrada, o porque DAS lo ha rechazado o cancelado.
 - Detección: el ejecutor no recibe la confirmación del stop, o la reconciliación ve posición sin stop.
