@@ -207,12 +207,30 @@ def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd:
         "hs_offset_pct": hs.get("offset_pct", 0.0),
         "hs_fallback_value": hs.get("fallback_value"),
         "hs_fallback_first": hs.get("fallback_first_entry", False),
+        # LOS MISMOS NIVELES QUE EL AVISO (15-sep-2026). Hasta hoy esta
+        # simulacion interna —de cuyos trades el bot deduce piramides y
+        # salidas— no recibia el ATR por barra, los pivotes ni los respaldos
+        # que `nivel_stop` si usa desde el 10-sep: con stop por ATR no entraba
+        # NUNCA (sin `atrs` y sin respaldo el motor no entra), con el pivote
+        # caia al 5 % y `struct_fallback_pct` se ignoraba. Sin error y sin log.
+        # El aviso salia bien y las salidas se deducian de otra operacion.
+        "atrs": _columna(frame, "atr"),
+        "hs_atr_fallback_pct": hs.get("atr_fallback_pct"),
+        "hs_struct_fallback_pct": hs.get("struct_fallback_pct"),
+        **dict(zip(("pivot_highs", "pivot_lows"),
+                   pivotes_para_stop({"high": frame["high"].values, "low": frame["low"].values,
+                                      "timestamp": frame["timestamp"].values},
+                                     hs.get("pivot_window"))
+                   if necesita_pivotes(hs) else (None, None))),
         "hods": frame["hod"].values.astype(np.float64),
         "lods": frame["lod"].values.astype(np.float64),
         "pm_highs": frame["pm_high"].values.astype(np.float64),
         "pm_lows": frame["pm_low"].values.astype(np.float64),
         "prev_highs": frame["prev_high"].values.astype(np.float64),
         "prev_lows": frame["prev_low"].values.astype(np.float64),
+        # VWAP del dia, para que la simulacion interna del bot (de la que deduce
+        # piramides y salidas) resuelva el stop por VWAP donde el backtest.
+        "vwaps": _columna(frame, "vwap"),
         "timestamps": ts,
         "look_ahead_prevention": True,
     }
@@ -234,6 +252,13 @@ def es_fin_de_ventana(momento, ventana: dict | None) -> bool:
         return (t.hour, t.minute) >= (int(h), int(m))
     except (ValueError, TypeError):
         return False
+
+
+def _columna(frame, nombre: str):
+    """Columna del frame como float64, o None si no existe."""
+    if frame is None or nombre not in frame.columns:
+        return None
+    return frame[nombre].values.astype(np.float64)
 
 
 def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo: bool) -> Optional[float]:
@@ -267,6 +292,9 @@ def nivel_stop(sdef: dict, frame: pd.DataFrame, i: int, precio: float, es_largo:
             frame["prev_high"].values.astype(np.float64),
             frame["prev_low"].values.astype(np.float64),
             piv_h, piv_l,
+            # El VWAP lo trae `market_frame` como columna del dia entero, igual
+            # que hod/lod; si el frame no la tiene (tests a mano), sin nivel.
+            _columna(frame, "vwap"),
         )
         if nivel <= 0.0:
             # Mismo respaldo que el simulador: 5% cuando el nivel no se resuelve.

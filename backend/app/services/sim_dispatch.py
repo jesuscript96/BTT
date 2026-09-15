@@ -158,6 +158,8 @@ def _hs_value_to_code(hs_value):
         return _pjit.HS_PIVHIGH
     elif hs_value in ("Pivot Low", "Ultimo pivote bajo", "Último pivote bajo"):
         return _pjit.HS_PIVLOW
+    elif hs_value == "VWAP":
+        return _pjit.HS_VWAP
     return _pjit.HS_NONE
 
 
@@ -218,6 +220,7 @@ def simulate_jit(
     # Stop por ATR: el ATR de cada barra (ver portfolio_sim.simulate).
     pivot_highs: np.ndarray | None = None,
     pivot_lows: np.ndarray | None = None,
+    vwaps: np.ndarray | None = None,
     atrs: np.ndarray | None = None,
     # Respaldo en % para las barras sin ATR (ver portfolio_sim.simulate).
     hs_atr_fallback_pct: float | None = None,
@@ -351,6 +354,7 @@ def simulate_jit(
     has_prev_low, prev_low_a = _opt(prev_lows)
     has_piv_high, piv_high_a = _opt(pivot_highs)
     has_piv_low, piv_low_a = _opt(pivot_lows)
+    has_vwap, vwap_a = _opt(vwaps)
     has_atrs, atrs_a = _opt(atrs)
 
     if timestamps is None:
@@ -440,6 +444,7 @@ def simulate_jit(
         has_prev_low, prev_low_a,
         has_piv_high, piv_high_a,
         has_piv_low, piv_low_a,
+        has_vwap, vwap_a,
         has_atrs, atrs_a, atr_mult, atr_fallback_pct,
         fixed_amount,
         struct_fallback_pct,

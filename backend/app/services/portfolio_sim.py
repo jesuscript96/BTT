@@ -84,9 +84,40 @@ def pivotes_para_stop(arrays: dict, win: int | None = None):
             _ultimo_pivote(h, l, day_id, w, False))
 
 
+def vwap_para_stop(arrays: dict):
+    """VWAP del dia por barra, para el stop estructural (2026-09-15).
+
+    LA MISMA cuenta que el indicador `VWAP` de las condiciones y del grafico
+    (`indicators._vwap`: precio tipico ponderado por volumen, acumulado desde la
+    PRIMERA vela del dia). Si cada sitio tuviera la suya, el stop podria estar
+    en un VWAP y la condicion de entrada en otro, sin error y sin log.
+
+    HAY QUE PASARLE EL DIA ENTERO (desde las 04:00), nunca la sesion recortada:
+    un VWAP que arrancara a las 09:30 seria OTRO indicador (el «VWAP de RTH») y
+    no coincidiria con el de las condiciones. Por eso lo calcula `market_frame`
+    como columna del frame completo, igual que hod/lod/pm_high, y el recorte de
+    sesion se lo lleva ya hecho — a diferencia del ATR y los pivotes, que se
+    calculan sobre los arrays recortados porque solo miran hacia atras N velas.
+
+    Devuelve None si faltan columnas: quien llama lo trata como "nivel no
+    disponible", que el motor ya sabe manejar (cae al respaldo).
+    """
+    from app.services.indicators import _vwap
+    try:
+        h = np.asarray(arrays["high"], dtype=np.float64)
+        l = np.asarray(arrays["low"], dtype=np.float64)
+        c = np.asarray(arrays["close"], dtype=np.float64)
+        v = np.asarray(arrays["volume"], dtype=np.float64)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if len(c) == 0:
+        return None
+    return _vwap(h, l, c, v)
+
+
 def _structural_level(
     value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
-    pivot_highs=None, pivot_lows=None,
+    pivot_highs=None, pivot_lows=None, vwaps=None,
 ):
     """Nivel estructural de un hard stop en la barra i.
 
@@ -117,6 +148,16 @@ def _structural_level(
         return v if v > 0 else 0.0
     if value in ("Pivot Low", "Ultimo pivote bajo") and pivot_lows is not None:
         v = pivot_lows[i]
+        return v if v > 0 else 0.0
+    # VWAP (2026-09-15). El nivel se FIJA en la barra de entrada como todos los
+    # demas (no persigue al VWAP despues): el stop es "el VWAP que habia cuando
+    # entre", con su operador y su margen. Con un corto entrado por debajo del
+    # VWAP el stop queda arriba, que es donde toca; entrado por ENCIMA, el
+    # nivel cae del lado ganador y `_sl_side_valid` descarta la entrada, igual
+    # que un corto con Previous Max ya roto. NaN mientras el volumen acumulado
+    # del dia es 0 (`NaN > 0` es False) -> respaldo.
+    if value == "VWAP" and vwaps is not None:
+        v = vwaps[i]
         return v if v > 0 else 0.0
     return 0.0
 
@@ -339,6 +380,8 @@ def simulate(
     # Ultimo pivote confirmado por barra, para `hs_value` = "Pivot High"/"Pivot Low".
     pivot_highs: np.ndarray | None = None,
     pivot_lows: np.ndarray | None = None,
+    # VWAP del dia por barra, para `hs_value` = "VWAP" (ver `vwap_para_stop`).
+    vwaps: np.ndarray | None = None,
     atrs: np.ndarray | None = None,
     # RESPALDO DEL STOP POR ATR (2026-09-10). Durante las primeras barras del dia
     # el ATR es NaN porque le faltan velas para su periodo. Sin respaldo NO SE
@@ -1842,7 +1885,7 @@ def simulate(
                 if hs_type == "Market Structure (HOD/LOD)":
                     val_struct = _structural_level(
                         hs_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
-                        pivot_highs, pivot_lows,
+                        pivot_highs, pivot_lows, vwaps,
                     )
                     if val_struct <= 0.0:
                         # RESPALDO cuando el nivel no se resuelve (el pivote aun
@@ -1876,7 +1919,7 @@ def simulate(
                         if hs_fallback_value and (hs_fallback_first or total_trades > 0):
                             fb_level = _structural_level(
                                 hs_fallback_value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
-                                pivot_highs, pivot_lows,
+                                pivot_highs, pivot_lows, vwaps,
                             )
                             if fb_level > 0:
                                 fb_stop = fb_level * (1.0 + sl_offset)

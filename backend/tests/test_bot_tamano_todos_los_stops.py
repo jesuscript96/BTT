@@ -701,3 +701,300 @@ def test_importe_fijo_pasa_por_cangrejo_y_el_hibrido():
     t_h = _sim_importe(size_by_sl=True, hybrid_stop=True,
                        hybrid_black_swan_pct=50.0, hybrid_max_loss_pct=0.05)
     assert t_h["size"] == pytest.approx(10.0)
+
+
+# ══ VWAP como nivel del stop de estructura (15-sep-2026) ══════════════════
+#
+# Lo pidió Jaume: «como tenemos Previous Max y demás, lo mismo respecto al
+# VWAP», dentro de Market Structure. Mismo trato que los otros niveles: se
+# FIJA en la barra de entrada (no persigue al VWAP después), lleva operador y
+# margen, pasa por Cangrejo A/B, híbrido y «Shares por SL», y el bot lo resuelve
+# por la MISMA función.
+#
+# LO QUE HAY QUE VIGILAR AQUÍ es que sea EL MISMO VWAP que el de las condiciones
+# y el gráfico: precio típico ponderado por volumen, acumulado desde la PRIMERA
+# vela del día. Por eso viaja como columna de `market_frame` (día entero) y se
+# recorta con la sesión, y no se calcula sobre los arrays recortados.
+
+
+def _serie_con_vwap():
+    """Precio 100 fijo salvo la vela 1 (120) con volumen doble.
+
+    Típico de cada vela = close (high = low = close). Volumen 1 salvo la vela 1
+    con 2. VWAP en la vela 5: (100 + 240 + 100x4) / (1 + 2 + 4) = 740/7.
+    """
+    px = np.full(N, 100.0)
+    px[1] = 120.0
+    vol = np.ones(N)
+    vol[1] = 2.0
+    return px, vol
+
+
+VWAP_5 = 740.0 / 7.0      # 105,714...
+
+
+def _sim_vwap(entrada=5, offset=0.0, **kw):
+    from app.services.portfolio_sim import vwap_para_stop
+    px, vol = _serie_con_vwap()
+    ts = (np.arange(N) * 60_000_000_000).astype(np.int64)
+    vw = vwap_para_stop({"high": px, "low": px, "close": px, "volume": vol})
+    entries = np.zeros(N, dtype=bool)
+    entries[entrada] = True
+    res = simulate(
+        close=px, open_=px.copy(), high=px, low=px,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0,
+        risk_r=300.0, risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=ts,
+        hs_type="Market Structure (HOD/LOD)", hs_value="VWAP",
+        hs_operator=">=", hs_offset_pct=offset,
+        vwaps=vw, **kw,
+    )
+    return (res["trades"][0] if res["trades"] else None), vw
+
+
+def test_vwap_es_el_mismo_que_el_indicador():
+    """`vwap_para_stop` y el indicador `VWAP` de las condiciones son la misma
+    cuenta. Si alguien cambiara uno y no el otro, el stop estaría en un VWAP y
+    la condición de entrada en otro — sin error."""
+    import pandas as pd
+    from app.services.portfolio_sim import vwap_para_stop
+    from app.services.indicators import compute_indicator
+    px, vol = _serie_con_vwap()
+    hi, lo = px * 1.01, px * 0.99
+    df = pd.DataFrame({"open": px, "high": hi, "low": lo, "close": px, "volume": vol})
+    del_stop = vwap_para_stop({"high": hi, "low": lo, "close": px, "volume": vol})
+    del_indicador = compute_indicator("VWAP", df).values
+    assert np.allclose(del_stop, del_indicador, equal_nan=True)
+
+
+def test_vwap_el_stop_es_el_vwap_de_la_entrada():
+    t, vw = _sim_vwap(size_by_sl=True)
+    assert vw[5] == pytest.approx(VWAP_5)
+    assert t is not None
+    assert t["stop_loss"] == pytest.approx(VWAP_5)
+    assert t["size"] == pytest.approx(300.0 / (VWAP_5 - 100.0))   # riesgo / distancia
+
+
+def test_vwap_con_margen_y_operador():
+    t, _ = _sim_vwap(size_by_sl=True, offset=10.0)
+    assert t["stop_loss"] == pytest.approx(VWAP_5 * 1.10)
+
+
+def test_vwap_entrado_del_lado_equivocado_no_se_entra():
+    """Un corto con el precio POR ENCIMA del VWAP: el nivel cae del lado
+    ganador, la premisa está muerta y el motor no entra — igual que con un
+    Previous Max ya roto. No es un caso especial del VWAP."""
+    from app.services.portfolio_sim import vwap_para_stop
+    px = np.full(N, 100.0)
+    px[1] = 80.0                       # tira el VWAP por debajo de 100
+    vol = np.ones(N)
+    vol[1] = 2.0
+    vw = vwap_para_stop({"high": px, "low": px, "close": px, "volume": vol})
+    assert vw[5] < 100.0
+    entries = np.zeros(N, dtype=bool)
+    entries[5] = True
+    res = simulate(
+        close=px, open_=px.copy(), high=px, low=px,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0,
+        risk_r=300.0, risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="Market Structure (HOD/LOD)", hs_value="VWAP",
+        hs_operator=">=", hs_offset_pct=0.0, vwaps=vw, size_by_sl=True,
+    )
+    assert res["trades"] == []
+
+
+def test_vwap_sin_volumen_cae_al_respaldo():
+    """Mientras el volumen acumulado del día es 0 el VWAP es NaN: respaldo del
+    5 %, como cualquier nivel que no se resuelve."""
+    from app.services.portfolio_sim import vwap_para_stop
+    px = np.full(N, 100.0)
+    vw = vwap_para_stop({"high": px, "low": px, "close": px, "volume": np.zeros(N)})
+    assert np.isnan(vw[5])
+    entries = np.zeros(N, dtype=bool)
+    entries[5] = True
+    res = simulate(
+        close=px, open_=px.copy(), high=px, low=px,
+        entries=entries, exits=np.zeros(N, dtype=bool),
+        direction="shortonly", init_cash=1_000_000.0,
+        risk_r=300.0, risk_type="FIXED", look_ahead_prevention=True,
+        timestamps=(np.arange(N) * 60_000_000_000).astype(np.int64),
+        hs_type="Market Structure (HOD/LOD)", hs_value="VWAP",
+        hs_operator=">=", hs_offset_pct=0.0, vwaps=vw, size_by_sl=True,
+    )
+    assert res["trades"][0]["stop_loss"] == pytest.approx(105.0)
+
+
+def test_vwap_paridad_python_jit():
+    from app.services.sim_dispatch import simulate_jit
+    from app.services.portfolio_sim import vwap_para_stop
+    px, vol = _serie_con_vwap()
+    ts = (np.arange(N) * 60_000_000_000).astype(np.int64)
+    vw = vwap_para_stop({"high": px, "low": px, "close": px, "volume": vol})
+    entries = np.zeros(N, dtype=bool)
+    entries[5] = True
+    base = dict(
+        close=px, open_=px.copy(), high=px, low=px,
+        entries=entries, exits=np.zeros(N, dtype=bool), direction="shortonly",
+        init_cash=1_000_000.0, risk_r=300.0, risk_type="FIXED",
+        look_ahead_prevention=True, timestamps=ts,
+        hs_type="Market Structure (HOD/LOD)", hs_value="VWAP",
+        hs_operator=">=", hs_offset_pct=3.0,
+        vwaps=vw, size_by_sl=True,
+    )
+    t_py = simulate(**base)["trades"][0]
+    t_jit = simulate_jit(**base)["trades"][0]
+    for campo in ("stop_loss", "size", "entry_price"):
+        assert t_py[campo] == pytest.approx(t_jit[campo]), campo
+    # y como RESPALDO de otro nivel, también en paridad
+    base2 = dict(base, hs_value="Previous Max", hs_fallback_value="VWAP",
+                 hs_fallback_first=True)
+    t_py2 = simulate(**base2)["trades"]
+    t_jit2 = simulate_jit(**base2)["trades"]
+    assert len(t_py2) == len(t_jit2)
+    for a, b in zip(t_py2, t_jit2):
+        assert a["stop_loss"] == pytest.approx(b["stop_loss"])
+
+
+def test_vwap_el_aviso_dice_lo_mismo_que_el_motor():
+    """El bot lee el VWAP como columna del frame (`market_frame`) y lo resuelve
+    con la MISMA `_structural_level`. Si se separaran, esto lo caza."""
+    import pandas as pd
+    from app.services.portfolio_sim import vwap_para_stop
+    px, vol = _serie_con_vwap()
+    ts = pd.to_datetime((np.arange(N) * 60_000_000_000).astype("datetime64[ns]"))
+    vw = vwap_para_stop({"high": px, "low": px, "close": px, "volume": vol})
+    frame = pd.DataFrame({
+        "high": px, "low": px, "close": px, "timestamp": ts,
+        "hod": px, "lod": px, "pm_high": px, "pm_low": px,
+        "prev_high": np.zeros(N), "prev_low": np.zeros(N), "vwap": vw,
+    })
+    sdef = _sdef("Market Structure (HOD/LOD)", "VWAP")
+    sdef["risk_management"]["hard_stop"]["operator"] = ">="
+    sdef["risk_management"]["hard_stop"]["offset_pct"] = 0
+    stop = stop_estimado(sdef, frame, 5, 100.0, es_largo=False, sl_stop=None)
+    t, _ = _sim_vwap(size_by_sl=True)
+    assert stop == pytest.approx(VWAP_5)
+    assert stop == pytest.approx(t["stop_loss"])
+    assert calcular_acciones(300.0, 100.0, stop, True) == pytest.approx(t["size"])
+
+
+def test_vwap_el_frame_del_bot_lo_trae_del_dia_entero():
+    """`market_frame` calcula la columna sobre el día COMPLETO. Un VWAP que
+    empezara en la sesión elegida (RTH) sería otro indicador y no coincidiría
+    con el de las condiciones."""
+    import pandas as pd
+    from app.services.market_frame import build_market_frame
+    from app.services.portfolio_sim import vwap_para_stop
+    px, vol = _serie_con_vwap()
+    ts = pd.to_datetime("2026-09-15 04:00") + pd.to_timedelta(np.arange(N), unit="min")
+    day = pd.DataFrame({"open": px, "high": px, "low": px, "close": px,
+                        "volume": vol, "timestamp": ts})
+    frame = build_market_frame(day, "XYZ", {})
+    assert "vwap" in frame.columns
+    assert np.allclose(frame["vwap"].values,
+                       vwap_para_stop({"high": px, "low": px, "close": px, "volume": vol}))
+    assert frame["vwap"].iloc[5] == pytest.approx(VWAP_5)
+
+
+def test_vwap_pasa_por_cangrejo_y_por_el_hibrido():
+    """Como cualquier otro nivel: los topes miran el precio del stop."""
+    dist = VWAP_5 - 100.0                                    # 5,714 %
+    t_a, _ = _sim_vwap(size_by_sl=True, cangrejo_active=True,
+                       cangrejo_max_sl_dist_pct=4.0)
+    assert t_a["stop_loss"] == pytest.approx(104.0)          # apretado al 4 %
+    assert t_a["size"] == pytest.approx(75.0)                # 300 / 4
+
+    t_b, _ = _sim_vwap(size_by_sl=True, cangrejo_active=True,
+                       cangrejo_max_loss_at_sl_pct=0.01)
+    assert t_b["size"] == pytest.approx(100.0 / dist)        # 100 $ / distancia
+
+    t_h, _ = _sim_vwap(size_by_sl=True, hybrid_stop=True,
+                       hybrid_black_swan_pct=50.0, hybrid_max_loss_pct=0.05)
+    assert t_h["size"] == pytest.approx(10.0)                # 1.000 $ / 100 $ de precio
+
+
+# ══ La simulación INTERNA del bot recibe los mismos niveles que el aviso ═══
+#
+# EL FALLO QUE ARREGLA ESTO (15-sep-2026, encontrado metiendo el VWAP). El bot
+# tiene DOS vías: `nivel_stop` (el aviso) y `simulate(**_kwargs_simulate(...))`
+# (de cuyos trades deduce pirámides y salidas). El 10-sep se actualizó la
+# primera con el ATR por barra, el pivote y el respaldo ajustable; la segunda
+# no recibía nada de eso: con stop por ATR la simulación interna no entraba
+# NUNCA, con el pivote caía al 5 % y `struct_fallback_pct` se ignoraba. El
+# aviso salía bien y las salidas se deducían de otra operación — sin error.
+#
+# Aquí las dos vías se cruzan PASANDO POR `_kwargs_simulate` de verdad, con un
+# frame de `market_frame` (que es el que ve el bot), para cada nivel nuevo.
+
+
+def _frame_del_bot(px, vol=None):
+    import pandas as pd
+    from app.services.market_frame import build_market_frame
+    ts = pd.to_datetime("2026-09-15 04:00") + pd.to_timedelta(np.arange(len(px)), unit="min")
+    day = pd.DataFrame({"open": px, "high": px, "low": px, "close": px,
+                        "volume": vol if vol is not None else np.ones(len(px)),
+                        "timestamp": ts})
+    return build_market_frame(day, "XYZ", {})
+
+
+def _sim_interna_del_bot(frame, sdef, senal_en):
+    """Lo que simula el bot por dentro, tal cual (`_kwargs_simulate`)."""
+    from app.services.bot_alerts_engine import _kwargs_simulate
+    n = len(frame)
+    entries = np.zeros(n, dtype=bool)
+    entries[senal_en] = True
+    senales = {"entries": entries, "exits": np.zeros(n, dtype=bool),
+               "direction": "shortonly", "sl_stop": None}
+    return simulate(**_kwargs_simulate(frame, senales, sdef, 300.0))["trades"]
+
+
+def test_bot_interna_vwap_mismo_stop_que_el_aviso():
+    px, vol = _serie_con_vwap()
+    frame = _frame_del_bot(px, vol)
+    sdef = _sdef("Market Structure (HOD/LOD)", "VWAP")
+    sdef["risk_management"]["hard_stop"].update({"operator": ">=", "offset_pct": 0})
+    trades = _sim_interna_del_bot(frame, sdef, 5)
+    assert trades and trades[0]["stop_loss"] == pytest.approx(VWAP_5)
+    aviso = stop_estimado(sdef, frame, 5, 100.0, es_largo=False, sl_stop=None)
+    assert aviso == pytest.approx(trades[0]["stop_loss"])
+
+
+def test_bot_interna_pivote_ya_no_cae_al_5_por_ciento():
+    px = _serie_con_pivote()
+    frame = _frame_del_bot(px)
+    sdef = _sdef("Market Structure (HOD/LOD)", "Ultimo pivote alto")
+    sdef["risk_management"]["hard_stop"].update({"operator": ">=", "offset_pct": 0, "pivot_window": 1})
+    trades = _sim_interna_del_bot(frame, sdef, 5)
+    assert trades and trades[0]["stop_loss"] == pytest.approx(110.0)     # el pivote, no 105
+    aviso = stop_estimado(sdef, frame, 5, 100.0, es_largo=False, sl_stop=None)
+    assert aviso == pytest.approx(trades[0]["stop_loss"])
+
+
+def test_bot_interna_atr_ya_entra():
+    """Antes: sin `atrs` el motor no entraba y la simulación interna del bot
+    devolvía cero trades para CUALQUIER estrategia con stop por ATR."""
+    n = 40
+    px = 100.0 + np.sin(np.arange(n)) * 2.0          # con rango, para que el ATR exista
+    frame = _frame_del_bot(px)
+    assert np.isfinite(frame["atr"].values[30])
+    sdef = _sdef("ATR Multiplier", 2.0)
+    trades = _sim_interna_del_bot(frame, sdef, 30)
+    assert trades, "con el ATR en el frame, la simulación interna tiene que entrar"
+    aviso = stop_estimado(sdef, frame, 30, float(px[31]), es_largo=False, sl_stop=None)
+    # el aviso se calcula sobre el precio de la vela siguiente (la de relleno),
+    # el motor sobre su precio de entrada: misma distancia en ATRs
+    assert (aviso - px[31]) == pytest.approx(trades[0]["stop_loss"] - trades[0]["entry_price"], rel=1e-6)
+
+
+def test_bot_interna_respeta_el_respaldo_ajustable():
+    px = _serie_con_pivote()
+    frame = _frame_del_bot(px)
+    sdef = _sdef("Market Structure (HOD/LOD)", "Ultimo pivote alto")
+    # ventana 4: en la vela 3 no hay pivote -> respaldo, y el respaldo es el 8 %
+    sdef["risk_management"]["hard_stop"].update({"operator": ">=", "offset_pct": 0,
+                                                  "pivot_window": 4, "struct_fallback_pct": 8.0})
+    trades = _sim_interna_del_bot(frame, sdef, 3)
+    assert trades and trades[0]["stop_loss"] == pytest.approx(trades[0]["entry_price"] * 1.08)
