@@ -5871,3 +5871,12 @@ de Databento, no copiar `users.duckdb`.
 - **Hipótesis de causa:** HIPÓTESIS — el fix natural sería extender field_map con las etiquetas de METRIC_MAP (o validar la métrica al recibir el POST y fallar con 400); decisión del dueño del código.
 - **Código tocado:** NINGUNO (confirmado)
 - **Estado:** ABIERTO
+
+### [ESTUDIO · 2026-09-15 · COBERTURA LAGO] Los rampadores lentos YA están en el lago, con velas — no hace falta cangrejo_data (Álvaro + ZCode)
+- **La pregunta:** para una estrategia short desde las 11:00 sobre acciones que no gapearon en el open RTH pero corrieron después, ¿los tiene el lago o habría que re-ingerir historia con cangrejo_data (horas de Databento)?
+- **Respuesta: SÍ están, y con velas M1.** No hace falta tocar cangrejo_data. Sondeo read-only sobre `local_data.duckdb` (backend parado, watchdog también — ojo: `run_backend_forever.bat` revive el backend en segundos si solo matas este; secuencia correcta: watchdog primero, luego backend), con el python del venv.
+- **Cohortes por año (ticker-días con gap en open < 8 %):** corrida > 20 % a las 10:30 (`m60_return_pct`): 878-4.353/año (2019-2026, pico 2022). > 30 % a las 10:30: 428-2.392/año. Día acabado > 25 % (`day_return_pct`): 1.886-10.471/año. **Con suelo precio ≥ 1 $ y volumen día ≥ 1 M: 151-534/año** — el tamaño de muestra operable.
+- **Velas:** muestra de 2026-03 del cohorte principal: 312/312 pares con velas en `intraday_1m` (100 %). La ingesta del lago NO está recortada al gap ≥ 10 % del open — `daily_metrics` tiene ~2,5 M filas/año.
+- **Notas para el diseño de la estrategia:** (a) `m90_return_pct` NO existe en `daily_metrics` (solo en el derivado ma_daily que usa el servicio de fades) — no hay métrica "as of 11:00" filtrable; (b) ~40 % de filas tienen `m60` sano y ~46 % `day_return` (estable por años, no degrada); (c) por tanto el patrón correcto es universo amplio (precio/volumen, SIN gap mínimo) + condición de entrada `Current Gap (%) ≥ X` (causal, por vela) + `entry_time_windows` desde las 11:00 — nada de filtrar el universo por Day Return/RTH Run (look-ahead).
+- **Scripts:** `.tmp_wip_premerge/cobertura_rampadores.py` (efímero, nada al repo).
+- **Estado:** RESPUESTA OBTENIDA. Pendiente de Álvaro: montar el borrador y correr (con `look_ahead_prevention=true` y defaults a la vista).
