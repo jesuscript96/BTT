@@ -21,8 +21,11 @@
 | 3 | Arreglar BUG A (pre_high backfill) | ✅ hecha (F3.0 análisis · F3.1 código+verificado · F3.3 tests 10✅) |
 | 4 | Arreglar BUG B + barrido en vivo | ✅ hecha (BUG B tests 4✅ · barrido en F5) |
 | 5 | Validación end-to-end en QA (develop) | ✅ hecha (backend en verde sobre `6f03987`) |
-| 6 | Canary en prod | 🟡 arrancada 2026-09-14 (desplegado `99f6ae5`, WS ok, backfill confirmado; falta validar premarket real 2026-09-15 vía observer) |
-| 7 | Go-live 100 % (destape frontend) | ⬜ pendiente (UI ya re-expuesto por Vercel; falta E2E navegador + vigía 04:00 ET) |
+| 6 | Canary en prod | ✅ hecha (desplegado `99f6ae5`, disparo en vivo en prod 2026-09-14 + premarket real validado 2026-09-15 vía observer) |
+| 7 | Go-live 100 % (destape frontend) | 🟡 casi (UI re-expuesto, E2E navegador + Telegram + disparo ✅; quedan flecos: BUG D, vigía 04:00, decisiones) |
+
+> **FEATURE VALIDADA Y EN PROD (2026-09-15).** BUG A + BUG B corregidos y probados de punta a punta.
+> Cierre y flecos abiertos en `docs/alerts/CIERRE.md`.
 
 *(Marcar 🟡 en curso / ✅ hecha a medida que avanzamos.)*
 
@@ -216,8 +219,10 @@ crear-alarma→redeploy→sigue-ahí = opcional (necesita un redeploy manual de 
   **llegó el aviso a Telegram del bot de prod `@Edgiethebot`** (@AgarciaDigital). Verificado por los
   dos lados: API (active_alarms=1, FTFT chg=100 en el WS) + recepción en el teléfono. Nota:
   `watched_tickers` queda `[]` con alarmas de *tickers concretos* (esa lista es solo para universo).
-- **Falta para cerrar F6:** validar el premarket real del 2026-09-15 (que los gappers salen con su
-  PM High Gap correcto) vía observer. El camino en vivo detecta→dispara→avisa YA está probado.
+- **✅ PREMARKET REAL VALIDADO (2026-09-15 09:00 ET):** el observer entregó a Discord el snapshot en
+  vivo con `session=pre`, WS conectado y el **PM High Gap correcto** de los gappers del día (BDRX
+  203,57 %, VEEA 97,82 %, MYSZ 98,8 %, SUGP 68,68 %…). Es justo el número que fallaba en el incidente
+  → ahora sale bien en premarket real. **F6 CERRADA.**
 
 ---
 
