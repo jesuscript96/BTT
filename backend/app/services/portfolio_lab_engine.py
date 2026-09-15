@@ -63,7 +63,12 @@ def compute_stats(
     """
     eq = np.asarray(equity_curve, dtype=float)
     ret = np.asarray(daily_ret, dtype=float)
-    peak = np.maximum.accumulate(np.maximum(eq, 1e-9))
+    # El pico arranca en el CAPITAL INICIAL, no en el primer cierre: la curva
+    # empieza el primer dia operado, y si los primeros dias pierden, medir el
+    # bache desde ese primer cierre (ya mas bajo) lo recortaba. Visto el
+    # 14-sep-2026 con «2.1B 50K»: -6,24 % aqui frente al -7,34 % de su curva
+    # guardada, que si incluye el punto del capital.
+    peak = np.maximum(np.maximum.accumulate(np.maximum(eq, 1e-9)), max(float(init_cash), 1e-9))
     dd_pct = (eq / peak - 1.0) * 100.0
     max_dd = float(dd_pct.min()) if len(dd_pct) else 0.0
 

@@ -1,35 +1,43 @@
 "use client";
 
-// Estanteria de estrategias: el cuadro rectangular con filas FINAS (mas
-// delgadas que las de Robustez, a peticion) que se usa para el baul generico,
-// el portfolio y la incubadora. Cada fila lleva sus metricas tipicas, el
-// distintivo de normalizacion y las acciones que le pase el contenedor.
+// Estanteria de estrategias: el cuadro rectangular con filas FINAS de UNA
+// linea, estilo hoja de calculo (pedido el 14-sep-2026: el baul crecia y habia
+// que bajar y bajar), que se usa para el baul generico, el portfolio y la
+// incubadora. Las etiquetas de las metricas van UNA vez, en la cabecera del
+// cuadro, y no repetidas en cada fila; el cuadro tiene altura tope y scroll
+// interno con la cabecera fija. Cada fila lleva el distintivo de normalizacion
+// y las acciones que le pase el contenedor; al desplegarla se ven todas las
+// condiciones y el minigrafico (que se carga en ese momento, no antes).
 
 import React, { useMemo, useState } from "react";
 import { CircleAlert, ChevronRight } from "lucide-react";
 import { color, font, radius } from "@/components/ui/tokens";
 import { Help } from "@/components/robustez/help";
 import { RenameableName } from "@/components/robustez/shared";
-import {
-  ConditionList,
-  KeyVals,
-  SectionTitle,
-  executionLines,
-} from "@/components/robustez/StrategyPicker";
-import { flattenConditions, formatUniverseRule, riskLines } from "@/lib/robustez/formatStrategy";
 import type { PortfolioStrategy } from "@/lib/api_portfolio_lab";
+import { StrategyDetail } from "./StrategyDetail";
 
 const num = (v: number | null | undefined, d = 2, suffix = "") =>
   v == null || !Number.isFinite(v) ? "—" : `${v.toFixed(d)}${suffix}`;
 
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+/** Celda numerica de la fila: sin etiqueta (va en la cabecera del cuadro). */
+function Cell({ value, tone }: { value: string; tone?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, minWidth: 52 }}>
-      <span style={{ fontSize: 8.5, letterSpacing: "0.08em", textTransform: "uppercase", color: color.textMuted, fontFamily: font.sans }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 12, fontFamily: font.mono, color: tone || color.textPrimary }}>{value}</span>
-    </div>
+    <span style={{ fontSize: 11.5, fontFamily: font.mono, color: tone || color.textPrimary, textAlign: "right", whiteSpace: "nowrap" }}>
+      {value}
+    </span>
+  );
+}
+
+/** Columnas de la fila y de la cabecera: chevron, nombre, corrida, estado,
+ *  cinco metricas y las acciones. Compartidas para que cuadren. */
+const COLS = "14px minmax(180px, 1fr) 150px 132px 64px 60px 52px 48px 56px auto";
+
+function HeadCell({ children, right }: { children: React.ReactNode; right?: boolean }) {
+  return (
+    <span style={{ fontSize: 8.5, letterSpacing: "0.09em", textTransform: "uppercase", color: color.textMuted, fontFamily: font.sans, textAlign: right ? "right" : "left", whiteSpace: "nowrap" }}>
+      {children}
+    </span>
   );
 }
 
@@ -71,7 +79,7 @@ function NormBadge({ s }: { s: PortfolioStrategy }) {
           padding: "2px 8px",
         }}
       >
-        se normalizará{n.exact ? "" : " (aprox.)"}
+        se normalizará{n.exact ? "" : " ≈"}
       </span>
       <Help title="Corrida sin normalizar">
         Esta corrida se guardó con {n.issues.join(", ")}. El motor del portfolio la lleva al dominio común
@@ -151,19 +159,31 @@ export function StrategyShelf({
   actions,
   curves = {},
   onRename,
+  onOpen,
+  maxRows = 12,
 }: {
   title: string;
   hint?: string;
   strategies: PortfolioStrategy[];
   emptyText: string;
   actions?: (s: PortfolioStrategy) => React.ReactNode;
-  /** Curvas de equity PRECARGADAS por el contenedor (BaulTab): al desplegar
-   *  una fila el minigrafico ya esta en memoria y sale al instante. */
+  /** Curvas de equity que el contenedor (BaulTab) ya tiene en memoria. */
   curves?: Record<string, CurveState>;
   /** Renombrado inline. Si se omite, el nombre se pinta sin lapiz. */
   onRename?: (s: PortfolioStrategy, newName: string) => Promise<void>;
+  /** Se llama al DESPLEGAR una fila: el contenedor carga la curva entonces.
+   *  Antes se precargaban todas al abrir la pagina, trece llamadas a la vez
+   *  que se serializaban en el backend y dejaban el listado en timeout. */
+  onOpen?: (s: PortfolioStrategy) => void;
+  /** Filas visibles sin scroll; a partir de ahi el cuadro hace scroll interno. */
+  maxRows?: number;
 }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const ROW_H = 28;
+  const toggleRow = (s: PortfolioStrategy, open: boolean) => {
+    setOpenId(open ? null : s.id);
+    if (!open) onOpen?.(s);
+  };
 
   return (
     <section
@@ -193,174 +213,123 @@ export function StrategyShelf({
       {strategies.length === 0 ? (
         <div style={{ padding: "18px 20px", fontSize: 12, color: color.textMuted, fontFamily: font.sans }}>{emptyText}</div>
       ) : (
-        strategies.map((s, i) => {
+      // Con una fila desplegada el cuadro crece: el detalle (condiciones y
+      // minigrafico) no cabe en doce filas y leerlo con scroll interno era
+      // incomodo. Al plegarla vuelve a su altura tope.
+      <div style={{ maxHeight: openId ? undefined : ROW_H * maxRows + 24, overflowY: "auto" }}>
+        {/* Cabecera de columnas, fija al hacer scroll. */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: COLS,
+            columnGap: 10,
+            alignItems: "center",
+            padding: "4px 14px",
+            position: "sticky",
+            top: 0,
+            zIndex: 1,
+            background: color.bgSurface,
+            borderBottom: `0.5px solid ${color.border}`,
+          }}
+        >
+          <span />
+          <HeadCell>Estrategia</HeadCell>
+          <HeadCell>Corrida</HeadCell>
+          <HeadCell>Estado</HeadCell>
+          <HeadCell right>Retorno</HeadCell>
+          <HeadCell right>Max DD</HeadCell>
+          <HeadCell right>Win</HeadCell>
+          <HeadCell right>PF</HeadCell>
+          <HeadCell right>Sharpe</HeadCell>
+          <span />
+        </div>
+        {strategies.map((s) => {
           const open = openId === s.id;
           const r = s.run;
           return (
-            <div key={s.id} style={{ borderTop: i === 0 ? "none" : `0.5px solid ${color.border}` }}>
+            <div key={s.id} style={{ borderTop: `0.5px solid ${color.border}` }}>
               <div
                 role="button"
                 tabIndex={0}
                 aria-expanded={open}
-                onClick={() => setOpenId(open ? null : s.id)}
+                onClick={() => toggleRow(s, open)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    setOpenId(open ? null : s.id);
+                    toggleRow(s, open);
                   }
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-ec-surface-hover)")}
-                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = open ? color.bgElevated : "transparent")}
                 style={{
-                  display: "flex",
+                  display: "grid",
+                  gridTemplateColumns: COLS,
+                  columnGap: 10,
                   alignItems: "center",
-                  gap: 10,
-                  padding: "6px 14px",
+                  height: ROW_H,
+                  padding: "0 14px",
                   cursor: "pointer",
                   transition: "background 120ms",
                   outline: "none",
+                  background: open ? color.bgElevated : "transparent",
                 }}
               >
                 <ChevronRight
                   style={{
-                    width: 13,
-                    height: 13,
+                    width: 12,
+                    height: 12,
                     strokeWidth: 1.5,
                     color: color.textMuted,
-                    flexShrink: 0,
                     transform: open ? "rotate(90deg)" : "none",
                     transition: "transform 150ms",
                   }}
                 />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontFamily: font.sans, color: color.textHigh }}>
-                    {onRename ? (
-                      <RenameableName name={s.name} onRename={(n) => onRename(s, n)} />
-                    ) : (
-                      <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {s.name}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 10, fontFamily: font.sans, color: color.textMuted }}>
-                    {r
-                      ? `${r.total_trades ?? "?"} trades · corrida del ${(r.executed_at || "").slice(0, 16).replace("T", " ")}`
-                      : "sin backtest guardado"}
-                  </div>
+                <div style={{ minWidth: 0, fontSize: 12, fontFamily: font.sans, color: color.textHigh, display: "flex", alignItems: "center" }}>
+                  {onRename ? (
+                    <RenameableName name={s.name} onRename={(n) => onRename(s, n)} textStyle={{ fontSize: 12 }} />
+                  ) : (
+                    <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.name}
+                    </span>
+                  )}
                 </div>
-
+                <span style={{ fontSize: 10.5, fontFamily: font.mono, color: color.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {r
+                    ? `${r.total_trades ?? "?"} tr · ${(r.executed_at || "").slice(0, 10)}`
+                    : "sin backtest"}
+                </span>
                 {r ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
+                  <>
                     <NormBadge s={s} />
-                    <Stat label="Retorno" value={num(r.total_return_pct, 1, "%")} tone={(r.total_return_pct ?? 0) >= 0 ? color.profit : color.loss} />
-                    <Stat label="Max DD" value={num(r.max_drawdown_pct, 1, "%")} tone={color.loss} />
-                    <Stat label="Win" value={num(r.win_rate, 1, "%")} />
-                    <Stat label="PF" value={num(r.profit_factor, 2)} />
-                    <Stat label="Sharpe" value={num(r.sharpe_ratio, 2)} />
-                  </div>
+                    <Cell value={num(r.total_return_pct, 1, "%")} tone={(r.total_return_pct ?? 0) >= 0 ? color.profit : color.loss} />
+                    <Cell value={num(r.max_drawdown_pct, 1, "%")} tone={color.loss} />
+                    <Cell value={num(r.win_rate, 1, "%")} />
+                    <Cell value={num(r.profit_factor, 2)} />
+                    <Cell value={num(r.sharpe_ratio, 2)} />
+                  </>
                 ) : (
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: color.warning, fontFamily: font.sans, flexShrink: 0 }}>
-                    <CircleAlert style={{ width: 12, height: 12, strokeWidth: 1.5 }} />
-                    no analizable
-                  </span>
+                  <>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10, color: color.warning, fontFamily: font.sans, whiteSpace: "nowrap" }}>
+                      <CircleAlert style={{ width: 11, height: 11, strokeWidth: 1.5 }} />
+                      no analizable
+                    </span>
+                    <Cell value="—" tone={color.textMuted} />
+                    <Cell value="—" tone={color.textMuted} />
+                    <Cell value="—" tone={color.textMuted} />
+                    <Cell value="—" tone={color.textMuted} />
+                    <Cell value="—" tone={color.textMuted} />
+                  </>
                 )}
-
-                {actions && (
-                  <div style={{ display: "flex", gap: 6, flexShrink: 0, marginLeft: 4 }} onClick={(e) => e.stopPropagation()}>
-                    {actions(s)}
-                  </div>
-                )}
+                <div style={{ display: "flex", gap: 5, justifyContent: "flex-end", minWidth: 0 }} onClick={(e) => e.stopPropagation()}>
+                  {actions?.(s)}
+                </div>
               </div>
 
-              {open &&
-                (() => {
-                  // Mismo desplegable que el StrategyPicker de Robustez: TODAS
-                  // las condiciones de la estrategia, mas el minigrafico de la
-                  // curva simulada.
-                  const def = (s.definition || {}) as Record<string, any>;
-                  const entry = flattenConditions(def.entry_logic?.root_condition);
-                  const exit = flattenConditions(def.exit_logic?.root_condition);
-                  const uni = (def.universe_filters?.rules || []) as Record<string, any>[];
-                  const risk = riskLines(def.risk_management);
-                  const windows = (def.entry_logic?.entry_time_windows || []) as Record<string, any>[];
-                  const exec = executionLines(r?.backtest_params as Record<string, any> | undefined);
-                  const curve = curves[s.id];
-                  return (
-                    <div style={{ background: color.bgBase, padding: "14px 18px 16px 37px" }}>
-                      {s.description && (
-                        <p style={{ margin: "0 0 12px", fontSize: 11.5, fontFamily: font.sans, color: color.textSecondary, lineHeight: 1.55, maxWidth: 720 }}>
-                          {s.description}
-                        </p>
-                      )}
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 22 }}>
-                        <div>
-                          <SectionTitle>Universo</SectionTitle>
-                          <KeyVals
-                            rows={[
-                              ["Sesgo", String(def.bias ?? "—")],
-                              ["Dia", String(def.apply_day ?? "—")],
-                              ["Rango", `${def.universe_filters?.date_from ?? "?"} → ${def.universe_filters?.date_to ?? "?"}`],
-                              ["Sesiones", ((def.market_sessions as string[]) || []).join(", ") || "—"],
-                              ...uni.map((rule) => ["Filtro", formatUniverseRule(rule)] as [string, string]),
-                            ]}
-                          />
-                        </div>
-
-                        <div>
-                          <SectionTitle>Entrada</SectionTitle>
-                          <ConditionList items={entry} />
-                          {windows.length > 0 && (
-                            <div style={{ marginTop: 10 }}>
-                              <KeyVals rows={windows.map((w) => ["Ventana", `${w.from_time} — ${w.to_time}`] as [string, string])} />
-                            </div>
-                          )}
-                        </div>
-
-                        <div>
-                          <SectionTitle>Salida</SectionTitle>
-                          <ConditionList items={exit} />
-                        </div>
-
-                        <div>
-                          <SectionTitle>Riesgo</SectionTitle>
-                          <KeyVals rows={risk} />
-                        </div>
-
-                        {exec.length > 0 && (
-                          <div>
-                            <SectionTitle>Ejecucion — con que se corrio</SectionTitle>
-                            <KeyVals rows={exec} />
-                          </div>
-                        )}
-
-                        {r && (
-                          <div>
-                            <SectionTitle>Ultimos 6 meses (simulado)</SectionTitle>
-                            {curve === "loading" || curve === undefined ? (
-                              <span style={{ fontSize: 11, color: color.textMuted, fontFamily: font.sans }}>cargando curva…</span>
-                            ) : curve === "error" ? (
-                              <span style={{ fontSize: 11, color: color.warning, fontFamily: font.sans }}>no se pudo cargar la curva</span>
-                            ) : (
-                              <Sparkline points={curve} />
-                            )}
-                            <p style={{ margin: "7px 0 0", fontSize: 9.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.45, maxWidth: 260 }}>
-                              Tramo final de la curva de la corrida guardada. El seguimiento en vivo llega
-                              con la Monitorización.
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                      {!r && (
-                        <span style={{ fontSize: 11.5, fontFamily: font.sans, color: color.textMuted, display: "block", marginTop: 10 }}>
-                          Ejecuta y guarda un backtest de esta estrategia desde el Backtester para poder estudiarla aqui.
-                        </span>
-                      )}
-                    </div>
-                  );
-                })()}
+              {open && <StrategyDetail s={s} curve={curves[s.id]} />}
             </div>
           );
-        })
+        })}
+      </div>
       )}
     </section>
   );
@@ -400,8 +369,8 @@ export function ShelfAction({
       disabled={disabled}
       title={title}
       style={{
-        padding: "3px 9px",
-        fontSize: 10,
+        padding: "2px 7px",
+        fontSize: 9.5,
         fontFamily: font.sans,
         letterSpacing: "0.03em",
         border: `0.5px solid ${borde}`,

@@ -102,7 +102,7 @@ y reconciliación), después el resto.)*
 - Parámetros: N1, N2, N3 en % sobre la entrada (o según estructura); margen del límite sobre el ask en cada nivel, en % (pequeño en N1/N2, grande en N3); espera tras pasar N3 (≈ 30 min). Nunca precios fijos: todo en % porque depende del precio de cada acción. Valores: los da Jaume, van al cuadro de mandos.
 - Si la acción falla: N3 sin llenar y sin condiciones de cisne negro → por definir (C5).
 - Prueba: tabla de casos con precio caminando por N1, N2, N3 y pasando de largo; réplica en sombra.
-- Estado: BORRADOR (12-sep). Pendiente: (a) confirmar con el socio; (b) RTH: Jaume cree que igual, no lo tiene claro; (c) [API, PRIORITARIO] la idea de Jaume es UN solo stop con varios triggers (los tres niveles dentro de la misma orden), porque un evento así va muy rápido y no da tiempo a que el bot cancele y reponga tres stops; hay que confirmar con el PDF si DAS lo admite. Si no lo admite, se decide entonces cómo hacerlo; (d) cómo se define «no consigue cerrar» en cada nivel (tiempo o precio que supera el límite) → C5; (e) condiciones de cisne negro → G1/G2.
+- Estado: BORRADOR (12-sep). Pendiente: (a) confirmar con el socio; (b) RTH: Jaume cree que igual, no lo tiene claro; (c) RESUELTO el 14-sep (Jaume lo ha comprobado): un stop NO puede llevar tres triggers, pero SÍ se pueden dejar puestos TRES stop limit a la vez, cada uno con su trigger y su límite (el de arriba con más margen). Los tres residen en DAS desde la entrada: no hay que cancelar y reponer nada durante el evento. Consecuencia: R-C-11 (limpieza de stops sobrantes); (d) cómo se define «no consigue cerrar» en cada nivel (tiempo o precio que supera el límite) → C5; (e) condiciones de cisne negro → G1/G2.
 - Origen: C1. Directriz de Jaume del 12-sep.
 
 ### R-C-02 · Paso de un nivel de stop al siguiente
@@ -115,6 +115,17 @@ y reconciliación), después el resto.)*
 - Prueba: tabla de casos (se compra todo / nada / parte) en cada nivel.
 - Estado: BORRADOR (12-sep). NO SE PUEDE CERRAR hasta saber cómo funcionan los stops en DAS [API]: si admite varios triggers en un stop, si hacen falta varios stops, o si el bot tiene que vigilar el precio y cerrar a mercado él mismo.
 - Origen: C5. Directriz de Jaume del 12-sep. Aclaración: el ÚNICO criterio de tiempo en los stops es el de después del tercer nivel (cisne negro, espera de media hora), y se especifica en el bloque de contingencias, no aquí.
+
+### R-C-11 · Tres stops residentes: ajuste de cantidades y limpieza (no quedarse largo)
+- Situación: hay tres stop limit puestos a la vez (N1, N2, N3) sobre un corto. Si cada uno lleva la cantidad completa y se ejecutan varios, se compraría de más y la cuenta quedaría LARGA sin querer.
+- Detección: cada fill de cualquiera de los tres stops, confirmado por DAS.
+- Acción: (1) con cada fill, reducir la cantidad de los stops que quedan a las acciones que siguen en corto (procedimiento de R-C-07); (2) en cuanto la posición quede a cero (se ha salido entera por N1, o por N1 + N2), CANCELAR inmediatamente todos los stops pendientes; (3) si pese a todo se ejecuta un stop de más y aparece una posición LARGA, cerrarla a mercado inmediatamente y avisar.
+- Quién la ejecuta: ejecutor + vigilante (comprobar que no hay stops huérfanos ni posición larga).
+- Parámetros: ninguno.
+- Si la acción falla: la cancelación no se confirma → vigilante vigila el fill de más y aplica (3). Aviso en todo caso.
+- Prueba: tabla de casos (sale todo en N1 / en N1+N2 / parcial en cada uno; carrera fill-cancelación) y demo.
+- Estado: BORRADOR (14-sep). [API]: si DAS permite ligar los tres stops (OCO) para que se cancelen solos, mejor; si no, lo hace el bot.
+- Origen: C1 (aclaración de Jaume del 14-sep tras comprobar DAS).
 
 ### R-C-03 · Posición sin stop puesto en DAS
 - Situación: hay posición abierta y DAS no tiene el stop aceptado: justo tras la entrada, o porque DAS lo ha rechazado o cancelado.
@@ -195,7 +206,11 @@ y reconciliación), después el resto.)*
 - Estado: BORRADOR (13-sep). Aviso conocido: Massive incluye prints tardíos y de dark pool; un máximo de PM puede venir de un print que no estuvo en el libro. No se filtra (paridad con el backtester), pero es una fuente de diferencia entre nivel y precio real que se medirá en sombra.
 - Origen: C13. Directriz de Jaume del 13-sep.
 
-**Prints tardíos y dark pool (Jaume preguntó cómo se solventa, 13-sep):** no en el cálculo del nivel (paridad), sino en el DISPARO: (1) stop de DAS que dispare por bid/ask, no por último precio, si DAS lo permite [API, C6]; (2) el vigilante exige que el precio se sostenga N segundos / N prints por encima del nivel antes de actuar; (3) medir en sombra cuántos niveles de estructura los fija un print tardío; solo si es frecuente se plantearía filtrarlos en lago y backtester a la vez.
+**Prints tardíos y dark pool (cerrado con Jaume, 13-sep).** Qué son: operaciones hechas fuera del libro que la cinta publica más tarde (de 20 ms a segundos); llegan en tiempo real como un print más, con hora de ejecución vieja. Nuestra orden nunca se ejecuta contra ellos; el único riesgo es que un stop que dispare por «último precio» se dispare por uno. Solución, sin esperar nada (prioridad: ejecutar en milisegundos, mínimo slippage):
+1. **El stop residente en DAS dispara por el ASK (corto) / BID (largo), no por último precio.** DECIDIDO: Jaume recuerda que DAS admite stops del tipo «Ask + 0,01», que obligan a reconocer el ask. Un print de dark pool no mueve el ask. PENDIENTE de contrastar con el PDF: cómo se escribe ese disparo en el comando del API (no si existe, sino la sintaxis) → C6.
+2. **El vigilante** mira el ask/bid de DAS (lo más simple) o, si lee el feed de operaciones de Massive, aplica el filtro del lago: ignorar prints con más de 10 ms entre ejecución y publicación (el feed trae las dos horas; las velas de 1 min no). Filtro por print, instantáneo.
+3. NO se espera N segundos ni N prints para disparar (idea retirada: sube el slippage). La única espera es la decisión de cisne negro DESPUÉS del tercer trigger.
+4. El nivel de estructura se sigue calculando con Massive sin filtrar (paridad con el backtester).
 
 ### R-C-10 · Stop al arrancar el bot con posiciones ya abiertas
 - Situación: el bot arranca (reinicio, caída y relanzamiento) y DAS tiene posiciones abiertas.
@@ -216,11 +231,128 @@ y reconciliación), después el resto.)*
 
 ### Área G · El precio se dispara
 
+**PENDIENTE G3 (14-sep), decisión importante, volver a preguntar:** tope de pérdida por posición y cómo distinguir cisne negro de squeeze. Lo que hay: (1) el tercer trigger N3 hace de tope por posición; no habrá una capa más por posición. (2) Lo que distingue cisne negro de squeeze es el TIEMPO, no el tamaño: si pasados 5-10 minutos de superar N3 el precio sigue arriba (y con volumen), no es fogonazo, es squeeze y se cierra a mercado; si ha vuelto, era fogonazo y se espera (Jaume prefiere 5-10 min a segundos). (3) Un tope de CUENTA como último cinturón («nunca más de X % de la cuenta en una posición, pase lo que pase»), que cierra aunque parezca fogonazo; se gestiona desde el cuadro de mandos. Riesgo que Jaume quiere meditar: un tope del 20 % de la cuenta y el bot confundiendo cisne negro con squeeze normal.
+
 ### Área F · Halts
+
+### R-F-01 · Halt de volatilidad (LULD) con posición dentro
+- Situación: el bot está en corto y la acción entra en halt de subida (limit up). k = halts UP del mismo ticker ACUMULADOS en todo el RTH del día (también los anteriores a la entrada del bot); los halts DOWN no cuentan.
+- Detección: estado de halt, precio de reapertura, bandas limit up / limit down y primera vela de 1 min tras reabrir. Massive NO da las bandas; se cree que DAS sí [API F1, F11: confirmar].
+- Acción, dos escenarios:
+  1. **Reabre con el stop POR ENCIMA del precio**: se MANTIENE la posición mientras k < 3. Con k = 3, cierre a MERCADO en cuanto reabra. Siempre que k = 2 (ya ha habido dos halts, da igual cuándo entramos), si el precio se acerca a un 3-5 % del limit up, se SALE A MERCADO antes de que pare para evitar el tercero (Jaume, 15-sep: antes 2-3 %); si no da tiempo y para, se aplica lo anterior: mercado al reabrir.
+  2. **Stop POR DEBAJO del precio** (se lo ha saltado o por cualquier otra causa): se SALE sí o sí, a MERCADO al reabrir, sin tope de subida. Solo se REENTRA si la estrategia lo dice Y la primera vela de 1 min tras la reapertura sube menos de un 6 % Y k < 3. (Dato de Jaume: si la primera vela tras reabrir supera el 6 %, la probabilidad de que encadene otro halt es > 80 %.) Tras reentrar se aplica la misma lógica con el nuevo stop: con k = 1, escenario 1 normal; con k = 2, la salida a mercado a 3-5 % de la banda y mercado al reabrir si para.
+- Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento k y distancia a la banda) + guarda (reentrada).
+- Parámetros: k máximo = 3; distancia a la banda para salir con k = 2: 3-5 %, salida a mercado; primera vela máxima para reentrar: 6 %; ruta de salida en reapertura (pendiente PDF).
+- Si la acción falla: la orden de cierre en la reapertura no se llena → R-C-01/R-C-02 (niveles) y R-C-03 (sin stop, si DAS lo canceló en el halt).
+- Prueba: replicar sobre los halts de 2B con status exacto (24_status_estrategias.py) y tabla de casos (k = 1, 2, 3; stop encima/debajo; primera vela < / ≥ 6 %).
+- Estado: BORRADOR (14-sep, reescrita tras los datos de `34_tras_reapertura.py`). TODO el área F se repasa con el PDF (fuente de halts y bandas, rutas, qué hace DAS con los stops en un halt). Nota: los máximos de ×10-×44 del histórico son de días con 7-40 halts encadenados, no de lo que pasa tras el tercero; con salida en k = 3 el 90 % de los días con ≥ 3 halts queda por debajo de +144 % sobre el primer halt.
+- Origen: F2, F5, D8. Directrices de Jaume del 14-sep.
+
+### R-F-02 · Stop por encima del limit up: bajar el stop bajo la banda
+- Situación: al colocar (o recalcular) el stop, el nivel queda POR ENCIMA del precio de limit up (la banda LULD superior, que se recibe como dato [API F11]).
+- Detección: comparar el nivel del stop con la banda superior vigente cada vez que se coloca o se mueve el stop y cada vez que la banda cambia.
+- Acción: si el stop está por debajo de la banda, nada. Si está por encima o coincide, colocar el stop un 1-2 % POR DEBAJO de la banda, para evitar a toda costa entrar en el halt con la posición abierta.
+- Quién la ejecuta: guarda (cálculo) + ejecutor (recolocar con R-C-05).
+- Parámetros: margen bajo la banda = 1-2 % (cuadro de mandos).
+- Si la acción falla: no se puede recolocar → R-C-03.
+- Prueba: tabla de casos con bandas de 5/10/20 % y stops a distintas distancias; comprobar en sombra cuántas veces actúa.
+- Estado: BORRADOR (14-sep). Depende de que DAS entregue la banda [API].
+- Origen: F11 (y decisión del 5-sep sobre bandas LULD). Directriz de Jaume del 14-sep.
+
+### R-F-03 · Sin reentrada tras salir por stop y halt
+- Situación: la posición se cerró por stop y la acción entró en halt (antes o después de la salida).
+- Detección: salida por stop registrada en el diario + halt detectado en el mismo ticker.
+- Acción: la estrategia NO vuelve a entrar en ese ticker salvo que se cumplan las tres condiciones de R-F-01 escenario 2: la estrategia lo pide, la primera vela de 1 min tras la reapertura sube < 6 %, y k < 3.
+- Quién la ejecuta: guarda.
+- Parámetros: primera vela máxima 6 %; k < 3.
+- Si la acción falla: —
+- Prueba: tabla de casos.
+- Estado: BORRADOR (14-sep). Condición fijada el 14-sep.
+- Origen: F5 / D6. Directriz de Jaume del 14-sep.
+
+### R-F-04 · Orden de entrada y halt
+- Situación: (a) hay una orden de entrada enviada y sin ejecutar cuando la acción se para; (b) la señal se genera con la vela justo anterior al halt y la acción ya está parada cuando el bot va a enviar.
+- Detección: estado de halt (DAS) + orden viva en DAS / señal pendiente en el diario.
+- Acción: (a) se CANCELA la entrada; al reabrir se reevalúa la estrategia y, si en ese momento manda estar dentro, se entra. (b) la señal se GUARDA y se ejecuta al reabrir si las condiciones de la estrategia siguen valiendo Y la primera vela tras la reapertura no ha subido más de un X % (X por decidir con un estudio).
+- Quién la ejecuta: ejecutor (cancelar) + motor/guarda (reevaluar).
+- Parámetros: X % de subida máxima de la primera vela tras reabrir: PENDIENTE (estudio).
+- Si la acción falla: la cancelación no se confirma antes de la reapertura → tratar como posición nueva si se llena (R-F-01 aplica desde ese momento).
+- Prueba: tabla de casos; sombra.
+- Estado: BORRADOR (14-sep). Pendiente: X % (estudio) y confirmación con el PDF.
+- Origen: F3 y F13. Directriz de Jaume del 14-sep.
+
+### R-F-05 · Halts largos: T1 (noticia) y T12 (Nasdaq pide información)
+- Situación: la posición está dentro cuando la acción entra en un halt que no es de volatilidad.
+- Detección: motivo del halt (T1 / T12) por DAS o fuente externa [API F9].
+- Acción: (a) **T1**: misma lógica de reapertura que R-F-01: reabre por debajo del stop → nada; por encima → mercado, salvo que la subida supere el 250 %, en cuyo caso no se cierra y se manda alerta máxima por Telegram para que cierre un humano. (b) **T12**: el bot AVISA y el control pasa al humano; el bot no hace nada más con esa posición.
+- Quién la ejecuta: ejecutor + vigilante (aviso); humano en T12 y en el caso > 1.000 %.
+- Parámetros: subida máxima de reapertura para cierre automático en T1 = 250 % (Jaume: 1.000 → 500 → 250 el 14-sep, a la vista de los datos: ningún T1 continuó más de ×2,2 tras reabrir). En LULD no hay tope: manda k (R-F-01).
+- Si la acción falla: —
+- Prueba: replicar sobre los T1/T12 del histórico (fichas_t12_t1.csv, t1_sin_reabrir_detalle.csv).
+- Estado: BORRADOR (14-sep). Datos de referencia (8 años, todo el mercado, `34_tras_reapertura.py`, 14-sep):
+  - T1 que reabren ≥ +70 % sobre el precio de parada (32 casos en horario 04:00-16:00; el mayor CAPR 3-dic-2025 +329 %; ABVX 22-jul-2025 +475 % fue en after-hours: paró a las 16:01 y reabrió a las 18:30, fuera del horario del bot): DESPUÉS de reabrir suben de mediana un +5 % más (p90 +62 %); 11 de 32 subieron más de un 20 % adicional y 13 cerraron por debajo de la reapertura. La mayor subida adicional tras un T1 fue SMMT 30-may-2024, +113 % (en 60 min), luego BGXX +104 % y BENEW +90 %. Ninguna llegó a doblar y media la reapertura. Un umbral del 250 % en T1 solo habría dejado sin cerrar automáticamente CAPR 3-dic-2025 (+329 %), que después cerró un 2 % por debajo de la reapertura.
+  - LULD: la reapertura en sí casi no salta (mediana +0,1 %, p99 +34 %, máx +309 % MKD 2020). El peligro es la CADENA después: entre los que reabren ≥ +100 % (26), la subida adicional mediana es +25 %, p90 +274 %, máx +673 % (CCG 18-sep-2023); AIRE 23-oct-2023 reabrió +100 % y subió otro +1.151 %. Y los que más subieron tras reabrir lo hicieron desde reaperturas PLANAS: ATXG 31-ago-2022 (+4.449 % tras un halt que reabrió −23 %), QMMM 9-sep-2025 (+3.305 %), INHD 8-jun-2026 (+2.451 %), ZJYL, LTRPB. Conclusión: para T1 el umbral de «no cerrar» puede ser bajo (nada continuó más de ×2,1); para LULD lo que manda es el recuento de halts (R-F-01), no el salto de reapertura.
+- Origen: F6 y F7. Directriz de Jaume del 14-sep.
+
+### R-F-06 · Halt en premercado
+- Situación: la posición está dentro y la acción entra en halt (T1/T12; en PM no hay LULD) y reabre en premercado.
+- Detección: igual que R-F-05.
+- Acción: misma lógica que R-F-01/R-F-05, con una diferencia: en PM no existen órdenes a mercado. Si el bot tiene que cerrar, pone una orden LÍMITE en la ruta más rápida (lista de rutas preferibles: PDF), REMOVIENDO liquidez (límite que cruza el ask) para salir lo antes posible. Si ya hay un stop limit puesto y se entra en T1/T12 en PM, ese stop se cambia por otro que remueva más liquidez (límite más alejado sobre el ask) para poder salir en cuanto reabra. Si el halt reabre ya en RTH, aplica lo de R-F-01/R-F-05 tal cual.
+- Quién la ejecuta: ejecutor.
+- Parámetros: margen sobre el ask del límite de salida en PM tras halt (más ancho que el de N1/N2); ruta rápida (PDF).
+- Si la acción falla: R-C-02 (siguiente nivel) / R-C-03.
+- Prueba: caso NEXI 2026 (T12 en PM que reabrió el mismo día) y tabla de casos.
+- Estado: BORRADOR (14-sep). Rutas pendientes del PDF.
+- Origen: F8. Directriz de Jaume del 14-sep.
+
+**F10 (SSR), decidido el 14-sep:** SÍ se entra en acciones en SSR. No hay regla de seguridad por SSR (el área F fija criterios de salida, no de entrada). Matiz de Jaume para el área H: habrá acciones cuyos locates sean de UN SOLO USO (cada corto obliga a comprar otro paquete); ahí el cálculo del fade / EV frente al coste del locate se repite CADA VEZ que se piden locates, no una vez por día. Queda B19 y el área H.
+
+**F12 (medias sesiones), decidido el 14-sep:** se opera normal. El calendario ya está en las estrategias, en la actualización de datos y en el sistema; el bot hereda la hora de cierre de ese día sin regla aparte.
 
 ### Área I · Riesgo y cortacircuitos
 
+**I1 (pérdida diaria máxima), decidido el 14-sep: NO HAY cortacircuito de pérdida diaria en el bot, de momento.** No habrá reglas de pérdida máxima diaria más allá de lo que marque cada estrategia y de las reglas de proceso de este libro. Si algún día se pone, se contaría realizado + latente. El bot no se apaga «por que sí»: se controla por Telegram, pero no hay apagado automático por pérdida. Datos: Sage ofrece autoliquidación en RTH, no en PM. Pendiente de volver a preguntar más adelante.
+
+### R-I-01 · Capital disponible manda: entrar con lo que quede
+- Situación: llega una señal de entrada y hay que dimensionarla.
+- Detección: capital libre de la cuenta (DAS, buying power [API E6]) frente al tamaño que pide la estrategia (riesgo fijo del cuadro de mandos).
+- Acción: no hay tope de número de posiciones: lo limita el capital. Si no queda capital libre, no se entra. Si queda solo una parte (la estrategia pide el 2 % y queda el 1 %), se entra con lo que quede (el 1 %).
+- Quién la ejecuta: guarda (dimensionado).
+- Parámetros: ninguno propio; el tamaño por estrategia y por pirámide viene del cuadro de mandos.
+- Si la acción falla: capital libre no se puede leer de DAS → no se entra (enlaza con K11).
+- Prueba: tabla de casos (libre ≥ pedido / parcial / cero).
+- Estado: BORRADOR (14-sep).
+- Origen: I5. Directriz de Jaume del 14-sep.
+
+### R-I-02 · El tamaño lo fija el cuadro de mandos, nunca el bot
+- Situación: cualquier decisión de tamaño: entrada, cada nivel de pirámide, capital por estrategia, escalón del canario.
+- Detección: valores del cuadro de mandos.
+- Acción: el bot aplica el riesgo fijo que Jaume ponga en el cuadro de mandos para cada estrategia y cada piramidación. El bot NO decide tamaños ni escalones; subir o bajar el escalón del canario lo hace Jaume cambiando el valor.
+- Quién la ejecuta: guarda.
+- Parámetros: todos en el cuadro de mandos.
+- Si la acción falla: sin valor en el cuadro de mandos → no se entra.
+- Prueba: tabla de casos.
+- Estado: BORRADOR (14-sep).
+- Origen: I10. Directriz de Jaume del 14-sep.
+
+### R-I-03 · Cambios en caliente: el cuadro de mandos manda siempre
+- Situación: se cambia un parámetro (riesgo, tope, margen) a media sesión.
+- Detección: nuevo valor en el cuadro de mandos.
+- Acción: el bot lo aplica en la SIGUIENTE señal (no reabre ni recalcula lo ya abierto salvo que otra regla lo diga). Si el JSON de la estrategia y el cuadro de mandos difieren, manda el cuadro de mandos, siempre.
+- Quién la ejecuta: guarda.
+- Parámetros: —
+- Si la acción falla: el bot no puede leer el cuadro de mandos → sigue con el último valor conocido y avisa.
+- Prueba: cambiar un valor en sombra y comprobar que la siguiente señal lo usa; registrar quién cambió qué (M9).
+- Estado: BORRADOR (14-sep).
+- Origen: I12. Directriz de Jaume del 14-sep.
+
+**Nota de Jaume (14-sep) para las áreas C/D/E:** la gestión de stops y posiciones habrá que hacerla bien por ESTRATEGIA, porque cada una meterá cantidades distintas a mercado. Se irá viendo.
+
 ### Área B · Entrada
+
+**B1 (precio que se mueve al enviar), ABIERTA el 14-sep, forma decidida y números en blanco.** Forma: entrada en corto con orden LÍMITE al bid menos un margen (remover liquidez con techo), en PM y en RTH; a mercado solo en casos contados por definir. Si el bid sube (a favor), se recoloca al nuevo bid tantas veces como haga falta mientras la señal siga vigente. Si baja (en contra), se persigue hasta una tolerancia sobre el precio de la señal y luego se abandona. Variante SSR: un tick por encima del bid (agrega liquidez) [API: cómo indica DAS el SSR]. Margen y tolerancia en % con suelo de 1 céntimo, distintos por sesión, al cuadro de mandos. Los VALORES salen del estudio de abajo, no a ojo: el spread del 6 % y los libros de 1-7 k$ del estudio de cisnes son de días de fogonazo, no de entradas normales.
+
+**ESTUDIO PENDIENTE (Jaume avisa, previsto 15-sep a primera hora): libro en entradas normales vs no normales.** Muestra: 300-500 ticker-días al azar de las entradas reales de 1B (PM, run 8b773d84) y 2B (RTH, run 6023ec78) + los ticker-días de fogonazo y de cadena de halts como grupo «no normal». Datos: NBBO consolidado de Databento (EQUS.MINI mbp-1, 2023+) con operaciones, 1-3 $ (OK de Jaume dado el 14-sep). Medir: (1) en el segundo de la señal y los 10 siguientes: spread (cts y %), acciones en el bid, movimiento a 1/5/10 s, probabilidad de ejecución y coste de un límite al bid, bid −0,3 %, bid −0,7 %, y en el ask → margen y tolerancia de B1, y de rebote el slippage «asumible»; (2) en el cruce del stop: segundos de +0 a +1/+3/+5/+10 % sobre el nivel y margen sobre el ask que habría bastado para ejecutar el 90/95/99 % de los stop limit, normal y fogonazo por separado → márgenes de N1, N2, N3. Contrastar con los fills reales del socio (stop-limit ×1,007 del trigger, 95 % ≤ ×1,07) y con los fills de DAS de Jaume (tarea P7). Script nuevo en `D:ot_senales\estudio_cisnes\`.
 
 ### Área H · Locates
 

@@ -9,6 +9,12 @@
 // Los modelos de escalado (fix ratio, Kelly, HRP, momentum, EV, drawdown) y
 // la frecuencia de rebalanceo llegan en la fase 2 como sub-modulos de esta
 // misma pestaña.
+//
+// La cuarta sub-pestaña, «En crudo» (14-sep-2026), es otra cosa: las corridas
+// TAL CUAL se guardaron (sin normalizar, cada una con sus costes) bajo un
+// nocional por trade y un tope de exposicion. Vive en ./crudo y no pasa por
+// el motor normalizado; y su selector son TODAS las estrategias con corrida,
+// no solo las del cuadro Portfolio.
 
 import React, { useEffect, useMemo, useState } from "react";
 import { color, font, radius } from "@/components/ui/tokens";
@@ -34,6 +40,7 @@ import { DrawdownRibbon } from "@/components/robustez/charts/BasicCharts";
 import { PortfolioCurves, SERIES_PALETTE, type XMode, type YMode } from "./charts/PortfolioCurves";
 import { CorrelationMatrix } from "./charts/CorrelationMatrix";
 import { PnlCalendar } from "./PnlCalendar";
+import { CrudoTab } from "./crudo/CrudoTab";
 import { ChevronRight } from "lucide-react";
 import {
   runPortfolioCombine,
@@ -85,7 +92,7 @@ export function PortfolioTab({ strategies }: { strategies: PortfolioStrategy[] }
   const [showCalendar, setShowCalendar] = useState(false);
 
   // F2: sub-pestañas y configuracion compartida de los modelos.
-  const [sub, setSub] = useState<"general" | "modelos" | "comparar">("general");
+  const [sub, setSub] = useState<"general" | "modelos" | "comparar" | "crudo">("general");
   const [modelCfg, setModelCfg] = useState<ModelCfg>(DEFAULT_MODEL_CFG);
 
   const [mcOut, setMcOut] = useState<MonteCarloOut | null>(null);
@@ -194,12 +201,39 @@ export function PortfolioTab({ strategies }: { strategies: PortfolioStrategy[] }
   const scalingEngine = useScalingSection(sectionCtx);
   const compareEngine = useCompareSection(sectionCtx);
 
+  const subTabs = (
+    <SubTabs
+      value={sub}
+      onChange={setSub}
+      options={[
+        { value: "general", label: "Imagen general" },
+        { value: "modelos", label: "Modelos (Escalado y Pesos)" },
+        { value: "comparar", label: "Comparativa" },
+        { value: "crudo", label: "En crudo" },
+      ]}
+    />
+  );
+
+  // La vista en crudo no depende del cuadro Portfolio: se pinta aunque este vacio.
+  if (sub === "crudo") {
+    return (
+      <div>
+        {subTabs}
+        <CrudoTab strategies={strategies} />
+      </div>
+    );
+  }
+
   if (!pool.length) {
     return (
-      <Placeholder>
-        El cuadro <strong>Portfolio</strong> está vacío. Ve a la pestaña Baúl y añade estrategias con
-        «+ Portfolio» — hacen falta corridas guardadas, idealmente normalizadas.
-      </Placeholder>
+      <div>
+        {subTabs}
+        <Placeholder>
+          El cuadro <strong>Portfolio</strong> está vacío. Ve a la pestaña Baúl y añade estrategias con
+          «+ Portfolio» — hacen falta corridas guardadas, idealmente normalizadas. Para estudiar corridas
+          sin normalizar, con sus propios costes, usa <strong>En crudo</strong>.
+        </Placeholder>
+      </div>
     );
   }
 
@@ -215,15 +249,7 @@ export function PortfolioTab({ strategies }: { strategies: PortfolioStrategy[] }
 
   return (
     <div>
-      <SubTabs
-        value={sub}
-        onChange={setSub}
-        options={[
-          { value: "general", label: "Imagen general" },
-          { value: "modelos", label: "Modelos (Escalado y Pesos)" },
-          { value: "comparar", label: "Comparativa" },
-        ]}
-      />
+      {subTabs}
       <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 340px) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
       {/* ── Rail de configuracion (la ejecucion es comun a las tres vistas).
           maxHeight + scroll interno: con dos tarjetas el rail supera la

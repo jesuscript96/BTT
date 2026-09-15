@@ -145,6 +145,113 @@ def monitor_snapshot_from_result(result: dict, start_date: str) -> dict:
     }
 
 
+# ── Cache persistente de backtest_params por corrida ─────────────────────
+# El listado del baul necesita los parametros con los que se corrio cada
+# estrategia (normalizacion, condiciones), y sacarlos con `json_extract` del
+# `results_json` obliga a leer y parsear el documento ENTERO de cada corrida
+# (varios MB; 32 MB para las 13 ultimas). En esta maquina eso va contra un
+# disco mecanico que, nada mas arrancar la app, esta ademas leyendo el lago
+# para la cache del universo y para el bot: la primera llamada del dia paso de
+# 20 s y el frontend la dio por muerta (15-sep-2026). Los parametros de una
+# corrida no cambian nunca (su id es el job_id; un re-guardado del mismo job
+# renueva `executed_at`, que va en la clave), asi que se guardan UNA vez en
+# una tabla pequena y el listado pasa a ser solo columnas tipadas.
+
+def ensure_params_cache_table(con) -> None:
+    _ensure_once(
+        con,
+        "params_cache",
+        (
+            """
+            CREATE TABLE IF NOT EXISTS portfolio_lab_params_cache (
+                run_id VARCHAR NOT NULL,
+                executed_at VARCHAR NOT NULL,
+                params JSON,
+                PRIMARY KEY (run_id, executed_at)
+            )
+            """,
+        ),
+    )
+
+
+def list_runs_light(con, strategy_ids_wanted: set[str]) -> dict[str, dict]:
+    """Como `robustness_service.list_runs_for_strategies` pero con los
+    `backtest_params` sacados de la cache persistente; solo las corridas que
+    aun no esten se extraen del JSON (una vez) y se guardan.
+    """
+    rows = con.execute(
+        """
+        SELECT id, strategy_ids, executed_at, total_trades, win_rate,
+               profit_factor, total_return_pct, max_drawdown_pct, sharpe_ratio
+        FROM backtest_results
+        ORDER BY executed_at DESC
+        """
+    ).fetchall()
+    best: dict[str, dict] = {}
+    for r in rows:
+        for sid in rs._as_list(r[1]):
+            if sid not in strategy_ids_wanted or sid in best:
+                continue
+            best[sid] = {
+                "run_id": r[0],
+                "executed_at": str(r[2]) if r[2] else None,
+                "total_trades": r[3],
+                "win_rate": r[4],
+                "profit_factor": r[5],
+                "total_return_pct": r[6],
+                "max_drawdown_pct": r[7],
+                "sharpe_ratio": r[8],
+                "backtest_params": {},
+            }
+    if not best:
+        return best
+
+    ensure_params_cache_table(con)
+    keys = {(m["run_id"], m["executed_at"] or "") for m in best.values()}
+    ids = sorted({k[0] for k in keys})
+    placeholders = ", ".join("?" for _ in ids)
+    cached: dict[tuple[str, str], dict] = {}
+    for run_id, ts, params in con.execute(
+        f"SELECT run_id, executed_at, params FROM portfolio_lab_params_cache WHERE run_id IN ({placeholders})",
+        ids,
+    ).fetchall():
+        cached[(run_id, ts)] = rs._as_dict(params)
+
+    missing = [m for m in best.values() if (m["run_id"], m["executed_at"] or "") not in cached]
+    if missing:
+        # Solo las que faltan pasan por el JSON entero, y solo esta vez.
+        miss_ids = [m["run_id"] for m in missing]
+        ph = ", ".join("?" for _ in miss_ids)
+        try:
+            fetched = {
+                r[0]: rs._as_dict(r[1])
+                for r in con.execute(
+                    f"SELECT id, json_extract(results_json, '$.backtest_params') "
+                    f"FROM backtest_results WHERE id IN ({ph})",
+                    miss_ids,
+                ).fetchall()
+            }
+        except Exception as e:  # noqa: BLE001 - mejor sin parametros que sin listado
+            print(f"[WARN] backtest_params no extraidos: {e}")
+            fetched = {}
+        import json as _json
+        for m in missing:
+            params = fetched.get(m["run_id"]) or {}
+            cached[(m["run_id"], m["executed_at"] or "")] = params
+            if params:
+                try:
+                    con.execute(
+                        "INSERT OR REPLACE INTO portfolio_lab_params_cache (run_id, executed_at, params) VALUES (?, ?, ?)",
+                        [m["run_id"], m["executed_at"] or "", _json.dumps(params)],
+                    )
+                except Exception as e:  # noqa: BLE001 - la cache es un extra
+                    print(f"[WARN] cache de backtest_params no escrita: {e}")
+
+    for m in best.values():
+        m["backtest_params"] = cached.get((m["run_id"], m["executed_at"] or ""), {})
+    return best
+
+
 def get_assignments(con) -> dict[str, list[str]]:
     ensure_assignments_table(con)
     rows = con.execute(

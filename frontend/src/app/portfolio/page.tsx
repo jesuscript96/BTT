@@ -37,16 +37,26 @@ export default function PortfolioPage() {
   // Que se acaba de borrar, para decirlo con numeros en vez de un "hecho" seco.
   const [aviso, setAviso] = useState<string | null>(null);
 
+  // `intento` fuerza una recarga desde el boton «reintentar» del error.
+  const [intento, setIntento] = useState(0);
+  const [lento, setLento] = useState(false);
   useEffect(() => {
     let alive = true;
+    // (loading/error/lento los deja listos el estado inicial o «reintentar»)
+    // Pasados 6 s se explica por que puede tardar (arranque de la app).
+    const aviso = setTimeout(() => alive && setLento(true), 6000);
     listPortfolioStrategies()
       .then((list) => alive && setStrategies(list))
       .catch((e) => alive && setError(e?.message || "No se pudo cargar el listado de estrategias"))
-      .finally(() => alive && setLoading(false));
+      .finally(() => {
+        clearTimeout(aviso);
+        if (alive) setLoading(false);
+      });
     return () => {
       alive = false;
+      clearTimeout(aviso);
     };
-  }, []);
+  }, [intento]);
 
   const toggle = useCallback(async (s: PortfolioStrategy, bucket: Bucket, present: boolean) => {
     setBusyId(s.id);
@@ -114,7 +124,26 @@ export default function PortfolioPage() {
 
       {error && (
         <div style={{ marginBottom: 18 }}>
-          <ErrorBox>{error}</ErrorBox>
+          <ErrorBox>
+            {error}
+            {loading ? null : (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoading(true);
+                    setError(null);
+                    setLento(false);
+                    setIntento((k) => k + 1);
+                  }}
+                  style={{ background: "none", border: `0.5px solid ${color.border}`, borderRadius: 4, padding: "1px 8px", color: color.textHigh, cursor: "pointer", fontSize: 11, fontFamily: font.sans, marginLeft: 8 }}
+                >
+                  reintentar
+                </button>
+              </>
+            )}
+          </ErrorBox>
         </div>
       )}
 
@@ -151,8 +180,14 @@ export default function PortfolioPage() {
         // auto-guardados viven en backtest_results, no en strategies.
         <RecentRunsTab />
       ) : loading ? (
-        <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: color.textMuted, fontFamily: font.sans }}>
+        <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: color.textMuted, fontFamily: font.sans, lineHeight: 1.6 }}>
           Cargando estrategias…
+          {lento && (
+            <div style={{ fontSize: 11.5, marginTop: 6 }}>
+              Está tardando: nada más arrancar la app, el backend y el bot leen el lago del disco y esta lectura va
+              detrás. Puede llegar al minuto; después va en un par de segundos.
+            </div>
+          )}
         </div>
       ) : tab === "baul" ? (
         <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} onRename={renombrar} busyId={busyId} />

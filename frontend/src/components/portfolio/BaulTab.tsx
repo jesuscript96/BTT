@@ -5,7 +5,7 @@
 // guardan en el backend (tabla portfolio_lab_assignments) y por eso
 // sobreviven a recargas y reinicios.
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ReadingNote } from "@/components/robustez/shared";
 import { StrategyShelf, ShelfAction, type CurveState } from "./StrategyShelf";
@@ -50,29 +50,23 @@ export function BaulTab({
   const inPortfolio = strategies.filter((s) => s.buckets.includes("portfolio"));
   const inIncubator = strategies.filter((s) => s.buckets.includes("incubadora"));
 
-  // Precarga de las curvas de equity de TODAS las estrategias con corrida
-  // (~0,3 s cada una, en paralelo): al desplegar una fila, el minigrafico de
-  // los ultimos 6 meses ya esta en memoria y sale al instante.
+  // La curva de equity se pide AL DESPLEGAR la fila, una a una, y se guarda
+  // para no volver a pedirla. Antes se precargaban todas al abrir la pagina:
+  // trece llamadas a la vez que el backend serializaba (~12 s) y que dejaban
+  // el propio listado en timeout de 20 s (14-sep-2026). Ahora la primera
+  // apertura de una fila tarda ~1 s (la corrida se lee del disco) y las
+  // siguientes nada: el backend la deja en cache.
   const [curves, setCurves] = useState<Record<string, CurveState>>({});
-  useEffect(() => {
-    let alive = true;
-    const pending = strategies.filter((s) => s.run && !curves[s.id]);
-    if (!pending.length) return;
+  const cargarCurva = useCallback((s: PortfolioStrategy) => {
+    if (!s.run) return;
     setCurves((c) => {
-      const next = { ...c };
-      for (const s of pending) next[s.id] = "loading";
-      return next;
-    });
-    for (const s of pending) {
+      if (c[s.id] && c[s.id] !== "error") return c;
       getPortfolioStrategyEquity(s.id)
-        .then((r) => alive && setCurves((c) => ({ ...c, [s.id]: r.equity })))
-        .catch(() => alive && setCurves((c) => ({ ...c, [s.id]: "error" })));
-    }
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategies]);
+        .then((r) => setCurves((prev) => ({ ...prev, [s.id]: r.equity })))
+        .catch(() => setCurves((prev) => ({ ...prev, [s.id]: "error" })));
+      return { ...c, [s.id]: "loading" };
+    });
+  }, []);
 
   const toggles = (s: PortfolioStrategy) => {
     const p = s.buckets.includes("portfolio");
@@ -159,6 +153,7 @@ export function BaulTab({
 
       <StrategyShelf
         curves={curves}
+        onOpen={cargarCurva}
         title="Baúl genérico"
         hint="todas las estrategias guardadas · pulsa una fila para ver con qué se corrió"
         strategies={strategies}
@@ -169,6 +164,7 @@ export function BaulTab({
 
       <StrategyShelf
         curves={curves}
+        onOpen={cargarCurva}
         title="Portfolio"
         hint="las que se estudian juntas en la pestaña Portfolio"
         strategies={inPortfolio}
@@ -179,6 +175,7 @@ export function BaulTab({
 
       <StrategyShelf
         curves={curves}
+        onOpen={cargarCurva}
         title="Incubadora"
         hint="listas para salir, en observación antes de operar en real"
         strategies={inIncubator}
