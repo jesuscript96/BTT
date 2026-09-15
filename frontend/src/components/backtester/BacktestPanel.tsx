@@ -16,6 +16,7 @@ import {
   previewStrategyDeletion,
   type DeletionPreview,
 } from "@/lib/api_portfolio_lab";
+import { getSharedStrategies, type SharedStrategyEntry } from "@/lib/api";
 
 export interface BacktestPanelParams {
   dataset_id: string;
@@ -120,6 +121,7 @@ interface BacktestPanelProps {
   onClearPendingDataset?: () => void;
   activeStrategy?: any;
   onConfigureStrategy?: (strategyId: string) => void;
+  onOpenSharedDraft?: (entry: SharedStrategyEntry) => void;
 }
 
 function formatConditionGroup(group: any): string {
@@ -352,7 +354,9 @@ export default function BacktestPanel({
   loading,
   isDarkMode = false,
   activeStrategy,
-  onConfigureStrategy
+  builderActive = false,
+  onConfigureStrategy,
+  onOpenSharedDraft
 }: BacktestPanelProps) {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   /* POST-MVP AGENTIC - descomentar cuando se active ChatBotAgentic.tsx (ver docs/plan_asistente_edgie.md)
@@ -467,6 +471,9 @@ export default function BacktestPanel({
   */
 
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  // Compartidas para el apartado propio del desplegable: el mismo listado que
+  // la pestaña Compartidas (estrategias_compartidas/), sin filtrar las propias.
+  const [sharedList, setSharedList] = useState<SharedStrategyEntry[]>([]);
   const isInitialMountRef = useRef(true);
   const [selectedDataset, setSelectedDataset] = useState("");
   const [selectedStrategy, setSelectedStrategy] = useState("");
@@ -686,10 +693,10 @@ export default function BacktestPanel({
       if (s.length > 0) {
         const hasPrefillStrategy = prefill?.strategy_id && s.some(st => st.id === prefill.strategy_id);
         const hasSavedStrategy = savedState?.selectedStrategy && s.some(st => st.id === savedState.selectedStrategy);
-        const selectedId = hasPrefillStrategy 
-          ? prefill!.strategy_id! 
-          : hasSavedStrategy 
-          ? savedState.selectedStrategy 
+        const selectedId = hasPrefillStrategy
+          ? prefill!.strategy_id!
+          : hasSavedStrategy
+          ? savedState.selectedStrategy
           : s[0].id;
         setSelectedStrategy(selectedId);
       }
@@ -697,6 +704,11 @@ export default function BacktestPanel({
       console.error("Error loading strategies:", e);
       failed = true;
     }
+    // Las compartidas alimentan el apartado propio del desplegable. Con catch
+    // aparte: si fallan, el desplegable sigue funcionando con las guardadas.
+    getSharedStrategies()
+      .then((r) => setSharedList(r.strategies))
+      .catch((e) => console.error("Error loading shared strategies:", e));
 
     if (savedState) {
       if (savedState.initCash !== undefined) setInitCash(savedState.initCash);
@@ -788,6 +800,11 @@ export default function BacktestPanel({
     fetchStrategies()
       .then((s) => setStrategies(s))
       .catch((e) => console.error("Error refreshing strategies:", e));
+    // Las compartidas también se refrescan: compartir/borrar desde la pestaña
+    // o un merge del otro dev cambia el listado.
+    getSharedStrategies()
+      .then((r) => setSharedList(r.strategies))
+      .catch((e) => console.error("Error refreshing shared strategies:", e));
   }, [refreshTrigger]);
 
   useEffect(() => {
@@ -1137,6 +1154,19 @@ export default function BacktestPanel({
               <select
                 value={selectedStrategy}
                 onChange={(e) => {
+                  // Una compartida del apartado de abajo no se "selecciona":
+                  // no existe en la BD ni trae corrida guardada, así que se
+                  // abre como borrador (mismo camino que «Abrir borrador» de
+                  // la pestaña Compartidas). El efecto de sincronía con
+                  // activeStrategy fijará luego el id draft_shared_* y el
+                  // desplegable pasará a mostrar [Borrador] nombre.
+                  if (e.target.value.startsWith("shared:")) {
+                    const entry = sharedList.find(
+                      (c) => `shared:${c.shared_by}/${c.filename}` === e.target.value,
+                    );
+                    if (entry) onOpenSharedDraft?.(entry);
+                    return;
+                  }
                   setSelectedStrategy(e.target.value);
                   cerrarConfirmBorrado();
                 }}
@@ -1168,6 +1198,18 @@ export default function BacktestPanel({
                     {s.name}
                   </option>
                 ))}
+                {onOpenSharedDraft && sharedList.length > 0 && (
+                  <optgroup label="compartidas · abren como borrador">
+                    {sharedList.map((c) => (
+                      <option
+                        key={`shared:${c.shared_by}/${c.filename}`}
+                        value={`shared:${c.shared_by}/${c.filename}`}
+                      >
+                        {c.name} · {c.shared_by}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
               {deletableStrategy && (
                 <button
@@ -1306,6 +1348,20 @@ export default function BacktestPanel({
                     lineHeight: '1.3',
                     wordBreak: 'break-word',
                   }}>{currentStrat?.name || (stratDef as any)?.name}</div>
+                )}
+
+                {/* Un borrador nacido de una compartida no tiene corrida
+                    guardada: la diferencia con una guardada del baúl hay que
+                    decirla aquí, o parece que al abrirla "no pasa nada". */}
+                {isDraft && selectedStrategy.startsWith("draft_shared_") && (
+                  <div style={{
+                    fontFamily: 'var(--color-ec-sans)',
+                    fontSize: 10,
+                    color: 'var(--color-ec-text-muted)',
+                    lineHeight: '1.4',
+                  }}>
+                    abierta desde Compartidas: solo trae la configuración — corre el backtest para ver resultados
+                  </div>
                 )}
 
                 {cleanDesc && (

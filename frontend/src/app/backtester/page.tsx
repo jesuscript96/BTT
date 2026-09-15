@@ -1557,6 +1557,8 @@ export default function Home() {
               loading={loading}
               isDarkMode={isDarkMode}
               activeStrategy={computedActiveStrategy}
+              builderActive={mode === 'builder'}
+              onOpenSharedDraft={abrirCompartidaComoBorrador}
               onConfigureStrategy={async (strategyId) => {
                 if (!strategyId) return;
 
