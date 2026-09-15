@@ -76,6 +76,13 @@ Parado cerró el proceso; las dos estrategias marcadas; universo 5.696, cierres 
 
 Guardar `bot_alerts_runner.py` con el backend en `--reload` lo dejó ~8 min sin responder con el mercado abierto (13:22–13:30; el worker no volvía). Cuarta recarga atascada en tres días. El bot no se enteró (no es hijo del backend desde `2036971`; Telegram lo manda él). **Con el visto bueno de Jaume, `D:\lanzador_btt\arrancar_btt.ps1` ya arranca uvicorn SIN `--reload`.** Consecuencia para el siguiente chat: **tocar el backend no llega al backend que corre; hay que reiniciarlo a mano** (matar el cmd «BTT backend» + sus python sin `/T`, relanzar sin reload, fuera de sesión) y verificar el efecto. Ojo con el sandbox de PowerShell: `Stop-Process` se bloquea; usar `powershell -NoProfile -Command` desde Bash.
 
+### Por la noche: los dos huecos, arreglados
+
+Jaume aprobó los dos arreglos («Vale a las dos cosas»), con el bot apagado:
+
+- **Cuaderno propio del bot.** `bot.py` abre un `FileHandler` al arrancar: `D:/bot_senales/logs/bot_AAAA-MM-DD.log` (append, cabecera «arranque … (PID)», borra los de más de 90 días, ~100 KB/día). Probado lanzándolo DETACHED como lo hace la página: escribe. La causa del hueco era ese `DETACHED_PROCESS`: sin consola, cmd no consigue pasarle a python la redirección `>> bot_hoy.log 2>&1` del .bat (los `echo` sí entran; python no). **Desde el 16-sep el log del bot se lee en `logs/`.**
+- **`/estado` 100 % memoria** (`d1d4632`): `bas.estado_cacheado()` y la base solo con la cache fría; Telegram por `tg.probar_sin_esperar()` (hilo de fondo, fallos cacheados 15 s). Verificado tras relanzar el backend (19:53, sin `--reload`): con 6 curvas de equity en paralelo (17,5 s), `/estado` pasó de 1,93 s a 0,14 s en el peor sondeo. 7 tests nuevos; 197 de bot_alerts pasan.
+
 ### Desde el 9-sep, para quien retome el bot (todo en commits y en la memoria de Claude)
 
 9-sep: festivos NYSE y horario de verano (`bot_alerts_calendario.py`); el botón Vigilar no encendía (env `BOT_ALERTS_ARRANCADO_POR_LA_PAGINA`). 10-sep: solo avisaba el primer tramo de un TP parcial → dedup por `(entry_idx, n_tramo)`, para cualquier tipo de parcial; fuga del token de Telegram en los logs de httpx **aplazada por decisión de Jaume** (no replantearla). 11-sep: Parado CIERRA el proceso, Vigilar arranca limpio, y recarga en caliente de estrategias (`estrategias_version` en `/estado`, `MotorAlertas.actualizar()` conserva la memoria del día). Pendientes conocidos: el bucle «sin estrategias activas» no publica el diario mientras espera; `posicion_restante` no se guarda en la base (solo va en Telegram, a propósito).
