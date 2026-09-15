@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import ssl
+import threading
 import time
 from typing import TYPE_CHECKING, Iterable
 
@@ -331,3 +332,69 @@ def probar() -> dict:
         # Un fallo NO se cachea: si es un corte pasajero, el siguiente intento
         # debe volver a probar en vez de dar por muerto a Telegram un minuto.
         return {"ok": False, "detalle": f"error de red: {exc}"}
+
+
+# ── La misma comprobacion, pero SIN ESPERAR a la red ─────────────────────────
+#
+# `probar()` cachea los exitos 60 s, pero cuando la cache caduca la peticion que
+# llega en ese momento PAGA la llamada a Telegram (hasta TIMEOUT = 10 s), y los
+# fallos no se cachean: con Telegram o el DNS lentos, TODAS las peticiones
+# esperan. Eso viviria dentro de GET /estado, que el bot sondea cada 5 s con
+# 8 s de paciencia: el 15-sep-2026 el bot anoto 22 «timed out» leyendo su
+# propio estado, en racimos, mientras el backend respondia en milisegundos al
+# resto. Una llamada de red no puede estar en el camino del latido.
+#
+# Aqui la red va SIEMPRE en un hilo aparte. Quien pregunta recibe al instante
+# lo ultimo que se supo (aunque este caducado) y, si toca refrescar, se lanza
+# el refresco de fondo. Los fallos si se recuerdan, TTL_FALLO segundos, para no
+# relanzar un hilo por peticion cuando Telegram esta caido.
+TTL_FALLO = 15.0
+_cache_fallo: tuple[float, dict] | None = None
+_refresco_en_curso = False
+_LOCK_PROBAR = threading.Lock()
+
+
+def _refrescar_probar() -> None:
+    global _cache_fallo, _refresco_en_curso
+    try:
+        res = probar()                       # la de siempre: red + cache de exitos
+        with _LOCK_PROBAR:
+            _cache_fallo = None if res.get("ok") else (time.time(), res)
+    finally:
+        with _LOCK_PROBAR:
+            _refresco_en_curso = False
+
+
+def probar_sin_esperar() -> dict:
+    """Lo que sabe de Telegram AHORA, sin tocar la red en este hilo.
+
+    Devuelve la ultima respuesta buena si tiene menos de TTL_PROBAR; si no, el
+    ultimo fallo si tiene menos de TTL_FALLO; y si toca refrescar, lanza la
+    llamada real en un hilo de fondo y mientras tanto devuelve lo ultimo que
+    hubo (o «comprobando…» si nunca hubo nada). Nunca bloquea mas que un lock.
+    """
+    global _refresco_en_curso
+    token, chat = _cfg()
+    if not token:
+        return {"ok": False, "detalle": "falta TELEGRAM_BOT_TOKEN", "enviando": False}
+
+    ahora = time.time()
+    lanzar = False
+    with _LOCK_PROBAR:
+        bueno, fallo = _cache_probar, _cache_fallo
+        if bueno is not None and ahora - bueno[0] < TTL_PROBAR:
+            return dict(bueno[1])
+        if fallo is not None and ahora - fallo[0] < TTL_FALLO:
+            return dict(fallo[1])
+        if not _refresco_en_curso:
+            _refresco_en_curso = lanzar = True
+    if lanzar:
+        threading.Thread(target=_refrescar_probar, name="telegram-probar", daemon=True).start()
+
+    # Mientras llega el refresco: lo ultimo que se supo, aunque este viejo.
+    if bueno is not None:
+        return dict(bueno[1])
+    if fallo is not None:
+        return dict(fallo[1])
+    return {"ok": False, "detalle": "comprobando…", "chat_id": chat or "(sin configurar)",
+            "enviando": envio_activo()}

@@ -330,20 +330,37 @@ def limpiar_eventos(antes_de: str):
 
 @router.get("/estado")
 def leer_estado():
-    """Si el bot deberia estar vigilando y cuando dio senales de vida."""
+    """Si el bot deberia estar vigilando y cuando dio senales de vida.
+
+    ES LO QUE HAY EN ESTE MOMENTO, Y SALE DE MEMORIA. Lo pide la pagina cada
+    2 s y el bot cada 5 s (con 8 s de paciencia), y todo lo que devuelve ya
+    vive en memoria: el latido, el radar y el detalle los manda el bot; el
+    interruptor lo pone la pagina; la version de las estrategias es un
+    contador. La base solo hace falta UNA vez, al arrancar el backend, para
+    recuperar el interruptor.
+
+    Antes abria una conexion a users.duckdb en cada peticion y llamaba a la
+    API de Telegram (getMe, hasta 10 s) cuando su cache de 60 s caducaba. Con
+    la pagina de Portfolio cargando curvas o Telegram lento, /estado se
+    atascaba y el bot anotaba «timed out» leyendo su propio estado: 22 veces
+    el 15-sep-2026, en racimos, sin que nada estuviera caido. Ninguna de las
+    dos cosas es «estado»; ninguna tiene que estar en el camino del latido.
+    """
     _guard()
-    con = get_user_db_connection(read_only=True)
-    try:
-        estado = bas.get_estado(con)
-        # Para que el bot sepa si tiene que recargar las estrategias, sin una
-        # peticion mas: ya pide esto cada 5 segundos.
-        estado["estrategias_version"] = bas.version_estrategias()
-        estado["telegram"] = tg.probar() if os.getenv("TELEGRAM_BOT_TOKEN") else {
-            "ok": False, "detalle": "sin token configurado", "enviando": False,
-        }
-        return estado
-    finally:
-        con.close()
+    estado = bas.estado_cacheado()
+    if estado is None:
+        con = get_user_db_connection(read_only=True)
+        try:
+            estado = bas.get_estado(con)
+        finally:
+            con.close()
+    # Para que el bot sepa si tiene que recargar las estrategias, sin una
+    # peticion mas: ya pide esto cada 5 segundos.
+    estado["estrategias_version"] = bas.version_estrategias()
+    estado["telegram"] = tg.probar_sin_esperar() if os.getenv("TELEGRAM_BOT_TOKEN") else {
+        "ok": False, "detalle": "sin token configurado", "enviando": False,
+    }
+    return estado
 
 
 class EstadoReq(BaseModel):
