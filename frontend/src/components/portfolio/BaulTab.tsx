@@ -22,6 +22,7 @@ export function BaulTab({
   onToggle,
   onDelete,
   onRename,
+  onMove,
   busyId,
 }: {
   strategies: PortfolioStrategy[];
@@ -29,6 +30,8 @@ export function BaulTab({
   /** Borrado DEFINITIVO: la estrategia, sus corridas y sus asignaciones. */
   onDelete: (s: PortfolioStrategy) => void;
   onRename: (s: PortfolioStrategy, newName: string) => Promise<void>;
+  /** Subir/bajar una fila dentro de la lista visible de ese cuadro. */
+  onMove?: (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => void;
   busyId: string | null;
 }) {
   // Confirmacion en dos pasos, en la propia fila: el borrado es irreversible y
@@ -154,6 +157,7 @@ export function BaulTab({
       <StrategyShelf
         curves={curves}
         onOpen={cargarCurva}
+        onMove={onMove}
         title="Baúl genérico"
         hint="todas las estrategias guardadas · pulsa una fila para ver con qué se corrió"
         strategies={strategies}
@@ -165,6 +169,7 @@ export function BaulTab({
       <StrategyShelf
         curves={curves}
         onOpen={cargarCurva}
+        onMove={onMove}
         title="Portfolio"
         hint="las que se estudian juntas en la pestaña Portfolio"
         strategies={inPortfolio}
@@ -176,6 +181,7 @@ export function BaulTab({
       <StrategyShelf
         curves={curves}
         onOpen={cargarCurva}
+        onMove={onMove}
         title="Incubadora"
         hint="listas para salir, en observación antes de operar en real"
         strategies={inIncubator}
@@ -185,7 +191,8 @@ export function BaulTab({
       />
 
       <p style={{ margin: 0, fontSize: 11, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
-        Una estrategia puede estar en los dos cuadros a la vez. <strong>Quitarla</strong> de un cuadro
+        Con <strong>▲ ▼</strong> subes o bajas una estrategia en la lista; es un solo orden para todas las listas
+        (Baúl, cuadros, «En crudo», Robustez) y se recuerda en este navegador. Una estrategia puede estar en los dos cuadros a la vez. <strong>Quitarla</strong> de un cuadro
         no borra nada: la estrategia y sus corridas siguen en el baúl genérico. <strong>Borrar</strong>,
         en el baúl genérico, no deja rastro: se lleva la estrategia, todas sus corridas guardadas (con
         sus ficheros de disco) y sus asignaciones. También caen las <strong>corridas de cartera</strong>

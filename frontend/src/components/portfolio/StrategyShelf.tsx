@@ -160,6 +160,7 @@ export function StrategyShelf({
   curves = {},
   onRename,
   onOpen,
+  onMove,
   maxRows = 12,
 }: {
   title: string;
@@ -175,6 +176,8 @@ export function StrategyShelf({
    *  Antes se precargaban todas al abrir la pagina, trece llamadas a la vez
    *  que se serializaban en el backend y dejaban el listado en timeout. */
   onOpen?: (s: PortfolioStrategy) => void;
+  /** Subir/bajar la fila dentro de este cuadro (se le pasan los ids visibles). */
+  onMove?: (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => void;
   /** Filas visibles sin scroll; a partir de ahi el cuadro hace scroll interno. */
   maxRows?: number;
 }) {
@@ -243,9 +246,10 @@ export function StrategyShelf({
           <HeadCell right>Sharpe</HeadCell>
           <span />
         </div>
-        {strategies.map((s) => {
+        {strategies.map((s, idx) => {
           const open = openId === s.id;
           const r = s.run;
+          const visibles = strategies.map((x) => x.id);
           return (
             <div key={s.id} style={{ borderTop: `0.5px solid ${color.border}` }}>
               <div
@@ -320,7 +324,13 @@ export function StrategyShelf({
                     <Cell value="—" tone={color.textMuted} />
                   </>
                 )}
-                <div style={{ display: "flex", gap: 5, justifyContent: "flex-end", minWidth: 0 }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ display: "flex", gap: 5, justifyContent: "flex-end", minWidth: 0, alignItems: "center" }} onClick={(e) => e.stopPropagation()}>
+                  {onMove && (
+                    <span style={{ display: "inline-flex", gap: 2, marginRight: 4 }}>
+                      <MoveBtn dir={-1} disabled={idx === 0} onClick={() => onMove(s, -1, visibles)} />
+                      <MoveBtn dir={1} disabled={idx === strategies.length - 1} onClick={() => onMove(s, 1, visibles)} />
+                    </span>
+                  )}
                   {actions?.(s)}
                 </div>
               </div>
@@ -332,6 +342,35 @@ export function StrategyShelf({
       </div>
       )}
     </section>
+  );
+}
+
+/** Flecha para subir o bajar la fila un puesto. Discreta: mismo gris que el
+ *  texto apagado, y se apaga del todo en los extremos. */
+export function MoveBtn({ dir, disabled, onClick }: { dir: -1 | 1; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={dir < 0 ? "Subir" : "Bajar"}
+      style={{
+        width: 18,
+        height: 18,
+        padding: 0,
+        border: `0.5px solid ${color.border}`,
+        borderRadius: radius.sm,
+        background: "transparent",
+        color: color.textSecondary,
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.25 : 1,
+        fontSize: 9,
+        lineHeight: 1,
+        fontFamily: font.sans,
+      }}
+    >
+      {dir < 0 ? "▲" : "▼"}
+    </button>
   );
 }
 

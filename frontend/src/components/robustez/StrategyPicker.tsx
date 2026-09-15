@@ -87,28 +87,54 @@ interface Props {
   loadingRunFor: string | null;
   /** Renombrado inline. Si se omite, el nombre se pinta sin lapiz. */
   onRename?: (s: RobustezStrategy, newName: string) => Promise<void>;
+  /** Subir/bajar la fila (mismo orden manual que las listas del Portfolio). */
+  onMove?: (s: RobustezStrategy, dir: -1 | 1, visibles: string[]) => void;
 }
 
 const num = (v: number | null | undefined, digits = 2, suffix = "") =>
   v == null || Number.isNaN(v) ? "—" : `${v.toFixed(digits)}${suffix}`;
 
-/** Metrica compacta de la cabecera de cada estrategia. */
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+/** Celda numerica de la fila: sin etiqueta (va UNA vez en la cabecera). */
+function Cell({ value, tone }: { value: string; tone?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1, minWidth: 52 }}>
-      <span
-        style={{
-          fontSize: 8.5,
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          color: color.textMuted,
-          fontFamily: font.sans,
-        }}
-      >
-        {label}
-      </span>
-      <span style={{ fontSize: 11.5, fontFamily: font.mono, color: tone || color.textHigh }}>{value}</span>
-    </div>
+    <span style={{ fontSize: 11.5, fontFamily: font.mono, color: tone || color.textHigh, textAlign: "right", whiteSpace: "nowrap" }}>
+      {value}
+    </span>
+  );
+}
+
+/** Columnas de la fila y de la cabecera (14-sep-2026: filas de UNA linea de
+ *  28 px, como el Baul y «En crudo» del Portfolio; antes eran de dos lineas
+ *  con la etiqueta de cada metrica repetida en cada fila). */
+const COLS = "14px minmax(180px, 1fr) 150px 64px 60px 52px 48px 56px 44px";
+
+function HeadCell({ children, right }: { children: React.ReactNode; right?: boolean }) {
+  return (
+    <span style={{ fontSize: 8.5, letterSpacing: "0.09em", textTransform: "uppercase", color: color.textMuted, fontFamily: font.sans, textAlign: right ? "right" : "left", whiteSpace: "nowrap" }}>
+      {children}
+    </span>
+  );
+}
+
+/** Flecha para subir o bajar la fila un puesto. */
+function MoveBtn({ dir, disabled, onClick }: { dir: -1 | 1; disabled?: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      disabled={disabled}
+      title={dir < 0 ? "Subir" : "Bajar"}
+      style={{
+        width: 18, height: 18, padding: 0, border: `0.5px solid ${color.border}`, borderRadius: radius.sm,
+        background: "transparent", color: color.textSecondary, cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.25 : 1, fontSize: 9, lineHeight: 1, fontFamily: font.sans,
+      }}
+    >
+      {dir < 0 ? "▲" : "▼"}
+    </button>
   );
 }
 
@@ -185,8 +211,10 @@ export function KeyVals({ rows }: { rows: Array<[string, string, React.ReactNode
   );
 }
 
-export default function StrategyPicker({ strategies, selectedId, onSelect, loadingRunFor, onRename }: Props) {
+export default function StrategyPicker({ strategies, selectedId, onSelect, loadingRunFor, onRename, onMove }: Props) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const ROW_H = 28;
+  const visibles = strategies.map((x) => x.id);
 
   if (!strategies.length) {
     return (
@@ -206,6 +234,26 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
 
   return (
     <div style={{ display: "flex", flexDirection: "column" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: COLS,
+          columnGap: 10,
+          alignItems: "center",
+          padding: "4px 14px 4px 16px",
+          borderBottom: `0.5px solid ${color.border}`,
+        }}
+      >
+        <span />
+        <HeadCell>Estrategia</HeadCell>
+        <HeadCell>Corrida</HeadCell>
+        <HeadCell right>Retorno</HeadCell>
+        <HeadCell right>Max DD</HeadCell>
+        <HeadCell right>Win</HeadCell>
+        <HeadCell right>PF</HeadCell>
+        <HeadCell right>Sharpe</HeadCell>
+        <span />
+      </div>
       {strategies.map((s, idx) => {
         const isExpanded = expandedId === s.id;
         const isSelected = selectedId === s.id;
@@ -237,13 +285,12 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
                 }
               }}
               style={{
-                display: "flex",
+                display: "grid",
+                gridTemplateColumns: COLS,
+                columnGap: 10,
                 alignItems: "center",
-                gap: 10,
-                // Filas finas, como las del baul del Portfolio (peticion del
-                // usuario 2026-08-24): la lista se recorre de un vistazo y no
-                // empuja el contenido util fuera de la pantalla.
-                padding: "5px 14px",
+                height: ROW_H,
+                padding: "0 14px",
                 cursor: "pointer",
                 background: isSelected ? color.bgElevated : "transparent",
                 borderLeft: `2px solid ${isSelected ? color.copper : "transparent"}`,
@@ -258,68 +305,62 @@ export default function StrategyPicker({ strategies, selectedId, onSelect, loadi
             >
               <ChevronRight
                 style={{
-                  width: 13,
-                  height: 13,
+                  width: 12,
+                  height: 12,
                   strokeWidth: 1.5,
-                  flexShrink: 0,
                   color: color.textMuted,
                   transform: isExpanded ? "rotate(90deg)" : "none",
                   transition: "transform 150ms",
                 }}
               />
 
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                  {isSelected && <Check style={{ width: 12, height: 12, color: color.copper, flexShrink: 0 }} />}
-                  {onRename ? (
-                    <RenameableName
-                      name={s.name || "Sin nombre"}
-                      onRename={(n) => onRename(s, n)}
-                      textStyle={{ fontSize: 12.5, color: color.textHigh, minWidth: 0 }}
-                    />
-                  ) : (
-                    <span
-                      style={{
-                        fontSize: 12.5,
-                        fontFamily: font.sans,
-                        color: color.textHigh,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {s.name || "Sin nombre"}
-                    </span>
-                  )}
-                  {loadingRunFor === s.id && (
-                    <span style={{ fontSize: 10, color: color.copper, fontFamily: font.sans }}>cargando…</span>
-                  )}
-                </div>
-                <div style={{ fontSize: 9.5, color: color.textMuted, fontFamily: font.sans }}>
-                  {hasRun
-                    ? `${s.run!.total_trades ?? 0} trades · corrida del ${(s.run!.executed_at || "").slice(0, 16).replace("T", " ")}`
-                    : "sin backtest guardado"}
-                </div>
+              <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 7 }}>
+                {isSelected && <Check style={{ width: 12, height: 12, color: color.copper, flexShrink: 0 }} />}
+                {onRename ? (
+                  <RenameableName
+                    name={s.name || "Sin nombre"}
+                    onRename={(n) => onRename(s, n)}
+                    textStyle={{ fontSize: 12, color: color.textHigh, minWidth: 0 }}
+                  />
+                ) : (
+                  <span style={{ fontSize: 12, fontFamily: font.sans, color: color.textHigh, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {s.name || "Sin nombre"}
+                  </span>
+                )}
+                {loadingRunFor === s.id && (
+                  <span style={{ fontSize: 10, color: color.copper, fontFamily: font.sans, flexShrink: 0 }}>cargando…</span>
+                )}
               </div>
 
+              <span style={{ fontSize: 10.5, fontFamily: font.mono, color: color.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {hasRun ? `${s.run!.total_trades ?? 0} tr · ${(s.run!.executed_at || "").slice(0, 10)}` : "sin backtest"}
+              </span>
+
               {hasRun ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 15, flexShrink: 0 }}>
-                  <Stat
-                    label="Retorno"
-                    value={num(s.run!.total_return_pct, 1, "%")}
-                    tone={(s.run!.total_return_pct ?? 0) >= 0 ? color.profit : color.loss}
-                  />
-                  <Stat label="Max DD" value={num(s.run!.max_drawdown_pct, 1, "%")} tone={color.loss} />
-                  <Stat label="Win" value={num(s.run!.win_rate, 1, "%")} />
-                  <Stat label="PF" value={num(s.run!.profit_factor, 2)} />
-                  <Stat label="Sharpe" value={num(s.run!.sharpe_ratio, 2)} />
-                </div>
+                <>
+                  <Cell value={num(s.run!.total_return_pct, 1, "%")} tone={(s.run!.total_return_pct ?? 0) >= 0 ? color.profit : color.loss} />
+                  <Cell value={num(s.run!.max_drawdown_pct, 1, "%")} tone={color.loss} />
+                  <Cell value={num(s.run!.win_rate, 1, "%")} />
+                  <Cell value={num(s.run!.profit_factor, 2)} />
+                  <Cell value={num(s.run!.sharpe_ratio, 2)} />
+                </>
               ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 5, color: color.warning, flexShrink: 0 }}>
-                  <CircleAlert style={{ width: 12, height: 12, strokeWidth: 1.5 }} />
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans }}>no analizable</span>
-                </div>
+                <>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: color.warning, fontSize: 10, fontFamily: font.sans, whiteSpace: "nowrap", gridColumn: "span 5" }}>
+                    <CircleAlert style={{ width: 11, height: 11, strokeWidth: 1.5 }} />
+                    no analizable
+                  </span>
+                </>
               )}
+
+              <span style={{ display: "inline-flex", gap: 2, justifyContent: "flex-end" }} onClick={(e) => e.stopPropagation()}>
+                {onMove && (
+                  <>
+                    <MoveBtn dir={-1} disabled={idx === 0} onClick={() => onMove(s, -1, visibles)} />
+                    <MoveBtn dir={1} disabled={idx === strategies.length - 1} onClick={() => onMove(s, 1, visibles)} />
+                  </>
+                )}
+              </span>
             </div>
 
             {/* Desplegable: TODAS las condiciones */}

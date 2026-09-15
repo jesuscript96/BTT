@@ -54,6 +54,16 @@ Ademas: la exposicion (nocional abierto a la vez entre TODAS las estrategias,
 AL MINUTO: un trade de premercado que cierra a las 09:29 y uno de RTH que abre
 a las 09:35 no coinciden) y un tope opcional que salta o recorta lo que no cabe.
 
+«SOLO UNA ESTRATEGIA ABIERTA A LA VEZ POR ACCION» (`one_per_ticker`, Jaume,
+15-sep-2026): en cada ticker entra la primera estrategia que da senal y,
+mientras su posicion este abierta, ninguna otra entra en ese ticker; cuando
+sale (stop, take profit, lo que sea) vuelve a entrar la primera que de senal.
+Se resuelve ANTES de dimensionar, por ticker y al minuto, con la hora de
+entrada y de salida guardadas; a igual minuto manda el orden de la lista
+(la estrategia mas arriba). Limite honesto: las senales que una estrategia
+BLOQUEADA habria tenido despues, mientras en su propio backtest estaba dentro,
+no existen en los trades guardados; el resultado es, si acaso, conservador.
+
 La R de cada trade se define por su stop: neto / (|entrada - stop| * acciones).
 Es la misma en todas las estrategias y modos; sin stop guardado, 0.
 """
@@ -279,6 +289,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
       monthly_expenses   $/mes del portfolio (una cuenta)
       max_exposure_usd   tope de nocional abierto a la vez (0 = sin tope)
       cap_mode           "skip" | "trim"
+      one_per_ticker     solo una estrategia abierta a la vez por accion
       start_date/end_date
     """
     capital = _f(cfg.get("capital"))
@@ -290,6 +301,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     # cuenta crece (Jaume, 14-sep). Manda sobre el tope en $ si viene > 0.
     cap_pct = _f(cfg.get("max_exposure_pct"))
     trim = str(cfg.get("cap_mode") or "skip") == "trim"
+    one_per_ticker = bool(cfg.get("one_per_ticker"))
     d_from = str(cfg.get("start_date") or "") or None
     d_to = str(cfg.get("end_date") or "") or None
     default_exec = _exec_cfg(cfg.get("default_exec"))
@@ -311,6 +323,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     unsized = [0] * n
     sin_stop = [0] * n
     stop_aprox_n = [0] * n
+    blocked = [0] * n
     for i, run in enumerate(runs):
         params = run.get("backtest_params") or {}
         init_saved = _f(params.get("init_cash"), 10000.0)
@@ -382,6 +395,37 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             })
         by_day.append(idx)
         spans.append((min(dates), max(dates)) if dates else ("", ""))
+
+    # ── 1b. Solo una estrategia abierta a la vez por accion ──────────────
+    # Barrido de TODOS los trades por (hora de entrada, orden en la lista):
+    # un trade cuyo ticker tiene una posicion abierta (de la estrategia que
+    # sea) hasta un minuto posterior a su entrada se queda fuera. Va antes de
+    # dimensionar para que el capital del dia ya no cuente con los bloqueados.
+    if one_per_ticker and n > 1:
+        cola = sorted(
+            ((tr["t0"], i, tr) for i in range(n) for trades_d in by_day[i].values() for tr in trades_d),
+            key=lambda x: (x[0], x[1]),
+        )
+        abierto_hasta: dict[str, float] = {}
+        fuera: set[int] = set()
+        for t0, i, tr in cola:
+            tk = tr["ticker"]
+            if abierto_hasta.get(tk, -1.0) > t0:
+                fuera.add(id(tr))
+                blocked[i] += 1
+                continue
+            abierto_hasta[tk] = max(tr["t1"], t0)
+        if fuera:
+            for i in range(n):
+                idx = by_day[i]
+                for d in list(idx.keys()):
+                    idx[d] = [tr for tr in idx[d] if id(tr) not in fuera]
+                    if not idx[d]:
+                        del idx[d]
+            spans = [
+                (min(idx.keys()), max(idx.keys())) if idx else ("", "")
+                for idx in by_day
+            ]
 
     calendar = sorted({d for idx in by_day for d in idx})
     if not calendar:
@@ -660,6 +704,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "skipped": sum(1 for a in accepted if a["si"] == i and a.get("skipped")),
                 "trimmed": sum(1 for a in accepted if a["si"] == i and a.get("trimmed")),
                 "unsized": unsized[i],
+                "blocked": blocked[i],
             },
         })
 
@@ -687,6 +732,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     return {
         "config": {
             "capital": capital, "monthly_expenses": expenses, "max_exposure_usd": cap, "max_exposure_pct": cap_pct,
+            "one_per_ticker": one_per_ticker,
             "cap_mode": "trim" if trim else "skip", "start_date": d_from, "end_date": d_to,
             "default_exec": default_exec,
             "sizing": "exec", "notional_usd": 0.0, "per_strategy_usd": {},
@@ -701,7 +747,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             "max_usd": ple._r6(max(day_peak.values()) if day_peak else 0.0),
             "cap_usd": cap,
         },
-        "cap_report": {"taken": len(accepted), "skipped": skipped, "trimmed": trimmed, "unsized": sum(unsized)},
+        "cap_report": {"taken": len(accepted), "skipped": skipped, "trimmed": trimmed, "unsized": sum(unsized), "blocked": sum(blocked)},
         "metrics": metrics,
         "costs": {"fees": ple._r6(tot_fees), "slippage": ple._r6(tot_slip), "locates": ple._r6(tot_loc), "expenses": ple._r6(tot_exp)},
         "locates_random": lr.resumen(loc_prices_drawn) if loc_prices_drawn else None,

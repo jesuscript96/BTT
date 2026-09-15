@@ -76,7 +76,7 @@ const DEFAULT_CFG: Cfg = {
   end_date: "",
 };
 
-export function PortfolioTab({ strategies }: { strategies: PortfolioStrategy[] }) {
+export function PortfolioTab({ strategies, onMove }: { strategies: PortfolioStrategy[]; onMove?: (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => void }) {
   // Solo se estudian las del cuadro "Portfolio" del Baul.
   const pool = useMemo(() => strategies.filter((s) => s.buckets.includes("portfolio") && s.run), [strategies]);
 
@@ -219,7 +219,7 @@ export function PortfolioTab({ strategies }: { strategies: PortfolioStrategy[] }
     return (
       <div>
         {subTabs}
-        <CrudoTab strategies={strategies} />
+        <CrudoTab strategies={strategies} onMove={onMove} />
       </div>
     );
   }
