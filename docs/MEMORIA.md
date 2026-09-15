@@ -30,6 +30,44 @@
 
 ---
 
+## 2026-09-15 (Sailor, Portfolio) — El timeout volvió, el bot que se encendía solo, orden manual ▲▼, Robustez en filas finas y «una a la vez por acción»
+
+Dos sesiones de Jaume en el día sobre Portfolio/Baúl (la del VWAP y el bot va en la entrada de al lado). Commits `3e9d174` (mañana, subido a mediodía) y `6accbec` (tarde), los dos **subidos a `sailor-rama-desarrollo` y `staging`** por orden suya; con el segundo subieron también `d1d4632` y `7fbe10c` (bot de alertas, de su otra sesión). Backend relanzado a mano tres veces (09:02, 17:53 la otra sesión, 19:21), siempre con el bot parado salvo la metedura de pata de las 17:42 que cuenta la otra entrada.
+
+### El timeout de 20 s del listado volvió (mañana) — arreglo de raíz
+
+El 14-sep lo «arreglé» quitando las 13 curvas en paralelo; el 15 por la mañana Jaume lo vio otra vez en la **primera llamada del día**: `GET /portfolio-lab/strategies` tardaba 16 s medidos con el disco mecánico saturado (backend y bot recién arrancados, `users.duckdb` de 3 GB frío). El coste estaba en `json_extract` sobre `backtest_params` de cada corrida. Arreglo: tabla persistente `portfolio_lab_params_cache(run_id, executed_at, params)` (`ensure_params_cache_table` + `list_runs_light` en `portfolio_lab_service.py`): el listado hace un scan tipado y solo las corridas que no están en la caché pasan por `json_extract`; una corrida re-ejecutada cambia de `executed_at` y se recalcula sola. Listado a 0,05-0,12 s en caliente. En el frontend el listado va con 120 s de timeout, aviso «está tardando» a los 6 s y botón «reintentar» (el `setState` va en el click, no en el efecto: la regla `set-state-in-effect` del lint).
+
+### «¿Por qué coño el bot se enciende al abrir la aplicación?»
+
+Era el paso 5 de `D:\lanzador_btt\arrancar_btt.ps1` (fuera del repo): el acceso directo del escritorio arrancaba backend, frontend **y el bot**. Jaume: «debe encenderse cuando le doy a Vigilar, no debe ir a su aire nunca». Paso quitado, cabecera del script explicándolo, pasos renumerados 1/4..4/4; copia en `arrancar_btt.ps1.bak-2026-09-15`. Ahora el único bot que existe es el que arranca el botón Vigilar.
+
+### Orden manual de las estrategias (▲▼) — un orden para todas las listas
+
+Botones ▲▼ en el Baúl (los tres cuadros), en «En crudo» y en Robustez. `frontend/src/lib/ordenEstrategias.ts`: `leerOrden` / `guardarOrden` / `aplicarOrden` / `moverEnOrden`, guardado en `localStorage` (`btt.orden_estrategias`). Mover dentro de un cuadro que es un subconjunto (p. ej. solo las de Portfolio) intercambia con el **vecino visible** en el orden global, así el orden no se rompe entre cuadros. Es por navegador y no por usuario, a propósito: no toca base de datos ni lógica, y el bot lee el Baúl igual que antes (el orden solo es visual… y desempata en «una a la vez», ver abajo). Al arrancar la página el estado sale de `useState(() => leerOrden())` para no pisar el SSR.
+
+### Robustez en filas finas
+
+`StrategyPicker` reescrito como filas de una línea de 28 px con cabecera de columnas (`COLS = "14px minmax(180px, 1fr) 150px 64px 60px 52px 48px 56px 44px"`), como el Baúl y «En crudo». Jaume: «son todas como muy anchas». Lógica del picker intacta; `robustez/page.tsx` aplica el orden compartido.
+
+### Auditoría de «Gen. Debilidad (PM Top)»: sin look-ahead
+
+Jaume vio en un gráfico que la estrategia entraba «al principio del gráfico» con PM High Gap > 50 y sospechó de mirar el futuro. Comprobado sobre el código y sobre los trades guardados: los 7 indicadores de la entrada son causales (PM High Gap = máximo acumulado del premercado hasta esa vela frente al cierre de ayer; el perfil de volumen es acumulado; etc.), ninguna entrada en las velas 0-1 (mínimo `entry_idx` 2), y el 5,7 % que entra en las velas 2-5 rinde igual que el resto. Lo que ve como «principio del gráfico» es que el gráfico arranca en la **primera vela del ticker ese día** (tickers ilíquidos con pocas velas de premercado), no a las 04:00.
+
+### «Solo una estrategia abierta a la vez por acción» (`one_per_ticker`)
+
+Pedido de Jaume: «¿se podría hacer sin corromper nada?». Sí: es un filtro sobre los trades guardados, no toca corridas ni estrategias. Check en el bloque Portfolio de «En crudo». En `portfolio_lab_raw.simulate`, entre preparar los trades y el bucle diario: barrido de TODOS los trades por (hora de entrada, orden de la lista); si el ticker tiene una posición abierta (de la estrategia que sea) hasta un minuto posterior, el trade se bloquea. Va **antes** de dimensionar para que el capital del día no cuente con los bloqueados. Al salir (stop, TP, lo que sea) entra la primera que dé señal, **sea la que sea** — Jaume preguntó si tras un stop seguiría con la primera o entraría la segunda: entra la segunda si da señal antes; a igual minuto manda el orden manual ▲▼. Contador «Bloqueadas» (tarjeta y columna por estrategia). Verificado por API: 0 solapes por ticker; con 3 estrategias, 1.746 bloqueadas.
+
+**Límite honesto:** las señales que una estrategia bloqueada habría tenido *después*, mientras en su propio backtest estaba dentro de la posición, no existen en los trades guardados: el resultado es, si acaso, conservador. Reproducirlo exacto exigiría un backtest conjunto. Variante ofrecida y no pedida: «la que entró primero se queda el ticker».
+
+### Menudencias
+
+- Aviso de consola «uncontrolled → controlled» en el checkbox: `checked={!!cfg.onePerTicker}` (la config guardada de antes no traía la clave).
+- `useMemo` sin importar en `robustez/page.tsx` (tsc lo cazó); tsc y eslint limpios al commitear.
+- **PENDIENTE que Jaume dejó dicho:** tiene que **auditar el Portfolio «En crudo»** («encontré alguna cosilla», noche del 14-sep). Recordárselo al empezar.
+
+---
+
 ## 2026-09-15 (Sailor, tarde) — El VWAP como nivel del stop de estructura, y la simulación interna del bot iba sin niveles
 
 Pedido de Jaume: «como tenemos Previous Max y demás, lo mismo respecto al VWAP», dentro de Market Structure. Commit `6ae48ab` en `sailor-rama-desarrollo`, sin subir al escribir esto. Backend relanzado a mano (sin `--reload`) con el bot parado por él.
