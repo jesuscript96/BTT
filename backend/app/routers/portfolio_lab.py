@@ -83,7 +83,9 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
                 "normalization": None,
             })
 
-        runs = rs.list_runs_for_strategies(con, {s["id"] for s in out})
+        # Con los backtest_params de la cache persistente: sin leer el JSON
+        # entero de cada corrida (20 s de timeout al arrancar, 15-sep-2026).
+        runs = pls.list_runs_light(con, {s["id"] for s in out})
         assignments = pls.get_assignments(con)
         for s in out:
             s["run"] = runs.get(s["id"])
@@ -538,7 +540,7 @@ def _monitored_strategies(con, user_id) -> list[dict]:
             except (TypeError, ValueError):
                 definition = {}
         out.append({"id": sid, "name": name, "definition": definition, "buckets": buckets})
-    metas = rs.list_runs_for_strategies(con, {s["id"] for s in out})
+    metas = pls.list_runs_light(con, {s["id"] for s in out})
     for s in out:
         s["run"] = metas.get(s["id"])
     return [s for s in out if s["run"]]

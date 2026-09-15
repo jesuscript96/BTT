@@ -44,7 +44,11 @@ export interface PortfolioStrategy {
 }
 
 export function listPortfolioStrategies(): Promise<PortfolioStrategy[]> {
-  return apiRequest<PortfolioStrategy[]>("/portfolio-lab/strategies");
+  // 120 s y no los 20 por defecto: nada mas arrancar la app, el backend y el
+  // bot leen el lago del disco mecanico y la primera llamada del dia puede
+  // tardar mas de 20 s (15-sep-2026). El backend ademas cachea los
+  // parametros de cada corrida, asi que las siguientes van en 1-3 s.
+  return apiRequest<PortfolioStrategy[]>("/portfolio-lab/strategies", { timeoutMs: 120_000 });
 }
 
 export function setPortfolioAssignment(
