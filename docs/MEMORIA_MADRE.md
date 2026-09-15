@@ -5846,3 +5846,28 @@ de Databento, no copiar `users.duckdb`.
 - **Tabla de contingencia OOS (halt-UP, desde reapertura, 15 min):** NO ENTRAR (v1c≥6): 1.197 rehalt / 304 sin · ESPERAR (+2..+6): 616 / 540 · OK ENTRAR (≤+2): 2.070 / 2.328. Lo que evita la regla: en los NO ENTRAR que rehaltean, el salto al siguiente halt es de mediana +5,1 % (p90 +18,9 %) y el máximo en 3 velas +20,1 % (p90 +43,9 %) — eso es lo que no se come el corto que espera.
 - **Techo y límites:** logístico con 9 features (IRLS en numpy, no hay sklearn en el env): AUC 0,761 y top-5 % al 82,5 % — la regla de un umbral está EN el techo del modelo; no hace falta ML. Recall de R1 solo 31 % (es regla de precisión para no entrar, no de caza). Límites: solo Nasdaq (XNAS), solo el universo del lago, dirección por salto de reapertura (granularidad 1 min), banda LULD aproximada, y la etiqueta desde reapertura incluye los rehalts dentro de la vela 1 (para el bot que espera la vela valen los números «al instante de decisión»).
 - **Estado:** estudio POSITIVO entregado como pedía el PRD. Scripts 01-04 + logs + cohorte (44.348 × 68) en `.tmp_rehalt/` (efímero, NADA al repo; esta entrada sin commitear aún). Si Álvaro lo aprueba: candidata a (a) guard del backtester «no operar ticker-día tras halt-UP con v1c ≥ +6 %» y (b) regla R-C del bot de ejecución — desarrollo aparte con su propio PRD.
+
+### [HALLAZGO · 2026-09-15 · 01] /api/data/filter devuelve 500 al serializar registros con NaN
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** backend/app/routers/data.py:99 (`filter_daily_metrics` — hace `SELECT *` y el JSON de respuesta no tolera NaN)
+- **Qué observé:** un POST con reglas «Open Gap % < 8» + «Day Return % > 25» (rango 2026-01-01..2026-09-12) responde 500 con `Out of range float values are not JSON compliant: nan`. La SQL ejecuta bien: el fallo es solo al serializar las filas devueltas (alguna columna del SELECT * lleva NaN en las filas que casan).
+- **Cómo reproducir:** `curl -s -X POST http://127.0.0.1:8010/api/data/filter -H "Content-Type: application/json" -d '{"date_from":"2026-01-01","date_to":"2026-09-12","rules":[{"id":"r1","category":"gap","metric":"Open Gap %","operator":"<","valueType":"static","value":"8"},{"id":"r2","category":"ret","metric":"Day Return %","operator":">","valueType":"static","value":"25"}]}'`
+- **Evidencia:** log del backend local (arranque 15-sep 11:15): `GLOBAL ERROR: Out of range float values are not JSON compliant: nan` + `POST /api/data/filter 500`. Ojo: el crash implica que la consulta DEVUELVE filas (con cero filas no hay nada que serializar), aunque el get_dashboard_stats sobre vacío también podría producir NaN — no verificado cuál de los dos.
+- **Impacto:** la página de Análisis no puede filtrar por cohortes cuyas filas traigan NaN; bloquea medir empíricamente la cobertura del lago (necesario para el estudio de entradas short desde las 11:00 con «current gap» tardío).
+- **Hipótesis de causa:** HIPÓTESIS — columnas derivadas sin backfill (m0/m90 de ma_daily u otras) viajan NaN y `json.dumps`/pandas `to_json` no las soporta.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-15 · 02] universo con métrica fuera del field_map muere en background, en silencio
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** backend/app/services/query_service.py:217-240 (`field_map` de `build_screener_query`) + backend/app/routers/query.py (creación de dataset, trabajo en background)
+- **Qué observé:** `POST /api/queries/` con una regla `{"metric": "Day Return %", ...}` responde 200 con id de dataset, pero la materialización de pares revienta en background: `Parser Error: syntax error at or near "Return"` — la ETIQUETA viaja sin traducir a `day_return_pct` (`field_map.get(metric, metric)` la deja pasar tal cual a la SQL). El dataset queda en `precache-status: error` sin ningún error visible para el usuario.
+- **La asimetría:** el camino del UNIVERSO solo mapea 7 etiquetas (Close Price, Min Open PM price, PMH Gap %, Premarket Volume, Open Gap %, EOD Volume, RTH Range %); el camino del ANÁLISIS (METRIC_MAP de data.py) admite ~25 (Day Return %, M15/M30/M60/M180 Return %, HOD/LOD Time…). El builder de la UI (lib/universoFiltros.ts) solo ofrece las 7, pero la API y cualquier estrategia compartida puede mandar cualquiera.
+- **Cómo reproducir:** `curl -s -X POST http://127.0.0.1:8010/api/queries/ -H "Content-Type: application/json" -d '{"name":"prueba","filters":{"date_from":"2026-01-01","date_to":"2026-09-12","rules":[{"metric":"Day Return %","operator":">","value":25}]}}'` → 200, y en el log `Background dataset creation failed ... Parser Error`.
+- **Evidencia:** log del backend local 15-sep: `[ERROR] Background dataset creation failed for 1bce3238-7720-4118-a177-d6e426ada78d: Parser Error: syntax error at or near "Return" ... gap_pct < ? AND Day Return % > ?` (dataset de prueba borrado después).
+- **Impacto:** no se pueden construir universos con métricas «as of» (p. ej. M60 Return % = corrido a las 10:30) aunque la columna exista en daily_metrics — justo lo que necesita el estudio de shorts desde las 11:00. Y el fallo es silencioso: solo visible en `precache-status/{id}`.
+- **Hipótesis de causa:** HIPÓTESIS — el fix natural sería extender field_map con las etiquetas de METRIC_MAP (o validar la métrica al recibir el POST y fallar con 400); decisión del dueño del código.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
