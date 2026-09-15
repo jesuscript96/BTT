@@ -1173,18 +1173,32 @@ export default function BacktestPanel({
                   </option>
                 )}
                 {strategies.map((s) => (
-                  <option key={s.id} value={s.id}>
+                  <option
+                    key={s.id}
+                    value={s.id}
+                    style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}
+                  >
                     {s.name}
                   </option>
                 ))}
                 {onOpenSharedDraft && sharedList.length > 0 && (
-                  <optgroup label="compartidas · abren como borrador">
+                  // El apartado va en mayúsculas y cobre (el acento de la casa,
+                  // como los rótulos de sección del panel) para que no se
+                  // confunda con las guardadas del baúl. El popup de un select
+                  // nativo pinta como quiere: Chrome/Edge y Firefox respetan
+                  // estos estilos en las options y, en gran parte, en el rótulo
+                  // del optgroup; donde no, degrada al texto en negrita.
+                  <optgroup
+                    label="COMPARTIDAS — ABREN COMO BORRADOR"
+                    style={{ color: 'var(--color-ec-copper)', backgroundColor: 'var(--color-ec-bg-elevated)', fontWeight: 700 }}
+                  >
                     {sharedList.map((c) => (
                       <option
                         key={`shared:${c.shared_by}/${c.filename}`}
                         value={`shared:${c.shared_by}/${c.filename}`}
+                        style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}
                       >
-                        {c.name} · {c.shared_by}
+                        {c.name} · {c.shared_by.toUpperCase()}
                       </option>
                     ))}
                   </optgroup>
