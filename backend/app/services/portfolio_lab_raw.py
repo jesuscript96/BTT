@@ -425,7 +425,8 @@ SCALING_DEFAULT: dict[str, Any] = {
     "base_risk": 100.0,     # $ por trade en TOTAL (fixed; base de fixed_ratio)
     "pct": 1.0,             # % del capital del dia en TOTAL (percent; respaldo de kelly sin muestra)
     "delta": 500.0,         # fixed_ratio: $ de beneficio por escalon
-    "kelly_mult": 0.5,      # 1 = kelly entera, 0.5 = media, 0.25 = cuarto
+    "kelly_mult": 0.5,      # fraccion de Kelly, libre (1 = entera)
+    "kelly_scope": "per_strategy",  # per_strategy | global (ver _Escalado)
     "cap_pct": 10.0,        # tope de la SUMA por trade, % del capital del dia (0 = sin)
     "rebalance": "M",       # D | W | M
     "lookback_days": 90,    # ventana de estimacion (dias naturales)
@@ -442,7 +443,8 @@ def _scaling_cfg(raw: Optional[dict]) -> Optional[dict]:
         if k in cfg:
             cfg[k] = v
     cfg["model"] = str(cfg["model"] or "kelly")
-    cfg["weighting"] = str(cfg["weighting"] or "hrp")
+    cfg["kelly_scope"] = "global" if str(cfg.get("kelly_scope") or "") == "global" else "per_strategy"
+    cfg["weighting"] = str(cfg["weighting"] or "equal")
     cfg["rebalance"] = str(cfg["rebalance"] or "M").upper()[:1]
     for k in ("base_risk", "pct", "delta", "kelly_mult", "cap_pct", "floor"):
         cfg[k] = _f(cfg[k])
@@ -450,22 +452,61 @@ def _scaling_cfg(raw: Optional[dict]) -> Optional[dict]:
     return cfg
 
 
+def _kelly_exacta(port_r: np.ndarray) -> Optional[float]:
+    """La f que maximiza la media de log(1 + f * R) sobre los dias de la
+    ventana: la Kelly de verdad para la distribucion EMPIRICA. mu/sigma^2 (la
+    de F2) es su aproximacion de segundo orden y, con colas gordas y varios
+    trades al dia, pide mas de la cuenta. La busqueda es ternaria (el
+    log-crecimiento es concavo en f) y no pasa de la f que arruinaria con el
+    peor dia visto. None = sin muestra; 0 = sin edge (no apostar)."""
+    r = np.asarray(port_r, dtype=float)
+    if len(r) < pls.MIN_OBS or not np.any(r != 0):
+        return None
+    rmin = float(r.min())
+    hi = (0.999 / -rmin) if rmin < 0 else 5.0
+    lo = 0.0
+    for _ in range(80):
+        m1 = lo + (hi - lo) / 3.0
+        m2 = hi - (hi - lo) / 3.0
+        if float(np.mean(np.log1p(m1 * r))) < float(np.mean(np.log1p(m2 * r))):
+            lo = m1
+        else:
+            hi = m2
+    f = (lo + hi) / 2.0
+    if float(np.mean(np.log1p(f * r))) <= 0.0:
+        return 0.0
+    return float(f)
+
+
 class _Escalado:
-    """Riesgo TOTAL por trade y su reparto entre estrategias, re-estimados en
-    cada rebalanceo con datos ESTRICTAMENTE anteriores (Jaume, 16-sep):
+    """Riesgo por trade de cada estrategia, re-estimado en cada rebalanceo con
+    datos ESTRICTAMENTE anteriores. Version del 16-sep (noche), tras la
+    conversacion con Jaume: SOLO KELLY manda; HRP fuera.
 
-        riesgo de la estrategia i por trade = X_total(dia) x w_i(periodo)
-        sum_i w_i = 1  ->  la suma de todas = X_total <= tope
+    Dos formas de calcular Kelly (`kelly_scope`):
 
-    X_total: fixed = base $ | percent = pct % del capital del dia |
-    kelly = f* (media/varianza de la R diaria neta del portfolio ponderado, en
-    la ventana) x kelly_mult, con techo KELLY_CEILING, en % del capital del
-    dia | fixed_ratio = escalon de Ryan Jones. Despues el tope del usuario
-    (cap_pct del capital del dia) recorta sin redistribuir.
+      per_strategy  la Kelly EXACTA de cada estrategia sobre SU R diaria en la
+                    ventana, x kelly_mult -> riesgo_i por trade. Si la SUMA de
+                    todas pasa del tope, se recortan TODAS en proporcion
+                    («que lo pondere en base al tope»): la que mejor va sigue
+                    llevando mas. Es la que da mas peso a la que mejor va.
+      global        la Kelly exacta del CONJUNTO (R diaria de todas, sumadas
+                    con las proporciones de sus Kellys propias) x kelly_mult =
+                    riesgo TOTAL, topado con min(); se reparte entre las
+                    estrategias en proporcion a la Kelly propia de cada una.
 
-    Los pesos (HRP y compania) y Kelly se estiman sobre la R NETA por trade
-    (bruto por accion menos comisiones y slippage de la fila, entre la distancia
-    al stop): no depende del tamano, asi que vale igual escalado o no.
+    Modelos sin Kelly (fixed / percent / fixed_ratio): riesgo TOTAL repartido
+    a partes iguales entre las vivas (sin HRP ni nada).
+
+    Todo en fraccion del capital DEL DIA (compound diario). Kelly es la exacta
+    (`_kelly_exacta`); la aproximacion mu/sigma^2 se guarda al lado solo para
+    verla. Una estrategia sin muestra en la ventana (menos de MIN_OBS dias con
+    trades) va con el respaldo `pct`; con Kelly <= 0 (sin edge) va a 0.
+
+    OJO con lo que sale de estas curvas: los backtests suponen liquidez
+    infinita, asi que con miles de trades y PF > 1 Kelly pide 10-80 % por
+    trade. Aqui el tope no es un ajuste fino: es lo unico que hace realista el
+    resultado.
     """
 
     def __init__(self, cfg: dict, calendar: list[str], r_daily: np.ndarray,
@@ -478,140 +519,211 @@ class _Escalado:
         self.capital = capital
         self.n = r_daily.shape[1]
         self.periodo: Optional[str] = None
-        self.w = np.zeros(self.n)
-        self.f_raw: Optional[float] = None
-        self.x_pct: Optional[float] = None    # kelly: % del capital por trade en TOTAL
-        self.nota: Optional[str] = None
-        self.fallback = False
+        self.kelly_global: Optional[float] = None
+        self.kelly_global_quad: Optional[float] = None
+        self.risk = np.zeros(self.n)      # fraccion del capital del dia por trade, por estrategia (tras tope)
         self.periods: list[dict] = []
         self.lookback = int(cfg["lookback_days"])
 
     # -- estimacion con datos anteriores a `hasta` (exclusivo) o inclusivo ----
-    def _estimar(self, hasta: str, inclusivo: bool) -> tuple[np.ndarray, list[int], Optional[float], bool]:
+    def _estimar(self, hasta: str, inclusivo: bool) -> dict:
+        cfg = self.cfg
         cal = self.calendar
         cut = (ple._parse_day(hasta) - timedelta(days=self.lookback)).isoformat()
         if inclusivo:
             rows = [k for k, d in enumerate(cal) if cut <= d <= hasta]
         else:
             rows = [k for k, d in enumerate(cal) if cut <= d < hasta]
-        alive = [i for i in range(self.n)
-                 if self.spans[i][0] and self.spans[i][0] <= hasta <= self.spans[i][1]]
-        if not alive:
-            alive = [i for i in range(self.n) if self.spans[i][0] and self.spans[i][0] <= hasta]
-        if not alive:
-            return np.zeros(self.n), [], None, True
         win = self.r_daily[rows, :] if rows else np.empty((0, self.n))
-        win_trades = [[r for (td, r) in self.trade_r[i] if cut <= td <= hasta and (inclusivo or td < hasta)]
-                      for i in range(self.n)]
-        # Sin trades en la ventana no hay nada que estimar: esa estrategia se
-        # queda fuera del reparto este periodo (si no, HRP cae a pesos iguales
-        # para todas por una columna sin varianza).
-        con_trades = [i for i in alive if win_trades[i]]
-        if con_trades:
-            alive = con_trades
-        upto = [k for k, d in enumerate(cal) if d <= hasta] if inclusivo else [k for k, d in enumerate(cal) if d < hasta]
-        if upto:
-            cum = np.cumsum(self.r_daily[upto, :], axis=0)
-            peak = np.maximum.accumulate(cum, axis=0)
-            dd = cum - peak
-            ddmax = dd.min(axis=0)
-            dd_ratio = [float(dd[-1, i] / ddmax[i]) if ddmax[i] < 0 else 0.0 for i in range(self.n)]
-        else:
-            dd_ratio = [0.0] * self.n
-        w_alive, fb = pls._weights_at(self.cfg["weighting"], alive, win, win_trades, dd_ratio, float(self.cfg["floor"]))
-        w = np.zeros(self.n)
-        for j, i in enumerate(alive):
-            w[i] = float(w_alive[j])
-        f = None
-        if self.cfg["model"] == "kelly":
-            port = win[:, alive] @ w_alive if win.size else np.zeros(0)
-            f = pls._kelly_fraction(np.asarray(port, dtype=float))
-        return w, alive, f, fb
+        # Vivas: con trades en la ventana (sin trades no hay nada que estimar).
+        con_trades = [i for i in range(self.n)
+                      if any(cut <= td <= hasta and (inclusivo or td < hasta) for (td, _r) in self.trade_r[i])]
+        alive = con_trades
+        if not alive:
+            # Arranque de la historia (nada anterior): las que ya existen van
+            # con el respaldo, que para eso esta.
+            alive = [i for i in range(self.n) if self.spans[i][0] and self.spans[i][0] <= hasta]
+        n_alive = len(alive)
+        mult = float(cfg["kelly_mult"])
+        pct_resp = float(cfg["pct"]) / 100.0
+        cap = float(cfg["cap_pct"]) / 100.0
+        model = cfg["model"]
+        scope = cfg.get("kelly_scope") or "per_strategy"
 
-    def _x_pct_de(self, f: Optional[float]) -> tuple[Optional[float], Optional[str]]:
-        """Kelly -> % del capital por trade en TOTAL, con techo. None = respaldo."""
-        if f is None:
-            return None, "sin muestra en la ventana: respaldo al % fijo"
-        if f <= 0:
-            return 0.0, "sin edge en la ventana: Kelly manda no apostar"
-        x = f * float(self.cfg["kelly_mult"])
-        if x > pls.KELLY_CEILING:
-            return pls.KELLY_CEILING * 100.0, f"techo interno del {pls.KELLY_CEILING * 100:.0f} %"
-        return x * 100.0, None
+        k_raw = [None] * self.n       # kelly exacta propia (fraccion)
+        k_quad = [None] * self.n      # mu/sigma^2 propia
+        pedido = np.zeros(self.n)     # antes del tope
+        notas: list[str] = []
+        fallback = False
+        if model == "kelly" and n_alive:
+            for i in alive:
+                serie = np.asarray(win[:, i] if win.size else np.zeros(0), dtype=float)
+                # Muestra minima: dias CON trades de esa estrategia (los dias a
+                # cero no cambian el optimo de log(1 + f R), pero no son muestra).
+                if int(np.count_nonzero(serie)) < pls.MIN_OBS:
+                    k_raw[i] = None
+                    k_quad[i] = None
+                else:
+                    k_raw[i] = _kelly_exacta(serie)
+                    k_quad[i] = pls._kelly_fraction(serie)
+            if scope == "global":
+                # Proporciones por Kelly propia (sin muestra -> respaldo, sin edge -> 0).
+                base = np.array([(k_raw[i] if k_raw[i] is not None else pct_resp) for i in alive], dtype=float)
+                if base.sum() <= 0:
+                    total = 0.0
+                    shares = np.zeros(n_alive)
+                    notas.append("sin edge en la ventana: Kelly manda no apostar")
+                else:
+                    shares = base / base.sum()
+                    port = np.asarray(win[:, alive] @ shares if win.size else np.zeros(0), dtype=float)
+                    kg = _kelly_exacta(port)
+                    self.kelly_global = kg
+                    self.kelly_global_quad = pls._kelly_fraction(port) if len(port) >= pls.MIN_OBS else None
+                    if kg is None:
+                        total = pct_resp
+                        fallback = True
+                        notas.append("sin muestra en la ventana: respaldo al % fijo")
+                    elif kg <= 0:
+                        total = 0.0
+                        notas.append("sin edge en la ventana: Kelly manda no apostar")
+                    else:
+                        total = kg * mult
+                for j, i in enumerate(alive):
+                    pedido[i] = total * shares[j]
+            else:
+                for i in alive:
+                    if k_raw[i] is None:
+                        pedido[i] = pct_resp
+                        fallback = True
+                    elif k_raw[i] <= 0:
+                        pedido[i] = 0.0
+                    else:
+                        pedido[i] = k_raw[i] * mult
+                if fallback:
+                    notas.append("alguna estrategia sin muestra en la ventana: respaldo al % fijo")
+        elif n_alive:
+            # fixed / percent / fixed_ratio: el total se decide dia a dia en at();
+            # aqui solo el reparto, a partes iguales.
+            for i in alive:
+                pedido[i] = 1.0 / n_alive
 
-    def at(self, d: str, equity_open: float) -> tuple[float, np.ndarray, dict]:
-        """(X_total en $ para hoy, pesos, info del periodo)."""
+        # Tope de la SUMA: recorte proporcional (todas por igual), sin redistribuir.
+        suma = float(pedido.sum())
+        capped = False
+        aplicado = pedido.copy()
+        if model == "kelly" and cap > 0 and suma > cap + 1e-12:
+            aplicado = pedido * (cap / suma)
+            capped = True
+        if not n_alive:
+            notas.append("ninguna estrategia con trades en la ventana")
+        return {
+            "alive": alive, "k_raw": k_raw, "k_quad": k_quad, "pedido": pedido, "aplicado": aplicado,
+            "capped": capped, "fallback": fallback, "nota": "; ".join(notas) or None, "cut": cut,
+        }
+
+    def at(self, d: str, equity_open: float) -> tuple[np.ndarray, dict]:
+        """(fraccion del capital del dia por trade, por estrategia; info del periodo)."""
         key = pls._period_key(d, self.cfg["rebalance"])
         if key != self.periodo:
             self.periodo = key
-            self.w, alive, self.f_raw, self.fallback = self._estimar(d, inclusivo=False)
-            self.x_pct, self.nota = self._x_pct_de(self.f_raw) if self.cfg["model"] == "kelly" else (None, None)
+            self.kelly_global = None
+            self.kelly_global_quad = None
+            e = self._estimar(d, inclusivo=False)
+            self._est = e
+            self.risk = e["aplicado"]
+            suma_ped = float(e["pedido"].sum()) if self.cfg["model"] == "kelly" else None
+            suma_apl = float(e["aplicado"].sum()) if self.cfg["model"] == "kelly" else None
+            tot = float(e["aplicado"].sum())
             self.periods.append({
-                "period": key, "from": d, "alive": len(alive),
-                "weights": [ple._r6(x) for x in self.w],
-                "weights_fallback": bool(self.fallback),
-                "kelly_raw_pct": ple._r6(self.f_raw * 100.0) if self.f_raw is not None else None,
-                "x_pct": ple._r6(self.x_pct) if self.x_pct is not None else None,
-                "note": self.nota,
+                "period": key, "from": d, "alive": len(e["alive"]),
+                # reparto (suma 1) para el grafico de barras apiladas
+                "weights": [ple._r6(float(v / tot)) if tot > 0 else 0.0 for v in e["aplicado"]],
+                "weights_fallback": bool(e["fallback"]),
+                "kelly_raw_pct": ple._r6(self.kelly_global * 100.0) if self.cfg["model"] == "kelly" and (self.cfg.get("kelly_scope") or "per_strategy") == "global" and self.kelly_global is not None else None,
+                "kelly_por_estrategia_pct": [ple._r6(k * 100.0) if k is not None else None for k in e["k_raw"]],
+                "risk_pct": [ple._r6(float(v) * 100.0) for v in e["aplicado"]],
+                "x_pct": ple._r6(suma_ped * 100.0) if suma_ped is not None else None,
+                "applied_pct": ple._r6(suma_apl * 100.0) if suma_apl is not None else None,
+                "capped": bool(e["capped"]),
+                "note": e["nota"],
             })
         m = self.cfg["model"]
+        per = self.periods[-1]
+        if m == "kelly":
+            return self.risk, per
+        # Modelos sin Kelly: total del dia (en $) repartido por las proporciones.
         if m == "fixed":
             x = float(self.cfg["base_risk"])
         elif m == "fixed_ratio":
             x = pls._fixed_ratio_x(equity_open, self.capital, float(self.cfg["base_risk"]), float(self.cfg["delta"]))
-        elif m == "kelly":
-            pct = self.x_pct if self.x_pct is not None else float(self.cfg["pct"])
-            x = equity_open * pct / 100.0
         else:
             x = equity_open * float(self.cfg["pct"]) / 100.0
+        x_model = x
         cap = float(self.cfg["cap_pct"])
         capped = False
         if cap > 0 and x > equity_open * cap / 100.0:
             x = equity_open * cap / 100.0
             capped = True
-        self.periods[-1]["capped"] = bool(self.periods[-1].get("capped") or capped)
-        return x, self.w, self.periods[-1]
+        per["capped"] = bool(per.get("capped") or capped)
+        if per["applied_pct"] is None and equity_open > 0:
+            per["applied_pct"] = ple._r6(x / equity_open * 100.0)
+            per["x_pct"] = ple._r6(x_model / equity_open * 100.0)
+            per["risk_pct"] = [ple._r6(float(v) * x / equity_open * 100.0) for v in self.risk]
+        frac = (x / equity_open) if equity_open > 0 else 0.0
+        return self.risk * frac, per
 
     def today(self, equity_now: float, names: list[str]) -> dict:
-        """Lo que habria que poner HOY: pesos con toda la historia hasta la
-        ultima fecha (inclusive) y el riesgo por trade de cada estrategia."""
+        """Lo que habria que poner HOY: con toda la historia hasta la ultima
+        fecha (inclusive), la Kelly de cada estrategia, la fraccion, el tope y
+        el riesgo por trade de cada una."""
         hasta = self.calendar[-1]
-        w, alive, f, fb = self._estimar(hasta, inclusivo=True)
+        self.kelly_global = None
+        self.kelly_global_quad = None
+        e = self._estimar(hasta, inclusivo=True)
         m = self.cfg["model"]
-        nota = None
-        if m == "kelly":
-            x_pct, nota = self._x_pct_de(f)
-            if x_pct is None:
-                x_pct = float(self.cfg["pct"])
-        elif m == "percent":
-            x_pct = float(self.cfg["pct"])
-        elif m == "fixed_ratio":
-            x_pct = pls._fixed_ratio_x(equity_now, self.capital, float(self.cfg["base_risk"]), float(self.cfg["delta"])) / equity_now * 100.0 if equity_now > 0 else 0.0
-        else:
-            x_pct = float(self.cfg["base_risk"]) / equity_now * 100.0 if equity_now > 0 else 0.0
+        mult = float(self.cfg["kelly_mult"])
         cap = float(self.cfg["cap_pct"])
-        applied = min(x_pct, cap) if cap > 0 else x_pct
-        cut = (ple._parse_day(hasta) - timedelta(days=self.lookback)).isoformat()
+        if m == "kelly":
+            ped = e["pedido"] * 100.0
+            apl = e["aplicado"] * 100.0
+        else:
+            if m == "fixed":
+                x_pct = float(self.cfg["base_risk"]) / equity_now * 100.0 if equity_now > 0 else 0.0
+            elif m == "fixed_ratio":
+                x_pct = pls._fixed_ratio_x(equity_now, self.capital, float(self.cfg["base_risk"]), float(self.cfg["delta"])) / equity_now * 100.0 if equity_now > 0 else 0.0
+            else:
+                x_pct = float(self.cfg["pct"])
+            x_apl = min(x_pct, cap) if cap > 0 else x_pct
+            ped = e["pedido"] * x_pct
+            apl = e["aplicado"] * x_apl
+        suma_ped = float(ped.sum())
+        suma_apl = float(apl.sum())
+        scope = self.cfg.get("kelly_scope") or "per_strategy"
         return {
             "date": hasta,
             "equity": ple._r6(equity_now),
-            "window": {"from": cut, "to": hasta},
+            "window": {"from": e["cut"], "to": hasta},
             "model": m,
-            "kelly_raw_pct": ple._r6(f * 100.0) if f is not None else None,
-            "kelly_mult": float(self.cfg["kelly_mult"]),
-            "x_pct": ple._r6(x_pct),
+            "kelly_scope": scope if m == "kelly" else None,
+            "kelly_raw_pct": ple._r6(self.kelly_global * 100.0) if (m == "kelly" and scope == "global" and self.kelly_global is not None) else None,
+            "kelly_quad_pct": ple._r6(self.kelly_global_quad * 100.0) if (m == "kelly" and scope == "global" and self.kelly_global_quad is not None) else None,
+            "kelly_mult": mult,
+            "x_pct": ple._r6(suma_ped),
             "cap_pct": cap,
-            "applied_pct": ple._r6(applied),
-            "applied_usd": ple._r6(equity_now * applied / 100.0),
-            "capped": bool(cap > 0 and x_pct > cap),
-            "note": nota,
-            "weights_fallback": bool(fb),
+            "applied_pct": ple._r6(suma_apl),
+            "applied_usd": ple._r6(equity_now * suma_apl / 100.0),
+            "capped": bool(e["capped"]) or (m != "kelly" and cap > 0 and suma_ped > suma_apl + 1e-9),
+            "note": e["nota"],
+            "weights_fallback": bool(e["fallback"]),
             "per_strategy": [
                 {
-                    "idx": i, "name": names[i], "alive": i in alive,
-                    "weight": ple._r6(float(w[i])),
-                    "risk_pct": ple._r6(applied * float(w[i])),
-                    "risk_usd": ple._r6(equity_now * applied * float(w[i]) / 100.0),
+                    "idx": i, "name": names[i], "alive": i in e["alive"],
+                    "kelly_pct": ple._r6(e["k_raw"][i] * 100.0) if e["k_raw"][i] is not None else None,
+                    "kelly_quad_pct": ple._r6(e["k_quad"][i] * 100.0) if e["k_quad"][i] is not None else None,
+                    "asked_pct": ple._r6(float(ped[i])),
+                    "weight": ple._r6(float(apl[i] / suma_apl)) if suma_apl > 0 else 0.0,
+                    "risk_pct": ple._r6(float(apl[i])),
+                    "risk_usd": ple._r6(equity_now * float(apl[i]) / 100.0),
                 }
                 for i in range(self.n)
             ],
@@ -870,9 +982,9 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             ruined = True
         if ruined:
             expense = 0.0
-        x_total, w_esc = 0.0, None
+        risk_esc = None
         if esc is not None and not ruined:
-            x_total, w_esc, _ = esc.at(d, equity_open)
+            risk_esc, _ = esc.at(d, equity_open)
 
         # a) Tamano y costes de cada trade del dia (sin locates todavia)
         dia: list[dict] = []
@@ -886,7 +998,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 as_saved = False
                 if esc is not None:
                     # Escalado: TODAS por riesgo, con el reparto del periodo.
-                    r_usd = x_total * float(w_esc[i]) if w_esc is not None else 0.0
+                    r_usd = equity_open * float(risk_esc[i]) if risk_esc is not None else 0.0
                     if r_usd <= 0:
                         no_weight[i] += 1
                         continue

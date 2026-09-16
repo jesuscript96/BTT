@@ -459,7 +459,12 @@ class RawScalingIn(BaseModel):
     base_risk: float = Field(default=100.0, ge=0)
     pct: float = Field(default=1.0, ge=0)
     delta: float = Field(default=500.0, ge=0)
-    kelly_mult: float = Field(default=0.5, gt=0, le=1)
+    # Fraccion de Kelly: 1 = la optima; 0.5 / 0.25 las de la practica; se
+    # admite cualquier valor (hasta 3, por si se quiere ver el sobre-Kelly).
+    kelly_mult: float = Field(default=0.5, gt=0, le=3)
+    # per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
+    # global: la Kelly del conjunto repartida por las Kellys propias.
+    kelly_scope: Literal["per_strategy", "global"] = "per_strategy"
     cap_pct: float = Field(default=10.0, ge=0)
     rebalance: Literal["D", "W", "M"] = "M"
     lookback_days: int = Field(default=90, ge=1)

@@ -515,6 +515,50 @@ export const RAW_EXEC_DEFAULT: RawExec = {
   locates_seed: 1,
 };
 
+/** Puerta por EV del portfolio: la cuenta del backtester (locates_gate) con
+ *  los paquetes DE MAS respecto a lo ya alquilado hoy por cualquiera. */
+export interface RawGateIn {
+  ventana: number;
+  por: "trades" | "dias";
+  ev_defecto_pct: number;
+  min_trades: number;
+}
+
+/** Locates de la CUENTA (un broker para todas). Con este bloque, lo de las
+ *  filas se ignora. shared: un alquiler por ticker-dia sobre el maximo en
+ *  corto A LA VEZ sumando estrategias (la que cubre libera; la siguiente que
+ *  cabe va gratis). */
+export interface RawLocatesIn {
+  mode: "none" | "fixed" | "random";
+  cost: number;
+  min: number;
+  max: number;
+  seed: number;
+  shared: boolean;
+  gate: RawGateIn | null;
+  /** Banda de N semillas sobre los mismos paquetes (solo aleatorios). */
+  band_seeds: number;
+}
+
+/** Escalado y pesos sobre las corridas en crudo: riesgo TOTAL por trade
+ *  (X) repartido entre estrategias (i arriesga X * w_i, sum w = 1); el tope
+ *  recorta la SUMA. Los R de las filas se ignoran. */
+export interface RawScalingIn {
+  model: "fixed" | "percent" | "kelly" | "fixed_ratio";
+  base_risk: number;
+  pct: number;
+  delta: number;
+  kelly_mult: number;
+  /** per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
+   *  global: la Kelly del conjunto repartida por las Kellys propias. */
+  kelly_scope?: "per_strategy" | "global";
+  cap_pct: number;
+  rebalance: RebalanceFreq;
+  lookback_days: number;
+  weighting: WeightModel;
+  floor: number;
+}
+
 export interface RawConfigIn {
   strategy_ids: string[];
   /** Capital del portfolio: base del compound (% por trade), del retorno y
@@ -532,8 +576,85 @@ export interface RawConfigIn {
   one_per_ticker?: boolean;
   /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
   monthly_expenses: number;
+  locates?: RawLocatesIn | null;
+  scaling?: RawScalingIn | null;
   start_date?: string | null;
   end_date?: string | null;
+}
+
+export interface RawLocatesReport {
+  mode: "none" | "fixed" | "random" | "per_row";
+  shared: boolean;
+  gate: boolean;
+  ticker_days: number;
+  packages: number;
+  cost: number;
+  gate_out: number;
+  gate_free: number;
+}
+
+export interface RawLocatesBand {
+  seeds: number;
+  seed_actual: number;
+  final: { p05: number; p25: number; p50: number; p75: number; p95: number };
+  max_dd_pct: { p05: number; p50: number; p95: number };
+  cost: { p05: number; p50: number; p95: number };
+  bands: { p05: number[]; p50: number[]; p95: number[] };
+}
+
+export interface RawScalingPeriod {
+  period: string;
+  from: string;
+  alive: number;
+  weights: number[];
+  weights_fallback: boolean;
+  /** Kelly EXACTA de la ventana (la f que maximiza el log-crecimiento empirico), % del capital por trade. */
+  kelly_raw_pct: number | null;
+  /** La aproximacion mu/sigma^2, solo para compararla. */
+  kelly_quad_pct?: number | null;
+  /** Lo que PEDIA el modelo (tras la fraccion de Kelly), % del capital del dia. */
+  x_pct: number | null;
+  /** Lo APLICADO el primer dia del periodo, tras el tope del usuario. */
+  applied_pct?: number | null;
+  /** Riesgo por trade aplicado de cada estrategia (% del capital del dia) y su Kelly propia. */
+  risk_pct?: number[];
+  kelly_por_estrategia_pct?: Array<number | null>;
+  note: string | null;
+  capped?: boolean;
+}
+
+export interface RawScalingToday {
+  date: string;
+  equity: number;
+  window: { from: string; to: string };
+  model: RawScalingIn["model"];
+  kelly_scope?: "per_strategy" | "global" | null;
+  /** Kelly global exacta (solo con kelly_scope = global). */
+  kelly_raw_pct: number | null;
+  kelly_quad_pct?: number | null;
+  kelly_mult: number;
+  x_pct: number;
+  cap_pct: number;
+  applied_pct: number;
+  applied_usd: number;
+  capped: boolean;
+  note: string | null;
+  weights_fallback: boolean;
+  per_strategy: Array<{
+    idx: number; name: string; alive: boolean;
+    /** Kelly propia exacta (% del capital por trade) y su aproximacion mu/sigma^2. */
+    kelly_pct?: number | null; kelly_quad_pct?: number | null;
+    /** Lo que pedia (tras la fraccion) y lo aplicado (tras el tope), % del capital del dia. */
+    asked_pct?: number; weight: number; risk_pct: number; risk_usd: number;
+  }>;
+}
+
+export interface RawScalingOut {
+  cfg: RawScalingIn;
+  periods: RawScalingPeriod[];
+  today: RawScalingToday;
+  no_stop: number;
+  no_weight: number;
 }
 
 /** Con que se corrio la corrida guardada (para la fila del selector). */
@@ -563,6 +684,12 @@ export interface RawCapReport {
   unsized: number;
   /** Senales que no entraron porque otra estrategia ya estaba dentro del ticker. */
   blocked?: number;
+  /** Cortos que la puerta por EV dejo fuera / que cabian en lo alquilado (gratis). */
+  gate_out?: number;
+  gate_free?: number;
+  /** Escalado: sin stop (no se puede dimensionar por riesgo) / con peso 0. */
+  no_stop?: number;
+  no_weight?: number;
   notional_usd?: number;
 }
 
@@ -643,9 +770,15 @@ export interface RawOut {
     cap_mode: "skip" | "trim";
     one_per_ticker?: boolean;
     monthly_expenses: number;
+    locates?: RawLocatesIn | null;
+    scaling?: RawScalingIn | null;
     start_date: string | null;
     end_date: string | null;
   };
+  /** 16-sep: locates de la cuenta, banda y escalado (solo en el backend nuevo). */
+  locates_report?: RawLocatesReport;
+  locates_band?: RawLocatesBand | null;
+  scaling?: RawScalingOut | null;
   ruined?: boolean;
   /** Percentiles del sorteo de locates aleatorios de esta llamada. */
   locates_random?: { n: number; media?: number; p10?: number; p50?: number; p90?: number; min?: number; max?: number } | null;

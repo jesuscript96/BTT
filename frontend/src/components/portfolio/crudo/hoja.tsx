@@ -33,6 +33,81 @@ export function Sec({ title, help, children, sinRelleno, right }: {
   );
 }
 
+/** Un paso del flujo de trabajo (16-sep): caja numerada y plegable con una
+ *  linea-resumen en la cabecera cuando esta plegada. Un paso «apagado» (el
+ *  anterior no se ha calculado) se ve, pero no se abre: asi el recorrido se
+ *  intuye sin leer nada. */
+export function Paso({ num, title, help, summary, open, onToggle, disabled, disabledNote, right, children, sinRelleno }: {
+  num: number; title: string; help?: React.ReactNode; summary?: React.ReactNode; open: boolean; onToggle: () => void;
+  disabled?: boolean; disabledNote?: string; right?: React.ReactNode; children: React.ReactNode; sinRelleno?: boolean;
+}) {
+  const vivo = open && !disabled;
+  return (
+    <section id={`paso-${num}`} style={{ marginBottom: 14, border: `1px solid ${vivo ? color.copper : color.border}`, background: color.bgSurface, opacity: disabled ? 0.55 : 1 }}>
+      <div
+        role="button"
+        onClick={() => { if (!disabled) onToggle(); }}
+        style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 10px", borderBottom: vivo ? `1px solid ${color.border}` : "none", background: color.bgElevated, cursor: disabled ? "not-allowed" : "pointer", userSelect: "none" }}
+      >
+        <span style={{ width: 20, height: 20, display: "inline-flex", alignItems: "center", justifyContent: "center", background: vivo ? color.copper : "transparent", border: `1px solid ${vivo ? color.copper : color.textMuted}`, color: vivo ? "#1A0A00" : color.textSecondary, fontFamily: font.mono, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{num}</span>
+        <span style={{ ...etiqueta, color: color.textHigh, fontSize: 10.5, whiteSpace: "nowrap" }}>{title}</span>
+        {help && <span onClick={(e) => e.stopPropagation()}><Help title={title}>{help}</Help></span>}
+        <span style={{ fontFamily: font.sans, fontSize: 11, color: disabled ? color.textMuted : color.textSecondary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+          {disabled ? disabledNote : summary}
+        </span>
+        {right && !disabled && <div onClick={(e) => e.stopPropagation()} style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>{right}</div>}
+        <span style={{ marginLeft: right && !disabled ? 0 : "auto", fontFamily: font.mono, fontSize: 11, color: color.textMuted, flexShrink: 0 }}>{vivo ? "▾" : "▸"}</span>
+      </div>
+      {vivo && <div style={{ padding: sinRelleno ? 0 : "2px 10px 8px" }}>{children}</div>}
+    </section>
+  );
+}
+
+/** La tira de arriba: los pasos y en cual estas. Pulsar uno lo abre. */
+export function PasoBar({ pasos, activo, onGo }: { pasos: Array<{ num: number; label: string; hecho: boolean; disponible: boolean }>; activo: number; onGo: (num: number) => void }) {
+  return (
+    <div style={{ display: "flex", border: hairline, marginBottom: 14, background: color.bgSurface }}>
+      {pasos.map((p, i) => {
+        const on = p.num === activo;
+        return (
+          <button key={p.num} type="button" disabled={!p.disponible} onClick={() => onGo(p.num)} style={{
+            flex: 1, display: "flex", alignItems: "center", gap: 8, padding: "7px 12px", background: on ? color.bgElevated : "transparent",
+            border: "none", borderLeft: i ? hairline : "none", borderBottom: on ? `2px solid ${color.copper}` : "2px solid transparent",
+            cursor: p.disponible ? "pointer" : "not-allowed", opacity: p.disponible ? 1 : 0.45, textAlign: "left",
+          }}>
+            <span style={{ width: 18, height: 18, display: "inline-flex", alignItems: "center", justifyContent: "center", background: p.hecho ? color.copper : "transparent", border: `1px solid ${p.hecho || on ? color.copper : color.textMuted}`, color: p.hecho ? "#1A0A00" : on ? color.copperText : color.textMuted, fontFamily: font.mono, fontSize: 10.5, fontWeight: 700, flexShrink: 0 }}>{p.hecho ? "✓" : p.num}</span>
+            <span style={{ fontFamily: font.sans, fontSize: 11.5, fontWeight: on ? 600 : 500, color: on ? color.textHigh : p.hecho ? color.textPrimary : color.textSecondary, whiteSpace: "nowrap" }}>{p.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Pestañas dentro de un paso (las vistas de un mismo resultado). */
+export function SubTabs<T extends string>({ value, onChange, options }: { value: T; onChange: (v: T) => void; options: Array<{ value: T; label: string }> }) {
+  return (
+    <div style={{ display: "flex", gap: 0, borderBottom: hairline, marginBottom: 8 }}>
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <button key={o.value} type="button" onClick={() => onChange(o.value)} style={{
+            padding: "6px 12px", background: "transparent", border: "none", borderBottom: on ? `2px solid ${color.copper}` : "2px solid transparent",
+            marginBottom: -1, color: on ? color.textHigh : color.textSecondary, fontFamily: font.sans, fontSize: 11.5, fontWeight: on ? 600 : 500, cursor: "pointer", whiteSpace: "nowrap",
+          }}>{o.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Parrafo de lectura: lo que significa lo que se ve, en cristiano. */
+export function Nota({ children, tone }: { children: React.ReactNode; tone?: "warning" | "loss" }) {
+  return (
+    <p style={{ margin: "6px 0 2px", fontSize: 11, fontFamily: font.sans, color: tone === "warning" ? color.warning : tone === "loss" ? color.loss : color.textSecondary, lineHeight: 1.55 }}>{children}</p>
+  );
+}
+
 export function Row({ label, help, children, wide }: { label: string; help?: React.ReactNode; children: React.ReactNode; wide?: boolean }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: wide ? "1fr" : "150px 1fr", gap: wide ? 4 : 10, alignItems: "center", padding: "5px 0", borderBottom: hairline }}>

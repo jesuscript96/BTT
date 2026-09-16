@@ -296,3 +296,216 @@ export function ExposureChart({
     </div>
   );
 }
+
+/**
+ * Un solo panel de lineas sobre el calendario (16-sep): para enfrentar dos
+ * curvas (la suma tal cual y la escalada) o pintar una banda (p05-p95 rellena
+ * y la mediana) con la curva real encima. Mismo marco, rejilla y cursor que
+ * el panel de PnL.
+ */
+export function LinesChart({
+  labels,
+  series,
+  band,
+  yFormat,
+  hoverFormat,
+  height = 260,
+  titulo,
+  conCero = true,
+}: {
+  labels: string[];
+  series: Serie[];
+  /** Relleno entre dos series (misma longitud que labels). */
+  band?: { lo: number[]; hi: number[]; color: string; name: string };
+  yFormat: (v: number) => string;
+  hoverFormat: (v: number) => string;
+  height?: number;
+  titulo?: string;
+  conCero?: boolean;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const H = height;
+  const PAD = PAD_PNL;
+  const geom = useMemo(() => {
+    const len = Math.max(labels.length, 2);
+    const xOf = (i: number) => PAD_PNL.l + (i / (len - 1)) * (W - PAD_PNL.l - PAD_PNL.r);
+    const todas: Serie[] = band ? [...series, { name: "lo", values: band.lo, color: "" }, { name: "hi", values: band.hi, color: "" }] : series;
+    const r = rango(todas, conCero);
+    const yOf = (v: number) => PAD_PNL.t + (1 - (v - r.lo) / (r.hi - r.lo)) * (H - PAD_PNL.t - PAD_PNL.b);
+    const path = (a: number[]) => {
+      let d = "";
+      for (let i = 0; i < a.length; i++) {
+        const v = a[i];
+        if (!Number.isFinite(v)) continue;
+        d += `${d ? "L" : "M"}${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`;
+      }
+      return d;
+    };
+    let bandPath = "";
+    if (band) {
+      const up = path(band.hi);
+      let down = "";
+      for (let i = band.lo.length - 1; i >= 0; i--) {
+        const v = band.lo[i];
+        if (!Number.isFinite(v)) continue;
+        down += `L${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`;
+      }
+      bandPath = up && down ? `${up}${down}Z` : "";
+    }
+    const marks = xMarks(labels);
+    return { xOf, yOf, path, bandPath, yTicks: niceTicks(r.lo, r.hi, 5), years: marks.years, xt: marks.ticks };
+  }, [labels, series, band, H, conCero]);
+
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fx = ((e.clientX - rect.left) / rect.width) * W;
+    const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (labels.length - 1));
+    setHover(i >= 0 && i < labels.length ? i : null);
+  };
+  const endLabels = useMemo(() => {
+    const items = series
+      .map((s) => ({ s, v: s.values[s.values.length - 1] }))
+      .filter((x) => Number.isFinite(x.v))
+      .map((x) => ({ ...x, y: geom.yOf(x.v) }))
+      .sort((a, b) => a.y - b.y);
+    for (let i = 1; i < items.length; i++) if (items[i].y - items[i - 1].y < 11) items[i].y = items[i - 1].y + 11;
+    return items;
+  }, [series, geom]);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+        {geom.yTicks.map((t) => (
+          <g key={`t${t}`}>
+            <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke={color.border} strokeWidth={Math.abs(t) < 1e-9 ? 1 : 0.5} strokeDasharray={Math.abs(t) < 1e-9 ? undefined : "2 4"} />
+            <text x={PAD.l - 7} y={geom.yOf(t) + 3.5} textAnchor="end" fontSize={9.5} fontFamily={MONO} fill={color.textMuted}>{yFormat(t)}</text>
+          </g>
+        ))}
+        {geom.years.map((i) => (
+          <line key={`y${i}`} x1={geom.xOf(i)} x2={geom.xOf(i)} y1={PAD.t} y2={H - PAD.b} stroke={color.border} strokeWidth={0.8} strokeDasharray="1 3" />
+        ))}
+        {band && geom.bandPath && <path d={geom.bandPath} fill={band.color} opacity={0.14} />}
+        {series.map((s) => (
+          <path key={s.name} d={geom.path(s.values)} fill="none" stroke={s.color} strokeWidth={s.width ?? 1} strokeLinejoin="round" strokeDasharray={s.name.startsWith("mediana") ? "4 3" : undefined} />
+        ))}
+        {endLabels.map(({ s, v, y }) => (
+          <text key={s.name} x={W - PAD.r + 5} y={y + 3.5} fontSize={9.5} fontFamily={MONO} fill={s.color}>{yFormat(v)}</text>
+        ))}
+        <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={H - PAD.t - PAD.b} fill="none" stroke={color.border} strokeWidth={1} />
+        {titulo && <text x={PAD.l + 6} y={PAD.t + 12} fontSize={9} fontFamily="var(--color-ec-sans)" fill={color.textMuted} letterSpacing="0.8">{titulo}</text>}
+        {geom.xt.map((i) => (
+          <text key={`x${i}`} x={geom.xOf(i)} y={H - PAD.b + 15} textAnchor={i === 0 ? "start" : i === labels.length - 1 ? "end" : "middle"} fontSize={9.5} fontFamily={MONO} fill={color.textMuted}>{labels[i]}</text>
+        ))}
+        {hover != null && (
+          <g>
+            <line x1={geom.xOf(hover)} x2={geom.xOf(hover)} y1={PAD.t} y2={H - PAD.b} stroke={color.textSecondary} strokeWidth={0.7} strokeDasharray="3 3" />
+            {series.map((s) => Number.isFinite(s.values[hover]) && <circle key={s.name} cx={geom.xOf(hover)} cy={geom.yOf(s.values[hover])} r={2.4} fill={s.color} stroke={color.bgBase} />)}
+          </g>
+        )}
+      </svg>
+      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
+        <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{hover != null ? labels[hover] : "final"}</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>
+          {series.map((s) => {
+            const v = hover != null ? s.values[hover] : s.values[s.values.length - 1];
+            return (
+              <span key={s.name} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
+                <span style={{ width: 12, height: 0, borderTop: `${s.width && s.width > 1.5 ? 2.5 : 1.5}px solid ${s.color}` }} />
+                <span style={{ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                <span style={{ fontFamily: font.mono, color: Number.isFinite(v) ? color.textHigh : color.textMuted }}>{Number.isFinite(v) ? hoverFormat(v) : "—"}</span>
+              </span>
+            );
+          })}
+          {band && hover != null && Number.isFinite(band.lo[hover]) && (
+            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
+              {band.name} <span style={{ fontFamily: font.mono, color: color.textHigh }}>{hoverFormat(band.lo[hover])} … {hoverFormat(band.hi[hover])}</span>
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Como se repartio el riesgo entre estrategias, periodo a periodo: barras
+ * apiladas al 100 % (el peso de cada una) y, encima, el riesgo total por trade
+ * que mandaba ese periodo (% del capital del dia) en cobre.
+ */
+export function WeightsChart({
+  periods,
+  names,
+  colors,
+  height = 200,
+}: {
+  periods: Array<{ period: string; weights: number[]; x_pct: number | null; applied_pct?: number | null; capped?: boolean }>;
+  names: string[];
+  colors: string[];
+  height?: number;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  const H = height;
+  const PAD = { t: 14, r: 56, b: 26, l: 40 };
+  const nP = Math.max(periods.length, 1);
+  const bw = (W - PAD.l - PAD.r) / nP;
+  const hBars = H - PAD.t - PAD.b;
+  // Se pinta lo APLICADO (tras el tope); lo que pedia el modelo sale al pasar el raton.
+  const aplicado = (p: { x_pct: number | null; applied_pct?: number | null }) => (p.applied_pct ?? p.x_pct ?? NaN);
+  const xs = periods.map((p) => aplicado(p)).filter(Number.isFinite);
+  const xMax = Math.max(1, ...xs) * 1.15;
+  const yX = (v: number) => PAD.t + (1 - v / xMax) * hBars;
+  const step = Math.max(1, Math.ceil(nP / 8));
+  const k = hover;
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseLeave={() => setHover(null)}>
+        {periods.map((p, i) => {
+          let acc = 0;
+          const x0 = PAD.l + i * bw;
+          return (
+            <g key={p.period} onMouseEnter={() => setHover(i)}>
+              {p.weights.map((w, j) => {
+                const h = Math.max(0, w) * hBars;
+                const y0 = PAD.t + hBars - acc - h;
+                acc += h;
+                return w > 0 ? <rect key={j} x={x0 + 0.5} y={y0} width={Math.max(0.5, bw - 1)} height={h} fill={colors[j % colors.length]} opacity={hover == null || hover === i ? 0.75 : 0.35} /> : null;
+              })}
+            </g>
+          );
+        })}
+        {periods.length > 1 && (
+          <path
+            d={periods.map((p, i) => (Number.isFinite(aplicado(p)) ? `${i === 0 || !Number.isFinite(aplicado(periods[i - 1])) ? "M" : "L"}${(PAD.l + (i + 0.5) * bw).toFixed(1)},${yX(aplicado(p)).toFixed(1)}` : "")).join("")}
+            fill="none" stroke={color.copper} strokeWidth={2} strokeLinejoin="round"
+          />
+        )}
+        {periods.map((p, i) => Number.isFinite(aplicado(p)) && (
+          <circle key={`c${p.period}`} cx={PAD.l + (i + 0.5) * bw} cy={yX(aplicado(p))} r={p.capped ? 3 : 2} fill={p.capped ? color.warning : color.copper} stroke={color.bgBase} />
+        ))}
+        <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={hBars} fill="none" stroke={color.border} strokeWidth={1} />
+        {[0, 0.5, 1].map((f) => (
+          <text key={f} x={PAD.l - 6} y={PAD.t + (1 - f) * hBars + 3.5} textAnchor="end" fontSize={9.5} fontFamily={MONO} fill={color.textMuted}>{Math.round(f * 100)} %</text>
+        ))}
+        {niceTicks(0, xMax, 3).map((t) => (
+          <text key={`r${t}`} x={W - PAD.r + 6} y={yX(t) + 3.5} fontSize={9.5} fontFamily={MONO} fill={color.copper}>{n(t, 1)} %</text>
+        ))}
+        {periods.map((p, i) => (i % step === 0 || i === periods.length - 1) && (
+          <text key={`x${p.period}`} x={PAD.l + (i + 0.5) * bw} y={H - PAD.b + 14} textAnchor="middle" fontSize={9} fontFamily={MONO} fill={color.textMuted}>{p.period}</text>
+        ))}
+      </svg>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 16px", padding: "6px 4px 2px", borderTop: hairline, fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
+        <span style={{ fontFamily: font.mono, color: color.textMuted, minWidth: 70 }}>{k != null ? periods[k].period : "periodo"}</span>
+        {k != null ? (
+          <>
+            <span>riesgo total por trade aplicado <span style={{ fontFamily: font.mono, color: periods[k].capped ? color.warning : color.copper }}>{Number.isFinite(aplicado(periods[k])) ? `${n(aplicado(periods[k]), 2)} %` : "—"}</span>{periods[k].capped ? ` (el modelo pedía ${n(periods[k].x_pct, 2)} %, manda el tope)` : ""}</span>
+            {periods[k].weights.map((w, j) => w > 0 && (
+              <span key={j} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, background: colors[j % colors.length], display: "inline-block" }} />{names[j]} <span style={{ fontFamily: font.mono, color: color.textHigh }}>{n(w * 100, 0)} %</span></span>
+            ))}
+          </>
+        ) : (
+          <span>pasa el ratón por un periodo: barras = reparto entre estrategias · línea cobre = riesgo total por trade aplicado (% del capital del día) · punto ámbar = el tope recortó lo que pedía el modelo</span>
+        )}
+      </div>
+    </div>
+  );
+}
