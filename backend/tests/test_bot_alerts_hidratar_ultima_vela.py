@@ -62,8 +62,10 @@ def runner(monkeypatch):
     monkeypatch.setattr(eng, "simulate", lambda **kw: {"trades": []})
     monkeypatch.setattr(eng, "_kwargs_simulate", lambda *a, **k: {})
     monkeypatch.setattr(eng, "compile_strategy_def", lambda sdef: {})
-    monkeypatch.setattr(eng, "calcular_acciones", lambda *a, **k: (100.0, None, None),
-                        raising=False)
+    # Devuelve un float, como la de verdad (`-> Optional[float]`). Antes
+    # devolvia una tupla por descuido y colaba porque nadie operaba con ella;
+    # desde el 16-sep el motor la redondea a acciones enteras.
+    monkeypatch.setattr(eng, "calcular_acciones", lambda *a, **k: 100.0)
 
     est = {"strategy_id": "s1", "name": "1B", "riesgo_usd": 300.0,
            "definition": {"bias": "short", "risk_management": {}},

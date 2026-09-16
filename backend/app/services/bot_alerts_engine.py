@@ -574,6 +574,82 @@ class _EstadoPar:
     # las 08:30 no aviso a nadie, con el bot en marcha y sin un solo error.
     salidas_avisadas: set = field(default_factory=set)
     piramides_avisadas: set = field(default_factory=set)  # (entry_idx, nivel, vela)
+    # LO QUE SE AVISO ABRIR, por vela de senal: la cantidad que Jaume metio de
+    # verdad. Las salidas y las piramides se cuadran sobre esto y no sobre lo
+    # que rellena el simulador (ver `_cuadre`). Enteras: en el broker se
+    # teclean acciones enteras y el aviso las muestra sin decimales.
+    acciones_avisadas: dict = field(default_factory=dict)  # i de senal -> acciones
+    cerrado_avisado: dict = field(default_factory=dict)    # entry_idx -> ya cerradas (avisadas)
+
+
+# ── `_cuadre`: LAS CANTIDADES TIENEN QUE CUADRAR ─────────────────────────────
+# (las tres funciones de abajo; desde el codigo se referencian como `_cuadre`)
+#
+# El aviso de ENTRADA dimensiona con el cierre de la vela de senal (es lo unico
+# que hay cuando se avisa). El simulador, en cambio, rellena en la apertura de
+# la vela siguiente y calcula SUS acciones con ese precio. Con un stop a 12 %
+# de distancia, una diferencia de un 0,2 % en el precio mueve las acciones un
+# 2 %: MEDS entro avisando 284 y el simulador llevaba 289; SUGP 1.056 contra
+# 1.095. Y como salidas y piramides salian de los trades del simulador, el
+# aviso de cierre decia «cierra 289» a quien habia metido 284.
+#
+# Jaume, 16-sep-2026: «debe salir con las mismas que entra, y si ha anyadido
+# pues con las que toque, al igual que con los parciales. Las cantidades deben
+# estar cuadradas».
+#
+# Regla: la posicion AVISADA es la verdad. Entrada avisada + anyadidos avisados
+# = total; cada tramo de salida es la misma FRACCION que en el simulador, pero
+# sobre ese total, redondeada a acciones enteras, y el ultimo tramo se lleva
+# el resto para que la suma cierre exacta. Los anyadidos si valen tal cual: el
+# simulador los dimensiona por riesgo o importe, no a partir de las acciones
+# de la entrada, asi que no arrastran el desvio.
+#
+# Si la entrada NO se aviso (posicion heredada al hidratar el dia), no hay
+# verdad avisada y se dan las cantidades del simulador, como antes.
+
+def _entrada_avisada(estado: "_EstadoPar", entry_idx: int) -> Optional[float]:
+    """Acciones avisadas para la entrada que el simulador indexa en `entry_idx`.
+
+    La senal se avisa en la vela `i`; con `look_ahead_prevention` el simulador
+    rellena en `i+1` y ese es su `entry_idx`. Se mira primero `entry_idx-1` y,
+    por si el relleno fuera en la misma vela, `entry_idx`.
+    """
+    for k in (entry_idx - 1, entry_idx):
+        if k in estado.acciones_avisadas:
+            return float(estado.acciones_avisadas[k])
+    return None
+
+
+def _ejecuciones_de(trades: list[dict], entry_idx: int) -> list[dict]:
+    """Piramides de una entrada, sin duplicados y en orden de vela.
+
+    El simulador cuelga la lista `pyr_executions` del trade que cierra; con
+    tramos parciales la misma ejecucion puede colgar de varios trades.
+    """
+    vistas: dict[tuple, dict] = {}
+    for t in trades:
+        if int(t.get("entry_idx", -2)) != entry_idx:
+            continue
+        for ex in (t.get("pyr_executions") or []):
+            vistas.setdefault((int(ex.get("level", 0)), int(ex.get("idx", -1))), ex)
+    return sorted(vistas.values(), key=lambda ex: (int(ex.get("idx", -1)), int(ex.get("level", 0))))
+
+
+def _total_avisado(estado: "_EstadoPar", trades: list[dict], entry_idx: int,
+                   hasta_idx: Optional[int] = None) -> Optional[float]:
+    """Entrada avisada + anyadidos − reducciones (enteros), o None si la
+    entrada no se aviso. Con `hasta_idx`, solo las ejecuciones hasta esa vela
+    incluida (para decir «posicion queda en» en el aviso de una piramide)."""
+    base = _entrada_avisada(estado, entry_idx)
+    if base is None:
+        return None
+    total = float(round(base))
+    for ex in _ejecuciones_de(trades, entry_idx):
+        if hasta_idx is not None and int(ex.get("idx", -1)) > hasta_idx:
+            break
+        cantidad = float(round(float(ex.get("size") or 0.0)))
+        total += -cantidad if str(ex.get("kind") or "add") == "reduce" else cantidad
+    return max(total, 0.0)
 
 
 class MotorAlertas:
@@ -782,14 +858,21 @@ class MotorAlertas:
                 if clave in estado.piramides_avisadas:
                     continue
                 estado.piramides_avisadas.add(clave)
+                # «Posicion queda en»: sobre lo AVISADO (entrada avisada + estos
+                # anyadidos), no sobre el relleno del simulador. Ver `_cuadre`.
+                cuadrado = _total_avisado(estado, trades, entry_idx, hasta_idx=int(ex.get("idx", -1)))
+                cantidad = float(ex.get("size", 0.0))
+                if cuadrado is not None:
+                    cantidad = float(round(cantidad))
                 eventos.append(Evento(
                     tipo="piramide", ticker=ticker,
                     strategy_id=est["strategy_id"], estrategia=est["name"],
                     momento=momento, precio=float(ex.get("price", precio)),
-                    direccion=direccion, acciones=float(ex.get("size", 0.0)),
+                    direccion=direccion, acciones=cantidad,
                     nivel=int(ex.get("level", 0)),
                     accion_piramide=str(ex.get("kind") or "add"),
-                    posicion_total=float(ex.get("position_size", 0.0)),
+                    posicion_total=(cuadrado if cuadrado is not None
+                                    else float(ex.get("position_size", 0.0))),
                     entrada_idx=entry_idx,
                 ))
 
@@ -838,6 +921,20 @@ class MotorAlertas:
             restante = None
             if total is not None:
                 restante = max(0.0, total - sum(tramos[: n_tramo + 1]))
+            # CUADRAR CON LO AVISADO (ver `_cuadre`, arriba). El tramo es la
+            # misma fraccion que en el simulador pero sobre la posicion avisada,
+            # en acciones enteras; el ultimo tramo se lleva el resto, asi la
+            # suma de los cierres es exactamente lo que se aviso abrir.
+            avisado = _total_avisado(estado, trades, entry_idx)
+            if avisado is not None and total:
+                ya_cerrado = float(estado.cerrado_avisado.get(entry_idx, 0.0))
+                pendiente = max(0.0, avisado - ya_cerrado)
+                ultimo = restante is not None and restante < 1e-6
+                cierra_av = pendiente if ultimo else float(round(avisado * cierra / total))
+                cierra_av = max(0.0, min(cierra_av, pendiente))
+                estado.cerrado_avisado[entry_idx] = ya_cerrado + cierra_av
+                cierra, total = cierra_av, avisado
+                restante = max(0.0, pendiente - cierra_av)
             eventos.append(Evento(
                 tipo="salida", ticker=ticker,
                 strategy_id=est["strategy_id"], estrategia=est["name"],
@@ -896,6 +993,11 @@ class MotorAlertas:
                         hibrido=_hibrido_de(rm, est),
                         cangrejo=cangrejo,
                     )
+                    # Enteras, y apuntadas: es la verdad sobre la que se cuadran
+                    # las salidas y las piramides de esta entrada (`_cuadre`).
+                    if acciones is not None:
+                        acciones = float(round(acciones))
+                        estado.acciones_avisadas[i] = acciones
                     eventos.append(Evento(
                         tipo="entrada", ticker=ticker,
                         strategy_id=est["strategy_id"], estrategia=est["name"],
