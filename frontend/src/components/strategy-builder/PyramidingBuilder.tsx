@@ -295,7 +295,15 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                 <select
                                     value={lv.action}
-                                    onChange={(e) => setLevel(idx, { ...lv, action: e.target.value as 'add' | 'reduce' })}
+                                    onChange={(e) => {
+                                        const a = e.target.value as 'add' | 'reduce';
+                                        // Al pasar a Quitar, el SL de lote se retira:
+                                        // un reduce cierra, no abre lotes, y la clave
+                                        // en un nivel reduce rebota con 422 al guardar.
+                                        setLevel(idx, a === 'reduce'
+                                            ? { ...lv, action: a, lot_stop: null }
+                                            : { ...lv, action: a });
+                                    }}
                                     style={selectStyle}
                                 >
                                     <option value="add">Añadir</option>
@@ -461,6 +469,100 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     </>
                                 )}
                             </div>
+                            {/* ── SL DEL LOTE (PRD 2026-09-15) ──
+                                Solo en niveles Añadir: cada ejecución del nivel
+                                lleva su propio cinturón, que al romperse cierra
+                                SOLO ese lote (el stop del trade sigue mandando
+                                sobre el conjunto). Mismo vocabulario que el SL
+                                de la estrategia; el backend resuelve los
+                                nombres vía normaliza_lot_stop. */}
+                            {lv.action === 'add' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                    <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>SL del lote:</span>
+                                    <select
+                                        value={lv.lot_stop?.mode ?? ''}
+                                        onChange={(e) => {
+                                            const m = e.target.value;
+                                            setLevel(idx, {
+                                                ...lv,
+                                                lot_stop: m === '' ? null
+                                                    : m === 'pct'
+                                                        ? { mode: 'pct', pct: lv.lot_stop?.pct ?? 2.5 }
+                                                        : { mode: 'structure', level: lv.lot_stop?.level ?? 'Ultimo pivote alto', offset_pct: lv.lot_stop?.offset_pct ?? 0.5 },
+                                            });
+                                        }}
+                                        style={selectStyle}
+                                        title={
+                                            "Stop propio de CADA añadido de este nivel.\n" +
+                                            "Al romperse cierra SOLO ese lote, con su PnL contra su precio de entrada;\n" +
+                                            "el stop del trade sigue mandando sobre el conjunto (misma vela: manda el global).\n" +
+                                            "% — distancia fija desde el precio del lote.\n" +
+                                            "Estructura — un nivel del día, congelado en la vela de señal del añadido.\n" +
+                                            "Sin cinturón (—), el lote vive y muere con el stop del trade, como siempre.\n" +
+                                            "Si con el modo por distancia al stop la distancia que dimensiona el añadido\n" +
+                                            "es la de ESTE SL, el lote arriesga exactamente lo que el nivel declara."
+                                        }
+                                    >
+                                        <option value="">—</option>
+                                        <option value="pct">%</option>
+                                        <option value="structure">estructura</option>
+                                    </select>
+                                    {lv.lot_stop?.mode === 'pct' && (
+                                        <>
+                                            <input
+                                                type="number" min={0.1} step={0.1}
+                                                value={lv.lot_stop.pct ?? ''}
+                                                onChange={(e) => setLevel(idx, { ...lv, lot_stop: { mode: 'pct', pct: e.target.value === '' ? 0 : Number(e.target.value) } })}
+                                                onFocus={(e) => e.target.select()}
+                                                style={{ ...selectStyle, width: 62, cursor: 'text' }}
+                                                title="Distancia % desde el precio de entrada del lote (lado perdedor según el bias)."
+                                            />
+                                            <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>de holgura</span>
+                                        </>
+                                    )}
+                                    {lv.lot_stop?.mode === 'structure' && (
+                                        <>
+                                            <select
+                                                value={lv.lot_stop.level ?? 'Ultimo pivote alto'}
+                                                onChange={(e) => setLevel(idx, { ...lv, lot_stop: { ...lv.lot_stop!, mode: 'structure', level: e.target.value } })}
+                                                style={selectStyle}
+                                                title="El nivel del día vigente en la vela de señal del añadido (mismos niveles que el SL de la estrategia)."
+                                            >
+                                                <option value="Ultimo pivote alto">Último pivote alto</option>
+                                                <option value="Ultimo pivote bajo">Último pivote bajo</option>
+                                                <option value="Previous Max">Previous Max</option>
+                                                <option value="HOD">HOD</option>
+                                                <option value="LOD">LOD</option>
+                                            </select>
+                                            {(lv.lot_stop.level === 'Ultimo pivote alto' || lv.lot_stop.level === 'Ultimo pivote bajo') && (
+                                                <input
+                                                    type="number" min={1} step={1}
+                                                    value={lv.lot_stop.pivot_window ?? ''}
+                                                    placeholder="3"
+                                                    onChange={(e) => setLevel(idx, { ...lv, lot_stop: { ...lv.lot_stop!, mode: 'structure', pivot_window: e.target.value === '' ? undefined : Math.max(1, Math.floor(Number(e.target.value))) } })}
+                                                    onBlur={(e) => {
+                                                        const v = parseInt(e.target.value, 10);
+                                                        setLevel(idx, { ...lv, lot_stop: { ...lv.lot_stop!, mode: 'structure', pivot_window: isNaN(v) ? 3 : v } });
+                                                    }}
+                                                    onFocus={(e) => e.target.select()}
+                                                    style={{ ...selectStyle, width: 56, cursor: 'text' }}
+                                                    title="Velas de confirmación del pivote (3 por defecto). Mientras no haya pivote confirmado, el añadido NO se ejecuta: sin cinturón no hay lote."
+                                                />
+                                            )}
+                                            <input
+                                                type="number" min={0} step={0.1}
+                                                value={lv.lot_stop.offset_pct ?? ''}
+                                                placeholder="0"
+                                                onChange={(e) => setLevel(idx, { ...lv, lot_stop: { ...lv.lot_stop!, mode: 'structure', offset_pct: e.target.value === '' ? 0 : Number(e.target.value) } })}
+                                                onFocus={(e) => e.target.select()}
+                                                style={{ ...selectStyle, width: 56, cursor: 'text' }}
+                                                title="Holgura en % que ALEJA el stop del precio (arriba en corto, abajo en largo)."
+                                            />
+                                            <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>+ % holgura</span>
+                                        </>
+                                    )}
+                                </div>
+                            )}
                             {/* El MISMO editor de grupos que entrada/salida: AND/OR,
                                 anidados, todos los indicadores y comparadores. */}
                             <GroupDisplay
@@ -516,6 +618,9 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                         de la entrada; una reentrada lo rearma todo. El recorrido se mide con el cierre de cada vela y se opera en la
                         siguiente. El stop y el take profit no se recalculan al añadir (quedan anclados a la entrada original) y corren en
                         paralelo: cierran lo que las quitas no se hayan llevado.
+                        {' '}Con «SL del lote», cada añadido de ese nivel trae su propio cinturón: al romperse cierra SOLO ese lote (con
+                        PnL contra su precio de entrada) y el stop del trade sigue mandando sobre el conjunto; si el nivel no se puede
+                        resolver al añadir (p. ej. pivote sin confirmar), el añadido no se ejecuta.
                     </span>
                 </div>
             )}

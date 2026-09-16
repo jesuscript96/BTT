@@ -404,3 +404,156 @@ def test_dorado_simulador_sin_lot_stop_byte_identico():
     # sería vacuo): 3 adds + 1 reduce en la bitácora del cierre.
     bitacora = res["trades"][-1].get("pyr_executions") or []
     assert [e["kind"] for e in bitacora].count("add") == 3
+
+
+# ── Parcial → luego lot stop: el lote es notional sobre el pool ────────────
+
+def _dia_conservacion(pct_parcial):
+    """Base 10@10 + lote 10@9,5 (avg 9,75). Parcial HOUR-agnóstico por
+    distancia: 5 % a la baja (9,5) cerrando `pct_parcial` del pool. Luego el
+    lote salta a 9,975."""
+    n = 18
+    open_, high, low, close, ts = _dia(n=n)
+    # vela del lote: señal en la 5, fill a 9,5 (open de la 6)
+    open_[6:] = 9.5; close[6:] = 9.5
+    high[6:10] = 9.55; low[6:10] = 9.45
+    low[8] = 9.4          # dispara el parcial (nivel 9,5) en la 8
+    high[10] = 10.0       # dispara el lote (SL 9,975) en la 10
+    open_[11:] = 10.0; close[11:] = 10.0; high[11:] = 10.05; low[11:] = 9.95
+    niveles = [_nivel_add(_senal(5, n=n), amount_usd=95.0,
+                          lot_stop={"mode": "pct", "pct": 5.0})]   # SL 9,975
+    res = _correr(open_, high, low, close, ts, _senal(1, n=n), _senal(13, n=n),
+                  niveles,
+                  partial_take_profits=[{"distance_pct": 0.05,
+                                         "capital_pct": pct_parcial}])
+    return res
+
+
+def test_parcial_25_luego_lot_stop_cierra_lo_suyo_y_la_base_residual():
+    """Parcial del 25 % (5 acc) → lote cierra 10 (su tamaño completo, queda
+    base 5) → la salida por señal cierra el RESIDUAL de la base a la media
+    recalculada (10,25). Conservación: la suma de las piernas cuadra con la
+    equity final, sin sizes negativos ni piernas mayores que el pool vivo."""
+    res = _dia_conservacion(0.25)
+    razones = [t["exit_reason"] for t in res["trades"]]
+    assert razones == ["Partial TP", "Pyramid Lot Stop", "Signal"], razones
+    parcial, lote, final = res["trades"]
+    # parcial: 25 % del pool (20) = 5 acc a 9,5 contra avg 9,75
+    assert parcial["size"] == 5.0 and parcial["pnl"] == 1.25
+    # lote: SU tamaño completo (10 ≤ 15 vivas), contra SU px 9,5
+    assert lote["size"] == 10.0 and lote["pnl"] == -4.75
+    assert lote["entry_price"] == 9.5
+    # base residual: 5 acc a la media recalculada (9,75·15 − 9,5·10)/5 = 10,25
+    assert final["size"] == 5.0 and final["avg_entry_price"] == 10.25
+    assert final["pnl"] == 1.25
+    # conservación: equity final == inicial + suma de piernas (a céntimo)
+    suma = sum(t["pnl"] for t in res["trades"])
+    assert abs((res["equity"][-1] - (CASH + suma))) < 1e-6
+    assert sum(t["size"] for t in res["trades"]) == 20.0   # base 10 + lote 10
+
+
+def test_parcial_75_capsa_el_lote_al_pool_vivo_y_vacia_la_posicion():
+    """Parcial del 75 % (15 acc) → solo quedan 5 vivas: el lote pidió 10 pero
+    se CAPA a min(10, 5) = 5, la posición se vacía en la pierna del lote (la
+    base residual es 0) y la bitácora se cuelga de esa última pierna. Sin
+    sizes negativos y conservación exacta."""
+    res = _dia_conservacion(0.75)
+    razones = [t["exit_reason"] for t in res["trades"]]
+    assert razones == ["Partial TP", "Pyramid Lot Stop"], razones
+    parcial, lote = res["trades"]
+    assert parcial["size"] == 15.0 and parcial["pnl"] == 3.75
+    # CAPADO al pool vivo: 5, no las 10 del lote
+    assert lote["size"] == 5.0 and lote["pnl"] == -2.375
+    bitacora = lote.get("pyr_executions") or []
+    assert [e["kind"] for e in bitacora] == ["add", "lot_stop"]
+    # conservación y cierre total: 15 + 5 = 20 acc, nada queda vivo
+    assert sum(t["size"] for t in res["trades"]) == 20.0
+    suma = sum(t["pnl"] for t in res["trades"])
+    assert abs((res["equity"][-1] - (CASH + suma))) < 1e-6
+
+
+# ── lot_stop × stop VWAP del trade (merge 738cec2) ─────────────────────────
+
+def _dia_vwap(n=18):
+    """Precio plano a 10; VWAP constante a 10,3 → stop del trade (VWAP +2 %)
+    = 10,506, por encima de la entrada: válido en corto."""
+    open_, high, low, close, ts = _dia(n=n)
+    return open_, high, low, close, ts, np.full(n, 10.3)
+
+
+HS_VWAP = {"hs_type": "Market Structure (HOD/LOD)", "hs_value": "VWAP",
+           "hs_operator": ">=", "hs_offset_pct": 2.0}
+
+
+def test_lot_stop_convive_con_el_stop_vwap_del_trade():
+    """Lote con SL 10,4; stop del trade VWAP+2 % = 10,506. Una vela con high
+    10,45 cruza SOLO el lote: cierra el lote y el trade sigue vivo hasta que
+    otra vela cruza el VWAP-stop y cierra la base POR SU MOTIVO."""
+    open_, high, low, close, ts, vwaps = _dia_vwap()
+    high[7] = 10.45      # cruza el lote (10,4), no el trade (10,506)
+    high[11] = 10.6      # cruza el stop del trade
+    niveles = [_nivel_add(_senal(4), lot_stop={"mode": "pct", "pct": 4.0})]
+    res = _correr(open_, high, low, close, ts, _senal(1), _senal(14), niveles,
+                  vwaps=vwaps, **HS_VWAP)
+    razones = [t["exit_reason"] for t in res["trades"]]
+    assert razones == ["Pyramid Lot Stop", "SL"], razones
+    lote, sl_trade = res["trades"]
+    assert lote["exit_price"] == 10.4 and lote["size"] == 10.0
+    # el stop del trade cierra la base al nivel VWAP+2 %, clamped a la vela
+    assert sl_trade["exit_price"] == 10.506 and sl_trade["size"] == 10.0
+    assert sl_trade["stop_loss"] == 10.506
+
+
+def test_stop_vwap_manda_en_la_misma_vela_sin_doble_fill():
+    """Una SOLA vela (high 10,6) cruza el lote (10,4) y el VWAP-stop (10,506):
+    manda el global — sale TODO por 'SL' a 10,506 y NO se registra cierre de
+    lote (§3.4, sin dobles fills)."""
+    open_, high, low, close, ts, vwaps = _dia_vwap()
+    high[7] = 10.6
+    niveles = [_nivel_add(_senal(4), lot_stop={"mode": "pct", "pct": 4.0})]
+    res = _correr(open_, high, low, close, ts, _senal(1), _senal(14), niveles,
+                  vwaps=vwaps, **HS_VWAP)
+    razones = [t["exit_reason"] for t in res["trades"]]
+    assert razones == ["SL"], razones
+    assert res["trades"][0]["size"] == 20.0
+    assert res["trades"][0]["exit_price"] == 10.506
+
+
+# ── Payload: _build_executions con piernas de lote ─────────────────────────
+
+def test_build_executions_sin_duplicar_el_cierre_de_lote():
+    """El cierre de lote sale por partida doble (leg + pyr_exec kind lot_stop):
+    la bitácora debe quedarse con la entrada de pirámide (dice el nivel), NO
+    pintar dos marcadores. Y el label dice «SL lote», con sl_px para la línea
+    punteada del gráfico."""
+    from app.services.backtest_service import _build_executions
+
+    ts = 1789445000
+    run = [
+        # cierre final de la posición (la base, tras salir el lote)
+        {"entry_time_epoch": ts, "entry_price": 10.0, "size": 10.0,
+         "exit_time_epoch": ts + 600, "exit_price": 9.0, "pnl": 10.0,
+         "exit_reason": "Signal"},
+        # la pierna del SL de lote (el simulador también la emite como trade)
+        {"entry_time_epoch": ts, "entry_price": 9.9, "size": 10.0,
+         "exit_time_epoch": ts + 300, "exit_price": 10.395, "pnl": -4.95,
+         "exit_reason": "Pyramid Lot Stop"},
+    ]
+    run[0]["pyr_executions"] = [
+        {"kind": "add", "idx": 5, "time_epoch": ts + 60, "price": 9.9,
+         "size": 10.0, "level": 1, "position_size": 20.0},
+        {"kind": "lot_stop", "idx": 9, "time_epoch": ts + 300,
+         "price": 10.395, "size": 10.0, "level": 1,
+         "position_size": 10.0, "pnl": -4.95, "sl_px": 10.395},
+    ]
+    execs = _build_executions(run)
+    clases = [(e["kind"], e["time_epoch"]) for e in execs]
+    # UN solo marcador en el instante del lote (la entrada de bitácora), y la
+    # leg de "Pyramid Lot Stop" queda deduplicada.
+    en_el_lote = [e for e in execs if e["time_epoch"] == ts + 300]
+    assert len(en_el_lote) == 1, clases
+    assert en_el_lote[0]["kind"] == "lot_stop"
+    assert en_el_lote[0]["label"] == "Pirámide 1: SL lote"
+    assert en_el_lote[0]["sl_px"] == 10.395
+    # la entrada sigue siendo la base (sum legs − adds = 20 − 10)
+    assert execs[0]["kind"] == "entry" and execs[0]["size"] == 10.0

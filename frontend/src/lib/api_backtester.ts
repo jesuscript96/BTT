@@ -259,12 +259,17 @@ export interface LocatesRandomSummary {
 }
 
 export interface TradeExecution {
-  kind: 'entry' | 'add' | 'reduce' | 'exit';
+  // 'lot_stop' = SL por lote (PRD 2026-09-15): el cierre defensivo de UN
+  // lote de pirámide. Lleva `sl_px` (su nivel congelado) para que el gráfico
+  // pueda pintar la línea punteada.
+  kind: 'entry' | 'add' | 'reduce' | 'exit' | 'lot_stop';
   time_epoch: number;
   price: number;
   size?: number;
   pnl?: number | null;
   label?: string;
+  // Solo kind 'lot_stop': el nivel del SL del lote.
+  sl_px?: number;
   // Ejecución de la escalera del scalping complejo (el gráfico la pinta más pequeña).
   escalera?: boolean;
 }

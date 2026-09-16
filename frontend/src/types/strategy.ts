@@ -554,6 +554,27 @@ export interface PyramidLevel {
     move_pct?: number;
     move_dir?: 'favor' | 'contra';
     move_ref?: 'entry' | 'last';
+    // SL POR LOTE (PRD 2026-09-15). Solo en niveles 'add': un stop propio que
+    // viaja con CADA ejecución del nivel y cierra SOLO ese lote. Sin la clave
+    // (o null tras apagarla en la UI), el nivel se comporta como siempre.
+    //   mode 'pct'        -> distancia % desde el precio de entrada del lote
+    //   mode 'structure'  -> un nivel del día (los nombres del SL del trade;
+    //                        el backend los normaliza vía normaliza_lot_stop)
+    // El nivel se congela en la vela de señal del añadido y no se recalcula;
+    // si no se puede resolver (pivote sin confirmar, lado ganador), el
+    // añadido NO se ejecuta.
+    lot_stop?: LotStopConfig | null;
+}
+
+export interface LotStopConfig {
+    mode: 'pct' | 'structure';
+    // mode 'pct': distancia % (UI: 2.5 = 2,5 %)
+    pct?: number;
+    // mode 'structure': nivel + holgura. Nombres de la UI del SL del trade,
+    // que el backend resuelve como alias (last_pivot/swing incluido).
+    level?: string;
+    pivot_window?: number;   // solo con pivote (default backend: 3)
+    offset_pct?: number;     // holgura % que ALEJA el stop del precio
 }
 
 // Un grupo de piramides con su modo. Los grupos corren en paralelo entre si;

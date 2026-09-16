@@ -47,6 +47,10 @@ export const EXIT_COLORS: Record<string, { bg: string; text: string }> = {
   // Cierres por el coste de halts: cian.
   Halt:             { bg: "rgba(6,182,212,0.14)",  text: "#06b6d4" },
   "Halt (atrapado)": { bg: "rgba(6,182,212,0.14)", text: "#22d3ee" },
+  // Piernas de piramidación: quita programada (ámbar, como los parciales) y
+  // SL de lote (rojo suave — es un stop, pero de UN lote, no del trade).
+  "Pyramid Reduce":   { bg: "rgba(217,164,65,0.12)", text: "#d9a441" },
+  "Pyramid Lot Stop": { bg: "rgba(248,113,113,0.12)", text: "#f87171" },
 };
 
 /** Texto del tooltip de un cierre por halt. */

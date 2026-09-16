@@ -123,6 +123,12 @@ que el stop del trade). Se registra:
   ver §10).
 - Las acciones salen de `size` y de `pyr_base` (los TP parciales siguientes
   porcentan sobre lo que quede vivo).
+- **El lote es una entidad contable, no un lote físico de acciones.** Una vez
+  agrupado el pool, los parciales y reducciones adelgazan la posición SIN
+  respetar fronteras de lote: el cierre del lote se capa a `min(lote, size
+  vivo)` y la conservación del PnL se apoya en el cierre residual de la base
+  (tests §6.1: parcial-25 % → lote completo + base residual; parcial-75 % →
+  lote capado que vacía la posición).
 
 ### 3.4 Coexistencia y orden dentro de la barra
 
