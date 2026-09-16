@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 
 from app.services.portfolio_sim import (
-    atr_para_stop, pivotes_para_stop, necesita_pivotes,
+    atr_para_stop, pivotes_para_stop, necesita_pivotes, vwap_para_stop,
 )
 from app.services.strategy_engine import (
     translate_strategy, translate_strategy_native, get_lowest_timeframe_mins,
@@ -323,6 +323,9 @@ def _compute_signals_for_pair(
             {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
         ]
 
+    # VWAP del dia ENTERO y luego recortado, como hod/pm_high (paridad con el
+    # camino secuencial, que lo trae de market_frame). Misma funcion.
+    _vwap_full = vwap_para_stop({"high": H, "low": L, "close": C, "volume": V})
     arrays_out = {
         "open": O[session_mask_np],
         "high": H[session_mask_np],
@@ -336,6 +339,7 @@ def _compute_signals_for_pair(
         "pm_low": pm_low_run[session_mask_np],
         "prev_high": prev_h[session_mask_np],
         "prev_low": prev_l[session_mask_np],
+        "vwap": (_vwap_full[session_mask_np] if _vwap_full is not None else None),
     }
 
     # --- candle_delay shift ---
@@ -1115,6 +1119,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 **dict(zip(("pivot_highs", "pivot_lows"),
                            pivotes_para_stop(sig["arrays"], hs.get("pivot_window"))
                            if necesita_pivotes(hs) else (None, None))),
+                vwaps=sig["arrays"].get("vwap"),
                 prev_lows=sig["arrays"].get("prev_low"),
                 timestamps=sig["timestamps_arr"],
                 elapsed_limit=elapsed_limit,

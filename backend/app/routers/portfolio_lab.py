@@ -440,6 +440,8 @@ class RawReq(BaseModel):
     # En % del capital DEL DIA; si viene > 0 manda sobre el tope en $.
     max_exposure_pct: float = Field(default=0.0, ge=0)
     cap_mode: Literal["skip", "trim"] = "skip"
+    # Solo una estrategia abierta a la vez por accion (ver portfolio_lab_raw).
+    one_per_ticker: bool = False
     monthly_expenses: float = Field(default=0.0, ge=0)
     start_date: str | None = None
     end_date: str | None = None
@@ -489,6 +491,7 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
             "max_exposure_usd": req.max_exposure_usd,
             "max_exposure_pct": req.max_exposure_pct,
             "cap_mode": req.cap_mode,
+            "one_per_ticker": req.one_per_ticker,
             "monthly_expenses": req.monthly_expenses,
             "start_date": req.start_date,
             "end_date": req.end_date,

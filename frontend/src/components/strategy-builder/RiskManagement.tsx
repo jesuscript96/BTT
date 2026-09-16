@@ -240,8 +240,15 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                         <option value="PML">PML (Premarket Low)</option>
                                         <option value="Previous Max">Previous Max</option>
                                         <option value="Previous Min">Previous Min</option>
-                                        <option value="Ultimo pivote alto">\u00daltimo pivote alto</option>
-                                        <option value="Ultimo pivote bajo">\u00daltimo pivote bajo</option>
+                                        {/* VWAP (15-sep-2026). El del dia entero, el mismo
+                                            que la condicion y el grafico. Se fija en la vela
+                                            de la senal como los demas: no persigue al VWAP
+                                            despues. Un corto entrado POR ENCIMA del VWAP
+                                            queda con el nivel del lado ganador y no entra,
+                                            igual que un Previous Max ya roto. */}
+                                        <option value="VWAP">VWAP</option>
+                                        <option value="Ultimo pivote alto">Último pivote alto</option>
+                                        <option value="Ultimo pivote bajo">Último pivote bajo</option>
                                     </select>
                                     {/* VELAS DE CONFIRMACION del pivote. Solo sale
                                         con los dos niveles de pivote, porque los

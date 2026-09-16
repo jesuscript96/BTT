@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import { color, font } from "@/components/ui/tokens";
 import { Panel } from "@/components/ui";
 import StrategyPicker from "@/components/robustez/StrategyPicker";
+import { aplicarOrden, guardarOrden, leerOrden, moverEnOrden } from "@/lib/ordenEstrategias";
 import ModuleRail, { type ModuleId } from "@/components/robustez/ModuleRail";
 import ResultsPanel from "@/components/robustez/ResultsPanel";
 import { ErrorBox } from "@/components/robustez/shared";
@@ -22,7 +23,20 @@ import {
 import { renameStrategy } from "@/lib/api";
 
 export default function RobustezPage() {
-  const [strategies, setStrategies] = useState<RobustezStrategy[]>([]);
+  const [strategiesRaw, setStrategies] = useState<RobustezStrategy[]>([]);
+  // Orden manual compartido con las listas del Portfolio (localStorage).
+  const [orden, setOrden] = useState<string[]>(() => (typeof window === "undefined" ? [] : leerOrden()));
+  const strategies = useMemo(() => aplicarOrden(strategiesRaw, orden), [strategiesRaw, orden]);
+  const mover = useCallback(
+    (s: RobustezStrategy, dir: -1 | 1, visibles: string[]) => {
+      const completo = aplicarOrden(strategiesRaw, orden).map((x) => x.id);
+      const nuevo = moverEnOrden(completo, visibles, s.id, dir);
+      if (!nuevo) return;
+      setOrden(nuevo);
+      guardarOrden(nuevo);
+    },
+    [strategiesRaw, orden],
+  );
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [run, setRun] = useState<RobustezRun | null>(null);
   const [loadingList, setLoadingList] = useState(true);
@@ -161,6 +175,7 @@ export default function RobustezPage() {
             selectedId={selectedId}
             onSelect={handleSelect}
             onRename={handleRename}
+            onMove={mover}
             loadingRunFor={loadingRunFor}
           />
         )}

@@ -8,7 +8,7 @@
 // imagen general y, en fase 2, los modelos de escalado) y Monitorizacion
 // (fase 3). Reemplaza a la antigua pagina /database.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Briefcase } from "lucide-react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
@@ -25,11 +25,29 @@ import {
   type PortfolioStrategy,
 } from "@/lib/api_portfolio_lab";
 import { renameStrategy } from "@/lib/api";
+import { aplicarOrden, guardarOrden, leerOrden, moverEnOrden } from "@/lib/ordenEstrategias";
 
 type Tab = "baul" | "portfolio" | "monitor" | "runs";
 
 export default function PortfolioPage() {
-  const [strategies, setStrategies] = useState<PortfolioStrategy[]>([]);
+  const [strategiesRaw, setStrategies] = useState<PortfolioStrategy[]>([]);
+  // Orden manual (botones ▲▼ en las listas), recordado en el navegador. Es el
+  // mismo para el Baul, sus cuadros y «En crudo».
+  // Se lee al crear el estado (en el servidor no hay window y sale vacio; la
+  // lista solo se pinta tras cargar, asi que no hay desajuste de hidratacion).
+  const [orden, setOrden] = useState<string[]>(() => (typeof window === "undefined" ? [] : leerOrden()));
+  const strategies = useMemo(() => aplicarOrden(strategiesRaw, orden), [strategiesRaw, orden]);
+  const mover = useCallback(
+    (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => {
+      // El orden completo actual = el orden aplicado a TODAS las estrategias.
+      const completo = aplicarOrden(strategiesRaw, orden).map((x) => x.id);
+      const nuevo = moverEnOrden(completo, visibles, s.id, dir);
+      if (!nuevo) return;
+      setOrden(nuevo);
+      guardarOrden(nuevo);
+    },
+    [strategiesRaw, orden],
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("baul");
@@ -190,9 +208,9 @@ export default function PortfolioPage() {
           )}
         </div>
       ) : tab === "baul" ? (
-        <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} onRename={renombrar} busyId={busyId} />
+        <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} onRename={renombrar} onMove={mover} busyId={busyId} />
       ) : tab === "portfolio" ? (
-        <PortfolioTab strategies={strategies} />
+        <PortfolioTab strategies={strategies} onMove={mover} />
       ) : (
         <MonitorTab />
       )}

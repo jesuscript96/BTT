@@ -32,7 +32,7 @@ import {
   type RawOut,
 } from "@/lib/api_portfolio_lab";
 import { StrategyDetail } from "../StrategyDetail";
-import type { CurveState } from "../StrategyShelf";
+import { MoveBtn, type CurveState } from "../StrategyShelf";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Btn, Num, Row, Sec, Stat, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd, usdCorto } from "./hoja";
 import { ExposureChart, PnlDdChart, type Serie } from "./CrudoCharts";
@@ -44,11 +44,13 @@ interface Cfg {
   expenses: number;
   cap: number;
   capUnit: "usd" | "pct";
+  /** Solo una estrategia abierta a la vez por accion. */
+  onePerTicker: boolean;
   start: string;
   end: string;
 }
 
-const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", start: "", end: "" };
+const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", onePerTicker: false, start: "", end: "" };
 
 /** Curva propia de una serie (base + PnL diario) y su drawdown, con el pico
  *  arrancando en la base. Antes del primer dia con trades, NaN.
@@ -191,7 +193,7 @@ function ExecCells({ e, onChange, porSl }: { e: RawExec; onChange: (next: RawExe
   );
 }
 
-export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
+export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy[]; onMove?: (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => void }) {
   const pool = useMemo(() => strategies.filter((s) => s.run), [strategies]);
 
   // Marcadas por defecto: las del cuadro Portfolio. Se guarda solo lo que el
@@ -267,6 +269,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
         default_exec: defaultExec,
         max_exposure_usd: cfg.capUnit === "usd" ? cfg.cap : 0,
         max_exposure_pct: cfg.capUnit === "pct" ? cfg.cap : 0,
+        one_per_ticker: !!cfg.onePerTicker,
         cap_mode: "skip",
         monthly_expenses: cfg.expenses,
         start_date: cfg.start || null,
@@ -405,6 +408,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                   <th style={{ ...thL, width: 26 }} />
                   <th style={{ ...thL, width: 14 }} />
                   <th style={{ ...thL, width: 18 }} />
+                  <th style={{ ...thL, width: 44 }} />
                   <th style={thL}>Estrategia</th>
                   <th style={thL}>R por trade</th>
                   <th style={thL}>Comisiones</th>
@@ -417,6 +421,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                   <th style={{ ...thL, width: 26 }} />
                   <th style={{ ...thL, width: 14 }} />
                   <th style={{ ...thL, width: 18 }} />
+                  <th style={{ ...thL, width: 44 }} />
                   <th style={thL}>Estrategia</th>
                   <th style={thL}>Corrida</th>
                   <th style={thL}>Periodo</th>
@@ -438,6 +443,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                   <td style={tdTxt} />
                   <td style={tdTxt} />
                   <td style={tdTxt} />
+                  <td style={tdTxt} />
                   <td style={{ ...tdTxt, color: color.copperText, fontWeight: 600 }}>Por defecto</td>
                   <ExecCells e={defaultExec} onChange={setDefaultExec} porSl={null} />
                   <td style={{ ...tdTxt, padding: "2px 6px" }}>
@@ -445,14 +451,15 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                   </td>
                 </tr>
               )}
-              {pool.map((s) => {
+              {pool.map((s, idx) => {
                 const on = !!checked[s.id];
                 const ci = selectedIds.indexOf(s.id);
+                const visibles = pool.map((x) => x.id);
                 const params = (s.run?.backtest_params || {}) as Record<string, unknown>;
                 const c = condiciones(params);
                 const ret = s.run?.total_return_pct ?? null;
                 const open = abierta === s.id;
-                const nCols = vista === "exec" ? 9 : 15;
+                const nCols = vista === "exec" ? 10 : 16;
                 const cabecera = (
                   <>
                     <td style={{ ...tdTxt, padding: "0 4px 0 10px" }}>
@@ -463,6 +470,14 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                     </td>
                     <td style={{ ...tdTxt, padding: "0 2px", cursor: "pointer" }} onClick={() => desplegar(s)} title={open ? "Plegar" : "Ver los datos de la estrategia"}>
                       <ChevronRight style={{ width: 12, height: 12, strokeWidth: 1.5, color: color.textMuted, transform: open ? "rotate(90deg)" : "none", transition: "transform 150ms", display: "block" }} />
+                    </td>
+                    <td style={{ ...tdTxt, padding: "0 4px" }}>
+                      {onMove && (
+                        <span style={{ display: "inline-flex", gap: 2 }}>
+                          <MoveBtn dir={-1} disabled={idx === 0} onClick={() => onMove(s, -1, visibles)} />
+                          <MoveBtn dir={1} disabled={idx === pool.length - 1} onClick={() => onMove(s, 1, visibles)} />
+                        </span>
+                      )}
                     </td>
                     <td style={{ ...tdTxt, maxWidth: 230, overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer", color: open ? color.copperText : color.textHigh }} onClick={() => desplegar(s)} title={`corrida del ${(s.run?.executed_at || "").slice(0, 10)} · ${c.periodo} · capital ${usd(c.capital)} · ${c.tamano} · comisiones ${c.comisiones} · slippage ${c.slippage} · locates ${c.locates} · gastos ${c.gastos} — pulsa para ver los datos de la estrategia`}>
                       {s.name}
@@ -529,7 +544,8 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
             con el que empieza), del retorno y del drawdown. <strong>Gastos fijos</strong>: de esta cuenta, el primer día
             operado de cada mes; los de las corridas no cuentan. <strong>Tope de exposición</strong> (opcional): lo máximo
             que puede haber en posiciones abiertas a la vez sumando todas las estrategias, en % del capital <em>del
-            día</em> o en $; un trade que no cabe no se entra. 0 = sin tope.
+            día</em> o en $; un trade que no cabe no se entra. 0 = sin tope. <strong>Una a la vez por acción</strong>
+            (opcional): en cada acción solo la primera estrategia que da señal; las demás esperan a que salga.
           </>
         }
       >
@@ -560,6 +576,14 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                 </div>
                 <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>{cfg.cap > 0 ? "" : "sin tope"}</span>
               </div>
+            </Row>
+            <Row label="Una a la vez por acción" help="En cada acción entra solo la primera estrategia que da señal; mientras su posición está abierta, las demás no entran en esa acción. Cuando sale (stop, take profit, lo que sea), vuelve a entrar la primera que dé señal, sea la que sea. Se resuelve al minuto con las horas de entrada y salida guardadas; a igual minuto manda el orden de la lista (la de más arriba). Las señales que se quedan fuera salen en la columna «Bloqueadas». Ojo: las señales que una estrategia bloqueada habría tenido después, mientras en su propio backtest estaba dentro, no existen en los datos guardados, así que el resultado es, si acaso, conservador.">
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, fontFamily: font.sans, color: color.textPrimary, cursor: "pointer" }}>
+                {/* `!!`: tras una recarga en caliente el estado viejo no trae el
+                    campo y `undefined` haria el input no controlado. */}
+                <input type="checkbox" checked={!!cfg.onePerTicker} onChange={(e) => set("onePerTicker", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
+                solo una estrategia abierta a la vez en cada acción
+              </label>
             </Row>
           </div>
           <div>
@@ -601,6 +625,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
               <Stat label="En posiciones a la vez (máx.)" value={`${n(exposicion.max, 0)} %`} sub={`del capital del día · hasta ${usd(out.exposure.max_usd)} · ${Math.max(0, ...out.exposure.max_open_daily)} posiciones`} tone={exposicion.max > 100 ? "warning" : undefined} />
               <Stat label="Costes" value={usd(costesTot)} sub={`comis. ${usd(out.costs.fees)} · slippage ${usd(out.costs.slippage || 0)} · locates ${usd(out.costs.locates)} · fijos ${usd(out.costs.expenses)}`} tone="loss" />
               {out.cap_report.skipped > 0 && <Stat label="Fuera por el tope" value={n(out.cap_report.skipped, 0)} sub={`trades de ${n(out.cap_report.taken + out.cap_report.skipped, 0)}`} tone="warning" />}
+              {(out.cap_report.blocked || 0) > 0 && <Stat label="Bloqueadas" value={n(out.cap_report.blocked, 0)} sub="señales con otra estrategia ya dentro" help="Trades de las corridas que no entran porque otra estrategia ya tenía posición abierta en esa acción (opción «una a la vez por acción»)." tone="warning" />}
             </div>
             {out.ruined && <p style={{ margin: "4px 0 0", fontSize: 11, fontFamily: font.sans, color: color.loss }}>La cuenta llegó a cero antes del final: a partir de ahí no se abre ningún trade más.</p>}
             {m.total_return_pct > 100000 && (
@@ -698,6 +723,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                   <th style={thR}>Slippage</th>
                   <th style={thR}>Locates</th>
                   <th style={thR}>stop ≈</th>
+                  {out.config.one_per_ticker && <th style={thR}>Bloqueadas</th>}
                 </tr>
               </thead>
               <tbody>
@@ -722,6 +748,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                       <td style={{ ...tdNum, color: color.textMuted }}>{usd(p.totals.slippage || 0)}</td>
                       <td style={{ ...tdNum, color: color.textMuted }}>{usd(p.totals.locates)}</td>
                       <td style={{ ...tdNum, color: color.textMuted }} title={`${n(p.totals.sin_stop || 0, 0)} sin stop guardado (R = 0)`}>{n(p.totals.stop_aprox || 0, 0)}</td>
+                      {out.config.one_per_ticker && <td style={{ ...tdNum, color: (p.cap_report.blocked || 0) > 0 ? color.warning : color.textMuted }}>{n(p.cap_report.blocked || 0, 0)}</td>}
                     </tr>
                   );
                 })}
@@ -742,6 +769,7 @@ export function CrudoTab({ strategies }: { strategies: PortfolioStrategy[] }) {
                   <td style={{ ...tdNum, ...sep, color: color.textMuted }}>{usd(out.costs.slippage || 0)}</td>
                   <td style={{ ...tdNum, ...sep, color: color.textMuted }}>{usd(out.costs.locates)}</td>
                   <td style={{ ...tdNum, ...sep }} />
+                  {out.config.one_per_ticker && <td style={{ ...tdNum, ...sep, color: color.textMuted }}>{n(out.cap_report.blocked || 0, 0)}</td>}
                 </tr>
               </tbody>
             </table>

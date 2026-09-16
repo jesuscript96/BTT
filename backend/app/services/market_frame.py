@@ -34,6 +34,17 @@ def _atr_barra(day_df):
         "close": day_df["close"].values,
     })
 
+def _vwap_barra(day_df):
+    """VWAP del dia por barra, con la misma cuenta que el indicador."""
+    from app.services.portfolio_sim import vwap_para_stop
+    return vwap_para_stop({
+        "high": day_df["high"].values,
+        "low": day_df["low"].values,
+        "close": day_df["close"].values,
+        "volume": day_df["volume"].values,
+    })
+
+
 def build_market_frame(
     day_df: pd.DataFrame,
     ticker: str,
@@ -124,4 +135,9 @@ def build_market_arrays(
         # que el backtest (`atr_para_stop`) — si cada uno tuviera la suya, el
         # aviso y el backtest podrian separarse sin que nada avisara.
         "atr": _atr_barra(day_df),
+        # VWAP por barra, para el STOP POR VWAP (2026-09-15). Va aqui, sobre el
+        # dia ENTERO, y no sobre los arrays recortados a la sesion: un VWAP que
+        # arrancara a las 09:30 no seria el que ve la condicion ni el grafico.
+        # El recorte de sesion se lo lleva hecho, como hod/pm_high.
+        "vwap": _vwap_barra(day_df),
     }

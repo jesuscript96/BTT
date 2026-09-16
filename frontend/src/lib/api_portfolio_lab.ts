@@ -527,6 +527,9 @@ export interface RawConfigIn {
   /** Lo mismo en % del capital DEL DIA; si viene > 0 manda sobre el de $. */
   max_exposure_pct?: number;
   cap_mode: "skip" | "trim";
+  /** Solo una estrategia abierta a la vez por accion: entra la primera que da
+   *  senal y las demas no entran en ese ticker hasta que sale. */
+  one_per_ticker?: boolean;
   /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
   monthly_expenses: number;
   start_date?: string | null;
@@ -558,6 +561,8 @@ export interface RawCapReport {
   skipped: number;
   trimmed: number;
   unsized: number;
+  /** Senales que no entraron porque otra estrategia ya estaba dentro del ticker. */
+  blocked?: number;
   notional_usd?: number;
 }
 
@@ -636,6 +641,7 @@ export interface RawOut {
     max_exposure_usd: number;
     max_exposure_pct?: number;
     cap_mode: "skip" | "trim";
+    one_per_ticker?: boolean;
     monthly_expenses: number;
     start_date: string | null;
     end_date: string | null;

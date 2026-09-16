@@ -984,6 +984,10 @@ def run_backtest(
                 "pm_low": mini_df["pm_low"].values.astype(np.float64),
                 "prev_high": mini_df["prev_high"].values.astype(np.float64),
                 "prev_low": mini_df["prev_low"].values.astype(np.float64),
+                # El VWAP ya viene del dia entero (market_frame); aqui solo se
+                # recorta con el resto. Si no estuviera, el stop por VWAP
+                # caeria al respaldo SIN AVISAR.
+                "vwap": mini_df["vwap"].values.astype(np.float64),
             }
             
             # Apply mask to signals
@@ -1227,6 +1231,10 @@ def run_backtest(
                 **dict(zip(("pivot_highs", "pivot_lows"),
                            pivotes_para_stop(arrays, hs.get("pivot_window"))
                            if necesita_pivotes(hs) else (None, None))),
+                # VWAP del dia (columna de market_frame, ya recortada a la
+                # sesion). Se pasa siempre, como hods/lods: solo lo lee el
+                # stop cuyo nivel es "VWAP".
+                vwaps=arrays.get("vwap"),
                 prev_lows=arrays.get("prev_low"),
                 timestamps=timestamps_arr,
                 elapsed_limit=elapsed_limit,
