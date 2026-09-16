@@ -326,6 +326,10 @@ def _compute_signals_for_pair(
     # VWAP del dia ENTERO y luego recortado, como hod/pm_high (paridad con el
     # camino secuencial, que lo trae de market_frame). Misma funcion.
     _vwap_full = vwap_para_stop({"high": H, "low": L, "close": C, "volume": V})
+    # ATR del stop, igual: dia entero (desde el premercado, solo velas
+    # anteriores) y recortado; en RTH las 14 primeras velas ya llevan ATR,
+    # como en el bot. Antes se recalculaba sobre lo recortado (16-sep).
+    _atr_full = atr_para_stop({"high": H, "low": L, "close": C})
     arrays_out = {
         "open": O[session_mask_np],
         "high": H[session_mask_np],
@@ -340,6 +344,7 @@ def _compute_signals_for_pair(
         "prev_high": prev_h[session_mask_np],
         "prev_low": prev_l[session_mask_np],
         "vwap": (_vwap_full[session_mask_np] if _vwap_full is not None else None),
+        "atr": (_atr_full[session_mask_np] if _atr_full is not None else None),
     }
 
     # --- candle_delay shift ---
@@ -1112,7 +1117,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 pm_highs=sig["arrays"].get("pm_high"),
                 pm_lows=sig["arrays"].get("pm_low"),
                 prev_highs=sig["arrays"].get("prev_high"),
-                atrs=(atr_para_stop(sig["arrays"])
+                atrs=(sig["arrays"].get("atr")
                       if hs.get("type") == "ATR Multiplier" else None),
                 hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
                 hs_struct_fallback_pct=hs.get("struct_fallback_pct"),
