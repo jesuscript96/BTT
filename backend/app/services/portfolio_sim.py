@@ -511,6 +511,7 @@ def simulate(
     pyr_base = 0.0
     # Estado de la señal de cada nivel DENTRO del trade (se rearma al entrar).
     pyr_prev_sig: list = []
+    pyr_last_px = 0.0
     pyr_fired: list = []   # contador de disparos por nivel (int)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
@@ -1572,12 +1573,21 @@ def simulate(
                 pyramid_levels_iter = []
             else:
                 pyramid_levels_iter = pyramid_levels
-            if pyramid_sequential:
-                nivel_activo = next(
-                    (k for k in range(len(pyramid_levels))
-                     if pyr_fired[k] < pyramid_levels[k]["max_fires"]),
-                    -1,
-                )
+            # GRUPOS (2026-09-16). Cada nivel lleva `group` y `sequential`; los
+            # grupos son independientes entre si y dentro de un grupo
+            # secuencial solo vigila el primer nivel que aun tenga veces. Sin
+            # esas claves (senales de antes) manda `pyramid_sequential` para
+            # todos, que es exactamente el comportamiento anterior.
+            activos_por_grupo = {}
+            for k, lvk in enumerate(pyramid_levels):
+                gk = lvk.get("group", 0)
+                if lvk.get("sequential", pyramid_sequential) and gk not in activos_por_grupo:
+                    activos_por_grupo[gk] = next(
+                        (j for j in range(len(pyramid_levels))
+                         if pyramid_levels[j].get("group", 0) == gk
+                         and pyr_fired[j] < pyramid_levels[j]["max_fires"]),
+                        -1,
+                    )
             for lv_idx, lv in enumerate(pyramid_levels_iter):
                 if pyr_fired[lv_idx] >= lv["max_fires"]:
                     continue
@@ -1585,14 +1595,34 @@ def simulate(
                 # de señal, para que al llegarle pueda disparar aunque su
                 # condicion llevara rato cumpliendose. Antes el flanco se
                 # consumia estando desarmado y el nivel quedaba muerto.
-                if nivel_activo is not None and lv_idx != nivel_activo:
-                    continue
+                if lv.get("sequential", pyramid_sequential):
+                    if activos_por_grupo.get(lv.get("group", 0), -1) != lv_idx:
+                        continue
                 # El disparo es en el paso de "no se cumple" a "se cumple", pero
                 # medido DENTRO del trade: `pyr_prev_sig` arranca en False en
                 # cada entrada, asi que una condicion que YA se cumplia al entrar
                 # dispara en la primera barra. Antes se miraba la barra anterior
                 # del array completo y esa condicion no disparaba jamas.
                 sig_now = bool(lv["signals"][i])
+                # DISPARO POR RECORRIDO (2026-09-16): X % del PRECIO a favor o en
+                # contra, medido con el cierre de esta vela respecto al precio
+                # de entrada de la operacion (o al del ultimo disparo de la
+                # piramide). Es el take profit / stop loss de la propia
+                # piramide. Se combina con las condiciones (AND) y con el
+                # flanco: cruzar el umbral es UN evento, no uno por vela.
+                _mv = lv.get("move")
+                if sig_now and _mv:
+                    _ref = (pyr_last_px if (_mv.get("ref") == "last" and pyr_last_px > 0)
+                            else entry_price)
+                    if _ref > 0:
+                        _a_favor = (close[i] - _ref) / _ref * 100.0
+                        if not is_long:
+                            _a_favor = -_a_favor
+                        _umbral = float(_mv.get("pct", 0.0))
+                        sig_now = ((_a_favor >= _umbral) if _mv.get("dir") != "contra"
+                                   else (-_a_favor >= _umbral))
+                    else:
+                        sig_now = False
                 dispara = sig_now and not pyr_prev_sig[lv_idx]
                 pyr_prev_sig[lv_idx] = sig_now
                 if not dispara:
@@ -1729,6 +1759,7 @@ def simulate(
                     # usuario, 2026-08-23).
                     pyr_base += add_size
                     pyr_fired[lv_idx] += 1
+                    pyr_last_px = add_px
                     pyr_exec.append({
                         "kind": "add",
                         "idx": exec_idx,
@@ -1796,6 +1827,7 @@ def simulate(
                     size -= red_size
                     pyr_base -= red_size
                     pyr_fired[lv_idx] += 1
+                    pyr_last_px = net_red
                     pyr_exec.append({
                         "kind": "reduce",
                         "idx": exec_idx,
@@ -2087,6 +2119,9 @@ def simulate(
                     # entrada (reentradas incluidas) rearma sus niveles.
                     pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
                     pyr_prev_sig = [False] * len(pyramid_levels) if pyramid_mode else []
+                    # Precio del ultimo anadido/quita de ESTA posicion, para los
+                    # niveles por recorrido medidos "desde el ultimo disparo".
+                    pyr_last_px = 0.0
                     pyr_base = size
                     # Bitacora de las ejecuciones de piramide de ESTA posicion.
                     # Viaja pegada al trade de cierre (`pyr_executions`) para

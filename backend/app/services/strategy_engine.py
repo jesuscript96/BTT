@@ -340,6 +340,47 @@ def get_lowest_timeframe_mins(logic_dict: dict | None) -> int:
     return lowest_mins
 
 
+def _parse_pyr_move(lv: dict):
+    """El disparo por recorrido de un nivel de piramide, o None.
+
+    Devuelve {"pct", "dir", "ref"}: X % de recorrido del PRECIO (no de la
+    vela), "favor"/"contra" respecto al sentido del trade, y desde donde se
+    mide: "entry" (el precio de entrada de la operacion) o "last" (el precio
+    del ultimo anadido/quita de esta posicion; sin ninguno, la entrada).
+    """
+    if str(lv.get("trigger", "conditions")).lower() not in ("move", "recorrido"):
+        return None
+    try:
+        pct = float(lv.get("move_pct", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        pct = 0.0
+    if pct <= 0:
+        return None
+    d = str(lv.get("move_dir", "favor")).lower()
+    r = str(lv.get("move_ref", "entry")).lower()
+    return {
+        "pct": pct,
+        "dir": "contra" if d in ("contra", "against", "en contra") else "favor",
+        "ref": "last" if r in ("last", "ultimo", "\u00faltimo", "last_fire") else "entry",
+    }
+
+
+def _pyr_grupo(lv: dict) -> int:
+    try:
+        g = int(lv.get("group", 0) or 0)
+    except (TypeError, ValueError):
+        g = 0
+    return max(0, g)
+
+
+def _pyr_secuencial(lv: dict, grupos: list, modo_global_seq: bool) -> bool:
+    """Si el grupo de este nivel va en secuencia. Sin `groups`, el modo global."""
+    g = _pyr_grupo(lv)
+    if grupos and g < len(grupos) and isinstance(grupos[g], dict):
+        return str(grupos[g].get("mode", "individual")).lower() == "sequential"
+    return modo_global_seq
+
+
 def compile_strategy_def(strategy_def: dict) -> dict:
     """Pre-extract all per-strategy fields once. N1d: also normalize indicator names."""
     bias = strategy_def.get("bias", "long")
@@ -370,11 +411,25 @@ def compile_strategy_def(strategy_def: dict) -> dict:
     # queda inerte (prioridad nº1 del usuario: cero cambios si no se piramida).
     pyramiding = strategy_def.get("pyramiding") or {}
     pyr_levels_def = []
+    # GRUPOS (2026-09-16). Cada nivel lleva `group` (indice, 0 por defecto) y
+    # `pyramiding.groups[g].mode` dice si ESE grupo es secuencial o
+    # individual. Los grupos son independientes entre si. Sin `groups` (las
+    # estrategias de antes) todo es el grupo 0 con el `mode` global de
+    # siempre — asi una definicion vieja se compila exactamente igual.
+    pyr_grupos = pyramiding.get("groups") or []
+    modo_global_seq = str(pyramiding.get("mode", "individual")).lower() == "sequential"
     for lv in (pyramiding.get("levels") or []):
         root = lv.get("root_condition") or {}
-        if not root.get("conditions"):
+        # DISPARO POR RECORRIDO (2026-09-16): `trigger: "move"` + `move_pct`.
+        # El nivel dispara cuando el precio lleva X % a favor (o en contra)
+        # desde la entrada (o desde el ultimo disparo de la piramide), como
+        # un take profit / stop loss de la propia piramide. Si ademas lleva
+        # condiciones, se exigen las dos cosas (AND).
+        move = _parse_pyr_move(lv)
+        if not root.get("conditions") and move is None:
             continue
-        _normalize_tree(root)
+        if root.get("conditions"):
+            _normalize_tree(root)
         try:
             pct = float(lv.get("capital_pct", 0.0))
         except (TypeError, ValueError):
@@ -412,6 +467,12 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             "hybrid_stop": bool(lv.get("hybrid_stop", False)),
             "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
             "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
+            # Grupo del nivel y si ese grupo va en secuencia. Van EN EL NIVEL
+            # (no en un bloque aparte) para que el simulador no tenga que
+            # cruzar dos listas: la regla de las tres capas otra vez.
+            "group": _pyr_grupo(lv),
+            "sequential": _pyr_secuencial(lv, pyr_grupos, modo_global_seq),
+            "move": move,
         })
 
     # ── Scalping (2026-09-12) ──
@@ -905,9 +966,15 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
     out = []
     for lv in levels_def:
         try:
-            sig = _evaluate_condition_group(lv["root_condition"], df, tf, daily_stats, cache)
-            sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
-            sig_arr = sig_arr.astype(bool)
+            if (lv.get("root_condition") or {}).get("conditions"):
+                sig = _evaluate_condition_group(lv["root_condition"], df, tf, daily_stats, cache)
+                sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
+                sig_arr = sig_arr.astype(bool)
+            else:
+                # Nivel SOLO por recorrido: la senal logica es "siempre" y el
+                # simulador pone el umbral de precio, que depende del trade
+                # (precio de entrada) y aqui no se conoce.
+                sig_arr = np.ones(len(df), dtype=bool)
             if entry_time_mask is not None:
                 m = entry_time_mask
                 m = m.values if hasattr(m, "values") else np.asarray(m)
@@ -935,6 +1002,10 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 "hybrid_stop": lv.get("hybrid_stop", False),
                 "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
                 "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
+                # Grupo, modo del grupo y disparo por recorrido (2026-09-16).
+                "group": lv.get("group", 0),
+                "sequential": lv.get("sequential", compiled.get("pyramid_sequential", False)),
+                "move": lv.get("move"),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel

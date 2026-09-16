@@ -1,5 +1,5 @@
 import React from 'react';
-import { PyramidingConfig, PyramidLevel, Timeframe, emptyPyramidLevel } from '@/types/strategy';
+import { PyramidingConfig, PyramidGroup, PyramidLevel, Timeframe, emptyPyramidLevel } from '@/types/strategy';
 import { GroupDisplay } from './ConditionBuilder';
 
 /**
@@ -17,6 +17,19 @@ import { GroupDisplay } from './ConditionBuilder';
  *  - Cada nivel dispara UNA vez por trade; la reentrada lo rearma.
  *  - TP/SL/parciales corren en paralelo: se llevan lo que esto no quite.
  *  - Los niveles de SL/TP quedan anclados a la entrada ORIGINAL.
+ *
+ * GRUPOS (16-sep-2026, petición del usuario): las pirámides van en grupos y
+ * cada grupo tiene su propio modo. Así se puede tener «dos en secuencia y una
+ * independiente»: un grupo secuencial con las dos y otro grupo con la tercera.
+ * Los grupos corren en paralelo entre sí. En el JSON cada nivel lleva su
+ * `group` (índice) y `pyramiding.groups[g].mode`; sin `groups`, todo es el
+ * grupo 0 con el `mode` de siempre (las estrategias guardadas no cambian).
+ *
+ * DISPARO POR RECORRIDO (misma fecha): además de por condiciones, un nivel
+ * puede disparar cuando el PRECIO lleva X % a favor o en contra desde la
+ * entrada (o desde el último añadido/quita), como un take profit / stop loss
+ * de la propia pirámide. Con condiciones y recorrido a la vez, se exigen los
+ * dos.
  */
 
 interface Props {
@@ -42,15 +55,45 @@ const selectStyle: React.CSSProperties = {
 export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
     const active = config.active === true;
 
+    // Vista normalizada de los grupos: sin `groups` (estrategia de antes) hay
+    // uno solo con el modo global. Al escribir se guardan los dos, `groups` y
+    // `mode` (= el del primer grupo), para que nada de lo viejo se rompa.
+    const grupos: PyramidGroup[] = config.groups && config.groups.length
+        ? config.groups
+        : [{ mode: config.mode || 'individual' }];
+    const grupoDe = (l: PyramidLevel) => Math.min(Math.max(0, l.group ?? 0), grupos.length - 1);
+    const escribir = (levels: PyramidLevel[], gs: PyramidGroup[] = grupos) =>
+        onChange({ ...config, levels, groups: gs, mode: gs[0]?.mode ?? 'individual' });
+
     const setLevel = (idx: number, lv: PyramidLevel) => {
         const levels = config.levels.slice();
         levels[idx] = lv;
-        onChange({ ...config, levels });
+        escribir(levels);
     };
 
     const removeLevel = (idx: number) => {
-        onChange({ ...config, levels: config.levels.filter((_, i) => i !== idx) });
+        escribir(config.levels.filter((_, i) => i !== idx));
     };
+
+    const setGrupoModo = (g: number, mode: PyramidGroup['mode']) => {
+        const gs = grupos.slice();
+        gs[g] = { ...gs[g], mode };
+        escribir(config.levels, gs);
+    };
+
+    const addGrupo = () => escribir(config.levels, [...grupos, { mode: 'individual' }]);
+
+    // Quitar un grupo se lleva sus pirámides y reindexa las de los grupos de
+    // detrás. Siempre queda al menos un grupo.
+    const removeGrupo = (g: number) => {
+        if (grupos.length <= 1) return;
+        const levels = config.levels
+            .filter(l => grupoDe(l) !== g)
+            .map(l => (grupoDe(l) > g ? { ...l, group: grupoDe(l) - 1 } : { ...l, group: grupoDe(l) }));
+        escribir(levels, grupos.filter((_, i) => i !== g));
+    };
+
+    const addLevel = (g: number) => escribir([...config.levels, { ...emptyPyramidLevel(), group: g }]);
 
     // El contador que pidió el usuario: cuánto llevamos añadido y cuánto
     // quitado. Los añadidos se suman en % del equity. Las quitas son % de la
@@ -146,20 +189,6 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     {TIMEFRAMES.map(tf => <option key={tf} value={tf}>{tf}</option>)}
                                 </select>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Modo:</span>
-                                <select
-                                    value={config.mode || 'individual'}
-                                    onChange={(e) => onChange({ ...config, mode: e.target.value as 'individual' | 'sequential' })}
-                                    style={selectStyle}
-                                    title={(config.mode || 'individual') === 'individual'
-                                        ? 'Cada pirámide vigila su condición en paralelo, sin depender de las demás.'
-                                        : 'Cada pirámide solo se arma cuando la anterior ya ha disparado al menos una vez.'}
-                                >
-                                    <option value="individual">Individual</option>
-                                    <option value="sequential">Secuencial</option>
-                                </select>
-                            </div>
                         </div>
                         {/* El contador pedido por el usuario */}
                         {config.levels.length > 0 && (
@@ -184,8 +213,50 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                         )}
                     </div>
 
-                    {/* Niveles */}
-                    {config.levels.map((lv, idx) => (
+                    {/* GRUPOS: cada uno con su modo y sus pirámides. El número de
+                        cada pirámide es global (el que usa el motor y la
+                        descripción), aunque se muestre dentro de su grupo. */}
+                    {grupos.map((gr, g) => (
+                        <div key={`g${g}`} style={{
+                            border: '0.5px dashed var(--color-ec-border)',
+                            borderRadius: 8,
+                            padding: '10px 10px 12px',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 10,
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{
+                                    fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 700,
+                                    color: 'var(--color-ec-copper)', textTransform: 'uppercase', letterSpacing: '0.08em',
+                                }}>Grupo {g + 1}</span>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)' }}>Modo:</span>
+                                <select
+                                    value={gr.mode || 'individual'}
+                                    onChange={(e) => setGrupoModo(g, e.target.value as PyramidGroup['mode'])}
+                                    style={selectStyle}
+                                    title={(gr.mode || 'individual') === 'individual'
+                                        ? 'Cada pirámide de este grupo vigila su disparo en paralelo, sin depender de las demás.'
+                                        : 'Dentro de este grupo, cada pirámide solo se arma cuando la anterior ya ha disparado al menos una vez. Los otros grupos van a su aire.'}
+                                >
+                                    <option value="individual">Individual</option>
+                                    <option value="sequential">Secuencial</option>
+                                </select>
+                                {grupos.length > 1 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => removeGrupo(g)}
+                                        style={{
+                                            marginLeft: 'auto', background: 'transparent', border: 'none',
+                                            color: 'var(--color-ec-loss)', cursor: 'pointer', fontSize: 11,
+                                            fontFamily: 'var(--color-ec-sans)', padding: 0,
+                                        }}
+                                        title="Eliminar este grupo y sus pirámides"
+                                    >✕ eliminar grupo</button>
+                                )}
+                            </div>
+
+                            {config.levels.map((lv, idx) => grupoDe(lv) === g && (
                         <div key={idx} style={{
                             border: '0.5px solid var(--color-ec-border)',
                             borderLeft: '2px solid var(--color-ec-copper)',
@@ -329,6 +400,67 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     title="Cuántas veces puede disparar esta pirámide por trade (cada cumplimiento nuevo de la condición cuenta una vez)"
                                 />
                             </div>
+                            {/* DISPARO: por condiciones (como siempre) o por RECORRIDO
+                                del precio. Con recorrido, las condiciones de abajo son
+                                opcionales y, si hay, se exigen las dos cosas. */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>Dispara por:</span>
+                                <select
+                                    value={lv.trigger === 'move' ? 'move' : 'conditions'}
+                                    onChange={(e) => setLevel(idx, {
+                                        ...lv,
+                                        trigger: e.target.value as 'conditions' | 'move',
+                                        ...(e.target.value === 'move' && !lv.move_pct ? { move_pct: 5, move_dir: 'favor' as const, move_ref: 'entry' as const } : {}),
+                                    })}
+                                    style={selectStyle}
+                                    title={'· Condiciones — el grupo de condiciones de abajo, como la entrada.\n'
+                                        + '· Recorrido del precio — cuando el precio lleva X % a favor o en contra, '
+                                        + 'medido desde la entrada o desde el último añadido/quita. Es el take profit / '
+                                        + 'stop loss de la propia pirámide. Si además pones condiciones, hacen falta las dos.'}
+                                >
+                                    <option value="conditions">condiciones</option>
+                                    <option value="move">recorrido del precio</option>
+                                </select>
+                                {lv.trigger === 'move' && (
+                                    <>
+                                        <select
+                                            value={lv.move_dir ?? 'favor'}
+                                            onChange={(e) => setLevel(idx, { ...lv, move_dir: e.target.value as 'favor' | 'contra' })}
+                                            style={selectStyle}
+                                            title="A favor = en el sentido del trade (en un corto, hacia abajo). En contra = al revés."
+                                        >
+                                            <option value="favor">a favor</option>
+                                            <option value="contra">en contra</option>
+                                        </select>
+                                        <input
+                                            type="number"
+                                            min={0.1}
+                                            step={0.5}
+                                            value={lv.move_pct ?? ''}
+                                            onChange={(e) => setLevel(idx, { ...lv, move_pct: e.target.value === '' ? 0 : Number(e.target.value) })}
+                                            onFocus={(e) => e.target.select()}
+                                            style={{ ...selectStyle, width: 62, cursor: 'text' }}
+                                            title="Recorrido del PRECIO en % (acumulado, no el de una vela). Se mide con el cierre de cada vela y se opera en la siguiente."
+                                        />
+                                        <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>%</span>
+                                        <select
+                                            value={lv.move_ref ?? 'entry'}
+                                            onChange={(e) => setLevel(idx, { ...lv, move_ref: e.target.value as 'entry' | 'last' })}
+                                            style={selectStyle}
+                                            title={'Desde dónde se mide el recorrido:\n'
+                                                + '· la entrada — el precio al que se abrió la operación\n'
+                                                + '· el último disparo — el precio del último añadido o quita de esta posición '
+                                                + '(sin ninguno, la entrada). Con varias «veces», encadena escalones: +5 %, otro +5 % desde ahí...'}
+                                        >
+                                            <option value="entry">desde la entrada</option>
+                                            <option value="last">desde el último disparo</option>
+                                        </select>
+                                        {lv.root_condition.conditions.length > 0 && (
+                                            <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>y además las condiciones de abajo</span>
+                                        )}
+                                    </>
+                                )}
+                            </div>
                             {/* El MISMO editor de grupos que entrada/salida: AND/OR,
                                 anidados, todos los indicadores y comparadores. */}
                             <GroupDisplay
@@ -338,32 +470,52 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                 parentTimeframe={config.timeframe}
                             />
                         </div>
+                            ))}
+
+                            <button
+                                type="button"
+                                onClick={() => addLevel(g)}
+                                style={{
+                                    alignSelf: 'flex-start',
+                                    backgroundColor: 'transparent',
+                                    border: '0.5px dashed var(--color-ec-copper)',
+                                    borderRadius: 5,
+                                    padding: '6px 12px',
+                                    fontSize: 11,
+                                    fontWeight: 600,
+                                    fontFamily: 'var(--color-ec-sans)',
+                                    color: 'var(--color-ec-copper)',
+                                    cursor: 'pointer',
+                                }}
+                            >+ Añadir pirámide al grupo {g + 1}</button>
+                        </div>
                     ))}
 
                     <button
                         type="button"
-                        onClick={() => onChange({ ...config, levels: [...config.levels, emptyPyramidLevel()] })}
+                        onClick={addGrupo}
                         style={{
                             alignSelf: 'flex-start',
                             backgroundColor: 'transparent',
-                            border: '0.5px dashed var(--color-ec-copper)',
+                            border: '0.5px dashed var(--color-ec-border)',
                             borderRadius: 5,
                             padding: '6px 12px',
                             fontSize: 11,
                             fontWeight: 600,
                             fontFamily: 'var(--color-ec-sans)',
-                            color: 'var(--color-ec-copper)',
+                            color: 'var(--color-ec-text-muted)',
                             cursor: 'pointer',
                         }}
-                    >+ Añadir pirámide</button>
+                        title="Otro grupo, independiente de los anteriores, con su propio modo"
+                    >+ Añadir grupo</button>
 
                     <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 9.5, color: 'var(--color-ec-text-muted)', lineHeight: 1.5 }}>
-                        {(config.mode || 'individual') === 'individual'
-                            ? 'Cada pirámide es INDEPENDIENTE: vigila su condición en paralelo, sin depender de las demás (la numeración es solo orden).'
-                            : 'Modo SECUENCIAL: cada pirámide solo se arma cuando la anterior ya ha disparado al menos una vez.'}
-                        {' '}Dispara hasta las «veces» indicadas, contando cada cumplimiento nuevo de la condición, siempre después de la
-                        entrada; una reentrada lo rearma todo. El stop y el take profit no se recalculan al añadir (quedan anclados a la
-                        entrada original) y corren en paralelo: cierran lo que las quitas no se hayan llevado.
+                        Los grupos van en paralelo, cada uno con su modo: INDIVIDUAL = cada pirámide vigila su disparo por su cuenta;
+                        SECUENCIAL = cada pirámide del grupo se arma cuando la anterior del mismo grupo ya ha disparado. Un nivel dispara
+                        hasta las «veces» indicadas, contando cada cumplimiento nuevo (de las condiciones o del recorrido), siempre después
+                        de la entrada; una reentrada lo rearma todo. El recorrido se mide con el cierre de cada vela y se opera en la
+                        siguiente. El stop y el take profit no se recalculan al añadir (quedan anclados a la entrada original) y corren en
+                        paralelo: cierran lo que las quitas no se hayan llevado.
                     </span>
                 </div>
             )}

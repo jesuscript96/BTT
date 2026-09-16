@@ -1383,6 +1383,9 @@ export default function BacktestPanel({
                       const pyr = stratDef?.pyramiding;
                       const niveles = pyr?.levels || [];
                       if (!niveles.length) return null;
+                      // Grupos (16-sep-2026): cada nivel dice su grupo y cada
+                      // grupo su modo. Sin `groups`, es el modo global de siempre.
+                      const grupos: { mode?: string }[] = pyr?.groups?.length ? pyr.groups : [{ mode: pyr?.mode || 'individual' }];
                       const txt = niveles.map((l: any, i: number) => {
                         const unidad = (l.unit ?? 'pct') === 'usd' ? '$' : '%';
                         const accion = l.action === 'reduce' ? 'Quita' : 'Añade';
@@ -1390,13 +1393,21 @@ export default function BacktestPanel({
                           ? ''
                           : (l.action === 'reduce' ? ' de la posición' : ' del equity');
                         const veces = (l.times ?? 1) > 1 ? ` ×${l.times}` : '';
-                        return `${i + 1}) ${accion} ${l.capital_pct}${unidad}${base}${veces}`;
+                        const grupo = grupos.length > 1 ? `G${Math.min(Math.max(0, l.group ?? 0), grupos.length - 1) + 1} ` : '';
+                        // Disparo por recorrido: «si 5% a favor (desde el último disparo)».
+                        const disparo = l.trigger === 'move' && (l.move_pct || 0) > 0
+                          ? ` si ${l.move_pct}% ${l.move_dir === 'contra' ? 'en contra' : 'a favor'}${l.move_ref === 'last' ? ' desde el último disparo' : ''}${l.root_condition?.conditions?.length ? ' + condiciones' : ''}`
+                          : '';
+                        return `${grupo}${i + 1}) ${accion} ${l.capital_pct}${unidad}${base}${veces}${disparo}`;
                       }).join(" | ");
+                      const modos = grupos.length > 1
+                        ? ' · ' + grupos.map((g, k) => `G${k + 1} ${g.mode === 'sequential' ? 'sec.' : 'ind.'}`).join(', ')
+                        : (grupos[0]?.mode === 'sequential' ? ' · secuencial' : '');
                       return (
                         <div>
                           <span style={{ fontWeight: 600, color: 'var(--color-ec-copper)' }}>PIRAMIDACIÓN: </span>
                           <span style={{ color: 'var(--color-ec-text-primary)' }}>
-                            {txt}{pyr?.mode === 'sequential' ? ' · secuencial' : ''}
+                            {txt}{modos}
                             {pyr?.timeframe ? ` · ${pyr.timeframe}` : ''}
                           </span>
                         </div>
