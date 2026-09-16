@@ -727,6 +727,9 @@ export default function Chart({
             const snap = snapToCandle(ex.time_epoch, candleTimes);
             if (!snap || !candleTimeSet.has(snap)) continue;
             const isAdd = ex.kind === "add";
+            // SL de lote (PRD 2026-09-15): cierre defensivo de UN lote — rojo
+            // como el stop del trade, para no leerlo como un parcial ámbar.
+            const esLotStop = ex.kind === "lot_stop";
             const isLong = t.direction.toLowerCase().includes("long");
             // Escalera del scalping complejo: triángulos pequeños, añadido
             // debajo de la vela y quita encima, con la flecha en el sentido de
@@ -739,10 +742,10 @@ export default function Chart({
               position: esEscalera
                 ? (isAdd ? "belowBar" : "aboveBar")
                 : (isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar"),
-              // Cobre para los añadidos (aumentan la posición) y ámbar para
-              // las salidas parciales, para no confundirlos con la entrada ni
-              // con el cierre.
-              color: isAdd ? "#c87941" : "#d9a441",
+              // Cobre para los añadidos (aumentan la posición), ámbar para las
+              // salidas parciales y rojo para el SL de lote, para no
+              // confundirlos con la entrada ni con el cierre.
+              color: esLotStop ? "#ef4444" : (isAdd ? "#c87941" : "#d9a441"),
               shape: esEscalera
                 ? (compra ? "arrowUp" : "arrowDown")
                 : (isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square"),
@@ -832,6 +835,23 @@ export default function Chart({
             axisLabelVisible: true,
             title: "SL",
           });
+          // SL POR LOTE (PRD 2026-09-15): el nivel congelado de cada lote que
+          // cerró por su cinturón, en rojo suave y SIN etiqueta en el eje (en
+          // un día de varias patas serían demasiadas cifras pegadas). La línea
+          // del stop del trade (la de arriba) sigue siendo la roja dura.
+          for (const ex of (t.executions || [])) {
+            if (ex.kind !== "lot_stop") continue;
+            const exPx = Number(ex.sl_px);
+            if (!exPx || exPx <= 0) continue;
+            candleSeries.createPriceLine({
+              price: exPx,
+              color: "#f87171",
+              lineWidth: 1,
+              lineStyle: 2, // discontinua
+              axisLabelVisible: false,
+              title: ex.label || "SL lote",
+            });
+          }
         }
       }
 

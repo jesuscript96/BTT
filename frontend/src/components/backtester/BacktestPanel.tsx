@@ -1626,7 +1626,31 @@ export default function BacktestPanel({
                           ? ''
                           : (l.action === 'reduce' ? ' de la posición' : ' del equity');
                         const veces = (l.times ?? 1) > 1 ? ` ×${l.times}` : '';
-                        return `${i + 1}) ${accion} ${l.capital_pct}${unidad}${base}${veces}`;
+                        // SL del lote (PRD 2026-09-15): una línea por nivel que
+                        // lo declara. Acepta los nombres de la UI y los
+                        // canónicos del backend (la definición puede llegar
+                        // guardada de cualquiera de las dos formas).
+                        let sl = '';
+                        const ls = l.lot_stop;
+                        if (ls && ls.mode) {
+                          if (ls.mode === 'pct') {
+                            sl = ` · cada lote con SL: ${ls.pct}%`;
+                          } else {
+                            const lvLow = String(ls.level ?? '').toLowerCase();
+                            const esPivoteAlto = lvLow === 'ultimo pivote alto' || lvLow === 'último pivote alto'
+                              || lvLow === 'pivot high' || (lvLow === 'last_pivot' && ls.swing === 'up');
+                            const esPivoteBajo = lvLow === 'ultimo pivote bajo' || lvLow === 'último pivote bajo'
+                              || lvLow === 'pivot low' || (lvLow === 'last_pivot' && ls.swing === 'down');
+                            const nombre = esPivoteAlto
+                              ? `pivote-${ls.pivot_window ?? 3} ↑`
+                              : esPivoteBajo
+                                ? `pivote-${ls.pivot_window ?? 3} ↓`
+                                : (lvLow === 'previous max' || lvLow === 'previous_max' ? 'prev max' : lvLow);
+                            const off = ls.offset_pct ? ` +${ls.offset_pct}%` : '';
+                            sl = ` · cada lote con SL: ${nombre}${off}`;
+                          }
+                        }
+                        return `${i + 1}) ${accion} ${l.capital_pct}${unidad}${base}${veces}${sl}`;
                       }).join(" | ");
                       return (
                         <div>

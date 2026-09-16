@@ -1586,14 +1586,21 @@ def _build_executions(run: list[dict]) -> list[dict]:
     # Los añadidos/reducciones de pirámide van colgados de alguna de las legs.
     for leg in run:
         for pe in (leg.get("pyr_executions") or []):
+            _kind_pe = pe.get("kind")
             execs.append({
-                "kind": pe.get("kind"),          # add | reduce
+                "kind": _kind_pe,          # add | reduce | lot_stop
                 "time_epoch": pe.get("time_epoch"),
                 "price": pe.get("price"),
                 "size": pe.get("size"),
                 "pnl": pe.get("pnl"),
+                # SL por lote (PRD 2026-09-15): el nivel congelado del lote,
+                # para que el gráfico pueda pintar su línea punteada.
+                **({"sl_px": pe.get("sl_px")}
+                   if _kind_pe == "lot_stop" and pe.get("sl_px") else {}),
                 "label": (f"Pirámide {pe.get('level')}: "
-                          f"{'añade' if pe.get('kind') == 'add' else 'reduce'}"),
+                          + ("añade" if _kind_pe == "add"
+                             else "reduce" if _kind_pe == "reduce"
+                             else "SL lote")),
             })
         # Y los de la escalera del scalping complejo, marcados para que el
         # gráfico los pinte más pequeños (son muchos y muy seguidos).
@@ -1611,8 +1618,10 @@ def _build_executions(run: list[dict]) -> list[dict]:
     # Una reducción de pirámide sale por PARTIDA DOBLE: como leg (el simulador
     # le emite un trade propio) y en `pyr_executions`. Se queda la segunda, que
     # dice de qué pirámide viene; sin esto el gráfico pintaba dos marcadores
-    # encima del mismo evento.
-    ya = {(e["time_epoch"], e["price"]) for e in execs if e["kind"] == "reduce"}
+    # encima del mismo evento. El SL de lote es igual: leg con exit_reason
+    # "Pyramid Lot Stop" Y entrada kind "lot_stop" en la bitácora.
+    ya = {(e["time_epoch"], e["price"])
+          for e in execs if e["kind"] in ("reduce", "lot_stop")}
     # Cada leg aporta su salida (parcial, reducción o cierre final).
     for leg in run:
         if (leg.get("exit_time_epoch"), leg.get("exit_price")) in ya:
