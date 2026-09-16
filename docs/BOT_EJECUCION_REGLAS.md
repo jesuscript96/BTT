@@ -433,6 +433,17 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - B13 (Jaume, 16-sep): fill a precio MEJOR que el último precio → se acepta, se registra y ya. Fill PEOR de lo que la regla permite (fallo de DAS o de la orden) → se AVISA y se MANTIENE la posición con su stop; no se cierra por eso.
 - B19, SSR (Jaume, 16-sep, opción 2): con la restricción de venta en corto activa, la venta solo puede ejecutarse por encima del bid, así que la rama 1 (al bid) no existe: se aplica la MISMA escalera de siempre con un suelo: ningún escalón por debajo de bid + 0,01 $ (o bid + 1 tick). El bot necesita saber si el valor está en SSR ese día [API: bandera SSR en el L1 de DAS]. Nota de Jaume: la SSR no siempre viene de una caída del 10 %; a veces el valor «aparece» en SSR y no hay locates, o son de un solo uso: se trata en el área H (locates).
 
+### R-B-05 · Tamaño frente al volumen: medido siempre, tope desactivado de momento
+- Situación: cualquier orden de entrada o pirámide.
+- Detección: volumen ACUMULADO del día de la acción hasta ese instante (elección de Jaume frente a las últimas N velas) y tamaño pedido por el cuadro de mandos.
+- Acción: el bot calcula y registra en el diario la fracción (tamaño / acumulado del día) de cada orden. El TOPE está DESACTIVADO por defecto (parámetro del cuadro de mandos, «sin límite»): con los tamaños actuales no hace falta. Si se activa, la orden se recorta al tope y se entra con lo que quepa (como R-I-01); lo que no quepa se gestiona con la ejecución parcial (R-B-02) y el slippage, aunque se mueva el precio.
+- Quién la ejecuta: guarda + diario.
+- Parámetros: fracción máxima del acumulado del día (por defecto desactivado).
+- Si la acción falla: sin volumen acumulado (primeros minutos del PM) → se registra 0 y no se limita.
+- Prueba: revisar en sombra la distribución de la fracción registrada.
+- Estado: FIJADA (Jaume, 16-sep) como «medir, no limitar»; se reconfigura si aparecen problemas con tamaños mayores. Cumple M9 (preparado desde el inicio) sin actuar.
+- Origen: B8.
+
 - Principio (Jaume, 16-sep): el algoritmo intenta SIEMPRE el mejor precio disponible, acercándose al 0 % de slippage; el 3 % es el peor caso admitido, no un objetivo. Slippage mediano esperado con todo junto: ≈ 0,9 % en PM, ≈ 0,6 % en RTH.
 
 ### R-B-03 · Varias entradas del mismo ticker a la vez (una estrategia esperando y llegan otras)
