@@ -512,6 +512,13 @@ def simulate(
     # Estado de la señal de cada nivel DENTRO del trade (se rearma al entrar).
     pyr_prev_sig: list = []
     pyr_fired: list = []   # contador de disparos por nivel (int)
+    # ── CAMINO DE CONDICIONES por nivel (PRD 2026-09-16) ──
+    # Estado de los pasos de cada nivel-camino DENTRO del trade, inicializado
+    # y rearmado donde pyr_prev_sig/pyr_fired (cada entrada). Los niveles
+    # normales no lo usan (pyr_step_prev queda a None): coste cero sin camino.
+    pyr_step_k: list = []      # índice del paso pendiente por nivel
+    pyr_step_prev: list = []   # list[bool]: prev_sig de CADA paso (flanco)
+    pyr_last_latch: list = []  # vela del último enganche (solo same_bar=False)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
     # ── SL POR LOTE (PRD 2026-09-15, docs/PRD_SL_POR_LOTE_EN_PIRAMIDACION) ──
@@ -1736,9 +1743,37 @@ def simulate(
                 # cada entrada, asi que una condicion que YA se cumplia al entrar
                 # dispara en la primera barra. Antes se miraba la barra anterior
                 # del array completo y esa condicion no disparaba jamas.
-                sig_now = bool(lv["signals"][i])
-                dispara = sig_now and not pyr_prev_sig[lv_idx]
-                pyr_prev_sig[lv_idx] = sig_now
+                if lv.get("steps_signals") is None:
+                    # ── Nivel NORMAL: exactamente como siempre (regla nº1 del
+                    # PRD del camino: sin steps, ni una coma distinta) ──
+                    sig_now = bool(lv["signals"][i])
+                    dispara = sig_now and not pyr_prev_sig[lv_idx]
+                    pyr_prev_sig[lv_idx] = sig_now
+                else:
+                    # ── Nivel CAMINO (PRD 2026-09-16, §8): avanzar tantos
+                    # pasos como se pueda en esta vela. Es la MISMA regla que
+                    # el gate `nivel_activo` de arriba, llevada a pasos: solo
+                    # se evalúa el paso PENDIENTE, y su prev_sig solo se
+                    # actualiza en su turno — un paso futuro no consume su
+                    # flanco antes de tiempo. Con same_bar=False, en la vela
+                    # de un enganche no se evalúa el siguiente paso. ──
+                    steps = lv["steps_signals"]
+                    same_bar = lv.get("same_bar", True)
+                    dispara = False
+                    while pyr_step_k[lv_idx] < len(steps):
+                        k = pyr_step_k[lv_idx]
+                        if (not same_bar) and pyr_last_latch[lv_idx] == i:
+                            break          # ya hubo un enganche en esta vela
+                        sig_now = bool(steps[k][i])
+                        engancha = sig_now and not pyr_step_prev[lv_idx][k]
+                        pyr_step_prev[lv_idx][k] = sig_now
+                        if not engancha:
+                            break          # el paso pendiente no engancha hoy
+                        pyr_step_k[lv_idx] += 1
+                        pyr_last_latch[lv_idx] = i
+                        if pyr_step_k[lv_idx] == len(steps):
+                            dispara = True  # enganchado el último paso
+                            break
                 if not dispara:
                     continue
                 # El disparo se contabiliza SOLO si llega a ejecutarse (mas
@@ -1912,6 +1947,14 @@ def simulate(
                     # usuario, 2026-08-23).
                     pyr_base += add_size
                     pyr_fired[lv_idx] += 1
+                    # Nivel-camino: llaves reiniciadas para poder recorrer el
+                    # camino entero otra vez (Q4: cada disparo es un recorrido
+                    # completo), CONSERVANDO el prev_sig de cada paso (Q3
+                    # anti-metralla): una condición sostenida no re-dispara,
+                    # hace falta flanco nuevo.
+                    if lv.get("steps_signals") is not None:
+                        pyr_step_k[lv_idx] = 0
+                        pyr_last_latch[lv_idx] = -1
                     pyr_exec.append({
                         "kind": "add",
                         "idx": exec_idx,
@@ -1985,6 +2028,11 @@ def simulate(
                     size -= red_size
                     pyr_base -= red_size
                     pyr_fired[lv_idx] += 1
+                    # Nivel-camino: mismo rearme de llaves que el add (Q3/Q4),
+                    # conservando el prev_sig de cada paso.
+                    if lv.get("steps_signals") is not None:
+                        pyr_step_k[lv_idx] = 0
+                        pyr_last_latch[lv_idx] = -1
                     pyr_exec.append({
                         "kind": "reduce",
                         "idx": exec_idx,
@@ -2276,6 +2324,20 @@ def simulate(
                     # entrada (reentradas incluidas) rearma sus niveles.
                     pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
                     pyr_prev_sig = [False] * len(pyramid_levels) if pyramid_mode else []
+                    # El camino tambien se rearma con cada entrada: llaves a
+                    # cero y flancos limpios — una condicion vigente al entrar
+                    # engancha en la primera vela de su turno, y un evento
+                    # transitorio ANTES de la entrada no cuenta (Q2=A, PRD
+                    # 2026-09-16 §4). Los niveles normales quedan a None.
+                    if pyramid_mode:
+                        pyr_step_k = [0] * len(pyramid_levels)
+                        pyr_step_prev = [
+                            ([False] * len(lv["steps_signals"])
+                             if lv.get("steps_signals") is not None else None)
+                            for lv in pyramid_levels]
+                        pyr_last_latch = [-1] * len(pyramid_levels)
+                    else:
+                        pyr_step_k, pyr_step_prev, pyr_last_latch = [], [], []
                     # Idem los lotes con SL: la posición anterior murió con
                     # ellos dentro; los suyos empiezan de cero.
                     if lots_on:

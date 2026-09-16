@@ -26,6 +26,25 @@ interface Props {
 
 const TIMEFRAMES: Timeframe[] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1];
 
+// ── CAMINO DE CONDICIONES (PRD 2026-09-16) ──
+// Un nivel puede declarar una cadena ORDENADA de condiciones en vez de una
+// sola: engancha el último paso = dispara. Los helpers de aquí son la única
+// definición de "es camino" / "es válido" que usan el builder y los dos
+// puntos que serializan el payload (StrategyForm e InlineStrategyBuilder
+// llevan su copia local de `nivelValido`, igual que hacen con el resto).
+const GRUPO_VACIO = (): any => ({ type: "group", operator: "AND", conditions: [] });
+
+const esCamino = (l: PyramidLevel) => Array.isArray(l.steps);
+
+export const nivelPiramideValido = (l: PyramidLevel) => esCamino(l)
+    ? (l.steps!.length >= 2 && l.steps!.every(s => (s?.conditions?.length ?? 0) > 0))
+    : ((l.root_condition?.conditions?.length ?? 0) > 0);
+
+// El nivel-camino NO viaja con root_condition: son mutuamente excluyentes y
+// el backend rebota con 422 un nivel con ambas.
+export const nivelPiramideParaPayload = (l: PyramidLevel): PyramidLevel =>
+    esCamino(l) ? { ...l, root_condition: undefined } : l;
+
 const selectStyle: React.CSSProperties = {
     backgroundColor: 'var(--color-ec-bg-sidebar)',
     border: '0.5px solid var(--color-ec-border)',
@@ -50,6 +69,61 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
 
     const removeLevel = (idx: number) => {
         onChange({ ...config, levels: config.levels.filter((_, i) => i !== idx) });
+    };
+
+    // ── Camino: conmutador, pasos y reordenación ▲▼ ──
+    const toggleCamino = (idx: number, on: boolean) => {
+        const lv = config.levels[idx];
+        if (on) {
+            // El 1er paso arranca con la condición que ya tenía el nivel (si
+            // la había) y el 2º vacío. La condición única deja de viajar.
+            const primero = (lv.root_condition?.conditions?.length ?? 0) > 0
+                ? JSON.parse(JSON.stringify(lv.root_condition))
+                : GRUPO_VACIO();
+            setLevel(idx, {
+                ...lv,
+                steps: [primero, GRUPO_VACIO()],
+                same_bar: lv.same_bar ?? true,
+            });
+        } else {
+            // Al apagar vuelve el editor único. Si la definición cargada era
+            // camino, la condición única arranca vacía (los pasos no se
+            // colapsan: se pierden al apagar el camino, como cualquier otro
+            // campo que se deja de usar).
+            setLevel(idx, {
+                ...lv,
+                steps: undefined,
+                same_bar: undefined,
+                root_condition: lv.root_condition ?? GRUPO_VACIO(),
+            });
+        }
+    };
+
+    const setPaso = (idx: number, p: number, grupo: any) => {
+        const lv = config.levels[idx];
+        const steps = lv.steps!.slice();
+        steps[p] = grupo;
+        setLevel(idx, { ...lv, steps });
+    };
+
+    const addPaso = (idx: number) => {
+        const lv = config.levels[idx];
+        setLevel(idx, { ...lv, steps: [...lv.steps!, GRUPO_VACIO()] });
+    };
+
+    const removePaso = (idx: number, p: number) => {
+        const lv = config.levels[idx];
+        if ((lv.steps?.length ?? 0) <= 2) return;   // mínimo 2 pasos
+        setLevel(idx, { ...lv, steps: lv.steps!.filter((_, i) => i !== p) });
+    };
+
+    const movePaso = (idx: number, p: number, dir: -1 | 1) => {
+        const lv = config.levels[idx];
+        const steps = lv.steps!.slice();
+        const destino = p + dir;
+        if (destino < 0 || destino >= steps.length) return;
+        [steps[p], steps[destino]] = [steps[destino], steps[p]];
+        setLevel(idx, { ...lv, steps });
     };
 
     // El contador que pidió el usuario: cuánto llevamos añadido y cuánto
@@ -431,14 +505,135 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     )}
                                 </div>
                             )}
-                            {/* El MISMO editor de grupos que entrada/salida: AND/OR,
-                                anidados, todos los indicadores y comparadores. */}
-                            <GroupDisplay
-                                group={lv.root_condition}
-                                onChange={(g) => setLevel(idx, { ...lv, root_condition: g })}
-                                accentColor="amber"
-                                parentTimeframe={config.timeframe}
-                            />
+                            {/* ── CAMINO DE CONDICIONES (PRD 2026-09-16) ──
+                                Cadena ORDENADA: cada paso es el mismo editor
+                                de condiciones de siempre; el nivel dispara al
+                                engancharse el ÚLTIMO. OFF (default) = un solo
+                                bloque, como siempre. */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>Camino (condiciones en secuencia)</span>
+                                <div
+                                    className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${esCamino(lv) ? 'bg-ec-copper/70' : 'bg-muted'}`}
+                                    onClick={() => toggleCamino(idx, !esCamino(lv))}
+                                    title={'OFF: una única condición, como siempre.\nON: cadena ordenada de condiciones — primero se cumple la 1ª, luego la 2ª\n(aunque la 1ª ya no se cumpla)… y al engancharse la ÚLTIMA se ejecuta\nla acción. Los pasos intermedios no operan: solo abren la puerta.'}
+                                >
+                                    <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${esCamino(lv) ? 'left-4.5' : 'left-0.5'}`}></div>
+                                </div>
+                                {esCamino(lv) && (
+                                    <>
+                                        <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', marginLeft: 6, whiteSpace: 'nowrap' }}>Permitir completar en la misma vela</span>
+                                        <div
+                                            className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${(lv.same_bar ?? true) ? 'bg-ec-copper/70' : 'bg-muted'}`}
+                                            onClick={() => setLevel(idx, { ...lv, same_bar: !(lv.same_bar ?? true) })}
+                                            title={'ON (default): el camino puede completarse en la MISMA vela — con pasos\nsimultáneos equivale al AND clásico.\nOFF: el paso siguiente solo puede engancharse en la vela posterior o más\ntarde (≥1 vela entre enganches).'}
+                                        >
+                                            <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all shadow-sm ${(lv.same_bar ?? true) ? 'left-4.5' : 'left-0.5'}`}></div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                            {esCamino(lv) ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {(lv.steps ?? []).map((paso, p) => (
+                                        <div key={p} style={{
+                                            border: '0.5px solid var(--color-ec-border)',
+                                            borderRadius: 6,
+                                            padding: '8px 10px',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 8,
+                                        }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                <span style={{
+                                                    fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 700,
+                                                    color: 'var(--color-ec-text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em',
+                                                }}>{`${p + 1}º paso`}</span>
+                                                {/* ▲▼: reordenar pasos. El orden ES la semántica del
+                                                    camino (mismo patrón que Portfolio/Robustez). */}
+                                                <button
+                                                    type="button"
+                                                    disabled={p === 0}
+                                                    onClick={() => movePaso(idx, p, -1)}
+                                                    title="Subir el paso un puesto"
+                                                    style={{
+                                                        width: 18, height: 18, padding: 0,
+                                                        border: '0.5px solid var(--color-ec-border)', borderRadius: 5,
+                                                        background: 'transparent', color: 'var(--color-ec-text-secondary)',
+                                                        cursor: p === 0 ? 'default' : 'pointer',
+                                                        opacity: p === 0 ? 0.25 : 1, fontSize: 9, lineHeight: 1,
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                    }}
+                                                >▲</button>
+                                                <button
+                                                    type="button"
+                                                    disabled={p === (lv.steps!.length - 1)}
+                                                    onClick={() => movePaso(idx, p, 1)}
+                                                    title="Bajar el paso un puesto"
+                                                    style={{
+                                                        width: 18, height: 18, padding: 0,
+                                                        border: '0.5px solid var(--color-ec-border)', borderRadius: 5,
+                                                        background: 'transparent', color: 'var(--color-ec-text-secondary)',
+                                                        cursor: p === (lv.steps!.length - 1) ? 'default' : 'pointer',
+                                                        opacity: p === (lv.steps!.length - 1) ? 0.25 : 1, fontSize: 9, lineHeight: 1,
+                                                        fontFamily: 'var(--color-ec-sans)',
+                                                    }}
+                                                >▼</button>
+                                                <button
+                                                    type="button"
+                                                    disabled={(lv.steps?.length ?? 0) <= 2}
+                                                    onClick={() => removePaso(idx, p)}
+                                                    style={{
+                                                        marginLeft: 'auto',
+                                                        background: 'transparent', border: 'none',
+                                                        color: 'var(--color-ec-loss)', cursor: (lv.steps?.length ?? 0) <= 2 ? 'default' : 'pointer',
+                                                        fontSize: 11, fontFamily: 'var(--color-ec-sans)', padding: 0,
+                                                        opacity: (lv.steps?.length ?? 0) <= 2 ? 0.25 : 1,
+                                                    }}
+                                                    title="Quitar este paso (mínimo 2)"
+                                                >✕</button>
+                                            </div>
+                                            {/* Cada paso: el MISMO editor de grupos que entrada/salida. */}
+                                            <GroupDisplay
+                                                group={paso}
+                                                onChange={(g) => setPaso(idx, p, g)}
+                                                accentColor="amber"
+                                                parentTimeframe={config.timeframe}
+                                            />
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        onClick={() => addPaso(idx)}
+                                        style={{
+                                            alignSelf: 'flex-start',
+                                            backgroundColor: 'transparent',
+                                            border: '0.5px dashed var(--color-ec-copper)',
+                                            borderRadius: 5,
+                                            padding: '4px 10px',
+                                            fontSize: 10,
+                                            fontWeight: 600,
+                                            fontFamily: 'var(--color-ec-sans)',
+                                            color: 'var(--color-ec-copper)',
+                                            cursor: 'pointer',
+                                        }}
+                                    >+ Añadir paso</button>
+                                    {/* El front avisa; el back blinda con 422. */}
+                                    {!nivelPiramideValido(lv) && (
+                                        <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-loss)' }}>
+                                            El camino necesita al menos 2 pasos y ninguno vacío — así no se puede guardar.
+                                        </span>
+                                    )}
+                                </div>
+                            ) : (
+                                /* El MISMO editor de grupos que entrada/salida: AND/OR,
+                                   anidados, todos los indicadores y comparadores. */
+                                <GroupDisplay
+                                    group={lv.root_condition ?? GRUPO_VACIO()}
+                                    onChange={(g) => setLevel(idx, { ...lv, root_condition: g })}
+                                    accentColor="amber"
+                                    parentTimeframe={config.timeframe}
+                                />
+                            )}
                         </div>
                     ))}
 
@@ -469,6 +664,9 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                         {' '}Con «SL del lote», cada añadido de ese nivel trae su propio cinturón: al romperse cierra SOLO ese lote (con
                         PnL contra su precio de entrada) y el stop del trade sigue mandando sobre el conjunto; si el nivel no se puede
                         resolver al añadir (p. ej. pivote sin confirmar), el añadido no se ejecuta.
+                        {' '}Con «Camino», la condición única se sustituye por una CADENA ordenada: cada paso engancha cuando le toca
+                        (aunque los anteriores ya no se cumplan) y la acción se ejecuta al engancharse el último; los pasos cuentan solo
+                        desde la entrada, y con más de una «vez» el camino se recorre entero una vez por cada disparo.
                     </span>
                 </div>
             )}

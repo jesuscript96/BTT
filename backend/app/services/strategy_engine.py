@@ -340,6 +340,27 @@ def get_lowest_timeframe_mins(logic_dict: dict | None) -> int:
     return lowest_mins
 
 
+def _normalize_tree(group):
+    """Normaliza IN PLACE los nombres de indicadores de un árbol de condiciones.
+
+    Vale para CUALQUIER árbol del mismo tipo que el de entrada (entrada,
+    salida, pirámide, escalping, pasos de un camino): solo sustituye el
+    `name` de cada source/target/level por su forma canónica. Estaba anidada
+    en `compile_strategy_def`; sube a módulo para que `normaliza_steps`
+    reutilice EXACTAMENTE la misma normalización en cada paso (PRD del
+    camino, 2026-09-16) — una sola forma de normalizar, cero réplicas.
+    """
+    if not group:
+        return
+    for cond in group.get("conditions", []):
+        if cond.get("type") == "group" or ("conditions" in cond and "operator" in cond):
+            _normalize_tree(cond)
+        for key in ("source", "target", "level"):
+            cfg = cond.get(key)
+            if isinstance(cfg, dict) and "name" in cfg:
+                cfg["name"] = normalize_indicator_name(cfg["name"])
+
+
 # ── SL POR LOTE en niveles de piramidación (PRD 2026-09-15) ───────────────
 #
 # Cada nivel `add` puede declarar un stop propio que cierra SOLO ese lote.
@@ -466,6 +487,53 @@ def normaliza_lot_stop(lot_stop) -> dict:
     raise ValueError(f"'mode' debe ser 'pct' o 'structure' (llegó {lot_stop.get('mode')!r})")
 
 
+def normaliza_steps(steps, same_bar=True) -> dict:
+    """Valida y normaliza el «camino de condiciones» de un nivel (PRD
+    2026-09-16, docs/PRD_CAMINITO_CONDICIONES_PIRAMIDACION_20260916.md).
+
+    Un camino es una lista ORDENADA de árboles de condición: cada paso es
+    EXACTAMENTE un root_condition de entrada/salida/pirámide (mismo
+    ConditionGroup recursivo), y el nivel dispara su acción al engancharse el
+    ÚLTIMO paso. Igual que `normaliza_lot_stop`, ESTA función es la definición
+    única de qué es un camino válido: la usan el compilador (para normalizar
+    al ejecutar) y el field_validator del schema (para el 422 al guardar).
+
+    Devuelve el bloque canónico que viaja al compilador:
+      {"steps": [<árbol>, ...], "same_bar": <bool>}
+
+    Lanza ValueError (mensaje en claro) con cualquier combinación imposible:
+    `steps` que no sea lista, menos de 2 pasos, un paso sin condiciones, o
+    `same_bar` que no sea bool. Nada de drop silencioso: hoy el compilador
+    descarta en silencio un nivel con el árbol vacío, y un paso vacío
+    cambiaría el camino sin avisar (lección de las «TRES CAPAS»,
+    MEMORIA_MADRE §4).
+
+    Los árboles se devuelven en una COPIA profunda ya normalizada con la
+    MISMA `_normalize_tree` de entrada/salida: el input NO se toca (mismo
+    contrato que `normaliza_lot_stop` — el field_validator del schema invoca
+    esto solo para validar, y un validador pydantic no puede andar
+    reescribiendo el payload que le enseñan).
+    """
+    if not isinstance(steps, list):
+        raise ValueError(
+            f"debe ser una lista de pasos, llegó {type(steps).__name__}")
+    if len(steps) < 2:
+        raise ValueError(f"hacen falta al menos 2 pasos (llegaron {len(steps)})")
+    if same_bar is None:
+        same_bar = True
+    if not isinstance(same_bar, bool):
+        raise ValueError(f"'same_bar' debe ser true o false (llegó {same_bar!r})")
+    import copy
+    pasos = copy.deepcopy(steps)
+    for j, paso in enumerate(pasos):
+        conds = paso.get("conditions") if isinstance(paso, dict) else None
+        if not isinstance(conds, list) or not conds:
+            raise ValueError(
+                f"el paso {j + 1} está vacío: cada paso necesita sus condiciones")
+        _normalize_tree(paso)
+    return {"steps": pasos, "same_bar": bool(same_bar)}
+
+
 def compile_strategy_def(strategy_def: dict) -> dict:
     """Pre-extract all per-strategy fields once. N1d: also normalize indicator names."""
     bias = strategy_def.get("bias", "long")
@@ -473,18 +541,8 @@ def compile_strategy_def(strategy_def: dict) -> dict:
     exit_logic = strategy_def.get("exit_logic", {}) or {}
     risk = strategy_def.get("risk_management", {}) or {}
 
-    # N1d: normalize all indicator names in the condition tree
-    def _normalize_tree(group):
-        if not group:
-            return
-        for cond in group.get("conditions", []):
-            if cond.get("type") == "group" or ("conditions" in cond and "operator" in cond):
-                _normalize_tree(cond)
-            for key in ("source", "target", "level"):
-                cfg = cond.get(key)
-                if isinstance(cfg, dict) and "name" in cfg:
-                    cfg["name"] = normalize_indicator_name(cfg["name"])
-
+    # N1d: normalize all indicator names in the condition tree (misma
+    # función para entrada, salida, niveles de pirámide y pasos de camino).
     _normalize_tree(entry_logic.get("root_condition", {}))
     _normalize_tree(exit_logic.get("root_condition", {}))
 
@@ -497,10 +555,29 @@ def compile_strategy_def(strategy_def: dict) -> dict:
     pyramiding = strategy_def.get("pyramiding") or {}
     pyr_levels_def = []
     for lv in (pyramiding.get("levels") or []):
-        root = lv.get("root_condition") or {}
-        if not root.get("conditions"):
-            continue
-        _normalize_tree(root)
+        # CAMINO DE CONDICIONES (PRD 2026-09-16): el nivel puede declarar una
+        # lista ORDENADA de árboles (`steps`) en vez de un único
+        # `root_condition`; enganchado el último paso, dispara. Son
+        # mutuamente excluyentes y un camino inválido REVIENTA (el schema ya
+        # lo rebotó con 422 al guardar; llegar aquí es payload corrupto o
+        # hecho a mano) — nunca un drop silencioso que cambiaría el camino.
+        steps_raw = lv.get("steps")
+        if steps_raw is not None:
+            if lv.get("root_condition"):
+                raise ValueError(
+                    "un nivel de piramidación no puede llevar 'steps' y "
+                    "'root_condition' a la vez")
+            try:
+                steps_canon = normaliza_steps(steps_raw, lv.get("same_bar", True))
+            except ValueError as e:
+                raise ValueError(
+                    f"pyramiding nivel {len(pyr_levels_def) + 1}, steps: {e}") from e
+            root = None
+        else:
+            root = lv.get("root_condition") or {}
+            if not root.get("conditions"):
+                continue
+            _normalize_tree(root)
         try:
             pct = float(lv.get("capital_pct", 0.0))
         except (TypeError, ValueError):
@@ -537,7 +614,6 @@ def compile_strategy_def(strategy_def: dict) -> dict:
                 raise ValueError(f"pyramiding nivel {len(pyr_levels_def) + 1}, "
                                  f"lot_stop: {e}") from e
         nivel_compilado = {
-            "root_condition": root,
             "action": action,
             "unit": unit,
             # En 'usd' el numero son dolares tal cual, no un porcentaje.
@@ -558,6 +634,15 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
             "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
         }
+        if root is not None:
+            # Nivel normal: primera clave, como siempre (regla nº1 — el
+            # compilado de un nivel SIN steps es bit-identico al de antes).
+            nivel_compilado = {"root_condition": root, **nivel_compilado}
+        else:
+            # Nivel-camino: viaja la lista de pasos y el flag de misma vela;
+            # root_condition NO viaja (son excluyentes por diseño).
+            nivel_compilado["steps_def"] = steps_canon["steps"]
+            nivel_compilado["same_bar"] = steps_canon["same_bar"]
         if lot_stop_def is not None:
             nivel_compilado["lot_stop"] = lot_stop_def
         pyr_levels_def.append(nivel_compilado)
@@ -923,6 +1008,42 @@ def apply_entry_fill_window(entries_arr, minutes, time_windows,
     return entries_arr & mask & fill_ok
 
 
+def mapa_senales_nivel(lv: dict, fn) -> dict:
+    """Aplica `fn` a las señales de un nivel de pirámide, sea normal o camino.
+
+    Un nivel normal lleva un único array `signals`; un nivel-camino (PRD
+    2026-09-16) lleva `steps_signals`, un array por paso. Cualquier
+    transformación barra a barra que el pipeline haga sobre las señales de un
+    nivel (copiar para la caché, recortar por la máscara de sesión) tiene que
+    llegar a los pasos IGUAL: esta es la única definición de cómo, para que
+    los puntos que lo hacen no se desincronicen.
+    """
+    if lv.get("steps_signals") is None:
+        return {**lv, "signals": fn(lv["signals"])}
+    return {**lv, "steps_signals": [fn(s) for s in lv["steps_signals"]]}
+
+
+def aplica_ventana_relleno_nivel(lv: dict, minutes, time_windows,
+                                 look_ahead_prevention: bool = True) -> dict:
+    """La ventana de entrada en la vela de RELLENO, para un nivel de pirámide.
+
+    Un añadido es una entrada: si la vela donde se RELLENA el disparo (la
+    siguiente) cae fuera de la ventana, no se coge. En un nivel normal el
+    disparo es su única señal; en un nivel-camino el disparo es el enganche
+    del ÚLTIMO paso — los intermedios no ejecutan nada, así que la regla de
+    la vela de relleno solo les aplica a él (todos los pasos ya llevan la
+    máscara de la vela de señal aplicada por el evaluador, a cada uno).
+    """
+    def _fn(arr):
+        return apply_entry_fill_window(arr, minutes, time_windows,
+                                       look_ahead_prevention=look_ahead_prevention)
+
+    if lv.get("steps_signals") is None:
+        return {**lv, "signals": _fn(lv["signals"])}
+    pasos = lv["steps_signals"]
+    return {**lv, "steps_signals": pasos[:-1] + [_fn(pasos[-1])]}
+
+
 # ── Public API: translate_strategy (legacy path, backward compatible) ────
 
 def translate_strategy(
@@ -1044,6 +1165,14 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
     aplicaba y las pirámides se disparaban con la ventana cerrada — visto en
     vivo con GELS, que piramidó a las 08:08 ET teniendo `entry_time_windows`
     hasta las 08:00. Afectaba al backtest igual que al bot de alertas.
+
+    NIVEL-CAMINO (PRD 2026-09-16): un nivel con `steps_def` no emite
+    `signals` sino `steps_signals` — una lista de arrays, uno por paso, cada
+    uno evaluado con la MISMA maquinaria y la MISMA caché que la entrada, y
+    con la ventana horaria aplicada a CADA paso (un añadido es una entrada:
+    con la ventana cerrada no engancha ninguno). Si una máscara no cuadra en
+    longitud con un paso, el nivel entero se omite con log de error — misma
+    regla que hoy, nunca a medias.
     """
     levels_def = compiled.get("pyramid_levels_def") or []
     if not levels_def:
@@ -1053,6 +1182,45 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
     out = []
     for lv in levels_def:
         try:
+            if lv.get("steps_def") is not None:
+                steps_arrs = []
+                for paso in lv["steps_def"]:
+                    sig = _evaluate_condition_group(paso, df, tf, daily_stats, cache)
+                    sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
+                    sig_arr = sig_arr.astype(bool)
+                    if entry_time_mask is not None:
+                        m = entry_time_mask
+                        m = m.values if hasattr(m, "values") else np.asarray(m)
+                        if len(m) == len(sig_arr):
+                            sig_arr = sig_arr & m.astype(bool)
+                        else:
+                            # Longitudes distintas: NO se aplica a medias. Un
+                            # paso sin su ventana seria un enganche que la
+                            # estrategia no pide — el nivel se omite ENTERO.
+                            logger.error(
+                                "[PYRAMID] la ventana horaria no cuadra con las senales "
+                                "de un paso (%d vs %d): el nivel se omite entero",
+                                len(m), len(sig_arr))
+                            steps_arrs = None
+                            break
+                    steps_arrs.append(sig_arr)
+                if steps_arrs is None:
+                    continue
+                out.append({
+                    "steps_signals": steps_arrs,
+                    "same_bar": lv.get("same_bar", True),
+                    "action": lv["action"],
+                    "capital_frac": lv["capital_frac"],
+                    "max_fires": lv.get("max_fires", 1),
+                    "unit": lv.get("unit", "pct"),
+                    "amount_usd": lv.get("amount_usd", 0.0),
+                    "size_by_sl": lv.get("size_by_sl", False),
+                    "hybrid_stop": lv.get("hybrid_stop", False),
+                    "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
+                    "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
+                    **({"lot_stop": lv["lot_stop"]} if lv.get("lot_stop") is not None else {}),
+                })
+                continue
             sig = _evaluate_condition_group(lv["root_condition"], df, tf, daily_stats, cache)
             sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
             sig_arr = sig_arr.astype(bool)

@@ -567,6 +567,39 @@ class StrategyCreate(BaseModel):
                     f"levels[{j}].lot_stop: solo aplica a niveles action='add'")
         return v
 
+    @field_validator("pyramiding")
+    @classmethod
+    def _valida_steps_por_nivel(cls, v):
+        """CAMINO DE CONDICIONES (PRD 2026-09-16): valida `steps` al GUARDAR.
+
+        Patrón idéntico al de `lot_stop`: el bloque `pyramiding` sigue siendo
+        un dict opaco (no se muta nada aquí) y la definición de qué es un
+        camino válido vive en `strategy_engine.normaliza_steps` — una sola
+        fuente, la misma del compilador —; aquí solo se invoca para validar.
+        `steps` y `root_condition` son mutuamente excluyentes por nivel, un
+        camino necesita ≥ 2 pasos y ningún paso puede ir vacío: todo rebota
+        con 422 en la frontera, nada de drop silencioso (lección de las
+        «TRES CAPAS», MEMORIA_MADRE §4).
+        """
+        if not isinstance(v, dict):
+            return v
+        niveles = v.get("levels")
+        if not isinstance(niveles, list):
+            return v
+        from app.services.strategy_engine import normaliza_steps
+        for j, lv in enumerate(niveles):
+            if not isinstance(lv, dict) or lv.get("steps") is None:
+                continue
+            if lv.get("root_condition"):
+                raise ValueError(
+                    f"levels[{j}]: 'steps' y 'root_condition' son mutuamente "
+                    f"exclusivos en un nivel de piramidación")
+            try:
+                normaliza_steps(lv["steps"], lv.get("same_bar", True))
+            except ValueError as e:
+                raise ValueError(f"levels[{j}].steps: {e}") from e
+        return v
+
     # Modelos avanzados (XGBoost / HMM). Dict opaco por el mismo motivo que
     # `pyramiding`: la lista de features es el mismo tipo de arbol que las
     # condiciones y ya lo valida `advanced_backtest.parse_config`. Sin este

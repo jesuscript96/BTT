@@ -35,7 +35,7 @@ from app.services.portfolio_sim import (
 )
 from app.services.strategy_engine import (
     translate_strategy, translate_strategy_native, get_lowest_timeframe_mins,
-    apply_entry_fill_window,
+    apply_entry_fill_window, mapa_senales_nivel, aplica_ventana_relleno_nivel,
 )
 
 logger = logging.getLogger(__name__)
@@ -320,7 +320,10 @@ def _compute_signals_for_pair(
     exits_arr = exits_arr[session_mask_np]
     if sig_pyramid_levels:
         sig_pyramid_levels = [
-            {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
+            # Recorte de sesión a cada paso igual que al array único de un
+            # nivel normal (mismo espacio de índices; PRD camino 2026-09-16).
+            mapa_senales_nivel(lv, lambda s, _m=session_mask_np: s[_m])
+            for lv in sig_pyramid_levels
         ]
 
     # VWAP del dia ENTERO y luego recortado, como hod/pm_high (paridad con el
@@ -387,10 +390,12 @@ def _compute_signals_for_pair(
             )
             if sig_pyramid_levels:
                 # Un anyadido es una entrada: mismo criterio que la de apertura.
+                # En un nivel-camino, la vela de relleno manda sobre el
+                # enganche del ÚLTIMO paso (los intermedios no ejecutan nada).
                 sig_pyramid_levels = [
-                    {**lv, "signals": apply_entry_fill_window(
-                        lv["signals"], minutes_np[session_mask_np], _tw,
-                        look_ahead_prevention=look_ahead_prevention)}
+                    aplica_ventana_relleno_nivel(
+                        lv, minutes_np[session_mask_np], _tw,
+                        look_ahead_prevention=look_ahead_prevention)
                     for lv in sig_pyramid_levels
                 ]
 

@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { EntryLogicBuilder } from "@/components/strategy-builder/EntryLogic";
 import { ExitLogicBuilder } from "@/components/strategy-builder/ExitLogic";
 import { RiskManagementComponent } from "@/components/strategy-builder/RiskManagement";
-import { PyramidingBuilder } from "@/components/strategy-builder/PyramidingBuilder";
+import { PyramidingBuilder, nivelPiramideValido, nivelPiramideParaPayload } from "@/components/strategy-builder/PyramidingBuilder";
 import { ScalpingBuilder } from "@/components/strategy-builder/ScalpingBuilder";
 import { AdvancedModelBuilder, AdvancedModelConfig, initialAdvancedModel } from "@/components/strategy-builder/AdvancedModelBuilder";
 import { validateStrategyLogic } from "@/lib/strategyValidation";
@@ -465,7 +465,7 @@ export default function InlineStrategyBuilder({
     if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
     if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
     if (stratObj.pyramiding) {
-      setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) });
+      setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, root_condition: l.root_condition ?? { type: 'group', operator: 'AND', conditions: [] }, ...l })) });
     } else {
       setPyramiding(initialPyramiding);
     }
@@ -619,7 +619,7 @@ export default function InlineStrategyBuilder({
   );
   const [pyramiding, setPyramiding] = useState<PyramidingConfig>(
     stratObj?.pyramiding
-      ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, ...l })) }
+      ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, root_condition: l.root_condition ?? { type: 'group', operator: 'AND', conditions: [] }, ...l })) }
       : initialPyramiding
   );
   const [scalping, setScalping] = useState<ScalpingConfig>(
@@ -768,11 +768,15 @@ export default function InlineStrategyBuilder({
       : {};
 
   const pyramidingForPayload = () =>
-    pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
+    pyramiding.active && pyramiding.levels.some(nivelPiramideValido)
       ? { pyramiding: {
             timeframe: pyramiding.timeframe,
                         mode: pyramiding.mode || 'individual',
-            levels: pyramiding.levels.filter(l => l.root_condition.conditions.length > 0 && l.capital_pct > 0),
+            // Un nivel-camino (steps) viaja SIN root_condition: son
+            // mutuamente excluyentes y el backend rebota con 422 con ambas.
+            levels: pyramiding.levels
+              .filter(l => nivelPiramideValido(l) && l.capital_pct > 0)
+              .map(nivelPiramideParaPayload),
           } }
       : {};
 

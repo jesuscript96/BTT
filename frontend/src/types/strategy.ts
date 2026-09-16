@@ -517,7 +517,20 @@ export const initialExitLogic: ExitLogic = {
 // dispara UNA sola vez por trade; la reentrada los rearma. TP/SL corren en
 // paralelo y se llevan lo que las reducciones no quiten.
 export interface PyramidLevel {
-    root_condition: ConditionGroup;
+    // Condición ÚNICA del nivel (modo clásico). En un nivel-camino NO viaja
+    // en el payload: el backend la rechaza si llega junto a `steps` (son
+    // mutuamente excluyentes) y el builder la omite al serializar.
+    root_condition?: ConditionGroup;
+    // CAMINO DE CONDICIONES (PRD 2026-09-16): lista ORDENADA de árboles —
+    // cada paso es el MISMO ConditionGroup que root_condition. El nivel
+    // dispara su acción al engancharse el ÚLTIMO paso; los intermedios solo
+    // abren la puerta al siguiente. Mínimo 2 pasos, ninguno vacío (el
+    // backend rebota con 422 lo contrario).
+    steps?: ConditionGroup[];
+    // true (default): el camino puede completarse en la MISMA vela — con
+    // pasos simultáneos equivale al AND clásico. false: el paso siguiente
+    // solo puede engancharse en la vela posterior o más tarde.
+    same_bar?: boolean;
     action: 'add' | 'reduce';
     // Que significa `capital_pct`:
     //   'pct' (por defecto) -> % del equity al añadir, % de la posicion
