@@ -5913,3 +5913,9 @@ de Databento, no copiar `users.duckdb`.
 - **No tocado:** `GapsDelTicker.tsx` (Ticker análisis) sigue con SU despliegue inline bajo la fila — otra página, no estaba en el pedido; si se quiere el visor allí también, es un cambio aparte.
 - **Pruebas:** `tsc --noEmit` limpio; eslint sin errores nuevos (los 2 `react-hooks/set-state-in-effect` que salen en ResultsTabs/TradesTab ya estaban en HEAD, verificado linteando las versiones de HEAD). OK de Álvaro («me encanta»).
 - **Estado:** `3575d3a` en `alvaro-rama-desarrollo`. **Sin push** (pendiente de OK de Álvaro, como siempre).
+
+### [INTEGRACIÓN · 2026-09-16 · 01] Criterio de Álvaro fijado tras el visor de trade: la IA NUNCA hace push a staging — commits a su rama sí, la integración a staging la lleva él
+- **Qué quedó fijado (palabra de Álvaro):** la IA commitea en `alvaro-rama-desarrollo` sin problema, y push SOLO a esa rama personal, siempre previa confirmación. A `staging` la IA **nunca** sube push: la integración (merge local o PR contra `staging`, según `.agent/ALVARO_DEV_BRANCH.md`) la hace Álvaro. Encaja con la regla de oro nº1-2 de `AGENTS.md` (main intocable; integración por PR).
+- **Corrección de estado de la FEATURE 2026-09-16 · VISOR DE TRADE (entrada anterior):** su línea de estado quedó escrita «Sin push» antes del OK; con el OK explícito de Álvaro SÍ se subió — `origin/alvaro-rama-desarrollo` avanzó de `4014f36` a `5303be1` (código `3575d3a` + memoria `5303be1`). **`staging` sigue sin tocar** (head `723a392`): pendiente de que Álvaro lo integre cuando quiera.
+- **Código tocado:** ninguno adicional (solo esta entrada).
+- **Estado:** NORMATIVA FIJADA POR ÁLVARO.
