@@ -53,7 +53,7 @@
 - [ ] B17. ¿Órdenes ocultas o iceberg? ¿Aportan algo en small caps o no? **[API]**
 - [ ] B18. Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
 - [ ] B19. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
-- [x] B20. → guarda por DISTANCIA último precio→bid (D = 5 % PM / 3 % RTH) PROVISIONAL; la de spread queda descartada como criterio principal. ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
+- [x] B20. → guarda por DISTANCIA último precio→bid (D = 5 % en PM y RTH) PROVISIONAL; la de spread queda descartada como criterio principal. ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
 
 ## C. Stop y protección de la posición
 
