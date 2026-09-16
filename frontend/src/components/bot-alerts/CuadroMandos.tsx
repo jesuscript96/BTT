@@ -347,6 +347,10 @@ export default function CuadroMandos() {
    *  dicho: el anyadido cae a lo que diga la estrategia, y sin capital el
    *  backend no deja activar una estrategia con stop hibrido. */
   const [riesgosPir, setRiesgosPir] = useState<Record<string, string>>({});
+  // Una cantidad POR PIRAMIDE (16-sep-2026), por estrategia y en el orden de
+  // su definicion. Vacia = sin cantidad propia: cae al riesgo pir. global de
+  // antes (si lo hubiera) y, sin el, a lo que diga la estrategia.
+  const [riesgosPirNivel, setRiesgosPirNivel] = useState<Record<string, string[]>>({});
   const [capitales, setCapitales] = useState<Record<string, string>>({});
   /** EV de cada estrategia, en % del precio de entrada. Lo tecleas tú: el bot
    *  no puede saber qué backtest consideras válido. Lo usa el cálculo de
@@ -484,6 +488,16 @@ export default function CuadroMandos() {
         ));
         setRiesgosPir(Object.fromEntries(
           s.map((x) => [x.strategy_id, x.riesgo_piramide_usd != null ? String(x.riesgo_piramide_usd) : ""]),
+        ));
+        // Lo guardado por piramide; si no hay lista pero si un riesgo pir.
+        // global (lo de antes), se ensena en todas las casillas para que se
+        // vea lo que el bot va a usar de verdad.
+        setRiesgosPirNivel(Object.fromEntries(
+          s.map((x) => [x.strategy_id, (x.piramides || []).map((p) => {
+            const v = x.riesgos_piramide?.[p.i];
+            if (v != null && v > 0) return String(v);
+            return x.riesgo_piramide_usd != null ? String(x.riesgo_piramide_usd) : "";
+          })]),
         ));
         setCapitales(Object.fromEntries(
           s.map((x) => [x.strategy_id, x.capital_usd != null ? String(x.capital_usd) : ""]),
@@ -635,16 +649,21 @@ export default function CuadroMandos() {
     const riesgoPir = Number(riesgosPir[s.strategy_id]) || null;
     const capital = Number(capitales[s.strategy_id]) || null;
     const ev = Number(evs[s.strategy_id]) || null;
+    // Por piramide: la lista entera, con null donde no hay cantidad, para que
+    // el backend pueda borrar una que antes estaba puesta.
+    const porPir = (s.piramides || []).map((_, k) => Number(riesgosPirNivel[s.strategy_id]?.[k]) || null);
+    const riesgosPirLista = porPir.some((v) => v != null) ? porPir : null;
     try {
       // La comprobacion de verdad la hace el backend contra la definicion
       // GUARDADA, que es la que va a usar el bot. Aqui solo se pilla lo obvio.
       await guardarVigilancia(s.strategy_id, activa, riesgo, {
         riesgo_piramide_usd: riesgoPir, capital_usd: capital, ev_pct: ev,
+        riesgos_piramide: riesgosPirLista,
       });
       setEstrategias((prev) => prev.map((x) =>
         x.strategy_id === s.strategy_id
           ? { ...x, activa, riesgo_usd: riesgo, riesgo_piramide_usd: riesgoPir,
-              capital_usd: capital, ev_pct: ev }
+              capital_usd: capital, ev_pct: ev, riesgos_piramide: riesgosPirLista }
           : x));
       setError(null);
     } catch (err) {
@@ -865,7 +884,7 @@ export default function CuadroMandos() {
               <Th ancho={96}>Origen</Th>
               <Th ancho={64}>Sesgo</Th>
               <Th num ancho={100}>Riesgo €</Th>
-              <Th num ancho={100}>Riesgo pir. €</Th>
+              <Th num ancho={150}>Riesgo pir. € (por pirámide)</Th>
               <Th num ancho={100}>Capital €</Th>
               <Th num ancho={78}>EV %</Th>
               <Th>El riesgo es</Th>
@@ -938,13 +957,35 @@ export default function CuadroMandos() {
                   <Td num>
                     {/* Solo si la estrategia piramida. Vacio = usa lo que diga
                         su definicion, que es lo que pasaba hasta hoy. */}
-                    {s.piramida ? (
-                      <CampoNum
-                        valor={riesgosPir[s.strategy_id] ?? ""}
-                        onChange={(v) => setRiesgosPir((p) => ({ ...p, [s.strategy_id]: v }))}
-                        onBlur={() => s.activa && guardarEstrategia(s, true)}
-                        titulo="Riesgo del añadido. Vacío = el que diga la estrategia."
-                      />
+                    {s.piramida && (s.piramides?.length ?? 0) > 0 ? (
+                      // UNA CASILLA POR PIRAMIDE (16-sep-2026): cada una puede
+                      // llevar su dinero. La etiqueta dice cual es (grupo,
+                      // añade/quita) y el tooltip, lo que hace y cuando dispara.
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+                        {(s.piramides || []).map((p, k) => (
+                          <div key={p.i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <span style={{ fontSize: 9.5, color: color.textMuted, whiteSpace: "nowrap", fontFamily: font.mono }}
+                                  title={`Pirámide ${p.i + 1} · grupo ${p.grupo + 1} (${p.modo === "sequential" ? "secuencial" : "individual"}) · ${p.accion === "reduce" ? "quita" : "añade"} ${p.cantidad} · ${p.disparo}`}>
+                              P{p.i + 1}·G{p.grupo + 1} {p.accion === "reduce" ? "−" : "+"}
+                            </span>
+                            <CampoNum
+                              valor={riesgosPirNivel[s.strategy_id]?.[k] ?? ""}
+                              onChange={(v) => setRiesgosPirNivel((prev) => {
+                                const lista = (prev[s.strategy_id] || []).slice();
+                                while (lista.length < (s.piramides?.length ?? 0)) lista.push("");
+                                lista[k] = v;
+                                return { ...prev, [s.strategy_id]: lista };
+                              })}
+                              onBlur={() => s.activa && guardarEstrategia(s, true)}
+                              titulo={p.accion === "reduce"
+                                ? `Dólares de posición que cierra la pirámide ${p.i + 1} (${p.disparo}). Vacío = lo que diga la estrategia.`
+                                : p.size_by_sl
+                                  ? `Pérdida máxima (riesgo) del añadido ${p.i + 1}, en $ — va por distancia al stop (${p.disparo}). Vacío = lo que diga la estrategia.`
+                                  : `Dólares que añade la pirámide ${p.i + 1} (${p.disparo}). Vacío = lo que diga la estrategia.`}
+                            />
+                          </div>
+                        ))}
+                      </div>
                     ) : <span style={{ color: color.textMuted }}>—</span>}
                   </Td>
                   <Td num>

@@ -419,7 +419,7 @@ def compile_strategy_def(strategy_def: dict) -> dict:
     # siempre — asi una definicion vieja se compila exactamente igual.
     pyr_grupos = pyramiding.get("groups") or []
     modo_global_seq = str(pyramiding.get("mode", "individual")).lower() == "sequential"
-    for lv in (pyramiding.get("levels") or []):
+    for def_index, lv in enumerate(pyramiding.get("levels") or []):
         root = lv.get("root_condition") or {}
         # DISPARO POR RECORRIDO (2026-09-16): `trigger: "move"` + `move_pct`.
         # El nivel dispara cuando el precio lleva X % a favor (o en contra)
@@ -474,6 +474,11 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             "group": _pyr_grupo(lv),
             "sequential": _pyr_secuencial(lv, pyr_grupos, modo_global_seq),
             "move": move,
+            # Posicion del nivel en `pyramiding.levels` TAL CUAL esta guardada.
+            # El cuadro de mandos del bot da un riesgo por piramide y lo indexa
+            # por esta posicion; como aqui se descartan niveles invalidos, el
+            # indice de esta lista compilada NO vale para eso.
+            "def_index": def_index,
         })
 
     # ── Scalping (2026-09-12) ──
@@ -1007,6 +1012,7 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 "group": lv.get("group", 0),
                 "sequential": lv.get("sequential", compiled.get("pyramid_sequential", False)),
                 "move": lv.get("move"),
+                "def_index": lv.get("def_index"),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel

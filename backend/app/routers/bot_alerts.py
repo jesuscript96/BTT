@@ -129,6 +129,10 @@ class WatchReq(BaseModel):
     # Riesgo del ANYADIDO, que no tiene por que ser el de la entrada. None = no
     # dicho: se usa lo que diga la definicion de la estrategia.
     riesgo_piramide_usd: Optional[float] = Field(default=None, gt=0)
+    # UNA cantidad por piramide (16-sep-2026), en el orden de la definicion de
+    # la estrategia. None en una posicion = esa piramide sin cantidad propia
+    # (cae al riesgo de piramide global y, sin el, a la estrategia).
+    riesgos_piramide: Optional[list[Optional[float]]] = None
     # La cuenta real. Solo hace falta con stop hibrido, que sin ella no puede
     # calcular su techo. El bot no la conoce por ningun otro sitio.
     capital_usd: Optional[float] = Field(default=None, gt=0)
@@ -236,7 +240,7 @@ def guardar(req: WatchReq, user_id: Optional[str] = Depends(get_current_user_id)
 
             return bas.set_watch(con, req.strategy_id, req.activa, req.riesgo_usd,
                                  req.riesgo_piramide_usd, req.capital_usd,
-                                 req.ev_pct)
+                                 req.ev_pct, req.riesgos_piramide)
         finally:
             con.close()
 

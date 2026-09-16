@@ -78,9 +78,14 @@ def ensure_watch_table(con) -> None:
         #   ev_pct: la esperanza de la estrategia, en % del precio de entrada.
         #     La teclea Jaume — el bot no puede saber que backtest considera
         #     valido. La usa `/evf` para no tener que repetirla en cada mensaje.
+        #   riesgos_piramide_json (16-sep-2026): una cantidad POR PIRAMIDE, en
+        #     el orden de `pyramiding.levels` de la estrategia, como lista JSON
+        #     (null = esa piramide no tiene cantidad propia). Manda sobre
+        #     `riesgo_piramide_usd`, que queda como respaldo.
         for columna, tipo in (("riesgo_piramide_usd", "DOUBLE"),
                               ("capital_usd", "DOUBLE"),
-                              ("ev_pct", "DOUBLE")):
+                              ("ev_pct", "DOUBLE"),
+                              ("riesgos_piramide_json", "VARCHAR")):
             try:
                 con.execute(f"ALTER TABLE bot_alert_watch ADD COLUMN {columna} {tipo}")
             except Exception:
@@ -449,7 +454,7 @@ def get_watch(con) -> dict[str, dict]:
     ensure_watch_table(con)
     rows = con.execute(
         "SELECT strategy_id, activa, riesgo_usd, updated_at, "
-        "riesgo_piramide_usd, capital_usd, ev_pct FROM bot_alert_watch"
+        "riesgo_piramide_usd, capital_usd, ev_pct, riesgos_piramide_json FROM bot_alert_watch"
     ).fetchall()
     return {
         r[0]: {
@@ -461,25 +466,62 @@ def get_watch(con) -> dict[str, dict]:
             "riesgo_piramide_usd": float(r[4]) if r[4] is not None else None,
             "capital_usd": float(r[5]) if r[5] is not None else None,
             "ev_pct": float(r[6]) if r[6] is not None else None,
+            "riesgos_piramide": _leer_riesgos_piramide(r[7]),
         }
         for r in rows
     }
 
 
+def _leer_riesgos_piramide(raw) -> Optional[list]:
+    """La lista JSON de cantidades por piramide, o None si no hay."""
+    if not raw:
+        return None
+    try:
+        v = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(v, list):
+        return None
+    out = []
+    for x in v:
+        try:
+            out.append(float(x) if x is not None and float(x) > 0 else None)
+        except (TypeError, ValueError):
+            out.append(None)
+    return out if any(x is not None for x in out) else None
+
+
+def _limpiar_riesgos_piramide(riesgos) -> Optional[list]:
+    """Normaliza lo que manda el cuadro: numeros > 0 o None por posicion."""
+    if not riesgos:
+        return None
+    out = []
+    for x in riesgos:
+        try:
+            out.append(float(x) if x is not None and float(x) > 0 else None)
+        except (TypeError, ValueError):
+            out.append(None)
+    return out if any(x is not None for x in out) else None
+
+
 def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
               riesgo_piramide_usd: float | None = None,
               capital_usd: float | None = None,
-              ev_pct: float | None = None) -> dict:
+              ev_pct: float | None = None,
+              riesgos_piramide: list | None = None) -> dict:
     """Guarda (o actualiza) la vigilancia de una estrategia. Devuelve su fila."""
     ensure_watch_table(con)
+    riesgos_piramide = _limpiar_riesgos_piramide(riesgos_piramide)
     con.execute(
         "INSERT OR REPLACE INTO bot_alert_watch "
-        "(strategy_id, activa, riesgo_usd, updated_at, riesgo_piramide_usd, capital_usd, ev_pct) "
-        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)",
+        "(strategy_id, activa, riesgo_usd, updated_at, riesgo_piramide_usd, capital_usd, ev_pct, "
+        "riesgos_piramide_json) "
+        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)",
         [strategy_id, bool(activa), float(riesgo_usd),
          float(riesgo_piramide_usd) if riesgo_piramide_usd is not None else None,
          float(capital_usd) if capital_usd is not None else None,
-         float(ev_pct) if ev_pct is not None else None],
+         float(ev_pct) if ev_pct is not None else None,
+         json.dumps(riesgos_piramide) if riesgos_piramide else None],
     )
     marcar_cambio_estrategias()
     return {
@@ -488,7 +530,40 @@ def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
         "riesgo_piramide_usd": riesgo_piramide_usd,
         "capital_usd": capital_usd,
         "ev_pct": ev_pct,
+        "riesgos_piramide": riesgos_piramide,
     }
+
+
+def describir_piramides(definition: dict) -> list[dict]:
+    """Una linea por piramide de la estrategia, en el orden de su definicion,
+    para que el cuadro de mandos pueda pedir la cantidad de cada una y decir
+    de cual habla. `i` es la posicion (la misma que usa el motor como
+    `def_index`), aunque la piramide no sea valida para el motor."""
+    pyr = definition.get("pyramiding") or {}
+    grupos = pyr.get("groups") or []
+    modo_global = str(pyr.get("mode", "individual")).lower()
+    out = []
+    for i, lv in enumerate(pyr.get("levels") or []):
+        g = 0
+        try:
+            g = max(0, int(lv.get("group", 0) or 0))
+        except (TypeError, ValueError):
+            pass
+        modo = (str(grupos[g].get("mode", "individual")).lower()
+                if grupos and g < len(grupos) and isinstance(grupos[g], dict) else modo_global)
+        accion = "reduce" if str(lv.get("action", "add")).lower() == "reduce" else "add"
+        unidad = "$" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "%"
+        cantidad = f"{lv.get('capital_pct', 0)}{unidad}"
+        if str(lv.get("trigger", "conditions")).lower() in ("move", "recorrido") and lv.get("move_pct"):
+            lado = "en contra" if str(lv.get("move_dir", "favor")).lower() in ("contra", "against") else "a favor"
+            desde = " desde el ultimo disparo" if str(lv.get("move_ref", "entry")).lower() in ("last", "ultimo") else ""
+            disparo = f"si {lv.get('move_pct')}% {lado}{desde}"
+        else:
+            disparo = "por condiciones"
+        out.append({"i": i, "accion": accion, "grupo": g, "modo": modo,
+                    "cantidad": cantidad, "disparo": disparo,
+                    "size_by_sl": bool(lv.get("size_by_sl", False))})
+    return out
 
 
 def _parse_definition(raw: Any) -> dict:
@@ -588,6 +663,10 @@ def listar_candidatas(con, scope_sql: str = "", scope_params: Optional[list] = N
             "ev_pct": cfg.get("ev_pct"),
             # Si piramida, hay un segundo riesgo que fijar.
             "piramida": bool(((definition.get("pyramiding") or {}).get("levels")) or []),
+            # Y desde el 16-sep-2026, UNA cantidad por piramide: la lista de
+            # piramides para pedirlas una a una, y lo ya guardado.
+            "piramides": describir_piramides(definition),
+            "riesgos_piramide": cfg.get("riesgos_piramide"),
             # La ventana de ENTRADAS, distinta de la de sesion.
             "ventana_entradas": [
                 {"inicio": w.get("from_time"), "fin": w.get("to_time")}
@@ -640,6 +719,7 @@ def vigiladas(con, scope_sql: str = "", scope_params: Optional[list] = None) -> 
             # capital el stop hibrido no se puede aplicar (por eso `/watch` no
             # deja activar una estrategia hibrida sin el).
             "riesgo_piramide_usd": cfg.get("riesgo_piramide_usd"),
+            "riesgos_piramide": cfg.get("riesgos_piramide"),
             "ev_pct": cfg.get("ev_pct"),
             "capital_usd": cfg.get("capital_usd"),
             "definition": definition,

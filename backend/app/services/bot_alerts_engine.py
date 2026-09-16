@@ -115,27 +115,63 @@ def _hard_stop(sdef: dict) -> dict:
     return (rm.get("hard_stop") or {}) if rm.get("use_hard_stop") else {}
 
 
-def _niveles_con_riesgo(niveles, riesgo_usd: Optional[float]):
+def _riesgo_del_nivel(lv: dict, riesgo_usd: Optional[float], por_nivel) -> Optional[float]:
+    """La cantidad del cuadro de mandos para ESTE nivel, o None (= la estrategia).
+
+    Primero la lista POR NIVEL (16-sep-2026), indexada por la posicion del
+    nivel en la definicion guardada (`def_index`); si para ese nivel no hay
+    nada (vacio / None), el riesgo de piramide GLOBAL de antes; y si tampoco,
+    None: lo que diga la estrategia.
+    """
+    if por_nivel:
+        k = lv.get("def_index")
+        try:
+            k = int(k) if k is not None else None
+        except (TypeError, ValueError):
+            k = None
+        if k is not None and 0 <= k < len(por_nivel):
+            v = por_nivel[k]
+            try:
+                if v is not None and float(v) > 0:
+                    return float(v)
+            except (TypeError, ValueError):
+                pass
+    if riesgo_usd and riesgo_usd > 0:
+        return float(riesgo_usd)
+    return None
+
+
+def _niveles_con_riesgo(niveles, riesgo_usd: Optional[float], por_nivel=None):
     """Los niveles de piramide con la cantidad que diga el cuadro de mandos.
 
     `None` = no dicho: se deja lo que traiga la estrategia, que es como se ha
     comportado siempre. Con un valor, se fuerza `unit="usd"` porque lo que se
     teclea son dolares, no un porcentaje del equity.
+
+    POR NIVEL (16-sep-2026): `por_nivel` es la lista del cuadro de mandos, una
+    cantidad por piramide de la estrategia (en el orden de su definicion,
+    `def_index`). Cada piramide puede llevar su dinero; la que no lo tenga cae
+    al riesgo global de siempre y, sin el, a la estrategia.
     """
-    if not niveles or not riesgo_usd or riesgo_usd <= 0:
-        return niveles
+    if not niveles or (not por_nivel and not (riesgo_usd and riesgo_usd > 0)):
+        return niveles          # nada que aplicar: la lista tal cual, como siempre
     fuera = []
     for lv in niveles:
+        cantidad = _riesgo_del_nivel(lv, riesgo_usd, por_nivel)
+        if cantidad is None:
+            fuera.append(lv)
+            continue
         n = dict(lv)
         n["unit"] = "usd"
-        n["amount_usd"] = float(riesgo_usd)
+        n["amount_usd"] = cantidad
         fuera.append(n)
     return fuera
 
 
 def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd: float,
                      riesgo_piramide_usd: Optional[float] = None,
-                     capital_usd: Optional[float] = None) -> dict:
+                     capital_usd: Optional[float] = None,
+                     riesgos_piramide=None) -> dict:
     """Traduce frame + senales + estrategia a los argumentos de `simulate`.
 
     Los costes van todos a cero por decision de producto: el bot avisa, no
@@ -199,7 +235,7 @@ def _kwargs_simulate(frame: pd.DataFrame, senales: dict, sdef: dict, riesgo_usd:
         # entrada: por valor de mercado es capital a desplegar; por distancia al
         # stop es la perdida maxima.
         "pyramid_levels": _niveles_con_riesgo(senales.get("pyramid_levels"),
-                                              riesgo_piramide_usd),
+                                              riesgo_piramide_usd, riesgos_piramide),
         "pyramid_sequential": senales.get("pyramid_sequential", False),
         "hs_type": hs.get("type"),
         "hs_value": hs.get("value"),
@@ -672,6 +708,7 @@ class MotorAlertas:
         return _json.dumps({
             "d": e.get("definition"), "r": e.get("riesgo_usd"),
             "rp": e.get("riesgo_piramide_usd"), "c": e.get("capital_usd"),
+            "rpl": e.get("riesgos_piramide"),
             "ev": e.get("ev_pct"), "v": e.get("ventana"), "n": e.get("name"),
         }, sort_keys=True, default=str)
 
@@ -693,6 +730,9 @@ class MotorAlertas:
             # hibrida sin rellenarlo.
             "capital_usd": e.get("capital_usd"),
             "riesgo_piramide_usd": e.get("riesgo_piramide_usd"),
+            # Una cantidad por piramide (16-sep-2026), en el orden de la
+            # definicion. Manda sobre el riesgo de piramide global.
+            "riesgos_piramide": e.get("riesgos_piramide"),
             # Para el comando /evf de Telegram: asi no hay que repetir el
             # EV en cada mensaje.
             "ev_pct": e.get("ev_pct"),
@@ -837,7 +877,8 @@ class MotorAlertas:
         senales = translate_strategy(frame, sdef, daily_stats, compiled=est["compiled"])
         res = simulate(**_kwargs_simulate(frame, senales, sdef, est["riesgo_usd"],
                                           est.get("riesgo_piramide_usd"),
-                                          est.get("capital_usd")))
+                                          est.get("capital_usd"),
+                                          est.get("riesgos_piramide")))
         trades = res.get("trades") or []
 
         es_largo = str(senales["direction"]).lower().startswith("long")

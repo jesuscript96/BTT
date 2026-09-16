@@ -46,6 +46,14 @@ export interface EstrategiaCandidata {
   ev_pct?: number | null;
   /** Si la estrategia piramida: decide si se pide el riesgo del anyadido. */
   piramida?: boolean;
+  /** Las piramides de la estrategia, en el orden de su definicion (16-sep-2026):
+   *  una casilla de riesgo por cada una. `i` es la posicion que usa el motor. */
+  piramides?: {
+    i: number; accion: 'add' | 'reduce'; grupo: number; modo: 'individual' | 'sequential';
+    cantidad: string; disparo: string; size_by_sl: boolean;
+  }[];
+  /** Lo guardado: una cantidad por piramide (null = sin cantidad propia). */
+  riesgos_piramide?: (number | null)[] | null;
   hard_stop: Record<string, unknown> | null;
   ventana: Ventana;
   /** La ventana de ENTRADAS (`entry_time_windows`), que NO es la de sesion.
@@ -66,6 +74,10 @@ export function guardarVigilancia(
     riesgo_piramide_usd?: number | null;
     capital_usd?: number | null;
     ev_pct?: number | null;
+    /** Una cantidad por piramide, en el orden de la definicion; null = sin
+     *  cantidad propia. Se manda entera (con sus null) para que el backend
+     *  pueda BORRAR una cantidad que antes estaba puesta. */
+    riesgos_piramide?: (number | null)[] | null;
   },
 ): Promise<{ strategy_id: string; activa: boolean; riesgo_usd: number }> {
   return apiRequest("/bot-alerts/watch", {
@@ -75,6 +87,7 @@ export function guardarVigilancia(
     body: JSON.stringify({
       strategy_id, activa, riesgo_usd,
       ...(extra?.riesgo_piramide_usd ? { riesgo_piramide_usd: extra.riesgo_piramide_usd } : {}),
+      ...(extra?.riesgos_piramide ? { riesgos_piramide: extra.riesgos_piramide } : {}),
       ...(extra?.capital_usd ? { capital_usd: extra.capital_usd } : {}),
       ...(extra?.ev_pct ? { ev_pct: extra.ev_pct } : {}),
     }),
