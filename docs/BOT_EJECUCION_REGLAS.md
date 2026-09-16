@@ -414,6 +414,18 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 **R-B-01, rama 2 (16-sep, propuesta con datos): cuando el bid está a más del 5 % del último precio, NO se descarta: se deja una venta límite AGREGANDO liquidez, en escalera.** En 1B es el 14 % de las señales (distancia mediana 13 %, p90 28 %). Medido sobre esas 27 entradas: una venta límite fija a −X % bajo el último precio se ejecuta en 60 s el 78 % (−1 %), 81 % (−2 y −3 %), 85 % (−4 %), 89 % (−5 %); es decir, el precio SUBE hasta casi el último precio en la mayoría de los casos, así que una orden fija a −5 % regala slippage (se ejecuta a −5 % por definición). ESCALERA: −1 % en t0, −2 % a los 15 s, −3 % a los 30 s, −4 % a los 45 s, −5 % a los 60 s, cancelar a los 120 s o en cuanto la estrategia deje de decir «dentro» (en 1B, su condición dura 1 minuto): se ejecuta el 85 %, slippage medio −1,9 %, 13 de 23 al −1 %, tiempo mediano 11 s. Esas entradas rinden +7,2 % bruto de media (+2,2 % neto incluso con −5 %). Rama 1 (distancia ≤ 5 %): remover al bid ejecuta AL BID, slippage mediana −0,8 %, media −1,2 %; el techo del 0,5 % no se paga salvo que el bid se mueva durante el envío. Tiempos de la escalera: PROVISIONALES, a fijar con datos (Jaume).
 
+**Foto completa con puerta 3 % + escalera hasta −3 % (16-sep), sobre TODAS las señales de la muestra:**
+| | 1B (190) | 2B (159) |
+|---|---|---|
+| Entran | 95 % | 100 % |
+| Con slippage ≤ 0,5 % | 28 % | 41 % |
+| Con slippage ≤ 1 % | 62 % | 75 % |
+| Entre 1 y 2 % | 20 % | 18 % |
+| Entre 2 y 3 % | 11 % | 8 % |
+| No entran | 5 % | 0 % |
+| Slippage medio de las que entran | 1,1 % (mediana 0,86 %, p90 2,3 %) | 0,78 % (mediana 0,61 %, p90 1,8 %) |
+(Un caso de 1B sale con 11 % en la simulación por el «fallback a los 30 s» del script; con la regla real la orden descansa en su límite y nunca pasa del 3 %.) Frente a la puerta 5 %: entran 98 %, media 1,24 %.
+
 **Nota metodológica:** el «slippage» aquí es la diferencia entre el precio de entrada del backtester (open de la vela i+1) y el bid real en ese segundo. No es que el bot pague de más: es que el backtester era optimista. La corrección de fondo es que el backtester llene al bid (o al open menos un spread estimado) en vez de al open; el lago no tiene bid/ask, así que se calibra en sombra y luego se aplica al motor (área P).
 
 ~~ESTUDIO PENDIENTE~~ (hecho el 15-sep): Muestra: 300-500 ticker-días al azar de las entradas reales de 1B (PM, run 8b773d84) y 2B (RTH, run 6023ec78) + los ticker-días de fogonazo y de cadena de halts como grupo «no normal». Datos: NBBO consolidado de Databento (EQUS.MINI mbp-1, 2023+) con operaciones, 1-3 $ (OK de Jaume dado el 14-sep). Medir: (1) en el segundo de la señal y los 10 siguientes: spread (cts y %), acciones en el bid, movimiento a 1/5/10 s, probabilidad de ejecución y coste de un límite al bid, bid −0,3 %, bid −0,7 %, y en el ask → margen y tolerancia de B1, y de rebote el slippage «asumible»; (2) en el cruce del stop: segundos de +0 a +1/+3/+5/+10 % sobre el nivel y margen sobre el ask que habría bastado para ejecutar el 90/95/99 % de los stop limit, normal y fogonazo por separado → márgenes de N1, N2, N3. Contrastar con los fills reales del socio (stop-limit ×1,007 del trigger, 95 % ≤ ×1,07) y con los fills de DAS de Jaume (tarea P7). Script nuevo en `D:ot_senales\estudio_cisnes\`.
