@@ -135,7 +135,13 @@ export default function Home() {
   const [isSavingDataset, setIsSavingDataset] = useState(false);
   const [isSavingStrategy, setIsSavingStrategy] = useState(false);
   const [draftStrategy, setDraftStrategy] = useState<Draft | null>(null);
-  const [loadedStrategyId, setLoadedStrategyId] = useState<string | null>(null);
+  // HALLAZGO 2026-09-16·03: id de la estrategia guardada de la que desciende el
+  // borrador del builder. El builder emite sus drafts con id "draft", así que
+  // builderDraft nunca dice de quién es; y la id de la última corrida no vale
+  // como pista (cada corrida del panel la mueve a la estrategia corrida — fue
+  // el viejo `loadedStrategyId`, eliminado en este mismo fix). Sin este
+  // origen, «Config. Estrategia guardada» reabría el borrador de OTRA.
+  const [builderDraftOriginId, setBuilderDraftOriginId] = useState<string | null>(null);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showRewriteModal, setShowRewriteModal] = useState(false);
   const [saveName, setSaveName] = useState("");
@@ -177,14 +183,18 @@ export default function Home() {
   // y disparar los rellenos de dataset/config (reviviendo el contrato fill-*).
   const { startHelper } = useBacktestHelper({
     setMode: (m) => setMode(m),
-    loadExampleStrategy: () =>
+    loadExampleStrategy: () => {
+      // El ejemplo es un borrador huérfano: sin resetear el origen, «Config.»
+      // lo reabriría creyendo que es de la estrategia anterior (HALLAZGO 03).
+      setBuilderDraftOriginId(null);
       setBuilderDraft((prev) => {
         if (!exampleLoadedRef.current) {
           preHelperDraftRef.current = prev;
           exampleLoadedRef.current = true;
         }
         return EXAMPLE_STRATEGY;
-      }),
+      });
+    },
     fillDataset: () => {
       datasetFilledRef.current = true;
       window.dispatchEvent(new CustomEvent(FILL_DATASET_EVENT, { detail: EXAMPLE_DATASET }));
@@ -239,9 +249,15 @@ export default function Home() {
   const handleSaveToBaulClick = async () => {
     if (draftStrategy) {
       const activeDatasetId = draftStrategy.dataset_id || panelParamsRef.current?.dataset_id;
-      const realId = loadedStrategyId && !loadedStrategyId.startsWith("draft") && !loadedStrategyId.startsWith("wizard_draft")
-        ? loadedStrategyId
-        : (draftStrategy.id && !draftStrategy.id.startsWith("draft") && !draftStrategy.id.startsWith("wizard_draft") ? draftStrategy.id : null);
+      // HALLAZGO 2026-09-16·03: la id de reescritura sale del PROPIO draft (si
+      // trae id real) o del ORIGEN del borrador del builder — nunca de
+      // `loadedStrategyId`, que es la estrategia de la última CORRIDA: tras
+      // correr B con el borrador de A vivo, reescribía B con el contenido de A.
+      const draftIdReal = draftStrategy.id && !draftStrategy.id.startsWith("draft") && !draftStrategy.id.startsWith("wizard_draft")
+        ? draftStrategy.id
+        : null;
+      const realId = draftIdReal
+        ?? (builderDraftOriginId && !builderDraftOriginId.startsWith("draft") && !builderDraftOriginId.startsWith("wizard_draft") ? builderDraftOriginId : null);
       
       const isExisting = !!realId;
 
@@ -900,7 +916,14 @@ export default function Home() {
       try {
         const strategyData = await getStrategy(params.strategy_id);
         setActiveStrategy(strategyData);
-        setLoadedStrategyId(strategyData.id ?? null);
+        // HALLAZGO 2026-09-16·03: la corrida cambia de estrategia activa; si el
+        // borrador del builder es de OTRA (o es huérfano), se jubila — si no,
+        // «Config. Estrategia guardada» lo reabriría como si fuera de esta.
+        // Correr la MISMA estrategia conserva el borrador y sus ediciones.
+        if (builderDraft && builderDraftOriginId !== (strategyData.id ?? null)) {
+          setBuilderDraft(null);
+          setBuilderDraftOriginId(null);
+        }
         
         const def = typeof strategyData.definition === 'string' 
           ? JSON.parse(strategyData.definition) 
@@ -1053,9 +1076,6 @@ export default function Home() {
         if (saved.jobId) jobIdRef.current = saved.jobId;
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
-          if (saved.activeStrategy.id && !saved.activeStrategy.id.startsWith("draft") && !saved.activeStrategy.id.startsWith("wizard_draft")) {
-            setLoadedStrategyId(saved.activeStrategy.id);
-          }
         }
         if (saved.selectedDay !== undefined) setSelectedDay(saved.selectedDay);
         // Sesiones guardadas ANTES de quitar el wizard pueden traer 'wizard' o
@@ -1066,6 +1086,9 @@ export default function Home() {
           setMode(m);
         }
         if (saved.builderDraft) setBuilderDraft(saved.builderDraft);
+        // El origen viaja con el borrador en el snapshot: sin esto, el F5
+        // revivía un par desincronizado (HALLAZGO 2026-09-16·03).
+        setBuilderDraftOriginId(saved.builderDraftOriginId ?? null);
       }
     } catch (e) {
       console.error("Error loading backtester_results_state:", e);
@@ -1083,7 +1106,8 @@ export default function Home() {
       activeStrategy,
       selectedDay,
       mode,
-      builderDraft
+      builderDraft,
+      builderDraftOriginId
     };
     try {
       sessionStorage.setItem("backtester_results_state", JSON.stringify(resultsState));
@@ -1096,7 +1120,8 @@ export default function Home() {
           activeStrategy,
           selectedDay,
           mode,
-          builderDraft
+          builderDraft,
+          builderDraftOriginId
         };
         sessionStorage.setItem("backtester_results_state", JSON.stringify(lightState));
       } catch (innerEx) {
@@ -1107,7 +1132,8 @@ export default function Home() {
             activeStrategy,
             selectedDay,
             mode,
-            builderDraft
+            builderDraft,
+            builderDraftOriginId
           };
           sessionStorage.setItem("backtester_results_state", JSON.stringify(configOnlyState));
         } catch (configEx) {
@@ -1115,7 +1141,7 @@ export default function Home() {
         }
       }
     }
-  }, [result, activeStrategy, selectedDay, mode, builderDraft]);
+  }, [result, activeStrategy, selectedDay, mode, builderDraft, builderDraftOriginId]);
 
   // Dark Mode side-effect
   useEffect(() => {
@@ -1432,13 +1458,17 @@ export default function Home() {
             <BacktestPanel
               onRun={handleRun}
               onNewStrategy={() => {
-                const hadSavedOrLoaded = !!loadedStrategyId;
+                // Con una estrategia activa (cargada o corrida) o un borrador que
+                // desciende de una guardada, «Nueva Estrategia» arranca en blanco;
+                // un borrador huerfano a medias se conserva al abrir/cerrar
+                // (misma regla que antes, cuando esto miraba `loadedStrategyId`).
+                const hadSavedOrLoaded = !!activeStrategy || !!builderDraftOriginId;
                 if (hadSavedOrLoaded) {
                   setActiveStrategy(null);
                   setBuilderDraft(null);
                   setDraftStrategy(null);
                 }
-                setLoadedStrategyId(null);
+                setBuilderDraftOriginId(null);
                 setMode((prev) => {
                   const isOpening = prev !== 'builder';
                   if (isOpening) {
@@ -1475,14 +1505,17 @@ export default function Home() {
                 if (strategyId === "draft" || strategyId.startsWith("draft_") || strategyId === "wizard_draft" || strategyId.startsWith("wizard_draft_")) {
                   setMode('builder');
                 } else {
-                  if (strategyId === loadedStrategyId && builderDraft) {
+                  // HALLAZGO 2026-09-16·03: el atajo reabre el borrador SOLO si
+                  // desciende de la estrategia pedida (origen), no de la última
+                  // corrida — que puede ser otra mientras el borrador siga vivo.
+                  if (strategyId === builderDraftOriginId && builderDraft) {
                     setMode('builder');
                     return;
                   }
                   try {
                     const strategyData = await getStrategy(strategyId);
                     setActiveStrategy(strategyData);
-                    setLoadedStrategyId(strategyData.id ?? null);
+                    setBuilderDraftOriginId(strategyData.id ?? null);
                     
                     const def = typeof strategyData.definition === 'string' 
                       ? JSON.parse(strategyData.definition) 
@@ -1886,7 +1919,7 @@ export default function Home() {
                         }
 
                         setActiveStrategy(savedStrategy);
-                        setLoadedStrategyId(savedStrategy.id ?? null);
+                        setBuilderDraftOriginId(savedStrategy.id ?? null);
                         strategyIdRef.current = savedStrategy.id ?? "";
                         
                         const def = typeof savedStrategy.definition === 'string'
@@ -2077,7 +2110,7 @@ export default function Home() {
 
                         // Update the active strategy in the state with the returned/updated strategy
                         setActiveStrategy(updated);
-                        setLoadedStrategyId(updated.id ?? null);
+                        setBuilderDraftOriginId(updated.id ?? null);
                         strategyIdRef.current = updated.id ?? "";
                         
                         const def = typeof updated.definition === 'string'
