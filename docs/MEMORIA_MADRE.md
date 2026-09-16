@@ -5973,3 +5973,10 @@ de Databento, no copiar `users.duckdb`.
 - **Verificación:** `tsc --noEmit` limpio; eslint del fichero **94 problemas (82 errores / 12 warnings) = EXACTAMENTE el baseline de HEAD** (medido con stash antes/después del cambio): cero issues nuevos. Traza del repro del hallazgo sobre el código final: Config(A) → correr B → Config abre **B** (antes: A); el atajo legítimo Config(A)→cerrar→Config(A) sigue reabriendo las ediciones sin guardar de A; correr la MISMA estrategia desde el panel conserva el borrador. Pendiente de la verificación visual de Álvaro en el navegador con sus dos estrategias reales.
 - **Código tocado:** `frontend/src/app/backtester/page.tsx` (fix) y esta entrada. Nada más.
 - **Estado:** RESUELTO (`70ff4d7`, rama `alvaro-rama-desarrollo`). **Sin push** (pendiente del OK de Álvaro; a `staging` no se sube nunca, lo integra él).
+
+### [INTEGRACIÓN · 2026-09-16 · 02] Fix del Config verificado por Álvaro en el navegador y subido a origin — junto con los 4 commits que esperaban su OK
+- **Qué se verificó:** Álvaro reprodujo su caso real (RTH 2.3 cargada → correr la 1B. Modelización Sobrino 3 → «Config. Estrategia guardada») y ya abre la estrategia pedida («Bien, ya va!»). Con esto el HALLAZGO 2026-09-16·03 queda cerrado de punta a punta: reporte → fix con su OK → verificación visual.
+- **Qué se subió (OK explícito de Álvaro):** `origin/alvaro-rama-desarrollo` avanza de `71ac80a` a `06598ae` — los 2 commits del hallazgo 03 (`70ff4d7` fix, `06598ae` memoria) MÁS los 4 que sus entradas dejaban «sin push pendiente de OK»: camino de condiciones (`2fbbe5a`, `d489967`) y rearme del disparo descartado (`5f19ef9`, `6995e5d`). Las líneas «Sin push» de esas entradas quedan anuladas por esta (motivo: los commits del fix 03 son descendientes de los otros 4 — imposible subir solo dos).
+- **staging y main:** intactos; la integración a `staging` la lleva Álvaro, como siempre.
+- **Código tocado:** ninguno adicional (solo esta entrada).
+- **Estado:** HECHO.
