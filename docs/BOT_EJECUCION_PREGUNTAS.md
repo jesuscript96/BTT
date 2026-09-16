@@ -44,15 +44,15 @@
 - [ ] B8. Tamaño frente a liquidez: ¿tope de acciones por orden como fracción del volumen reciente y del tamaño visible en el ask/bid? ¿Se trocea la orden en tramos?
 - [ ] B9. Precio por debajo de 1 $: ¿decimales admitidos y cómo se redondea el límite? **[API]**
 - [ ] B10. ¿Lote máximo por orden del bróker y cómo se parte? **[API]**
-- [ ] B11. Orden límite en premercado que no se ejecuta en N s: ¿se recoloca, se cancela o se deja viva hasta una hora?
+- [x] B11. → sin excepciones en PM (R-B-01). Orden límite en premercado que no se ejecuta en N s: ¿se recoloca, se cancela o se deja viva hasta una hora?
 - [x] B12. → R-B-04 (en el instante del cierre de la vela i, por ticks; = open de i+1 del backtest). ¿Se entra en la vela siguiente (i+1) como el backtester o al instante? Si el precio de i+1 ya está peor que el tope de entrada, ¿se salta?
-- [ ] B13. Si el fill llega a un precio mucho mejor o peor del esperado (más de X %), ¿se avisa, se recalcula el tamaño o se cierra?
-- [ ] B14. Antes de vender en corto, ¿el bot comprueba SSR (solo se puede vender por encima del bid)? ¿Cómo lo sabe? **[API]**
+- [x] B13. → mejor: se acepta; peor por fallo: avisar y mantener con stop. Si el fill llega a un precio mucho mejor o peor del esperado (más de X %), ¿se avisa, se recalcula el tamaño o se cierra?
+- [x] B14. → R-B-01 (suelo bid + 0,01 en SSR); cómo se lee la bandera [API]. Antes de vender en corto, ¿el bot comprueba SSR (solo se puede vender por encima del bid)? ¿Cómo lo sabe? **[API]**
 - [ ] B15. Locate aceptado y DAS rechaza el corto igualmente: ¿qué se hace y cómo se registra? **[API]**
 - [ ] B16. Cancelación no confirmada: ¿se asume viva? Cancelación confirmada y después llega un fill (carrera): ¿cómo se reconcilia? **[API]**
 - [ ] B17. ¿Órdenes ocultas o iceberg? ¿Aportan algo en small caps o no? **[API]**
 - [x] B18. → sí: halt cancela la escalera; al reabrir, nueva solo si «dentro» (R-F-04). Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
-- [ ] B19. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
+- [x] B19. → sí se entra; escalera con suelo bid + 0,01 (R-B-01); bandera SSR [API]. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
 - [x] B20. → R-B-01: tope 3 % por distancia último precio→bid (FIJADO el 16-sep; la guarda por spread descartada). ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
 
 ## C. Stop y protección de la posición
