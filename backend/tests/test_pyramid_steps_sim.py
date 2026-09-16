@@ -381,3 +381,77 @@ def test_ventana_de_relleno_solo_al_ultimo_paso():
     # un nivel normal sigue siendo señal única con el mismo filtro
     out_n = aplica_ventana_relleno_nivel(_lv_normal(), minutes, tw, True)
     assert out_n["signals"].tolist() == [True, False, False]
+
+
+# ── Rearme al DISPARAR cuando el añadido se descarta por riesgo ────────────
+# (PRD docs/PRD_CAMINO_REARME_DISPARO_DESCARTADO_20260916.md, HALLAZGO
+# 2026-09-16·02): las llaves vuelven a cero tanto si el disparo se ejecuta
+# como si lo descarta la caja o los locates — un descarte NO gasta una de
+# las `times` (pyr_fired solo sube al ejecutar) ni deja el nivel muerto.
+
+def _dia_caja_ajustada(n=20):
+    """Velas planas a 10 $ y entrada que compromete el 100 % del capital
+    (risk_r = init_cash → 1000 acciones de 10 $): ningún add cabe hasta que
+    el reduce de la barra 10 libera la mitad de la posición."""
+    open_, high, low, close, ts = _dia(n=n)
+    return open_, high, low, close, ts
+
+
+_NIVEL_REDUCE = {
+    "signals": None,   # se rellena en cada test
+    "action": "reduce", "capital_frac": 0.5, "max_fires": 1, "unit": "pct",
+    "amount_usd": 0.0, "size_by_sl": False, "hybrid_stop": False,
+    "hybrid_black_swan_pct": None, "hybrid_max_loss_pct": None,
+}
+
+
+def _nivel_reduce(en_barra, n=N):
+    nv = dict(_NIVEL_REDUCE)
+    nv["signals"] = _senal(en_barra, n=n)
+    return nv
+
+
+def test_disparo_descartado_por_caja_rearma_el_camino():
+    """El disparo de la barra 5 se descarta SIN caja (la entrada comprometió
+    el 100 %); el reduce de la barra 10 libera caja; el camino se recorre
+    OTRA VEZ (A re-flanquea en la 14, B en la 15) y el segundo disparo SÍ
+    ejecuta. Antes del fix: 0 adds (las llaves quedaban clavadas). La
+    paridad con un nivel NORMAL equivalente (1 add) es lo que se rompía."""
+    n = 20
+    sigA = _senal(4, n=n); sigA[14:16] = True    # A: dos flancos (4 y 14)
+    sigB = _senal(5, 15, n=n)                    # B: llega en 5 y en 15
+    open_, high, low, close, ts = _dia_caja_ajustada(n)
+
+    def correr(nivel_1):
+        return _correr(open_, high, low, close, ts, _senal(1, n=n), _senal(18, n=n),
+                       [_nivel_reduce(10, n), nivel_1], risk_r=CASH)
+
+    res_camino = correr(_nivel_camino([sigA, sigB], max_fires=2))
+    res_normal = correr(_nivel_normal(_senal(5, 15, n=n), max_fires=2))
+    adds_camino = [(a["idx"], a["size"]) for a in _adds(res_camino)]
+    adds_normal = [(a["idx"], a["size"]) for a in _adds(res_normal)]
+    # el reduce liberó la caja en ambos (fill 11, la mitad de la posición)
+    for res in (res_camino, res_normal):
+        assert any(t["exit_reason"] == "Pyramid Reduce" and t["size"] == 500.0
+                   for t in res["trades"])
+    # PARIDAD: el camino descartado se recupera igual que un nivel normal
+    assert adds_camino == adds_normal == [(16, 10.0)]
+
+
+def test_tras_descarte_la_condicion_sostenida_no_reengancha_sin_flanco():
+    """Q3 intacta tras el arreglo: el disparo de la barra 5 se descarta sin
+    caja, el reduce libera caja en la 11 y B vuelve a tener flanco en la 15,
+    pero el paso 1 (A) quedó SOSTENIDO sin flanco nuevo — con
+    `pyr_step_prev` conservado, el camino NO puede volver a engancharse y no
+    hay ningún add. (Si este test revienta, alguien reseteó prev_sig.)"""
+    n = 20
+    niveles = [_nivel_reduce(10, n),
+               _nivel_camino([_senal_rango(0, n - 1, n=n), _senal(5, 15, n=n)],
+                             max_fires=2)]
+    open_, high, low, close, ts = _dia_caja_ajustada(n)
+    res = _correr(open_, high, low, close, ts, _senal(1, n=n), _senal(18, n=n),
+                  niveles, risk_r=CASH)
+    # la caja ESTABA libre (reduce ejecutado): lo único que frena es Q3
+    assert any(t["exit_reason"] == "Pyramid Reduce" and t["size"] == 500.0
+               for t in res["trades"])
+    assert _adds(res) == []
