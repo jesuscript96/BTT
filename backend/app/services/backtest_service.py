@@ -24,6 +24,7 @@ from app.services.strategy_engine import (
     translate_strategy, _parse_risk_management, compile_strategy_def,
     scalping_tp_time_limit,
     get_lowest_timeframe_mins, apply_entry_fill_window,
+    mapa_senales_nivel, aplica_ventana_relleno_nivel,
 )
 # Dispatcher (PRD rendimiento-backtester 03.9): portfolio_sim.py queda intacto como
 # especificación/fallback; BACKTEST_NUMBA_SIM=1 activa el kernel Numba equivalente.
@@ -932,7 +933,10 @@ def run_backtest(
                     "accept_reentries": sig_accept_reentries,
                     "max_reentries": sig_max_reentries,
                     "pyramid_levels": [
-                        {**lv, "signals": lv["signals"].copy()} for lv in sig_pyramid_levels
+                        # Copia defensiva de las señales, sea un array normal
+                        # o uno por paso (nivel-camino, PRD 2026-09-16).
+                        mapa_senales_nivel(lv, lambda s: s.copy())
+                        for lv in sig_pyramid_levels
                     ],
                     "pyramid_sequential": sig_pyramid_sequential,
                     "reentry_cooldown_bars": sig_cooldown,
@@ -1003,7 +1007,10 @@ def run_backtest(
             exits_arr = exits_arr[session_mask_np]
             if sig_pyramid_levels:
                 sig_pyramid_levels = [
-                    {**lv, "signals": lv["signals"][session_mask_np]} for lv in sig_pyramid_levels
+                    # El recorte de sesión llega a cada paso igual que al
+                    # array único de un nivel normal (mismo espacio de índices).
+                    mapa_senales_nivel(lv, lambda s, _m=session_mask_np: s[_m])
+                    for lv in sig_pyramid_levels
                 ]
 
         # --- Apply candle_delay shift on trimmed/untrimmed numpy arrays ---
@@ -1055,11 +1062,13 @@ def run_backtest(
                     look_ahead_prevention=look_ahead_prevention,
                 )
                 if sig_pyramid_levels:
-                    # Un anyadido es una entrada: mismo criterio.
+                    # Un anyadido es una entrada: mismo criterio. En un
+                    # nivel-camino, la vela de relleno manda sobre el enganche
+                    # del ÚLTIMO paso (los intermedios no ejecutan nada).
                     sig_pyramid_levels = [
-                        {**lv, "signals": apply_entry_fill_window(
-                            lv["signals"], _mins_trim, _tw,
-                            look_ahead_prevention=look_ahead_prevention)}
+                        aplica_ventana_relleno_nivel(
+                            lv, _mins_trim, _tw,
+                            look_ahead_prevention=look_ahead_prevention)
                         for lv in sig_pyramid_levels
                     ]
 

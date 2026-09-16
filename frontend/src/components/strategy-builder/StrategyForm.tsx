@@ -21,7 +21,7 @@ import {
 } from '@/types/strategy';
 import { EntryLogicBuilder } from './EntryLogic';
 import { ExitLogicBuilder } from './ExitLogic';
-import { PyramidingBuilder } from './PyramidingBuilder';
+import { PyramidingBuilder, nivelPiramideValido, nivelPiramideParaPayload } from './PyramidingBuilder';
 import { RiskManagementComponent } from './RiskManagement';
 import { Save, Loader2, Code, FlaskConical, Database, X } from 'lucide-react';
 import { getQueries, createStrategy } from '@/lib/api';
@@ -164,13 +164,17 @@ export const StrategyForm = ({ onStrategySaved }: Props) => {
             entry_logic: entryLogic,
             exit_logic: exitLogic,
             risk_management: riskManagement,
-            // Solo viaja si esta activa Y hay niveles con condiciones: sin
-            // piramidar, la definicion queda EXACTAMENTE como siempre.
-            ...(pyramiding.active && pyramiding.levels.some(l => l.root_condition.conditions.length > 0)
+            // Solo viaja si esta activa Y hay niveles validos: sin
+            // piramidar, la definicion queda EXACTAMENTE como siempre. Un
+            // nivel-camino (steps) viaja SIN root_condition — son mutuamente
+            // excluyentes y el backend rebota con 422 un nivel con ambas.
+            ...(pyramiding.active && pyramiding.levels.some(nivelPiramideValido)
                 ? { pyramiding: {
                         timeframe: pyramiding.timeframe,
                         mode: pyramiding.mode || 'individual',
-                        levels: pyramiding.levels.filter(l => l.root_condition.conditions.length > 0 && l.capital_pct > 0),
+                        levels: pyramiding.levels
+                            .filter(l => nivelPiramideValido(l) && l.capital_pct > 0)
+                            .map(nivelPiramideParaPayload),
                     } }
                 : {}),
             dataset_id: selectedDatasetId || null,

@@ -1450,7 +1450,17 @@ export default function BacktestPanel({
                             sl = ` · cada lote con SL: ${nombre}${off}`;
                           }
                         }
-                        return `${grupo}${i + 1}) ${accion} ${l.capital_pct}${unidad}${base}${veces}${disparo}${sl}`;
+                        // CAMINO (PRD 2026-09-16): el nivel declara una cadena
+                        // ordenada de pasos en vez de una condición única — se
+                        // pinta «1º … → 2º …» para ver de un vistazo que ese
+                        // nivel no es un AND clásico.
+                        let camino = '';
+                        if (Array.isArray(l.steps) && l.steps.length) {
+                          camino = ` · camino: ${l.steps.map((s: any, k: number) =>
+                            `${k + 1}º ${formatConditionGroup(s) || '—'}`).join(' → ')}`;
+                          if (l.same_bar === false) camino += ' (velas separadas)';
+                        }
+                        return `${grupo}${i + 1}) ${accion} ${l.capital_pct}${unidad}${base}${veces}${disparo}${sl}${camino}`;
                       }).join(" | ");
                       const modos = grupos.length > 1
                         ? ' · ' + grupos.map((g, k) => `G${k + 1} ${g.mode === 'sequential' ? 'sec.' : 'ind.'}`).join(', ')

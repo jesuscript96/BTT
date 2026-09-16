@@ -267,6 +267,25 @@ def tope_cangrejo(capital: float, max_loss_pct: float | None,
     return (max_loss_pct / 100.0) * capital / dist
 
 
+def _recorrido_cumplido(mv: dict, close_i: float, entry_px: float,
+                        ultimo_px: float, is_long: bool) -> bool:
+    """Disparo por recorrido de un nivel de piramide (2026-09-16): ¿lleva el
+    precio `mv["pct"]` % a favor (o en contra, `mv["dir"]`) medido con el
+    cierre de esta vela desde la entrada de la operacion o, con
+    `mv["ref"] == "last"`, desde el ultimo anadido/quita DE SU GRUPO
+    (`ultimo_px`; sin ninguno, la entrada)? Los grupos son independientes:
+    una quita del grupo 2 no puede mover la escalera del grupo 1 (medido:
+    pasaba). Sin precio de referencia, no se cumple."""
+    ref = ultimo_px if (mv.get("ref") == "last" and ultimo_px > 0) else entry_px
+    if not ref > 0:
+        return False
+    a_favor = (close_i - ref) / ref * 100.0
+    if not is_long:
+        a_favor = -a_favor
+    umbral = float(mv.get("pct", 0.0))
+    return (a_favor >= umbral) if mv.get("dir") != "contra" else (-a_favor >= umbral)
+
+
 def simulate(
     close: np.ndarray,
     open_: np.ndarray,
@@ -513,6 +532,13 @@ def simulate(
     pyr_prev_sig: list = []
     pyr_last_px: dict = {}
     pyr_fired: list = []   # contador de disparos por nivel (int)
+    # ── CAMINO DE CONDICIONES por nivel (PRD 2026-09-16) ──
+    # Estado de los pasos de cada nivel-camino DENTRO del trade, inicializado
+    # y rearmado donde pyr_prev_sig/pyr_fired (cada entrada). Los niveles
+    # normales no lo usan (pyr_step_prev queda a None): coste cero sin camino.
+    pyr_step_k: list = []      # índice del paso pendiente por nivel
+    pyr_step_prev: list = []   # list[bool]: prev_sig de CADA paso (flanco)
+    pyr_last_latch: list = []  # vela del último enganche (solo same_bar=False)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
     # ── SL POR LOTE (PRD 2026-09-15, docs/PRD_SL_POR_LOTE_EN_PIRAMIDACION) ──
@@ -1747,32 +1773,58 @@ def simulate(
                 # cada entrada, asi que una condicion que YA se cumplia al entrar
                 # dispara en la primera barra. Antes se miraba la barra anterior
                 # del array completo y esa condicion no disparaba jamas.
-                sig_now = bool(lv["signals"][i])
                 # DISPARO POR RECORRIDO (2026-09-16): X % del PRECIO a favor o en
                 # contra, medido con el cierre de esta vela respecto al precio
                 # de entrada de la operacion (o al del ultimo disparo de la
-                # piramide). Es el take profit / stop loss de la propia
-                # piramide. Se combina con las condiciones (AND) y con el
-                # flanco: cruzar el umbral es UN evento, no uno por vela.
+                # piramide DE SU GRUPO). Es el take profit / stop loss de la
+                # propia piramide. Se combina con las condiciones (AND) y con
+                # el flanco: cruzar el umbral es UN evento, no uno por vela.
+                # En un nivel-camino va pegado al ULTIMO paso (el que dispara).
                 _mv = lv.get("move")
-                if sig_now and _mv:
-                    # "Desde el ultimo disparo" = el ultimo anadido/quita DE ESTE
-                    # GRUPO. Los grupos son independientes: una quita del grupo 2
-                    # no puede mover la escalera del grupo 1 (medido: pasaba).
-                    _ult = pyr_last_px.get(lv.get("group", 0), 0.0)
-                    _ref = (_ult if (_mv.get("ref") == "last" and _ult > 0)
-                            else entry_price)
-                    if _ref > 0:
-                        _a_favor = (close[i] - _ref) / _ref * 100.0
-                        if not is_long:
-                            _a_favor = -_a_favor
-                        _umbral = float(_mv.get("pct", 0.0))
-                        sig_now = ((_a_favor >= _umbral) if _mv.get("dir") != "contra"
-                                   else (-_a_favor >= _umbral))
-                    else:
-                        sig_now = False
-                dispara = sig_now and not pyr_prev_sig[lv_idx]
-                pyr_prev_sig[lv_idx] = sig_now
+                if lv.get("steps_signals") is None:
+                    # ── Nivel NORMAL: exactamente como siempre (regla nº1 del
+                    # PRD del camino: sin steps, ni una coma distinta) ──
+                    sig_now = bool(lv["signals"][i])
+                    if sig_now and _mv:
+                        sig_now = _recorrido_cumplido(
+                            _mv, close[i], entry_price,
+                            pyr_last_px.get(lv.get("group", 0), 0.0), is_long)
+                    dispara = sig_now and not pyr_prev_sig[lv_idx]
+                    pyr_prev_sig[lv_idx] = sig_now
+                else:
+                    # ── Nivel CAMINO (PRD 2026-09-16, §8): avanzar tantos
+                    # pasos como se pueda en esta vela. Es la MISMA regla que
+                    # el gate `nivel_activo` de arriba, llevada a pasos: solo
+                    # se evalúa el paso PENDIENTE, y su prev_sig solo se
+                    # actualiza en su turno — un paso futuro no consume su
+                    # flanco antes de tiempo. Con same_bar=False, en la vela
+                    # de un enganche no se evalúa el siguiente paso. ──
+                    steps = lv["steps_signals"]
+                    same_bar = lv.get("same_bar", True)
+                    dispara = False
+                    while pyr_step_k[lv_idx] < len(steps):
+                        k = pyr_step_k[lv_idx]
+                        if (not same_bar) and pyr_last_latch[lv_idx] == i:
+                            break          # ya hubo un enganche en esta vela
+                        sig_now = bool(steps[k][i])
+                        if sig_now and _mv and k == len(steps) - 1:
+                            # El recorrido es una condicion mas del ultimo
+                            # paso: engancha (y dispara) en la primera vela
+                            # en que el paso se cumple Y el precio lleva el
+                            # recorrido pedido; los pasos intermedios no
+                            # operan y no lo miran.
+                            sig_now = _recorrido_cumplido(
+                                _mv, close[i], entry_price,
+                                pyr_last_px.get(lv.get("group", 0), 0.0), is_long)
+                        engancha = sig_now and not pyr_step_prev[lv_idx][k]
+                        pyr_step_prev[lv_idx][k] = sig_now
+                        if not engancha:
+                            break          # el paso pendiente no engancha hoy
+                        pyr_step_k[lv_idx] += 1
+                        pyr_last_latch[lv_idx] = i
+                        if pyr_step_k[lv_idx] == len(steps):
+                            dispara = True  # enganchado el último paso
+                            break
                 if not dispara:
                     continue
                 # El disparo se contabiliza SOLO si llega a ejecutarse (mas
@@ -1947,6 +1999,14 @@ def simulate(
                     pyr_base += add_size
                     pyr_fired[lv_idx] += 1
                     pyr_last_px[lv.get("group", 0)] = add_px
+                    # Nivel-camino: llaves reiniciadas para poder recorrer el
+                    # camino entero otra vez (Q4: cada disparo es un recorrido
+                    # completo), CONSERVANDO el prev_sig de cada paso (Q3
+                    # anti-metralla): una condición sostenida no re-dispara,
+                    # hace falta flanco nuevo.
+                    if lv.get("steps_signals") is not None:
+                        pyr_step_k[lv_idx] = 0
+                        pyr_last_latch[lv_idx] = -1
                     pyr_exec.append({
                         "kind": "add",
                         "idx": exec_idx,
@@ -2021,6 +2081,11 @@ def simulate(
                     pyr_base -= red_size
                     pyr_fired[lv_idx] += 1
                     pyr_last_px[lv.get("group", 0)] = net_red
+                    # Nivel-camino: mismo rearme de llaves que el add (Q3/Q4),
+                    # conservando el prev_sig de cada paso.
+                    if lv.get("steps_signals") is not None:
+                        pyr_step_k[lv_idx] = 0
+                        pyr_last_latch[lv_idx] = -1
                     pyr_exec.append({
                         "kind": "reduce",
                         "idx": exec_idx,
@@ -2316,6 +2381,20 @@ def simulate(
                     # para los niveles por recorrido medidos "desde el ultimo
                     # disparo".
                     pyr_last_px = {}
+                    # El camino tambien se rearma con cada entrada: llaves a
+                    # cero y flancos limpios — una condicion vigente al entrar
+                    # engancha en la primera vela de su turno, y un evento
+                    # transitorio ANTES de la entrada no cuenta (Q2=A, PRD
+                    # 2026-09-16 §4). Los niveles normales quedan a None.
+                    if pyramid_mode:
+                        pyr_step_k = [0] * len(pyramid_levels)
+                        pyr_step_prev = [
+                            ([False] * len(lv["steps_signals"])
+                             if lv.get("steps_signals") is not None else None)
+                            for lv in pyramid_levels]
+                        pyr_last_latch = [-1] * len(pyramid_levels)
+                    else:
+                        pyr_step_k, pyr_step_prev, pyr_last_latch = [], [], []
                     # Idem los lotes con SL: la posición anterior murió con
                     # ellos dentro; los suyos empiezan de cero.
                     if lots_on:
