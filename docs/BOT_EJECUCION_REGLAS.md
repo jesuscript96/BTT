@@ -139,6 +139,17 @@ y reconciliación), después el resto.)*
 
 Aclaraciones de Jaume (15-sep): la venta del exceso SOLO se hace si la posición neta es LARGA (acciones compradas); si por cualquier error lo que queda es corto, NO se vende nada. La orden de emergencia lleva la posición entera porque tiene que poder cubrirlo todo si el principal falla. PENDIENTES PRIORITARIOS, con datos: (i) qué hacer si tras la limpieza sigue quedando algo corto (mantener / reponer stop); (ii) qué hace el bot a la VUELTA de un cisne negro (cuándo cerrar mientras el precio devuelve; hoy: la orden de emergencia se ejecuta sola al cruzar su límite en ~9 de cada 10, humano a la media hora en el resto).
 
+**REGLA FIJADA (Jaume, 16-sep) y NOTA DE DATOS para el repaso final.** La estructura de dos stops residentes (principal +3 %, emergencia a +10 % del límite del principal con +50 %) y la limpieza estricta quedan FIJADAS. Cifras en las que se apoya (`36_analisis_libro_entradas.py`, NBBO consolidado, 15-sep; solo operaciones que salen por stop; 1B = PM, 2B = RTH):
+| Margen del limitP | Se ejecuta al instante | En 60 s | Colgado | Slippage sobre el nivel (mediana / p95 / p99) |
+|---|---|---|---|---|
+| +0 % (justo en el nivel) | 71 % / 77 % | 96 % / 97 % | 1-3 % | −0,6 / 0,0 / 0,0 |
+| +1 % | 88 % / 89 % | 98 % | 1-2 % | +0,1 / +0,8 / +1,0 |
+| **+3 % (principal)** | **95 % / 91 %** | **98-99 %** | **1-2 % [IC95 0-5]** | **+0,3 / +2,2 / +2,8** |
+| +10 % | 100 % / 95 % | 99-100 % | 0-1 % | +0,7 / +5,9 / +8,8 |
+| **+50 % (emergencia), en fogonazos** | **86 %** | **97 % (5 min)** | **1 % [0-5]** | **+8,8 / +42 / +47** |
+| +50 % en stops normales | 100 % | 100 % | 0 % | +0,7 / +7,6 / +16 |
+Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % sobre el nivel, p90 +16-20 %. En fogonazos el ask ya está +20 % (mediana) sobre el nivel en el disparo. Riesgo de que una segunda orden residente se dispare antes de que el bot cancele (0,5 s): a +1 % del primero, 55-65 %; a +5 %, 14-24 %; a +10 %, 6-8 %; a +20-30 %, 2-6 %; en fogonazos 40-70 %. Vuelta del cisne negro: con salto ≥ 100 % el precio vuelve por debajo de +100 % en 30 min en el 96 % [88-99] y por debajo de +50 % en el 86 % [74-93] (mediana 1-2 min); ≥ 500 %: 75 % [41-93] y 62 % [31-86].
+
 ### R-C-03 · Posición sin stop puesto en DAS
 - Situación: hay posición abierta y DAS no tiene el stop aceptado: justo tras la entrada, o porque DAS lo ha rechazado o cancelado.
 - Detección: el ejecutor no recibe la confirmación del stop, o la reconciliación ve posición sin stop.
