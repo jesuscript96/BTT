@@ -536,6 +536,37 @@ class StrategyCreate(BaseModel):
     # pydantic lo descartaba en SILENCIO (extra="ignore" por defecto) y una
     # estrategia guardada no podia conservar su piramidacion.
     pyramiding: Optional[dict] = None
+
+    @field_validator("pyramiding")
+    @classmethod
+    def _valida_lot_stop_por_nivel(cls, v):
+        """SL POR LOTE (PRD 2026-09-15): valida `lot_stop` al GUARDAR.
+
+        El bloque `pyramiding` sigue siendo un dict opaco (no se muta nada
+        aquí); lo único que se comprueba es el bloque NUEVO, para que una
+        combinación imposible rebote con 422 en la frontera del API y no
+        llegue nunca al motor. La definición de qué es válido vive en
+        `strategy_engine.normaliza_lot_stop` — una sola fuente, la misma del
+        compilador — y aquí solo se invoca para validar, sin normalizar.
+        """
+        if not isinstance(v, dict):
+            return v
+        niveles = v.get("levels")
+        if not isinstance(niveles, list):
+            return v
+        from app.services.strategy_engine import normaliza_lot_stop
+        for j, lv in enumerate(niveles):
+            if not isinstance(lv, dict) or lv.get("lot_stop") is None:
+                continue
+            try:
+                normaliza_lot_stop(lv["lot_stop"])
+            except ValueError as e:
+                raise ValueError(f"levels[{j}].lot_stop: {e}") from e
+            if str(lv.get("action", "add")).strip().lower() == "reduce":
+                raise ValueError(
+                    f"levels[{j}].lot_stop: solo aplica a niveles action='add'")
+        return v
+
     # Modelos avanzados (XGBoost / HMM). Dict opaco por el mismo motivo que
     # `pyramiding`: la lista de features es el mismo tipo de arbol que las
     # condiciones y ya lo valida `advanced_backtest.parse_config`. Sin este
