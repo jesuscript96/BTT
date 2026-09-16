@@ -30,6 +30,42 @@
 
 ---
 
+## 2026-09-16 (Sailor, Portfolio) — «En crudo» en cuatro pasos, locates de la cuenta, Kelly exacta por estrategia, y el ATR del día entero
+
+Todo el día sobre Portfolio → «En crudo», con el bot vigilando por la mañana (backend en worktree, frontend en sitio) y apagado por la tarde (fusión + tres reinicios del 8010). Commits `67c8b3f` (ATR), `2a1a2c6` (En crudo) y esta MEMORIA, subidos a `sailor-rama-desarrollo` y `staging` por orden de Jaume. Suite: 1.273 pasados, 0 fallos.
+
+### La página, en cuatro pasos
+
+Jaume: «me pierdo en datos y gráficas… quiero un flujo de trabajo que se intuya, diseño técnico estilo Genético, nada de minimalismo extremo». `CrudoTab` es ahora solo el hilo: una tira arriba con los pasos y cuatro cajas numeradas y plegables con su resumen (`Paso`, `PasoBar`, `SubTabs`, `Nota` en `hoja.tsx`): **1 Ejecución** (tabla por estrategia + bloque «Portfolio — la cuenta»), **2 Visión general** (pestañas Resumen · Exposición · Por estrategia · Correlación · Calendario), **3 Límites de pérdida** (histórico + Monte Carlo + banda de locates), **4 Escalado y pesos**. Los pasos 2-4 no se abren sin calcular el 1. Un fichero por paso (`PasoEjecucion`, `PasoVision`, `PasoMonteCarlo`, `PasoEscalado`) y los cálculos puros en `modelo.ts`.
+
+### Locates de la cuenta (motor `portfolio_lab_raw` v2)
+
+Jaume: «si contamos los locates separados los estamos sobrecontando… la RTH sería gratis porque ya se han pagado en premercado». El modelo de locate pasa al bloque Portfolio (un bróker para todas; las filas ya no llevan locates). **Compartidos**: por ticker-día se alquila una vez el máximo de acciones en corto *a la vez* sumando estrategias (barrido al minuto); la que cubre libera; la que cabe en lo alquilado va gratis; paga la que provoca el paquete de más. **Puerta por EV**: la misma cuenta que `locates_gate` (EV en sombra de *su* estrategia contra el fade necesario de los paquetes *de más* respecto a lo alquilado hoy por cualquiera). **Banda**: N semillas sobre los mismos paquetes, sin volver a simular (como `locates_banda`). Sin el bloque, el motor es idéntico al anterior (probado contra el commit `75cd028` con corridas sintéticas). Con las reales (R fijo 200 $): por estrategia 76.338 $ vs compartidos 66.549 $ (−13 %, 1.532 entradas gratis); la puerta con EV 2 % quita 1.635 cortos y *baja* el retorno (rechaza entradas tras rachas malas que luego eran buenas), como en el backtester.
+
+**Los «90 M de locates sobre 150 M de beneficio» no eran un bug.** Con R fijo: 459 acciones de media a 6,68 $ (nocional 1.067 $), a 3 $ el paquete el locate medio es 11,58 $ = 1,08 % del nocional, contra 44,84 $ de PnL medio por corto → 26 % del bruto; con aleatorios 1-10 $, 50-60 %. Las corridas se guardaron sin locates (la página lo pide así) y por eso nunca lo había visto. Pregunta abierta: qué paga de verdad por paquete.
+
+### Escalado: de HRP a «solo Kelly» (tres versiones en un día)
+
+- **v2 (mañana)**: Kelly del conjunto repartida por HRP/iguales/momentum/EV/DD, con la regla que dictó Jaume («si Kelly dice 5 % y tengo 5 estrategias, cada una 1 %»: la suma = Kelly ≤ tope).
+- **Auditoría (noche)**, pedida por él («hay algo que no debe estar bien»): tres bugs y una lección. (1) **Monte Carlo con DD de −40.000 %**: remuestreaba los $ de cada día en modo aditivo sobre una curva que compone; ahora remuestrea el retorno diario y compone (`mode: "compound"`, `risk_pct: 1`) → DD p95 −18 %. (2) **«25 % (topado)» con tope 10 %**: el periodo guardaba lo pedido tras el techo interno del 25 % heredado de Modelos; ahora guarda `x_pct` (pedido) y `applied_pct` (aplicado) y el gráfico pinta lo aplicado; el techo interno está fuera. (3) **Kelly μ/σ² se pasaba**: ahora `_kelly_exacta` (la f que maximiza la media de log(1 + f·R) sobre los días de la ventana, acotada por el peor día); hoy 11,9 % vs 21,2 % de la aproximación, que se enseña al lado. **La lección**: con estas curvas (liquidez infinita, PF 1,7, 8,6 trades/día) el crecimiento sube con el riesgo hasta el 15 % sin encontrar óptimo, y **Kelly entera sin tope arruina** (−100 %): la óptima del pasado sobre-apuesta el futuro. El tope no afina, hace realista el resultado; aviso en pantalla cuando Kelly > 15 %. Verificado trade a trade que el riesgo aplicado = capital del día × aplicado × peso.
+- **«Con el escalado gano menos que con compound»** era semántica: el % del escalado era el TOTAL repartido y el de las filas es POR ESTRATEGIA; y la pestaña Modelos multiplica Kelly por el número de estrategias (X × n × w). Explicado con números; Jaume: «ahí me columpié».
+- **v3 (noche, la que queda)**: **solo Kelly, HRP fuera** (reparte por varianza, no por edge: dio el 86 % a la PM por estable y bajó el crecimiento; y su objetivo es «más peso a la que mejor vaya»). `kelly_scope`: **de cada estrategia** (Kelly exacta propia × fracción; si la suma pasa del tope, recorte *proporcional* de todas: la mejor sigue llevando más) o **global** (Kelly del conjunto × fracción, topada, repartida por las Kellys propias). Fracción libre (`kelly_mult` hasta 3) con botones ¼ ½ óptima. Real, ¼ y tope 10 %: RTH 28,8 % y PM 11,9 % de Kelly propia → piden 7,19 + 2,97 → 7,08 / 2,92 (71/29); crecimiento 7 %/día frente a 1,9 %/día de las filas al 1 %; DD −48 %. Ahora la RTH lleva más (mejor Kelly propia): lo contrario que con HRP. Le conté la literatura sin inventar: Kelly/Thorp sólido y fraccional por ruido; HRP (López de Prado 2016) es de riesgo; «Kelly + HRP» era heurística mía.
+- «Desde el inicio» en % / $ / R; «Hoy» = tabla Kelly propia → × fracción → aplicado → $ → peso. Todo es RIESGO (lo que se pierde al stop), no nocional: lo pone la pantalla porque Jaume lo leyó como «exposición».
+
+### El ATR del stop, desde la primera vela del premercado
+
+Jaume: «tiene que coger todas las velas desde el inicio de premarket, independientemente de la sesión» (= lo que ya hacía el bot). Ninguna versión miraba el futuro; el backtest recortaba a la sesión ANTES de calcular y en RTH las 14 primeras velas iban sin ATR (respaldo o sin entrar). Ahora `backtest_service` usa la columna `atr` de `market_frame` (día entero, recortada con la sesión, como hod/vwap) y `backtest_signals` calcula `_atr_full` y recorta; misma receta que el VWAP del 15-sep. `test_stop_atr_dia_entero.py`: el stop = entrada + k × ATR de la vela de la SEÑAL (no la de relleno), hay entradas entre 09:30 y 09:43 que antes no existían, y los tres caminos + JIT coinciden.
+
+### Trampas del día
+
+- `_ts` del motor crudo espera `YYYY-MM-DD HH:MM:SS` con espacio; con «T» todo cae a medianoche y los solapes desaparecen sin error.
+- Comparar «por estrategia» vs «compartidos» con R en % del capital no vale: el compound cambia los tamaños entre corridas y parecía que el pool cobraba MÁS.
+- `_hrp_weights` devuelve None (pesos iguales para todas) si una columna no tiene varianza; por eso «viva» = con trades en la ventana.
+- El worktree sale con CRLF; los parches conservan el final de línea del fichero. Y la herramienta Bash volvió a comerse `\n` dentro de un script: los parches van por fichero.
+- **PENDIENTE que Jaume dejó dicho: revisar mañana todo lo metido hoy en «En crudo»** (locates de la cuenta, puerta, banda, Monte Carlo, escalado Kelly v3) — se suma a la auditoría suya pendiente desde el 14-sep.
+
+---
+
 ## 2026-09-16 (Sailor, noche) — Piramidación por grupos, disparo por recorrido, y una cantidad por pirámide en el bot
 
 Pedido de Jaume: (1) «tres pirámides donde dos sean secuenciales y una individual» — el modo era uno solo para toda la lista; (2) que una pirámide pueda añadir o quitar «si X % de recorrido del precio (no de la vela), a favor o en contra», como un take profit / stop loss de la propia pirámide; (3) que el bot de alarmas y el cuadro de mandos pidan el riesgo de CADA pirámide. Commits `c2c1b5d`, `1121289`, `960cc26` en `sailor-rama-desarrollo`; sin subir al escribir esto. Backend relanzado a mano con el bot parado.
