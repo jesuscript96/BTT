@@ -515,6 +515,46 @@ def simulate(
     pyr_fired: list = []   # contador de disparos por nivel (int)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
+    # ── SL POR LOTE (PRD 2026-09-15, docs/PRD_SL_POR_LOTE_EN_PIRAMIDACION) ──
+    # lots_on: ¿algún nivel declara lot_stop? Sin él no se ejecuta ni una
+    # rama nueva: `lots` queda vacío para siempre y el estado por barra es el
+    # de siempre (camino caliente intacto, §8 del PRD).
+    lots_on = bool(pyramid_levels) and any(lv.get("lot_stop") for lv in pyramid_levels)
+    lots: list[dict] = []   # lotes vivos del trade: {level, px, size, sl_px}
+    _lot_pivots: dict = {}  # pivot_window -> (pivotes altos, pivotes bajos)
+    if lots_on:
+        # Las series de pivote por ventana del nivel, con la MISMA función del
+        # stop estructural del trade (paridad bit a bit, §5.3 del PRD). Solo
+        # para niveles structure+last_pivot; HOD/LOD/Previous Max ya llegan
+        # como arrays del trade.
+        for lv in pyramid_levels:
+            _ls = lv.get("lot_stop")
+            if (_ls and _ls.get("mode") == "structure"
+                    and _ls.get("level") == "last_pivot"):
+                _win = int(_ls.get("pivot_window", 3))
+                if _win not in _lot_pivots:
+                    _lot_pivots[_win] = pivotes_para_stop(
+                        {"high": high, "low": low, "timestamp": timestamps}, _win)
+
+        def _nivel_lot(ls, i):
+            """Valor del nivel estructural del SL de lote en la barra i.
+
+            0.0 = no disponible (pivote sin confirmar, array ausente). Misma
+            función (`_structural_level`) y misma causalidad que el stop del
+            trade: nada de una segunda implementación.
+            """
+            if ls["level"] == "last_pivot":
+                ph, pl = _lot_pivots.get(int(ls.get("pivot_window", 3)), (None, None))
+                return _structural_level(
+                    "Pivot High" if ls.get("swing") == "up" else "Pivot Low",
+                    i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows, ph, pl)
+            nombre = {"previous_max": "Previous Max",
+                      "hod": "HOD", "lod": "LOD"}.get(ls["level"])
+            if nombre is None:
+                return 0.0
+            return _structural_level(nombre, i, hods, lods, pm_highs, pm_lows,
+                                     prev_highs, prev_lows)
+
     # Risk amount tracking for reporting
     risk_amount = risk_r
 
@@ -1418,6 +1458,110 @@ def simulate(
                 size = 0.0
 
 
+        # ── SL POR LOTE: disparo y cierre (PRD 2026-09-15, §3.3-3.4) ──
+        # Va DESPUÉS del stop del trade: si el global saltó en esta vela ya
+        # puso `in_position=False` y aquí no se llega (manda el global, sin
+        # dobles fills). Y ANTES de la escalera y de las señales de pirámide,
+        # que así ven la posición ya aligerada. `lots` vacío (sin niveles con
+        # lot_stop) = este bloque no existe. Con Black Swan manual esperando el
+        # cierre diferido no hay órdenes en el mercado: los lotes esperan.
+        if lots and in_position and not bs_wait:
+            _supervivientes_lot = []
+            _pos_muerta_lot = False
+            for _lot in lots:   # orden cronológico de lote (§3.4)
+                _tocado = ((low[i] <= _lot["sl_px"]) if is_long
+                           else (high[i] >= _lot["sl_px"]))
+                if not _tocado:
+                    _supervivientes_lot.append(_lot)
+                    continue
+                # Cierra SOLO este lote, nunca más de lo que queda vivo (los
+                # parciales/reducciones pueden haber adelgazado la posición).
+                _q_lot = min(_lot["size"], size)
+                if _q_lot <= 0:
+                    continue   # lote fantasma: no se conserva en la lista
+                # Mismo tratamiento de fill que el stop del trade: el precio
+                # del nivel, acotado al extremo de la vela, penalizado por el
+                # slippage de la corrida.
+                _exit_ls = (max(_lot["sl_px"], low[i]) if is_long
+                            else min(_lot["sl_px"], high[i]))
+                _slip_ls = _exit_ls * slippage
+                _net_ls = (_exit_ls - _slip_ls) if is_long else (_exit_ls + _slip_ls)
+                # PnL CONTRA EL PX DE ENTRADA DEL LOTE (PRD §3.3, decisión
+                # cerrada): NO contra avg_entry_price. El reduce usa la media
+                # a propósito (cierra un % de la flotante); esto cierra un
+                # lote concreto y su PnL es contra su propio precio.
+                if is_long:
+                    _gross_ls = (_net_ls - _lot["px"]) * _q_lot
+                else:
+                    _gross_ls = (_lot["px"] - _net_ls) * _q_lot
+                if fee_type == "FLAT":
+                    _fee_ls = fees * _q_lot * 2
+                else:
+                    # Nocional de los dos lados, con la entrada del LOTE.
+                    _fee_ls = (_lot["px"] + _net_ls) * _q_lot * fees
+                _pnl_ls = _gross_ls - _fee_ls
+                realized_pnl += _pnl_ls
+                _avg_antes = avg_entry_price
+                _size_antes = size
+                size -= _q_lot
+                pyr_base = max(0.0, pyr_base - _q_lot)
+                # La media se recalcula restando la contribución del lote
+                # cerrado (§5.4): la operación inversa del incremental de los
+                # adds. La base sigue disuelta en la media; solo se descuenta
+                # lo que cierra.
+                if size > 0:
+                    avg_entry_price = (_avg_antes * _size_antes - _lot["px"] * _q_lot) / size
+                _car_ls = _lot["px"] * _q_lot
+                _ret_ls = (_pnl_ls / _car_ls) * 100 if _car_ls > 0 else 0.0
+                trades.append({
+                    "entry_idx": entry_idx,
+                    "exit_idx": i,
+                    # entry_price = fill REAL del lote (§3.3); la media del
+                    # trade global se reporta aparte, como en los reduce.
+                    "entry_price": round(_lot["px"], 6),
+                    "avg_entry_price": round(_avg_antes, 6),
+                    "exit_price": round(_net_ls, 6),
+                    "pnl": round(_pnl_ls, 4),
+                    "return_pct": round(_ret_ls, 4),
+                    "direction": "Long" if is_long else "Short",
+                    "status": "Closed",
+                    "size": round(_q_lot, 6),
+                    "exit_reason": "Pyramid Lot Stop",
+                    "fees": round(_fee_ls, 4),
+                    "mae": round(mae, 4),
+                    "mfe": round(mfe, 4),
+                    # El stop que disparó es el NIVEL DEL LOTE, no el del trade.
+                    "stop_loss": round(_lot["sl_px"], 6),
+                })
+                pyr_exec.append({
+                    "kind": "lot_stop",
+                    "idx": int(i),
+                    "time_epoch": (int(timestamps[i] // 1_000_000_000)
+                                   if timestamps is not None else None),
+                    "price": round(_net_ls, 6),
+                    "size": round(_q_lot, 6),
+                    "level": int(_lot["level"]) + 1,
+                    "position_size": round(size, 6),
+                    "pnl": round(_pnl_ls, 4),
+                    "sl_px": round(_lot["sl_px"], 6),
+                })
+                if size <= 0.0001:
+                    # Los lotes vaciaron la posición: no habrá trade de
+                    # cierre, la bitácora se cuelga de esta última leg (el
+                    # mismo arreglo que los reduce). Se deja caer al flujo
+                    # normal, como el reduce que vacía.
+                    in_position = False
+                    size = 0.0
+                    if pyramid_mode and pyr_exec and trades:
+                        trades[-1]["pyr_executions"] = pyr_exec
+                        pyr_exec = []
+                    _pos_muerta_lot = True
+                    break
+            if _pos_muerta_lot:
+                lots = []   # la posición murió; se rearma en la próxima entrada
+            else:
+                lots = _supervivientes_lot
+
         # --- Escalera del scalping complejo (2026-09-12) ---
         # Mismo sitio y mismas condiciones que la piramide: despues de las
         # salidas, con la posicion viva y nunca en la vela de entrada. Con
@@ -1660,6 +1804,37 @@ def simulate(
                     add_px = (px + slip) if is_long else (px - slip)
                     if add_px <= 0:
                         continue
+                    # ── SL DEL LOTE: anclaje CONGELADO (PRD §3.2) ──
+                    # Se calcula UNA vez con la información de la vela de
+                    # señal — la misma causalidad que el stop estructural/ATR
+                    # del trade, que también ancla en `i` cuando el fill es en
+                    # la apertura de `i+1`: lo último CERRADO del todo al
+                    # momento del fill es la barra i. Nunca se recalcula.
+                    ls = lv.get("lot_stop")
+                    lot_sl_px = 0.0
+                    if ls is not None:
+                        if ls["mode"] == "pct":
+                            lot_sl_px = (add_px * (1.0 - ls["pct"] / 100.0) if is_long
+                                         else add_px * (1.0 + ls["pct"] / 100.0))
+                        else:
+                            val_ls = _nivel_lot(ls, i) if lots_on else 0.0
+                            if val_ls <= 0.0:
+                                # Sin nivel resuelto no hay cinturón, y un
+                                # añadido sin su cinturón declarado cambia el
+                                # riesgo en silencio: el lote NO se hace (la
+                                # señal se consume; el nivel no gasta su
+                                # disparo, como cualquier add descartado).
+                                continue
+                            off_ls = float(ls.get("offset_pct", 0.0) or 0.0)
+                            # La holgura siempre ALEJA el stop del precio:
+                            # hacia arriba en corto, hacia abajo en largo.
+                            lot_sl_px = (val_ls * (1.0 - off_ls / 100.0) if is_long
+                                         else val_ls * (1.0 + off_ls / 100.0))
+                        if not _sl_side_valid(lot_sl_px, add_px, is_long):
+                            # Nivel en el lado ganador = premisa muerta: la
+                            # misma regla que invalida una entrada con el stop
+                            # estructural del trade.
+                            continue
                     cash_now = init_cash + realized_pnl
                     if cash_now <= 0:
                         continue
@@ -1695,8 +1870,16 @@ def simulate(
                     if lv.get("size_by_sl"):
                         # `add_cash` deja de ser capital y pasa a ser RIESGO: se
                         # divide por la distancia al stop, igual que la entrada.
-                        dist_pyr = (abs(add_px - trade_sl_price)
-                                    if trade_sl_price and trade_sl_price > 0 else 0.0)
+                        # CON SL DE LOTE (PRD §3.5): la distancia que dimensiona
+                        # el añadido es la del SL DEL LOTE, no la del trade — el
+                        # lote entero arriesga exactamente lo que el nivel
+                        # declara. Sin lot_stop, la del stop del trade (como
+                        # siempre).
+                        _dist_lot = (abs(add_px - lot_sl_px)
+                                     if ls is not None and lot_sl_px > 0 else 0.0)
+                        dist_pyr = (_dist_lot if _dist_lot > 0 else
+                                    (abs(add_px - trade_sl_price)
+                                     if trade_sl_price and trade_sl_price > 0 else 0.0))
                         add_size_pedido = (add_cash / dist_pyr if dist_pyr > 0
                                            else add_cash / add_px)
                         # Y con el tope hibrido del NIVEL, que tiene sus propios
@@ -1779,6 +1962,12 @@ def simulate(
                         **({"recortado_por_caja": round(add_cash_pedido, 2)} if recortado else {}),
                         **({"recortado_por_locates": int(max_locates)} if recortado_locates else {}),
                     })
+                    # El lote queda apuntado con su tamaño EJECUTADO (recortes
+                    # de caja/locates incluidos: si el cinturón salta, cierra
+                    # lo que de verdad se añadió).
+                    if ls is not None:
+                        lots.append({"level": lv_idx, "px": add_px,
+                                     "size": add_size, "sl_px": lot_sl_px})
                     if not is_long:
                         max_short_size_today = max(max_short_size_today, size)
                 else:
@@ -2127,6 +2316,10 @@ def simulate(
                     # para los niveles por recorrido medidos "desde el ultimo
                     # disparo".
                     pyr_last_px = {}
+                    # Idem los lotes con SL: la posición anterior murió con
+                    # ellos dentro; los suyos empiezan de cero.
+                    if lots_on:
+                        lots = []
                     pyr_base = size
                     # Bitacora de las ejecuciones de piramide de ESTA posicion.
                     # Viaja pegada al trade de cierre (`pyr_executions`) para

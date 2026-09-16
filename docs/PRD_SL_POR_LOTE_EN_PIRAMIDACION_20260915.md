@@ -2,7 +2,10 @@
 
 - **Fecha:** 2026-09-15
 - **Autor:** Álvaro (idea y decisiones de diseño) + ZCode (redacción y verificación de código)
-- **Estado:** BORRADOR PARA REVISIÓN — listo para check de la IA de implementación
+- **Estado:** REVISADO CONTRA CÓDIGO (2026-09-15) — todas las afirmaciones de
+  §5.2/§5.5/§3.1/§3.3 verificadas en el repo; incorporados dos ajustes de
+  semántica (§3.3 precio de referencia del PnL de lote y §10·5). Listo para
+  implementación.
 - **Entrega deseada:** si el check es positivo, HOY (fases P0-P1 mínimas)
 
 ---
@@ -76,19 +79,23 @@ En cada **nivel** de `pyramiding.levels[]`, clave opcional `lot_stop`:
 
 - `mode: "pct"` → distancia % desde el precio de entrada del lote (lado
   correcto según bias: en corto, por encima; en largo, por debajo).
-- `mode: "structure"` → el nivel de estructura **vigente en la vela del fill**
+- `mode: "structure"` → el nivel de estructura **vigente en la vela de
+  señal** —lo último totalmente cerrado al momento del fill, que es la
+  apertura de la barra siguiente (§3.2)—
   (causal; el vocabulario es el del SL estructural existente del motor, más
   «Último pivote» con su `pivot_window` y `swing`). En corto con `last_pivot`:
   el techo confirmado (lower high de la pata) + `offset_pct` de holgura hacia
   arriba; en largo, el espejo con suelos.
 - Sin `lot_stop` → comportamiento actual, idéntico (§4).
 
-### 3.2 Anclaje: CONGELADO en la vela del fill del lote
+### 3.2 Anclaje: CONGELADO en la vela de señal del lote
 
-El nivel del SL de lote se calcula una vez, con la información de la vela en
-que el añadido se ejecuta, y no se recalcula. Precedente: el stop ATR causal
-(fe40b65 — «nivel fijado en la entrada con el ATR de la vela de señal»). Es la
-versión causal limpia; el trailing estructural de lote queda para v2 (§9).
+El nivel del SL de lote se calcula una vez, con la información de la vela de
+señal del añadido —lo último totalmente cerrado al momento del fill; el fill
+es la apertura de la barra siguiente—, y no se recalcula. Precedente: el stop
+ATR causal (fe40b65 — «nivel fijado en la entrada con el ATR de la vela de
+señal»). Es la versión causal limpia; el trailing estructural de lote queda
+para v2 (§9). *(Ratificado por Álvaro el 2026-09-15 tras la implementación.)*
 
 ### 3.3 Disparo y cierre
 
@@ -99,7 +106,18 @@ penalizado por el slippage configurado de la corrida (mismo tratamiento de fill
 que el stop del trade). Se registra:
 
 - Un trade de cierre con `exit_reason: "Pyramid Lot Stop"`, con su pnl/fees y
-  `entry_price` = fill real del lote (calcado del registro de los reduce).
+  `entry_price` = fill real del lote. Se clona la **estructura y el formato** del
+  registro de los `reduce` (mismos campos, mismo cálculo de fees por los dos
+  lados, misma entrada en `pyr_exec`), **PERO NO el precio de referencia del
+  PnL**. ⚠️ El `reduce` calcula `gross_pnl` contra `avg_entry_price` —la media
+  ponderada de TODA la posición (`portfolio_sim.py:1721-1723`)—; un SL de lote
+  cierra un lote CONCRETO, así que su `gross_pnl` se calcula contra el **`px` de
+  entrada de ESE lote**, no contra la media. Fórmula explícita (mismo slippage
+  que el stop del trade): en largo `(net_lote − lot.px) × lot.size`, en corto
+  `(lot.px − net_lote) × lot.size`. Clonar el `reduce` al pie de la letra aquí
+  daría el número equivocado y rompería el propósito («cada lote con su propio
+  pnl»). El `avg_entry_price` del trade global se sigue reportando aparte, como
+  en los `reduce`.
 - Entrada en `pyr_exec` con `kind: "lot_stop"` (o extender el `add`
   correspondiente con `closed_idx`/`closed_price` — decisión de implementación,
   ver §10).
@@ -177,8 +195,13 @@ misma causalidad; NO una segunda implementación — paridad bit a bit con
 - Cada `add` con nivel con `lot_stop` apunta su lote.
 - Evaluación y cierre por barra según §3.3-3.4, con registro calcado de los
   `reduce`.
-- `avg_entry_price` pasa a media de los lotes vivos (base incluida como lote
-  implícito sin lot_stop) — misma fórmula, ahora restando lotes cerrados.
+- `avg_entry_price` se **recalcula al cerrar un lote** restando su contribución,
+  SIN necesidad de meter la base en la lista de `lots` (coherente con §10·4,
+  base NO es lote en v1): `avg_new = (avg·size − lot.px·lot.size) /
+  (size − lot.size)`. La media hoy se construye incrementalmente con cada `add`
+  (`portfolio_sim.py:1680`); esto es la operación inversa. `size` y `pyr_base`
+  bajan en `lot.size`. (No es "media de los lotes vivos": la base sigue disuelta
+  en `avg_entry_price` como hasta ahora; solo se descuenta lo que cierra.)
 
 ### 5.5 Kernel Numba
 
@@ -212,7 +235,10 @@ estrategias ajenas sin la clave importan/abren igual (§4).
 1. **Unit (sim):** matemática del cierre por lote — pct y estructura, largo y
    corto; slippage aplicado; pnl/fees del lote; `avg_entry_price` tras cerrar
    un lote; `pyr_base` reducida; lote recortado por tope de caja (cierra lo que
-   haya).
+   haya). **Test discriminante del precio de referencia (§3.3):** un caso donde
+   `lot.px ≠ avg_entry_price` (base + al menos un add a otro precio) para el que
+   el PnL contra la media daría un número DISTINTO al PnL contra el px del lote;
+   el test fija el valor correcto (px del lote) y falla si se calcó del `reduce`.
 2. **Unit (same-bar):** stop global + lot stop en la misma vela (manda global,
    sin doble fill); dos lot stops en la misma vela; lot stop y reduce el mismo
    día.
@@ -232,6 +258,8 @@ estrategias ajenas sin la clave importan/abren igual (§4).
 
 - [ ] Definiciones sin `lot_stop` → corridas byte-idénticas (test dorado verde).
 - [ ] `lot_stop` pct y estructura cierran SOLO su lote, con registro propio.
+- [ ] El PnL del cierre de lote se calcula contra el `px` del lote, NO contra
+      `avg_entry_price` (test discriminante §6.1 verde).
 - [ ] El stop del trade sigue mandando sobre el conjunto; misma-barra sin dobles fills.
 - [ ] `size_by_sl` del nivel usa la distancia al SL del lote cuando ambos existen.
 - [ ] Schema valida y rechaza basura con 422; builder y tarjeta lo muestran.
@@ -268,6 +296,12 @@ estrategias ajenas sin la clave importan/abren igual (§4).
 4. **Base como lote implícito:** ¿la entrada principal también pasa a la
    estructura de lotes (uniforme, sin `lot_stop`)? Propuesto: NO en v1 — solo
    los añadidos; menos superficie de regresión.
+5. **Precio de referencia del PnL del lote (RESUELTO — ver §3.3):** el
+   `gross_pnl` del cierre de lote va contra el `px` de entrada de ESE lote, no
+   contra `avg_entry_price`. Se deja fijado aquí para que no se reabra ni se
+   "calque del reduce" por inercia: el `reduce` usa la media a propósito (cierra
+   un % de la flotante, no un lote identificado); el lot stop cierra un lote
+   concreto y su PnL es contra su propio precio. Decisión cerrada por Álvaro.
 
 ---
 

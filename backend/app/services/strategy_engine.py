@@ -380,6 +380,130 @@ def _pyr_secuencial(lv: dict, grupos: list, modo_global_seq: bool) -> bool:
     if grupos and g < len(grupos) and isinstance(grupos[g], dict):
         return str(grupos[g].get("mode", "individual")).lower() == "sequential"
     return modo_global_seq
+# ── SL POR LOTE en niveles de piramidación (PRD 2026-09-15) ───────────────
+#
+# Cada nivel `add` puede declarar un stop propio que cierra SOLO ese lote.
+# La clave viaja en `pyramiding.levels[].lot_stop` y es un dict opaco para
+# pydantic (como todo el bloque): ESTA función es la definición única de qué
+# es un bloque válido y de cómo se normaliza. La usa el compilador (que ya la
+# aplica a cualquier definición que llega al motor) y el field_validator del
+# schema (que la aplica al GUARDAR, para que la basura rebote con 422 y no
+# llegue nunca al motor).
+#
+# El vocabulario de `level` es el del SL estructural del trade, con los mismos
+# alias de la interfaz; `swing` solo existe para el pivote (alto = techo para
+# un corto, bajo = suelo para un largo), igual que "Último pivote alto/bajo".
+LOT_STOP_LEVEL_ALIASES = {
+    "last_pivot": "last_pivot",
+    "ultimo pivote": "last_pivot",
+    "último pivote": "last_pivot",
+    "pivote": "last_pivot",
+    "previous_max": "previous_max",
+    "previous max": "previous_max",
+    "prevmax": "previous_max",
+    "maximo previo": "previous_max",
+    "máximo previo": "previous_max",
+    "hod": "hod",
+    "high of day": "hod",
+    "lod": "lod",
+    "low of day": "lod",
+}
+
+# El pivote según el swing. Sirve para aceptar los nombres del SL del trade
+# ("Pivot High"...) como alias del par level+swing.
+LOT_STOP_PIVOTE_ALIASES = {
+    "pivot high": "up", "ultimo pivote alto": "up", "último pivote alto": "up",
+    "pivot low": "down", "ultimo pivote bajo": "down", "último pivote bajo": "down",
+}
+
+# Ventana por defecto del pivote, la misma que el stop del trade
+# (portfolio_sim.PIVOT_WINDOW_STOP); se duplica aquí para no importar el
+# simulador dentro del compilador.
+LOT_STOP_PIVOT_WINDOW_DEFECTO = 3
+
+
+def _numero_lot_stop(valor, campo: str) -> float:
+    """Coerce a float un campo numérico del bloque. str numérico vale (la UI
+    manda strings a veces); bool NO (True es un 1 de Python pero no un %)."""
+    if isinstance(valor, bool) or valor is None:
+        raise ValueError(f"'{campo}' debe ser un número")
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        raise ValueError(f"'{campo}' debe ser un número (llegó {valor!r})") from None
+
+
+def normaliza_lot_stop(lot_stop) -> dict:
+    """Valida y normaliza el bloque `lot_stop` de un nivel de piramidación.
+
+    Devuelve el bloque CANÓNICO que viaja al simulador:
+      {"mode": "pct", "pct": <float, en %>}
+      {"mode": "structure", "level": <clave canónica>, "swing": "up"|"down",
+       "pivot_window": <int>, "offset_pct": <float, en %>}
+
+    Lanza ValueError (mensaje en claro) con cualquier combinación imposible:
+    mode fuera de {pct, structure}, pct sin número o <= 0, structure sin
+    nivel reconocible, pivote sin swing, ventana < 1, offset negativo.
+    Claves desconocidas se ignoran, como en el resto del bloque pyramiding.
+    """
+    if not isinstance(lot_stop, dict):
+        raise ValueError(f"debe ser un objeto, llegó {type(lot_stop).__name__}")
+
+    mode = str(lot_stop.get("mode", "")).strip().lower()
+    if mode == "pct":
+        pct = _numero_lot_stop(lot_stop.get("pct"), "pct")
+        if pct <= 0:
+            raise ValueError("'pct' debe ser > 0")
+        return {"mode": "pct", "pct": pct}
+
+    if mode == "structure":
+        nivel_raw = lot_stop.get("level")
+        if not isinstance(nivel_raw, str) or not nivel_raw.strip():
+            raise ValueError("'level' es obligatorio con mode=structure")
+        nivel_txt = nivel_raw.strip().lower()
+        swing = None
+        if nivel_txt in LOT_STOP_PIVOTE_ALIASES:
+            level = "last_pivot"
+            swing = LOT_STOP_PIVOTE_ALIASES[nivel_txt]
+        elif nivel_txt in LOT_STOP_LEVEL_ALIASES:
+            level = LOT_STOP_LEVEL_ALIASES[nivel_txt]
+        else:
+            raise ValueError(
+                f"'level' desconocido: {nivel_raw!r} (vocabulario: last_pivot, "
+                f"previous_max, hod, lod)")
+        if level == "last_pivot" and swing is None:
+            swing_raw = str(lot_stop.get("swing", "")).strip().lower()
+            if swing_raw in ("up", "alto", "alta"):
+                swing = "up"
+            elif swing_raw in ("down", "bajo", "baja"):
+                swing = "down"
+            else:
+                raise ValueError(
+                    "'swing' es obligatorio con level=last_pivot "
+                    "(up = pivote alto, down = pivote bajo)")
+        out = {"mode": "structure", "level": level, "offset_pct": 0.0}
+        if level == "last_pivot":
+            out["swing"] = swing
+            win_raw = lot_stop.get("pivot_window", LOT_STOP_PIVOT_WINDOW_DEFECTO)
+            if isinstance(win_raw, bool) or win_raw is None:
+                raise ValueError("'pivot_window' debe ser un entero >= 1")
+            try:
+                win = int(win_raw)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"'pivot_window' debe ser un entero >= 1 (llegó {win_raw!r})") from None
+            if win < 1:
+                raise ValueError("'pivot_window' debe ser >= 1")
+            out["pivot_window"] = win
+        offset = lot_stop.get("offset_pct", 0.0)
+        if offset is not None:
+            offset = _numero_lot_stop(offset, "offset_pct")
+            if offset < 0:
+                raise ValueError("'offset_pct' no puede ser negativo")
+            out["offset_pct"] = offset
+        return out
+
+    raise ValueError(f"'mode' debe ser 'pct' o 'structure' (llegó {lot_stop.get('mode')!r})")
 
 
 def compile_strategy_def(strategy_def: dict) -> dict:
@@ -447,9 +571,28 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         # precio de la barra. El default 'pct' mantiene la regla nº1: una
         # definición sin `unit` se compila exactamente igual que antes.
         unit = "usd" if str(lv.get("unit", "pct")).lower() in ("usd", "$", "dollars") else "pct"
-        pyr_levels_def.append({
+        action = "reduce" if str(lv.get("action", "add")).lower() == "reduce" else "add"
+        # SL POR LOTE (PRD 2026-09-15). Sin la clave → nada: el nivel compilado
+        # sale SIN 'lot_stop' y es bit-identico al de siempre (regla nº1, test
+        # dorado del §6.4). Con la clave, valida fuerte: un cinturon mal
+        # declarado no se ignora en silencio, REVIENTA — el schema ya lo ha
+        # filtrado con 422 al guardar, asi que llegar aqui invalido es payload
+        # corrupto o hecho a mano. Y solo existe en niveles 'add': un reduce
+        # cierra, no abre lotes.
+        lot_stop_def = None
+        if lv.get("lot_stop") is not None:
+            if action != "add":
+                raise ValueError(
+                    "lot_stop solo aplica a niveles action='add' "
+                    f"(nivel con action={action!r})")
+            try:
+                lot_stop_def = normaliza_lot_stop(lv["lot_stop"])
+            except ValueError as e:
+                raise ValueError(f"pyramiding nivel {len(pyr_levels_def) + 1}, "
+                                 f"lot_stop: {e}") from e
+        nivel_compilado = {
             "root_condition": root,
-            "action": "reduce" if str(lv.get("action", "add")).lower() == "reduce" else "add",
+            "action": action,
             "unit": unit,
             # En 'usd' el numero son dolares tal cual, no un porcentaje.
             "amount_usd": pct if unit == "usd" else 0.0,
@@ -479,7 +622,10 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             # por esta posicion; como aqui se descartan niveles invalidos, el
             # indice de esta lista compilada NO vale para eso.
             "def_index": def_index,
-        })
+        }
+        if lot_stop_def is not None:
+            nivel_compilado["lot_stop"] = lot_stop_def
+        pyr_levels_def.append(nivel_compilado)
 
     # ── Scalping (2026-09-12) ──
     # Bloque opcional `scalping`: la entrada lógica deja de ser LA entrada y
@@ -1013,6 +1159,9 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 "sequential": lv.get("sequential", compiled.get("pyramid_sequential", False)),
                 "move": lv.get("move"),
                 "def_index": lv.get("def_index"),
+                # SL por lote: solo cuando el nivel lo declara, para que el
+                # dict de un nivel sin la clave siga siendo el de siempre.
+                **({"lot_stop": lv["lot_stop"]} if lv.get("lot_stop") is not None else {}),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel
