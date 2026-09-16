@@ -66,19 +66,37 @@ no existen en los trades guardados; el resultado es, si acaso, conservador.
 
 La R de cada trade se define por su stop: neto / (|entrada - stop| * acciones).
 Es la misma en todas las estrategias y modos; sin stop guardado, 0.
+
+16-sep-2026 (Jaume): LOCATES DEL PORTFOLIO y ESCALADO.
+  - Locates: la cuenta es una y el broker es uno. Con `cfg["locates"]` el
+    modelo (fijo / aleatorio) vale para todas y, si `shared`, se alquila UNA
+    vez por ticker-dia lo que la cuenta necesita: el maximo de acciones en
+    corto A LA VEZ sumando estrategias, al minuto. La que cubre libera; la
+    siguiente que cabe en lo alquilado va gratis (la PM paga, la RTH no).
+    Paga la que provoca el paquete de mas. Puerta por EV opcional: la misma
+    cuenta que `locates_gate` (EV en sombra de SU estrategia vs fade necesario
+    de los paquetes DE MAS respecto a lo alquilado por CUALQUIERA hoy). Banda:
+    N semillas sobre los mismos paquetes, sin volver a simular.
+  - Escalado (`cfg["scaling"]`): riesgo TOTAL por trade X (fijo / % / Kelly /
+    fixed ratio) repartido por HRP y compania: estrategia i arriesga X * w_i,
+    sum w_i = 1, y el tope del usuario recorta la SUMA. Los R de las filas se
+    ignoran; comisiones, slippage, locates, tope y «una a la vez» se conservan.
+    Todo re-estimado en cada rebalanceo con datos anteriores. Ver `_Escalado`.
 """
 from __future__ import annotations
 
 import heapq
 import math
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Optional
 
 import numpy as np
 
+from app.services import locates_gate as lg
 from app.services import locates_random as lr
 from app.services import portfolio_lab_engine as ple
+from app.services import portfolio_lab_scaling as pls
 from app.services import robustness_service as rs
 
 _TRADE_FIELDS = (
@@ -262,6 +280,344 @@ def _exec_cfg(raw: Optional[dict]) -> dict:
     return cfg
 
 
+def _r_neta(tr: dict, ex: dict) -> float:
+    """R neta de un trade preparado con los costes de su fila, por accion:
+    no depende del tamano. Sin stop ni riesgo guardado, 0."""
+    if ex["fee_type"] == "PERCENT":
+        fee_ps = (ex["fees"] / 100.0) * (tr["entry"] + tr["exit"])
+    else:
+        fee_ps = ex["fees"] * 2.0
+    slip_ps = (ex["slippage_pct"] / 100.0) * (tr["entry"] + tr["exit"])
+    net_ps = tr["gross_ps"] - fee_ps - slip_ps
+    if tr["stop_dist"] > 0:
+        risk_ps = tr["stop_dist"] / tr["pyr"] if tr["pyr"] > 0 else tr["stop_dist"]
+    elif tr["risk_orig"] > 0 and tr["size_saved"] > 0:
+        risk_ps = tr["risk_orig"] / tr["size_saved"]
+    else:
+        return 0.0
+    return net_ps / risk_ps if risk_ps > 0 else 0.0
+
+
+# ── Locates del portfolio (una cuenta, un broker) ───────────────────────
+
+LOCATES_DEFAULT: dict[str, Any] = {
+    "mode": "none",         # none | fixed | random
+    "cost": 0.0,            # $ por paquete de 100 (fixed)
+    "min": 1.0,             # random: banda de precios del paquete
+    "max": 10.0,
+    "seed": 1,
+    "shared": True,         # True: UN alquiler por ticker-dia para toda la cuenta
+    "gate": None,           # None | {ventana, por, ev_defecto_pct, min_trades}
+    "band_seeds": 0,        # >0: banda de N semillas (solo random)
+}
+
+
+def _locates_cfg(raw: Optional[dict]) -> Optional[dict]:
+    """None = no hay bloque de locates del portfolio (cada estrategia cobra los
+    suyos, como antes del 16-sep). Con bloque, manda sobre las filas."""
+    if not raw:
+        return None
+    cfg = dict(LOCATES_DEFAULT)
+    for k, v in raw.items():
+        if k in cfg:
+            cfg[k] = v
+    cfg["mode"] = str(cfg["mode"] or "none")
+    for k in ("cost", "min", "max"):
+        cfg[k] = _f(cfg[k])
+    cfg["seed"] = int(_f(cfg["seed"]))
+    cfg["shared"] = bool(cfg["shared"])
+    cfg["band_seeds"] = max(0, min(int(_f(cfg["band_seeds"])), 500))
+    g = cfg.get("gate")
+    if g:
+        cfg["gate"] = {
+            "ventana": max(1, int(_f(g.get("ventana"), 30))),
+            "por": "dias" if str(g.get("por") or "trades") == "dias" else "trades",
+            "ev_defecto_pct": _f(g.get("ev_defecto_pct"), 2.0),
+            "min_trades": max(1, int(_f(g.get("min_trades"), 10))),
+        }
+    else:
+        cfg["gate"] = None
+    if cfg["mode"] == "fixed" and cfg["cost"] <= 0:
+        cfg["mode"] = "none"
+    return cfg
+
+
+def _sombra_de(run: dict) -> lg.ConfigPuerta:
+    """EV en sombra de UNA estrategia: sus cortos guardados (todos, sin
+    recortar por fechas: es su historia), cerrados antes del instante que se
+    decide. Movimiento en % del precio, bruto, como en el backtester."""
+    cierres: list[int] = []
+    moves: list[float] = []
+    for t in run.get("trades") or []:
+        if str(t.get("direction") or "").lower().startswith("l"):
+            continue
+        ent = _f(t.get("avg_entry_price")) or _f(t.get("entry_price"))
+        sal = _f(t.get("exit_price"))
+        t1 = _ts(t.get("exit_time"))
+        if ent <= 0 or sal <= 0 or t1 is None:
+            continue
+        cierres.append(int(t1 * 1_000_000_000))
+        moves.append((ent - sal) / ent * 100.0)
+    if not cierres:
+        return lg.ConfigPuerta()
+    orden = np.argsort(np.asarray(cierres, dtype=np.int64), kind="stable")
+    return lg.ConfigPuerta(
+        sombra_cierre_ns=np.asarray(cierres, dtype=np.int64)[orden],
+        sombra_move_pct=np.asarray(moves, dtype=np.float64)[orden],
+    )
+
+
+def _banda_locates(
+    calendar: list[str],
+    pnl_pre: list[float],
+    loc_days: list[dict],
+    capital: float,
+    lo: float,
+    hi: float,
+    n_seeds: int,
+    seed_actual: int,
+) -> Optional[dict]:
+    """Banda de N semillas sobre los MISMOS paquetes alquilados: solo cambia el
+    precio sorteado de cada ticker-dia (como `locates_banda` del backtester:
+    sin volver a simular los trades)."""
+    if n_seeds <= 0 or not loc_days:
+        return None
+    idx = {d: k for k, d in enumerate(calendar)}
+    pre = np.asarray(pnl_pre, dtype=float)
+    finales: list[float] = []
+    dds: list[float] = []
+    costes: list[float] = []
+    curvas: list[np.ndarray] = []
+    for s in range(1, n_seeds + 1):
+        coste = np.zeros(len(calendar))
+        for ld in loc_days:
+            k = idx.get(ld["date"])
+            if k is None:
+                continue
+            coste[k] += ld["packages"] * lr.precio_locate(ld["ref"], lo, hi, s, ld["ticker"], ld["date"])["precio"]
+        curva = capital + np.cumsum(pre - coste)
+        peak = np.maximum(np.maximum.accumulate(curva), capital)
+        dd = float(((curva - peak) / peak).min() * 100.0) if len(curva) else 0.0
+        finales.append(float(curva[-1]))
+        dds.append(dd)
+        costes.append(float(coste.sum()))
+        curvas.append(curva)
+    M = np.vstack(curvas)
+    q = lambda xs, p: float(np.percentile(np.asarray(xs), p))
+    return {
+        "seeds": n_seeds,
+        "seed_actual": seed_actual,
+        "final": {"p05": q(finales, 5), "p25": q(finales, 25), "p50": q(finales, 50), "p75": q(finales, 75), "p95": q(finales, 95)},
+        "max_dd_pct": {"p05": q(dds, 5), "p50": q(dds, 50), "p95": q(dds, 95)},
+        "cost": {"p05": q(costes, 5), "p50": q(costes, 50), "p95": q(costes, 95)},
+        "bands": {
+            "p05": [ple._r6(x) for x in np.percentile(M, 5, axis=0)],
+            "p50": [ple._r6(x) for x in np.percentile(M, 50, axis=0)],
+            "p95": [ple._r6(x) for x in np.percentile(M, 95, axis=0)],
+        },
+    }
+
+
+# ── Escalado y pesos (Kelly x HRP) sobre las corridas en crudo ──────────
+
+SCALING_DEFAULT: dict[str, Any] = {
+    "model": "kelly",       # fixed | percent | kelly | fixed_ratio
+    "base_risk": 100.0,     # $ por trade en TOTAL (fixed; base de fixed_ratio)
+    "pct": 1.0,             # % del capital del dia en TOTAL (percent; respaldo de kelly sin muestra)
+    "delta": 500.0,         # fixed_ratio: $ de beneficio por escalon
+    "kelly_mult": 0.5,      # 1 = kelly entera, 0.5 = media, 0.25 = cuarto
+    "cap_pct": 10.0,        # tope de la SUMA por trade, % del capital del dia (0 = sin)
+    "rebalance": "M",       # D | W | M
+    "lookback_days": 90,    # ventana de estimacion (dias naturales)
+    "weighting": "hrp",     # equal | hrp | momentum | ev | dd
+    "floor": 0.05,          # peso minimo por estrategia viva
+}
+
+
+def _scaling_cfg(raw: Optional[dict]) -> Optional[dict]:
+    if not raw:
+        return None
+    cfg = dict(SCALING_DEFAULT)
+    for k, v in raw.items():
+        if k in cfg:
+            cfg[k] = v
+    cfg["model"] = str(cfg["model"] or "kelly")
+    cfg["weighting"] = str(cfg["weighting"] or "hrp")
+    cfg["rebalance"] = str(cfg["rebalance"] or "M").upper()[:1]
+    for k in ("base_risk", "pct", "delta", "kelly_mult", "cap_pct", "floor"):
+        cfg[k] = _f(cfg[k])
+    cfg["lookback_days"] = max(1, int(_f(cfg["lookback_days"], 90)))
+    return cfg
+
+
+class _Escalado:
+    """Riesgo TOTAL por trade y su reparto entre estrategias, re-estimados en
+    cada rebalanceo con datos ESTRICTAMENTE anteriores (Jaume, 16-sep):
+
+        riesgo de la estrategia i por trade = X_total(dia) x w_i(periodo)
+        sum_i w_i = 1  ->  la suma de todas = X_total <= tope
+
+    X_total: fixed = base $ | percent = pct % del capital del dia |
+    kelly = f* (media/varianza de la R diaria neta del portfolio ponderado, en
+    la ventana) x kelly_mult, con techo KELLY_CEILING, en % del capital del
+    dia | fixed_ratio = escalon de Ryan Jones. Despues el tope del usuario
+    (cap_pct del capital del dia) recorta sin redistribuir.
+
+    Los pesos (HRP y compania) y Kelly se estiman sobre la R NETA por trade
+    (bruto por accion menos comisiones y slippage de la fila, entre la distancia
+    al stop): no depende del tamano, asi que vale igual escalado o no.
+    """
+
+    def __init__(self, cfg: dict, calendar: list[str], r_daily: np.ndarray,
+                 trade_r: list[list[tuple[str, float]]], spans: list[tuple[str, str]], capital: float):
+        self.cfg = cfg
+        self.calendar = calendar
+        self.r_daily = r_daily            # (dias x n) R neta diaria por estrategia
+        self.trade_r = trade_r            # por estrategia, (fecha, R) ordenados
+        self.spans = spans
+        self.capital = capital
+        self.n = r_daily.shape[1]
+        self.periodo: Optional[str] = None
+        self.w = np.zeros(self.n)
+        self.f_raw: Optional[float] = None
+        self.x_pct: Optional[float] = None    # kelly: % del capital por trade en TOTAL
+        self.nota: Optional[str] = None
+        self.fallback = False
+        self.periods: list[dict] = []
+        self.lookback = int(cfg["lookback_days"])
+
+    # -- estimacion con datos anteriores a `hasta` (exclusivo) o inclusivo ----
+    def _estimar(self, hasta: str, inclusivo: bool) -> tuple[np.ndarray, list[int], Optional[float], bool]:
+        cal = self.calendar
+        cut = (ple._parse_day(hasta) - timedelta(days=self.lookback)).isoformat()
+        if inclusivo:
+            rows = [k for k, d in enumerate(cal) if cut <= d <= hasta]
+        else:
+            rows = [k for k, d in enumerate(cal) if cut <= d < hasta]
+        alive = [i for i in range(self.n)
+                 if self.spans[i][0] and self.spans[i][0] <= hasta <= self.spans[i][1]]
+        if not alive:
+            alive = [i for i in range(self.n) if self.spans[i][0] and self.spans[i][0] <= hasta]
+        if not alive:
+            return np.zeros(self.n), [], None, True
+        win = self.r_daily[rows, :] if rows else np.empty((0, self.n))
+        win_trades = [[r for (td, r) in self.trade_r[i] if cut <= td <= hasta and (inclusivo or td < hasta)]
+                      for i in range(self.n)]
+        # Sin trades en la ventana no hay nada que estimar: esa estrategia se
+        # queda fuera del reparto este periodo (si no, HRP cae a pesos iguales
+        # para todas por una columna sin varianza).
+        con_trades = [i for i in alive if win_trades[i]]
+        if con_trades:
+            alive = con_trades
+        upto = [k for k, d in enumerate(cal) if d <= hasta] if inclusivo else [k for k, d in enumerate(cal) if d < hasta]
+        if upto:
+            cum = np.cumsum(self.r_daily[upto, :], axis=0)
+            peak = np.maximum.accumulate(cum, axis=0)
+            dd = cum - peak
+            ddmax = dd.min(axis=0)
+            dd_ratio = [float(dd[-1, i] / ddmax[i]) if ddmax[i] < 0 else 0.0 for i in range(self.n)]
+        else:
+            dd_ratio = [0.0] * self.n
+        w_alive, fb = pls._weights_at(self.cfg["weighting"], alive, win, win_trades, dd_ratio, float(self.cfg["floor"]))
+        w = np.zeros(self.n)
+        for j, i in enumerate(alive):
+            w[i] = float(w_alive[j])
+        f = None
+        if self.cfg["model"] == "kelly":
+            port = win[:, alive] @ w_alive if win.size else np.zeros(0)
+            f = pls._kelly_fraction(np.asarray(port, dtype=float))
+        return w, alive, f, fb
+
+    def _x_pct_de(self, f: Optional[float]) -> tuple[Optional[float], Optional[str]]:
+        """Kelly -> % del capital por trade en TOTAL, con techo. None = respaldo."""
+        if f is None:
+            return None, "sin muestra en la ventana: respaldo al % fijo"
+        if f <= 0:
+            return 0.0, "sin edge en la ventana: Kelly manda no apostar"
+        x = f * float(self.cfg["kelly_mult"])
+        if x > pls.KELLY_CEILING:
+            return pls.KELLY_CEILING * 100.0, f"techo interno del {pls.KELLY_CEILING * 100:.0f} %"
+        return x * 100.0, None
+
+    def at(self, d: str, equity_open: float) -> tuple[float, np.ndarray, dict]:
+        """(X_total en $ para hoy, pesos, info del periodo)."""
+        key = pls._period_key(d, self.cfg["rebalance"])
+        if key != self.periodo:
+            self.periodo = key
+            self.w, alive, self.f_raw, self.fallback = self._estimar(d, inclusivo=False)
+            self.x_pct, self.nota = self._x_pct_de(self.f_raw) if self.cfg["model"] == "kelly" else (None, None)
+            self.periods.append({
+                "period": key, "from": d, "alive": len(alive),
+                "weights": [ple._r6(x) for x in self.w],
+                "weights_fallback": bool(self.fallback),
+                "kelly_raw_pct": ple._r6(self.f_raw * 100.0) if self.f_raw is not None else None,
+                "x_pct": ple._r6(self.x_pct) if self.x_pct is not None else None,
+                "note": self.nota,
+            })
+        m = self.cfg["model"]
+        if m == "fixed":
+            x = float(self.cfg["base_risk"])
+        elif m == "fixed_ratio":
+            x = pls._fixed_ratio_x(equity_open, self.capital, float(self.cfg["base_risk"]), float(self.cfg["delta"]))
+        elif m == "kelly":
+            pct = self.x_pct if self.x_pct is not None else float(self.cfg["pct"])
+            x = equity_open * pct / 100.0
+        else:
+            x = equity_open * float(self.cfg["pct"]) / 100.0
+        cap = float(self.cfg["cap_pct"])
+        capped = False
+        if cap > 0 and x > equity_open * cap / 100.0:
+            x = equity_open * cap / 100.0
+            capped = True
+        self.periods[-1]["capped"] = bool(self.periods[-1].get("capped") or capped)
+        return x, self.w, self.periods[-1]
+
+    def today(self, equity_now: float, names: list[str]) -> dict:
+        """Lo que habria que poner HOY: pesos con toda la historia hasta la
+        ultima fecha (inclusive) y el riesgo por trade de cada estrategia."""
+        hasta = self.calendar[-1]
+        w, alive, f, fb = self._estimar(hasta, inclusivo=True)
+        m = self.cfg["model"]
+        nota = None
+        if m == "kelly":
+            x_pct, nota = self._x_pct_de(f)
+            if x_pct is None:
+                x_pct = float(self.cfg["pct"])
+        elif m == "percent":
+            x_pct = float(self.cfg["pct"])
+        elif m == "fixed_ratio":
+            x_pct = pls._fixed_ratio_x(equity_now, self.capital, float(self.cfg["base_risk"]), float(self.cfg["delta"])) / equity_now * 100.0 if equity_now > 0 else 0.0
+        else:
+            x_pct = float(self.cfg["base_risk"]) / equity_now * 100.0 if equity_now > 0 else 0.0
+        cap = float(self.cfg["cap_pct"])
+        applied = min(x_pct, cap) if cap > 0 else x_pct
+        cut = (ple._parse_day(hasta) - timedelta(days=self.lookback)).isoformat()
+        return {
+            "date": hasta,
+            "equity": ple._r6(equity_now),
+            "window": {"from": cut, "to": hasta},
+            "model": m,
+            "kelly_raw_pct": ple._r6(f * 100.0) if f is not None else None,
+            "kelly_mult": float(self.cfg["kelly_mult"]),
+            "x_pct": ple._r6(x_pct),
+            "cap_pct": cap,
+            "applied_pct": ple._r6(applied),
+            "applied_usd": ple._r6(equity_now * applied / 100.0),
+            "capped": bool(cap > 0 and x_pct > cap),
+            "note": nota,
+            "weights_fallback": bool(fb),
+            "per_strategy": [
+                {
+                    "idx": i, "name": names[i], "alive": i in alive,
+                    "weight": ple._r6(float(w[i])),
+                    "risk_pct": ple._r6(applied * float(w[i])),
+                    "risk_usd": ple._r6(equity_now * applied * float(w[i]) / 100.0),
+                }
+                for i in range(self.n)
+            ],
+        }
+
+
 def _start_of_day_equity(global_equity: list[dict], init_cash: float) -> dict[str, float]:
     """Balance de apertura de cada dia de la corrida guardada (para deshacer
     el riesgo PERCENT). El punto i de la curva es el cierre del dia i."""
@@ -290,6 +646,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
       max_exposure_usd   tope de nocional abierto a la vez (0 = sin tope)
       cap_mode           "skip" | "trim"
       one_per_ticker     solo una estrategia abierta a la vez por accion
+      locates            bloque del portfolio (ver LOCATES_DEFAULT); sin el,
+                         cada fila cobra los suyos como antes
+      scaling            escalado y pesos (ver SCALING_DEFAULT); None = los
+                         R de las filas
       start_date/end_date
     """
     capital = _f(cfg.get("capital"))
@@ -431,6 +791,49 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     if not calendar:
         raise ValueError("Ninguna estrategia tiene trades en el rango elegido")
 
+    # ── 1c. Locates del portfolio, puerta por EV y escalado ──────────────
+    loc_cfg = _locates_cfg(cfg.get("locates"))
+    esc_cfg = _scaling_cfg(cfg.get("scaling"))
+    shared = bool(loc_cfg and loc_cfg["shared"] and loc_cfg["mode"] != "none")
+    gate_cfgs: list[Optional[lg.ConfigPuerta]] = [None] * n
+    if loc_cfg and loc_cfg["gate"] and loc_cfg["mode"] != "none":
+        g = loc_cfg["gate"]
+        for i, run in enumerate(runs):
+            c = _sombra_de(run)
+            c.ventana = g["ventana"]
+            c.por = g["por"]
+            c.ev_defecto_pct = g["ev_defecto_pct"]
+            c.min_trades = g["min_trades"]
+            gate_cfgs[i] = c
+
+    def loc_of(i: int) -> tuple[str, float, float, float, int]:
+        """(modo, $/paquete, min, max, semilla) que cobra la estrategia i: el
+        bloque del portfolio si lo hay; si no, lo de su fila (como antes)."""
+        if loc_cfg:
+            return loc_cfg["mode"], loc_cfg["cost"], loc_cfg["min"], loc_cfg["max"], loc_cfg["seed"]
+        ex = execs[i]
+        mode = str(ex["locates"])
+        if mode == "fixed" and ex["locates_cost"] <= 0:
+            mode = "none"
+        return mode, ex["locates_cost"], ex["locates_min"], ex["locates_max"], ex["locates_seed"]
+
+    esc: Optional[_Escalado] = None
+    if esc_cfg:
+        # R neta por trade (sin depender del tamano): la senal con los costes
+        # de la fila; es lo que miran HRP y Kelly.
+        idx_cal = {d: k for k, d in enumerate(calendar)}
+        r_daily = np.zeros((len(calendar), n))
+        trade_r: list[list[tuple[str, float]]] = [[] for _ in range(n)]
+        for i in range(n):
+            ex = execs[i]
+            for d, trades_d in by_day[i].items():
+                for tr in trades_d:
+                    r = _r_neta(tr, ex)
+                    r_daily[idx_cal[d], i] += r
+                    trade_r[i].append((d, r))
+            trade_r[i].sort()
+        esc = _Escalado(esc_cfg, calendar, r_daily, trade_r, spans, capital)
+
     # ── 2. Dia a dia: dimensionar con el capital del dia, costes, locates ──
     equity = capital
     months_seen: set[str] = set()
@@ -440,7 +843,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     daily_ret: list[float] = []
     per_pnl: list[list[float]] = [[] for _ in range(n)]
     per_trades: list[list[int]] = [[] for _ in range(n)]
-    per_locates: list[list[float]] = [[] for _ in range(n)]
+    per_locates: list[list[float]] = [[] for _ in range(n)]   # cobrados aqui (no los ya dentro de as_saved)
     tot = [
         {"pnl_net": 0.0, "gross": 0.0, "n_trades": 0, "wins": 0, "fees": 0.0, "slippage": 0.0,
          "locates": 0.0, "gross_win": 0.0, "gross_loss": 0.0, "notional": 0.0}
@@ -450,6 +853,11 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     trade_rows: list[tuple[str, str, int, float, float]] = []
     accepted: list[dict] = []
     loc_prices_drawn: list[float] = []
+    loc_days: list[dict] = []          # ticker-dia alquilados (paquetes, ref, precio): base de la banda
+    gate_out = [0] * n                 # cortos que la puerta por EV dejo fuera
+    gate_free = [0] * n                # cortos que cabian en lo ya alquilado hoy (gratis)
+    no_stop = [0] * n                  # escalado: sin stop -> no se puede dimensionar por riesgo
+    no_weight = [0] * n                # escalado: peso 0 (no viva / Kelly a 0)
 
     for d in calendar:
         month = d[:7]
@@ -462,44 +870,56 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             ruined = True
         if ruined:
             expense = 0.0
-        day_total = 0.0
+        x_total, w_esc = 0.0, None
+        if esc is not None and not ruined:
+            x_total, w_esc, _ = esc.at(d, equity_open)
+
+        # a) Tamano y costes de cada trade del dia (sin locates todavia)
+        dia: list[dict] = []
         for i in range(n):
             trades_d = by_day[i].get(d)
             if ruined or not trades_d:
-                per_pnl[i].append(0.0)
-                per_trades[i].append(0)
-                per_locates[i].append(0.0)
                 continue
             ex = execs[i]
             sizing = ex["sizing"]
-            pnl_i = 0.0
-            loc_i = 0.0
-            shorts_max: dict[str, float] = {}
-            shorts_ref: dict[str, float] = {}
-            n_i = 0
             for tr in trades_d:
-                if sizing == "as_saved":
+                as_saved = False
+                if esc is not None:
+                    # Escalado: TODAS por riesgo, con el reparto del periodo.
+                    r_usd = x_total * float(w_esc[i]) if w_esc is not None else 0.0
+                    if r_usd <= 0:
+                        no_weight[i] += 1
+                        continue
+                    if tr["stop_dist"] > 0:
+                        new_size = (r_usd / tr["stop_dist"]) * tr["pyr"]
+                    elif tr["risk_orig"] > 0:
+                        new_size = tr["size_saved"] * (r_usd / tr["risk_orig"])
+                    else:
+                        no_stop[i] += 1
+                        continue
+                elif sizing == "as_saved":
+                    as_saved = True
                     new_size = tr["size_saved"]
+                elif sizing == "risk":
+                    r_usd = ex["size_value"] if ex["size_unit"] == "usd" else equity_open * ex["size_value"] / 100.0
+                    if tr["stop_dist"] > 0:
+                        new_size = (r_usd / tr["stop_dist"]) * tr["pyr"]
+                    elif tr["risk_orig"] > 0:
+                        new_size = tr["size_saved"] * (r_usd / tr["risk_orig"])
+                    else:
+                        new_size = 0.0
+                else:
+                    x_usd = ex["size_value"] if ex["size_unit"] == "usd" else equity_open * ex["size_value"] / 100.0
+                    new_size = (x_usd / tr["init_price"]) * tr["pyr"]
+                if new_size <= 0:
+                    continue
+                if as_saved:
                     net = tr["pnl_saved_net"]
                     fee = tr["fees_saved"]
                     slip = 0.0
                     gross = net + fee + tr["locate_saved"]
-                    loc_own = tr["locate_saved"]
-                    loc_i += loc_own
+                    locate = tr["locate_saved"]
                 else:
-                    if sizing == "risk":
-                        r_usd = ex["size_value"] if ex["size_unit"] == "usd" else equity_open * ex["size_value"] / 100.0
-                        if tr["stop_dist"] > 0:
-                            new_size = (r_usd / tr["stop_dist"]) * tr["pyr"]
-                        elif tr["risk_orig"] > 0:
-                            new_size = tr["size_saved"] * (r_usd / tr["risk_orig"])
-                        else:
-                            new_size = 0.0
-                    else:
-                        x_usd = ex["size_value"] if ex["size_unit"] == "usd" else equity_open * ex["size_value"] / 100.0
-                        new_size = (x_usd / tr["init_price"]) * tr["pyr"]
-                    if new_size <= 0:
-                        continue
                     gross = tr["gross_ps"] * new_size
                     if ex["fee_type"] == "PERCENT":
                         fee = (ex["fees"] / 100.0) * (tr["entry"] + tr["exit"]) * new_size
@@ -507,53 +927,145 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                         fee = ex["fees"] * new_size * 2.0
                     slip = (ex["slippage_pct"] / 100.0) * (tr["entry"] + tr["exit"]) * new_size
                     net = gross - fee - slip
-                    loc_own = 0.0
-                    if tr["direction"] == "Short" and ex["locates"] != "none":
-                        tk = tr["ticker"]
-                        if new_size > shorts_max.get(tk, 0.0):
-                            shorts_max[tk] = new_size
-                            shorts_ref[tk] = tr["ref_price"]
+                    locate = 0.0
                 notional = new_size * tr["entry"]
                 risk_new = tr["stop_dist"] * (new_size / tr["pyr"] if tr["pyr"] > 0 else new_size)
                 r_ref = (net / risk_new) if risk_new > 0 else 0.0
-                pnl_i += net
-                n_i += 1
-                st = tot[i]
-                st["n_trades"] += 1
-                st["gross"] += gross
-                st["fees"] += fee
-                st["slippage"] += slip
-                st["notional"] += notional
-                if net > 0:
-                    st["wins"] += 1
-                    st["gross_win"] += net
-                elif net < 0:
-                    st["gross_loss"] += -net
-                tot_fees += fee
-                tot_slip += slip
-                trade_rows.append((d, tr["entry_time"], i, r_ref, net))
-                accepted.append({
-                    "date": d, "si": i, "t0": tr["t0"], "t1": tr["t1"], "ticker": tr["ticker"],
-                    "dir": tr["direction"][:1], "entry": tr["entry_time"][11:16], "exit": tr["exit_time"][11:16],
-                    "entry_px": tr["entry"], "exit_px": tr["exit"], "size": new_size, "notional": notional,
-                    "pnl": net, "fees": fee, "slip": slip, "locate": loc_own, "r": r_ref, "reason": tr["exit_reason"],
+                dia.append({
+                    "si": i, "tr": tr, "as_saved": as_saved, "size": new_size, "gross": gross,
+                    "fee": fee, "slip": slip, "net": net, "notional": notional, "r": r_ref, "locate": locate,
                 })
-            # Locates del dia por ticker (sobre el mayor corto), fijos o sorteados.
-            if sizing != "as_saved":
-                if ex["locates"] == "fixed" and ex["locates_cost"] > 0:
-                    loc_i = sum(math.ceil(sz / 100.0) * ex["locates_cost"] for sz in shorts_max.values())
-                elif ex["locates"] == "random":
-                    for tk, sz in shorts_max.items():
-                        precio = lr.precio_locate(shorts_ref.get(tk, 0.0), ex["locates_min"], ex["locates_max"], ex["locates_seed"], tk, d)["precio"]
-                        loc_prices_drawn.append(precio)
-                        loc_i += math.ceil(sz / 100.0) * precio
-                pnl_i -= loc_i
-            # (en as_saved los locates ya van dentro del neto de cada trade)
+
+        # b) Locates, en orden de entrada del dia. Compartidos: UN alquiler por
+        #    ticker-dia para toda la cuenta sobre el maximo en corto A LA VEZ
+        #    (una que cubre libera; la siguiente cabe gratis). Puerta por EV:
+        #    entra si el EV en sombra de SU estrategia paga los paquetes DE MAS.
+        dia.sort(key=lambda a: (a["tr"]["t0"], a["si"]))
+        loc_by_i = [0.0] * n
+        if shared:
+            mode, cost, lo, hi, seed = loc_of(0)
+            open_short: dict[str, list[tuple[float, float]]] = {}
+            rented: dict[str, int] = {}
+            price: dict[str, float] = {}
+            ref: dict[str, float] = {}
+            for a in dia:
+                tr = a["tr"]
+                if a["as_saved"] or not tr["direction"].startswith("S"):
+                    continue
+                tk = tr["ticker"]
+                lst = open_short.setdefault(tk, [])
+                conc = sum(sz for (t1, sz) in lst if t1 > tr["t0"]) + a["size"]
+                if tk not in price:
+                    if mode == "fixed":
+                        price[tk] = cost
+                    else:
+                        price[tk] = lr.precio_locate(tr["ref_price"], lo, hi, seed, tk, d)["precio"]
+                        loc_prices_drawn.append(price[tk])
+                    ref[tk] = tr["ref_price"]
+                needed = int(math.ceil(conc / 100.0))
+                have = rented.get(tk, 0)
+                marginal = max(0, needed - have)
+                gc = gate_cfgs[a["si"]]
+                if gc is not None:
+                    ev, _n_ev, _dflt = lg.ev_rodante_pct(gc, int(tr["t0"] * 1_000_000_000))
+                    fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price[tk])
+                    if not ev > fade:
+                        a["gate_out"] = True
+                        gate_out[a["si"]] += 1
+                        continue
+                if marginal == 0 and have > 0:
+                    gate_free[a["si"]] += 1
+                rented[tk] = max(have, needed)
+                a["locate"] = marginal * price[tk]
+                loc_by_i[a["si"]] += a["locate"]
+                lst.append((tr["t1"], a["size"]))
+            for tk, pk in rented.items():
+                if pk > 0:
+                    loc_days.append({"ticker": tk, "date": d, "packages": pk, "ref": ref[tk], "price": price[tk]})
+        else:
+            # Por estrategia (como el backtester de cada una): su maximo en
+            # corto del dia por ticker; las reentradas reutilizan lo alquilado.
+            max_short: dict[tuple[int, str], float] = {}
+            price_s: dict[tuple[int, str], float] = {}
+            ref_s: dict[tuple[int, str], float] = {}
+            for a in dia:
+                tr = a["tr"]
+                i = a["si"]
+                if a["as_saved"] or not tr["direction"].startswith("S"):
+                    continue
+                mode, cost, lo, hi, seed = loc_of(i)
+                if mode == "none":
+                    continue
+                tk = tr["ticker"]
+                key = (i, tk)
+                if key not in price_s:
+                    if mode == "fixed":
+                        price_s[key] = cost
+                    else:
+                        price_s[key] = lr.precio_locate(tr["ref_price"], lo, hi, seed, tk, d)["precio"]
+                        loc_prices_drawn.append(price_s[key])
+                    ref_s[key] = tr["ref_price"]
+                m = max_short.get(key, 0.0)
+                gc = gate_cfgs[i]
+                if gc is not None:
+                    v = lg.evaluar(gc, int(tr["t0"] * 1_000_000_000), tr["entry"], a["size"], m, price_s[key])
+                    if not v["entra"]:
+                        a["gate_out"] = True
+                        gate_out[i] += 1
+                        continue
+                marginal = lg.paquetes_marginales(m, a["size"])
+                if marginal == 0 and m > 0:
+                    gate_free[i] += 1
+                max_short[key] = max(m, a["size"])
+                a["locate"] = marginal * price_s[key]
+                loc_by_i[i] += a["locate"]
+            for (i, tk), m in max_short.items():
+                if m > 0:
+                    loc_days.append({"ticker": tk, "date": d, "packages": int(math.ceil(m / 100.0)),
+                                     "ref": ref_s[(i, tk)], "price": price_s[(i, tk)]})
+
+        # c) Acumular el dia
+        pnl_by_i = [0.0] * n
+        n_by_i = [0] * n
+        for a in dia:
+            if a.get("gate_out"):
+                continue
+            i = a["si"]
+            tr = a["tr"]
+            st = tot[i]
+            st["n_trades"] += 1
+            st["gross"] += a["gross"]
+            st["fees"] += a["fee"]
+            st["slippage"] += a["slip"]
+            st["notional"] += a["notional"]
+            if a["net"] > 0:
+                st["wins"] += 1
+                st["gross_win"] += a["net"]
+            elif a["net"] < 0:
+                st["gross_loss"] += -a["net"]
+            if a["as_saved"]:
+                st["locates"] += a["locate"]     # ya dentro del neto guardado: solo se ensena
+            tot_fees += a["fee"]
+            tot_slip += a["slip"]
+            pnl_by_i[i] += a["net"]
+            n_by_i[i] += 1
+            trade_rows.append((d, tr["entry_time"], i, a["r"], a["net"]))
+            accepted.append({
+                "date": d, "si": i, "t0": tr["t0"], "t1": tr["t1"], "ticker": tr["ticker"],
+                "dir": tr["direction"][:1], "entry": tr["entry_time"][11:16], "exit": tr["exit_time"][11:16],
+                "entry_px": tr["entry"], "exit_px": tr["exit"], "size": a["size"], "notional": a["notional"],
+                "pnl": a["net"], "fees": a["fee"], "slip": a["slip"], "locate": a["locate"], "r": a["r"],
+                "reason": tr["exit_reason"],
+            })
+        day_total = 0.0
+        for i in range(n):
+            loc_i = loc_by_i[i]
+            pnl_i = pnl_by_i[i] - loc_i
             tot_loc += loc_i
             tot[i]["locates"] += loc_i
             tot[i]["pnl_net"] += pnl_i
             per_pnl[i].append(pnl_i)
-            per_trades[i].append(n_i)
+            per_trades[i].append(n_by_i[i])
             per_locates[i].append(loc_i)
             day_total += pnl_i
         day_total -= expense
@@ -705,6 +1217,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "trimmed": sum(1 for a in accepted if a["si"] == i and a.get("trimmed")),
                 "unsized": unsized[i],
                 "blocked": blocked[i],
+                "gate_out": gate_out[i],
+                "gate_free": gate_free[i],
+                "no_stop": no_stop[i],
+                "no_weight": no_weight[i],
             },
         })
 
@@ -729,14 +1245,45 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         "reason": [a["reason"] for a in accepted],
     }
 
+    # Banda de locates: N semillas sobre los mismos paquetes (solo aleatorios).
+    locates_band = None
+    if loc_cfg and loc_cfg["mode"] == "random" and loc_cfg["band_seeds"] > 0 and loc_days:
+        pnl_pre = [daily_pnl[k] + sum(per_locates[i][k] for i in range(n)) for k in range(len(calendar))]
+        locates_band = _banda_locates(calendar, pnl_pre, loc_days, capital, loc_cfg["min"], loc_cfg["max"],
+                                      loc_cfg["band_seeds"], loc_cfg["seed"])
+    locates_report = {
+        "mode": loc_cfg["mode"] if loc_cfg else "per_row",
+        "shared": shared,
+        "gate": bool(loc_cfg and loc_cfg["gate"]),
+        "ticker_days": len(loc_days),
+        "packages": int(sum(ld["packages"] for ld in loc_days)),
+        "cost": ple._r6(tot_loc),
+        "gate_out": int(sum(gate_out)),
+        "gate_free": int(sum(gate_free)),
+    }
+    scaling_out = None
+    if esc is not None:
+        scaling_out = {
+            "cfg": esc_cfg,
+            "periods": esc.periods,
+            "today": esc.today(equity_curve[-1] if equity_curve else capital, [str(r.get("name") or "") for r in runs]),
+            "no_stop": int(sum(no_stop)),
+            "no_weight": int(sum(no_weight)),
+        }
+
     return {
         "config": {
             "capital": capital, "monthly_expenses": expenses, "max_exposure_usd": cap, "max_exposure_pct": cap_pct,
             "one_per_ticker": one_per_ticker,
             "cap_mode": "trim" if trim else "skip", "start_date": d_from, "end_date": d_to,
             "default_exec": default_exec,
+            "locates": loc_cfg,
+            "scaling": esc_cfg,
             "sizing": "exec", "notional_usd": 0.0, "per_strategy_usd": {},
         },
+        "locates_report": locates_report,
+        "locates_band": locates_band,
+        "scaling": scaling_out,
         "calendar": calendar,
         "equity": [ple._r6(x) for x in equity_curve],
         "daily_pnl": [ple._r6(x) for x in daily_pnl],
