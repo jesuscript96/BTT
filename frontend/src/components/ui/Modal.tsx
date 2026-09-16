@@ -15,6 +15,9 @@ interface ModalProps {
   /** Footer actions row (right-aligned). */
   footer?: ReactNode;
   width?: number;
+  /** Contenido a sangre (sin padding ni tipografía heredada): para visores
+   *  que traen su propio cromado, como el gráfico de un trade. */
+  fullBleed?: boolean;
   /** Disable closing on backdrop click (e.g. destructive confirmations). */
   disableBackdropClose?: boolean;
 }
@@ -23,7 +26,7 @@ interface ModalProps {
  * Centered modal dialog. Dark-copper treatment: surface panel, xl radius,
  * xl shadow, blurred backdrop. Closes on Escape and backdrop click.
  */
-export function Modal({ open, onClose, title, eyebrow, children, footer, width = 460, disableBackdropClose }: ModalProps) {
+export function Modal({ open, onClose, title, eyebrow, children, footer, width = 460, fullBleed, disableBackdropClose }: ModalProps) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -81,7 +84,9 @@ export function Modal({ open, onClose, title, eyebrow, children, footer, width =
           </div>
         )}
 
-        <div style={{ padding: 20, overflowY: "auto", fontFamily: font.sans, fontSize: 13, color: color.textPrimary, lineHeight: 1.55 }}>
+        <div style={fullBleed
+          ? { padding: 0, overflowY: "auto" }
+          : { padding: 20, overflowY: "auto", fontFamily: font.sans, fontSize: 13, color: color.textPrimary, lineHeight: 1.55 }}>
           {children}
         </div>
 

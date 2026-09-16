@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import type { BacktestResult, DayCandles, MultiDayCandles, Strategy, TradeRecord, EquityPoint } from "@/lib/api_backtester";
 import PerformanceTab from "@/components/backtester/tabs/PerformanceTab";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
@@ -14,6 +14,7 @@ import SharedStrategiesTab from "@/components/backtester/tabs/SharedStrategiesTa
 import type { SharedStrategyEntry } from "@/lib/api";
 import LockedFeature from "@/components/LockedFeature";
 import PanelAnalisisTrade from "@/components/backtester/PanelAnalisisTrade";
+import { Modal } from "@/components/ui";
 
 // Edge va DESPUES de «Análisis por trade» y ANTES de Optimization a proposito:
 // el orden es un zoom hacia fuera (una operacion → el microscopio → agregado en
@@ -95,19 +96,20 @@ export default function ResultsTabs({
     setMountedChartsSub((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   };
 
-  // Que trade esta desplegado en Trades/Calendario. `ticker|fecha`, o null.
+  // Que trade esta abierto en el visor (modal). `ticker|fecha`, o null. Un
+  // unico estado para Trades y Calendario: no puede haber dos visores.
   const [tradeDesplegado, setTradeDesplegado] = useState<string | null>(null);
 
   /**
    * Un trade se puede abrir de DOS formas, y las dos cargan las mismas velas:
-   *   "pestana"     -> salta a «Analisis por trade», como se hacia siempre.
-   *   "desplegable" -> se queda donde esta y lo despliega bajo la fila.
-   * Volver a tocar el mismo trade desplegado lo cierra.
+   *   "pestana" -> salta a «Analisis por trade», como se hacia siempre.
+   *   "visor"   -> abre el grafico en el visor modal, centrado sobre la app.
+   * Volver a tocar el mismo trade con el visor abierto lo cierra.
    */
   const handleSelectTrade = (
     ticker: string,
     date: string,
-    modo: "pestana" | "desplegable" = "pestana",
+    modo: "pestana" | "visor" = "pestana",
   ) => {
     const dayIdx = result.day_results.findIndex(
       (d) => d.ticker === ticker && d.date === date
@@ -115,7 +117,7 @@ export default function ResultsTabs({
     if (dayIdx === -1) return;
 
     const clave = `${ticker}|${date}`;
-    if (modo === "desplegable" && tradeDesplegado === clave) {
+    if (modo === "visor" && tradeDesplegado === clave) {
       setTradeDesplegado(null);
       return;
     }
@@ -132,10 +134,10 @@ export default function ResultsTabs({
 
   const [loadProgress, setLoadProgress] = useState(0);
 
-  // El MISMO panel de la pestaña, en version compacta. Se define aqui porque
-  // los datos (velas, equity, trades del dia) son props de este componente:
-  // las tablas solo lo colocan donde toca.
-  const panelDesplegable = (
+  // El MISMO panel de la pestaña, en version compacta, para el visor modal.
+  // Se define aqui porque los datos (velas, equity, trades del dia) son
+  // props de este componente.
+  const panelDelVisor = (
     <PanelAnalisisTrade
       dayCandles={dayCandles}
       multiDayCandles={multiDayCandles}
@@ -146,9 +148,23 @@ export default function ResultsTabs({
       equityLoading={equityLoading}
       loadProgress={loadProgress}
       compacto
-      onAbrirPestana={() => { setTradeDesplegado(null); selectTab("analysis"); }}
     />
   );
+
+  // Cifras de la cabecera del visor: salen de los registros del propio
+  // ticker-dia (puede haber mas de un trade ese dia; el grafico los pinta
+  // todos, la cabecera los resume).
+  const [visorTicker, visorFecha] = (tradeDesplegado ?? "|").split("|");
+  const cifrasVisor = useMemo(() => {
+    if (!tradeDesplegado) return { n: 0, pnl: 0, avgR: null as number | null };
+    const ts = result.trades.filter((t) => `${t.ticker}|${t.date}` === tradeDesplegado);
+    const rs = ts.map((t) => t.r_multiple).filter((r): r is number => r !== null);
+    return {
+      n: ts.length,
+      pnl: ts.reduce((a, t) => a + t.pnl, 0),
+      avgR: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : null,
+    };
+  }, [tradeDesplegado, result.trades]);
 
   useEffect(() => {
     if (candlesLoading) {
@@ -348,7 +364,6 @@ export default function ResultsTabs({
             monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
             onSelectTrade={handleSelectTrade}
             tradeDesplegado={tradeDesplegado}
-            panelAnalisis={panelDesplegable}
             riskR={riskR}
             riskType={backtestParams?.risk_type as string}
             globalEquity={result.global_equity}
@@ -368,7 +383,7 @@ export default function ResultsTabs({
           {mountedTabs.has("trades") && (
           <TradesTab trades={result.trades} onSelectTrade={handleSelectTrade}
                      strategyName={activeStrategy?.name}
-                     tradeDesplegado={tradeDesplegado} panelAnalisis={panelDesplegable}
+                     tradeDesplegado={tradeDesplegado}
                      evGate={result.ev_gate} sinPuerta={result.sin_puerta}
                      bswan={result.bswan} halts={result.halts} />
           )}
@@ -567,6 +582,63 @@ export default function ResultsTabs({
           )}
         </div>
       </div>
+
+      {/* ── Visor de trade ─────────────────────────────────────────────
+          El click en un ticker (Trades o el detalle de dia de Calendario)
+          abre el grafico AQUI: centrado, con la app oscurecida y difuminada
+          detras. Antes se desplegaba como una fila mas dentro de la propia
+          tabla, pegado a la toggle bar: dificil de orientarse, y con el
+          raton cruzando el grafico al moverse por la pagina (zoom
+          accidental). Al ir al final del arbol, el visor se apila encima
+          del modal de dia de Calendario cuando los dos estan abiertos. */}
+      <Modal
+        open={!!tradeDesplegado}
+        onClose={() => setTradeDesplegado(null)}
+        width={1400}
+        fullBleed
+        eyebrow={visorFecha ? `Análisis de trade · ${visorFecha}` : "Análisis de trade"}
+        title={visorTicker ? (
+          <span style={{ display: "inline-flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "var(--color-ec-mono)", fontSize: 18, fontWeight: 700, letterSpacing: "-0.02em", color: "var(--color-ec-text-high)" }}>
+              {visorTicker}
+            </span>
+            {cifrasVisor.n > 0 && (
+              <span style={{ fontFamily: "var(--color-ec-sans)", fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)" }}>
+                {cifrasVisor.n} {cifrasVisor.n === 1 ? "trade" : "trades"}
+              </span>
+            )}
+            <span style={{ fontFamily: "var(--color-ec-mono)", fontSize: 13, fontWeight: 800, color: cifrasVisor.pnl >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)" }}>
+              {cifrasVisor.pnl >= 0 ? "+" : "−"}${Math.abs(cifrasVisor.pnl).toFixed(2)}
+            </span>
+            {cifrasVisor.avgR !== null && (
+              <span style={{ fontFamily: "var(--color-ec-mono)", fontSize: 11, fontWeight: 600, color: cifrasVisor.avgR >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)" }}>
+                avg {cifrasVisor.avgR.toFixed(2)}R
+              </span>
+            )}
+          </span>
+        ) : undefined}
+        footer={
+          <button
+            onClick={() => { setTradeDesplegado(null); selectTab("analysis"); }}
+            title="Ver este mismo grafico en la pestaña «Analisis por trade», con mas alto."
+            style={{
+              background: "none",
+              border: "0.5px solid var(--color-ec-border)",
+              borderRadius: 5,
+              padding: "5px 12px",
+              fontSize: 11,
+              fontWeight: 500,
+              color: "var(--color-ec-text-secondary)",
+              fontFamily: "var(--color-ec-sans)",
+              cursor: "pointer",
+            }}
+          >
+            Abrir en Análisis por trade →
+          </button>
+        }
+      >
+        {panelDelVisor}
+      </Modal>
     </div>
   );
 }
