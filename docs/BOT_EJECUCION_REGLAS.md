@@ -415,12 +415,26 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 16-sep). Pendiente futuro: regla específica para tamaños muy grandes.
 - Origen: B3.
 
+- B18 (Jaume, 16-sep): si llega un HALT con la escalera viva, se cancela; al reabrir, entrada nueva desde cero SOLO si las reglas dicen «dentro» (R-F-04, primera vela < 6 %, k < 3).
+
+### R-B-04 · Cuándo se envía la entrada: en el instante en que cierra la vela de la señal
+- Situación: la estrategia evalúa la señal con la vela i (cerrada). El backtester entra al open de i+1 (regla anti look-ahead).
+- Detección: el bot construye la vela i en tiempo real con el feed de operaciones de Massive (no espera a la vela agregada AM, que llega con retraso) y evalúa la señal EN EL INSTANTE en que termina el minuto (t = cierre de i, que es el mismo instante que la apertura de i+1).
+- Acción: la orden sale en ese instante (decenas de milisegundos después del cierre). Es el mismo momento en que el backtester entra, así que hay paridad, y es lo antes que se puede sin mirar el futuro: «milisegundos ANTES del cierre» no es posible sin adivinar el cierre (el último print del minuto puede cambiar la señal), y romper eso rompería la paridad con el backtest.
+- Caducidad de la señal: si por un retraso del feed o del bot la orden no ha podido salir en el instante, la señal sigue valiendo dentro del mismo minuto (los 60 s de R-B-01) siempre que se cumpla la puerta del 3 %; pasado el minuto, caduca (enlaza con A1, PROVISIONAL).
+- Quién la ejecuta: motor (señal por ticks) + ejecutor.
+- Parámetros: caducidad = 60 s desde el cierre de la vela (provisional).
+- Si la acción falla: sin ticks (feed caído) → se usa la vela AM al llegar, y la señal se trata como «tardía» (caducidad).
+- Prueba: comparar en sombra la hora de envío con el cierre de la vela (latencia señal→orden) y la señal calculada por ticks con la de la vela AM (paridad).
+- Estado: FIJADA (Jaume, 16-sep), caducidad provisional.
+- Origen: B12, A1.
+
 - Principio (Jaume, 16-sep): el algoritmo intenta SIEMPRE el mejor precio disponible, acercándose al 0 % de slippage; el 3 % es el peor caso admitido, no un objetivo. Slippage mediano esperado con todo junto: ≈ 0,9 % en PM, ≈ 0,6 % en RTH.
 
-### R-B-03 · Dos entradas del mismo ticker a la vez (estrategia A esperando y llega B)
-- Situación: la orden de entrada de la estrategia A sigue viva (escalera, hasta 60 s) y otra estrategia B (o una pirámide de B) pide entrar en el mismo ticker. La pirámide de la propia A no puede darse: solo se piramida con la base ya dentro.
+### R-B-03 · Varias entradas del mismo ticker a la vez (una estrategia esperando y llegan otras)
+- Situación: la orden de entrada de una estrategia sigue viva (escalera, hasta 60 s) y OTRAS estrategias (pueden ser 20 a la vez: A y B son solo nombres de ejemplo), o sus pirámides, piden entrar en el mismo ticker. La pirámide de una estrategia nunca coincide con su propia base: solo se piramida con la base ya dentro.
 - Detección: nueva señal sobre un ticker con orden de entrada viva.
-- Acción: se SUMAN las cantidades en una sola orden de venta (más acciones en corto) y la escalera se REINICIA desde el primer escalón con la cantidad total. El bot registra en el diario qué parte de la cantidad pertenece a cada estrategia (lotes), para repartir después fills, stops y take profits (áreas C y E).
+- Acción: se SUMAN las cantidades de todas las estrategias en una sola orden de venta y la escalera se REINICIA desde el primer escalón con el total. El bot registra en el diario qué parte pertenece a cada estrategia (un lote por estrategia, N lotes), para repartir después fills, stops y take profits (áreas C y E).
 - Quién la ejecuta: ejecutor + diario.
 - Parámetros: los de R-B-01.
 - Si la acción falla: fill parcial → R-B-02, repartiendo lo ejecutado entre lotes en proporción a lo pedido.

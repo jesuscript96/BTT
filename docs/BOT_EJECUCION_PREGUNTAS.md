@@ -18,7 +18,7 @@
 
 ## A. Señal y datos antes de la orden
 
-- [ ] A1. ¿Cuánto tiempo es válida una señal? Si el ejecutor la recibe 3 s, 30 s o 3 min tarde, ¿se ejecuta, se recalcula o se descarta?
+- [x] A1. → R-B-04 (provisional: 60 s desde el cierre de la vela, con la puerta del 3 %). ¿Cuánto tiempo es válida una señal? Si el ejecutor la recibe 3 s, 30 s o 3 min tarde, ¿se ejecuta, se recalcula o se descarta?
 - [ ] A2. ¿A qué distancia entre el precio de la señal y el precio actual se invalida la entrada (en % y en múltiplos del spread)?
 - [ ] A3. Si el feed de Massive se retrasa o se corta a media señal, ¿con qué retraso máximo se permite ABRIR? ¿Y con cuál solo se GESTIONA lo abierto?
 - [ ] A4. El bot decide con datos de Massive y ejecuta contra precios de DAS. Cuando difieren (prints tardíos, dark pool), ¿cuál manda para entrar y cuál para el stop? **[dato]** el 93 % de los «fogonazos» del crudo eran prints tardíos que están en la cinta y en las velas, no en el libro.
@@ -45,13 +45,13 @@
 - [ ] B9. Precio por debajo de 1 $: ¿decimales admitidos y cómo se redondea el límite? **[API]**
 - [ ] B10. ¿Lote máximo por orden del bróker y cómo se parte? **[API]**
 - [ ] B11. Orden límite en premercado que no se ejecuta en N s: ¿se recoloca, se cancela o se deja viva hasta una hora?
-- [ ] B12. ¿Se entra en la vela siguiente (i+1) como el backtester o al instante? Si el precio de i+1 ya está peor que el tope de entrada, ¿se salta?
+- [x] B12. → R-B-04 (en el instante del cierre de la vela i, por ticks; = open de i+1 del backtest). ¿Se entra en la vela siguiente (i+1) como el backtester o al instante? Si el precio de i+1 ya está peor que el tope de entrada, ¿se salta?
 - [ ] B13. Si el fill llega a un precio mucho mejor o peor del esperado (más de X %), ¿se avisa, se recalcula el tamaño o se cierra?
 - [ ] B14. Antes de vender en corto, ¿el bot comprueba SSR (solo se puede vender por encima del bid)? ¿Cómo lo sabe? **[API]**
 - [ ] B15. Locate aceptado y DAS rechaza el corto igualmente: ¿qué se hace y cómo se registra? **[API]**
 - [ ] B16. Cancelación no confirmada: ¿se asume viva? Cancelación confirmada y después llega un fill (carrera): ¿cómo se reconcilia? **[API]**
 - [ ] B17. ¿Órdenes ocultas o iceberg? ¿Aportan algo en small caps o no? **[API]**
-- [ ] B18. Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
+- [x] B18. → sí: halt cancela la escalera; al reabrir, nueva solo si «dentro» (R-F-04). Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
 - [ ] B19. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
 - [x] B20. → R-B-01: tope 3 % por distancia último precio→bid (FIJADO el 16-sep; la guarda por spread descartada). ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
 
