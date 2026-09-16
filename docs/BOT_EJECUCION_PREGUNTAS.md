@@ -137,8 +137,8 @@
 - [x] H1. → R-H-01 (pronto y barato: al entrar en el radar; se compra cuando el EV da ventaja). ¿Cuándo se pide el locate: en prealerta (44-59), al confirmar la señal, o cuando el ticker «salta» pronto porque es más barato? (P4)
 - [x] H2. → R-H-01 (cálculo de EV existente; se actualiza el precio hasta que haya ventaja). ¿Cuánto se paga como máximo por acción y como % del beneficio esperado? ¿Se descarta la operación si el locate supera X % del EV? **[dato]** la puerta por EV ya existe en el backtester (`PROYECTO_EV_Y_LOCATES.md`).
 - [ ] H3. Locate parcial (dan 500 de 1.000): ¿se opera con menos, se pide a otro proveedor o se descarta?
-- [ ] H4. Locate comprado y operación que no se da: ¿coste hundido aceptado? ¿Tope diario de locates «desperdiciados»?
-- [ ] H5. Tope diario y por operación de gasto en locates. **[dato]** una operación se llevó 7.000 $ de 10.000 en el backtest.
+- [x] H4. → coste hundido aceptado; tope R-H-03 (3 % de la cuenta). Locate comprado y operación que no se da: ¿coste hundido aceptado? ¿Tope diario de locates «desperdiciados»?
+- [x] H5. → R-H-03: nunca más del 3 % de la cuenta. Tope diario y por operación de gasto en locates. **[dato]** una operación se llevó 7.000 $ de 10.000 en el backtest.
 - [ ] H6. Paquetes de 100: ¿se ajusta el tamaño de la posición al múltiplo del locate? **[dato]** se cobra por paquetes enteros, no es lineal. **PREGUNTAR A JAUME (lo pidió el 15-sep): ¿a partir de cuántas acciones de excedente merece la pena pagar un paquete de locate más?** Ejemplo: el cálculo pide 105 acciones → 2 locates; pagar un locate por 5 acciones es tirar el dinero, así que se juega con 100 y se sacrifican esas 5. Hay que fijar el umbral (en acciones o en % del paquete, o en coste del locate frente al beneficio esperado de esas acciones).
 - [ ] H7. ¿Los locates caducan al cierre? ¿Sirven para reentradas el mismo día? ¿Se pueden devolver y con qué reembolso? **[API]**
 - [ ] H8. El precio del locate cambia entre la consulta y la aceptación: ¿se acepta hasta +X %? **[API]**
@@ -146,10 +146,10 @@
 - [ ] H10. ETB (no hace falta locate): ¿cómo se sabe y se salta el paso? HTB imposible: ¿se descarta la señal y se registra? **[API]**
 - [ ] H11. ¿Hay locates en premercado a cualquier hora (04:00)? ¿A qué hora empieza el servicio? **[API]**
 - [ ] H12. Locate aceptado y luego halt o T12: ¿coste del préstamo por días? ¿Quién lo vigila?
-- [ ] H13. Registro de cada locate (precio, hora, usado o no) para alimentar la puerta por EV con datos reales.
+- [x] H13. → R-H-01 (registrado). Registro de cada locate (precio, hora, usado o no) para alimentar la puerta por EV con datos reales.
 - [ ] H14. Dividendos con corto: si por error queda una posición overnight en fecha ex-dividendo, ¿quién lo detecta?
 - [ ] H16. **(Añadida por Jaume, 16-sep, problema real del socio)** Al hacer «inquire» de locates el bróker no devuelve nada, o no hay locates disponibles para esa acción: ¿qué hace el bot? ¿Reintenta (cuántas veces, cada cuánto), prueba otro proveedor, descarta la señal y lo registra, avisa? ¿Y si la falta de locates llega en una PIRÁMIDE con posición ya abierta? **[API: qué respuesta da DAS cuando no hay locates]**
-- [ ] H15. ¿Tope de locates «en reserva» a la vez (comprados y sin usar) para no quemar la cuenta en prealertas?
+- [x] H15. → R-H-03. ¿Tope de locates «en reserva» a la vez (comprados y sin usar) para no quemar la cuenta en prealertas?
 
 ## I. Capital, riesgo y cortacircuitos
 

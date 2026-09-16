@@ -502,6 +502,36 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA en su lógica (Jaume, 16-sep). TODO el proceso (localización, inquire, actualización, compra, errores) se REPASA con el PDF. Añadir a la lista de preguntas al bróker: unidades del precio del locate, lista de códigos de log y de error del API para poder detectarlos.
 - Origen: H1, H2, H13. Decisión del 5-sep («pronto y barato») confirmada el 16-sep.
 
+**Concreción de R-H-01 (Jaume, 16-sep):**
+1. **Frecuencia**: actualizar el precio LO MÁS RÁPIDO que permita el API, en paralelo para cada acción que salte al radar, desde el instante en que salta (cada una a su hora). [API: cuota de inquires]. El RADAR tiene que ser configurable desde el cuadro de mandos: no solo por % de subida; también por precio, volumen y lo que se quiera.
+2. **PARADA (riesgo de cola): en cuanto se compran los locates que tocan para una acción, el bot DEJA de actualizar y NO compra más para esa acción**, salvo que más adelante los pida otra estrategia o haga falta por lo que sea. Hay que asegurar que nunca entre en un bucle de actualizar y comprar sin control. → R-H-02.
+3. **Cantidad**: las acciones que dicte la estrategia al precio de ese momento (es la base del cálculo de EV). Paquetes de 100, tirando POR LO BAJO: si el excedente sobre el paquete no supera el 20 %, no se compra el paquete extra (110 → 1 paquete; 130 → 2 paquetes). **El umbral del 20 % queda PENDIENTE de decidir al final** (H6), como los demás pendientes; el proceso general es este.
+4. **Si el precio cambia mucho antes de la señal** y harían falta más locates para el tamaño de la estrategia: de base, SOLO se compran al principio aunque el precio se mueva. Marco para la decisión pendiente: si hiciera falta más de un paquete adicional (p. ej. 100 comprados y ahora 190 necesarios), se compraría otro SOLO si el EV sigue siendo positivo contando el COSTE TOTAL de todos los locates ya pagados más el nuevo, no el nuevo en exclusiva. **PENDIENTE de decidir más adelante.**
+5. **Hasta cuándo**: se sigue intentando hasta conseguir un precio con ventaja; el cuadro de mandos podrá fijar un tiempo o una hora límite de intentos.
+6. **Tope de gasto en locates (medida de emergencia)**: el gasto en locates NUNCA debe superar el 3 % de la cuenta. → R-H-03.
+
+### R-H-02 · Parada del proceso de locates: comprar una vez y no volver a comprar
+- Situación: el módulo de locates ha comprado los paquetes necesarios para una acción.
+- Detección: confirmación de compra del locate por DAS.
+- Acción: se marca la acción como «localizada» con la cantidad comprada; se DETIENE la actualización de precios y queda PROHIBIDA cualquier compra adicional para esa acción, salvo petición explícita nueva (otra estrategia, pirámide que lo requiera, locates de un solo uso consumidos), que pasa otra vez por el cálculo de EV con el coste total acumulado. Cerrojo por acción y por día.
+- Quién la ejecuta: módulo de locates + vigilante (comprueba que no hay compras repetidas).
+- Parámetros: ninguno.
+- Si la acción falla: si se detecta una segunda compra no pedida → parar el módulo de locates entero y avisar.
+- Prueba: tabla de casos; sombra con recuento de compras por acción y día (debe ser 1 salvo peticiones nuevas).
+- Estado: FIJADA (Jaume, 16-sep).
+- Origen: H1 (riesgo de cola señalado por Jaume).
+
+### R-H-03 · Tope de gasto en locates: 3 % de la cuenta
+- Situación: cualquier compra de locates.
+- Detección: gasto acumulado en locates (del día) frente al valor de la cuenta.
+- Acción: no se compra ningún locate que haga superar el 3 % de la cuenta en gasto de locates. Medida de emergencia; aviso cuando se alcance.
+- Quién la ejecuta: guarda del módulo de locates.
+- Parámetros: 3 % (cuadro de mandos). Ventana: por día (a confirmar en el repaso).
+- Si la acción falla: —
+- Prueba: tabla de casos.
+- Estado: FIJADA (Jaume, 16-sep).
+- Origen: H4, H5, H15.
+
 ### Área J · Infraestructura
 
 ### Área K · Estado y reconciliación
