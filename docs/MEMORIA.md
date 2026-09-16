@@ -30,6 +30,26 @@
 
 ---
 
+## 2026-09-16 (Sailor, noche) — Piramidación por grupos, disparo por recorrido, y una cantidad por pirámide en el bot
+
+Pedido de Jaume: (1) «tres pirámides donde dos sean secuenciales y una individual» — el modo era uno solo para toda la lista; (2) que una pirámide pueda añadir o quitar «si X % de recorrido del precio (no de la vela), a favor o en contra», como un take profit / stop loss de la propia pirámide; (3) que el bot de alarmas y el cuadro de mandos pidan el riesgo de CADA pirámide. Commits `c2c1b5d`, `1121289`, `960cc26` en `sailor-rama-desarrollo`; sin subir al escribir esto. Backend relanzado a mano con el bot parado.
+
+### Grupos y recorrido (compilador → traductor → simulador)
+
+- **JSON:** cada nivel lleva `group` (índice) y `pyramiding.groups[g].mode`; `trigger: "move"` + `move_pct` + `move_dir` (favor/contra) + `move_ref` (entry/last). **Sin `groups`, todo es el grupo 0 con el `mode` de siempre**: las estrategias guardadas se compilan y simulan igual (test). El compilador mete `group`, `sequential`, `move` y `def_index` EN EL NIVEL para que el simulador no cruce dos listas (las tres capas otra vez).
+- **Semántica:** grupos independientes; dentro de un grupo secuencial solo vigila el primer nivel con veces. El recorrido se mide con el cierre de cada vela respecto al precio de entrada o al del último añadido/quita **de su grupo**; cruzar el umbral es un evento (flanco); con condiciones además, AND; la orden en la vela siguiente; la ventana de entradas se aplica también. Un nivel solo por recorrido ya no necesita condiciones (antes se descartaba en silencio: `nivelPiramideValido` en `InlineStrategyBuilder` es la lista blanca del frontend).
+- **Lo que salió probando en real** (estrategia del GA + G1 secuencial «+3 % a favor, otro +3 % desde el añadido» y G2 «quita 50 % si 4 % en contra», 2 semanas, 115 ejecuciones cruzadas con las velas del gráfico): con «desde el último disparo» = cualquier nivel, una quita del G2 reseteaba la escalera del G1 (7 de 115). Ahora es por grupo: 111/111 cuadran. Test que falla con la semántica anterior.
+- **UI:** `PyramidingBuilder` por grupos (modo por grupo, «+ Añadir pirámide al grupo N», «+ Añadir grupo»); en cada pirámide «Dispara por: condiciones | recorrido del precio» con dirección, % y desde dónde. La descripción del panel lo cuenta.
+- OJO al leer un resultado de `run_backtest`: las ejecuciones de pirámide van en `trade["executions"]` (kind add/reduce, label «Pirámide N: añade»); `pyr_executions` se quita al fusionar. Me costó un rato pensar que no disparaba nada.
+
+### Riesgo por pirámide en el bot y el cuadro de mandos
+
+`bot_alert_watch.riesgos_piramide_json`: lista JSON, una cantidad por pirámide en el orden de la definición guardada (`def_index`: la lista compilada descarta niveles inválidos y su índice no vale). Prioridad: por nivel → `riesgo_piramide_usd` global (respaldo) → la estrategia. `/bot-alerts/strategies` describe las pirámides (`describir_piramides`: grupo, modo, añade/quita, cantidad, disparo) y el cuadro pinta una casilla por pirámide (P1·G1 +), prellenada con el global de antes si no hay lista. `_niveles_con_riesgo(niveles, global, por_nivel)` y `_kwargs_simulate` llevan la lista; la firma de recompilación también.
+
+Tests: 15 + 7 nuevos; suite 1.273 pasados, 0 fallos.
+
+---
+
 ## 2026-09-16 (Sailor, bot de alertas) — Día de 55 avisos sin un fallo, y las cantidades que no cuadraban
 
 Bot arrancado desde la página a las 09:49 y parado por Jaume a las 16:31. **55 avisos = 55 en Telegram = 55 en la base = 55 en el cuaderno**. **0 «timed out»** (ayer 22): el `/estado` en memoria hace lo que tenía que hacer. El cuaderno nuevo (`D:/bot_senales/logs/bot_2026-09-16.log`, 354 líneas) tiene el día entero y de él sale la auditoría. 14 admisiones al radar, todas con «evaluada como ACTUAL». PM 1A: 7 posiciones y 21 tramos de TP en tres oleadas simultáneas (14:16, 14:31, 14:46), 21 de 21. RTH 1B (riesgo 150) muy activa. Al parar quedaban 7 posiciones RTH abiertas en el simulador (avisado a Jaume: sin bot no hay avisos de sus salidas).
