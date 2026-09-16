@@ -394,15 +394,27 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Detección: último precio cruzado (el que usa el backtester) y bid de DAS en el segundo de la señal. Tope T = 3 %.
 - Acción:
   1. **Bid a menos del 3 % del último precio** (80 de cada 100 señales de 1B, 94 de 2B): venta límite (limitP) a bid × (1 − 0,5 %), al instante. Se ejecuta AL BID (el mejor precio disponible en ese momento); el 0,5 % es solo el techo por si el bid se mueve durante el envío. Sin espera.
-  2. **Bid a más del 3 %**: no se cruza. Se deja una venta límite AGREGANDO liquidez en ESCALERA: a −1 % del último precio; si en 20 s no se ejecuta, a −2 %; si en otros 20 s no, a −3 %; si al minuto sigue sin ejecutarse, se cancela y NO se entra. Se cancela antes en cuanto la estrategia deje de decir «dentro».
+  2. **Bid a más del 3 %**: no se cruza. Se deja una venta límite AGREGANDO liquidez en ESCALERA (Jaume, 16-sep): a −1 % del último precio; a los 10 s, a −2 %; a los 20 s, a −3 %, y ahí se queda lo que resta del minuto; si a los 60 s sigue sin ejecutarse, se cancela y NO se entra. Se cancela antes en cuanto la estrategia deje de decir «dentro».
   3. Nunca se vende por debajo del último precio × (1 − 3 %). El 3 % es un tope, no un precio: solo se llega a él si no hay nadie más arriba.
 - Quién la ejecuta: ejecutor (guarda: distancia último→bid).
-- Parámetros (cuadro de mandos): tope T = 3 %; techo de la rama 1 = 0,5 %; escalones 1 / 2 / 3 %; tiempo por escalón 20 s; tiempo total 60 s. Ruta: ARCA en PM; en RTH, SAGEPRO si en sombra llena igual de rápido que ARCA, si no ARCA.
+- Parámetros (cuadro de mandos): tope T = 3 %; techo de la rama 1 = 0,5 %; escalones 1 / 2 / 3 %; cambio de escalón cada 10 s; el tercero espera hasta completar 60 s. Ruta: ARCA en PM; en RTH, SAGEPRO si en sombra llena igual de rápido que ARCA, si no ARCA.
 - Si la acción falla: sin cotización (libro vacío, antes de ~05:30 ET en muchos valores) → no se entra. Orden de la rama 1 no ejecutada porque el bid cayó más del 0,5 % durante el envío → pasa a la rama 2 (escalera) desde el escalón que corresponda.
 - Prueba: sombra, midiendo slippage real frente al precio del backtester y % de señales que se quedan fuera.
 - Estado: FIJADA (Jaume, 16-sep) salvo la ruta (sombra) y el ajuste fino de tiempos con fills reales.
 - Origen: B1, B2 (queda absorbida: no hay reenvíos, la escalera es la persecución), B20. Estudio P12 (`36`/`37` y cálculos del 16-sep).
 - Tiempo total de la escalera (medido el 16-sep, 1B, señales que van a la escalera): 10 s → entran el 39 % (12 de cada 100 señales fuera); 20 s → 55 % (9 fuera); 30 s → 63 % (7 fuera); 45 s → 71 % (6 fuera); 60 s → 74 % (5 fuera); 90-120 s → 74-76 % (5 fuera). Más de 60 s no aporta; menos de 30 s pierde el doble de señales. Se fija 60 s.
+
+### R-B-02 · Entrada ejecutada a medias
+- Situación: la orden de entrada se ejecuta solo en parte (p. ej. 400 de 1.000) porque en el bid no había más. Frecuente: en PM una orden de 300 $ cabe entera el 53 % de las veces; de 3.000 $, el 6 %.
+- Detección: fill parcial confirmado por DAS.
+- Acción: el resto (600) sigue con la misma lógica de R-B-01 (al nuevo bid si está a menos del 3 % del último precio; si no, escalera), como máximo hasta completar el minuto desde la señal y sin pasar nunca del 3 %. Al minuto, se acepta la posición que haya (400) con su stop proporcional (R-C-01) y se cancela lo pendiente. No hay mínimo por debajo del cual no compense quedarse: se entra siempre que se pueda y con lo que se pueda.
+- Quién la ejecuta: ejecutor.
+- Parámetros: los de R-B-01.
+- Si la acción falla: lo no ejecutado se cancela; la posición parcial queda protegida por su stop.
+- Prueba: sombra (recuento de parciales y tamaño medio conseguido frente al pedido).
+- Estado: FIJADA (Jaume, 16-sep). Pendiente futuro: regla específica para tamaños muy grandes.
+- Origen: B3.
+
 - Resultado esperado (muestra P12): 1B entra en el 95 % de las señales, 62 % con slippage ≤ 1 %, media 1,1 %; se pierden 5 de cada 100 señales (13 % del bruto de la muestra, 9 casos con el bid a 4-28 % del último precio). 2B entra en el 100 %, 75 % con ≤ 1 %, media 0,78 %.
 
 **B20, guarda de spread: PROVISIONAL, a confirmar en el repaso final y en sombra.** No entrar si (ask − bid) / bid > 5 % en el segundo de la señal. Motivo (`37_slippage_asumible.py`, 16-sep): en 1B el 47 % de las entradas tienen slippage peor que −1 % frente al backtester y el 25 % tienen spread > 10 % con slippage medio −9 %; con spread ≤ 5 % quedan el 56 % de las entradas de 1B (94 % de 2B) con slippage medio −1,0 % (2B −0,75 %). AVISO: las entradas de spread ancho de 1B son de las MÁS rentables en bruto (62 % del beneficio bruto está en entradas con slippage > 1 %, +5,3 % medio/op): el backtester las llena a un precio que no existe, y su rentabilidad NETA real no se sabe hasta la sombra. La muestra (190 ops) no permite fijar el umbral con confianza: el neto por 100 operaciones con filtro 5 % es +198 [IC95 −15, +401] frente a +86 [−220, +384] sin filtro. Slippage que aguanta cada estrategia (esperanza neta = retorno medio bruto − slippage): 1B se queda a cero con 3,5 % y pierde la mitad del edge con 1,7 %; 2B a cero con 3,1 %, mitad con 1,6 %. El «no más del 1 %» de Jaume deja el 70 % del edge.

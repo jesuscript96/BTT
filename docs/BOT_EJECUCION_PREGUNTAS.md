@@ -36,7 +36,7 @@
 
 - [x] B1. → R-B-01 FIJADA (al bid si <3 %, escalera 1/2/3 % en 60 s si no; tope 3 %). Si al enviar el precio ya se ha movido, ¿se pone un límite a qué distancia (ask/bid ± X % o X ticks)? ¿Se persigue al precio hasta un tope y luego se abandona?
 - [x] B2. → absorbida por R-B-01 (sin reenvíos: la escalera es la persecución; a los 60 s se cancela). ¿Cuántas veces se reintenta una entrada no ejecutada y con qué separación? ¿Tras el último intento se descarta la señal para el día?
-- [ ] B3. Ejecución parcial: ¿se acepta el resto, se cancela el resto y se protege lo lleno, o hay un mínimo por debajo del cual no compensa (comisión mínima, paquetes de locate de 100)?
+- [x] B3. → R-B-02 (sigue con R-B-01 hasta el minuto; se acepta lo que haya; sin mínimo). Ejecución parcial: ¿se acepta el resto, se cancela el resto y se protege lo lleno, o hay un mínimo por debajo del cual no compensa (comisión mínima, paquetes de locate de 100)?
 - [ ] B4. Orden rechazada: ¿qué motivos puede dar el bróker (sin locate, sin buying power, halt, precio fuera de banda, lote, ruta cerrada) y hay una respuesta distinta por motivo? **[API]**
 - [ ] B5. Orden enviada sin respuesta (timeout): ¿se asume no enviada, enviada, o se consulta el estado antes de reintentar? ¿Cómo se evita la orden doble? **[API: identificador de orden propio]**
 - [ ] B6. ¿Puede haber dos órdenes vivas del mismo lado sobre el mismo ticker? ¿Cerrojo por ticker mientras haya una orden en vuelo?
@@ -148,6 +148,7 @@
 - [ ] H12. Locate aceptado y luego halt o T12: ¿coste del préstamo por días? ¿Quién lo vigila?
 - [ ] H13. Registro de cada locate (precio, hora, usado o no) para alimentar la puerta por EV con datos reales.
 - [ ] H14. Dividendos con corto: si por error queda una posición overnight en fecha ex-dividendo, ¿quién lo detecta?
+- [ ] H16. **(Añadida por Jaume, 16-sep, problema real del socio)** Al hacer «inquire» de locates el bróker no devuelve nada, o no hay locates disponibles para esa acción: ¿qué hace el bot? ¿Reintenta (cuántas veces, cada cuánto), prueba otro proveedor, descarta la señal y lo registra, avisa? ¿Y si la falta de locates llega en una PIRÁMIDE con posición ya abierta? **[API: qué respuesta da DAS cuando no hay locates]**
 - [ ] H15. ¿Tope de locates «en reserva» a la vez (comprados y sin usar) para no quemar la cuenta en prealertas?
 
 ## I. Capital, riesgo y cortacircuitos
