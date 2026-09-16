@@ -34,7 +34,7 @@
 
 ## B. Enviar la orden de entrada
 
-- [ ] B1. Si al enviar el precio ya se ha movido, ¿se pone un límite a qué distancia (ask/bid ± X % o X ticks)? ¿Se persigue al precio hasta un tope y luego se abandona?
+- [x] B1. → R-B-01 (fijada: remover al bid, techo 0,5 %, PM y RTH). Si al enviar el precio ya se ha movido, ¿se pone un límite a qué distancia (ask/bid ± X % o X ticks)? ¿Se persigue al precio hasta un tope y luego se abandona?
 - [ ] B2. ¿Cuántas veces se reintenta una entrada no ejecutada y con qué separación? ¿Tras el último intento se descarta la señal para el día?
 - [ ] B3. Ejecución parcial: ¿se acepta el resto, se cancela el resto y se protege lo lleno, o hay un mínimo por debajo del cual no compensa (comisión mínima, paquetes de locate de 100)?
 - [ ] B4. Orden rechazada: ¿qué motivos puede dar el bróker (sin locate, sin buying power, halt, precio fuera de banda, lote, ruta cerrada) y hay una respuesta distinta por motivo? **[API]**
@@ -53,7 +53,7 @@
 - [ ] B17. ¿Órdenes ocultas o iceberg? ¿Aportan algo en small caps o no? **[API]**
 - [ ] B18. Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
 - [ ] B19. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
-- [ ] B20. ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
+- [x] B20. → guarda de spread 5 % PROVISIONAL (repaso final + sombra). ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
 
 ## C. Stop y protección de la posición
 
