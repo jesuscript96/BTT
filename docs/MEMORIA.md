@@ -30,6 +30,20 @@
 
 ---
 
+## 2026-09-16 (Sailor, bot de alertas) — Día de 55 avisos sin un fallo, y las cantidades que no cuadraban
+
+Bot arrancado desde la página a las 09:49 y parado por Jaume a las 16:31. **55 avisos = 55 en Telegram = 55 en la base = 55 en el cuaderno**. **0 «timed out»** (ayer 22): el `/estado` en memoria hace lo que tenía que hacer. El cuaderno nuevo (`D:/bot_senales/logs/bot_2026-09-16.log`, 354 líneas) tiene el día entero y de él sale la auditoría. 14 admisiones al radar, todas con «evaluada como ACTUAL». PM 1A: 7 posiciones y 21 tramos de TP en tres oleadas simultáneas (14:16, 14:31, 14:46), 21 de 21. RTH 1B (riesgo 150) muy activa. Al parar quedaban 7 posiciones RTH abiertas en el simulador (avisado a Jaume: sin bot no hay avisos de sus salidas).
+
+Dos cortes `1008` «límite de conexiones de la cuenta» (10:01 y 15:43): algo más se conectó a Massive con la misma clave; el bot reconectó en 2 s sin perder velas. Pendiente saber qué es.
+
+### Las cantidades no cuadraban: «entra 284, cierra 289» (`3b87b62`)
+
+Jaume: «debe salir con las mismas que entra, y si ha añadido pues con las que toque, al igual que con los parciales. Las cantidades deben estar cuadradas». El aviso de entrada dimensiona con el cierre de la vela de señal; el simulador interno rellena en la apertura siguiente y calcula SUS acciones con ese precio; salidas y pirámides salían del simulador. Medido hoy: MEDS RTH 284→289, RETO 208→210, MEDS PM 507+359=866 pero «posición 890», JZXN 449+486=935 pero tramos 232+464+232=928. Sin error ni log (caso 13 de «bugs que no dan error»).
+
+Arreglo en `bot_alerts_engine` (`_cuadre`): la posición **avisada** es la verdad. El motor apunta las acciones del aviso de entrada (enteras) por vela de señal; entrada + añadidos = total; cada tramo de salida es la misma fracción que en el simulador pero sobre ese total, en enteros, y el último tramo se lleva el resto. Los añadidos valen tal cual (el simulador los dimensiona por riesgo/importe, no desde la entrada). Posición heredada al hidratar (entrada no avisada) → cantidades del simulador, como antes. **Verificado repitiendo el día real por REST** con el motor nuevo, sin Telegram ni base: MEDS 284→284, RETO 208→208, MEDS PM 866→866, JZXN 935→234+468+233. 6 tests (`test_bot_alerts_cantidades_cuadradas.py`); un stub que devolvía tupla en vez de float, corregido. Entra en vigor con el siguiente Vigilar. Subido a sailor y staging.
+
+**Receta**: repetir un ticker del día con el motor actual sin tocar nada → `scratchpad/verificar_cuadre.py TICKER HH:MM [PM|RTH]` (hidrata por REST hasta HH:MM NY y da las velas una a una al RunnerAlertas; solo imprime).
+
 ## 2026-09-15 (Sailor, Portfolio) — El timeout volvió, el bot que se encendía solo, orden manual ▲▼, Robustez en filas finas y «una a la vez por acción»
 
 Dos sesiones de Jaume en el día sobre Portfolio/Baúl (la del VWAP y el bot va en la entrada de al lado). Commits `3e9d174` (mañana, subido a mediodía) y `6accbec` (tarde), los dos **subidos a `sailor-rama-desarrollo` y `staging`** por orden suya; con el segundo subieron también `d1d4632` y `7fbe10c` (bot de alertas, de su otra sesión). Backend relanzado a mano tres veces (09:02, 17:53 la otra sesión, 19:21), siempre con el bot parado salvo la metedura de pata de las 17:42 que cuenta la otra entrada.
