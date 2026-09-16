@@ -346,7 +346,8 @@ def _parse_pyr_move(lv: dict):
     Devuelve {"pct", "dir", "ref"}: X % de recorrido del PRECIO (no de la
     vela), "favor"/"contra" respecto al sentido del trade, y desde donde se
     mide: "entry" (el precio de entrada de la operacion) o "last" (el precio
-    del ultimo anadido/quita de esta posicion; sin ninguno, la entrada).
+    del ultimo anadido/quita DE SU GRUPO en esta posicion; sin ninguno, la
+    entrada). Por grupo y no global: los grupos son independientes.
     """
     if str(lv.get("trigger", "conditions")).lower() not in ("move", "recorrido"):
         return None

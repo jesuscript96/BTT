@@ -547,7 +547,7 @@ export interface PyramidLevel {
     // DISPARO POR RECORRIDO (16-sep-2026). 'conditions' (por defecto) = por
     // las condiciones de abajo, como siempre. 'move' = cuando el PRECIO lleva
     // `move_pct` % a favor o en contra (`move_dir`) medido desde la entrada o
-    // desde el ultimo anadido/quita de la posicion (`move_ref`): el take
+    // desde el ultimo anadido/quita DE SU GRUPO en la posicion (`move_ref`): el take
     // profit / stop loss de la propia piramide. Si ademas hay condiciones, se
     // exigen las dos cosas.
     trigger?: 'conditions' | 'move';

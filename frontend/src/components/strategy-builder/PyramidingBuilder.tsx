@@ -449,7 +449,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                             style={selectStyle}
                                             title={'Desde dónde se mide el recorrido:\n'
                                                 + '· la entrada — el precio al que se abrió la operación\n'
-                                                + '· el último disparo — el precio del último añadido o quita de esta posición '
+                                                + '· el último disparo — el precio del último añadido o quita DE ESTE GRUPO en esta posición '
                                                 + '(sin ninguno, la entrada). Con varias «veces», encadena escalones: +5 %, otro +5 % desde ahí...'}
                                         >
                                             <option value="entry">desde la entrada</option>

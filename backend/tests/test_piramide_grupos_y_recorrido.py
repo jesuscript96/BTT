@@ -245,3 +245,25 @@ def test_las_claves_llegan_al_simulador_por_translate():
     assert lv["group"] == 1 and lv["sequential"] is True
     assert lv["move"] == {"pct": 2.0, "dir": "contra", "ref": "last"}
     assert np.asarray(lv["signals"]).all()       # sin condiciones: la señal lógica es «siempre»
+
+
+def test_desde_el_ultimo_disparo_es_el_ultimo_de_SU_grupo():
+    """Medido en una corrida real: con «desde el último disparo» = cualquier
+    nivel, una QUITA del grupo 2 (en contra) reseteaba la escalera del grupo 1
+    y el segundo añadido saltaba a un 3 % por debajo de la quita, no del
+    primer añadido. Los grupos son independientes: cada uno lleva su último
+    disparo. Largo: G1 = escalera de +5 % desde el último disparo (2 veces);
+    G2 = quitar si −4 %. El precio sube a 106 (añadido 1 a ~106), baja a 95
+    (quita de G2), y vuelve a 108: el añadido 2 tiene que esperar a 106 x 1,05
+    = 111,3, así que con un máximo de 108 NO dispara."""
+    close = np.array([100.0] * 3 + list(np.linspace(100, 106, 7)) + list(np.linspace(106, 95, 12))
+                     + list(np.linspace(95, 108, 14)) + [108.0] * 5)
+    niveles = [_nivel(group=0, root_condition=VACIO, trigger="move", move_pct=5, move_dir="favor",
+                      move_ref="last", times=2),
+               _nivel(group=1, root_condition=VACIO, action="reduce", unit="pct", capital_pct=50,
+                      trigger="move", move_pct=4, move_dir="contra", move_ref="entry")]
+    grupos = [{"mode": "individual"}, {"mode": "individual"}]
+    _, _, ejec = _correr(_definicion(niveles, groups=grupos), close, entrada_en=0)
+    kinds = [(e["level"], e["kind"]) for e in ejec]
+    assert kinds.count((1, "add")) == 1, kinds        # solo el primer escalón
+    assert (2, "reduce") in kinds, kinds               # la quita del otro grupo sí

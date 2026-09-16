@@ -511,7 +511,7 @@ def simulate(
     pyr_base = 0.0
     # Estado de la señal de cada nivel DENTRO del trade (se rearma al entrar).
     pyr_prev_sig: list = []
-    pyr_last_px = 0.0
+    pyr_last_px: dict = {}
     pyr_fired: list = []   # contador de disparos por nivel (int)
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
@@ -1612,7 +1612,11 @@ def simulate(
                 # flanco: cruzar el umbral es UN evento, no uno por vela.
                 _mv = lv.get("move")
                 if sig_now and _mv:
-                    _ref = (pyr_last_px if (_mv.get("ref") == "last" and pyr_last_px > 0)
+                    # "Desde el ultimo disparo" = el ultimo anadido/quita DE ESTE
+                    # GRUPO. Los grupos son independientes: una quita del grupo 2
+                    # no puede mover la escalera del grupo 1 (medido: pasaba).
+                    _ult = pyr_last_px.get(lv.get("group", 0), 0.0)
+                    _ref = (_ult if (_mv.get("ref") == "last" and _ult > 0)
                             else entry_price)
                     if _ref > 0:
                         _a_favor = (close[i] - _ref) / _ref * 100.0
@@ -1759,7 +1763,7 @@ def simulate(
                     # usuario, 2026-08-23).
                     pyr_base += add_size
                     pyr_fired[lv_idx] += 1
-                    pyr_last_px = add_px
+                    pyr_last_px[lv.get("group", 0)] = add_px
                     pyr_exec.append({
                         "kind": "add",
                         "idx": exec_idx,
@@ -1827,7 +1831,7 @@ def simulate(
                     size -= red_size
                     pyr_base -= red_size
                     pyr_fired[lv_idx] += 1
-                    pyr_last_px = net_red
+                    pyr_last_px[lv.get("group", 0)] = net_red
                     pyr_exec.append({
                         "kind": "reduce",
                         "idx": exec_idx,
@@ -2119,9 +2123,10 @@ def simulate(
                     # entrada (reentradas incluidas) rearma sus niveles.
                     pyr_fired = [0] * len(pyramid_levels) if pyramid_mode else []
                     pyr_prev_sig = [False] * len(pyramid_levels) if pyramid_mode else []
-                    # Precio del ultimo anadido/quita de ESTA posicion, para los
-                    # niveles por recorrido medidos "desde el ultimo disparo".
-                    pyr_last_px = 0.0
+                    # Precio del ultimo anadido/quita de ESTA posicion, POR GRUPO,
+                    # para los niveles por recorrido medidos "desde el ultimo
+                    # disparo".
+                    pyr_last_px = {}
                     pyr_base = size
                     # Bitacora de las ejecuciones de piramide de ESTA posicion.
                     # Viaja pegada al trade de cierre (`pyr_executions`) para
