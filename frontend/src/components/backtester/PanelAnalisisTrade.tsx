@@ -5,8 +5,9 @@ import Chart from "@/components/backtester/Chart";
 
 /**
  * El grafico de «Analisis por trade», extraido para poder pintarlo en DOS
- * sitios: su propia pestaña y, desplegado, debajo de la fila que se toca en
- * Trades y en Calendario.
+ * sitios: su propia pestaña y, en version compacta, dentro del visor modal
+ * que abre el click en un ticker (Trades y Calendario). GapsDelTicker
+ * tambien lo reutiliza, desplegado bajo su fila.
  *
  * POR QUE UN COMPONENTE Y NO COPIAR EL BLOQUE. Los datos (velas, equity,
  * trades del dia) los carga el PADRE cuando se pide un dia; aqui solo se
@@ -14,8 +15,8 @@ import Chart from "@/components/backtester/Chart";
  * que se desincronizan en cuanto se toque uno — el patron que ya ha mordido en
  * este repo con las listas de indicadores.
  *
- * `compacto` solo baja las alturas: dentro de una fila desplegada no hacen
- * falta los 520 px de la pestaña completa.
+ * `compacto` solo baja las alturas: dentro del visor modal no hacen falta
+ * los 520 px de la pestaña completa.
  */
 interface PanelAnalisisTradeProps {
     dayCandles: DayCandles | null;
@@ -27,8 +28,6 @@ interface PanelAnalisisTradeProps {
     equityLoading?: boolean;
     loadProgress: number;
     compacto?: boolean;
-    /** Solo en el modo desplegado: lleva a la pestaña completa. */
-    onAbrirPestana?: () => void;
 }
 
 export default function PanelAnalisisTrade({
@@ -41,33 +40,11 @@ export default function PanelAnalisisTrade({
     equityLoading,
     loadProgress,
     compacto = false,
-    onAbrirPestana,
 }: PanelAnalisisTradeProps) {
     const alturaMin = compacto ? 380 : 520;
 
     return (
         <div style={{ minHeight: alturaMin, display: "flex", flexDirection: "column", position: "relative" }}>
-            {onAbrirPestana && (
-                <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
-                    <button
-                        onClick={onAbrirPestana}
-                        style={{
-                            background: "none",
-                            border: "0.5px solid var(--color-ec-border)",
-                            borderRadius: 5,
-                            padding: "4px 10px",
-                            fontSize: 11,
-                            fontWeight: 500,
-                            color: "var(--color-ec-text-secondary)",
-                            fontFamily: "var(--color-ec-sans)",
-                            cursor: "pointer",
-                        }}
-                        title="Ver este mismo grafico en la pestaña «Analisis por trade», con mas alto."
-                    >
-                        Abrir en Análisis por trade →
-                    </button>
-                </div>
-            )}
 
             {candlesLoading && (
                 <div
