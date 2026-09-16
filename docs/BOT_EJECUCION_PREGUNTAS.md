@@ -134,8 +134,8 @@
 
 ## H. Locates y préstamo
 
-- [ ] H1. ¿Cuándo se pide el locate: en prealerta (44-59), al confirmar la señal, o cuando el ticker «salta» pronto porque es más barato? (P4)
-- [ ] H2. ¿Cuánto se paga como máximo por acción y como % del beneficio esperado? ¿Se descarta la operación si el locate supera X % del EV? **[dato]** la puerta por EV ya existe en el backtester (`PROYECTO_EV_Y_LOCATES.md`).
+- [x] H1. → R-H-01 (pronto y barato: al entrar en el radar; se compra cuando el EV da ventaja). ¿Cuándo se pide el locate: en prealerta (44-59), al confirmar la señal, o cuando el ticker «salta» pronto porque es más barato? (P4)
+- [x] H2. → R-H-01 (cálculo de EV existente; se actualiza el precio hasta que haya ventaja). ¿Cuánto se paga como máximo por acción y como % del beneficio esperado? ¿Se descarta la operación si el locate supera X % del EV? **[dato]** la puerta por EV ya existe en el backtester (`PROYECTO_EV_Y_LOCATES.md`).
 - [ ] H3. Locate parcial (dan 500 de 1.000): ¿se opera con menos, se pide a otro proveedor o se descarta?
 - [ ] H4. Locate comprado y operación que no se da: ¿coste hundido aceptado? ¿Tope diario de locates «desperdiciados»?
 - [ ] H5. Tope diario y por operación de gasto en locates. **[dato]** una operación se llevó 7.000 $ de 10.000 en el backtest.
@@ -287,6 +287,8 @@ Para repasar el día que llegue el PDF, en este orden:
 11. Cuota y límite de mensajes por segundo. (J18)
 12. Demo o paper. (O1)
 13. Qué NO puede hacer el API (transferencias, ajustes de cuenta). (Q6)
+14. **Lista completa de códigos de LOG y de ERROR que puede devolver el API** (órdenes, locates, conexión), para poder detectarlos y tratarlos uno a uno (Jaume, 16-sep).
+15. Unidades del precio del locate (por acción o por paquete de 100) y cómo se compra (comando, confirmación, qué devuelve si no hay). (H1, H16)
 
 ## Registro
 

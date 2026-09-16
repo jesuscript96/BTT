@@ -441,7 +441,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Parámetros: fracción máxima del acumulado del día (por defecto desactivado).
 - Si la acción falla: sin volumen acumulado (primeros minutos del PM) → se registra 0 y no se limita.
 - Prueba: revisar en sombra la distribución de la fracción registrada.
-- Estado: FIJADA (Jaume, 16-sep) como «medir, no limitar»; se reconfigura si aparecen problemas con tamaños mayores. Cumple M9 (preparado desde el inicio) sin actuar.
+- Estado: FIJADA (Jaume, 16-sep) como «medir, no limitar». El TOPE queda como PENDIENTE DE DECISIÓN A FUTURO: no para ahora ni para la primera implementación; solo cuando los tamaños lo pidan. Cumple M9 (preparado desde el inicio) sin actuar.
 - Origen: B8.
 
 - Principio (Jaume, 16-sep): el algoritmo intenta SIEMPRE el mejor precio disponible, acercándose al 0 % de slippage; el 3 % es el peor caso admitido, no un objetivo. Slippage mediano esperado con todo junto: ≈ 0,9 % en PM, ≈ 0,6 % en RTH.
@@ -490,6 +490,17 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 ~~ESTUDIO PENDIENTE~~ (hecho el 15-sep): Muestra: 300-500 ticker-días al azar de las entradas reales de 1B (PM, run 8b773d84) y 2B (RTH, run 6023ec78) + los ticker-días de fogonazo y de cadena de halts como grupo «no normal». Datos: NBBO consolidado de Databento (EQUS.MINI mbp-1, 2023+) con operaciones, 1-3 $ (OK de Jaume dado el 14-sep). Medir: (1) en el segundo de la señal y los 10 siguientes: spread (cts y %), acciones en el bid, movimiento a 1/5/10 s, probabilidad de ejecución y coste de un límite al bid, bid −0,3 %, bid −0,7 %, y en el ask → margen y tolerancia de B1, y de rebote el slippage «asumible»; (2) en el cruce del stop: segundos de +0 a +1/+3/+5/+10 % sobre el nivel y margen sobre el ask que habría bastado para ejecutar el 90/95/99 % de los stop limit, normal y fogonazo por separado → márgenes de N1, N2, N3. Contrastar con los fills reales del socio (stop-limit ×1,007 del trigger, 95 % ≤ ×1,07) y con los fills de DAS de Jaume (tarea P7). Script nuevo en `D:ot_senales\estudio_cisnes\`.
 
 ### Área H · Locates
+
+### R-H-01 · El locate se pide PRONTO Y BARATO, y se compra cuando el EV lo justifica
+- Situación: una acción entra en el radar (premarket high gap ≥ X según el radar). Es cuando el locate está más barato, aunque el trade aún no se dé. **Regla clave del sistema (Jaume, 16-sep).**
+- Detección: entrada en el radar. El bot pregunta (inquire) el precio del locate de esa acción. Se cree que el precio se da POR ACCIÓN, no por paquete de 100 [API: confirmar; si es por paquete, se recalcula].
+- Acción: (1) enfrentar el precio del locate con el EV de la estrategia que marque el cuadro de mandos, con el MISMO cálculo que ya existe para «¿hay ventaja matemática?» (`PROYECTO_EV_Y_LOCATES.md`, puerta por EV, /evf). (2) Si NO hay ventaja matemática, el bot sigue actualizando el precio del locate de forma continua HASTA que encuentre un precio que, cruzado con el EV, dé ventaja positiva. (3) En ese momento COMPRA los locates y deja de actualizar, salvo que después haga falta más (pirámide, segunda estrategia, locates de un solo uso ya consumidos). (4) Todo registrado en el diario: precio, hora, cantidad, comprado o no, usado o no (H13).
+- Quién la ejecuta: módulo de locates (proceso interno; la prealerta y el radar sirven para esto, no van a Telegram, M8).
+- Parámetros: EV por estrategia (cuadro de mandos); frecuencia de actualización del precio [por decidir]; cantidad a localizar [por decidir: la del tamaño del cuadro de mandos al precio actual].
+- Si la acción falla: el inquire no devuelve nada, no hay locates, la compra no se ejecuta (botón/vía que no funciona): POR DEFINIR, cada caso medido y previsto (H16). Se repasa entero con el PDF.
+- Prueba: sombra: registrar precios de locate por hora desde la entrada en el radar y comparar con el precio en el momento de la señal (P4).
+- Estado: FIJADA en su lógica (Jaume, 16-sep). TODO el proceso (localización, inquire, actualización, compra, errores) se REPASA con el PDF. Añadir a la lista de preguntas al bróker: unidades del precio del locate, lista de códigos de log y de error del API para poder detectarlos.
+- Origen: H1, H2, H13. Decisión del 5-sep («pronto y barato») confirmada el 16-sep.
 
 ### Área J · Infraestructura
 
