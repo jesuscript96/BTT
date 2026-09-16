@@ -1774,6 +1774,18 @@ def simulate(
                         if pyr_step_k[lv_idx] == len(steps):
                             dispara = True  # enganchado el último paso
                             break
+                    if dispara:
+                        # REARME AL DISPARAR, no al ejecutar (PRD 2026-09-16
+                        # del rearme, HALLAZGO 2026-09-16·02). Las llaves
+                        # vuelven a cero pase lo que pase con la ejecución: si
+                        # el añadido se descarta por caja o locates, el camino
+                        # puede recorrerse otra vez (un descarte NO gasta una
+                        # de las `times`; `pyr_fired` solo sube al ejecutar).
+                        # `pyr_step_prev` se CONSERVA: la protección
+                        # anti-metralla de Q3 sigue intacta — para volver a
+                        # enganchar el paso 1 hace falta un flanco nuevo.
+                        pyr_step_k[lv_idx] = 0
+                        pyr_last_latch[lv_idx] = -1
                 if not dispara:
                     continue
                 # El disparo se contabiliza SOLO si llega a ejecutarse (mas
@@ -1947,14 +1959,6 @@ def simulate(
                     # usuario, 2026-08-23).
                     pyr_base += add_size
                     pyr_fired[lv_idx] += 1
-                    # Nivel-camino: llaves reiniciadas para poder recorrer el
-                    # camino entero otra vez (Q4: cada disparo es un recorrido
-                    # completo), CONSERVANDO el prev_sig de cada paso (Q3
-                    # anti-metralla): una condición sostenida no re-dispara,
-                    # hace falta flanco nuevo.
-                    if lv.get("steps_signals") is not None:
-                        pyr_step_k[lv_idx] = 0
-                        pyr_last_latch[lv_idx] = -1
                     pyr_exec.append({
                         "kind": "add",
                         "idx": exec_idx,
@@ -2028,11 +2032,6 @@ def simulate(
                     size -= red_size
                     pyr_base -= red_size
                     pyr_fired[lv_idx] += 1
-                    # Nivel-camino: mismo rearme de llaves que el add (Q3/Q4),
-                    # conservando el prev_sig de cada paso.
-                    if lv.get("steps_signals") is not None:
-                        pyr_step_k[lv_idx] = 0
-                        pyr_last_latch[lv_idx] = -1
                     pyr_exec.append({
                         "kind": "reduce",
                         "idx": exec_idx,
