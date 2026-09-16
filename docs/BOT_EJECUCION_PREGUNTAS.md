@@ -39,7 +39,7 @@
 - [x] B3. → R-B-02 (sigue con R-B-01 hasta el minuto; se acepta lo que haya; sin mínimo). Ejecución parcial: ¿se acepta el resto, se cancela el resto y se protege lo lleno, o hay un mínimo por debajo del cual no compensa (comisión mínima, paquetes de locate de 100)?
 - [ ] B4. Orden rechazada: ¿qué motivos puede dar el bróker (sin locate, sin buying power, halt, precio fuera de banda, lote, ruta cerrada) y hay una respuesta distinta por motivo? **[API]**
 - [ ] B5. Orden enviada sin respuesta (timeout): ¿se asume no enviada, enviada, o se consulta el estado antes de reintentar? ¿Cómo se evita la orden doble? **[API: identificador de orden propio]**
-- [ ] B6. ¿Puede haber dos órdenes vivas del mismo lado sobre el mismo ticker? ¿Cerrojo por ticker mientras haya una orden en vuelo?
+- [x] B6. → R-B-03 (se suman cantidades en una orden, escalera reiniciada, lotes por estrategia en el diario). ¿Puede haber dos órdenes vivas del mismo lado sobre el mismo ticker? ¿Cerrojo por ticker mientras haya una orden en vuelo?
 - [ ] B7. Ruta: ¿cuál por defecto, cuál en premercado, cuál cuando urge salir, y quién decide el cambio? **[API: rutas, horarios y tipos de orden por ruta]**
 - [ ] B8. Tamaño frente a liquidez: ¿tope de acciones por orden como fracción del volumen reciente y del tamaño visible en el ask/bid? ¿Se trocea la orden en tramos?
 - [ ] B9. Precio por debajo de 1 $: ¿decimales admitidos y cómo se redondea el límite? **[API]**

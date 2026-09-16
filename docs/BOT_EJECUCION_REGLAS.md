@@ -415,6 +415,19 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 16-sep). Pendiente futuro: regla específica para tamaños muy grandes.
 - Origen: B3.
 
+- Principio (Jaume, 16-sep): el algoritmo intenta SIEMPRE el mejor precio disponible, acercándose al 0 % de slippage; el 3 % es el peor caso admitido, no un objetivo. Slippage mediano esperado con todo junto: ≈ 0,9 % en PM, ≈ 0,6 % en RTH.
+
+### R-B-03 · Dos entradas del mismo ticker a la vez (estrategia A esperando y llega B)
+- Situación: la orden de entrada de la estrategia A sigue viva (escalera, hasta 60 s) y otra estrategia B (o una pirámide de B) pide entrar en el mismo ticker. La pirámide de la propia A no puede darse: solo se piramida con la base ya dentro.
+- Detección: nueva señal sobre un ticker con orden de entrada viva.
+- Acción: se SUMAN las cantidades en una sola orden de venta (más acciones en corto) y la escalera se REINICIA desde el primer escalón con la cantidad total. El bot registra en el diario qué parte de la cantidad pertenece a cada estrategia (lotes), para repartir después fills, stops y take profits (áreas C y E).
+- Quién la ejecuta: ejecutor + diario.
+- Parámetros: los de R-B-01.
+- Si la acción falla: fill parcial → R-B-02, repartiendo lo ejecutado entre lotes en proporción a lo pedido.
+- Prueba: tabla de casos; sombra.
+- Estado: FIJADA (Jaume, 16-sep). Caso raro: si coinciden, coinciden a la vez (la escalera no dura más de un minuto).
+- Origen: B6.
+
 - Resultado esperado (muestra P12): 1B entra en el 95 % de las señales, 62 % con slippage ≤ 1 %, media 1,1 %; se pierden 5 de cada 100 señales (13 % del bruto de la muestra, 9 casos con el bid a 4-28 % del último precio). 2B entra en el 100 %, 75 % con ≤ 1 %, media 0,78 %.
 
 **B20, guarda de spread: PROVISIONAL, a confirmar en el repaso final y en sombra.** No entrar si (ask − bid) / bid > 5 % en el segundo de la señal. Motivo (`37_slippage_asumible.py`, 16-sep): en 1B el 47 % de las entradas tienen slippage peor que −1 % frente al backtester y el 25 % tienen spread > 10 % con slippage medio −9 %; con spread ≤ 5 % quedan el 56 % de las entradas de 1B (94 % de 2B) con slippage medio −1,0 % (2B −0,75 %). AVISO: las entradas de spread ancho de 1B son de las MÁS rentables en bruto (62 % del beneficio bruto está en entradas con slippage > 1 %, +5,3 % medio/op): el backtester las llena a un precio que no existe, y su rentabilidad NETA real no se sabe hasta la sombra. La muestra (190 ops) no permite fijar el umbral con confianza: el neto por 100 operaciones con filtro 5 % es +198 [IC95 −15, +401] frente a +86 [−220, +384] sin filtro. Slippage que aguanta cada estrategia (esperanza neta = retorno medio bruto − slippage): 1B se queda a cero con 3,5 % y pierde la mitad del edge con 1,7 %; 2B a cero con 3,1 %, mitad con 1,6 %. El «no más del 1 %» de Jaume deja el 70 % del edge.
