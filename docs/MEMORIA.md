@@ -69,6 +69,10 @@ Jaume pidió mirar «memoria madre» / la rama de Álvaro: había dos funciones 
 - **«EV por precio» rehecho** (Jaume: ejes ilegibles y solapados, gráfico muy ancho, quería más barras): barras de 0,5 $ hasta 20 $ (+ «> 20») en divs (sin SVG estirado), línea del cero, etiqueta del eje cada 2 $, hover con tramo/EV/n, barras claras con < 20 trades; a la derecha la tabla con los seis tramos de la puerta (los números que se copian) y arriba el EV medio y el ponderado por nocional.
 - **Panel de la puerta, v3:** los selectores Trades | Días | Fijo y Completo | Por rango van solos, cada uno en su fila a todo el ancho debajo del check (se comían «Con qué EV»); el EV completo en su fila etiqueta | casilla.
 
+### 19:00 — el «no entra en ninguna» era la trampa de las tres capas, no el EV
+
+Jaume corrió PM (A) (4 % del equity, locates 1-20 $, «Fijo → por rango» con sus EV) y la puerta rechazó los 45.934 veredictos. En la corrida guardada: `ev_gate_fixed_pct: 0`, `ev_gate_ranges: None`. `backtester/page.tsx` copia los parámetros del panel campo a campo en TRES sitios (borrador, definición y estrategia guardada) y a esa lista le faltaban los dos campos nuevos; mis pruebas por API sí los mandaban, por eso no lo vi. Arreglado (`b8002b4`) y verificado desde la interfaz (llegan los seis tramos; con 3 % en todos y 100 $ fijos por trade acepta 139 de 4.430: con posiciones de 100 $ un paquete entero de 1-10 $ es un fade del 1-10 %, los paquetes son enteros). Fórmula del fade confirmada a Jaume: `paquetes × precio_paquete / acciones / precio × 100` (un paquete entero = precio del paquete / 100 por acción). Camino + recorrido: fuera el desplegable, el recorrido va SIEMPRE primero (decisión suya).
+
 ### Trampas del día
 
 - **Dos sesiones en el mismo repo:** mientras yo encadenaba cherry-picks, la sesión del bot commiteó en sailor (`9f17b65`, `edc9c8d`, 17:04). No pasó nada porque cada uno añadió sus ficheros por ruta, pero es una carrera real: **nunca `git add -A`** con otra sesión viva, y leer MEMORIA.md justo antes de escribirlo.
