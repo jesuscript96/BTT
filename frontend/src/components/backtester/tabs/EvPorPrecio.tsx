@@ -1,16 +1,18 @@
 "use client";
 
 // EV por PRECIO de entrada (17-sep, Jaume): el EV de la estrategia (media,
-// por trade, de lo que se movió la acción a favor en % del precio, antes de
-// comisiones y de locates) y cómo cambia con el precio de la acción.
+// por trade, de lo que se movió el PRECIO a favor desde la entrada, en % del
+// precio de entrada, antes de comisiones y de locates) y cómo cambia con el
+// precio de la acción.
 //
-// EL MOVIMIENTO SE MIDE POR EL PNL SOBRE EL NOCIONAL, no por el precio de la
-// última salida: los trades llegan agrupados (parciales, quitas, SL de lote
-// en una fila) y `exit_price` es solo el de la última pierna; con un parcial
-// a buen precio y el resto cerrado a EOD peor, salía «negativo» en trades
-// que ganaban dinero (Jaume, 17-sep: «EV negativo en casi todos los rangos y
-// la estrategia es ganadora»). Misma definición que `locates_gate.movimiento_pct`
-// del backend, que es la que usa la puerta por EV.
+// EL MOVIMIENTO ES EL CAMINO DEL PRECIO TRAS LA SEÑAL: del fill de la ENTRADA
+// (no del precio medio con las pirámides: con añadidos en % del equity sobre
+// una base fija en $, la media dependía del capital y el EV cambiaba de signo
+// entre «fijo» y «%») al precio medio de TODAS las salidas ponderado por
+// acciones (no la última pierna: con un parcial a buen precio y el resto a
+// EOD peor salía «negativo» en trades ganadores). Así no depende de cuánto
+// dinero se mete. Misma definición que `locates_gate.movimiento_pct` del
+// backend, que es la que usa la puerta por EV.
 //
 // Dos vistas: barras finas de 0,5 $ (hasta 20 $ y «> 20») para ver la forma,
 // y la tabla con los seis tramos de la puerta «EV fijo por rango» y del
@@ -24,18 +26,25 @@ import InfoTooltip from "@/components/backtester/InfoTooltip";
 const f2 = (x: number) => x.toFixed(2).replace(".", ",");
 const f1 = (x: number) => x.toFixed(1).replace(".", ",");
 
-/** Movimiento a favor en % del precio de entrada, bruto: (pnl + comisiones) /
- *  (precio medio × acciones). Sin pnl/size cae al precio de salida. */
-export function movimientoPct(t: TradeRecord): number | null {
-  const ent = Number(t.avg_entry_price || t.entry_price || 0);
-  if (!(ent > 0)) return null;
-  const size = Number(t.size || 0);
-  if (size > 0 && t.pnl != null && Number.isFinite(Number(t.pnl))) {
-    const bruto = Number(t.pnl) + Number(t.fees || 0);
-    return (bruto / (ent * size)) * 100;
+/** Precio medio de salida ponderado por acciones (piernas exit / reduce /
+ *  lot_stop de `executions`); sin ellas, `exit_price`. */
+function precioSalidaMedio(t: TradeRecord): number {
+  let num = 0, den = 0;
+  for (const e of t.executions || []) {
+    if (e.kind !== "exit" && e.kind !== "reduce" && e.kind !== "lot_stop") continue;
+    const sz = Number(e.size || 0), px = Number(e.price || 0);
+    if (sz > 0 && px > 0) { num += sz * px; den += sz; }
   }
-  const sal = Number(t.exit_price || 0);
-  if (!(sal > 0)) return null;
+  return den > 0 ? num / den : Number(t.exit_price || 0);
+}
+
+/** Movimiento del precio a favor desde el fill de la entrada hasta el precio
+ *  medio de salida, en % del precio de entrada. Bruto e independiente del
+ *  capital. */
+export function movimientoPct(t: TradeRecord): number | null {
+  const ent = Number(t.entry_price || t.avg_entry_price || 0);
+  const sal = precioSalidaMedio(t);
+  if (!(ent > 0) || !(sal > 0)) return null;
   const largo = String(t.direction || "").toLowerCase().startsWith("l");
   return ((largo ? sal - ent : ent - sal) / ent) * 100;
 }
@@ -53,20 +62,18 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
     const finas = Array.from({ length: N_FINAS }, () => [] as number[]);
     const tramos = RANGOS_PRECIO_EV.map(() => [] as number[]);
     const todos: number[] = [];
-    let nocional = 0, bruto = 0;
     for (const t of trades) {
       const m = movimientoPct(t);
       if (m == null) continue;
-      const ent = Number(t.avg_entry_price || t.entry_price || 0);
+      // El tramo es el del precio de ENTRADA (el fill), como el que mira la puerta.
+      const ent = Number(t.entry_price || t.avg_entry_price || 0);
       const k = Math.min(N_FINAS - 1, Math.floor(ent / PASO));
       finas[k].push(m);
       tramos[indiceRango(ent)].push(m);
       todos.push(m);
-      const noc = ent * Number(t.size || 0);
-      if (noc > 0) { nocional += noc; bruto += (m / 100) * noc; }
     }
     return {
-      total: { n: todos.length, ev: media(todos), evPonderado: nocional > 0 ? (bruto / nocional) * 100 : null },
+      total: { n: todos.length, ev: media(todos) },
       finas: finas.map((xs, k) => ({ lo: k * PASO, n: xs.length, ev: media(xs) })),
       tramos: RANGOS_PRECIO_EV.map(([lo, hi], k) => ({ lo, hi, n: tramos[k].length, ev: media(tramos[k]) })),
     };
@@ -89,12 +96,11 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
           <InfoTooltip
             position="left"
             width={360}
-            text="<b>EV de la estrategia</b> = media, por trade, de lo que se movió la acción a favor en % del precio de entrada, antes de comisiones y de locates. Se mide por el PnL del trade sobre su nocional (precio medio × acciones), no por el precio de la última salida: con parciales, la última pierna no cuenta el trade entero. Es la magnitud que se enfrenta al «fade necesario» del locate (el coste del locate sobre ese mismo nocional). <b>Ponderado</b> = lo mismo pero pesando cada trade por su nocional (= PnL bruto total / nocional total). <b>Barras</b>: el mismo EV por tramos de 0,5 $ del precio de entrada, para ver la forma; pasa el ratón para leer cada barra (las claras tienen menos de 20 trades: ruido). <b>Tabla</b>: los seis tramos de la puerta «EV fijo por rango» (Costes opcionales → Puerta por EV → Fijo → Por rango) y del cuadro de mandos: son los números que se copian ahí."
+            text="<b>EV de la estrategia</b> = media, por trade, de lo que se movió el PRECIO a favor desde la entrada, en % del precio de entrada: del fill de la entrada al precio medio de todas las salidas (parciales incluidas, ponderado por acciones). Es el camino del precio tras la señal: bruto (sin comisiones ni locates) e independiente de cuánto dinero se mete o de las pirámides. Es lo que se enfrenta al «fade necesario» del locate. <b>Barras</b>: el mismo EV por tramos de 0,5 $ del precio de entrada, para ver la forma; pasa el ratón para leer cada barra (las claras tienen menos de 20 trades: ruido). <b>Tabla</b>: los seis tramos de la puerta «EV fijo por rango» (Costes opcionales → Puerta por EV → Fijo → Por rango) y del cuadro de mandos: son los números que se copian ahí."
           />
         </span>
         <span className="ml-auto mr-3 text-[10px] font-mono text-[var(--color-ec-text-secondary)]">
           EV {datos.total.ev == null ? "—" : `${f2(datos.total.ev)} %`}
-          {datos.total.evPonderado != null && <span className="text-[var(--color-ec-text-muted)]"> · ponderado {f2(datos.total.evPonderado)} %</span>}
           {" · "}{datos.total.n} trades
         </span>
       </div>

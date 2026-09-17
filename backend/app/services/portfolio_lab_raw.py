@@ -206,6 +206,9 @@ def load_runs(con, wanted: dict[str, tuple[str, str]]) -> dict[str, dict]:
                 first = next((e for e in ejec if isinstance(e, dict) and e.get("kind") == "entry"), None)
                 slim["init_size"] = _f(first.get("size")) if first else 0.0
                 slim["init_price"] = _f(first.get("price")) if first else 0.0
+                # Precio medio de salida (todas las piernas) para el EV en
+                # sombra: `executions` no viaja en el registro recortado.
+                slim["exit_vwap"] = lg.precio_salida_medio(t)
                 trades.append(slim)
             payload = {
                 "run_id": run_id,
@@ -354,8 +357,9 @@ def _locates_cfg(raw: Optional[dict]) -> Optional[dict]:
 def _sombra_de(run: dict) -> lg.ConfigPuerta:
     """EV en sombra de UNA estrategia: sus cortos guardados (todos, sin
     recortar por fechas: es su historia), cerrados antes del instante que se
-    decide. Movimiento = `locates_gate.movimiento_pct` (por el PnL sobre el
-    nocional, bruto), la MISMA definicion que el backtester."""
+    decide. Movimiento = `locates_gate.movimiento_pct` (el camino del precio
+    desde la entrada hasta el precio medio de salida), la MISMA definicion
+    que el backtester."""
     cierres: list[int] = []
     moves: list[float] = []
     for t in run.get("trades") or []:

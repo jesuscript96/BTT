@@ -80,16 +80,27 @@ def test_ventana_cero_es_todo_el_historico():
     assert n30 == 30 and abs(ev30 - 9.0) < 1e-9
 
 
-def test_movimiento_pct_va_por_el_pnl_y_no_por_la_ultima_salida():
-    """Corto a 10 $ x 100 acc: 75 % cerrado a 9 (gana 75 $), el 25 % a EOD a
-    10,4 (pierde 10 $). El trade agrupado gana 65 $ brutos pero su
-    `exit_price` es 10,4: por el precio de la ultima pierna saldria -4 %;
-    por el PnL sobre el nocional, +6,5 %. Es lo que se compara con el fade
-    (el coste del locate sobre ese mismo nocional)."""
-    t = {"direction": "Short", "avg_entry_price": 10.0, "entry_price": 10.0, "exit_price": 10.4,
-         "size": 100.0, "pnl": 65.0 - 1.0, "fees": 1.0, "exit_time_epoch": 1_700_000_000}
+def test_movimiento_pct_es_el_camino_del_precio_desde_la_entrada():
+    """Corto entrado a 10 $ (100 acc); anadido de piramide a 12 $ (300 acc);
+    75 % cerrado a 9 y el 25 % restante a EOD a 10,4. Por el precio de la
+    ultima pierna saldria -4 %; por el PnL sobre el nocional (media 11,5)
+    saldria otro numero que depende de cuanto se anadio; el camino del PRECIO
+    tras la entrada es (10 - 9,35) / 10 = +6,5 %: salida media ponderada
+    9 x 0,75 + 10,4 x 0,25 = 9,35, contra el fill de la ENTRADA. No depende
+    del capital ni de la piramide."""
+    t = {"direction": "Short", "entry_price": 10.0, "avg_entry_price": 11.5, "exit_price": 10.4,
+         "size": 400.0, "pnl": 100.0, "fees": 2.0, "exit_time_epoch": 1_700_000_000,
+         "executions": [
+             {"kind": "entry", "price": 10.0, "size": 100.0},
+             {"kind": "add", "price": 12.0, "size": 300.0},
+             {"kind": "exit", "price": 9.0, "size": 300.0},
+             {"kind": "exit", "price": 10.4, "size": 100.0},
+         ]}
+    assert abs(lg.precio_salida_medio(t) - 9.35) < 1e-9
     assert abs(lg.movimiento_pct(t) - 6.5) < 1e-9
-    # sin pnl/size (registro viejo): cae al precio de salida, como antes
+    # registro recortado (portfolio crudo): `exit_vwap` precalculado
+    assert abs(lg.movimiento_pct({"direction": "Short", "entry_price": 10.0, "exit_vwap": 9.35, "exit_price": 10.4}) - 6.5) < 1e-9
+    # sin nada de eso: la ultima pierna, como antes
     assert abs(lg.movimiento_pct({"direction": "Short", "entry_price": 10.0, "exit_price": 9.5}) - 5.0) < 1e-9
     assert abs(lg.movimiento_pct({"direction": "Long", "entry_price": 10.0, "exit_price": 9.5}) + 5.0) < 1e-9
     assert lg.movimiento_pct({"direction": "Short", "entry_price": 0.0, "exit_price": 9.5}) is None

@@ -183,33 +183,50 @@ def evaluar(
     }
 
 
-def movimiento_pct(t: dict) -> Optional[float]:
-    """Lo que se movio la accion A FAVOR en un trade, en % del precio de
-    entrada, bruto (antes de comisiones y de locates). UNA definicion para
-    el EV en sombra del backtest, el del portfolio en crudo y el «EV por
-    precio» de Charts (el frontend la calca).
+def precio_salida_medio(t: dict) -> float:
+    """Precio medio de SALIDA del trade, ponderado por acciones: las piernas
+    exit / reduce / lot_stop de `executions` (parciales, quitas de piramide,
+    SL de lote y el cierre final). Sin `executions` (registros viejos o
+    recortados), `exit_vwap` si alguien lo precalculo, y si no `exit_price`
+    (la ultima pierna). 0 si no hay nada."""
+    ejec = t.get("executions") or []
+    num = den = 0.0
+    for e in ejec:
+        if not isinstance(e, dict) or e.get("kind") not in ("exit", "reduce", "lot_stop"):
+            continue
+        sz = float(e.get("size") or 0.0)
+        px = float(e.get("price") or 0.0)
+        if sz > 0 and px > 0:
+            num += sz * px
+            den += sz
+    if den > 0:
+        return num / den
+    vw = float(t.get("exit_vwap") or 0.0)
+    if vw > 0:
+        return vw
+    return float(t.get("exit_price") or 0.0)
 
-    Se mide por el PnL sobre el nocional — (pnl + comisiones) / (precio medio
-    x acciones) — y NO por el precio de la ULTIMA salida: los trades que
-    llegan aqui vienen agrupados (parciales, quitas de piramide, SL de lote
-    en una sola fila) y `exit_price` es solo el de la ultima pierna. Con un
-    take profit parcial a buen precio y el resto cerrado a EOD peor, el
-    precio de la ultima pierna decia «negativo» en trades que ganaban dinero;
-    medido el 17-sep: la estrategia entera daba EV negativo siendo ganadora.
-    Es exactamente la magnitud que se compara con el fade: el fade es el
-    coste del locate sobre ese mismo nocional. Sin pnl/size (registros
-    viejos o a mano) cae al precio de salida, como antes.
+
+def movimiento_pct(t: dict) -> Optional[float]:
+    """Lo que se movio el PRECIO a favor en un trade desde la entrada, en % del
+    precio de entrada: el EV de la estrategia como lo entiende Jaume (17-sep,
+    «el EV medio de cada rango de precios sin mas, independiente del
+    capital»). UNA definicion para el EV en sombra del backtest, el del
+    portfolio en crudo y el «EV por precio» de Charts (el frontend la calca).
+
+    Entrada = `entry_price`, el fill de la entrada (NO el precio medio con las
+    piramides: con anadidos en % del equity sobre una base fija en $ la media
+    dependia del capital y el EV cambiaba de signo entre «fijo» y «%»; medido
+    el 17-sep). Salida = precio medio de TODAS las piernas de salida,
+    ponderado por acciones (`precio_salida_medio`): con un parcial a buen
+    precio y el resto a EOD peor, el precio de la ultima pierna decia
+    «negativo» en trades que ganaban. Asi el numero es el camino del precio
+    tras la senal: bruto, sin comisiones ni locates, e igual en «fijo» y en
+    «%» (verificado: 893 trades, mismo EV por tramo con las dos ejecuciones).
     """
-    ent = float(t.get("avg_entry_price") or t.get("entry_price") or 0.0)
-    if ent <= 0:
-        return None
-    size = float(t.get("size") or 0.0)
-    pnl = t.get("pnl")
-    if size > 0 and pnl is not None:
-        bruto = float(pnl) + float(t.get("fees") or 0.0)
-        return bruto / (ent * size) * 100.0
-    sal = float(t.get("exit_price") or 0.0)
-    if sal <= 0:
+    ent = float(t.get("entry_price") or t.get("avg_entry_price") or 0.0)
+    sal = precio_salida_medio(t)
+    if ent <= 0 or sal <= 0:
         return None
     largo = str(t.get("direction", "")).lower().startswith("l")
     return ((sal - ent) if largo else (ent - sal)) / ent * 100.0
@@ -218,9 +235,9 @@ def movimiento_pct(t: dict) -> Optional[float]:
 def sombra_desde_trades(trades: list[dict]) -> tuple[np.ndarray, np.ndarray]:
     """Arrays de sombra a partir de los trades de la pasada SIN puerta.
 
-    Solo cortos. El movimiento es `movimiento_pct` (% del precio, bruto, por
-    el PnL sobre el nocional). Ordenados por cierre para que `searchsorted`
-    funcione.
+    Solo cortos. El movimiento es `movimiento_pct` (el camino del precio tras
+    la entrada, en % del precio, bruto). Ordenados por cierre para que
+    `searchsorted` funcione.
     """
     cierres, moves = [], []
     for t in trades:
