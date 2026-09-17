@@ -6014,3 +6014,16 @@ de Databento, no copiar `users.duckdb`.
 - **Vigía (agente auditor):** veredicto «el trabajo es sólido» — A–F en verde, cifras recalculadas independientemente y cuadran. Avisos incorporados: (1) borrado `.tmp_camino/resumen_runs.json` (baselines falsas por el dedup de jobs); (2) **matiz que se le debe a Álvaro: las dos ganadoras de las 10 maneras suben PnL pero EMPEORAN DD/sharpe/pf** (Sobri escalera: DD −1.08% vs −0.77% base, sharpe 7.82 vs 8.02; G&E fade30: DD −0.39% vs −0.20%, WR 56.3% vs 66.3%) — no son dominantes, son «más R por más riesgo»; (3) las compartidas de Sailor CORRIERON vacías (dataset inexistente aquí no revienta: 0 trades), no «fallaron».
 - **Código tocado:** NINGUNO.
 - **Estado:** genético `20260917_161048_8349` currando (60×30, mejor fitness 15.73 y subiendo en gen 1).
+
+### [HALLAZGO · 2026-09-17 · 02] La página del genético CRASHEA con corridas cuyo config.json no lleva `catalogo`/`sesiones` (corridas creadas por API)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/genetico/page.tsx:1410` — `{detalle.config.catalogo.length} indicadores · {detalle.config.sesgo} · {detalle.config.sesiones.join("/")}`
+- **Qué observé:** al abrir la página del Genético con una corrida mía seleccionada (detalle), toda la página muere con `Cannot read properties of undefined (reading 'length')` — el overlay rojo de Next.js tapa la app entera (reportado por Álvaro: «No me deja abrir el genético»). Las corridas lanzadas desde la UI siempre llevan en su `config.json` un montón de campos (`catalogo`, `sesiones`, `n_condiciones`, `sesgo`, `universo`, `guardas`…) que el router NO exige; las 4 corridas lanzadas por API el 17-sep llevaban solo los obligatorios → `catalogo`/`sesiones` undefined → TypeError en render.
+- **Cómo reproducir:** `POST /api/genetico/corridas` con un config sin `catalogo` ni `sesiones` (p. ej. el de `corridas/20260917_161048_8349/config.json` ANTES del parche) → abrir `http://localhost:3000/genetico` y seleccionar esa corrida → crash.
+- **Evidencia:** captura de Álvaro (overlay rojo, page.tsx:1410:123); config.json original de las 4 corridas (backup en `.tmp_camino/backup_configs/`) sin las claves; config de la corrida vieja `20260915_212216_cc08` (creada desde la UI) CON las claves.
+- **Hipótesis de causa:** HIPÓTESIS — la página se escribió contra la forma completa que manda la UI y nunca vio una corrida sin esos campos.
+- **Impacto:** cualquier corrida creada por API (o futura forma de config más ligera) deja la página del genético INUTILIZABLE hasta que se parchea su config.json.
+- **Qué hice (datos, no código):** parcheé los `config.json` de las 4 corridas mías en `BTT_GENETICO_DIR` añadiendo `catalogo` (los 14 nombres reales de sus genes), `sesiones:["custom"]` (el `market_sessions` real de la estrategia base — ojo, NO `rth`) y `n_condiciones:5`. Backups de los 4 originales en `.tmp_camino/backup_configs/`. Verificado en navegador: la página carga y el detalle pinta `semilla 7 · 5 cond. · 14 indicadores · · custom`. Fix definitivo (guardas `?? []` en page.tsx o defaults en el router) PENDIENTE de decisión — no lo toqué.
+- **Código tocado:** NINGUNO del repo (solo config.json de corridas, fuera del repo).
+- **Estado:** ABIERTO (parcheado para las corridas existentes; el bug de fondo sigue)
