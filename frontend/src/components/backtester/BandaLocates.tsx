@@ -266,12 +266,12 @@ export default function BandaLocates({ result, initCash, backtestParams, ultimaP
             <div style={{ borderTop: `1px solid ${color.border}`, paddingTop: 6 }}>
               <div style={{ fontSize: "0.82em", letterSpacing: "0.1em", textTransform: "uppercase", color: color.textMuted, marginBottom: 2 }}>Cómo leerlo</div>
               <div><b style={{ color: color.copperBright }}>Más del 90 % de historias en positivo</b><span style={{ color: color.textSecondary }}> · la estrategia aguanta los locates; el histórico no fue suerte.</span></div>
-              <div><b style={{ color: color.copperBright }}>Entre el 65 y el 90 %</b><span style={{ color: color.textSecondary }}> · aguanta por poco. Una racha mala normal te deja en pérdidas: o bajas paquetes o aprietas la puerta por EV.</span></div>
+              <div><b style={{ color: color.copperBright }}>Entre el 65 y el 90 %</b><span style={{ color: color.textSecondary }}> · aguanta por poco. Una racha mala normal te deja en pérdidas: o bajas paquetes o aprietas la puerta por EV/MFE/Fade.</span></div>
               <div><b style={{ color: color.copperBright }}>Por debajo del 65 %</b><span style={{ color: color.textSecondary }}> · no aguanta. Que tu corrida acabara ganando es a poco más que cara o cruz.</span></div>
               <div><b style={{ color: color.copperBright }}>Sin locates el 100 % y con locates la mitad</b><span style={{ color: color.textSecondary }}> · el edge existe pero se lo lleva entero el alquiler. El problema es el coste, no la señal.</span></div>
               <div><b style={{ color: color.copperBright }}>Franja ① estrecha y ② ancha</b><span style={{ color: color.textSecondary }}> · lo normal. Deja de preocuparte por la semilla y mira el porcentaje de la ②.</span></div>
             </div>
-            <div style={{ color: color.warning, fontSize: "0.92em" }}>Ojo (1): el bootstrap supone que todas tus operaciones salen de la misma bolsa. Si el edge se ha degradado con los años — y la pestaña Edge dice que sí — mezcla las buenas de 2021 con las malas de ahora y te da una respuesta OPTIMISTA. Ojo (2): con la puerta por EV activa esto es una aproximación, porque con otra semilla la puerta habría dejado entrar otros trades.</div>
+            <div style={{ color: color.warning, fontSize: "0.92em" }}>Ojo (1): el bootstrap supone que todas tus operaciones salen de la misma bolsa. Si el edge se ha degradado con los años — y la pestaña Edge dice que sí — mezcla las buenas de 2021 con las malas de ahora y te da una respuesta OPTIMISTA. Ojo (2): con la puerta por EV/MFE/Fade activa esto es una aproximación, porque con otra semilla la puerta habría dejado entrar otros trades.</div>
           </div>
         </Help>
       </div>
@@ -317,7 +317,7 @@ export default function BandaLocates({ result, initCash, backtestParams, ultimaP
           <>
             {conPuerta && (
               <div style={{ marginTop: 10, fontSize: 11.5, color: color.warning }}>
-                Aproximación: la corrida lleva la puerta por EV y con otra semilla habría dejado entrar otros trades. Aquí se mantienen los tuyos y solo cambia el precio.
+                Aproximación: la corrida lleva la puerta por EV/MFE/Fade y con otra semilla habría dejado entrar otros trades. Aquí se mantienen los tuyos y solo cambia el precio.
               </div>
             )}
 

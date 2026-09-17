@@ -15,6 +15,10 @@ import React, { useRef, useState } from "react";
 import { color, font } from "@/components/ui";
 import { fetchBacktestJobStatus, fetchBacktestResult, startBacktestWithDefinition, type BacktestResult } from "@/lib/api_backtester";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
+import { RANGOS_PRECIO_EV, casillasDesdeRangos, etiquetaRango, rangosDesdeCasillas, type EvRango } from "@/lib/evRangos";
+
+type Metrica = "ev" | "mfe" | "fade";
+const METRICA_LABEL: Record<Metrica, string> = { ev: "EV", mfe: "MFE", fade: "Fade" };
 
 const num: React.CSSProperties = { fontFamily: font.mono, fontVariantNumeric: "tabular-nums" };
 const f1 = (x: number) => x.toFixed(1).replace(".", ",");
@@ -38,7 +42,7 @@ function parseRangos(txt: string): Array<[number, number]> {
   return out;
 }
 
-interface Fila { min: number; max: number; puerta: boolean; result: BacktestResult; jobId: string }
+interface Fila { min: number; max: number; puerta: boolean; result: BacktestResult; jobId: string; medida?: string; valor?: string }
 
 function esperar(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -74,6 +78,14 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
 }) {
   const [txt, setTxt] = useState("1-3, 1-5, 1-10, 2-20");
   const [ev, setEv] = useState(3);
+  // La medida que se enfrenta al fade (EV | MFE | Fade) y si el valor fijo es
+  // uno solo o por tramo de precio; ambos nacen de la corrida abierta.
+  const [metrica, setMetrica] = useState<Metrica>(() => {
+    const m = String(peticion?.ev_gate_metric ?? "ev");
+    return m === "mfe" || m === "fade" ? m : "ev";
+  });
+  const [porRango, setPorRango] = useState<boolean>(() => Array.isArray(peticion?.ev_gate_ranges) && (peticion!.ev_gate_ranges as EvRango[]).some((r) => r && r.ev_pct != null && r.ev_pct > 0));
+  const [casillas, setCasillas] = useState<string[]>(() => casillasDesdeRangos(Array.isArray(peticion?.ev_gate_ranges) ? (peticion!.ev_gate_ranges as EvRango[]) : null));
   const [seed, setSeed] = useState<number>(Number(peticion?.locates_seed) || 1);
   const [conSinPuerta, setConSinPuerta] = useState(true);
   const [filas, setFilas] = useState<Fila[]>([]);
@@ -101,7 +113,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
       for (const [mn, mx] of rangos) {
         for (const puerta of conSinPuerta ? [false, true] : [true]) {
           k += 1;
-          const etq = `${f1(mn)}–${f1(mx)} $ ${puerta ? `con ${medida} fijo ${f1(ev)} %` : "sin puerta"} (${k} de ${total})`;
+          const etq = `${f1(mn)}–${f1(mx)} $ ${puerta ? `con ${medida} fijo ${valorTxt}` : "sin puerta"} (${k} de ${total})`;
           setEstado({ txt: etq, pct: 0 });
           const req: Record<string, unknown> = {
             ...peticion,
@@ -112,14 +124,16 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
             locates_seed: seed,
             ev_gate_enabled: puerta,
             ev_gate_by: "fijo",
-            ev_gate_fixed_pct: ev,
-            ev_gate_ranges: [],
+            ev_gate_metric: metrica,
+            // Por rango no viaja completo: un tramo vacio = en ese tramo no se entra (como en el panel).
+            ev_gate_fixed_pct: porRango ? 0 : ev,
+            ev_gate_ranges: porRango ? rangosDesdeCasillas(casillas) : [],
             ev_gate_default_pct: ev,
             ev_gate_min_trades: 10,
             ev_gate_window: 30,
           };
           const { result, jobId } = await correrYEsperar(req, sigo, (p) => setEstado({ txt: etq, pct: p }));
-          acc.push({ min: mn, max: mx, puerta, result, jobId });
+          acc.push({ min: mn, max: mx, puerta, result, jobId, medida, valor: valorTxt });
           setFilas([...acc]);
           if (pararRef.current) { seguir = false; break; }
         }
@@ -134,8 +148,8 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
   };
 
   const filaSel = sel != null ? filas[sel] : null;
-  // La medida de la puerta viene con la peticion (EV | MFE medio | Fade medio, 17-sep).
-  const medida = ({ ev: "EV", mfe: "MFE", fade: "Fade" } as Record<string, string>)[String(peticion?.ev_gate_metric ?? "ev")] ?? "EV";
+  const medida = METRICA_LABEL[metrica];
+  const valorTxt = porRango ? "por rango" : `${f1(ev)} %`;
   const locatesPagados = (r: BacktestResult) => r.trades.reduce((a, t) => a + (Number(t.pnl ?? 0) - Number((t as unknown as { pnl_with_locates?: number }).pnl_with_locates ?? t.pnl ?? 0)), 0);
 
   return (
@@ -145,7 +159,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
           <span style={{ color: color.copperBright }}>3 · </span>Locates por rangos con {medida} fijo
         </div>
         <div style={{ fontSize: 11, color: color.textSecondary, marginTop: 2, lineHeight: 1.5 }}>
-          La misma estrategia y parámetros de esta corrida, vuelta a correr con varios rangos de locates aleatorios (misma semilla para todos: solo cambia el rango), cada uno sin puerta y con la puerta por EV fijo (el corto entra si ese EV supera su fade necesario). Cada fila es un backtest entero y se lanzan uno detrás de otro: tarda. Pon el EV que midas en IS y, con el periodo en OOS, verás qué tal se sostiene. Pulsa una fila para ver su calendario.
+          La misma estrategia y parámetros de esta corrida, vuelta a correr con varios rangos de locates aleatorios (misma semilla para todos: solo cambia el rango), cada uno sin puerta y con la puerta fija por la medida que elijas (EV, MFE o Fade, completo o por tramo de precio: el corto entra si esa medida supera su fade necesario). Cada fila es un backtest entero y se lanzan uno detrás de otro: tarda. Pon el valor que midas en IS (Charts → EV · MFE · Fade por precio) y, con el periodo en OOS, verás qué tal se sostiene. Pulsa una fila para ver su calendario.
         </div>
       </div>
       <div style={{ padding: "10px 14px" }}>
@@ -155,14 +169,47 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 10.5, color: color.textMuted }}>rangos ($ por paquete)</span>
             <input value={txt} onChange={(e) => setTxt(e.target.value)} style={{ ...control, width: 260 }} />
-            <span style={{ fontSize: 10.5, color: color.textMuted }}>{medida} fijo</span>
-            <input type="number" value={ev} min={0} step={0.5} onChange={(e) => setEv(Number(e.target.value) || 0)} style={{ ...control, width: 64, textAlign: "right" }} />
-            <span style={{ fontSize: 10.5, color: color.textMuted }}>% · semilla</span>
+            <span style={{ fontSize: 10.5, color: color.textMuted }}>medida</span>
+            <div style={{ display: "flex", border: `1px solid ${color.border}` }}>
+              {(["ev", "mfe", "fade"] as const).map((m, i) => (
+                <button key={m} type="button" onClick={() => setMetrica(m)} title={m === "ev" ? "EV: entrada → salida media" : m === "mfe" ? "MFE: lo máximo a favor desde la entrada" : "Fade: entrada → salida final"}
+                        style={{ background: metrica === m ? color.copper : "transparent", color: metrica === m ? "#1A0A00" : color.textSecondary, fontWeight: metrica === m ? 600 : 400, border: 0, borderLeft: i ? `1px solid ${color.border}` : undefined, fontFamily: font.sans, fontSize: 10.5, height: 24, padding: "0 9px", cursor: "pointer" }}>
+                  {METRICA_LABEL[m]}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", border: `1px solid ${color.border}` }}>
+              {([false, true] as const).map((r, i) => (
+                <button key={String(r)} type="button" onClick={() => { setPorRango(r); if (r) setCasillas((prev) => RANGOS_PRECIO_EV.map((_, k) => String(prev[k] ?? "").trim() || String(ev))); }}
+                        style={{ background: porRango === r ? color.copper : "transparent", color: porRango === r ? "#1A0A00" : color.textSecondary, fontWeight: porRango === r ? 600 : 400, border: 0, borderLeft: i ? `1px solid ${color.border}` : undefined, fontFamily: font.sans, fontSize: 10.5, height: 24, padding: "0 9px", cursor: "pointer" }}>
+                  {r ? "por rango" : "completo"}
+                </button>
+              ))}
+            </div>
+            {!porRango && (
+              <>
+                <span style={{ fontSize: 10.5, color: color.textMuted }}>{medida} fijo</span>
+                <input type="number" value={ev} min={0} step={0.5} onChange={(e) => setEv(Number(e.target.value) || 0)} style={{ ...control, width: 64, textAlign: "right" }} />
+                <span style={{ fontSize: 10.5, color: color.textMuted }}>%</span>
+              </>
+            )}
+            <span style={{ fontSize: 10.5, color: color.textMuted }}>· semilla</span>
             <input type="number" value={seed} min={0} step={1} onChange={(e) => setSeed(Math.round(Number(e.target.value) || 0))} style={{ ...control, width: 60, textAlign: "right" }} />
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11, color: color.textPrimary, cursor: "pointer" }}>
               <input type="checkbox" checked={conSinPuerta} onChange={(e) => setConSinPuerta(e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
               también sin puerta
             </label>
+            {porRango && (
+              <div style={{ flexBasis: "100%", display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10.5, color: color.textMuted }}>{medida} por tramo de precio (vacío = en ese tramo no se entra)</span>
+                {RANGOS_PRECIO_EV.map(([lo, hi], k) => (
+                  <label key={k} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, color: color.textMuted, fontFamily: font.mono }}>
+                    {etiquetaRango(lo, hi)}
+                    <input type="number" min={0} step={0.1} placeholder="—" value={casillas[k] ?? ""} onChange={(e) => setCasillas((prev) => { const l = prev.slice(); while (l.length < RANGOS_PRECIO_EV.length) l.push(""); l[k] = e.target.value; return l; })} style={{ ...control, width: 58, textAlign: "right" }} />
+                  </label>
+                ))}
+              </div>
+            )}
             {!estado ? (
               <button type="button" onClick={lanzar} disabled={!rangos.length} style={{ background: color.copper, color: "#1A0A00", border: `1px solid ${color.copper}`, padding: "5px 12px", fontSize: 11.5, fontWeight: 600, cursor: rangos.length ? "pointer" : "not-allowed", opacity: rangos.length ? 1 : 0.5, height: 28 }}>
                 Correr {rangos.length * (conSinPuerta ? 2 : 1)} backtests
@@ -200,7 +247,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
                 return (
                   <tr key={f.jobId} onClick={() => setSel(on ? null : i)} style={{ cursor: "pointer", background: on ? color.bgElevated : undefined }}>
                     <td style={{ ...tdL, fontFamily: font.mono, color: on ? color.copperBright : color.textHigh }}>{f1(f.min)} – {f1(f.max)} $</td>
-                    <td style={{ ...tdL, color: f.puerta ? color.textHigh : color.textMuted }}>{f.puerta ? `EV fijo ${f1(ev)} %` : "sin puerta"}</td>
+                    <td style={{ ...tdL, color: f.puerta ? color.textHigh : color.textMuted }}>{f.puerta ? `${f.medida ?? medida} fijo ${f.valor ?? valorTxt}` : "sin puerta"}</td>
                     <td style={{ ...td, color: m.total_pnl >= 0 ? color.profit : color.loss, fontWeight: 600 }}>{usd(m.total_pnl)}</td>
                     <td style={{ ...td, color: m.total_return_pct >= 0 ? color.profit : color.loss }}>{f1(m.total_return_pct)} %</td>
                     <td style={{ ...td, color: color.loss }}>{f1(m.max_drawdown_pct)} %</td>
@@ -219,7 +266,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
         {filaSel && (
           <div style={{ marginTop: 10, borderTop: `1px solid ${color.border}`, paddingTop: 8 }}>
             <div style={{ fontSize: 11, color: color.textSecondary, marginBottom: 6 }}>
-              Calendario de <b style={{ color: color.textHigh }}>{f1(filaSel.min)} – {f1(filaSel.max)} $ {filaSel.puerta ? `con ${medida} fijo ${f1(ev)} %` : "sin puerta"}</b>.
+              Calendario de <b style={{ color: color.textHigh }}>{f1(filaSel.min)} – {f1(filaSel.max)} $ {filaSel.puerta ? `con ${filaSel.medida ?? medida} fijo ${filaSel.valor ?? valorTxt}` : "sin puerta"}</b>.
             </div>
             <CalendarTab
               dayResults={filaSel.result.day_results || []}
