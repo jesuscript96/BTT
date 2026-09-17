@@ -6077,3 +6077,9 @@ de Databento, no copiar `users.duckdb`.
 - **Verificación:** tsc limpio; E2E en navegador: toggle de chips oculta/restaura (opacidades y sin crash), leyenda y segmentos presentes tras re-run.
 - **Código tocado:** solo `frontend/src/components/backtester/Chart.tsx`. Sin push.
 - **Estado:** hecho y verificado en navegador.
+
+### [TRABAJO · 2026-09-17 · 5] FIX chips interactivos: las etiquetas de lote se ordenaban DESPEGADAS de sus marcadores
+- **Bug (mío, v1 de los chips):** al ocultar un lote se escondían los marcadores EQUIVOCADOS (p. ej. el primer parcial) y el marcador del añadido se quedaba. Causa: `markers.sort()` ordenaba los marcadores por hora PERO el array paralelo de etiquetas de lote (`marcasLotes`) se quedaba en orden de construcción — con varios trades en el día (orden de construcción ≠ cronológico) cada marcador heredaba el lote de OTRO. Fix: ordenar por PARES (`{m, lote}`) para que viajen pegados.
+- **Lo de «la primera piramidación mantiene el SL donde la entrada inicial» NO es bug — son los niveles de verdad:** en 104 de 1002 trades el SL del lote 1 y el SL del trade coinciden EXACTAMENTE (p10 de la separación = 0). Caso AEI 2025-01-02: SL trade 2.6145; lote 1 SL 2.6145 (pivote implícito 2.49 × 1.05 = 2.6145) — el ancla estructural del trade y la del lote caen en el mismo precio, y las dos líneas se solapan (roja discontinua del trade + punteada del color del lote 1, esta última solo el tramo final). Todos los trades tienen stop_loss (0 sin línea), el SL del trade siempre se pinta.
+- **Código tocado:** `frontend/src/components/backtester/Chart.tsx` (orden por pares). Sin push.
+- **Estado:** fix aplicado; tsc limpio.
