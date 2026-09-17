@@ -6054,3 +6054,15 @@ de Databento, no copiar `users.duckdb`.
 - **Semántica de exposición del motor (leída de portfolio_sim):** `unit:'pct'` añade % del equity REALIZADO del momento (compone); `unit:'usd'` añade $ fijos; `size_by_sl` convierte la cifra en RIESGO (tamaño = riesgo/distancia al SL del lote). TOPE DE CAJA (regla 2026-08-23): comprometido = avg_entry_price×size a PRECIOS DE COMPRA; disponible = cash−comprometido; un add que no cabe se RECORTA (anotado `recortado_por_caja`) — la exposición NUNCA supera la caja. Extras: cangrejo B tope de pérdida al SL de toda la posición; max_locates en corto.
 - **Código tocado:** `frontend/src/components/backtester/Chart.tsx`, `backend/app/services/portfolio_sim.py` (sl_px en add), `backend/app/services/backtest_service.py` (_build_executions). En la rama de Álvaro; sin push.
 - **Estado:** hecho y verificado.
+
+### [HALLAZGO · 2026-09-17 · 03] El visor de trade queda en «No hay velas para este trade» tras una carga fallida de velas — y NO se puede reintentar
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/backtester/page.tsx:1104-1107` (catch silencioso de `loadCandles`) + `frontend/src/components/backtester/ResultsTabs.tsx:109-133` (`handleSelectTrade` no fuerza recarga del MISMO día)
+- **Qué observé:** Álvaro abrió el visor de HXHX 2025-12-22 y el modal quedó en «No hay velas para este trade». Verificado: el backend TIENE las velas de ese ticker-día en AMBOS datasets (200, 764 velas), y en el log del backend NO existe petición `/candles/multi` de HXHX desde su navegador (las demás —AEI, INDP, RILYL, YCBD— todas 200). La carga falló en el cliente (probablemente durante el reinicio del backend de la sesión o un fallo transitorio de red), el `catch` solo hace `console.error` y deja `dayCandles=null` — el mismo estado que un día sin datos, con el MISMO mensaje.
+- **Cómo reproducir:** abrir un trade en el visor con el backend caído unos segundos (o cortar la red al cargar) → el modal muestra «No hay velas para este trade» aunque los datos existan. Y con el visor cerrado, volver a hacer click en el MISMO ticker no recarga: la 2ª pulsación cierra el visor, y la 3ª re-selecciona el mismo índice de `selectedDay` → React no re-dispara el efecto → sin petición. Solo se recupera haciendo click en OTRO ticker-día y volviendo, o F5.
+- **Evidencia:** log `backend_restart2.log` (líneas 6565-12194: ninguna petición HXHX del navegador; curls propios 200); curls a `/candles/multi` con ambos datasets (c8bcddc7 y cef3f7b2) devolviendo 764 velas de gap_day.
+- **Impacto:** UX del visor: un fallo puntual de red confunde con «día sin datos» y atrapa al usuario sin botón de reintento.
+- **Fix propuesto (no aplicado):** distinguir error de vacío en `loadCandles` (estado `candlesError`) con botón «Reintentar» en el visor; y/o forzar la recarga en `handleSelectTrade` cuando el día seleccionado no cambia (nonce de recarga).
+- **Código tocado:** NINGUNO (confirmado).
+- **Estado:** ABIERTO
