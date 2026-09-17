@@ -65,7 +65,11 @@ DEF_CON_PYR = {
 
 # Congelados el 2026-09-15 ANTES del camino (ver test_lot_stop_nivel.py, que
 # los capturó con el mismo escenario).
-GOLDEN_CON_PYR = "3c2474e661a9ce09de26e97595f19969cbc1dcc04ff144744eb56a1d9d2ddb4a"
+# En sailor (17-sep) el dorado es el de test_lot_stop_nivel: cada nivel lleva
+# las claves de los grupos de piramide desde el 16-sep (`group`, `sequential`,
+# `move`, `def_index`); verificado que es el MISMO hash que sailor daba antes
+# de integrar el lot_stop y el camino.
+GOLDEN_CON_PYR = "97cc54570067a9f67f00f6bf32232bec2ce944f871b37b29ea2860d7c0455047"
 
 CAMINO_2P = [json.loads(json.dumps(SIEMPRE)), json.loads(json.dumps(SIEMPRE))]
 

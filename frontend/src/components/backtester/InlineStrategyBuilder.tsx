@@ -26,6 +26,7 @@ import type {
   ConditionGroup,
   PostGapPrecondition,
   PyramidingConfig,
+  PyramidLevel,
   ScalpingBlock,
   ScalpingConfig,
 } from "@/types/strategy";
@@ -157,7 +158,7 @@ export interface Draft {
   dataset_id?: string;
   universe_filters?: any;
   // Solo presente si la piramidación está activa con niveles (regla nº1).
-  pyramiding?: { timeframe: string; mode?: 'individual' | 'sequential'; levels: any[] };
+  pyramiding?: { timeframe: string; mode?: 'individual' | 'sequential'; levels: any[]; groups?: { mode: 'individual' | 'sequential' }[] };
   // Igual que pyramiding: solo viaja si el bloque está encendido.
   advanced_model?: any;
   // Scalping: solo viaja si el bloque está encendido y el gatillo tiene condiciones.
@@ -465,7 +466,7 @@ export default function InlineStrategyBuilder({
     if (stratObj.exit_logic) setExitLogic(stratObj.exit_logic);
     if (stratObj.risk_management) setRiskManagement(stratObj.risk_management);
     if (stratObj.pyramiding) {
-      setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, root_condition: l.root_condition ?? { type: 'group', operator: 'AND', conditions: [] }, ...l })) });
+      setPyramiding({ active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, root_condition: l.root_condition ?? { type: 'group', operator: 'AND', conditions: [] }, ...l })), ...(stratObj.pyramiding.groups?.length ? { groups: stratObj.pyramiding.groups } : {}) });
     } else {
       setPyramiding(initialPyramiding);
     }
@@ -619,7 +620,7 @@ export default function InlineStrategyBuilder({
   );
   const [pyramiding, setPyramiding] = useState<PyramidingConfig>(
     stratObj?.pyramiding
-      ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, root_condition: l.root_condition ?? { type: 'group', operator: 'AND', conditions: [] }, ...l })) }
+      ? { active: true, timeframe: stratObj.pyramiding.timeframe || Timeframe.M1, mode: stratObj.pyramiding.mode === 'sequential' ? 'sequential' as const : 'individual' as const, levels: (stratObj.pyramiding.levels || []).map((l: any) => ({ times: 1, root_condition: l.root_condition ?? { type: 'group', operator: 'AND', conditions: [] }, ...l })), ...(stratObj.pyramiding.groups?.length ? { groups: stratObj.pyramiding.groups } : {}) }
       : initialPyramiding
   );
   const [scalping, setScalping] = useState<ScalpingConfig>(
@@ -767,16 +768,24 @@ export default function InlineStrategyBuilder({
           } }
       : {};
 
+  // Un nivel vale si tiene condiciones O dispara por recorrido (16-sep-2026):
+  // antes, sin condiciones no viajaba, y un nivel «+5 % a favor» no tiene
+  // por que llevar ninguna.
+  // `nivelPiramideValido` / `nivelPiramideParaPayload`: los del PyramidingBuilder
+  // (una sola definicion: camino, recorrido o condiciones).
   const pyramidingForPayload = () =>
     pyramiding.active && pyramiding.levels.some(nivelPiramideValido)
       ? { pyramiding: {
             timeframe: pyramiding.timeframe,
-                        mode: pyramiding.mode || 'individual',
+            mode: pyramiding.mode || 'individual',
             // Un nivel-camino (steps) viaja SIN root_condition: son
             // mutuamente excluyentes y el backend rebota con 422 con ambas.
             levels: pyramiding.levels
               .filter(l => nivelPiramideValido(l) && l.capital_pct > 0)
               .map(nivelPiramideParaPayload),
+            // Los grupos solo viajan si se han definido: una estrategia de
+            // antes se guarda igual que antes.
+            ...(pyramiding.groups?.length ? { groups: pyramiding.groups } : {}),
           } }
       : {};
 

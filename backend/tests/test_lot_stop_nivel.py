@@ -67,7 +67,13 @@ DEF_SIN_PYR = {k: v for k, v in DEF_CON_PYR.items() if k != "pyramiding"}
 
 # Congelados el 2026-09-15 ANTES de tocar strategy_engine (script de captura
 # en .tmp_lot_stop/captura_golden.py del scratchpad de la sesión).
-GOLDEN_CON_PYR = "3c2474e661a9ce09de26e97595f19969cbc1dcc04ff144744eb56a1d9d2ddb4a"
+# El dorado CON piramide se recongelo el 17-sep al integrar el lot_stop en
+# sailor: alli cada nivel compilado lleva desde el 16-sep las claves de los
+# grupos de piramide (`group`, `sequential`, `move`, `def_index`), asi que el
+# hash de Alvaro (3c2474e6...) no puede coincidir aunque el lot_stop no toque
+# nada; lo que sigue vigilando este test es que el lot_stop no cambie el
+# compilado de un nivel que no lo declara.
+GOLDEN_CON_PYR = "97cc54570067a9f67f00f6bf32232bec2ce944f871b37b29ea2860d7c0455047"
 GOLDEN_SIN_PYR = "8630d492c467310e09cefb963201904fe8bc65270d3f9114ceb7b40a4aadfe86"
 
 

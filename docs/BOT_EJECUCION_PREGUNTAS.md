@@ -18,9 +18,9 @@
 
 ## A. Señal y datos antes de la orden
 
-- [ ] A1. ¿Cuánto tiempo es válida una señal? Si el ejecutor la recibe 3 s, 30 s o 3 min tarde, ¿se ejecuta, se recalcula o se descarta?
+- [x] A1. → R-B-04 (provisional: 60 s desde el cierre de la vela, con la puerta del 3 %). ¿Cuánto tiempo es válida una señal? Si el ejecutor la recibe 3 s, 30 s o 3 min tarde, ¿se ejecuta, se recalcula o se descarta?
 - [ ] A2. ¿A qué distancia entre el precio de la señal y el precio actual se invalida la entrada (en % y en múltiplos del spread)?
-- [ ] A3. Si el feed de Massive se retrasa o se corta a media señal, ¿con qué retraso máximo se permite ABRIR? ¿Y con cuál solo se GESTIONA lo abierto?
+- [x] A3. → R-D-05 (sin feed: no abrir, mantener, aviso); el umbral de segundos en J2. Si el feed de Massive se retrasa o se corta a media señal, ¿con qué retraso máximo se permite ABRIR? ¿Y con cuál solo se GESTIONA lo abierto?
 - [ ] A4. El bot decide con datos de Massive y ejecuta contra precios de DAS. Cuando difieren (prints tardíos, dark pool), ¿cuál manda para entrar y cuál para el stop? **[dato]** el 93 % de los «fogonazos» del crudo eran prints tardíos que están en la cinta y en las velas, no en el libro.
 - [ ] A5. ¿Cómo se filtra un print erróneo (un tick fuera de rango)? ¿Un solo tick puede disparar una entrada o una salida?
 - [ ] A6. ¿Qué pasa si el reloj del PC o del VPS se desvía? ¿Sincronización de hora obligatoria y comprobada al arrancar?
@@ -34,26 +34,26 @@
 
 ## B. Enviar la orden de entrada
 
-- [ ] B1. Si al enviar el precio ya se ha movido, ¿se pone un límite a qué distancia (ask/bid ± X % o X ticks)? ¿Se persigue al precio hasta un tope y luego se abandona?
-- [ ] B2. ¿Cuántas veces se reintenta una entrada no ejecutada y con qué separación? ¿Tras el último intento se descarta la señal para el día?
-- [ ] B3. Ejecución parcial: ¿se acepta el resto, se cancela el resto y se protege lo lleno, o hay un mínimo por debajo del cual no compensa (comisión mínima, paquetes de locate de 100)?
+- [x] B1. → R-B-01 FIJADA (al bid si <3 %, escalera 1/2/3 % en 60 s si no; tope 3 %). Si al enviar el precio ya se ha movido, ¿se pone un límite a qué distancia (ask/bid ± X % o X ticks)? ¿Se persigue al precio hasta un tope y luego se abandona?
+- [x] B2. → absorbida por R-B-01 (sin reenvíos: la escalera es la persecución; a los 60 s se cancela). ¿Cuántas veces se reintenta una entrada no ejecutada y con qué separación? ¿Tras el último intento se descarta la señal para el día?
+- [x] B3. → R-B-02 (sigue con R-B-01 hasta el minuto; se acepta lo que haya; sin mínimo). Ejecución parcial: ¿se acepta el resto, se cancela el resto y se protege lo lleno, o hay un mínimo por debajo del cual no compensa (comisión mínima, paquetes de locate de 100)?
 - [ ] B4. Orden rechazada: ¿qué motivos puede dar el bróker (sin locate, sin buying power, halt, precio fuera de banda, lote, ruta cerrada) y hay una respuesta distinta por motivo? **[API]**
 - [ ] B5. Orden enviada sin respuesta (timeout): ¿se asume no enviada, enviada, o se consulta el estado antes de reintentar? ¿Cómo se evita la orden doble? **[API: identificador de orden propio]**
-- [ ] B6. ¿Puede haber dos órdenes vivas del mismo lado sobre el mismo ticker? ¿Cerrojo por ticker mientras haya una orden en vuelo?
+- [x] B6. → R-B-03 (se suman cantidades en una orden, escalera reiniciada, lotes por estrategia en el diario). ¿Puede haber dos órdenes vivas del mismo lado sobre el mismo ticker? ¿Cerrojo por ticker mientras haya una orden en vuelo?
 - [ ] B7. Ruta: ¿cuál por defecto, cuál en premercado, cuál cuando urge salir, y quién decide el cambio? **[API: rutas, horarios y tipos de orden por ruta]**
-- [ ] B8. Tamaño frente a liquidez: ¿tope de acciones por orden como fracción del volumen reciente y del tamaño visible en el ask/bid? ¿Se trocea la orden en tramos?
+- [x] B8. → R-B-05 (acumulado del día; se mide siempre, tope desactivado). Tamaño frente a liquidez: ¿tope de acciones por orden como fracción del volumen reciente y del tamaño visible en el ask/bid? ¿Se trocea la orden en tramos?
 - [ ] B9. Precio por debajo de 1 $: ¿decimales admitidos y cómo se redondea el límite? **[API]**
 - [ ] B10. ¿Lote máximo por orden del bróker y cómo se parte? **[API]**
-- [ ] B11. Orden límite en premercado que no se ejecuta en N s: ¿se recoloca, se cancela o se deja viva hasta una hora?
-- [ ] B12. ¿Se entra en la vela siguiente (i+1) como el backtester o al instante? Si el precio de i+1 ya está peor que el tope de entrada, ¿se salta?
-- [ ] B13. Si el fill llega a un precio mucho mejor o peor del esperado (más de X %), ¿se avisa, se recalcula el tamaño o se cierra?
-- [ ] B14. Antes de vender en corto, ¿el bot comprueba SSR (solo se puede vender por encima del bid)? ¿Cómo lo sabe? **[API]**
+- [x] B11. → sin excepciones en PM (R-B-01). Orden límite en premercado que no se ejecuta en N s: ¿se recoloca, se cancela o se deja viva hasta una hora?
+- [x] B12. → R-B-04 (en el instante del cierre de la vela i, por ticks; = open de i+1 del backtest). ¿Se entra en la vela siguiente (i+1) como el backtester o al instante? Si el precio de i+1 ya está peor que el tope de entrada, ¿se salta?
+- [x] B13. → mejor: se acepta; peor por fallo: avisar y mantener con stop. Si el fill llega a un precio mucho mejor o peor del esperado (más de X %), ¿se avisa, se recalcula el tamaño o se cierra?
+- [x] B14. → R-B-01 (suelo bid + 0,01 en SSR); cómo se lee la bandera [API]. Antes de vender en corto, ¿el bot comprueba SSR (solo se puede vender por encima del bid)? ¿Cómo lo sabe? **[API]**
 - [ ] B15. Locate aceptado y DAS rechaza el corto igualmente: ¿qué se hace y cómo se registra? **[API]**
 - [ ] B16. Cancelación no confirmada: ¿se asume viva? Cancelación confirmada y después llega un fill (carrera): ¿cómo se reconcilia? **[API]**
 - [ ] B17. ¿Órdenes ocultas o iceberg? ¿Aportan algo en small caps o no? **[API]**
-- [ ] B18. Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
-- [ ] B19. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
-- [ ] B20. ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
+- [x] B18. → sí: halt cancela la escalera; al reabrir, nueva solo si «dentro» (R-F-04). Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
+- [x] B19. → sí se entra; escalera con suelo bid + 0,01 (R-B-01); bandera SSR [API]. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
+- [x] B20. → R-B-01: tope 3 % por distancia último precio→bid (FIJADO el 16-sep; la guarda por spread descartada). ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
 
 ## C. Stop y protección de la posición
 
@@ -77,19 +77,19 @@
 ## D. Salidas, take profit y pirámides
 
 - [ ] D1. Take profit: ¿límite residente en DAS unido al stop (OCO/bracket) o gestionado por el bot? ¿DAS lo admite? **[API]**
-- [ ] D2. Take profit ejecutado a medias y el precio vuelve: ¿se deja el resto o se cancela?
-- [ ] D3. Salida por hora de la estrategia: ¿límite, mercado, o límite y a los N s mercado? ¿Y si no hay liquidez?
-- [ ] D4. Cierre forzoso de fin de día: ¿a qué hora, con qué margen antes del cierre, y qué pasa si no se consigue (posición overnight no deseada)? **[dato]** quien aguanta al cierre se lleva el T12 a casa (INHD, TENK).
+- [x] D2. → R-D-03 (resto al ask con techo 3 %; si no, stops + aviso; stops ajustados a lo que queda). Take profit ejecutado a medias y el precio vuelve: ¿se deja el resto o se cancela?
+- [x] D3. → R-D-01 (escalera de compra 1/2/3 % en 60 s y luego al ask; sin doble compra). Salida por hora de la estrategia: ¿límite, mercado, o límite y a los N s mercado? ¿Y si no hay liquidez?
+- [x] D4. → R-D-02 (EOD por estrategia, margen, aviso máximo y botón «control humano»). Cierre forzoso de fin de día: ¿a qué hora, con qué margen antes del cierre, y qué pasa si no se consigue (posición overnight no deseada)? **[dato]** quien aguanta al cierre se lleva el T12 a casa (INHD, TENK).
 - [ ] D5. Ejemplo de Jaume: se reduce por take profit y luego OTRA estrategia añade capital al mismo ticker. ¿Se permite? ¿Es nueva posición con su stop? ¿Se prohíbe añadir durante X min tras una reducción?
-- [ ] D6. Reentradas: ¿cuántas por ticker y día? ¿Cuenta como el backtester (−1 es trampa)? ¿Reutiliza el locate?
-- [ ] D7. Salida por deterioro de datos (feed caído): ¿cerrar todo o mantener con el stop residente?
+- [x] D6. → R-D-04 (según la estrategia; locate reutilizado si se puede; excepción halt). Reentradas: ¿cuántas por ticker y día? ¿Cuenta como el backtester (−1 es trampa)? ¿Reutiliza el locate?
+- [x] D7. → R-D-05 (mantener con stops, no abrir, aviso de emergencia). Salida por deterioro de datos (feed caído): ¿cerrar todo o mantener con el stop residente?
 - [x] D8. → R-F-01 caso 4 (con 2 halts, salir a 2-3 % de la banda). Salida anticipada por aviso de halts (cadena de LULD) o por acercarse a la banda: **[dato]** salir a X % de la banda no vale como automatismo (2 % de acierto); una cadena de ≥ 5 LULD acaba en T12 1 de cada 300.
 - [ ] D9. Salida rechazada (ruta cerrada, sin liquidez): ¿cambio de ruta automático y cuántos intentos? **[API]**
-- [ ] D10. Salida por tramos por liquidez: ¿se acepta cerrar en varios trozos y cuánto se espera entre ellos?
-- [ ] D11. ¿El bot puede cerrar una posición que abrió Jaume a mano? (ver K5)
-- [ ] D12. Posición que queda abierta por error después de la hora: ¿aviso inmediato, cierre automático en after-hours o esperar al humano?
-- [ ] D13. Pirámide: ¿cada nivel es una orden nueva con su guarda, o el ejecutor la trata como cambio de posición objetivo? ¿Qué pasa si el nivel 2 se llena y el 1 no?
-- [ ] D14. Take profit parcial cuando la liquidez es pequeña: ¿se sacrifica el parcial y se sale entero?
+- [x] D10. → igual que R-D-01, sin más. Salida por tramos por liquidez: ¿se acepta cerrar en varios trozos y cuánto se espera entre ellos?
+- [x] D11. → R-D-06 (solo con «cerrar todo» de Telegram: ask para cortos, bid para largos). ¿El bot puede cerrar una posición que abrió Jaume a mano? (ver K5)
+- [x] D12. → R-D-02 (aviso máximo por lote; humano; sin after-hours). Posición que queda abierta por error después de la hora: ¿aviso inmediato, cierre automático en after-hours o esperar al humano?
+- [x] D13. → mismo protocolo que las entradas (R-B-01/02/03). Pirámide: ¿cada nivel es una orden nueva con su guarda, o el ejecutor la trata como cambio de posición objetivo? ¿Qué pasa si el nivel 2 se llena y el 1 no?
+- [x] D14. → R-D-03. Take profit parcial cuando la liquidez es pequeña: ¿se sacrifica el parcial y se sale entero?
 
 ## E. Varias estrategias, mismo ticker, capital compartido
 
@@ -98,7 +98,7 @@
 - [ ] E3. ¿Tope de capital por ticker sumando estrategias? Si no cabe, ¿cede la última en llegar o la de menor EV?
 - [ ] E4. ¿Tope de capital total y por sesión (PM frente a RTH)? ¿Reserva para pirámides ya previstas?
 - [ ] E5. Señales simultáneas en tickers distintos sin capital para todas: ¿prioridad por orden de llegada, por EV o por riesgo?
-- [ ] E6. Buying power distinto en PM, intradía y overnight: ¿cómo lo sabe el bot y cómo lo respeta? **[API]**
+- [ ] E6. **RECORDAR: pedir a Jaume las reglas de margen/buying power de su bróker con el PDF (17-sep).** Buying power distinto en PM, intradía y overnight: ¿cómo lo sabe el bot y cómo lo respeta? **[API]**
 - [ ] E7. Si una estrategia se retira o cambia de versión, ¿qué pasa con sus posiciones vivas?
 - [ ] E8. Estrategias con distinto riesgo por operación: ¿unidad de riesgo común o por estrategia? (afecta a congelar el motor)
 - [ ] E9. ¿El locate es de la posición o de la estrategia? Si dos estrategias lo usan, ¿quién paga?
@@ -134,21 +134,22 @@
 
 ## H. Locates y préstamo
 
-- [ ] H1. ¿Cuándo se pide el locate: en prealerta (44-59), al confirmar la señal, o cuando el ticker «salta» pronto porque es más barato? (P4)
-- [ ] H2. ¿Cuánto se paga como máximo por acción y como % del beneficio esperado? ¿Se descarta la operación si el locate supera X % del EV? **[dato]** la puerta por EV ya existe en el backtester (`PROYECTO_EV_Y_LOCATES.md`).
-- [ ] H3. Locate parcial (dan 500 de 1.000): ¿se opera con menos, se pide a otro proveedor o se descarta?
-- [ ] H4. Locate comprado y operación que no se da: ¿coste hundido aceptado? ¿Tope diario de locates «desperdiciados»?
-- [ ] H5. Tope diario y por operación de gasto en locates. **[dato]** una operación se llevó 7.000 $ de 10.000 en el backtest.
+- [x] H1. → R-H-01 (pronto y barato: al entrar en el radar; se compra cuando el EV da ventaja). ¿Cuándo se pide el locate: en prealerta (44-59), al confirmar la señal, o cuando el ticker «salta» pronto porque es más barato? (P4)
+- [x] H2. → R-H-01 (cálculo de EV existente; se actualiza el precio hasta que haya ventaja). ¿Cuánto se paga como máximo por acción y como % del beneficio esperado? ¿Se descarta la operación si el locate supera X % del EV? **[dato]** la puerta por EV ya existe en el backtester (`PROYECTO_EV_Y_LOCATES.md`).
+- [x] H3. → R-H-04 (se opera con lo que hay y se sigue buscando). Locate parcial (dan 500 de 1.000): ¿se opera con menos, se pide a otro proveedor o se descarta?
+- [x] H4. → coste hundido aceptado; tope R-H-03 (3 % de la cuenta). Locate comprado y operación que no se da: ¿coste hundido aceptado? ¿Tope diario de locates «desperdiciados»?
+- [x] H5. → R-H-03: nunca más del 3 % de la cuenta. Tope diario y por operación de gasto en locates. **[dato]** una operación se llevó 7.000 $ de 10.000 en el backtest.
 - [ ] H6. Paquetes de 100: ¿se ajusta el tamaño de la posición al múltiplo del locate? **[dato]** se cobra por paquetes enteros, no es lineal. **PREGUNTAR A JAUME (lo pidió el 15-sep): ¿a partir de cuántas acciones de excedente merece la pena pagar un paquete de locate más?** Ejemplo: el cálculo pide 105 acciones → 2 locates; pagar un locate por 5 acciones es tirar el dinero, así que se juega con 100 y se sacrifican esas 5. Hay que fijar el umbral (en acciones o en % del paquete, o en coste del locate frente al beneficio esperado de esas acciones).
 - [ ] H7. ¿Los locates caducan al cierre? ¿Sirven para reentradas el mismo día? ¿Se pueden devolver y con qué reembolso? **[API]**
 - [ ] H8. El precio del locate cambia entre la consulta y la aceptación: ¿se acepta hasta +X %? **[API]**
 - [ ] H9. Varios proveedores: ¿se elige el más barato automáticamente? **[API]**
 - [ ] H10. ETB (no hace falta locate): ¿cómo se sabe y se salta el paso? HTB imposible: ¿se descarta la señal y se registra? **[API]**
 - [ ] H11. ¿Hay locates en premercado a cualquier hora (04:00)? ¿A qué hora empieza el servicio? **[API]**
-- [ ] H12. Locate aceptado y luego halt o T12: ¿coste del préstamo por días? ¿Quién lo vigila?
-- [ ] H13. Registro de cada locate (precio, hora, usado o no) para alimentar la puerta por EV con datos reales.
+- [x] H12. → avisar; lo gestiona el humano con el bróker. Locate aceptado y luego halt o T12: ¿coste del préstamo por días? ¿Quién lo vigila?
+- [x] H13. → R-H-01 (registrado). Registro de cada locate (precio, hora, usado o no) para alimentar la puerta por EV con datos reales.
 - [ ] H14. Dividendos con corto: si por error queda una posición overnight en fecha ex-dividendo, ¿quién lo detecta?
-- [ ] H15. ¿Tope de locates «en reserva» a la vez (comprados y sin usar) para no quemar la cuenta en prealertas?
+- [ ] H16. **(Añadida por Jaume, 16-sep, problema real del socio)** Al hacer «inquire» de locates el bróker no devuelve nada, o no hay locates disponibles para esa acción: ¿qué hace el bot? ¿Reintenta (cuántas veces, cada cuánto), prueba otro proveedor, descarta la señal y lo registra, avisa? ¿Y si la falta de locates llega en una PIRÁMIDE con posición ya abierta? **[API: qué respuesta da DAS cuando no hay locates]**
+- [x] H15. → R-H-03. ¿Tope de locates «en reserva» a la vez (comprados y sin usar) para no quemar la cuenta en prealertas?
 
 ## I. Capital, riesgo y cortacircuitos
 
@@ -286,6 +287,8 @@ Para repasar el día que llegue el PDF, en este orden:
 11. Cuota y límite de mensajes por segundo. (J18)
 12. Demo o paper. (O1)
 13. Qué NO puede hacer el API (transferencias, ajustes de cuenta). (Q6)
+14. **Lista completa de códigos de LOG y de ERROR que puede devolver el API** (órdenes, locates, conexión), para poder detectarlos y tratarlos uno a uno (Jaume, 16-sep).
+15. Unidades del precio del locate (por acción o por paquete de 100) y cómo se compra (comando, confirmación, qué devuelve si no hay). (H1, H16)
 
 ## Registro
 

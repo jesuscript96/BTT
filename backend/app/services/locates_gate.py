@@ -34,19 +34,83 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 
 NS_POR_DIA = 86_400_000_000_000
 
+# ── EV FIJO, completo o POR RANGO DE PRECIO (Jaume, 17-sep-2026) ──────────
+# La puerta puede enfrentar el fade a un EV FIJO en vez de al rodante: el que
+# Jaume mide en IS para ver que tal va en OOS. Y ese EV fijo puede ser uno
+# solo («completo») o uno por tramo de PRECIO de entrada («por rango»): una
+# accion de 0,40 $ no se mueve como una de 8 $. UNA SOLA DEFINICION para el
+# backtest, el portfolio en crudo, el cuadro de mandos y el /evf del bot: si
+# el tramo se mira en un sitio distinto de otro, el veredicto de la app y el
+# del bot se separan sin que nada avise.
+RANGOS_PRECIO_EV: tuple[tuple[float, Optional[float]], ...] = (
+    (0.0, 0.5), (0.5, 1.0), (1.0, 3.0), (3.0, 5.0), (5.0, 10.0), (10.0, None),
+)
+
+
+def rangos_ev_normalizados(rangos) -> list[dict]:
+    """[{lo, hi, ev_pct}] limpio y ordenado por `lo`. `hi` None = sin techo.
+    Se descarta lo que no sea un tramo con numeros; un tramo sin EV (None o
+    <= 0) se conserva con ev_pct None para que quien lo mire sepa que no hay."""
+    out: list[dict] = []
+    for r in rangos or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            lo = float(r.get("lo", 0.0) or 0.0)
+            hi_raw = r.get("hi")
+            hi = float(hi_raw) if hi_raw not in (None, "") else None
+            ev_raw = r.get("ev_pct")
+            ev = float(ev_raw) if ev_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            continue
+        if hi is not None and hi <= lo:
+            continue
+        if ev is not None and ev <= 0:
+            ev = None
+        out.append({"lo": lo, "hi": hi, "ev_pct": ev})
+    out.sort(key=lambda r: r["lo"])
+    return out
+
+
+def ev_fijo_para_precio(ev_fijo_pct: float, ev_rangos, precio: float) -> tuple[float, str]:
+    """El EV fijo que se enfrenta a un corto que entra a `precio`.
+
+    Con tramos: el del tramo que contiene el precio (lo <= precio < hi; el
+    ultimo sin techo) si tiene EV; si el precio no cae en ninguno o el tramo
+    no tiene EV, el completo. Devuelve (ev, origen) con origen "rango" o
+    "completo", para poder ensenar de donde salio el veredicto."""
+    p = float(precio or 0.0)
+    for r in rangos_ev_normalizados(ev_rangos):
+        if r["ev_pct"] is None:
+            continue
+        if p >= r["lo"] and (r["hi"] is None or p < r["hi"]):
+            return float(r["ev_pct"]), "rango"
+    return float(ev_fijo_pct or 0.0), "completo"
+
 
 @dataclass
 class ConfigPuerta:
     """Lo que la pantalla decide; ver el `?` de cada campo en BacktestPanel."""
-    ventana: int = 30                # cuantos trades o cuantos dias mirar
+    ventana: int = 30                # cuantos trades o cuantos dias mirar (0 = todo)
     por: str = "trades"              # "trades" | "dias"
     ev_defecto_pct: float = 2.0      # EV que se asume mientras no hay historia
     min_trades: int = 10             # por debajo de esto se usa el defecto
+    # 17-sep: modo "fijo" = SIEMPRE se compara `ev_fijo_pct` (o el EV del tramo
+    # de precio de la entrada, si `ev_rangos` lo trae) con el fade; la sombra no
+    # se mira. "rodante" = lo de siempre.
+    modo: str = "rodante"            # "rodante" | "fijo"
+    # Que medida se enfrenta al fade: "ev" | "mfe" | "fade" (17-sep). En
+    # modo rodante la sombra ya viene construida con esa medida; en modo
+    # fijo los numeros los pone el usuario. Aqui viaja para el resumen.
+    metrica: str = "ev"
+    ev_fijo_pct: float = 0.0
+    ev_rangos: list = field(default_factory=list)   # [{lo, hi, ev_pct}]
     # Sombra: senales de la pasada SIN puerta. Ordenadas por instante de cierre.
     sombra_cierre_ns: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
     sombra_move_pct: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
@@ -77,7 +141,12 @@ def ev_rodante_pct(cfg: ConfigPuerta, ahora_ns: int) -> tuple[float, int, bool]:
     if cierres.size == 0:
         return float(cfg.ev_defecto_pct), 0, True
     fin = int(np.searchsorted(cierres, ahora_ns, side="left"))   # cerradas antes
-    if cfg.por == "dias":
+    if int(cfg.ventana) <= 0:
+        # Ventana 0 = TODO el historico cerrado antes (media que se va
+        # ampliando). 17-sep: con 30 trades el EV rodante tiene un error tipico
+        # mayor que el propio EV y la puerta rechaza por ruido.
+        ini = 0
+    elif cfg.por == "dias":
         ini = int(np.searchsorted(cierres, ahora_ns - int(cfg.ventana) * NS_POR_DIA, side="left"))
     else:
         ini = max(0, fin - int(cfg.ventana))
@@ -99,7 +168,12 @@ def evaluar(
     el resto se guarda para poder explicar despues por que."""
     paq = paquetes_marginales(max_corto_hoy, size_nueva)
     fade = fade_necesario_pct(precio, size_nueva, paq, precio_paquete)
-    ev, n, defecto = ev_rodante_pct(cfg, ahora_ns)
+    if cfg.modo == "fijo":
+        ev, origen = ev_fijo_para_precio(cfg.ev_fijo_pct, cfg.ev_rangos, precio)
+        n, defecto = 0, False
+    else:
+        ev, n, defecto = ev_rodante_pct(cfg, ahora_ns)
+        origen = "rodante"
     return {
         "entra": bool(ev > fade),
         "ev_pct": round(ev, 4),
@@ -109,27 +183,132 @@ def evaluar(
         "coste": round(paq * precio_paquete, 4),
         "n_ev": int(n),
         "ev_por_defecto": bool(defecto),
+        "ev_origen": origen,
+        "metrica": cfg.metrica,
     }
 
 
-def sombra_desde_trades(trades: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+def precio_salida_medio(t: dict) -> float:
+    """Precio medio de SALIDA del trade, ponderado por acciones: las piernas
+    exit / reduce / lot_stop de `executions` (parciales, quitas de piramide,
+    SL de lote y el cierre final). Sin `executions` (registros viejos o
+    recortados), `exit_vwap` si alguien lo precalculo, y si no `exit_price`
+    (la ultima pierna). 0 si no hay nada."""
+    ejec = t.get("executions") or []
+    num = den = 0.0
+    for e in ejec:
+        if not isinstance(e, dict) or e.get("kind") not in ("exit", "reduce", "lot_stop"):
+            continue
+        sz = float(e.get("size") or 0.0)
+        px = float(e.get("price") or 0.0)
+        if sz > 0 and px > 0:
+            num += sz * px
+            den += sz
+    if den > 0:
+        return num / den
+    vw = float(t.get("exit_vwap") or 0.0)
+    if vw > 0:
+        return vw
+    return float(t.get("exit_price") or 0.0)
+
+
+def movimiento_pct(t: dict) -> Optional[float]:
+    """Lo que se movio el PRECIO a favor en un trade desde la entrada, en % del
+    precio de entrada: el EV de la estrategia como lo entiende Jaume (17-sep,
+    «el EV medio de cada rango de precios sin mas, independiente del
+    capital»). UNA definicion para el EV en sombra del backtest, el del
+    portfolio en crudo y el «EV por precio» de Charts (el frontend la calca).
+
+    Entrada = `entry_price`, el fill de la entrada (NO el precio medio con las
+    piramides: con anadidos en % del equity sobre una base fija en $ la media
+    dependia del capital y el EV cambiaba de signo entre «fijo» y «%»; medido
+    el 17-sep). Salida = precio medio de TODAS las piernas de salida,
+    ponderado por acciones (`precio_salida_medio`): con un parcial a buen
+    precio y el resto a EOD peor, el precio de la ultima pierna decia
+    «negativo» en trades que ganaban. Asi el numero es el camino del precio
+    tras la senal: bruto, sin comisiones ni locates, e igual en «fijo» y en
+    «%» (verificado: 893 trades, mismo EV por tramo con las dos ejecuciones).
+    """
+    ent = float(t.get("entry_price") or t.get("avg_entry_price") or 0.0)
+    sal = precio_salida_medio(t)
+    if ent <= 0 or sal <= 0:
+        return None
+    largo = str(t.get("direction", "")).lower().startswith("l")
+    return ((sal - ent) if largo else (ent - sal)) / ent * 100.0
+
+
+# ── Las tres medidas de la puerta (17-sep-2026, Jaume) ──────────────────
+# Lo que se enfrenta al fade necesario del locate puede ser el EV (lo de
+# siempre: el camino del precio desde la entrada al precio medio de salida),
+# el MFE (lo MAXIMO que el precio se movio a favor desde la entrada hasta la
+# salida final, lo que ya mide el simulador trade a trade) o el FADE (lo que
+# el precio se movio a favor desde la entrada hasta la salida FINAL, la
+# ultima pierna). Las tres en % del precio de entrada, brutas, desde el fill
+# de la entrada e independientes de las piramides y del capital.
+METRICAS_PUERTA: tuple[str, ...] = ("ev", "mfe", "fade")
+
+def normaliza_metrica(m) -> str:
+    """'ev' (defecto) | 'mfe' | 'fade'. Acepta mayusculas y alias."""
+    x = str(m or "ev").strip().lower()
+    if x in ("mfe", "max", "maximo", "máximo"):
+        return "mfe"
+    if x in ("fade", "salida", "final"):
+        return "fade"
+    return "ev"
+
+
+def fade_salida_pct(t: dict) -> Optional[float]:
+    """Fade desde el fill de la entrada hasta la salida FINAL (la ultima
+    pierna: con tres parciales, el tercero), en % del precio de entrada."""
+    ent = float(t.get("entry_price") or t.get("avg_entry_price") or 0.0)
+    sal = float(t.get("exit_price") or 0.0)
+    if ent <= 0 or sal <= 0:
+        return None
+    largo = str(t.get("direction", "")).lower().startswith("l")
+    return ((sal - ent) if largo else (ent - sal)) / ent * 100.0
+
+
+def mfe_pct(t: dict) -> Optional[float]:
+    """El MFE que ya mide el simulador: lo maximo que el precio se movio a
+    favor desde el fill de la entrada hasta la salida final (con parciales,
+    el mayor de las piernas cubre la vida entera), en % del precio de
+    entrada y acotado por el stop/TP ejecutado."""
+    v = t.get("mfe")
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def metrica_trade(t: dict, metrica: str = "ev") -> Optional[float]:
+    """La medida elegida de UN trade (`normaliza_metrica`)."""
+    m = normaliza_metrica(metrica)
+    if m == "mfe":
+        return mfe_pct(t)
+    if m == "fade":
+        return fade_salida_pct(t)
+    return movimiento_pct(t)
+
+
+def sombra_desde_trades(trades: list[dict], metrica: str = "ev") -> tuple[np.ndarray, np.ndarray]:
     """Arrays de sombra a partir de los trades de la pasada SIN puerta.
 
-    Solo cortos. El movimiento es en % del precio, bruto: (entrada - salida) /
-    entrada, con el precio MEDIO de la posicion (con piramide es el que manda).
-    Ordenados por cierre para que `searchsorted` funcione.
+    Solo cortos. El valor de cada trade es `metrica_trade` (EV, MFE o fade,
+    en % del precio, bruto). Ordenados por cierre para que `searchsorted`
+    funcione.
     """
     cierres, moves = [], []
     for t in trades:
         if str(t.get("direction", "")).lower().startswith("l"):
             continue
-        ent = float(t.get("avg_entry_price") or t.get("entry_price") or 0.0)
-        sal = float(t.get("exit_price") or 0.0)
         ex = t.get("exit_time_epoch")
-        if ent <= 0 or sal <= 0 or ex is None:
+        mv = metrica_trade(t, metrica)
+        if mv is None or ex is None:
             continue
         cierres.append(int(ex) * 1_000_000_000)
-        moves.append((ent - sal) / ent * 100.0)
+        moves.append(mv)
     if not cierres:
         return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64)
     orden = np.argsort(np.asarray(cierres, dtype=np.int64), kind="stable")

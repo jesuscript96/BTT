@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from app.services.portfolio_sim import (
-    atr_para_stop, pivotes_para_stop, necesita_pivotes,
+    pivotes_para_stop, necesita_pivotes,
 )
 from app.services.strategy_engine import (
     translate_strategy, _parse_risk_management, compile_strategy_def,
@@ -992,6 +992,12 @@ def run_backtest(
                 # recorta con el resto. Si no estuviera, el stop por VWAP
                 # caeria al respaldo SIN AVISAR.
                 "vwap": mini_df["vwap"].values.astype(np.float64),
+                # El ATR del stop, igual: del dia ENTERO (desde la primera vela
+                # del premercado, solo velas anteriores a cada una) y recortado
+                # aqui. Antes se recalculaba sobre los arrays ya recortados y en
+                # RTH las 14 primeras velas iban sin ATR (respaldo o sin entrar)
+                # mientras el bot, con el mismo frame, si lo tenia (16-sep).
+                "atr": (mini_df["atr"].values.astype(np.float64) if "atr" in mini_df else None),
             }
             
             # Apply mask to signals
@@ -1230,9 +1236,11 @@ def run_backtest(
                 pm_highs=arrays.get("pm_high"),
                 pm_lows=arrays.get("pm_low"),
                 prev_highs=arrays.get("prev_high"),
-                # STOP POR ATR: se calcula SOLO si la estrategia lo pide, para
-                # no pagarlo en todos los ticker-dias. Periodo 14, como antes.
-                atrs=(atr_para_stop(arrays) if hs_type == "ATR Multiplier" else None),
+                # STOP POR ATR: la columna de market_frame (dia entero, periodo
+                # 14, recortada con la sesion como hod/vwap). NO se recalcula
+                # sobre los arrays recortados: en RTH eso dejaba las 14
+                # primeras velas sin ATR y al bot no (16-sep, Jaume).
+                atrs=(arrays.get("atr") if hs_type == "ATR Multiplier" else None),
                 hs_atr_fallback_pct=hs.get("atr_fallback_pct"),
                 hs_struct_fallback_pct=hs.get("struct_fallback_pct"),
                 # Los pivotes SOLO se calculan si el stop los pide (o su
@@ -1365,7 +1373,12 @@ def run_backtest(
         **({"ev_gate": {**_puerta, "ventana": int(ev_gate.ventana), "por": ev_gate.por,
                         "ev_defecto_pct": float(ev_gate.ev_defecto_pct),
                         "min_trades": int(ev_gate.min_trades),
-                        "n_sombra": int(ev_gate.sombra_cierre_ns.size)}} if ev_gate is not None else {}),
+                        "n_sombra": int(ev_gate.sombra_cierre_ns.size),
+                        # 17-sep: EV fijo (completo o por rango de precio).
+                        "modo": str(getattr(ev_gate, "modo", "rodante")),
+                        "metrica": str(getattr(ev_gate, "metrica", "ev")),
+                        "ev_fijo_pct": float(getattr(ev_gate, "ev_fijo_pct", 0.0) or 0.0),
+                        "ev_rangos": list(getattr(ev_gate, "ev_rangos", []) or [])}} if ev_gate is not None else {}),
         # Resumen del coste de Black Swan. Solo con el coste activo: sin el, el
         # resultado no lleva la clave.
         **({"bswan": {"enabled": True, **bswan.resumen(), **_bs_stats,

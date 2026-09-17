@@ -11,6 +11,7 @@ import {
 } from "lightweight-charts";
 import type { TradeRecord } from "@/lib/api_backtester";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
+import { metricaTrade } from "@/components/backtester/tabs/EvPorPrecio";
 
 interface RollingEVChartProps {
     trades: TradeRecord[];
@@ -18,29 +19,29 @@ interface RollingEVChartProps {
     isDarkMode?: boolean;
 }
 
-type Unidad = "R" | "pct";
+type Unidad = "R" | "pct" | "mfe" | "fade";
+
+const UNIDAD_TITULO: Record<Unidad, string> = { R: "EV", pct: "EV", mfe: "MFE", fade: "Fade" };
 
 /** Recorrido de UNA operación, en la unidad pedida.
  *
- *  R    múltiplos de riesgo — «cuántos riesgos gano por operación»
- *  pct  % del precio de entrada — «cuánto se movió el precio a mi favor»
+ *  R     múltiplos de riesgo — «cuántos riesgos gano por operación»
+ *  pct   EV en % del precio de entrada: de la entrada al precio medio de todas
+ *        las salidas (17-sep: antes miraba solo la última pierna y el precio
+ *        medio con las pirámides, y salía negativo en trades ganadores)
+ *  mfe   lo máximo que se movió el precio a favor desde la entrada
+ *  fade  de la entrada a la salida FINAL
  *
- * NO SON CONVERTIBLES ENTRE SÍ con un factor fijo: dependen de la distancia al
- * stop de cada operación. 0,15 R puede ser un 6 % en una entrada con el stop
- * lejos y un 1 % en otra con el stop pegado.
+ * Los % son EXACTAMENTE los de la puerta por EV/MFE/Fade y de «EV · MFE · Fade
+ * por precio» (`metricaTrade`, calcado de `locates_gate.metrica_trade`).
  *
- * El % se saca de `entry_price`/`exit_price` y NO de `r_multiple`: el motor
- * guarda ese campo redondeado a dos decimales, y sobre operaciones de céntimos
- * el redondeo se come justo el margen que se quiere medir (un fade de locates
- * ronda el 1 %).
+ * R y % NO SON CONVERTIBLES ENTRE SÍ con un factor fijo: dependen de la
+ * distancia al stop de cada operación. 0,15 R puede ser un 6 % en una entrada
+ * con el stop lejos y un 1 % en otra con el stop pegado.
  */
 function recorrido(t: TradeRecord, u: Unidad): number {
     if (u === "R") return t.r_multiple ?? 0;
-    const entrada = t.avg_entry_price ?? t.entry_price;
-    if (!entrada) return 0;
-    const bruto = (t.exit_price - entrada) / entrada * 100;
-    // En corto se gana cuando el precio baja.
-    return String(t.direction).toLowerCase().startsWith("short") ? -bruto : bruto;
+    return metricaTrade(t, u === "pct" ? "ev" : u) ?? 0;
 }
 
 /** Esperanza matemática de un conjunto de operaciones.
@@ -54,6 +55,10 @@ function recorrido(t: TradeRecord, u: Unidad): number {
  */
 function ev(ts: TradeRecord[], u: Unidad = "R"): number {
     if (!ts.length) return 0;
+    // En % del precio la media simple YA es WR × ganancia − (1 − WR) × pérdida
+    // (cada trade entra con su signo); separar por el signo del PnL fallaría
+    // con el MFE, que nunca es negativo.
+    if (u !== "R") return ts.reduce((s, t) => s + recorrido(t, u), 0) / ts.length;
     const wins = ts.filter((t) => t.pnl > 0);
     const losses = ts.filter((t) => t.pnl <= 0);
     const media = (xs: TradeRecord[]) =>
@@ -277,12 +282,16 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
         <div className="flex flex-col h-full transition-colors">
             <div className="px-3 py-2 flex items-center justify-between">
                 <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
-                    Rolling EV <span style={{ opacity: 0.6, fontWeight: 400 }}>
+                    Rolling {UNIDAD_TITULO[unidad]} <span style={{ opacity: 0.6, fontWeight: 400 }}>
                         ({unidad === "R" ? "en R" : "en % del precio"})
                     </span>
                     <InfoTooltip
                         position="left"
-                        text={unidad === "R"
+                        text={unidad === "mfe"
+                            ? "MFE móvil, en % DEL PRECIO DE ENTRADA: la media, por trade, de lo MÁXIMO que se movió el precio a favor desde la entrada hasta la salida final. Ventana de N trades (T) o de N días (D) con todos los trades de esos días. Es una de las tres medidas que la puerta puede enfrentar al fade del locate."
+                            : unidad === "fade"
+                            ? "Fade móvil, en % DEL PRECIO DE ENTRADA: la media, por trade, de lo que se movió el precio a favor desde la entrada hasta la salida FINAL (la última pierna). Ventana de N trades (T) o de N días (D). Es una de las tres medidas que la puerta puede enfrentar al fade del locate."
+                            : unidad === "R"
                             ? "Esperanza Matemática (EV) móvil, en MÚLTIPLOS DE RIESGO: 0,15 significa que ganas de media 0,15 veces tu riesgo por operación. Con riesgo 300 $, son 45 $. OJO: no es un %, y no se puede copiar al campo EV del cuadro de mandos."
                             : "Esperanza Matemática (EV) móvil, en % DEL PRECIO DE ENTRADA: cuánto se mueve el precio a tu favor de media. ESTE es el que se compara con el coste de los locates y el que va en el campo EV del cuadro de mandos."}
                     />
@@ -308,13 +317,17 @@ export default function RollingEVChart({ trades, riskR, isDarkMode = false }: Ro
                         sirve para decidir sobre locates, porque el coste del
                         locate también es un % del precio. */}
                     <div className="flex text-[10px] font-mono gap-2.5">
-                        {([["R", "R"], ["pct", "%"]] as const).map(([val, label]) => (
+                        {([["R", "R"], ["pct", "EV %"], ["mfe", "MFE %"], ["fade", "Fade %"]] as const).map(([val, label]) => (
                             <button
                                 key={val}
                                 onClick={() => setUnidad(val)}
                                 title={val === "R"
                                     ? "En múltiplos de riesgo: cuántos riesgos ganas por operación"
-                                    : "En % del precio de entrada: cuánto se mueve el precio a tu favor. Es el que se compara con el coste de los locates."}
+                                    : val === "pct"
+                                    ? "EV en % del precio de entrada: de la entrada al precio medio de todas las salidas. Es el que se compara con el coste de los locates."
+                                    : val === "mfe"
+                                    ? "MFE en % del precio de entrada: lo máximo que se movió el precio a favor desde la entrada."
+                                    : "Fade en % del precio de entrada: de la entrada a la salida final."}
                                 className={`px-2 py-0.5 rounded transition-colors ${unidad === val
                                     ? "text-[var(--color-ec-text-primary)] font-bold bg-[rgba(216,122,61,0.15)] border border-[rgba(216,122,61,0.3)]"
                                     : "text-[var(--color-ec-text-secondary)] hover:text-[var(--color-ec-text-primary)] border border-transparent"

@@ -428,6 +428,69 @@ class ExecIn(BaseModel):
     locates_seed: int = 1
 
 
+class RawEvRangoIn(BaseModel):
+    """Un tramo de precio de entrada con su EV (ver locates_gate.RANGOS_PRECIO_EV)."""
+    lo: float = Field(ge=0)
+    hi: float | None = None
+    ev_pct: float | None = None
+
+
+class RawGateIn(BaseModel):
+    """Puerta de los cortos. mode "ev": la cuenta del backtester (locates_gate)
+    con el EV rodante de la estrategia (EV por defecto hasta que hay
+    historia; ventana 0 = todo el historico) contra el fade de los paquetes
+    DE MAS respecto a lo ya alquilado hoy. mode "ev_fixed": SIEMPRE se
+    compara ev_fixed_pct con el fade (el EV medido en IS, para ver OOS); con
+    `ev_ranges`, el EV del tramo de precio de la entrada (17-sep)."""
+    mode: Literal["ev", "ev_fixed"] = "ev"
+    # Que medida se enfrenta al fade necesario (17-sep): "ev" (camino del
+    # precio hasta la salida media), "mfe" (maximo a favor) o "fade" (hasta la
+    # salida final). En rodante decide la sombra; en fijo, los numeros los
+    # pone el usuario y esto solo etiqueta.
+    metric: Literal["ev", "mfe", "fade"] = "ev"
+    ev_fixed_pct: float = Field(default=3.0, ge=0)
+    ev_ranges: list[RawEvRangoIn] | None = None
+    ventana: int = Field(default=30, ge=0)
+    por: Literal["trades", "dias"] = "trades"
+    ev_defecto_pct: float = 2.0
+    min_trades: int = Field(default=10, ge=1)
+
+
+class RawLocatesIn(BaseModel):
+    """Locates de la CUENTA (un broker para todas las estrategias). Con este
+    bloque, lo de las filas se ignora. `shared`: un alquiler por ticker-dia
+    sobre el maximo en corto a la vez sumando estrategias."""
+    mode: Literal["none", "fixed", "random"] = "none"
+    cost: float = Field(default=0.0, ge=0)
+    min: float = Field(default=1.0, ge=0)
+    max: float = Field(default=10.0, ge=0)
+    seed: int = 1
+    shared: bool = True
+    gate: RawGateIn | None = None
+    band_seeds: int = Field(default=0, ge=0, le=500)
+
+
+class RawScalingIn(BaseModel):
+    """Escalado y pesos sobre las corridas en crudo (ver _Escalado): riesgo
+    TOTAL por trade repartido entre estrategias; los R de las filas se
+    ignoran. cap_pct: tope de la SUMA, % del capital del dia."""
+    model: Literal["fixed", "percent", "kelly", "fixed_ratio"] = "kelly"
+    base_risk: float = Field(default=100.0, ge=0)
+    pct: float = Field(default=1.0, ge=0)
+    delta: float = Field(default=500.0, ge=0)
+    # Fraccion de Kelly: 1 = la optima; 0.5 / 0.25 las de la practica; se
+    # admite cualquier valor (hasta 3, por si se quiere ver el sobre-Kelly).
+    kelly_mult: float = Field(default=0.5, gt=0, le=3)
+    # per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
+    # global: la Kelly del conjunto repartida por las Kellys propias.
+    kelly_scope: Literal["per_strategy", "global"] = "per_strategy"
+    cap_pct: float = Field(default=10.0, ge=0)
+    rebalance: Literal["D", "W", "M"] = "M"
+    lookback_days: int = Field(default=90, ge=1)
+    weighting: Literal["equal", "hrp", "momentum", "ev", "dd"] = "hrp"
+    floor: float = Field(default=0.05, ge=0, le=1)
+
+
 class RawReq(BaseModel):
     """Portfolio EN CRUDO (ver portfolio_lab_raw): las corridas guardadas
     sumadas con la ejecucion fijada AQUI, estrategia por estrategia; lo que
@@ -443,6 +506,9 @@ class RawReq(BaseModel):
     # Solo una estrategia abierta a la vez por accion (ver portfolio_lab_raw).
     one_per_ticker: bool = False
     monthly_expenses: float = Field(default=0.0, ge=0)
+    # 16-sep: locates de la cuenta (compartidos + puerta + banda) y escalado.
+    locates: RawLocatesIn | None = None
+    scaling: RawScalingIn | None = None
     start_date: str | None = None
     end_date: str | None = None
 
@@ -493,6 +559,8 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
             "cap_mode": req.cap_mode,
             "one_per_ticker": req.one_per_ticker,
             "monthly_expenses": req.monthly_expenses,
+            "locates": req.locates.model_dump() if req.locates else None,
+            "scaling": req.scaling.model_dump() if req.scaling else None,
             "start_date": req.start_date,
             "end_date": req.end_date,
         })

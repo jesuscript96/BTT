@@ -19,6 +19,7 @@ import { color, font } from "@/components/ui";
 import { Help } from "@/components/robustez/help";
 import { pedirBandaLocates, type BandaLocates as Banda, type BootstrapLocates } from "@/lib/api_locates";
 import { Histograma } from "@/components/backtester/tabs/edge/charts";
+import RangosLocatesBacktest from "./RangosLocatesBacktest";
 
 const num: React.CSSProperties = { fontFamily: font.mono, fontVariantNumeric: "tabular-nums" };
 const f2 = (x: number) => x.toFixed(2).replace(".", ",");
@@ -201,8 +202,9 @@ function HistoResultados({ mc, real }: { mc: BootstrapLocates; real: number | nu
 }
 
 /* ---- el bloque ---- */
-export default function BandaLocates({ result, initCash, backtestParams }: {
+export default function BandaLocates({ result, initCash, backtestParams, ultimaPeticion = null }: {
   result: BacktestResult; initCash: number; backtestParams?: Record<string, unknown>;
+  ultimaPeticion?: Record<string, unknown> | null;
 }) {
   const rnd = result.locates_random;
   const conPuerta = !!result.ev_gate;
@@ -264,12 +266,12 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
             <div style={{ borderTop: `1px solid ${color.border}`, paddingTop: 6 }}>
               <div style={{ fontSize: "0.82em", letterSpacing: "0.1em", textTransform: "uppercase", color: color.textMuted, marginBottom: 2 }}>Cómo leerlo</div>
               <div><b style={{ color: color.copperBright }}>Más del 90 % de historias en positivo</b><span style={{ color: color.textSecondary }}> · la estrategia aguanta los locates; el histórico no fue suerte.</span></div>
-              <div><b style={{ color: color.copperBright }}>Entre el 65 y el 90 %</b><span style={{ color: color.textSecondary }}> · aguanta por poco. Una racha mala normal te deja en pérdidas: o bajas paquetes o aprietas la puerta por EV.</span></div>
+              <div><b style={{ color: color.copperBright }}>Entre el 65 y el 90 %</b><span style={{ color: color.textSecondary }}> · aguanta por poco. Una racha mala normal te deja en pérdidas: o bajas paquetes o aprietas la puerta por EV/MFE/Fade.</span></div>
               <div><b style={{ color: color.copperBright }}>Por debajo del 65 %</b><span style={{ color: color.textSecondary }}> · no aguanta. Que tu corrida acabara ganando es a poco más que cara o cruz.</span></div>
               <div><b style={{ color: color.copperBright }}>Sin locates el 100 % y con locates la mitad</b><span style={{ color: color.textSecondary }}> · el edge existe pero se lo lleva entero el alquiler. El problema es el coste, no la señal.</span></div>
               <div><b style={{ color: color.copperBright }}>Franja ① estrecha y ② ancha</b><span style={{ color: color.textSecondary }}> · lo normal. Deja de preocuparte por la semilla y mira el porcentaje de la ②.</span></div>
             </div>
-            <div style={{ color: color.warning, fontSize: "0.92em" }}>Ojo (1): el bootstrap supone que todas tus operaciones salen de la misma bolsa. Si el edge se ha degradado con los años — y la pestaña Edge dice que sí — mezcla las buenas de 2021 con las malas de ahora y te da una respuesta OPTIMISTA. Ojo (2): con la puerta por EV activa esto es una aproximación, porque con otra semilla la puerta habría dejado entrar otros trades.</div>
+            <div style={{ color: color.warning, fontSize: "0.92em" }}>Ojo (1): el bootstrap supone que todas tus operaciones salen de la misma bolsa. Si el edge se ha degradado con los años — y la pestaña Edge dice que sí — mezcla las buenas de 2021 con las malas de ahora y te da una respuesta OPTIMISTA. Ojo (2): con la puerta por EV/MFE/Fade activa esto es una aproximación, porque con otra semilla la puerta habría dejado entrar otros trades.</div>
           </div>
         </Help>
       </div>
@@ -315,7 +317,7 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
           <>
             {conPuerta && (
               <div style={{ marginTop: 10, fontSize: 11.5, color: color.warning }}>
-                Aproximación: la corrida lleva la puerta por EV y con otra semilla habría dejado entrar otros trades. Aquí se mantienen los tuyos y solo cambia el precio.
+                Aproximación: la corrida lleva la puerta por EV/MFE/Fade y con otra semilla habría dejado entrar otros trades. Aquí se mantienen los tuyos y solo cambia el precio.
               </div>
             )}
 
@@ -455,6 +457,13 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
           </>
         )}
       </div>
+      <RangosLocatesBacktest
+        peticion={ultimaPeticion}
+        initCash={initCash}
+        riskR={Number(backtestParams?.risk_r || 0)}
+        riskType={backtestParams?.risk_type as string | undefined}
+        monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
+      />
     </div>
   );
 }

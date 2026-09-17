@@ -51,6 +51,8 @@ interface ResultsTabsProps {
   strategyId?: string;
   datasetId?: string;
   backtestParams?: Record<string, unknown>;
+  /** La peticion entera de la corrida (para relanzarla con otros rangos de locates). */
+  ultimaPeticion?: Record<string, unknown> | null;
   onSelectDay?: (idx: number) => void;
   /** Pestaña Compartidas: abrir una compartida como BORRADOR en el builder,
    *  para revisarla y ajustarla antes de correr nada. */
@@ -73,6 +75,7 @@ export default function ResultsTabs({
   strategyId = "",
   datasetId = "",
   backtestParams = {},
+  ultimaPeticion = null,
   onSelectDay,
   onOpenSharedDraft,
 }: ResultsTabsProps) {
@@ -559,7 +562,7 @@ export default function ResultsTabs({
           </div>
           <div style={{ display: chartsSubTab === "banda_locates" ? "block" : "none" }}>
             {mountedTabs.has("charts_optimization") && mountedChartsSub.has("banda_locates") && (
-            <BandaLocates result={result} initCash={initCash} backtestParams={backtestParams} />
+            <BandaLocates result={result} initCash={initCash} backtestParams={backtestParams} ultimaPeticion={ultimaPeticion} />
             )}
           </div>
           <div style={{ display: chartsSubTab === "optimization" ? "block" : "none" }}>

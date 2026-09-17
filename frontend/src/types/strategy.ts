@@ -553,6 +553,24 @@ export interface PyramidLevel {
     hybrid_stop?: boolean;
     hybrid_black_swan_pct?: number | null;
     hybrid_max_loss_pct?: number | null;
+    // GRUPO al que pertenece (indice en `PyramidingConfig.groups`). Sin
+    // declarar = grupo 0. Cada grupo tiene su propio modo (individual o
+    // secuencial) y los grupos son independientes entre si.
+    group?: number;
+    // DISPARO POR RECORRIDO (16-sep-2026). 'conditions' (por defecto) = por
+    // las condiciones de abajo, como siempre. 'move' = cuando el PRECIO lleva
+    // `move_pct` % a favor o en contra (`move_dir`) medido desde la entrada o
+    // desde el ultimo anadido/quita DE SU GRUPO en la posicion (`move_ref`): el take
+    // profit / stop loss de la propia piramide. Si ademas hay condiciones, se
+    // exigen las dos cosas.
+    trigger?: 'conditions' | 'move';
+    move_pct?: number;
+    move_dir?: 'favor' | 'contra';
+    move_ref?: 'entry' | 'last';
+    // Solo con CAMINO (17-sep): 'first' (por defecto) = el recorrido es el
+    // primer paso, una condicion inicial que, cumplida, da paso al siguiente
+    // aunque luego no se mantenga; 'last' = se exige en la vela del disparo.
+    move_pos?: 'first' | 'last';
     // SL POR LOTE (PRD 2026-09-15). Solo en niveles 'add': un stop propio que
     // viaja con CADA ejecución del nivel y cierra SOLO ese lote. Sin la clave
     // (o null tras apagarla en la UI), el nivel se comporta como siempre.
@@ -576,6 +594,14 @@ export interface LotStopConfig {
     offset_pct?: number;     // holgura % que ALEJA el stop del precio
 }
 
+// Un grupo de piramides con su modo. Los grupos corren en paralelo entre si;
+// dentro de un grupo secuencial cada piramide se arma cuando la anterior del
+// MISMO grupo ya disparo. Un grupo individual con tres piramides equivale a
+// tres grupos de una.
+export interface PyramidGroup {
+    mode: 'individual' | 'sequential';
+}
+
 export interface PyramidingConfig {
     active: boolean;       // toggle de la UI; si está OFF, la definición NO
                            // lleva la clave `pyramiding` (regla nº1: sin
@@ -586,6 +612,10 @@ export interface PyramidingConfig {
     // anterior ya ha disparado al menos una vez.
     mode: 'individual' | 'sequential';
     levels: PyramidLevel[];
+    // GRUPOS (16-sep-2026). Sin esta lista, todos los niveles son el grupo 0
+    // con `mode`: las estrategias guardadas antes se cargan y se compilan
+    // exactamente igual que siempre.
+    groups?: PyramidGroup[];
 }
 
 export const emptyPyramidLevel = (): PyramidLevel => ({

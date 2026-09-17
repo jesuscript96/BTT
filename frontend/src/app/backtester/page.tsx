@@ -301,6 +301,17 @@ export default function Home() {
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const panelParamsRef = useRef<BacktestPanelParams | null>(null);
   const jobIdRef = useRef<string | null>(null);
+  // La peticion ENTERA de la ultima corrida (definicion + parametros): la
+  // subpagina de bandas de locates la relanza con otros rangos (17-sep).
+  const ultimaPeticionRef = useRef<Record<string, unknown> | null>(null);
+  const lanzarConDefinicion = (p: Parameters<typeof startBacktestWithDefinition>[0]) => {
+    ultimaPeticionRef.current = p as unknown as Record<string, unknown>;
+    return startBacktestWithDefinition(p);
+  };
+  const lanzar = (p: Parameters<typeof startBacktest>[0]) => {
+    ultimaPeticionRef.current = p as unknown as Record<string, unknown>;
+    return startBacktest(p);
+  };
 
   // F3/F4: launch an async backtest, poll its job status (by job_id), and
   // return the light result (no equity_curves — those are fetched per day).
@@ -615,6 +626,12 @@ export default function Home() {
       ev_gate_by: p?.ev_gate_by,
       ev_gate_default_pct: p?.ev_gate_default_pct,
       ev_gate_min_trades: p?.ev_gate_min_trades,
+      // EV FIJO (17-sep): sin estas dos lineas el modo «Fijo» llegaba al
+      // backend con EV 0 y sin tramos y la puerta lo rechazaba TODO (la
+      // trampa de las tres capas: el panel las mandaba, esta lista no).
+      ev_gate_fixed_pct: p?.ev_gate_fixed_pct,
+      ev_gate_ranges: p?.ev_gate_ranges,
+      ev_gate_metric: p?.ev_gate_metric,
       bswan_enabled: p?.bswan_enabled,
       bswan_mode: p?.bswan_mode,
       bswan_threshold_pct: p?.bswan_threshold_pct,
@@ -634,7 +651,7 @@ export default function Home() {
     };
 
     try {
-      const data = await runJobAndLoad(startBacktestWithDefinition({
+      const data = await runJobAndLoad(lanzarConDefinicion({
         dataset_id: activeDatasetId,
         strategy_definition: {
           name: draft.name,
@@ -680,6 +697,9 @@ export default function Home() {
         ev_gate_by: p?.ev_gate_by,
         ev_gate_default_pct: p?.ev_gate_default_pct,
         ev_gate_min_trades: p?.ev_gate_min_trades,
+        ev_gate_fixed_pct: p?.ev_gate_fixed_pct,
+        ev_gate_ranges: p?.ev_gate_ranges,
+        ev_gate_metric: p?.ev_gate_metric,
         // Coste de Black Swan: sin declararlo aqui se caeria en silencio
         // (lista blanca, MEMORIA §10 / tres capas).
         bswan_enabled: p?.bswan_enabled,
@@ -936,6 +956,9 @@ export default function Home() {
       ev_gate_by: (params as any).ev_gate_by,
       ev_gate_default_pct: (params as any).ev_gate_default_pct,
       ev_gate_min_trades: (params as any).ev_gate_min_trades,
+      ev_gate_fixed_pct: (params as any).ev_gate_fixed_pct,
+      ev_gate_ranges: (params as any).ev_gate_ranges,
+      ev_gate_metric: (params as any).ev_gate_metric,
       bswan_enabled: params.bswan_enabled,
       bswan_mode: params.bswan_mode,
       bswan_threshold_pct: params.bswan_threshold_pct,
@@ -955,7 +978,7 @@ export default function Home() {
     };
 
     try {
-      const data = await runJobAndLoad(startBacktest(params));
+      const data = await runJobAndLoad(lanzar(params));
       setResult(data);
       if (data.trades && data.trades.length > 0) {
         const firstTrade = data.trades[0];
@@ -1584,13 +1607,12 @@ export default function Home() {
             <BacktestPanel
               onRun={handleRun}
               onNewStrategy={() => {
-                // "Nueva Estrategia" arranca SIEMPRE en blanco. Adaptado de
-                // fdb0b7c (perdido en el reinicio de staging del 2026-09-01):
-                // antes el reset estaba tras el gate loadedStrategyId y un
-                // borrador SIN guardar sobrevivía — el constructor heredaba la
-                // estrategia anterior.
-                const isOpening = mode !== 'builder';
-                if (isOpening) {
+                // Con una estrategia activa (cargada o corrida) o un borrador que
+                // desciende de una guardada, «Nueva Estrategia» arranca en blanco;
+                // un borrador huerfano a medias se conserva al abrir/cerrar
+                // (misma regla que antes, cuando esto miraba `loadedStrategyId`).
+                const hadSavedOrLoaded = !!activeStrategy || !!builderDraftOriginId;
+                if (hadSavedOrLoaded) {
                   setActiveStrategy(null);
                   setBuilderDraft(null);
                   setDraftStrategy(null);
@@ -1599,6 +1621,14 @@ export default function Home() {
                 } else {
                   setMode('config');
                 }
+                setBuilderDraftOriginId(null);
+                setMode((prev) => {
+                  const isOpening = prev !== 'builder';
+                  if (isOpening) {
+                    return 'builder';
+                  }
+                  return 'config';
+                });
               }}
               onNewDataset={() => setMode((prev) => (prev === 'dataset' ? 'config' : 'dataset'))}
               onParamsChange={handlePanelParamsChange}
@@ -1917,6 +1947,7 @@ export default function Home() {
                 strategyId={strategyIdRef.current}
                 datasetId={datasetIdRef.current}
                 backtestParams={backtestParamsRef.current}
+                ultimaPeticion={ultimaPeticionRef.current}
                 onSelectDay={setSelectedDay}
                 onOpenSharedDraft={abrirCompartidaComoBorrador}
               />
