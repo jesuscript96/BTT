@@ -86,6 +86,21 @@ Jaume: «quizás lo sensato no es verlo desde el EV»: quiere enfrentar al fade 
 
 Jaume: «en Charts sigo viendo solo EV». Ahora la medida se elige en cada visor de la primera fila con las MISMAS definiciones por trade que la puerta (`EvPorPrecio.metricaTrade`): **Rolling** con R | EV % | MFE % | Fade % (el «%» de antes miraba la última pierna y el precio medio con pirámides: ya es el EV bueno; con MFE/Fade la media simple, sin separar por el signo del PnL, porque el MFE nunca es negativo); **por tiempo** y **por día** con $ (el PnL medio de siempre) | EV | MFE | Fade, un selector para los dos; y «EV · MFE · Fade por precio» con su toggle. La tabla de rangos de la banda de locates también elige la medida y completo/por rango (`0ad1f14`).
 
+### 20:00-20:40 — Captura, tope según EV y la regla de bolsillo (Charts)
+
+- **Captura = EV / MFE** (total y por tramo, columna CAPT.): qué parte del recorrido que hubo se llevan las salidas (PM 1A: 4,84 / 21,21 ≈ 23 %). Diagnóstico, no objetivo: baja → mirar las salidas, no los locates; se maximiza el EV. Orientación en el (?): 20-40 % normal, < 15 % salidas lejos del movimiento, > 50 % raro; va por comparación.
+- **Tope según EV** (columna TOPE EV; NO es lo pagado, lo confundió con el sorteo 1-15): el precio por paquete de 100 que el EV aguanta = **EV (%) × precio de la acción** (el locate cuesta precio del paquete / 100 por acción). Es la puerta EV vs fade dada la vuelta. Arriba, «por cada 1 $ de precio». Sin margen por comisiones ni por paquetes enteros.
+- **Regla de bolsillo** (Jaume quería UN número para real): $ por paquete por cada 1 $ de precio = EV del tramo más flojo con ≥ 20 trades × 2/3 (el global permite de más en las baratas). PM 1A: ≈ 2,3 $/paq. por cada 1 $ (a 0,60 $ → 1,4 $; a 3 $ → 7 $; a 10 $ → 23 $).
+- Consejo dado: para la puerta y el tope, el EV (lo que se captura), no el MFE (techo: nadie sale en el mínimo) ni el fade final (ignora los parciales). MFE y fade quedan como diagnóstico. Slippage: dejarlo puesto (es parte de lo que se captura); sin slippage solo para medir cuánto cuesta.
+
+### PENDIENTES para el 18-sep (Jaume: «mañana ponme en pendientes repasar todo esto»)
+
+1. **REPASAR TODO LO DEL 17-sep** en la app, en este orden: (a) Costes opcionales → Puerta por EV/MFE/Fade (medida, Trades/Días/Fijo, completo/por rango, valor por defecto); (b) Charts → Rolling con R/EV/MFE/Fade, por tiempo y por día con $/EV/MFE/Fade, y «EV · MFE · Fade por precio» (tabla, captura, TOPE EV, regla de bolsillo); (c) Banda de locates → bloque 3 con medida y completo/por rango; (d) el camino de condiciones y el SL por lote de Álvaro en el builder (y el recorrido como 1º paso del camino); (e) «Config. Estrategia guardada» ya abre la pedida; (f) portfolio crudo: puerta con medida, calendario y Monte Carlo del escalado, «hasta qué precio compensan», rangos.
+2. **Repetir la auditoría rodante vs fijo** del crudo con la sombra corregida (los 94.732 $ de la mañana se midieron con la última pierna).
+3. Cruce real-simulado: sigue esperando su CSV (operaciones + PnL, sin estrategia).
+4. Cuadro de mandos / bot: el `/evf` compara el número que Jaume ponga (EV, o el que quiera) con el fade del locate cotizado; si quiere la medida etiquetada ahí, es un texto.
+5. Lo de siempre pendiente: su revisión de «En crudo» desde el 14-sep; Overhead en el bot; lago lento.
+
 ### Trampas del día
 
 - **Dos sesiones en el mismo repo:** mientras yo encadenaba cherry-picks, la sesión del bot commiteó en sailor (`9f17b65`, `edc9c8d`, 17:04). No pasó nada porque cada uno añadió sus ficheros por ruta, pero es una carrera real: **nunca `git add -A`** con otra sesión viva, y leer MEMORIA.md justo antes de escribirlo.
