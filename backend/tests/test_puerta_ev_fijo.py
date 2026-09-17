@@ -112,3 +112,29 @@ def test_movimiento_pct_es_el_camino_del_precio_desde_la_entrada():
     ])
     assert list(c) == [10 * 1_000_000_000, 20 * 1_000_000_000]
     assert abs(m[0] - 5.0) < 1e-9 and abs(m[1] - 6.5) < 1e-9
+
+
+def test_las_tres_medidas_de_la_puerta_ev_mfe_fade():
+    """EV = camino del precio hasta la salida media (parciales incluidos);
+    FADE = hasta la salida FINAL (la ultima pierna); MFE = lo maximo a favor,
+    que ya mide el simulador (`mfe`, en % del precio de entrada)."""
+    t = {"direction": "Short", "entry_price": 10.0, "avg_entry_price": 11.5, "exit_price": 10.4,
+         "size": 400.0, "pnl": 100.0, "fees": 2.0, "mfe": 12.5, "exit_time_epoch": 1_700_000_000,
+         "executions": [{"kind": "entry", "price": 10.0, "size": 100.0}, {"kind": "add", "price": 12.0, "size": 300.0},
+                        {"kind": "exit", "price": 9.0, "size": 300.0}, {"kind": "exit", "price": 10.4, "size": 100.0}]}
+    assert abs(lg.metrica_trade(t, "ev") - 6.5) < 1e-9
+    assert abs(lg.metrica_trade(t, "fade") + 4.0) < 1e-9      # 10 -> 10,4: -4 % (la ultima pierna)
+    assert abs(lg.metrica_trade(t, "mfe") - 12.5) < 1e-9
+    assert lg.metrica_trade({**t, "mfe": None}, "mfe") is None
+    assert abs(lg.metrica_trade({**t, "direction": "Long"}, "fade") - 4.0) < 1e-9
+    # alias y defecto
+    assert lg.normaliza_metrica("MFE") == "mfe" and lg.normaliza_metrica("Fade") == "fade"
+    assert lg.normaliza_metrica(None) == "ev" and lg.normaliza_metrica("loquesea") == "ev"
+    # la sombra se construye con la medida pedida
+    c, m = lg.sombra_desde_trades([t], metrica="mfe")
+    assert list(m) == [12.5]
+    c, m = lg.sombra_desde_trades([t], metrica="fade")
+    assert abs(m[0] + 4.0) < 1e-9
+    # y el veredicto dice con que medida se comparo
+    cfg = lg.ConfigPuerta(modo="fijo", ev_fijo_pct=3.0, metrica="mfe")
+    assert lg.evaluar(cfg, 0, 4.0, 500, 0.0, 3.0)["metrica"] == "mfe"

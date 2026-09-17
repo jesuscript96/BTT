@@ -443,6 +443,11 @@ class RawGateIn(BaseModel):
     compara ev_fixed_pct con el fade (el EV medido en IS, para ver OOS); con
     `ev_ranges`, el EV del tramo de precio de la entrada (17-sep)."""
     mode: Literal["ev", "ev_fixed"] = "ev"
+    # Que medida se enfrenta al fade necesario (17-sep): "ev" (camino del
+    # precio hasta la salida media), "mfe" (maximo a favor) o "fade" (hasta la
+    # salida final). En rodante decide la sombra; en fijo, los numeros los
+    # pone el usuario y esto solo etiqueta.
+    metric: Literal["ev", "mfe", "fade"] = "ev"
     ev_fixed_pct: float = Field(default=3.0, ge=0)
     ev_ranges: list[RawEvRangoIn] | None = None
     ventana: int = Field(default=30, ge=0)

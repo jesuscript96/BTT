@@ -87,6 +87,10 @@ class BacktestRequest(BaseModel):
     ev_gate_enabled: bool = False
     ev_gate_window: int = 30
     ev_gate_by: str = "trades"          # "trades" | "dias" | "fijo"
+    # Que medida se enfrenta al fade necesario del locate (17-sep): "ev" (el
+    # camino del precio desde la entrada al precio medio de salida), "mfe"
+    # (lo maximo a favor desde la entrada) o "fade" (hasta la salida final).
+    ev_gate_metric: str = "ev"
     ev_gate_default_pct: float = 2.0
     ev_gate_min_trades: int = 10
     # 17-sep: con ev_gate_by = "fijo", el EV que se enfrenta SIEMPRE al fade;
@@ -552,9 +556,12 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             # antes de ese instante. El stream es de un solo uso: se crea otro.
             if req.ev_gate_enabled and req.locates_random:
                 from app.services.locates_gate import ConfigPuerta, rangos_ev_normalizados, sombra_desde_trades
-                _c_ns, _m_pct = sombra_desde_trades(results.get("trades", []))
+                from app.services.locates_gate import normaliza_metrica
+                _metrica = normaliza_metrica(req.ev_gate_metric)
+                _c_ns, _m_pct = sombra_desde_trades(results.get("trades", []), metrica=_metrica)
                 _fijo = str(req.ev_gate_by).lower().startswith("f")
                 _cfg_puerta = ConfigPuerta(
+                    metrica=_metrica,
                     ventana=max(0, int(req.ev_gate_window)),
                     por="dias" if str(req.ev_gate_by).lower().startswith("d") else "trades",
                     ev_defecto_pct=float(req.ev_gate_default_pct),

@@ -105,6 +105,10 @@ class ConfigPuerta:
     # de precio de la entrada, si `ev_rangos` lo trae) con el fade; la sombra no
     # se mira. "rodante" = lo de siempre.
     modo: str = "rodante"            # "rodante" | "fijo"
+    # Que medida se enfrenta al fade: "ev" | "mfe" | "fade" (17-sep). En
+    # modo rodante la sombra ya viene construida con esa medida; en modo
+    # fijo los numeros los pone el usuario. Aqui viaja para el resumen.
+    metrica: str = "ev"
     ev_fijo_pct: float = 0.0
     ev_rangos: list = field(default_factory=list)   # [{lo, hi, ev_pct}]
     # Sombra: senales de la pasada SIN puerta. Ordenadas por instante de cierre.
@@ -180,6 +184,7 @@ def evaluar(
         "n_ev": int(n),
         "ev_por_defecto": bool(defecto),
         "ev_origen": origen,
+        "metrica": cfg.metrica,
     }
 
 
@@ -232,19 +237,74 @@ def movimiento_pct(t: dict) -> Optional[float]:
     return ((sal - ent) if largo else (ent - sal)) / ent * 100.0
 
 
-def sombra_desde_trades(trades: list[dict]) -> tuple[np.ndarray, np.ndarray]:
+# ── Las tres medidas de la puerta (17-sep-2026, Jaume) ──────────────────
+# Lo que se enfrenta al fade necesario del locate puede ser el EV (lo de
+# siempre: el camino del precio desde la entrada al precio medio de salida),
+# el MFE (lo MAXIMO que el precio se movio a favor desde la entrada hasta la
+# salida final, lo que ya mide el simulador trade a trade) o el FADE (lo que
+# el precio se movio a favor desde la entrada hasta la salida FINAL, la
+# ultima pierna). Las tres en % del precio de entrada, brutas, desde el fill
+# de la entrada e independientes de las piramides y del capital.
+METRICAS_PUERTA: tuple[str, ...] = ("ev", "mfe", "fade")
+
+def normaliza_metrica(m) -> str:
+    """'ev' (defecto) | 'mfe' | 'fade'. Acepta mayusculas y alias."""
+    x = str(m or "ev").strip().lower()
+    if x in ("mfe", "max", "maximo", "máximo"):
+        return "mfe"
+    if x in ("fade", "salida", "final"):
+        return "fade"
+    return "ev"
+
+
+def fade_salida_pct(t: dict) -> Optional[float]:
+    """Fade desde el fill de la entrada hasta la salida FINAL (la ultima
+    pierna: con tres parciales, el tercero), en % del precio de entrada."""
+    ent = float(t.get("entry_price") or t.get("avg_entry_price") or 0.0)
+    sal = float(t.get("exit_price") or 0.0)
+    if ent <= 0 or sal <= 0:
+        return None
+    largo = str(t.get("direction", "")).lower().startswith("l")
+    return ((sal - ent) if largo else (ent - sal)) / ent * 100.0
+
+
+def mfe_pct(t: dict) -> Optional[float]:
+    """El MFE que ya mide el simulador: lo maximo que el precio se movio a
+    favor desde el fill de la entrada hasta la salida final (con parciales,
+    el mayor de las piernas cubre la vida entera), en % del precio de
+    entrada y acotado por el stop/TP ejecutado."""
+    v = t.get("mfe")
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def metrica_trade(t: dict, metrica: str = "ev") -> Optional[float]:
+    """La medida elegida de UN trade (`normaliza_metrica`)."""
+    m = normaliza_metrica(metrica)
+    if m == "mfe":
+        return mfe_pct(t)
+    if m == "fade":
+        return fade_salida_pct(t)
+    return movimiento_pct(t)
+
+
+def sombra_desde_trades(trades: list[dict], metrica: str = "ev") -> tuple[np.ndarray, np.ndarray]:
     """Arrays de sombra a partir de los trades de la pasada SIN puerta.
 
-    Solo cortos. El movimiento es `movimiento_pct` (el camino del precio tras
-    la entrada, en % del precio, bruto). Ordenados por cierre para que
-    `searchsorted` funcione.
+    Solo cortos. El valor de cada trade es `metrica_trade` (EV, MFE o fade,
+    en % del precio, bruto). Ordenados por cierre para que `searchsorted`
+    funcione.
     """
     cierres, moves = [], []
     for t in trades:
         if str(t.get("direction", "")).lower().startswith("l"):
             continue
         ex = t.get("exit_time_epoch")
-        mv = movimiento_pct(t)
+        mv = metrica_trade(t, metrica)
         if mv is None or ex is None:
             continue
         cierres.append(int(ex) * 1_000_000_000)

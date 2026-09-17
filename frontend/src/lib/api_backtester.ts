@@ -216,6 +216,7 @@ export interface EvGateSummary {
   ventana: number; por: string; ev_defecto_pct: number; min_trades: number; n_sombra: number;
   /** 17-sep: "fijo" = siempre el EV fijo (completo o del tramo de precio). */
   modo?: "rodante" | "fijo";
+  metrica?: "ev" | "mfe" | "fade";
   ev_fijo_pct?: number;
   ev_rangos?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
 }
@@ -548,6 +549,8 @@ export async function runBacktest(params: {
   ev_gate_min_trades?: number;
   ev_gate_fixed_pct?: number;
   ev_gate_ranges?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
+  // Que medida se enfrenta al fade del locate (17-sep): ev | mfe | fade.
+  ev_gate_metric?: "ev" | "mfe" | "fade";
   // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
   bswan_enabled?: boolean;
   bswan_mode?: "mercado" | "manual";
@@ -602,6 +605,8 @@ export async function runBacktestWithDefinition(params: {
   ev_gate_min_trades?: number;
   ev_gate_fixed_pct?: number;
   ev_gate_ranges?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
+  // Que medida se enfrenta al fade del locate (17-sep): ev | mfe | fade.
+  ev_gate_metric?: "ev" | "mfe" | "fade";
   // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
   bswan_enabled?: boolean;
   bswan_mode?: "mercado" | "manual";
@@ -827,6 +832,8 @@ export async function runOptimizationSurface(params: {
   ev_gate_min_trades?: number;
   ev_gate_fixed_pct?: number;
   ev_gate_ranges?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
+  // Que medida se enfrenta al fade del locate (17-sep): ev | mfe | fade.
+  ev_gate_metric?: "ev" | "mfe" | "fade";
   // Coste de Black Swan. La optimización lo acepta por coherencia de tipos; el
   // barrido no lo aplica hoy (solo el backtest del panel).
   bswan_enabled?: boolean;

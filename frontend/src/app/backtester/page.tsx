@@ -570,6 +570,7 @@ export default function Home() {
       // trampa de las tres capas: el panel las mandaba, esta lista no).
       ev_gate_fixed_pct: p?.ev_gate_fixed_pct,
       ev_gate_ranges: p?.ev_gate_ranges,
+      ev_gate_metric: p?.ev_gate_metric,
       bswan_enabled: p?.bswan_enabled,
       bswan_mode: p?.bswan_mode,
       bswan_threshold_pct: p?.bswan_threshold_pct,
@@ -637,6 +638,7 @@ export default function Home() {
         ev_gate_min_trades: p?.ev_gate_min_trades,
         ev_gate_fixed_pct: p?.ev_gate_fixed_pct,
         ev_gate_ranges: p?.ev_gate_ranges,
+        ev_gate_metric: p?.ev_gate_metric,
         // Coste de Black Swan: sin declararlo aqui se caeria en silencio
         // (lista blanca, MEMORIA §10 / tres capas).
         bswan_enabled: p?.bswan_enabled,
@@ -892,6 +894,7 @@ export default function Home() {
       ev_gate_min_trades: (params as any).ev_gate_min_trades,
       ev_gate_fixed_pct: (params as any).ev_gate_fixed_pct,
       ev_gate_ranges: (params as any).ev_gate_ranges,
+      ev_gate_metric: (params as any).ev_gate_metric,
       bswan_enabled: params.bswan_enabled,
       bswan_mode: params.bswan_mode,
       bswan_threshold_pct: params.bswan_threshold_pct,

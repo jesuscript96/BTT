@@ -101,7 +101,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
       for (const [mn, mx] of rangos) {
         for (const puerta of conSinPuerta ? [false, true] : [true]) {
           k += 1;
-          const etq = `${f1(mn)}–${f1(mx)} $ ${puerta ? `con EV fijo ${f1(ev)} %` : "sin puerta"} (${k} de ${total})`;
+          const etq = `${f1(mn)}–${f1(mx)} $ ${puerta ? `con ${medida} fijo ${f1(ev)} %` : "sin puerta"} (${k} de ${total})`;
           setEstado({ txt: etq, pct: 0 });
           const req: Record<string, unknown> = {
             ...peticion,
@@ -134,13 +134,15 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
   };
 
   const filaSel = sel != null ? filas[sel] : null;
+  // La medida de la puerta viene con la peticion (EV | MFE medio | Fade medio, 17-sep).
+  const medida = ({ ev: "EV", mfe: "MFE", fade: "Fade" } as Record<string, string>)[String(peticion?.ev_gate_metric ?? "ev")] ?? "EV";
   const locatesPagados = (r: BacktestResult) => r.trades.reduce((a, t) => a + (Number(t.pnl ?? 0) - Number((t as unknown as { pnl_with_locates?: number }).pnl_with_locates ?? t.pnl ?? 0)), 0);
 
   return (
     <div style={{ marginTop: 18, border: `1px solid ${color.border}`, background: color.bgSurface }}>
       <div style={{ padding: "8px 14px", borderBottom: `1px solid ${color.border}`, background: color.bgElevated }}>
         <div style={{ fontSize: 10.5, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textMuted }}>
-          <span style={{ color: color.copperBright }}>3 · </span>Locates por rangos con EV fijo
+          <span style={{ color: color.copperBright }}>3 · </span>Locates por rangos con {medida} fijo
         </div>
         <div style={{ fontSize: 11, color: color.textSecondary, marginTop: 2, lineHeight: 1.5 }}>
           La misma estrategia y parámetros de esta corrida, vuelta a correr con varios rangos de locates aleatorios (misma semilla para todos: solo cambia el rango), cada uno sin puerta y con la puerta por EV fijo (el corto entra si ese EV supera su fade necesario). Cada fila es un backtest entero y se lanzan uno detrás de otro: tarda. Pon el EV que midas en IS y, con el periodo en OOS, verás qué tal se sostiene. Pulsa una fila para ver su calendario.
@@ -153,7 +155,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontSize: 10.5, color: color.textMuted }}>rangos ($ por paquete)</span>
             <input value={txt} onChange={(e) => setTxt(e.target.value)} style={{ ...control, width: 260 }} />
-            <span style={{ fontSize: 10.5, color: color.textMuted }}>EV fijo</span>
+            <span style={{ fontSize: 10.5, color: color.textMuted }}>{medida} fijo</span>
             <input type="number" value={ev} min={0} step={0.5} onChange={(e) => setEv(Number(e.target.value) || 0)} style={{ ...control, width: 64, textAlign: "right" }} />
             <span style={{ fontSize: 10.5, color: color.textMuted }}>% · semilla</span>
             <input type="number" value={seed} min={0} step={1} onChange={(e) => setSeed(Math.round(Number(e.target.value) || 0))} style={{ ...control, width: 60, textAlign: "right" }} />
@@ -217,7 +219,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
         {filaSel && (
           <div style={{ marginTop: 10, borderTop: `1px solid ${color.border}`, paddingTop: 8 }}>
             <div style={{ fontSize: 11, color: color.textSecondary, marginBottom: 6 }}>
-              Calendario de <b style={{ color: color.textHigh }}>{f1(filaSel.min)} – {f1(filaSel.max)} $ {filaSel.puerta ? `con EV fijo ${f1(ev)} %` : "sin puerta"}</b>.
+              Calendario de <b style={{ color: color.textHigh }}>{f1(filaSel.min)} – {f1(filaSel.max)} $ {filaSel.puerta ? `con ${medida} fijo ${f1(ev)} %` : "sin puerta"}</b>.
             </div>
             <CalendarTab
               dayResults={filaSel.result.day_results || []}

@@ -522,6 +522,8 @@ export interface RawGateIn {
    *  historia; ventana 0 = todo el historico); ev_fixed: SIEMPRE se compara
    *  ev_fixed_pct con el fade (el EV medido en IS, para ver OOS). */
   mode?: "ev" | "ev_fixed";
+  /** Que medida se enfrenta al fade (17-sep): ev | mfe | fade. */
+  metric?: "ev" | "mfe" | "fade";
   ev_fixed_pct?: number;
   ventana: number;
   por: "trades" | "dias";

@@ -339,6 +339,8 @@ def _locates_cfg(raw: Optional[dict]) -> Optional[dict]:
             # 17-sep: el EV medido en IS para ver que tal va en OOS). Es lo
             # mismo que «no entrar si el fade > EV fijo».
             "mode": "ev_fixed" if str(g.get("mode") or "ev") in ("ev_fixed", "fade") else "ev",
+            # Que medida se enfrenta al fade (17-sep): ev | mfe | fade.
+            "metric": lg.normaliza_metrica(g.get("metric")),
             "ev_fixed_pct": _f(g.get("ev_fixed_pct", g.get("fade_max_pct")), 3.0),
             # EV por tramo de precio de entrada (17-sep); un tramo sin EV cae al completo.
             "ev_ranges": lg.rangos_ev_normalizados(g.get("ev_ranges")),
@@ -354,7 +356,7 @@ def _locates_cfg(raw: Optional[dict]) -> Optional[dict]:
     return cfg
 
 
-def _sombra_de(run: dict) -> lg.ConfigPuerta:
+def _sombra_de(run: dict, metrica: str = "ev") -> lg.ConfigPuerta:
     """EV en sombra de UNA estrategia: sus cortos guardados (todos, sin
     recortar por fechas: es su historia), cerrados antes del instante que se
     decide. Movimiento = `locates_gate.movimiento_pct` (el camino del precio
@@ -365,16 +367,17 @@ def _sombra_de(run: dict) -> lg.ConfigPuerta:
     for t in run.get("trades") or []:
         if str(t.get("direction") or "").lower().startswith("l"):
             continue
-        mv = lg.movimiento_pct(t)
+        mv = lg.metrica_trade(t, metrica)
         t1 = _ts(t.get("exit_time"))
         if mv is None or t1 is None:
             continue
         cierres.append(int(t1 * 1_000_000_000))
         moves.append(mv)
     if not cierres:
-        return lg.ConfigPuerta()
+        return lg.ConfigPuerta(metrica=lg.normaliza_metrica(metrica))
     orden = np.argsort(np.asarray(cierres, dtype=np.int64), kind="stable")
     return lg.ConfigPuerta(
+        metrica=lg.normaliza_metrica(metrica),
         sombra_cierre_ns=np.asarray(cierres, dtype=np.int64)[orden],
         sombra_move_pct=np.asarray(moves, dtype=np.float64)[orden],
     )
@@ -1011,11 +1014,12 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     ev_ranges = (loc_cfg["gate"]["ev_ranges"] if loc_cfg and loc_cfg["gate"] else [])
     if loc_cfg and loc_cfg["gate"] and loc_cfg["mode"] != "none" and gate_mode == "ev_fixed":
         for i in range(n):
-            gate_cfgs[i] = lg.ConfigPuerta(modo="fijo", ev_fijo_pct=fade_max, ev_rangos=ev_ranges)
+            gate_cfgs[i] = lg.ConfigPuerta(modo="fijo", ev_fijo_pct=fade_max, ev_rangos=ev_ranges,
+                                           metrica=loc_cfg["gate"].get("metric", "ev"))
     if loc_cfg and loc_cfg["gate"] and loc_cfg["mode"] != "none" and gate_mode == "ev":
         g = loc_cfg["gate"]
         for i, run in enumerate(runs):
-            c = _sombra_de(run)
+            c = _sombra_de(run, g.get("metric", "ev"))
             c.ventana = g["ventana"]
             c.por = g["por"]
             c.ev_defecto_pct = g["ev_defecto_pct"]

@@ -1376,6 +1376,7 @@ def run_backtest(
                         "n_sombra": int(ev_gate.sombra_cierre_ns.size),
                         # 17-sep: EV fijo (completo o por rango de precio).
                         "modo": str(getattr(ev_gate, "modo", "rodante")),
+                        "metrica": str(getattr(ev_gate, "metrica", "ev")),
                         "ev_fijo_pct": float(getattr(ev_gate, "ev_fijo_pct", 0.0) or 0.0),
                         "ev_rangos": list(getattr(ev_gate, "ev_rangos", []) or [])}} if ev_gate is not None else {}),
         # Resumen del coste de Black Swan. Solo con el coste activo: sin el, el

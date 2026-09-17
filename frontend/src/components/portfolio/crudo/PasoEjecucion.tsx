@@ -12,7 +12,7 @@ import type { PortfolioStrategy, RawExec } from "@/lib/api_portfolio_lab";
 import { StrategyDetail } from "../StrategyDetail";
 import { MoveBtn, type CurveState } from "../StrategyShelf";
 import { Btn, Num, Row, Sec, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
-import { condiciones, execDeCorrida, type Cfg, type LocCfg } from "./modelo";
+import { GATE_METRIC_LABEL, condiciones, execDeCorrida, type Cfg, type LocCfg } from "./modelo";
 
 export interface EjecucionModel {
   pool: PortfolioStrategy[];
@@ -361,7 +361,7 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                     <Toggle value={loc.shared ? "shared" : "row"} onChange={(v) => setL("shared", v === "shared")} options={[{ value: "shared", label: "compartido por acción y día" }, { value: "row", label: "cada estrategia el suyo" }]} />
                   </div>
                 </Row>
-                <Row label="Puerta por EV" help="Un corto entra solo si el EV paga el «fade necesario»: el % que tiene que moverse la acción a favor solo para pagar los paquetes de más que exige ese corto (con alquiler compartido, lo ya alquilado por cualquiera va gratis). «EV rodante»: lo de siempre, el EV por defecto hasta que la estrategia tiene historia y luego la media de sus últimos N trades cerrados; ojo, con N = 30 el error de la estimación es mayor que el propio EV y rechaza por racha (auditoría del 17-sep). «EV fijo»: SIEMPRE se enfrenta ese valor al fade — pon el EV que midas en IS y mira qué tal va en OOS; entra si EV fijo > fade.">
+                <Row label="Puerta por EV/MFE/Fade" help="Un corto entra solo si la medida elegida (EV, MFE medio o fade medio, en % del precio de entrada; las tres se ven en Charts → «EV por precio» del backtester) paga el «fade necesario»: el % que tiene que moverse la acción a favor solo para pagar los paquetes de más que exige ese corto (con alquiler compartido, lo ya alquilado por cualquiera va gratis). «EV rodante»: lo de siempre, el EV por defecto hasta que la estrategia tiene historia y luego la media de sus últimos N trades cerrados; ojo, con N = 30 el error de la estimación es mayor que el propio EV y rechaza por racha (auditoría del 17-sep). «EV fijo»: SIEMPRE se enfrenta ese valor al fade — pon el EV que midas en IS y mira qué tal va en OOS; entra si EV fijo > fade.">
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, fontFamily: font.sans, color: color.textPrimary, cursor: "pointer" }}>
                       <input type="checkbox" checked={!!loc.gate} onChange={(e) => setL("gate", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
@@ -369,22 +369,25 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                     </label>
                     {loc.gate && (
                       <>
-                        <div style={{ width: 220 }}>
-                          <Toggle value={loc.gateMode ?? "ev_rodante"} onChange={(v) => setL("gateMode", v)} options={[{ value: "ev_rodante", label: "EV rodante" }, { value: "ev_fijo", label: "EV fijo" }]} />
+                        <div style={{ width: 250 }}>
+                          <Toggle value={loc.gateMetric ?? "ev"} onChange={(v) => setL("gateMetric", v)} options={[{ value: "ev", label: "EV" }, { value: "mfe", label: "MFE" }, { value: "fade", label: "Fade" }]} />
+                        </div>
+                        <div style={{ width: 200 }}>
+                          <Toggle value={loc.gateMode ?? "ev_rodante"} onChange={(v) => setL("gateMode", v)} options={[{ value: "ev_rodante", label: "rodante" }, { value: "ev_fijo", label: "fijo" }]} />
                         </div>
                         {(loc.gateMode ?? "ev_rodante") === "ev_rodante" ? (
                           <>
                             <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>últimos</span>
                             <div style={{ width: 56 }}><Num value={loc.gateVentana} onChange={(v) => setL("gateVentana", Math.max(1, Math.round(Number(v) || 0)))} min={1} step={5} /></div>
-                            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>trades · EV sin historia</span>
+                            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>trades · valor sin historia</span>
                             <div style={{ width: 56 }}><Num value={loc.gateEv} onChange={(v) => setL("gateEv", Number(v) || 0)} min={0} step={0.5} /></div>
                             <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>%</span>
                           </>
                         ) : (
                           <>
-                            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>EV</span>
+                            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>{GATE_METRIC_LABEL[loc.gateMetric ?? "ev"]}</span>
                             <div style={{ width: 56 }}><Num value={loc.evFijo ?? 3} onChange={(v) => setL("evFijo", Number(v) || 0)} min={0} step={0.5} /></div>
-                            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del precio · entra si EV &gt; fade necesario</span>
+                            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del precio · entra si supera el fade necesario</span>
                           </>
                         )}
                       </>

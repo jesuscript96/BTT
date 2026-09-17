@@ -40,6 +40,7 @@ export interface BacktestPanelParams {
   ev_gate_min_trades?: number;
   ev_gate_fixed_pct?: number;
   ev_gate_ranges?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
+  ev_gate_metric?: "ev" | "mfe" | "fade";
   // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
   bswan_enabled?: boolean;
   bswan_mode?: "mercado" | "manual";
@@ -86,6 +87,7 @@ interface BacktestPanelProps {
     ev_gate_min_trades?: number;
     ev_gate_fixed_pct?: number;
     ev_gate_ranges?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
+  ev_gate_metric?: "ev" | "mfe" | "fade";
     bswan_enabled?: boolean;
     bswan_mode?: "mercado" | "manual";
     bswan_threshold_pct?: number;
@@ -496,6 +498,11 @@ export default function BacktestPanel({
   // EV FIJO (17-sep): «completo» = un EV para todos los trades; «rango» = uno
   // por tramo de precio de entrada (los tramos de «EV por precio» de Charts).
   const [evGateFixedMode, setEvGateFixedMode] = useState<"completo" | "rango">("completo");
+  // Que medida se enfrenta al fade del locate (17-sep): EV (el camino del
+  // precio hasta la salida media), MFE (lo maximo a favor) o Fade (hasta la
+  // salida final). Las mismas opciones (Trades | Dias | Fijo, completo o por
+  // rango) valen para las tres.
+  const [evGateMetric, setEvGateMetric] = useState<"ev" | "mfe" | "fade">("ev");
   const [evGateFixed, setEvGateFixed] = useState(EV_FIJO_DEFECTO);
   // Las seis casillas se precargan con el EV completo que haya puesto EN EL
   // MOMENTO de pasar a «por rango» (Jaume, 17-sep: «pon un numero por defecto,
@@ -663,6 +670,7 @@ export default function BacktestPanel({
       if (savedState.evGateDefault !== undefined) setEvGateDefault(savedState.evGateDefault);
       if (savedState.evGateMinTrades !== undefined) setEvGateMinTrades(savedState.evGateMinTrades);
       if (savedState.evGateFixedMode !== undefined) setEvGateFixedMode(savedState.evGateFixedMode);
+      if (savedState.evGateMetric !== undefined) setEvGateMetric(savedState.evGateMetric);
       if (savedState.evGateFixed !== undefined) setEvGateFixed(savedState.evGateFixed);
       if (Array.isArray(savedState.evGateRangos)) setEvGateRangos(RANGOS_PRECIO_EV.map((_, k) => String(savedState.evGateRangos[k] ?? "")));
       if (savedState.useBswan !== undefined) setUseBswan(savedState.useBswan);
@@ -825,6 +833,7 @@ export default function BacktestPanel({
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
       ev_gate_fixed_pct: useEvGate && evGateBy === "fijo" && evGateFixedMode === "completo" ? evGateFixed : 0,
       ev_gate_ranges: useEvGate && evGateBy === "fijo" && evGateFixedMode === "rango" ? rangosDesdeCasillas(evGateRangos) : [],
+      ev_gate_metric: evGateMetric,
       bswan_enabled: useBswan,
       bswan_mode: bswanMode,
       bswan_threshold_pct: useBswan ? bswanThreshold : 0,
@@ -845,7 +854,7 @@ export default function BacktestPanel({
     fees, feeType, slippage, startDate, endDate, marketSessions,
     customStartTime, customEndTime, useLocates, locatesCost, maxLocates,
     useLocatesRandom, locatesMin, locatesMax, locatesSeed,
-    useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos,
+    useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos, evGateMetric,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
     useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
@@ -884,6 +893,7 @@ export default function BacktestPanel({
         evGateDefault,
         evGateMinTrades,
         evGateFixedMode,
+        evGateMetric,
         evGateFixed,
         evGateRangos,
         useBswan,
@@ -908,7 +918,7 @@ export default function BacktestPanel({
     startDate, endDate, marketSessions, customStartTime, customEndTime,
     riskType, feeType, isPercent, loadingData,
     useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
-    evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos,
+    evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos, evGateMetric,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
     useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses
@@ -977,6 +987,7 @@ export default function BacktestPanel({
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
       ev_gate_fixed_pct: useEvGate && evGateBy === "fijo" && evGateFixedMode === "completo" ? evGateFixed : 0,
       ev_gate_ranges: useEvGate && evGateBy === "fijo" && evGateFixedMode === "rango" ? rangosDesdeCasillas(evGateRangos) : [],
+      ev_gate_metric: evGateMetric,
       // Coste de Black Swan. Apagado = el backend ni lo mira.
       bswan_enabled: useBswan,
       bswan_mode: bswanMode,
@@ -1978,7 +1989,7 @@ export default function BacktestPanel({
                     className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
                   />
                   <span style={et}>
-                    Puerta por EV
+                    Puerta por EV/MFE/Fade
                     <InfoTooltip
                       position="left"
                       width={340}
@@ -1991,6 +2002,45 @@ export default function BacktestPanel({
               </React.Fragment>
             );
             if (evGate) {
+              // QUE MEDIDA se enfrenta al fade del locate (17-sep, Jaume): el EV
+              // (lo de siempre), el MFE medio o el fade medio hasta la salida
+              // final. Las tres se miden en Charts → «EV por precio».
+              filas.push(
+                <React.Fragment key="evmetrica">
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 44 }}>
+                    <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
+                      {(["ev", "mfe", "fade"] as const).map((m, i) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => setEvGateMetric(m)}
+                          title={m === "ev"
+                            ? "EV: lo que se movió el precio a favor desde la entrada hasta el precio medio de todas las salidas (parciales incluidos)."
+                            : m === "mfe"
+                              ? "MFE medio: lo MÁXIMO que se movió el precio a favor desde la entrada hasta la salida final."
+                              : "Fade medio: lo que se movió el precio a favor desde la entrada hasta la salida FINAL (la última pierna)."}
+                          style={{
+                            background: evGateMetric === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                            color: evGateMetric === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                            fontWeight: evGateMetric === m ? 600 : 400,
+                            border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                            fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                            padding: '0 9px', cursor: 'pointer',
+                          }}
+                        >
+                          {m === "ev" ? "EV" : m === "mfe" ? "MFE" : "Fade"}
+                        </button>
+                      ))}
+                    </div>
+                    <InfoTooltip
+                      position="left"
+                      width={330}
+                      text="Qué medida de la estrategia se enfrenta al fade necesario del locate. Las tres son % del precio de entrada, brutas e independientes del capital, y se ven en Charts → «EV por precio». EV: media, por trade, del movimiento a favor desde la entrada hasta el precio medio de todas las salidas. MFE medio: media de lo máximo que se movió a favor desde la entrada. Fade medio: media del movimiento a favor desde la entrada hasta la salida final. Trades / Días / Fijo y completo / por rango funcionan igual con las tres."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </div>
+                </React.Fragment>
+              );
               // Los selectores van SOLOS, cada uno en una fila a todo el ancho
               // debajo del check, sin etiqueta a la izquierda: al lado se
               // comian la frase «Puerta por EV» y luego «Con que EV» (Jaume,
@@ -2023,7 +2073,7 @@ export default function BacktestPanel({
                   <InfoTooltip
                     position="left"
                     width={320}
-                    text="Trades / Días: el EV rodante en sombra (la media de los últimos N trades cerrados, o de los cerrados en los últimos N días), con el EV por defecto mientras no hay historia. Fijo: siempre se enfrenta al fade el EV que pongas tú (el que midas en IS, para ver qué tal va en OOS), completo o por tramo de precio de entrada; no mira la sombra."
+                    text="Trades / Días: el rodante en sombra de la medida elegida (EV, MFE o fade): la media de los últimos N trades cerrados, o de los cerrados en los últimos N días, con el valor por defecto mientras no hay historia. Fijo: siempre se enfrenta al fade el valor que pongas tú (el que midas en IS, para ver qué tal va en OOS), completo o por tramo de precio de entrada; no mira la sombra."
                     style={{ display: 'inline-flex' }}
                   />
                   </div>
@@ -2068,7 +2118,7 @@ export default function BacktestPanel({
               if (evGateFixedMode === "completo") {
                 filas.push(
                   <React.Fragment key="evfijoval">
-                    <span style={{ ...sub, paddingLeft: 44 }}>EV fijo (%)</span>
+                    <span style={{ ...sub, paddingLeft: 44 }}>{evGateMetric === "ev" ? "EV" : evGateMetric === "mfe" ? "MFE" : "Fade"} fijo (%)</span>
                     <input type="number" step="0.1" min={0} value={evGateFixed} style={inp}
                            title="EV (% del precio) que se enfrenta siempre al fade"
                            onChange={(e) => setEvGateFixed(Math.max(0, Number(e.target.value) || 0))} />
@@ -2117,11 +2167,11 @@ export default function BacktestPanel({
               filas.push(
                 <React.Fragment key="evdef">
                   <span style={{ ...sub, paddingLeft: 44 }}>
-                    EV por defecto (%)
+                    {evGateMetric === "ev" ? "EV" : evGateMetric === "mfe" ? "MFE" : "Fade"} por defecto (%)
                     <InfoTooltip
                       position="left"
                       width={300}
-                      text="El EV que se asume mientras aún no hay historia suficiente (al principio de la corrida, o cuando en la ventana hay menos trades que el mínimo de abajo). En % del precio, como el fade: 2 significa que se da por hecho que la acción se mueve un 2 % a favor de media. Ponlo parecido al EV real que le das al /evf; si lo pones muy alto, al principio entra en todo; muy bajo, no entra en nada hasta que hay datos."
+                      text="El valor de la medida elegida (EV, MFE o fade) que se asume mientras aún no hay historia suficiente: al principio de la corrida, o cuando en la ventana hay menos trades cerrados que el mínimo. Pon el que midas en Charts para esa medida."
                       style={{ display: 'inline-flex' }}
                     />
                   </span>
@@ -2136,7 +2186,7 @@ export default function BacktestPanel({
                     <InfoTooltip
                       position="left"
                       width={300}
-                      text="Por debajo de este número de trades cerrados en la ventana, el EV rodante no se fía de sí mismo y usa el EV por defecto. Evita que dos trades sueltos decidan por toda una semana."
+                      text="Por debajo de este número de trades cerrados en la ventana, el rodante (del EV, del MFE o del fade, según la medida elegida) no se fía de sí mismo y usa el valor por defecto. Evita que dos trades sueltos decidan por toda una semana."
                       style={{ display: 'inline-flex' }}
                     />
                   </span>
