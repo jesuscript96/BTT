@@ -989,13 +989,23 @@ export default function Chart({
           }
         }
 
-        markers.sort((a, b) => (a.time as number) - (b.time as number));
+        // ORDENAR POR HORA llevando las etiquetas de lote PEGADAS: si se
+        // ordenara solo `markers`, `marcasLotes` quedaría en el orden de
+        // construcción y cada marcador heredaría el lote de OTRO (con varios
+        // trades en el día el orden de construcción no es cronológico). Era el
+        // bug de la v1: ocultar un lote se llevaba por delante el marcador
+        // equivocado (p. ej. el primer parcial) y dejaba el suyo.
+        const pares = markers
+          .map((m, i) => ({ m, lote: marcasLotes[i] }))
+          .sort((a, b) => (a.m.time as number) - (b.m.time as number));
+        const markersOrden = pares.map(p => p.m);
+        const lotesOrden = pares.map(p => p.lote);
         // Con el botón «Datos» apagado los marcadores van SIN texto: los
         // símbolos se quedan —hay que seguir viendo dónde entró y salió— pero
         // el texto desaparece, que es lo que se pisa cuando hay muchas
         // operaciones seguidas y acaba tapando las velas.
-        marcadoresRef.current = markers;
-        marcasLotesRef.current = marcasLotes;
+        marcadoresRef.current = markersOrden;
+        marcasLotesRef.current = lotesOrden;
         markersApiRef.current = createSeriesMarkers(candleSeries, []);
         // UNA sola regla para pintar marcadores, compartida por el botón
         // «Datos» y por los chips de la leyenda: fuera los lotes ocultos, y
