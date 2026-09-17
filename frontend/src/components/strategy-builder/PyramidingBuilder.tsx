@@ -541,18 +541,10 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                             <option value="last">desde el último disparo</option>
                                         </select>
                                         {esCamino(lv) ? (
-                                            <select
-                                                value={lv.move_pos === 'last' ? 'last' : 'first'}
-                                                onChange={(e) => setLevel(idx, { ...lv, move_pos: e.target.value as 'first' | 'last' })}
-                                                style={selectStyle}
-                                                title={'Dónde va el recorrido dentro del camino:\n'
-                                                    + '· como 1º paso — condición inicial: en cuanto el precio lleve ese recorrido, queda cumplido y se pasa al '
-                                                    + 'siguiente paso aunque luego el precio se vuelva.\n'
-                                                    + '· en el disparo — se exige en la misma vela en que engancha el último paso.'}
-                                            >
-                                                <option value="first">como 1º paso del camino (condición inicial)</option>
-                                                <option value="last">en el disparo (junto al último paso)</option>
-                                            </select>
+                                            <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}
+                                                  title="Con el camino encendido, el recorrido es lo PRIMERO: en cuanto el precio lleve ese recorrido queda cumplido (aunque luego se vuelva) y empiezan los pasos del camino, en su orden.">
+                                                primero el recorrido, luego los pasos del camino
+                                            </span>
                                         ) : (lv.root_condition?.conditions?.length ?? 0) > 0 && (
                                             <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>y además las condiciones de abajo</span>
                                         )}

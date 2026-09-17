@@ -565,6 +565,11 @@ export default function Home() {
       ev_gate_by: p?.ev_gate_by,
       ev_gate_default_pct: p?.ev_gate_default_pct,
       ev_gate_min_trades: p?.ev_gate_min_trades,
+      // EV FIJO (17-sep): sin estas dos lineas el modo «Fijo» llegaba al
+      // backend con EV 0 y sin tramos y la puerta lo rechazaba TODO (la
+      // trampa de las tres capas: el panel las mandaba, esta lista no).
+      ev_gate_fixed_pct: p?.ev_gate_fixed_pct,
+      ev_gate_ranges: p?.ev_gate_ranges,
       bswan_enabled: p?.bswan_enabled,
       bswan_mode: p?.bswan_mode,
       bswan_threshold_pct: p?.bswan_threshold_pct,
@@ -630,6 +635,8 @@ export default function Home() {
         ev_gate_by: p?.ev_gate_by,
         ev_gate_default_pct: p?.ev_gate_default_pct,
         ev_gate_min_trades: p?.ev_gate_min_trades,
+        ev_gate_fixed_pct: p?.ev_gate_fixed_pct,
+        ev_gate_ranges: p?.ev_gate_ranges,
         // Coste de Black Swan: sin declararlo aqui se caeria en silencio
         // (lista blanca, MEMORIA §10 / tres capas).
         bswan_enabled: p?.bswan_enabled,
@@ -883,6 +890,8 @@ export default function Home() {
       ev_gate_by: (params as any).ev_gate_by,
       ev_gate_default_pct: (params as any).ev_gate_default_pct,
       ev_gate_min_trades: (params as any).ev_gate_min_trades,
+      ev_gate_fixed_pct: (params as any).ev_gate_fixed_pct,
+      ev_gate_ranges: (params as any).ev_gate_ranges,
       bswan_enabled: params.bswan_enabled,
       bswan_mode: params.bswan_mode,
       bswan_threshold_pct: params.bswan_threshold_pct,
