@@ -120,6 +120,10 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
   const etiquetaFina = (lo: number) => (lo >= TECHO ? `> ${TECHO}` : String(lo).replace(".", ","));
   const hov = hover != null ? datos.finas[hover] : null;
   const pct = (v: number | null) => (v == null ? "—" : `${f2(v)} %`);
+  // CAPTURA = EV / MFE: que parte del recorrido disponible se llevan las
+  // salidas (17-sep, Jaume). Bajo = el problema son las salidas, no los locates.
+  const captura = (b: { ev: number | null; mfe: number | null }) => (b.ev == null || b.mfe == null || !(b.mfe > 0) ? null : (b.ev / b.mfe) * 100);
+  const pct0 = (v: number | null) => (v == null ? "—" : `${v.toFixed(0)} %`);
   const colorDe = (v: number | null) => (v == null ? undefined : v >= 0 ? "var(--color-ec-copper-bright)" : "var(--color-ec-loss)");
 
   return (
@@ -130,7 +134,7 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
           <InfoTooltip
             position="left"
             width={380}
-            text="Las tres medidas de la estrategia que se pueden enfrentar al «fade necesario» del locate (Costes opcionales → Puerta por EV/MFE/Fade). Todas en % del precio de ENTRADA (el fill, no el precio medio con las pirámides), brutas y sin que el capital las mueva; por trade, contando el trade entero (parciales incluidos). <b>EV</b>: media de lo que se movió el precio a favor desde la entrada hasta el precio medio de todas las salidas = WR × ganancia media − (1 − WR) × pérdida media, en unidades de fade. <b>MFE medio</b>: media de lo máximo que se movió a favor desde la entrada hasta la salida final. <b>Fade medio</b>: media de lo que se movió a favor desde la entrada hasta la salida FINAL (la última pierna). <b>Barras</b>: la medida elegida por tramos de 0,5 $ del precio de entrada; pasa el ratón para leer cada barra (las claras tienen menos de 20 trades: ruido). <b>Tabla</b>: las tres medidas en los seis tramos de la puerta «por rango» y del cuadro de mandos: son los números que se copian ahí."
+            text="Las tres medidas de la estrategia que se pueden enfrentar al «fade necesario» del locate (Costes opcionales → Puerta por EV/MFE/Fade). Todas en % del precio de ENTRADA (el fill, no el precio medio con las pirámides), brutas y sin que el capital las mueva; por trade, contando el trade entero (parciales incluidos). <b>EV</b>: media de lo que se movió el precio a favor desde la entrada hasta el precio medio de todas las salidas = WR × ganancia media − (1 − WR) × pérdida media, en unidades de fade. <b>MFE medio</b>: media de lo máximo que se movió a favor desde la entrada hasta la salida final. <b>Fade medio</b>: media de lo que se movió a favor desde la entrada hasta la salida FINAL (la última pierna). <b>Captura</b> = EV / MFE: qué parte del recorrido que hubo se llevan tus salidas; si es baja, el problema son las salidas, no los locates. <b>Barras</b>: la medida elegida por tramos de 0,5 $ del precio de entrada; pasa el ratón para leer cada barra (las claras tienen menos de 20 trades: ruido). <b>Tabla</b>: las tres medidas en los seis tramos de la puerta «por rango» y del cuadro de mandos: son los números que se copian ahí."
           />
         </span>
         <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)', marginLeft: 10 }}>
@@ -152,11 +156,11 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
           ))}
         </div>
         <span className="ml-auto mr-3 text-[10px] font-mono text-[var(--color-ec-text-secondary)]">
-          EV {pct(datos.total.ev)} · MFE {pct(datos.total.mfe)} · Fade {pct(datos.total.fade)} · {datos.total.n} trades
+          EV {pct(datos.total.ev)} · MFE {pct(datos.total.mfe)} · Fade {pct(datos.total.fade)} · <span title="Captura = EV / MFE: qué parte del recorrido disponible se llevan tus salidas">captura {pct0(captura(datos.total))}</span> · {datos.total.n} trades
         </span>
       </div>
 
-      <div className="flex-1 min-h-0 px-3 pb-2" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 330px", gap: 18 }}>
+      <div className="flex-1 min-h-0 px-3 pb-2" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 380px", gap: 18 }}>
         {/* Barras finas: divs, no SVG estirado (el texto no se deforma). */}
         <div className="flex flex-col min-w-0 h-full">
           <div className="text-[9.5px] font-mono h-[14px]" style={{ color: "var(--color-ec-text-muted)" }}>
@@ -207,6 +211,7 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
                     {m === "ev" ? "EV" : m === "mfe" ? "MFE" : "FADE"}
                   </th>
                 ))}
+                <th className="text-right font-semibold pb-1" style={{ fontSize: 9.5, letterSpacing: "0.08em" }} title="Captura = EV / MFE">CAPT.</th>
                 <th className="text-right font-semibold pb-1" style={{ fontSize: 9.5, letterSpacing: "0.08em" }}>N</th>
               </tr>
             </thead>
@@ -218,6 +223,7 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
                   {METRICAS.map((m) => (
                     <td key={m} className="py-[3px] text-right" style={{ color: colorDe(t[m]), fontWeight: metrica === m ? 600 : 400 }}>{pct(t[m])}</td>
                   ))}
+                  <td className="py-[3px] text-right" style={{ color: "var(--color-ec-text-muted)" }}>{pct0(captura(t))}</td>
                   <td className="py-[3px] text-right">{t.n}</td>
                 </tr>
               ))}
