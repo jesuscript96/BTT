@@ -453,6 +453,31 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.ABSORPTION_WICK]: "Devuelve 1 cuando se cumplen LAS DOS condiciones a la vez y 0 cuando no (se compara contra 0: «> 0» es «se cumplen las dos»). Existe porque por separado ninguna de las dos dice gran cosa — la lectura de una depende de cómo esté la otra: ▸ ABSORCIÓN ALTA + MECHA ALTA = hay un vendedor real y además defendido; ese nivel es el techo. Es la combinación que se busca para cortar. ▸ ABSORCIÓN ALTA + MECHA BAJA = alguien absorbe pero sin rechazo visible; puede ser acumulación, y ahí cortarse es peligroso. ▸ ABSORCIÓN BAJA + MECHA ALTA = mecha sin dinero detrás; es ruido de libro vacío y no significa nada. ▸ ABSORCIÓN BAJA + MECHA BAJA = sube sin encontrar resistencia, no hay nadie vendiendo; NO es sitio para cortos. Fíjate en que la cuarta combinación te evita más pérdidas de las que ganancias te da la primera, que suele ser el reparto real de este negocio. Los umbrales por defecto (2,5 y 0,40) son el percentil 90 de cada medida sobre el universo real del bot, así que de salida marcan «esto es raro» en vez de dispararse en cualquier vela."
 };
 
+/** Explicación CORTA de «para qué sirve», en 1-2 frases (petición de Álvaro,
+ *  17-sep-2026: primero pidió la línea clara; luego, que el tocho largo NO
+ *  acompañe). Va sola en el tooltip; las descripciones largas siguen en
+ *  INDICATOR_DESCRIPTIONS por si se quieren recuperar. */
+export const INDICATOR_QUICK_HELP: Partial<Record<IndicatorType, string>> = {
+    [IndicatorType.LAST_PIVOT]:
+        "PARA QUÉ SIRVE: el último techo o suelo CONFIRMADO del día. Se actualiza con cada giro "
+      + "(«Previous Max» nunca baja). Para cruces del precio y stop de estructura.",
+    [IndicatorType.VOL_POC]:
+        "PARA QUÉ SIRVE: el precio con MÁS volumen del día — donde más gente tiene su coste. "
+      + "Imán al que el precio tiende a volver; perderlo es salir del precio aceptado.",
+    [IndicatorType.VOL_NODE_UP]:
+        "PARA QUÉ SIRVE: la primera zona con volumen POR ENCIMA del precio — la resistencia real del día. "
+      + "Stop del corto. Si no existe (NaN), no hay techo conocido.",
+    [IndicatorType.VOL_NODE_DOWN]:
+        "PARA QUÉ SIRVE: la primera zona con volumen POR DEBAJO — el soporte real del día. "
+      + "Objetivo del corto. Si desaparece (NaN), abajo no queda nadie que frene la caída.",
+    [IndicatorType.VOL_ZONE_HIGH]:
+        "PARA QUÉ SIRVE: el techo de la banda donde se negoció casi todo el día (70 % del volumen). "
+      + "Marco FIJO: dice si el precio está dentro o la perdió por arriba.",
+    [IndicatorType.VOL_ZONE_LOW]:
+        "PARA QUÉ SIRVE: el suelo de esa misma banda. Perderlo hacia abajo es entrar donde casi "
+      + "nadie compró — terreno sin soporte.",
+};
+
 const PARAM_FIELD_STYLE: React.CSSProperties = {
     backgroundColor: 'var(--color-ec-bg-sidebar)',
     border: '0.5px solid var(--color-ec-border)',
@@ -594,52 +619,107 @@ const AyudaOpcion = ({ clave }: { clave: string }) => {
 
 const TooltipIcon = ({ indicatorName, customText }: { indicatorName?: IndicatorType; customText?: string }) => {
     const context = React.useContext(TooltipContext);
-    if (!context) return null;
+    // FALLBACK propio cuando no hay contexto (condiciones de PIRÁMIDES y
+    // Camino): el GroupDisplay de esas secciones se renderiza FUERA del
+    // LogicBuilder, que es quien monta el TooltipContext — sin esto, el
+    // icono se desactivaba él solo y ahí no había ayuda NUNCA (ni «?»).
+    const [fallbackPos, setFallbackPos] = React.useState<{ x: number; y: number } | null>(null);
+    const setActiveTooltip = context?.setActiveTooltip;
 
-    const { setActiveTooltip } = context;
     const description = customText || (indicatorName ? INDICATOR_DESCRIPTIONS[indicatorName] : undefined);
     if (!description) return null;
 
+    // Si hay explicación corta, va SOLA (petición expresa: el texto largo
+    // sobraba). El resto de indicadores sigue con su descripción de siempre.
+    const quick = !customText && indicatorName ? INDICATOR_QUICK_HELP[indicatorName] : undefined;
+    const fullText = quick ?? description;
+    const titulo = indicatorName ? (INDICATOR_LABELS[indicatorName] || indicatorName) : undefined;
+
+    const abrir = (clientX: number, clientY: number) => {
+        if (setActiveTooltip) {
+            setActiveTooltip({ text: fullText, x: clientX, y: clientY, width: 185, title: titulo });
+        } else {
+            setFallbackPos({ x: clientX, y: clientY });
+        }
+    };
+    const cerrar = () => {
+        if (setActiveTooltip) setActiveTooltip(null);
+        else setFallbackPos(null);
+    };
+
     return (
+        <>
         <span
             onMouseEnter={(e) => {
-                setActiveTooltip({
-                    text: description,
-                    x: e.clientX,
-                    y: e.clientY,
-                    width: 185,
-                    title: indicatorName ? (INDICATOR_LABELS[indicatorName] || indicatorName) : undefined
-                });
-                e.currentTarget.style.color = "var(--color-ec-text-primary)";
-                e.currentTarget.style.borderColor = "var(--color-ec-text-muted)";
-                e.currentTarget.style.backgroundColor = "var(--color-ec-bg-surface)";
+                abrir(e.clientX, e.clientY);
+                e.currentTarget.style.backgroundColor = "color-mix(in srgb, var(--color-ec-copper) 25%, transparent)";
+                e.currentTarget.style.borderColor = "var(--color-ec-copper-bright)";
             }}
             onMouseLeave={(e) => {
-                setActiveTooltip(null);
-                e.currentTarget.style.color = "var(--color-ec-text-muted)";
-                e.currentTarget.style.borderColor = "var(--color-ec-border)";
-                e.currentTarget.style.backgroundColor = "var(--color-ec-bg-elevated)";
+                cerrar();
+                e.currentTarget.style.backgroundColor = "color-mix(in srgb, var(--color-ec-copper) 12%, transparent)";
+                e.currentTarget.style.borderColor = "color-mix(in srgb, var(--color-ec-copper) 55%, transparent)";
             }}
             style={{
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center",
-                width: 14,
-                height: 14,
+                width: 15,
+                height: 15,
                 borderRadius: "50%",
-                backgroundColor: "var(--color-ec-bg-elevated)",
-                border: "0.5px solid var(--color-ec-border)",
-                color: "var(--color-ec-text-muted)",
-                fontSize: 9,
-                fontWeight: 700,
+                backgroundColor: "color-mix(in srgb, var(--color-ec-copper) 12%, transparent)",
+                border: "1px solid color-mix(in srgb, var(--color-ec-copper) 55%, transparent)",
+                color: "var(--color-ec-copper-bright)",
+                fontSize: 10,
+                fontWeight: 800,
+                fontStyle: "italic",
+                fontFamily: "Georgia, serif",
                 cursor: "help",
                 flexShrink: 0,
                 userSelect: "none",
                 transition: "all 150ms ease",
             }}
         >
-            ?
+            i
         </span>
+        {!setActiveTooltip && fallbackPos && typeof document !== "undefined" && createPortal(
+            <div
+                style={{
+                    position: "fixed",
+                    top: fallbackPos.y,
+                    left: fallbackPos.x,
+                    transform: "translate(0, -100%)",
+                    backgroundColor: "var(--color-ec-bg-elevated)",
+                    color: "var(--color-ec-text-primary)",
+                    border: "0.5px solid var(--color-ec-border)",
+                    borderRadius: 4,
+                    padding: "6px 8px",
+                    lineHeight: 1.3,
+                    width: 185,
+                    zIndex: 100005,
+                    pointerEvents: "none",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                    fontFamily: "var(--color-ec-sans)",
+                    whiteSpace: "normal",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                    textAlign: 'left',
+                }}
+            >
+                {titulo && (
+                    <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 2 }}>
+                        {titulo}
+                    </strong>
+                )}
+                <span
+                    style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
+                    dangerouslySetInnerHTML={{ __html: fullText }}
+                />
+            </div>,
+            document.body
+        )}
+        </>
     );
 };
 
