@@ -185,7 +185,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
                 <th style={th}>Max DD</th>
                 <th style={th}>PF</th>
                 <th style={th}>Trades</th>
-                <th style={th}>Fuera</th>
+                <th style={th} title="Veredictos negativos de la puerta: uno por VELA con señal mientras el corto sigue vetado, no uno por trade">Vetos</th>
                 <th style={th}>Locates</th>
                 <th style={th}>$/paq. mediana</th>
               </tr>
@@ -213,7 +213,7 @@ export default function RangosLocatesBacktest({ peticion, initCash, riskR, riskT
             </tbody>
           </table>
         )}
-        {filas.length > 0 && !filaSel && <div style={{ marginTop: 6, fontSize: 11, color: color.textSecondary }}>Pulsa una fila para ver su calendario. «Fuera»: cortos que la puerta rechazó. «Locates»: lo pagado (PnL − PnL con locates de cada trade).</div>}
+        {filas.length > 0 && !filaSel && <div style={{ marginTop: 6, fontSize: 11, color: color.textSecondary }}>Pulsa una fila para ver su calendario. «Vetos»: veredictos negativos de la puerta, uno por vela con señal (una misma señal vetada suma uno cada vela que sigue viva), no uno por trade. «Locates»: lo pagado (PnL − PnL con locates de cada trade).</div>}
         {filaSel && (
           <div style={{ marginTop: 10, borderTop: `1px solid ${color.border}`, paddingTop: 8 }}>
             <div style={{ fontSize: 11, color: color.textSecondary, marginBottom: 6 }}>
