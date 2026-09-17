@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import ssl
 import threading
 import time
@@ -207,16 +208,12 @@ def formatear(ev: "Evento") -> str:
     return "\n".join(lineas)
 
 
-def enviar_texto(texto: str) -> bool:
-    """Manda un mensaje. Devuelve si salio de verdad.
+def _post(texto: str) -> tuple[bool, bool, str]:
+    """Un intento de envio. Devuelve (salio, merece_reintento, detalle).
 
-    Nunca lanza: un fallo de red no puede tumbar el bot ni hacerle perder la
-    vela siguiente. Si falla, queda en el log y el aviso sigue estando en el
-    cuadro de mandos.
+    Un rechazo de Telegram (4xx: mensaje mal formado, chat equivocado…) no
+    cambia por repetirlo; un timeout o un 5xx si.
     """
-    if not envio_activo():
-        logger.info("[TELEGRAM] (no enviado: %s)\n%s", motivo_inactivo(), texto)
-        return False
     token, chat = _cfg()
     try:
         r = httpx.post(
@@ -230,13 +227,119 @@ def enviar_texto(texto: str) -> bool:
             },
             timeout=TIMEOUT, verify=_verify(),
         )
-        if r.status_code != 200:
-            logger.warning("[TELEGRAM] rechazado (%s): %s", r.status_code, r.text[:300])
-            return False
-        return True
+        if r.status_code == 200:
+            return True, False, ""
+        return False, r.status_code >= 500, f"rechazado ({r.status_code}): {r.text[:300]}"
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[TELEGRAM] fallo de envio: %s", exc)
+        return False, True, f"fallo de envio: {exc}"
+
+
+def enviar_texto(texto: str) -> bool:
+    """Manda un mensaje y espera la respuesta. Devuelve si salio de verdad.
+
+    Nunca lanza: un fallo de red no puede tumbar el bot ni hacerle perder la
+    vela siguiente. Si falla, queda en el log y el aviso sigue estando en el
+    cuadro de mandos. Es UN intento y bloquea hasta TIMEOUT: para los avisos
+    del bot en vivo se usa `encolar`, que no espera y reintenta.
+    """
+    if not envio_activo():
+        logger.info("[TELEGRAM] (no enviado: %s)\n%s", motivo_inactivo(), texto)
         return False
+    ok, _, detalle = _post(texto)
+    if not ok:
+        logger.warning("[TELEGRAM] %s", detalle)
+    return ok
+
+
+# ── Envio en segundo plano ──────────────────────────────────────────────────
+#
+# 17-sep-2026, 14:31: cinco tramos de take profit a la vez; el tercero (KXIN,
+# 394 de 787) se quedo esperando a Telegram 10 s y se dio por perdido. No hubo
+# reintento y, peor, el bot entero estuvo esos 10 s parado (el aviso siguiente
+# salio 10 s tarde y el feed acumulo 12 s de retraso). Un aviso que Jaume
+# ejecuta a mano no puede depender de que Telegram conteste a la primera.
+#
+# Un solo hilo consume la cola, asi que los mensajes salen en el ORDEN en que
+# se generaron (entrada antes que su piramide, tramo 1 antes que tramo 2).
+
+REINTENTOS = 3
+ESPERA_REINTENTO = 2.0      # entre intentos: 2 s, luego 4 s
+
+_cola: "queue.Queue[str | None]" = queue.Queue()
+_hilo_envio: threading.Thread | None = None
+_LOCK_HILO = threading.Lock()
+perdidos = 0                 # mensajes que no salieron tras todos los intentos
+
+
+def enviar_con_reintentos(texto: str) -> bool:
+    """Hasta REINTENTOS intentos con espera creciente. Deja en el log si costo
+    mas de uno o si al final se perdio. Bloquea: es lo que corre el hilo."""
+    global perdidos
+    detalle = ""
+    intento = 0
+    for intento in range(1, REINTENTOS + 1):
+        ok, reintentar, detalle = _post(texto)
+        if ok:
+            if intento > 1:
+                logger.warning("[TELEGRAM] enviado al intento %d (antes: %s)", intento, detalle)
+            return True
+        if not reintentar:
+            break
+        if intento < REINTENTOS:
+            time.sleep(ESPERA_REINTENTO * intento)
+    perdidos += 1
+    logger.error("[TELEGRAM] PERDIDO tras %d intento(s): %s\n%s", intento, detalle, texto)
+    return False
+
+
+def _bucle_envio() -> None:
+    while True:
+        texto = _cola.get()
+        try:
+            if texto is not None:
+                enviar_con_reintentos(texto)
+        except Exception as exc:  # noqa: BLE001  # el hilo no muere nunca
+            logger.error("[TELEGRAM] error inesperado enviando: %s", exc)
+        finally:
+            _cola.task_done()
+        if texto is None:
+            return
+
+
+def encolar(texto: str) -> bool:
+    """Deja el mensaje en la cola y vuelve al instante; el hilo de envio lo
+    manda con reintentos. Devuelve False solo si Telegram esta apagado."""
+    global _hilo_envio
+    if not envio_activo():
+        logger.info("[TELEGRAM] (no enviado: %s)\n%s", motivo_inactivo(), texto)
+        return False
+    with _LOCK_HILO:
+        if _hilo_envio is None or not _hilo_envio.is_alive():
+            _hilo_envio = threading.Thread(target=_bucle_envio, name="telegram-envio", daemon=True)
+            _hilo_envio.start()
+    _cola.put(texto)
+    return True
+
+
+def pendientes_de_envio() -> int:
+    return _cola.unfinished_tasks
+
+
+def vaciar(espera: float = 30.0) -> bool:
+    """Espera a que salga lo encolado (al cerrar el bot). Devuelve si se vacio.
+
+    El hilo es daemon: sin esto, cerrar el bot con un aviso a medio enviar lo
+    perderia sin dejar rastro.
+    """
+    if _hilo_envio is None or not _hilo_envio.is_alive():
+        return _cola.unfinished_tasks == 0
+    limite = time.time() + espera
+    while time.time() < limite:
+        if _cola.unfinished_tasks == 0:
+            return True
+        time.sleep(0.1)
+    logger.warning("[TELEGRAM] cierro con %d mensaje(s) sin enviar", _cola.unfinished_tasks)
+    return False
 
 
 def recibir(offset: int = 0, espera: int = 0) -> tuple[list[dict], int]:
