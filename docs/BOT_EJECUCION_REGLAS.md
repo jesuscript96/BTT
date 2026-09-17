@@ -586,6 +586,30 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 17-sep).
 - Origen: D2, D14.
 
+### R-D-04 · Reentradas
+- Situación: la estrategia vuelve a dar señal en un ticker del que ya se salió ese día (por stop, take profit u hora).
+- Detección: señal nueva + historial del día en el diario + parámetros de la estrategia (accept_reentries / max_reentries, como en el backtester).
+- Acción: se reentra siempre que la estrategia lo permita y esté dentro de sus límites horarios; si llega su EOD sin take profit, se cierra como en el backtest (R-D-02). Única excepción: tras stop con halt (R-F-03). Locate: se REUTILIZA el ya comprado si el bróker lo permite; si no (locates de un solo uso / SSR), vuelve a pasar por R-H-01 y solo se compra si el EV sigue siendo positivo con el coste total acumulado.
+- Quién la ejecuta: guarda (mismo if/elif que el backtester y el bot de avisos: paridad) + módulo de locates.
+- Parámetros: los de la estrategia. OJO al centinela: max_reentries = −1 NO es «ninguna» ni «ilimitadas»: significa «sin tope numérico, manda accept_reentries»; 0 es «ninguna». La interfaz escribe −1 al encender el interruptor y 0 al apagarlo.
+- Si la acción falla: sin locate disponible → no se reentra, se registra.
+- Prueba: tabla de casos (−1 / 0 / N con accept_reentries true/false); paridad con el backtest.
+- Estado: FIJADA (Jaume, 17-sep).
+- Origen: D6.
+
+### R-D-05 · Se cae el feed de Massive con posiciones abiertas (DAS vivo)
+- Situación: el bot deja de recibir datos de Massive (señales y salidas por estrategia imposibles) pero DAS sigue vivo.
+- Detección: latido del feed (sin ticks ni velas más de N segundos, parámetro).
+- Acción: se MANTIENEN las posiciones con sus stops residentes (el vigilante sigue viendo el precio de DAS y las salidas por hora son de reloj), NO se abren nuevas, y AVISO DE EMERGENCIA inmediato al humano para pasar a control humano.
+- Quién la ejecuta: vigilante + supervisor.
+- Parámetros: segundos sin feed para declarar caída (por fijar en J2).
+- Si la acción falla: si además cae DAS → área J (J3/J4).
+- Prueba: simulacro cortando el feed en sombra.
+- Estado: FIJADA (Jaume, 17-sep).
+- Origen: D7, A3.
+
+**D13 (Jaume, 17-sep): las entradas de las pirámides siguen el MISMO protocolo que las entradas normales (R-B-01/02/03); no hay regla de orden entre niveles.**
+
 **RECORDATORIO para el día del PDF (Jaume, 17-sep): pedirle las REGLAS DE MARGEN / BUYING POWER de su bróker.** Tiene reglas particulares (margen intradía, PM, autoliquidación en RTH) que pueden afectar a la ejecución y habrá que configurar cosas en función de ellas. → área E (E6) y R-I-01.
 
 ### Área E · Capital compartido entre estrategias

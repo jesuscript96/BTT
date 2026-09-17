@@ -20,7 +20,7 @@
 
 - [x] A1. → R-B-04 (provisional: 60 s desde el cierre de la vela, con la puerta del 3 %). ¿Cuánto tiempo es válida una señal? Si el ejecutor la recibe 3 s, 30 s o 3 min tarde, ¿se ejecuta, se recalcula o se descarta?
 - [ ] A2. ¿A qué distancia entre el precio de la señal y el precio actual se invalida la entrada (en % y en múltiplos del spread)?
-- [ ] A3. Si el feed de Massive se retrasa o se corta a media señal, ¿con qué retraso máximo se permite ABRIR? ¿Y con cuál solo se GESTIONA lo abierto?
+- [x] A3. → R-D-05 (sin feed: no abrir, mantener, aviso); el umbral de segundos en J2. Si el feed de Massive se retrasa o se corta a media señal, ¿con qué retraso máximo se permite ABRIR? ¿Y con cuál solo se GESTIONA lo abierto?
 - [ ] A4. El bot decide con datos de Massive y ejecuta contra precios de DAS. Cuando difieren (prints tardíos, dark pool), ¿cuál manda para entrar y cuál para el stop? **[dato]** el 93 % de los «fogonazos» del crudo eran prints tardíos que están en la cinta y en las velas, no en el libro.
 - [ ] A5. ¿Cómo se filtra un print erróneo (un tick fuera de rango)? ¿Un solo tick puede disparar una entrada o una salida?
 - [ ] A6. ¿Qué pasa si el reloj del PC o del VPS se desvía? ¿Sincronización de hora obligatoria y comprobada al arrancar?
@@ -81,14 +81,14 @@
 - [x] D3. → R-D-01 (escalera de compra 1/2/3 % en 60 s y luego al ask; sin doble compra). Salida por hora de la estrategia: ¿límite, mercado, o límite y a los N s mercado? ¿Y si no hay liquidez?
 - [x] D4. → R-D-02 (EOD por estrategia, margen, aviso máximo y botón «control humano»). Cierre forzoso de fin de día: ¿a qué hora, con qué margen antes del cierre, y qué pasa si no se consigue (posición overnight no deseada)? **[dato]** quien aguanta al cierre se lleva el T12 a casa (INHD, TENK).
 - [ ] D5. Ejemplo de Jaume: se reduce por take profit y luego OTRA estrategia añade capital al mismo ticker. ¿Se permite? ¿Es nueva posición con su stop? ¿Se prohíbe añadir durante X min tras una reducción?
-- [ ] D6. Reentradas: ¿cuántas por ticker y día? ¿Cuenta como el backtester (−1 es trampa)? ¿Reutiliza el locate?
-- [ ] D7. Salida por deterioro de datos (feed caído): ¿cerrar todo o mantener con el stop residente?
+- [x] D6. → R-D-04 (según la estrategia; locate reutilizado si se puede; excepción halt). Reentradas: ¿cuántas por ticker y día? ¿Cuenta como el backtester (−1 es trampa)? ¿Reutiliza el locate?
+- [x] D7. → R-D-05 (mantener con stops, no abrir, aviso de emergencia). Salida por deterioro de datos (feed caído): ¿cerrar todo o mantener con el stop residente?
 - [x] D8. → R-F-01 caso 4 (con 2 halts, salir a 2-3 % de la banda). Salida anticipada por aviso de halts (cadena de LULD) o por acercarse a la banda: **[dato]** salir a X % de la banda no vale como automatismo (2 % de acierto); una cadena de ≥ 5 LULD acaba en T12 1 de cada 300.
 - [ ] D9. Salida rechazada (ruta cerrada, sin liquidez): ¿cambio de ruta automático y cuántos intentos? **[API]**
 - [ ] D10. Salida por tramos por liquidez: ¿se acepta cerrar en varios trozos y cuánto se espera entre ellos?
 - [ ] D11. ¿El bot puede cerrar una posición que abrió Jaume a mano? (ver K5)
 - [x] D12. → R-D-02 (aviso máximo por lote; humano; sin after-hours). Posición que queda abierta por error después de la hora: ¿aviso inmediato, cierre automático en after-hours o esperar al humano?
-- [ ] D13. Pirámide: ¿cada nivel es una orden nueva con su guarda, o el ejecutor la trata como cambio de posición objetivo? ¿Qué pasa si el nivel 2 se llena y el 1 no?
+- [x] D13. → mismo protocolo que las entradas (R-B-01/02/03). Pirámide: ¿cada nivel es una orden nueva con su guarda, o el ejecutor la trata como cambio de posición objetivo? ¿Qué pasa si el nivel 2 se llena y el 1 no?
 - [x] D14. → R-D-03. Take profit parcial cuando la liquidez es pequeña: ¿se sacrifica el parcial y se sale entero?
 
 ## E. Varias estrategias, mismo ticker, capital compartido
