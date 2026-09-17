@@ -569,11 +569,24 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Detección: reloj + posiciones abiertas del LOTE de esa estrategia (no de otras).
 - Acción: (1) al EOD de la estrategia se cierra lo que quede de su lote con R-D-01. (2) Como R-D-01 puede tardar hasta un minuto más el ask, se da un MARGEN de unos segundos después del EOD antes de comprobar; pasado el margen, si quedan posiciones de ese lote sin cerrar → AVISO MÁXIMO y control humano. (3) Los avisos son POR ESTRATEGIA teniendo en cuenta las demás: si A cierra a las 11 y B a las 12, a las 11 solo se comprueba el lote de A; las posiciones de B no son alarma hasta su EOD. (4) Cuadro de mandos: botón **«Control humano»** que deshabilita el bot (lo apaga) para que las operaciones las hagamos nosotros a mano.
 - Quién la ejecuta: ejecutor + vigilante (comprobación por lote) + humano.
-- Parámetros: margen tras el EOD (segundos, por fijar; propuesta 90 s = escalera + ask + confirmación); EOD por estrategia (JSON).
+- Parámetros (Jaume, 17-sep): la salida de EOD se LANZA 60 s ANTES de la hora de EOD (la escalera termina justo en el EOD y el ask sale en ese instante) y la comprobación se hace 30 s DESPUÉS del EOD. EOD por estrategia (JSON).
 - Si la acción falla: —
 - Prueba: tabla de casos con dos estrategias de EOD distinto; sombra.
-- Estado: FIJADA (Jaume, 17-sep), margen por fijar. Sin intentos en after-hours: aviso y humano.
+- Estado: FIJADA (Jaume, 17-sep). Sin intentos en after-hours: aviso y humano.
 - Origen: D4, D12.
+
+### R-D-03 · Take profit ejecutado a medias y el precio rebota
+- Situación: la orden de take profit (compra agregando en el nivel) se ejecuta en parte (300 de 500) y el precio se da la vuelta hacia arriba.
+- Detección: fill parcial del take profit + precio por encima del nivel.
+- Acción: (1) el resto (200) se cierra con una compra limitP al ask con TECHO del 3 % sobre el último precio (misma protección que el stop principal); en un rebote normal se ejecuta al instante. (2) Si NO se ejecuta porque el precio se ha ido más del 3 %, NO se persigue: la posición sigue en manos de sus dos stops residentes (principal y emergencia), que ya llevan la lógica de squeeze y cisne negro. Nunca una compra a mercado sin techo en ese momento (libro posiblemente vacío). (3) Si no se ejecuta, AVISO al humano: la posición puede quedar en el «limbo» entre el límite y el stop hasta que el precio vuelva a uno de los dos. (4) El bot ajusta en todo momento la cantidad de los stops a la posición que queda «en el aire» (R-C-07: reducir el stop a lo que sigue en corto). (5) Si por un fogonazo se ejecutan compras de más y quedan acciones LARGAS, se venden al instante (R-C-11).
+- Quién la ejecuta: ejecutor + vigilante (posición neta, aviso).
+- Parámetros: techo 3 % (el de R-C-01).
+- Si la acción falla: —
+- Prueba: tabla de casos (parcial + rebote pequeño / rebote > 3 % / fogonazo); sombra.
+- Estado: FIJADA (Jaume, 17-sep).
+- Origen: D2, D14.
+
+**RECORDATORIO para el día del PDF (Jaume, 17-sep): pedirle las REGLAS DE MARGEN / BUYING POWER de su bróker.** Tiene reglas particulares (margen intradía, PM, autoliquidación en RTH) que pueden afectar a la ejecución y habrá que configurar cosas en función de ellas. → área E (E6) y R-I-01.
 
 ### Área E · Capital compartido entre estrategias
 
