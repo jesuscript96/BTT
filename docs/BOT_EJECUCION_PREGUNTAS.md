@@ -85,8 +85,8 @@
 - [x] D7. → R-D-05 (mantener con stops, no abrir, aviso de emergencia). Salida por deterioro de datos (feed caído): ¿cerrar todo o mantener con el stop residente?
 - [x] D8. → R-F-01 caso 4 (con 2 halts, salir a 2-3 % de la banda). Salida anticipada por aviso de halts (cadena de LULD) o por acercarse a la banda: **[dato]** salir a X % de la banda no vale como automatismo (2 % de acierto); una cadena de ≥ 5 LULD acaba en T12 1 de cada 300.
 - [ ] D9. Salida rechazada (ruta cerrada, sin liquidez): ¿cambio de ruta automático y cuántos intentos? **[API]**
-- [ ] D10. Salida por tramos por liquidez: ¿se acepta cerrar en varios trozos y cuánto se espera entre ellos?
-- [ ] D11. ¿El bot puede cerrar una posición que abrió Jaume a mano? (ver K5)
+- [x] D10. → igual que R-D-01, sin más. Salida por tramos por liquidez: ¿se acepta cerrar en varios trozos y cuánto se espera entre ellos?
+- [x] D11. → R-D-06 (solo con «cerrar todo» de Telegram: ask para cortos, bid para largos). ¿El bot puede cerrar una posición que abrió Jaume a mano? (ver K5)
 - [x] D12. → R-D-02 (aviso máximo por lote; humano; sin after-hours). Posición que queda abierta por error después de la hora: ¿aviso inmediato, cierre automático en after-hours o esperar al humano?
 - [x] D13. → mismo protocolo que las entradas (R-B-01/02/03). Pirámide: ¿cada nivel es una orden nueva con su guarda, o el ejecutor la trata como cambio de posición objetivo? ¿Qué pasa si el nivel 2 se llena y el 1 no?
 - [x] D14. → R-D-03. Take profit parcial cuando la liquidez es pequeña: ¿se sacrifica el parcial y se sale entero?

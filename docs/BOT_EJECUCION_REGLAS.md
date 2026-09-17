@@ -610,6 +610,19 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 **D13 (Jaume, 17-sep): las entradas de las pirámides siguen el MISMO protocolo que las entradas normales (R-B-01/02/03); no hay regla de orden entre niveles.**
 
+**D10 (Jaume, 17-sep): salida por tramos por falta de liquidez: se acepta sin más, igual que R-D-01 (lo que quede al ask al final del minuto); sin límite de tiempo distinto para salidas grandes.**
+
+### R-D-06 · «Cerrar todo» desde Telegram (incluye posiciones manuales)
+- Situación: el humano manda por Telegram el comando «cerrar todo» (con confirmación, M1).
+- Detección: comando autorizado por chat_id.
+- Acción: el bot cierra TODAS las posiciones de la cuenta, incluidas las que no abrió él (manuales): los cortos comprando AL ASK y los largos vendiendo AL BID (remover, rápido). Cancela antes las órdenes vivas de cada posición para no comprar/vender de más (R-C-11). Techo del límite: por decidir (propuesta: el mismo 3 % y, si algo no entra, aviso inmediato con lo que queda).
+- Quién la ejecuta: ejecutor por orden del humano.
+- Parámetros: techo (por decidir).
+- Si la acción falla: aviso con la lista de lo que sigue abierto.
+- Prueba: simulacro en demo/sombra con posiciones del bot y manuales.
+- Estado: FIJADA en su lógica (Jaume, 17-sep); techo pendiente.
+- Origen: D11, M1.
+
 **RECORDATORIO para el día del PDF (Jaume, 17-sep): pedirle las REGLAS DE MARGEN / BUYING POWER de su bróker.** Tiene reglas particulares (margen intradía, PM, autoliquidación en RTH) que pueden afectar a la ejecución y habrá que configurar cosas en función de ellas. → área E (E6) y R-I-01.
 
 ### Área E · Capital compartido entre estrategias
