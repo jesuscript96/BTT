@@ -911,20 +911,18 @@ export default function Chart({
             "#ef4444", 2, "SL");
           // CADA LOTE, en su color: el precio de ENTRADA (discontinuo) durante
           // la vida del lote — desde el añadido hasta su SL de lote o el
-          // cierre del trade — y su CINTURÓN congelado (punteado), que nació
-          // con el lote y vive exactamente ese mismo tramo. Ver juntos los dos
-          // niveles del lote es lo que contesta «cuánto espacio tenía este
-          // añadido hasta su stop» de un vistazo.
-          // El SL se pinta SOLO EN EL TRAMO FINAL de la vida del lote
-          // (últimos 30 min): existió desde la entrada, pero pintarlo entero
-          // duplica cada horizontal y satura el gráfico — lo que importa ver
-          // del cinturón es el nivel justo antes de que importe (su cierre o
-          // el final del trade).
+          // cierre del trade — y su CINTURÓN congelado (punteado). Ver juntos
+          // los dos niveles del lote es lo que contesta «cuánto espacio tenía
+          // este añadido hasta su stop» de un vistazo.
+          // El SL se pinta ANCLADO AL AÑADIDO — nace justo sobre su marcador —
+          // y CORTO (30 min): existió toda la vida del lote, pero pintarlo
+          // entero duplica cada horizontal; anclarlo al FINAL lo dejaba
+          // desplazado a la derecha del añadido, lejos de donde se lee.
           for (const lote of lotes) {
             const sEntry = segmento(lote.entryPx, lote.entryTime, lote.endTime, lote.color, 2);
             const sSl = (lote.slPx !== undefined && lote.slPx > 0)
-              ? segmento(lote.slPx, Math.max(lote.entryTime, lote.endTime - 30 * 60),
-                lote.endTime, lote.color, 1)
+              ? segmento(lote.slPx, lote.entryTime,
+                Math.min(lote.endTime, lote.entryTime + 30 * 60), lote.color, 1)
               : null;
             if (sEntry || sSl) seriesPorLote.set(lote.idx, { entry: sEntry, sl: sSl ?? undefined });
           }
@@ -1007,22 +1005,126 @@ export default function Chart({
         marcadoresRef.current = markersOrden;
         marcasLotesRef.current = lotesOrden;
         markersApiRef.current = createSeriesMarkers(candleSeries, []);
-        // UNA sola regla para pintar marcadores, compartida por el botón
-        // «Datos» y por los chips de la leyenda: fuera los lotes ocultos, y
-        // fuera el texto si «Datos» está apagado.
-        aplicarMarcadoresRef.current = () => {
-          const api = markersApiRef.current;
-          const ms = marcadoresRef.current;
-          if (!api) return;
-          const visibles = ms.filter((m: any, i: number) => {
-            const lots = marcasLotesRef.current[i];
-            return !lots || !lots.every(l => lotesOcultosRef.current.has(l));
+
+        // ── ETIQUETAS CON FONDO ─────────────────────────────────────────
+        // lightweight-charts pinta el texto de los marcadores SIN fondo y
+        // sobre las velas es ilegible (petición de Álvaro, 2026-09-17). Los
+        // SÍMBOLOS se quedan en el canvas (marcan el punto exacto); el TEXTO
+        // pasa a chips HTML con recuadro oscuro y borde del color de su
+        // marcador, reposicionados al desplazar/escalar el gráfico. Si dos
+        // chips se solapan (mucho zoom out), se oculta el que llega después:
+        // mejor perder un texto que leer una sopa.
+        {
+          const overlay = document.createElement("div");
+          overlay.style.cssText =
+            "position:absolute;inset:0;pointer-events:none;z-index:4;overflow:hidden;";
+          container.appendChild(overlay);
+          cleanupFns.push(() => overlay.remove());
+
+          const velaPorTiempo = new Map<number, CandleData>(
+            deduped.map(c => [c.time as number, c]));
+          const etiquetas = markersOrden.map((m: any, i: number) => {
+            const el = document.createElement("div");
+            el.textContent = m.text;
+            el.style.cssText =
+              "position:absolute;display:none;white-space:nowrap;pointer-events:none;" +
+              "max-width:150px;overflow:hidden;text-overflow:ellipsis;" +
+              "background:var(--color-ec-bg-base);color:#e5e7eb;" +
+              `border:0.5px solid ${m.color};border-radius:3px;padding:1px 4px;` +
+              "font:500 9px/1.4 var(--color-ec-mono);";
+            overlay.appendChild(el);
+            const vela = velaPorTiempo.get(m.time as number);
+            return {
+              el, idx: i,
+              time: m.time as number,
+              side: m.position as "aboveBar" | "belowBar",
+              alto: vela?.high ?? 0,
+              bajo: vela?.low ?? 0,
+            };
           });
-          api.setMarkers(
-            datosEntradasRef.current ? visibles : visibles.map((m: any) => ({ ...m, text: "" })),
-          );
-        };
-        aplicarMarcadoresRef.current();
+
+          const reposicionarEtiquetas = () => {
+            const visibles = new Set<number>();
+            marcadoresRef.current.forEach((_: any, i: number) => {
+              const lots = marcasLotesRef.current[i];
+              const ver = (!lots || !lots.every(l => lotesOcultosRef.current.has(l)))
+                && datosEntradasRef.current;
+              if (ver) visibles.add(i);
+            });
+            const escalaT = chart.timeScale();
+            const ancho = container.clientWidth || 0;
+            const altoCont = container.clientHeight || 400;
+            const conCaja: typeof etiquetas = [];
+            for (const e of etiquetas) {
+              if (!visibles.has(e.idx) || !e.alto) { e.el.style.display = "none"; continue; }
+              const x = escalaT.timeToCoordinate(e.time as Time) as number | null;
+              if (x === null || x < -20 || x > ancho + 20) { e.el.style.display = "none"; continue; }
+              const y = e.side === "aboveBar"
+                ? candleSeries.priceToCoordinate(e.alto)
+                : candleSeries.priceToCoordinate(e.bajo);
+              if (y === null) { e.el.style.display = "none"; continue; }
+              e.el.style.display = "block";
+              e.el.style.left = `${Math.max(2, x - 4)}px`;
+              e.el.style.top = e.side === "aboveBar"
+                ? `${Math.max(2, y - 30)}px`     // encima del símbolo
+                : `${Math.min(altoCont - 16, y + 12)}px`;  // debajo del símbolo
+              conCaja.push(e);
+            }
+            // Anti-solape horizontal con DOS ALTURAS por lado (cercana y
+            // alejada de las velas): con el día entero a la vista los
+            // añadidos caen en pocos píxeles y una sola altura escondía casi
+            // todos los textos. Si las dos alturas están ocupadas en ese
+            // tramo, el chip se oculta — mejor perder un texto que una sopa.
+            conCaja.sort((a, b) => a.el.offsetLeft - b.el.offsetLeft);
+            const bordeDerecho: Record<string, number[]> = { above: [-Infinity, -Infinity], below: [-Infinity, -Infinity] };
+            for (const e of conCaja) {
+              const lado = e.side === "aboveBar" ? "above" : "below";
+              const izq = e.el.offsetLeft;
+              const der = izq + e.el.offsetWidth;
+              const carriles = bordeDerecho[lado];
+              let carril = carriles.findIndex(d => izq >= d + 4);
+              if (carril === -1) { e.el.style.display = "none"; continue; }
+              carriles[carril] = der;
+              if (lado === "above") {
+                e.el.style.top = `${Math.max(2, parseFloat(e.el.style.top) - carril * 15)}px`;
+              } else {
+                e.el.style.top = `${parseFloat(e.el.style.top) + carril * 15}px`;
+              }
+            }
+          };
+
+          chart.timeScale().subscribeVisibleTimeRangeChange(reposicionarEtiquetas);
+          // v5 no expone evento de cambio en la escala de PRECIOS (solo de
+          // tiempo): se vigila con un sondeo barato — leer el rango visible
+          // cada 400 ms y repintar solo si cambió — que cubre el arrastre
+          // vertical y el auto-escalado de la escala.
+          let ultRango = "";
+          const vigia = window.setInterval(() => {
+            try {
+              const r = chart.priceScale("right").getVisibleRange();
+              const clave = r ? `${r.from.toFixed(6)}|${r.to.toFixed(6)}` : "";
+              if (clave !== ultRango) { ultRango = clave; reposicionarEtiquetas(); }
+            } catch { /* escala aún no lista */ }
+          }, 400);
+          cleanupFns.push(() => window.clearInterval(vigia));
+
+          // UNA sola regla para pintar marcadores + etiquetas, compartida por
+          // el botón «Datos» y por los chips de la leyenda: fuera los lotes
+          // ocultos. El texto SIEMPRE vive en los chips («Datos» los apaga);
+          // al canvas van solo los símbolos.
+          aplicarMarcadoresRef.current = () => {
+            const api = markersApiRef.current;
+            const ms = marcadoresRef.current;
+            if (!api) return;
+            const visibles = ms.filter((m: any, i: number) => {
+              const lots = marcasLotesRef.current[i];
+              return !lots || !lots.every(l => lotesOcultosRef.current.has(l));
+            });
+            api.setMarkers(visibles.map((m: any) => ({ ...m, text: "" })));
+            reposicionarEtiquetas();
+          };
+          aplicarMarcadoresRef.current();
+        }
 
         // LEYENDA DE PIRÁMIDES: chip numerado por lote, para leer el color sin
         // depender del texto de los marcadores (que se apaga con «Datos»).
