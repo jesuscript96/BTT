@@ -133,6 +133,13 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
   // salidas (17-sep, Jaume). Bajo = el problema son las salidas, no los locates.
   const captura = (b: { ev: number | null; mfe: number | null }) => (b.ev == null || b.mfe == null || !(b.mfe > 0) ? null : (b.ev / b.mfe) * 100);
   const pct0 = (v: number | null) => (v == null ? "—" : `${v.toFixed(0)} %`);
+  // REGLA DE BOLSILLO para real (Jaume, 17-sep): UN numero, $ por paquete por
+  // cada 1 $ de precio de la accion. Se coge el EV del tramo mas flojo de los
+  // que tienen trades de sobra (n >= 20) — el global mezcla tramos y permite
+  // de mas justo en las baratas — y se deja dos tercios de margen por
+  // comisiones, ruido del EV y redondeo a paquetes enteros.
+  const evFlojo = datos.tramos.filter((t) => t.n >= 20 && t.ev != null).reduce<number | null>((m, t) => (m == null || (t.ev as number) < m ? (t.ev as number) : m), null);
+  const reglaBolsillo = evFlojo != null && evFlojo > 0 ? evFlojo * (2 / 3) : null;
   const colorDe = (v: number | null) => (v == null ? undefined : v >= 0 ? "var(--color-ec-copper-bright)" : "var(--color-ec-loss)");
 
   return (
@@ -165,7 +172,10 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
           ))}
         </div>
         <span className="ml-auto mr-3 text-[10px] font-mono text-[var(--color-ec-text-secondary)]">
-          EV {pct(datos.total.ev)} · MFE {pct(datos.total.mfe)} · Fade {pct(datos.total.fade)} · <span title="Captura = EV / MFE: qué parte del recorrido disponible se llevan tus salidas">captura {pct0(captura(datos.total))}</span> · <span title="TOPE SEGÚN EV: no es lo que se pagó, es lo que el EV aguantaría = EV (%) × precio de la acción, en $ por paquete de 100. Aquí por cada 1 $ de precio: multiplica por el precio de la acción (a 5 $, ×5). Por tramo, en la tabla.">tope según EV {datos.total.ev == null || !(datos.total.ev > 0) ? "—" : `${f2(datos.total.ev)} $/paq. por cada 1 $ de precio`}</span> · {datos.total.n} trades
+          EV {pct(datos.total.ev)} · MFE {pct(datos.total.mfe)} · Fade {pct(datos.total.fade)} · <span title="Captura = EV / MFE: qué parte del recorrido disponible se llevan tus salidas">captura {pct0(captura(datos.total))}</span> · <span title="TOPE SEGÚN EV: no es lo que se pagó, es lo que el EV aguantaría = EV (%) × precio de la acción, en $ por paquete de 100. Aquí por cada 1 $ de precio: multiplica por el precio de la acción (a 5 $, ×5). Por tramo, en la tabla.">tope según EV {datos.total.ev == null || !(datos.total.ev > 0) ? "—" : `${f2(datos.total.ev)} $/paq. por cada 1 $ de precio`}</span>
+          {reglaBolsillo != null && (
+            <> · <span style={{ color: "var(--color-ec-copper-bright)", fontWeight: 600 }} title={`REGLA DE BOLSILLO para real: paga como máximo ${f2(reglaBolsillo)} $ por paquete por cada 1 $ de precio de la acción (a 3 $, ${f2(reglaBolsillo * 3)} $; a 0,60 $, ${f2(reglaBolsillo * 0.6)} $). Es el EV del tramo más flojo con ≥ 20 trades (${f2(evFlojo as number)} %) con dos tercios de margen por comisiones, ruido y paquetes enteros.`}>regla: {f2(reglaBolsillo)} $/paq. por cada 1 $</span></>
+          )} · {datos.total.n} trades
         </span>
       </div>
 
