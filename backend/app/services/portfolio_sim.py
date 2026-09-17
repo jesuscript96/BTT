@@ -2044,6 +2044,13 @@ def simulate(
                         # un añadido a medias no parezca uno normal.
                         **({"recortado_por_caja": round(add_cash_pedido, 2)} if recortado else {}),
                         **({"recortado_por_locates": int(max_locates)} if recortado_locates else {}),
+                        # El nivel congelado del cinturón viaja TAMBIÉN en el
+                        # añadido (no solo en su cierre): así el visor empareja
+                        # lote y lot_stop por precio y puede pintar el SL del
+                        # lote desde su entrada — que es exactamente el tramo en
+                        # el que ese nivel estuvo vivo (se congela al añadir y
+                        # nunca se recalcula, §3.2 del PRD 20260915).
+                        **({"sl_px": round(lot_sl_px, 6)} if ls is not None else {}),
                     })
                     # El lote queda apuntado con su tamaño EJECUTADO (recortes
                     # de caja/locates incluidos: si el cinturón salta, cierra

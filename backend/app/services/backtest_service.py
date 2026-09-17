@@ -1616,9 +1616,12 @@ def _build_executions(run: list[dict]) -> list[dict]:
                 "size": pe.get("size"),
                 "pnl": pe.get("pnl"),
                 # SL por lote (PRD 2026-09-15): el nivel congelado del lote,
-                # para que el gráfico pueda pintar su línea punteada.
+                # para que el gráfico pueda pintar su línea punteada. En el
+                # AÑADIDO también (el nivel se congela al añadir): el visor
+                # empareja lote y cierre por precio y dibuja el cinturón desde
+                # la entrada del lote, no solo a posteriori.
                 **({"sl_px": pe.get("sl_px")}
-                   if _kind_pe == "lot_stop" and pe.get("sl_px") else {}),
+                   if _kind_pe in ("lot_stop", "add") and pe.get("sl_px") else {}),
                 "label": (f"Pirámide {pe.get('level')}: "
                           + ("añade" if _kind_pe == "add"
                              else "reduce" if _kind_pe == "reduce"
