@@ -108,6 +108,30 @@ function getSeriesColor(indicatorId: string, instanceIndex: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Color por AÑADIDO de pirámide (visor de lotes)
+// ---------------------------------------------------------------------------
+// Cada añadido —no cada nivel: con times>1 un mismo nivel dispara varias veces
+// seguidas— lleva su color, y con él nacen sus dos segmentos punteados (precio
+// de entrada y SL del lote) y los marcadores de su apertura y su cierre. El
+// color es el hilo que une «dónde entró este lote, con qué cinturón y cuándo
+// salió». Se eligieron tonos que no pisen los que ya significan cosas en el
+// gráfico: verde/rojo (velas, entradas y salidas), rojo duro (stop del trade),
+// ámbar (parciales) y cobre (escalera del scalping).
+const COLOR_PIRAMIDE = [
+  "#38bdf8", // 1 cielo
+  "#a78bfa", // 2 violeta
+  "#f472b6", // 3 rosa
+  "#facc15", // 4 amarillo
+  "#2dd4bf", // 5 turquesa
+  "#fb923c", // 6 naranja
+  "#a3e635", // 7 lima
+  "#e879f9", // 8 fucsia
+  "#60a5fa", // 9 azul
+  "#34d399", // 10 esmeralda
+];
+const colorPiramide = (n: number) => COLOR_PIRAMIDE[(n - 1) % COLOR_PIRAMIDE.length];
+
+// ---------------------------------------------------------------------------
 // Candle aggregation (frontend-only, no backend changes)
 // ---------------------------------------------------------------------------
 type Timeframe = "1m" | "5m" | "15m" | "30m" | "1h";
@@ -642,6 +666,44 @@ export default function Chart({
         }
 
         const rawMarkers: RawMarker[] = [];
+        // Lotes de pirámide del día (para la leyenda de colores): el máximo de
+        // añadidos que llegó a tener un solo trade.
+        let maxLotesDia = 0;
+        // Segmento horizontal FINITO y punteado: nace en t0, muere en t1. Las
+        // priceLines infinitas cruzaban el gráfico entero y, con varios lotes
+        // vivos a la vez, pintaban niveles que solo existieron un rato — aquí
+        // cada línea abarca EXACTAMENTE el tramo en que estuvo viva.
+        // El NACIMIENTO tiene que caer en este día (tolerancia de medio día);
+        // la muerte, si quedó fuera (swing multi-día), se acampa en la última
+        // vela del día. Es el mismo idioma de las cajas de Darvas: una serie
+        // con dos puntos al mismo nivel es una horizontal estática.
+        const segmento = (
+          px: number | undefined | null, t0: number, t1: number,
+          color: string, estilo: 1 | 2, title?: string,
+        ) => {
+          if (px == null || !Number.isFinite(px) || px <= 0) return;
+          const s0 = snapToCandle(t0, candleTimes);
+          if (s0 == null || Math.abs(t0 - s0) > 43200) return; // no nace hoy
+          const s1snap = snapToCandle(t1, candleTimes);
+          let s1 = (s1snap != null && Math.abs(t1 - s1snap) <= 43200)
+            ? s1snap
+            : candleTimes[candleTimes.length - 1];
+          if (s1 <= s0) {
+            // nace y muere en la misma vela: estirar una vela para que se vea
+            const sig = candleTimes.find(ct => ct > s0);
+            if (sig === undefined) return;
+            s1 = sig;
+          }
+          const serie = chart.addSeries(LineSeries, {
+            color, lineWidth: 1, lineStyle: estilo,
+            priceLineVisible: false, lastValueVisible: !!title,
+            ...(title ? { title } : {}),
+          });
+          serie.setData([
+            { time: s0 as Time, value: px },
+            { time: s1 as Time, value: px },
+          ]);
+        };
         for (const t of dayTrades) {
           const entryDate = t.entry_time.split(" ")[0];
           const exitDate = t.exit_time.split(" ")[0];
@@ -711,13 +773,67 @@ export default function Chart({
             }
           }
 
+          // --- Lotes de piramidación (pre-paso) ---------------------------
+          // Cada añadido es un LOTE con número y color propios; su cierre es
+          // su SL de lote si saltó (emparejado por el nivel congelado `sl_px`,
+          // que viaja en el add y en el lot_stop) o el cierre del trade. Las
+          // reducciones NO cierran lotes: quitan un % de lo flotante, no un
+          // lote concreto — el segmento sigue vivo hasta su cierre real.
+          // Corridas viejas (sin sl_px en el add) emparejan por orden: el
+          // cierre se lleva el lote abierto más antiguo.
+          interface Lote {
+            idx: number; color: string;
+            entryTime: number; entryPx: number; slPx?: number;
+            endTime: number; endPx?: number; cerradoPorSL: boolean;
+          }
+          const lotes: Lote[] = [];
+          const lotePorEjec: Array<Lote | undefined> = [];
+          for (const ex of (t.executions || [])) {
+            let lote: Lote | undefined;
+            if (!ex.escalera && ex.kind === "add") {
+              lote = {
+                idx: lotes.length + 1,
+                color: colorPiramide(lotes.length + 1),
+                entryTime: ex.time_epoch,
+                entryPx: ex.price,
+                slPx: ex.sl_px,
+                endTime: t.exit_time_epoch,
+                cerradoPorSL: false,
+              };
+              lotes.push(lote);
+            } else if (!ex.escalera && ex.kind === "lot_stop") {
+              const abiertos = lotes.filter(l => !l.cerradoPorSL);
+              const slNum = Number(ex.sl_px);
+              lote = abiertos.find(l => l.slPx !== undefined && Math.abs(l.slPx - slNum) < 1e-6)
+                ?? abiertos[0];
+              if (lote) {
+                lote.endTime = ex.time_epoch;
+                lote.endPx = ex.price;
+                lote.cerradoPorSL = true;
+                // Resultados corridos antes de que el add viajara con su
+                // nivel: el cinturón se congela al añadir y nunca se mueve
+                // (semántica del motor), así que el sl_px del CIERRE es
+                // también el del lote durante toda su vida — se puede rellenar
+                // hacia atrás y el segmento pintado es el exacto igualmente.
+                if (lote.slPx === undefined && ex.sl_px !== undefined) {
+                  lote.slPx = ex.sl_px;
+                }
+              }
+            }
+            lotePorEjec.push(lote);
+          }
+          if (lotes.length > maxLotesDia) maxLotesDia = lotes.length;
+
           // --- Ejecuciones intermedias -------------------------------------
           // Añadidos y reducciones de piramidación y take profits parciales.
           // La entrada y el cierre final ya llevan su marcador arriba, así que
           // aquí solo se pinta lo que ocurre EN MEDIO — que antes era
           // invisible: un `add` no genera trade propio y la fusión de legs se
           // llevaba por delante los parciales.
-          for (const ex of (t.executions || [])) {
+          const execs = t.executions || [];
+          for (let ei = 0; ei < execs.length; ei++) {
+            const ex = execs[ei];
+            const lote = lotePorEjec[ei];
             if (ex.kind === "entry") continue;
             if (ex.time_epoch === t.exit_time_epoch) continue; // es el cierre
             // El mismo criterio de día que la entrada y la salida (comparar
@@ -727,8 +843,6 @@ export default function Chart({
             const snap = snapToCandle(ex.time_epoch, candleTimes);
             if (!snap || !candleTimeSet.has(snap)) continue;
             const isAdd = ex.kind === "add";
-            // SL de lote (PRD 2026-09-15): cierre defensivo de UN lote — rojo
-            // como el stop del trade, para no leerlo como un parcial ámbar.
             const esLotStop = ex.kind === "lot_stop";
             const isLong = t.direction.toLowerCase().includes("long");
             // Escalera del scalping complejo: triángulos pequeños, añadido
@@ -742,19 +856,45 @@ export default function Chart({
               position: esEscalera
                 ? (isAdd ? "belowBar" : "aboveBar")
                 : (isAdd ? (isLong ? "belowBar" : "aboveBar") : "aboveBar"),
-              // Cobre para los añadidos (aumentan la posición), ámbar para las
-              // salidas parciales y rojo para el SL de lote, para no
-              // confundirlos con la entrada ni con el cierre.
-              color: esLotStop ? "#ef4444" : (isAdd ? "#c87941" : "#d9a441"),
+              // El AÑADIDO y su SL de lote van en el COLOR DEL LOTE (el hilo
+              // que une su segmento de entrada, su cinturón y su cierre); la
+              // escalera sigue en cobre y los parciales en ámbar. Un lote cuyo
+              // color no se pudo averiguar (corrida vieja) cae al rojo/ámbar
+              // de siempre.
+              color: esEscalera
+                ? "#c87941"
+                : isAdd
+                  ? (lote ? lote.color : "#c87941")
+                  : (esLotStop ? (lote ? lote.color : "#ef4444") : "#d9a441"),
               shape: esEscalera
                 ? (compra ? "arrowUp" : "arrowDown")
                 : (isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square"),
               text: isAdd
-                ? `+${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${esEscalera && ex.label ? ` (${ex.label})` : ""}`
+                ? `${lote && !esEscalera ? `+${lote.idx} · ` : "+"}${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${esEscalera && ex.label ? ` (${ex.label})` : ""}`
                 : `−${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
               isEntry: false,
               ...(esEscalera ? { size: 0.6 } : {}),
             });
+          }
+
+          // ── Segmentos del trade y de sus lotes ─────────────────────────
+          // SL DEL TRADE: rojo discontinuo, de la entrada a la salida — el
+          // mismo dato que antes pintaba la priceLine infinita, ahora solo
+          // donde existió. Con `title` el precio queda legible en el eje al
+          // final del segmento.
+          segmento(t.stop_loss, t.entry_time_epoch, t.exit_time_epoch,
+            "#ef4444", 2, "SL");
+          // CADA LOTE, en su color: el precio de ENTRADA (discontinuo) durante
+          // la vida del lote — desde el añadido hasta su SL de lote o el
+          // cierre del trade — y su CINTURÓN congelado (punteado), que nació
+          // con el lote y vive exactamente ese mismo tramo. Ver juntos los dos
+          // niveles del lote es lo que contesta «cuánto espacio tenía este
+          // añadido hasta su stop» de un vistazo.
+          for (const lote of lotes) {
+            segmento(lote.entryPx, lote.entryTime, lote.endTime, lote.color, 2);
+            if (lote.slPx !== undefined && lote.slPx > 0) {
+              segmento(lote.slPx, lote.entryTime, lote.endTime, lote.color, 1);
+            }
           }
         }
 
@@ -818,40 +958,39 @@ export default function Chart({
           datosEntradasRef.current ? markers : markers.map(m => ({ ...m, text: "" })),
         );
 
-        // Líneas del Stop Loss de cada trade del día: discontinuas, en rojo
-        // y con el precio en el eje. Antes el SL solo existía en la tabla y
-        // no podía verse sobre las velas (p. ej. para comprobar de un vistazo
-        // que el nivel queda en el lado correcto de la entrada).
-        for (const t of dayTrades) {
-          if (!t.stop_loss || t.stop_loss <= 0) continue;
-          const tEntryDate = t.entry_time.split(" ")[0];
-          const tExitDate = t.exit_time.split(" ")[0];
-          if (dayDateStr && tEntryDate !== dayDateStr && tExitDate !== dayDateStr) continue;
-          candleSeries.createPriceLine({
-            price: t.stop_loss,
-            color: "#ef4444",
-            lineWidth: 1,
-            lineStyle: 2, // discontinua
-            axisLabelVisible: true,
-            title: "SL",
-          });
-          // SL POR LOTE (PRD 2026-09-15): el nivel congelado de cada lote que
-          // cerró por su cinturón, en rojo suave y SIN etiqueta en el eje (en
-          // un día de varias patas serían demasiadas cifras pegadas). La línea
-          // del stop del trade (la de arriba) sigue siendo la roja dura.
-          for (const ex of (t.executions || [])) {
-            if (ex.kind !== "lot_stop") continue;
-            const exPx = Number(ex.sl_px);
-            if (!exPx || exPx <= 0) continue;
-            candleSeries.createPriceLine({
-              price: exPx,
-              color: "#f87171",
-              lineWidth: 1,
-              lineStyle: 2, // discontinua
-              axisLabelVisible: false,
-              title: ex.label || "SL lote",
-            });
+        // LEYENDA DE PIRÁMIDES: chip numerado por lote, para leer el color sin
+        // depender del texto de los marcadores (que se apaga con «Datos»).
+        // Va pegada arriba a la izquierda, sin fondo que tape las velas —
+        // solo un hilo de etiquetas— y con `pointer-events: none`.
+        if (maxLotesDia > 0) {
+          const leyenda = document.createElement("div");
+          leyenda.style.cssText =
+            "position:absolute;top:8px;left:10px;z-index:5;pointer-events:none;" +
+            "display:flex;align-items:center;gap:8px;" +
+            "font:600 10px/1 var(--color-ec-mono);color:var(--color-ec-text-muted);" +
+            "text-transform:uppercase;letter-spacing:0.08em;";
+          const titulo = document.createElement("span");
+          titulo.textContent = "Pirámides";
+          leyenda.appendChild(titulo);
+          const visibles = Math.min(maxLotesDia, COLOR_PIRAMIDE.length);
+          for (let i = 1; i <= visibles; i++) {
+            const chip = document.createElement("span");
+            chip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;` +
+              `width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:700;color:#16181A;` +
+              `background:${colorPiramide(i)};`;
+            chip.textContent = String(i);
+            leyenda.appendChild(chip);
           }
+          if (maxLotesDia > COLOR_PIRAMIDE.length) {
+            const mas = document.createElement("span");
+            mas.textContent = `+${maxLotesDia - COLOR_PIRAMIDE.length}`;
+            leyenda.appendChild(mas);
+          }
+          // El contenedor ya es `position:relative` — la regla de medición lo
+          // fija para su propio overlay y corre antes que esto — así que aquí
+          // solo se añade y se quita la leyenda.
+          container.appendChild(leyenda);
+          cleanupFns.push(() => { leyenda.remove(); });
         }
       }
 
