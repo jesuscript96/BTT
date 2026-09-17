@@ -6091,3 +6091,10 @@ de Databento, no copiar `users.duckdb`.
 - **Verificación:** tsc limpio; en navegador: chips con borde del color de su lote (+1 azul cielo, +2 violeta…), ocultar el lote 1 quita su chip, 5 etiquetas visibles a día completo con doble carril.
 - **Código tocado:** solo `frontend/src/components/backtester/Chart.tsx`. Sin push.
 - **Estado:** hecho y verificado.
+
+### [TRABAJO · 2026-09-17 · 7] Fuera las líneas de entrada de los lotes; el nivel de SL viaja en el chip
+- **Qué pidió Álvaro:** las horizontales de precio de entrada de las piramidaciones «no tienen mucho sentido»; y no entendía por qué «faltaba» un SL.
+- **Lo del SL que faltaba (no era bug):** en BNAI los lotes 2-3 comparten SL (0.504), los 4-5 (0.49875) y los 6-7 (0.487305) — añadidos contra el MISMO pivote, mismo cinturón: sus punteadas caen al mismo nivel y se tapan entre sí (la última pintada encima), pareciendo SLs ausentes.
+- **Cambios:** (1) FUERA la horizontal de precio de entrada de cada lote — con 8 añadidos casi al mismo precio eran ocho líneas solapadas sin información; dónde entró lo marcan el marcador y el chip. (2) El chip del lote ahora lleva su SL en texto: «+3 · 2.25 @ $0.44 · SL 0.504» (fmtNivel: 3 decimales por debajo de $2) — ningún solape lo esconde. (3) El SL punteado sigue: 30 min naciendo en el añadido.
+- **Código tocado:** `frontend/src/components/backtester/Chart.tsx`. Sin push.
+- **Estado:** hecho; tsc limpio; toggle verificado (ocultar lote 3 quita su chip).

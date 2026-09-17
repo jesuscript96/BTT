@@ -84,6 +84,13 @@ function fmtShares(n: number): string {
   return n.toFixed(3);
 }
 
+/** Precio de un nivel (SL) legible en el chip: los tickers de centavos
+ *  necesitan 3 decimales para no colapsar niveles distintos en el mismo
+ *  texto (0.504 vs 0.498). */
+function fmtNivel(px: number): string {
+  return px >= 2 ? px.toFixed(2) : px.toFixed(3);
+}
+
 // ---------------------------------------------------------------------------
 // Color palettes for multi-instance indicators
 // ---------------------------------------------------------------------------
@@ -687,9 +694,9 @@ export default function Chart({
         // Lotes de pirámide del día (para la leyenda de colores): el máximo de
         // añadidos que llegó a tener un solo trade.
         let maxLotesDia = 0;
-        // Series de segmentos de cada lote (índice de lote → sus series), para
+        // Series de segmentos de cada lote (índice de lote → su SL), para
         // que los chips de la leyenda puedan ocultarlas sin reconstruir.
-        const seriesPorLote = new Map<number, { entry: any; sl?: any }>();
+        const seriesPorLote = new Map<number, { sl?: any }>();
         // Segmento horizontal FINITO y punteado: nace en t0, muere en t1. Las
         // priceLines infinitas cruzaban el gráfico entero y, con varios lotes
         // vivos a la vez, pintaban niveles que solo existieron un rato — aquí
@@ -894,7 +901,7 @@ export default function Chart({
                 ? (compra ? "arrowUp" : "arrowDown")
                 : (isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square"),
               text: isAdd
-                ? `${lote && !esEscalera ? `+${lote.idx} · ` : "+"}${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${esEscalera && ex.label ? ` (${ex.label})` : ""}`
+                ? `${lote && !esEscalera ? `+${lote.idx} · ` : "+"}${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${lote && !esEscalera && lote.slPx ? ` · SL ${fmtNivel(lote.slPx)}` : ""}${esEscalera && ex.label ? ` (${ex.label})` : ""}`
                 : `−${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
               isEntry: false,
               ...(esEscalera ? { size: 0.6 } : {}),
@@ -909,22 +916,19 @@ export default function Chart({
           // final del segmento.
           segmento(t.stop_loss, t.entry_time_epoch, t.exit_time_epoch,
             "#ef4444", 2, "SL");
-          // CADA LOTE, en su color: el precio de ENTRADA (discontinuo) durante
-          // la vida del lote — desde el añadido hasta su SL de lote o el
-          // cierre del trade — y su CINTURÓN congelado (punteado). Ver juntos
-          // los dos niveles del lote es lo que contesta «cuánto espacio tenía
-          // este añadido hasta su stop» de un vistazo.
-          // El SL se pinta ANCLADO AL AÑADIDO — nace justo sobre su marcador —
-          // y CORTO (30 min): existió toda la vida del lote, pero pintarlo
-          // entero duplica cada horizontal; anclarlo al FINAL lo dejaba
-          // desplazado a la derecha del añadido, lejos de donde se lee.
+          // CADA LOTE: SOLO su CINTURÓN (punteado, 30 min naciendo en el
+          // añadido). La línea de precio de ENTRADA se quitó (petición de
+          // Álvaro 2026-09-17: con 8 añadidos casi al mismo precio eran ocho
+          // horizontales solapadas sin información) — dónde entró lo dicen el
+          // marcador y el chip, que además lleva el nivel de su SL en texto:
+          // lotes añadidos contra el MISMO pivote comparten nivel de SL y sus
+          // líneas se tapaban entre sí (parecía que "faltaba" un SL).
           for (const lote of lotes) {
-            const sEntry = segmento(lote.entryPx, lote.entryTime, lote.endTime, lote.color, 2);
             const sSl = (lote.slPx !== undefined && lote.slPx > 0)
               ? segmento(lote.slPx, lote.entryTime,
                 Math.min(lote.endTime, lote.entryTime + 30 * 60), lote.color, 1)
               : null;
-            if (sEntry || sSl) seriesPorLote.set(lote.idx, { entry: sEntry, sl: sSl ?? undefined });
+            if (sSl) seriesPorLote.set(lote.idx, { sl: sSl });
           }
         }
 
@@ -1158,7 +1162,6 @@ export default function Chart({
               chip.style.opacity = ahoraOculto ? "0.28" : "1";
               const ss = seriesPorLote.get(i);
               const ver = !ahoraOculto;
-              if (ss?.entry) ss.entry.applyOptions({ visible: ver });
               if (ss?.sl) ss.sl.applyOptions({ visible: ver });
               aplicarMarcadoresRef.current?.();
             });
