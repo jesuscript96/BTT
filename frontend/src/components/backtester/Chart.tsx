@@ -297,6 +297,18 @@ export default function Chart({
    *  decides quitar el texto porque no se lee. */
   const marcadoresRef = useRef<any[]>([]);
   const markersApiRef = useRef<any>(null);
+  /** Lote(s) al que pertenece cada marcador de marcadoresRef (null = no es de
+   *  ningún lote: entrada, cierre, parciales…). Paralelo por índice, para no
+   *  ensuciar los objetos que traga lightweight-charts. */
+  const marcasLotesRef = useRef<(number[] | null)[]>([]);
+  /** Lotes ocultados con los chips de la leyenda. Se resetea al reconstruir el
+   *  gráfico (otro día/serie temporal): los índices de lote cambian de
+   *  significado y arrastrarlos escondería el lote equivocado. */
+  const lotesOcultosRef = useRef<Set<number>>(new Set());
+  /** Repinta los marcadores aplicando lotes ocultos y el toggle «Datos».
+   *  Lo llena el efecto que monta el gráfico; lo comparten los chips de la
+   *  leyenda y el botón «Datos» para no duplicar la misma regla. */
+  const aplicarMarcadoresRef = useRef<(() => void) | null>(null);
   /** Volumen y dollar volume ACUMULADOS del día hasta donde está el cursor.
    *  Etiqueta fija sobre la franja de volumen: no se pinta uno por vela (eso
    *  sería ilegible) sino un solo par de números que cambia al mover el ratón. */
@@ -435,6 +447,9 @@ export default function Chart({
     subChartsRef.current = [];
     dayChartsRef.current = [];
     measureClearFnsRef.current = [];
+    // Los toggles de la leyenda no sobreviven a una reconstrucción: los
+    // índices de lote de la nueva serie no son los de la anterior.
+    lotesOcultosRef.current = new Set();
     const cleanupFns: Array<() => void> = [];
 
     const activeCharts: IChartApi[] = [];
@@ -663,12 +678,18 @@ export default function Chart({
           // más pequeña: son muchos eventos seguidos y a tamaño normal tapan
           // las velas.
           size?: number;
+          // Lote(s) de pirámide a los que pertenece (para poder ocultarlos
+          // desde la leyenda). Sin clave = no es de ningún lote.
+          lotes?: number[];
         }
 
         const rawMarkers: RawMarker[] = [];
         // Lotes de pirámide del día (para la leyenda de colores): el máximo de
         // añadidos que llegó a tener un solo trade.
         let maxLotesDia = 0;
+        // Series de segmentos de cada lote (índice de lote → sus series), para
+        // que los chips de la leyenda puedan ocultarlas sin reconstruir.
+        const seriesPorLote = new Map<number, { entry: any; sl?: any }>();
         // Segmento horizontal FINITO y punteado: nace en t0, muere en t1. Las
         // priceLines infinitas cruzaban el gráfico entero y, con varios lotes
         // vivos a la vez, pintaban niveles que solo existieron un rato — aquí
@@ -677,13 +698,15 @@ export default function Chart({
         // la muerte, si quedó fuera (swing multi-día), se acampa en la última
         // vela del día. Es el mismo idioma de las cajas de Darvas: una serie
         // con dos puntos al mismo nivel es una horizontal estática.
+        // Devuelve la serie creada (para poder ocultarla desde la leyenda) o
+        // null si el segmento no se pudo dibujar.
         const segmento = (
           px: number | undefined | null, t0: number, t1: number,
           color: string, estilo: 1 | 2, title?: string,
-        ) => {
-          if (px == null || !Number.isFinite(px) || px <= 0) return;
+        ): any => {
+          if (px == null || !Number.isFinite(px) || px <= 0) return null;
           const s0 = snapToCandle(t0, candleTimes);
-          if (s0 == null || Math.abs(t0 - s0) > 43200) return; // no nace hoy
+          if (s0 == null || Math.abs(t0 - s0) > 43200) return null; // no nace hoy
           const s1snap = snapToCandle(t1, candleTimes);
           let s1 = (s1snap != null && Math.abs(t1 - s1snap) <= 43200)
             ? s1snap
@@ -691,7 +714,7 @@ export default function Chart({
           if (s1 <= s0) {
             // nace y muere en la misma vela: estirar una vela para que se vea
             const sig = candleTimes.find(ct => ct > s0);
-            if (sig === undefined) return;
+            if (sig === undefined) return null;
             s1 = sig;
           }
           const serie = chart.addSeries(LineSeries, {
@@ -703,6 +726,7 @@ export default function Chart({
             { time: s0 as Time, value: px },
             { time: s1 as Time, value: px },
           ]);
+          return serie;
         };
         for (const t of dayTrades) {
           const entryDate = t.entry_time.split(" ")[0];
@@ -874,6 +898,7 @@ export default function Chart({
                 : `−${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
               isEntry: false,
               ...(esEscalera ? { size: 0.6 } : {}),
+              ...(lote && !esEscalera ? { lotes: [lote.idx] } : {}),
             });
           }
 
@@ -890,11 +915,18 @@ export default function Chart({
           // con el lote y vive exactamente ese mismo tramo. Ver juntos los dos
           // niveles del lote es lo que contesta «cuánto espacio tenía este
           // añadido hasta su stop» de un vistazo.
+          // El SL se pinta SOLO EN EL TRAMO FINAL de la vida del lote
+          // (últimos 30 min): existió desde la entrada, pero pintarlo entero
+          // duplica cada horizontal y satura el gráfico — lo que importa ver
+          // del cinturón es el nivel justo antes de que importe (su cierre o
+          // el final del trade).
           for (const lote of lotes) {
-            segmento(lote.entryPx, lote.entryTime, lote.endTime, lote.color, 2);
-            if (lote.slPx !== undefined && lote.slPx > 0) {
-              segmento(lote.slPx, lote.entryTime, lote.endTime, lote.color, 1);
-            }
+            const sEntry = segmento(lote.entryPx, lote.entryTime, lote.endTime, lote.color, 2);
+            const sSl = (lote.slPx !== undefined && lote.slPx > 0)
+              ? segmento(lote.slPx, Math.max(lote.entryTime, lote.endTime - 30 * 60),
+                lote.endTime, lote.color, 1)
+              : null;
+            if (sEntry || sSl) seriesPorLote.set(lote.idx, { entry: sEntry, sl: sSl ?? undefined });
           }
         }
 
@@ -908,6 +940,9 @@ export default function Chart({
         }
 
         const markers: SeriesMarker<Time>[] = [];
+        // Lote(s) de cada marcador final, en paralelo por índice (los objetos
+        // que se mandan a lightweight-charts van limpios).
+        const marcasLotes: (number[] | null)[] = [];
         for (const [time, group] of grouped) {
           if (group.length === 1) {
             const m = group[0];
@@ -919,6 +954,7 @@ export default function Chart({
               text: m.text,
               ...(m.size ? { size: m.size } : {}),
             });
+            marcasLotes.push(m.lotes ?? null);
           } else {
             // Sort: entries before exits
             group.sort((a, b) => (a.isEntry ? 0 : 1) - (b.isEntry ? 0 : 1));
@@ -944,6 +980,12 @@ export default function Chart({
               shape: mergedShape,
               text: combinedText,
             });
+            // Unión de lotes del grupo: si comparte vela con algo que no es de
+            // lote (entrada, parcial), se muestra mientras ese algo se muestre.
+            marcasLotes.push(
+              group.some(m => !m.lotes)
+                ? null
+                : [...new Set(group.flatMap(m => m.lotes ?? []))]);
           }
         }
 
@@ -953,15 +995,31 @@ export default function Chart({
         // el texto desaparece, que es lo que se pisa cuando hay muchas
         // operaciones seguidas y acaba tapando las velas.
         marcadoresRef.current = markers;
-        markersApiRef.current = createSeriesMarkers(
-          candleSeries,
-          datosEntradasRef.current ? markers : markers.map(m => ({ ...m, text: "" })),
-        );
+        marcasLotesRef.current = marcasLotes;
+        markersApiRef.current = createSeriesMarkers(candleSeries, []);
+        // UNA sola regla para pintar marcadores, compartida por el botón
+        // «Datos» y por los chips de la leyenda: fuera los lotes ocultos, y
+        // fuera el texto si «Datos» está apagado.
+        aplicarMarcadoresRef.current = () => {
+          const api = markersApiRef.current;
+          const ms = marcadoresRef.current;
+          if (!api) return;
+          const visibles = ms.filter((m: any, i: number) => {
+            const lots = marcasLotesRef.current[i];
+            return !lots || !lots.every(l => lotesOcultosRef.current.has(l));
+          });
+          api.setMarkers(
+            datosEntradasRef.current ? visibles : visibles.map((m: any) => ({ ...m, text: "" })),
+          );
+        };
+        aplicarMarcadoresRef.current();
 
         // LEYENDA DE PIRÁMIDES: chip numerado por lote, para leer el color sin
         // depender del texto de los marcadores (que se apaga con «Datos»).
-        // Va pegada arriba a la izquierda, sin fondo que tape las velas —
-        // solo un hilo de etiquetas— y con `pointer-events: none`.
+        // INTERACTIVA: un click en el chip oculta/muestra ese lote (sus dos
+        // segmentos y sus marcadores) sin reconstruir el gráfico — con 8 lotes
+        // a la vez lo que falta es IR VIÉNDOLOS DE UNO EN UNO. El contenedor
+        // no captura el ratón (no frena el crosshair); solo los chips.
         if (maxLotesDia > 0) {
           const leyenda = document.createElement("div");
           leyenda.style.cssText =
@@ -977,8 +1035,21 @@ export default function Chart({
             const chip = document.createElement("span");
             chip.style.cssText = `display:inline-flex;align-items:center;justify-content:center;` +
               `width:16px;height:16px;border-radius:3px;font-size:9px;font-weight:700;color:#16181A;` +
-              `background:${colorPiramide(i)};`;
+              `background:${colorPiramide(i)};pointer-events:auto;cursor:pointer;` +
+              `transition:opacity 120ms ease;user-select:none;`;
             chip.textContent = String(i);
+            chip.title = `Ocultar/mostrar el lote ${i} (sus líneas y marcadores)`;
+            chip.addEventListener("click", () => {
+              const ocultos = lotesOcultosRef.current;
+              const ahoraOculto = !ocultos.has(i);
+              if (ahoraOculto) ocultos.add(i); else ocultos.delete(i);
+              chip.style.opacity = ahoraOculto ? "0.28" : "1";
+              const ss = seriesPorLote.get(i);
+              const ver = !ahoraOculto;
+              if (ss?.entry) ss.entry.applyOptions({ visible: ver });
+              if (ss?.sl) ss.sl.applyOptions({ visible: ver });
+              aplicarMarcadoresRef.current?.();
+            });
             leyenda.appendChild(chip);
           }
           if (maxLotesDia > COLOR_PIRAMIDE.length) {
@@ -1640,13 +1711,12 @@ export default function Chart({
     };
   }, [candles, trades, equity, activeIndicators, timeframe, isMultiView, multiDayCandles, applyDay, ticker, date, swingActive, swingTargetDay]);
 
-  // Botón «Datos»: repinta los marcadores con o sin texto, en el sitio.
+  // Botón «Datos»: repinta los marcadores con o sin texto, en el sitio. La
+  // regla completa (texto + lotes ocultos de la leyenda) vive en
+  // aplicarMarcadores, que llena el efecto del gráfico.
   useEffect(() => {
     datosEntradasRef.current = datosEntradas;
-    const api = markersApiRef.current;
-    const ms = marcadoresRef.current;
-    if (!api || !ms.length) return;
-    api.setMarkers(datosEntradas ? ms : ms.map((m: any) => ({ ...m, text: "" })));
+    aplicarMarcadoresRef.current?.();
   }, [datosEntradas]);
 
   // Toggle de la regla: sincroniza el ref, cambia el cursor y hace que el
