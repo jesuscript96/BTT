@@ -380,10 +380,16 @@ def _parse_pyr_move(lv: dict):
         return None
     d = str(lv.get("move_dir", "favor")).lower()
     r = str(lv.get("move_ref", "entry")).lower()
+    # En un CAMINO (17-sep): "first" = el recorrido es el primer paso, una
+    # condicion inicial que, una vez cumplida, da paso al siguiente aunque
+    # luego no se mantenga; "last" = se exige en la vela del disparo, pegado
+    # al ultimo paso. En un nivel normal no cambia nada.
+    pos = str(lv.get("move_pos", "first")).lower()
     return {
         "pct": pct,
         "dir": "contra" if d in ("contra", "against", "en contra") else "favor",
         "ref": "last" if r in ("last", "ultimo", "\u00faltimo", "last_fire") else "entry",
+        "pos": "last" if pos in ("last", "ultimo", "\u00faltimo", "disparo") else "first",
     }
 
 

@@ -154,7 +154,8 @@ def test_solo_por_recorrido_no_necesita_condiciones():
         _nivel(root_condition=VACIO),                                    # este sí se descarta
     ]))
     assert len(comp["pyramid_levels_def"]) == 1
-    assert comp["pyramid_levels_def"][0]["move"] == {"pct": 5.0, "dir": "favor", "ref": "entry"}
+    # `pos` (17-sep): donde va el recorrido dentro de un camino; "first" por defecto.
+    assert comp["pyramid_levels_def"][0]["move"] == {"pct": 5.0, "dir": "favor", "ref": "entry", "pos": "first"}
 
 
 def test_a_favor_desde_la_entrada_largo():
@@ -243,7 +244,7 @@ def test_las_claves_llegan_al_simulador_por_translate():
     s = translate_strategy(frame, d, {}, compiled=compile_strategy_def(d))
     lv = s["pyramid_levels"][0]
     assert lv["group"] == 1 and lv["sequential"] is True
-    assert lv["move"] == {"pct": 2.0, "dir": "contra", "ref": "last"}
+    assert lv["move"] == {"pct": 2.0, "dir": "contra", "ref": "last", "pos": "first"}
     assert np.asarray(lv["signals"]).all()       # sin condiciones: la señal lógica es «siempre»
 
 

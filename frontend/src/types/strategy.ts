@@ -567,6 +567,10 @@ export interface PyramidLevel {
     move_pct?: number;
     move_dir?: 'favor' | 'contra';
     move_ref?: 'entry' | 'last';
+    // Solo con CAMINO (17-sep): 'first' (por defecto) = el recorrido es el
+    // primer paso, una condicion inicial que, cumplida, da paso al siguiente
+    // aunque luego no se mantenga; 'last' = se exige en la vela del disparo.
+    move_pos?: 'first' | 'last';
     // SL POR LOTE (PRD 2026-09-15). Solo en niveles 'add': un stop propio que
     // viaja con CADA ejecución del nivel y cierra SOLO ese lote. Sin la clave
     // (o null tras apagarla en la UI), el nivel se comporta como siempre.

@@ -2,16 +2,18 @@
 """Camino de condiciones (Alvaro, PRD 2026-09-16) + disparo por recorrido
 (sailor, 2026-09-16): integrados el 17-sep.
 
-El recorrido del precio va pegado al ULTIMO paso del camino: los pasos
-intermedios enganchan por sus condiciones y el ultimo solo engancha (y
-dispara) en la primera vela en que se cumple Y el precio lleva el recorrido
-pedido. Un nivel normal con recorrido y un camino sin recorrido siguen
+El recorrido del precio dentro de un camino va, por defecto, como PRIMER
+paso (Jaume, 17-sep): una condicion inicial que engancha por flanco como las
+demas y, una vez cumplida, da paso al siguiente aunque luego el precio se
+vuelva. Con `move.pos = "last"` se exige en la vela del disparo, pegado al
+ultimo paso. Un nivel normal con recorrido y un camino sin recorrido siguen
 exactamente como estaban (lo vigilan sus propias suites).
 """
 import numpy as np
 import pandas as pd
 
 from app.services.portfolio_sim import simulate, _recorrido_cumplido
+from app.services.strategy_engine import _parse_pyr_move
 
 CASH, RISK, N = 10000.0, 100.0, 20
 
@@ -72,53 +74,69 @@ def _correr(closes, niveles, entrada=1, salida=18):
     return [e["idx"] for t in res["trades"] for e in (t.get("pyr_executions") or []) if e["kind"] == "add"]
 
 
+MV = {"pct": 5.0, "dir": "favor", "ref": "entry"}          # pos ausente = "first"
+MV_LAST = {**MV, "pos": "last"}
+
+
 def test_recorrido_cumplido_es_la_misma_regla_de_siempre():
-    mv = {"pct": 5.0, "dir": "favor", "ref": "entry"}
     # corto: a favor = hacia abajo
-    assert _recorrido_cumplido(mv, 9.5, 10.0, 0.0, False) is True
-    assert _recorrido_cumplido(mv, 9.6, 10.0, 0.0, False) is False
-    assert _recorrido_cumplido(mv, 10.5, 10.0, 0.0, True) is True
+    assert _recorrido_cumplido(MV, 9.5, 10.0, 0.0, False) is True
+    assert _recorrido_cumplido(MV, 9.6, 10.0, 0.0, False) is False
+    assert _recorrido_cumplido(MV, 10.5, 10.0, 0.0, True) is True
     # "desde el ultimo disparo" con ultimo precio; sin el, la entrada
-    assert _recorrido_cumplido({**mv, "ref": "last"}, 9.5, 10.0, 9.9, False) is False
-    assert _recorrido_cumplido({**mv, "ref": "last"}, 9.5, 10.0, 0.0, False) is True
-    assert _recorrido_cumplido({**mv, "dir": "contra"}, 10.5, 10.0, 0.0, False) is True
-    assert _recorrido_cumplido(mv, 9.0, 0.0, 0.0, False) is False
+    assert _recorrido_cumplido({**MV, "ref": "last"}, 9.5, 10.0, 9.9, False) is False
+    assert _recorrido_cumplido({**MV, "ref": "last"}, 9.5, 10.0, 0.0, False) is True
+    assert _recorrido_cumplido({**MV, "dir": "contra"}, 10.5, 10.0, 0.0, False) is True
+    assert _recorrido_cumplido(MV, 9.0, 0.0, 0.0, False) is False
 
 
-def test_el_recorrido_va_pegado_al_ultimo_paso_del_camino():
-    """Corto a 10 (fill en la barra 2). A engancha en la 4. B es cierta de la
-    6 en adelante, pero el precio solo lleva un 5 % a favor (<= 9,5) desde la
-    barra 9: el camino dispara ahi (fill en la 10), no en la 6."""
-    closes = [10.0] * 9 + [9.4] * 11
-    mv = {"pct": 5.0, "dir": "favor", "ref": "entry"}
-    con = _correr(closes, [_nivel(pasos=[_senal(4), _rango(6, N - 1)], move=mv)])
-    assert con == [10]
-    # El mismo camino sin recorrido dispara en cuanto engancha B (fill en la 7).
-    sin = _correr(closes, [_nivel(pasos=[_senal(4), _rango(6, N - 1)])])
-    assert sin == [7]
+def test_el_compilador_lee_move_pos_y_por_defecto_es_primer_paso():
+    base = {"trigger": "move", "move_pct": 5}
+    assert _parse_pyr_move(base)["pos"] == "first"
+    assert _parse_pyr_move({**base, "move_pos": "last"})["pos"] == "last"
+    assert _parse_pyr_move({**base, "move_pos": "disparo"})["pos"] == "last"
+    assert _parse_pyr_move({**base, "move_pos": "first"})["pos"] == "first"
 
 
-def test_el_recorrido_no_toca_a_los_pasos_intermedios():
-    """A (paso 1) engancha en la barra 4 aunque el precio no haya recorrido
-    nada: el recorrido solo condiciona al ultimo paso. Con B en la barra 6 y
-    precio ya con el 5 % desde la 5, dispara con B (fill en la 7)."""
+def test_por_defecto_el_recorrido_es_el_primer_paso_y_no_hace_falta_que_se_mantenga():
+    """Corto a 10 (fill en la barra 2). El precio llega al 5 % a favor en la
+    barra 4 (engancha el recorrido) y se VUELVE en la 6 (ya no lo cumple).
+    A engancha en la 8 y B en la 10: dispara con B (fill en la 11) aunque
+    en ese momento el precio este por encima de la entrada."""
+    closes = [10.0] * 4 + [9.4, 9.4] + [10.3] * 14
+    con = _correr(closes, [_nivel(pasos=[_senal(8), _senal(10)], move=MV)])
+    assert con == [11]
+
+
+def test_el_primer_paso_es_el_recorrido_y_los_de_condiciones_esperan_su_turno():
+    """A es cierta en la barra 3, ANTES de que el precio llegue al 5 % (barra
+    5): no cuenta, porque A no tiene el turno hasta que engancha el recorrido.
+    Con A otra vez en la 7 y B en la 9, dispara con B (fill en la 10)."""
     closes = [10.0] * 5 + [9.4] * 15
-    mv = {"pct": 5.0, "dir": "favor", "ref": "entry"}
-    assert _correr(closes, [_nivel(pasos=[_senal(4), _senal(6)], move=mv)]) == [7]
+    assert _correr(closes, [_nivel(pasos=[_senal(3, 7), _senal(9)], move=MV)]) == [10]
+    # Sin la segunda A, el camino se queda esperando: cero anadidos.
+    assert _correr(closes, [_nivel(pasos=[_senal(3), _senal(9)], move=MV)]) == []
 
 
-def test_el_ultimo_paso_no_engancha_sin_recorrido_y_no_se_queda_colgado():
-    """B solo es cierta en la barra 6 y el recorrido no llega hasta la 9: el
-    ultimo paso no engancha en la 6 (no hay recorrido) y en la 9 ya no hay B:
-    cero anadidos, y el nivel sigue vivo para una B posterior (barra 12)."""
+def test_recorrido_ya_cumplido_al_entrar_engancha_en_la_primera_vela():
+    """Como cualquier paso (Q2=A): si al entrar el precio ya lleva el recorrido,
+    el primer paso engancha en la primera vela post-entrada y sigue con A y B."""
+    closes = [10.0, 10.0, 10.0, 9.4] + [9.4] * 16     # fill en la 2 a 10; la 3 ya a 9,4
+    assert _correr(closes, [_nivel(pasos=[_senal(5), _senal(7)], move=MV)]) == [8]
+
+
+def test_con_pos_last_el_recorrido_se_exige_en_el_disparo():
+    """La forma alternativa: A engancha en la 4; B es cierta de la 6 en
+    adelante, pero el 5 % a favor solo llega en la 9: dispara ahi (fill 10)."""
     closes = [10.0] * 9 + [9.4] * 11
-    mv = {"pct": 5.0, "dir": "favor", "ref": "entry"}
-    assert _correr(closes, [_nivel(pasos=[_senal(4), _senal(6)], move=mv)]) == []
-    assert _correr(closes, [_nivel(pasos=[_senal(4), _senal(6, 12)], move=mv)]) == [13]
+    assert _correr(closes, [_nivel(pasos=[_senal(4), _rango(6, N - 1)], move=MV_LAST)]) == [10]
+    # y no toca a los pasos intermedios: A engancha en la 4 sin recorrido
+    closes2 = [10.0] * 5 + [9.4] * 15
+    assert _correr(closes2, [_nivel(pasos=[_senal(4), _senal(6)], move=MV_LAST)]) == [7]
 
 
-def test_un_nivel_normal_con_recorrido_sigue_igual():
-    """La regla de siempre (16-sep): condiciones AND recorrido, con flanco."""
+def test_un_camino_sin_recorrido_y_un_nivel_normal_siguen_igual():
     closes = [10.0] * 9 + [9.4] * 11
-    mv = {"pct": 5.0, "dir": "favor", "ref": "entry"}
-    assert _correr(closes, [_nivel(senal=_rango(4, N - 1), move=mv)]) == [10]
+    assert _correr(closes, [_nivel(pasos=[_senal(4), _rango(6, N - 1)])]) == [7]
+    # nivel normal con recorrido: condiciones AND recorrido, con flanco (16-sep)
+    assert _correr(closes, [_nivel(senal=_rango(4, N - 1), move=MV)]) == [10]

@@ -267,6 +267,18 @@ def tope_cangrejo(capital: float, max_loss_pct: float | None,
     return (max_loss_pct / 100.0) * capital / dist
 
 
+def _camino_recorrido_primero(lv: dict) -> bool:
+    """En un nivel-camino, ¿va el recorrido como PRIMER paso (condicion
+    inicial) en vez de pegado al ultimo? Defecto si hay recorrido: si."""
+    mv = lv.get("move")
+    return bool(mv) and mv.get("pos", "first") != "last"
+
+
+def _n_pasos_camino(lv: dict) -> int:
+    """Pasos de un nivel-camino contando el recorrido como paso si va primero."""
+    return len(lv["steps_signals"]) + (1 if _camino_recorrido_primero(lv) else 0)
+
+
 def _recorrido_cumplido(mv: dict, close_i: float, entry_px: float,
                         ultimo_px: float, is_long: bool) -> bool:
     """Disparo por recorrido de un nivel de piramide (2026-09-16): ¿lleva el
@@ -1801,28 +1813,35 @@ def simulate(
                     # de un enganche no se evalúa el siguiente paso. ──
                     steps = lv["steps_signals"]
                     same_bar = lv.get("same_bar", True)
+                    # RECORRIDO en un camino (17-sep, Jaume): o es el PRIMER
+                    # paso — una condicion inicial que engancha por flanco como
+                    # las demas y, cumplida, da paso al siguiente aunque luego
+                    # el precio se vuelva — o va pegado al ULTIMO, exigido en la
+                    # vela del disparo. Los pasos intermedios nunca lo miran.
+                    _mv_primero = _camino_recorrido_primero(lv)
+                    n_pasos = len(steps) + (1 if _mv_primero else 0)
                     dispara = False
-                    while pyr_step_k[lv_idx] < len(steps):
+                    while pyr_step_k[lv_idx] < n_pasos:
                         k = pyr_step_k[lv_idx]
                         if (not same_bar) and pyr_last_latch[lv_idx] == i:
                             break          # ya hubo un enganche en esta vela
-                        sig_now = bool(steps[k][i])
-                        if sig_now and _mv and k == len(steps) - 1:
-                            # El recorrido es una condicion mas del ultimo
-                            # paso: engancha (y dispara) en la primera vela
-                            # en que el paso se cumple Y el precio lleva el
-                            # recorrido pedido; los pasos intermedios no
-                            # operan y no lo miran.
+                        if _mv_primero and k == 0:
                             sig_now = _recorrido_cumplido(
                                 _mv, close[i], entry_price,
                                 pyr_last_px.get(lv.get("group", 0), 0.0), is_long)
+                        else:
+                            sig_now = bool(steps[k - 1 if _mv_primero else k][i])
+                            if sig_now and _mv and not _mv_primero and k == len(steps) - 1:
+                                sig_now = _recorrido_cumplido(
+                                    _mv, close[i], entry_price,
+                                    pyr_last_px.get(lv.get("group", 0), 0.0), is_long)
                         engancha = sig_now and not pyr_step_prev[lv_idx][k]
                         pyr_step_prev[lv_idx][k] = sig_now
                         if not engancha:
                             break          # el paso pendiente no engancha hoy
                         pyr_step_k[lv_idx] += 1
                         pyr_last_latch[lv_idx] = i
-                        if pyr_step_k[lv_idx] == len(steps):
+                        if pyr_step_k[lv_idx] == n_pasos:
                             dispara = True  # enganchado el último paso
                             break
                     if dispara:
@@ -2388,7 +2407,7 @@ def simulate(
                     if pyramid_mode:
                         pyr_step_k = [0] * len(pyramid_levels)
                         pyr_step_prev = [
-                            ([False] * len(lv["steps_signals"])
+                            ([False] * _n_pasos_camino(lv)
                              if lv.get("steps_signals") is not None else None)
                             for lv in pyramid_levels]
                         pyr_last_latch = [-1] * len(pyramid_levels)

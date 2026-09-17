@@ -1424,7 +1424,7 @@ export default function BacktestPanel({
                         const grupo = grupos.length > 1 ? `G${Math.min(Math.max(0, l.group ?? 0), grupos.length - 1) + 1} ` : '';
                         // Disparo por recorrido: «si 5% a favor (desde el último disparo)».
                         const disparo = l.trigger === 'move' && (l.move_pct || 0) > 0
-                          ? ` si ${l.move_pct}% ${l.move_dir === 'contra' ? 'en contra' : 'a favor'}${l.move_ref === 'last' ? ' desde el último disparo' : ''}${l.root_condition?.conditions?.length ? ' + condiciones' : ''}`
+                          ? ` si ${l.move_pct}% ${l.move_dir === 'contra' ? 'en contra' : 'a favor'}${l.move_ref === 'last' ? ' desde el último disparo' : ''}${l.root_condition?.conditions?.length ? ' + condiciones' : ''}${Array.isArray(l.steps) && l.steps.length ? (l.move_pos === 'last' ? ' (en el disparo)' : ' (1º paso)') : ''}`
                           : '';
                         // SL del lote (PRD 2026-09-15): una línea por nivel que
                         // lo declara. Acepta los nombres de la UI y los
