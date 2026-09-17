@@ -78,3 +78,26 @@ def test_ventana_cero_es_todo_el_historico():
     cfg30 = lg.ConfigPuerta(ventana=30, por="trades", min_trades=10, sombra_cierre_ns=cierres, sombra_move_pct=moves)
     ev30, n30, _ = lg.ev_rodante_pct(cfg30, int(200 * lg.NS_POR_DIA))
     assert n30 == 30 and abs(ev30 - 9.0) < 1e-9
+
+
+def test_movimiento_pct_va_por_el_pnl_y_no_por_la_ultima_salida():
+    """Corto a 10 $ x 100 acc: 75 % cerrado a 9 (gana 75 $), el 25 % a EOD a
+    10,4 (pierde 10 $). El trade agrupado gana 65 $ brutos pero su
+    `exit_price` es 10,4: por el precio de la ultima pierna saldria -4 %;
+    por el PnL sobre el nocional, +6,5 %. Es lo que se compara con el fade
+    (el coste del locate sobre ese mismo nocional)."""
+    t = {"direction": "Short", "avg_entry_price": 10.0, "entry_price": 10.0, "exit_price": 10.4,
+         "size": 100.0, "pnl": 65.0 - 1.0, "fees": 1.0, "exit_time_epoch": 1_700_000_000}
+    assert abs(lg.movimiento_pct(t) - 6.5) < 1e-9
+    # sin pnl/size (registro viejo): cae al precio de salida, como antes
+    assert abs(lg.movimiento_pct({"direction": "Short", "entry_price": 10.0, "exit_price": 9.5}) - 5.0) < 1e-9
+    assert abs(lg.movimiento_pct({"direction": "Long", "entry_price": 10.0, "exit_price": 9.5}) + 5.0) < 1e-9
+    assert lg.movimiento_pct({"direction": "Short", "entry_price": 0.0, "exit_price": 9.5}) is None
+    # y la sombra usa esa definicion (solo cortos, ordenada por cierre)
+    c, m = lg.sombra_desde_trades([
+        {**t, "exit_time_epoch": 20},
+        {**t, "direction": "Long", "exit_time_epoch": 15},          # fuera: largo
+        {"direction": "Short", "entry_price": 4.0, "exit_price": 3.8, "exit_time_epoch": 10},
+    ])
+    assert list(c) == [10 * 1_000_000_000, 20 * 1_000_000_000]
+    assert abs(m[0] - 5.0) < 1e-9 and abs(m[1] - 6.5) < 1e-9

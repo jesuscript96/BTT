@@ -183,24 +183,55 @@ def evaluar(
     }
 
 
+def movimiento_pct(t: dict) -> Optional[float]:
+    """Lo que se movio la accion A FAVOR en un trade, en % del precio de
+    entrada, bruto (antes de comisiones y de locates). UNA definicion para
+    el EV en sombra del backtest, el del portfolio en crudo y el «EV por
+    precio» de Charts (el frontend la calca).
+
+    Se mide por el PnL sobre el nocional — (pnl + comisiones) / (precio medio
+    x acciones) — y NO por el precio de la ULTIMA salida: los trades que
+    llegan aqui vienen agrupados (parciales, quitas de piramide, SL de lote
+    en una sola fila) y `exit_price` es solo el de la ultima pierna. Con un
+    take profit parcial a buen precio y el resto cerrado a EOD peor, el
+    precio de la ultima pierna decia «negativo» en trades que ganaban dinero;
+    medido el 17-sep: la estrategia entera daba EV negativo siendo ganadora.
+    Es exactamente la magnitud que se compara con el fade: el fade es el
+    coste del locate sobre ese mismo nocional. Sin pnl/size (registros
+    viejos o a mano) cae al precio de salida, como antes.
+    """
+    ent = float(t.get("avg_entry_price") or t.get("entry_price") or 0.0)
+    if ent <= 0:
+        return None
+    size = float(t.get("size") or 0.0)
+    pnl = t.get("pnl")
+    if size > 0 and pnl is not None:
+        bruto = float(pnl) + float(t.get("fees") or 0.0)
+        return bruto / (ent * size) * 100.0
+    sal = float(t.get("exit_price") or 0.0)
+    if sal <= 0:
+        return None
+    largo = str(t.get("direction", "")).lower().startswith("l")
+    return ((sal - ent) if largo else (ent - sal)) / ent * 100.0
+
+
 def sombra_desde_trades(trades: list[dict]) -> tuple[np.ndarray, np.ndarray]:
     """Arrays de sombra a partir de los trades de la pasada SIN puerta.
 
-    Solo cortos. El movimiento es en % del precio, bruto: (entrada - salida) /
-    entrada, con el precio MEDIO de la posicion (con piramide es el que manda).
-    Ordenados por cierre para que `searchsorted` funcione.
+    Solo cortos. El movimiento es `movimiento_pct` (% del precio, bruto, por
+    el PnL sobre el nocional). Ordenados por cierre para que `searchsorted`
+    funcione.
     """
     cierres, moves = [], []
     for t in trades:
         if str(t.get("direction", "")).lower().startswith("l"):
             continue
-        ent = float(t.get("avg_entry_price") or t.get("entry_price") or 0.0)
-        sal = float(t.get("exit_price") or 0.0)
         ex = t.get("exit_time_epoch")
-        if ent <= 0 or sal <= 0 or ex is None:
+        mv = movimiento_pct(t)
+        if mv is None or ex is None:
             continue
         cierres.append(int(ex) * 1_000_000_000)
-        moves.append((ent - sal) / ent * 100.0)
+        moves.append(mv)
     if not cierres:
         return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64)
     orden = np.argsort(np.asarray(cierres, dtype=np.int64), kind="stable")

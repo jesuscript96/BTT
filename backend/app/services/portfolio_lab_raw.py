@@ -354,19 +354,19 @@ def _locates_cfg(raw: Optional[dict]) -> Optional[dict]:
 def _sombra_de(run: dict) -> lg.ConfigPuerta:
     """EV en sombra de UNA estrategia: sus cortos guardados (todos, sin
     recortar por fechas: es su historia), cerrados antes del instante que se
-    decide. Movimiento en % del precio, bruto, como en el backtester."""
+    decide. Movimiento = `locates_gate.movimiento_pct` (por el PnL sobre el
+    nocional, bruto), la MISMA definicion que el backtester."""
     cierres: list[int] = []
     moves: list[float] = []
     for t in run.get("trades") or []:
         if str(t.get("direction") or "").lower().startswith("l"):
             continue
-        ent = _f(t.get("avg_entry_price")) or _f(t.get("entry_price"))
-        sal = _f(t.get("exit_price"))
+        mv = lg.movimiento_pct(t)
         t1 = _ts(t.get("exit_time"))
-        if ent <= 0 or sal <= 0 or t1 is None:
+        if mv is None or t1 is None:
             continue
         cierres.append(int(t1 * 1_000_000_000))
-        moves.append((ent - sal) / ent * 100.0)
+        moves.append(mv)
     if not cierres:
         return lg.ConfigPuerta()
     orden = np.argsort(np.asarray(cierres, dtype=np.int64), kind="stable")

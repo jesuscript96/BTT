@@ -928,7 +928,7 @@ export default function ChartsTab({
       {/* ROW 1b (17-sep): EV por rango de PRECIO de entrada, los tramos de la
           puerta «EV fijo por rango» y del cuadro de mandos. Ancho entero: seis
           barras con su etiqueta no caben en un tercio. */}
-      <div className="h-[240px] mt-8" style={{ borderBottom: '1px solid var(--border)' }}>
+      <div className="h-[250px] mt-8" style={{ borderBottom: '1px solid var(--border)' }}>
         <EvPorPrecio trades={trades} />
       </div>
 
