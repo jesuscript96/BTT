@@ -553,6 +553,28 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área D · Salidas y pirámides
 
+### R-D-01 · Salida por hora de la estrategia: escalera de compra y, si no, al ask
+- Situación: la estrategia manda salir por hora (cierre de la estrategia, «Partial TP (Hour)», salida por tiempo). Se compra para cubrir.
+- Detección: reloj de la estrategia (hora de salida definida en su JSON) y ask/último precio de DAS.
+- Acción: misma lógica que la entrada pero al revés. Escalera de COMPRA agregando liquidez: +1 % sobre el último precio; a los 10 s, +2 %; a los 20 s, +3 %, y ahí hasta completar el minuto. Si al minuto no se ha ejecutado (entera o en parte), lo que quede se compra AL ASK (remover) para asegurar la salida. Lógica estricta «si / si no»: lo ejecutado en la escalera se DESCUENTA y la orden al ask lleva solo el resto; jamás se compra dos veces la misma cantidad (mismo control que R-C-11: posición neta real).
+- Quién la ejecuta: ejecutor + vigilante (comprobación de posición neta tras la salida).
+- Parámetros: escalones 1/2/3 %; cambio cada 10 s; tiempo total 60 s (los de R-B-01, compartidos).
+- Si la acción falla: la orden al ask no se ejecuta (sin liquidez) → R-C-03 (aviso, reintentos) y aviso máximo si llega al EOD de la estrategia (R-D-02).
+- Prueba: tabla de casos (ejecuta en escalón 1/2/3, parcial + resto al ask, nada + todo al ask); sombra.
+- Estado: FIJADA (Jaume, 17-sep).
+- Origen: D3.
+
+### R-D-02 · Fin de día (EOD) POR ESTRATEGIA y botón «control humano»
+- Situación: llega el EOD de una estrategia. OJO: el EOD es la hora FINAL de cada estrategia (p. ej. una estrategia de 8:00 a 9:00 tiene EOD a las 9:00), no las 09:30 ni las 16:00. Cada estrategia tiene el suyo.
+- Detección: reloj + posiciones abiertas del LOTE de esa estrategia (no de otras).
+- Acción: (1) al EOD de la estrategia se cierra lo que quede de su lote con R-D-01. (2) Como R-D-01 puede tardar hasta un minuto más el ask, se da un MARGEN de unos segundos después del EOD antes de comprobar; pasado el margen, si quedan posiciones de ese lote sin cerrar → AVISO MÁXIMO y control humano. (3) Los avisos son POR ESTRATEGIA teniendo en cuenta las demás: si A cierra a las 11 y B a las 12, a las 11 solo se comprueba el lote de A; las posiciones de B no son alarma hasta su EOD. (4) Cuadro de mandos: botón **«Control humano»** que deshabilita el bot (lo apaga) para que las operaciones las hagamos nosotros a mano.
+- Quién la ejecuta: ejecutor + vigilante (comprobación por lote) + humano.
+- Parámetros: margen tras el EOD (segundos, por fijar; propuesta 90 s = escalera + ask + confirmación); EOD por estrategia (JSON).
+- Si la acción falla: —
+- Prueba: tabla de casos con dos estrategias de EOD distinto; sombra.
+- Estado: FIJADA (Jaume, 17-sep), margen por fijar. Sin intentos en after-hours: aviso y humano.
+- Origen: D4, D12.
+
 ### Área E · Capital compartido entre estrategias
 
 ### Área L · Calendario
