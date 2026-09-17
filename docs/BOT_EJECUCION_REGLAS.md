@@ -525,12 +525,25 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Situación: cualquier compra de locates.
 - Detección: gasto acumulado en locates (del día) frente al valor de la cuenta.
 - Acción: no se compra ningún locate que haga superar el 3 % de la cuenta en gasto de locates. Medida de emergencia; aviso cuando se alcance.
-- Quién la ejecuta: guarda del módulo de locates.
+- Quién la ejecuta: guarda del módulo de locates + el VIGILANTE (Jaume, 16-sep): el bot que vigila por encima debe controlar al que ejecuta y, si este falla y no para de comprar locates sin control, es el vigilante quien CORTA esas compras (deshabilita el módulo de locates y avisa). Un bucle de compra de locates es un riesgo de cola muy grande.
 - Parámetros: 3 % (cuadro de mandos). Ventana: por día (a confirmar en el repaso).
 - Si la acción falla: —
 - Prueba: tabla de casos.
 - Estado: FIJADA (Jaume, 16-sep).
 - Origen: H4, H5, H15.
+
+### R-H-04 · Locate parcial: se opera con lo que hay y se sigue buscando
+- Situación: se piden 200 y el bróker solo ofrece 100 (o menos de lo necesario).
+- Detección: respuesta del inquire / de la compra con cantidad menor.
+- Acción: se compran las que hay (si el EV lo justifica) y se opera con esa cantidad. El módulo sigue buscando el resto con el mismo proceso de R-H-01 (actualizar precio hasta que haya disponibles y con ventaja), y si aparecen se compran, siempre bajo R-H-02 (petición explícita, coste total acumulado) y R-H-03 (tope 3 %).
+- Quién la ejecuta: módulo de locates.
+- Parámetros: los de R-H-01.
+- Si la acción falla: no aparecen más → se sigue solo con lo comprado.
+- Prueba: tabla de casos; sombra.
+- Estado: FIJADA (Jaume, 16-sep).
+- Origen: H3.
+
+**H12 (Jaume, 16-sep): locate con la posición atrapada (halt largo, T12): basta con AVISAR; en la práctica ni hace falta, el humano lo gestiona con el bróker, que le va informando día a día.**
 
 ### Área J · Infraestructura
 
