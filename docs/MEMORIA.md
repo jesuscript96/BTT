@@ -82,6 +82,10 @@ Jaume: «quizás lo sensato no es verlo desde el EV»: quiere enfrentar al fade 
 - Verificado: desde la interfaz llega `ev_gate_metric: mfe` y el resumen dice `metrica: mfe`; por API en junio (PM 1A, rodante 30 trades): EV 158 aceptados / MFE 271 / Fade 161 (el MFE es mayor → pasan más). Test `test_las_tres_medidas_de_la_puerta_ev_mfe_fade`. Suite 1.398.
 - Con la configuración real de Jaume (PM (A), 4 % del equity, locates 1-20 $, fees 5 pb, slip 0,3 %): sin locates +273 M (compuesto, liquidez infinita); con locates aleatorios y SIN puerta **−100 %** (los locates se lo comen); con la puerta por rango con los EV de la tabla **+5.108 %**, DD −21,6 %, 2.577 trades de 4.449. Los paquetes son ENTEROS: con posiciones pequeñas el fade de un paquete es enorme (100 $ a 5 $ = 20 acciones, pero pagas el paquete de 100: 5 %).
 
+### 19:50 — Charts con las tres medidas en todos los visores
+
+Jaume: «en Charts sigo viendo solo EV». Ahora la medida se elige en cada visor de la primera fila con las MISMAS definiciones por trade que la puerta (`EvPorPrecio.metricaTrade`): **Rolling** con R | EV % | MFE % | Fade % (el «%» de antes miraba la última pierna y el precio medio con pirámides: ya es el EV bueno; con MFE/Fade la media simple, sin separar por el signo del PnL, porque el MFE nunca es negativo); **por tiempo** y **por día** con $ (el PnL medio de siempre) | EV | MFE | Fade, un selector para los dos; y «EV · MFE · Fade por precio» con su toggle. La tabla de rangos de la banda de locates también elige la medida y completo/por rango (`0ad1f14`).
+
 ### Trampas del día
 
 - **Dos sesiones en el mismo repo:** mientras yo encadenaba cherry-picks, la sesión del bot commiteó en sailor (`9f17b65`, `edc9c8d`, 17:04). No pasó nada porque cada uno añadió sus ficheros por ruta, pero es una carrera real: **nunca `git add -A`** con otra sesión viva, y leer MEMORIA.md justo antes de escribirlo.

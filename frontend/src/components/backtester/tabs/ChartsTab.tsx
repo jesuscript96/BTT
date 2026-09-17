@@ -30,7 +30,7 @@ import RollingEVChart from "@/components/backtester/RollingEVChart";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import EntryWindowSweepChart from "@/components/backtester/EntryWindowSweepChart";
-import EvPorPrecio from "@/components/backtester/tabs/EvPorPrecio";
+import EvPorPrecio, { metricaTrade, type MetricaPuerta } from "@/components/backtester/tabs/EvPorPrecio";
 import { Zap, Shield, Loader2 } from "lucide-react";
 
 interface ChartsTabProps {
@@ -126,6 +126,13 @@ export default function ChartsTab({
   // entrada, y (b) qué EV daría cada franja si el límite horario de entrada
   // fuese otro — que exige lanzar un backtest por franja.
   const [evTimeVista, setEvTimeVista] = useState<"trades" | "barrido">("trades");
+  // Medida de «por tiempo» y «por día» (17-sep, Jaume): $ = el PnL medio por
+  // trade (lo de siempre); EV / MFE / Fade = las medidas de la puerta, en %
+  // del precio de entrada (mismas definiciones que «EV · MFE · Fade por precio»).
+  const [medidaEv, setMedidaEv] = useState<"pnl" | MetricaPuerta>("pnl");
+  const MEDIDA_LABEL: Record<"pnl" | MetricaPuerta, string> = { pnl: "$", ev: "EV", mfe: "MFE", fade: "Fade" };
+  const valorMedida = (t: TradeRecord): number | null => (medidaEv === "pnl" ? t.pnl : metricaTrade(t, medidaEv));
+  const fmtMedida = (v: number, dec = 2) => (medidaEv === "pnl" ? `$${v.toFixed(dec)}` : `${v.toFixed(dec)} %`);
 
   const gridColor = "#2C2F33";
   const tickColor = "#ffffff";
@@ -386,9 +393,11 @@ export default function ChartsTab({
       const halfHour = m < 30 ? "00" : "30";
       const key = `${String(h).padStart(2, '0')}:${halfHour}`;
 
+      const v = valorMedida(t);
+      if (v == null) continue;
       if (!timeMap.has(key)) timeMap.set(key, { total: 0, count: 0 });
       const entry = timeMap.get(key)!;
-      entry.total += t.pnl;
+      entry.total += v;
       entry.count++;
     }
 
@@ -399,16 +408,19 @@ export default function ChartsTab({
         ev: data.count > 0 ? data.total / data.count : 0,
         count: data.count,
       }));
-  }, [trades]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades, medidaEv]);
 
   const evByDay = useMemo(() => {
     const dayMap = new Map<number, { total: number; count: number }>();
     for (const t of trades) {
       const d = t.entry_weekday;
       if (d > 4) continue;
+      const v = valorMedida(t);
+      if (v == null) continue;
       if (!dayMap.has(d)) dayMap.set(d, { total: 0, count: 0 });
       const m = dayMap.get(d)!;
-      m.total += t.pnl;
+      m.total += v;
       m.count++;
     }
     return [0, 1, 2, 3, 4].map((d) => {
@@ -419,7 +431,8 @@ export default function ChartsTab({
         count: data.count,
       };
     });
-  }, [trades]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trades, medidaEv]);
 
   const { gapVsPnl, gapRegression, gapRegressionLine } = useMemo(() => {
     const points: { x: number; y: number }[] = [];
@@ -829,15 +842,31 @@ export default function ChartsTab({
         <div className="flex flex-col h-full" style={{ borderRight: '1px solid var(--border)' }}>
           <div className="px-3 py-2 flex items-center gap-2">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-8 inline-flex items-center gap-1">
-              EV por Tiempo
+              {MEDIDA_LABEL[medidaEv] === "$" ? "EV" : MEDIDA_LABEL[medidaEv]} por Tiempo
               <InfoTooltip
                 position="left"
-                text="<b>Trades:</b> Esperanza Matemática (EV) promedio de los trades que hubo, agrupados por su hora de entrada (intervalos de 30 minutos).<br/><br/><b>Barrido:</b> lanza un backtest por cada franja horaria y compara su EV. Responde a «¿en qué franja debería dejar entrar?», que el modo Trades no puede contestar: si la estrategia tiene un límite horario de entrada, ahí no hay trades fuera de él."
+                text="<b>Medida ($ | EV | MFE | Fade):</b> $ = PnL medio por trade (lo de siempre); EV, MFE y Fade = las tres medidas de la puerta, en % del precio de entrada, con las mismas definiciones que «EV · MFE · Fade por precio». Vale para este gráfico y para el de días.<br/><br/><b>Trades:</b> promedio de los trades que hubo, agrupados por su hora de entrada (intervalos de 30 minutos).<br/><br/><b>Barrido:</b> lanza un backtest por cada franja horaria y compara su EV. Responde a «¿en qué franja debería dejar entrar?», que el modo Trades no puede contestar: si la estrategia tiene un límite horario de entrada, ahí no hay trades fuera de él."
               />
             </span>
             {/* gap-1 + p-[3px]: los dos botones estaban pegados uno a otro y al
                 borde de la caja, y se leian como un solo bloque. */}
-            <div className="ml-auto mr-2 flex items-center gap-1 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[22px] p-[3px]">
+            <div className="ml-auto mr-1 flex items-center gap-1 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[22px] p-[3px]">
+              {(["pnl", "ev", "mfe", "fade"] as const).map((id) => (
+                <button
+                  key={id}
+                  onClick={() => setMedidaEv(id)}
+                  title={id === "pnl" ? "PnL medio por trade, en $" : id === "ev" ? "EV en % del precio: de la entrada al precio medio de las salidas" : id === "mfe" ? "MFE en % del precio: lo máximo a favor desde la entrada" : "Fade en % del precio: de la entrada a la salida final"}
+                  className={`px-2 text-[9px] font-mono rounded-sm transition-colors ${
+                    medidaEv === id
+                      ? "bg-[var(--color-ec-copper)] text-[var(--color-ec-copper-text)]"
+                      : "text-[var(--color-ec-text-secondary)]"
+                  }`}
+                >
+                  {MEDIDA_LABEL[id]}
+                </button>
+              ))}
+            </div>
+            <div className="mr-2 flex items-center gap-1 bg-[var(--color-ec-bg-elevated)] rounded border border-[var(--color-ec-border)] h-[22px] p-[3px]">
               {([["trades", "Trades"], ["barrido", "Barrido"]] as const).map(([id, txt]) => (
                 <button
                   key={id}
@@ -873,12 +902,12 @@ export default function ChartsTab({
                   tickLine={false}
                   minTickGap={25}
                 />
-                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => fmtMedida(v, medidaEv === "pnl" ? 0 : 1)} />
                 <Tooltip
                   contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace', color: '#fff' }}
                   itemStyle={{ color: '#fff' }}
                   labelStyle={{ color: '#aaa' }}
-                  formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
+                  formatter={(value: any) => [fmtMedida(Number(value)), medidaEv === "pnl" ? 'EV ($)' : MEDIDA_LABEL[medidaEv]]}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
                 <ReferenceLine y={0} stroke="#6A6D72" strokeWidth={0.5} />
@@ -895,10 +924,10 @@ export default function ChartsTab({
         <div className="flex flex-col h-full">
           <div className="px-3 py-2 flex items-center">
             <span className="text-[10px] font-semibold text-[var(--color-ec-text-primary)] uppercase tracking-[0.12em] ml-4 inline-flex items-center gap-1">
-              EV por Dia
+              {MEDIDA_LABEL[medidaEv] === "$" ? "EV" : MEDIDA_LABEL[medidaEv]} por Dia
               <InfoTooltip
                 position="left"
-                text="Esperanza Matemática (EV) promedio por día de la semana de entrada. Ayuda a detectar si hay días específicos (como los lunes o viernes) en los que la estrategia rinde peor y convendría evitar operar."
+                text="Misma medida que el gráfico de la izquierda ($ = PnL medio por trade; EV / MFE / Fade en % del precio de entrada). Promedio por día de la semana de entrada. Ayuda a detectar si hay días específicos (como los lunes o viernes) en los que la estrategia rinde peor y convendría evitar operar."
               />
             </span>
           </div>
@@ -907,12 +936,12 @@ export default function ChartsTab({
               <BarChart data={evByDay} margin={{ top: 16, right: 16, bottom: 16, left: 16 }}>
                 <CartesianGrid stroke={gridColor} vertical={false} />
                 <XAxis dataKey="day" tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
+                <YAxis tick={{ fontSize: 10, fill: tickColor, fontFamily: 'monospace' }} axisLine={false} tickLine={false} tickFormatter={(v: number) => fmtMedida(v, medidaEv === "pnl" ? 0 : 1)} />
                 <Tooltip
                   contentStyle={{ fontSize: '10px', backgroundColor: tooltipBg, border: '1px solid var(--border)', borderRadius: 2, fontFamily: 'monospace', color: '#fff' }}
                   itemStyle={{ color: '#fff' }}
                   labelStyle={{ color: '#aaa' }}
-                  formatter={(value: any) => [`$${Number(value).toFixed(2)}`, 'EV']}
+                  formatter={(value: any) => [fmtMedida(Number(value)), medidaEv === "pnl" ? 'EV ($)' : MEDIDA_LABEL[medidaEv]]}
                   cursor={{ fill: "rgba(120,113,108,0.04)" }}
                 />
                 <ReferenceLine y={0} stroke="#6A6D72" strokeWidth={0.5} />
