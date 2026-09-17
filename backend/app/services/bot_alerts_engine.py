@@ -564,6 +564,7 @@ def estimar_por_estrategia(estrategias: list, sdef_de, frame, i: int,
             "nombre": est.get("name") or est.get("nombre") or "?",
             "riesgo_usd": riesgo,
             "ev_pct": est.get("ev_pct"),
+            "ev_rangos": est.get("ev_rangos"),
             "acciones": None,
             "stop": None,
             "motivo": None,
@@ -709,7 +710,7 @@ class MotorAlertas:
             "d": e.get("definition"), "r": e.get("riesgo_usd"),
             "rp": e.get("riesgo_piramide_usd"), "c": e.get("capital_usd"),
             "rpl": e.get("riesgos_piramide"),
-            "ev": e.get("ev_pct"), "v": e.get("ventana"), "n": e.get("name"),
+            "ev": e.get("ev_pct"), "evr": e.get("ev_rangos"), "v": e.get("ventana"), "n": e.get("name"),
         }, sort_keys=True, default=str)
 
     def _compilar(self, e: dict) -> dict:
@@ -736,6 +737,8 @@ class MotorAlertas:
             # Para el comando /evf de Telegram: asi no hay que repetir el
             # EV en cada mensaje.
             "ev_pct": e.get("ev_pct"),
+            # EV por tramo de precio (17-sep); el /evf coge el del precio de la accion.
+            "ev_rangos": e.get("ev_rangos"),
             "definition": sdef,
             "ventana": e.get("ventana") or {},
             # Se compila UNA vez, no en cada vela: es lo caro del motor.

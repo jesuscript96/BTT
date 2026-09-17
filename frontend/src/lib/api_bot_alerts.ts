@@ -44,6 +44,9 @@ export interface EstrategiaCandidata {
    *  tecleas tu: el bot no puede saber que backtest consideras valido. La usa
    *  el calculo de locates, aqui y en el comando `/evf` de Telegram. */
   ev_pct?: number | null;
+  /** EV por tramo de PRECIO de entrada (17-sep): el /evf coge el del tramo del
+   *  precio de la accion; un tramo sin EV cae a ev_pct. Ver lib/evRangos. */
+  ev_rangos?: Array<{ lo: number; hi: number | null; ev_pct: number | null }> | null;
   /** Si la estrategia piramida: decide si se pide el riesgo del anyadido. */
   piramida?: boolean;
   /** Las piramides de la estrategia, en el orden de su definicion (16-sep-2026):
@@ -78,6 +81,9 @@ export function guardarVigilancia(
      *  cantidad propia. Se manda entera (con sus null) para que el backend
      *  pueda BORRAR una cantidad que antes estaba puesta. */
     riesgos_piramide?: (number | null)[] | null;
+    /** EV por tramo de precio; se manda la lista entera (con sus null) para
+     *  que el backend pueda borrar un tramo que antes estaba puesto. */
+    ev_rangos?: Array<{ lo: number; hi: number | null; ev_pct: number | null }> | null;
   },
 ): Promise<{ strategy_id: string; activa: boolean; riesgo_usd: number }> {
   return apiRequest("/bot-alerts/watch", {
@@ -90,6 +96,7 @@ export function guardarVigilancia(
       ...(extra?.riesgos_piramide ? { riesgos_piramide: extra.riesgos_piramide } : {}),
       ...(extra?.capital_usd ? { capital_usd: extra.capital_usd } : {}),
       ...(extra?.ev_pct ? { ev_pct: extra.ev_pct } : {}),
+      ...(extra?.ev_rangos ? { ev_rangos: extra.ev_rangos } : {}),
     }),
   });
 }

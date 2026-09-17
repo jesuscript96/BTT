@@ -19,6 +19,7 @@ import { color, font } from "@/components/ui";
 import { Help } from "@/components/robustez/help";
 import { pedirBandaLocates, type BandaLocates as Banda, type BootstrapLocates } from "@/lib/api_locates";
 import { Histograma } from "@/components/backtester/tabs/edge/charts";
+import RangosLocatesBacktest from "./RangosLocatesBacktest";
 
 const num: React.CSSProperties = { fontFamily: font.mono, fontVariantNumeric: "tabular-nums" };
 const f2 = (x: number) => x.toFixed(2).replace(".", ",");
@@ -201,8 +202,9 @@ function HistoResultados({ mc, real }: { mc: BootstrapLocates; real: number | nu
 }
 
 /* ---- el bloque ---- */
-export default function BandaLocates({ result, initCash, backtestParams }: {
+export default function BandaLocates({ result, initCash, backtestParams, ultimaPeticion = null }: {
   result: BacktestResult; initCash: number; backtestParams?: Record<string, unknown>;
+  ultimaPeticion?: Record<string, unknown> | null;
 }) {
   const rnd = result.locates_random;
   const conPuerta = !!result.ev_gate;
@@ -455,6 +457,13 @@ export default function BandaLocates({ result, initCash, backtestParams }: {
           </>
         )}
       </div>
+      <RangosLocatesBacktest
+        peticion={ultimaPeticion}
+        initCash={initCash}
+        riskR={Number(backtestParams?.risk_r || 0)}
+        riskType={backtestParams?.risk_type as string | undefined}
+        monthlyExpenses={Number(backtestParams?.monthly_expenses || 0)}
+      />
     </div>
   );
 }

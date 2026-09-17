@@ -91,6 +91,9 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const [escKey, setEscKey] = useState("");
   const [escRunning, setEscRunning] = useState(false);
   const [escError, setEscError] = useState<string | null>(null);
+  const [mcEsc, setMcEsc] = useState<MonteCarloOut | null>(null);
+  const [mcEscRunning, setMcEscRunning] = useState(false);
+  const [mcEscError, setMcEscError] = useState<string | null>(null);
 
   // ── Que paso esta abierto ─────────────────────────────────────────────
   const [abiertos, setAbiertos] = useState<Record<number, boolean>>({ 1: true, 2: true, 3: false, 4: false });
@@ -151,6 +154,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setMcError(null);
       setOutEsc(null);
       setEscKey("");
+      setMcEsc(null);
       setAbiertos((a) => ({ ...a, 1: false, 2: true }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo calcular el portfolio");
@@ -159,36 +163,65 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     }
   };
 
+  // Se remuestrean los RETORNOS diarios (% del capital con el que empezo
+  // cada dia) y se componen, no los $ de cada dia sumados: con una curva que
+  // compone, un dia de −50 M $ puesto donde la cuenta tenia 100 k $ daba
+  // drawdowns de −40.000 % (visto el 16-sep). Con `risk_pct: 1` el motor hace
+  // equity *= 1 + ret/100, es decir, compone tal cual.
+  const mcDe = (o: RawOut) => {
+    const cap = o.config.capital;
+    const rets = o.daily_pnl.map((v, i) => {
+      const open = i === 0 ? cap : o.equity[i - 1];
+      return open > 0 ? (v / open) * 100 : 0;
+    });
+    return runPortfolioMc({
+      values: rets,
+      init_cash: cap,
+      simulations: Number(mcSims) || 5000,
+      method: mcMethod,
+      mode: "compound",
+      risk_pct: 1,
+      ruin_pct: 50,
+    });
+  };
   const simularMc = async () => {
     if (!out || mcRunning) return;
     setMcRunning(true);
     setMcError(null);
     try {
-      // Se remuestrean los RETORNOS diarios (% del capital con el que empezo
-      // cada dia) y se componen, no los $ de cada dia sumados: con una curva
-      // que compone, un dia de −50 M $ puesto donde la cuenta tenia 100 k $
-      // daba drawdowns de −40.000 % (visto el 16-sep). Con `risk_pct: 1` el
-      // motor hace equity *= 1 + ret/100, es decir, compone tal cual.
-      const cap = out.config.capital;
-      const rets = out.daily_pnl.map((v, i) => {
-        const open = i === 0 ? cap : out.equity[i - 1];
-        return open > 0 ? (v / open) * 100 : 0;
-      });
-      const res = await runPortfolioMc({
-        values: rets,
-        init_cash: cap,
-        simulations: Number(mcSims) || 5000,
-        method: mcMethod,
-        mode: "compound",
-        risk_pct: 1,
-        ruin_pct: 50,
-      });
-      setMcOut(res);
+      setMcOut(await mcDe(out));
     } catch (e) {
       setMcError(e instanceof Error ? e.message : "No se pudo simular");
     } finally {
       setMcRunning(false);
     }
+  };
+  const simularMcEsc = async () => {
+    if (!outEsc || mcEscRunning) return;
+    setMcEscRunning(true);
+    setMcEscError(null);
+    try {
+      setMcEsc(await mcDe(outEsc));
+    } catch (e) {
+      setMcEscError(e instanceof Error ? e.message : "No se pudo simular");
+    } finally {
+      setMcEscRunning(false);
+    }
+  };
+  // Del paso 3: un calculo con otro rango de locates aleatorios (misma cuenta),
+  // sin puerta o con EV fijo. Sin banda de semillas: cada fila debe ser rapida.
+  const correrRango = (min: number, max: number, seed: number, evFijo: number | null) =>
+    runPortfolioRaw({
+      ...cuerpo(),
+      locates: {
+        mode: "random", cost: 0, min, max, seed, shared: loc.shared, band_seeds: 0,
+        gate: evFijo == null ? null : { mode: "ev_fixed", ev_fixed_pct: evFijo, ventana: 0, por: "trades", ev_defecto_pct: evFijo, min_trades: 10 },
+      },
+    });
+  // Del paso 3: poner «EV fijo = F» como puerta del paso 1 (entra si F > fade).
+  const usarFade = (f: number) => {
+    setLoc((l) => ({ ...l, gate: true, gateMode: "ev_fijo", evFijo: f }));
+    setAbiertos((a) => ({ ...a, 1: true }));
   };
 
   const escKeyNow = JSON.stringify({ ranKey, esc });
@@ -202,6 +235,8 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       if (!res.scaling) throw new Error("El backend todavía no lleva el escalado del portfolio en crudo: hay que aplicarlo con el bot parado.");
       setOutEsc(res);
       setEscKey(escKeyNow);
+      setMcEsc(null);
+      setMcEscError(null);
     } catch (e) {
       setEscError(e instanceof Error ? e.message : "No se pudo calcular el escalado");
     } finally {
@@ -254,7 +289,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const resumen3 = mcOut ? `DD a tragar (1 de 20) ${pct(mcOut.dd_tolerance?.p95)} · prob. de acabar perdiendo ${pct(mcOut.prob_losing_pct)}` : out?.locates_band ? `banda de ${n(out.locates_band.seeds, 0)} semillas lista · Monte Carlo sin simular` : "límites históricos listos · Monte Carlo sin simular";
   const hoy = outEsc?.scaling?.today;
   const modeloTxt = esc.model === "kelly" ? `${KELLY_SCOPE_LABEL[esc.kelly_scope ?? "per_strategy"]} × ${n(esc.kelly_mult, 2)}` : MODELO_LABEL[esc.model];
-  const resumen4 = hoy ? `hoy: ${pct(hoy.applied_pct, 2)} por trade sumando todas (${usd(hoy.applied_usd)}) · ${modeloTxt}${escStale ? " · (desactualizado)" : ""}` : `${modeloTxt} · tope ${n(esc.cap_pct, 1)} %`;
+  const resumen4 = hoy ? `hoy: ${pct(hoy.applied_pct, 2)} por trade sumando todas (${usd(hoy.applied_usd)}) · ${modeloTxt}${mcEsc ? ` · MC: DD a tragar ${pct(mcEsc.dd_tolerance?.p95)}` : ""}${escStale ? " · (desactualizado)" : ""}` : `${modeloTxt} · tope ${n(esc.cap_pct, 1)} %`;
 
   const listo = !!out && !!curvas && !!exposicion;
   const pasos = [
@@ -289,12 +324,12 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
 
       <Paso num={3} title="Límites de pérdida" open={!!abiertos[3]} onToggle={() => toggle(3)} summary={resumen3} disabled={!listo} disabledNote="primero calcula el paso 1"
         help="Cuánto se puede llegar a perder con esto: lo que ya pasó en la serie real (peor día, VaR, rachas), lo que podría pasar remuestreando los días (Monte Carlo bootstrap: el drawdown que hay que estar dispuesto a tragar) y, con locates aleatorios, cuánto depende el resultado del precio de los locates (banda de semillas).">
-        {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcMethod, setMcMethod, mcRunning, mcError, simularMc }} />}
+        {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcMethod, setMcMethod, mcRunning, mcError, simularMc, onUsarFade: usarFade, correrRango, evFijoActual: loc.evFijo ?? 3, seedActual: loc.seed }} />}
       </Paso>
 
       <Paso num={4} title="Escalado y pesos" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el escalado" : "primero calcula el paso 1"}
         help="Cuánto arriesgar por trade en cada estrategia según Kelly (de cada una, o global sobre el capital total), con la fracción que quieras y un tope sobre la suma que manda sobre todo. Responde a dos preguntas: qué habría que poner HOY en cada estrategia, y qué habría pasado aplicándolo desde el principio con datos solo anteriores a cada rebalanceo. Aquí los R del paso 1 no cuentan: el tamaño lo pone Kelly.">
-        {listo && out && <PasoEscalado m={{ out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc }} />}
+        {listo && out && <PasoEscalado m={{ out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc, mcEsc, mcEscRunning, mcEscError, simularMcEsc, mcSims }} />}
       </Paso>
 
       <p style={{ margin: "0 0 10px", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>

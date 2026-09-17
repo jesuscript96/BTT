@@ -330,7 +330,16 @@ def _locates_cfg(raw: Optional[dict]) -> Optional[dict]:
     g = cfg.get("gate")
     if g:
         cfg["gate"] = {
-            "ventana": max(1, int(_f(g.get("ventana"), 30))),
+            # mode "ev": EV rodante de la estrategia vs fade (EV por defecto
+            # hasta que hay historia; ventana 0 = todo el historico). mode
+            # "ev_fixed": SIEMPRE se compara ev_fixed_pct con el fade (Jaume,
+            # 17-sep: el EV medido en IS para ver que tal va en OOS). Es lo
+            # mismo que «no entrar si el fade > EV fijo».
+            "mode": "ev_fixed" if str(g.get("mode") or "ev") in ("ev_fixed", "fade") else "ev",
+            "ev_fixed_pct": _f(g.get("ev_fixed_pct", g.get("fade_max_pct")), 3.0),
+            # EV por tramo de precio de entrada (17-sep); un tramo sin EV cae al completo.
+            "ev_ranges": lg.rangos_ev_normalizados(g.get("ev_ranges")),
+            "ventana": max(0, int(_f(g.get("ventana"), 30))),
             "por": "dias" if str(g.get("por") or "trades") == "dias" else "trades",
             "ev_defecto_pct": _f(g.get("ev_defecto_pct"), 2.0),
             "min_trades": max(1, int(_f(g.get("min_trades"), 10))),
@@ -730,6 +739,86 @@ class _Escalado:
         }
 
 
+def _analisis_locates(accepted: list[dict], n: int, names: list[str], loc_days: list[dict], loc_cfg: Optional[dict]) -> Optional[dict]:
+    """Hasta que precio compensan los locates (17-sep, pedido de Jaume).
+
+    - Precio de equilibrio: PnL de los cortos ANTES de locates / paquetes
+      alquilados. A ese precio por paquete el portfolio se queda a cero. El
+      neto es lineal en el precio, asi que la curva neto(P) sale de ahi.
+    - Tramos de fade: el neto tras el locate de cada corto segun su fade
+      necesario (% del precio que hay que ganar solo para pagar SUS paquetes
+      de mas). Ensena desde que fade deja de compensar.
+    - Regla F: «no entrar si el fade necesario > F», estimada sobre los cortos
+      aceptados (aprox.: no recalcula el alquiler compartido al quitar cortos).
+    Solo con paquetes contados (bloque de locates con alquiler compartido, o
+    por estrategia con precio); sin locates no hay fade que mirar.
+    """
+    shorts = [a for a in accepted if a["dir"] == "S"]
+    if not shorts or not loc_days:
+        return None
+    paquetes = int(sum(ld["packages"] for ld in loc_days))
+    if paquetes <= 0:
+        return None
+    pnl_pre = float(sum(a["pnl"] for a in shorts))          # neto de comisiones y slippage, antes de locates
+    pnl_total_pre = float(sum(a["pnl"] for a in accepted))
+    equilibrio = pnl_pre / paquetes
+    con_precio = bool(loc_cfg and loc_cfg["mode"] != "none")
+    por_estrategia = []
+    for i in range(n):
+        mios = [a for a in shorts if a["si"] == i]
+        pk = int(sum(a.get("packages", 0) for a in mios))
+        pp = float(sum(a["pnl"] for a in mios))
+        por_estrategia.append({
+            "idx": i, "name": names[i], "shorts": len(mios), "packages": pk,
+            "pnl_pre_locates": ple._r6(pp),
+            "breakeven_price": ple._r6(pp / pk) if pk > 0 else None,
+            "paid": ple._r6(float(sum(a["locate"] for a in mios))),
+        })
+    grid = [0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0]
+    curve = [{"price": P, "net_shorts": ple._r6(pnl_pre - P * paquetes), "net_total": ple._r6(pnl_total_pre - P * paquetes)} for P in grid]
+    out: dict[str, Any] = {
+        "packages": paquetes, "shorts": len(shorts),
+        "pnl_shorts_pre_locates": ple._r6(pnl_pre),
+        "pnl_total_pre_locates": ple._r6(pnl_total_pre),
+        "breakeven_price": ple._r6(equilibrio),
+        "paid": ple._r6(float(sum(a["locate"] for a in shorts))),
+        "avg_price_paid": ple._r6(float(sum(a["locate"] for a in shorts)) / paquetes),
+        "per_strategy": por_estrategia,
+        "curve": curve,
+        "mean_move_pct": ple._r6(float(np.mean([a["pnl"] / a["notional"] * 100.0 for a in shorts if a["notional"] > 0]))),
+        "fade_buckets": None, "fade_rule": None,
+    }
+    if con_precio:
+        fades = np.array([a.get("fade_pct", 0.0) for a in shorts], dtype=float)
+        pnl = np.array([a["pnl"] for a in shorts], dtype=float)
+        loc = np.array([a["locate"] for a in shorts], dtype=float)
+        nom = np.array([a["notional"] for a in shorts], dtype=float)
+        neto = pnl - loc
+        tramos = [(0.0, 0.001), (0.001, 0.5), (0.5, 1.0), (1.0, 1.5), (1.5, 2.0), (2.0, 3.0), (3.0, 5.0), (5.0, 8.0), (8.0, 1e9)]
+        buckets = []
+        for lo, hi in tramos:
+            m = (fades >= lo) & (fades < hi)
+            if not m.any():
+                continue
+            buckets.append({
+                "lo": lo, "hi": hi if hi < 1e9 else None, "n": int(m.sum()),
+                "move_pct": ple._r6(float(np.mean(pnl[m] / np.where(nom[m] > 0, nom[m], 1.0) * 100.0))),
+                "net_mean": ple._r6(float(np.mean(neto[m]))),
+                "net_total": ple._r6(float(np.sum(neto[m]))),
+                "win_pct": ple._r6(float(np.mean(pnl[m] > 0) * 100.0)),
+            })
+        out["fade_buckets"] = buckets
+        regla = []
+        for F in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0):
+            m = fades < F      # entra si EV fijo (F) > fade
+            regla.append({"fade_max_pct": F, "taken": int(m.sum()), "net_est": ple._r6(float(neto[m].sum()))})
+        out["fade_rule"] = regla
+        out["net_now"] = ple._r6(float(neto.sum()))
+        best = max(regla, key=lambda r: r["net_est"])
+        out["best_fade_max_pct"] = best["fade_max_pct"] if best["net_est"] > float(neto.sum()) else None
+    return out
+
+
 def _start_of_day_equity(global_equity: list[dict], init_cash: float) -> dict[str, float]:
     """Balance de apertura de cada dia de la corrida guardada (para deshacer
     el riesgo PERCENT). El punto i de la curva es el cierre del dia i."""
@@ -906,9 +995,20 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     # ── 1c. Locates del portfolio, puerta por EV y escalado ──────────────
     loc_cfg = _locates_cfg(cfg.get("locates"))
     esc_cfg = _scaling_cfg(cfg.get("scaling"))
-    shared = bool(loc_cfg and loc_cfg["shared"] and loc_cfg["mode"] != "none")
+    # Con bloque de locates y alquiler compartido se hace el barrido aunque el
+    # modo sea "none" (precio 0): asi se cuentan los paquetes y sale el precio
+    # de equilibrio («si pagaras X por paquete...») sin cobrar nada.
+    shared = bool(loc_cfg and loc_cfg["shared"])
     gate_cfgs: list[Optional[lg.ConfigPuerta]] = [None] * n
-    if loc_cfg and loc_cfg["gate"] and loc_cfg["mode"] != "none":
+    gate_mode = (loc_cfg["gate"]["mode"] if loc_cfg and loc_cfg["gate"] else None)
+    # EV fijo: el corto entra si ev_fijo > fade (el completo, o el del tramo de
+    # precio de la entrada si hay rangos).
+    fade_max = (loc_cfg["gate"]["ev_fixed_pct"] if loc_cfg and loc_cfg["gate"] else 0.0)
+    ev_ranges = (loc_cfg["gate"]["ev_ranges"] if loc_cfg and loc_cfg["gate"] else [])
+    if loc_cfg and loc_cfg["gate"] and loc_cfg["mode"] != "none" and gate_mode == "ev_fixed":
+        for i in range(n):
+            gate_cfgs[i] = lg.ConfigPuerta(modo="fijo", ev_fijo_pct=fade_max, ev_rangos=ev_ranges)
+    if loc_cfg and loc_cfg["gate"] and loc_cfg["mode"] != "none" and gate_mode == "ev":
         g = loc_cfg["gate"]
         for i, run in enumerate(runs):
             c = _sombra_de(run)
@@ -1070,25 +1170,36 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 if tk not in price:
                     if mode == "fixed":
                         price[tk] = cost
-                    else:
+                    elif mode == "random":
                         price[tk] = lr.precio_locate(tr["ref_price"], lo, hi, seed, tk, d)["precio"]
                         loc_prices_drawn.append(price[tk])
+                    else:
+                        price[tk] = 0.0
                     ref[tk] = tr["ref_price"]
                 needed = int(math.ceil(conc / 100.0))
                 have = rented.get(tk, 0)
                 marginal = max(0, needed - have)
-                gc = gate_cfgs[a["si"]]
-                if gc is not None:
-                    ev, _n_ev, _dflt = lg.ev_rodante_pct(gc, int(tr["t0"] * 1_000_000_000))
-                    fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price[tk])
-                    if not ev > fade:
+                fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price[tk]) if mode != "none" else 0.0
+                if mode != "none" and gate_mode == "ev_fixed":
+                    ev_f, _origen = lg.ev_fijo_para_precio(fade_max, ev_ranges, tr["entry"])
+                    if not ev_f > fade:
                         a["gate_out"] = True
                         gate_out[a["si"]] += 1
                         continue
+                else:
+                    gc = gate_cfgs[a["si"]]
+                    if gc is not None:
+                        ev, _n_ev, _dflt = lg.ev_rodante_pct(gc, int(tr["t0"] * 1_000_000_000))
+                        if not ev > fade:
+                            a["gate_out"] = True
+                            gate_out[a["si"]] += 1
+                            continue
                 if marginal == 0 and have > 0:
                     gate_free[a["si"]] += 1
                 rented[tk] = max(have, needed)
                 a["locate"] = marginal * price[tk]
+                a["packages"] = marginal
+                a["fade_pct"] = fade
                 loc_by_i[a["si"]] += a["locate"]
                 lst.append((tr["t1"], a["size"]))
             for tk, pk in rented.items():
@@ -1118,18 +1229,22 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                         loc_prices_drawn.append(price_s[key])
                     ref_s[key] = tr["ref_price"]
                 m = max_short.get(key, 0.0)
+                marginal = lg.paquetes_marginales(m, a["size"])
+                fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price_s[key])
                 gc = gate_cfgs[i]
                 if gc is not None:
+                    # `evaluar` resuelve los dos modos (rodante y fijo, con o sin rangos).
                     v = lg.evaluar(gc, int(tr["t0"] * 1_000_000_000), tr["entry"], a["size"], m, price_s[key])
                     if not v["entra"]:
                         a["gate_out"] = True
                         gate_out[i] += 1
                         continue
-                marginal = lg.paquetes_marginales(m, a["size"])
                 if marginal == 0 and m > 0:
                     gate_free[i] += 1
                 max_short[key] = max(m, a["size"])
                 a["locate"] = marginal * price_s[key]
+                a["packages"] = marginal
+                a["fade_pct"] = fade
                 loc_by_i[i] += a["locate"]
             for (i, tk), m in max_short.items():
                 if m > 0:
@@ -1167,7 +1282,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "dir": tr["direction"][:1], "entry": tr["entry_time"][11:16], "exit": tr["exit_time"][11:16],
                 "entry_px": tr["entry"], "exit_px": tr["exit"], "size": a["size"], "notional": a["notional"],
                 "pnl": a["net"], "fees": a["fee"], "slip": a["slip"], "locate": a["locate"], "r": a["r"],
-                "reason": tr["exit_reason"],
+                "reason": tr["exit_reason"], "packages": int(a.get("packages", 0)), "fade_pct": float(a.get("fade_pct", 0.0)),
             })
         day_total = 0.0
         for i in range(n):
@@ -1353,9 +1468,14 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         # Comisiones + slippage del trade (los dos costes que se fijan aqui).
         "fees": [round(a["fees"] + a["slip"], 2) for a in accepted],
         "locate": [round(a["locate"], 2) for a in accepted],
+        # Fade necesario del corto (% del precio que hay que ganar solo para
+        # pagar sus paquetes de mas) y esos paquetes.
+        "fade": [round(a.get("fade_pct", 0.0), 3) for a in accepted],
+        "packages": [int(a.get("packages", 0)) for a in accepted],
         "r": [round(a["r"], 2) for a in accepted],
         "reason": [a["reason"] for a in accepted],
     }
+    locates_analysis = _analisis_locates(accepted, n, [str(r.get("name") or "") for r in runs], loc_days, loc_cfg)
 
     # Banda de locates: N semillas sobre los mismos paquetes (solo aleatorios).
     locates_band = None
@@ -1395,6 +1515,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         },
         "locates_report": locates_report,
         "locates_band": locates_band,
+        "locates_analysis": locates_analysis,
         "scaling": scaling_out,
         "calendar": calendar,
         "equity": [ple._r6(x) for x in equity_curve],

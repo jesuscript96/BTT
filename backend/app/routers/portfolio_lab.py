@@ -428,10 +428,24 @@ class ExecIn(BaseModel):
     locates_seed: int = 1
 
 
+class RawEvRangoIn(BaseModel):
+    """Un tramo de precio de entrada con su EV (ver locates_gate.RANGOS_PRECIO_EV)."""
+    lo: float = Field(ge=0)
+    hi: float | None = None
+    ev_pct: float | None = None
+
+
 class RawGateIn(BaseModel):
-    """Puerta por EV del portfolio: la misma cuenta que la del backtester
-    (locates_gate), con los paquetes DE MAS respecto a lo ya alquilado hoy."""
-    ventana: int = Field(default=30, ge=1)
+    """Puerta de los cortos. mode "ev": la cuenta del backtester (locates_gate)
+    con el EV rodante de la estrategia (EV por defecto hasta que hay
+    historia; ventana 0 = todo el historico) contra el fade de los paquetes
+    DE MAS respecto a lo ya alquilado hoy. mode "ev_fixed": SIEMPRE se
+    compara ev_fixed_pct con el fade (el EV medido en IS, para ver OOS); con
+    `ev_ranges`, el EV del tramo de precio de la entrada (17-sep)."""
+    mode: Literal["ev", "ev_fixed"] = "ev"
+    ev_fixed_pct: float = Field(default=3.0, ge=0)
+    ev_ranges: list[RawEvRangoIn] | None = None
+    ventana: int = Field(default=30, ge=0)
     por: Literal["trades", "dias"] = "trades"
     ev_defecto_pct: float = 2.0
     min_trades: int = Field(default=10, ge=1)

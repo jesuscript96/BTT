@@ -82,10 +82,15 @@ def ensure_watch_table(con) -> None:
         #     el orden de `pyramiding.levels` de la estrategia, como lista JSON
         #     (null = esa piramide no tiene cantidad propia). Manda sobre
         #     `riesgo_piramide_usd`, que queda como respaldo.
+        #   ev_rangos_json (17-sep-2026): el EV POR TRAMO DE PRECIO de entrada,
+        #     [{lo, hi, ev_pct}] (ver locates_gate.RANGOS_PRECIO_EV). Con el, el
+        #     /evf enfrenta el fade al EV del tramo del precio de la accion; un
+        #     tramo sin EV cae a `ev_pct`.
         for columna, tipo in (("riesgo_piramide_usd", "DOUBLE"),
                               ("capital_usd", "DOUBLE"),
                               ("ev_pct", "DOUBLE"),
-                              ("riesgos_piramide_json", "VARCHAR")):
+                              ("riesgos_piramide_json", "VARCHAR"),
+                              ("ev_rangos_json", "VARCHAR")):
             try:
                 con.execute(f"ALTER TABLE bot_alert_watch ADD COLUMN {columna} {tipo}")
             except Exception:
@@ -454,7 +459,7 @@ def get_watch(con) -> dict[str, dict]:
     ensure_watch_table(con)
     rows = con.execute(
         "SELECT strategy_id, activa, riesgo_usd, updated_at, "
-        "riesgo_piramide_usd, capital_usd, ev_pct, riesgos_piramide_json FROM bot_alert_watch"
+        "riesgo_piramide_usd, capital_usd, ev_pct, riesgos_piramide_json, ev_rangos_json FROM bot_alert_watch"
     ).fetchall()
     return {
         r[0]: {
@@ -467,9 +472,22 @@ def get_watch(con) -> dict[str, dict]:
             "capital_usd": float(r[5]) if r[5] is not None else None,
             "ev_pct": float(r[6]) if r[6] is not None else None,
             "riesgos_piramide": _leer_riesgos_piramide(r[7]),
+            "ev_rangos": _leer_ev_rangos(r[8]),
         }
         for r in rows
     }
+
+
+def _leer_ev_rangos(raw) -> Optional[list]:
+    """[{lo, hi, ev_pct}] de la columna JSON, o None si no hay ninguno con EV."""
+    if not raw:
+        return None
+    try:
+        from app.services.locates_gate import rangos_ev_normalizados
+        lista = rangos_ev_normalizados(json.loads(raw))
+    except Exception:  # noqa: BLE001 - una columna corrupta no tumba el cuadro
+        return None
+    return lista if any(r.get("ev_pct") for r in lista) else None
 
 
 def _leer_riesgos_piramide(raw) -> Optional[list]:
@@ -508,20 +526,26 @@ def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
               riesgo_piramide_usd: float | None = None,
               capital_usd: float | None = None,
               ev_pct: float | None = None,
-              riesgos_piramide: list | None = None) -> dict:
+              riesgos_piramide: list | None = None,
+              ev_rangos: list | None = None) -> dict:
     """Guarda (o actualiza) la vigilancia de una estrategia. Devuelve su fila."""
     ensure_watch_table(con)
     riesgos_piramide = _limpiar_riesgos_piramide(riesgos_piramide)
+    from app.services.locates_gate import rangos_ev_normalizados
+    ev_rangos_l = rangos_ev_normalizados(ev_rangos)
+    if not any(r.get("ev_pct") for r in ev_rangos_l):
+        ev_rangos_l = []
     con.execute(
         "INSERT OR REPLACE INTO bot_alert_watch "
         "(strategy_id, activa, riesgo_usd, updated_at, riesgo_piramide_usd, capital_usd, ev_pct, "
-        "riesgos_piramide_json) "
-        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?)",
+        "riesgos_piramide_json, ev_rangos_json) "
+        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)",
         [strategy_id, bool(activa), float(riesgo_usd),
          float(riesgo_piramide_usd) if riesgo_piramide_usd is not None else None,
          float(capital_usd) if capital_usd is not None else None,
          float(ev_pct) if ev_pct is not None else None,
-         json.dumps(riesgos_piramide) if riesgos_piramide else None],
+         json.dumps(riesgos_piramide) if riesgos_piramide else None,
+         json.dumps(ev_rangos_l) if ev_rangos_l else None],
     )
     marcar_cambio_estrategias()
     return {
@@ -530,6 +554,7 @@ def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
         "riesgo_piramide_usd": riesgo_piramide_usd,
         "capital_usd": capital_usd,
         "ev_pct": ev_pct,
+        "ev_rangos": ev_rangos_l or None,
         "riesgos_piramide": riesgos_piramide,
     }
 
@@ -721,6 +746,7 @@ def vigiladas(con, scope_sql: str = "", scope_params: Optional[list] = None) -> 
             "riesgo_piramide_usd": cfg.get("riesgo_piramide_usd"),
             "riesgos_piramide": cfg.get("riesgos_piramide"),
             "ev_pct": cfg.get("ev_pct"),
+            "ev_rangos": cfg.get("ev_rangos"),
             "capital_usd": cfg.get("capital_usd"),
             "definition": definition,
             "ventana": ventana_operativa(definition),

@@ -284,6 +284,17 @@ export default function Home() {
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
   const panelParamsRef = useRef<BacktestPanelParams | null>(null);
   const jobIdRef = useRef<string | null>(null);
+  // La peticion ENTERA de la ultima corrida (definicion + parametros): la
+  // subpagina de bandas de locates la relanza con otros rangos (17-sep).
+  const ultimaPeticionRef = useRef<Record<string, unknown> | null>(null);
+  const lanzarConDefinicion = (p: Parameters<typeof startBacktestWithDefinition>[0]) => {
+    ultimaPeticionRef.current = p as unknown as Record<string, unknown>;
+    return startBacktestWithDefinition(p);
+  };
+  const lanzar = (p: Parameters<typeof startBacktest>[0]) => {
+    ultimaPeticionRef.current = p as unknown as Record<string, unknown>;
+    return startBacktest(p);
+  };
 
   // F3/F4: launch an async backtest, poll its job status (by job_id), and
   // return the light result (no equity_curves — those are fetched per day).
@@ -557,7 +568,7 @@ export default function Home() {
     };
 
     try {
-      const data = await runJobAndLoad(startBacktestWithDefinition({
+      const data = await runJobAndLoad(lanzarConDefinicion({
         dataset_id: activeDatasetId,
         strategy_definition: {
           name: draft.name,
@@ -875,7 +886,7 @@ export default function Home() {
     };
 
     try {
-      const data = await runJobAndLoad(startBacktest(params));
+      const data = await runJobAndLoad(lanzar(params));
       setResult(data);
       if (data.trades && data.trades.length > 0) {
         const firstTrade = data.trades[0];
@@ -1745,6 +1756,7 @@ export default function Home() {
                 strategyId={strategyIdRef.current}
                 datasetId={datasetIdRef.current}
                 backtestParams={backtestParamsRef.current}
+                ultimaPeticion={ultimaPeticionRef.current}
                 onSelectDay={setSelectedDay}
               />
             </>

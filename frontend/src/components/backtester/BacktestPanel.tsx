@@ -5,6 +5,11 @@ import type { Dataset, Strategy } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
 import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
+import { RANGOS_PRECIO_EV, etiquetaRango, rangosDesdeCasillas } from "@/lib/evRangos";
+
+// EV fijo (% del precio) con el que nace la casilla del completo de la puerta
+// por EV; las seis casillas por rango se precargan con el completo al abrirlas.
+const EV_FIJO_DEFECTO = 3;
 import { Plus, Settings } from "lucide-react";
 
 export interface BacktestPanelParams {
@@ -30,9 +35,11 @@ export interface BacktestPanelParams {
   locates_seed?: number;
   ev_gate_enabled?: boolean;
   ev_gate_window?: number;
-  ev_gate_by?: "trades" | "dias";
+  ev_gate_by?: "trades" | "dias" | "fijo";
   ev_gate_default_pct?: number;
   ev_gate_min_trades?: number;
+  ev_gate_fixed_pct?: number;
+  ev_gate_ranges?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
   // Coste de Black Swan (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
   bswan_enabled?: boolean;
   bswan_mode?: "mercado" | "manual";
@@ -74,9 +81,11 @@ interface BacktestPanelProps {
     locates_seed?: number;
     ev_gate_enabled?: boolean;
     ev_gate_window?: number;
-    ev_gate_by?: "trades" | "dias";
+    ev_gate_by?: "trades" | "dias" | "fijo";
     ev_gate_default_pct?: number;
     ev_gate_min_trades?: number;
+    ev_gate_fixed_pct?: number;
+    ev_gate_ranges?: Array<{ lo: number; hi: number | null; ev_pct: number | null }>;
     bswan_enabled?: boolean;
     bswan_mode?: "mercado" | "manual";
     bswan_threshold_pct?: number;
@@ -481,9 +490,18 @@ export default function BacktestPanel({
   // Puerta por EV (fase 2). Solo tiene sentido con locates aleatorios.
   const [evGate, setEvGate] = useState(false);
   const [evGateWindow, setEvGateWindow] = useState(30);
-  const [evGateBy, setEvGateBy] = useState<"trades" | "dias">("trades");
+  const [evGateBy, setEvGateBy] = useState<"trades" | "dias" | "fijo">("trades");
   const [evGateDefault, setEvGateDefault] = useState(2);
   const [evGateMinTrades, setEvGateMinTrades] = useState(10);
+  // EV FIJO (17-sep): «completo» = un EV para todos los trades; «rango» = uno
+  // por tramo de precio de entrada (los tramos de «EV por precio» de Charts).
+  const [evGateFixedMode, setEvGateFixedMode] = useState<"completo" | "rango">("completo");
+  const [evGateFixed, setEvGateFixed] = useState(EV_FIJO_DEFECTO);
+  // Las seis casillas se precargan con el EV completo que haya puesto EN EL
+  // MOMENTO de pasar a «por rango» (Jaume, 17-sep: «pon un numero por defecto,
+  // precargado del EV»); solo se rellenan las que esten en blanco, lo que el
+  // haya tecleado se respeta.
+  const [evGateRangos, setEvGateRangos] = useState<string[]>(() => RANGOS_PRECIO_EV.map(() => ""));
   const useEvGate = useLocatesRandom && evGate;
   // COSTE DE BLACK SWAN (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
   // "mercado" = el motor cierra en la vela del mechazo a un precio penalizado
@@ -644,6 +662,9 @@ export default function BacktestPanel({
       if (savedState.evGateBy !== undefined) setEvGateBy(savedState.evGateBy);
       if (savedState.evGateDefault !== undefined) setEvGateDefault(savedState.evGateDefault);
       if (savedState.evGateMinTrades !== undefined) setEvGateMinTrades(savedState.evGateMinTrades);
+      if (savedState.evGateFixedMode !== undefined) setEvGateFixedMode(savedState.evGateFixedMode);
+      if (savedState.evGateFixed !== undefined) setEvGateFixed(savedState.evGateFixed);
+      if (Array.isArray(savedState.evGateRangos)) setEvGateRangos(RANGOS_PRECIO_EV.map((_, k) => String(savedState.evGateRangos[k] ?? "")));
       if (savedState.useBswan !== undefined) setUseBswan(savedState.useBswan);
       if (savedState.bswanMode !== undefined) setBswanMode(savedState.bswanMode);
       if (savedState.bswanThreshold !== undefined) setBswanThreshold(savedState.bswanThreshold);
@@ -802,6 +823,8 @@ export default function BacktestPanel({
       ev_gate_by: evGateBy,
       ev_gate_default_pct: useEvGate ? evGateDefault : 0,
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
+      ev_gate_fixed_pct: useEvGate && evGateBy === "fijo" && evGateFixedMode === "completo" ? evGateFixed : 0,
+      ev_gate_ranges: useEvGate && evGateBy === "fijo" && evGateFixedMode === "rango" ? rangosDesdeCasillas(evGateRangos) : [],
       bswan_enabled: useBswan,
       bswan_mode: bswanMode,
       bswan_threshold_pct: useBswan ? bswanThreshold : 0,
@@ -822,7 +845,7 @@ export default function BacktestPanel({
     fees, feeType, slippage, startDate, endDate, marketSessions,
     customStartTime, customEndTime, useLocates, locatesCost, maxLocates,
     useLocatesRandom, locatesMin, locatesMax, locatesSeed,
-    useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
+    useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
     useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
@@ -860,6 +883,9 @@ export default function BacktestPanel({
         evGateBy,
         evGateDefault,
         evGateMinTrades,
+        evGateFixedMode,
+        evGateFixed,
+        evGateRangos,
         useBswan,
         bswanMode,
         bswanThreshold,
@@ -882,7 +908,7 @@ export default function BacktestPanel({
     startDate, endDate, marketSessions, customStartTime, customEndTime,
     riskType, feeType, isPercent, loadingData,
     useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
-    evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades,
+    evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
     useHalts, haltsMode, haltsN, haltsSlippage,
     useMonthlyExpenses, monthlyExpenses
@@ -949,6 +975,8 @@ export default function BacktestPanel({
       ev_gate_by: evGateBy,
       ev_gate_default_pct: useEvGate ? evGateDefault : 0,
       ev_gate_min_trades: useEvGate ? evGateMinTrades : 0,
+      ev_gate_fixed_pct: useEvGate && evGateBy === "fijo" && evGateFixedMode === "completo" ? evGateFixed : 0,
+      ev_gate_ranges: useEvGate && evGateBy === "fijo" && evGateFixedMode === "rango" ? rangosDesdeCasillas(evGateRangos) : [],
       // Coste de Black Swan. Apagado = el backend ni lo mira.
       bswan_enabled: useBswan,
       bswan_mode: bswanMode,
@@ -1925,14 +1953,32 @@ export default function BacktestPanel({
                     />
                   </span>
                 </label>
-                {evGate ? (
+                <span />
+              </React.Fragment>
+            );
+            if (evGate) {
+              // Los botones van en su propia fila, debajo del check: al lado
+              // se comian la frase «Puerta por EV» (Jaume, 17-sep).
+              filas.push(
+                <React.Fragment key="evmodo">
+                  <span style={{ ...sub, paddingLeft: 44 }}>
+                    Con qué EV
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="Trades / Días: el EV rodante en sombra (la media de los últimos N trades cerrados, o de los cerrados en los últimos N días), con el EV por defecto mientras no hay historia. Fijo: siempre se enfrenta al fade el EV que pongas tú (el que midas en IS, para ver qué tal va en OOS), completo o por tramo de precio de entrada; no mira la sombra."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
                   <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
-                    {(["trades", "dias"] as const).map((m, i) => (
+                    {(["trades", "dias", "fijo"] as const).map((m, i) => (
                       <button
                         key={m}
                         type="button"
                         onClick={() => setEvGateBy(m)}
-                        title="Sobre qué se calcula el EV rodante: los últimos N trades cerrados, o los trades cerrados en los últimos N días"
+                        title={m === "fijo"
+                          ? "EV FIJO: siempre se enfrenta al fade el EV que pongas (el que midas en IS, para ver qué tal va en OOS), completo o por tramo de precio de entrada. No mira la sombra."
+                          : "Sobre qué se calcula el EV rodante: los últimos N trades cerrados, o los trades cerrados en los últimos N días"}
                         style={{
                           background: evGateBy === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
                           color: evGateBy === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
@@ -1942,14 +1988,80 @@ export default function BacktestPanel({
                           padding: '0 9px', cursor: 'pointer',
                         }}
                       >
-                        {m === "trades" ? "Trades" : "Días"}
+                        {m === "trades" ? "Trades" : m === "dias" ? "Días" : "Fijo"}
                       </button>
                     ))}
                   </div>
-                ) : <span />}
-              </React.Fragment>
-            );
-            if (evGate) {
+                </React.Fragment>
+              );
+            }
+            if (evGate && evGateBy === "fijo") {
+              filas.push(
+                <React.Fragment key="evfijo">
+                  <span style={{ ...sub, paddingLeft: 44 }}>
+                    EV fijo
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="«Completo»: un solo EV (% del precio) para todos los cortos; entra el corto si ese EV supera su fade necesario. «Por rango»: un EV por tramo de PRECIO de entrada — los tramos de «EV por precio» de la pestaña Charts: anota ahí los valores y ponlos aquí. Un tramo vacío = en ese tramo no se entra (no hay EV con el que comparar). Es el mismo criterio que el cuadro de mandos del bot y el /evf, para que el backtest y el aviso digan lo mismo."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
+                      {(["completo", "rango"] as const).map((m, i) => (
+                        <button
+                          key={m}
+                          type="button"
+                          onClick={() => {
+                            setEvGateFixedMode(m);
+                            if (m === "rango") setEvGateRangos((prev) => RANGOS_PRECIO_EV.map((_, k) => String(prev[k] ?? "").trim() || String(evGateFixed)));
+                          }}
+                          style={{
+                            background: evGateFixedMode === m ? 'var(--color-ec-copper)' : 'var(--color-ec-bg-base)',
+                            color: evGateFixedMode === m ? 'var(--color-ec-copper-text)' : 'var(--color-ec-text-secondary)',
+                            fontWeight: evGateFixedMode === m ? 600 : 400,
+                            border: 0, borderLeft: i ? '1px solid var(--color-ec-border)' : undefined,
+                            fontFamily: 'var(--color-ec-sans)', fontSize: 10, height: 24,
+                            padding: '0 9px', cursor: 'pointer',
+                          }}
+                        >
+                          {m === "completo" ? "Completo" : "Por rango"}
+                        </button>
+                      ))}
+                    </div>
+                    {evGateFixedMode === "completo" && (
+                      <input type="number" step="0.1" min={0} value={evGateFixed} style={inp}
+                             title="EV (% del precio) que se enfrenta siempre al fade"
+                             onChange={(e) => setEvGateFixed(Math.max(0, Number(e.target.value) || 0))} />
+                    )}
+                  </span>
+                </React.Fragment>
+              );
+              if (evGateFixedMode === "rango") {
+                // Los seis tramos, UNO POR FILA del bloque (etiqueta | casilla),
+                // como el resto de filas: asi las casillas quedan alineadas con
+                // las demas del bloque. En una sola fila a todo el ancho se
+                // amontonaban (el panel mide ~245 px) (Jaume, 17-sep). Sin
+                // casilla de EV completo: un tramo vacio = en ese tramo no se
+                // entra, y la fila lo dice mientras esta vacio.
+                RANGOS_PRECIO_EV.forEach(([lo, hi], k) => {
+                  const vacio = !(Number(String(evGateRangos[k] ?? "").replace(",", ".")) > 0);
+                  filas.push(
+                    <React.Fragment key={`evrango${k}`}>
+                      <span style={{ ...sub, paddingLeft: 44, fontFamily: 'var(--color-ec-mono)' }}>{etiquetaRango(lo, hi)}</span>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <span style={nota}>{vacio ? 'no entra' : ''}</span>
+                        <input type="number" step="0.1" min={0} placeholder="—" value={evGateRangos[k] ?? ""} style={inp}
+                               title={`EV (% del precio) de los cortos que entran entre ${etiquetaRango(lo, hi)}. Vacío = en ese tramo no se entra.`}
+                               onChange={(e) => setEvGateRangos((prev) => { const l = prev.slice(); while (l.length < RANGOS_PRECIO_EV.length) l.push(""); l[k] = e.target.value; return l; })} />
+                      </span>
+                    </React.Fragment>
+                  );
+                });
+              }
+            }
+            if (evGate && evGateBy !== "fijo") {
               filas.push(
                 <React.Fragment key="ventana">
                   <span style={{ ...sub, paddingLeft: 44 }}>

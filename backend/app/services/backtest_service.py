@@ -1364,7 +1364,11 @@ def run_backtest(
         **({"ev_gate": {**_puerta, "ventana": int(ev_gate.ventana), "por": ev_gate.por,
                         "ev_defecto_pct": float(ev_gate.ev_defecto_pct),
                         "min_trades": int(ev_gate.min_trades),
-                        "n_sombra": int(ev_gate.sombra_cierre_ns.size)}} if ev_gate is not None else {}),
+                        "n_sombra": int(ev_gate.sombra_cierre_ns.size),
+                        # 17-sep: EV fijo (completo o por rango de precio).
+                        "modo": str(getattr(ev_gate, "modo", "rodante")),
+                        "ev_fijo_pct": float(getattr(ev_gate, "ev_fijo_pct", 0.0) or 0.0),
+                        "ev_rangos": list(getattr(ev_gate, "ev_rangos", []) or [])}} if ev_gate is not None else {}),
         # Resumen del coste de Black Swan. Solo con el coste activo: sin el, el
         # resultado no lleva la clave.
         **({"bswan": {"enabled": True, **bswan.resumen(), **_bs_stats,

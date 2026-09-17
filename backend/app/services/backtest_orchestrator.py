@@ -86,9 +86,15 @@ class BacktestRequest(BaseModel):
     # rodante cubre el fade que exige el locate. Ver locates_gate.py.
     ev_gate_enabled: bool = False
     ev_gate_window: int = 30
-    ev_gate_by: str = "trades"          # "trades" | "dias"
+    ev_gate_by: str = "trades"          # "trades" | "dias" | "fijo"
     ev_gate_default_pct: float = 2.0
     ev_gate_min_trades: int = 10
+    # 17-sep: con ev_gate_by = "fijo", el EV que se enfrenta SIEMPRE al fade;
+    # y, si se quiere afinar, uno por tramo de precio de entrada
+    # ([{lo, hi, ev_pct}], ver locates_gate.RANGOS_PRECIO_EV). Un tramo sin
+    # EV cae al completo.
+    ev_gate_fixed_pct: float = 0.0
+    ev_gate_ranges: list[dict] | None = None
     # COSTE DE BLACK SWAN (Jaume 2026-09-11). Ver backend/app/services/bswan.py.
     # Apagado = nada cambia. `bswan_mode`: "mercado" (cierra en la vela del
     # mechazo a precio penalizado por tramos) o "manual" (cierra N minutos
@@ -545,14 +551,18 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             # puerta y en cada entrada mira el EV rodante de la sombra cerrada
             # antes de ese instante. El stream es de un solo uso: se crea otro.
             if req.ev_gate_enabled and req.locates_random:
-                from app.services.locates_gate import ConfigPuerta, sombra_desde_trades
+                from app.services.locates_gate import ConfigPuerta, rangos_ev_normalizados, sombra_desde_trades
                 _c_ns, _m_pct = sombra_desde_trades(results.get("trades", []))
+                _fijo = str(req.ev_gate_by).lower().startswith("f")
                 _cfg_puerta = ConfigPuerta(
-                    ventana=max(1, int(req.ev_gate_window)),
+                    ventana=max(0, int(req.ev_gate_window)),
                     por="dias" if str(req.ev_gate_by).lower().startswith("d") else "trades",
                     ev_defecto_pct=float(req.ev_gate_default_pct),
                     min_trades=max(1, int(req.ev_gate_min_trades)),
                     sombra_cierre_ns=_c_ns, sombra_move_pct=_m_pct,
+                    modo="fijo" if _fijo else "rodante",
+                    ev_fijo_pct=float(req.ev_gate_fixed_pct or 0.0),
+                    ev_rangos=rangos_ev_normalizados(req.ev_gate_ranges) if _fijo else [],
                 )
                 _sin_puerta = {
                     "aggregate_metrics": results.get("aggregate_metrics"),

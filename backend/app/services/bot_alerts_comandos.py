@@ -120,7 +120,10 @@ def _bloque_estrategia(fila: dict, precio: float, coste: float,
     """
     nombre = _esc(fila.get("nombre") or "?")
     riesgo = fila.get("riesgo_usd")
-    ev = fila.get("ev_pct")
+    # El EV del tramo de PRECIO de la accion si el cuadro de mandos lo tiene
+    # (17-sep); si no, el completo. MISMA funcion que la puerta del backtest.
+    from app.services.locates_gate import ev_fijo_para_precio
+    ev, ev_origen = ev_fijo_para_precio(fila.get("ev_pct") or 0.0, fila.get("ev_rangos") or [], precio)
     acciones = fila.get("acciones")
     motivo = fila.get("motivo")
 
@@ -151,7 +154,8 @@ def _bloque_estrategia(fila: dict, precio: float, coste: float,
     if coste_real > coste * 1.001:
         lineas.append(f"locate real <b>{coste_real:.4f}</b> $/acción "
                       f"<i>(nominal {coste:.4f})</i>")
-    lineas.append(f"fade necesario <b>{fade:.4f} %</b> · EV {ev:.4f} %")
+    lineas.append(f"fade necesario <b>{fade:.4f} %</b> · EV {ev:.4f} %"
+                  + (" <i>(del tramo de precio)</i>" if ev_origen == "rango" else ""))
     lineas.append(f"<b>{POSITIVA if bien else NEGATIVA}</b> · margen {margen:+.4f} pp")
     # La coletilla va PEGADA a su veredicto y no al final del mensaje: con
     # varias estrategias, una sola frase no sabria a cual se refiere.

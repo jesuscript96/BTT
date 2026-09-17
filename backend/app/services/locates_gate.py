@@ -34,19 +34,79 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Optional
 
 import numpy as np
 
 NS_POR_DIA = 86_400_000_000_000
 
+# ── EV FIJO, completo o POR RANGO DE PRECIO (Jaume, 17-sep-2026) ──────────
+# La puerta puede enfrentar el fade a un EV FIJO en vez de al rodante: el que
+# Jaume mide en IS para ver que tal va en OOS. Y ese EV fijo puede ser uno
+# solo («completo») o uno por tramo de PRECIO de entrada («por rango»): una
+# accion de 0,40 $ no se mueve como una de 8 $. UNA SOLA DEFINICION para el
+# backtest, el portfolio en crudo, el cuadro de mandos y el /evf del bot: si
+# el tramo se mira en un sitio distinto de otro, el veredicto de la app y el
+# del bot se separan sin que nada avise.
+RANGOS_PRECIO_EV: tuple[tuple[float, Optional[float]], ...] = (
+    (0.0, 0.5), (0.5, 1.0), (1.0, 3.0), (3.0, 5.0), (5.0, 10.0), (10.0, None),
+)
+
+
+def rangos_ev_normalizados(rangos) -> list[dict]:
+    """[{lo, hi, ev_pct}] limpio y ordenado por `lo`. `hi` None = sin techo.
+    Se descarta lo que no sea un tramo con numeros; un tramo sin EV (None o
+    <= 0) se conserva con ev_pct None para que quien lo mire sepa que no hay."""
+    out: list[dict] = []
+    for r in rangos or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            lo = float(r.get("lo", 0.0) or 0.0)
+            hi_raw = r.get("hi")
+            hi = float(hi_raw) if hi_raw not in (None, "") else None
+            ev_raw = r.get("ev_pct")
+            ev = float(ev_raw) if ev_raw not in (None, "") else None
+        except (TypeError, ValueError):
+            continue
+        if hi is not None and hi <= lo:
+            continue
+        if ev is not None and ev <= 0:
+            ev = None
+        out.append({"lo": lo, "hi": hi, "ev_pct": ev})
+    out.sort(key=lambda r: r["lo"])
+    return out
+
+
+def ev_fijo_para_precio(ev_fijo_pct: float, ev_rangos, precio: float) -> tuple[float, str]:
+    """El EV fijo que se enfrenta a un corto que entra a `precio`.
+
+    Con tramos: el del tramo que contiene el precio (lo <= precio < hi; el
+    ultimo sin techo) si tiene EV; si el precio no cae en ninguno o el tramo
+    no tiene EV, el completo. Devuelve (ev, origen) con origen "rango" o
+    "completo", para poder ensenar de donde salio el veredicto."""
+    p = float(precio or 0.0)
+    for r in rangos_ev_normalizados(ev_rangos):
+        if r["ev_pct"] is None:
+            continue
+        if p >= r["lo"] and (r["hi"] is None or p < r["hi"]):
+            return float(r["ev_pct"]), "rango"
+    return float(ev_fijo_pct or 0.0), "completo"
+
 
 @dataclass
 class ConfigPuerta:
     """Lo que la pantalla decide; ver el `?` de cada campo en BacktestPanel."""
-    ventana: int = 30                # cuantos trades o cuantos dias mirar
+    ventana: int = 30                # cuantos trades o cuantos dias mirar (0 = todo)
     por: str = "trades"              # "trades" | "dias"
     ev_defecto_pct: float = 2.0      # EV que se asume mientras no hay historia
     min_trades: int = 10             # por debajo de esto se usa el defecto
+    # 17-sep: modo "fijo" = SIEMPRE se compara `ev_fijo_pct` (o el EV del tramo
+    # de precio de la entrada, si `ev_rangos` lo trae) con el fade; la sombra no
+    # se mira. "rodante" = lo de siempre.
+    modo: str = "rodante"            # "rodante" | "fijo"
+    ev_fijo_pct: float = 0.0
+    ev_rangos: list = field(default_factory=list)   # [{lo, hi, ev_pct}]
     # Sombra: senales de la pasada SIN puerta. Ordenadas por instante de cierre.
     sombra_cierre_ns: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.int64))
     sombra_move_pct: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=np.float64))
@@ -77,7 +137,12 @@ def ev_rodante_pct(cfg: ConfigPuerta, ahora_ns: int) -> tuple[float, int, bool]:
     if cierres.size == 0:
         return float(cfg.ev_defecto_pct), 0, True
     fin = int(np.searchsorted(cierres, ahora_ns, side="left"))   # cerradas antes
-    if cfg.por == "dias":
+    if int(cfg.ventana) <= 0:
+        # Ventana 0 = TODO el historico cerrado antes (media que se va
+        # ampliando). 17-sep: con 30 trades el EV rodante tiene un error tipico
+        # mayor que el propio EV y la puerta rechaza por ruido.
+        ini = 0
+    elif cfg.por == "dias":
         ini = int(np.searchsorted(cierres, ahora_ns - int(cfg.ventana) * NS_POR_DIA, side="left"))
     else:
         ini = max(0, fin - int(cfg.ventana))
@@ -99,7 +164,12 @@ def evaluar(
     el resto se guarda para poder explicar despues por que."""
     paq = paquetes_marginales(max_corto_hoy, size_nueva)
     fade = fade_necesario_pct(precio, size_nueva, paq, precio_paquete)
-    ev, n, defecto = ev_rodante_pct(cfg, ahora_ns)
+    if cfg.modo == "fijo":
+        ev, origen = ev_fijo_para_precio(cfg.ev_fijo_pct, cfg.ev_rangos, precio)
+        n, defecto = 0, False
+    else:
+        ev, n, defecto = ev_rodante_pct(cfg, ahora_ns)
+        origen = "rodante"
     return {
         "entra": bool(ev > fade),
         "ev_pct": round(ev, 4),
@@ -109,6 +179,7 @@ def evaluar(
         "coste": round(paq * precio_paquete, 4),
         "n_ev": int(n),
         "ev_por_defecto": bool(defecto),
+        "ev_origen": origen,
     }
 
 

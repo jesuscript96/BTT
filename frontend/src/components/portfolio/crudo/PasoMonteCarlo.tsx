@@ -2,18 +2,21 @@
 
 // Paso 3 de «En crudo»: limites de perdida. Lo historico (lo que ya paso en
 // la serie real) y el Monte Carlo bootstrap de los dias del conjunto (lo que
-// podria pasar con la misma suerte en otro orden). Y, con locates aleatorios,
-// la banda de semillas: cuanto del resultado depende del precio de los locates.
+// podria pasar con la misma suerte en otro orden). Con locates aleatorios, la
+// banda de semillas: cuanto del resultado depende del precio de los locates.
+// Y desde el 17-sep: hasta que precio compensan los locates (precio de
+// equilibrio, neto por tramo de fade y la regla «fade maximo»).
 
 import React, { useMemo } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
-import { SpaghettiChart, DistributionChart } from "@/components/robustez/charts/MonteCarloCharts";
 import type { RawOut } from "@/lib/api_portfolio_lab";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Btn, Nota, Num, Sec, Stat, Toggle, n, pct, tdNum, tdTxt, thL, thR, usd, usdCorto } from "./hoja";
 import { LinesChart } from "./CrudoCharts";
 import { limitesHistoricos } from "./modelo";
+import { McResultado } from "./McResultado";
+import { RangosLocatesCrudo } from "./RangosLocatesCrudo";
 
 export interface MonteCarloModel {
   out: RawOut;
@@ -25,13 +28,20 @@ export interface MonteCarloModel {
   mcRunning: boolean;
   mcError: string | null;
   simularMc: () => void;
+  /** Poner en el paso 1 la puerta «EV fijo = F» (hay que volver a calcular). */
+  onUsarFade: (f: number) => void;
+  /** Un calculo del motor con otro rango de locates aleatorios (y puerta por EV fijo o sin puerta). */
+  correrRango: (min: number, max: number, seed: number, evFijo: number | null) => Promise<RawOut>;
+  evFijoActual: number;
+  seedActual: number;
 }
 
 export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
-  const { out, mcOut, mcSims, setMcSims, mcMethod, setMcMethod, mcRunning, mcError, simularMc } = m;
+  const { out, mcOut, mcSims, setMcSims, mcMethod, setMcMethod, mcRunning, mcError, simularMc, onUsarFade, correrRango, evFijoActual, seedActual } = m;
   const cap = out.config.capital;
   const hist = useMemo(() => limitesHistoricos(out.daily_pnl, out.equity, cap), [out, cap]);
   const bd = out.locates_band;
+  const an = out.locates_analysis;
   const bandSeries = useMemo(() => {
     if (!bd) return null;
     return {
@@ -42,6 +52,16 @@ export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
       band: { lo: bd.bands.p05.map((v) => ((v - cap) / cap) * 100), hi: bd.bands.p95.map((v) => ((v - cap) / cap) * 100), color: color.info, name: "p05 … p95" },
     };
   }, [bd, out.equity, cap]);
+  const curvaPrecio = useMemo(() => {
+    if (!an) return null;
+    return {
+      labels: an.curve.map((c) => `${n(c.price, 1)} $`),
+      series: [
+        { name: "neto de los cortos", color: color.copper, width: 2.2, values: an.curve.map((c) => c.net_shorts) },
+        { name: "neto del portfolio", color: color.textSecondary, values: an.curve.map((c) => c.net_total) },
+      ],
+    };
+  }, [an]);
 
   const fila = (etq: string, ayuda: string, u: number, p: number) => (
     <tr>
@@ -56,6 +76,7 @@ export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
       )}
     </tr>
   );
+  const gateActual = out.config.locates?.gate;
 
   return (
     <div>
@@ -104,29 +125,137 @@ export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
           {!mcOut ? (
             <Nota>Pulsa <strong>Simular</strong>: {n(Number(mcSims) || 5000, 0)} recorridos de {n(out.calendar.length, 0)} días.</Nota>
           ) : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", padding: "4px 0" }}>
-              <Stat label="DD mediano" value={pct(mcOut.drawdown?.p50)} tone="loss" sub={`real ${pct(mcOut.base_max_drawdown)}`} />
-              <Stat big label="DD a tragar (1 de 20)" value={pct(mcOut.dd_tolerance?.p95)} tone="loss" help="Para que solo 1 de cada 20 escenarios lo supere, hay que aguantar este drawdown." />
-              <Stat label="DD a tragar (1 de 100)" value={pct(mcOut.dd_tolerance?.p99)} tone="loss" />
-              <Stat label="Acabar perdiendo" value={pct(mcOut.prob_losing_pct)} sub="probabilidad" />
-              <Stat label="Ruina (−50 %)" value={pct(mcOut.prob_ruin_pct)} sub="probabilidad" />
-              <Stat label="Balance mediano" value={usd(mcOut.final_balance?.p50)} sub={`p5 ${usdCorto(mcOut.final_balance?.p5 ?? NaN)} · p95 ${usdCorto(mcOut.final_balance?.p95 ?? NaN)}`} />
-            </div>
+            <Nota>Simulado sobre la suma del paso 2: {n(mcOut.simulations, 0)} recorridos. Abajo, los recorridos y las distribuciones.</Nota>
           )}
         </Sec>
       </div>
 
-      {mcOut && (
-        <Sec title="Recorridos y distribuciones" sinRelleno help="Arriba, una muestra de recorridos simulados con la banda y la curva real en cobre. Abajo, la distribución del balance final y la del drawdown máximo, con el valor real marcado.">
-          <div style={{ padding: "6px 10px 10px", display: "flex", flexDirection: "column", gap: 12 }}>
-            <SpaghettiChart spaghetti={mcOut.spaghetti} bands={mcOut.bands} baseCurve={mcOut.base_curve} initCash={mcOut.init_cash} xLabel="días →" />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 14 }}>
-              <DistributionChart hist={mcOut.hist_final} markers={[{ value: mcOut.base_final, label: `real ${usd(mcOut.base_final)}`, color: "var(--color-ec-copper)" }]} caption="Balance final de cada recorrido" />
-              <DistributionChart hist={mcOut.hist_drawdown} markers={[{ value: mcOut.base_max_drawdown, label: `real ${pct(mcOut.base_max_drawdown)}`, color: "var(--color-ec-copper)" }]} fmtValue={(v: number) => pct(v)} caption="Drawdown máximo de cada recorrido" />
+      {mcOut && <McResultado mcOut={mcOut} />}
+
+      {an && (
+        <Sec title="Locates — hasta qué precio compensan" help={
+          <>
+            <strong>Precio de equilibrio</strong>: el PnL de los cortos antes de locates (ya con comisiones y slippage)
+            partido por los paquetes de 100 que la cuenta alquila. A ese precio por paquete los cortos se quedan a cero;
+            el neto baja en línea recta con el precio (la curva). Por estrategia, lo mismo con sus cortos y sus paquetes.
+            <br /><br />
+            <strong>Fade necesario</strong> de un corto: el % que tiene que moverse la acción a favor solo para pagar los
+            paquetes de más que exige (con alquiler compartido, lo ya alquilado va gratis). La tabla por tramos enseña el
+            neto tras el locate según ese fade: donde el neto medio se vuelve negativo, ese corto no compensaba.
+            <br /><br />
+            <strong>Puerta por EV fijo</strong>: entra el corto si el EV que fijes supera su fade necesario. La tabla
+            estima el neto para varios EV fijos sobre los cortos de este cálculo (aproximado: quitar un corto cambia lo
+            alquilado a los demás; al ponerlo en el paso 1 se recalcula exacto). Auditoría del 17-sep: el EV rodante de
+            30 trades rechazaba por racha (el error de estimar el EV con 30 trades es mayor que el propio EV) y perdía
+            dinero; el EV fijo compara el coste de CADA corto con el edge de la estrategia, que es lo que se buscaba.
+          </>
+        }>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", padding: "4px 0" }}>
+            <Stat big label="Precio de equilibrio" value={`${n(an.breakeven_price, 2)} $`} sub="por paquete de 100 · a ese precio los cortos se quedan a cero" tone="warning" />
+            <Stat label="Paquetes alquilados" value={n(an.packages, 0)} sub={`${n(an.shorts, 0)} cortos`} />
+            <Stat label="PnL de los cortos antes de locates" value={usd(an.pnl_shorts_pre_locates)} tone={an.pnl_shorts_pre_locates >= 0 ? "profit" : "loss"} />
+            {an.paid > 0 && <Stat label="Pagado" value={usd(an.paid)} sub={`${n(an.avg_price_paid, 2)} $ por paquete de media · ${pct((an.paid / Math.max(1, an.pnl_shorts_pre_locates)) * 100, 0)} del bruto`} tone="loss" />}
+            <Stat label="Movimiento medio del corto" value={pct(an.mean_move_pct, 2)} sub="del precio, antes de locates" help="La media de lo que se mueve a favor cada corto (PnL / nocional). Es el edge medio contra el que se compara el fade." />
+            {an.best_fade_max_pct != null && an.fade_rule && (
+              <Stat label="EV fijo que más neto deja" value={`${n(an.best_fade_max_pct, 1)} %`} sub={`≈ ${usd(an.fade_rule.find((r) => r.fade_max_pct === an.best_fade_max_pct)?.net_est ?? 0)} frente a ${usd(an.net_now ?? 0)} sin puerta`} tone="profit" />
+            )}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start", marginTop: 6 }}>
+            <div>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    <th style={thL}>Estrategia</th>
+                    <th style={thR}>Cortos</th>
+                    <th style={thR}>Paquetes</th>
+                    <th style={thR}>PnL antes de locates</th>
+                    <th style={thR}>Equilibrio $/paq.</th>
+                    {an.paid > 0 && <th style={thR}>Pagado</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {an.per_strategy.map((p) => (
+                    <tr key={p.idx}>
+                      <td style={tdTxt}>{p.name}</td>
+                      <td style={tdNum}>{n(p.shorts, 0)}</td>
+                      <td style={tdNum}>{n(p.packages, 0)}</td>
+                      <td style={{ ...tdNum, color: p.pnl_pre_locates >= 0 ? color.profit : color.loss }}>{usd(p.pnl_pre_locates)}</td>
+                      <td style={{ ...tdNum, color: color.textHigh }}>{p.breakeven_price == null ? "—" : `${n(p.breakeven_price, 2)} $`}</td>
+                      {an.paid > 0 && <td style={{ ...tdNum, color: color.textMuted }}>{usd(p.paid)}</td>}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {curvaPrecio && (
+                <div style={{ marginTop: 10 }}>
+                  <LinesChart labels={curvaPrecio.labels} series={curvaPrecio.series} yFormat={(v) => usdCorto(v)} hoverFormat={(v) => `${n(v, 0)} $`} height={220} titulo="NETO SEGÚN EL PRECIO DEL PAQUETE (FIJO PARA TODOS)" />
+                </div>
+              )}
+            </div>
+            <div>
+              {an.fade_buckets ? (
+                <>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={thL}>Fade necesario</th>
+                        <th style={thR}>Cortos</th>
+                        <th style={thR}>Mov. medio</th>
+                        <th style={thR}>Neto medio</th>
+                        <th style={thR}>Neto total</th>
+                        <th style={thR}>Win</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {an.fade_buckets.map((b, i) => (
+                        <tr key={i}>
+                          <td style={{ ...tdTxt, fontFamily: font.mono }}>{b.hi == null ? `> ${n(b.lo, 1)} %` : b.hi <= 0.001 ? "gratis (0 %)" : `${n(b.lo, 1)} – ${n(b.hi, 1)} %`}</td>
+                          <td style={tdNum}>{n(b.n, 0)}</td>
+                          <td style={tdNum}>{pct(b.move_pct, 2)}</td>
+                          <td style={{ ...tdNum, color: b.net_mean >= 0 ? color.profit : color.loss, fontWeight: 600 }}>{usd(b.net_mean, 2)}</td>
+                          <td style={{ ...tdNum, color: b.net_total >= 0 ? color.profit : color.loss }}>{usd(b.net_total)}</td>
+                          <td style={{ ...tdNum, color: color.textMuted }}>{pct(b.win_pct, 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {an.fade_rule && (
+                    <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 10 }}>
+                      <thead>
+                        <tr>
+                          <th style={thL}>Puerta por EV fijo de</th>
+                          <th style={thR}>Entran</th>
+                          <th style={thR}>Neto estimado</th>
+                          <th style={thL} />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {an.fade_rule.map((r) => {
+                          const mejor = r.fade_max_pct === an.best_fade_max_pct;
+                          const activa = gateActual?.mode === "ev_fixed" && gateActual.ev_fixed_pct === r.fade_max_pct;
+                          return (
+                            <tr key={r.fade_max_pct} style={{ background: mejor ? color.bgElevated : undefined }}>
+                              <td style={{ ...tdTxt, fontFamily: font.mono, color: mejor ? color.copperText : color.textHigh }}>{n(r.fade_max_pct, 1)} %{activa ? " · en uso" : ""}</td>
+                              <td style={tdNum}>{n(r.taken, 0)} de {n(an.shorts, 0)}</td>
+                              <td style={{ ...tdNum, color: (r.net_est - (an.net_now ?? 0)) >= 0 ? color.profit : color.loss }}>{usd(r.net_est)}</td>
+                              <td style={{ ...tdTxt, padding: "2px 6px" }}><Btn onClick={() => onUsarFade(r.fade_max_pct)} title="Poner este EV fijo como puerta en el paso 1 y volver a calcular (exacto)">usar</Btn></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </>
+              ) : (
+                <Nota>Sin precio de locate (paso 1 en «sin locates») no hay fade que mirar: el precio de equilibrio y la curva valen igual; para los tramos y la regla, pon locates fijos o aleatorios y vuelve a calcular.</Nota>
+              )}
             </div>
           </div>
         </Sec>
       )}
+
+      <RangosLocatesCrudo base={out} evInicial={an?.best_fade_max_pct ?? evFijoActual} seedInicial={seedActual} correr={correrRango} />
 
       {bd && bandSeries && (
         <Sec title={`Banda de locates — ${n(bd.seeds, 0)} semillas`} help="Los mismos trades y los mismos paquetes alquilados, pero con el precio de cada acción-día sorteado con otra semilla, N veces (como la banda del Backtester: sin volver a simular). Dice cuánto del resultado depende de la suerte con el precio de los locates. La curva real es la de la semilla del paso 1; la banda va del percentil 5 al 95 de las semillas." sinRelleno>

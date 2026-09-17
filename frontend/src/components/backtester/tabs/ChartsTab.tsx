@@ -30,6 +30,7 @@ import RollingEVChart from "@/components/backtester/RollingEVChart";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
 import CalendarTab from "@/components/backtester/tabs/CalendarTab";
 import EntryWindowSweepChart from "@/components/backtester/EntryWindowSweepChart";
+import EvPorPrecio from "@/components/backtester/tabs/EvPorPrecio";
 import { Zap, Shield, Loader2 } from "lucide-react";
 
 interface ChartsTabProps {
@@ -922,6 +923,13 @@ export default function ChartsTab({
             </ResponsiveContainer>
           </div>
         </div>
+      </div>
+
+      {/* ROW 1b (17-sep): EV por rango de PRECIO de entrada, los tramos de la
+          puerta «EV fijo por rango» y del cuadro de mandos. Ancho entero: seis
+          barras con su etiqueta no caben en un tercio. */}
+      <div className="h-[240px] mt-8" style={{ borderBottom: '1px solid var(--border)' }}>
+        <EvPorPrecio trades={trades} />
       </div>
 
       {/* ROW 2: Distributions side by side — no card wrappers */}

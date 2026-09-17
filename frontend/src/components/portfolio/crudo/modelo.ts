@@ -29,11 +29,16 @@ export interface LocCfg {
   /** Un alquiler por ticker-dia para toda la cuenta (true) o cada estrategia el suyo. */
   shared: boolean;
   gate: boolean;
+  /** ev_rodante: lo de siempre (EV por defecto hasta que hay historia, luego
+   *  el rolling de N trades); ev_fijo: SIEMPRE ese EV contra el fade. */
+  gateMode: "ev_rodante" | "ev_fijo";
   gateVentana: number;
   gateEv: number;
+  /** El EV fijo (% del precio) que se enfrenta al fade en modo ev_fijo. */
+  evFijo: number;
 }
 
-export const LOC0: LocCfg = { mode: "none", cost: 3, min: 1, max: 10, seed: 1, shared: true, gate: false, gateVentana: 30, gateEv: 2 };
+export const LOC0: LocCfg = { mode: "none", cost: 3, min: 1, max: 10, seed: 1, shared: true, gate: false, gateMode: "ev_rodante", gateVentana: 30, gateEv: 2, evFijo: 3 };
 
 export function locatesIn(l: LocCfg, bandSeeds: number): RawLocatesIn {
   return {
@@ -43,7 +48,11 @@ export function locatesIn(l: LocCfg, bandSeeds: number): RawLocatesIn {
     max: l.max,
     seed: l.seed,
     shared: l.shared,
-    gate: l.gate && l.mode !== "none" ? { ventana: l.gateVentana, por: "trades", ev_defecto_pct: l.gateEv, min_trades: 10 } : null,
+    gate: l.gate && l.mode !== "none"
+      ? (l.gateMode === "ev_fijo"
+        ? { mode: "ev_fixed", ev_fixed_pct: l.evFijo, ventana: 0, por: "trades", ev_defecto_pct: l.evFijo, min_trades: 10 }
+        : { mode: "ev", ventana: l.gateVentana, por: "trades", ev_defecto_pct: l.gateEv, min_trades: 10 })
+      : null,
     band_seeds: l.mode === "random" ? bandSeeds : 0,
   };
 }
@@ -51,7 +60,8 @@ export function locatesIn(l: LocCfg, bandSeeds: number): RawLocatesIn {
 export function locatesResumen(l: LocCfg): string {
   if (l.mode === "none") return "sin locates";
   const precio = l.mode === "fixed" ? `${n(l.cost, 2)} $/100` : `aleatorios ${n(l.min, 0)}–${n(l.max, 0)} $/100`;
-  return `locates ${precio} ${l.shared ? "compartidos" : "por estrategia"}${l.gate ? " · puerta por EV" : ""}`;
+  const puerta = !l.gate ? "" : l.gateMode === "ev_fijo" ? ` · puerta por EV fijo ${n(l.evFijo, 1)} %` : ` · puerta por EV rodante (${l.gateVentana} trades)`;
+  return `locates ${precio} ${l.shared ? "compartidos" : "por estrategia"}${puerta}`;
 }
 
 /** Escalado y pesos (paso 4). */

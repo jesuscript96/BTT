@@ -47,6 +47,7 @@ import {
   type EventoAlerta,
   type Radar,
 } from "@/lib/api_bot_alerts";
+import { RANGOS_PRECIO_EV, casillasDesdeRangos, etiquetaRango, rangosDesdeCasillas } from "@/lib/evRangos";
 
 const SONIDO_KEY = "botAlertas.sonido.v1";
 /** Lo que se teclea en el radar (locate y EV por ticker). Se guarda en el
@@ -356,6 +357,10 @@ export default function CuadroMandos() {
    *  no puede saber qué backtest consideras válido. Lo usa el cálculo de
    *  locates del radar y el comando /evf de Telegram. */
   const [evs, setEvs] = useState<Record<string, string>>({});
+  // EV por tramo de PRECIO (17-sep): seis casillas por estrategia, en el orden
+  // de RANGOS_PRECIO_EV. Vacia = ese tramo cae al EV completo.
+  const [evRangos, setEvRangos] = useState<Record<string, string[]>>({});
+  const [evRangosAbierto, setEvRangosAbierto] = useState<Record<string, boolean>>({});
   /** Fila desplegada y su explicacion. Se pide al abrir, no al cargar la
    *  pagina: son datos que solo se miran cuando se duda de algo. */
   const [abierta, setAbierta] = useState<string | null>(null);
@@ -505,6 +510,8 @@ export default function CuadroMandos() {
         setEvs(Object.fromEntries(
           s.map((x) => [x.strategy_id, x.ev_pct != null ? String(x.ev_pct) : ""]),
         ));
+        setEvRangos(Object.fromEntries(s.map((x) => [x.strategy_id, casillasDesdeRangos(x.ev_rangos)])));
+        setEvRangosAbierto(Object.fromEntries(s.map((x) => [x.strategy_id, !!(x.ev_rangos && x.ev_rangos.some((r) => r.ev_pct != null))])));
       })
       .catch((e) => vivo && setError(e?.message || "No se pudo cargar el cuadro de mandos"))
       .finally(() => vivo && setCargando(false));
@@ -653,17 +660,21 @@ export default function CuadroMandos() {
     // el backend pueda borrar una que antes estaba puesta.
     const porPir = (s.piramides || []).map((_, k) => Number(riesgosPirNivel[s.strategy_id]?.[k]) || null);
     const riesgosPirLista = porPir.some((v) => v != null) ? porPir : null;
+    // EV por tramo: la lista entera siempre (con sus null) para que el backend
+    // pueda borrar un tramo que antes estaba puesto.
+    const rangosLista = rangosDesdeCasillas(evRangos[s.strategy_id] || []);
     try {
       // La comprobacion de verdad la hace el backend contra la definicion
       // GUARDADA, que es la que va a usar el bot. Aqui solo se pilla lo obvio.
       await guardarVigilancia(s.strategy_id, activa, riesgo, {
         riesgo_piramide_usd: riesgoPir, capital_usd: capital, ev_pct: ev,
-        riesgos_piramide: riesgosPirLista,
+        riesgos_piramide: riesgosPirLista, ev_rangos: rangosLista,
       });
       setEstrategias((prev) => prev.map((x) =>
         x.strategy_id === s.strategy_id
           ? { ...x, activa, riesgo_usd: riesgo, riesgo_piramide_usd: riesgoPir,
-              capital_usd: capital, ev_pct: ev, riesgos_piramide: riesgosPirLista }
+              capital_usd: capital, ev_pct: ev, riesgos_piramide: riesgosPirLista,
+              ev_rangos: rangosLista.some((r) => r.ev_pct != null) ? rangosLista : null }
           : x));
       setError(null);
     } catch (err) {
@@ -1010,13 +1021,42 @@ export default function CuadroMandos() {
                         comando /evf de Telegram, para no repetirla en cada
                         mensaje. La tecleas tú: el bot no puede saber qué
                         backtest consideras válido. */}
-                    <CampoNum
-                      valor={evs[s.strategy_id] ?? ""}
-                      onChange={(v) => setEvs((p) => ({ ...p, [s.strategy_id]: v }))}
-                      onBlur={() => s.activa && guardarEstrategia(s, true)}
-                      paso={0.1}
-                      titulo="Esperanza matemática de la estrategia, en % del precio de entrada. Se usa para decidir si compensan los locates."
-                    />
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                        <button
+                          type="button"
+                          onClick={() => setEvRangosAbierto((p) => ({ ...p, [s.strategy_id]: !p[s.strategy_id] }))}
+                          title="EV por tramo de precio de entrada (los tramos de «EV por precio» de Charts): el /evf usa el del tramo del precio de la acción; un tramo vacío cae al EV completo."
+                          style={{ background: "transparent", border: `1px solid ${color.border}`, color: evRangosAbierto[s.strategy_id] ? color.copperText : color.textMuted, fontSize: 9.5, fontFamily: font.mono, padding: "1px 5px", cursor: "pointer", height: 22 }}
+                        >
+                          {evRangosAbierto[s.strategy_id] ? "▾ rango" : "▸ rango"}
+                        </button>
+                        <CampoNum
+                          valor={evs[s.strategy_id] ?? ""}
+                          onChange={(v) => setEvs((p) => ({ ...p, [s.strategy_id]: v }))}
+                          onBlur={() => s.activa && guardarEstrategia(s, true)}
+                          paso={0.1}
+                          titulo="Esperanza matemática de la estrategia, en % del precio de entrada (el EV completo). Se usa para decidir si compensan los locates; con tramos por precio, es el respaldo de los tramos vacíos."
+                        />
+                      </div>
+                      {evRangosAbierto[s.strategy_id] && RANGOS_PRECIO_EV.map(([lo, hi], k) => (
+                        <div key={k} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                          <span style={{ fontSize: 9.5, color: color.textMuted, whiteSpace: "nowrap", fontFamily: font.mono }}>{etiquetaRango(lo, hi)}</span>
+                          <CampoNum
+                            valor={evRangos[s.strategy_id]?.[k] ?? ""}
+                            onChange={(v) => setEvRangos((prev) => {
+                              const lista = (prev[s.strategy_id] || []).slice();
+                              while (lista.length < RANGOS_PRECIO_EV.length) lista.push("");
+                              lista[k] = v;
+                              return { ...prev, [s.strategy_id]: lista };
+                            })}
+                            onBlur={() => s.activa && guardarEstrategia(s, true)}
+                            paso={0.1}
+                            titulo={`EV (% del precio) de los trades que entran entre ${etiquetaRango(lo, hi)}. Vacío = se usa el EV completo.`}
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </Td>
                   {/* Estilo Cangrejo va PRIMERO porque, cuando está activo,
                       el híbrido está muerto: el motor arbitra a su favor. Si se

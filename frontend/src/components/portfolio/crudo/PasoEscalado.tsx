@@ -14,9 +14,12 @@ import React, { useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
 import type { RawOut } from "@/lib/api_portfolio_lab";
-import { Btn, Nota, Num, Row, Sec, Stat, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd, usdCorto } from "./hoja";
+import type { MonteCarloOut } from "@/lib/api_robustez";
+import { Btn, Nota, Num, Row, Sec, Stat, SubTabs, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd, usdCorto } from "./hoja";
 import { LinesChart, WeightsChart } from "./CrudoCharts";
 import { MODELO_LABEL, curvaPropia, type EscCfg } from "./modelo";
+import { CalendarioCrudo } from "./CalendarioCrudo";
+import { McResultado } from "./McResultado";
 
 export interface EscaladoModel {
   out: RawOut;
@@ -27,6 +30,12 @@ export interface EscaladoModel {
   escError: string | null;
   escStale: boolean;
   calcularEsc: () => void;
+  /** Monte Carlo sobre la curva escalada (17-sep). */
+  mcEsc: MonteCarloOut | null;
+  mcEscRunning: boolean;
+  mcEscError: string | null;
+  simularMcEsc: () => void;
+  mcSims: number | "";
 }
 
 const sel: React.CSSProperties = { ...control, fontFamily: font.sans, cursor: "pointer" };
@@ -44,12 +53,13 @@ function fraccionLabel(m: number) {
 }
 
 export function PasoEscalado({ m }: { m: EscaladoModel }) {
-  const { out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc } = m;
+  const { out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc, mcEsc, mcEscRunning, mcEscError, simularMcEsc, mcSims } = m;
   const set = <K extends keyof EscCfg>(k: K, v: EscCfg[K]) => setEsc((c) => ({ ...c, [k]: v }));
   const sc = outEsc?.scaling ?? null;
   const hoy = sc?.today ?? null;
   const cap = out.config.capital;
   const [unidad, setUnidad] = useState<"pct" | "usd" | "r">("pct");
+  const [vistaEsc, setVistaEsc] = useState<"curva" | "calendario" | "montecarlo">("curva");
 
   const comparacion = useMemo(() => {
     if (!outEsc) return null;
@@ -248,9 +258,29 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
           <Sec
             title="Desde el inicio — si lo hubieras aplicado"
             help="La misma cuenta, los mismos trades, pero con el riesgo por trade que cada periodo dictaban el modelo y el reparto, estimados solo con lo anterior a ese periodo (el primero va con el respaldo y pesos iguales: no hay historia). Frente a la suma del paso 1 con los R de las filas, sin escalar. En % del capital, en $ de PnL acumulado, o en R acumulada (suma de la R de cada trade: neto / lo arriesgado)."
-            right={<div style={{ width: 130 }}><Toggle value={unidad} onChange={setUnidad} options={[{ value: "pct", label: "%" }, { value: "usd", label: "$" }, { value: "r", label: "R" }]} /></div>}
+            right={vistaEsc === "curva" ? <div style={{ width: 130 }}><Toggle value={unidad} onChange={setUnidad} options={[{ value: "pct", label: "%" }, { value: "usd", label: "$" }, { value: "r", label: "R" }]} /></div> : undefined}
             sinRelleno
           >
+            <div style={{ padding: "6px 10px 0" }}>
+              <SubTabs value={vistaEsc} onChange={setVistaEsc} options={[{ value: "curva", label: "Curva" }, { value: "calendario", label: "Calendario" }, { value: "montecarlo", label: "Monte Carlo" }]} />
+            </div>
+            {vistaEsc === "calendario" && (
+              <div style={{ padding: "4px 10px 10px" }}>
+                <Nota>El mismo calendario del paso 2, sobre la simulación escalada: Profits (bruto), Gastos (comisiones + slippage + locates + fijos) y Profits − Gastos, en $ o en R. Pulsa un día para ver sus trades por estrategia.</Nota>
+                <CalendarioCrudo out={outEsc} names={names} />
+              </div>
+            )}
+            {vistaEsc === "montecarlo" && (
+              <div style={{ padding: "4px 10px 10px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "4px 0 8px" }}>
+                  <Btn primary onClick={simularMcEsc} disabled={mcEscRunning}>{mcEscRunning ? "Simulando…" : mcEsc ? "Volver a simular" : "Simular"}</Btn>
+                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>{n(Number(mcSims) || 5000, 0)} recorridos (los del paso 3) sobre los retornos diarios de la curva escalada, compuestos. A qué drawdown te expones con este escalado.</span>
+                </div>
+                {mcEscError && <ErrorBox>{mcEscError}</ErrorBox>}
+                {mcEsc && <McResultado mcOut={mcEsc} titulo="Recorridos y distribuciones del escalado" />}
+              </div>
+            )}
+            {vistaEsc === "curva" && (
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 360px", alignItems: "start" }}>
               <LinesChart labels={out.calendar} series={comparacion.series} yFormat={fmtY} hoverFormat={fmtHover} height={300} titulo={unidad === "usd" ? "PNL ACUMULADO" : unidad === "r" ? "R ACUMULADA" : "RETORNO SOBRE EL CAPITAL"} />
               <div style={{ borderLeft: `1px solid ${color.border}`, alignSelf: "stretch" }}>
@@ -297,6 +327,7 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                 )}
               </div>
             </div>
+            )}
           </Sec>
 
           <Sec title={`Reparto periodo a periodo — ${sc.periods.length} ${esc.rebalance === "D" ? "días" : esc.rebalance === "W" ? "semanas" : "meses"}`} help="Cada barra es un periodo de rebalanceo: cómo se repartió el riesgo entre las estrategias (apilado al 100 %: la parte de cada una en la suma aplicada, es decir, quién llevaba más ese periodo). La línea de cobre es la suma del riesgo por trade que se APLICÓ, en % del capital del día, ya con el tope; un punto ámbar es un periodo en que las Kellys pedían más y el tope las recortó (al pasar el ratón se ve lo que pedían y el riesgo de cada una)." sinRelleno>

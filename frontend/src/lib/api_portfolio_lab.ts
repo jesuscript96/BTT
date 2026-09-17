@@ -518,10 +518,34 @@ export const RAW_EXEC_DEFAULT: RawExec = {
 /** Puerta por EV del portfolio: la cuenta del backtester (locates_gate) con
  *  los paquetes DE MAS respecto a lo ya alquilado hoy por cualquiera. */
 export interface RawGateIn {
+  /** ev: EV rodante de la estrategia vs fade (EV por defecto hasta que hay
+   *  historia; ventana 0 = todo el historico); ev_fixed: SIEMPRE se compara
+   *  ev_fixed_pct con el fade (el EV medido en IS, para ver OOS). */
+  mode?: "ev" | "ev_fixed";
+  ev_fixed_pct?: number;
   ventana: number;
   por: "trades" | "dias";
   ev_defecto_pct: number;
   min_trades: number;
+}
+
+/** Hasta que precio compensan los locates (17-sep). */
+export interface RawLocatesAnalysis {
+  packages: number;
+  shorts: number;
+  pnl_shorts_pre_locates: number;
+  pnl_total_pre_locates: number;
+  /** PnL de los cortos antes de locates / paquetes: a ese $ por paquete el portfolio se queda a cero. */
+  breakeven_price: number;
+  paid: number;
+  avg_price_paid: number;
+  mean_move_pct: number;
+  per_strategy: Array<{ idx: number; name: string; shorts: number; packages: number; pnl_pre_locates: number; breakeven_price: number | null; paid: number }>;
+  curve: Array<{ price: number; net_shorts: number; net_total: number }>;
+  fade_buckets: Array<{ lo: number; hi: number | null; n: number; move_pct: number; net_mean: number; net_total: number; win_pct: number }> | null;
+  fade_rule: Array<{ fade_max_pct: number; taken: number; net_est: number }> | null;
+  net_now?: number;
+  best_fade_max_pct?: number | null;
 }
 
 /** Locates de la CUENTA (un broker para todas). Con este bloque, lo de las
@@ -757,6 +781,9 @@ export interface RawTrades {
   fees: number[];
   /** Locate cobrado a este trade (tal cual la corrida; 0 si re-dimensionado). */
   locate?: number[];
+  /** Fade necesario del corto (% del precio) y sus paquetes de mas. */
+  fade?: number[];
+  packages?: number[];
   r: number[];
   reason: string[];
 }
@@ -778,6 +805,7 @@ export interface RawOut {
   /** 16-sep: locates de la cuenta, banda y escalado (solo en el backend nuevo). */
   locates_report?: RawLocatesReport;
   locates_band?: RawLocatesBand | null;
+  locates_analysis?: RawLocatesAnalysis | null;
   scaling?: RawScalingOut | null;
   ruined?: boolean;
   /** Percentiles del sorteo de locates aleatorios de esta llamada. */
