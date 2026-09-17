@@ -1991,19 +1991,13 @@ export default function BacktestPanel({
               </React.Fragment>
             );
             if (evGate) {
-              // Los botones van en su propia fila, debajo del check: al lado
-              // se comian la frase «Puerta por EV» (Jaume, 17-sep).
+              // Los selectores van SOLOS, cada uno en una fila a todo el ancho
+              // debajo del check, sin etiqueta a la izquierda: al lado se
+              // comian la frase «Puerta por EV» y luego «Con que EV» (Jaume,
+              // 17-sep, dos veces). El (?) va pegado a los botones.
               filas.push(
                 <React.Fragment key="evmodo">
-                  <span style={{ ...sub, paddingLeft: 44 }}>
-                    Con qué EV
-                    <InfoTooltip
-                      position="left"
-                      width={320}
-                      text="Trades / Días: el EV rodante en sombra (la media de los últimos N trades cerrados, o de los cerrados en los últimos N días), con el EV por defecto mientras no hay historia. Fijo: siempre se enfrenta al fade el EV que pongas tú (el que midas en IS, para ver qué tal va en OOS), completo o por tramo de precio de entrada; no mira la sombra."
-                      style={{ display: 'inline-flex' }}
-                    />
-                  </span>
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 44 }}>
                   <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
                     {(["trades", "dias", "fijo"] as const).map((m, i) => (
                       <button
@@ -2026,22 +2020,20 @@ export default function BacktestPanel({
                       </button>
                     ))}
                   </div>
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="Trades / Días: el EV rodante en sombra (la media de los últimos N trades cerrados, o de los cerrados en los últimos N días), con el EV por defecto mientras no hay historia. Fijo: siempre se enfrenta al fade el EV que pongas tú (el que midas en IS, para ver qué tal va en OOS), completo o por tramo de precio de entrada; no mira la sombra."
+                    style={{ display: 'inline-flex' }}
+                  />
+                  </div>
                 </React.Fragment>
               );
             }
             if (evGate && evGateBy === "fijo") {
               filas.push(
                 <React.Fragment key="evfijo">
-                  <span style={{ ...sub, paddingLeft: 44 }}>
-                    EV fijo
-                    <InfoTooltip
-                      position="left"
-                      width={320}
-                      text="«Completo»: un solo EV (% del precio) para todos los cortos; entra el corto si ese EV supera su fade necesario. «Por rango»: un EV por tramo de PRECIO de entrada — los tramos de «EV por precio» de la pestaña Charts: anota ahí los valores y ponlos aquí. Un tramo vacío = en ese tramo no se entra (no hay EV con el que comparar). Es el mismo criterio que el cuadro de mandos del bot y el /evf, para que el backtest y el aviso digan lo mismo."
-                      style={{ display: 'inline-flex' }}
-                    />
-                  </span>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 44 }}>
                     <div style={{ display: 'flex', border: '1px solid var(--color-ec-border)' }}>
                       {(["completo", "rango"] as const).map((m, i) => (
                         <button
@@ -2064,14 +2056,25 @@ export default function BacktestPanel({
                         </button>
                       ))}
                     </div>
-                    {evGateFixedMode === "completo" && (
-                      <input type="number" step="0.1" min={0} value={evGateFixed} style={inp}
-                             title="EV (% del precio) que se enfrenta siempre al fade"
-                             onChange={(e) => setEvGateFixed(Math.max(0, Number(e.target.value) || 0))} />
-                    )}
-                  </span>
+                    <InfoTooltip
+                      position="left"
+                      width={320}
+                      text="«Completo»: un solo EV (% del precio) para todos los cortos; entra el corto si ese EV supera su fade necesario. «Por rango»: un EV por tramo de PRECIO de entrada — los tramos de «EV por precio» de la pestaña Charts: anota ahí los valores y ponlos aquí. Un tramo vacío = en ese tramo no se entra (no hay EV con el que comparar). Es el mismo criterio que el cuadro de mandos del bot y el /evf, para que el backtest y el aviso digan lo mismo."
+                      style={{ display: 'inline-flex' }}
+                    />
+                  </div>
                 </React.Fragment>
               );
+              if (evGateFixedMode === "completo") {
+                filas.push(
+                  <React.Fragment key="evfijoval">
+                    <span style={{ ...sub, paddingLeft: 44 }}>EV fijo (%)</span>
+                    <input type="number" step="0.1" min={0} value={evGateFixed} style={inp}
+                           title="EV (% del precio) que se enfrenta siempre al fade"
+                           onChange={(e) => setEvGateFixed(Math.max(0, Number(e.target.value) || 0))} />
+                  </React.Fragment>
+                );
+              }
               if (evGateFixedMode === "rango") {
                 // Los seis tramos, UNO POR FILA del bloque (etiqueta | casilla),
                 // como el resto de filas: asi las casillas quedan alineadas con
