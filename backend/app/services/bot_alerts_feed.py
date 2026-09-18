@@ -47,6 +47,25 @@ WS_URL = os.getenv("MASSIVE_WS_URL", "wss://socket.massive.com/stocks")
 REST = os.getenv("MASSIVE_API_BASE_URL", "https://api.massive.com")
 ET = "America/New_York"
 
+# ESPERA ANTES DE CUALQUIER RECONEXION (Jaume, 18-sep-2026: «un delay de 1
+# minuto para cualquier reconexion»).
+#
+# La cuenta de Massive la comparten dos claves (la nuestra y la del otro
+# socio) con un tope de conexiones simultaneas. Cuando un cliente se cae
+# SIN cerrar bien (un contenedor que reinicia, un cable, un proceso matado),
+# Massive tarda un rato en darse cuenta de que el socket viejo esta muerto;
+# si ese cliente reconecta al segundo, la cuenta suma una conexion de mas y
+# Massive echa a OTRA: asi nos tiraba a nosotros el reinicio rapido del
+# Docker de nuestro socio (los 1008 de las 04:01-04:03 NY del 10 al 18-sep).
+# Reconectar nosotros al segundo le haria lo mismo a el. Esperar un minuto da
+# tiempo a que el socket viejo desaparezca de su lista.
+#
+# Lo que cuesta: durante ese minuto no llegan velas, y el motor no rellena
+# hacia atras al reconectar (una vela de minuto de cada ticker vigilado sin
+# evaluar). En premercado a las 04:02 NY no hay posiciones y da igual; en la
+# apertura RTH seria la primera vela. Decision de Jaume; ajustable por .env.
+ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "60"))
+
 
 def clave_bot() -> str:
     """La clave del BOT. Nunca `MASSIVE_API_KEY`.
@@ -232,7 +251,7 @@ class FeedEnVivo:
                 "MASSIVE_API_KEY"
             )
 
-        espera = 1.0
+        espera = ESPERA_RECONEXION
         while not self._parar:
             conectado_en = None
             try:
@@ -269,16 +288,18 @@ class FeedEnVivo:
             except Exception as exc:  # noqa: BLE001
                 self.conectado = False
                 self._ws = None
-                # La espera solo se reinicia si la conexion AGUANTO un rato. Sin
-                # esto, que te echen por tener otra sesion con la misma clave
-                # convierte la reconexion en un martilleo de 1 s sobre el socket
-                # y sobre el log.
+                # Siempre se espera ESPERA_RECONEXION (ver arriba: que el socket
+                # viejo desaparezca de la cuenta antes de volver). Si la conexion
+                # NO aguanto ni un minuto, se dobla: un rechazo repetido no se
+                # martillea. Tope: cuatro minutos.
                 ahora = asyncio.get_event_loop().time()
                 if conectado_en is not None and ahora - conectado_en >= 60:
-                    espera = 1.0
-                logger.warning("[FEED] desconectado (%s); reintento en %.0f s", exc, espera)
+                    espera = ESPERA_RECONEXION
+                logger.warning("[FEED] desconectado (%s); reintento en %.0f s "
+                               "(espera minima para no tirar a otro cliente de la cuenta)",
+                               exc, espera)
                 await asyncio.sleep(espera)
-                espera = min(espera * 2, 60.0)
+                espera = min(espera * 2, max(ESPERA_RECONEXION * 4, 60.0))
         self.conectado = False
 
     def _procesar(self, crudo: Any) -> None:
