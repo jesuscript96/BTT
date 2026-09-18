@@ -6190,3 +6190,18 @@ de Databento, no copiar `users.duckdb`.
 - **Impacto:** cualquier recarga de `/backtester` con resultado cargado deja mudo el visor de velas hasta re-ejecutar un backtest (única acción que repone `datasetIdRef`). Puede confundirse con «el backend no va» (sintomatología idéntica a una caída del backend: gráficos sin datos y sin error). Es PREEXISTENTE e independiente del fix `fa1bc89` y del reinicio del backend de hoy (comparadas sessión viva vs recargada sobre el mismo backend y la misma corrida).
 - **Código tocado:** NINGUNO (confirmado)
 - **Estado:** ABIERTO
+
+### [INTEGRACIÓN · 2026-09-18 · 03] Merge de origin/staging (97ca87f) en alvaro-rama-desarrollo — resuelto a mano y verificado
+- **Aplica:** GLM 5.3 (para Álvaro), commit `4c939f3`.
+- **Qué llegó de staging:** los cherry-picks de nuestro trabajo del visor (adaptados, `54165e4`), el fix `e886ecd` (los 3 bugs del PRD de Jaime **+ el visor mudo tras F5**), la ayuda del InfoTooltip (`07dfdae`) y la MEMORIA de Sailor (`97ca87f`).
+- **Conflictos (2, ambos frontend) y resolución:**
+  - `frontend/src/app/backtester/page.tsx` (3 hunks): el bloque P1 de restauración (`backtest_params` → init_cash/risk_r/is_percent) existía SOLO en nuestra rama — staging lo había perdido en algún reinicio; se conserva íntegro y se le AÑADE la restauración de `datasetId` de `e886ecd` (unión, no elección). `onSelectDay` pasa a `seleccionarDia` (reintento de velas). Comentario de compartidas conservado.
+  - `frontend/src/components/backtester/BacktestPanel.tsx` (1 hunk): la prop `builderActive` entraba DUPLICADA (auto-merge + lado staging); deduplicada dejando la declarada con comentario.
+- **Verificación:** `tsc --noEmit` limpio; `test_lot_stop_sim.py` + `test_validacion_422_no_500.py` → **30 passed**; y verificación EN VIVO en el navegador (ver entrada siguiente).
+
+### [FIX · 2026-09-18 · 03] RESUELTO: [HALLAZGO · 2026-09-18 · 02] — el visor mudo tras F5, arreglado por staging (e886ecd) y verificado aquí tras el merge
+- **Resuelto por:** Jaume/Sailor en `e886ecd` (staging, 09:44) — independiente de nuestro reporte, mismo diagnóstico: el snapshot de sessionStorage no guardaba el dataset y `loadCandles` sale en silencio sin él. Su fix persiste `datasetId` en el snapshot, lo restaura al montar, y de regalo añade reintento (re-picar el mismo día vuelve a pedir las velas).
+- **Verificado por la IA de pruebas (post-merge `4c939f3`, en vivo):** con el código fusionado y `datasetId` presente en el snapshot (inyectado a mano en el guardado viejo — desde el próximo run el propio código ya lo guarda), tras F5 + clic en un día: `GET /api/candles/multi?dataset_id=c8bcddc7…&ticker=AEI&date=2025-01-02… → 200 OK` en `backend_prof.log`. Antes del fix, el mismo flujo producía 0 peticiones de velas (evidencia en el hallazgo).
+- **Detalle conservado del lado de Álvaro:** nuestro bloque P1 (restaurar init_cash/risk_r/is_percent del `backtest_params`) había desaparecido de staging; el merge lo recupera — ver [INTEGRACIÓN · 2026-09-18 · 03].
+- **Estado de [HALLAZGO · 2026-09-18 · 02]:** **RESUELTO** (commit `e886ecd` vía merge `4c939f3`, verificado en vivo).
+- **Código tocado:** solo la resolución del merge (los 4 hunks citados) y esta memoria.
