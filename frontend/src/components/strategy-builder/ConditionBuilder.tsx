@@ -296,6 +296,12 @@ export const etiquetaCorta = (cfg?: { name?: string; pivot_rank?: number; swing_
         if (name === IndicatorType.VOLUMEN_PICO) return `Vol. del ${dir} nº${num}`;
         return `${dir === 'valle' ? 'Valle' : 'Pico'} nº${num}`;
     }
+    // «Último pivote > Último pivote» no dice nada sin la dirección (Jaume,
+    // 18-sep, con la 1B de Álvaro): alto/bajo y la ventana de confirmación.
+    if (name === IndicatorType.LAST_PIVOT) {
+        const cfg2 = cfg as { swing_dir?: string; pivot_window?: number } | null | undefined;
+        return `Último pivote ${cfg2?.swing_dir === 'down' ? 'bajo' : 'alto'} (${cfg2?.pivot_window ?? 3})`;
+    }
     return INDICATOR_LABELS[name] || name;
 };
 
@@ -2595,8 +2601,10 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
         const esFamiliaPicos = (cfg?: { name?: IndicatorType }) =>
             cfg?.name === IndicatorType.PICO ||
             cfg?.name === IndicatorType.EDAD_PICO ||
-            cfg?.name === IndicatorType.VOLUMEN_PICO;
+            cfg?.name === IndicatorType.VOLUMEN_PICO ||
+            cfg?.name === IndicatorType.LAST_PIVOT;
         const etiquetaFamiliaPicos = (cfg: IndicatorConfig) => {
+            if (cfg.name === IndicatorType.LAST_PIVOT) return etiquetaCorta(cfg);
             const num = cfg.pivot_rank ?? 1;
             const dir = cfg.swing_dir === 'down' ? 'valle' : 'pico';
             if (cfg.name === IndicatorType.EDAD_PICO) return `Edad del ${dir} nº${num}`;

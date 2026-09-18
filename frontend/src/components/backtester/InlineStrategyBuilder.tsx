@@ -31,6 +31,7 @@ import type {
   ScalpingConfig,
 } from "@/types/strategy";
 import { COMPARATOR_LABELS, ConditionRow, isPercentIndicator, etiquetaCorta } from "@/components/strategy-builder/ConditionBuilder";
+import { normalizaNombresIndicadores } from "@/lib/nombresIndicadores";
 import { Clock, Save } from "lucide-react";
 import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
 
@@ -316,14 +317,20 @@ interface Props {
 function getParsedStrategyDef(strat: any) {
   if (!strat) return null;
   const def = strat.definition;
+  let parsed: any;
   if (typeof def === 'string') {
     try {
-      return JSON.parse(def);
+      parsed = JSON.parse(def);
     } catch (e) {
-      return strat;
+      parsed = strat;
     }
+  } else {
+    parsed = def || strat;
   }
-  return def || strat;
+  // Nombres de indicador que el motor acepta pero el constructor no conoce
+  // («Close», «Último pivote» con acento…): al canónico, o el constructor los
+  // enseña sin parámetros y al editar la condición pierde el destino.
+  return normalizaNombresIndicadores(parsed);
 }
 
 export default function InlineStrategyBuilder({
