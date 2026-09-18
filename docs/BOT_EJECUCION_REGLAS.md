@@ -651,6 +651,21 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 18-sep).
 - Origen: E5, E4.
 
+### R-E-03 · Estrategia desactivada o cambiada de versión con posiciones vivas
+- Situación: se desactiva una estrategia en el cuadro de mandos, o se carga una versión nueva, mientras tiene un lote abierto.
+- Detección: cambio en el cuadro de mandos con lote vivo.
+- Acción: el cuadro de mandos muestra en ese momento los botones para elegir: «cerrar posiciones y reiniciar con la nueva estrategia» (cierre con R-D-01 y arranque de la versión nueva) o «esperar a que la estrategia antigua termine el día» (el lote se gestiona hasta su salida normal con las reglas de la versión vieja; la nueva empieza al día siguiente). Nada automático: lo elige el humano.
+- Quién la ejecuta: cuadro de mandos + ejecutor.
+- Parámetros: ninguno.
+- Si la acción falla: sin elección del humano → se espera a que termine el día (opción segura).
+- Prueba: sombra.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: E7, O4.
+
+**E8 (Jaume, 18-sep): cada estrategia y cada pirámide tiene su propia unidad de riesgo.** El cuadro de mandos solo registra el número (como el cuadro actual de las alarmas); cómo se usa lo dicta la estrategia: p. ej. la entrada por distancia al stop y riesgo normal (market value) y las pirámides en dólares fijos. El bot interpreta el riesgo según lo que diga cada estrategia.
+
+**E9 (Jaume, 18-sep): el locate se carga a la PRIMERA estrategia que da señal;** si sobran acciones del paquete, a la siguiente; si faltan, se compran más (R-H-01, coste total acumulado). En principio no debería faltar: se compran al principio previendo las acciones necesarias.
+
 **Recordatorio del área E (ya decidido en C, B y D):** un lote por estrategia en el diario; entradas simultáneas sumadas en una orden (R-B-03); stop único si coinciden en nivel, uno por lote si difieren (R-C-06 + nota de R-C-11); take profits por lote (R-D-03); la suma de órdenes nunca supera la posición.
 
 ### Área L · Calendario

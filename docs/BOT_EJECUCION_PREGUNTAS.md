@@ -99,9 +99,9 @@
 - [x] E4. → R-I-01 + R-E-02 (capital libre, orden de llegada; pirámide sin dinero no se hace). ¿Tope de capital total y por sesión (PM frente a RTH)? ¿Reserva para pirámides ya previstas?
 - [x] E5. → R-E-02 (orden de llegada; lo que sobre; sin proporcional). Señales simultáneas en tickers distintos sin capital para todas: ¿prioridad por orden de llegada, por EV o por riesgo?
 - [ ] E6. **RECORDAR: pedir a Jaume las reglas de margen/buying power de su bróker con el PDF (17-sep).** Buying power distinto en PM, intradía y overnight: ¿cómo lo sabe el bot y cómo lo respeta? **[API]**
-- [ ] E7. Si una estrategia se retira o cambia de versión, ¿qué pasa con sus posiciones vivas?
-- [ ] E8. Estrategias con distinto riesgo por operación: ¿unidad de riesgo común o por estrategia? (afecta a congelar el motor)
-- [ ] E9. ¿El locate es de la posición o de la estrategia? Si dos estrategias lo usan, ¿quién paga?
+- [x] E7. → R-E-03 (botones en el cuadro de mandos: cerrar y reiniciar / esperar al fin del día). Si una estrategia se retira o cambia de versión, ¿qué pasa con sus posiciones vivas?
+- [x] E8. → unidad propia por estrategia y por pirámide; el bot la interpreta según la estrategia. Estrategias con distinto riesgo por operación: ¿unidad de riesgo común o por estrategia? (afecta a congelar el motor)
+- [x] E9. → a la primera que da señal; el sobrante a la siguiente; si falta, se compra más. ¿El locate es de la posición o de la estrategia? Si dos estrategias lo usan, ¿quién paga?
 
 ## F. Halts
 
