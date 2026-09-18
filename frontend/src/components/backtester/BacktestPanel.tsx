@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import type { Dataset, Strategy } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
-import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
+import { COMPARATOR_LABELS, etiquetaCorta } from "@/components/strategy-builder/ConditionBuilder";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
 import { RANGOS_PRECIO_EV, etiquetaRango, rangosDesdeCasillas } from "@/lib/evRangos";
 
@@ -138,21 +138,21 @@ function formatConditionGroup(group: any): string {
       const tfStr = c.timeframe ? `[${c.timeframe}] ` : '';
       if (c.type === 'indicator_comparison') {
         const sourceName = c.source?.name || "";
-        const sourceStr = `${INDICATOR_LABELS[sourceName] || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
+        const sourceStr = `${etiquetaCorta(c.source) || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator || "";
         let targetStr = '';
         if (typeof c.target === 'number') {
           targetStr = String(c.target);
         } else if (c.target && typeof c.target === 'object') {
           const targetName = c.target.name || "";
-          targetStr = `${INDICATOR_LABELS[targetName] || targetName}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          targetStr = `${etiquetaCorta(c.target) || targetName}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
         }
         return `${tfStr}${sourceStr} ${compStr} ${targetStr}`.trim();
       } else if (c.type === 'price_level_distance') {
         const sourceName = c.source?.name || "";
-        const sourceStr = `${INDICATOR_LABELS[sourceName] || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
+        const sourceStr = `${etiquetaCorta(c.source) || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelName = c.level?.name || "";
-        const levelStr = `${INDICATOR_LABELS[levelName] || levelName}${c.level?.offset ? `[t-${c.level.offset}]` : ''}`;
+        const levelStr = `${etiquetaCorta(c.level) || levelName}${c.level?.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
         return `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct || 0}%`.trim();
       }

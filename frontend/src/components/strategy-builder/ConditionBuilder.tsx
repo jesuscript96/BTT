@@ -278,6 +278,23 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
 };
 
 // Human-readable labels for comparators using symbols
+/** Etiqueta corta de un lado de una condicion para los RESUMENES del panel
+ *  (tarjeta de la estrategia, desplegable). Para la familia de picos/valles
+ *  lleva la direccion y el numero de giro: sin ellos «Pico(1) < Pico(2)» se
+ *  leia como «Pico / valle (nº N) < Pico / valle (nº N)» (pendiente que dejo
+ *  Alvaro el 18-sep). Para el resto, la etiqueta de siempre. */
+export const etiquetaCorta = (cfg?: { name?: string; pivot_rank?: number; swing_dir?: string } | null): string => {
+    const name = cfg?.name || "";
+    if (name === IndicatorType.PICO || name === IndicatorType.EDAD_PICO || name === IndicatorType.VOLUMEN_PICO) {
+        const num = cfg?.pivot_rank ?? 1;
+        const dir = cfg?.swing_dir === 'down' ? 'valle' : 'pico';
+        if (name === IndicatorType.EDAD_PICO) return `Edad del ${dir} nº${num}`;
+        if (name === IndicatorType.VOLUMEN_PICO) return `Vol. del ${dir} nº${num}`;
+        return `${dir === 'valle' ? 'Valle' : 'Pico'} nº${num}`;
+    }
+    return INDICATOR_LABELS[name] || name;
+};
+
 export const COMPARATOR_LABELS: Record<string, string> = {
     [Comparator.GT]: ">",
     [Comparator.LT]: "<",

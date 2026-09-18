@@ -30,7 +30,7 @@ import type {
   ScalpingBlock,
   ScalpingConfig,
 } from "@/types/strategy";
-import { INDICATOR_LABELS, COMPARATOR_LABELS, ConditionRow, isPercentIndicator } from "@/components/strategy-builder/ConditionBuilder";
+import { COMPARATOR_LABELS, ConditionRow, isPercentIndicator, etiquetaCorta } from "@/components/strategy-builder/ConditionBuilder";
 import { Clock, Save } from "lucide-react";
 import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
 
@@ -175,18 +175,18 @@ function getGroupSummaryText(group: ConditionGroup): string {
     } else {
       const tfStr = c.timeframe ? `[${c.timeframe}] ` : '';
       if (c.type === 'indicator_comparison') {
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        const sourceStr = `${etiquetaCorta(c.source)}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';
         if (typeof c.target === 'number') {
           targetStr = String(c.target);
         } else {
-          targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          targetStr = `${etiquetaCorta(c.target)}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
         }
         return `${tfStr}${sourceStr} ${compStr} ${targetStr}`;
       } else if (c.type === 'price_level_distance') {
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
-        const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
+        const sourceStr = `${etiquetaCorta(c.source)}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        const levelStr = `${etiquetaCorta(c.level)}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
         return `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct}%`;
       }
@@ -223,7 +223,7 @@ function getLeafConditions(
           const opSymbol = c.comparator === Comparator.EQ ? '=' : c.comparator === Comparator.GT ? '>' : c.comparator === Comparator.LT ? '<' : c.comparator === Comparator.LTE ? '≤' : '≥';
           value = `${opSymbol} ${c.target} mins`;
         } else {
-          const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+          const sourceStr = `${etiquetaCorta(c.source)}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
           const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
           let targetStr = '';
           if (typeof c.target === 'number') {
@@ -233,14 +233,14 @@ function getLeafConditions(
               targetStr = String(c.target);
             }
           } else {
-            targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+            targetStr = `${etiquetaCorta(c.target)}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
           }
           label = `${tfStr}${sourceStr}:`;
           value = `${compStr} ${targetStr}`;
         }
       } else if (c.type === 'price_level_distance') {
-        const sourceStr = `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
-        const levelStr = `${INDICATOR_LABELS[c.level.name] || c.level.name}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
+        const sourceStr = `${etiquetaCorta(c.source)}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
+        const levelStr = `${etiquetaCorta(c.level)}${c.level.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
         const posStr = c.position && c.position !== 'any' ? ` (${c.position})` : '';
         label = `${tfStr}Dist(${sourceStr}, ${levelStr}):`;

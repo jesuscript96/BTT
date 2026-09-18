@@ -9,9 +9,13 @@ interface InfoTooltipProps {
   style?: React.CSSProperties;
   width?: string | number;
   title?: string;
+  /** "i" dibuja el icono redondo con «i» (el mismo del constructor de
+   *  condiciones) en vez del «(?)» de texto. Para secciones cuyos controles
+   *  solo llevan `title=` nativo: el usuario no ve que hay ayuda. */
+  variant?: "i";
 }
 
-export default function InfoTooltip({ text, position = "top", style, width, title }: InfoTooltipProps) {
+export default function InfoTooltip({ text, position = "top", style, width, title, variant }: InfoTooltipProps) {
   const [hovered, setHovered] = useState(false);
   const [coords, setCoords] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const iconRef = useRef<HTMLSpanElement>(null);
@@ -104,19 +108,44 @@ export default function InfoTooltip({ text, position = "top", style, width, titl
         ...style
       }}
     >
-      <span
-        style={{
-          cursor: "help",
-          opacity: 0.6,
-          fontSize: "8px",
-          color: "var(--color-ec-text-secondary)",
-          userSelect: "none",
-          marginLeft: "4px",
-          display: "inline-block",
-        }}
-      >
-        (?)
-      </span>
+      {variant === "i" ? (
+        <span
+          style={{
+            cursor: "help",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 15,
+            height: 15,
+            borderRadius: "50%",
+            backgroundColor: "color-mix(in srgb, var(--color-ec-copper, #d87a3d) 12%, transparent)",
+            border: "1px solid color-mix(in srgb, var(--color-ec-copper, #d87a3d) 55%, transparent)",
+            color: "var(--color-ec-copper-bright, #e89a63)",
+            fontSize: 10,
+            fontWeight: 800,
+            fontStyle: "italic",
+            fontFamily: "Georgia, serif",
+            userSelect: "none",
+            flexShrink: 0,
+          }}
+        >
+          i
+        </span>
+      ) : (
+        <span
+          style={{
+            cursor: "help",
+            opacity: 0.6,
+            fontSize: "8px",
+            color: "var(--color-ec-text-secondary)",
+            userSelect: "none",
+            marginLeft: "4px",
+            display: "inline-block",
+          }}
+        >
+          (?)
+        </span>
+      )}
       {hovered && typeof document !== "undefined" && createPortal(
         <span
           style={{
