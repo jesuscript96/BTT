@@ -590,6 +590,17 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 18-sep).
 - Origen: J17, J1.
 
+### R-J-06 · VPS: uno, Windows, DAS dentro; actualizaciones solo con todo apagado
+- Situación: producción en el VPS (M12). De momento UN solo VPS y una sola infraestructura (la de Jaume). Futuro apuntado: el socio podría tener su propio bot con la misma arquitectura, duplicando el VPS o corriendo dos juegos de procesos en uno; no se aborda ahora.
+- Acción: (1) el socio puede actuar en emergencias sin Jaume: apagar el bot (botón / Telegram) y reiniciar el VPS desde el panel del proveedor. (2) Actualizaciones de Windows SOLO con todo apagado (VPS, bot, DAS); nunca con el bot o DAS encendidos; reinicios automáticos desactivados. (3) Al reiniciar el VPS: arranque automático en orden DAS → vigilante → ejecutor, y reconciliación completa (R-C-10) antes de enviar nada. (4) Fase PC: router lejos del PC → segundo SAI pequeño para el router o hotspot del móvil como conexión de respaldo con menor prioridad en Windows.
+- Estado: FIJADA (Jaume, 18-sep). Origen: J10, J20, J1.
+
+### R-J-07 · Reloj, disco y actualización de DAS
+- Reloj: todo en hora de Nueva York; al arrancar se comprueba la sincronización; si el reloj se desvía más de 2 s, el bot se NIEGA a operar y avisa. (J12)
+- Disco: rotación diaria de logs y diario; aviso si quedan menos de 5 GB libres. (J13)
+- Actualización forzada de DAS: tarea HUMANA. El supervisor detecta que DAS no arranca o pide actualizar, AVISA, y lo actualiza una persona; nunca automático. (J14)
+- Estado: FIJADA (Jaume, 18-sep).
+
 ### R-J-03 · Tabla del modo degradado
 | Qué falla | Abrir nuevas | Gestionar abiertas | Stops | Aviso |
 |---|---|---|---|---|

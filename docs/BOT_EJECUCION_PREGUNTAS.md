@@ -179,17 +179,17 @@
 - [x] J7. → R-J-04 (relanzar cada 30 s, aviso). Se cae el bot (excepción): ¿supervisor, tiempo máximo caído, reconciliación al volver, aviso por Telegram?
 - [x] J8. → R-J-04 (10 s). Bot colgado sin morir (latido parado): ¿quién lo mata y lo relanza?
 - [x] J9. → R-J-04 (cerrojo obligatorio). Dos instancias del bot a la vez (dos PIDs, relanzar sin matar): ¿cerrojo de instancia única?
-- [ ] J10. VPS: proveedor, ubicación (cerca de NY), Windows Update forzado (ventana de mantenimiento fuera de mercado), reinicios, una sola sesión RDP, coste.
+- [x] J10. → R-J-06. VPS: proveedor, ubicación (cerca de NY), Windows Update forzado (ventana de mantenimiento fuera de mercado), reinicios, una sola sesión RDP, coste.
 - [ ] J11. Un solo login de DAS por cuenta: si Jaume abre DAS en casa, expulsa al bot. ¿Segunda cuenta? (P1) **[API]**
-- [ ] J12. Reloj y zona horaria del VPS (todo en ET; DST distinto al de España).
-- [ ] J13. Disco lleno por logs y diario: ¿rotación y tope?
-- [ ] J14. Actualización forzada de DAS: ¿cómo se detecta y quién la hace?
+- [x] J12. → R-J-07 (ET; desvío > 2 s = no operar). Reloj y zona horaria del VPS (todo en ET; DST distinto al de España).
+- [x] J13. → R-J-07 (rotación diaria; aviso < 5 GB). Disco lleno por logs y diario: ¿rotación y tope?
+- [x] J14. → R-J-07 (humano; el bot avisa). Actualización forzada de DAS: ¿cómo se detecta y quién la hace?
 - [ ] J15. Sesión de DAS que caduca de noche: ¿relogin antes de las 04:00 y comprobación? **[API]**
 - [x] J16. → R-J-03 (tabla). Modo degradado: tabla de qué se permite en cada estado (todo bien / sin feed / sin DAS / sin bot / sin Telegram).
 - [x] J17. → R-J-05 (ping 60 s, alarma a los 3 min). Vigilante externo: si el bot no da señal de vida en N min, ¿alguien recibe aviso aunque el propio bot esté muerto?
 - [ ] J18. Latencia: ¿se mide ida y vuelta orden→confirmación y a partir de cuánto no se opera?
 - [ ] J19. Caída del proveedor de Telegram: ¿el bot sigue operando o se pausa por falta de canal de aviso?
-- [ ] J20. Reinicio del VPS por el panel del proveedor (el socio): ¿arranque automático de DAS y bot con reconciliación antes de nada?
+- [x] J20. → R-J-06 (DAS → vigilante → ejecutor + reconciliación). Reinicio del VPS por el panel del proveedor (el socio): ¿arranque automático de DAS y bot con reconciliación antes de nada?
 
 ## K. Estado y reconciliación
 
