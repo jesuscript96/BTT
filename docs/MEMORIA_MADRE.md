@@ -6114,3 +6114,50 @@ de Databento, no copiar `users.duckdb`.
 - **Verificación:** suite COMPLETA del backend 1125 passed / 115 skipped / 3 xfailed — incluye los dorados de Sailor (GOLDEN_CON_PYR 97cc5457…): nuestro compilador mergeado es bit-idéntico al suyo. `tsc --noEmit` limpio. E2E en navegador: backtest de la GA Sobri MEJORADA con el motor mergeado → los MISMSOS 1.002 trades que antes del merge, gráficos y visor (chips + SL en texto + leyenda interactiva) funcionando.
 - **WIP de Álvaro preservado:** sus tooltips «para qué sirve» (InfoTooltip variant i + ConditionBuilder quick-help) vuelven como cambios sin commitear; el bloque que re-añadía el selector «Modo» global se descartó (la UI de grupos de staging lo sustituye) — parche completo de respaldo en `.tmp_camino/backup_wip_tooltips.patch` y la rama `backup-alvaro-premerge-20260918` permite deshacer el merge entero.
 - **Estado del merge commit:** `00ed733` LOCAL, sin push (pendiente OK de Álvaro).
+
+### [HALLAZGO · 2026-09-18 · 01] La fusión de legs le pega al TRADE el `entry_price` y el `stop_loss` del LOTE cuando el SL por lote es el primer cierre — por eso el SL de la pirámide y el «general» salen idénticos
+- **Reporta:** Claude Opus 5 (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `backend/app/services/backtest_service.py:1732` (`_group_partial_exits._flush` → `trade = dict(first)`) y `backend/app/services/backtest_service.py:1600-1605` (`_build_executions`, la ejecución `entry` sale del mismo `first`)
+- **Qué observé:** con SL por lote, el motor emite el cierre del lote como un leg propio con `entry_price = px del añadido` y `stop_loss = sl del lote` (`portfolio_sim.py:1553-1571`). Si ese leg dispara ANTES que cualquier parcial o que el cierre del trade, es el PRIMER leg del grupo, y `dict(first)` le pega esos dos campos al trade fusionado. El stop REAL del trade no se guarda en ninguna parte del registro fusionado. El visor pinta `t.stop_loss` en rojo con la etiqueta «SL», así que lo que se ve como stop general es en realidad el cinturón del lote — y coincide al milímetro con el del chip del añadido porque **es el mismo número**, no dos stops que casualmente empatan.
+- **Cómo reproducir:** corrida guardada `f72bbf33-151c-480c-abdd-9999c9f4df73` (users.duckdb, 2026-09-18 10:40, 1831 trades, estrategia con `hard_stop` = Previous Max +10 % y `lot_stop` = Último pivote alto w2 +5 %). Trade ATMV 2025-12-09. O caso mínimo, sin motor: `_group_partial_exits([leg_lot_stop, leg_cierre])` con `entry_idx` común → el trade resultante se queda con el `entry_price`/`stop_loss` del leg del lote.
+- **Evidencia (números reales de esa corrida):**
+  - ATMV 2025-12-09: `entry_price=9.3`, `stop_loss=10.248`, `exit_reason='SL'`, **`exit_price=13.574`**. El SL saltó en 13.574 (= Previous Max 12.34 × 1.10, verificado sobre el parquet del lago) pero el trade reporta 10.248, que es 9.76 × 1.05 — el último pivote alto (w=2) vigente entre 05:10 y 05:45, o sea el `sl_px` del añadido de las 05:43.
+  - 519 de 1831 trades (28 %) tienen `stop_loss` == el `sl_px` del lote que cerró primero.
+  - 274 de ellos salieron por `'SL'` a un precio distinto del `stop_loss` que reportan.
+  - 520 de 521 trades cuyo primer cierre es un `lot_stop` tienen `entry_price` == el precio del añadido de ese lote, no el de la entrada.
+  - **Control:** 220 salidas por `'SL'` sin ningún `lot_stop` → 0 discrepancias entre `exit_price` y `stop_loss`. El artefacto es exclusivo del SL por lote.
+- **Hipótesis de causa (HIPÓTESIS):** `_flush` se escribió cuando el primer leg de un grupo era siempre un parcial, que comparte entrada y stop con el trade. El leg del SL por lote (2026-09-15) rompe esa premisa: es el único que trae entrada y stop PROPIOS.
+- **Impacto:** (1) el visor de «Análisis por trade» pinta como SL del trade el del lote y como entrada el precio del añadido; (2) `stop_loss` y `entry_price` de la API quedan mal en el 28 % de los trades de una corrida con SL por lote, así que cualquier análisis que mida distancia al stop, R teórica o MAE/MFE sobre el stop reportado hereda el error; (3) **invalida la conclusión de la entrada [TRABAJO · 2026-09-17 · 5]** («los 104 de 1002 trades con SL de lote y SL de trade idénticos NO son bug, son los niveles de verdad»): el caso AEI 2025-01-02 que se citó allí — SL trade 2.6145 = pivote 2.49 × 1.05 — sale de la fórmula del `lot_stop`, no de la del `hard_stop`, que era Previous Max; el `stop_loss` que se comparó ya venía contaminado. `pnl`, `size` y `return_pct` NO están afectados (se recalculan sumando legs).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+- **Control pedido por Álvaro (¿y si la pirámide NO lleva SL propio?): ese caso está SANO.** Separada la misma corrida en cuatro grupos por lo que hace el lote:
+
+  | grupo | trades | salidas por `SL` | `stop_loss` ≠ precio de salida |
+  |---|---|---|---|
+  | sin piramidación | 322 | 140 | **0** |
+  | pirámide con `lot_stop` que NO saltó | 966 | 80 | **0** |
+  | `lot_stop` saltó pero NO fue el primer cierre | 22 | 5 | **0** |
+  | `lot_stop` saltó y fue el PRIMER cierre | 521 | 276 | **274** |
+
+  Y en 12 corridas guardadas de estrategias con piramidación y CERO `lot_stop` (`6b058a06`, `d4a49232`, `1ebce568`, `71789b34`, `234aa8cf`, `8d6a1555`, `ab9649a0`, `d2beecaa`, `e1c411a9`, `f1e8d3be`, `04ad5550`, `16dccb9f`): entre 79 y 258 salidas por `SL` con añadidos en cada una, **0 discrepancias en todas**. Mismo ticker-día como contraste directo — ALCE 2025-01-02: sin `lot_stop` reporta `stop_loss=1.815` = `exit_price` (correcto, los añadidos cuelgan del stop general); con `lot_stop` el mismo ticker-día reporta `stop_loss=1.512` y sale en 1.815.
+  Conclusión: el defecto NO está en la piramidación ni en compartir el stop general — un añadido sin cinturón propio hereda el stop del trade y eso se reporta y se pinta bien (sin `sl_px` el visor no dibuja ni chip de SL ni punteada de lote). El defecto es exclusivamente el leg del SL POR LOTE ocupando el puesto de `first` en la fusión.
+- **Corridas viejas también afectadas:** `8d92f8d1` (2026-09-17 15:43) es anterior a que el `add` viajara con su `sl_px`, pero tiene 444 legs `lot_stop` y el mismo artefacto — ATMV 2025-12-09 ahí reporta `entry=9.51048`, `stop_loss=10.1535` y sale en 13.587574.
+
+### [FIX · 2026-09-18 · 01] RESUELTO: [HALLAZGO · 2026-09-18 · 01] — el trade fusionado ya reporta SU entrada y SU stop, no los del lote
+- **Aplica:** GLM 5.3 (para Álvaro), en `alvaro-rama-desarrollo`, commit `fa1bc89` — diseño y alcance exactos del `docs/PRD_FIX_SL_LOTE_FUSION_20260918_GLM.md`.
+- **Qué cambió:**
+  - `portfolio_sim.py`: el leg del SL por lote viaja además con `trade_entry_price`/`trade_stop_loss` (informativos; no entran en PnL, tamaño ni métrica). El leg crudo conserva SU entrada y SU cinturón (asserts de `test_lot_stop_sim.py` intactos).
+  - `backtest_service.py`: helper `_identidad_trade` restaura la identidad en `_flush` (multi-leg), en el atajo `len(run)==1` y en el de un solo registro; el marcador `entry` de `_build_executions` sale del mismo helper; las claves auxiliares se quitan del trade final. Con respaldo para corridas previas al fix (primer leg no-lote).
+  - **Detalle NO previsto por el PRD y necesario:** `_enrich_trades` construye un dict nuevo por leg con lista explícita de claves — sin propagar allí las dos claves auxiliares, el §5.1 era código muerto (se caían justo antes de la fusión). Propagadas y cubiertas por test.
+  - Fuera de alcance respetado: `avg_entry_price` sin tocar (§5.3). El camino slab/parallel (`_enrich_trades_arr`, `backtest_signals.py`) tampoco se toca: no fusiona legs (no consume `_group_partial_exits`), no hay bug que arreglar ahí; slab apagado en local.
+- **Tests:** 5 nuevos en `backend/tests/test_lot_stop_sim.py` (criterios 7.1–7.3 del PRD + propagación por `_enrich_trades` + nivel motor con sl_stop discriminante). Suite completa: **1130 passed / 115 skipped / 3 xfailed** (la referencia 1125 del merge + los 5 nuevos). Golden hashes del compilador y asserts del PRD del SL por lote intactos.
+- **Verificación E2E (criterio 5, motor real):** re-corrida de `f72bbf33-151c-480c-abdd-9999c9f4df73` con `run_backtest_orchestrator` y la petición original reconstruida de `backtest_params` + `*_pedido` (mismo dataset `c8bcddc7`, estrategia «1B Sobri 3 · Escalera Fade10», 2025-01-01→2026-01-01, sesión custom 04:00–08:45, `look_ahead_prevention=true` explícito; **ningún** campo quedó a default del orquestador):
+  - **ATMV 2025-12-09:** `stop_loss` 10.248 → **13.574** (= salida por SL). `entry_price` 9.30 → **9.63**, verificado como el open de la vela 05:41 del parquet del lago — el 9.30 era el px del añadido de las 05:43; la línea «entry @ 9.30» del propio PRD heredaba el bug en el precio.
+  - **ALCE 2025-01-02:** `stop_loss` 1.512 → **1.815** (= salida). `entry_price` 1.48 → **1.455** = open de la vela 04:51 del parquet. Los DOS trades con salida SL ese día reportan stop == precio de salida.
+  - **Chequeo agregado:** trades con `exit_reason='SL'` y `|exit_price − stop_loss| > 0,005`: 274 → **0**.
+  - **Invariante de dinero:** `total_pnl` **401.99**, `total_trades` **1831**, `win_rate` **64.06** — idénticos a `f72bbf33`. Completitud 3008/3008 igual.
+  - **Criterio 6 (a nivel de datos):** el trade lleva SL 13.574 y el chip del añadido sigue con `sl_px` 10.248 — dos niveles distintos, los de verdad. El marcador de entrada pinta 9.63 (el fill real).
+  - Scripts y log en `.tmp_fix_sl_lote/` (efímeros, no commiteados).
+- **Nota:** las corridas YA guardadas no se recalculan (como avisaba el PRD §8); re-correr para ver el dato bien.
+- **Estado de [HALLAZGO · 2026-09-18 · 01]:** **RESUELTO** (commit `fa1bc89`, rama `alvaro-rama-desarrollo`, sin push a la espera del OK de Álvaro).
