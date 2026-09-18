@@ -165,13 +165,11 @@ export const Sidebar = ({ onOpenFeedback }: { onOpenFeedback?: () => void }) => 
                     </div>
                 )}
 
-                {/* La pagina del Screener se retiro en esta rama (2026-09-01):
-                    es un proyecto propio y no se usa. El SERVICIO que la
-                    alimentaba (live_screener_service) SE CONSERVA a proposito:
-                    mantiene por ticker el cierre de ayer, el maximo de
-                    premercado y el volumen acumulado desde el WebSocket, que es
-                    justo lo que necesita el bot de alertas. Borrarlo obligaria
-                    a reescribirlo. El endpoint /api/screener/live tambien sigue. */}
+                {/* La pagina del Screener se retiro en esta rama (2026-09-01) y
+                    su servicio (live_screener_service, el websocket a Massive
+                    con todo el mercado) se borro el 18-sep-2026: el bot de
+                    alertas tiene su propio bot_alerts_mercado y la cuenta de
+                    Massive tiene tope de conexiones simultaneas. */}
 
                 {/* Market Analysis */}
                 <Link
