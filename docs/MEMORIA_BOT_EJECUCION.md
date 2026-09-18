@@ -740,9 +740,16 @@ que esté escrito con número en `docs/BOT_EJECUCION_REGLAS.md`.
 
 **Fase actual (desde el 12-sep): diseño de reglas.** Banco de preguntas en
 `docs/BOT_EJECUCION_PREGUNTAS.md`; se contesta por áreas y cada respuesta pasa
-al libro de reglas. Al 14-sep: área C hecha (R-C-01..11, salvo lo del PDF), F hecha
-(R-F-01..06), I hecha (R-I-01..03, sin cortacircuito diario), G3 pendiente con
-propuesta, B1 abierta a la espera del estudio P12. Siguiente: resto de B, D, H, J, K.
+al libro de reglas. Al 18-sep (noche): hechas C, F, I, B, H, D, E y J (salvo lo
+del PDF); G3 pendiente con propuesta; estudio P12 HECHO (libro NBBO, 0,80 $):
+entrada al bid si < 3 %, escalera 1/2/3 % en 60 s, tope 3 %; stops: principal
++3 % y emergencia a +10 %/+50 %, limpieza estricta. **SIGUIENTE: área K (estado y
+reconciliación: K1 cada cuánto, K5 cuenta compartida con operaciones manuales,
+K11 reconciliación que falla), luego A, L, M, N, O, P, Q y el repaso final de
+pendientes.** Pendientes de decisión al final: G3, excedente de locates 20 %,
+recompra de locates si el precio se mueve, tope de volumen, techo de «cerrar
+todo», latencia (J18), canal alternativo a Telegram (M4), traspaso humano↔bot,
+vuelta del cisne negro, reponer stop si sigue corto, comprar SAI.
 Datos de halts subidos a `alvaro-rama-desarrollo` (8357ff3) por petición de Jaume.
 
 | # | Pendiente | Estado |

@@ -601,6 +601,14 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Actualización forzada de DAS: tarea HUMANA. El supervisor detecta que DAS no arranca o pide actualizar, AVISA, y lo actualiza una persona; nunca automático. (J14)
 - Estado: FIJADA (Jaume, 18-sep).
 
+**J18 (Jaume, 18-sep): latencia: PENDIENTE para el repaso final** (nunca ha operado con el API de DAS; sin referencia para fijar un umbral). Lo importante es la información que devuelvan DAS y el bróker cuando una orden no entra, cuando no deja por margen, etc.: lista de códigos y respuestas [API, apartado R punto 14]. El bot mide y registra la latencia orden→confirmación desde el primer día.
+
+### R-J-08 · Telegram caído
+- Situación: Telegram no responde o rechaza los envíos.
+- Acción: el bot sigue operando con normalidad; los avisos quedan siempre en el log y en el panel de avisos del cuadro de mandos; los envíos a Telegram se encolan y se reintentan. Canal de EMERGENCIA alternativo por decidir: propuesta, correo electrónico (gratuito, sin depender de Telegram) para los avisos de nivel máximo, y como segundo escalón un SMS o una llamada automática (servicios de pago por uso, unos céntimos por mensaje) solo para el nivel máximo.
+- Estado: FIJADA en su lógica (Jaume, 18-sep); canal alternativo por decidir en el área M (M4).
+- Origen: J19.
+
 ### R-J-03 · Tabla del modo degradado
 | Qué falla | Abrir nuevas | Gestionar abiertas | Stops | Aviso |
 |---|---|---|---|---|

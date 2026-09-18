@@ -187,8 +187,8 @@
 - [ ] J15. Sesión de DAS que caduca de noche: ¿relogin antes de las 04:00 y comprobación? **[API]**
 - [x] J16. → R-J-03 (tabla). Modo degradado: tabla de qué se permite en cada estado (todo bien / sin feed / sin DAS / sin bot / sin Telegram).
 - [x] J17. → R-J-05 (ping 60 s, alarma a los 3 min). Vigilante externo: si el bot no da señal de vida en N min, ¿alguien recibe aviso aunque el propio bot esté muerto?
-- [ ] J18. Latencia: ¿se mide ida y vuelta orden→confirmación y a partir de cuánto no se opera?
-- [ ] J19. Caída del proveedor de Telegram: ¿el bot sigue operando o se pausa por falta de canal de aviso?
+- [ ] J18. **PENDIENTE para el repaso final (Jaume, 18-sep): sin referencia hasta operar con el API.** Latencia: ¿se mide ida y vuelta orden→confirmación y a partir de cuánto no se opera?
+- [x] J19. → R-J-08 (sigue operando, reintenta; canal alternativo en M4: correo + SMS/llamada para el nivel máximo). Caída del proveedor de Telegram: ¿el bot sigue operando o se pausa por falta de canal de aviso?
 - [x] J20. → R-J-06 (DAS → vigilante → ejecutor + reconciliación). Reinicio del VPS por el panel del proveedor (el socio): ¿arranque automático de DAS y bot con reconciliación antes de nada?
 
 ## K. Estado y reconciliación
