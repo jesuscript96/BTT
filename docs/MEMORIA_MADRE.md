@@ -6161,3 +6161,20 @@ de Databento, no copiar `users.duckdb`.
   - Scripts y log en `.tmp_fix_sl_lote/` (efímeros, no commiteados).
 - **Nota:** las corridas YA guardadas no se recalculan (como avisaba el PRD §8); re-correr para ver el dato bien.
 - **Estado de [HALLAZGO · 2026-09-18 · 01]:** **RESUELTO** (commit `fa1bc89`, rama `alvaro-rama-desarrollo`, sin push a la espera del OK de Álvaro).
+
+### [FIX · 2026-09-18 · 02] VERIFICACIÓN EN VIVO de [HALLAZGO · 2026-09-18 · 01] — backend reiniciado, re-corrida DESDE LA UI, 244→0, dinero idéntico
+- **Aplica:** GLM 5.3 (para Álvaro), en `alvaro-rama-desarrollo`, a la altura de `e197d25` (fix `fa1bc89` ya commiteado, sin push).
+- **Contexto (por qué hacía falta):** la entrada anterior ([FIX · 2026-09-18 · 01]) marcó el hallazgo RESUELTO con una verificación E2E que llamaba al motor directamente (`run_backtest_orchestrator` en proceso nuevo → código nuevo). Pero el backend local no se había reiniciado: el proceso de las 09:30 seguía sirviendo el código VIEJO con `reload=False` a propósito, y las corridas de la UI de las 11:46–11:56 salieron contaminadas. El RESUELTO era prematuro hasta verificar contra el backend en marcha.
+- **Qué se hizo (el plan de Álvaro, paso a paso):**
+  1. **Reinicio del backend.** Kill del árbol viejo (PID 33328 trampoline + 12440 uvicorn, `taskkill /T /F`). Detalle operativo: el watchdog `backend/scripts/run_backend_forever.bat` (PID 13492) **sigue vivo** — pese a que la nota del 2026-09-07 en `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md` daba por muerta su última instancia — y relanzó el backend él solo a las 12:01:53 vía el launcher seguro. Log en `backend_prof.log`: `[INFO] GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true).` + `Connected. Tables: [...]` + uvicorn en 8010, `/health` → ok. Al arrancar a las 12:01, el proceso sirve el código de `fa1bc89` (commit 11:44:46).
+  2. **Re-corrida DESDE LA UI** (navegador real contra el frontend del 3000): estrategia guardada `d3c21a74` «GA Sobri MEJORADA · mejora 2ª pasada semilla 7 (», 1R Fijo 1, fees 0, slippage 0 — el dataset `c8bcddc7` (Universo_Definitiva_2.3_8075), la sesión custom 04:00–08:45 y las fechas 2025-01-01→2026-01-01 los trae la propia estrategia/dataset. Corrida nueva: **`c4f8633a-7066-4805-8a4d-9edfcb50a2b6`** (12:15:07).
+  3. **Validación sobre el resultado GUARDADO** (users.duckdb, script `.tmp_fix_sl_lote/validar_run_nuevo.py`), no sobre el motor:
+     - Petición equivalente a la de `0dd2398a-c313-49ae-93cc-0ea1c1199888` campo a campo (dataset, fechas pedido/efectivas, sesión, init_cash, riesgo FIXED 1.0, fees/slippage 0, `look_ahead_prevention=true`) y definición de estrategia idéntica.
+     - Trades con primer cierre = `lot_stop`: **244** en ambas (mismos trades).
+     - De esos, `stop_loss == sl_px` del lote: **244 → 0**.
+     - De esos, `entry_price == px` del añadido: **244 → 0 contaminados**. Con el matcher literal quedan 3 matches (ORIS/STEC/BDRX) que son **coincidencia de precio**, no contaminación: en los tres `entry_price` == precio de SU ejecución `entry` (identidad correcta) y `stop_loss` != cinturón del lote — un añadido simplemente llenó al mismo precio que la entrada (BDRX tiene 7 añadidos).
+     - **BDRX 2025-12-10:** `entry_price` 5.53 → **6.25** (dentro de su vela 04:25, rango 5.82–6.37, y == su ejecución entry), `stop_loss` 7.4235 → **8.624** (= Previous Max 7.84 × 1.10, el hard stop del TRADE). `exit_reason` EOD.
+     - **Invariante de dinero vs `0dd2398a`:** `total_pnl` **267.77**, `total_trades` **1002**, `win_rate` **59.18** — idénticos. `total_return_r` 267.84 y `max_drawdown_pct` −0.0947 también idénticos.
+     - Extra: trades con salida `SL` y `|exit_price − stop_loss| > 0.005`: **90 → 0**.
+- **Estado de [HALLAZGO · 2026-09-18 · 01]:** **RESUELTO y verificado EN VIVO** (commit `fa1bc89`; la corrida guardada de referencia es `c4f8633a`). Sin push, a la espera del OK de Álvaro.
+- **Código tocado:** NINGUNO en esta verificación (solo scratch en `.tmp_fix_sl_lote/` y esta entrada de memoria). Backend reiniciado, backend/frontend siguen corriendo.
