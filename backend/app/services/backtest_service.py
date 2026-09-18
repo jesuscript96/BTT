@@ -1541,6 +1541,13 @@ def _enrich_trades(
             "entry_weekday": entry_ts.weekday(),
             "gap_pct": float(gap_pct) if gap_pct is not None else None,
             "stop_loss": t.get("stop_loss", 0.0),
+            # Identidad del TRADE que llevan las piernas de SL por lote (las
+            # únicas con entrada y stop propios). Sin propagarla aquí se caía
+            # justo antes de llegar a `_group_partial_exits`, que es quien la
+            # necesita para restaurar la identidad del trade fusionado.
+            **({"trade_entry_price": t["trade_entry_price"],
+                "trade_stop_loss": t["trade_stop_loss"]}
+               if t.get("trade_entry_price") is not None else {}),
             # Bitácora de la piramidación (añadidos y reducciones con su hora y
             # precio). El agrupador la convierte en `executions[]` y luego se
             # borra. Sin propagarla aquí se perdía justo antes de llegar: los
@@ -1562,6 +1569,26 @@ def _enrich_trades(
                if t.get("halt_idx") is not None else {}),
         })
     return result
+
+
+def _identidad_trade(run: list[dict]) -> tuple:
+    """(entry_price, stop_loss) del TRADE, inmunes al leg del SL por lote.
+
+    El cierre por SL de lote es el único leg con entrada y stop propios (el px
+    del añadido y el cinturón del lote). Si salta antes que cualquier parcial
+    es el primero del grupo, y `dict(first)` se los pegaría al trade entero.
+    """
+    first = run[0]
+    if first.get("exit_reason") != "Pyramid Lot Stop":
+        return first.get("entry_price"), first.get("stop_loss")
+    if first.get("trade_entry_price") is not None:
+        return first.get("trade_entry_price"), first.get("trade_stop_loss")
+    # Respaldo para resultados de corridas anteriores al fix: el primer leg que
+    # no sea de lote sí trae la identidad del trade.
+    base = next((l for l in run if l.get("exit_reason") != "Pyramid Lot Stop"), None)
+    if base is not None:
+        return base.get("entry_price"), base.get("stop_loss")
+    return first.get("entry_price"), first.get("stop_loss")
 
 
 def _build_executions(run: list[dict]) -> list[dict]:
@@ -1601,7 +1628,9 @@ def _build_executions(run: list[dict]) -> list[dict]:
     execs: list[dict] = [{
         "kind": "entry",
         "time_epoch": first.get("entry_time_epoch"),
-        "price": first.get("entry_price"),
+        # La entrada que se pinta es la del TRADE: si el primer leg es un
+        # cierre de lote, su `entry_price` es el px del añadido.
+        "price": _identidad_trade(run)[0],
         "size": round(_entry_size, 6) if isinstance(_entry_size, float) else _entry_size,
         "label": "Entrada",
     }]
@@ -1699,7 +1728,12 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
             execs = _build_executions([t])
             if execs:
                 t["executions"] = execs
+            # Un único leg de lote (posición vaciada entera por lotes) también
+            # reporta la identidad del TRADE, no la del lote.
+            t["entry_price"], t["stop_loss"] = _identidad_trade([t])
             t.pop("pyr_executions", None)
+            t.pop("trade_entry_price", None)
+            t.pop("trade_stop_loss", None)
         return trades_records
 
     grouped: list[dict] = []
@@ -1714,7 +1748,12 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
             execs = _build_executions(run)
             if execs:
                 solo["executions"] = execs
+            # Ídem el atajo de _flush: un leg de lote solo en su grupo reporta
+            # la identidad del TRADE.
+            solo["entry_price"], solo["stop_loss"] = _identidad_trade(run)
             solo.pop("pyr_executions", None)
+            solo.pop("trade_entry_price", None)
+            solo.pop("trade_stop_loss", None)
             grouped.append(solo)
             return
         first, last = run[0], run[-1]
@@ -1729,6 +1768,10 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         ret_pct = round((pnl / capital) * 100, 4) if capital > 0 else 0.0
         r_values = [t.get("r_multiple") for t in run if t.get("r_multiple") is not None]
         trade = dict(first)
+        # La identidad del TRADE manda sobre la del primer leg: si este es un
+        # cierre de lote, `dict(first)` habría heredado el px del añadido y el
+        # cinturón del lote como entrada y stop del trade entero.
+        trade["entry_price"], trade["stop_loss"] = _identidad_trade(run)
         trade.update({
             "pnl": pnl,
             "fees": fees,
@@ -1778,6 +1821,8 @@ def _group_partial_exits(trades_records: list[dict]) -> list[dict]:
         if execs:
             trade["executions"] = execs
         trade.pop("pyr_executions", None)
+        trade.pop("trade_entry_price", None)
+        trade.pop("trade_stop_loss", None)
         grouped.append(trade)
 
     for t in trades_records:
