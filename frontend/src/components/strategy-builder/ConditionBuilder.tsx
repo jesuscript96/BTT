@@ -27,7 +27,11 @@ const isVolumeIndicator = (name?: string): boolean => {
         name === IndicatorType.ACCUMULATED_VOLUME ||
         name === IndicatorType.ACCUM_DOLLAR_VOLUME ||
         name === IndicatorType.DOLLAR_VOLUME ||
-        name === IndicatorType.YESTERDAY_VOLUME
+        name === IndicatorType.YESTERDAY_VOLUME ||
+        // El volumen de la vela del giro nº N va en acciones, como «Volume»:
+        // la casilla en millones (con la M), que es como se escribe sin
+        // equivocarse en los ceros (Jaume, 18-sep).
+        name === IndicatorType.VOLUMEN_PICO
     );
 };
 
