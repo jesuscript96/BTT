@@ -510,7 +510,7 @@ export default function Home() {
       ...(def.pyramiding ? { pyramiding: def.pyramiding } : {}),
       ...(def.advanced_model ? { advanced_model: def.advanced_model } : {}),
     } as any);
-    setLoadedStrategyId(null);
+    setBuilderDraftOriginId(null);
     setActiveSessions(def.market_sessions || ["rth"]);
     setActiveCustomStartTime(def.custom_start_time || "09:30");
     setActiveCustomEndTime(def.custom_end_time || "16:00");
