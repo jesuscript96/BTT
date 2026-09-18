@@ -14,6 +14,7 @@ from app.services.indicators import (
     _stochastic, _macd, _dmi, _cci, _roc, _momentum, _obv,
     _linear_regression, _consecutive_count,
     _hammer, _shooting_star, _pivot_points, _safe_float,
+    _pico_enumerado,
 )
 
 logger = logging.getLogger("backtester.strategy_engine")
@@ -32,11 +33,18 @@ _COMPARATOR_OPS = {
 # ── N2a: Raw indicator compute dispatch (numpy arrays, O(1) lookup) ─────
 def _compute_indicator_raw(name, close, high, low, open_, volume, period=None,
                            period2=None, period3=None, std_dev=None,
-                           multiplier=None, offset=0, daily_stats=None):
+                           multiplier=None, offset=0, daily_stats=None,
+                           swing_dir=None, pivot_window=None, pivot_rank=None):
     """Compute indicator directly from numpy arrays. Dict dispatch for O(1) lookup."""
     ds = daily_stats or {}
     fn = _RAW_INDICATOR_DISPATCH.get(name)
     if fn is not None:
+        if name in _PICO_ENUM_FAMILY:
+            # La familia de picos/valles necesita sus tres parámetros y el eje
+            # absoluto de minutos (ds["_abs_min"]): van por la firma extendida,
+            # no por la genérica de 11 argumentos.
+            return fn(close, high, low, open_, volume, period, period2, period3,
+                      std_dev, multiplier, ds, swing_dir, pivot_window, pivot_rank)
         return fn(close, high, low, open_, volume, period, period2, period3,
                   std_dev, multiplier, ds)
     # Fallback: NaN for uncommon indicators
@@ -237,6 +245,67 @@ def _ri_pivot_r2(c, h, l, o, v, p, p2, p3, sd, m, ds):
 def _ri_pivot_s2(c, h, l, o, v, p, p2, p3, sd, m, ds):
     pv = _pivot_points(ds); return np.full(len(c), pv.get("S2", np.nan))
 
+
+# ── Picos y valles enumerados — Fase 2 del PRD 2026-09-18 (§7.1) ──────────
+# Réplica nativa del carril legacy (_compute_raw → _pico_enumerado): MISMO
+# kernel, mismos defaults y mismos clamps que indicators.py. Dos diferencias
+# con el resto del dispatch nativo, ambas deliberadas:
+#   1. Los tres parámetros de la familia (swing_dir/pivot_window/pivot_rank)
+#      viajan EXPLÍCITOS en la firma — el dispatch genérico no los tiene, y un
+#      parámetro que cae al defecto en silencio es exactamente el fallo del
+#      PRD §5 (por eso aquí son posicionales obligatorios: si alguien los
+#      olvida, TypeError, no rank=1 mudo).
+#   2. El `multiplier` SÍ se aplica (post-cómputo, como el legacy en
+#      compute_indicator: `result * multiplier`), porque el HCH del PRD §6
+#      usa targets "Pico x 0.97". El resto de indicadores nativos hoy lo
+#      ignoran; no cambiar eso aquí sin tests de equivalencia propios.
+# El eje de minutos ABSOLUTO por barra viaja en ds["_abs_min"] (mismo carril
+# que "_mins"): sin él no hay reinicio diario ni edad en minutos de reloj.
+_PICO_ENUM_FAMILY = ("Pico", "Edad del pico", "Volumen del pico")
+
+
+def _ri_pico_family(c, h, l, o, v, p, p2, p3, sd, m, ds,
+                    swing_dir, pivot_window, pivot_rank, out_kind):
+    abs_min = ds.get("_abs_min") if ds else None
+    if abs_min is None:
+        logger.error(
+            "[N2A] %s: sin eje de minutos absoluto (ds['_abs_min']) — NaN en "
+            "toda la serie; la condición no disparará",
+            _PICO_ENUM_FAMILY[out_kind],
+        )
+        return np.full(len(c), np.nan)
+    win = int(pivot_window) if pivot_window else 3
+    if win < 1:
+        win = 1
+    rank = int(pivot_rank) if pivot_rank else 1
+    if rank < 1:
+        rank = 1
+    abs_min = np.asarray(abs_min)
+    res = _pico_enumerado(
+        np.asarray(h, dtype=np.float64), np.asarray(l, dtype=np.float64),
+        np.asarray(v, dtype=np.float64),
+        abs_min.astype(np.float64), (abs_min // 1440).astype(np.int64),
+        win, str(swing_dir or "up").lower() != "down", rank, out_kind,
+    )
+    if m is not None:
+        res = res * m
+    return res
+
+
+def _ri_pico(c, h, l, o, v, p, p2, p3, sd, m, ds, swing_dir, pivot_window, pivot_rank):
+    return _ri_pico_family(c, h, l, o, v, p, p2, p3, sd, m, ds,
+                           swing_dir, pivot_window, pivot_rank, 0)
+
+
+def _ri_pico_edad(c, h, l, o, v, p, p2, p3, sd, m, ds, swing_dir, pivot_window, pivot_rank):
+    return _ri_pico_family(c, h, l, o, v, p, p2, p3, sd, m, ds,
+                           swing_dir, pivot_window, pivot_rank, 1)
+
+
+def _ri_pico_vol(c, h, l, o, v, p, p2, p3, sd, m, ds, swing_dir, pivot_window, pivot_rank):
+    return _ri_pico_family(c, h, l, o, v, p, p2, p3, sd, m, ds,
+                           swing_dir, pivot_window, pivot_rank, 2)
+
 _RAW_INDICATOR_DISPATCH = {
     "Close": _ri_close, "Open": _ri_open, "High": _ri_high, "Low": _ri_low,
     "Bar Close": _ri_close, "Bar Open": _ri_open,
@@ -279,6 +348,12 @@ _RAW_INDICATOR_DISPATCH = {
     "Pivot Points": _ri_pivot_pp, "PP": _ri_pivot_pp,
     "R1": _ri_pivot_r1, "S1": _ri_pivot_s1,
     "R2": _ri_pivot_r2, "S2": _ri_pivot_s2,
+    # Fase 2 del PRD de picos y valles (§7.1): la familia pasa al carril
+    # rápido SOLO después de que la clave de dedup de _extract_indicator_plan
+    # distinga swing_dir/pivot_window/pivot_rank (ya lo hace). Sus tres
+    # parámetros viajan por la firma extendida de _compute_indicator_raw.
+    "Pico": _ri_pico, "Edad del pico": _ri_pico_edad,
+    "Volumen del pico": _ri_pico_vol,
 }
 
 
@@ -898,6 +973,15 @@ def _extract_indicator_plan(compiled: dict) -> dict:
         period2 = cfg.get("period2")
         period3 = cfg.get("period3")
         std_dev = cfg.get("stdDev")
+        # Picos y valles enumerados (PRD §7.1, Fase 2): sin estos tres campos
+        # en la clave, Pico(rank=1), Pico(rank=2) y Valle(rank=1) compartirían
+        # etiqueta y el motor les daría EL MISMO array (HCH siempre verdadero,
+        # sin error ni log). Solo se añaden cuando alguno existe, para que las
+        # claves de todos los demás indicadores queden byte-identicas.
+        if (cfg.get("swing_dir") is not None or cfg.get("pivot_window") is not None
+                or cfg.get("pivot_rank") is not None):
+            return (f"{name}|{tf}|{period}|{period2}|{period3}|{std_dev}"
+                    f"|{cfg.get('swing_dir')}|{cfg.get('pivot_window')}|{cfg.get('pivot_rank')}")
         return f"{name}|{tf}|{period}|{period2}|{period3}|{std_dev}"
 
     def _walk_group(group, parent_tf):
@@ -922,6 +1006,9 @@ def _extract_indicator_plan(compiled: dict) -> dict:
                                     "std_dev": cfg.get("stdDev"),
                                     "multiplier": cfg.get("multiplier"),
                                     "offset": cfg.get("offset", 0),
+                                    "swing_dir": cfg.get("swing_dir"),
+                                    "pivot_window": cfg.get("pivot_window"),
+                                    "pivot_rank": cfg.get("pivot_rank"),
                                     "key": k}
 
     _walk_group(compiled.get("entry_root", {}), compiled.get("entry_tf", "1m"))
@@ -1401,18 +1488,25 @@ def translate_strategy_native(
         if period_mins <= 1 or minutes_arr is None:
             c, h, l, o, v = C, H, L, O, V
             mins_tf = minutes_arr
+            abs_tf = abs_min_arr
         else:
             c, h, l, o, v, mins_tf, labels = _resample_arrays_time_based(
                 C, H, L, O, V, minutes_arr, abs_min_arr, period_mins
             )
             if tf not in align_ctx:
                 align_ctx[tf] = _build_closed_bar_alignment(abs_min_arr, labels, period_mins)
+            # Minutos ABSOLUTOS de la PRIMERA barra de cada bucket (=
+            # timestamp:"first" del resample legacy, no el borde del bucket:
+            # con huecos difieren, y la edad del pico los notaría). La familia
+            # de picos/valles lo usa para el reinicio diario y la edad.
+            abs_tf = labels + (mins_tf - labels % 1440)
 
         # "_mins" = minutos-del-día de la PRIMERA barra de cada bucket (paridad
         # con el timestamp:"first" del resample legacy); lo usan los indicadores
         # de sesión (PM High/Low, PM High Gap, RTH fallback).
         ds_tf = dict(base_ds)
         ds_tf["_mins"] = mins_tf
+        ds_tf["_abs_min"] = abs_tf
 
         for spec in specs:
             indicator_results[spec["key"]] = _compute_indicator_raw(
@@ -1424,6 +1518,9 @@ def translate_strategy_native(
                 multiplier=spec.get("multiplier"),
                 offset=spec.get("offset", 0),
                 daily_stats=ds_tf,
+                swing_dir=spec.get("swing_dir"),
+                pivot_window=spec.get("pivot_window"),
+                pivot_rank=spec.get("pivot_rank"),
             )
 
     # Fase 2: Evaluate conditions
@@ -1725,6 +1822,14 @@ def _cfg_key_static(cfg: dict, tf: str) -> str | None:
     period2 = cfg.get("period2")
     period3 = cfg.get("period3")
     std_dev = cfg.get("stdDev")
+    # Mismo formato que _cfg_key de _extract_indicator_plan, INCLUDING el
+    # sufijo de la familia de picos/valles — si uno cambia sin el otro, los
+    # lookups de _eval_comparison_native fallan en silencio (None → condición
+    # a False). PRD §7.1.
+    if (cfg.get("swing_dir") is not None or cfg.get("pivot_window") is not None
+            or cfg.get("pivot_rank") is not None):
+        return (f"{name}|{tf}|{period}|{period2}|{period3}|{std_dev}"
+                f"|{cfg.get('swing_dir')}|{cfg.get('pivot_window')}|{cfg.get('pivot_rank')}")
     return f"{name}|{tf}|{period}|{period2}|{period3}|{std_dev}"
 
 
