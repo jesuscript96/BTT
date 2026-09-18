@@ -1407,7 +1407,7 @@ export default function GeneticoPage() {
             {detalle.datos && (
               <div style={{ fontSize: 11, color: color.textMuted, padding: "6px 0", borderBottom: hairline, fontFamily: font.mono }}>
                 {entero(detalle.datos.pares)} ticker-días · {entero(detalle.datos.velas)} velas · {detalle.datos.primer_dia} → {detalle.datos.ultimo_dia}
-                {" · "}semilla {detalle.config.semilla} · {detalle.config.n_condiciones} cond. · {detalle.config.catalogo.length} indicadores · {detalle.config.sesgo} · {detalle.config.sesiones.join("/")}
+                {" · "}semilla {detalle.config.semilla} · {detalle.config.n_condiciones ?? "—"} cond. · {(detalle.config.catalogo ?? []).length} indicadores · {detalle.config.sesgo ?? "—"} · {(detalle.config.sesiones ?? []).join("/") || "—"}
               </div>
             )}
 

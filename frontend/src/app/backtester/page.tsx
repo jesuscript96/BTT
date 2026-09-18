@@ -156,6 +156,19 @@ export default function Home() {
   const [backtestProgress, setBacktestProgress] = useState<any | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedDay, setSelectedDay] = useState(0);
+  // Error de carga de velas, APARTE del «día sin velas»: hasta el 18-sep el
+  // catch de loadCandles dejaba dayCandles=null en silencio y el visor pintaba
+  // «No hay velas» tanto si el backend no tenía datos como si la petición
+  // había caído (p. ej. en un reinicio del backend). Y no había reintento:
+  // volver a pinchar el mismo día no re-disparaba el efecto (mismo índice).
+  const [candlesError, setCandlesError] = useState(false);
+  const [candlesReload, setCandlesReload] = useState(0);
+  const recargarVelas = useCallback(() => setCandlesReload((n) => n + 1), []);
+  /** Seleccionar un día SIEMPRE vuelve a pedir sus velas, aunque sea el mismo. */
+  const seleccionarDia = useCallback((idx: number) => {
+    setSelectedDay(idx);
+    setCandlesReload((n) => n + 1);
+  }, []);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [strategyToSave, setStrategyToSave] = useState<any | null>(null);
   const [includeWhatIfInSave, setIncludeWhatIfInSave] = useState(true);
@@ -1083,6 +1096,7 @@ export default function Home() {
       if (!day) return;
 
       setCandlesLoading(true);
+      setCandlesError(false);
       setDayCandles(null);
       setMultiDayCandles(null);
       try {
@@ -1123,6 +1137,7 @@ export default function Home() {
         console.error("Error loading candles:", err);
         setDayCandles(null);
         setMultiDayCandles(null);
+        setCandlesError(true);
       } finally {
         setCandlesLoading(false);
       }
@@ -1135,7 +1150,8 @@ export default function Home() {
     if (result && result.day_results.length > 0) {
       loadCandles(selectedDay);
     }
-  }, [result, selectedDay, loadCandles]);
+    // candlesReload: re-pedir aunque el día no cambie (reintento / re-click).
+  }, [result, selectedDay, loadCandles, candlesReload]);
 
   // Load results state from sessionStorage on mount
   useEffect(() => {
@@ -1145,6 +1161,7 @@ export default function Home() {
         const saved = JSON.parse(stored);
         if (saved.result) setResult(saved.result);
         if (saved.jobId) jobIdRef.current = saved.jobId;
+        if (saved.datasetId) datasetIdRef.current = saved.datasetId;
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
         }
@@ -1174,6 +1191,9 @@ export default function Home() {
     const resultsState = {
       result: lightweightResult,
       jobId: jobIdRef.current, // keep so equity can be re-fetched after a reload (within the 1h job TTL)
+      // Sin el dataset, tras un F5 loadCandles salia en silencio y el visor
+      // decia «No hay velas para este trade» para TODOS los trades (18-sep).
+      datasetId: datasetIdRef.current,
       activeStrategy,
       selectedDay,
       mode,
@@ -1855,6 +1875,8 @@ export default function Home() {
                 activeStrategy={activeStrategy}
                 strategyDefinition={activeStrategy?.definition}
                 candlesLoading={candlesLoading}
+                candlesError={candlesError}
+                onRetryCandles={recargarVelas}
                 currentTrades={currentTrades || []}
                 currentEquity={currentEquity || []}
                 equityLoading={equityLoading}
@@ -1863,7 +1885,7 @@ export default function Home() {
                 datasetId={datasetIdRef.current}
                 backtestParams={backtestParamsRef.current}
                 ultimaPeticion={ultimaPeticionRef.current}
-                onSelectDay={setSelectedDay}
+                onSelectDay={seleccionarDia}
                 onOpenSharedDraft={abrirCompartidaComoBorrador}
               />
             </>
