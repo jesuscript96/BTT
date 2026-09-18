@@ -104,3 +104,46 @@ def test_create_rechaza_el_formato_antiguo():
         "exit_logic": {"stop_loss_type": "Fixed Price", "stop_loss_value": 0.5},
     }
     assert client.post("/api/strategies/", json=antiguo).status_code == 422
+
+
+def test_scalping_block_sobrevive_al_guardado():
+    """HALLAZGO 2026-09-18-03: POST y PUT construian `definition` campo a campo
+    y se dejaban el bloque `scalping` dentro — la estrategia guardaba su chasis
+    pero perdia el gatillo 1m en silencio (el mismo patron que sufrio
+    `pyramiding`). Aqui se comprueba el round-trip completo por la API.
+    """
+    payload = _payload(nombre="Test Scalping Roundtrip")
+    payload["scalping"] = {
+        "timeframe": "1m",
+        "root_condition": {
+            "operator": "AND",
+            "conditions": [{
+                "type": "indicator_comparison",
+                "source": {"name": "% Fade"},
+                "comparator": "GREATER_THAN_OR_EQUAL",
+                "target": 10.0,
+            }],
+        },
+        "max_minutes": 0,
+        "cooldown_bars": 5,
+        "capital_pct": 100,
+        "mode": "simple",
+    }
+
+    # POST — y que el bloque llegue a la DEFINICION persistida, no solo al
+    # model_dump de la respuesta (que siempre lo llevo).
+    response = client.post("/api/strategies/", json=payload)
+    assert response.status_code == 200, response.text
+    strategy_id = response.json()["id"]
+    try:
+        guardada = client.get(f"/api/strategies/{strategy_id}").json()
+        assert guardada.get("scalping") == payload["scalping"]
+
+        # PUT — el update tenia el mismo agujero.
+        payload["name"] = "Test Scalping Roundtrip v2"
+        response = client.put(f"/api/strategies/{strategy_id}", json=payload)
+        assert response.status_code == 200, response.text
+        guardada = client.get(f"/api/strategies/{strategy_id}").json()
+        assert guardada.get("scalping") == payload["scalping"]
+    finally:
+        client.delete(f"/api/strategies/{strategy_id}")

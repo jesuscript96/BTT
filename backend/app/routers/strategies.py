@@ -44,6 +44,9 @@ def create_strategy(strategy: StrategyCreate, background_tasks: BackgroundTasks,
                 **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
                 # Igual con el modelo avanzado: sin el, la definicion no cambia.
                 **({"advanced_model": strategy.advanced_model} if strategy.advanced_model else {}),
+                # Igual con el bloque scalping: sin esta clave, el gatillo 1m se
+                # pierde al guardar y la estrategia queda como una normal.
+                **({"scalping": strategy.scalping} if strategy.scalping else {}),
             })
 
             con.execute(
@@ -109,6 +112,9 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
                 **({"pyramiding": strategy.pyramiding} if strategy.pyramiding else {}),
                 # Igual con el modelo avanzado: sin el, la definicion no cambia.
                 **({"advanced_model": strategy.advanced_model} if strategy.advanced_model else {}),
+                # Igual con el bloque scalping: sin esta clave, el gatillo 1m se
+                # pierde al guardar y la estrategia queda como una normal.
+                **({"scalping": strategy.scalping} if strategy.scalping else {}),
             })
 
             con.execute(
