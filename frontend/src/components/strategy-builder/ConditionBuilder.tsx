@@ -63,6 +63,8 @@ export const isMeasureIndicator = (name?: string): boolean => {
         name === IndicatorType.REG_R2 ||
         name === IndicatorType.ATR_EXTENSION ||
         name === IndicatorType.TIME_VS_LEVEL ||
+        name === IndicatorType.EDAD_PICO ||
+        name === IndicatorType.VOLUMEN_PICO ||
         name === IndicatorType.PM_HIGH_GAP ||
         name === IndicatorType.CURRENT_GAP ||
         name === IndicatorType.OPEN_GAP ||
@@ -154,6 +156,13 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         // ruido (1-2) y pivotes fiables pero tardios (8+).
         case IndicatorType.LAST_PIVOT:
             return { pivot_window: 3, swing_dir: "up" };
+        // Picos y valles enumerados (PRD 2026-09-18): mismos defectos que
+        // "Ultimo pivote" (rank=1 ES "Ultimo pivote"), con el numero de giro
+        // explicito para que cambiarlo sea un gesto consciente.
+        case IndicatorType.PICO:
+        case IndicatorType.EDAD_PICO:
+        case IndicatorType.VOLUMEN_PICO:
+            return { pivot_window: 3, swing_dir: "up", pivot_rank: 1 };
         // Franjas del 1 % del precio y liston al 60 % del POC: con eso salen
         // las dos o tres zonas de verdad de un dia normal.
         case IndicatorType.VOL_BIN_PCT:
@@ -204,6 +213,9 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.AM_OPEN,
         IndicatorType.PREVIOUS_MAX, IndicatorType.PREVIOUS_MIN,
         IndicatorType.LAST_PIVOT,
+        // Pico/valle enumerado: NIVEL DE PRECIO como "Ultimo pivote", pero
+        // eligiendo QUÉ giro de la lista (pivot_rank).
+        IndicatorType.PICO,
         IndicatorType.VOL_POC, IndicatorType.VOL_NODE_UP,
         IndicatorType.VOL_NODE_DOWN,
         IndicatorType.VOL_ZONE_HIGH, IndicatorType.VOL_ZONE_LOW,
@@ -258,6 +270,10 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.ABSORPTION_WICK,
         IndicatorType.RETRACEMENT,
         IndicatorType.TIME_VS_LEVEL,
+        // Las dos MEDIDAS de la familia de picos/valles: minutos y volumen,
+        // solo contra una cifra (igual que las demás de este bloque).
+        IndicatorType.EDAD_PICO,
+        IndicatorType.VOLUMEN_PICO,
     ],
 };
 
@@ -348,6 +364,9 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.VOL_ZONE_HIGH]: "Zona alta (borde superior)",
     [IndicatorType.VOL_ZONE_LOW]: "Zona baja (borde inferior)",
     [IndicatorType.LAST_PIVOT]: "\u00daltimo pivote",
+    [IndicatorType.PICO]: "Pico / valle (nº N)",
+    [IndicatorType.EDAD_PICO]: "Edad del pico (min)",
+    [IndicatorType.VOLUMEN_PICO]: "Volumen del pico",
     [IndicatorType.RETRACEMENT]: "Retroceso (%)",
     [IndicatorType.ABSORPTION]: "Absorción (M$ por 1%)",
     [IndicatorType.WICK_RATIO]: "Ratio de mecha",
@@ -447,6 +466,9 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.VOL_NODE_UP]: "El precio de la primera franja POR ENCIMA de la actual que tiene volumen suficiente para contar como zona: la resistencia real del día, la que sale del dinero cruzado y no de unir dos máximos con una regla. Es un PRECIO: se cruza, se compara y sirve de stop de estructura. EL LISTÓN es lo que decide qué cuenta como zona — una franja es nodo si tiene al menos ese % del volumen de la franja más gorda. Con 85 solo pasan las zonas grandes; con 60 salen las de verdad (dos o tres en un día normal); con 30 pasa casi todo y aparece ruido. Fíjate en que NO le dices cuántas zonas quieres: le dices cuánto tiene que pesar una franja para contar, y el número de zonas lo pone el día. Si hubo una zona sale una, si hubo tres salen tres. USO NATURAL EN CORTO: es el stop. Por encima hay oferta acumulada que te protege, así que el stop tiene una razón detrás en vez de ser una distancia inventada. EJEMPLO REAL (OLB, 9-sep-2026, listón 60): a las 14:33, con el precio en 0,3624, el nodo de arriba estaba en 0,4027 — todo el papel que se había acumulado por la mañana. VALE NaN cuando por encima no hay ninguna zona, y eso es un aviso en sí mismo: no hay techo conocido por delante. Comparar contra NaN da falso, así que una condición con este indicador no dispara mientras no haya nodo.",
     [IndicatorType.VOL_NODE_DOWN]: "Lo mismo hacia abajo: el primer precio con volumen suficiente por DEBAJO del actual. El soporte real del día. Es un PRECIO y sirve de stop, de objetivo y de cruce. Y AQUÍ ESTÁ LA SEÑAL MÁS ÚTIL DE TODO EL PERFIL: cuando vale NaN significa que POR DEBAJO NO HAY NADIE. No queda gente con su coste ahí, así que no hay nada que frene una caída. EJEMPLO REAL (OLB, 9-sep-2026, listón 60): a las 12:33 el nodo de abajo estaba en 0,4194, justo debajo del precio. A las 13:33 desapareció. Entre ese momento y el cierre el precio se fue de 0,3895 a 0,3394. La DESAPARICIÓN del soporte llegó antes que la caída. USOS: como objetivo de un corto (ahí es donde se va a frenar), como stop de un largo, y sobre todo el cruce — «Bar Close cruza por debajo del Nodo de abajo» es literalmente «acaba de comerse el soporte real y entra en el vacío». COMBINACIONES: con «Absorción» baja no hay nadie que lo pare y la caída es limpia; con «Absorción» alta hay alguien recogiendo abajo y el corto es mucho más peligroso. El listón funciona igual que en «Nodo de arriba».",
     [IndicatorType.LAST_PIVOT]: "El último techo (o suelo) que dejó el mercado, como PRECIO. Un techo es una vela cuyo máximo es mayor que el de las N velas de su izquierda Y el de las N de su derecha; el suelo es el espejo con los mínimos. NO ES LO MISMO QUE «Previous max», y la diferencia importa: aquel es el máximo corrido del día y NUNCA baja. Con la secuencia 10 → 15 → 12 → 14 → 11, «Previous max» se queda en 15 para siempre, mientras que el último pivote alto es 14 (el techo que el mercado acaba de dejar) y el último pivote bajo es 12 (el suelo, cuando «Previous min» daría 10). Para un stop eso lo cambia todo: 15 está lejísísimos y 14 está pegado. EL PARÁMETRO son las velas de CONFIRMACIÓN a cada lado, y es un intercambio real: con 1 o 2 salen pivotes de ruido; con 8 o más son fiables pero llegan tarde. 3 es un punto de partida razonable. OJO AL RETARDO, que no es un defecto sino la naturaleza de la cosa: un pivote no se puede confirmar hasta que pasan N velas sin superarlo, así que el nivel aparece N velas DESPUÉS de haber ocurrido. Eso es justo lo que lo hace causal: nunca se mira una vela que aún no existe. Vale NaN hasta que se confirma el primero del día, y se reinicia cada sesión. Como es un precio y no una medida, se puede comparar contra el precio y contra otros niveles, y también se puede elegir como stop de estructura.",
+    [IndicatorType.PICO]: "El techo (o suelo) nº N de la lista de giros del día, como PRECIO. Es el MISMO pivote que «Último pivote», con toda la lista: con nº 1 son exactamente lo mismo; nº 2 es el giro ANTERIOR, nº 3 el de antes... y eso es lo que «Último pivote» no podía hacer: COMPARAR un techo con otro. «Pico(1) < Pico(2)» es «el último techo quedó por debajo del anterior» — el corazón de un hombro-cabeza-hombro (nº 1 = hombro derecho, nº 2 = cabeza, nº 3 = hombro izquierdo), de un doble techo o de una divergencia de estructura. CON «Pivote bajo» el pico se convierte en VALLE (mismos parámetros, mínimos en vez de máximos). El retardo de confirmación es el mismo y NO es un defecto: el giro solo aparece N velas DESPUÉS de ocurrir, porque hasta que pasan N velas sin superarlo no se puede saber que era un techo — eso es lo que lo hace causal. Se reinicia cada día: el patrón tiene que caber en una sesión (por eso en temporalidad 1d no funciona y da NaN siempre). Vale NaN mientras no se hayan confirmado N giros ese día — nunca el de ayer, nunca un 0 — y por encima de nº 16 también da NaN. Los empates exactos no cuentan como giro nuevo (comparación estricta).",
+    [IndicatorType.EDAD_PICO]: "Los MINUTOS DE RELOJ transcurridos desde que se formó el giro nº N (el mismo pivote que «Último pivote»; nº 1 = el último confirmado). Minutos de reloj y no velas porque las velas del lago son dispersas: en un premercado ilíquido «20 velas atrás» es una ventana distinta en cada ticker. USO NATURAL: acotar el patrón en el tiempo — «Edad del pico(3) < 90» pide que las tres cimas de un hombro-cabeza-hombro hayan cabido en hora y media. Con «Pivote bajo» mide la edad del valle. El retardo de confirmación es el mismo de la familia y no es un defecto: la edad empieza a contarse en la vela del giro, pero el dato solo existe N velas después, cuando el pivote se confirma. Se reinicia cada día (en 1d da NaN siempre) y vale NaN mientras no exista el giro nº N, o por encima de nº 16. Es una MEDIDA, no un nivel: solo se compara contra una cifra.",
+    [IndicatorType.VOLUMEN_PICO]: "El VOLUMEN de la vela en la que se formó el giro nº N (el mismo pivote que «Último pivote»; nº 1 = el último confirmado). Dice si el techo se hizo con dinero de verdad o fue una mecha suelta en un libro vacío — dos techos a la misma altura son cosas muy distintas si uno negoció 5 millones y el otro 50.000 $. CON «Pivote bajo» mira el volumen del valle. Mismo retardo de confirmación que la familia: el dato solo existe N velas después del giro, y eso lo hace causal. Se reinicia cada día (en 1d da NaN siempre) y vale NaN mientras no exista el giro nº N, o por encima de nº 16. Es una MEDIDA, no un nivel: solo se compara contra una cifra.",
     [IndicatorType.RETRACEMENT]: "Qué fracción del impulso se ha devuelto ya, en % del propio impulso (no del precio). EJEMPLO: el precio sube de 10,00 a 15,00 — ha ganado 5,00. Si baja a 14,00 ha devuelto 1 de 5, o sea 20. A 13,00 son 40. A 11,00 son 80 y el impulso está prácticamente roto. Por encima de 100 ha perforado la base de la que salió. Al hacer un máximo nuevo el impulso se reancla y vuelve casi a 0, igual que «Previous max» se actualiza vela a vela. CÓMO SE DEFINE EL IMPULSO, y esto importa: el máximo es el mayor high corrido y la base es el menor low ANTERIOR a la vela en que se hizo ese máximo. Todo pasado, así que NO mira al futuro — a diferencia de un pivote clásico, que necesita ver N velas por delante para confirmarse. POR QUÉ NO ES LO MISMO QUE «% Fade»: el fade mide la caída en % del PRECIO, así que un 8% significa cosas distintas en un ticker que se movió un 10% y en uno que se movió un 200%. Esto lo normaliza por el tamaño del impulso, y por eso el mismo umbral vale para todo el universo. NIVELES ORIENTATIVOS: por debajo de 30 el impulso aguanta y el comprador sigue ahí; entre 40 y 60 es un retroceso normal; por encima de 70 el que compró arriba está atrapado y la continuación es bastante menos probable. Los números de Fibonacci (38,2 y 61,8) no tienen ninguna evidencia detrás: mide dónde está el corte real en TU universo, que para eso tienes el lago. La ventana en minutos limita el impulso a ese tramo de reloj; déjala en 0 para medir el impulso del día entero. Vale NaN mientras no haya impulso que medir (primera vela del día, o precio plano).",
     [IndicatorType.ABSORPTION]: "Cuántos MILLONES de dólares hicieron falta para mover el precio un 1%, en una ventana de X MINUTOS DE RELOJ. Es la profundidad del mercado y se lee al derecho: cuanto MÁS ALTO, más caro es moverlo, o sea más absorción. EJEMPLO: en 5 minutos se negocian 2 millones de dólares y el precio acaba un 0,35% por encima de donde empezó → 2 / 0,35 = 5,7. Eso no es calma, es que alguien está poniendo a la venta exactamente tanto como le compran; en una small cap suele ser un ATM, un insider o un fondo saliendo — gente sin prisa y con tamaño que colocar, y por eso el nivel aguanta. NIVELES MEDIDOS sobre 2.461 lecturas reales del universo del bot (8-9 sep 2026, ventana de 5 min): la mitad están por debajo de 0,26; el percentil 75 es 0,85; el 90 es 2,6; el 95 es 5,1 y el 99 es 17,5. Léelo así: por debajo de 0,3 el precio se mueve con nada (código de barras); a partir de 2,5 hay alguien al otro lado; por encima de 5 es un muro. OJO al denominador: es el desplazamiento NETO de la ventana, no el rango. Una vela que sube y vuelve al mismo sitio ha avanzado cero y por eso puntúa alto — que es justo lo que se busca. Vale NaN si la ventana solo tiene una vela.",
     [IndicatorType.WICK_RATIO]: "Qué fracción de todo lo que recorrió el precio en la ventana se devolvió en forma de mecha, de 0 a 1. Con «arriba» mide el rechazo de las subidas (alguien vende cada empujón); con «abajo», el de las caídas (alguien compra cada hundimiento). EJEMPLO: una vela abre en 5,00, sube a 5,40 y cierra en 5,05, con mínimo en 4,98. Recorrido total 0,42, mecha superior 0,35 → 0,83: le devolvieron el 83% de lo que subió. Se suma sobre toda la ventana para no depender de una vela suelta, que puede ser un mal print. NIVELES MEDIDOS sobre 2.474 lecturas reales (8-9 sep 2026, ventana de 5 min, mecha superior): la MEDIANA es 0,21 — en un día normal siempre se devuelve una quinta parte del recorrido y eso no significa nada; el percentil 75 es 0,29; el 90 es 0,37; el 95 es 0,43 y el 99 es 0,58. Pedir «> 0,5» deja fuera al 97% de las lecturas y casi no dispara nunca: para un filtro que salte de vez en cuando, 0,40 es un punto de partida razonable.",
@@ -461,6 +483,16 @@ export const INDICATOR_QUICK_HELP: Partial<Record<IndicatorType, string>> = {
     [IndicatorType.LAST_PIVOT]:
         "PARA QUÉ SIRVE: el último techo o suelo CONFIRMADO del día. Se actualiza con cada giro "
       + "(«Previous Max» nunca baja). Para cruces del precio y stop de estructura.",
+    [IndicatorType.PICO]:
+        "PARA QUÉ SIRVE: el techo (o valle) nº N contando hacia atrás — mismo pivote que «Último pivote» "
+      + "(nº 1 = idéntico). Comparar nº 1 con nº 2 y nº 3 es lo que escribe un hombro-cabeza-hombro "
+      + "o un doble techo. Se reinicia cada día; en 1d da NaN y por encima de nº 16 también.",
+    [IndicatorType.EDAD_PICO]:
+        "PARA QUÉ SIRVE: los minutos de reloj desde que se formó el giro nº N — acota el patrón en el "
+      + "tiempo (p. ej. las tres cimas del HCH en menos de 90 min). Medida: solo contra una cifra.",
+    [IndicatorType.VOLUMEN_PICO]:
+        "PARA QUÉ SIRVE: el volumen de la vela del giro nº N — si el techo se hizo con dinero de verdad "
+      + "o fue una mecha suelta. Medida: solo contra una cifra.",
     [IndicatorType.VOL_POC]:
         "PARA QUÉ SIRVE: el precio con MÁS volumen del día — donde más gente tiene su coste. "
       + "Imán al que el precio tiende a volver; perderlo es salir del precio aceptado.",
@@ -1256,7 +1288,7 @@ export const IndicatorParams = ({
                                     min={1}
                                     value={value.pivot_window ?? ''}
                                     onChange={(e) => onChange({ ...value, pivot_window: e.target.value === '' ? undefined : Number(e.target.value) })}
-                                    onFocus={(e) => e.target.select()}
+                                    onFocus={(e) => e.currentTarget.select()}
                                     placeholder="Velas"
                                     style={{ ...PARAM_FIELD_STYLE, flex: '1 1 80px', minWidth: '80px' }}
                                     title="Velas de CONFIRMACION a cada lado. Con 1 o 2 salen pivotes de ruido; con 8 o mas son fiables pero llegan tarde. El nivel aparece estas velas DESPUES de que ocurriera el giro: ese retardo es lo que lo hace causal."
@@ -1270,6 +1302,54 @@ export const IndicatorParams = ({
                                     <option value="up">Pivote alto (techo)</option>
                                     <option value="down">Pivote bajo (suelo)</option>
                                 </select>
+                            </div>
+                        );
+                    case IndicatorType.PICO:
+                    case IndicatorType.EDAD_PICO:
+                    case IndicatorType.VOLUMEN_PICO:
+                        // Mismos controles que "Ultimo pivote" + el NUMERO de
+                        // giro (pivot_rank): 1 = el ultimo confirmado (identico
+                        // a "Ultimo pivote"), 2 = el anterior... hasta 16.
+                        return (
+                            <div style={{ display: 'flex', gap: 6, width: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={value.pivot_window ?? ''}
+                                    onChange={(e) => onChange({ ...value, pivot_window: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onFocus={(e) => e.target.select()}
+                                    placeholder="Velas"
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 70px', minWidth: '70px' }}
+                                    title="Velas de CONFIRMACION a cada lado, igual que en «Último pivote». Con 1 o 2 salen pivotes de ruido; con 8 o más son fiables pero llegan tarde. El giro aparece estas velas DESPUÉS de ocurrir: ese retardo es lo que lo hace causal, no un defecto."
+                                />
+                                <select
+                                    value={value.swing_dir || 'up'}
+                                    onChange={(e) => onChange({ ...value, swing_dir: e.target.value as "up" | "down" })}
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 130px', minWidth: '130px', cursor: 'pointer' }}
+                                    title="Techo (pico) o suelo (valle): mismos parámetros, máximos o mínimos."
+                                >
+                                    <option value="up">Pico (techo)</option>
+                                    <option value="down">Valle (suelo)</option>
+                                </select>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    max={16}
+                                    value={value.pivot_rank ?? ''}
+                                    onChange={(e) => onChange({ ...value, pivot_rank: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                    onBlur={() => {
+                                        const val = value.pivot_rank;
+                                        if (val === undefined || isNaN(val)) {
+                                            onChange({ ...value, pivot_rank: 1 });
+                                        } else {
+                                            onChange({ ...value, pivot_rank: Math.max(1, Math.min(16, val)) });
+                                        }
+                                    }}
+                                    onFocus={(e) => e.target.select()}
+                                    placeholder="Nº"
+                                    style={{ ...PARAM_FIELD_STYLE, flex: '1 1 56px', minWidth: '56px' }}
+                                    title="Qué giro de la lista: 1 = el último confirmado (idéntico a «Último pivote»), 2 = el anterior, 3 = el de antes... Hasta 16; por encima da NaN. Comparar nº 1 contra nº 2 y nº 3 es lo que escribe un hombro-cabeza-hombro o un doble techo."
+                                />
                             </div>
                         );
                     case IndicatorType.RETRACEMENT:
@@ -2486,7 +2566,23 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
         // Los fades llevan su modo EN el resumen por el mismo motivo que el
         // Squeeze: «% Session Fade» de premercado y del dia completo son cosas
         // distintas, y sin esto las dos condiciones se leerian identicas.
-        const sourceStr = c.source.name === IndicatorType.SQUEEZE
+        // La familia de picos/valles, igual: «Pico(1) < Pico(2)» y
+        // «Pico(2) < Pico(3)» son condiciones distintas que sin el numero de
+        // giro y la direccion se leerian identicas.
+        const esFamiliaPicos = (cfg?: { name?: IndicatorType }) =>
+            cfg?.name === IndicatorType.PICO ||
+            cfg?.name === IndicatorType.EDAD_PICO ||
+            cfg?.name === IndicatorType.VOLUMEN_PICO;
+        const etiquetaFamiliaPicos = (cfg: IndicatorConfig) => {
+            const num = cfg.pivot_rank ?? 1;
+            const dir = cfg.swing_dir === 'down' ? 'valle' : 'pico';
+            if (cfg.name === IndicatorType.EDAD_PICO) return `Edad del ${dir} nº${num}`;
+            if (cfg.name === IndicatorType.VOLUMEN_PICO) return `Vol. del ${dir} nº${num}`;
+            return `${dir === 'valle' ? 'Valle' : 'Pico'} nº${num}`;
+        };
+        const sourceStr = esFamiliaPicos(c.source)
+            ? etiquetaFamiliaPicos(c.source)
+            : c.source.name === IndicatorType.SQUEEZE
             ? `Squeeze ${c.source.squeeze_direction === 'down' ? '↓' : '↑'} ${c.source.range_minutes ?? 5} min`
             : c.source.name === IndicatorType.SESSION_FADE
             ? `% Session Fade (${c.source.session_ref === 'rth' ? 'RTH' : c.source.session_ref === 'full' ? 'día completo' : 'PM'})`
@@ -2504,7 +2600,9 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
                 targetStr = String(c.target);
             }
         } else {
-            targetStr = `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+            targetStr = esFamiliaPicos(c.target)
+                ? `${etiquetaFamiliaPicos(c.target)}${c.target.offset ? `[t-${c.target.offset}]` : ''}`
+                : `${INDICATOR_LABELS[c.target.name] || c.target.name}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
         }
         return { source: `${tfStr}${sourceStr}:`, target: `${compStr} ${targetStr}` };
     } else if (c.type === 'price_level_distance') {

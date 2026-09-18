@@ -115,6 +115,15 @@ export enum IndicatorType {
     VOL_ZONE_HIGH = "Zona alta",
     VOL_ZONE_LOW = "Zona baja",
     LAST_PIVOT = "Ultimo pivote",
+    // Picos y valles ENUMERADOS (PRD 2026-09-18): la familia de «Ultimo
+    // pivote» con la LISTA de los últimos giros del día. `pivot_rank=1` es
+    // idéntico a «Ultimo pivote»; rank>1 mira hacia atrás en el índice de
+    // EVENTOS (no de velas) — lo que hace falta para un
+    // hombro-cabeza-hombro o un doble techo. Con swing_dir="down", pico =
+    // valle. Los strings coinciden EXACTAMENTE con el enum del backend.
+    PICO = "Pico",
+    EDAD_PICO = "Edad del pico",
+    VOLUMEN_PICO = "Volumen del pico",
     RETRACEMENT = "Retroceso (%)",
     ABSORPTION = "Absorption",
     WICK_RATIO = "Wick Ratio",
@@ -264,6 +273,11 @@ export interface IndicatorConfig {
     wick_level?: number;
     // "Retroceso (%)": impulso al alza ("up") o a la baja ("down").
     swing_dir?: "up" | "down";
+    // "Pico"/"Edad del pico"/"Volumen del pico": cuál de los últimos giros
+    // del día devuelve el indicador. 1 = el último confirmado (idéntico a
+    // «Ultimo pivote»), 2 = el anterior, 3 = el de antes... Por encima de 16
+    // el motor da NaN (tamaño del búfer). Viaja tal cual en el JSON.
+    pivot_rank?: number;
     // Perfil de volumen: anchura de franja (% del primer precio del dia) y
     // liston para que una franja cuente como nodo (% del volumen del POC).
     bin_pct?: number;
