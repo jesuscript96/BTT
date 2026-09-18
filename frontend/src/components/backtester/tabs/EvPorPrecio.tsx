@@ -133,6 +133,10 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
   // salidas (17-sep, Jaume). Bajo = el problema son las salidas, no los locates.
   const captura = (b: { ev: number | null; mfe: number | null }) => (b.ev == null || b.mfe == null || !(b.mfe > 0) ? null : (b.ev / b.mfe) * 100);
   const pct0 = (v: number | null) => (v == null ? "—" : `${v.toFixed(0)} %`);
+  // TRAMO MÁS FLOJO (Jaume, 18-sep: «añade ambos datos, el más flojo y el puro
+  // de toda la corrida, así se puede comparar»): de los seis tramos de precio
+  // con ≥ 20 trades, el de menor EV, TAL CUAL (sin margen), como el general.
+  const tramoFlojo = datos.tramos.filter((t) => t.n >= 20 && t.ev != null).reduce<(typeof datos.tramos)[number] | null>((m, t) => (m == null || (t.ev as number) < (m.ev as number) ? t : m), null);
   const colorDe = (v: number | null) => (v == null ? undefined : v >= 0 ? "var(--color-ec-copper-bright)" : "var(--color-ec-loss)");
 
   return (
@@ -165,8 +169,23 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
           ))}
         </div>
         <span className="ml-auto mr-3 text-[10px] font-mono text-[var(--color-ec-text-secondary)]">
-          EV {pct(datos.total.ev)} · MFE {pct(datos.total.mfe)} · Fade {pct(datos.total.fade)} · <span title="Captura = EV / MFE: qué parte del recorrido disponible se llevan tus salidas">captura {pct0(captura(datos.total))}</span> · <span title="TOPE SEGÚN EV: no es lo que se pagó, es lo que el EV aguantaría = EV (%) × precio de la acción, en $ por paquete de 100. Aquí por cada 1 $ de precio: multiplica por el precio de la acción (a 5 $, ×5). Por tramo, en la tabla.">tope según EV {datos.total.ev == null || !(datos.total.ev > 0) ? "—" : `${f2(datos.total.ev)} $/paq. por cada 1 $ de precio`}</span> · {datos.total.n} trades
+          EV {pct(datos.total.ev)} · MFE {pct(datos.total.mfe)} · Fade {pct(datos.total.fade)} · captura {pct0(captura(datos.total))}
+          <InfoTooltip position="left" width={300} title="Captura" text="Captura = EV / MFE: qué parte del recorrido que hubo se llevan tus salidas. Orientación gruesa para un fade intradía con parciales: entre el 20 y el 40 % es lo normal; por debajo del 15 % las salidas están lejos del movimiento; por encima del 50 % es raro. Va por comparación entre tramos y entre versiones; no se maximiza a ciegas (aguantar más sube la captura y puede hundir el EV)." />
+          {" · "}{datos.total.n} trades
         </span>
+      </div>
+      {/* Los DOS topes según EV, puros (sin margen): el de toda la corrida y el
+          del tramo de precio más flojo. Jaume, 18-sep: los dos para compararlos;
+          el margen para real lo pone él. */}
+      <div className="px-3 pb-1 -mt-1 flex items-center justify-end gap-1 text-[10px] font-mono text-[var(--color-ec-text-secondary)]">
+        <span className="uppercase tracking-[0.08em] font-semibold" style={{ fontSize: 9.5, color: "var(--color-ec-text-muted)" }}>Tope según EV</span>
+        <InfoTooltip position="left" width={340} title="Tope según EV" text="El precio de locate que el EV aguanta, en $ POR PAQUETE de 100 acciones y POR CADA 1 $ DE PRECIO de la acción: multiplica por el precio de la acción que tengas delante (a 3 $, ×3; a 0,60 $, ×0,6). Sale de EV (%) × precio: el locate cuesta precio del paquete / 100 por acción y el EV da EV % × precio por acción; a ese precio de paquete el locate se come el EV entero. NO es lo que se pagó en la simulación (eso lo decide el rango de locates). Es el equilibrio exacto, SIN margen por comisiones, ruido del EV ni paquetes enteros (20 acciones pagan el paquete de 100): el margen que quieras dejarte lo pones tú. Por tramo de precio, en la columna TOPE EV de la tabla." />
+        <span>{" · "}toda la corrida <b style={{ color: "var(--color-ec-copper-bright)" }}>{datos.total.ev == null || !(datos.total.ev > 0) ? "—" : `${f2(datos.total.ev)} $/paq. por cada 1 $`}</b></span>
+        <InfoTooltip position="left" width={320} title="Toda la corrida" text={`El EV PURO de la estrategia entera (${pct(datos.total.ev)}, los ${datos.total.n} trades de todos los precios) hecho tope de locate. Un solo número para cualquier acción, pero es una media: en los tramos de precio donde la estrategia gana menos permite pagar de más, y en los que gana más, de menos.`} />
+        <span>{" · "}tramo más flojo <b style={{ color: "var(--color-ec-copper-bright)" }}>{tramoFlojo == null || !((tramoFlojo.ev as number) > 0) ? "—" : `${f2(tramoFlojo.ev as number)} $/paq. por cada 1 $`}</b>{tramoFlojo ? ` [${etiquetaRango(tramoFlojo.lo, tramoFlojo.hi)} $, n ${tramoFlojo.n}]` : ""}</span>
+        <InfoTooltip position="left" width={340} title="Tramo más flojo" text={tramoFlojo
+          ? `De los seis tramos de precio de la tabla con al menos 20 trades, el que tiene el EV más bajo: ${etiquetaRango(tramoFlojo.lo, tramoFlojo.hi)} $, EV ${pct(tramoFlojo.ev)} con ${tramoFlojo.n} trades, hecho tope de locate y también PURO (sin margen). Es el número prudente: si lo usas para todos los precios, no pagas de más en ningún tramo. La diferencia con el de toda la corrida es cuánto permite de más el general en el tramo donde la estrategia gana menos. Cada tramo tiene el suyo en la columna TOPE EV.`
+          : "Ningún tramo de precio llega a 20 trades: no hay tramo más flojo que valga."} />
       </div>
 
       <div className="flex-1 min-h-0 px-3 pb-2" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 440px", gap: 18 }}>
@@ -220,8 +239,8 @@ export default function EvPorPrecio({ trades }: { trades: TradeRecord[] }) {
                     {m === "ev" ? "EV" : m === "mfe" ? "MFE" : "FADE"}
                   </th>
                 ))}
-                <th className="text-right font-semibold pb-1" style={{ fontSize: 9.5, letterSpacing: "0.08em" }} title="Captura = EV / MFE: qué parte del recorrido disponible se llevan tus salidas. Orientación: 20-40 % normal, < 15 % salidas lejos del movimiento, > 50 % raro. Va por comparación.">CAPT.</th>
-                <th className="text-right font-semibold pb-1" style={{ fontSize: 9.5, letterSpacing: "0.08em" }} title="TOPE SEGÚN EV: no es lo que se pagó, es el precio por paquete de 100 que el EV del tramo aguantaría = EV (%) × precio medio de entrada del tramo">TOPE EV</th>
+                <th className="text-right font-semibold pb-1" style={{ fontSize: 9.5, letterSpacing: "0.08em", whiteSpace: "nowrap" }}>CAPT.<InfoTooltip position="left" width={280} title="Captura" text="Captura = EV / MFE del tramo: qué parte del recorrido que hubo se llevan tus salidas. Orientación: 20-40 % normal, < 15 % salidas lejos del movimiento, > 50 % raro. Va por comparación entre tramos." /></th>
+                <th className="text-right font-semibold pb-1" style={{ fontSize: 9.5, letterSpacing: "0.08em", whiteSpace: "nowrap" }}>TOPE EV<InfoTooltip position="left" width={300} title="Tope según EV, por tramo" text="El precio de locate, en $ por paquete de 100, que el EV de ESTE tramo aguanta = EV (%) del tramo × precio medio de entrada de sus trades. Puro, sin margen. NO es lo que se pagó en la simulación. Es el número que usa la puerta «por rango» si copias los EV de esta tabla al panel." /></th>
                 <th className="text-right font-semibold pb-1" style={{ fontSize: 9.5, letterSpacing: "0.08em" }}>N</th>
               </tr>
             </thead>
