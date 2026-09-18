@@ -96,9 +96,15 @@ class Evento:
     nivel: Optional[int] = None
     accion_piramide: Optional[str] = None   # 'add' | 'reduce'
     posicion_total: Optional[float] = None
+    # La cuenta de trading (18-sep-2026). None = la principal (la de
+    # riesgo_usd del cuadro de mandos); un nombre = una de las «otras
+    # cuentas», que opera la misma senal con otro riesgo y otras acciones.
+    cuenta: Optional[str] = None
 
     def __str__(self) -> str:
         cab = f"[{self.tipo.upper()}] {self.ticker} · {self.estrategia}"
+        if self.cuenta:
+            cab += f" · [{self.cuenta}]"
         acc = f"{self.acciones:,.0f}" if self.acciones is not None else "?"
         if self.tipo == "entrada":
             stop = f"{self.stop:.4f}" if self.stop is not None else "sin stop"
@@ -699,8 +705,55 @@ class MotorAlertas:
 
     def __init__(self, estrategias: list[dict]):
         """`estrategias` es lo que devuelve /api/bot-alerts/vigiladas."""
-        self.estrategias = [self._compilar(e) for e in estrategias]
+        self.estrategias = self._compilar_todas(estrategias)
         self._estado: dict[tuple[str, str], _EstadoPar] = {}
+
+    # ── Varias cuentas por estrategia (18-sep-2026) ─────────────────────────
+    #
+    # Jaume opera a veces la MISMA estrategia con dos cuentas de distinto
+    # riesgo (300/300 y 200/200). La senal es una; las acciones, no: ni los
+    # redondeos, ni los topes, ni el cuadre de los tramos («el ultimo se lleva
+    # el resto») son proporcionales, asi que no vale una regla de tres sobre
+    # la principal. Cada cuenta corre su propio simulador con su riesgo y lleva
+    # su propio libro de acciones avisadas.
+    #
+    # COMO: cada estrategia vigilada se expande en una ENTRADA POR CUENTA. La
+    # principal conserva `clave == strategy_id` y `cuenta None` (todo lo de
+    # antes sigue igual); las otras llevan `clave = strategy_id::nombre`. El
+    # estado del dia va por (ticker, clave). Las senales (lo caro) se calculan
+    # una vez por estrategia y por vela y se comparten entre sus cuentas.
+    @staticmethod
+    def _por_cuenta(e: dict) -> list[dict]:
+        """La estrategia tal cual (principal) + una copia por cada otra cuenta."""
+        salida = [dict(e, cuenta=None, clave=e["strategy_id"])]
+        for c in (e.get("cuentas") or []):
+            try:
+                riesgo = float(c.get("riesgo_usd") or 0)
+            except (TypeError, ValueError):
+                continue
+            if riesgo <= 0:
+                continue
+            nombre = str(c.get("nombre") or "").strip() or f"cuenta {len(salida) + 1}"
+            rp = c.get("riesgo_piramide_usd")
+            salida.append(dict(
+                e, cuenta=nombre, clave=f"{e['strategy_id']}::{nombre}",
+                riesgo_usd=riesgo,
+                # La otra cuenta no tiene cantidades por piramide propias: su
+                # riesgo de piramide es uno solo (o el de entrada si no se dijo).
+                riesgo_piramide_usd=(float(rp) if rp else riesgo),
+                riesgos_piramide=None,
+            ))
+        return salida
+
+    def _compilar_todas(self, estrategias: list[dict]) -> list[dict]:
+        out = []
+        for e in estrategias:
+            compilado = None
+            for ec in self._por_cuenta(e):
+                item = self._compilar(ec, compilado)
+                compilado = item["compiled"]      # se comparte entre cuentas
+                out.append(item)
+        return out
 
     @staticmethod
     def _firma(e: dict) -> str:
@@ -709,11 +762,11 @@ class MotorAlertas:
         return _json.dumps({
             "d": e.get("definition"), "r": e.get("riesgo_usd"),
             "rp": e.get("riesgo_piramide_usd"), "c": e.get("capital_usd"),
-            "rpl": e.get("riesgos_piramide"),
+            "rpl": e.get("riesgos_piramide"), "cta": e.get("cuenta"),
             "ev": e.get("ev_pct"), "evr": e.get("ev_rangos"), "v": e.get("ventana"), "n": e.get("name"),
         }, sort_keys=True, default=str)
 
-    def _compilar(self, e: dict) -> dict:
+    def _compilar(self, e: dict, compilado=None) -> dict:
         sdef = e["definition"]
         # LA FIRMA SE CALCULA ANTES DE COMPILAR. `compile_strategy_def` modifica
         # la definicion EN SITIO (normaliza nombres de indicadores), asi que
@@ -723,6 +776,10 @@ class MotorAlertas:
         firma = self._firma(e)
         return {
             "strategy_id": e["strategy_id"],
+            # La clave del estado del dia: strategy_id (principal) o
+            # strategy_id::cuenta. Y la cuenta en claro para los avisos.
+            "clave": e.get("clave") or e["strategy_id"],
+            "cuenta": e.get("cuenta"),
             "name": e["name"],
             "riesgo_usd": float(e["riesgo_usd"]),
             # Del cuadro de mandos, no de la estrategia: el bot no conoce
@@ -741,8 +798,9 @@ class MotorAlertas:
             "ev_rangos": e.get("ev_rangos"),
             "definition": sdef,
             "ventana": e.get("ventana") or {},
-            # Se compila UNA vez, no en cada vela: es lo caro del motor.
-            "compiled": compile_strategy_def(sdef),
+            # Se compila UNA vez, no en cada vela: es lo caro del motor. Las
+            # otras cuentas de la misma estrategia reutilizan la de la principal.
+            "compiled": compilado if compilado is not None else compile_strategy_def(sdef),
             "_firma": firma,
         }
 
@@ -767,23 +825,29 @@ class MotorAlertas:
         SOLO SE RECOMPILA LO QUE CAMBIO. Compilar es lo caro; la firma
         (definicion + riesgos + ventana) decide si hace falta.
         """
-        viejas = {e["strategy_id"]: e for e in self.estrategias}
+        viejas = {e["clave"]: e for e in self.estrategias}
         resultado = {"anyadidas": [], "quitadas": [], "cambiadas": []}
         lista: list[dict] = []
         vistas: set = set()
         for e in estrategias:
-            sid = e["strategy_id"]
-            vistas.add(sid)
-            prev = viejas.get(sid)
-            if prev is not None and prev.get("_firma") == self._firma(e):
-                lista.append(prev)
-                continue
-            lista.append(self._compilar(e))
-            (resultado["cambiadas"] if prev is not None
-             else resultado["anyadidas"]).append(e["name"])
-        for sid, prev in viejas.items():
-            if sid not in vistas:
-                resultado["quitadas"].append(prev["name"])
+            compilado = None
+            for ec in self._por_cuenta(e):
+                clave = ec["clave"]
+                vistas.add(clave)
+                prev = viejas.get(clave)
+                if prev is not None and prev.get("_firma") == self._firma(ec):
+                    lista.append(prev)
+                    compilado = prev["compiled"]
+                    continue
+                item = self._compilar(ec, compilado)
+                compilado = item["compiled"]
+                lista.append(item)
+                etiqueta = e["name"] + (f" [{ec['cuenta']}]" if ec.get("cuenta") else "")
+                (resultado["cambiadas"] if prev is not None
+                 else resultado["anyadidas"]).append(etiqueta)
+        for clave, prev in viejas.items():
+            if clave not in vistas:
+                resultado["quitadas"].append(prev["name"] + (f" [{prev['cuenta']}]" if prev.get("cuenta") else ""))
         self.estrategias = lista
         return resultado
 
@@ -838,9 +902,11 @@ class MotorAlertas:
             # (solo se admiten entradas con i < n-1) y con cero revienta.
             return eventos
 
+        senales_por_estrategia: dict = {}   # una vez por estrategia, compartida entre sus cuentas
         for est in self.estrategias:
             try:
-                eventos.extend(self._procesar_estrategia(ticker, frame, daily_stats or {}, est))
+                eventos.extend(self._procesar_estrategia(ticker, frame, daily_stats or {}, est,
+                                                         senales_por_estrategia))
             except Exception as exc:  # noqa: BLE001
                 # Una estrategia que falla no puede callar a las demas: el bot
                 # sigue vigilando el resto y el fallo queda en el log.
@@ -870,14 +936,22 @@ class MotorAlertas:
 
     def _procesar_estrategia(
         self, ticker: str, frame: pd.DataFrame, daily_stats: dict, est: dict,
+        senales_cache: Optional[dict] = None,
     ) -> list[Evento]:
         eventos: list[Evento] = []
         n = len(frame)
         i = n - 1
         sdef = est["definition"]
-        estado = self._par(ticker, est["strategy_id"])
+        estado = self._par(ticker, est.get("clave") or est["strategy_id"])
 
-        senales = translate_strategy(frame, sdef, daily_stats, compiled=est["compiled"])
+        # Las senales no dependen del riesgo: con varias cuentas se calculan
+        # una vez por estrategia y las demas cuentas las reutilizan.
+        if senales_cache is not None and est["strategy_id"] in senales_cache:
+            senales = senales_cache[est["strategy_id"]]
+        else:
+            senales = translate_strategy(frame, sdef, daily_stats, compiled=est["compiled"])
+            if senales_cache is not None:
+                senales_cache[est["strategy_id"]] = senales
         res = simulate(**_kwargs_simulate(frame, senales, sdef, est["riesgo_usd"],
                                           est.get("riesgo_piramide_usd"),
                                           est.get("capital_usd"),
@@ -909,7 +983,8 @@ class MotorAlertas:
                 if cuadrado is not None:
                     cantidad = float(round(cantidad))
                 eventos.append(Evento(
-                    tipo="piramide", ticker=ticker,
+                    tipo="piramide", ticker=ticker, cuenta=est.get("cuenta"),
+                    riesgo_usd=est["riesgo_usd"],   # para ordenar los bloques por cuenta
                     strategy_id=est["strategy_id"], estrategia=est["name"],
                     momento=momento, precio=float(ex.get("price", precio)),
                     direccion=direccion, acciones=cantidad,
@@ -980,7 +1055,8 @@ class MotorAlertas:
                 cierra, total = cierra_av, avisado
                 restante = max(0.0, pendiente - cierra_av)
             eventos.append(Evento(
-                tipo="salida", ticker=ticker,
+                tipo="salida", ticker=ticker, cuenta=est.get("cuenta"),
+                riesgo_usd=est["riesgo_usd"],   # para ordenar los bloques por cuenta
                 strategy_id=est["strategy_id"], estrategia=est["name"],
                 momento=momento, precio=float(t.get("exit_price", precio)),
                 direccion=direccion, motivo=str(t.get("exit_reason") or "?"),
@@ -1043,7 +1119,7 @@ class MotorAlertas:
                         acciones = float(round(acciones))
                         estado.acciones_avisadas[i] = acciones
                     eventos.append(Evento(
-                        tipo="entrada", ticker=ticker,
+                        tipo="entrada", ticker=ticker, cuenta=est.get("cuenta"),
                         strategy_id=est["strategy_id"], estrategia=est["name"],
                         momento=momento, precio=precio, direccion=direccion,
                         acciones=acciones, stop=stop,

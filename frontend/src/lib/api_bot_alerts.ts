@@ -57,12 +57,23 @@ export interface EstrategiaCandidata {
   }[];
   /** Lo guardado: una cantidad por piramide (null = sin cantidad propia). */
   riesgos_piramide?: (number | null)[] | null;
+  /** OTRAS cuentas que operan esta estrategia con otro riesgo (18-sep-2026).
+   *  La principal es riesgo_usd / riesgo_piramide_usd. El bot corre el
+   *  simulador una vez por cuenta y Telegram junta los bloques en un mensaje. */
+  cuentas?: CuentaExtra[] | null;
   hard_stop: Record<string, unknown> | null;
   ventana: Ventana;
   /** La ventana de ENTRADAS (`entry_time_windows`), que NO es la de sesion.
    *  Son capas distintas: la sesion dice que velas existen, esta cuando se
    *  puede ABRIR (entradas y piramides). */
   ventana_entradas?: { inicio: string | null; fin: string | null }[];
+}
+
+export interface CuentaExtra {
+  nombre: string;
+  riesgo_usd: number;
+  /** null = el mismo riesgo que la entrada. */
+  riesgo_piramide_usd: number | null;
 }
 
 export function listarEstrategias(): Promise<EstrategiaCandidata[]> {
@@ -84,6 +95,8 @@ export function guardarVigilancia(
     /** EV por tramo de precio; se manda la lista entera (con sus null) para
      *  que el backend pueda borrar un tramo que antes estaba puesto. */
     ev_rangos?: Array<{ lo: number; hi: number | null; ev_pct: number | null }> | null;
+    /** Otras cuentas; [] borra las que hubiera. */
+    cuentas?: CuentaExtra[] | null;
   },
 ): Promise<{ strategy_id: string; activa: boolean; riesgo_usd: number }> {
   return apiRequest("/bot-alerts/watch", {
@@ -97,6 +110,8 @@ export function guardarVigilancia(
       ...(extra?.capital_usd ? { capital_usd: extra.capital_usd } : {}),
       ...(extra?.ev_pct ? { ev_pct: extra.ev_pct } : {}),
       ...(extra?.ev_rangos ? { ev_rangos: extra.ev_rangos } : {}),
+      // Se manda siempre que venga (aunque sea []): quitar una cuenta tambien es guardar.
+      ...(extra?.cuentas !== undefined ? { cuentas: extra.cuentas ?? [] } : {}),
     }),
   });
 }
@@ -147,6 +162,8 @@ export interface EventoAlerta {
   nivel: number | null;
   accion_piramide: string | null;
   posicion_total: number | null;
+  /** La cuenta de trading; null = la principal (18-sep-2026). */
+  cuenta?: string | null;
   /** Cubo de la estrategia que lo genero, para separar las dos tablas. */
   origen: "portfolio" | "incubadora";
   /**

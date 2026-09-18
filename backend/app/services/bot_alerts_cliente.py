@@ -40,7 +40,11 @@ def id_evento(ev: Any) -> str:
     tipo), de modo que reenviar la misma tanda tras un fallo de red no duplica
     filas: el backend hace INSERT OR REPLACE sobre esta clave.
     """
-    return f"{ev.ticker}|{ev.strategy_id}|{str(ev.momento)[:19]}|{ev.tipo}"
+    base = f"{ev.ticker}|{ev.strategy_id}|{str(ev.momento)[:19]}|{ev.tipo}"
+    # Con varias cuentas (18-sep-2026) cada cuenta es un aviso distinto: mismas
+    # senal y hora, otras acciones. La principal conserva el id de siempre.
+    cuenta = getattr(ev, "cuenta", None)
+    return f"{base}|{cuenta}" if cuenta else base
 
 
 def evento_a_dict(ev: Any, origen: str, modo: str) -> dict:
@@ -64,6 +68,7 @@ def evento_a_dict(ev: Any, origen: str, modo: str) -> dict:
         "origen": origen,
         "modo": modo,
         "estado": getattr(ev, "estado", "alerta"),
+        "cuenta": getattr(ev, "cuenta", None),
     }
 
 

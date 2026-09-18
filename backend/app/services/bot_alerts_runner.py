@@ -218,8 +218,11 @@ class RunnerAlertas:
             except Exception:          # noqa: BLE001
                 return None            # una consulta no puede tumbar nada
 
+        # Con varias cuentas la misma estrategia aparece repetida en el motor
+        # (una entrada por cuenta); para estimar el stop basta una por estrategia.
+        unicas = list({e["strategy_id"]: e for e in self.motor.estrategias}.values())
         return estimar_por_estrategia(
-            self.motor.estrategias, lambda e: e["definition"],
+            unicas, lambda e: e["definition"],
             frame, len(frame) - 1, precio, _sl_stop_de,
         )
 
