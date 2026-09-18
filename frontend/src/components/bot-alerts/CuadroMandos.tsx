@@ -351,7 +351,13 @@ export default function CuadroMandos() {
   // UN mensaje con un bloque por cuenta, la de más riesgo primero.
   type CuentaFila = { nombre: string; riesgo: string; riesgoPir: string };
   const [cuentas, setCuentas] = useState<Record<string, CuentaFila[]>>({});
-  const [cuentasAbierto, setCuentasAbierto] = useState<Record<string, boolean>>({});
+  // Rejilla comun de las columnas Riesgo y Riesgo pir.: una fila de 22 px por
+  // casilla; la fila principal mide tantas casillas como piramides tenga.
+  const ALTO_FILA = 22;
+  const alturaFilaPrincipal = (s: EstrategiaCandidata) => {
+    const n = s.piramida ? Math.max(1, s.piramides?.length ?? 0) : 1;
+    return n * ALTO_FILA + (n - 1) * 3;
+  };
   /** Riesgo del ANYADIDO y capital de la cuenta, por estrategia. Vacio = no
    *  dicho: el anyadido cae a lo que diga la estrategia, y sin capital el
    *  backend no deja activar una estrategia con stop hibrido. */
@@ -519,7 +525,6 @@ export default function CuadroMandos() {
           nombre: c.nombre || "", riesgo: String(c.riesgo_usd),
           riesgoPir: c.riesgo_piramide_usd != null ? String(c.riesgo_piramide_usd) : "",
         }))])));
-        setCuentasAbierto(Object.fromEntries(s.map((x) => [x.strategy_id, (x.cuentas || []).length > 0])));
         setEvs(Object.fromEntries(
           s.map((x) => [x.strategy_id, x.ev_pct != null ? String(x.ev_pct) : ""]),
         ));
@@ -982,91 +987,80 @@ export default function CuadroMandos() {
                     {s.bias === "short" ? "Corto" : s.bias === "long" ? "Largo" : "—"}
                   </Td>
                   <Td num>
+                    {/* UNA FILA POR CUENTA, alineada con la columna de al lado
+                        (18-sep-2026, Jaume: «si añado una cuenta el diseño
+                        tiene que estar alineado»). La primera es la principal
+                        (riesgo_usd de siempre; sus pirámides van en la columna
+                        de pirámides, una casilla por pirámide). Cada otra
+                        cuenta es una fila: nombre · riesgo aquí, y su riesgo de
+                        pirámide en la columna de pirámides, a la misma altura.
+                        La altura de la fila principal la marca el número de
+                        pirámides, para que las dos columnas casen. */}
                     <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                        <button
-                          type="button"
-                          onClick={() => setCuentasAbierto((p) => ({ ...p, [s.strategy_id]: !p[s.strategy_id] }))}
-                          title="Otras cuentas que operan esta estrategia con otro riesgo. Cada aviso de Telegram lleva un bloque por cuenta (la de más riesgo primero) con sus acciones."
-                          style={{ background: "transparent", border: `1px solid ${color.border}`, color: (cuentas[s.strategy_id]?.length ?? 0) > 0 ? color.copperText : color.textMuted, fontSize: 9.5, fontFamily: font.mono, padding: "1px 5px", cursor: "pointer", height: 22 }}
-                        >
-                          {cuentasAbierto[s.strategy_id] ? "▾ ctas" : `▸ ctas${(cuentas[s.strategy_id]?.length ?? 0) > 0 ? ` +${cuentas[s.strategy_id].length}` : ""}`}
-                        </button>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4, height: alturaFilaPrincipal(s) }}>
+                        {(cuentas[s.strategy_id]?.length ?? 0) > 0 && (
+                          <span style={{ width: 62, fontSize: 9.5, color: color.textMuted, fontFamily: font.mono, textAlign: "right" }} title="La cuenta principal: el riesgo de siempre.">principal</span>
+                        )}
                         <CampoNum
                           valor={riesgos[s.strategy_id] ?? ""}
                           onChange={(v) => setRiesgos((p) => ({ ...p, [s.strategy_id]: v }))}
                           onBlur={() => s.activa && guardarEstrategia(s, true)}
-                          titulo="Riesgo por operación de la entrada (cuenta principal)."
+                          titulo="Lo que apuestas por operación en la cuenta principal (en $). Cómo se traduce a acciones lo dice la estrategia."
                         />
+                        {(cuentas[s.strategy_id]?.length ?? 0) > 0 && <span style={{ width: 14 }} />}
                       </div>
-                      {cuentasAbierto[s.strategy_id] && (
-                        <>
-                          {(cuentas[s.strategy_id] || []).map((c, k) => (
-                            <div key={k} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                              <input
-                                type="text" value={c.nombre} placeholder={`cuenta ${k + 2}`}
-                                title="Nombre de la cuenta: es la etiqueta de su bloque en el mensaje de Telegram."
-                                onChange={(ev) => setCuentas((prev) => {
-                                  const lista = (prev[s.strategy_id] || []).slice();
-                                  lista[k] = { ...lista[k], nombre: ev.target.value };
-                                  return { ...prev, [s.strategy_id]: lista };
-                                })}
-                                onBlur={() => s.activa && guardarEstrategia(s, true)}
-                                style={{ width: 62, background: color.bgElevated, border: `0.5px solid ${color.border}`, borderRadius: 2, color: color.textPrimary, fontFamily: font.mono, fontSize: 10.5, padding: "2px 5px" }}
-                              />
-                              <CampoNum
-                                valor={c.riesgo}
-                                onChange={(v) => setCuentas((prev) => {
-                                  const lista = (prev[s.strategy_id] || []).slice();
-                                  lista[k] = { ...lista[k], riesgo: v };
-                                  return { ...prev, [s.strategy_id]: lista };
-                                })}
-                                onBlur={() => s.activa && guardarEstrategia(s, true)}
-                                aviso={!(Number(c.riesgo) > 0)}
-                                titulo="Riesgo por operación de la entrada en esta cuenta."
-                              />
-                              <CampoNum
-                                valor={c.riesgoPir}
-                                onChange={(v) => setCuentas((prev) => {
-                                  const lista = (prev[s.strategy_id] || []).slice();
-                                  lista[k] = { ...lista[k], riesgoPir: v };
-                                  return { ...prev, [s.strategy_id]: lista };
-                                })}
-                                onBlur={() => s.activa && guardarEstrategia(s, true)}
-                                titulo="Riesgo de cada pirámide en esta cuenta. Vacío = el mismo que la entrada."
-                              />
-                              <button
-                                type="button" title="Quitar esta cuenta"
-                                onClick={() => {
-                                  setCuentas((prev) => ({ ...prev, [s.strategy_id]: (prev[s.strategy_id] || []).filter((_, j) => j !== k) }));
-                                  if (s.activa) setTimeout(() => guardarEstrategia({ ...s }, true), 0);
-                                }}
-                                style={{ background: "transparent", border: "none", color: color.textMuted, cursor: "pointer", fontSize: 12, padding: "0 2px" }}
-                              >×</button>
-                            </div>
-                          ))}
+                      {(cuentas[s.strategy_id] || []).map((c, k) => (
+                        <div key={k} style={{ display: "flex", alignItems: "center", gap: 4, height: ALTO_FILA }}>
+                          <input
+                            type="text" value={c.nombre} placeholder={`cuenta ${k + 2}`}
+                            title="Nombre de la cuenta: es su etiqueta en el mensaje de Telegram."
+                            onChange={(ev) => setCuentas((prev) => {
+                              const lista = (prev[s.strategy_id] || []).slice();
+                              lista[k] = { ...lista[k], nombre: ev.target.value };
+                              return { ...prev, [s.strategy_id]: lista };
+                            })}
+                            onBlur={() => s.activa && guardarEstrategia(s, true)}
+                            style={{ width: 62, height: 22, background: color.bgElevated, border: `0.5px solid ${color.border}`, borderRadius: 2, color: color.textPrimary, fontFamily: font.mono, fontSize: 10.5, padding: "2px 5px" }}
+                          />
+                          <CampoNum
+                            valor={c.riesgo}
+                            onChange={(v) => setCuentas((prev) => {
+                              const lista = (prev[s.strategy_id] || []).slice();
+                              lista[k] = { ...lista[k], riesgo: v };
+                              return { ...prev, [s.strategy_id]: lista };
+                            })}
+                            onBlur={() => s.activa && guardarEstrategia(s, true)}
+                            aviso={!(Number(c.riesgo) > 0)}
+                            titulo="Lo que apuestas por operación en esta cuenta (en $)."
+                          />
                           <button
-                            type="button"
-                            onClick={() => setCuentas((prev) => ({ ...prev, [s.strategy_id]: [...(prev[s.strategy_id] || []), { nombre: "", riesgo: "", riesgoPir: "" }] }))}
-                            style={{ background: "transparent", border: `1px solid ${color.border}`, color: color.textMuted, fontSize: 9.5, fontFamily: font.mono, padding: "1px 5px", cursor: "pointer", height: 20 }}
-                          >+ cuenta</button>
-                          {(cuentas[s.strategy_id]?.length ?? 0) > 0 && (
-                            <span style={{ fontSize: 9, color: color.textMuted, fontFamily: font.mono }}>nombre · riesgo · riesgo pir.</span>
-                          )}
-                        </>
-                      )}
+                            type="button" title="Quitar esta cuenta"
+                            onClick={() => {
+                              setCuentas((prev) => ({ ...prev, [s.strategy_id]: (prev[s.strategy_id] || []).filter((_, j) => j !== k) }));
+                              if (s.activa) setTimeout(() => guardarEstrategia({ ...s }, true), 0);
+                            }}
+                            style={{ width: 14, background: "transparent", border: "none", color: color.textMuted, cursor: "pointer", fontSize: 12, padding: 0, lineHeight: 1 }}
+                          >×</button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setCuentas((prev) => ({ ...prev, [s.strategy_id]: [...(prev[s.strategy_id] || []), { nombre: "", riesgo: "", riesgoPir: "" }] }))}
+                        title="Otra cuenta que opera esta estrategia con otro riesgo. El aviso de Telegram lleva una línea por cuenta con sus acciones."
+                        style={{ background: "transparent", border: `1px solid ${color.border}`, color: color.textMuted, fontSize: 9.5, fontFamily: font.mono, padding: "0 5px", cursor: "pointer", height: 18, marginTop: 1 }}
+                      >+ cuenta</button>
                     </div>
                   </Td>
                   <Td num>
-                    {/* Solo si la estrategia piramida. Vacio = usa lo que diga
-                        su definicion, que es lo que pasaba hasta hoy. */}
-                    {s.piramida && (s.piramides?.length ?? 0) > 0 ? (
-                      // UNA CASILLA POR PIRAMIDE (16-sep-2026): cada una puede
-                      // llevar su dinero. La etiqueta dice cual es (grupo,
-                      // añade/quita) y el tooltip, lo que hace y cuando dispara.
-                      <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
-                        {(s.piramides || []).map((p, k) => (
-                          <div key={p.i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    {/* Misma rejilla que la columna de riesgo: la fila principal
+                        (una casilla POR PIRAMIDE desde el 16-sep-2026, cada una
+                        con su dinero) y debajo una fila por cuenta extra con su
+                        riesgo de pirámide. Vacío = usa lo que diga la
+                        definición (principal) o el riesgo de entrada (cuentas). */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-end", justifyContent: "center", height: alturaFilaPrincipal(s) }}>
+                        {s.piramida && (s.piramides?.length ?? 0) > 0 ? (s.piramides || []).map((p, k) => (
+                          <div key={p.i} style={{ display: "flex", alignItems: "center", gap: 5, height: ALTO_FILA }}>
                             <span style={{ fontSize: 9.5, color: color.textMuted, whiteSpace: "nowrap", fontFamily: font.mono }}
                                   title={`Pirámide ${p.i + 1} · grupo ${p.grupo + 1} (${p.modo === "sequential" ? "secuencial" : "individual"}) · ${p.accion === "reduce" ? "quita" : "añade"} ${p.cantidad} · ${p.disparo}`}>
                               P{p.i + 1}·G{p.grupo + 1} {p.accion === "reduce" ? "−" : "+"}
@@ -1081,15 +1075,29 @@ export default function CuadroMandos() {
                               })}
                               onBlur={() => s.activa && guardarEstrategia(s, true)}
                               titulo={p.accion === "reduce"
-                                ? `Dólares de posición que cierra la pirámide ${p.i + 1} (${p.disparo}). Vacío = lo que diga la estrategia.`
-                                : p.size_by_sl
-                                  ? `Pérdida máxima (riesgo) del añadido ${p.i + 1}, en $ — va por distancia al stop (${p.disparo}). Vacío = lo que diga la estrategia.`
-                                  : `Dólares que añade la pirámide ${p.i + 1} (${p.disparo}). Vacío = lo que diga la estrategia.`}
+                                ? `Lo que quita la pirámide ${p.i + 1} (${p.disparo}), en $. Vacío = lo que diga la estrategia.`
+                                : `Lo que apuestas en la pirámide ${p.i + 1} (${p.disparo}), en $. Cómo se traduce a acciones lo dice la estrategia. Vacío = lo que diga la estrategia.`}
                             />
                           </div>
-                        ))}
+                        )) : <span style={{ color: color.textMuted }}>—</span>}
                       </div>
-                    ) : <span style={{ color: color.textMuted }}>—</span>}
+                      {(cuentas[s.strategy_id] || []).map((c, k) => (
+                        <div key={k} style={{ display: "flex", alignItems: "center", gap: 5, height: ALTO_FILA }}>
+                          {s.piramida ? (
+                            <CampoNum
+                              valor={c.riesgoPir}
+                              onChange={(v) => setCuentas((prev) => {
+                                const lista = (prev[s.strategy_id] || []).slice();
+                                lista[k] = { ...lista[k], riesgoPir: v };
+                                return { ...prev, [s.strategy_id]: lista };
+                              })}
+                              onBlur={() => s.activa && guardarEstrategia(s, true)}
+                              titulo="Lo que apuestas en cada pirámide en esta cuenta (en $). Vacío = lo mismo que la entrada."
+                            />
+                          ) : <span style={{ color: color.textMuted }}>—</span>}
+                        </div>
+                      ))}
+                    </div>
                   </Td>
                   <Td num>
                     {/* Con stop hibrido O con el Modo B de Estilo Cangrejo:
