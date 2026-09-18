@@ -569,6 +569,27 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 18-sep).
 - Origen: J3, J4, J15.
 
+### R-J-04 · El bot se cae, se cuelga o se duplica
+- Situación: (a) el ejecutor o el vigilante muere por excepción; (b) sigue vivo pero sin latido (colgado); (c) se arranca una segunda instancia.
+- Detección: supervisor (proceso) y latido cruzado ejecutor↔vigilante; cerrojo de instancia única.
+- Acción: (a) muerto → el supervisor lo relanza, un intento cada 30 s sin límite; AVISO desde el primer momento (log + Telegram, como todo) y aviso al recuperarse; al volver, reconciliación (R-C-10) antes de nada. (b) colgado → a los 10 s sin latido se mata y se relanza; reintento cada 10 s hasta que vuelva, avisando de lo que pasa. (c) CERROJO DE INSTANCIA ÚNICA obligatorio en los DOS procesos: al arrancar, si ya hay otra instancia viva, la nueva NO arranca y avisa; el humano conserva el control manual del primero para apagarlo cuando quiera.
+- Quién la ejecuta: supervisor.
+- Parámetros: 30 s (relanzar), 10 s (colgado).
+- Si la acción falla: si ejecutor y vigilante mueren a la vez → R-J-05.
+- Prueba: matar cada proceso, colgarlo (bloqueo artificial) y lanzar dos veces, en sombra.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J7, J8, J9.
+
+### R-J-05 · Vigilante externo (latido) y SAI
+- Situación: se apaga la máquina entera (luz, VPS caído): nadie dentro puede avisar.
+- Detección: el vigilante manda un «ping» silencioso cada 60 s a un servicio externo de vigilancia; el servicio da la ALARMA (Telegram + el panel de avisos del cuadro de mandos, que son los mismos logs) cuando faltan 3 pings seguidos (3 min) en horario de mercado. Nada se dice mientras todo va bien.
+- Acción: alarma → control humano (los stops residentes protegen mientras tanto).
+- Quién la ejecuta: servicio externo + humano.
+- Parámetros: latido 60 s; alarma a los 3 fallos.
+- SAI (fase PC): Jaume se compra un SAI; el PC Y EL ROUTER enchufados a él. Protección real: los stops residentes. **PENDIENTE: comprar el SAI** (line-interactive 700-1000 VA con USB: APC Back-UPS BX, Eaton 3S o CyberPower, ≈ 100-150 €).
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J17, J1.
+
 ### R-J-03 · Tabla del modo degradado
 | Qué falla | Abrir nuevas | Gestionar abiertas | Stops | Aviso |
 |---|---|---|---|---|

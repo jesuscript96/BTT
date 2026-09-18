@@ -170,15 +170,15 @@
 
 ## J. Infraestructura: VPS, luz, comunicaciones
 
-- [ ] J1. Se va la luz en casa (fase PC): ¿SAI? ¿Cuánto aguanta? ¿Bastan los stops residentes?
+- [x] J1. → R-J-05 (SAI con PC y router; PENDIENTE comprarlo). Se va la luz en casa (fase PC): ¿SAI? ¿Cuánto aguanta? ¿Bastan los stops residentes?
 - [x] J2. → R-J-01 (30 s prealerta, 60 s emergencia). Se corta Internet en casa: ¿4G de respaldo? ¿A partir de cuántos segundos sin feed se pasa a «no abrir, solo gestionar» y cuántos a «cerrar todo»?
 - [x] J3. → R-J-02 (aviso máximo, reconexión 2/4/8/16/30 s, aviso cada 5 min). Se cae la conexión bot↔DAS (socket local): ¿reconexión automática, cuántos intentos, qué pasa con las órdenes en vuelo? **[API]**
 - [x] J4. → R-J-02 (relanzar y reloguear; 2FA [API]). Se cae DAS (la aplicación): ¿el supervisor la relanza y reloguea sola? ¿Hay 2FA que lo impida? **[API]**
 - [ ] J5. Se cae Sage o el servidor de DAS: ¿teléfono del bróker, app móvil, plan de cierre manual? (runbook)
 - [ ] J6. Se cae Massive: ¿fuente alternativa (L1 de DAS) solo para gestionar lo abierto?
-- [ ] J7. Se cae el bot (excepción): ¿supervisor, tiempo máximo caído, reconciliación al volver, aviso por Telegram?
-- [ ] J8. Bot colgado sin morir (latido parado): ¿quién lo mata y lo relanza?
-- [ ] J9. Dos instancias del bot a la vez (dos PIDs, relanzar sin matar): ¿cerrojo de instancia única?
+- [x] J7. → R-J-04 (relanzar cada 30 s, aviso). Se cae el bot (excepción): ¿supervisor, tiempo máximo caído, reconciliación al volver, aviso por Telegram?
+- [x] J8. → R-J-04 (10 s). Bot colgado sin morir (latido parado): ¿quién lo mata y lo relanza?
+- [x] J9. → R-J-04 (cerrojo obligatorio). Dos instancias del bot a la vez (dos PIDs, relanzar sin matar): ¿cerrojo de instancia única?
 - [ ] J10. VPS: proveedor, ubicación (cerca de NY), Windows Update forzado (ventana de mantenimiento fuera de mercado), reinicios, una sola sesión RDP, coste.
 - [ ] J11. Un solo login de DAS por cuenta: si Jaume abre DAS en casa, expulsa al bot. ¿Segunda cuenta? (P1) **[API]**
 - [ ] J12. Reloj y zona horaria del VPS (todo en ET; DST distinto al de España).
@@ -186,7 +186,7 @@
 - [ ] J14. Actualización forzada de DAS: ¿cómo se detecta y quién la hace?
 - [ ] J15. Sesión de DAS que caduca de noche: ¿relogin antes de las 04:00 y comprobación? **[API]**
 - [x] J16. → R-J-03 (tabla). Modo degradado: tabla de qué se permite en cada estado (todo bien / sin feed / sin DAS / sin bot / sin Telegram).
-- [ ] J17. Vigilante externo: si el bot no da señal de vida en N min, ¿alguien recibe aviso aunque el propio bot esté muerto?
+- [x] J17. → R-J-05 (ping 60 s, alarma a los 3 min). Vigilante externo: si el bot no da señal de vida en N min, ¿alguien recibe aviso aunque el propio bot esté muerto?
 - [ ] J18. Latencia: ¿se mide ida y vuelta orden→confirmación y a partir de cuánto no se opera?
 - [ ] J19. Caída del proveedor de Telegram: ¿el bot sigue operando o se pausa por falta de canal de aviso?
 - [ ] J20. Reinicio del VPS por el panel del proveedor (el socio): ¿arranque automático de DAS y bot con reconciliación antes de nada?
