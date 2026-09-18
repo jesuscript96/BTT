@@ -1,6 +1,6 @@
 import React from 'react';
 import { PyramidingConfig, PyramidGroup, PyramidLevel, Timeframe, emptyPyramidLevel } from '@/types/strategy';
-import { GroupDisplay } from './ConditionBuilder';
+import { AyudaIndicadores, GroupDisplay } from './ConditionBuilder';
 import InfoTooltip from '@/components/backtester/InfoTooltip';
 
 /**
@@ -75,7 +75,7 @@ const selectStyle: React.CSSProperties = {
     cursor: 'pointer',
 };
 
-export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
+const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
     const active = config.active === true;
 
     // Vista normalizada de los grupos: sin `groups` (estrategia de antes) hay
@@ -869,4 +869,13 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
         </div>
     );
 });
-PyramidingBuilder.displayName = "PyramidingBuilder";
+PyramidingBuilderInner.displayName = "PyramidingBuilderInner";
+
+/** Las condiciones de las pirámides usan el mismo GroupDisplay que la entrada
+ *  y la salida, pero fuera de LogicBuilder: sin este proveedor los desplegables
+ *  de indicadores salían sin icono de ayuda (Jaume, 18-sep). */
+export const PyramidingBuilder = (props: Props) => (
+    <AyudaIndicadores>
+        <PyramidingBuilderInner {...props} />
+    </AyudaIndicadores>
+);

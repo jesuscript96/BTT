@@ -401,6 +401,60 @@ interface TooltipContextType {
 }
 const TooltipContext = React.createContext<TooltipContextType | null>(null);
 
+/** Proveedor de los iconos de ayuda de los indicadores para quien use
+ *  GroupDisplay FUERA de LogicBuilder (las condiciones de las pirámides, los
+ *  pasos del camino). Sin él, TooltipIcon devuelve null en silencio y los
+ *  desplegables salen sin icono — es lo que vio Jaume el 18-sep. Mismo cartel
+ *  flotante que LogicBuilder. */
+export const AyudaIndicadores = ({ children }: { children: React.ReactNode }) => {
+    const [activeTooltip, setActiveTooltip] = React.useState<{
+        text: string; x: number; y: number; width?: number; title?: string;
+    } | null>(null);
+    const containerRef = React.useRef<HTMLDivElement>(null);
+    return (
+        <TooltipContext.Provider value={{ setActiveTooltip, containerRef }}>
+            {children}
+            {activeTooltip && typeof document !== "undefined" && createPortal(
+                <div
+                    style={{
+                        position: "fixed",
+                        top: activeTooltip.y,
+                        left: activeTooltip.x,
+                        transform: "translate(0, -100%)",
+                        backgroundColor: "var(--color-ec-bg-elevated)",
+                        color: "var(--color-ec-text-primary)",
+                        border: "0.5px solid var(--color-ec-border)",
+                        borderRadius: 4,
+                        padding: "6px 8px",
+                        lineHeight: 1.3,
+                        width: 185,
+                        zIndex: 100005,
+                        pointerEvents: "none",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+                        fontFamily: "var(--color-ec-sans)",
+                        whiteSpace: "normal",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 2,
+                        textAlign: 'left',
+                    }}
+                >
+                    {activeTooltip.title && (
+                        <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 2 }}>
+                            {activeTooltip.title}
+                        </strong>
+                    )}
+                    <span
+                        style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
+                        dangerouslySetInnerHTML={{ __html: activeTooltip.text }}
+                    />
+                </div>,
+                document.body
+            )}
+        </TooltipContext.Provider>
+    );
+};
+
 export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.BAR_CLOSE]: "Precio de cierre de la barra actual.",
     [IndicatorType.BAR_OPEN]: "Precio de apertura de la barra actual.",
