@@ -627,6 +627,19 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área E · Capital compartido entre estrategias
 
+### R-E-01 · Lados opuestos sobre el mismo ticker: prohibido
+- Situación: una estrategia está corta en un ticker y otra da señal de LARGO en el mismo ticker (o viceversa).
+- Detección: señal de sentido contrario al lote abierto en ese ticker.
+- Acción: PROHIBIDO hasta nuevo aviso: la señal contraria se descarta y se registra. Una compra sobre un corto solo puede venir de un stop, de un take profit o de una compra de emergencia para netear la posición (R-C-11); nunca de una entrada de otra estrategia.
+- Quién la ejecuta: guarda.
+- Parámetros: ninguno.
+- Si la acción falla: —
+- Prueba: tabla de casos.
+- Estado: FIJADA (Jaume, 18-sep). Hoy todas las estrategias son cortas.
+- Origen: E2.
+
+**Recordatorio del área E (ya decidido en C, B y D):** un lote por estrategia en el diario; entradas simultáneas sumadas en una orden (R-B-03); stop único si coinciden en nivel, uno por lote si difieren (R-C-06 + nota de R-C-11); take profits por lote (R-D-03); la suma de órdenes nunca supera la posición.
+
 ### Área L · Calendario
 
 ### Área M · Control humano
