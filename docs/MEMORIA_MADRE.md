@@ -6210,3 +6210,29 @@ de Databento, no copiar `users.duckdb`.
 - **Estado remoto:** `origin/alvaro-rama-desarrollo` = `b953d85` (todo lo de hoy: fix `fa1bc89` verificado en vivo, merge de staging `4c939f3` resuelto a mano, hallazgos 18-01/18-02 cerrados, PRDs del SL-lote y de picos/valles, estrategias compartidas). `origin/staging` sigue en `97ca87f` — **sin push**, como manda la regla (ver INTEGRACIÓN 2026-09-16·01).
 - **AVISO para quien integre alvaro-rama-desarrollo → staging:** un merge normal/fast-forward de nuestra rama a staging **borraría 25 ficheros del bot de avisos** (los `bot_alerts_*` de backend/tests/frontend que nuestra rama no lleva, por los merges históricos «SIN el bot»: `calendario`, `cliente`, `diario`, `feed`, `mercado`, `prealertas`, `radar`, `runner`, `universo`, sus tests, `BOT_ALERTAS_MODOS_DE_FALLO.md`, la página `bot-alertas` y `api_bot_alerts.ts`). Detectado al abortar el intento antes de empujar nada. La integración segura es la de siempre (la que ya usa Sailor: cherry-picks adaptados) o, si se mergea, restaurando la zona del bot desde staging en el mismo commit (`git checkout 97ca87f -- <rutas del bot>`).
 - **Código tocado:** NINGUNO en este paso (solo memoria). Local: staging realineado a `origin/staging` y vuelta a `alvaro-rama-desarrollo`.
+
+### [TRABAJO · 2026-09-18 · 4] Perímetro EXACTO de la zona del bot entre alvaro-rama-desarrollo y staging (refs: eba7817 vs 97ca87f)
+- **Hecho verificado con git, no a ojo.** Tres comprobaciones sobre `origin/staging` (97ca87f) y nuestra rama (eba7817):
+  1. **Ficheros del bot con contenido DISTINTO entre ramas: NINGUNO.** Los que nuestra rama lleva (`routers/bot_alerts.py`, `services/bot_alerts_{comandos,engine,service,telegram}.py`) son byte a byte los de staging. No hay riesgo de regresión por versión — solo de BORRADO por ausencia.
+  2. **Ficheros del bot en nuestra rama que staging no tenga: NINGUNO.** Nuestro subconjunto ⊂ staging.
+  3. **Ficheros en staging que nuestra rama NO lleva (= lo que un merge directo BORRARÍA): exactamente 25, todos zona cerrada:**
+     - `backend/app/services/bot_alerts_{calendario,cliente,diario,feed,mercado,prealertas,radar,runner,universo}.py` (9)
+     - `backend/tests/test_bot_alerts_{calendario,cliente_reintento,comandos,diario,estado_en_memoria,hidratar_ultima_vela,prealertas,radar_cierres,recarga_estrategias,salidas_parciales}.py` (10)
+     - `backend/tests/test_bot_tamano_todos_los_stops.py`, `backend/tests/test_evf_paquetes_de_100.py` (2 — este último parece no-bot por el nombre pero importa de `app.services.bot_alerts_comandos`: ES del bot)
+     - `docs/BOT_ALERTAS_MODOS_DE_FALLO.md` (1)
+     - `frontend/src/app/bot-alertas/page.tsx`, `frontend/src/components/bot-alerts/CuadroMandos.tsx`, `frontend/src/lib/api_bot_alerts.ts` (3)
+- **Procedimiento seguro para quien integre alvaro-rama-desarrollo → staging** (o cherry-picks, que es lo que ya hace Sailor):
+  ```
+  git checkout staging && git pull origin staging
+  git merge --no-ff --no-commit alvaro-rama-desarrollo
+  # restaurar TODA la zona del bot desde staging en el mismo commit:
+  git checkout origin/staging -- backend/app/routers/bot_alerts.py \
+      backend/app/services/bot_alerts_*.py backend/tests/test_bot_alerts_*.py \
+      backend/tests/test_bot_tamano_todos_los_stops.py backend/tests/test_evf_paquetes_de_100.py \
+      docs/BOT_ALERTAS_MODOS_DE_FALLO.md frontend/src/app/bot-alertas \
+      frontend/src/components/bot-alerts frontend/src/lib/api_bot_alerts.ts
+  git diff --diff-filter=D --name-only origin/staging | grep -i bot   # debe salir VACÍO
+  git commit
+  ```
+  El `grep -i bot` vacío es el porta-verja: si sale algo, el merge está borrando zona cerrada y NO se empuja. (Los nombres no estándar —`test_evf_*`, `test_bot_tamano_*`— hay que listarlos a mano: el grep no los caza por el patrón, solo el chequeo final.)
+- **Código tocado:** NINGUNO (solo esta memoria).
