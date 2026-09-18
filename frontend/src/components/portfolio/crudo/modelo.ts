@@ -152,7 +152,7 @@ export function condiciones(p: Record<string, unknown>) {
     comisiones: fees === 0 ? "0" : ft === "PERCENT" ? `${n(fees * 100, 4)} %` : `${n(fees, 4)} $/acc`,
     slippage: num("slippage") === 0 ? "0" : `${n(num("slippage") * 100, 3)} %`,
     locates: random
-      ? `aleatorios ${n(num("locates_random_min"), 0)}–${n(num("locates_random_max"), 0)} (semilla ${n(num("locates_seed"), 0)})`
+      ? `aleatorios ${n(num("locates_random_min"), 2)}–${n(num("locates_random_max"), 1)} (semilla ${n(num("locates_seed"), 0)})`
       : num("locates_cost") === 0 ? "0" : `${n(num("locates_cost"), 2)} ${String(p.locate_type ?? "FLAT").toUpperCase() === "PERCENT" ? "%" : "$"}/100`,
     gastos: num("monthly_expenses") === 0 ? "0" : `${n(num("monthly_expenses"), 0)} $/mes`,
     periodo: `${String(p.start_date ?? "?").slice(0, 10)} → ${String(p.end_date ?? "?").slice(0, 10)}`,

@@ -499,8 +499,9 @@ export default function BacktestPanel({
   // "aleatorio" = sorteo por ticker-dia dentro de [min, max], sesgado por el
   // precio de la accion y determinista por semilla.
   const [locatesMode, setLocatesMode] = useState<"fijo" | "aleatorio">("fijo");
-  const [locatesMin, setLocatesMin] = useState(1);
-  const [locatesMax, setLocatesMax] = useState(10);
+  // 0,3-15 = la banda p10-p90 medida sobre un mes de locates reales (18-sep).
+  const [locatesMin, setLocatesMin] = useState(0.3);
+  const [locatesMax, setLocatesMax] = useState(15);
   const [locatesSeed, setLocatesSeed] = useState(1);
   const useLocatesRandom = useLocates && locatesMode === "aleatorio";
   // Puerta por EV (fase 2). Solo tiene sentido con locates aleatorios.
@@ -2166,7 +2167,7 @@ export default function BacktestPanel({
                   <InfoTooltip
                     position="left"
                     width={320}
-                    text="En vez de un precio fijo, cada ticker y día recibe un precio de locate distinto, sorteado dentro de este rango (en dólares por paquete de 100 acciones). El sorteo NO es a ciegas: las acciones baratas caen hacia la parte baja del rango y las caras hacia la alta, porque así funcionan los brokers; el gapper más barato que se opera (0,30 $) paga el mínimo del rango y el más caro (25 $) el máximo, así que el rango se usa entero. Ejemplo con rango 1-20: una acción a 0,50 $ suele salir entre 1 y 2; una a 1 $ entre 1,6 y 3,2; una a 3 $ entre 3,4 y 6,8; una a 10 $ entre 7,7 y 15; a partir de 25 $ pega en el 20. El precio de referencia es la primera vela del día (04:00), así que no mira el futuro. Se cobra como siempre: paquetes enteros, una vez por ticker y día, sobre el máximo en corto de ese día."
+                    text="En vez de un precio fijo, cada ticker y día recibe un precio de locate distinto (en dólares por paquete de 100 acciones). El rango es «lo normal»: 9 de cada 10 locates de la corrida caen dentro, 1 de cada 20 sale más barato y 1 de cada 20 más caro (la cola cara existe: como mucho 5 veces el máximo). El sorteo NO es a ciegas: el locate crece con el precio de la acción (una de 20 $ paga unas 4 veces lo que una de 2 $), pero alrededor de eso la dispersión es enorme, porque manda lo fácil o difícil que sea prestar la acción ese día. Medido con un mes de locates reales (DAS): la banda de ese bróker es 0,3-15, y el típico es 0,9 para una acción de 0,50 $, 1,4 para una de 1 $, 2,7 para una de 3 $ y 5,6 para una de 10 $. Con 1-20 sale el doble de caro que eso. El precio de referencia es la primera vela del día (04:00), así que no mira el futuro. Se cobra como siempre: paquetes enteros, una vez por ticker y día, sobre el máximo en corto de ese día."
                     style={{ display: 'inline-flex' }}
                   />
                 </span>

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""El sorteo de locates aleatorios: determinista, sesgado por precio como una
-ley de potencia entre los extremos del rango, y el rango se usa ENTERO.
+"""El sorteo de locates aleatorios: determinista, con la forma del mercado
+(precio^0,6 y mucha dispersion) y el rango del usuario como banda p10-p90.
 
-18-sep: hasta hoy la escala iba de 0,10 a 30 $ (suelo y techo del universo) y
-como los gappers que se operan viven entre 0,3 y 25 $, con rango 1-20 el locate
-mas barato de una corrida entera era 2,69 y las acciones de menos de 1 $ pagaban
-7-9 $ el paquete (10 % de fade): la puerta por EV las tumbaba a todas y parecia
-cosa del EV. Estos tests fijan la forma nueva.
+18-sep: hasta hoy el rango era un suelo y un techo duros con el centro lineal en
+log-precio entre 0,10 y 30 $ y ruido sigma 0,35. Medido contra 99 locates reales
+del socio de Jaume (un mes): cobertura del 21 %, el doble de caro para las
+acciones baratas y tres veces menos disperso que la realidad. Estos tests fijan
+la forma nueva y los numeros medidos.
 """
 import math
 import random
@@ -14,97 +14,91 @@ import random
 import pytest
 
 from app.services.locates_random import (
-    PRECIO_BARATA,
-    PRECIO_CARA,
-    SIGMA,
+    COLA_MAXIMA,
+    EXPONENTE_PRECIO,
+    PRECIO_MEDIANO,
+    SUELO_PAQUETE,
     centro_por_precio,
-    posicion_por_precio,
+    parametros_banda,
     precio_locate,
     resumen,
 )
 
 
 def test_determinista_y_sin_depender_del_orden():
-    a = precio_locate(2.5, 1, 20, 7, "ABCD", "2026-03-04")
-    b = precio_locate(2.5, 1, 20, 7, "ABCD", "2026-03-04")
+    a = precio_locate(2.5, 0.3, 15, 7, "ABCD", "2026-03-04")
+    b = precio_locate(2.5, 0.3, 15, 7, "ABCD", "2026-03-04")
     assert a == b
     # Otra semilla u otro ticker-dia: otro precio (mismo centro).
-    c = precio_locate(2.5, 1, 20, 8, "ABCD", "2026-03-04")
-    d = precio_locate(2.5, 1, 20, 7, "ABCD", "2026-03-05")
+    c = precio_locate(2.5, 0.3, 15, 8, "ABCD", "2026-03-04")
+    d = precio_locate(2.5, 0.3, 15, 7, "ABCD", "2026-03-05")
     assert c["centro"] == a["centro"] == d["centro"]
     assert len({a["precio"], c["precio"], d["precio"]}) == 3
 
 
-def test_la_barata_paga_el_minimo_y_la_cara_el_maximo():
-    # Por debajo de la barata y por encima de la cara el centro se pega al
-    # extremo del rango: asi el rango que pide el usuario se usa entero.
-    assert posicion_por_precio(PRECIO_BARATA) == 0.0
-    assert posicion_por_precio(PRECIO_BARATA / 2) == 0.0
-    assert posicion_por_precio(PRECIO_CARA) == pytest.approx(1.0)
-    assert posicion_por_precio(PRECIO_CARA * 4) == pytest.approx(1.0)
-    assert centro_por_precio(0.20, 1, 20) == pytest.approx(1.0)
-    assert centro_por_precio(0.30, 1, 20) == pytest.approx(1.0)
-    assert centro_por_precio(25.0, 1, 20) == pytest.approx(20.0)
-    assert centro_por_precio(80.0, 1, 20) == pytest.approx(20.0)
+def test_el_nivel_es_la_media_geometrica_del_rango_en_la_accion_de_2_dolares():
+    nivel, ruido, techo = parametros_banda(0.3, 15)
+    assert nivel == pytest.approx(math.sqrt(0.3 * 15))
+    assert centro_por_precio(PRECIO_MEDIANO, 0.3, 15) == pytest.approx(nivel)
+    assert techo == pytest.approx(COLA_MAXIMA * 15)
+    # Banda mas ancha en proporcion -> mas ruido; 1-20 sale con sigma ~1,0 (la
+    # medida real, sin el suelo del broker, es 1,15).
+    assert 0.9 < parametros_banda(1, 20)[1] < 1.1
+    assert parametros_banda(0.3, 15)[1] > parametros_banda(1, 20)[1] > parametros_banda(1, 10)[1]
 
 
-def test_ley_de_potencia_entre_los_extremos():
-    # log(L) lineal en log(precio): el exponente es log(max/min)/log(cara/barata).
-    b = math.log(20 / 1) / math.log(PRECIO_CARA / PRECIO_BARATA)
-    assert 0.6 < b < 0.75                      # crece con el precio, MENOS que proporcional
-    assert centro_por_precio(10, 1, 20) / centro_por_precio(1, 1, 20) == pytest.approx(10 ** b)
-    # Medido el 18-sep y escrito en el modulo y en el tooltip del panel.
-    assert centro_por_precio(0.50, 1, 20) == pytest.approx(1.41, abs=0.02)
-    assert centro_por_precio(1.00, 1, 20) == pytest.approx(2.26, abs=0.02)
-    assert centro_por_precio(3.00, 1, 20) == pytest.approx(4.76, abs=0.02)
-    assert centro_por_precio(10.0, 1, 20) == pytest.approx(10.75, abs=0.02)
-    # Y el fade al centro (L / precio) BAJA con el precio, como en la realidad.
-    fades = [centro_por_precio(p, 1, 20) / p for p in (0.5, 1, 2, 3, 5, 10, 20)]
+def test_el_locate_crece_con_el_precio_como_potencia_0_6():
+    # Medido: 1,49 x precio^0,62 sobre los locates reales. Una de 20 $ paga 4
+    # veces lo que una de 2 $, no 10; el fade (L / precio) BAJA con el precio.
+    assert centro_por_precio(20, 0.3, 15) / centro_por_precio(2, 0.3, 15) == pytest.approx(10 ** EXPONENTE_PRECIO)
+    fades = [centro_por_precio(p, 0.3, 15) / p for p in (0.3, 0.5, 1, 2, 3, 5, 10, 20)]
     assert fades == sorted(fades, reverse=True)
-
-
-def test_el_centro_es_monotono_en_el_precio():
-    precios = [0.1, 0.3, 0.5, 0.75, 1, 1.5, 2, 3, 5, 8, 10, 15, 20, 25, 40, 100]
-    centros = [centro_por_precio(p, 1, 20) for p in precios]
+    centros = [centro_por_precio(p, 0.3, 15) for p in (0.1, 0.3, 0.5, 1, 2, 3, 5, 10, 20, 50)]
     assert centros == sorted(centros)
+    # Los numeros del tooltip del panel (banda 0,3-15).
+    assert centro_por_precio(0.5, 0.3, 15) == pytest.approx(0.92, abs=0.02)
+    assert centro_por_precio(1.0, 0.3, 15) == pytest.approx(1.40, abs=0.02)
+    assert centro_por_precio(3.0, 0.3, 15) == pytest.approx(2.71, abs=0.02)
+    assert centro_por_precio(10.0, 0.3, 15) == pytest.approx(5.57, abs=0.02)
 
 
-def test_el_sorteo_no_se_sale_del_rango_y_se_reparte_alrededor_del_centro():
-    xs = [precio_locate(3.0, 1, 20, s, "TK", "2026-01-02")["precio"] for s in range(1, 2001)]
-    assert min(xs) >= 1.0 and max(xs) <= 20.0
-    c = centro_por_precio(3.0, 1, 20)
-    # Mediana en el centro (el ruido es lognormal de media 0 en log) y dos de
-    # cada tres entre x0,7 y x1,4: sigma 0,35.
-    xs.sort()
-    assert xs[len(xs) // 2] == pytest.approx(c, rel=0.06)
-    dentro = sum(1 for x in xs if c * math.exp(-SIGMA) <= x <= c * math.exp(SIGMA))
-    assert 0.62 <= dentro / len(xs) <= 0.74
-
-
-def test_sobre_un_universo_de_gappers_el_rango_se_usa_entero():
-    # Precios de referencia como los medidos el 18-sep (lognormal: mediana 2,5 $,
-    # sigma 1 en log). Antes del 18-sep el minimo de una corrida asi era 2,69 y la
-    # mediana 11 $; ahora el minimo es el minimo del rango, el maximo el maximo,
-    # y la mediana cae cerca de la media geometrica del rango (sqrt(1*20) = 4,5).
+def test_la_banda_es_lo_normal_9_de_cada_10_dentro():
+    # Precios de referencia como los medidos (lognormal: mediana 2 $, sigma 1).
     rng = random.Random(42)
-    refs = [math.exp(rng.gauss(math.log(2.5), 1.0)) for _ in range(4000)]
-    xs = [precio_locate(r, 1, 20, 9, f"T{i}", "2026-01-02")["precio"] for i, r in enumerate(refs)]
-    r = resumen(xs)
-    assert r["min"] == pytest.approx(1.0, abs=0.01)
-    assert r["max"] == pytest.approx(20.0, abs=0.01)
-    assert 3.0 <= r["p50"] <= 6.0
-    assert r["p10"] < 2.5 and r["p90"] > 9.0
+    refs = [math.exp(rng.gauss(math.log(2.0), 1.0)) for _ in range(6000)]
+    for lo, hi in ((0.3, 15), (1, 20), (1, 10)):
+        xs = [precio_locate(r, lo, hi, 9, f"T{i}", "2026-01-02")["precio"] for i, r in enumerate(refs)]
+        res = resumen(xs)
+        dentro = sum(1 for x in xs if lo <= x <= hi) / len(xs)
+        assert 0.76 <= dentro <= 0.84, (lo, hi, dentro)
+        assert res["p10"] == pytest.approx(lo, rel=0.12)
+        assert res["p90"] == pytest.approx(hi, rel=0.12)
+        assert res["p50"] == pytest.approx(math.sqrt(lo * hi), rel=0.12)
+        # La cola cara existe pero esta acotada; por abajo, el suelo del broker.
+        assert res["max"] <= COLA_MAXIMA * hi + 1e-9
+        assert res["min"] >= SUELO_PAQUETE
 
 
-def test_rango_desde_cero_interpola_lineal():
-    # Sin minimo no hay potencia posible (0 elevado a nada): lineal en log-precio.
-    pos = posicion_por_precio(3.0)
-    assert centro_por_precio(3.0, 0, 10) == pytest.approx(10 * pos)
-    assert precio_locate(3.0, 0, 10, 1, "TK", "2026-01-02")["precio"] <= 10.0
+def test_reproduce_los_locates_reales_del_socio():
+    # Un mes de locates reales (DAS, 99 cotizaciones con precio del dia): $/paq
+    # p10 0,06 (suelo del broker), p50 1,96, p90 12,1; precios p10 0,45, p50
+    # 2,1, p90 6. Con la banda 0,3-15 el modelo, sobre esos mismos precios, da
+    # una poblacion parecida (medido: p10 0,23, p50 1,8, p90 11,6).
+    rng = random.Random(7)
+    precios = [math.exp(rng.gauss(math.log(2.1), 1.0)) for _ in range(4000)]
+    xs = [precio_locate(p, 0.3, 15, 3, f"S{i}", "2026-09-01")["precio"] for i, p in enumerate(precios)]
+    res = resumen(xs)
+    assert 1.4 <= res["p50"] <= 2.6
+    assert 8.0 <= res["p90"] <= 16.0
+    assert res["p10"] <= 0.5
 
 
-def test_rango_invertido_o_degenerado():
-    # min > max se ordena; min == max devuelve ese precio siempre.
-    assert precio_locate(3.0, 20, 1, 1, "TK", "2026-01-02") == precio_locate(3.0, 1, 20, 1, "TK", "2026-01-02")
-    assert precio_locate(3.0, 5, 5, 1, "TK", "2026-01-02")["precio"] == 5.0
-    assert precio_locate(0.0, 1, 20, 1, "TK", "2026-01-02")["posicion"] == 0.0
+def test_rango_desde_cero_y_rango_invertido():
+    # Sin minimo no hay media geometrica: se toma maximo/100 como minimo efectivo.
+    nivel, ruido, _ = parametros_banda(0, 10)
+    assert nivel == pytest.approx(1.0) and ruido > 1.0
+    assert precio_locate(3.0, 0, 10, 1, "TK", "2026-01-02")["precio"] >= SUELO_PAQUETE
+    # min > max se ordena; min == max devuelve un sorteo con el ruido minimo.
+    assert precio_locate(3.0, 15, 0.3, 1, "TK", "2026-01-02") == precio_locate(3.0, 0.3, 15, 1, "TK", "2026-01-02")
+    assert parametros_banda(5, 5)[0] == 5.0
+    assert precio_locate(0.0, 0.3, 15, 1, "TK", "2026-01-02")["precio"] > 0
