@@ -397,9 +397,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     
     origin = request.headers.get("origin")
     allow_origin = origin if origin else "https://www.mystrategybuilder.fun"
+    # Con pydantic v2 cada error de un `field_validator` que lanza ValueError
+    # lleva el propio ValueError dentro de `ctx`. Meterlo tal cual en la
+    # respuesta hacia saltar «Object of type ValueError is not JSON
+    # serializable», y ESE TypeError acababa en el manejador global como un 500
+    # sin el mensaje del validador (PRD de Alvaro, 18-sep-2026). Se pasa por
+    # jsonable_encoder, que convierte la excepcion en su texto.
+    from fastapi.encoders import jsonable_encoder
     return JSONResponse(
         status_code=422,
-        content={"detail": exc.errors()},
+        content={"detail": jsonable_encoder(exc.errors())},
         headers={
             "Access-Control-Allow-Origin": allow_origin,
             "Access-Control-Allow-Credentials": "true"

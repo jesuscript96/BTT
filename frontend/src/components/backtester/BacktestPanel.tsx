@@ -120,8 +120,9 @@ interface BacktestPanelProps {
   pendingDatasetSelect?: string;
   onClearPendingDataset?: () => void;
   activeStrategy?: any;
-  builderActive?: boolean;
   onConfigureStrategy?: (strategyId: string) => void;
+  /** El constructor está abierto: el panel sigue al borrador aunque el desplegable diga otra cosa. */
+  builderActive?: boolean;
   onOpenSharedDraft?: (entry: SharedStrategyEntry) => void;
 }
 

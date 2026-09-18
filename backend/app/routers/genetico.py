@@ -651,10 +651,27 @@ def listar_corridas():
     return filas
 
 
+def _config_completa(cfg: dict) -> dict:
+    """Rellena lo que la pagina da por hecho.
+
+    Las corridas creadas desde la pagina traen `catalogo`, `sesiones` y
+    `n_condiciones`; las lanzadas por API o desde la consola pueden traer solo
+    lo obligatorio, y la pagina hacia `config.catalogo.length` sin guardas:
+    TypeError y overlay rojo tapando la pagina entera (PRD de Alvaro,
+    18-sep-2026). Se completa AQUI, para todos los consumidores de una vez.
+    """
+    cfg = dict(cfg or {})
+    cfg.setdefault("catalogo", [])
+    cfg.setdefault("sesiones", [])
+    cfg.setdefault("stops", [])
+    cfg.setdefault("n_condiciones", None)
+    return cfg
+
+
 @router.get("/corridas/{corrida_id}")
 def ver_corrida(corrida_id: str):
     d = _dir(corrida_id)
-    cfg = _json(os.path.join(d, "config.json"), {})
+    cfg = _config_completa(_json(os.path.join(d, "config.json"), {}))
     est = _json(os.path.join(d, "estado.json"), {})
     mejores = _json(os.path.join(d, "mejores.json"), {}).get("mejores", [])
     datos = _json(os.path.join(cfg.get("dir_datos", ""), "datos.json"), None) if cfg.get("dir_datos") else None

@@ -44,6 +44,9 @@ interface ResultsTabsProps {
   activeStrategy?: Strategy | null;
   strategyDefinition?: Record<string, unknown>;
   candlesLoading: boolean;
+  /** La carga de velas FALLÓ (red/backend): distinto de «día sin velas». */
+  candlesError?: boolean;
+  onRetryCandles?: () => void;
   currentTrades: TradeRecord[];
   currentEquity: EquityPoint[];
   equityLoading?: boolean;
@@ -68,6 +71,8 @@ export default function ResultsTabs({
   activeStrategy = null,
   strategyDefinition,
   candlesLoading,
+  candlesError,
+  onRetryCandles,
   currentTrades,
   currentEquity,
   equityLoading = false,
@@ -148,6 +153,8 @@ export default function ResultsTabs({
       currentTrades={currentTrades}
       currentEquity={currentEquity}
       candlesLoading={candlesLoading}
+      candlesError={candlesError}
+      onRetryCandles={onRetryCandles}
       equityLoading={equityLoading}
       loadProgress={loadProgress}
       compacto
@@ -399,6 +406,8 @@ export default function ResultsTabs({
             currentTrades={currentTrades}
             currentEquity={currentEquity}
             candlesLoading={candlesLoading}
+      candlesError={candlesError}
+      onRetryCandles={onRetryCandles}
             equityLoading={equityLoading}
             loadProgress={loadProgress}
           />

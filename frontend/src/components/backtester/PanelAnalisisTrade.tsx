@@ -25,6 +25,9 @@ interface PanelAnalisisTradeProps {
     currentTrades: TradeRecord[];
     currentEquity: EquityPoint[];
     candlesLoading: boolean;
+    /** La petición de velas falló (no es lo mismo que un día sin velas). */
+    candlesError?: boolean;
+    onRetryCandles?: () => void;
     equityLoading?: boolean;
     loadProgress: number;
     compacto?: boolean;
@@ -37,6 +40,8 @@ export default function PanelAnalisisTrade({
     currentTrades,
     currentEquity,
     candlesLoading,
+    candlesError = false,
+    onRetryCandles,
     equityLoading,
     loadProgress,
     compacto = false,
@@ -133,7 +138,39 @@ export default function PanelAnalisisTrade({
                 />
             )}
 
-            {!candlesLoading && (!dayCandles || dayCandles.candles.length === 0) && (
+            {!candlesLoading && candlesError && (
+                <div
+                    style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: 10,
+                        flex: 1,
+                        minHeight: alturaMin,
+                    }}
+                >
+                    <p className="text-[10px] text-center font-mono" style={{ color: "var(--color-ec-loss)" }}>
+                        No se pudieron cargar las velas (el backend no respondió).
+                    </p>
+                    {onRetryCandles && (
+                        <button
+                            type="button"
+                            onClick={onRetryCandles}
+                            className="text-[10px] font-mono px-3 py-1 rounded"
+                            style={{
+                                border: "0.5px solid var(--color-ec-border)",
+                                color: "var(--color-ec-text-primary)",
+                                backgroundColor: "var(--color-ec-bg-elevated)",
+                                cursor: "pointer",
+                            }}
+                        >
+                            Reintentar
+                        </button>
+                    )}
+                </div>
+            )}
+            {!candlesLoading && !candlesError && (!dayCandles || dayCandles.candles.length === 0) && (
                 <div
                     style={{
                         display: "flex",
