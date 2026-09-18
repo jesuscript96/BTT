@@ -638,6 +638,19 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 18-sep). Hoy todas las estrategias son cortas.
 - Origen: E2.
 
+**E3 (Jaume, 18-sep): sin tope por ticker.** La exposición por ticker la controla el reparto del cuadro de mandos: si se quiere un 6 % máximo en total con tres estrategias, se asigna un 2 % a cada una; es imposible acumular más de lo previsto en un solo valor.
+
+### R-E-02 · Sin capital para todas: orden de llegada
+- Situación: varias señales (o pirámides) a la vez y no hay capital libre para todas.
+- Detección: capital libre de DAS frente a lo pedido (R-I-01).
+- Acción: por ORDEN DE LLEGADA. La primera entra entera; la siguiente recibe el capital que sobre (si sobra algo, solo eso); si no queda nada, no entra. Lo mismo con las pirámides: si no hay dinero, no se piramida. Sin reparto proporcional.
+- Quién la ejecuta: guarda.
+- Parámetros: ninguno.
+- Si la acción falla: —
+- Prueba: tabla de casos.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: E5, E4.
+
 **Recordatorio del área E (ya decidido en C, B y D):** un lote por estrategia en el diario; entradas simultáneas sumadas en una orden (R-B-03); stop único si coinciden en nivel, uno por lote si difieren (R-C-06 + nota de R-C-11); take profits por lote (R-D-03); la suma de órdenes nunca supera la posición.
 
 ### Área L · Calendario

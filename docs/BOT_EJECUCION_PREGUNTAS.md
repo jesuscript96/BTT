@@ -95,9 +95,9 @@
 
 - [x] E1. → lotes por estrategia + R-B-03 + R-C-06/R-C-11 + R-D-03. Dos estrategias, mismo ticker, mismo lado: DAS netea en una sola posición. ¿Cómo reparte el bot fills, stops y PnL entre las dos?
 - [x] E2. → R-E-01 (prohibido hasta nuevo aviso). Dos estrategias, lados opuestos: ¿prohibido, o la segunda cierra la primera? (con neteo, una compra sobre un corto lo cubre)
-- [ ] E3. ¿Tope de capital por ticker sumando estrategias? Si no cabe, ¿cede la última en llegar o la de menor EV?
-- [ ] E4. ¿Tope de capital total y por sesión (PM frente a RTH)? ¿Reserva para pirámides ya previstas?
-- [ ] E5. Señales simultáneas en tickers distintos sin capital para todas: ¿prioridad por orden de llegada, por EV o por riesgo?
+- [x] E3. → sin tope: lo controla el reparto del cuadro de mandos. ¿Tope de capital por ticker sumando estrategias? Si no cabe, ¿cede la última en llegar o la de menor EV?
+- [x] E4. → R-I-01 + R-E-02 (capital libre, orden de llegada; pirámide sin dinero no se hace). ¿Tope de capital total y por sesión (PM frente a RTH)? ¿Reserva para pirámides ya previstas?
+- [x] E5. → R-E-02 (orden de llegada; lo que sobre; sin proporcional). Señales simultáneas en tickers distintos sin capital para todas: ¿prioridad por orden de llegada, por EV o por riesgo?
 - [ ] E6. **RECORDAR: pedir a Jaume las reglas de margen/buying power de su bróker con el PDF (17-sep).** Buying power distinto en PM, intradía y overnight: ¿cómo lo sabe el bot y cómo lo respeta? **[API]**
 - [ ] E7. Si una estrategia se retira o cambia de versión, ¿qué pasa con sus posiciones vivas?
 - [ ] E8. Estrategias con distinto riesgo por operación: ¿unidad de riesgo común o por estrategia? (afecta a congelar el motor)
