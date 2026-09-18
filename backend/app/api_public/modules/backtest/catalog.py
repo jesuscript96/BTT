@@ -18,7 +18,7 @@ _CATEGORY = {
         "Squeeze",
     ],
     "Volatility": ["ATR", "ADX", "Bollinger Bands", "Donchian", "Parabolic SAR"],
-    "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "Accumulated Dollar Volume", "Dollar Volume", "SMA Volume"],
+    "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "Accumulated Dollar Volume", "Dollar Volume", "SMA Volume", "Volumen del pico"],
     "Price": [
         "Bar Close", "Bar Open", "High Bar", "Low Bar", "PM High", "PM Low", "PM Open",
         "AM Open", "RTH High", "RTH Low", "RTH Open", "Yesterday High", "Yesterday Low",
@@ -28,6 +28,7 @@ _CATEGORY = {
         "Prev. Bar Open", "Prev. Bar High", "Prev. Bar Low", "Day Open", "High of Day",
         "Low of Day", "Current Open", "Previous Close", "Max N Bars",
         "Ultimo pivote",
+        "Pico",
         "Punto de control", "Nodo de arriba", "Nodo de abajo",
         "Zona alta", "Zona baja",
     ],
@@ -43,6 +44,7 @@ _CATEGORY = {
     ],
     "Time": [
         "Time of Day", "Range of Time", "High/Low from x time", "High/Low from hour-time",
+        "Edad del pico",
     ],
     "Returns": ["Ret % PM", "Ret % RTH"],
     # Bloque aparte, igual que en la UI: medidas que no existen en las
@@ -89,6 +91,13 @@ _PARAMS = {
     "Retroceso (%)": ["range_minutes", "swing_dir"],
     # pivot_window = velas de confirmacion a cada lado; swing_dir = techo o suelo.
     "Ultimo pivote": ["pivot_window", "swing_dir"],
+    # Picos y valles enumerados (PRD 2026-09-18): mismo criterio que "Ultimo
+    # pivote"; pivot_rank = cual de los ultimos giros devuelve (1 = el ultimo,
+    # identico a "Ultimo pivote"; 2 = el anterior...). No funciona en 1d: el
+    # reset diario deja cada barra en un dia nuevo y sale NaN siempre.
+    "Pico": ["swing_dir", "pivot_window", "pivot_rank"],
+    "Edad del pico": ["swing_dir", "pivot_window", "pivot_rank"],
+    "Volumen del pico": ["swing_dir", "pivot_window", "pivot_rank"],
     # bin_pct = anchura de franja en % del precio; liston_pct = % del POC para
     # que una franja cuente como nodo.
     "Vol. de la franja": ["bin_pct"],
