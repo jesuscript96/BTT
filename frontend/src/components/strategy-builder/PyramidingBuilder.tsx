@@ -1,6 +1,7 @@
 import React from 'react';
 import { PyramidingConfig, PyramidGroup, PyramidLevel, Timeframe, emptyPyramidLevel } from '@/types/strategy';
 import { GroupDisplay } from './ConditionBuilder';
+import InfoTooltip from '@/components/backtester/InfoTooltip';
 
 /**
  * Piramidación (2026-08-22): gestión dinámica de la posición.
@@ -561,6 +562,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                             {lv.action === 'add' && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                     <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>SL del lote:</span>
+                                    <InfoTooltip position="top" width={320} title="SL del lote" text="Stop propio de CADA añadido de este nivel. Al romperse cierra SOLO ese lote, con su PnL contra su precio de entrada; el stop del trade sigue mandando sobre el conjunto (en la misma vela manda el global). «%»: distancia fija desde el precio del lote. «Estructura»: un nivel del día, congelado en la vela de señal del añadido. Con «—» el lote vive y muere con el stop del trade, como siempre. Si el añadido se dimensiona por distancia al stop, la distancia es la de ESTE SL: el lote arriesga exactamente lo que el nivel declara." />
                                     <select
                                         value={lv.lot_stop?.mode ?? ''}
                                         onChange={(e) => {
@@ -652,6 +654,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                 bloque, como siempre. */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                                 <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>Camino (condiciones en secuencia)</span>
+                                <InfoTooltip position="top" width={320} title="Camino de condiciones" text="Apagado: una única condición, como siempre. Encendido: cadena ordenada de condiciones — primero se cumple la 1.ª, luego la 2.ª (aunque la 1.ª ya no se cumpla)… y al engancharse la ÚLTIMA se ejecuta la acción. Los pasos intermedios no operan: solo abren la puerta. Con «misma vela» encendido el camino puede completarse dentro de una sola vela." />
                                 <div
                                     className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${esCamino(lv) ? 'bg-ec-copper/70' : 'bg-muted'}`}
                                     onClick={() => toggleCamino(idx, !esCamino(lv))}
