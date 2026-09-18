@@ -146,9 +146,9 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
     FORMATO AL GRANO (Jaume, 18-sep-2026: «hay que ir al grano en las alertas,
     prealertas, stops, anyadir y take profits»). Tres o cuatro lineas: que es
     (icono + ticker + que hacer), a que precio, y las cantidades. Con varias
-    cuentas, la cabecera y el precio van una sola vez y debajo un bloque por
-    cuenta separado por `------`, cada uno con sus acciones, la de mas riesgo
-    primero. Asi un take profit en dos cuentas es UN mensaje y no dos.
+    cuentas, la cabecera y el precio van una sola vez, un separador `------`
+    y debajo una linea por cuenta con sus acciones, la de mas riesgo primero.
+    Asi un take profit en dos cuentas es UN mensaje y no dos.
 
     SOBRE EL COLOR: Telegram no colorea texto; los emojis marcan la linea.
     Lleva siempre stop y riesgo en las entradas: si el precio se ha movido,
@@ -179,7 +179,7 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
         for e in evs:
             b = f"{_etiqueta(e, varias)}Acciones: <b>{_num(e.acciones, 0)}</b>"
             if e.riesgo_usd is not None:
-                b += f" · 🟠 Riesgo: {_num(e.riesgo_usd, 0)}"
+                b += f" (R:{_num(e.riesgo_usd, 0)})"
             bloques.append(b)
         lineas += _unir(bloques) + [pie]
         return "\n".join(lineas)
@@ -235,13 +235,10 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
 
 
 def _unir(bloques: list[str]) -> list[str]:
-    """Los bloques por cuenta, con el separador entre ellos (no antes ni despues)."""
-    out: list[str] = []
-    for k, b in enumerate(bloques):
-        if k:
-            out.append(SEPARADOR)
-        out.append(b)
-    return out
+    """Un separador tras el precio/stop y, debajo, una linea por cuenta, una
+    encima de otra (Jaume, 18-sep-2026: «colocar precio y stop como estan, un
+    separador, y despues las lineas por cuenta»)."""
+    return [SEPARADOR] + list(bloques) if bloques else []
 
 
 def _post(texto: str) -> tuple[bool, bool, str]:

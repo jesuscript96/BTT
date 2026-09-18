@@ -139,7 +139,7 @@ def test_un_mensaje_con_un_bloque_por_cuenta_mayor_riesgo_primero(entorno):
     assert len(grupos) == 1, "misma senal, tres cuentas: UN mensaje"
     assert [e.cuenta for e in grupos[0]] == ["GRANDE", None, "IBKR"], "de mas a menos riesgo"
     texto = tg.formatear_grupo(grupos[0])
-    assert texto.count(tg.SEPARADOR) == 2
+    assert texto.count(tg.SEPARADOR) == 1, "un solo separador, tras precio y stop"
     assert texto.index("[GRANDE]") < texto.index("[principal]") < texto.index("[IBKR]")
     assert "Acciones: <b>1.000</b>" in texto and "Acciones: <b>600</b>" in texto and "Acciones: <b>400</b>" in texto
     assert texto.count("Precio:") == 1 and texto.count("KXIN") == 1, "cabecera y precio una sola vez"
@@ -150,8 +150,8 @@ def test_una_cuenta_sin_etiquetas_ni_separador(entorno):
     m = mod.MotorAlertas([_estrategia()])
     evs = _senal(m, entorno)
     texto = tg.formatear(evs[0])
-    assert tg.SEPARADOR not in texto and "[principal]" not in texto
-    assert "Acciones: <b>600</b>" in texto and "Stop: 2,5000" in texto and "Riesgo: 300" in texto
+    assert "[principal]" not in texto
+    assert "Acciones: <b>600</b>" in texto and "Stop: 2,5000" in texto and "(R:300)" in texto
 
 
 def test_agrupar_no_mezcla_senales_distintas(entorno):
