@@ -1570,6 +1570,12 @@ def simulate(
                     "mfe": round(mfe, 4),
                     # El stop que disparó es el NIVEL DEL LOTE, no el del trade.
                     "stop_loss": round(_lot["sl_px"], 6),
+                    # La identidad del TRADE viaja con el leg para que la fusión
+                    # pueda restaurarla: este es el único leg con entrada y stop
+                    # propios, y si es el primero del grupo `dict(first)` se los
+                    # pegaría al trade entero (PRD_FIX_SL_LOTE_FUSION, 2026-09-18).
+                    "trade_entry_price": round(entry_price, 6),
+                    "trade_stop_loss": round(trade_sl_price, 6),
                 })
                 pyr_exec.append({
                     "kind": "lot_stop",

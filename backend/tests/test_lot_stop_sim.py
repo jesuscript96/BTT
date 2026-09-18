@@ -557,3 +557,150 @@ def test_build_executions_sin_duplicar_el_cierre_de_lote():
     assert en_el_lote[0]["sl_px"] == 10.395
     # la entrada sigue siendo la base (sum legs − adds = 20 − 10)
     assert execs[0]["kind"] == "entry" and execs[0]["size"] == 10.0
+
+
+# ── Identidad del TRADE en la fusión (fix 2026-09-18, PRD_FIX_SL_LOTE_FUSION) ─
+
+def _leg(entry_idx, exit_idx, exit_reason, entry_price, stop_loss, size, pnl,
+         exit_price, trade_entry=None, trade_stop=None, avg_entry=None):
+    """Leg enriquecida mínima, la forma que consume `_group_partial_exits`."""
+    return {
+        "ticker": "XX", "date": "2025-12-09",
+        "entry_idx": entry_idx, "exit_idx": exit_idx,
+        "entry_time": f"2025-12-09 04:{entry_idx:02d}:00",
+        "exit_time": f"2025-12-09 04:{exit_idx:02d}:00",
+        "entry_time_epoch": 1765300000 + entry_idx * 60,
+        "exit_time_epoch": 1765300000 + exit_idx * 60,
+        "entry_price": entry_price,
+        "avg_entry_price": avg_entry if avg_entry is not None else entry_price,
+        "exit_price": exit_price, "pnl": pnl, "fees": 0.0,
+        "pnl_with_locates": pnl, "return_pct": 0.0,
+        "direction": "Short", "status": "Closed", "size": size,
+        "exit_reason": exit_reason, "mae": 0.0, "mfe": 0.0,
+        "stop_loss": stop_loss,
+        **({"trade_entry_price": trade_entry, "trade_stop_loss": trade_stop}
+           if trade_entry is not None else {}),
+    }
+
+
+def test_fusion_no_hereda_la_identidad_del_lote():
+    """[criterio 7.1] El cierre del lote saltó ANTES que el cierre del trade:
+    es el primer leg del grupo y `dict(first)` le pegaba su px (9,9) y su
+    cinturón (10,395) al trade entero. Con el fix la identidad sale de
+    `trade_entry_price`/`trade_stop_loss`; pnl/size siguen siendo la suma."""
+    from app.services.backtest_service import _group_partial_exits
+
+    lote = _leg(2, 9, "Pyramid Lot Stop", 9.9, 10.395, 10.0, -4.95, 10.395,
+                trade_entry=10.0, trade_stop=12.34, avg_entry=9.95)
+    cierre = _leg(2, 20, "SL", 10.0, 12.34, 10.0, 23.4, 12.34, avg_entry=9.95)
+    (trade,) = _group_partial_exits([lote, cierre])
+    assert trade["entry_price"] == 10.0       # del TRADE, no el px del añadido
+    assert trade["stop_loss"] == 12.34        # el SL real, no el cinturón 10,395
+    assert trade["pnl"] == round(-4.95 + 23.4, 4)
+    assert trade["size"] == 20.0
+    assert trade["exit_reason"] == "SL" and trade["exit_price"] == 12.34
+    assert "trade_entry_price" not in trade and "trade_stop_loss" not in trade
+    # el marcador de entrada del gráfico también es el del TRADE
+    entrada = [e for e in trade["executions"] if e["kind"] == "entry"]
+    assert entrada and entrada[0]["price"] == 10.0
+
+
+def test_posicion_vaciada_entera_por_lotes():
+    """[criterio 7.2] Todos los legs son cierres de lote: sin otro leg de
+    donde tomarla, la identidad SOLO puede salir de las claves auxiliares.
+    Cubre la fusión multi-leg, el atajo `len(run) == 1` y el de un solo
+    registro — y en ninguno queda expuesta la clave auxiliar."""
+    from app.services.backtest_service import _group_partial_exits
+
+    lote1 = _leg(2, 5, "Pyramid Lot Stop", 9.9, 10.395, 10.0, -4.95, 10.395,
+                 trade_entry=10.0, trade_stop=12.34)
+    lote2 = _leg(2, 7, "Pyramid Lot Stop", 10.5, 11.025, 10.0, -5.25, 11.025,
+                 trade_entry=10.0, trade_stop=12.34)
+    (trade,) = _group_partial_exits([lote1, lote2])
+    assert trade["entry_price"] == 10.0 and trade["stop_loss"] == 12.34
+    assert trade["size"] == 20.0 and trade["pnl"] == round(-4.95 - 5.25, 4)
+    assert "trade_entry_price" not in trade and "trade_stop_loss" not in trade
+
+    # atajo len(run)==1: dos posiciones seguidas, la primera vaciada por UN lote
+    lote_solo = _leg(2, 5, "Pyramid Lot Stop", 9.9, 10.395, 10.0, -4.95, 10.395,
+                     trade_entry=10.0, trade_stop=12.34)
+    otra = _leg(30, 40, "Signal", 8.0, 8.8, 10.0, 2.0, 8.2)
+    t1, t2 = _group_partial_exits([lote_solo, otra])
+    assert t1["entry_price"] == 10.0 and t1["stop_loss"] == 12.34
+    assert "trade_entry_price" not in t1 and "trade_stop_loss" not in t1
+    assert t2["entry_price"] == 8.0 and t2["stop_loss"] == 8.8   # intacta
+
+    # atajo len(trades_records) < 2: la lista entera es UN leg de lote
+    (solo,) = _group_partial_exits([
+        _leg(2, 5, "Pyramid Lot Stop", 9.9, 10.395, 10.0, -4.95, 10.395,
+             trade_entry=10.0, trade_stop=12.34)])
+    assert solo["entry_price"] == 10.0 and solo["stop_loss"] == 12.34
+    assert "trade_entry_price" not in solo and "trade_stop_loss" not in solo
+
+
+def test_fusion_sin_lote_es_la_de_siempre():
+    """[criterio 7.3] Sin lot_stop la fusión no cambia ni una coma: un parcial
+    primero y el cierre después siguen dando el trade de siempre (entrada y
+    stop del primer leg, que ES la del trade)."""
+    from app.services.backtest_service import _group_partial_exits
+
+    parcial = _leg(2, 9, "Partial TP", 10.0, 12.34, 10.0, 5.0, 10.5, avg_entry=9.95)
+    cierre = _leg(2, 20, "SL", 10.0, 12.34, 10.0, 23.4, 12.34, avg_entry=9.95)
+    (trade,) = _group_partial_exits([parcial, cierre])
+    assert trade["entry_price"] == 10.0 and trade["stop_loss"] == 12.34
+    assert trade["pnl"] == round(5.0 + 23.4, 4) and trade["size"] == 20.0
+    assert trade["exit_reason"] == "SL" and trade["exit_price"] == 12.34
+    assert "trade_entry_price" not in trade and "trade_stop_loss" not in trade
+    entrada = [e for e in trade["executions"] if e["kind"] == "entry"]
+    assert entrada and entrada[0]["price"] == 10.0
+
+
+def test_enrich_trades_lleva_la_identidad_del_lote_hasta_la_fusion():
+    """El fix depende de que las dos claves auxiliares sobrevivan a
+    `_enrich_trades` (construye un dict nuevo por leg y ahí se caían antes
+    de llegar al agrupador). Una leg normal no gana las claves."""
+    from app.services.backtest_service import _enrich_trades
+
+    ts = pd.Series(pd.date_range("2025-12-09 04:00", periods=25, freq="1min"))
+    raw = {
+        "entry_idx": 2, "exit_idx": 9, "entry_price": 9.9,
+        "avg_entry_price": 9.95, "exit_price": 10.395, "pnl": -4.95,
+        "fees": 0.0, "return_pct": -5.0, "direction": "Short",
+        "status": "Closed", "size": 10.0, "exit_reason": "Pyramid Lot Stop",
+        "mae": 0.0, "mfe": 0.0, "stop_loss": 10.395,
+        "trade_entry_price": 10.0, "trade_stop_loss": 12.34,
+    }
+    (leg,) = _enrich_trades([raw], ts, "ATMV", "2025-12-09", {}, 100.0)
+    assert leg["trade_entry_price"] == 10.0 and leg["trade_stop_loss"] == 12.34
+
+    normal = {k: v for k, v in raw.items()
+              if k not in ("trade_entry_price", "trade_stop_loss")}
+    (leg2,) = _enrich_trades([normal], ts, "ATMV", "2025-12-09", {}, 100.0)
+    assert "trade_entry_price" not in leg2 and "trade_stop_loss" not in leg2
+
+
+def test_pierna_de_lote_lleva_la_identidad_del_trade_mientras_conserva_la_suya():
+    """Fix §5.1 visto desde el motor: la pierna de lote sigue reportando SU
+    entrada (9) y SU cinturón (9,81) —los asserts de siempre— y ADEMÁS viaja
+    con la entrada (10) y el stop (10,8) del TRADE, informativos."""
+    n = 20
+    open_, high, low, close, ts = _dia(n=n)
+    # base a 10; el añadido se llena a 9 (open de la barra 6)
+    open_[:6] = 10.0; close[:6] = 10.0; low[:6] = 9.95; high[:6] = 10.05
+    open_[6:] = 9.0; close[6:] = 9.0; high[6:9] = 9.05; low[6:] = 8.95
+    high[9] = 9.9     # cruza el cinturón del lote (9 × 1,09 = 9,81)
+    high[12] = 10.9   # luego la base sale por el SL del trade (10 × 1,08)
+    niveles = [_nivel_add(_senal(5, n=n), amount_usd=90.0,
+                          lot_stop={"mode": "pct", "pct": 9.0})]
+    res = _correr(open_, high, low, close, ts, _senal(1, n=n), _senal(16, n=n),
+                  niveles, sl_stop=0.08)
+
+    lote, sl_trade = res["trades"]
+    assert lote["exit_reason"] == "Pyramid Lot Stop"
+    # SU identidad (lo que exigen los tests del PRD del SL por lote, intactos)
+    assert lote["entry_price"] == 9.0 and lote["stop_loss"] == 9.81
+    assert lote["pnl"] == round((9.0 - 9.81) * 10.0, 4)
+    # ...y la del TRADE al lado, para que la fusión pueda restaurarla
+    assert lote["trade_entry_price"] == 10.0 and lote["trade_stop_loss"] == 10.8
+    assert sl_trade["exit_reason"] == "SL" and sl_trade["stop_loss"] == 10.8
+    assert "trade_entry_price" not in sl_trade
