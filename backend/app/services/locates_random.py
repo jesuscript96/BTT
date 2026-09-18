@@ -18,14 +18,24 @@ LAS TRES REGLAS DEL SORTEO
    otro orden, y cambiar un parametro cualquiera no mueve ni un locate: la
    diferencia que veas es del parametro, no de la suerte del sorteo.
 
-3. **Las caras salen caras, sin anclas del usuario.** El precio de la accion fija
-   el CENTRO dentro del rango [minimo, maximo] en escala logaritmica entre el
-   suelo del universo (0,10 $, el mismo que ya filtra el backtest) y un techo de
-   30 $; y alrededor de ese centro se sortea con una dispersion lognormal
-   moderada, recortada al rango. Medido con rango 1-10 (dos de cada tres
-   sorteos): una accion de 0,30 $ sale en torno a 2,7 (2-3,9), una de 3 $ en
-   torno a 6,4 (4,6-9), una de 15 $ en torno a 8,9 (6,4-10). Jaume no quiso
-   poner anclas: «que se distribuya solo».
+3. **Las caras salen caras, y el rango se usa ENTERO.** El precio de la accion
+   fija el CENTRO del sorteo como una ley de potencia entre los dos extremos del
+   rango: el gapper mas barato que se opera aqui (~0,30 $) cae en el minimo del
+   rango y el mas caro (~25 $) en el maximo, y entre medias el locate crece con
+   el precio pero MENOS que proporcionalmente (con 1-20, multiplicar el precio
+   por 10 multiplica el locate por 4,8). Alrededor del centro se sortea con una
+   dispersion lognormal moderada, recortada al rango. Medido con rango 1-20
+   (dos de cada tres sorteos): una accion de 0,50 $ sale en torno a 1,4
+   (1,0-2,0), una de 1 $ en torno a 2,3 (1,6-3,2), una de 3 $ en torno a 4,8
+   (3,4-6,7), una de 10 $ en torno a 10,8 (7,6-15), una de 25 $ o mas pega en
+   el 20. Jaume no quiso poner anclas: «que se distribuya solo».
+
+   Hasta el 18-sep la escala iba del suelo del universo (0,10 $) al techo
+   (30 $), lineal en log-precio: como los gappers que se operan viven entre
+   0,3 y 25 $, la corrida nunca usaba el tramo bajo del rango (con 1-20 el
+   locate mas barato de 3.445 ticker-dias fue 2,69 y una accion de 0,50-1 $
+   pagaba 7,6 $ el paquete = 10 % de fade), y la puerta por EV tumbaba el 95 %
+   de las acciones de menos de 1 $. Era la forma de repartir, no el EV.
 
 El precio de referencia es la PRIMERA vela del frame del dia (arranca a las
 04:00): es causal —se conoce antes de cualquier entrada— y es lo que mira un
@@ -38,11 +48,14 @@ import math
 import random
 from typing import Iterable
 
-# Escala de precios del universo. El suelo es el mismo que aplica
-# `data_service._filtrar_universo`; el techo es donde estas acciones dejan de
-# ser «small caps» a efectos de locate. No son parametros del usuario a proposito.
-PRECIO_SUELO = 0.10
-PRECIO_TECHO = 30.0
+# Anclas de la ley de potencia: el precio de referencia al que un ticker-dia
+# paga el MINIMO del rango y el precio al que paga el MAXIMO. Medidas el 18-sep
+# sobre 3.445 ticker-dias operados por PM (A) en 2024-2026: p1 de la referencia
+# 0,54 $ (la estrategia filtra por precio; otras bajan mas), p98 30 $. Por
+# debajo de la barata se paga el minimo y por encima de la cara el maximo. No
+# son parametros del usuario a proposito: el rango ya es su mando.
+PRECIO_BARATA = 0.30
+PRECIO_CARA = 25.0
 
 # Dispersion (sigma del lognormal) alrededor del centro. Con 0,35, dos de cada
 # tres sorteos caen entre x0,7 y x1,4 del centro. Si algun dia hace falta, es un
@@ -60,11 +73,27 @@ def _rng(seed: int, ticker: str, fecha: str) -> random.Random:
 
 
 def posicion_por_precio(precio: float) -> float:
-    """Donde cae ese precio en el universo, de 0 (suelo) a 1 (techo), en log."""
+    """Donde cae ese precio entre los gappers, de 0 (la barata) a 1 (la cara),
+    lineal en log-precio y recortado: por debajo de la barata es 0, por encima
+    de la cara es 1."""
     if not precio or precio <= 0:
         return 0.0
-    p = min(max(precio, PRECIO_SUELO), PRECIO_TECHO)
-    return math.log(p / PRECIO_SUELO) / math.log(PRECIO_TECHO / PRECIO_SUELO)
+    p = min(max(precio, PRECIO_BARATA), PRECIO_CARA)
+    return math.log(p / PRECIO_BARATA) / math.log(PRECIO_CARA / PRECIO_BARATA)
+
+
+def centro_por_precio(precio: float, minimo: float, maximo: float) -> float:
+    """Centro del sorteo para ese precio: ley de potencia entre minimo y maximo
+    (la barata paga el minimo, la cara el maximo, y en medio el locate crece con
+    el precio elevado a log(max/min)/log(cara/barata)). Si el rango arranca en
+    0 no hay potencia posible y se interpola lineal."""
+    lo, hi = float(min(minimo, maximo)), float(max(minimo, maximo))
+    if lo < 0:
+        lo = 0.0
+    pos = posicion_por_precio(precio)
+    if lo > 0 and hi > lo:
+        return lo * (hi / lo) ** pos
+    return lo + (hi - lo) * pos
 
 
 def precio_locate(
@@ -84,7 +113,7 @@ def precio_locate(
     if lo < 0:
         lo = 0.0
     pos = posicion_por_precio(precio_ref)
-    centro = lo + (hi - lo) * pos
+    centro = centro_por_precio(precio_ref, lo, hi)
     if hi <= lo or centro <= 0:
         precio = lo
     else:

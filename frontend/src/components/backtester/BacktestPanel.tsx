@@ -2166,7 +2166,7 @@ export default function BacktestPanel({
                   <InfoTooltip
                     position="left"
                     width={320}
-                    text="En vez de un precio fijo, cada ticker y día recibe un precio de locate distinto, sorteado dentro de este rango (en dólares por paquete de 100 acciones). El sorteo NO es a ciegas: las acciones baratas caen hacia la parte baja del rango y las caras hacia la alta, porque así funcionan los brokers. Ejemplo con rango 1-10: una acción a 0,30 $ suele salir entre 2 y 4; una a 3 $ entre 4,5 y 9; una a 15 $ entre 6,5 y 10. El precio de referencia es la primera vela del día (04:00), así que no mira el futuro. Se cobra como siempre: paquetes enteros, una vez por ticker y día, sobre el máximo en corto de ese día."
+                    text="En vez de un precio fijo, cada ticker y día recibe un precio de locate distinto, sorteado dentro de este rango (en dólares por paquete de 100 acciones). El sorteo NO es a ciegas: las acciones baratas caen hacia la parte baja del rango y las caras hacia la alta, porque así funcionan los brokers; el gapper más barato que se opera (0,30 $) paga el mínimo del rango y el más caro (25 $) el máximo, así que el rango se usa entero. Ejemplo con rango 1-20: una acción a 0,50 $ suele salir entre 1 y 2; una a 1 $ entre 1,6 y 3,2; una a 3 $ entre 3,4 y 6,8; una a 10 $ entre 7,7 y 15; a partir de 25 $ pega en el 20. El precio de referencia es la primera vela del día (04:00), así que no mira el futuro. Se cobra como siempre: paquetes enteros, una vez por ticker y día, sobre el máximo en corto de ese día."
                     style={{ display: 'inline-flex' }}
                   />
                 </span>
