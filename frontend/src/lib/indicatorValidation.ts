@@ -219,6 +219,27 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
         IndicatorType.OVERHEAD_X_DAYS,
         IndicatorType.VWAP,
     ],
+    // Es un NIVEL DE PRECIO (mismos destinos que "Ultimo pivote") Y ADEMAS SE
+    // COMPARA CONSIGO MISMO: "Pico(1) < Pico(2)" es el punto entero de la
+    // familia — sin el, no se puede escribir un hombro-cabeza-hombro. El rank
+    // (pivot_rank) viaja dentro de cada lado, no cambia el nombre.
+    [IndicatorType.PICO]: [
+        IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
+        IndicatorType.HIGH_BAR, IndicatorType.LOW_BAR,
+        IndicatorType.PM_OPEN, IndicatorType.PM_HIGH, IndicatorType.PM_LOW,
+        IndicatorType.PREVIOUS_MIN, IndicatorType.PREVIOUS_MAX,
+        IndicatorType.LAST_PIVOT,
+        IndicatorType.PICO,
+        IndicatorType.YESTERDAY_OPEN, IndicatorType.YESTERDAY_CLOSE,
+        IndicatorType.YESTERDAY_HIGH, IndicatorType.YESTERDAY_LOW,
+        IndicatorType.HIGH_X_DAYS, IndicatorType.LOW_X_DAYS,
+        IndicatorType.OVERHEAD_X_DAYS,
+        IndicatorType.VWAP,
+    ],
+    // Las otras dos de la familia son MEDIDAS (minutos y volumen): solo
+    // contra una cifra fija, igual que Squeeze o Retroceso.
+    [IndicatorType.EDAD_PICO]: [],
+    [IndicatorType.VOLUMEN_PICO]: [],
     [IndicatorType.PREVIOUS_MIN]: [
         ...PERFIL_VOLUMEN,
         IndicatorType.BAR_CLOSE, IndicatorType.BAR_OPEN,
@@ -349,6 +370,10 @@ export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
     [IndicatorType.VOL_ZONE_HIGH]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.VOL_ZONE_LOW]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.LAST_PIVOT]: [...DISTANCE_ALLOWED_TARGETS],
+    // Nivel de precio como "Ultimo pivote", y consigo mismo: la distancia
+    // entre DOS giros de la lista (p. ej. |Pico(1) - Pico(3)| < 1,5% mide que
+    // los dos hombros de un HCH estén a la misma altura).
+    [IndicatorType.PICO]: [...DISTANCE_ALLOWED_TARGETS, IndicatorType.PICO],
     [IndicatorType.PREVIOUS_MAX]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.PREVIOUS_MIN]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.SMA]: [...DISTANCE_ALLOWED_TARGETS],
