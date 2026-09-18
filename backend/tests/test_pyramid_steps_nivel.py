@@ -69,7 +69,11 @@ DEF_CON_PYR = {
 # las claves de los grupos de piramide desde el 16-sep (`group`, `sequential`,
 # `move`, `def_index`); verificado que es el MISMO hash que sailor daba antes
 # de integrar el lot_stop y el camino.
-GOLDEN_CON_PYR = "97cc54570067a9f67f00f6bf32232bec2ce944f871b37b29ea2860d7c0455047"
+# Recongelado el 18-sep (Fase 2 de picos y valles): _extract_indicator_plan
+# añade swing_dir/pivot_window/pivot_rank a cada spec del plan. Diff del
+# compilado verificado campo a campo (viejo vs nuevo): SOLO esos tres nulls
+# en los specs; señales y claves de indicadores no-pivot intactas.
+GOLDEN_CON_PYR = "46e24a2656d883b0a278fc586aea46fb10317a3beab0679802a835c901376dfa"
 
 CAMINO_2P = [json.loads(json.dumps(SIEMPRE)), json.loads(json.dumps(SIEMPRE))]
 

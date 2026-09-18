@@ -2920,11 +2920,14 @@ def _compute_raw(
         #   Pico            -> el PRECIO del giro nº `pivot_rank` hacia atras
         #   Edad del pico   -> minutos de RELOJ desde que se formó ese giro
         #   Volumen del pico-> el volumen de la vela de ese giro
-        # FASE 1 DEL PRD: esta familia NO se registra en
-        # _RAW_INDICATOR_DISPATCH (strategy_engine). Toda estrategia que la use
-        # cae al carril legacy por el gate has_special, que es donde
-        # `pivot_rank` viaja entero. NO moverla al dispatch nativo sin ampliar
-        # antes la clave de deduplicacion de _extract_indicator_plan (PRD §7.1).
+        # FASE 2 del PRD (2026-09-18): la familia YA está registrada en
+        # _RAW_INDICATOR_DISPATCH (strategy_engine) y corre por el carril
+        # nativo cuando BTT_N2A_NATIVE_ENABLED=1. La trampa del §7.1 está
+        # cerrada: la clave de dedup de _extract_indicator_plan Y
+        # _cfg_key_static distinguen swing_dir/pivot_window/pivot_rank, así
+        # que Pico(1), Pico(2) y Valle(1) jamás comparten array. Este camino
+        # (legacy) sigue siendo LA especificación y el que usan las estrategias
+        # con price_level_distance (el HCH del §6, gated a legacy).
         # `1d` no funciona con esta familia (el reinicio diario deja cada barra
         # en un dia nuevo y el indicador sale NaN siempre): decision del PRD
         # §6, documentada aqui; no se rechaza con error.

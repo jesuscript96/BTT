@@ -6,9 +6,9 @@ indexando por EVENTOS (`pivot_rank`), no por velas. Es lo que permite expresar
 un hombro-cabeza-hombro comparando rank 1 contra rank 2 y rank 3.
 
 Datos 100% sintéticos, al estilo de test_n2a_native_equivalence.py — no toca
-DuckDB ni GCS. FASE 1 del PRD: la familia NO está en _RAW_INDICATOR_DISPATCH
-(eso lo cubre el test extra del final, no hace falta paridad con el carril
-nativo porque nunca va por él).
+DuckDB ni GCS. FASE 2 del PRD (§7.1): la familia ESTÁ en
+_RAW_INDICATOR_DISPATCH y la paridad con el carril legacy se exige abajo
+(clave de dedup, gate has_special y señales idénticas nativo↔legacy).
 """
 import time
 
@@ -21,6 +21,7 @@ from app.services.strategy_engine import (
     _RAW_INDICATOR_DISPATCH,
     compile_strategy_def,
     translate_strategy,
+    translate_strategy_native,
 )
 
 
@@ -322,21 +323,168 @@ def test_8_coste_no_depende_de_pivot_window():
     )
 
 
-# ─── Extra (fuera de los 8): Fase 1 = carril legacy ───────────────────────
+# ─── Extra (fuera de los 8): Fase 2 = carril nativo ───────────────────────
 
-def test_fase1_la_familia_va_por_el_carril_legacy():
-    """PRD §7.1, Fase 1: la familia NO se registra en _RAW_INDICATOR_DISPATCH
-    y cualquier estrategia que la use cae al carril legacy por el gate
-    has_special (que es donde pivot_rank viaja entero). El día que se mueva
-    al dispatch nativo hay que ampliar ANTES la clave de deduplicación de
-    _extract_indicator_plan (trampa del §7.1)."""
+def _make_arrays(df):
+    """Réplica exacta de la construcción de arrays_native en
+    backtest_signals._compute_signals_for_pair (test_n2a_native_equivalence)."""
+    ts = pd.to_datetime(df["timestamp"])
+    ts_int64 = ts.values.astype("datetime64[ns]").astype(np.int64)
+    abs_min = ts_int64 // 60_000_000_000
+    return {
+        "open": np.asarray(df["open"], dtype=np.float64),
+        "high": np.asarray(df["high"], dtype=np.float64),
+        "low": np.asarray(df["low"], dtype=np.float64),
+        "close": np.asarray(df["close"], dtype=np.float64),
+        "volume": np.asarray(df["volume"], dtype=np.float64),
+        "minutes_arr": abs_min % 1440,
+        "abs_min_arr": abs_min,
+    }
+
+
+def _assert_equivalente_native(strat, df, min_entries=1):
+    """Señales legacy vs nativo IDÉNTICAS (el legacy es LA especificación)."""
+    compiled = compile_strategy_def(strat)
+    assert not compiled["_indicator_plan"]["has_special"], (
+        "la estrategia debería ser nativa-elegible y el gate la mandó a legacy"
+    )
+    legacy = translate_strategy(df.copy(), strat, {}, compiled=compiled)
+    native = translate_strategy_native(_make_arrays(df), compiled, {})
+    leg = np.asarray(legacy["entries"], dtype=bool)
+    nat = np.asarray(native["entries"], dtype=bool)
+    assert len(leg) == len(nat) == len(df)
+    assert leg.sum() >= min_entries, (
+        f"caso trivial ({leg.sum()} entradas): el test no está midiendo nada"
+    )
+    assert np.array_equal(leg, nat), (
+        f"entries divergen: legacy={leg.sum()} native={nat.sum()} "
+        f"primeras diffs={np.flatnonzero(leg != nat)[:10]}"
+    )
+    lex = np.asarray(legacy["exits"], dtype=bool)
+    nex = np.asarray(native["exits"], dtype=bool)
+    assert np.array_equal(lex, nex), (
+        f"exits divergen: legacy={lex.sum()} native={nex.sum()}"
+    )
+    return leg
+
+
+def test_fase2_la_familia_va_por_el_carril_nativo():
+    """PRD §7.1, Fase 2: la familia ESTÁ en _RAW_INDICATOR_DISPATCH y una
+    estrategia de comparaciones puras ya NO cae al legacy (has_special=False).
+    El HCH con price_level_distance SIGUE yendo al legacy: esa condición no
+    tiene paridad nativa garantizada y gatea la estrategia entera."""
     for nombre in ("Pico", "Edad del pico", "Volumen del pico"):
-        assert nombre not in _RAW_INDICATOR_DISPATCH, (
-            f"{nombre} está en el dispatch nativo: eso es la Fase 2 del PRD, "
-            "no la Fase 1"
+        assert nombre in _RAW_INDICATOR_DISPATCH, (
+            f"{nombre} no está en el dispatch nativo: la Fase 2 del PRD no está"
         )
         src = {"name": nombre, "swing_dir": "up", "pivot_window": 3,
                "pivot_rank": 1}
         strat = _strategy([_cmp(src, "GREATER_THAN", -1e9)])
         plan = compile_strategy_def(strat)["_indicator_plan"]
-        assert plan["has_special"], f"{nombre} no cae al carril legacy"
+        assert not plan["has_special"], f"{nombre} sigue cayendo al legacy"
+
+        # con price_level_distance (las condiciones 3-4 del HCH del §6): legacy
+        dist = {"type": "price_level_distance", "source": src,
+                "level": dict(src, pivot_rank=3),
+                "comparator": "DISTANCE_LT", "value_pct": 1.5, "position": "any"}
+        strat_hch = _strategy([_cmp(src, "GREATER_THAN", -1e9), dist])
+        assert compile_strategy_def(strat_hch)["_indicator_plan"]["has_special"], (
+            "un price_level_distance con Pico debería gatear la estrategia al legacy"
+        )
+
+
+def test_fase2_clave_de_dedup_distingue_la_familia():
+    """LA trampa del §7.1: Pico(1), Pico(2), Valle(1) y Pico(win=5) deben ser
+    specs distintas con claves distintas. Si comparten clave, el motor les da
+    el MISMO array y el HCH sale siempre verdadero — sin error ni log."""
+    p = lambda **kw: {"name": "Pico", "swing_dir": "up", "pivot_window": 3,
+                      "pivot_rank": 1, **kw}
+    strat = _strategy([
+        _cmp(p(), "GREATER_THAN", -1e9),
+        _cmp(p(pivot_rank=2), "GREATER_THAN", -1e9),
+        _cmp(p(swing_dir="down"), "GREATER_THAN", -1e9),
+        _cmp(p(pivot_window=5), "GREATER_THAN", -1e9),
+    ])
+    plan = compile_strategy_def(strat)["_indicator_plan"]
+    claves = [s["key"] for s in plan["specs"] if s["name"] == "Pico"]
+    assert len(claves) == 4, f"el plan deduplicó configs distintas: {claves}"
+    assert len(set(claves)) == 4
+
+
+@pytest.mark.parametrize("swing_dir,win", [("up", 2), ("down", 2), ("up", 3)])
+def test_fase2_paridad_native_legacy_1m(swing_dir, win):
+    """Señales idénticas nativo vs legacy con giros conocidos y con random
+    walk: Pico(1) contra Pico(2), Edad y Volumen."""
+    df = _dia_giros()
+    base = {"name": "Pico", "swing_dir": swing_dir, "pivot_window": win}
+    strat = _strategy([
+        _cmp(dict(base, pivot_rank=1), "LESS_THAN", dict(base, pivot_rank=2)),
+        _cmp({**base, "name": "Edad del pico", "pivot_rank": 2},
+             "LESS_THAN", 90),
+        _cmp({**base, "name": "Volumen del pico", "pivot_rank": 1},
+             "GREATER_THAN", 500),
+    ])
+    _assert_equivalente_native(strat, df)
+
+    # random walk con huecos (más giros, NaNs mezclados)
+    df2 = _dia_aleatorio(seed=7)
+    strat2 = _strategy([
+        _cmp(dict(base, pivot_rank=1), "GREATER_THAN", dict(base, pivot_rank=3)),
+        _cmp({**base, "name": "Edad del pico", "pivot_rank": 1},
+             "LESS_THAN", 120),
+    ])
+    _assert_equivalente_native(strat2, df2)
+
+
+def test_fase2_paridad_native_legacy_multiplier():
+    """El HCH del §6 usa targets 'Pico x 0.97': el multiplier se aplica
+    post-cómputo en el legacy (compute_indicator) y el nativo debe hacer
+    lo mismo con la familia."""
+    df = _dia_giros()
+    base = {"name": "Pico", "swing_dir": "up", "pivot_window": 2}
+    strat = _strategy([
+        _cmp(dict(base, pivot_rank=1), "LESS_THAN",
+             dict(base, pivot_rank=2, multiplier=0.97)),
+    ])
+    _assert_equivalente_native(strat, df)
+
+
+def test_fase2_paridad_native_legacy_tf5m():
+    """tf=5m con huecos de minutos: el resample nativo es por reloj y el eje
+    absoluto de la familia debe ser el de la PRIMERA barra de cada bucket
+    (= timestamp:'first' del legacy), no el borde del bucket."""
+    df = _dia_aleatorio(seed=11, n=480)
+    base = {"name": "Pico", "swing_dir": "up", "pivot_window": 2}
+    strat = dict(_strategy([
+        _cmp(dict(base, pivot_rank=1), "GREATER_THAN", dict(base, pivot_rank=2)),
+    ]))
+    strat["entry_logic"]["timeframe"] = "5m"
+    strat["exit_logic"]["timeframe"] = "5m"
+    _assert_equivalente_native(strat, df)
+
+
+def test_fase2_paridad_native_legacy_multidia():
+    """Frame de dos días: el reinicio diario tiene que dar igual en ambos
+    carriles (el nativo deriva el día del eje absoluto de minutos)."""
+    d1 = _dia_giros(date="2024-11-12")
+    d2 = _dia_giros(date="2024-11-13", offset=5.0)
+    df = pd.concat([d1, d2], ignore_index=True)
+    base = {"name": "Pico", "swing_dir": "up", "pivot_window": 2}
+    strat = _strategy([
+        _cmp(dict(base, pivot_rank=1), "LESS_THAN", dict(base, pivot_rank=2)),
+    ])
+    entries = _assert_equivalente_native(strat, df)
+    # y que el día 2 dispare también (el reinicio no lo deja heredadando NaN)
+    assert entries[len(d1):].any(), "el día 2 no generó entradas"
+
+
+def test_fase2_paridad_native_legacy_cruce_valle():
+    """La ENTRADA del HCH (condición 6): Bar Close CRUZA POR DEBAJO del
+    valle rank=1. Los cruces replican shift(1) del legacy."""
+    df = _dia_aleatorio(seed=13, n=360)
+    valle = {"name": "Pico", "swing_dir": "down", "pivot_window": 3,
+             "pivot_rank": 1}
+    strat = _strategy([
+        _cmp({"name": "Close"}, "CROSSES_BELOW", valle),
+    ])
+    _assert_equivalente_native(strat, df)

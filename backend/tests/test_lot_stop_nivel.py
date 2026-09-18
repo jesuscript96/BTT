@@ -73,8 +73,13 @@ DEF_SIN_PYR = {k: v for k, v in DEF_CON_PYR.items() if k != "pyramiding"}
 # hash de Alvaro (3c2474e6...) no puede coincidir aunque el lot_stop no toque
 # nada; lo que sigue vigilando este test es que el lot_stop no cambie el
 # compilado de un nivel que no lo declara.
-GOLDEN_CON_PYR = "97cc54570067a9f67f00f6bf32232bec2ce944f871b37b29ea2860d7c0455047"
-GOLDEN_SIN_PYR = "8630d492c467310e09cefb963201904fe8bc65270d3f9114ceb7b40a4aadfe86"
+# Recongelados el 18-sep (Fase 2 de picos y valles): _extract_indicator_plan
+# añade swing_dir/pivot_window/pivot_rank a cada spec del plan. Diff del
+# compilado verificado campo a campo (viejo vs nuevo con git show HEAD):
+# SOLO esos tres nulls en los specs; señales y claves de indicadores
+# no-pivot intactas.
+GOLDEN_CON_PYR = "46e24a2656d883b0a278fc586aea46fb10317a3beab0679802a835c901376dfa"
+GOLDEN_SIN_PYR = "639188d29b0659b6eb837d939d42a362095247a50c845237552e109e90004730"
 
 
 def _hash_compilado(definicion: dict) -> str:
