@@ -254,7 +254,8 @@ def guardar(req: WatchReq, user_id: Optional[str] = Depends(get_current_user_id)
 
             return bas.set_watch(con, req.strategy_id, req.activa, req.riesgo_usd,
                                  req.riesgo_piramide_usd, req.capital_usd,
-                                 req.ev_pct, req.riesgos_piramide, req.ev_rangos)
+                                 req.ev_pct, req.riesgos_piramide, req.ev_rangos,
+                                 [c.model_dump() for c in (req.cuentas or [])] or None)
         finally:
             con.close()
 
