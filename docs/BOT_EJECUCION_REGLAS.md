@@ -547,6 +547,39 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área J · Infraestructura
 
+### R-J-01 · Caída del feed de Massive: prealerta a 30 s, emergencia a 60 s
+- Situación: en horario de mercado dejan de llegar ticks y velas de Massive.
+- Detección: latido del feed.
+- Acción: a los 30 s sin datos, PREALERTA; a los 60 s, ALERTA DE EMERGENCIA y modo degradado de R-D-05 (no abrir, mantener con stops, vigilante con precio de DAS). Se sigue monitorizando: si vuelve el feed, aviso de recuperación y se reanuda.
+- Quién la ejecuta: supervisor + vigilante.
+- Parámetros: 30 s / 60 s.
+- Si la acción falla: —
+- Prueba: simulacro cortando el feed.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J2, A3.
+
+### R-J-02 · Caída de la conexión con DAS o de la aplicación DAS
+- Situación: el socket con DAS se cae, o la aplicación DAS se cierra o pierde la sesión.
+- Detección: latido del socket / proceso de DAS.
+- Acción: (1) AVISO MÁXIMO a la primera. (2) Reconexión automática constante: reintento a los 2 s, 4, 8, 16 y después cada 30 s sin parar (relanzar DAS y reloguear si es la aplicación [API: 2FA]). (3) Mientras siga caída, aviso máximo cada 5 minutos. (4) En el cuadro de mandos, botón para deshabilitar el bot (apagarlo) si el humano decide tomar el control. (5) Al reconectar: aviso de recuperación y reconciliación completa (R-C-10) ANTES de enviar nada. Mientras tanto, lo único que protege son los stops residentes en el servidor de DAS.
+- Quién la ejecuta: supervisor.
+- Parámetros: cadencia 2/4/8/16/30 s; aviso cada 5 min.
+- Si la acción falla: —
+- Prueba: simulacro matando DAS y cortando el socket en demo/sombra.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J3, J4, J15.
+
+### R-J-03 · Tabla del modo degradado
+| Qué falla | Abrir nuevas | Gestionar abiertas | Stops | Aviso |
+|---|---|---|---|---|
+| Nada | sí | sí | residentes en DAS | normal |
+| Feed de Massive | no | sí, con precio de DAS | residentes | prealerta 30 s, emergencia 60 s (R-J-01) |
+| Conexión con DAS | no | no: solo actúan los stops ya puestos en el servidor de DAS | residentes | máximo a la primera + cada 5 min, reconexión constante (R-J-02) |
+| El ejecutor (bot) | no | el vigilante | residentes | emergencia + relanzar |
+| El vigilante | sí, con aviso | el ejecutor | residentes | aviso + relanzar |
+| Telegram | sí | sí | residentes | por canal alternativo (M4) |
+- Estado: FIJADA (Jaume, 18-sep). Origen: J16.
+
 ### Área K · Estado y reconciliación
 
 ### Área A · Señal y datos

@@ -171,9 +171,9 @@
 ## J. Infraestructura: VPS, luz, comunicaciones
 
 - [ ] J1. Se va la luz en casa (fase PC): ¿SAI? ¿Cuánto aguanta? ¿Bastan los stops residentes?
-- [ ] J2. Se corta Internet en casa: ¿4G de respaldo? ¿A partir de cuántos segundos sin feed se pasa a «no abrir, solo gestionar» y cuántos a «cerrar todo»?
-- [ ] J3. Se cae la conexión bot↔DAS (socket local): ¿reconexión automática, cuántos intentos, qué pasa con las órdenes en vuelo? **[API]**
-- [ ] J4. Se cae DAS (la aplicación): ¿el supervisor la relanza y reloguea sola? ¿Hay 2FA que lo impida? **[API]**
+- [x] J2. → R-J-01 (30 s prealerta, 60 s emergencia). Se corta Internet en casa: ¿4G de respaldo? ¿A partir de cuántos segundos sin feed se pasa a «no abrir, solo gestionar» y cuántos a «cerrar todo»?
+- [x] J3. → R-J-02 (aviso máximo, reconexión 2/4/8/16/30 s, aviso cada 5 min). Se cae la conexión bot↔DAS (socket local): ¿reconexión automática, cuántos intentos, qué pasa con las órdenes en vuelo? **[API]**
+- [x] J4. → R-J-02 (relanzar y reloguear; 2FA [API]). Se cae DAS (la aplicación): ¿el supervisor la relanza y reloguea sola? ¿Hay 2FA que lo impida? **[API]**
 - [ ] J5. Se cae Sage o el servidor de DAS: ¿teléfono del bróker, app móvil, plan de cierre manual? (runbook)
 - [ ] J6. Se cae Massive: ¿fuente alternativa (L1 de DAS) solo para gestionar lo abierto?
 - [ ] J7. Se cae el bot (excepción): ¿supervisor, tiempo máximo caído, reconciliación al volver, aviso por Telegram?
@@ -185,7 +185,7 @@
 - [ ] J13. Disco lleno por logs y diario: ¿rotación y tope?
 - [ ] J14. Actualización forzada de DAS: ¿cómo se detecta y quién la hace?
 - [ ] J15. Sesión de DAS que caduca de noche: ¿relogin antes de las 04:00 y comprobación? **[API]**
-- [ ] J16. Modo degradado: tabla de qué se permite en cada estado (todo bien / sin feed / sin DAS / sin bot / sin Telegram).
+- [x] J16. → R-J-03 (tabla). Modo degradado: tabla de qué se permite en cada estado (todo bien / sin feed / sin DAS / sin bot / sin Telegram).
 - [ ] J17. Vigilante externo: si el bot no da señal de vida en N min, ¿alguien recibe aviso aunque el propio bot esté muerto?
 - [ ] J18. Latencia: ¿se mide ida y vuelta orden→confirmación y a partir de cuánto no se opera?
 - [ ] J19. Caída del proveedor de Telegram: ¿el bot sigue operando o se pausa por falta de canal de aviso?
