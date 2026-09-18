@@ -1096,6 +1096,12 @@ INDICATOR_NAME_MAP = {
     "Zona baja": "Zona baja",
     "Ultimo pivote": "Ultimo pivote",
     "\u00daltimo pivote": "Ultimo pivote",
+    # Picos y valles enumerados (PRD 2026-09-18): "Pico" con swing_dir="down"
+    # es el valle; la edad va en minutos de reloj y el volumen es el de la vela
+    # del giro.
+    "Pico": "Pico",
+    "Edad del pico": "Edad del pico",
+    "Volumen del pico": "Volumen del pico",
     "Retroceso (%)": "Retroceso (%)",
     "Absorption": "Absorption",
     "Wick Ratio": "Wick Ratio",
@@ -1171,6 +1177,12 @@ def compute_indicator(
     wick_level: float | None = None,
     # "Retroceso (%)": si el impulso que se mide es al alza o a la baja.
     swing_dir: str | None = None,
+    # "Pico"/"Edad del pico"/"Volumen del pico": cual de los ultimos giros del
+    # dia devuelve el indicador (1 = el ultimo confirmado, 2 = el anterior...).
+    # Va en la CLAVE DE CACHE de abajo: sin el, rank=1 y rank=2 COMPARTIRIAN
+    # resultado y el patron daria siempre verdadero (PRD §5, el fallo mas
+    # peligroso del lote).
+    pivot_rank: int | None = None,
     # Perfil de volumen: anchura de franja (% del primer precio del dia) y
     # liston para que una franja cuente como nodo (% del volumen del POC).
     bin_pct: float | None = None,
@@ -1181,7 +1193,7 @@ def compute_indicator(
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}|{bin_pct}|{liston_pct}|{zona_pct}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}|{bin_pct}|{liston_pct}|{zona_pct}|{pivot_rank}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -1217,6 +1229,7 @@ def compute_indicator(
         wick_side=wick_side, abs_op=abs_op, abs_level=abs_level,
         wick_op=wick_op, wick_level=wick_level, swing_dir=swing_dir,
         bin_pct=bin_pct, liston_pct=liston_pct, zona_pct=zona_pct,
+        pivot_rank=pivot_rank,
     )
 
     if offset and offset != 0:
@@ -1870,6 +1883,100 @@ def _ultimo_pivote(h, l, day_id, win, alto):
     return out
 
 
+# Picos y valles ENUMERADOS (PRD 2026-09-18,
+# docs/PRD_PICOS_Y_VALLES_ENUMERADOS_20260918.md).
+#
+# Mismo giro que `_ultimo_pivote`, pero en vez de quedarse con el ultimo guarda
+# los ultimos M del dia en un bufer circular: `rank=1` es el ultimo confirmado
+# (IDENTICO a "Ultimo pivote", mismo criterio de deteccion copiado vela a
+# vela), `rank=2` el anterior, `rank=3` el de antes... Eso es lo que hace
+# falta para comparar unos giros con otros — un hombro-cabeza-hombro, un doble
+# techo, una divergencia de estructura — y lo que el lenguaje de condiciones
+# (serie en la barra t contra serie en la barra t) no podia expresar: un pivote
+# vive en un indice de EVENTOS, no de velas, y `offset` (velas, no pivotes) no
+# sirve de sustituto.
+#
+# Contrato (hereda de `_ultimo_pivote`, ver el PRD §4.2):
+#   - causal: el pivote centrado en `i - win` se confirma en la barra `i`;
+#   - comparacion estricta (`>` / `<`): los empates no cuentan;
+#   - reinicio diario (day_id): el patron cabe dentro de una sesion;
+#   - NaN honesto: sin `rank` giros confirmados HOY, NaN (nunca el de ayer);
+#   - `rank > M` (buffer): NaN, no error;
+#   - la EDAD va en minutos de RELOJ (t_min de la barra actual menos el de la
+#     vela del giro), no en velas — las velas del lago son dispersas.
+#
+# OJO numba (PRD §9): el bufer es circular y su indice se acota A MANO. Un
+# indice negativo dentro de un @njit sin boundscheck NO da IndexError: mata el
+# proceso entero sin traceback (0xC0000005). Ninguna lectura sale de [0, M-1].
+_PICO_BUFFER_M = 16
+
+
+@njit(cache=True)
+def _pico_enumerado(h, l, v, t_min, day_id, win, alto, rank, out_kind):
+    n = len(h)
+    out = np.full(n, np.nan)
+    M = _PICO_BUFFER_M
+    buf_precio = np.zeros(M)
+    buf_tmin = np.zeros(M)
+    buf_vol = np.zeros(M)
+    cur_day = -1
+    day_start = 0
+    cuenta = 0        # pivotes confirmados HOY (gate del NaN honesto)
+    head = 0          # indice del bufer donde esta el mas reciente
+    for i in range(n):
+        if day_id[i] != cur_day:
+            cur_day = day_id[i]
+            day_start = i
+            cuenta = 0
+            head = 0
+        c = i - win                      # candidato: el centro de la ventana
+        if c - win >= day_start:         # con sus `win` velas a cada lado, del MISMO dia
+            es_pivote = True
+            # ESTRICTAMENTE mayor (o menor) que TODAS las de su ventana, igual
+            # que `_ultimo_pivote`: en un tramo plano ninguna vela es pivote y
+            # un doble techo exacto no cuenta como giro nuevo.
+            if alto:
+                for k in range(c - win, c + win + 1):
+                    if k != c and h[k] >= h[c]:
+                        es_pivote = False
+                        break
+                if es_pivote:
+                    head += 1
+                    if head >= M:
+                        head = 0
+                    buf_precio[head] = h[c]
+                    buf_tmin[head] = t_min[c]
+                    buf_vol[head] = v[c]
+                    cuenta += 1
+            else:
+                for k in range(c - win, c + win + 1):
+                    if k != c and l[k] <= l[c]:
+                        es_pivote = False
+                        break
+                if es_pivote:
+                    head += 1
+                    if head >= M:
+                        head = 0
+                    buf_precio[head] = l[c]
+                    buf_tmin[head] = t_min[c]
+                    buf_vol[head] = v[c]
+                    cuenta += 1
+        if rank <= cuenta and rank <= M:
+            # Indice del rank-esimo giro hacia atras. El wrap se hace con un
+            # `if` explicito y NO con `%`: en numba un resto negativo mal
+            # acotado es exactamente el tipo de indice que tumba el proceso.
+            j = head - (rank - 1)
+            if j < 0:
+                j += M
+            if out_kind == 0:
+                out[i] = buf_precio[j]
+            elif out_kind == 1:
+                out[i] = t_min[i] - buf_tmin[j]
+            else:
+                out[i] = buf_vol[j]
+    return out
+
+
 # Perfil de volumen intradia: el volumen del dia repartido por FRANJAS DE
 # PRECIO, en vez de por tiempo. Dice donde se ha cruzado el dinero, que es donde
 # esta la gente con su coste — y por tanto donde hay oferta esperando.
@@ -2093,6 +2200,7 @@ def _compute_raw(
     bin_pct: float | None = None,
     liston_pct: float | None = None,
     zona_pct: float | None = None,
+    pivot_rank: int | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -2798,6 +2906,52 @@ def _compute_raw(
                 h_v, l_v = h_v[order], l_v[order]
             res = _ultimo_pivote(h_v, l_v, day_id, win,
                                  str(swing_dir or "up").lower() != "down")
+            if order is not None:
+                out[order] = res
+            else:
+                out = res
+        return pd.Series(out, index=close.index)
+
+    if name in ("Pico", "Edad del pico", "Volumen del pico"):
+        # Picos y valles ENUMERADOS (PRD 2026-09-18). Ver `_pico_enumerado`.
+        # Mismo criterio de deteccion que "Ultimo pivote": `pivot_rank=1` con
+        # los mismos `swing_dir` y `pivot_window` da EXACTAMENTE lo mismo que
+        # aquel (es un test del PRD §8, no una aspiracion).
+        #   Pico            -> el PRECIO del giro nº `pivot_rank` hacia atras
+        #   Edad del pico   -> minutos de RELOJ desde que se formó ese giro
+        #   Volumen del pico-> el volumen de la vela de ese giro
+        # FASE 1 DEL PRD: esta familia NO se registra en
+        # _RAW_INDICATOR_DISPATCH (strategy_engine). Toda estrategia que la use
+        # cae al carril legacy por el gate has_special, que es donde
+        # `pivot_rank` viaja entero. NO moverla al dispatch nativo sin ampliar
+        # antes la clave de deduplicacion de _extract_indicator_plan (PRD §7.1).
+        # `1d` no funciona con esta familia (el reinicio diario deja cada barra
+        # en un dia nuevo y el indicador sale NaN siempre): decision del PRD
+        # §6, documentada aqui; no se rechaza con error.
+        win = int(pivot_window) if pivot_window else 3
+        if win < 1:
+            win = 1
+        rank = int(pivot_rank) if pivot_rank else 1
+        if rank < 1:
+            rank = 1
+        if name == "Edad del pico":
+            out_kind = 1
+        elif name == "Volumen del pico":
+            out_kind = 2
+        else:
+            out_kind = 0
+        n = len(close)
+        out = np.full(n, np.nan)
+        t_min, day_id, order = _minutes_axis(df, n)
+        if t_min is not None:
+            h_v = high.values.astype(np.float64)
+            l_v = low.values.astype(np.float64)
+            v_v = volume.values.astype(np.float64)
+            if order is not None:
+                h_v, l_v, v_v = h_v[order], l_v[order], v_v[order]
+            res = _pico_enumerado(h_v, l_v, v_v, t_min, day_id, win,
+                                  str(swing_dir or "up").lower() != "down",
+                                  rank, out_kind)
             if order is not None:
                 out[order] = res
             else:

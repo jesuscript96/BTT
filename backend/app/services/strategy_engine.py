@@ -1962,6 +1962,10 @@ def _compute_from_config(
         bin_pct=cfg.get("bin_pct"),
         liston_pct=cfg.get("liston_pct"),
         zona_pct=cfg.get("zona_pct"),
+        # "Pico"/"Edad del pico"/"Volumen del pico" (PRD 2026-09-18). Sin este
+        # reenvio el rank se pierde MUDO y el indicador calcularia con rank=1
+        # (mismo fallo que ya tuvieron otros indicadores, PRD §5).
+        pivot_rank=cfg.get("pivot_rank"),
     )
 
 

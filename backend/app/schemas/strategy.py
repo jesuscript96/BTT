@@ -57,6 +57,14 @@ class IndicatorType(str, Enum):
     VOL_ZONE_HIGH = "Zona alta"
     VOL_ZONE_LOW = "Zona baja"
     LAST_PIVOT = "Ultimo pivote"
+    # Picos y valles ENUMERADOS (PRD 2026-09-18): la familia de "Ultimo
+    # pivote" con la LISTA de los ultimos giros del dia. `pivot_rank=1` es
+    # identico a "Ultimo pivote"; rank>1 mira hacia atras en el indice de
+    # EVENTOS (no de velas) — lo que hace falta para un
+    # hombro-cabeza-hombro. "Pico" con swing_dir="down" es el valle.
+    PICO = "Pico"
+    EDAD_PICO = "Edad del pico"
+    VOLUMEN_PICO = "Volumen del pico"
     RETRACEMENT = "Retroceso (%)"
     ABSORPTION = "Absorption"
     WICK_RATIO = "Wick Ratio"
@@ -361,6 +369,15 @@ class IndicatorConfig(BaseModel):
     # "Retroceso (%)": si el impulso que se mide es al alza (retroceso desde el
     # maximo, el caso de un gapper) o a la baja (rebote desde el minimo).
     swing_dir: Optional[Literal["up", "down"]] = None
+    # "Pico"/"Edad del pico"/"Volumen del pico": cual de los ultimos giros del
+    # dia devuelve el indicador. 1 = el ultimo confirmado (identico a "Ultimo
+    # pivote"), 2 = el anterior, 3 = el de antes... Mas de la profundidad del
+    # bufer (16) da NaN, no error.
+    # DECLARADO AQUI A PROPOSITO: pydantic va con extra="ignore", un campo sin
+    # declarar se tira SIN error, SIN log y SIN 422. `pivot_rank` tiene que
+    # vivir en CUATRO sitios (este, la clave de cache de compute_indicator,
+    # _compute_from_config y el catalog.py) — ver PRD §5.
+    pivot_rank: Optional[int] = None
     # Perfil de volumen:
     #   bin_pct     anchura de cada franja, en % del primer precio del dia.
     #   liston_pct  cuanto volumen tiene que tener una franja para contar como
