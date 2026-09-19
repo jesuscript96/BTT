@@ -100,3 +100,21 @@ def test_sin_stop_no_consume_ni_se_topa_en_riesgo():
     out = plr.simulate(runs, cfg)
     assert out["ticker_cap_report"]["sin_stop"] == 1 and out["ticker_cap_report"]["skipped"] == 0
     assert _n_trades(out) == [1, 1]
+
+
+def test_base_por_trade_el_tope_es_lo_que_arriesga_un_trade():
+    # «Por trade»: sin numero. s1 mete 300 $ de riesgo en AAA; s2 (tambien 300 $
+    # por trade) llega con el ticker ya al tope de UN trade => fuera. Con trim,
+    # queda 0 => tambien fuera. BBB entra (su primer trade cabe por definicion).
+    out = plr.simulate(_runs(), _cfg(0, basis="trade"))
+    r = out["ticker_cap_report"]
+    assert r["basis"] == "trade" and r["skipped"] == 1 and _n_trades(out) == [1, 0, 1]
+    # s2 con la mitad de riesgo por trade (150 $): el tope del ticker para ella
+    # es 150 y ya hay 300 => fuera igual. Con s2 al doble (600 $): tope 600, hay
+    # 300 => cabe la mitad => con trim entra recortada, con skip se salta.
+    cfg = _cfg(0, basis="trade", cap_mode="trim")
+    cfg["per_strategy"] = {"s2": {"sizing": "risk", "size_value": 600.0, "size_unit": "usd"}}
+    out = plr.simulate(_runs(), cfg)
+    assert out["ticker_cap_report"]["trimmed"] == 1 and _n_trades(out) == [1, 1, 1]
+    # 600 $ de riesgo a 0,10 $ = 6.000 acc; recortada a 300 $ => 3.000 acc => +300 $
+    assert out["per_strategy"][1]["totals"]["pnl_net"] == pytest.approx(0.1 * 3000)

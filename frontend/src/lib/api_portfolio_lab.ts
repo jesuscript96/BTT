@@ -603,7 +603,8 @@ export interface RawConfigIn {
   /** Tope POR ACCION (19-sep): lo abierto a la vez en un mismo ticker sumando
    *  estrategias, % del equity del dia (0 = sin tope), en riesgo o nocional. */
   max_ticker_pct?: number;
-  ticker_cap_basis?: "risk" | "notional";
+  /** trade = el tope es lo que arriesga UN trade de la estrategia que entra (su Kelly o su % por trade); el numero no se usa. */
+  ticker_cap_basis?: "risk" | "notional" | "trade";
   /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
   monthly_expenses: number;
   locates?: RawLocatesIn | null;
@@ -805,7 +806,7 @@ export interface RawOut {
     cap_mode: "skip" | "trim";
     one_per_ticker?: boolean;
     max_ticker_pct?: number;
-    ticker_cap_basis?: "risk" | "notional";
+    ticker_cap_basis?: "risk" | "notional" | "trade";
     monthly_expenses: number;
     locates?: RawLocatesIn | null;
     scaling?: RawScalingIn | null;
@@ -833,7 +834,7 @@ export interface RawOut {
   /** Margen y BP (solo con el bloque activo): trades fuera/recortados por margen y el pico de margen usado. */
   margin_report?: { enabled: boolean; broker: string; capacity_pct: number; skipped: number; trimmed: number; pico_medio_pct: number; pico_max_pct: number } | null;
   /** Tope por accion (solo con el tope > 0): trades fuera/recortados y los sin stop (en riesgo no se pueden medir). */
-  ticker_cap_report?: { pct: number; basis: "risk" | "notional"; skipped: number; trimmed: number; sin_stop: number } | null;
+  ticker_cap_report?: { pct: number; basis: "risk" | "notional" | "trade"; skipped: number; trimmed: number; sin_stop: number } | null;
   metrics: CombineMetrics;
   costs: { fees: number; slippage?: number; locates: number; expenses: number };
   var: CombineVar | null;

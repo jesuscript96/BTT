@@ -862,7 +862,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                          ticker sumando estrategias, en % del equity del dia
                          (0 = sin tope); se salta o recorta segun cap_mode
       ticker_cap_basis   "risk" (perdida al stop de la entrada, lo que
-                         dimensiona Kelly) | "notional"
+                         dimensiona Kelly) | "notional" | "trade" (el tope
+                         es lo que arriesga UN trade de la estrategia que
+                         entra: su fraccion de Kelly o su % por trade; el
+                         numero no se usa)
       margin             {"enabled", "broker", "capacity_pct"} (ver margen.py):
                          cada entrada exige margen segun precio y lado; la
                          que no cabe en el equity del dia se salta o recorta
@@ -884,8 +887,9 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     # en paralelo»). Sumando estrategias, primero llega primero entra; la que
     # llega con el ticker lleno se salta o se recorta (cap_mode).
     ticker_cap_pct = _f(cfg.get("max_ticker_pct"))
-    ticker_basis = "notional" if str(cfg.get("ticker_cap_basis") or "risk") == "notional" else "risk"
-    ticker_on = ticker_cap_pct > 0
+    _tb = str(cfg.get("ticker_cap_basis") or "risk")
+    ticker_basis = _tb if _tb in ("risk", "notional", "trade") else "risk"
+    ticker_on = ticker_basis == "trade" or ticker_cap_pct > 0
     # Margen y buying power (19-sep): opcional; apagado, nada cambia.
     _mg_raw = cfg.get("margin") or {}
     margin_on = bool(_mg_raw.get("enabled"))
@@ -1176,6 +1180,12 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     "si": i, "tr": tr, "as_saved": as_saved, "size": new_size, "gross": gross,
                     "fee": fee, "slip": slip, "net": net, "notional": notional, "r": r_ref, "locate": locate,
                     "risk": risk_new,
+                    # Lo que dimensiono este trade (base «por trade» del tope
+                    # por accion): el riesgo pedido si fue por riesgo/Kelly,
+                    # el nocional pedido si fue por capital; tal cual, lo suyo.
+                    "budget": (r_usd if (esc is not None or sizing == "risk") else
+                               (x_usd if sizing == "capital" else (risk_new if risk_new > 0 else notional))),
+                    "budget_basis": ("risk" if (esc is not None or sizing == "risk" or (sizing == "as_saved" and risk_new > 0)) else "notional"),
                 })
 
         # b) Locates, en orden de entrada del dia. Compartidos: UN alquiler por
@@ -1313,6 +1323,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "entry_px": tr["entry"], "exit_px": tr["exit"], "size": a["size"], "notional": a["notional"],
                 "pnl": a["net"], "fees": a["fee"], "slip": a["slip"], "locate": a["locate"], "r": a["r"],
                 "risk": float(a.get("risk", 0.0)),
+                "budget": float(a.get("budget", 0.0)), "budget_basis": str(a.get("budget_basis") or "risk"),
                 "reason": tr["exit_reason"], "packages": int(a.get("packages", 0)), "fade_pct": float(a.get("fade_pct", 0.0)),
             })
         day_total = 0.0
@@ -1392,11 +1403,17 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 used_tk[tk] = used_tk.get(tk, 0.0) - freed_t
             if used_tk.get(tk, 0.0) < 1e-9:
                 used_tk[tk] = 0.0
-            take_t = a["notional"] if ticker_basis == "notional" else float(a.get("risk") or 0.0)
-            if ticker_basis == "risk" and take_t <= 0:
+            if ticker_basis == "trade":
+                # El tope es lo que arriesga UN trade de la estrategia que entra.
+                _b = str(a.get("budget_basis") or "risk")
+                take_t = a["notional"] if _b == "notional" else float(a.get("risk") or 0.0)
+                cap_tk = float(a.get("budget") or 0.0)
+            else:
+                take_t = a["notional"] if ticker_basis == "notional" else float(a.get("risk") or 0.0)
+                cap_tk = equity_open_by_day.get(a["date"], capital) * ticker_cap_pct / 100.0
+            if ticker_basis != "notional" and take_t <= 0:
                 # Sin stop no hay riesgo que medir: no consume ni se topa (se cuenta).
                 ticker_sin_stop += 1
-            cap_tk = equity_open_by_day.get(a["date"], capital) * ticker_cap_pct / 100.0
             if cap_tk > 0 and take_t > 0 and used_tk[tk] + take_t > cap_tk + 1e-9:
                 free_t = cap_tk - used_tk[tk]
                 f_ok = min(f_ok, (free_t / take_t) if (trim and free_t > 1e-9) else 0.0)

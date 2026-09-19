@@ -128,7 +128,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     max_exposure_usd: cfg.capUnit === "usd" ? cfg.cap : 0,
     max_exposure_pct: cfg.capUnit === "pct" ? cfg.cap : 0,
     one_per_ticker: !!cfg.onePerTicker,
-    max_ticker_pct: cfg.tickerCap > 0 ? cfg.tickerCap : 0,
+    max_ticker_pct: cfg.tickerCapBasis === "trade" ? 0 : (cfg.tickerCap > 0 ? cfg.tickerCap : 0),
     ticker_cap_basis: cfg.tickerCapBasis || "risk",
     margin: cfg.margin ? { enabled: true, broker: cfg.marginBroker || "sagetrader", capacity_pct: 100 } : null,
     cap_mode: "skip",
@@ -287,7 +287,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   }
 
   // ── Resumenes de cabecera de cada paso ───────────────────────────────
-  const resumen1 = `${selectedIds.length} ${selectedIds.length === 1 ? "estrategia" : "estrategias"} · ${usd(cfg.capital)} · ${cfg.cap > 0 ? `tope ${n(cfg.cap, 0)} ${cfg.capUnit === "pct" ? "% del día" : "$"}` : "sin tope"}${cfg.onePerTicker ? " · una a la vez" : ""}${cfg.tickerCap > 0 ? ` · por acción ≤ ${n(cfg.tickerCap, 1)} % ${cfg.tickerCapBasis === "notional" ? "nocional" : "riesgo"}` : ""}${cfg.margin ? " · margen" : ""} · ${locatesResumen(loc)}${cfg.expenses > 0 ? ` · ${usd(cfg.expenses)}/mes` : ""}`;
+  const resumen1 = `${selectedIds.length} ${selectedIds.length === 1 ? "estrategia" : "estrategias"} · ${usd(cfg.capital)} · ${cfg.cap > 0 ? `tope ${n(cfg.cap, 0)} ${cfg.capUnit === "pct" ? "% del día" : "$"}` : "sin tope"}${cfg.onePerTicker ? " · una a la vez" : ""}${cfg.tickerCapBasis === "trade" ? " · por acción ≤ un trade" : cfg.tickerCap > 0 ? ` · por acción ≤ ${n(cfg.tickerCap, 1)} % ${cfg.tickerCapBasis === "notional" ? "nocional" : "riesgo"}` : ""}${cfg.margin ? " · margen" : ""} · ${locatesResumen(loc)}${cfg.expenses > 0 ? ` · ${usd(cfg.expenses)}/mes` : ""}`;
   const resumen2 = out ? `retorno ${pct(out.metrics.total_return_pct)} · max DD ${pct(curvas?.sumaMaxDd)} · ${n(out.metrics.n_trades, 0)} trades · Sharpe ${n(out.metrics.sharpe)}${stale ? " · (desactualizado)" : ""}` : "";
   const resumen3 = mcOut ? `DD a tragar (1 de 20) ${pct(mcOut.dd_tolerance?.p95)} · prob. de acabar perdiendo ${pct(mcOut.prob_losing_pct)}` : out?.locates_band ? `banda de ${n(out.locates_band.seeds, 0)} semillas lista · Monte Carlo sin simular` : "límites históricos listos · Monte Carlo sin simular";
   const hoy = outEsc?.scaling?.today;

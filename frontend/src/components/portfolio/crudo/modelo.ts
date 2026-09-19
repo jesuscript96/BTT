@@ -16,7 +16,7 @@ export interface Cfg {
   /** Tope POR ACCION (19-sep): % del equity del dia abierto a la vez en un
    *  mismo ticker sumando estrategias; 0 = sin tope. En riesgo o nocional. */
   tickerCap: number;
-  tickerCapBasis: "risk" | "notional";
+  tickerCapBasis: "risk" | "notional" | "trade";
   /** Criterios de margen y buying power del broker (19-sep). */
   margin: boolean;
   marginBroker: string;
