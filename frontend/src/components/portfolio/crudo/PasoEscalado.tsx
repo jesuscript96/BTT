@@ -110,6 +110,12 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
             cuánto se re-estima todo, siempre con datos anteriores a ese día. <strong>Ventana</strong>: cuántos días
             naturales de historia se miran; una estrategia sin trades en ella no entra ese periodo.
             <br /><br />
+            <strong>Por trade o por acción</strong>: la fracción de Kelly es POR TRADE. Si dos estrategias entran en
+            la misma acción a la vez, esa acción lleva la suma de las dos. Para que el límite sea POR ACCIÓN, en el
+            paso 1 está «Tope por acción»: X % en riesgo, o «un trade» (en una acción nunca más de lo que arriesga un
+            trade de Kelly); y «Lo que no cabe» decide si la segunda se salta o entra recortada. Se aplica también
+            aquí, al simular el escalado.
+            <br /><br />
             Los R del paso 1 no cuentan; comisiones, slippage, locates, tope de exposición y «una a la vez» sí. Los
             trades sin stop guardado no se pueden dimensionar por riesgo y quedan fuera (se cuentan). Los modelos sin
             Kelly (% fijo, $ fijos, fixed ratio) reparten el total a partes iguales.
@@ -165,7 +171,7 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
               </Row>
             </>
           )}
-          <Row label="Tope de la suma" help="Lo máximo que se arriesga por trade sumando todas las estrategias, en % del capital del día. Si el modelo pide más, se queda aquí. 0 = sin tope (con estas curvas, que suponen liquidez infinita, Kelly pide cifras de locos: el tope es lo que hace realista el resultado).">
+          <Row label="Tope de la suma" help="Lo máximo que se arriesga POR TRADE sumando todas las estrategias, en % del capital del día. Si el modelo pide más, se queda aquí. 0 = sin tope (con estas curvas, que suponen liquidez infinita, Kelly pide cifras de locos: el tope es lo que hace realista el resultado). Es por trade: dos estrategias en la misma acción a la vez suman; para eso está «Tope por acción» en el paso 1.">
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <div style={{ width: 70 }}><Num value={esc.cap_pct} onChange={(v) => set("cap_pct", Number(v) || 0)} min={0} step={0.5} /></div>
               <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día {esc.cap_pct <= 0 ? "· sin tope" : ""}</span>
