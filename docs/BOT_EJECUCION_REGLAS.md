@@ -867,7 +867,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 19-sep). Origen: M2, M3.
 
 ### R-M-02 · Canales: Telegram siempre; correo y SMS para el nivel Máximo
-- Telegram para todo (en cola con reintentos, R-J-08). Para el nivel MÁXIMO, además: correo electrónico siempre, y SMS (llega por red móvil, no necesita Internet en el móvil de Jaume). Sin llamada de voz.
+- Reparto FIJADO (Jaume, 19-sep): Telegram → niveles 1, 2 y 3 (en cola con reintentos, R-J-08). Correo (Gmail) → niveles 2 y 3. SMS → SOLO nivel 3 (Máximo); llega por red móvil, no necesita Internet en el móvil de Jaume. Sin llamada de voz.
 - SMS: servicio de pago por uso, sin suscripción mensual: Amazon SNS (≈ 0,05-0,10 € por SMS a España, sin cuota) o Twilio (parecido por mensaje; puede exigir alquilar un número ≈ 1 €/mes salvo remitente alfanumérico). Coste real esperado: céntimos al mes, porque el nivel Máximo es raro. El envío lo hace el bot por Internet desde el VPS; solo la recepción va por red móvil.
 - Estado: FIJADA en su lógica (Jaume, 19-sep); proveedor de SMS por elegir (preferencia: sin suscripción). Origen: M4, J19.
 
@@ -880,6 +880,13 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 **M8 (Jaume, 19-sep): día en que ni Jaume ni el socio pueden vigilar: se apaga el bot ese día o se pone en «modo trading de seguridad» (R-I-04).**
 
 ### Área N · Registro y contabilidad
+
+### R-N-01 · El diario
+- Qué se guarda por cada decisión: hora exacta, estrategia y lote, señal y sus datos (precio, bid, ask, distancia), regla aplicada, orden enviada (token, tipo, precio, ruta), respuesta de DAS (aceptada, rechazada con motivo, fill con precio y cantidad), stops puestos y cambiados, locates (precio, cantidad, usado o no), avisos emitidos, y las métricas de ejecución (slippage frente al backtester, latencia orden→confirmación, fracción del volumen).
+- Cómo: ficheros por día, escritos ANTES de enviar y DESPUÉS de la respuesta (M6); texto (JSONL) para el día en curso y, si crece, parquet para el histórico (ocupa poco). Los precios que vio el bot se guardan también, para poder reproducir cualquier día sin el feed (los del lago llegan con la actualización, pero el diario guarda los que el bot usó en el instante). Copia fuera del VPS siempre (Q4). Conservación: todo.
+- Comisiones, tasas y PnL neto: NO hace falta que el bot los calcule ni los cuadre con el bróker (lo tiene el bróker); se REGISTRAN por tener base de datos, sin regla de cuadre.
+- Métricas de ejecución: en el resumen DIARIO (R-M-01), no en el cuadro de mandos (no inundarlo; el cuadro se repasa al final).
+- Estado: FIJADA (Jaume, 19-sep). Origen: N1-N6.
 
 ### Área O · Pruebas y despliegue
 

@@ -230,12 +230,12 @@
 
 ## N. Registro, contabilidad y auditoría
 
-- [ ] N1. Diario JSONL: qué campos por decisión (señal, guarda, orden, respuesta, fill, stop, locate, reconciliación).
-- [ ] N2. Comisiones, ECN, tasas SEC/FINRA, locates, plataforma: ¿el bot calcula el PnL neto o se toma de DAS?
-- [ ] N3. Reconciliación diaria del PnL con el extracto del bróker: tolerancia y proceso.
-- [ ] N4. Métricas de ejecución: slippage real frente a la señal, tiempo señal→fill, % de rechazos, por ruta y por hora.
-- [ ] N5. ¿Basta el diario para reproducir cada decisión de un día concreto sin el feed?
-- [ ] N6. Exportación fiscal y conservación de los diarios.
+- [x] N1. → R-N-01. Diario JSONL: qué campos por decisión (señal, guarda, orden, respuesta, fill, stop, locate, reconciliación).
+- [x] N2. → R-N-01. Comisiones, ECN, tasas SEC/FINRA, locates, plataforma: ¿el bot calcula el PnL neto o se toma de DAS?
+- [x] N3. → R-N-01. Reconciliación diaria del PnL con el extracto del bróker: tolerancia y proceso.
+- [x] N4. → R-N-01. Métricas de ejecución: slippage real frente a la señal, tiempo señal→fill, % de rechazos, por ruta y por hora.
+- [x] N5. → R-N-01. ¿Basta el diario para reproducir cada decisión de un día concreto sin el feed?
+- [x] N6. → R-N-01. Exportación fiscal y conservación de los diarios.
 
 ## O. Pruebas, sombra, canario y despliegue
 
