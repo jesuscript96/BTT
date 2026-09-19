@@ -30,6 +30,7 @@
 - [ ] A10. ¿El bot debe conocer eventos programados (FOMC, resultados, SEC) o eso es tarea humana antes de la sesión?
 - [ ] A11. ¿Hay lista negra de tickers a mano? ¿Quién la mantiene y cuándo se aplica (antes de la señal o al ejecutar)?
 - [ ] A12. Si la hidratación por REST al entrar al radar falla o llega incompleta, ¿se opera sin histórico o se espera a tenerlo?
+- [ ] A14. **(Añadida por Jaume, 19-sep)** Acciones en FUSIÓN / ADQUISICIÓN (OPA con precio clavado): ¿el bot no entra? ¿Cómo lo detecta (lista, noticia, cotización pegada al precio de la OPA)? **[dato]** auditoría del 19-sep (otra sesión): 340 OPAs 2019→2026; 1A entra en el 47 % y pierde (PF 0,72/0,25), 1B no entra; filtro propuesto sin código.
 - [ ] A13. ¿Qué pasa si la estrategia usa un indicador que en vivo no existe (tabla de Overhead, métricas RTH antes de las 09:30)? ¿Se bloquea la estrategia entera o solo la señal?
 
 ## B. Enviar la orden de entrada
