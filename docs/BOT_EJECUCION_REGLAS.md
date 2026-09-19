@@ -691,6 +691,25 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área A · Señal y datos
 
+### R-A-01 · Señal que llega tarde: no se entra
+- Situación: por retraso del bot o del feed, el último precio se ha alejado del precio con el que se generó la señal más de X %.
+- Acción: NO se entra (además del tope del 3 % de R-B-01). No debería pasar: la captura de la señal es instantánea (R-B-04). Se registra el retraso para medirlo en sombra.
+- Parámetros: X (cuadro de mandos; provisional 1 %).
+- Estado: FIJADA (Jaume, 19-sep). Origen: A2.
+
+### R-A-02 · Prints tardíos y de dark pool en las señales
+- Situación: la cinta de Massive incluye prints de dark pool y tardíos: son ejecuciones REALES pero hechas fuera del libro y publicadas con retraso; su precio NO es accesible para nosotros. Pueden alterar el máximo, mínimo o cierre de una vela y con ello una señal o un nivel de estructura. En el estudio, el 93 % de los «fogonazos» de la cinta eran de este tipo.
+- Detección: el feed de operaciones de Massive trae las dos horas (ejecución y publicación): filtrar es comparar dos números por tick, coste cero de rapidez. La cinta de DAS marca con la bandera de condición si un print vale para el último precio.
+- Acción (Jaume, 19-sep): (1) la ENTRADA ya está protegida: si una señal viene de un print fantasma, el bid real estará lejos y R-B-01 no vende por debajo del 3 %; (2) los STOPS disparan por ask (R-C-01), así que un print fantasma no los dispara; (3) para las SEÑALES se mantiene la PARIDAD con el backtester (velas sin filtrar) y se MIDE en sombra cuántas señales cambiarían con el filtro de prints tardíos; si son relevantes, se filtra en el lago y en el bot A LA VEZ (área P).
+- Estado: FIJADA (Jaume, 19-sep); medición en sombra pendiente. Origen: A5, A4.
+
+### R-A-03 · Splits, contrasplits, IPOs recientes, SPACs y OPAs: exclusiones del radar
+- Situación: valores que no deben entrar aunque den señal.
+- Detección: (1) Splits / contrasplits del día: lista de acciones corporativas de Nasdaq (Daily List) consultada cada mañana antes del PM; el lago ya anula esos días, y el radar tendrá filtro. (2) IPO / relisting reciente: Massive /v3/reference/tickers/{t} devuelve list_date (fecha de salida a bolsa): no entrar si lleva cotizando menos de X días (Jaume: p. ej. un mes). (3) SPAC: el mismo endpoint da sic_code y sic_description; las SPAC son SIC 6770 «Blank Checks». (4) OPA / fusión con precio clavado: Massive NO lo da directamente. Dos vías a estudiar: noticias de Massive (/v2/reference/news, palabras clave «to be acquired», «definitive agreement», «merger») y la heurística de precio que propone Jaume: tras un gap grande el precio se queda horas en una banda estrecha; medir en el lago la anchura de esa banda en las 340 OPAs de la auditoría del 19-sep para fijar el umbral y usarlo como SALIDA de seguridad (si estamos dentro y el precio se clava, salir).
+- Acción: lista NEGRA manual en el cuadro de mandos (Jaume mete tickers a mano, p. ej. OPAs conocidas) + exclusiones automáticas configurables del radar (IPO < X días, SPAC, split del día) + salida de seguridad por «precio clavado» (pendiente de estudio).
+- Parámetros: X días de IPO (provisional 30); umbrales de la banda de OPA (estudio).
+- Estado: FIJADA en su lógica (Jaume, 19-sep); estudio de la banda de OPA pendiente (con el filtro propuesto en la auditoría del 19-sep). Origen: A8, A11, A14.
+
 ### Área D · Salidas y pirámides
 
 ### R-D-01 · Salida por hora de la estrategia: escalera de compra y, si no, al ask
