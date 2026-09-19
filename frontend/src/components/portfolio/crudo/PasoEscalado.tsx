@@ -48,6 +48,16 @@ function rAcumulada(o: RawOut): number[] {
   return o.calendar.map((d) => { acc += porDia.get(d) || 0; return acc; });
 }
 
+/** Primer dia del periodo de rebalanceo que viene despues de `ultimo`. */
+function siguientePeriodo(ultimo: string, rebalance: "D" | "W" | "M"): string {
+  const d = new Date(`${ultimo}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return "el siguiente";
+  if (rebalance === "M") { d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + 1); }
+  else if (rebalance === "W") { const dow = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() + (7 - dow)); }
+  else d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 function fraccionLabel(m: number) {
   return m === 1 ? "entera (óptima)" : m === 0.5 ? "½" : m === 0.25 ? "¼" : `× ${n(m, 2)}`;
 }
@@ -59,6 +69,10 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
   const hoy = sc?.today ?? null;
   const cap = out.config.capital;
   const [unidad, setUnidad] = useState<"pct" | "usd" | "r">("pct");
+  // Capital con el que se leen los $ del siguiente periodo: el del portfolio
+  // por defecto, no el final de la simulacion (que con estas curvas es una
+  // cifra de fantasia).
+  const [capitalSig, setCapitalSig] = useState<number>(cap);
   const [vistaEsc, setVistaEsc] = useState<"curva" | "calendario" | "montecarlo">("curva");
 
   const comparacion = useMemo(() => {
@@ -79,6 +93,9 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
     return { series, ddA, ddB, rA: rA[rA.length - 1] || 0, rB: rB[rB.length - 1] || 0 };
   }, [out, outEsc, cap, unidad]);
 
+  // En R el escalado no puede ganar MAS que las filas: la R de un trade no
+  // depende del tamano; solo puede perder los trades que no pudo dimensionar.
+  const perdidosEsc = sc ? (sc.no_weight || 0) + (sc.no_stop || 0) : 0;
   const fmtY = (v: number) => (unidad === "usd" ? usdCorto(v) : unidad === "r" ? `${n(v, 0)} R` : `${n(v, 0)} %`);
   const fmtHover = (v: number) => (unidad === "usd" ? `${n(v, 0)} $` : unidad === "r" ? `${n(v, 1)} R` : `${n(v, 1)} %`);
 
@@ -105,8 +122,9 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
             repartida entre las estrategias en proporción a la Kelly propia de cada una.
             <br /><br />
             <strong>Fracción</strong>: lo que se aplica de la Kelly (1 = entera; ½ y ¼ las de la práctica; cualquier
-            número). <strong>Tope</strong>: lo máximo que se arriesga por trade sumando todas las estrategias; con estas
-            curvas (liquidez infinita) es lo único que hace realista el resultado. <strong>Rebalanceo</strong>: cada
+            número). <strong>Tope por estrategia</strong>: lo máximo por trade de cada una (primero). <strong>Tope de la
+            suma</strong>: lo máximo por trade sumando todas (después, recorte proporcional); con estas curvas (liquidez
+            infinita) los topes son lo único que hace realista el resultado: Kelly pone el orden, los topes el nivel. <strong>Rebalanceo</strong>: cada
             cuánto se re-estima todo, siempre con datos anteriores a ese día. <strong>Ventana</strong>: cuántos días
             naturales de historia se miran; una estrategia sin trades en ella no entra ese periodo.
             <br /><br />
@@ -171,7 +189,13 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
               </Row>
             </>
           )}
-          <Row label="Tope de la suma" help="Lo máximo que se arriesga POR TRADE sumando todas las estrategias, en % del capital del día. Si el modelo pide más, se queda aquí. 0 = sin tope (con estas curvas, que suponen liquidez infinita, Kelly pide cifras de locos: el tope es lo que hace realista el resultado). Es por trade: dos estrategias en la misma acción a la vez suman; para eso está «Tope por acción» en el paso 1.">
+          <Row label="Tope por estrategia" help="Lo máximo que puede arriesgar POR TRADE una estrategia, en % del capital del día. Se aplica ANTES que el tope de la suma y no reparte lo recortado. Sin él, en cuanto una estrategia tiene muestra y las demás van con el respaldo, el recorte proporcional de la suma le daba a esa casi todo el tope (con tus tres, feb-2024: 9,0 / 0,5 / 0,5 % con tope 10) y la curva se disparaba desde el segundo mes. Con él, Kelly decide el orden y las proporciones y los topes deciden el nivel: es lo que convierte esto en una guía. 0 = sin tope.">
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ width: 70 }}><Num value={esc.cap_strategy_pct ?? 0} onChange={(v) => set("cap_strategy_pct", Number(v) || 0)} min={0} step={0.25} /></div>
+              <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día por trade y estrategia {(esc.cap_strategy_pct ?? 0) <= 0 ? "· sin tope" : ""}</span>
+            </div>
+          </Row>
+          <Row label="Tope de la suma" help="Lo máximo que se arriesga POR TRADE sumando todas las estrategias, en % del capital del día. Si el modelo pide más, se queda aquí (recorte proporcional, después del tope por estrategia). 0 = sin tope (con estas curvas, que suponen liquidez infinita, Kelly pide cifras de locos: los topes son lo que hace realista el resultado). Es por trade: dos estrategias en la misma acción a la vez suman; para eso está «Tope por acción» en el paso 1.">
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <div style={{ width: 70 }}><Num value={esc.cap_pct} onChange={(v) => set("cap_pct", Number(v) || 0)} min={0} step={0.5} /></div>
               <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día {esc.cap_pct <= 0 ? "· sin tope" : ""}</span>
@@ -196,7 +220,7 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
           {escError && <div style={{ marginTop: 8 }}><ErrorBox>{escError}</ErrorBox></div>}
         </Sec>
 
-        <Sec title="Hoy — lo que habría que poner" help="Con toda la historia hasta la última fecha de las corridas: la Kelly de cada estrategia, lo que pide tras la fracción, y lo aplicado tras el tope. Todo es RIESGO por trade (lo que se pierde si salta el stop), no dinero metido. La cifra en $ es sobre el capital final de la simulación. Una estrategia sin trades en los últimos N días de la ventana no entra (no hay con qué estimarla): si su corrida termina antes que las demás, vuelve a correrla hasta hoy.">
+        <Sec title={`Siguiente periodo — lo que hay que poner${hoy ? ` (desde ${siguientePeriodo(hoy.date, esc.rebalance)})` : ""}`} help="La recomendación para el periodo que viene: con la ventana que acaba en la última fecha de las corridas (los últimos N días), la Kelly de cada estrategia, lo que pide tras la fracción, y lo aplicado tras el tope. Todo es RIESGO por trade (lo que se pierde si salta el stop), no dinero metido. La cifra en $ es sobre el capital que pongas en la casilla (por defecto, el del portfolio), no sobre el final de la simulación. Da lo mismo cuánta historia haya antes de la ventana: la estimación solo mira la ventana. Una estrategia sin trades en la ventana no entra (no hay con qué estimarla): si su corrida termina antes que las demás, vuelve a correrla hasta hoy.">
           {!hoy ? (
             <Nota>Pulsa <strong>Calcular escalado</strong>.</Nota>
           ) : (
@@ -205,8 +229,14 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                 {hoy.model === "kelly" && hoy.kelly_scope === "global" && <Stat label="Kelly global" value={hoy.kelly_raw_pct == null ? "—" : pct(hoy.kelly_raw_pct, 2)} sub={hoy.kelly_raw_pct == null ? (hoy.note || "sin muestra") : `× ${fraccionLabel(hoy.kelly_mult)} = ${pct(hoy.x_pct, 2)}${hoy.kelly_quad_pct != null ? ` · aprox. μ/σ² ${pct(hoy.kelly_quad_pct, 1)}` : ""}`} help="La fracción que maximiza el crecimiento (media de log(1 + f·R diaria)) sobre los días de la ventana con todas las estrategias juntas: la Kelly exacta del conjunto. La aproximación clásica μ/σ² se enseña al lado. Ojo: es la óptima DEL PASADO de la ventana; aplicada entera y sin tope al futuro, arruina (probado el 16-sep con estas corridas)." />}
                 {hoy.model === "kelly" && hoy.kelly_scope !== "global" && <Stat label="Suma de las Kellys" value={pct(hoy.x_pct, 2)} sub={`cada una × ${fraccionLabel(hoy.kelly_mult)}, sumadas`} help="La suma de lo que pide cada estrategia (su Kelly exacta × la fracción). Si pasa del tope, se recortan todas en proporción." />}
                 {hoy.model !== "kelly" && <Stat label="Modelo" value={pct(hoy.x_pct, 2)} sub={MODELO_LABEL[hoy.model]} />}
+                <Stat label="Tope por estrategia" value={(hoy.cap_strategy_pct ?? 0) > 0 ? pct(hoy.cap_strategy_pct ?? 0, 2) : "sin tope"} sub={hoy.capped_strategy ? "recorta a alguna" : "no actúa"} tone={hoy.capped_strategy ? "warning" : undefined} />
                 <Stat label="Tope de la suma" value={hoy.cap_pct > 0 ? pct(hoy.cap_pct, 2) : "sin tope"} sub={hoy.capped ? `manda el tope: ${pct(hoy.x_pct, 2)} → ${pct(hoy.cap_pct, 2)}` : "no actúa"} tone={hoy.capped ? "warning" : undefined} />
-                <Stat big label="Riesgo total por trade" value={pct(hoy.applied_pct, 2)} sub={`${usd(hoy.applied_usd)} sobre ${usdCorto(hoy.equity)} $ · si entran todas a la vez`} tone="profit" />
+                <Stat big label="Riesgo total por trade" value={pct(hoy.applied_pct, 2)} sub={`${usd(capitalSig * hoy.applied_pct / 100)} sobre ${usdCorto(capitalSig)} $ · si entran todas a la vez`} tone="profit" />
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0 6px" }}>
+                <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>Capital de la cuenta para el siguiente periodo</span>
+                <div style={{ width: 110 }}><Num value={capitalSig} onChange={(v) => setCapitalSig(Number(v) || 0)} min={0} step={1000} /></div>
+                <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>$ · los $ por trade de la tabla salen de aquí</span>
               </div>
               <Nota>
                 {hoy.model === "kelly"
@@ -237,7 +267,7 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                       {hoy.model === "kelly" && <td style={tdNum} title={p.kelly_quad_pct != null ? `aprox. μ/σ² ${pct(p.kelly_quad_pct, 1)}` : ""}>{p.kelly_pct == null ? "—" : pct(p.kelly_pct, 2)}</td>}
                       {hoy.model === "kelly" && <td style={{ ...tdNum, color: color.textSecondary }}>{pct(p.asked_pct, 2)}</td>}
                       <td style={{ ...tdNum, color: color.textHigh, fontWeight: 600 }}>{pct(p.risk_pct, 2)}</td>
-                      <td style={{ ...tdNum, color: color.textHigh }}>{usd(p.risk_usd)}</td>
+                      <td style={{ ...tdNum, color: color.textHigh }}>{usd(capitalSig * p.risk_pct / 100)}</td>
                       <td style={{ ...tdNum, color: color.textMuted }}>{pct(p.weight * 100, 0)}</td>
                     </tr>
                   ))}
@@ -246,13 +276,13 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                     {hoy.model === "kelly" && <td style={{ ...tdNum, borderTop: `1px solid ${color.border}` }} />}
                     {hoy.model === "kelly" && <td style={{ ...tdNum, borderTop: `1px solid ${color.border}`, color: color.textSecondary }}>{pct(hoy.x_pct, 2)}</td>}
                     <td style={{ ...tdNum, borderTop: `1px solid ${color.border}`, color: color.copper, fontWeight: 600 }}>{pct(hoy.applied_pct, 2)}</td>
-                    <td style={{ ...tdNum, borderTop: `1px solid ${color.border}`, color: color.copper }}>{usd(hoy.applied_usd)}</td>
+                    <td style={{ ...tdNum, borderTop: `1px solid ${color.border}`, color: color.copper }}>{usd(capitalSig * hoy.applied_pct / 100)}</td>
                     <td style={{ ...tdNum, borderTop: `1px solid ${color.border}` }}>100 %</td>
                   </tr>
                 </tbody>
               </table>
               <p style={{ margin: "8px 0 0", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
-                Ventana {hoy.window.from} → {hoy.window.to}. «Peso» = parte de cada una en la suma aplicada. Si todas entran a la vez en la misma acción, el riesgo en esa acción es la suma: {pct(hoy.applied_pct, 2)}.
+                Ventana {hoy.window.from} → {hoy.window.to} ({esc.lookback_days} días: solo cuenta esto, la historia anterior no cambia la recomendación). «Peso» = parte de cada una en la suma aplicada. Si todas entran a la vez en la misma acción, el riesgo en esa acción es la suma: {pct(hoy.applied_pct, 2)} (o lo que diga el «Tope por acción» del paso 1).
               </p>
             </>
           )}
@@ -321,7 +351,7 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                   </tbody>
                 </table>
                 <p style={{ margin: 0, padding: "8px 10px", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
-                  «R de las filas»: cada estrategia con el R que tiene en su fila del paso 1, sin escalar ni repartir. La R acumulada no depende del tamaño: si es distinta es porque cambian los trades que entran (tope, puerta, sin stop, peso 0).
+                  «R de las filas»: cada estrategia con el R que tiene en su fila del paso 1, sin escalar ni repartir. <strong>En R el escalado nunca puede ganar más que las filas</strong>: la R de un trade (neto ÷ lo arriesgado) no depende del tamaño, así que escalar multiplica los $ pero deja la R igual; solo puede PERDER R por los trades que no pudo dimensionar ({n(perdidosEsc, 0)} aquí: peso 0 en su periodo o sin stop) y por los que dejan fuera los topes. Si ves menos R con más $, es eso, no un error.
                 </p>
                 {(sc.no_stop > 0 || sc.no_weight > 0 || outEsc.ruined || periodosUnaViva > 0) && (
                   <p style={{ margin: 0, padding: "0 10px 8px", fontSize: 10.5, fontFamily: font.sans, color: color.warning, lineHeight: 1.5 }}>
@@ -336,8 +366,8 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
             )}
           </Sec>
 
-          <Sec title={`Reparto periodo a periodo — ${sc.periods.length} ${esc.rebalance === "D" ? "días" : esc.rebalance === "W" ? "semanas" : "meses"}`} help="Cada barra es un periodo de rebalanceo: cómo se repartió el riesgo entre las estrategias (apilado al 100 %: la parte de cada una en la suma aplicada, es decir, quién llevaba más ese periodo). La línea de cobre es la suma del riesgo por trade que se APLICÓ, en % del capital del día, ya con el tope; un punto ámbar es un periodo en que las Kellys pedían más y el tope las recortó (al pasar el ratón se ve lo que pedían y el riesgo de cada una)." sinRelleno>
-            <WeightsChart periods={sc.periods} names={names} colors={colores} height={200} />
+          <Sec title={`Riesgo por trade, periodo a periodo — ${sc.periods.length} ${esc.rebalance === "D" ? "días" : esc.rebalance === "W" ? "semanas" : "meses"}`} help="Cada barra es un periodo de rebalanceo. La altura de cada tramo es el riesgo por trade que se APLICÓ a esa estrategia ese periodo, en % REAL del capital del día (ya con la fracción de Kelly y el tope); la barra entera es la suma, lo que hay en juego si entran todas a la vez. La raya de cobre es el tope de la suma; un triángulo ámbar marca un periodo en que el modelo pedía más y mandó el tope. Al pasar el ratón: el % por trade de cada estrategia, su Kelly propia de ese periodo y lo que pedía la suma." sinRelleno>
+            <WeightsChart periods={sc.periods} names={names} colors={colores} capPct={esc.cap_pct} height={240} />
           </Sec>
         </>
       )}

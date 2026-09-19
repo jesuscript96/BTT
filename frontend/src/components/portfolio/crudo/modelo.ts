@@ -92,6 +92,7 @@ export const ESC0: EscCfg = {
   kelly_mult: 0.5,
   kelly_scope: "per_strategy",
   cap_pct: 5,
+  cap_strategy_pct: 2,
   rebalance: "M",
   lookback_days: 90,
   // Sin HRP ni reparto: solo Kelly manda (Jaume, 16-sep noche). Los modelos

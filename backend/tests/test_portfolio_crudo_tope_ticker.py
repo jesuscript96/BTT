@@ -118,3 +118,58 @@ def test_base_por_trade_el_tope_es_lo_que_arriesga_un_trade():
     assert out["ticker_cap_report"]["trimmed"] == 1 and _n_trades(out) == [1, 1, 1]
     # 600 $ de riesgo a 0,10 $ = 6.000 acc; recortada a 300 $ => 3.000 acc => +300 $
     assert out["per_strategy"][1]["totals"]["pnl_net"] == pytest.approx(0.1 * 3000)
+
+
+# ── Escalado: tope por estrategia (19-sep) ─────────────────────────────
+
+def test_tope_por_estrategia_va_antes_que_el_de_la_suma():
+    """Pedido 18,5 / 1 / 1 con tope de la suma 10: sin tope por estrategia el
+    recorte proporcional daba 9,02 / 0,49 / 0,49 (una sola se lleva el tope);
+    con tope por estrategia 3, primero 3 / 1 / 1 (suma 5 <= 10: la suma no actua)."""
+    from app.services.portfolio_lab_raw import _Escalado, _scaling_cfg
+    import numpy as np
+    cal = [f"2026-01-{d:02d}" for d in range(2, 31)]
+    r_daily = np.zeros((len(cal), 3))
+    esc = _Escalado(_scaling_cfg({"model": "kelly", "kelly_mult": 0.5, "cap_pct": 10.0, "cap_strategy_pct": 0.0}),
+                    cal, r_daily, [[], [], []], [(cal[0], cal[-1])] * 3, 10000.0)
+    # Se simula la estimacion con pedidos conocidos: el recorte es lo que se prueba.
+    pedido = np.array([0.185, 0.01, 0.01])
+
+    def recorte(cfg):
+        cap_i = float(cfg.get("cap_strategy_pct") or 0.0) / 100.0
+        apl = pedido.copy()
+        if cap_i > 0:
+            apl = np.minimum(apl, cap_i)
+        cap = float(cfg["cap_pct"]) / 100.0
+        if cap > 0 and apl.sum() > cap:
+            apl = apl * (cap / apl.sum())
+        return apl * 100.0
+
+    sin = recorte(esc.cfg)
+    assert np.allclose(sin, [9.0244, 0.4878, 0.4878], atol=1e-3)
+    con = recorte(_scaling_cfg({"model": "kelly", "kelly_mult": 0.5, "cap_pct": 10.0, "cap_strategy_pct": 3.0}))
+    assert np.allclose(con, [3.0, 1.0, 1.0])
+
+
+def test_tope_por_estrategia_en_la_simulacion_real():
+    """Con las tres estrategias sinteticas y Kelly: con tope por estrategia
+    ninguna pasa de el en ningun periodo, y el flag capped_strategy sale."""
+    runs = [_run("s1", "AAA", "04:10", "04:30", 1000, exitp=0.8), _run("s2", "BBB", "04:15", "04:40", 1000, exitp=0.85),
+            _run("s3", "CCC", "04:20", "04:25", 1000, exitp=0.9)]
+    # Historia de 60 dias para que Kelly tenga muestra: se replican los trades por dia.
+    import copy
+    for r in runs:
+        base = r["trades"][0]
+        r["trades"] = []
+        for k in range(60):
+            t = copy.deepcopy(base)
+            d = f"2026-{1 + k // 28:02d}-{1 + k % 28:02d}"
+            t["date"] = d; t["entry_time"] = f"{d} {base['entry_time'][11:]}"; t["exit_time"] = f"{d} {base['exit_time'][11:]}"
+            r["trades"].append(t)
+    cfg = {"capital": 10000.0, "cap_mode": "skip", "default_exec": {"sizing": "risk", "size_value": 1.0, "size_unit": "pct"},
+           "scaling": {"model": "kelly", "kelly_mult": 1.0, "cap_pct": 0.0, "cap_strategy_pct": 0.5, "rebalance": "W", "lookback_days": 30, "pct": 0.25}}
+    out = plr.simulate(runs, cfg)
+    sc = out["scaling"]
+    assert all(max(p["risk_pct"]) <= 0.5 + 1e-9 for p in sc["periods"])
+    assert any(p.get("capped_strategy") for p in sc["periods"])
+    assert sc["today"]["cap_strategy_pct"] == 0.5

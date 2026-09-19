@@ -444,6 +444,7 @@ SCALING_DEFAULT: dict[str, Any] = {
     "kelly_mult": 0.5,      # fraccion de Kelly, libre (1 = entera)
     "kelly_scope": "per_strategy",  # per_strategy | global (ver _Escalado)
     "cap_pct": 10.0,        # tope de la SUMA por trade, % del capital del dia (0 = sin)
+    "cap_strategy_pct": 0.0,  # tope POR ESTRATEGIA por trade, % del capital del dia (0 = sin); va ANTES del de la suma
     "rebalance": "M",       # D | W | M
     "lookback_days": 90,    # ventana de estimacion (dias naturales)
     "weighting": "hrp",     # equal | hrp | momentum | ev | dd
@@ -462,7 +463,7 @@ def _scaling_cfg(raw: Optional[dict]) -> Optional[dict]:
     cfg["kelly_scope"] = "global" if str(cfg.get("kelly_scope") or "") == "global" else "per_strategy"
     cfg["weighting"] = str(cfg["weighting"] or "equal")
     cfg["rebalance"] = str(cfg["rebalance"] or "M").upper()[:1]
-    for k in ("base_risk", "pct", "delta", "kelly_mult", "cap_pct", "floor"):
+    for k in ("base_risk", "pct", "delta", "kelly_mult", "cap_pct", "cap_strategy_pct", "floor"):
         cfg[k] = _f(cfg[k])
     cfg["lookback_days"] = max(1, int(_f(cfg["lookback_days"], 90)))
     return cfg
@@ -623,18 +624,31 @@ class _Escalado:
             for i in alive:
                 pedido[i] = 1.0 / n_alive
 
-        # Tope de la SUMA: recorte proporcional (todas por igual), sin redistribuir.
-        suma = float(pedido.sum())
-        capped = False
+        # Tope POR ESTRATEGIA primero (19-sep, Jaume): ninguna pasa de X % por
+        # trade, sin redistribuir lo recortado. Sin el, en cuanto una
+        # estrategia tiene muestra y las demas van con el respaldo, el recorte
+        # proporcional de la suma le daba a esa casi todo el tope (feb-2024:
+        # 9,0 / 0,5 / 0,5 con tope 10) y la curva se disparaba desde el segundo
+        # mes. Kelly decide el orden y las proporciones; los topes, el nivel.
+        cap_i = float(cfg.get("cap_strategy_pct") or 0.0) / 100.0
+        capped_i = False
         aplicado = pedido.copy()
+        if model == "kelly" and cap_i > 0:
+            over = aplicado > cap_i + 1e-12
+            if bool(over.any()):
+                aplicado = np.minimum(aplicado, cap_i)
+                capped_i = True
+        # Tope de la SUMA: recorte proporcional (todas por igual), sin redistribuir.
+        suma = float(aplicado.sum())
+        capped = False
         if model == "kelly" and cap > 0 and suma > cap + 1e-12:
-            aplicado = pedido * (cap / suma)
+            aplicado = aplicado * (cap / suma)
             capped = True
         if not n_alive:
             notas.append("ninguna estrategia con trades en la ventana")
         return {
             "alive": alive, "k_raw": k_raw, "k_quad": k_quad, "pedido": pedido, "aplicado": aplicado,
-            "capped": capped, "fallback": fallback, "nota": "; ".join(notas) or None, "cut": cut,
+            "capped": capped, "capped_strategy": capped_i, "fallback": fallback, "nota": "; ".join(notas) or None, "cut": cut,
         }
 
     def at(self, d: str, equity_open: float) -> tuple[np.ndarray, dict]:
@@ -661,6 +675,7 @@ class _Escalado:
                 "x_pct": ple._r6(suma_ped * 100.0) if suma_ped is not None else None,
                 "applied_pct": ple._r6(suma_apl * 100.0) if suma_apl is not None else None,
                 "capped": bool(e["capped"]),
+                "capped_strategy": bool(e.get("capped_strategy")),
                 "note": e["nota"],
             })
         m = self.cfg["model"]
@@ -729,6 +744,8 @@ class _Escalado:
             "applied_pct": ple._r6(suma_apl),
             "applied_usd": ple._r6(equity_now * suma_apl / 100.0),
             "capped": bool(e["capped"]) or (m != "kelly" and cap > 0 and suma_ped > suma_apl + 1e-9),
+            "capped_strategy": bool(e.get("capped_strategy")),
+            "cap_strategy_pct": float(self.cfg.get("cap_strategy_pct") or 0.0),
             "note": e["nota"],
             "weights_fallback": bool(e["fallback"]),
             "per_strategy": [

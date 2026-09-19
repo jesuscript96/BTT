@@ -492,6 +492,9 @@ class RawScalingIn(BaseModel):
     # global: la Kelly del conjunto repartida por las Kellys propias.
     kelly_scope: Literal["per_strategy", "global"] = "per_strategy"
     cap_pct: float = Field(default=10.0, ge=0)
+    # Tope POR ESTRATEGIA por trade (% del capital del dia; 0 = sin). Se aplica
+    # antes que el de la suma y no redistribuye.
+    cap_strategy_pct: float = Field(default=0.0, ge=0)
     rebalance: Literal["D", "W", "M"] = "M"
     lookback_days: int = Field(default=90, ge=1)
     weighting: Literal["equal", "hrp", "momentum", "ev", "dd"] = "hrp"

@@ -579,6 +579,8 @@ export interface RawScalingIn {
    *  global: la Kelly del conjunto repartida por las Kellys propias. */
   kelly_scope?: "per_strategy" | "global";
   cap_pct: number;
+  /** Tope POR ESTRATEGIA por trade (% del capital del dia; 0 = sin), antes del de la suma. */
+  cap_strategy_pct?: number;
   rebalance: RebalanceFreq;
   lookback_days: number;
   weighting: WeightModel;
@@ -654,6 +656,8 @@ export interface RawScalingPeriod {
   kelly_por_estrategia_pct?: Array<number | null>;
   note: string | null;
   capped?: boolean;
+  /** Ese periodo alguna estrategia pedia mas que el tope por estrategia. */
+  capped_strategy?: boolean;
 }
 
 export interface RawScalingToday {
@@ -671,6 +675,8 @@ export interface RawScalingToday {
   applied_pct: number;
   applied_usd: number;
   capped: boolean;
+  capped_strategy?: boolean;
+  cap_strategy_pct?: number;
   note: string | null;
   weights_fallback: boolean;
   per_strategy: Array<{
