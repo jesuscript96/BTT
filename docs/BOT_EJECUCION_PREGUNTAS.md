@@ -24,14 +24,14 @@
 - [x] A4. → R-C-09 + R-A-02 (Massive para señales, DAS para vigilar; prints fantasma tapados por R-B-01 y disparo por ask). El bot decide con datos de Massive y ejecuta contra precios de DAS. Cuando difieren (prints tardíos, dark pool), ¿cuál manda para entrar y cuál para el stop? **[dato]** el 93 % de los «fogonazos» del crudo eran prints tardíos que están en la cinta y en las velas, no en el libro.
 - [x] A5. → R-A-02 (paridad; medir en sombra; filtrar en lago y bot a la vez si hace falta). ¿Cómo se filtra un print erróneo (un tick fuera de rango)? ¿Un solo tick puede disparar una entrada o una salida?
 - [x] A6. → R-J-07 (desvío > 2 s = no operar). ¿Qué pasa si el reloj del PC o del VPS se desvía? ¿Sincronización de hora obligatoria y comprobada al arrancar?
-- [ ] A7. ¿Qué se hace con una señal en un símbolo que DAS no reconoce igual (cambio de ticker, sufijos, ADR)?
+- [x] A7. → R-A-04 (tabla de equivalencias diaria; si no casa, no se opera y avisa). ¿Qué se hace con una señal en un símbolo que DAS no reconoce igual (cambio de ticker, sufijos, ADR)?
 - [x] A8. → R-A-03 (Daily List de Nasdaq cada mañana; filtro del radar). ¿Puede la estrategia dar señal en un ticker con split o contrasplit ese día o el siguiente? ¿Cómo lo sabe el bot (Nasdaq Daily List)?
 - [ ] A9. Dos señales de la misma estrategia en el mismo minuto para el mismo ticker (duplicado por reconexión del feed): ¿cómo se detecta y cuál se ignora?
-- [ ] A10. ¿El bot debe conocer eventos programados (FOMC, resultados, SEC) o eso es tarea humana antes de la sesión?
+- [x] A10. → tarea humana, sin regla. ¿El bot debe conocer eventos programados (FOMC, resultados, SEC) o eso es tarea humana antes de la sesión?
 - [x] A11. → R-A-03 (lista negra manual en el cuadro de mandos + exclusiones automáticas). ¿Hay lista negra de tickers a mano? ¿Quién la mantiene y cuándo se aplica (antes de la señal o al ejecutar)?
-- [ ] A12. Si la hidratación por REST al entrar al radar falla o llega incompleta, ¿se opera sin histórico o se espera a tenerlo?
+- [x] A12. → R-A-04 (no operar hasta tener histórico; reintentar). Si la hidratación por REST al entrar al radar falla o llega incompleta, ¿se opera sin histórico o se espera a tenerlo?
 - [x] A14. → R-A-03 (IPO por list_date, SPAC por SIC 6770; OPA: noticias + banda de precio, estudio pendiente). **(Añadida por Jaume, 19-sep)** Acciones en FUSIÓN / ADQUISICIÓN (OPA con precio clavado), y también **IPOs / relistings y SPACs**: ¿el bot no entra? ¿Cómo lo detecta? Jaume: la mayoría (IPO, relisting, SPAC) se pueden sacar de Massive; las OPAs no, y se verá cómo abordarlas. **[dato]** auditoría del 19-sep (otra sesión): 340 OPAs 2019→2026; 1A entra en el 47 % y pierde (PF 0,72/0,25), 1B no entra; filtro propuesto sin código.
-- [ ] A13. ¿Qué pasa si la estrategia usa un indicador que en vivo no existe (tabla de Overhead, métricas RTH antes de las 09:30)? ¿Se bloquea la estrategia entera o solo la señal?
+- [x] A13. → R-A-04 (bloqueo de la estrategia + aviso). ¿Qué pasa si la estrategia usa un indicador que en vivo no existe (tabla de Overhead, métricas RTH antes de las 09:30)? ¿Se bloquea la estrategia entera o solo la señal?
 
 ## B. Enviar la orden de entrada
 
