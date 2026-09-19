@@ -898,13 +898,29 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### R-O-02 · Repetición de un día grabado y vuelta atrás (PROPUESTA, pendiente de Jaume)
 - Antes de estrenar cada versión: (1) pasar las tablas de casos de las reglas de este libro; (2) REPETIR un día grabado (las grabaciones del bot de avisos) contra el ejecutor EN SECO (sin DAS: decide y escribe en el diario, no envía), comparando con la versión anterior; sirve además para provocar casos raros (halt, fogonazo, entrada a medias) que el canario quizá no muestre. (3) Vuelta atrás: cada versión de bot y de estrategias etiquetada con fecha; mando de «volver a la anterior» en el arranque, en minutos.
-- Estado: PROPUESTA (19-sep), pendiente de Jaume. Origen: O7, O8.
+- Estado: FIJADA (Jaume, 19-sep): repetición de días grabados obligatoria (dejará el bot de avisos encendido más tiempo para grabar más días y probar todo antes de entrar en vivo) y vuelta atrás formal con versiones guardadas por fecha (ocupan poco). Origen: O7, O8.
 
 **O9 (Jaume, 19-sep):** lo que solo se puede probar con dinero (locates reales, rechazos, halts) se descubre en el canario a tamaño mínimo y cada caso nuevo se anota en el libro; pero no todo aparecerá en el canario (hay casos raros) y no es plan alargarlo mucho → por eso importa la repetición de días grabados (R-O-02).
 
 ### Área P · Backtester vs vivo
 
+**P1 y P5 (Jaume, 19-sep):** el backtester se deja como está (llena los stops en reaperturas al nivel, no modela halts ni SSR); se MIDE en sombra la diferencia real y solo se toca el motor si es relevante (igual que con los prints tardíos, R-A-02).
+**P2 y P3 (19-sep):** el backtester no tiene slippage de base: lo pone quien lo configura. Recomendación para EVALUAR estrategias (no regla del bot): usar los valores medidos (1 % PM, 0,7 % RTH) hasta tener los reales de la sombra. Al bot le entra la estrategia normalizada: solo reglas, sin comisiones ni slippage.
+**P4 (Jaume, 19-sep):** el bot registra cada precio real de locate con fecha (R-H-01) y con eso se recalibra la banda de locates del backtester cada cierto tiempo; a futuro, modelar «ciclos» de precios de locates. De momento, registrar basta.
+**P6:** resuelto en R-A-02 (mismo filtro de prints en lago y bot cuando se decida).
+**P7 (Jaume, 19-sep):** SIN criterio de parada automática por divergencia. El bot registra el slippage medio (R-N-01); si se fuera de madre, tocaría buscar estrategias nuevas, y eso no es cosa del bot.
+**P8:** resuelto en R-A-04 (indicador que no existe en vivo → estrategia bloqueada + aviso).
+
 ### Área Q · Seguridad
+
+### R-Q-01 · Seguridad (todo FIJADO, Jaume, 19-sep)
+- Credenciales de DAS, token de Telegram y claves solo en el .env del VPS, fuera del repo.
+- Acceso al VPS con usuario propio para Jaume y otro para el socio; RDP solo por VPN o con IP fija.
+- Comandos de Telegram solo desde los dos chat_id autorizados (Jaume y socio), con confirmación en los que cambian algo.
+- La fuga del token de Telegram en los logs (httpx), aplazada hasta ahora, se ARREGLA ANTES de pasar a dinero real.
+- Copias del diario y del estado fuera del VPS (R-N-01).
+- El bot no tiene ningún permiso de mover dinero ni cambiar ajustes de cuenta [API: confirmar que el CMD API no lo permite o cómo se bloquea].
+- Origen: Q1-Q6.
 
 ## 4. Registro de cambios
 

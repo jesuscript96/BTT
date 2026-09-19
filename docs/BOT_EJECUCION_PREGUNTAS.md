@@ -245,29 +245,29 @@
 - [x] O4. → R-O-01. Versionado de estrategias: JSON con hash y fecha; ¿cómo se despliega una versión nueva sin tocar el bot en marcha? **[dato]** el bot de avisos lee las estrategias UNA vez al arrancar.
 - [x] O5. → R-O-01. Cambios de código con el bot vivo: prohibidos en mercado. ¿Ventana de despliegue y comprobación de arranque limpio?
 - [ ] O6. Pruebas de la guarda con tablas (función pura); simulacro de reconexión; simulacro completo del socio.
-- [ ] O7. ¿Repetición de un día grabado contra el ejecutor en seco antes de cada versión?
-- [ ] O8. Vuelta atrás: ¿cómo se recupera la versión anterior en 5 min?
+- [x] O7. → R-O-02 fijada. ¿Repetición de un día grabado contra el ejecutor en seco antes de cada versión?
+- [x] O8. → R-O-02 fijada (versiones por fecha). Vuelta atrás: ¿cómo se recupera la versión anterior en 5 min?
 - [x] O9. → canario a tamaño mínimo + repetición de días grabados. ¿Qué se prueba con dinero real que no se puede probar de otra forma (locates, rechazos, halts)? ¿Cómo se fuerza?
 
 ## P. Backtester frente a vivo
 
-- [ ] P1. Fills en reaperturas: el motor llena al nivel, el vivo al open. ¿Se mide y se corrige el motor o se acepta?
-- [ ] P2. Liquidez infinita del motor: ¿tope de fracción de volumen también en el backtest para que sean comparables? **[dato]** 1B: 152× el volumen de la vela.
-- [ ] P3. Ventana de entrada i+1 y slippage como fracción: ¿el bot replica o mejora? ¿Cómo se compara luego?
-- [ ] P4. Locates aleatorios en el backtester frente a reales: ¿se registra el precio real para recalibrar la distribución?
-- [ ] P5. Halts y SSR no están en el motor: ¿el bot los añade como guarda aparte (tabla auxiliar de halts), y el backtester después?
-- [ ] P6. Prints tardíos en las velas AM: ¿la señal en vivo se calcula con la misma cinta que el backtest?
-- [ ] P7. ¿Cuándo se para el bot por divergencia con el backtest (acierto, slippage p95, frecuencia de señales)?
-- [ ] P8. Indicadores del backtester que no existen en vivo (Overhead, métricas RTH antes de las 09:30): ¿lista cerrada y bloqueo?
+- [x] P1. → se mide en sombra; motor intacto. Fills en reaperturas: el motor llena al nivel, el vivo al open. ¿Se mide y se corrige el motor o se acepta?
+- [x] P2. → recomendación de evaluación, no regla. Liquidez infinita del motor: ¿tope de fracción de volumen también en el backtest para que sean comparables? **[dato]** 1B: 152× el volumen de la vela.
+- [x] P3. → idem P2. Ventana de entrada i+1 y slippage como fracción: ¿el bot replica o mejora? ¿Cómo se compara luego?
+- [x] P4. → registrar locates reales y recalibrar. Locates aleatorios en el backtester frente a reales: ¿se registra el precio real para recalibrar la distribución?
+- [x] P5. → se mide en sombra. Halts y SSR no están en el motor: ¿el bot los añade como guarda aparte (tabla auxiliar de halts), y el backtester después?
+- [x] P6. → R-A-02. Prints tardíos en las velas AM: ¿la señal en vivo se calcula con la misma cinta que el backtest?
+- [x] P7. → sin parada automática; solo registro. ¿Cuándo se para el bot por divergencia con el backtest (acierto, slippage p95, frecuencia de señales)?
+- [x] P8. → R-A-04. Indicadores del backtester que no existen en vivo (Overhead, métricas RTH antes de las 09:30): ¿lista cerrada y bloqueo?
 
 ## Q. Seguridad
 
-- [ ] Q1. Credenciales de DAS y token de Telegram en `.env`, fuera del repo. ¿Quién tiene acceso al VPS y con qué usuario?
-- [ ] Q2. Comandos de Telegram solo desde chat_id autorizados: ¿qué pasa si roban el teléfono?
-- [ ] Q3. La fuga de tokens de httpx en los logs (aplazada): ¿se arregla antes del VPS con dinero real?
-- [ ] Q4. Copias del diario y del estado fuera del VPS.
-- [ ] Q5. RDP expuesto a Internet: ¿VPN o IP fija?
-- [ ] Q6. ¿Puede el bot enviar dinero o cambiar ajustes de la cuenta por API? Si sí, ¿cómo se le impide? **[API]**
+- [x] Q1. → R-Q-01. Credenciales de DAS y token de Telegram en `.env`, fuera del repo. ¿Quién tiene acceso al VPS y con qué usuario?
+- [x] Q2. → R-Q-01. Comandos de Telegram solo desde chat_id autorizados: ¿qué pasa si roban el teléfono?
+- [x] Q3. → R-Q-01 (antes de dinero real). La fuga de tokens de httpx en los logs (aplazada): ¿se arregla antes del VPS con dinero real?
+- [x] Q4. → R-Q-01. Copias del diario y del estado fuera del VPS.
+- [x] Q5. → R-Q-01. RDP expuesto a Internet: ¿VPN o IP fija?
+- [x] Q6. → R-Q-01 [API]. ¿Puede el bot enviar dinero o cambiar ajustes de la cuenta por API? Si sí, ¿cómo se le impide? **[API]**
 
 ---
 
