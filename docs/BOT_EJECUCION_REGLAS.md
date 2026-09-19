@@ -890,6 +890,18 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área O · Pruebas y despliegue
 
+**O2 y O3 (Jaume, 19-sep): el orden sombra → demo → canario y el número de sesiones de cada fase se DECIDEN AL FINAL, con todo hecho; puede hacer falta más o menos. Las fases y criterios del 5-sep siguen como referencia.**
+
+### R-O-01 · Cambios solo con el bot apagado, y versión registrada
+- Los cambios de código y de estrategias se hacen SIEMPRE con todo el bot apagado (fuera de la ventana de R-L-01): apagar del todo, actualizar, reiniciar. Nunca en caliente. El bot escribe en el diario, en cada arranque, la versión de código y el hash y fecha del JSON de estrategias con que arranca.
+- Estado: FIJADA (Jaume, 19-sep). Origen: O4, O5.
+
+### R-O-02 · Repetición de un día grabado y vuelta atrás (PROPUESTA, pendiente de Jaume)
+- Antes de estrenar cada versión: (1) pasar las tablas de casos de las reglas de este libro; (2) REPETIR un día grabado (las grabaciones del bot de avisos) contra el ejecutor EN SECO (sin DAS: decide y escribe en el diario, no envía), comparando con la versión anterior; sirve además para provocar casos raros (halt, fogonazo, entrada a medias) que el canario quizá no muestre. (3) Vuelta atrás: cada versión de bot y de estrategias etiquetada con fecha; mando de «volver a la anterior» en el arranque, en minutos.
+- Estado: PROPUESTA (19-sep), pendiente de Jaume. Origen: O7, O8.
+
+**O9 (Jaume, 19-sep):** lo que solo se puede probar con dinero (locates reales, rechazos, halts) se descubre en el canario a tamaño mínimo y cada caso nuevo se anota en el libro; pero no todo aparecerá en el canario (hay casos raros) y no es plan alargarlo mucho → por eso importa la repetición de días grabados (R-O-02).
+
 ### Área P · Backtester vs vivo
 
 ### Área Q · Seguridad

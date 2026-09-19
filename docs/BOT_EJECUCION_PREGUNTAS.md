@@ -240,14 +240,14 @@
 ## O. Pruebas, sombra, canario y despliegue
 
 - [x] O1. → SÍ hay demo (Jaume, 19-sep); cómo se accede por API, con el PDF. ¿Hay demo o paper en DAS con Sage? Si no, ¿la sombra sustituye del todo? **[API]**
-- [ ] O2. Sombra: ¿cómo se comparan las órdenes calculadas con los fills manuales de Jaume (exportación de DAS)?
-- [ ] O3. Canario: tamaño, duración, criterios de salida (ya en la submemoria) y quién decide subir de escalón.
-- [ ] O4. Versionado de estrategias: JSON con hash y fecha; ¿cómo se despliega una versión nueva sin tocar el bot en marcha? **[dato]** el bot de avisos lee las estrategias UNA vez al arrancar.
-- [ ] O5. Cambios de código con el bot vivo: prohibidos en mercado. ¿Ventana de despliegue y comprobación de arranque limpio?
+- [x] O2. → decisión al final. Sombra: ¿cómo se comparan las órdenes calculadas con los fills manuales de Jaume (exportación de DAS)?
+- [x] O3. → decisión al final. Canario: tamaño, duración, criterios de salida (ya en la submemoria) y quién decide subir de escalón.
+- [x] O4. → R-O-01. Versionado de estrategias: JSON con hash y fecha; ¿cómo se despliega una versión nueva sin tocar el bot en marcha? **[dato]** el bot de avisos lee las estrategias UNA vez al arrancar.
+- [x] O5. → R-O-01. Cambios de código con el bot vivo: prohibidos en mercado. ¿Ventana de despliegue y comprobación de arranque limpio?
 - [ ] O6. Pruebas de la guarda con tablas (función pura); simulacro de reconexión; simulacro completo del socio.
 - [ ] O7. ¿Repetición de un día grabado contra el ejecutor en seco antes de cada versión?
 - [ ] O8. Vuelta atrás: ¿cómo se recupera la versión anterior en 5 min?
-- [ ] O9. ¿Qué se prueba con dinero real que no se puede probar de otra forma (locates, rechazos, halts)? ¿Cómo se fuerza?
+- [x] O9. → canario a tamaño mínimo + repetición de días grabados. ¿Qué se prueba con dinero real que no se puede probar de otra forma (locates, rechazos, halts)? ¿Cómo se fuerza?
 
 ## P. Backtester frente a vivo
 
