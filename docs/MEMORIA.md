@@ -30,6 +30,11 @@
 
 ---
 
+## 2026-09-19 (Sailor) — Los nombres de picos/valles de vuelta, el cartel de ayuda ancho, y las pruebas por API que pisaban al portfolio
+
+- **Etiquetas de «Pico / valle», «Edad del pico» y «Volumen del pico»** (`20acbd1`): el parche del 18-sep escribió las descripciones en `INDICATOR_LABELS` (la misma clave aparece dos veces en `ConditionBuilder.tsx` y el regex cogió la primera): los desplegables enseñaban «Es un NIVEL DE PRECIO…» como nombre. Etiquetas cortas de vuelta, textos en `INDICATOR_DESCRIPTIONS` con párrafos. **Cartel de ayuda** de los indicadores (`CartelAyudaIndicador`, un componente para LogicBuilder y AyudaIndicadores): 380 px, a la derecha del icono (a la izquierda si no cabe), centrado en el ratón y acotado al viewport; antes 185 px anclado por encima y se salía por arriba.
+- **PM (1A) sin trades en el portfolio de Jaume** (tres estrategias, «menos de un año»): el portfolio coge la corrida guardada MÁS RECIENTE con ese `strategy_id`, y `POST /api/backtest` autoguarda TODO (`[auto] Borrador · …`), también mis pruebas por API: 6 de PM (1A) sobre junio-2026 (17-18 sep) y 9 de PM (A). Borradas las 15 por `DELETE /api/strategy-search/{id}`; ahora PM (1A) → `e9bf1fea` (15-sep, 4.430 trades, 2024-01→2026-09) y PM (A) → `0bb93415` (16-sep, 4.432). Las corridas de la UI llevan `strategy_ids = []` y no compiten. **Regla nueva:** pruebas por API con `X-Backtest-Sync: true` (síncrono, sin autoguardar) o borrarlas al acabar. Jaume tiene que volver a lanzar su combinación.
+
 ## 2026-09-18 (Sailor, Backtester) — El sorteo de locates repartía mal el rango: la puerta no tumbaba por el EV, tumbaba por la forma de repartir el coste
 
 **La pregunta de Jaume** (tras su corrida de las 09:58: PM (A), 4 % del equity, locates aleatorios 1-20 semilla 9, puerta EV fijo 4 %; job `13cb2364`): «si pongo de 1 a 20, ¿cómo es posible que el locate más barato fuera de 2,65? […] todas las acciones por debajo de 1 $ se cancelan, y por debajo de 2 también […] ¿estás seguro de que la distribución de locates según precio está bien hecha?». Tenía razón.
