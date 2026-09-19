@@ -109,7 +109,7 @@
 - [ ] F1. ¿Cómo sabe el bot que hay halt: L1 de DAS, ausencia de prints, fuente externa (Nasdaq Trader)? ¿Con qué latencia? **[API]**
 - [x] F2. → R-F-01 (borrador; ruta de salida pendiente PDF). Halt con posición dentro: ¿DAS cancela el stop residente? ¿Se prepara orden para la reapertura, límite o mercado en la subasta? **[API]**
 - [x] F3. → R-F-04 (cancelar y reevaluar al reabrir). Halt con orden de entrada en vuelo: ¿se cancela siempre?
-- [ ] F4. Reapertura: ¿precio de referencia para decidir si salir (stop saltado, reabre por encima)? ¿Se sale en el primer print o se espera N s? **[dato]** el SL en la vela de reapertura se llena de mediana −3 % y p90 +4,8 % peor que el nivel, máx +14,5 %.
+- [x] F4. → R-F-01 (reabre por encima del stop → mercado; por debajo → nada). Reapertura: ¿precio de referencia para decidir si salir (stop saltado, reabre por encima)? ¿Se sale en el primer print o se espera N s? **[dato]** el SL en la vela de reapertura se llena de mediana −3 % y p90 +4,8 % peor que el nivel, máx +14,5 %.
 - [x] F5. → R-F-01 (3 halts up seguidos = cierre a mercado al reabrir) y R-F-03 (sin reentrada). Cadena de LULD (≥ 5 en el día): ¿no ampliar, reducir o cerrar? **[dato]** 6+ halts llegan de mediana a ×2 y no vuelven; PAVS 7 halts ×13.
 - [x] F6. → R-F-05. T1 (noticia pendiente) con posición: puede durar horas. ¿Aviso y esperar? ¿Y si dura hasta el cierre?
 - [x] F7. → R-F-05 (aviso y control humano). T12 con posición: capital bloqueado días, locate que sigue corriendo, posible buy-in. ¿Cómo se contabiliza y quién avisa al socio?
@@ -126,11 +126,11 @@
 - [ ] G2. ¿Cómo distingue en vivo fogonazo de subida real: segundos sostenidos por encima de X % del salto, operaciones, volumen? ¿Con qué datos, si el NBBO de DAS avisa poco?
 - [ ] G3. Pérdida máxima absoluta por posición: por encima de +Z % sobre la entrada, ¿cierre a mercado pase lo que pase? ¿Z distinto en PM y en RTH?
 - [ ] G4. Squeeze lento (sube y no devuelve en 5-30 min): ¿salida por tiempo desde el pico? **[dato]** esperar más de 1 min no baja el p95; en ≥ 500 %, 5 de 8 vuelven en menos de 2 min y TNON, XHG y GRYP no.
-- [ ] G5. Orden basura en el libro (25 $, 10.000 $): ¿cómo se protege un cierre a mercado? ¿Siempre limitado con banda? **[dato]** 7 de 56 disparos tenían una orden basura en los 10 niveles.
+- [x] G5. → R-C-01 (limitP con techo; nunca mercado sin techo). Orden basura en el libro (25 $, 10.000 $): ¿cómo se protege un cierre a mercado? ¿Siempre limitado con banda? **[dato]** 7 de 56 disparos tenían una orden basura en los 10 niveles.
 - [ ] G6. Cierre por tramos durante un pico: ¿la mitad al +50 % y el resto cuando devuelve?
 - [ ] G7. Si la pérdida latente de una posición supera la pérdida diaria, ¿se cierra esa posición o todo?
 - [ ] G8. Buy-in del bróker (te obligan a cubrir): ¿cómo se entera el bot y cómo lo contabiliza? **[API]**
-- [ ] G9. El precio se dispara con una orden de ENTRADA viva (aún no dentro): ¿se cancela por distancia al precio de señal (A2) o se deja?
+- [x] G9. → R-A-01 + R-B-01 (tope 3 %: no se entra). El precio se dispara con una orden de ENTRADA viva (aún no dentro): ¿se cancela por distancia al precio de señal (A2) o se deja?
 - [ ] G10. ¿Se registra cada fogonazo visto en vivo (con o sin posición) para calibrar X, Y, N con datos propios?
 
 ## H. Locates y préstamo
@@ -148,26 +148,26 @@
 - [ ] H11. ¿Hay locates en premercado a cualquier hora (04:00)? ¿A qué hora empieza el servicio? **[API]**
 - [x] H12. → avisar; lo gestiona el humano con el bróker. Locate aceptado y luego halt o T12: ¿coste del préstamo por días? ¿Quién lo vigila?
 - [x] H13. → R-H-01 (registrado). Registro de cada locate (precio, hora, usado o no) para alimentar la puerta por EV con datos reales.
-- [ ] H14. Dividendos con corto: si por error queda una posición overnight en fecha ex-dividendo, ¿quién lo detecta?
+- [x] H14. → no aplica: sin posiciones overnight (R-D-02). Dividendos con corto: si por error queda una posición overnight en fecha ex-dividendo, ¿quién lo detecta?
 - [ ] H16. **(Añadida por Jaume, 16-sep, problema real del socio)** Al hacer «inquire» de locates el bróker no devuelve nada, o no hay locates disponibles para esa acción: ¿qué hace el bot? ¿Reintenta (cuántas veces, cada cuánto), prueba otro proveedor, descarta la señal y lo registra, avisa? ¿Y si la falta de locates llega en una PIRÁMIDE con posición ya abierta? **[API: qué respuesta da DAS cuando no hay locates]**
 - [x] H15. → R-H-03. ¿Tope de locates «en reserva» a la vez (comprados y sin usar) para no quemar la cuenta en prealertas?
 
 ## I. Capital, riesgo y cortacircuitos
 
 - [x] I1. → decidido: SIN cortacircuito diario de momento (solo lo que marque la estrategia); repreguntar más adelante. Pérdida diaria máxima: ¿valor, se cuenta realizada + latente, quién corta (bot, ajustes de riesgo de DAS, ambos), y qué se hace al cortar (cerrar todo, cancelar todo, bloquear hasta mañana)? **[API: ajustes de riesgo de la cuenta]**
-- [ ] I2. Pérdida máxima por operación y por ticker-día.
+- [x] I2. → sin tope propio del bot: lo marca la estrategia (I1). Pérdida máxima por operación y por ticker-día.
 - [ ] I3. Racha: ¿N pérdidas seguidas paran el día? ¿Una semana en negativo reduce el tamaño?
-- [ ] I4. Exposición total y por ticker (P3: 3-4 % barajado): ¿sobre qué capital, el equity del día, el inicial o un mínimo fijado?
+- [x] I4. → reparto del cuadro de mandos (E3) + margen real de Sage (2c). Exposición total y por ticker (P3: 3-4 % barajado): ¿sobre qué capital, el equity del día, el inicial o un mínimo fijado?
 - [x] I5. → R-I-01 (lo limita el capital; se entra con lo que quede). Número máximo de posiciones simultáneas y de órdenes vivas.
-- [ ] I6. Fracción máxima del volumen reciente (M9): ¿de qué ventana y qué múltiplo? ¿Se aplica también a la salida?
-- [ ] I7. Cuenta muy en negativo en premercado: ¿qué hace Sage? (P1) ¿Y el bot: deja de abrir por debajo de X de equity?
-- [ ] I8. PDT y mínimos de cuenta: ¿el bot vigila el número de day trades y el equity mínimo?
+- [x] I6. → R-B-05 (acumulado del día, tope desactivado). Fracción máxima del volumen reciente (M9): ¿de qué ventana y qué múltiplo? ¿Se aplica también a la salida?
+- [x] I7. → bot: capital libre = BP real (R-I-01, 2c); qué hace Sage: pregunta al bróker (apartado R 16). Cuenta muy en negativo en premercado: ¿qué hace Sage? (P1) ¿Y el bot: deja de abrir por debajo de X de equity?
+- [x] I8. → pregunta al bróker (PDT con < 25 k$, apartado R 16). PDT y mínimos de cuenta: ¿el bot vigila el número de day trades y el equity mínimo?
 - [ ] I9. Llamada de margen: ¿reacciona el bot o es humano? **[API]**
 - [x] I10. → R-I-02 (tamaños y escalones en el cuadro de mandos, no el bot). Escalón inicial (canario): ¿1 acción, 100 $, 1 % del tamaño final? ¿Quién autoriza subir y con qué criterio?
-- [ ] I11. ¿Reducción automática del tamaño tras días malos o tamaño fijo hasta que un humano lo cambie?
+- [x] I11. → R-I-02 (tamaño fijo hasta que el humano lo cambie). ¿Reducción automática del tamaño tras días malos o tamaño fijo hasta que un humano lo cambie?
 - [x] I12. → R-I-03 (siguiente señal; cuadro de mandos manda). Los topes viven en el JSON de la estrategia y en el cuadro de mandos: si difieren, ¿cuál manda? ¿Se pueden cambiar en caliente y desde dónde?
-- [ ] I13. Un tope que se supera por un fill peor de lo esperado (no por decisión): ¿se corrige al instante o se tolera hasta la salida?
-- [ ] I14. ¿Los cortacircuitos se prueban cada día en seco (simulacro) o solo cuando saltan?
+- [x] I13. → B13 (mantener con stop y avisar). Un tope que se supera por un fill peor de lo esperado (no por decisión): ¿se corrige al instante o se tolera hasta la salida?
+- [x] I14. → R-O-02 (tablas de casos y días grabados antes de cada versión). ¿Los cortacircuitos se prueban cada día en seco (simulacro) o solo cuando saltan?
 
 ## J. Infraestructura: VPS, luz, comunicaciones
 
@@ -176,7 +176,7 @@
 - [x] J3. → R-J-02 (aviso máximo, reconexión 2/4/8/16/30 s, aviso cada 5 min). Se cae la conexión bot↔DAS (socket local): ¿reconexión automática, cuántos intentos, qué pasa con las órdenes en vuelo? **[API]**
 - [x] J4. → R-J-02 (relanzar y reloguear; 2FA [API]). Se cae DAS (la aplicación): ¿el supervisor la relanza y reloguea sola? ¿Hay 2FA que lo impida? **[API]**
 - [ ] J5. Se cae Sage o el servidor de DAS: ¿teléfono del bróker, app móvil, plan de cierre manual? (runbook)
-- [ ] J6. Se cae Massive: ¿fuente alternativa (L1 de DAS) solo para gestionar lo abierto?
+- [x] J6. → R-D-05 (precio de DAS para gestionar lo abierto). Se cae Massive: ¿fuente alternativa (L1 de DAS) solo para gestionar lo abierto?
 - [x] J7. → R-J-04 (relanzar cada 30 s, aviso). Se cae el bot (excepción): ¿supervisor, tiempo máximo caído, reconciliación al volver, aviso por Telegram?
 - [x] J8. → R-J-04 (10 s). Bot colgado sin morir (latido parado): ¿quién lo mata y lo relanza?
 - [x] J9. → R-J-04 (cerrojo obligatorio). Dos instancias del bot a la vez (dos PIDs, relanzar sin matar): ¿cerrojo de instancia única?
@@ -195,15 +195,15 @@
 ## K. Estado y reconciliación
 
 - [x] K1. → R-K-01 (eventos al instante + barrido cada 2 s / 10 s; tras fill y reconexión). Fuente de la verdad: DAS. ¿Cada cuántos segundos se reconcilia y qué se compara (posiciones, órdenes vivas, cuenta)?
-- [ ] K2. Posición en DAS que el bot no conoce: ¿aviso y no tocar, o adoptar con stop?
-- [ ] K3. Posición que el bot cree tener y DAS no: ¿se limpia el estado y se avisa?
-- [ ] K4. Órdenes vivas que el bot no conoce: ¿cancelar o dejar?
+- [x] K2. → R-C-10 caso 4. Posición en DAS que el bot no conoce: ¿aviso y no tocar, o adoptar con stop?
+- [x] K3. → R-C-10 caso 3 / R-K-01. Posición que el bot cree tener y DAS no: ¿se limpia el estado y se avisa?
+- [x] K4. → R-C-10 + R-C-11 (cancelar las del lote que sobren; las desconocidas: aviso). Órdenes vivas que el bot no conoce: ¿cancelar o dejar?
 - [x] K5. → R-K-02 (no opera a mano en la cuenta del bot; solo emergencias). Operaciones manuales de Jaume en la misma cuenta: ¿cuenta separada, o etiqueta que el bot respeta? ¿«Cerrar todo» cierra también las manuales?
-- [ ] K6. Reinicio a media sesión: ¿qué se recupera del disco (posiciones, órdenes, locates, señales ya ejecutadas) y qué se rehidrata del feed?
-- [ ] K7. Idempotencia por id de evento (`ticker|estrategia|momento|tipo`): si la misma señal se reevalúa tras un reinicio, ¿se reconoce como ya ejecutada?
-- [ ] K8. ¿El diario JSONL se escribe antes de enviar la orden y después de la respuesta, siempre, aunque el disco esté lento?
-- [ ] K9. Divergencia entre fills del diario y los de DAS al final del día: ¿tolerancia y quién la revisa?
-- [ ] K10. Cambio de día: ¿cuándo «cierra» el día el bot y se resetean contadores (pérdida diaria, reentradas, locates)?
+- [x] K6. → R-C-10 (reconciliación al arrancar) + R-A-05. Reinicio a media sesión: ¿qué se recupera del disco (posiciones, órdenes, locates, señales ya ejecutadas) y qué se rehidrata del feed?
+- [x] K7. → R-A-05 (id estable) + token de orden. Idempotencia por id de evento (`ticker|estrategia|momento|tipo`): si la misma señal se reevalúa tras un reinicio, ¿se reconoce como ya ejecutada?
+- [x] K8. → R-N-01 (antes y después, M6). ¿El diario JSONL se escribe antes de enviar la orden y después de la respuesta, siempre, aunque el disco esté lento?
+- [x] K9. → sin cuadre (R-N-01); se registra. Divergencia entre fills del diario y los de DAS al final del día: ¿tolerancia y quién la revisa?
+- [x] K10. → R-L-01 (el día cierra al apagar tras el último EOD; contadores por día). Cambio de día: ¿cuándo «cierra» el día el bot y se resetean contadores (pérdida diaria, reentradas, locates)?
 - [x] K11. → R-K-03 (30 s con el último estado bueno, luego no abrir + aviso). Si la reconciliación misma falla (DAS no contesta), ¿el bot sigue operando con el último estado bueno o se para?
 
 ## L. Horario y calendario
@@ -226,7 +226,7 @@
 - [x] M6. → R-M-03 (proteger, avisar, pausar entradas hasta «sigue»). Si un humano opera en DAS por RDP mientras el bot corre, ¿el bot lo detecta y se pausa?
 - [x] M7. → no; capital mínimo o demo al principio. ¿Se pide confirmación humana para algo (primera operación del día, tamaño mayor que X) o nunca?
 - [x] M8. → apagar ese día o modo de seguridad (R-I-04). Guardia: ¿alguien mira el premercado cada día? ¿Qué pasa si nadie puede?
-- [ ] M9. ¿Cómo se cambia un parámetro en caliente y cómo queda registrado quién lo cambió?
+- [x] M9. → R-I-03 (siguiente señal, cuadro de mandos manda) + R-N-01 (quién cambió qué). ¿Cómo se cambia un parámetro en caliente y cómo queda registrado quién lo cambió?
 
 ## N. Registro, contabilidad y auditoría
 
@@ -244,7 +244,7 @@
 - [x] O3. → decisión al final. Canario: tamaño, duración, criterios de salida (ya en la submemoria) y quién decide subir de escalón.
 - [x] O4. → R-O-01. Versionado de estrategias: JSON con hash y fecha; ¿cómo se despliega una versión nueva sin tocar el bot en marcha? **[dato]** el bot de avisos lee las estrategias UNA vez al arrancar.
 - [x] O5. → R-O-01. Cambios de código con el bot vivo: prohibidos en mercado. ¿Ventana de despliegue y comprobación de arranque limpio?
-- [ ] O6. Pruebas de la guarda con tablas (función pura); simulacro de reconexión; simulacro completo del socio.
+- [x] O6. → R-O-02 + simulacros de R-J-02/R-J-04/R-J-06. Pruebas de la guarda con tablas (función pura); simulacro de reconexión; simulacro completo del socio.
 - [x] O7. → R-O-02 fijada. ¿Repetición de un día grabado contra el ejecutor en seco antes de cada versión?
 - [x] O8. → R-O-02 fijada (versiones por fecha). Vuelta atrás: ¿cómo se recupera la versión anterior en 5 min?
 - [x] O9. → canario a tamaño mínimo + repetición de días grabados. ¿Qué se prueba con dinero real que no se puede probar de otra forma (locates, rechazos, halts)? ¿Cómo se fuerza?
