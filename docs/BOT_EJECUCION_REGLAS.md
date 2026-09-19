@@ -723,7 +723,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Parámetros: X días de IPO (provisional 30); banda de OPA: desde el máximo de PM, 30 min con rango ≤ 1,5 % y ≥ 100 k $ negociados.
 - **El estudio de la banda YA ESTÁ HECHO (otra sesión, 19-sep, memoria «auditoría mergers»):** con esa señal se detecta el 58 % de las OPAs antes de las 09:00 con un 0,8 % de falsos positivos en 522 gaps normales; se dispara sobre todo DESPUÉS de haber entrado → es regla de SALIDA de seguridad, no de veto. Las OPAs que no la disparan (el precio sube en escalera hacia la oferta) son las que hacen daño (4 stops de 1A). Noticias de Massive: PARCIALES (varias OPAs sin noticia el día del gap) → Jaume: inviables como filtro; el dato técnico de las velas es el primer filtro, y las noticias, si acaso, secundario. Massive SÍ da en el momento sic_code (6770 = SPAC), type (UNIT/WARRANT/ADRC), list_date, market_cap y acciones en circulación a la fecha.
 - **Riesgo real de entrar en una OPA que la señal no detecta (el 40 % restante), según la auditoría:** 1A entró en 159 de 340 OPAs; resultado total −5,3 R en 163 operaciones: «dinero muerto, no agujero». Antes de clavarse PF 0,72; después PF 0,25 con el 88 % de las operaciones a ±1 %. Solo 4 stops (entradas tempranas mientras el precio sube en escalera hacia la oferta) y algunas de −9/−15 % sin stop. El peor caso es un stop normal (1 R) y capital parado horas; NO es riesgo de cola: en las OPAs el precio se clava, no se dispara. Los fogonazos siguen siendo el peligro, no las OPAs. Además, en el 26 % hubo un halt T1 ~35 min ANTES del gap (no se está dentro). **¿Y una OPA que se «clave» a una distancia enorme (+1.000 %)?** El gap de la OPA ocurre antes de que entremos (es lo que nos hace entrar); una vez dentro, lo que puede pasar es que el precio siga subiendo en escalera hacia el precio de la oferta (los 4 stops de 1A, −9/−15 % sin stop). El caso de cola de verdad es una OPA ANUNCIADA con la posición abierta: halt T1 y reapertura al precio de la oferta; eso ya está cubierto por R-F-05 con datos: en 8 años el T1 que más alto reabrió en horario fue +329 % (CAPR) y +475 % en after-hours (ABVX); mercado al reabrir hasta +250 %, por encima alerta máxima y humano.
-- Estado: FIJADA (Jaume, 19-sep): lista negra manual + IPO < 30 días + SPAC (SIC 6770) + split del día fuera; salida de seguridad por banda clavada (30 min ≤ 1,5 %, ≥ 100 k $) como regla del bot. Origen: A8, A11, A14.
+- Estado: FIJADA (Jaume, 19-sep) salvo la norma de las OPAs, que Jaume quiere REPASAR más adelante (pendiente del repaso final): lista negra manual + IPO < 30 días + SPAC (SIC 6770) + split del día fuera; salida de seguridad por banda clavada (30 min ≤ 1,5 %, ≥ 100 k $) como propuesta. Origen: A8, A11, A14.
 
 ### Área D · Salidas y pirámides
 
@@ -858,6 +858,26 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 19-sep). Origen: L6.
 
 ### Área M · Control humano
+
+### R-M-01 · Tres niveles de aviso, resumen diario y comando de detalle
+- Niveles: **Informativo** (entradas, salidas, pirámides, take profits); **Aviso** (incidentes que el bot resolvió solo: stop repuesto, entrada parcial, locate no disponible, reconexión); **Máximo** (necesita humano: posición sin stop, DAS caído, cisne negro, posición desconocida, compras de más, EOD sin cerrar, bucle de locates). Sin prealertas en este bot (M8).
+- Todo aviso va a la vez a Telegram, al log y al panel de avisos del cuadro de mandos (mismos mensajes).
+- Resumen al cierre de cada día: operaciones, resultado por estrategia, incidentes, coste de locates, slippage medido.
+- Comando de Telegram «detalle» para pedir la explicación completa de cualquier aviso o incidente (sobre todo de los niveles Aviso y Máximo).
+- Estado: FIJADA (Jaume, 19-sep). Origen: M2, M3.
+
+### R-M-02 · Canales: Telegram siempre; correo y SMS para el nivel Máximo
+- Telegram para todo (en cola con reintentos, R-J-08). Para el nivel MÁXIMO, además: correo electrónico siempre, y SMS (llega por red móvil, no necesita Internet en el móvil de Jaume). Sin llamada de voz.
+- SMS: servicio de pago por uso, sin suscripción mensual: Amazon SNS (≈ 0,05-0,10 € por SMS a España, sin cuota) o Twilio (parecido por mensaje; puede exigir alquilar un número ≈ 1 €/mes salvo remitente alfanumérico). Coste real esperado: céntimos al mes, porque el nivel Máximo es raro. El envío lo hace el bot por Internet desde el VPS; solo la recepción va por red móvil.
+- Estado: FIJADA en su lógica (Jaume, 19-sep); proveedor de SMS por elegir (preferencia: sin suscripción). Origen: M4, J19.
+
+### R-M-03 · Intervención humana detectada: proteger, avisar y pausar entradas
+- Situación: aparece en DAS una orden o posición que no es del bot (Jaume o el socio han actuado a mano, en emergencia).
+- Acción: el bot AVISA (log + Telegram), protege la posición (R-C-10 caso 4) y SE PONE EN PAUSA de nuevas entradas hasta que un humano le diga «sigue» (comando de Telegram o botón del cuadro de mandos). Las posiciones propias siguen gestionándose. Esto resuelve el traspaso humano↔bot que estaba pendiente: la señal de «esto lo he hecho yo» es el propio «sigue».
+- Estado: FIJADA (Jaume, 19-sep). Origen: M6, K5, pendiente de R-C-10.
+
+**M7 (Jaume, 19-sep): el bot NO pide confirmación humana antes de operar; es autónomo dentro de sus reglas. Las primeras semanas se va con capital mínimo o en demo (se concreta en el área O).**
+**M8 (Jaume, 19-sep): día en que ni Jaume ni el socio pueden vigilar: se apaga el bot ese día o se pone en «modo trading de seguridad» (R-I-04).**
 
 ### Área N · Registro y contabilidad
 

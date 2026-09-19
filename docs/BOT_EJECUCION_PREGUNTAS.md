@@ -219,13 +219,13 @@
 ## M. Control humano y avisos
 
 - [ ] M1. Comandos de Telegram: `/estado`, `/pausar` (no abrir), `/cerrar_todo SI`, `/reanudar`. ¿Quién está autorizado (chat_id)? ¿Confirmación en dos pasos?
-- [ ] M2. Qué se avisa (entradas, salidas, errores, reconciliación fallida, latido perdido) y qué no (prealertas). (M8)
-- [ ] M3. ¿Silencio si todo va bien? ¿Resumen al cierre del día?
-- [ ] M4. Si Telegram falla: ¿canal alternativo (correo, SMS)?
+- [x] M2. → R-M-01 (tres niveles). Qué se avisa (entradas, salidas, errores, reconciliación fallida, latido perdido) y qué no (prealertas). (M8)
+- [x] M3. → R-M-01 (resumen diario + comando detalle). ¿Silencio si todo va bien? ¿Resumen al cierre del día?
+- [x] M4. → R-M-02 (correo + SMS de pago por uso para el nivel Máximo). Si Telegram falla: ¿canal alternativo (correo, SMS)?
 - [ ] M5. Socio: qué puede hacer sin Jaume (pausar, apagar el VPS, cerrar todo en DAS) y runbook de una página.
-- [ ] M6. Si un humano opera en DAS por RDP mientras el bot corre, ¿el bot lo detecta y se pausa?
-- [ ] M7. ¿Se pide confirmación humana para algo (primera operación del día, tamaño mayor que X) o nunca?
-- [ ] M8. Guardia: ¿alguien mira el premercado cada día? ¿Qué pasa si nadie puede?
+- [x] M6. → R-M-03 (proteger, avisar, pausar entradas hasta «sigue»). Si un humano opera en DAS por RDP mientras el bot corre, ¿el bot lo detecta y se pausa?
+- [x] M7. → no; capital mínimo o demo al principio. ¿Se pide confirmación humana para algo (primera operación del día, tamaño mayor que X) o nunca?
+- [x] M8. → apagar ese día o modo de seguridad (R-I-04). Guardia: ¿alguien mira el premercado cada día? ¿Qué pasa si nadie puede?
 - [ ] M9. ¿Cómo se cambia un parámetro en caliente y cómo queda registrado quién lo cambió?
 
 ## N. Registro, contabilidad y auditoría
