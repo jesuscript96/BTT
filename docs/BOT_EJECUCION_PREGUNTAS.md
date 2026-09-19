@@ -208,13 +208,13 @@
 
 ## L. Horario y calendario
 
-- [ ] L1. Ventanas de operación por estrategia (PM 04:00-09:30, RTH) y ventanas prohibidas (primeros N s tras las 09:30, últimos N min).
-- [ ] L2. Festivos y medias sesiones: ¿fuente (Massive) y qué hace el bot ese día?
-- [ ] L3. Horario de verano: todo en ET; ¿el bot lo comprueba solo?
-- [ ] L4. ¿Se permite alguna posición overnight? Si no, hora límite dura de cierre y margen.
-- [ ] L5. Fin de semana y días sin operar: ¿apagado o vigilante en marcha?
-- [ ] L6. La sesión de la estrategia se SUMA, no sustituye (trampa conocida del backtester): ¿el bot lee la sesión como el backtester o la corrige?
-- [ ] L7. Días con evento macro conocido: ¿lista manual de no operar?
+- [x] L1. → JSON de la estrategia (R-L-02). Ventanas de operación por estrategia (PM 04:00-09:30, RTH) y ventanas prohibidas (primeros N s tras las 09:30, últimos N min).
+- [x] L2. → calendario de Massive (F12). Festivos y medias sesiones: ¿fuente (Massive) y qué hace el bot ese día?
+- [x] L3. → R-J-07. Horario de verano: todo en ET; ¿el bot lo comprueba solo?
+- [x] L4. → no (R-D-02). ¿Se permite alguna posición overnight? Si no, hora límite dura de cierre y margen.
+- [x] L5. → R-L-01 (encendido solo PM + parte de RTH; apagado fuera). Fin de semana y días sin operar: ¿apagado o vigilante en marcha?
+- [x] L6. → R-L-02 (paridad + revisión manual + comprobación del bot). La sesión de la estrategia se SUMA, no sustituye (trampa conocida del backtester): ¿el bot lee la sesión como el backtester o la corrige?
+- [x] L7. → tarea humana (A10). Días con evento macro conocido: ¿lista manual de no operar?
 
 ## M. Control humano y avisos
 

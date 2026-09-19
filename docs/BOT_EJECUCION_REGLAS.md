@@ -722,7 +722,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Acción: lista NEGRA manual en el cuadro de mandos (Jaume mete tickers a mano, p. ej. OPAs conocidas) + exclusiones automáticas configurables del radar (IPO < X días, SPAC, split del día) + salida de seguridad por «precio clavado» (pendiente de estudio).
 - Parámetros: X días de IPO (provisional 30); banda de OPA: desde el máximo de PM, 30 min con rango ≤ 1,5 % y ≥ 100 k $ negociados.
 - **El estudio de la banda YA ESTÁ HECHO (otra sesión, 19-sep, memoria «auditoría mergers»):** con esa señal se detecta el 58 % de las OPAs antes de las 09:00 con un 0,8 % de falsos positivos en 522 gaps normales; se dispara sobre todo DESPUÉS de haber entrado → es regla de SALIDA de seguridad, no de veto. Las OPAs que no la disparan (el precio sube en escalera hacia la oferta) son las que hacen daño (4 stops de 1A). Noticias de Massive: PARCIALES (varias OPAs sin noticia el día del gap) → Jaume: inviables como filtro; el dato técnico de las velas es el primer filtro, y las noticias, si acaso, secundario. Massive SÍ da en el momento sic_code (6770 = SPAC), type (UNIT/WARRANT/ADRC), list_date, market_cap y acciones en circulación a la fecha.
-- **Riesgo real de entrar en una OPA que la señal no detecta (el 40 % restante), según la auditoría:** 1A entró en 159 de 340 OPAs; resultado total −5,3 R en 163 operaciones: «dinero muerto, no agujero». Antes de clavarse PF 0,72; después PF 0,25 con el 88 % de las operaciones a ±1 %. Solo 4 stops (entradas tempranas mientras el precio sube en escalera hacia la oferta) y algunas de −9/−15 % sin stop. El peor caso es un stop normal (1 R) y capital parado horas; NO es riesgo de cola: en las OPAs el precio se clava, no se dispara. Los fogonazos siguen siendo el peligro, no las OPAs. Además, en el 26 % hubo un halt T1 ~35 min ANTES del gap (no se está dentro).
+- **Riesgo real de entrar en una OPA que la señal no detecta (el 40 % restante), según la auditoría:** 1A entró en 159 de 340 OPAs; resultado total −5,3 R en 163 operaciones: «dinero muerto, no agujero». Antes de clavarse PF 0,72; después PF 0,25 con el 88 % de las operaciones a ±1 %. Solo 4 stops (entradas tempranas mientras el precio sube en escalera hacia la oferta) y algunas de −9/−15 % sin stop. El peor caso es un stop normal (1 R) y capital parado horas; NO es riesgo de cola: en las OPAs el precio se clava, no se dispara. Los fogonazos siguen siendo el peligro, no las OPAs. Además, en el 26 % hubo un halt T1 ~35 min ANTES del gap (no se está dentro). **¿Y una OPA que se «clave» a una distancia enorme (+1.000 %)?** El gap de la OPA ocurre antes de que entremos (es lo que nos hace entrar); una vez dentro, lo que puede pasar es que el precio siga subiendo en escalera hacia el precio de la oferta (los 4 stops de 1A, −9/−15 % sin stop). El caso de cola de verdad es una OPA ANUNCIADA con la posición abierta: halt T1 y reapertura al precio de la oferta; eso ya está cubierto por R-F-05 con datos: en 8 años el T1 que más alto reabrió en horario fue +329 % (CAPR) y +475 % en after-hours (ABVX); mercado al reabrir hasta +250 %, por encima alerta máxima y humano.
 - Estado: FIJADA (Jaume, 19-sep): lista negra manual + IPO < 30 días + SPAC (SIC 6770) + split del día fuera; salida de seguridad por banda clavada (30 min ≤ 1,5 %, ≥ 100 k $) como regla del bot. Origen: A8, A11, A14.
 
 ### Área D · Salidas y pirámides
@@ -843,6 +843,19 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 **Recordatorio del área E (ya decidido en C, B y D):** un lote por estrategia en el diario; entradas simultáneas sumadas en una orden (R-B-03); stop único si coinciden en nivel, uno por lote si difieren (R-C-06 + nota de R-C-11); take profits por lote (R-D-03); la suma de órdenes nunca supera la posición.
 
 ### Área L · Calendario
+
+**Resueltas de rebote:** L1 ventanas por estrategia (JSON); L2 festivos y medias sesiones por el calendario de Massive (F12); L3 horario de verano (R-J-07, todo en ET); L4 sin posiciones overnight (R-D-02); L7 eventos macro = tarea humana (A10).
+
+### R-L-01 · Horario de encendido: solo PM y la parte de sesión que interese
+- Situación: el bot NO está encendido las 24 horas (Jaume, 19-sep).
+- Acción: el supervisor arranca DAS → vigilante → ejecutor antes de las 04:00 ET de cada día de mercado (con reconciliación) y los apaga tras el último EOD de las estrategias activas más el margen de R-D-02. Fines de semana y festivos: apagado. El latido externo (R-J-05) solo vigila dentro de la ventana de encendido.
+- Parámetros: hora de arranque y de apagado (cuadro de mandos; hoy PM y parte de RTH).
+- Estado: FIJADA (Jaume, 19-sep). Origen: L5.
+
+### R-L-02 · Ventana horaria de cada estrategia: revisión manual + comprobación del bot
+- Situación: trampa conocida del backtester: la sesión «se sumaba» (RTH + personalizada corría hasta las 16:00); corregido en la interfaz, pero las estrategias antiguas guardadas pueden seguir así.
+- Acción: el bot interpreta el JSON EXACTAMENTE como el backtester (paridad). Antes de estrenar cada estrategia, Jaume revisa a mano su ventana horaria; el bot, al cargarla, comprueba coherencia (ventana, EOD, sesión) y avisa si ve algo raro.
+- Estado: FIJADA (Jaume, 19-sep). Origen: L6.
 
 ### Área M · Control humano
 
