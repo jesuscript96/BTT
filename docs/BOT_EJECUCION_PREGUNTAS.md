@@ -81,7 +81,7 @@
 - [x] D2. → R-D-03 (resto al ask con techo 3 %; si no, stops + aviso; stops ajustados a lo que queda). Take profit ejecutado a medias y el precio vuelve: ¿se deja el resto o se cancela?
 - [x] D3. → R-D-01 (escalera de compra 1/2/3 % en 60 s y luego al ask; sin doble compra). Salida por hora de la estrategia: ¿límite, mercado, o límite y a los N s mercado? ¿Y si no hay liquidez?
 - [x] D4. → R-D-02 (EOD por estrategia, margen, aviso máximo y botón «control humano»). Cierre forzoso de fin de día: ¿a qué hora, con qué margen antes del cierre, y qué pasa si no se consigue (posición overnight no deseada)? **[dato]** quien aguanta al cierre se lleva el T12 a casa (INHD, TENK).
-- [ ] D5. Ejemplo de Jaume: se reduce por take profit y luego OTRA estrategia añade capital al mismo ticker. ¿Se permite? ¿Es nueva posición con su stop? ¿Se prohíbe añadir durante X min tras una reducción?
+- [x] D5. → R-D-07 (prioridad al take profit, al ask; luego la entrada). Ejemplo de Jaume: se reduce por take profit y luego OTRA estrategia añade capital al mismo ticker. ¿Se permite? ¿Es nueva posición con su stop? ¿Se prohíbe añadir durante X min tras una reducción?
 - [x] D6. → R-D-04 (según la estrategia; locate reutilizado si se puede; excepción halt). Reentradas: ¿cuántas por ticker y día? ¿Cuenta como el backtester (−1 es trampa)? ¿Reutiliza el locate?
 - [x] D7. → R-D-05 (mantener con stops, no abrir, aviso de emergencia). Salida por deterioro de datos (feed caído): ¿cerrar todo o mantener con el stop residente?
 - [x] D8. → R-F-01 caso 4 (con 2 halts, salir a 2-3 % de la banda). Salida anticipada por aviso de halts (cadena de LULD) o por acercarse a la banda: **[dato]** salir a X % de la banda no vale como automatismo (2 % de acierto); una cadena de ≥ 5 LULD acaba en T12 1 de cada 300.
@@ -156,7 +156,7 @@
 
 - [x] I1. → decidido: SIN cortacircuito diario de momento (solo lo que marque la estrategia); repreguntar más adelante. Pérdida diaria máxima: ¿valor, se cuenta realizada + latente, quién corta (bot, ajustes de riesgo de DAS, ambos), y qué se hace al cortar (cerrar todo, cancelar todo, bloquear hasta mañana)? **[API: ajustes de riesgo de la cuenta]**
 - [x] I2. → sin tope propio del bot: lo marca la estrategia (I1). Pérdida máxima por operación y por ticker-día.
-- [ ] I3. Racha: ¿N pérdidas seguidas paran el día? ¿Una semana en negativo reduce el tamaño?
+- [x] I3. → sin regla; manda la estrategia. Racha: ¿N pérdidas seguidas paran el día? ¿Una semana en negativo reduce el tamaño?
 - [x] I4. → reparto del cuadro de mandos (E3) + margen real de Sage (2c). Exposición total y por ticker (P3: 3-4 % barajado): ¿sobre qué capital, el equity del día, el inicial o un mínimo fijado?
 - [x] I5. → R-I-01 (lo limita el capital; se entra con lo que quede). Número máximo de posiciones simultáneas y de órdenes vivas.
 - [x] I6. → R-B-05 (acumulado del día, tope desactivado). Fracción máxima del volumen reciente (M9): ¿de qué ventana y qué múltiplo? ¿Se aplica también a la salida?

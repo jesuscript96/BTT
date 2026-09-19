@@ -840,6 +840,13 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 **E9 (Jaume, 18-sep): el locate se carga a la PRIMERA estrategia que da señal;** si sobran acciones del paquete, a la siguiente; si faltan, se compran más (R-H-01, coste total acumulado). En principio no debería faltar: se compran al principio previendo las acciones necesarias.
 
+### R-D-07 · Take profit de una estrategia y entrada de otra en el mismo instante
+- Situación: en el mismo minuto (o instante) coinciden un take profit de la estrategia A y una entrada de la estrategia B en el mismo ticker. Muy raro, pero previsto.
+- Acción: PRIORIDAD al take profit: primero se ejecuta el take profit de A, después la entrada de B, una tras otra, nunca juntas. Si se detectan a la vez, el take profit se tira AL ASK (remover) para que sea lo más rápido posible, porque libera buying power y margen para la entrada. Añadir en un ticker tras una reducción está permitido sin más; no hay veto temporal.
+- Estado: FIJADA (Jaume, 19-sep). Origen: D5.
+
+**I3 (Jaume, 19-sep): sin regla de racha; manda la estrategia. El bot solo está ajustado para límites estrictos por stop loss y las reglas de proceso de este libro.**
+
 **Recordatorio del área E (ya decidido en C, B y D):** un lote por estrategia en el diario; entradas simultáneas sumadas en una orden (R-B-03); stop único si coinciden en nivel, uno por lote si difieren (R-C-06 + nota de R-C-11); take profits por lote (R-D-03); la suma de órdenes nunca supera la posición.
 
 ### Área L · Calendario
