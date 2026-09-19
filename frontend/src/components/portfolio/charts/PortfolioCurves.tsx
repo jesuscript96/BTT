@@ -10,16 +10,17 @@
 // las series comparten el mismo eje (el calendario del combinado), un dia sin
 // operar arrastra el valor anterior.
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { color, font, radius } from "@/components/ui/tokens";
 import type { CombineOut } from "@/lib/api_portfolio_lab";
+import { CartelPuntero, CruzTecnica, RejillaX, usePuntero } from "./puntero";
 
 export type YMode = "usd" | "pct" | "r";
 export type XMode = "fecha" | "trades";
 
 const W = 900;
 const H = 320;
-const PAD = { t: 16, r: 16, b: 36, l: 66 };
+const PAD = { t: 16, r: 16, b: 40, l: 70 };
 
 /** Paleta para las lineas de estrategia (la combinada siempre va en cobre). */
 export const SERIES_PALETTE = [
@@ -62,8 +63,6 @@ export function PortfolioCurves({
   yMode: YMode;
   xMode: XMode;
 }) {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-
   const data = useMemo(() => {
     const init = Number(out.config?.init_cash) || 10000;
     const names = out.per_strategy.map((p) => p.name);
@@ -124,7 +123,7 @@ export function PortfolioCurves({
     const yOf = (v: number) => PAD.t + (1 - (v - lo) / (hi - lo)) * (H - PAD.t - PAD.b);
     const line = (a: number[]) =>
       a.map((v, i) => `${i === 0 ? "M" : "L"}${xOf(i).toFixed(1)},${yOf(v).toFixed(1)}`).join("");
-    return { lo, hi, n, xOf, yOf, line, ticks: niceTicks(lo, hi) };
+    return { lo, hi, n, xOf, yOf, line, ticks: niceTicks(lo, hi, 6) };
   }, [data]);
 
   const fmtY = (v: number) =>
@@ -145,12 +144,9 @@ export function PortfolioCurves({
     return Array.from({ length: count }, (_, k) => Math.round((k / (count - 1)) * (n - 1)));
   }, [data.labels]);
 
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const fx = ((e.clientX - rect.left) / rect.width) * W;
-    const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (geom.n - 1));
-    setHoverIdx(i >= 0 && i < data.labels.length ? i : null);
-  };
+  // Lectura tecnica bajo el cursor: cruz + cartel en el puntero (puntero.tsx).
+  const { puntero, onMove, onLeave } = usePuntero(data.labels.length, W, PAD.l, PAD.r);
+  const hoverIdx = puntero?.idx ?? null;
 
   return (
     <div>
@@ -167,16 +163,18 @@ export function PortfolioCurves({
           viewBox={`0 0 ${W} ${H}`}
           style={{ width: "100%", height: "auto", display: "block" }}
           onMouseMove={onMove}
-          onMouseLeave={() => setHoverIdx(null)}
+          onMouseLeave={onLeave}
         >
+          <RejillaX xs={xTicks.map((i) => geom.xOf(i))} top={PAD.t} bottom={H - PAD.b} />
           {geom.ticks.map((t) => (
             <g key={t}>
               <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke="var(--color-ec-border)" strokeWidth="0.5" />
-              <text x={PAD.l - 7} y={geom.yOf(t) + 3} textAnchor="end" fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+              <text x={PAD.l - 7} y={geom.yOf(t) + 3} textAnchor="end" fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
                 {fmtY(t)}
               </text>
             </g>
           ))}
+          <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={H - PAD.t - PAD.b} fill="none" stroke="var(--color-ec-border)" strokeWidth="0.8" />
 
           {/* Linea de cero, para ver de un vistazo cuando el PnL es negativo. */}
           {geom.lo < 0 && geom.hi > 0 && (
@@ -184,7 +182,7 @@ export function PortfolioCurves({
           )}
 
           {xTicks.map((i) => (
-            <text key={i} x={geom.xOf(i)} y={H - PAD.b + 14} textAnchor={i === 0 ? "start" : i === data.labels.length - 1 ? "end" : "middle"} fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+            <text key={i} x={geom.xOf(i)} y={H - PAD.b + 30} textAnchor={i === 0 ? "start" : i === data.labels.length - 1 ? "end" : "middle"} fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
               {data.labels[i]}
             </text>
           ))}
@@ -195,7 +193,20 @@ export function PortfolioCurves({
           <path d={geom.line(data.combined)} fill="none" stroke="var(--color-ec-copper)" strokeWidth="1.9" />
 
           {hoverIdx != null && (
-            <line x1={geom.xOf(hoverIdx)} x2={geom.xOf(hoverIdx)} y1={PAD.t} y2={H - PAD.b} stroke="var(--color-ec-text-secondary)" strokeWidth="0.6" strokeDasharray="2 2" />
+            <CruzTecnica
+              x={geom.xOf(hoverIdx)}
+              y={geom.yOf(data.combined[hoverIdx])}
+              W={W - PAD.r}
+              top={PAD.t}
+              bottom={H - PAD.b}
+              padL={PAD.l}
+              etiquetaX={data.labels[hoverIdx]}
+              etiquetaY={fmtHover(data.combined[hoverIdx])}
+              puntos={[
+                { cx: geom.xOf(hoverIdx), cy: geom.yOf(data.combined[hoverIdx]), color: color.copper, r: 3.5 },
+                ...data.per.map((s, si) => ({ cx: geom.xOf(hoverIdx), cy: geom.yOf(s[hoverIdx]), color: SERIES_PALETTE[si % SERIES_PALETTE.length] })),
+              ]}
+            />
           )}
 
           <text x={W - PAD.r} y={H - 6} textAnchor="end" fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-sans)">
@@ -206,39 +217,17 @@ export function PortfolioCurves({
           </text>
         </svg>
 
-        {/* Lectura del punto bajo el cursor: las dos escalas a la vez tapaban
-            el lienzo, asi que va en una esquina fija. */}
-        {hoverIdx != null && (
-          <div
-            style={{
-              position: "absolute",
-              top: 8,
-              right: 10,
-              background: color.bgElevated,
-              border: `0.5px solid ${color.border}`,
-              borderRadius: radius.sm,
-              padding: "7px 10px",
-              fontSize: 10.5,
-              fontFamily: font.mono,
-              color: color.textPrimary,
-              pointerEvents: "none",
-              minWidth: 150,
-            }}
-          >
-            <div style={{ color: color.textMuted, fontFamily: font.sans, marginBottom: 3 }}>{data.labels[hoverIdx]}</div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: color.copper }}>
-              <span>Portfolio</span>
-              <span>{fmtHover(data.combined[hoverIdx])}</span>
-            </div>
-            {data.per.map((s, si) => (
-              <div key={si} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <span style={{ color: SERIES_PALETTE[si % SERIES_PALETTE.length], overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 150 }}>
-                  {data.names[si]}
-                </span>
-                <span>{fmtHover(s[hoverIdx])}</span>
-              </div>
-            ))}
-          </div>
+        {/* Cartel en el puntero: fecha, portfolio y cada estrategia. */}
+        {puntero && (
+          <CartelPuntero
+            puntero={puntero}
+            titulo={data.labels[puntero.idx]}
+            subtitulo={xMode === "fecha" ? `sesión ${puntero.idx + 1} de ${data.labels.length}` : `trade ${puntero.idx + 1} de ${data.labels.length}`}
+            filas={[
+              { color: color.copper, nombre: "Portfolio combinado", valor: fmtHover(data.combined[puntero.idx]), grueso: true },
+              ...data.per.map((s, si) => ({ color: SERIES_PALETTE[si % SERIES_PALETTE.length], nombre: data.names[si], valor: fmtHover(s[puntero.idx]) })),
+            ]}
+          />
         )}
       </div>
 

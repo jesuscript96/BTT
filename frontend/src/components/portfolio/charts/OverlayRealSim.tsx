@@ -7,6 +7,7 @@
 
 import React, { useMemo } from "react";
 import { color, font, radius } from "@/components/ui/tokens";
+import { CartelPuntero, CruzTecnica, RejillaX, usePuntero } from "./puntero";
 
 const W = 900;
 
@@ -37,6 +38,8 @@ function Panel({
   h,
   colorA = "var(--color-ec-copper)",
   colorB = "var(--color-ec-info)",
+  nombreA = "Real",
+  nombreB = "Simulado",
 }: {
   days: string[];
   a: number[];
@@ -46,8 +49,12 @@ function Panel({
   h: number;
   colorA?: string;
   colorB?: string;
+  nombreA?: string;
+  nombreB?: string;
 }) {
-  const PAD = { t: 12, r: 12, b: 26, l: 64 };
+  const PAD = { t: 12, r: 12, b: 40, l: 68 };
+  // Cruz + cartel en el puntero (19-sep).
+  const { puntero, onMove, onLeave } = usePuntero(days.length, W, PAD.l, PAD.r);
   const pool = [...a, ...b];
   let lo = Math.min(...pool);
   let hi = Math.max(...pool);
@@ -61,27 +68,57 @@ function Panel({
   const count = Math.min(6, days.length);
   const xTicks = Array.from({ length: count }, (_, k) => Math.round((k / (count - 1)) * (days.length - 1)));
   return (
-    <div style={{ background: color.bgBase, border: `0.5px solid ${color.border}`, borderRadius: radius.md, padding: "10px 12px 6px" }}>
-      <svg viewBox={`0 0 ${W} ${h}`} style={{ width: "100%", height: "auto", display: "block" }}>
+    <div style={{ position: "relative", background: color.bgBase, border: `0.5px solid ${color.border}`, borderRadius: radius.md, padding: "10px 12px 6px" }}>
+      <svg viewBox={`0 0 ${W} ${h}`} style={{ width: "100%", height: "auto", display: "block" }} onMouseMove={onMove} onMouseLeave={onLeave}>
+        <RejillaX xs={xTicks.map((i) => xOf(i))} top={PAD.t} bottom={h - PAD.b} />
         {niceTicks(lo, hi).map((t) => (
           <g key={t}>
             <line x1={PAD.l} x2={W - PAD.r} y1={yOf(t)} y2={yOf(t)} stroke="var(--color-ec-border)" strokeWidth="0.5" />
-            <text x={PAD.l - 7} y={yOf(t) + 3} textAnchor="end" fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+            <text x={PAD.l - 7} y={yOf(t) + 3} textAnchor="end" fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
               {fmtY(t)}
             </text>
           </g>
         ))}
+        <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={h - PAD.t - PAD.b} fill="none" stroke="var(--color-ec-border)" strokeWidth="0.8" />
         <path d={line(b)} fill="none" stroke={colorB} strokeWidth="1.3" strokeDasharray="4 3" opacity="0.85" />
         <path d={line(a)} fill="none" stroke={colorA} strokeWidth="1.8" />
         {xTicks.map((i) => (
-          <text key={i} x={xOf(i)} y={h - PAD.b + 14} textAnchor={i === 0 ? "start" : i === days.length - 1 ? "end" : "middle"} fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+          <text key={i} x={xOf(i)} y={h - PAD.b + 30} textAnchor={i === 0 ? "start" : i === days.length - 1 ? "end" : "middle"} fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
             {days[i]}
           </text>
         ))}
+        {puntero && (
+          <CruzTecnica
+            x={xOf(puntero.idx)}
+            y={yOf(a[puntero.idx])}
+            W={W - PAD.r}
+            top={PAD.t}
+            bottom={h - PAD.b}
+            padL={PAD.l}
+            etiquetaX={days[puntero.idx]}
+            etiquetaY={fmtY(a[puntero.idx])}
+            puntos={[
+              { cx: xOf(puntero.idx), cy: yOf(a[puntero.idx]), color: colorA, r: 3.5 },
+              { cx: xOf(puntero.idx), cy: yOf(b[puntero.idx]), color: colorB },
+            ]}
+          />
+        )}
         <text x={12} y={PAD.t + 2} fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-sans)" transform={`rotate(-90 12 ${PAD.t + 2})`} textAnchor="end">
           {yLabel}
         </text>
       </svg>
+      {puntero && (
+        <CartelPuntero
+          puntero={puntero}
+          titulo={days[puntero.idx]}
+          subtitulo={`sesión ${puntero.idx + 1} de ${days.length}`}
+          filas={[
+            { color: colorA, nombre: nombreA, valor: fmtY(a[puntero.idx]), grueso: true },
+            { color: colorB, nombre: nombreB, valor: fmtY(b[puntero.idx]) },
+            { color: color.textMuted, nombre: "diferencia", valor: fmtY(a[puntero.idx] - b[puntero.idx]) },
+          ]}
+        />
+      )}
     </div>
   );
 }
@@ -119,7 +156,7 @@ export function OverlayRealSim({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <Panel days={data.days} a={data.a} b={data.b} fmtY={money} yLabel="equity ($)" h={240} />
+      <Panel days={data.days} a={data.a} b={data.b} fmtY={money} yLabel="equity ($)" h={240} nombreA="Tu equity real" nombreB="Portfolio simulado" />
       {/* El drawdown va en ROJO (peticion expresa): continuo = real, punteado = simulado. */}
       <Panel
         days={data.days}

@@ -10,6 +10,7 @@
 import React, { useMemo, useState } from "react";
 import { color, font, hairline } from "@/components/ui/tokens";
 import { n, usdCorto } from "./hoja";
+import { CartelPuntero, type Puntero } from "@/components/portfolio/charts/puntero";
 
 export interface Serie {
   name: string;
@@ -78,6 +79,7 @@ export function PnlDdChart({
   height?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
   const PAD = PAD_PNL;
   const GAP = 26;                       // hueco entre paneles (con el eje x del de arriba)
@@ -116,9 +118,13 @@ export function PnlDdChart({
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const cont = (e.currentTarget.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? rect;
     const fx = ((e.clientX - rect.left) / rect.width) * W;
     const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (labels.length - 1));
-    setHover(i >= 0 && i < labels.length ? i : null);
+    const ok = i >= 0 && i < labels.length;
+    setHover(ok ? i : null);
+    // Posicion del raton en el marco, para el cartel (que no escala con el viewBox).
+    setPt(ok ? { idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height } : null);
   };
 
   // Etiquetas de valor final en el borde derecho, sin que se pisen.
@@ -138,7 +144,7 @@ export function PnlDdChart({
 
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); setPt(null); }}>
         {/* ── Panel de arriba: PnL acumulado ── */}
         {geom.tTicks.map((t) => (
           <g key={`t${t}`}>
@@ -191,6 +197,18 @@ export function PnlDdChart({
           </g>
         )}
       </svg>
+      {pt && hover != null && (
+        <CartelPuntero
+          puntero={pt}
+          titulo={labels[hover]}
+          subtitulo={`sesión ${hover + 1} de ${labels.length}`}
+          filas={pnl.map((s, k) => ({
+            color: s.color, nombre: s.name, grueso: !!(s.width && s.width > 1.5),
+            valor: Number.isFinite(s.values[hover]) ? hoverFormat(s.values[hover]) : "—",
+            extra: dd[k] && Number.isFinite(dd[k].values[hover]) ? `dd ${n(dd[k].values[hover], 1)} %` : undefined,
+          }))}
+        />
+      )}
 
       {/* Lectura: valor final o el del cursor, PnL y drawdown de cada serie. */}
       <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
@@ -233,6 +251,7 @@ export function ExposureChart({
   height?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
   const PAD = PAD_EXP;
   const geom = useMemo(() => {
@@ -249,16 +268,20 @@ export function ExposureChart({
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const cont = (e.currentTarget.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? rect;
     const fx = ((e.clientX - rect.left) / rect.width) * W;
     const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (labels.length - 1));
-    setHover(i >= 0 && i < labels.length ? i : null);
+    const ok = i >= 0 && i < labels.length;
+    setHover(ok ? i : null);
+    // Posicion del raton en el marco, para el cartel (que no escala con el viewBox).
+    setPt(ok ? { idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height } : null);
   };
   const iMax = pct.reduce((b, v, i) => (v > pct[b] ? i : b), 0);
   const k = hover ?? iMax;
 
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); setPt(null); }}>
         {geom.ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke={color.border} strokeWidth={0.5} strokeDasharray="2 4" />
@@ -287,6 +310,18 @@ export function ExposureChart({
           </g>
         )}
       </svg>
+      {pt && hover != null && (
+        <CartelPuntero
+          puntero={pt}
+          titulo={labels[hover]}
+          subtitulo={`sesión ${hover + 1} de ${labels.length}`}
+          filas={[
+            { color: color.info, nombre: "del capital del día", valor: `${n(pct[hover], 0)} %`, grueso: true },
+            { color: color.info, nombre: "en posiciones", valor: `${usdCorto(usd[hover] || 0)} $` },
+            { color: color.info, nombre: "posiciones a la vez", valor: String(maxOpen[hover] || 0) },
+          ]}
+        />
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 18px", padding: "6px 4px 2px", borderTop: hairline, fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
         <span style={{ fontFamily: font.mono, color: color.textMuted, minWidth: 90 }}>{hover != null ? labels[hover] : `máximo · ${labels[iMax] || ""}`}</span>
         <span>del capital del día <span style={{ fontFamily: font.mono, color: pct[k] > 100 ? color.warning : color.textHigh }}>{n(pct[k], 0)} %</span></span>
@@ -324,6 +359,7 @@ export function LinesChart({
   conCero?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
   const PAD = PAD_PNL;
   const geom = useMemo(() => {
@@ -358,9 +394,13 @@ export function LinesChart({
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const cont = (e.currentTarget.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? rect;
     const fx = ((e.clientX - rect.left) / rect.width) * W;
     const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (labels.length - 1));
-    setHover(i >= 0 && i < labels.length ? i : null);
+    const ok = i >= 0 && i < labels.length;
+    setHover(ok ? i : null);
+    // Posicion del raton en el marco, para el cartel (que no escala con el viewBox).
+    setPt(ok ? { idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height } : null);
   };
   const endLabels = useMemo(() => {
     const items = series
@@ -374,7 +414,7 @@ export function LinesChart({
 
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); setPt(null); }}>
         {geom.yTicks.map((t) => (
           <g key={`t${t}`}>
             <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke={color.border} strokeWidth={Math.abs(t) < 1e-9 ? 1 : 0.5} strokeDasharray={Math.abs(t) < 1e-9 ? undefined : "2 4"} />
@@ -403,6 +443,17 @@ export function LinesChart({
           </g>
         )}
       </svg>
+      {pt && hover != null && (
+        <CartelPuntero
+          puntero={pt}
+          titulo={labels[hover]}
+          subtitulo={`sesión ${hover + 1} de ${labels.length}`}
+          filas={[
+            ...series.map((s) => ({ color: s.color, nombre: s.name, grueso: !!(s.width && s.width > 1.5), valor: Number.isFinite(s.values[hover]) ? hoverFormat(s.values[hover]) : "—" })),
+            ...(band && Number.isFinite(band.lo[hover]) ? [{ color: band.color, nombre: band.name, valor: `${hoverFormat(band.lo[hover])} … ${hoverFormat(band.hi[hover])}` }] : []),
+          ]}
+        />
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
         <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{hover != null ? labels[hover] : "final"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>

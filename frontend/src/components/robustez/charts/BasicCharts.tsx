@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { color, font, radius } from "@/components/ui/tokens";
 import type { EquityPointT } from "@/lib/api_robustez";
+import { CartelPuntero, CruzTecnica, type Puntero } from "@/components/portfolio/charts/puntero";
 import { epochToDate } from "@/lib/robustez/analytics";
 
 /* SVG a pelo en vez de una libreria de charts: estas dos figuras son un area y
@@ -35,14 +36,18 @@ function ChartFrame({
   children,
   height = H,
   caption,
+  overlay,
 }: {
   children: React.ReactNode;
   height?: number;
   caption?: string;
+  /** Capa HTML sobre el lienzo (el cartel del puntero, que no escala con el viewBox). */
+  overlay?: React.ReactNode;
 }) {
   return (
     <div
       style={{
+        position: "relative",
         background: color.bgBase,
         border: `0.5px solid ${color.border}`,
         borderRadius: radius.md,
@@ -52,6 +57,7 @@ function ChartFrame({
       <svg viewBox={`0 0 ${W} ${height}`} style={{ width: "100%", height: "auto", display: "block" }}>
         {children}
       </svg>
+      {overlay}
       {caption && (
         <div style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, padding: "2px 2px 4px" }}>
           {caption}
@@ -63,7 +69,11 @@ function ChartFrame({
 
 /** Curva "bajo el agua": el drawdown en cada momento, medido desde el maximo previo. */
 export function DrawdownRibbon({ equity }: { equity: EquityPointT[] }) {
-  const [hover, setHover] = useState<number | null>(null);
+  // Cruz + cartel en el puntero (19-sep): el indice bajo el cursor y la
+  // posicion del raton en pixeles del marco, para que el cartel no escale con
+  // el viewBox y se lea.
+  const [puntero, setPuntero] = useState<Puntero | null>(null);
+  const hover = puntero?.idx ?? null;
 
   const { path, area, dd, minDd, xOf, yOf, eqPath, eqLo, eqHi } = useMemo(() => {
     const dd: number[] = [];
@@ -104,8 +114,21 @@ export function DrawdownRibbon({ equity }: { equity: EquityPointT[] }) {
   if (!equity.length) return null;
   const ticks = niceTicks(minDd, 0, 4);
 
+  const capital = (v: number) => money(v);
   return (
-    <ChartFrame caption="En rojo, la distancia al maximo historico en cada sesion: cuanto mas ancha la mancha, mas tiempo bajo el agua. En verde tenue y al fondo, la curva de capital, para situar cada hundimiento — usa su propia escala, no la del eje.">
+    <ChartFrame
+      overlay={puntero && (
+        <CartelPuntero
+          puntero={puntero}
+          titulo={epochToDate(equity[puntero.idx].time)}
+          subtitulo={`sesión ${puntero.idx + 1} de ${equity.length}`}
+          filas={[
+            { color: "var(--color-ec-loss)", nombre: "Drawdown", valor: `${dd[puntero.idx].toFixed(2)} %`, grueso: true },
+            { color: "var(--color-ec-profit)", nombre: "Capital", valor: capital(equity[puntero.idx].value) },
+          ]}
+        />
+      )}
+      caption="En rojo, la distancia al maximo historico en cada sesion: cuanto mas ancha la mancha, mas tiempo bajo el agua. En verde tenue y al fondo, la curva de capital, para situar cada hundimiento — usa su propia escala, no la del eje.">
       <defs>
         {/* gradiente del area de drawdown */}
         <linearGradient id="ddgrad" x1="0" y1="0" x2="0" y2="1">
@@ -177,37 +200,30 @@ export function DrawdownRibbon({ equity }: { equity: EquityPointT[] }) {
         width={W - PAD.l - PAD.r}
         height={H - PAD.t - PAD.b}
         fill="transparent"
-        onMouseLeave={() => setHover(null)}
+        onMouseLeave={() => setPuntero(null)}
         onMouseMove={(e) => {
           const svg = e.currentTarget.ownerSVGElement;
           if (!svg) return;
           const r = svg.getBoundingClientRect();
+          const cont = (svg.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? r;
           const rel = ((e.clientX - r.left) / r.width) * W;
           const i = Math.round(((rel - PAD.l) / (W - PAD.l - PAD.r)) * (dd.length - 1));
-          setHover(i >= 0 && i < dd.length ? i : null);
+          if (i < 0 || i >= dd.length) { setPuntero(null); return; }
+          setPuntero({ idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height });
         }}
       />
       {hover != null && (
-        <g pointerEvents="none">
-          <line
-            x1={xOf(hover)}
-            x2={xOf(hover)}
-            y1={PAD.t}
-            y2={H - PAD.b}
-            stroke="var(--color-ec-copper)"
-            strokeWidth="0.75"
-          />
-          <circle cx={xOf(hover)} cy={yOf(dd[hover])} r="2.5" fill="var(--color-ec-copper)" />
-          <text
-            x={Math.min(xOf(hover) + 8, W - 130)}
-            y={PAD.t + 12}
-            fontSize="10"
-            fill="var(--color-ec-text-high)"
-            fontFamily="var(--color-ec-mono)"
-          >
-            {epochToDate(equity[hover].time)} · {dd[hover].toFixed(2)}%
-          </text>
-        </g>
+        <CruzTecnica
+          x={xOf(hover)}
+          y={yOf(dd[hover])}
+          W={W - PAD.r}
+          top={PAD.t}
+          bottom={H - PAD.b}
+          padL={PAD.l}
+          etiquetaX={epochToDate(equity[hover].time)}
+          etiquetaY={`${dd[hover].toFixed(1)}%`}
+          puntos={[{ cx: xOf(hover), cy: yOf(dd[hover]), color: "var(--color-ec-loss)", r: 3.2 }]}
+        />
       )}
     </ChartFrame>
   );

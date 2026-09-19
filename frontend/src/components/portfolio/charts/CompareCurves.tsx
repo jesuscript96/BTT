@@ -9,16 +9,17 @@
 // `visible` permite encender/apagar modelos sin re-ejecutar nada.
 // CompareDrawdown pinta las curvas "bajo el agua" de los mismos modelos.
 
-import React, { useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import { color, font, radius } from "@/components/ui/tokens";
 import type { ScalingCompareResult } from "@/lib/api_portfolio_lab";
 import { SERIES_PALETTE } from "./PortfolioCurves";
+import { CartelPuntero, CruzTecnica, RejillaX, usePuntero } from "./puntero";
 
 export type ModelYMode = "usd" | "pct" | "r";
 
 const W = 900;
 const H = 300;
-const PAD = { t: 14, r: 14, b: 28, l: 66 };
+const PAD = { t: 14, r: 14, b: 40, l: 70 };
 
 const money = (v: number) => {
   const a = Math.abs(v);
@@ -131,10 +132,12 @@ export function CompareCurves({
   visible?: boolean[];
   onToggle?: (i: number) => void;
 }) {
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const shown = results
     .map((r, i) => ({ r, i }))
     .filter(({ r, i }) => !r.error && r.equity && r.equity.length > 1 && (visible ? visible[i] : true));
+  const nCal = shown.length ? (shown[0].r.calendar || []).length : 0;
+  const { puntero, onMove, onLeave } = usePuntero(nCal, W, PAD.l, PAD.r);
+  const hoverIdx = puntero?.idx ?? null;
 
   const geom = useMemo(() => {
     if (!shown.length) return null;
@@ -187,13 +190,6 @@ export function CompareCurves({
       : yMode === "pct"
         ? `${v.toFixed(2)}%`
         : `${v.toFixed(2)}R`;
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const fx = ((e.clientX - rect.left) / rect.width) * W;
-    const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (geom.n - 1));
-    setHoverIdx(i >= 0 && i < geom.cal.length ? i : null);
-  };
-
   return (
     <div>
       <div style={{ position: "relative", background: color.bgBase, border: `0.5px solid ${color.border}`, borderRadius: radius.md, padding: "10px 12px 6px" }}>
@@ -201,62 +197,55 @@ export function CompareCurves({
           viewBox={`0 0 ${W} ${H}`}
           style={{ width: "100%", height: "auto", display: "block" }}
           onMouseMove={onMove}
-          onMouseLeave={() => setHoverIdx(null)}
+          onMouseLeave={onLeave}
         >
+          <RejillaX xs={xTicks.map((i) => geom.xOf(i))} top={PAD.t} bottom={H - PAD.b} />
           {geom.ticks.map((t) => (
             <g key={t}>
               <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke="var(--color-ec-border)" strokeWidth="0.5" />
-              <text x={PAD.l - 7} y={geom.yOf(t) + 3} textAnchor="end" fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+              <text x={PAD.l - 7} y={geom.yOf(t) + 3} textAnchor="end" fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
                 {geom.fmtY(t)}
               </text>
             </g>
           ))}
+          <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={H - PAD.t - PAD.b} fill="none" stroke="var(--color-ec-border)" strokeWidth="0.8" />
           <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(geom.zero)} y2={geom.yOf(geom.zero)} stroke="var(--color-ec-text-muted)" strokeWidth="0.75" strokeDasharray="3 3" />
           {shown.map(({ r, i }) => (
             <path key={r.label} d={line(seriesFor(r, yMode, initCash))} fill="none" stroke={SERIES_PALETTE[i % SERIES_PALETTE.length]} strokeWidth="1.4" />
           ))}
           {xTicks.map((i) => (
-            <text key={i} x={geom.xOf(i)} y={H - PAD.b + 14} textAnchor={i === 0 ? "start" : i === geom.cal.length - 1 ? "end" : "middle"} fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+            <text key={i} x={geom.xOf(i)} y={H - PAD.b + 30} textAnchor={i === 0 ? "start" : i === geom.cal.length - 1 ? "end" : "middle"} fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
               {geom.cal[i]}
             </text>
           ))}
           {hoverIdx != null && (
-            <line x1={geom.xOf(hoverIdx)} x2={geom.xOf(hoverIdx)} y1={PAD.t} y2={H - PAD.b} stroke="var(--color-ec-text-secondary)" strokeWidth="0.6" strokeDasharray="2 2" />
+            <CruzTecnica
+              x={geom.xOf(hoverIdx)}
+              W={W - PAD.r}
+              top={PAD.t}
+              bottom={H - PAD.b}
+              padL={PAD.l}
+              etiquetaX={geom.cal[hoverIdx]}
+              puntos={shown.map(({ r, i }) => {
+                const v = seriesFor(r, yMode, initCash)[hoverIdx];
+                return { cx: geom.xOf(hoverIdx), cy: geom.yOf(v != null && Number.isFinite(v) ? v : geom.zero), color: SERIES_PALETTE[i % SERIES_PALETTE.length] };
+              })}
+            />
           )}
           <text x={12} y={PAD.t + 2} fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-sans)" transform={`rotate(-90 12 ${PAD.t + 2})`} textAnchor="end">
             {yMode === "usd" ? "capital (escala log)" : yMode === "pct" ? "retorno acumulado (%)" : "R acumulada del modelo"}
           </text>
         </svg>
-        {hoverIdx != null && (
-          <div
-            style={{
-              position: "absolute",
-              top: 8,
-              right: 10,
-              background: color.bgElevated,
-              border: `0.5px solid ${color.border}`,
-              borderRadius: radius.sm,
-              padding: "7px 10px",
-              fontSize: 10.5,
-              fontFamily: font.mono,
-              color: color.textPrimary,
-              pointerEvents: "none",
-              minWidth: 150,
-            }}
-          >
-            <div style={{ color: color.textMuted, fontFamily: font.sans, marginBottom: 3 }}>{geom.cal[hoverIdx]}</div>
-            {shown.map(({ r, i }) => {
-              const v = seriesFor(r, yMode, initCash)[hoverIdx];
-              return (
-                <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <span style={{ color: SERIES_PALETTE[i % SERIES_PALETTE.length], overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 150 }}>
-                    {r.label}
-                  </span>
-                  <span>{v != null && Number.isFinite(v) ? fmtHover(v) : "—"}</span>
-                </div>
-              );
+        {puntero && (
+          <CartelPuntero
+            puntero={puntero}
+            titulo={geom.cal[puntero.idx]}
+            subtitulo={`sesión ${puntero.idx + 1} de ${geom.cal.length}`}
+            filas={shown.map(({ r, i }) => {
+              const v = seriesFor(r, yMode, initCash)[puntero.idx];
+              return { color: SERIES_PALETTE[i % SERIES_PALETTE.length], nombre: r.label, valor: v != null && Number.isFinite(v) ? fmtHover(v) : "—" };
             })}
-          </div>
+          />
         )}
       </div>
       <Legend results={results} visible={visible} onToggle={onToggle} />
@@ -275,10 +264,12 @@ export function CompareDrawdown({
   onToggle?: (i: number) => void;
 }) {
   const HH = 220;
-  const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const shown = results
     .map((r, i) => ({ r, i }))
     .filter(({ r, i }) => !r.error && r.equity && r.equity.length > 1 && (visible ? visible[i] : true));
+  const nCal = shown.length ? (shown[0].r.calendar || []).length : 0;
+  const { puntero, onMove, onLeave } = usePuntero(nCal, W, PAD.l, PAD.r);
+  const hoverIdx = puntero?.idx ?? null;
 
   const geom = useMemo(() => {
     if (!shown.length) return null;
@@ -306,14 +297,6 @@ export function CompareDrawdown({
     ? Array.from({ length: count }, (_, k) => Math.round((k / (count - 1)) * (geom.cal.length - 1)))
     : [];
 
-  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const fx = ((e.clientX - rect.left) / rect.width) * W;
-    const n = Math.max(...geom.dds.map((d) => d.length), 2);
-    const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (n - 1));
-    setHoverIdx(i >= 0 && i < geom.cal.length ? i : null);
-  };
-
   return (
     <div>
       <div style={{ position: "relative", background: color.bgBase, border: `0.5px solid ${color.border}`, borderRadius: radius.md, padding: "10px 12px 6px" }}>
@@ -321,58 +304,48 @@ export function CompareDrawdown({
           viewBox={`0 0 ${W} ${HH}`}
           style={{ width: "100%", height: "auto", display: "block" }}
           onMouseMove={onMove}
-          onMouseLeave={() => setHoverIdx(null)}
+          onMouseLeave={onLeave}
         >
+          <RejillaX xs={xTicks.map((i) => geom.xOf(i))} top={PAD.t} bottom={HH - PAD.b} />
           {geom.ticks.map((t) => (
             <g key={t}>
               <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke="var(--color-ec-border)" strokeWidth="0.5" />
-              <text x={PAD.l - 7} y={geom.yOf(t) + 3} textAnchor="end" fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+              <text x={PAD.l - 7} y={geom.yOf(t) + 3} textAnchor="end" fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
                 {t.toFixed(0)}%
               </text>
             </g>
           ))}
+          <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={HH - PAD.t - PAD.b} fill="none" stroke="var(--color-ec-border)" strokeWidth="0.8" />
           {shown.map(({ r, i }, k) => (
             <path key={r.label} d={line(geom.dds[k])} fill="none" stroke={SERIES_PALETTE[i % SERIES_PALETTE.length]} strokeWidth="1.2" />
           ))}
           {xTicks.map((i) => (
-            <text key={i} x={geom.xOf(i)} y={HH - PAD.b + 14} textAnchor={i === 0 ? "start" : i === geom.cal.length - 1 ? "end" : "middle"} fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-mono)">
+            <text key={i} x={geom.xOf(i)} y={HH - PAD.b + 30} textAnchor={i === 0 ? "start" : i === geom.cal.length - 1 ? "end" : "middle"} fontSize="10" fill="var(--color-ec-text-secondary)" fontFamily="var(--color-ec-mono)">
               {geom.cal[i]}
             </text>
           ))}
           {hoverIdx != null && (
-            <line x1={geom.xOf(hoverIdx)} x2={geom.xOf(hoverIdx)} y1={PAD.t} y2={HH - PAD.b} stroke="var(--color-ec-text-secondary)" strokeWidth="0.6" strokeDasharray="2 2" />
+            <CruzTecnica
+              x={geom.xOf(hoverIdx)}
+              W={W - PAD.r}
+              top={PAD.t}
+              bottom={HH - PAD.b}
+              padL={PAD.l}
+              etiquetaX={geom.cal[hoverIdx]}
+              puntos={shown.map(({ i }, k) => ({ cx: geom.xOf(hoverIdx), cy: geom.yOf(geom.dds[k][hoverIdx] ?? 0), color: SERIES_PALETTE[i % SERIES_PALETTE.length] }))}
+            />
           )}
           <text x={12} y={PAD.t + 2} fontSize="9" fill="var(--color-ec-text-muted)" fontFamily="var(--color-ec-sans)" transform={`rotate(-90 12 ${PAD.t + 2})`} textAnchor="end">
             drawdown (%)
           </text>
         </svg>
-        {hoverIdx != null && (
-          <div
-            style={{
-              position: "absolute",
-              top: 8,
-              right: 10,
-              background: color.bgElevated,
-              border: `0.5px solid ${color.border}`,
-              borderRadius: radius.sm,
-              padding: "7px 10px",
-              fontSize: 10.5,
-              fontFamily: font.mono,
-              color: color.textPrimary,
-              pointerEvents: "none",
-              minWidth: 140,
-            }}
-          >
-            <div style={{ color: color.textMuted, fontFamily: font.sans, marginBottom: 3 }}>{geom.cal[hoverIdx]}</div>
-            {shown.map(({ r, i }, k) => (
-              <div key={r.label} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                <span style={{ color: SERIES_PALETTE[i % SERIES_PALETTE.length], overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 150 }}>
-                  {r.label}
-                </span>
-                <span>{geom.dds[k][hoverIdx] != null ? `${geom.dds[k][hoverIdx].toFixed(2)}%` : "—"}</span>
-              </div>
-            ))}
-          </div>
+        {puntero && (
+          <CartelPuntero
+            puntero={puntero}
+            titulo={geom.cal[puntero.idx]}
+            subtitulo={`sesión ${puntero.idx + 1} de ${geom.cal.length}`}
+            filas={shown.map(({ r, i }, k) => ({ color: SERIES_PALETTE[i % SERIES_PALETTE.length], nombre: r.label, valor: geom.dds[k][puntero.idx] != null ? `${geom.dds[k][puntero.idx].toFixed(2)} %` : "—" }))}
+          />
         )}
       </div>
       <Legend results={results} visible={visible} onToggle={onToggle} />

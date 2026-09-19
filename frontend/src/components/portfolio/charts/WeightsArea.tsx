@@ -10,6 +10,7 @@ import React, { useMemo } from "react";
 import { color, font, radius } from "@/components/ui/tokens";
 import type { RebalancePoint } from "@/lib/api_portfolio_lab";
 import { SERIES_PALETTE } from "./PortfolioCurves";
+import { CartelPuntero, CruzTecnica, usePuntero } from "./puntero";
 
 const W = 900;
 const H = 200;
@@ -22,6 +23,8 @@ export function WeightsArea({
   timeline: RebalancePoint[];
   names: string[];
 }) {
+  // Cruz + cartel en el puntero: los pesos de cada estrategia en ese rebalanceo (19-sep).
+  const { puntero, onMove, onLeave } = usePuntero(timeline.length, W, PAD.l, PAD.r);
   const geom = useMemo(() => {
     if (timeline.length < 2) return null;
     const n = names.length;
@@ -58,13 +61,14 @@ export function WeightsArea({
     <div>
       <div
         style={{
+          position: "relative",
           background: color.bgBase,
           border: `0.5px solid ${color.border}`,
           borderRadius: radius.md,
           padding: "10px 12px 6px",
         }}
       >
-        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }} onMouseMove={onMove} onMouseLeave={onLeave}>
           {[0, 0.25, 0.5, 0.75, 1].map((v) => (
             <g key={v}>
               <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(v)} y2={geom.yOf(v)} stroke="var(--color-ec-border)" strokeWidth="0.5" />
@@ -81,7 +85,18 @@ export function WeightsArea({
               {timeline[i].date}
             </text>
           ))}
+          {puntero && (
+            <CruzTecnica x={geom.xOf(puntero.idx)} W={W - PAD.r} top={PAD.t} bottom={H - PAD.b} padL={PAD.l} etiquetaX={timeline[puntero.idx].date} puntos={[]} />
+          )}
         </svg>
+        {puntero && (
+          <CartelPuntero
+            puntero={puntero}
+            titulo={timeline[puntero.idx].date}
+            subtitulo={`rebalanceo ${puntero.idx + 1} de ${timeline.length}`}
+            filas={names.map((nm, s) => ({ color: SERIES_PALETTE[s % SERIES_PALETTE.length], nombre: nm, valor: `${((timeline[puntero.idx].weights[s] || 0) * 100).toFixed(1)} %` }))}
+          />
+        )}
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: "6px 18px", padding: "8px 4px 0", fontSize: 10.5, fontFamily: font.sans }}>
         {names.map((nm, s) => (
