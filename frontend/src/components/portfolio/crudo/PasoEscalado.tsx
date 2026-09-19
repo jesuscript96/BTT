@@ -190,6 +190,11 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                   <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día</span>
                 </div>
               </Row>
+              <Row label="Sin edge en la ventana" help="Qué hacer con una estrategia cuya Kelly sale a 0 en la ventana (sus últimos N días, con los locates descontados, no dan edge). «Apagar»: no opera ese periodo (lo de siempre: es lo que dice Kelly). «Respaldo»: opera con el % de «sin muestra». Apagar es lo que más separa a Kelly de las filas cuando la ventana es corta: con tus tres PM y 90 días, 585 trades fuera.">
+                <div style={{ width: 200 }}>
+                  <Toggle value={esc.no_edge ?? "off"} onChange={(v) => set("no_edge", v)} options={[{ value: "off", label: "apagar" }, { value: "fallback", label: "respaldo" }]} />
+                </div>
+              </Row>
             </>
           )}
           <Row label="Tope por estrategia" help="Lo máximo que puede arriesgar POR TRADE una estrategia, en % del capital del día. Se aplica ANTES que el tope de la suma y no reparte lo recortado. Sin él, en cuanto una estrategia tiene muestra y las demás van con el respaldo, el recorte proporcional de la suma le daba a esa casi todo el tope (con tus tres, feb-2024: 9,0 / 0,5 / 0,5 % con tope 10) y la curva se disparaba desde el segundo mes. Con él, Kelly decide el orden y las proporciones y los topes deciden el nivel: es lo que convierte esto en una guía. 0 = sin tope.">

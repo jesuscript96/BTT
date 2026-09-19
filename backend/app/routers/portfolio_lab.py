@@ -499,6 +499,8 @@ class RawScalingIn(BaseModel):
     lookback_days: int = Field(default=90, ge=1)
     weighting: Literal["equal", "hrp", "momentum", "ev", "dd"] = "hrp"
     floor: float = Field(default=0.05, ge=0, le=1)
+    # Estrategia sin edge en la ventana (Kelly <= 0): apagarla o el respaldo.
+    no_edge: Literal["off", "fallback"] = "off"
 
 
 class RawReq(BaseModel):

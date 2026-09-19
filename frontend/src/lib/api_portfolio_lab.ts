@@ -585,6 +585,8 @@ export interface RawScalingIn {
   lookback_days: number;
   weighting: WeightModel;
   floor: number;
+  /** Estrategia sin edge en la ventana (Kelly <= 0): off = a 0 (apagada) | fallback = el % de respaldo. */
+  no_edge?: "off" | "fallback";
 }
 
 export interface RawConfigIn {

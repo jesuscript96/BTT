@@ -459,6 +459,7 @@ SCALING_DEFAULT: dict[str, Any] = {
     "lookback_days": 90,    # ventana de estimacion (dias naturales)
     "weighting": "hrp",     # equal | hrp | momentum | ev | dd
     "floor": 0.05,          # peso minimo por estrategia viva
+    "no_edge": "off",       # estrategia con Kelly <= 0 en la ventana: off (a 0) | fallback (el % de respaldo)
 }
 
 
@@ -472,6 +473,7 @@ def _scaling_cfg(raw: Optional[dict]) -> Optional[dict]:
     cfg["model"] = str(cfg["model"] or "kelly")
     cfg["kelly_scope"] = "global" if str(cfg.get("kelly_scope") or "") == "global" else "per_strategy"
     cfg["weighting"] = str(cfg["weighting"] or "equal")
+    cfg["no_edge"] = "fallback" if str(cfg.get("no_edge") or "off") == "fallback" else "off"
     cfg["rebalance"] = str(cfg["rebalance"] or "M").upper()[:1]
     for k in ("base_risk", "pct", "delta", "kelly_mult", "cap_pct", "cap_strategy_pct", "floor"):
         cfg[k] = _f(cfg[k])
@@ -606,6 +608,42 @@ def kelly_cuenta_real(rows: list[dict], risk_mode: str, risk_value: float, capit
     }
 
 
+def _reparte_topes(pedido: np.ndarray, es_respaldo: np.ndarray, cap_i: float, cap_suma: float) -> tuple[np.ndarray, bool, bool]:
+    """Fracciones por trade tras los topes, conservando las PROPORCIONES de
+    Kelly (19-sep).
+
+    - Las de respaldo (sin muestra) se quedan con lo pedido (su % fijo),
+      recortado a su tope, y no entran en el reparto.
+    - Si lo que piden las demas pasa de lo que queda del tope de la suma, ese
+      resto se reparte en proporcion a lo pedido (el orden de Kelly se
+      conserva); si no, cada una se queda con lo pedido.
+    - Despues, ninguna pasa del tope por estrategia (sin redistribuir).
+
+    Antes se recortaba primero cada una a su tope y luego la suma en
+    proporcion sobre lo ya recortado: con Kellys de 60-85 % todas caian en el
+    tope por estrategia y la suma las dejaba IGUALES (2,33 / 2,33 / 2,33 con
+    tope 7): el orden se perdia, y un 3 / 2 / 2 a mano le ganaba a Kelly.
+    """
+    ped = np.asarray(pedido, dtype=float)
+    resp = np.asarray(es_respaldo, dtype=bool)
+    apl = ped.copy()
+    capped = False
+    capped_i = False
+    if cap_suma > 0:
+        fijo = float(ped[resp].sum())
+        resto = max(0.0, cap_suma - fijo)
+        suma_k = float(ped[~resp].sum())
+        if suma_k > resto + 1e-12:
+            apl[~resp] = ped[~resp] * (resto / suma_k) if suma_k > 0 else 0.0
+            capped = True
+    if cap_i > 0:
+        over = apl > cap_i + 1e-12
+        if bool(over.any()):
+            apl = np.minimum(apl, cap_i)
+            capped_i = True
+    return apl, capped, capped_i
+
+
 class _Escalado:
     """Riesgo por trade de cada estrategia, re-estimado en cada rebalanceo con
     datos ESTRICTAMENTE anteriores. Version del 16-sep (noche), tras la
@@ -728,7 +766,10 @@ class _Escalado:
                         pedido[i] = pct_resp
                         fallback = True
                     elif k_raw[i] <= 0:
-                        pedido[i] = 0.0
+                        # Sin edge en la ventana: a 0 (apagada) o el respaldo
+                        # (19-sep: apagar costaba cientos de trades con los
+                        # locates descontados en la R).
+                        pedido[i] = pct_resp if cfg.get("no_edge") == "fallback" else 0.0
                     else:
                         pedido[i] = k_raw[i] * mult
                 if fallback:
@@ -739,26 +780,16 @@ class _Escalado:
             for i in alive:
                 pedido[i] = 1.0 / n_alive
 
-        # Tope POR ESTRATEGIA primero (19-sep, Jaume): ninguna pasa de X % por
-        # trade, sin redistribuir lo recortado. Sin el, en cuanto una
-        # estrategia tiene muestra y las demas van con el respaldo, el recorte
-        # proporcional de la suma le daba a esa casi todo el tope (feb-2024:
-        # 9,0 / 0,5 / 0,5 con tope 10) y la curva se disparaba desde el segundo
-        # mes. Kelly decide el orden y las proporciones; los topes, el nivel.
+        # Topes (19-sep, Jaume): Kelly decide el orden y las proporciones; los
+        # topes, el nivel. Las que van con el respaldo (sin muestra) se quedan
+        # con su % y no entran en el reparto (sin esto, en feb-2024 la unica
+        # con muestra se llevaba 9,0 % del tope 10 y las otras dos 0,5).
         cap_i = float(cfg.get("cap_strategy_pct") or 0.0) / 100.0
-        capped_i = False
-        aplicado = pedido.copy()
-        if model == "kelly" and cap_i > 0:
-            over = aplicado > cap_i + 1e-12
-            if bool(over.any()):
-                aplicado = np.minimum(aplicado, cap_i)
-                capped_i = True
-        # Tope de la SUMA: recorte proporcional (todas por igual), sin redistribuir.
-        suma = float(aplicado.sum())
-        capped = False
-        if model == "kelly" and cap > 0 and suma > cap + 1e-12:
-            aplicado = aplicado * (cap / suma)
-            capped = True
+        if model == "kelly":
+            es_respaldo = np.array([bool(fallback and scope != "global" and i in alive and k_raw[i] is None) for i in range(self.n)])
+            aplicado, capped, capped_i = _reparte_topes(pedido, es_respaldo, cap_i, cap)
+        else:
+            aplicado, capped, capped_i = pedido.copy(), False, False
         if not n_alive:
             notas.append("ninguna estrategia con trades en la ventana")
         return {

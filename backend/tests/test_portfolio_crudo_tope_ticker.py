@@ -122,33 +122,24 @@ def test_base_por_trade_el_tope_es_lo_que_arriesga_un_trade():
 
 # ── Escalado: tope por estrategia (19-sep) ─────────────────────────────
 
-def test_tope_por_estrategia_va_antes_que_el_de_la_suma():
-    """Pedido 18,5 / 1 / 1 con tope de la suma 10: sin tope por estrategia el
-    recorte proporcional daba 9,02 / 0,49 / 0,49 (una sola se lleva el tope);
-    con tope por estrategia 3, primero 3 / 1 / 1 (suma 5 <= 10: la suma no actua)."""
-    from app.services.portfolio_lab_raw import _Escalado, _scaling_cfg
+def test_los_topes_conservan_las_proporciones_de_kelly():
+    """Pedido 60 / 60 / 90 (Kellys x fraccion), tope de la suma 7 y por
+    estrategia 5: antes cada una caia a 5 y la suma las dejaba iguales
+    (2,33 / 2,33 / 2,33); ahora la suma se reparte con las proporciones
+    (2,0 / 2,0 / 3,0). Y una de respaldo se queda con su % sin entrar en
+    el reparto: 18,5 / 1 / 1 con tope 10 y 3 por estrategia -> 3 / 1 / 1."""
     import numpy as np
-    cal = [f"2026-01-{d:02d}" for d in range(2, 31)]
-    r_daily = np.zeros((len(cal), 3))
-    esc = _Escalado(_scaling_cfg({"model": "kelly", "kelly_mult": 0.5, "cap_pct": 10.0, "cap_strategy_pct": 0.0}),
-                    cal, r_daily, [[], [], []], [(cal[0], cal[-1])] * 3, 10000.0)
-    # Se simula la estimacion con pedidos conocidos: el recorte es lo que se prueba.
-    pedido = np.array([0.185, 0.01, 0.01])
-
-    def recorte(cfg):
-        cap_i = float(cfg.get("cap_strategy_pct") or 0.0) / 100.0
-        apl = pedido.copy()
-        if cap_i > 0:
-            apl = np.minimum(apl, cap_i)
-        cap = float(cfg["cap_pct"]) / 100.0
-        if cap > 0 and apl.sum() > cap:
-            apl = apl * (cap / apl.sum())
-        return apl * 100.0
-
-    sin = recorte(esc.cfg)
-    assert np.allclose(sin, [9.0244, 0.4878, 0.4878], atol=1e-3)
-    con = recorte(_scaling_cfg({"model": "kelly", "kelly_mult": 0.5, "cap_pct": 10.0, "cap_strategy_pct": 3.0}))
-    assert np.allclose(con, [3.0, 1.0, 1.0])
+    from app.services.portfolio_lab_raw import _reparte_topes
+    apl, capped, capped_i = _reparte_topes(np.array([0.60, 0.60, 0.90]), np.array([False, False, False]), 0.05, 0.07)
+    assert np.allclose(apl * 100, [2.0, 2.0, 3.0]) and capped and not capped_i
+    apl, capped, capped_i = _reparte_topes(np.array([0.185, 0.01, 0.01]), np.array([False, True, True]), 0.03, 0.10)
+    assert np.allclose(apl * 100, [3.0, 1.0, 1.0]) and capped_i
+    # Sin tope de la suma: solo el tope por estrategia.
+    apl, capped, capped_i = _reparte_topes(np.array([0.185, 0.01, 0.01]), np.array([False, True, True]), 0.03, 0.0)
+    assert np.allclose(apl * 100, [3.0, 1.0, 1.0]) and not capped and capped_i
+    # Sin pasarse de la suma: lo pedido tal cual.
+    apl, capped, capped_i = _reparte_topes(np.array([0.02, 0.01, 0.01]), np.array([False, False, False]), 0.05, 0.10)
+    assert np.allclose(apl * 100, [2.0, 1.0, 1.0]) and not capped and not capped_i
 
 
 def test_tope_por_estrategia_en_la_simulacion_real():

@@ -99,6 +99,7 @@ export const ESC0: EscCfg = {
   // sin Kelly reparten el total a partes iguales.
   weighting: "equal",
   floor: 0,
+  no_edge: "off",
 };
 
 export const KELLY_SCOPE_LABEL: Record<"per_strategy" | "global", string> = {
