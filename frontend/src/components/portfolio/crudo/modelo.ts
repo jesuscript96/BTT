@@ -13,6 +13,10 @@ export interface Cfg {
   capUnit: "usd" | "pct";
   /** Solo una estrategia abierta a la vez por accion. */
   onePerTicker: boolean;
+  /** Tope POR ACCION (19-sep): % del equity del dia abierto a la vez en un
+   *  mismo ticker sumando estrategias; 0 = sin tope. En riesgo o nocional. */
+  tickerCap: number;
+  tickerCapBasis: "risk" | "notional";
   /** Criterios de margen y buying power del broker (19-sep). */
   margin: boolean;
   marginBroker: string;
@@ -20,7 +24,7 @@ export interface Cfg {
   end: string;
 }
 
-export const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", onePerTicker: false, margin: false, marginBroker: "sagetrader", start: "", end: "" };
+export const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", onePerTicker: false, tickerCap: 0, tickerCapBasis: "risk", margin: false, marginBroker: "sagetrader", start: "", end: "" };
 
 /** Locates de la CUENTA (paso 1): un broker para todas las estrategias. */
 export interface LocCfg {

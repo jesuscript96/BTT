@@ -858,6 +858,11 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                          cada fila cobra los suyos como antes
       scaling            escalado y pesos (ver SCALING_DEFAULT); None = los
                          R de las filas
+      max_ticker_pct     tope POR ACCION: lo abierto a la vez en un mismo
+                         ticker sumando estrategias, en % del equity del dia
+                         (0 = sin tope); se salta o recorta segun cap_mode
+      ticker_cap_basis   "risk" (perdida al stop de la entrada, lo que
+                         dimensiona Kelly) | "notional"
       margin             {"enabled", "broker", "capacity_pct"} (ver margen.py):
                          cada entrada exige margen segun precio y lado; la
                          que no cabe en el equity del dia se salta o recorta
@@ -874,6 +879,13 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     cap_pct = _f(cfg.get("max_exposure_pct"))
     trim = str(cfg.get("cap_mode") or "skip") == "trim"
     one_per_ticker = bool(cfg.get("one_per_ticker"))
+    # Tope POR ACCION (19-sep, Jaume: «si aplicamos Kelly, en un ticker no debe
+    # haber mas de dicha exposicion como maximo; me da igual si hay 20 tickers
+    # en paralelo»). Sumando estrategias, primero llega primero entra; la que
+    # llega con el ticker lleno se salta o se recorta (cap_mode).
+    ticker_cap_pct = _f(cfg.get("max_ticker_pct"))
+    ticker_basis = "notional" if str(cfg.get("ticker_cap_basis") or "risk") == "notional" else "risk"
+    ticker_on = ticker_cap_pct > 0
     # Margen y buying power (19-sep): opcional; apagado, nada cambia.
     _mg_raw = cfg.get("margin") or {}
     margin_on = bool(_mg_raw.get("enabled"))
@@ -1163,6 +1175,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 dia.append({
                     "si": i, "tr": tr, "as_saved": as_saved, "size": new_size, "gross": gross,
                     "fee": fee, "slip": slip, "net": net, "notional": notional, "r": r_ref, "locate": locate,
+                    "risk": risk_new,
                 })
 
         # b) Locates, en orden de entrada del dia. Compartidos: UN alquiler por
@@ -1299,6 +1312,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "dir": tr["direction"][:1], "entry": tr["entry_time"][11:16], "exit": tr["exit_time"][11:16],
                 "entry_px": tr["entry"], "exit_px": tr["exit"], "size": a["size"], "notional": a["notional"],
                 "pnl": a["net"], "fees": a["fee"], "slip": a["slip"], "locate": a["locate"], "r": a["r"],
+                "risk": float(a.get("risk", 0.0)),
                 "reason": tr["exit_reason"], "packages": int(a.get("packages", 0)), "fade_pct": float(a.get("fade_pct", 0.0)),
             })
         day_total = 0.0
@@ -1337,6 +1351,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     open_heap_m: list[tuple[float, float]] = []
     usado_m = 0.0
     day_peak_m: dict[str, float] = {}
+    # Tope por accion: un contador de lo abierto POR TICKER (riesgo o nocional).
+    open_tk: dict[str, list[tuple[float, float]]] = {}
+    used_tk: dict[str, float] = {}
+    ticker_sin_stop = 0
     for a in accepted:
         while open_heap and open_heap[0][0] <= a["t0"]:
             _, freed = heapq.heappop(open_heap)
@@ -1365,15 +1383,37 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 free_m = capacidad - usado_m
                 f_ok = min(f_ok, (free_m / take_m) if (trim and free_m > 1e-9 and take_m > 0) else 0.0)
                 a["margin_hit"] = True
+        take_t = 0.0
+        if ticker_on:
+            tk = a["ticker"]
+            h_tk = open_tk.setdefault(tk, [])
+            while h_tk and h_tk[0][0] <= a["t0"]:
+                _, freed_t = heapq.heappop(h_tk)
+                used_tk[tk] = used_tk.get(tk, 0.0) - freed_t
+            if used_tk.get(tk, 0.0) < 1e-9:
+                used_tk[tk] = 0.0
+            take_t = a["notional"] if ticker_basis == "notional" else float(a.get("risk") or 0.0)
+            if ticker_basis == "risk" and take_t <= 0:
+                # Sin stop no hay riesgo que medir: no consume ni se topa (se cuenta).
+                ticker_sin_stop += 1
+            cap_tk = equity_open_by_day.get(a["date"], capital) * ticker_cap_pct / 100.0
+            if cap_tk > 0 and take_t > 0 and used_tk[tk] + take_t > cap_tk + 1e-9:
+                free_t = cap_tk - used_tk[tk]
+                f_ok = min(f_ok, (free_t / take_t) if (trim and free_t > 1e-9) else 0.0)
+                a["ticker_hit"] = True
         if f_ok <= 0.0:
             a["skipped"] = True
             continue
         if f_ok < 1.0:
-            for k in ("size", "notional", "pnl", "fees", "slip"):
+            for k in ("size", "notional", "pnl", "fees", "slip", "risk"):
                 a[k] *= f_ok
             a["trimmed"] = True
             take *= f_ok
             take_m *= f_ok
+            take_t *= f_ok
+        if ticker_on:
+            heapq.heappush(open_tk[a["ticker"]], (a["t1"], take_t))
+            used_tk[a["ticker"]] = used_tk.get(a["ticker"], 0.0) + take_t
         heapq.heappush(open_heap, (a["t1"], take))
         exposure += take
         if exposure > day_peak.get(a["date"], 0.0):
@@ -1389,6 +1429,12 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     trimmed = sum(1 for a in accepted if a.get("trimmed"))
     margin_skipped = sum(1 for a in accepted if a.get("skipped") and a.get("margin_hit"))
     margin_trimmed = sum(1 for a in accepted if a.get("trimmed") and a.get("margin_hit"))
+    ticker_skipped = sum(1 for a in accepted if a.get("skipped") and a.get("ticker_hit"))
+    ticker_trimmed = sum(1 for a in accepted if a.get("trimmed") and a.get("ticker_hit"))
+    # Por estrategia, ANTES de filtrar los saltados (abajo se quitan de
+    # `accepted`, y contarlos despues daba siempre 0).
+    skipped_by_i = [sum(1 for a in accepted if a["si"] == i and a.get("skipped")) for i in range(n)]
+    trimmed_by_i = [sum(1 for a in accepted if a["si"] == i and a.get("trimmed")) for i in range(n)]
     if skipped or trimmed:
         # Recomponer las series sin los saltados y con los recortados (los
         # locates del dia se mantienen: el tope es un extra, no se afina).
@@ -1488,8 +1534,8 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             },
             "cap_report": {
                 "taken": st["n_trades"],
-                "skipped": sum(1 for a in accepted if a["si"] == i and a.get("skipped")),
-                "trimmed": sum(1 for a in accepted if a["si"] == i and a.get("trimmed")),
+                "skipped": skipped_by_i[i],
+                "trimmed": trimmed_by_i[i],
                 "unsized": unsized[i],
                 "blocked": blocked[i],
                 "gate_out": gate_out[i],
@@ -1555,6 +1601,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         "config": {
             "capital": capital, "monthly_expenses": expenses, "max_exposure_usd": cap, "max_exposure_pct": cap_pct,
             "one_per_ticker": one_per_ticker,
+            "max_ticker_pct": ticker_cap_pct, "ticker_cap_basis": ticker_basis,
             "cap_mode": "trim" if trim else "skip", "start_date": d_from, "end_date": d_to,
             "margin": ({"enabled": True, "broker": margin_broker, "capacity_pct": margin_cap_pct} if margin_on else None),
             "default_exec": default_exec,
@@ -1576,6 +1623,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             "max_usd": ple._r6(max(day_peak.values()) if day_peak else 0.0),
             "cap_usd": cap,
         },
+        "ticker_cap_report": ({
+            "pct": ticker_cap_pct, "basis": ticker_basis,
+            "skipped": ticker_skipped, "trimmed": ticker_trimmed, "sin_stop": ticker_sin_stop,
+        } if ticker_on else None),
         "margin_report": ({
             "enabled": True, "broker": margin_broker, "capacity_pct": margin_cap_pct,
             "skipped": margin_skipped, "trimmed": margin_trimmed,

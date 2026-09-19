@@ -274,6 +274,8 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
             que puede haber en posiciones abiertas a la vez sumando todas las estrategias, en % del capital <em>del
             día</em> o en $; un trade que no cabe no se entra. 0 = sin tope. <strong>Una a la vez por acción</strong>
             (opcional): en cada acción solo la primera estrategia que da señal; las demás esperan a que salga.
+            <strong>Tope por acción</strong> (opcional): lo abierto a la vez en una misma acción sumando
+            estrategias no pasa de X % del capital del día, en riesgo (lo que dimensiona Kelly) o en nocional.
             <strong>Criterios Margen y BP</strong> (opcional): el margen del bróker sobre todas las posiciones
             abiertas a la vez; la que no cabe en el equity del día no entra. Con el (?) de la fila están las reglas.
             <br /><br />
@@ -323,6 +325,16 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                 <input type="checkbox" checked={!!cfg.onePerTicker} onChange={(e) => set("onePerTicker", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
                 solo una estrategia abierta a la vez en cada acción
               </label>
+            </Row>
+            <Row label="Tope por acción" help="Lo máximo que puede haber abierto A LA VEZ en una misma acción sumando todas las estrategias, en % del capital del día. Es lo que pidió Jaume para Kelly: la fracción de Kelly es por trade, y si dos estrategias (o más) están dentro del mismo ticker a la vez, el ticker acumula la suma; con este tope la que llega segunda solo recibe lo que queda (o no entra: el modo es el mismo que el del tope de exposición). Primero llega, primero entra, al minuto. «Riesgo» = la pérdida al stop de la entrada, la misma cifra que dimensiona Kelly y el % por trade (un trade sin stop no se puede medir: no consume ni se topa, y se cuenta). «Nocional» = el valor de la posición. 0 = sin tope. Me da igual cuántas acciones haya en paralelo: para eso está el tope de exposición.">
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ width: 100 }}><Num value={cfg.tickerCap} onChange={(v) => set("tickerCap", Number(v) || 0)} min={0} step={1} /></div>
+                <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del día en</span>
+                <div style={{ width: 150 }}>
+                  <Toggle value={cfg.tickerCapBasis || "risk"} onChange={(u) => set("tickerCapBasis", u)} options={[{ value: "risk", label: "riesgo" }, { value: "notional", label: "nocional" }]} />
+                </div>
+                <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>{cfg.tickerCap > 0 ? "" : "sin tope"}</span>
+              </div>
             </Row>
             <Row label="Criterios Margen y BP" help="Simula el margen y el buying power del bróker sobre TODAS las estrategias juntas: cada posición abierta consume margen según su precio y su lado, y la que no cabe en el equity del día no entra (o se recorta, según el modo del tope). Se recorre el día en orden cronológico entre todas las estrategias, igual que el tope de exposición. Reglas de SageTrader (FAQ, sep-2026): largos 25 % del valor (4:1 intradía); cortos a partir de 5 $, el mayor de 30 % o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional). La capacidad es el equity del día.">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>

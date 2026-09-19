@@ -1,0 +1,102 @@
+# -*- coding: utf-8 -*-
+"""Tope POR ACCION en el portfolio en crudo (19-sep-2026): lo abierto a la vez
+en un mismo ticker sumando estrategias no pasa de X % del equity del dia, en
+riesgo (perdida al stop de la entrada) o en nocional. Primero llega, primero
+entra; la que llega con el ticker lleno se salta (o se recorta con trim)."""
+import pytest
+
+from app.services import portfolio_lab_raw as plr
+
+
+def _run(sid, ticker, t_in, t_out, size, entry=1.0, exitp=0.9, stop=1.1, direction="Short"):
+    return {
+        "strategy_id": sid, "run_id": f"run-{sid}", "name": sid,
+        "backtest_params": {"init_cash": 10000.0, "risk_type": "FIXED", "risk_r": 100.0,
+                            "slippage": 0.0, "size_by_sl": True},
+        "equity": [],
+        "trades": [{
+            "date": "2026-01-02", "ticker": ticker, "direction": direction,
+            "entry_time": f"2026-01-02 {t_in}:00", "exit_time": f"2026-01-02 {t_out}:00",
+            "avg_entry_price": entry, "entry_price": entry, "exit_price": exitp,
+            "size": size, "init_size": size, "init_price": entry,
+            "pnl": (entry - exitp) * size, "pnl_with_locates": (entry - exitp) * size,
+            "fees": 0.0, "stop_loss": stop, "exit_reason": "TP",
+        }],
+    }
+
+
+def _cfg(pct, basis="risk", cap_mode="skip", risk_usd=300.0):
+    # Todas por riesgo: 300 $ al stop por trade (stop a 0,10 $ => 3.000 acciones a 1 $).
+    return {
+        "capital": 10000.0, "monthly_expenses": 0.0, "max_exposure_usd": 0.0, "cap_mode": cap_mode,
+        "default_exec": {"sizing": "risk", "size_value": risk_usd, "size_unit": "usd"},
+        "max_ticker_pct": pct, "ticker_cap_basis": basis,
+    }
+
+
+def _runs():
+    # Dos estrategias cortas en AAA a la vez (04:10-04:30 y 04:15-04:40) y una
+    # tercera en BBB (04:20): AAA acumula 600 $ de riesgo = 6 % del equity.
+    return [_run("s1", "AAA", "04:10", "04:30", 1000), _run("s2", "AAA", "04:15", "04:40", 1000),
+            _run("s3", "BBB", "04:20", "04:25", 1000)]
+
+
+def _n_trades(out):
+    return [s["totals"]["n_trades"] for s in out["per_strategy"]]
+
+
+def test_sin_tope_nada_cambia():
+    out = plr.simulate(_runs(), _cfg(0))
+    assert out["ticker_cap_report"] is None and out["config"]["max_ticker_pct"] == 0
+    assert _n_trades(out) == [1, 1, 1]
+
+
+def test_tope_por_accion_en_riesgo_salta_a_la_segunda_del_mismo_ticker():
+    # 5 % de 10.000 = 500 $ de riesgo por ticker: s1 mete 300, s2 pediria 300 mas
+    # (600 > 500) => fuera. BBB no se toca (otro ticker).
+    out = plr.simulate(_runs(), _cfg(5.0))
+    r = out["ticker_cap_report"]
+    assert r["basis"] == "risk" and r["skipped"] == 1 and r["trimmed"] == 0
+    assert _n_trades(out) == [1, 0, 1]
+    assert out["cap_report"]["skipped"] == 1
+    # Y el conteo por estrategia ya no sale a cero.
+    assert [s["cap_report"]["skipped"] for s in out["per_strategy"]] == [0, 1, 0]
+
+
+def test_tope_por_accion_con_trim_recorta_a_lo_que_queda():
+    out = plr.simulate(_runs(), _cfg(5.0, cap_mode="trim"))
+    r = out["ticker_cap_report"]
+    assert r["skipped"] == 0 and r["trimmed"] == 1
+    assert _n_trades(out) == [1, 1, 1]
+    # s2 se queda con 200 $ de riesgo de 300 => 2/3 del tamano => 2.000 acc => +200 $
+    assert out["per_strategy"][1]["totals"]["pnl_net"] == pytest.approx(0.1 * 2000)
+
+
+def test_tope_por_accion_en_nocional():
+    # Nocional: 3.000 acc a 1 $ = 3.000 $ por trade = 30 % del equity. Con 50 %
+    # por ticker, la segunda en AAA (60 %) no cabe; con 70 % si.
+    out = plr.simulate(_runs(), _cfg(50.0, basis="notional"))
+    assert out["ticker_cap_report"]["basis"] == "notional" and out["ticker_cap_report"]["skipped"] == 1
+    assert _n_trades(out) == [1, 0, 1]
+    out = plr.simulate(_runs(), _cfg(70.0, basis="notional"))
+    assert out["ticker_cap_report"]["skipped"] == 0 and _n_trades(out) == [1, 1, 1]
+
+
+def test_la_salida_libera_el_ticker():
+    # s2 entra en AAA a las 04:31, cuando s1 ya salio (04:30): cabe.
+    runs = [_run("s1", "AAA", "04:10", "04:30", 1000), _run("s2", "AAA", "04:31", "04:40", 1000)]
+    out = plr.simulate(runs, _cfg(5.0))
+    assert out["ticker_cap_report"]["skipped"] == 0 and _n_trades(out) == [1, 1]
+
+
+def test_sin_stop_no_consume_ni_se_topa_en_riesgo():
+    # Un trade sin stop (stop_loss 0, la corrida no dimensiono por stop) no tiene
+    # riesgo medible: se cuenta en sin_stop y no bloquea.
+    r2 = _run("s2", "AAA", "04:15", "04:40", 1000, stop=0.0)
+    r2["backtest_params"]["size_by_sl"] = False
+    runs = [_run("s1", "AAA", "04:10", "04:30", 1000), r2]
+    cfg = _cfg(5.0)
+    cfg["per_strategy"] = {"s2": {"sizing": "capital", "size_value": 1000.0, "size_unit": "usd"}}
+    out = plr.simulate(runs, cfg)
+    assert out["ticker_cap_report"]["sin_stop"] == 1 and out["ticker_cap_report"]["skipped"] == 0
+    assert _n_trades(out) == [1, 1]

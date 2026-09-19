@@ -57,6 +57,11 @@ function formatValor(v: number, modo: ModoVista, unidad: Unidad): string {
   return `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(2)} R`;
 }
 
+/** El equity de cierre de mes, en dólares enteros y con separador de miles. */
+function formatEquity(v: number): string {
+  return `$${Math.round(v).toLocaleString("es-ES")}`;
+}
+
 /** El día (YYYY-MM-DD) de un punto de la curva de equity.
  *
  *  Los puntos vienen en epoch de UTC a medianoche, así que se lee en UTC: con
@@ -261,6 +266,39 @@ export default function CalendarTab({
     return Array.from(set).sort();
   }, [dayResults]);
 
+  /** EQUITY AL CIERRE DE CADA MES (Jaume, 19-sep-2026): «si empiezo con 10.000
+   *  y ese mes en profits − gastos me sale −200, que salga 9.800; y su % respecto
+   *  al mes anterior». Se calcula SIEMPRE neto y en dólares, mire lo que mire la
+   *  vista (Profits / Gastos / R): capital inicial + (pnl − locates − gastos
+   *  fijos) acumulados mes a mes, con los mismos trades que pinta el calendario,
+   *  que es lo que cuadra con la curva de equity con gastos. El % es la
+   *  variación sobre el equity con el que EMPEZÓ el mes (el cierre del anterior;
+   *  el capital inicial para el primero). */
+  const equityPorMes = useMemo(() => {
+    const netoMes = new Map<string, number>();
+    const mesesConTrades = new Set<string>();
+    for (const t of trades) {
+      if (!t.date) continue;
+      const m = t.date.slice(0, 7);
+      mesesConTrades.add(m);
+      const locates = t.pnl - (t.pnl_with_locates ?? t.pnl);
+      netoMes.set(m, (netoMes.get(m) || 0) + t.pnl - locates);
+    }
+    // Los gastos fijos se cargan en los meses operados, como en la vista Gastos.
+    if (monthlyExpenses > 0) {
+      for (const m of mesesConTrades) netoMes.set(m, (netoMes.get(m) || 0) - monthlyExpenses);
+    }
+    const out = new Map<string, { inicio: number; fin: number; neto: number; pct: number }>();
+    let eq = initCash;
+    for (const m of months) {
+      const neto = netoMes.get(m) || 0;
+      const inicio = eq;
+      eq += neto;
+      out.set(m, { inicio, fin: eq, neto, pct: inicio > 0 ? (neto / inicio) * 100 : 0 });
+    }
+    return out;
+  }, [trades, monthlyExpenses, initCash, months]);
+
   if (!dayResults.length) {
     return <p className="text-[11px] text-[var(--color-ec-text-muted)] font-mono">Sin resultados</p>;
   }
@@ -385,6 +423,7 @@ export default function CalendarTab({
             }
           }
 
+          const eqMes = equityPorMes.get(monthStr);
           const mHasGastos = viewMode === "gastos" && monthPnl > 0;
           const mIsWin = viewMode === "gastos" ? !mHasGastos : monthPnl >= 0;
           const mColor = viewMode === "gastos"
@@ -413,18 +452,32 @@ export default function CalendarTab({
                 <span style={{ fontSize: 13, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-ec-text-high)" }}>
                   {monthName}
                 </span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  {monthTrades > 0 && (
-                    <span style={{ fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--font-sans)" }}>
-                      {monthTrades} trades
-                    </span>
-                  )}
-                  {(monthPnl !== 0 || (viewMode === "gastos" && monthTrades > 0)) && (
-                    <span style={{
-                      fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
-                      color: mColor,
-                    }}>
-                      {formatValor(monthPnl, viewMode, unidadReal)}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {monthTrades > 0 && (
+                      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--color-ec-text-muted)", fontFamily: "var(--font-sans)" }}>
+                        {monthTrades} trades
+                      </span>
+                    )}
+                    {(monthPnl !== 0 || (viewMode === "gastos" && monthTrades > 0)) && (
+                      <span style={{
+                        fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "-0.03em",
+                        color: mColor,
+                      }}>
+                        {formatValor(monthPnl, viewMode, unidadReal)}
+                      </span>
+                    )}
+                  </div>
+                  {/* Equity al cierre del mes y % sobre el equity con el que empezó (Jaume, 19-sep). */}
+                  {initCash > 0 && eqMes && (
+                    <span
+                      title={`Equity al cierre del mes: ${formatEquity(eqMes.inicio)} al empezar ${eqMes.neto >= 0 ? "+" : "−"} $${Math.abs(eqMes.neto).toFixed(2)} de profits − gastos (comisiones, locates y gastos fijos) = ${formatEquity(eqMes.fin)}. El % es sobre el equity con el que empezó el mes.`}
+                      style={{ fontSize: 10, fontFamily: "monospace", letterSpacing: "-0.02em", color: "var(--color-ec-text-secondary)", whiteSpace: "nowrap", cursor: "help" }}
+                    >
+                      equity {formatEquity(eqMes.fin)}
+                      <span style={{ marginLeft: 6, fontWeight: 700, color: eqMes.neto >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)" }}>
+                        {eqMes.neto >= 0 ? "+" : "−"}{Math.abs(eqMes.pct).toFixed(1)} %
+                      </span>
                     </span>
                   )}
                 </div>

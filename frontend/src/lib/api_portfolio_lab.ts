@@ -600,6 +600,10 @@ export interface RawConfigIn {
   /** Solo una estrategia abierta a la vez por accion: entra la primera que da
    *  senal y las demas no entran en ese ticker hasta que sale. */
   one_per_ticker?: boolean;
+  /** Tope POR ACCION (19-sep): lo abierto a la vez en un mismo ticker sumando
+   *  estrategias, % del equity del dia (0 = sin tope), en riesgo o nocional. */
+  max_ticker_pct?: number;
+  ticker_cap_basis?: "risk" | "notional";
   /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
   monthly_expenses: number;
   locates?: RawLocatesIn | null;
@@ -800,6 +804,8 @@ export interface RawOut {
     max_exposure_pct?: number;
     cap_mode: "skip" | "trim";
     one_per_ticker?: boolean;
+    max_ticker_pct?: number;
+    ticker_cap_basis?: "risk" | "notional";
     monthly_expenses: number;
     locates?: RawLocatesIn | null;
     scaling?: RawScalingIn | null;
@@ -826,6 +832,8 @@ export interface RawOut {
   cap_report: RawCapReport;
   /** Margen y BP (solo con el bloque activo): trades fuera/recortados por margen y el pico de margen usado. */
   margin_report?: { enabled: boolean; broker: string; capacity_pct: number; skipped: number; trimmed: number; pico_medio_pct: number; pico_max_pct: number } | null;
+  /** Tope por accion (solo con el tope > 0): trades fuera/recortados y los sin stop (en riesgo no se pueden medir). */
+  ticker_cap_report?: { pct: number; basis: "risk" | "notional"; skipped: number; trimmed: number; sin_stop: number } | null;
   metrics: CombineMetrics;
   costs: { fees: number; slippage?: number; locates: number; expenses: number };
   var: CombineVar | null;

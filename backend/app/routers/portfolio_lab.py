@@ -512,6 +512,10 @@ class RawReq(BaseModel):
     cap_mode: Literal["skip", "trim"] = "skip"
     # Solo una estrategia abierta a la vez por accion (ver portfolio_lab_raw).
     one_per_ticker: bool = False
+    # Tope POR ACCION (19-sep): lo abierto a la vez en un ticker sumando
+    # estrategias, % del equity del dia; 0 = sin tope. En riesgo o nocional.
+    max_ticker_pct: float = Field(default=0.0, ge=0)
+    ticker_cap_basis: Literal["risk", "notional"] = "risk"
     monthly_expenses: float = Field(default=0.0, ge=0)
     # 16-sep: locates de la cuenta (compartidos + puerta + banda) y escalado.
     locates: RawLocatesIn | None = None
@@ -566,6 +570,8 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
             "max_exposure_pct": req.max_exposure_pct,
             "cap_mode": req.cap_mode,
             "one_per_ticker": req.one_per_ticker,
+            "max_ticker_pct": req.max_ticker_pct,
+            "ticker_cap_basis": req.ticker_cap_basis,
             "monthly_expenses": req.monthly_expenses,
             "locates": req.locates.model_dump() if req.locates else None,
             "scaling": req.scaling.model_dump() if req.scaling else None,
