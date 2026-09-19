@@ -30,7 +30,7 @@
 - [ ] A10. ¿El bot debe conocer eventos programados (FOMC, resultados, SEC) o eso es tarea humana antes de la sesión?
 - [ ] A11. ¿Hay lista negra de tickers a mano? ¿Quién la mantiene y cuándo se aplica (antes de la señal o al ejecutar)?
 - [ ] A12. Si la hidratación por REST al entrar al radar falla o llega incompleta, ¿se opera sin histórico o se espera a tenerlo?
-- [ ] A14. **(Añadida por Jaume, 19-sep)** Acciones en FUSIÓN / ADQUISICIÓN (OPA con precio clavado): ¿el bot no entra? ¿Cómo lo detecta (lista, noticia, cotización pegada al precio de la OPA)? **[dato]** auditoría del 19-sep (otra sesión): 340 OPAs 2019→2026; 1A entra en el 47 % y pierde (PF 0,72/0,25), 1B no entra; filtro propuesto sin código.
+- [ ] A14. **(Añadida por Jaume, 19-sep)** Acciones en FUSIÓN / ADQUISICIÓN (OPA con precio clavado), y también **IPOs / relistings y SPACs**: ¿el bot no entra? ¿Cómo lo detecta? Jaume: la mayoría (IPO, relisting, SPAC) se pueden sacar de Massive; las OPAs no, y se verá cómo abordarlas. **[dato]** auditoría del 19-sep (otra sesión): 340 OPAs 2019→2026; 1A entra en el 47 % y pierde (PF 0,72/0,25), 1B no entra; filtro propuesto sin código.
 - [ ] A13. ¿Qué pasa si la estrategia usa un indicador que en vivo no existe (tabla de Overhead, métricas RTH antes de las 09:30)? ¿Se bloquea la estrategia entera o solo la señal?
 
 ## B. Enviar la orden de entrada
@@ -273,18 +273,18 @@
 
 ## R. Consolidado: lo que hay que saber sí o sí del API de DAS
 
-Para repasar el día que llegue el PDF, en este orden:
+**19-sep: apareció el manual oficial del CMD API (rev. 2021-11) en el repo das-bridge; lo que dice está en el libro de reglas, apartado 2b. Es de 2021 y PUEDE ESTAR DESFASADO: todo se coteja con el PDF del bróker.** Para repasar el día que llegue el PDF, en este orden:
 
-1. Identificador de orden propio del cliente (idempotencia) y consulta de estado de una orden. (B5, B16)
-2. Stops residentes en el servidor: si existen, si disparan en premercado, con qué precio (último, bid/ask), qué pasa con ellos en un halt, distancia mínima y tope de stops vivos. (C2, C3, C6, C11, C15, C16)
-3. Tipos de orden y de vigencia admitidos: mercado, límite, stop, stop límite, trailing, OCO/bracket, oculta; DAY/IOC/extendido. (B7, B17, D1)
+1. Identificador de orden propio: SEGÚN EL MANUAL 2021 existe (token en NEWORDER; %OrderAct con Send_Rej / CancelRej / TimeOut). Cotejar y pedir los textos de «notes». (B5, B16)
+2. Stops: SEGÚN EL MANUAL 2021 hay STOPLMT (disparo + límite) por la ruta SMAT (admite todos los stops). PENDIENTE: por qué precio dispara (último/bid/ask, C6), si dispara en PM (C3), qué pasa en un halt (C16), distancia mínima (C15), tope de stops vivos (C11), si existe REPLACE.
+3. Tipos de orden: SEGÚN EL MANUAL 2021: MKT, límite, PEG, STOPMKT, STOPLMT, STOPTRAILING, STOPRANGE, oculta (Display=0); TIF DAY, DAY+, IOC, GTC, AtOpen, AtClose, FOK. **NO hay OCO/bracket** → limpieza por el bot (R-C-11). Cotejar. (B7, B17, D1)
 4. Rutas: cuáles admiten premercado, cuáles urgen para salir, coste por ruta. (B7, D9)
 5. Motivos de rechazo que devuelve, y en qué formato. (B4)
 6. Lotes máximos, decimales por debajo de 1 $, redondeo. (B9, B10)
-7. Locates: consultar, aceptar, devolver, proveedores, caducidad, precio que cambia, ETB/HTB, horario del servicio. (B15, H7-H11)
-8. Cómo llegan halt, motivo (LULD/T1/T12), bandas LULD y SSR por el L1. (F1, F2, F9, F10, F11, B14)
-9. Buying power por tramo (PM, intradía, overnight), llamada de margen, buy-in, ajustes de riesgo de la cuenta. (E6, I1, I9, G8)
-10. Socket: reconexión, relogin, caducidad de sesión de noche, 2FA, un solo login por cuenta; y si admite DOS conexiones a la vez con el mismo login (ejecutor + vigilante, R-C-08). (J3, J4, J11, J15, C12)
+7. Locates: SEGÚN EL MANUAL 2021 hay juego completo de comandos (SLPRICEINQUIRE con precio POR ACCIÓN y tamaño 0 = no hay; SLNEWORDER; SLOFFEROPERATION Accept/Reject; SLAvailQuery; estados %SLOrder; «Already Shortable» = ETB). PENDIENTE: tipo de ruta de locate de Sage (0 o 1), nombres de rutas, caducidad, devolución, horario. (B15, H7-H11, H16)
+8. Bandas LULD: SEGÚN EL MANUAL 2021 llegan ($LDLU con Lv1). PENDIENTE: halt y motivo, y bandera SSR: NO están en $Quote ni T&S → fuente externa o rechazo de orden. (F1, F2, F9, F10, B14)
+9. Buying power: SEGÚN EL MANUAL 2021: GET BP (intradía y overnight) y GET SHORTINFO (shortable, tamaño máximo por orden, tasas de margen del símbolo). PENDIENTE: reglas de margen de Sage en detalle (apartado 2c del libro), autoliquidación, PDT, buy-in. (E6, I1, I9, G8)
+10. Socket: SEGÚN EL MANUAL 2021 hay mensajes de estado de OrderServer/QuoteServer, modo «watch» (solo lectura) y comando CLIENT (número de clientes conectados → varias conexiones posibles). PENDIENTE: si una segunda conexión normal puede enviar órdenes, relogin, 2FA, sesión de noche, un login por cuenta. (J3, J4, J11, J15, C12)
 11. Cuota y límite de mensajes por segundo. (J18)
 12. Demo o paper. (O1)
 13. Qué NO puede hacer el API (transferencias, ajustes de cuenta). (Q6)
@@ -296,3 +296,4 @@ Para repasar el día que llegue el PDF, en este orden:
 | Fecha | Qué |
 |---|---|
 | 2026-09-12 | Se abre el banco con 17 áreas y el consolidado para el PDF. Ninguna contestada. |
+16. **Reglas de margen de Sage (19-sep, apartado 2c del libro):** qué valores son «alto riesgo» (criterio), si GET BP ya descuenta el margen por símbolo, autoliquidación en RTH (hora, aviso), corto en PM que supera el margen, PDT con cuenta < 25 k$, llamadas de margen.

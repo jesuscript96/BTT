@@ -85,6 +85,46 @@ Cualquiera se puede rebajar, pero por escrito y con fecha.
 - **Locates pronto y barato vs en prealerta** (P4).
 - **Cadena de LULD como aviso** (P10): 1 de cada 300 días con ≥ 5 LULD acaba en T12.
 
+## 2b. Lo que ya sabemos del CMD API de DAS (manual oficial, revisión 2021-11-10, encontrado el 19-sep)
+
+Fuente: «Frontend CMD API Manual» de DAS (15 páginas) incluido en el repositorio de un tercero
+(github.com/misantroop/das-bridge), que Jaume trajo SOLO como contexto: NO se copia código de ese repo;
+el bot se escribe desde este libro. Copia de referencia en D:/bot_senales/bot_ejecucion/referencia_das_bridge/.
+**AVISO (Jaume, 19-sep): el manual es de 2021 y NO sabemos si está al día; DAS puede haber cambiado cosas.
+Nada de este apartado es definitivo: TODO se coteja con el PDF oficial que dé el bróker.**
+
+**Lo que dice el manual (pasa de [API] a «sabido según el manual de 2021, a cotejar»):**
+1. **Token de orden propio (B5)**: NEWORDER lleva un «token» numérico que elige el cliente y vuelve en cada %ORDER → idempotencia posible. Al hacer LOGIN el servidor manda TODAS las posiciones, órdenes y trades (#POS…#POSEND, #Order…#OrderEnd, #Trade…#TradeEnd) y POSREFRESH pide las posiciones: la reconciliación de R-C-10 y R-K-01 está soportada.
+2. **Tipos de orden**: MKT, límite, PEG (MID/AGG/PRIM/LAST), STOPMKT (precio de disparo), **STOPLMT (precio de disparo + precio límite: es nuestro limitP con techo)**, STOPTRAILING, STOPRANGE / STOPRANGEMKT (banda baja-alta), oculta/iceberg con Display=0/num (B17: existe). **NO hay OCO ni bracket en el CMD API** → la limpieza de stops la hace el bot (R-C-11), como estaba previsto; el diseño «una principal + una emergencia» se mantiene. **No hay comando REPLACE en este manual** (el repo lo usa; puede ser de una versión posterior): mover un stop sería cancelar y reponer → cotejar.
+3. **Vigencia (TIF)**: DAY, DAY+ (extendido; es el valor por defecto), IOC, GTC, AtOpen, AtClose, FOK → premercado cubierto con DAY+.
+4. **Rutas**: la orden lleva la ruta (ARCA, INET, …). «SMAT» es una ruta especial mantenida por DAS que **admite todos los tipos de stop** (algunas rutas no admiten stops) → los stops residentes irían por SMAT o la ruta que indique el bróker. Los nombres de Sage (ARCA, EDGA, SAGEPRO) hay que confirmarlos como cadenas exactas del API.
+5. **Cancelación**: CANCEL orderid y CANCEL ALL (base de «cerrar todo», R-D-06).
+6. **Estados de orden**: Hold, Sending, Accepted, Canceled, Rejected, Executed (parcial o total), Triggered, Closed; y acciones %OrderAct: Sending, Send_Rej (rechazo, con campo «notes» con el motivo), Accept, Canceling, Canceled, CancelRej (cancelación rechazada: la carrera de B16), TimeOut, Execute (con precio y acciones del fill), Close → B4 y B16 tienen soporte; los textos concretos de «notes» se piden al bróker (apartado R, punto 14).
+7. **Buying power (E6, R-I-01)**: GET BP devuelve el BP intradía y el BP overnight de la cuenta.
+8. **GET SHORTINFO símbolo** → shortable Y/N, **shortsize (tamaño máximo de un corto por orden: B10)**, marginable Y/N, tasas de margen largo/corto del símbolo (0 = por defecto, 100 = 100 % en efectivo) → H10 (ETB/HTB) y el margen «alto riesgo» de Sage se pueden leer por símbolo.
+9. **Datos**: SB símbolo Lv1 → $Quote con ask, tamaño del ask, bid, tamaño del bid, último, volumen, máximo, mínimo, apertura, cierre de ayer, VWAP y hora; SB tms → time & sales con bandera de condición (bit 5 = válido para último precio: los prints «tardíos / odd lot» se pueden filtrar); SB Lv2 (INET/ARCA/BATS). **$LDLU símbolo limitDown limitUp llega con Lv1 → F11: las bandas LULD vienen por el API.** Las velas de minuto del API llegan con 30 s de retraso (se construyen con time & sales): confirma que la señal va por Massive (R-B-04).
+10. **Límites por conexión**: 50 símbolos en Lv1/T&S, 10 en Lv2, 50 en gráficos. El vigilante solo necesita Lv1 de las posiciones abiertas: cabe. El radar (~300 tickers) va por Massive, no por DAS.
+11. **Varias conexiones**: el comando CLIENT «devuelve el número de clientes conectados» y LOGIN admite modo «watch» (1 = solo lectura, recibe %IORDER/%IPOS/%ITRADE) → el API parece admitir más de una conexión al mismo DAS: el vigilante podría tener la suya (R-C-08 requisito 1). Cotejar si una segunda conexión normal puede enviar órdenes.
+12. **Locates**: SLPRICEINQUIRE símbolo acciones ruta/ALLROUTE → %SLRET tipo 1 con **precio POR ACCIÓN** y tamaño ofrecido (0 = no hay acciones para localizar), o tipo 2 = fallo con motivo (p. ej. «Already Shortable» = ETB, no hace falta locate). SLNEWORDER para pedir; SLCANCELORDER; SLOFFEROPERATION id Accept/Reject (rutas «tipo 1», con oferta que hay que aceptar); %SLOrder con estados Sending, Waiting, Located, Offered, Canceled, Rejected, Closed, Declined; SLAvailQuery cuenta símbolo → acciones disponibles. → H16 tiene respuesta técnica: «no hay» = tamaño 0 o tipo 2; el «tipo de ruta de locate» de Sage (0 o 1) es pregunta al bróker.
+13. **Estado de conexión**: mensajes #OrderServer / #QuoteServer Logon/Connect Successful/Failed → R-J-02 puede detectar la caída del servidor de órdenes aunque el socket local siga vivo (R-K-03).
+
+**Sigue SIN respuesta en el manual (se mantiene [API] / pregunta al bróker):**
+- Por qué precio dispara un STOPLMT (último, bid, ask): el manual remite a «los campos del montage» → C6 pendiente de sintaxis (Jaume recuerda «Ask + 0,01» en el montage).
+- Bandera de **SSR** y estado de **HALT**: no aparecen en $Quote ni en T&S → F1 y F10 pendientes (fuente externa: Nasdaq Trader / Databento en vivo, o el rechazo de la orden).
+- Decimales bajo 1 $ (B9), cuotas de mensajes (J18), 2FA y sesión de noche (J15), un login por cuenta (J11), demo (O1), REPLACE, órdenes «solo cerrar».
+
+## 2c. Reglas de margen de Sage (página pública, leída el 19-sep) y qué implican con 10-12 k$
+
+Cuenta relevante: **SageTrader Pro** (depósito inicial 3.000 $, mantener 2.000 $): buying power total 4× el equity; largo máximo 2×; **corto máximo 1× el equity; cortos «de alto riesgo» 0,5× el equity**. Margen inicial de cortos (Reg T): precio < 5 $ → el mayor de 2,50 $/acción o el 100 % del valor; ≥ 5 $ → el mayor de 5 $/acción o el 30 %. Mantenimiento (FINRA 4210) de cortos: < 2,50 $ → 2,50 $/acción; 2,50-4,99 $ → 100 % del valor; 5-16,66 $ → 5 $/acción; ≥ 16,67 $ → 30 %. La página NO habla de PDT, intradía vs overnight, PM, autoliquidación (Jaume: la hay en RTH, no en PM), llamadas de margen ni concentración.
+
+Consecuencias para el bot (cuenta de 10-12 k$, todo cortos en small caps):
+1. **El «capital libre» de R-I-01 no es el nominal: es el margen.** Un corto de 1.000 acciones a 1 $ (1.000 $ nominales) exige 2.500 $ de margen (2,50 $/acción). Con 10 k$, el corto máximo a 1 $ sería ≈ 4.000 acciones (4.000 $ nominales), y la mitad si el valor es «alto riesgo». El bot debe calcular el margen exigido de cada orden por tramo de precio ANTES de enviarla y dimensionar con GET BP y la tasa del símbolo de GET SHORTINFO, no con el nominal.
+2. **Tope de exposición corta total: 1× el equity (0,5× en «alto riesgo»)** sumando todas las estrategias. Encaja con E3 (reparto del cuadro de mandos), pero el bot lo comprueba contra el BP real.
+3. **Orden rechazada por margen**: llegará como Send_Rej con motivo → guarda previa + tratamiento del rechazo (B4).
+4. **Posición que cambia de tramo**: un corto abierto a 5,20 $ que baja a 4,90 $ pasa del 30 % al 100 % de mantenimiento (y a 2,50 $/acción bajo 2,50 $): el margen exigido SUBE cuando la operación va a favor. Con posiciones pequeñas no importa; con tamaño puede disparar la autoliquidación del bróker. El vigilante debería vigilar el margen de mantenimiento total frente al equity.
+
+**PREGUNTAS AL BRÓKER (se suman al apartado R):** qué valores son «alto riesgo» (lista o criterio: precio, float, HTB); si el BP que devuelve GET BP ya descuenta estas reglas por símbolo; cómo y a qué hora autoliquida en RTH y qué avisa antes; qué pasa con un corto abierto en PM que supera el margen; si aplican PDT (con 10-12 k$, por debajo de 25 k$, aplicaría: ¿3 day trades en 5 días?); llamadas de margen y plazos.
+
 ## 3. Reglas
 
 *(Ninguna todavía. Se van añadiendo por área a medida que se contesta el banco
