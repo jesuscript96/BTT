@@ -604,6 +604,8 @@ export interface RawConfigIn {
   monthly_expenses: number;
   locates?: RawLocatesIn | null;
   scaling?: RawScalingIn | null;
+  /** Criterios de margen y buying power del broker (19-sep). Apagado = nada cambia. */
+  margin?: { enabled: boolean; broker: string; capacity_pct: number } | null;
   start_date?: string | null;
   end_date?: string | null;
 }
@@ -822,6 +824,8 @@ export interface RawOut {
     cap_usd: number;
   };
   cap_report: RawCapReport;
+  /** Margen y BP (solo con el bloque activo): trades fuera/recortados por margen y el pico de margen usado. */
+  margin_report?: { enabled: boolean; broker: string; capacity_pct: number; skipped: number; trimmed: number; pico_medio_pct: number; pico_max_pct: number } | null;
   metrics: CombineMetrics;
   costs: { fees: number; slippage?: number; locates: number; expenses: number };
   var: CombineVar | null;

@@ -1,5 +1,5 @@
 "use client";
-import type { EvGateSummary, BSwanSummary, HaltsSummary } from "@/lib/api_backtester";
+import type { EvGateSummary, BSwanSummary, HaltsSummary, MargenSummary } from "@/lib/api_backtester";
 
 import { useState, useMemo, useEffect } from "react";
 import { Download } from "lucide-react";
@@ -27,6 +27,8 @@ interface TradesTabProps {
   bswan?: BSwanSummary;
   /** Coste de halts: resumen de la corrida (solo con el coste activo). */
   halts?: HaltsSummary;
+  /** Margen y buying power: resumen de la corrida (solo con el bloque activo). */
+  margen?: MargenSummary;
 }
 
 type SortKey = keyof TradeRecord;
@@ -103,7 +105,7 @@ const SortHeader = ({ label, field, align = "left", sortKey, sortDir, onSort, cl
   </th>
 );
 
-export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswan, halts,
+export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswan, halts, margen,
                                    strategyName, evGate, sinPuerta }: TradesTabProps) {
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("date");
@@ -262,6 +264,14 @@ export default function TradesTab({ trades, onSelectTrade, tradeDesplegado, bswa
                 <> · penalización <strong className="text-[var(--danger)]">−${halts.penalizacion_usd.toFixed(2)}</strong></>
               )}
               {halts.aviso && <strong className="text-[var(--danger)]"> · tabla vacía</strong>}
+            </span>
+          )}
+          {margen && (
+            <span title={`Margen y BP (${margen.broker_nombre}): ${margen.reglas} Entradas o añadidos que no cupieron en el equity del día, recorriendo el día en orden cronológico; ese ticker no tomó riesgo nuevo el resto del día. Pico de margen usado: media ${margen.pico_medio_pct.toFixed(0)} % de la capacidad, máximo ${margen.pico_max_pct.toFixed(0)} %.`}>
+              margen:{" "}
+              <strong style={{ color: '#f59e0b' }}>{margen.bloqueos} cortes</strong>
+              {" "}en {margen.dias_con_bloqueo} de {margen.dias} días
+              {" "}· pico medio {margen.pico_medio_pct.toFixed(0)} %
             </span>
           )}
           {!bswan && hayMecha && (

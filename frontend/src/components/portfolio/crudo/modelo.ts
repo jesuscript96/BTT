@@ -13,11 +13,14 @@ export interface Cfg {
   capUnit: "usd" | "pct";
   /** Solo una estrategia abierta a la vez por accion. */
   onePerTicker: boolean;
+  /** Criterios de margen y buying power del broker (19-sep). */
+  margin: boolean;
+  marginBroker: string;
   start: string;
   end: string;
 }
 
-export const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", onePerTicker: false, start: "", end: "" };
+export const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", onePerTicker: false, margin: false, marginBroker: "sagetrader", start: "", end: "" };
 
 /** Locates de la CUENTA (paso 1): un broker para todas las estrategias. */
 export interface LocCfg {

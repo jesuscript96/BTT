@@ -858,6 +858,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                          cada fila cobra los suyos como antes
       scaling            escalado y pesos (ver SCALING_DEFAULT); None = los
                          R de las filas
+      margin             {"enabled", "broker", "capacity_pct"} (ver margen.py):
+                         cada entrada exige margen segun precio y lado; la
+                         que no cabe en el equity del dia se salta o recorta
+                         (mismo cap_mode que el tope de exposicion)
       start_date/end_date
     """
     capital = _f(cfg.get("capital"))
@@ -870,6 +874,11 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     cap_pct = _f(cfg.get("max_exposure_pct"))
     trim = str(cfg.get("cap_mode") or "skip") == "trim"
     one_per_ticker = bool(cfg.get("one_per_ticker"))
+    # Margen y buying power (19-sep): opcional; apagado, nada cambia.
+    _mg_raw = cfg.get("margin") or {}
+    margin_on = bool(_mg_raw.get("enabled"))
+    margin_broker = str(_mg_raw.get("broker") or "sagetrader")
+    margin_cap_pct = _f(_mg_raw.get("capacity_pct"), 100.0) or 100.0
     d_from = str(cfg.get("start_date") or "") or None
     d_to = str(cfg.get("end_date") or "") or None
     default_exec = _exec_cfg(cfg.get("default_exec"))
@@ -1322,33 +1331,64 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     exposure = 0.0
     day_peak: dict[str, float] = {}
     day_peak_n: dict[str, int] = {}
+    # Margen: su propio contador de lo abierto (exigencia, no nocional) y el
+    # pico del dia en % de la capacidad, para el informe.
+    from app.services.margen import requisito_por_accion as _req_ps
+    open_heap_m: list[tuple[float, float]] = []
+    usado_m = 0.0
+    day_peak_m: dict[str, float] = {}
     for a in accepted:
         while open_heap and open_heap[0][0] <= a["t0"]:
             _, freed = heapq.heappop(open_heap)
             exposure -= freed
         if exposure < 1e-9:
             exposure = 0.0
+        while open_heap_m and open_heap_m[0][0] <= a["t0"]:
+            _, freed_m = heapq.heappop(open_heap_m)
+            usado_m -= freed_m
+        if usado_m < 1e-9:
+            usado_m = 0.0
         take = a["notional"]
         cap_day = (equity_open_by_day.get(a["date"], capital) * cap_pct / 100.0) if cap_pct > 0 else cap
+        # Factor de recorte que dejan el tope de exposicion y el margen (el
+        # menor de los dos); 0 = no cabe.
+        f_ok = 1.0
         if cap_day > 0 and exposure + take > cap_day + 1e-9:
             free = cap_day - exposure
-            if trim and free > 1e-9 and a["notional"] > 0:
-                f = free / a["notional"]
-                for k in ("size", "notional", "pnl", "fees", "slip"):
-                    a[k] *= f
-                a["trimmed"] = True
-                take = free
-            else:
-                a["skipped"] = True
-                continue
+            f_ok = min(f_ok, (free / a["notional"]) if (trim and free > 1e-9 and a["notional"] > 0) else 0.0)
+        take_m = 0.0
+        if margin_on:
+            es_corto = str(a.get("dir") or "").upper().startswith("S")
+            take_m = _req_ps(a["entry_px"], es_corto, margin_broker) * a["size"]
+            capacidad = equity_open_by_day.get(a["date"], capital) * margin_cap_pct / 100.0
+            if capacidad > 0 and usado_m + take_m > capacidad + 1e-9:
+                free_m = capacidad - usado_m
+                f_ok = min(f_ok, (free_m / take_m) if (trim and free_m > 1e-9 and take_m > 0) else 0.0)
+                a["margin_hit"] = True
+        if f_ok <= 0.0:
+            a["skipped"] = True
+            continue
+        if f_ok < 1.0:
+            for k in ("size", "notional", "pnl", "fees", "slip"):
+                a[k] *= f_ok
+            a["trimmed"] = True
+            take *= f_ok
+            take_m *= f_ok
         heapq.heappush(open_heap, (a["t1"], take))
         exposure += take
         if exposure > day_peak.get(a["date"], 0.0):
             day_peak[a["date"]] = exposure
         if len(open_heap) > day_peak_n.get(a["date"], 0):
             day_peak_n[a["date"]] = len(open_heap)
+        if margin_on:
+            heapq.heappush(open_heap_m, (a["t1"], take_m))
+            usado_m += take_m
+            if usado_m > day_peak_m.get(a["date"], 0.0):
+                day_peak_m[a["date"]] = usado_m
     skipped = sum(1 for a in accepted if a.get("skipped"))
     trimmed = sum(1 for a in accepted if a.get("trimmed"))
+    margin_skipped = sum(1 for a in accepted if a.get("skipped") and a.get("margin_hit"))
+    margin_trimmed = sum(1 for a in accepted if a.get("trimmed") and a.get("margin_hit"))
     if skipped or trimmed:
         # Recomponer las series sin los saltados y con los recortados (los
         # locates del dia se mantienen: el tope es un extra, no se afina).
@@ -1516,6 +1556,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             "capital": capital, "monthly_expenses": expenses, "max_exposure_usd": cap, "max_exposure_pct": cap_pct,
             "one_per_ticker": one_per_ticker,
             "cap_mode": "trim" if trim else "skip", "start_date": d_from, "end_date": d_to,
+            "margin": ({"enabled": True, "broker": margin_broker, "capacity_pct": margin_cap_pct} if margin_on else None),
             "default_exec": default_exec,
             "locates": loc_cfg,
             "scaling": esc_cfg,
@@ -1535,6 +1576,14 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             "max_usd": ple._r6(max(day_peak.values()) if day_peak else 0.0),
             "cap_usd": cap,
         },
+        "margin_report": ({
+            "enabled": True, "broker": margin_broker, "capacity_pct": margin_cap_pct,
+            "skipped": margin_skipped, "trimmed": margin_trimmed,
+            "pico_medio_pct": ple._r6(float(np.mean([100.0 * day_peak_m.get(d, 0.0) / (equity_open_by_day.get(d, capital) * margin_cap_pct / 100.0)
+                                                      for d in calendar if equity_open_by_day.get(d, capital) > 0])) if calendar else 0.0),
+            "pico_max_pct": ple._r6(max([100.0 * day_peak_m.get(d, 0.0) / (equity_open_by_day.get(d, capital) * margin_cap_pct / 100.0)
+                                         for d in calendar if equity_open_by_day.get(d, capital) > 0] or [0.0])),
+        } if margin_on else None),
         "cap_report": {"taken": len(accepted), "skipped": skipped, "trimmed": trimmed, "unsized": sum(unsized), "blocked": sum(blocked)},
         "metrics": metrics,
         "costs": {"fees": ple._r6(tot_fees), "slippage": ple._r6(tot_slip), "locates": ple._r6(tot_loc), "expenses": ple._r6(tot_exp)},

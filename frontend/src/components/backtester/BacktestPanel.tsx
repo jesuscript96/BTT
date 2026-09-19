@@ -59,6 +59,10 @@ export interface BacktestPanelParams {
   halts_mode?: "primero" | "n";
   halts_n?: number;
   halts_slippage_pct?: number;
+  // Criterios de margen y buying power (Jaume 2026-09-19). Ver backend/app/services/margen.py.
+  margin_enabled?: boolean;
+  margin_broker?: string;
+  margin_capacity_pct?: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
   is_percent: number;
@@ -104,6 +108,9 @@ interface BacktestPanelProps {
     halts_mode?: "primero" | "n";
     halts_n?: number;
     halts_slippage_pct?: number;
+    margin_enabled?: boolean;
+    margin_broker?: string;
+    margin_capacity_pct?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;
@@ -543,6 +550,10 @@ export default function BacktestPanel({
   const [haltsMode, setHaltsMode] = useState<"primero" | "n">("primero");
   const [haltsN, setHaltsN] = useState(2);
   const [haltsSlippage, setHaltsSlippage] = useState(5);
+  // CRITERIOS DE MARGEN Y BP (Jaume 2026-09-19). Ver backend/app/services/margen.py.
+  // Solo si esta activo se aplica; el broker lleva su tabla de exigencia.
+  const [useMargin, setUseMargin] = useState(false);
+  const [marginBroker, setMarginBroker] = useState("sagetrader");
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -750,6 +761,8 @@ export default function BacktestPanel({
       if (savedState.haltsMode !== undefined) setHaltsMode(savedState.haltsMode);
       if (savedState.haltsN !== undefined) setHaltsN(savedState.haltsN);
       if (savedState.haltsSlippage !== undefined) setHaltsSlippage(savedState.haltsSlippage);
+      if (savedState.useMargin !== undefined) setUseMargin(savedState.useMargin);
+      if (savedState.marginBroker !== undefined) setMarginBroker(savedState.marginBroker);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -916,6 +929,10 @@ export default function BacktestPanel({
       halts_mode: haltsMode,
       halts_n: useHalts ? haltsN : 0,
       halts_slippage_pct: useHalts ? haltsSlippage : 0,
+      // Margen y BP. Apagado = el backend ni lo mira.
+      margin_enabled: useMargin,
+      margin_broker: marginBroker,
+      margin_capacity_pct: 100,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       is_percent: isPercent,
@@ -928,7 +945,7 @@ export default function BacktestPanel({
     useLocatesRandom, locatesMin, locatesMax, locatesSeed,
     useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos, evGateMetric,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
-    useHalts, haltsMode, haltsN, haltsSlippage,
+    useHalts, haltsMode, haltsN, haltsSlippage, useMargin, marginBroker,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
     sizeBySl,
   ]);
@@ -978,6 +995,8 @@ export default function BacktestPanel({
         haltsMode,
         haltsN,
         haltsSlippage,
+        useMargin,
+        marginBroker,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -992,7 +1011,7 @@ export default function BacktestPanel({
     useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
     evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos, evGateMetric,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
-    useHalts, haltsMode, haltsN, haltsSlippage,
+    useHalts, haltsMode, haltsN, haltsSlippage, useMargin, marginBroker,
     useMonthlyExpenses, monthlyExpenses
   ]);
 
@@ -1072,6 +1091,10 @@ export default function BacktestPanel({
       halts_mode: haltsMode,
       halts_n: useHalts ? haltsN : 0,
       halts_slippage_pct: useHalts ? haltsSlippage : 0,
+      // Margen y BP. Apagado = el backend ni lo mira.
+      margin_enabled: useMargin,
+      margin_broker: marginBroker,
+      margin_capacity_pct: 100,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -2640,6 +2663,49 @@ export default function BacktestPanel({
                 </span>
                 <input type="number" step="1" min={0} value={haltsSlippage} style={inp}
                        onChange={(e) => setHaltsSlippage(Math.max(0, Number(e.target.value) || 0))} />
+              </React.Fragment>
+            );
+          }
+
+          // CRITERIOS DE MARGEN Y BP (Jaume 2026-09-19): check + broker + (?).
+          filas.push(
+            <React.Fragment key="margen">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useMargin}
+                  onChange={() => setUseMargin(!useMargin)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                />
+                <span style={et}>
+                  Criterios Margen y BP
+                  <InfoTooltip
+                    position="left"
+                    width={380}
+                    text="Simula el margen y el buying power del bróker: cada posición abierta consume margen según su precio y su lado, y la orden que no cabe en el equity del día NO se ejecuta. Se recorren todas las entradas del día en ORDEN CRONOLÓGICO (entre todos los tickers): las que llegan tarde y ya no caben se cortan, y ese ticker no toma riesgo nuevo el resto del día; lo abierto sigue hasta su salida. Reglas de SageTrader (FAQ, sep-2026): LARGOS 25 % del valor (4:1 intradía); CORTOS a partir de 5 $, el mayor de 30 % del valor o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional: con 10.000 $ de equity no puedes tener más de 2.000 $ en corto en esa acción). Al abrir se exige el mayor de la inicial y el mantenimiento por precio, como hace DAS. La capacidad es el equity del día (compone con la cuenta). En Trades verás cuántas entradas se cortaron."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+              </label>
+              <span />
+            </React.Fragment>
+          );
+          if (useMargin) {
+            filas.push(
+              <React.Fragment key="margen-broker">
+                <span style={sub}>
+                  Bróker
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="De momento solo SageTrader (reglas de su FAQ, sep-2026). Cada bróker es una tabla de exigencia por precio y lado en backend/app/services/margen.py; añadir otro es añadir su tabla."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <select value={marginBroker} onChange={(e) => setMarginBroker(e.target.value)}
+                        style={{ ...inp, width: 'auto', minWidth: 96, textAlign: 'left', fontFamily: 'var(--color-ec-sans)', cursor: 'pointer' }}>
+                  <option value="sagetrader">SageTrader</option>
+                </select>
               </React.Fragment>
             );
           }

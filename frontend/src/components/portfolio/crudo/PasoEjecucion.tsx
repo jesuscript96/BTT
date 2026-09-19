@@ -274,6 +274,8 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
             que puede haber en posiciones abiertas a la vez sumando todas las estrategias, en % del capital <em>del
             día</em> o en $; un trade que no cabe no se entra. 0 = sin tope. <strong>Una a la vez por acción</strong>
             (opcional): en cada acción solo la primera estrategia que da señal; las demás esperan a que salga.
+            <strong>Criterios Margen y BP</strong> (opcional): el margen del bróker sobre todas las posiciones
+            abiertas a la vez; la que no cabe en el equity del día no entra. Con el (?) de la fila están las reglas.
             <br /><br />
             <strong>Locates</strong>: el bróker es uno, así que el modelo de precio (fijo por paquete de 100, o aleatorio
             con el sorteo del Backtester) vale para todas. <strong>Compartidos</strong>: por cada acción y día se alquila
@@ -321,6 +323,19 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                 <input type="checkbox" checked={!!cfg.onePerTicker} onChange={(e) => set("onePerTicker", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
                 solo una estrategia abierta a la vez en cada acción
               </label>
+            </Row>
+            <Row label="Criterios Margen y BP" help="Simula el margen y el buying power del bróker sobre TODAS las estrategias juntas: cada posición abierta consume margen según su precio y su lado, y la que no cabe en el equity del día no entra (o se recorta, según el modo del tope). Se recorre el día en orden cronológico entre todas las estrategias, igual que el tope de exposición. Reglas de SageTrader (FAQ, sep-2026): largos 25 % del valor (4:1 intradía); cortos a partir de 5 $, el mayor de 30 % o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional). La capacidad es el equity del día.">
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, fontFamily: font.sans, color: color.textPrimary, cursor: "pointer" }}>
+                  <input type="checkbox" checked={!!cfg.margin} onChange={(e) => set("margin", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
+                  aplicar el margen del bróker
+                </label>
+                {cfg.margin && (
+                  <select value={cfg.marginBroker || "sagetrader"} onChange={(e) => set("marginBroker", e.target.value)} style={{ ...control, fontFamily: font.sans, width: "auto" }}>
+                    <option value="sagetrader">SageTrader</option>
+                  </select>
+                )}
+              </div>
             </Row>
             <Row label="Periodo" help="Vacío = todo el histórico de cada corrida. Cada estrategia solo cuenta en el tramo en que tiene trades.">
               <div style={{ display: "flex", gap: 6 }}>

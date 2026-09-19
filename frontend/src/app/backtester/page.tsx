@@ -653,6 +653,9 @@ export default function Home() {
       halts_mode: p?.halts_mode,
       halts_n: p?.halts_n,
       halts_slippage_pct: p?.halts_slippage_pct,
+      margin_enabled: p?.margin_enabled,
+      margin_broker: p?.margin_broker,
+      margin_capacity_pct: p?.margin_capacity_pct,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -723,6 +726,9 @@ export default function Home() {
       halts_mode: p?.halts_mode,
       halts_n: p?.halts_n,
       halts_slippage_pct: p?.halts_slippage_pct,
+      margin_enabled: p?.margin_enabled,
+      margin_broker: p?.margin_broker,
+      margin_capacity_pct: p?.margin_capacity_pct,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
       }));
@@ -792,6 +798,9 @@ export default function Home() {
     halts_mode?: "primero" | "n";
     halts_n?: number;
     halts_slippage_pct?: number;
+    margin_enabled?: boolean;
+    margin_broker?: string;
+    margin_capacity_pct?: number;
   }) => {
     const isDraftId = params.strategy_id === "draft" ||
                       params.strategy_id === "wizard_draft" || 
@@ -977,6 +986,9 @@ export default function Home() {
       halts_mode: params.halts_mode,
       halts_n: params.halts_n,
       halts_slippage_pct: params.halts_slippage_pct,
+      margin_enabled: params.margin_enabled,
+      margin_broker: params.margin_broker,
+      margin_capacity_pct: params.margin_capacity_pct,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,

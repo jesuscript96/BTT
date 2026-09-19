@@ -384,7 +384,7 @@ export default function ResultsTabs({
                      strategyName={activeStrategy?.name}
                      tradeDesplegado={tradeDesplegado}
                      evGate={result.ev_gate} sinPuerta={result.sin_puerta}
-                     bswan={result.bswan} halts={result.halts} />
+                     bswan={result.bswan} halts={result.halts} margen={result.margen} />
           )}
         </div>
         <div style={{ display: activeTab === "analysis" ? "block" : "none" }}>

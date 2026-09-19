@@ -435,6 +435,13 @@ class RawEvRangoIn(BaseModel):
     ev_pct: float | None = None
 
 
+class RawMarginIn(BaseModel):
+    """Criterios de margen y buying power del broker (19-sep). Ver margen.py."""
+    enabled: bool = False
+    broker: str = "sagetrader"
+    capacity_pct: float = Field(default=100.0, gt=0, le=1000)
+
+
 class RawGateIn(BaseModel):
     """Puerta de los cortos. mode "ev": la cuenta del backtester (locates_gate)
     con el EV rodante de la estrategia (EV por defecto hasta que hay
@@ -509,6 +516,7 @@ class RawReq(BaseModel):
     # 16-sep: locates de la cuenta (compartidos + puerta + banda) y escalado.
     locates: RawLocatesIn | None = None
     scaling: RawScalingIn | None = None
+    margin: RawMarginIn | None = None
     start_date: str | None = None
     end_date: str | None = None
 
@@ -561,6 +569,7 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
             "monthly_expenses": req.monthly_expenses,
             "locates": req.locates.model_dump() if req.locates else None,
             "scaling": req.scaling.model_dump() if req.scaling else None,
+            "margin": req.margin.model_dump() if req.margin else None,
             "start_date": req.start_date,
             "end_date": req.end_date,
         })

@@ -128,6 +128,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     max_exposure_usd: cfg.capUnit === "usd" ? cfg.cap : 0,
     max_exposure_pct: cfg.capUnit === "pct" ? cfg.cap : 0,
     one_per_ticker: !!cfg.onePerTicker,
+    margin: cfg.margin ? { enabled: true, broker: cfg.marginBroker || "sagetrader", capacity_pct: 100 } : null,
     cap_mode: "skip",
     monthly_expenses: cfg.expenses,
     locates: locatesIn(loc, BAND_SEEDS),
