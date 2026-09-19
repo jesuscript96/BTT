@@ -658,6 +658,8 @@ export interface RawScalingPeriod {
   capped?: boolean;
   /** Ese periodo alguna estrategia pedia mas que el tope por estrategia. */
   capped_strategy?: boolean;
+  /** Unidad de la fraccion de cada estrategia: risk (al stop) | capital (en posicion). */
+  bases?: Array<"risk" | "capital">;
 }
 
 export interface RawScalingToday {
@@ -685,6 +687,8 @@ export interface RawScalingToday {
     kelly_pct?: number | null; kelly_quad_pct?: number | null;
     /** Lo que pedia (tras la fraccion) y lo aplicado (tras el tope), % del capital del dia. */
     asked_pct?: number; weight: number; risk_pct: number; risk_usd: number;
+    /** risk: % del capital al stop; capital: % del capital en posicion (la corrida dimensiono por capital). */
+    basis?: "risk" | "capital";
   }>;
 }
 

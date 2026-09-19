@@ -494,7 +494,7 @@ export function WeightsChart({
   capPct = 0,
   height = 240,
 }: {
-  periods: Array<{ period: string; from?: string; weights: number[]; risk_pct?: number[]; kelly_por_estrategia_pct?: Array<number | null>; x_pct: number | null; applied_pct?: number | null; capped?: boolean; alive?: number }>;
+  periods: Array<{ period: string; from?: string; weights: number[]; risk_pct?: number[]; kelly_por_estrategia_pct?: Array<number | null>; bases?: Array<"risk" | "capital">; x_pct: number | null; applied_pct?: number | null; capped?: boolean; alive?: number }>;
   names: string[];
   colors: string[];
   capPct?: number;
@@ -549,7 +549,7 @@ export function WeightsChart({
     const ks = p.kelly_por_estrategia_pct || [];
     const filas = names.map((nm, j) => ({
       color: colors[j % colors.length], nombre: nm,
-      valor: r[j] > 0 ? `${n(r[j], 2)} % por trade` : "—",
+      valor: r[j] > 0 ? `${n(r[j], 2)} % ${p.bases && p.bases[j] === "capital" ? "en posición" : "en riesgo"}` : "—",
       extra: ks[j] != null ? `Kelly ${n(ks[j] as number, 0)} %` : (r[j] > 0 ? "respaldo" : "fuera"),
     }));
     const apl = aplicado(p);

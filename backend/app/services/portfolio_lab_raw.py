@@ -283,15 +283,24 @@ def _exec_cfg(raw: Optional[dict]) -> dict:
     return cfg
 
 
-def _r_neta(tr: dict, ex: dict) -> float:
+def _r_neta(tr: dict, ex: dict, locate_ps: float = 0.0) -> float:
     """R neta de un trade preparado con los costes de su fila, por accion:
-    no depende del tamano. Sin stop ni riesgo guardado, 0."""
+    no depende del tamano. En la UNIDAD de la estrategia (19-sep): si se
+    dimensiona por capital, R = neto / valor de la posicion por accion (el
+    retorno sobre lo metido); si por stop, neto / riesgo por accion. Sin stop
+    ni riesgo guardado (por stop), 0. `locate_ps`: alquiler esperado por
+    accion (solo cortos), para que Kelly no ignore lo que cobra la cuenta."""
     if ex["fee_type"] == "PERCENT":
         fee_ps = (ex["fees"] / 100.0) * (tr["entry"] + tr["exit"])
     else:
         fee_ps = ex["fees"] * 2.0
     slip_ps = (ex["slippage_pct"] / 100.0) * (tr["entry"] + tr["exit"])
     net_ps = tr["gross_ps"] - fee_ps - slip_ps
+    if locate_ps > 0 and str(tr.get("direction") or "").startswith("S"):
+        net_ps -= locate_ps
+    if ex["sizing"] == "capital":
+        base_ps = tr["init_price"] / tr["pyr"] if tr["pyr"] > 0 else tr["init_price"]
+        return net_ps / base_ps if base_ps > 0 else 0.0
     if tr["stop_dist"] > 0:
         risk_ps = tr["stop_dist"] / tr["pyr"] if tr["pyr"] > 0 else tr["stop_dist"]
     elif tr["risk_orig"] > 0 and tr["size_saved"] > 0:
@@ -526,6 +535,10 @@ class _Escalado:
     resultado.
     """
 
+    # Unidad de la fraccion de cada estrategia: "risk" (stop) o "capital"
+    # (posicion). La pone simulate() al construir; por defecto, riesgo.
+    bases: list[str] = []
+
     def __init__(self, cfg: dict, calendar: list[str], r_daily: np.ndarray,
                  trade_r: list[list[tuple[str, float]]], spans: list[tuple[str, str]], capital: float):
         self.cfg = cfg
@@ -676,6 +689,7 @@ class _Escalado:
                 "applied_pct": ple._r6(suma_apl * 100.0) if suma_apl is not None else None,
                 "capped": bool(e["capped"]),
                 "capped_strategy": bool(e.get("capped_strategy")),
+                "bases": list(self.bases) if self.bases else ["risk"] * self.n,
                 "note": e["nota"],
             })
         m = self.cfg["model"]
@@ -757,6 +771,7 @@ class _Escalado:
                     "weight": ple._r6(float(apl[i] / suma_apl)) if suma_apl > 0 else 0.0,
                     "risk_pct": ple._r6(float(apl[i])),
                     "risk_usd": ple._r6(equity_now * float(apl[i]) / 100.0),
+                    "basis": (self.bases[i] if self.bases else "risk"),
                 }
                 for i in range(self.n)
             ],
@@ -1088,13 +1103,24 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         trade_r: list[list[tuple[str, float]]] = [[] for _ in range(n)]
         for i in range(n):
             ex = execs[i]
+            mode_l, cost_l, lo_l, hi_l, _seed_l = loc_of(i)
             for d, trades_d in by_day[i].items():
                 for tr in trades_d:
-                    r = _r_neta(tr, ex)
+                    # Locate esperado por accion: el precio fijo del paquete, o
+                    # la mediana del sorteo para ese precio de referencia (sin
+                    # el redondeo a paquetes enteros ni el alquiler compartido).
+                    if mode_l == "fixed":
+                        locate_ps = cost_l / 100.0
+                    elif mode_l == "random":
+                        locate_ps = lr.centro_por_precio(tr["ref_price"], lo_l, hi_l) / 100.0
+                    else:
+                        locate_ps = 0.0
+                    r = _r_neta(tr, ex, locate_ps)
                     r_daily[idx_cal[d], i] += r
                     trade_r[i].append((d, r))
             trade_r[i].sort()
         esc = _Escalado(esc_cfg, calendar, r_daily, trade_r, spans, capital)
+        esc.bases = ["capital" if execs[i]["sizing"] == "capital" else "risk" for i in range(n)]
 
     # ── 2. Dia a dia: dimensionar con el capital del dia, costes, locates ──
     equity = capital
@@ -1147,12 +1173,20 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             for tr in trades_d:
                 as_saved = False
                 if esc is not None:
-                    # Escalado: TODAS por riesgo, con el reparto del periodo.
+                    # Escalado: la fraccion del periodo en la UNIDAD de cada
+                    # estrategia (19-sep): por POSICION (% del capital en
+                    # nocional) si se dimensiona por capital, por riesgo (stop)
+                    # si por stop. Antes iba todo por riesgo con el stop
+                    # aproximado: en PM (A) un 1 % de riesgo eran posiciones 6
+                    # veces mayores (mediana) que un 1 % por capital, y perdidas
+                    # de hasta 4 R en un trade.
                     r_usd = equity_open * float(risk_esc[i]) if risk_esc is not None else 0.0
                     if r_usd <= 0:
                         no_weight[i] += 1
                         continue
-                    if tr["stop_dist"] > 0:
+                    if sizing == "capital":
+                        new_size = (r_usd / tr["init_price"]) * tr["pyr"]
+                    elif tr["stop_dist"] > 0:
                         new_size = (r_usd / tr["stop_dist"]) * tr["pyr"]
                     elif tr["risk_orig"] > 0:
                         new_size = tr["size_saved"] * (r_usd / tr["risk_orig"])
@@ -1202,7 +1236,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     # el nocional pedido si fue por capital; tal cual, lo suyo.
                     "budget": (r_usd if (esc is not None or sizing == "risk") else
                                (x_usd if sizing == "capital" else (risk_new if risk_new > 0 else notional))),
-                    "budget_basis": ("risk" if (esc is not None or sizing == "risk" or (sizing == "as_saved" and risk_new > 0)) else "notional"),
+                    "budget_basis": ("notional" if sizing == "capital" else ("risk" if (esc is not None or sizing == "risk" or (sizing == "as_saved" and risk_new > 0)) else "notional")),
                 })
 
         # b) Locates, en orden de entrada del dia. Compartidos: UN alquiler por

@@ -121,6 +121,9 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
             <strong>Kelly global</strong>: la Kelly del conjunto (los días de todas juntas) × la fracción, topada, y
             repartida entre las estrategias en proporción a la Kelly propia de cada una.
             <br /><br />
+            <strong>Unidad</strong>: cada estrategia va en la suya, la misma que en su backtest: por RIESGO (lo que se
+            pierde al stop) si dimensionó por stop; por POSICIÓN (% del capital metido) si dimensionó por capital. Así
+            «1 %» en Kelly es lo mismo que «1 %» en su fila del paso 1, y no seis veces más.
             <strong>Fracción</strong>: lo que se aplica de la Kelly (1 = entera; ½ y ¼ las de la práctica; cualquier
             número). <strong>Tope por estrategia</strong>: lo máximo por trade de cada una (primero). <strong>Tope de la
             suma</strong>: lo máximo por trade sumando todas (después, recorte proporcional); con estas curvas (liquidez
@@ -266,7 +269,7 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                       <td style={tdTxt}><span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span style={{ width: 10, height: 10, background: colorSerie(p.idx), display: "inline-block" }} />{p.name}{!p.alive && <span style={{ fontSize: 9.5, color: color.textMuted }}>sin trades en la ventana</span>}{p.alive && p.kelly_pct === 0 && <span style={{ fontSize: 9.5, color: color.warning }}>sin edge en la ventana</span>}{p.alive && p.kelly_pct == null && hoy.model === "kelly" && <span style={{ fontSize: 9.5, color: color.textMuted }}>sin muestra: respaldo</span>}</span></td>
                       {hoy.model === "kelly" && <td style={tdNum} title={p.kelly_quad_pct != null ? `aprox. μ/σ² ${pct(p.kelly_quad_pct, 1)}` : ""}>{p.kelly_pct == null ? "—" : pct(p.kelly_pct, 2)}</td>}
                       {hoy.model === "kelly" && <td style={{ ...tdNum, color: color.textSecondary }}>{pct(p.asked_pct, 2)}</td>}
-                      <td style={{ ...tdNum, color: color.textHigh, fontWeight: 600 }}>{pct(p.risk_pct, 2)}</td>
+                      <td style={{ ...tdNum, color: color.textHigh, fontWeight: 600 }} title={p.basis === "capital" ? "en POSICIÓN: % del capital del día metido en la operación (la corrida dimensiona por capital, sin stop)" : "en RIESGO: % del capital del día que se pierde si salta el stop"}>{pct(p.risk_pct, 2)}<span style={{ fontSize: 9.5, color: color.textMuted, fontWeight: 400, marginLeft: 4 }}>{p.basis === "capital" ? "posición" : "riesgo"}</span></td>
                       <td style={{ ...tdNum, color: color.textHigh }}>{usd(capitalSig * p.risk_pct / 100)}</td>
                       <td style={{ ...tdNum, color: color.textMuted }}>{pct(p.weight * 100, 0)}</td>
                     </tr>
@@ -282,7 +285,7 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
                 </tbody>
               </table>
               <p style={{ margin: "8px 0 0", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
-                Ventana {hoy.window.from} → {hoy.window.to} ({esc.lookback_days} días: solo cuenta esto, la historia anterior no cambia la recomendación). «Peso» = parte de cada una en la suma aplicada. Si todas entran a la vez en la misma acción, el riesgo en esa acción es la suma: {pct(hoy.applied_pct, 2)} (o lo que diga el «Tope por acción» del paso 1).
+                Ventana {hoy.window.from} → {hoy.window.to} ({esc.lookback_days} días: solo cuenta esto, la historia anterior no cambia la recomendación). <strong>Unidad</strong>: «riesgo» = % del capital que se pierde si salta el stop (corridas dimensionadas por stop); «posición» = % del capital metido en la operación (corridas dimensionadas por capital, como en su backtest): con stops al 15 %, un 1 % de riesgo son posiciones 6 veces mayores que un 1 % en posición. «Peso» = parte de cada una en la suma aplicada. Si todas entran a la vez en la misma acción, el riesgo en esa acción es la suma: {pct(hoy.applied_pct, 2)} (o lo que diga el «Tope por acción» del paso 1).
               </p>
             </>
           )}

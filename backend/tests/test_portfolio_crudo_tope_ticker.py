@@ -173,3 +173,49 @@ def test_tope_por_estrategia_en_la_simulacion_real():
     assert all(max(p["risk_pct"]) <= 0.5 + 1e-9 for p in sc["periods"])
     assert any(p.get("capped_strategy") for p in sc["periods"])
     assert sc["today"]["cap_strategy_pct"] == 0.5
+
+
+# ── Escalado: la unidad de cada estrategia (19-sep, auditoria de Kelly) ──
+
+def _run_capital(sid, ticker, t_in, t_out, size, entry=2.0, exitp=1.8):
+    r = _run(sid, ticker, t_in, t_out, size, entry=entry, exitp=exitp, stop=entry * 1.5)
+    r["backtest_params"]["size_by_sl"] = False   # la corrida dimensiono por capital
+    return r
+
+
+def test_r_neta_en_la_unidad_de_la_estrategia():
+    from app.services.portfolio_lab_raw import _r_neta
+    tr = {"gross_ps": 0.2, "entry": 2.0, "exit": 1.8, "init_price": 2.0, "pyr": 1.0, "stop_dist": 1.0,
+          "risk_orig": 0.0, "size_saved": 100.0, "direction": "Short"}
+    ex_cap = {"fee_type": "FLAT", "fees": 0.0, "slippage_pct": 0.0, "sizing": "capital"}
+    ex_risk = dict(ex_cap, sizing="risk")
+    # Por capital: retorno sobre la posicion (0,2 / 2 = 10 %); por stop: 0,2 / 1 = 0,2 R.
+    assert _r_neta(tr, ex_cap) == pytest.approx(0.10)
+    assert _r_neta(tr, ex_risk) == pytest.approx(0.20)
+    # El locate esperado por accion se descuenta (solo cortos): 0,02 $/acc.
+    assert _r_neta(tr, ex_cap, locate_ps=0.02) == pytest.approx(0.09)
+    assert _r_neta(dict(tr, direction="Long"), ex_cap, locate_ps=0.02) == pytest.approx(0.10)
+
+
+def test_kelly_dimensiona_por_posicion_a_las_que_van_por_capital():
+    """Con tope por estrategia 1 % y una corrida por capital, Kelly pone 1 % del
+    capital del dia EN POSICION (200 $ a 2 $ = 100 acciones), no 1 % de riesgo
+    al stop aproximado (que a 1 $ de distancia serian 100 acc x 2 $ = 200 $
+    de nocional... y con stops lejanos, mucho mas)."""
+    import copy
+    base = _run_capital("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9)
+    base["trades"] = []
+    for k in range(60):
+        t = copy.deepcopy(_run_capital("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9)["trades"][0])
+        d = f"2026-{1 + k // 28:02d}-{1 + k % 28:02d}"
+        t["date"] = d; t["entry_time"] = f"{d} 04:10:00"; t["exit_time"] = f"{d} 04:30:00"
+        base["trades"].append(t)
+    cfg = {"capital": 20000.0, "cap_mode": "skip", "default_exec": {"sizing": "auto", "size_value": 1.0, "size_unit": "pct"},
+           "scaling": {"model": "kelly", "kelly_mult": 1.0, "cap_pct": 0.0, "cap_strategy_pct": 1.0, "rebalance": "M", "lookback_days": 30, "pct": 1.0}}
+    out = plr.simulate([base], cfg)
+    sc = out["scaling"]
+    assert sc["today"]["per_strategy"][0]["basis"] == "capital"
+    assert all(p["bases"] == ["capital"] for p in sc["periods"])
+    # Primer trade: 1 % de 20.000 = 200 $ en posicion a 2 $ = 100 acciones.
+    assert out["trades"]["size"][0] == pytest.approx(100.0, rel=1e-3)
+    assert out["trades"]["notional"][0] == pytest.approx(200.0, rel=1e-3)

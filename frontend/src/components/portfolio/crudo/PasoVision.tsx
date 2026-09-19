@@ -68,6 +68,19 @@ export function PasoVision({ m }: { m: VisionModel }) {
             {lr && lr.gate && <Stat label="Fuera por la puerta" value={n(lr.gate_out, 0)} sub="cortos cuyo EV no pagaba el locate" tone="warning" />}
           </div>
           {out.ruined && <Nota tone="loss">La cuenta llegó a cero antes del final: a partir de ahí no se abre ningún trade más.</Nota>}
+          {(() => {
+            // Locates que se comen el bruto (19-sep): con posiciones pequenas se
+            // paga el paquete de 100 entero por 30 acciones, y una estrategia
+            // ganadora sale perdedora sin que nada falle.
+            const bruto = out.per_strategy.reduce((a, p) => a + Math.max(0, p.totals.gross ?? 0), 0);
+            const loc = out.costs.locates || 0;
+            if (!(loc > 0) || !(bruto > 0) || loc / bruto < 0.5) return null;
+            return (
+              <Nota tone="warning">
+                Los locates se llevan el <strong>{n((loc / bruto) * 100, 0)} %</strong> del bruto ({usd(loc as number)} de {usd(bruto)}). Se paga el paquete de 100 acciones entero: con posiciones pequeñas (pocas acciones por trade) el alquiler pesa mucho más que en la corrida original, y una estrategia ganadora sale perdedora sin que nada falle. Sube el % por trade, quita el bloque de locates de la cuenta o mira la puerta por EV.
+              </Nota>
+            );
+          })()}
           {met.total_return_pct > 100000 && (
             <Nota tone="warning">Un R en % del capital compone cada día: con varios trades al día y PF &gt; 1 la cifra se dispara y deja de decir nada. Baja el %, ponlo en $ fijos, o acorta el periodo.</Nota>
           )}
