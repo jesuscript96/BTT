@@ -883,6 +883,14 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Acción: el bot AVISA (log + Telegram), protege la posición (R-C-10 caso 4) y SE PONE EN PAUSA de nuevas entradas hasta que un humano le diga «sigue» (comando de Telegram o botón del cuadro de mandos). Las posiciones propias siguen gestionándose. Esto resuelve el traspaso humano↔bot que estaba pendiente: la señal de «esto lo he hecho yo» es el propio «sigue».
 - Estado: FIJADA (Jaume, 19-sep). Origen: M6, K5, pendiente de R-C-10.
 
+### R-M-04 · Comandos de Telegram (lista acordada el 19-sep)
+- Solo desde los dos chat_id autorizados (Jaume y socio). Los de consulta van sin confirmación; los de acción sobre el bot con confirmación en dos pasos; los de acción sobre el mercado con «SI» explícito.
+- Consulta: /estado (encendido o pausado, posiciones por estrategia, PnL del día, últimos incidentes); /posiciones (cada lote: entrada, stop, take profit, PnL latente); /ordenes (órdenes vivas en DAS); /locates (comprados hoy, precio, usados o no, gasto frente al 3 %); /estrategias (activas, ventana, tamaño); /detalle id; /salud (conexiones Massive/DAS/servidor de órdenes, latido, latencia, reloj); /log n.
+- Acción sobre el bot: /pausar y /reanudar (no abrir nuevas); /sigue (tras intervención humana, R-M-03); /modo_seguridad on|off (R-I-04); /desactivar y /activar estrategia; /apagar («control humano») y /encender (arranca con reconciliación).
+- Acción sobre el mercado: /cerrar_todo SI; /cerrar ticker SI (ask para cortos, bid para largos); /cancelar_ordenes ticker SI (deja la posición sin órdenes vivas para actuar a mano); /stop ticker precio SI (mover el stop a mano).
+- **Coherencia tras un cierre por Telegram (Jaume, 19-sep):** cuando se cierra una posición o un lote por Telegram, el bot lo REGISTRA como cerrado y CANCELA todas las órdenes asociadas a ese lote (stops, take profits, escaleras) y desactiva sus salidas por hora: nunca ejecutar un take profit ni una salida por hora sobre una posición que ya no existe (compraría a mercado sin posición). Todo se comprueba contra la posición neta real de DAS (R-C-11).
+- Estado: FIJADA en su lista (Jaume, 19-sep); runbook borrador en docs/BOT_EJECUCION_RUNBOOK.md. Origen: M1, M5.
+
 **M7 (Jaume, 19-sep): el bot NO pide confirmación humana antes de operar; es autónomo dentro de sus reglas. Las primeras semanas se va con capital mínimo o en demo (se concreta en el área O).**
 **M8 (Jaume, 19-sep): día en que ni Jaume ni el socio pueden vigilar: se apaga el bot ese día o se pone en «modo trading de seguridad» (R-I-04).**
 

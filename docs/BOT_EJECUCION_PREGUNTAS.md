@@ -175,7 +175,7 @@
 - [x] J2. → R-J-01 (30 s prealerta, 60 s emergencia). Se corta Internet en casa: ¿4G de respaldo? ¿A partir de cuántos segundos sin feed se pasa a «no abrir, solo gestionar» y cuántos a «cerrar todo»?
 - [x] J3. → R-J-02 (aviso máximo, reconexión 2/4/8/16/30 s, aviso cada 5 min). Se cae la conexión bot↔DAS (socket local): ¿reconexión automática, cuántos intentos, qué pasa con las órdenes en vuelo? **[API]**
 - [x] J4. → R-J-02 (relanzar y reloguear; 2FA [API]). Se cae DAS (la aplicación): ¿el supervisor la relanza y reloguea sola? ¿Hay 2FA que lo impida? **[API]**
-- [ ] J5. Se cae Sage o el servidor de DAS: ¿teléfono del bróker, app móvil, plan de cierre manual? (runbook)
+- [x] J5. → runbook (teléfono del bróker, app, cierre manual). Se cae Sage o el servidor de DAS: ¿teléfono del bróker, app móvil, plan de cierre manual? (runbook)
 - [x] J6. → R-D-05 (precio de DAS para gestionar lo abierto). Se cae Massive: ¿fuente alternativa (L1 de DAS) solo para gestionar lo abierto?
 - [x] J7. → R-J-04 (relanzar cada 30 s, aviso). Se cae el bot (excepción): ¿supervisor, tiempo máximo caído, reconciliación al volver, aviso por Telegram?
 - [x] J8. → R-J-04 (10 s). Bot colgado sin morir (latido parado): ¿quién lo mata y lo relanza?
@@ -218,11 +218,11 @@
 
 ## M. Control humano y avisos
 
-- [ ] M1. Comandos de Telegram: `/estado`, `/pausar` (no abrir), `/cerrar_todo SI`, `/reanudar`. ¿Quién está autorizado (chat_id)? ¿Confirmación en dos pasos?
+- [x] M1. → R-M-04 (lista de comandos y coherencia tras cierre). Comandos de Telegram: `/estado`, `/pausar` (no abrir), `/cerrar_todo SI`, `/reanudar`. ¿Quién está autorizado (chat_id)? ¿Confirmación en dos pasos?
 - [x] M2. → R-M-01 (tres niveles). Qué se avisa (entradas, salidas, errores, reconciliación fallida, latido perdido) y qué no (prealertas). (M8)
 - [x] M3. → R-M-01 (resumen diario + comando detalle). ¿Silencio si todo va bien? ¿Resumen al cierre del día?
 - [x] M4. → R-M-02 (correo + SMS de pago por uso para el nivel Máximo). Si Telegram falla: ¿canal alternativo (correo, SMS)?
-- [ ] M5. Socio: qué puede hacer sin Jaume (pausar, apagar el VPS, cerrar todo en DAS) y runbook de una página.
+- [x] M5. → runbook borrador (docs/BOT_EJECUCION_RUNBOOK.md), definitivo al final. Socio: qué puede hacer sin Jaume (pausar, apagar el VPS, cerrar todo en DAS) y runbook de una página.
 - [x] M6. → R-M-03 (proteger, avisar, pausar entradas hasta «sigue»). Si un humano opera en DAS por RDP mientras el bot corre, ¿el bot lo detecta y se pausa?
 - [x] M7. → no; capital mínimo o demo al principio. ¿Se pide confirmación humana para algo (primera operación del día, tamaño mayor que X) o nunca?
 - [x] M8. → apagar ese día o modo de seguridad (R-I-04). Guardia: ¿alguien mira el premercado cada día? ¿Qué pasa si nadie puede?
