@@ -26,7 +26,7 @@
 - [x] A6. → R-J-07 (desvío > 2 s = no operar). ¿Qué pasa si el reloj del PC o del VPS se desvía? ¿Sincronización de hora obligatoria y comprobada al arrancar?
 - [x] A7. → R-A-04 (tabla de equivalencias diaria; si no casa, no se opera y avisa). ¿Qué se hace con una señal en un símbolo que DAS no reconoce igual (cambio de ticker, sufijos, ADR)?
 - [x] A8. → R-A-03 (Daily List de Nasdaq cada mañana; filtro del radar). ¿Puede la estrategia dar señal en un ticker con split o contrasplit ese día o el siguiente? ¿Cómo lo sabe el bot (Nasdaq Daily List)?
-- [ ] A9. Dos señales de la misma estrategia en el mismo minuto para el mismo ticker (duplicado por reconexión del feed): ¿cómo se detecta y cuál se ignora?
+- [x] A9. → R-A-05 (id estable heredado; repetidas se ignoran). Dos señales de la misma estrategia en el mismo minuto para el mismo ticker (duplicado por reconexión del feed): ¿cómo se detecta y cuál se ignora?
 - [x] A10. → tarea humana, sin regla. ¿El bot debe conocer eventos programados (FOMC, resultados, SEC) o eso es tarea humana antes de la sesión?
 - [x] A11. → R-A-03 (lista negra manual en el cuadro de mandos + exclusiones automáticas). ¿Hay lista negra de tickers a mano? ¿Quién la mantiene y cuándo se aplica (antes de la señal o al ejecutar)?
 - [x] A12. → R-A-04 (no operar hasta tener histórico; reintentar). Si la hidratación por REST al entrar al radar falla o llega incompleta, ¿se opera sin histórico o se espera a tenerlo?
