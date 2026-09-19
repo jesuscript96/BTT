@@ -1174,6 +1174,21 @@ export default function Home() {
         if (saved.result) setResult(saved.result);
         if (saved.jobId) jobIdRef.current = saved.jobId;
         if (saved.datasetId) datasetIdRef.current = saved.datasetId;
+        // LOS PARAMETROS DE LA CORRIDA (19-sep-2026). Sin esto, tras un F5 o al
+        // volver de otra pagina, el resultado revivia pero initCash/riskR/tipo
+        // de riesgo se quedaban en los valores por defecto (10.000, 100 $, sin
+        // tipo): el bloque de gastos fijos de Edge tomaba una corrida a 1 $ por
+        // operacion como si fuera a 100 $ y pedia 83 millones de capital para
+        // que los gastos fueran ruido; y el calendario en R dividia por la R
+        // equivocada. Un bug que no da error.
+        if (saved.backtestParams && typeof saved.backtestParams === "object") {
+          backtestParamsRef.current = saved.backtestParams;
+          const ic = Number(saved.backtestParams.init_cash);
+          const rr = Number(saved.backtestParams.risk_r);
+          if (Number.isFinite(ic) && ic > 0) initCashRef.current = ic;
+          if (Number.isFinite(rr) && rr > 0) riskRRef.current = rr;
+        }
+        if (saved.strategyId) strategyIdRef.current = saved.strategyId;
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
         }
@@ -1206,6 +1221,10 @@ export default function Home() {
       // Sin el dataset, tras un F5 loadCandles salia en silencio y el visor
       // decia «No hay velas para este trade» para TODOS los trades (18-sep).
       datasetId: datasetIdRef.current,
+      // Los parametros con los que se lanzo (capital, 1R, tipo de riesgo,
+      // gastos, locates...): las pestanas los necesitan tras un F5.
+      backtestParams: backtestParamsRef.current,
+      strategyId: strategyIdRef.current,
       activeStrategy,
       selectedDay,
       mode,
@@ -1220,6 +1239,8 @@ export default function Home() {
         // Fallback 1: Save result metadata and summary stats, but exclude trades as well
         const lightState = {
           result: lightweightResult ? { ...lightweightResult, trades: [], day_results: [] } : null,
+          backtestParams: backtestParamsRef.current,
+          strategyId: strategyIdRef.current,
           activeStrategy,
           selectedDay,
           mode,

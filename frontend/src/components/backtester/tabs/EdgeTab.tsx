@@ -142,11 +142,11 @@ function Cifra({ k, v, s, tono, ultima }: {
 }) {
   return (
     <div style={{
-      flex: 1, padding: "0 14px", minWidth: 0,
+      flex: 1, padding: "0 12px", minWidth: 0,
       borderRight: ultima ? undefined : `0.5px solid ${color.border}`,
     }}>
       <div style={{ fontSize: 10, letterSpacing: "0.07em", textTransform: "uppercase", color: color.textMuted }}>{k}</div>
-      <div style={{ ...num, textAlign: "left", fontSize: 20, color: tono || color.textHigh, marginTop: 2 }}>{v}</div>
+      <div style={{ ...num, textAlign: "left", fontSize: 18, color: tono || color.textHigh, marginTop: 2, whiteSpace: "nowrap" }}>{v}</div>
       {s && <div style={{ fontSize: 11, color: color.textSecondary, marginTop: 1 }}>{s}</div>}
     </div>
   );
@@ -170,13 +170,10 @@ const Seg = <T extends string>({ valor, opciones, onChange }: {
 );
 
 /**
- * Alto de un elemento y ancho de otro, en vivo.
- *
- * Hace falta para que el eje X de los dos gráficos caiga justo en la última
- * línea de la tabla de al lado. Un alto fijo no sirve: los SVG van a `width:
- * 100%` con `height: auto`, así que su alto renderizado sale del ancho de su
- * columna, y eso cambia con la ventana. Midiendo los dos se despeja el alto del
- * viewBox que hace que coincidan.
+ * Alto de la tabla, en vivo, para que el eje X de los dos gráficos de al lado
+ * caiga justo en su última línea. Los SVG se dibujan a tamaño real (1:1, ver
+ * `useAncho` en charts.tsx), así que el alto del viewBox es directamente el
+ * alto de la tabla en píxeles (acotado en `altoUtil`).
  */
 function useEncaje() {
   const refTabla = React.useRef<HTMLDivElement>(null);
@@ -201,9 +198,7 @@ function useEncaje() {
     return () => ro.disconnect();
   });
 
-  // Los SVG miden 460 de ancho en su viewBox: con este alto, el renderizado
-  // acaba midiendo exactamente lo que mide la tabla.
-  const h = medidas ? Math.max(150, Math.round((460 * medidas.alto) / medidas.ancho)) : undefined;
+  const h = medidas ? Math.max(150, medidas.alto) : undefined;
   return { refTabla, refGrafico, h };
 }
 
@@ -274,10 +269,17 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
   // (ver gastos.ts). Con riesgo fijo, `riskR` son los $ por operacion.
   const enPct = riskType === "PERCENT";
   const riesgo0 = enPct ? initCash * riskR / 100 : riskR;
+  // Una corrida a 1 $ por operacion (o cualquier cifra por debajo del 0,1 %
+  // del capital) es una UNIDAD DE MEDIDA para leer en R, no el riesgo real de
+  // Jaume: tomarla como «tu riesgo actual» (0,01 %) hacia que el capital para
+  // que los gastos fueran ruido saliera en decenas de millones. Se parte del
+  // 1 % y se avisa; la cifra se cambia en la casilla.
+  const pctCorrida = initCash > 0 && riskR > 0 ? (riskR / initCash) * 100 : 0;
+  const unidadDeMedida = !enPct && pctCorrida > 0 && pctCorrida < 0.1;
   const [gastos, setGastos] = useState(gastosPanel > 0 ? gastosPanel : 300);
   const [capital, setCapital] = useState(initCash > 0 ? initCash : 10_000);
   const [riesgoPct, setRiesgoPct] = useState(
-    enPct ? riskR : initCash > 0 && riskR > 0 ? Math.round((riskR / initCash) * 10000) / 100 : 1);
+    enPct ? riskR : unidadDeMedida ? 1 : pctCorrida > 0 ? Math.round(pctCorrida * 100) / 100 : 1);
   const [theta, setTheta] = useState<"5" | "10" | "20">("10");
   const th = Number(theta) / 100;
 
@@ -334,20 +336,25 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
   );
 
   const sinBruto = b.brutoMedio <= 0;
+  // La cuenta en R, que no depende de la unidad de la corrida: cuanto gana al
+  // mes en R, y cuanto tiene que valer 1 R para pagar los gastos.
+  const rMes = riesgo0 > 0 ? b.brutoMedio / riesgo0 : 0;
+  const rEqUsd = rMes > 0 ? gastos / rMes : 0;
+  const rRuidoUsd = rMes > 0 ? gastos / (th * rMes) : 0;
   return (
     <Bloque
       titulo="Gastos fijos: punto de equilibrio y umbral de ruido"
       ayuda={<Ayuda
         titulo="Gastos fijos: punto de equilibrio y umbral de ruido"
-        ves="Qué pasa con el beneficio mensual de esta misma corrida si cambias el capital o el riesgo por operación, descontando una cifra fija de gastos al mes. No se relanza nada: como el riesgo es fijo en dólares, el resultado de cada mes escala en proporción, y los meses son los reales de la corrida."
+        ves="Qué pasa con el beneficio mensual de esta misma corrida si cambias el capital o el riesgo por operación, descontando una cifra fija de gastos al mes. No se relanza nada: el resultado de cada mes escala en proporción al riesgo por operación, y los meses son los reales de la corrida. LA CUENTA, EN TRES PASOS: (1) la corrida gana X R al mes (su edge, sin unidades); (2) para pagar G $ de gastos, 1 R tiene que valer G / X $ (equilibrio) o G / (θ · X) $ para que sean «ruido» (θ = el % del bruto que aceptas que se lleven); (3) con un riesgo del r % por operación, el capital es (1 R) / r. «Riesgo» es lo que arriesgas al stop si dimensionas por stop; si dimensionas por capital, es el tamaño de la posición."
         ejemplo={u
           ? <>Con {eur(gastos)} al mes de gastos y {eur(capital)} de capital, el equilibrio está en un riesgo
               del <b>{f2(u.riesgoEquilibrioPct)} %</b> por operación (por debajo, pierdes aunque la estrategia gane).
               Para que los gastos sean ruido ({theta} % del bruto o menos) hace falta un <b>{f2(u.riesgoRuidoPct)} %</b>,
               y ese riesgo implica una caída máxima del <b>{f1(u.ddEnRuidoPct)} %</b> del capital. Al revés: con tu
               riesgo actual del {f2(riesgoPct)} %, el capital para que sean ruido es <b>{eur(u.capitalRuido)}</b>.</>
-          : <>Con 300 $ de gastos, 1 % de riesgo y una estrategia que hace 5 R al mes, el equilibrio son 6.000 $
-              de capital y el «ruido» (10 %) llega a los 60.000 $.</>}
+          : <>Con 300 $ de gastos, 1 % de riesgo y una estrategia que hace 5 R al mes: 1 R tiene que valer 60 $
+              para el equilibrio (6.000 $ de capital) y 600 $ para que sean ruido al 10 % (60.000 $).</>}
         sirve="Es la pregunta de si te puedes permitir la estrategia con tu cuenta. El edge es un porcentaje y escala con el capital; los gastos son una cifra y no. Con poco capital el bruto de un mes es del orden de los gastos, y un mes flojo es un mes en pérdidas aunque la estrategia sea buena: la columna «meses en pérdida» lo cuenta sobre los meses reales, no sobre la media."
         escenarios={[
           ["Tu fila «ahora» tiene los gastos en verde", "Ya son ruido: la estrategia es la que manda en tu resultado, no la factura."],
@@ -357,24 +364,27 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
           ["La posición se pone en ámbar", "A ese tamaño, en small caps, el backtest deja de ser creíble: no se llena al precio del histórico."],
         ]}
         nota={enPct
-          ? `la corrida usa riesgo en % del equity (${f2(riskR)} %), así que su PnL en $ compone y no sirve tal cual: aquí cada operación se pasa a lo que habría dado con un riesgo fijo de ${miles(Math.round(riesgo0))} $ (el del primer día) usando su retorno sobre el capital en riesgo. La escala es lineal desde ahí; en small caps deja de serlo con posiciones grandes.`
-          : riskType && riskType !== "FIXED"
-            ? `la corrida usa riesgo «${riskType}»: se toma como fijo de ${miles(Math.round(riskR))} $ por operación, y es una aproximación.`
-            : "los meses son los de la corrida (del primero al último con operaciones, contando los vacíos), y la escala es lineal: en small caps deja de serlo con posiciones grandes."}
+          ? `la corrida usa riesgo en % del equity (${f2(riskR)} %), así que su PnL en $ compone y no sirve tal cual: aquí cada operación se pasa a lo que habría dado con un riesgo fijo de ${miles(Math.round(riesgo0))} $ (el del primer día) usando su R (el PnL partido por el riesgo de ese día, que el motor calcula también con pirámides y parciales). La escala es lineal desde ahí; en small caps deja de serlo con posiciones grandes.`
+          : unidadDeMedida
+            ? `la corrida va a ${miles(Math.round(riskR * 100) / 100)} $ por operación: es una unidad de medida para leer en R, no un riesgo real (sería el ${f2(pctCorrida)} % del capital). Por eso aquí se parte de un 1 % de riesgo; cámbialo en la casilla.`
+            : riskType && riskType !== "FIXED"
+              ? `la corrida usa riesgo «${riskType}»: se toma como fijo de ${miles(Math.round(riskR))} $ por operación, y es una aproximación.`
+              : "los meses son los de la corrida (del primero al último con operaciones, contando los vacíos), y la escala es lineal: en small caps deja de serlo con posiciones grandes."}
       />}
       pie={sinBruto
         ? <>La estrategia <b style={{ color: color.loss }}>no gana ni sin gastos</b> (bruto medio {eur(b.brutoMedio)} al mes): no hay punto de equilibrio que buscar.</>
         : u && <>
-            Con <b>{eur(gastos)}</b>/mes y <b>{eur(capital)}</b>: equilibrio en el <b style={{ color: color.warning }}>{f2(u.riesgoEquilibrioPct)} %</b> de riesgo;
-            ruido (≤ {theta} %) a partir del <b style={{ color: color.copperBright }}>{f2(u.riesgoRuidoPct)} %</b>, que cuesta una caída máxima
-            del <b>{f1(u.ddEnRuidoPct)} %</b>. Con tu <b>{f2(riesgoPct)} %</b>: equilibrio con <b>{eur(u.capitalEquilibrio)}</b> y ruido con <b style={{ color: color.copperBright }}>{eur(u.capitalRuido)}</b>.
-            Bruto medio de la corrida: {eur(b.brutoMedio)}/mes a {eur(riesgo0)} por operación, {b.meses.length} meses.
+            La corrida gana <b>{f2(rMes)} R al mes</b> ({b.meses.length} meses; {eur(b.brutoMedio)}/mes a {eur(riesgo0)} por operación{enPct ? ", descompuesto" : ""}).
+            Para pagar <b>{eur(gastos)}</b>/mes, 1 R tiene que valer <b style={{ color: color.warning }}>{eur(rEqUsd)}</b> (equilibrio)
+            o <b style={{ color: color.copperBright }}>{eur(rRuidoUsd)}</b> para que sean ruido (≤ {theta} % del bruto).
+            Con <b>{eur(capital)}</b> eso es un riesgo del <b style={{ color: color.warning }}>{f2(u.riesgoEquilibrioPct)} %</b> / <b style={{ color: color.copperBright }}>{f2(u.riesgoRuidoPct)} %</b> por operación
+            (el de ruido cuesta una caída máxima del <b>{f1(u.ddEnRuidoPct)} %</b>); con tu <b>{f2(riesgoPct)} %</b>, un capital de <b>{eur(u.capitalEquilibrio)}</b> / <b style={{ color: color.copperBright }}>{eur(u.capitalRuido)}</b>.
           </>}
     >
       <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
         <Entrada etiqueta="Gastos fijos" valor={gastos} onChange={setGastos} sufijo="$/mes" paso={10} />
         <Entrada etiqueta="Capital" valor={capital} onChange={setCapital} sufijo="$" paso={1000} ancho={104} />
-        <Entrada etiqueta="Riesgo" valor={riesgoPct} onChange={setRiesgoPct} sufijo="% por op." paso={0.25} ancho={72} />
+        <Entrada etiqueta="Riesgo (o posición)" valor={riesgoPct} onChange={setRiesgoPct} sufijo="% por op." paso={0.25} ancho={72} />
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 11.5, color: color.textMuted }}>Son «ruido» si se llevan ≤</span>
           <Seg<"5" | "10" | "20"> valor={theta} onChange={setTheta}
@@ -385,7 +395,8 @@ function GastosFijos({ trades, riskR, initCash, gastosPanel, riskType }: {
 
       {!sinBruto && u && (
         <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, borderBottom: `0.5px solid ${color.border}`, padding: "10px 0", marginBottom: 12 }}>
-          <Cifra k="Bruto / mes en la corrida" v={eur(b.brutoMedio)} s={`a ${eur(riesgo0)} por operación${enPct ? " (descompuesto)" : ""}`} />
+          <Cifra k="La corrida gana" v={`${f2(rMes)} R / mes`} s={`${eur(b.brutoMedio)}/mes a ${eur(riesgo0)} por operación${enPct ? " (descompuesto)" : ""}`} />
+          <Cifra k="1 R para pagar los gastos" v={eur(rEqUsd)} s={`equilibrio · ruido con ${eur(rRuidoUsd)}`} tono={color.warning} />
           <Cifra k="Riesgo de equilibrio" v={`${f2(u.riesgoEquilibrioPct)} %`} s="neto = 0 con este capital" tono={color.warning} />
           <Cifra k="Riesgo para que sean ruido" v={`${f2(u.riesgoRuidoPct)} %`} s={`caída máxima ${f1(u.ddEnRuidoPct)} %`} tono={color.copperBright} />
           <Cifra k={`Capital para ruido al ${f2(riesgoPct)} %`} v={eur(u.capitalRuido)} s={`equilibrio con ${eur(u.capitalEquilibrio)}`} tono={color.copperBright} ultima />
@@ -608,7 +619,7 @@ export default function EdgeTab({ trades, datasetId = "", riskR = 0, initCash = 
                 </span>}
           </div>
         </div>
-        <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", rowGap: 12, borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
           <Cifra k="Operaciones" v={miles(trades.length)} s={`${res.length} periodos`} />
           <Cifra k="Periodos con muestra" v={`${res.length - flojos.length}`}
                  s={`de ${res.length} · mínimo ${MIN_OPS} ops`}
@@ -785,7 +796,7 @@ export default function EdgeTab({ trades, datasetId = "", riskR = 0, initCash = 
             const varOps = hist ? ((ult12 - hist) / hist) * 100 : 0;
             const varExp = expIni ? ((expAhora - expIni) / Math.abs(expIni)) * 100 : 0;
             return (
-              <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", rowGap: 12, borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
                 <Cifra k="Ops al mes" v={f1(ult12)} s={`histórico ${f1(hist)}`} />
                 <Cifra k="Varía la oportunidad" v={`${varOps >= 0 ? "+" : "−"}${f1(Math.abs(varOps))} %`}
                        s="últimos 12 meses" tono={varOps >= 0 ? color.profit : color.loss} />
@@ -884,9 +895,10 @@ export default function EdgeTab({ trades, datasetId = "", riskR = 0, initCash = 
         )}
       </Bloque>
 
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 12, marginTop: 12 }}>
+      {/* Tres bloques en fila (Jaume, 19-sep: gráficos pequeños, uno al lado del
+          otro y sin huecos): en pantallas estrechas el grid baja a dos o a uno. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))", gap: 12, marginTop: 12 }}>
         <Bloque
-          ancho="1 / -1"
           titulo="Recorrido a favor y en contra (MFE / MAE)"
           ayuda={<Ayuda
             titulo="Recorrido a favor y en contra"
@@ -925,7 +937,7 @@ export default function EdgeTab({ trades, datasetId = "", riskR = 0, initCash = 
             const dMae = primero.maeP[1] ? ((ultimo.maeP[1] - primero.maeP[1]) / primero.maeP[1]) * 100 : 0;
             const dR = rAntes ? ((rAhora - rAntes) / rAntes) * 100 : 0;
             return (
-              <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", rowGap: 12, borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
                 <Cifra k="A favor" v={`${f1(ultimo.mfeP[1])} %`}
                        s={`${dMfe >= 0 ? "+" : "−"}${f1(Math.abs(dMfe))} % desde ${primero.periodo}`}
                        tono={dMfe >= 0 ? color.profit : color.loss} />
@@ -980,7 +992,7 @@ export default function EdgeTab({ trades, datasetId = "", riskR = 0, initCash = 
                   <>
                     <Piruleta sufijo=" min" titulo="minutos desde la entrada hasta el mejor momento"
                               filas={ps.map((p) => ({ etiqueta: p, p: rec.tiempo_mfe[p].p }))} />
-                    <div style={{ display: "flex", borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", rowGap: 12, borderTop: `0.5px solid ${color.border}`, marginTop: 12, paddingTop: 12 }}>
                       <Cifra k="Ahora" v={`${f1(b.p[1])} min`} s={`la mitad tarda menos`} />
                       <Cifra k={`En ${ps[0]}`} v={`${f1(a.p[1])} min`} s="mediana" />
                       <Cifra k="Diferencia" v={`${d <= 0 ? "−" : "+"}${f1(Math.abs(d))} min`}

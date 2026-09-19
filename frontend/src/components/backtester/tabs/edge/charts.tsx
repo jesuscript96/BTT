@@ -23,11 +23,45 @@ const T = {
   wa: color.warning, surf: color.bgSurface, elev: color.bgElevated,
 };
 
-const Svg = ({ w, h, children }: { w: number; h: number; children: React.ReactNode }) => (
-  <svg viewBox={`0 0 ${w} ${h}`} role="img"
-       style={{ display: "block", width: "100%", height: "auto", fontFamily: font.sans }}>
-    {children}
-  </svg>
+/**
+ * Ancho REAL del contenedor, en píxeles, para dibujar el SVG a tamaño 1:1.
+ *
+ * Hasta el 19-sep-2026 los SVG llevaban un viewBox fijo (460 de ancho) y
+ * `width: 100%`: el navegador escalaba el dibujo ENTERO con el ancho de la
+ * columna, y en un bloque a ancho completo de un monitor grande las letras
+ * salían a 25-30 px y un gráfico ocupaba media pantalla («enormes», Jaume;
+ * y con 33 meses las etiquetas del eje X se pisaban). Ahora el ancho del
+ * viewBox ES el ancho del contenedor y el alto es fijo: las letras miden
+ * siempre lo mismo y el eje X gana sitio con la pantalla en vez de
+ * amontonarse. Antes de medir se dibuja con el ancho por defecto.
+ */
+export function useAncho(defecto = 460): [React.RefObject<HTMLDivElement | null>, number] {
+  const ref = React.useRef<HTMLDivElement | null>(null);
+  const [w, setW] = React.useState(defecto);
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const medir = () => {
+      const x = Math.round(el.getBoundingClientRect().width);
+      if (x > 40) setW((p) => (Math.abs(p - x) < 1 ? p : x));
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w];
+}
+
+const Svg = ({ w, h, refDiv, children }: {
+  w: number; h: number; refDiv?: React.RefObject<HTMLDivElement | null>; children: React.ReactNode;
+}) => (
+  <div ref={refDiv} style={{ width: "100%", minWidth: 0 }}>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img"
+         style={{ display: "block", maxWidth: "100%", fontFamily: font.sans }}>
+      {children}
+    </svg>
+  </div>
 );
 const Txt = ({ x, y, children, fill = T.sec, fs = 10.5, ta = "middle" as const, w, mono }:
   { x: number; y: number; children: React.ReactNode; fill?: string; fs?: number;
@@ -47,6 +81,10 @@ function saltoEtiquetas(n: number, anchoPorItem: number, minPx = 32): number {
   if (n <= 1 || anchoPorItem >= minPx) return 1;
   return Math.ceil(minPx / Math.max(1, anchoPorItem));
 }
+/** El sitio que necesita la etiqueta mas larga (mono de 10 px: ~6,2 px por
+ *  caracter) mas un hueco, para que «2024 T1» no se pise con «2024 T2». */
+const anchoEtiquetas = (etiquetas: string[]) =>
+  Math.max(32, Math.max(0, ...etiquetas.map((e) => e.length)) * 6.2 + 8);
 const tocaEtiqueta = (i: number, n: number, salto: number) => (n - 1 - i) % salto === 0;
 
 /**
@@ -85,7 +123,8 @@ export function Forest({ filas, unidad, leyenda, extremos, h }: {
    *  renderizado depende del ancho de la columna. */
   h?: number;
 }) {
-  const W = 460, H = altoUtil(h, filas.length), L = 78, R = 20, Tp = 24, B = 46;
+  const [refW, W] = useAncho(460);
+  const H = altoUtil(h, filas.length), L = 78, R = 20, Tp = 24, B = 46;
   const vals = filas.flatMap((f) => [f.lo, f.hi, 0]);
   const min = Math.min(...vals), max = Math.max(...vals);
   const pad = (max - min) * 0.12 || 0.1;
@@ -93,7 +132,7 @@ export function Forest({ filas, unidad, leyenda, extremos, h }: {
   const X = (v: number) => L + ((v - lo) / (hi - lo)) * (W - L - R);
   const ticks = [0, 1, 2, 3, 4].map((k) => lo + ((hi - lo) * k) / 4);
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {ticks.map((v, i) => (
         <React.Fragment key={i}>
           <line x1={X(v)} y1={Tp} x2={X(v)} y2={H - B} stroke={T.bd} strokeWidth={1} strokeDasharray="2 3" />
@@ -145,14 +184,15 @@ export function Descomposicion({ filas, h }: {
   /** Igual que en `Forest`: alto del viewBox impuesto para cuadrar con la tabla. */
   h?: number;
 }) {
-  const W = 460, H = altoUtil(h, filas.length), L = 26, R = 26, Tp = 24, B = 46;
+  const [refW, W] = useAncho(460);
+  const H = altoUtil(h, filas.length), L = 26, R = 26, Tp = 24, B = 46;
   if (!filas.length) return null;
   const max = Math.max(...filas.flatMap((f) => [f.aporta, f.resta])) * 1.12 || 1;
   const cx = L + (W - L - R) / 2;
   const X = (v: number) => cx + (v / max) * ((W - L - R) / 2);
   const alto = 13;
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[-1, -0.5, 0.5, 1].map((k, i) => (
         <React.Fragment key={i}>
           <line x1={X(max * k)} y1={Tp} x2={X(max * k)} y2={H - B}
@@ -186,14 +226,15 @@ export function Descomposicion({ filas, h }: {
 export function Barras({ filas, sufijo, titulo }: {
   filas: { etiqueta: string; v: number; nota?: string }[]; sufijo: string; titulo: string;
 }) {
-  const W = 460, H = 206, L = 40, R = 14, Tp = 24, B = 42;
+  const [refW, W] = useAncho(460);
+  const H = 206, L = 40, R = 14, Tp = 24, B = 42;
   const max = Math.max(1, ...filas.map((f) => f.v)) * 1.15;
   const paso = (W - L - R) / Math.max(1, filas.length);
   const Y = (v: number) => H - B - (v / max) * (H - B - Tp);
   const ancho = Math.min(46, paso * 0.62);
-  const salto = saltoEtiquetas(filas.length, paso);
+  const salto = saltoEtiquetas(filas.length, paso, anchoEtiquetas(filas.map((f) => f.etiqueta)));
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[0, 0.25, 0.5, 0.75, 1].map((p, i) => (
         <Rejilla key={i} x1={L} x2={W - R} y={Y(max * p)} lx={L - 7}
                  label={f1(max * p) + sufijo} />
@@ -232,7 +273,8 @@ export function Barras({ filas, sufijo, titulo }: {
 
 export function Mensual({ serie, unidad }: { serie: PuntoMes[]; unidad: string }) {
   // Igual que en Excursiones: abajo hay dos filas de texto, hace falta hueco.
-  const W = 620, H = 242, L = 40, R = 44, Tp = 18, B = 44;
+  const [refW, W] = useAncho(620);
+  const H = 242, L = 40, R = 44, Tp = 18, B = 44;
   if (serie.length < 2) return null;
   const n = serie.length, bw = (W - L - R) / n;
   const maxO = Math.max(...serie.map((p) => p.ops)) * 1.15 || 1;
@@ -250,7 +292,7 @@ export function Mensual({ serie, unidad }: { serie: PuntoMes[]; unidad: string }
   const anios = new Map<string, number>();
   serie.forEach((p, i) => { const a = p.mes.slice(0, 4); if (!anios.has(a)) anios.set(a, i); });
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[0, 0.5, 1].map((k, i) => {
         const v = (elo - pad) + (ehi + pad - (elo - pad)) * k;
         return <Rejilla key={i} x1={L} x2={W - R} y={Y2r(v)} lx={W - R + 6} ta="start" label={f2(v)} />;
@@ -289,18 +331,19 @@ export function Excursiones({ filas }: {
 }) {
   // B grande a proposito: abajo van DOS filas de texto (los periodos y el pie),
   // y con el margen de antes se pisaban.
-  const W = 460, H = 232, L = 40, R = 14, Tp = 18, B = 44;
+  const [refW, W] = useAncho(460);
+  const H = 232, L = 40, R = 14, Tp = 18, B = 44;
   const max = Math.max(...filas.flatMap((f) => [f.mfeP[3], f.maeP[3]])) * 1.12 || 1;
   const paso = (W - L - R) / Math.max(1, filas.length);
   const Y = (v: number) => H - B - (v / max) * (H - B - Tp);
-  const salto = saltoEtiquetas(filas.length, paso);
+  const salto = saltoEtiquetas(filas.length, paso, anchoEtiquetas(filas.map((f) => f.etiqueta)));
   const cx = (i: number) => L + paso * i + paso / 2;
   // Las cajas sueltas no dejan ver la TENDENCIA, que es justo lo que se busca:
   // dos lineas por las medianas y el encogimiento salta a la vista.
   const linea = (sel: (f: typeof filas[number]) => number[], off: number) =>
     "M" + filas.map((f, i) => `${cx(i) + off} ${Y(sel(f)[1])}`).join(" L ");
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[0, 0.25, 0.5, 0.75, 1].map((p, i) => (
         <Rejilla key={i} x1={L} x2={W - R} y={Y(max * p)} lx={L - 7} label={f1(max * p) + " %"} />
       ))}
@@ -345,7 +388,8 @@ export function Barrido({ series, todas, unidad, ejeX, marcaActual }: {
   todas?: string[];
   unidad: string; ejeX: string; marcaActual?: number | null;
 }) {
-  const W = 460, H = 235, L = 46, R = 16, Tp = 20, B = 40;
+  const [refW, W] = useAncho(460);
+  const H = 235, L = 46, R = 16, Tp = 20, B = 40;
   const orden = todas ?? series.map((s) => s.etiqueta);
   const todos = series.flatMap((s) => s.puntos.map((p) => p.v));
   if (!todos.length) return null;
@@ -356,7 +400,7 @@ export function Barrido({ series, todas, unidad, ejeX, marcaActual }: {
   const X = (x: number) => L + ((x - x0) / (x1 - x0)) * (W - L - R);
   const Y = (v: number) => H - B - ((v - lo) / (hi - lo)) * (H - B - Tp);
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[0, 0.25, 0.5, 0.75, 1].map((k, i) => {
         const v = lo + (hi - lo) * k;
         return <Rejilla key={i} x1={L} x2={W - R} y={Y(v)} lx={L - 7} label={sgn(v, 2)} />;
@@ -413,7 +457,8 @@ export function CurvaMarginal({ series, todas, unidad, marcas }: {
 }) {
   // Tp deja hueco arriba para la cajita de A/B, que sube 17 px si se juntan.
   // W grande y H contenido: es una serie temporal, necesita ancho, no alto.
-  const W = 1100, H = 300, L = 54, R = 22, Tp = 46, B = 44;
+  const [refW, W] = useAncho(1100);
+  const H = 300, L = 54, R = 22, Tp = 46, B = 44;
   const todos = series.flatMap((s) => s.puntos);
   if (todos.length < 2) return null;
   const m0 = Math.min(...todos.map((p) => p.m)), m1 = Math.max(...todos.map((p) => p.m));
@@ -426,7 +471,7 @@ export function CurvaMarginal({ series, todas, unidad, marcas }: {
   const ticks: number[] = [];
   for (let m = Math.ceil(m0 / salto) * salto; m <= m1; m += salto) ticks.push(m);
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[0, 0.25, 0.5, 0.75, 1].map((k, i) => {
         const v = lo + (hi - lo) * k;
         return <Rejilla key={i} x1={L} x2={W - R} y={Y(v)} lx={L - 9} label={sgn(v, 2)} />;
@@ -486,13 +531,14 @@ export function CurvaMarginal({ series, todas, unidad, marcas }: {
 export function Piruleta({ filas, sufijo, titulo }: {
   filas: { etiqueta: string; p: number[] }[]; sufijo: string; titulo: string;
 }) {
-  const W = 460, H = 205, L = 42, R = 16, Tp = 26, B = 30;
+  const [refW, W] = useAncho(460);
+  const H = 205, L = 42, R = 16, Tp = 26, B = 30;
   const max = Math.max(...filas.flatMap((f) => f.p)) * 1.15 || 1;
   const paso = (W - L - R) / Math.max(1, filas.length);
   const Y = (v: number) => H - B - (v / max) * (H - B - Tp);
-  const salto = saltoEtiquetas(filas.length, paso);
+  const salto = saltoEtiquetas(filas.length, paso, anchoEtiquetas(filas.map((f) => f.etiqueta)));
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[0, 0.25, 0.5, 0.75, 1].map((k, i) => (
         <Rejilla key={i} x1={L} x2={W - R} y={Y(max * k)} lx={L - 7} label={f1(max * k)} />
       ))}
@@ -524,7 +570,8 @@ export function Piruleta({ filas, sufijo, titulo }: {
 export function Histograma({ hist, actual, p95, unidad, pie }: {
   hist: { c: number; n: number }[]; actual: number; p95: number; unidad: string; pie?: string;
 }) {
-  const W = 460, H = 244, L = 30, R = 16, Tp = 30, B = 44;
+  const [refW, W] = useAncho(460);
+  const H = 244, L = 30, R = 16, Tp = 30, B = 44;
   if (!hist.length) return null;
   const min = hist[0].c, max = hist[hist.length - 1].c;
   const span = max - min || 1;
@@ -533,7 +580,7 @@ export function Histograma({ hist, actual, p95, unidad, pie }: {
   const Y = (n: number) => H - B - (n / (maxN * 1.2)) * (H - B - Tp);
   const bw = (W - L - R) / hist.length;
   return (
-    <Svg w={W} h={H}>
+    <Svg w={W} h={H} refDiv={refW}>
       {[0, 0.25, 0.5, 0.75, 1].map((k, i) => {
         const v = min + span * k;
         return (
