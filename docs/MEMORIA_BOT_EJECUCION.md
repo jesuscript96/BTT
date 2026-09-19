@@ -739,17 +739,20 @@ que los ≈ 56 $ estimados con `get_cost` (la estimación cobra por rango pedido
 que esté escrito con número en `docs/BOT_EJECUCION_REGLAS.md`.
 
 **Fase actual (desde el 12-sep): diseño de reglas.** Banco de preguntas en
-`docs/BOT_EJECUCION_PREGUNTAS.md`; se contesta por áreas y cada respuesta pasa
-al libro de reglas. Al 18-sep (noche): hechas C, F, I, B, H, D, E y J (salvo lo
-del PDF); G3 pendiente con propuesta; estudio P12 HECHO (libro NBBO, 0,80 $):
-entrada al bid si < 3 %, escalera 1/2/3 % en 60 s, tope 3 %; stops: principal
-+3 % y emergencia a +10 %/+50 %, limpieza estricta. **SIGUIENTE: área K (estado y
-reconciliación: K1 cada cuánto, K5 cuenta compartida con operaciones manuales,
-K11 reconciliación que falla), luego A, L, M, N, O, P, Q y el repaso final de
-pendientes.** Pendientes de decisión al final: G3, excedente de locates 20 %,
-recompra de locates si el precio se mueve, tope de volumen, techo de «cerrar
-todo», latencia (J18), canal alternativo a Telegram (M4), traspaso humano↔bot,
-vuelta del cisne negro (qué hacer tras la espera de media hora, con datos), reponer stop si sigue corto, comprar SAI, qué hacer con acciones en OPA (A14), diseño del «modo trading de seguridad» (R-I-04: interruptor que bloquea entradas por float / market cap / precio).
+`docs/BOT_EJECUCION_PREGUNTAS.md`; libro en `docs/BOT_EJECUCION_REGLAS.md`; runbook
+borrador en `docs/BOT_EJECUCION_RUNBOOK.md`. **Al 19-sep: TODAS las áreas (A-Q)
+recorridas.** Quedan 42 preguntas abiertas: 28 del PDF del bróker y 14 del REPASO
+FINAL con datos. 19-sep: apareció el manual del CMD API de DAS (rev. 2021, en el
+repo das-bridge, solo contexto, a cotejar con el oficial) → apartado 2b del libro;
+reglas de margen de Sage → apartado 2c (el capital libre es MARGEN, no nominal;
+corto máx. 1× equity, 0,5× en «alto riesgo»; autoliquidación solo en RTH).
+**SIGUIENTE (20-sep): bloque G, cisne negro y squeeze, con los datos que ya hay**
+(G1, G2, G3, G4, G6, G7, G10); luego el resto del repaso final: reponer stop si
+sigue corto, plan B de R-C-07, excedente de locates 20 % y recompra, tiempos de la
+escalera y ruta, tope de volumen, norma de OPAs, latencia J18, techo de «cerrar
+todo», modo trading de seguridad (R-I-04: >5 $, >2 M $ acumulados), fases y
+sesiones de sombra/demo/canario, cuadro de mandos, comprar SAI. Con el PDF: cotejar
+2b, las 28 [API] del apartado R, margen de Sage, y las reglas «a repreguntar».
 Datos de halts subidos a `alvaro-rama-desarrollo` (8357ff3) por petición de Jaume.
 
 | # | Pendiente | Estado |
