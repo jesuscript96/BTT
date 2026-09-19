@@ -1270,6 +1270,27 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     no_stop = [0] * n                  # escalado: sin stop -> no se puede dimensionar por riesgo
     no_weight = [0] * n                # escalado: peso 0 (no viva / Kelly a 0)
 
+    # ── Estado de los TOPES (exposicion, margen, por accion), que persiste
+    # entre dias: una posicion abierta sigue ocupando sitio hasta su salida.
+    # Se aplican DENTRO de cada dia, en orden cronologico, ANTES de locates y
+    # de acumular (19-sep): lo que no cabe no existe, y no paga nada.
+    from app.services.margen import requisito_por_accion as _req_ps
+    open_heap: list[tuple[float, float]] = []
+    exposure = 0.0
+    day_peak: dict[str, float] = {}
+    day_peak_n: dict[str, int] = {}
+    open_heap_m: list[tuple[float, float]] = []
+    usado_m = 0.0
+    day_peak_m: dict[str, float] = {}
+    open_tk: dict[str, list[tuple[float, float]]] = {}
+    used_tk: dict[str, float] = {}
+    ticker_sin_stop = 0
+    skipped_by_i = [0] * n
+    trimmed_by_i = [0] * n
+    margin_skipped = margin_trimmed = 0
+    ticker_skipped = ticker_trimmed = 0
+    equity_open_by_day: dict[str, float] = {}
+
     for d in calendar:
         month = d[:7]
         expense = 0.0
@@ -1379,11 +1400,103 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     "budget_basis": ("notional" if sizing == "capital" else ("risk" if (esc is not None or sizing == "risk" or (sizing == "as_saved" and risk_new > 0)) else "notional")),
                 })
 
+        # a2) TOPES, en orden cronologico del dia: exposicion (nocional abierto
+        #     a la vez), margen del broker y tope por accion. El que no cabe se
+        #     salta o se recorta (cap_mode) AQUI, antes de locates y de
+        #     acumular: no paga alquiler ni cuenta para nada.
+        dia.sort(key=lambda a: (a["tr"]["t0"], a["si"]))
+        equity_open_by_day[d] = equity_open
+        cap_day = (equity_open * cap_pct / 100.0) if cap_pct > 0 else cap
+        capacidad_m = equity_open * margin_cap_pct / 100.0
+        cap_tk_dia = equity_open * ticker_cap_pct / 100.0
+        for a in dia:
+            tr = a["tr"]
+            t0, t1 = tr["t0"], tr["t1"]
+            while open_heap and open_heap[0][0] <= t0:
+                _, freed = heapq.heappop(open_heap)
+                exposure -= freed
+            if exposure < 1e-9:
+                exposure = 0.0
+            while open_heap_m and open_heap_m[0][0] <= t0:
+                _, freed_m = heapq.heappop(open_heap_m)
+                usado_m -= freed_m
+            if usado_m < 1e-9:
+                usado_m = 0.0
+            take = a["notional"]
+            f_ok = 1.0
+            if cap_day > 0 and exposure + take > cap_day + 1e-9:
+                free = cap_day - exposure
+                f_ok = min(f_ok, (free / a["notional"]) if (trim and free > 1e-9 and a["notional"] > 0) else 0.0)
+            take_m = 0.0
+            if margin_on:
+                es_corto = tr["direction"].startswith("S")
+                take_m = _req_ps(tr["entry"], es_corto, margin_broker) * a["size"]
+                if capacidad_m > 0 and usado_m + take_m > capacidad_m + 1e-9:
+                    free_m = capacidad_m - usado_m
+                    f_ok = min(f_ok, (free_m / take_m) if (trim and free_m > 1e-9 and take_m > 0) else 0.0)
+                    a["margin_hit"] = True
+            take_t = 0.0
+            if ticker_on:
+                tk = tr["ticker"]
+                h_tk = open_tk.setdefault(tk, [])
+                while h_tk and h_tk[0][0] <= t0:
+                    _, freed_t = heapq.heappop(h_tk)
+                    used_tk[tk] = used_tk.get(tk, 0.0) - freed_t
+                if used_tk.get(tk, 0.0) < 1e-9:
+                    used_tk[tk] = 0.0
+                if ticker_basis == "trade":
+                    _b = str(a.get("budget_basis") or "risk")
+                    take_t = a["notional"] if _b == "notional" else float(a.get("risk") or 0.0)
+                    cap_tk = float(a.get("budget") or 0.0)
+                else:
+                    take_t = a["notional"] if ticker_basis == "notional" else float(a.get("risk") or 0.0)
+                    cap_tk = cap_tk_dia
+                if ticker_basis != "notional" and take_t <= 0:
+                    ticker_sin_stop += 1
+                if cap_tk > 0 and take_t > 0 and used_tk[tk] + take_t > cap_tk + 1e-9:
+                    free_t = cap_tk - used_tk[tk]
+                    f_ok = min(f_ok, (free_t / take_t) if (trim and free_t > 1e-9) else 0.0)
+                    a["ticker_hit"] = True
+            if f_ok <= 0.0:
+                a["skipped"] = True
+                skipped_by_i[a["si"]] += 1
+                if a.get("margin_hit"):
+                    margin_skipped += 1
+                if a.get("ticker_hit"):
+                    ticker_skipped += 1
+                continue
+            if f_ok < 1.0:
+                for k in ("size", "notional", "gross", "fee", "slip", "net", "risk"):
+                    a[k] *= f_ok
+                a["trimmed"] = True
+                trimmed_by_i[a["si"]] += 1
+                if a.get("margin_hit"):
+                    margin_trimmed += 1
+                if a.get("ticker_hit"):
+                    ticker_trimmed += 1
+                take *= f_ok
+                take_m *= f_ok
+                take_t *= f_ok
+            if ticker_on:
+                heapq.heappush(open_tk[tr["ticker"]], (t1, take_t))
+                used_tk[tr["ticker"]] = used_tk.get(tr["ticker"], 0.0) + take_t
+            heapq.heappush(open_heap, (t1, take))
+            exposure += take
+            if exposure > day_peak.get(d, 0.0):
+                day_peak[d] = exposure
+            if len(open_heap) > day_peak_n.get(d, 0):
+                day_peak_n[d] = len(open_heap)
+            if margin_on:
+                heapq.heappush(open_heap_m, (t1, take_m))
+                usado_m += take_m
+                if usado_m > day_peak_m.get(d, 0.0):
+                    day_peak_m[d] = usado_m
+        dia = [a for a in dia if not a.get("skipped")]
+
         # b) Locates, en orden de entrada del dia. Compartidos: UN alquiler por
         #    ticker-dia para toda la cuenta sobre el maximo en corto A LA VEZ
         #    (una que cubre libera; la siguiente cabe gratis). Puerta por EV:
         #    entra si el EV en sombra de SU estrategia paga los paquetes DE MAS.
-        dia.sort(key=lambda a: (a["tr"]["t0"], a["si"]))
         loc_by_i = [0.0] * n
         if shared:
             mode, cost, lo, hi, seed = loc_of(0)
@@ -1538,157 +1651,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         daily_pnl.append(day_total)
         daily_ret.append(day_total / equity_open if equity_open > 0 else 0.0)
 
-    # ── 3. Exposicion: barrido cronologico AL MINUTO de todos los trades ──
-    # (con tope opcional: se aplica sobre el tamano ya decidido; un trade que
-    # no cabe se marca y despues se descuenta de las series)
+    # ── 3. Los topes ya se aplicaron dentro de cada dia (a2). Totales para el informe.
     accepted.sort(key=lambda a: (a["t0"], a["date"]))
-    equity_open_by_day = {d: (capital if k == 0 else equity_curve[k - 1]) for k, d in enumerate(calendar)}
-    open_heap: list[tuple[float, float]] = []
-    exposure = 0.0
-    day_peak: dict[str, float] = {}
-    day_peak_n: dict[str, int] = {}
-    # Margen: su propio contador de lo abierto (exigencia, no nocional) y el
-    # pico del dia en % de la capacidad, para el informe.
-    from app.services.margen import requisito_por_accion as _req_ps
-    open_heap_m: list[tuple[float, float]] = []
-    usado_m = 0.0
-    day_peak_m: dict[str, float] = {}
-    # Tope por accion: un contador de lo abierto POR TICKER (riesgo o nocional).
-    open_tk: dict[str, list[tuple[float, float]]] = {}
-    used_tk: dict[str, float] = {}
-    ticker_sin_stop = 0
-    for a in accepted:
-        while open_heap and open_heap[0][0] <= a["t0"]:
-            _, freed = heapq.heappop(open_heap)
-            exposure -= freed
-        if exposure < 1e-9:
-            exposure = 0.0
-        while open_heap_m and open_heap_m[0][0] <= a["t0"]:
-            _, freed_m = heapq.heappop(open_heap_m)
-            usado_m -= freed_m
-        if usado_m < 1e-9:
-            usado_m = 0.0
-        take = a["notional"]
-        cap_day = (equity_open_by_day.get(a["date"], capital) * cap_pct / 100.0) if cap_pct > 0 else cap
-        # Factor de recorte que dejan el tope de exposicion y el margen (el
-        # menor de los dos); 0 = no cabe.
-        f_ok = 1.0
-        if cap_day > 0 and exposure + take > cap_day + 1e-9:
-            free = cap_day - exposure
-            f_ok = min(f_ok, (free / a["notional"]) if (trim and free > 1e-9 and a["notional"] > 0) else 0.0)
-        take_m = 0.0
-        if margin_on:
-            es_corto = str(a.get("dir") or "").upper().startswith("S")
-            take_m = _req_ps(a["entry_px"], es_corto, margin_broker) * a["size"]
-            capacidad = equity_open_by_day.get(a["date"], capital) * margin_cap_pct / 100.0
-            if capacidad > 0 and usado_m + take_m > capacidad + 1e-9:
-                free_m = capacidad - usado_m
-                f_ok = min(f_ok, (free_m / take_m) if (trim and free_m > 1e-9 and take_m > 0) else 0.0)
-                a["margin_hit"] = True
-        take_t = 0.0
-        if ticker_on:
-            tk = a["ticker"]
-            h_tk = open_tk.setdefault(tk, [])
-            while h_tk and h_tk[0][0] <= a["t0"]:
-                _, freed_t = heapq.heappop(h_tk)
-                used_tk[tk] = used_tk.get(tk, 0.0) - freed_t
-            if used_tk.get(tk, 0.0) < 1e-9:
-                used_tk[tk] = 0.0
-            if ticker_basis == "trade":
-                # El tope es lo que arriesga UN trade de la estrategia que entra.
-                _b = str(a.get("budget_basis") or "risk")
-                take_t = a["notional"] if _b == "notional" else float(a.get("risk") or 0.0)
-                cap_tk = float(a.get("budget") or 0.0)
-            else:
-                take_t = a["notional"] if ticker_basis == "notional" else float(a.get("risk") or 0.0)
-                cap_tk = equity_open_by_day.get(a["date"], capital) * ticker_cap_pct / 100.0
-            if ticker_basis != "notional" and take_t <= 0:
-                # Sin stop no hay riesgo que medir: no consume ni se topa (se cuenta).
-                ticker_sin_stop += 1
-            if cap_tk > 0 and take_t > 0 and used_tk[tk] + take_t > cap_tk + 1e-9:
-                free_t = cap_tk - used_tk[tk]
-                f_ok = min(f_ok, (free_t / take_t) if (trim and free_t > 1e-9) else 0.0)
-                a["ticker_hit"] = True
-        if f_ok <= 0.0:
-            a["skipped"] = True
-            continue
-        if f_ok < 1.0:
-            for k in ("size", "notional", "pnl", "fees", "slip", "risk"):
-                a[k] *= f_ok
-            a["trimmed"] = True
-            take *= f_ok
-            take_m *= f_ok
-            take_t *= f_ok
-        if ticker_on:
-            heapq.heappush(open_tk[a["ticker"]], (a["t1"], take_t))
-            used_tk[a["ticker"]] = used_tk.get(a["ticker"], 0.0) + take_t
-        heapq.heappush(open_heap, (a["t1"], take))
-        exposure += take
-        if exposure > day_peak.get(a["date"], 0.0):
-            day_peak[a["date"]] = exposure
-        if len(open_heap) > day_peak_n.get(a["date"], 0):
-            day_peak_n[a["date"]] = len(open_heap)
-        if margin_on:
-            heapq.heappush(open_heap_m, (a["t1"], take_m))
-            usado_m += take_m
-            if usado_m > day_peak_m.get(a["date"], 0.0):
-                day_peak_m[a["date"]] = usado_m
-    skipped = sum(1 for a in accepted if a.get("skipped"))
-    trimmed = sum(1 for a in accepted if a.get("trimmed"))
-    margin_skipped = sum(1 for a in accepted if a.get("skipped") and a.get("margin_hit"))
-    margin_trimmed = sum(1 for a in accepted if a.get("trimmed") and a.get("margin_hit"))
-    ticker_skipped = sum(1 for a in accepted if a.get("skipped") and a.get("ticker_hit"))
-    ticker_trimmed = sum(1 for a in accepted if a.get("trimmed") and a.get("ticker_hit"))
-    # Por estrategia, ANTES de filtrar los saltados (abajo se quitan de
-    # `accepted`, y contarlos despues daba siempre 0).
-    skipped_by_i = [sum(1 for a in accepted if a["si"] == i and a.get("skipped")) for i in range(n)]
-    trimmed_by_i = [sum(1 for a in accepted if a["si"] == i and a.get("trimmed")) for i in range(n)]
-    if skipped or trimmed:
-        # Recomponer las series sin los saltados y con los recortados (los
-        # locates del dia se mantienen: el tope es un extra, no se afina).
-        idx_day = {d: k for k, d in enumerate(calendar)}
-        per_pnl = [[-per_locates[i][k] for k in range(len(calendar))] for i in range(n)]
-        per_trades = [[0] * len(calendar) for _ in range(n)]
-        for i, st in enumerate(tot):
-            st.update({"pnl_net": -sum(per_locates[i]), "gross": 0.0, "n_trades": 0, "wins": 0, "fees": 0.0,
-                       "slippage": 0.0, "gross_win": 0.0, "gross_loss": 0.0, "notional": 0.0})
-        tot_fees = tot_slip = 0.0
-        trade_rows = []
-        for a in accepted:
-            if a.get("skipped"):
-                continue
-            i, k = a["si"], idx_day[a["date"]]
-            per_pnl[i][k] += a["pnl"]
-            per_trades[i][k] += 1
-            st = tot[i]
-            st["n_trades"] += 1
-            st["pnl_net"] += a["pnl"]
-            st["gross"] += a["pnl"] + a["fees"] + a["slip"]
-            st["fees"] += a["fees"]
-            st["slippage"] += a["slip"]
-            st["notional"] += a["notional"]
-            if a["pnl"] > 0:
-                st["wins"] += 1
-                st["gross_win"] += a["pnl"]
-            elif a["pnl"] < 0:
-                st["gross_loss"] += -a["pnl"]
-            tot_fees += a["fees"]
-            tot_slip += a["slip"]
-            trade_rows.append((a["date"], a["entry"], i, a["r"], a["pnl"]))
-        equity = capital
-        equity_curve, daily_pnl, daily_ret = [], [], []
-        months_seen = set()
-        for k, d in enumerate(calendar):
-            month = d[:7]
-            expense = expenses if (expenses > 0 and month not in months_seen) else 0.0
-            months_seen.add(month)
-            equity_open = equity
-            day_total = sum(per_pnl[i][k] for i in range(n)) - expense
-            equity += day_total
-            equity_curve.append(equity)
-            daily_pnl.append(day_total)
-            daily_ret.append(day_total / equity_open if equity_open > 0 else 0.0)
-        accepted = [a for a in accepted if not a.get("skipped")]
+    skipped = sum(skipped_by_i)
+    trimmed = sum(trimmed_by_i)
 
     # ── 4. Metricas ─────────────────────────────────────────────────────
     metrics = ple.compute_stats(calendar, equity_curve, daily_ret, trade_rows, capital)

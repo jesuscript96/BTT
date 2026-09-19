@@ -313,7 +313,7 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
             <Row label="Gastos fijos ($/mes)">
               <div style={{ width: 160 }}><Num value={cfg.expenses} onChange={(v) => set("expenses", Number(v) || 0)} min={0} step={25} /></div>
             </Row>
-            <Row label="Tope de exposición">
+            <Row label="Tope de exposición" help="Lo máximo que puede haber en posiciones abiertas A LA VEZ sumando TODAS las estrategias y todos los tickers, en % del capital del día o en $. Es un tope del TOTAL abierto, no por trade: con posiciones del 3 %, 2 % y 2 %, un tope del 7 % solo deja dentro dos o tres a la vez y salta (o recorta) el resto del día; con tus tres PM, un 7 % dejó fuera 7 de cada 10 trades. Si lo que quieres es limitar cada trade, eso es el % de la fila; si es cada acción, el «Tope por acción». 0 = sin tope. Lo que no cabe no entra: no paga locates ni cuenta para nada.">
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <div style={{ width: 100 }}><Num value={cfg.cap} onChange={(v) => set("cap", Number(v) || 0)} min={0} step={cfg.capUnit === "pct" ? 10 : 5000} /></div>
                 <div style={{ width: 150 }}>

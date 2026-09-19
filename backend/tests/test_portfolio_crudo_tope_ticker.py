@@ -260,3 +260,45 @@ def test_techo_hibrido_y_tope_de_caja_en_el_crudo():
     out2 = plr.simulate([r2], {"capital": 10000.0, "cap_mode": "skip",
                                "default_exec": {"sizing": "auto", "size_value": 10.0, "size_unit": "pct"}})
     assert out2["trades"]["size"][0] == pytest.approx(5000.0, rel=1e-6)
+
+
+# ── Los topes van DENTRO del dia: lo saltado no paga locates ni cuenta (19-sep) ──
+
+def test_un_trade_saltado_por_el_tope_no_paga_locates_ni_rompe_la_ruina():
+    """Dos cortos a la vez en tickers distintos con tope de exposicion del 5 %:
+    el segundo no cabe y se salta. Con locates fijos de la cuenta, el saltado
+    NO puede pagar alquiler (antes lo pagaba: 2A perdia 99.273 $ con 478
+    trades). Y sin el tope, los dos entran y los dos pagan."""
+    runs = [_run("s1", "AAA", "04:10", "04:30", 1000, entry=1.0, exitp=0.9),
+            _run("s2", "BBB", "04:15", "04:40", 1000, entry=1.0, exitp=0.9)]
+    for r in runs:
+        r["backtest_params"]["size_by_sl"] = False
+    base = {"capital": 10000.0, "cap_mode": "skip",
+            "default_exec": {"sizing": "auto", "size_value": 5.0, "size_unit": "pct"},
+            "locates": {"mode": "fixed", "cost": 3.0, "shared": True, "gate": None}}
+    con_tope = plr.simulate(runs, dict(base, max_exposure_pct=5.0))
+    assert con_tope["cap_report"]["skipped"] == 1
+    assert [p["totals"]["n_trades"] for p in con_tope["per_strategy"]] == [1, 0]
+    # 5 % de 10.000 = 500 $ a 1 $ = 500 acciones = 5 paquetes x 3 $ = 15 $ solo la primera.
+    assert [round(p["totals"]["locates"], 2) for p in con_tope["per_strategy"]] == [15.0, 0.0]
+    assert con_tope["per_strategy"][1]["totals"]["pnl_net"] == 0.0
+    sin_tope = plr.simulate(runs, dict(base, max_exposure_pct=0.0))
+    assert [p["totals"]["n_trades"] for p in sin_tope["per_strategy"]] == [1, 1]
+    assert [round(p["totals"]["locates"], 2) for p in sin_tope["per_strategy"]] == [15.0, 15.0]
+
+
+def test_la_ruina_para_la_cuenta_tambien_con_topes():
+    """Un trade que pierde mas que la cuenta la deja a cero y no se opera mas,
+    con o sin tope (antes, con tope, la curva recompuesta seguia por debajo de
+    cero: la suma de Jaume pasaba de -16.000 $ con 10.000 $ de capital)."""
+    import copy
+    r = _run("s1", "AAA", "04:10", "04:30", 1000, entry=1.0, exitp=3.0, stop=1.1)   # corto que pierde 200 %
+    r["backtest_params"]["size_by_sl"] = False
+    r2 = copy.deepcopy(r); r2["trades"][0]["date"] = "2026-01-05"; r2["trades"][0]["entry_time"] = "2026-01-05 04:10:00"; r2["trades"][0]["exit_time"] = "2026-01-05 04:30:00"
+    r["trades"].append(r2["trades"][0])
+    for cap in (0.0, 80.0):
+        out = plr.simulate([r], {"capital": 10000.0, "cap_mode": "skip", "max_exposure_pct": cap,
+                                  "default_exec": {"sizing": "auto", "size_value": 60.0, "size_unit": "pct"}})
+        assert out["ruined"] is True
+        assert min(out["equity"]) >= 0.0
+        assert out["per_strategy"][0]["totals"]["n_trades"] == 1
