@@ -98,6 +98,7 @@ from app.services import locates_random as lr
 from app.services import portfolio_lab_engine as ple
 from app.services import portfolio_lab_scaling as pls
 from app.services import robustness_service as rs
+from app.services.portfolio_sim import tope_hibrido as _tope_hibrido
 
 _TRADE_FIELDS = (
     "ticker", "date", "entry_time", "exit_time", "entry_price", "avg_entry_price",
@@ -502,6 +503,107 @@ def _kelly_exacta(port_r: np.ndarray) -> Optional[float]:
     if float(np.mean(np.log1p(f * r))) <= 0.0:
         return 0.0
     return float(f)
+
+
+def kelly_cuenta_real(rows: list[dict], risk_mode: str, risk_value: float, capital_inicial: float,
+                      kelly_mult: float, cap_pct: float, cap_strategy_pct: float, lookback_days: int,
+                      estrategias: list[dict], capital_siguiente: float) -> dict:
+    """KELLY SOBRE LA CUENTA REAL (19-sep, Jaume): «volcar mi operativa real,
+    calcular Kelly ahi y que me diga cuanto apostar el siguiente periodo, y
+    repartirlo entre las estrategias segun las Kellys del backtest».
+
+    `rows`: [{"date", "pnl"}] con el PnL NETO de cada dia real (varias filas
+    del mismo dia se suman). El riesgo por trade que se uso ese dia:
+      - risk_mode "usd": `risk_value` $ fijos por trade -> R_dia = pnl / riesgo;
+      - risk_mode "pct": `risk_value` % del equity con el que empezo el dia
+        (capital_inicial + PnL acumulado) -> R_dia = pnl / (pct x equity).
+    Kelly exacta sobre la R diaria de la ventana (lookback_days; 0 = toda la
+    historia), x kelly_mult, topada por cap_pct = TOTAL por trade del siguiente
+    periodo. El reparto entre estrategias es el del modo global del escalado:
+    proporcional a la Kelly propia de cada una en el backtest (`estrategias`:
+    [{"name", "kelly_pct"}]); tope por estrategia primero, tope de la suma
+    despues (sin redistribuir).
+    """
+    por_dia: dict[str, float] = {}
+    for r in rows:
+        d = str(r.get("date") or "")[:10]
+        if len(d) != 10:
+            continue
+        por_dia[d] = por_dia.get(d, 0.0) + _f(r.get("pnl"))
+    dias = sorted(por_dia)
+    if not dias:
+        raise ValueError("No hay filas con fecha y PnL")
+    modo = "pct" if str(risk_mode) == "pct" else "usd"
+    if risk_value <= 0:
+        raise ValueError("El riesgo por trade tiene que ser mayor que cero")
+    equity = float(capital_inicial)
+    r_por_dia: list[tuple[str, float, float]] = []
+    for d in dias:
+        pnl = por_dia[d]
+        if modo == "usd":
+            riesgo = float(risk_value)
+        else:
+            riesgo = equity * float(risk_value) / 100.0
+        r_por_dia.append((d, pnl / riesgo if riesgo > 0 else 0.0, riesgo))
+        equity += pnl
+    if lookback_days and lookback_days > 0:
+        cut = (ple._parse_day(dias[-1]) - timedelta(days=int(lookback_days))).isoformat()
+        ventana = [x for x in r_por_dia if x[0] >= cut]
+    else:
+        ventana = r_por_dia
+    serie = np.asarray([x[1] for x in ventana], dtype=float)
+    kg = _kelly_exacta(serie) if len(serie) else None
+    kq = pls._kelly_fraction(serie) if len(serie) >= pls.MIN_OBS else None
+    if kg is None:
+        total = None
+        nota = f"sin muestra: hacen falta {pls.MIN_OBS} dias con operaciones en la ventana (hay {int(np.count_nonzero(serie))})"
+    elif kg <= 0:
+        total = 0.0
+        nota = "sin edge en la ventana: Kelly manda no apostar"
+    else:
+        total = kg * float(kelly_mult)
+        nota = None
+    # Reparto por las Kellys del backtest.
+    ks = [max(0.0, _f(e.get("kelly_pct"))) for e in estrategias]
+    suma_k = sum(ks)
+    shares = [k / suma_k if suma_k > 0 else (1.0 / len(ks) if ks else 0.0) for k in ks]
+    cap_i = float(cap_strategy_pct or 0.0)
+    cap = float(cap_pct or 0.0)
+    pedido = [(total or 0.0) * 100.0 * sh for sh in shares]
+    aplicado = [min(v, cap_i) if cap_i > 0 else v for v in pedido]
+    capped_i = any(a < p - 1e-12 for a, p in zip(aplicado, pedido))
+    suma_apl = sum(aplicado)
+    capped = False
+    if cap > 0 and suma_apl > cap + 1e-12:
+        aplicado = [a * cap / suma_apl for a in aplicado]
+        capped = True
+        suma_apl = cap
+    peor = float(serie.min()) if len(serie) else 0.0
+    return {
+        "dias": len(r_por_dia), "dias_ventana": len(ventana), "dias_con_operaciones": int(np.count_nonzero(serie)),
+        "desde": ventana[0][0] if ventana else None, "hasta": ventana[-1][0] if ventana else None,
+        "equity_final": ple._r6(equity), "risk_mode": modo, "risk_value": float(risk_value),
+        "r_media_dia": ple._r6(float(serie.mean())) if len(serie) else 0.0,
+        "r_peor_dia": ple._r6(peor), "r_mejor_dia": ple._r6(float(serie.max())) if len(serie) else 0.0,
+        "r_total_ventana": ple._r6(float(serie.sum())) if len(serie) else 0.0,
+        "kelly_raw_pct": ple._r6(kg * 100.0) if kg is not None else None,
+        "kelly_quad_pct": ple._r6(kq * 100.0) if kq is not None else None,
+        "kelly_mult": float(kelly_mult),
+        "total_pedido_pct": ple._r6((total or 0.0) * 100.0) if total is not None else None,
+        "cap_pct": cap, "cap_strategy_pct": cap_i, "capped": capped, "capped_strategy": capped_i,
+        "total_pct": ple._r6(suma_apl) if total is not None else None,
+        "total_usd": ple._r6(capital_siguiente * suma_apl / 100.0) if total is not None else None,
+        "capital_siguiente": float(capital_siguiente),
+        "nota": nota,
+        "per_strategy": [
+            {"name": e.get("name"), "kelly_pct": ple._r6(_f(e.get("kelly_pct"))), "share": ple._r6(sh),
+             "risk_pct": ple._r6(a) if total is not None else None,
+             "risk_usd": ple._r6(capital_siguiente * a / 100.0) if total is not None else None,
+             "basis": e.get("basis") or "risk"}
+            for e, sh, a in zip(estrategias, shares, aplicado)
+        ],
+        "serie": [{"date": d, "r": ple._r6(r), "pnl": ple._r6(por_dia[d]), "riesgo": ple._r6(rg)} for d, r, rg in r_por_dia],
+    }
 
 
 class _Escalado:
@@ -934,13 +1036,34 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
 
     n = len(runs)
     execs: list[dict] = []
+    # REGLAS INTRINSECAS de cada estrategia (19-sep, Jaume: «tal cual las
+    # indicaciones que marcaba la estrategia»): el techo hibrido (por SL) y el
+    # cangrejo modo B (la perdida al stop no pasa de X % de la cuenta) recortan
+    # la ENTRADA al re-dimensionar, con el capital del dia, exactamente como
+    # hace el motor (`portfolio_sim`); y el tope de caja (no mas nocional que
+    # la cuenta). Se leen de los parametros de la corrida y, si faltan, de la
+    # definicion de la estrategia guardada con ella. El modo A del cangrejo
+    # (apretar el stop) ya esta dentro del stop guardado del trade.
+    reglas: list[dict] = []
     for run in runs:
         raw_e = per_cfg_raw.get(str(run.get("strategy_id")))
         ex = _exec_cfg(raw_e) if raw_e else dict(default_exec)
+        params = run.get("backtest_params") or {}
         if ex["sizing"] == "auto":
-            params = run.get("backtest_params") or {}
             ex["sizing"] = "risk" if params.get("size_by_sl") else "capital"
         execs.append(ex)
+        rm = ((params.get("strategy_definition") or {}).get("risk_management") or {}) if isinstance(params.get("strategy_definition"), dict) else {}
+        def _p(k: str):
+            v = params.get(k)
+            return rm.get(k) if v is None else v
+        reglas.append({
+            "hybrid": bool(_p("hybrid_stop")) and bool(params.get("size_by_sl")),
+            "bs_pct": _f(_p("hybrid_black_swan_pct")),
+            "ml_pct": _f(_p("hybrid_max_loss_pct")),
+            "cangrejo_b": bool(_p("cangrejo_active")) and _f(_p("cangrejo_max_loss_at_sl_pct")) > 0,
+            "cb_pct": _f(_p("cangrejo_max_loss_at_sl_pct")),
+        })
+    recortes_reglas = [0] * n
 
     # ── 1. Preparar los trades: deshacer la corrida, dejar la senal por accion ─
     by_day: list[dict[str, list[dict]]] = []
@@ -1209,6 +1332,23 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     new_size = (x_usd / tr["init_price"]) * tr["pyr"]
                 if new_size <= 0:
                     continue
+                if not as_saved and tr["init_price"] > 0 and equity_open > 0:
+                    # Techo hibrido, cangrejo B y tope de caja sobre la ENTRADA
+                    # (la piramide conserva su proporcion).
+                    pyr_f = tr["pyr"] if tr["pyr"] > 0 else 1.0
+                    entrada = new_size / pyr_f
+                    tope_e = entrada
+                    rg = reglas[i]
+                    if rg["hybrid"]:
+                        t_h = _tope_hibrido(equity_open, rg["bs_pct"], rg["ml_pct"], tr["init_price"])
+                        if t_h is not None:
+                            tope_e = min(tope_e, t_h)
+                    if rg["cangrejo_b"] and tr["stop_dist"] > 0:
+                        tope_e = min(tope_e, (rg["cb_pct"] / 100.0) * equity_open / tr["stop_dist"])
+                    tope_e = min(tope_e, equity_open / tr["init_price"])
+                    if tope_e < entrada - 1e-12:
+                        new_size = tope_e * pyr_f
+                        recortes_reglas[i] += 1
                 if as_saved:
                     net = tr["pnl_saved_net"]
                     fee = tr["fees_saved"]
@@ -1610,7 +1750,11 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "gate_free": gate_free[i],
                 "no_stop": no_stop[i],
                 "no_weight": no_weight[i],
+                # Entradas recortadas por las reglas de la propia estrategia
+                # (techo hibrido, cangrejo B, tope de caja).
+                "reglas": recortes_reglas[i],
             },
+            "reglas": {k: reglas[i][k] for k in ("hybrid", "cangrejo_b", "bs_pct", "ml_pct", "cb_pct")},
         })
 
     trade_rows.sort(key=lambda r: (r[0], r[1]))

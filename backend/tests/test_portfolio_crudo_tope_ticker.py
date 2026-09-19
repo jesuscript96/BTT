@@ -219,3 +219,44 @@ def test_kelly_dimensiona_por_posicion_a_las_que_van_por_capital():
     # Primer trade: 1 % de 20.000 = 200 $ en posicion a 2 $ = 100 acciones.
     assert out["trades"]["size"][0] == pytest.approx(100.0, rel=1e-3)
     assert out["trades"]["notional"][0] == pytest.approx(200.0, rel=1e-3)
+
+
+# ── Reglas intrinsecas de la estrategia al re-dimensionar (19-sep) ──────
+
+def test_cangrejo_b_recorta_la_entrada_en_el_crudo():
+    """Corrida por capital con cangrejo B al 1 %: con 10.000 $ y un stop a 1 $
+    de distancia, la entrada no puede pasar de 100 acciones aunque el 5 % del
+    capital pida 250 (5 % de 10.000 = 500 $ / 2 $)."""
+    r = _run("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9, stop=3.0)
+    r["backtest_params"].update({"size_by_sl": False, "cangrejo_active": True, "cangrejo_max_loss_at_sl_pct": 1.0})
+    out = plr.simulate([r], {"capital": 10000.0, "cap_mode": "skip",
+                             "default_exec": {"sizing": "auto", "size_value": 5.0, "size_unit": "pct"}})
+    assert out["trades"]["size"][0] == pytest.approx(100.0, rel=1e-6)
+    assert out["per_strategy"][0]["cap_report"]["reglas"] == 1
+    assert out["per_strategy"][0]["reglas"]["cangrejo_b"] is True
+    # Sin la regla, las 250 acciones.
+    r2 = _run("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9, stop=3.0)
+    r2["backtest_params"]["size_by_sl"] = False
+    out2 = plr.simulate([r2], {"capital": 10000.0, "cap_mode": "skip",
+                               "default_exec": {"sizing": "auto", "size_value": 5.0, "size_unit": "pct"}})
+    assert out2["trades"]["size"][0] == pytest.approx(250.0, rel=1e-6)
+    assert out2["per_strategy"][0]["cap_report"]["reglas"] == 0
+
+
+def test_techo_hibrido_y_tope_de_caja_en_el_crudo():
+    """Hibrido (por SL): con 10.000 $, cisne del 500 % y perdida maxima del
+    50 %, la posicion no pasa de 1.000 $ de valor (500 acciones a 2 $) aunque
+    el riesgo pida mas. Y el tope de caja: nunca mas nocional que la cuenta."""
+    r = _run("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9, stop=2.1)
+    r["backtest_params"].update({"size_by_sl": True, "hybrid_stop": True, "hybrid_black_swan_pct": 500.0, "hybrid_max_loss_pct": 50.0})
+    # 10 % de riesgo con stop a 0,10 $ pediria 10.000 acciones (20.000 $ de nocional).
+    out = plr.simulate([r], {"capital": 10000.0, "cap_mode": "skip",
+                             "default_exec": {"sizing": "auto", "size_value": 10.0, "size_unit": "pct"}})
+    assert out["trades"]["size"][0] == pytest.approx(500.0, rel=1e-6)
+    assert out["per_strategy"][0]["cap_report"]["reglas"] == 1
+    # Solo tope de caja (sin hibrido): 10.000 $ / 2 $ = 5.000 acciones como maximo.
+    r2 = _run("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9, stop=2.1)
+    r2["backtest_params"]["size_by_sl"] = True
+    out2 = plr.simulate([r2], {"capital": 10000.0, "cap_mode": "skip",
+                               "default_exec": {"sizing": "auto", "size_value": 10.0, "size_unit": "pct"}})
+    assert out2["trades"]["size"][0] == pytest.approx(5000.0, rel=1e-6)

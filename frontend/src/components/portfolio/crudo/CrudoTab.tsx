@@ -39,6 +39,7 @@ import { PasoEjecucion } from "./PasoEjecucion";
 import { PasoVision } from "./PasoVision";
 import { PasoMonteCarlo } from "./PasoMonteCarlo";
 import { PasoEscalado } from "./PasoEscalado";
+import { PasoCuentaReal } from "./PasoCuentaReal";
 
 const BAND_SEEDS = 100;
 
@@ -301,6 +302,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     { num: 2, label: "Visión general", hecho: listo, disponible: listo },
     { num: 3, label: "Límites de pérdida", hecho: !!mcOut, disponible: listo },
     { num: 4, label: "Escalado y pesos", hecho: !!outEsc, disponible: listo && !backendViejo },
+    { num: 5, label: "Cuenta real", hecho: false, disponible: true },
   ];
   const activo = !listo ? 1 : abiertos[4] && outEsc ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
 
@@ -334,6 +336,13 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       <Paso num={4} title="Escalado y pesos" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el escalado" : "primero calcula el paso 1"}
         help="Cuánto arriesgar por trade en cada estrategia según Kelly (de cada una, o global sobre el capital total), con la fracción que quieras y un tope sobre la suma que manda sobre todo. Responde a dos preguntas: qué habría que poner HOY en cada estrategia, y qué habría pasado aplicándolo desde el principio con datos solo anteriores a cada rebalanceo. Aquí los R del paso 1 no cuentan: el tamaño lo pone Kelly.">
         {listo && out && <PasoEscalado m={{ out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc, mcEsc, mcEscRunning, mcEscError, simularMcEsc, mcSims }} />}
+      </Paso>
+
+      <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Kelly sobre tu operativa real y el reparto entre estrategias"
+        help="Pega el CSV de tu cuenta real (fecha y PnL neto por día o por trade) y el riesgo por trade que usabas: sale la Kelly de TU cuenta (fills, slippage y locates reales incluidos) → cuánto arriesgar en total el siguiente periodo, y ese total repartido entre las estrategias del paso 4 en proporción a sus Kellys del backtest. No hace falta saber de qué estrategia viene cada trade.">
+        <div style={{ padding: "10px 10px 6px" }}>
+          <PasoCuentaReal m={{ out, outEsc, esc, capital: cfg.capital }} />
+        </div>
       </Paso>
 
       <p style={{ margin: "0 0 10px", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>

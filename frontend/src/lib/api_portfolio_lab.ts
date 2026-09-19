@@ -855,6 +855,42 @@ export interface RawOut {
   trades: RawTrades;
 }
 
+/** Kelly sobre la cuenta REAL (19-sep): PnL diario real + riesgo por trade
+ *  usado -> R diaria -> Kelly -> total del siguiente periodo, repartido entre
+ *  las estrategias por sus Kellys del backtest. */
+export interface KellyRealIn {
+  rows: Array<{ date: string; pnl: number }>;
+  risk_mode: "usd" | "pct";
+  risk_value: number;
+  capital_inicial: number;
+  kelly_mult: number;
+  cap_pct: number;
+  cap_strategy_pct: number;
+  lookback_days: number;
+  estrategias: Array<{ name: string; kelly_pct: number; basis?: "risk" | "capital" }>;
+  capital_siguiente: number;
+}
+
+export interface KellyRealOut {
+  dias: number; dias_ventana: number; dias_con_operaciones: number;
+  desde: string | null; hasta: string | null;
+  equity_final: number; risk_mode: "usd" | "pct"; risk_value: number;
+  r_media_dia: number; r_peor_dia: number; r_mejor_dia: number; r_total_ventana: number;
+  kelly_raw_pct: number | null; kelly_quad_pct: number | null; kelly_mult: number;
+  total_pedido_pct: number | null; cap_pct: number; cap_strategy_pct: number; capped: boolean; capped_strategy: boolean;
+  total_pct: number | null; total_usd: number | null; capital_siguiente: number; nota: string | null;
+  per_strategy: Array<{ name: string; kelly_pct: number; share: number; risk_pct: number | null; risk_usd: number | null; basis: "risk" | "capital" }>;
+  serie: Array<{ date: string; r: number; pnl: number; riesgo: number }>;
+}
+
+export function kellyCuentaReal(body: KellyRealIn): Promise<KellyRealOut> {
+  return apiRequest<KellyRealOut>("/portfolio-lab/raw/kelly-real", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 60_000,
+  });
+}
+
 export function runPortfolioRaw(body: RawConfigIn): Promise<RawOut> {
   return apiRequest<RawOut>("/portfolio-lab/raw", {
     method: "POST",

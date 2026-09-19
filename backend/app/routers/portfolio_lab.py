@@ -565,7 +565,7 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
             raise HTTPException(status_code=404, detail=f"La corrida de {names[sid]} ya no existe")
         runs.append({"strategy_id": sid, "name": names[sid], **run})
     try:
-        return plr.simulate(runs, {
+        out = plr.simulate(runs, {
             "capital": req.capital,
             "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
             "default_exec": req.default_exec.model_dump(),
@@ -584,6 +584,89 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
         })
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    _bitacora_crudo(req, runs, out)
+    return out
+
+
+class KellyRealRow(BaseModel):
+    date: str
+    pnl: float
+
+
+class KellyRealEstrategia(BaseModel):
+    name: str
+    kelly_pct: float = 0.0
+    basis: Literal["risk", "capital"] = "risk"
+
+
+class KellyRealReq(BaseModel):
+    """Kelly sobre la cuenta REAL (ver portfolio_lab_raw.kelly_cuenta_real)."""
+    rows: list[KellyRealRow]
+    risk_mode: Literal["usd", "pct"] = "usd"
+    risk_value: float = Field(default=100.0, gt=0)
+    capital_inicial: float = Field(default=10000.0, gt=0)
+    kelly_mult: float = Field(default=0.5, gt=0, le=3)
+    cap_pct: float = Field(default=5.0, ge=0)
+    cap_strategy_pct: float = Field(default=2.0, ge=0)
+    lookback_days: int = Field(default=90, ge=0)
+    estrategias: list[KellyRealEstrategia] = []
+    capital_siguiente: float = Field(default=10000.0, gt=0)
+
+
+@router.post("/raw/kelly-real")
+def kelly_real(req: KellyRealReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Cuanto apostar el siguiente periodo segun la cuenta real, repartido
+    entre las estrategias por sus Kellys del backtest."""
+    _guard()
+    try:
+        return plr.kelly_cuenta_real(
+            [r.model_dump() for r in req.rows], req.risk_mode, req.risk_value, req.capital_inicial,
+            req.kelly_mult, req.cap_pct, req.cap_strategy_pct, req.lookback_days,
+            [e.model_dump() for e in req.estrategias], req.capital_siguiente,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _bitacora_crudo(req: "RawReq", runs: list[dict], out: dict) -> None:
+    """Una linea JSON por calculo en data/portfolio_crudo.jsonl: la config y
+    los totales por estrategia. Para poder mirar «lo ultimo que he corrido»
+    (Jaume, 19-sep) sin tener que adivinar la configuracion. Nunca rompe."""
+    try:
+        import datetime as _dt
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+        os.makedirs(base, exist_ok=True)
+        fila = {
+            "ts": _dt.datetime.now().isoformat(timespec="seconds"),
+            "strategies": [{"id": r.get("strategy_id"), "name": r.get("name"), "run_id": r.get("run_id")} for r in runs],
+            "config": {
+                "capital": req.capital, "cap_mode": req.cap_mode, "one_per_ticker": req.one_per_ticker,
+                "max_exposure_usd": req.max_exposure_usd, "max_exposure_pct": req.max_exposure_pct,
+                "max_ticker_pct": req.max_ticker_pct, "ticker_cap_basis": req.ticker_cap_basis,
+                "monthly_expenses": req.monthly_expenses, "start_date": req.start_date, "end_date": req.end_date,
+                "default_exec": req.default_exec.model_dump(),
+                "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
+                "locates": req.locates.model_dump() if req.locates else None,
+                "scaling": req.scaling.model_dump() if req.scaling else None,
+                "margin": req.margin.model_dump() if req.margin else None,
+            },
+            "result": {
+                "final_equity": (out.get("equity") or [None])[-1],
+                "total_return_pct": (out.get("metrics") or {}).get("total_return_pct"),
+                "ruined": out.get("ruined"),
+                "per_strategy": [
+                    {"name": p.get("name"), "n_trades": (p.get("totals") or {}).get("n_trades"),
+                     "pnl_net": (p.get("totals") or {}).get("pnl_net"), "locates": (p.get("totals") or {}).get("locates"),
+                     "cap_report": p.get("cap_report")}
+                    for p in (out.get("per_strategy") or [])
+                ],
+                "scaling_today": ((out.get("scaling") or {}).get("today") or {}).get("per_strategy"),
+            },
+        }
+        with open(os.path.join(base, "portfolio_crudo.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(fila, ensure_ascii=False, default=str) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── Monitorizacion (F3) ────────────────────────────────────────────────
