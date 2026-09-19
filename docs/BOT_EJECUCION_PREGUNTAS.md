@@ -239,7 +239,7 @@
 
 ## O. Pruebas, sombra, canario y despliegue
 
-- [ ] O1. ¿Hay demo o paper en DAS con Sage? Si no, ¿la sombra sustituye del todo? **[API]**
+- [x] O1. → SÍ hay demo (Jaume, 19-sep); cómo se accede por API, con el PDF. ¿Hay demo o paper en DAS con Sage? Si no, ¿la sombra sustituye del todo? **[API]**
 - [ ] O2. Sombra: ¿cómo se comparan las órdenes calculadas con los fills manuales de Jaume (exportación de DAS)?
 - [ ] O3. Canario: tamaño, duración, criterios de salida (ya en la submemoria) y quién decide subir de escalón.
 - [ ] O4. Versionado de estrategias: JSON con hash y fecha; ¿cómo se despliega una versión nueva sin tocar el bot en marcha? **[dato]** el bot de avisos lee las estrategias UNA vez al arrancar.
