@@ -622,6 +622,33 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área K · Estado y reconciliación
 
+### R-K-01 · Reconciliación con DAS: por eventos al instante y barrido completo cada 2 s
+- Situación: marcha normal del bot.
+- Detección: (1) DAS empuja los cambios (fills, cancelaciones, posiciones) al instante: el estado del bot se actualiza con cada evento sin esperar. (2) Además, BARRIDO completo (posiciones, órdenes vivas, cuenta) cada 2 s mientras haya posiciones u órdenes vivas en horario de mercado, cada 10 s si no hay nada abierto, y SIEMPRE tras cada fill, cada cancelación y cada reconexión. El vigilante ya comprueba los stops cada segundo (R-C-04).
+- Acción: cualquier diferencia entre el diario y DAS → R-C-10 (casos 1-4).
+- Quién la ejecuta: reconciliación.
+- Parámetros: 2 s / 10 s (cuadro de mandos). Carga: un barrido son 2-3 peticiones; a 2 s son ~1,5 peticiones/s, muy por debajo del límite que recuerda Jaume (~500 peticiones cada 5 s; 5.000 órdenes/día) [API: confirmar cuotas].
+- Si la acción falla: R-K-03.
+- Prueba: sombra; medir latencia del barrido y que no compita con el envío de órdenes.
+- Estado: FIJADA (Jaume, 19-sep). Nota: cada segundo también cabría en cuota; se elige 2 s porque el instante lo dan los eventos y el barrido es solo la red de seguridad; si en sombra se ve que el barrido no molesta, se puede bajar a 1 s.
+- Origen: K1.
+
+### R-K-02 · La cuenta es del bot; el humano solo interviene en emergencias
+- Situación: Jaume NO opera a mano en la cuenta del bot. Solo puede cerrar o netear posiciones en una emergencia (y a malas, apagar antes el bot y tomar el mando).
+- Acción: el bot trata toda posición u orden que no esté en su diario como intervención humana de emergencia: aviso, stop de protección (R-C-10 caso 4) y no la deshace. Pendiente el traspaso humano↔bot (marcar «esto lo he hecho yo») ya apuntado.
+- Estado: FIJADA (Jaume, 19-sep). Origen: K5, D11.
+
+### R-K-03 · La reconciliación falla con el socket vivo
+- Situación: DAS no contesta a la consulta de posiciones/órdenes/cuenta pero la conexión sigue viva.
+- Acción: se sigue operando con el último estado bueno durante 30 s; pasados, se pasa a «no abrir nuevas» (las abiertas se gestionan con los stops residentes y los eventos que sí lleguen) y AVISO (importante). Al volver la reconciliación, barrido completo y aviso de recuperación.
+- Parámetros: 30 s.
+- Estado: FIJADA (Jaume, 19-sep). Origen: K11.
+
+### R-I-04 · «Modo trading de seguridad» (PENDIENTE de diseñar)
+- Idea de Jaume (19-sep): un interruptor en el cuadro de mandos que, activado a voluntad (viaje, no poder estar pendiente), BLOQUEA la entrada en cualquier acción que cumpla condiciones de riesgo: float < X, market cap < Y, precio nominal < Z, y otras condiciones que se definan. Las posiciones abiertas se gestionan igual; solo se restringen las entradas.
+- Pendiente: lista de condiciones y valores, de dónde salen float y market cap en vivo (Massive REST / tabla tickers), y si el modo también reduce el tamaño. Se diseña con el cuadro de mandos.
+- Estado: PENDIENTE (apuntado el 19-sep). Origen: idea nueva; enlaza con A11 (lista negra) y M9.
+
 ### Área A · Señal y datos
 
 ### Área D · Salidas y pirámides

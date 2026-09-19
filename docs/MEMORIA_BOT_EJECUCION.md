@@ -749,7 +749,7 @@ K11 reconciliación que falla), luego A, L, M, N, O, P, Q y el repaso final de
 pendientes.** Pendientes de decisión al final: G3, excedente de locates 20 %,
 recompra de locates si el precio se mueve, tope de volumen, techo de «cerrar
 todo», latencia (J18), canal alternativo a Telegram (M4), traspaso humano↔bot,
-vuelta del cisne negro (qué hacer tras la espera de media hora, con datos), reponer stop si sigue corto, comprar SAI, qué hacer con acciones en OPA (A14).
+vuelta del cisne negro (qué hacer tras la espera de media hora, con datos), reponer stop si sigue corto, comprar SAI, qué hacer con acciones en OPA (A14), diseño del «modo trading de seguridad» (R-I-04: interruptor que bloquea entradas por float / market cap / precio).
 Datos de halts subidos a `alvaro-rama-desarrollo` (8357ff3) por petición de Jaume.
 
 | # | Pendiente | Estado |

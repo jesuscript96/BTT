@@ -194,17 +194,17 @@
 
 ## K. Estado y reconciliación
 
-- [ ] K1. Fuente de la verdad: DAS. ¿Cada cuántos segundos se reconcilia y qué se compara (posiciones, órdenes vivas, cuenta)?
+- [x] K1. → R-K-01 (eventos al instante + barrido cada 2 s / 10 s; tras fill y reconexión). Fuente de la verdad: DAS. ¿Cada cuántos segundos se reconcilia y qué se compara (posiciones, órdenes vivas, cuenta)?
 - [ ] K2. Posición en DAS que el bot no conoce: ¿aviso y no tocar, o adoptar con stop?
 - [ ] K3. Posición que el bot cree tener y DAS no: ¿se limpia el estado y se avisa?
 - [ ] K4. Órdenes vivas que el bot no conoce: ¿cancelar o dejar?
-- [ ] K5. Operaciones manuales de Jaume en la misma cuenta: ¿cuenta separada, o etiqueta que el bot respeta? ¿«Cerrar todo» cierra también las manuales?
+- [x] K5. → R-K-02 (no opera a mano en la cuenta del bot; solo emergencias). Operaciones manuales de Jaume en la misma cuenta: ¿cuenta separada, o etiqueta que el bot respeta? ¿«Cerrar todo» cierra también las manuales?
 - [ ] K6. Reinicio a media sesión: ¿qué se recupera del disco (posiciones, órdenes, locates, señales ya ejecutadas) y qué se rehidrata del feed?
 - [ ] K7. Idempotencia por id de evento (`ticker|estrategia|momento|tipo`): si la misma señal se reevalúa tras un reinicio, ¿se reconoce como ya ejecutada?
 - [ ] K8. ¿El diario JSONL se escribe antes de enviar la orden y después de la respuesta, siempre, aunque el disco esté lento?
 - [ ] K9. Divergencia entre fills del diario y los de DAS al final del día: ¿tolerancia y quién la revisa?
 - [ ] K10. Cambio de día: ¿cuándo «cierra» el día el bot y se resetean contadores (pérdida diaria, reentradas, locates)?
-- [ ] K11. Si la reconciliación misma falla (DAS no contesta), ¿el bot sigue operando con el último estado bueno o se para?
+- [x] K11. → R-K-03 (30 s con el último estado bueno, luego no abrir + aviso). Si la reconciliación misma falla (DAS no contesta), ¿el bot sigue operando con el último estado bueno o se para?
 
 ## L. Horario y calendario
 
