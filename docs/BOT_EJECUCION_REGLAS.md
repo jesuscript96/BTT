@@ -309,8 +309,8 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
   - Máximo % de subida de la acción respecto al PRIMER stop desde que empezó el movimiento (para saber ante qué fogonazo estamos: 100, 200, 1.000 %…).
   - % actual de la acción respecto al primer stop (el slippage que nos comeríamos si cerramos ahora).
   - Pérdida ya ejecutada del trade, en $ y %: lo perdido en las acciones que sí salieron por el stop normal y por el de emergencia.
-  - Recordatorio de comandos: /cerrar TICKER SI (cierre al ask con techo), /cerrar TICKER N SI (cerrar solo N acciones), /estado TICKER, /parar_avisos TICKER (deja de mandar el mensaje de 5 min; la alerta de cambio de estado sigue), /reanudar_avisos TICKER.
-  Datos añadidos por Claude (propuesta, 20-sep): volumen y dólares negociados en los últimos 5 min (liquidez para salir), spread actual en %, si está en halt o a qué distancia de la banda LULD y cuántos halts lleva (k), minutos hasta el EOD de la estrategia, minutos desde el máximo del movimiento (si lleva N minutos bajando), estado de la orden de emergencia (sigue viva, su precio límite), estado de la conexión con DAS.
+  - Recordatorio de comandos: /cerrar TICKER SI (cierra TODA la posición al ask con techo), /cerrar TICKER N SI (cierra SOLO N acciones y deja el resto: es el cierre por tramos de G6, decidido por el humano), /estado TICKER, /parar_avisos TICKER BS (deja de mandar SOLO el mensaje de 5 min de ESE evento de ESE ticker; todo lo demás sigue igual, y un evento nuevo vuelve a arrancar el ciclo), /reanudar_avisos TICKER BS.
+  Datos añadidos (aprobados por Jaume, 20-sep): halts (SOLO en sesión de mercado: si está parada, distancia a la banda LULD, halts que lleva el día k), minutos desde el máximo del movimiento y si lleva N minutos bajando, minutos hasta el EOD de la estrategia, y estado de la orden de emergencia (sigue viva, su precio límite). No incluidos: volumen 5 min, spread, conexión DAS (van en /salud y /estado).
   (3) Si el fogonazo se cierra DENTRO del stop de emergencia, se manda el mismo informe UNA sola vez con la frase «POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP DE EMERGENCIA».
   (4) Todo fogonazo visto en vivo (con o sin posición) se registra en el diario con su máximo, duración y devolución, para recalibrar los umbrales con datos propios (G10).
 - Quién la ejecuta: vigilante (informes y registro) + humano (decisión y cierre por Telegram).
@@ -318,6 +318,11 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Si la acción falla: sin Telegram → correo y SMS con el mismo informe (R-M-02).
 - Prueba: simular el protocolo con un día grabado de fogonazo (R-O-02) y comprobar formato y cadencia.
 - Estado: FIJADA (Jaume, 20-sep). Sustituye a la «espera de media hora» de R-C-01 como procedimiento: no hay plazo fijo, el humano decide cuándo. Origen: G1, G2, G3, G4, G6, G7, G10.
+
+### R-G-02 · Aviso de halt (PM y RTH)
+- Situación: una acción con posición abierta (o con orden de entrada viva) entra en halt, en premercado o en sesión.
+- Acción: mensaje por Telegram en el momento (nivel Aviso), breve: ticker, tipo de halt si se conoce (LULD / T1 / T12), hora, precio de parada, posición y stop, k (halts del día) y bandas LULD si es en sesión. Al reabrir, segundo mensaje con precio de reapertura y qué hizo el bot (R-F-01). Sin ciclo de 5 minutos.
+- Estado: FIJADA (Jaume, 20-sep). Origen: F, petición del 20-sep.
 
 **G3, G4, G6 y G7 (20-sep): sin decisión automática del bot.** El tope de pérdida por posición, la salida por tiempo, el cierre por tramos y la relación con la pérdida del día son decisiones del HUMANO dentro del protocolo R-G-01, con los datos del informe. G2 (fogonazo vs squeeze) queda como INFORMACIÓN del informe (minutos desde el máximo, si lleva bajando), no como disparador.
 
