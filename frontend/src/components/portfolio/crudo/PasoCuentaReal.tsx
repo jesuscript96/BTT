@@ -18,12 +18,14 @@ import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
 import { kellyCuentaReal, type KellyRealOut, type RawOut } from "@/lib/api_portfolio_lab";
 import { Btn, Nota, Num, Row, Sec, Stat, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
-import type { EscCfg } from "./modelo";
 
 export function PasoCuentaReal({ m }: { m: {
-  out: RawOut | null; outEsc: RawOut | null; esc: EscCfg; capital: number;
+  out: RawOut | null; capital: number;
+  /** Los pesos con los que se reparte el total real: los % del paso 1 (o el reparto B). */
+  pesos: Array<{ name: string; kelly_pct: number; basis: "risk" | "capital" }>;
+  origenPesos: string;
 } }) {
-  const { outEsc, esc, capital } = m;
+  const { capital, pesos, origenPesos } = m;
   const [csv, setCsv] = useState("");
   // Fichero elegido (20-sep, Jaume: «meterle el csv o excel en archivo»). Un
   // CSV/TXT se lee aquí y va como texto (se ve en la caja); un Excel va en
@@ -36,15 +38,15 @@ export function PasoCuentaReal({ m }: { m: {
   const [capitalSig, setCapitalSig] = useState<number>(capital > 0 ? capital : 10000);
   const [ventana, setVentana] = useState<number>(0);
   const [base, setBase] = useState<"clasica" | "exacta">("clasica");
-  const [mult, setMult] = useState<number>(esc.kelly_mult || 0.5);
-  const [capSuma, setCapSuma] = useState<number>(esc.cap_pct ?? 10);
-  const [capEst, setCapEst] = useState<number>(esc.cap_strategy_pct ?? 0);
+  const [mult, setMult] = useState<number>(0.5);
+  const [capSuma, setCapSuma] = useState<number>(10);
+  const [capEst, setCapEst] = useState<number>(0);
   const [res, setRes] = useState<KellyRealOut | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const hoy = outEsc?.scaling?.today ?? null;
-  const estrategias = useMemo(() => (hoy ? hoy.per_strategy.map((p) => ({ name: p.name, kelly_pct: p.kelly_pct ?? 0, basis: p.basis ?? "risk" })) : []), [hoy]);
+  const estrategias = useMemo(() => pesos.filter((p) => p.kelly_pct > 0), [pesos]);
+  const hoy = estrategias.length > 0;
   const lineas = csv.trim() ? csv.trim().split(/\r?\n/).length : 0;
   const esDas = /symbol/i.test(csv.slice(0, 400)) && /net amt/i.test(csv.slice(0, 400));
 
@@ -188,7 +190,7 @@ export function PasoCuentaReal({ m }: { m: {
                 <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>días (0 = toda la historia del CSV)</span>
               </div>
             </Row>
-            <Row label="Reparto" help="El total real se reparte entre las estrategias del paso 4 por sus Kellys del backtest (el modo «Kelly por estrategia · total fijo» con el total de tu cuenta). Tope por estrategia opcional.">
+            <Row label="Reparto" help={`El total real se reparte entre las estrategias en proporción a ${origenPesos}. Tope por estrategia opcional.`}>
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>por estrategia ≤</span>
                 <div style={{ width: 64 }}><Num value={capEst} onChange={(v) => setCapEst(Number(v) || 0)} min={0} step={0.25} /></div>
@@ -200,7 +202,7 @@ export function PasoCuentaReal({ m }: { m: {
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0 4px" }}>
             <Btn primary onClick={calcular} disabled={running || !hayEntrada}>{running ? "Calculando…" : "Calcular con mi cuenta"}</Btn>
             <span style={{ fontSize: 10.5, fontFamily: font.sans, color: hoy ? color.textMuted : color.warning }}>
-              {hoy ? `reparto por las Kellys del paso 4 (${estrategias.length} estrategias)` : "sin el paso 4 calculado, sale el total pero no el reparto por estrategia"}
+              {hoy ? `reparto según ${origenPesos} (${estrategias.length} estrategias)` : "sin estrategias con % > 0 en el paso 1, sale el total pero no el reparto"}
             </span>
           </div>
           {error && <div style={{ marginTop: 8 }}><ErrorBox>{error}</ErrorBox></div>}

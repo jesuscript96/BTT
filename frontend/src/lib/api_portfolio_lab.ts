@@ -566,33 +566,23 @@ export interface RawLocatesIn {
   band_seeds: number;
 }
 
-/** Escalado y pesos sobre las corridas en crudo: riesgo TOTAL por trade
- *  (X) repartido entre estrategias (i arriesga X * w_i, sum w = 1); el tope
- *  recorta la SUMA. Los R de las filas se ignoran. */
-export interface RawScalingIn {
-  model: "fixed" | "percent" | "kelly" | "fixed_ratio";
-  base_risk: number;
-  pct: number;
-  delta: number;
-  kelly_mult: number;
-  /** per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
-   *  global: la Kelly del conjunto repartida por las Kellys propias. */
-  kelly_scope?: "per_strategy" | "global" | "account" | "fixed_total";
-  /** exacta: log-crecimiento de la R diaria; clasica: p - q/b por operacion (20-sep). */
-  kelly_base?: "exacta" | "clasica";
-  /** account: pesos fijos por id de estrategia (se normalizan). */
-  fixed_weights?: Record<string, number>;
-  /** fixed_total: el total por trade que se reparte por las Kellys propias. */
-  total_pct?: number;
-  cap_pct: number;
-  /** Tope POR ESTRATEGIA por trade (% del capital del dia; 0 = sin), antes del de la suma. */
-  cap_strategy_pct?: number;
-  rebalance: RebalanceFreq;
-  lookback_days: number;
-  weighting: WeightModel;
-  floor: number;
-  /** Estrategia sin edge en la ventana (Kelly <= 0): off = a 0 (apagada) | fallback = el % de respaldo. */
-  no_edge?: "off" | "fallback";
+/** Tamano por SETUP (20-sep): el % del paso 1 de cada trade x la Kelly
+ *  relativa (EV/sigma^2) de su tramo de precio de entrada, estimada
+ *  walk-forward por anos con todo lo anterior (el primer ano va a x1). */
+export interface RawSetupIn {
+  enabled: boolean;
+  feature?: "price";
+  /** [[lo, hi], ...]; hi null = sin techo. Sin nada, los tramos por defecto. */
+  ranges?: Array<[number, number | null]> | null;
+  min_trades?: number;
+  /** Encoge el multiplicador hacia x1 segun la muestra: m = 1 + (m - 1) * n / (n + shrink). */
+  shrink?: number;
+  clip_lo?: number;
+  clip_hi?: number;
+  /** walk_forward: cada ano con lo anterior (fuera de muestra); all: toda la historia (in-sample, solo para ver la tabla). */
+  estimate?: "walk_forward" | "all";
+  /** Una sola tabla con los trades de todas las estrategias (mas muestra por tramo). */
+  pooled?: boolean;
 }
 
 export interface RawConfigIn {
@@ -618,7 +608,7 @@ export interface RawConfigIn {
   /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
   monthly_expenses: number;
   locates?: RawLocatesIn | null;
-  scaling?: RawScalingIn | null;
+  setup?: RawSetupIn | null;
   /** Criterios de margen y buying power del broker (19-sep). Apagado = nada cambia. */
   margin?: { enabled: boolean; broker: string; capacity_pct: number } | null;
   start_date?: string | null;
@@ -645,69 +635,32 @@ export interface RawLocatesBand {
   bands: { p05: number[]; p50: number[]; p95: number[] };
 }
 
-export interface RawScalingPeriod {
-  period: string;
-  from: string;
-  alive: number;
-  weights: number[];
-  weights_fallback: boolean;
-  /** Kelly EXACTA de la ventana (la f que maximiza el log-crecimiento empirico), % del capital por trade. */
-  kelly_raw_pct: number | null;
-  /** La aproximacion mu/sigma^2, solo para compararla. */
-  kelly_quad_pct?: number | null;
-  /** Lo que PEDIA el modelo (tras la fraccion de Kelly), % del capital del dia. */
-  x_pct: number | null;
-  /** Lo APLICADO el primer dia del periodo, tras el tope del usuario. */
-  applied_pct?: number | null;
-  /** Riesgo por trade aplicado de cada estrategia (% del capital del dia) y su Kelly propia. */
-  risk_pct?: number[];
-  kelly_por_estrategia_pct?: Array<number | null>;
-  note: string | null;
-  capped?: boolean;
-  /** Ese periodo alguna estrategia pedia mas que el tope por estrategia. */
-  capped_strategy?: boolean;
-  /** Unidad de la fraccion de cada estrategia: risk (al stop) | capital (en posicion). */
-  bases?: Array<"risk" | "capital">;
+export interface RawSetupRange {
+  lo: number;
+  hi: number | null;
+  n: number;
+  ev_pct: number;
+  sd_pct: number;
+  /** EV/sigma^2 (la Kelly del tramo, en su unidad). */
+  f: number | null;
+  /** El multiplicador aplicado al % del paso 1. */
+  m: number;
+  con_muestra: boolean;
 }
 
-export interface RawScalingToday {
-  date: string;
-  equity: number;
-  window: { from: string; to: string };
-  model: RawScalingIn["model"];
-  kelly_scope?: "per_strategy" | "global" | "account" | "fixed_total" | null;
-  /** Kelly del conjunto (global / account). */
-  kelly_raw_pct: number | null;
-  total_pct?: number | null;
-  fixed_weights?: number[] | null;
-  kelly_quad_pct?: number | null;
-  kelly_mult: number;
-  x_pct: number;
-  cap_pct: number;
-  applied_pct: number;
-  applied_usd: number;
-  capped: boolean;
-  capped_strategy?: boolean;
-  cap_strategy_pct?: number;
-  note: string | null;
-  weights_fallback: boolean;
-  per_strategy: Array<{
-    idx: number; name: string; alive: boolean;
-    /** Kelly propia exacta (% del capital por trade) y su aproximacion mu/sigma^2. */
-    kelly_pct?: number | null; kelly_quad_pct?: number | null;
-    /** Lo que pedia (tras la fraccion) y lo aplicado (tras el tope), % del capital del dia. */
-    asked_pct?: number; weight: number; risk_pct: number; risk_usd: number;
-    /** risk: % del capital al stop; capital: % del capital en posicion (la corrida dimensiono por capital). */
-    basis?: "risk" | "capital";
-  }>;
+export interface RawSetupTable {
+  name: string;
+  basis: "risk" | "capital";
+  ranges: RawSetupRange[];
 }
 
-export interface RawScalingOut {
-  cfg: RawScalingIn;
-  periods: RawScalingPeriod[];
-  today: RawScalingToday;
-  no_stop: number;
-  no_weight: number;
+export interface RawSetupOut {
+  cfg: RawSetupIn & { ranges: Array<[number, number | null]>; min_trades: number; shrink: number; clip_lo: number; clip_hi: number; estimate: "walk_forward" | "all"; pooled: boolean };
+  /** La tabla estimada con TODO: la que vale para operar manana. */
+  vigente: RawSetupTable[];
+  /** Walk-forward: la tabla que se aplico a cada ano (estimada con lo anterior). */
+  por_ano: Array<{ desde: string; tablas: RawSetupTable[] }>;
+  por_estrategia: Array<{ name: string; trades: number; distintos_de_1: number; mult_medio: number; mult_min: number; mult_max: number }>;
 }
 
 /** Con que se corrio la corrida guardada (para la fila del selector). */
@@ -740,9 +693,8 @@ export interface RawCapReport {
   /** Cortos que la puerta por EV dejo fuera / que cabian en lo alquilado (gratis). */
   gate_out?: number;
   gate_free?: number;
-  /** Escalado: sin stop (no se puede dimensionar por riesgo) / con peso 0. */
-  no_stop?: number;
-  no_weight?: number;
+  /** Trades con multiplicador de setup distinto de 1. */
+  setup?: number;
   notional_usd?: number;
 }
 
@@ -815,6 +767,8 @@ export interface RawTrades {
   packages?: number[];
   r: number[];
   reason: string[];
+  /** Multiplicador de setup aplicado a cada trade (1 sin tabla). */
+  setup_mult?: number[];
 }
 
 export interface RawOut {
@@ -829,7 +783,7 @@ export interface RawOut {
     ticker_cap_basis?: "risk" | "notional" | "trade";
     monthly_expenses: number;
     locates?: RawLocatesIn | null;
-    scaling?: RawScalingIn | null;
+    setup?: RawSetupIn | null;
     start_date: string | null;
     end_date: string | null;
   };
@@ -837,7 +791,7 @@ export interface RawOut {
   locates_report?: RawLocatesReport;
   locates_band?: RawLocatesBand | null;
   locates_analysis?: RawLocatesAnalysis | null;
-  scaling?: RawScalingOut | null;
+  setup?: RawSetupOut | null;
   ruined?: boolean;
   /** Percentiles del sorteo de locates aleatorios de esta llamada. */
   locates_random?: { n: number; media?: number; p10?: number; p50?: number; p90?: number; min?: number; max?: number } | null;
@@ -914,6 +868,63 @@ export function kellyCuentaReal(body: KellyRealIn): Promise<KellyRealOut> {
 
 export function runPortfolioRaw(body: RawConfigIn): Promise<RawOut> {
   return apiRequest<RawOut>("/portfolio-lab/raw", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 120_000,
+  });
+}
+
+/** El nivel de la cuenta por la caida (20-sep): la misma configuracion con los
+ *  % del paso 1 x cada factor; para cada uno lo real y el Monte Carlo. */
+export interface RawNivel {
+  factor: number;
+  total_pct: number;
+  per_strategy_pct: Record<string, number>;
+  final_equity: number;
+  return_pct: number;
+  max_dd_pct: number;
+  worst_day_pct: number;
+  ruined: boolean;
+  trades: number;
+  mc: { dd_p95: number; dd_p99: number; dd_median: number; final_p5: number; final_p50: number; final_p95: number; prob_ruin_pct: number; prob_losing_pct: number } | null;
+}
+export interface RawNivelesOut {
+  capital: number;
+  ruin_pct: number;
+  mc_sims: number;
+  niveles: RawNivel[];
+}
+export function runPortfolioNiveles(body: RawConfigIn & { factors?: number[]; mc_sims?: number; ruin_pct?: number }): Promise<RawNivelesOut> {
+  return apiRequest<RawNivelesOut>("/portfolio-lab/raw/niveles", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 300_000,
+  });
+}
+
+/** Reparto entre estrategias por Kelly conjunta (20-sep), estimado en la
+ *  primera parte y comprobado en la segunda contra los % del paso 1. */
+export interface RawRepartoCandidato {
+  name: string;
+  pct: number[];
+  is: { mult: number; dd_pct: number };
+  oos: { mult: number; dd_pct: number };
+  all: { mult: number; dd_pct: number };
+}
+export interface RawRepartoOut {
+  names: string[];
+  strategy_ids: string[];
+  total_pct: number;
+  split_date: string | null;
+  dias_is: number;
+  dias_oos: number;
+  correlation: number[][];
+  kelly_propia_pct: Array<number | null>;
+  candidatos: RawRepartoCandidato[];
+  recomendado: { pct: number[]; weights: number[] };
+}
+export function runPortfolioReparto(body: RawConfigIn & { total_pct?: number | null; split?: number; cap_strategy_pct?: number }): Promise<RawRepartoOut> {
+  return apiRequest<RawRepartoOut>("/portfolio-lab/raw/reparto", {
     method: "POST",
     body: JSON.stringify(body),
     timeoutMs: 120_000,

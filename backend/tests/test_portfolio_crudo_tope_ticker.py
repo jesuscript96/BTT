@@ -121,53 +121,6 @@ def test_base_por_trade_el_tope_es_lo_que_arriesga_un_trade():
 
 
 # ── Escalado: tope por estrategia (19-sep) ─────────────────────────────
-
-def test_los_topes_conservan_las_proporciones_de_kelly():
-    """Pedido 60 / 60 / 90 (Kellys x fraccion), tope de la suma 7 y por
-    estrategia 5: antes cada una caia a 5 y la suma las dejaba iguales
-    (2,33 / 2,33 / 2,33); ahora la suma se reparte con las proporciones
-    (2,0 / 2,0 / 3,0). Y una de respaldo se queda con su % sin entrar en
-    el reparto: 18,5 / 1 / 1 con tope 10 y 3 por estrategia -> 3 / 1 / 1."""
-    import numpy as np
-    from app.services.portfolio_lab_raw import _reparte_topes
-    apl, capped, capped_i = _reparte_topes(np.array([0.60, 0.60, 0.90]), np.array([False, False, False]), 0.05, 0.07)
-    assert np.allclose(apl * 100, [2.0, 2.0, 3.0]) and capped and not capped_i
-    apl, capped, capped_i = _reparte_topes(np.array([0.185, 0.01, 0.01]), np.array([False, True, True]), 0.03, 0.10)
-    assert np.allclose(apl * 100, [3.0, 1.0, 1.0]) and capped_i
-    # Sin tope de la suma: solo el tope por estrategia.
-    apl, capped, capped_i = _reparte_topes(np.array([0.185, 0.01, 0.01]), np.array([False, True, True]), 0.03, 0.0)
-    assert np.allclose(apl * 100, [3.0, 1.0, 1.0]) and not capped and capped_i
-    # Sin pasarse de la suma: lo pedido tal cual.
-    apl, capped, capped_i = _reparte_topes(np.array([0.02, 0.01, 0.01]), np.array([False, False, False]), 0.05, 0.10)
-    assert np.allclose(apl * 100, [2.0, 1.0, 1.0]) and not capped and not capped_i
-
-
-def test_tope_por_estrategia_en_la_simulacion_real():
-    """Con las tres estrategias sinteticas y Kelly: con tope por estrategia
-    ninguna pasa de el en ningun periodo, y el flag capped_strategy sale."""
-    runs = [_run("s1", "AAA", "04:10", "04:30", 1000, exitp=0.8), _run("s2", "BBB", "04:15", "04:40", 1000, exitp=0.85),
-            _run("s3", "CCC", "04:20", "04:25", 1000, exitp=0.9)]
-    # Historia de 60 dias para que Kelly tenga muestra: se replican los trades por dia.
-    import copy
-    for r in runs:
-        base = r["trades"][0]
-        r["trades"] = []
-        for k in range(60):
-            t = copy.deepcopy(base)
-            d = f"2026-{1 + k // 28:02d}-{1 + k % 28:02d}"
-            t["date"] = d; t["entry_time"] = f"{d} {base['entry_time'][11:]}"; t["exit_time"] = f"{d} {base['exit_time'][11:]}"
-            r["trades"].append(t)
-    cfg = {"capital": 10000.0, "cap_mode": "skip", "default_exec": {"sizing": "risk", "size_value": 1.0, "size_unit": "pct"},
-           "scaling": {"model": "kelly", "kelly_mult": 1.0, "cap_pct": 0.0, "cap_strategy_pct": 0.5, "rebalance": "W", "lookback_days": 30, "pct": 0.25}}
-    out = plr.simulate(runs, cfg)
-    sc = out["scaling"]
-    assert all(max(p["risk_pct"]) <= 0.5 + 1e-9 for p in sc["periods"])
-    assert any(p.get("capped_strategy") for p in sc["periods"])
-    assert sc["today"]["cap_strategy_pct"] == 0.5
-
-
-# ── Escalado: la unidad de cada estrategia (19-sep, auditoria de Kelly) ──
-
 def _run_capital(sid, ticker, t_in, t_out, size, entry=2.0, exitp=1.8):
     r = _run(sid, ticker, t_in, t_out, size, entry=entry, exitp=exitp, stop=entry * 1.5)
     r["backtest_params"]["size_by_sl"] = False   # la corrida dimensiono por capital
@@ -186,34 +139,6 @@ def test_r_neta_en_la_unidad_de_la_estrategia():
     # El locate esperado por accion se descuenta (solo cortos): 0,02 $/acc.
     assert _r_neta(tr, ex_cap, locate_ps=0.02) == pytest.approx(0.09)
     assert _r_neta(dict(tr, direction="Long"), ex_cap, locate_ps=0.02) == pytest.approx(0.10)
-
-
-def test_kelly_dimensiona_por_posicion_a_las_que_van_por_capital():
-    """Con tope por estrategia 1 % y una corrida por capital, Kelly pone 1 % del
-    capital del dia EN POSICION (200 $ a 2 $ = 100 acciones), no 1 % de riesgo
-    al stop aproximado (que a 1 $ de distancia serian 100 acc x 2 $ = 200 $
-    de nocional... y con stops lejanos, mucho mas)."""
-    import copy
-    base = _run_capital("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9)
-    base["trades"] = []
-    for k in range(60):
-        t = copy.deepcopy(_run_capital("s1", "AAA", "04:10", "04:30", 500, entry=2.0, exitp=1.9)["trades"][0])
-        d = f"2026-{1 + k // 28:02d}-{1 + k % 28:02d}"
-        t["date"] = d; t["entry_time"] = f"{d} 04:10:00"; t["exit_time"] = f"{d} 04:30:00"
-        base["trades"].append(t)
-    cfg = {"capital": 20000.0, "cap_mode": "skip", "default_exec": {"sizing": "auto", "size_value": 1.0, "size_unit": "pct"},
-           "scaling": {"model": "kelly", "kelly_mult": 1.0, "cap_pct": 0.0, "cap_strategy_pct": 1.0, "rebalance": "M", "lookback_days": 30, "pct": 1.0}}
-    out = plr.simulate([base], cfg)
-    sc = out["scaling"]
-    assert sc["today"]["per_strategy"][0]["basis"] == "capital"
-    assert all(p["bases"] == ["capital"] for p in sc["periods"])
-    # Primer trade: 1 % de 20.000 = 200 $ en posicion a 2 $ = 100 acciones.
-    assert out["trades"]["size"][0] == pytest.approx(100.0, rel=1e-3)
-    assert out["trades"]["notional"][0] == pytest.approx(200.0, rel=1e-3)
-
-
-# ── Reglas intrinsecas de la estrategia al re-dimensionar (19-sep) ──────
-
 def test_cangrejo_b_recorta_la_entrada_en_el_crudo():
     """Corrida por capital con cangrejo B al 1 %: con 10.000 $ y un stop a 1 $
     de distancia, la entrada no puede pasar de 100 acciones aunque el 5 % del
@@ -296,58 +221,3 @@ def test_la_ruina_para_la_cuenta_tambien_con_topes():
 
 
 # ── Los dos modos de Kelly de Jaume (20-sep) ────────────────────────────
-
-def _tres_runs_con_historia(dias=60):
-    import copy
-    base = [(_run("s1", "AAA", "04:10", "04:30", 1000, entry=1.0, exitp=0.92), 0), (_run("s2", "BBB", "04:15", "04:40", 1000, entry=1.0, exitp=0.95), 0),
-            (_run("s3", "CCC", "04:20", "04:25", 1000, entry=1.0, exitp=0.97), 0)]
-    runs = []
-    for r, _ in base:
-        r["backtest_params"]["size_by_sl"] = False
-        t0 = r["trades"][0]; r["trades"] = []
-        for k in range(dias):
-            t = copy.deepcopy(t0)
-            d = f"2026-{1 + k // 28:02d}-{1 + k % 28:02d}"
-            t["date"] = d; t["entry_time"] = f"{d} {t0['entry_time'][11:]}"; t["exit_time"] = f"{d} {t0['exit_time'][11:]}"
-            # un poco de dispersion para que Kelly no sea infinita
-            t["pnl"] = t["pnl"] * (1.0 if k % 5 else -0.5); t["pnl_with_locates"] = t["pnl"]
-            r["trades"].append(t)
-        runs.append(r)
-    return runs
-
-
-def test_modo_cuenta_pesos_fijos():
-    """Kelly por CUENTA: la R diaria del portfolio con los pesos 50/25/25,
-    Kelly de esa serie x fraccion, topada al 6 % -> total 6 %; cada estrategia
-    = total x su peso: 3 / 1,5 / 1,5."""
-    runs = _tres_runs_con_historia()
-    cfg = {"capital": 10000.0, "cap_mode": "skip", "default_exec": {"sizing": "auto", "size_value": 1.0, "size_unit": "pct"},
-           "scaling": {"model": "kelly", "kelly_scope": "account", "kelly_mult": 1.0, "cap_pct": 6.0, "cap_strategy_pct": 0.0,
-                       "fixed_weights": {"s1": 50, "s2": 25, "s3": 25}, "rebalance": "M", "lookback_days": 30, "pct": 1.0}}
-    out = plr.simulate(runs, cfg)
-    hoy = out["scaling"]["today"]
-    assert hoy["kelly_scope"] == "account" and hoy["kelly_raw_pct"] is not None and hoy["kelly_raw_pct"] > 6
-    assert hoy["applied_pct"] == pytest.approx(6.0)
-    assert [round(p["risk_pct"], 4) for p in hoy["per_strategy"]] == [3.0, 1.5, 1.5]
-    assert hoy["fixed_weights"] == [50.0, 25.0, 25.0]
-
-
-def test_modo_total_fijo_reparte_por_kellys():
-    """Kelly por ESTRATEGIA con total fijo del 10 %: la suma aplicada es 10 y
-    el reparto sigue las Kellys propias (s1 gana mas por trade: mayor Kelly)."""
-    runs = _tres_runs_con_historia()
-    cfg = {"capital": 10000.0, "cap_mode": "skip", "default_exec": {"sizing": "auto", "size_value": 1.0, "size_unit": "pct"},
-           "scaling": {"model": "kelly", "kelly_scope": "fixed_total", "total_pct": 10.0, "cap_pct": 0.0, "cap_strategy_pct": 0.0,
-                       "rebalance": "M", "lookback_days": 30, "pct": 1.0}}
-    out = plr.simulate(runs, cfg)
-    hoy = out["scaling"]["today"]
-    assert hoy["kelly_scope"] == "fixed_total" and hoy["total_pct"] == 10.0
-    assert hoy["applied_pct"] == pytest.approx(10.0)
-    ks = [p["kelly_pct"] for p in hoy["per_strategy"]]
-    rs = [p["risk_pct"] for p in hoy["per_strategy"]]
-    assert all(k is not None and k > 0 for k in ks)
-    for k, r in zip(ks, rs):
-        assert r == pytest.approx(10.0 * k / sum(ks), rel=1e-6)
-    # Mismo periodo -> mismos pesos aunque la historia empiece antes.
-    out2 = plr.simulate(runs, dict(cfg, start_date="2026-02-01"))
-    assert [round(p["risk_pct"], 6) for p in out2["scaling"]["today"]["per_strategy"]] == [round(r, 6) for r in rs]

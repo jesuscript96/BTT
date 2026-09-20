@@ -477,36 +477,21 @@ class RawLocatesIn(BaseModel):
     band_seeds: int = Field(default=0, ge=0, le=500)
 
 
-class RawScalingIn(BaseModel):
-    """Escalado y pesos sobre las corridas en crudo (ver _Escalado): riesgo
-    TOTAL por trade repartido entre estrategias; los R de las filas se
-    ignoran. cap_pct: tope de la SUMA, % del capital del dia."""
-    model: Literal["fixed", "percent", "kelly", "fixed_ratio"] = "kelly"
-    base_risk: float = Field(default=100.0, ge=0)
-    pct: float = Field(default=1.0, ge=0)
-    delta: float = Field(default=500.0, ge=0)
-    # Fraccion de Kelly: 1 = la optima; 0.5 / 0.25 las de la practica; se
-    # admite cualquier valor (hasta 3, por si se quiere ver el sobre-Kelly).
-    kelly_mult: float = Field(default=0.5, gt=0, le=3)
-    # per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
-    # global: la Kelly del conjunto repartida por las Kellys propias.
-    # account: Kelly por cuenta con pesos fijos; fixed_total: total fijo
-    # repartido por las Kellys propias (20-sep).
-    kelly_scope: Literal["per_strategy", "global", "account", "fixed_total"] = "per_strategy"
-    fixed_weights: dict[str, float] | None = None
-    total_pct: float = Field(default=10.0, ge=0)
-    # exacta: la f que maximiza el log-crecimiento de la R diaria; clasica: p - q/b por operacion.
-    kelly_base: Literal["exacta", "clasica"] = "exacta"
-    cap_pct: float = Field(default=10.0, ge=0)
-    # Tope POR ESTRATEGIA por trade (% del capital del dia; 0 = sin). Se aplica
-    # antes que el de la suma y no redistribuye.
-    cap_strategy_pct: float = Field(default=0.0, ge=0)
-    rebalance: Literal["D", "W", "M"] = "M"
-    lookback_days: int = Field(default=90, ge=1)
-    weighting: Literal["equal", "hrp", "momentum", "ev", "dd"] = "hrp"
-    floor: float = Field(default=0.05, ge=0, le=1)
-    # Estrategia sin edge en la ventana (Kelly <= 0): apagarla o el respaldo.
-    no_edge: Literal["off", "fallback"] = "off"
+class RawSetupIn(BaseModel):
+    """Tamano por SETUP (20-sep, ver setup_sizing): el % del paso 1 de cada
+    trade x la Kelly relativa (EV/sigma^2) de su tramo de precio de entrada,
+    estimada walk-forward por anos con todo lo anterior."""
+    enabled: bool = True
+    feature: Literal["price"] = "price"
+    # [[lo, hi], ...]; hi null = sin techo. None = los tramos por defecto.
+    ranges: list[list[float | None]] | None = None
+    min_trades: int = Field(default=30, ge=5)
+    shrink: float = Field(default=50.0, ge=0)
+    clip_lo: float = Field(default=0.5, ge=0)
+    clip_hi: float = Field(default=2.0, ge=0)
+    estimate: Literal["walk_forward", "all"] = "walk_forward"
+    # Una sola tabla con los trades de todas las estrategias (mas muestra por tramo).
+    pooled: bool = False
 
 
 class RawReq(BaseModel):
@@ -530,17 +515,14 @@ class RawReq(BaseModel):
     monthly_expenses: float = Field(default=0.0, ge=0)
     # 16-sep: locates de la cuenta (compartidos + puerta + banda) y escalado.
     locates: RawLocatesIn | None = None
-    scaling: RawScalingIn | None = None
+    setup: RawSetupIn | None = None
     margin: RawMarginIn | None = None
     start_date: str | None = None
     end_date: str | None = None
 
 
-@router.post("/raw")
-def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
-    """Portfolio en crudo: N corridas con la ejecucion fijada por estrategia y
-    la exposicion medida al minuto. Milisegundos sobre trades guardados."""
-    _guard()
+def _cargar_runs(req: "RawReq", user_id) -> list[dict]:
+    """Las corridas guardadas mas recientes de las estrategias pedidas."""
     if not req.strategy_ids:
         raise HTTPException(status_code=400, detail="Elige al menos una estrategia")
     con = get_user_db_connection(read_only=True)
@@ -565,35 +547,172 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
         loaded = plr.load_runs(con, wanted)
     finally:
         con.close()
-
     runs = []
     for sid in req.strategy_ids:
         run = loaded.get(sid)
         if not run:
             raise HTTPException(status_code=404, detail=f"La corrida de {names[sid]} ya no existe")
         runs.append({"strategy_id": sid, "name": names[sid], **run})
+    return runs
+
+
+def _cfg_crudo(req: "RawReq") -> dict:
+    return {
+        "capital": req.capital,
+        "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
+        "default_exec": req.default_exec.model_dump(),
+        "max_exposure_usd": req.max_exposure_usd,
+        "max_exposure_pct": req.max_exposure_pct,
+        "cap_mode": req.cap_mode,
+        "one_per_ticker": req.one_per_ticker,
+        "max_ticker_pct": req.max_ticker_pct,
+        "ticker_cap_basis": req.ticker_cap_basis,
+        "monthly_expenses": req.monthly_expenses,
+        "locates": req.locates.model_dump() if req.locates else None,
+        "setup": req.setup.model_dump() if req.setup else None,
+        "margin": req.margin.model_dump() if req.margin else None,
+        "start_date": req.start_date,
+        "end_date": req.end_date,
+    }
+
+
+@router.post("/raw")
+def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Portfolio en crudo: N corridas con la ejecucion fijada por estrategia y
+    la exposicion medida al minuto. Milisegundos sobre trades guardados."""
+    _guard()
+    runs = _cargar_runs(req, user_id)
     try:
-        out = plr.simulate(runs, {
-            "capital": req.capital,
-            "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
-            "default_exec": req.default_exec.model_dump(),
-            "max_exposure_usd": req.max_exposure_usd,
-            "max_exposure_pct": req.max_exposure_pct,
-            "cap_mode": req.cap_mode,
-            "one_per_ticker": req.one_per_ticker,
-            "max_ticker_pct": req.max_ticker_pct,
-            "ticker_cap_basis": req.ticker_cap_basis,
-            "monthly_expenses": req.monthly_expenses,
-            "locates": req.locates.model_dump() if req.locates else None,
-            "scaling": req.scaling.model_dump() if req.scaling else None,
-            "margin": req.margin.model_dump() if req.margin else None,
-            "start_date": req.start_date,
-            "end_date": req.end_date,
-        })
+        out = plr.simulate(runs, _cfg_crudo(req))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     _bitacora_crudo(req, runs, out)
     return out
+
+
+class RawNivelesReq(RawReq):
+    """El nivel de la cuenta por la caida (20-sep): la misma configuracion
+    con los % del paso 1 multiplicados por cada factor, y para cada uno la
+    caida real, el peor dia, el final y el Monte Carlo (bootstrap por dias):
+    la DD que hay que tragar para que solo 1 de 20 (o 1 de 100) recorridos
+    la supere. Se elige el mayor factor cuya DD p95 se aguanta."""
+    factors: list[float] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+    mc_sims: int = Field(default=2000, ge=100, le=20000)
+    ruin_pct: float = Field(default=50.0, gt=0, le=100)
+
+
+@router.post("/raw/niveles")
+def raw_niveles(req: RawNivelesReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    _guard()
+    runs = _cargar_runs(req, user_id)
+    base_cfg = _cfg_crudo(req)
+    filas = []
+    factores = sorted({round(float(f), 4) for f in req.factors if f and f > 0})[:12] or [1.0]
+    for k in factores:
+        cfg = json.loads(json.dumps(base_cfg))
+        for ex in [cfg["default_exec"], *cfg["per_strategy"].values()]:
+            ex["size_value"] = float(ex.get("size_value") or 0.0) * k
+        try:
+            out = plr.simulate(runs, cfg)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cap0 = float(out["config"]["capital"]); eq = out["equity"]; pnl = out["daily_pnl"]
+        rets = []
+        for i, v in enumerate(pnl):
+            open_ = cap0 if i == 0 else eq[i - 1]
+            rets.append((v / open_) * 100.0 if open_ > 0 else 0.0)
+        peak = cap0; mdd = 0.0
+        for e in eq:
+            peak = max(peak, e)
+            mdd = min(mdd, (e / peak - 1.0) * 100.0 if peak > 0 else 0.0)
+        mc = None
+        try:
+            mc = run_bootstrap(rets, init_cash=cap0, simulations=req.mc_sims, method="bootstrap", mode="compound",
+                               risk_pct=1.0, ruin_pct=req.ruin_pct, seed=1)
+        except ValueError:
+            mc = None
+        total_pct = sum(float(ex.get("size_value") or 0.0) for ex in cfg["per_strategy"].values()) if cfg["per_strategy"] else float(cfg["default_exec"].get("size_value") or 0.0) * len(runs)
+        filas.append({
+            "factor": k,
+            "total_pct": round(total_pct, 4),
+            "per_strategy_pct": {sid: round(float(ex.get("size_value") or 0.0), 4) for sid, ex in cfg["per_strategy"].items()},
+            "final_equity": eq[-1] if eq else cap0,
+            "return_pct": round((eq[-1] / cap0 - 1.0) * 100.0, 2) if eq and cap0 > 0 else 0.0,
+            "max_dd_pct": round(mdd, 2),
+            "worst_day_pct": round(min(rets), 2) if rets else 0.0,
+            "ruined": bool(out.get("ruined")),
+            "trades": int(out["cap_report"]["taken"]),
+            "mc": ({"dd_p95": mc["dd_tolerance"]["p95"], "dd_p99": mc["dd_tolerance"]["p99"], "dd_median": mc["drawdown"]["p50"],
+                    "final_p5": mc["final_balance"]["p5"], "final_p50": mc["final_balance"]["p50"], "final_p95": mc["final_balance"]["p95"],
+                    "prob_ruin_pct": mc["prob_ruin_pct"], "prob_losing_pct": mc["prob_losing_pct"]} if mc else None),
+        })
+    return {"capital": req.capital, "ruin_pct": req.ruin_pct, "mc_sims": req.mc_sims, "niveles": filas}
+
+
+class RawRepartoReq(RawReq):
+    """Reparto entre estrategias por KELLY CONJUNTA (20-sep): la f por
+    estrategia que maximiza el crecimiento de la SUMA (con correlaciones),
+    con el total = la suma de los % del paso 1 (o `total_pct`), estimada en
+    la primera parte (`split` = fraccion de dias) y comprobada en la segunda
+    contra los pesos actuales y a partes iguales; y la estimada con todo, que
+    es la recomendacion."""
+    total_pct: float | None = None
+    split: float = Field(default=0.5, gt=0.1, lt=0.9)
+    cap_strategy_pct: float = Field(default=0.0, ge=0)
+
+
+@router.post("/raw/reparto")
+def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    _guard()
+    import numpy as np
+    from app.services import setup_sizing as ss
+    runs = _cargar_runs(req, user_id)
+    cfg = _cfg_crudo(req)
+    try:
+        out = plr.simulate(runs, cfg)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    n = len(runs)
+    sizes = []
+    for r in runs:
+        ex = cfg["per_strategy"].get(r["strategy_id"]) or cfg["default_exec"]
+        if str(ex.get("size_unit") or "pct") != "pct":
+            raise HTTPException(status_code=400, detail="El reparto necesita los tamanos del paso 1 en % del capital (no en $)")
+        sizes.append(float(ex.get("size_value") or 0.0))
+    sizes_arr = np.asarray(sizes, dtype=float)
+    if not np.all(sizes_arr > 0):
+        raise HTTPException(status_code=400, detail="Todas las estrategias necesitan un % por trade > 0 en el paso 1")
+    cap0 = float(out["config"]["capital"]); eq = np.asarray(out["equity"], dtype=float)
+    eq_open = np.concatenate([[cap0], eq[:-1]]) if len(eq) else np.array([])
+    X = np.zeros((len(eq), n))
+    for i, p in enumerate(out["per_strategy"]):
+        X[:, i] = np.asarray(p["pnl_daily"], dtype=float) / np.where(eq_open > 0, eq_open, np.nan) / sizes_arr[i]
+    X = np.nan_to_num(X)
+    total = float(req.total_pct) if req.total_pct else float(sizes_arr.sum())
+    cap_i = [req.cap_strategy_pct] * n if req.cap_strategy_pct > 0 else None
+    corte = int(len(eq) * req.split)
+    X_is, X_oos = X[:corte], X[corte:]
+    if len(X_is) < 40 or len(X_oos) < 20:
+        raise HTTPException(status_code=400, detail="Hacen falta al menos 60 dias para estimar y comprobar el reparto")
+    f_is = ss.kelly_conjunta(X_is, total, cap_i)
+    f_all = ss.kelly_conjunta(X, total, cap_i)
+    f_cur = sizes_arr / sizes_arr.sum() * total
+    f_eq = np.full(n, total / n)
+    def fila(nombre, f):
+        e_is, d_is = ss.crecimiento(X_is, f); e_oos, d_oos = ss.crecimiento(X_oos, f); e_all, d_all = ss.crecimiento(X, f)
+        return {"name": nombre, "pct": [round(float(x), 3) for x in f],
+                "is": {"mult": round(e_is, 4), "dd_pct": round(d_is * 100, 2)}, "oos": {"mult": round(e_oos, 4), "dd_pct": round(d_oos * 100, 2)},
+                "all": {"mult": round(e_all, 4), "dd_pct": round(d_all * 100, 2)}}
+    corr = np.corrcoef(X.T) if n > 1 else np.ones((1, 1))
+    return {
+        "names": [r["name"] for r in runs], "strategy_ids": [r["strategy_id"] for r in runs],
+        "total_pct": total, "split_date": out["calendar"][corte] if corte < len(out["calendar"]) else None,
+        "dias_is": int(len(X_is)), "dias_oos": int(len(X_oos)),
+        "correlation": [[round(float(corr[i, j]), 3) for j in range(n)] for i in range(n)],
+        "kelly_propia_pct": [round(float(X[:, i].mean() / X[:, i].var()), 2) if X[:, i].var() > 0 else None for i in range(n)],
+        "candidatos": [fila("Kelly conjunta (estimada en la 1.ª parte)", f_is), fila("Los % del paso 1", f_cur), fila("A partes iguales", f_eq)],
+        "recomendado": {"pct": [round(float(x), 3) for x in f_all], "weights": [round(float(x / f_all.sum()), 4) if f_all.sum() > 0 else 0.0 for x in f_all]},
+    }
 
 
 class KellyRealRow(BaseModel):
@@ -686,7 +805,7 @@ def _bitacora_crudo(req: "RawReq", runs: list[dict], out: dict) -> None:
                 "default_exec": req.default_exec.model_dump(),
                 "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
                 "locates": req.locates.model_dump() if req.locates else None,
-                "scaling": req.scaling.model_dump() if req.scaling else None,
+                "setup": req.setup.model_dump() if req.setup else None,
                 "margin": req.margin.model_dump() if req.margin else None,
             },
             "result": {
@@ -699,7 +818,7 @@ def _bitacora_crudo(req: "RawReq", runs: list[dict], out: dict) -> None:
                      "cap_report": p.get("cap_report")}
                     for p in (out.get("per_strategy") or [])
                 ],
-                "scaling_today": ((out.get("scaling") or {}).get("today") or {}).get("per_strategy"),
+                "setup": ((out.get("setup") or {}).get("por_estrategia")),
             },
         }
         with open(os.path.join(base, "portfolio_crudo.jsonl"), "a", encoding="utf-8") as fh:

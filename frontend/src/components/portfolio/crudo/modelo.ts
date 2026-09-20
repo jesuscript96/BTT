@@ -1,7 +1,7 @@
 // Estado y calculos puros de la vista En crudo (16-sep): lo que no pinta
 // nada vive aqui para que cada paso sea solo su pantalla.
 
-import type { RawExec, RawLocatesIn, RawScalingIn } from "@/lib/api_portfolio_lab";
+import type { RawExec, RawLocatesIn, RawSetupIn } from "@/lib/api_portfolio_lab";
 import { n } from "./hoja";
 
 /** Bloque Portfolio del paso 1 (v3, 20-sep): las estrategias entran
@@ -85,52 +85,16 @@ export function locatesResumen(l: LocCfg): string {
   return `locates ${precio} ${l.shared ? "compartidos" : "por estrategia"}${puerta}`;
 }
 
-/** Escalado y pesos (paso 4). */
-export type EscCfg = RawScalingIn;
-
-export const ESC0: EscCfg = {
-  model: "kelly",
-  base_risk: 100,
-  pct: 1,
-  delta: 500,
-  kelly_mult: 0.5,
-  // v3 (20-sep): dos modos. account = Kelly por CUENTA con pesos fijos;
-  // fixed_total = Kelly por ESTRATEGIA con el total fijo.
-  kelly_scope: "account",
-  kelly_base: "clasica",
-  fixed_weights: {},
-  total_pct: 10,
-  cap_pct: 10,
-  cap_strategy_pct: 0,
-  rebalance: "M",
-  lookback_days: 90,
-  // Sin HRP ni reparto: solo Kelly manda (Jaume, 16-sep noche). Los modelos
-  // sin Kelly reparten el total a partes iguales.
-  weighting: "equal",
-  floor: 0,
-  no_edge: "fallback",
-};
-
-export const KELLY_SCOPE_LABEL: Record<"per_strategy" | "global" | "account" | "fixed_total", string> = {
-  per_strategy: "Kelly de cada estrategia",
-  global: "Kelly global (capital total)",
-  account: "Kelly por cuenta · pesos fijos",
-  fixed_total: "Kelly por estrategia · total fijo",
-};
-
-export const MODELO_LABEL: Record<EscCfg["model"], string> = {
-  kelly: "Kelly",
-  percent: "% del capital (compound)",
-  fixed: "$ fijos",
-  fixed_ratio: "Fixed ratio (Ryan Jones)",
-};
-
-export const PESOS_LABEL: Record<EscCfg["weighting"], string> = {
-  hrp: "HRP (López de Prado)",
-  equal: "Iguales",
-  momentum: "Momentum",
-  ev: "Por EV",
-  dd: "Por drawdown",
+/** Tamano por setup (paso 4 C). */
+export const SETUP0: RawSetupIn = {
+  enabled: true,
+  feature: "price",
+  min_trades: 30,
+  shrink: 50,
+  clip_lo: 0.5,
+  clip_hi: 2.0,
+  estimate: "walk_forward",
+  pooled: false,
 };
 
 /** Curva propia de una serie (base + PnL diario) y su drawdown, con el pico
