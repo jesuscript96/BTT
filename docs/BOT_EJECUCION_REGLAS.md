@@ -334,6 +334,8 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Estado: FIJADA (Jaume, 20-sep). Origen: pregunta 2 del repaso de stops; reentrada tras BS.
 - Nota (1.3): reponer la emergencia si DAS la cancela o rechaza vale para OPERATIVA NORMAL (fuera del protocolo); dentro del protocolo, no.
 
+**Entrada que cae en el arranque de un cisne negro (Jaume, 20-sep): SIN guardas nuevas.** (1) Si el fill de entrada llega y el ask salta antes de que DAS acepte los stops: R-C-03 (reintentos, aviso) y, con el trigger ya por debajo del precio, protocolo R-G-01. (2) Si la escalera está agregando y el precio sube, la venta pendiente se ejecuta en mitad de la subida: se ACEPTA sin guarda (nada de «cancelar la escalera si el ask sube X % en Y s»: complejiza y puede ser peligroso). Razón con datos: se entra a mejor precio que la señal, y los fogonazos devuelven el 83-98 % del salto en 10-30 s; al cabo de un rato se pierde menos o incluso se gana. Los stops y el protocolo hacen su trabajo.
+
 ### R-G-02 · Aviso de halt (PM y RTH)
 - Situación: una acción con posición abierta (o con orden de entrada viva) entra en halt, en premercado o en sesión.
 - Acción: mensaje por Telegram en el momento (nivel Aviso), breve: ticker, tipo de halt si se conoce (LULD / T1 / T12), hora, precio de parada, posición y stop, k (halts del día) y bandas LULD si es en sesión. Al reabrir, segundo mensaje con precio de reapertura y qué hizo el bot (R-F-01). Sin ciclo de 5 minutos.
