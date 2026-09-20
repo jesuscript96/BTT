@@ -297,3 +297,5 @@
 |---|---|
 | 2026-09-12 | Se abre el banco con 17 áreas y el consolidado para el PDF. Ninguna contestada. |
 16. **Reglas de margen de Sage (19-sep, apartado 2c del libro):** qué valores son «alto riesgo» (criterio), si GET BP ya descuenta el margen por símbolo, autoliquidación en RTH (hora, aviso), corto en PM que supera el margen, PDT con cuenta < 25 k$, llamadas de margen.
+
+17. **[Sage] Halt largo (T12) con un corto dentro: ¿qué comisión, coste de préstamo (hard-to-borrow) o cargo por locate cobran por cada día que la posición siga atrapada? ¿Hay buy-in forzoso? (Jaume, 20-sep: RECORDÁRSELO al preguntar al bróker.)**
