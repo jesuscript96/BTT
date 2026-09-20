@@ -11,12 +11,11 @@
 // varios rangos de precios. La curva real (CSV del paso 5) se pinta encima en
 // el paso 5.
 
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
 import type { RawCaminosOut, RawOut } from "@/lib/api_portfolio_lab";
 import { Btn, Nota, Num, Sec, Stat, colorSerie, n, pct, tdNum, tdTxt, thL, thR, usd, usdCorto } from "./hoja";
-import { LinesChart } from "./CrudoCharts";
 
 export interface CaminosModel {
   out: RawOut;
@@ -29,32 +28,21 @@ export interface CaminosModel {
   rangosExtra: Array<[number, number]>;
   setRangosExtra: (v: Array<[number, number]>) => void;
   calcular: () => void;
+  /** El rango cuya banda se pinta (lo lleva el padre, que coloca el grafico). */
+  sel: number;
+  setSel: (k: number) => void;
 }
 
 const numChico: React.CSSProperties = { height: 24, fontSize: 11, padding: "2px 5px", textAlign: "right" };
 const lbl: React.CSSProperties = { fontSize: 10.5, fontFamily: font.sans, color: color.textMuted };
 
 export function CaminosLocates({ m }: { m: CaminosModel }) {
-  const { out, caminos, running, error, seeds, setSeeds, rangosExtra, setRangosExtra, calcular } = m;
-  const cap = out.config.capital;
+  const { out, caminos, running, error, seeds, setSeeds, rangosExtra, setRangosExtra, calcular, sel, setSel } = m;
   const loc = out.config.locates;
   const aleatorios = !!loc && loc.mode === "random";
-  const [sel, setSel] = useState(0);
   const [nuevoLo, setNuevoLo] = useState(0.3);
   const [nuevoHi, setNuevoHi] = useState(15);
   const rango = caminos?.rangos[Math.min(sel, (caminos?.rangos.length ?? 1) - 1)] ?? null;
-
-  const grafico = useMemo(() => {
-    if (!caminos || !rango) return null;
-    const toPct = (v: number) => ((v - cap) / cap) * 100;
-    return {
-      series: [
-        { name: "mediana de los caminos", color: color.textSecondary, width: 1.4, values: rango.bands.p50.map(toPct) },
-        { name: "la semilla del paso 1", color: color.copper, width: 2.2, values: out.equity.map(toPct) },
-      ],
-      band: { lo: rango.bands.p05.map(toPct), hi: rango.bands.p95.map(toPct), color: color.info, name: "p05 … p95" },
-    };
-  }, [caminos, rango, out.equity, cap]);
 
   return (
     <Sec
@@ -99,7 +87,7 @@ export function CaminosLocates({ m }: { m: CaminosModel }) {
       </div>
       {error && <div style={{ marginTop: 8 }}><ErrorBox>{error}</ErrorBox></div>}
       {!caminos && !error && aleatorios && <Nota>Pulsa <strong>Simular caminos</strong>: {n(seeds, 0)} simulaciones completas por rango.</Nota>}
-      {caminos && rango && grafico && (
+      {caminos && rango && (
         <>
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 8 }}>
             <thead>
@@ -129,23 +117,34 @@ export function CaminosLocates({ m }: { m: CaminosModel }) {
               ))}
             </tbody>
           </table>
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 280px", alignItems: "start", marginTop: 8 }}>
-            <LinesChart labels={caminos.calendar} series={grafico.series} band={grafico.band} yFormat={(v) => `${n(v, 0)} %`} hoverFormat={(v) => `${n(v, 1)} %`} height={260} titulo={`RETORNO SOBRE EL CAPITAL · rango ${n(rango.lo, 2)}–${n(rango.hi, 2)} $`} />
-            <div style={{ borderLeft: `1px solid ${color.border}`, alignSelf: "stretch", padding: "4px 10px" }}>
-              <div style={{ display: "flex", flexWrap: "wrap" }}>
-                <Stat label="Final" value={usd(rango.final.p50)} sub={`p05 ${usdCorto(rango.final.p05)} · p95 ${usdCorto(rango.final.p95)} · tu semilla ${usdCorto(out.equity[out.equity.length - 1])}`} />
-                <Stat label="Caída máxima" value={pct(rango.max_dd_pct.p50)} sub={`peor camino ${pct(rango.max_dd_pct.p05)} · mejor ${pct(rango.max_dd_pct.p95)}`} tone="loss" />
-                <Stat label="Locates" value={usd(rango.cost.p50)} sub={`p05 ${usdCorto(rango.cost.p05)} · p95 ${usdCorto(rango.cost.p95)}`} tone="loss" />
-              </div>
-              <p style={{ ...lbl, margin: "6px 0 0", lineHeight: 1.5 }}>
-                Banda estrecha: el precio de los locates no decide el resultado. Ancha: la estrategia vive del precio que le toque. Pulsa otra fila para ver su banda.
-              </p>
-            </div>
+          <div style={{ display: "flex", flexWrap: "wrap", marginTop: 6 }}>
+            <Stat label={`Final · rango ${n(rango.lo, 2)}–${n(rango.hi, 2)} $`} value={usd(rango.final.p50)} sub={`p05 ${usdCorto(rango.final.p05)} · p95 ${usdCorto(rango.final.p95)} · tu semilla ${usdCorto(out.equity[out.equity.length - 1])}`} />
+            <Stat label="Caída máxima" value={pct(rango.max_dd_pct.p50)} sub={`peor camino ${pct(rango.max_dd_pct.p05)} · mejor ${pct(rango.max_dd_pct.p95)}`} tone="loss" />
+            <Stat label="Locates" value={usd(rango.cost.p50)} sub={`p05 ${usdCorto(rango.cost.p05)} · p95 ${usdCorto(rango.cost.p95)}`} tone="loss" />
           </div>
+          <p style={{ ...lbl, margin: "4px 0 0", lineHeight: 1.5 }}>
+            Banda estrecha: el precio de los locates no decide el resultado. Ancha: la estrategia vive del precio que le toque. Pulsa otra fila para ver su banda en el gráfico de abajo.
+          </p>
         </>
       )}
     </Sec>
   );
+}
+
+/** Las series del gráfico de caminos: banda p05–p95, mediana y la semilla del paso 1, en % del capital. */
+export function seriesCaminos(caminos: RawCaminosOut, rangoIdx: number, out: RawOut) {
+  const rango = caminos.rangos[Math.min(rangoIdx, caminos.rangos.length - 1)];
+  if (!rango) return null;
+  const cap = out.config.capital;
+  const toPct = (v: number) => ((v - cap) / cap) * 100;
+  return {
+    rango,
+    series: [
+      { name: "mediana de los caminos", color: color.textSecondary, width: 1.4, values: rango.bands.p50.map(toPct) },
+      { name: "la semilla del paso 1", color: color.copper, width: 2.2, values: out.equity.map(toPct) },
+    ],
+    band: { lo: rango.bands.p05.map(toPct), hi: rango.bands.p95.map(toPct), color: color.info, name: "p05 … p95" },
+  };
 }
 
 /** La curva real (fecha → equity) sobre las bandas de la simulación, en el

@@ -18,10 +18,13 @@ function Frame({
   children,
   height,
   caption,
+  width = W,
 }: {
   children: React.ReactNode;
   height: number;
   caption?: string;
+  /** Ancho del viewBox: con el ancho real de la columna el dibujo sale a tamano real (no escala). */
+  width?: number;
 }) {
   return (
     <div
@@ -32,7 +35,7 @@ function Frame({
         padding: "10px 12px 6px",
       }}
     >
-      <svg viewBox={`0 0 ${W} ${height}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: "auto", display: "block" }}>
         {children}
       </svg>
       {caption && (
@@ -58,6 +61,9 @@ export function SpaghettiChart({
   baseCurve,
   initCash,
   xLabel = "trades →",
+  width = 900,
+  height = 300,
+  caption = "Cada linea tenue es una historia alternativa. Las bandas son los percentiles 5–95 y 25–75; la linea cobre, lo que paso de verdad.",
 }: {
   spaghetti: number[][];
   bands: McBands;
@@ -65,8 +71,12 @@ export function SpaghettiChart({
   initCash: number;
   /** Unidad del eje X: robustez remuestrea por trade, portfolio por dia. */
   xLabel?: string;
+  width?: number;
+  height?: number;
+  caption?: string;
 }) {
-  const H = 300;
+  const H = height;
+  const W = width;
   const geom = useMemo(() => {
     const pool = [...bands.p5, ...bands.p95, ...baseCurve, initCash].filter((v) => Number.isFinite(v));
     if (!pool.length) return null;
@@ -107,7 +117,8 @@ export function SpaghettiChart({
   return (
     <Frame
       height={H}
-      caption="Cada linea tenue es una historia alternativa. Las bandas son los percentiles 5–95 y 25–75; la linea cobre, lo que paso de verdad."
+      width={W}
+      caption={caption}
     >
       {geom.ticks.map((t) => (
         <g key={t}>
@@ -181,14 +192,19 @@ export function DistributionChart({
   barColor = "var(--color-ec-info)",
   fmtValue = (v: number) => `$${money(v)}`,
   caption,
+  width = 900,
+  height = 190,
 }: {
   hist: McHistogram;
   markers?: Array<{ value: number; label: string; color: string }>;
   barColor?: string;
   fmtValue?: (v: number) => string;
   caption?: string;
+  width?: number;
+  height?: number;
 }) {
-  const H = 190;
+  const H = height;
+  const W = width;
   const { counts, edges } = hist;
   if (!counts.length || edges.length < 2) return null;
 
@@ -201,7 +217,7 @@ export function DistributionChart({
   const yOf = (c: number) => PAD.t + (1 - c / maxC) * (H - PAD.t - PAD.b);
 
   return (
-    <Frame height={H} caption={caption}>
+    <Frame height={H} width={W} caption={caption}>
       {counts.map((c, i) => {
         const x0 = xOf(edges[i]);
         const x1 = xOf(edges[i + 1]);

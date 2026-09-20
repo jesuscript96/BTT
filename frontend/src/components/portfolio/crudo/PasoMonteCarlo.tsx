@@ -1,18 +1,23 @@
 "use client";
 
-// Paso 3 de «En crudo» (v3, 20-sep-2026): SOLO el Monte Carlo bootstrap del
-// portfolio del paso 1, con sus datos clave, los recorridos, las
-// distribuciones y una tabla de percentiles. Jaume: «el montecarlo bootstrap
-// con sus datos clave y tabla. Nada más».
+// Paso 3 de «En crudo» (v3/v4, 20-sep-2026): el Monte Carlo bootstrap del
+// portfolio del paso 1 (datos clave y tabla de percentiles) y los caminos de la
+// simulación según los locates (N simulaciones enteras con otra semilla). Los
+// tres gráficos van en una fila, el de los caminos el más grande, a tamaño
+// real (Jaume: «no quiero un gráfico tan masivamente grande; tres, uno al lado
+// del otro, siendo el de los caminos el más grande»).
 
-import React from "react";
+import React, { useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
+import { SpaghettiChart, DistributionChart } from "@/components/robustez/charts/MonteCarloCharts";
+import { useAncho } from "@/components/backtester/tabs/edge/charts";
 import type { RawCaminosOut, RawOut } from "@/lib/api_portfolio_lab";
-import { CaminosLocates } from "./CaminosLocates";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Btn, Nota, Num, Sec, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
-import { McResultado } from "./McResultado";
+import { McTarjetas } from "./McResultado";
+import { CaminosLocates, seriesCaminos } from "./CaminosLocates";
+import { LinesChart } from "./CrudoCharts";
 
 export interface MonteCarloModel {
   out: RawOut;
@@ -73,8 +78,23 @@ function TablaPercentiles({ mcOut }: { mcOut: MonteCarloOut }) {
   );
 }
 
+/** Una celda de la fila de gráficos que mide su ancho para dibujar a tamaño real. */
+function Celda({ children, titulo }: { children: (ancho: number) => React.ReactNode; titulo: string }) {
+  const [ref, ancho] = useAncho(420);
+  return (
+    <div ref={ref} style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: color.textMuted, fontFamily: font.sans, marginBottom: 4 }}>{titulo}</div>
+      {children(ancho)}
+    </div>
+  );
+}
+
 export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
   const { out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc, caminos, caminosRunning, caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, simularCaminos } = m;
+  const [sel, setSel] = useState(0);
+  const gc = caminos ? seriesCaminos(caminos, sel, out) : null;
+  const vacio = (txt: string) => <div style={{ border: `1px dashed ${color.border}`, padding: 14, fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, textAlign: "center" }}>{txt}</div>;
+
   return (
     <div style={{ padding: "10px 10px 6px" }}>
       <Sec
@@ -92,12 +112,40 @@ export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
         {!mcOut ? (
           <Nota>Pulsa <strong>Simular</strong>: {n(Number(mcSims) || 5000, 0)} recorridos de {n(out.calendar.length, 0)} días sobre la suma del paso 2.</Nota>
         ) : (
-          <Nota>{n(mcOut.simulations, 0)} recorridos de {n(out.calendar.length, 0)} días sobre la suma del paso 2.</Nota>
+          <>
+            <Nota>{n(mcOut.simulations, 0)} recorridos de {n(out.calendar.length, 0)} días sobre la suma del paso 2.</Nota>
+            <McTarjetas mcOut={mcOut} />
+          </>
         )}
       </Sec>
-      {mcOut && <McResultado mcOut={mcOut} />}
+
+      <CaminosLocates m={{ out, caminos, running: caminosRunning, error: caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, calcular: simularCaminos, sel, setSel }} />
+
+      {/* La fila de tres graficos: caminos (el grande), recorridos, distribuciones. */}
+      <Sec title="Gráficos" sinRelleno help="A la izquierda, los caminos según los locates (banda p05–p95, mediana, y tu semilla en cobre; pulsa una fila de la tabla de arriba para cambiar de rango). En medio, una muestra de recorridos del bootstrap con sus bandas y la curva real. A la derecha, la distribución del balance final y la del drawdown máximo de los recorridos, con el valor real marcado.">
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 12, alignItems: "start", padding: "8px 10px 10px" }}>
+          <Celda titulo={gc ? `Caminos según los locates · rango ${n(gc.rango.lo, 2)}–${n(gc.rango.hi, 2)} $` : "Caminos según los locates"}>
+            {() => gc && caminos ? (
+              <LinesChart labels={caminos.calendar} series={gc.series} band={gc.band} yFormat={(v) => `${n(v, 0)} %`} hoverFormat={(v) => `${n(v, 1)} %`} height={300} titulo="RETORNO SOBRE EL CAPITAL" />
+            ) : vacio("Simula los caminos (arriba) para ver la banda.")}
+          </Celda>
+          <Celda titulo="Recorridos del bootstrap">
+            {(ancho) => mcOut ? (
+              <SpaghettiChart spaghetti={mcOut.spaghetti} bands={mcOut.bands} baseCurve={mcOut.base_curve} initCash={mcOut.init_cash} xLabel="días →" width={Math.max(260, ancho - 26)} height={300} caption="Líneas tenues: recorridos; bandas: p5–p95 y p25–p75; cobre: lo real." />
+            ) : vacio("Simula el bootstrap para ver los recorridos.")}
+          </Celda>
+          <Celda titulo="Distribuciones">
+            {(ancho) => mcOut ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <DistributionChart hist={mcOut.hist_final} markers={[{ value: mcOut.base_final, label: `real ${usd(mcOut.base_final)}`, color: "var(--color-ec-copper)" }]} caption="Balance final de cada recorrido" width={Math.max(260, ancho - 26)} height={130} />
+                <DistributionChart hist={mcOut.hist_drawdown} markers={[{ value: mcOut.base_max_drawdown, label: `real ${pct(mcOut.base_max_drawdown)}`, color: "var(--color-ec-copper)" }]} fmtValue={(v: number) => pct(v)} caption="Drawdown máximo de cada recorrido" width={Math.max(260, ancho - 26)} height={130} />
+              </div>
+            ) : vacio("Simula el bootstrap para ver las distribuciones.")}
+          </Celda>
+        </div>
+      </Sec>
+
       {mcOut && <TablaPercentiles mcOut={mcOut} />}
-      <CaminosLocates m={{ out, caminos, running: caminosRunning, error: caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, calcular: simularCaminos }} />
     </div>
   );
 }
