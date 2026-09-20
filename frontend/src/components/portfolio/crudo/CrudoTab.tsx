@@ -23,6 +23,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import {
   getPortfolioStrategyEquity,
+  runPortfolioCaminos,
   runPortfolioMc,
   runPortfolioNiveles,
   runPortfolioRaw,
@@ -31,6 +32,7 @@ import {
   type RawConfigIn,
   type RawExec,
   type RawBrakeIn,
+  type RawCaminosOut,
   type RawNivelesOut,
   type RawOut,
   type RawRotationIn,
@@ -101,6 +103,11 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const [mcSims, setMcSims] = useState<number | "">(5000);
   const [mcRunning, setMcRunning] = useState(false);
   const [mcError, setMcError] = useState<string | null>(null);
+  const [caminos, setCaminos] = useState<RawCaminosOut | null>(null);
+  const [caminosRunning, setCaminosRunning] = useState(false);
+  const [caminosError, setCaminosError] = useState<string | null>(null);
+  const [seeds, setSeeds] = useState(30);
+  const [rangosExtra, setRangosExtra] = useState<Array<[number, number]>>([]);
 
   // ── Paso 4: nivel por la caida, reparto y tamano por setup ─────────────
   const [niveles, setNiveles] = useState<RawNivelesOut | null>(null);
@@ -185,6 +192,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setRanKey(cfgKey);
       setMcOut(null);
       setMcError(null);
+      setCaminos(null);
       setNiveles(null);
       setReparto(null);
       setOutAuto(null);
@@ -233,6 +241,21 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setMcRunning(false);
     }
   };
+  const simularCaminos = async () => {
+    if (!out || caminosRunning) return;
+    setCaminosRunning(true);
+    setCaminosError(null);
+    try {
+      const l = out.config.locates;
+      const rangos: number[][] = [[l?.min ?? 1, l?.max ?? 10], ...rangosExtra.map(([a, b]) => [a, b])];
+      setCaminos(await runPortfolioCaminos({ ...cuerpo(), seeds, rangos }));
+    } catch (e) {
+      setCaminosError(e instanceof Error ? e.message : "No se pudieron simular los caminos");
+    } finally {
+      setCaminosRunning(false);
+    }
+  };
+
   // ── Paso 4 ────────────────────────────────────────────────────────────
   const calcularNiveles = async () => {
     if (!out || nivelesRunning) return;
@@ -392,7 +415,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
 
       <Paso num={3} title="Monte Carlo" open={!!abiertos[3]} onToggle={() => toggle(3)} summary={resumen3} disabled={!listo} disabledNote="primero calcula el paso 1"
         help="Lo que podría pasar remuestreando los días del portfolio con reemplazo (bootstrap): el drawdown que hay que estar dispuesto a tragar, la probabilidad de acabar perdiendo y la tabla de percentiles.">
-        {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc }} />}
+        {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc, caminos, caminosRunning, caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, simularCaminos }} />}
       </Paso>
 
       <Paso num={4} title="Escalado" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el paso 4" : "primero calcula el paso 1"}
@@ -404,7 +427,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Con tu CSV real: cuánto exponer el siguiente periodo y cuánto a cada estrategia"
         help="El fichero de tu cuenta real (el export de DAS en .csv o .xlsx, o fecha y PnL) y la unidad de la R: sale la Kelly de TU cuenta (fills, slippage y locates reales incluidos) → cuánto arriesgar en total el siguiente periodo (con el freno del paso 4 si lo tienes puesto y tu cuenta está en caída), y ese total repartido entre las estrategias con los pesos que dice la rotación del paso 4 (o los % del paso 1 si no la has calculado). No hace falta saber de qué estrategia viene cada trade.">
         <div style={{ padding: "10px 10px 6px" }}>
-          <PasoCuentaReal m={{ out, capital: capitalEfectivo, brake: brake.enabled ? brake : null, pesos: selected.map((s, i) => ({ name: s.name, kelly_pct: outAuto?.rotation ? outAuto.rotation.hoy.sizes[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const })), origenPesos: outAuto?.rotation ? "la rotación del paso 4 (lo que toca el siguiente periodo)" : "los % del paso 1" }} />
+          <PasoCuentaReal m={{ out, capital: capitalEfectivo, caminos, brake: brake.enabled ? brake : null, pesos: selected.map((s, i) => ({ name: s.name, kelly_pct: outAuto?.rotation ? outAuto.rotation.hoy.sizes[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const })), origenPesos: outAuto?.rotation ? "la rotación del paso 4 (lo que toca el siguiente periodo)" : "los % del paso 1" }} />
         </div>
       </Paso>
 

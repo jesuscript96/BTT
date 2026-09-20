@@ -16,7 +16,9 @@
 import React, { useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
-import { kellyCuentaReal, type KellyRealOut, type RawBrakeIn, type RawOut } from "@/lib/api_portfolio_lab";
+import { kellyCuentaReal, type KellyRealOut, type RawBrakeIn, type RawCaminosOut, type RawOut } from "@/lib/api_portfolio_lab";
+import { LinesChart } from "./CrudoCharts";
+import { realSobreCaminos } from "./CaminosLocates";
 import { Btn, Nota, Num, Row, Sec, Stat, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
 
 export function PasoCuentaReal({ m }: { m: {
@@ -26,8 +28,11 @@ export function PasoCuentaReal({ m }: { m: {
   origenPesos: string;
   /** El freno por caida del paso 4 (null = sin freno): se aplica a la curva REAL del CSV. */
   brake: RawBrakeIn | null;
+  /** Los caminos del paso 3 (si se han simulado): la curva real se pinta encima. */
+  caminos: RawCaminosOut | null;
 } }) {
-  const { capital, pesos, origenPesos, brake } = m;
+  const { capital, pesos, origenPesos, brake, caminos } = m;
+  const [rangoIdx, setRangoIdx] = useState(0);
   const [csv, setCsv] = useState("");
   // Fichero elegido (20-sep, Jaume: «meterle el csv o excel en archivo»). Un
   // CSV/TXT se lee aquí y va como texto (se ve en la caja); un Excel va en
@@ -210,6 +215,27 @@ export function PasoCuentaReal({ m }: { m: {
           {error && <div style={{ marginTop: 8 }}><ErrorBox>{error}</ErrorBox></div>}
         </Sec>
 
+        {res && caminos && (() => {
+          const real: Array<{ date: string; equity: number }> = [];
+          let acc = capitalInicial;
+          for (const f of res.serie) { acc += f.pnl; real.push({ date: f.date, equity: acc }); }
+          const g = realSobreCaminos(caminos, Math.min(rangoIdx, caminos.rangos.length - 1), real);
+          const r = caminos.rangos[Math.min(rangoIdx, caminos.rangos.length - 1)];
+          return (
+            <Sec title="Tu cuenta real sobre los caminos de la simulación" help={<>Tu curva real (capital inicial + PnL diario del CSV) encima de la banda p05–p95 de los caminos del paso 3, en los días que coinciden, las dos re-basadas a 0 % el primer día real. Si tu curva va por dentro de la banda, lo que ganas es lo que dice la simulación con los locates de ese rango; si va por debajo de la p05, o los locates te salen más caros que el rango, o hay algo más (slippage, fills, algo que no está en el backtest). Cambia el rango si has simulado varios.</>}
+              right={caminos.rangos.length > 1 ? <div style={{ width: Math.min(420, 110 * caminos.rangos.length) }}><Toggle value={String(Math.min(rangoIdx, caminos.rangos.length - 1))} onChange={(v) => setRangoIdx(Number(v))} options={caminos.rangos.map((x, k) => ({ value: String(k), label: `${n(x.lo, 1)}–${n(x.hi, 1)} $` }))} /></div> : undefined}
+            >
+              {!g ? (
+                <Nota>Tu CSV ({res.desde ?? "—"} → {res.hasta ?? "—"}) y la simulación ({caminos.calendar[0]} → {caminos.calendar[caminos.calendar.length - 1]}) no comparten al menos dos días: no hay tramo que comparar. Corre las estrategias hasta hoy y vuelve a calcular el paso 1.</Nota>
+              ) : (
+                <>
+                  <Nota>{n(g.dias, 0)} días en común ({g.desde} → {g.hasta}) · rango de locates {n(r.lo, 2)}–{n(r.hi, 2)} $ · {n(r.seeds, 0)} caminos.</Nota>
+                  <LinesChart labels={g.labels} series={g.series} band={g.band} yFormat={(v) => `${n(v, 1)} %`} hoverFormat={(v) => `${n(v, 2)} %`} height={240} titulo="RETORNO DESDE EL PRIMER DÍA REAL" />
+                </>
+              )}
+            </Sec>
+          );
+        })()}
         <Sec title="Siguiente periodo según tu cuenta" help={<>Arriba, lo que dice tu cuenta: operaciones, % de ganadoras, ganancia y pérdida medias, la Kelly (clásica y exacta), lo que pide tras la fracción y lo aplicado tras el tope: el riesgo TOTAL por trade. Si el freno del paso 4 está puesto y tu cuenta real está en caída, el total va × el multiplicador. Debajo, cada estrategia con su peso (el de la rotación del paso 4 o el % del paso 1), su proporción y lo que le toca en % y en $. <strong>La tarjeta del final es la respuesta</strong>: cuánto exponer en total y cuánto a cada estrategia.</>}>
           {!res ? (
             <Nota>Elige el fichero de DAS (.csv o .xlsx), o pega el CSV, y pulsa <strong>Calcular con mi cuenta</strong>.</Nota>

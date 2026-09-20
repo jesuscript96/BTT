@@ -598,7 +598,8 @@ export interface RawRotationIn {
   pattern: number[] | null;
   /** Suelo por estrategia (% por trade); 0 = sin suelo. */
   min_pct: number;
-  metric: "return" | "sharpe";
+  /** return: lo ganado por 1 % en la ventana; ev_trade: EV por trade; sharpe: media / desviacion diaria. */
+  metric: "return" | "ev_trade" | "sharpe";
 }
 
 /** Freno por caida de la cuenta: con la caida desde el maximo por encima de
@@ -969,13 +970,9 @@ export function runPortfolioNiveles(body: RawConfigIn & { factors?: number[]; mc
  *  primera parte y comprobado en la segunda contra los % del paso 1. */
 export interface RawRepartoCandidato {
   name: string;
-  /** actual | iguales | kelly_is | kelly_all | sin_<i> | solo_<i> | mk_minvar | mk_sharpe | mk_front_<k> */
+  /** actual | iguales | kelly_is | kelly_all | sin_<i> | solo_<i> */
   clave: string;
   pct: number[];
-  /** Lo de Markowitz, lineal en la R diaria por unidad: retorno y volatilidad al dia y Sharpe anualizado. */
-  ret_dia_pct?: number;
-  vol_dia_pct?: number;
-  sharpe?: number | null;
   /** Con el motor entero (locates, margen, costes) y la misma suma. */
   final_equity: number;
   max_dd_pct: number;
@@ -998,6 +995,33 @@ export interface RawRepartoOut {
   candidatos: RawRepartoCandidato[];
   recomendado: { pct: number[]; weights: number[] };
 }
+/** Caminos de la simulacion segun los locates (20-sep tarde): la misma
+ *  configuracion corrida ENTERA N veces con semillas distintas del sorteo,
+ *  para uno o varios rangos de precios; percentiles de los caminos. */
+export interface RawCaminosRango {
+  lo: number;
+  hi: number;
+  seeds: number;
+  final: { p05: number; p25: number; p50: number; p75: number; p95: number };
+  max_dd_pct: { p05: number; p50: number; p95: number };
+  cost: { p05: number; p50: number; p95: number };
+  trades: { p05: number; p50: number; p95: number };
+  bands: { p05: number[]; p25: number[]; p50: number[]; p75: number[]; p95: number[] };
+}
+export interface RawCaminosOut {
+  capital: number;
+  calendar: string[];
+  seeds: number;
+  rangos: RawCaminosRango[];
+}
+export function runPortfolioCaminos(body: RawConfigIn & { seeds?: number; rangos?: number[][] }): Promise<RawCaminosOut> {
+  return apiRequest<RawCaminosOut>("/portfolio-lab/raw/caminos", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 600_000,
+  });
+}
+
 export function runPortfolioReparto(body: RawConfigIn & { total_pct?: number | null; split?: number; cap_strategy_pct?: number }): Promise<RawRepartoOut> {
   return apiRequest<RawRepartoOut>("/portfolio-lab/raw/reparto", {
     method: "POST",

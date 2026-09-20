@@ -8,7 +8,8 @@
 import React from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
-import type { RawOut } from "@/lib/api_portfolio_lab";
+import type { RawCaminosOut, RawOut } from "@/lib/api_portfolio_lab";
+import { CaminosLocates } from "./CaminosLocates";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Btn, Nota, Num, Sec, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
 import { McResultado } from "./McResultado";
@@ -21,6 +22,15 @@ export interface MonteCarloModel {
   mcRunning: boolean;
   mcError: string | null;
   simularMc: () => void;
+  // Caminos segun los locates (N simulaciones enteras con otra semilla)
+  caminos: RawCaminosOut | null;
+  caminosRunning: boolean;
+  caminosError: string | null;
+  seeds: number;
+  setSeeds: (v: number) => void;
+  rangosExtra: Array<[number, number]>;
+  setRangosExtra: (v: Array<[number, number]>) => void;
+  simularCaminos: () => void;
 }
 
 const PERCENTILES = ["p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99"] as const;
@@ -64,7 +74,7 @@ function TablaPercentiles({ mcOut }: { mcOut: MonteCarloOut }) {
 }
 
 export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
-  const { out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc } = m;
+  const { out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc, caminos, caminosRunning, caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, simularCaminos } = m;
   return (
     <div style={{ padding: "10px 10px 6px" }}>
       <Sec
@@ -87,6 +97,7 @@ export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
       </Sec>
       {mcOut && <McResultado mcOut={mcOut} />}
       {mcOut && <TablaPercentiles mcOut={mcOut} />}
+      <CaminosLocates m={{ out, caminos, running: caminosRunning, error: caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, calcular: simularCaminos }} />
     </div>
   );
 }

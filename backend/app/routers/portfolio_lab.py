@@ -749,14 +749,6 @@ def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current
         for i in range(n):
             solo = np.zeros(n); solo[i] = total
             candidatos.append((f"Todo a {names[i]}", solo, f"solo_{i}"))
-        # Markowitz (Jaume, 20-sep: «¿y la frontera eficiente?»): con la misma
-        # suma y sin cortos, la cartera de minima varianza, la de maximo
-        # Sharpe (tangencia = la direccion Sigma^-1 mu, la aproximacion
-        # cuadratica de la Kelly conjunta) y dos puntos de la frontera entre
-        # la minima varianza y el maximo retorno. Todo sobre la R diaria por
-        # 1 % de cada estrategia; la caida real la pone luego el motor.
-        for nombre, f, clave in ss.markowitz(X, total, cap_i):
-            candidatos.append((nombre, f, clave))
     vistos: dict[tuple, int] = {}
     filas = []
     for nombre, f, clave in candidatos:
@@ -785,14 +777,8 @@ def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current
                 peak = max(peak, e); m = min(m, (e / peak - 1.0) if peak > 0 else 0.0)
             return m * 100.0
         vistos[key] = len(filas)
-        r_lin = X @ f
         filas.append({
             "name": nombre, "clave": clave, "pct": [round(float(x), 3) for x in f],
-            # Lo de Markowitz (lineal en la R diaria por unidad): retorno y
-            # volatilidad diarios y el Sharpe anualizado.
-            "ret_dia_pct": round(float(r_lin.mean()) * 100.0, 4),
-            "vol_dia_pct": round(float(r_lin.std()) * 100.0, 4),
-            "sharpe": round(float(r_lin.mean() / r_lin.std() * (252 ** 0.5)), 3) if r_lin.std() > 0 else None,
             "final_equity": eqk[-1] if eqk else cap0,
             "max_dd_pct": round(_dd(eqk, cap0), 2),
             "ruined": bool(o.get("ruined")),
@@ -811,6 +797,66 @@ def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current
         "candidatos": filas,
         "recomendado": {"pct": [round(float(x), 3) for x in f_all], "weights": [round(float(x / f_all.sum()), 4) if f_all.sum() > 0 else 0.0 for x in f_all]},
     }
+
+
+class RawCaminosReq(RawReq):
+    """Caminos de la simulacion segun los locates (Jaume, 20-sep tarde): la
+    misma configuracion corrida ENTERA N veces con semillas distintas del
+    sorteo de locates (cambia el precio de cada accion-dia y, con puerta, que
+    cortos entran), para uno o varios rangos de precios. Devuelve los
+    percentiles de los caminos de equity, del final, de la caida y del coste,
+    para ver entre que bandas cae lo que se va ganando de verdad."""
+    seeds: int = Field(default=30, ge=2, le=200)
+    # Rangos [lo, hi] del sorteo a probar; vacio = el del paso 1.
+    rangos: list[list[float]] = []
+
+
+@router.post("/raw/caminos")
+def raw_caminos(req: RawCaminosReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    _guard()
+    import numpy as np
+    runs = _cargar_runs(req, user_id)
+    base_cfg = _cfg_crudo(req)
+    loc = base_cfg.get("locates") or {}
+    if not loc or str(loc.get("mode")) != "random":
+        raise HTTPException(status_code=400, detail="Los caminos necesitan los locates ALEATORIOS del paso 1 (es el precio sorteado lo que cambia de un camino a otro)")
+    rangos = [[float(r[0]), float(r[1])] for r in req.rangos if len(r) >= 2 and float(r[1]) > float(r[0]) >= 0][:6]
+    if not rangos:
+        rangos = [[float(loc.get("min") or 1.0), float(loc.get("max") or 10.0)]]
+    cap0 = float(req.capital)
+    salida = []
+    calendar = None
+    for lo, hi in rangos:
+        curvas = []; finales = []; dds = []; costes = []; trades = []
+        for s in range(1, req.seeds + 1):
+            cfg = json.loads(json.dumps(base_cfg))
+            cfg["locates"]["min"] = lo; cfg["locates"]["max"] = hi; cfg["locates"]["seed"] = s
+            cfg["locates"]["band_seeds"] = 0
+            try:
+                o = plr.simulate(runs, cfg)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            if calendar is None:
+                calendar = o["calendar"]
+            eq = np.asarray(o["equity"], dtype=float)
+            if len(eq) != len(calendar):
+                continue
+            peak = np.maximum(np.maximum.accumulate(eq), cap0)
+            curvas.append(eq); finales.append(float(eq[-1])); dds.append(float(((eq - peak) / peak).min() * 100.0))
+            costes.append(float(o["costs"]["locates"])); trades.append(int(o["cap_report"]["taken"]))
+        if not curvas:
+            continue
+        M = np.vstack(curvas)
+        q = lambda xs, p: round(float(np.percentile(np.asarray(xs), p)), 2)
+        salida.append({
+            "lo": lo, "hi": hi, "seeds": len(curvas),
+            "final": {k: q(finales, p) for k, p in (("p05", 5), ("p25", 25), ("p50", 50), ("p75", 75), ("p95", 95))},
+            "max_dd_pct": {k: q(dds, p) for k, p in (("p05", 5), ("p50", 50), ("p95", 95))},
+            "cost": {k: q(costes, p) for k, p in (("p05", 5), ("p50", 50), ("p95", 95))},
+            "trades": {"p05": q(trades, 5), "p50": q(trades, 50), "p95": q(trades, 95)},
+            "bands": {k: [round(float(x), 2) for x in np.percentile(M, p, axis=0)] for k, p in (("p05", 5), ("p25", 25), ("p50", 50), ("p75", 75), ("p95", 95))},
+        })
+    return {"capital": cap0, "calendar": calendar or [], "seeds": req.seeds, "rangos": salida}
 
 
 class KellyRealRow(BaseModel):

@@ -38,7 +38,7 @@ ROTATION_DEFAULT: dict[str, Any] = {
     "every_days": 20,
     "pattern": None,         # % por trade por puesto (mejor primero); None = los % del paso 1 ordenados
     "min_pct": 1.0,          # suelo por estrategia (% por trade); 0 = sin suelo
-    "metric": "return",      # return (retorno acumulado por unidad) | sharpe (media/desviacion diaria)
+    "metric": "return",      # return (retorno acumulado por unidad) | ev_trade (EV por trade) | sharpe (media/desviacion diaria)
 }
 
 BRAKE_DEFAULT: dict[str, Any] = {
@@ -75,7 +75,8 @@ def rotation_cfg(raw: Optional[dict], n: int) -> Optional[dict]:
     else:
         cfg["pattern"] = None
     cfg["min_pct"] = max(0.0, _f(cfg["min_pct"], 1.0))
-    cfg["metric"] = "sharpe" if str(cfg.get("metric") or "") == "sharpe" else "return"
+    _m = str(cfg.get("metric") or "")
+    cfg["metric"] = _m if _m in ("sharpe", "ev_trade") else "return"
     return cfg
 
 
@@ -134,6 +135,7 @@ class Rotacion:
         self.pattern = [max(0.0, float(x)) for x in pat]
         self.total = float(sum(self.pattern))
         self.r_unit: list[list[float]] = [[] for _ in range(self.n)]   # retorno por 1 % por dia, por estrategia
+        self.n_tr: list[list[int]] = [[] for _ in range(self.n)]         # trades por dia, por estrategia
         self.dias: list[str] = []
         self.sizes = list(self.base)
         self.ranks: Optional[list[int]] = None
@@ -162,6 +164,9 @@ class Rotacion:
         if self.cfg["metric"] == "sharpe":
             sd = float(serie.std())
             return float(serie.mean() / sd) if sd > 1e-12 else 0.0
+        if self.cfg["metric"] == "ev_trade":
+            n_tr = int(sum(self.n_tr[i][-lb:]))
+            return float(serie.sum() / n_tr) if n_tr > 0 else 0.0
         return float(serie.sum())
 
     def _asignar(self) -> tuple[list[float], Optional[list[int]], str]:
@@ -191,7 +196,7 @@ class Rotacion:
             self.dias_con_rotacion += 1
         return self.sizes
 
-    def registrar(self, d: str, r_unit: list[float]) -> None:
+    def registrar(self, d: str, r_unit: list[float], n_trades: Optional[list[int]] = None) -> None:
         """`r_unit[i]`: lo que habria aportado la estrategia i ese dia por cada
         1 % por trade (la sombra: suma de la R neta por accion de sus trades en
         su unidad x 0,01). No depende del tamano que llevara ni de si iba a 0:
@@ -199,6 +204,7 @@ class Rotacion:
         self.dias.append(d)
         for i in range(self.n):
             self.r_unit[i].append(float(r_unit[i]))
+            self.n_tr[i].append(int(n_trades[i]) if n_trades is not None else 0)
 
     def hoy(self) -> dict:
         """Lo que toca el siguiente periodo, con TODO lo registrado."""
