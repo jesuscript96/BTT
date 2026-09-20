@@ -15,6 +15,7 @@ import { useAncho } from "@/components/backtester/tabs/edge/charts";
 import type { RawCaminosOut, RawOut } from "@/lib/api_portfolio_lab";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Btn, Nota, Num, Sec, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
+import { hairline } from "@/components/ui/tokens";
 import { McTarjetas } from "./McResultado";
 import { CaminosLocates, seriesCaminos } from "./CaminosLocates";
 import { LinesChart } from "./CrudoCharts";
@@ -89,11 +90,28 @@ function Celda({ children, titulo }: { children: (ancho: number) => React.ReactN
   );
 }
 
+// Los tres graficos, nivelados (Jaume, 20-sep: «los mismos bordes, no curvos, y
+// al mismo nivel»): todos en modo «plano» (marco cuadrado, sin caja), los dos
+// grandes de ALTO px y las dos distribuciones apiladas de modo que
+// 2 × ALTO_DIST + 2 × PIE = ALTO + PIE. El pie es la misma fila que la leyenda
+// de LinesChart (6 + 13 + 2 px y el filo de arriba).
+const ALTO = 300;
+const PIE = 21.5;
+const ALTO_DIST = (ALTO - PIE) / 2;
+
+function Pie({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: "6px 4px 2px", borderTop: hairline, fontSize: 10.5, lineHeight: "13px", fontFamily: font.sans, color: color.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+      {children}
+    </div>
+  );
+}
+
 export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
   const { out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc, caminos, caminosRunning, caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, simularCaminos } = m;
   const [sel, setSel] = useState(0);
   const gc = caminos ? seriesCaminos(caminos, sel, out) : null;
-  const vacio = (txt: string) => <div style={{ border: `1px dashed ${color.border}`, padding: 14, fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, textAlign: "center" }}>{txt}</div>;
+  const vacio = (txt: string) => <div style={{ border: `1px dashed ${color.border}`, height: ALTO + PIE, boxSizing: "border-box", display: "flex", alignItems: "center", justifyContent: "center", padding: 14, fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, textAlign: "center" }}>{txt}</div>;
 
   return (
     <div style={{ padding: "10px 10px 6px" }}>
@@ -126,19 +144,24 @@ export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr)", gap: 12, alignItems: "start", padding: "8px 10px 10px" }}>
           <Celda titulo={gc ? `Caminos según los locates · rango ${n(gc.rango.lo, 2)}–${n(gc.rango.hi, 2)} $` : "Caminos según los locates"}>
             {(ancho) => gc && caminos ? (
-              <LinesChart labels={caminos.calendar} series={gc.series} band={gc.band} yFormat={(v) => `${n(v, 0)} %`} hoverFormat={(v) => `${n(v, 1)} %`} height={300} width={Math.max(260, ancho)} titulo="RETORNO SOBRE EL CAPITAL" />
+              <LinesChart labels={caminos.calendar} series={gc.series} band={gc.band} yFormat={(v) => `${n(v, 0)} %`} hoverFormat={(v) => `${n(v, 1)} %`} height={ALTO} width={Math.max(260, ancho)} titulo="RETORNO SOBRE EL CAPITAL" />
             ) : vacio("Simula los caminos (arriba) para ver la banda.")}
           </Celda>
           <Celda titulo="Recorridos del bootstrap">
             {(ancho) => mcOut ? (
-              <SpaghettiChart spaghetti={mcOut.spaghetti} bands={mcOut.bands} baseCurve={mcOut.base_curve} initCash={mcOut.init_cash} xLabel="días →" width={Math.max(260, ancho - 26)} height={278} caption="Líneas tenues: recorridos; bandas: p5–p95 y p25–p75; cobre: lo real." />
+              <div>
+                <SpaghettiChart spaghetti={mcOut.spaghetti} bands={mcOut.bands} baseCurve={mcOut.base_curve} initCash={mcOut.init_cash} xLabel="días →" width={Math.max(260, ancho)} height={ALTO} plano />
+                <Pie>Líneas tenues: recorridos · bandas: p5–p95 y p25–p75 · cobre: lo real · escala logarítmica</Pie>
+              </div>
             ) : vacio("Simula el bootstrap para ver los recorridos.")}
           </Celda>
           <Celda titulo="Distribuciones">
             {(ancho) => mcOut ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <DistributionChart hist={mcOut.hist_final} markers={[{ value: mcOut.base_final, label: `real ${usd(mcOut.base_final)}`, color: "var(--color-ec-copper)" }]} caption="Balance final de cada recorrido" width={Math.max(260, ancho - 26)} height={130} />
-                <DistributionChart hist={mcOut.hist_drawdown} markers={[{ value: mcOut.base_max_drawdown, label: `real ${pct(mcOut.base_max_drawdown)}`, color: "var(--color-ec-copper)" }]} fmtValue={(v: number) => pct(v)} caption="Drawdown máximo de cada recorrido" width={Math.max(260, ancho - 26)} height={130} />
+              <div>
+                <DistributionChart hist={mcOut.hist_final} markers={[{ value: mcOut.base_final, label: `real ${usd(mcOut.base_final)}`, color: "var(--color-ec-copper)" }]} width={Math.max(200, ancho)} height={ALTO_DIST} plano />
+                <Pie>Balance final de cada recorrido</Pie>
+                <DistributionChart hist={mcOut.hist_drawdown} markers={[{ value: mcOut.base_max_drawdown, label: `real ${pct(mcOut.base_max_drawdown)}`, color: "var(--color-ec-copper)" }]} fmtValue={(v: number) => pct(v)} width={Math.max(200, ancho)} height={ALTO_DIST} plano />
+                <Pie>Drawdown máximo de cada recorrido</Pie>
               </div>
             ) : vacio("Simula el bootstrap para ver las distribuciones.")}
           </Celda>

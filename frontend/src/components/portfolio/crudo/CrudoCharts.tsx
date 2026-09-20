@@ -211,7 +211,7 @@ export function PnlDdChart({
       )}
 
       {/* Lectura: valor final o el del cursor, PnL y drawdown de cada serie. */}
-      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "center", lineHeight: "13px" }}>
         <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{hover != null ? labels[hover] : "final"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>
           {pnl.map((s, k) => {
@@ -458,7 +458,7 @@ export function LinesChart({
           ]}
         />
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "center", lineHeight: "13px" }}>
         <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{hover != null ? labels[hover] : "final"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>
           {series.map((s) => {
@@ -614,7 +614,7 @@ export function WeightsChart({
       {pt && k != null && (
         <CartelPuntero puntero={pt} titulo={periods[k].period} subtitulo={periods[k].from ? `desde ${periods[k].from}${periods[k].capped ? " · mandó el tope" : ""}` : undefined} filas={filasCartel(periods[k])} />
       )}
-      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "center", lineHeight: "13px" }}>
         <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{pk ? pk.period : "periodo"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>
           {pk && riesgos(pk).map((v, j) => (

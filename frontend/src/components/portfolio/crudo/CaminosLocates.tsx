@@ -140,8 +140,8 @@ export function seriesCaminos(caminos: RawCaminosOut, rangoIdx: number, out: Raw
   return {
     rango,
     series: [
-      { name: "mediana de los caminos", color: color.textSecondary, width: 1.4, values: rango.bands.p50.map(toPct) },
-      { name: "la semilla del paso 1", color: color.copper, width: 2.2, values: out.equity.map(toPct) },
+      { name: "mediana", color: color.textSecondary, width: 1.4, values: rango.bands.p50.map(toPct) },
+      { name: "tu semilla", color: color.copper, width: 2.2, values: out.equity.map(toPct) },
     ],
     band: { lo: rango.bands.p05.map(toPct), hi: rango.bands.p95.map(toPct), color: color.info, name: "p05 … p95" },
   };
