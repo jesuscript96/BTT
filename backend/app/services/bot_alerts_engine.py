@@ -623,6 +623,13 @@ class _EstadoPar:
     # teclean acciones enteras y el aviso las muestra sin decimales.
     acciones_avisadas: dict = field(default_factory=dict)  # i de senal -> acciones
     cerrado_avisado: dict = field(default_factory=dict)    # entry_idx -> ya cerradas (avisadas)
+    # REARME TRAS SALIR (2026-09-20). Vela de senal de la ultima entrada avisada y
+    # vela de la ultima salida avisada que dejo la posicion a cero. Si la salida
+    # es posterior a la entrada (o no se ha avisado ninguna entrada hoy), la
+    # senal vuelve a contar aunque lleve encendida varias velas: es lo que hace
+    # el simulador desde hoy (entra por NIVEL, no por flanco).
+    idx_ultima_entrada_avisada: int = -1
+    idx_ultimo_cierre_avisado: int = -1
 
 
 # ── `_cuadre`: LAS CANTIDADES TIENEN QUE CUADRAR ─────────────────────────────
@@ -1054,6 +1061,11 @@ class MotorAlertas:
                 estado.cerrado_avisado[entry_idx] = ya_cerrado + cierra_av
                 cierra, total = cierra_av, avisado
                 restante = max(0.0, pendiente - cierra_av)
+            # La posicion queda a cero (ultimo tramo, o trade sin parciales):
+            # a partir de aqui la senal se rearma para la entrada siguiente.
+            if restante is None or restante < 1e-6:
+                estado.idx_ultimo_cierre_avisado = max(
+                    estado.idx_ultimo_cierre_avisado, int(t.get("exit_idx", i)))
             eventos.append(Evento(
                 tipo="salida", ticker=ticker, cuenta=est.get("cuenta"),
                 riesgo_usd=est["riesgo_usd"],   # para ordenar los bloques por cuenta
@@ -1068,12 +1080,21 @@ class MotorAlertas:
 
         # ── ENTRADA ─────────────────────────────────────────────────────────
         # Se avisa con la SENAL, no con el trade: el trade no existe hasta la
-        # vela siguiente y el aviso llegaria tarde. Se exige flanco (apagada
-        # antes, encendida ahora), que es lo que el simulador convierte en
-        # operacion; una senal que lleva encendida varias velas no es una
-        # entrada nueva.
+        # vela siguiente y el aviso llegaria tarde. Se avisa en el flanco
+        # (apagada antes, encendida ahora) O con la senal REARMADA: desde el
+        # 2026-09-20 el simulador entra por nivel, asi que tras un stop —o tras
+        # un intento descartado— una senal que sigue encendida vuelve a ser una
+        # entrada. Rearmada = no hay ninguna entrada avisada hoy, o la ultima
+        # salida avisada que dejo la posicion a cero es posterior a la ultima
+        # entrada avisada. Con el flanco solo, el bot callaba esas reentradas
+        # y luego avisaba su SALIDA (el simulador si las hacia): posiciones
+        # fantasma. Todo lo demas del aviso es igual que antes.
         entradas = np.asarray(senales["entries"], dtype=bool)
-        if i not in estado.entradas_avisadas and entradas[i] and not entradas[i - 1]:
+        rearmada = (
+            estado.idx_ultima_entrada_avisada < 0
+            or estado.idx_ultimo_cierre_avisado > estado.idx_ultima_entrada_avisada
+        )
+        if i not in estado.entradas_avisadas and entradas[i] and (not entradas[i - 1] or rearmada):
             # Ya dentro? El ultimo trade sintetico ES la posicion viva.
             dentro = any(
                 t.get("exit_reason") == "EOD" and int(t.get("exit_idx", -1)) >= i
@@ -1099,6 +1120,7 @@ class MotorAlertas:
                 # backtest no opera.
                 if not (hs_estructural and stop is None):
                     estado.entradas_avisadas.add(i)
+                    estado.idx_ultima_entrada_avisada = i
                     rm = sdef.get("risk_management") or {}
                     cangrejo = _cangrejo_de(rm, est)
                     # MODO A: el aviso tiene que dar el stop APRETADO, que es

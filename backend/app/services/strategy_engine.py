@@ -430,6 +430,19 @@ LOT_STOP_LEVEL_ALIASES = {
     "prevmax": "previous_max",
     "maximo previo": "previous_max",
     "máximo previo": "previous_max",
+    "previous_min": "previous_min",
+    "previous min": "previous_min",
+    "prevmin": "previous_min",
+    # Modo «vela de la señal» (opt-in, 2026-09-20); ver _structural_level.
+    "previous_max_senal": "previous_max_senal",
+    "previous max (vela de la señal)": "previous_max_senal",
+    "previous max (vela de la senal)": "previous_max_senal",
+    "prevmax+0": "previous_max_senal",
+    "previous_min_senal": "previous_min_senal",
+    "previous min (vela de la señal)": "previous_min_senal",
+    "previous min (vela de la senal)": "previous_min_senal",
+    "prevmin+0": "previous_min_senal",
+    # HOD/LOD = Previous Max/Min (vela de la senal); la UI ya no los ofrece.
     "hod": "hod",
     "high of day": "hod",
     "lod": "lod",
@@ -497,7 +510,7 @@ def normaliza_lot_stop(lot_stop) -> dict:
         else:
             raise ValueError(
                 f"'level' desconocido: {nivel_raw!r} (vocabulario: last_pivot, "
-                f"previous_max, hod, lod)")
+                f"previous_max, previous_min, previous_max_senal, previous_min_senal)")
         if level == "last_pivot" and swing is None:
             swing_raw = str(lot_stop.get("swing", "")).strip().lower()
             if swing_raw in ("up", "alto", "alta"):

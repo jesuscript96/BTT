@@ -642,8 +642,9 @@ const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
                                                 <option value="Ultimo pivote alto">Último pivote alto</option>
                                                 <option value="Ultimo pivote bajo">Último pivote bajo</option>
                                                 <option value="Previous Max">Previous Max</option>
-                                                <option value="HOD">HOD</option>
-                                                <option value="LOD">LOD</option>
+                                                <option value="Previous Min">Previous Min</option>
+                                                <option value="Previous Max (vela de la señal)">Previous Max (vela de la señal)</option>
+                                                <option value="Previous Min (vela de la señal)">Previous Min (vela de la señal)</option>
                                             </select>
                                             <InfoTooltip variant="i" width={280} text="El nivel del día vigente en la vela de señal del añadido, congelado ahí (mismos niveles que el SL de estructura de la estrategia)." />
                                             {(lv.lot_stop.level === 'Ultimo pivote alto' || lv.lot_stop.level === 'Ultimo pivote bajo') && (

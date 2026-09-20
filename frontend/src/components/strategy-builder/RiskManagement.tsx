@@ -169,7 +169,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                 value={risk.hard_stop.type}
                                 onChange={(e) => {
                                     const newType = e.target.value as RiskType;
-                                    const newValue = newType === RiskType.MARKET_STRUCTURE ? 'LOD' : 2.0;
+                                    const newValue = newType === RiskType.MARKET_STRUCTURE ? 'Previous Min' : 2.0;
                                     onChange({
                                         ...risk,
                                         hard_stop: {
@@ -206,7 +206,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                     "ensancha cuando el ticker se mueve mas y se estrecha cuando se calma. " +
                                     "Durante las primeras velas del dia el ATR todavia no existe y ahi NO se " +
                                     "entra: sin ATR no se sabe cuanto se mueve esto.\n" +
-                                    "Market Structure — el stop en un nivel del dia (HOD, PMH, maximo previo...)."
+                                    "Market Structure — el stop en un nivel del dia (PMH, Previous Max, Previous Max desde la vela de la señal, VWAP, último pivote...)."
                                 }
                             >
                                 <option value={RiskType.PERCENTAGE}>%</option>
@@ -216,7 +216,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                             {risk.hard_stop.type === RiskType.MARKET_STRUCTURE ? (
                                 <>
                                     <select
-                                        value={risk.hard_stop.value || 'LOD'}
+                                        value={risk.hard_stop.value || 'Previous Min'}
                                         onChange={(e) => updateRiskSetting('hard_stop', 'value', e.target.value)}
                                         style={{
                                             backgroundColor: 'var(--color-ec-bg-sidebar)',
@@ -234,12 +234,22 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                             height: '36px',
                                         }}
                                     >
-                                        <option value="HOD">HOD (High of Day)</option>
-                                        <option value="LOD">LOD (Low of Day)</option>
+                                        {/* 20-sep-2026 (Jaume): HOD/LOD fuera del desplegable.
+                                            «Previous Max/Min» es el de siempre: el máximo/mínimo
+                                            del día HASTA la vela anterior a la señal. «(vela de
+                                            la señal)» lo mide desde la vela de la señal hacia
+                                            atrás, esa vela incluida (la orden sigue entrando en
+                                            la siguiente): para gaps que rompen de golpe, donde
+                                            el nivel de siempre queda bajo la entrada del corto
+                                            y no se opera. Las estrategias guardadas con HOD/LOD
+                                            siguen funcionando: el motor los trata como el modo
+                                            «vela de la señal». */}
                                         <option value="PMH">PMH (Premarket High)</option>
                                         <option value="PML">PML (Premarket Low)</option>
                                         <option value="Previous Max">Previous Max</option>
                                         <option value="Previous Min">Previous Min</option>
+                                        <option value="Previous Max (vela de la señal)">Previous Max (vela de la señal)</option>
+                                        <option value="Previous Min (vela de la señal)">Previous Min (vela de la señal)</option>
                                         {/* VWAP (15-sep-2026). El del dia entero, el mismo
                                             que la condicion y el grafico. Se fija en la vela
                                             de la senal como los demas: no persigue al VWAP
@@ -360,10 +370,10 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                                     </div>
 
                                     {/* EL RESPALDO SOLO DONDE PUEDE HACER FALTA.
-                                        Con HOD o LOD el nivel existe desde la
-                                        primera vela y con Previous Max/Min solo
-                                        falta en la primerisima, asi que ensenyar
-                                        el campo ahi es ruido (lo dijo Jaume).
+                                        Con Previous Max/Min (en cualquiera de
+                                        los dos modos) el nivel existe desde la
+                                        primera vela, asi que ensenyar el campo
+                                        ahi es ruido (lo dijo Jaume).
                                         Donde SI hace falta: el ultimo pivote, que
                                         no existe hasta que se confirma uno, y
                                         PMH/PML en un ticker que no cotizo en

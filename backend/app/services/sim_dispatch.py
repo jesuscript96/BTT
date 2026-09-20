@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 import numpy as np
 
+from app.services import portfolio_sim as _psim
 from app.services.portfolio_sim import simulate as _legacy_simulate
 from app.services import portfolio_sim_jit as _pjit
 from app.services.portfolio_sim_jit import _core_simulate_jit
@@ -142,9 +143,12 @@ _PARTIAL_REASONS = (6, 7, 8, 9)
 def _hs_value_to_code(hs_value):
     """hs_value (string) -> codigo HS_* del kernel. Misma tabla para el nivel
     principal y para `fallback_value`, para que no puedan divergir."""
-    if hs_value == "HOD":
+    # Mismo mapa que `_structural_level` (portfolio_sim.py): "Previous Max" es
+    # el de siempre (hasta la vela anterior); "(vela de la señal)" y HOD/LOD
+    # son el maximo corrido con la vela de la senal.
+    if hs_value == "HOD" or hs_value in _psim.PREVMAX_VELA_SENAL:
         return _pjit.HS_HOD
-    elif hs_value == "LOD":
+    elif hs_value == "LOD" or hs_value in _psim.PREVMIN_VELA_SENAL:
         return _pjit.HS_LOD
     elif hs_value == "PMH":
         return _pjit.HS_PMH

@@ -500,9 +500,12 @@ STOP_OFFSET_PCT = (0, 3, 5, 10, 15)
 # Niveles estructurales del motor (RiskManagement.tsx): el stop de un corto va
 # ARRIBA (maximos), el de un largo ABAJO (minimos). Operador como en las
 # estrategias guardadas de Jaume.
+# 2026-09-20: HOD/LOD fuera del sorteo; en su lugar «Previous Max/Min (vela de
+# la señal)», que es lo mismo (maximo corrido CON la vela de la senal). «Previous
+# Max» a secas sigue siendo el de siempre (hasta la vela anterior).
 STOP_NIVELES = {
-    "short": (("HOD", ">="), ("PMH", ">="), ("Previous Max", ">=")),
-    "long": (("LOD", "<="), ("PML", "<="), ("Previous Min", "<=")),
+    "short": (("PMH", ">="), ("Previous Max", ">="), ("Previous Max (vela de la señal)", ">=")),
+    "long": (("PML", "<="), ("Previous Min", "<="), ("Previous Min (vela de la señal)", "<=")),
 }
 # El ultimo pivote como stop de estructura (10-sep-2026), SOLO si «Ultimo
 # pivote» esta marcado en el catalogo: es el mismo interruptor que lo mete como
