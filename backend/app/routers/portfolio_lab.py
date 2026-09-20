@@ -721,6 +721,14 @@ def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current
         for i in range(n):
             solo = np.zeros(n); solo[i] = total
             candidatos.append((f"Todo a {names[i]}", solo, f"solo_{i}"))
+        # Markowitz (Jaume, 20-sep: «¿y la frontera eficiente?»): con la misma
+        # suma y sin cortos, la cartera de minima varianza, la de maximo
+        # Sharpe (tangencia = la direccion Sigma^-1 mu, la aproximacion
+        # cuadratica de la Kelly conjunta) y dos puntos de la frontera entre
+        # la minima varianza y el maximo retorno. Todo sobre la R diaria por
+        # 1 % de cada estrategia; la caida real la pone luego el motor.
+        for nombre, f, clave in ss.markowitz(X, total, cap_i):
+            candidatos.append((nombre, f, clave))
     vistos: dict[tuple, int] = {}
     filas = []
     for nombre, f, clave in candidatos:
@@ -749,8 +757,14 @@ def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current
                 peak = max(peak, e); m = min(m, (e / peak - 1.0) if peak > 0 else 0.0)
             return m * 100.0
         vistos[key] = len(filas)
+        r_lin = X @ f
         filas.append({
             "name": nombre, "clave": clave, "pct": [round(float(x), 3) for x in f],
+            # Lo de Markowitz (lineal en la R diaria por unidad): retorno y
+            # volatilidad diarios y el Sharpe anualizado.
+            "ret_dia_pct": round(float(r_lin.mean()) * 100.0, 4),
+            "vol_dia_pct": round(float(r_lin.std()) * 100.0, 4),
+            "sharpe": round(float(r_lin.mean() / r_lin.std() * (252 ** 0.5)), 3) if r_lin.std() > 0 else None,
             "final_equity": eqk[-1] if eqk else cap0,
             "max_dd_pct": round(_dd(eqk, cap0), 2),
             "ruined": bool(o.get("ruined")),

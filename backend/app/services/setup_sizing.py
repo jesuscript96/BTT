@@ -271,3 +271,61 @@ def crecimiento(X: np.ndarray, f: np.ndarray) -> tuple[float, float]:
         if e <= 0:
             break
     return float(e), float(mdd)
+
+
+def markowitz(X: np.ndarray, total: float, cap_i: Optional[list[float]] = None) -> list[tuple[str, np.ndarray, str]]:
+    """Carteras de Markowitz con la misma suma y sin cortos: minima varianza,
+    maximo Sharpe y dos puntos de la frontera (retorno a 1/3 y 2/3 del camino
+    entre la minima varianza y el maximo retorno). [(nombre, f, clave)]."""
+    X = np.asarray(X, dtype=float)
+    n = X.shape[1]
+    if n < 2 or len(X) < 30:
+        return []
+    mu = X.mean(axis=0)
+    S = np.cov(X.T)
+    ub = [float(cap_i[i]) if (cap_i and cap_i[i] and cap_i[i] > 0) else float(total) for i in range(n)]
+    try:
+        from scipy.optimize import minimize
+    except ImportError:  # pragma: no cover
+        return []
+
+    def opt(objetivo, extra=None):
+        cons = [{"type": "eq", "fun": lambda f: f.sum() - total}] + list(extra or [])
+        best = None
+        x0s = [np.full(n, total / n)] + [np.eye(n)[i] * total * 0.7 + np.full(n, total * 0.3 / n) for i in range(n)]
+        for x0 in x0s:
+            x0 = np.minimum(x0, ub)
+            try:
+                r = minimize(objetivo, x0, bounds=[(0.0, ub[i]) for i in range(n)], constraints=cons, method="SLSQP",
+                             options={"ftol": 1e-12, "maxiter": 500})
+            except Exception:  # pragma: no cover
+                continue
+            if r.x is None or not np.all(np.isfinite(r.x)):
+                continue
+            if best is None or r.fun < best.fun:
+                best = r
+        if best is None:
+            return None
+        f = np.clip(best.x, 0.0, ub)
+        return f * (total / f.sum()) if f.sum() > 0 else None
+
+    def var(f): return float(f @ S @ f)
+    def neg_sharpe(f):
+        v = var(f)
+        return -float(mu @ f) / (v ** 0.5) if v > 1e-18 else 0.0
+    out = []
+    f_min = opt(var)
+    f_sh = opt(neg_sharpe)
+    if f_min is not None:
+        out.append(("Markowitz · mínima varianza", f_min, "mk_minvar"))
+    if f_sh is not None:
+        out.append(("Markowitz · máximo Sharpe (tangencia)", f_sh, "mk_sharpe"))
+    if f_min is not None:
+        r_min = float(mu @ f_min)
+        r_max = float(max(mu[i] * min(ub[i], total) for i in range(n)))
+        for k, frac in ((1, 1.0 / 3.0), (2, 2.0 / 3.0)):
+            R = r_min + (r_max - r_min) * frac
+            f = opt(var, [{"type": "eq", "fun": lambda f, R=R: float(mu @ f) - R}])
+            if f is not None:
+                out.append((f"Markowitz · frontera {k}/3", f, f"mk_front_{k}"))
+    return out

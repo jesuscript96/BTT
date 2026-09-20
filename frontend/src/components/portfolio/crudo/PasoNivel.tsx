@@ -173,7 +173,13 @@ export function PasoNivel({ m }: { m: NivelModel }) {
             el motor entero (locates, margen, costes) y se mira el final, la caída y lo de antes y después del corte (la
             segunda mitad es fuera de muestra). Candidatos: tus % del paso 1, a partes iguales, la <strong>Kelly conjunta</strong>
             (la f que maximiza el crecimiento de la suma con las correlaciones; estimada en la primera mitad y con todo),
-            «sin X» (su parte repartida a las demás) y «todo a X».
+            «sin X» (su parte repartida a las demás), «todo a X» y las de <strong>Markowitz</strong>: mínima varianza, máximo Sharpe
+            (la tangencia, Σ⁻¹μ: la misma dirección que la aproximación cuadrática de Kelly) y dos puntos de su frontera.
+            <br /><br />
+            <strong>Markowitz mide el riesgo como varianza, y aquí la varianza no es la caída:</strong> la caída la hacen unos pocos días de
+            cola (−7 a −9 %, que una normal daría una vez cada miles de días), no el vaivén diario; una estrategia de poca
+            volatilidad cuyos días malos coinciden con los de las otras baja la varianza y NO baja la caída. Por eso cada
+            cartera se corre con el motor y se mira su DD real al lado de su volatilidad y su Sharpe.
             <br /><br />
             <strong>Cómo se lee:</strong> a un nivel tan bajo respecto a Kelly el crecimiento es casi la suma de lo que rinde cada una por
             unidad de tamaño, así que mover capital hacia la que más rinde por unidad sube el retorno… y la caída, porque
@@ -202,6 +208,8 @@ export function PasoNivel({ m }: { m: NivelModel }) {
                   {reparto.names.map((nm, i) => <th key={nm} style={{ ...thR, color: colorSerie(i) }}>{nm.length > 18 ? `${nm.slice(0, 17)}…` : nm}</th>)}
                   <th style={thR}>Final</th>
                   <th style={thR}>DD</th>
+                  <th style={thR}>Vol/día</th>
+                  <th style={thR}>Sharpe</th>
                   <th style={thR}>Antes ×</th>
                   <th style={thR}>DD</th>
                   <th style={thR}>Después ×</th>
@@ -217,6 +225,8 @@ export function PasoNivel({ m }: { m: NivelModel }) {
                       {c.pct.map((x, i) => <td key={i} style={tdNum}>{pct(x, 2)}</td>)}
                       <td style={{ ...tdNum, fontWeight: 700 }}>{c.ruined ? <span style={{ color: color.loss }}>ruina</span> : usd(c.final_equity)}</td>
                       <td style={{ ...tdNum, color: color.loss, fontWeight: 700 }}>{pct(c.max_dd_pct)}</td>
+                      <td style={{ ...tdNum, color: color.textMuted }}>{c.vol_dia_pct != null ? pct(c.vol_dia_pct, 2) : "—"}</td>
+                      <td style={{ ...tdNum, color: color.textMuted }}>{c.sharpe != null ? n(c.sharpe, 2) : "—"}</td>
                       <td style={tdNum}>×{n(c.is.mult, 1)}</td>
                       <td style={{ ...tdNum, color: color.loss }}>{pct(c.is.dd_pct)}</td>
                       <td style={tdNum}>×{n(c.oos.mult, 1)}</td>

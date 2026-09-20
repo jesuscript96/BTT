@@ -138,3 +138,23 @@ def test_kelly_conjunta_reparte_por_edge_y_correlacion():
     assert f2[0] + f2[2] == pytest.approx(f2[1], rel=0.3) and f2.sum() == pytest.approx(10.0, abs=1e-6)
     e, dd = ss.crecimiento(np.column_stack([a, b, c]), f)
     assert e > 1.0 and -1.0 < dd <= 0.0
+
+
+def test_markowitz_minima_varianza_y_tangencia():
+    rng = np.random.default_rng(5)
+    n = 600
+    a = 0.004 + 0.02 * rng.standard_normal(n)
+    b = 0.002 + 0.01 * rng.standard_normal(n)          # menos retorno, mucha menos varianza
+    c = 0.003 + 0.02 * rng.standard_normal(n)
+    X = np.column_stack([a, b, c])
+    out = ss.markowitz(X, 7.0)
+    claves = [k for _, _, k in out]
+    assert claves[:2] == ["mk_minvar", "mk_sharpe"] and "mk_front_1" in claves and "mk_front_2" in claves
+    f_min = dict((k, f) for _, f, k in out)["mk_minvar"]
+    f_sh = dict((k, f) for _, f, k in out)["mk_sharpe"]
+    assert f_min.sum() == pytest.approx(7.0, abs=1e-6) and f_sh.sum() == pytest.approx(7.0, abs=1e-6)
+    # La de minima varianza carga la de menos varianza; la tangencia no baja el Sharpe respecto a iguales.
+    assert f_min[1] > f_min[0] and f_min[1] > f_min[2]
+    S = np.cov(X.T); mu = X.mean(axis=0)
+    sharpe = lambda f: float(mu @ f) / float(f @ S @ f) ** 0.5
+    assert sharpe(f_sh) >= sharpe(np.full(3, 7.0 / 3)) - 1e-9

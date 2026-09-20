@@ -906,9 +906,13 @@ export function runPortfolioNiveles(body: RawConfigIn & { factors?: number[]; mc
  *  primera parte y comprobado en la segunda contra los % del paso 1. */
 export interface RawRepartoCandidato {
   name: string;
-  /** actual | iguales | kelly_is | kelly_all | sin_<i> | solo_<i> */
+  /** actual | iguales | kelly_is | kelly_all | sin_<i> | solo_<i> | mk_minvar | mk_sharpe | mk_front_<k> */
   clave: string;
   pct: number[];
+  /** Lo de Markowitz, lineal en la R diaria por unidad: retorno y volatilidad al dia y Sharpe anualizado. */
+  ret_dia_pct?: number;
+  vol_dia_pct?: number;
+  sharpe?: number | null;
   /** Con el motor entero (locates, margen, costes) y la misma suma. */
   final_equity: number;
   max_dd_pct: number;
