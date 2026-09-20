@@ -123,15 +123,15 @@ export function PasoMonteCarlo({ m }: { m: MonteCarloModel }) {
 
       {/* La fila de tres graficos: caminos (el grande), recorridos, distribuciones. */}
       <Sec title="Gráficos" sinRelleno help="A la izquierda, los caminos según los locates (banda p05–p95, mediana, y tu semilla en cobre; pulsa una fila de la tabla de arriba para cambiar de rango). En medio, una muestra de recorridos del bootstrap con sus bandas y la curva real. A la derecha, la distribución del balance final y la del drawdown máximo de los recorridos, con el valor real marcado.">
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)", gap: 12, alignItems: "start", padding: "8px 10px 10px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr)", gap: 12, alignItems: "start", padding: "8px 10px 10px" }}>
           <Celda titulo={gc ? `Caminos según los locates · rango ${n(gc.rango.lo, 2)}–${n(gc.rango.hi, 2)} $` : "Caminos según los locates"}>
-            {() => gc && caminos ? (
-              <LinesChart labels={caminos.calendar} series={gc.series} band={gc.band} yFormat={(v) => `${n(v, 0)} %`} hoverFormat={(v) => `${n(v, 1)} %`} height={300} titulo="RETORNO SOBRE EL CAPITAL" />
+            {(ancho) => gc && caminos ? (
+              <LinesChart labels={caminos.calendar} series={gc.series} band={gc.band} yFormat={(v) => `${n(v, 0)} %`} hoverFormat={(v) => `${n(v, 1)} %`} height={300} width={Math.max(260, ancho)} titulo="RETORNO SOBRE EL CAPITAL" />
             ) : vacio("Simula los caminos (arriba) para ver la banda.")}
           </Celda>
           <Celda titulo="Recorridos del bootstrap">
             {(ancho) => mcOut ? (
-              <SpaghettiChart spaghetti={mcOut.spaghetti} bands={mcOut.bands} baseCurve={mcOut.base_curve} initCash={mcOut.init_cash} xLabel="días →" width={Math.max(260, ancho - 26)} height={300} caption="Líneas tenues: recorridos; bandas: p5–p95 y p25–p75; cobre: lo real." />
+              <SpaghettiChart spaghetti={mcOut.spaghetti} bands={mcOut.bands} baseCurve={mcOut.base_curve} initCash={mcOut.init_cash} xLabel="días →" width={Math.max(260, ancho - 26)} height={278} caption="Líneas tenues: recorridos; bandas: p5–p95 y p25–p75; cobre: lo real." />
             ) : vacio("Simula el bootstrap para ver los recorridos.")}
           </Celda>
           <Celda titulo="Distribuciones">

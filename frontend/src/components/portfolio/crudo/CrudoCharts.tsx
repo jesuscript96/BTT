@@ -347,6 +347,7 @@ export function LinesChart({
   height = 260,
   titulo,
   conCero = true,
+  width,
 }: {
   labels: string[];
   series: Serie[];
@@ -357,10 +358,13 @@ export function LinesChart({
   height?: number;
   titulo?: string;
   conCero?: boolean;
+  /** Ancho del viewBox; con el ancho real del contenedor el dibujo sale a tamano real (no escala). */
+  width?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
+  const W = width && width > 100 ? width : 1000;
   const PAD = PAD_PNL;
   const geom = useMemo(() => {
     const len = Math.max(labels.length, 2);
@@ -390,7 +394,7 @@ export function LinesChart({
     }
     const marks = xMarks(labels);
     return { xOf, yOf, path, bandPath, yTicks: niceTicks(r.lo, r.hi, 5), years: marks.years, xt: marks.ticks };
-  }, [labels, series, band, H, conCero]);
+  }, [labels, series, band, H, W, conCero]);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();

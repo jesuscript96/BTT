@@ -45,6 +45,22 @@ BROKERS: dict[str, dict[str, Any]] = {
         "resumen": ("Largos 25 % del valor (4:1). Cortos: ≥ 5 $ → el mayor de 30 % o 5 $/acción; "
                     "2,50–5 $ → 100 % del valor; < 2,50 $ → 2,50 $/acción. Todo intradía."),
     },
+    # 20-sep, Jaume: «en real pocas veces me deja tener tantas posiciones
+    # abiertas con tanto capital expuesto». Los gappers que se venden en
+    # corto suelen ir en lista especial (hard to borrow): el broker exige el
+    # 100 % del valor aunque coticen a mas de 5 $. Esta variante lo aplica a
+    # TODOS los cortos (y 2,50 $/accion por debajo de 2,50 $); largos igual.
+    "sagetrader_estricto": {
+        "nombre": "SageTrader estricto (cortos 100 %)",
+        "largo_pct": 25.0,
+        "corto_pct": 100.0,
+        "corto_alto_min_usd": 0.0,
+        "umbral_alto": 5.0,
+        "umbral_bajo": 2.5,
+        "corto_bajo_usd": 2.5,
+        "resumen": ("Largos 25 % del valor (4:1). Cortos: ≥ 2,50 $ → el 100 % del valor (lista especial / HTB); "
+                    "< 2,50 $ → 2,50 $/acción. Todo intradía."),
+    },
 }
 
 

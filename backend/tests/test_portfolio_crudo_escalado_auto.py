@@ -151,3 +151,18 @@ def test_metrica_por_hora_premia_a_la_rapida():
             r.sizes_para(d); r.registrar(d, [0.003, 0.002], [1, 1], [6.0, 1.0])
     assert rr.sizes_para("2026-01-06") == [3.0, 1.0]
     assert rh.sizes_para("2026-01-06") == [1.0, 3.0]
+
+
+def test_puntuaciones_diarias_coinciden_con_el_ranking():
+    cfg = ea.rotation_cfg({"enabled": True, "lookback_days": 5, "rebalance": "N", "every_days": 5, "pattern": [3, 1], "metric": "return"}, 2)
+    rot = ea.Rotacion(cfg, [2.0, 2.0], ["a", "b"])
+    vals = [[0.001, 0.002], [0.002, 0.001], [0.003, 0.000], [0.000, 0.004], [0.001, 0.001], [0.005, 0.000]]
+    for k, v in enumerate(vals):
+        d = f"2026-01-{k + 1:02d}"
+        rot.sizes_para(d); rot.registrar(d, v, [1, 1], [1.0, 1.0])
+    sc = rot.informe()["scores_daily"]
+    assert sc["dates"] == [f"2026-01-{k + 1:02d}" for k in range(6)]
+    assert sc["por_estrategia"][0][:4] == [None] * 4
+    # dia 5: suma de los 5 primeros; dia 6: suma de los dias 2-6
+    assert sc["por_estrategia"][0][4] == pytest.approx(0.007) and sc["por_estrategia"][1][4] == pytest.approx(0.008)
+    assert sc["por_estrategia"][0][5] == pytest.approx(0.011) and sc["por_estrategia"][1][5] == pytest.approx(0.006)

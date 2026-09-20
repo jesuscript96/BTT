@@ -610,6 +610,8 @@ export interface RawRotationOut {
   rebalanceos: number;
   cambios_de_ranking: number;
   dias_con_rotacion: number;
+  /** La puntuacion de cada estrategia a cada dia (misma ventana y metrica): el oscilador. null hasta tener ventana. */
+  scores_daily?: { dates: string[]; por_estrategia: Array<Array<number | null>> };
 }
 
 export interface RawBrakeOut {

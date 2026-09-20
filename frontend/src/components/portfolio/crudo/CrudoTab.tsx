@@ -19,7 +19,7 @@
 //
 // La pestaña «Imagen general» (normalizada) sigue siendo la fuente del bot.
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import {
   getPortfolioStrategyEquity,
@@ -253,6 +253,26 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setNivelesRunning(false);
     }
   };
+  // Paso 4 A: «Usar ×k» multiplica los % del paso 1 por el factor y recalcula
+  // el portfolio (el recalculo se dispara en cuanto el estado lleva los % nuevos).
+  const [recalcularPendiente, setRecalcularPendiente] = useState(false);
+  const usarNivel = (k: number) => {
+    if (!(k > 0) || Math.abs(k - 1) < 1e-9) return;
+    setCfg((c) => ({
+      ...c,
+      pctComun: Math.round(c.pctComun * k * 10000) / 10000,
+      pctPor: Object.fromEntries(Object.entries(c.pctPor).map(([id, v]) => [id, Math.round(Number(v) * k * 10000) / 10000])),
+    }));
+    setRecalcularPendiente(true);
+  };
+  useEffect(() => {
+    if (recalcularPendiente && !running) {
+      setRecalcularPendiente(false);
+      void calcular();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recalcularPendiente, cfgRaw]);
+
   // ── Escalado automatico (paso 4 B): rotacion por ranking + freno ──────
   // Tres simulaciones (las que haya segun lo encendido): solo rotacion, solo
   // freno con los % fijos, y las dos; la base es el paso 1.
@@ -375,11 +395,11 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       <Paso num={4} title="Escalado" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el paso 4" : "primero calcula el paso 1"}
         help="Dos bloques sobre el portfolio del paso 1. A: ¿a qué nivel de la cuenta? (tus % × un factor, con la caída real y la del Monte Carlo: se elige el tope por la caída que tragas). B: el escalado automático: dentro de ese tope, la rotación de pesos por ranking (cada semana, mes o N sesiones: más a la que mejor lo ha hecho en los últimos X días, con suelo por estrategia) y el freno por caída como opción; se corren desde el principio solo rotación, solo freno y las dos, frente a tus % fijos, y sale lo que toca poner el siguiente periodo."
         sinRelleno>
-        {listo && out && <PasoNivel m={{ out, nombres: selected.map((s) => s.name), niveles, nivelesRunning, nivelesError, calcularNiveles, pctBase, rot, setRot, brake, setBrake, auto, autoRunning, autoError, autoStale, calcularAuto }} />}
+        {listo && out && <PasoNivel m={{ out, nombres: selected.map((s) => s.name), niveles, nivelesRunning, nivelesError, calcularNiveles, usarNivel, pctBase, rot, setRot, brake, setBrake, auto, autoRunning, autoError, autoStale, calcularAuto }} />}
       </Paso>
 
-      <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Con tu CSV real: cuánto exponer el siguiente periodo y cuánto a cada estrategia"
-        help="El fichero de tu cuenta real (el export de DAS en .csv o .xlsx, o fecha y PnL) y la unidad de la R: sale la Kelly de TU cuenta (fills, slippage y locates reales incluidos) → cuánto arriesgar en total el siguiente periodo (con el freno del paso 4 si lo tienes puesto y tu cuenta está en caída), y ese total repartido entre las estrategias con los pesos que dice la rotación del paso 4 (o los % del paso 1 si no la has calculado). No hace falta saber de qué estrategia viene cada trade.">
+      <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Tu CSV real frente a la simulación, y lo que toca poner el siguiente periodo (sin y con freno)"
+        help="El fichero de tu cuenta real (el export de DAS en .csv o .xlsx, o fecha y PnL): tu curva real se pinta sobre los caminos del paso 3 (paridad entre lo simulado y lo real), se mira si tu cuenta está en caída para el freno del paso 4, y la tarjeta final dice cuánto poner el siguiente periodo: la suma de los % del paso 4 (la rotación, o los % del paso 1) y cada estrategia, sin freno y con freno. No hace falta saber de qué estrategia viene cada trade.">
         <div style={{ padding: "10px 10px 6px" }}>
           <PasoCuentaReal m={{ out, capital: capitalEfectivo, caminos, brake: brake.enabled ? brake : null, pesos: selected.map((s, i) => { const r = auto?.ambos?.rotation ?? auto?.rot?.rotation; return { name: s.name, kelly_pct: r ? r.hoy.sizes[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const }; }), origenPesos: (auto?.ambos?.rotation ?? auto?.rot?.rotation) ? "la rotación del paso 4 (lo que toca el siguiente periodo)" : "los % del paso 1" }} />
         </div>

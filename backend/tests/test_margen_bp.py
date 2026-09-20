@@ -187,3 +187,12 @@ def test_con_el_simulador_real_una_reentrada_posterior_si_cabe():
     dia = aplicar_margen_dia(pend, 10_000.0, ConfigMargen(), simulate, "2026-01-05")
     assert [b["ticker"] for b in dia["bloqueos"]] == ["CCC"]
     assert pend[2]["sim_result"]["trades"] == []
+
+
+def test_broker_estricto_exige_el_100_por_ciento_a_todos_los_cortos():
+    from app.services.margen import requisito_por_accion
+    assert requisito_por_accion(10.0, True, "sagetrader") == 5.0            # FAQ: max(30 %, 5 $)
+    assert requisito_por_accion(10.0, True, "sagetrader_estricto") == 10.0  # estricto: 100 %
+    assert requisito_por_accion(3.0, True, "sagetrader_estricto") == 3.0
+    assert requisito_por_accion(1.0, True, "sagetrader_estricto") == 2.5    # < 2,50 $: 2,50 $/accion
+    assert requisito_por_accion(10.0, False, "sagetrader_estricto") == 2.5  # largos igual (25 %)

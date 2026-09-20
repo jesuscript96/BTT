@@ -311,7 +311,12 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
             <Row label="Gastos fijos ($/mes)">
               <div style={{ width: 160 }}><Num value={cfg.expenses} onChange={(v) => set("expenses", Number(v) || 0)} min={0} step={25} /></div>
             </Row>
-            <Row label="Criterios Margen y BP" help="Simula el margen y el buying power del bróker sobre TODAS las estrategias juntas: cada posición abierta consume margen según su precio y su lado, y la que no cabe en el equity del día no entra. Se recorre el día en orden cronológico entre todas las estrategias. Reglas de SageTrader (FAQ, sep-2026): largos 25 % del valor (4:1 intradía); cortos a partir de 5 $, el mayor de 30 % o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional). La capacidad es el equity del día.">
+            <Row label="Criterios Margen y BP" help={<>
+              Simula el margen y el buying power del bróker sobre TODAS las estrategias juntas: cada posición abierta consume margen según su precio y su lado, y la que no cabe en el equity del día no entra. Se recorre el día en orden cronológico entre todas las estrategias; la capacidad es el equity del día.
+              <br /><br /><strong>SageTrader (FAQ, sep-2026)</strong>: largos 25 % del valor (4:1 intradía); cortos a partir de 5 $, el mayor de 30 % o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional).
+              <br /><br /><strong>SageTrader estricto</strong>: igual, pero TODOS los cortos a partir de 2,50 $ exigen el 100 % del valor, como cuando el valor está en lista especial (hard to borrow), que es lo habitual en los gappers que se venden en corto. Si en real te deja menos exposición de la que dice la simulación, prueba este.
+              <br /><br />La exposición que enseña Visión es el nocional abierto ÷ equity; el margen es otra cosa (mucho menor que el nocional salvo por debajo de 2,50 $): un 80 % de exposición en cortos de 5-15 $ usa un 40-80 % de la capacidad con la FAQ, y el 80 % con el estricto.
+            </>}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, fontFamily: font.sans, color: color.textPrimary, cursor: "pointer" }}>
                   <input type="checkbox" checked={!!cfg.margin} onChange={(e) => set("margin", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
@@ -319,7 +324,8 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                 </label>
                 {cfg.margin && (
                   <select value={cfg.marginBroker || "sagetrader"} onChange={(e) => set("marginBroker", e.target.value)} style={{ ...control, fontFamily: font.sans, width: "auto" }}>
-                    <option value="sagetrader">SageTrader</option>
+                    <option value="sagetrader">SageTrader (FAQ)</option>
+                    <option value="sagetrader_estricto">SageTrader estricto (cortos 100 %)</option>
                   </select>
                 )}
               </div>

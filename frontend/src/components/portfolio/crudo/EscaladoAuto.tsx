@@ -76,6 +76,15 @@ export function EscaladoAuto({ m }: { m: EscaladoAutoModel }) {
   // La rotación que manda para «hoy»: la de la simulación con las dos reglas si está, si no la de solo rotación.
   const rotOut = auto?.ambos?.rotation ?? auto?.rot?.rotation ?? null;
   const brakeOut = auto?.ambos?.brake ?? auto?.frenoSolo?.brake ?? null;
+  const patronPlano = patron.length > 1 && patron.every((v) => Math.abs(v - patron[0]) < 1e-9);
+  // El oscilador: la puntuacion rodante de cada estrategia (misma ventana y metrica del ranking).
+  const oscilador = useMemo(() => {
+    const sc = rotOut?.scores_daily;
+    if (!sc || !sc.dates.length) return null;
+    const esPct = (rot.metric === "return" || rot.metric === "ev_trade" || rot.metric === "per_hour");
+    const series: Serie[] = sc.por_estrategia.map((vals, i) => ({ name: nombres[i] ?? `#${i + 1}`, color: colorSerie(i), width: 1.6, values: vals.map((v) => (v == null ? NaN : esPct ? v * 100 : v)) }));
+    return { labels: sc.dates, series, esPct };
+  }, [rotOut, nombres, rot.metric]);
   const ejemplo = useMemo(() => {
     // Ejemplo numérico del reparto para la ayuda: el patrón sobre un ranking cualquiera.
     const orden = nombres.map((nm, i) => ({ nm, i })).slice(0, patron.length);
@@ -213,6 +222,7 @@ export function EscaladoAuto({ m }: { m: EscaladoAutoModel }) {
       </div>
 
       {error && <div style={{ marginTop: 8 }}><ErrorBox>{error}</ErrorBox></div>}
+      {rot.enabled && patronPlano && <Nota tone="warning">El patrón es plano ({patron.map((v) => n(v, 2)).join(" / ")}): con los mismos % para todos los puestos, la rotación no cambia nada. Pon un patrón desigual (p. ej. 4 / 2 / 1) para que la mejor se lleve más.</Nota>}
       {stale && auto && <Nota tone="warning">Los ajustes han cambiado desde el último cálculo.</Nota>}
       {!auto && !error && <Nota>Pulsa <strong>Calcular escalado</strong>: el portfolio desde el principio con {rot.enabled && brake.enabled ? "solo rotación, solo freno y las dos" : rot.enabled ? "la rotación" : brake.enabled ? "el freno" : "(enciende la rotación o el freno)"}, frente a tus % fijos, y lo que toca el siguiente periodo.</Nota>}
 
@@ -274,6 +284,19 @@ export function EscaladoAuto({ m }: { m: EscaladoAutoModel }) {
               </tbody>
             </table>
           </div>
+
+          {/* ── El oscilador: quien va mejor en cada momento ───────── */}
+          {oscilador && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: color.textMuted, fontFamily: font.sans, marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                Rendimiento rodante por estrategia (lo que mira el ranking)
+              </div>
+              <LinesChart labels={oscilador.labels} series={oscilador.series} yFormat={(v) => (oscilador.esPct ? `${n(v, 2)} %` : n(v, 2))} hoverFormat={(v) => (oscilador.esPct ? `${n(v, 3)} %` : n(v, 3))} height={200} titulo={rot.metric === "return" ? `LO GANADO POR 1 % EN LAS ÚLTIMAS ${n(rot.lookback_days, 0)} SESIONES (% DEL CAPITAL)` : rot.metric === "ev_trade" ? `EV POR TRADE (POR 1 %) EN LAS ÚLTIMAS ${n(rot.lookback_days, 0)} SESIONES` : rot.metric === "per_hour" ? `LO GANADO POR 1 % Y HORA EN MERCADO, ÚLTIMAS ${n(rot.lookback_days, 0)} SESIONES` : `SHARPE DIARIO, ÚLTIMAS ${n(rot.lookback_days, 0)} SESIONES`} />
+              <p style={{ ...lbl, margin: "4px 0 0", lineHeight: 1.5 }}>
+                Cada línea es una estrategia como si fuera un oscilador: su puntuación en la ventana, día a día. La que va más alta es la que el ranking pone primera en la siguiente revisión. Donde se cruzan es donde cambia el ranking.
+              </p>
+            </div>
+          )}
 
           {/* ── Los periodos ────────────────────────────────────────── */}
           {rotOut && rotOut.periods.length > 0 && (

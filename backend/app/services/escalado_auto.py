@@ -224,6 +224,41 @@ class Rotacion:
             "desde": (self.dias[-1] if self.dias else None),
         }
 
+    def puntuaciones_diarias(self) -> list[list[Optional[float]]]:
+        """La puntuacion de cada estrategia a CADA dia registrado con la misma
+        ventana y metrica del ranking (None hasta tener ventana completa): el
+        «oscilador» de la UI, para ver quien va mejor en cada momento."""
+        lb = self.cfg["lookback_days"]
+        out: list[list[Optional[float]]] = []
+        for i in range(self.n):
+            r = np.asarray(self.r_unit[i], dtype=float)
+            ntr = np.asarray(self.n_tr[i], dtype=float)
+            hrs = np.asarray(self.horas[i], dtype=float)
+            serie: list[Optional[float]] = []
+            cr = np.concatenate([[0.0], np.cumsum(r)])
+            cn = np.concatenate([[0.0], np.cumsum(ntr)])
+            ch = np.concatenate([[0.0], np.cumsum(hrs)])
+            for t in range(len(r)):
+                if t + 1 < lb:
+                    serie.append(None)
+                    continue
+                a, b = t + 1 - lb, t + 1
+                suma = float(cr[b] - cr[a])
+                if self.cfg["metric"] == "sharpe":
+                    w = r[a:b]
+                    sd = float(w.std())
+                    serie.append(round(float(w.mean() / sd), 6) if sd > 1e-12 else 0.0)
+                elif self.cfg["metric"] == "ev_trade":
+                    k = float(cn[b] - cn[a])
+                    serie.append(round(suma / k, 6) if k > 0 else 0.0)
+                elif self.cfg["metric"] == "per_hour":
+                    h = float(ch[b] - ch[a])
+                    serie.append(round(suma / h, 6) if h > 1e-9 else 0.0)
+                else:
+                    serie.append(round(suma, 6))
+            out.append(serie)
+        return out
+
     def informe(self) -> dict:
         medias = [float(np.mean([p["sizes"][i] for p in self.periods])) if self.periods else self.base[i] for i in range(self.n)]
         cambios = sum(1 for k in range(1, len(self.periods))
@@ -233,6 +268,7 @@ class Rotacion:
             "cfg": dict(self.cfg, pattern=self.pattern), "periods": self.periods, "hoy": self.hoy(),
             "size_medio": [round(x, 4) for x in medias], "rebalanceos": len(self.periods), "cambios_de_ranking": int(cambios),
             "dias_con_rotacion": int(self.dias_con_rotacion),
+            "scores_daily": {"dates": list(self.dias), "por_estrategia": self.puntuaciones_diarias()},
         }
 
 

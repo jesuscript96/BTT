@@ -26,6 +26,8 @@ export interface NivelModel {
   nivelesRunning: boolean;
   nivelesError: string | null;
   calcularNiveles: () => void;
+  /** Aplica el factor a los % del paso 1 y vuelve a calcular el portfolio. */
+  usarNivel: (factor: number) => void;
   // B
   pctBase: number[];
   rot: RawRotationIn;
@@ -58,7 +60,7 @@ export function retornoPorAno(cal: string[], equity: number[], capital: number):
 }
 
 export function PasoNivel({ m }: { m: NivelModel }) {
-  const { out, nombres, niveles, nivelesRunning, nivelesError, calcularNiveles, pctBase, rot, setRot, brake, setBrake, auto, autoRunning, autoError, autoStale, calcularAuto } = m;
+  const { out, nombres, niveles, nivelesRunning, nivelesError, calcularNiveles, usarNivel, pctBase, rot, setRot, brake, setBrake, auto, autoRunning, autoError, autoStale, calcularAuto } = m;
 
   const totalBase = useMemo(() => out.per_strategy.map((p) => p.exec?.size_value ?? 0).reduce((a, b) => a + b, 0), [out]);
 
@@ -74,8 +76,9 @@ export function PasoNivel({ m }: { m: NivelModel }) {
             la caída que hay que tragar para que solo 1 de 20 (p95) o 1 de 100 (p99) recorridos la superen.
             <br /><br />
             <strong>Cómo se lee:</strong> subir el nivel da más retorno y más caída casi en proporción; no hay un nivel «óptimo» por
-            retorno. Se elige el mayor factor cuya DD p95 aguantas: ese es el tope global de la cuenta, y la suma que reparte
-            el bloque B.
+            retorno (la estrategia no puede decirte cuánto poner: por debajo de Kelly, que aquí es una fantasía, más es siempre
+            más retorno y más caída). Se elige el mayor factor cuya DD p95 aguantas: ese es el tope global de la cuenta, y la suma
+            que reparte el bloque B. <strong>«Usar»</strong> multiplica los % del paso 1 por ese factor y recalcula todo con él.
           </>
         }
         right={<Btn primary onClick={calcularNiveles} disabled={nivelesRunning}>{nivelesRunning ? "Calculando…" : niveles ? "Volver a calcular" : "Calcular niveles"}</Btn>}
@@ -98,6 +101,7 @@ export function PasoNivel({ m }: { m: NivelModel }) {
                 <th style={thR}>(1 de 100)</th>
                 <th style={thR}>Final mediana MC</th>
                 <th style={thR}>Ruina (−{n(niveles.ruin_pct, 0)} %)</th>
+                <th style={thR} />
               </tr>
             </thead>
             <tbody>
@@ -115,6 +119,7 @@ export function PasoNivel({ m }: { m: NivelModel }) {
                     <td style={{ ...tdNum, color: color.loss }}>{f.mc ? pct(f.mc.dd_p99) : "—"}</td>
                     <td style={tdNum}>{f.mc ? usd(f.mc.final_p50) : "—"}</td>
                     <td style={{ ...tdNum, color: f.mc && f.mc.prob_ruin_pct > 0 ? color.loss : color.textMuted }}>{f.mc ? pct(f.mc.prob_ruin_pct) : "—"}</td>
+                    <td style={{ ...tdNum, padding: "2px 6px" }}>{actual ? <span style={{ fontSize: 10, color: color.textMuted }}>en uso</span> : <Btn onClick={() => usarNivel(f.factor)} title={`Poner los % del paso 1 × ${n(f.factor, 2)} y recalcular`}>Usar ×{n(f.factor, 2)}</Btn>}</td>
                   </tr>
                 );
               })}
