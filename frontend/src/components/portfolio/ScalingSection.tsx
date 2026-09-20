@@ -859,7 +859,7 @@ export function useScalingSection(ctx: Ctx): { config: React.ReactNode; results:
             </button>
             {showCal && (
               <div style={{ marginTop: 12 }}>
-                <PnlCalendar dates={out.calendar} pnl={out.daily_pnl} counts={out.calendar.map(() => 0)} />
+                <PnlCalendar dates={out.calendar} pnl={out.daily_pnl} counts={out.calendar.map(() => 0)} equity={out.equity} />
               </div>
             )}
           </div>
@@ -1236,7 +1236,7 @@ export function useCompareSection(ctx: Ctx): { config: React.ReactNode; results:
                   </button>
                   {showCal && chosen.calendar && (
                     <div style={{ marginTop: 12 }}>
-                      <PnlCalendar dates={chosen.calendar} pnl={anStats.dailyPnl} counts={chosen.calendar.map(() => 0)} />
+                      <PnlCalendar dates={chosen.calendar} pnl={anStats.dailyPnl} counts={chosen.calendar.map(() => 0)} equity={chosen.equity} />
                     </div>
                   )}
                 </div>

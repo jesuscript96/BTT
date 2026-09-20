@@ -613,6 +613,10 @@ class KellyRealReq(BaseModel):
     rows: list[KellyRealRow] = []
     # El CSV tal cual (DAS «Transactions» o fecha;pnl): si viene, manda sobre rows.
     csv_text: str | None = None
+    # O el FICHERO subido (20-sep, Jaume: «meterle el csv o excel en archivo»):
+    # .csv/.txt o .xlsx en base64 con su nombre; manda sobre csv_text.
+    file_b64: str | None = None
+    filename: str | None = None
     # notional: R = pnl / valor de la posicion de cada operacion (sin stop; lo
     # que trae DAS). usd / pct: riesgo por trade fijo o % del equity del dia.
     risk_mode: Literal["usd", "pct", "notional"] = "notional"
@@ -635,9 +639,20 @@ def kelly_real(req: KellyRealReq, user_id: Optional[str] = Depends(get_current_u
     try:
         rows = [r.model_dump() for r in req.rows]
         parseo = None
-        if req.csv_text and req.csv_text.strip():
+        texto = req.csv_text
+        if req.file_b64:
+            import base64
+            from app.services.cuenta_real import texto_de_fichero
+            try:
+                contenido = base64.b64decode(req.file_b64, validate=False)
+            except Exception:
+                raise ValueError("El fichero no llegó bien (base64)")
+            if len(contenido) > 25_000_000:
+                raise ValueError("El fichero pasa de 25 MB")
+            texto = texto_de_fichero(contenido, req.filename or "")
+        if texto and texto.strip():
             from app.services.cuenta_real import parse_csv
-            parseo = parse_csv(req.csv_text)
+            parseo = parse_csv(texto)
             rows = [{"date": f["date"], "pnl": f["pnl"], "notional": f.get("notional", 0.0)} for f in parseo["filas"]]
         out = plr.kelly_cuenta_real(
             rows, req.risk_mode, req.risk_value, req.capital_inicial,

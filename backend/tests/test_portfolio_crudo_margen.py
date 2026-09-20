@@ -89,3 +89,31 @@ def test_la_salida_libera_margen():
     out = plr.simulate(runs, _cfg({"enabled": True, "broker": "sagetrader", "capacity_pct": 100}))
     assert out["margin_report"]["skipped"] == 0
     assert [s["totals"]["n_trades"] for s in out["per_strategy"]] == [1, 1, 1]
+
+
+def test_el_corto_que_tumba_la_puerta_no_ocupa_margen_ni_exposicion():
+    """20-sep: la puerta de locates se decidia DESPUES del barrido de topes, y
+    el corto tumbado se quedaba ocupando exposicion y margen todo su rato:
+    otros trades se saltaban por un margen que nadie usaba, y el pico de
+    exposicion del dia contaba trades que no existieron (Jaume vio un 87 %
+    que en realidad era un 77 %). Ahora la puerta decide dentro del barrido."""
+    # BBB: 2.000 $ a 0,70 $ = 2.857 acc => 29 paquetes x 3 $ = 87 $ = 4,35 %
+    # de fade > EV fijo 4 % => la puerta lo tumba (su margen, 2,50 $/acc =
+    # 7.143 $, cabia). AAA y CCC: 3 % => entran.
+    runs = [_run("s1", "AAA", "04:10", "04:30", 1000), _run("s2", "BBB", "04:15", "04:40", 2000, entry=0.7, exitp=0.63),
+            _run("s3", "CCC", "04:20", "04:25", 200)]
+    cfg = _cfg({"enabled": True, "broker": "sagetrader", "capacity_pct": 100}, sizes=(1000.0, 2000.0, 200.0))
+    cfg["locates"] = {"mode": "fixed", "cost": 3.0, "shared": True,
+                      "gate": {"mode": "ev_fixed", "ev_fixed_pct": 4.0}}
+    out = plr.simulate(runs, cfg)
+    assert [s["cap_report"]["gate_out"] for s in out["per_strategy"]] == [0, 1, 0]
+    # Sin BBB ocupando sus 7.143 $ de margen (2.500 + 7.143 + 500 > 10.000),
+    # CCC (500 $) cabe: nada saltado.
+    assert out["margin_report"]["skipped"] == 0 and out["cap_report"]["skipped"] == 0
+    assert [s["totals"]["n_trades"] for s in out["per_strategy"]] == [1, 0, 1]
+    # Pico de margen: AAA 2.500 + CCC 500 = 3.000 de 10.000; exposicion 1.200 $.
+    assert out["margin_report"]["pico_max_pct"] == pytest.approx(30.0)
+    assert out["exposure"]["max_usd"] == pytest.approx(1200.0)
+    assert max(out["exposure"]["max_open_daily"]) == 2
+    # Y BBB no paga alquiler.
+    assert [round(s["totals"]["locates"], 2) for s in out["per_strategy"]] == [30.0, 0.0, 6.0]

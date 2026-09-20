@@ -872,6 +872,9 @@ export interface KellyRealIn {
   rows?: Array<{ date: string; pnl: number; notional?: number }>;
   /** El CSV tal cual (DAS «Transactions» o fecha;pnl): si viene, manda sobre rows. */
   csv_text?: string;
+  /** O el fichero (.csv/.txt/.xlsx) en base64 con su nombre: manda sobre csv_text. */
+  file_b64?: string;
+  filename?: string;
   /** notional: R = pnl / valor de la posicion (sin stop, lo que trae DAS). */
   risk_mode: "usd" | "pct" | "notional";
   kelly_base?: "exacta" | "clasica";

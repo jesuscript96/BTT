@@ -638,6 +638,13 @@ def kelly_cuenta_real(rows: list[dict], risk_mode: str, risk_value: float, capit
         aplicado = [a * cap / suma_apl for a in aplicado]
         capped = True
         suma_apl = cap
+    if not estrategias:
+        # Sin el paso 4 (nada que repartir) el TOTAL sale igual: Kelly x
+        # fraccion, topado (20-sep: salia 0 y la UI decia «sale el total»).
+        suma_apl = (total or 0.0) * 100.0
+        if cap > 0 and suma_apl > cap + 1e-12:
+            suma_apl = cap
+            capped = True
     peor = float(serie.min()) if len(serie) else 0.0
     return {
         "dias": len(r_por_dia), "dias_ventana": len(ventana), "dias_con_operaciones": int(np.count_nonzero(serie)),
@@ -1551,10 +1558,106 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     "budget_basis": ("notional" if sizing == "capital" else ("risk" if (esc is not None or sizing == "risk" or (sizing == "as_saved" and risk_new > 0)) else "notional")),
                 })
 
+        # Estado de los locates del dia (lo usa _puerta_y_alquiler, dentro del
+        # bucle de topes).
+        loc_by_i = [0.0] * n
+        open_short: dict[str, list[tuple[float, float]]] = {}
+        rented: dict[str, int] = {}
+        price: dict[str, float] = {}
+        ref: dict[str, float] = {}
+        max_short: dict[tuple[int, str], float] = {}
+        price_s: dict[tuple[int, str], float] = {}
+        ref_s: dict[tuple[int, str], float] = {}
+        if shared:
+            mode_sh, cost_sh, lo_sh, hi_sh, seed_sh = loc_of(0)
+
+        def _puerta_y_alquiler(a: dict) -> bool:
+            """Decide si el corto pasa la puerta y le cobra sus paquetes DE MAS.
+            False = la puerta lo tumba (gate_out): no entra, no ocupa nada."""
+            tr = a["tr"]
+            if a["as_saved"] or not tr["direction"].startswith("S"):
+                return True
+            tk = tr["ticker"]
+            if shared:
+                mode, cost, lo, hi, seed = mode_sh, cost_sh, lo_sh, hi_sh, seed_sh
+                lst = open_short.setdefault(tk, [])
+                conc = sum(sz for (t1, sz) in lst if t1 > tr["t0"]) + a["size"]
+                if tk not in price:
+                    if mode == "fixed":
+                        price[tk] = cost
+                    elif mode == "random":
+                        price[tk] = lr.precio_locate(tr["ref_price"], lo, hi, seed, tk, d)["precio"]
+                        loc_prices_drawn.append(price[tk])
+                    else:
+                        price[tk] = 0.0
+                    ref[tk] = tr["ref_price"]
+                needed = int(math.ceil(conc / 100.0))
+                have = rented.get(tk, 0)
+                marginal = max(0, needed - have)
+                fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price[tk]) if mode != "none" else 0.0
+                if mode != "none" and gate_mode == "ev_fixed":
+                    ev_f, _origen = lg.ev_fijo_para_precio(fade_max, ev_ranges, tr["entry"])
+                    if not ev_f > fade:
+                        a["gate_out"] = True
+                        gate_out[a["si"]] += 1
+                        return False
+                else:
+                    gc = gate_cfgs[a["si"]]
+                    if gc is not None:
+                        ev, _n_ev, _dflt = lg.ev_rodante_pct(gc, int(tr["t0"] * 1_000_000_000))
+                        if not ev > fade:
+                            a["gate_out"] = True
+                            gate_out[a["si"]] += 1
+                            return False
+                if marginal == 0 and have > 0:
+                    gate_free[a["si"]] += 1
+                rented[tk] = max(have, needed)
+                a["locate"] = marginal * price[tk]
+                a["packages"] = marginal
+                a["fade_pct"] = fade
+                loc_by_i[a["si"]] += a["locate"]
+                lst.append((tr["t1"], a["size"]))
+                return True
+            # Por estrategia (como el backtester de cada una): su maximo en
+            # corto del dia por ticker; las reentradas reutilizan lo alquilado.
+            i = a["si"]
+            mode, cost, lo, hi, seed = loc_of(i)
+            if mode == "none":
+                return True
+            key = (i, tk)
+            if key not in price_s:
+                if mode == "fixed":
+                    price_s[key] = cost
+                else:
+                    price_s[key] = lr.precio_locate(tr["ref_price"], lo, hi, seed, tk, d)["precio"]
+                    loc_prices_drawn.append(price_s[key])
+                ref_s[key] = tr["ref_price"]
+            m = max_short.get(key, 0.0)
+            marginal = lg.paquetes_marginales(m, a["size"])
+            fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price_s[key])
+            gc = gate_cfgs[i]
+            if gc is not None:
+                # `evaluar` resuelve los dos modos (rodante y fijo, con o sin rangos).
+                v = lg.evaluar(gc, int(tr["t0"] * 1_000_000_000), tr["entry"], a["size"], m, price_s[key])
+                if not v["entra"]:
+                    a["gate_out"] = True
+                    gate_out[i] += 1
+                    return False
+            if marginal == 0 and m > 0:
+                gate_free[i] += 1
+            max_short[key] = max(m, a["size"])
+            a["locate"] = marginal * price_s[key]
+            a["packages"] = marginal
+            a["fade_pct"] = fade
+            loc_by_i[i] += a["locate"]
+            return True
+
         # a2) TOPES, en orden cronologico del dia: exposicion (nocional abierto
         #     a la vez), margen del broker y tope por accion. El que no cabe se
         #     salta o se recorta (cap_mode) AQUI, antes de locates y de
-        #     acumular: no paga alquiler ni cuenta para nada.
+        #     acumular: no paga alquiler ni cuenta para nada. Y en el mismo
+        #     paso, tras el recorte, la puerta de locates: lo que tumba tampoco
+        #     ocupa sitio.
         dia.sort(key=lambda a: (a["tr"]["t0"], a["si"]))
         equity_open_by_day[d] = equity_open
         cap_day = (equity_open * cap_pct / 100.0) if cap_pct > 0 else cap
@@ -1628,6 +1731,12 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 take *= f_ok
                 take_m *= f_ok
                 take_t *= f_ok
+            # La puerta de locates (y su alquiler) se decide AQUI, con el
+            # tamano ya recortado: si la tumba, no ocupa exposicion, margen ni
+            # tope por accion (antes se decidia despues y el sitio quedaba
+            # ocupado por trades que no existian).
+            if not _puerta_y_alquiler(a):
+                continue
             if ticker_on:
                 heapq.heappush(open_tk[tr["ticker"]], (t1, take_t))
                 used_tk[tr["ticker"]] = used_tk.get(tr["ticker"], 0.0) + take_t
@@ -1644,103 +1753,18 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     day_peak_m[d] = usado_m
         dia = [a for a in dia if not a.get("skipped")]
 
-        # b) Locates, en orden de entrada del dia. Compartidos: UN alquiler por
-        #    ticker-dia para toda la cuenta sobre el maximo en corto A LA VEZ
-        #    (una que cubre libera; la siguiente cabe gratis). Puerta por EV:
-        #    entra si el EV en sombra de SU estrategia paga los paquetes DE MAS.
-        loc_by_i = [0.0] * n
+        # b) Locates del dia (el estado; la decision va DENTRO del bucle de
+        #    topes, mas arriba, trade a trade y en orden cronologico: 20-sep, un
+        #    corto que la puerta tumba no debe ocupar exposicion ni margen).
+        #    Compartidos: UN alquiler por ticker-dia para toda la cuenta sobre
+        #    el maximo en corto A LA VEZ (una que cubre libera; la siguiente
+        #    cabe gratis). Puerta por EV: entra si el EV en sombra de SU
+        #    estrategia paga los paquetes DE MAS.
         if shared:
-            mode, cost, lo, hi, seed = loc_of(0)
-            open_short: dict[str, list[tuple[float, float]]] = {}
-            rented: dict[str, int] = {}
-            price: dict[str, float] = {}
-            ref: dict[str, float] = {}
-            for a in dia:
-                tr = a["tr"]
-                if a["as_saved"] or not tr["direction"].startswith("S"):
-                    continue
-                tk = tr["ticker"]
-                lst = open_short.setdefault(tk, [])
-                conc = sum(sz for (t1, sz) in lst if t1 > tr["t0"]) + a["size"]
-                if tk not in price:
-                    if mode == "fixed":
-                        price[tk] = cost
-                    elif mode == "random":
-                        price[tk] = lr.precio_locate(tr["ref_price"], lo, hi, seed, tk, d)["precio"]
-                        loc_prices_drawn.append(price[tk])
-                    else:
-                        price[tk] = 0.0
-                    ref[tk] = tr["ref_price"]
-                needed = int(math.ceil(conc / 100.0))
-                have = rented.get(tk, 0)
-                marginal = max(0, needed - have)
-                fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price[tk]) if mode != "none" else 0.0
-                if mode != "none" and gate_mode == "ev_fixed":
-                    ev_f, _origen = lg.ev_fijo_para_precio(fade_max, ev_ranges, tr["entry"])
-                    if not ev_f > fade:
-                        a["gate_out"] = True
-                        gate_out[a["si"]] += 1
-                        continue
-                else:
-                    gc = gate_cfgs[a["si"]]
-                    if gc is not None:
-                        ev, _n_ev, _dflt = lg.ev_rodante_pct(gc, int(tr["t0"] * 1_000_000_000))
-                        if not ev > fade:
-                            a["gate_out"] = True
-                            gate_out[a["si"]] += 1
-                            continue
-                if marginal == 0 and have > 0:
-                    gate_free[a["si"]] += 1
-                rented[tk] = max(have, needed)
-                a["locate"] = marginal * price[tk]
-                a["packages"] = marginal
-                a["fade_pct"] = fade
-                loc_by_i[a["si"]] += a["locate"]
-                lst.append((tr["t1"], a["size"]))
             for tk, pk in rented.items():
                 if pk > 0:
                     loc_days.append({"ticker": tk, "date": d, "packages": pk, "ref": ref[tk], "price": price[tk]})
         else:
-            # Por estrategia (como el backtester de cada una): su maximo en
-            # corto del dia por ticker; las reentradas reutilizan lo alquilado.
-            max_short: dict[tuple[int, str], float] = {}
-            price_s: dict[tuple[int, str], float] = {}
-            ref_s: dict[tuple[int, str], float] = {}
-            for a in dia:
-                tr = a["tr"]
-                i = a["si"]
-                if a["as_saved"] or not tr["direction"].startswith("S"):
-                    continue
-                mode, cost, lo, hi, seed = loc_of(i)
-                if mode == "none":
-                    continue
-                tk = tr["ticker"]
-                key = (i, tk)
-                if key not in price_s:
-                    if mode == "fixed":
-                        price_s[key] = cost
-                    else:
-                        price_s[key] = lr.precio_locate(tr["ref_price"], lo, hi, seed, tk, d)["precio"]
-                        loc_prices_drawn.append(price_s[key])
-                    ref_s[key] = tr["ref_price"]
-                m = max_short.get(key, 0.0)
-                marginal = lg.paquetes_marginales(m, a["size"])
-                fade = lg.fade_necesario_pct(tr["entry"], a["size"], marginal, price_s[key])
-                gc = gate_cfgs[i]
-                if gc is not None:
-                    # `evaluar` resuelve los dos modos (rodante y fijo, con o sin rangos).
-                    v = lg.evaluar(gc, int(tr["t0"] * 1_000_000_000), tr["entry"], a["size"], m, price_s[key])
-                    if not v["entra"]:
-                        a["gate_out"] = True
-                        gate_out[i] += 1
-                        continue
-                if marginal == 0 and m > 0:
-                    gate_free[i] += 1
-                max_short[key] = max(m, a["size"])
-                a["locate"] = marginal * price_s[key]
-                a["packages"] = marginal
-                a["fade_pct"] = fade
-                loc_by_i[i] += a["locate"]
             for (i, tk), m in max_short.items():
                 if m > 0:
                     loc_days.append({"ticker": tk, "date": d, "packages": int(math.ceil(m / 100.0)),

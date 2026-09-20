@@ -518,7 +518,7 @@ export function PortfolioTab({ strategies, onMove }: { strategies: PortfolioStra
               </button>
               {showCalendar && (
                 <div style={{ marginTop: 12 }}>
-                  <PnlCalendar dates={out.calendar} pnl={out.daily_pnl} counts={dayCounts} />
+                  <PnlCalendar dates={out.calendar} pnl={out.daily_pnl} counts={dayCounts} equity={out.equity} />
                 </div>
               )}
             </div>

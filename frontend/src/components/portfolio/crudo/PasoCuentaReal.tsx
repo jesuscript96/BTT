@@ -25,6 +25,11 @@ export function PasoCuentaReal({ m }: { m: {
 } }) {
   const { outEsc, esc, capital } = m;
   const [csv, setCsv] = useState("");
+  // Fichero elegido (20-sep, Jaume: «meterle el csv o excel en archivo»). Un
+  // CSV/TXT se lee aquí y va como texto (se ve en la caja); un Excel va en
+  // base64 y lo lee el backend (openpyxl).
+  const [fichero, setFichero] = useState<{ name: string; size: number; b64: string | null } | null>(null);
+  const [arrastrando, setArrastrando] = useState(false);
   const [riskMode, setRiskMode] = useState<"notional" | "pct" | "usd">("notional");
   const [riskValue, setRiskValue] = useState<number>(1);
   const [capitalInicial, setCapitalInicial] = useState<number>(capital > 0 ? capital : 10000);
@@ -43,20 +48,44 @@ export function PasoCuentaReal({ m }: { m: {
   const lineas = csv.trim() ? csv.trim().split(/\r?\n/).length : 0;
   const esDas = /symbol/i.test(csv.slice(0, 400)) && /net amt/i.test(csv.slice(0, 400));
 
-  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
+  const cargarFichero = (f: File | undefined | null) => {
     if (!f) return;
+    setRes(null); setError(null);
+    const ext = (f.name.split(".").pop() || "").toLowerCase();
+    if (ext === "xlsx" || ext === "xlsm" || ext === "xls") {
+      const r = new FileReader();
+      r.onload = () => {
+        const dataUrl = String(r.result || "");
+        const b64 = dataUrl.includes(",") ? dataUrl.slice(dataUrl.indexOf(",") + 1) : dataUrl;
+        setCsv("");
+        setFichero({ name: f.name, size: f.size, b64 });
+      };
+      r.readAsDataURL(f);
+      return;
+    }
     const r = new FileReader();
-    r.onload = () => setCsv(String(r.result || ""));
+    r.onload = () => {
+      setCsv(String(r.result || ""));
+      setFichero({ name: f.name, size: f.size, b64: null });
+    };
     r.readAsText(f);
   };
+  const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    cargarFichero(e.target.files?.[0]);
+    e.target.value = "";
+  };
+  const quitarFichero = () => { setFichero(null); setCsv(""); setRes(null); };
+  const hayEntrada = !!(fichero?.b64) || !!csv.trim();
 
   const calcular = async () => {
-    if (!csv.trim() || running) return;
+    if (!hayEntrada || running) return;
     setRunning(true); setError(null);
     try {
       const o = await kellyCuentaReal({
-        csv_text: csv, risk_mode: riskMode, risk_value: riskMode === "notional" ? 1 : riskValue, capital_inicial: capitalInicial,
+        csv_text: fichero?.b64 ? undefined : csv,
+        file_b64: fichero?.b64 ?? undefined,
+        filename: fichero?.b64 ? fichero.name : undefined,
+        risk_mode: riskMode, risk_value: riskMode === "notional" ? 1 : riskValue, capital_inicial: capitalInicial,
         kelly_mult: mult, cap_pct: capSuma, cap_strategy_pct: capEst, lookback_days: ventana, kelly_base: base,
         estrategias, capital_siguiente: capitalSig,
       });
@@ -73,9 +102,9 @@ export function PasoCuentaReal({ m }: { m: {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(380px, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
         <Sec title="Tu cuenta" help={
           <>
-            <strong>Qué pegar</strong>: el export de DAS («Transactions»: una fila por fill, con Trade Date, Side,
-            Symbol, Qty, Price, comisiones y Net Amt) tal cual, o un CSV sencillo con <em>fecha</em> y <em>PnL neto</em>
-            por día o por operación. Con el de DAS, cada operación es un símbolo-día: PnL = ventas − compras (con las
+            <strong>Qué meter</strong>: el fichero del export de DAS («Transactions»: una fila por fill, con Trade Date,
+            Side, Symbol, Qty, Price, comisiones y Net Amt) en .csv o en Excel (.xlsx), o un CSV sencillo con
+            <em>fecha</em> y <em>PnL neto</em> por día o por operación. También vale pegar el contenido. Con el de DAS, cada operación es un símbolo-día: PnL = ventas − compras (con las
             tasas dentro) y valor de la posición = lo mayor de lo comprado y lo vendido.
             <br /><br />
             <strong>Unidad de la R</strong>: «posición» = PnL ÷ valor de la posición de cada operación (no hace falta
@@ -88,19 +117,48 @@ export function PasoCuentaReal({ m }: { m: {
             estrategia opcional). No hace falta saber de qué estrategia viene cada trade real.
           </>
         }>
-          <textarea
-            value={csv}
-            onChange={(e) => setCsv(e.target.value)}
-            placeholder={"Pega aquí el export de DAS (Transactions) o un CSV con:\nfecha;pnl\n2026-08-03;125,40\n2026-08-04;-80,00"}
-            spellCheck={false}
-            style={{ ...control, width: "100%", minHeight: 120, fontFamily: font.mono, fontSize: 11, resize: "vertical", padding: 8 }}
-          />
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" }}>
-            <input type="file" accept=".csv,.txt,text/csv" onChange={onFile} style={{ fontSize: 11, fontFamily: font.sans, color: color.textSecondary }} />
-            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: lineas ? color.textSecondary : color.textMuted }}>
-              {lineas ? `${n(lineas, 0)} líneas · ${esDas ? "formato DAS (fills)" : "formato fecha;pnl"}` : "pega el CSV o elige el fichero"}
-            </span>
+          {/* El fichero (CSV o Excel) es la entrada: elegir o arrastrar. */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setArrastrando(true); }}
+            onDragLeave={() => setArrastrando(false)}
+            onDrop={(e) => { e.preventDefault(); setArrastrando(false); cargarFichero(e.dataTransfer.files?.[0]); }}
+            style={{
+              border: `1px dashed ${arrastrando ? color.copper : color.border}`, background: arrastrando ? "rgba(184, 115, 51, 0.06)" : color.bgElevated,
+              padding: "10px 12px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+            }}
+          >
+            <label style={{ display: "inline-flex", alignItems: "center", height: 28, padding: "0 12px", cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: font.sans, color: "#1A0A00", background: color.copper, border: `1px solid ${color.copper}`, whiteSpace: "nowrap" }}>
+              Elegir fichero…
+              <input type="file" accept=".csv,.txt,.xlsx,.xlsm,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={onFile} style={{ display: "none" }} />
+            </label>
+            {fichero ? (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11, fontFamily: font.sans, color: color.textSecondary }}>
+                <span style={{ fontFamily: font.mono, color: color.textHigh }}>{fichero.name}</span>
+                <span style={{ color: color.textMuted }}>{fichero.size >= 1024 * 1024 ? `${n(fichero.size / 1024 / 1024, 1)} MB` : `${n(fichero.size / 1024, 0)} KB`}{fichero.b64 ? " · Excel, lo lee el backend" : lineas ? ` · ${n(lineas, 0)} líneas · ${esDas ? "formato DAS (fills)" : "formato fecha;pnl"}` : ""}</span>
+                <Btn onClick={quitarFichero}>quitar</Btn>
+              </span>
+            ) : (
+              <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>
+                el export de DAS (Transactions) en <strong>.csv</strong> o <strong>.xlsx</strong>, o un CSV con fecha y PnL · o arrástralo aquí
+              </span>
+            )}
           </div>
+          {/* Pegar, como alternativa (y como vista del CSV cargado). */}
+          {!fichero?.b64 && (
+            <details open={!fichero && !!csv.trim()} style={{ marginTop: 6 }}>
+              <summary style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, cursor: "pointer", userSelect: "none" }}>
+                {fichero ? "ver o editar el contenido" : "o pega aquí el contenido"}
+                {!fichero && lineas > 0 && <span style={{ marginLeft: 8, color: color.textSecondary }}>{n(lineas, 0)} líneas · {esDas ? "formato DAS (fills)" : "formato fecha;pnl"}</span>}
+              </summary>
+              <textarea
+                value={csv}
+                onChange={(e) => { setCsv(e.target.value); if (fichero) setFichero(null); }}
+                placeholder={"Pega aquí el export de DAS (Transactions) o un CSV con:\nfecha;pnl\n2026-08-03;125,40\n2026-08-04;-80,00"}
+                spellCheck={false}
+                style={{ ...control, width: "100%", minHeight: 100, marginTop: 6, fontFamily: font.mono, fontSize: 11, resize: "vertical", padding: 8 }}
+              />
+            </details>
+          )}
           <div style={{ marginTop: 10 }}>
             <Row label="Unidad de la R">
               <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -140,7 +198,7 @@ export function PasoCuentaReal({ m }: { m: {
             </Row>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0 4px" }}>
-            <Btn primary onClick={calcular} disabled={running || !csv.trim()}>{running ? "Calculando…" : "Calcular con mi cuenta"}</Btn>
+            <Btn primary onClick={calcular} disabled={running || !hayEntrada}>{running ? "Calculando…" : "Calcular con mi cuenta"}</Btn>
             <span style={{ fontSize: 10.5, fontFamily: font.sans, color: hoy ? color.textMuted : color.warning }}>
               {hoy ? `reparto por las Kellys del paso 4 (${estrategias.length} estrategias)` : "sin el paso 4 calculado, sale el total pero no el reparto por estrategia"}
             </span>
@@ -150,7 +208,7 @@ export function PasoCuentaReal({ m }: { m: {
 
         <Sec title="Siguiente periodo según tu cuenta" help="Arriba, lo que dice tu cuenta: operaciones, % de ganadoras, ganancia y pérdida medias, la Kelly (clásica y exacta), lo que pide tras la fracción y lo aplicado tras el tope: el riesgo TOTAL por trade. Debajo, cada estrategia con su Kelly del backtest, su proporción y lo que le toca en % y en $.">
           {!res ? (
-            <Nota>Pega tu CSV y pulsa <strong>Calcular con mi cuenta</strong>.</Nota>
+            <Nota>Elige el fichero de DAS (.csv o .xlsx), o pega el CSV, y pulsa <strong>Calcular con mi cuenta</strong>.</Nota>
           ) : (
             <>
               {res.csv && (

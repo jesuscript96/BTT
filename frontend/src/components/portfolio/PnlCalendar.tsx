@@ -19,20 +19,72 @@ function formatPnl(pnl: number): string {
 
 const tint = (base: string, pct: number) => `color-mix(in srgb, ${base} ${pct}%, transparent)`;
 
+export function formatEquity(v: number): string {
+  return `$${Math.round(v).toLocaleString("es-ES")}`;
+}
+
+/** Equity con la que empezó y acabó cada mes (YYYY-MM) a partir de la curva
+ *  diaria (equity al CIERRE de cada día del calendario) y el capital inicial:
+ *  el mes empieza donde acabó el anterior. El % es sobre el equity de inicio. */
+export function equityPorMes(dates: string[], equity: number[] | undefined, capital: number): Map<string, { inicio: number; fin: number; pct: number }> {
+  const out = new Map<string, { inicio: number; fin: number; pct: number }>();
+  if (!equity || equity.length !== dates.length || !dates.length) return out;
+  let inicio = capital;
+  let mesActual = dates[0].slice(0, 7);
+  for (let i = 0; i < dates.length; i++) {
+    const mes = dates[i].slice(0, 7);
+    if (mes !== mesActual) {
+      inicio = equity[i - 1];
+      mesActual = mes;
+    }
+    const fin = equity[i];
+    out.set(mes, { inicio, fin, pct: inicio > 0 ? ((fin - inicio) / inicio) * 100 : 0 });
+  }
+  return out;
+}
+
+/** «equity $X ±Y %» para la cabecera de un mes. */
+export function EquityMes({ eq }: { eq: { inicio: number; fin: number; pct: number } | undefined }) {
+  if (!eq) return null;
+  const sube = eq.fin >= eq.inicio;
+  return (
+    <span
+      title={`Equity al cierre del mes: ${formatEquity(eq.inicio)} al empezar → ${formatEquity(eq.fin)} (profits − comisiones, locates y gastos fijos). El % es sobre el equity con el que empezó el mes.`}
+      style={{ fontSize: 10, fontFamily: font.mono, letterSpacing: "-0.02em", color: color.textSecondary, whiteSpace: "nowrap", cursor: "help" }}
+    >
+      equity {formatEquity(eq.fin)}
+      <span style={{ marginLeft: 6, fontWeight: 700, color: sube ? color.profit : color.loss }}>
+        {sube ? "+" : "−"}{Math.abs(eq.pct).toFixed(1)} %
+      </span>
+    </span>
+  );
+}
+
 export function PnlCalendar({
   dates,
   pnl,
   counts,
+  equity,
+  capital,
 }: {
   dates: string[];
   pnl: number[];
   counts: number[];
+  /** Equity al cierre de cada día (alineada con `dates`): con ella, la cabecera
+   *  de cada mes lleva lo que queda en la cuenta y el % sobre el mes anterior. */
+  equity?: number[];
+  /** Capital inicial; si no viene, se deduce de la curva (equity[0] − pnl[0]). */
+  capital?: number;
 }) {
   const byDate = useMemo(() => {
     const m = new Map<string, { pnl: number; count: number }>();
     dates.forEach((d, i) => m.set(d, { pnl: pnl[i] ?? 0, count: counts[i] ?? 0 }));
     return m;
   }, [dates, pnl, counts]);
+  const eqMeses = useMemo(() => {
+    const cap0 = capital != null && capital > 0 ? capital : (equity && equity.length ? equity[0] - (pnl[0] ?? 0) : 0);
+    return equityPorMes(dates, equity, cap0);
+  }, [dates, equity, capital, pnl]);
 
   const months = useMemo(() => {
     const s = new Set<string>();
@@ -95,11 +147,14 @@ export function PnlCalendar({
               <span style={{ fontSize: 11.5, textTransform: "capitalize", letterSpacing: "0.04em", color: color.textHigh, fontFamily: font.sans }}>
                 {monthName}
               </span>
-              <span style={{ display: "inline-flex", gap: 8, alignItems: "baseline" }}>
-                {mCount > 0 && (
-                  <span style={{ fontSize: 9.5, color: color.textMuted, fontFamily: font.sans }}>{mCount} trades</span>
-                )}
-                <span style={{ fontSize: 11, fontFamily: font.mono, color: mTone }}>{formatPnl(mPnl)}</span>
+              <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                <span style={{ display: "inline-flex", gap: 8, alignItems: "baseline" }}>
+                  {mCount > 0 && (
+                    <span style={{ fontSize: 9.5, color: color.textMuted, fontFamily: font.sans }}>{mCount} trades</span>
+                  )}
+                  <span style={{ fontSize: 11, fontFamily: font.mono, color: mTone }}>{formatPnl(mPnl)}</span>
+                </span>
+                <EquityMes eq={eqMeses.get(monthStr)} />
               </span>
             </div>
 

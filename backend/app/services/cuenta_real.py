@@ -167,3 +167,60 @@ def parse_simple(texto: str) -> dict:
 
 def parse_csv(texto: str) -> dict:
     return parse_das(texto) if es_das(texto) else parse_simple(texto)
+
+
+# ── Fichero subido (20-sep): CSV/TXT o Excel .xlsx → el texto CSV de siempre ──
+
+def _celda_a_texto(v: Any) -> str:
+    if v is None:
+        return ""
+    if hasattr(v, "strftime"):
+        # datetime/date de Excel -> ISO, que _fecha entiende.
+        try:
+            return v.strftime("%Y-%m-%d %H:%M:%S") if hasattr(v, "hour") else v.strftime("%Y-%m-%d")
+        except Exception:
+            return str(v)
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v)
+
+
+def texto_de_fichero(contenido: bytes, nombre: str) -> str:
+    """Devuelve el CSV (texto) de un fichero subido: .csv/.txt tal cual (UTF-8
+    con o sin BOM, o latin-1), .xlsx/.xlsm por openpyxl (la primera hoja con
+    datos, celdas separadas por coma, entrecomilladas si hace falta). El .xls
+    viejo no: hay que guardarlo como .xlsx o .csv."""
+    ext = (nombre or "").rsplit(".", 1)[-1].lower() if "." in (nombre or "") else ""
+    if ext in ("xlsx", "xlsm"):
+        try:
+            import openpyxl  # type: ignore
+        except ImportError as e:  # pragma: no cover
+            raise ValueError("Para leer Excel hace falta openpyxl en el backend (pip install openpyxl)") from e
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(contenido), read_only=True, data_only=True)
+        except Exception as e:
+            raise ValueError(f"No se pudo abrir el Excel: {e}") from e
+        buf = io.StringIO()
+        w = csv.writer(buf, lineterminator="\n")
+        n_filas = 0
+        for ws in wb.worksheets:
+            for fila in ws.iter_rows(values_only=True):
+                celdas = [_celda_a_texto(v) for v in fila]
+                if not any(c.strip() for c in celdas):
+                    continue
+                w.writerow(celdas)
+                n_filas += 1
+            if n_filas:
+                break
+        wb.close()
+        if not n_filas:
+            raise ValueError("El Excel no tiene ninguna hoja con datos")
+        return buf.getvalue()
+    if ext == "xls":
+        raise ValueError("El .xls antiguo no se puede leer: guárdalo como .xlsx o como .csv")
+    for enc in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return contenido.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return contenido.decode("utf-8", errors="replace")
