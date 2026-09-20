@@ -566,25 +566,6 @@ export interface RawLocatesIn {
   band_seeds: number;
 }
 
-/** Tamano por SETUP (20-sep): el % del paso 1 de cada trade x la Kelly
- *  relativa (EV/sigma^2) de su tramo de precio de entrada, estimada
- *  walk-forward por anos con todo lo anterior (el primer ano va a x1). */
-export interface RawSetupIn {
-  enabled: boolean;
-  feature?: "price";
-  /** [[lo, hi], ...]; hi null = sin techo. Sin nada, los tramos por defecto. */
-  ranges?: Array<[number, number | null]> | null;
-  min_trades?: number;
-  /** Encoge el multiplicador hacia x1 segun la muestra: m = 1 + (m - 1) * n / (n + shrink). */
-  shrink?: number;
-  clip_lo?: number;
-  clip_hi?: number;
-  /** walk_forward: cada ano con lo anterior (fuera de muestra); all: toda la historia (in-sample, solo para ver la tabla). */
-  estimate?: "walk_forward" | "all";
-  /** Una sola tabla con los trades de todas las estrategias (mas muestra por tramo). */
-  pooled?: boolean;
-}
-
 /** Rotacion por ranking (20-sep tarde): cada semana / mes / N sesiones se
  *  ordenan las estrategias por lo que rindieron por unidad de tamano en la
  *  ventana y se les da el % por trade del patron segun su puesto. */
@@ -662,7 +643,6 @@ export interface RawConfigIn {
   /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
   monthly_expenses: number;
   locates?: RawLocatesIn | null;
-  setup?: RawSetupIn | null;
   rotation?: RawRotationIn | null;
   brake?: RawBrakeIn | null;
   /** Criterios de margen y buying power del broker (19-sep). Apagado = nada cambia. */
@@ -689,34 +669,6 @@ export interface RawLocatesBand {
   max_dd_pct: { p05: number; p50: number; p95: number };
   cost: { p05: number; p50: number; p95: number };
   bands: { p05: number[]; p50: number[]; p95: number[] };
-}
-
-export interface RawSetupRange {
-  lo: number;
-  hi: number | null;
-  n: number;
-  ev_pct: number;
-  sd_pct: number;
-  /** EV/sigma^2 (la Kelly del tramo, en su unidad). */
-  f: number | null;
-  /** El multiplicador aplicado al % del paso 1. */
-  m: number;
-  con_muestra: boolean;
-}
-
-export interface RawSetupTable {
-  name: string;
-  basis: "risk" | "capital";
-  ranges: RawSetupRange[];
-}
-
-export interface RawSetupOut {
-  cfg: RawSetupIn & { ranges: Array<[number, number | null]>; min_trades: number; shrink: number; clip_lo: number; clip_hi: number; estimate: "walk_forward" | "all"; pooled: boolean };
-  /** La tabla estimada con TODO: la que vale para operar manana. */
-  vigente: RawSetupTable[];
-  /** Walk-forward: la tabla que se aplico a cada ano (estimada con lo anterior). */
-  por_ano: Array<{ desde: string; tablas: RawSetupTable[] }>;
-  por_estrategia: Array<{ name: string; trades: number; distintos_de_1: number; mult_medio: number; mult_min: number; mult_max: number }>;
 }
 
 /** Con que se corrio la corrida guardada (para la fila del selector). */
@@ -749,8 +701,6 @@ export interface RawCapReport {
   /** Cortos que la puerta por EV dejo fuera / que cabian en lo alquilado (gratis). */
   gate_out?: number;
   gate_free?: number;
-  /** Trades con multiplicador de setup distinto de 1. */
-  setup?: number;
   notional_usd?: number;
 }
 
@@ -823,8 +773,6 @@ export interface RawTrades {
   packages?: number[];
   r: number[];
   reason: string[];
-  /** Multiplicador de setup aplicado a cada trade (1 sin tabla). */
-  setup_mult?: number[];
 }
 
 export interface RawOut {
@@ -839,8 +787,7 @@ export interface RawOut {
     ticker_cap_basis?: "risk" | "notional" | "trade";
     monthly_expenses: number;
     locates?: RawLocatesIn | null;
-    setup?: RawSetupIn | null;
-    rotation?: RawRotationIn | null;
+      rotation?: RawRotationIn | null;
     brake?: RawBrakeIn | null;
     start_date: string | null;
     end_date: string | null;
@@ -849,7 +796,6 @@ export interface RawOut {
   locates_report?: RawLocatesReport;
   locates_band?: RawLocatesBand | null;
   locates_analysis?: RawLocatesAnalysis | null;
-  setup?: RawSetupOut | null;
   rotation?: RawRotationOut | null;
   brake?: RawBrakeOut | null;
   ruined?: boolean;
@@ -966,35 +912,6 @@ export function runPortfolioNiveles(body: RawConfigIn & { factors?: number[]; mc
   });
 }
 
-/** Reparto entre estrategias por Kelly conjunta (20-sep), estimado en la
- *  primera parte y comprobado en la segunda contra los % del paso 1. */
-export interface RawRepartoCandidato {
-  name: string;
-  /** actual | iguales | kelly_is | kelly_all | sin_<i> | solo_<i> */
-  clave: string;
-  pct: number[];
-  /** Con el motor entero (locates, margen, costes) y la misma suma. */
-  final_equity: number;
-  max_dd_pct: number;
-  ruined: boolean;
-  trades: number;
-  is: { mult: number; dd_pct: number };
-  oos: { mult: number; dd_pct: number };
-}
-export interface RawRepartoOut {
-  names: string[];
-  strategy_ids: string[];
-  total_pct: number;
-  split_date: string | null;
-  dias_is: number;
-  dias_oos: number;
-  correlation: number[][];
-  kelly_propia_pct: Array<number | null>;
-  /** Retorno diario medio de cada estrategia por cada 1 % por trade (lo que manda a un nivel bajo). */
-  ret_por_unidad_pct?: number[];
-  candidatos: RawRepartoCandidato[];
-  recomendado: { pct: number[]; weights: number[] };
-}
 /** Caminos de la simulacion segun los locates (20-sep tarde): la misma
  *  configuracion corrida ENTERA N veces con semillas distintas del sorteo,
  *  para uno o varios rangos de precios; percentiles de los caminos. */
@@ -1019,13 +936,5 @@ export function runPortfolioCaminos(body: RawConfigIn & { seeds?: number; rangos
     method: "POST",
     body: JSON.stringify(body),
     timeoutMs: 600_000,
-  });
-}
-
-export function runPortfolioReparto(body: RawConfigIn & { total_pct?: number | null; split?: number; cap_strategy_pct?: number }): Promise<RawRepartoOut> {
-  return apiRequest<RawRepartoOut>("/portfolio-lab/raw/reparto", {
-    method: "POST",
-    body: JSON.stringify(body),
-    timeoutMs: 120_000,
   });
 }

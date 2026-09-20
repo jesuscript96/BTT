@@ -477,23 +477,6 @@ class RawLocatesIn(BaseModel):
     band_seeds: int = Field(default=0, ge=0, le=500)
 
 
-class RawSetupIn(BaseModel):
-    """Tamano por SETUP (20-sep, ver setup_sizing): el % del paso 1 de cada
-    trade x la Kelly relativa (EV/sigma^2) de su tramo de precio de entrada,
-    estimada walk-forward por anos con todo lo anterior."""
-    enabled: bool = True
-    feature: Literal["price"] = "price"
-    # [[lo, hi], ...]; hi null = sin techo. None = los tramos por defecto.
-    ranges: list[list[float | None]] | None = None
-    min_trades: int = Field(default=30, ge=5)
-    shrink: float = Field(default=50.0, ge=0)
-    clip_lo: float = Field(default=0.5, ge=0)
-    clip_hi: float = Field(default=2.0, ge=0)
-    estimate: Literal["walk_forward", "all"] = "walk_forward"
-    # Una sola tabla con los trades de todas las estrategias (mas muestra por tramo).
-    pooled: bool = False
-
-
 class RawRotationIn(BaseModel):
     """Rotacion por ranking (20-sep tarde, ver escalado_auto): cada semana /
     mes / N sesiones se ordenan las estrategias por lo que rindieron por
@@ -539,7 +522,6 @@ class RawReq(BaseModel):
     monthly_expenses: float = Field(default=0.0, ge=0)
     # 16-sep: locates de la cuenta (compartidos + puerta + banda) y escalado.
     locates: RawLocatesIn | None = None
-    setup: RawSetupIn | None = None
     rotation: RawRotationIn | None = None
     brake: RawBrakeIn | None = None
     margin: RawMarginIn | None = None
@@ -595,7 +577,6 @@ def _cfg_crudo(req: "RawReq") -> dict:
         "ticker_cap_basis": req.ticker_cap_basis,
         "monthly_expenses": req.monthly_expenses,
         "locates": req.locates.model_dump() if req.locates else None,
-        "setup": req.setup.model_dump() if req.setup else None,
         "rotation": req.rotation.model_dump() if req.rotation else None,
         "brake": req.brake.model_dump() if req.brake else None,
         "margin": req.margin.model_dump() if req.margin else None,
@@ -675,128 +656,6 @@ def raw_niveles(req: RawNivelesReq, user_id: Optional[str] = Depends(get_current
                     "prob_ruin_pct": mc["prob_ruin_pct"], "prob_losing_pct": mc["prob_losing_pct"]} if mc else None),
         })
     return {"capital": req.capital, "ruin_pct": req.ruin_pct, "mc_sims": req.mc_sims, "niveles": filas}
-
-
-class RawRepartoReq(RawReq):
-    """Reparto entre estrategias por KELLY CONJUNTA (20-sep): la f por
-    estrategia que maximiza el crecimiento de la SUMA (con correlaciones),
-    con el total = la suma de los % del paso 1 (o `total_pct`), estimada en
-    la primera parte (`split` = fraccion de dias) y comprobada en la segunda
-    contra los pesos actuales y a partes iguales; y la estimada con todo, que
-    es la recomendacion."""
-    total_pct: float | None = None
-    split: float = Field(default=0.5, gt=0.1, lt=0.9)
-    cap_strategy_pct: float = Field(default=0.0, ge=0)
-
-
-@router.post("/raw/reparto")
-def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current_user_id)):
-    _guard()
-    import numpy as np
-    from app.services import setup_sizing as ss
-    runs = _cargar_runs(req, user_id)
-    cfg = _cfg_crudo(req)
-    try:
-        out = plr.simulate(runs, cfg)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    n = len(runs)
-    sizes = []
-    for r in runs:
-        ex = cfg["per_strategy"].get(r["strategy_id"]) or cfg["default_exec"]
-        if str(ex.get("size_unit") or "pct") != "pct":
-            raise HTTPException(status_code=400, detail="El reparto necesita los tamanos del paso 1 en % del capital (no en $)")
-        sizes.append(float(ex.get("size_value") or 0.0))
-    sizes_arr = np.asarray(sizes, dtype=float)
-    if not np.all(sizes_arr > 0):
-        raise HTTPException(status_code=400, detail="Todas las estrategias necesitan un % por trade > 0 en el paso 1")
-    cap0 = float(out["config"]["capital"]); eq = np.asarray(out["equity"], dtype=float)
-    eq_open = np.concatenate([[cap0], eq[:-1]]) if len(eq) else np.array([])
-    X = np.zeros((len(eq), n))
-    for i, p in enumerate(out["per_strategy"]):
-        X[:, i] = np.asarray(p["pnl_daily"], dtype=float) / np.where(eq_open > 0, eq_open, np.nan) / sizes_arr[i]
-    X = np.nan_to_num(X)
-    total = float(req.total_pct) if req.total_pct else float(sizes_arr.sum())
-    cap_i = [req.cap_strategy_pct] * n if req.cap_strategy_pct > 0 else None
-    corte = int(len(eq) * req.split)
-    X_is, X_oos = X[:corte], X[corte:]
-    if len(X_is) < 40 or len(X_oos) < 20:
-        raise HTTPException(status_code=400, detail="Hacen falta al menos 60 dias para estimar y comprobar el reparto")
-    f_is = ss.kelly_conjunta(X_is, total, cap_i)
-    f_all = ss.kelly_conjunta(X, total, cap_i)
-    f_cur = sizes_arr / sizes_arr.sum() * total
-    f_eq = np.full(n, total / n)
-    names = [r["name"] for r in runs]
-
-    # La FRONTERA (Jaume, 20-sep: «no me creo que no se pueda mejorar variando
-    # el capital de cada una con la misma suma»): cada reparto candidato se
-    # corre con el MOTOR ENTERO (locates, margen, costes) con la misma suma, y
-    # se mira el final, la caida, y lo de antes y despues del corte. Los
-    # candidatos: los % actuales, a partes iguales, la Kelly conjunta (estimada
-    # en la 1.ª parte y con todo), «sin X» (su parte repartida a las demas en
-    # proporcion) y «todo a X».
-    candidatos: list[tuple[str, np.ndarray, str]] = [
-        ("Los % del paso 1", f_cur, "actual"),
-        ("A partes iguales", f_eq, "iguales"),
-        ("Kelly conjunta (estimada en la 1.ª parte)", f_is, "kelly_is"),
-        ("Kelly conjunta (con todo)", f_all, "kelly_all"),
-    ]
-    if n > 1:
-        for i in range(n):
-            resto = sizes_arr.copy(); resto[i] = 0.0
-            if resto.sum() > 0:
-                candidatos.append((f"Sin {names[i]}", resto / resto.sum() * total, f"sin_{i}"))
-        for i in range(n):
-            solo = np.zeros(n); solo[i] = total
-            candidatos.append((f"Todo a {names[i]}", solo, f"solo_{i}"))
-    vistos: dict[tuple, int] = {}
-    filas = []
-    for nombre, f, clave in candidatos:
-        f = np.asarray(f, dtype=float)
-        key = tuple(round(float(x), 3) for x in f)
-        if key in vistos:
-            filas[vistos[key]]["name"] += f" = {nombre}"
-            continue
-        cfg_k = json.loads(json.dumps(cfg))
-        for sid, v in zip([r["strategy_id"] for r in runs], f):
-            ex = dict(cfg_k["per_strategy"].get(sid) or cfg_k["default_exec"])
-            # 0 exacto no deja trades en el motor (sin tamano): casi cero.
-            ex["size_value"] = float(v) if v > 1e-6 else 1e-4
-            ex["size_unit"] = "pct"
-            cfg_k["per_strategy"][sid] = ex
-        try:
-            o = plr.simulate(runs, cfg_k)
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        eqk = o["equity"]
-        k = min(corte, len(eqk) - 1)
-        eq_is_fin = eqk[k - 1] if k > 0 else cap0
-        def _dd(curva, inicio):
-            peak = inicio; m = 0.0
-            for e in curva:
-                peak = max(peak, e); m = min(m, (e / peak - 1.0) if peak > 0 else 0.0)
-            return m * 100.0
-        vistos[key] = len(filas)
-        filas.append({
-            "name": nombre, "clave": clave, "pct": [round(float(x), 3) for x in f],
-            "final_equity": eqk[-1] if eqk else cap0,
-            "max_dd_pct": round(_dd(eqk, cap0), 2),
-            "ruined": bool(o.get("ruined")),
-            "trades": int(o["cap_report"]["taken"]),
-            "is": {"mult": round(eq_is_fin / cap0, 4) if cap0 > 0 else 0.0, "dd_pct": round(_dd(eqk[:k], cap0), 2)},
-            "oos": {"mult": round(eqk[-1] / eq_is_fin, 4) if eq_is_fin > 0 else 0.0, "dd_pct": round(_dd(eqk[k:], eq_is_fin), 2)},
-        })
-    corr = np.corrcoef(X.T) if n > 1 else np.ones((1, 1))
-    return {
-        "names": names, "strategy_ids": [r["strategy_id"] for r in runs],
-        "total_pct": total, "split_date": out["calendar"][corte] if corte < len(out["calendar"]) else None,
-        "dias_is": int(len(X_is)), "dias_oos": int(len(X_oos)),
-        "correlation": [[round(float(corr[i, j]), 3) for j in range(n)] for i in range(n)],
-        "kelly_propia_pct": [round(float(X[:, i].mean() / X[:, i].var()), 2) if X[:, i].var() > 0 else None for i in range(n)],
-        "ret_por_unidad_pct": [round(float(X[:, i].mean() * 100.0), 4) for i in range(n)],
-        "candidatos": filas,
-        "recomendado": {"pct": [round(float(x), 3) for x in f_all], "weights": [round(float(x / f_all.sum()), 4) if f_all.sum() > 0 else 0.0 for x in f_all]},
-    }
 
 
 class RawCaminosReq(RawReq):
@@ -966,7 +825,8 @@ def _bitacora_crudo(req: "RawReq", runs: list[dict], out: dict) -> None:
                 "default_exec": req.default_exec.model_dump(),
                 "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
                 "locates": req.locates.model_dump() if req.locates else None,
-                "setup": req.setup.model_dump() if req.setup else None,
+                "rotation": req.rotation.model_dump() if req.rotation else None,
+                "brake": req.brake.model_dump() if req.brake else None,
                 "margin": req.margin.model_dump() if req.margin else None,
             },
             "result": {
@@ -979,7 +839,7 @@ def _bitacora_crudo(req: "RawReq", runs: list[dict], out: dict) -> None:
                      "cap_report": p.get("cap_report")}
                     for p in (out.get("per_strategy") or [])
                 ],
-                "setup": ((out.get("setup") or {}).get("por_estrategia")),
+                "rotation_hoy": ((out.get("rotation") or {}).get("hoy")),
             },
         }
         with open(os.path.join(base, "portfolio_crudo.jsonl"), "a", encoding="utf-8") as fh:

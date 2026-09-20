@@ -77,12 +77,11 @@ Es la misma en todas las estrategias y modos; sin stop guardado, 0.
     cuenta que `locates_gate` (EV en sombra de SU estrategia vs fade necesario
     de los paquetes DE MAS respecto a lo alquilado por CUALQUIERA hoy). Banda:
     N semillas sobre los mismos paquetes, sin volver a simular.
-  - Tamano por SETUP (`cfg["setup"]`, 20-sep): el tamano del paso 1 de cada
-    trade se multiplica por la Kelly relativa de su setup (EV/sigma^2 del
-    tramo de precio de entrada, estimada walk-forward por anos con todo lo
-    anterior). El nivel de la cuenta lo siguen poniendo los % del paso 1: la
-    tabla mueve tamano de los setups flojos a los buenos con el mismo
-    nocional medio. Ver `setup_sizing`.
+  - Escalado automatico (`cfg["rotation"]`, `cfg["brake"]`, 20-sep): rotacion
+    de pesos por ranking (cada W/M/N sesiones, la que mejor rindio por unidad
+    en la ventana se lleva el primer % del patron, con suelo) y freno por
+    caida de la cuenta. Ver `escalado_auto`. (El tamano por setup y la
+    frontera de repartos se midieron y se quitaron el 20-sep: ver MEMORIA.)
 """
 from __future__ import annotations
 
@@ -97,7 +96,6 @@ import numpy as np
 from app.services import locates_gate as lg
 from app.services import locates_random as lr
 from app.services import portfolio_lab_engine as ple
-from app.services import setup_sizing as ss
 from app.services import escalado_auto as ea
 from app.services import portfolio_lab_scaling as pls
 from app.services import robustness_service as rs
@@ -745,7 +743,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
       one_per_ticker     solo una estrategia abierta a la vez por accion
       locates            bloque del portfolio (ver LOCATES_DEFAULT); sin el,
                          cada fila cobra los suyos como antes
-      setup              tamano por setup (ver setup_sizing.SETUP_DEFAULT); None = los
                          R de las filas
       max_ticker_pct     tope POR ACCION: lo abierto a la vez en un mismo
                          ticker sumando estrategias, en % del equity del dia
@@ -934,9 +931,8 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     if not calendar:
         raise ValueError("Ninguna estrategia tiene trades en el rango elegido")
 
-    # ── 1c. Locates del portfolio, puerta por EV, tamano por setup y escalado automatico ──
+    # ── 1c. Locates del portfolio, puerta por EV y escalado automatico ───
     loc_cfg = _locates_cfg(cfg.get("locates"))
-    setup_cfg = ss.setup_cfg(cfg.get("setup"))
     rot_cfg = ea.rotation_cfg(cfg.get("rotation"), n)
     brk_cfg = ea.brake_cfg(cfg.get("brake"))
     if rot_cfg and any(execs[i]["size_unit"] != "pct" or execs[i]["sizing"] == "as_saved" for i in range(n)):
@@ -975,29 +971,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         if mode == "fixed" and ex["locates_cost"] <= 0:
             mode = "none"
         return mode, ex["locates_cost"], ex["locates_min"], ex["locates_max"], ex["locates_seed"]
-
-    mults: Optional[ss.Multiplicadores] = None
-    if setup_cfg:
-        # Una muestra por trade: (fecha, precio de entrada, u), con u la R
-        # neta por accion en la UNIDAD de la estrategia (retorno sobre la
-        # posicion si dimensiona por capital, R si por stop), con los costes de
-        # su fila y el locate esperado por accion (fijo/100 o la mediana del
-        # sorteo para su precio de referencia).
-        muestras: list[list[tuple[str, float, float]]] = [[] for _ in range(n)]
-        for i in range(n):
-            ex = execs[i]
-            mode_l, cost_l, lo_l, hi_l, _seed_l = loc_of(i)
-            for d, trades_d in by_day[i].items():
-                for tr in trades_d:
-                    if mode_l == "fixed":
-                        locate_ps = cost_l / 100.0
-                    elif mode_l == "random":
-                        locate_ps = lr.centro_por_precio(tr["ref_price"], lo_l, hi_l) / 100.0
-                    else:
-                        locate_ps = 0.0
-                    muestras[i].append((d, float(tr["entry"]), _r_neta(tr, ex, locate_ps)))
-            muestras[i].sort()
-        mults = ss.Multiplicadores(setup_cfg, muestras, calendar)
 
     # Escalado automatico (20-sep tarde): rotacion por ranking y freno por caida.
     rot: Optional[ea.Rotacion] = None
@@ -1046,7 +1019,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     loc_days: list[dict] = []          # ticker-dia alquilados (paquetes, ref, precio): base de la banda
     gate_out = [0] * n                 # cortos que la puerta por EV dejo fuera
     gate_free = [0] * n                # cortos que cabian en lo ya alquilado hoy (gratis)
-    setup_n = [0] * n                  # trades con multiplicador de setup distinto de 1
 
     # ── Estado de los TOPES (exposicion, margen, por accion), que persiste
     # entre dias: una posicion abierta sigue ocupando sitio hasta su salida.
@@ -1095,7 +1067,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             sv = float(sizes_hoy[i]) if sizes_hoy is not None else float(ex["size_value"])
             for tr in trades_d:
                 as_saved = False
-                m_setup = 1.0
                 if sizing == "as_saved":
                     as_saved = True
                     new_size = tr["size_saved"]
@@ -1129,15 +1100,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     if tope_e < entrada - 1e-12:
                         new_size = tope_e * pyr_f
                         recortes_reglas[i] += 1
-                if mults is not None and not as_saved:
-                    # Tamano por setup: el % del paso 1 x la Kelly relativa
-                    # del tramo de precio de este trade (tabla del ano).
-                    m_setup = mults.mult(i, float(tr["entry"]), d)
-                    if abs(m_setup - 1.0) > 1e-9:
-                        setup_n[i] += 1
-                    new_size *= m_setup
-                    if new_size <= 0:
-                        continue
                 if not as_saved and m_brake < 1.0:
                     new_size *= m_brake
                     if new_size <= 0:
@@ -1170,10 +1132,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     "budget": (r_usd if sizing == "risk" else
                                (x_usd if sizing == "capital" else (risk_new if risk_new > 0 else notional))),
                     "budget_basis": ("notional" if sizing == "capital" else ("risk" if (sizing == "risk" or (sizing == "as_saved" and risk_new > 0)) else "notional")),
-                    "setup_mult": m_setup,
                 })
-                if mults is not None and not as_saved:
-                    mults.registrar(i, m_setup, notional)
 
         # Estado de los locates del dia (lo usa _puerta_y_alquiler, dentro del
         # bucle de topes).
@@ -1421,7 +1380,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "risk": float(a.get("risk", 0.0)),
                 "budget": float(a.get("budget", 0.0)), "budget_basis": str(a.get("budget_basis") or "risk"),
                 "reason": tr["exit_reason"], "packages": int(a.get("packages", 0)), "fade_pct": float(a.get("fade_pct", 0.0)),
-                "setup_mult": float(a.get("setup_mult", 1.0)),
             })
         day_total = 0.0
         for i in range(n):
@@ -1511,7 +1469,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 "blocked": blocked[i],
                 "gate_out": gate_out[i],
                 "gate_free": gate_free[i],
-                "setup": setup_n[i],
                 # Entradas recortadas por las reglas de la propia estrategia
                 # (techo hibrido, cangrejo B, tope de caja).
                 "reglas": recortes_reglas[i],
@@ -1542,7 +1499,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         "packages": [int(a.get("packages", 0)) for a in accepted],
         "r": [round(a["r"], 2) for a in accepted],
         "reason": [a["reason"] for a in accepted],
-        "setup_mult": [round(float(a.get("setup_mult", 1.0)), 3) for a in accepted],
     }
     locates_analysis = _analisis_locates(accepted, n, [str(r.get("name") or "") for r in runs], loc_days, loc_cfg)
 
@@ -1564,10 +1520,6 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     }
     rotation_out = rot.informe() if rot is not None else None
     brake_out = brk.informe(equity_curve[-1] if equity_curve else capital) if brk is not None else None
-    setup_out = None
-    if mults is not None:
-        setup_out = mults.informe([str(r.get("name") or "") for r in runs],
-                                  ["capital" if execs[i]["sizing"] == "capital" else "risk" for i in range(n)])
 
     return {
         "config": {
@@ -1578,14 +1530,12 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             "margin": ({"enabled": True, "broker": margin_broker, "capacity_pct": margin_cap_pct} if margin_on else None),
             "default_exec": default_exec,
             "locates": loc_cfg,
-            "setup": setup_cfg,
             "rotation": rot_cfg, "brake": brk_cfg,
             "sizing": "exec", "notional_usd": 0.0, "per_strategy_usd": {},
         },
         "locates_report": locates_report,
         "locates_band": locates_band,
         "locates_analysis": locates_analysis,
-        "setup": setup_out,
         "rotation": rotation_out,
         "brake": brake_out,
         "calendar": calendar,

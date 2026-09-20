@@ -293,22 +293,28 @@ export function PasoCuentaReal({ m }: { m: {
                 </table>
               )}
               {res.total_pct != null && (() => {
-                const mult = res.freno?.frenado ? res.freno.mult : 1;
-                const totalFinal = res.total_pct * mult;
-                const usdFinal = (res.total_usd ?? 0) * mult;
+                const multFreno = res.freno ? (res.freno.frenado ? res.freno.mult : 1) : null;
+                const fila = (titulo: string, mult: number, sub: string) => (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "flex-start" }}>
+                    <Stat big label={titulo} value={pct((res.total_pct ?? 0) * mult, 2)} sub={`${usd((res.total_usd ?? 0) * mult)} sobre ${usd(res.capital_siguiente)} · ${sub}`} tone="profit" />
+                    {res.per_strategy.map((p, i) => (
+                      <Stat key={p.name + i} label={p.name.length > 22 ? `${p.name.slice(0, 21)}…` : p.name} value={p.risk_pct == null ? "—" : pct(p.risk_pct * mult, 2)} sub={`${p.risk_usd == null ? "—" : usd(p.risk_usd * mult)} · ${p.basis === "capital" ? "en posición" : "en riesgo al stop"}`} />
+                    ))}
+                  </div>
+                );
                 return (
                   <div style={{ marginTop: 10, border: `1px solid ${color.copper}`, background: "rgba(184, 115, 51, 0.06)", padding: "8px 12px" }}>
                     <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: color.copper, fontFamily: font.sans, marginBottom: 4 }}>
                       Siguiente periodo — lo que toca poner en tu cuenta
                     </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                      <Stat big label="Exposición total por trade" value={pct(totalFinal, 2)} sub={`${usd(usdFinal)} sobre ${usd(res.capital_siguiente)}${mult < 1 ? ` · con el freno ×${n(mult, 2)}` : ""}`} tone="profit" />
-                      {res.per_strategy.map((p, i) => (
-                        <Stat key={p.name + i} label={p.name.length > 22 ? `${p.name.slice(0, 21)}…` : p.name} value={p.risk_pct == null ? "—" : pct(p.risk_pct * mult, 2)} sub={`${p.risk_usd == null ? "—" : usd(p.risk_usd * mult)} · ${p.basis === "capital" ? "en posición" : "en riesgo al stop"}`} />
-                      ))}
-                    </div>
+                    {fila("Sin freno: exposición total por trade", 1, "el total de tu cuenta")}
+                    {multFreno != null && (
+                      <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${color.border}` }}>
+                        {fila("Con freno: exposición total por trade", multFreno, multFreno < 1 ? `el freno está PUESTO: × ${n(multFreno, 2)} (tu cuenta a ${pct(res.freno?.dd_pct)} de su máximo)` : `el freno está quitado (tu cuenta a ${pct(res.freno?.dd_pct)} de su máximo): lo mismo`)}
+                      </div>
+                    )}
                     <div style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, marginTop: 4, lineHeight: 1.5 }}>
-                      El total sale de tu operativa real (Kelly {res.kelly_base === "clasica" ? "clásica" : "exacta"} × {n(res.kelly_mult, 2)}, topada al {pct(res.cap_pct, 1)}{mult < 1 ? ", × el freno" : ""}); el reparto entre estrategias, de {origenPesos}. La unidad de cada una es la de su backtest: «riesgo» (lo que pierde si salta el stop) o «posición» (% del capital metido en la operación).
+                      El total sale de tu operativa real (Kelly {res.kelly_base === "clasica" ? "clásica" : "exacta"} × {n(res.kelly_mult, 2)}, topada al {pct(res.cap_pct, 1)}); el reparto entre estrategias, de {origenPesos}. «Con freno» aplica la regla del paso 4 a tu curva real. La unidad de cada una es la de su backtest: «riesgo» (lo que pierde si salta el stop) o «posición» (% del capital metido en la operación).
                     </div>
                   </div>
                 );

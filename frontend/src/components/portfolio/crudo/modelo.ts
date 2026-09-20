@@ -1,7 +1,7 @@
 // Estado y calculos puros de la vista En crudo (16-sep): lo que no pinta
 // nada vive aqui para que cada paso sea solo su pantalla.
 
-import type { RawBrakeIn, RawExec, RawLocatesIn, RawRotationIn, RawSetupIn } from "@/lib/api_portfolio_lab";
+import type { RawBrakeIn, RawExec, RawLocatesIn, RawRotationIn } from "@/lib/api_portfolio_lab";
 import { n } from "./hoja";
 
 /** Bloque Portfolio del paso 1 (v3, 20-sep): las estrategias entran
@@ -88,18 +88,6 @@ export function locatesResumen(l: LocCfg): string {
 /** Escalado automatico (paso 4 B): rotacion por ranking y freno por caida. */
 export const ROT0: RawRotationIn = { enabled: true, lookback_days: 126, rebalance: "M", every_days: 20, pattern: null, min_pct: 1, metric: "return" };
 export const BRAKE0: RawBrakeIn = { enabled: false, dd_pct: 10, mult: 0.5, exit_dd_pct: 5 };
-
-/** Tamano por setup (paso 4 D). */
-export const SETUP0: RawSetupIn = {
-  enabled: true,
-  feature: "price",
-  min_trades: 30,
-  shrink: 50,
-  clip_lo: 0.5,
-  clip_hi: 2.0,
-  estimate: "walk_forward",
-  pooled: false,
-};
 
 /** Curva propia de una serie (base + PnL diario) y su drawdown, con el pico
  *  arrancando en la base. Antes del primer dia con trades, NaN.

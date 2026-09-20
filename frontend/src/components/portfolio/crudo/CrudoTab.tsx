@@ -11,8 +11,8 @@
 //   1. Ejecucion        -> Calcular (estrategias + % por trade + cuenta)
 //   2. Vision general   (la curva del portfolio y sus tablas)
 //   3. Monte Carlo      (bootstrap: datos clave y tabla, nada mas)
-//   4. Nivel y setups   (A: el nivel de la cuenta por la caida; B: reparto por
-//                        Kelly conjunta con IS/OOS; C: tamano por setup, walk-forward)
+//   4. Escalado         (A: el nivel de la cuenta por la caida, para el tope;
+//                        B: rotacion de pesos por ranking + freno por caida)
 //   5. Cuenta real      (el CSV de la operativa real: Kelly del total y el reparto)
 // Cada paso es una caja plegable con su resumen; el 2-4 no se abren sin el 1.
 // Este fichero solo lleva el estado y el hilo; cada paso pinta lo suyo.
@@ -27,7 +27,6 @@ import {
   runPortfolioMc,
   runPortfolioNiveles,
   runPortfolioRaw,
-  runPortfolioReparto,
   type PortfolioStrategy,
   type RawConfigIn,
   type RawExec,
@@ -36,15 +35,13 @@ import {
   type RawNivelesOut,
   type RawOut,
   type RawRotationIn,
-  type RawRepartoOut,
-  type RawSetupIn,
 } from "@/lib/api_portfolio_lab";
 import type { CurveState } from "../StrategyShelf";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Nota, Paso, PasoBar, colorSerie, n, pct, usd } from "./hoja";
 import type { Serie } from "./CrudoCharts";
-import { BRAKE0, CFG0, LOC0, ROT0, SETUP0, curvaPropia, locatesIn, locatesResumen, pctDe, type Cfg, type LocCfg } from "./modelo";
-import { patronEfectivo } from "./EscaladoAuto";
+import { BRAKE0, CFG0, LOC0, ROT0, curvaPropia, locatesIn, locatesResumen, pctDe, type Cfg, type LocCfg } from "./modelo";
+import { patronEfectivo, type EscaladoAutoResultado } from "./EscaladoAuto";
 import { PasoEjecucion, porSlDe } from "./PasoEjecucion";
 import { PasoVision } from "./PasoVision";
 import { PasoMonteCarlo } from "./PasoMonteCarlo";
@@ -109,25 +106,16 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const [seeds, setSeeds] = useState(30);
   const [rangosExtra, setRangosExtra] = useState<Array<[number, number]>>([]);
 
-  // ── Paso 4: nivel por la caida, reparto y tamano por setup ─────────────
+  // ── Paso 4: nivel por la caida (tope) y escalado automatico ────────────
   const [niveles, setNiveles] = useState<RawNivelesOut | null>(null);
   const [nivelesRunning, setNivelesRunning] = useState(false);
   const [nivelesError, setNivelesError] = useState<string | null>(null);
-  const [reparto, setReparto] = useState<RawRepartoOut | null>(null);
-  const [repartoRunning, setRepartoRunning] = useState(false);
-  const [repartoError, setRepartoError] = useState<string | null>(null);
   const [rot, setRot] = useState<RawRotationIn>(ROT0);
   const [brake, setBrake] = useState<RawBrakeIn>(BRAKE0);
-  const [outAuto, setOutAuto] = useState<RawOut | null>(null);
+  const [auto, setAuto] = useState<EscaladoAutoResultado | null>(null);
   const [autoKey, setAutoKey] = useState("");
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoError, setAutoError] = useState<string | null>(null);
-  const [setup, setSetup] = useState<RawSetupIn>(SETUP0);
-  const [outSetup, setOutSetup] = useState<RawOut | null>(null);
-  const [outConst, setOutConst] = useState<RawOut | null>(null);
-  const [setupKey, setSetupKey] = useState("");
-  const [setupRunning, setSetupRunning] = useState(false);
-  const [setupError, setSetupError] = useState<string | null>(null);
 
   // ── Que paso esta abierto ─────────────────────────────────────────────
   const [abiertos, setAbiertos] = useState<Record<number, boolean>>({ 1: true, 2: true, 3: false, 4: false });
@@ -194,12 +182,8 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setMcError(null);
       setCaminos(null);
       setNiveles(null);
-      setReparto(null);
-      setOutAuto(null);
+      setAuto(null);
       setAutoKey("");
-      setOutSetup(null);
-      setOutConst(null);
-      setSetupKey("");
       setAbiertos((a) => ({ ...a, 1: false, 2: true }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo calcular el portfolio");
@@ -269,64 +253,31 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setNivelesRunning(false);
     }
   };
-  const calcularReparto = async () => {
-    if (!out || repartoRunning) return;
-    setRepartoRunning(true);
-    setRepartoError(null);
-    try {
-      setReparto(await runPortfolioReparto({ ...cuerpo(), split: 0.5 }));
-    } catch (e) {
-      setRepartoError(e instanceof Error ? e.message : "No se pudo calcular el reparto");
-    } finally {
-      setRepartoRunning(false);
-    }
-  };
   // ── Escalado automatico (paso 4 B): rotacion por ranking + freno ──────
+  // Tres simulaciones (las que haya segun lo encendido): solo rotacion, solo
+  // freno con los % fijos, y las dos; la base es el paso 1.
   const pctBase = selected.map((s) => pctDe(cfg, s.id));
   const rotEnvio: RawRotationIn = { ...rot, pattern: patronEfectivo(rot, pctBase) };
   const autoKeyNow = JSON.stringify({ ranKey, rot: rotEnvio, brake });
-  const autoStale = outAuto != null && autoKey !== autoKeyNow;
+  const autoStale = auto != null && autoKey !== autoKeyNow;
   const calcularAuto = async () => {
-    if (!out || autoRunning) return;
+    if (!out || autoRunning || (!rot.enabled && !brake.enabled)) return;
     setAutoRunning(true);
     setAutoError(null);
     try {
-      const res = await runPortfolioRaw({ ...cuerpo(), rotation: rot.enabled ? rotEnvio : null, brake: brake.enabled ? brake : null });
-      if (rot.enabled && !res.rotation) throw new Error("El backend que responde no lleva el escalado automático: hay que reiniciarlo (con el bot parado).");
-      setOutAuto(res);
+      const res: EscaladoAutoResultado = { rot: null, frenoSolo: null, ambos: null };
+      if (rot.enabled) {
+        res.rot = await runPortfolioRaw({ ...cuerpo(), rotation: rotEnvio, brake: null });
+        if (!res.rot.rotation) throw new Error("El backend que responde no lleva el escalado automático: hay que reiniciarlo (con el bot parado).");
+      }
+      if (brake.enabled) res.frenoSolo = await runPortfolioRaw({ ...cuerpo(), rotation: null, brake });
+      if (rot.enabled && brake.enabled) res.ambos = await runPortfolioRaw({ ...cuerpo(), rotation: rotEnvio, brake });
+      setAuto(res);
       setAutoKey(autoKeyNow);
     } catch (e) {
       setAutoError(e instanceof Error ? e.message : "No se pudo calcular el escalado automático");
     } finally {
       setAutoRunning(false);
-    }
-  };
-  const setupKeyNow = JSON.stringify({ ranKey, setup });
-  const setupStale = outSetup != null && setupKey !== setupKeyNow;
-  const calcularSetup = async () => {
-    if (!out || setupRunning) return;
-    setSetupRunning(true);
-    setSetupError(null);
-    try {
-      const conSetup = await runPortfolioRaw({ ...cuerpo(), setup: { ...setup, enabled: true } });
-      if (!conSetup.setup) throw new Error("El backend que responde no lleva el tamaño por setup: hay que reiniciarlo (con el bot parado).");
-      setOutSetup(conSetup);
-      // La comparacion honesta: el % constante con el MISMO tamano medio que
-      // acabo aplicando la tabla a cada estrategia.
-      const base = cuerpo();
-      const per: Record<string, RawExec> = { ...base.per_strategy };
-      for (const p of conSetup.setup.por_estrategia) {
-        const st = selected.find((x) => x.name === p.name);
-        if (!st) continue;
-        const ex = per[st.id] ?? base.default_exec;
-        per[st.id] = { ...ex, size_value: ex.size_value * p.mult_medio };
-      }
-      setOutConst(await runPortfolioRaw({ ...base, per_strategy: per }));
-      setSetupKey(setupKeyNow);
-    } catch (e) {
-      setSetupError(e instanceof Error ? e.message : "No se pudo calcular el tamaño por setup");
-    } finally {
-      setSetupRunning(false);
     }
   };
 
@@ -376,9 +327,12 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const nivelActual = niveles?.niveles.find((f) => Math.abs(f.factor - 1) < 1e-9);
   const resumen4 = [
     nivelActual?.mc ? `al nivel del paso 1, DD a tragar ${pct(nivelActual.mc.dd_p95)}` : "nivel por la caída",
-    outAuto ? `automático ${usd(outAuto.equity[outAuto.equity.length - 1])} vs fijo ${usd(out ? out.equity[out.equity.length - 1] : 0)}${outAuto.rotation ? ` · siguiente ${outAuto.rotation.hoy.sizes.map((x) => n(x, 2)).join(" / ")} %` : ""}${outAuto.brake?.hoy.frenado ? " · FRENO" : ""}${autoStale ? " (desactualizado)" : ""}` : "escalado automático",
-    reparto ? (() => { const mejor = [...reparto.candidatos].sort((a, b) => b.final_equity - a.final_equity)[0]; const act = reparto.candidatos.find((c) => c.clave === "actual"); return mejor && act ? `reparto: el mejor con la misma suma ${usd(mejor.final_equity)} (DD ${pct(mejor.max_dd_pct)}) vs tus % ${usd(act.final_equity)} (DD ${pct(act.max_dd_pct)})` : "reparto"; })() : "reparto",
-    outSetup ? `setup ${usd(outSetup.equity[outSetup.equity.length - 1])}${outConst ? ` vs constante ${usd(outConst.equity[outConst.equity.length - 1])}` : ""}${setupStale ? " (desactualizado)" : ""}` : "tamaño por setup",
+    (() => {
+      if (!auto) return "escalado automático";
+      const rotHoy = auto.ambos?.rotation ?? auto.rot?.rotation;
+      const mejor = [auto.rot, auto.frenoSolo, auto.ambos].filter((x): x is RawOut => !!x).sort((a, b) => b.equity[b.equity.length - 1] - a.equity[a.equity.length - 1])[0];
+      return `${mejor ? `mejor ${usd(mejor.equity[mejor.equity.length - 1])} vs fijo ${usd(out ? out.equity[out.equity.length - 1] : 0)}` : ""}${rotHoy ? ` · siguiente ${rotHoy.hoy.sizes.map((x) => n(x, 2)).join(" / ")} %` : ""}${(auto.ambos?.brake ?? auto.frenoSolo?.brake)?.hoy.frenado ? " · FRENO" : ""}${autoStale ? " (desactualizado)" : ""}`;
+    })(),
   ].join(" · ");
 
   const listo = !!out && !!curvas && !!exposicion;
@@ -386,10 +340,10 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     { num: 1, label: "Ejecución", hecho: listo && !stale, disponible: true },
     { num: 2, label: "Visión general", hecho: listo, disponible: listo },
     { num: 3, label: "Monte Carlo", hecho: !!mcOut, disponible: listo },
-    { num: 4, label: "Escalado", hecho: !!(niveles || reparto || outSetup || outAuto), disponible: listo && !backendViejo },
+    { num: 4, label: "Escalado", hecho: !!(niveles || auto), disponible: listo && !backendViejo },
     { num: 5, label: "Cuenta real", hecho: false, disponible: true },
   ];
-  const activo = !listo ? 1 : abiertos[4] && (niveles || reparto || outSetup || outAuto) ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
+  const activo = !listo ? 1 : abiertos[4] && (niveles || auto) ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
 
   return (
     <div>
@@ -419,15 +373,15 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       </Paso>
 
       <Paso num={4} title="Escalado" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el paso 4" : "primero calcula el paso 1"}
-        help="Cuatro bloques sobre el portfolio del paso 1. A: ¿a qué nivel de la cuenta? (tus % × un factor, con la caída real y la del Monte Carlo: se elige por la caída que tragas). B: el escalado automático: la rotación de pesos por ranking (cada semana, mes o N sesiones, con suelo por estrategia) y el freno por caída, corridos desde el principio y con lo que toca poner el siguiente periodo. C: la frontera de repartos fijos con la misma suma (Kelly conjunta, Markowitz, sin X, todo a X). D: más tamaño en los mejores setups (la Kelly relativa de cada tramo de precio, comparada contra un % constante con el mismo tamaño medio)."
+        help="Dos bloques sobre el portfolio del paso 1. A: ¿a qué nivel de la cuenta? (tus % × un factor, con la caída real y la del Monte Carlo: se elige el tope por la caída que tragas). B: el escalado automático: dentro de ese tope, la rotación de pesos por ranking (cada semana, mes o N sesiones: más a la que mejor lo ha hecho en los últimos X días, con suelo por estrategia) y el freno por caída como opción; se corren desde el principio solo rotación, solo freno y las dos, frente a tus % fijos, y sale lo que toca poner el siguiente periodo."
         sinRelleno>
-        {listo && out && <PasoNivel m={{ out, nombres: selected.map((s) => s.name), niveles, nivelesRunning, nivelesError, calcularNiveles, reparto, repartoRunning, repartoError, calcularReparto, pctBase, rot, setRot, brake, setBrake, outAuto, autoRunning, autoError, autoStale, calcularAuto, setup, setSetup, outSetup, outConst, setupRunning, setupError, setupStale, calcularSetup }} />}
+        {listo && out && <PasoNivel m={{ out, nombres: selected.map((s) => s.name), niveles, nivelesRunning, nivelesError, calcularNiveles, pctBase, rot, setRot, brake, setBrake, auto, autoRunning, autoError, autoStale, calcularAuto }} />}
       </Paso>
 
       <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Con tu CSV real: cuánto exponer el siguiente periodo y cuánto a cada estrategia"
         help="El fichero de tu cuenta real (el export de DAS en .csv o .xlsx, o fecha y PnL) y la unidad de la R: sale la Kelly de TU cuenta (fills, slippage y locates reales incluidos) → cuánto arriesgar en total el siguiente periodo (con el freno del paso 4 si lo tienes puesto y tu cuenta está en caída), y ese total repartido entre las estrategias con los pesos que dice la rotación del paso 4 (o los % del paso 1 si no la has calculado). No hace falta saber de qué estrategia viene cada trade.">
         <div style={{ padding: "10px 10px 6px" }}>
-          <PasoCuentaReal m={{ out, capital: capitalEfectivo, caminos, brake: brake.enabled ? brake : null, pesos: selected.map((s, i) => ({ name: s.name, kelly_pct: outAuto?.rotation ? outAuto.rotation.hoy.sizes[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const })), origenPesos: outAuto?.rotation ? "la rotación del paso 4 (lo que toca el siguiente periodo)" : "los % del paso 1" }} />
+          <PasoCuentaReal m={{ out, capital: capitalEfectivo, caminos, brake: brake.enabled ? brake : null, pesos: selected.map((s, i) => { const r = auto?.ambos?.rotation ?? auto?.rot?.rotation; return { name: s.name, kelly_pct: r ? r.hoy.sizes[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const }; }), origenPesos: (auto?.ambos?.rotation ?? auto?.rot?.rotation) ? "la rotación del paso 4 (lo que toca el siguiente periodo)" : "los % del paso 1" }} />
         </div>
       </Paso>
 
