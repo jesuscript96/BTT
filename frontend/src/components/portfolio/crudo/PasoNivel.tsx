@@ -17,7 +17,8 @@
 import React, { useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
-import type { RawNivelesOut, RawOut, RawRepartoOut, RawSetupIn } from "@/lib/api_portfolio_lab";
+import type { RawBrakeIn, RawNivelesOut, RawOut, RawRepartoOut, RawRotationIn, RawSetupIn } from "@/lib/api_portfolio_lab";
+import { EscaladoAuto } from "./EscaladoAuto";
 import { Btn, Nota, Num, Row, Sec, Stat, Toggle, colorSerie, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
 import { LinesChart, type Serie } from "./CrudoCharts";
 
@@ -34,7 +35,18 @@ export interface NivelModel {
   repartoRunning: boolean;
   repartoError: string | null;
   calcularReparto: () => void;
-  // C
+  // B (automatico)
+  pctBase: number[];
+  rot: RawRotationIn;
+  setRot: React.Dispatch<React.SetStateAction<RawRotationIn>>;
+  brake: RawBrakeIn;
+  setBrake: React.Dispatch<React.SetStateAction<RawBrakeIn>>;
+  outAuto: RawOut | null;
+  autoRunning: boolean;
+  autoError: string | null;
+  autoStale: boolean;
+  calcularAuto: () => void;
+  // D
   setup: RawSetupIn;
   setSetup: React.Dispatch<React.SetStateAction<RawSetupIn>>;
   outSetup: RawOut | null;
@@ -73,6 +85,7 @@ function maxDd(equity: number[], capital: number): number {
 
 export function PasoNivel({ m }: { m: NivelModel }) {
   const { out, nombres, niveles, nivelesRunning, nivelesError, calcularNiveles, reparto, repartoRunning, repartoError, calcularReparto,
+    pctBase, rot, setRot, brake, setBrake, outAuto, autoRunning, autoError, autoStale, calcularAuto,
     setup, setSetup, outSetup, outConst, setupRunning, setupError, setupStale, calcularSetup } = m;
   const cap0 = out.config.capital;
   const set = <K extends keyof RawSetupIn>(k: K, v: RawSetupIn[K]) => setSetup((s) => ({ ...s, [k]: v }));
@@ -164,9 +177,12 @@ export function PasoNivel({ m }: { m: NivelModel }) {
         )}
       </Sec>
 
-      {/* ── B. Reparto ───────────────────────────────────────────────── */}
+      {/* ── B. Escalado automatico ─────────────────────────────────── */}
+      <EscaladoAuto m={{ out, nombres, pctBase, rot, setRot, brake, setBrake, outAuto, running: autoRunning, error: autoError, stale: autoStale, calcular: calcularAuto }} />
+
+      {/* ── C. Reparto fijo (frontera) ─────────────────────────────── */}
       <Sec
-        title="B · Reparto entre estrategias, con la misma suma"
+        title="C · Reparto fijo entre estrategias, con la misma suma (frontera)"
         help={
           <>
             Qué pasa si cambias el capital de cada estrategia <strong>sin cambiar la suma</strong>: cada reparto candidato se corre con
@@ -247,7 +263,7 @@ export function PasoNivel({ m }: { m: NivelModel }) {
 
       {/* ── C. Tamano por setup ───────────────────────────────────────── */}
       <Sec
-        title="C · Tamaño por setup (tramo de precio de entrada)"
+        title="D · Tamaño por setup (tramo de precio de entrada)"
         help={
           <>
             Cada trade se dimensiona con el % del paso 1 <strong>× la Kelly relativa de su setup</strong>: para cada estrategia y

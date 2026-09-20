@@ -98,6 +98,7 @@ from app.services import locates_gate as lg
 from app.services import locates_random as lr
 from app.services import portfolio_lab_engine as ple
 from app.services import setup_sizing as ss
+from app.services import escalado_auto as ea
 from app.services import portfolio_lab_scaling as pls
 from app.services import robustness_service as rs
 from app.services.portfolio_sim import tope_hibrido as _tope_hibrido
@@ -933,9 +934,13 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     if not calendar:
         raise ValueError("Ninguna estrategia tiene trades en el rango elegido")
 
-    # ── 1c. Locates del portfolio, puerta por EV y tamano por setup ──────
+    # ── 1c. Locates del portfolio, puerta por EV, tamano por setup y escalado automatico ──
     loc_cfg = _locates_cfg(cfg.get("locates"))
     setup_cfg = ss.setup_cfg(cfg.get("setup"))
+    rot_cfg = ea.rotation_cfg(cfg.get("rotation"), n)
+    brk_cfg = ea.brake_cfg(cfg.get("brake"))
+    if rot_cfg and any(execs[i]["size_unit"] != "pct" or execs[i]["sizing"] == "as_saved" for i in range(n)):
+        raise ValueError("La rotacion por ranking necesita los tamanos del paso 1 en % del capital (no en $ ni «como la corrida»)")
     # Con bloque de locates y alquiler compartido se hace el barrido aunque el
     # modo sea "none" (precio 0): asi se cuentan los paquetes y sale el precio
     # de equilibrio («si pagaras X por paquete...») sin cobrar nada.
@@ -994,6 +999,29 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             muestras[i].sort()
         mults = ss.Multiplicadores(setup_cfg, muestras, calendar)
 
+    # Escalado automatico (20-sep tarde): rotacion por ranking y freno por caida.
+    rot: Optional[ea.Rotacion] = None
+    u_dia: list[dict[str, float]] = [{} for _ in range(n)]
+    if rot_cfg:
+        rot = ea.Rotacion(rot_cfg, [float(execs[i]["size_value"]) for i in range(n)], [str(r.get("name") or "") for r in runs])
+        # La sombra por dia: suma de la R neta por accion (en la unidad de cada
+        # estrategia, con sus costes y el locate esperado) de los trades del dia.
+        for i in range(n):
+            ex = execs[i]
+            mode_l, cost_l, lo_l, hi_l, _seed_l = loc_of(i)
+            for d, trades_d in by_day[i].items():
+                acc = 0.0
+                for tr in trades_d:
+                    if mode_l == "fixed":
+                        locate_ps = cost_l / 100.0
+                    elif mode_l == "random":
+                        locate_ps = lr.centro_por_precio(tr["ref_price"], lo_l, hi_l) / 100.0
+                    else:
+                        locate_ps = 0.0
+                    acc += _r_neta(tr, ex, locate_ps)
+                u_dia[i][d] = acc
+    brk: Optional[ea.Freno] = ea.Freno(brk_cfg, capital) if brk_cfg else None
+
     # ── 2. Dia a dia: dimensionar con el capital del dia, costes, locates ──
     equity = capital
     months_seen: set[str] = set()
@@ -1050,6 +1078,9 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             ruined = True
         if ruined:
             expense = 0.0
+        # Escalado automatico: los % del dia (rotacion) y el multiplicador del freno.
+        sizes_hoy = rot.sizes_para(d) if (rot is not None and not ruined) else None
+        m_brake = brk.mult_para(d, equity_open) if (brk is not None and not ruined) else 1.0
 
         # a) Tamano y costes de cada trade del dia (sin locates todavia)
         dia: list[dict] = []
@@ -1059,6 +1090,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                 continue
             ex = execs[i]
             sizing = ex["sizing"]
+            sv = float(sizes_hoy[i]) if sizes_hoy is not None else float(ex["size_value"])
             for tr in trades_d:
                 as_saved = False
                 m_setup = 1.0
@@ -1066,7 +1098,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     as_saved = True
                     new_size = tr["size_saved"]
                 elif sizing == "risk":
-                    r_usd = ex["size_value"] if ex["size_unit"] == "usd" else equity_open * ex["size_value"] / 100.0
+                    r_usd = sv if ex["size_unit"] == "usd" else equity_open * sv / 100.0
                     if tr["stop_dist"] > 0:
                         new_size = (r_usd / tr["stop_dist"]) * tr["pyr"]
                     elif tr["risk_orig"] > 0:
@@ -1074,7 +1106,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     else:
                         new_size = 0.0
                 else:
-                    x_usd = ex["size_value"] if ex["size_unit"] == "usd" else equity_open * ex["size_value"] / 100.0
+                    x_usd = sv if ex["size_unit"] == "usd" else equity_open * sv / 100.0
                     new_size = (x_usd / tr["init_price"]) * tr["pyr"]
                 if new_size <= 0:
                     continue
@@ -1102,6 +1134,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     if abs(m_setup - 1.0) > 1e-9:
                         setup_n[i] += 1
                     new_size *= m_setup
+                    if new_size <= 0:
+                        continue
+                if not as_saved and m_brake < 1.0:
+                    new_size *= m_brake
                     if new_size <= 0:
                         continue
                 if as_saved:
@@ -1405,6 +1441,10 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         equity_curve.append(equity)
         daily_pnl.append(day_total)
         daily_ret.append(day_total / equity_open if equity_open > 0 else 0.0)
+        if rot is not None:
+            rot.registrar(d, [u_dia[i].get(d, 0.0) * 0.01 for i in range(n)])
+        if brk is not None:
+            brk.registrar(equity)
 
     # ── 3. Los topes ya se aplicaron dentro de cada dia (a2). Totales para el informe.
     accepted.sort(key=lambda a: (a["t0"], a["date"]))
@@ -1520,6 +1560,8 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         "gate_out": int(sum(gate_out)),
         "gate_free": int(sum(gate_free)),
     }
+    rotation_out = rot.informe() if rot is not None else None
+    brake_out = brk.informe(equity_curve[-1] if equity_curve else capital) if brk is not None else None
     setup_out = None
     if mults is not None:
         setup_out = mults.informe([str(r.get("name") or "") for r in runs],
@@ -1535,12 +1577,15 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
             "default_exec": default_exec,
             "locates": loc_cfg,
             "setup": setup_cfg,
+            "rotation": rot_cfg, "brake": brk_cfg,
             "sizing": "exec", "notional_usd": 0.0, "per_strategy_usd": {},
         },
         "locates_report": locates_report,
         "locates_band": locates_band,
         "locates_analysis": locates_analysis,
         "setup": setup_out,
+        "rotation": rotation_out,
+        "brake": brake_out,
         "calendar": calendar,
         "equity": [ple._r6(x) for x in equity_curve],
         "daily_pnl": [ple._r6(x) for x in daily_pnl],

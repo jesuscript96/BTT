@@ -585,6 +585,59 @@ export interface RawSetupIn {
   pooled?: boolean;
 }
 
+/** Rotacion por ranking (20-sep tarde): cada semana / mes / N sesiones se
+ *  ordenan las estrategias por lo que rindieron por unidad de tamano en la
+ *  ventana y se les da el % por trade del patron segun su puesto. */
+export interface RawRotationIn {
+  enabled: boolean;
+  /** Sesiones de la ventana de ranking. */
+  lookback_days: number;
+  rebalance: "W" | "M" | "N";
+  every_days: number;
+  /** % por trade por puesto (mejor primero); null = los % del paso 1 ordenados. */
+  pattern: number[] | null;
+  /** Suelo por estrategia (% por trade); 0 = sin suelo. */
+  min_pct: number;
+  metric: "return" | "sharpe";
+}
+
+/** Freno por caida de la cuenta: con la caida desde el maximo por encima de
+ *  dd_pct, todos los tamanos x mult hasta que vuelva por encima de exit_dd_pct. */
+export interface RawBrakeIn {
+  enabled: boolean;
+  dd_pct: number;
+  mult: number;
+  exit_dd_pct: number;
+}
+
+export interface RawRotationPeriod {
+  from: string;
+  sizes: number[];
+  /** Puesto de cada estrategia (1 = la mejor); null en el arranque sin historia. */
+  ranks: number[] | null;
+  scores: Array<number | null>;
+  nota: string;
+}
+
+export interface RawRotationOut {
+  cfg: RawRotationIn & { pattern: number[] };
+  periods: RawRotationPeriod[];
+  /** Lo que toca el siguiente periodo, con toda la historia. */
+  hoy: { sizes: number[]; ranks: number[] | null; scores: Array<number | null>; weights: number[]; total_pct: number; nota: string; desde: string | null };
+  size_medio: number[];
+  rebalanceos: number;
+  cambios_de_ranking: number;
+  dias_con_rotacion: number;
+}
+
+export interface RawBrakeOut {
+  cfg: RawBrakeIn;
+  dias_frenado: number;
+  episodios: number;
+  eventos: Array<{ date: string; que: "freno" | "suelta"; dd_pct: number }>;
+  hoy: { frenado: boolean; dd_pct: number; mult: number; peak: number };
+}
+
 export interface RawConfigIn {
   strategy_ids: string[];
   /** Capital del portfolio: base del compound (% por trade), del retorno y
@@ -609,6 +662,8 @@ export interface RawConfigIn {
   monthly_expenses: number;
   locates?: RawLocatesIn | null;
   setup?: RawSetupIn | null;
+  rotation?: RawRotationIn | null;
+  brake?: RawBrakeIn | null;
   /** Criterios de margen y buying power del broker (19-sep). Apagado = nada cambia. */
   margin?: { enabled: boolean; broker: string; capacity_pct: number } | null;
   start_date?: string | null;
@@ -784,6 +839,8 @@ export interface RawOut {
     monthly_expenses: number;
     locates?: RawLocatesIn | null;
     setup?: RawSetupIn | null;
+    rotation?: RawRotationIn | null;
+    brake?: RawBrakeIn | null;
     start_date: string | null;
     end_date: string | null;
   };
@@ -792,6 +849,8 @@ export interface RawOut {
   locates_band?: RawLocatesBand | null;
   locates_analysis?: RawLocatesAnalysis | null;
   setup?: RawSetupOut | null;
+  rotation?: RawRotationOut | null;
+  brake?: RawBrakeOut | null;
   ruined?: boolean;
   /** Percentiles del sorteo de locates aleatorios de esta llamada. */
   locates_random?: { n: number; media?: number; p10?: number; p50?: number; p90?: number; min?: number; max?: number } | null;
@@ -840,6 +899,8 @@ export interface KellyRealIn {
   lookback_days: number;
   estrategias: Array<{ name: string; kelly_pct: number; basis?: "risk" | "capital" }>;
   capital_siguiente: number;
+  /** El freno por caida del paso 4 aplicado a la curva REAL del CSV. */
+  brake?: RawBrakeIn | null;
 }
 
 export interface KellyRealOut {
@@ -856,6 +917,8 @@ export interface KellyRealOut {
   total_pct: number | null; total_usd: number | null; capital_siguiente: number; nota: string | null;
   per_strategy: Array<{ name: string; kelly_pct: number; share: number; risk_pct: number | null; risk_usd: number | null; basis: "risk" | "capital" }>;
   serie: Array<{ date: string; r: number; pnl: number; riesgo: number }>;
+  /** Estado del freno sobre la cuenta real (solo si se manda `brake`). */
+  freno?: { frenado: boolean; dd_pct: number; mult: number; peak: number; dias_frenado: number; episodios: number; total_pct_con_freno: number | null; total_usd_con_freno: number | null } | null;
 }
 
 export function kellyCuentaReal(body: KellyRealIn): Promise<KellyRealOut> {

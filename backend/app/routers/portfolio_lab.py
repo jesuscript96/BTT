@@ -494,6 +494,30 @@ class RawSetupIn(BaseModel):
     pooled: bool = False
 
 
+class RawRotationIn(BaseModel):
+    """Rotacion por ranking (20-sep tarde, ver escalado_auto): cada semana /
+    mes / N sesiones se ordenan las estrategias por lo que rindieron por
+    unidad de tamano en la ventana y se les da el % por trade del patron
+    segun su puesto, con un suelo por estrategia."""
+    enabled: bool = True
+    lookback_days: int = Field(default=126, ge=5)
+    rebalance: Literal["W", "M", "N"] = "M"
+    every_days: int = Field(default=20, ge=1)
+    # % por trade por puesto (mejor primero). None = los % del paso 1 ordenados.
+    pattern: list[float] | None = None
+    min_pct: float = Field(default=1.0, ge=0)
+    metric: Literal["return", "sharpe"] = "return"
+
+
+class RawBrakeIn(BaseModel):
+    """Freno por caida de la cuenta: con la caida desde el maximo por encima
+    de dd_pct, todos los tamanos x mult hasta que vuelva por encima de exit_dd_pct."""
+    enabled: bool = True
+    dd_pct: float = Field(default=10.0, gt=0)
+    mult: float = Field(default=0.5, ge=0, le=1)
+    exit_dd_pct: float = Field(default=5.0, ge=0)
+
+
 class RawReq(BaseModel):
     """Portfolio EN CRUDO (ver portfolio_lab_raw): las corridas guardadas
     sumadas con la ejecucion fijada AQUI, estrategia por estrategia; lo que
@@ -516,6 +540,8 @@ class RawReq(BaseModel):
     # 16-sep: locates de la cuenta (compartidos + puerta + banda) y escalado.
     locates: RawLocatesIn | None = None
     setup: RawSetupIn | None = None
+    rotation: RawRotationIn | None = None
+    brake: RawBrakeIn | None = None
     margin: RawMarginIn | None = None
     start_date: str | None = None
     end_date: str | None = None
@@ -570,6 +596,8 @@ def _cfg_crudo(req: "RawReq") -> dict:
         "monthly_expenses": req.monthly_expenses,
         "locates": req.locates.model_dump() if req.locates else None,
         "setup": req.setup.model_dump() if req.setup else None,
+        "rotation": req.rotation.model_dump() if req.rotation else None,
+        "brake": req.brake.model_dump() if req.brake else None,
         "margin": req.margin.model_dump() if req.margin else None,
         "start_date": req.start_date,
         "end_date": req.end_date,
@@ -818,6 +846,9 @@ class KellyRealReq(BaseModel):
     estrategias: list[KellyRealEstrategia] = []
     capital_siguiente: float = Field(default=10000.0, gt=0)
     kelly_base: Literal["exacta", "clasica"] = "clasica"
+    # El freno por caida del paso 4, aplicado a la curva REAL del CSV: si la
+    # cuenta real esta frenada, el total del siguiente periodo va x mult.
+    brake: RawBrakeIn | None = None
 
 
 @router.post("/raw/kelly-real")
@@ -851,6 +882,20 @@ def kelly_real(req: KellyRealReq, user_id: Optional[str] = Depends(get_current_u
         if parseo is not None:
             out["csv"] = {"formato": parseo["formato"], "n_fills": parseo["n_fills"], "n_ops": len(parseo["filas"]), "aviso": parseo["aviso"],
                           "ops": parseo["filas"][-400:]}
+        # Freno por caida sobre la curva real (capital inicial + PnL diario acumulado).
+        out["freno"] = None
+        if req.brake and req.brake.enabled:
+            from app.services import escalado_auto as ea
+            curva = []
+            acc = float(req.capital_inicial)
+            for fila in out.get("serie") or []:
+                acc += float(fila.get("pnl") or 0.0)
+                curva.append(acc)
+            fr = ea.freno_sobre_curva(ea.brake_cfg(req.brake.model_dump()), curva, float(req.capital_inicial))
+            hoy = fr["hoy"]
+            out["freno"] = {**hoy, "dias_frenado": fr["dias_frenado"], "episodios": fr["episodios"],
+                            "total_pct_con_freno": (round(float(out["total_pct"]) * hoy["mult"], 4) if out.get("total_pct") is not None else None),
+                            "total_usd_con_freno": (round(float(out["total_usd"]) * hoy["mult"], 2) if out.get("total_usd") is not None else None)}
         return out
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

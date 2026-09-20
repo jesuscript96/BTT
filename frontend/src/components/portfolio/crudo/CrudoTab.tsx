@@ -30,8 +30,10 @@ import {
   type PortfolioStrategy,
   type RawConfigIn,
   type RawExec,
+  type RawBrakeIn,
   type RawNivelesOut,
   type RawOut,
+  type RawRotationIn,
   type RawRepartoOut,
   type RawSetupIn,
 } from "@/lib/api_portfolio_lab";
@@ -39,7 +41,8 @@ import type { CurveState } from "../StrategyShelf";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Nota, Paso, PasoBar, colorSerie, n, pct, usd } from "./hoja";
 import type { Serie } from "./CrudoCharts";
-import { CFG0, LOC0, SETUP0, curvaPropia, locatesIn, locatesResumen, pctDe, type Cfg, type LocCfg } from "./modelo";
+import { BRAKE0, CFG0, LOC0, ROT0, SETUP0, curvaPropia, locatesIn, locatesResumen, pctDe, type Cfg, type LocCfg } from "./modelo";
+import { patronEfectivo } from "./EscaladoAuto";
 import { PasoEjecucion, porSlDe } from "./PasoEjecucion";
 import { PasoVision } from "./PasoVision";
 import { PasoMonteCarlo } from "./PasoMonteCarlo";
@@ -106,6 +109,12 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const [reparto, setReparto] = useState<RawRepartoOut | null>(null);
   const [repartoRunning, setRepartoRunning] = useState(false);
   const [repartoError, setRepartoError] = useState<string | null>(null);
+  const [rot, setRot] = useState<RawRotationIn>(ROT0);
+  const [brake, setBrake] = useState<RawBrakeIn>(BRAKE0);
+  const [outAuto, setOutAuto] = useState<RawOut | null>(null);
+  const [autoKey, setAutoKey] = useState("");
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoError, setAutoError] = useState<string | null>(null);
   const [setup, setSetup] = useState<RawSetupIn>(SETUP0);
   const [outSetup, setOutSetup] = useState<RawOut | null>(null);
   const [outConst, setOutConst] = useState<RawOut | null>(null);
@@ -178,6 +187,8 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setMcError(null);
       setNiveles(null);
       setReparto(null);
+      setOutAuto(null);
+      setAutoKey("");
       setOutSetup(null);
       setOutConst(null);
       setSetupKey("");
@@ -245,6 +256,26 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setRepartoError(e instanceof Error ? e.message : "No se pudo calcular el reparto");
     } finally {
       setRepartoRunning(false);
+    }
+  };
+  // ── Escalado automatico (paso 4 B): rotacion por ranking + freno ──────
+  const pctBase = selected.map((s) => pctDe(cfg, s.id));
+  const rotEnvio: RawRotationIn = { ...rot, pattern: patronEfectivo(rot, pctBase) };
+  const autoKeyNow = JSON.stringify({ ranKey, rot: rotEnvio, brake });
+  const autoStale = outAuto != null && autoKey !== autoKeyNow;
+  const calcularAuto = async () => {
+    if (!out || autoRunning) return;
+    setAutoRunning(true);
+    setAutoError(null);
+    try {
+      const res = await runPortfolioRaw({ ...cuerpo(), rotation: rot.enabled ? rotEnvio : null, brake: brake.enabled ? brake : null });
+      if (rot.enabled && !res.rotation) throw new Error("El backend que responde no lleva el escalado automático: hay que reiniciarlo (con el bot parado).");
+      setOutAuto(res);
+      setAutoKey(autoKeyNow);
+    } catch (e) {
+      setAutoError(e instanceof Error ? e.message : "No se pudo calcular el escalado automático");
+    } finally {
+      setAutoRunning(false);
     }
   };
   const setupKeyNow = JSON.stringify({ ranKey, setup });
@@ -322,6 +353,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const nivelActual = niveles?.niveles.find((f) => Math.abs(f.factor - 1) < 1e-9);
   const resumen4 = [
     nivelActual?.mc ? `al nivel del paso 1, DD a tragar ${pct(nivelActual.mc.dd_p95)}` : "nivel por la caída",
+    outAuto ? `automático ${usd(outAuto.equity[outAuto.equity.length - 1])} vs fijo ${usd(out ? out.equity[out.equity.length - 1] : 0)}${outAuto.rotation ? ` · siguiente ${outAuto.rotation.hoy.sizes.map((x) => n(x, 2)).join(" / ")} %` : ""}${outAuto.brake?.hoy.frenado ? " · FRENO" : ""}${autoStale ? " (desactualizado)" : ""}` : "escalado automático",
     reparto ? (() => { const mejor = [...reparto.candidatos].sort((a, b) => b.final_equity - a.final_equity)[0]; const act = reparto.candidatos.find((c) => c.clave === "actual"); return mejor && act ? `reparto: el mejor con la misma suma ${usd(mejor.final_equity)} (DD ${pct(mejor.max_dd_pct)}) vs tus % ${usd(act.final_equity)} (DD ${pct(act.max_dd_pct)})` : "reparto"; })() : "reparto",
     outSetup ? `setup ${usd(outSetup.equity[outSetup.equity.length - 1])}${outConst ? ` vs constante ${usd(outConst.equity[outConst.equity.length - 1])}` : ""}${setupStale ? " (desactualizado)" : ""}` : "tamaño por setup",
   ].join(" · ");
@@ -331,10 +363,10 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     { num: 1, label: "Ejecución", hecho: listo && !stale, disponible: true },
     { num: 2, label: "Visión general", hecho: listo, disponible: listo },
     { num: 3, label: "Monte Carlo", hecho: !!mcOut, disponible: listo },
-    { num: 4, label: "Nivel y setups", hecho: !!(niveles || reparto || outSetup), disponible: listo && !backendViejo },
+    { num: 4, label: "Escalado", hecho: !!(niveles || reparto || outSetup || outAuto), disponible: listo && !backendViejo },
     { num: 5, label: "Cuenta real", hecho: false, disponible: true },
   ];
-  const activo = !listo ? 1 : abiertos[4] && (niveles || reparto || outSetup) ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
+  const activo = !listo ? 1 : abiertos[4] && (niveles || reparto || outSetup || outAuto) ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
 
   return (
     <div>
@@ -363,16 +395,16 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
         {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc }} />}
       </Paso>
 
-      <Paso num={4} title="Nivel y setups" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el paso 4" : "primero calcula el paso 1"}
-        help="Tres preguntas sobre el portfolio del paso 1. A: ¿a qué nivel de la cuenta? (tus % × un factor, con la caída real y la del Monte Carlo: se elige por la caída que tragas). B: ¿cómo repartir entre estrategias? (Kelly conjunta con correlaciones, estimada en la primera mitad y comprobada en la segunda contra tus %). C: ¿más tamaño en los mejores setups? (la Kelly relativa de cada tramo de precio, walk-forward por años, comparada contra un % constante con el mismo tamaño medio: si no gana a eso, no añade nada)."
+      <Paso num={4} title="Escalado" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el paso 4" : "primero calcula el paso 1"}
+        help="Cuatro bloques sobre el portfolio del paso 1. A: ¿a qué nivel de la cuenta? (tus % × un factor, con la caída real y la del Monte Carlo: se elige por la caída que tragas). B: el escalado automático: la rotación de pesos por ranking (cada semana, mes o N sesiones, con suelo por estrategia) y el freno por caída, corridos desde el principio y con lo que toca poner el siguiente periodo. C: la frontera de repartos fijos con la misma suma (Kelly conjunta, Markowitz, sin X, todo a X). D: más tamaño en los mejores setups (la Kelly relativa de cada tramo de precio, comparada contra un % constante con el mismo tamaño medio)."
         sinRelleno>
-        {listo && out && <PasoNivel m={{ out, nombres: selected.map((s) => s.name), niveles, nivelesRunning, nivelesError, calcularNiveles, reparto, repartoRunning, repartoError, calcularReparto, setup, setSetup, outSetup, outConst, setupRunning, setupError, setupStale, calcularSetup }} />}
+        {listo && out && <PasoNivel m={{ out, nombres: selected.map((s) => s.name), niveles, nivelesRunning, nivelesError, calcularNiveles, reparto, repartoRunning, repartoError, calcularReparto, pctBase, rot, setRot, brake, setBrake, outAuto, autoRunning, autoError, autoStale, calcularAuto, setup, setSetup, outSetup, outConst, setupRunning, setupError, setupStale, calcularSetup }} />}
       </Paso>
 
-      <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Kelly sobre tu operativa real y el reparto entre estrategias"
-        help="El fichero de tu cuenta real (el export de DAS en .csv o .xlsx, o fecha y PnL) y la unidad de la R: sale la Kelly de TU cuenta (fills, slippage y locates reales incluidos) → cuánto arriesgar en total el siguiente periodo, y ese total repartido entre las estrategias con los pesos del paso 1 (o los del reparto B si lo has calculado). No hace falta saber de qué estrategia viene cada trade.">
+      <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Con tu CSV real: cuánto exponer el siguiente periodo y cuánto a cada estrategia"
+        help="El fichero de tu cuenta real (el export de DAS en .csv o .xlsx, o fecha y PnL) y la unidad de la R: sale la Kelly de TU cuenta (fills, slippage y locates reales incluidos) → cuánto arriesgar en total el siguiente periodo (con el freno del paso 4 si lo tienes puesto y tu cuenta está en caída), y ese total repartido entre las estrategias con los pesos que dice la rotación del paso 4 (o los % del paso 1 si no la has calculado). No hace falta saber de qué estrategia viene cada trade.">
         <div style={{ padding: "10px 10px 6px" }}>
-          <PasoCuentaReal m={{ out, capital: capitalEfectivo, pesos: selected.map((s, i) => ({ name: s.name, kelly_pct: reparto && reparto.recomendado.pct[i] != null && reparto.strategy_ids[i] === s.id ? reparto.recomendado.pct[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const })), origenPesos: reparto ? "el reparto B (Kelly conjunta, todo el histórico)" : "los % del paso 1" }} />
+          <PasoCuentaReal m={{ out, capital: capitalEfectivo, brake: brake.enabled ? brake : null, pesos: selected.map((s, i) => ({ name: s.name, kelly_pct: outAuto?.rotation ? outAuto.rotation.hoy.sizes[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const })), origenPesos: outAuto?.rotation ? "la rotación del paso 4 (lo que toca el siguiente periodo)" : "los % del paso 1" }} />
         </div>
       </Paso>
 

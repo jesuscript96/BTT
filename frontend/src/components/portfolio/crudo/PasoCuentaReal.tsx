@@ -16,7 +16,7 @@
 import React, { useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
-import { kellyCuentaReal, type KellyRealOut, type RawOut } from "@/lib/api_portfolio_lab";
+import { kellyCuentaReal, type KellyRealOut, type RawBrakeIn, type RawOut } from "@/lib/api_portfolio_lab";
 import { Btn, Nota, Num, Row, Sec, Stat, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
 
 export function PasoCuentaReal({ m }: { m: {
@@ -24,8 +24,10 @@ export function PasoCuentaReal({ m }: { m: {
   /** Los pesos con los que se reparte el total real: los % del paso 1 (o el reparto B). */
   pesos: Array<{ name: string; kelly_pct: number; basis: "risk" | "capital" }>;
   origenPesos: string;
+  /** El freno por caida del paso 4 (null = sin freno): se aplica a la curva REAL del CSV. */
+  brake: RawBrakeIn | null;
 } }) {
-  const { capital, pesos, origenPesos } = m;
+  const { capital, pesos, origenPesos, brake } = m;
   const [csv, setCsv] = useState("");
   // Fichero elegido (20-sep, Jaume: «meterle el csv o excel en archivo»). Un
   // CSV/TXT se lee aquí y va como texto (se ve en la caja); un Excel va en
@@ -89,7 +91,7 @@ export function PasoCuentaReal({ m }: { m: {
         filename: fichero?.b64 ? fichero.name : undefined,
         risk_mode: riskMode, risk_value: riskMode === "notional" ? 1 : riskValue, capital_inicial: capitalInicial,
         kelly_mult: mult, cap_pct: capSuma, cap_strategy_pct: capEst, lookback_days: ventana, kelly_base: base,
-        estrategias, capital_siguiente: capitalSig,
+        estrategias, capital_siguiente: capitalSig, brake,
       });
       setRes(o);
     } catch (e) {
@@ -208,7 +210,7 @@ export function PasoCuentaReal({ m }: { m: {
           {error && <div style={{ marginTop: 8 }}><ErrorBox>{error}</ErrorBox></div>}
         </Sec>
 
-        <Sec title="Siguiente periodo según tu cuenta" help="Arriba, lo que dice tu cuenta: operaciones, % de ganadoras, ganancia y pérdida medias, la Kelly (clásica y exacta), lo que pide tras la fracción y lo aplicado tras el tope: el riesgo TOTAL por trade. Debajo, cada estrategia con su Kelly del backtest, su proporción y lo que le toca en % y en $.">
+        <Sec title="Siguiente periodo según tu cuenta" help={<>Arriba, lo que dice tu cuenta: operaciones, % de ganadoras, ganancia y pérdida medias, la Kelly (clásica y exacta), lo que pide tras la fracción y lo aplicado tras el tope: el riesgo TOTAL por trade. Si el freno del paso 4 está puesto y tu cuenta real está en caída, el total va × el multiplicador. Debajo, cada estrategia con su peso (el de la rotación del paso 4 o el % del paso 1), su proporción y lo que le toca en % y en $. <strong>La tarjeta del final es la respuesta</strong>: cuánto exponer en total y cuánto a cada estrategia.</>}>
           {!res ? (
             <Nota>Elige el fichero de DAS (.csv o .xlsx), o pega el CSV, y pulsa <strong>Calcular con mi cuenta</strong>.</Nota>
           ) : (
@@ -227,12 +229,18 @@ export function PasoCuentaReal({ m }: { m: {
                 <Stat big label="Riesgo total por trade" value={res.total_pct == null ? "—" : pct(res.total_pct, 2)} sub={res.total_pct == null ? "" : `${usd(res.total_usd)} sobre ${usd(res.capital_siguiente)}${res.capped ? " · manda el tope" : ""}`} tone={res.total_pct == null ? undefined : "profit"} />
               </div>
               {res.nota && <Nota tone="warning">{res.nota}</Nota>}
+              {res.freno && (
+                <Nota tone={res.freno.frenado ? "warning" : undefined}>
+                  Freno por caída sobre tu cuenta real: {res.freno.frenado ? <>PUESTO (×{n(res.freno.mult, 2)}): tu cuenta está a {pct(res.freno.dd_pct)} de su máximo ({usd(res.freno.peak)})</> : <>quitado: tu cuenta está a {pct(res.freno.dd_pct)} de su máximo</>}
+                  {res.freno.episodios > 0 ? ` · en el histórico del CSV se habría frenado ${n(res.freno.episodios, 0)} ${res.freno.episodios === 1 ? "vez" : "veces"} (${n(res.freno.dias_frenado, 0)} días)` : ""}.
+                </Nota>
+              )}
               {res.per_strategy.length > 0 && (
                 <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 6 }}>
                   <thead>
                     <tr>
                       <th style={thL}>Estrategia</th>
-                      <th style={thR}>Kelly backtest</th>
+                      <th style={thR}>Peso (paso 4)</th>
                       <th style={thR}>Proporción</th>
                       <th style={{ ...thR, color: color.copper }}>% por trade</th>
                       <th style={thR}>$ por trade</th>
@@ -258,9 +266,27 @@ export function PasoCuentaReal({ m }: { m: {
                   </tbody>
                 </table>
               )}
-              <p style={{ margin: "8px 0 0", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
-                El total sale de TU cuenta (fills, slippage y locates reales incluidos); el reparto, de lo que dice el backtest de cada estrategia en su ventana (paso 4). La unidad de cada una es la de su backtest: «riesgo» (al stop) o «posición» (% del capital metido).
-              </p>
+              {res.total_pct != null && (() => {
+                const mult = res.freno?.frenado ? res.freno.mult : 1;
+                const totalFinal = res.total_pct * mult;
+                const usdFinal = (res.total_usd ?? 0) * mult;
+                return (
+                  <div style={{ marginTop: 10, border: `1px solid ${color.copper}`, background: "rgba(184, 115, 51, 0.06)", padding: "8px 12px" }}>
+                    <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", color: color.copper, fontFamily: font.sans, marginBottom: 4 }}>
+                      Siguiente periodo — lo que toca poner en tu cuenta
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      <Stat big label="Exposición total por trade" value={pct(totalFinal, 2)} sub={`${usd(usdFinal)} sobre ${usd(res.capital_siguiente)}${mult < 1 ? ` · con el freno ×${n(mult, 2)}` : ""}`} tone="profit" />
+                      {res.per_strategy.map((p, i) => (
+                        <Stat key={p.name + i} label={p.name.length > 22 ? `${p.name.slice(0, 21)}…` : p.name} value={p.risk_pct == null ? "—" : pct(p.risk_pct * mult, 2)} sub={`${p.risk_usd == null ? "—" : usd(p.risk_usd * mult)} · ${p.basis === "capital" ? "en posición" : "en riesgo al stop"}`} />
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, marginTop: 4, lineHeight: 1.5 }}>
+                      El total sale de tu operativa real (Kelly {res.kelly_base === "clasica" ? "clásica" : "exacta"} × {n(res.kelly_mult, 2)}, topada al {pct(res.cap_pct, 1)}{mult < 1 ? ", × el freno" : ""}); el reparto entre estrategias, de {origenPesos}. La unidad de cada una es la de su backtest: «riesgo» (lo que pierde si salta el stop) o «posición» (% del capital metido en la operación).
+                    </div>
+                  </div>
+                );
+              })()}
             </>
           )}
         </Sec>
