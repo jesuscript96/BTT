@@ -322,7 +322,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const nivelActual = niveles?.niveles.find((f) => Math.abs(f.factor - 1) < 1e-9);
   const resumen4 = [
     nivelActual?.mc ? `al nivel del paso 1, DD a tragar ${pct(nivelActual.mc.dd_p95)}` : "nivel por la caída",
-    reparto ? `reparto OOS ×${n(reparto.candidatos[0]?.oos.mult, 1)} vs ×${n(reparto.candidatos[1]?.oos.mult, 1)} tus %` : "reparto",
+    reparto ? (() => { const mejor = [...reparto.candidatos].sort((a, b) => b.final_equity - a.final_equity)[0]; const act = reparto.candidatos.find((c) => c.clave === "actual"); return mejor && act ? `reparto: el mejor con la misma suma ${usd(mejor.final_equity)} (DD ${pct(mejor.max_dd_pct)}) vs tus % ${usd(act.final_equity)} (DD ${pct(act.max_dd_pct)})` : "reparto"; })() : "reparto",
     outSetup ? `setup ${usd(outSetup.equity[outSetup.equity.length - 1])}${outConst ? ` vs constante ${usd(outConst.equity[outConst.equity.length - 1])}` : ""}${setupStale ? " (desactualizado)" : ""}` : "tamaño por setup",
   ].join(" · ");
 

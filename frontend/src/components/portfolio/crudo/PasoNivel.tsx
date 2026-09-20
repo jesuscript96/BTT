@@ -166,17 +166,18 @@ export function PasoNivel({ m }: { m: NivelModel }) {
 
       {/* ── B. Reparto ───────────────────────────────────────────────── */}
       <Sec
-        title="B · Reparto entre estrategias (Kelly conjunta)"
+        title="B · Reparto entre estrategias, con la misma suma"
         help={
           <>
-            La f de cada estrategia que maximiza el crecimiento de la <strong>suma</strong> teniendo en cuenta la correlación entre ellas,
-            con el mismo total que tus % del paso 1. Se estima en la primera mitad de los días y se comprueba en la segunda
-            (fuera de muestra) contra tus % y contra repartir a partes iguales. «Todo» es la estimación con toda la historia:
-            la que valdría para mañana.
+            Qué pasa si cambias el capital de cada estrategia <strong>sin cambiar la suma</strong>: cada reparto candidato se corre con
+            el motor entero (locates, margen, costes) y se mira el final, la caída y lo de antes y después del corte (la
+            segunda mitad es fuera de muestra). Candidatos: tus % del paso 1, a partes iguales, la <strong>Kelly conjunta</strong>
+            (la f que maximiza el crecimiento de la suma con las correlaciones; estimada en la primera mitad y con todo),
+            «sin X» (su parte repartida a las demás) y «todo a X».
             <br /><br />
-            <strong>Ojo:</strong> a un nivel tan bajo respecto a Kelly, el crecimiento apenas nota la diversificación, así que el óptimo
-            tiende a concentrar en la que más rinde por unidad de tamaño. Concentrar sube la caída: mira siempre la DD al lado
-            del múltiplo, y compara con el bloque A (subir el nivel de tus % suele dar lo mismo con menos caída).
+            <strong>Cómo se lee:</strong> a un nivel tan bajo respecto a Kelly el crecimiento es casi la suma de lo que rinde cada una por
+            unidad de tamaño, así que mover capital hacia la que más rinde por unidad sube el retorno… y la caída, porque
+            pierdes diversificación. La tabla te da la frontera: eliges por la caída que tragas (bloque A).
           </>
         }
         right={<Btn primary onClick={calcularReparto} disabled={repartoRunning}>{repartoRunning ? "Calculando…" : reparto ? "Volver a calcular" : "Calcular reparto"}</Btn>}
@@ -188,39 +189,47 @@ export function PasoNivel({ m }: { m: NivelModel }) {
         ) : (
           <>
             <div style={{ padding: "6px 10px 0", display: "flex", flexWrap: "wrap" }}>
-              <Stat label="Total por trade" value={pct(reparto.total_pct, 2)} sub="la suma de tus % del paso 1" />
-              <Stat label="Corte IS / OOS" value={reparto.split_date ?? "—"} sub={`${n(reparto.dias_is, 0)} días para estimar · ${n(reparto.dias_oos, 0)} para comprobar`} />
-              <Stat label="Recomendado (todo)" value={reparto.recomendado.pct.map((x) => `${n(x, 2)} %`).join(" / ")} sub={reparto.names.map((nm) => nm.slice(0, 16)).join(" / ")} />
+              <Stat label="Suma por trade" value={pct(reparto.total_pct, 2)} sub="la de tus % del paso 1, igual en todos" />
+              <Stat label="Corte" value={reparto.split_date ?? "—"} sub={`${n(reparto.dias_is, 0)} días antes · ${n(reparto.dias_oos, 0)} después (fuera de muestra)`} />
+              {reparto.ret_por_unidad_pct && (
+                <Stat label="Retorno por 1 % por trade" value={reparto.ret_por_unidad_pct.map((x) => `${n(x, 3)} %`).join(" · ")} sub={`al día · ${reparto.names.map((nm) => nm.slice(0, 10)).join(" · ")}`} help="El retorno diario medio del portfolio que aporta cada estrategia por cada 1 % por trade que se le da. A un nivel bajo, el crecimiento es casi la suma de esto × su %: la que más rinde por unidad es la que «pide» el capital." />
+              )}
             </div>
             <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 6 }}>
               <thead>
                 <tr>
                   <th style={thL}>Reparto</th>
                   {reparto.names.map((nm, i) => <th key={nm} style={{ ...thR, color: colorSerie(i) }}>{nm.length > 18 ? `${nm.slice(0, 17)}…` : nm}</th>)}
-                  <th style={thR}>IS ×</th>
-                  <th style={thR}>IS DD</th>
-                  <th style={thR}>OOS ×</th>
-                  <th style={thR}>OOS DD</th>
-                  <th style={thR}>Todo ×</th>
+                  <th style={thR}>Final</th>
+                  <th style={thR}>DD</th>
+                  <th style={thR}>Antes ×</th>
+                  <th style={thR}>DD</th>
+                  <th style={thR}>Después ×</th>
+                  <th style={thR}>DD</th>
                 </tr>
               </thead>
               <tbody>
-                {reparto.candidatos.map((c) => (
-                  <tr key={c.name}>
-                    <td style={tdTxt}>{c.name}</td>
-                    {c.pct.map((x, i) => <td key={i} style={tdNum}>{pct(x, 2)}</td>)}
-                    <td style={tdNum}>×{n(c.is.mult, 1)}</td>
-                    <td style={{ ...tdNum, color: color.loss }}>{pct(c.is.dd_pct)}</td>
-                    <td style={{ ...tdNum, fontWeight: 700 }}>×{n(c.oos.mult, 1)}</td>
-                    <td style={{ ...tdNum, color: color.loss, fontWeight: 700 }}>{pct(c.oos.dd_pct)}</td>
-                    <td style={tdNum}>×{n(c.all.mult, 1)}</td>
-                  </tr>
-                ))}
+                {[...reparto.candidatos].sort((a, b) => b.final_equity - a.final_equity).map((c) => {
+                  const actual = c.clave === "actual";
+                  return (
+                    <tr key={c.name} style={actual ? { background: "rgba(184, 115, 51, 0.08)" } : undefined}>
+                      <td style={{ ...tdTxt, fontWeight: actual ? 700 : 500, whiteSpace: "normal" }}>{c.name}</td>
+                      {c.pct.map((x, i) => <td key={i} style={tdNum}>{pct(x, 2)}</td>)}
+                      <td style={{ ...tdNum, fontWeight: 700 }}>{c.ruined ? <span style={{ color: color.loss }}>ruina</span> : usd(c.final_equity)}</td>
+                      <td style={{ ...tdNum, color: color.loss, fontWeight: 700 }}>{pct(c.max_dd_pct)}</td>
+                      <td style={tdNum}>×{n(c.is.mult, 1)}</td>
+                      <td style={{ ...tdNum, color: color.loss }}>{pct(c.is.dd_pct)}</td>
+                      <td style={tdNum}>×{n(c.oos.mult, 1)}</td>
+                      <td style={{ ...tdNum, color: color.loss }}>{pct(c.oos.dd_pct)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
             <p style={{ margin: 0, padding: "8px 10px", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
-              Correlación diaria: {reparto.names.map((nm, i) => reparto.names.slice(i + 1).map((nm2, j) => `${nm.slice(0, 12)} – ${nm2.slice(0, 12)}: ${n(reparto.correlation[i][i + 1 + j], 2)}`).join(" · ")).filter(Boolean).join(" · ")}.
-              Kelly propia de cada una (sin tope, por 1 % por trade): {reparto.kelly_propia_pct.map((k, i) => `${reparto.names[i].slice(0, 12)} ${k == null ? "—" : n(k, 0)} %`).join(" · ")}.
+              Ordenado por el final. Correlación diaria: {reparto.names.map((nm, i) => reparto.names.slice(i + 1).map((nm2, j) => `${nm.slice(0, 12)} – ${nm2.slice(0, 12)}: ${n(reparto.correlation[i][i + 1 + j], 2)}`).join(" · ")).filter(Boolean).join(" · ")}.
+              Kelly propia de cada una (sin tope): {reparto.kelly_propia_pct.map((k, i) => `${reparto.names[i].slice(0, 12)} ${k == null ? "—" : n(k, 0)} %`).join(" · ")}.
+              Un reparto que gana en «después» y no en «antes» (o al revés) es ruido; el que gana en los dos con una caída que tragas es el bueno. Compáralo siempre con subir el nivel de tus % (bloque A) a la misma caída.
             </p>
           </>
         )}

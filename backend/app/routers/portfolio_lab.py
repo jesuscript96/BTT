@@ -698,19 +698,75 @@ def raw_reparto(req: RawRepartoReq, user_id: Optional[str] = Depends(get_current
     f_all = ss.kelly_conjunta(X, total, cap_i)
     f_cur = sizes_arr / sizes_arr.sum() * total
     f_eq = np.full(n, total / n)
-    def fila(nombre, f):
-        e_is, d_is = ss.crecimiento(X_is, f); e_oos, d_oos = ss.crecimiento(X_oos, f); e_all, d_all = ss.crecimiento(X, f)
-        return {"name": nombre, "pct": [round(float(x), 3) for x in f],
-                "is": {"mult": round(e_is, 4), "dd_pct": round(d_is * 100, 2)}, "oos": {"mult": round(e_oos, 4), "dd_pct": round(d_oos * 100, 2)},
-                "all": {"mult": round(e_all, 4), "dd_pct": round(d_all * 100, 2)}}
+    names = [r["name"] for r in runs]
+
+    # La FRONTERA (Jaume, 20-sep: «no me creo que no se pueda mejorar variando
+    # el capital de cada una con la misma suma»): cada reparto candidato se
+    # corre con el MOTOR ENTERO (locates, margen, costes) con la misma suma, y
+    # se mira el final, la caida, y lo de antes y despues del corte. Los
+    # candidatos: los % actuales, a partes iguales, la Kelly conjunta (estimada
+    # en la 1.ª parte y con todo), «sin X» (su parte repartida a las demas en
+    # proporcion) y «todo a X».
+    candidatos: list[tuple[str, np.ndarray, str]] = [
+        ("Los % del paso 1", f_cur, "actual"),
+        ("A partes iguales", f_eq, "iguales"),
+        ("Kelly conjunta (estimada en la 1.ª parte)", f_is, "kelly_is"),
+        ("Kelly conjunta (con todo)", f_all, "kelly_all"),
+    ]
+    if n > 1:
+        for i in range(n):
+            resto = sizes_arr.copy(); resto[i] = 0.0
+            if resto.sum() > 0:
+                candidatos.append((f"Sin {names[i]}", resto / resto.sum() * total, f"sin_{i}"))
+        for i in range(n):
+            solo = np.zeros(n); solo[i] = total
+            candidatos.append((f"Todo a {names[i]}", solo, f"solo_{i}"))
+    vistos: dict[tuple, int] = {}
+    filas = []
+    for nombre, f, clave in candidatos:
+        f = np.asarray(f, dtype=float)
+        key = tuple(round(float(x), 3) for x in f)
+        if key in vistos:
+            filas[vistos[key]]["name"] += f" = {nombre}"
+            continue
+        cfg_k = json.loads(json.dumps(cfg))
+        for sid, v in zip([r["strategy_id"] for r in runs], f):
+            ex = dict(cfg_k["per_strategy"].get(sid) or cfg_k["default_exec"])
+            # 0 exacto no deja trades en el motor (sin tamano): casi cero.
+            ex["size_value"] = float(v) if v > 1e-6 else 1e-4
+            ex["size_unit"] = "pct"
+            cfg_k["per_strategy"][sid] = ex
+        try:
+            o = plr.simulate(runs, cfg_k)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        eqk = o["equity"]
+        k = min(corte, len(eqk) - 1)
+        eq_is_fin = eqk[k - 1] if k > 0 else cap0
+        def _dd(curva, inicio):
+            peak = inicio; m = 0.0
+            for e in curva:
+                peak = max(peak, e); m = min(m, (e / peak - 1.0) if peak > 0 else 0.0)
+            return m * 100.0
+        vistos[key] = len(filas)
+        filas.append({
+            "name": nombre, "clave": clave, "pct": [round(float(x), 3) for x in f],
+            "final_equity": eqk[-1] if eqk else cap0,
+            "max_dd_pct": round(_dd(eqk, cap0), 2),
+            "ruined": bool(o.get("ruined")),
+            "trades": int(o["cap_report"]["taken"]),
+            "is": {"mult": round(eq_is_fin / cap0, 4) if cap0 > 0 else 0.0, "dd_pct": round(_dd(eqk[:k], cap0), 2)},
+            "oos": {"mult": round(eqk[-1] / eq_is_fin, 4) if eq_is_fin > 0 else 0.0, "dd_pct": round(_dd(eqk[k:], eq_is_fin), 2)},
+        })
     corr = np.corrcoef(X.T) if n > 1 else np.ones((1, 1))
     return {
-        "names": [r["name"] for r in runs], "strategy_ids": [r["strategy_id"] for r in runs],
+        "names": names, "strategy_ids": [r["strategy_id"] for r in runs],
         "total_pct": total, "split_date": out["calendar"][corte] if corte < len(out["calendar"]) else None,
         "dias_is": int(len(X_is)), "dias_oos": int(len(X_oos)),
         "correlation": [[round(float(corr[i, j]), 3) for j in range(n)] for i in range(n)],
         "kelly_propia_pct": [round(float(X[:, i].mean() / X[:, i].var()), 2) if X[:, i].var() > 0 else None for i in range(n)],
-        "candidatos": [fila("Kelly conjunta (estimada en la 1.ª parte)", f_is), fila("Los % del paso 1", f_cur), fila("A partes iguales", f_eq)],
+        "ret_por_unidad_pct": [round(float(X[:, i].mean() * 100.0), 4) for i in range(n)],
+        "candidatos": filas,
         "recomendado": {"pct": [round(float(x), 3) for x in f_all], "weights": [round(float(x / f_all.sum()), 4) if f_all.sum() > 0 else 0.0 for x in f_all]},
     }
 

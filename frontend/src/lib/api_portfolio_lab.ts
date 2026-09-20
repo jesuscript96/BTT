@@ -906,10 +906,16 @@ export function runPortfolioNiveles(body: RawConfigIn & { factors?: number[]; mc
  *  primera parte y comprobado en la segunda contra los % del paso 1. */
 export interface RawRepartoCandidato {
   name: string;
+  /** actual | iguales | kelly_is | kelly_all | sin_<i> | solo_<i> */
+  clave: string;
   pct: number[];
+  /** Con el motor entero (locates, margen, costes) y la misma suma. */
+  final_equity: number;
+  max_dd_pct: number;
+  ruined: boolean;
+  trades: number;
   is: { mult: number; dd_pct: number };
   oos: { mult: number; dd_pct: number };
-  all: { mult: number; dd_pct: number };
 }
 export interface RawRepartoOut {
   names: string[];
@@ -920,6 +926,8 @@ export interface RawRepartoOut {
   dias_oos: number;
   correlation: number[][];
   kelly_propia_pct: Array<number | null>;
+  /** Retorno diario medio de cada estrategia por cada 1 % por trade (lo que manda a un nivel bajo). */
+  ret_por_unidad_pct?: number[];
   candidatos: RawRepartoCandidato[];
   recomendado: { pct: number[]; weights: number[] };
 }
