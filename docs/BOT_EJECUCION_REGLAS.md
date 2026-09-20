@@ -294,6 +294,33 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área G · El precio se dispara
 
+### R-G-01 · Protocolo de cisne negro: el bot NO decide; informa cada 5 minutos y cierra el humano
+- Situación: el precio ha pasado del límite de la orden de emergencia (R-C-01) sin ejecutarla: quedan acciones cortas al descubierto.
+- Principio (Jaume, 20-sep): el bot NO coloca órdenes que persigan al precio en mitad de un fogonazo o squeeze (la volatilidad podría sacarnos a un precio extremo) ni toma decisiones de cierre: un error de código o la falta de liquidez lo harían contraproducente. En el peor escenario cierra el HUMANO, vigilando de la mano del bot. La orden de emergencia sigue puesta: si el precio vuelve a su límite, se ejecuta sola.
+- Acción: (1) ALERTA MÁXIMA por Telegram, SMS y correo en el instante. (2) Cada 5 minutos, mensaje por Telegram con este formato:
+
+  «Posible BS <TICKER>»
+  - Precio del stop normal y del de emergencia.
+  - Precio en el momento del mensaje (y bid / ask).
+  - Minutos desde el evento.
+  - Al descubierto: acciones cortas que no se han podido cerrar en el stop de emergencia.
+  - % de pérdida sobre el trade (latente, al precio actual).
+  - % de pérdida sobre la cuenta, total (contando lo ya perdido en los stops), también en $.
+  - Máximo % de subida de la acción respecto al PRIMER stop desde que empezó el movimiento (para saber ante qué fogonazo estamos: 100, 200, 1.000 %…).
+  - % actual de la acción respecto al primer stop (el slippage que nos comeríamos si cerramos ahora).
+  - Pérdida ya ejecutada del trade, en $ y %: lo perdido en las acciones que sí salieron por el stop normal y por el de emergencia.
+  - Recordatorio de comandos: /cerrar TICKER SI (cierre al ask con techo), /cerrar TICKER N SI (cerrar solo N acciones), /estado TICKER, /parar_avisos TICKER (deja de mandar el mensaje de 5 min; la alerta de cambio de estado sigue), /reanudar_avisos TICKER.
+  Datos añadidos por Claude (propuesta, 20-sep): volumen y dólares negociados en los últimos 5 min (liquidez para salir), spread actual en %, si está en halt o a qué distancia de la banda LULD y cuántos halts lleva (k), minutos hasta el EOD de la estrategia, minutos desde el máximo del movimiento (si lleva N minutos bajando), estado de la orden de emergencia (sigue viva, su precio límite), estado de la conexión con DAS.
+  (3) Si el fogonazo se cierra DENTRO del stop de emergencia, se manda el mismo informe UNA sola vez con la frase «POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP DE EMERGENCIA».
+  (4) Todo fogonazo visto en vivo (con o sin posición) se registra en el diario con su máximo, duración y devolución, para recalibrar los umbrales con datos propios (G10).
+- Quién la ejecuta: vigilante (informes y registro) + humano (decisión y cierre por Telegram).
+- Parámetros: cadencia de informes = 5 min.
+- Si la acción falla: sin Telegram → correo y SMS con el mismo informe (R-M-02).
+- Prueba: simular el protocolo con un día grabado de fogonazo (R-O-02) y comprobar formato y cadencia.
+- Estado: FIJADA (Jaume, 20-sep). Sustituye a la «espera de media hora» de R-C-01 como procedimiento: no hay plazo fijo, el humano decide cuándo. Origen: G1, G2, G3, G4, G6, G7, G10.
+
+**G3, G4, G6 y G7 (20-sep): sin decisión automática del bot.** El tope de pérdida por posición, la salida por tiempo, el cierre por tramos y la relación con la pérdida del día son decisiones del HUMANO dentro del protocolo R-G-01, con los datos del informe. G2 (fogonazo vs squeeze) queda como INFORMACIÓN del informe (minutos desde el máximo, si lleva bajando), no como disparador.
+
 **PENDIENTE G3 (14-sep), decisión importante, volver a preguntar:** tope de pérdida por posición y cómo distinguir cisne negro de squeeze. Lo que hay: (1) el tercer trigger N3 hace de tope por posición; no habrá una capa más por posición. (2) Lo que distingue cisne negro de squeeze es el TIEMPO, no el tamaño: si pasados 5-10 minutos de superar N3 el precio sigue arriba (y con volumen), no es fogonazo, es squeeze y se cierra a mercado; si ha vuelto, era fogonazo y se espera (Jaume prefiere 5-10 min a segundos). (3) Un tope de CUENTA como último cinturón («nunca más de X % de la cuenta en una posición, pase lo que pase»), que cierra aunque parezca fogonazo; se gestiona desde el cuadro de mandos. Riesgo que Jaume quiere meditar: un tope del 20 % de la cuenta y el bot confundiendo cisne negro con squeeze normal.
 
 ### Área F · Halts

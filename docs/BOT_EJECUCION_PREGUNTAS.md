@@ -122,16 +122,16 @@
 
 ## G. El precio se dispara
 
-- [ ] G1. Fogonazo (sube ≥ X % en ≤ Y s y devuelve): ¿el bot no ejecuta el stop y espera N s? ¿Con qué X, Y, N? **[dato]** con 3 % por ticker, cerrar en el pico pierde de media el 14 % (peor 145 %); esperar 30 s, 2,6 % (p95 5,8 %); a 5 min p95 7,2 %. 1 de cada 10 saltos ≥ 100 % no vuelve en PM.
-- [ ] G2. ¿Cómo distingue en vivo fogonazo de subida real: segundos sostenidos por encima de X % del salto, operaciones, volumen? ¿Con qué datos, si el NBBO de DAS avisa poco?
-- [ ] G3. Pérdida máxima absoluta por posición: por encima de +Z % sobre la entrada, ¿cierre a mercado pase lo que pase? ¿Z distinto en PM y en RTH?
-- [ ] G4. Squeeze lento (sube y no devuelve en 5-30 min): ¿salida por tiempo desde el pico? **[dato]** esperar más de 1 min no baja el p95; en ≥ 500 %, 5 de 8 vuelven en menos de 2 min y TNON, XHG y GRYP no.
+- [x] G1. → R-G-01 (protocolo: informar cada 5 min, cierra el humano). Fogonazo (sube ≥ X % en ≤ Y s y devuelve): ¿el bot no ejecuta el stop y espera N s? ¿Con qué X, Y, N? **[dato]** con 3 % por ticker, cerrar en el pico pierde de media el 14 % (peor 145 %); esperar 30 s, 2,6 % (p95 5,8 %); a 5 min p95 7,2 %. 1 de cada 10 saltos ≥ 100 % no vuelve en PM.
+- [x] G2. → R-G-01 (información del informe, no disparador). ¿Cómo distingue en vivo fogonazo de subida real: segundos sostenidos por encima de X % del salto, operaciones, volumen? ¿Con qué datos, si el NBBO de DAS avisa poco?
+- [x] G3. → R-G-01 (humano). Pérdida máxima absoluta por posición: por encima de +Z % sobre la entrada, ¿cierre a mercado pase lo que pase? ¿Z distinto en PM y en RTH?
+- [x] G4. → R-G-01 (humano). Squeeze lento (sube y no devuelve en 5-30 min): ¿salida por tiempo desde el pico? **[dato]** esperar más de 1 min no baja el p95; en ≥ 500 %, 5 de 8 vuelven en menos de 2 min y TNON, XHG y GRYP no.
 - [x] G5. → R-C-01 (limitP con techo; nunca mercado sin techo). Orden basura en el libro (25 $, 10.000 $): ¿cómo se protege un cierre a mercado? ¿Siempre limitado con banda? **[dato]** 7 de 56 disparos tenían una orden basura en los 10 niveles.
-- [ ] G6. Cierre por tramos durante un pico: ¿la mitad al +50 % y el resto cuando devuelve?
-- [ ] G7. Si la pérdida latente de una posición supera la pérdida diaria, ¿se cierra esa posición o todo?
+- [x] G6. → R-G-01 (/cerrar TICKER N SI). Cierre por tramos durante un pico: ¿la mitad al +50 % y el resto cuando devuelve?
+- [x] G7. → R-G-01 (dato del informe; humano). Si la pérdida latente de una posición supera la pérdida diaria, ¿se cierra esa posición o todo?
 - [ ] G8. Buy-in del bróker (te obligan a cubrir): ¿cómo se entera el bot y cómo lo contabiliza? **[API]**
 - [x] G9. → R-A-01 + R-B-01 (tope 3 %: no se entra). El precio se dispara con una orden de ENTRADA viva (aún no dentro): ¿se cancela por distancia al precio de señal (A2) o se deja?
-- [ ] G10. ¿Se registra cada fogonazo visto en vivo (con o sin posición) para calibrar X, Y, N con datos propios?
+- [x] G10. → R-G-01 (4): se registra cada fogonazo. ¿Se registra cada fogonazo visto en vivo (con o sin posición) para calibrar X, Y, N con datos propios?
 
 ## H. Locates y préstamo
 
