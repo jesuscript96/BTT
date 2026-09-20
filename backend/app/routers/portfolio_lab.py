@@ -490,7 +490,13 @@ class RawScalingIn(BaseModel):
     kelly_mult: float = Field(default=0.5, gt=0, le=3)
     # per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
     # global: la Kelly del conjunto repartida por las Kellys propias.
-    kelly_scope: Literal["per_strategy", "global"] = "per_strategy"
+    # account: Kelly por cuenta con pesos fijos; fixed_total: total fijo
+    # repartido por las Kellys propias (20-sep).
+    kelly_scope: Literal["per_strategy", "global", "account", "fixed_total"] = "per_strategy"
+    fixed_weights: dict[str, float] | None = None
+    total_pct: float = Field(default=10.0, ge=0)
+    # exacta: la f que maximiza el log-crecimiento de la R diaria; clasica: p - q/b por operacion.
+    kelly_base: Literal["exacta", "clasica"] = "exacta"
     cap_pct: float = Field(default=10.0, ge=0)
     # Tope POR ESTRATEGIA por trade (% del capital del dia; 0 = sin). Se aplica
     # antes que el de la suma y no redistribuye.
@@ -593,6 +599,7 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
 class KellyRealRow(BaseModel):
     date: str
     pnl: float
+    notional: float = 0.0
 
 
 class KellyRealEstrategia(BaseModel):
@@ -603,8 +610,12 @@ class KellyRealEstrategia(BaseModel):
 
 class KellyRealReq(BaseModel):
     """Kelly sobre la cuenta REAL (ver portfolio_lab_raw.kelly_cuenta_real)."""
-    rows: list[KellyRealRow]
-    risk_mode: Literal["usd", "pct"] = "usd"
+    rows: list[KellyRealRow] = []
+    # El CSV tal cual (DAS «Transactions» o fecha;pnl): si viene, manda sobre rows.
+    csv_text: str | None = None
+    # notional: R = pnl / valor de la posicion de cada operacion (sin stop; lo
+    # que trae DAS). usd / pct: riesgo por trade fijo o % del equity del dia.
+    risk_mode: Literal["usd", "pct", "notional"] = "notional"
     risk_value: float = Field(default=100.0, gt=0)
     capital_inicial: float = Field(default=10000.0, gt=0)
     kelly_mult: float = Field(default=0.5, gt=0, le=3)
@@ -613,6 +624,7 @@ class KellyRealReq(BaseModel):
     lookback_days: int = Field(default=90, ge=0)
     estrategias: list[KellyRealEstrategia] = []
     capital_siguiente: float = Field(default=10000.0, gt=0)
+    kelly_base: Literal["exacta", "clasica"] = "clasica"
 
 
 @router.post("/raw/kelly-real")
@@ -621,11 +633,21 @@ def kelly_real(req: KellyRealReq, user_id: Optional[str] = Depends(get_current_u
     entre las estrategias por sus Kellys del backtest."""
     _guard()
     try:
-        return plr.kelly_cuenta_real(
-            [r.model_dump() for r in req.rows], req.risk_mode, req.risk_value, req.capital_inicial,
+        rows = [r.model_dump() for r in req.rows]
+        parseo = None
+        if req.csv_text and req.csv_text.strip():
+            from app.services.cuenta_real import parse_csv
+            parseo = parse_csv(req.csv_text)
+            rows = [{"date": f["date"], "pnl": f["pnl"], "notional": f.get("notional", 0.0)} for f in parseo["filas"]]
+        out = plr.kelly_cuenta_real(
+            rows, req.risk_mode, req.risk_value, req.capital_inicial,
             req.kelly_mult, req.cap_pct, req.cap_strategy_pct, req.lookback_days,
-            [e.model_dump() for e in req.estrategias], req.capital_siguiente,
+            [e.model_dump() for e in req.estrategias], req.capital_siguiente, req.kelly_base,
         )
+        if parseo is not None:
+            out["csv"] = {"formato": parseo["formato"], "n_fills": parseo["n_fills"], "n_ops": len(parseo["filas"]), "aviso": parseo["aviso"],
+                          "ops": parseo["filas"][-400:]}
+        return out
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

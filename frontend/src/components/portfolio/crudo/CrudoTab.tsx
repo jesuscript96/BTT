@@ -1,18 +1,18 @@
 "use client";
 
-// Sub-pestaña «En crudo» de Portfolio: la SUMA de varias corridas guardadas,
-// cada una con la EJECUCION QUE SE FIJA AQUI (R por trade, comisiones,
-// slippage), reseteando lo que tenia la corrida; capital, gastos fijos, tope,
-// «una a la vez» y LOCATES son de la cuenta. Nada se vuelve a correr: el motor
-// (portfolio_lab_raw) deshace los costes y el tamaño de cada trade guardado y
-// reaplica los de aqui.
+// Sub-pestaña «En crudo» de Portfolio: la SUMA de varias corridas guardadas
+// NORMALIZADAS (1 $ por trade, sin costes), a las que se les pone aqui lo del
+// portfolio: el % por trade de cada una, comisiones, slippage, locates de la
+// cuenta, capital, gastos fijos y margen. Nada se vuelve a correr: el motor
+// (portfolio_lab_raw) deshace el tamaño de cada trade guardado y reaplica lo
+// de aqui.
 //
-// Desde el 16-sep es un flujo de cuatro pasos numerados (Jaume: «quiero orden
-// y un flujo que se intuya, nada de mil cosas donde mirar»):
-//   1. Ejecucion        -> Calcular
-//   2. Vision general   (resumen, exposicion, por estrategia, correlacion, calendario)
-//   3. Limites de perdida (historico, Monte Carlo bootstrap, banda de locates)
-//   4. Escalado y pesos (Kelly x HRP con tope: hoy y desde el inicio)
+// v3 (20-sep-2026, Jaume: «vamos a simplificarlo»), cinco pasos:
+//   1. Ejecucion        -> Calcular (estrategias + % por trade + cuenta)
+//   2. Vision general   (la curva del portfolio y sus tablas)
+//   3. Monte Carlo      (bootstrap: datos clave y tabla, nada mas)
+//   4. Escalado         (Kelly por cuenta con pesos fijos | Kelly por estrategia con total fijo)
+//   5. Cuenta real      (el CSV de la operativa real: Kelly del total y el reparto)
 // Cada paso es una caja plegable con su resumen; el 2-4 no se abren sin el 1.
 // Este fichero solo lleva el estado y el hilo; cada paso pinta lo suyo.
 //
@@ -21,7 +21,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
 import {
-  RAW_EXEC_DEFAULT,
   getPortfolioStrategyEquity,
   runPortfolioMc,
   runPortfolioRaw,
@@ -34,14 +33,15 @@ import type { CurveState } from "../StrategyShelf";
 import type { MonteCarloOut } from "@/lib/api_robustez";
 import { Nota, Paso, PasoBar, colorSerie, n, pct, usd } from "./hoja";
 import type { Serie } from "./CrudoCharts";
-import { CFG0, ESC0, KELLY_SCOPE_LABEL, LOC0, curvaPropia, locatesIn, locatesResumen, type Cfg, type EscCfg, type LocCfg, MODELO_LABEL } from "./modelo";
-import { PasoEjecucion } from "./PasoEjecucion";
+import { CFG0, ESC0, KELLY_SCOPE_LABEL, LOC0, curvaPropia, locatesIn, locatesResumen, pctDe, type Cfg, type EscCfg, type LocCfg, MODELO_LABEL } from "./modelo";
+import { PasoEjecucion, porSlDe } from "./PasoEjecucion";
 import { PasoVision } from "./PasoVision";
 import { PasoMonteCarlo } from "./PasoMonteCarlo";
 import { PasoEscalado } from "./PasoEscalado";
 import { PasoCuentaReal } from "./PasoCuentaReal";
 
-const BAND_SEEDS = 100;
+// v3: sin banda de semillas en el paso 1 (el paso 3 es solo el bootstrap).
+const BAND_SEEDS = 0;
 
 export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy[]; onMove?: (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => void }) {
   const pool = useMemo(() => strategies.filter((s) => s.run), [strategies]);
@@ -53,12 +53,20 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     for (const s of pool) next[s.id] = checkedRaw[s.id] ?? s.buckets.includes("portfolio");
     return next;
   }, [pool, checkedRaw]);
-  const [defaultExec, setDefaultExec] = useState<RawExec>({ ...RAW_EXEC_DEFAULT });
-  const [execRaw, setExecRaw] = useState<Record<string, RawExec>>({});
-  const execDe = (id: string): RawExec => execRaw[id] ?? defaultExec;
+  // v3: por fila solo el slippage; el % por trade y las comisiones van en cfg.
+  const [slipDefault, setSlipDefault] = useState<number>(0);
+  const [slipRaw, setSlipRaw] = useState<Record<string, number>>({});
+  const slipDe = (id: string): number => (id in slipRaw ? slipRaw[id] : slipDefault);
+  const execDe = (id: string): RawExec => ({
+    sizing: "auto", size_value: pctDe(cfg, id), size_unit: "pct",
+    fees: cfg.fees, fee_type: cfg.feeType, slippage_pct: slipDe(id),
+    locates: "none", locates_cost: 0, locates_min: 1, locates_max: 10, locates_seed: 1,
+  });
   const [vista, setVista] = useState<"exec" | "corrida">("exec");
   const [cfgRaw, setCfg] = useState<Cfg>(CFG0);
   const set = <K extends keyof Cfg>(k: K, v: Cfg[K]) => setCfg((c) => ({ ...c, [k]: v }));
+  // Necesario antes de execDe (usa cfg): el capital resuelto va abajo, aqui solo la config.
+  const cfg: Cfg = cfgRaw;
   const [loc, setLoc] = useState<LocCfg>(LOC0);
   const [abierta, setAbierta] = useState<string | null>(null);
   const [curves, setCurves] = useState<Record<string, CurveState>>({});
@@ -82,7 +90,6 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   // ── Paso 3: Monte Carlo ────────────────────────────────────────────────
   const [mcOut, setMcOut] = useState<MonteCarloOut | null>(null);
   const [mcSims, setMcSims] = useState<number | "">(5000);
-  const [mcMethod, setMcMethod] = useState<"bootstrap" | "permutacion">("bootstrap");
   const [mcRunning, setMcRunning] = useState(false);
   const [mcError, setMcError] = useState<string | null>(null);
 
@@ -107,33 +114,35 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   const selected = pool.filter((s) => checked[s.id]);
   const selectedIds = selected.map((s) => s.id);
   const capitalCorridas = selected.reduce((a, s) => a + (Number((s.run?.backtest_params as Record<string, unknown> | undefined)?.init_cash) || 0), 0);
-  const cfg: Cfg = { ...cfgRaw, capital: cfgRaw.capital > 0 ? cfgRaw.capital : capitalCorridas };
+  const capitalEfectivo = cfgRaw.capital > 0 ? cfgRaw.capital : capitalCorridas;
   const perStrategy: Record<string, RawExec> = {};
   for (const s of selected) perStrategy[s.id] = execDe(s.id);
+  const defaultExec: RawExec = { sizing: "auto", size_value: cfg.pctComun, size_unit: "pct", fees: cfg.fees, fee_type: cfg.feeType, slippage_pct: slipDefault, locates: "none", locates_cost: 0, locates_min: 1, locates_max: 10, locates_seed: 1 };
 
-  const cfgKey = JSON.stringify({ ids: selectedIds, cfg, perStrategy, loc });
+  const cfgKey = JSON.stringify({ ids: selectedIds, cfg, capitalEfectivo, perStrategy, loc });
   const stale = out != null && ranKey !== cfgKey;
   const problema: string | null =
     !selectedIds.length ? "Marca al menos una estrategia."
-    : cfg.capital <= 0 ? "Pon un capital mayor que cero."
-    : selected.some((s) => { const e = execDe(s.id); return e.sizing !== "as_saved" && e.size_value <= 0; }) ? "Alguna estrategia marcada tiene el tamaño por trade a cero."
+    : capitalEfectivo <= 0 ? "Pon un capital mayor que cero."
+    : selected.some((s) => pctDe(cfg, s.id) <= 0) ? "Alguna estrategia marcada tiene el % por trade a cero."
     : loc.mode === "fixed" && loc.cost <= 0 ? "Los locates fijos necesitan un precio por paquete."
     : loc.mode === "random" && loc.max <= loc.min ? "En los locates aleatorios el máximo tiene que ser mayor que el mínimo."
     : null;
 
+  // v3: sin tope de exposicion, ni «una a la vez», ni tope por accion (el
+  // motor los sigue admitiendo por API; aqui van apagados).
   const cuerpo = (): RawConfigIn => ({
     strategy_ids: selectedIds,
-    capital: cfg.capital,
+    capital: capitalEfectivo,
     per_strategy: perStrategy,
     default_exec: defaultExec,
-    max_exposure_usd: cfg.capUnit === "usd" ? cfg.cap : 0,
-    max_exposure_pct: cfg.capUnit === "pct" ? cfg.cap : 0,
-    one_per_ticker: !!cfg.onePerTicker,
-    // Tope por accion: «off» = 0 % en riesgo (el motor lo lee como sin tope).
-    max_ticker_pct: (cfg.tickerCapBasis === "risk" || cfg.tickerCapBasis === "notional") && cfg.tickerCap > 0 ? cfg.tickerCap : 0,
-    ticker_cap_basis: cfg.tickerCapBasis === "off" || !cfg.tickerCapBasis ? "risk" : cfg.tickerCapBasis,
+    max_exposure_usd: 0,
+    max_exposure_pct: 0,
+    one_per_ticker: false,
+    max_ticker_pct: 0,
+    ticker_cap_basis: "risk",
     margin: cfg.margin ? { enabled: true, broker: cfg.marginBroker || "sagetrader", capacity_pct: 100 } : null,
-    cap_mode: cfg.capMode === "trim" ? "trim" : "skip",
+    cap_mode: "skip",
     monthly_expenses: cfg.expenses,
     locates: locatesIn(loc, BAND_SEEDS),
     start_date: cfg.start || null,
@@ -183,7 +192,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       values: rets,
       init_cash: cap,
       simulations: Number(mcSims) || 5000,
-      method: mcMethod,
+      method: "bootstrap",
       mode: "compound",
       risk_pct: 1,
       ruin_pct: 50,
@@ -213,30 +222,20 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setMcEscRunning(false);
     }
   };
-  // Del paso 3: un calculo con otro rango de locates aleatorios (misma cuenta),
-  // sin puerta o con EV fijo. Sin banda de semillas: cada fila debe ser rapida.
-  const correrRango = (min: number, max: number, seed: number, evFijo: number | null) =>
-    runPortfolioRaw({
-      ...cuerpo(),
-      locates: {
-        mode: "random", cost: 0, min, max, seed, shared: loc.shared, band_seeds: 0,
-        gate: evFijo == null ? null : { mode: "ev_fixed", ev_fixed_pct: evFijo, ventana: 0, por: "trades", ev_defecto_pct: evFijo, min_trades: 10 },
-      },
-    });
-  // Del paso 3: poner «EV fijo = F» como puerta del paso 1 (entra si F > fade).
-  const usarFade = (f: number) => {
-    setLoc((l) => ({ ...l, gate: true, gateMode: "ev_fijo", evFijo: f }));
-    setAbiertos((a) => ({ ...a, 1: true }));
-  };
-
-  const escKeyNow = JSON.stringify({ ranKey, esc });
+  // Pesos fijos del modo «por cuenta»: los que haya puesto en el paso 4 y, si
+  // no hay para alguna marcada, su % del paso 1 (asi el reparto por defecto es
+  // el mismo que el del portfolio de base).
+  const pesosFijos: Record<string, number> = {};
+  for (const s of selected) pesosFijos[s.id] = (esc.fixed_weights && esc.fixed_weights[s.id] != null) ? Number(esc.fixed_weights[s.id]) : pctDe(cfg, s.id);
+  const escEnvio: EscCfg = { ...esc, fixed_weights: pesosFijos };
+  const escKeyNow = JSON.stringify({ ranKey, esc: escEnvio });
   const escStale = outEsc != null && escKey !== escKeyNow;
   const calcularEsc = async () => {
     if (!out || escRunning) return;
     setEscRunning(true);
     setEscError(null);
     try {
-      const res = await runPortfolioRaw({ ...cuerpo(), scaling: esc });
+      const res = await runPortfolioRaw({ ...cuerpo(), scaling: escEnvio });
       if (!res.scaling) throw new Error("El backend todavía no lleva el escalado del portfolio en crudo: hay que aplicarlo con el bot parado.");
       setOutEsc(res);
       setEscKey(escKeyNow);
@@ -289,19 +288,21 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   }
 
   // ── Resumenes de cabecera de cada paso ───────────────────────────────
-  const resumen1 = `${selectedIds.length} ${selectedIds.length === 1 ? "estrategia" : "estrategias"} · ${usd(cfg.capital)} · ${cfg.cap > 0 ? `tope ${n(cfg.cap, 0)} ${cfg.capUnit === "pct" ? "% del día" : "$"}` : "sin tope"}${cfg.onePerTicker ? " · una a la vez" : ""}${cfg.tickerCapBasis === "trade" ? " · por acción ≤ un trade" : (cfg.tickerCapBasis === "risk" || cfg.tickerCapBasis === "notional") && cfg.tickerCap > 0 ? ` · por acción ≤ ${n(cfg.tickerCap, 1)} % ${cfg.tickerCapBasis === "notional" ? "nocional" : "riesgo"}` : ""}${cfg.margin ? " · margen" : ""}${cfg.capMode === "trim" ? " · recortar" : ""} · ${locatesResumen(loc)}${cfg.expenses > 0 ? ` · ${usd(cfg.expenses)}/mes` : ""}`;
+  const resumen1 = `${selectedIds.length} ${selectedIds.length === 1 ? "estrategia" : "estrategias"} · ${usd(capitalEfectivo)} · ${cfg.pctMismo ? `${n(cfg.pctComun, 2)} % por trade` : "% por estrategia"}${cfg.fees > 0 ? ` · comisiones ${n(cfg.fees, cfg.feeType === "FLAT" ? 4 : 3)} ${cfg.feeType === "FLAT" ? "$/acc" : "%"}` : ""}${cfg.margin ? " · margen" : ""} · ${locatesResumen(loc)}${cfg.expenses > 0 ? ` · ${usd(cfg.expenses)}/mes` : ""}`;
   const resumen2 = out ? `retorno ${pct(out.metrics.total_return_pct)} · max DD ${pct(curvas?.sumaMaxDd)} · ${n(out.metrics.n_trades, 0)} trades · Sharpe ${n(out.metrics.sharpe)}${stale ? " · (desactualizado)" : ""}` : "";
-  const resumen3 = mcOut ? `DD a tragar (1 de 20) ${pct(mcOut.dd_tolerance?.p95)} · prob. de acabar perdiendo ${pct(mcOut.prob_losing_pct)}` : out?.locates_band ? `banda de ${n(out.locates_band.seeds, 0)} semillas lista · Monte Carlo sin simular` : "límites históricos listos · Monte Carlo sin simular";
+  const resumen3 = mcOut ? `DD a tragar (1 de 20) ${pct(mcOut.dd_tolerance?.p95)} · prob. de acabar perdiendo ${pct(mcOut.prob_losing_pct)}` : "Monte Carlo sin simular";
   const hoy = outEsc?.scaling?.today;
-  const modeloTxt = esc.model === "kelly" ? `${KELLY_SCOPE_LABEL[esc.kelly_scope ?? "per_strategy"]} × ${n(esc.kelly_mult, 2)}` : MODELO_LABEL[esc.model];
-  const resumen4 = hoy ? `hoy: ${pct(hoy.applied_pct, 2)} por trade sumando todas (${usd(hoy.applied_usd)}) · ${modeloTxt}${mcEsc ? ` · MC: DD a tragar ${pct(mcEsc.dd_tolerance?.p95)}` : ""}${escStale ? " · (desactualizado)" : ""}` : `${modeloTxt} · tope ${n(esc.cap_pct, 1)} %`;
+  const modeloTxt = esc.model === "kelly"
+    ? (esc.kelly_scope === "fixed_total" ? `${KELLY_SCOPE_LABEL.fixed_total} ${n(esc.total_pct ?? 10, 1)} %` : `${KELLY_SCOPE_LABEL[esc.kelly_scope ?? "account"]} × ${n(esc.kelly_mult, 2)} · tope ${n(esc.cap_pct, 1)} %`)
+    : MODELO_LABEL[esc.model];
+  const resumen4 = hoy ? `siguiente periodo: ${pct(hoy.applied_pct, 2)} por trade sumando todas · ${modeloTxt}${mcEsc ? ` · MC: DD a tragar ${pct(mcEsc.dd_tolerance?.p95)}` : ""}${escStale ? " · (desactualizado)" : ""}` : modeloTxt;
 
   const listo = !!out && !!curvas && !!exposicion;
   const pasos = [
     { num: 1, label: "Ejecución", hecho: listo && !stale, disponible: true },
     { num: 2, label: "Visión general", hecho: listo, disponible: listo },
-    { num: 3, label: "Límites de pérdida", hecho: !!mcOut, disponible: listo },
-    { num: 4, label: "Escalado y pesos", hecho: !!outEsc, disponible: listo && !backendViejo },
+    { num: 3, label: "Monte Carlo", hecho: !!mcOut, disponible: listo },
+    { num: 4, label: "Escalado", hecho: !!outEsc, disponible: listo && !backendViejo },
     { num: 5, label: "Cuenta real", hecho: false, disponible: true },
   ];
   const activo = !listo ? 1 : abiertos[4] && outEsc ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
@@ -311,9 +312,9 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       <PasoBar pasos={pasos} activo={activo} onGo={ir} />
 
       <Paso num={1} title="Ejecución" open={!!abiertos[1]} onToggle={() => toggle(1)} summary={resumen1} sinRelleno
-        help="Qué estrategias entran y con qué ejecución cada una (R por trade, comisiones, slippage), y lo que es de la cuenta: capital, gastos fijos, tope de exposición, «una a la vez», locates y periodo. Calcular reconstruye la suma desde los trades guardados; nada se vuelve a correr ni se modifica.">
+        help="Las estrategias marcadas entran normalizadas; aquí se les pone lo del portfolio: el % por trade de cada una (el mismo para todas o uno por estrategia), comisiones, slippage, locates, capital, gastos fijos, margen y periodo. Calcular reconstruye la suma desde los trades guardados; nada se vuelve a correr ni se modifica.">
         <div style={{ padding: "10px 10px 0" }}>
-          <PasoEjecucion m={{ pool, checked, setChecked, selected, selectedIds, defaultExec, setDefaultExec, execRaw, setExecRaw, execDe, vista, setVista, abierta, curves, desplegar, onMove, cfgRaw, cfg, set, setCfg, capitalCorridas, loc, setLoc, problema, stale, running, calcular, error }} />
+          <PasoEjecucion m={{ pool, checked, setChecked, selected, selectedIds, slipDefault, setSlipDefault, slipRaw, setSlipRaw, slipDe, vista, setVista, abierta, curves, desplegar, onMove, cfgRaw, cfg: { ...cfg, capital: capitalEfectivo }, set, setCfg, capitalCorridas, loc, setLoc, problema, stale, running, calcular, error }} />
         </div>
       </Paso>
 
@@ -328,20 +329,20 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
         {listo && out && curvas && exposicion && <PasoVision m={{ out, curvas, propias, exposicion, yMode, setYMode }} />}
       </Paso>
 
-      <Paso num={3} title="Límites de pérdida" open={!!abiertos[3]} onToggle={() => toggle(3)} summary={resumen3} disabled={!listo} disabledNote="primero calcula el paso 1"
-        help="Cuánto se puede llegar a perder con esto: lo que ya pasó en la serie real (peor día, VaR, rachas), lo que podría pasar remuestreando los días (Monte Carlo bootstrap: el drawdown que hay que estar dispuesto a tragar) y, con locates aleatorios, cuánto depende el resultado del precio de los locates (banda de semillas).">
-        {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcMethod, setMcMethod, mcRunning, mcError, simularMc, onUsarFade: usarFade, correrRango, evFijoActual: loc.evFijo ?? 3, seedActual: loc.seed }} />}
+      <Paso num={3} title="Monte Carlo" open={!!abiertos[3]} onToggle={() => toggle(3)} summary={resumen3} disabled={!listo} disabledNote="primero calcula el paso 1"
+        help="Lo que podría pasar remuestreando los días del portfolio con reemplazo (bootstrap): el drawdown que hay que estar dispuesto a tragar, la probabilidad de acabar perdiendo y la tabla de percentiles.">
+        {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc }} />}
       </Paso>
 
-      <Paso num={4} title="Escalado y pesos" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el escalado" : "primero calcula el paso 1"}
-        help="Cuánto arriesgar por trade en cada estrategia según Kelly (de cada una, o global sobre el capital total), con la fracción que quieras y un tope sobre la suma que manda sobre todo. Responde a dos preguntas: qué habría que poner HOY en cada estrategia, y qué habría pasado aplicándolo desde el principio con datos solo anteriores a cada rebalanceo. Aquí los R del paso 1 no cuentan: el tamaño lo pone Kelly.">
-        {listo && out && <PasoEscalado m={{ out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc, mcEsc, mcEscRunning, mcEscError, simularMcEsc, mcSims }} />}
+      <Paso num={4} title="Escalado" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el escalado" : "primero calcula el paso 1"}
+        help="El portfolio del paso 1 corrido con Kelly, de dos formas. «Kelly por cuenta · pesos fijos»: Kelly sobre el PnL del portfolio dice cuánto apostar en total el siguiente periodo (con un tope) y ese total se reparte con los pesos fijos que pongas. «Kelly por estrategia · total fijo»: fijas el total (p. ej. 10 %) y se reparte según la Kelly de cada estrategia en la ventana. En los dos casos: qué poner el siguiente periodo, y qué habría pasado aplicándolo desde el principio con datos solo anteriores a cada rebalanceo.">
+        {listo && out && <PasoEscalado m={{ out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc, mcEsc, mcEscRunning, mcEscError, simularMcEsc, mcSims, selected: selected.map((s) => ({ id: s.id, name: s.name, porSl: porSlDe(s), pctBase: pctDe(cfg, s.id) })) }} />}
       </Paso>
 
       <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Kelly sobre tu operativa real y el reparto entre estrategias"
         help="Pega el CSV de tu cuenta real (fecha y PnL neto por día o por trade) y el riesgo por trade que usabas: sale la Kelly de TU cuenta (fills, slippage y locates reales incluidos) → cuánto arriesgar en total el siguiente periodo, y ese total repartido entre las estrategias del paso 4 en proporción a sus Kellys del backtest. No hace falta saber de qué estrategia viene cada trade.">
         <div style={{ padding: "10px 10px 6px" }}>
-          <PasoCuentaReal m={{ out, outEsc, esc, capital: cfg.capital }} />
+          <PasoCuentaReal m={{ out, outEsc, esc, capital: capitalEfectivo }} />
         </div>
       </Paso>
 

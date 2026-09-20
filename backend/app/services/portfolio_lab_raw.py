@@ -452,7 +452,10 @@ SCALING_DEFAULT: dict[str, Any] = {
     "pct": 1.0,             # % del capital del dia en TOTAL (percent; respaldo de kelly sin muestra)
     "delta": 500.0,         # fixed_ratio: $ de beneficio por escalon
     "kelly_mult": 0.5,      # fraccion de Kelly, libre (1 = entera)
-    "kelly_scope": "per_strategy",  # per_strategy | global (ver _Escalado)
+    "kelly_scope": "per_strategy",  # per_strategy | global | account | fixed_total (ver _Escalado)
+    "fixed_weights": None,  # account: pesos fijos por estrategia (lista alineada con las corridas)
+    "total_pct": 10.0,      # fixed_total: el total por trade que se reparte por las Kellys propias
+    "kelly_base": "exacta", # exacta (log-crecimiento de la R diaria) | clasica (p - q/b por operacion)
     "cap_pct": 10.0,        # tope de la SUMA por trade, % del capital del dia (0 = sin)
     "cap_strategy_pct": 0.0,  # tope POR ESTRATEGIA por trade, % del capital del dia (0 = sin); va ANTES del de la suma
     "rebalance": "M",       # D | W | M
@@ -471,7 +474,12 @@ def _scaling_cfg(raw: Optional[dict]) -> Optional[dict]:
         if k in cfg:
             cfg[k] = v
     cfg["model"] = str(cfg["model"] or "kelly")
-    cfg["kelly_scope"] = "global" if str(cfg.get("kelly_scope") or "") == "global" else "per_strategy"
+    _sc = str(cfg.get("kelly_scope") or "")
+    cfg["kelly_scope"] = _sc if _sc in ("global", "account", "fixed_total") else "per_strategy"
+    cfg["total_pct"] = _f(cfg.get("total_pct"), 10.0)
+    cfg["kelly_base"] = "clasica" if str(cfg.get("kelly_base") or "") == "clasica" else "exacta"
+    fw = cfg.get("fixed_weights")
+    cfg["fixed_weights"] = [_f(x) for x in fw] if isinstance(fw, (list, tuple)) else None
     cfg["weighting"] = str(cfg["weighting"] or "equal")
     cfg["no_edge"] = "fallback" if str(cfg.get("no_edge") or "off") == "fallback" else "off"
     cfg["rebalance"] = str(cfg["rebalance"] or "M").upper()[:1]
@@ -479,6 +487,22 @@ def _scaling_cfg(raw: Optional[dict]) -> Optional[dict]:
         cfg[k] = _f(cfg[k])
     cfg["lookback_days"] = max(1, int(_f(cfg["lookback_days"], 90)))
     return cfg
+
+
+def kelly_clasica(rs) -> Optional[float]:
+    """La Kelly «de toda la vida» por operacion: f = p - q/b, con p = % de
+    operaciones ganadoras y b = ganancia media / perdida media (en la misma
+    unidad que las R). None sin ganadoras o sin perdedoras."""
+    xs = [float(x) for x in rs if x is not None and np.isfinite(x)]
+    g = [x for x in xs if x > 0]
+    p = [x for x in xs if x < 0]
+    if not g or not p or len(xs) < pls.MIN_OBS:
+        return None
+    pw = len(g) / len(xs)
+    b = (sum(g) / len(g)) / (abs(sum(p)) / len(p))
+    if b <= 0:
+        return None
+    return pw - (1.0 - pw) / b
 
 
 def _kelly_exacta(port_r: np.ndarray) -> Optional[float]:
@@ -509,7 +533,7 @@ def _kelly_exacta(port_r: np.ndarray) -> Optional[float]:
 
 def kelly_cuenta_real(rows: list[dict], risk_mode: str, risk_value: float, capital_inicial: float,
                       kelly_mult: float, cap_pct: float, cap_strategy_pct: float, lookback_days: int,
-                      estrategias: list[dict], capital_siguiente: float) -> dict:
+                      estrategias: list[dict], capital_siguiente: float, kelly_base: str = "exacta") -> dict:
     """KELLY SOBRE LA CUENTA REAL (19-sep, Jaume): «volcar mi operativa real,
     calcular Kelly ahi y que me diga cuanto apostar el siguiente periodo, y
     repartirlo entre las estrategias segun las Kellys del backtest».
@@ -527,35 +551,69 @@ def kelly_cuenta_real(rows: list[dict], risk_mode: str, risk_value: float, capit
     despues (sin redistribuir).
     """
     por_dia: dict[str, float] = {}
+    r_pos_dia: dict[str, float] = {}          # R «por posicion»: pnl / valor de la posicion, sumada por dia
+    ops: list[tuple[str, float, float]] = []  # (dia, pnl, notional) de cada operacion
     for r in rows:
         d = str(r.get("date") or "")[:10]
         if len(d) != 10:
             continue
-        por_dia[d] = por_dia.get(d, 0.0) + _f(r.get("pnl"))
+        pnl = _f(r.get("pnl"))
+        notional = _f(r.get("notional"))
+        por_dia[d] = por_dia.get(d, 0.0) + pnl
+        if notional > 0:
+            r_pos_dia[d] = r_pos_dia.get(d, 0.0) + pnl / notional
+        ops.append((d, pnl, notional))
     dias = sorted(por_dia)
     if not dias:
         raise ValueError("No hay filas con fecha y PnL")
-    modo = "pct" if str(risk_mode) == "pct" else "usd"
-    if risk_value <= 0:
+    modo = str(risk_mode) if str(risk_mode) in ("usd", "pct", "notional") else "usd"
+    if modo == "notional" and not any(n > 0 for _, _, n in ops):
+        raise ValueError("Para la R por posicion hacen falta operaciones con valor de posicion (el CSV de DAS lo trae)")
+    if modo != "notional" and risk_value <= 0:
         raise ValueError("El riesgo por trade tiene que ser mayor que cero")
     equity = float(capital_inicial)
     r_por_dia: list[tuple[str, float, float]] = []
+    _riesgo_de_dia: dict[str, float] = {}
     for d in dias:
         pnl = por_dia[d]
-        if modo == "usd":
-            riesgo = float(risk_value)
+        if modo != "notional":
+            _riesgo_de_dia[d] = float(risk_value) if modo == "usd" else equity * float(risk_value) / 100.0
+        if modo == "notional":
+            # La R de cada operacion es su retorno sobre la posicion; la del dia,
+            # la suma (misma unidad que el crudo cuando la estrategia va por capital).
+            r_por_dia.append((d, r_pos_dia.get(d, 0.0), 0.0))
         else:
-            riesgo = equity * float(risk_value) / 100.0
-        r_por_dia.append((d, pnl / riesgo if riesgo > 0 else 0.0, riesgo))
+            riesgo = float(risk_value) if modo == "usd" else equity * float(risk_value) / 100.0
+            r_por_dia.append((d, pnl / riesgo if riesgo > 0 else 0.0, riesgo))
         equity += pnl
+    # Kelly CLASICA por operacion (p - q/b), como referencia: p = % de
+    # operaciones ganadoras, b = ganancia media / perdida media, en la misma
+    # unidad que la R (por posicion si hay notional; si no, en $).
+    _rs = [(pnl / n if (modo == "notional" and n > 0) else pnl) for _, pnl, n in ops]
+    _g = [x for x in _rs if x > 0]
+    _p = [x for x in _rs if x < 0]
+    clasica = None
+    if _g and _p:
+        p_win = len(_g) / len(_rs)
+        b = (sum(_g) / len(_g)) / (abs(sum(_p)) / len(_p))
+        clasica = p_win - (1.0 - p_win) / b if b > 0 else None
+    ops_stats = {"n": len(ops), "ganadoras": len(_g), "perdedoras": len(_p), "win_rate": ple._r6(100.0 * len(_g) / len(_rs)) if _rs else 0.0,
+                 "ganancia_media": ple._r6(sum(_g) / len(_g)) if _g else 0.0, "perdida_media": ple._r6(abs(sum(_p)) / len(_p)) if _p else 0.0,
+                 "kelly_clasica_pct": ple._r6(clasica * 100.0) if clasica is not None else None}
     if lookback_days and lookback_days > 0:
         cut = (ple._parse_day(dias[-1]) - timedelta(days=int(lookback_days))).isoformat()
         ventana = [x for x in r_por_dia if x[0] >= cut]
     else:
         ventana = r_por_dia
     serie = np.asarray([x[1] for x in ventana], dtype=float)
-    kg = _kelly_exacta(serie) if len(serie) else None
+    kg_exacta = _kelly_exacta(serie) if len(serie) else None
     kq = pls._kelly_fraction(serie) if len(serie) >= pls.MIN_OBS else None
+    # Kelly clasica sobre las operaciones de la ventana (p - q/b).
+    _desde = ventana[0][0] if ventana else None
+    _rs_ops = [(pnl / n if (modo == "notional" and n > 0) else (pnl / _riesgo_de_dia.get(d, 1.0)))
+               for d, pnl, n in ops if (_desde is None or d >= _desde)]
+    kg_clasica = kelly_clasica(_rs_ops)
+    kg = kg_clasica if str(kelly_base) == "clasica" else kg_exacta
     if kg is None:
         total = None
         nota = f"sin muestra: hacen falta {pls.MIN_OBS} dias con operaciones en la ventana (hay {int(np.count_nonzero(serie))})"
@@ -585,10 +643,14 @@ def kelly_cuenta_real(rows: list[dict], risk_mode: str, risk_value: float, capit
         "dias": len(r_por_dia), "dias_ventana": len(ventana), "dias_con_operaciones": int(np.count_nonzero(serie)),
         "desde": ventana[0][0] if ventana else None, "hasta": ventana[-1][0] if ventana else None,
         "equity_final": ple._r6(equity), "risk_mode": modo, "risk_value": float(risk_value),
+        "pnl_total": ple._r6(sum(por_dia.values())), "ops": ops_stats,
         "r_media_dia": ple._r6(float(serie.mean())) if len(serie) else 0.0,
         "r_peor_dia": ple._r6(peor), "r_mejor_dia": ple._r6(float(serie.max())) if len(serie) else 0.0,
         "r_total_ventana": ple._r6(float(serie.sum())) if len(serie) else 0.0,
         "kelly_raw_pct": ple._r6(kg * 100.0) if kg is not None else None,
+        "kelly_base": "clasica" if str(kelly_base) == "clasica" else "exacta",
+        "kelly_exacta_pct": ple._r6(kg_exacta * 100.0) if kg_exacta is not None else None,
+        "kelly_clasica_pct": ple._r6(kg_clasica * 100.0) if kg_clasica is not None else None,
         "kelly_quad_pct": ple._r6(kq * 100.0) if kq is not None else None,
         "kelly_mult": float(kelly_mult),
         "total_pedido_pct": ple._r6((total or 0.0) * 100.0) if total is not None else None,
@@ -736,7 +798,58 @@ class _Escalado:
                 else:
                     k_raw[i] = _kelly_exacta(serie)
                     k_quad[i] = pls._kelly_fraction(serie)
-            if scope == "global":
+            if scope == "account":
+                # KELLY POR CUENTA, PESOS FIJOS (Jaume, 20-sep): la R diaria del
+                # portfolio con los pesos fijos del usuario; Kelly de esa serie
+                # x fraccion = el TOTAL por trade; cada estrategia = total x peso.
+                fw = list(cfg.get("fixed_weights") or [])
+                w_all = np.array([(fw[i] if i < len(fw) else 0.0) for i in range(self.n)], dtype=float)
+                w_all = np.where(w_all > 0, w_all, 0.0)
+                if w_all.sum() <= 0:
+                    w_all = np.ones(self.n)
+                w_all = w_all / w_all.sum()
+                shares = np.array([w_all[i] for i in alive], dtype=float)
+                port = np.asarray(win @ w_all if win.size else np.zeros(0), dtype=float)
+                if cfg.get("kelly_base") == "clasica":
+                    # p - q/b sobre las OPERACIONES de la ventana, cada una en
+                    # R x el peso de su estrategia (lo que aporta a la cuenta).
+                    rs_ops = [r * w_all[i] for i in range(self.n)
+                              for (td, r) in self.trade_r[i] if cut <= td <= hasta and (inclusivo or td < hasta)]
+                    kg = kelly_clasica(rs_ops)
+                else:
+                    kg = _kelly_exacta(port)
+                self.kelly_global = kg
+                self.kelly_global_quad = pls._kelly_fraction(port) if len(port) >= pls.MIN_OBS else None
+                if kg is None:
+                    total = pct_resp
+                    fallback = True
+                    notas.append("sin muestra en la ventana: respaldo al % fijo")
+                elif kg <= 0:
+                    total = pct_resp if cfg.get("no_edge") == "fallback" else 0.0
+                    notas.append("sin edge en la ventana: Kelly manda no apostar")
+                else:
+                    total = kg * mult
+                for j, i in enumerate(alive):
+                    pedido[i] = total * shares[j]
+            elif scope == "fixed_total":
+                # KELLY POR ESTRATEGIA, TOTAL FIJO (Jaume, 20-sep): el total lo
+                # pone el usuario y se reparte por las Kellys propias de la
+                # ventana (sin muestra -> el respaldo cuenta como su Kelly).
+                total = float(cfg.get("total_pct") or 0.0) / 100.0
+                base = np.array([(k_raw[i] if k_raw[i] is not None else pct_resp) for i in alive], dtype=float)
+                if cfg.get("no_edge") == "fallback":
+                    base = np.where(base > 0, base, pct_resp)
+                base = np.where(base > 0, base, 0.0)
+                if base.sum() <= 0:
+                    shares = np.zeros(n_alive)
+                    notas.append("sin edge en la ventana: Kelly manda no apostar")
+                else:
+                    shares = base / base.sum()
+                    if any(k_raw[i] is None for i in alive):
+                        fallback = True
+                for j, i in enumerate(alive):
+                    pedido[i] = total * shares[j]
+            elif scope == "global":
                 # Proporciones por Kelly propia (sin muestra -> respaldo, sin edge -> 0).
                 base = np.array([(k_raw[i] if k_raw[i] is not None else pct_resp) for i in alive], dtype=float)
                 if base.sum() <= 0:
@@ -815,7 +928,7 @@ class _Escalado:
                 # reparto (suma 1) para el grafico de barras apiladas
                 "weights": [ple._r6(float(v / tot)) if tot > 0 else 0.0 for v in e["aplicado"]],
                 "weights_fallback": bool(e["fallback"]),
-                "kelly_raw_pct": ple._r6(self.kelly_global * 100.0) if self.cfg["model"] == "kelly" and (self.cfg.get("kelly_scope") or "per_strategy") == "global" and self.kelly_global is not None else None,
+                "kelly_raw_pct": ple._r6(self.kelly_global * 100.0) if self.cfg["model"] == "kelly" and (self.cfg.get("kelly_scope") or "per_strategy") in ("global", "account") and self.kelly_global is not None else None,
                 "kelly_por_estrategia_pct": [ple._r6(k * 100.0) if k is not None else None for k in e["k_raw"]],
                 "risk_pct": [ple._r6(float(v) * 100.0) for v in e["aplicado"]],
                 "x_pct": ple._r6(suma_ped * 100.0) if suma_ped is not None else None,
@@ -883,8 +996,10 @@ class _Escalado:
             "window": {"from": e["cut"], "to": hasta},
             "model": m,
             "kelly_scope": scope if m == "kelly" else None,
-            "kelly_raw_pct": ple._r6(self.kelly_global * 100.0) if (m == "kelly" and scope == "global" and self.kelly_global is not None) else None,
-            "kelly_quad_pct": ple._r6(self.kelly_global_quad * 100.0) if (m == "kelly" and scope == "global" and self.kelly_global_quad is not None) else None,
+            "kelly_raw_pct": ple._r6(self.kelly_global * 100.0) if (m == "kelly" and scope in ("global", "account") and self.kelly_global is not None) else None,
+            "kelly_quad_pct": ple._r6(self.kelly_global_quad * 100.0) if (m == "kelly" and scope in ("global", "account") and self.kelly_global_quad is not None) else None,
+            "total_pct": float(self.cfg.get("total_pct") or 0.0) if scope == "fixed_total" else None,
+            "fixed_weights": list(self.cfg.get("fixed_weights") or []) if scope == "account" else None,
             "kelly_mult": mult,
             "x_pct": ple._r6(suma_ped),
             "cap_pct": cap,
@@ -1212,7 +1327,12 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
 
     # ── 1c. Locates del portfolio, puerta por EV y escalado ──────────────
     loc_cfg = _locates_cfg(cfg.get("locates"))
-    esc_cfg = _scaling_cfg(cfg.get("scaling"))
+    _sc_raw = cfg.get("scaling")
+    if isinstance(_sc_raw, dict) and isinstance(_sc_raw.get("fixed_weights"), dict):
+        # Pesos por id de estrategia -> lista alineada con el orden de las corridas.
+        _fwd = _sc_raw["fixed_weights"]
+        _sc_raw = dict(_sc_raw, fixed_weights=[_f(_fwd.get(str(r.get("strategy_id")), 0.0)) for r in runs])
+    esc_cfg = _scaling_cfg(_sc_raw)
     # Con bloque de locates y alquiler compartido se hace el barrido aunque el
     # modo sea "none" (precio 0): asi se cuentan los paquetes y sale el precio
     # de equilibrio («si pagaras X por paquete...») sin cobrar nada.

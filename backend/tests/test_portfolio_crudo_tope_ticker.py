@@ -293,3 +293,61 @@ def test_la_ruina_para_la_cuenta_tambien_con_topes():
         assert out["ruined"] is True
         assert min(out["equity"]) >= 0.0
         assert out["per_strategy"][0]["totals"]["n_trades"] == 1
+
+
+# ── Los dos modos de Kelly de Jaume (20-sep) ────────────────────────────
+
+def _tres_runs_con_historia(dias=60):
+    import copy
+    base = [(_run("s1", "AAA", "04:10", "04:30", 1000, entry=1.0, exitp=0.92), 0), (_run("s2", "BBB", "04:15", "04:40", 1000, entry=1.0, exitp=0.95), 0),
+            (_run("s3", "CCC", "04:20", "04:25", 1000, entry=1.0, exitp=0.97), 0)]
+    runs = []
+    for r, _ in base:
+        r["backtest_params"]["size_by_sl"] = False
+        t0 = r["trades"][0]; r["trades"] = []
+        for k in range(dias):
+            t = copy.deepcopy(t0)
+            d = f"2026-{1 + k // 28:02d}-{1 + k % 28:02d}"
+            t["date"] = d; t["entry_time"] = f"{d} {t0['entry_time'][11:]}"; t["exit_time"] = f"{d} {t0['exit_time'][11:]}"
+            # un poco de dispersion para que Kelly no sea infinita
+            t["pnl"] = t["pnl"] * (1.0 if k % 5 else -0.5); t["pnl_with_locates"] = t["pnl"]
+            r["trades"].append(t)
+        runs.append(r)
+    return runs
+
+
+def test_modo_cuenta_pesos_fijos():
+    """Kelly por CUENTA: la R diaria del portfolio con los pesos 50/25/25,
+    Kelly de esa serie x fraccion, topada al 6 % -> total 6 %; cada estrategia
+    = total x su peso: 3 / 1,5 / 1,5."""
+    runs = _tres_runs_con_historia()
+    cfg = {"capital": 10000.0, "cap_mode": "skip", "default_exec": {"sizing": "auto", "size_value": 1.0, "size_unit": "pct"},
+           "scaling": {"model": "kelly", "kelly_scope": "account", "kelly_mult": 1.0, "cap_pct": 6.0, "cap_strategy_pct": 0.0,
+                       "fixed_weights": {"s1": 50, "s2": 25, "s3": 25}, "rebalance": "M", "lookback_days": 30, "pct": 1.0}}
+    out = plr.simulate(runs, cfg)
+    hoy = out["scaling"]["today"]
+    assert hoy["kelly_scope"] == "account" and hoy["kelly_raw_pct"] is not None and hoy["kelly_raw_pct"] > 6
+    assert hoy["applied_pct"] == pytest.approx(6.0)
+    assert [round(p["risk_pct"], 4) for p in hoy["per_strategy"]] == [3.0, 1.5, 1.5]
+    assert hoy["fixed_weights"] == [50.0, 25.0, 25.0]
+
+
+def test_modo_total_fijo_reparte_por_kellys():
+    """Kelly por ESTRATEGIA con total fijo del 10 %: la suma aplicada es 10 y
+    el reparto sigue las Kellys propias (s1 gana mas por trade: mayor Kelly)."""
+    runs = _tres_runs_con_historia()
+    cfg = {"capital": 10000.0, "cap_mode": "skip", "default_exec": {"sizing": "auto", "size_value": 1.0, "size_unit": "pct"},
+           "scaling": {"model": "kelly", "kelly_scope": "fixed_total", "total_pct": 10.0, "cap_pct": 0.0, "cap_strategy_pct": 0.0,
+                       "rebalance": "M", "lookback_days": 30, "pct": 1.0}}
+    out = plr.simulate(runs, cfg)
+    hoy = out["scaling"]["today"]
+    assert hoy["kelly_scope"] == "fixed_total" and hoy["total_pct"] == 10.0
+    assert hoy["applied_pct"] == pytest.approx(10.0)
+    ks = [p["kelly_pct"] for p in hoy["per_strategy"]]
+    rs = [p["risk_pct"] for p in hoy["per_strategy"]]
+    assert all(k is not None and k > 0 for k in ks)
+    for k, r in zip(ks, rs):
+        assert r == pytest.approx(10.0 * k / sum(ks), rel=1e-6)
+    # Mismo periodo -> mismos pesos aunque la historia empiece antes.
+    out2 = plr.simulate(runs, dict(cfg, start_date="2026-02-01"))
+    assert [round(p["risk_pct"], 6) for p in out2["scaling"]["today"]["per_strategy"]] == [round(r, 6) for r in rs]

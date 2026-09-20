@@ -1,18 +1,22 @@
 "use client";
 
-// Paso 1 de «En crudo»: que estrategias entran, con que ejecucion cada una
-// (R por trade, comisiones, slippage) y lo que es de la CUENTA (capital,
-// gastos fijos, tope, una a la vez, locates, periodo). Termina en Calcular.
+// Paso 1 de «En crudo» (v3, 20-sep-2026, Jaume: «vamos a simplificarlo»):
+// la lista de estrategias tal cual —entran NORMALIZADAS al motor, y por fila
+// solo se toca el slippage— y debajo lo que es del portfolio: el % por trade
+// de cada una (el mismo para todas o uno por estrategia), los locates (una
+// vez por accion-dia para toda la cuenta, o cada una lo suyo; fijos o
+// aleatorios), el capital, los gastos fijos, las comisiones para todas y el
+// margen del broker. Termina en Calcular.
 
 import React, { Fragment } from "react";
 import { ChevronRight } from "lucide-react";
 import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
-import type { PortfolioStrategy, RawExec } from "@/lib/api_portfolio_lab";
+import type { PortfolioStrategy } from "@/lib/api_portfolio_lab";
 import { StrategyDetail } from "../StrategyDetail";
 import { MoveBtn, type CurveState } from "../StrategyShelf";
 import { Btn, Num, Row, Sec, Toggle, colorSerie, control, n, pct, tdNum, tdTxt, thL, thR, usd } from "./hoja";
-import { GATE_METRIC_LABEL, condiciones, execDeCorrida, type Cfg, type LocCfg } from "./modelo";
+import { GATE_METRIC_LABEL, condiciones, pctDe, type Cfg, type LocCfg } from "./modelo";
 
 export interface EjecucionModel {
   pool: PortfolioStrategy[];
@@ -20,11 +24,12 @@ export interface EjecucionModel {
   setChecked: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   selected: PortfolioStrategy[];
   selectedIds: string[];
-  defaultExec: RawExec;
-  setDefaultExec: React.Dispatch<React.SetStateAction<RawExec>>;
-  execRaw: Record<string, RawExec>;
-  setExecRaw: React.Dispatch<React.SetStateAction<Record<string, RawExec>>>;
-  execDe: (id: string) => RawExec;
+  /** Slippage (% del precio, cada lado) por estrategia; sin valor propio, el por defecto. */
+  slipDefault: number;
+  setSlipDefault: (v: number) => void;
+  slipRaw: Record<string, number>;
+  setSlipRaw: React.Dispatch<React.SetStateAction<Record<string, number>>>;
+  slipDe: (id: string) => number;
   vista: "exec" | "corrida";
   setVista: (v: "exec" | "corrida") => void;
   abierta: string | null;
@@ -48,74 +53,30 @@ export interface EjecucionModel {
 const sel: React.CSSProperties = { ...control, height: 24, fontSize: 11, padding: "2px 4px", fontFamily: font.sans, cursor: "pointer" };
 const numChico: React.CSSProperties = { height: 24, fontSize: 11, padding: "2px 5px", textAlign: "right" };
 
-/** Controles de la ejecucion de UNA fila (o de la fila «por defecto»): el R
- *  por trade (fijo o %), comisiones y slippage. Si va por SL o por capital lo
- *  decide la ESTRATEGIA (su «Tamaño por SL»), como en el backtester: aqui se
- *  enseña como etiqueta, no se elige. Los locates son de la cuenta (abajo). */
-function ExecCells({ e, onChange, porSl }: { e: RawExec; onChange: (next: RawExec) => void; porSl: boolean | null }) {
-  const set = <K extends keyof RawExec>(k: K, v: RawExec[K]) => onChange({ ...e, [k]: v });
-  const fijo = e.sizing === "as_saved";
-  return (
-    <>
-      <td style={{ ...tdTxt, padding: "2px 6px" }}>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <div style={{ width: 70 }}><Num value={e.size_value} onChange={(v) => set("size_value", Number(v) || 0)} min={0} step={e.size_unit === "pct" ? 0.5 : 100} disabled={fijo} style={numChico} /></div>
-          <select style={{ ...sel, width: 52 }} value={e.size_unit} disabled={fijo} onChange={(ev) => set("size_unit", ev.target.value as RawExec["size_unit"])}>
-            <option value="pct">%</option>
-            <option value="usd">$</option>
-          </select>
-          {porSl != null && (
-            <span
-              title={porSl ? "La estrategia dimensiona por stop: 1R es lo que se pierde si salta el stop" : "La estrategia dimensiona por capital: 1R es el dinero que se mete en el trade"}
-              style={{ fontSize: 9.5, fontFamily: font.sans, color: color.textMuted, whiteSpace: "nowrap", cursor: "help" }}
-            >
-              {porSl ? "por SL" : "por capital"}
-            </span>
-          )}
-        </div>
-      </td>
-      <td style={{ ...tdTxt, padding: "2px 6px" }}>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          <div style={{ width: 70 }}><Num value={e.fees} onChange={(v) => set("fees", Number(v) || 0)} min={0} step={e.fee_type === "PERCENT" ? 0.001 : 0.0005} disabled={fijo} style={numChico} /></div>
-          <select style={{ ...sel, width: 64 }} value={e.fee_type} disabled={fijo} onChange={(ev) => set("fee_type", ev.target.value as RawExec["fee_type"])}>
-            <option value="FLAT">$/acc</option>
-            <option value="PERCENT">%</option>
-          </select>
-        </div>
-      </td>
-      <td style={{ ...tdTxt, padding: "2px 6px" }}>
-        <div style={{ width: 64 }}><Num value={e.slippage_pct} onChange={(v) => set("slippage_pct", Number(v) || 0)} min={0} step={0.05} disabled={fijo} style={numChico} /></div>
-      </td>
-    </>
-  );
+/** Si la estrategia dimensiona por stop (riesgo) o por capital (posicion): lo
+ *  decide su definicion (o los parametros de su corrida). */
+export function porSlDe(s: PortfolioStrategy): boolean {
+  const params = (s.run?.backtest_params || {}) as Record<string, unknown>;
+  const rm = (s.definition as Record<string, unknown> | undefined)?.risk_management as Record<string, unknown> | undefined;
+  return !!(rm?.size_by_sl ?? params.size_by_sl);
 }
 
 export function PasoEjecucion({ m }: { m: EjecucionModel }) {
-  const { pool, checked, setChecked, selected, selectedIds, defaultExec, setDefaultExec, execRaw, setExecRaw, execDe, vista, setVista, abierta, curves, desplegar, onMove, cfgRaw, cfg, set, setCfg, capitalCorridas, loc, setLoc, problema, stale, running, calcular, error } = m;
+  const { pool, checked, setChecked, selected, selectedIds, slipDefault, setSlipDefault, slipRaw, setSlipRaw, slipDe, vista, setVista, abierta, curves, desplegar, onMove, cfgRaw, cfg, set, setCfg, capitalCorridas, loc, setLoc, problema, stale, running, calcular, error } = m;
   const setL = <K extends keyof LocCfg>(k: K, v: LocCfg[K]) => setLoc((l) => ({ ...l, [k]: v }));
+  const setPctPor = (id: string, v: number) => setCfg((c) => ({ ...c, pctPor: { ...c.pctPor, [id]: v } }));
 
   return (
     <>
       <Sec
-        title="Estrategias — ejecución de cada una"
+        title="Estrategias"
         help={
           <>
-            Lo del panel izquierdo del Backtester, pero fijado aquí y por estrategia: lo que tenía cada corrida se
-            <strong> resetea</strong> para este cálculo (nada se guarda ni se toca en la estrategia).
-            <br /><br />
-            <strong>R por trade</strong> — lo mismo que «Riesgo por trade» del panel del Backtester: fijo en $ o en %
-            del capital del portfolio con el que empieza cada día. Si ese R es lo que se pierde al stop o el dinero
-            que se mete lo decide <strong>la estrategia</strong> (su «Tamaño por SL»), como siempre; aquí se enseña
-            como etiqueta al lado del R.
-            <br /><br />
-            <strong>Comisiones</strong> en $ por acción o % del valor (los dos lados). <strong>Slippage</strong> en %
-            del precio en cada lado. Los <strong>locates</strong> ya no van por fila: son de la cuenta, en el bloque
-            Portfolio de abajo.
-            <br /><br />
-            La fila <strong>por defecto</strong> es la ejecución de todas las que no se hayan tocado; «→ todas» la copia
-            a todas las marcadas. «= corrida» pone en una fila lo que tenía su corrida. Con «cómo se corrió» ves las
-            condiciones originales de cada una, y pulsando el nombre (o la flecha) se despliegan debajo los datos
-            de la estrategia.
+            Las estrategias entran <strong>normalizadas</strong> (sus corridas guardadas a 1 $ por trade, sin costes):
+            así se mide la señal pura de cada una y todo lo demás se pone aquí, en el bloque Portfolio. Por fila solo
+            se toca el <strong>slippage</strong> (% del precio en cada lado); «= corrida» pone el de su corrida y «↺»
+            vuelve al por defecto. Con «cómo se corrió» ves las condiciones originales, y pulsando el nombre (o la
+            flecha) se despliegan debajo los datos de la estrategia.
           </>
         }
         sinRelleno
@@ -140,8 +101,7 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                   <th style={{ ...thL, width: 18 }} />
                   <th style={{ ...thL, width: 44 }} />
                   <th style={thL}>Estrategia</th>
-                  <th style={thL}>R por trade</th>
-                  <th style={thL}>Comisiones</th>
+                  <th style={thL}>Dimensiona</th>
                   <th style={thL}>Slippage %</th>
                   <th style={{ ...thL, width: 90 }} />
                 </tr>
@@ -174,9 +134,12 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                   <td style={tdTxt} />
                   <td style={tdTxt} />
                   <td style={{ ...tdTxt, color: color.copperText, fontWeight: 600 }}>Por defecto</td>
-                  <ExecCells e={defaultExec} onChange={setDefaultExec} porSl={null} />
+                  <td style={tdTxt} />
                   <td style={{ ...tdTxt, padding: "2px 6px" }}>
-                    <Btn onClick={() => setExecRaw((x) => { const nx = { ...x }; for (const s of selected) nx[s.id] = { ...defaultExec }; return nx; })} title="Copia la fila por defecto a todas las estrategias marcadas">→ todas</Btn>
+                    <div style={{ width: 64 }}><Num value={slipDefault} onChange={(v) => setSlipDefault(Number(v) || 0)} min={0} step={0.05} style={numChico} /></div>
+                  </td>
+                  <td style={{ ...tdTxt, padding: "2px 6px" }}>
+                    <Btn onClick={() => setSlipRaw({})} title="Quitar los slippages propios: todas con el por defecto">→ todas</Btn>
                   </td>
                 </tr>
               )}
@@ -188,7 +151,7 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                 const c = condiciones(params);
                 const ret = s.run?.total_return_pct ?? null;
                 const open = abierta === s.id;
-                const nCols = vista === "exec" ? 9 : 16;
+                const nCols = vista === "exec" ? 8 : 16;
                 const cabecera = (
                   <>
                     <td style={{ ...tdTxt, padding: "0 4px 0 10px" }}>
@@ -221,17 +184,22 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                   </tr>
                 );
                 if (vista === "exec") {
-                  const e = execDe(s.id);
-                  const propio = !!execRaw[s.id];
+                  const porSl = porSlDe(s);
+                  const propio = s.id in slipRaw;
                   return (
                     <Fragment key={s.id}>
                       <tr style={{ opacity: on ? 1 : 0.5 }}>
                         {cabecera}
-                        <ExecCells e={e} onChange={(next) => setExecRaw((x) => ({ ...x, [s.id]: next }))} porSl={!!(((s.definition as Record<string, unknown> | undefined)?.risk_management as Record<string, unknown> | undefined)?.size_by_sl ?? params.size_by_sl)} />
+                        <td style={{ ...tdTxt, fontSize: 10, color: color.textMuted }} title={porSl ? "Dimensiona por stop: su % es lo que se pierde si salta el stop (riesgo)" : "Dimensiona por capital: su % es el dinero que se mete en el trade (posición)"}>
+                          {porSl ? "por SL (riesgo)" : "por capital (posición)"}
+                        </td>
+                        <td style={{ ...tdTxt, padding: "2px 6px" }}>
+                          <div style={{ width: 64 }}><Num value={slipDe(s.id)} onChange={(v) => setSlipRaw((x) => ({ ...x, [s.id]: Number(v) || 0 }))} min={0} step={0.05} style={numChico} /></div>
+                        </td>
                         <td style={{ ...tdTxt, padding: "2px 6px" }}>
                           <div style={{ display: "flex", gap: 4 }}>
-                            <Btn onClick={() => setExecRaw((x) => ({ ...x, [s.id]: execDeCorrida(params) }))} title="Poner en esta fila la ejecución con la que se guardó su corrida (R, comisiones y slippage)">= corrida</Btn>
-                            {propio && <Btn onClick={() => setExecRaw((x) => { const nx = { ...x }; delete nx[s.id]; return nx; })} title="Volver a la fila por defecto">↺</Btn>}
+                            <Btn onClick={() => setSlipRaw((x) => ({ ...x, [s.id]: (Number(params.slippage) || 0) * 100 }))} title="Poner en esta fila el slippage con el que se guardó su corrida">= corrida</Btn>
+                            {propio && <Btn onClick={() => setSlipRaw((x) => { const nx = { ...x }; delete nx[s.id]; return nx; })} title="Volver al por defecto">↺</Btn>}
                           </div>
                         </td>
                       </tr>
@@ -268,34 +236,64 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
         title="Portfolio — la cuenta"
         help={
           <>
-            <strong>Capital</strong>: el del portfolio; es la base del % por trade (compound: cada día se usa el capital
-            con el que empieza), del retorno y del drawdown. <strong>Gastos fijos</strong>: de esta cuenta, el primer día
-            operado de cada mes; los de las corridas no cuentan. <strong>Tope de exposición</strong> (opcional): lo máximo
-            que puede haber en posiciones abiertas a la vez sumando todas las estrategias, en % del capital <em>del
-            día</em> o en $; un trade que no cabe no se entra. 0 = sin tope. <strong>Una a la vez por acción</strong>
-            (opcional): en cada acción solo la primera estrategia que da señal; las demás esperan a que salga.
-            <strong>Tope por acción</strong> (opcional): lo abierto a la vez en una misma acción sumando
-            estrategias no pasa de X % del capital del día (en riesgo o en nocional) o de lo que arriesga un trade
-            («un trade»); sin él, cada trade lleva lo suyo. <strong>Lo que no cabe</strong>: saltar o recortar, para
-            los tres topes.
-            <strong>Criterios Margen y BP</strong> (opcional): el margen del bróker sobre todas las posiciones
-            abiertas a la vez; la que no cabe en el equity del día no entra. Con el (?) de la fila están las reglas.
+            Lo que se aplica a cada estrategia normalizada para montar el portfolio. <strong>% por trade</strong>: lo
+            que pone cada estrategia en cada operación, en % del capital con el que empieza el día (compound); el mismo
+            para todas, o uno por estrategia. En qué unidad va cada % lo dice su columna «Dimensiona»: <em>riesgo</em>
+            (lo que se pierde si salta el stop) si dimensiona por SL, <em>posición</em> (el dinero que se mete) si
+            dimensiona por capital, como en su backtest. <strong>Comisiones</strong> para todas: $ por acción (los dos
+            lados) o % del valor. <strong>Capital</strong>: la base del compound, del retorno y del drawdown.
+            <strong> Gastos fijos</strong>: de la cuenta, el primer día operado de cada mes. <strong>Margen y BP</strong>:
+            el margen del bróker sobre todas las posiciones abiertas a la vez; la que no cabe en el equity del día no
+            entra (las reglas, en su (?)). <strong>Periodo</strong>: vacío = todo el histórico.
             <br /><br />
-            <strong>Locates</strong>: el bróker es uno, así que el modelo de precio (fijo por paquete de 100, o aleatorio
-            con el sorteo del Backtester) vale para todas. <strong>Compartidos</strong>: por cada acción y día se alquila
-            una sola vez lo que la cuenta necesita —el máximo de acciones en corto <em>a la vez</em> sumando
-            estrategias—; la que cubre libera, y la siguiente que cabe en lo alquilado va gratis (la de premercado
-            paga, la de RTH no). Paga la que provoca el paquete de más. «Por estrategia» es lo de antes: cada una
-            alquila lo suyo aunque coincidan. <strong>Puerta de los cortos</strong>: decide si un corto entra según
-            lo que le cuesta el locate («fade necesario»: el % que tiene que moverse la acción solo para pagar los
-            paquetes de más que exige). «Fade máximo» es la regla que gana en la auditoría del 17-sep; las de EV
-            comparan el fade con el edge medio de la estrategia (todo el histórico, o los últimos N trades). Con
-            locates compartidos lo ya alquilado por cualquiera va gratis, así que muchas entradas pasan sin coste.
+            <strong>Locates</strong>: fijos por paquete de 100 o aleatorios (el sorteo del Backtester, banda p10–p90).
+            <strong> Una vez por acción y día</strong>: se alquila UNA vez lo que la cuenta necesita (el máximo de
+            acciones en corto a la vez sumando estrategias): paga la que provoca el paquete de más, la siguiente que cabe va
+            gratis. «Cada estrategia el suyo»: cada una alquila lo suyo aunque coincidan. <strong>Puerta</strong>: un corto
+            entra solo si su EV/MFE/Fade paga el «fade necesario» de sus paquetes.
           </>
         }
       >
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 28 }}>
           <div>
+            <Row label="% por trade" help="Lo que pone cada estrategia en cada operación, en % del capital del día. «El mismo para todas» o uno por estrategia. La unidad de cada una es la de su backtest (riesgo al stop o posición): la columna «Dimensiona» de arriba.">
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <div style={{ width: 290 }}>
+                    <Toggle value={cfg.pctMismo ? "mismo" : "por"} onChange={(v) => set("pctMismo", v === "mismo")} options={[{ value: "mismo", label: "el mismo para todas" }, { value: "por", label: "por estrategia" }]} />
+                  </div>
+                  {cfg.pctMismo && (
+                    <>
+                      <div style={{ width: 70 }}><Num value={cfg.pctComun} onChange={(v) => set("pctComun", Number(v) || 0)} min={0} step={0.25} /></div>
+                      <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día, cada una en su unidad</span>
+                    </>
+                  )}
+                </div>
+                {!cfg.pctMismo && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {selected.length === 0 && <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>marca estrategias arriba</span>}
+                    {selected.map((s, i) => (
+                      <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span style={{ width: 10, height: 10, background: colorSerie(i), display: "inline-block", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, fontFamily: font.sans, color: color.textPrimary, width: 210, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>{s.name}</span>
+                        <div style={{ width: 70 }}><Num value={pctDe(cfg, s.id)} onChange={(v) => setPctPor(s.id, Number(v) || 0)} min={0} step={0.25} /></div>
+                        <span style={{ fontSize: 10, fontFamily: font.sans, color: color.textMuted }}>% · {porSlDe(s) ? "riesgo" : "posición"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </Row>
+            <Row label="Comisiones (todas)">
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div style={{ width: 80 }}><Num value={cfg.fees} onChange={(v) => set("fees", Number(v) || 0)} min={0} step={cfg.feeType === "PERCENT" ? 0.001 : 0.0005} /></div>
+                <select style={{ ...sel, width: 70, height: 28 }} value={cfg.feeType} onChange={(ev) => set("feeType", ev.target.value as Cfg["feeType"])}>
+                  <option value="FLAT">$/acc</option>
+                  <option value="PERCENT">%</option>
+                </select>
+                <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>{cfg.feeType === "FLAT" ? "por acción, los dos lados" : "del valor, cada lado"}</span>
+              </div>
+            </Row>
             <Row label="Capital">
               <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                 <div style={{ width: 160, flexShrink: 0 }}>
@@ -313,72 +311,7 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
             <Row label="Gastos fijos ($/mes)">
               <div style={{ width: 160 }}><Num value={cfg.expenses} onChange={(v) => set("expenses", Number(v) || 0)} min={0} step={25} /></div>
             </Row>
-            <Row label="Tope de exposición" help="Lo máximo que puede haber en posiciones abiertas A LA VEZ sumando TODAS las estrategias y todos los tickers, en % del capital del día o en $. Es un tope del TOTAL abierto, no por trade: con posiciones del 3 %, 2 % y 2 %, un tope del 7 % solo deja dentro dos o tres a la vez y salta (o recorta) el resto del día; con tus tres PM, un 7 % dejó fuera 7 de cada 10 trades. Si lo que quieres es limitar cada trade, eso es el % de la fila; si es cada acción, el «Tope por acción». 0 = sin tope. Lo que no cabe no entra: no paga locates ni cuenta para nada.">
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ width: 100 }}><Num value={cfg.cap} onChange={(v) => set("cap", Number(v) || 0)} min={0} step={cfg.capUnit === "pct" ? 10 : 5000} /></div>
-                <div style={{ width: 150 }}>
-                  <Toggle value={cfg.capUnit} onChange={(u) => setCfg((c) => ({ ...c, capUnit: u, cap: 0 }))} options={[{ value: "pct", label: "% del día" }, { value: "usd", label: "$" }]} />
-                </div>
-                <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>{cfg.cap > 0 ? "" : "sin tope"}</span>
-              </div>
-            </Row>
-            <Row label="Una a la vez por acción" help="En cada acción entra solo la primera estrategia que da señal; mientras su posición está abierta, las demás no entran en esa acción. Cuando sale (stop, take profit, lo que sea), vuelve a entrar la primera que dé señal, sea la que sea. Se resuelve al minuto con las horas de entrada y salida guardadas; a igual minuto manda el orden de la lista (la de más arriba). Las señales que se quedan fuera salen como «Bloqueadas». Ojo: las señales que una estrategia bloqueada habría tenido después, mientras en su propio backtest estaba dentro, no existen en los datos guardados, así que el resultado es, si acaso, conservador.">
-              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, fontFamily: font.sans, color: color.textPrimary, cursor: "pointer" }}>
-                <input type="checkbox" checked={!!cfg.onePerTicker} onChange={(e) => set("onePerTicker", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
-                solo una estrategia abierta a la vez en cada acción
-              </label>
-            </Row>
-            <Row label="Tope por acción" help={
-              <>
-                Cuando dos estrategias (o más) entran en la <strong>misma acción a la vez</strong>, cada una lleva su
-                tamaño y la acción acumula la suma. Ejemplo con Kelly al 3 % por trade: PM 1A entra en ABCD con un
-                3 % del capital en riesgo; PM 2A entra en ABCD a la vez con otro 3 % → en ABCD hay un 6 % en juego.
-                Este ajuste decide qué se hace con eso. Siempre por orden de llegada, al minuto: la primera se lleva
-                su tamaño entero; la que sale libera su parte. Las acciones distintas no se estorban entre sí (para el
-                total está el «Tope de exposición»).
-                <br /><br />
-                <strong>No (por trade)</strong>: no se hace nada. Cada trade lleva lo suyo y ABCD acaba con el 6 %.
-                Es lo de siempre.
-                <br /><br />
-                <strong>X % en riesgo</strong>: en una misma acción nunca hay más de X % del capital del día en
-                riesgo (lo que se pierde si salta el stop: la misma cifra que reparte Kelly). Con X = 4: PM 1A entra
-                con 3 %; PM 2A pide 3 % pero solo queda 1 % → entra con 1 % si abajo has puesto «recortar», o no
-                entra si has puesto «saltar». Ojo: si X es menor que lo que pide un trade, también recorta (o salta)
-                al primero.
-                <br /><br />
-                <strong>X % en nocional</strong>: lo mismo, pero midiendo el valor de la posición (acciones × precio)
-                en vez del riesgo. Para quien dimensiona por capital o no tiene stop guardado.
-                <br /><br />
-                <strong>Un trade</strong>: sin número. El tope de la acción es lo que arriesga <em>un</em> trade de la
-                estrategia que entra (su Kelly, o su % por trade). Con 3 %: PM 1A entra con 3 %; PM 2A pide 3 %, su
-                tope para ABCD es 3 % y ya hay 3 % → no entra (si su Kelly fuera mayor, entraría solo con la
-                diferencia, en «recortar»). Es «en una acción, nunca más de lo que arriesga un trade».
-                <br /><br />
-                Un trade sin stop guardado no se puede medir en riesgo: no consume tope ni se topa, y se cuenta en el
-                resultado.
-              </>
-            }>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ width: 430 }}>
-                  <Toggle value={cfg.tickerCapBasis || "off"} onChange={(u) => set("tickerCapBasis", u)} options={[{ value: "off", label: "no (por trade)" }, { value: "risk", label: "X % en riesgo" }, { value: "notional", label: "X % en nocional" }, { value: "trade", label: "un trade" }]} />
-                </div>
-                {(cfg.tickerCapBasis === "risk" || cfg.tickerCapBasis === "notional") && (
-                  <>
-                    <div style={{ width: 80 }}><Num value={cfg.tickerCap} onChange={(v) => set("tickerCap", Number(v) || 0)} min={0} step={1} /></div>
-                    <span style={{ fontSize: 10.5, fontFamily: font.sans, color: cfg.tickerCap > 0 ? color.textMuted : color.warning }}>
-                      {cfg.tickerCap > 0 ? `% del capital del día en ${cfg.tickerCapBasis === "notional" ? "valor de posición" : "riesgo (pérdida al stop)"}, por acción` : "pon el %: con 0 no hay tope"}
-                    </span>
-                  </>
-                )}
-                {cfg.tickerCapBasis === "trade" && (
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>en una acción, nunca más de lo que arriesga un trade de la estrategia que entra</span>
-                )}
-                {(!cfg.tickerCapBasis || cfg.tickerCapBasis === "off") && (
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>cada trade lleva lo suyo; dos estrategias en la misma acción suman</span>
-                )}
-              </div>
-            </Row>
-            <Row label="Criterios Margen y BP" help="Simula el margen y el buying power del bróker sobre TODAS las estrategias juntas: cada posición abierta consume margen según su precio y su lado, y la que no cabe en el equity del día no entra (o se recorta, según el modo del tope). Se recorre el día en orden cronológico entre todas las estrategias, igual que el tope de exposición. Reglas de SageTrader (FAQ, sep-2026): largos 25 % del valor (4:1 intradía); cortos a partir de 5 $, el mayor de 30 % o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional). La capacidad es el equity del día.">
+            <Row label="Criterios Margen y BP" help="Simula el margen y el buying power del bróker sobre TODAS las estrategias juntas: cada posición abierta consume margen según su precio y su lado, y la que no cabe en el equity del día no entra. Se recorre el día en orden cronológico entre todas las estrategias. Reglas de SageTrader (FAQ, sep-2026): largos 25 % del valor (4:1 intradía); cortos a partir de 5 $, el mayor de 30 % o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional). La capacidad es el equity del día.">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, fontFamily: font.sans, color: color.textPrimary, cursor: "pointer" }}>
                   <input type="checkbox" checked={!!cfg.margin} onChange={(e) => set("margin", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />
@@ -389,14 +322,6 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
                     <option value="sagetrader">SageTrader</option>
                   </select>
                 )}
-              </div>
-            </Row>
-            <Row label="Lo que no cabe" help="Qué pasa con un trade que no cabe en el tope de exposición, en el tope por acción o en el margen del bróker. «Saltar»: no entra (como si no hubiera dado señal). «Recortar»: entra con el tamaño que quepa, y su resultado, comisiones y slippage en la misma proporción. Vale para los tres topes a la vez.">
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <div style={{ width: 180 }}>
-                  <Toggle value={cfg.capMode || "skip"} onChange={(u) => set("capMode", u)} options={[{ value: "skip", label: "saltar" }, { value: "trim", label: "recortar" }]} />
-                </div>
-                <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>{cfg.capMode === "trim" ? "entra con lo que quepa" : "no entra"}</span>
               </div>
             </Row>
             <Row label="Periodo" help="Vacío = todo el histórico de cada corrida. Cada estrategia solo cuenta en el tramo en que tiene trades.">
@@ -435,10 +360,10 @@ export function PasoEjecucion({ m }: { m: EjecucionModel }) {
               <>
                 <Row label="Alquiler">
                   <div style={{ width: 300 }}>
-                    <Toggle value={loc.shared ? "shared" : "row"} onChange={(v) => setL("shared", v === "shared")} options={[{ value: "shared", label: "compartido por acción y día" }, { value: "row", label: "cada estrategia el suyo" }]} />
+                    <Toggle value={loc.shared ? "shared" : "row"} onChange={(v) => setL("shared", v === "shared")} options={[{ value: "shared", label: "una vez por acción y día" }, { value: "row", label: "cada estrategia el suyo" }]} />
                   </div>
                 </Row>
-                <Row label="Puerta por EV/MFE/Fade" help="Un corto entra solo si la medida elegida (EV, MFE medio o fade medio, en % del precio de entrada; las tres se ven en Charts → «EV por precio» del backtester) paga el «fade necesario»: el % que tiene que moverse la acción a favor solo para pagar los paquetes de más que exige ese corto (con alquiler compartido, lo ya alquilado por cualquiera va gratis). «EV rodante»: lo de siempre, el EV por defecto hasta que la estrategia tiene historia y luego la media de sus últimos N trades cerrados; ojo, con N = 30 el error de la estimación es mayor que el propio EV y rechaza por racha (auditoría del 17-sep). «EV fijo»: SIEMPRE se enfrenta ese valor al fade — pon el EV que midas en IS y mira qué tal va en OOS; entra si EV fijo > fade.">
+                <Row label="Puerta por EV/MFE/Fade" help="Un corto entra solo si la medida elegida (EV, MFE medio o fade medio, en % del precio de entrada; las tres se ven en Charts → «EV por precio» del backtester) paga el «fade necesario»: el % que tiene que moverse la acción a favor solo para pagar los paquetes de más que exige ese corto (con alquiler compartido, lo ya alquilado por cualquiera va gratis). «Rodante»: el valor por defecto hasta que la estrategia tiene historia y luego la media de sus últimos N trades cerrados. «Fijo»: SIEMPRE se enfrenta ese valor al fade; entra si lo supera.">
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 11.5, fontFamily: font.sans, color: color.textPrimary, cursor: "pointer" }}>
                       <input type="checkbox" checked={!!loc.gate} onChange={(e) => setL("gate", e.target.checked)} style={{ margin: 0, accentColor: "var(--color-ec-copper)" }} />

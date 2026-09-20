@@ -36,6 +36,8 @@ export interface EscaladoModel {
   mcEscError: string | null;
   simularMcEsc: () => void;
   mcSims: number | "";
+  /** Las estrategias marcadas en el paso 1: para los pesos fijos del modo por cuenta. */
+  selected: Array<{ id: string; name: string; porSl: boolean; pctBase: number }>;
 }
 
 const sel: React.CSSProperties = { ...control, fontFamily: font.sans, cursor: "pointer" };
@@ -63,7 +65,10 @@ function fraccionLabel(m: number) {
 }
 
 export function PasoEscalado({ m }: { m: EscaladoModel }) {
-  const { out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc, mcEsc, mcEscRunning, mcEscError, simularMcEsc, mcSims } = m;
+  const { out, outEsc, esc, setEsc, escRunning, escError, escStale, calcularEsc, mcEsc, mcEscRunning, mcEscError, simularMcEsc, mcSims, selected } = m;
+  const modo: "account" | "fixed_total" = esc.kelly_scope === "fixed_total" ? "fixed_total" : "account";
+  const pesoDe = (id: string, base: number) => (esc.fixed_weights && esc.fixed_weights[id] != null ? Number(esc.fixed_weights[id]) : base);
+  const sumaPesos = selected.reduce((a, s) => a + pesoDe(s.id, s.pctBase), 0);
   const set = <K extends keyof EscCfg>(k: K, v: EscCfg[K]) => setEsc((c) => ({ ...c, [k]: v }));
   const sc = outEsc?.scaling ?? null;
   const hoy = sc?.today ?? null;
@@ -110,105 +115,89 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
       <div style={{ display: "grid", gridTemplateColumns: "minmax(380px, 1fr) minmax(0, 1fr)", gap: 14, alignItems: "start" }}>
         <Sec title="Ajustes" help={
           <>
-            Todo es <strong>riesgo por trade</strong>: lo que se pierde si salta el stop, en % del capital con el que
-            empieza el día (no el dinero metido en la posición). <strong>Kelly</strong> sale de la historia: la fracción
-            que habría hecho crecer más la cuenta sobre los días de la ventana (la exacta, con la distribución real de
-            los días; la aproximación clásica μ/σ² se enseña al lado). Solo Kelly manda: no hay HRP ni reparto.
+            El portfolio del paso 1 corrido con Kelly, de dos formas.
             <br /><br />
-            <strong>Kelly de cada estrategia</strong>: cada una con su propia Kelly × la fracción; la que mejor va lleva
-            más, la que no tiene edge en la ventana se queda a 0. Si la <em>suma</em> de todas pasa del tope, se
-            recortan todas en la misma proporción hasta que la suma sea el tope (la mejor sigue llevando más).
-            <strong>Kelly global</strong>: la Kelly del conjunto (los días de todas juntas) × la fracción, topada, y
-            repartida entre las estrategias en proporción a la Kelly propia de cada una.
+            <strong>Kelly por cuenta · pesos fijos</strong>: Kelly se calcula sobre el PnL del portfolio entero (la
+            de toda la vida: probabilidad de ganar y relación ganancia/pérdida de las operaciones; o la exacta sobre
+            los días) y dice cuánto apostar EN TOTAL el siguiente periodo, × la fracción y con un tope. Ese total se
+            reparte con los <strong>pesos fijos</strong> que pongas (p. ej. 50 / 25 / 25). Ejemplo: Kelly 30 %, tope
+            10 %, pesos 50/25/25 → 5 / 2,5 / 2,5 % por trade.
             <br /><br />
-            <strong>Unidad</strong>: cada estrategia va en la suya, la misma que en su backtest: por RIESGO (lo que se
-            pierde al stop) si dimensionó por stop; por POSICIÓN (% del capital metido) si dimensionó por capital. Así
-            «1 %» en Kelly es lo mismo que «1 %» en su fila del paso 1, y no seis veces más.
-            <strong>Fracción</strong>: lo que se aplica de la Kelly (1 = entera; ½ y ¼ las de la práctica; cualquier
-            número). <strong>Tope por estrategia</strong>: lo máximo por trade de cada una (primero). <strong>Tope de la
-            suma</strong>: lo máximo por trade sumando todas (después, recorte proporcional); con estas curvas (liquidez
-            infinita) los topes son lo único que hace realista el resultado: Kelly pone el orden, los topes el nivel. <strong>Rebalanceo</strong>: cada
-            cuánto se re-estima todo, siempre con datos anteriores a ese día. <strong>Ventana</strong>: cuántos días
-            naturales de historia se miran; una estrategia sin trades en ella no entra ese periodo.
+            <strong>Kelly por estrategia · total fijo</strong>: fijas el total (p. ej. 10 %) y se reparte entre las
+            estrategias en proporción a la Kelly de cada una en la ventana: las que mejor van llevan más. Es el
+            reparto que usarías en real; con la misma ventana sale lo mismo aunque la simulación empiece antes o
+            después.
             <br /><br />
-            <strong>Por trade o por acción</strong>: la fracción de Kelly es POR TRADE. Si dos estrategias entran en
-            la misma acción a la vez, esa acción lleva la suma de las dos. Para que el límite sea POR ACCIÓN, en el
-            paso 1 está «Tope por acción»: X % en riesgo, o «un trade» (en una acción nunca más de lo que arriesga un
-            trade de Kelly); y «Lo que no cabe» decide si la segunda se salta o entra recortada. Se aplica también
-            aquí, al simular el escalado.
-            <br /><br />
-            Los R del paso 1 no cuentan; comisiones, slippage, locates, tope de exposición y «una a la vez» sí. Los
-            trades sin stop guardado no se pueden dimensionar por riesgo y quedan fuera (se cuentan). Los modelos sin
-            Kelly (% fijo, $ fijos, fixed ratio) reparten el total a partes iguales.
+            <strong>Unidad</strong>: cada estrategia va en la suya, la del paso 1: riesgo (al stop) si dimensiona por
+            SL, posición (% del capital metido) si dimensiona por capital. <strong>Rebalanceo</strong>: cada cuánto se
+            re-estima, siempre con datos anteriores. <strong>Ventana</strong>: cuántos días de historia se miran.
+            <strong> Sin muestra</strong>: el % que se usa mientras no hay 20 sesiones. <strong>Sin edge</strong>: una
+            estrategia con Kelly 0 en la ventana se apaga o va con el respaldo.
           </>
         }>
-          <Row label="Riesgo total">
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <select style={{ ...sel, width: 210 }} value={esc.model} onChange={(e) => set("model", e.target.value as EscCfg["model"])}>
-                {(Object.keys(MODELO_LABEL) as EscCfg["model"][]).map((k) => <option key={k} value={k}>{MODELO_LABEL[k]}</option>)}
-              </select>
-              {esc.model === "percent" && (
-                <>
-                  <div style={{ width: 70 }}><Num value={esc.pct} onChange={(v) => set("pct", Number(v) || 0)} min={0} step={0.25} /></div>
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día</span>
-                </>
-              )}
-              {(esc.model === "fixed" || esc.model === "fixed_ratio") && (
-                <>
-                  <div style={{ width: 90 }}><Num value={esc.base_risk} onChange={(v) => set("base_risk", Number(v) || 0)} min={0} step={50} /></div>
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>$ por trade{esc.model === "fixed_ratio" ? " de base" : ""}</span>
-                </>
-              )}
-              {esc.model === "fixed_ratio" && (
-                <>
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>Δ</span>
-                  <div style={{ width: 90 }}><Num value={esc.delta} onChange={(v) => set("delta", Number(v) || 0)} min={0} step={100} /></div>
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>$ de beneficio por escalón</span>
-                </>
-              )}
+          <Row label="Modo">
+            <div style={{ width: 420 }}>
+              <Toggle value={modo} onChange={(v) => set("kelly_scope", v)} options={[{ value: "account", label: "Kelly por cuenta · pesos fijos" }, { value: "fixed_total", label: "Kelly por estrategia · total fijo" }]} />
             </div>
           </Row>
-          {esc.model === "kelly" && (
+          {modo === "account" ? (
             <>
-              <Row label="Cómo se calcula" help="De cada estrategia: su propia Kelly, y la suma se recorta al tope en proporción. Global: la Kelly del conjunto, topada y repartida por las Kellys propias.">
-                <div style={{ width: 340 }}>
-                  <Toggle value={esc.kelly_scope ?? "per_strategy"} onChange={(v) => set("kelly_scope", v)} options={[{ value: "per_strategy", label: "de cada estrategia" }, { value: "global", label: "global (capital total)" }]} />
+              <Row label="Pesos fijos" help="Cómo se reparte el total entre las estrategias, siempre igual. Se normalizan (50/25/25 es lo mismo que 2/1/1). Por defecto, los % del paso 1.">
+                <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                  {selected.map((s, i) => {
+                    const w = pesoDe(s.id, s.pctBase);
+                    return (
+                      <div key={s.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span style={{ width: 10, height: 10, background: colorSerie(i), display: "inline-block", flexShrink: 0 }} />
+                        <span style={{ fontSize: 11, fontFamily: font.sans, color: color.textPrimary, width: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.name}>{s.name}</span>
+                        <div style={{ width: 70 }}><Num value={w} onChange={(v) => setEsc((c) => ({ ...c, fixed_weights: { ...(c.fixed_weights || {}), [s.id]: Number(v) || 0 } }))} min={0} step={5} /></div>
+                        <span style={{ fontSize: 10, fontFamily: font.sans, color: color.textMuted }}>= {sumaPesos > 0 ? n((w / sumaPesos) * 100, 0) : "—"} % del total · {s.porSl ? "riesgo" : "posición"}</span>
+                      </div>
+                    );
+                  })}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <Btn onClick={() => setEsc((c) => ({ ...c, fixed_weights: Object.fromEntries(selected.map((s) => [s.id, 1])) }))}>iguales</Btn>
+                    <Btn onClick={() => setEsc((c) => ({ ...c, fixed_weights: {} }))}>los del paso 1</Btn>
+                  </div>
                 </div>
               </Row>
-              <Row label="Fracción de Kelly" help="Cuánto de la Kelly óptima se aplica: 1 = la entera (óptima), 0,5 = media, 0,25 = un cuarto. Cualquier número vale; por encima de 1 es sobre-Kelly (más drawdown por menos crecimiento).">
+              <Row label="Kelly" help="«Clásica»: p − q/b por operación (probabilidad de ganar menos la de perder partida por la relación ganancia media / pérdida media), la de toda la vida. «Exacta»: la fracción que maximiza el crecimiento de la R diaria del portfolio (log-crecimiento), que pesa más los peores días. Con pocos datos, la clásica es más estable.">
+                <div style={{ width: 200 }}>
+                  <Toggle value={esc.kelly_base ?? "clasica"} onChange={(v) => set("kelly_base", v)} options={[{ value: "clasica", label: "clásica" }, { value: "exacta", label: "exacta" }]} />
+                </div>
+              </Row>
+              <Row label="Fracción de Kelly" help="Cuánto de la Kelly se aplica: 1 = la entera, 0,5 = media, 0,25 = un cuarto. Cualquier número vale.">
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                   <div style={{ width: 80 }}><Num value={esc.kelly_mult} onChange={(v) => set("kelly_mult", Math.max(0.01, Number(v) || 0))} min={0.01} max={3} step={0.05} /></div>
                   <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>× Kelly ·</span>
                   <Btn onClick={() => set("kelly_mult", 0.25)}>¼</Btn>
                   <Btn onClick={() => set("kelly_mult", 0.5)}>½</Btn>
-                  <Btn onClick={() => set("kelly_mult", 1)}>óptima</Btn>
+                  <Btn onClick={() => set("kelly_mult", 1)}>entera</Btn>
                 </div>
               </Row>
-              <Row label="Sin muestra" help="Mientras la ventana no tiene 20 sesiones (al principio de la historia), Kelly no se puede estimar y se usa este % fijo.">
+              <Row label="Tope de la cuenta" help="Lo máximo que se apuesta por trade sumando todas las estrategias, en % del capital del día. Si Kelly pide más, se queda aquí (Kelly 30 y tope 10 → 10). 0 = sin tope.">
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <div style={{ width: 70 }}><Num value={esc.pct} onChange={(v) => set("pct", Number(v) || 0)} min={0} step={0.25} /></div>
-                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día</span>
+                  <div style={{ width: 70 }}><Num value={esc.cap_pct} onChange={(v) => set("cap_pct", Number(v) || 0)} min={0} step={0.5} /></div>
+                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día {esc.cap_pct <= 0 ? "· sin tope" : ""}</span>
                 </div>
               </Row>
-              <Row label="Sin edge en la ventana" help="Qué hacer con una estrategia cuya Kelly sale a 0 en la ventana (sus últimos N días, con los locates descontados, no dan edge). «Apagar»: no opera ese periodo (lo de siempre: es lo que dice Kelly). «Respaldo»: opera con el % de «sin muestra». Apagar es lo que más separa a Kelly de las filas cuando la ventana es corta: con tus tres PM y 90 días, 585 trades fuera.">
-                <div style={{ width: 200 }}>
-                  <Toggle value={esc.no_edge ?? "off"} onChange={(v) => set("no_edge", v)} options={[{ value: "off", label: "apagar" }, { value: "fallback", label: "respaldo" }]} />
+            </>
+          ) : (
+            <>
+              <Row label="Total fijo" help="Lo que se apuesta por trade sumando todas las estrategias, siempre. Kelly solo decide cómo se reparte entre ellas.">
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div style={{ width: 70 }}><Num value={esc.total_pct ?? 10} onChange={(v) => set("total_pct", Number(v) || 0)} min={0} step={0.5} /></div>
+                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día, repartido por las Kellys de cada estrategia</span>
+                </div>
+              </Row>
+              <Row label="Tope por estrategia" help="Opcional: ninguna estrategia pasa de este % por trade aunque su Kelly le dé más del total. 0 = sin tope.">
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <div style={{ width: 70 }}><Num value={esc.cap_strategy_pct ?? 0} onChange={(v) => set("cap_strategy_pct", Number(v) || 0)} min={0} step={0.25} /></div>
+                  <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día {(esc.cap_strategy_pct ?? 0) <= 0 ? "· sin tope" : ""}</span>
                 </div>
               </Row>
             </>
           )}
-          <Row label="Tope por estrategia" help="Lo máximo que puede arriesgar POR TRADE una estrategia, en % del capital del día. Se aplica ANTES que el tope de la suma y no reparte lo recortado. Sin él, en cuanto una estrategia tiene muestra y las demás van con el respaldo, el recorte proporcional de la suma le daba a esa casi todo el tope (con tus tres, feb-2024: 9,0 / 0,5 / 0,5 % con tope 10) y la curva se disparaba desde el segundo mes. Con él, Kelly decide el orden y las proporciones y los topes deciden el nivel: es lo que convierte esto en una guía. 0 = sin tope.">
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <div style={{ width: 70 }}><Num value={esc.cap_strategy_pct ?? 0} onChange={(v) => set("cap_strategy_pct", Number(v) || 0)} min={0} step={0.25} /></div>
-              <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día por trade y estrategia {(esc.cap_strategy_pct ?? 0) <= 0 ? "· sin tope" : ""}</span>
-            </div>
-          </Row>
-          <Row label="Tope de la suma" help="Lo máximo que se arriesga POR TRADE sumando todas las estrategias, en % del capital del día. Si el modelo pide más, se queda aquí (recorte proporcional, después del tope por estrategia). 0 = sin tope (con estas curvas, que suponen liquidez infinita, Kelly pide cifras de locos: los topes son lo que hace realista el resultado). Es por trade: dos estrategias en la misma acción a la vez suman; para eso está «Tope por acción» en el paso 1.">
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <div style={{ width: 70 }}><Num value={esc.cap_pct} onChange={(v) => set("cap_pct", Number(v) || 0)} min={0} step={0.5} /></div>
-              <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día {esc.cap_pct <= 0 ? "· sin tope" : ""}</span>
-            </div>
-          </Row>
           <Row label="Rebalanceo">
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <div style={{ width: 210 }}>
@@ -219,10 +208,21 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
               <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>días</span>
             </div>
           </Row>
+          <Row label="Sin muestra" help="Mientras la ventana no tiene 20 sesiones (al principio de la historia), Kelly no se puede estimar y se usa este % por estrategia.">
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ width: 70 }}><Num value={esc.pct} onChange={(v) => set("pct", Number(v) || 0)} min={0} step={0.25} /></div>
+              <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textMuted }}>% del capital del día</span>
+            </div>
+          </Row>
+          <Row label="Sin edge en la ventana" help="Qué hacer con una estrategia cuya Kelly sale a 0 en la ventana (sus últimos N días, con los locates descontados, no dan edge). «Apagar»: no opera ese periodo. «Respaldo»: opera con el % de «sin muestra». Apagar cuesta trades cuando la ventana es corta.">
+            <div style={{ width: 200 }}>
+              <Toggle value={esc.no_edge ?? "fallback"} onChange={(v) => set("no_edge", v)} options={[{ value: "off", label: "apagar" }, { value: "fallback", label: "respaldo" }]} />
+            </div>
+          </Row>
           <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0 4px" }}>
             <Btn primary onClick={calcularEsc} disabled={escRunning}>{escRunning ? "Calculando…" : outEsc ? "Recalcular" : "Calcular escalado"}</Btn>
             <span style={{ fontSize: 10.5, fontFamily: font.sans, color: escStale ? color.warning : color.textMuted }}>
-              {escStale ? "ha cambiado algo desde el último cálculo" : "sobre las mismas estrategias, costes y periodo del paso 1"}
+              {escStale ? "ha cambiado algo desde el último cálculo" : "sobre el portfolio del paso 1 (mismas estrategias, costes y periodo)"}
             </span>
           </div>
           {escError && <div style={{ marginTop: 8 }}><ErrorBox>{escError}</ErrorBox></div>}
@@ -234,8 +234,9 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
           ) : (
             <>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", padding: "4px 0" }}>
-                {hoy.model === "kelly" && hoy.kelly_scope === "global" && <Stat label="Kelly global" value={hoy.kelly_raw_pct == null ? "—" : pct(hoy.kelly_raw_pct, 2)} sub={hoy.kelly_raw_pct == null ? (hoy.note || "sin muestra") : `× ${fraccionLabel(hoy.kelly_mult)} = ${pct(hoy.x_pct, 2)}${hoy.kelly_quad_pct != null ? ` · aprox. μ/σ² ${pct(hoy.kelly_quad_pct, 1)}` : ""}`} help="La fracción que maximiza el crecimiento (media de log(1 + f·R diaria)) sobre los días de la ventana con todas las estrategias juntas: la Kelly exacta del conjunto. La aproximación clásica μ/σ² se enseña al lado. Ojo: es la óptima DEL PASADO de la ventana; aplicada entera y sin tope al futuro, arruina (probado el 16-sep con estas corridas)." />}
-                {hoy.model === "kelly" && hoy.kelly_scope !== "global" && <Stat label="Suma de las Kellys" value={pct(hoy.x_pct, 2)} sub={`cada una × ${fraccionLabel(hoy.kelly_mult)}, sumadas`} help="La suma de lo que pide cada estrategia (su Kelly exacta × la fracción). Si pasa del tope, se recortan todas en proporción." />}
+                {hoy.model === "kelly" && (hoy.kelly_scope === "global" || hoy.kelly_scope === "account") && <Stat label="Kelly de la cuenta" value={hoy.kelly_raw_pct == null ? "—" : pct(hoy.kelly_raw_pct, 2)} sub={hoy.kelly_raw_pct == null ? (hoy.note || "sin muestra") : `× ${fraccionLabel(hoy.kelly_mult)} = ${pct(hoy.x_pct, 2)}${hoy.kelly_quad_pct != null ? ` · aprox. μ/σ² ${pct(hoy.kelly_quad_pct, 1)}` : ""}`} help="La Kelly del PnL del portfolio entero en la ventana (con los pesos fijos): cuánto apostar en total. Es la óptima DEL PASADO de la ventana; aplicada entera y sin tope al futuro, arruina." />}
+                {hoy.model === "kelly" && hoy.kelly_scope === "fixed_total" && <Stat label="Total fijo" value={pct(hoy.total_pct ?? 0, 2)} sub="repartido por las Kellys de cada estrategia" help="El total lo pones tú; Kelly solo decide el reparto en proporción a la Kelly propia de cada estrategia en la ventana." />}
+                {hoy.model === "kelly" && (hoy.kelly_scope === "per_strategy") && <Stat label="Suma de las Kellys" value={pct(hoy.x_pct, 2)} sub={`cada una × ${fraccionLabel(hoy.kelly_mult)}, sumadas`} help="La suma de lo que pide cada estrategia (su Kelly exacta × la fracción). Si pasa del tope, se recortan todas en proporción." />}
                 {hoy.model !== "kelly" && <Stat label="Modelo" value={pct(hoy.x_pct, 2)} sub={MODELO_LABEL[hoy.model]} />}
                 <Stat label="Tope por estrategia" value={(hoy.cap_strategy_pct ?? 0) > 0 ? pct(hoy.cap_strategy_pct ?? 0, 2) : "sin tope"} sub={hoy.capped_strategy ? "recorta a alguna" : "no actúa"} tone={hoy.capped_strategy ? "warning" : undefined} />
                 <Stat label="Tope de la suma" value={hoy.cap_pct > 0 ? pct(hoy.cap_pct, 2) : "sin tope"} sub={hoy.capped ? `manda el tope: ${pct(hoy.x_pct, 2)} → ${pct(hoy.cap_pct, 2)}` : "no actúa"} tone={hoy.capped ? "warning" : undefined} />
@@ -248,7 +249,13 @@ export function PasoEscalado({ m }: { m: EscaladoModel }) {
               </div>
               <Nota>
                 {hoy.model === "kelly"
-                  ? <>{hoy.kelly_scope === "global" ? `Kelly global ${pct(hoy.kelly_raw_pct, 2)} × ${fraccionLabel(hoy.kelly_mult)} = ${pct(hoy.x_pct, 2)}` : `Las Kellys de cada estrategia × ${fraccionLabel(hoy.kelly_mult)} suman ${pct(hoy.x_pct, 2)}`}; tope {hoy.cap_pct > 0 ? pct(hoy.cap_pct, 2) : "ninguno"} {hoy.capped ? "→ manda el tope, recorte proporcional" : "→ no actúa"}. <strong>Lo que pones en cada estrategia está en la columna «Aplicado»</strong>; la suma ({pct(hoy.applied_pct, 2)}) es lo que hay en juego si entran todas a la vez.</>
+                  ? <>{hoy.kelly_scope === "fixed_total"
+                        ? `Total fijo ${pct(hoy.total_pct ?? 0, 2)}, repartido por las Kellys propias de la ventana`
+                        : hoy.kelly_scope === "account"
+                          ? `Kelly de la cuenta ${pct(hoy.kelly_raw_pct, 2)} × ${fraccionLabel(hoy.kelly_mult)} = ${pct(hoy.x_pct, 2)}; tope ${hoy.cap_pct > 0 ? pct(hoy.cap_pct, 2) : "ninguno"} ${hoy.capped ? "→ manda el tope" : "→ no actúa"}; repartido con los pesos fijos`
+                          : hoy.kelly_scope === "global"
+                            ? `Kelly global ${pct(hoy.kelly_raw_pct, 2)} × ${fraccionLabel(hoy.kelly_mult)} = ${pct(hoy.x_pct, 2)}; tope ${hoy.cap_pct > 0 ? pct(hoy.cap_pct, 2) : "ninguno"} ${hoy.capped ? "→ manda el tope" : "→ no actúa"}`
+                            : `Las Kellys de cada estrategia × ${fraccionLabel(hoy.kelly_mult)} suman ${pct(hoy.x_pct, 2)}; tope ${hoy.cap_pct > 0 ? pct(hoy.cap_pct, 2) : "ninguno"} ${hoy.capped ? "→ manda el tope, recorte proporcional" : "→ no actúa"}`}. <strong>Lo que pones en cada estrategia está en la columna «Aplicado»</strong>; la suma ({pct(hoy.applied_pct, 2)}) es lo que hay en juego si entran todas a la vez.</>
                   : <>{MODELO_LABEL[hoy.model]}: {pct(hoy.x_pct, 2)} en total; tope {hoy.cap_pct > 0 ? pct(hoy.cap_pct, 2) : "ninguno"} {hoy.capped ? "→ manda el tope" : "→ no actúa"}; repartido a partes iguales.</>}
               </Nota>
               {hoy.note && <Nota tone="warning">{hoy.note}</Nota>}

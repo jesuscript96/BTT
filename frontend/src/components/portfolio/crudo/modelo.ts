@@ -4,24 +4,21 @@
 import type { RawExec, RawLocatesIn, RawScalingIn } from "@/lib/api_portfolio_lab";
 import { n } from "./hoja";
 
-/** Bloque Portfolio del paso 1. */
+/** Bloque Portfolio del paso 1 (v3, 20-sep): las estrategias entran
+ *  normalizadas y aqui se pone lo de la cuenta: el % por trade de cada una (el
+ *  mismo para todas o uno por estrategia), comisiones para todas, capital,
+ *  gastos fijos, margen y periodo. Los locates van en `LocCfg`. */
 export interface Cfg {
   /** 0 = la suma de los capitales de las corridas marcadas. */
   capital: number;
   expenses: number;
-  cap: number;
-  capUnit: "usd" | "pct";
-  /** Solo una estrategia abierta a la vez por accion. */
-  onePerTicker: boolean;
-  /** Tope POR ACCION (19-sep): % del equity del dia abierto a la vez en un
-   *  mismo ticker sumando estrategias; 0 = sin tope. En riesgo o nocional. */
-  tickerCap: number;
-  /** off = sin tope (cada trade lleva lo suyo); risk/notional = X % del dia;
-   *  trade = lo que arriesga un trade de la estrategia que entra. */
-  tickerCapBasis: "off" | "risk" | "notional" | "trade";
-  /** Que pasa con lo que no cabe (tope de exposicion, tope por accion, margen):
-   *  saltar = no entra; recortar = entra con lo que quepa. */
-  capMode: "skip" | "trim";
+  /** % del capital del dia por trade: el mismo para todas o uno por estrategia (por id). */
+  pctMismo: boolean;
+  pctComun: number;
+  pctPor: Record<string, number>;
+  /** Comisiones para todas: $ por accion (los dos lados) o % del valor. */
+  fees: number;
+  feeType: "FLAT" | "PERCENT";
   /** Criterios de margen y buying power del broker (19-sep). */
   margin: boolean;
   marginBroker: string;
@@ -29,7 +26,14 @@ export interface Cfg {
   end: string;
 }
 
-export const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", onePerTicker: false, tickerCap: 0, tickerCapBasis: "off", capMode: "skip", margin: false, marginBroker: "sagetrader", start: "", end: "" };
+export const CFG0: Cfg = { capital: 0, expenses: 0, pctMismo: true, pctComun: 1, pctPor: {}, fees: 0, feeType: "FLAT", margin: false, marginBroker: "sagetrader", start: "", end: "" };
+
+/** El % por trade que le toca a una estrategia con la config del paso 1. */
+export function pctDe(cfg: Cfg, id: string): number {
+  if (cfg.pctMismo) return cfg.pctComun;
+  const v = cfg.pctPor[id];
+  return Number.isFinite(v) ? v : cfg.pctComun;
+}
 
 /** Locates de la CUENTA (paso 1): un broker para todas las estrategias. */
 export interface LocCfg {
@@ -90,21 +94,28 @@ export const ESC0: EscCfg = {
   pct: 1,
   delta: 500,
   kelly_mult: 0.5,
-  kelly_scope: "per_strategy",
-  cap_pct: 5,
-  cap_strategy_pct: 2,
+  // v3 (20-sep): dos modos. account = Kelly por CUENTA con pesos fijos;
+  // fixed_total = Kelly por ESTRATEGIA con el total fijo.
+  kelly_scope: "account",
+  kelly_base: "clasica",
+  fixed_weights: {},
+  total_pct: 10,
+  cap_pct: 10,
+  cap_strategy_pct: 0,
   rebalance: "M",
   lookback_days: 90,
   // Sin HRP ni reparto: solo Kelly manda (Jaume, 16-sep noche). Los modelos
   // sin Kelly reparten el total a partes iguales.
   weighting: "equal",
   floor: 0,
-  no_edge: "off",
+  no_edge: "fallback",
 };
 
-export const KELLY_SCOPE_LABEL: Record<"per_strategy" | "global", string> = {
+export const KELLY_SCOPE_LABEL: Record<"per_strategy" | "global" | "account" | "fixed_total", string> = {
   per_strategy: "Kelly de cada estrategia",
   global: "Kelly global (capital total)",
+  account: "Kelly por cuenta · pesos fijos",
+  fixed_total: "Kelly por estrategia · total fijo",
 };
 
 export const MODELO_LABEL: Record<EscCfg["model"], string> = {

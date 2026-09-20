@@ -577,7 +577,13 @@ export interface RawScalingIn {
   kelly_mult: number;
   /** per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
    *  global: la Kelly del conjunto repartida por las Kellys propias. */
-  kelly_scope?: "per_strategy" | "global";
+  kelly_scope?: "per_strategy" | "global" | "account" | "fixed_total";
+  /** exacta: log-crecimiento de la R diaria; clasica: p - q/b por operacion (20-sep). */
+  kelly_base?: "exacta" | "clasica";
+  /** account: pesos fijos por id de estrategia (se normalizan). */
+  fixed_weights?: Record<string, number>;
+  /** fixed_total: el total por trade que se reparte por las Kellys propias. */
+  total_pct?: number;
   cap_pct: number;
   /** Tope POR ESTRATEGIA por trade (% del capital del dia; 0 = sin), antes del de la suma. */
   cap_strategy_pct?: number;
@@ -669,9 +675,11 @@ export interface RawScalingToday {
   equity: number;
   window: { from: string; to: string };
   model: RawScalingIn["model"];
-  kelly_scope?: "per_strategy" | "global" | null;
-  /** Kelly global exacta (solo con kelly_scope = global). */
+  kelly_scope?: "per_strategy" | "global" | "account" | "fixed_total" | null;
+  /** Kelly del conjunto (global / account). */
   kelly_raw_pct: number | null;
+  total_pct?: number | null;
+  fixed_weights?: number[] | null;
   kelly_quad_pct?: number | null;
   kelly_mult: number;
   x_pct: number;
@@ -861,8 +869,12 @@ export interface RawOut {
  *  usado -> R diaria -> Kelly -> total del siguiente periodo, repartido entre
  *  las estrategias por sus Kellys del backtest. */
 export interface KellyRealIn {
-  rows: Array<{ date: string; pnl: number }>;
-  risk_mode: "usd" | "pct";
+  rows?: Array<{ date: string; pnl: number; notional?: number }>;
+  /** El CSV tal cual (DAS «Transactions» o fecha;pnl): si viene, manda sobre rows. */
+  csv_text?: string;
+  /** notional: R = pnl / valor de la posicion (sin stop, lo que trae DAS). */
+  risk_mode: "usd" | "pct" | "notional";
+  kelly_base?: "exacta" | "clasica";
   risk_value: number;
   capital_inicial: number;
   kelly_mult: number;
@@ -876,9 +888,13 @@ export interface KellyRealIn {
 export interface KellyRealOut {
   dias: number; dias_ventana: number; dias_con_operaciones: number;
   desde: string | null; hasta: string | null;
-  equity_final: number; risk_mode: "usd" | "pct"; risk_value: number;
+  equity_final: number; risk_mode: "usd" | "pct" | "notional"; risk_value: number;
   r_media_dia: number; r_peor_dia: number; r_mejor_dia: number; r_total_ventana: number;
   kelly_raw_pct: number | null; kelly_quad_pct: number | null; kelly_mult: number;
+  kelly_base?: "exacta" | "clasica"; kelly_exacta_pct?: number | null; kelly_clasica_pct?: number | null;
+  pnl_total?: number;
+  ops?: { n: number; ganadoras: number; perdedoras: number; win_rate: number; ganancia_media: number; perdida_media: number; kelly_clasica_pct: number | null };
+  csv?: { formato: string; n_fills: number; n_ops: number; aviso: string | null; ops: Array<{ date: string; symbol: string; pnl: number; notional: number; lado: string | null; fees: number; locates: number; n_fills: number; plano: boolean }> };
   total_pedido_pct: number | null; cap_pct: number; cap_strategy_pct: number; capped: boolean; capped_strategy: boolean;
   total_pct: number | null; total_usd: number | null; capital_siguiente: number; nota: string | null;
   per_strategy: Array<{ name: string; kelly_pct: number; share: number; risk_pct: number | null; risk_usd: number | null; basis: "risk" | "capital" }>;
