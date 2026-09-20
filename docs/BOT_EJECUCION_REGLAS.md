@@ -1009,3 +1009,54 @@ Lecturas: (1) con la emergencia puesta NADIE se queda dentro a los 30 min (1 cas
 | Fecha | Qué | Quién |
 |---|---|---|
 | 2026-09-12 | Se abre el fichero con el formato, los principios marco y el índice de áreas. Ninguna regla aún. | Jaume + Claude |
+
+## 4. Cuadro de mandos: inventario (borrador del 20-sep, en repaso con Jaume)
+
+Todo lo que el libro dice «va al cuadro de mandos», recogido en un sitio. Tres columnas: qué es, valor hoy, de dónde sale. Regla de oro (R-I-03): si el JSON de la estrategia y el cuadro difieren, manda el cuadro. El bot lee el cuadro en la siguiente señal, nunca reabre lo ya abierto.
+
+### 4.1 Por estrategia (una fila por estrategia activa, hasta 20)
+| Campo | Valor hoy | Origen |
+|---|---|---|
+| Activa (sí/no) + botones al desactivar (cancelar entradas / dejar salidas) | — | R-E-03 |
+| Tamaño: riesgo fijo por entrada y por cada piramidación (unidad de la estrategia) | lo pone Jaume | R-I-02 |
+| EV mínimo del locate para entrar (por rango de precio si aplica) | de la puerta por EV del backtester | R-H-01 |
+| Hora EOD y hora de fin de ventana de entrada | JSON | R-D-02 |
+| Reentradas (accept_reentries / max_reentries; −1 = sin tope numérico) | JSON | R-D-04 |
+| Niveles de stop N1 / N2 / N3 en % o estructura + márgenes del límite (3 % / 50 %) | 10 % / +3 % / ×1,10 / +50 % | R-C-01 |
+| Take profit (parciales y cómo reduce el stop) | JSON | R-C-05, R-D-03 |
+| Sesiones permitidas (PM / RTH) y ruta por sesión | ARCA PM; RTH SAGEPRO o ARCA (sombra) | R-B-01 |
+
+### 4.2 Globales de la cuenta
+| Campo | Valor hoy | Origen |
+|---|---|---|
+| Tope de gasto en locates sobre la cuenta (por día) | 3 % | R-H-03 |
+| Puerta de entrada: distancia último→bid | 3 % | R-B-01 |
+| Techo de la rama rápida | 0,5 % | R-B-01 |
+| Escalera: escalones y tiempos | 1/2/3 % · 10 s · 60 s | R-B-01, R-D-01 |
+| Caducidad de una señal sin llenar | 60 s | R-B-04 |
+| Fracción máxima del volumen acumulado | desactivado | R-B-05 |
+| Techo «cerrar todo» y reintentos | 5 % · 2 | R-D-06 |
+| Halts: k máximo, distancia a la banda con k = 2, vela máxima para reentrar, T1 tope | 3 · 3-5 % · 6 % · 250 % | R-F-01, R-F-05 |
+| Margen del stop bajo limit up | 1-2 % | R-F-02 |
+| Stop de protección para posiciones desconocidas al arrancar | 20-30 % | R-C-10 |
+| Exclusiones: días de IPO, banda de OPA (min, rango, $) | 30 d · 30 min ≤ 1,5 % ≥ 100 k $ | R-A-03 |
+| Modo trading de seguridad (precio mín., $ acumulados) | > 5 $ · > 2 M $ (pendiente) | R-I-04 |
+| Horas de encendido y apagado | PM + parte RTH | R-L-01 |
+
+### 4.3 Técnicos (raramente se tocan)
+| Campo | Valor hoy | Origen |
+|---|---|---|
+| Barrido de reconciliación / posiciones | 2 s / 10 s | R-K-01 |
+| Feed: prealerta / emergencia | 30 s / 60 s | R-J-01 |
+| Reconexión DAS y aviso | 2/4/8/16/30 s · 5 min | R-J-02 |
+| Vigilante: relanzar / colgado / latido | 30 s / 10 s / 60 s ×3 | R-J-03, R-J-05 |
+| Reloj y disco | 2 s · 5 GB | R-J-07 |
+| Cadencia de informes en cisne negro | 5 min | R-G-01 |
+| Comprobación del stop tras aviso DAS | 1 s | R-C-04 |
+| Filtro de prints tardíos | 10-20 ms | R-A-02 |
+| Intentos y ventana del stop rechazado | 5 · 5 min · 100 % | R-C-03 |
+
+### 4.4 Lo que el cuadro muestra (solo lectura)
+Posiciones y órdenes vivas con su estado (principal / emergencia / TP), BP y equity de DAS, locates comprados hoy y gasto acumulado frente al tope, señales del día y qué pasó con cada una (entró / caducó / rechazada), estado del feed, de DAS y del vigilante, última reconciliación, y el botón «Control humano» por estrategia.
+
+**Preguntas abiertas del inventario (a responder con Jaume):** CM1 ¿dónde vive el cuadro: la app del backtester (pestaña nueva) o un fichero/pantalla propia del bot? CM2 ¿qué campos puede tocar en caliente y cuáles exigen bot apagado (R-O-01)? CM3 ¿historial de cambios con fecha y quién? CM4 ¿los valores por estrategia se editan en el JSON y el cuadro solo los enseña, o al revés?
