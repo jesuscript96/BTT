@@ -489,7 +489,7 @@ class RawRotationIn(BaseModel):
     # % por trade por puesto (mejor primero). None = los % del paso 1 ordenados.
     pattern: list[float] | None = None
     min_pct: float = Field(default=1.0, ge=0)
-    metric: Literal["return", "sharpe"] = "return"
+    metric: Literal["return", "ev_trade", "per_hour", "sharpe"] = "return"
 
 
 class RawBrakeIn(BaseModel):

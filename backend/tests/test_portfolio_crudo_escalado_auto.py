@@ -137,3 +137,17 @@ def test_en_el_motor_el_freno_reduce_la_caida():
     assert con["brake"]["episodios"] >= 1 and con["brake"]["dias_frenado"] > 0
     assert dd(con["equity"]) > dd(sin["equity"])          # menos caida (menos negativa)
     assert con["brake"]["hoy"]["frenado"] is False           # al final, recuperado y suelto
+
+
+def test_metrica_por_hora_premia_a_la_rapida():
+    """a gana 0,3 % al dia en 6 horas; b gana 0,2 % al dia en 1 hora: por lo
+    ganado, a; por hora en mercado, b."""
+    cfg_r = ea.rotation_cfg({"enabled": True, "lookback_days": 5, "rebalance": "N", "every_days": 5, "pattern": [3, 1], "metric": "return"}, 2)
+    cfg_h = ea.rotation_cfg({"enabled": True, "lookback_days": 5, "rebalance": "N", "every_days": 5, "pattern": [3, 1], "metric": "per_hour"}, 2)
+    rr, rh = ea.Rotacion(cfg_r, [2.0, 2.0], ["a", "b"]), ea.Rotacion(cfg_h, [2.0, 2.0], ["a", "b"])
+    for k in range(5):
+        d = f"2026-01-{k + 1:02d}"
+        for r in (rr, rh):
+            r.sizes_para(d); r.registrar(d, [0.003, 0.002], [1, 1], [6.0, 1.0])
+    assert rr.sizes_para("2026-01-06") == [3.0, 1.0]
+    assert rh.sizes_para("2026-01-06") == [1.0, 3.0]

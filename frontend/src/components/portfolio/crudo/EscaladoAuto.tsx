@@ -147,8 +147,16 @@ export function EscaladoAuto({ m }: { m: EscaladoAutoModel }) {
               <span style={lbl}>sesiones (126 ≈ 6 meses, 252 ≈ 1 año)</span>
             </div>
           </Row>
-          <Row label="Por qué se ordena" help="Lo que se mira de cada estrategia en la ventana para ordenarlas. «Lo ganado por 1 %»: lo que aportó al portfolio por cada 1 % de tamaño, sumado en la ventana: quien más ha aportado por unidad, primera (es lo que se midió: +17-35 % en tus PM). «EV por trade»: lo mismo dividido por sus trades: la calidad media de cada operación, sin premiar a la que opera más. «Sharpe»: lo ganado dividido por lo que oscila día a día: premia a la regular frente a la que gana a golpes (con tus PM fue peor). No es «la que ha mejorado más»: es «la que mejor lo ha hecho en la ventana».">
-            <div style={{ width: 360 }}><Toggle value={rot.metric} onChange={(v) => setR("metric", v)} options={[{ value: "return", label: "lo ganado por 1 %" }, { value: "ev_trade", label: "EV por trade" }, { value: "sharpe", label: "Sharpe" }]} /></div>
+          <Row label="Por qué se ordena" help={<>
+            Lo que se mira de cada estrategia en la ventana para ordenarlas. Siempre en RELATIVO al tamaño (por cada 1 % que se le da), nunca en dinero: así una con el 1 % y otra con el 4 % se comparan de igual a igual.
+            <br /><br />
+            <strong>Lo ganado por 1 %</strong>: lo que aportó al portfolio por cada 1 % de tamaño, sumado en la ventana: quien más ha aportado por unidad, primera (es lo que se midió: +17-35 % en tus PM).
+            <br /><strong>EV por trade</strong>: lo mismo dividido por sus trades: la calidad media de cada operación, sin premiar a la que opera más.
+            <br /><strong>Por hora en mercado</strong>: lo ganado por 1 % dividido por las horas que tuvo posición abierta: premia a la que entra y sale rápido frente a la que ocupa la sesión entera ganando más. Ojo: en esta simulación tener la posición abierta mucho rato no cuesta nada (cada estrategia tiene su % y no se roban capital, salvo que el margen del bróker esté activado), así que esta forma de ordenar no hace ganar más aquí; sirve si tú prefieres estrategias rápidas por razones de fuera (buying power real, atención, riesgo de estar dentro).
+            <br /><strong>Sharpe</strong>: lo ganado dividido por lo que oscila día a día: premia a la regular frente a la que gana a golpes (con tus PM fue peor).
+            <br /><br />No es «la que ha mejorado más»: es «la que mejor lo ha hecho en la ventana».
+          </>}>
+            <div style={{ width: 480 }}><Toggle value={rot.metric} onChange={(v) => setR("metric", v)} options={[{ value: "return", label: "lo ganado por 1 %" }, { value: "ev_trade", label: "EV por trade" }, { value: "per_hour", label: "por hora en mercado" }, { value: "sharpe", label: "Sharpe" }]} /></div>
           </Row>
           <Row label="Patrón de pesos" help="El % por trade que se lleva cada PUESTO del ranking: el primer número va a la mejor estrategia del periodo, el segundo a la siguiente… La suma del patrón es el tope global (elígelo con el bloque A). Por defecto son tus % del paso 1 ordenados de mayor a menor (con 4/2/1 en el paso 1: la mejor 4, la del medio 2, la peor 1), así la suma es la misma que sin rotación y la comparación es justa. Un patrón más desigual (5/2/0) gana más y cae más; uno más plano (3/2/2) al revés.">
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -174,11 +182,23 @@ export function EscaladoAuto({ m }: { m: EscaladoAutoModel }) {
 
       {/* ── Freno ────────────────────────────────────────────────────── */}
       <div style={{ borderTop: `1px solid ${color.border}`, marginTop: 6, paddingTop: 6 }}>
-        <Row label="Freno por caída" help="Sin freno: los tamaños solo cambian con el capital (compound: si la cuenta baja, apuestas menos $ pero el mismo %). Con freno: cuando la cuenta cae más de X % desde su máximo, además se multiplican todos los tamaños por m hasta que la caída vuelve por encima de Y %. Se decide cada mañana con el cierre del día anterior. Se corre con y sin él para que compares.">
+        <Row label="Freno por caída" help={<>
+            <strong>Sin freno</strong>: cada trade va con su % del capital de ese día. Si la cuenta baja, apuestas menos dólares (porque el capital es menor) pero el MISMO %: eso ya lo hace el compound solo.
+            <br /><br />
+            <strong>Con freno</strong>: se mira cada mañana cuánto ha caído la cuenta desde su máximo (con el cierre de ayer). Si la caída pasa de X %, ADEMÁS del compound, todos los tamaños se multiplican por m (0,5 = la mitad) y se quedan así hasta que la caída vuelve a ser menor que Y %. Entonces se quita el freno y se vuelve al tamaño completo.
+            <br /><br />
+            <strong>Para qué</strong>: que una mala racha que ya ha empezado no se haga tan profunda: a partir del −X % solo pierdes la mitad (o lo que pongas en m) de lo que perderías sin freno. <strong>Lo que cuesta</strong>: los días buenos que llegan mientras estás frenado también cuentan a la mitad, así que recuperas más despacio. <strong>Lo que no evita</strong>: un precipicio de un solo día, porque se decide con el cierre de ayer.
+            <br /><br />Se corre con freno y sin freno (y con y sin rotación) para que veas las cuatro curvas y elijas.
+          </>}>
           <div style={{ width: 190 }}><Toggle value={brake.enabled ? "si" : "no"} onChange={(v) => setB("enabled", v === "si")} options={[{ value: "si", label: "con freno" }, { value: "no", label: "sin freno" }]} /></div>
         </Row>
         {brake.enabled && (
-          <Row label="Regla" help="«Frena a partir de −X %»: la caída desde el máximo de la cuenta que dispara el freno (10 % en tus PM: 42 días frenado en 668, 4 episodios). «Multiplicador»: por cuánto se multiplican todos los tamaños mientras dura (0,5 = la mitad; 0 = no operar). «Suelta al volver a −Y %»: la caída (menor que X) a la que se quita el freno; si Y es 0 hay que volver al máximo, y eso puede tardar meses a mitad de tamaño. Regla de bolsillo: la caída máxima queda en X + (lo que sobrepase) × m.">
+          <Row label="Regla" help={<>
+            Ejemplo con 10 / ×0,5 / 5: la cuenta hace máximo en 100.000 $ y va cayendo. Mientras esté por encima de 90.000 (menos de un 10 % de caída) no pasa nada. El día que cierra en 89.000 (−11 %), desde la mañana siguiente todo va a la mitad: 4/2/1 pasa a 2/1/0,5. Sigue a la mitad aunque la cuenta suba a 92.000 o baje a 85.000. El día que cierra en 95.000 o más (menos de un 5 % de caída), a la mañana siguiente se vuelve al tamaño completo.
+            <br /><br />
+            <strong>Frena a partir de −X %</strong>: cuanto más pequeño, antes frena y más a menudo (10 % en tus PM: 4 veces, 42 días en total de 668). <strong>Multiplicador</strong>: 0,5 = la mitad; 0,25 = un cuarto; 0 = no operar hasta soltar. <strong>Suelta al volver a −Y %</strong>: tiene que ser menor que X; con Y = 0 hay que volver al máximo, y eso a mitad de tamaño puede tardar meses.
+            <br /><br />Regla de bolsillo: la caída máxima se queda en X + (lo que hubiera sobrepasado) × m. Una caída que sin freno iba a llegar al −16 % se queda en unos −13 %.
+          </>}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <span style={lbl}>frena a partir de −</span>
               <div style={{ width: 60 }}><Num value={brake.dd_pct} onChange={(v) => setB("dd_pct", Math.max(0.1, Number(v) || 0.1))} min={0.1} step={1} style={numChico} /></div>

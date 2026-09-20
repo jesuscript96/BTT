@@ -579,8 +579,8 @@ export interface RawRotationIn {
   pattern: number[] | null;
   /** Suelo por estrategia (% por trade); 0 = sin suelo. */
   min_pct: number;
-  /** return: lo ganado por 1 % en la ventana; ev_trade: EV por trade; sharpe: media / desviacion diaria. */
-  metric: "return" | "ev_trade" | "sharpe";
+  /** return: lo ganado por 1 % en la ventana; ev_trade: EV por trade; per_hour: por hora con posicion; sharpe: media / desviacion diaria. */
+  metric: "return" | "ev_trade" | "per_hour" | "sharpe";
 }
 
 /** Freno por caida de la cuenta: con la caida desde el maximo por encima de

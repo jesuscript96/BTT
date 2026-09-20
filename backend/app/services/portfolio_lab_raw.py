@@ -976,6 +976,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
     rot: Optional[ea.Rotacion] = None
     u_dia: list[dict[str, float]] = [{} for _ in range(n)]
     n_dia: list[dict[str, int]] = [{} for _ in range(n)]
+    h_dia: list[dict[str, float]] = [{} for _ in range(n)]
     if rot_cfg:
         rot = ea.Rotacion(rot_cfg, [float(execs[i]["size_value"]) for i in range(n)], [str(r.get("name") or "") for r in runs])
         # La sombra por dia: suma de la R neta por accion (en la unidad de cada
@@ -995,6 +996,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
                     acc += _r_neta(tr, ex, locate_ps)
                 u_dia[i][d] = acc
                 n_dia[i][d] = len(trades_d)
+                h_dia[i][d] = sum(max(0.0, float(tr["t1"]) - float(tr["t0"])) for tr in trades_d) / 3600.0
     brk: Optional[ea.Freno] = ea.Freno(brk_cfg, capital) if brk_cfg else None
 
     # ── 2. Dia a dia: dimensionar con el capital del dia, costes, locates ──
@@ -1402,7 +1404,7 @@ def simulate(runs: list[dict], cfg: dict) -> dict:
         daily_pnl.append(day_total)
         daily_ret.append(day_total / equity_open if equity_open > 0 else 0.0)
         if rot is not None:
-            rot.registrar(d, [u_dia[i].get(d, 0.0) * 0.01 for i in range(n)], [n_dia[i].get(d, 0) for i in range(n)])
+            rot.registrar(d, [u_dia[i].get(d, 0.0) * 0.01 for i in range(n)], [n_dia[i].get(d, 0) for i in range(n)], [h_dia[i].get(d, 0.0) for i in range(n)])
         if brk is not None:
             brk.registrar(equity)
 
