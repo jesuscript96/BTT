@@ -1019,6 +1019,7 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Prueba: repetir la medida de latencia por canal en sombra, cada día, y guardarla en el diario.
 - Estado: PROPUESTA (21-sep, a partir de la medida). Pendiente: aplicar también al bot de señales actual si Jaume quiere prealertas más tempranas.
 - Origen: pregunta de Jaume del 21-sep (otro chat detectó los 3 s).
+- **Variante DAS (21-sep):** construir las velas de los tickers del radar desde el Time & Sales de DAS (100-300 ms) en vez de los ticks de Massive (0,7 s). Condiciones: (a) que el tope de símbolos del Level 1 por API (≈ 50 según el manual) cubra el radar del día [API R-18]; (b) que las velas salgan IGUALES que las de Massive, que son las del backtester (feed consolidado de todas las bolsas, mismas exclusiones de prints) [API R-19]; (c) Massive queda para el radar, los cierres de ayer y como respaldo de velas si DAS cae. Decisión: en SOMBRA se construyen por las dos vías a la vez y se comparan varios días; si coinciden y caben, manda DAS; si no, Massive con ticks.
 
 ## 4. Cuadro de mandos: inventario (borrador del 20-sep, en repaso con Jaume)
 
