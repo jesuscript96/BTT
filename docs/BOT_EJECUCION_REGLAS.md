@@ -1011,6 +1011,15 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 |---|---|---|
 | 2026-09-12 | Se abre el fichero con el formato, los principios marco y el índice de áreas. Ninguna regla aún. | Jaume + Claude |
 
+### R-A-06 · Canal de datos de Massive: ticks y cotizaciones, no agregados por segundo
+- Situación: el bot de señales actual se suscribe al canal A (agregados por segundo) y AM (velas). Medido el 21-sep con 22.215 mensajes del día: el agregado llega 3,4 s DESPUÉS de cerrar su segundo (p90 3,5 s, máx 7,7 s; reloj del PC corregido con w32tm). Medido en vivo el mismo día: el canal T (operaciones) y el canal Q (cotizaciones bid/ask) llegan a 0,70 s (p90 0,73 s), y el A a 2,6 s.
+- Acción: el bot de ejecución se suscribe a T y Q de los tickers del radar y construye las velas él mismo a partir de las operaciones; el A y el AM quedan solo como comprobación. Para los precios de ejecución (bid/ask al enviar, puerta del 3 %, escalera, vigilancia de posiciones) se usa la cotización de DAS ($Quote, Level 1 del bróker), que es en tiempo real; Massive solo genera señales.
+- Consecuencia: la vela se cierra a los 0,7 s en vez de a los 3,4 s; la puerta de entrada de R-B-01 mira un bid de DAS, no uno de Massive con 3 s de retraso. Los stops residentes no dependen de nada de esto.
+- Parámetros: ninguno.
+- Prueba: repetir la medida de latencia por canal en sombra, cada día, y guardarla en el diario.
+- Estado: PROPUESTA (21-sep, a partir de la medida). Pendiente: aplicar también al bot de señales actual si Jaume quiere prealertas más tempranas.
+- Origen: pregunta de Jaume del 21-sep (otro chat detectó los 3 s).
+
 ## 4. Cuadro de mandos: inventario (borrador del 20-sep, en repaso con Jaume)
 
 Todo lo que el libro dice «va al cuadro de mandos», recogido en un sitio. Tres columnas: qué es, valor hoy, de dónde sale. Regla de oro (R-I-03): si el JSON de la estrategia y el cuadro difieren, manda el cuadro. El bot lee el cuadro en la siguiente señal, nunca reabre lo ya abierto.
