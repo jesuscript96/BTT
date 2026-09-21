@@ -17,7 +17,9 @@
 // Cada paso es una caja plegable con su resumen; el 2-4 no se abren sin el 1.
 // Este fichero solo lleva el estado y el hilo; cada paso pinta lo suyo.
 //
-// La pestaña «Imagen general» (normalizada) sigue siendo la fuente del bot.
+// Desde el 21-sep-2026 es la unica pestana de cartera (fuera Imagen general,
+// Modelos y Comparativa). El bot no depende de esto: elige sus estrategias en
+// su propia tabla (bot_alerts_service), no en la cartera.
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { color, font } from "@/components/ui/tokens";
@@ -408,7 +410,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       <p style={{ margin: "0 0 10px", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
         Todo se reconstruye desde los trades guardados de cada corrida; no se vuelve a correr ningún backtest ni se
         modifica ninguna estrategia. Black Swan y Halts no se pueden reconstruir así: quedan para una fase con backtest
-        efímero, si hace falta. La pestaña <strong>Imagen general</strong> sigue siendo la del portfolio normalizado que lee el bot.
+        efímero, si hace falta.
       </p>
     </div>
   );

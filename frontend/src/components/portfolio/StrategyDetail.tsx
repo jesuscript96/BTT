@@ -100,8 +100,7 @@ export function StrategyDetail({
               <Sparkline points={curve} />
             )}
             <p style={{ margin: "7px 0 0", fontSize: 9.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.45, maxWidth: 260 }}>
-              Tramo final de la curva de la corrida guardada. El seguimiento en vivo llega
-              con la Monitorización.
+              Tramo final de la curva de la corrida guardada.
             </p>
           </div>
         )}
