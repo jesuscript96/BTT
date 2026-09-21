@@ -110,6 +110,15 @@ SEGUNDO_DECISION = 44
 # los mismos dias y las mismas velas en los dos metodos.
 SEGUNDO_LIMITE = 59
 
+# CONDICIONES DE OPERACION QUE NO MUEVEN EL PRECIO DE LA VELA (si el volumen).
+# Es la regla con la que Massive monta sus velas oficiales: el odd lot (37,
+# menos de 100 acciones) y unas pocas mas (precio medio, cash, next day, fuera
+# de secuencia, cierres/aperturas oficiales de centro, contingentes) cuentan
+# en el volumen pero no en open/high/low/close. Medido el 21-sep-2026 sobre
+# GLND, BTTC y LOBO (700.000 operaciones): sumando todo, el cierre difiere de
+# la vela oficial en el 40 % de los minutos; sin odd lots, en el 0-1 %.
+CONDICIONES_SIN_PRECIO = {2, 7, 15, 16, 20, 21, 29, 33, 37, 38, 52, 53}
+
 
 @dataclass
 class VelaEnCurso:
@@ -123,15 +132,57 @@ class VelaEnCurso:
     av_ahora: Optional[float]
     segundos: int = 0
     evaluada: bool = False           # ya se decidio este minuto
+    # OPERACIONES SUELTAS (21-sep-2026): lo que han sumado las operaciones
+    # del minuto que han llegado por `T.`, y las que han llegado DESPUES del
+    # ultimo agregado oficial (`A.`) que actualizo `av_ahora`. Con ellas la
+    # vela avanza en milisegundos; el `av` oficial, que llega 3 s tarde, solo
+    # sirve de ancla para no quedarnos cortos de volumen.
+    v_operaciones: float = 0.0
+    v_desde_ultimo_av: float = 0.0
+    operaciones: int = 0
+    ultimo_ms: int = 0                             # hora SIP de la ultima operacion
+    _ops: list = field(default_factory=list)       # (ms, tamanyo) del minuto
+    # Si la vela se vio desde el principio del minuto. Un ticker recien
+    # admitido empieza a recibir operaciones a mitad de minuto: esa primera
+    # vela esta a medias y NO vale para disparar la alerta (espera la oficial).
+    completa: bool = True
+    cerrada_propia: bool = False                   # ya se entrego como vela propia
+    con_precio: bool = False                       # alguna operacion movio el precio
+
+    def como_vela_cerrada(self) -> dict:
+        """La vela terminada, con el timestamp al INICIO del minuto (como la oficial)."""
+        return {
+            "timestamp": pd.Timestamp(datetime.fromtimestamp(self.minuto, tz=ET).replace(tzinfo=None)),
+            "open": self.open, "high": self.high, "low": self.low, "close": self.close,
+            "volume": self.volumen,
+        }
+
+    def v_tras(self, ms: int) -> float:
+        """Tamanyo sumado de las operaciones con hora >= ms."""
+        return float(sum(t for m, t in self._ops if m >= ms))
+
+    def v_hasta(self, ms: int) -> float:
+        """Tamanyo sumado de las operaciones con hora < ms."""
+        return float(sum(t for m, t in self._ops if m < ms))
 
     @property
     def volumen(self) -> float:
-        """Volumen del minuto, del acumulado del dia.
+        """Volumen del minuto.
 
-        Si por lo que sea no viene `av`, se devuelve 0 en vez de una suma
-        aproximada: un volumen corto haria que la condicion de dollar volume se
-        cumpliera mas tarde de lo que toca, y eso es peor que no prealertar.
+        Con `av` (acumulado oficial del dia): av_ahora - av_inicio, MAS las
+        operaciones llegadas despues de ese `av` (que aun no cuenta). Sin `av`
+        (aun no ha llegado ningun agregado del minuto), la suma de operaciones.
+        Nunca se devuelve un volumen mas corto que el que ya hemos visto pasar:
+        un volumen corto haria que la condicion de dollar volume se cumpliera
+        mas tarde de lo que toca.
         """
+        # CON OPERACIONES, MANDA SU SUMA (medido en vivo el 21-sep-2026: cuadra
+        # con la vela oficial al 0,1 %). Sumarle lo posterior al `av` la inflaba
+        # un 1-6 %: el `av` se publica 3 s despues del segundo y YA incluye las
+        # operaciones de esos 3 s. El `av` solo manda cuando no hay operaciones
+        # (bot sin `T.`), como hasta hoy.
+        if self.operaciones > 0:
+            return self.v_operaciones
         if self.av_inicio is None or self.av_ahora is None:
             return 0.0
         return max(0.0, self.av_ahora - self.av_inicio)
@@ -155,14 +206,19 @@ class ConstructorParcial:
         # Ultimo minuto CERRADO de cada ticker, en epoch. Sin esto se emiten
         # prealertas de velas muertas — ver `marcar_cerrada`.
         self._cerradas: dict[str, int] = {}
+        # La ultima vela TERMINADA de cada ticker montada con operaciones, para
+        # compararla con la oficial (21-sep-2026).
+        self._terminadas: dict[str, VelaEnCurso] = {}
 
     def olvidar(self, ticker: str) -> None:
         self._curso.pop(ticker, None)
         self._cerradas.pop(ticker, None)
+        self._terminadas.pop(ticker, None)
 
     def reiniciar(self) -> None:
         self._curso.clear()
         self._cerradas.clear()
+        self._terminadas.clear()
 
     def marcar_cerrada(self, ticker: str, ts) -> None:
         """Avisa de que la vela de ese minuto YA CERRO. Llamar al recibir `AM`.
@@ -190,6 +246,104 @@ class ConstructorParcial:
         if minuto > self._cerradas.get(ticker, -1):
             self._cerradas[ticker] = minuto
 
+    def aplicar_operacion(self, ev: dict) -> Optional[tuple[str, VelaEnCurso, datetime, int]]:
+        """Una operacion suelta (`T.`): {sym, p, s, t}. Misma salida que `aplicar`.
+
+        POR QUE (21-sep-2026). El agregado por segundo llega ~3 s despues de
+        cerrarse el segundo; una prealerta «del segundo 44» veia en realidad el
+        estado del 41. Las operaciones llegan a decenas de milisegundos: con
+        ellas la vela en curso se mueve al instante y la prealerta mira lo que
+        hay AHORA. El `av` oficial, cuando llega, sigue siendo el ancla del
+        volumen (ver `VelaEnCurso.volumen`).
+        """
+        tk = ev.get("sym")
+        ts, precio, tam = ev.get("t"), ev.get("p"), ev.get("s")
+        if not tk or ts is None or precio is None:
+            return None
+        ms = int(ts)
+        precio = float(precio)
+        tam = float(tam or 0.0)
+        mueve_precio = not (set(ev.get("c") or ()) & CONDICIONES_SIN_PRECIO)
+        t = datetime.fromtimestamp(ms / 1000, tz=ET)
+        minuto = int(t.timestamp()) // 60 * 60
+
+        v = self._curso.get(tk)
+        if v is not None and v.minuto > minuto:
+            # Operacion rezagada de un minuto ya cerrado: solo cuenta para la
+            # comparacion con la oficial, no reabre nada.
+            ant = self._terminadas.get(tk)
+            if ant is not None and ant.minuto == minuto:
+                ant.v_operaciones += tam
+            return None
+        if v is None or v.minuto != minuto:
+            if v is not None and v.minuto < minuto:
+                # La vela anterior queda terminada: se guarda para compararla
+                # con la oficial cuando llegue (ver `terminada`).
+                self._terminadas[tk] = v
+            anterior = v
+            # Vista desde el principio del minuto si veniamos siguiendo el
+            # ticker (habia vela del minuto anterior) o si esta es la primera
+            # operacion del minuto y llega en sus primeros 2 s.
+            completa = (anterior is not None and anterior.minuto == minuto - 60) or (t.second < 2)
+            v = VelaEnCurso(
+                minuto=minuto, open=precio, high=precio, low=precio, close=precio,
+                # El acumulado al empezar el minuto es el que dejo la vela
+                # anterior, si la conocemos; si no, no se inventa.
+                av_inicio=(anterior.av_ahora if anterior is not None and anterior.minuto == minuto - 60 else None),
+                av_ahora=None, segundos=0, completa=completa, con_precio=mueve_precio,
+            )
+            self._curso[tk] = v
+        else:
+            if mueve_precio:
+                if not v.con_precio:
+                    # Hasta ahora solo habia odd lots: el precio arranca aqui.
+                    v.open = v.high = v.low = v.close = precio
+                    v.con_precio = True
+                else:
+                    v.high = max(v.high, precio)
+                    v.low = min(v.low, precio)
+                    if ms >= v.ultimo_ms:
+                        v.close = precio
+        v.ultimo_ms = max(v.ultimo_ms, ms)
+        v.operaciones += 1
+        v.v_operaciones += tam
+        v._ops.append((ms, tam))
+        if v.av_ahora is not None:
+            v.v_desde_ultimo_av += tam
+
+        if v.evaluada or not (SEGUNDO_DECISION <= t.second <= SEGUNDO_LIMITE):
+            return None
+        if minuto <= self._cerradas.get(tk, -1):
+            return None
+        return tk, v, datetime.fromtimestamp(minuto, tz=ET), t.second
+
+    def velas_por_cerrar(self, ahora_epoch: float, margen_s: float = 0.8) -> list:
+        """Velas propias cuyo minuto ya termino hace >= margen_s y aun no se han
+        entregado como cerradas: [(ticker, VelaEnCurso)]. La primera operacion
+        del minuto siguiente suele cerrarlas antes; esto cubre a los tickers
+        que se callan. Se marcan como entregadas para no cerrarlas dos veces."""
+        out = []
+        for tk, v in list(self._curso.items()):
+            if not v.cerrada_propia and v.operaciones > 0 and ahora_epoch >= v.minuto + 60 + margen_s:
+                v.cerrada_propia = True
+                out.append((tk, v))
+        for tk, v in list(self._terminadas.items()):
+            if not v.cerrada_propia and v.operaciones > 0 and ahora_epoch >= v.minuto + 60 + margen_s:
+                v.cerrada_propia = True
+                out.append((tk, v))
+        return out
+
+    def terminada(self, ticker: str, minuto_epoch: int) -> Optional[VelaEnCurso]:
+        """La vela que montamos con operaciones para ese minuto, si la hay.
+        Sirve para compararla con la oficial (`AM`) al llegar esta."""
+        v = self._terminadas.get(ticker)
+        if v is not None and v.minuto == minuto_epoch:
+            return v
+        v = self._curso.get(ticker)
+        if v is not None and v.minuto == minuto_epoch:
+            return v
+        return None
+
     def aplicar(self, ev: dict) -> Optional[tuple[str, VelaEnCurso, datetime, int]]:
         """Un mensaje `A`. Devuelve el ticker y su vela si TOCA MIRAR.
 
@@ -214,6 +368,12 @@ class ConstructorParcial:
         av = float(av) if av is not None else None
 
         v = self._curso.get(tk)
+        if v is not None and v.minuto < minuto:
+            self._terminadas[tk] = v
+        if v is not None and v.minuto > minuto:
+            # Un agregado de un minuto ya pasado (llega 3 s tarde): las
+            # operaciones ya abrieron el minuto siguiente. No se retrocede.
+            return None
         if v is None or v.minuto != minuto:
             # Minuto nuevo: la vela empieza aqui. `av_inicio` es el acumulado
             # ANTES de este segundo, para que el volumen del minuto salga bien.
@@ -227,10 +387,21 @@ class ConstructorParcial:
         else:
             v.high = max(v.high, float(h))
             v.low = min(v.low, float(l))
-            v.close = float(c)
+            # El cierre lo manda quien llegue MAS TARDE en tiempo de mercado: el
+            # agregado es de hace 3 s y las operaciones ya han podido moverlo.
+            if v.operaciones == 0 or int(ts) >= v.ultimo_ms:
+                v.close = float(c)
             v.segundos += 1
             if av is not None:
+                if v.av_inicio is None:
+                    # El minuto lo abrieron las operaciones (sin `av`). El
+                    # acumulado al empezar es este `av` menos lo que el minuto
+                    # lleva hasta el fin de este segundo, que ya conocemos.
+                    v.av_inicio = av - v.v_hasta(int(ts) + 1000)
                 v.av_ahora = av
+                # Las operaciones anteriores al fin de este segundo ya estan
+                # dentro del `av`; las posteriores, no.
+                v.v_desde_ultimo_av = v.v_tras(int(ts) + 1000)
 
         # `evaluada` la pone el que llama, cuando de verdad ha avisado. Aqui solo
         # se comprueba la ventana: del segundo 50 al 59.

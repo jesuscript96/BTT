@@ -186,6 +186,24 @@ class RunnerAlertas:
                     logger.warning("[BOT] fallo al notificar %s: %s", ev.ticker, exc)
         return eventos
 
+    def tiene_vela(self, ticker: str, ts) -> bool:
+        """Si ya hay una vela con ese timestamp (propia u oficial)."""
+        clave = str(pd.Timestamp(ts))[:16]
+        return any(str(pd.Timestamp(v.get("timestamp")))[:16] == clave for v in self._velas.get(ticker, [])[-3:])
+
+    def sustituir_vela(self, ticker: str, vela: dict) -> bool:
+        """Reemplaza EN SILENCIO la vela de ese minuto por otra (la oficial), sin
+        reevaluar: el aviso ya se dio con la propia (21-sep-2026). Devuelve si
+        habia una que sustituir. Solo se mira entre las tres ultimas: la
+        oficial llega ~2 s despues de que la propia cerrara el minuto."""
+        clave = str(pd.Timestamp(vela.get("timestamp")))[:16]
+        lista = self._velas.get(ticker, [])
+        for k in range(len(lista) - 1, max(-1, len(lista) - 4), -1):
+            if str(pd.Timestamp(lista[k].get("timestamp")))[:16] == clave:
+                lista[k] = {c: vela.get(c) for c in COLUMNAS}
+                return True
+        return False
+
     def estimacion_locates(self, ticker: str, precio: float) -> list[dict]:
         """Para `/evf`: que pediria cada estrategia si entrara a `precio` ahora.
 

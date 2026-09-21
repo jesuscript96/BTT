@@ -186,10 +186,19 @@ class FeedEnVivo:
         al_tick: Optional[Callable[[str, dict], Any]] = None,
         todo_el_mercado: bool = False,
         al_mercado: Optional[Callable[[dict], Any]] = None,
+        al_operacion: Optional[Callable[[str, dict], Any]] = None,
     ):
         self.tickers = [t.upper() for t in tickers]
         self.al_cerrar_vela = al_cerrar_vela
         self.al_tick = al_tick
+        # OPERACIONES SUELTAS (`T.`, 21-sep-2026). Los agregados por segundo
+        # (`A.`) llegan ~3 s despues de cerrarse el segundo: es el tiempo que
+        # Massive tarda en agregarlos, constante, medido en 22.215 mensajes
+        # (mediana 3,08 s). Para reaccionar en milisegundos hay que leer las
+        # operaciones tal cual salen de bolsa y agregarlas nosotros. Solo se
+        # suscriben para los tickers vigilados; el mercado entero sigue en AM.
+        self.al_operacion = al_operacion
+        self.operaciones_recibidas = 0
         # Suscribirse al mercado entero para que el radar pueda descubrir gaps.
         # `al_mercado` recibe TODOS los agregados de minuto, incluidos los de
         # los tickers ya vigilados.
@@ -233,7 +242,8 @@ class FeedEnVivo:
         self.tickers.extend(pendientes)
         ws = self._ws
         if ws is not None:
-            canales = ([f"AM.{t}" for t in pendientes] + [f"A.{t}" for t in pendientes])
+            canales = ([f"AM.{t}" for t in pendientes] + [f"A.{t}" for t in pendientes]
+                       + ([f"T.{t}" for t in pendientes] if self.al_operacion else []))
             try:
                 await ws.send(json.dumps({"action": "subscribe",
                                           "params": ",".join(canales)}))
@@ -263,7 +273,8 @@ class FeedEnVivo:
                     # La lista ENTERA, no solo la inicial: si el radar anyadio
                     # tickers mientras el socket estaba caido, entran aqui.
                     canales = ([f"AM.{t}" for t in self.tickers]
-                               + [f"A.{t}" for t in self.tickers])
+                               + [f"A.{t}" for t in self.tickers]
+                               + ([f"T.{t}" for t in self.tickers] if self.al_operacion else []))
                     if self.todo_el_mercado:
                         # Los agregados por minuto de TODO el mercado. Es lo que
                         # alimenta al radar: sin ver el mercado entero no se
@@ -340,5 +351,15 @@ class FeedEnVivo:
                 if self.al_tick is not None:
                     try:
                         self.al_tick(str(ev.get("sym", "")), ev)
+                    except Exception:  # noqa: BLE001
+                        pass
+            elif tipo == "T":
+                # Una operacion: {sym, p (precio), s (tamanyo), t (hora SIP en
+                # ms), c (condiciones), x (bolsa), z (tape)}. Llega a decenas
+                # de milisegundos del cruce.
+                self.operaciones_recibidas += 1
+                if self.al_operacion is not None:
+                    try:
+                        self.al_operacion(str(ev.get("sym", "")), ev)
                     except Exception:  # noqa: BLE001
                         pass
