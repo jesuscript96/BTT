@@ -38,6 +38,9 @@ export interface CatalogoGenetico {
   familias: Array<{ clave: string; etiqueta: string }>;
   guardas: GuardaCatalogo[];
   stops: { pct: number[]; offset_pct: number[]; niveles: Record<string, string[]> };
+  // Parámetros que se pueden FIJAR al marcar el indicador (p.ej. `ap_session`
+  // de Previous max/min y % Fade). `opciones[0]` es el defecto.
+  params_fijables?: Array<{ param: string; indicadores: string[]; opciones: Array<{ value: string; label: string }> }>;
   tps: {
     pct: number[]; hora: string[]; tiempo: number[];
     parcial_cierre: number[]; parcial_max: number;
@@ -106,6 +109,14 @@ export interface ConfigCorrida {
   ventana_entrada: Array<{ from_time: string; to_time: string }> | null;
   guardas: CondicionMotor[];
   catalogo: string[];
+  // 21-sep-2026: los nueve niveles base (Prev. Bar…, Previous max/min, VWAP,
+  // PM High/Low) van con casilla dentro de `catalogo`, y esta clave le dice al
+  // genético que los elija uno a uno. Un config sin ella (corridas antiguas)
+  // sortea los nueve como siempre.
+  niveles_explicitos?: boolean;
+  // {indicador: {param: valor}} — "auto" = según la sesión de la corrida,
+  // "*" = sortear la rejilla del catálogo, otro = ese valor fijo.
+  params_fijos?: Record<string, Record<string, string>>;
   n_condiciones: number;
   stops: string[];
   tps: string[];

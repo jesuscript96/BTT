@@ -26,7 +26,8 @@ from genetico import catalogo as C
 
 # ── Nacimiento al azar ──────────────────────────────────────────────────────
 
-def objetivo_aleatorio(rng: random.Random, ind, marcados=None) -> dict:
+def objetivo_aleatorio(rng: random.Random, ind, marcados=None, explicitos=None,
+                       params_izq: dict | None = None, config: dict | None = None) -> dict:
     """Un nivel del lado derecho, CON sus parametros sorteados.
 
     Sin esto, un Donchian o una Darvas saldrian siempre con el periodo por
@@ -36,18 +37,68 @@ def objetivo_aleatorio(rng: random.Random, ind, marcados=None) -> dict:
 
     `marcados` es el catalogo elegido en la pagina: los niveles OPCIONALES (el
     perfil de volumen, el pivote) solo entran si estan marcados. None = solo
-    los de siempre.
+    los de siempre. `explicitos`: ver `catalogo.objetivos_permitidos`.
+
+    `params_izq` son los parametros del lado izquierdo, para el caso «Pico
+    contra Pico»: el destino hereda ventana y direccion y cambia SOLO el numero
+    de giro. Sin eso saldrian «Pico nº1(up) > Pico nº1(down)» (un techo contra
+    un suelo: siempre verdad) o «Pico nº2 > Pico nº2» (siempre falso).
     """
-    nivel = rng.choice(C.objetivos_permitidos(ind, marcados))
-    rejilla = C.NIVELES_CON_PARAMS.get(nivel, {})
+    nivel = rng.choice(C.objetivos_permitidos(ind, marcados, explicitos))
+    if nivel == ind.nombre and "pivot_rank" in ind.params:
+        return _mismo_giro_otro_numero(rng, ind, params_izq or {})
+    # Con los parametros fijados en la pagina (p.ej. `ap_session` de Previous
+    # max segun la sesion de la corrida) reducidos a su unico valor.
+    rejilla = C.rejilla_params(nivel, config, C.NIVELES_CON_PARAMS.get(nivel, {}))
     return {"ind": nivel, "params": {k: rng.choice(v) for k, v in rejilla.items()}}
 
 
+def _mismo_giro_otro_numero(rng: random.Random, ind, params_izq: dict) -> dict:
+    """Destino «Pico» para un origen «Pico»: misma ventana y direccion, otro nº."""
+    rank_izq = params_izq.get("pivot_rank")
+    otros = [r for r in ind.params["pivot_rank"] if r != rank_izq] or list(ind.params["pivot_rank"])
+    params = {k: params_izq.get(k, rng.choice(v)) for k, v in ind.params.items() if k != "pivot_rank"}
+    params["pivot_rank"] = rng.choice(otros)
+    return {"ind": ind.nombre, "params": params}
+
+
+def coherencia(c: dict) -> dict:
+    """Arregla EN SITIO una condicion «Pico contra Pico» tras mutar el origen:
+    si el numero de giro del destino coincide con el del origen, o la ventana o
+    la direccion se han separado, el destino se realinea. Devuelve `c`.
+
+    Sin esto, mutar `pivot_rank` del origen de 2 a 1 con el destino en 1 dejaba
+    «Pico nº1 < Pico nº1»: falso en todas las velas, cero operaciones, y el
+    genetico lo descarta sin que nadie sepa que era la mutacion y no la idea.
+    """
+    obj = c.get("objetivo")
+    if not isinstance(obj, dict) or obj.get("ind") != c.get("ind"):
+        return c
+    ind = C.CATALOGO[c["ind"]]
+    if "pivot_rank" not in ind.params:
+        return c
+    izq = c.get("params") or {}
+    der = dict(obj.get("params") or {})
+    for k in ind.params:
+        if k != "pivot_rank" and k in izq:
+            der[k] = izq[k]
+    if der.get("pivot_rank") == izq.get("pivot_rank") or der.get("pivot_rank") is None:
+        otros = [r for r in ind.params["pivot_rank"] if r != izq.get("pivot_rank")]
+        # Determinista a proposito (el vecino de arriba): quien llama ya ha
+        # gastado su azar; aqui solo se repara, y siempre igual para la misma
+        # entrada, que es lo que mantiene estable la huella.
+        der["pivot_rank"] = otros[0] if otros else izq.get("pivot_rank")
+    obj["params"] = der
+    return c
+
+
 def _condicion_aleatoria(rng: random.Random, nombres: list[str],
-                         marcados: list[str] | None = None) -> dict:
+                         marcados: list[str] | None = None, explicitos=None,
+                         config: dict | None = None) -> dict:
     """`nombres`: candidatos al lado IZQUIERDO. `marcados`: todo lo marcado en
     la pagina (decide que niveles opcionales valen como destino); si no viene,
-    se usan los mismos `nombres`."""
+    se usan los mismos `nombres`. `explicitos`: si los niveles base se eligen
+    uno a uno (config["niveles_explicitos"]); None = deducirlo."""
     izq = C.lado_izquierdo(nombres)
     if not izq:
         raise ValueError(
@@ -55,7 +106,7 @@ def _condicion_aleatoria(rng: random.Random, nombres: list[str],
             "falta al menos un indicador que pueda ir a la izquierda de la condicion "
             "(Bar Close, RSI, % Fade...)")
     ind = C.CATALOGO[rng.choice(izq)]
-    params = {k: rng.choice(v) for k, v in ind.params.items()}
+    params = {k: rng.choice(v) for k, v in C.rejilla_params(ind.nombre, config, ind.params).items()}
     comp = rng.choice(ind.comparadores)
     opciones = []
     if ind.valores:
@@ -66,7 +117,8 @@ def _condicion_aleatoria(rng: random.Random, nombres: list[str],
     if tipo == "numero":
         objetivo = rng.choice(ind.valores)
     else:
-        objetivo = objetivo_aleatorio(rng, ind, nombres if marcados is None else marcados)
+        objetivo = objetivo_aleatorio(rng, ind, nombres if marcados is None else marcados,
+                                      explicitos, params, config)
     return {"ind": ind.nombre, "params": params, "comp": comp, "objetivo": objetivo}
 
 
@@ -156,13 +208,17 @@ def aleatorio(config: dict, rng: random.Random) -> dict:
     # que no son niveles opcionales (esos entran como destino y como stop).
     marcados = list(config["catalogo"])
     nombres = C.lado_izquierdo(marcados)
+    # Desde el 21-sep-2026 la pagina manda `niveles_explicitos: true` y los
+    # nueve niveles base se eligen con casilla; un config sin la clave (corridas
+    # anteriores, consola) sortea los nueve como siempre.
+    explicitos = config.get("niveles_explicitos")
     n = int(config.get("n_condiciones", 2))
     conds = []
     usados = set()
     intentos = 0
     while len(conds) < n and intentos < 50:
         intentos += 1
-        c = _condicion_aleatoria(rng, nombres, marcados)
+        c = _condicion_aleatoria(rng, nombres, marcados, explicitos, config)
         if c["ind"] in usados:
             continue  # un indicador por condicion: dos Squeeze no aportan, ensucian
         usados.add(c["ind"])
@@ -210,8 +266,7 @@ def receta(individuo: dict) -> str:
         if isinstance(obj, dict):
             # Con los parametros: un «Donchian» a secas no dice si es la banda
             # de arriba o la de abajo, y son estrategias opuestas.
-            ps = [str(v) for _, v in sorted((obj.get("params") or {}).items()) if v is not None]
-            der = f"{obj['ind']}({', '.join(ps)})" if ps else obj["ind"]
+            der = C.etiqueta(obj["ind"], obj.get("params"))
         else:
             der = str(obj)
         partes.append(f"{izq} {C.SIMBOLO.get(c['comp'], c['comp'])} {der}")

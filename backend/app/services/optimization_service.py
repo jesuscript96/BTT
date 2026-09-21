@@ -402,6 +402,18 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
             v_step = 1.0
             v_min = float(max(0, int(v - 5))) if min_val is None else float(min_val)
             v_max = float(int(v + 10)) if max_val is None else float(max_val)
+        elif v < 0 and min_val is None and max_val is None:
+            # OBJETIVOS NEGATIVOS (21-sep-2026): «Recorrido (%) < -2», «Reg.
+            # Slope < -0.1», «ATR Extension < -3»… El rango automatico de abajo
+            # esta pensado para positivos: con v = -2 daba min = max(0, -0,5)
+            # = 0 y max = max(-6, 8) = 8, o sea que el 3D, el walk-forward y el
+            # genetico barrian de 0 a 8 una condicion que pedia NEGATIVOS, sin
+            # error y sin pisar nunca el signo bueno. Jaume lo vio como «el
+            # genetico no tiene en cuenta el de recorrido». Se refleja el rango
+            # de los positivos: de -8 a -0,5 para un -2.
+            v_step = float(step or _auto_step(v))
+            v_min = -float(max(abs(v) * 3, abs(v) + 10))
+            v_max = -float(abs(v) * 0.25)
         else:
             v_step = float(step or _auto_step(v))
             # `or` NO vale aqui: un min_val de 0 es falsy y se colaba el
@@ -425,6 +437,7 @@ def extract_parameters(strategy_def: dict) -> list[dict]:
         })
 
     def _auto_step(v):
+        v = abs(v)          # el paso de un -2 es el de un 2
         if v == 0:
             return 1
         if v >= 100:
@@ -749,6 +762,27 @@ def _extract_indicator_params(cfg, logic_label, path, add_fn):
             add_fn(param_id, label, val, "Indicator", f"{path}.{param_key}",
                    is_int_param=True, allow_zero=(param_key == "offset"))
 
+    # LA FAMILIA DE PIVOTES (21-sep-2026): «Ultimo pivote», «Pico», «Edad del
+    # pico», «Volumen del pico» y los triangulos llevan `pivot_window` (velas de
+    # confirmacion a cada lado) y los tres de picos ademas `pivot_rank` (que
+    # giro de la lista: 1 = el ultimo). Ninguno estaba en `int_keys`, asi que
+    # una estrategia con «Pico nº2» no tenia NADA que mover ni en el 3D ni en el
+    # genetico en modo mejorar — Jaume: «no tiene en cuenta el pico/valle (nºN)
+    # ni el ultimo pivote». Rangos acotados a lo que el motor entiende: la
+    # ventana desde 1 (el motor la sube a 1 si baja mas), el numero de giro de
+    # 1 a 6 (el bufer del motor guarda 16, pero por encima de 5-6 giros en un
+    # dia casi nunca existe y el indicador sale NaN).
+    pw = cfg.get("pivot_window")
+    if pw is not None:
+        add_fn(f"{path}.pivot_window", f"{logic_label} {name} velas de confirmación",
+               pw, "Indicator", f"{path}.pivot_window",
+               min_val=1, max_val=8, step=1, is_int_param=True)
+    pr = cfg.get("pivot_rank")
+    if pr is not None:
+        add_fn(f"{path}.pivot_rank", f"{logic_label} {name} nº de giro",
+               pr, "Indicator", f"{path}.pivot_rank",
+               min_val=1, max_val=6, step=1, is_int_param=True)
+
     for param_key in float_keys:
         val = cfg.get(param_key)
         if val is not None:
@@ -769,6 +803,10 @@ _INT_PARAM_KEYS = {
     "time_hour", "time_minute", "days_lookback", "orb_minutes",
     "time_from_hour", "time_from_minute", "range_minutes",
     "deviationLevel", "sma_period", "lookback",
+    # La familia de pivotes (21-sep-2026). Un 2.0 en `pivot_rank` no revienta
+    # (el motor hace int()), pero un 2.0 en el JSON de la estrategia guardada
+    # es lo que luego el constructor pinta raro.
+    "pivot_window", "pivot_rank",
 }
 
 

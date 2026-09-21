@@ -146,7 +146,7 @@ def test_ninguno_se_queda_sin_lado_derecho():
     derecho es la definición, no un despiste."""
     for nombre, ind in C.CATALOGO.items():
         if ind.solo_destino:
-            assert nombre in C.NIVELES_OPCIONALES, f"{nombre}: solo_destino sin rejilla de nivel"
+            assert nombre in C.NIVELES_OPCIONALES or nombre in C.NIVELES_BASE,                 f"{nombre}: solo_destino sin rejilla de nivel"
             continue
         assert ind.valores or ind.objetivos, f"{nombre}: no se puede comparar con nada"
 
@@ -158,7 +158,8 @@ def test_ninguno_se_queda_sin_lado_derecho():
 # premisa fue «no romper nada de lo que ya funciona»: una corrida configurada
 # como siempre tiene que sortear exactamente lo mismo que antes.
 
-_DE_SIEMPRE = C.NIVELES + tuple(n for n in C.NIVELES_CON_PARAMS if n not in C.NIVELES_OPCIONALES)
+_DE_SIEMPRE = C.NIVELES + tuple(n for n in C.NIVELES_CON_PARAMS
+                                if n not in C.NIVELES_OPCIONALES and n not in C.NIVELES)
 
 
 def test_sin_marcar_nada_los_destinos_son_los_de_siempre():
@@ -205,6 +206,189 @@ def test_solo_niveles_marcados_falla_con_un_mensaje_claro():
     cfg = {"catalogo": ["Punto de control"], "n_condiciones": 1, "sesgo": "short"}
     with pytest.raises(ValueError, match="Punto de control"):
         X.aleatorio(cfg, random.Random(1))
+
+
+# ── Los niveles BASE con casilla y la familia de picos (21-sep-2026) ────
+#
+# Jaume: «no tiene en cuenta indicadores como el pico/valle (nºN) o el Ultimo
+# pivote, previous max y min, Prev. Bar close/open/high/low...». Los niveles
+# base entraban como destino pero sin casilla: ni se veian ni se podian quitar.
+# Ahora tienen casilla, marcada de serie, y la pagina manda
+# `niveles_explicitos: true`. Un config antiguo (sin la clave y sin ningun
+# nivel base en `catalogo`) tiene que sortear EXACTAMENTE lo de siempre.
+
+def test_los_niveles_base_estan_en_el_catalogo_marcados_de_serie():
+    for n in C.NIVELES_BASE:
+        assert n in C.CATALOGO and C.CATALOGO[n].solo_destino and C.CATALOGO[n].por_defecto, n
+        assert C.CATALOGO[n].familia == "precio"
+
+
+def test_con_niveles_explicitos_solo_entran_los_marcados():
+    bc = C.CATALOGO["Bar Close"]
+    marcados = ["Bar Close", "Prev. Bar Low", "VWAP"]
+    permitidos = C.objetivos_permitidos(bc, marcados, explicitos=True)
+    assert "Prev. Bar Low" in permitidos and "VWAP" in permitidos
+    assert "Prev. Bar Close" not in permitidos and "Previous max" not in permitidos
+    # los que no tienen casilla (medias, bandas, Darvas...) siguen entrando
+    assert "SMA" in permitidos and "Darvas Box" in permitidos
+    # y el orden relativo es el de siempre
+    assert [o for o in _DE_SIEMPRE if o in permitidos] == list(permitidos)
+
+
+def test_sin_la_clave_pero_con_niveles_base_marcados_se_deduce_explicito():
+    """La pagina nueva manda la clave; pero si alguien construye el config a
+    mano con «Prev. Bar Low» dentro, es que sabe que hay casillas."""
+    bc = C.CATALOGO["Bar Close"]
+    permitidos = C.objetivos_permitidos(bc, ["Bar Close", "Prev. Bar Low"])
+    assert "Prev. Bar Low" in permitidos and "VWAP" not in permitidos
+
+
+def test_con_todo_desmarcado_y_explicito_no_se_queda_sin_destinos():
+    """Desmarcar los nueve no puede reventar `rng.choice(())`: quedan medias y
+    bandas."""
+    import random
+    cfg = {"catalogo": ["Bar Close"], "niveles_explicitos": True, "n_condiciones": 1,
+           "sesgo": "short", "stops": ["pct"], "tps": ["pct"]}
+    destinos = {c["objetivo"]["ind"] for i in (X.aleatorio(cfg, random.Random(3)) for _ in range(300))
+                for c in i["condiciones"] if isinstance(c["objetivo"], dict)}
+    assert destinos and not (destinos & set(C.NIVELES_BASE)), destinos
+
+
+def test_el_pico_entra_como_destino_solo_marcado_y_del_2_al_4():
+    import random
+    rng = random.Random(8)
+    con = {}
+    for _ in range(600):
+        c = X._condicion_aleatoria(rng, ["Bar Close"], ["Bar Close", "Pico"])
+        if isinstance(c["objetivo"], dict) and c["objetivo"]["ind"] == "Pico":
+            con.setdefault("rank", set()).add(c["objetivo"]["params"]["pivot_rank"])
+    assert con.get("rank") == {2, 3, 4}, con
+    sin = {c["objetivo"]["ind"] for c in (X._condicion_aleatoria(random.Random(1), ["Bar Close"], ["Bar Close"])
+                                          for _ in range(400)) if isinstance(c["objetivo"], dict)}
+    assert "Pico" not in sin
+
+
+def test_pico_contra_pico_nunca_es_el_mismo_giro_ni_mezcla_techos_con_suelos():
+    """«Pico nº1(up) > Pico nº1(down)» es siempre verdad y «Pico nº2 > Pico
+    nº2» siempre falso: dos condiciones muertas que no se sortean ni salen al
+    mutar."""
+    import random
+    from genetico import motor as M
+    cfg = {"catalogo": ["Pico"], "n_condiciones": 1, "sesgo": "short",
+           "stops": ["pct"], "tps": ["pct"], "p_mutacion": 0.9}
+    rng = random.Random(12)
+    vistos = set()
+    for _ in range(300):
+        i = X.aleatorio(cfg, rng)
+        for _m in range(3):
+            i = M.mutar(i, cfg, rng)
+            c = i["condiciones"][0]
+            assert c["ind"] == "Pico" and c["objetivo"]["ind"] == "Pico"
+            a, b = c["params"], c["objetivo"]["params"]
+            assert a["pivot_rank"] != b["pivot_rank"], c
+            assert a["swing_dir"] == b["swing_dir"] and a["pivot_window"] == b["pivot_window"], c
+            vistos.add((a["pivot_rank"], b["pivot_rank"], a["swing_dir"]))
+    assert len(vistos) >= 8, vistos
+
+
+def test_la_receta_de_los_picos_dice_el_numero_de_giro():
+    ind = {"condiciones": [{"ind": "Pico", "params": {"pivot_window": 3, "swing_dir": "up", "pivot_rank": 1},
+                            "comp": C.LT,
+                            "objetivo": {"ind": "Pico", "params": {"pivot_window": 3, "swing_dir": "up", "pivot_rank": 2}}}],
+           "stop": {"modo": "pct", "valor": 5}, "tp": {"modo": "pct", "valor": 10}}
+    r = X.receta(ind)
+    assert "Pico nº1(3, up) < Pico nº2(3, up)" in r, r
+
+
+def test_la_familia_de_picos_llega_al_motor_con_pivot_rank():
+    """`pivot_rank` tiene que viajar en la definicion: sin el, el motor usa 1 y
+    «Pico nº3» seria «Ultimo pivote» sin avisar."""
+    cfg = _config(catalogo=["Edad del pico"], n_condiciones=1)
+    import random
+    i = X.aleatorio(cfg, random.Random(2))
+    src = X.a_definicion(i, cfg)["entry_logic"]["root_condition"]["conditions"][-1]["source"]
+    assert src["name"] == "Edad del pico" and src["pivot_rank"] in (1, 2, 3)
+    assert src["swing_dir"] in ("up", "down") and src["pivot_window"] in (2, 3, 5)
+
+
+# ── Parametros FIJADOS en la pagina: `ap_session` sigue a la sesion (21-sep) ──
+#
+# Jaume: «previous max y min tienen que tener en cuenta la sesion en la que fijo
+# que se corran las pruebas; mejor si puedo seleccionar el periodo». El motor
+# calcula sobre el dia entero y recorta despues, asi que en RTH un Previous max
+# desde las 04:00 incluye el premercado: es otro indicador.
+
+def test_la_sesion_de_referencia_sigue_a_la_sesion_de_la_corrida():
+    f = C.sesion_de_referencia
+    assert f({"sesiones": ["rth"]}) == "ap.RTH"
+    assert f({"sesiones": ["pre"]}) == "ap.PM"
+    assert f({"sesiones": ["post"]}) == "ap.AM"
+    assert f({"sesiones": ["custom"], "hora_ini": "08:00"}) == "ap.PM"
+    assert f({"sesiones": ["custom"], "hora_ini": "10:30"}) == "ap.RTH"
+    assert f({"sesiones": ["custom"], "hora_ini": "16:30"}) == "ap.AM"
+    assert f({"sesiones": ["pre", "rth"]}) == "ap.PM"        # la mas temprana
+    assert f({}) == "ap.RTH"                                  # el defecto de la pagina
+
+
+def _cfg_fijos(valor, **extra):
+    cfg = {"catalogo": ["Bar Close", "Previous max", "% Fade"], "niveles_explicitos": True,
+           "n_condiciones": 1, "sesgo": "short", "stops": ["pct"], "tps": ["pct"],
+           "sesiones": ["rth"], "p_mutacion": 0.9,
+           "params_fijos": {"Previous max": {"ap_session": valor}, "% Fade": {"ap_session": valor}}}
+    cfg.update(extra)
+    return cfg
+
+
+def _ap_sessions_vistos(cfg, n=300, mutar=True):
+    import random
+    from genetico import motor as M
+    rng = random.Random(17)
+    vistos = {"Previous max": set(), "% Fade": set()}
+    for _ in range(n):
+        i = X.aleatorio(cfg, rng)
+        for _m in range(2 if mutar else 0):
+            i = M.mutar(i, cfg, rng)
+        for c in i["condiciones"]:
+            if c["ind"] == "% Fade":
+                vistos["% Fade"].add(c["params"].get("ap_session"))
+            obj = c["objetivo"]
+            if isinstance(obj, dict) and obj["ind"] == "Previous max":
+                vistos["Previous max"].add(obj["params"].get("ap_session"))
+    return vistos
+
+
+def test_con_auto_previous_max_y_fade_llevan_la_sesion_de_la_corrida_tambien_al_mutar():
+    v = _ap_sessions_vistos(_cfg_fijos("auto"))
+    assert v["Previous max"] == {"ap.RTH"} and v["% Fade"] == {"ap.RTH"}, v
+    v = _ap_sessions_vistos(_cfg_fijos("auto", sesiones=["pre"]))
+    assert v["Previous max"] == {"ap.PM"} and v["% Fade"] == {"ap.PM"}, v
+
+
+def test_un_valor_fijo_a_mano_manda_sobre_la_sesion():
+    v = _ap_sessions_vistos(_cfg_fijos("ap.PM"))          # corrida RTH, pero pedido 04:00
+    assert v["Previous max"] == {"ap.PM"} and v["% Fade"] == {"ap.PM"}, v
+
+
+def test_sortear_y_config_antiguo_prueban_las_dos():
+    v = _ap_sessions_vistos(_cfg_fijos("*"))
+    assert v["Previous max"] == {"ap.PM", "ap.RTH"} and v["% Fade"] == {"ap.PM", "ap.RTH"}, v
+    cfg = _cfg_fijos("auto"); del cfg["params_fijos"]      # corrida anterior al 21-sep
+    v = _ap_sessions_vistos(cfg)
+    assert v["Previous max"] == {"ap.PM", "ap.RTH"}, v
+
+
+def test_un_parametro_fijado_no_es_un_gen_al_mutar():
+    """Con `ap_session` fijado y `fade_ref` libre, la mutacion de parametro del
+    % Fade solo puede tocar `fade_ref`: sortear el fijo devolveria un clon."""
+    import random
+    from genetico import motor as M
+    cfg = _cfg_fijos("auto")
+    rng = random.Random(3)
+    c = {"ind": "% Fade", "params": {"fade_ref": "previous_max", "ap_session": "ap.RTH"},
+         "comp": C.GT, "objetivo": 10}
+    for _ in range(200):
+        m = M._mutar_condicion(c, cfg, rng)
+        assert m["params"]["ap_session"] == "ap.RTH", m
 
 
 def test_el_pivote_entra_al_stop_solo_si_esta_marcado():
@@ -282,6 +466,8 @@ SONDAS = {
     "ref_level": ["vwap", "pmh"], "level_dir": ["above", "below"],
     "wick_side": ["upper", "lower"], "swing_dir": ["up", "down"],
     "bin_pct": [0.5, 2.0], "liston_pct": [30, 90], "zona_pct": [50, 85],
+    # La familia de picos enumerados (21-sep-2026).
+    "pivot_rank": [1, 2],
 }
 
 # `multiplier` NO es una rama del indicador: `indicators.py` lo aplica al final
