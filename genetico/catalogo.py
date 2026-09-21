@@ -209,11 +209,12 @@ AUTO, SORTEAR = "auto", "*"
 # este orden. El primero es el defecto.
 OPCIONES_FIJABLES = {
     "ap_session": (
-        (AUTO, "Según la sesión de la corrida"),
-        ("ap.PM", "Desde las 04:00 (con premercado)"),
-        ("ap.RTH", "Desde las 09:30 (solo RTH)"),
-        ("ap.AM", "Desde las 16:00 (solo after)"),
-        (SORTEAR, "Sortear (04:00 y 09:30)"),
+        # Cortas a proposito: el desplegable vive en una columna de ~180 px.
+        (AUTO, "Sesión de la corrida"),
+        ("ap.PM", "Desde 04:00 (con PM)"),
+        ("ap.RTH", "Desde 09:30 (RTH)"),
+        ("ap.AM", "Desde 16:00 (after)"),
+        (SORTEAR, "Sortear 04:00 / 09:30"),
     ),
 }
 
