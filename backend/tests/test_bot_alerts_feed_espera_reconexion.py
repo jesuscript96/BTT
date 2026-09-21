@@ -31,7 +31,7 @@ def _feed():
     return feed_mod.FeedEnVivo(["AAA"], al_cerrar_vela=lambda *a, **k: None)
 
 
-@pytest.mark.parametrize("espera_env", [60.0, 5.0])
+@pytest.mark.parametrize("espera_env", [5.0, 20.0])
 def test_espera_configurada_antes_de_cada_reconexion(monkeypatch, espera_env):
     monkeypatch.setenv("MASSIVE_BOT_API_KEY", "clave")
     monkeypatch.setattr(feed_mod, "ESPERA_RECONEXION", espera_env)
@@ -48,8 +48,57 @@ def test_espera_configurada_antes_de_cada_reconexion(monkeypatch, espera_env):
     asyncio.run(f.correr())
     assert esperas[0] == espera_env, "la primera reconexion ya espera el minimo"
     assert all(e >= espera_env for e in esperas), esperas
-    assert esperas[1] == espera_env * 2, "sin aguantar un minuto, se dobla (no se martillea)"
+    assert esperas[1] == min(espera_env * 2, feed_mod.ESPERA_RECONEXION_MAX), "sin aguantar un minuto, se dobla hasta el tope (no se martillea)"
 
 
-def test_por_defecto_es_un_minuto():
-    assert feed_mod.ESPERA_RECONEXION == 60.0
+def test_por_defecto_cinco_segundos_y_tope_de_un_minuto():
+    # 21-sep: 5 s la primera vez (el corte real dura 1-2 s), doblando hasta 60
+    # si nos vuelven a echar sin aguantar un minuto.
+    assert feed_mod.ESPERA_RECONEXION == 5.0
+    assert feed_mod.ESPERA_RECONEXION_MAX == 60.0
+
+
+class _WsQueCae:
+    """Primera conexion: cae al leer. Segunda: vive hasta que el feed pare."""
+    intentos = 0
+
+    def __init__(self, *a, **k):
+        _WsQueCae.intentos += 1
+        self.n = _WsQueCae.intentos
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def send(self, *_):
+        pass
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if self.n == 1:
+            raise OSError("nos han echado")
+        await asyncio.sleep(0)
+        return '{"ev":"status","status":"x","message":"y"}'
+
+
+def test_tras_reconectar_avisa_con_los_segundos_sin_datos(monkeypatch):
+    monkeypatch.setenv("MASSIVE_BOT_API_KEY", "clave")
+    monkeypatch.setattr(feed_mod.websockets, "connect", _WsQueCae)
+    _WsQueCae.intentos = 0
+    reloj = {"t": 1000.0}
+    monkeypatch.setattr(feed_mod.time, "time", lambda: reloj["t"])
+
+    async def sleep_falso(segundos):
+        reloj["t"] += segundos
+
+    monkeypatch.setattr(feed_mod.asyncio, "sleep", sleep_falso)
+    avisos = []
+    f = feed_mod.FeedEnVivo(["AAA"], al_cerrar_vela=lambda *a, **k: None,
+                            al_reconectar=lambda sin_datos: (avisos.append(sin_datos), setattr(f, "_parar", True)))
+    asyncio.run(f.correr())
+    assert f.reconexiones == 1
+    assert avisos and abs(avisos[0] - feed_mod.ESPERA_RECONEXION) < 1e-6, "los segundos sin datos = la espera antes de volver"

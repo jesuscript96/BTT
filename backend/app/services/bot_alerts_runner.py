@@ -186,6 +186,11 @@ class RunnerAlertas:
                     logger.warning("[BOT] fallo al notificar %s: %s", ev.ticker, exc)
         return eventos
 
+    def ultima_vela_ts(self, ticker: str):
+        """El timestamp de la ultima vela que tiene el motor para ese ticker, o None."""
+        lista = self._velas.get(ticker) or []
+        return pd.Timestamp(lista[-1]["timestamp"]) if lista else None
+
     def tiene_vela(self, ticker: str, ts) -> bool:
         """Si ya hay una vela con ese timestamp (propia u oficial)."""
         clave = str(pd.Timestamp(ts))[:16]

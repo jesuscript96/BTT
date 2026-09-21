@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import logging
 import os
 import ssl
@@ -64,7 +65,12 @@ ET = "America/New_York"
 # hacia atras al reconectar (una vela de minuto de cada ticker vigilado sin
 # evaluar). En premercado a las 04:02 NY no hay posiciones y da igual; en la
 # apertura RTH seria la primera vela. Decision de Jaume; ajustable por .env.
-ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "60"))
+ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "5"))
+# 21-sep-2026 (Jaume): la primera vuelta a los 5 s —el corte real dura 1-2 s y
+# la conexion sobrante del socio ya no suele estar—; si nos vuelven a echar sin
+# aguantar un minuto, la siguiente espera se dobla (10, 20, 40) hasta el tope.
+# Las velas que falten se recuperan por REST al reconectar (`al_reconectar`).
+ESPERA_RECONEXION_MAX = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION_MAX", "60"))
 
 
 def clave_bot() -> str:
@@ -187,6 +193,7 @@ class FeedEnVivo:
         todo_el_mercado: bool = False,
         al_mercado: Optional[Callable[[dict], Any]] = None,
         al_operacion: Optional[Callable[[str, dict], Any]] = None,
+        al_reconectar: Optional[Callable[[float], Any]] = None,
     ):
         self.tickers = [t.upper() for t in tickers]
         self.al_cerrar_vela = al_cerrar_vela
@@ -199,6 +206,12 @@ class FeedEnVivo:
         # suscriben para los tickers vigilados; el mercado entero sigue en AM.
         self.al_operacion = al_operacion
         self.operaciones_recibidas = 0
+        # Tras una RECONEXION (no la primera conexion): recibe los segundos que
+        # el socket estuvo caido, para que el bot rellene por REST las velas
+        # que se emitieron mientras tanto.
+        self.al_reconectar = al_reconectar
+        self.reconexiones = 0
+        self._caido_desde: Optional[float] = None
         # Suscribirse al mercado entero para que el radar pueda descubrir gaps.
         # `al_mercado` recibe TODOS los agregados de minuto, incluidos los de
         # los tickers ya vigilados.
@@ -289,6 +302,15 @@ class FeedEnVivo:
                     self.conectado = True
                     conectado_en = asyncio.get_event_loop().time()
                     logger.info("[FEED] conectado · %d tickers", len(self.tickers))
+                    if self._caido_desde is not None:
+                        self.reconexiones += 1
+                        sin_datos = time.time() - self._caido_desde
+                        self._caido_desde = None
+                        if self.al_reconectar is not None:
+                            try:
+                                self.al_reconectar(sin_datos)
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning("[FEED] fallo al recuperar tras reconectar: %s", exc)
 
                     async for crudo in ws:
                         if self._parar:
@@ -299,18 +321,18 @@ class FeedEnVivo:
             except Exception as exc:  # noqa: BLE001
                 self.conectado = False
                 self._ws = None
-                # Siempre se espera ESPERA_RECONEXION (ver arriba: que el socket
-                # viejo desaparezca de la cuenta antes de volver). Si la conexion
-                # NO aguanto ni un minuto, se dobla: un rechazo repetido no se
-                # martillea. Tope: cuatro minutos.
+                if self._caido_desde is None:
+                    self._caido_desde = time.time()
+                # 5 s la primera vez; si la conexion NO aguanto ni un minuto (nos
+                # han vuelto a echar: la conexion sobrante seguia contando), se
+                # dobla hasta ESPERA_RECONEXION_MAX. Un rechazo repetido no se
+                # martillea, y volver despacio no tira a otro cliente de la cuenta.
                 ahora = asyncio.get_event_loop().time()
                 if conectado_en is not None and ahora - conectado_en >= 60:
                     espera = ESPERA_RECONEXION
-                logger.warning("[FEED] desconectado (%s); reintento en %.0f s "
-                               "(espera minima para no tirar a otro cliente de la cuenta)",
-                               exc, espera)
+                logger.warning("[FEED] desconectado (%s); reintento en %.0f s", exc, espera)
                 await asyncio.sleep(espera)
-                espera = min(espera * 2, max(ESPERA_RECONEXION * 4, 60.0))
+                espera = min(espera * 2, ESPERA_RECONEXION_MAX)
         self.conectado = False
 
     def _procesar(self, crudo: Any) -> None:
