@@ -30,6 +30,16 @@
 
 ---
 
+## 2026-09-21 (Sailor, bot de alertas) — Primer día sin 1008 (arrancando después de los socios), la parada de 5 s era nuestra, y velas propias por operaciones (`6fcdb4b`, SIN subir)
+
+**Sesión** 10:05→12:34, solo PM 1A (300): 9/9/9 avisos, 0 errores, 0 fallos Telegram, **0 cortes**: primer día de seis sin `1008` en la franja 04:01–04:03 NY; la única diferencia fue el orden (los tres socios conectaron antes). GRML dio señal a las 04:02 NY (181 acc @ 5,48, stop 7,139) tres minutos antes de arrancar: el motor la vio en la hidratación y quedó como posición heredada (pirámide +148 @ 5,11 avisada: ignorar). CUE señal correcta a las 04:07 (18 acc: acción de 50 $ con 3.000 acc/min). Filtros propuestos para acciones «lentas»: tope de precio en el universo, `Accumulated Volume` en acciones, `SMA Volume`, `Candle Range %`, flotante mínimo.
+
+**Cortes**: la explicación que queda: la cuarta conexión aparece cuando uno de los socios entra (04:01–04:03 NY) y dura lo que Massive tarda en soltar su socket anterior; nosotros caíamos por ser la más vieja. Regla: **conectar después de ellos**. Para zanjarlo: que ellos cuenten conexiones al arrancar, o pedir a Massive el registro de conexiones de la cuenta (16/17/18-sep). Prueba 3 (provocar la cuarta) reservada.
+
+**Microparada de 5 s a las 10:15:14–19 (vista en las grabaciones, no en el log)**: coincide con el tick del barrido del radar (cada 30 s desde 10:05:44); en Python un hilo con cálculo congela al lector del socket (GIL). Los «3 s» constantes NO son parada: el agregado por segundo (`A.`) se publica 3,08 s después del segundo (Massive), la vela oficial (`AM`) 2,1 s después del minuto; reloj del PC +0,23 s. Slippage medido (133 avisos, 16–21 sep): mediana 0 %, p90 +1,1 % a +3 s y +2,4 % a +15 s: el tiempo humano pesa más que el dato.
+
+**Velas propias (decisión de Jaume: «lo hacemos, solo del bot; comprobamos paridad»)**: `T.` de los vigilados; vela montada con operaciones (odd lots y demás condiciones sin precio: volumen sí, precio no — regla de la oficial), cerrada a +0,8 s → alerta ~1,2 s antes; prealerta por operaciones (ve el segundo 43,5 en vez del 41); la oficial llega 2 s después, se compara (paridad en el log, `[VELA PROPIA]` y resumen cada 5 min) y sustituye en silencio. Primera vela de un ticker recién admitido no dispara (espera la oficial). Sonda en vivo: paridad 13/13 en precio y volumen 0,0–0,1 %. `BOT_VELAS_PROPIAS=0` para volver a la oficial. `[TIEMPOS]` mide barrido/cierre/prealerta/hidratación (aviso > 1 s). Grabaciones: **30 días**. **A revisar en cada auditoría**: `[VELA PROPIA]` (velas distintas), `[TIEMPOS]`, `[OPERACIONES]`.
+
 ## 2026-09-20 (Sailor, Motor + bot) — Señal por NIVEL (no por flanco), «Previous Max/Min (vela de la señal)» como modo opcional del stop, y el bot rearmado tras salir
 
 - **Qué vio Jaume.** Dos corridas iguales salvo una condición: la 1 (`gap PM > 50 AND close > 0,7`) daba 28 trades y la 2 (la misma + `close < low anterior`) 54, siendo «más restrictiva». Y AEMD el 17-sep (cisne a las 06:43, mecha 4,15 → 14) no aparecía en la 1 pese a cumplir el gap. Auditoría: **12 de 12** tickers que la 2 tenía y la 1 no eran el mismo caso.
