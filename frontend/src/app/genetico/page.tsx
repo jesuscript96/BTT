@@ -26,6 +26,8 @@ import {
   type BloqueGenes,
   type GenGenetico,
   getCatalogo,
+  PRIORIDADES,
+  type PrioridadGen,
   guardarComoEstrategia,
   listarCorridas,
   pararCorrida,
@@ -547,6 +549,11 @@ export default function GeneticoPage() {
      Hoy solo `ap_session` de Previous max/min y % Fade. Sin entrada = el
      defecto del catálogo («según la sesión de la corrida»). */
   const [paramsFijos, setParamsFijos] = useState<Record<string, Record<string, string>>>({});
+  /* Prioridad por indicador (21-sep-2026). Sin entrada = «normal». Jaume vio
+     que los niveles base salían 0-1 veces por corrida: el sorteo los trata
+     como una opción más de Bar Close. «Alta» los hace pesar ×3 en cada
+     sorteo (y a Bar Close / High / Low con ellos). */
+  const [prioridades, setPrioridades] = useState<Record<string, PrioridadGen>>({});
   const [nCond, setNCond] = useState<"1" | "2" | "3">("2");
   const [stopPct, setStopPct] = useState(true);
   const [stopEstructura, setStopEstructura] = useState(true);
@@ -741,6 +748,10 @@ export default function GeneticoPage() {
       params_fijos: Object.fromEntries((catalogo?.params_fijables ?? []).flatMap((pf) =>
         pf.indicadores.filter((nombre) => indicadores[nombre]).map((nombre) =>
           [nombre, { ...(paramsFijos[nombre] ?? {}), [pf.param]: paramsFijos[nombre]?.[pf.param] ?? pf.opciones[0]?.value ?? "auto" }]))),
+      // Solo las que no son «normal» y de indicadores marcados: sin ninguna,
+      // el genético sortea exactamente como siempre (misma semilla, misma corrida).
+      prioridades: Object.fromEntries(Object.entries(prioridades)
+        .filter(([nombre, p]) => p !== "normal" && indicadores[nombre])),
       n_condiciones: Number(nCond),
       stops: [...(stopPct ? ["pct"] : []), ...(stopEstructura ? ["estructura"] : [])],
       tps: [...(tpPct ? ["pct"] : []), ...(tpHora ? ["hora"] : []), ...(tpTiempo ? ["tiempo"] : [])],
@@ -753,7 +764,7 @@ export default function GeneticoPage() {
         : {}),
     };
   }, [filtrosUniverso, fechaIni, fechaFin, sesgo, sesion, horaIni, horaFin, ventanaOn, ventanaDe, ventanaA,
-    catalogo, guardas, indicadores, paramsFijos, nCond, stopPct, stopEstructura, tpPct, tpHora, tpTiempo, riesgo, fitness, minTrades,
+    catalogo, guardas, indicadores, paramsFijos, prioridades, nCond, stopPct, stopEstructura, tpPct, tpHora, tpTiempo, riesgo, fitness, minTrades,
     semilla, poblacion, generaciones, workers, paciencia, pararALas, pararALasOn,
     modo, estrategiaId, genesMarcados, agregacion, trozos]);
 
@@ -1113,6 +1124,19 @@ export default function GeneticoPage() {
                           </select>
                         </div>
                       ))}
+                      {/* Prioridad (21-sep-2026): cuánto pesa este nombre en el
+                          sorteo. Solo se pinta si no es «normal» o si se abre
+                          con el botón, para no llenar la lista de desplegables. */}
+                      {indicadores[i.nombre] && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0 6px 22px", fontFamily: font.sans, fontSize: 11, color: color.textSecondary, flexWrap: "wrap", minWidth: 0 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>prioridad<Help title="Prioridad en el sorteo">{"Cuánto pesa este nombre cada vez que el genético sortea un indicador: al nacer una condición, al elegir el nivel contra el que compara Bar Close / High Bar / Low Bar, y al cambiar el indicador entero en una mutación. «Alta» = ×3, «baja» = ÷3. Si un NIVEL va en «alta», Bar Close / High / Low también salen más, porque son los únicos que lo usan. Con todo en «normal» la corrida es idéntica a la de siempre (misma semilla, mismos individuos). No cambia el fitness: solo cuántas veces se prueba."}</Help></span>
+                          <select style={{ ...control, height: 22, fontSize: 11, padding: "0 4px", width: "100%", flex: "1 1 100%" }}
+                            value={prioridades[i.nombre] ?? "normal"}
+                            onChange={(e) => setPrioridades((s) => ({ ...s, [i.nombre]: e.target.value as PrioridadGen }))}>
+                            {PRIORIDADES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

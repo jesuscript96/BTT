@@ -44,7 +44,7 @@ def objetivo_aleatorio(rng: random.Random, ind, marcados=None, explicitos=None,
     de giro. Sin eso saldrian «Pico nº1(up) > Pico nº1(down)» (un techo contra
     un suelo: siempre verdad) o «Pico nº2 > Pico nº2» (siempre falso).
     """
-    nivel = rng.choice(C.objetivos_permitidos(ind, marcados, explicitos))
+    nivel = C.elegir(rng, C.objetivos_permitidos(ind, marcados, explicitos), config)
     if nivel == ind.nombre and "pivot_rank" in ind.params:
         return _mismo_giro_otro_numero(rng, ind, params_izq or {})
     # Con los parametros fijados en la pagina (p.ej. `ap_session` de Previous
@@ -105,7 +105,15 @@ def _condicion_aleatoria(rng: random.Random, nombres: list[str],
             "solo hay niveles marcados (" + ", ".join(marcados or nombres) + "): hace "
             "falta al menos un indicador que pueda ir a la izquierda de la condicion "
             "(Bar Close, RSI, % Fade...)")
-    ind = C.CATALOGO[rng.choice(izq)]
+    # A la izquierda cada nombre pesa lo suyo O lo del nivel mas prioritario
+    # que pueda llevar de destino: «VWAP alta» tiene que hacer salir mas a Bar
+    # Close, que es el unico que lo compara; si no, subir un nivel no movia
+    # casi nada (medido: 1,6x en vez de 4x).
+    todos = nombres if marcados is None else marcados
+    ind = C.CATALOGO[C.elegir(rng, izq, config, pesos=[
+        max([C.peso(n, config)] + [C.peso(o, config) for o in C.objetivos_permitidos(C.CATALOGO[n], todos, explicitos)
+                                   if C.peso(o, config) > 1.0])
+        for n in izq])]
     params = {k: rng.choice(v) for k, v in C.rejilla_params(ind.nombre, config, ind.params).items()}
     comp = rng.choice(ind.comparadores)
     opciones = []
@@ -113,7 +121,15 @@ def _condicion_aleatoria(rng: random.Random, nombres: list[str],
         opciones.append("numero")
     if ind.objetivos:
         opciones.append("indicador")
-    tipo = rng.choice(opciones)
+    # Con prioridades, «contra un nivel» pesa lo que el nivel permitido mas
+    # prioritario: marcar VWAP en «alta» no serviria de nada si la cara o cruz
+    # numero/indicador siguiera al 50 %. Sin prioridades, cara o cruz.
+    if len(opciones) == 2:
+        permitidos = C.objetivos_permitidos(ind, todos, explicitos)
+        peso_ind = max((C.peso(n, config) for n in permitidos), default=1.0)
+        tipo = rng.choice(opciones) if peso_ind == 1.0 else rng.choices(opciones, weights=[1.0, peso_ind], k=1)[0]
+    else:
+        tipo = rng.choice(opciones)
     if tipo == "numero":
         objetivo = rng.choice(ind.valores)
     else:

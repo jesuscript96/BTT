@@ -262,6 +262,36 @@ def rejilla_params(nombre: str, config: dict | None, base: dict | None = None) -
     return rej
 
 
+# ── Prioridades por indicador (21-sep-2026) ─────────────────────────────────
+#
+# Jaume: los niveles base salian 0-1 veces por corrida porque el sorteo los
+# trata como una opcion mas de Bar Close (1 de 27 a la izquierda, cara o cruz
+# contra numero, 1 de ~20 destinos). La pagina pinta un desplegable por
+# indicador marcado y manda config["prioridades"] = {nombre: "alta"|"baja"};
+# «normal» no viaja. El peso multiplica la probabilidad de salir en CADA
+# sorteo donde el nombre compite (lado izquierdo, destino, cambio de indicador
+# al mutar). Con todo en «normal» el sorteo es EXACTAMENTE `rng.choice`: misma
+# semilla, misma corrida que antes de existir esto.
+PESO_PRIORIDAD = {"alta": 3.0, "normal": 1.0, "baja": 1.0 / 3.0}
+
+
+def peso(nombre: str, config: dict | None) -> float:
+    pri = ((config or {}).get("prioridades") or {}).get(nombre, "normal")
+    return PESO_PRIORIDAD.get(pri, 1.0)
+
+
+def elegir(rng, opciones, config: dict | None, pesos: list[float] | None = None):
+    """`rng.choice(opciones)` con las prioridades de la pagina (o con `pesos`
+    ya calculados). Si todos los pesos son iguales se llama a `rng.choice` tal
+    cual (mismo consumo de azar)."""
+    opciones = list(opciones)
+    if pesos is None:
+        pesos = [peso(n, config) for n in opciones]
+    if len(set(pesos)) <= 1:
+        return rng.choice(opciones)
+    return rng.choices(opciones, weights=pesos, k=1)[0]
+
+
 def lado_izquierdo(nombres) -> list[str]:
     """Los marcados que pueden ir a la izquierda de una condicion: todo menos
     los niveles opcionales. Si Jaume marca solo «Punto de control», esto

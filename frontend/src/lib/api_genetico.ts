@@ -117,6 +117,11 @@ export interface ConfigCorrida {
   // {indicador: {param: valor}} — "auto" = según la sesión de la corrida,
   // "*" = sortear la rejilla del catálogo, otro = ese valor fijo.
   params_fijos?: Record<string, Record<string, string>>;
+  // Prioridad por indicador (21-sep-2026): «alta» pesa x3 y «baja» /3 en cada
+  // sorteo donde el nombre compite (lado izquierdo, destino de Bar Close /
+  // High / Low, cambio de indicador al mutar). Solo viajan las que no son
+  // «normal»; sin ninguna, la corrida es idéntica a la de siempre.
+  prioridades?: Record<string, PrioridadGen>;
   n_condiciones: number;
   stops: string[];
   tps: string[];
@@ -246,6 +251,13 @@ export interface DatasetResumen {
   min_date?: string | null;
   max_date?: string | null;
 }
+
+export type PrioridadGen = "alta" | "normal" | "baja";
+export const PRIORIDADES: Array<{ value: PrioridadGen; label: string }> = [
+  { value: "normal", label: "Prioridad normal" },
+  { value: "alta", label: "Prioridad alta (×3)" },
+  { value: "baja", label: "Prioridad baja (÷3)" },
+];
 
 export const getCatalogo = () => apiRequest<CatalogoGenetico>("/genetico/catalogo");
 /** Qué se le puede mover a una estrategia, agrupado por bloque (modo «mejorar»). */

@@ -717,3 +717,57 @@ def test_la_receta_dice_que_linea_del_nivel_se_usa():
     r = X.receta(ind)
     assert "Donchian(Lower, 20)" in r or "Donchian(20, Lower)" in r
     assert "Parciales: 50% 5%" in r
+
+
+# ── Prioridades por indicador (21-sep-2026) ────────────────────────────────
+#
+# Jaume: «poner pesos a cada indicador… con un desplegable por prioridades».
+# Los niveles base salian 0-1 veces por corrida. Con «alta» el nombre pesa x3
+# en cada sorteo donde compite; con todo en «normal» la corrida es la misma.
+
+def _condiciones(cfg, semilla=5, n=400):
+    import random
+    rng = random.Random(semilla)
+    return [c for _ in range(n) for c in X.aleatorio(cfg, rng)["condiciones"]]
+
+
+def test_sin_prioridades_la_corrida_es_identica():
+    cfg = {"catalogo": ["Bar Close", "RSI", "Squeeze", "VWAP", "Previous max"], "niveles_explicitos": True,
+           "n_condiciones": 2, "sesgo": "short", "stops": ["pct"], "tps": ["pct"]}
+    assert _condiciones(cfg) == _condiciones({**cfg, "prioridades": {}})
+    assert _condiciones(cfg) == _condiciones({**cfg, "prioridades": {"RSI": "normal"}})
+
+
+def test_alta_en_un_nivel_lo_hace_salir_mas_como_destino():
+    cfg = {"catalogo": ["Bar Close", "RSI", "Squeeze", "VWAP", "Previous max", "PM Low"],
+           "niveles_explicitos": True, "n_condiciones": 2, "sesgo": "short", "stops": ["pct"], "tps": ["pct"]}
+    def veces(cs, nombre):
+        return sum(1 for c in cs if isinstance(c["objetivo"], dict) and c["objetivo"]["ind"] == nombre)
+    base = _condiciones(cfg)
+    con = _condiciones({**cfg, "prioridades": {"VWAP": "alta"}})
+    assert veces(con, "VWAP") > 2 * veces(base, "VWAP")
+    # y Bar Close (el unico que lleva niveles) tambien sale mas a la izquierda
+    assert sum(c["ind"] == "Bar Close" for c in con) >= sum(c["ind"] == "Bar Close" for c in base)
+
+
+def test_baja_en_un_indicador_lo_hace_salir_menos_y_alta_mas():
+    cfg = {"catalogo": ["Bar Close", "RSI", "Squeeze", "% Fade"], "n_condiciones": 1,
+           "sesgo": "short", "stops": ["pct"], "tps": ["pct"]}
+    base = _condiciones(cfg)
+    menos = _condiciones({**cfg, "prioridades": {"RSI": "baja"}})
+    mas = _condiciones({**cfg, "prioridades": {"RSI": "alta"}})
+    n = lambda cs: sum(c["ind"] == "RSI" for c in cs)
+    assert n(menos) < n(base) < n(mas)
+
+
+def test_la_mutacion_de_indicador_entero_respeta_la_prioridad():
+    import random
+    from genetico import motor
+    cfg = {"catalogo": ["Bar Close", "RSI", "Squeeze", "% Fade", "MACD"], "n_condiciones": 1,
+           "sesgo": "short", "stops": ["pct"], "tps": ["pct"], "p_mutacion": 1.0,
+           "prioridades": {"Squeeze": "alta", "RSI": "baja"}}
+    rng = random.Random(1)
+    ind = X.aleatorio(cfg, rng)
+    import collections
+    vistos = collections.Counter(motor.mutar(ind, cfg, rng)["condiciones"][0]["ind"] for _ in range(600))
+    assert vistos["Squeeze"] > vistos["RSI"]
