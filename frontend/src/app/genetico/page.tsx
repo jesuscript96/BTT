@@ -148,9 +148,13 @@ function Toggle<T extends string>({ value, onChange, options }: { value: T; onCh
 
 function Check({ checked, onChange, label, help }: { checked: boolean; onChange: (v: boolean) => void; label: string; help?: React.ReactNode }) {
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 7, fontFamily: font.sans, fontSize: 12, color: color.textPrimary, cursor: "pointer", padding: "3px 0" }}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ margin: 0 }} />
-      {label}{help && <Help title={label}>{help}</Help>}
+    // `minWidth: 0` + `overflowWrap: anywhere`: las etiquetas largas del catálogo
+    // («Triangle Ascending (pivot_window, tri_lookback, …)») se salían del
+    // cuadro en vez de partirse; un flex item no encoge por debajo de su
+    // contenido si no se le dice.
+    <label style={{ display: "flex", alignItems: "flex-start", gap: 7, fontFamily: font.sans, fontSize: 12, color: color.textPrimary, cursor: "pointer", padding: "3px 0", minWidth: 0 }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ margin: "2px 0 0", flexShrink: 0 }} />
+      <span style={{ minWidth: 0, overflowWrap: "anywhere", lineHeight: 1.35 }}>{label}{help && <span style={{ display: "inline-flex", verticalAlign: "middle", marginLeft: 4 }}><Help title={label}>{help}</Help></span>}</span>
     </label>
   );
 }
@@ -1082,11 +1086,11 @@ export default function GeneticoPage() {
                   );
                 })}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", columnGap: 12 }}>
                 {(catalogo?.indicadores ?? []).filter((i) => i.familia === familia).map((i) => {
                   const fijables = (catalogo?.params_fijables ?? []).filter((pf) => pf.indicadores.includes(i.nombre));
                   return (
-                    <div key={i.nombre}>
+                    <div key={i.nombre} style={{ minWidth: 0 }}>
                       <Check checked={!!indicadores[i.nombre]}
                         onChange={(v) => setIndicadores((s) => ({ ...s, [i.nombre]: v }))}
                         help={esNivel(i)
@@ -1098,14 +1102,15 @@ export default function GeneticoPage() {
                           corrida, que es lo que Jaume pidió; el desplegable
                           permite fijarlo a mano o volver a sortearlo. */}
                       {indicadores[i.nombre] && fijables.map((pf) => (
-                        <div key={pf.param} style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0 6px 22px", fontFamily: font.sans, fontSize: 11, color: color.textSecondary }}>
-                          <span>{pf.param === "ap_session" ? "cuenta desde" : pf.param}</span>
-                          <select style={{ ...control, height: 22, fontSize: 11, padding: "0 4px", width: "auto" }}
+                        <div key={pf.param} style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0 6px 22px", fontFamily: font.sans, fontSize: 11, color: color.textSecondary, flexWrap: "wrap", minWidth: 0 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{pf.param === "ap_session" ? "cuenta desde" : pf.param}<Help title="Desde cuándo cuenta">{"El motor calcula los indicadores sobre el día entero y recorta la sesión después, así que en una corrida RTH un «Previous max» que cuente desde las 04:00 incluye el máximo del premercado: es otro indicador. «Según la sesión de la corrida» lo alinea con lo que ve el simulador (RTH → 09:30, premarket → 04:00, horas → según la hora de inicio). «Sortear» lo deja como gen y el genético prueba las dos."}</Help></span>
+                          {/* A ancho completo en su propia línea: en la columna
+                              estrecha el texto de la opción se cortaba. */}
+                          <select style={{ ...control, height: 22, fontSize: 11, padding: "0 4px", width: "100%", flex: "1 1 100%" }}
                             value={paramsFijos[i.nombre]?.[pf.param] ?? pf.opciones[0]?.value}
                             onChange={(e) => setParamsFijos((s) => ({ ...s, [i.nombre]: { ...(s[i.nombre] ?? {}), [pf.param]: e.target.value } }))}>
                             {pf.opciones.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                           </select>
-                          <Help title="Desde cuándo cuenta">{"El motor calcula los indicadores sobre el día entero y recorta la sesión después, así que en una corrida RTH un «Previous max» que cuente desde las 04:00 incluye el máximo del premercado: es otro indicador. «Según la sesión de la corrida» lo alinea con lo que ve el simulador (RTH → 09:30, premarket → 04:00, horas → según la hora de inicio). «Sortear» lo deja como gen y el genético prueba las dos."}</Help>
                         </div>
                       ))}
                     </div>
