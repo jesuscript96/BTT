@@ -40,7 +40,7 @@ import {
 } from "@/lib/api_portfolio_lab";
 import type { CurveState } from "../StrategyShelf";
 import type { MonteCarloOut } from "@/lib/api_robustez";
-import { Nota, Paso, PasoBar, colorSerie, n, pct, usd } from "./hoja";
+import { Nota, Paso, PasoBar, colorSerie, n, pct, usd, type ModoVista } from "./hoja";
 import type { Serie } from "./CrudoCharts";
 import { BRAKE0, CFG0, LOC0, ROT0, curvaPropia, locatesIn, locatesResumen, pctDe, type Cfg, type LocCfg } from "./modelo";
 import { patronEfectivo, type EscaladoAutoResultado } from "./EscaladoAuto";
@@ -122,10 +122,22 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
   // ── Que paso esta abierto ─────────────────────────────────────────────
   const [abiertos, setAbiertos] = useState<Record<number, boolean>>({ 1: true, 2: true, 3: false, 4: false });
   const toggle = (k: number) => setAbiertos((a) => ({ ...a, [k]: !a[k] }));
+  // Dos formas de verlo (Jaume, 21-sep-2026): «todo en vertical» (los cinco
+  // pasos apilados; la tira baja hasta el pulsado) o «de uno en uno» (solo el
+  // paso elegido en la tira, ahi mismo, sin scroll). Se recuerda en el
+  // navegador; el modo por defecto es el vertical.
+  const [modo, setModoRaw] = useState<ModoVista>(() => {
+    try { return (typeof window !== "undefined" && window.localStorage.getItem("crudo.vista") === "uno") ? "uno" : "vertical"; } catch { return "vertical"; }
+  });
+  const setModo = (m: ModoVista) => { setModoRaw(m); try { window.localStorage.setItem("crudo.vista", m); } catch { /* sin almacenamiento: da igual */ } };
+  const [activoUno, setActivoUno] = useState(1);
   const ir = (k: number) => {
+    if (modo === "uno") { setActivoUno(k); return; }
     setAbiertos((a) => ({ ...a, [k]: true }));
     if (typeof document !== "undefined") document.getElementById(`paso-${k}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  const visible = (k: number) => modo === "vertical" || activoUno === k;
+  const abierto = (k: number) => (modo === "uno" ? true : !!abiertos[k]);
 
   const selected = pool.filter((s) => checked[s.id]);
   const selectedIds = selected.map((s) => s.id);
@@ -187,6 +199,7 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
       setAuto(null);
       setAutoKey("");
       setAbiertos((a) => ({ ...a, 1: false, 2: true }));
+      setActivoUno(2);
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo calcular el portfolio");
     } finally {
@@ -365,18 +378,18 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
     { num: 4, label: "Escalado", hecho: !!(niveles || auto), disponible: listo && !backendViejo },
     { num: 5, label: "Cuenta real", hecho: false, disponible: true },
   ];
-  const activo = !listo ? 1 : abiertos[4] && (niveles || auto) ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
+  const activo = modo === "uno" ? activoUno : !listo ? 1 : abiertos[4] && (niveles || auto) ? 4 : abiertos[3] ? 3 : abiertos[2] ? 2 : 1;
 
   return (
     <div>
-      <PasoBar pasos={pasos} activo={activo} onGo={ir} />
+      <PasoBar pasos={pasos} activo={activo} onGo={ir} modo={modo} setModo={setModo} />
 
-      <Paso num={1} title="Ejecución" open={!!abiertos[1]} onToggle={() => toggle(1)} summary={resumen1} sinRelleno
+      {visible(1) && <Paso num={1} title="Ejecución" open={abierto(1)} onToggle={() => toggle(1)} summary={resumen1} sinRelleno
         help="Las estrategias marcadas entran normalizadas; aquí se les pone lo del portfolio: el % por trade de cada una (el mismo para todas o uno por estrategia), comisiones, slippage, locates, capital, gastos fijos, margen y periodo. Calcular reconstruye la suma desde los trades guardados; nada se vuelve a correr ni se modifica.">
         <div style={{ padding: "10px 10px 0" }}>
           <PasoEjecucion m={{ pool, checked, setChecked, selected, selectedIds, slipDefault, setSlipDefault, slipRaw, setSlipRaw, slipDe, vista, setVista, abierta, curves, desplegar, onMove, cfgRaw, cfg: { ...cfg, capital: capitalEfectivo }, set, setCfg, capitalCorridas, loc, setLoc, problema, stale, running, calcular, error }} />
         </div>
-      </Paso>
+      </Paso>}
 
       {backendViejo && (
         <Nota tone="warning">
@@ -384,28 +397,28 @@ export function CrudoTab({ strategies, onMove }: { strategies: PortfolioStrategy
         </Nota>
       )}
 
-      <Paso num={2} title="Visión general" open={!!abiertos[2]} onToggle={() => toggle(2)} summary={resumen2} disabled={!listo} disabledNote="primero calcula el paso 1"
+      {visible(2) && <Paso num={2} title="Visión general" open={abierto(2)} onToggle={() => toggle(2)} summary={resumen2} disabled={!listo} disabledNote="primero calcula el paso 1"
         help="Lo que habría hecho una cuenta operando todas las estrategias marcadas a la vez con la ejecución del paso 1. Pestañas: el resumen con la curva y el drawdown, la exposición al minuto, la tabla por estrategia, la correlación y el calendario.">
         {listo && out && curvas && exposicion && <PasoVision m={{ out, curvas, propias, exposicion, yMode, setYMode }} />}
-      </Paso>
+      </Paso>}
 
-      <Paso num={3} title="Monte Carlo" open={!!abiertos[3]} onToggle={() => toggle(3)} summary={resumen3} disabled={!listo} disabledNote="primero calcula el paso 1"
+      {visible(3) && <Paso num={3} title="Monte Carlo" open={abierto(3)} onToggle={() => toggle(3)} summary={resumen3} disabled={!listo} disabledNote="primero calcula el paso 1"
         help="Lo que podría pasar remuestreando los días del portfolio con reemplazo (bootstrap): el drawdown que hay que estar dispuesto a tragar, la probabilidad de acabar perdiendo y la tabla de percentiles.">
         {listo && out && <PasoMonteCarlo m={{ out, mcOut, mcSims, setMcSims, mcRunning, mcError, simularMc, caminos, caminosRunning, caminosError, seeds, setSeeds, rangosExtra, setRangosExtra, simularCaminos }} />}
-      </Paso>
+      </Paso>}
 
-      <Paso num={4} title="Escalado" open={!!abiertos[4]} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el paso 4" : "primero calcula el paso 1"}
+      {visible(4) && <Paso num={4} title="Escalado" open={abierto(4)} onToggle={() => toggle(4)} summary={resumen4} disabled={!listo || backendViejo} disabledNote={backendViejo ? "el backend todavía no lleva el paso 4" : "primero calcula el paso 1"}
         help="Dos bloques sobre el portfolio del paso 1. A: ¿a qué nivel de la cuenta? (tus % × un factor, con la caída real y la del Monte Carlo: se elige el tope por la caída que tragas). B: el escalado automático: dentro de ese tope, la rotación de pesos por ranking (cada semana, mes o N sesiones: más a la que mejor lo ha hecho en los últimos X días, con suelo por estrategia) y el freno por caída como opción; se corren desde el principio solo rotación, solo freno y las dos, frente a tus % fijos, y sale lo que toca poner el siguiente periodo."
         sinRelleno>
         {listo && out && <PasoNivel m={{ out, nombres: selected.map((s) => s.name), niveles, nivelesRunning, nivelesError, calcularNiveles, usarNivel, pctBase, rot, setRot, brake, setBrake, auto, autoRunning, autoError, autoStale, calcularAuto }} />}
-      </Paso>
+      </Paso>}
 
-      <Paso num={5} title="Cuenta real" open={!!abiertos[5]} onToggle={() => toggle(5)} summary="Tu CSV real frente a la simulación, y lo que toca poner el siguiente periodo (sin y con freno)"
+      {visible(5) && <Paso num={5} title="Cuenta real" open={abierto(5)} onToggle={() => toggle(5)} summary="Tu CSV real frente a la simulación, y lo que toca poner el siguiente periodo (sin y con freno)"
         help="El fichero de tu cuenta real (el export de DAS en .csv o .xlsx, o fecha y PnL): tu curva real se pinta sobre los caminos del paso 3 (paridad entre lo simulado y lo real), se mira si tu cuenta está en caída para el freno del paso 4, y la tarjeta final dice cuánto poner el siguiente periodo: la suma de los % del paso 4 (la rotación, o los % del paso 1) y cada estrategia, sin freno y con freno. No hace falta saber de qué estrategia viene cada trade.">
         <div style={{ padding: "10px 10px 6px" }}>
           <PasoCuentaReal m={{ out, capital: capitalEfectivo, caminos, brake: brake.enabled ? brake : null, pesos: selected.map((s, i) => { const r = auto?.ambos?.rotation ?? auto?.rot?.rotation; return { name: s.name, kelly_pct: r ? r.hoy.sizes[i] : pctDe(cfg, s.id), basis: porSlDe(s) ? "risk" as const : "capital" as const }; }), origenPesos: (auto?.ambos?.rotation ?? auto?.rot?.rotation) ? "la rotación del paso 4 (lo que toca el siguiente periodo)" : "los % del paso 1" }} />
         </div>
-      </Paso>
+      </Paso>}
 
       <p style={{ margin: "0 0 10px", fontSize: 10.5, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
         Todo se reconstruye desde los trades guardados de cada corrida; no se vuelve a correr ningún backtest ni se
