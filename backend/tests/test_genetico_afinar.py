@@ -492,6 +492,27 @@ def test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia():
     assert "accept_reentries" not in p and "max_reentries" not in p
 
 
+def test_slippage_y_comisiones_del_panel_van_en_por_ciento_y_el_motor_en_fraccion():
+    """21-sep-2026: «Genetico 2» dio WR 0 % y ruina en 478 individuos seguidos.
+
+    La pagina pide «Slippage %» (0,3 = 0,3 %) como el BacktestPanel, que divide
+    por 100 antes de mandar; el evaluador pasaba el 0,3 tal cual y el motor lo
+    leia como fraccion: un 30 % por lado. Ninguna operacion podia ganar y no
+    habia ningun error. Lo mismo con las comisiones en PERCENT; en FLAT son $
+    por accion y no se tocan.
+    """
+    from genetico import evaluador as EV
+    cfg = {"riesgo": {"slippage": 0.3, "fees": 0.1, "fee_type": "PERCENT"}}
+    p = EV.parametros_backtest(cfg)
+    assert abs(p["slippage"] - 0.003) < 1e-12
+    assert abs(p["fees"] - 0.001) < 1e-12
+    # En modo mejorar, igual (el slippage es del panel, no de la estrategia).
+    p2 = EV.parametros_backtest(cfg, {"market_sessions": ["rth"], "risk_management": {}})
+    assert abs(p2["slippage"] - 0.003) < 1e-12
+    flat = EV.parametros_backtest({"riesgo": {"slippage": 0, "fees": 0.005, "fee_type": "FLAT"}})
+    assert flat["fees"] == 0.005 and flat["slippage"] == 0
+
+
 # ── El usuario elige QUE disparadores puede probar cada parcial ──────────────
 # Jaume, 6-sep-2026: «no me deja elegir esos baremos el programa, solo me deja
 # elegir si quiero 1, 2, 3... hasta 5 parciales». La pagina ya deja recortar la

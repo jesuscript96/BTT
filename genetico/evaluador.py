@@ -43,6 +43,17 @@ def parametros_backtest(config: dict, definicion: dict | None = None) -> dict:
     Por eso, con definicion, mandan la definicion y sus genes.
     """
     r = config.get("riesgo", {})
+    # UNIDADES. La pagina del genetico pide «Slippage %» y «Comisiones» en %
+    # (0,3 = 0,3 %), igual que el BacktestPanel; pero `run_backtest` (y el
+    # motor) los leen como FRACCION del nocional por lado (0,003). El panel
+    # divide por 100 antes de mandar; aqui se hace lo mismo, en un solo sitio.
+    # Sin esto, 0,3 era un 30 % por lado: la corrida «Genetico 2» (20-sep) dio
+    # WR 0 % y ruina en 478 individuos seguidos sin ningun error.
+    fee_type = str(r.get("fee_type", "PERCENT"))
+    fees = float(r.get("fees", 0))
+    if fee_type == "PERCENT":
+        fees = fees / 100.0
+    slippage = float(r.get("slippage", 0)) / 100.0
     if definicion:
         rm = definicion.get("risk_management") or {}
         return dict(
@@ -58,9 +69,9 @@ def parametros_backtest(config: dict, definicion: dict | None = None) -> dict:
             cangrejo_active=bool(rm.get("cangrejo_active", False)),
             cangrejo_max_sl_dist_pct=rm.get("cangrejo_max_sl_dist_pct"),
             cangrejo_max_loss_at_sl_pct=rm.get("cangrejo_max_loss_at_sl_pct"),
-            fees=float(r.get("fees", 0)),
-            fee_type=str(r.get("fee_type", "PERCENT")),
-            slippage=float(r.get("slippage", 0)),
+            fees=fees,
+            fee_type=fee_type,
+            slippage=slippage,
             market_sessions=list(definicion.get("market_sessions") or ["rth"]),
             custom_start_time=definicion.get("custom_start_time"),
             custom_end_time=definicion.get("custom_end_time"),
@@ -80,9 +91,9 @@ def parametros_backtest(config: dict, definicion: dict | None = None) -> dict:
         cangrejo_active=bool(r.get("cangrejo_active", False)),
         cangrejo_max_sl_dist_pct=r.get("cangrejo_max_sl_dist_pct"),
         cangrejo_max_loss_at_sl_pct=r.get("cangrejo_max_loss_at_sl_pct"),
-        fees=float(r.get("fees", 0)),
-        fee_type=str(r.get("fee_type", "PERCENT")),
-        slippage=float(r.get("slippage", 0)),
+        fees=fees,
+        fee_type=fee_type,
+        slippage=slippage,
         market_sessions=list(config.get("sesiones", ["rth"])),
         custom_start_time=config.get("hora_ini"),
         custom_end_time=config.get("hora_fin"),
