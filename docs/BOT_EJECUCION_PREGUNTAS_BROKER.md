@@ -48,7 +48,13 @@ Listado limpio para el día que pidamos el PDF del API. Referencias entre parén
 8. **ES:** Rutas disponibles: cuáles operan en premercado (desde las 04:00), cuáles en after-hours, coste de cada una (añadir/quitar liquidez), y cuál recomiendan para salir con urgencia. ¿Qué es exactamente la ruta SMAT?  
    **EN:** Available routes: which ones work in pre-market (from 4:00 AM), which in after-hours, cost of each (adding/removing liquidity), and which one you recommend for urgent exits. What exactly is the SMAT route?  *(B7, D9, R-4)*
 
-9. **ES:** Precios por debajo de 1 $: ¿cuántos decimales admite el límite y cómo se redondea? ¿Hay tamaño máximo de orden y cómo se parte?  
+9. **ES:** ¿El API admite órdenes «post only» o «add liquidity only» (por ejemplo ARCA ALO), que se rechazan o se recolocan en vez de ejecutarse contra el libro? ¿Con qué sintaxis se envían?  
+   **EN:** Does the API support "post only" / "add liquidity only" orders (e.g. ARCA ALO) that are rejected or repriced instead of executing against the book? What is the syntax?  *(R-20)*
+
+10. **ES:** La orden PEG MID (pegada al punto medio) del manual: ¿qué rutas la admiten? ¿Funciona en premercado? ¿Cobra el mismo rebate que una orden límite que descansa en el libro, o tiene una tarifa distinta? ¿Admite precio límite y Display=0?  
+   **EN:** The PEG MID order (pegged to the midpoint) in the manual: which routes support it? Does it work in pre-market? Does it earn the same rebate as a resting limit order, or is it priced differently? Does it accept a limit price and Display=0?  *(R-21)*
+
+11. **ES:** Precios por debajo de 1 $: ¿cuántos decimales admite el límite y cómo se redondea? ¿Hay tamaño máximo de orden y cómo se parte?  
    **EN:** Prices below $1: how many decimals does a limit price accept and how is it rounded? Is there a maximum order size, and how should it be split?  *(B9, B10, R-6)*
 
 ## 3. Stops / 3. Stops
