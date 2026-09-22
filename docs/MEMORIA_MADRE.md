@@ -6367,3 +6367,12 @@ de Databento, no copiar `users.duckdb`.
 - **Contexto medido que va con el PRD (22-sep):** en la familia Sobri-escalera, TODA salida temprana probada pierde R frente a aguantar (08:30: −43R·2025; 50/50: a medio camino; reduce-50 % en fade<5: −38/−57R). El PRD no promete más R — da la perilla para medir TP por lote, que hoy no es expresable.
 - **Código tocado:** NINGUNO (solo el PRD y esta memoria).
 - **Estado:** PRD listo para quien toque el motor (Álvaro decide rama/momento); Fase de implementación NO arrancada.
+
+### [TRABAJO · 2026-09-22 · 4] PRD del TP por lote — ronda de revisión de Álvaro: 3 críticos + 2 menores CERRADOS (PRD v2, sin tocar código)
+- **Revisión de Álvaro (verificó las anclas él mismo):** dinámica correcta, construible tal cual; pidió cerrar 3 puntos críticos y 2 menores antes de implementar.
+- **Cerrado 1 — orden GLOBAL de vela (§4.3 del PRD):** orden fijado con números de línea verificados: HALTS (665) → BSwan (769) → salidas del trade (911+) → **parciales/TP globales (1054)** → **cinturón (1499)** → **rungs lot_tp [nuevo, tras el SL de cada lote]** → escalera (1609) → **adds/REDUCE (1731)** → entradas (2140). Consecuencias explícitas: los parciales globales NO ven los rungs de esa vela (corren antes, pyr_base intacto); el REDUCE de pirámide SÍ los ve (corre después); stop del trade saltó → ni cinturón ni rungs.
+- **Cerrado 2 — dos rungs en la misma vela (§4.2):** disparan TODOS los cruzados, en travel ascendente, cada uno con su fill. Fill = semántica de orden LÍMITE, idéntica a los parciales globales por % (portfolio_sim.py:1281-1282): nivel si toque intrabar; si la vela ABRE más allá, al OPEN. Variante de test añadida al §6.2 con fills/tamaños/fees calculados a mano.
+- **Cerrado 3 — honestidad del fill (línea en §4.2):** fill de límite (nivel o mejor) es deliberadamente distinto del tratamiento del stop (nivel acotado al extremo, 1520-1524); el optimismo residual (nivel tocado intrabar se trading al nivel) se acepta por paridad. Dicho en el PRD, no escondido.
+- **Menores:** §5.1 ahora exige travel_pct ESTRICTAMENTE creciente (422, sin reordenar en silencio); §6.5 clava el número exacto del recorte de caja (add pide 2 $, caja deja 1 $, rung 50 % → leg de exactamente 0,50 $).
+- **Código tocado:** NINGUNO (solo el PRD y esta memoria).
+- **Estado:** PRD v2 listo para implementar; quién y cuándo, lo decide Álvaro.

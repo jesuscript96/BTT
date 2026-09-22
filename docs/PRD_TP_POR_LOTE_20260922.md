@@ -100,13 +100,41 @@ entrada), medida desde la entrada del LOTE.
    `lot_tp` compila y corre **EXACTAMENTE igual** que hoy — byte a byte en el
    compilado (dorados de `test_lot_stop_nivel` / `test_pyramid_steps_nivel`)
    y céntimo a céntimo en el simulador. El bloque solo se escribe si existe.
-2. **Disparo:** un rung dispara la primera vez que la vela TOCA su nivel
-   (high/low cruza el precio objetivo), igual que los rungs globales por %.
-   Se marca disparado por lote+rung; no se re-arman nunca dentro del mismo
-   trade (misma regla que `partial_tp_hits`).
-3. **Orden dentro de la vela:** el orden de ejecución del simulador manda
-   (`stop → TP → parcial → señal`, comentario en `portfolio_sim.py:667`).
-   Dentro del lote: **primero el `lot_stop`, después los rungs de `lot_tp`**
+2. **Disparo y fill:** un rung dispara la primera vez que la vela TOCA su
+   nivel (high/low cruza el precio objetivo), igual que los rungs globales
+   por %. Se marca disparado por lote+rung; no se re-arman nunca dentro del
+   mismo trade (misma regla que `partial_tp_hits`).
+   **Varios rungs en la MISMA vela** (gap fuerte a favor): disparan TODOS los
+   cruzados, en orden de `travel_pct` ascendente, cada uno con SU fill. El
+   fill es semántica de orden límite, idéntica a los parciales globales por %
+   (`portfolio_sim.py:1281-1282`): **al nivel si la vela lo toca intrabar; si
+   la vela ABRE ya más allá del nivel, al OPEN de la vela** (mejor para el
+   que cierra, acotado al extremo de la vela). Nota de honestidad exigida en
+   revisión: es fill de límite (nivel o mejor), deliberadamente distinto del
+   tratamiento del stop (nivel acotado al extremo, `portfolio_sim.py:1520-1524`);
+   el optimismo residual es asumir que el nivel tocado intrabar se pudo
+   trading al nivel. Se acepta por paridad con los parciales globales.
+3. **Orden DENTRO de la vela — el orden global completo, fijado** (verificado
+   contra el simulador; los números de línea son de `portfolio_sim.py`):
+   ```
+   HALTS (665) → Black Swan (769) → salidas del trade: stop/TP/señal (911+)
+   → parciales/TP GLOBALES (1054-1286)
+   → cinturón SL por lote (1499)
+   → RUNGS de lot_tp  [NUEVO: dentro del bloque del cinturón, inmediatamente
+                        después del chequeo de SL de cada lote]
+   → escalera scalping (1609) → adds/REDUCE de pirámide (1731-2139)
+   → entradas nuevas (2140)
+   ```
+   Consecuencias explícitas (revisión de Álvaro, 22-sep):
+   - Los **parciales globales corren ANTES**: NO ven los rungs de esa vela —
+     su `pt_size = pyr_base × cap_frac` se calcula sobre el flotante intacto
+     de los rungs (y de los lotes cerrados por el cinturón en esa misma vela
+     tampoco: el cinturón va después).
+   - El **REDUCE de pirámide corre DESPUÉS**: SÍ ve el `pyr_base` ya reducido
+     por el cinturón y por los rungs de esa vela.
+   - Si el **stop del TRADE** saltó en la vela, `in_position=False` y ni
+     cinturón ni rungs corren (regla existente, `portfolio_sim.py:1500-1502`).
+   - Dentro del lote: **primero el `lot_stop`, después los rungs de `lot_tp`**
    — si en la misma vela se toca el cinturón y un rung, gana el stop
    (conservador, y coherente con «el SL es inamovible»).
 4. **Nunca en la vela de entrada del lote** (el add entra en la apertura de la
@@ -138,8 +166,11 @@ entrada), medida desde la entrada del LOTE.
 
 1. **`schemas/strategy.py`** — validador del bloque `pyramiding`: `lot_tp`
    declarado y validado (rungs no vacíos, `travel_pct` > 0, `capital_pct` en
-   (0, 100], Σ ≤ 100, orden por travel creciente — o se reordena y se declara).
-   Sin declarar, `extra="ignore"` lo tira sin avisar. **422**, como `lot_stop`.
+   (0, 100], Σ ≤ 100, y `travel_pct` **ESTRICTAMENTE creciente** — dos rungs
+   al mismo nivel o en orden decreciente son un 422, NO se reordenan en
+   silencio: un ladder desordenado es un error de quien lo escribe, y
+   reordenarlo escondería el error). Sin declarar, `extra="ignore"` lo tira
+   sin avisar. **422**, como `lot_stop`.
 2. **`compile_strategy_def` (strategy_engine)** — normalización de niveles:
    `lot_tp` → estructura interna por nivel. Dorados: el compilado de una
    definición SIN lot_tp no cambia (hash congelado, recongelado documentando
@@ -170,6 +201,11 @@ entrada), medida desde la entrada del LOTE.
    comprobar las dos legs con SU precio de entrada, SU tamaño (50 %/30 % del
    lote), sus fees, y que el 20 % restante sale con la salida global (hora),
    con el `stop_loss` del leg final = el del trade.
+   **Variante «una vela cruza DOS rungs»** (exigida en revisión): gap fuerte
+   a favor — una sola vela M1 cruza los niveles de los rungs 1 y 2 → las DOS
+   legs en esa vela, en orden de travel ascendente, y si la vela ABRE más
+   allá del segundo nivel, AMBAS legs al precio del open (semántica límite,
+   §4.2). Fills, tamaños y fees calculados a mano dentro del test.
 3. **SL inamovible:** día donde el lote recorre +9 % y vuelve a perforar el
    cinturón — cero rungs disparados, leg única de `Pyramid Lot Stop` por el
    tamaño vivo completo. Y el caso límite: vela que toca rung Y cinturón →
@@ -177,7 +213,11 @@ entrada), medida desde la entrada del LOTE.
 4. **Rung único por lote:** precio oscila y cruza el nivel del rung dos veces
    → una sola leg.
 5. **Recorte de caja:** add recortado por el tope de caja → rungs sobre el
-   tamaño ejecutado, no sobre el nominal pedido.
+   tamaño ejecutado, no sobre el nominal pedido. **Con el número exacto
+   clavado** (exigido en revisión): el test fabrica un add que pide 2 $ y la
+   caja solo deja ejecutar 1 $; con un rung del 50 %, la leg debe cerrar
+   exactamente 0,50 $ al fill del nivel con sus fees calculados a mano —
+   «% del original» significa aquí «% del tamaño EJECUTADO del add».
 6. **Vela de entrada:** el rung no dispara en la vela en que el add entra.
 7. **Σ = 100 %:** lote se vacía por rungs sin matar el trade (la base sigue);
    y lotes vacíos + cinturón vaciando todo → bitácora colgada de la última
