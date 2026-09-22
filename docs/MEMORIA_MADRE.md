@@ -6384,3 +6384,36 @@ de Databento, no copiar `users.duckdb`.
 - **E2E con motor real (API, backend rearrancado con el código nuevo):** B200 + rung 50 % a +10 % en cada peldaño de la escalera, 2025: **+474,48R · PF 1,5077 · 2122 trades, 1970 ejecuciones lot_tp (+97,54 $ de rungs), determinista entre corridas**. Lectura honesta (coherente con todo el eje de salidas): −24R frente a no tomar TP (498,84) — soltar la mitad del lote al 10 % le quita recorrido al fondo del fade. La perilla está; ahora se puede BARRER.
 - **Código tocado:** schemas/strategy.py, strategy_engine.py, portfolio_sim.py, backtest_service.py, tests/test_tp_por_lote.py, PRD (§4.4), frontend (types, api_backtester, PyramidingBuilder, Chart).
 - **Estado:** HECHO en `alvaro-rama-desarrollo`; pendiente de revisión visual de Álvaro en el builder/visor.
+
+### [SESIÓN · 2026-09-22 · CIERRE] Reporte completo del día — 2 fixes, 1 hallazgo cerrado, 1 regla nueva, 1 campaña con ganadora, comparativas del eje de salidas, PRD v2 e IMPLEMENTACIÓN del TP por lote
+
+**Índice del día con estado de cada cosa (entradas detalladas referenciadas).**
+
+**1. Fixes entregados y verificados**
+- **[FIX · 2026-09-22 · 01]** Modal del día del calendario: ahora muestra el **R TOTAL** del día junto al PnL, y la media etiquetada «R/trade» — cerraba lo presentacional del hallazgo 17-09·03 (`149cacb`).
+- **[HALLAZGO/FIX · 2026-09-22 · 01]** El dropdown `ap_session` mostraba «ap.RTH» con el campo VACÍO (el motor usa ap.PM para vacío). Fallback visual corregido en los 5 sitios + comentario anti-regresión (`149cacb`, RESUELTO).
+- **De camino quedó validado EN VIVO el fix del hallazgo 18-03** (bloque scalping sobrevive al PUT) al acortar las descripciones de las 2 ganadoras de scalping — re-corridas por `strategy_id` idénticas al céntimo ([DATOS · 2026-09-22 · 1], `cba0818`).
+
+**2. Regla nueva de flujo ([REGLA · 2026-09-22 · 1], `116ce92`)**
+Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NUNCA lo empuja** — integración de Álvaro/Jaime con el porta-verja (TRABAJO 18-09·4). Snapshot de lo pendiente de integración documentado en [ESTADO · 2026-09-22 · 1].
+
+**3. Campaña «>200R/año, curva progresiva, parámetros redondos» ([TRABAJO · 2026-09-22 · 2], `4f64e5d`)**
+- **GANADORA guardada: «B200 · Sobri Escalera stop5 sin parciales»** (`c2a24250`): 3 perillas redondas sobre el chasis 1B Sobri 3 (stop máx. previo +5 %, sin parciales —todo a las 09:00—, fade de entrada <40). **+342R (2024 OOS) · +499R (2025) · +386R (2026 7m)**, r² 0,92-0,99, DD ~1 %. Controles del chasis clavados al céntimo; verificación por `strategy_id` idéntica.
+- **Comparativas con «Modelización Sobri 3»** (la que usaban): con el add igualado a 1 $ ([COMPARATIVA guardada, `9a1be64f`]), la Modelización da 210/333/256R vs 342/499/386R de la B200 — los criterios B200 ganan en los tres años; sus +14.000R originales venían del add de 300 $ (exposición), con DD −38 %. En R y DD-en-R: 13.959R/384R vs 499R/16R.
+- **Eje de hora de salida, cerrado con monotonía**: 09:00 > 50/50 (08:30+08:45) > 08:30 plano, en 2024/2025/2026 e **incluso en el dato fresco jul→4-sep** (la campaña nunca lo vio: +6,4R para el 09:00 en 5 semanas). El lago llega al **4 de septiembre**.
+- ⚠️ **PENDIENTE DE ÁLVARO:** la B200 guardada fue re-guardada desde la UI a las 16:47 con salida **Full 08:30** (−43R en 2025 vs 09:00). Restaurar a 09:00 = un PUT, ofertado y a la espera de decisión.
+
+**4. TP por lote: del PRD a producción en un día**
+- **[TRABAJO · 2026-09-22 · 3]** PRD v1 (`907a064`): semántica exacta de Álvaro — cada ejecución con su SL inamovible + rungs «al recorrer X % saca Y % del lote», resto cabalgando al cierre del trade.
+- **[TRABAJO · 2026-09-22 · 4]** Revisión de Álvaro (verificó las anclas él mismo): 3 críticos + 2 menores cerrados en PRD v2 (`5effdf7`) — orden global de vela fijado con líneas, multi-rung por vela con fills límite, honestidad del fill, validador estrictamente creciente, número exacto del recorte.
+- **[TRABAJO · 2026-09-22 · 5] IMPLEMENTACIÓN COMPLETA** (`eaa7ce1`): schema (422) + compile + passthrough + simulador (rungs tras el SL del lote, fills nivel/open, legs con identidad, Σ=100 % muere limpio, guard de vela de fill con la asimetría documentada: el cinturón SÍ salta en la vela de fill) + serializador (`level/rung/travel_pct` pasan; deduplicación leg-vs-bitácora) + builder (editor de peldaños con validación en vivo) + visor (chips TP por lote). **24 tests nuevos, suite 1181 passed, dorados intactos. E2E: 1.970 rungs en B200·2025, determinista.**
+- Dato honesto del primer punto del espacio: rung 50 % a +10 % → 474,48R (−24R vs no tomar TP). **Siguiente paso natural: barrer travel/capital** (TP corto solo en peldaños profundos, base larga).
+
+**5. Pendientes abiertos del día**
+1. Decisión B200 guardada: restaurar salida 09:00 (ofertado).
+2. Barrido travel/capital del lot_tp sobre la B200.
+3. Revisión visual de Álvaro del builder/visor del lot_tp (backend ya corre con el código).
+4. Lo heredado y no urgente: formateador del resumen del panel izquierdo (picos/valles), pestaña «Charts + Optimization IS» con gráfico vacío, multiplier del carril nativo para no-pivotes (solo si se enciende N2A).
+5. Integración a staging: 148+ commits acumulados, porta-verja de TRABAJO 18-09·4.
+
+**Código tocado en el día (resumen):** fixes calendario+dropdown (frontend), campaña y comparativas (solo datos/scripts efímeros), PRD v1/v2, feature completa del TP por lote (4 ficheros backend + 4 frontend + tests). Suite: 1148 → **1181 passed**. Rama pusheada a `eaa7ce1` + este reporte.
