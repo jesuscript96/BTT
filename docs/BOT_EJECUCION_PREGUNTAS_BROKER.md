@@ -65,13 +65,16 @@ Listado limpio para el día que pidamos el PDF del API. Referencias entre parén
 2. **ES:** ¿Con qué precio dispara un stop: último precio, bid, ask? ¿Se puede elegir? ¿Disparan en premercado y after-hours?  
    **EN:** Which price triggers a stop: last, bid, or ask? Can we choose? Do stops trigger in pre-market and after-hours?  *(C3, C6, R-2)*
 
-3. **ES:** ¿Qué pasa con un stop cuando la acción entra en halt? ¿Se cancela, se mantiene, se ejecuta al reabrir?  
+3. **ES:** En DAS Trader Pro existe la orden StopLimitP («LimitP»), que dispara por el último precio cruzado. ¿Está disponible por el API además del STOPLMT del manual? ¿Cuál es el precio de disparo de cada tipo (último, bid, ask) y cuál recomiendan en premercado? ¿Un print tardío o fuera de secuencia puede dispararla?  
+   **EN:** DAS Trader Pro has the StopLimitP ("LimitP") order, triggered by the last trade price. Is it available through the API in addition to the STOPLMT in the manual? What is the trigger price for each type (last, bid, ask) and which do you recommend in pre-market? Can a late or out-of-sequence print trigger it?  *(R-22)*
+
+4. **ES:** ¿Qué pasa con un stop cuando la acción entra en halt? ¿Se cancela, se mantiene, se ejecuta al reabrir?  
    **EN:** What happens to a stop when the stock is halted? Is it cancelled, kept, or executed at the reopening?  *(C16)*
 
-4. **ES:** ¿Hay distancia mínima entre el precio actual y el stop para que sea aceptado? ¿Hay límite de órdenes stop vivas por cuenta o por símbolo?  
+5. **ES:** ¿Hay distancia mínima entre el precio actual y el stop para que sea aceptado? ¿Hay límite de órdenes stop vivas por cuenta o por símbolo?  
    **EN:** Is there a minimum distance between the current price and the stop for it to be accepted? Is there a limit on live stop orders per account or per symbol?  *(C15, C11)*
 
-5. **ES:** ¿Se pueden tener dos órdenes stop de compra sobre la misma posición corta a la vez (una principal y una de emergencia), cada una con su cantidad?  
+6. **ES:** ¿Se pueden tener dos órdenes stop de compra sobre la misma posición corta a la vez (una principal y una de emergencia), cada una con su cantidad?  
    **EN:** Can we have two buy-stop orders on the same short position at the same time (a main one and an emergency one), each with its own quantity?  *(C1, R-C-11)*
 
 ## 4. Datos de mercado por el API / 4. Market data through the API

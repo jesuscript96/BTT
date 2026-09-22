@@ -302,4 +302,5 @@
 18. **[API] Datos por API: ¿cuántos símbolos admite a la vez el Level 1 y el Time & Sales ($Quote / $T&S)? ¿Depende del plan de datos contratado? (Jaume, 21-sep: para construir las velas del radar desde DAS.)**
 19. **[API/Sage] ¿El feed de precios de DAS es consolidado de todas las bolsas (SIP) o solo Nasdaq? ¿Qué operaciones excluye del Time & Sales (lotes sueltos, prints tardíos, condiciones)? Necesario para que las velas del bot coincidan con las del backtester (Massive).**
 20. **[API] ¿El API admite órdenes «post only» / «add liquidity only» (ARCA ALO, EDGA post-only), que se rechazan o recolocan en vez de remover? ¿Con qué sintaxis?**
-21. **[API/Sage] Orden PEG MID del manual 2021 (pegada al punto medio): ¿qué rutas la admiten, funciona en premercado, cobra el mismo rebate que una límite que descansa o tiene tarifa propia? ¿Admite precio límite y Display=0?***
+21. **[API/Sage] Orden PEG MID del manual 2021 (pegada al punto medio): ¿qué rutas la admiten, funciona en premercado, cobra el mismo rebate que una límite que descansa o tiene tarifa propia? ¿Admite precio límite y Display=0?**
+22. **[API] StopLimitP («LimitP», dispara por ÚLTIMO PRECIO): ¿existe por el API además de STOPLMT? ¿Cuál es el precio de disparo de cada uno (último / bid / ask) y cuál recomiendan en premercado? ¿Un print tardío o fuera de secuencia puede dispararlo?***
