@@ -815,6 +815,7 @@ export default function Chart({
           interface Lote {
             idx: number; color: string;
             entryTime: number; entryPx: number; slPx?: number;
+            nivel?: number;
             endTime: number; endPx?: number; cerradoPorSL: boolean;
           }
           const lotes: Lote[] = [];
@@ -828,10 +829,17 @@ export default function Chart({
                 entryTime: ex.time_epoch,
                 entryPx: ex.price,
                 slPx: ex.sl_px,
+                nivel: ex.level,
                 endTime: t.exit_time_epoch,
                 cerradoPorSL: false,
               };
               lotes.push(lote);
+            } else if (!ex.escalera && ex.kind === "lot_tp") {
+              // TP POR LOTE: un rung cierra PARTE del lote — el segmento sigue
+              // vivo hasta su cierre real (SL de lote o cierre del trade).
+              // Se empareja por nivel de pirámide (el más reciente abierto de
+              // ese nivel: la escalera dispara varias veces el mismo nivel).
+              lote = [...lotes].reverse().find(l => !l.cerradoPorSL && l.nivel !== undefined && l.nivel === ex.level);
             } else if (!ex.escalera && ex.kind === "lot_stop") {
               const abiertos = lotes.filter(l => !l.cerradoPorSL);
               const slNum = Number(ex.sl_px);
@@ -875,6 +883,7 @@ export default function Chart({
             if (!snap || !candleTimeSet.has(snap)) continue;
             const isAdd = ex.kind === "add";
             const esLotStop = ex.kind === "lot_stop";
+            const esLotTp = ex.kind === "lot_tp";
             const isLong = t.direction.toLowerCase().includes("long");
             // Escalera del scalping complejo: triángulos pequeños, añadido
             // debajo de la vela y quita encima, con la flecha en el sentido de
@@ -896,12 +905,14 @@ export default function Chart({
                 ? "#c87941"
                 : isAdd
                   ? (lote ? lote.color : "#c87941")
-                  : (esLotStop ? (lote ? lote.color : "#ef4444") : "#d9a441"),
+                  : (esLotStop || esLotTp ? (lote ? lote.color : "#ef4444") : "#d9a441"),
               shape: esEscalera
                 ? (compra ? "arrowUp" : "arrowDown")
                 : (isAdd ? (isLong ? "arrowUp" : "arrowDown") : "square"),
               text: isAdd
                 ? `${lote && !esEscalera ? `+${lote.idx} · ` : "+"}${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${lote && !esEscalera && lote.slPx ? ` · SL ${fmtNivel(lote.slPx)}` : ""}${esEscalera && ex.label ? ` (${ex.label})` : ""}`
+                : esLotTp
+                ? `${lote ? `TP${lote.idx}` : "TP"}${ex.rung ? ` r${ex.rung}` : ""} · −${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}`
                 : `−${fmtShares(ex.size ?? 0)} @ $${ex.price.toFixed(2)}${ex.label ? ` (${ex.label})` : ""}`,
               isEntry: false,
               ...(esEscalera ? { size: 0.6 } : {}),

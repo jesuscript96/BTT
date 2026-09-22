@@ -137,9 +137,13 @@ entrada), medida desde la entrada del LOTE.
    - Dentro del lote: **primero el `lot_stop`, después los rungs de `lot_tp`**
    — si en la misma vela se toca el cinturón y un rung, gana el stop
    (conservador, y coherente con «el SL es inamovible»).
-4. **Nunca en la vela de entrada del lote** (el add entra en la apertura de la
-   vela siguiente a su señal; sus rungs se vigilan desde la vela posterior —
-   misma regla que el cinturón y la escalera).
+4. **Nunca en la vela de FILL del lote** (§ cambio de la revisión de
+   implementación, 22-sep): el add llena en la apertura de la vela siguiente
+   a su señal; sus rungs se vigilan desde la vela POSTERIOR al fill
+   (`fill_idx`). **Asimetría deliberada con el cinturón:** el SL de lote SÍ
+   puede saltar en la vela de fill (la protección entra desde el primer
+   instante — verificado en el simulador); la toma de beneficios, siendo
+   conservadora, espera una vela.
 5. **Tamaño:** cada rung cierra `capital_pct` % del tamaño ORIGINAL del lote
    (escalera aditiva: 50+30 = 80 % del lote; el 20 % restante cabalga). Nunca
    más de lo que queda vivo del lote (recortes de caja/locates incluidos: si

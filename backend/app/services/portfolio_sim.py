@@ -554,10 +554,11 @@ def simulate(
     partial_tp_hits: list[bool] = []  # Track which partial TP levels have been hit
 
     # ── SL POR LOTE (PRD 2026-09-15, docs/PRD_SL_POR_LOTE_EN_PIRAMIDACION) ──
-    # lots_on: ¿algún nivel declara lot_stop? Sin él no se ejecuta ni una
-    # rama nueva: `lots` queda vacío para siempre y el estado por barra es el
-    # de siempre (camino caliente intacto, §8 del PRD).
-    lots_on = bool(pyramid_levels) and any(lv.get("lot_stop") for lv in pyramid_levels)
+    # lots_on: ¿algún nivel declara lot_stop o lot_tp? Sin ninguno no se
+    # ejecuta ni una rama nueva: `lots` queda vacío para siempre y el estado
+    # por barra es el de siempre (camino caliente intacto, §8 del PRD).
+    lots_on = bool(pyramid_levels) and any(
+        lv.get("lot_stop") or lv.get("lot_tp") for lv in pyramid_levels)
     lots: list[dict] = []   # lotes vivos del trade: {level, px, size, sl_px}
     _lot_pivots: dict = {}  # pivot_window -> (pivotes altos, pivotes bajos)
     if lots_on:
@@ -1507,10 +1508,130 @@ def simulate(
             _supervivientes_lot = []
             _pos_muerta_lot = False
             for _lot in lots:   # orden cronológico de lote (§3.4)
-                _tocado = ((low[i] <= _lot["sl_px"]) if is_long
-                           else (high[i] >= _lot["sl_px"]))
+                # sl_px=None (nivel con lot_tp sin lot_stop): sin cinturón,
+                # el resto del lote cabalga con el stop del trade.
+                _tocado = (_lot["sl_px"] is not None and
+                           ((low[i] <= _lot["sl_px"]) if is_long
+                            else (high[i] >= _lot["sl_px"])))
                 if not _tocado:
-                    _supervivientes_lot.append(_lot)
+                    # ── TP POR LOTE (PRD 2026-09-22, §4.2-4.4): los rungs
+                    # del lote corren JUSTO DESPUÉS de su SL — si el
+                    # cinturón saltó arriba, el lote ya cerró entero y no
+                    # llega aquí (en empate de vela gana el stop). Fill de
+                    # LÍMITE (§4.2): al nivel si la vela lo toca; si la vela
+                    # ABRE más allá del nivel, al open — idéntico a los
+                    # parciales globales por %. Varios rungs en la misma
+                    # vela: todos los cruzados, en travel ascendente, cada
+                    # uno con SU fill. Nunca en la vela de FILL del add
+                    # (§4.4: desde la posterior; el cinturón sí puede saltar
+                    # en la de fill — protección y beneficio, asimetría
+                    # deliberada).
+                    if _lot.get("tp") and i > _lot.get("fill_idx", -1):
+                        for _ri, (_tv, _cp) in enumerate(_lot["tp"]):
+                            if _lot["tp_fired"][_ri]:
+                                continue
+                            _rung_px = (_lot["px"] * (1.0 + _tv / 100.0) if is_long
+                                        else _lot["px"] * (1.0 - _tv / 100.0))
+                            _rung_tocado = ((high[i] >= _rung_px) if is_long
+                                            else (low[i] <= _rung_px))
+                            if not _rung_tocado:
+                                continue
+                            _lot["tp_fired"][_ri] = True
+                            if is_long:
+                                _exit_tp = max(_rung_px, open_[i])
+                                _exit_tp = min(_exit_tp, high[i])
+                                _net_tp = _exit_tp - _exit_tp * slippage
+                            else:
+                                _exit_tp = min(_rung_px, open_[i])
+                                _exit_tp = max(_exit_tp, low[i])
+                                _net_tp = _exit_tp + _exit_tp * slippage
+                            # % del tamaño EJECUTADO del lote (size0), nunca
+                            # más de lo vivo: recortes de caja/locates, rungs
+                            # anteriores de esta misma vela o parciales/reduce
+                            # que adelgazaron el flotante (mismo guard que el
+                            # cinturón, §3.4).
+                            _q_rung = _lot["size0"] * _cp / 100.0
+                            _q_rung = min(_q_rung, _lot["size"], size)
+                            if _q_rung <= 0:
+                                continue
+                            _avg_antes = avg_entry_price
+                            _size_antes = size
+                            size -= _q_rung
+                            pyr_base = max(0.0, pyr_base - _q_rung)
+                            if size > 0:
+                                avg_entry_price = (
+                                    (_avg_antes * _size_antes - _lot["px"] * _q_rung)
+                                    / size)
+                            if is_long:
+                                _gross_tp = (_net_tp - _lot["px"]) * _q_rung
+                            else:
+                                _gross_tp = (_lot["px"] - _net_tp) * _q_rung
+                            if fee_type == "FLAT":
+                                _fee_tp = fees * _q_rung * 2
+                            else:
+                                _fee_tp = (_lot["px"] + _net_tp) * _q_rung * fees
+                            _pnl_tp = _gross_tp - _fee_tp
+                            realized_pnl += _pnl_tp
+                            _car_tp = _lot["px"] * _q_rung
+                            _ret_tp = (_pnl_tp / _car_tp) * 100 if _car_tp > 0 else 0.0
+                            trades.append({
+                                "entry_idx": entry_idx,
+                                "exit_idx": i,
+                                # entry_price = fill REAL del lote y PnL contra
+                                # SU precio (mismo criterio que las legs del
+                                # cinturón, §3.3 del PRD del SL de lote).
+                                "entry_price": round(_lot["px"], 6),
+                                "avg_entry_price": round(_avg_antes, 6),
+                                "exit_price": round(_net_tp, 6),
+                                "pnl": round(_pnl_tp, 4),
+                                "return_pct": round(_ret_tp, 4),
+                                "direction": "Long" if is_long else "Short",
+                                "status": "Closed",
+                                "size": round(_q_rung, 6),
+                                "exit_reason": f"Lot TP ({_ri + 1}/{len(_lot['tp'])})",
+                                "fees": round(_fee_tp, 4),
+                                "mae": round(mae, 4),
+                                "mfe": round(mfe, 4),
+                                # El stop que vigila el resto del lote.
+                                "stop_loss": round(
+                                    _lot["sl_px"] if _lot["sl_px"] is not None
+                                    else trade_sl_price, 6),
+                                # Identidad del trade para la fusión (patrón
+                                # PRD_FIX_SL_LOTE_FUSION).
+                                "trade_entry_price": round(entry_price, 6),
+                                "trade_stop_loss": round(trade_sl_price, 6),
+                            })
+                            pyr_exec.append({
+                                "kind": "lot_tp",
+                                "idx": int(i),
+                                "time_epoch": (int(timestamps[i] // 1_000_000_000)
+                                               if timestamps is not None else None),
+                                "price": round(_net_tp, 6),
+                                "size": round(_q_rung, 6),
+                                "level": int(_lot["level"]) + 1,
+                                "position_size": round(size, 6),
+                                "pnl": round(_pnl_tp, 4),
+                                "rung": _ri + 1,
+                                "travel_pct": float(_tv),
+                            })
+                            _lot["size"] -= _q_rung
+                            if size <= 0.0001:
+                                # Los rungs vaciaron la posición: misma salida
+                                # que el cinturón — bitácora colgada de esta
+                                # leg y rearme en la próxima entrada.
+                                in_position = False
+                                size = 0.0
+                                if pyramid_mode and pyr_exec and trades:
+                                    trades[-1]["pyr_executions"] = pyr_exec
+                                    pyr_exec = []
+                                _pos_muerta_lot = True
+                                break
+                    if _pos_muerta_lot:
+                        break
+                    # Sobrevive si le queda algo: un lote cuyos rungs suman
+                    # el 100 % muere limpio (el trade sigue con el resto).
+                    if _lot["size"] > 0.0001:
+                        _supervivientes_lot.append(_lot)
                     continue
                 # Cierra SOLO este lote, nunca más de lo que queda vivo (los
                 # parciales/reducciones pueden haber adelgazado la posición).
@@ -2060,10 +2181,28 @@ def simulate(
                     })
                     # El lote queda apuntado con su tamaño EJECUTADO (recortes
                     # de caja/locates incluidos: si el cinturón salta, cierra
-                    # lo que de verdad se añadió).
-                    if ls is not None:
-                        lots.append({"level": lv_idx, "px": add_px,
-                                     "size": add_size, "sl_px": lot_sl_px})
+                    # lo que de verdad se añadió). Con `lot_tp` (PRD
+                    # 2026-09-22) el registro gana además su escalera de
+                    # rungs, el estado de disparo de cada uno y el tamaño
+                    # original: los rungs cierran % del tamaño EJECUTADO del
+                    # add, nunca del vivo. Un nivel con lot_tp y sin lot_stop
+                    # también deja lote (con sl_px=None: su resto cabalga con
+                    # el stop del trade).
+                    _tp_lote = lv.get("lot_tp")
+                    if ls is not None or _tp_lote is not None:
+                        _lote = {"level": lv_idx, "px": add_px,
+                                 "size": add_size,
+                                 "sl_px": lot_sl_px if ls is not None else None}
+                        if _tp_lote is not None:
+                            _lote["tp"] = _tp_lote["rungs"]
+                            _lote["tp_fired"] = [False] * len(_tp_lote["rungs"])
+                            _lote["size0"] = add_size
+                            # PRD §4.4: los rungs se vigilan desde la vela
+                            # POSTERIOR al fill. (El cinturón SÍ puede saltar en
+                            # la vela de fill: protección desde el primer
+                            # instante; beneficio, conservador.)
+                            _lote["fill_idx"] = exec_idx
+                        lots.append(_lote)
                     if not is_long:
                         max_short_size_today = max(max_short_size_today, size)
                 else:

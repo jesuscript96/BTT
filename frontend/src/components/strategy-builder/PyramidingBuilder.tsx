@@ -685,6 +685,97 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     )}
                                 </div>
                             )}
+                            {/* ── TP DEL LOTE (PRD 2026-09-22) ──
+                                Solo en niveles Añadir: la escalera de toma de
+                                beneficios propia de CADA ejecución del nivel.
+                                Cada rung cierra un % del lote cuando el precio
+                                recorre X % a favor desde SU precio de entrada;
+                                el resto cabalga hasta la salida del trade (o su
+                                SL de lote). El backend valida: travel
+                                estrictamente creciente y Σ capital ≤ 100. */}
+                            {lv.action === 'add' && (
+                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
+                                    <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap', marginTop: 5 }}>TP del lote:</span>
+                                    <InfoTooltip position="top" width={330} title="TP del lote" text="Escalera de toma de beneficios propia de CADA añadido de este nivel. Cada peldaño cierra un % del lote cuando el precio recorre X % A FAVOR desde su propio precio de entrada (en corto, cuando cae). El % es sobre el tamaño ejecutado del añadido y cada peldaño dispara una sola vez. El RESTO del lote no se cierra solo: cabalga hasta la salida del trade o su SL de lote. El recorrido debe ir creciendo de peldaño a peldaño y la suma de porcentajes no puede pasar de 100." />
+                                    <select
+                                        value={lv.lot_tp ? 'on' : ''}
+                                        onChange={(e) => setLevel(idx, {
+                                            ...lv,
+                                            lot_tp: e.target.value === 'on'
+                                                ? (lv.lot_tp ?? { rungs: [{ travel_pct: 10, capital_pct: 50 }] })
+                                                : null,
+                                        })}
+                                        style={{ ...selectStyle, marginTop: 2 }}
+                                        title={
+                                            "Escalera de toma de beneficios propia de CADA añadido de este nivel.\n" +
+                                            "Cada peldaño: al recorrer X % a favor desde SU precio de entrada, cierra\n" +
+                                            "el Y % del tamaño del lote (una vez por lote). El resto del lote cabalga\n" +
+                                            "hasta la salida del trade o su SL de lote. Con «—» no hay TP de lote."
+                                        }
+                                    >
+                                        <option value="">—</option>
+                                        <option value="on">escalera</option>
+                                    </select>
+                                    {lv.lot_tp && (() => {
+                                        const rungs = lv.lot_tp.rungs ?? [];
+                                        const setRungs = (nr: typeof rungs) =>
+                                            setLevel(idx, { ...lv, lot_tp: { ...lv.lot_tp!, rungs: nr } });
+                                        const suma = rungs.reduce((a, r) => a + (Number(r.capital_pct) || 0), 0);
+                                        const creciente = rungs.every((r, i) => i === 0 || Number(r.travel_pct) > Number(rungs[i - 1].travel_pct));
+                                        const viajesPositivos = rungs.every((r) => Number(r.travel_pct) > 0);
+                                        const capsOk = rungs.every((r) => Number(r.capital_pct) > 0 && Number(r.capital_pct) <= 100);
+                                        const valido = creciente && viajesPositivos && capsOk && suma <= 100;
+                                        return (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                                {rungs.map((r, ri) => (
+                                                    <div key={ri} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                        <input
+                                                            type="number" min={0.1} step={0.5}
+                                                            value={r.travel_pct ?? ''}
+                                                            onChange={(e) => setRungs(rungs.map((x, i) => i === ri ? { ...x, travel_pct: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
+                                                            onFocus={(e) => e.target.select()}
+                                                            style={{ ...selectStyle, width: 58, cursor: 'text' }}
+                                                            title="% de recorrido favorable desde el precio de entrada del lote (en corto: caída)."
+                                                        />
+                                                        <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>% recorrido → saca</span>
+                                                        <input
+                                                            type="number" min={1} max={100} step={5}
+                                                            value={r.capital_pct ?? ''}
+                                                            onChange={(e) => setRungs(rungs.map((x, i) => i === ri ? { ...x, capital_pct: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
+                                                            onFocus={(e) => e.target.select()}
+                                                            style={{ ...selectStyle, width: 58, cursor: 'text' }}
+                                                            title="% del tamaño del lote que cierra este peldaño."
+                                                        />
+                                                        <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>% del lote</span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setRungs(rungs.filter((_, i) => i !== ri))}
+                                                            style={{ background: 'transparent', border: 'none', color: 'var(--color-ec-text-muted)', cursor: 'pointer', fontSize: 12, padding: '0 4px', lineHeight: 1 }}
+                                                            title="Quitar este peldaño"
+                                                        >×</button>
+                                                    </div>
+                                                ))}
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setRungs([...rungs, { travel_pct: (Number(rungs[rungs.length - 1]?.travel_pct) || 5) + 5, capital_pct: 25 }])}
+                                                        style={{ background: 'transparent', border: 'none', color: 'var(--color-ec-copper)', cursor: 'pointer', fontSize: 10.5, fontWeight: 700, padding: 0 }}
+                                                        title="Añadir un peldaño a la escalera"
+                                                    >+ peldaño</button>
+                                                    <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: valido ? 'var(--color-ec-text-muted)' : 'var(--color-ec-loss)' }}>
+                                                        {valido
+                                                            ? `Σ ${suma % 1 === 0 ? suma : suma.toFixed(1)} % del lote · el resto sale con el trade`
+                                                            : (!viajesPositivos ? 'el % de recorrido debe ser > 0 · '
+                                                               : !creciente ? 'el recorrido debe crecer de peldaño a peldaño · '
+                                                               : !capsOk ? 'el % del lote debe estar en (0, 100] · '
+                                                               : '') + `Σ ${suma.toFixed(1)} % > 100 no vale`}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+                            )}
                             {/* ── CAMINO DE CONDICIONES (PRD 2026-09-16) ──
                                 Cadena ORDENADA: cada paso es el mismo editor
                                 de condiciones de siempre; el nivel dispara al
