@@ -498,47 +498,29 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 4. Trigger N1: límite L1 + 3 % (p95 de slippage +2,2 %, colgado 1-2 %). Trigger N2: límite L2 + 10 % (colgado ≤ 1 %, p95 +6 %). Trigger N3 (emergencia): límite L3 + 30-50 % (en fogonazos 3 % / 1 % colgado, p95 +29 / +42 %). El margen solo cuesta cuando el precio salta: con M = 3 % la mediana de slippage es +0,3 %.
 5. Cisne negro: un limitado en L se ejecuta en 5 min en el 71 % de los fogonazos a precio ≤ L; la espera tiene base en PM.
 
-### R-B-01 · Orden de entrada en corto: al bid si está cerca, escalera si está lejos, nunca más del 3 %
+### R-B-01 · Orden de entrada en corto (y piramidaciones): un minuto AGREGANDO en el punto medio y, si no, cruzar al bid con tope del 3 %
 - Situación: la estrategia da señal de entrada (o de pirámide) y el bot envía la orden. Vale para PM y RTH.
-- Detección: último precio cruzado (el que usa el backtester) y bid de DAS en el segundo de la señal. Tope T = 3 %.
-- Acción:
-  1. **Bid a menos del 3 % del último precio** (80 de cada 100 señales de 1B, 94 de 2B). **CAMBIADA el 22-sep (Jaume): primero se AGREGA, luego se cruza.** (a) Venta límite en el PUNTO MEDIO entre bid y ask (bid + 1 tick si el spread es de 2 ticks o menos), que descansa en el libro AGREGANDO liquidez, durante T1 = 2 s. **Medido el 22-sep (`42_agregar_vs_remover_entrada.py`, 349 entradas reales de 1B/2B con libro NBBO):** punto medio 2 s llena el 33 % y deja un neto de +0,23 % por trade frente a cruzar (precio +0,15 % y ECN), sin perder ninguna señal; bid + 1 tick 2 s llena el 40 % pero neto +0,02 % (lo que gana en ECN lo pierde en precio cuando no llena y el bid ya bajó); «siempre agregar» a bid + 1 tick 60 s sin cruzar (lo del socio) llena el 86 % con +0,52 % neto PERO pierde el 14 % de las señales, y esas son las MEJORES: en ellas el bid ya había caído un 2,9 % (mediana) / 4,6 % (media) a los 60 s. Con 1B a +4,2 % de media por trade, perder el 14 % de las mejores cuesta más de lo que se gana en el 86 %. Por eso: agregar SÍ, pero corto y en el medio, y cruzar en cuanto no llena. Si llena, se ha vendido más caro que al bid Y se ha cobrado el rebate (−0,0017 a −0,0024 $/acción en vez de pagar +0,0033). (b) Si a los 2 s no ha llenado (entera o en parte), lo que quede se cruza AL BID como antes: venta límite a bid × (1 − 0,5 %), al instante. (c) Si en esos 2 s el bid ha bajado más del 0,5 %, se pasa a la escalera (rama 2) desde el escalón que corresponda. Con SSR la orden ya tenía que ir por encima del bid: esta rama es la misma. Lo que se pierde en el peor caso son 2 s y lo que baje el precio en ese tiempo; lo que se gana cuando llena es el spread (mediana medida 0,4 %) más el rebate. Los dos valores (T1 y el nivel bid + 1 tick / punto medio) se AFINAN en sombra midiendo el % que llena agregando y el precio medio frente a cruzar al bid.
-  Redacción anterior (16-sep): venta límite a bid × (1 − 0,5 %) al instante, removiendo.
-  2. **Bid a más del 3 %**: no se cruza. Se deja una venta límite AGREGANDO liquidez en ESCALERA (Jaume, 16-sep): a −1 % del último precio; a los 10 s, a −2 %; a los 20 s, a −3 %, y ahí se queda lo que resta del minuto; si a los 60 s sigue sin ejecutarse, se cancela y NO se entra. Se cancela antes en cuanto la estrategia deje de decir «dentro».
-  3. Nunca se vende por debajo del último precio × (1 − 3 %). El 3 % es un tope, no un precio: solo se llega a él si no hay nadie más arriba.
-- Quién la ejecuta: ejecutor (guarda: distancia último→bid).
-- Parámetros (cuadro de mandos): tope T = 3 %; espera agregando en la rama 1 = 2 s (T1) y nivel = punto medio (bid + 1 tick con spread ≤ 2 ticks); techo de la rama 1 al cruzar = 0,5 %; escalones 1 / 2 / 3 %; cambio de escalón cada 10 s; el tercero espera hasta completar 60 s. Ruta: ARCA en PM; en RTH, SAGEPRO si en sombra llena igual de rápido que ARCA, si no ARCA.
-- Si la acción falla: sin cotización (libro vacío, antes de ~05:30 ET en muchos valores) → no se entra. Orden de la rama 1 no ejecutada porque el bid cayó más del 0,5 % durante el envío → pasa a la rama 2 (escalera) desde el escalón que corresponda.
-- Prueba: sombra, midiendo slippage real frente al precio del backtester y % de señales que se quedan fuera.
-- Estado: FIJADA (Jaume, 16-sep; rama 1 cambiada a «agregar 2 s y luego cruzar» el 22-sep) salvo la ruta (sombra) y el ajuste fino de tiempos con fills reales.
-- Origen: B1, B2 (queda absorbida: no hay reenvíos, la escalera es la persecución), B20. Estudio P12 (`36`/`37` y cálculos del 16-sep).
-- Tiempo total de la escalera (medido el 16-sep, 1B, señales que van a la escalera): 10 s → entran el 39 % (12 de cada 100 señales fuera); 20 s → 55 % (9 fuera); 30 s → 63 % (7 fuera); 45 s → 71 % (6 fuera); 60 s → 74 % (5 fuera); 90-120 s → 74-76 % (5 fuera). Más de 60 s no aporta; menos de 30 s pierde el doble de señales. Se fija 60 s.
-
-**Coste por entrada en Sage (22-sep, cálculo con las tarifas de la web del 19-sep, a confirmar con el bróker):** comisión 0,0003 $/acción + ECN al remover 0,003 $/acción en ARCA/EDGA (y en SAGEPRO solo de 04:00 a 07:00; en RTH SAGEPRO = 0) + en la venta en corto las tasas reguladoras (SEC ≈ 27,8 $ por millón de $ vendidos; FINRA TAF 0,000166 $/acción, máx. 8,30 $). Por cada 10.000 $ de nocional, ida y vuelta: a 0,50 $ (20.000 acc.) 136 $ = 1,36 % por ARCA y 16 $ = 0,16 % por SAGEPRO en RTH; a 1 $ 68 $ (0,68 %) / 8 $ (0,08 %); a 2 $ 34 $ (0,34 %) / 4 $; a 5 $ 14 $ (0,14 %) / 2 $; a 10 $ 7 $ (0,07 %) / 1 $. El coste va por ACCIÓN, así que pesa en las acciones baratas: por debajo de 1 $ la comisión ida y vuelta por ARCA supera el 0,7 % del nocional, del orden del slippage medido. Consecuencia: en RTH usar SAGEPRO si en sombra llena igual de rápido (ya en R-B-01); en PM no hay alternativa a pagar el ECN.
-
-**Agregar liquidez en la ENTRADA (22-sep, Jaume; los stops SIEMPRE remueven):** al agregar, la bolsa PAGA: ARCA −0,002 $/acción (04:00-20:00), EDGA −0,0027 (07:00-20:00); con la comisión de Sage la entrada queda en −0,0017 / −0,0024 $/acción (cobras) frente a +0,0033 removiendo: 0,0057 $/acción de diferencia. Ida y vuelta por 10.000 $ con la salida al ask: a 0,50 $ 136 $ (1,36 %) removiendo → 22 $ (0,22 %) agregando por EDGA; a 1 $ 68 → 11 $; a 2 $ 34 → 6 $; a 5 $ 14 → 2,4 $. PERO un solo céntimo de peor precio por esperar cuesta más que todo el ahorro: 200 $ (2 %) a 0,50 $, 100 $ (1 %) a 1 $, 50 $ a 2 $. En la escalera de R-B-01 los escalones −1 % y −2 % ya AGREGAN (quedan por encima del bid) y el −3 % remueve; la rama rápida (bid a < 3 % del último) remueve al bid. **R-B-06 → ABSORBIDA en R-B-01 rama 1 el 22-sep (Jaume): agregar 2 s y luego cruzar.** Ruta al agregar: EDGA de 07:00 en adelante (paga más), ARCA de 04:00 a 07:00. Decisión con datos de sombra.
-
-**PROPUESTA R-B-01 v3 (22-sep, idea de Jaume «agregar siempre con tope de slippage», medida con `43_agregar_con_tope.py` sobre las mismas 349 entradas):** UNA sola rama para entradas y piramidaciones (los TP agregan siempre; los stops remueven siempre): (1) en la señal, venta límite en el PUNTO MEDIO bid-ask, agregando, hasta T1 = 20 s; (2) si a los 20 s no ha llenado (o solo en parte), lo que quede se CRUZA al bid solo si el bid no ha caído más de X = 3 % respecto al bid de la señal; (3) si ha caído más, se cancela y NO se entra. Sustituye a las dos ramas actuales (rama rápida + escalera), que quedan absorbidas. Medido (valor de una señal perdida = +4,2 %, el trade medio de 1B; las perdidas valen más, ya han caído un 5-8 % al minuto):
-| Configuración | Llena agregando | Neto de las entradas vs cruzar | Señales perdidas | Valor esperado por señal |
-|---|---|---|---|---|
-| Cruzar al bid al instante (hoy, rama 1 vieja) | 0 % | 0 | 0 % | 0 |
-| Punto medio 2 s, luego cruzar siempre | 33 % | +0,23 % | 0 % | +0,23 % |
-| Punto medio 10 s, cruzar si bid ≥ −3 % | 52 % | +1,03 % | 8 % | +0,59 % |
-| **Punto medio 20 s, cruzar si bid ≥ −3 %** | 62 % | +1,42 % | 8 % | **+0,95 %** (+0,64 % si las perdidas valen solo su caída al minuto) |
-| Punto medio 30 s, cruzar si bid ≥ −3 % | 65 % | +1,53 % | 10 % | +0,95 % |
-| Punto medio 45 s, cruzar si bid ≥ −3 % | 69 % | +2,00 % | 11 % | +1,29 % |
-| Punto medio 60 s, cruzar si bid ≥ −2 % | 71 % | +2,36 % | 15 % | +1,38 % |
-| **Punto medio 60 s, cruzar si bid ≥ −3 %** (pregunta de Jaume) | 71 % | +2,14 % | 11 % | **+1,45 %** |
-| Al ask 20 s, cruzar si bid ≥ −3 % | 48 % | +1,32 % | 11 % | +0,72 % |
-| Siempre agregar bid + 1 tick 60 s, sin cruzar | 86 % | +0,52 % | 14 % | negativo |
-Lectura: el punto medio gana al ask (llena más y casi igual de caro); de 20 a 60 s sigue mejorando (+0,95 → +1,45 %) porque llenan más agregando sin perder más señales; 60 s coincide con la caducidad de la señal (R-B-04); el tope del 3 % es el que evita perder las mejores señales sin perseguirlas. Ganancia frente a cruzar al instante ≈ +0,9 % por señal en 1B, que es más que comisiones y locates juntos. Cautelas: llenado supuesto en el primer print a nuestro precio o mejor (optimista); sin re-pegar la orden si el libro se mueve (mejorable); afinar T1 y X en sombra con fills reales. Estado: PROPUESTA, pendiente del OK de Jaume.
+- Detección: bid y ask de DAS en el instante de la señal (t0); bid de la señal = referencia del tope.
+- Acción (**FIJADA por Jaume el 22-sep, sustituye a las dos ramas anteriores: rama rápida al bid + escalera**):
+  1. **Agregar.** Venta límite en el PUNTO MEDIO entre bid y ask (bid + 1 tick si el spread es de 2 ticks o menos), que descansa en el libro AGREGANDO liquidez, hasta 60 s (= la caducidad de la señal, R-B-04). Se cancela antes si la estrategia deja de decir «dentro».
+  2. **Cruzar con tope.** Si a los 60 s no ha llenado (entera o en parte), lo que quede se CRUZA al bid (venta límite a bid × (1 − 0,5 %), removiendo) SOLO si el bid no ha caído más del 3 % respecto al bid de la señal.
+  3. **No entrar.** Si el bid ha caído más del 3 %, se cancela y NO se entra: la señal se ha ido sin nosotros y no se persigue.
+  Lo ejecutado agregando se descuenta; la orden de cruce lleva solo el resto (control de posición neta, R-C-11). Con SSR la venta ya tiene que ir por encima del bid: mismo camino.
+- Medido (22-sep, `42_` y `43_agregar_vs_remover_entrada.py`, 349 entradas reales de 1B/2B con libro NBBO): llena agregando el 71 %; pierde el 11 % de las señales; valor esperado por señal +1,45 % frente a cruzar al instante (contando las perdidas al 4,2 % del trade medio de 1B). Alternativas medidas: 20 s +0,95 %; tope 2 % +1,38 % (pierde el 15 %); al ask en vez del punto medio, peor; «siempre agregar sin cruzar», negativo (pierde el 14 %, y son las mejores señales: bid −5 a −8 % al minuto). Cautelas: llenado supuesto en el primer print a nuestro precio o mejor (optimista), sin re-pegar la orden si el libro se mueve.
+- Principio (Jaume, 22-sep): **se AGREGA siempre** (entradas, pirámides, take profits, salidas con hora conocida donde se pueda), **excepto los stops y las situaciones delicadas** (cerrar todo, TP a medias con rebote, prioridad TP-entrada, halts, cisne negro), que remueven.
+- Quién la ejecuta: ejecutor (guarda: distancia bid de la señal → bid actual).
+- Parámetros (cuadro de mandos): espera agregando = 60 s; nivel = punto medio (bid + 1 tick con spread ≤ 2 ticks); tope de slippage al cruzar = 3 %; techo del cruce = 0,5 %. Ruta al agregar: EDGA de 07:00 en adelante (paga −0,0027 $/acción), ARCA de 04:00 a 07:00 (−0,002); al cruzar, ARCA en PM y SAGEPRO en RTH si en sombra llena igual de rápido.
+- Si la acción falla: sin cotización (libro vacío) → no se entra. El cruce no llena porque el bid se movió durante el envío → se reintenta una vez con el bid nuevo si sigue dentro del 3 %; si no, no se entra.
+- Prueba: sombra, midiendo % que llena agregando, precio medio frente al bid de la señal, % de señales perdidas y su valor; afinar los 60 s y el 3 % con fills reales.
+- Estado: FIJADA (Jaume, 22-sep). Historia: 16-sep rama rápida al bid + escalera −1/−2/−3 %; 22-sep mañana «agregar 2 s y cruzar»; 22-sep tarde esta versión, con datos.
+- Origen: B1, B2, B19; pregunta de Jaume del 22-sep tras lo del socio («siempre agrega»).
 
 ### R-B-02 · Entrada ejecutada a medias
 - Situación: la orden de entrada se ejecuta solo en parte (p. ej. 400 de 1.000) porque en el bid no había más. Frecuente: en PM una orden de 300 $ cabe entera el 53 % de las veces; de 3.000 $, el 6 %.
 - Detección: fill parcial confirmado por DAS.
 - Acción: el resto (600) sigue con la misma lógica de R-B-01 (al nuevo bid si está a menos del 3 % del último precio; si no, escalera), como máximo hasta completar el minuto desde la señal y sin pasar nunca del 3 %. Al minuto, se acepta la posición que haya (400) con su stop proporcional (R-C-01) y se cancela lo pendiente. No hay mínimo por debajo del cual no compense quedarse: se entra siempre que se pueda y con lo que se pueda.
 - Quién la ejecuta: ejecutor.
-- Parámetros: los de R-B-01.
+- Parámetros: los de R-B-01 (60 s agregando en el punto medio, tope 3 %).
 - Si la acción falla: lo no ejecutado se cancela; la posición parcial queda protegida por su stop.
 - Prueba: sombra (recuento de parciales y tamaño medio conseguido frente al pedido).
 - Estado: FIJADA (Jaume, 16-sep). Pendiente futuro: regla específica para tamaños muy grandes.
@@ -580,7 +562,7 @@ Lectura: el punto medio gana al ask (llena más y casi igual de caro); de 20 a 6
 - Detección: nueva señal sobre un ticker con orden de entrada viva.
 - Acción: se SUMAN las cantidades de todas las estrategias en una sola orden de venta y la escalera se REINICIA desde el primer escalón con el total. El bot registra en el diario qué parte pertenece a cada estrategia (un lote por estrategia, N lotes), para repartir después fills, stops y take profits (áreas C y E).
 - Quién la ejecuta: ejecutor + diario.
-- Parámetros: los de R-B-01.
+- Parámetros: los de R-B-01 (60 s agregando en el punto medio, tope 3 %).
 - Si la acción falla: fill parcial → R-B-02, repartiendo lo ejecutado entre lotes en proporción a lo pedido.
 - Prueba: tabla de casos; sombra.
 - Estado: FIJADA (Jaume, 16-sep). Caso raro: si coinciden, coinciden a la vez (la escalera no dura más de un minuto).
@@ -1086,9 +1068,8 @@ Todo lo que el libro dice «va al cuadro de mandos», recogido en un sitio. Tres
 | Campo | Valor hoy | Origen |
 |---|---|---|
 | Tope de gasto en locates sobre la cuenta (por día) | 3 % | R-H-03 |
-| Puerta de entrada: distancia último→bid | 3 % | R-B-01 |
-| Techo de la rama rápida | 0,5 % | R-B-01 |
-| Escalera: escalones y tiempos | 1/2/3 % · 10 s · 60 s | R-B-01, R-D-01 |
+| Entrada: espera agregando · nivel · tope de slippage al cruzar · techo del cruce | 60 s · punto medio · 3 % · 0,5 % | R-B-01 |
+| Salida por hora: escalera y tiempos | 1/2/3 % · 10 s · 60 s | R-D-01 |
 | Caducidad de una señal sin llenar | 60 s | R-B-04 |
 | Fracción máxima del volumen acumulado | desactivado | R-B-05 |
 | Techo «cerrar todo» y reintentos | 5 % · 2 | R-D-06 |
