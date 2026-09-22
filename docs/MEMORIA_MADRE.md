@@ -6327,3 +6327,17 @@ de Databento, no copiar `users.duckdb`.
 - **Efecto:** la IA no vuelve a pedir OK para cada push a `alvaro-rama-desarrollo` — commitea y empuja. `staging` sigue intocable para la IA (integración de Álvaro/Jaime con el porta-verja).
 - **Reflejado también en:** `.agent/ALVARO_DEV_BRANCH.md` (flujo diario, punto 5).
 - **Estado:** regla activa desde ahora.
+
+### [TRABAJO · 2026-09-22 · 2] Campaña «>200R/año en 2025 Y 2026, curva progresiva, parámetros redondos» — ganadora guardada: 342/499/386R (2024 OOS / 2025 / 2026)
+- **Encargo de Álvaro:** estrategias con curva progresiva, que funcionen en 2025-2026, >200R por año y parámetros no extraños.
+- **Método:** motor real vía API (plantilla de peticiones EXACTA de la campaña del 18-sep: todos los campos explícitos, look-ahead ON, fees 5 bps + slippage 0,1 %/lado, riesgo 1 $ fijo, locates 0). Base: chasis «1B Sobri 3 · Escalera Fade10». Fases: A) 11 variantes OAT con valores REDONDOS (fade 20/40, paso 15/20, stop +5/+15, adds 3/8, sin parciales, reentradas 5) sobre 2025+2026 combinados (e5ca2514); B) combinaciones de los 3 ejes ganadores; C) desglose POR AÑO de los 6 mejores; selección por min(R25,R26) + r² + DD. Script en `.tmp_bus200/campana.py`, ledger completo en `.tmp_scalp/corridas.jsonl` (tags B200_*).
+- **Control honesto que cuadra:** el chasis reprodujo sus números conocidos al céntimo (2025 +370,4R · 2026 +292,5R · 2024 +246,6R).
+- **GANADORA — «B200 · Sobri Escalera stop5 sin parciales»** (`c2a24250-a386-4e48-826e-83d990e7582d`), SOLO 3 perillas redondas sobre el chasis: **stop Máx. Previo +5 %** (antes +10), **sin parciales horarios** (todo a las 09:00), **fade de entrada <40** (antes <30). Resto intacto (escalera cada 10 %, 5 adds, stop de lote pivote+5, reentradas 2, sesión 04:00–08:45, PMH gap ≥50, ADV$ ≥1 M).
+  - **2024 (OOS, no visto por la selección): +342,4R · PF 1,48 · r² 0,989 · DD −1,26 %**
+  - **2025: +498,8R · PF 1,51 · r² 0,992 · DD −1,02 %**
+  - **2026 ene-jul: +386,1R · PF 1,74 · r² 0,919 · DD −0,90 %**
+  - Verificación de guardado: re-corrida por `strategy_id` (2025) → idéntica al céntimo (498,84R · PF 1,5116 · 2122 trades).
+- **Avisos de siempre:** locates NO incluidos (~2.000 ticker-días/año shorteados: riesgo ~10 $/trade o locates negociados); 2025+2026 son IS de la selección (2024 es el año limpio y también sale >200R); 2026 son solo 7 meses.
+- **Subproductos:** stop5 sólo ya da +451/+357R (25/26) — el eje que más mueve; sin_parciales mejora R y suaviza; fade40 añade trades sin romper PF. El chasis sigue siendo la referencia de consistencia.
+- **Código tocado:** NINGUNO del repo (scripts efímeros en `.tmp_bus200/`, estrategia vía API, y esta memoria).
+- **Estado:** hecho; pendiente de decisión de Álvaro: incubador / más validación / uso.
