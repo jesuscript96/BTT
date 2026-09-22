@@ -318,7 +318,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
   (3) Si el fogonazo se cierra DENTRO del stop de emergencia, se manda el mismo informe UNA sola vez con la frase «POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP DE EMERGENCIA».
   (4) Todo fogonazo visto en vivo (con o sin posición) se registra en el diario con su máximo, duración y devolución, para recalibrar los umbrales con datos propios (G10).
 - Quién la ejecuta: vigilante (informes y registro) + humano (decisión y cierre por Telegram).
-- Parámetros: cadencia de informes = 5 min.
+- Parámetros: cadencia de informes: CADA MINUTO los 5 primeros minutos y después cada 5 min, mismo mensaje (Jaume, 22-sep; antes «cada 5 min»).
 - Si la acción falla: sin Telegram → correo y SMS con el mismo informe (R-M-02).
 - Prueba: simular el protocolo con un día grabado de fogonazo (R-O-02) y comprobar formato y cadencia.
 - Estado: FIJADA (Jaume, 20-sep). Sustituye a la «espera de media hora» de R-C-01 como procedimiento: no hay plazo fijo, el humano decide cuándo. Origen: G1, G2, G3, G4, G6, G7, G10.
@@ -377,6 +377,7 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
   2. **Stop POR DEBAJO del precio** (se lo ha saltado o por cualquier otra causa): se SALE sí o sí, a MERCADO al reabrir, sin tope de subida. Solo se REENTRA si la estrategia lo dice Y la primera vela de 1 min tras la reapertura sube menos de un 6 % Y k < 3. (Dato de Jaume: si la primera vela tras reabrir supera el 6 %, la probabilidad de que encadene otro halt es > 80 %.) Tras reentrar se aplica la misma lógica con el nuevo stop: con k = 1, escenario 1 normal; con k = 2, la salida a mercado a 3-5 % de la banda y mercado al reabrir si para.
 - Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento k y distancia a la banda) + guarda (reentrada).
 - Parámetros: k máximo = 3; distancia a la banda para salir con k = 2: 3-5 %, salida a mercado; primera vela máxima para reentrar: 6 %; ruta de salida en reapertura (pendiente PDF).
+- **Cómo se sale «al reabrir» (Jaume, 22-sep, de su socio):** la orden de salida a MERCADO se envía DURANTE el halt, no al reabrir: así entra en el cruce de reapertura y no se pierden milisegundos. Momento: un minuto antes de la reapertura prevista (halt LULD de 5 min → en el minuto 4); si la reapertura no tiene hora conocida (T1/T12, prolongaciones), en cuanto se decida salir. Aplica a todos los casos del libro en que la decisión es «fuera al reabrir» (k = 3, k = 2 a 3-5 % de la banda, T1 > 250 %). [API R-23: si DAS acepta órdenes durante el halt y las manda al cruce de reapertura.]
 - Si la acción falla: la orden de cierre en la reapertura no se llena → R-C-01/R-C-02 (niveles) y R-C-03 (sin stop, si DAS lo canceló en el halt).
 - Prueba: replicar sobre los halts de 2B con status exacto (24_status_estrategias.py) y tabla de casos (k = 1, 2, 3; stop encima/debajo; primera vela < / ≥ 6 %).
 - Estado: BORRADOR (14-sep, reescrita tras los datos de `34_tras_reapertura.py`). TODO el área F se repasa con el PDF (fuente de halts y bandas, rutas, qué hace DAS con los stops en un halt). Nota: los máximos de ×10-×44 del histórico son de días con 7-40 halts encadenados, no de lo que pasa tras el tercero; con salida en k = 3 el 90 % de los días con ≥ 3 halts queda por debajo de +144 % sobre el primer halt.
@@ -702,9 +703,9 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 ### R-J-04 · El bot se cae, se cuelga o se duplica
 - Situación: (a) el ejecutor o el vigilante muere por excepción; (b) sigue vivo pero sin latido (colgado); (c) se arranca una segunda instancia.
 - Detección: supervisor (proceso) y latido cruzado ejecutor↔vigilante; cerrojo de instancia única.
-- Acción: (a) muerto → el supervisor lo relanza, un intento cada 30 s sin límite; AVISO desde el primer momento (log + Telegram, como todo) y aviso al recuperarse; al volver, reconciliación (R-C-10) antes de nada. (b) colgado → a los 10 s sin latido se mata y se relanza; reintento cada 10 s hasta que vuelva, avisando de lo que pasa. (c) CERROJO DE INSTANCIA ÚNICA obligatorio en los DOS procesos: al arrancar, si ya hay otra instancia viva, la nueva NO arranca y avisa; el humano conserva el control manual del primero para apagarlo cuando quiera.
+- Acción (tiempos v2, Jaume 22-sep: «30 s es mucho»): (a) muerto → el supervisor recibe la salida del proceso AL INSTANTE y lo relanza en 1 s; si vuelve a morir seguido, espera 2, 5 y 10 s entre intentos (para no entrar en bucle) y sigue cada 10 s sin límite; lo que tarde en volver a operar es el propio arranque (cargar, conectar a DAS, reconciliar: a MEDIR, objetivo < 10 s); AVISO desde el primer momento (log + Telegram, como todo) y aviso al recuperarse; al volver, reconciliación (R-C-10) antes de nada. (b) colgado → latido cada 1 s; a los 3 s sin latido se mata y se relanza (antes 10 s); reintento igual que (a), avisando de lo que pasa. (c) CERROJO DE INSTANCIA ÚNICA obligatorio en los DOS procesos: al arrancar, si ya hay otra instancia viva, la nueva NO arranca y avisa; el humano conserva el control manual del primero para apagarlo cuando quiera.
 - Quién la ejecuta: supervisor.
-- Parámetros: 30 s (relanzar), 10 s (colgado).
+- Parámetros: relanzar 1 s (luego 2/5/10 s si encadena caídas); colgado 3 s sin latido (latido 1 s). Antes: 30 s / 10 s.
 - Si la acción falla: si ejecutor y vigilante mueren a la vez → R-J-05.
 - Prueba: matar cada proceso, colgarlo (bloqueo artificial) y lanzar dos veces, en sombra.
 - Estado: FIJADA (Jaume, 18-sep).
@@ -726,7 +727,7 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Estado: FIJADA (Jaume, 18-sep). Origen: J10, J20, J1.
 
 ### R-J-07 · Reloj, disco y actualización de DAS
-- Reloj: todo en hora de Nueva York; al arrancar se comprueba la sincronización; si el reloj se desvía más de 2 s, el bot se NIEGA a operar y avisa. (J12)
+- Reloj: todo en hora de Nueva York; al arrancar se comprueba la sincronización; si el reloj se desvía más de 2 s, el bot se NIEGA a operar y avisa; por debajo, solo aviso si pasa de 0,5 s. Jaume (22-sep): sin hiperestrictez, los umbrales se validan en vivo. (J12)
 - Disco: rotación diaria de logs y diario; aviso si quedan menos de 5 GB libres. (J13)
 - Actualización forzada de DAS: tarea HUMANA. El supervisor detecta que DAS no arranca o pide actualizar, AVISA, y lo actualiza una persona; nunca automático. (J14)
 - Estado: FIJADA (Jaume, 18-sep).
@@ -845,7 +846,7 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 ### R-D-03 · Take profit ejecutado a medias y el precio rebota
 - Situación: la orden de take profit (compra agregando en el nivel) se ejecuta en parte (300 de 500) y el precio se da la vuelta hacia arriba.
 - Detección: fill parcial del take profit + precio por encima del nivel.
-- Acción: (1) el resto (200) se cierra con una compra limitP al ask con TECHO del 3 % sobre el último precio (misma protección que el stop principal); en un rebote normal se ejecuta al instante. (2) Si NO se ejecuta porque el precio se ha ido más del 3 %, NO se persigue: la posición sigue en manos de sus dos stops residentes (principal y emergencia), que ya llevan la lógica de squeeze y cisne negro. Nunca una compra a mercado sin techo en ese momento (libro posiblemente vacío). (3) Si no se ejecuta, AVISO al humano: la posición puede quedar en el «limbo» entre el límite y el stop hasta que el precio vuelva a uno de los dos. (4) El bot ajusta en todo momento la cantidad de los stops a la posición que queda «en el aire» (R-C-07: reducir el stop a lo que sigue en corto). (5) Si por un fogonazo se ejecutan compras de más y quedan acciones LARGAS, se venden al instante (R-C-11).
+- Acción (v2, Jaume 22-sep: mismo patrón que la entrada, agregar primero): (1) el resto (200) se pone como compra AGREGANDO en el punto medio bid-ask hasta 60 s; si no llena, lo que quede se cruza AL ASK con TECHO del 3 % sobre el último precio (misma protección que el stop principal). Redacción anterior (17-sep): directamente al ask con techo 3 %. (2) Si NO se ejecuta porque el precio se ha ido más del 3 %, NO se persigue: la posición sigue en manos de sus dos stops residentes (principal y emergencia), que ya llevan la lógica de squeeze y cisne negro. Nunca una compra a mercado sin techo en ese momento (libro posiblemente vacío). (3) Si no se ejecuta, AVISO al humano: la posición puede quedar en el «limbo» entre el límite y el stop hasta que el precio vuelva a uno de los dos. (4) El bot ajusta en todo momento la cantidad de los stops a la posición que queda «en el aire» (R-C-07: reducir el stop a lo que sigue en corto). (5) Si por un fogonazo se ejecutan compras de más y quedan acciones LARGAS, se venden al instante (R-C-11).
 - Quién la ejecuta: ejecutor + vigilante (posición neta, aviso).
 - Parámetros: techo 3 % (el de R-C-01).
 - Si la acción falla: —
