@@ -6307,3 +6307,10 @@ de Databento, no copiar `users.duckdb`.
 - **Efecto colateral inofensivo del PUT:** rellena defaults explícitos que la definición vieja omitía (`candle_delay: null`, `size_by_sl: false`, `hybrid_stop: false`…). Sin efecto semántico — DEMOSTRADO re-corriendo ambas por `strategy_id` con la petición EXACTA de las VERIF del 18-sep: **PM 3602 trades · PF 1,0984 · +114,22R · pnl 112,18** y **RTH 1518 · 1,1623 · +67,33R · 67,46**, completitud 100 % en ambas. Idénticas al céntimo a las corridas originales (tags `PM_VERIF_desc22` / `RTH_VERIF_desc22` en `.tmp_scalp/corridas.jsonl`).
 - **Código tocado:** NINGUNO (script efímero en `.tmp_fase2/`, datos vía API, y esta memoria).
 - **Estado:** hecho.
+
+### [FIX · 2026-09-22 · 01] RESUELTO lo presentacional de [HALLAZGO · 2026-09-17 · 03]: el modal del día del calendario ya muestra el R TOTAL, no solo la media por trade
+- **Reportó la confusión de nuevo:** Álvaro (22-sep, en pantalla): «el calendario me pone 0,03 RS cuando la RS es un dólar y en dólares habría dado varias RS».
+- **Causa (misma del hallazgo 17-09·03):** el header del modal sumaba el PnL TOTAL del día en dólares pero mostraba `avg r_multiple` — media POR TRADE — sin etiqueta de per-trade. Un día de +1,84 $ con ~60 operaciones de scalping: media 0,03 R/trade junto a «+$1,84» → parece que no cuadra nada.
+- **Fix (`frontend/src/components/backtester/tabs/CalendarTab.tsx`):** el modal ahora muestra, junto al PnL: **R total del día** (suma de `r_multiple`, formato `+1,84 R` igual que las celdas) y la media **etiquetada** «media +0,03 R/trade» (con title explicativo). Las celdas semana/mes/día NO se tocaron: ya mostraban totales con la conversión R por día correcta.
+- **Verificación:** `npx tsc --noEmit` limpio; con riesgo fijo de 1 $, el R total del modal y el PnL del día ahora coinciden por construcción (1,84 $ → +1,84 R). Comprobado en vivo por Álvaro tras el hot-reload (pendiente de su OK visual).
+- **Estado:** RESUELTO (commit de esta fecha); la parte NO presentacional del hallazgo 17-09·03 (las Rs SÍ se sumaban, verificado con motor real) ya estaba cerrada entonces.

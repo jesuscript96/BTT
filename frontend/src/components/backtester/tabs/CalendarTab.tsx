@@ -623,7 +623,8 @@ export default function CalendarTab({
         );
         const dayPnl = dayTrades.reduce((acc, t) => acc + t.pnl, 0);
         const rValues = dayTrades.map((t) => t.r_multiple).filter((r): r is number => r !== null);
-        const avgR = rValues.length ? rValues.reduce((a, b) => a + b, 0) / rValues.length : null;
+        const totalR = rValues.length ? rValues.reduce((a, b) => a + b, 0) : null;
+        const avgR = totalR !== null ? totalR / rValues.length : null;
         const dateLabel = new Date(`${selectedDate}T12:00:00`).toLocaleDateString("es-ES", {
           weekday: "long", day: "numeric", month: "short", year: "numeric",
         });
@@ -681,12 +682,27 @@ export default function CalendarTab({
                   }}>
                     {formatPnl(dayPnl)}
                   </span>
-                  {avgR !== null && (
+                  {totalR !== null && (
                     <span style={{
-                      fontSize: 11, fontWeight: 600, fontFamily: "monospace",
-                      color: avgR >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                      fontSize: 12, fontWeight: 800, fontFamily: "monospace",
+                      color: totalR >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
                     }}>
-                      avg {avgR.toFixed(2)}R
+                      {totalR >= 0 ? "+" : "−"}{Math.abs(totalR).toFixed(2)} R
+                    </span>
+                  )}
+                  {/* La media suelta junto al PnL TOTAL era la lectura rota
+                      (hallazgo 17-09·03): un «0,03 R» al lado de «+$1,84» solo
+                      cuadra si sabes que una es por trade y la otra del día.
+                      Se queda, pero etiquetada como media POR TRADE. */}
+                  {avgR !== null && (
+                    <span
+                      title="Media de R por operación de este día"
+                      style={{
+                        fontSize: 10, fontWeight: 600, fontFamily: "monospace", opacity: 0.75,
+                        color: avgR >= 0 ? "var(--color-ec-profit)" : "var(--color-ec-loss)",
+                      }}
+                    >
+                      media {avgR >= 0 ? "+" : "−"}{Math.abs(avgR).toFixed(2)} R/trade
                     </span>
                   )}
                 </div>
