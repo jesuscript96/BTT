@@ -136,5 +136,8 @@ Listado limpio para el día que pidamos el PDF del API. Referencias entre parén
 1. **ES:** Si un corto queda atrapado en un halt de varios días (T12), ¿qué comisiones, coste de préstamo (hard-to-borrow) o cargos por locate se cobran por cada día? ¿Puede haber buy-in forzoso durante el halt?  
    **EN:** If a short is stuck in a multi-day halt (T12), what commissions, hard-to-borrow fees or locate charges are billed per day? Can there be a forced buy-in during the halt?  *(R-17)*
 
-2. **ES:** Comisiones y tarifas de rutas actualizadas (confirmar las de la web: comisión por acción, añadir/quitar liquidez por ruta, horarios).  
+2. **ES:** Órdenes durante un halt: ¿acepta el API una orden a mercado o límite mientras la acción está parada y la envía al cruce de reapertura? ¿Se puede cancelar antes de la reapertura? ¿Qué mensajes devuelve el API en ese caso?  
+   **EN:** Orders during a halt: does the API accept a market or limit order while the stock is halted and route it to the reopening cross? Can it be cancelled before the reopening? What messages does the API return in that case?  *(R-23)*
+
+3. **ES:** Comisiones y tarifas de rutas actualizadas (confirmar las de la web: comisión por acción, añadir/quitar liquidez por ruta, horarios).  
    **EN:** Current commissions and route fees (confirm the ones on the website: per-share commission, add/remove liquidity by route, hours).  *(B7)*
