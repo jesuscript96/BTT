@@ -119,6 +119,16 @@ SEGUNDO_LIMITE = 59
 # la vela oficial en el 40 % de los minutos; sin odd lots, en el 0-1 %.
 CONDICIONES_SIN_PRECIO = {2, 7, 15, 16, 20, 21, 29, 33, 37, 38, 52, 53}
 
+# PRINTS TARDIOS: LA REGLA DE LOS 20 ms (la misma del lago de Jaume). Cada
+# operacion trae dos relojes: cuando se ejecuto (`pt`) y cuando la publico la
+# cinta (`t`). Las de fuera de bolsa (dark pools, sesion nocturna) se publican
+# tarde: a las 04:00 NY la cinta suelta de golpe lo de la noche con horas de
+# retraso. La vela oficial las coloca en el minuto en que se EJECUTARON; la
+# propia las metia en el minuto de publicacion: 22-sep-2026, QNME 04:03 con
+# 785.000 acciones (oficial 148.000) y cierre 1,04 en vez de 1,0598, y dos
+# entradas avisadas sobre esa vela. Se descartan del todo (precio y volumen).
+UMBRAL_TARDIO_MS = 20
+
 
 @dataclass
 class VelaEnCurso:
@@ -209,6 +219,9 @@ class ConstructorParcial:
         # La ultima vela TERMINADA de cada ticker montada con operaciones, para
         # compararla con la oficial (21-sep-2026).
         self._terminadas: dict[str, VelaEnCurso] = {}
+        # Operaciones descartadas por tardias (regla de los 20 ms), para el log.
+        self.tardias = 0
+        self.v_tardias = 0.0
 
     def olvidar(self, ticker: str) -> None:
         self._curso.pop(ticker, None)
@@ -261,6 +274,11 @@ class ConstructorParcial:
         if not tk or ts is None or precio is None:
             return None
         ms = int(ts)
+        pt = ev.get("pt")
+        if pt is not None and ms - int(pt) > UMBRAL_TARDIO_MS:
+            self.tardias += 1
+            self.v_tardias += float(tam or 0.0)
+            return None
         precio = float(precio)
         tam = float(tam or 0.0)
         mueve_precio = not (set(ev.get("c") or ()) & CONDICIONES_SIN_PRECIO)

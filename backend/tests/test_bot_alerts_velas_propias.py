@@ -99,3 +99,25 @@ def test_runner_sustituye_la_vela_propia_por_la_oficial_sin_anyadir():
     ok = r.sustituir_vela("KXIN", {"timestamp": pd.Timestamp("2026-09-21 04:05"), "open": 2.0, "high": 2.25, "low": 2.0, "close": 2.21, "volume": 300})
     assert ok and len(r._velas["KXIN"]) == 2 and r._velas["KXIN"][-1]["close"] == 2.21
     assert r.sustituir_vela("KXIN", {"timestamp": pd.Timestamp("2026-09-21 04:07"), "close": 1}) is False
+
+
+def test_los_prints_tardios_se_descartan_del_todo():
+    """22-sep-2026: a las 04:00 NY la cinta publica lo de la noche con horas de
+    retraso; QNME 04:03 salio con 785.000 acciones (oficial 148.000) y cierre
+    1,04 (oficial 1,0598). Regla de los 20 ms: publicado > 20 ms despues de
+    ejecutarse -> fuera, ni precio ni volumen."""
+    c = pre.ConstructorParcial()
+    c.aplicar_operacion({**_op(0, 2.00), "pt": BASE})                               # a tiempo
+    c.aplicar_operacion({**_op(5, 1.04, tam=500000), "pt": BASE - 3 * 3600 * 1000})  # de la noche
+    c.aplicar_operacion({**_op(6, 2.02, tam=100), "pt": BASE + 6000 - 30})           # 30 ms tarde
+    c.aplicar_operacion({**_op(7, 2.05, tam=100), "pt": BASE + 7000 - 10})           # 10 ms: a tiempo
+    v = c._curso["KXIN"]
+    assert (v.open, v.high, v.low, v.close) == (2.00, 2.05, 2.00, 2.05)
+    assert v.volumen == 200
+    assert c.tardias == 2 and c.v_tardias == 500100
+
+
+def test_sin_pt_no_se_descarta_nada():
+    c = pre.ConstructorParcial()
+    c.aplicar_operacion(_op(0, 2.00))
+    assert c._curso["KXIN"].volumen == 100 and c.tardias == 0
