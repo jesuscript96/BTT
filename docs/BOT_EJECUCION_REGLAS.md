@@ -823,6 +823,8 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Estado: FIJADA (Jaume, 17-sep).
 - Origen: D3.
 
+**Matiz de liquidez en las salidas (22-sep):** en una compra para cubrir, AGREGAR es dejar la orden por DEBAJO del ask (al bid o entre bid y ask) y esperar; REMOVER es comprar al ask. La escalera de R-D-01 (+1/+2/+3 % sobre el último) solo agrega cuando el ask está lejos (más de un 1 % por encima del último); si el ask está cerca, el primer escalón ya lo cruza y remueve al instante con techo del 1 %. Así que hoy, de las salidas: el TAKE PROFIT agrega (orden en su nivel, cobra rebate); la salida por hora agrega solo con spread ancho; EOD, cerrar todo, TP a medias, prioridad de R-D-07 y todos los stops REMUEVEN. **Propuesta R-D-08 (a medir en sombra, no fijada):** en las salidas con hora conocida (salida por hora y EOD), empezar 60 s ANTES con una compra agregando al bid (o bid + 1 tick), y lo que no haya llenado al llegar la hora sigue el camino actual (escalera y ask); se mide en sombra qué % llena agregando y cuánto cuesta en precio la espera frente al ECN ahorrado (0,0057 $/acción). Los stops quedan fuera de esto: siempre remueven.
+
 ### R-D-02 · Fin de día (EOD) POR ESTRATEGIA y botón «control humano»
 - Situación: llega el EOD de una estrategia. OJO: el EOD es la hora FINAL de cada estrategia (p. ej. una estrategia de 8:00 a 9:00 tiene EOD a las 9:00), no las 09:30 ni las 16:00. Cada estrategia tiene el suyo.
 - Detección: reloj + posiciones abiertas del LOTE de esa estrategia (no de otras).
