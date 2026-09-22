@@ -6354,3 +6354,9 @@ de Databento, no copiar `users.duckdb`.
 - **Fix propuesto (pendiente de OK de Álvaro):** que el dropdown muestre **ap.PM** cuando el campo está vacío (paridad con el motor), o mejor aún, que al cargar una definición se materialice el default real (`ap.PM` explícito) para que pantalla y motor no puedan discrepar.
 - **Código tocado:** NINGUNO (solo esta memoria).
 - **Estado:** ABIERTO
+
+### [FIX · 2026-09-22 · 01 · RESOLUCIÓN] [HALLAZGO · 2026-09-22 · 01] — el dropdown de `ap_session` ya muestra ap.PM cuando el campo está vacío (paridad con el motor)
+- **Fix:** en `frontend/src/components/strategy-builder/ConditionBuilder.tsx`, los 5 fallbacks visuales de `ap_session` vacío pasan de `'ap.RTH'` a `'ap.PM'` (los dos dropdowns —% Fade y Previous Max/Min—, sus dos AyudaOpcion, y el texto de resumen de condición). Con comentario explicando que vacío = default del MOTOR (`_ap_session_started`) para que nadie lo «corrja» de vuelta.
+- **NO se tocaron** los defaults de CREACIÓN (líneas 120/201: `% Fade`/`Previous Max` nuevos se siguen creando con `ap.RTH` EXPLÍCITO): ahí no hay mentira — lo que se ve es lo que se guarda — y cambiarlo sería una decisión de producto, no un fix.
+- **Verificación:** `npx tsc --noEmit` limpio. Comprobación visual pendiente del F5 de Álvaro: la B200 (`c2a24250`) debe mostrar su pirámide %Fade ≥ 10 con «ap.PM · 04:00».
+- **Estado:** RESUELTO (commit de esta fecha); sin cambios de datos ni de comportamiento del motor.
