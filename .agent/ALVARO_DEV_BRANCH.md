@@ -14,7 +14,9 @@ los dos para estar sincronizados, sin tocar `main`.
 3. **Traer lo último de la conjunta antes de trabajar:**
    `git fetch && git merge origin/staging` (así tienes los avances de Sailor).
 4. Hacer cambios y commit a `alvaro-rama-desarrollo`.
-5. Antes de push, pedir confirmación al usuario. Tras OK:
+5. Push a la rama personal: **autorización permanente** (Álvaro, 22-sep-2026:
+   «a mi rama siempre, a staging nunca lo empujes») — no hace falta pedir OK
+   para cada push a `alvaro-rama-desarrollo`. Tras cada push:
    `git push origin alvaro-rama-desarrollo`.
 
 ## Compartir tu trabajo (integrar a `staging`)
@@ -26,6 +28,10 @@ git merge alvaro-rama-desarrollo
 git push origin staging          # (tras confirmación)
 ```
 (O por Pull Request contra `staging` si preferís revisión.)
+
+**La IA NUNCA empuja a `staging`** (regla fija de Álvaro, 22-sep-2026): la
+integración la hacen Álvaro/Jaime con el procedimiento porta-verja documentado
+en `docs/MEMORIA_MADRE.md` (TRABAJO 18-09·4 y ESTADO 22-09·1).
 
 ## Prohibido
 - Tocar `main` (push / commit / merge). Es producción con clientes de pago.

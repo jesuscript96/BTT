@@ -6321,3 +6321,9 @@ de Databento, no copiar `users.duckdb`.
 - **Cómo integrarlo SEGURO:** el procedimiento exacto (merge --no-ff --no-commit + restauración de la zona del bot + porta-verja `git diff --diff-filter=D --name-only origin/staging | grep -i bot` que debe salir VACÍO) ya está documentado en **[TRABAJO · 2026-09-18 · 4]**, con el perímetro verificado de los 25 ficheros del bot. OJO: aquel perímetro se midió contra staging `97ca87f`; si staging ha movido ficheros del bot desde entonces, el porta-verja final del procedimiento es quien lo caza — correrlo SIEMPRE antes de empujar.
 - **Alternativa ya usada en la casa:** cherry-picks selectivos (lo que hace Sailor), que evitan tocar la zona del bot de plano.
 - **Estado:** documentado; integración en manos de Álvaro/Jaime.
+
+### [REGLA · 2026-09-22 · 1] Push a la rama personal: autorización permanente; staging: NUNCA por la IA
+- **Dicho por Álvaro (22-sep):** «a mi rama siempre, a staging nunca lo empujes».
+- **Efecto:** la IA no vuelve a pedir OK para cada push a `alvaro-rama-desarrollo` — commitea y empuja. `staging` sigue intocable para la IA (integración de Álvaro/Jaime con el porta-verja).
+- **Reflejado también en:** `.agent/ALVARO_DEV_BRANCH.md` (flujo diario, punto 5).
+- **Estado:** regla activa desde ahora.
