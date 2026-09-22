@@ -30,6 +30,75 @@
 
 ---
 
+## 2026-09-22 (Sailor, bot de alertas) — El radar a un proceso aparte, las alertas vuelven a la vela OFICIAL, y tres diagnósticos míos que eran falsos (`51acbc4`, en sailor Y staging)
+
+**Resumen honesto del día:** el trabajo del 21-sep (velas propias montadas con
+los prints) se ha DESHECHO, porque partía de una métrica mal leída. Lo que sí
+queda es la prealerta con prints (0,26 s) y, ya al final, el arreglo de verdad:
+el radar fuera del hilo del bot.
+
+**La métrica que nos engañó.** `[LATENCIA]` del bot medía el canal por SEGUNDO
+(`A.`, `bot.py:751`) y además contra el INICIO del segundo, así que marcaba
+3-4 s. Nadie medía la vela de minuto. De ahí salió la idea de que «las alertas
+llegan 3 s tarde» y todo lo del 21-sep. **La vela de minuto llega a 1,5 s**
+(sonda ligera: 1,46-1,75 s; con la carga del bot simulada —23.419 velas del
+mercado, prints y ticks—: 1,49 s). Las alertas nunca llegaron 3 s tarde.
+
+**Velas propias: medidas y apagadas.** Cerrando a 1,0 s ganaban medio segundo
+sobre la oficial y a cambio **el 43 % de las velas salía con el cierre distinto**
+(0,43 % de mediana, hasta 5,7 %), porque Massive publica los dark pools del
+propio minuto hasta 6 s tarde. Interruptor `BOT_VELAS_PROPIAS` (por defecto 0).
+Antes de apagarlas se probó la regla buena (cada print al minuto en que se
+EJECUTÓ, en vez de la de los 20 ms del lago): quita los «fogonazos» nocturnos
+igual que hace la vela oficial (medido: la vela oficial de QNME 04:03 lleva
+148k acciones, no las 785k publicadas ese minuto), pero no arregla la cola.
+
+**El radar era el que frenaba al bot.** Corría en un HILO (`asyncio.to_thread`),
+que en Python no evita nada: un hilo calculando bloquea al que lee el socket.
+Medido con instrumentación nueva: barrido de 5,81 s → **11,09 s sin leer del
+socket** → velas de esos minutos a 9-11 s. Sobre el día entero (2.985 velas,
+desde las grabaciones): **mediana 1,94 s, 89 % por debajo de 3 s, 8 % por
+encima de 5 s**, y esos lentos concentrados a partir de las 10:00 NY, que es
+cuando el barrido se vuelve caro. Ahora el radar es un PROCESO aparte
+(`bot_alerts_radar_proceso.py`), barre cada 12 s en vez de 30, y el bot solo
+lee y avisa. Tras el cambio: **p90 de 17,6 s a 2,03 s**.
+
+**Sin segunda conexión a Massive.** El bot mantiene la única y le pasa al hijo
+por una tubería las velas que ya recibe. Dos trampas medidas en banco antes de
+escribir nada: mandar la ráfaga de 5.700 una a una cuesta 84 ms y en un solo
+envío 3,4 ms; y el lote pesa más que el buffer de la tubería, así que `send` se
+bloquearía si el hijo estuviera barriendo — de ahí el hilo lector en el hijo y
+el de envío en el padre, ninguno bloquea su camino crítico.
+
+**Lo que NO cuesta dinero:** los 2 s de latencia equivalen a que el precio se
+mueva 0,42 % de mediana (p90 0,87 %), pero **la mediana con signo es 0,00 %**:
+es ruido, no un peaje. Y de las 49 alertas del día, **todas** cayeron en velas
+de 1,2-2,3 s; ninguna en un minuto lento.
+
+**Lo del socio de Jaume** («me llega a 1 s»): cuadra. El último print de cada
+minuto llega a +0,95 s y la vela oficial a +2,08 s → **1,13 s** de diferencia.
+Él mide desde que tiene el minuto completo; nosotros desde que el minuto cierra.
+
+**Tres cosas que dije y eran falsas** (por si sirven de vacuna): que `AM.*` (las
+velas de todo el mercado) nos costaba un segundo — cuesta 0-6 ms por paquete;
+que el grabador bloqueaba — un volcado son 1 ms; y que el radar «no estorbaba
+porque ya estaba en un hilo» — sí estorbaba, por el GIL. Las tres se cayeron
+midiendo. El patrón: sacar conclusiones de ventanas de 5 minutos en vez de
+mirar el día entero.
+
+**Incidencia propia:** mi sonda de medición abrió una 4ª conexión a las 13:34 y
+provocó **5 cortes 1008** (bot sin datos ~4 min). Regla: NUNCA abrir websockets
+con el bot encendido.
+
+**Pendiente para mañana:** (1) confirmar en premercado con volumen que la cola
+de velas lentas y los «minicortes de 1-2 s» del 21-sep desaparecen — la métrica
+`[LATENCIA socket]` («mayor rato sin leer») lo dirá; (2) decidir si la ADMISIÓN
+de tickers nuevos baja de 30 s (hoy el radar refresca cada 12 s pero el bot solo
+mira la lista cada `radar_seg`); (3) avisar en el log de los fogonazos de dark
+pools cuando aparezcan.
+
+---
+
 ## 2026-09-21 (Sailor, bot de alertas) — Primer día sin 1008 (arrancando después de los socios), la parada de 5 s era nuestra, y velas propias por operaciones (`6fcdb4b`, SIN subir)
 
 **Sesión** 10:05→12:34, solo PM 1A (300): 9/9/9 avisos, 0 errores, 0 fallos Telegram, **0 cortes**: primer día de seis sin `1008` en la franja 04:01–04:03 NY; la única diferencia fue el orden (los tres socios conectaron antes). GRML dio señal a las 04:02 NY (181 acc @ 5,48, stop 7,139) tres minutos antes de arrancar: el motor la vio en la hidratación y quedó como posición heredada (pirámide +148 @ 5,11 avisada: ignorar). CUE señal correcta a las 04:07 (18 acc: acción de 50 $ con 3.000 acc/min). Filtros propuestos para acciones «lentas»: tope de precio en el universo, `Accumulated Volume` en acciones, `SMA Volume`, `Candle Range %`, flotante mínimo.
