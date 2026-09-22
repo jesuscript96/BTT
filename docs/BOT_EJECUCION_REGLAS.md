@@ -513,6 +513,8 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Origen: B1, B2 (queda absorbida: no hay reenvíos, la escalera es la persecución), B20. Estudio P12 (`36`/`37` y cálculos del 16-sep).
 - Tiempo total de la escalera (medido el 16-sep, 1B, señales que van a la escalera): 10 s → entran el 39 % (12 de cada 100 señales fuera); 20 s → 55 % (9 fuera); 30 s → 63 % (7 fuera); 45 s → 71 % (6 fuera); 60 s → 74 % (5 fuera); 90-120 s → 74-76 % (5 fuera). Más de 60 s no aporta; menos de 30 s pierde el doble de señales. Se fija 60 s.
 
+**Coste por entrada en Sage (22-sep, cálculo con las tarifas de la web del 19-sep, a confirmar con el bróker):** comisión 0,0003 $/acción + ECN al remover 0,003 $/acción en ARCA/EDGA (y en SAGEPRO solo de 04:00 a 07:00; en RTH SAGEPRO = 0) + en la venta en corto las tasas reguladoras (SEC ≈ 27,8 $ por millón de $ vendidos; FINRA TAF 0,000166 $/acción, máx. 8,30 $). Por cada 10.000 $ de nocional, ida y vuelta: a 0,50 $ (20.000 acc.) 136 $ = 1,36 % por ARCA y 16 $ = 0,16 % por SAGEPRO en RTH; a 1 $ 68 $ (0,68 %) / 8 $ (0,08 %); a 2 $ 34 $ (0,34 %) / 4 $; a 5 $ 14 $ (0,14 %) / 2 $; a 10 $ 7 $ (0,07 %) / 1 $. El coste va por ACCIÓN, así que pesa en las acciones baratas: por debajo de 1 $ la comisión ida y vuelta por ARCA supera el 0,7 % del nocional, del orden del slippage medido. Consecuencia: en RTH usar SAGEPRO si en sombra llena igual de rápido (ya en R-B-01); en PM no hay alternativa a pagar el ECN.
+
 ### R-B-02 · Entrada ejecutada a medias
 - Situación: la orden de entrada se ejecuta solo en parte (p. ej. 400 de 1.000) porque en el bid no había más. Frecuente: en PM una orden de 300 $ cabe entera el 53 % de las veces; de 3.000 $, el 6 %.
 - Detección: fill parcial confirmado por DAS.
