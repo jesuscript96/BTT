@@ -590,6 +590,51 @@ CATALOGO: dict[str, Indicador] = {
               "situaciones opuestas. 0 cuando no se cumple; se reinicia cada sesión. "
               "Se sortean el nivel y el lado.",
     ),
+    # VOLUMEN CONTRA EL UNIVERSO (22-sep-2026). El unico de los tres que
+    # necesita algo de fuera es «RVOL universo»: el perfil del universo
+    # (backend/scripts/perfil_volumen_universo.py). Sin el vale NaN y la
+    # condicion no se cumple nunca — la corrida no falla, pero ese gen no
+    # sirve para nada; comprobarlo antes de marcarlo en una corrida larga.
+    "RVOL universo": Indicador(
+        nombre="RVOL universo", familia="alternativos",
+        params={"range_minutes": [5, 10, 30]},
+        valores=(0.5, 0.8, 1.5, 3, 5, 10), comparadores=(GT, LT),
+        ayuda="Cuanto volumen hay AHORA frente al que toca A ESTA HORA en un dia de "
+              "gap (1 = normal, 3 = el triple, 0,4 = seco). No es el RVOL de siempre: "
+              "la referencia son LOS DEMAS GAPPERS, no los dias previos del ticker "
+              "(un gapper del +50 % no tiene dias normales). Perfil medido en 14.418 "
+              "ticker-dias de 2019-2023, o sea fuera de muestra para 2024 en "
+              "adelante. < 0,5 seco · 0,8-1,5 normal · > 3 climax. MEDIDO sobre "
+              "24.750 maximos del dia reales: con RVOL < 0,5 el corto toca -8 % "
+              "antes que +8 % el 72,7 % de las veces (base 64 %) y solo sube un "
+              "5,8 % en contra; con RVOL > 10 acierta igual que la base pero la "
+              "subida mediana en contra es del 22,9 % — el climax parece la senal "
+              "buena y es la trampa.",
+    ),
+    "Minutos desde el pico de volumen": Indicador(
+        nombre="Minutos desde el pico de volumen", familia="alternativos",
+        params={},
+        valores=(5, 10, 20, 40, 60), comparadores=(GT, LT),
+        ayuda="Minutos desde la vela de mas volumen del dia. En un gapper el pico de "
+              "VOLUMEN llega antes que el maximo del PRECIO: ese hueco es donde vive "
+              "el corto. MEDIDO sobre 24.750 maximos del dia reales: con el pico a "
+              "< 5 min el corto toca -8 % antes que +8 % el 65,7 % de las veces pero "
+              "sube un 13,5 % en contra; a 15-60 min acierta el 60,5 % con solo un "
+              "7 % en contra. Esperar no mejora el acierto: baja el RIESGO. Causal: "
+              "el maximo es corrido.",
+    ),
+    "Pendiente del volumen": Indicador(
+        nombre="Pendiente del volumen", familia="alternativos",
+        params={"range_minutes": [5, 10, 20]},
+        valores=(0.3, 0.6, 1, 2, 3), comparadores=(GT, LT),
+        ayuda="Volumen de los ultimos X minutos entre el de los X anteriores: si el "
+              "volumen acelera (> 2) o se apaga (< 0,5). Con el precio subiendo y la "
+              "pendiente baja, sube por falta de vendedores y no por compras. OJO: "
+              "medido sobre 24.750 maximos del dia reales, apenas separa (58-65 % "
+              "frente al 64 % de base) y la pendiente baja sale algo PEOR que la "
+              "alta: compara con hace un rato, no con lo normal del dia. Para «se ha "
+              "secado» usa «RVOL universo». No necesita tabla ninguna.",
+    ),
     "Absorption": Indicador(
         nombre="Absorption", familia="alternativos",
         params={"range_minutes": [3, 5, 10]},

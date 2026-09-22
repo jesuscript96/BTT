@@ -7,11 +7,14 @@ Supports the full IndicatorConfig schema (BTT March 2026):
   days_lookback, calc_on_heikin, time_hour, time_minute, time_condition
 """
 
+import logging
 import os
 
 import numpy as np
 import pandas as pd
 from numba import njit
+
+logger = logging.getLogger(__name__)
 
 try:
     import talib as _talib
@@ -1103,6 +1106,10 @@ INDICATOR_NAME_MAP = {
     "Edad del pico": "Edad del pico",
     "Volumen del pico": "Volumen del pico",
     "Retroceso (%)": "Retroceso (%)",
+    "RVOL universo": "RVOL universo",
+    "RVOL Universo": "RVOL universo",
+    "Minutos desde el pico de volumen": "Minutos desde el pico de volumen",
+    "Pendiente del volumen": "Pendiente del volumen",
     "Absorption": "Absorption",
     "Wick Ratio": "Wick Ratio",
     "Absorption + Wick": "Absorption + Wick",
@@ -2136,6 +2143,47 @@ _REF_LEVEL_MAP = {
 }
 
 
+# ── Perfil de volumen del universo (22-sep-2026) ───────────────────────────
+# Lo construye `backend/scripts/perfil_volumen_universo.py`: para cada minuto
+# del reloj NY, que fraccion del volumen del dia hace un gapper tipico, y la
+# acumulada F(m). Se carga UNA vez por proceso; sin fichero, los indicadores
+# que lo usan valen NaN (la condicion no se cumple nunca) y se avisa una sola
+# vez en el log — nunca a medias y nunca en silencio.
+_PERFIL_VOL: dict | None = None
+_PERFIL_VOL_AVISADO = False
+
+
+def perfil_volumen_universo() -> dict | None:
+    """{'F': array de 1441 con la acumulada por minuto del dia, 'meta': {...}}."""
+    global _PERFIL_VOL, _PERFIL_VOL_AVISADO
+    if _PERFIL_VOL is not None:
+        return _PERFIL_VOL or None
+    import json as _json
+    import os as _os
+    base = _os.getenv("CACHE_DIR", r"D:\tmp\btt_intraday_cache")
+    ruta = _os.path.join(base, "perfil_volumen", "perfil_universo.parquet")
+    try:
+        d = pd.read_parquet(ruta)
+        F = np.zeros(1441, dtype=np.float64)
+        F[d["minuto_del_dia"].values.astype(int)] = d["acumulada"].values.astype(np.float64)
+        # Fuera de las horas perfiladas la acumulada se arrastra: antes de la
+        # primera, 0; despues de la ultima, 1.
+        F = np.maximum.accumulate(F)
+        meta = {}
+        m_ruta = _os.path.join(base, "perfil_volumen", "perfil_meta.json")
+        if _os.path.exists(m_ruta):
+            meta = _json.load(open(m_ruta, encoding="utf-8"))
+        _PERFIL_VOL = {"F": F, "meta": meta}
+    except Exception as e:                                       # noqa: BLE001
+        if not _PERFIL_VOL_AVISADO:
+            _PERFIL_VOL_AVISADO = True
+            logger.warning("[RVOL] sin perfil del universo (%s): «RVOL universo» valdra NaN. "
+                           "Se construye con backend/scripts/perfil_volumen_universo.py", e)
+        _PERFIL_VOL = {}
+        return None
+    return _PERFIL_VOL
+
+
 def _minutes_axis(df, n):
     """Eje de tiempo en minutos + id de dia. Devuelve (t_min, day_id, order).
 
@@ -2979,6 +3027,85 @@ def _compute_raw(
             else:
                 out = res
         return pd.Series(out, index=close.index)
+
+    if name in ("RVOL universo", "Minutos desde el pico de volumen", "Pendiente del volumen"):
+        # LOS TRES SALEN DEL VOLUMEN Y DEL RELOJ, y los tres son causales: solo
+        # miran velas ya cerradas. Ventana por RELOJ (no por numero de velas):
+        # en estos tickers las velas son dispersas y «10 velas atras» pueden ser
+        # 40 minutos ([[btt-velas-dispersas-ventana-reloj]]).
+        win = int(range_minutes) if range_minutes else 10
+        if win < 1:
+            win = 1
+        n = len(close)
+        out = np.full(n, np.nan)
+        t_min, day_id, order = _minutes_axis(df, n)
+        if t_min is None:
+            return pd.Series(out, index=close.index)
+        v = volume.values.astype(np.float64)
+        if order is not None:
+            v = v[order]
+        # minuto del reloj NY (los timestamps del lago son hora ET sin zona)
+        minuto_dia = (np.floor(t_min).astype(np.int64) % 1440)
+        # acumulado del DIA (el motor pasa un ticker-dia, pero no se da por hecho)
+        nuevo_dia = np.r_[True, day_id[1:] != day_id[:-1]]
+        v_acum = np.cumsum(v)
+        base_dia = np.where(nuevo_dia, v_acum - v, np.nan)
+        base_dia = pd.Series(base_dia).ffill().values
+        v_acum_dia = v_acum - base_dia
+
+        # indice de la ultima vela a >= `win` minutos de distancia (mismo dia)
+        j = np.searchsorted(t_min, t_min - win, side="right") - 1
+        mismo = (j >= 0) & (day_id[np.maximum(j, 0)] == day_id)
+        v_antes = np.where(mismo, v_acum_dia[np.maximum(j, 0)], 0.0)
+        v_ventana = v_acum_dia - v_antes
+
+        if name == "Pendiente del volumen":
+            # Los `win` minutos de antes de la ventana, para comparar.
+            j2 = np.searchsorted(t_min, t_min - 2 * win, side="right") - 1
+            mismo2 = (j2 >= 0) & (day_id[np.maximum(j2, 0)] == day_id)
+            v_antes2 = np.where(mismo2, v_acum_dia[np.maximum(j2, 0)], 0.0)
+            v_previa = v_antes - v_antes2
+            with np.errstate(divide="ignore", invalid="ignore"):
+                res = np.where(v_previa > 0, v_ventana / v_previa, np.nan)
+            # Sin ventana previa completa (el principio del dia) no hay con que
+            # comparar: NaN, no un numero inventado.
+            res = np.where(mismo2, res, np.nan)
+        elif name == "Minutos desde el pico de volumen":
+            # Minutos de reloj desde la vela de MAS volumen del dia hasta ahora.
+            # Causal: el maximo es corrido, nunca mira hacia delante.
+            res = np.full(n, np.nan)
+            mejor_v = -1.0
+            mejor_t = np.nan
+            for i in range(n):
+                if nuevo_dia[i]:
+                    mejor_v, mejor_t = -1.0, np.nan
+                if v[i] > mejor_v:
+                    mejor_v, mejor_t = v[i], t_min[i]
+                res[i] = t_min[i] - mejor_t
+        else:
+            perfil = perfil_volumen_universo()
+            if perfil is None:
+                return pd.Series(out, index=close.index)
+            F = perfil["F"]
+            m_ahora = np.clip(minuto_dia, 0, 1440)
+            m_antes = np.clip(minuto_dia - win, 0, 1440)
+            F_ahora, F_antes = F[m_ahora], F[m_antes]
+            # El dia PROYECTADO sale de lo que ya lleva: si a las 09:00 lleva
+            # V y el perfil dice que a esa hora va el 8 % del dia, el dia pinta
+            # V/0,08. Lo esperado en la ventana es ese dia por el trozo de
+            # perfil que ocupa. Por debajo del 0,5 % de dia acumulado el
+            # cociente es inestable (dividir por casi nada): NaN.
+            with np.errstate(divide="ignore", invalid="ignore"):
+                dia_proyectado = np.where(F_antes >= 0.005, v_antes / F_antes, np.nan)
+                esperado = dia_proyectado * (F_ahora - F_antes)
+                res = np.where(esperado > 0, v_ventana / esperado, np.nan)
+            res = np.where((v_antes > 0) & mismo, res, np.nan)
+
+        if order is not None:
+            deshacer = np.empty(n, dtype=np.int64)
+            deshacer[order] = np.arange(n)
+            res = res[deshacer]
+        return pd.Series(res, index=close.index)
 
     if name in ("Absorption", "Wick Ratio", "Absorption + Wick"):
         # Los tres salen del MISMO recorrido de la ventana de reloj.
