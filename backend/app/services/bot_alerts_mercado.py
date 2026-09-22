@@ -238,6 +238,31 @@ class MercadoEnVivo:
         with self._lock:
             return list(self._estados.values())
 
+    def volcar(self) -> dict:
+        """El estado entero, en cosas que se pueden mandar por una tuberia.
+
+        Sirve para resucitar al proceso del radar sin perder lo acumulado del
+        dia (maximo de premercado, volumen, cierres de ayer): ver
+        `bot_alerts_radar_proceso`. Un radar recien nacido que empezara de cero
+        no veria el maximo de premercado de la manyana y dejaria de admitir
+        tickers que ya cumplian.
+        """
+        with self._lock:
+            return {tk: vars(st).copy() for tk, st in self._estados.items()}
+
+    def cargar(self, datos: dict) -> int:
+        """Lo contrario de `volcar`. Lo que ya hubiera se pisa."""
+        campos = set(EstadoTicker.__dataclass_fields__)
+        n = 0
+        with self._lock:
+            for tk, d in (datos or {}).items():
+                try:
+                    self._estados[tk] = EstadoTicker(**{k: v for k, v in d.items() if k in campos})
+                    n += 1
+                except Exception:  # noqa: BLE001
+                    continue
+        return n
+
     @property
     def tickers_con_datos(self) -> int:
         with self._lock:

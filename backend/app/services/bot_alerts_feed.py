@@ -211,6 +211,13 @@ class FeedEnVivo:
         # que se emitieron mientras tanto.
         self.al_reconectar = al_reconectar
         self.reconexiones = 0
+        # MEDICION (22-sep-2026): retraso de la vela de minuto de un ticker
+        # vigilado EN EL INSTANTE en que sale del socket, antes de tocarla; y
+        # el mayor rato que el bucle ha pasado sin leer. Si `lat_socket` ya es
+        # alto, el retraso no es nuestro.
+        self.lat_socket: list = []
+        self.hueco_lectura = 0.0
+        self._ultima_lectura: Optional[float] = None
         self._caido_desde: Optional[float] = None
         # Suscribirse al mercado entero para que el radar pueda descubrir gaps.
         # `al_mercado` recibe TODOS los agregados de minuto, incluidos los de
@@ -313,6 +320,10 @@ class FeedEnVivo:
                                 logger.warning("[FEED] fallo al recuperar tras reconectar: %s", exc)
 
                     async for crudo in ws:
+                        _ahora = time.time()
+                        if self._ultima_lectura is not None:
+                            self.hueco_lectura = max(self.hueco_lectura, _ahora - self._ultima_lectura)
+                        self._ultima_lectura = _ahora
                         if self._parar:
                             break
                         self._procesar(crudo)
@@ -348,6 +359,11 @@ class FeedEnVivo:
                 logger.info("[FEED] %s: %s", ev.get("status"), ev.get("message"))
             elif tipo == "AM":
                 sym = str(ev.get("sym", ""))
+                if sym in self.tickers and self._ultima_lectura is not None:
+                    try:
+                        self.lat_socket.append(self._ultima_lectura - int(ev["e"]) / 1000.0)
+                    except Exception:   # noqa: BLE001
+                        pass
                 # Primero al estado del mercado (lo usa el radar): esto entra
                 # para TODOS los tickers, esten vigilados o no.
                 if self.al_mercado is not None:

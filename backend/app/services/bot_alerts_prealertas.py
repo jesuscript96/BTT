@@ -119,15 +119,26 @@ SEGUNDO_LIMITE = 59
 # la vela oficial en el 40 % de los minutos; sin odd lots, en el 0-1 %.
 CONDICIONES_SIN_PRECIO = {2, 7, 15, 16, 20, 21, 29, 33, 37, 38, 52, 53}
 
-# PRINTS TARDIOS: LA REGLA DE LOS 20 ms (la misma del lago de Jaume). Cada
-# operacion trae dos relojes: cuando se ejecuto (`pt`) y cuando la publico la
-# cinta (`t`). Las de fuera de bolsa (dark pools, sesion nocturna) se publican
-# tarde: a las 04:00 NY la cinta suelta de golpe lo de la noche con horas de
-# retraso. La vela oficial las coloca en el minuto en que se EJECUTARON; la
-# propia las metia en el minuto de publicacion: 22-sep-2026, QNME 04:03 con
-# 785.000 acciones (oficial 148.000) y cierre 1,04 en vez de 1,0598, y dos
-# entradas avisadas sobre esa vela. Se descartan del todo (precio y volumen).
-UMBRAL_TARDIO_MS = 20
+# PRINTS TARDIOS: CADA PRINT VA AL MINUTO EN QUE SE EJECUTO (22-sep-2026,
+# decision de Jaume). Cada operacion trae dos relojes: cuando se ejecuto (`pt`)
+# y cuando la publico la cinta (`t`). Las de fuera de bolsa (dark pools, sesion
+# nocturna) se publican tarde: a las 04:00 NY la cinta suelta lo de la noche
+# con horas de retraso (QNME 04:03: 785.000 acciones publicadas, la vela
+# oficial lleva 148.000). El print se coloca en la vela del minuto de
+# EJECUCION: si ese minuto ya se entrego, se descarta (ni precio ni volumen):
+# es lo que hace la vela oficial de Massive (medido: ni la de 04:03 ni ninguna
+# anterior llevan esas acciones), y asi los «fogonazos» de hace horas no
+# pintan mechas. Los dark pools ejecutados en el minuto EN CURSO y publicados
+# unos cientos de ms tarde SI entran, como en la oficial: con la regla anterior
+# (descartar todo lo publicado > 20 ms tras ejecutarse, la del lago) la propia
+# perdia hasta el 28 % del volumen de la vela en QNME y el cierre en el 7 % de
+# las velas.
+# El tope de espera al cerrar la vela propia: ver `velas_por_cerrar`.
+MARGEN_CIERRE_S = 1.0
+# Una vela se cierra en cuanto llega un print del minuto siguiente publicado
+# al menos esto despues de acabar el minuto: la cinta va en orden de
+# publicacion, asi que lo del minuto anterior ya ha pasado.
+MARGEN_SIGUIENTE_MS = 100
 
 
 @dataclass
@@ -157,6 +168,7 @@ class VelaEnCurso:
     # vela esta a medias y NO vale para disparar la alerta (espera la oficial).
     completa: bool = True
     cerrada_propia: bool = False                   # ya se entrego como vela propia
+    lista: bool = False                            # ya llego un print del minuto siguiente
     con_precio: bool = False                       # alguna operacion movio el precio
 
     def como_vela_cerrada(self) -> dict:
@@ -219,7 +231,8 @@ class ConstructorParcial:
         # La ultima vela TERMINADA de cada ticker montada con operaciones, para
         # compararla con la oficial (21-sep-2026).
         self._terminadas: dict[str, VelaEnCurso] = {}
-        # Operaciones descartadas por tardias (regla de los 20 ms), para el log.
+        # Operaciones descartadas por tardias (ejecutadas en un minuto que ya
+        # se entrego), para el log.
         self.tardias = 0
         self.v_tardias = 0.0
 
@@ -273,25 +286,37 @@ class ConstructorParcial:
         ts, precio, tam = ev.get("t"), ev.get("p"), ev.get("s")
         if not tk or ts is None or precio is None:
             return None
-        ms = int(ts)
+        ms = int(ts)                                   # publicacion (SIP)
         pt = ev.get("pt")
-        if pt is not None and ms - int(pt) > UMBRAL_TARDIO_MS:
-            self.tardias += 1
-            self.v_tardias += float(tam or 0.0)
-            return None
+        ms_ejec = int(pt) if pt is not None else ms    # ejecucion
         precio = float(precio)
         tam = float(tam or 0.0)
         mueve_precio = not (set(ev.get("c") or ()) & CONDICIONES_SIN_PRECIO)
-        t = datetime.fromtimestamp(ms / 1000, tz=ET)
+        t = datetime.fromtimestamp(ms_ejec / 1000, tz=ET)
         minuto = int(t.timestamp()) // 60 * 60
+        if minuto < (ms // 1000) // 60 * 60 - 60:
+            # Ejecutado antes del minuto anterior al de publicacion: un dark
+            # pool de hace horas. No tiene vela donde caer (ni abre una).
+            self.tardias += 1
+            self.v_tardias += tam
+            return None
 
         v = self._curso.get(tk)
         if v is not None and v.minuto > minuto:
-            # Operacion rezagada de un minuto ya cerrado: solo cuenta para la
-            # comparacion con la oficial, no reabre nada.
+            # Print de un minuto anterior al en curso. Si es el recien
+            # terminado y aun no se entrego, entra en el (llego en la cola);
+            # si ya se entrego o es mas viejo (dark pool de hace horas), fuera.
             ant = self._terminadas.get(tk)
-            if ant is not None and ant.minuto == minuto:
-                ant.v_operaciones += tam
+            if ant is not None and ant.minuto == minuto and not ant.cerrada_propia:
+                self._sumar(ant, ms, ms_ejec, precio, tam, mueve_precio)
+            else:
+                self.tardias += 1
+                self.v_tardias += tam
+            return None
+        if v is not None and v.minuto == minuto and v.cerrada_propia:
+            # Vela ya entregada por tope de espera: el print llega tarde.
+            self.tardias += 1
+            self.v_tardias += tam
             return None
         if v is None or v.minuto != minuto:
             if v is not None and v.minuto < minuto:
@@ -302,7 +327,10 @@ class ConstructorParcial:
             # Vista desde el principio del minuto si veniamos siguiendo el
             # ticker (habia vela del minuto anterior) o si esta es la primera
             # operacion del minuto y llega en sus primeros 2 s.
-            completa = (anterior is not None and anterior.minuto == minuto - 60) or (t.second < 2)
+            # (Por hora de PUBLICACION: un dark pool ejecutado en el segundo 1
+            # y publicado en el 24 no significa que vieramos el minuto entero.)
+            seg_pub = datetime.fromtimestamp(ms / 1000, tz=ET).second
+            completa = (anterior is not None and anterior.minuto == minuto - 60) or (seg_pub < 2 and t.second < 2)
             v = VelaEnCurso(
                 minuto=minuto, open=precio, high=precio, low=precio, close=precio,
                 # El acumulado al empezar el minuto es el que dejo la vela
@@ -311,23 +339,17 @@ class ConstructorParcial:
                 av_ahora=None, segundos=0, completa=completa, con_precio=mueve_precio,
             )
             self._curso[tk] = v
+            v.ultimo_ms = ms_ejec
+            v.operaciones = 1
+            v.v_operaciones = tam
+            v._ops.append((ms, tam))
         else:
-            if mueve_precio:
-                if not v.con_precio:
-                    # Hasta ahora solo habia odd lots: el precio arranca aqui.
-                    v.open = v.high = v.low = v.close = precio
-                    v.con_precio = True
-                else:
-                    v.high = max(v.high, precio)
-                    v.low = min(v.low, precio)
-                    if ms >= v.ultimo_ms:
-                        v.close = precio
-        v.ultimo_ms = max(v.ultimo_ms, ms)
-        v.operaciones += 1
-        v.v_operaciones += tam
-        v._ops.append((ms, tam))
-        if v.av_ahora is not None:
-            v.v_desde_ultimo_av += tam
+            self._sumar(v, ms, ms_ejec, precio, tam, mueve_precio)
+        # Un print del minuto en curso publicado ya pasado el margen deja la
+        # vela anterior lista para entregar (ver `velas_por_cerrar`).
+        ant = self._terminadas.get(tk)
+        if ant is not None and not ant.lista and not ant.cerrada_propia and ms >= minuto * 1000 + MARGEN_SIGUIENTE_MS:
+            ant.lista = True
 
         if v.evaluada or not (SEGUNDO_DECISION <= t.second <= SEGUNDO_LIMITE):
             return None
@@ -335,18 +357,42 @@ class ConstructorParcial:
             return None
         return tk, v, datetime.fromtimestamp(minuto, tz=ET), t.second
 
-    def velas_por_cerrar(self, ahora_epoch: float, margen_s: float = 0.8) -> list:
-        """Velas propias cuyo minuto ya termino hace >= margen_s y aun no se han
-        entregado como cerradas: [(ticker, VelaEnCurso)]. La primera operacion
-        del minuto siguiente suele cerrarlas antes; esto cubre a los tickers
-        que se callan. Se marcan como entregadas para no cerrarlas dos veces."""
+    @staticmethod
+    def _sumar(v: VelaEnCurso, ms: int, ms_ejec: int, precio: float, tam: float, mueve_precio: bool) -> None:
+        """Anyade un print a una vela ya abierta. El cierre es el del ultimo
+        print EJECUTADO, no el ultimo publicado."""
+        if mueve_precio:
+            if not v.con_precio:
+                # Hasta ahora solo habia odd lots: el precio arranca aqui.
+                v.open = v.high = v.low = v.close = precio
+                v.con_precio = True
+            else:
+                v.high = max(v.high, precio)
+                v.low = min(v.low, precio)
+                if ms_ejec >= v.ultimo_ms:
+                    v.close = precio
+        v.ultimo_ms = max(v.ultimo_ms, ms_ejec)
+        v.operaciones += 1
+        v.v_operaciones += tam
+        v._ops.append((ms, tam))
+        if v.av_ahora is not None:
+            v.v_desde_ultimo_av += tam
+
+    def velas_por_cerrar(self, ahora_epoch: float, margen_s: float = MARGEN_CIERRE_S) -> list:
+        """Velas propias listas para entregar, una sola vez: [(ticker, VelaEnCurso)].
+
+        Una vela esta lista cuando (a) ha llegado un print del minuto siguiente
+        (la cinta va en orden de publicacion: lo del minuto ya ha pasado) o
+        (b) el minuto acabo hace >= margen_s, para los tickers que se callan.
+        22-sep-2026: con un margen fijo de 0,8 s y la cinta llegando a +0,9 s,
+        se quedaban fuera los prints del ultimo tramo del minuto (TOPS, FBGL:
+        cierre distinto de la oficial); Jaume no quiere esperar mas de 1 s.
+        """
         out = []
-        for tk, v in list(self._curso.items()):
-            if not v.cerrada_propia and v.operaciones > 0 and ahora_epoch >= v.minuto + 60 + margen_s:
-                v.cerrada_propia = True
-                out.append((tk, v))
-        for tk, v in list(self._terminadas.items()):
-            if not v.cerrada_propia and v.operaciones > 0 and ahora_epoch >= v.minuto + 60 + margen_s:
+        for tk, v in list(self._curso.items()) + list(self._terminadas.items()):
+            if v.cerrada_propia or v.operaciones == 0:
+                continue
+            if v.lista or ahora_epoch >= v.minuto + 60 + margen_s:
                 v.cerrada_propia = True
                 out.append((tk, v))
         return out

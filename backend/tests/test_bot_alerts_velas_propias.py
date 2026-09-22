@@ -6,8 +6,9 @@ garantizar:
   1. Los odd lots (condicion 37) y demas condiciones sin precio cuentan en el
      volumen pero no mueven open/high/low/close (es lo que hace la oficial).
   2. Una vela que empezo a verse a mitad de minuto NO es completa.
-  3. `velas_por_cerrar` entrega la vela solo cuando el minuto acabo hace >= el
-     margen, y una sola vez.
+  3. `velas_por_cerrar` entrega la vela con el primer print del minuto
+     siguiente o, si el ticker se calla, al tope de 1,0 s; una sola vez.
+  6. Cada print va al minuto en que se EJECUTO; los de hace horas, fuera.
   4. La prealerta por operacion mira el segundo REAL (44), y el `av` oficial
      sigue anclando el volumen.
   5. El runner sustituye la vela propia por la oficial sin anyadir otra.
@@ -59,7 +60,7 @@ def test_velas_por_cerrar_una_vez_y_con_margen():
     c.aplicar_operacion(_op(59, 2.20))
     fin = (BASE + 60000) / 1000
     assert c.velas_por_cerrar(fin + 0.5) == [], "aun no ha pasado el margen"
-    cerradas = c.velas_por_cerrar(fin + 0.9)
+    cerradas = c.velas_por_cerrar(fin + 1.0)
     assert [tk for tk, _ in cerradas] == ["KXIN"]
     vela = cerradas[0][1].como_vela_cerrada()
     assert str(vela["timestamp"]) == "2026-09-21 04:05:00" and vela["close"] == 2.20
@@ -101,20 +102,67 @@ def test_runner_sustituye_la_vela_propia_por_la_oficial_sin_anyadir():
     assert r.sustituir_vela("KXIN", {"timestamp": pd.Timestamp("2026-09-21 04:07"), "close": 1}) is False
 
 
-def test_los_prints_tardios_se_descartan_del_todo():
-    """22-sep-2026: a las 04:00 NY la cinta publica lo de la noche con horas de
-    retraso; QNME 04:03 salio con 785.000 acciones (oficial 148.000) y cierre
-    1,04 (oficial 1,0598). Regla de los 20 ms: publicado > 20 ms despues de
-    ejecutarse -> fuera, ni precio ni volumen."""
+def test_cada_print_va_al_minuto_en_que_se_ejecuto():
+    """22-sep-2026 (Jaume): un print se coloca en la vela del minuto de
+    EJECUCION (`pt`). Un dark pool de hace horas (QNME 04:03: 785.000 acciones
+    de la noche) no tiene vela: fuera, ni precio ni volumen; asi no pinta
+    mechas («fogonazos»). Uno ejecutado en el minuto en curso y publicado
+    cientos de ms tarde SI entra: la oficial lo lleva."""
     c = pre.ConstructorParcial()
     c.aplicar_operacion({**_op(0, 2.00), "pt": BASE})                               # a tiempo
     c.aplicar_operacion({**_op(5, 1.04, tam=500000), "pt": BASE - 3 * 3600 * 1000})  # de la noche
-    c.aplicar_operacion({**_op(6, 2.02, tam=100), "pt": BASE + 6000 - 30})           # 30 ms tarde
-    c.aplicar_operacion({**_op(7, 2.05, tam=100), "pt": BASE + 7000 - 10})           # 10 ms: a tiempo
+    c.aplicar_operacion({**_op(6, 2.02, tam=100), "pt": BASE + 6000 - 400})          # 400 ms tarde, mismo minuto
+    c.aplicar_operacion({**_op(7, 2.05, tam=100), "pt": BASE + 7000 - 10})           # 10 ms
     v = c._curso["KXIN"]
     assert (v.open, v.high, v.low, v.close) == (2.00, 2.05, 2.00, 2.05)
-    assert v.volumen == 200
-    assert c.tardias == 2 and c.v_tardias == 500100
+    assert v.volumen == 300
+    assert c.tardias == 1 and c.v_tardias == 500000
+
+
+def test_el_cierre_es_el_ultimo_print_ejecutado_no_el_ultimo_publicado():
+    c = pre.ConstructorParcial()
+    c.aplicar_operacion({**_op(50, 2.00), "pt": BASE + 50000})
+    c.aplicar_operacion({**_op(58, 2.10), "pt": BASE + 58000})
+    # Publicado despues (seg 59) pero ejecutado antes (seg 55): no es el cierre.
+    c.aplicar_operacion({**_op(59, 2.30), "pt": BASE + 55000})
+    v = c._curso["KXIN"]
+    assert v.close == 2.10 and v.high == 2.30
+
+
+def test_print_de_la_cola_entra_en_la_vela_anterior_si_no_se_entrego():
+    """La cinta llega a +0,9 s: el print de las :59,9 aparece cuando ya hay
+    prints del minuto siguiente. Si la vela anterior no se entrego, entra."""
+    c = pre.ConstructorParcial()
+    c.aplicar_operacion({**_op(30, 2.00), "pt": BASE + 30000})
+    c.aplicar_operacion({**_op(60, 2.20, ms_extra=50), "pt": BASE + 60000 + 40})     # minuto siguiente
+    c.aplicar_operacion({**_op(60, 2.10, ms_extra=80), "pt": BASE + 59000 + 900})    # cola del anterior
+    ant = c._terminadas["KXIN"]
+    assert ant.close == 2.10 and ant.volumen == 200 and c.tardias == 0
+    # Ya entregada: el siguiente rezagado es tardio.
+    ant.cerrada_propia = True
+    c.aplicar_operacion({**_op(60, 2.15, ms_extra=90), "pt": BASE + 59000 + 950})
+    assert ant.volumen == 200 and c.tardias == 1
+
+
+def test_se_cierra_con_el_primer_print_del_minuto_siguiente_o_al_tope():
+    """Jaume no quiere esperar mas de 1 s: la vela se entrega en cuanto llega
+    un print del minuto siguiente publicado >= 100 ms tras acabar el minuto
+    (lo del anterior ya ha pasado), y si el ticker se calla, a +1,0 s."""
+    fin = BASE / 1000 + 60
+    c = pre.ConstructorParcial()
+    c.aplicar_operacion({**_op(30, 2.00), "pt": BASE + 30000})
+    assert c.velas_por_cerrar(fin + 0.3) == []
+    c.aplicar_operacion({**_op(60, 2.20, ms_extra=50), "pt": BASE + 60000 + 40})     # +50 ms: aun no
+    assert c.velas_por_cerrar(fin + 0.3) == []
+    c.aplicar_operacion({**_op(60, 2.21, ms_extra=150), "pt": BASE + 60000 + 140})   # +150 ms: lista
+    cerradas = c.velas_por_cerrar(fin + 0.3)
+    assert [tk for tk, _ in cerradas] == ["KXIN"] and cerradas[0][1].minuto == BASE // 1000
+    assert c.velas_por_cerrar(fin + 5) == [] or all(v.minuto != BASE // 1000 for _, v in c.velas_por_cerrar(fin + 5))
+    # Ticker callado: tope de 1,0 s.
+    c2 = pre.ConstructorParcial()
+    c2.aplicar_operacion({**_op(30, 2.00), "pt": BASE + 30000})
+    assert c2.velas_por_cerrar(fin + 0.95) == []
+    assert [tk for tk, _ in c2.velas_por_cerrar(fin + 1.0)] == ["KXIN"]
 
 
 def test_sin_pt_no_se_descarta_nada():
