@@ -6360,3 +6360,10 @@ de Databento, no copiar `users.duckdb`.
 - **NO se tocaron** los defaults de CREACIÓN (líneas 120/201: `% Fade`/`Previous Max` nuevos se siguen creando con `ap.RTH` EXPLÍCITO): ahí no hay mentira — lo que se ve es lo que se guarda — y cambiarlo sería una decisión de producto, no un fix.
 - **Verificación:** `npx tsc --noEmit` limpio. Comprobación visual pendiente del F5 de Álvaro: la B200 (`c2a24250`) debe mostrar su pirámide %Fade ≥ 10 con «ap.PM · 04:00».
 - **Estado:** RESUELTO (commit de esta fecha); sin cambios de datos ni de comportamiento del motor.
+
+### [TRABAJO · 2026-09-22 · 3] PRD del «TP por lote» escrito — take profit con parciales propios en cada piramidación (el espejo del SL por lote)
+- **Pedido de Álvaro:** cada ejecución de piramidación con su SL de lote (inamovible, el actual) y su TP propio: rungs de «al recorrer X % desde SU precio, saca Y % del lote», y el resto del lote cabalgando hasta la salida final del trade. Semántica exacta y ejemplo literal quedan en el PRD.
+- **PRD:** `docs/PRD_TP_POR_LOTE_20260922.md` — anclado al código real: los lotes ya viven como individuos (`lots` con px/size/sl_px, cinturón en portfolio_sim:1504-1607), los parciales globales ya hacen rungs (pyr_base), y NO existe ningún TP por lote hoy (grep negativo). Contrato: regla nº1 byte-identical sin el bloque, disparo por toque con SL-gana-en-empate, rungs sobre tamaño ORIGINAL del lote, contabilidad por leg con identidad del trade (patrón 18-01), 9 tests exigibles, 6 sitios donde se perdería en silencio.
+- **Contexto medido que va con el PRD (22-sep):** en la familia Sobri-escalera, TODA salida temprana probada pierde R frente a aguantar (08:30: −43R·2025; 50/50: a medio camino; reduce-50 % en fade<5: −38/−57R). El PRD no promete más R — da la perilla para medir TP por lote, que hoy no es expresable.
+- **Código tocado:** NINGUNO (solo el PRD y esta memoria).
+- **Estado:** PRD listo para quien toque el motor (Álvaro decide rama/momento); Fase de implementación NO arrancada.
