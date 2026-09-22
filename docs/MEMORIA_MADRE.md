@@ -6341,3 +6341,16 @@ de Databento, no copiar `users.duckdb`.
 - **Subproductos:** stop5 sólo ya da +451/+357R (25/26) — el eje que más mueve; sin_parciales mejora R y suaviza; fade40 añade trades sin romper PF. El chasis sigue siendo la referencia de consistencia.
 - **Código tocado:** NINGUNO del repo (scripts efímeros en `.tmp_bus200/`, estrategia vía API, y esta memoria).
 - **Estado:** hecho; pendiente de decisión de Álvaro: incubador / más validación / uso.
+
+### [HALLAZGO · 2026-09-22 · 01] El dropdown de `ap_session` muestra «ap.RTH» cuando el campo está VACÍO — y el motor, para vacío, usa ap.PM
+- **Reporta:** ZCode (para Álvaro, detectado por él en pantalla)
+- **Severidad:** inconsistencia (UI miente; no corrompe datos)
+- **Dónde:** `frontend/src/components/strategy-builder/ConditionBuilder.tsx:1562` y `:1701` (`value={value.ap_session || 'ap.RTH'}`) vs `backend/app/services/indicators.py` `_ap_session_started` («ap.PM (defecto) desde la primera barra del frame»).
+- **Qué observé:** en la estrategia «B200 · Sobri Escalera stop5 sin parciales», la condición de pirámide (% Fade ≥ 10) tiene `ap_session` AUSENTE. El motor la computa como **ap.PM** (máximo acumulado desde la primera barra del frame = el máximo del premarket; coherente con la entrada, que lo lleva explícito). Pero el builder muestra el dropdown en **«ap.RTH»** porque pinta `'ap.RTH'` como fallback del valor vacío. Álvaro leyó «ap.RTH» en una estrategia 04:00–08:45 y lógicamente preguntó.
+- **Impacto:** (a) lectura errónea de la config en pantalla; (b) trampa de edición: quien «cambie» el dropdown de RTH a PM está escribiendo ap.PM explícito (mismo comportamiento que vacío — inofensivo), pero quien lo deje en «ap.RTH» creyendo que esa es la semántica vigente, opera engañado. Guardar SIN tocar el dropdown conserva el vacío (no hay corrupción de datos).
+- **Detalle adicional:** al crear una condición % Fade NUEVA desde el builder, SÍ se escribe `ap_session: "ap.RTH"` explícito (`ConditionBuilder.tsx:201`) — default de UI distinto del default del motor (vacío → ap.PM).
+- **Hipótesis de causa:** el fallback visual se copió del default de creación en vez del default del motor.
+- **Cómo reproducir:** cargar la estrategia B200 (`c2a24250-…`) en el constructor → sección de piramidación → la condición % Fade ≥ 10 muestra «ap.RTH · 09:30» con el campo realmente vacío (verificar por API: `ap_session` no existe en el source).
+- **Fix propuesto (pendiente de OK de Álvaro):** que el dropdown muestre **ap.PM** cuando el campo está vacío (paridad con el motor), o mejor aún, que al cargar una definición se materialice el default real (`ap.PM` explícito) para que pantalla y motor no puedan discrepar.
+- **Código tocado:** NINGUNO (solo esta memoria).
+- **Estado:** ABIERTO
