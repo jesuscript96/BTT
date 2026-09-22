@@ -208,3 +208,62 @@ def test_los_tres_no_miran_al_futuro(perfil_plano):
             corto = compute_indicator(nombre, d.iloc[:k + 1].copy(), **kw).values
             a, b = entero[k], corto[k]
             assert (np.isnan(a) and np.isnan(b)) or a == pytest.approx(b, rel=1e-9), (nombre, k)
+
+
+# ══ Rotación (acciones en circulación) ═════════════════════════════════════
+#
+# OJO al nombre: es CIRCULACIÓN, no float. El float real es menor y por tanto
+# la rotación real es MAYOR que este número, nunca al revés. No hay fuente
+# histórica fiable del float (ver scripts/acciones_circulacion_etl.py).
+
+@pytest.fixture
+def circulacion(monkeypatch):
+    """Tabla de juguete: AAA amplía capital a mitad de 2025."""
+    d = pd.DataFrame([
+        {"ticker": "AAA", "fecha_informe": "2025-03-31", "shares": 1_000_000.0},
+        {"ticker": "AAA", "fecha_informe": "2025-09-30", "shares": 10_000_000.0},
+    ])
+    monkeypatch.setattr(ind, "_CIRCULACION", {"AAA": d})
+    return d
+
+
+def test_rotacion_del_dia(circulacion):
+    d = _df([100_000.0] * 30, inicio="2026-09-22 09:00")
+    r = compute_indicator("Rotacion", d, daily_stats={"ticker": "AAA", "date": "2025-06-15"}).values
+    # 1.000.000 de acciones en circulación: cada 10 velas de 100.000 es 1 vuelta
+    assert r[9] == pytest.approx(1.0)
+    assert r[29] == pytest.approx(3.0)
+
+
+def test_rotacion_usa_el_informe_ANTERIOR_al_dia(circulacion):
+    """Lo que hace que el dato valga: en junio la empresa tenía 1 M de
+    acciones; en diciembre, 10 M. Usar el número de hoy para un día de junio
+    daría una rotación diez veces menor."""
+    d = _df([100_000.0] * 30, inicio="2026-09-22 09:00")
+    junio = compute_indicator("Rotacion", d, daily_stats={"ticker": "AAA", "date": "2025-06-15"}).values
+    diciembre = compute_indicator("Rotacion", d, daily_stats={"ticker": "AAA", "date": "2025-12-15"}).values
+    assert junio[29] == pytest.approx(3.0)
+    assert diciembre[29] == pytest.approx(0.3)
+
+
+def test_rotacion_antes_del_primer_informe_es_nan(circulacion):
+    """No se rellena hacia atrás: usar la circulación de después de una
+    ampliación para un día previo es el error de 5-20× que avisa el ETL."""
+    d = _df([100_000.0] * 30, inicio="2026-09-22 09:00")
+    r = compute_indicator("Rotacion", d, daily_stats={"ticker": "AAA", "date": "2025-01-05"}).values
+    assert np.isnan(r).all()
+
+
+def test_rotacion_sin_ticker_o_sin_tabla_es_nan(circulacion):
+    d = _df([100_000.0] * 30, inicio="2026-09-22 09:00")
+    assert np.isnan(compute_indicator("Rotacion", d, daily_stats={}).values).all()
+    assert np.isnan(compute_indicator(
+        "Rotacion", d, daily_stats={"ticker": "ZZZ", "date": "2025-06-15"}).values).all()
+
+
+def test_rotacion_en_ventana(circulacion):
+    d = _df([100_000.0] * 60, inicio="2026-09-22 09:00")
+    r = compute_indicator("Rotacion en X min", d, range_minutes=10,
+                          daily_stats={"ticker": "AAA", "date": "2025-06-15"}).values
+    # 10 minutos x 100.000 = 1.000.000 = una vuelta entera
+    assert r[40] == pytest.approx(1.0)

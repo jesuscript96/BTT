@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
 from pydantic import BaseModel
@@ -79,6 +81,21 @@ METRIC_MAP = {
     "HOD Time": "hod_time",
     "LOD Time": "lod_time",
     "PM High Time": "pm_high_time",
+    # VOLUMEN RELATIVO (22-sep-2026). Los tres son cocientes contra la media de
+    # los 20 dias ANTERIORES del mismo ticker, no columnas: se calculan en la
+    # CTE `base` de la consulta. 1 = un dia normal para esta accion; 10 = diez
+    # veces su volumen habitual. Un umbral fijo en acciones mezcla el tamanyo
+    # del ticker con la noticia; esto no.
+    "Volume vs 20d avg": "vol_rel_20",
+    "PM Volume vs 20d avg": "pm_vol_rel_20",
+    "Volume 3 prev days vs 20d avg": "vol_prev3_rel_20",
+    # ACCIONES EN CIRCULACION y rotacion del dia (22-sep-2026). Salen de la
+    # tabla que construye scripts/acciones_circulacion_etl.py, cruzada por el
+    # ULTIMO informe anterior a ese dia. Es circulacion, NO float: el float es
+    # menor y la rotacion real, mayor. Sin tabla, las dos son NULL y el filtro
+    # no deja pasar nada — mejor eso que una rotacion inventada.
+    "Shares Outstanding": "shares_outstanding",
+    "Day Rotation (vol / shares)": "rotacion_dia",
     #
     # RETIRADAS, y por que. Ninguna de estas columnas existe en el lago (38
     # columnas, comprobadas una a una):
@@ -108,9 +125,68 @@ def filter_daily_metrics(filters: FilterRequest):
     try:
         con = get_db_connection(read_only=True)
         # Derive date from timestamp since daily_metrics has no date column
-        query = "SELECT *, CAST(timestamp AS VARCHAR)[:10] as date FROM daily_metrics WHERE 1=1"
+        # VENTANAS SOBRE LOS DIAS ANTERIORES (22-sep-2026). `ROWS BETWEEN 20
+        # PRECEDING AND 1 PRECEDING` excluye el dia actual a proposito: el
+        # volumen de hoy no puede entrar en «lo normal de esta accion», seria
+        # mirarse a si mismo y aplanar el cociente. Y la ventana se calcula
+        # sobre la tabla ENTERA, antes de filtrar por fechas: si se calculara
+        # despues, los primeros dias del rango se quedarian sin sus 20 dias
+        # previos y el cociente saldria mal sin que nada lo dijera (el patron
+        # de «dos filtros en pasadas distintas» que ya mordio aqui).
+        query = """
+            WITH base AS (
+                SELECT *,
+                    CAST(timestamp AS VARCHAR)[:10] as date,
+                    rth_volume / NULLIF(AVG(rth_volume) OVER (
+                        PARTITION BY ticker ORDER BY timestamp
+                        ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING), 0) AS vol_rel_20,
+                    pm_volume / NULLIF(AVG(pm_volume) OVER (
+                        PARTITION BY ticker ORDER BY timestamp
+                        ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING), 0) AS pm_vol_rel_20,
+                    AVG(rth_volume) OVER (
+                        PARTITION BY ticker ORDER BY timestamp
+                        ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING)
+                    / NULLIF(AVG(rth_volume) OVER (
+                        PARTITION BY ticker ORDER BY timestamp
+                        ROWS BETWEEN 20 PRECEDING AND 1 PRECEDING), 0) AS vol_prev3_rel_20
+                FROM daily_metrics
+            ),
+            circ AS (
+                __CIRCULACION__
+            ),
+            base2 AS (
+                -- El ULTIMO informe anterior a ese dia (ASOF). Sin informe
+                -- previo, NULL: no se rellena hacia atras, porque usar la
+                -- circulacion de despues de una ampliacion para un dia anterior
+                -- es un error de 5 a 20 veces (OCTO paso de 3,04 a 46,3 millones
+                -- de acciones en seis meses).
+                SELECT b.*, c.shares AS shares_outstanding,
+                       b.rth_volume / NULLIF(c.shares, 0) AS rotacion_dia
+                FROM base b
+                ASOF LEFT JOIN circ c
+                  ON b.ticker = c.ticker AND CAST(b.timestamp AS DATE) >= c.fecha_informe
+            )
+            SELECT * FROM base2 WHERE 1=1"""
+        # La tabla de acciones en circulacion es OPCIONAL: si no esta, la CTE
+        # devuelve cero filas y `shares_outstanding`/`rotacion_dia` salen NULL
+        # (el filtro no deja pasar nada, que es lo correcto: sin dato no se
+        # puede afirmar una rotacion). La ruta va como PRIMER parametro porque
+        # DuckDB liga los `?` por orden de aparicion en el SQL.
         params = []
-        
+        _circ = os.path.join(os.getenv("CACHE_DIR", r"D:	mptt_intraday_cache"),
+                             "circulacion", "circulacion.parquet")
+        if os.path.exists(_circ):
+            query = query.replace(
+                "__CIRCULACION__",
+                "SELECT ticker, CAST(fecha_informe AS DATE) AS fecha_informe, shares "
+                "FROM read_parquet(?) WHERE shares > 0")
+            params.append(_circ)
+        else:
+            query = query.replace(
+                "__CIRCULACION__",
+                "SELECT NULL::VARCHAR AS ticker, NULL::DATE AS fecha_informe, "
+                "NULL::DOUBLE AS shares WHERE FALSE")
+
         # 1. Handle Basic Filters (legacy support)
         if filters.ticker:
             query += " AND ticker = ?"

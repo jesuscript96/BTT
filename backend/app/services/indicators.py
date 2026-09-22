@@ -1106,6 +1106,10 @@ INDICATOR_NAME_MAP = {
     "Edad del pico": "Edad del pico",
     "Volumen del pico": "Volumen del pico",
     "Retroceso (%)": "Retroceso (%)",
+    "Rotacion": "Rotacion",
+    "Rotaci\u00f3n": "Rotacion",
+    "Rotacion en X min": "Rotacion en X min",
+    "Rotaci\u00f3n en X min": "Rotacion en X min",
     "RVOL universo": "RVOL universo",
     "RVOL Universo": "RVOL universo",
     "Minutos desde el pico de volumen": "Minutos desde el pico de volumen",
@@ -2152,6 +2156,52 @@ _REF_LEVEL_MAP = {
 _PERFIL_VOL: dict | None = None
 _PERFIL_VOL_AVISADO = False
 
+# Acciones en circulacion por ticker y fecha de informe. Se carga una vez y se
+# consulta con `asof`: el dato de un informe vale hasta el siguiente. Sin
+# fichero, «Rotacion» vale NaN y se avisa una vez.
+_CIRCULACION = None
+_CIRC_AVISADO = False
+
+
+def circulacion_a_fecha(ticker: str | None, fecha: str | None) -> float | None:
+    """Acciones en circulacion de ese ticker en esa fecha, o None.
+
+    OJO: es CIRCULACION, no float. El float (lo que de verdad puede cambiar de
+    manos) es MENOR, asi que la rotacion real es MAYOR que la que sale de aqui.
+    No hay fuente historica fiable del float; ver el ETL.
+    """
+    global _CIRCULACION, _CIRC_AVISADO
+    if not ticker or not fecha:
+        return None
+    if _CIRCULACION is None:
+        import os as _os
+        base = _os.getenv("CACHE_DIR", r"D:\tmp\btt_intraday_cache")
+        ruta = _os.path.join(base, "circulacion", "circulacion.parquet")
+        try:
+            d = pd.read_parquet(ruta)
+            d["fecha_informe"] = d["fecha_informe"].astype(str)
+            d = d.sort_values(["ticker", "fecha_informe"])
+            _CIRCULACION = {t: g for t, g in d.groupby("ticker")}
+        except Exception as e:                                   # noqa: BLE001
+            if not _CIRC_AVISADO:
+                _CIRC_AVISADO = True
+                logger.warning("[ROTACION] sin tabla de acciones en circulacion (%s): "
+                               "«Rotacion» valdra NaN. Se construye con "
+                               "backend/scripts/acciones_circulacion_etl.py", e)
+            _CIRCULACION = {}
+    g = _CIRCULACION.get(str(ticker).upper())
+    if g is None or not len(g):
+        return None
+    # El ultimo informe con fecha <= la del dia (relleno hacia delante). Un dia
+    # anterior al primer informe NO se rellena hacia atras: usar la circulacion
+    # de despues de una ampliacion para un dia previo es el error de 5-20x que
+    # avisa el ETL.
+    previos = g[g["fecha_informe"] <= str(fecha)[:10]]
+    if not len(previos):
+        return None
+    v = float(previos["shares"].iloc[-1])
+    return v if v > 0 else None
+
 
 def perfil_volumen_universo() -> dict | None:
     """{'F': array de 1441 con la acumulada por minuto del dia, 'meta': {...}}."""
@@ -3027,6 +3077,41 @@ def _compute_raw(
             else:
                 out = res
         return pd.Series(out, index=close.index)
+
+    if name in ("Rotacion", "Rotacion en X min"):
+        # ROTACION: cuantas veces se han cambiado de manos TODAS las acciones
+        # que existen. Volumen acumulado del dia (o de la ventana) dividido
+        # por las acciones en circulacion A ESA FECHA.
+        ds = daily_stats or {}
+        shares = circulacion_a_fecha(ds.get("ticker"), str(ds.get("date") or "")[:10])
+        n = len(close)
+        if not shares:
+            return pd.Series(np.full(n, np.nan), index=close.index)
+        t_min, day_id, order = _minutes_axis(df, n)
+        v = volume.values.astype(np.float64)
+        if t_min is None:
+            return pd.Series(np.cumsum(v) / shares, index=close.index)
+        if order is not None:
+            v = v[order]
+        nuevo_dia = np.r_[True, day_id[1:] != day_id[:-1]]
+        v_acum = np.cumsum(v)
+        base_dia = pd.Series(np.where(nuevo_dia, v_acum - v, np.nan)).ffill().values
+        v_acum_dia = v_acum - base_dia
+        if name == "Rotacion":
+            res = v_acum_dia / shares
+        else:
+            win = int(range_minutes) if range_minutes else 30
+            if win < 1:
+                win = 1
+            j = np.searchsorted(t_min, t_min - win, side="right") - 1
+            mismo = (j >= 0) & (day_id[np.maximum(j, 0)] == day_id)
+            v_antes = np.where(mismo, v_acum_dia[np.maximum(j, 0)], 0.0)
+            res = (v_acum_dia - v_antes) / shares
+        if order is not None:
+            deshacer = np.empty(n, dtype=np.int64)
+            deshacer[order] = np.arange(n)
+            res = res[deshacer]
+        return pd.Series(res, index=close.index)
 
     if name in ("RVOL universo", "Minutos desde el pico de volumen", "Pendiente del volumen"):
         # LOS TRES SALEN DEL VOLUMEN Y DEL RELOJ, y los tres son causales: solo

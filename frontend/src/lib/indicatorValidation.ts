@@ -328,6 +328,8 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // El percentil es una MEDIDA: solo contra una cifra.
     [IndicatorType.VOL_BIN_PCT]: [],
     // Los tres de volumen contra el universo: MEDIDAS, solo contra una cifra.
+    [IndicatorType.ROTACION]: [],
+    [IndicatorType.ROTACION_VENTANA]: [],
     [IndicatorType.RVOL_UNIVERSO]: [],
     [IndicatorType.MIN_DESDE_PICO_VOL]: [],
     [IndicatorType.PENDIENTE_VOLUMEN]: [],

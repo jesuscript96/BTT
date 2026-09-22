@@ -111,6 +111,14 @@ export default function Home() {
       // Volume metrics
       "EOD Volume": { column: "volume", paramPrefix: "volume" },
       "Premarket Volume": { column: "pm_volume", paramPrefix: "pm_volume" },
+      // Volumen relativo a la media de 20 dias del propio ticker. No son
+      // columnas: el backend las calcula con una ventana (ver METRIC_MAP).
+      "Volume vs 20d avg": { column: "vol_rel_20", paramPrefix: "vol_rel_20" },
+      "PM Volume vs 20d avg": { column: "pm_vol_rel_20", paramPrefix: "pm_vol_rel_20" },
+      "Volume 3 prev days vs 20d avg": { column: "vol_prev3_rel_20", paramPrefix: "vol_prev3_rel_20" },
+      // Circulacion a fecha (ultimo informe anterior al dia) y rotacion.
+      "Shares Outstanding": { column: "shares_outstanding", paramPrefix: "shares_outstanding" },
+      "Day Rotation (vol / shares)": { column: "rotacion_dia", paramPrefix: "rotacion_dia" },
 
       // Gap & Run metrics
       "Open Gap %": { column: "gap_pct", paramPrefix: "gap_pct" },

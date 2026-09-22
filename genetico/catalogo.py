@@ -595,6 +595,31 @@ CATALOGO: dict[str, Indicador] = {
     # (backend/scripts/perfil_volumen_universo.py). Sin el vale NaN y la
     # condicion no se cumple nunca — la corrida no falla, pero ese gen no
     # sirve para nada; comprobarlo antes de marcarlo en una corrida larga.
+    # ROTACION: el volumen del dia contra las ACCIONES EN CIRCULACION (no el
+    # float: ese dato no existe con historico). Necesita la tabla que construye
+    # backend/scripts/acciones_circulacion_etl.py; sin ella vale NaN y el gen
+    # no sirve — comprobarlo antes de marcarlo en una corrida larga.
+    "Rotacion": Indicador(
+        nombre="Rotacion", familia="volumen",
+        params={},
+        valores=(0.5, 1, 2, 3, 5, 10), comparadores=(GT, LT),
+        ayuda="Cuantas veces se han cambiado de manos hoy TODAS las acciones que "
+              "existen (volumen del dia / acciones en circulacion). Rotacion 3 = "
+              "casi nadie que la tenga la compro por debajo del precio de hoy, y esa "
+              "es la gente que vende en cuanto se gira. < 0,5 dia normal · 1-3 el "
+              "papel ya cambio de manos entero · > 5 pump de manual. OJO: es "
+              "CIRCULACION, no float: el float es menor, asi que la rotacion real es "
+              "MAYOR que este numero.",
+    ),
+    "Rotacion en X min": Indicador(
+        nombre="Rotacion en X min", familia="volumen",
+        params={"range_minutes": [15, 30, 60]},
+        valores=(0.05, 0.1, 0.3, 0.5), comparadores=(GT, LT),
+        ayuda="La rotacion de los ultimos X minutos: la VELOCIDAD, no el total. "
+              "0,5 en media hora es media empresa cambiando de manos en media hora "
+              "— el climax en directo. < 0,05 esta parado. Mismo aviso: circulacion, "
+              "no float.",
+    ),
     "RVOL universo": Indicador(
         nombre="RVOL universo", familia="alternativos",
         params={"range_minutes": [5, 10, 30]},

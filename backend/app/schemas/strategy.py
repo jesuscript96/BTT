@@ -68,6 +68,10 @@ class IndicatorType(str, Enum):
     RETRACEMENT = "Retroceso (%)"
     # VOLUMEN CONTRA EL UNIVERSO (22-sep-2026). Los tres son MEDIDAS: solo se
     # comparan contra una cifra, nunca contra otro indicador.
+    # Volumen del dia contra las ACCIONES EN CIRCULACION (no el float: ese
+    # dato no existe con historico. Ver scripts/acciones_circulacion_etl.py).
+    ROTACION = "Rotacion"
+    ROTACION_VENTANA = "Rotacion en X min"
     RVOL_UNIVERSO = "RVOL universo"
     MIN_DESDE_PICO_VOL = "Minutos desde el pico de volumen"
     PENDIENTE_VOLUMEN = "Pendiente del volumen"

@@ -69,6 +69,16 @@ def _utiles(nombre: str, rejilla: dict) -> dict:
     return {k: v[0] for k, v in rejilla.items() if v and v[0] is not None}
 
 
+# Los que se apoyan en una TABLA EXTERNA: con el ticker sintetico de STATS (o
+# sin el fichero en la maquina) devuelven NaN, y eso es CORRECTO — no
+# significa que el motor no conozca el nombre. Cada uno tiene su propio test.
+CON_TABLA_EXTERNA = {
+    "Rotacion": "test_indicadores_volumen_universo.py (acciones en circulacion)",
+    "Rotacion en X min": "test_indicadores_volumen_universo.py (acciones en circulacion)",
+    "RVOL universo": "test_indicadores_volumen_universo.py (perfil del universo)",
+}
+
+
 @pytest.mark.parametrize("nombre", sorted(C.CATALOGO))
 def test_el_motor_sabe_calcular_cada_indicador(nombre):
     """Cada nombre del catálogo tiene que devolver una serie de verdad.
@@ -79,6 +89,12 @@ def test_el_motor_sabe_calcular_cada_indicador(nombre):
     """
     df_len = len(_velas())
     s = _calcula(nombre, _utiles(nombre, C.CATALOGO[nombre].params))
+    if nombre in CON_TABLA_EXTERNA:
+        # Se comprueba lo unico que este test puede comprobar sin la tabla:
+        # que el motor DEVUELVE una serie del tamanyo del dia (si no conociera
+        # el nombre, tampoco llegaria aqui con la longitud bien).
+        assert s is not None and len(s) == df_len, f"{nombre}: el motor no lo conoce"
+        pytest.skip(f"necesita tabla externa; se cubre en {CON_TABLA_EXTERNA[nombre]}")
     assert s is not None, f"{nombre}: el motor no devuelve nada"
     assert len(s) == df_len, f"{nombre}: devuelve {len(s)} valores para {df_len} velas"
     assert pd.Series(s).notna().any(), \
