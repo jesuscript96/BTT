@@ -518,6 +518,18 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 
 **Agregar liquidez en la ENTRADA (22-sep, Jaume; los stops SIEMPRE remueven):** al agregar, la bolsa PAGA: ARCA −0,002 $/acción (04:00-20:00), EDGA −0,0027 (07:00-20:00); con la comisión de Sage la entrada queda en −0,0017 / −0,0024 $/acción (cobras) frente a +0,0033 removiendo: 0,0057 $/acción de diferencia. Ida y vuelta por 10.000 $ con la salida al ask: a 0,50 $ 136 $ (1,36 %) removiendo → 22 $ (0,22 %) agregando por EDGA; a 1 $ 68 → 11 $; a 2 $ 34 → 6 $; a 5 $ 14 → 2,4 $. PERO un solo céntimo de peor precio por esperar cuesta más que todo el ahorro: 200 $ (2 %) a 0,50 $, 100 $ (1 %) a 1 $, 50 $ a 2 $. En la escalera de R-B-01 los escalones −1 % y −2 % ya AGREGAN (quedan por encima del bid) y el −3 % remueve; la rama rápida (bid a < 3 % del último) remueve al bid. **R-B-06 → ABSORBIDA en R-B-01 rama 1 el 22-sep (Jaume): agregar 2 s y luego cruzar.** Ruta al agregar: EDGA de 07:00 en adelante (paga más), ARCA de 04:00 a 07:00. Decisión con datos de sombra.
 
+**PROPUESTA R-B-01 v3 (22-sep, idea de Jaume «agregar siempre con tope de slippage», medida con `43_agregar_con_tope.py` sobre las mismas 349 entradas):** UNA sola rama para entradas y piramidaciones (los TP agregan siempre; los stops remueven siempre): (1) en la señal, venta límite en el PUNTO MEDIO bid-ask, agregando, hasta T1 = 20 s; (2) si a los 20 s no ha llenado (o solo en parte), lo que quede se CRUZA al bid solo si el bid no ha caído más de X = 3 % respecto al bid de la señal; (3) si ha caído más, se cancela y NO se entra. Sustituye a las dos ramas actuales (rama rápida + escalera), que quedan absorbidas. Medido (valor de una señal perdida = +4,2 %, el trade medio de 1B; las perdidas valen más, ya han caído un 5-8 % al minuto):
+| Configuración | Llena agregando | Neto de las entradas vs cruzar | Señales perdidas | Valor esperado por señal |
+|---|---|---|---|---|
+| Cruzar al bid al instante (hoy, rama 1 vieja) | 0 % | 0 | 0 % | 0 |
+| Punto medio 2 s, luego cruzar siempre | 33 % | +0,23 % | 0 % | +0,23 % |
+| Punto medio 10 s, cruzar si bid ≥ −3 % | 52 % | +1,03 % | 8 % | +0,59 % |
+| **Punto medio 20 s, cruzar si bid ≥ −3 %** | 62 % | +1,42 % | 8 % | **+0,95 %** (+0,64 % si las perdidas valen solo su caída al minuto) |
+| Punto medio 30 s, cruzar si bid ≥ −3 % | 65 % | +1,53 % | 10 % | +0,95 % |
+| Al ask 20 s, cruzar si bid ≥ −3 % | 48 % | +1,32 % | 11 % | +0,72 % |
+| Siempre agregar bid + 1 tick 60 s, sin cruzar | 86 % | +0,52 % | 14 % | negativo |
+Lectura: el punto medio gana al ask (llena más y casi igual de caro); entre 20 y 30 s ya no mejora; el tope del 3 % es el que evita perder las mejores señales sin perseguirlas. Ganancia frente a cruzar al instante ≈ +0,9 % por señal en 1B, que es más que comisiones y locates juntos. Cautelas: llenado supuesto en el primer print a nuestro precio o mejor (optimista); sin re-pegar la orden si el libro se mueve (mejorable); afinar T1 y X en sombra con fills reales. Estado: PROPUESTA, pendiente del OK de Jaume.
+
 ### R-B-02 · Entrada ejecutada a medias
 - Situación: la orden de entrada se ejecuta solo en parte (p. ej. 400 de 1.000) porque en el bid no había más. Frecuente: en PM una orden de 300 $ cabe entera el 53 % de las veces; de 3.000 $, el 6 %.
 - Detección: fill parcial confirmado por DAS.
