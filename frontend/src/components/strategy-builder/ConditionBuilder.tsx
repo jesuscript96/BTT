@@ -1658,10 +1658,13 @@ export const IndicatorParams = ({
                                     <option value="vwap_cross">Desde el cruce del VWAP</option>
                                 </select>
                                 {/* La sesión solo pinta con "máximo previo": el cruce del VWAP
-                                    se ancla en el cruce, no en el arranque de una sesión. */}
+                                    se ancla en el cruce, no en el arranque de una sesión.
+                                    Vacío → ap.PM: es el default del MOTOR para null
+                                    (`_ap_session_started`), y este fallback visual debe
+                                    decir lo mismo que el motor (hallazgo 22-09·01). */}
                                 {(value.fade_ref || 'previous_max') === 'previous_max' && (
                                     <select
-                                        value={value.ap_session || 'ap.RTH'}
+                                        value={value.ap_session || 'ap.PM'}
                                         onChange={(e) => onChange({ ...value, ap_session: e.target.value as "ap.PM" | "ap.RTH" | "ap.AM" })}
                                         style={{
                                             flex: '1 1 90px',
@@ -1686,7 +1689,7 @@ export const IndicatorParams = ({
                                 )}
                                 <AyudaOpcion clave={`fade_ref.${value.fade_ref || 'previous_max'}`} />
                                 {(value.fade_ref || 'previous_max') === 'previous_max' && (
-                                    <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.RTH'}`} />
+                                    <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.PM'}`} />
                                 )}
                             </div>
                         );
@@ -1800,7 +1803,7 @@ export const IndicatorParams = ({
                                     Session:
                                 </span>
                                 <select
-                                    value={value.ap_session || "ap.RTH"}
+                                    value={value.ap_session || "ap.PM"}
                                     onChange={(e) => onChange({ ...value, ap_session: e.target.value as "ap.PM" | "ap.RTH" | "ap.AM" })}
                                     style={{
                                         flex: 1,
@@ -1820,7 +1823,7 @@ export const IndicatorParams = ({
                                     <option value="ap.RTH">ap.RTH · 09:30</option>
                                     <option value="ap.AM">ap.AM · 16:00</option>
                                 </select>
-                                <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.RTH'}`} />
+                                <AyudaOpcion clave={`ap_session.${value.ap_session || 'ap.PM'}`} />
                             </div>
                         );
                     default:
@@ -2691,7 +2694,7 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
             : c.source.name === IndicatorType.SESSION_FADE
             ? `% Session Fade (${c.source.session_ref === 'rth' ? 'RTH' : c.source.session_ref === 'full' ? 'día completo' : 'PM'})`
             : c.source.name === IndicatorType.FADE
-            ? `% Fade (${c.source.fade_ref === 'vwap_cross' ? 'cruce VWAP' : `máx. previo ${c.source.ap_session || 'ap.RTH'}`})`
+            ? `% Fade (${c.source.fade_ref === 'vwap_cross' ? 'cruce VWAP' : `máx. previo ${c.source.ap_session || 'ap.PM'}`})`
             : `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';
