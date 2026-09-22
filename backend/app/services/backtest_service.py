@@ -1663,7 +1663,7 @@ def _build_executions(run: list[dict]) -> list[dict]:
         for pe in (leg.get("pyr_executions") or []):
             _kind_pe = pe.get("kind")
             execs.append({
-                "kind": _kind_pe,          # add | reduce | lot_stop
+                "kind": _kind_pe,          # add | reduce | lot_stop | lot_tp
                 "time_epoch": pe.get("time_epoch"),
                 "price": pe.get("price"),
                 "size": pe.get("size"),
@@ -1675,10 +1675,20 @@ def _build_executions(run: list[dict]) -> list[dict]:
                 # la entrada del lote, no solo a posteriori.
                 **({"sl_px": pe.get("sl_px")}
                    if _kind_pe in ("lot_stop", "add") and pe.get("sl_px") else {}),
+                # Nivel de pirámide de la ejecución (visores emparejan lote y
+                # legs por nivel) y, en el TP por lote (PRD 2026-09-22), qué
+                # rung disparó y su travel — sin este passthrough la capa de
+                # API se los come y el visor no puede ni emparejar ni etiquetar.
+                **({"level": pe.get("level")}
+                   if _kind_pe in ("add", "lot_stop", "lot_tp")
+                   and pe.get("level") is not None else {}),
+                **({"rung": pe.get("rung"), "travel_pct": pe.get("travel_pct")}
+                   if _kind_pe == "lot_tp" else {}),
                 "label": (f"Pirámide {pe.get('level')}: "
                           + ("añade" if _kind_pe == "add"
                              else "reduce" if _kind_pe == "reduce"
-                             else "SL lote")),
+                             else "SL lote" if _kind_pe == "lot_stop"
+                             else "TP lote")),
             })
         # Y los de la escalera del scalping complejo, marcados para que el
         # gráfico los pinte más pequeños (son muchos y muy seguidos).
@@ -1697,9 +1707,10 @@ def _build_executions(run: list[dict]) -> list[dict]:
     # le emite un trade propio) y en `pyr_executions`. Se queda la segunda, que
     # dice de qué pirámide viene; sin esto el gráfico pintaba dos marcadores
     # encima del mismo evento. El SL de lote es igual: leg con exit_reason
-    # "Pyramid Lot Stop" Y entrada kind "lot_stop" en la bitácora.
+    # "Pyramid Lot Stop" Y entrada kind "lot_stop" en la bitácora. El TP por
+    # lote (PRD 2026-09-22), idéntico: leg "Lot TP (n/N)" + kind "lot_tp".
     ya = {(e["time_epoch"], e["price"])
-          for e in execs if e["kind"] in ("reduce", "lot_stop")}
+          for e in execs if e["kind"] in ("reduce", "lot_stop", "lot_tp")}
     # Cada leg aporta su salida (parcial, reducción o cierre final).
     for leg in run:
         if (leg.get("exit_time_epoch"), leg.get("exit_price")) in ya:

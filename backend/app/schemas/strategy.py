@@ -595,6 +595,35 @@ class StrategyCreate(BaseModel):
 
     @field_validator("pyramiding")
     @classmethod
+    def _valida_lot_tp_por_nivel(cls, v):
+        """TP POR LOTE (PRD 2026-09-22): valida `lot_tp` al GUARDAR.
+
+        Patrón idéntico al de `lot_stop`: el bloque sigue siendo un dict opaco
+        y la definición de qué es válido vive en
+        `strategy_engine.normaliza_lot_tp` — una sola fuente, la misma del
+        compilador. travel_pct estrictamente creciente, capital_pct en
+        (0, 100] con Σ ≤ 100: todo rebota con 422, nada de drops silenciosos.
+        """
+        if not isinstance(v, dict):
+            return v
+        niveles = v.get("levels")
+        if not isinstance(niveles, list):
+            return v
+        from app.services.strategy_engine import normaliza_lot_tp
+        for j, lv in enumerate(niveles):
+            if not isinstance(lv, dict) or lv.get("lot_tp") is None:
+                continue
+            try:
+                normaliza_lot_tp(lv["lot_tp"])
+            except ValueError as e:
+                raise ValueError(f"levels[{j}].lot_tp: {e}") from e
+            if str(lv.get("action", "add")).strip().lower() == "reduce":
+                raise ValueError(
+                    f"levels[{j}].lot_tp: solo aplica a niveles action='add'")
+        return v
+
+    @field_validator("pyramiding")
+    @classmethod
     def _valida_steps_por_nivel(cls, v):
         """CAMINO DE CONDICIONES (PRD 2026-09-16): valida `steps` al GUARDAR.
 

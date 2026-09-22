@@ -606,6 +606,13 @@ export interface PyramidLevel {
     // si no se puede resolver (pivote sin confirmar, lado ganador), el
     // añadido NO se ejecuta.
     lot_stop?: LotStopConfig | null;
+    // TP POR LOTE (PRD 2026-09-22). Solo en niveles 'add': la escalera de
+    // toma de beneficios propia de CADA ejecución del nivel. Cada rung cierra
+    // capital_pct % del tamaño EJECUTADO del lote cuando el precio recorre
+    // travel_pct % a favor desde SU precio de entrada; el resto del lote
+    // cabalga hasta la salida del trade (o su lot_stop). travel estrictamente
+    // creciente y Σ capital_pct ≤ 100 (el backend lo valida con 422).
+    lot_tp?: LotTpConfig | null;
 }
 
 export interface LotStopConfig {
@@ -617,6 +624,19 @@ export interface LotStopConfig {
     level?: string;
     pivot_window?: number;   // solo con pivote (default backend: 3)
     offset_pct?: number;     // holgura % que ALEJA el stop del precio
+}
+
+export interface LotTpConfig {
+    // Escalera ordenada por travel_pct creciente (el validador del backend
+    // rebota con 422 cualquier otra cosa).
+    rungs: LotTpRung[];
+}
+
+export interface LotTpRung {
+    // % de recorrido favorable desde el precio del lote (short: caída).
+    travel_pct: number;
+    // % del tamaño EJECUTADO del lote que cierra este rung.
+    capital_pct: number;
 }
 
 // Un grupo de piramides con su modo. Los grupos corren en paralelo entre si;

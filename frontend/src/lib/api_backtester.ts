@@ -275,7 +275,10 @@ export interface TradeExecution {
   // 'lot_stop' = SL por lote (PRD 2026-09-15): el cierre defensivo de UN
   // lote de pirámide. Lleva `sl_px` (su nivel congelado) para que el gráfico
   // pueda pintar la línea punteada.
-  kind: 'entry' | 'add' | 'reduce' | 'exit' | 'lot_stop';
+  // 'lot_tp' = TP por lote (PRD 2026-09-22): el rung de toma de beneficios
+  // de UN lote (fill de límite al nivel, o al open si la vela gap-eó más
+  // allá). Lleva `rung` (1-based) y `travel_pct`.
+  kind: 'entry' | 'add' | 'reduce' | 'exit' | 'lot_stop' | 'lot_tp';
   time_epoch: number;
   price: number;
   size?: number;
@@ -283,6 +286,12 @@ export interface TradeExecution {
   label?: string;
   // Solo kind 'lot_stop': el nivel del SL del lote.
   sl_px?: number;
+  // Solo kind 'lot_tp': qué rung del lote disparó (1-based) y su travel %.
+  rung?: number;
+  travel_pct?: number;
+  // Nivel de piramidación (1-based) al que pertenece la ejecución: lo llevan
+  // 'add', 'lot_stop' y 'lot_tp' — el visor empareja lote y legs por nivel.
+  level?: number;
   // Ejecución de la escalera del scalping complejo (el gráfico la pinta más pequeña).
   escalera?: boolean;
 }

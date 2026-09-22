@@ -621,6 +621,61 @@ def normaliza_lot_stop(lot_stop) -> dict:
     raise ValueError(f"'mode' debe ser 'pct' o 'structure' (llegó {lot_stop.get('mode')!r})")
 
 
+# ── TP POR LOTE (PRD 2026-09-22, docs/PRD_TP_POR_LOTE_20260922.md) ────────
+#
+# El espejo de `lot_stop`: cada EJECUCIÓN de un nivel 'add' puede declarar su
+# propia escalera de toma de beneficios. Un rung = «al recorrer travel_pct %
+# desde el PRECIO DEL LOTE (a favor del trade), cierra capital_pct % del
+# TAMAÑO EJECUTADO del lote». El resto del lote NO se cierra solo: cabalga
+# hasta la salida del trade o su stop de lote. Igual que `normaliza_lot_stop`,
+# ESTA función es la definición única (la usa el compilador y el
+# field_validator del schema) y los errores son ValueError con mensaje en
+# claro: nada de drops silenciosos.
+def normaliza_lot_tp(lot_tp) -> dict:
+    """Valida y normaliza el bloque `lot_tp` de un nivel de piramidación.
+
+    Devuelve el bloque CANÓNICO que viaja al simulador:
+      {"rungs": [(travel_pct, capital_pct), ...]}   — travel en %, capital en %
+
+    Reglas (PRD §3 y §5.1, revisión de Álvaro 22-sep): rungs no vacíos,
+    travel_pct > 0 y ESTRICTAMENTE creciente (dos rungs al mismo nivel o en
+    orden decreciente son un 422 — no se reordenan en silencio), capital_pct
+    en (0, 100], y la suma de capital_pct ≤ 100 (el resto del lote cabalga).
+    """
+    if not isinstance(lot_tp, dict):
+        raise ValueError(f"debe ser un objeto, llegó {type(lot_tp).__name__}")
+
+    rungs_raw = lot_tp.get("rungs")
+    if not isinstance(rungs_raw, list) or not rungs_raw:
+        raise ValueError(
+            "'rungs' debe ser una lista no vacía de objetos "
+            "{travel_pct, capital_pct}")
+
+    rungs = []
+    suma_cap = 0.0
+    for j, r in enumerate(rungs_raw):
+        if not isinstance(r, dict):
+            raise ValueError(f"rungs[{j}] debe ser un objeto, llegó {type(r).__name__}")
+        t = _numero_lot_stop(r.get("travel_pct"), f"rungs[{j}].travel_pct")
+        c = _numero_lot_stop(r.get("capital_pct"), f"rungs[{j}].capital_pct")
+        if t <= 0:
+            raise ValueError(f"rungs[{j}].travel_pct debe ser > 0")
+        if not (0.0 < c <= 100.0):
+            raise ValueError(f"rungs[{j}].capital_pct debe estar en (0, 100]")
+        if rungs and t <= rungs[-1][0]:
+            raise ValueError(
+                f"rungs[{j}].travel_pct debe ser ESTRICTAMENTE creciente "
+                f"(llegó {t:g} con el anterior en {rungs[-1][0]:g}: un ladder "
+                f"desordenado es un error de quien lo escribe, no se reordena)")
+        suma_cap += c
+        rungs.append((t, c))
+    if suma_cap > 100.0 + 1e-9:
+        raise ValueError(
+            f"la suma de capital_pct no puede pasar de 100 (suma {suma_cap:g}: "
+            f"el resto del lote tiene que cabalgar hasta la salida del trade)")
+    return {"rungs": rungs}
+
+
 def normaliza_steps(steps, same_bar=True) -> dict:
     """Valida y normaliza el «camino de condiciones» de un nivel (PRD
     2026-09-16, docs/PRD_CAMINITO_CONDICIONES_PIRAMIDACION_20260916.md).
@@ -762,6 +817,21 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             except ValueError as e:
                 raise ValueError(f"pyramiding nivel {len(pyr_levels_def) + 1}, "
                                  f"lot_stop: {e}") from e
+        # TP POR LOTE (PRD 2026-09-22). Mismo patrón que lot_stop: sin la
+        # clave el nivel compilado sale SIN 'lot_tp' y es bit-idéntico al de
+        # siempre (regla nº1). Con la clave, valida fuerte; y solo en niveles
+        # 'add' (un reduce no abre lotes que tomar).
+        lot_tp_def = None
+        if lv.get("lot_tp") is not None:
+            if action != "add":
+                raise ValueError(
+                    "lot_tp solo aplica a niveles action='add' "
+                    f"(nivel con action={action!r})")
+            try:
+                lot_tp_def = normaliza_lot_tp(lv["lot_tp"])
+            except ValueError as e:
+                raise ValueError(f"pyramiding nivel {len(pyr_levels_def) + 1}, "
+                                 f"lot_tp: {e}") from e
         nivel_compilado = {
             "action": action,
             "unit": unit,
@@ -805,6 +875,8 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             nivel_compilado["same_bar"] = steps_canon["same_bar"]
         if lot_stop_def is not None:
             nivel_compilado["lot_stop"] = lot_stop_def
+        if lot_tp_def is not None:
+            nivel_compilado["lot_tp"] = lot_tp_def
         pyr_levels_def.append(nivel_compilado)
 
     # ── Scalping (2026-09-12) ──
@@ -1391,6 +1463,9 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                     "hybrid_black_swan_pct": lv.get("hybrid_black_swan_pct"),
                     "hybrid_max_loss_pct": lv.get("hybrid_max_loss_pct"),
                     **({"lot_stop": lv["lot_stop"]} if lv.get("lot_stop") is not None else {}),
+                    # TP por lote (PRD 2026-09-22): mismo carril que lot_stop —
+                    # sin esta copia el bloque se pierde AQUÍ en silencio.
+                    **({"lot_tp": lv["lot_tp"]} if lv.get("lot_tp") is not None else {}),
                     # Grupo, modo del grupo y disparo por recorrido (2026-09-16):
                     # un camino es un nivel mas de su grupo.
                     "group": lv.get("group", 0),
@@ -1443,6 +1518,8 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 # SL por lote: solo cuando el nivel lo declara, para que el
                 # dict de un nivel sin la clave siga siendo el de siempre.
                 **({"lot_stop": lv["lot_stop"]} if lv.get("lot_stop") is not None else {}),
+                # TP por lote: idem (PRD 2026-09-22).
+                **({"lot_tp": lv["lot_tp"]} if lv.get("lot_tp") is not None else {}),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel
