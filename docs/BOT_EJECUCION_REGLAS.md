@@ -526,9 +526,12 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 | Punto medio 10 s, cruzar si bid ≥ −3 % | 52 % | +1,03 % | 8 % | +0,59 % |
 | **Punto medio 20 s, cruzar si bid ≥ −3 %** | 62 % | +1,42 % | 8 % | **+0,95 %** (+0,64 % si las perdidas valen solo su caída al minuto) |
 | Punto medio 30 s, cruzar si bid ≥ −3 % | 65 % | +1,53 % | 10 % | +0,95 % |
+| Punto medio 45 s, cruzar si bid ≥ −3 % | 69 % | +2,00 % | 11 % | +1,29 % |
+| Punto medio 60 s, cruzar si bid ≥ −2 % | 71 % | +2,36 % | 15 % | +1,38 % |
+| **Punto medio 60 s, cruzar si bid ≥ −3 %** (pregunta de Jaume) | 71 % | +2,14 % | 11 % | **+1,45 %** |
 | Al ask 20 s, cruzar si bid ≥ −3 % | 48 % | +1,32 % | 11 % | +0,72 % |
 | Siempre agregar bid + 1 tick 60 s, sin cruzar | 86 % | +0,52 % | 14 % | negativo |
-Lectura: el punto medio gana al ask (llena más y casi igual de caro); entre 20 y 30 s ya no mejora; el tope del 3 % es el que evita perder las mejores señales sin perseguirlas. Ganancia frente a cruzar al instante ≈ +0,9 % por señal en 1B, que es más que comisiones y locates juntos. Cautelas: llenado supuesto en el primer print a nuestro precio o mejor (optimista); sin re-pegar la orden si el libro se mueve (mejorable); afinar T1 y X en sombra con fills reales. Estado: PROPUESTA, pendiente del OK de Jaume.
+Lectura: el punto medio gana al ask (llena más y casi igual de caro); de 20 a 60 s sigue mejorando (+0,95 → +1,45 %) porque llenan más agregando sin perder más señales; 60 s coincide con la caducidad de la señal (R-B-04); el tope del 3 % es el que evita perder las mejores señales sin perseguirlas. Ganancia frente a cruzar al instante ≈ +0,9 % por señal en 1B, que es más que comisiones y locates juntos. Cautelas: llenado supuesto en el primer print a nuestro precio o mejor (optimista); sin re-pegar la orden si el libro se mueve (mejorable); afinar T1 y X en sombra con fills reales. Estado: PROPUESTA, pendiente del OK de Jaume.
 
 ### R-B-02 · Entrada ejecutada a medias
 - Situación: la orden de entrada se ejecuta solo en parte (p. ej. 400 de 1.000) porque en el bid no había más. Frecuente: en PM una orden de 300 $ cabe entera el 53 % de las veces; de 3.000 $, el 6 %.
