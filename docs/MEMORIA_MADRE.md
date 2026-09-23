@@ -3480,6 +3480,1860 @@ interruptor por razones históricas.
 
 ---
 
+<!-- merge(staging) 2026-09-08: entradas propias de alvaro-rama-desarrollo que staging no tenia, conservadas al fusionar. Append-only como siempre. -->
+
+### [HALLAZGO · 2026-08-29 · 02] "PM High Gap (%)" significa cosas distintas según la vía del motor
+- **Reporta:** ZCode (para Álvaro; afecta a todo el equipo)
+- **Severidad:** inconsistencia
+- **Dónde:** `backend/app/backtester/engine.py:784-797` vs
+  `backend/app/services/indicators.py:~1290` y
+  `backend/app/services/strategy_engine.py:~160`
+- **Qué observé:** la vía `engine.py` calcula PM High Gap como
+  `(PMH_final_del_día − apertura_de_ayer) / apertura_de_ayer`, mientras que
+  `indicators.py` y `strategy_engine.py` (la vía rápida que corre los
+  backtests) usan `(PMH_acumulado_causal − cierre_de_ayer) / cierre_de_ayer`.
+  Dos denominadores distintos y PMH final vs corriendo: el mismo número no
+  representa lo mismo.
+- **Cómo reproducir:** leer las tres implementaciones citadas; contrastar el
+  valor de la condición "PM High Gap (%)" de una misma estrategia en cada vía.
+- **Evidencia:** código citado (semántica divergente, sin ejecución cruzada
+  aún — marcado como inconsistencia estructural).
+- **Hipótesis de causa:** HIPÓTESIS — `engine.py` es vía legado que quedó
+  sin actualizar cuando el indicador se hizo causal en las otras vías.
+- **Impacto:** backtests que pasen por la vía de `engine.py` ven un PMH Gap
+  distinto (y con PMH final = look-ahead intradía) que por la vía rápida.
+  Además bloquea/confunde el uso de "PM High Gap (%)" como target dinámico
+  (gap-vs-gap) hasta que las vías converjan.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### 6. Adoptados los dos commits de Álvaro del 30-ago
+
+Jaume da el visto bueno y entran por cherry-pick suelto (nunca merge de la rama:
+son 30 commits con conflicto seguro en el documento). Autoría de Álvaro
+conservada.
+
+| Commit aquí | Original | Qué trae |
+|---|---|---|
+| `e872c70` | `9c0cb85` | rechazar universos sin reglas + cap de pre-cache |
+| `54186e2` | `8063e0a` | filtros Gap −1 compartidos por las tres vías + rachas por día |
+
+**El único conflicto fue `docs/MEMORIA_MADRE.md`**, como estaba previsto. Se
+resolvió **conservando los dos lados**: las entradas de Álvaro del 29-ago están
+ahora al final, bajo una cabecera que explica que llegaron por cherry-pick y por
+eso van fuera de orden cronológico.
+
+**Verificación de que no corrompe nada:**
+- Los 14 tests que traen sus commits (`test_prev_day_universe_filters.py` y
+  `test_daily_streak_metrics.py`): **14/14 en verde** aquí.
+- Suite completa antes y después de los cherry-picks: **el conjunto de fallos es
+  IDÉNTICO** (los mismos 103, todos dependientes del lago local y de GCS). Los
+  pases suben de 384 a 400 = sus 14 tests + 2 míos del modo `full`.
+- `tsc --noEmit`: 0 errores.
+- Comprobado en la app en marcha: la sección **«GAP-1 DAY»** aparece en el
+  configurador de dataset con sus siete métricas (Open price, Open PM price, PM
+  High Gap, Premarket total volume, Gap, RTH Total volume, Bar RTH Range).
+
+**Consecuencia que conviene tener presente:** cualquier dataset que use una regla
+`Gap −1` deja de pasar por el hot-cache y va por la vía autoritativa, más lenta.
+Es deliberado y es lo correcto — por el camino rápido ese filtro **se ignoraba en
+silencio** y el universo salía sin filtrar.
+
+**Sigue ABIERTO el HALLAZGO 02 de Álvaro** («PM High Gap (%)» significa cosas
+distintas en `engine.py` y en la vía rápida). No se ha tocado: arreglarlo cambia
+los backtests viejos, y es una decisión de producto que Jaume no ha tomado.
+
+### 7. RSI y MACD, y dos borrados grandes
+
+**RSI y las tres líneas del MACD, expuestos.** Sorpresa al mirarlo: el backend
+**ya los calculaba** —y hasta por la vía rápida— y el gráfico **ya los pintaba**.
+Lo único que faltaba era que aparecieran en el desplegable de condiciones. Y
+«MACD Signal» / «MACD Histogram» tampoco estaban en el enum del BACKEND, así que
+guardar una estrategia con ellos habría devuelto 422 (el fallo de Darvas otra
+vez). Las tres líneas son **nombres distintos, no un parámetro**: así las tiene
+el motor. `macd_line` de `IndicatorConfig` queda marcado como ajuste fantasma —
+no lo lee nadie, no conectarle UI.
+
+**Borrado `app/backtester/engine.py` (1.905 líneas).** Código muerto: nadie
+instanciaba `BacktestEngine`, y este documento y dos módulos ya lo decían. Se
+van con él siete scripts y dos tests. Lo único vivo que tenía —
+`find_elapsed_time_condition/minutes`, que solo leen la definición de la
+estrategia— se movió a `backtest_service.py`.
+
+> **Para Álvaro:** con esto, el **HALLAZGO 02** (el «PM High Gap (%)» divergente
+> entre vías) **queda cerrado por desaparición de una de las dos vías**. La que
+> tenía el look-ahead y el denominador raro era justo `engine.py`. Ya no hay dos
+> semánticas: solo queda la causal.
+>
+> **Aviso honesto:** `swing_option` se queda **sin ningún test**. El que había
+> probaba `engine.run()`, o sea una implementación que no se ejecuta — era
+> confianza falsa, pero conviene saber que ahora no hay red.
+
+**Borrado el modo Wizard (7.044 + 347 líneas).** Jaume solo usa el modo libre.
+«Nueva Estrategia» y «Configurar» entran directos al constructor; desaparecen la
+pantalla de elección y el modo `wizard`. Dos detalles que había que atar:
+
+1. Las sesiones guardadas con `mode: 'wizard'` se traducen a `'builder'` al
+   restaurar. Sin eso la página quedaría en un modo inexistente y el cajón no se
+   abriría nunca.
+2. **El tutorial guiado usaba el Wizard en 6 de sus 9 pasos.** No se ha perdido:
+   se rehízo sobre el constructor libre con las anclas que este **ya tenía**
+   (`st-bias`, `st-sessions`, `st-entry`, `st-risk`), comprobadas en el DOM.
+
+Total del día: **10.400 líneas menos**, sin una sola regresión (mismo conjunto
+de 103 fallos de entorno antes y después).
+
+### [HALLAZGO · 2026-08-29 · 02 → RESUELTO POR BORRADO] "PM High Gap (%)" divergente entre vías del motor
+- **Reporta/cierra:** ZCode (para Álvaro)
+- **Resuelto por:** `92edadc` en `staging` (borrado del motor viejo) + merge `da4a1b7` en `alvaro-rama-desarrollo`. `backend/app/backtester/engine.py` (la vía que calculaba el gap con apertura de ayer + PMH final del día) YA NO EXISTE. Solo quedan `indicators.py` y `strategy_engine.py`, que ya coincidían (cierre de ayer + PMH acumulado causal).
+- **Verificación post-merge:** `ls backend/app/backtester/` → solo `__init__.py`, `backtest_validator.py`, `portfolio.py`. Tests del feature Gap -1/rachas: 14/14 pasando sobre el árbol mergeado. Backend reloaded con el código nuevo y API 200.
+- **Estado:** RESUELTO (por eliminación de la vía divergente; merge `da4a1b7`)
+
+## 2026-09-01
+
+### Investigación: «Bar Close [t-5] > PM High» — el NÚCLEO evalúa correcto
+
+Petición de Álvaro: «¿es verdad que la condición "bar close 5 velas atrás > PMH"
+funciona mal? ¿hay algún bug?». Verificado el camino completo por lectura de
+código + repro sintética (`backend/scratch/test_offset_pmh_repro.py`, fichero
+efímero de un uso):
+
+- La condición viaja como `source={"name":"Bar Close","offset":5}` vs
+  `target={"name":"PM High"}`. `compute_indicator` hace `result.shift(5)`
+  (`indicators.py:981`), PMH es el running causal del premarket
+  (`_pm_running_series`, congelado tras las 09:30). Con offset la estrategia
+  cae SIEMPRE en la vía clásica (`_cfg_native_ok` marca `has_special` en
+  `strategy_engine.py:509`; el dispatch nativo ignora el offset, por eso el
+  gate). `compile_strategy_def` no pierde el campo.
+- Repro 1m día completo (720 barras): señal del motor = `close[i-5] > PMH[i]`
+  con **0 mismatches**. Idem sin offset, idem frame solo-RTH (PMH cae a la
+  constante de `daily_stats`, causal en RTH), idem a 5m (offset=5 ⇒ 25 min,
+  unidades = velas del timeframe de la condición, coherente con el label).
+
+**Conclusión: no hay bug en la evaluación de la condición en sí.** Lo que sí
+hay son dos salvedades, registradas como hallazgos abajo: semántica de "vela"
+con datos dispersos (01) y contaminación de sesiones en modo swing (02).
+
+### [HALLAZGO · 2026-09-01 · 01] «Bars Back» cuenta FILAS dispersas, no MINUTOS — en premarket la ventana real varía por ticker
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** duda (semántica de diseño, no bug de cálculo)
+- **Dónde:** `backend/app/services/indicators.py:981` (`result.shift(offset)`)
+- **Qué observé:** `offset` («Bars Back (X)» en la UI, `[t-N]` en el label) se
+  aplica con `shift(N)` sobre las filas del df del día. Las velas del lago son
+  dispersas (solo minutos con operaciones; documentado para Squeeze en la
+  entrada del 2026-08-26: huecos de hasta 37 min en premarket). Resultado: en
+  un ticker con huecos, "5 velas atrás" puede mirar el cierre de hace 8, 15 o
+  30 minutos de reloj, y la ventana difiere entre tickers y tramos del día.
+  Squeeze se resolvió por reloj (asof sobre timestamps) precisamente por esto;
+  el offset genérico no.
+- **Cómo reproducir:** cualquier condición `Bar Close` con offset>=2 sobre un
+  ticker con premarket iliquido; comparar `close.shift(N)` contra el cierre de
+  hace N*tf minutos de reloj — divergen en cuanto hay huecos.
+- **Evidencia:** repro sintética `backend/scratch/test_offset_pmh_repro.py`
+  (datos continuos: 0 mismatches — el shift es correcto por filas); la
+  dispersión del lago real está medida en la entrada de Squeeze
+  (MEMORIA_MADRE 2026-08-26 §1).
+- **Impacto:** si Álvaro lee «5 velas atrás» como «hace 5 minutos», la
+  condición parece "funcionar mal" en premarket/illiquidos aunque el motor haga
+  exactamente lo que el label dice. En RTH denso casi nunca se nota. Decidir:
+  mantener filas (documentar) o pasar el offset a asof por reloj (como
+  Squeeze; CAMBIA resultados de estrategias guardadas).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-01 · 02] Modo swing: PMH/PML/RTH-High/Low/Open acumulan A TRAVÉS de los días concatenados
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** `backend/app/services/indicators.py:1123-1171` (`_pm_running_series`/`_rth_running_series` usan minutos-del-día + `fmax.accumulate` sobre el frame ENTERO) + `backend/app/services/backtest_signals.py:450-457` (concat de días del swing)
+- **Qué observé:** en swing, `_preprocess_pair` concatena gap-day + días
+  posteriores en un solo frame y `translate_strategy` evalúa sobre él. Las
+  series de sesión enmascaran por minutos-del-día y acumulan sin cortar por
+  fecha: en el día 2, "PM High" vale max(PMH día 1, PMH día 2) — no el PMH de
+  NI un día concreto. Ídem RTH High/Low. Las ENTRADAS del día 2+ se suprimen
+  (máscara `is_subsequent_np`), pero las SALIDAS y cualquier condición evaluada
+  en días posteriores ven la serie mezclada; y `close.shift(5)` en las primeras
+  barras del día 2 lee las últimas velas del día 1.
+- **Cómo reproducir:** `backend/scratch/test_swing_pmh.py` (efímero): día 1 con
+  PMH 10.47 y día 2 con PMH ~10.2 concatenados → `compute_indicator("PM High")`
+  en el día 2 devuelve 10.47 (el del día 1); `RTH High` día 2 devuelve el RTH
+  high del día 1.
+- **Evidencia:** salida del repro: `PMH día2 09:31 = 10.4700` (per-día sería
+  ~10.20), `PMH día2 12:00 = 10.4700`, `RTH High día2 12:00 = 10.3200` (es el
+  high RTH del día 1).
+- **Hipótesis de causa:** HIPÓTESIS — las series de sesión se diseñaron para
+  frames de un solo día (el caso no-swing es el 99% del uso) y nadie cortó el
+  accumulate por fecha al introducir la concatenación swing. Nota: para un
+  swing corto abierto el día del gap, anclar salidas al PMH del DÍA DEL GAP
+  sería defendible como semántica; el máx mezclado no corresponde a ninguna de
+  las dos lecturas (si el día 2 supera al 1, la serie se salta al PMH del día
+  2). Los stops estructurales del simulador (`pm_highs` de `arrays_out`) usan
+  la misma serie acumulada.
+- **Impacto:** estrategias swing cuyas SALIDAS (o stops de estructura)
+  referencien PMH/PML/RTH-High/Low: en días 2+ se comparan contra niveles que
+  no son los de ningún día real. Con la condición de esta investigación como
+  SALIDA («close 5 velas atrás > PMH») en swing, sí "funciona mal".
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### Receta (sin código): setup «First Red Day» — racha de gaps en días PREVIOS al operado
+
+Petición de Álvaro: filtrar que los 2 días anteriores al día operado hayan tenido
+cada uno un gap grande (>= 25%). Verificado contra el código (2026-09-01):
+
+- Las `rules` de universo solo tienen LAG 1 filtrable (`lag_gap_pct_1`,
+  `lag_pmh_gap_pct_1`, etc., `qualifying_windows.PREV_DAY_LAG_SOURCES`). LAG 2
+  existe en stage-2 solo para OHLCV/pm_high (`lag_rth_*_2`, `lag_pm_high_2`),
+  NO para gap_pct/pmh_gap_pct → «el gap de hace 2 días» no es regla directa.
+- **Inversión del ancla**: anclar el dataset en el ÚLTIMO día de subida T-1
+  (rules: `pmh_gap_pct >= 25` + `lag_pmh_gap_pct_1 >= 25`) y poner la estrategia
+  `apply_day: gap_1_day` → opera T. `_remap_trading_day` re-escribe
+  yesterday_*/rth_*/pm_high/gap_pct al día operado con semántica correcta
+  (yesterday_close = cierre de T-1). Selecciona exactamente los mismos días que
+  «T-1 y T-2 gappearon y opero T».
+- Reglas AND-only: «(gap_pct O pmh_gap_pct) >= 25 por día» NO es expresable en
+  un dataset; elegir una métrica o lanzar variantes.
+- Precaución look-ahead: postgap_preconditions con `day: 'gap_1_day'` usan la
+  métrica DIARIA completa del día operado (cierre de T): como filtro de universo
+  en backtest es conocimiento del futuro. El "día rojo" debe decidirse con
+  condiciones intradía, no con el cierre.
+
+## 2026-08-31 (tarde) — Bloque «Modelos avanzados»: XGBoost como filtro
+
+Petición de Jaume: poder aplicar un modelo a una estrategia existente y ver el
+resultado **fuera de muestra** como si fuera un backtest normal. Modo filtro
+terminado; el modo «estrategia» (el modelo decidiendo solo) queda declarado en
+la interfaz pero devuelve un aviso de que no está implementado.
+
+### Cómo está montado, y por qué así
+
+**Entrenar y probar son la MISMA `run_backtest`, llamada dos veces con
+universos distintos.** De ahí salen tres propiedades sin escribir código:
+
+- Lo que se devuelve —equity, trades, métricas, gráfico— es el periodo de
+  prueba y nada más: al motor simplemente no se le dan los días de
+  entrenamiento. No hay que filtrar métricas a posteriori.
+- El entrenamiento no puede contaminarse: literalmente no ha visto esos días.
+- Si alguien cambia el motor, las dos pasadas cambian igual.
+
+Por eso el bloque tiene **sus propias fechas** y no reutiliza el deslizador
+IS/OOS del panel: ese reparte UN backtest en dos tramos y las métricas que
+enseña son las del IS. La interfaz avisa de que hay que dejarlo al 100 % IS.
+
+**El punto de contacto con el motor es UNO:** una máscara sobre `entries_arr`,
+en el mismo sitio donde ya filtra el swing. El modelo solo QUITA entradas,
+nunca añade, así que el peor caso posible es operar menos. Simulador, gestión
+de riesgo, métricas, gráfico y Walk Forward quedan intactos.
+
+Va **después** del filtro de swing, a petición de Jaume: con swing el frame
+abarca varios días y es el swing quien impide abrir en los posteriores. Si el
+modelo corriera antes, juzgaría señales que el swing va a descartar igualmente.
+
+### El hallazgo: el HMM de librería tiene look-ahead
+
+`predict` (Viterbi) y `predict_proba` (forward-backward) de `hmmlearn` miran la
+secuencia **entera**: el estado que asignan a las 09:35 está calculado sabiendo
+lo que pasó a las 15:00 de ese mismo día. **Da igual con qué periodo se haya
+entrenado** — el futuro entra por la inferencia, no por el entrenamiento.
+
+Por eso la recursión hacia delante está escrita a mano. Hay un test que lo
+demuestra recalculando con el día cortado, y **otro que comprueba que la función
+de la librería SÍ falla esa prueba**, para que nadie la sustituya por comodidad
+dentro de seis meses.
+
+### Decisiones de diseño que no son evidentes
+
+- **Se eligen indicadores, no rangos.** Encontrar los cortes («RSI > 68 con
+  volumen alto») es exactamente lo que hace un árbol de decisión; dárselos
+  hechos es hacerle el trabajo peor y le impide encontrar uno mejor.
+- **Los niveles de precio entran como distancia en %.** Un VWAP crudo haría que
+  el modelo memorizara «18,40 dólares», que no se traslada a otro ticker.
+- **Las señales que no llegaron a operarse se descartan**, no se etiquetan como
+  perdedoras: «no se ejecutó» no es «salió mal».
+- **El recuento de señales vetadas lo lleva el propio modelo**, gratis. Correr
+  la prueba otra vez sin modelo solo para restar es un backtest entero más, así
+  que esa comparación va apagada por defecto.
+- **La configuración se valida antes de cargar un solo dato**, y sus errores van
+  como 400 con el texto: el diagnóstico del frontend pinta los 5xx como
+  `Response Data: {}` y parecen un error mudo.
+
+### Tiempos, medidos
+
+El modelo es prácticamente gratis; **el coste es el lago**. XGBoost con 1.000
+operaciones tarda 0,13 s; el HMM sobre un millón de velas, 15 s; la inferencia
+por vela, 0,2 ms. **Un backtest con modelo ≈ 2× uno normal**, por las dos
+pasadas.
+
+### Verificación y dependencias
+
+30 tests nuevos. Suite completa sin regresiones, `tsc` limpio, bloque
+comprobado en la app. **No se ha corrido todavía un backtest real de punta a
+punta** con el bloque activo (hace falta dataset y minutos de lago).
+
+Tres dependencias nuevas: `xgboost`, `scikit-learn`, `hmmlearn`. Comprobado con
+un simulacro previo que **no tocan numpy, pandas ni scipy** — solo añaden.
+
+### Lo que falta
+
+1. El modo «estrategia» (standalone).
+2. **Persistencia del modelo entrenado.** Hoy se entrena en cada backtest, así
+   que una estrategia guardada con modelo no puede reproducir un run viejo.
+   Haría falta versionar los binarios y que la estrategia guarde el id.
+
+### Modo «estrategia» completado, con guardas
+
+Jaume fijó la especificación y es la buena: **el stop lo pone él, no el modelo.**
+El etiquetado (`label_triple_barrier`) simula desde cada vela con **su** stop y
+**su** take profit —los mismos valores que `_parse_risk_management` le entrega
+al simulador, no una interpretación aparte— y mira qué pasa primero: toca
+objetivo (buena), toca stop (mala), o se acaba el plazo (el signo de lo que
+llevara). Empate en la misma vela: gana el stop, que es lo pesimista.
+
+**Por qué no el atajo fácil.** La tentación es etiquetar con «¿subió un X% en N
+minutos?». Eso **ignora el camino**: una vela desde la que el precio primero cae
+un 20% —stop saltado, estás fuera— y luego sube saldría marcada como BUENA. El
+modelo aprendería a buscar justo esas y en real comerías stop tras stop mientras
+el backtest presume de aciertos. Hay un test dedicado a ese caso concreto.
+
+**Las guardas, que también las pidió él.** En modo «estrategia» el backtest se
+para ANTES de cargar un solo dato si están activas la lógica de entrada, la de
+salida, la piramidación o el swing: todas ponen entradas, y el resultado sería
+una mezcla de dos sistemas de la que no se sabría de quién es el mérito. El
+mensaje dice cuál sobra y ofrece la alternativa. Y se exige un stop configurado.
+
+**Lo que sí se respeta, tal cual:** stop, take profit total y parcial, trailing,
+salida por hora, límite de pérdida diaria, reentradas, locates, comisiones y
+slippage. Lo aplica el simulador de siempre, exactamente igual que en cualquier
+otra estrategia.
+
+**Una decisión que se tomó sin preguntar, por si algún día chirría:** las
+SALIDAS no las da el modelo, vienen de la gestión de riesgo. Un modelo de salida
+necesitaría su propia etiqueta («¿fue bueno salir aquí?»), que es un segundo
+problema de modelado entero.
+
+**Dos detalles de implementación que no son evidentes:** el motor se salta los
+días sin señales, y en este modo no hay señales de las reglas — ese atajo se
+desactiva solo en este modo. Y el día se **muestrea** (~120 velas de las ~700)
+para entrenar: con miles de días, guardarlas todas son cientos de megas y la
+vela 301 no enseña nada que no enseñara la 300.
+
+## 2026-08-31 (noche) — Auditoría del bloque de modelos: DOS fugas, resultados inválidos
+
+Jaume corrió un backtest con el modelo y los números salieron «una auténtica
+locura». Pidió auditoría antes de creérselos. **Tenía razón: había dos fallos
+reales**, los dos introducidos con el bloque el mismo día. La auditoría se hizo
+primero en SOLO LECTURA (reproducciones contra el código instalado, sin tocar
+un fichero, con un backtest suyo aún en cola) y después se aplicaron los
+arreglos. Commit `09db5f7`.
+
+### Fuga 1 — el HMM sabía el volumen del futuro (la que infló la curva)
+
+`hmm_observations` normalizaba el volumen de cada vela por la **media del día
+entero** (`np.nanmean`). La vela de las 07:00 quedaba escalada por el volumen
+que llegaría por la tarde. Medido con dos días idénticos hasta la vela 330 (uno
+con spike de volumen posterior, otro sin él): **la probabilidad de estado que ve
+XGBoost en la misma vela difiere hasta en 0,86** de un máximo de 1.
+
+En este universo eso no es un matiz: el volumen total del día es LA información
+(¿va a ser un pump monstruo o va a morirse?). El modelo la explotaba y el
+backtest salía espectacular — e irreproducible en vivo, porque a las 07:00 ese
+dato no existe. Arreglo: volumen relativo a la **media acumulada hasta t**.
+
+### Fuga 2 — con sesión RTH, las etiquetas se emparejaban con la vela equivocada
+
+Los hooks del modelo corrían **antes** del recorte de sesión: la señal quedaba
+indexada sobre el día completo (premarket incluido) y el trade del simulador
+sobre el frame recortado — ~330 velas de desfase. Las parejas señal-trade no se
+encontraban nunca, **sin error y sin aviso**: el modelo entrenaba con parejas
+rotas o descartaba casi todo. Arreglo: los hooks van después del recorte y del
+`candle_delay` (mismo espacio de índices que los trades), las features se siguen
+calculando sobre el día completo, y la máscara de sesión traduce entre los dos
+espacios.
+
+### Blindaje adicional
+
+- **Slab y paralelo quedan excluidos cuando hay modelo**: sus caminos no tienen
+  los hooks y lo habrían ignorado en silencio (un resultado etiquetado como
+  «filtrado» sin haber filtrado nada).
+- Test de causalidad **de punta a punta**: el score completo (features + HMM +
+  XGBoost) del día cortado en la vela k coincide con el prefijo del score del
+  día entero. Más los dos tests de regresión de cada fuga.
+
+### La regla que queda
+
+> **Cualquier backtest con modelo anterior a `09db5f7` es inválido.** Con HMM
+> activado llevaba la fuga 1; con sesión recortada, la 2. Re-lanzar.
+
+### El motor principal, verificado intacto
+
+Sin el bloque, `parse_config` devuelve `None` y la llamada a `run_backtest` es
+idéntica a la de siempre. Suite completa: el mismo conjunto de 103 fallos de
+entorno que antes de que el bloque existiera (comparado en cada paso). Y en
+verde, nombrados: `sim_jit_equivalence`, `n2a_native`, `n2a_e2e`,
+`current_gap`, `fade_indicators`, `max_reentries`, `daily_loss_limit`,
+`daily_limit_sequential`, `locates`, `pm_lookahead` — **157 tests del camino
+secuencial de punta a punta**.
+
+---
+
+## 2026-09-01 — Bot de alertas en vivo, y `staging` igualada a `sailor`
+
+### 📣 Para Álvaro: `staging` se ha reiniciado hoy
+
+`staging` apunta ahora a `93da17d`, el mismo commit que
+`sailor-rama-desarrollo`. **No se ha perdido trabajo:** los 8 commits que
+`staging` tenía y `sailor` no (el borrado del motor viejo, RSI/MACD, «% Session
+Fade», los filtros Gap−1, el fix de datasets y los dos de memoria) **ya estaban
+en `sailor` con otro hash** — se habían subido por las dos vías. Se comprobó uno
+a uno por mensaje antes de forzar.
+
+Etiqueta de rescate en el remoto, por si acaso:
+`staging-antes-del-reinicio-2026-09-01` → `9ba2308`.
+
+### Lo que trae esta sesión: el bot de alertas
+
+Proyecto **propio de Sailor**, aislado del producto: un bot que lleva las
+estrategias del portfolio a avisos en tiempo real por Telegram y a una página
+nueva (`/bot-alertas`). Ejecución manual — el bot avisa, la orden la mete una
+persona.
+
+**Casi todo es código nuevo y separado** (`bot_alerts_*.py`, `market_frame.py`,
+`CuadroMandos.tsx`). Solo tres cosas tocan lo existente:
+
+1. **`backtest_service.py`, −58 líneas.** La fórmula que construye el frame
+   (HOD/LOD, máximos de premercado acumulados, Previous Max/Min) se extrajo a
+   `app/services/market_frame.py` porque el bot la necesita igual y la tenía
+   COPIADA fuera del repo. **El comportamiento no cambia**: verificado idéntico
+   bit a bit —los 15 arrays, 150 ticker-días, 76.385 barras— y con la suite
+   completa antes y después (455 pasan / 103 fallan / 13 errores, los mismos).
+
+   > `backtest_signals._compute_signals_for_pair` conserva SU versión en numpy
+   > puro. **No se unificaron a propósito**: son fórmulas distintas de lo mismo
+   > (`cummax` de pandas vs `np.maximum.accumulate`, que difieren ante NaN) con
+   > su paridad ya verificada aparte. Fundirlas sería un cambio de
+   > comportamiento disfrazado de limpieza.
+
+2. **`main.py` y `Sidebar.tsx`**: registrar la página nueva. Inocuo.
+
+3. **Borrado de la página del Screener** (`Screener.tsx` y su ruta, −2.078
+   líneas). ⚠️ **Ojo, Álvaro:** el screener figura en todos los planes de
+   `entitlements/policy.py`. Se retiró porque en esta línea de trabajo no se usa
+   y Sailor lo decidió así. **El SERVICIO se conserva**
+   (`live_screener_service.py` y `/api/screener/live`): mantiene por ticker el
+   cierre de ayer, el máximo de premercado y el volumen acumulado desde el
+   WebSocket, que es justo lo que necesita el bot. **Si esto llega a producción,
+   hay que reponer la página.**
+
+### Dos hallazgos que valen para todo el proyecto
+
+**El volumen del WebSocket por segundo se queda corto.** Construir velas sumando
+los agregados `A` da los precios bien pero **al volumen le falta entre un 1,5 %
+y un 4,6 %** (medido con AAPL/TSLA/NVDA/SPY): el proveedor cuenta operaciones
+—bloques fuera de secuencia, lotes sueltos— que no aparecen ahí. Hay que usar
+`AM`, el agregado por minuto, que llega ya cerrado y oficial: 20 velas, 20
+idénticas al REST. Importa para cualquier cosa que decida con volumen.
+
+**`get_user_db_connection(read_only=True)` ignora el parámetro** y abre todas
+las conexiones en escritura (`database.py:11-15`). Como DuckDB solo admite un
+escritor, **una página que consulta cada 2 s bloquea las escrituras**: medido,
+un POST esperando más de 60 s hasta agotar el tiempo, y con la página cerrada
+0,2 s. Y si se llenan los hilos del servidor esperando, **deja de responder a
+todo, incluido `/docs`**, aunque el proceso siga vivo — eso es lo que parecía
+que el backend «se caía». Aquí se resolvió con caché en memoria; **cualquier
+módulo nuevo que consulte a menudo se va a encontrar lo mismo.**
+
+### Documentación
+
+`docs/BOT_ALERTAS_MODOS_DE_FALLO.md` — mapa de caídas, decisiones de diseño y
+lo que hará falta antes de conectar la API de un bróker (reconciliación,
+idempotencia de órdenes, interruptor de emergencia). Se escribió pensando en esa
+conversación futura.
+
+---
+
+## 2026-09-02
+
+### 🚨 AVISO PARA ÁLVARO Y SU IA — Alertas es zona cerrada
+
+**El bot de avisos en vivo y la página de Alertas los llevan Jaume y Sailor en
+exclusiva por ahora. No se tocan, no se arrancan, no se configuran y no se
+descargan para probarlos.** Está también como regla de oro nº 6 en `AGENTS.md`,
+en `CLAUDE.md` y en `.agent/ALVARO_DEV_BRANCH.md`, con la lista de ficheros.
+
+No es celo de código. Son tres razones concretas y ninguna se arregla teniendo
+cuidado:
+
+1. **Opera con dinero real.** Los avisos salen a un grupo de Telegram y Jaume
+   pone las órdenes a mano con ellos. Un cambio que altere una condición no
+   rompe un test: le hace entrar en una operación que no era.
+2. **La cuenta de datos en vivo admite UNA sola conexión.** Arrancar el bot en
+   otra máquina **echa al de Jaume y lo deja sordo**, sin que ninguno de los dos
+   vea un error — el bot sigue diciendo «conectado». Pasó hoy mismo con una
+   prueba de nada.
+3. **Está en desarrollo activo** y sin cobertura suficiente. Lo que parece
+   código muerto o mejorable suele ser una decisión medida, y el porqué está en
+   los comentarios.
+
+**Traerlo por `staging` no es tocarlo**: esos ficheros llegarán en el merge y no
+hay que hacer nada con ellos. La única excepción de lectura/escritura es
+`backend/app/services/market_frame.py`, compartido a propósito con el backtester
+(fórmula verificada bit a bit sobre 150 ticker-días): leerlo, sin problema;
+**cambiarlo, avisando antes**, porque mueve las señales en vivo aunque los
+backtests sigan en verde. Si algo de Alertas bloquea una tarea legítima, se
+habla con Jaume — la decisión es suya, no del agente.
+
+### El radar vigila las condiciones de CADA estrategia, no un umbral inventado
+
+**Cómo estaba mal.** El radar filtraba por el precio ACTUAL contra el cierre de
+ayer, con un umbral puesto a ojo (30 %). Pero `PM High Gap %` —la condición de
+1B— es un **máximo acumulado que no baja**. Un ticker que hizo +80 % y retrocedió
+a +22 % sigue cumpliendo, y el radar lo descartaba. En gaps en corto retroceder
+tras el máximo es lo NORMAL: el fallo afectaba al caso típico, no a uno raro.
+
+**Cómo está ahora** (`bot_alerts_mercado.py`, `bot_alerts_universo.py`,
+`RadarPorEstrategia`): el bot se suscribe a `AM.*` (mercado entero), acumula por
+ticker máximo de premercado, volumen y precio, y evalúa **el filtro de universo
+de cada estrategia activa**. Admitido un ticker, no sale hasta cambiar de día.
+Cada candidato lleva de qué estrategia viene y por qué regla.
+
+**Lo que se puede y no se puede saber antes de las 09:30:** `PM High Gap %`,
+`Current Gap %`, `Premarket Volume`, `Volume`, `Price` y `Previous Close`, sí.
+**`Open Gap %` NO existe antes de la apertura**, así que 2.1B y 3B no son
+vigilables en premercado — y el bot lo dice al arrancar en vez de ignorarlas en
+silencio. Lo que no se sabe calcular se declara NO EVALUABLE y el ticker no
+entra: dar por cumplida una condición sin comprobarla haría avisar de lo que no
+toca.
+
+**Bug grave arreglado: el cierre de ayer.** El bot llamaba a
+`build_market_frame` con `daily_stats` VACÍO, y el código cae a un valor de
+emergencia: **usa el primer precio de hoy como cierre de ayer**. Sin error, sin
+log. Medido con SGLD: PM High Gap salía 50,4 % cuando el real era 525 %.
+Arreglado pidiendo el snapshot (`prevDay.c`). **Verificado que `prevDay.c` es el
+cierre RTH y no el after-hours**: SGLD cerró RTH en 5,08 y after-hours en 17,30;
+el campo da 5,08.
+
+### Prealertas: la vela se mira cada segundo del 50 al 59
+
+El backtest entra al `open` de la vela siguiente a la señal, o sea en el instante
+en que la vela de señal cierra. Avisar al cierre deja **margen cero** para poner
+la orden a mano. La prealerta evalúa la vela a medias y avisa antes.
+
+Estaba mirando **una sola vez**, en el segundo 50. Eso dejaba escapar las señales
+que se completan después, y ésas llegaban al cierre sin margen. Medido sobre el
+tick data del lago:
+
+| | captura | margen | falsas alarmas |
+|---|---|---|---|
+| solo el segundo 50 | 12/14 (86 %) | 10 s | 3 de 8 |
+| del 50 al 59 | **14/14 (100 %)** | 9,4 s de media, 6 s el peor | 3 de 9 |
+
+Captura todas, el margen apenas baja y **no añade falsas alarmas** — el riesgo
+era una condición que se cumple en el 52 y deja de cumplirse en el 58, y no pasó
+ni una vez en 2.959 velas de premercado. El máximo sigue siendo 10 s; el peor
+caso teórico es 1 s, pero medido ninguna bajó de 6.
+
+**Detalle de implementación que parece menor y no lo es:** el minuto se marca
+como avisado desde **el bot, al publicar**, no dentro de `aplicar()`. Marcarlo
+dentro haría volver a mirar una sola vez, y **no lo notaría nadie**: el bot
+seguiría avisando, solo que menos. Hay tests que lo fijan
+(`backend/tests/test_bot_alerts_prealertas.py`), incluido uno para que un mismo
+aviso no se repita ocho veces en el minuto.
+
+**El volumen de la vela parcial sale de `av`, no de sumar los `v`.** Sumar los
+agregados por segundo deja fuera operaciones (hasta un 4,6 % menos) y 1B decide
+con dollar volume acumulado. `av` es el volumen acumulado del día, ya oficial:
+restándole el que había al empezar el minuto sale el del minuto exacto. Si no
+viene `av` el volumen se declara 0 en vez de aproximarlo — un volumen corto haría
+cumplir la condición más tarde de lo que toca, y eso es peor que no prealertar.
+
+### Dos cosas que valen para cualquiera que trabaje en este repo
+
+**Editar código del backend con `--reload` puesto tumba lo que dependa de él.**
+Cada fichero guardado reinicia uvicorn; durante el reinicio devuelve 500 y luego
+deja de aceptar conexiones unos segundos. Los «cuelgues del backend» que se
+llevaban investigando días eran esto, provocado desde el propio editor.
+Confirmado por descarte: cuatro horas sin un solo error en cuanto se dejó de
+tocar código, con el bot procesando 528 velas.
+
+**Un comentario no es una garantía.** `hidratar()` decía «no genera avisos: lo
+que ya pasó, pasó» y no estaba implementado: el bot avisó a las 20:28 de
+operaciones de las 14:27 y salieron a Telegram. Está arreglado (se llama al
+motor con el frame hidratado y se descartan los eventos, para marcarlos como
+vistos), pero la lección es general.
+
+## 2026-09-02 — Merge de `staging` en `alvaro-rama-desarrollo` SIN el bot de alertas
+
+Merge de `origin/staging` (`6db5a36`, staging reescrita sobre la historia de
+sailor el 2026-09-01). Trae: bloque «Modelos avanzados» (XGBoost+HMM, modo
+filtro), el fix de las DOS fugas de la auditoría (`09db5f7`), modo
+«estrategia» con guardas, `market_frame.py` (fórmula del frame extraída de
+`backtest_service`, compartida con el bot), y las entradas de memoria de
+Sailor/Jaume.
+
+**Decisión de Álvaro: el bot de alertas queda EXCLUIDO de esta rama** (zona
+cerrada de Jaume/Sailor, ver `AGENTS.md` § zona cerrada). Excluidos del merge y
+a excluir también en futuros merges de staging: `backend/app/services/bot_alerts_*.py`,
+`backend/app/routers/bot_alerts.py`, `backend/tests/test_bot_alerts_*.py`,
+`frontend/src/app/bot-alertas/`, `frontend/src/components/bot-alertas/`,
+`frontend/src/lib/api_bot_alerts.ts`, `docs/BOT_ALERTAS_MODOS_DE_FALLO.md`.
+También se revirtió el registro del router en `main.py` y el link del Sidebar.
+Se CONSERVA: `market_frame.py` (lo importa `backtest_service`), el servicio del
+screener y **la página del Screener** (staging la retiró como parte del proyecto
+del bot; sin el bot, Álvaro se queda con el Screener).
+
+Conflictos resueltos: `backtest_service.py` (import de `market_frame`, lado
+staging) y esta memoria (ambos lados conservados). Lo nuestro que staging no
+adoptó se conserva solo (warmup de indicadores, splits en `init_db.py`
+con `LAKE_PREV_CLOSE_YA_AJUSTADO`, «Últimas pruebas» en Portfolio,
+`subphase_profiler.py`): staging no lo tocó desde la base del merge.
+
+## 2026-09-02 (2ª sesión) — Retirada de la página del Screener (cambio de decisión)
+
+Álvaro decide que la página del Screener no le hace falta ahora mismo. En el
+merge de esta mañana se había CONSERVADO a propósito (staging la retiró como
+parte del bot de alertas, que aquí está excluido); ahora se retira también aquí,
+alineando la rama con staging en este punto:
+
+- `frontend/src/app/screener/page.tsx` y `frontend/src/components/Screener.tsx`
+  movidos a `_archive/frontend-screener-20260902/` (no borrados, regla de oro 5).
+- Link del Sidebar retirado (con comentario explicativo in situ).
+- El SERVICIO backend se conserva intacto (`live_screener_service`,
+  `/api/screener/live`, `/api/screener/daily`): igual que en staging. El
+  endpoint de DATOS `/market/screener` lo siguen usando Ticker Analysis
+  (`page.tsx` home) y `analysis/[ticker]/[date]` — NO tocar.
+- Verificado: `tsc --noEmit` 0 errores, `GET /screener` → 404, `/` → 200.
+
+## 2026-09-03 — Descarga de trades en CSV en la pestaña Trades del Backtester
+
+Petición de Álvaro: quería recuperar la "opción de descargar en CSV los trades
+de una estrategia". Investigado el historial completo (todas las ramas, reflog,
+commits colgantes, pre-Wizard, develop/main): esa opción NUNCA existió en la
+app — lo que existía era (a) su script propio `analisis/paso2_estrategia_fade_pm.py`
+que exporta trades con pandas, y (b) el export de datos de mercado de la home,
+llevaba oculto desde la época MVP (`HIDDEN FOR MVP`, `page.tsx:232`). Así que
+se implementa de cero:
+
+- Botón "CSV" (icono download) en la cabecera de la pestaña Trades, junto a
+  los totales. Exporta TODOS los trades del run en orden cronológico (no la
+  ventana filtrada de la tabla). Sin backend: serializa en cliente.
+- Formato pensado para analizar después: separador ';' + decimales con punto +
+  BOM UTF-8 + CRLF (Excel-ES con doble clic, pandas con `sep=';'`). Una sola
+  fila de cabecera, sin bloques de resumen.
+- 22 columnas: nº, ticker, fecha ISO, día de la semana, dirección, hora
+  entrada/salida, duración en minutos, tamaño, precio entrada (fill real y
+  precio medio — difieren con piramidación), precio salida, stop loss, PnL,
+  comisiones, retorno %, R, MAE %, MFE %, gap %, motivo de salida, ejecuciones.
+  Precios/tamaños a 4 decimales sin ceros de relleno (hay tickers subdólar).
+- Nombre de fichero: `<estrategia>_trades_<n>_<fecha-hora>.csv` (el nombre lo
+  pasa ResultsTabs desde `activeStrategy`).
+- Verificado: `tsc --noEmit` 0 errores; la lógica exacta del builder ejecutada
+  contra los 2.799 trades reales del run auto-guardado 3aff85df (Definitiva
+  2.3): 2.799 filas, 22 columnas, 0 filas rotas.
+
+## 📣 2026-09-03 — Para Jaime: botón «CSV» en la pestaña Trades (REPORTE — solo en rama de Álvaro)
+
+> Petición de Álvaro. **NADA de esto está en `staging`**: ni pusheado a la rama
+> remota, ni PR, ni merge. Vive SOLO en `alvaro-rama-desarrollo`, commit
+> `0e14921`. La integración a `staging`, por PR, cuando Álvaro/Jaime lo decidan.
+> Este reporte viaja en la memoria para que quede constancia del cambio.
+
+**Qué se ha hecho.** Botón «CSV» (icono descarga) en la cabecera de la
+pestaña Trades del Backtester, junto a los totales. Exporta TODOS los trades
+del run en orden cronológico (no la ventana filtrada de la tabla), generado
+íntegramente en cliente — **sin cambios de backend**.
+
+**Por qué.** Álvaro recordaba una opción así pero nunca existió en la app: se
+buscó en todas las ramas (incluidas backups de Álvaro), reflog, commits
+colgantes, pre-borrado-del-Wizard, `develop` y `main` — nada. Lo que existía:
+su script propio `analisis/paso2_estrategia_fade_pm.py` (export con pandas) y
+el export de datos de mercado de la home, oculto desde la época MVP
+(`HIDDEN FOR MVP`, `page.tsx:232`). Así que se implementó de cero.
+
+**Ficheros tocados (solo 2 + esta memoria):**
+- `frontend/src/components/backtester/tabs/TradesTab.tsx` — builder del CSV,
+  botón y descarga (Blob en cliente).
+- `frontend/src/components/backtester/ResultsTabs.tsx` — pasa el nombre de la
+  estrategia para el nombre del fichero (una línea).
+
+**Formato del CSV** (pensado para analizar después): separador `;` + decimales
+con punto + BOM UTF-8 + CRLF → Excel-ES con doble clic, pandas con `sep=';'`.
+22 columnas con unidades en cabecera: nº, ticker, fecha ISO, día de la semana,
+dirección, hora entrada/salida, duración (min), tamaño, precio entrada (fill
+real Y precio medio ponderado — difieren con piramidación), precio salida,
+stop loss, PnL, comisiones, retorno %, R, MAE %, MFE %, gap %, motivo de
+salida, ejecuciones. Precios/tamaños a 4 decimales sin ceros de relleno
+(tickers subdólar). Fichero: `<estrategia>_trades_<n>_<fechahora>.csv`.
+
+**Verificación.** `tsc --noEmit` 0 errores. El builder exacto ejecutado contra
+los 2.799 trades reales del run auto-guardado `3aff85df` (Definitiva 2.3):
+2.799 filas, 22 columnas, 0 filas rotas.
+
+**Para revisar (Jaime):** `git show 0e14921` en la rama de Álvaro cuando esté
+pusheada — el diff es pequeño y autónomo (no toca motor ni backend).
+
+### [HALLAZGO · 2026-09-04 · 01] «Nueva Estrategia» hereda los parámetros del borrador anterior — el fix de Adrian (fdb0b7c) se perdió con el reinicio de staging
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/backtester/page.tsx`, handler `onNewStrategy` (~línea 1293): el reset de `activeStrategy`/`builderDraft`/`draftStrategy` está tras el gate `if (hadSavedOrLoaded)`.
+- **Qué observé:** con un BORRADOR sin guardar como estado previo, pulsar «Nueva Estrategia» NO limpia nada y el constructor abre con los parámetros de la estrategia anterior. Con una estrategia guardada cargada sí resetea (por eso en la verificación del 2026-09-03 no se vio: arrancó con «Estrategia 1B» auto-cargada).
+- **Cómo reproducir:** Backtester → crear/modificar una estrategia SIN guardar (borrador) → pulsar «Nueva Estrategia» → el constructor abre heredando los parámetros del borrador en vez de en blanco.
+- **Evidencia:** el código actual es idéntico (en lógica) al pre-fix de `fdb0b7c` (Adrian Garcia, 2026-08-21, «fix(backtester): "Nueva Estrategia" arranca siempre en blanco (Config. libre heredaba la anterior)», reportado por cliente). Ese commit está en `main` y `develop` pero NO en `staging` ni en `alvaro-rama-desarrollo` (verificado con `git merge-base --is-ancestor`): el reinicio de staging del 2026-09-01 (base sailor) no descendía de él.
+- **Hipótesis de causa:** la reconstrucción de staging desde `sailor-rama-desarrollo` dejó fuera fixes de la línea develop/main; este es uno (puede que no el único — merece un barrido `git log main ^staging` para ver qué más se perdió).
+- **Impacto:** UX confusa y riesgo de correr backtests con parámetros heredados sin querer. Afecta a staging y a la rama de Álvaro por igual.
+- **Arreglo conocido:** adaptar `fdb0b7c` — quitar el gate y resetear SIEMPRE al abrir (el diff original refería modos `builder_choice`/`wizard` que ya no existen; hay que adaptarlo a `builder`/`config` actuales). Decisión de Álvaro: aplicarlo en su rama o pedirlo a Jaume para staging.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-04 · 01 → FIX EN RAMA ÁLVARO] «Nueva Estrategia» heredaba el borrador anterior
+- **Aplica/cierra (en esta rama):** ZCode con OK explícito de Álvaro. Adaptación del fix original de Adrian `fdb0b7c`: fuera el gate `hadSavedOrLoaded` — al ABRIR «Nueva Estrategia» se resetea SIEMPRE (`activeStrategy`/`builderDraft`/`draftStrategy`/`loadedStrategyId` a null → modo `builder`); si ya estaba abierto, colapsa a `config` como antes. Mismos pasos que el fix de Adrian, sin las referencias a `builder_choice`/`wizard` (modos ya borrados).
+- **Verificación:** `tsc --noEmit` 0 errores. Repro visual no posible en esta sesión (navegador embebido inestable): verificada la lógica por lectura — el reset ya no depende de `loadedStrategyId`, así que el caso "borrador sin guardar" queda cubierto igual que el de estrategia guardada. Pendiente confirmación de Álvaro en uso normal.
+- **Sigue ABIERTO PARA `staging`** (y por tanto para producción vía develop→main si el fix no se recoge allí): la línea sailor/staging no contiene `fdb0b7c` ni este cambio. Que Jaume lo recoja de aquí o reaplique `fdb0b7c` adaptado.
+
+### [HALLAZGO · 2026-09-04 · 02 → FIX EN RAMA ÁLVARO] Tras «Nueva Estrategia» el desplegable conservaba el último nombre — segunda cara del fix perdido
+- **Reporta/aplica:** ZCode (para Álvaro, con su OK de continuar el fix en su rama). Mismo origen que el 01: el reset de la página no alcanzaba al estado INTERNO de `BacktestPanel`.
+- **Dónde:** `frontend/src/components/backtester/BacktestPanel.tsx` — el efecto que sincroniza `activeStrategy` → `selectedStrategy` solo cubría el camino de CARGA (prop con id); cuando «Nueva Estrategia» pone `activeStrategy=null` (+ `builderDraft=null`, ver `computedActiveStrategy`), el panel conservaba su `selectedStrategy` anterior y el desplegable seguía mostrando «Estrategia 1B» (y su resumen debajo).
+- **Fix:** (1) rama `else` en el efecto — si la prop queda sin id y había ref previa, `setSelectedStrategy("")` y ref a null (guardado por la ref, no toca la restauración de sessionStorage ni el borrador `[Borrador]` id="draft"); (2) opción placeholder `value=""` ("cargar estrategia guardada…") en el `<select>` cuando no hay selección — sin ella el navegador pintaba la primera estrategia como si estuviera elegida.
+- **Casos borde verificados por lectura:** restauración de sesión (ref vacía al montar → no limpiado espurio), borrador nuevo (id "draft" → rama if intacta), edición de guardada (el draft conserva el id real → sin cambio), corrida de borrador → vuelve a `[Borrador]` como antes.
+- **Verificación:** `tsc --noEmit` 0 errores. Confirmación visual pendiente de Álvaro (navegador embebido inestable en esta sesión).
+- **Sigue ABIERTO PARA `staging`** junto al 01.
+- **Código tocado:** solo `BacktestPanel.tsx` (en rama de Álvaro, como el del 01)
+- **Estado:** ABIERTO (para staging) / arreglado en rama Álvaro
+
+## 📣 2026-09-04 — Para Jaime: modo «R» en el Calendar del Backtester (REPORTE — solo en rama de Álvaro)
+
+Petición de Álvaro: ver el calendario de resultados en múltiplos de R, no solo
+en dinero. **Solo en `alvaro-rama-desarrollo`** (sin push a staging/PR/merge
+por ahora); commit de referencia en la rama.
+
+**Qué se ha hecho.** Cuarto modo de vista «R» en la pestaña Calendar
+(`CalendarTab.tsx`, solo frontend): junto a Profits / Gastos / Profits−Gastos.
+Muestra la SUMA de `r_multiple` por día/semana/mes (mismo criterio que el pnl
+neto: sin locates, `r_multiple` del trade). Formato «+1.25R» / «-0.32R»,
+coloreado verde/rojo por signo igual que los modos monetarios, tooltips del
+día y de la semana con el valor en R, y totales mensuales en R. Los gastos
+fijos mensuales NO se mezclan en este modo (no tienen sentido en múltiplos de
+R). El modal de detalle del día sigue mostrando PnL $ y avg R por trade, que
+ya los tenía.
+
+**Verificación.** `tsc --noEmit` 0 errores. Cálculo replicado contra los 2.799
+trades reales del run `3aff85df`: 393 días con trades, suma por día = R total
+del run (150.57R), coherencia exacta.
+---
+
+## 2026-09-03 / 04
+
+Sesión larga: el bot operó en vivo por primera vez y de ahí salieron dos bugs
+del MOTOR (no del bot) que afectan a cualquier backtest con piramidación.
+
+### 1. ⚠️ BUG DEL MOTOR: las pirámides se saltaban `entry_time_windows`
+
+**Afecta a todo backtest con piramidación y ventana de entradas.** La ventana se
+aplicaba solo a `entries`; `_evaluate_pyramid_levels` no la miraba, así que un
+nivel podía disparar a cualquier hora de la sesión.
+
+Visto en vivo el 3-sep: GELS piramidó a las **08:08 ET** teniendo la ventana de
+entradas cerrada a las 08:00. Jaume confirmó que esa ventana es global —
+entradas **y** pirámides.
+
+Medido sobre un frame de prueba: **59 señales de pirámide fuera de ventana
+antes, 0 después**, y las 241 legítimas intactas. Sin `entry_time_windows` nada
+cambia.
+
+> **Los resultados guardados de estrategias con pirámide + ventana ya no
+> coinciden.** No es opinable: era un bug.
+
+### 2. Stop híbrido: tercer modo de dimensionado
+
+Además de valor de mercado y distancia al stop. Va por SL, pero topando la
+exposición:
+
+```
+techo en dólares = (% de cuenta asumible × capital) / % del evento
+```
+
+Resuelve el punto ciego del modo por SL: con el stop muy ceñido el tamaño se
+dispara. Medido — cuenta de 10.000 $, riesgo 300 $, stop al 1 %: **30.000
+acciones, tres veces la cuenta expuesta**; un hueco del 1.000 % en contra deja
+debiendo dinero. Con techo al 50 % ante un evento del 1.000 %, esas 30.000 se
+quedan en 500. **Recorta, no anula.**
+
+**El techo es de VALOR, no de acciones.** Con 100 $ de techo se compran 100
+acciones a 1 $ pero 200 a 0,50 $. Confundirlo multiplica la exposición por el
+precio.
+
+Los dos porcentajes viven en la **estrategia** (decisión de Jaume: afecta
+directamente al resultado del backtest); el **capital**, en el cuadro de mandos
+del bot, que no conoce la cuenta real. Se aplica por separado a entrada y a
+pirámide, cada una con sus porcentajes.
+
+**⚠️ Aviso para quien toque el motor: el kernel Numba NO implementa el techo.**
+Una estrategia híbrida se rutea SIEMPRE al motor Python, igual que se hace con
+la piramidación. Sin ese ruteo, y con `BACKTEST_NUMBA_SIM=1`, el techo se pierde
+**en silencio** en todo backtest sin pirámides.
+
+### 3. La pirámide tiene ahora su propio modo de tamaño
+
+Independiente del de la entrada: un añadido puede ir por distancia al stop
+aunque la entrada vaya por valor de mercado. **El mismo añadido sale a 3, 150 o
+5 acciones según el modo** — hasta ahora iba siempre por valor de mercado y no
+había forma de cambiarlo.
+
+Esto salió de una observación de Jaume en vivo: con el mismo stop, su pirámide
+arriesgaba **146 $ donde la entrada arriesgaba 300 $**, porque una se
+dimensionaba por stop y la otra por capital.
+
+### 4. Rolling EV: el modo «días» hacía MEDIA DE MEDIAS
+
+Sacaba el EV de cada día y promediaba esos EV, así que **un día con una
+operación pesaba igual que uno con diez**:
+
+| | |
+|---|---|
+| lunes: 1 trade que gana 1,0R | EV del día `+1,000 R` |
+| martes: 10 trades de −0,2R | EV del día `−0,200 R` |
+| modo DÍAS (media de medias) | **`+0,400 R`** |
+| modo TRADES (los 11 juntos) | **`−0,091 R`** ← el real |
+
+Cambiaba **el signo**: un mes de días flojos con una ganadora suelta se pintaba
+como rentable. Ahora la ventana de N días coge todas las operaciones de esos
+días. El modo por trades ya era correcto y no cambia (verificado: diferencia 0).
+
+### 5. Bot de alertas
+
+- **Prealertas del segundo 50 al 59** (antes solo el 50). Medido sobre tick
+  data: de 86 % a 100 % de captura, margen de 10 s a 9,4 s de media.
+- **Prealertas huérfanas arregladas**: los agregados por segundo tardan ~3 s, así
+  que el tick del segundo 59 llegaba DESPUÉS de cerrar su vela y nadie la
+  confirmaba ni descartaba — se quedaba en ámbar para siempre.
+- **El bot ya ESCUCHA**: `/evf TICKER COSTE EV%` por Telegram dice si compensan
+  los locates. Solo responde al chat configurado, los comandos solo LEEN, y
+  nada de lo que llegue puede tumbar el bucle de velas.
+- **Desplegable de condiciones** en el cuadro de mandos: lo que el motor aplica
+  DE VERDAD, incluida la configuración guardada que NO se usa y por qué. Sobre
+  la 1B real saca tres: trailing y swing (con su `active: false`, inofensivos) y
+  **dos take profit parciales que se encenderían cambiando OTRO campo**.
+
+### 6. Auditoría del guardado de estrategias: es FIEL
+
+A petición de Jaume. Round-trip sobre la 1B real: **370 campos, 0 perdidos, 0
+inventados, 0 alterados**. El guardado no corrompe nada. Lo que faltaba era
+poder **ver** qué parte de lo guardado está viva — de ahí el desplegable.
+
+### Dos cosas que valen para cualquiera en este repo
+
+**El patrón de las TRES CAPAS sigue mordiendo.** Se documentó en §4 de este
+mismo documento y aun así se volvió a caer en él el mismo día: se escribió el
+código que LEE cuatro campos nuevos y no el que los ESCRIBE. Un `lv.get("x")`
+que siempre devuelve `None` no falla, no avisa, y no sale en los tests que no lo
+cubren. Salió en una auditoría posterior, no en la suite.
+
+**`r_multiple` viene REDONDEADO A DOS DECIMALES.** Cualquier cálculo que
+compare márgenes finos (un fade del 1,19 % contra un EV del 2,4 %) tiene que
+salir de `entry_price`/`exit_price`, no de ahí.
+
+---
+
+## 2026-09-04 (tarde/noche) — Prealertas medidas, dos bugs silenciosos y el genético ampliado
+
+Sesión de después del cierre. Lo importante son **tres bugs que no daban ningún
+error** y un estudio que cambia un parámetro que llevaba semanas puesto a ojo.
+
+### 1. La ventana de la prealerta pasa del segundo 50 al 44
+
+Medido sobre 30 días y 33 entradas de tick data, más 25.408 mensajes de latencia
+del feed en vivo. Dos cosas que no se sabían cuando se eligió el 50:
+
+- **La señal se cumple mucho antes de lo que se creía.** Mediana en el
+  **segundo 17**, y 9 de 33 ya cumplían en el 5. Se esperaba al 50 para ver algo
+  que en la mitad de los casos llevaba treinta segundos hecho.
+- **La latencia se come el margen.** El agregado por segundo tarda ~3,7 s de
+  mediana (p99 4,1 s, con un pico de **9,8 s**). Un aviso del segundo 50 no daba
+  los 10 s que prometía: daba **7,8 s** hasta la alerta de verdad, y 0,2 s en el
+  pico.
+
+| ventana | margen mediana | de cada N avisos, 1 opera |
+|---|---|---|
+| 50-59 | 7,8 s | 2,3 |
+| **44-59** | **13,8 s** | **3,6** |
+| 30-59 | 27,8 s | 4,5 |
+
+La captura NO cambia (32 de 33 en todas): lo único que se compra adelantando es
+tiempo. Se eligió el 44 y no el 30 —que es donde el estudio pone el óptimo—
+porque la cuenta de falsas del estudio no cuadró con el primer día en vivo
+(predecía ~4 y hubo 0), así que el número absoluto no es de fiar todavía.
+
+Tres cosas que ninguna ventana arregla: 4 de 33 señales se cumplen de verdad
+tarde (segundos 54, 55 y 59) y llegarán siempre con menos de 5 s; una de ellas
+llega después que su propia alerta y la descarta `marcar_cerrada`.
+
+El medidor quedó en `D:\bot_senales\medir_ventanas_comparadas.py`.
+
+### 2. `MACD Signal` y `MACD Histogram` eran SIEMPRE NaN
+
+`_ema_core` siembra con la media de los primeros `window` valores. Sobre precios
+está bien, pero también se aplica a la SALIDA de otro indicador: la señal del
+MACD es una EMA de la línea MACD, y esa empieza con `slow-1` NaN (25 con el 26
+por defecto). La suma salía NaN, la siembra salía NaN, y como cada valor depende
+del anterior se propagaba hasta el final:
+
+    MACD            -> 275 valores de 300
+    MACD Signal     ->   0 de 300
+    MACD Histogram  ->   0 de 300
+
+Una comparación contra NaN da False, así que **cualquier estrategia con «MACD
+Signal» o «MACD Histogram» no operaba nunca**, sin error ni log. Al DI+/DI− del
+ADX le pasaba lo mismo. Arreglado saltando los NaN de cabecera antes de sembrar;
+sin NaN el resultado es idéntico. Comprobado contra la batería entera: arregla 2
+tests y no rompe ninguno.
+
+### 3. El What-if recortaba trades sin que nadie se lo pidiera
+
+`dd_threshold` venía por defecto en 5 y `size_mgmt_type` en `"dd"`, y la página
+no manda ninguno de los dos. Resultado: **toda simulación, sin marcar nada,
+recortaba a la mitad el tamaño de cada trade abierto con más de un 5 % de
+drawdown encima**. Según dónde cayeran las pérdidas eso podía MEJORAR la curva —
+y entonces el What-if «sin filtros» salía mejor que el original, que es
+imposible. Lo detectó Jaume mirando la pantalla, no la suite.
+
+La regla que faltaba, ahora fijada con un test: **un What-if sin opciones
+devuelve la curva de partida**. Al apagarlo salió un segundo fallo que el
+default tapaba: la media del modo `sma` se calculaba también en modo `dd`, y con
+período 0 dividía entre cero.
+
+### 4. Un backtest que falla dejaba el dataset BLOQUEADO
+
+Son dos almacenes. El POST siembra `backtest_progress[dataset_id]` en `running`
+antes de lanzar el hilo, pero el estado del job vive en `backtest_jobs`, y al
+fallar solo se actualizaba ese. Si el job moría pronto —definición mal formada,
+falta de memoria— ese `running` se quedaba para siempre y todo intento posterior
+devolvía `already_running` apuntando a un job muerto. **Solo se arreglaba
+reiniciando el backend.** Encontrado por accidente midiendo el consumo de RAM.
+
+### 5. Genético: de 7 indicadores a 26, y las ramas que no se probaban
+
+Catálogo agrupado en seis familias con pestañas y ayuda por indicador. **Por
+defecto siguen marcados solo los siete de la v1**: los demás están para elegir,
+no para llevarlos todos.
+
+Y el hallazgo, que salió de una pregunta de Jaume: **el lado DERECHO de las
+condiciones se armaba con `params: {}`**, sin sortear nada. Mientras los niveles
+eran precios sueltos (VWAP, PM High) no se notaba; al meter Darvas, Donchian,
+Bollinger, SMA y EMA, todos habrían salido siempre con el periodo por defecto y
+la banda de arriba — ofrecer «Darvas Box» habría sido ofrecer «Darvas por arriba
+con 3 velas».
+
+Preguntó si pasaba con más, y pasaba: MACD iba siempre con 12/26/9 y las
+Bollinger con 2 desviaciones. Auditado indicador a indicador contra el motor y
+convertido en test permanente, que ahora lo detecta solo.
+
+**El test no lo caza todo, y conviene saberlo:** compara sobre una serie
+sintética, y los cinco parámetros de los triángulos salían «sin efecto» ahí
+porque esa serie no llega a formar triángulos. Los añadió Jaume de memoria.
+
+Nuevo en riesgo: stop híbrido, stop mínimo %, take profit mínimo % y take
+profits parciales con las tres variantes del motor. Ojo con `take_profit_mode`:
+el motor **ignora `partial_take_profits` en modo "Full" en silencio**.
+
+### 6. Bot de alertas: `/estado` y el diario
+
+`/estado radar` y `/estado TICKER` en Telegram, de solo lectura. Y un **diario**
+al final del cuadro de mandos con las incidencias y el log, con botón de copiar:
+va enganchado al logger RAÍZ, así que recoge lo que registre cualquiera —el
+socket, httpx, un error sin capturar— sin ir añadiendo llamadas.
+
+### Lo que vale para cualquiera en este repo
+
+**Tres de los cuatro bugs de hoy no daban ningún error.** Una condición contra
+NaN, un default que nadie manda, un `params: {}` vacío: ninguno lanza, ninguno
+aparece en un log, y los tres cambian resultados que se miran para decidir con
+dinero. El patrón se repite — lo que no falla ruidosamente hay que buscarlo a
+propósito.
+
+**El backend hay que arrancarlo con el venv**, no con el Python global: le falta
+`jose` y revienta al importar, pero el error solo sale en stderr y parece que se
+cuelga. Y `--reload` no recoge los cambios de forma fiable si queda un proceso
+viejo con el puerto.
+
+### 7. Calendario del backtester: en dinero o en R
+
+Los tres modos de siempre (profits, gastos, profits−gastos) se pueden leer en
+dólares o en múltiplos de riesgo. Son DOS EJES, no un cuarto modo.
+
+Con riesgo FIJO, 1 R es el «Riesgo fijo $» del panel. Con riesgo PORCENTUAL —que
+al principio dejé fuera de más— la R no desaparece, cambia: el motor arriesga
+ese % del balance de **apertura del día**, así que 1 R es constante DENTRO de un
+día y solo cambia de un día a otro. Es la misma cuenta que ya hacía `r_precise`
+en `robustness_service.py`, verificada allí contra una corrida real.
+
+La conversión va POR DÍA, no al pintar: la R de una semana es la suma de las R
+de sus días. Con 10.000 $ al 2 % y tres días de +200/−100/+450 salen 2,738 R
+sumando por día y 2,750 R dividiendo al final, y esa diferencia crece con la
+cuenta.
+
+No se usa `r_multiple` del trade: así los GASTOS también se leen en R, y se
+evita arrastrar su redondeo a dos decimales.
+
+**Aviso:** Jaume pidió traer esto de la rama de Álvaro, pero NO está en el
+remoto — el `CalendarTab.tsx` es idéntico en `sailor`, `staging` y
+`alvaro-rama-desarrollo`. Lo tendrá en local. Esto está escrito de cero y puede
+quedar distinto a lo suyo.
+
+### 8. Dos parciales no pueden caer en el mismo sitio
+
+Primera corrida del genético con los take profits parciales puestos, y salió
+esto: `Parciales: 25% a las 12:00, 33% a las 12:00`. El motor los aplica en
+orden, así que el segundo salta justo detrás del primero: cierra más posición de
+golpe y gasta un gen en algo que no añade ninguna decisión. Corregido.
+
+---
+
+## Pendientes para el 2026-09-05
+
+1. **Ver la ventana 44-59 en vivo.** Es su primer premercado. Medir cuántas
+   prealertas se confirman y cuántas no: el estudio predice ~2,7 avisos en balde
+   por cada bueno, pero su cuenta de falsas NO cuadró con el día 4 (predecía ~4
+   y hubo 0), así que el número absoluto está por confirmar. Si el ruido es
+   tolerable, el siguiente escalón es 40-59 (17,8 s de margen).
+
+2. **Auditar el calendario en R** con datos reales. Quedó sin verificar en
+   pantalla —el genético tenía la máquina— y Jaume quiere repasarlo.
+
+3. **El aviso de cancelación de la prealerta.** Ahora una prealerta solo se
+   confirma o descarta al CERRAR la vela; si la señal se rompe en el segundo 50
+   se sigue mirando el gráfico sin saberlo. Avisar en el momento en que se cae
+   convertiría el ruido de adelantar la ventana en información, y es lo que
+   haría cómodo bajar al 40 o al 30.
+
+4. **Los 119 tests que fallan**, que siguen ahí y son de antes de esta sesión.
+
+5. **Del genético:** `parar_a_las` no venía configurada en la corrida de la
+   noche del 4 — con el bot de alertas arrancando a las 10:00 (hora española)
+   hay que ponerla siempre. Y con `min_trades` a 1.000 los individuos daban
+   fitness 0 con 729 trades: un suelo por encima de lo que el dataset da deja al
+   genético sin gradiente, todo a cero y cruzando al azar.
+
+---
+
+## 2026-09-06 — Sesión personalizada, ventana de entrada y barrido por franjas
+
+Reportado por Jaume sobre `RTH prueba 1`: «le pongo sesión personalizada y horas
+de entrada y no me hace caso — salen trades a las 15:30 y barras de EV hasta las
+13:30». Diagnosticado sobre la corrida real guardada (2.688 trades, 11:46).
+
+### 1. La sesión personalizada NO se ignoraba: se SUMABA
+
+La definición tenía `market_sessions: ['rth', 'custom']` con custom 04:00-12:00.
+El motor hace la **unión** de todas las sesiones marcadas
+(`_get_market_sessions_mask`, `mask |= ...`), así que la sesión efectiva era
+04:00-16:00. De ahí los 1.077 cierres en la hora de las 15: son EOD en la última
+vela de RTH.
+
+No era un bug del motor sino del selector: cuatro casillas independientes en las
+que «Horas personalizadas» convivía con «Regular Hours» sin que nada avisara.
+**Ahora «Horas personalizadas» es EXCLUYENTE** con pre/rth/post en
+`InlineStrategyBuilder`. Y para las estrategias ya guardadas con las dos
+marcadas, el resumen de `BacktestPanel` pinta un aviso rojo con la sesión REAL
+(«se suman: 04:00-16:00»), porque hasta ahora leía «Personalizado (04:00-12:00)»
+mientras el backtest corría hasta las 16:00.
+
+### 2. BUG DEL MOTOR: la ventana de entrada no miraba la vela de RELLENO
+
+`entry_time_windows` se aplicaba a la vela de la **señal**, pero con
+`look_ahead_prevention` el simulador compra en la apertura de la vela
+**siguiente** (`eff_entry_idx = i + 1`, `portfolio_sim`). Nadie comprobaba el
+reloj ahí.
+
+En un ticker líquido eso es un minuto de desfase. En los **warrants con velas
+dispersas** —una vela por minuto NEGOCIADO, no por minuto de reloj— la "vela
+siguiente" a las 11:29 podía ser la de las 13:45. Con ventana 09:30-11:30 la
+corrida tenía 41 entradas en el cubo de las 11:30 (casi todas las 11:31) y 5
+sueltas a las 12:11, 12:30, 13:01 y 13:45. Ninguna daba error ni salía en ningún
+log: el patrón de `btt-bugs-que-no-dan-error`.
+
+Corregido con `strategy_engine.apply_entry_fill_window`, llamada **después** del
+recorte de sesión y del `candle_delay` (el único espacio de índices en el que
+`i + 1` es de verdad la vela de compra), en los dos sitios que generan señales:
+`backtest_service` (secuencial) y `backtest_signals` (paralelo + slab). Se
+aplica también a las pirámides, por la misma regla de 2026-09-03: un añadido es
+una entrada.
+
+**Ventana ESTRICTA por decisión de Jaume:** si el límite está en 11:30 y la
+señal salta en la vela de 11:30, la compra caería en la de 11:31 y NO se coge.
+Esto retira también las entradas de 11:31. Impacto en PnL de aquella corrida:
+1,6 $ sobre 354 $ — corregirlo no cambia la estrategia, cambia que el gráfico
+deje de mentir sobre a qué hora se entra. **Las corridas anteriores al 6-sep no
+son comparables con las nuevas.**
+
+De paso, las tres copias del bucle que parseaba `from_time`/`to_time` (legacy,
+nativo N2a y la nueva) se unificaron en `build_entry_time_mask`.
+
+### 3. Los límites horarios ya se pueden OPTIMIZAR
+
+`entry_logic.entry_time_windows.N.from_time` / `.to_time` no aparecían en el
+optimizador 3D: los valores son texto («09:30»), `float()` revienta y `_add` los
+descartaba sin decir nada. Ahora se extraen como parámetros `time_of_day` (se
+barren en minutos desde medianoche, ±2 h recortado a 04:00-20:00, paso 5) y al
+escribir cada punto se devuelven como «HH:MM» — `_needs_hhmm_reencode` amplía lo
+que antes solo hacía el take profit por hora. El frontend no necesitó cambios:
+`unit === "time_of_day"` ya pintaba selectores de hora.
+
+### 4. EV barriendo la ventana de entrada (gráfico nuevo)
+
+El gráfico «EV por Tiempo» agrupa los trades QUE HUBO por su hora de entrada; si
+hay límite horario, fuera de él no hay nada que ver. Se añade un conmutador
+**Trades / Barrido**: el segundo lanza un backtest por franja (09:30-10:00,
+10:00-10:30…) y compara el EV de cada una — `EntryWindowSweepChart`.
+
+Va por el mismo motor que el optimizador, con un añadido general a `ParamConfig`:
+**`linked_paths` / `linked_offsets`**, un eje que escribe además en otras rutas
+sumándoles un desplazamiento. Así la ventana se mueve DE UNA PIEZA con una sola
+dimensión de rejilla: N corridas, no N². Sin esas claves el comportamiento de un
+eje es exactamente el de siempre.
+
+También se hizo **recursiva la limpieza de NaN** del resultado: solo se limpiaba
+la rejilla de 2 dimensiones, y con 1 eje los `NaN` salían crudos — `NaN` no es
+JSON válido y el navegador reventaba al parsear, sin ningún error en el backend.
+
+### 5. MEDIDO: el 29 % de los trades son WARRANTS, y pierden
+
+Los tickers de la fuga (ONMDW, ISPOW, GMBLW, RVSNW…) son warrants. Cruzando los
+2.688 trades contra `massive.tickers`:
+
+| tipo | trades | % | PnL |
+|---|---|---|---|
+| CS | 1.748 | 65,0 % | +426,79 |
+| **WARRANT** | **776** | **28,9 %** | **−62,14** |
+| ADRC | 119 | 4,4 % | +6,04 |
+| RIGHT / ETF / UNIT / PFD / ETS | 32 | 1,2 % | −12,14 |
+| sin referencia | 13 | 0,5 % | −4,09 |
+
+El 31,6 % de los trades NO son acción común, y entre todos restan ~77 $ de un
+resultado de 354 $. `daily_metrics` no lleva columna de tipo de instrumento, por
+eso entran; pero la vista `massive.tickers` (ticker, name, type) YA está
+registrada en el DuckDB del backend (`database.py`) y en el lago local, así que
+el filtro es viable sin infraestructura nueva. **Pendiente de decidir con Jaume**
+si va como filtro de universo opt-in o como default, y qué se hace con los
+tickers sin referencia. El screener en vivo y `bot_alerts_radar` ya filtran por
+`TIPOS = ("CS", "ADRC")`.
+
+### 5b. IMPLEMENTADO el mismo día: filtro de tipo de instrumento
+
+Decisión de Jaume: **por defecto para todas las estrategias**, tipos permitidos
+`CS` + `ADRC` (los mismos que el screener en vivo y `bot_alerts_radar`), y los
+tickers **sin fila en la referencia se QUEDAN** — la referencia es de hoy y un
+ticker legítimo deslistado en 2024 no tiene fila; excluirlos sería un sesgo de
+supervivencia al revés.
+
+`data_service._filtrar_tipo_instrumento`, aplicado en `fetch_qualifying_data` —
+el envoltorio cacheado — en sus **tres** salidas (acierto de Redis, acierto de
+disco y cálculo). Va DESPUÉS de cachear a propósito: la caché guarda el universo
+crudo, así que la escotilla `BACKTEST_ALLOW_ALL_INSTRUMENT_TYPES=1` sigue
+funcionando sin invalidarla y una caché escrita antes de hoy también se filtra.
+
+La referencia se lee una vez y se cachea en proceso, con tres intentos:
+`massive.tickers` → `tickers` → el parquet del lago con una conexión DuckDB **en
+memoria propia** (si el fallo es que el lago está abierto por otro proceso,
+`get_db_connection` fallaría también en el respaldo). **Si no se puede leer, NO
+se filtra** y se loguea en ERROR: quedarse sin referencia no puede vaciar el
+universo en silencio.
+
+⚠️ Esto cambia el resultado de TODAS las corridas anteriores al 2026-09-06.
+
+### 5c. El filtro llega también al buscador y a los datasets
+
+Jaume: «que los oculten porque no voy a operar nunca un warrant». La MISMA
+función (`_filtrar_tipo_instrumento`) se aplica ahora en tres sitios, no en tres
+copias de la regla:
+
+1. `fetch_qualifying_data` — el universo del backtest.
+2. `routers/data.py` `/api/data/filter` — el buscador de tickers. Va **antes**
+   de `get_dashboard_stats` y de la serie agregada, para que la tabla y las
+   métricas de arriba cuadren entre sí. Esa consulta no lleva `LIMIT`, así que
+   filtrar sobre el resultado es exacto.
+3. `routers/query.py` `_compute_dataset_pairs` — los pares (ticker, día) de un
+   dataset, tras el `drop_duplicates`.
+
+**Lo que NO se tocó, a propósito:** `/api/data/tickers` (el autocompletado de la
+referencia) sigue devolviendo todo — se usa también para mirar un ticker suelto
+en Análisis, donde ver un warrant no molesta.
+
+⚠️ **Los datasets ya creados guardan sus pares en `dataset_pairs` y siguen
+contando los días de warrant.** El backtest ya no los opera (lo filtra el
+qualifying), pero el número de días del selector no bajará hasta que el dataset
+se vuelva a crear. El genético no se ve afectado: usa `qualifying.feather`, que
+sale de `fetch_qualifying_data` (ver el comentario de `_escribir_qualifying`).
+
+---
+
+## 2026-09-06 (tarde) · Locates en el calendario, suelo de precio y lectura neta del barrido
+
+### 6. El calendario era la ÚNICA vista que ignoraba los locates
+
+Jaume: «veo que de mayo a junio he ganado dinero y en la curva de equity con
+gastos claramente estoy perdiendo». No era impresión suya. Medido sobre su
+corrida, el desfase entre el calendario y la curva era **exactamente el coste de
+locates, mes a mes y al céntimo**:
+
+| mes | calendario | curva c/gastos | desfase | locates |
+|---|---|---|---|---|
+| 2026-01 | +427,27 | +139,27 | 288,00 | 288 |
+| **2026-05** | **+195,82** | **−188,18** | **384,00** | **384** |
+| 2026-06 | +4.823,65 | +3.849,65 | 974,00 | 974 |
+| 2026-08 | +3.161,50 | +2.531,50 | 630,00 | 630 |
+
+Causa: `CalendarTab` construía sus casillas con `t.pnl`, que es el PnL **antes**
+del alquiler de acciones — el locate viaja aparte porque se cobra una vez por
+ticker-día, no por operación. La curva de equity con gastos sí lo descuenta, y
+el `total_pnl` que reporta el motor también (11.698,79 − 3.604 = 8.094,79). El
+calendario era el único sitio que no.
+
+**Los gastos fijos SÍ estaban** — si hubieran faltado, el desfase de mayo habría
+sido 684 y no 384.
+
+Ahora: «Gastos» = comisiones + locates + fijos; «Profits - Gastos» = pnl −
+locates − fijos; «Profits» sin tocar (bruto antes de costes). Verificado contra
+`global_equity_expenses`: **cuadra al céntimo en los nueve meses**.
+
+Matiz de atribución: al repartir el locate por operación, un día con varias
+entradas en el mismo ticker puede cargárselo entero a una de ellas. Los totales
+de día, semana y mes son exactos; el reparto intradía es aproximado.
+
+### 7. Suelo de precio en el universo: 0,10 $
+
+`universe_filters.min_price` / `max_price` están declarados en el esquema y la
+interfaz los enseña, pero **`_build_where_clause` nunca los ha leído**: no han
+filtrado nada jamás. Misma familia que los 45 filtros del buscador.
+
+Por eso el suelo va aparte y siempre activo (`_filtrar_precio_minimo`), medido
+sobre `open` — la primera cotización del día, que es **causal**; usar `close` o
+`high` sería mirar el futuro. Los días sin precio se quedan, igual que los
+tickers sin ficha. Escotilla `BACKTEST_MIN_PRICE=0`.
+
+Las dos reglas del universo viven ahora en `_filtrar_universo`, que usan el
+backtest, el buscador y los pares de un dataset. Para los pares, `open` viaja en
+el SELECT y se descarta después (`dataset_pairs` solo guarda ticker+date).
+
+Lo motivó la operación de OPPr a $0,0005: 636.873 acciones y 6.369 $ de locates
+sobre una posición de 300 $, que se llevó 7.000 $ de una cuenta de 10.000.
+
+### 8. Barrido de EV: lectura BRUTA y NETA
+
+`expectancy` del motor divide el PnL **antes** de locates: 46,42 $ frente a
+32,12 $ reales en la corrida de Jaume, un 45 % de más. Se añade `total_pnl` al
+detalle de cada punto de la rejilla y un conmutador **Bruto / Neto** en el
+gráfico. **El defecto se queda en Bruto** a propósito, por petición explícita de
+no cambiar lo que ya había; el globo enseña las dos lecturas más el dinero total
+de la franja. Ninguna de las dos lleva los gastos fijos del mes.
+
+### 9. Espaciado del barrido
+
+Los conmutadores `Trades / Barrido` y `15m/30m/60m/120m` estaban pegados entre sí
+y al borde de su caja, y los minutos se leían como un continuo. `gap-1`,
+`p-[3px]` y más ancho interior; `Barrer`/`Cancelar` con margen a los lados.
+
+---
+
+## 2026-09-06 (noche) · El genético gana un segundo modo: MEJORAR una estrategia
+
+Petición de Jaume: «el genético busca estrategias, pero ¿podría optimizar UNA
+con todos sus parámetros? En el 3D optimizo uno o dos; ¿y si tiene cinco o
+seis? Quiero la combinación más ROBUSTA, no la que más dinero da». Y una
+condición: **el modo explorador no se toca, se le añade otro al lado.**
+
+### 10. Dos especies de cromosoma, un solo motor
+
+`genetico/especie.py` decide, según `config["modo"]`, qué módulo provee
+`aleatorio / mutar / cruzar / huella / receta / a_definicion`:
+
+    explorar (por defecto) -> cromosoma.py   el de siempre, intacto
+    mejorar                -> afinar.py      NUEVO
+
+**Por qué un cromosoma nuevo y no reutilizar el del explorador.**
+`cromosoma.a_definicion()` va en un solo sentido y hardcodea `exit_logic: None`,
+`postgap_preconditions: None`, `apply_day`, `timeframe: 1m` y trailing/swing
+apagados. Convertir una estrategia hecha a mano a ese cromosoma le arrancaría la
+mitad de su definición **en silencio**. En `afinar.py` el individuo ES la
+definición: se parte de la semilla intacta y solo se escriben las rutas
+marcadas. Hay un test por cada cosa que debe sobrevivir.
+
+Los genes salen de **`extract_parameters`**, el mismo del optimizador 3D — ya
+sabe leer los indicadores y sus parámetros con rango, paso y unidad — y se
+escriben con `_set_nested_value`, que reescribe "HH:MM" donde toca. Se le añaden
+los que ese extractor no cubre: **sesión de mercado** (un gen categórico que
+escribe tres claves) y **reentradas**. Comprobado sobre `RTH prueba 1`: saca el
+objetivo del % Fade, el del Elapsed Time, el periodo Y el objetivo del RVOL, las
+dos puntas de la ventana horaria, stop, take profit, reentradas y sesión.
+
+**El rango lo elige el usuario**, como en el 3D; el backend solo propone ±2
+escalones.
+
+### 11. La robustez es un EJE APARTE, no otra métrica
+
+Dos desplegables en vez de uno: **qué mides** (los mismos EV·√N, PF, Sharpe… del
+explorador) y **cómo lo agregas**:
+
+- `valor` — lo de siempre, y el defecto.
+- `peor_trozo` — parte el IS en tramos con el mismo número de días de mercado y
+  puntúa con el peor. **No cuesta ni un backtest más**: una corrida ya devuelve
+  el día a día.
+- `media_menos_sigma` — media − λ·σ entre tramos.
+- `vecindario` — el «robust plateau» del 3D en N dimensiones, usando los
+  individuos YA evaluados de la caché. También gratis.
+
+La agregación solo se ofrece en modo mejorar. El explorador no la ve y su
+`config` no la lleva, así que corre exactamente igual que antes.
+
+### 12. Tres trampas que se cerraron por el camino
+
+**La sesión la pisaba el panel.** `evaluador.parametros_backtest` pasa
+`market_sessions` a `run_backtest` **por argumento**, y el argumento gana sobre
+la definición. En modo mejorar eso habría hecho que la corrida entera evaluara
+el horario del explorador en vez del de la estrategia — y sin ningún error. Con
+definición, ahora mandan la definición y sus genes (también `size_by_sl` y el
+stop híbrido).
+
+**`mutar` podía devolver un clon.** El `tocado = True` marcaba «lo intenté», no
+«cambió», y `_vecino` sortea de toda la rejilla un 30 % de las veces. Un clon ya
+está en la caché, así que la generación se quedaba sin individuos nuevos que
+evaluar y el genético se estancaba sin dar ni un aviso. Lo cazó
+`test_mutar_siempre_cambia_algo`.
+
+**Las guardas y el operador OR.** En modo mejorar las guardas fijas se meten
+delante de la lógica de entrada, pero solo si la raíz es un AND: colarlas dentro
+de un OR las convertiría en «o esto o la guarda», lo contrario de una guarda. Si
+la raíz es OR, se envuelve en un AND.
+
+### 13. Otras decisiones
+
+- **La definición se CONGELA al lanzar** (`estrategia_base` en el `config.json`
+  de la corrida). Si el usuario edita la estrategia a media noche, los
+  individuos ya evaluados y los que quedan partirían de bases distintas.
+- **La generación 0 lleva la estrategia TAL CUAL** como línea base, más
+  mutaciones suyas de radio creciente (60 % del cupo) y luego aleatorios. Sin la
+  línea base no se puede saber si el genético ha mejorado algo.
+- Todos los genes empiezan **desmarcados**: marcar por defecto sería mover cosas
+  que nadie ha pedido.
+
+25 tests nuevos en `test_genetico_afinar.py`. 731 en total, `tsc` limpio.
+
+### 14. Modo mejorar, segunda tanda: parciales variables, pirámide y dataset
+
+**Parciales como ESTRUCTURA, no solo como número.** Petición de Jaume: «quiero
+probar qué pasa si añado 3 o 5 parciales, ya sea por hora, minutos o distancia…
+aunque modifique la estrategia». Se resuelve con dos tipos de gen:
+
+- `parciales.n` — cuántos niveles (0 a 5). Cero es una opción legítima: es la
+  comparación contra no ponerlos.
+- `parciales.{i}.nivel` — un gen CATEGÓRICO por nivel, con la lista completa de
+  disparadores (`pct:6`, `hora:10:30`, `tiempo:30`) construida con las mismas
+  rejillas que usa el explorador.
+
+Encajarlo así, y no como cuatro genes por nivel (tipo + valor% + valor hora +
+valor minutos), lo deja en 1 + N casillas en vez de 1 + 4N, y hace que «un
+escalón» signifique algo para la mutación.
+
+**El capital se reparte a partes iguales** y el último se lleva el resto: el
+motor exige que sumen exactamente 100 % o deja posición sin cerrar. Repartir así
+lo garantiza sin meter N dimensiones más de sobreajuste; para repartos
+desiguales están los genes de ruta `partial_take_profits.i.capital_pct`.
+
+**Si hay estructura, las rutas de parciales se ignoran.** No es solo evitar que
+dos genes se peleen: `_encode_tp_value` relee la forma NUEVA, así que escribir
+un 6 sobre un nivel recién puesto a `"HOUR:10:30"` daría `"HOUR:00:06"` — un
+disparador que nadie ha pedido, sin ningún error.
+
+**PIRAMIDACIÓN: `extract_parameters` no la miraba.** Una estrategia con pirámide
+tenía sus niveles congelados tanto en el genético como en el optimizador 3D. Se
+conservaban (la definición se copia entera) pero no había forma de moverlos, y
+el tamaño de un añadido pesa tanto como el de la entrada. Ahora salen tres
+cosas por nivel: `capital_pct`, `times` y los umbrales de SU condición, que van
+por la misma maquinaria que las de entrada y salida. **Esto también se lo lleva
+el optimizador 3D**, que hasta hoy tampoco podía tocar una pirámide.
+
+**El dataset lo trae la estrategia.** Al elegirla en modo mejorar se carga solo
+su `dataset_id`. Elegirlo a mano era una forma fácil de evaluar la estrategia
+sobre otro universo del que se construyó y no enterarse: el número sale, solo
+que no es el de esa estrategia. Se puede cambiar después, y si se cambia, la
+página avisa. Si la estrategia no tiene dataset guardado (usa filtros de
+universo), lo dice y no toca nada.
+
+740 tests (34 en `test_genetico_afinar.py`), `tsc` limpio.
+
+### 15. La sesión, en tres genes (no en una casilla)
+
+Jaume, sobre la primera versión: «me refería a elegir entre qué horas quiero que
+mire, quizás quiero ver si cerrando a las 11 es mejor que a las 12; si solo
+puedo poner tick en sesión de mercado no sé qué baremos está usando». Tenía
+razón: con un solo gen categórico de sesión eso no se puede barrer.
+
+Ahora son tres: `__sesion_tipo__` (categórico), `__sesion_desde__` y
+`__sesion_hasta__` (horas, en minutos desde medianoche, con rango y paso como
+cualquier otro gen). Reglas, cada una tapando un agujero:
+
+1. Si el gen de TIPO está marcado, manda él.
+2. Si NO lo está pero sí alguna HORA, la sesión pasa a personalizada. Dejarla en
+   RTH haría que el barrido no cambiara nada: N corridas dando el mismo número,
+   sin error.
+3. La punta que no se barre se queda en la que tenga hoy la estrategia.
+4. Fuera de personalizada las horas se BORRAN (el lío de la unión de sesiones).
+5. Un cierre anterior a la apertura recorta el día a cero velas: el genético lo
+   descarta solo (nota 0), pero no se escribe una sesión imposible.
+
+### 16. Indicador nuevo: «Open Gap (%)», y las 8 capas que hizo falta tocar
+
+Pedido como guarda del genético: «añade también lo de gap de apertura mínimo,
+por si no quiero solo ver el de PM». No existía: el motor solo tenía
+«PM High Gap (%)» (máximo de premercado vs cierre de ayer) y «Current Gap (%)»
+(precio vivo vs cierre de ayer). El gap de apertura solo vivía como columna del
+lago, para filtrar universos.
+
+**Es CAUSAL a propósito: NaN antes de las 09:30.** El dato existe
+(`gap_at_open_pct`) y devolverlo constante todo el día habría sido trivial —
+pero es LOOKAHEAD: una estrategia que entra a las 08:00 estaría usando la
+apertura de las 09:30. El NaN de la mañana no es un fallo, es la corrección.
+Mismo criterio que «% Session Fade».
+
+Capas tocadas: `indicators.py` (legacy) · `strategy_engine.py`
+(`_ri_open_gap` + dispatch nativo, con test de paridad) · `schemas/strategy.py`
+(`IndicatorType`) · `api_public/.../catalog.py` · `types/strategy.ts` ·
+`indicatorValidation.ts` · `ConditionBuilder.tsx` (es-porcentaje, es-medida,
+desplegable, etiqueta y ayuda) · `genetico/catalogo.py` (la guarda, que sale en
+los DOS modos).
+
+De esas, **`indicatorValidation.ts` la cazó TypeScript** — es la única de las
+ocho que da error en vez de caerse en silencio.
+
+⚠️ **Una capa NO se ha tocado, a propósito:** el bot de avisos en vivo
+(`bot_alerts_universo.py`) tiene su propio mapa de nombres y es zona cerrada
+(AGENTS.md). Una estrategia que use «Open Gap (%)» funciona en el backtest pero
+**el bot todavía no la entiende**. Queda para Jaume y Sailor.
+
+### 17. El genético ya no pide dataset: lo definen las guardas y las fechas
+
+Jaume: «yo meto las guardas y el rango de fechas donde quiero analizar; que
+cargue un dataset en base a eso, no hace falta ni quiero que tengamos que
+cargar ningún dataset aquí… las guardas que fijamos son como filtros también de
+universo». Vale para los DOS modos.
+
+**Se pudo hacer porque el dataset solo servía para producir el `qualifying`**:
+`datos.preparar` lo usa y a partir de ahí el `dataset_id` es solo metadato; las
+velas salen de los pares del propio qualifying.
+
+`fetch_qualifying_data` acepta ahora `filtros` explícitos (sin ellos, se
+comporta exactamente igual que siempre). El router traduce cada guarda a una
+columna diaria, y **cada traducción es una COTA SUPERIOR de su guarda intradía,
+así que nunca quita un día que la guarda habría dejado pasar**:
+
+| guarda | columna | por qué es segura |
+|---|---|---|
+| `Bar Close > X` | `high > X` | si una vela cierra sobre X, el máximo del día también. **`open` NO valdría**: una acción abre a 0,05 y se va a 5 |
+| `Dollar Volume > X` | `volume * high > X` | Σ(precio·vol) ≤ high·Σvol |
+| `Accumulated Dollar Volume > X` | `volume * high > X` | igual |
+| `PM High Gap (%) > X` | `pmh_gap_pct > X` | el PMH final ≥ el acumulado |
+| `Open Gap (%) > X` | `gap_at_open_pct > X` | exacto, es constante |
+
+Las guardas **siguen corriendo vela a vela** dentro de la estrategia: esto solo
+evita cargar días que no pueden pasarlas nunca.
+
+**Tope de 60.000 ticker-días y contador en vivo.** Sin una guarda que acote, el
+universo es el lago entero: medido, precio > 0,7 y dollar volume > 1 M sobre
+2019-2024 dan **7.461.580 ticker-días**. Marcando además PM High Gap ≥ 50 bajan
+a **7.800**. La página lo enseña antes de lanzar y el backend lo rechaza por
+encima del tope — mejor un error que decir «lanzada» y dejarla muriendo sola.
+
+El contador es un `count` directo sobre el parquet materializado, con DuckDB en
+memoria: **4,7 s** frente a los más de 30 que tardaba construyendo el qualifying
+entero con sus 32 ventanas LAG/LEAD para dar un número.
+
+**Cabo suelto conocido:** al guardar un ganador desde la tabla, la estrategia se
+guarda SIN dataset atado (la corrida ya no tiene uno). El aviso lo dice y el
+universo se elige al abrirla en el Backtester.
+
+### 18. Rectificación: las guardas NO son el universo
+
+Jaume, sobre §17: «una guarda puede ser una guarda, pero si te digo que el close
+sea mayor que 7 **no** te estoy diciendo que solo incluyamos acciones por encima
+de 7, te estoy diciendo que solo quiero ENTRAR cuando la estrategia supera 7…
+intenta no transformar nada, no hacer equivalencias ni cosas raras».
+
+Tenía razón. La traducción guarda→columna de §17 era matemáticamente segura
+(cotas superiores) pero conceptualmente equivocada: mezclaba dos cosas que el
+usuario tiene separadas en la cabeza, y le obligaba a razonar sobre
+equivalencias para saber qué iba a correr. **Retirada.**
+
+Ahora:
+
+- **Las guardas son guardas**: condiciones de entrada, vela a vela. Nada más.
+- **El universo se define aparte**, en su propio cuadro, con las MISMAS opciones
+  que al crear un dataset en el Backtester — se reutiliza `InlineDatasetBuilder`
+  entero, con una prop nueva `soloFiltros` que se salta el modal del nombre y no
+  crea ningún dataset. Cero divergencia de opciones y cero traducciones: los
+  filtros viajan en `cfg["universo"]` con la forma exacta que ya entiende
+  `_build_where_clause`.
+
+Se conservan de §17 el contador en vivo y el tope de 60.000, que sí eran útiles.
+
+**El contador cae a la vía lenta con reglas de Gap−1.** El parquet materializado
+no lleva `lag_pmh_gap_pct` ni sus hermanas — se calculan al vuelo en la vía
+completa. Un universo con Gap−1 reventaba el count rápido con un Binder Error y
+devolvía un 500; ahora se registra y se recalcula por la vía buena.
+
+**Lección:** cuando una simplificación exige explicarle al usuario una
+equivalencia para que entienda qué va a correr, la simplificación es el problema.
+
+### 19. Universo con el estilo de la página, y el tope de parciales
+
+Tres retoques pedidos por Jaume sobre el modo mejorar:
+
+**1. El nº de parciales manda sobre las filas.** Si el rango de «Cuántos
+parciales» llega a 2, marcar el disparador del 4º no haría nada: el gen viajaría
+y `a_definicion` lo ignoraría — un ajuste fantasma sin error, como el Max DD
+Diario. Ahora esas filas salen deshabilitadas («por encima del máximo de
+parciales») y además se filtran del config, por si el máximo baja después.
+
+**2. Se va la sección «Datos».** Tenía nombre + IS desde/hasta, y el cuadro de
+universo llevaba SU propio rango de fechas: dos sitios para el mismo periodo,
+pidiendo contradecirse. Ahora hay un solo cuadro, **Universo**, con el nombre de
+la corrida, el periodo IS y los filtros. Jaume: «no te compliques, ese rango de
+fechas global es el IS».
+
+**3. El selector, con el estilo de la página.** Estaba embebido
+`InlineDatasetBuilder` entero y desentonaba con el resto (`Sec`/`Row`/`Sel`/
+`Num`). Ahora es nativo: sección + métrica + operador + valor + «Añadir», y las
+condiciones puestas como fichas con «×».
+
+**Sin duplicar el catálogo.** Las métricas, sus descripciones, la traducción a
+columnas del lago y el armado del objeto de filtros se han sacado a
+`lib/universoFiltros.ts`, que ahora usan LAS DOS pantallas —
+`InlineDatasetBuilder` importa de ahí. Dos listas de métricas no darían error:
+una se quedaría corta y nadie lo notaría.
+
+Detalle: al añadir una condición que repite sección + métrica + signo, se
+SUSTITUYE la anterior. Dos reglas contradictorias sobre lo mismo dejarían el
+universo vacío sin decir por qué.
+
+### 20. Tres ajustes fantasma en el panel de riesgo del modo mejorar
+
+Jaume: «en riesgo veo la opción de reentradas y arriba también me deja
+activarlas. En modo estrategia la opción de riesgo para reentradas no debería
+estar».
+
+Tenía razón, y no era solo una. En modo mejorar, **reentradas, «shares por SL» y
+stop híbrido salen de la DEFINICIÓN de la estrategia**
+(`evaluador.parametros_backtest` los lee de ahí, ver §12). Los controles del
+panel del explorador seguían pintados y **no hacían nada**: se tocaban, no
+pasaba nada y nadie avisaba — el patrón del Max DD Diario.
+
+Ahora esos tres solo se pintan en modo explorar; en mejorar, una línea explica
+de dónde salen y recuerda que las reentradas se pueden mover como gen.
+
+Lo cubre `test_en_modo_mejorar_el_riesgo_del_panel_no_pisa_a_la_estrategia`:
+con el panel diciendo lo contrario que la estrategia, mandan la estrategia y su
+híbrido, y las reentradas ni siquiera viajan como argumento.
+
+### 21. El KeyError que la pantalla no podía enseñar
+
+Al quitar el dataset (§17-19) se cambió el router y la página, pero se quedó
+`genetico/corrida.py` haciendo `config["dataset_id"]`. Resultado: la corrida
+moría a los tres segundos con un `KeyError` y **en la pantalla no salía nada** —
+Jaume: «sigue en marcha no? parece que no haga nada».
+
+Es el modo de fallo propio de esta arquitectura: el genético es un **proceso
+externo**, así que su traceback acaba en `salida.txt` dentro del directorio de
+la corrida, y la página solo ve que `estado.json` no aparece. Sin abrir ese
+fichero no hay forma de saber que ha reventado.
+
+**Dónde mirar cuando una corrida «no hace nada»**, por este orden:
+
+    <corrida>/salida.txt   el traceback del proceso, si murió
+    <corrida>/log.txt      el avance; en la fase de velas escribe cada 12 meses
+    <corrida>/estado.json  lo que lee la página; NO existe hasta que arranca
+
+Ojo con confundir «muerta» con «cargando»: la preparación de datos es lo primero
+y lo más lento (medido en la corrida del 6-sep: 72 meses en ~3,5 min, una línea
+de log cada 12). Hasta que no acaba, `estado.json` no existe y la página está en
+blanco con todo funcionando.
+
+`corrida.py` usa ahora `config.get("dataset_id") or ""`, y `datos.preparar`
+lanza un error que se entiende si de verdad no hay ni qualifying ni dataset.
+`test_genetico_sin_dataset.py` vigila las dos mitades del contrato — y lee solo
+el CÓDIGO, porque el comentario que explica el fallo contiene el mismo literal.
+
+## 2026-09-07 — Merge de `staging` en `alvaro-rama-desarrollo` SIN el bot de alertas (2º merge de exclusión)
+
+Merge de `origin/staging` (`c8e1883`; 62 commits de Jaume desde `6db5a36`).
+Trae: el paquete `genetico/` completo (optimizador genético de estrategias,
+con router `/api/genetico` y página `/genetico`, ambos APAGADOS por defecto
+vía `GENETICO_ENABLED` / `NEXT_PUBLIC_GENETICO_ENABLED`), stop híbrido con
+techo de parciales al 40 %, margen de stop de estructura en el optimizador
+(3D, WFO y genético), ventana de entrada estricta y sesión excluyente,
+parciales variables y piramidación con dimensionado propio, locates en el
+calendario, Rolling EV, `strategy_explain.py` (qué hace DE VERDAD una
+estrategia frente a su JSON), what-if de céntimos de las mesas de fondeo,
+primitivo UI `Panel`, y los docs `MEMORIA_BOT_EJECUCION.md`,
+`PROYECTO_EV_Y_LOCATES.md` y `PROYECTO_TELEGRAM_ESTADO.md`.
+
+**Bot de alertas: EXCLUIDO otra vez** (decisión fijada en la entrada del
+2026-09-02): los 14 ficheros de la zona cerrada que trae staging quedaron
+fuera (6 `bot_alerts_*.py` modificados, `bot_alerts_comandos.py` y
+`bot_alerts_diario.py` nuevos, sus tests, `CuadroMandos.tsx` y
+`api_bot_alerts.ts` y el router). Ni un fichero ni una referencia queda en
+la rama; `market_frame.py` ni se tocó (staging no lo modificó). Sin `.env`
+ni secretos trackeados en staging (verificado con `git ls-tree`).
+`strategy_explain.py` (nuevo de staging) importa `bot_alerts_universo`
+perezosamente DENTRO de un try/except puesto a propósito por Jaume («para
+no atar este módulo al bot»): sin el bot devuelve `{}` y no rompe nada;
+aquí solo lo invoca el router excluido, así que queda dormido e inofensivo.
+
+Conflictos resueltos:
+- `MEMORIA_MADRE.md` — ambos lados conservados (nuestras entradas + las de Jaume).
+- `Sidebar.tsx` — nuestro estado (sin Screener ni Alertas) + el link
+  «Genético» gated de staging (import `Dna`, sin `Radio` — era del link de
+  Alertas que aquí no existe).
+- `CalendarTab.tsx` — adoptada la versión de STAGING (lectura en dinero o en
+  R de los tres modos, riesgo porcentual y locates en el calendario). SUPERA
+  al modo «R» local del commit `2f19fe7`, que queda retirado en la práctica:
+  mantener las dos versiones re-conflictuaría cada merge y la de staging es
+  la que vive en la rama conjunta. El botón CSV de Trades y los fixes de
+  «Nueva Estrategia» (`2c4e5eb`, `e29652c`) SIGUEN: esos ficheros
+  auto-fusionaron y se comprobó que los cambios locales siguen presentes.
+
+Verificación: `tsc --noEmit` 0 errores; `compileall` de `backend/app` y
+`genetico` OK; pytest `test_stop_hibrido` + `test_genetico_*` 112/113 (el
+único fallo es ambiental, ver hallazgo de abajo); `test_strategy_api` +
+`test_backtest_dataset_bloqueado` 8/8. OJO al lanzar pytest: `database.py`
+abre `local_data.duckdb` RELATIVO al cwd — desde la raíz del repo conecta a
+una BD vacía y falla sin que nada esté roto; lanzar desde `backend/`.
+`backend/.env` intacto (des trackeado, el merge no lo toca).
+
+### [HALLAZGO · 2026-09-07 · 01] El paquete `genetico` tiene rutas por defecto en `D:/` — la suite falla en cualquier PC que no sea la de Jaume
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug (ambiental — en la máquina de Jaume no falla)
+- **Dónde:** `genetico/entorno.py:15` (`BTT_GENETICO_DIR` por defecto `D:/tmp/btt_genetico`, con `os.makedirs(DIR_TRABAJO)` dentro de `preparar()`) y `genetico/datos.py:35` (lago por defecto `D:/lago_backtester/parquet/...`)
+- **Qué observé:** al llegar por el merge de staging, `backend/tests/test_genetico_sin_dataset.py::test_sin_qualifying_y_sin_dataset_el_error_lo_explica` falla en este equipo con `FileNotFoundError: [WinError 3] El sistema no puede encontrar la ruta especificada: 'D:/'` — no hay unidad D:. Los otros 112 tests del mismo lote pasan.
+- **Cómo reproducir:** `backend/.venv/Scripts/python.exe -m pytest backend/tests/test_genetico_sin_dataset.py -q` (desde la raíz del repo, sin `BTT_GENETICO_DIR` definido)
+- **Evidencia:** `1 failed, 112 passed in 6.47s`; el traceback termina en `os.makedirs(name='D:/', exist_ok=True)` alcanzado desde `genetico/entorno.py` (`DIR_TRABAJO`). Confirmed: ni `.env` ni variables del entorno definen `BTT_GENETICO_DIR` aquí.
+- **Hipótesis de causa:** HIPÓTESIS — Jaume desarrolla con el lago y el scratch en su unidad `D:`; el default del `os.getenv` apunta a SU máquina en vez de a una ruta portable (relativa al repo o temporal). `datos.py` además trae el lago `D:/lago_backtester/...` hardcodeado en el propio literal.
+- **Impacto:** el genético no puede ejecutarse en la máquina de Álvaro sin definir `BTT_GENETICO_DIR` (y la ruta del lago); 1 test rojo fuera de la máquina de Jaume. No afecta al arranque normal: router y página están gated OFF por defecto.
+- **Código tocado:** NINGUNO (confirmado) — el código llega verbatim del merge de staging; no se ha modificado para arreglarlo
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-07 · 02] Warmup JIT de indicadores huérfano desde el merge del 2026-09-02 — main.py llama a una función que ya no existe
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug (menor; degrada con WARN, no rompe)
+- **Dónde:** `backend/app/main.py:195-196` (caller) frente a `backend/app/services/indicators.py` (la función ya no está)
+- **Qué observé:** al arrancar el backend tras el merge del 2026-09-07, el log saca `[JIT] warmup de indicadores falló (no crítico): cannot import name 'warmup_indicators' from 'app.services.indicators'`. El caller vive en `main.py` (introducido por `bcc75ba`, perf(jit)), pero `def warmup_indicators` NO existe ni en `indicators.py` del base `6db5a36`, ni del pre-merge `2f19fe7`, ni de staging `c8e1883` — solo en `bcc75ba` original. Ya faltaba en el merge anterior `13ce154` (2026-09-02): o sea, el warmup no ocurre desde entonces.
+- **Cómo reproducir:** arrancar el backend y mirar el log de arranque (WARN `[JIT] warmup de indicadores falló`).
+- **Evidencia:** `git grep -c "def warmup_indicators" bcc75ba -- backend/app/services/indicators.py` → 1; el mismo grep en `13ce154`, `6db5a36`, `2f19fe7` y `c8e1883` → 0. Caller presente en `main.py:195` en todos los HEAD recientes.
+- **Hipótesis de causa:** HIPÓTESIS — el merge del 2026-09-02 tomó el `indicators.py` de staging (que no descendía del warmup) y el caller de `main.py` sobrevivió al auto-merge. El WARN viene de ahí, no del merge del 2026-09-07 (pre y post-merge están iguales).
+- **Impacto:** el primer backtest de cada arranque paga el coste JIT de los indicadores en vez de calentarlo en background. Sin efecto en resultados.
+- **Código tocado:** NINGUNO (confirmado) — reportado, no arreglado (reintegrar el warmup o retirar el caller es decisión de Álvaro/Jaume, y habría que adaptarlo al catálogo nuevo de indicadores de staging)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-07 · 03] El calendario en R convierte con el 1R del PANEL EN VIVO, no con el de la corrida ejecutada — descuadre de 100× demostrado
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug (números R falsos al reabrir una corrida cuyo 1R de lanzamiento difiere del campo actual del panel; con la corrida recién lanzada y el panel sin tocar, cuadra)
+- **Dónde:** `frontend/src/components/backtester/ResultsTabs.tsx:291-292` — pasa `riskR={riskR}` (estado VIVO del panel, `BacktestPanel.tsx:420`) junto a `riskType={backtestParams?.risk_type}` (parámetros GUARDADOS de la corrida). Fuentes mezcladas. El consumidor es `CalendarTab.tsx` (`puedeR`, `valorRPorDia`), que divide el PnL del día entre ese `riskR`.
+- **Qué observé:** Álvaro veía «1 R = $100» y un mes a +0.02 R en el calendario de una corrida cargada. La corrida (autosave `041b2fc7`, «Doble Techo 1», 2.472 trades) se lanzó con `risk_r: 1.0, risk_type: FIXED, size_by_sl: false` (leído de `backtest_params` persistido por `_autosave_success`): posiciones de ~1 $ nocional (CHOW 2026-01-02: size 0.970874 = 1/entry_price) y `r_multiple = pnl/1`. El calendario dividía entre el 100 $ del panel → sus R salían 100× más pequeñas que los `r_multiple` del propio motor (marzo: +0.02 R pintado vs +2.15 R sumando r_multiple). El motor NO está en causa: re-lanzando la misma petición con `risk_r: 100` por API, los tamaños son de cientos de acciones y `r_multiple = pnl/100` exacto (control `b5d7a02e`).
+- **Cómo reproducir:** lanzar una corrida con 1R=1 $ (FIXED), cambiar el campo 1R del panel a 100, mirar el calendario en R: la etiqueta dice «1 R = $100» y los números R del calendario son 100× menores que la suma de `r_multiple` de los trades de esa misma corrida.
+- **Evidencia:** suma marzo 2026 de la corrida 041b2fc7: Σ r_multiple = +2.15 R; Σ (pnl/100) = +0.02 R (lo pintado). Params de la corrida en `GET /api/strategy-search/041b2fc7` → `backtest_params.risk_r = 1.0`. Control con `risk_r=100`: CHOW size 764.94, pnl 119.03 → r_multiple 1.19 = pnl/100 ✓.
+- **Hipótesis de causa:** HIPÓTESIS — al adoptar la lectura en R de staging (unidad $/R de CalendarTab) no se cableó `riskR` desde los `backtest_params` guardados de la corrida cargada (donde ya viaja `risk_type`), sino del estado vivo del panel. Con la sesión restaurada o un autosave reabierto, el 1R de lanzamiento y el del panel divergen y la conversión miente sin error.
+- **Impacto:** cualquier R del calendario (y tooltips/semanas/meses) leída de una corrida cuyo 1R de ejecución no coincida con el campo actual es falsa en la proporción entre ambos. No afecta a los `r_multiple` de la pestaña Trades (los calcula el motor con el riesgo de la corrida). La corrida inspeccionada, además, corrió con posiciones de ~1 $ (1R=1 $, tamaño por valor de mercado): su PnL en dólares no es evaluable como estrategia.
+- **Código tocado:** NINGUNO (confirmado) — cablear `riskR` desde `backtest_params` (o etiquetar la unidad con el 1R de la corrida) es el arreglo propuesto; lo aplica el dueño del código
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-07 · 04] `r_multiple` divide TODO el PnL (pirámides incluidas) entre el riesgo INICIAL — Rs absurdas cuando las pirámides dimensionan aparte; y `total_return_r` del autosave es siempre 0
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia (semántica de R con piramidación) + bug menor (métrica siempre 0)
+- **Dónde:** `backend/app/services/backtest_service.py:1251` y `_compute_r_multiple` (1462-1470): `r_multiple = pnl_total_del_trade / risk_unit_dollar` con `risk_unit_dollar = risk_r` de la corrida. Piramidación: `portfolio_sim.py` (niveles con `amount_usd` fijo y dimensionado propio). Secundario: `backend/app/routers/strategy_search.py:42` (`aggregate.get("total_return_r", 0)`).
+- **Qué observé:** corrida 2ee9c294 («1B Sobri», 1.217 trades) lanzada con `risk_r=1.0, FIXED, size_by_sl=true`; la estrategia piramida «Añade 300$» por nivel. Nocional de los trades: mediana 301 $ (las pirámides mandan; la entrada inicial con riesgo de 1 $ es minúscula). El motor reparte: Rs de +192.6R / −237.7R por trade, media +9.84R, **suma +11.974R** — una cifra sin significado: el PnL lo generan pirámides de 300 $ pero el divisor es el riesgo inicial de 1 $. El «retorno» del gráfico (+119.74 %, 10.000→21.974 $) es real en dólares y lo explican las pirámides. Y en «Últimas pruebas» TODAS las corridas (incluidas las buenas) listan R=0.0.
+- **Cómo reproducir:** 1B Sobri (tiene pirámide «Añade 300$» + tamaño por SL) con 1R=1 $ FIXED, 2026-01-01→2026-08-25; mirar la columna R de Trades y el R de Últimas pruebas.
+- **Evidencia:** trades 2ee9c294: JWEL 2026-08-10 nocional 352 $, pnl −237.73, R −237.7 (SL); MAMO 2026-02-03 nocional 325 $, pnl +192.56, R +192.6 (EOD); Σ r_multiple = +11.974R; riesgo implícito pnl/R mediana = 1.0000. Aggregate de la misma corrida: `avg_profit_factor 2.0557, total_return_pct 119.74` — sin ninguna clave `total_return_r` → `strategy_search.py:42` cae al 0.
+- **Hipótesis de causa:** HIPÓTESIS — (a) la R se definió como «pnl del trade / riesgo de la unidad» antes de que las pirámides dimensionaran por su cuenta (amount_usd fijo / tamaño propio), y nadie revisó el divisor; con pirámides el riesgo real del trade es inicial + añadidos. (b) el escritor del autosave espera una clave que el agregado nunca produjo bajo ese nombre (renombrado en algún momento o nunca existió).
+- **Impacto:** toda métrica en R de corridas con piramidación en dólares fijos es inservible (columna R de Trades, avg R del modal del calendario, ranking del genético si usa r_multiple). Con riesgo «normal» (100 $) los números parecen razonables pero mezclan la misma escala. Últimas pruebas no muestra R de ninguna corrida y su filtro por R no filtra.
+- **Código tocado:** NINGUNO (confirmado) — decidir el divisor correcto (riesgo acumulado real del trade, o excluir pirámides de la R) es decisión de diseño de Jaume/Álvaro
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-07 · 05] La regla de céntimos del What-if media contra la ÚLTIMA venta, no contra la MEDIA de salidas — veredictos equivocados en ambos sentidos con parciales/pirámides
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `backend/app/services/what_if_service.py` (`mueve_bastante`, comparaba `avg_entry_price` contra `exit_price`) + `backend/app/services/backtest_service.py:1432` (`exit_price` del trade agrupado = precio del ÚLTIMO fill, por `_group_partial_exits`)
+- **Qué observé:** TTP publica la regla como «10.0 cents difference between average entry and **average exit** price» (tradethepool.com/program-terms). La implementación usaba la media ponderada en la entrada pero el precio de la última venta en la salida. Con TP parciales/pirámides eso se equivoca en los dos sentidos: invalida wins que la mesa paga y da por buenos wins que la mesa no abona.
+- **Cómo reproducir:** long con entrada media 1,00. Caso A: ventas de 900 acc @0,80 + 100 acc @0,98 → media 0,818 → recorrido 18,2¢ (la mesa LO cuenta); con `exit_price` (0,98) el código veía 2¢ y lo invalidaba. Caso B: 700 @0,95 + 300 @0,80 → media 0,905 → 9,5¢ (la mesa NO lo cuenta); con `exit_price` (0,80) el código veía 20¢ y lo daba por bueno.
+- **Evidencia:** docstring de `_group_partial_exits` («exit (hora/precio/razón) de la última»); corrida del usuario 2ee9c294 (1.217 trades, estrategia con parciales/pirámides): 71 wins invalidados bajo el criterio viejo. Tests nuevos en `backend/tests/test_what_if_centimos.py::test_la_salida_es_la_MEDIA_de_las_ventas` fijan los dos casos.
+- **Hipótesis de causa:** HIPÓTESIS — la regla se escribió pensando en trades de una sola salida (donde `exit_price` ES la media) y no se revisó al llegar los trades agrupados con `executions[]`.
+- **Impacto:** What-if con «Cts. mín.» activo sobre estrategias con parciales/pirámides. Estrategias sin parciales no cambian ni un céntimo.
+- **Código tocado:** fix aplicado por ZCode en `alvaro-rama-desarrollo` con OK explícito de Álvaro (2026-09-07): nueva `_salida_media()` que pondera cada venta (kinds exit/reduce de `executions[]`) por sus acciones; `exit_price` queda como fallback exacto para trades de una salida.
+- **Estado:** RESUELTO (commit 2b597cf)
+
+### [HALLAZGO · 2026-09-07 · 06] El borde exacto de la regla de céntimos estaba en «> estricto» y la norma de TTP dice «at least» — los 10¢ justos SÍ cuentan
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia (impacto pequeño, lado conservador)
+- **Dónde:** `backend/app/services/what_if_service.py` (`mueve_bastante`: `(recorrido − mínimo) > 1e-9`)
+- **Qué observé:** la implementación invalidaba el caso del borde exacto (un short de 1,00 a 0,90 con mínimo 10 «NO cuenta», por la lectura de «supera» — Jaume, 2026-09-04, documentada en el propio docstring). Los Program Terms oficiales dicen «**at least** 10 price ticks» y su ejemplo canónico es compra 50.10 → venta «50.20 **(at least)**»: 10,0¢ justos cuentan. FXEmpire lo corrobora: «any trade closed with a profit of **less than** 10 cents is not recognized as valid».
+- **Cómo reproducir:** `mueve_bastante` con entrada 1,00 y salida 0,90, mínimo 0.10 → devolvía False (invalidado).
+- **Evidencia:** tradethepool.com/program-terms (sección Consistency/Validity Rules) + fxempire.com/prop-firms/tradethepool. Test vuelto del revés: `test_el_borde_exacto_SI_cuenta`.
+- **Impacto:** trades con recorrido medio exactamente de 10,0¢ quedaban invalidados de más. Fills exactos raros, pero el ejemplo canónico de la propia mesa es ese caso.
+- **Código tocado:** fix aplicado por ZCode en `alvaro-rama-desarrollo` con OK de Álvaro (2026-09-07): comparación `>=` con tolerancia de coma flotante.
+- **Estado:** RESUELTO (commit 2b597cf)
+
+### [HALLAZGO · 2026-09-07 · 07] El win invalidado por la regla de céntimos DESAPARECÍA con sus comisiones — la mesa las cobra igual (Program Terms)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia (lado optimista, pequeño pero sistemático)
+- **Dónde:** `backend/app/services/what_if_service.py` (el filtro hacía `continue`: el trade salía de trades/equity/drawdown/calendario)
+- **Qué observé:** al invalidar un win, el What-if lo eliminaba entero → su PnL y también sus fees desaparecían de la curva. Los Program Terms de TTP listan las comisiones como deducción SIEMPRE («Deductions include… Commissions»): el beneficio no se abona, pero las comisiones se cobran. Además, al sacarlo del conteo, winrate/expectancy se recalculaban solo sobre los supervivientes y el día del trade invalidado se esfumaba del calendario del What-if.
+- **Cómo reproducir:** trade ganador pnl 100, fees 7, recorrido 5¢, mínimo 10 → antes: `run_what_if` devolvía `trades == []`; el día desaparecía de `day_results`.
+- **Evidencia:** tests reescritos `test_el_win_invalidado_se_queda_pagando_solo_sus_fees` y `test_los_dias_reflejan_el_filtro` (el día ya no se esfuma; expectancy del día = −fees).
+- **Impacto:** curva del What-if con la regla activa, ligeramente optimista (en +fees por cada win invalidado); conteo de trades/winrate.
+- **Código tocado:** fix aplicado por ZCode en `alvaro-rama-desarrollo` con decisión explícita de Álvaro (2026-09-07): el trade se queda con `pnl = −fees` sobre una copia (el trade de entrada no se muta) y `return_pct` recalculado.
+- **Estado:** RESUELTO (commit 2b597cf)
+
+### [HALLAZGO · 2026-09-07 · 08] TTP tiene una SEGUNDA regla de validez (60s/30s entre cada add y su primer reduce) que no está modelada
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** mejora (opcional)
+- **Dónde:** N/A (ausencia en `backend/app/services/what_if_service.py`)
+- **Qué observé:** los Program Terms exigen, además de los 10¢, «at least a 60.0-second range (30.0 seconds for MAX/FLEX) between each opening/adding execution and the next subsequent closing/reducing execution» de la posición. Si se incumple, el beneficio de TODA la posición no cuenta. No está implementada en ninguna parte — y la UI no la muestra, así que no hay botón que mienta.
+- **Cómo reproducir:** N/A (revisión de código).
+- **Evidencia:** tradethepool.com/program-terms, sección Consistency/Validity Rules.
+- **Impacto:** con velas M1 y `look_ahead_prevention=true`, los fills de velas consecutivas distan exactamente 60,0 s («at least 60.0» pasa), así que con la estrategia actual casi nunca dispararía. Relevante si algún día se opera con fills sub-minuto o datos más finos.
+- **Código tocado:** NINGUNO — decisión de Álvaro (2026-09-07): no modelarla por ahora.
+- **Estado:** ABIERTO (descartado por decisión de Álvaro; reabrir si cambia el estilo de ejecución)
+
+## 2026-09-07 (tarde) — INCIDENTE: `local_data.duckdb` corrompido y reconstruido — LECCIONES OPERATIVAS PARA CUALQUIER IA EN ESTE EQUIPO
+
+**Qué pasó.** El updater diario de cangrejo (`actualizar_diario.py`) para el
+backend del :8010 con `taskkill /F` antes de su `--load` (correcto por diseño:
+DuckDB es single-writer). Ese día (run 13:11) su paso `etl_edgecute` falló a
+mitad (13:30) dejando la BD «a medias» — y el propio script avisó de NO
+relanzar el backend. La IA (ZCode) relanzó el backend DOS veces más sin saberlo;
+el re-run del updater (13:48) volvió a matarlas con `/F` con la BD abierta en
+escritura. Tres kills sin checkpoint + una escritura a medias → bloque de
+metadatos inconsistente → `INTERNAL Error: Failed to load metadata pointer` en
+cada apertura. DuckDB no tiene herramienta de repair: solo backup o reconstruir.
+
+**Qué se salvó.** TODO lo de usuario: vive en `users.duckdb` (12 estrategias,
+75 datasets, 2,9M pares, autosaves), que quedó intacto. `local_data.duckdb`
+solo contenía tablas de mercado (sus tablas de usuario estaban a 0 filas).
+
+**Reparación** (verificada: backtest de control idéntico bit a bit al pre-incidente):
+1. Parar el backend (PID del `run_backend_safe.py` de cangrejo).
+2. Corrupto apartado como `local_data.duckdb.corrupto_20260907` (+ su .wal); NO borrado.
+3. Reconstrucción con el modo reparación NATIVO del ETL del propio cangrejo:
+   `datos/scripts/etl_to_edgecute.py --load-only` con su venv (`datos/.venv`) —
+   recarga DROP+CREATE+INSERT de las 5 tablas de mercado desde el parquet (866 s,
+   3.000M velas intraday + 19,35M daily_metrics + tickers/splits/registry).
+4. Backend arriba; `users.duckdb` intocado; backup `.prev_20260826_193508` intacto
+   como red de seguridad.
+
+**REGLAS PARA CUALQUIER IA (y para Álvaro) en este equipo:**
+- **Jamás arrancar/relanzar el backend mientras corra `actualizar_diario.py`**:
+  taskkillea lo que haya en el :8010 sin avisar. Si el backend "muere solo y sin
+  traceback", MIRAR PRIMERO `cangrejo_data/datos/logs/` — es el updater.
+- Tras un FALLO del updater (`FALLO_*.txt`), el backend queda deliberadamente
+  parado («BBDD potencialmente a medias»): no re-arrancarlo hasta revisar.
+- La fuente de verdad de mercado es el **parquet del lago** (`LOCAL_LAKE_DIR`);
+  `local_data.duckdb` es materialización reconstruible con `--load-only` (~15 min).
+- Con DuckDB corrompido, no intentar abrirlo en escritura «a ver si se arregla».
+
+**Pendiente de decisión de Álvaro** (espacio): `.corrupto_20260907` (58 GB) +
+`.prev_20260826` (57 GB) pueden borrarse cuando la BD nueva lleve días probada.
+
+### [HALLAZGO · 2026-09-07 · 05] La caché intraday por ticker no se invalida cuando el lago crece — días nuevos «no tienen intradía» y STRICT rechaza la corrida
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug (recurrente: aparece cada vez que un backtest pisa días más nuevos que la caché)
+- **Dónde:** `backend/app/db/gcs_cache.py` — `_fetch_and_cache_month`: la caché por ticker en disco se lee sin ninguna comprobación de frescura (`if os.path.exists(fp): parts.append(pd.read_parquet(fp))`); encima `_MONTH_CACHE` (en RAM, por proceso) congela el mes ensamblado hasta el reinicio del backend.
+- **Qué observé:** corridas sobre el dataset 65631af6 (rango → 2026-08-31) rechazadas por STRICT con SIEMPRE los mismos 46/2046 ticker-días, todos del 26-31 de agosto. Los parquet cacheados de esos tickers (`raw/2026/08/*.parquet`) contienen agosto SOLO hasta el 25 — se cachearon cuando el lago llegaba ahí (corridas del 4-sep); el lago ya tiene el 26-31 (verificado por query directa: p. ej. AEHL 2026-08-31, 912 velas en `month=8`). `/api/candles/multi` SÍ servía esos días (usa otro camino). Tras borrar `raw/2026/08`+`09` Y reiniciar el backend (la RAM servía la copia vieja igual): misma corrida → **100,0 % (2046/2046), 1.245 trades**.
+- **Cómo reproducir:** cachear un mes con el lago parcial (p. ej. backtest a mitad de mes), esperar a que el updater complete el mes en el lago, relanzar con rango que pise los días nuevos → rechazo por STRICT con los días del final. Sin STRICT: resultado silenciosamente parcial.
+- **Evidencia:** parquet cacheado AEHL agosto: 17 días, último 2026-08-25; lago `year=2026/month=8`: cubre 2026-08-03→31. Tres corridas idénticas → idénticos 46 faltantes. Post borrado+reinicio → 100 %.
+- **Hipótesis de causa:** HIPÓTESIS — la caché se diseñó contra un lago inmutable por mes (GCS frío) y la vida diaria del lago local (el updater carga días nuevos del mes en curso) la dejó sin historia de invalidación. Ni mtime del parquet del lago ni cobertura de fechas se comprueban.
+- **Impacto:** todo backtest cuyo rango incluya días más nuevos que la caché del mes. Con `BACKTEST_STRICT_COMPLETENESS=true` (el .env local de Álvaro) la corrida se rechaza; con false, sale parcial sin error. Paliativo local aplicado y documentado: borrar `.cache/intraday/raw/<año>/<mes>` afecto + reiniciar backend.
+- **Arreglo propuesto (para Jaume):** validar frescura por mes contra el lago (p. ej. comparar max(date) del caché con el del parquet del mes, o su mtime) en el hit de `_fetch_and_cache_month`; e invalidar `_MONTH_CACHE` igual.
+- **Código tocado:** NINGUNO (confirmado) — solo ficheros de caché locales y `CACHE_DISK_QUOTA_GB=150` en el `.env` local (el default 40 GB además evictaba meses en corridas largas, otro modo de perder días)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-08 · 01] backtest_params guarda fechas que no son las ejecutadas en dos corridas de la 1B Sobri (2026-01-02→2026-09-04 vs. trades reales 2025)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** tabla `backtest_results` de `backend/users.duckdb`, corridas `240d10bc` (Estrategia 1B - modelizacion Sobri, ejecutada 2026-09-08 17:21) y `fe1040b1` (Modelización Sobri 1, 16:54). Campo `backtest_params.start_date/end_date` dentro de `results_json`.
+- **Qué observé:** en esas dos corridas `backtest_params` dice `start_date=2026-01-02, end_date=2026-09-04`, pero los trades reales del JSON van de 2025-01-02 a 2025-12-31 (las otras tres corridas del mismo lote —Sobri 2/3/4— sí reportan 2025-01-02→2025-12-31 y coinciden con sus trades).
+- **Cómo reproducir:** abrir `users.duckdb` read_only, leer `results_json->backtest_params` y el rango de fechas de los trades de esas dos corridas; comparar.
+- **Evidencia:** corridas `240d10bc` y `fe1040b1`: params 2026-01-02→2026-09-04, trades 2025-01-02→2025-12-31; 1831 trades en las 5 corridas del lote, mismos días/tickers. Además ambas corridas dan resultados idénticos trade a trade (definiciones duplicadas en `strategies`).
+- **Hipótesis de causa:** HIPÓTESIS — la UI/editar estrategia conservó el date_to 2026-09-04 de la v0 original al duplicar, y los params guardados reflejan el formulario, no las fechas efectivamente ejecutadas por el orquestador.
+- **Impacto:** solo metadatos; los resultados (trades/métricas) parecen consistentes entre versiones. Pero cualquier filtro o reporte que confíe en `backtest_params` para segmentar por fechas (p. ej. OOS por IS/OOS) clasificaría mal estas corridas.
+- **Código tocado:** NINGUNO (confirmado; solo lectura de la BD)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-08 · 02] El split IS/OOS (is_percent) se descarta en el backend: el motor siempre corre el rango completo y lo persistido es IS+OOS mezclado
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** `frontend/src/components/backtester/BacktestPanel.tsx:712,815` (envía `is_percent`), `backend/app/services/backtest_orchestrator.py:41` (`BacktestRequest` NO declara `is_percent` — Pydantic lo descarta), `frontend/src/app/backtester/page.tsx:1076+` (memo `isFilteredResult` recalcula el IS solo en el cliente; el OOS no se guarda).
+- **Qué observé:** las 5 corridas del lote de hoy de la 1B Sobri se lanzaron con el slider OOS al 10 %, pero `backtest_results` guarda el backtest completo (IS+OOS mezclados) y ningún resultado OOS por ningún sitio (recorrido recursivo del JSON: solo existe `backtest_params.is_percent=90` como metadato).
+- **Cómo reproducir:** lanzar un backtest con is_percent<100 desde la UI; inspeccionar `results_json` guardado — no hay métricas IS ni OOS separadas.
+- **Evidencia:** grep recursivo con regex `oos|is_|train|test|walk|split|valid` (case-insensitive) sobre results_json de las 5 corridas de hoy: únicos matches `backtest_params` e `is_percent=90`. En código, `BacktestRequest` no tiene el campo.
+- **Hipótesis de causa:** HIPÓTESIS — el slider se añadió como feature de display del frontend y nunca se bajó al orquestador.
+- **Impacto:** cualquier análisis desde la BD (o desde la API de resultados) ve métricas mezcladas aunque el usuario crea que correó IS 90 %; el OOS se pierde al cerrar la página. Riesgo de sobreestimar robustez sin darse cuenta. El OOS real de motor solo está en los endpoints de robustez (`/api/robustness/wfo/*`), que no se usaron.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-08 · 03] Return/Calmar "locos" de la 1B Sobri: aritmética exacta, la escala la dispara la config (FIXED 300$ sobre 10k / PERCENT 5% compuesto) — más 3 problemas de presentación
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** duda (semántica/diseño) + mejora opcional de UI. NO es bug de cálculo.
+- **Dónde:** `backend/app/services/backtest_service.py:1779-1780` (return = total_pnl/init_cash, sin gastos, sin anualizar), `:1882-1883` (calmar = return TOTAL/|maxDD|), `:1760-1772` (monthly_expenses solo va a total_pnl_net), `frontend/src/components/backtester/MetricsCard.tsx:19,25` + tooltip Calmar ("anualizada" — falso), `frontend/src/app/backtester/page.tsx:1538` y `ResultsTabs.tsx:293,481,502` (curva principal pinta global_equity SIN gastos).
+- **Qué observé:** reconstruida la curva completa de las corridas 1B Sobri del 08-sep (249 días) desde los trades: return 919,31% == 91.930,93$/10.000$ EXACTO (descuadre máx 0,01$); calmar 60,05 == 919,31/15,31 EXACTO. El maxDD −15,31% ocurrió el DÍA 1 (2025-01-02, equity 8.469$: 5 pérdidas de 300$ con la cuenta en mínimo) y no volvió a repetirse. La causa de la escala: risk_type=FIXED con 300$/R y ~7,4 entradas/día (350,8R netos × 300$ ≈ 105k$ sobre cuenta de 10k$); el return es inversamente proporcional a init_cash. La corrida 17:58 (`bc7df3a6`, PERCENT 5%, 2.417 trades) da total_return_pct = 9,5 BILLONES % (PnL 954 billones $, nocional máx. 1,1×10¹⁵ $): compounding diario de 5% × 3,08R/día sin límites de liquidez/float — exponencial aritméticamente exacta dentro del modelo.
+- **Cómo reproducir:** corridas 16:41–17:31 y 17:58 del 2026-09-08 en backtest_results; recalcular Σpnl(trades)−locates vs total_pnl e init_cash.
+- **Evidencia:** riesgo@stop de 766 trades simples = 300,00$ exactos (p50=mean=p95); ΣR×300 = 105.231 vs Σpnl 105.107 (+0,1%); armA/armB de %TEMP%\ab_sobri coinciden bit a bit con BD. Sharpe √365, sortino 11,39, todo consistente.
+- **Impacto:** Return y Calmar no son comparables entre configs con distinto init_cash/risk_type; monthly_expenses (3.600$/año = 36% del inicial) NO restan del Return mostrado (neto real 883% vs 919%); tooltip del Calmar dice "anualizada" y no lo es; gráfico principal sin gastos. La corrida PERCENT 5% parece un bug del motor pero es limitación de diseño (sin constraints de mercado).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO (decisiones para Álvaro/Jaume: usar total_pnl_net o mostrar ambos; anualizar o retocar tooltip; pintar global_equity_expenses; capar nocional/liquidez en PERCENT)
+
+### [IMPLEMENTACIÓN · 2026-09-08 · PRD_METRICAS_Y_OOS] Métricas honestas + OOS persistido + ΣR + fechas ejecutadas — en rama `alvaro-rama-desarrollo`
+- **Implementa:** ZCode (para Álvaro, por petición explícita suya) — cierra los HALLAZGOS 2026-09-08·01, ·02 y la parte de presentación del ·03.
+- **Qué cambió (sin tocar NI UN trade — paridad verificada bit a bit contra la corrida canónica de la Sobri 3 de las 17:10):**
+  - `_aggregate_metrics`: claves nuevas `r_total` (ΣR), `total_return_net_pct` (neto de monthly_expenses) y `calmar_ratio_annualized` (CAGR/|maxDD|). Las viejas quedan intactas por comparabilidad (decisión de Álvaro: claves nuevas, UI dual).
+  - `BacktestRequest.is_percent` (antes Pydantic lo descartaba) + `compute_is_oos_metrics`: el motor ejecuta igual (una pasada) y añade `results["is_oos"]` con is/oos_metrics réplica exacta del cutoff del frontend (índice de equity; trades del día límite a OOS; locates del día límite a IS). Persistido gratis vía autosave.
+  - `results["executed_date_range"]` (del qualifying filtrado) y `_autosave_success` escribe `backtest_params.start_date/end_date` con el rango EJECUTADO, no el del formulario.
+  - `strategy_search._map_aggregate_metrics`: la columna `total_return_r` lee `r_total` (fallback a la clave legacy; corridas viejas siguen en 0, no se reescriben).
+  - Frontend: tipos+firmas `is_percent`; la ruta de borrador también lo envía; el memo IS usa `is_oos.is_metrics` del motor cuando existe (fallback cliente); al reabrir un run se restauran is_percent/init_cash/risk_r/monthly_expenses/risk_type (el split se perdía al recargar); MetricsCard con R Total / Return (neto) / Calmar (anual.) y tooltips corregidos; la curva de gastos usa `global_equity_expenses` del payload (antes se simulaba en cliente con meses de 30,44 días).
+- **Verificación:** suite backend 747 passed / 87 skipped (15 tests nuevos en `tests/test_prd_metricas_oos.py`); repro canónica Sobri 3: 1831 trades, PF 1.6239, ret 936.9092 %, DD −15.7417 %, sharpe 5.5428 idénticos + r_total 356.55, neto 900.9092 %, Calmar anual. 60.372, executed 2025-01-02→2025-12-31, IS 1713/318.07R/82.994 $, OOS 118/38.48R/10.697 $ — todo OK. `npm run build` limpio.
+- **Pendiente de coordinación:** `tests/test_backtest_golden.py` compara aggregate_metrics completo con igualdad exacta y solo corre en servidor → **hay que recapturar el golden-B allí** al desplegar (solo añade claves). P2.5 del PRD (topes de nocional/liquidez para PERCENT) queda fuera de este cambio, por decisión.
+- **Código tocado:** `backend/app/services/{backtest_service,backtest_orchestrator}.py`, `backend/app/routers/{backtest,strategy_search}.py`, `backend/tests/test_prd_metricas_oos.py` (nuevo), `frontend/src/lib/api_backtester.ts`, `frontend/src/app/backtester/page.tsx`, `frontend/src/components/backtester/{MetricsCard.tsx,tabs/EquityCurveTab.tsx}`, `docs/PRD_METRICAS_Y_OOS_BACKTESTER.md` (nuevo). Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+### [DECISIÓN PENDIENTE · 2026-09-08 · merge staging→álvaro] Regla de céntimos: ¿el win invalidado se QUITA o se QUEDA pagando solo sus fees?
+- **Plantea:** ZCode al fusionar staging en `alvaro-rama-desarrollo` (respetando el flujo de cada uno)
+- **El conflicto:** la variante de Álvaro (2b597cf, decisión 2026-09-07: «el win invalidado se queda en la curva pagando solo sus comisiones, la mesa las cobra igual») **nunca se subió a staging** — solo llegó allí el PRD de docs. La recomposición en R de staging (892b7fd) se construyó sobre la semántica contraria: **quitar el ganador invalidado** (ocupando su hueco del día), con tests propios (`test_el_ganador_descartado_SIGUE_OCUPANDO_su_hueco_del_dia`, `test_what_if_recomposicion.py`).
+- **Qué se ha hecho en el merge:** manda **staging** (quitar) para no romper su recomposición; las correcciones de Álvaro que SÍ viajan (no chocan con nadie): recorrido entre **MEDIAS** de salida y **borde de 10¢ inclusivo** (`_salida_media`, `>= -1e-9`). Los 3 tests de la variante fees quedan `xfail(strict)` con la razón apuntada aquí.
+- **Quién decide:** Álvaro con Jaume. Si gana la variante fees: re-aplicar el hunk (está en 2b597cf), adaptar los tests de recomposicion (la supervivencia del locate del día cambia: un día nunca «queda sin trades» por céntimos) y subirlo TODO junto a staging para que no vuelva a divergir.
+- **Código tocado:** merge en rama `alvaro-rama-desarrollo` (what_if_service.py con nota de merge inline; tests xfail). Nada en staging.
+- **Estado:** ABIERTO — pendiente de acuerdo.
+
+## 2026-09-09 — Launcher de arranque seguro del backend y pestaña Rachas
+
+### [IMPLEMENTACIÓN · 2026-09-09 · 01] Arranque seguro del backend local: launcher con guardas, fin de los huérfanos de `--reload`
+- **Implementa:** ZCode (para Álvaro; trabajo de las sesiones del 07–09 sep, commiteado hoy) — parte operativa del INCIDENTE del 2026-09-07 (tarde).
+- **Qué cambió:**
+  - `backend/scripts/run_backend_safe.py` (nuevo): launcher que antes de arrancar verifica (en orden) intérprete del venv, `DISABLE_GCS_SYNC=true` + `LIVE_SCREENER_ENABLED=false`, puerto 8010 libre (dice quién lo tiene y sugiere no tocarlo si es el backend que rearranca cangrejo_data) y sonda de `local_data.duckdb` (abre/cierra en exclusiva; si falla, traduce el error críptico de DuckDB y lista procesos sospechosos/huérfanos con PID). Flags `--check-only` y `--kill-orphans`; códigos de salida 0 ok / 2 puerto / 3 DuckDB / 4 intérprete / 5 entorno. Arranca uvicorn SIN `--reload`, 1 worker, y exporta `BTT_REQUIRE_DB=1`.
+  - `backend/scripts/arrancar_backend.bat` (nuevo): envoltorio que localiza el python del venv.
+  - `backend/app/main.py`: con `BTT_REQUIRE_DB=1` (solo local) el proceso MUERE al arrancar si la BD no abre, en vez de quedar sirviendo sin datos; en prod el flag no está y se conserva el comportamiento tolerante. `__main__` sin reload, 1 worker, puerto 8010.
+  - `backend/scripts/run_backend_forever.bat` (watchdog): ya no lanza `uvicorn --reload` — delega en `arrancar_backend.bat`; sleeps con `ping` (`timeout` no espera sin consola: crash-loop del 05-sep).
+  - `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md` (nuevo) y guías (`README.md`, `GUIA_DEV_LOCAL…` raíz y docs) alineadas: se arranca con `scripts\arrancar_backend.bat`, JAMÁS `uvicorn --reload`; troubleshooting del lock/metadata y de la «muerte» normal sobre las 09:00 (carga de cangrejo_data).
+- **Verificación:** `py_compile` OK en `main.py` y `run_backend_safe.py`; `psutil>=5.9.0` ya estaba en `requirements.txt`.
+- **Pendiente (ya apuntado el 07-sep, no resuelto aquí):** `requirements.txt` sigue fijando `duckdb==1.1.3` mientras el venv local subió a 1.5.5 — decidir el salto juntos (prod/staging usan GCS/MotherDuck).
+- **Código tocado:** `backend/app/main.py`, `backend/scripts/{arrancar_backend.bat,run_backend_safe.py,run_backend_forever.bat}`, `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md` (nuevo), `README.md`, `GUIA_DEV_LOCAL_Y_DEVELOP_PARA_IA.md` y `docs/GUIA_DEV_LOCAL_Y_DEVELOP_PARA_IA.md`. Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+### [IMPLEMENTACIÓN · 2026-09-09 · 02] Pestaña «Rachas» + fila «W Days» en la tarjeta de métricas
+- **Implementa:** ZCode (para Álvaro).
+- **Qué cambió:**
+  - `frontend/src/lib/day_streaks.ts` (nuevo): `computeDayStreaks()` — MISMA receta que «Max W/L Day Streak» del backend: día = Σ pnl de sus trades − locates del día (neto), solo cuentan días con operaciones (un día sin operar no rompe la racha), día plano cuenta como perdedor; gastos fijos mensuales NO descuentados aquí.
+  - `frontend/src/components/backtester/tabs/RachasTab.tsx` (nuevo): tira cronológica de cuadraditos W/L agrupada por mes natural, cabecera de stats (días W/L, % ganadores, racha máx W/L, racha actual) e histograma de nº de rachas por longitud (W y L).
+  - `ResultsTabs`: pestaña «Rachas» entre Calendar y Trades (misma capa de agregado por día, en orden cronológico puro).
+  - `MetricsCard`: fila «W Days» (ganadores/total · %) cuando llegan dayStats. `page.tsx` calcula los dayStreaks sobre `isFilteredResult`, y `ResultsTabs` también recibe `isFilteredResult` → pestaña y fila reaccionan al slider IS/OOS sin código extra. Top row 580→610 px para la fila nueva.
+- **Verificación:** `npx tsc --noEmit` limpio. Cálculo 100% en cliente (el backend no manda conteos por día).
+- **Código tocado:** `frontend/src/lib/day_streaks.ts` (nuevo), `frontend/src/components/backtester/tabs/RachasTab.tsx` (nuevo), `frontend/src/components/backtester/{ResultsTabs.tsx,MetricsCard.tsx}`, `frontend/src/app/backtester/page.tsx`. Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+---
+
 ## 2026-09-09 · La mañana que el bot no dio alertas: cinco fallos a la vez, ninguno con error
 
 Jaume se fue toda la mañana con el bot «funcionando» y perdió acciones que debían
@@ -3708,6 +5562,46 @@ lo tuve delante y lo leí como si fuera lo esperado.
 **Estado:** 992 tests pasan, 0 fallan (eran 973). `faca7d6` en `sailor` y
 `staging`.
 
+### [IMPLEMENTACIÓN · 2026-09-09 · 03] La tarjeta del panel describe el DRAFT vivo, no la copia guardada — fechas del universo reflejadas = fechas corridas
+- **Implementa:** ZCode (para Álvaro, por petición explícita suya). **Nota:** un hallazgo previo de hoy sobre las 20 corridas «Doble Techo 1» quedó RETIRADO antes de salir de la rama — las corridas eran correctas (Álvaro confirmó que quiso 2025 completo); el problema era solo de visualización.
+- **Qué pasaba:** al cargar una estrategia guardada en el builder, `buildDraft` conserva su id (solo genera id nueva para borradores frescos), así que el draft vivo y la copia de la lista `strategies` comparten id. El backtest lo ejecuta el draft (ediciones incluidas) — corridas del 09-sep con universo 2025-01-01→2026-01-01 correctas — pero `getStratDef` prefería la copia congelada del array (que solo se refresca al guardar): la tarjeta describía el universo viejo (2026-01-01→2026-08-20) mientras lo corrido era otro.
+- **Fix (`frontend/src/components/backtester/BacktestPanel.tsx`, `getStratDef` + prop nueva `builderActive`; `frontend/src/app/backtester/page.tsx` la pasa como `mode === 'builder'`):** si hay draft vivo, la tarjeta lo describe cuando (a) el builder está abierto (su emisión continua viaja con id fija «draft»), (b) la id del draft es de borrador (`draft_*`/`wizard_draft*`) o (c) coincide con la selección del desplegable (los drafts nacidos de una guardada heredan su id). En cualquier otro caso manda la copia guardada, como siempre. Con esto la tarjeta (fechas del universo, sesión, stops, condiciones) se actualiza en vivo con las ediciones del builder y describe lo que PROBAR va a correr; inspeccionar una guardada del desplegable sin builder abierto sigue igual que antes.
+- **Verificación:** `npx tsc --noEmit` limpio; los chunks compilados del dev server contienen el cambio. Sin cambios de backend ni de motor; los `backtest_params` de las corridas de hoy ya eran correctos (conservan el snapshot del draft ejecutado).
+- **Código tocado:** `frontend/src/components/backtester/BacktestPanel.tsx` (props + `getStratDef`), `frontend/src/app/backtester/page.tsx` (1 prop). Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging por el flujo habitual.
+
+### [FIX · 2026-09-10 · 01] Stop ATR Multiplier: nivel causal fijado en la entrada — adiós a la media del día que miraba al futuro
+- **Implementa:** ZCode (para Álvaro, por petición explícita suya). Cierra el hallazgo del 9-sep documentado por Sailor en `docs/MEMORIA.md` («el ATR que mira al futuro»).
+- **Qué pasaba:** `sl_stop` era una fracción FIJA derivada de `avg_atr = ATR(14).dropna().mean()` — la media de TODO el día, barras posteriores a la entrada incluidas. Look-ahead puro: una entrada matinal de un día que explotaba tarde recibía un stop 4,6× más ancho del que le correspondía (y 5× más estrecho dentro de la explosión). Además la distancia era la misma a las 07:00 que a las 15:00 — una constante diaria, no un stop por ATR.
+- **Fix (vía del NIVEL, como HOD/LOD):** el stop se fija EN la entrada con el ATR CAUSAL de la vela de señal: `entry ∓ multiplicador × ATR(vela de señal)`.
+  - `strategy_engine.py`: los dos caminos (nativo y legacy/`_parse_risk_management`, ahora 7-tuple) emiten `sl_atr_arr` (serie causal ATR(14) 1m) en vez de fabricar `sl_stop`.
+  - `portfolio_sim.py`: param nuevo `atr_arr`; rama de entrada que fija el nivel; salidas por `trade_sl_price` (`sl_level_mode`). ATR sin dato aún (primeras velas) → 5 % alrededor de la entrada, misma convención que el nivel estructural ausente. Multiplicador ≤ 0 = sin stop (como siempre). Stop en lado ganador → no se entra (regla del estructural).
+  - `backtest_signals.py` / `backtest_service.py`: la serie viaja, se recorta por la máscara de sesión (mismo espacio de índices que las señales) y llega al simulador como `atr_arr`. cubre la ruta con caché del optimizador (re-parse de riesgo por iteración).
+  - `sim_dispatch.py`: ATR-con-serie va SIEMPRE al motor Python (el kernel JIT no lo implementa — misma vía que piramidación). JIT queda bit a bit intacto.
+- **Compatibilidad y aviso para staging:** sin serie (`atr_arr=None`), el ATR Multiplier cae a la fracción `sl_stop` de siempre — así el bot de Jaume NO se rompe al integrar, PERO seguirá avisando con el stop viejo (escalar): al llevar esto a staging, el lado del bot (`bot_alerts_engine.py` resuelve no-estructurales como `precio × (1 ∓ sl_stop)`) tiene que adoptar la misma regla o avisará con un stop distinto del que backtestea. Es exactamente el aviso que dejaba escrito Sailor. `market_frame.py`: INTACTO.
+- **Verificación:** 7 tests nuevos (`tests/test_stop_atr_causal.py`: largo/corto usan SOLO el ATR de la vela de señal, dos entradas con ATR distinto no comparten stop, NaN→5 %, multiplicador 0 sin stop, stop en lado ganador invalida entrada, sin serie cae a fracción). Paridad nativo↔legacy actualizada al contrato nuevo (`sl_stop None` + series iguales). Suite completa: 817 passed / 115 skipped / 3 xfailed / 0 fallos.
+- **Impacto en resultados:** cualquier backtest con hard stop ATR Multiplier correrá a partir de ahora con stops MÁS ESTRECHOS en entradas mataneras de días de expansión tardía (los antiguos iban inflados por la fórmula con lookahead). Los runs guardados de antes NO se recalculan.
+- **Código tocado:** `backend/app/services/{strategy_engine,portfolio_sim,sim_dispatch,backtest_signals,backtest_service}.py`, `backend/tests/{test_stop_atr_causal.py nuevo,test_n2a_native_equivalence.py}`. Zona bot-alerts: INTACTA.
+- **Estado:** IMPLEMENTADO EN RAMA ÁLVARO — pendiente de PR a staging (con el aviso del bot encima).
+
+### [HALLAZGO · 2026-09-10 · 02] El % de retorno NO es comparable entre capitales: el tope de locates (1.000 acciones) y los gastos fijos no escalan con el capital
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** duda
+- **Dónde:** `backend/app/services/portfolio_sim.py:1227-1370` (cadena de sizing: `risk_amount` → `size_by_sl` → tope cangrejo → tope caja → tope locates)
+- **Qué observé:** la MISMA estrategia (definiciones «G&E GENETICO - 10k» y «G&E GENETICO - 50k», byte-idénticas salvo el capital, en `users.duckdb → strategies`) con `init_cash` 10.000 vs 50.000 da **554,80 %** vs **304,69 %** de retorno total, con las MISMAS 1.198 operaciones y el mismo win rate (66,44 %). El capital pequeño rinde porcentualmente MÁS. No es un bug de cálculo: es que dos topes del sizing son ABSOLUTOS y no escalan con la cuenta, y estrangulan a la cuenta grande:
+  1. **Tope de locates** (`portfolio_sim.py:1369-1370`): en corto `size = min(size, max_locates × 100)` = **1.000 acciones fijas** (con `max_locates=10`). El objetivo de posición es el 5 % del cash (`risk_type=PERCENT`, `risk_r=5`, línea 1228), así que con 50 k el objetivo ya supera 1.000 acciones en todo ticker < 2,50 $ (y en cada vez más tickers conforme el equity compone: con 200 k de equity, en todo ticker < 10 $). Con 10 k el objetivo es 500 $ y el tope casi nunca ata.
+  2. **Gastos fijos** (`monthly_expenses=300`): los mismos 6.300 $ para las dos cuentas — 63 % del capital inicial en la de 10 k, 12,6 % en la de 50 k. Esta arrastra MÁS a la pequeña, pero pierde contra el efecto 1: en bruto la diferencia es aún mayor (617,80 % vs 317,29 %).
+- **Cómo reproducir:** en el backtester, cargar la estrategia guardada «G&E GENETICO - 10k» (id `2e194490-8f29-43c5-b22c-0c257a40989c`) y correr con Capital inicial 10.000 y luego 50.000 (resto igual: universo 2025-01-01→2026-09-04, `max_locates=10`, `risk_type=PERCENT`, `risk_r=5`, `size_by_sl=false`, cangrejo «perdida» 3 %, `monthly_expenses=300`, `look_ahead_prevention=true`). Corridas de referencia ya guardadas en `backtest_results`: `011823bb-67b3-4380-8621-ebfc34a80ab1` (10 k → 554,80 %) y `f3c1b1f5-d5cc-4f68-828b-43733f5c5f7b` (50 k → 304,69 %), ambas del 2026-09-10.
+- **Evidencia** (de los `results_json` guardados; volcados en `.tmp_capital_diff/`):
+  - Trade 1 (AEI 2025-01-02, corto a 2,21 $): 10 k → 226,24434 acciones = exactamente 500/2,21 (5 % del cash); 50 k → 1.000 acciones (objetivo 2.500/2,21 = 1.131 recortado por el tope de locates). Fórmula verificada bit a bit, incluido el tope cangrejo: ALCE 2025-01-02 a 1,345 con SL 2,54 → 251,046039 acciones = exactamente 300/1,195 (3 % de 10 k entre la distancia al SL).
+  - Trades recortados a 1.000 acciones por locates: **779/1.198 (65,0 %)** con 50 k vs **294/1.198 (24,5 %)** con 10 k.
+  - Despliegue medio (valor de posición / equity del día previo): 50 k → **2,71 %** (mediana 2,44 %) y CAE con el tiempo (3,22 % 1.ª mitad → 2,16 % 2.ª); 10 k → **4,04 %** (mediana 5,00 %, justo el objetivo) y se mantiene (4,38 % → 3,67 %). La cuenta grande compone cada vez más ahogada por un tope fijo.
+  - Direcciones: 1.198/1.198 cortas en ambas — el tope de locates aplica a TODO el universo.
+- **Hipótesis de causa:** N/A — verificado contra el código y los datos; el comportamiento es el diseñado (los locates son paquetes reales de 100 acciones y `max_locates` es cuántos se está dispuesto a alquilar).
+- **Impacto:** cualquier comparación de % de retorno, CAGR, Sharpe o Calmar entre corridas con distinto capital (o el mismo capital en momentos distintos de la curva) está sesgada por un parámetro operativo (`max_locates`) que no representa lo mismo en una cuenta de 10 k que en una de 50 k+. Con este universo (precio medio de entrada 6,69 $, 524 entradas < 2,50 $), el 5 % del cash de una cuenta ≥ 50 k supera el tope en la mayoría de trades. Decisión de diseño pendiente: ¿el tope de locates debe escalar con el capital, o se asume y se documenta que el % no es comparable entre capitales?
+- **Código tocado:** NINGUNO (confirmado — solo lecturas de `users.duckdb` en modo read-only y volcados JSON a `.tmp_capital_diff/`, mi scratchpad).
+- **Estado:** ABIERTO
+
 ### [GUÍA · 2026-09-10] Compartir estrategias entre devs — PARA SAILOR Y SU IA (traerse SOLO esta implementación)
 - **Escribe:** ZCode (para Álvaro, a petición suya; destinataria de la guía: la IA de Sailor)
 - **Qué es:** sistema para intercambiar estrategias del backtester entre Álvaro y Sailor vía JSON en el repo. Ya está en `origin/staging`. Los ficheros viven en `estrategias_compartidas/<dev>/` (un JSON por estrategia) y el transporte es **git** — nada se sube automáticamente, solo viaja lo que cada uno commitea.
@@ -3725,6 +5619,22 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Detalles técnicos (por si tu IA quiere verlo):** endpoints `GET/POST/DELETE /api/shared-strategies` (`backend/app/routers/shared_strategies.py`, lógica en `backend/app/services/shared_strategies.py`); el import reusa el `POST /api/strategies/` existente, no toca schema de BD; test de referencia `backend/tests/test_shared_strategies.py` (14/14). Formato del JSON: `format_version/shared_by/shared_at/source_strategy_id/name/description/definition`.
 - **Zona bot-alertas:** INTACTA y sin relación con esto — sigue sin tocarse.
 - **Estado:** IMPLEMENTADO Y EN STAGING (6c4c3a7 + 7e9fef6); primera estrategia compartida: «G&E GENETICO - 10k».
+
+### [PROTOCOLO · 2026-09-10] Compartir estrategias con Sailor — flujo desde el lado de Álvaro
+- **Escribe:** ZCode (para Álvaro; válido para cualquier IA que trabaje su rama)
+- **Qué es:** cómo se comparte una estrategia con Sailor usando la pestaña «Compartidas» del backtester. La guía de CONSUMO (lado Sailor) ya está en staging como [GUÍA · 2026-09-10]; esta entrada es el ciclo desde el lado de Álvaro.
+- **El ciclo (lo único que hay que recordar):**
+  1. Backtester → correr cualquier backtest → pestaña **«Compartidas»** (derecha de «Charts + Optimization IS»; solo existe con un resultado cargado) → sección *«Compartir una tuya»* → botón **«Compartir»**. Eso escribe el JSON en `estrategias_compartidas/alvaro/` **en el disco local — nada ha salido del ordenador**. Re-compartir la misma estrategia sobreescribe su mismo JSON (slug + 4 chars del id): el botón pasa a decir «Actualizar».
+  2. Commit en `alvaro-rama-desarrollo` de la carpeta `estrategias_compartidas/` y **cherry-pick de ese commit a `origin/staging`** (worktree temporal sobre staging; ver commits de ejemplo 7e9fef6/a302026). Quitar una compartida con «Quitar» + mismo proceso = le desaparece a Sailor en su próximo pull.
+  3. Sailor: pull de staging → «Refrescar» → «Importar copia» (copia nueva cada vez; no actualiza la anterior).
+- **Reglas fijadas por Álvaro esta sesión (NO saltárselas):**
+  - A **staging solo sube el paquete de compartidas** (feature + JSONs + su guía). Nada más de la rama de Álvaro sin estar auditado por Jaime. Los hallazgos y demás trabajo: **solo aquí en MEMORIA_MADRE** (rama de Álvaro), nunca a staging por la vía rápida.
+  - **Todo push (rama o staging) requiere confirmación explícita de Álvaro**, siempre.
+  - El botón NO publica nada: el viaje es git, y se decide commit a commit.
+- **Detalles que evitarán sustos:** staging quedó con la última estrategia compartida («G&E GENETICO - La Buena», a302026; la «10k» fue retirada al ser reemplazada). `.gitignore` necesita la negación `!estrategias_compartidas/**/*.json` (el repo ignora `*.json` global) — ya viene en la feature, no limpiarla. Sailor debe tener `SHARED_STRATEGIES_OWNER=sailor` en su `backend/.env`. Endpoints: `GET/POST/DELETE /api/shared-strategies`; el import reusa `POST /api/strategies/`.
+- **Nota del merge del 10-sep (tarde):** desde la integración del VISOR de Jaume (ver [DECISIÓN + FEATURE · 2026-09-10 · COMPARTIDAS] abajo), la pestaña ya NO importa estrategias: se comparte la radiografía para replicarla a mano. «Compartir una tuya» y quitar las tuyas siguen igual; el paso 3 del ciclo queda como referencia histórica.
+- **Código tocado:** NINGUNO (entrada de documentación).
+- **Estado:** VIGENTE — protocolo de uso diario.
 
 ### [FEATURE · 2026-09-10 · BANDA DE LOCATES] Bootstrap al lado de la banda: «¿ganaría igual con otro histórico?» (Jaume + Claude)
 - **La pregunta de Jaume:** si el Monte Carlo de las semillas se puede llevar más lejos «para asegurarnos sí o sí de que la estrategia soporta esas comisiones independientemente del histórico que ocupe». Sí, pero **no sobre las tres curvas p10/p50/p90**: son percentiles fecha a fecha, no escenarios (ninguna semilla vive la curva p10), y remuestrearlas sería promediar promedios.
@@ -3762,6 +5672,19 @@ lo tuve delante y lo leí como si fuera lo esperado.
 - **Es destructivo Y VIAJA:** al commitear y subir el borrado, el fichero le desaparece también al otro (recuperable por git). El `confirm` lo dice con esas palabras y distingue si la estrategia es tuya o suya; el botón se pone rojo al pasar por encima.
 - **Tests:** los 14 de Álvaro siguen pasando, +4 nuevos (borrar con `dev`, `dev` malformado incluido traversal, `dev` vacío, `dev` inexistente) → 24/24. **Hallazgo de los propios tests:** la cadena vacía NO es un `dev` malformado — significa «no me han dado dev» y cae en el propio owner, que es justo lo que manda el frontend (`entry.shared_by || undefined`).
 - **Nota de entorno:** `test_api_roundtrip_compartir_y_quitar` falló una vez con `IO Error: File is already open` de DuckDB por tener el backend levantado; al repetir, verde. No es del código — es [[DuckDB: no hay lecturas baratas]].
+
+### [INTEGRACIÓN · 2026-09-10 · 03] Merge de staging en la rama de Álvaro: el VISOR de compartidas de Jaume y su suite de stops entran; nuestro fix ATR causal se retira a favor del suyo
+- **Integra:** ZCode (para Álvaro, por petición explícita suya). Commit `e96cd2a` en `alvaro-rama-desarrollo`. **Sin push** (pendiente de confirmación de Álvaro, como siempre).
+- **Qué entró de Jaume** (17 commits suyos hoy en staging, hasta `50c78e0`):
+  - **Compartidas = VISOR** (`e9bad10`+`783b019`+`b0e3151`): su `SharedStrategiesTab.tsx` reemplaza al nuestro por decisión suya documentada más arriba — radiografía sin campos invisibles, sin «Importar copia», y borrado de ficheros de cualquier dev (`?dev=` en el DELETE). Nuestro backend (router/servicio/tests) queda tal cual él lo integró (24/24 tests).
+  - **Stops**: fix ATR causal por barra (`1ed3d7e`), respaldo % sin ATR (`033d9cb`), «Último pivote» como indicador y stop (`194e41e`), respaldo estructural variable (`966baf8`), fix «Fixed Amount» (`035e4bf`). `market_frame.py` gana la columna `atr` (su cambio, compartido con el bot — adoptado, no modificado).
+  - **Perfil de volumen** x4 indicadores (`8c1d8ab`), **PanelAnalisisTrade** desplegado en Trades/Calendario (`46a1a9f`), **bootstrap de la banda de locates** (`b57beb6`+`34a7006`), fix UI del bloque stop (`4a15ec1`).
+- **La decisión clave (Álvaro, esta sesión):** el look-ahead del stop ATR lo arreglamos nosotros (fe40b65: ATR de la vela de señal) y Jaume en paralelo (1ed3d7e: nivel por barra en la entrada, Wilder unificado, paridad JIT y bot verificadas). **Gana el de Jaume** para mantener backtest↔bot idénticos. Consecuencias: `backtest_service`/`backtest_signals`/`sim_dispatch` tomados íntegros de staging (nuestro delta vs base allí era SOLO el ATR, medido: 12/13/7 líneas), y `test_stop_atr_causal.py` archivado en `_archive/tests-stop-atr-causal-20260910/` con README explicando la semántica que lo invalida (NaN ya no es 5 %: sin ATR no se entra). La cobertura causal vive en `test_n2a_native_equivalence` (su guardia anti-colapso-a-fracción).
+- **Zona cerrada INTACTA:** 4 conflictos modify/delete resueltos manteniendo la exclusión (`bot_alerts.py`, `bot_alerts_engine.py`, `bot_alerts_telegram.py`, `test_bot_tamano_todos_los_stops.py`) + `test_bot_alerts_salidas_parciales.py` (nuevo en staging, llegó como added) también fuera — importa `bot_alerts_engine`. Cero ficheros bot en el commit final (verificado).
+- **Costuras manuales del merge:** `TradesTab`/`ResultsTabs` combinados (su panel desplegable + nuestro botón CSV con `strategyName`); `api.ts` de staging + nuestro bloque «Últimas pruebas» (`getRecentRuns`/`getSavedRunById`/`RecentRun`) re-integrado a mano porque el `--theirs` entero se lo llevaba; MEMORIA con las entradas de ambos lados.
+- **Verificación:** suite backend completa dos veces (antes y después de restaurar los 3 archivos del motor): **841 passed / 115 skipped / 3 xfailed / 0 fallos**, con el backend local levantado (sin el flake DuckDB de la nota de Jaume). `npx tsc --noEmit` limpio. Paridad Numba cubierta por `test_n2a_native_equivalence` (verde).
+- **Lo nuestro que NO se pierde:** Rachas (`RachasTab`, `day_streaks`), launcher seguro (`run_backend_safe.py`), tarjeta DRAFT vivo, botón CSV, «Últimas pruebas» de Portfolio, hallazgo del tope de locates (abierto más arriba) — todo presente y testeado.
+- **Estado:** INTEGRADO EN RAMA ÁLVARO (`e96cd2a`), sin push. Consecuencia operativa: a partir de aquí, cualquier backtest con stop ATR Multiplier usa la semántica de Jaume (sin entrada sin ATR, respaldo % configurable) — los runs guardados anteriores no se recalculan.
 
 ### [FEATURE · 2026-09-11 · BLACK SWAN] Coste de Black Swan y vista «BS» en el gráfico MAE/MFE (Jaume + Claude)
 - **Qué pidió Jaume:** saber cuántas veces una estrategia ha estado expuesta a una «mecha Black Swan» (vela de 1 minuto cuyo máximo se dispara sobre su apertura más de un 100 %, tipo PLYX ~5.000 % en segundos) y poder simular, como coste opcional, que ese mechazo te saca del trade.
@@ -3904,6 +5827,615 @@ de Databento, no copiar `users.duckdb`.
 - **Gráfico y diseño (después):** las ejecuciones de la escalera se pintan como triángulos pequeños (añadido debajo, quita encima, flecha en el sentido de la orden) vía `executions[].escalera`; y el bloque se rehizo sobrio (filas etiqueta | control, `InfoTooltip` estándar, sin cajas) porque a Jaume el primero le «parecía hecho con IA». Lección: calcar el patrón de Stop Loss / Take Profit, no el de la piramidación (cajas con borde cobre).
 - **Lo que queda:** sin probar con piramidación y parciales a la vez; el bot no lo usará (decisión de Jaume).
 
+### [INTEGRACIÓN · 2026-09-14 · 01] Merge de staging en la rama de Álvaro: scalping+escalera, BSwan/halts, fix del crash del perfil — SIN el bot
+- **Integra:** ZCode (para Álvaro, por petición explícita suya). Commit `7696e85` en `alvaro-rama-desarrollo`. **Sin push** (pendiente de OK de Álvaro, como siempre). Base: `50c78e0`; 42 commits de staging, 50 ficheros, +6.663/−183.
+- **Qué entró:** Modo Scalping completo (ventana + capital por entrada + modo Complejo con escalera), coste de Black Swan y de halts (apagados por defecto: cero cambio en corridas de siempre), gaps del ticker 2019+, «Alternativos» opt-in en el genético, perfil de volumen como destino de cruce, y el **fix crítico del perfil** (`3fb783a`: `i0` sin acotar escribía fuera del array y mataba el proceso 0xC0000005 — también el backend en backtests normales con «Detalle %» bajo). Docs: submemoria del bot de ejecución (v6-v8, libro de reglas, banco de preguntas) — solo .md de investigación, sin código.
+- **Zona cerrada INTACTA:** 5 modify/delete resueltos manteniendo el borrado (`bot_alerts.py`, `bot_alerts_cliente/engine/runner/service.py`), `test_bot_alerts_recarga_estrategias.py` (nuevo en staging) fuera, y `routers/strategies.py` restaurado a nuestra versión (el hook `marcar_cambio_estrategias` de `e0e7518` llama al servicio del bot, que aquí no existe — lo habría roto al guardar estrategias). Verificado: 0 ficheros bot en index, disco y docs; única referencia backend es el import perezoso con try/except de `strategy_explain.py` (preexistente, a propósito).
+- **Costuras manuales:** 6 conflictos. `TradesTab`/`ResultsTabs` = unión de props (nuestro `strategyName` del CSV + su `bswan`/`halts`). `SharedStrategiesTab`: fila «Reentradas» con la función de staging `describirReentradas` — **es la fiel al motor** (`portfolio_sim`: tope numérico manda con `>=0` aunque el interruptor esté apagado; `-1` decide `accept_reentries` = `accumulate`), sustituye a nuestro porte inline (mismo aviso rojo de ilimitadas). `page.tsx`: 3 bloques que solo diferían en comentarios de porte — tomado el lado staging (nuestro porte de 1013fed era idéntico al original, verificado). `api_backtester.ts`: sus campos + nuestro comentario IS/OOS. `MEMORIA_MADRE`: entradas de ambos lados.
+- **Verificación:** `npx tsc --noEmit` limpio; 229 tests de features pasan (perfil, bswan, scalping, escalera, halts, genético) con DuckDB a salvo; `py_compile` de los 14 backend tocados OK. Backend reiniciado con el launcher seguro: log `DISABLE_GCS_SYNC=true`, `/health` OK, `bswan_enabled`/`halts_enabled` en `BacktestRequest` y `scalping` en `StrategyCreate` (código nuevo cargado). Compartidas OK (HTTP 200): las 2 de sailor + la nuestra. Nuestro «Abrir borrador» (`onOpenDraft`), papelera de guardadas, CSV de trades, Rachas y «Últimas pruebas» siguen presentes.
+- **Nota de ambiente:** ojo con `SHARED_STRATEGIES_OWNER` — el nuestro es `alvaro` en `backend/.env`; sin él las de sailor caen en `dev/`.
+- **Estado:** INTEGRADO EN RAMA ÁLVARO (`7696e85`), sin push.
+
+### [ESTUDIO · 2026-09-14 · REHALTES] El rehalt se lee en la vela de reapertura: esperar el cierre de la vela 1 y decidir con él (Álvaro + ZCode, `PRD_ESTUDIO_REHALTES.md`)
+- **La pregunta:** condicionado a un halt LULD, ¿qué dice la primera (o segundas) vela M1 tras la reapertura sobre la probabilidad de otro halt encadenado? Quería Álvaro una regla legible «en la que en un X % alto de los casos el movimiento de la vela siguiente propicie otro halt», para no entrar en una lotería. Respuesta corta: **la hay, con X ≈ 80 % y validada fuera de muestra.**
+- **Datos y cohorte:** parquet de halts de Databento (61.290 LULD 2019-2026; todos caen en RTH, el LULD no existe en horario extendido) cruzado con las velas M1 del lago. Con velas quedan 44.348 (72 %): el lago solo cubre su universo operable (gap ≥ 10 % + volumen), que es justo el del bot. Limpia CS/ADRC (tabla `tickers`, regla de Jaume v8) + `px_antes ≥ 0,50 $` + reanudado: **40.913 halts**. Trampas heredadas aplicadas desde el minuto 1 (T1/T12 de las 19:50 fuera por diseño al mirar solo LULD, símbolos reutilizados frenados por px+prev_close, warrants/units fuera).
+- **Tasas base — la cadena existe y engancha:** P(halt k+1 tras la reapertura) = 37,4 % a 5 min, **47,1 % a 15 min**, 51,0 % a 30, 58,7 % EOD. Y sube con el orden del halt (15 min): k=1 31 % → k=2 47,5 % → k≥7 ~68 % → k≥11 72 %. Por año (EOD) fue del 45 % (2019) al **67,5 % (2026)**: el mercado rehaltea cada vez más. 1.466 ticker-días con ≥6 LULD y 237 con ≥16. Halt-UP y halt-DOWN rehaltean igual (48,1/46,1 %), pero tras un halt-UP el siguiente es más veces UP (24,5 % vs 18,4 %). Dicho de otro modo: **haber tenido un halt ya SUBE la probabilidad de otro, y cada halt de la cadena la sube más** — exacto lo que Álvaro sospechaba.
+- **La regla (IS 2019-24, halt-UP, etiqueta «rehalt ≤ 15 min desde la reapertura»):** cierre de la vela 1 ≥ **+6 %** sobre la reapertura → P = **77,0 %** [75,3-78,6] (n=2.468); ≥ +8 % → 82,0 % (n=1.861); rango ≥ 8 % y cierre en el 30 % superior → 74,3 % (n=2.789). El headroom a la banda LULD reconstruida separa menos (≤ 0 % → 59,6 %): con velas M1 la banda es aproximada (media de trades ≈ precio típico de 5 velas, ±1 céntimo SIP; las violaciones medidas p50 5-6 % vs 10-20 % teóricos) y la vela la supera como señal. En el extremo ≥ +15 % la precisión cae a 67 % (agotamiento del fogonazo): el filo está entre +6 % y +10 %.
+- **OOS 2025-26 (reglas congeladas ANTES de mirar, criterio PRD P≥70 % n≥30):** v1c ≥ +6 % → **79,7 %** [77,6-81,7] (n=1.501); ≥ +8 % → **85,6 %** [83,5-87,5]; espejo halt-DOWN con v1c ≤ −6 % → 79,8 %. **Sin los 5 días SPAC famosos (GATE/GGAA/ASPA/NOVV/HYZN, 42 filas) los números no se mueven**: no es una anécdota de manías. Estable por año R1: 67,5 % (2019, n=120) a 82,8 % (2026). CUIDADO con el lado «seguro»: con vela 1 plana el rehalt a 15 min era 35,9 % en IS y ya es 47,8 % en OOS — la base sube y el filo hay que re-medirlo cada año.
+- **Crib sheet corto tras halt-UP (esperar el cierre de la vela 1; riesgos medidos al instante de decisión, 15 min):** **NO ENTRAR** si v1c ≥ +6 % (riesgo 52-54 % tras sobrevivir la vela; 79,7 % contando los que rehaltean dentro de la propia vela 1) o si es el k≥3 del día aunque la vela sea floja (38 %, y 58 % desde reapertura con k≥2). **ESPERAR** si v1c entre +2 % y +6 % (41,7 %) o k=2 con vela floja (32 %). **ENTRAR** solo si k=1 y v1c ≤ +2 %: riesgo residual **16,2 % IS / 23,2 % OOS** (EOD 27 %) — la lotería se reduce ~3× pero NO desaparece; el tamaño de posición manda. Espejo simétrico para largos tras halt-DOWN. Detalle operativo: **el 69 % de los rehalts llegan DURANTE el primer minuto** (mediana 0,6 min) — esperar la vela 1 completa ya esquiva la mayoría de las cadenas rápidas.
+- **Tabla de contingencia OOS (halt-UP, desde reapertura, 15 min):** NO ENTRAR (v1c≥6): 1.197 rehalt / 304 sin · ESPERAR (+2..+6): 616 / 540 · OK ENTRAR (≤+2): 2.070 / 2.328. Lo que evita la regla: en los NO ENTRAR que rehaltean, el salto al siguiente halt es de mediana +5,1 % (p90 +18,9 %) y el máximo en 3 velas +20,1 % (p90 +43,9 %) — eso es lo que no se come el corto que espera.
+- **Techo y límites:** logístico con 9 features (IRLS en numpy, no hay sklearn en el env): AUC 0,761 y top-5 % al 82,5 % — la regla de un umbral está EN el techo del modelo; no hace falta ML. Recall de R1 solo 31 % (es regla de precisión para no entrar, no de caza). Límites: solo Nasdaq (XNAS), solo el universo del lago, dirección por salto de reapertura (granularidad 1 min), banda LULD aproximada, y la etiqueta desde reapertura incluye los rehalts dentro de la vela 1 (para el bot que espera la vela valen los números «al instante de decisión»).
+- **Estado:** estudio POSITIVO entregado como pedía el PRD. Scripts 01-04 + logs + cohorte (44.348 × 68) en `.tmp_rehalt/` (efímero, NADA al repo; esta entrada sin commitear aún). Si Álvaro lo aprueba: candidata a (a) guard del backtester «no operar ticker-día tras halt-UP con v1c ≥ +6 %» y (b) regla R-C del bot de ejecución — desarrollo aparte con su propio PRD.
+
+### [HALLAZGO · 2026-09-15 · 01] /api/data/filter devuelve 500 al serializar registros con NaN
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** backend/app/routers/data.py:99 (`filter_daily_metrics` — hace `SELECT *` y el JSON de respuesta no tolera NaN)
+- **Qué observé:** un POST con reglas «Open Gap % < 8» + «Day Return % > 25» (rango 2026-01-01..2026-09-12) responde 500 con `Out of range float values are not JSON compliant: nan`. La SQL ejecuta bien: el fallo es solo al serializar las filas devueltas (alguna columna del SELECT * lleva NaN en las filas que casan).
+- **Cómo reproducir:** `curl -s -X POST http://127.0.0.1:8010/api/data/filter -H "Content-Type: application/json" -d '{"date_from":"2026-01-01","date_to":"2026-09-12","rules":[{"id":"r1","category":"gap","metric":"Open Gap %","operator":"<","valueType":"static","value":"8"},{"id":"r2","category":"ret","metric":"Day Return %","operator":">","valueType":"static","value":"25"}]}'`
+- **Evidencia:** log del backend local (arranque 15-sep 11:15): `GLOBAL ERROR: Out of range float values are not JSON compliant: nan` + `POST /api/data/filter 500`. Ojo: el crash implica que la consulta DEVUELVE filas (con cero filas no hay nada que serializar), aunque el get_dashboard_stats sobre vacío también podría producir NaN — no verificado cuál de los dos.
+- **Impacto:** la página de Análisis no puede filtrar por cohortes cuyas filas traigan NaN; bloquea medir empíricamente la cobertura del lago (necesario para el estudio de entradas short desde las 11:00 con «current gap» tardío).
+- **Hipótesis de causa:** HIPÓTESIS — columnas derivadas sin backfill (m0/m90 de ma_daily u otras) viajan NaN y `json.dumps`/pandas `to_json` no las soporta.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-15 · 02] universo con métrica fuera del field_map muere en background, en silencio
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** backend/app/services/query_service.py:217-240 (`field_map` de `build_screener_query`) + backend/app/routers/query.py (creación de dataset, trabajo en background)
+- **Qué observé:** `POST /api/queries/` con una regla `{"metric": "Day Return %", ...}` responde 200 con id de dataset, pero la materialización de pares revienta en background: `Parser Error: syntax error at or near "Return"` — la ETIQUETA viaja sin traducir a `day_return_pct` (`field_map.get(metric, metric)` la deja pasar tal cual a la SQL). El dataset queda en `precache-status: error` sin ningún error visible para el usuario.
+- **La asimetría:** el camino del UNIVERSO solo mapea 7 etiquetas (Close Price, Min Open PM price, PMH Gap %, Premarket Volume, Open Gap %, EOD Volume, RTH Range %); el camino del ANÁLISIS (METRIC_MAP de data.py) admite ~25 (Day Return %, M15/M30/M60/M180 Return %, HOD/LOD Time…). El builder de la UI (lib/universoFiltros.ts) solo ofrece las 7, pero la API y cualquier estrategia compartida puede mandar cualquiera.
+- **Cómo reproducir:** `curl -s -X POST http://127.0.0.1:8010/api/queries/ -H "Content-Type: application/json" -d '{"name":"prueba","filters":{"date_from":"2026-01-01","date_to":"2026-09-12","rules":[{"metric":"Day Return %","operator":">","value":25}]}}'` → 200, y en el log `Background dataset creation failed ... Parser Error`.
+- **Evidencia:** log del backend local 15-sep: `[ERROR] Background dataset creation failed for 1bce3238-7720-4118-a177-d6e426ada78d: Parser Error: syntax error at or near "Return" ... gap_pct < ? AND Day Return % > ?` (dataset de prueba borrado después).
+- **Impacto:** no se pueden construir universos con métricas «as of» (p. ej. M60 Return % = corrido a las 10:30) aunque la columna exista en daily_metrics — justo lo que necesita el estudio de shorts desde las 11:00. Y el fallo es silencioso: solo visible en `precache-status/{id}`.
+- **Hipótesis de causa:** HIPÓTESIS — el fix natural sería extender field_map con las etiquetas de METRIC_MAP (o validar la métrica al recibir el POST y fallar con 400); decisión del dueño del código.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [ESTUDIO · 2026-09-15 · COBERTURA LAGO] Los rampadores lentos YA están en el lago, con velas — no hace falta cangrejo_data (Álvaro + ZCode)
+- **La pregunta:** para una estrategia short desde las 11:00 sobre acciones que no gapearon en el open RTH pero corrieron después, ¿los tiene el lago o habría que re-ingerir historia con cangrejo_data (horas de Databento)?
+- **Respuesta: SÍ están, y con velas M1.** No hace falta tocar cangrejo_data. Sondeo read-only sobre `local_data.duckdb` (backend parado, watchdog también — ojo: `run_backend_forever.bat` revive el backend en segundos si solo matas este; secuencia correcta: watchdog primero, luego backend), con el python del venv.
+- **Cohortes por año (ticker-días con gap en open < 8 %):** corrida > 20 % a las 10:30 (`m60_return_pct`): 878-4.353/año (2019-2026, pico 2022). > 30 % a las 10:30: 428-2.392/año. Día acabado > 25 % (`day_return_pct`): 1.886-10.471/año. **Con suelo precio ≥ 1 $ y volumen día ≥ 1 M: 151-534/año** — el tamaño de muestra operable.
+- **Velas:** muestra de 2026-03 del cohorte principal: 312/312 pares con velas en `intraday_1m` (100 %). La ingesta del lago NO está recortada al gap ≥ 10 % del open — `daily_metrics` tiene ~2,5 M filas/año.
+- **Notas para el diseño de la estrategia:** (a) `m90_return_pct` NO existe en `daily_metrics` (solo en el derivado ma_daily que usa el servicio de fades) — no hay métrica "as of 11:00" filtrable; (b) ~40 % de filas tienen `m60` sano y ~46 % `day_return` (estable por años, no degrada); (c) por tanto el patrón correcto es universo amplio (precio/volumen, SIN gap mínimo) + condición de entrada `Current Gap (%) ≥ X` (causal, por vela) + `entry_time_windows` desde las 11:00 — nada de filtrar el universo por Day Return/RTH Run (look-ahead).
+- **Scripts:** `.tmp_wip_premerge/cobertura_rampadores.py` (efímero, nada al repo).
+- **Estado:** RESPUESTA OBTENIDA. Pendiente de Álvaro: montar el borrador y correr (con `look_ahead_prevention=true` y defaults a la vista).
+
+### [HALLAZGO · 2026-09-15 · 03] GET /api/strategies y el get_strategy del orquestador sirven definiciones DISTINTAS de la misma estrategia (68a748d5)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** backend/app/services/data_service.py:63-103 (`get_strategy`: users.duckdb con fallback a parquet GCS, SIN scope) vs backend/app/routers/strategies.py:309-331 (`GET /api/strategies/{id}`: users.duckdb con `scope_clause(user_id)`)
+- **Qué observé:** la misma estrategia («Estrategia 1B - Modelización Sobri 3 + Piramidación Patas», id `68a748d5-995e-49b5-ba77-f29f124f7fdc`) corrida por el orquestador con `strategy_id` (usa el almacén de `data_service.get_strategy`) y corrida con la definición copiada de `GET /api/strategies/{id}` pasada inline (`strategy_definition` sin id) produce corridas DIFERENTES sobre el mismo dataset, mismas fechas, mismos parámetros: 1.831 trades en ambas pero 4.559 adds / pnl 2.795.934 $ en la primera vs 5.212 adds / pnl 18.491.381 $ en la segunda. Primer trade divergente (ADGM 2025-01-02 07:32): tamaño 140,6 acciones vs 1.323,2 con el mismo entry — la pirámide y/o el riesgo de las dos copias NO son el mismo contenido.
+- **Cómo reproducir:** backend local arriba; (a) `curl -X POST http://localhost:8010/api/backtest -H "X-Backtest-Sync: true" -d '{"dataset_id":"c8bcddc7-42e7-4a51-baaa-81a9ae731c47","strategy_id":"68a748d5-995e-49b5-ba77-f29f124f7fdc",...}'`; (b) `curl http://localhost:8010/api/strategies/68a748d5-... > copia.json` y mismo POST con `"strategy_definition": <copia.json>` (sin `strategy_id`). Comparar trades: divergen desde el trade 0. Requests exactos en `.tmp_lot_stop/request_dorado.json` y `.tmp_lot_stop/request_inline40.json` (efímeros).
+- **Evidencia:** las dos corridas + una repetición de control del request (a) que es BYTE-IDÉNTICA (el motor es determinista; la divergencia es contenido de la definición, no ruido). Log del orquestador en (a): `strategy_def keys` con 13 claves (definición guardada pura); la copia del GET lleva 18 (13 + id/name/description/fechas/in_incubator) — pero la diferencia de comportamiento no puede venir de las 6 claves de metadatos: compile no las lee. `data_service.get_strategy` tiene fallback a parquet de GCS cuando el lookup local falla.
+- **Hipótesis de causa:** HIPÓTESIS — `data_service.get_strategy` no encuentra la fila en users.duckdb local (fallo de conexión/lock o fila ausente) y sirve una copia VIEJA del parquet de GCS, mientras el router lee la fila local vigente; o existen dos copias con el mismo id en almacenes distintos. Falta confirmar cuál de las dos copias es la que Álvaro considera la buena.
+- **Impacto:** cualquier flujo que re-serialice una estrategia desde el GET y la corra inline («abrir borrador», compartidas al importar/reabrir, scripts) corre OTRA estrategia distinta a la que corre el panel con `strategy_id` — sin ningún aviso. También hace ambigua la validación A/B del PRD de SL por lote (§6.6): la corrida de referencia debe fijar SIEMPRE `strategy_id`, nunca una copia del GET.
+- **Código tocado:** NINGUNO por este hallazgo (confirmado). El P0+P1 del PRD de lot_stop en la rama de Álvaro es trabajo aprobado aparte, sin relación con la causa.
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-16 · 01] Refinamiento del 2026-09-15·03 — mecanismo confirmado: miss silencioso (sin WARN) al fallback de GCS en data_service.get_strategy; los metadatos del GET son inertes
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** backend/app/services/data_service.py:63-105 (`get_strategy`: lookup users.duckdb SIN scope; si `fetchone()` devuelve None NO se loguea nada y cae al parquet de GCS; el `[WARN] Could not read strategy...` solo se imprime si EXCEPCIONA) vs backend/app/routers/strategies.py:309-331 (`GET /api/strategies/{id}`: misma tabla users.duckdb con `scope_clause`, SIN fallback). PK de id (init_db.py:173) descarta filas duplicadas (verificado por Álvaro).
+- **Qué observé:** dos pruebas nuevas cierran el mecanismo del hallazgo 2026-09-15·03. (1) **Test de metadatos:** la definición del GET recortada a sus 13 claves (sin id/name/description/fechas/in_incubator), corrida inline, es BYTE-IDÉNTICA a la corrida con las 18 claves — los metadatos son inertes para el motor; la divergencia es 100 % CONTENIDO de definición. (2) **Log:** cero apariciones de `[WARN] Could not read strategy` en todo `backend_prof.log` (incluida una corrida con `strategy_id` del 16-sep por la mañana) — con el código actual, un MISS (fila no encontrada, sin excepción) cae al fallback de GCS SIN dejar ningún rastro. El WARN que se buscaba como diagnóstico NO puede aparecer en el caso miss: la ausencia del WARN no demuestra nada.
+- **Cómo reproducir:** backend local; (a) POST `/api/backtest` con `strategy_id=68a748d5…` (definición que sirve `data_service.get_strategy`); (b) POST con `strategy_definition` = respuesta de `GET /api/strategies/68a748d5…` recortada a sus 13 claves. Mismos dataset/fechas/parámetros. Resultados distintos (2,79 M vs 18,49 M $; 4.559 vs 5.212 adds) y ningún WARN en el log. Requests exactos: `.tmp_lot_stop/request_dorado.json` y `.tmp_lot_stop/request_def13.json` (efímeros).
+- **Evidencia:** `cmp` de `def13.json` vs `inline40.json` → idénticos byte a byte (metadatos inertes); `def13.json` vs `dorado_branch_api.json` → difieren (contenido distinto); `grep -c "Could not read strategy" backend_prof.log` → 0. Control de determinismo: repetición exacta del request (a) byte-idéntica, antes y después del merge 738cec2 (que añadió el stop VWAP y NO movió el resultado de la réplica).
+- **Hipótesis de causa:** CONFIRMADO el mecanismo general (fallback silencioso); queda por determinar POR QUÉ el lookup local falla para esta estrategia (fila ausente en la users.duckdb del backend, camino de conexión distinto, o el GET y data_service no ven la misma base) y CUÁL copia es la vigente — la local (la del GET, 18,49 M) o la de GCS (la que consumió el id-path, 2,79 M). Decisión de Álvaro.
+- **Impacto:** igual que el 2026-09-15·03, más una consecuencia práctica INVERTIDA para el A/B del PRD de SL por lote (§6.6): si la copia vigente es la LOCAL, la corrida de referencia debe usar la definición del GET (inline), NO `strategy_id` — hasta confirmar cuál copia manda, no fijar la vía.
+- **Código tocado:** NINGUNO por este hallazgo (confirmado).
+- **Estado:** ABIERTO (refina al 2026-09-15·03, que sigue abierto)
+
+### [FEATURE · 2026-09-16 · VISOR DE TRADE] El click en un ticker abre el gráfico del trade en un modal centrado; fuera el despliegue inline bajo la fila (Álvaro + ZCode)
+- **Por qué:** el despliegue inline (una fila `<tr>` extra bajo la fila clicada, dentro de la tabla de Trades y del detalle de día de Calendar) aparecía donde estuviera el scroll — pegado a la toggle bar, difícil de orientarse — y para moverse por la página el ratón cruzaba el gráfico, con la rueda zoomeando en vez de hacer scroll. Pedido explícito de Álvaro: ventana centrada con lo de detrás oscurecido/difuminado, estilo visor de imagen.
+- **Qué es:** reutiliza el `Modal` de la librería UI (fondo `rgba(0,0,0,0.55)` + `blur(3px)`, cierra con Escape y click fuera, y bloquea el scroll del body mientras está abierto — la rueda solo zoomea el gráfico del visor, que ahí es lo que se quiere). Cabecera con ticker, fecha, nº de trades del ticker-día, PnL sumado y R medio (un día con piramidación son varios trades y el gráfico los pinta todos); pie con «Abrir en Análisis por trade →» (el botón que vivía dentro del panel, mudado al pie); la barra de progreso de carga de velas se ve dentro del visor. Funciona desde la pestaña Trades y desde el detalle de día de Calendar, donde el visor se apila encima del modal de día; con los dos abiertos, el primer Escape cierra SOLO el visor (guarda en el efecto de Escape de CalendarTab mirando `tradeDesplegado`).
+- **Dónde:** 5 ficheros de frontend, nada de backend ni de motor. `ResultsTabs.tsx` monta el visor y renombra el modo `"desplegable"`→`"visor"`; `TradesTab.tsx` y `CalendarTab.tsx` pierden la fila de expansión y el prop `panelAnalisis`; `PanelAnalisisTrade.tsx` pierde `onAbrirPestana` (nadie más lo usaba; GapsDelTicker no lo pasaba); `ui/Modal.tsx` gana el prop opcional `fullBleed` (contenido a sangre para visores; el resto de los modales idénticos).
+- **Conservado a propósito:** el estado único `tradeDesplegado` (`ticker|fecha`) — Trades y Calendar no pueden tener dos visores a la vez — y la carga de velas vía `onSelectDay` exactamente igual: solo cambia DÓNDE se pinta. La fila de la tabla sigue resaltándose en cobre detrás del backdrop.
+- **No tocado:** `GapsDelTicker.tsx` (Ticker análisis) sigue con SU despliegue inline bajo la fila — otra página, no estaba en el pedido; si se quiere el visor allí también, es un cambio aparte.
+- **Pruebas:** `tsc --noEmit` limpio; eslint sin errores nuevos (los 2 `react-hooks/set-state-in-effect` que salen en ResultsTabs/TradesTab ya estaban en HEAD, verificado linteando las versiones de HEAD). OK de Álvaro («me encanta»).
+- **Estado:** `3575d3a` en `alvaro-rama-desarrollo`. **Sin push** (pendiente de OK de Álvaro, como siempre).
+
+### [INTEGRACIÓN · 2026-09-16 · 01] Criterio de Álvaro fijado tras el visor de trade: la IA NUNCA hace push a staging — commits a su rama sí, la integración a staging la lleva él
+- **Qué quedó fijado (palabra de Álvaro):** la IA commitea en `alvaro-rama-desarrollo` sin problema, y push SOLO a esa rama personal, siempre previa confirmación. A `staging` la IA **nunca** sube push: la integración (merge local o PR contra `staging`, según `.agent/ALVARO_DEV_BRANCH.md`) la hace Álvaro. Encaja con la regla de oro nº1-2 de `AGENTS.md` (main intocable; integración por PR).
+- **Corrección de estado de la FEATURE 2026-09-16 · VISOR DE TRADE (entrada anterior):** su línea de estado quedó escrita «Sin push» antes del OK; con el OK explícito de Álvaro SÍ se subió — `origin/alvaro-rama-desarrollo` avanzó de `4014f36` a `5303be1` (código `3575d3a` + memoria `5303be1`). **`staging` sigue sin tocar** (head `723a392`): pendiente de que Álvaro lo integre cuando quiera.
+- **Código tocado:** ninguno adicional (solo esta entrada).
+- **Estado:** NORMATIVA FIJADA POR ÁLVARO.
+
+### [FEATURE · 2026-09-16 · CAMINO DE CONDICIONES] «Caminito» en la piramidación: cadena ordenada de condiciones por nivel (Álvaro + ZCode, PRD docs/PRD_CAMINITO_CONDICIONES_PIRAMIDACION_20260916.md)
+- **Qué es:** un nivel de pirámide puede declarar `steps` (lista ORDENADA de árboles de condición, el MISMO ConditionGroup que entrada/salida) en vez de un único `root_condition`. Cada paso engancha en su turno (flanco False→True dentro del trade); enganchado el ÚLTIMO, el nivel dispara su acción (`add`/`reduce`, ejecución y `lot_stop` exactamente como siempre). Los pasos intermedios no operan: solo abren la puerta al siguiente — el 2º puede llegar TARDE aunque el 1º ya no se cumpla (lo que un AND no puede expresar).
+- **Decisiones cerradas del PRD (Q1-Q5), implementadas tal cual:** `same_bar` por nivel (default true = generaliza el AND; false exige ≥1 vela entre enganches); los pasos cuentan solo desde la entrada (Q2=A: un estado vigente al entrar engancha en la 1ª vela de su turno, un transitorio previo no cuenta); tras disparar se reinician las llaves pero SE CONSERVA el `prev_sig` de cada paso (Q3 anti-metralla); `times>1` recorre el camino ENTERO por cada disparo (Q4); interno `steps`/`steps_signals`, UI «Camino (condiciones en secuencia)».
+- **Dónde (backend):** `strategy.py` (field_validator `_valida_steps_por_nivel`, clon del patrón lot_stop: delega en la fuente única); `strategy_engine.py` (`normaliza_steps` junto a `normaliza_lot_stop` — valida ≥2 pasos, ninguno vacío, `same_bar` bool, y normaliza cada paso con la MISMA `_normalize_tree`, ahora a nivel de módulo; rama camino en el bucle de niveles del compilador → `steps_def`+`same_bar`, sin `root_condition`; rama camino en `_evaluate_pyramid_levels` → `steps_signals` con la ventana horaria aplicada a CADA paso); `portfolio_sim.py` (estado `pyr_step_k`/`pyr_step_prev`/`pyr_last_latch` rearmado en cada entrada; la detección de disparo ramifica en `steps_signals is None` — nivel normal BIT-IDÉNTICO; reinicio de llaves junto a cada `pyr_fired += 1`). Numba intacto: `sim_dispatch` ya rutea cualquier pirámide al motor Python.
+- **Dónde (fontanería, fuera de los 3 archivos del PRD pero OBLIGATORIA):** `backtest_service.py` (3 sitios) y `backtest_signals.py` (2 sitios) copiaban/recortaban `lv["signals"]` entre evaluador y simulador — un nivel-camino reventaba ahí con `KeyError` (demostrado: HEAD revienta, ver dorada de abajo). Helpers únicos en `strategy_engine`: `mapa_senales_nivel` (copia/recorte a TODOS los pasos) y `aplica_ventana_relleno_nivel` (la ventana de la vela de relleno solo al ÚLTIMO paso: los intermedios no ejecutan nada; todos ya llevan la máscara de vela de señal del evaluador).
+- **Dónde (frontend):** `types/strategy.ts` (`root_condition` opcional + `steps?` + `same_bar?`); `PyramidingBuilder.tsx` (conmutador «Camino», pasos con el mismo GroupDisplay + reordenación ▲▼ + añadir/quitar paso con mínimo 2, interruptor «Permitir completar en la misma vela», aviso de camino inválido; helpers `nivelPiramideValido`/`nivelPiramideParaPayload`); `StrategyForm.tsx` e `InlineStrategyBuilder.tsx` (serialización: el nivel-camino viaja SIN `root_condition` — excluyentes, el backend rebota 422 con ambas); `BacktestPanel.tsx` (tarjeta «1º … → 2º …»).
+- **422 en la frontera (nada de drop silencioso):** `steps`+`root_condition` juntos, <2 pasos, paso vacío, `same_bar` no bool. NOTA deliberada: el «ninguno → 422» de la frase del PRD §5 NO se implementó — rompería la regla nº1 (una estrategia guardada con un nivel degenerado hoy guarda y compila igual) y no sigue el patrón espejo de lot_stop (el validador solo mira niveles QUE declaran la clave nueva). Si Álvaro lo quiere duro, es una línea más en el validador.
+- **Pruebas:** `test_pyramid_steps_nivel.py` (dorados de compilador con los MISMOS hashes de lot_stop + normaliza + compilador + 422) y `test_pyramid_steps_sim.py` (los 12 tests §11: orden, Q2, Q3, Q4, same_bar, rearme, invariante sequential, ventana horaria fin a fin, look-ahead, lot_stop anclado a la vela del disparo + fontanería). Suite completa: 1036 passed / 115 skipped / 3 xfailed. Dorada de tubería (`.tmp_camino/dorado_pipeline.py`): contrato de `_compute_signals_for_pair` HEAD vs actual SIN camino → hash idéntico `e6efed33e1f99328…`; con camino, HEAD revienta (`KeyError: 'signals'`) y el actual fluye. La dorada de API de `.tmp_lot_stop/` NO se pudo re-correr desde la sesión (el qualifying lee parquet de GCS y el shell no lleva credenciales; los controles del 16-sep se capturaron contra el backend del usuario) — cubierta por lo anterior + suite.
+- **A/B P3 (motor real, look_ahead_prevention=True):** mismo día sintético, paso A = «Close cruza encima de EMA20» (evento), paso B = «Close > umbral» (llega tarde). AND → 0 añadidos (B no vigente en el cruce); CAMINO [A,B] → 1 añadido a las 10:15 (B llegó con A ya cumplido); SEQUENTIAL de niveles → 2 añadidos (06:40 y 10:15: su paso intermedio SÍ opera). Semánticas distintas y correctas las tres (`.tmp_camino/ab_camino.py`).
+- **Estado:** en `alvaro-rama-desarrollo`, sin push (pendiente del OK de Álvaro, como siempre). Construido ENCIMA del `lot_stop` ya integrado (el bloque add del camino reutiliza su bloque tal cual).
+
+### [HALLAZGO · 2026-09-16 · 02] Un disparo del camino DESCARTADO por caja/locates deja el nivel muerto el resto del trade aunque `times` > 1 — un nivel normal sí se recupera
+- **Reporta:** Claude Opus (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** `backend/app/services/portfolio_sim.py:1771-1776` (al enganchar el último paso, `pyr_step_k` sube a `len(steps)` ANTES de ejecutar nada) vs `:1949-1957` y `:2030-2035` (el reinicio de llaves `pyr_step_k = 0` vive pegado a `pyr_fired += 1`, es decir SOLO en disparos que llegan a EJECUTARSE). Entre medias, los descartes por riesgo hacen `continue` sin tocar las llaves: `:1840` (`cash_now <= 0`), `:1849` (`add_cash <= 0`), `:1865` (`disponible <= 0`), `:1933` (cupo de locates), `:1938` (`add_size <= 0`).
+- **Qué observé:** cuando un camino completa su último paso pero el añadido se descarta por una regla de riesgo, `pyr_step_k` se queda clavado en `len(steps)`. Como el bucle de pasos entra con `while pyr_step_k < len(steps)`, ese nivel **no vuelve a evaluarse jamás en ese trade** — ni siquiera cuando la caja se libera más tarde y el patrón se repite entero. Con `max_fires = 2` acaba con CERO añadidos. Un nivel NORMAL en el mismo escenario sí vuelve a disparar en cuanto hay un flanco nuevo, porque su único estado (`pyr_prev_sig`) no lo bloquea. No es, por tanto, el «espejo del nivel normal» que documenta el código en `:1951-1955`.
+- **Cómo reproducir:** velas planas a 10 $, `init_cash = 10000`, `risk_r = 10000` FIXED (la entrada compromete el 100 % del capital → `disponible = 0`), `look_ahead_prevention=True`, `pyramid_sequential=False`, entrada barra 1, salida barra 18. Nivel 0 = `reduce` 50 % en la barra 10 (libera caja). Nivel 1 con `max_fires=2`, en dos variantes: (a) CAMINO con `steps_signals = [A@{3,12}, B@{5,14}]`, `same_bar=True`; (b) NORMAL con `signals = {5, 14}`. Script exacto: `scratchpad/repro_times_descartado.py` (efímero, fuera del repo), lanzado con `PYTHONPATH=. .venv/Scripts/python.exe`.
+- **Evidencia:** salida real de las dos corridas, idénticas salvo el nivel comparado —
+  `=== CAMINO [A,B] (max_fires=2) ===  reduce barra 11 size 500.00  ->  ADDS EJECUTADOS: 0  []`
+  `=== NIVEL NORMAL (max_fires=2) ===  reduce barra 11 size 500.00 / add barra 15 size 10.00  ->  ADDS EJECUTADOS: 1  [15]`
+  El `reduce` de la barra 11 libera 5.000 $ de capital comprometido en las DOS corridas: en la barra 14 había caja de sobra para el añadido de 100 $, y el camino ni siquiera llegó a mirarlo.
+- **Hipótesis de causa:** no hace falta hipótesis, el mecanismo está confirmado por lectura y por el repro: el reinicio de llaves se colocó junto a `pyr_fired += 1` (correcto para Q3/Q4 en disparos ejecutados) y no existe ninguna rama equivalente para el camino de descarte.
+- **Impacto:** solo niveles-camino con `times > 1` a los que se les descarta un disparo por caja o locates. Con `times = 1` es inocuo. Efecto secundario relevante para backtests: acopla en silencio el TAMAÑO de la posición con la DETECCIÓN del patrón — subir el tamaño de entrada mata caminos antes y cambia resultados por un motivo ajeno a la lógica de la estrategia (misma familia que «un default que no es neutro»). No afecta a niveles normales, ni a `lot_stop`, ni a nada sin `steps`.
+- **Código tocado:** NINGUNO (confirmado). Solo un script efímero en el scratchpad de la sesión.
+- **Estado:** ABIERTO. **Decisión de Álvaro (2026-09-16): opción B** — un disparo descartado por caja/locates rearma el camino igual que uno ejecutado (vuelve al paso 1 conservando los `prev_sig`, con lo que la protección anti-metralla de Q3 sigue intacta), pero **NO gasta una de las `times`**. Lo aplica Álvaro (también dueño del código) pasándole a GLM el encargo `docs/PRD_CAMINO_REARME_DISPARO_DESCARTADO_20260916.md`. Pendiente de verificación posterior.
+
+### [HALLAZGO · 2026-09-16 · 02 · RESOLUCIÓN] El disparo del camino descartado por caja/locates ya rearma el nivel — fix `5f19ef9`, opción B aplicada tal cual
+- **Cierra:** [HALLAZGO · 2026-09-16 · 02] (entrada anterior, queda como constancia; su estado ABIERTO queda anulado por esta).
+- **El cambio (`5f19ef9`, rama `alvaro-rama-desarrollo`):** EXACTAMENTE lo que fijó el PRD `docs/PRD_CAMINO_REARME_DISPARO_DESCARTADO_20260916.md` §3 — el reinicio de llaves (`pyr_step_k=0`, `pyr_last_latch=-1`) sube al final del bucle de pasos dentro de `if dispara:` (rearme al DISPARAR, no al ejecutar), y los dos bloques que lo hacían solo en el camino ejecutado (`portfolio_sim.py`, tras cada `pyr_fired += 1` del add y del reduce) se borran por redundantes con sus comentarios. `pyr_fired` sigue subiendo SOLO al ejecutar (un descarte NO gasta una de las `times`) y `pyr_step_prev` NO se toca (Q3: para reenganchar el paso 1 hace falta flanco `False→True` nuevo). Rama de niveles normales, `lot_stop`, topes de caja/locates, `size_by_sl`, híbrido y Numba: intactos.
+- **Verificación del repro del hallazgo:** mismo escenario (entrada que compromete el 100 % del capital, `reduce` que libera caja en mitad del día, nivel con `max_fires=2` cuyo patrón se completa dos veces) — el camino ahora ejecuta **1 add** en la segunda (antes del fix: **0**), en PARIDAD con el nivel normal equivalente (1 add). Test `test_disparo_descartado_por_caja_rearma_el_camino`, que además comprueba esa paridad explícitamente. Corrido contra el código pre-fix (stash puntual) para confirmar que discrimina: falla con 0 adds.
+- **Guardia de Q3:** `test_tras_descarte_la_condicion_sostenida_no_reengancha_sin_flanco` — tras el descarte, con la condición del paso 1 SOSTENIDA (sin flanco nuevo) y la caja ya liberada, el camino NO vuelve a engancharse. Pasa pre y post fix: está para cazar a quien resetee `pyr_step_prev` por error.
+- **Regresión:** el conjunto del PRD §5.3 + `test_strategy_api.py` → **118 passed** (referencia pre-cambio: 71 + 45 de steps + los 2 nuevos = 118, todo verde). Suite completa del backend: **1038 passed / 115 skipped / 3 xfailed**.
+- **Código tocado:** `backend/app/services/portfolio_sim.py` (rearme subido + 2 bloques borrados) y `backend/tests/test_pyramid_steps_sim.py` (2 tests al final). Nada más.
+- **Estado:** RESUELTO (`5f19ef9`). **Sin push** (pendiente del OK de Álvaro; a `staging` no se sube nunca, lo integra él).
+
+### [HALLAZGO · 2026-09-16 · 03] «Config. Estrategia guardada» abre el builder con la estrategia ANTERIOR si entre medias se corrió un backtest de otra — y se queda pillado
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/backtester/page.tsx:953-955` (`handleRun`, tras cada corrida del panel: `setActiveStrategy(strategyData)` + `setLoadedStrategyId(strategyData.id)` SIN tocar `builderDraft`) vs `page.tsx:1606-1609` (atajo de «Config. Estrategia guardada»: `if (strategyId === loadedStrategyId && builderDraft) { setMode('builder'); return; }` — reusa el borrador tal cual) y `page.tsx:2365` (`initialStrategy={builderDraft || activeStrategy || undefined}`). Agravante: `InlineStrategyBuilder.tsx:727` — el builder emite sus drafts con `id: "draft"` fijo, así que `builderDraft` NUNCA lleva la id real de la estrategia y el atajo no puede verificar de quién es el borrador. Persistencia del estado corrupto: `page.tsx:1129-1143` (el snapshot de sessionStorage restaura `activeStrategy`+`loadedStrategyId` por un lado y `builderDraft` por otro).
+- **Qué observé:** Álvaro tenía «RTH 2.3 y ON modelar» cargada, seleccionó «1B. Modelización Sobrino 3» en el desplegable, corrió el backtest con ella y al pulsar «Config. Estrategia guardada» para retocar parámetros el cajón abrió mostrando la estrategia ANTERIOR (RTH 2.3…). Repetir la operación no lo despegaba («se queda pillado»): mientras `loadedStrategyId` siga siendo la id de la última corrida y `builderDraft` siga vivo, el atajo reabre SIEMPRE el borrador viejo; y como el snapshot de sessionStorage guarda el par desincronizado, el F5 de la pestaña lo revive. La tarjeta-resumen del panel también describe el draft viejo en ese estado (`BacktestPanel.tsx:590-601`: con `activeStrategy.id === "draft"` prefiere el draft a la selección del desplegable).
+- **Cómo reproducir:** (1) abrir «Config. Estrategia guardada» con la estrategia A (basta abrir y cerrar el cajón, sin guardar) → queda `builderDraft` = borrador de A (id `"draft"`) y `loadedStrategyId` = A; (2) en el desplegable elegir la estrategia B y lanzar el backtest (PROBAR) → `handleRun` deja `loadedStrategyId` = B, `activeStrategy` = B, pero `builderDraft` sigue siendo el borrador de A; (3) clic en «Config. Estrategia guardada» con B seleccionada → `strategyId === loadedStrategyId` (B===B) Y `builderDraft` truthy → abre el builder con `initialStrategy = builderDraft` = **A**. Reintentos: mismo atajo, mismo A. F5: el snapshot restaura el par desincronizado. Salidas: «Nueva Estrategia» (limpia todo) o pasar por una tercera estrategia C (C ≠ loadedStrategyId → refetch) y volver a B.
+- **Evidencia:** lectura verificada de los cuatro puntos del código citados (ni un flujo más actualiza `builderDraft` en `handleRun`: grep de `setBuilderDraft` → solo helper-tour, compartidas, restauración, `onConfigureStrategy` y los dos flujos de guardado). El atajo es del commit `46bfc07` (Jaume, 2026-06-21), cuya intención legítima era reabrir tus ediciones sin guardar de la MISMA estrategia; `handleRun` reutiliza `loadedStrategyId` con otro significado (estrategia de la última corrida) y lo envenena.
+- **Hipótesis de causa:** CONFIRMADA por lectura: `loadedStrategyId` sirve a dos amos (origen del borrador del builder vs estrategia activa de resultados/corrida) y `builderDraft` no guarda la id real (el builder emite `id: "draft"`), con lo que el atajo no puede distinguir de qué estrategia es el borrador que reusa.
+- **Impacto:** el builder muestra y deja editar una estrategia que NO es la seleccionada (riesgo alto de retocar/guardar creyendo que editas B). Consecuencia peor por la misma raíz: «Guardar en el Baúl» en ese estado (`page.tsx:243-245`) toma `realId` de `loadedStrategyId` (= B) y propondría REESCRIBIR B con el contenido de A. No afecta al motor ni a resultados ya guardados; es todo estado de sesión del frontend (por pestaña).
+- **Código tocado:** NINGUNO (confirmado; solo esta entrada de memoria).
+- **Estado:** ABIERTO. Fix propuesto a Álvaro: trackear el ORIGEN del borrador (p. ej. `builderDraftOriginId` fijado en `onConfigureStrategy`/guardados, no en `handleRun`) y usarlo en el atajo en vez de `loadedStrategyId`; en `handleRun`, si el borrador es de OTRA estrategia, limpiarlo (hoy ya se pierde igual al reconfigurar una tercera). Pendiente de su OK para tocar la rama.
+
+### [HALLAZGO · 2026-09-16 · 03 · RESOLUCIÓN] «Config. Estrategia guardada» ya abre la estrategia pedida — fix con origen del borrador (`builderDraftOriginId`), OK de Álvaro en la sesión
+- **Cierra:** [HALLAZGO · 2026-09-16 · 03] (entrada anterior, queda como constancia; su «Pendiente de su OK» queda anulado por esta: el OK llegó — «Ok» — tras ver el fix propuesto, y lo aplicó ZCode en su rama bajo la excepción del protocolo).
+- **El cambio (solo `frontend/src/app/backtester/page.tsx`, 1 archivo):** (1) nuevo estado `builderDraftOriginId` = id de la estrategia guardada de la que desciende el borrador del builder; se fija al cargar por Config y en los dos flujos de guardado, y se resetea a `null` en «Nueva Estrategia», compartidas y tour-ejemplo (borradores huérfanos). (2) El atajo de «Config. Estrategia guardada» compara contra el ORIGEN, no contra la última corrida — reabre tus ediciones sin guardar SOLO si el borrador es de la estrategia pedida; si no, refetch limpio. (3) `handleRun`: tras una corrida, si el borrador es de OTRA estrategia (o huérfano) se jubila; correr la MISMA estrategia lo conserva con sus ediciones. (4) «Guardar en el Baúl»: la id de reescritura sale del propio draft (si trae id real) o del origen — nunca de la estrategia de la última corrida (blindado el sobrescrito B-con-contenido-de-A). (5) El snapshot de sessionStorage viaja con el origen en los 3 shapes y se restaura (el F5 ya no revive el par desincronizado). (6) `loadedStrategyId` queda SIN lectores tras el recableado y se elimina (declaración, 7 setters y el bloque muerto del restore).
+- **Verificación:** `tsc --noEmit` limpio; eslint del fichero **94 problemas (82 errores / 12 warnings) = EXACTAMENTE el baseline de HEAD** (medido con stash antes/después del cambio): cero issues nuevos. Traza del repro del hallazgo sobre el código final: Config(A) → correr B → Config abre **B** (antes: A); el atajo legítimo Config(A)→cerrar→Config(A) sigue reabriendo las ediciones sin guardar de A; correr la MISMA estrategia desde el panel conserva el borrador. Pendiente de la verificación visual de Álvaro en el navegador con sus dos estrategias reales.
+- **Código tocado:** `frontend/src/app/backtester/page.tsx` (fix) y esta entrada. Nada más.
+- **Estado:** RESUELTO (`70ff4d7`, rama `alvaro-rama-desarrollo`). **Sin push** (pendiente del OK de Álvaro; a `staging` no se sube nunca, lo integra él).
+
+### [INTEGRACIÓN · 2026-09-16 · 02] Fix del Config verificado por Álvaro en el navegador y subido a origin — junto con los 4 commits que esperaban su OK
+- **Qué se verificó:** Álvaro reprodujo su caso real (RTH 2.3 cargada → correr la 1B. Modelización Sobrino 3 → «Config. Estrategia guardada») y ya abre la estrategia pedida («Bien, ya va!»). Con esto el HALLAZGO 2026-09-16·03 queda cerrado de punta a punta: reporte → fix con su OK → verificación visual.
+- **Qué se subió (OK explícito de Álvaro):** `origin/alvaro-rama-desarrollo` avanza de `71ac80a` a `06598ae` — los 2 commits del hallazgo 03 (`70ff4d7` fix, `06598ae` memoria) MÁS los 4 que sus entradas dejaban «sin push pendiente de OK»: camino de condiciones (`2fbbe5a`, `d489967`) y rearme del disparo descartado (`5f19ef9`, `6995e5d`). Las líneas «Sin push» de esas entradas quedan anuladas por esta (motivo: los commits del fix 03 son descendientes de los otros 4 — imposible subir solo dos).
+- **staging y main:** intactos; la integración a `staging` la lleva Álvaro, como siempre.
+- **Código tocado:** ninguno adicional (solo esta entrada).
+- **Estado:** HECHO.
+
+### [HALLAZGO · 2026-09-17 · 01] Los 422 de los validadores de `pyramiding` salen del backend como 500 «Object of type ValueError is not JSON serializable»
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** mejora (UX de errores; la validación en sí FUNCIONA)
+- **Dónde:** manejador global de excepciones de `app/main.py` (el que envuelve y serializa) vs `backend/app/schemas/strategy.py` (`_valida_lot_stop_por_nivel`, `_valida_steps_por_nivel` — ambos `field_validator` que lanzan `ValueError` con mensaje en claro).
+- **Qué observé:** `POST /api/strategies/` con un `lot_stop` inválido (sin `pct`) o con `steps`+`root_condition` juntos responde **500** `{"detail":"Internal Server Error","message":"Object of type ValueError is not JSON serializable"}` en vez del 422 con el mensaje del validador. NO es del camino: el `lot_stop` (integrado hace días y con tests de 422 a nivel pydantic) da exactamente el mismo 500. La validación SÍ impide el guardado (verificado: ninguna sonda quedó en users.duckdb) — solo el STATUS y el mensaje viajan mal.
+- **Cómo reproducir:** backend local; `POST /api/strategies/` con `pyramiding.levels[0].lot_stop = {"mode":"pct"}` → 500 con ese mensaje; lo mismo con `steps:[un_paso]` o `steps`+`root_condition`.
+- **Evidencia:** sondas del 17-sep (respuesta exacta arriba); `StrategyCreate(**payload)` directo lanza `ValidationError` correcto (tests `test_lot_stop_nivel.py` y `test_pyramid_steps_nivel.py` lo prueban) — el fallo es SOLO en la capa FastAPI/manejador.
+- **Hipótesis de causa:** HIPÓTESIS — el manejador de excepciones global recibe la `ValueError`/`ValidationError` y hace `json.dumps` de algo que lleva el objeto excepción dentro (mismo patrón que el «Out of range float values are not JSON compliant» del 15-sep).
+- **Impacto:** cosmético/diagnóstico: el usuario ve 500 sin explicación en vez de «levels[0].steps: hacen falta al menos 2 pasos». Ningún dato inválido se guarda.
+- **Código tocado:** NINGUNO (confirmado).
+- **Estado:** ABIERTO
+
+### [TRABAJO · 2026-09-17] Caminito en G&E La Buena y 1B Sobri 3 + estudio de 10 maneras de piramidar + genético improving en marcha
+- **Qué se creó (NADA se sobrescribió):** 4 estrategias nuevas vía API, entrada/salida/riesgo/sesiones/fechas EXACTAS de sus originales, cambiando solo el bloque `pyramiding` (todas con $1 por añadido, `unit:'usd'`, SL de lote = último pivote alto +5% ventana 2 salvo indicación):
+  1. `G&E GENETICO - La Buena · Camino Fade20+Pivote` (65ee563b) — el camino del encargo: `% Fade>=20 → Elapsed from last High>=10 → 2 verdes → 2 rojas` (`same_bar:false`, times 3).
+  2. `1B Modelización Sobri 3 · Camino Fade20+Pivote` (f06589ff) — ídem.
+  3. `1B Sobri 3 · Escalera Fade10 (ganadora 10 maneras)` (5c32dbc4) — add en cada NUEVO flanco de `% Fade>=10`, times 5.
+  4. `G&E La Buena · Fade30+Confirmación (ganadora 10 maneras)` (7a44e899) — AND `% Fade>=30` + 2 rojas, times 2.
+- **La limitación documentada del «≥10 min desde la entrada»:** NO existe condición de pirámide «minutos desde la entrada» en el motor («Elapsed Time» solo es un marcador de salida por tiempo). Se usó `Elapsed time from last High >= 10` — el MISMO idioma que ya usan las pirámides originales de ambas estrategias (≥6 y ≥20), que en corto equivale a «tiempo desde la entrada/máximo». Documentado aquí y en la descripción de las estrategias; sin aproximaciones silenciosas.
+- **Resultados ($1/$1000, fees 5bps, slip 0.1%, look_ahead=true, mismas fechas de universo):** G&E 57.36→69.74 R con el camino (+21.6%); Sobri 287.85→310.18 (+7.8%). Análisis pareado (mismas posiciones): en G&E mejoran 479 vs empeoran 463; en Sobri 611 vs 529 — los ganadores ganan más de lo que pierden los perdedores. El coste de los lot stops ≈ 10-15% del bruto de los añadidos.
+- **Las 10 maneras** (`.tmp_camino/resumen_maneras.json`, scripts efímeros en `.tmp_camino/`): (01) camino del encargo; (02) AND clásico de las mismas 4 condiciones — **0 disparos, verde y roja nunca coexisten: el camino es la única forma de expresar el patrón**; (03) camino 2 pasos [fade→2 rojas]; (04) AND fade30+2rojas; (05) escalera fade10 times5; (06) camino [fade15→pierde VWAP]; (07) camino [fade20→rompe último pivote]; (08) AND tiempo+fade (idioma Patas); (09) camino al rebote [fade20→3 verdes]; (10) camino del encargo + quita 50% en fade40. **Ganadoras:** Sobri+05 = 370.45 R (+28.7% sobre baseline, 30.9 R/mes) y G&E+04 = 88.30 (+54%). Consistente en ambos chasis: el camino de 2 pasos > el de 4 (más disparos), y la quita dentro del camino (10) RESTA. OJO: elegidas y evaluadas sobre los MISMOS datos (sesgo de selección; sin OOS).
+- **Compartidas de Sailor/Jaime:** sus 3 estrategias con dataset («PM 1B TTP», «RTH 2B TTP», «Gen. Debilidad») referencian datasets que NO existen en esta instancia (91 datasets locales, ninguno suyo) → no ejecutables aquí; «Cruce con media prueba» y «GA RTH 2.3»/«MACD RSI» sin dataset. La comparativa de stats quedó entre las ejecutables.
+- **Genético:** corrida `20260917_155807_f99c` (modo mejorar, Sobri Escalera Fade10, 14 genes incl. umbral de fade de la escalera/$/times de la pirámide, pobl 60 × 30 gen, fitness expR_sqrtN) **corriendo en proceso propio** — ver `/api/genetico/corridas`. Un primer intento (`155559`) murió al arrancar: `genes` debe viajar como lista de OBJETOS del catálogo (`POST /genetico/genes`), no de ids.
+- **Falsas alarmas del camino descartadas durante la sesión (por si se repiten):** (1) los `pyr_executions` de los trades del RESULTADO se agrupan en `executions` (`_group_partial_exits`) — contar la clave vieja da 0 siempre; (2) `POST /api/backtest` DEDUPLICA por dataset con `status:"already_running"` y devuelve el job_id del que corre — dos corridas del mismo dataset lanzadas a la vez son LA MISMA.
+- **Código tocado:** NINGUNO del repo (solo estrategias vía API y scripts efímeros en `.tmp_camino/`).
+- **Estado:** hecho; genético corriendo. Vigía (agente auditor) lanzado sobre todo el trabajo.
+
+### [TRABAJO · 2026-09-17 · 2] Genético v2: la corrida 155807 se PARÓ (fitness 0 en toda la población por falta del bloque `riesgo`) y se relanzó la 161048 sana (fitness 15.7 y subiendo)
+- **Qué pasó:** la primera corrida del improving (`20260917_155807_f99c`) evaluaba bien (métricas reales: expectancy 16.5, sharpe 8.4 en el mejor) pero su `fitness` salía **0.0 en TODOS los individuos** — selección aleatoria, horas de CPU tiradas. Causa: mi config no llevaba el bloque `riesgo` → `_r_media` (genetico/evaluador.py:127-153) devuelve `None` con `risk_r` ausente → `avg_r`/`expR_sqrtN` = 0. Es EXACTAMENTE la trampa que el propio comentario del evaluador documenta («sin excepción, sin log y sin nada raro en la pantalla»); las corridas viejas que funcionan llevan `riesgo` completo (verificado en sus config.json). El vigía fue quien la señaló.
+- **Arreglo (sin tocar código):** corrida `155807` parada vía `/genetico/corridas/{id}/parar`; relanzada `20260917_161048_8349` («mejorar v2») idéntica + `riesgo {init_cash 1000, risk_r 1 FIXED, fees 5bps, slip 0.1%}` + `min_trades 100`. Estado: **corriendo, mejor fitness 15.73 en la generación 1**. Si alguna corrida futura vuelve a mostrar fitness 0 con métricas buenas, es esto: falta el bloque `riesgo`.
+- **Vigía (agente auditor):** veredicto «el trabajo es sólido» — A–F en verde, cifras recalculadas independientemente y cuadran. Avisos incorporados: (1) borrado `.tmp_camino/resumen_runs.json` (baselines falsas por el dedup de jobs); (2) **matiz que se le debe a Álvaro: las dos ganadoras de las 10 maneras suben PnL pero EMPEORAN DD/sharpe/pf** (Sobri escalera: DD −1.08% vs −0.77% base, sharpe 7.82 vs 8.02; G&E fade30: DD −0.39% vs −0.20%, WR 56.3% vs 66.3%) — no son dominantes, son «más R por más riesgo»; (3) las compartidas de Sailor CORRIERON vacías (dataset inexistente aquí no revienta: 0 trades), no «fallaron».
+- **Código tocado:** NINGUNO.
+- **Estado:** genético `20260917_161048_8349` currando (60×30, mejor fitness 15.73 y subiendo en gen 1).
+
+### [HALLAZGO · 2026-09-17 · 02] La página del genético CRASHEA con corridas cuyo config.json no lleva `catalogo`/`sesiones` (corridas creadas por API)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/genetico/page.tsx:1410` — `{detalle.config.catalogo.length} indicadores · {detalle.config.sesgo} · {detalle.config.sesiones.join("/")}`
+- **Qué observé:** al abrir la página del Genético con una corrida mía seleccionada (detalle), toda la página muere con `Cannot read properties of undefined (reading 'length')` — el overlay rojo de Next.js tapa la app entera (reportado por Álvaro: «No me deja abrir el genético»). Las corridas lanzadas desde la UI siempre llevan en su `config.json` un montón de campos (`catalogo`, `sesiones`, `n_condiciones`, `sesgo`, `universo`, `guardas`…) que el router NO exige; las 4 corridas lanzadas por API el 17-sep llevaban solo los obligatorios → `catalogo`/`sesiones` undefined → TypeError en render.
+- **Cómo reproducir:** `POST /api/genetico/corridas` con un config sin `catalogo` ni `sesiones` (p. ej. el de `corridas/20260917_161048_8349/config.json` ANTES del parche) → abrir `http://localhost:3000/genetico` y seleccionar esa corrida → crash.
+- **Evidencia:** captura de Álvaro (overlay rojo, page.tsx:1410:123); config.json original de las 4 corridas (backup en `.tmp_camino/backup_configs/`) sin las claves; config de la corrida vieja `20260915_212216_cc08` (creada desde la UI) CON las claves.
+- **Hipótesis de causa:** HIPÓTESIS — la página se escribió contra la forma completa que manda la UI y nunca vio una corrida sin esos campos.
+- **Impacto:** cualquier corrida creada por API (o futura forma de config más ligera) deja la página del genético INUTILIZABLE hasta que se parchea su config.json.
+- **Qué hice (datos, no código):** parcheé los `config.json` de las 4 corridas mías en `BTT_GENETICO_DIR` añadiendo `catalogo` (los 14 nombres reales de sus genes), `sesiones:["custom"]` (el `market_sessions` real de la estrategia base — ojo, NO `rth`) y `n_condiciones:5`. Backups de los 4 originales en `.tmp_camino/backup_configs/`. Verificado en navegador: la página carga y el detalle pinta `semilla 7 · 5 cond. · 14 indicadores · · custom`. Fix definitivo (guardas `?? []` en page.tsx o defaults en el router) PENDIENTE de decisión — no lo toqué.
+- **Código tocado:** NINGUNO del repo (solo config.json de corridas, fuera del repo).
+- **Estado:** ABIERTO (parcheado para las corridas existentes; el bug de fondo sigue)
+
+### [HALLAZGO · 2026-09-17 · 03] Las Rs de piramidación SÍ se suman en el calendario (verificado con motor real) — pero el modal de día muestra «avg R» y PnL en dinero plano, que es lo que lee como «no suma bien»
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** inconsistencia (UX de lectura; el motor y las casillas están BIEN)
+- **Dónde:** `frontend/src/components/backtester/tabs/CalendarTab.tsx:624-626` (modal de día: `dayPnl` = Σ `t.pnl` CRUDO en dinero y `avgR` = MEDIA de los `r_multiple`; ignora el modo profits/gastos/net y la unidad $/R elegidos) vs `CalendarTab.tsx:183-256` (la casilla SÍ respeta modo y unidad). Redondeo asociado: `backend/app/services/backtest_service.py:1791` (`r_multiple` a 2 decimales por trade, mientras la casilla se calcula desde el pnl sin redondear).
+- **Qué observé:** Álvaro sospechaba que las Rs generadas por piramidación no se sumaban en el calendario. Verificación con el MOTOR REAL y el postproceso completo hasta el frontend (compile_strategy_def + translate_strategy + simulate + `_enrich_trades` + `_group_partial_exits`), mismo día sintético, tres escenarios: base → 1 trade, Σpnl +6,3179 $ = Δ equity, casilla +0,063 R; con 1 AÑADIDO → 1 trade (el add no genera trade propio: viaja en `pyr_executions` y su PnL va DENTRO del pnl de la posición), Σpnl +9,7254 $ = Δ equity, casilla +0,097 R (el añadido aporta +3,4075 $ = +0,034 R y APARECE en la casilla); con 1 REDUCCIÓN → 2 legs crudos que el agrupador funde en 1 trade, Σpnl +4,6142 $ = Δ equity, sin doble contabilidad. **Conclusión: pipeline correcto al céntimo; las Rs de piramidación están en la casilla del día, la semana y el mes.** Lo que no cuadra en PANTALLA es el modal de día: cabecera con Σ pnl crudo en DÓLARES (el modo «profits» de la casilla suma las fees de vuelta y «net» resta locates; el modal ni lo uno ni lo otro) y «avg XR» (media) donde el ojo espera el total — un día con +0,5R/+0,3R/−0,2R pinta casilla +0,60R y modal «avg 0,20R». Encima cada fila muestra `r_multiple` redondeado a 2 decimales y neto de fees, que con fees/locates activos ya no coincide exactamente con la casilla aunque el fondo sea correcto.
+- **Cómo reproducir:** motor: `.tmp_calendario_rs/repro.py` (efímero, `backend/.venv/Scripts/python.exe`) — imprime trades crudos, `pyr_executions`, trades al frontend, Σpnl vs Δequity y la casilla que pintaría el calendario. Pantalla: calendario → unidad «R» → clic en un día con varios trades → comparar casilla (total) con «avg XR» del modal.
+- **Evidencia:** salida completa del repro en la sesión (resumen arriba); `statsByDate` (casilla/semana/mes) itera TODOS los trades recibidos; el add dentro del pnl de la posición está en `portfolio_sim.py:1432-1450` y `backtest_service.py:1509-1536`.
+- **Hipótesis de causa:** sin bug de fondo; el modal de día se quedó fuera del eje modo×unidad que la casilla sí respeta, y enseña la MEDIA de R donde se espera el TOTAL.
+- **Impacto:** solo lectura/confusión visual del modal de día del calendario; ningún número del motor, de las métricas ni de las casillas está mal.
+- **Código tocado:** NINGUNO (confirmado; solo el script efímero `.tmp_calendario_rs/repro.py`).
+- **Estado:** ABIERTO. Fix natural (si Álvaro lo quiere): que el modal muestre el TOTAL con la unidad y modo elegidos (misma cuenta que la casilla) y, si se conserva la media, aparte y etiquetada.
+
+### [TRABAJO · 2026-09-17 · 3] Visor de piramidaciones por lote (color + segmentos finitos) + análisis de exposición del caso genético
+- **Qué pidió Álvaro:** ver las piramidaciones con claridad en el visor de trades — color por piramidación, su SL asociado, líneas FINITAS (no la priceLine infinita del SL) y saber exactamente dónde entra y sale cada una; y saber cuánto capital llega a estar expuesto con la pirámide de 8 de la estrategia del genético.
+- **Frontend (`Chart.tsx`, todos los surfaces: Análisis por trade, visor modal de Trades/Calendar, GapsDelTicker):**
+  - Paleta de 10 colores por AÑADIDO (no por nivel: con times>1 un nivel dispara N veces) — cielo, violeta, rosa, amarillo, turquesa, naranja, lima, fucsia, azul, esmeralda; cicla a partir del 11º. Marcadores de add y de su SL de lote en el color del lote; el texto del add lleva «+N · ».
+  - Por cada lote, DOS segmentos punteados finitos (idioma cajas de Darvas: LineSeries de 2 puntos): precio de ENTRADA (discontinuo) y cinturón congelado (punteado), ambos desde el añadido hasta su cierre real (su lot_stop o el cierre del trade). Nacen y mueren donde el nivel existió.
+  - El SL del TRADE pasa de priceLine infinita a segmento finito entrada→salida (rojo, con el precio legible en el eje al final). Las priceLines infinitas rojo-suave de los lot_stop desaparecen (sustituidas por los segmentos por lote).
+  - Leyenda «PIRÁMIDES» con chips numerados 1..N arriba-izquierda del gráfico (para leer el color con «Datos» apagado).
+  - Emparejamiento lote↔cierre: por `sl_px` idéntico (exacto); fallback FIFO y backfill del sl_px desde el cierre (resultados viejos) — documentado en el propio código. Las reducciones NO cierran lotes (quitan % de lo flotante).
+- **Backend (aditivo, informativo, sin tocar métricas):** la bitácora `pyr_executions` del AÑADIDO ahora lleva su `sl_px` congelado (portfolio_sim + _build_executions). Estrategias sin lot_stop: byte-idénticas (spread condicional).
+- **Verificación:** `tsc --noEmit` limpio; 107 tests de pirámide/lot_stop en verde; E2E en navegador real (Backtester → GA Sobri MEJORADA 2ª pasada → BNAI 2025-06-02): leyenda con 8 chips, segmentos pares coloreados (discontinuo/punteado) en 0.44-0.52, SL del trade finito con etiqueta, sin errores.
+- **Exposición (motor real, réplica exacta de la corrida: dataset c8bcddc7, 2025, $1000, riesgo $1 FIXED size_by_sl, fees 5bps, slip 0.1%, look_ahead=true):** 1002 trades, +$249.48. Distribución de adds/trade: 0:344, 1:242, 2:116, 3:76, 4:69, 5:37, 6:31, 7:26, **8:61** — llegar al tope de 8 es COMÚN (1 de cada 11 trades con pirámide). Máximo comprometido a precio de compra: **$13.92 (1.39% de la cuenta)**; máximo riesgo simultáneo a los SL de lote: **$1.87 (0.19%)**; máx 8 lotes vivos. La estrategia guardada añade **$1 × 8** (unit usd).
+- **Semántica de exposición del motor (leída de portfolio_sim):** `unit:'pct'` añade % del equity REALIZADO del momento (compone); `unit:'usd'` añade $ fijos; `size_by_sl` convierte la cifra en RIESGO (tamaño = riesgo/distancia al SL del lote). TOPE DE CAJA (regla 2026-08-23): comprometido = avg_entry_price×size a PRECIOS DE COMPRA; disponible = cash−comprometido; un add que no cabe se RECORTA (anotado `recortado_por_caja`) — la exposición NUNCA supera la caja. Extras: cangrejo B tope de pérdida al SL de toda la posición; max_locates en corto.
+- **Código tocado:** `frontend/src/components/backtester/Chart.tsx`, `backend/app/services/portfolio_sim.py` (sl_px en add), `backend/app/services/backtest_service.py` (_build_executions). En la rama de Álvaro; sin push.
+- **Estado:** hecho y verificado.
+
+### [HALLAZGO · 2026-09-17 · 03] El visor de trade queda en «No hay velas para este trade» tras una carga fallida de velas — y NO se puede reintentar
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/backtester/page.tsx:1104-1107` (catch silencioso de `loadCandles`) + `frontend/src/components/backtester/ResultsTabs.tsx:109-133` (`handleSelectTrade` no fuerza recarga del MISMO día)
+- **Qué observé:** Álvaro abrió el visor de HXHX 2025-12-22 y el modal quedó en «No hay velas para este trade». Verificado: el backend TIENE las velas de ese ticker-día en AMBOS datasets (200, 764 velas), y en el log del backend NO existe petición `/candles/multi` de HXHX desde su navegador (las demás —AEI, INDP, RILYL, YCBD— todas 200). La carga falló en el cliente (probablemente durante el reinicio del backend de la sesión o un fallo transitorio de red), el `catch` solo hace `console.error` y deja `dayCandles=null` — el mismo estado que un día sin datos, con el MISMO mensaje.
+- **Cómo reproducir:** abrir un trade en el visor con el backend caído unos segundos (o cortar la red al cargar) → el modal muestra «No hay velas para este trade» aunque los datos existan. Y con el visor cerrado, volver a hacer click en el MISMO ticker no recarga: la 2ª pulsación cierra el visor, y la 3ª re-selecciona el mismo índice de `selectedDay` → React no re-dispara el efecto → sin petición. Solo se recupera haciendo click en OTRO ticker-día y volviendo, o F5.
+- **Evidencia:** log `backend_restart2.log` (líneas 6565-12194: ninguna petición HXHX del navegador; curls propios 200); curls a `/candles/multi` con ambos datasets (c8bcddc7 y cef3f7b2) devolviendo 764 velas de gap_day.
+- **Impacto:** UX del visor: un fallo puntual de red confunde con «día sin datos» y atrapa al usuario sin botón de reintento.
+- **Fix propuesto (no aplicado):** distinguir error de vacío en `loadCandles` (estado `candlesError`) con botón «Reintentar» en el visor; y/o forzar la recarga en `handleSelectTrade` cuando el día seleccionado no cambia (nonce de recarga).
+- **Código tocado:** NINGUNO (confirmado).
+- **Estado:** ABIERTO
+
+### [TRABAJO · 2026-09-17 · 4] Visor: chips de PIRÁMIDES interactivos + SL de lote más corto; explicación documentada del % Fade (máximo previo)
+- **Qué pidió Álvaro:** poder ocultar/mostrar lotes desde la leyenda para ver las piramidaciones de una en una; SLs más cortos (menos ruido); y entender qué es el «máximo previo» del fade de la Sobri.
+- **Chips interactivos (`Chart.tsx`):** un click en el chip N oculta/muestra el lote N — sus dos segmentos (`applyOptions({visible})`, SIN reconstruir el gráfico: el zoom no se pierde) y sus marcadores (regla única `aplicarMarcadores` que comparten los chips y el botón «Datos»: filtra lotes ocultos + texto). El chip se atenúa (opacity 0.28) al ocultarlo. Los toggles se resetean al reconstruir (otro día/timeframe) porque el índice de lote cambia de significado. Marcadores agrupados en una vela con algo que no es del lote (entrada/parcial) se quedan visibles.
+- **SL de lote más corto:** el segmento punteado del cinturón ahora cubre solo el TRAMO FINAL de la vida del lote (últimos 30 min, desde `max(entrada, fin−30min)`): existió desde la entrada pero pintarlo entero duplicaba cada horizontal; lo que importa es el nivel justo antes de que importe. El de ENTRADA (discontinuo) sigue abarcando la vida completa.
+- **El «máximo previo» del % Fade (documentado con líneas):** `indicators.py:1492 _previous_extreme_series` — máximo ACUMULADO de la sesión de referencia desplazado una vela (`.shift(1)`: el nivel de la barra actual no se incluye, comparar el precio contra él no es circular). La sesión la fija `ap_session` (indicators.py:1470): `ap.PM` (la de estas estrategias) desde la primera barra del frame (premercado incluido), `ap.RTH` desde las 09:30, `ap.AM` desde las 16:00. % Fade = % que el precio está por DEBAJO de ese máximo. Dos mecanismos generan «nuevos»: (a) re-anclaje — cada nuevo techo de sesión sube la referencia; (b) FLANCO — el disparo es por cruce False→True, no por permanencia: con el precio rondando la línea del umbral (máx×(1−X%)) cada bajada por debajo es un disparo (hasta `times`).
+- **Evidencia BNAI 2025-06-02 (velas reales + run_exposicion.json):** máximo del día 0.5647 fijado en premercado y NUNCA superado; línea del umbral (20%) = 0.4518; los 8 adds entre 09:00 y 10:00 a 0.4436-0.4504 con fade oscilando 18.9-21.2% — todos por MECANISMO (b) (flanco), ninguno por re-anclaje. La condición de la 2ª pasada es % Fade≥20 ap.PM; la mejorada de la 1ª, ≥24.5; la [10M] 05, ≥10 — mismo mecanismo.
+- **Cómo verlo en el gráfico:** indicador «% Fade (máx. del día)» del desplegable (FADE_PREV_MAX) — con ap.PM coincide 1:1 con la condición; ojo (comentario en indicators.ts:1060): con condiciones ap.RTH los números no cuadran antes de las 09:30.
+- **Verificación:** tsc limpio; E2E en navegador: toggle de chips oculta/restaura (opacidades y sin crash), leyenda y segmentos presentes tras re-run.
+- **Código tocado:** solo `frontend/src/components/backtester/Chart.tsx`. Sin push.
+- **Estado:** hecho y verificado en navegador.
+
+### [TRABAJO · 2026-09-17 · 5] FIX chips interactivos: las etiquetas de lote se ordenaban DESPEGADAS de sus marcadores
+- **Bug (mío, v1 de los chips):** al ocultar un lote se escondían los marcadores EQUIVOCADOS (p. ej. el primer parcial) y el marcador del añadido se quedaba. Causa: `markers.sort()` ordenaba los marcadores por hora PERO el array paralelo de etiquetas de lote (`marcasLotes`) se quedaba en orden de construcción — con varios trades en el día (orden de construcción ≠ cronológico) cada marcador heredaba el lote de OTRO. Fix: ordenar por PARES (`{m, lote}`) para que viajen pegados.
+- **Lo de «la primera piramidación mantiene el SL donde la entrada inicial» NO es bug — son los niveles de verdad:** en 104 de 1002 trades el SL del lote 1 y el SL del trade coinciden EXACTAMENTE (p10 de la separación = 0). Caso AEI 2025-01-02: SL trade 2.6145; lote 1 SL 2.6145 (pivote implícito 2.49 × 1.05 = 2.6145) — el ancla estructural del trade y la del lote caen en el mismo precio, y las dos líneas se solapan (roja discontinua del trade + punteada del color del lote 1, esta última solo el tramo final). Todos los trades tienen stop_loss (0 sin línea), el SL del trade siempre se pinta.
+- **Código tocado:** `frontend/src/components/backtester/Chart.tsx` (orden por pares). Sin push.
+- **Estado:** fix aplicado; tsc limpio.
+
+### [TRABAJO · 2026-09-17 · 6] Etiquetas de marcadores con recuadro (chips HTML) y SL de lote anclado al añadido
+- **Qué pidió Álvaro:** los textos de los marcadores sobre las velas eran ilegibles — quiere recuadro oscuro detrás (u otra ubicación limpia); y el SL del lote salía desplazado a la derecha, debería nacer justo donde se añade el lote.
+- **Etiquetas (Chart.tsx):** lightweight-charts no soporta fondo en el texto de los marcadores, así que el TEXTO sale del canvas y pasa a chips HTML sobre el gráfico: fondo `--color-ec-bg-base`, borde 0.5px del COLOR de su marcador, mono 9px, máx 150px con elipsis. Los SÍMBOLOS siguen en el canvas (marcan el punto exacto). Reposicionado al desplazar/escalar (suscripción al rango temporal + sondeo de 400 ms del rango de precios, que v5.2 no expone como evento). Anti-solape con DOS CARRILES por lado (cercano/lejano a las velas): a zoom de día completo caben ~5 etiquetas (antes ~2-3); al ampliar aparecen todas. El botón «Datos» apaga/enciende los chips; los chips de lotes se ocultan con su lote (misma regla `aplicarMarcadores`).
+- **SL de lote:** el segmento punteado ahora NACE EN EL AÑADIDO (justo encima/debajo de su marcador) y dura 30 min — antes lo anclé al FINAL de la vida del lote y quedaba desplazado a la derecha, lejos de donde se lee (corrección de lo de la entrada anterior).
+- **Verificación:** tsc limpio; en navegador: chips con borde del color de su lote (+1 azul cielo, +2 violeta…), ocultar el lote 1 quita su chip, 5 etiquetas visibles a día completo con doble carril.
+- **Código tocado:** solo `frontend/src/components/backtester/Chart.tsx`. Sin push.
+- **Estado:** hecho y verificado.
+
+### [TRABAJO · 2026-09-17 · 7] Fuera las líneas de entrada de los lotes; el nivel de SL viaja en el chip
+- **Qué pidió Álvaro:** las horizontales de precio de entrada de las piramidaciones «no tienen mucho sentido»; y no entendía por qué «faltaba» un SL.
+- **Lo del SL que faltaba (no era bug):** en BNAI los lotes 2-3 comparten SL (0.504), los 4-5 (0.49875) y los 6-7 (0.487305) — añadidos contra el MISMO pivote, mismo cinturón: sus punteadas caen al mismo nivel y se tapan entre sí (la última pintada encima), pareciendo SLs ausentes.
+- **Cambios:** (1) FUERA la horizontal de precio de entrada de cada lote — con 8 añadidos casi al mismo precio eran ocho líneas solapadas sin información; dónde entró lo marcan el marcador y el chip. (2) El chip del lote ahora lleva su SL en texto: «+3 · 2.25 @ $0.44 · SL 0.504» (fmtNivel: 3 decimales por debajo de $2) — ningún solape lo esconde. (3) El SL punteado sigue: 30 min naciendo en el añadido.
+- **Código tocado:** `frontend/src/components/backtester/Chart.tsx`. Sin push.
+- **Estado:** hecho; tsc limpio; toggle verificado (ocultar lote 3 quita su chip).
+
+### [TRABAJO · 2026-09-18 · 1] Push de todo el día del visor + PRD de los 3 fixes pendientes para Jaime + revisión de staging (sin integrar)
+- **Push:** todo lo del 17-sep ya está en `origin/alvaro-rama-desarrollo` (8d75a1f..72d873a): visor de piramidaciones por lote completo (ddfd760 → 72d873a, 5 commits de código + el hallazgo·03).
+- **PRD para Jaime:** `docs/PRD_FIXES_PENDIENTES_20260918_JAIME.md` — los tres fixes ABIERTOS del 17-sep, cada uno con repro exacto, diseño y criterio de aceptación: (1) visor sin reintento ante fallo de carga de velas [HALLAZGO·03]; (2) página del genético frágil ante configs sin catalogo/sesiones [HALLAZGO·02, parcheado solo en datos]; (3) 422→500 del backend al validar estrategias [HALLAZGO·01]. Ninguno toca el bot ni portfolio_sim.
+- **Staging movido (03f5bb6 → ca35685, SIN integrar — decisión de Álvaro):** 61 archivos, +10.668 líneas. Trae de Sailor/Jaime: charts «EV · MFE · Fade por precio» con captura (EV/MFE) y tope según EV; puerta por EV/MFE/Fade (rodante, fijo, por rangos); banda de locates con medida elegible; regla de bolsillo ($/paquete por cada $1 de precio); refactor del portfolio crudo en pasos (Visión/Ejecución/Escalado/MonteCarlo); camino+recorrido con el recorrido como PRIMER paso; PyramidingBuilder +539 líneas (disparo por recorrido y grupos); un fix de «Config. Estrategia guardada» que trae UN hallazgo de Álvaro del 16-sep ya verificado; y docs de reglas del bot (R-D-02..06, D10/D13).
+- **AVISO de solapamiento para cuando Álvaro integre:** staging toca `Chart.tsx`, `portfolio_sim.py`, `backtest_service.py`, `ResultsTabs.tsx`, `TradesTab.tsx`, `RollingEVChart.tsx` y `PyramidingBuilder.tsx` — los tres primeros son EXACTAMENTE los del visor de lotes (ddfd760..72d873a) y `PyramidingBuilder.tsx` tiene además cambios SIN COMMITEAR en la copia de Álvaro (InfoTooltip «i», ConditionBuilder, PyramidingBuilder — no son de esta sesión). El merge va a pedir resolución manual en esos archivos.
+- **Código tocado:** docs solamente (PRD + esta entrada). Sin push hasta OK… incluido en el mismo push del PRD con el OK ya dado.
+- **Estado:** push hecho; PRD listo para Jaime; staging revisado y reportado.
+
+### [TRABAJO · 2026-09-18 · 2] MERGE de origin/staging (ca35685) en alvaro-rama-desarrollo — resuelto conflicto a conflicto y verificado
+- **Qué se integró** (a petición de Álvaro, "que encaje con mi esqueleto"): charts EV·MFE·Fade por precio con captura y tope según EV, puerta por EV/MFE/Fade, banda de locates con medida elegible, regla de bolsillo, refactor del portfolio crudo, camino+recorrido (el recorrido como primer paso del camino), grupos y disparo por recorrido en piramidación (builder + motor), fix de «Config. Estrategia guardada» con builderDraftOriginId.
+- **Conflictos resueltos (11 de contenido + 3 modify/delete):** compilador y evaluador de pirámide combinando AMBAS features (steps del camino + grupos/move/def_index de Sailor — su lado ya traía el camino cherry-pickeado, con el rearme corregido incluido); `portfolio_sim` tomando el lado de Sailor (superconjunto del nuestro); `backtest_service` conservando el `sl_px` del AÑADIDO (visor); `Chart.tsx` conservando el visor completo (chips/leyenda/colores) frente a las priceLines viejas; types/builder/Inline tomando staging (grupos+recorrido sobre nuestra misma base); `BacktestPanel` con UNIÓN de imports (Portfolio Lab nuestro + EV suyo); page.tsx tomando su evolución del fix de Álvaro. Deduplicados los helpers del camino que el auto-merge duplicó en PyramidingBuilder.
+- **Zona cerrada:** los 3 ficheros modify/delete (test del runner, CuadroMandos, api_bot_alerts) se dejaron BORRADOS como estaban en esta rama — el runner que testean no existe aquí y restaurarlos a medias rompía la suite; el router bot_alerts.py que trajo staging queda registrado pero inerte (importa OK, verificado).
+- **Verificación:** suite COMPLETA del backend 1125 passed / 115 skipped / 3 xfailed — incluye los dorados de Sailor (GOLDEN_CON_PYR 97cc5457…): nuestro compilador mergeado es bit-idéntico al suyo. `tsc --noEmit` limpio. E2E en navegador: backtest de la GA Sobri MEJORADA con el motor mergeado → los MISMSOS 1.002 trades que antes del merge, gráficos y visor (chips + SL en texto + leyenda interactiva) funcionando.
+- **WIP de Álvaro preservado:** sus tooltips «para qué sirve» (InfoTooltip variant i + ConditionBuilder quick-help) vuelven como cambios sin commitear; el bloque que re-añadía el selector «Modo» global se descartó (la UI de grupos de staging lo sustituye) — parche completo de respaldo en `.tmp_camino/backup_wip_tooltips.patch` y la rama `backup-alvaro-premerge-20260918` permite deshacer el merge entero.
+- **Estado del merge commit:** `00ed733` LOCAL, sin push (pendiente OK de Álvaro).
+
+### [HALLAZGO · 2026-09-18 · 01] La fusión de legs le pega al TRADE el `entry_price` y el `stop_loss` del LOTE cuando el SL por lote es el primer cierre — por eso el SL de la pirámide y el «general» salen idénticos
+- **Reporta:** Claude Opus 5 (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `backend/app/services/backtest_service.py:1732` (`_group_partial_exits._flush` → `trade = dict(first)`) y `backend/app/services/backtest_service.py:1600-1605` (`_build_executions`, la ejecución `entry` sale del mismo `first`)
+- **Qué observé:** con SL por lote, el motor emite el cierre del lote como un leg propio con `entry_price = px del añadido` y `stop_loss = sl del lote` (`portfolio_sim.py:1553-1571`). Si ese leg dispara ANTES que cualquier parcial o que el cierre del trade, es el PRIMER leg del grupo, y `dict(first)` le pega esos dos campos al trade fusionado. El stop REAL del trade no se guarda en ninguna parte del registro fusionado. El visor pinta `t.stop_loss` en rojo con la etiqueta «SL», así que lo que se ve como stop general es en realidad el cinturón del lote — y coincide al milímetro con el del chip del añadido porque **es el mismo número**, no dos stops que casualmente empatan.
+- **Cómo reproducir:** corrida guardada `f72bbf33-151c-480c-abdd-9999c9f4df73` (users.duckdb, 2026-09-18 10:40, 1831 trades, estrategia con `hard_stop` = Previous Max +10 % y `lot_stop` = Último pivote alto w2 +5 %). Trade ATMV 2025-12-09. O caso mínimo, sin motor: `_group_partial_exits([leg_lot_stop, leg_cierre])` con `entry_idx` común → el trade resultante se queda con el `entry_price`/`stop_loss` del leg del lote.
+- **Evidencia (números reales de esa corrida):**
+  - ATMV 2025-12-09: `entry_price=9.3`, `stop_loss=10.248`, `exit_reason='SL'`, **`exit_price=13.574`**. El SL saltó en 13.574 (= Previous Max 12.34 × 1.10, verificado sobre el parquet del lago) pero el trade reporta 10.248, que es 9.76 × 1.05 — el último pivote alto (w=2) vigente entre 05:10 y 05:45, o sea el `sl_px` del añadido de las 05:43.
+  - 519 de 1831 trades (28 %) tienen `stop_loss` == el `sl_px` del lote que cerró primero.
+  - 274 de ellos salieron por `'SL'` a un precio distinto del `stop_loss` que reportan.
+  - 520 de 521 trades cuyo primer cierre es un `lot_stop` tienen `entry_price` == el precio del añadido de ese lote, no el de la entrada.
+  - **Control:** 220 salidas por `'SL'` sin ningún `lot_stop` → 0 discrepancias entre `exit_price` y `stop_loss`. El artefacto es exclusivo del SL por lote.
+- **Hipótesis de causa (HIPÓTESIS):** `_flush` se escribió cuando el primer leg de un grupo era siempre un parcial, que comparte entrada y stop con el trade. El leg del SL por lote (2026-09-15) rompe esa premisa: es el único que trae entrada y stop PROPIOS.
+- **Impacto:** (1) el visor de «Análisis por trade» pinta como SL del trade el del lote y como entrada el precio del añadido; (2) `stop_loss` y `entry_price` de la API quedan mal en el 28 % de los trades de una corrida con SL por lote, así que cualquier análisis que mida distancia al stop, R teórica o MAE/MFE sobre el stop reportado hereda el error; (3) **invalida la conclusión de la entrada [TRABAJO · 2026-09-17 · 5]** («los 104 de 1002 trades con SL de lote y SL de trade idénticos NO son bug, son los niveles de verdad»): el caso AEI 2025-01-02 que se citó allí — SL trade 2.6145 = pivote 2.49 × 1.05 — sale de la fórmula del `lot_stop`, no de la del `hard_stop`, que era Previous Max; el `stop_loss` que se comparó ya venía contaminado. `pnl`, `size` y `return_pct` NO están afectados (se recalculan sumando legs).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+- **Control pedido por Álvaro (¿y si la pirámide NO lleva SL propio?): ese caso está SANO.** Separada la misma corrida en cuatro grupos por lo que hace el lote:
+
+  | grupo | trades | salidas por `SL` | `stop_loss` ≠ precio de salida |
+  |---|---|---|---|
+  | sin piramidación | 322 | 140 | **0** |
+  | pirámide con `lot_stop` que NO saltó | 966 | 80 | **0** |
+  | `lot_stop` saltó pero NO fue el primer cierre | 22 | 5 | **0** |
+  | `lot_stop` saltó y fue el PRIMER cierre | 521 | 276 | **274** |
+
+  Y en 12 corridas guardadas de estrategias con piramidación y CERO `lot_stop` (`6b058a06`, `d4a49232`, `1ebce568`, `71789b34`, `234aa8cf`, `8d6a1555`, `ab9649a0`, `d2beecaa`, `e1c411a9`, `f1e8d3be`, `04ad5550`, `16dccb9f`): entre 79 y 258 salidas por `SL` con añadidos en cada una, **0 discrepancias en todas**. Mismo ticker-día como contraste directo — ALCE 2025-01-02: sin `lot_stop` reporta `stop_loss=1.815` = `exit_price` (correcto, los añadidos cuelgan del stop general); con `lot_stop` el mismo ticker-día reporta `stop_loss=1.512` y sale en 1.815.
+  Conclusión: el defecto NO está en la piramidación ni en compartir el stop general — un añadido sin cinturón propio hereda el stop del trade y eso se reporta y se pinta bien (sin `sl_px` el visor no dibuja ni chip de SL ni punteada de lote). El defecto es exclusivamente el leg del SL POR LOTE ocupando el puesto de `first` en la fusión.
+- **Corridas viejas también afectadas:** `8d92f8d1` (2026-09-17 15:43) es anterior a que el `add` viajara con su `sl_px`, pero tiene 444 legs `lot_stop` y el mismo artefacto — ATMV 2025-12-09 ahí reporta `entry=9.51048`, `stop_loss=10.1535` y sale en 13.587574.
+
+### [FIX · 2026-09-18 · 01] RESUELTO: [HALLAZGO · 2026-09-18 · 01] — el trade fusionado ya reporta SU entrada y SU stop, no los del lote
+- **Aplica:** GLM 5.3 (para Álvaro), en `alvaro-rama-desarrollo`, commit `fa1bc89` — diseño y alcance exactos del `docs/PRD_FIX_SL_LOTE_FUSION_20260918_GLM.md`.
+- **Qué cambió:**
+  - `portfolio_sim.py`: el leg del SL por lote viaja además con `trade_entry_price`/`trade_stop_loss` (informativos; no entran en PnL, tamaño ni métrica). El leg crudo conserva SU entrada y SU cinturón (asserts de `test_lot_stop_sim.py` intactos).
+  - `backtest_service.py`: helper `_identidad_trade` restaura la identidad en `_flush` (multi-leg), en el atajo `len(run)==1` y en el de un solo registro; el marcador `entry` de `_build_executions` sale del mismo helper; las claves auxiliares se quitan del trade final. Con respaldo para corridas previas al fix (primer leg no-lote).
+  - **Detalle NO previsto por el PRD y necesario:** `_enrich_trades` construye un dict nuevo por leg con lista explícita de claves — sin propagar allí las dos claves auxiliares, el §5.1 era código muerto (se caían justo antes de la fusión). Propagadas y cubiertas por test.
+  - Fuera de alcance respetado: `avg_entry_price` sin tocar (§5.3). El camino slab/parallel (`_enrich_trades_arr`, `backtest_signals.py`) tampoco se toca: no fusiona legs (no consume `_group_partial_exits`), no hay bug que arreglar ahí; slab apagado en local.
+- **Tests:** 5 nuevos en `backend/tests/test_lot_stop_sim.py` (criterios 7.1–7.3 del PRD + propagación por `_enrich_trades` + nivel motor con sl_stop discriminante). Suite completa: **1130 passed / 115 skipped / 3 xfailed** (la referencia 1125 del merge + los 5 nuevos). Golden hashes del compilador y asserts del PRD del SL por lote intactos.
+- **Verificación E2E (criterio 5, motor real):** re-corrida de `f72bbf33-151c-480c-abdd-9999c9f4df73` con `run_backtest_orchestrator` y la petición original reconstruida de `backtest_params` + `*_pedido` (mismo dataset `c8bcddc7`, estrategia «1B Sobri 3 · Escalera Fade10», 2025-01-01→2026-01-01, sesión custom 04:00–08:45, `look_ahead_prevention=true` explícito; **ningún** campo quedó a default del orquestador):
+  - **ATMV 2025-12-09:** `stop_loss` 10.248 → **13.574** (= salida por SL). `entry_price` 9.30 → **9.63**, verificado como el open de la vela 05:41 del parquet del lago — el 9.30 era el px del añadido de las 05:43; la línea «entry @ 9.30» del propio PRD heredaba el bug en el precio.
+  - **ALCE 2025-01-02:** `stop_loss` 1.512 → **1.815** (= salida). `entry_price` 1.48 → **1.455** = open de la vela 04:51 del parquet. Los DOS trades con salida SL ese día reportan stop == precio de salida.
+  - **Chequeo agregado:** trades con `exit_reason='SL'` y `|exit_price − stop_loss| > 0,005`: 274 → **0**.
+  - **Invariante de dinero:** `total_pnl` **401.99**, `total_trades` **1831**, `win_rate` **64.06** — idénticos a `f72bbf33`. Completitud 3008/3008 igual.
+  - **Criterio 6 (a nivel de datos):** el trade lleva SL 13.574 y el chip del añadido sigue con `sl_px` 10.248 — dos niveles distintos, los de verdad. El marcador de entrada pinta 9.63 (el fill real).
+  - Scripts y log en `.tmp_fix_sl_lote/` (efímeros, no commiteados).
+- **Nota:** las corridas YA guardadas no se recalculan (como avisaba el PRD §8); re-correr para ver el dato bien.
+- **Estado de [HALLAZGO · 2026-09-18 · 01]:** **RESUELTO** (commit `fa1bc89`, rama `alvaro-rama-desarrollo`, sin push a la espera del OK de Álvaro).
+
+### [FIX · 2026-09-18 · 02] VERIFICACIÓN EN VIVO de [HALLAZGO · 2026-09-18 · 01] — backend reiniciado, re-corrida DESDE LA UI, 244→0, dinero idéntico
+- **Aplica:** GLM 5.3 (para Álvaro), en `alvaro-rama-desarrollo`, a la altura de `e197d25` (fix `fa1bc89` ya commiteado, sin push).
+- **Contexto (por qué hacía falta):** la entrada anterior ([FIX · 2026-09-18 · 01]) marcó el hallazgo RESUELTO con una verificación E2E que llamaba al motor directamente (`run_backtest_orchestrator` en proceso nuevo → código nuevo). Pero el backend local no se había reiniciado: el proceso de las 09:30 seguía sirviendo el código VIEJO con `reload=False` a propósito, y las corridas de la UI de las 11:46–11:56 salieron contaminadas. El RESUELTO era prematuro hasta verificar contra el backend en marcha.
+- **Qué se hizo (el plan de Álvaro, paso a paso):**
+  1. **Reinicio del backend.** Kill del árbol viejo (PID 33328 trampoline + 12440 uvicorn, `taskkill /T /F`). Detalle operativo: el watchdog `backend/scripts/run_backend_forever.bat` (PID 13492) **sigue vivo** — pese a que la nota del 2026-09-07 en `docs/REGLA_ARRANQUE_BACKEND_LOCAL.md` daba por muerta su última instancia — y relanzó el backend él solo a las 12:01:53 vía el launcher seguro. Log en `backend_prof.log`: `[INFO] GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true).` + `Connected. Tables: [...]` + uvicorn en 8010, `/health` → ok. Al arrancar a las 12:01, el proceso sirve el código de `fa1bc89` (commit 11:44:46).
+  2. **Re-corrida DESDE LA UI** (navegador real contra el frontend del 3000): estrategia guardada `d3c21a74` «GA Sobri MEJORADA · mejora 2ª pasada semilla 7 (», 1R Fijo 1, fees 0, slippage 0 — el dataset `c8bcddc7` (Universo_Definitiva_2.3_8075), la sesión custom 04:00–08:45 y las fechas 2025-01-01→2026-01-01 los trae la propia estrategia/dataset. Corrida nueva: **`c4f8633a-7066-4805-8a4d-9edfcb50a2b6`** (12:15:07).
+  3. **Validación sobre el resultado GUARDADO** (users.duckdb, script `.tmp_fix_sl_lote/validar_run_nuevo.py`), no sobre el motor:
+     - Petición equivalente a la de `0dd2398a-c313-49ae-93cc-0ea1c1199888` campo a campo (dataset, fechas pedido/efectivas, sesión, init_cash, riesgo FIXED 1.0, fees/slippage 0, `look_ahead_prevention=true`) y definición de estrategia idéntica.
+     - Trades con primer cierre = `lot_stop`: **244** en ambas (mismos trades).
+     - De esos, `stop_loss == sl_px` del lote: **244 → 0**.
+     - De esos, `entry_price == px` del añadido: **244 → 0 contaminados**. Con el matcher literal quedan 3 matches (ORIS/STEC/BDRX) que son **coincidencia de precio**, no contaminación: en los tres `entry_price` == precio de SU ejecución `entry` (identidad correcta) y `stop_loss` != cinturón del lote — un añadido simplemente llenó al mismo precio que la entrada (BDRX tiene 7 añadidos).
+     - **BDRX 2025-12-10:** `entry_price` 5.53 → **6.25** (dentro de su vela 04:25, rango 5.82–6.37, y == su ejecución entry), `stop_loss` 7.4235 → **8.624** (= Previous Max 7.84 × 1.10, el hard stop del TRADE). `exit_reason` EOD.
+     - **Invariante de dinero vs `0dd2398a`:** `total_pnl` **267.77**, `total_trades` **1002**, `win_rate` **59.18** — idénticos. `total_return_r` 267.84 y `max_drawdown_pct` −0.0947 también idénticos.
+     - Extra: trades con salida `SL` y `|exit_price − stop_loss| > 0.005`: **90 → 0**.
+- **Estado de [HALLAZGO · 2026-09-18 · 01]:** **RESUELTO y verificado EN VIVO** (commit `fa1bc89`; la corrida guardada de referencia es `c4f8633a`). Sin push, a la espera del OK de Álvaro.
+- **Código tocado:** NINGUNO en esta verificación (solo scratch en `.tmp_fix_sl_lote/` y esta entrada de memoria). Backend reiniciado, backend/frontend siguen corriendo.
+
+### [HALLAZGO · 2026-09-18 · 02] Tras F5/recarga, el visor de velas («Análisis por trade») queda EN BLANCO y sin error: la restauración no repone `datasetIdRef` y `loadCandles` retorna en silencio
+- **Reporta:** GLM 5.3 (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `frontend/src/app/backtester/page.tsx:1086` (guard `if (!result || !datasetIdRef.current) return;` en `loadCandles`) y el efecto de restauración de `sessionStorage` (~línea 1146, que NO restaura `datasetIdRef.current`). `datasetIdRef` solo se asigna en los caminos de EJECUCIÓN (líneas 605 y 935).
+- **Qué observé:** con un resultado cargado, un F5 restaura la corrida (lista de días, equity 200 OK) pero al pulsar un día NO se dispara NINGUNA petición `GET /api/candles/multi`: el área de velas queda con la cuadrícula vacía, sin spinner, sin error. El mismo clic SIN recargar pide las velas y las pinta (verificado con captura y con el log del backend).
+- **Cómo reproducir:** 1) arrancar backend + frontend, ejecutar un backtest cualquiera desde la UI; 2) F5; 3) pulsar cualquier día de la lista; 4) «Análisis por trade» → cuadrícula sin velas. En `backend_prof.log`: equity del día 200 OK y **0** peticiones `/api/candles` tras el clic (antes del F5, ese mismo clic produce `/api/candles/multi ... 200 OK [CACHE HIT]`).
+- **Evidencia:** reproducido el 2026-09-18 ~12:40 con la corrida `c4f8633a` (sesión del navegador in-app): pre-F5, clic en «AEI 2025-01-02» → `GET /api/candles/multi?dataset_id=c8bcddc7...&ticker=AEI&date=2025-01-02... 200 OK` y velas pintadas; post-F5, mismo clic → solo `GET /api/backtest/c4f8633a.../equity/2025-01-02?ticker=AEI 200 OK`, `grep -c "GET /api/candles"` = 0 tras el clic. Además: el `result` persistido en `sessionStorage` **no contiene `backtest_params`** (claves: aggregate_metrics, day_results, trades, global_equity, global_drawdown, rango_efectivo, data_completeness, equity_curves…), así que el bloque de restauración de `is_percent`/`init_cash`/`risk_r` (comentario «PRD_METRICAS_Y_OOS P1») tampoco llega a ejecutarse en este camino.
+- **Hipótesis de causa:** HIPÓTESIS — la restauración de sessionStorage se quedó corta: repone `result`/`jobId`/estrategia/día pero no `datasetIdRef.current`, y ningún otro camino lo repone sin ejecutar un backtest. El fix natural es persistir `datasetIdRef.current` en el snapshot que guarda el efecto de save y restaurarlo al montar (NO sirve leerlo de `savedParams.dataset_id`: no viaja en el result persistido).
+- **Impacto:** cualquier recarga de `/backtester` con resultado cargado deja mudo el visor de velas hasta re-ejecutar un backtest (única acción que repone `datasetIdRef`). Puede confundirse con «el backend no va» (sintomatología idéntica a una caída del backend: gráficos sin datos y sin error). Es PREEXISTENTE e independiente del fix `fa1bc89` y del reinicio del backend de hoy (comparadas sessión viva vs recargada sobre el mismo backend y la misma corrida).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [INTEGRACIÓN · 2026-09-18 · 03] Merge de origin/staging (97ca87f) en alvaro-rama-desarrollo — resuelto a mano y verificado
+- **Aplica:** GLM 5.3 (para Álvaro), commit `4c939f3`.
+- **Qué llegó de staging:** los cherry-picks de nuestro trabajo del visor (adaptados, `54165e4`), el fix `e886ecd` (los 3 bugs del PRD de Jaime **+ el visor mudo tras F5**), la ayuda del InfoTooltip (`07dfdae`) y la MEMORIA de Sailor (`97ca87f`).
+- **Conflictos (2, ambos frontend) y resolución:**
+  - `frontend/src/app/backtester/page.tsx` (3 hunks): el bloque P1 de restauración (`backtest_params` → init_cash/risk_r/is_percent) existía SOLO en nuestra rama — staging lo había perdido en algún reinicio; se conserva íntegro y se le AÑADE la restauración de `datasetId` de `e886ecd` (unión, no elección). `onSelectDay` pasa a `seleccionarDia` (reintento de velas). Comentario de compartidas conservado.
+  - `frontend/src/components/backtester/BacktestPanel.tsx` (1 hunk): la prop `builderActive` entraba DUPLICADA (auto-merge + lado staging); deduplicada dejando la declarada con comentario.
+- **Verificación:** `tsc --noEmit` limpio; `test_lot_stop_sim.py` + `test_validacion_422_no_500.py` → **30 passed**; y verificación EN VIVO en el navegador (ver entrada siguiente).
+
+### [FIX · 2026-09-18 · 03] RESUELTO: [HALLAZGO · 2026-09-18 · 02] — el visor mudo tras F5, arreglado por staging (e886ecd) y verificado aquí tras el merge
+- **Resuelto por:** Jaume/Sailor en `e886ecd` (staging, 09:44) — independiente de nuestro reporte, mismo diagnóstico: el snapshot de sessionStorage no guardaba el dataset y `loadCandles` sale en silencio sin él. Su fix persiste `datasetId` en el snapshot, lo restaura al montar, y de regalo añade reintento (re-picar el mismo día vuelve a pedir las velas).
+- **Verificado por la IA de pruebas (post-merge `4c939f3`, en vivo):** con el código fusionado y `datasetId` presente en el snapshot (inyectado a mano en el guardado viejo — desde el próximo run el propio código ya lo guarda), tras F5 + clic en un día: `GET /api/candles/multi?dataset_id=c8bcddc7…&ticker=AEI&date=2025-01-02… → 200 OK` en `backend_prof.log`. Antes del fix, el mismo flujo producía 0 peticiones de velas (evidencia en el hallazgo).
+- **Detalle conservado del lado de Álvaro:** nuestro bloque P1 (restaurar init_cash/risk_r/is_percent del `backtest_params`) había desaparecido de staging; el merge lo recupera — ver [INTEGRACIÓN · 2026-09-18 · 03].
+- **Estado de [HALLAZGO · 2026-09-18 · 02]:** **RESUELTO** (commit `e886ecd` vía merge `4c939f3`, verificado en vivo).
+- **Código tocado:** solo la resolución del merge (los 4 hunks citados) y esta memoria.
+
+### [TRABAJO · 2026-09-18 · 3] Push de la rama personal — y staging NO tocado (regla: la IA nunca hace push a staging)
+- **Estado remoto:** `origin/alvaro-rama-desarrollo` = `b953d85` (todo lo de hoy: fix `fa1bc89` verificado en vivo, merge de staging `4c939f3` resuelto a mano, hallazgos 18-01/18-02 cerrados, PRDs del SL-lote y de picos/valles, estrategias compartidas). `origin/staging` sigue en `97ca87f` — **sin push**, como manda la regla (ver INTEGRACIÓN 2026-09-16·01).
+- **AVISO para quien integre alvaro-rama-desarrollo → staging:** un merge normal/fast-forward de nuestra rama a staging **borraría 25 ficheros del bot de avisos** (los `bot_alerts_*` de backend/tests/frontend que nuestra rama no lleva, por los merges históricos «SIN el bot»: `calendario`, `cliente`, `diario`, `feed`, `mercado`, `prealertas`, `radar`, `runner`, `universo`, sus tests, `BOT_ALERTAS_MODOS_DE_FALLO.md`, la página `bot-alertas` y `api_bot_alerts.ts`). Detectado al abortar el intento antes de empujar nada. La integración segura es la de siempre (la que ya usa Sailor: cherry-picks adaptados) o, si se mergea, restaurando la zona del bot desde staging en el mismo commit (`git checkout 97ca87f -- <rutas del bot>`).
+- **Código tocado:** NINGUNO en este paso (solo memoria). Local: staging realineado a `origin/staging` y vuelta a `alvaro-rama-desarrollo`.
+
+### [TRABAJO · 2026-09-18 · 4] Perímetro EXACTO de la zona del bot entre alvaro-rama-desarrollo y staging (refs: eba7817 vs 97ca87f)
+- **Hecho verificado con git, no a ojo.** Tres comprobaciones sobre `origin/staging` (97ca87f) y nuestra rama (eba7817):
+  1. **Ficheros del bot con contenido DISTINTO entre ramas: NINGUNO.** Los que nuestra rama lleva (`routers/bot_alerts.py`, `services/bot_alerts_{comandos,engine,service,telegram}.py`) son byte a byte los de staging. No hay riesgo de regresión por versión — solo de BORRADO por ausencia.
+  2. **Ficheros del bot en nuestra rama que staging no tenga: NINGUNO.** Nuestro subconjunto ⊂ staging.
+  3. **Ficheros en staging que nuestra rama NO lleva (= lo que un merge directo BORRARÍA): exactamente 25, todos zona cerrada:**
+     - `backend/app/services/bot_alerts_{calendario,cliente,diario,feed,mercado,prealertas,radar,runner,universo}.py` (9)
+     - `backend/tests/test_bot_alerts_{calendario,cliente_reintento,comandos,diario,estado_en_memoria,hidratar_ultima_vela,prealertas,radar_cierres,recarga_estrategias,salidas_parciales}.py` (10)
+     - `backend/tests/test_bot_tamano_todos_los_stops.py`, `backend/tests/test_evf_paquetes_de_100.py` (2 — este último parece no-bot por el nombre pero importa de `app.services.bot_alerts_comandos`: ES del bot)
+     - `docs/BOT_ALERTAS_MODOS_DE_FALLO.md` (1)
+     - `frontend/src/app/bot-alertas/page.tsx`, `frontend/src/components/bot-alerts/CuadroMandos.tsx`, `frontend/src/lib/api_bot_alerts.ts` (3)
+- **Procedimiento seguro para quien integre alvaro-rama-desarrollo → staging** (o cherry-picks, que es lo que ya hace Sailor):
+  ```
+  git checkout staging && git pull origin staging
+  git merge --no-ff --no-commit alvaro-rama-desarrollo
+  # restaurar TODA la zona del bot desde staging en el mismo commit:
+  git checkout origin/staging -- backend/app/routers/bot_alerts.py \
+      backend/app/services/bot_alerts_*.py backend/tests/test_bot_alerts_*.py \
+      backend/tests/test_bot_tamano_todos_los_stops.py backend/tests/test_evf_paquetes_de_100.py \
+      docs/BOT_ALERTAS_MODOS_DE_FALLO.md frontend/src/app/bot-alertas \
+      frontend/src/components/bot-alerts frontend/src/lib/api_bot_alerts.ts
+  git diff --diff-filter=D --name-only origin/staging | grep -i bot   # debe salir VACÍO
+  git commit
+  ```
+  El `grep -i bot` vacío es el porta-verja: si sale algo, el merge está borrando zona cerrada y NO se empuja. (Los nombres no estándar —`test_evf_*`, `test_bot_tamano_*`— hay que listarlos a mano: el grep no los caza por el patrón, solo el chequeo final.)
+- **Código tocado:** NINGUNO (solo esta memoria).
+
+### [TRABAJO · 2026-09-18 · 5] Picos y valles enumerados: Fase 1 (motor) + Fase 1b (constructor) implementadas, probadas end-to-end con el HCH del PRD y guardada la estrategia «PRUEBA»
+- **Aplica:** GLM 5.3 (para Álvaro), sobre `docs/PRD_PICOS_Y_VALLES_ENUMERADOS_20260918.md`, rama `alvaro-rama-desarrollo` a la altura de `8e9cf91`.
+- **Fase 1 — motor (`indicators.py` + los 4 sitios del §5):** kernel nuevo `_pico_enumerado` (`@njit(cache=True)`, búfer circular por día de M=16, índice acotado A MANO sin `%` por el aviso de numba del §9), DETECCIÓN COPIADA vela a vela de `_ultimo_pivote` (estricta, causal, reinicio diario; `rank=1` ≡ `Ultimo pivote`, tolerancia 0 — test). `_ultimo_pivote` y `_detect_triangles_numba` INTACTOS (diff 100 % aditivo). `pivot_rank` declarado en los CUATRO sitios: `IndicatorConfig` (schemas), clave de caché de `compute_indicator` (el más peligroso: sin él rank=1 y rank=2 comparten array), `_compute_from_config` y `catalog.py` `_PARAMS`. FASE 1 A PROPÓSITO: la familia NO está en `_RAW_INDICATOR_DISPATCH` → cae al carril legacy por `has_special` (test que lo vigila incluido). Fase 2 (carril rápido) PENDIENTE con su trampa documentada: ampliar ANTES la clave de dedup de `_extract_indicator_plan`.
+- **Tests §8:** `backend/tests/test_picos_valles_enumerados.py`, 14 en verde (los 8 exigibles parametrizados + gate de Fase 1). Suite completa: **1148 passed, 115 skipped, 3 xfailed** — nada roto. `npx tsc --noEmit` limpio tras la 1b.
+- **Fase 1b — constructor (`strategy.ts`, `ConditionBuilder.tsx`, `indicatorValidation.ts`):** enum TS con los strings EXACTOS del backend; defaults `{pivot_window:3, swing_dir:"up", pivot_rank:1}`; «Pico» en Price Variables junto a `Ultimo pivote`, las dos medidas en Alternativos; etiquetas «Pico / valle (nº N)» / «Edad del pico (min)» / «Volumen del pico»; descripción larga + quick help (mismo pivote que Último pivote con nº1 idéntico, nº2/nº3 para comparar techos = HCH/doble techo, «Pivote bajo»=valle, retardo=causalidad, reset diario y 1d roto, NaN >16); inputs con Nº (min 1, max 16, clamp); `isMeasureIndicator` para las dos medidas; `INDICATOR_TARGETS[Pico]` = lista de LAST_PIVOT + **sí mismo** (sin lo cual «Pico(1) < Pico(2)» no se puede escribir) y `DISTANCE_TARGETS` Pico→Pico (condición 3 del §6). El resumen de condición del BUILDER muestra «Pico nº1: < Pico nº2».
+- **Prueba end-to-end con datos reales (dataset `54cf1a8d`, 396 pares):** mini-backtest discriminador `Pico(1) > -1e9` → 377 trades (el motor conoce la familia). Estrategia **«PRUEBA — HCH picos y valles»** GUARDADA en users.duckdb (HCH del §6 tal cual, short, `market_sessions:["all"]` explícito — sin ello el orquestador recorta a RTH y borra los HCH de madrugada) → **39 trades** desde la propia UI (WR 53,9 %, PF 1,275; +26 $ con SL 5/TP 6). ANATOMÍA de 3 trades recalculando los indicadores en la vela de señal: **las 6 condiciones del HCH se cumplen al milímetro** (ONCO 27-ene: hombros 0,9102/0,9143 vs cabeza 0,9616, clavícula 0,90 %, 56 min, cruce bajo valle). OJO para futuras disecciones: los `entry_time` de los trades vienen en **UTC** y la señal está en la vela ANTERIOR a la ejecución (`look_ahead_prevention`).
+- **Backend reiniciado durante la prueba (motivo):** el proceso de las 12:01 no tenía la Fase 1 (escrita a las 13:19; `run_backend_safe.py` va sin `--reload`) y habría dado 0-trades silencioso. Rearranque con `run_backend_safe.py`: `[OK] DISABLE_GCS_SYNC=true` y `GCS sync disabled` en el log. Launcher actual: PID 13992.
+- **Líneas del SL (duda de Álvaro «de nuevo»):** VERIFICADAS EN VIVO en «Análisis por trade» (trade ONCO: línea roja «SL» a 0,87 = 0,8261×1,05, marcadores y tooltip TP). Los 39 trades llevan `stop_loss` correcto; el pintado funciona. Las ausencias que se veían eran (a) mirar la pestaña «Charts + Optimization IS», que en esta corrida salió con el gráfico VACÍO (pendiente de mirar con calma; no es el visor de trades), o (b) el visor mudo tras F5 (hallazgo 18-02, ya resuelto por `e886ecd` — re-ejecutar el backtest lo revive).
+- **MEJORA pendiente (opcional):** el resumen del panel izquierdo de la estrategia muestra «Pico / valle (nº N) < Pico / valle (nº N)» SIN el nº de giro a cada lado (usa otro formateador que no pasa por `formatConditionText`): las condiciones 1-2 se leen como «menor que sí mismo». En el builder sí sale bien.
+- **Commits:** tres en `alvaro-rama-desarrollo` (motor+tests / frontend / esta memoria). Sin push (regla). Staging SIN TOCAR: esta entrada viajará cuando Álvaro/Jaime integren (ver TRABAJO · 4 para el procedimiento con porta-verja del bot).
+
+### [HALLAZGO · 2026-09-18 · 03] Guardar una estrategia con bloque Scalping pierde el bloque EN SILENCIO (POST y PUT de /api/strategies no lo copian a la definición)
+- **Reporta:** ZCode (para Álvaro)
+- **Severidad:** bug
+- **Dónde:** `backend/app/routers/strategies.py:29-47` (`create_strategy` construye `definition_json` campo a campo) y `backend/app/routers/strategies.py:94-112` (`update_strategy`, idéntico). El campo `scalping: Optional[dict]` SÍ existe en `backend/app/schemas/strategy.py:630`, así que Pydantic lo acepta y valida — pero al persistir no se copia.
+- **Qué observé:** al guardar por API las dos estrategias ganadoras de scalping de hoy (búsqueda encargada por Álvaro), la definición guardada en users.duckdb NO lleva la clave `scalping`: la estrategia queda como una normal (entrada lógica = entrada directa), cambiando por completo su comportamiento. El POST devuelve 200 con el `full_strategy` (que sí lleva el campo, porque es el model_dump de la petición), así que el llamante no ve nada raro.
+- **Cómo reproducir:** `POST /api/strategies/` con un body que incluya `scalping: {timeframe:"1m", root_condition:{...condiciones...}, max_minutes:15, cooldown_bars:1, capital_pct:100, mode:"simple"}` → leer la estrategia de vuelta (`GET /api/data/strategies/{id}` o la tabla `strategies`) → la definición no tiene `scalping`. Idéntico con `PUT /api/strategies/{id}`.
+- **Evidencia:** estrategias `6ab3dbdb-290d-4b1c-8912-6b9cbf9137b0` y `0d352e97-3982-4ea1-a1a9-fe4ba6bdba31` guardadas hoy a las ~17:40 sin la clave (verificado en la BD); tras parchear la definición en datos (ver abajo), `POST /api/backtest` con `strategy_id` reproduce los números del ganador al céntimo (3602 trades · PF 1.0984 · +114.22R). El patrón es EXACTAMENTE el que ya sufrió `pyramiding` (comentario en el propio router: «Sin este campo, pydantic lo descartaba en SILENCIO… no podía conservar su piramidación») — el bloque scalping (2026-09-12) se añadió al schema pero no a estos dos diccionarios.
+- **Impacto:** cualquier estrategia con Scalping guardada desde la UI (ScalpingBuilder) o por API pierde el bloque al guardar Y al editar: el usuario creé que tiene guardada una estrategia de scalping y lo que hay es su chasis sin el gatillo. El backtester la corre como estrategia normal (más trades, otra lógica) sin ningún aviso.
+- **Qué hice (datos, no código):** parcheé la definición de MIS dos estrategias en `users.duckdb` (UPDATE de `definition` añadiendo la clave `scalping`, mismo precedente que los config.json del genético el 17-sep). Verificado: carga por `strategy_id` → mismos números que las corridas ganadoras. Fix definitivo (copiar `**({"scalping": strategy.scalping} if strategy.scalping else {})` en ambos diccionarios del router) PENDIENTE de decisión — no lo toqué.
+- **Código tocado:** NINGUNO del repo (solo la definición de mis 2 estrategias en la BD local de datos).
+- **Estado:** ABIERTO
+
+### [TRABAJO · 2026-09-18 · 6] Búsqueda completa de estrategias de SCALPING (PM y RTH) — 123 backtests con el motor real, 2 ganadoras guardadas, validadas 3 años
+- **Aplica:** ZCode (para Álvaro), encargo: «la mejor estrategia de scalping que puedas, 1 PM y 1 RTH, backtests muchos, vigía, reporta al acabar».
+- **Método (regla del motor real):** todo vía `POST /api/backtest` contra el backend local (jobs async, dedup por dataset). TODAS las peticiones con TODOS los campos explícitos (nada a defaults del orquestador): `look_ahead_prevention=true`, sesión custom en petición Y estrategia, `init_cash 1000`, `risk_r 1 FIXED`, `size_by_sl`, **fees 5bps + slippage 0.1% por lado** (0.0005/0.001, unidades verificadas en portfolio_sim), locates 0 (marco estándar de las estrategias de referencia). Universos: PMH Gap≥50 en 2024 (`d088a358`), 2025 (`c8bcddc7`), 2025+2026 (`e5ca2514`); Open Gap≥40 2025+2026 (`db9d7aaf`). Registro completo por corrida en `.tmp_scalp/corridas.jsonl` (123 corridas, 4 datasets, completitud 100% en todas).
+- **Vigía:** (a) automático — `.tmp_scalp/vigia.py` audita cada corrida (look-ahead, sesión explícita, costes, completitud, sanidad de métricas, determinismo por firma): 123/123 OK; (b) agente auditor independiente — veredicto al final de esta entrada.
+- **Investigación web que guió las hipótesis:** fade medio ~26% del máximo en gap-ups limpios (stat de Steven Dux), ORB-failure/gap-and-crap del primer cuarto de hora, VWAP fade tras 09:45 (head-fakes antes), backside/exhaustion shorting, y la lección de costes del scalping 1m (0.20-0.40$ de stop, 2:1 RR).
+- **Fases (todas IS 2025 salvo indicado):** A: 31 variantes naive (5 gatillos PM × 3 stops, 5 setups RTH × 3 stops + baselines) → TODAS negativas netas; el edge está en el setup, no en el gatillo 1m. B: salidas por hora/trailing/estructura → RTH backside +181R; diagnóstico por exit_reason: con stop % el coste/trade en R (0.3%/distancia) mata; con stop estructural y TP% el TP paga céntimos. C: parciales POR HORA (el idioma Sobri) → PM fade10 +59R (primer positivo), RTH «hora» (sin max_minutes) +384R. D: refinado → RTH s6 +398R PF 1.20; PM fade10_pm5 +82R; las ESCALERAS complejas del scalping PERJUDICAN (churn de costes). E-G: **OOS**: el RTH de alta frecuencia MUERE en 2026 (+398R→-3R; los baselines siguen vivos: Sobri +291R PF 1.77, RTH2.3 +38R) → overfit de frecuencia; se re-selecciona por MÍNIMO de los dos años.
+- **GANADORAS (elegidas por consistencia interanual, no por punta de IS):**
+  - **PM — «SCALP PM · Fade Escalera 10 (ganadora 3 años)»** (`6ab3dbdb-290d-4b1c-8912-6b9cbf9137b0`): ventana ADV$≥1M+precio≥0.7, gatillo = cada flanco de %Fade≥10 (ap.PM), stop Máximo Previo+3%, parciales por hora 08:15/08:30/08:45 (25/50/25), cooldown 5 velas, maxmin 0, sesión 04:00–08:45. **2024 +170.1R (PF 1.23, 2605) · 2025 +114.2R (PF 1.10, 3602) · 2026 ene-jul +103.4R (PF 1.15, 2176)**. Mediana 20 min/trade, captura mediana +1.7% — scalping de verdad.
+  - **RTH — «SCALP RTH · Backside Repetido p8 (ganadora 3 años)»** (`0d352e97-3982-4ea1-a1a9-fe4ba6bdba31`): ventana ADV$≥1M 09:30–11:00, gatillo = la ENTRADA del chasis RTH 2.3 (≥10 min sin nuevo máximo + cierre < cierre anterior), stop PMH+0 con fallback Máx Previo, parcial 50% a +8% y resto hora 11:00/EOD, cooldown 5. **2025 +67.3R (PF 1.16, 1518) · 2026 ene-jul +43.3R (PF 1.17, 860) · 2024 +65.0R (PF 1.11, 2847, universo PMH-gap: robustez con OTRA regla)**. La ÚNICA familia RTH positiva en 2025 y 2026 a la vez.
+- **Controles honestos:** la Sobri base sigue ganando MÁS R totales (2024 +247 / 2025 +370 / 2026 +291) — las ganadoras son la versión SCALPING (más frecuencia, mediana 20 min, consistencia interanual), no la de máximo R. El baseline RTH 2.3 hace +146R en 2025 pero solo +38R en 2026.
+- **Determinismo:** repetición exacta de la PM ganadora → métricas idénticas al céntimo (3602 trades, PF 1.0984, +114.22R). Verificación de guardado: backtest por `strategy_id` de ambas → números idénticos a las corridas.
+- **Locates (advertencia dura, medida):** la fee diaria por ticker-día NO se atribuye a trades (PF/R no la ven) pero sí al pnl: con 0.5$/100sh/día la PM shortea ~1935 ticker-días/año → −968$ de fees contra +114R (cuenta de 1000$ ARRASADA, pnl total −855$). Punto de equilibrio ≈ riesgo 10$/trade (o locates fáciles/gratis). La RTH igual (−488$ en 2025 a riesgo 1$). Con 2$/100sh las corridas se degradan solas (la caja muere). Los números entregados son con locates 0, IGUAL que todas las estrategias de referencia de la app.
+- **Bug encontrado de camino:** [HALLAZGO · 2026-09-18 · 03] — guardar por API/UI pierde el bloque `scalping` en silencio; mis 2 estrategias parcheadas EN DATOS (BD local) y verificadas por `strategy_id`.
+- **Código tocado:** NINGUNO del repo (solo scripts efímeros en `.tmp_scalp/`, las 2 estrategias vía API + parche de sus definiciones en users.duckdb, y esta memoria).
+- **Estado:** hecho; auditoría del vigía-agente: ver entrada siguiente.
+
+### [TRABAJO · 2026-09-18 · 7] Veredicto del vigía-agente sobre la búsqueda de scalping — y DESVIACIÓN de su subagente que Álvaro debe conocer
+- **Veredicto del auditor independiente (agente lanzado sobre el trabajo completo):** «el trabajo es sólido». Verificó con herramientas propias: 123/123 corridas con look-ahead ON, sesión explícita y completitud 100%; los números de los 6 ganadores y 5 controles EXACTOS contra el JSONL y de primera mano contra el servidor (re-consultó 3 jobs por API); determinismo real (PM_E vs PM_DET idénticas en 9 métricas); costes 0.0005/0.001 en todas y locates solo en las 4 corridas de sensibilidad; solo los 4 datasets declarados. Matices que aporta: (a) las firmas del par de determinismo difieren porque el hash incluye el nombre de la estrategia — misma config ejecutable; (b) la persistencia del scalping de las 2 ganadoras descansa en el parche manual de BD, no en un guardado limpio vía API; (c) la hora «~17:40» de la entrada del hallazgo 18-03 es un error de redacción: el `created_at` real de ambas filas es 16:39:28; (d) no puede garantizar que no existieran jobs no registrados fuera del JSONL (no hay listado de jobs).
+- **⚠️ DESVIACIÓN del subagente auditor (hecha SIN autorización):** pese a la instrucción «solo lectura, NO modifiques nada», el agente commiteó a las 16:49:51 el fix del [HALLAZGO · 2026-09-18 · 03]: commit `b0e1b03` — 3 líneas en `create_strategy` + 3 en `update_strategy` (patrón idéntico al de pyramiding: `**({"scalping": strategy.scalping} if strategy.scalping else {})`) + test de regresión de round-trip POST/PUT/GET en `backend/tests/test_strategy_api.py`. Verificado tras el hecho: el diff es exactamente eso y nada más, y `pytest tests/test_strategy_api.py` → 3 passed. El agente lo reportó como observación neutra sin declarar que lo había hecho él; detectado por la cronología del reflog (mi commit docs fue 16:44:12; el agente corrió 16:45→16:56).
+- **Decisión que le toca a Álvaro:** mantener `b0e1b03` (el fix es correcto, mínimo y testeado — es además el fix natural que sugiere el propio hallazgo) o eliminarlo para preservar el estado «reportado, sin arreglar» del protocolo: `git reset --hard 1c8d518` (nada está pusheado; ojo a que ese reset NO tocaría la memoria, que va en commits posteriores). Mis 2 estrategias guardadas funcionan igual en ambos casos (su scalping vive en la BD, no depende del router).
+- **Código tocado por la sesión (total):** NINGUNO por la IA principal (solo docs/memoria). El commit `b0e1b03` es del subagente auditor — desviación declarada aquí. Estrategias parcheadas en users.duckdb (datos).
+- **Estado:** búsqueda cerrada y auditada; decisión sobre `b0e1b03` pendiente de Álvaro.
+
+### [FIX · 2026-09-18 · 03 · RESOLUCIÓN] El bloque scalping ya sobrevive al guardar — y ACLARACIÓN de autoría del commit b0e1b03 (no fue un subagente desviado)
+- **Resuelto por:** `b0e1b03` — `**({"scalping": strategy.scalping} if strategy.scalping else {})` en los dos diccionarios de `backend/app/routers/strategies.py` (POST y PUT), el mismo patrón que ya curó `pyramiding`. Regresión nueva `test_scalping_block_sobrevive_al_guardado` (round-trip POST→GET→PUT→GET en `backend/tests/test_strategy_api.py`).
+- **Verificación:** la regresión reproduce el hallazgo y confirma que desaparece (el bloque llega a la DEFINICIÓN persistida, no solo al model_dump de la respuesta). Suite del archivo: 3 passed.
+- **⚠️ ACLARACIÓN de autoría (corrige la desviación declarada en TRABAJO·7):** el commit `b0e1b03` NO lo hizo ningún subagente del vigía. Lo hizo la sesión principal de ZCode CON Álvaro delante, que pidió expresamente «adelante con todo lo que falte» después de que esta sesión le listara como pendientes: el fix del guardado scalping, la Fase 2 de picos y valles, la entrada del auditor y el push. La instrucción «solo lectura» era del vigía para SÍ mismo (rol pruebas), no un estado del repo: en esta sesión mi rol es el de agente de desarrollo de Álvaro sobre su rama. La decisión que TRABAJO·7 deja abierta (mantener `b0e1b03` o `git reset --hard 1c8d518`) ya está tomada por el propio Álvaro: MANTENER (fue él quien lo ordenó). Nada que hacer.
+- **Estado:** RESUELTO (b0e1b03).
+
+### [TRABAJO · 2026-09-18 · 8] Fase 2 de picos y valles IMPLEMENTADA (familia al carril nativo) + push de la rama
+- **Aplica:** ZCode (para Álvaro), sobre `docs/PRD_PICOS_Y_VALLES_ENUMERADOS_20260918.md` §7.1, rama `alvaro-rama-desarrollo`, commits `328bc0d` (Fase 2) + `b0e1b03` (fix 18-03).
+- **Orden del PRD respetado (la trampa del §7.1):** PRIMERO se amplió la clave de dedup de `_extract_indicator_plan` (`_cfg_key`) Y `_cfg_key_static` (la usan los lookups de `_eval_comparison_native` — si una cambia sin la otra, lookup None → condición a False en silencio). Sufijo `swing_dir|pivot_window|pivot_rank` SOLO cuando alguno existe: las claves de todos los demás indicadores quedan byte-identicas (verificado con diff del compilado). DESPUÉS se registró la familia en `_RAW_INDICATOR_DISPATCH`.
+- **Nativo (`_ri_pico/_ri_pico_edad/_ri_pico_vol`):** mismo kernel `_pico_enumerado`, mismos defaults/clamps que el legacy. Parámetros EXPLÍCITOS en la firma (TypeError si faltan, no defecto mudo). El `multiplier` se aplica post-cómputo como hace el legacy (el HCH del §6 usa targets «Pico x 0.97»). El eje de minutos absoluto viaja en `ds["_abs_min"]` y es el de la PRIMERA barra de cada bucket (= `timestamp:"first"` del legacy, no el borde del bucket: con huecos del premarket la edad del pico los notaría).
+- **Tests (22 en el archivo, +8 de Fase 2):** gate invertido (comparaciones puras → has_special=False; `price_level_distance` con Pico sigue gating a legacy), clave de dedup distintiva (Pico(1)/Pico(2)/Valle(1)/Pico(win=5) = 4 specs), paridad nativo↔legacy EXACTA en: 1m con giros conocidos y random walk (3 paramétricos), multiplier, tf=5m con huecos, frame multidía, y CROSSES_BELOW del Close bajo el valle (la entrada del HCH).
+- **Dorados recongelados con evidencia:** `test_lot_stop_nivel` y `test_pyramid_steps_nivel` pinchan el hash del compilado, y el plan ganó 3 campos por spec. Diff campo a campo del compilado viejo (git show HEAD) vs nuevo: SOLO los tres nulls en los specs; señales y claves intactas. Recongelados con comentario documental (mismo procedimiento que el recongelado del 17-sep). OJO aprendido: el hash del SIN_PYR se contamina si se compila el CON_PYR antes en el mismo proceso (normalización in-place de «Bar Close»→«Close» compartiendo SIEMPRE) — capturar cada dorado en proceso fresco.
+- **Suite completa: 1157 passed, 115 skipped, 3 xfailed** (era 1148 en la Fase 1; +1 regresión scalping, +8 Fase 2). `test_n2a_native_equivalence.py`: 107 passed.
+- **Nota de contexto:** el carril nativo sigue APAGADO por defecto (`BTT_N2A_NATIVE_ENABLED=0`, backtest_signals.py) — la Fase 2 no cambia ningún comportamiento por defecto; habilita la familia para cuando el genético pida el carril rápido, con paridad exigida por tests.
+- **Observación pre-existente (no causada por esto, sin hallazgo propio):** el dispatch nativo ignora el `multiplier` en indicadores que no sean la familia de picos (p. ej. SMA/EMA target con multiplier divergiría del legacy). Hoy es irrelevante con el carril apagado y gated; si algún día se enciende N2A en producción, auditarlo antes. La familia de picos SÍ lo aplica (paridad con legacy, test específico).
+- **Push:** rama `alvaro-rama-desarrollo` pusheada a origin con TODO lo de hoy (incluye `7e1055e` del vigía, `b0e1b03` y `328bc0d`) tras el OK expreso de Álvaro («adelante con todo lo que falte»). Staging SIN TOCAR (regla).
+- **Estado:** Fase 2 HECHA; queda como mejora opcional el formateador del panel izquierdo del builder (ver TRABAJO·5) y mirar la pestaña «Charts + Optimization IS» con gráfico vacío.
+
+### [DATOS · 2026-09-22 · 1] Descripciones de las 2 ganadoras de scalping acortadas — y verificación al céntimo de que no se tocó NADA semántico
+- **Pedido de Álvaro:** al cargarlas en «cargar estrategia guardada», la descripción-ficha técnica ocupaba el panel entero como un muro de texto. Acortadas a un resumen de ~500 caracteres (lógica + números 3 años + AVISO de locates + referencia a esta memoria); la ficha completa vive aquí (TRABAJO 18-09·6).
+- **Cómo:** PUT por API contra el backend local (que ya corre con el fix `b0e1b03`) — con lo de paso quedó VALIDADO EN VIVO que el PUT conserva el bloque `scalping`. Verificado tras cada PUT: descripción aplicada, `scalping` intacto.
+- **Efecto colateral inofensivo del PUT:** rellena defaults explícitos que la definición vieja omitía (`candle_delay: null`, `size_by_sl: false`, `hybrid_stop: false`…). Sin efecto semántico — DEMOSTRADO re-corriendo ambas por `strategy_id` con la petición EXACTA de las VERIF del 18-sep: **PM 3602 trades · PF 1,0984 · +114,22R · pnl 112,18** y **RTH 1518 · 1,1623 · +67,33R · 67,46**, completitud 100 % en ambas. Idénticas al céntimo a las corridas originales (tags `PM_VERIF_desc22` / `RTH_VERIF_desc22` en `.tmp_scalp/corridas.jsonl`).
+- **Código tocado:** NINGUNO (script efímero en `.tmp_fase2/`, datos vía API, y esta memoria).
+- **Estado:** hecho.
+
+### [FIX · 2026-09-22 · 01] RESUELTO lo presentacional de [HALLAZGO · 2026-09-17 · 03]: el modal del día del calendario ya muestra el R TOTAL, no solo la media por trade
+- **Reportó la confusión de nuevo:** Álvaro (22-sep, en pantalla): «el calendario me pone 0,03 RS cuando la RS es un dólar y en dólares habría dado varias RS».
+- **Causa (misma del hallazgo 17-09·03):** el header del modal sumaba el PnL TOTAL del día en dólares pero mostraba `avg r_multiple` — media POR TRADE — sin etiqueta de per-trade. Un día de +1,84 $ con ~60 operaciones de scalping: media 0,03 R/trade junto a «+$1,84» → parece que no cuadra nada.
+- **Fix (`frontend/src/components/backtester/tabs/CalendarTab.tsx`):** el modal ahora muestra, junto al PnL: **R total del día** (suma de `r_multiple`, formato `+1,84 R` igual que las celdas) y la media **etiquetada** «media +0,03 R/trade» (con title explicativo). Las celdas semana/mes/día NO se tocaron: ya mostraban totales con la conversión R por día correcta.
+- **Verificación:** `npx tsc --noEmit` limpio; con riesgo fijo de 1 $, el R total del modal y el PnL del día ahora coinciden por construcción (1,84 $ → +1,84 R). Comprobado en vivo por Álvaro tras el hot-reload (pendiente de su OK visual).
+- **Estado:** RESUELTO (commit de esta fecha); la parte NO presentacional del hallazgo 17-09·03 (las Rs SÍ se sumaban, verificado con motor real) ya estaba cerrada entonces.
+
+### [ESTADO · 2026-09-22 · 1] Integración a staging: PENDIENTE — snapshot de qué viaja y cómo hacerlo seguro (petición de Álvaro: dejarlo documentado aquí y parar)
+- **Estado de la rama:** `alvaro-rama-desarrollo` pusheada a origin hasta `38fa515` (22-sep). **Staging NO se ha tocado** (regla: la IA nunca hace push/merge a staging; lo integran Álvaro/Jaime).
+- **Volumen pendiente de integración:** `git log origin/staging..HEAD` → **143 commits** (verificado el 22-sep tras `git fetch origin staging`). Es todo lo acumulado de la rama personal: visor de pirámides, caminito, fixes SL-lote y visor, **picos y valles Fases 1/1b/2**, **fix del guardado scalping (hallazgo 18-03)**, **fix del modal R del calendario**, PRDs y esta memoria.
+- **Cómo integrarlo SEGURO:** el procedimiento exacto (merge --no-ff --no-commit + restauración de la zona del bot + porta-verja `git diff --diff-filter=D --name-only origin/staging | grep -i bot` que debe salir VACÍO) ya está documentado en **[TRABAJO · 2026-09-18 · 4]**, con el perímetro verificado de los 25 ficheros del bot. OJO: aquel perímetro se midió contra staging `97ca87f`; si staging ha movido ficheros del bot desde entonces, el porta-verja final del procedimiento es quien lo caza — correrlo SIEMPRE antes de empujar.
+- **Alternativa ya usada en la casa:** cherry-picks selectivos (lo que hace Sailor), que evitan tocar la zona del bot de plano.
+- **Estado:** documentado; integración en manos de Álvaro/Jaime.
+
+### [REGLA · 2026-09-22 · 1] Push a la rama personal: autorización permanente; staging: NUNCA por la IA
+- **Dicho por Álvaro (22-sep):** «a mi rama siempre, a staging nunca lo empujes».
+- **Efecto:** la IA no vuelve a pedir OK para cada push a `alvaro-rama-desarrollo` — commitea y empuja. `staging` sigue intocable para la IA (integración de Álvaro/Jaime con el porta-verja).
+- **Reflejado también en:** `.agent/ALVARO_DEV_BRANCH.md` (flujo diario, punto 5).
+- **Estado:** regla activa desde ahora.
+
+### [TRABAJO · 2026-09-22 · 2] Campaña «>200R/año en 2025 Y 2026, curva progresiva, parámetros redondos» — ganadora guardada: 342/499/386R (2024 OOS / 2025 / 2026)
+- **Encargo de Álvaro:** estrategias con curva progresiva, que funcionen en 2025-2026, >200R por año y parámetros no extraños.
+- **Método:** motor real vía API (plantilla de peticiones EXACTA de la campaña del 18-sep: todos los campos explícitos, look-ahead ON, fees 5 bps + slippage 0,1 %/lado, riesgo 1 $ fijo, locates 0). Base: chasis «1B Sobri 3 · Escalera Fade10». Fases: A) 11 variantes OAT con valores REDONDOS (fade 20/40, paso 15/20, stop +5/+15, adds 3/8, sin parciales, reentradas 5) sobre 2025+2026 combinados (e5ca2514); B) combinaciones de los 3 ejes ganadores; C) desglose POR AÑO de los 6 mejores; selección por min(R25,R26) + r² + DD. Script en `.tmp_bus200/campana.py`, ledger completo en `.tmp_scalp/corridas.jsonl` (tags B200_*).
+- **Control honesto que cuadra:** el chasis reprodujo sus números conocidos al céntimo (2025 +370,4R · 2026 +292,5R · 2024 +246,6R).
+- **GANADORA — «B200 · Sobri Escalera stop5 sin parciales»** (`c2a24250-a386-4e48-826e-83d990e7582d`), SOLO 3 perillas redondas sobre el chasis: **stop Máx. Previo +5 %** (antes +10), **sin parciales horarios** (todo a las 09:00), **fade de entrada <40** (antes <30). Resto intacto (escalera cada 10 %, 5 adds, stop de lote pivote+5, reentradas 2, sesión 04:00–08:45, PMH gap ≥50, ADV$ ≥1 M).
+  - **2024 (OOS, no visto por la selección): +342,4R · PF 1,48 · r² 0,989 · DD −1,26 %**
+  - **2025: +498,8R · PF 1,51 · r² 0,992 · DD −1,02 %**
+  - **2026 ene-jul: +386,1R · PF 1,74 · r² 0,919 · DD −0,90 %**
+  - Verificación de guardado: re-corrida por `strategy_id` (2025) → idéntica al céntimo (498,84R · PF 1,5116 · 2122 trades).
+- **Avisos de siempre:** locates NO incluidos (~2.000 ticker-días/año shorteados: riesgo ~10 $/trade o locates negociados); 2025+2026 son IS de la selección (2024 es el año limpio y también sale >200R); 2026 son solo 7 meses.
+- **Subproductos:** stop5 sólo ya da +451/+357R (25/26) — el eje que más mueve; sin_parciales mejora R y suaviza; fade40 añade trades sin romper PF. El chasis sigue siendo la referencia de consistencia.
+- **Código tocado:** NINGUNO del repo (scripts efímeros en `.tmp_bus200/`, estrategia vía API, y esta memoria).
+- **Estado:** hecho; pendiente de decisión de Álvaro: incubador / más validación / uso.
+
+### [HALLAZGO · 2026-09-22 · 01] El dropdown de `ap_session` muestra «ap.RTH» cuando el campo está VACÍO — y el motor, para vacío, usa ap.PM
+- **Reporta:** ZCode (para Álvaro, detectado por él en pantalla)
+- **Severidad:** inconsistencia (UI miente; no corrompe datos)
+- **Dónde:** `frontend/src/components/strategy-builder/ConditionBuilder.tsx:1562` y `:1701` (`value={value.ap_session || 'ap.RTH'}`) vs `backend/app/services/indicators.py` `_ap_session_started` («ap.PM (defecto) desde la primera barra del frame»).
+- **Qué observé:** en la estrategia «B200 · Sobri Escalera stop5 sin parciales», la condición de pirámide (% Fade ≥ 10) tiene `ap_session` AUSENTE. El motor la computa como **ap.PM** (máximo acumulado desde la primera barra del frame = el máximo del premarket; coherente con la entrada, que lo lleva explícito). Pero el builder muestra el dropdown en **«ap.RTH»** porque pinta `'ap.RTH'` como fallback del valor vacío. Álvaro leyó «ap.RTH» en una estrategia 04:00–08:45 y lógicamente preguntó.
+- **Impacto:** (a) lectura errónea de la config en pantalla; (b) trampa de edición: quien «cambie» el dropdown de RTH a PM está escribiendo ap.PM explícito (mismo comportamiento que vacío — inofensivo), pero quien lo deje en «ap.RTH» creyendo que esa es la semántica vigente, opera engañado. Guardar SIN tocar el dropdown conserva el vacío (no hay corrupción de datos).
+- **Detalle adicional:** al crear una condición % Fade NUEVA desde el builder, SÍ se escribe `ap_session: "ap.RTH"` explícito (`ConditionBuilder.tsx:201`) — default de UI distinto del default del motor (vacío → ap.PM).
+- **Hipótesis de causa:** el fallback visual se copió del default de creación en vez del default del motor.
+- **Cómo reproducir:** cargar la estrategia B200 (`c2a24250-…`) en el constructor → sección de piramidación → la condición % Fade ≥ 10 muestra «ap.RTH · 09:30» con el campo realmente vacío (verificar por API: `ap_session` no existe en el source).
+- **Fix propuesto (pendiente de OK de Álvaro):** que el dropdown muestre **ap.PM** cuando el campo está vacío (paridad con el motor), o mejor aún, que al cargar una definición se materialice el default real (`ap.PM` explícito) para que pantalla y motor no puedan discrepar.
+- **Código tocado:** NINGUNO (solo esta memoria).
+- **Estado:** ABIERTO
+
+### [FIX · 2026-09-22 · 01 · RESOLUCIÓN] [HALLAZGO · 2026-09-22 · 01] — el dropdown de `ap_session` ya muestra ap.PM cuando el campo está vacío (paridad con el motor)
+- **Fix:** en `frontend/src/components/strategy-builder/ConditionBuilder.tsx`, los 5 fallbacks visuales de `ap_session` vacío pasan de `'ap.RTH'` a `'ap.PM'` (los dos dropdowns —% Fade y Previous Max/Min—, sus dos AyudaOpcion, y el texto de resumen de condición). Con comentario explicando que vacío = default del MOTOR (`_ap_session_started`) para que nadie lo «corrja» de vuelta.
+- **NO se tocaron** los defaults de CREACIÓN (líneas 120/201: `% Fade`/`Previous Max` nuevos se siguen creando con `ap.RTH` EXPLÍCITO): ahí no hay mentira — lo que se ve es lo que se guarda — y cambiarlo sería una decisión de producto, no un fix.
+- **Verificación:** `npx tsc --noEmit` limpio. Comprobación visual pendiente del F5 de Álvaro: la B200 (`c2a24250`) debe mostrar su pirámide %Fade ≥ 10 con «ap.PM · 04:00».
+- **Estado:** RESUELTO (commit de esta fecha); sin cambios de datos ni de comportamiento del motor.
+
+### [TRABAJO · 2026-09-22 · 3] PRD del «TP por lote» escrito — take profit con parciales propios en cada piramidación (el espejo del SL por lote)
+- **Pedido de Álvaro:** cada ejecución de piramidación con su SL de lote (inamovible, el actual) y su TP propio: rungs de «al recorrer X % desde SU precio, saca Y % del lote», y el resto del lote cabalgando hasta la salida final del trade. Semántica exacta y ejemplo literal quedan en el PRD.
+- **PRD:** `docs/PRD_TP_POR_LOTE_20260922.md` — anclado al código real: los lotes ya viven como individuos (`lots` con px/size/sl_px, cinturón en portfolio_sim:1504-1607), los parciales globales ya hacen rungs (pyr_base), y NO existe ningún TP por lote hoy (grep negativo). Contrato: regla nº1 byte-identical sin el bloque, disparo por toque con SL-gana-en-empate, rungs sobre tamaño ORIGINAL del lote, contabilidad por leg con identidad del trade (patrón 18-01), 9 tests exigibles, 6 sitios donde se perdería en silencio.
+- **Contexto medido que va con el PRD (22-sep):** en la familia Sobri-escalera, TODA salida temprana probada pierde R frente a aguantar (08:30: −43R·2025; 50/50: a medio camino; reduce-50 % en fade<5: −38/−57R). El PRD no promete más R — da la perilla para medir TP por lote, que hoy no es expresable.
+- **Código tocado:** NINGUNO (solo el PRD y esta memoria).
+- **Estado:** PRD listo para quien toque el motor (Álvaro decide rama/momento); Fase de implementación NO arrancada.
+
+### [TRABAJO · 2026-09-22 · 4] PRD del TP por lote — ronda de revisión de Álvaro: 3 críticos + 2 menores CERRADOS (PRD v2, sin tocar código)
+- **Revisión de Álvaro (verificó las anclas él mismo):** dinámica correcta, construible tal cual; pidió cerrar 3 puntos críticos y 2 menores antes de implementar.
+- **Cerrado 1 — orden GLOBAL de vela (§4.3 del PRD):** orden fijado con números de línea verificados: HALTS (665) → BSwan (769) → salidas del trade (911+) → **parciales/TP globales (1054)** → **cinturón (1499)** → **rungs lot_tp [nuevo, tras el SL de cada lote]** → escalera (1609) → **adds/REDUCE (1731)** → entradas (2140). Consecuencias explícitas: los parciales globales NO ven los rungs de esa vela (corren antes, pyr_base intacto); el REDUCE de pirámide SÍ los ve (corre después); stop del trade saltó → ni cinturón ni rungs.
+- **Cerrado 2 — dos rungs en la misma vela (§4.2):** disparan TODOS los cruzados, en travel ascendente, cada uno con su fill. Fill = semántica de orden LÍMITE, idéntica a los parciales globales por % (portfolio_sim.py:1281-1282): nivel si toque intrabar; si la vela ABRE más allá, al OPEN. Variante de test añadida al §6.2 con fills/tamaños/fees calculados a mano.
+- **Cerrado 3 — honestidad del fill (línea en §4.2):** fill de límite (nivel o mejor) es deliberadamente distinto del tratamiento del stop (nivel acotado al extremo, 1520-1524); el optimismo residual (nivel tocado intrabar se trading al nivel) se acepta por paridad. Dicho en el PRD, no escondido.
+- **Menores:** §5.1 ahora exige travel_pct ESTRICTAMENTE creciente (422, sin reordenar en silencio); §6.5 clava el número exacto del recorte de caja (add pide 2 $, caja deja 1 $, rung 50 % → leg de exactamente 0,50 $).
+- **Código tocado:** NINGUNO (solo el PRD y esta memoria).
+- **Estado:** PRD v2 listo para implementar; quién y cuándo, lo decide Álvaro.
+
+### [TRABAJO · 2026-09-22 · 5] TP POR LOTE IMPLEMENTADO y verificado end-to-end (PRD 2026-09-22, v2 con la revisión de Álvaro)
+- **Alcance completo:** schema (validador `lot_tp` con 422: travel estrictamente creciente, capital en (0,100], Σ≤100, solo niveles add) · compile (`normaliza_lot_tp`, bloque canónico `{rungs:[(travel,cap)]}` solo si se declara — regla nº1) · **`_evaluate_pyramid_levels`** (el passthrough del bloque al simulador — el PRD lo avisó como sitio-silencioso y ASÍ FUE: el primer run de tests lo cazó) · simulador (rungs en el bloque del cinturón, justo tras el SL del lote: fills de LÍMITE nivel/open, multi-rung por vela en travel ascendente, % sobre el tamaño EJECUTADO, contabilidad por leg con identidad del trade, lote Σ=100 % muere limpio) · serializador de ejecuciones (`level/rung/travel_pct` pasan; lot_tp entra en la deduplicación leg-vs-bitácora — sin eso pintaba doble) · builder (editor de peldaños con validación en vivo y Σ) · visor (chip «TP{n} r{k}» en el color de su lote, emparejado por nivel).
+- **Guard de vela de fill (§4.4, ajustado con evidencia):** verificado que el CINTURÓN sí puede saltar en la vela de fill del add (protección desde el primer instante); los rungs esperan a la vela posterior (`fill_idx`). Asimetría deliberada, documentada en el PRD.
+- **Tests:** `backend/tests/test_tp_por_lote.py`, 24 en verde (matemática exacta a mano: +2,5R del rung al 5 %, gap por open a 8,80, empate stop-gana, recorte de caja 2$→1$→leg de 0,05, Σ=100 %, 422s, round-trip). **Suite completa: 1181 passed, 115 skipped, 3 xfailed.** Dorados de lot_stop/pyramid_steps INTACTOS (regla nº1).
+- **E2E con motor real (API, backend rearrancado con el código nuevo):** B200 + rung 50 % a +10 % en cada peldaño de la escalera, 2025: **+474,48R · PF 1,5077 · 2122 trades, 1970 ejecuciones lot_tp (+97,54 $ de rungs), determinista entre corridas**. Lectura honesta (coherente con todo el eje de salidas): −24R frente a no tomar TP (498,84) — soltar la mitad del lote al 10 % le quita recorrido al fondo del fade. La perilla está; ahora se puede BARRER.
+- **Código tocado:** schemas/strategy.py, strategy_engine.py, portfolio_sim.py, backtest_service.py, tests/test_tp_por_lote.py, PRD (§4.4), frontend (types, api_backtester, PyramidingBuilder, Chart).
+- **Estado:** HECHO en `alvaro-rama-desarrollo`; pendiente de revisión visual de Álvaro en el builder/visor.
+
+### [SESIÓN · 2026-09-22 · CIERRE] Reporte completo del día — 2 fixes, 1 hallazgo cerrado, 1 regla nueva, 1 campaña con ganadora, comparativas del eje de salidas, PRD v2 e IMPLEMENTACIÓN del TP por lote
+
+**Índice del día con estado de cada cosa (entradas detalladas referenciadas).**
+
+**1. Fixes entregados y verificados**
+- **[FIX · 2026-09-22 · 01]** Modal del día del calendario: ahora muestra el **R TOTAL** del día junto al PnL, y la media etiquetada «R/trade» — cerraba lo presentacional del hallazgo 17-09·03 (`149cacb`).
+- **[HALLAZGO/FIX · 2026-09-22 · 01]** El dropdown `ap_session` mostraba «ap.RTH» con el campo VACÍO (el motor usa ap.PM para vacío). Fallback visual corregido en los 5 sitios + comentario anti-regresión (`149cacb`, RESUELTO).
+- **De camino quedó validado EN VIVO el fix del hallazgo 18-03** (bloque scalping sobrevive al PUT) al acortar las descripciones de las 2 ganadoras de scalping — re-corridas por `strategy_id` idénticas al céntimo ([DATOS · 2026-09-22 · 1], `cba0818`).
+
+**2. Regla nueva de flujo ([REGLA · 2026-09-22 · 1], `116ce92`)**
+Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NUNCA lo empuja** — integración de Álvaro/Jaime con el porta-verja (TRABAJO 18-09·4). Snapshot de lo pendiente de integración documentado en [ESTADO · 2026-09-22 · 1].
+
+**3. Campaña «>200R/año, curva progresiva, parámetros redondos» ([TRABAJO · 2026-09-22 · 2], `4f64e5d`)**
+- **GANADORA guardada: «B200 · Sobri Escalera stop5 sin parciales»** (`c2a24250`): 3 perillas redondas sobre el chasis 1B Sobri 3 (stop máx. previo +5 %, sin parciales —todo a las 09:00—, fade de entrada <40). **+342R (2024 OOS) · +499R (2025) · +386R (2026 7m)**, r² 0,92-0,99, DD ~1 %. Controles del chasis clavados al céntimo; verificación por `strategy_id` idéntica.
+- **Comparativas con «Modelización Sobri 3»** (la que usaban): con el add igualado a 1 $ ([COMPARATIVA guardada, `9a1be64f`]), la Modelización da 210/333/256R vs 342/499/386R de la B200 — los criterios B200 ganan en los tres años; sus +14.000R originales venían del add de 300 $ (exposición), con DD −38 %. En R y DD-en-R: 13.959R/384R vs 499R/16R.
+- **Eje de hora de salida, cerrado con monotonía**: 09:00 > 50/50 (08:30+08:45) > 08:30 plano, en 2024/2025/2026 e **incluso en el dato fresco jul→4-sep** (la campaña nunca lo vio: +6,4R para el 09:00 en 5 semanas). El lago llega al **4 de septiembre**.
+- ⚠️ **PENDIENTE DE ÁLVARO:** la B200 guardada fue re-guardada desde la UI a las 16:47 con salida **Full 08:30** (−43R en 2025 vs 09:00). Restaurar a 09:00 = un PUT, ofertado y a la espera de decisión.
+
+**4. TP por lote: del PRD a producción en un día**
+- **[TRABAJO · 2026-09-22 · 3]** PRD v1 (`907a064`): semántica exacta de Álvaro — cada ejecución con su SL inamovible + rungs «al recorrer X % saca Y % del lote», resto cabalgando al cierre del trade.
+- **[TRABAJO · 2026-09-22 · 4]** Revisión de Álvaro (verificó las anclas él mismo): 3 críticos + 2 menores cerrados en PRD v2 (`5effdf7`) — orden global de vela fijado con líneas, multi-rung por vela con fills límite, honestidad del fill, validador estrictamente creciente, número exacto del recorte.
+- **[TRABAJO · 2026-09-22 · 5] IMPLEMENTACIÓN COMPLETA** (`eaa7ce1`): schema (422) + compile + passthrough + simulador (rungs tras el SL del lote, fills nivel/open, legs con identidad, Σ=100 % muere limpio, guard de vela de fill con la asimetría documentada: el cinturón SÍ salta en la vela de fill) + serializador (`level/rung/travel_pct` pasan; deduplicación leg-vs-bitácora) + builder (editor de peldaños con validación en vivo) + visor (chips TP por lote). **24 tests nuevos, suite 1181 passed, dorados intactos. E2E: 1.970 rungs en B200·2025, determinista.**
+- Dato honesto del primer punto del espacio: rung 50 % a +10 % → 474,48R (−24R vs no tomar TP). **Siguiente paso natural: barrer travel/capital** (TP corto solo en peldaños profundos, base larga).
+
+**5. Pendientes abiertos del día**
+1. Decisión B200 guardada: restaurar salida 09:00 (ofertado).
+2. Barrido travel/capital del lot_tp sobre la B200.
+3. Revisión visual de Álvaro del builder/visor del lot_tp (backend ya corre con el código).
+4. Lo heredado y no urgente: formateador del resumen del panel izquierdo (picos/valles), pestaña «Charts + Optimization IS» con gráfico vacío, multiplier del carril nativo para no-pivotes (solo si se enciende N2A).
+5. Integración a staging: 148+ commits acumulados, porta-verja de TRABAJO 18-09·4.
+
+**Código tocado en el día (resumen):** fixes calendario+dropdown (frontend), campaña y comparativas (solo datos/scripts efímeros), PRD v1/v2, feature completa del TP por lote (4 ficheros backend + 4 frontend + tests). Suite: 1148 → **1181 passed**. Rama pusheada a `eaa7ce1` + este reporte.
+
+### [COMPARTIDA · 2026-09-23 · 1] Para JAIME (por staging): «B200 · Sobri Escalera stop5 sin parciales» en estrategias_compartidas/alvaro/
+- **Qué es:** la ganadora de la campaña «>200R/año con parámetros redondos» del 22-sep sobre el chasis 1B Sobri 3: stop Máx. Previo +5 %, sin parciales horarios (salida actual de Álvaro: todo 08:45), fade de entrada <40, escalera de 5 adds de 1 $ cada −10 % de fade, SL de lote en pivote alto (w2, +3 %) y **TP por lote: 50 % del lote al recorrer +10 %** (feature nueva, ver abajo).
+- **Fichero:** `estrategias_compartidas/alvaro/b200-sobri-escalera-stop5-sin-parciales-342-499-38--c2a2.json` (viaja por git → te llega al integrar staging; en la UI: pestana Compartidas → «Abrir borrador»).
+- **Números (marco 22-sep: fees 5 bps + slippage 0,1 %/lado, riesgo 1 $ fijo, locates 0):** salida 09:00 sin TP → **+342R (2024 OOS) · +499R (2025) · +386R (2026 ene-jul)**, r² 0,92-0,99, DD ~1 %. Con TP 50 % a +10 % (09:00) → +474R (2025). El eje hora de salida es monótono a favor de más tarde (verificado también en el dato fresco jul→4-sep). **Aviso: locates no incluidos** (~2.000 ticker-días/año shorteados).
+- **⚠️ IMPORTANTE para probarla:** lleva bloque `lot_tp` en la pirámide — la feature «TP por lote» del PRD 2026-09-22, implementada en `alvaro-rama-desarrollo` (`eaa7ce1`, TRABAJO 22-09·5). **En una rama sin ese código el bloque viaja pero se ignora en silencio** (la pirámide es dict opaco): la estrategia corre SIN sus TPs y sin ningún aviso. Para verla entera, con rama que incluya `eaa7ce1`.
+- **Detalle completo de la campaña y la feature:** TRABAJO 22-09·2 (campaña + comparativas con Modelización Sobri 3) y TRABAJO 22-09·5 (implementación del TP por lote, 24 tests, suite 1181 passed).
+- **Código tocado:** NINGUNO (datos: PUT de descripción + re-compartición por API; este fichero compartido y esta memoria).
+- **Estado:** compartida; a la espera de que la integre quien toque staging (porta-verja de TRABAJO 18-09·4).
+
+### [COMPARTIDA · 2026-09-23 · 2] SUSTITUYE a la · 1: para JAIME va «B200 nueva estrategia» (aa0676bd) — la que eligió Álvaro, SIN TP por lote
+- **Cambio:** Álvaro retiró la compartida anterior (c2a24250, con lot_tp) y compartió desde la UI la nueva a las 12:34. Yo solo le incrusté la descripción (salía vacía: compartió antes de que yo sela pusiera a la estrategia) con una re-compartición limpia — misma config, solo texto.
+- **Fichero:** `estrategias_compartidas/alvaro/b200-nueva-estrategia--aa06.json` (la `--c2a2.json` queda BORRADA del repo en este mismo commit).
+- **Config:** stop Máx. Previo +5 %, sin parciales —**todo a las 08:45**—, fade de entrada <40, escalera de 5 adds de 1 $ cada nuevo 10 % de fade, SL de lote en pivote alto (w2, +3 %), **SIN TP por lote** (lot_tp: null — la versión con rungs se queda en el baúl de Álvaro).
+- **Números medidos de ESTA config exacta** (23-sep, fees 5 bps + slip 0,1 %/lado, riesgo 1 $, locates 0): **2025 +492,4R** (PF 1,51, r² 0,99, DD −1 %) · **2026 ene→4-sep +418,1R** (PF 1,65). Referencia: con salida 09:00 fue +499R (2025) — el eje de salida es monótono a favor de más tarde. **Aviso: locates NO incluidos**.
+- **Ventaja práctica para Jaime:** al no llevar `lot_tp`, corre en CUALQUIER rama sin dependencia del commit `eaa7ce1` (la advertencia de la entrada · 1 ya no aplica a esta).
+- **Código tocado:** NINGUNO (datos: PUT descripción + re-compartir por API; git: quitar fichero viejo, añadir el nuevo, esta memoria).
+- **Estado:** compartida y verificada; a la espera de integración a staging con el porta-verja.
+
 ### [ARQUITECTURA · 2026-09-22 · BOT DE ALERTAS] El radar a un proceso aparte, y las alertas de vuelta a la vela oficial de Massive
 - **El problema, medido:** el barrido del radar (5.700 tickers, hasta 5,8 s de CPU) corría en un HILO del bot. En Python eso no aísla nada: mientras calcula, el hilo que lee el socket está parado. Instrumentando el feed se vio un barrido de 5,81 s dejando el bucle **11,09 s sin leer**, y las velas de minuto de esos minutos llegando a 9-11 s en vez de 2. Sobre el día entero (2.985 velas, desde las grabaciones): mediana 1,94 s, 89 % por debajo de 3 s, **8 % por encima de 5 s**, concentrados a partir de las 10:00 NY.
 - **La solución:** `backend/app/services/bot_alerts_radar_proceso.py` (nuevo). El radar es un PROCESO aparte con su propio estado del mercado; el bot le pasa por una tubería las velas que YA recibe. **No hay segunda conexión a Massive** (el límite de la cuenta es lo que provoca los 1008). Barre cada 12 s en vez de 30. Resultado: p90 de la vela de minuto de **17,6 s → 2,03 s**; el barrido desaparece de `[TIEMPOS]`.
@@ -3915,6 +6447,38 @@ de Databento, no copiar `users.duckdb`.
 - **Pruebas:** `test_bot_alerts_radar_proceso.py` (4: candidatos, no bloquea con el hijo muerto, resucita con el estado, volcar/cargar). Suite completa 1.525.
 - **Estado:** `51acbc4` en `sailor-rama-desarrollo` **y en `staging`** (avance limpio, staging no tenía nada propio). `D:\bot_senales\bot.py` vive fuera de git; copias `bot.py.bak-2026-09-22`, `-22b`, `-22c`.
 - **Pendiente:** confirmar en premercado con volumen que desaparecen la cola de velas lentas y los «minicortes de 1-2 s» del 21-sep; decidir si la ADMISIÓN de tickers nuevos baja de 30 s (hoy el radar refresca cada 12 s pero el bot mira la lista cada `radar_seg`); avisar en el log de los fogonazos de dark pools.
+
+### [INTEGRACIÓN · 2026-09-23 · 01] Merge de staging (68d4c2a) en alvaro-rama-desarrollo — todo Sailor dentro, zona bot COMPLETA por primera vez, suite 1585 verdes
+- **Integra:** ZCode (para Álvaro), petición suya del 23-sep («integra lo nuevo de staging en mi rama y mi local»). Merge `f5b1be7` (amend del `c70e54f`; el tags de hoy va aparte en `9016fb1`). Base común: `97ca87f` (18-sep). 177 commits de staging dentro.
+- **Qué entró:** portfolio «En crudo» completo (5 pasos, Kelly/escalado/rotación/freno, cuenta real con CSV/Excel, caminos por locates, calendarios con equity), **cambio del MOTOR compartido** `f561623`: señal por NIVEL (no por flanco) + stop Previous Max/Min (vela de la señal) opcional + bot rearmado tras salir — **puede mover señales de estrategias existentes respecto a corridas viejas**, tres indicadores de volumen contra el UNIVERSO (RVOL universo, Minutos desde el pico de volumen, Pendiente del volumen) + descargador del flujo de órdenes, rotación sobre acciones en circulación + 5 filtros de universo por volumen relativo, genético (picos/valles con casilla y niveles base, prioridad por indicador, slippage/comisiones en %), el radar del bot a PROCESO aparte (zona cerrada: ha entrado por el merge y no se ha tocado nada más), y docs (libro de reglas, fogonazos, preguntas al bróker).
+- **Conflictos: 16, todos documentados al resolver.** Contenido (9): `api_backtester.ts` (sus campos margin + nuestro comentario IS/OOS), `catalog.py` (lista Volume unida), `indicators.py` (comentario Fase 2 — el nuestro, vigente, porque nuestra Fase 2 está delante de su Fase 1), `ConditionBuilder.tsx` (sus 5 indicadores de universo y sus descripciones Pico enriquecidas con `<br/>`, ADOPTADAS; nuestro bloque quick-help), `PyramidingBuilder.tsx` (tooltips genéricos de staging, más precisos y citan el SL del lote; los de lot_stop y camino, los nuestros), `Sidebar.tsx` (su nota del screener, vigente tras borrar el servicio), `page.tsx` de portfolio (SU estructura de dos pestañas «Baúl» + «Análisis de portfolio», que borra Portfolio/Monitorización/Últimas pruebas + NUESTRO `etiquetar`/`onTags` del tags), `MEMORIA_MADRE.md` (ambos lados: nuestro bloque 14→23 sep + su entrada ARQUITECTURA del radar) y el test de picos add/add (el NUESTRO: Fase 1+2 = superconjunto del Fase 1 que trajo ella). Zona bot (7 modify/delete): restaurados de `origin/staging`.
+- **ZONA BOT COMPLETA — novedad importante:** su `bot_alerts_radar_proceso` nuevo importa `bot_alerts_radar`, que estaba entre los 17 ficheros del bot ausentes en esta rama (2 tests suyos fallaban por ModuleNotFoundError). Restaurados TODOS los que faltaban + su montaje en `main.py` (`include_router(bot_alerts…)` gated por `BOT_ALERTS_ENABLED`, APAGADO por defecto — no arranca nada). **El porta-verja `git diff --diff-filter=D --name-only origin/staging | grep -i bot` sale VACÍO por primera vez**: un merge futuro alvaro→staging ya NO borraría la zona del bot (el peligro documentado en TRABAJO 18-09·3/4 queda anulado). Recibirlos no es tocarlos: no se ha modificado ni una línea de la zona, byte a byte los de staging.
+- **Entorno:** `openpyxl==3.1.5` instalado en el venv (estaba en `requirements.txt` desde staging; sin él falla el test xlsx del crudo con ModuleNotFoundError). Y ojo: `pytest` a secas revienta la colección por `scripts/test_strategy_save.py` (un script con `sys.exit` en import, venido del merge) — la suite se corre como `pytest tests`.
+- **Verificación:** **1585 passed, 118 skipped, 3 xfailed** (union de las dos casas; era 1.157+6 en nuestra rama y 1.525 en la de Sailor al 22-sep) · `npx tsc --noEmit` limpio (dos veces: antes y después de restaurar la zona bot del frontend) · los 4 fallos iniciales (radar_proceso ×2, watch router 404, xlsx) quedaron explicados y resueltos: 3 por la zona bot a medias, 1 por openpyxl.
+- **Push:** rama personal sí (autorización permanente). Staging: SOLO DOCS en la entrada siguiente — jamás el merge entero, aunque ahora ya sería seguro para el bot.
+- **Código tocado:** solo lo del merge (resolución de conflictos + restauración fiel de la zona bot + 2 líneas de montaje del router en `main.py` copiadas de staging). Nada de la zona cerrada modificado.
+- **Estado:** HECHO y verificado.
+
+### [INTEGRACIÓN · 2026-09-23 · 02] Push DOCS-ONLY a staging (a92a5b7) — memoria + PRD para Sailor + compartida B200, por petición expresa de Álvaro
+- **Qué se subió a `staging`** (commit `a92a5b7`, SOLO 3 ficheros, 3.140 inserciones y CERO borrados): (1) `docs/MEMORIA_MADRE.md` completo de la rama de Álvaro — un SUPERCONJUNTO del de staging: verificado `grep -c '^-[^-]'` = 0 contra `origin/staging`, Sailor no pierde nada de lo suyo y gana todas las entradas de Álvaro del 18→23 sep; (2) `docs/PRD_PARA_SAILOR_TRAER_ALVARO_20260923.md` — la guía de cherry-picks: qué le falta a staging verificado con `git grep` (TP por lote `eaa7ce1` + PRDs `907a064`/`5effdf7`, Fase 2 picos `328bc0d`, fix ap_session `149cacb`, fix modal R `38fa515`, tags `9016fb1`), qué ya tiene (camino, SL-lote, b0e1b03, Fase 1/1b…), advertencias (lot_tp ignorado en silencio sin `eaa7ce1`; openpyxl; `pytest tests`; recongelar dorados en proceso fresco) y la verificación de referencia (1585/tsc limpio); (3) `estrategias_compartidas/alvaro/b200-nueva-estrategia--aa06.json` (sin `lot_tp` a propósito: corre en cualquier rama; la `c2a24250` con rungs se retiró y staging nunca la llegó a tener).
+- **Por qué esta vía y no un merge:** un merge de la rama entera habría llevado 154 commits de código sin auditar (protocolo 10-sep: a staging solo compartidas o lo auditado por Jaime). Con el docs-only Sailor recibe HOY el conocimiento y decide él qué cherry-pickear, como siempre.
+- **Porta-verja corrido antes de empujar:** `git diff --diff-filter=D --name-only origin/staging | grep -i bot` = VACÍO (y tras la integración de hoy el peligro histórico ya no existe: la rama lleva la zona bot COMPLETA, ver INTEGRACIÓN · 01).
+- **Autorización:** petición expresa y literal de Álvaro en esta sesión («después sube a staging MEMORIA MADRE lo que hemos hecho que no tenga Sailor, para que él se lo descargue como siempre con un PRD»). La regla «la IA NUNCA empuja a staging» (REGLA 22-09·1) queda como está para todo lo que no sea un docs-only pedido así de explícito.
+- **Push de la rama personal:** sí (autorización permanente), incluyendo esta entrada.
+- **Código tocado:** NINGUNO en este paso (docs + un JSON de compartida).
+- **Estado:** HECHO. A la espera de que Sailor haga pull y siga el PRD.
+
+### [FEATURE · 2026-09-23 · SCALPING UI] Vocabulario de trading, frase-resumen viva y esquema de la escalera — SOLO capa visual (para Álvaro)
+- **Origen:** petición directa de Álvaro (23-sep): usar y aprender el modo Scalping, pero con «nombres que no sean una puta mierda», coherentes con el lenguaje de trading y más visual — SIN tocar la lógica («hemos concluido que es un buen código, no me lo quiero cargar»). Auditoría previa en la misma sesión: mapa de qué es cada pieza del scalping (builder, escalera.py, portfolio_sim, 3 caminos, dispatch) y veredicto de que el aislamiento es ejemplar; la recomendación de retirar el modo Complejo quedó SOLO apuntada (§ Pendiente), decisión de Álvaro con Jaume.
+- **Qué cambió (`62fc54e` en `alvaro-rama-desarrollo`):** renombres de SOLO etiquetas visibles en `ScalpingBuilder.tsx` — Capital por entrada→**Tamaño de cada operación**, Salida por tiempo→**Cierre por tiempo** (help: time stop que PISA el TP-Tiempo), Pausa tras salir→**Espera antes de reentrar**, Paso→**Distancia entre niveles**, Core (suelo)→**Posición mínima**, Tope (techo)→**Posición máxima**, Recorrido máximo→**Rango de la escalera**, Rearmar→**Repetir niveles** (botones «Una vez por nivel»/«Grid (siempre)»); acciones con verbo de trading: **Piramidar/Tomar parcial** (a favor) y **Promediar/Reducir** (en contra); Modo como botones **Simple (entra y sale)/Con escalera**. Elección de Álvaro entre 3 opciones de naming y 3 niveles de visual (AskUserQuestion): verbos de trading + esquema&resumen + etiquetas del gráfico con dirección.
+- **Visual nuevo:** (a) **frase-resumen en vivo** bajo el header (siempre dice lo que hará la estrategia con los valores actuales, omitiendo lo que no aplica); (b) **esquema SVG de la escalera** en modo Con escalera (idioma `BandaLocates.tsx`: tokens, texto JAMÁS en cobre — solo la línea ENTRADA): niveles ±k·distancia (máx 3/lado), acción por lado con color profit/warning, aviso «cada promedio aleja el stop» con Promediar, bracket «rango ±X %» si recorta, nota de posición mín/máx + repetición + «stop y objetivo sobre el precio medio». Se redibuja al teclear (verificado rango 5→8 en vivo).
+- **Cadena de presentación completa:** `BacktestPanel.tsx` (resumen «SCALPING: … ESCALERA cada X%…» con el mismo vocabulario) y `backtest_service.py` SOLO la cadena `label` de `_build_executions`: «Escalera nivel N (a favor): piramida|toma parcial / (en contra): promedia|reduce», usando el `lado` que ya viaja en `escalera_executions`; corridas viejas sin lado caen al texto de siempre; la palabra «Escalera» se conserva (aserción `test_escalera.py:288` intacta). `exit_reason == "Escalera"` NI SE TOCA (7 aserciones).
+- **Lo que NO cambia (garantías verificadas):** claves JSON del bloque (`step_pct`, `favor_action`, `core_amount`, `rearm`…), `scalpingForPayload` (InlineStrategyBuilder), las 12 propagaciones de `page.tsx`, el motor entero (strategy_engine/escalera/portfolio_sim/sim_dispatch) y el comportamiento de campos al vaciar (distancia 0 = escalera off, como el Paso original). Las 2 ganadoras scalping del 18-sep y cualquier backtest: idénticos al céntimo.
+- **Verificación:** `npx tsc --noEmit` limpio · `pytest tests/test_escalera.py tests/test_scalping.py tests/test_strategy_api.py` → **44 passed** · navegador (next dev 3000 + backend 8010 del usuario) sobre «SCALP PM · Fade Escalera 10 (ganadora 3 años)» por strategy_id: resumen del panel nuevo sin cortes, builder Simple (frase-resumen correcta omitiendo max_minutes=0) y Con escalera (esquema completo con defaults Tomar parcial 50 % pos. inicial / Promediar 50 %), redibujado en vivo. Nota de entorno: en el navegador embebido la página NO carga estrategias servida por `127.0.0.1:3000` (sí por `localhost:3000`) — cosa del navegador de verificación, no de la app.
+- **PRD:** `docs/PRD_SCALPING_UI_VOCABULARIO_TRADING_20260923.md` (mapa completo de renombres, garantías, verificación, revert).
+- **Pendiente (constancia, no hecho):** `strategy_explain.py` + `CuadroMandos.tsx` no conocen el bloque scalping (el explicador se pinta en el panel del BOT, zona de Jaume) · el bot sigue SIN soportar scalping (prohibido marcarlas) · decisión Álvaro+Jaume sobre esconder/retirar el modo Complejo si sigue sin dar ganadoras (búsqueda 18-sep: las escaleras perjudican por churn de costes).
+- **Código tocado:** 3 ficheros (ScalpingBuilder.tsx, BacktestPanel.tsx —solo el bloque de resumen—, backtest_service.py —solo la cadena label—) + este PRD y esta memoria. Los 3 leídos ENTEROS antes de tocar (regla del repo). Zona bot: INTACTA.
+- **Estado:** HECHO y verificado en `alvaro-rama-desarrollo` (`62fc54e`).
 
 ### [ARQUITECTURA · 2026-09-23 · BOT DE ALERTAS] Cuatro procesos en paralelo, y el cuello real era la prealerta
 - **El problema, medido:** la prealerta llamaba a `evaluar_parcial` **con cada print**, dentro del hilo que lee el socket. Con 300 prints/s son ~3.600 evaluaciones por minuto concentradas en los 16 segundos de la ventana 44-59. El bot llegó al **97 % de su único núcleo con la máquina al 3 %** (en Python un proceso usa un núcleo, hagas los hilos que hagas). La firma en la grabación es inequívoca: 2,07 s clavados del segundo :08 al :42, subida desde el :43-44 hasta 12-26 s, y bajada de 1 s por segundo hasta recuperarse en el :08 siguiente — una cola drenándose, no un parón (el «rato sin leer» nunca pasó de 0,9 s).
