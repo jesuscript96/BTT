@@ -6479,3 +6479,10 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **Pendiente (constancia, no hecho):** `strategy_explain.py` + `CuadroMandos.tsx` no conocen el bloque scalping (el explicador se pinta en el panel del BOT, zona de Jaume) · el bot sigue SIN soportar scalping (prohibido marcarlas) · decisión Álvaro+Jaume sobre esconder/retirar el modo Complejo si sigue sin dar ganadoras (búsqueda 18-sep: las escaleras perjudican por churn de costes).
 - **Código tocado:** 3 ficheros (ScalpingBuilder.tsx, BacktestPanel.tsx —solo el bloque de resumen—, backtest_service.py —solo la cadena label—) + este PRD y esta memoria. Los 3 leídos ENTEROS antes de tocar (regla del repo). Zona bot: INTACTA.
 - **Estado:** HECHO y verificado en `alvaro-rama-desarrollo` (`62fc54e`).
+
+### [DOCS · 2026-09-23 · 03] Push docs-only a staging (e048dd5): memoria + PRD del scalping UI — mismo conducto que a92a5b7, por petición de Álvaro
+- **Qué se subió a `staging`** (commit `e048dd5`, SOLO 2 ficheros, 205 inserciones, CERO borrados): `docs/MEMORIA_MADRE.md` (superconjunto del de staging: la FEATURE de arriba) y `docs/PRD_SCALPING_UI_VOCABULARIO_TRADING_20260923.md`. El código del feat NO viaja en este push: queda en `alvaro-rama-desarrollo` (`62fc54e`) para cuando Sailor/Álvaro decidan integrarlo.
+- **Chequeos corridos ANTES de empujar:** tip de `origin/staging` seguía en `a92a5b7` (Sailor no había movido nada → la memoria es superconjunto estricto, `grep -c '^-[^-]'` = 0 líneas eliminadas) · porta-verja `git diff --diff-filter=D --name-only origin/staging | grep -i bot` = VACÍO.
+- **Autorización:** petición literal de Álvaro en esta sesión («subelo a mi rama alvaro rama desarrollo y un super PRD y BIEN REPORTADO EN MEMORIA MADRE de STAGING»); mismo conducto docs-only que la entrada [INTEGRACIÓN · 2026-09-23 · 02].
+- **Código tocado:** NINGUNO (docs).
+- **Estado:** HECHO (`staging` a92a5b7→e048dd5 · rama personal hasta `2f9a6c8` + este commit).
