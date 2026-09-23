@@ -1691,17 +1691,29 @@ def _build_executions(run: list[dict]) -> list[dict]:
                              else "TP lote")),
             })
         # Y los de la escalera del scalping complejo, marcados para que el
-        # gráfico los pinte más pequeños (son muchos y muy seguidos).
+        # gráfico los pinte más pequeños (son muchos y muy seguidos). El verbo
+        # es el de la UI (23-sep): piramidar/tomar parcial a favor,
+        # promediar/reducir en contra. El `lado` viene en la bitácora cruda; sin
+        # él (corridas viejas) se cae al añade/quita de siempre.
         for pe in (leg.get("escalera_executions") or []):
+            _lado_esc = pe.get("lado")
+            _k_esc = pe.get("kind")
+            if _lado_esc == "favor":
+                _verbo_esc = "piramida" if _k_esc == "add" else "toma parcial"
+            elif _lado_esc == "contra":
+                _verbo_esc = "promedia" if _k_esc == "add" else "reduce"
+            else:
+                _verbo_esc = "añade" if _k_esc == "add" else "quita"
+            _lado_lbl = (f" ({'a favor' if _lado_esc == 'favor' else 'en contra'})"
+                         if _lado_esc in ("favor", "contra") else "")
             execs.append({
-                "kind": pe.get("kind"),          # add | reduce
+                "kind": _k_esc,          # add | reduce
                 "time_epoch": pe.get("time_epoch"),
                 "price": pe.get("price"),
                 "size": pe.get("size"),
                 "pnl": pe.get("pnl"),
                 "escalera": True,
-                "label": (f"Escalera nivel {pe.get('nivel')}: "
-                          f"{'añade' if pe.get('kind') == 'add' else 'quita'}"),
+                "label": f"Escalera nivel {pe.get('nivel')}{_lado_lbl}: {_verbo_esc}",
             })
     # Una reducción de pirámide sale por PARTIDA DOBLE: como leg (el simulador
     # le emite un trade propio) y en `pyr_executions`. Se queda la segunda, que

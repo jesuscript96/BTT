@@ -1713,24 +1713,32 @@ export default function BacktestPanel({
 
                     {/* Scalping. Mismo motivo que la piramidación: con el
                         bloque, la entrada y la salida lógicas significan otra
-                        cosa (abren y cierran la ventana), y eso hay que verlo. */}
+                        cosa (abren y cierran la ventana), y eso hay que verlo.
+                        Vocabulario de trading (23-sep), igual que el builder:
+                        piramidar/tomar parcial a favor, promediar/reducir en
+                        contra, posición mín/máx, rango, repetir niveles. */}
                     {(() => {
                       const sc = stratDef?.scalping;
                       if (!sc?.root_condition?.conditions?.length) return null;
                       const partes = [
                         `gatillo con ${sc.root_condition.conditions.length} condición${sc.root_condition.conditions.length === 1 ? '' : 'es'}`,
-                        sc.max_minutes > 0 ? `salida a los ${sc.max_minutes} min` : 'sin salida por tiempo propia',
-                        sc.cooldown_bars > 0 ? `pausa de ${sc.cooldown_bars} vela${sc.cooldown_bars === 1 ? '' : 's'}` : 'sin pausa',
-                        `${sc.capital_pct ?? 100}% de la cifra del panel por entrada`,
+                        sc.max_minutes > 0 ? `cierre por tiempo a los ${sc.max_minutes} min` : 'sin cierre por tiempo propio',
+                        sc.cooldown_bars > 0 ? `espera de ${sc.cooldown_bars} vela${sc.cooldown_bars === 1 ? '' : 's'} antes de reentrar` : 'sin espera entre operaciones',
+                        `tamaño de cada operación: ${sc.capital_pct ?? 100}% de la cifra del panel`,
                         ...(sc.mode === 'complex' && sc.ladder ? [(() => {
                           const l = sc.ladder;
-                          const u = (x: string) => (x === 'usd' ? '$' : '% inicial');
-                          const acc = (a: string, n: number, un: string) =>
-                            a === 'add' ? `añade ${n}${u(un)}` : a === 'reduce' ? `quita ${n}${u(un)}` : 'nada';
-                          return `ESCALERA paso ${l.step_pct}%: a favor ${acc(l.favor_action, l.favor_amount, l.favor_unit)}, `
-                            + `en contra ${acc(l.contra_action, l.contra_amount, l.contra_unit)}, `
-                            + `core ${l.core_amount}${u(l.core_unit)}, tope ${l.cap_amount ? l.cap_amount + u(l.cap_unit) : 'sin'}, `
-                            + `recorrido ${l.max_travel_pct ? l.max_travel_pct + '%' : 'sin límite'}${l.rearm ? ', rearma niveles' : ''}`;
+                          const u = (x: string) => (x === 'usd' ? '$' : '% pos. inicial');
+                          const accF = (a: string, n: number, un: string) =>
+                            a === 'add' ? `piramida ${n}${u(un)}` : a === 'reduce' ? `toma parcial de ${n}${u(un)}` : 'nada';
+                          const accC = (a: string, n: number, un: string) =>
+                            a === 'add' ? `promedia ${n}${u(un)}` : a === 'reduce' ? `reduce ${n}${u(un)}` : 'nada';
+                          const lims: string[] = [];
+                          if (l.core_amount > 0) lims.push(`posición mín ${l.core_amount}${u(l.core_unit)}`);
+                          if (l.cap_amount > 0) lims.push(`posición máx ${l.cap_amount}${u(l.cap_unit)}`);
+                          if (l.max_travel_pct > 0) lims.push(`rango ±${l.max_travel_pct}%`);
+                          lims.push(l.rearm ? 'grid: cada nivel opera en cada cruce' : 'cada nivel una sola vez');
+                          return `ESCALERA cada ${l.step_pct}%: a favor ${accF(l.favor_action, l.favor_amount, l.favor_unit)}, `
+                            + `en contra ${accC(l.contra_action, l.contra_amount, l.contra_unit)}${lims.length ? `, ${lims.join(', ')}` : ''}`;
                         })()] : []),
                       ];
                       return (
