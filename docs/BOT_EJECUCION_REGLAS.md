@@ -724,7 +724,7 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 ### R-J-02 · Caída de la conexión con DAS o de la aplicación DAS
 - Situación: el socket con DAS se cae, o la aplicación DAS se cierra o pierde la sesión.
 - Detección: latido del socket / proceso de DAS.
-- Acción: (1) AVISO MÁXIMO a la primera. (2) Reconexión automática constante: reintento a los 2 s, 4, 8, 16 y después cada 30 s sin parar (relanzar DAS y reloguear si es la aplicación [API: 2FA]). (3) Mientras siga caída, aviso máximo cada 5 minutos. (4) En el cuadro de mandos, botón para deshabilitar el bot (apagarlo) si el humano decide tomar el control. (5) Al reconectar: aviso de recuperación y reconciliación completa (R-C-10) ANTES de enviar nada. Mientras tanto, lo único que protege son los stops residentes en el servidor de DAS.
+- Acción: (1) AVISO MÁXIMO a la primera. (2) Reconexión automática constante: reintento a los 2 s, 4, 8, 16 y después cada 30 s sin parar (relanzar DAS si es la aplicación; el LOGIN con 2FA lo hace Jaume a mano: aviso máximo y espera, decisión del 23-sep, EP-7). (3) Mientras siga caída, aviso máximo cada 5 minutos. (4) En el cuadro de mandos, botón para deshabilitar el bot (apagarlo) si el humano decide tomar el control. (5) Al reconectar: aviso de recuperación y reconciliación completa (R-C-10) ANTES de enviar nada. Mientras tanto, lo único que protege son los stops residentes en el servidor de DAS.
 - Quién la ejecuta: supervisor.
 - Parámetros: cadencia 2/4/8/16/30 s; aviso cada 5 min.
 - Si la acción falla: —
@@ -1104,7 +1104,7 @@ Escenarios que se han detectado y NO están decididos del todo. No bloquean el b
 | EP-4 | Trigger Order del API (stop pegado a la entrada) solo dispara con la entrada «fully executed»: una entrada llenada a medias (R-B-02) no tendría stop automático | El bot pone los stops él mismo tras cada fill parcial (diseño actual) | Si el API expone Trigger Orders, decidir si se usan solo cuando la entrada llena entera |
 | EP-5 | Techo de la emergencia: 50 % sobre su disparo (+87 % con stop a +10 %; +112 % con stop al Previous Max a +25 %) frente a medirlo sobre el límite del principal (+70 %) | Se mantiene el 50 % sobre el disparo (lo medido en el estudio) | Jaume decide si quiere un techo más corto; repetir el estudio de fogonazos con el valor elegido |
 | EP-6 | Limbo entre niveles con varias estrategias: rara vez el precio rebasa el principal de B sin llenarlo y sin llegar al de A | Sumar las acciones de B al principal de A (fijado) | Comprobar en demo el neteo de cantidades cuando A y B tienen fills parciales a la vez |
-| EP-7 | 2FA en la cuenta del bot: activarlo impide el relogin automático de R-J-02 salvo guardando el secreto TOTP en el VPS | Sin decidir | Pregunta al bróker (KB); decidir entre seguridad de la cuenta y relogin automático |
+| EP-7 | 2FA en la cuenta del bot | **CERRADO (Jaume, 23-sep): 2FA activado; el login de DAS lo hace Jaume A MANO cada día al encender el bot.** El relogin automático de R-J-02 queda solo para la reconexión del socket con DAS ya logueado; si DAS pide login, aviso máximo y lo hace el humano | — |
 | EP-8 | Suscriptor profesional: con socios que aportan capital o reparten beneficios los datos pasan a tarifa profesional | Sin decidir | Revisar el cuestionario de DAS antes de pedir el API |
 
 ## 4. Cuadro de mandos: inventario (borrador del 20-sep, en repaso con Jaume)
