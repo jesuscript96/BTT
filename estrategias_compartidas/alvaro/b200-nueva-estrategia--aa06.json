@@ -1,10 +1,10 @@
 {
   "format_version": 1,
   "shared_by": "alvaro",
-  "shared_at": "2026-09-23T12:33:27",
-  "source_strategy_id": "c2a24250-a386-4e48-826e-83d990e7582d",
-  "name": "B200 · Sobri Escalera stop5 sin parciales (342/499/386R)",
-  "description": "Mejora del chasis 1B Sobri 3 con perillas redondas: stop Máx. Previo +5 %, sin parciales horarios, fade de entrada <40; escalera de 5 adds de 1 $ cada nuevo 10 % de fade, SL de lote en pivote alto (w2, +3 %) y TP POR LOTE (feature nueva 22-sep): 50 % del lote al recorrer +10 %. Salida actual: todo a las 08:45. Marco 22-sep (fees 5 bps + slip 0,1 %/lado, riesgo 1 $): con salida 09:00 y sin TP → +342R (2024 OOS) · +499R (2025) · +386R (2026 7m); con TP 50 % a +10 % y salida 09:00 → +474R (2025). AVISO: locates NO incluidos. Config exacta y hallazgos en MEMORIA_MADRE (TRABAJO 22-09·2 y ·5).",
+  "shared_at": "2026-09-23T12:38:42",
+  "source_strategy_id": "aa0676bd-2606-45b4-8182-11592d18a124",
+  "name": "B200 nueva estrategia",
+  "description": "B200 de Álvaro (23-sep), versión elegida por él: stop Máx. Previo +5 %, sin parciales —TODO a las 08:45—, fade de entrada <40, escalera de 5 adds de 1 $ cada nuevo 10 % de fade, SL de lote en pivote alto (w2, +3 %), SIN TP por lote. Números PROPIOS de esta config exacta (fees 5 bps + slip 0,1 %/lado, riesgo 1 $, locates 0): 2025 +492R (PF 1,51, r² 0,99, DD −1 %) · 2026 ene-4sep +418R (PF 1,65). Con salida 09:00 fue +499R (2025). AVISO: locates NO incluidos. Campaña y detalle en MEMORIA_MADRE (TRABAJO 22-09·2).",
   "definition": {
     "bias": "short",
     "apply_day": "gap_day",
@@ -415,7 +415,7 @@
       "candle_delay": null
     },
     "risk_management": {
-      "size_by_sl": true,
+      "size_by_sl": false,
       "hybrid_stop": false,
       "hybrid_black_swan_pct": null,
       "hybrid_max_loss_pct": null,
@@ -490,14 +490,7 @@
             "pivot_window": 2,
             "offset_pct": 3
           },
-          "lot_tp": {
-            "rungs": [
-              {
-                "travel_pct": 10,
-                "capital_pct": 50
-              }
-            ]
-          }
+          "lot_tp": null
         }
       ],
       "groups": [

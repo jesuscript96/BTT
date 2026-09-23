@@ -6426,3 +6426,12 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **Detalle completo de la campaña y la feature:** TRABAJO 22-09·2 (campaña + comparativas con Modelización Sobri 3) y TRABAJO 22-09·5 (implementación del TP por lote, 24 tests, suite 1181 passed).
 - **Código tocado:** NINGUNO (datos: PUT de descripción + re-compartición por API; este fichero compartido y esta memoria).
 - **Estado:** compartida; a la espera de que la integre quien toque staging (porta-verja de TRABAJO 18-09·4).
+
+### [COMPARTIDA · 2026-09-23 · 2] SUSTITUYE a la · 1: para JAIME va «B200 nueva estrategia» (aa0676bd) — la que eligió Álvaro, SIN TP por lote
+- **Cambio:** Álvaro retiró la compartida anterior (c2a24250, con lot_tp) y compartió desde la UI la nueva a las 12:34. Yo solo le incrusté la descripción (salía vacía: compartió antes de que yo sela pusiera a la estrategia) con una re-compartición limpia — misma config, solo texto.
+- **Fichero:** `estrategias_compartidas/alvaro/b200-nueva-estrategia--aa06.json` (la `--c2a2.json` queda BORRADA del repo en este mismo commit).
+- **Config:** stop Máx. Previo +5 %, sin parciales —**todo a las 08:45**—, fade de entrada <40, escalera de 5 adds de 1 $ cada nuevo 10 % de fade, SL de lote en pivote alto (w2, +3 %), **SIN TP por lote** (lot_tp: null — la versión con rungs se queda en el baúl de Álvaro).
+- **Números medidos de ESTA config exacta** (23-sep, fees 5 bps + slip 0,1 %/lado, riesgo 1 $, locates 0): **2025 +492,4R** (PF 1,51, r² 0,99, DD −1 %) · **2026 ene→4-sep +418,1R** (PF 1,65). Referencia: con salida 09:00 fue +499R (2025) — el eje de salida es monótono a favor de más tarde. **Aviso: locates NO incluidos**.
+- **Ventaja práctica para Jaime:** al no llevar `lot_tp`, corre en CUALQUIER rama sin dependencia del commit `eaa7ce1` (la advertencia de la entrada · 1 ya no aplica a esta).
+- **Código tocado:** NINGUNO (datos: PUT descripción + re-compartir por API; git: quitar fichero viejo, añadir el nuevo, esta memoria).
+- **Estado:** compartida y verificada; a la espera de integración a staging con el porta-verja.
