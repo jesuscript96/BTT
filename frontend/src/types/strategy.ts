@@ -467,6 +467,11 @@ export interface Strategy {
     definition?: any;
     created_at?: string;
     updated_at?: string;
+    // Etiquetas de organización (2026-09-23). Metadato puro: viven en la
+    // columna `tags`, no dentro de `definition`. Los tags derivados
+    // (premarket/rth/scalping/piramidación) NO están aquí — se calculan con
+    // lib/strategyTags a partir de la definición.
+    tags?: string[];
 }
 
 // Default Initial State

@@ -24,7 +24,7 @@ import {
   type Bucket,
   type PortfolioStrategy,
 } from "@/lib/api_portfolio_lab";
-import { renameStrategy } from "@/lib/api";
+import { renameStrategy, setStrategyTags } from "@/lib/api";
 import { aplicarOrden, guardarOrden, leerOrden, moverEnOrden } from "@/lib/ordenEstrategias";
 
 type Tab = "baul" | "portfolio" | "monitor" | "runs";
@@ -96,6 +96,19 @@ export default function PortfolioPage() {
       setStrategies((prev) => prev.map((x) => (x.id === s.id ? { ...x, name: actualizada.name } : x)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "No se pudo renombrar la estrategia");
+      throw e;
+    }
+  }, []);
+
+  // Etiquetas de organización (2026-09-23). Actualización local tras el PATCH:
+  // re-listar el Baúl entero cuesta 1-3 s y el listado ya lo trae todo.
+  const etiquetar = useCallback(async (s: PortfolioStrategy, tags: string[]) => {
+    setError(null);
+    try {
+      await setStrategyTags(s.id, tags);
+      setStrategies((prev) => prev.map((x) => (x.id === s.id ? { ...x, tags } : x)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudieron guardar las etiquetas");
       throw e;
     }
   }, []);
@@ -208,7 +221,7 @@ export default function PortfolioPage() {
           )}
         </div>
       ) : tab === "baul" ? (
-        <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} onRename={renombrar} onMove={mover} busyId={busyId} />
+        <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} onRename={renombrar} onTags={etiquetar} onMove={mover} busyId={busyId} />
       ) : tab === "portfolio" ? (
         <PortfolioTab strategies={strategies} onMove={mover} />
       ) : (

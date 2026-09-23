@@ -16,7 +16,8 @@ import {
   previewStrategyDeletion,
   type DeletionPreview,
 } from "@/lib/api_portfolio_lab";
-import { getSharedStrategies, type SharedStrategyEntry } from "@/lib/api";
+import { getSharedStrategies, setStrategyTags, type SharedStrategyEntry } from "@/lib/api";
+import StrategyPickerMenu from "@/components/backtester/StrategyPickerMenu";
 
 export interface BacktestPanelParams {
   dataset_id: string;
@@ -610,6 +611,24 @@ export default function BacktestPanel({
     }
   };
 
+  // Borrado desde el selector (por fila, no solo la seleccionada): mismo
+  // endpoint en cascada que la papelera de al lado y que el Baúl. El picker
+  // ya enseñó la confirmación con el preview antes de llegar aquí.
+  const borrarDesdeSelector = async (s: Strategy) => {
+    await deletePortfolioStrategy(s.id);
+    const restantes = await fetchStrategies();
+    setStrategies(restantes);
+    setSelectedStrategy((prev) => (prev === s.id ? (restantes[0]?.id ?? "") : prev));
+  };
+
+  // Etiquetado desde el selector: PATCH de tags + refetch para que la fila y
+  // la tarjeta de resumen pinten los tags nuevos al momento.
+  const guardarTagsDesdeSelector = async (s: Strategy, tags: string[]) => {
+    await setStrategyTags(s.id, tags);
+    const restantes = await fetchStrategies();
+    setStrategies(restantes);
+  };
+
   const getStratDef = () => {
     let rawDef: any = null;
     const activeId = activeStrategy ? String(activeStrategy.id ?? "") : "";
@@ -1170,80 +1189,24 @@ export default function BacktestPanel({
             <div className="h-9 bg-gray-100 rounded animate-pulse" />
           ) : (
             <div style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
-              <select
-                value={selectedStrategy}
-                onChange={(e) => {
-                  // Una compartida del apartado de abajo no se "selecciona":
-                  // no existe en la BD ni trae corrida guardada, así que se
-                  // abre como borrador (mismo camino que «Abrir borrador» de
-                  // la pestaña Compartidas). El efecto de sincronía con
-                  // activeStrategy fijará luego el id draft_shared_* y el
-                  // desplegable pasará a mostrar [Borrador] nombre.
-                  if (e.target.value.startsWith("shared:")) {
-                    const entry = sharedList.find(
-                      (c) => `shared:${c.shared_by}/${c.filename}` === e.target.value,
-                    );
-                    if (entry) onOpenSharedDraft?.(entry);
-                    return;
-                  }
-                  setSelectedStrategy(e.target.value);
+              {/* Selector propio (antes un <select> nativo): el select no admite
+                  botones por opción ni chips, y hacía falta buscar, ver los
+                  grupos de sesión, etiquetar y borrar POR FILA desde aquí.
+                  Ver StrategyPickerMenu.tsx. */}
+              <StrategyPickerMenu
+                strategies={strategies}
+                sharedList={sharedList}
+                selectedId={selectedStrategy}
+                isDraft={isDraft}
+                activeStrategyName={activeStrategy?.name}
+                onSelect={(id) => {
+                  setSelectedStrategy(id);
                   cerrarConfirmBorrado();
                 }}
-                style={{
-                  backgroundColor: 'var(--color-ec-bg-elevated)',
-                  border: '0.5px solid var(--color-ec-border)',
-                  borderRadius: 5,
-                  padding: '7px 10px',
-                  fontFamily: 'var(--color-ec-sans)',
-                  fontSize: 12,
-                  fontWeight: 500,
-                  color: 'var(--color-ec-text-primary)',
-                  outline: 'none',
-                  flex: 1,
-                  minWidth: 0,
-                  cursor: 'pointer',
-                }}
-              >
-                {!selectedStrategy && (
-                  <option value="">cargar estrategia guardada…</option>
-                )}
-                {isDraft && activeStrategy && (
-                  <option value={selectedStrategy}>
-                    [Borrador] {activeStrategy.name}
-                  </option>
-                )}
-                {strategies.map((s) => (
-                  <option
-                    key={s.id}
-                    value={s.id}
-                    style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}
-                  >
-                    {s.name}
-                  </option>
-                ))}
-                {onOpenSharedDraft && sharedList.length > 0 && (
-                  // El apartado va en mayúsculas y cobre (el acento de la casa,
-                  // como los rótulos de sección del panel) para que no se
-                  // confunda con las guardadas del baúl. El popup de un select
-                  // nativo pinta como quiere: Chrome/Edge y Firefox respetan
-                  // estos estilos en las options y, en gran parte, en el rótulo
-                  // del optgroup; donde no, degrada al texto en negrita.
-                  <optgroup
-                    label="COMPARTIDAS — ABREN COMO BORRADOR"
-                    style={{ color: 'var(--color-ec-copper)', backgroundColor: 'var(--color-ec-bg-elevated)', fontWeight: 700 }}
-                  >
-                    {sharedList.map((c) => (
-                      <option
-                        key={`shared:${c.shared_by}/${c.filename}`}
-                        value={`shared:${c.shared_by}/${c.filename}`}
-                        style={{ backgroundColor: 'var(--color-ec-bg-elevated)', color: 'var(--color-ec-text-primary)' }}
-                      >
-                        {c.name} · {c.shared_by.toUpperCase()}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
+                onOpenSharedDraft={(entry) => onOpenSharedDraft?.(entry)}
+                onDelete={borrarDesdeSelector}
+                onTagsSaved={guardarTagsDesdeSelector}
+              />
               {deletableStrategy && (
                 <button
                   type="button"

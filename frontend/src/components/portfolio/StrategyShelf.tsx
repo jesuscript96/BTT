@@ -14,6 +14,8 @@ import { CircleAlert, ChevronRight } from "lucide-react";
 import { color, font, radius } from "@/components/ui/tokens";
 import { Help } from "@/components/robustez/help";
 import { RenameableName } from "@/components/robustez/shared";
+import { allTags, autoTags } from "@/lib/strategyTags";
+import { TagChip } from "@/components/ui/TagEditor";
 import type { PortfolioStrategy } from "@/lib/api_portfolio_lab";
 import { StrategyDetail } from "./StrategyDetail";
 
@@ -151,6 +153,30 @@ export function Sparkline({ points }: { points: EqPoint[] }) {
   );
 }
 
+/** Chips de tags junto al nombre de la fila: automáticos en cobre (salen de
+ *  la definición), manuales neutros. Máximo 2 visibles y cada uno trunca su
+ *  texto con «…» DENTRO de la píldora — la fila es de una línea y compite
+ *  con el nombre; el resto se ven al desplegar la estrategia. */
+function TagsEnFila({ s }: { s: PortfolioStrategy }) {
+  const autos = autoTags(s.definition);
+  const todos = allTags(s.definition, s.tags);
+  if (todos.length === 0) return null;
+  const visibles = todos.slice(0, 2);
+  const resto = todos.length - visibles.length;
+  return (
+    <span style={{ display: "inline-flex", gap: 3, alignItems: "center", marginLeft: 7, overflow: "hidden", flexShrink: 1 }}>
+      {visibles.map((t) => (
+        <TagChip key={t} label={t} auto={autos.includes(t)} maxLabelWidth={100} />
+      ))}
+      {resto > 0 && (
+        <span style={{ fontSize: 9.5, fontFamily: font.sans, color: color.textSecondary, whiteSpace: "nowrap" }}>
+          +{resto}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function StrategyShelf({
   title,
   hint,
@@ -161,6 +187,8 @@ export function StrategyShelf({
   onRename,
   onOpen,
   onMove,
+  onTags,
+  tagSuggestions = [],
   maxRows = 12,
 }: {
   title: string;
@@ -178,6 +206,10 @@ export function StrategyShelf({
   onOpen?: (s: PortfolioStrategy) => void;
   /** Subir/bajar la fila dentro de este cuadro (se le pasan los ids visibles). */
   onMove?: (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => void;
+  /** Guardar las etiquetas manuales desde el desplegable de la fila. */
+  onTags?: (s: PortfolioStrategy, tags: string[]) => Promise<void>;
+  /** Tags que ya existen en otras estrategias, para sugerirlos al editar. */
+  tagSuggestions?: string[];
   /** Filas visibles sin scroll; a partir de ahi el cuadro hace scroll interno. */
   maxRows?: number;
 }) {
@@ -296,6 +328,7 @@ export function StrategyShelf({
                       {s.name}
                     </span>
                   )}
+                  <TagsEnFila s={s} />
                 </div>
                 <span style={{ fontSize: 10.5, fontFamily: font.mono, color: color.textMuted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {r
@@ -335,7 +368,7 @@ export function StrategyShelf({
                 </div>
               </div>
 
-              {open && <StrategyDetail s={s} curve={curves[s.id]} />}
+              {open && <StrategyDetail s={s} curve={curves[s.id]} onTags={onTags} tagSuggestions={tagSuggestions} />}
             </div>
           );
         })}

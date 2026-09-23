@@ -5,8 +5,8 @@
 // guardan en el backend (tabla portfolio_lab_assignments) y por eso
 // sobreviven a recargas y reinicios.
 
-import React, { useCallback, useState } from "react";
-import { color, font } from "@/components/ui/tokens";
+import React, { useCallback, useMemo, useState } from "react";
+import { color, font, radius } from "@/components/ui/tokens";
 import { ReadingNote } from "@/components/robustez/shared";
 import { StrategyShelf, ShelfAction, type CurveState } from "./StrategyShelf";
 import {
@@ -16,12 +16,14 @@ import {
   type DeletionPreview,
   type PortfolioStrategy,
 } from "@/lib/api_portfolio_lab";
+import { allTags } from "@/lib/strategyTags";
 
 export function BaulTab({
   strategies,
   onToggle,
   onDelete,
   onRename,
+  onTags,
   onMove,
   busyId,
 }: {
@@ -30,6 +32,8 @@ export function BaulTab({
   /** Borrado DEFINITIVO: la estrategia, sus corridas y sus asignaciones. */
   onDelete: (s: PortfolioStrategy) => void;
   onRename: (s: PortfolioStrategy, newName: string) => Promise<void>;
+  /** Guardar las etiquetas de organización (metadato, no toca la definición). */
+  onTags: (s: PortfolioStrategy, tags: string[]) => Promise<void>;
   /** Subir/bajar una fila dentro de la lista visible de ese cuadro. */
   onMove?: (s: PortfolioStrategy, dir: -1 | 1, visibles: string[]) => void;
   busyId: string | null;
@@ -50,8 +54,38 @@ export function BaulTab({
       .then((p) => setPrevio(p))
       .catch(() => setPrevio(null)); // sin numeros, pero la confirmacion sigue
   };
-  const inPortfolio = strategies.filter((s) => s.buckets.includes("portfolio"));
-  const inIncubator = strategies.filter((s) => s.buckets.includes("incubadora"));
+
+  // ── Filtro del baúl (2026-09-23): chips de tags conmutables (OR) + búsqueda
+  // por nombre. Solo OCULTA filas: el orden manual ▲▼ y las asignaciones a los
+  // cuadros se quedan como estaban.
+  const [tagsFiltro, setTagsFiltro] = useState<string[]>([]);
+  const [busca, setBusca] = useState("");
+  const conteoTags = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const s of strategies) {
+      for (const t of allTags(s.definition, s.tags)) m.set(t, (m.get(t) || 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [strategies]);
+  const pasaFiltro = (s: PortfolioStrategy) => {
+    const q = busca.trim().toLowerCase();
+    if (q && !s.name.toLowerCase().includes(q)) return false;
+    if (tagsFiltro.length) {
+      const tags = allTags(s.definition, s.tags);
+      if (!tagsFiltro.some((t) => tags.includes(t))) return false;
+    }
+    return true;
+  };
+  const visibles = strategies.filter(pasaFiltro);
+  const filtroActivo = tagsFiltro.length > 0 || busca.trim() !== "";
+  // Sugerencias para el editor de tags: los manuales que ya existen en el baúl.
+  const sugerencias = useMemo(
+    () => [...new Set(strategies.flatMap((s) => s.tags || []))],
+    [strategies],
+  );
+
+  const inPortfolio = visibles.filter((s) => s.buckets.includes("portfolio"));
+  const inIncubator = visibles.filter((s) => s.buckets.includes("incubadora"));
 
   // La curva de equity se pide AL DESPLEGAR la fila, una a una, y se guarda
   // para no volver a pedirla. Antes se precargaban todas al abrir la pagina:
@@ -154,16 +188,101 @@ export function BaulTab({
         aproximada).
       </ReadingNote>
 
+      {/* Barra de filtro: un chip por tag en uso (con cuántas estrategias lo
+          llevan) y búsqueda por nombre. Se pinta solo si hay estrategias. */}
+      {strategies.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {conteoTags.map(([t, n]) => {
+            const activo = tagsFiltro.includes(t);
+            return (
+              <button
+                key={t}
+                type="button"
+                title={`${n} estrategia${n === 1 ? "" : "s"} con este tag`}
+                onClick={() =>
+                  setTagsFiltro((prev) => (prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]))
+                }
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                  fontSize: 10,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                  fontFamily: font.sans,
+                  fontWeight: 700,
+                  // Activo = relleno cobre con su texto oscuro dedicado
+                  // (`copperText` SOLO vale sobre cobre). Inactivo = relleno
+                  // elevado con texto claro: sin relleno, en el tema oscuro
+                  // el chip se vuelve un fantasma.
+                  color: activo ? color.copperText : color.textPrimary,
+                  border: `0.5px solid ${activo ? color.copper : "color-mix(in srgb, var(--color-ec-text-secondary) 45%, transparent)"}`,
+                  background: activo ? color.copper : color.bgElevated,
+                  borderRadius: radius.pill,
+                  padding: "3px 9px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {t}
+                <span style={{ fontWeight: 500, opacity: activo ? 0.75 : 0.6 }}>{n}</span>
+              </button>
+            );
+          })}
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="buscar por nombre…"
+            style={{
+              width: 140,
+              padding: "3px 9px",
+              fontSize: 10.5,
+              fontFamily: font.sans,
+              color: color.textPrimary,
+              background: color.bgElevated,
+              border: `0.5px solid color-mix(in srgb, var(--color-ec-text-secondary) 45%, transparent)`,
+              borderRadius: radius.sm,
+              outline: "none",
+              marginLeft: "auto",
+            }}
+          />
+          {filtroActivo && (
+            <button
+              type="button"
+              onClick={() => {
+                setTagsFiltro([]);
+                setBusca("");
+              }}
+              style={{
+                border: "none",
+                background: "transparent",
+                color: color.textMuted,
+                fontFamily: font.sans,
+                fontSize: 10,
+                textDecoration: "underline",
+                cursor: "pointer",
+                padding: 0,
+                whiteSpace: "nowrap",
+              }}
+            >
+              limpiar ({visibles.length}/{strategies.length})
+            </button>
+          )}
+        </div>
+      )}
+
       <StrategyShelf
         curves={curves}
         onOpen={cargarCurva}
         onMove={onMove}
         title="Baúl genérico"
         hint="todas las estrategias guardadas · pulsa una fila para ver con qué se corrió"
-        strategies={strategies}
-        emptyText="No hay estrategias guardadas. Crea una en el Backtester y guárdala con «Guardar estrategia en el baúl»."
+        strategies={visibles}
+        emptyText={filtroActivo ? "Ninguna estrategia pasa el filtro de arriba." : "No hay estrategias guardadas. Crea una en el Backtester y guárdala con «Guardar estrategia en el baúl»."}
         actions={toggles}
         onRename={onRename}
+        onTags={onTags}
+        tagSuggestions={sugerencias}
       />
 
       <StrategyShelf
@@ -173,9 +292,11 @@ export function BaulTab({
         title="Portfolio"
         hint="las que se estudian juntas en la pestaña Portfolio"
         strategies={inPortfolio}
-        emptyText="Vacío. Añade estrategias desde el baúl genérico con «+ Portfolio»."
+        emptyText={filtroActivo ? "Ninguna pasa el filtro." : "Vacío. Añade estrategias desde el baúl genérico con «+ Portfolio»."}
         actions={removeFrom("portfolio")}
         onRename={onRename}
+        onTags={onTags}
+        tagSuggestions={sugerencias}
       />
 
       <StrategyShelf
@@ -185,9 +306,11 @@ export function BaulTab({
         title="Incubadora"
         hint="listas para salir, en observación antes de operar en real"
         strategies={inIncubator}
-        emptyText="Vacío. Añade estrategias desde el baúl genérico con «+ Incubadora»."
+        emptyText={filtroActivo ? "Ninguna pasa el filtro." : "Vacío. Añade estrategias desde el baúl genérico con «+ Incubadora»."}
         actions={removeFrom("incubadora")}
         onRename={onRename}
+        onTags={onTags}
+        tagSuggestions={sugerencias}
       />
 
       <p style={{ margin: 0, fontSize: 11, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>

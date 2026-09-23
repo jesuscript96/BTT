@@ -15,6 +15,8 @@ import {
   executionLines,
 } from "@/components/robustez/StrategyPicker";
 import { flattenConditions, formatUniverseRule, riskLines } from "@/lib/robustez/formatStrategy";
+import { autoTags } from "@/lib/strategyTags";
+import { TagEditor } from "@/components/ui/TagEditor";
 import type { PortfolioStrategy } from "@/lib/api_portfolio_lab";
 import { Sparkline, type CurveState } from "./StrategyShelf";
 
@@ -22,11 +24,18 @@ export function StrategyDetail({
   s,
   curve,
   paddingLeft = 37,
+  onTags,
+  tagSuggestions = [],
 }: {
   s: PortfolioStrategy;
   /** Curva de equity de la ultima corrida; `undefined` = aun no pedida. */
   curve?: CurveState;
   paddingLeft?: number;
+  /** Guardar las etiquetas manuales (metadato). Opcional: donde no se pasa,
+   *  el desplegable solo enseña los tags sin editarlos. */
+  onTags?: (s: PortfolioStrategy, tags: string[]) => Promise<void>;
+  /** Tags que ya existen en otras estrategias, para sugerirlos. */
+  tagSuggestions?: string[];
 }) {
   const r = s.run;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,6 +56,17 @@ export function StrategyDetail({
         <p style={{ margin: "0 0 12px", fontSize: 11.5, fontFamily: font.sans, color: color.textSecondary, lineHeight: 1.55, maxWidth: 720 }}>
           {s.description}
         </p>
+      )}
+      {onTags && (
+        <div style={{ margin: "0 0 14px" }}>
+          <SectionTitle>Etiquetas</SectionTitle>
+          <TagEditor
+            tags={s.tags || []}
+            autoTags={autoTags(s.definition)}
+            suggestions={tagSuggestions}
+            onSave={(next) => onTags(s, next)}
+          />
+        </div>
       )}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))", gap: 22 }}>
         <div>
