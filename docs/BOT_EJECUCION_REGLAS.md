@@ -1105,7 +1105,6 @@ Escenarios que se han detectado y NO están decididos del todo. No bloquean el b
 | EP-5 | Techo de la emergencia: 50 % sobre su disparo (+87 % con stop a +10 %; +112 % con stop al Previous Max a +25 %) frente a medirlo sobre el límite del principal (+70 %) | Se mantiene el 50 % sobre el disparo (lo medido en el estudio) | Jaume decide si quiere un techo más corto; repetir el estudio de fogonazos con el valor elegido |
 | EP-6 | Limbo entre niveles con varias estrategias: rara vez el precio rebasa el principal de B sin llenarlo y sin llegar al de A | Sumar las acciones de B al principal de A (fijado) | Comprobar en demo el neteo de cantidades cuando A y B tienen fills parciales a la vez |
 | EP-7 | 2FA en la cuenta del bot | **CERRADO (Jaume, 23-sep): 2FA activado; el login de DAS lo hace Jaume A MANO cada día al encender el bot.** El relogin automático de R-J-02 queda solo para la reconexión del socket con DAS ya logueado; si DAS pide login, aviso máximo y lo hace el humano | — |
-| EP-8 | Suscriptor profesional: con socios que aportan capital o reparten beneficios los datos pasan a tarifa profesional | Sin decidir | Revisar el cuestionario de DAS antes de pedir el API |
 
 ## 4. Cuadro de mandos: inventario (borrador del 20-sep, en repaso con Jaume)
 
