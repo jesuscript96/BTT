@@ -65,7 +65,7 @@ def users_db(tmp_path, monkeypatch):
         CREATE TABLE strategies (
             id VARCHAR, name VARCHAR, description VARCHAR,
             created_at TIMESTAMP, updated_at TIMESTAMP,
-            definition VARCHAR, user_id VARCHAR
+            definition VARCHAR, user_id VARCHAR, tags VARCHAR
         )
         """
     )

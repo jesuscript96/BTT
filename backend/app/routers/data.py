@@ -5,6 +5,7 @@ from typing import Optional, List
 from pydantic import BaseModel
 from app.database import get_db_connection
 from app.auth import get_current_user_id, scope_clause
+from app.services.strategy_tags import parse_tags_column
 # Lazy imports for memory optimization
 # from app.ingestion import ingest_history
 # from app.processor import get_dashboard_stats, get_aggregate_time_series
@@ -614,7 +615,7 @@ def list_strategies_backtester(user_id: Optional[str] = Depends(get_current_user
             con = get_user_db_connection()
             try:
                 rows = con.execute(
-                    f"SELECT id, name, description, definition FROM strategies "
+                    f"SELECT id, name, description, definition, tags FROM strategies "
                     f"WHERE 1=1{scope_sql} ORDER BY created_at DESC",
                     scope_params,
                 ).fetchall()
@@ -624,6 +625,7 @@ def list_strategies_backtester(user_id: Optional[str] = Depends(get_current_user
                         "name": row[1],
                         "description": row[2],
                         "definition": _json.loads(row[3]) if isinstance(row[3], str) else row[3],
+                        "tags": parse_tags_column(row[4]),
                     })
             finally:
                 con.close()
@@ -645,7 +647,7 @@ def get_strategy_backtester(strategy_id: str, user_id: Optional[str] = Depends(g
         con = get_user_db_connection()
         try:
             row = con.execute(
-                f"SELECT id, name, description, definition FROM strategies WHERE id = ?{scope_sql}",
+                f"SELECT id, name, description, definition, tags FROM strategies WHERE id = ?{scope_sql}",
                 [strategy_id, *scope_params],
             ).fetchone()
             if row:
@@ -654,6 +656,7 @@ def get_strategy_backtester(strategy_id: str, user_id: Optional[str] = Depends(g
                     "name": row[1],
                     "description": row[2],
                     "definition": _json.loads(row[3]) if isinstance(row[3], str) else row[3],
+                    "tags": parse_tags_column(row[4]),
                 }
         finally:
             con.close()

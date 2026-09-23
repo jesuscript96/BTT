@@ -31,6 +31,7 @@ from app.services import portfolio_lab_scaling as plsc
 from app.services import portfolio_lab_service as pls
 from app.services import robustness_service as rs
 from app.services.robustness_mc import run_bootstrap
+from app.services.strategy_tags import parse_tags_column
 
 router = APIRouter()
 
@@ -58,7 +59,7 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
     scope_sql, scope_params = scope_clause(user_id)
     try:
         rows = con.execute(
-            f"SELECT id, name, description, created_at, updated_at, definition "
+            f"SELECT id, name, description, created_at, updated_at, definition, tags "
             f"FROM strategies WHERE 1=1{scope_sql} ORDER BY created_at DESC",
             scope_params,
         ).fetchall()
@@ -78,6 +79,7 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
                 "created_at": str(r[3]) if r[3] else None,
                 "updated_at": str(r[4]) if r[4] else None,
                 "definition": definition,
+                "tags": parse_tags_column(r[6]),
                 "run": None,
                 "buckets": [],
                 "normalization": None,

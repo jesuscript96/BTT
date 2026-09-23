@@ -115,6 +115,10 @@ export interface Strategy {
   apply_day?: any;
   entry_logic?: any;
   exit_logic?: any;
+  // Etiquetas de organización (2026-09-23): metadato que devuelve ya
+  // /data/strategies. Los derivados (premarket/rth/…) se calculan con
+  // lib/strategyTags a partir de `definition`.
+  tags?: string[];
 }
 
 export interface TradeRecord {

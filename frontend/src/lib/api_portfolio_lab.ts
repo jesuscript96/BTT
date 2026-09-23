@@ -38,6 +38,9 @@ export interface PortfolioStrategy {
   created_at: string | null;
   updated_at: string | null;
   definition: Record<string, unknown>;
+  /** Etiquetas de organización (metadato; los derivados se calculan con
+   *  lib/strategyTags a partir de `definition`). */
+  tags: string[];
   run: PortfolioRunMeta | null;
   buckets: Bucket[];
   normalization: PortfolioNormalization | null;

@@ -214,6 +214,16 @@ export function renameStrategy(id: string, name: string): Promise<Strategy> {
   });
 }
 
+/** Sustituye las etiquetas de organización de una estrategia (metadato puro,
+ *  no toca la definicion). Sustituye la lista completa: se manda el estado
+ *  final. Usado desde el selector del Backtester y el Baul de Portfolio. */
+export function setStrategyTags(id: string, tags: string[]): Promise<Strategy> {
+  return apiRequest<Strategy>(`/strategies/${encodeURIComponent(id)}/tags`, {
+    method: "PATCH",
+    body: JSON.stringify({ tags }),
+  });
+}
+
 export function toggleIncubator(
   id: string,
   monitoring: boolean,

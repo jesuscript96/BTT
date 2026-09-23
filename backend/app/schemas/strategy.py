@@ -674,4 +674,9 @@ class Strategy(StrategyCreate):
     # PRD_persistir_backtests_ANTIGRAVITY — Parte C: persistent flag for the
     # "Trading Incubator" watchlist (saved strategies under monitoring).
     in_incubator: Optional[bool] = False
+    # Etiquetas de organización (2026-09-23). Solo metadato: viven en la
+    # columna `tags` de la tabla, no dentro de `definition`, y las modifica
+    # el PATCH /{id}/tags. Los tags derivados (premarket/rth/scalping/
+    # piramidación) NO están aquí: el frontend los calcula de la definición.
+    tags: Optional[List[str]] = Field(default_factory=list)
 

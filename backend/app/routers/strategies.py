@@ -8,6 +8,7 @@ from datetime import datetime
 from app.database import get_user_db_connection, get_user_db_lock
 from app.auth import get_current_user_id, scope_clause
 from app.schemas.strategy import Strategy, StrategyCreate
+from app.services.strategy_tags import parse_tags_column, sanitize_tags, tags_to_column
 
 router = APIRouter()
 
@@ -84,13 +85,16 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
         try:
             # Ownership check: without the scope filter any authenticated user
             # could overwrite another user's strategy by guessing its id (IDOR).
+            # La columna `tags` viaja aqui solo para devolverla en la respuesta:
+            # el PUT reemplaza la definicion pero NO toca las etiquetas.
             row = con.execute(
-                f"SELECT created_at FROM strategies WHERE id = ?{scope_sql}",
+                f"SELECT created_at, tags FROM strategies WHERE id = ?{scope_sql}",
                 [strategy_id, *scope_params],
             ).fetchone()
             if not row:
                 raise HTTPException(status_code=404, detail="Strategy not found")
             created_at = row[0]
+            tags_col = parse_tags_column(row[1])
             now = datetime.now()
 
             definition_json = json.dumps({
@@ -150,7 +154,8 @@ def update_strategy(strategy_id: str, strategy: StrategyCreate, background_tasks
         **strategy.model_dump(),
         id=strategy_id,
         created_at=str(created_at),
-        updated_at=now.isoformat()
+        updated_at=now.isoformat(),
+        tags=tags_col,
     )
 
 
@@ -189,7 +194,7 @@ def rename_strategy(
                 [name, now, strategy_id, *scope_params],
             )
             row = con.execute(
-                f"SELECT id, name, description, created_at, updated_at, definition, in_incubator "
+                f"SELECT id, name, description, created_at, updated_at, definition, in_incubator, tags "
                 f"FROM strategies WHERE id = ?{scope_sql}",
                 [strategy_id, *scope_params],
             ).fetchone()
@@ -210,6 +215,72 @@ def rename_strategy(
     strategy_dict["created_at"] = str(row[3]) if row[3] else None
     strategy_dict["updated_at"] = str(row[4]) if row[4] else None
     strategy_dict["in_incubator"] = bool(row[6])
+    strategy_dict["tags"] = parse_tags_column(row[7])
+    return strategy_dict
+
+
+class StrategyTagsRequest(BaseModel):
+    tags: List[str]
+
+
+@router.patch("/{strategy_id}/tags")
+def set_strategy_tags(
+    strategy_id: str,
+    body: StrategyTagsRequest,
+    background_tasks: BackgroundTasks,
+    user_id: Optional[str] = Depends(get_current_user_id),
+):
+    """Sustituye las etiquetas de organización de una estrategia guardada.
+
+    Igual que rename_strategy: existe aparte del PUT para poder etiquetar
+    desde el selector del backtester o el Baúl de Portfolio sin pedir el
+    formulario entero. Solo metadato — la definición y las corridas no se
+    tocan. Sustituye la lista completa (frontend manda el estado final).
+    """
+    try:
+        tags = sanitize_tags(body.tags)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    lock = get_user_db_lock()
+    scope_sql, scope_params = scope_clause(user_id)
+    with lock:
+        con = get_user_db_connection()
+        try:
+            row = con.execute(
+                f"SELECT id FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Strategy not found")
+            now = datetime.now()
+            con.execute(
+                f"UPDATE strategies SET tags = ?, updated_at = ? WHERE id = ?{scope_sql}",
+                [tags_to_column(tags), now, strategy_id, *scope_params],
+            )
+            row = con.execute(
+                f"SELECT id, name, description, created_at, updated_at, definition, in_incubator, tags "
+                f"FROM strategies WHERE id = ?{scope_sql}",
+                [strategy_id, *scope_params],
+            ).fetchone()
+        finally:
+            con.close()
+
+    try:
+        from app.gcs_sync import upload_user_db
+        background_tasks.add_task(upload_user_db)
+        print("[GCS] users.duckdb upload scheduled in background after strategy tags update")
+    except Exception as e:
+        print(f"[WARN] GCS upload background scheduling failed: {e}")
+
+    strategy_dict = json.loads(row[5]) if isinstance(row[5], str) else (row[5] or {})
+    strategy_dict["id"] = row[0]
+    strategy_dict["name"] = row[1]
+    strategy_dict["description"] = row[2]
+    strategy_dict["created_at"] = str(row[3]) if row[3] else None
+    strategy_dict["updated_at"] = str(row[4]) if row[4] else None
+    strategy_dict["in_incubator"] = bool(row[6])
+    strategy_dict["tags"] = parse_tags_column(row[7])
     return strategy_dict
 
 
@@ -246,7 +317,7 @@ def toggle_incubator(
                 [bool(body.monitoring), now, strategy_id, *scope_params],
             )
             row = con.execute(
-                f"SELECT id, name, description, created_at, updated_at, definition, in_incubator "
+                f"SELECT id, name, description, created_at, updated_at, definition, in_incubator, tags "
                 f"FROM strategies WHERE id = ?{scope_sql}",
                 [strategy_id, *scope_params],
             ).fetchone()
@@ -267,6 +338,7 @@ def toggle_incubator(
     strategy_dict["created_at"] = str(row[3]) if row[3] else None
     strategy_dict["updated_at"] = str(row[4]) if row[4] else None
     strategy_dict["in_incubator"] = bool(row[6])
+    strategy_dict["tags"] = parse_tags_column(row[7])
     return strategy_dict
 
 
@@ -276,7 +348,7 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
     scope_sql, scope_params = scope_clause(user_id)
     try:
         rows = con.execute(
-            f"SELECT id, name, description, created_at, updated_at, definition, in_incubator "
+            f"SELECT id, name, description, created_at, updated_at, definition, in_incubator, tags "
             f"FROM strategies WHERE 1=1{scope_sql} ORDER BY created_at DESC",
             scope_params,
         ).fetchall()
@@ -305,6 +377,7 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
             strategy_dict["created_at"] = str(row[3]) if row[3] else None
             strategy_dict["updated_at"] = str(row[4]) if row[4] else None
             strategy_dict["in_incubator"] = bool(row[6])
+            strategy_dict["tags"] = parse_tags_column(row[7])
             strategies.append(Strategy(**strategy_dict))
         except Exception as e:
             print(f"Error building Strategy: {e}")
@@ -322,7 +395,7 @@ def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_
     scope_sql, scope_params = scope_clause(user_id)
     try:
         row = con.execute(
-            f"SELECT id, name, description, created_at, updated_at, definition, in_incubator "
+            f"SELECT id, name, description, created_at, updated_at, definition, in_incubator, tags "
             f"FROM strategies WHERE id = ?{scope_sql}",
             [strategy_id, *scope_params],
         ).fetchone()
@@ -334,6 +407,7 @@ def get_strategy(strategy_id: str, user_id: Optional[str] = Depends(get_current_
             strategy_dict["created_at"] = str(row[3]) if row[3] else None
             strategy_dict["updated_at"] = str(row[4]) if row[4] else None
             strategy_dict["in_incubator"] = bool(row[6])
+            strategy_dict["tags"] = parse_tags_column(row[7])
             return strategy_dict
     finally:
         con.close()

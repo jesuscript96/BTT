@@ -186,6 +186,17 @@ def init_db():
         except Exception as e:
             print(f"[WARN] Could not add in_incubator to strategies: {e}")
 
+        # tags: etiquetas libres de organización (2026-09-23). JSON-array en
+        # VARCHAR, misma filosofía que `definition`. Solo metadato: no forma
+        # parte de la definición ni afecta a ningún backtest. Self-healing
+        # igual que in_incubator. Ver app/services/strategy_tags.py.
+        try:
+            conn.execute(
+                "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS tags VARCHAR DEFAULT '[]'"
+            )
+        except Exception as e:
+            print(f"[WARN] Could not add tags to strategies: {e}")
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS datasets (
                 id VARCHAR PRIMARY KEY,
