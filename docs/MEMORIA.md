@@ -30,6 +30,61 @@
 
 ---
 
+## 2026-09-23 (Sailor) — Integrado lo de Álvaro: TP por lote, Fase 2 de picos, etiquetas y dos fixes (sailor y staging a la par)
+
+Traído de `alvaro-rama-desarrollo` por cherry-pick selectivo, siguiendo su
+`PRD_PARA_SAILOR_TRAER_ALVARO_20260923.md` (nunca un merge de su rama entera:
+mantiene 17 ficheros del bot ausentes).
+
+| Commit suyo | Qué | Conflictos |
+|---|---|---|
+| `328bc0d` | **Fase 2 de picos y valles** al carril nativo (sigue APAGADO por defecto, `BTT_N2A_NATIVE_ENABLED=0`) | ninguno |
+| `149cacb` | Fix del dropdown `ap_session`: mostraba `ap.RTH` y el motor usa `ap.PM` | solo memoria |
+| `38fa515` | Fix del modal del calendario: **R total** del día, y la media etiquetada | solo memoria |
+| `eaa7ce1` | **TP por lote** (`lot_tp`) + su PRD | solo memoria y el PRD |
+| `9016fb1` | **Etiquetas** de estrategias (columna `tags`, `TagEditor`, filtros) | `portfolio/page.tsx` |
+
+**El conflicto de verdad, y cómo se resolvió** (Jaume: «el nuestro va por
+delante, no cojas el suyo»): su `portfolio/page.tsx` todavía llevaba la pestaña
+`PortfolioTab`, que aquí se borró el 21-sep al dejar Portfolio en dos pestañas.
+Se conservó **nuestra** estructura y solo se le añadió su `onTags={etiquetar}`.
+
+**El fallo silencioso que esto cierra.** Sin `eaa7ce1`, una estrategia con
+`lot_tp` guardado **lo ignoraba sin dar ningún error**: el bloque se caía al
+hidratar la definición. Por eso él retiró la compartida `c2a24250` y la
+definitiva `aa06` va sin `lot_tp`.
+
+**Migración obligatoria en local, ya hecha:** `ALTER TABLE strategies ADD COLUMN
+IF NOT EXISTS tags VARCHAR` sobre `backend/users.duckdb` (copia previa en
+`users.duckdb.bak-2026-09-23`, 3,7 GB; 19 estrategias intactas). Sin la columna,
+`test_strategy_api` revienta con `Binder Error: Referenced column "tags" not
+found`.
+
+**Verificación: 1.691 pasan, 32 se saltan, 2 fallan — y los 2 fallos son
+PREVIOS, no de esto:**
+- `test_filtros_metric_map`: `METRIC_MAP` apunta a 5 columnas que no existen en
+  `daily_metrics` (`vol_rel_20`, `rotacion_dia`, `shares_outstanding`,
+  `pm_vol_rel_20`, `vol_prev3_rel_20`). Vienen de `13e901af` (los filtros de
+  volumen contra el universo, del otro chat); faltan por generar en el lago.
+  **Comprobado:** ninguno de los 5 cherry-picks toca `METRIC_MAP` ni
+  `daily_metrics` (0 coincidencias), y el único cambio de `data.py` es el de las
+  etiquetas.
+- `test_prefetch_parity`: busca `indicators._ticker_daily_ohlc_cache`, que
+  tampoco existía antes del merge. El cambio de `indicators.py` de la Fase 2 es
+  **solo comentarios** (comprobado línea a línea).
+
+`npx tsc --noEmit` limpio. Y de los 1.691, **398 son de la zona sensible** (bot
+de alertas, pirámides, TP por lote, etiquetas y picos): todos verdes. Importaba
+porque `eaa7ce1` toca `strategy_engine.py` y `portfolio_sim.py`, dos de los tres
+ficheros que el bot comparte con el backtester.
+
+**Sailor y staging quedan a la par.**
+
+**Pendiente de Álvaro, no traído:** el feat completo de Scalping UI (`62fc54e`,
+renombres al vocabulario de trading); en staging solo viaja su PRD.
+
+---
+
 ## 2026-09-23 (Sailor, bot de alertas) — El cuello era la PREALERTA (97 % de un núcleo), y el bot pasa a CUATRO PROCESOS en paralelo
 
 **Resumen del día.** Por la mañana las alertas se degradaron hasta 15 s de
