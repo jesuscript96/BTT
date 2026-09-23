@@ -65,11 +65,21 @@ ET = "America/New_York"
 # hacia atras al reconectar (una vela de minuto de cada ticker vigilado sin
 # evaluar). En premercado a las 04:02 NY no hay posiciones y da igual; en la
 # apertura RTH seria la primera vela. Decision de Jaume; ajustable por .env.
-ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "5"))
-# 21-sep-2026 (Jaume): la primera vuelta a los 5 s —el corte real dura 1-2 s y
-# la conexion sobrante del socio ya no suele estar—; si nos vuelven a echar sin
-# aguantar un minuto, la siguiente espera se dobla (10, 20, 40) hasta el tope.
-# Las velas que falten se recuperan por REST al reconectar (`al_reconectar`).
+#
+# CINTURON 2 (23-sep-2026, Jaume). Sube de 5 a 15 s. El 21-sep se bajo a 5
+# porque el corte tipico duraba 1-2 s y la conexion sobrante era DEL SOCIO, que
+# ya no solia estar. El 23-sep aparecio el caso contrario: nos echan a NOSOTROS
+# por ping timeout (1011) y la conexion zombi es la NUESTRA. Volver al segundo
+# 5 nos solapa con ella, la cuenta se pasa de tope y Massive echa a otro — al
+# socio. 15 s da margen a que Massive la suelte.
+#
+# Lo que costaba esperar (que el motor no rellenaba el hueco) ya no aplica:
+# desde el 22-sep `al_reconectar` recupera por REST las velas que falten, y el
+# 23-sep funciono en los dos cortes («tras el corte no faltaba ninguna vela»).
+ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "15"))
+# Si nos vuelven a echar sin aguantar un minuto, la siguiente espera se dobla
+# (30, 60) hasta el tope. Las velas que falten se recuperan por REST al
+# reconectar (`al_reconectar`).
 ESPERA_RECONEXION_MAX = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION_MAX", "60"))
 
 
@@ -285,8 +295,17 @@ class FeedEnVivo:
         while not self._parar:
             conectado_en = None
             try:
+                # CINTURON 1 (23-sep-2026). `ping_timeout` vale por defecto lo
+                # mismo que `ping_interval` (20 s): si el bucle va tan por
+                # detras que tarda mas de 20 s en llegar al ping, Massive nos da
+                # por muertos y corta con 1011. Paso ese dia a las 14:05:32 sin
+                # que nadie tocara nada — el p90 de la ventana anterior era
+                # 30,78 s, o sea que el corte era inevitable. Con 60 s un pico
+                # puntual ya no tira la conexion, y eso importa mas de lo que
+                # parece: cada corte nuestro provoca una reconexion que puede
+                # echar a un socio de la cuenta (ver ESPERA_RECONEXION).
                 async with websockets.connect(
-                    WS_URL, ssl=_ssl_ctx(), ping_interval=20,
+                    WS_URL, ssl=_ssl_ctx(), ping_interval=20, ping_timeout=60,
                     max_size=2**22, open_timeout=30,
                 ) as ws:
                     await ws.send(json.dumps({"action": "auth", "params": key}))

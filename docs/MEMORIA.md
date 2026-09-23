@@ -30,6 +30,114 @@
 
 ---
 
+## 2026-09-23 (Sailor, bot de alertas) — El cuello era la PREALERTA (97 % de un núcleo), y el bot pasa a CUATRO PROCESOS en paralelo
+
+**Resumen del día.** Por la mañana las alertas se degradaron hasta 15 s de
+mediana y Massive nos cortó la conexión dos veces. La causa no era el radar
+(arreglado ayer) ni Massive: era la prealerta evaluándose **con cada print**
+dentro del hilo que lee el socket. Un parche de tres líneas lo arregló en
+caliente, y por la tarde, con el dato ya medido, se rehízo el bot en cuatro
+procesos para que no pueda volver a pasar.
+
+**El reloj del PC iba 2,53 s adelantado.** Medido contra `time.windows.com`.
+Todas las métricas de latencia salían infladas 2,5 s, incluidas las de las
+primeras horas de hoy. Corregido con `w32tm /resync /force` a las 10:29 (el
+comando dice «no había información de hora disponible» y entra igual). **Ojo
+retroactivo:** no se sabe desde cuándo derivaba, así que las cifras del 22-sep
+pueden estar infladas también.
+
+**Lo que frenaba de verdad: la ventana de prealertas 44-59.** Sacado de la
+grabación segundo a segundo: la latencia era de **2,07 s clavados** en los
+segundos :08 a :42 de cada minuto, empezaba a subir **exactamente en el :43-44**
+(`SEGUNDO_DECISION = 44`) hasta 12-26 s, y luego bajaba 1 s por segundo hasta
+recuperarse en el :08 siguiente. Esa forma de sierra es una **cola drenándose**,
+no un parón: el «mayor rato sin leer del socket» nunca pasó de 0,9 s. Con 300
+prints/s y una llamada a `evaluar_parcial` por print, son ~3.600 evaluaciones
+por minuto concentradas en 16 segundos. El bot llegó al **97 % de su único
+núcleo mientras la máquina entera marcaba 3 %** (19 núcleos parados: en Python
+un proceso usa un núcleo, hagas los hilos que hagas).
+
+**Y por eso se cayó la conexión.** El `ping` de Massive (cada 20 s) lo contesta
+el mismo bucle que lee. Con el p90 en 30,78 s no llegaba a tiempo → `1011
+keepalive ping timeout` a las 14:05:32, **sin que nadie tocara nada**. Antes
+otro a las 10:42:26, ese sí junto al trasiego de estrategias de Jaume. Importa
+más de lo que parece: cada corte nuestro provoca una reconexión a los 5 s que
+puede solaparse con la conexión zombi, pasar del tope de la cuenta y **hacer
+que Massive eche al socio** — que es lo que le pasó.
+
+**El parche (tres líneas): una evaluación por segundo y ticker.** El print se
+aplica igual, la vela a medias es idéntica; solo se deja de repetir el cálculo.
+Probado en vivo a las 15:40 con **380 prints/s (más que el peor momento de la
+mañana)**: CPU del 97 % al **7,7 %**, mediana de la alerta de 15,36 s a
+**2,03 s**, p90 de 30,78 a 2,26 s, prints descartados por tardíos de 22.594 a
+**0**, margen de la prealerta de −2,6 s a **+12,1 s**.
+
+**Los dos cinturones** (`bot_alerts_feed.py`): `ping_timeout=60` (valía lo mismo
+que `ping_interval`, 20 s) y `ESPERA_RECONEXION` de 5 → **15 s**. Los 5 s se
+pusieron el 21-sep cuando la zombi era la del socio; hoy la zombi es la nuestra
+y volver al segundo 5 es justo lo que le cuesta la conexión a él. Lo que costaba
+esperar ya no aplica: `al_reconectar` recupera por REST desde el 22-sep.
+
+**La arquitectura nueva, decisión de Jaume («de cara a automatizar voy a
+necesitar paralelizar todo»):**
+
+```
+Massive ──(1 conexión)──▶ LECTOR ──┬──▶ RADAR      velas de todo el mercado
+                          (bot.py) ├──▶ ALERTA     velas de minuto
+                                   ├──▶ PREALERTA  prints y agregados
+                                   └──  VIGILANTE  levanta al que se caiga
+```
+
+La condición que lo hace funcionar: **el lector no calcula nada**. Coge el
+mensaje, mira el prefijo y lo empuja por su tubería. Su coste es diminuto y
+constante, así que no crece con los tickers ni con las estrategias. Sigue
+habiendo **una sola conexión a Massive**: las tuberías son locales.
+
+**Probado en producción 4 horas con el mercado abierto (16:21 → 20:22), 48
+ventanas:** mediana de las medianas **2,28 s**, peor mediana 2,64 s, p90 típico
+2,44 s, peor p90 de todo el día 3,66 s, 45 de 48 ventanas por debajo de 2,5 s.
+Mayor rato sin leer el socket: mediana 0,48 s, peor 1,33 s. 1.196.326 prints →
+35.855 evaluaciones (**1 de cada 33**). Cero cortes, cero `1008`, cero `1011`,
+y el vigilante no tuvo que levantar a nadie. Las 8 alertas salieron en el
+**segundo 1-2**. CPU: **8,3 % repartido en 4 núcleos**; RAM 682 MB (antes 330).
+
+**Honestamente: la arquitectura no es más rápida que el parche solo** (2,28 s
+frente a 2,03-2,15 s, la misma cosa dentro del ruido; esos ~2 s son el suelo de
+Massive). Lo que gana es **margen** —ya no hay nada caro en el bucle que lee, y
+la línea `[TIEMPOS]` ha desaparecido del log, que es la señal— y es la base
+para el bot automático.
+
+**Dos fallos míos, de los que no dan error, cazados por los tests y por mirar el
+log en vivo:**
+1. Mandaba **un mensaje por print** en vez de en lote. El test lo destapó: de
+   800 prints llegaban 21 y el resto los tiraba la cola acotada — la vela a
+   medias habría salido falsa. Es la trampa nº 1 que yo mismo había escrito en
+   el módulo base.
+2. La recuperación tras un corte recorría `runner.tickers`, que en el diseño
+   nuevo está vacío (el motor vive en el hijo): **no habría recuperado ninguna
+   vela**.
+3. Y uno cosmético visto en vivo: el hijo de prealertas escribía las mismas
+   líneas que el de alertas en el log (dos `[BOT] X hidratado`). Comprobado que
+   **no llegó ni a Telegram ni al cuadro de mandos**; silenciado su logger.
+
+**También de hoy:** la página de Portfolio daba 404 por caché rancia de
+turbopack (el chunk compilado era del 22-ago con el fuente del 21-sep);
+arreglado borrando `.next/dev` y reiniciando el front. Y la retención de
+grabaciones sube de 30 a **60 días** (35 ficheros de 16 sesiones = 53 MB).
+
+**Lección de método, la segunda vez esta semana:** Jaume me paró dos veces
+(«te estás rallando muchísimo», «las alertas me están llegando bien») y las dos
+tenía razón: estaba mirando la métrica agregada en vez de las alertas reales,
+que salían en el segundo 1-4. Mirar el agregado dice que hay un problema; mirar
+lo que el usuario recibe dice si importa.
+
+**Pendiente para mañana:** probarlo en premercado desde cero (tickers entrando y
+alertas de ENTRADA saltando en vivo, hoy solo hubo pirámides y salidas);
+confirmar con el socio la hora exacta de sus cortes para cerrar lo del `1008`
+encadenado; decidir si la ADMISIÓN de tickers baja de 30 s.
+
+---
+
 ## 2026-09-22 (Sailor, bot de alertas) — El radar a un proceso aparte, las alertas vuelven a la vela OFICIAL, y tres diagnósticos míos que eran falsos (`51acbc4`, en sailor Y staging)
 
 **Resumen honesto del día:** el trabajo del 21-sep (velas propias montadas con

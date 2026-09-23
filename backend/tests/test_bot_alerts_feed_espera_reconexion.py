@@ -51,10 +51,18 @@ def test_espera_configurada_antes_de_cada_reconexion(monkeypatch, espera_env):
     assert esperas[1] == min(espera_env * 2, feed_mod.ESPERA_RECONEXION_MAX), "sin aguantar un minuto, se dobla hasta el tope (no se martillea)"
 
 
-def test_por_defecto_cinco_segundos_y_tope_de_un_minuto():
-    # 21-sep: 5 s la primera vez (el corte real dura 1-2 s), doblando hasta 60
-    # si nos vuelven a echar sin aguantar un minuto.
-    assert feed_mod.ESPERA_RECONEXION == 5.0
+def test_por_defecto_quince_segundos_y_tope_de_un_minuto():
+    """23-sep-2026: de 5 a 15 s, y el ping aguanta 60 s.
+
+    El 21-sep se bajo a 5 s porque el corte tipico duraba 1-2 s y la conexion
+    sobrante era la DEL SOCIO, que ya no solia estar. El 23-sep aparecio el
+    caso contrario: a las 14:05:32 Massive nos echo a NOSOTROS por ping
+    timeout (1011) estando el bot saturado, y entonces la conexion zombi es la
+    nuestra. Volver a los 5 s se solapa con ella, la cuenta se pasa del tope y
+    Massive echa a otro — al socio. Las velas del hueco ya no se pierden:
+    `al_reconectar` las recupera por REST desde el 22-sep.
+    """
+    assert feed_mod.ESPERA_RECONEXION == 15.0
     assert feed_mod.ESPERA_RECONEXION_MAX == 60.0
 
 
