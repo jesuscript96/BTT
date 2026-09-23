@@ -6417,3 +6417,12 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 5. Integración a staging: 148+ commits acumulados, porta-verja de TRABAJO 18-09·4.
 
 **Código tocado en el día (resumen):** fixes calendario+dropdown (frontend), campaña y comparativas (solo datos/scripts efímeros), PRD v1/v2, feature completa del TP por lote (4 ficheros backend + 4 frontend + tests). Suite: 1148 → **1181 passed**. Rama pusheada a `eaa7ce1` + este reporte.
+
+### [COMPARTIDA · 2026-09-23 · 1] Para JAIME (por staging): «B200 · Sobri Escalera stop5 sin parciales» en estrategias_compartidas/alvaro/
+- **Qué es:** la ganadora de la campaña «>200R/año con parámetros redondos» del 22-sep sobre el chasis 1B Sobri 3: stop Máx. Previo +5 %, sin parciales horarios (salida actual de Álvaro: todo 08:45), fade de entrada <40, escalera de 5 adds de 1 $ cada −10 % de fade, SL de lote en pivote alto (w2, +3 %) y **TP por lote: 50 % del lote al recorrer +10 %** (feature nueva, ver abajo).
+- **Fichero:** `estrategias_compartidas/alvaro/b200-sobri-escalera-stop5-sin-parciales-342-499-38--c2a2.json` (viaja por git → te llega al integrar staging; en la UI: pestana Compartidas → «Abrir borrador»).
+- **Números (marco 22-sep: fees 5 bps + slippage 0,1 %/lado, riesgo 1 $ fijo, locates 0):** salida 09:00 sin TP → **+342R (2024 OOS) · +499R (2025) · +386R (2026 ene-jul)**, r² 0,92-0,99, DD ~1 %. Con TP 50 % a +10 % (09:00) → +474R (2025). El eje hora de salida es monótono a favor de más tarde (verificado también en el dato fresco jul→4-sep). **Aviso: locates no incluidos** (~2.000 ticker-días/año shorteados).
+- **⚠️ IMPORTANTE para probarla:** lleva bloque `lot_tp` en la pirámide — la feature «TP por lote» del PRD 2026-09-22, implementada en `alvaro-rama-desarrollo` (`eaa7ce1`, TRABAJO 22-09·5). **En una rama sin ese código el bloque viaja pero se ignora en silencio** (la pirámide es dict opaco): la estrategia corre SIN sus TPs y sin ningún aviso. Para verla entera, con rama que incluya `eaa7ce1`.
+- **Detalle completo de la campaña y la feature:** TRABAJO 22-09·2 (campaña + comparativas con Modelización Sobri 3) y TRABAJO 22-09·5 (implementación del TP por lote, 24 tests, suite 1181 passed).
+- **Código tocado:** NINGUNO (datos: PUT de descripción + re-compartición por API; este fichero compartido y esta memoria).
+- **Estado:** compartida; a la espera de que la integre quien toque staging (porta-verja de TRABAJO 18-09·4).
