@@ -1,4 +1,4 @@
-# Preguntas para el bróker (Sage) y el manual del API de DAS · 2026-09-22
+# Preguntas para el bróker (Sage) y el manual del API de DAS · 2026-09-23
 
 Listado limpio para el día que pidamos el PDF del API. Referencias entre paréntesis: pregunta del banco o punto del apartado R.
 
@@ -19,7 +19,13 @@ Listado limpio para el día que pidamos el PDF del API. Referencias entre parén
 5. **ES:** ¿Existe una cuenta demo o de simulación con el mismo API? ¿Cómo se configura y qué diferencias tiene con la real (fills, locates, datos)?  
    **EN:** Is there a demo or simulation account with the same API? How is it set up, and how does it differ from the live account (fills, locates, market data)?  *(O1, R-12)*
 
-6. **ES:** ¿Qué NO se puede hacer por el API (transferencias, cambios de cuenta, etc.)?  
+6. **ES:** La certificación del API: ¿qué hay que entregar y cuánto tarda? ¿Se exige también para la cuenta demo? ¿La facturación empieza al pedir la activación o al aprobar? ¿Qué nivel (símbolos y órdenes por día) recomiendan para un bot con hasta 50 símbolos y unas 200 órdenes al día?  
+   **EN:** API certification: what must we submit and how long does it take? Is it also required for the demo account? Does billing start when we request activation or when approved? Which tier (symbols and daily orders) do you recommend for a bot with up to 50 symbols and about 200 orders per day?  *(KB)*
+
+7. **ES:** Con 2FA activado, ¿puede el API iniciar sesión automáticamente? Si no, ¿recomiendan dejar 2FA desactivado en la cuenta del bot?  
+   **EN:** With 2FA enabled, can the API log in automatically? If not, do you recommend leaving 2FA disabled on the bot's account?  *(KB)*
+
+8. **ES:** ¿Qué NO se puede hacer por el API (transferencias, cambios de cuenta, etc.)?  
    **EN:** What can NOT be done through the API (transfers, account changes, etc.)?  *(Q6)*
 
 ## 2. Órdenes / 2. Orders
@@ -54,7 +60,16 @@ Listado limpio para el día que pidamos el PDF del API. Referencias entre parén
 10. **ES:** La orden PEG MID (pegada al punto medio) del manual: ¿qué rutas la admiten? ¿Funciona en premercado? ¿Cobra el mismo rebate que una orden límite que descansa en el libro, o tiene una tarifa distinta? ¿Admite precio límite y Display=0?  
    **EN:** The PEG MID order (pegged to the midpoint) in the manual: which routes support it? Does it work in pre-market? Does it earn the same rebate as a resting limit order, or is it priced differently? Does it accept a limit price and Display=0?  *(R-21)*
 
-11. **ES:** Precios por debajo de 1 $: ¿cuántos decimales admite el límite y cómo se redondea? ¿Hay tamaño máximo de orden y cómo se parte?  
+11. **ES:** La plataforma tiene órdenes OCO, Trigger Orders (WithTrigger) y Stop Range. ¿Están disponibles por el API? ¿Un Trigger Order dispara con una ejecución parcial de la orden principal o solo cuando está completa?  
+   **EN:** The platform has OCO orders, Trigger Orders (WithTrigger) and Stop Range. Are they available through the API? Does a Trigger Order fire on a partial fill of the primary order or only when it is fully executed?  *(KB)*
+
+12. **ES:** Los ajustes de la plataforma que abren ventanas de confirmación (Send Order Confirm, Same Order in 10 seconds, Price Check, aviso de stop demasiado lejos, Fast Stop Limit Order): ¿afectan a las órdenes enviadas por el API? ¿Cómo dejarlos desactivados en el perfil del bot?  
+   **EN:** Platform settings that open confirmation pop-ups (Send Order Confirm, Same Order in 10 seconds, Price Check, stop too far warning, Fast Stop Limit Order): do they affect orders sent through the API? How do we keep them disabled in the bot's profile?  *(KB)*
+
+13. **ES:** ¿Dos órdenes stop de compra vivas sobre la misma posición corta retienen buying power cada una? ¿Se valora la orden al precio límite? ¿Qué tope de órdenes abiertas por símbolo y lado tiene nuestra cuenta?  
+   **EN:** Do two live buy-stop orders on the same short position each reserve buying power? Is the order valued at its limit price? What is our account's limit on open orders per symbol and side?  *(KB)*
+
+14. **ES:** Precios por debajo de 1 $: ¿cuántos decimales admite el límite y cómo se redondea? ¿Hay tamaño máximo de orden y cómo se parte?  
    **EN:** Prices below $1: how many decimals does a limit price accept and how is it rounded? Is there a maximum order size, and how should it be split?  *(B9, B10, R-6)*
 
 ## 3. Stops / 3. Stops
@@ -128,7 +143,13 @@ Listado limpio para el día que pidamos el PDF del API. Referencias entre parén
 4. **ES:** Llamadas de margen y buy-in forzoso (obligación de cubrir un corto): ¿cómo se comunican y con qué plazo? ¿Se ven por el API?  
    **EN:** Margin calls and forced buy-ins (being forced to cover a short): how are they communicated and with what notice? Are they visible through the API?  *(I9, G8)*
 
-5. **ES:** Regla PDT (pattern day trader) con cuenta por debajo de 25.000 $: ¿cómo la aplican?  
+5. **ES:** Controles de riesgo de la cuenta (Account Risk Params): ¿cuáles están activos en nuestra cuenta (MaxLoss, Max Unreal, Position Unreal Loss, Max Ord Cap, Max Pos Val, Symbols/Route Control, Max Total Locate Fee, horario)? ¿Podemos verlos por el API? Pedimos activar «Always allow unwind positions» para que un bloqueo por pérdida nunca impida cerrar un corto.  
+   **EN:** Account risk controls (Account Risk Params): which ones are active on our account (MaxLoss, Max Unreal, Position Unreal Loss, Max Ord Cap, Max Pos Val, Symbols/Route Control, Max Total Locate Fee, trading hours)? Can we read them through the API? We ask you to enable "Always allow unwind positions" so that a loss-based block can never prevent us from covering a short.  *(KB)*
+
+6. **ES:** ¿Tiene nuestra cuenta activado algún cierre automático del bróker (Auto Stop, Unwind all SHORT at 3:59 PM, Total Loss)? ¿Con qué umbrales y aviso?  
+   **EN:** Does our account have any broker-side automatic liquidation enabled (Auto Stop, Unwind all SHORT at 3:59 PM, Total Loss)? With which thresholds and warning?  *(KB)*
+
+7. **ES:** Regla PDT (pattern day trader) con cuenta por debajo de 25.000 $: ¿cómo la aplican?  
    **EN:** PDT (pattern day trader) rule with an account below $25,000: how do you apply it?  *(R-16)*
 
 ## 7. Halts largos y costes / 7. Long halts and costs
