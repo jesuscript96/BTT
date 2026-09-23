@@ -1,12 +1,15 @@
 "use client";
 
 // Pagina de Portfolio (laboratorio local, gated por
-// NEXT_PUBLIC_PORTFOLIO_ENABLED): gestion de la union de estrategias, su
-// escalado y reparto de pesos, y su monitorizacion.
+// NEXT_PUBLIC_PORTFOLIO_ENABLED).
 //
-// Tres pestañas: Baul (baul generico + portfolio + incubadora), Portfolio (la
-// imagen general y, en fase 2, los modelos de escalado) y Monitorizacion
-// (fase 3). Reemplaza a la antigua pagina /database.
+// Dos pestañas (21-sep-2026, Jaume: «limpiar la pagina y dejar solo el Baul y
+// el crudo, que pasa a llamarse Analisis de portfolio»): «Baul» (el baul de
+// estrategias: cuadros, curvas, detalle, renombrar, borrar, orden manual) y
+// «Analisis de portfolio» (la cartera en cinco pasos, antes «En crudo»). Las antiguas
+// Portfolio (imagen general, modelos de escalado y pesos, comparativa) y
+// Monitorizacion (control en tiempo real) se borraron ese dia: lo que valia
+// de ellas vive en el crudo (calendario, Monte Carlo, escalado, cuenta real).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Briefcase } from "lucide-react";
@@ -14,9 +17,7 @@ import { color, font } from "@/components/ui/tokens";
 import { ErrorBox } from "@/components/robustez/shared";
 import { SubTabs } from "@/components/robustez/help";
 import { BaulTab } from "@/components/portfolio/BaulTab";
-import { PortfolioTab } from "@/components/portfolio/PortfolioTab";
-import { MonitorTab } from "@/components/portfolio/MonitorTab";
-import { RecentRunsTab } from "@/components/portfolio/RecentRunsTab";
+import { CrudoTab } from "@/components/portfolio/crudo/CrudoTab";
 import {
   deletePortfolioStrategy,
   listPortfolioStrategies,
@@ -27,7 +28,7 @@ import {
 import { renameStrategy, setStrategyTags } from "@/lib/api";
 import { aplicarOrden, guardarOrden, leerOrden, moverEnOrden } from "@/lib/ordenEstrategias";
 
-type Tab = "baul" | "portfolio" | "monitor" | "runs";
+type Tab = "baul" | "analisis";
 
 export default function PortfolioPage() {
   const [strategiesRaw, setStrategies] = useState<PortfolioStrategy[]>([]);
@@ -148,9 +149,8 @@ export default function PortfolioPage() {
         </h1>
       </div>
       <p style={{ fontSize: 12.5, fontFamily: font.sans, color: color.textMuted, margin: "0 0 22px", maxWidth: 760, lineHeight: 1.6 }}>
-        Une varias estrategias y estúdialas como una sola cartera: cómo se comportan juntas, cuánto se
-        solapan, qué drawdown esperar del conjunto, y — con los modelos de escalado — cuánto peso darle
-        a cada una en cada momento.
+        Tus estrategias, una a una (baúl) y juntas como una sola cartera (análisis de portfolio): qué
+        rinden en conjunto, qué caída esperar, a qué nivel ir y cuánto peso darle a cada una.
       </p>
 
       {error && (
@@ -200,17 +200,11 @@ export default function PortfolioPage() {
         onChange={setTab}
         options={[
           { value: "baul", label: "Baúl" },
-          { value: "portfolio", label: "Portfolio" },
-          { value: "monitor", label: "Monitorización" },
-          { value: "runs", label: "Últimas pruebas" },
+          { value: "analisis", label: "Análisis de portfolio" },
         ]}
       />
 
-      {tab === "runs" ? (
-        // Carga propia (independiente del listado de estrategias): los runs
-        // auto-guardados viven en backtest_results, no en strategies.
-        <RecentRunsTab />
-      ) : loading ? (
+      {loading ? (
         <div style={{ padding: "40px 20px", textAlign: "center", fontSize: 13, color: color.textMuted, fontFamily: font.sans, lineHeight: 1.6 }}>
           Cargando estrategias…
           {lento && (
@@ -222,10 +216,8 @@ export default function PortfolioPage() {
         </div>
       ) : tab === "baul" ? (
         <BaulTab strategies={strategies} onToggle={toggle} onDelete={borrar} onRename={renombrar} onTags={etiquetar} onMove={mover} busyId={busyId} />
-      ) : tab === "portfolio" ? (
-        <PortfolioTab strategies={strategies} onMove={mover} />
       ) : (
-        <MonitorTab />
+        <CrudoTab strategies={strategies} onMove={mover} />
       )}
     </div>
   );

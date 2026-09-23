@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import type { Dataset, Strategy } from "@/lib/api_backtester";
 import { fetchDatasets, fetchStrategies } from "@/lib/api_backtester";
-import { INDICATOR_LABELS, COMPARATOR_LABELS } from "@/components/strategy-builder/ConditionBuilder";
+import { COMPARATOR_LABELS, etiquetaCorta } from "@/components/strategy-builder/ConditionBuilder";
 import InfoTooltip from "@/components/backtester/InfoTooltip";
 import { RANGOS_PRECIO_EV, etiquetaRango, rangosDesdeCasillas } from "@/lib/evRangos";
 
@@ -60,6 +60,10 @@ export interface BacktestPanelParams {
   halts_mode?: "primero" | "n";
   halts_n?: number;
   halts_slippage_pct?: number;
+  // Criterios de margen y buying power (Jaume 2026-09-19). Ver backend/app/services/margen.py.
+  margin_enabled?: boolean;
+  margin_broker?: string;
+  margin_capacity_pct?: number;
   monthly_expenses: number;
   look_ahead_prevention: boolean;
   is_percent: number;
@@ -105,6 +109,9 @@ interface BacktestPanelProps {
     halts_mode?: "primero" | "n";
     halts_n?: number;
     halts_slippage_pct?: number;
+    margin_enabled?: boolean;
+    margin_broker?: string;
+    margin_capacity_pct?: number;
     look_ahead_prevention?: boolean;
     risk_type?: string;
     size_by_sl?: boolean;
@@ -139,21 +146,21 @@ function formatConditionGroup(group: any): string {
       const tfStr = c.timeframe ? `[${c.timeframe}] ` : '';
       if (c.type === 'indicator_comparison') {
         const sourceName = c.source?.name || "";
-        const sourceStr = `${INDICATOR_LABELS[sourceName] || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
+        const sourceStr = `${etiquetaCorta(c.source) || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator || "";
         let targetStr = '';
         if (typeof c.target === 'number') {
           targetStr = String(c.target);
         } else if (c.target && typeof c.target === 'object') {
           const targetName = c.target.name || "";
-          targetStr = `${INDICATOR_LABELS[targetName] || targetName}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
+          targetStr = `${etiquetaCorta(c.target) || targetName}${c.target.offset ? `[t-${c.target.offset}]` : ''}`;
         }
         return `${tfStr}${sourceStr} ${compStr} ${targetStr}`.trim();
       } else if (c.type === 'price_level_distance') {
         const sourceName = c.source?.name || "";
-        const sourceStr = `${INDICATOR_LABELS[sourceName] || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
+        const sourceStr = `${etiquetaCorta(c.source) || sourceName}${c.source?.offset ? `[t-${c.source.offset}]` : ''}`;
         const levelName = c.level?.name || "";
-        const levelStr = `${INDICATOR_LABELS[levelName] || levelName}${c.level?.offset ? `[t-${c.level.offset}]` : ''}`;
+        const levelStr = `${etiquetaCorta(c.level) || levelName}${c.level?.offset ? `[t-${c.level.offset}]` : ''}`;
         const compStr = c.comparator === 'DISTANCE_GT' ? '>' : '<';
         return `${tfStr}Dist(${sourceStr}, ${levelStr}) ${compStr} ${c.value_pct || 0}%`.trim();
       }
@@ -500,8 +507,9 @@ export default function BacktestPanel({
   // "aleatorio" = sorteo por ticker-dia dentro de [min, max], sesgado por el
   // precio de la accion y determinista por semilla.
   const [locatesMode, setLocatesMode] = useState<"fijo" | "aleatorio">("fijo");
-  const [locatesMin, setLocatesMin] = useState(1);
-  const [locatesMax, setLocatesMax] = useState(10);
+  // 0,3-15 = la banda p10-p90 medida sobre un mes de locates reales (18-sep).
+  const [locatesMin, setLocatesMin] = useState(0.3);
+  const [locatesMax, setLocatesMax] = useState(15);
   const [locatesSeed, setLocatesSeed] = useState(1);
   const useLocatesRandom = useLocates && locatesMode === "aleatorio";
   // Puerta por EV (fase 2). Solo tiene sentido con locates aleatorios.
@@ -543,6 +551,10 @@ export default function BacktestPanel({
   const [haltsMode, setHaltsMode] = useState<"primero" | "n">("primero");
   const [haltsN, setHaltsN] = useState(2);
   const [haltsSlippage, setHaltsSlippage] = useState(5);
+  // CRITERIOS DE MARGEN Y BP (Jaume 2026-09-19). Ver backend/app/services/margen.py.
+  // Solo si esta activo se aplica; el broker lleva su tabla de exigencia.
+  const [useMargin, setUseMargin] = useState(false);
+  const [marginBroker, setMarginBroker] = useState("sagetrader");
   const [useMonthlyExpenses, setUseMonthlyExpenses] = useState(false);
   const [monthlyExpenses, setMonthlyExpenses] = useState(0);
   const lookAheadPrevention = true;
@@ -779,6 +791,8 @@ export default function BacktestPanel({
       if (savedState.haltsMode !== undefined) setHaltsMode(savedState.haltsMode);
       if (savedState.haltsN !== undefined) setHaltsN(savedState.haltsN);
       if (savedState.haltsSlippage !== undefined) setHaltsSlippage(savedState.haltsSlippage);
+      if (savedState.useMargin !== undefined) setUseMargin(savedState.useMargin);
+      if (savedState.marginBroker !== undefined) setMarginBroker(savedState.marginBroker);
       if (savedState.useMonthlyExpenses !== undefined) setUseMonthlyExpenses(savedState.useMonthlyExpenses);
       if (savedState.monthlyExpenses !== undefined) setMonthlyExpenses(savedState.monthlyExpenses);
     }
@@ -951,6 +965,10 @@ export default function BacktestPanel({
       halts_mode: haltsMode,
       halts_n: useHalts ? haltsN : 0,
       halts_slippage_pct: useHalts ? haltsSlippage : 0,
+      // Margen y BP. Apagado = el backend ni lo mira.
+      margin_enabled: useMargin,
+      margin_broker: marginBroker,
+      margin_capacity_pct: 100,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       is_percent: isPercent,
@@ -963,7 +981,7 @@ export default function BacktestPanel({
     useLocatesRandom, locatesMin, locatesMax, locatesSeed,
     useEvGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos, evGateMetric,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
-    useHalts, haltsMode, haltsN, haltsSlippage,
+    useHalts, haltsMode, haltsN, haltsSlippage, useMargin, marginBroker,
     useMonthlyExpenses, monthlyExpenses, lookAheadPrevention, isPercent,
     sizeBySl,
   ]);
@@ -1013,6 +1031,8 @@ export default function BacktestPanel({
         haltsMode,
         haltsN,
         haltsSlippage,
+        useMargin,
+        marginBroker,
         useMonthlyExpenses,
         monthlyExpenses,
       };
@@ -1027,7 +1047,7 @@ export default function BacktestPanel({
     useLocates, locatesCost, maxLocates, locatesMode, locatesMin, locatesMax, locatesSeed,
     evGate, evGateWindow, evGateBy, evGateDefault, evGateMinTrades, evGateFixedMode, evGateFixed, evGateRangos, evGateMetric,
     useBswan, bswanMode, bswanThreshold, bswanSlippage, bswanPartition, bswanMinutes,
-    useHalts, haltsMode, haltsN, haltsSlippage,
+    useHalts, haltsMode, haltsN, haltsSlippage, useMargin, marginBroker,
     useMonthlyExpenses, monthlyExpenses
   ]);
 
@@ -1107,6 +1127,10 @@ export default function BacktestPanel({
       halts_mode: haltsMode,
       halts_n: useHalts ? haltsN : 0,
       halts_slippage_pct: useHalts ? haltsSlippage : 0,
+      // Margen y BP. Apagado = el backend ni lo mira.
+      margin_enabled: useMargin,
+      margin_broker: marginBroker,
+      margin_capacity_pct: 100,
       monthly_expenses: useMonthlyExpenses ? monthlyExpenses : 0,
       look_ahead_prevention: lookAheadPrevention,
       risk_type: riskType,
@@ -2146,7 +2170,7 @@ export default function BacktestPanel({
                   <InfoTooltip
                     position="left"
                     width={320}
-                    text="En vez de un precio fijo, cada ticker y día recibe un precio de locate distinto, sorteado dentro de este rango (en dólares por paquete de 100 acciones). El sorteo NO es a ciegas: las acciones baratas caen hacia la parte baja del rango y las caras hacia la alta, porque así funcionan los brokers. Ejemplo con rango 1-10: una acción a 0,30 $ suele salir entre 2 y 4; una a 3 $ entre 4,5 y 9; una a 15 $ entre 6,5 y 10. El precio de referencia es la primera vela del día (04:00), así que no mira el futuro. Se cobra como siempre: paquetes enteros, una vez por ticker y día, sobre el máximo en corto de ese día."
+                    text="En vez de un precio fijo, cada ticker y día recibe un precio de locate distinto (en dólares por paquete de 100 acciones). El rango es «lo normal»: 9 de cada 10 locates de la corrida caen dentro, 1 de cada 20 sale más barato y 1 de cada 20 más caro (la cola cara existe: como mucho 5 veces el máximo). El sorteo NO es a ciegas: el locate crece con el precio de la acción (una de 20 $ paga unas 4 veces lo que una de 2 $), pero alrededor de eso la dispersión es enorme, porque manda lo fácil o difícil que sea prestar la acción ese día. Medido con un mes de locates reales (DAS): la banda de ese bróker es 0,3-15, y el típico es 0,9 para una acción de 0,50 $, 1,4 para una de 1 $, 2,7 para una de 3 $ y 5,6 para una de 10 $. Con 1-20 sale el doble de caro que eso. El precio de referencia es la primera vela del día (04:00), así que no mira el futuro. Se cobra como siempre: paquetes enteros, una vez por ticker y día, sobre el máximo en corto de ese día."
                     style={{ display: 'inline-flex' }}
                   />
                 </span>
@@ -2619,6 +2643,49 @@ export default function BacktestPanel({
                 </span>
                 <input type="number" step="1" min={0} value={haltsSlippage} style={inp}
                        onChange={(e) => setHaltsSlippage(Math.max(0, Number(e.target.value) || 0))} />
+              </React.Fragment>
+            );
+          }
+
+          // CRITERIOS DE MARGEN Y BP (Jaume 2026-09-19): check + broker + (?).
+          filas.push(
+            <React.Fragment key="margen">
+              <label className="flex items-center gap-2 cursor-pointer" style={{ whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={useMargin}
+                  onChange={() => setUseMargin(!useMargin)}
+                  className="w-4 h-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+                />
+                <span style={et}>
+                  Criterios Margen y BP
+                  <InfoTooltip
+                    position="left"
+                    width={380}
+                    text="Simula el margen y el buying power del bróker: cada posición abierta consume margen según su precio y su lado, y la orden que no cabe en el equity del día NO se ejecuta. Se recorren todas las entradas del día en ORDEN CRONOLÓGICO (entre todos los tickers): las que llegan tarde y ya no caben se cortan, y ese ticker no toma riesgo nuevo el resto del día; lo abierto sigue hasta su salida. Reglas de SageTrader (FAQ, sep-2026): LARGOS 25 % del valor (4:1 intradía); CORTOS a partir de 5 $, el mayor de 30 % del valor o 5 $ por acción; entre 2,50 y 5 $, el 100 % del valor; por debajo de 2,50 $, 2,50 $ POR ACCIÓN (a 0,50 $ es el 500 % del nocional: con 10.000 $ de equity no puedes tener más de 2.000 $ en corto en esa acción). Al abrir se exige el mayor de la inicial y el mantenimiento por precio, como hace DAS. La capacidad es el equity del día (compone con la cuenta). En Trades verás cuántas entradas se cortaron."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+              </label>
+              <span />
+            </React.Fragment>
+          );
+          if (useMargin) {
+            filas.push(
+              <React.Fragment key="margen-broker">
+                <span style={sub}>
+                  Bróker
+                  <InfoTooltip
+                    position="left"
+                    width={320}
+                    text="De momento solo SageTrader (reglas de su FAQ, sep-2026). Cada bróker es una tabla de exigencia por precio y lado en backend/app/services/margen.py; añadir otro es añadir su tabla."
+                    style={{ display: 'inline-flex' }}
+                  />
+                </span>
+                <select value={marginBroker} onChange={(e) => setMarginBroker(e.target.value)}
+                        style={{ ...inp, width: 'auto', minWidth: 96, textAlign: 'left', fontFamily: 'var(--color-ec-sans)', cursor: 'pointer' }}>
+                  <option value="sagetrader">SageTrader</option>
+                </select>
               </React.Fragment>
             );
           }

@@ -739,10 +739,20 @@ que los ≈ 56 $ estimados con `get_cost` (la estimación cobra por rango pedido
 que esté escrito con número en `docs/BOT_EJECUCION_REGLAS.md`.
 
 **Fase actual (desde el 12-sep): diseño de reglas.** Banco de preguntas en
-`docs/BOT_EJECUCION_PREGUNTAS.md`; se contesta por áreas y cada respuesta pasa
-al libro de reglas. Al 14-sep: área C hecha (R-C-01..11, salvo lo del PDF), F hecha
-(R-F-01..06), I hecha (R-I-01..03, sin cortacircuito diario), G3 pendiente con
-propuesta, B1 abierta a la espera del estudio P12. Siguiente: resto de B, D, H, J, K.
+`docs/BOT_EJECUCION_PREGUNTAS.md`; libro en `docs/BOT_EJECUCION_REGLAS.md`; runbook
+borrador en `docs/BOT_EJECUCION_RUNBOOK.md`. **Al 19-sep: TODAS las áreas (A-Q)
+recorridas.** Quedan 42 preguntas abiertas: 28 del PDF del bróker y 14 del REPASO
+FINAL con datos. 19-sep: apareció el manual del CMD API de DAS (rev. 2021, en el
+repo das-bridge, solo contexto, a cotejar con el oficial) → apartado 2b del libro;
+reglas de margen de Sage → apartado 2c (el capital libre es MARGEN, no nominal;
+corto máx. 1× equity, 0,5× en «alto riesgo»; autoliquidación solo en RTH).
+**SIGUIENTE (20-sep): bloque G, cisne negro y squeeze, con los datos que ya hay**
+(G1, G2, G3, G4, G6, G7, G10); luego el resto del repaso final: reponer stop si
+sigue corto, plan B de R-C-07, excedente de locates 20 % y recompra, tiempos de la
+escalera y ruta, tope de volumen, norma de OPAs, latencia J18, techo de «cerrar
+todo», modo trading de seguridad (R-I-04: >5 $, >2 M $ acumulados), fases y
+sesiones de sombra/demo/canario, cuadro de mandos, comprar SAI. Con el PDF: cotejar
+2b, las 28 [API] del apartado R, margen de Sage, y las reglas «a repreguntar».
 Datos de halts subidos a `alvaro-rama-desarrollo` (8357ff3) por petición de Jaume.
 
 | # | Pendiente | Estado |
@@ -759,3 +769,9 @@ Datos de halts subidos a `alvaro-rama-desarrollo` (8357ff3) por petición de Jau
 | P10 | Cadena de LULD como aviso de T12: los 6 T12 peligrosos (4 en sesión + INHD y TENK en after-hours) llevaban ≥4 halts de volatilidad ese día; 1 de cada 300 días con ≥5 LULD acaba en T12. Si algún día se mantienen posiciones al cierre, el after-hours entra en juego. Candidata a regla/aviso del bot cuando se diseñe el cuadro de mandos (no ampliar / vigilar con ≥5 LULD). No decidido | Apuntado |
 | P11 | **Libro de reglas** (`BOT_EJECUCION_REGLAS.md`) a partir del banco de preguntas (`BOT_EJECUCION_PREGUNTAS.md`, 200 preguntas, 37 [API]). Jaume las piensa por su cuenta y se contestan por áreas; cada respuesta → regla numerada. Las [API] se repasan con el PDF (apartado R del banco) | Empezado el 12-sep, 0 reglas |
 | P12 | **Estudio del libro en entradas normales vs no normales: HECHO el 15-sep** (0,80 $; scripts 35/36; resultados y valores recomendados en `BOT_EJECUCION_REGLAS.md` área B). Hallazgo gordo: en PM el 44 % de las entradas de 1B tienen spread > 5 % y ahí el slippage medio es −5/−9 %; con guarda de spread ≤ 5 % queda en −1 %. Pendiente: medir qué parte del PnL de 1B viene de esas entradas antes de fijar la guarda | Hecho, decisión de B1 pendiente de Jaume |
+| P18 | **Agregar vs remover en la entrada (22-sep, `42_agregar_vs_remover_entrada.py`, 349 entradas reales 1B/2B):** punto medio 2 s y luego cruzar = +0,23 %/trade sin perder señales (FIJADO en R-B-01 rama 1); «siempre agregar» del socio = +0,52 % en el 86 % pero pierde el 14 % de señales que son las mejores (bid −2,9 % mediana a los 60 s) → NO. Repetir en sombra con fills reales. | Hecho (afinar en sombra) |
+| P17 | **Dos documentos para el socio (Jaume, 21-sep):** (a) borrador preliminar de la arquitectura con reglas y preguntas, simple y corto → HECHO el 21-sep (`bot_ejecucion/arquitectura_socio_pdf.py` → Arquitectura_bot_ejecucion_borrador_2026-09-21.pdf); (b) versión FINAL cuando esté todo (PDF del bróker, API, VPS) con lo que haya cambiado. RECORDÁRSELO al cerrar la fase de código. | (a) hecho, (b) pendiente |
+| P16 | **Listado de preguntas al bróker para el día del PDF/API (Jaume, 21-sep):** cuando el repaso esté cerrado, entregarle una lista limpia y ordenada (apartado R de PREGUNTAS, hoy 19 puntos + demo + cuotas + símbolos Level 1 + feed consolidado + coste halt T12 + OCO). | Pendiente, al cerrar el repaso |
+| P15 | **PRIMERA PRUEBA en sombra (Jaume, 21-sep):** medir desde el VPS la latencia de los ticks (T/Q) de Massive; por defecto las velas se construyen desde Massive (un solo proveedor, paridad con el backtester) y DAS solo ejecuta. Si la latencia medida supera ~0,5 s, montar la doble vía (velas desde el T&S de DAS en paralelo) y comparar vela a vela hasta paridad exacta. Motivo: el canal A de Massive llega a 3,4 s; T/Q a 0,7 s; DAS ≈ 0,1-0,3 s. Regla R-A-06; preguntas R-18/R-19. | Espera API |
+| P14 | **Pregunta al bróker (Sage), RECORDÁRSELA:** coste por día de un corto atrapado en un halt T12 largo (comisión, préstamo, locate, buy-in). Está en el apartado R punto 17 de PREGUNTAS. Añadida 20-sep. | Pendiente PDF/Sage |
+| P13 | **Fogonazos por tamaño** (`40_fogonazos_por_tamano.py`, 20-sep, 251 fogonazos con libro, 1,47 $ de descarga): 0 % sin salir a 30 min; salida en la subida 96 % (10 k) → 83 % (500 k); pérdida sobre la cuenta con 10 % por posición: media 2,6-3,2 %, p90 6,2-6,7 %, máx 8,4 % (MODD). Tabla en el libro (área G) y en el informe de fogonazos v11. **Jaume la preguntará en el futuro: recordársela.** | Hecho |

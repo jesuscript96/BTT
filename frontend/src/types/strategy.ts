@@ -125,6 +125,17 @@ export enum IndicatorType {
     EDAD_PICO = "Edad del pico",
     VOLUMEN_PICO = "Volumen del pico",
     RETRACEMENT = "Retroceso (%)",
+    // VOLUMEN CONTRA EL UNIVERSO (22-sep-2026). MEDIDAS: solo contra una cifra.
+    // «RVOL universo» necesita el perfil del universo, que construye
+    // backend/scripts/perfil_volumen_universo.py; sin el vale NaN.
+    // Volumen del dia contra las ACCIONES EN CIRCULACION (no el float: ese
+    // dato no existe con historico fiable). Necesita la tabla que construye
+    // backend/scripts/acciones_circulacion_etl.py; sin ella vale NaN.
+    ROTACION = "Rotacion",
+    ROTACION_VENTANA = "Rotacion en X min",
+    RVOL_UNIVERSO = "RVOL universo",
+    MIN_DESDE_PICO_VOL = "Minutos desde el pico de volumen",
+    PENDIENTE_VOLUMEN = "Pendiente del volumen",
     ABSORPTION = "Absorption",
     WICK_RATIO = "Wick Ratio",
     ABSORPTION_WICK = "Absorption + Wick",

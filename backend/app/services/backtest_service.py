@@ -202,6 +202,11 @@ def run_backtest(
     # nada cambia. Con el, fuerza la via SECUENCIAL y pasa a `simulate` los
     # halts de cada ticker-dia ya traducidos a indices de vela.
     halts=None,
+    # Criterios de margen y buying power (2026-09-19): `ConfigMargen` de
+    # `margen.py` o None. Con None nada cambia. Con el, fuerza la via SECUENCIAL
+    # y cada dia pasa por `aplicar_margen_dia` antes de volcarse: la entrada
+    # que no cabe en el equity del dia no se ejecuta (orden cronologico).
+    margen=None,
     look_ahead_prevention: bool = True,
     day_group_iter=None,
     n_groups_hint: int = 0,
@@ -265,7 +270,7 @@ def run_backtest(
         # `locates_cost` para todos: correria con el fijo en silencio.
         and not locates_random and ev_gate is None
         # El coste de Black Swan solo lo pasa el bucle secuencial al simulador.
-        and bswan is None and halts is None
+        and bswan is None and halts is None and margen is None
     )
     if _slab_mode:
         logger.info("[SLAB] stream slab activo (BTT_SLAB_STREAM_ENABLED=1)")
@@ -542,7 +547,7 @@ def run_backtest(
     _n_workers = _bsig.get_parallel_workers()
     if (not _slab_mode) and entry_model is None and feature_collector is None \
             and not locates_random and ev_gate is None and bswan is None and halts is None \
-            and _bsig.should_parallelize(_signal_cache, _n_workers):
+            and margen is None and _bsig.should_parallelize(_signal_cache, _n_workers):
         logger.info(f"[PARALLEL] Fase 1b pipeline fetch‖signals with {_n_workers} workers (fork)")
         _ctx = {
             "strategy_def": strategy_def,
@@ -604,6 +609,12 @@ def run_backtest(
     _tope_pct = str(_tope.get("unit") or "CASH").upper() == "PCT"
     _tope_cierra = str(_tope.get("on_open_positions") or "LET_RUN").upper() == "CLOSE_ALL"
     _pend: list[dict] = []
+    # Margen y BP: el dia entero se bufferiza igual que con el cortacircuitos.
+    _registro_margen = None
+    if margen is not None:
+        from app.services.margen import RegistroMargen
+        _registro_margen = RegistroMargen(cfg=margen)
+    _diferir_dia = _tope_on or margen is not None
 
     def _emitir(e):
         """Vuelca un ticker-dia ya resuelto. Codigo identico al de siempre."""
@@ -720,6 +731,16 @@ def run_backtest(
         if not _pend:
             return
         cash_dia = _pend[0]["cash"]
+        # Margen y BP ANTES del cortacircuitos: lo que no cabe no llega a
+        # existir, y el limite de perdida se mide sobre lo que si existe.
+        if _registro_margen is not None:
+            from app.services.margen import aplicar_margen_dia
+            _registro_margen.dias.append(aplicar_margen_dia(_pend, cash_dia, margen, simulate, _pend[0]["date"]))
+        if not _tope_on:
+            for e in _pend:
+                _emitir(e)
+            _pend.clear()
+            return
         limite = cash_dia * _tope_valor / 100.0 if _tope_pct else _tope_valor
 
         cierres = []
@@ -753,7 +774,8 @@ def run_backtest(
                 if not afectado:
                     continue
                 kw = dict(e["sim_kwargs"])
-                kw["no_new_risk_after"] = T
+                _prev = int(kw.get("no_new_risk_after") or 0)
+                kw["no_new_risk_after"] = min(_prev, T) if _prev else T
                 kw["force_close_at"] = T if _tope_cierra else 0
                 try:
                     e["sim_result"] = simulate(**kw)
@@ -1291,10 +1313,10 @@ def run_backtest(
             "cash": compounding_cash,
             "sorteo": _sorteo_dia,
         }
-        if _tope_on:
-            # Con el cortacircuitos activo no se puede emitir todavia: el corte
-            # depende del PnL de TODOS los tickers de la sesion, y aqui solo se
-            # ha visto uno. Se vuelca en _flush_dia, al cambiar de dia.
+        if _diferir_dia:
+            # Con el cortacircuitos (o el margen) activo no se puede emitir
+            # todavia: el corte depende de TODOS los tickers de la sesion, y
+            # aqui solo se ha visto uno. Se vuelca en _flush_dia, al cambiar de dia.
             _pend.append(_entrada)
         else:
             _emitir(_entrada)
@@ -1384,6 +1406,8 @@ def run_backtest(
         **({"bswan": {"enabled": True, **bswan.resumen(), **_bs_stats,
                       "penalizacion_usd": round(float(_bs_stats["penalizacion_usd"]), 2)}}
            if bswan is not None else {}),
+        # Margen y buying power. Solo con el bloque activo.
+        **({"margen": _registro_margen.resumen()} if _registro_margen is not None else {}),
         # Resumen del coste de halts. Solo con el coste activo.
         **({"halts": {"enabled": True, **halts[0].resumen(), **_ht_stats,
                       "penalizacion_usd": round(float(_ht_stats["penalizacion_usd"]), 2),

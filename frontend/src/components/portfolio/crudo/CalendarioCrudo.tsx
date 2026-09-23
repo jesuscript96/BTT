@@ -19,6 +19,7 @@ import { color, font, hairline } from "@/components/ui/tokens";
 import { Help } from "@/components/robustez/help";
 import type { RawOut } from "@/lib/api_portfolio_lab";
 import { Toggle, colorSerie, etiqueta, n, tdNum, tdTxt, thL, thR } from "./hoja";
+import { EquityMes, equityPorMes } from "../PnlCalendar";
 
 type Modo = "profits" | "gastos" | "net";
 type Unidad = "dinero" | "r";
@@ -137,6 +138,9 @@ export function CalendarioCrudo({ out, names }: { out: RawOut; names: string[] }
     for (const d of out.calendar) set.add(d.slice(0, 7));
     return Array.from(set).sort();
   }, [out.calendar]);
+  // Equity al cierre de cada mes y % sobre el mes anterior (Jaume, 20-sep):
+  // la curva del portfolio ya lleva todo (comisiones, locates, gastos fijos).
+  const eqMeses = useMemo(() => equityPorMes(out.calendar, out.equity, out.config.capital), [out.calendar, out.equity, out.config.capital]);
 
   const tono = (v: number, tiene: boolean) => {
     if (!tiene) return color.textMuted;
@@ -210,11 +214,14 @@ export function CalendarioCrudo({ out, names }: { out: RawOut; names: string[] }
             <div key={mesStr} style={{ border: `1px solid ${color.border}`, background: color.bgSurface, padding: "10px 10px 8px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", paddingBottom: 6, marginBottom: 6, borderBottom: hairline }}>
                 <span style={{ ...etiqueta, color: color.textHigh, fontSize: 10 }}>{nombreMes}</span>
-                <span style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
-                  {mesTr > 0 && <span style={{ fontSize: 10, fontFamily: font.sans, color: color.textMuted }}>{mesTr} trades</span>}
-                  {mesTr > 0 && (
-                    <span style={{ fontSize: 11.5, fontFamily: font.mono, color: tono(mesV, true) }}>{fmtValor(mesV, modo, unidad)}</span>
-                  )}
+                <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                  <span style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+                    {mesTr > 0 && <span style={{ fontSize: 10, fontFamily: font.sans, color: color.textMuted }}>{mesTr} trades</span>}
+                    {mesTr > 0 && (
+                      <span style={{ fontSize: 11.5, fontFamily: font.mono, color: tono(mesV, true) }}>{fmtValor(mesV, modo, unidad)}</span>
+                    )}
+                  </span>
+                  <EquityMes eq={eqMeses.get(mesStr)} />
                 </span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr) 1px 1.1fr", gap: 3, marginBottom: 3 }}>

@@ -211,26 +211,17 @@ async def lifespan(app: FastAPI):
                 "proceso se aborta en vez de servir sin datos."
             ) from e
 
-    # Live screener (internal, Admin-gated): warm the in-RAM state and connect
-    # to Massive's WS in the background. Best-effort — a WS/account/network
-    # hiccup must never block or slow startup.
-    try:
-        import asyncio as _asyncio
-        from app.services.live_screener_service import live_screener_service
-        app.state.live_screener_task = _asyncio.create_task(live_screener_service.start())
-    except Exception as e:
-        print(f"[WARN] Live screener service failed to start: {e}")
+    # El screener en vivo heredado (live_screener_service: un websocket a
+    # Massive con A.* de todo el mercado) se BORRO el 18-sep-2026 por decision
+    # de Jaume: llevaba apagado desde el 10-sep, nadie lo usaba (la pagina se
+    # retiro el 1-sep, el bot tiene su propio bot_alerts_mercado) y era una
+    # conexion mas a una cuenta con tope de conexiones simultaneas.
 
     start_scheduler()
     yield
     # Shutdown
     print("Shutdown: Cleaning up...")
     
-    try:
-        from app.services.live_screener_service import live_screener_service
-        await live_screener_service.stop()
-    except Exception:
-        pass
 
     # Upload user DB back to GCS on graceful shutdown, but only if this
     # instance actually took writes: a duplicate/stale instance shutting down
@@ -285,13 +276,13 @@ async def add_cors_headers_to_all_responses(request, call_next):
 
 from app.routers import data, strategies, backtest, query, market, strategy_search, ticker_analysis
 from app.routers import optimization, users, edgie
-from app.routers import screener
 from app.routers import assistant
 from app.routers import feedback
 from app.routers import portfolio
 from app.routers import lake_update
 from app.routers import robustness
 from app.routers import portfolio_lab
+from app.routers import bot_alerts
 from app.routers import local_control
 from app.routers import edge
 from app.routers import locates
@@ -314,7 +305,6 @@ app.include_router(strategy_search.router, prefix="/api/strategy-search", tags=[
 app.include_router(ticker_analysis.router)
 app.include_router(market.router)
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
-app.include_router(screener.router)
 from app.routers import news
 app.include_router(news.router, prefix="/api", tags=["News"])
 # Stocktwits social integration (Radar de Momentum, Sentiment Gauge, Why Trending,
@@ -345,6 +335,9 @@ app.include_router(robustness.router, prefix="/api/robustness", tags=["Robustnes
 # Portfolio (laboratorio local): gated por PORTFOLIO_LAB_ENABLED (apagado por
 # defecto, ver el router). No confundir con /api/portfolio, que es de produccion.
 app.include_router(portfolio_lab.router, prefix="/api/portfolio-lab", tags=["Portfolio Lab"])
+# Cuadro de mandos del bot de alertas: gated por BOT_ALERTS_ENABLED (apagado por
+# defecto). Solo configuracion; el bot vive en su propio proceso y consulta aqui.
+app.include_router(bot_alerts.router, prefix="/api/bot-alerts", tags=["Bot Alertas"])
 # Apagado limpio del entorno local desde la UI. Gated por LOCAL_SHUTDOWN_ENABLED
 # (default OFF): en prod el status dice que no esta disponible, el boton no se
 # pinta y el POST responde 503.

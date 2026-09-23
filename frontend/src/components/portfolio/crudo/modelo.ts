@@ -1,23 +1,39 @@
 // Estado y calculos puros de la vista En crudo (16-sep): lo que no pinta
 // nada vive aqui para que cada paso sea solo su pantalla.
 
-import type { RawExec, RawLocatesIn, RawScalingIn } from "@/lib/api_portfolio_lab";
+import type { RawBrakeIn, RawExec, RawLocatesIn, RawRotationIn } from "@/lib/api_portfolio_lab";
 import { n } from "./hoja";
 
-/** Bloque Portfolio del paso 1. */
+/** Bloque Portfolio del paso 1 (v3, 20-sep): las estrategias entran
+ *  normalizadas y aqui se pone lo de la cuenta: el % por trade de cada una (el
+ *  mismo para todas o uno por estrategia), comisiones para todas, capital,
+ *  gastos fijos, margen y periodo. Los locates van en `LocCfg`. */
 export interface Cfg {
   /** 0 = la suma de los capitales de las corridas marcadas. */
   capital: number;
   expenses: number;
-  cap: number;
-  capUnit: "usd" | "pct";
-  /** Solo una estrategia abierta a la vez por accion. */
-  onePerTicker: boolean;
+  /** % del capital del dia por trade: el mismo para todas o uno por estrategia (por id). */
+  pctMismo: boolean;
+  pctComun: number;
+  pctPor: Record<string, number>;
+  /** Comisiones para todas: $ por accion (los dos lados) o % del valor. */
+  fees: number;
+  feeType: "FLAT" | "PERCENT";
+  /** Criterios de margen y buying power del broker (19-sep). */
+  margin: boolean;
+  marginBroker: string;
   start: string;
   end: string;
 }
 
-export const CFG0: Cfg = { capital: 0, expenses: 0, cap: 0, capUnit: "pct", onePerTicker: false, start: "", end: "" };
+export const CFG0: Cfg = { capital: 0, expenses: 0, pctMismo: true, pctComun: 1, pctPor: {}, fees: 0, feeType: "FLAT", margin: false, marginBroker: "sagetrader", start: "", end: "" };
+
+/** El % por trade que le toca a una estrategia con la config del paso 1. */
+export function pctDe(cfg: Cfg, id: string): number {
+  if (cfg.pctMismo) return cfg.pctComun;
+  const v = cfg.pctPor[id];
+  return Number.isFinite(v) ? v : cfg.pctComun;
+}
 
 /** Locates de la CUENTA (paso 1): un broker para todas las estrategias. */
 export interface LocCfg {
@@ -69,44 +85,9 @@ export function locatesResumen(l: LocCfg): string {
   return `locates ${precio} ${l.shared ? "compartidos" : "por estrategia"}${puerta}`;
 }
 
-/** Escalado y pesos (paso 4). */
-export type EscCfg = RawScalingIn;
-
-export const ESC0: EscCfg = {
-  model: "kelly",
-  base_risk: 100,
-  pct: 1,
-  delta: 500,
-  kelly_mult: 0.5,
-  kelly_scope: "per_strategy",
-  cap_pct: 5,
-  rebalance: "M",
-  lookback_days: 90,
-  // Sin HRP ni reparto: solo Kelly manda (Jaume, 16-sep noche). Los modelos
-  // sin Kelly reparten el total a partes iguales.
-  weighting: "equal",
-  floor: 0,
-};
-
-export const KELLY_SCOPE_LABEL: Record<"per_strategy" | "global", string> = {
-  per_strategy: "Kelly de cada estrategia",
-  global: "Kelly global (capital total)",
-};
-
-export const MODELO_LABEL: Record<EscCfg["model"], string> = {
-  kelly: "Kelly",
-  percent: "% del capital (compound)",
-  fixed: "$ fijos",
-  fixed_ratio: "Fixed ratio (Ryan Jones)",
-};
-
-export const PESOS_LABEL: Record<EscCfg["weighting"], string> = {
-  hrp: "HRP (López de Prado)",
-  equal: "Iguales",
-  momentum: "Momentum",
-  ev: "Por EV",
-  dd: "Por drawdown",
-};
+/** Escalado automatico (paso 4 B): rotacion por ranking y freno por caida. */
+export const ROT0: RawRotationIn = { enabled: true, lookback_days: 126, rebalance: "M", every_days: 20, pattern: null, min_pct: 1, metric: "return" };
+export const BRAKE0: RawBrakeIn = { enabled: false, dd_pct: 10, mult: 0.5, exit_dd_pct: 5 };
 
 /** Curva propia de una serie (base + PnL diario) y su drawdown, con el pico
  *  arrancando en la base. Antes del primer dia con trades, NaN.
@@ -152,7 +133,7 @@ export function condiciones(p: Record<string, unknown>) {
     comisiones: fees === 0 ? "0" : ft === "PERCENT" ? `${n(fees * 100, 4)} %` : `${n(fees, 4)} $/acc`,
     slippage: num("slippage") === 0 ? "0" : `${n(num("slippage") * 100, 3)} %`,
     locates: random
-      ? `aleatorios ${n(num("locates_random_min"), 0)}–${n(num("locates_random_max"), 0)} (semilla ${n(num("locates_seed"), 0)})`
+      ? `aleatorios ${n(num("locates_random_min"), 2)}–${n(num("locates_random_max"), 1)} (semilla ${n(num("locates_seed"), 0)})`
       : num("locates_cost") === 0 ? "0" : `${n(num("locates_cost"), 2)} ${String(p.locate_type ?? "FLAT").toUpperCase() === "PERCENT" ? "%" : "$"}/100`,
     gastos: num("monthly_expenses") === 0 ? "0" : `${n(num("monthly_expenses"), 0)} $/mes`,
     periodo: `${String(p.start_date ?? "?").slice(0, 10)} → ${String(p.end_date ?? "?").slice(0, 10)}`,

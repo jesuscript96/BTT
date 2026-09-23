@@ -26,6 +26,8 @@ import {
   type BloqueGenes,
   type GenGenetico,
   getCatalogo,
+  PRIORIDADES,
+  type PrioridadGen,
   guardarComoEstrategia,
   listarCorridas,
   pararCorrida,
@@ -42,10 +44,11 @@ import {
 
 /* ── catalogo ────────────────────────────────────────────────────────── */
 
-// Un NIVEL opcional del catalogo (perfil de volumen, ultimo pivote): no se
-// compara con nada por si mismo, entra como destino de Bar Close / High / Low.
-// Se reconoce por la forma —sin rejilla de valores ni destinos— para no tener
-// que anyadir un campo mas a la API del backend.
+// Un NIVEL del catalogo (Prev. Bar Low, VWAP, PM High, Previous max…, y los
+// opcionales: perfil de volumen, ultimo pivote): no se compara con nada por si
+// mismo, entra como destino de Bar Close / High / Low. Se reconoce por la
+// forma —sin rejilla de valores ni destinos— para no tener que anyadir un
+// campo mas a la API del backend.
 const esNivel = (i: IndicadorCatalogo) => i.valores.length === 0 && i.objetivos.length === 0;
 
 /* ── formato ─────────────────────────────────────────────────────────── */
@@ -147,9 +150,13 @@ function Toggle<T extends string>({ value, onChange, options }: { value: T; onCh
 
 function Check({ checked, onChange, label, help }: { checked: boolean; onChange: (v: boolean) => void; label: string; help?: React.ReactNode }) {
   return (
-    <label style={{ display: "flex", alignItems: "center", gap: 7, fontFamily: font.sans, fontSize: 12, color: color.textPrimary, cursor: "pointer", padding: "3px 0" }}>
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ margin: 0 }} />
-      {label}{help && <Help title={label}>{help}</Help>}
+    // `minWidth: 0` + `overflowWrap: anywhere`: las etiquetas largas del catálogo
+    // («Triangle Ascending (pivot_window, tri_lookback, …)») se salían del
+    // cuadro en vez de partirse; un flex item no encoge por debajo de su
+    // contenido si no se le dice.
+    <label style={{ display: "flex", alignItems: "flex-start", gap: 7, fontFamily: font.sans, fontSize: 12, color: color.textPrimary, cursor: "pointer", padding: "3px 0", minWidth: 0 }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} style={{ margin: "2px 0 0", flexShrink: 0 }} />
+      <span style={{ minWidth: 0, overflowWrap: "anywhere", lineHeight: 1.35 }}>{label}{help && <span style={{ display: "inline-flex", verticalAlign: "middle", marginLeft: 4 }}><Help title={label}>{help}</Help></span>}</span>
     </label>
   );
 }
@@ -538,6 +545,15 @@ export default function GeneticoPage() {
   /** Pestaña de indicadores abierta. Con dos docenas en la lista, plana no se
    *  puede leer; por familias se marca «volumen» de un vistazo. */
   const [familia, setFamilia] = useState<string>("precio");
+  /* Parámetros fijados por indicador (21-sep-2026): {indicador: {param: valor}}.
+     Hoy solo `ap_session` de Previous max/min y % Fade. Sin entrada = el
+     defecto del catálogo («según la sesión de la corrida»). */
+  const [paramsFijos, setParamsFijos] = useState<Record<string, Record<string, string>>>({});
+  /* Prioridad por indicador (21-sep-2026). Sin entrada = «normal». Jaume vio
+     que los niveles base salían 0-1 veces por corrida: el sorteo los trata
+     como una opción más de Bar Close. «Alta» los hace pesar ×3 en cada
+     sorteo (y a Bar Close / High / Low con ellos). */
+  const [prioridades, setPrioridades] = useState<Record<string, PrioridadGen>>({});
   const [nCond, setNCond] = useState<"1" | "2" | "3">("2");
   const [stopPct, setStopPct] = useState(true);
   const [stopEstructura, setStopEstructura] = useState(true);
@@ -723,6 +739,19 @@ export default function GeneticoPage() {
       ventana_entrada: ventanaOn ? [{ from_time: ventanaDe, to_time: ventanaA }] : null,
       guardas: guardasMotor,
       catalogo: Object.entries(indicadores).filter(([, v]) => v).map(([k]) => k),
+      // Los niveles base se eligen con casilla: sin esta clave el genético
+      // metería los nueve aunque se hubieran desmarcado.
+      niveles_explicitos: true,
+      // Todos los fijables viajan SIEMPRE (con su defecto si no se tocó): así
+      // «Previous max» sigue la sesión de la corrida aunque nadie abra el
+      // desplegable. Sin la clave el genético sortearía la rejilla entera.
+      params_fijos: Object.fromEntries((catalogo?.params_fijables ?? []).flatMap((pf) =>
+        pf.indicadores.filter((nombre) => indicadores[nombre]).map((nombre) =>
+          [nombre, { ...(paramsFijos[nombre] ?? {}), [pf.param]: paramsFijos[nombre]?.[pf.param] ?? pf.opciones[0]?.value ?? "auto" }]))),
+      // Solo las que no son «normal» y de indicadores marcados: sin ninguna,
+      // el genético sortea exactamente como siempre (misma semilla, misma corrida).
+      prioridades: Object.fromEntries(Object.entries(prioridades)
+        .filter(([nombre, p]) => p !== "normal" && indicadores[nombre])),
       n_condiciones: Number(nCond),
       stops: [...(stopPct ? ["pct"] : []), ...(stopEstructura ? ["estructura"] : [])],
       tps: [...(tpPct ? ["pct"] : []), ...(tpHora ? ["hora"] : []), ...(tpTiempo ? ["tiempo"] : [])],
@@ -735,7 +764,7 @@ export default function GeneticoPage() {
         : {}),
     };
   }, [filtrosUniverso, fechaIni, fechaFin, sesgo, sesion, horaIni, horaFin, ventanaOn, ventanaDe, ventanaA,
-    catalogo, guardas, indicadores, nCond, stopPct, stopEstructura, tpPct, tpHora, tpTiempo, riesgo, fitness, minTrades,
+    catalogo, guardas, indicadores, paramsFijos, prioridades, nCond, stopPct, stopEstructura, tpPct, tpHora, tpTiempo, riesgo, fitness, minTrades,
     semilla, poblacion, generaciones, workers, paciencia, pararALas, pararALasOn,
     modo, estrategiaId, genesMarcados, agregacion, trozos]);
 
@@ -794,7 +823,9 @@ export default function GeneticoPage() {
       if (n === "Ultimo pivote" && config.stops.includes("estructura")) return false;
       return !hayPrecio;
     });
-    if (nivelesMuertos.length) problemas.push(`${nivelesMuertos.join(", ")}: es un nivel y no hay Bar Close / High Bar / Low Bar que lo use`);
+    if (nivelesMuertos.length) problemas.push(nivelesMuertos.length > 3
+      ? `${nivelesMuertos.length} niveles marcados (${nivelesMuertos.slice(0, 2).join(", ")}…) y no hay Bar Close / High Bar / Low Bar que los use`
+      : `${nivelesMuertos.join(", ")}: es un nivel y no hay Bar Close / High Bar / Low Bar que lo use`);
     if (config.stops.length === 0) problemas.push("marca algún tipo de stop");
     if (config.tps.length === 0) problemas.push("marca algún tipo de take profit");
   }
@@ -1066,19 +1097,54 @@ export default function GeneticoPage() {
                   );
                 })}
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 12 }}>
-                {(catalogo?.indicadores ?? []).filter((i) => i.familia === familia).map((i) => (
-                  <Check key={i.nombre} checked={!!indicadores[i.nombre]}
-                    onChange={(v) => setIndicadores((s) => ({ ...s, [i.nombre]: v }))}
-                    help={esNivel(i)
-                      ? <>{i.ayuda}<br /><br /><b>Es un NIVEL, no una condición.</b> Marcarlo no crea «{i.nombre} &gt; 3»: lo mete como destino de los cruces de Bar Close / High Bar / Low Bar{i.nombre === "Ultimo pivote" ? " y como nivel del stop de estructura" : ""}. Sin marcar, no aparece en ninguna receta.</>
-                      : i.ayuda}
-                    label={`${esNivel(i) ? "↳ " : ""}${i.nombre}${Object.keys(i.params).length ? ` (${Object.keys(i.params).join(", ")})` : ""}`} />
-                ))}
+              <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", columnGap: 12 }}>
+                {(catalogo?.indicadores ?? []).filter((i) => i.familia === familia).map((i) => {
+                  const fijables = (catalogo?.params_fijables ?? []).filter((pf) => pf.indicadores.includes(i.nombre));
+                  return (
+                    <div key={i.nombre} style={{ minWidth: 0 }}>
+                      <Check checked={!!indicadores[i.nombre]}
+                        onChange={(v) => setIndicadores((s) => ({ ...s, [i.nombre]: v }))}
+                        help={esNivel(i)
+                          ? <>{i.ayuda}<br /><br /><b>Es un NIVEL, no una condición.</b> Marcarlo no crea «{i.nombre} &gt; 3»: lo mete como destino de los cruces de Bar Close / High Bar / Low Bar{i.nombre === "Ultimo pivote" ? " y como nivel del stop de estructura" : ""}. Sin marcar, no aparece en ninguna receta.</>
+                          : i.ayuda}
+                        label={`${esNivel(i) ? "↳ " : ""}${i.nombre}${Object.keys(i.params).length ? ` (${Object.keys(i.params).join(", ")})` : ""}`} />
+                      {/* Parámetro FIJABLE (21-sep-2026): desde cuándo cuenta el
+                          máximo/mínimo. Por defecto sigue a la sesión de la
+                          corrida, que es lo que Jaume pidió; el desplegable
+                          permite fijarlo a mano o volver a sortearlo. */}
+                      {indicadores[i.nombre] && fijables.map((pf) => (
+                        <div key={pf.param} style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0 6px 22px", fontFamily: font.sans, fontSize: 11, color: color.textSecondary, flexWrap: "wrap", minWidth: 0 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{pf.param === "ap_session" ? "cuenta desde" : pf.param}<Help title="Desde cuándo cuenta">{"El motor calcula los indicadores sobre el día entero y recorta la sesión después, así que en una corrida RTH un «Previous max» que cuente desde las 04:00 incluye el máximo del premercado: es otro indicador. «Según la sesión de la corrida» lo alinea con lo que ve el simulador (RTH → 09:30, premarket → 04:00, horas → según la hora de inicio). «Sortear» lo deja como gen y el genético prueba las dos."}</Help></span>
+                          {/* A ancho completo en su propia línea: en la columna
+                              estrecha el texto de la opción se cortaba. */}
+                          <select style={{ ...control, height: 22, fontSize: 11, padding: "0 4px", width: "100%", flex: "1 1 100%" }}
+                            value={paramsFijos[i.nombre]?.[pf.param] ?? pf.opciones[0]?.value}
+                            onChange={(e) => setParamsFijos((s) => ({ ...s, [i.nombre]: { ...(s[i.nombre] ?? {}), [pf.param]: e.target.value } }))}>
+                            {pf.opciones.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                      ))}
+                      {/* Prioridad (21-sep-2026): cuánto pesa este nombre en el
+                          sorteo. Solo se pinta si no es «normal» o si se abre
+                          con el botón, para no llenar la lista de desplegables. */}
+                      {indicadores[i.nombre] && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "2px 0 6px 22px", fontFamily: font.sans, fontSize: 11, color: color.textSecondary, flexWrap: "wrap", minWidth: 0 }}>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>prioridad<Help title="Prioridad en el sorteo">{"Cuánto pesa este nombre cada vez que el genético sortea un indicador: al nacer una condición, al elegir el nivel contra el que compara Bar Close / High Bar / Low Bar, y al cambiar el indicador entero en una mutación. «Alta» = ×3, «baja» = ÷3. Si un NIVEL va en «alta», Bar Close / High / Low también salen más, porque son los únicos que lo usan. Con todo en «normal» la corrida es idéntica a la de siempre (misma semilla, mismos individuos). No cambia el fitness: solo cuántas veces se prueba."}</Help></span>
+                          <select style={{ ...control, height: 22, fontSize: 11, padding: "0 4px", width: "100%", flex: "1 1 100%" }}
+                            value={prioridades[i.nombre] ?? "normal"}
+                            onChange={(e) => setPrioridades((s) => ({ ...s, [i.nombre]: e.target.value as PrioridadGen }))}>
+                            {PRIORIDADES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-              {familia === "alternativos" && (
+              {(familia === "alternativos" || familia === "precio") && (
                 <div style={{ fontFamily: font.sans, fontSize: 11, color: color.textSecondary, marginTop: 6, lineHeight: 1.4 }}>
-                  Los marcados con ↳ son niveles (precios): entran como destino de Bar Close / High Bar / Low Bar, no como condición propia. Para que se usen, marca también alguno de esos tres en «Precio y niveles».
+                  Los marcados con ↳ son niveles (precios): entran como destino de Bar Close / High Bar / Low Bar, no como condición propia. Para que se usen, marca también alguno de esos tres{familia === "alternativos" ? " en «Precio y niveles»" : ""}.
+                  {familia === "precio" && " Los nueve niveles vienen marcados de serie porque siempre entraron así; desmarca los que no quieras que salgan en ninguna receta. Medias, bandas, Donchian, Darvas y Overhead entran siempre."}
                 </div>
               )}
             </div>
@@ -1086,7 +1152,7 @@ export default function GeneticoPage() {
           <Row label="Condiciones" help="Cuántas condiciones de lógica lleva cada estrategia (las guardas aparte). Cada una son ~4 parámetros libres; con ~1.500 operaciones, el techo estadístico son 2–3. Empieza por 2.">
             <Toggle<"1" | "2" | "3"> value={nCond} onChange={setNCond} options={[{ value: "1", label: "1" }, { value: "2", label: "2" }, { value: "3", label: "3" }]} />
           </Row>
-          <Row label="Stop" help={`Tipos de stop que puede elegir. En %: rejilla ${catalogo?.stops.pct.join(", ") ?? ""}. De estructura: HOD / PMH / Previous Max (short) o LOD / PML / Previous Min (long) —y el último pivote alto/bajo si marcas «Ultimo pivote» en Alternativos— con un margen de ${catalogo?.stops.offset_pct.join(", ") ?? ""} %. Un stop de estructura a +0 % con «shares por distancia» significa posición máxima: pon tope de locates.`}>
+          <Row label="Stop" help={`Tipos de stop que puede elegir. En %: rejilla ${catalogo?.stops.pct.join(", ") ?? ""}. De estructura: ${(catalogo?.stops.niveles?.short ?? []).join(" / ")} (short) o ${(catalogo?.stops.niveles?.long ?? []).join(" / ")} (long) —y el último pivote alto/bajo si marcas «Ultimo pivote» en Alternativos— con un margen de ${catalogo?.stops.offset_pct.join(", ") ?? ""} %. Un stop de estructura a +0 % con «shares por distancia» significa posición máxima: pon tope de locates.`}>
             <div style={{ display: "flex", gap: 16 }}>
               <Check checked={stopPct} onChange={setStopPct} label="Porcentaje" />
               <Check checked={stopEstructura} onChange={setStopEstructura} label="Estructura + margen" />

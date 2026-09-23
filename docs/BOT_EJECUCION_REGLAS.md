@@ -85,6 +85,46 @@ Cualquiera se puede rebajar, pero por escrito y con fecha.
 - **Locates pronto y barato vs en prealerta** (P4).
 - **Cadena de LULD como aviso** (P10): 1 de cada 300 días con ≥ 5 LULD acaba en T12.
 
+## 2b. Lo que ya sabemos del CMD API de DAS (manual oficial, revisión 2021-11-10, encontrado el 19-sep)
+
+Fuente: «Frontend CMD API Manual» de DAS (15 páginas) incluido en el repositorio de un tercero
+(github.com/misantroop/das-bridge), que Jaume trajo SOLO como contexto: NO se copia código de ese repo;
+el bot se escribe desde este libro. Copia de referencia en D:/bot_senales/bot_ejecucion/referencia_das_bridge/.
+**AVISO (Jaume, 19-sep): el manual es de 2021 y NO sabemos si está al día; DAS puede haber cambiado cosas.
+Nada de este apartado es definitivo: TODO se coteja con el PDF oficial que dé el bróker.**
+
+**Lo que dice el manual (pasa de [API] a «sabido según el manual de 2021, a cotejar»):**
+1. **Token de orden propio (B5)**: NEWORDER lleva un «token» numérico que elige el cliente y vuelve en cada %ORDER → idempotencia posible. Al hacer LOGIN el servidor manda TODAS las posiciones, órdenes y trades (#POS…#POSEND, #Order…#OrderEnd, #Trade…#TradeEnd) y POSREFRESH pide las posiciones: la reconciliación de R-C-10 y R-K-01 está soportada.
+2. **Tipos de orden**: MKT, límite, PEG (MID/AGG/PRIM/LAST), STOPMKT (precio de disparo), **STOPLMT (precio de disparo + precio límite: es nuestro limitP con techo)**, STOPTRAILING, STOPRANGE / STOPRANGEMKT (banda baja-alta), oculta/iceberg con Display=0/num (B17: existe). **NO hay OCO ni bracket en el CMD API** → la limpieza de stops la hace el bot (R-C-11), como estaba previsto; el diseño «una principal + una emergencia» se mantiene. **No hay comando REPLACE en este manual** (el repo lo usa; puede ser de una versión posterior): mover un stop sería cancelar y reponer → cotejar.
+3. **Vigencia (TIF)**: DAY, DAY+ (extendido; es el valor por defecto), IOC, GTC, AtOpen, AtClose, FOK → premercado cubierto con DAY+.
+4. **Rutas**: la orden lleva la ruta (ARCA, INET, …). El manual dice que «algunas rutas pueden no admitir stops» y que SMAT (ruta propia de DAS) los admite todos. MATIZ (Jaume, 19-sep): eso NO quiere decir que ARCA / EDGA / SAGEPRO no los admitan; el repo está pensado para horario de mercado y nosotros operamos también en PM, donde las bolsas no suelen guardar stops. Lo probable es que el stop viva en el servidor de DAS y, al dispararse, salga como límite por la ruta indicada. **PENDIENTE PDF/bróker: qué rutas admiten STOPLMT (y en PM), y el tipo «limitP» que Jaume conoce.** Las rutas preferidas siguen siendo las de Sage (ARCA en PM, SAGEPRO/ARCA en RTH, EDGA para agregar).
+5. **Cancelación**: CANCEL orderid y CANCEL ALL (base de «cerrar todo», R-D-06).
+6. **Estados de orden**: Hold, Sending, Accepted, Canceled, Rejected, Executed (parcial o total), Triggered, Closed; y acciones %OrderAct: Sending, Send_Rej (rechazo, con campo «notes» con el motivo), Accept, Canceling, Canceled, CancelRej (cancelación rechazada: la carrera de B16), TimeOut, Execute (con precio y acciones del fill), Close → B4 y B16 tienen soporte; los textos concretos de «notes» se piden al bróker (apartado R, punto 14).
+7. **Buying power (E6, R-I-01)**: GET BP devuelve el BP intradía y el BP overnight de la cuenta.
+8. **GET SHORTINFO símbolo** → shortable Y/N, **shortsize (tamaño máximo de un corto por orden: B10)**, marginable Y/N, tasas de margen largo/corto del símbolo (0 = por defecto, 100 = 100 % en efectivo) → H10 (ETB/HTB) y el margen «alto riesgo» de Sage se pueden leer por símbolo.
+9. **Datos**: SB símbolo Lv1 → $Quote con ask, tamaño del ask, bid, tamaño del bid, último, volumen, máximo, mínimo, apertura, cierre de ayer, VWAP y hora; SB tms → time & sales con bandera de condición (bit 5 = válido para último precio: los prints «tardíos / odd lot» se pueden filtrar); SB Lv2 (INET/ARCA/BATS). **$LDLU símbolo limitDown limitUp llega con Lv1 → F11: las bandas LULD vienen por el API.** Las velas de minuto del API llegan con 30 s de retraso (se construyen con time & sales): confirma que la señal va por Massive (R-B-04).
+10. **Límites por conexión**: 50 símbolos en Lv1/T&S, 10 en Lv2, 50 en gráficos. El vigilante solo necesita Lv1 de las posiciones abiertas: cabe. El radar (~300 tickers) va por Massive, no por DAS.
+11. **Varias conexiones**: el comando CLIENT «devuelve el número de clientes conectados» y LOGIN admite modo «watch» (1 = solo lectura, recibe %IORDER/%IPOS/%ITRADE) → el API parece admitir más de una conexión al mismo DAS: el vigilante podría tener la suya (R-C-08 requisito 1). Cotejar si una segunda conexión normal puede enviar órdenes.
+12. **Locates**: SLPRICEINQUIRE símbolo acciones ruta/ALLROUTE → %SLRET tipo 1 con **precio POR ACCIÓN** y tamaño ofrecido (0 = no hay acciones para localizar), o tipo 2 = fallo con motivo (p. ej. «Already Shortable» = ETB, no hace falta locate). SLNEWORDER para pedir; SLCANCELORDER; SLOFFEROPERATION id Accept/Reject (rutas «tipo 1», con oferta que hay que aceptar); %SLOrder con estados Sending, Waiting, Located, Offered, Canceled, Rejected, Closed, Declined; SLAvailQuery cuenta símbolo → acciones disponibles. → H16 tiene respuesta técnica: «no hay» = tamaño 0 o tipo 2; el «tipo de ruta de locate» de Sage (0 o 1) es pregunta al bróker.
+13. **Estado de conexión**: mensajes #OrderServer / #QuoteServer Logon/Connect Successful/Failed → R-J-02 puede detectar la caída del servidor de órdenes aunque el socket local siga vivo (R-K-03).
+
+**Sigue SIN respuesta en el manual (se mantiene [API] / pregunta al bróker):**
+- Por qué precio dispara un STOPLMT (último, bid, ask): el manual remite a «los campos del montage» → C6 pendiente de sintaxis (Jaume recuerda «Ask + 0,01» en el montage).
+- Bandera de **SSR** y estado de **HALT**: no aparecen en $Quote ni en T&S → F1 y F10 pendientes (fuente externa: Nasdaq Trader / Databento en vivo, o el rechazo de la orden).
+- Cuotas de mensajes (J18), 2FA y sesión de noche (J15), un login por cuenta (J11), REPLACE, órdenes «solo cerrar». Menores: formato de los decimales bajo 1 $ en NEWORDER (B9; DAS trabaja con 4 decimales en todo lo que muestra). **Demo: SÍ existe (Jaume, 19-sep) → O1 resuelta.**
+
+## 2c. Reglas de margen de Sage (página pública, leída el 19-sep) y qué implican con 10-12 k$
+
+Cuenta relevante: **SageTrader Pro** (depósito inicial 3.000 $, mantener 2.000 $): buying power total 4× el equity; largo máximo 2×; **corto máximo 1× el equity; cortos «de alto riesgo» 0,5× el equity**. Margen inicial de cortos (Reg T): precio < 5 $ → el mayor de 2,50 $/acción o el 100 % del valor; ≥ 5 $ → el mayor de 5 $/acción o el 30 %. Mantenimiento (FINRA 4210) de cortos: < 2,50 $ → 2,50 $/acción; 2,50-4,99 $ → 100 % del valor; 5-16,66 $ → 5 $/acción; ≥ 16,67 $ → 30 %. La página NO habla de PDT, intradía vs overnight, PM, llamadas de margen ni concentración. **Autoliquidación (Jaume, 19-sep): SOLO existe en horario de mercado; en premercado NO pueden autoliquidar.**
+
+Consecuencias para el bot (cuenta de 10-12 k$, todo cortos en small caps):
+1. **El «capital libre» de R-I-01 no es el nominal: es el margen.** Un corto de 1.000 acciones a 1 $ (1.000 $ nominales) exige 2.500 $ de margen (2,50 $/acción). Con 10 k$, el corto máximo a 1 $ sería ≈ 4.000 acciones (4.000 $ nominales), y la mitad si el valor es «alto riesgo». El bot debe calcular el margen exigido de cada orden por tramo de precio ANTES de enviarla y dimensionar con GET BP y la tasa del símbolo de GET SHORTINFO, no con el nominal.
+2. **Tope de exposición corta total: 1× el equity (0,5× en «alto riesgo»)** sumando todas las estrategias. Encaja con E3 (reparto del cuadro de mandos), pero el bot lo comprueba contra el BP real.
+3. **Orden rechazada por margen**: llegará como Send_Rej con motivo → guarda previa + tratamiento del rechazo (B4).
+4. **Posición que cambia de tramo**: un corto abierto a 5,20 $ que baja a 4,90 $ pasa del 30 % al 100 % de mantenimiento (y a 2,50 $/acción bajo 2,50 $): el margen exigido SUBE cuando la operación va a favor. Con posiciones pequeñas no importa; con tamaño puede disparar la autoliquidación del bróker. El vigilante debería vigilar el margen de mantenimiento total frente al equity.
+
+**PREGUNTAS AL BRÓKER (se suman al apartado R):** qué valores son «alto riesgo» (lista o criterio: precio, float, HTB); si el BP que devuelve GET BP ya descuenta estas reglas por símbolo; cómo y a qué hora autoliquida en RTH y qué avisa antes; qué pasa con un corto abierto en PM que supera el margen; si aplican PDT (con 10-12 k$, por debajo de 25 k$, aplicaría: ¿3 day trades en 5 días?); llamadas de margen y plazos.
+
 ## 3. Reglas
 
 *(Ninguna todavía. Se van añadiendo por área a medida que se contesta el banco
@@ -104,6 +144,15 @@ y reconciliación), después el resto.)*
 - Prueba: tabla de casos con precio caminando por N1, N2, N3 y pasando de largo; réplica en sombra.
 - Estado: BORRADOR (12-sep). Pendiente: (a) confirmar con el socio; (b) RTH: Jaume cree que igual, no lo tiene claro; (c) RESUELTO el 14-sep (Jaume lo ha comprobado): un stop NO puede llevar tres triggers, pero SÍ se pueden dejar puestos TRES stop limit a la vez, cada uno con su trigger y su límite (el de arriba con más margen). Los tres residen en DAS desde la entrada: no hay que cancelar y reponer nada durante el evento. Consecuencia: R-C-11 (limpieza de stops sobrantes); (d) cómo se define «no consigue cerrar» en cada nivel (tiempo o precio que supera el límite) → C5; (e) condiciones de cisne negro → G1/G2.
 - Origen: C1. Directriz de Jaume del 12-sep.
+
+**LimitP / StopLimitP (comprobado el 22-sep en el vídeo de Ocean Securities que pasó Jaume, «How to Use LimitP Stop Orders in DAS Trader Pro»):** en DAS Trader Pro existe el tipo de orden **StopLimitP («LimitP»)**: un stop limit que **dispara SOLO cuando el ÚLTIMO PRECIO CRUZADO toca el nivel**, no el bid/ask; pensado para premercado y after-hours, donde el spread ancho dispararía en falso un stop normal. Consecuencias para el libro: (1) hasta hoy el libro decía «disparo por ask» (C6) y el estudio de fogonazos se simuló así; con LimitP el disparo es por PRINT, así que se ha repetido el estudio con disparo por último precio (`40b_fogonazos_disparo_last.py`, resultados abajo); (2) el filtro de prints tardíos (R-A-02) pasa a ser relevante también para los stops: un print tardío o suelto podría disparar (o retrasar) un LimitP; (3) PREGUNTA al bróker [R-22]: si el API expone StopLimitP además de STOPLMT (el manual 2021 solo lista STOPLMT), cuál es el disparo de cada uno (último / bid / ask) y cuál conviene en PM. Jaume lo llama LimitP porque así aparece literal en las opciones de DAS Pro; es el nombre bueno. **Resultado de repetir el estudio con disparo por ÚLTIMO PRECIO (`40b`, 241 fogonazos, 10 k, 10 % por posición): sale en la subida el 86 % (por ask era el 96 %), en la bajada el 13 % (4 %), y quedan 2 posiciones SIN CERRAR a la media hora (TNON y ZEO): en TNON el último precio saltó de 7,02 a 35 $ en un solo print, los dos stops dispararon con el precio ya por encima de sus límites y no llenaron nada; cerrar a la media hora a 55,60 $ costaba el 80 % de la cuenta. Con disparo por ask ese mismo caso salía por el principal a 6,93 $ (1,3 % de la cuenta) porque el ask CAMINA antes de que se cruce el print. Pérdida media sobre la cuenta 3,6 % (2,6 % por ask), p90 7,0 % (6,2 %). Conclusión: para la protección contra fogonazos el disparo por ASK es claramente mejor; el disparo por último precio (LimitP) evita disparos en falso por spread ancho pero llega tarde en el fogonazo. DECISIÓN PENDIENTE (con el PDF): qué disparo usa STOPLMT por el API; si se puede elegir, principal y emergencia por ask/bid, y medir en sombra cuántos disparos en falso produce el ask con spreads anchos en PM (coste: salir antes de tiempo de un corto bueno y reentrar). Si solo hay LimitP, hay que rediseñar la emergencia (p. ej. stop a mercado en vez de límite, o vigilante que dispare por ask).** **Matiz de Jaume (22-sep, tarde): el stop limit normal NO funciona en premercado (probado por ellos); LimitP SÍ. Y TNON y ZEO son arranques del día (ZEO: 04:07, gap previo 40 %, 2.035 $ negociados antes), donde ninguna estrategia está dentro. Comprobado: sobre los 122 fogonazos «dentro de un gap ya hecho», LimitP sale en la subida el 95 % (ask 99 %), pérdida media 2,8 % (2,3 %), p90 6,3 % (6,1 %), máximo 8,4 % (igual); y en los 7 fogonazos donde 1B estaba dentro de verdad, con LimitP los 7 salen en la subida igual que por ask (6 por el principal al 10-13 %, LGHL por la emergencia al 65 %). Conclusión: para nuestra exposición real LimitP cubre prácticamente lo mismo; la diferencia grande por ask solo aparece en los arranques del día, donde no estamos. Por tanto: en PM los stops van en LimitP (disparo por último precio); la pregunta R-22 sigue para saber si el API lo expone y si en RTH conviene otro disparo.**
+
+**Varias estrategias con NIVELES de stop distintos sobre el mismo ticker (Jaume, 22-sep; PROPUESTA a decidir):** de inicio todas comparten el mismo par (3 % / 50 %). Cuando haya estrategias con niveles distintos (p. ej. A al Previous Max y B a +10 % de su entrada): UN stop principal POR NIVEL con las acciones de las estrategias que comparten ese nivel (si dos coinciden, un solo principal con la suma). Para la emergencia, dos opciones:
+(a) **Una sola emergencia con TODA la posición, por encima del principal más alto** (lo que propone Jaume como simple). Problema del «limbo»: si el precio pasa de largo el principal más BAJO (B) sin llenarlo, las acciones de B quedan cubiertas solo por una emergencia calculada sobre A: con A en 10 $ (principal 11,00/11,33, emergencia 12,46/18,70) y B en 9 $ (principal 9,90/10,20), las acciones de B no tienen nada entre 10,20 y 12,46 y su techo real es 18,70 = +108 % sobre SU entrada, no +87 %.
+(b) **Un PAR por nivel (principal + emergencia), compartido por las estrategias del mismo nivel.** Con dos niveles son 4 órdenes; nadie queda en limbo porque cada emergencia está a la distancia prevista de su principal. Coste: más órdenes que netear (R-C-11 ya trabaja por eventos y con token por orden, así que es mecánico) y un caso nuevo: una emergencia baja que dispara mientras la posición del nivel alto sigue viva se limita a SUS acciones, no toca las otras.
+**DECISIÓN de Jaume (22-sep): (a).** Un principal (3 %) por nivel de stop y UNA sola emergencia (50 %) con toda la posición, por encima del principal más alto; motivo: con muchos stops los márgenes pueden solaparse (una emergencia de un nivel cayendo dentro del margen del principal de otro) y liarse. Consecuencia aceptada: las estrategias de nivel más bajo tienen un techo mayor que el +87 % mientras no llegue la emergencia. **Mitigación FIJADA (Jaume, 22-sep):** si el precio pasa de largo el LÍMITE del principal de un nivel sin llenarlo (lo ve el vigilante, R-C-03/04), ese principal se cancela y sus acciones se SUMAN al principal del siguiente nivel por encima (el de A): B sale al nivel de A. Si el principal rebasado era ya el más alto (no hay otro encima), sus acciones se recolocan como principal nuevo al ask del momento + 3 %. Siempre una sola emergencia con toda la posición. Escenario raro; regla sencilla.
+
+**Qué es el «+87 %» (Jaume, 22-sep):** los márgenes se ENCADENAN, no se suman. Principal: disparo +10 % sobre la entrada; límite +3 % sobre el disparo → 1,10 × 1,03 = +13,3 %. Emergencia: disparo +10 % sobre el LÍMITE del principal → 1,133 × 1,10 = +24,6 %; límite +50 % sobre SU disparo → 1,246 × 1,50 = **+86,9 % sobre la entrada**. El «+10 % de disparo» del ejemplo NO es una regla: el disparo del principal es el NIVEL DE STOP DE LA ESTRATEGIA, esté donde esté (Previous Max, +10 %, ATR…). La cadena general: principal = nivel de la estrategia, límite = nivel × 1,03; emergencia: disparo = límite del principal × 1,10, límite = disparo × 1,50. Con el stop al Previous Max a +25 % de la entrada, el techo sale 1,25 × 1,03 × 1,10 × 1,50 = +112 % sobre la entrada. El «87 %» era solo el caso del ejemplo con stop a +10 %. Alternativa si se quiere un techo más corto: medir el 50 % sobre el límite del principal (+70 % en el ejemplo). El estudio de fogonazos está hecho con el +87 %; con un techo más bajo llenan menos en los saltos grandes (más COLA) a cambio de una pérdida máxima menor: se puede repetir el estudio con el techo que elija Jaume en minutos (`40_`, parámetro MARG2).
 
 ### R-C-02 · Paso de un nivel de stop al siguiente
 - Situación: el precio ha tocado un trigger (N1 o N2) y la orden limitada de ese nivel no ha comprado todo.
@@ -137,6 +186,7 @@ y reconciliación), después el resto.)*
 3. **Cisne negro: la decisión de «no cerrar y esperar» la tiene el STOP, no el bot.** Si es cisne negro, el precio pasa del límite de emergencia con la orden sin ejecutar (corto al descubierto); cuando el precio vuelve, la orden de emergencia se ejecuta en su límite al bajar, o si no, cierra el humano a la media hora. PENDIENTE (más adelante): reglas del bot en esa espera en función del % devuelto. Dato (`cierre_forzado.csv`, fogonazos del lago): con salto ≥ 100 % el precio vuelve por debajo de +100 % sobre el precio previo en 30 min en el 96 % [IC95 88-99] de los casos (mediana 1,2 min) y por debajo de +50 % en el 86 % [74-93]; con salto ≥ 500 %, 75 % [41-93] y 62 % [31-86]. El límite de emergencia queda ≈ +86 % sobre la entrada (1,10 × 1,13 × 1,5), así que en ~9 de cada 10 fogonazos la orden se ejecuta sola al volver y el humano solo entra en el resto.
 4. **Limpieza estricta (R-C-11, PRIORIDAD: proteger, no añadir riesgo).** Tras cualquier ejecución: (a) si la posición neta del lote queda a CERO, cancelar al instante TODAS las órdenes de ese lote (incluida la principal si está colgada: si no se cancela, se ejecuta al volver el precio y deja la cuenta larga); (b) si queda LARGA (compras de más), vender al bid SOLO el exceso: ejemplo, 100 cortas, el principal cubre 20, la emergencia (100) cubre 100 → largo 20 → se venden 20, JAMÁS 100 (dejaría 80 cortas al descubierto en pleno squeeze); (c) si sigue CORTA, mantener o reponer el stop que falte. Siempre sobre la posición neta real de DAS, nunca sobre la cantidad inicial del stop.
 
+**Decidido el 20-sep (Jaume) para el caso «sigue quedando algo corto»** (ej.: 100 cortas, el principal cubre 40, la emergencia 30, quedan 30 cortas y las dos órdenes vivas con cantidades viejas): (1) se CANCELA el stop principal (su momento pasó: está por debajo del precio y probablemente DAS no dejaría recolocarlo); (2) la orden de EMERGENCIA se AJUSTA a las acciones que quedan (30) si DAS permite cambiar la cantidad in situ [API/bróker: confirmar]; (3) si DAS cancela o rechaza la emergencia, se REPONE una nueva con el mismo trigger y límite por las acciones que quedan; (4) SIEMPRE EXACTAMENTE UNA orden de emergencia por posición: el vigilante lo comprueba (nunca 1.000 stops iguales al mismo nivel; riesgo de bucle); (5) si no se llega a ajustar o reponer a tiempo y al bajar el precio la emergencia compra de más (las 70 viejas), el exceso LARGO se vende al instante al bid, como siempre (R-C-11). Pregunta 2 (qué se toca durante el protocolo de cisne negro) PENDIENTE de contestar.
 Aclaraciones de Jaume (15-sep): la venta del exceso SOLO se hace si la posición neta es LARGA (acciones compradas); si por cualquier error lo que queda es corto, NO se vende nada. La orden de emergencia lleva la posición entera porque tiene que poder cubrirlo todo si el principal falla. PENDIENTES PRIORITARIOS, con datos: (i) qué hacer si tras la limpieza sigue quedando algo corto (mantener / reponer stop); (ii) qué hace el bot a la VUELTA de un cisne negro (cuándo cerrar mientras el precio devuelve; hoy: la orden de emergencia se ejecuta sola al cruzar su límite en ~9 de cada 10, humano a la media hora en el resto).
 
 **REGLA FIJADA (Jaume, 16-sep) y NOTA DE DATOS para el repaso final.** La estructura de dos stops residentes (principal +3 %, emergencia a +10 % del límite del principal con +50 %) y la limpieza estricta quedan FIJADAS. Cifras en las que se apoya (`36_analisis_libro_entradas.py`, NBBO consolidado, 15-sep; solo operaciones que salen por stop; 1B = PM, 2B = RTH):
@@ -203,6 +253,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Si la acción falla (DAS no acepta la reducción): POR DECIDIR tras el PDF. Las dos opciones son posibles: (a) dejar el stop grande un momento, (b) quitar el stop y aplicar R-C-03. Jaume cree que no hará falta quitarlo: probablemente DAS deja cambiar solo la cantidad del stop [API].
 - Prueba: tabla de casos (parcial 1 de 2, 2 de 2; reducción aceptada / rechazada).
 - Estado: BORRADOR (13-sep). Pendiente post-PDF: el plan B cuando la reducción falla.
+- **Plan B FIJADO (Jaume, 21-sep): el vigilante REPONE.** Si el ejecutor está caído (o tarda) y una posición se queda sin stop, o un stop desaparece, el vigilante pone él mismo el par principal + emergencia con los valores del libro y avisa. Y NETEA: cuando el ejecutor vuelve y quiere poner sus stops, primero lee las órdenes vivas en DAS; si ya hay un stop del vigilante sobre esa posición, lo ADOPTA (lo registra como suyo) en vez de poner otro. El vigilante, en cada barrido, comprueba que por posición hay exactamente UN principal y UNA emergencia con la cantidad correcta: sobrantes → cancelar el más nuevo; faltantes → reponer. Cada orden lleva en su token quién la puso (ejecutor/vigilante) para que el neteo sea inequívoco. Nunca dos stops del mismo tipo sobre la misma posición más que un instante (riesgo de cubrir el doble, R-C-11).
 - Origen: C10. Directriz de Jaume del 13-sep.
 
 **Pendiente para meditar con el PDF (Jaume, 13-sep), no es regla:** en una emergencia en la que la posición está «al descubierto» (sin stop, por un problema con el stop u órdenes que no se ejecutan) y el precio se acerca al nivel que tenía el stop, cerrar a partir de un X % de distancia hacia ese nivel. Choca con la lógica de cisne negro (no cerrar cuando se dispara); hay que meditarlo con toda la información del PDF. Enlaza con C12 (stop mental) y con las contingencias del área G.
@@ -254,6 +305,73 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área G · El precio se dispara
 
+### R-G-01 · Protocolo de cisne negro: el bot NO decide; informa cada 5 minutos y cierra el humano
+- Situación: el precio ha pasado del límite de la orden de emergencia (R-C-01) sin ejecutarla: quedan acciones cortas al descubierto.
+- Principio (Jaume, 20-sep): el bot NO coloca órdenes que persigan al precio en mitad de un fogonazo o squeeze (la volatilidad podría sacarnos a un precio extremo) ni toma decisiones de cierre: un error de código o la falta de liquidez lo harían contraproducente. En el peor escenario cierra el HUMANO, vigilando de la mano del bot. La orden de emergencia sigue puesta: si el precio vuelve a su límite, se ejecuta sola.
+- Acción: (1) ALERTA MÁXIMA por Telegram, SMS y correo en el instante. (2) Cada 5 minutos, mensaje por Telegram con este formato:
+
+  «Posible BS <TICKER>»
+  - Precio del stop normal y del de emergencia.
+  - Precio en el momento del mensaje (y bid / ask).
+  - Minutos desde el evento.
+  - Al descubierto: acciones cortas que no se han podido cerrar en el stop de emergencia.
+  - % de pérdida sobre el trade (latente, al precio actual).
+  - % de pérdida sobre la cuenta, total (contando lo ya perdido en los stops), también en $.
+  - Máximo % de subida de la acción respecto al PRIMER stop desde que empezó el movimiento (para saber ante qué fogonazo estamos: 100, 200, 1.000 %…).
+  - % actual de la acción respecto al primer stop (el slippage que nos comeríamos si cerramos ahora).
+  - Pérdida ya ejecutada del trade, en $ y %: lo perdido en las acciones que sí salieron por el stop normal y por el de emergencia.
+  - Recordatorio de comandos: /cerrar TICKER SI (cierra TODA la posición al ask con techo), /cerrar TICKER N SI (cierra SOLO N acciones y deja el resto: es el cierre por tramos de G6, decidido por el humano), /estado TICKER, /parar_avisos TICKER BS (deja de mandar SOLO el mensaje de 5 min de ESE evento de ESE ticker; todo lo demás sigue igual, y un evento nuevo vuelve a arrancar el ciclo), /reanudar_avisos TICKER BS.
+  Datos añadidos (aprobados por Jaume, 20-sep): halts (SOLO en sesión de mercado: si está parada, distancia a la banda LULD, halts que lleva el día k), minutos desde el máximo del movimiento y si lleva N minutos bajando, minutos hasta el EOD de la estrategia, y estado de la orden de emergencia (sigue viva, su precio límite). No incluidos: volumen 5 min, spread, conexión DAS (van en /salud y /estado).
+  (3) Si el fogonazo se cierra DENTRO del stop de emergencia, se manda el mismo informe UNA sola vez con la frase «POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP DE EMERGENCIA».
+  (4) Todo fogonazo visto en vivo (con o sin posición) se registra en el diario con su máximo, duración y devolución, para recalibrar los umbrales con datos propios (G10).
+- Quién la ejecuta: vigilante (informes y registro) + humano (decisión y cierre por Telegram).
+- Parámetros: cadencia de informes: CADA MINUTO los 5 primeros minutos y después cada 5 min, mismo mensaje (Jaume, 22-sep; antes «cada 5 min»).
+- Si la acción falla: sin Telegram → correo y SMS con el mismo informe (R-M-02).
+- Prueba: simular el protocolo con un día grabado de fogonazo (R-O-02) y comprobar formato y cadencia.
+- Estado: FIJADA (Jaume, 20-sep). Sustituye a la «espera de media hora» de R-C-01 como procedimiento: no hay plazo fijo, el humano decide cuándo. Origen: G1, G2, G3, G4, G6, G7, G10.
+
+**Caso real AEMD 17-sep-2026 (estudio 20-sep, `38_aemd_bs.py`, Databento 0,03 $): qué habría hecho el protocolo.** A las 06:43:38 el ask pasó de 4,4 a 14,0 $ en UN segundo (pico 13,90, +230 % sobre 4,2; libro Nasdaq de 8 k$ a 129 k$ en el ask) y a los 2 minutos estaba en 6-7; segundo empujón 06:54-06:56 hasta 9,50. En los 30 min del evento se negociaron 168 k acciones (1 M $). Corto hipotético en 5,80 con posición del 10 % de la cuenta, stop principal +10 % (6,38 / límite 6,57), emergencia 7,23 / límite 10,84:
+- **Comerse el fogonazo de las 06:43 de lleno** (hipotético: el precio nunca estuvo en 5,80 antes; sirve como caso extremo): el principal NO llena nada (el ask saltó los dos triggers en un segundo); la emergencia llena TODO en los minutos siguientes al volver el precio bajo 10,84: precio medio 9,80 (cuenta 10 k) a 8,78 (100 k). Pérdida 69 % del trade = 6,9 % de la cuenta (10 k); 51 % = 5,1 % (100 k). Con cuentas de 200 k a 2 M (3.400 a 34.000 acciones) la emergencia también llena entera dentro de la media hora (precio medio 8,7 → 7,9) porque el precio se quedó horas en 6-8 con volumen: **no se encontró el capital a partir del cual no se sale**; el límite práctico lo pone la paciencia (hasta 30 min) más que el libro. Sin necesidad de cierre humano a la media hora en ningún tamaño.
+- **Entrada real en 5,80 tras el fogonazo (06:44) con stop +10 %**: el principal dispara a las 06:44:06 en la subida a 6,81 y llena TODO en todos los tamaños a 6,24-6,36: pérdida 7,5-9,7 % del trade, 0,75-0,97 % de la cuenta. Un stop normal.
+- **Con stop +30 % (para comerse el segundo empujón a 9,50)**: el principal dispara a las 06:45:58 (7,54) y llena todo a 7,3-7,5: 26-29 % del trade, 2,6-2,9 % de la cuenta. La emergencia no hizo falta.
+- **Entrada en la vela ANTERIOR al fogonazo (4,22, cierre de la 06:42), stop +10 % (4,64 / límite 4,78; emergencia 5,26 / límite 7,89)**: el ask tocó 4,64 unos segundos antes del salto y en el libro había ≈ 1.190 acciones dentro del límite: hasta 50 k$ de cuenta (1.184 acciones) el PRINCIPAL llena todo a 4,56-4,65 (pérdida 8-10 % del trade, 0,8-1,0 % de la cuenta). Con 100 k (2.369 acciones) el principal llena la mitad y la EMERGENCIA el resto al volver el precio, a 5,75 de media (22 % del trade, 2,2 % de la cuenta). Con 500 k (11.848 acciones) la emergencia llena todo pero a 7,05 (61 % del trade, 6,1 % de la cuenta). Se sale siempre dentro de la emergencia; lo que crece con el tamaño es el precio. (Cifras de la primera pasada con fotos de 1 s; con fotos de 100 ms el principal llena todo en todos los tamaños a 4,55-4,74: ver conclusión corregida más abajo.)
+- Aviso metodológico: libro solo Nasdaq (el consolidado tiene más), fotos por segundo, se consume el 100 % de lo mostrado en el disparo y el 50 % después. Los precios medios de los tamaños grandes bajan porque la orden espera hasta 30 min y llena en la bajada.
+
+### R-G-03 · Durante el protocolo de cisne negro: solo se ajusta la cantidad; sin reentrada hasta que el humano lo diga
+- Situación: protocolo R-G-01 activo (precio por encima del límite de la emergencia, acciones al descubierto).
+- Acción sobre la orden de emergencia (Jaume, 20-sep): (1) SOLO se le baja la CANTIDAD a las acciones que realmente quedan cortas, si DAS permite cambiarla in situ [confirmar con DAS/PDF]; nada más: ni límite, ni trigger, ni perseguir al precio. (2) NO se repone si DAS la cancela durante el evento: si DAS la ha eliminado es deliberado (queda registrado en el diario), la alerta sigue y decide el humano; además DAS probablemente no deja crear un stop por debajo del precio actual. (3) Si el humano manda /cerrar TICKER SI, el bot CANCELA antes la emergencia para que no compre ella también (R-M-04).
+- Reentrada: tras un cisne negro en un ticker, NO se reentra en ese ticker hasta que el humano lo autorice (/sigue TICKER). Dato para tenerlo en cuenta: en el estudio, las operaciones de 1B que entraron DESPUÉS de un fogonazo (247, mediana 13 min después) rindieron +15 % de mediana frente a +8 % del conjunto; la autorización humana decide caso a caso.
+- Estado: FIJADA (Jaume, 20-sep). Origen: pregunta 2 del repaso de stops; reentrada tras BS.
+- Nota (1.3): reponer la emergencia si DAS la cancela o rechaza vale para OPERATIVA NORMAL (fuera del protocolo); dentro del protocolo, no.
+
+**Caso real PLYX 17-feb-2026 (`39_plyx_bs.py`, libro Nasdaq ya descargado):** máximo del PM 3,85 a las 06:02; entrada hipotética un 5 % por debajo (3,657, tocado ese mismo minuto); fogonazo a las 06:34:39-06:35:44 de 3,3 a 52,97 en Nasdaq (76,29 en el consolidado), +1.348 % sobre la entrada; el libro Nasdaq en el ask pasó de 4.805 $ (60 s antes) a 616 $ en el disparo y 0 $ en el pico. Stops +10 %: principal 4,02 / 4,14; emergencia 4,56 / 6,84. Los dos triggers se tocan con 0,2 s de diferencia; el principal NO llena nada; la emergencia llena TODO al volver el precio, a 6,40 de media en todos los tamaños (de 273 a 13.672 acciones: había una oferta grande en 6,40): **pérdida 75 % del trade = 7,5 % de la cuenta con posición del 10 %** (2,25 % con posición del 3 %). El mínimo del ask en los 30 min siguientes fue 3,97 (por debajo de la entrada): la emergencia compra en el primer nivel dentro de su límite al volver, no espera a que baje más. En el backtest, 1B tuvo PLYX dentro ese día y el motor lo cerró «al nivel» del stop (−22 a −65 %): el motor es optimista en fogonazos. Negociado en 30 min: 49 k acciones, 403 k $.
+**Caso real SLGB 9-jun-2026 (mismo script, TK=SLGB), CORREGIDO con fotos del libro de 100 ms** (la primera pasada, con una foto por segundo, se perdía el tramo en que el ask CAMINÓ): máximo del PM 1,40; entrada 1,33; fogonazo 06:33:03-06:33:59 de 1,36 a 12,66. El ask fue 1,46 → 1,55 → 1,57 → 1,87 → 1,96 en unos 4 segundos, con 2.400-6.500 acciones ofrecidas dentro de nuestros límites en esas décimas, y DESPUÉS saltó a 13,30. Principal (1,463 / 1,507): 0 llenas (las 3.400 acciones ≤ 1,507 desaparecen en la misma décima de segundo; con la latencia de DAS no se llega). Emergencia (1,66 / 2,49): llena TODO **en la subida, en los primeros segundos**, a 1,80 de media con 751 acciones (cuenta 10 k) → pérdida 35 % del trade = 3,5 % de la cuenta; con 20-500 k, a 2,0-2,1 (51-60 % del trade, 5-6 % de la cuenta). Cuadra con la experiencia del compañero de Jaume (salió de SLGB con el 10 % de 10 k, stop +10 % y emergencia a +30-40 %).
+**Los tres casos con fotos de 100 ms:** AEMD con entrada antes del fogonazo (4,22): el ask caminó de 4,4 a 4,8 unas décimas antes de saltar y el PRINCIPAL llena todo en todos los tamaños a 4,55-4,74 (pérdida 8-12 % del trade, 0,8-1,2 % de la cuenta, incluso con 500 k). PLYX: nada camina, libro a 0 $, solo la emergencia en la bajada a 6,40 (75 % del trade). SLGB: el principal no llega, la emergencia sale en la subida (35-60 %).
+**Estudio por tamaño sobre TODOS los fogonazos registrados (`40_fogonazos_por_tamano.py`, 20-sep, muestra ampliada): 251 fogonazos 2019-2026 (55 con salto ≥ 100 %, 196 de 50-100 %) con libro Nasdaq de 10 niveles y 30 min tras el pico (descarga `41_…`, 1,47 $). 3 excluidos porque el libro Nasdaq nunca llegó al trigger (OTLK, RGC, BQ: el fogonazo se cruzó en otras bolsas); 40 sin cobertura.** Corto abierto ANTES del fogonazo al último precio, posición 10 % de la cuenta, stops del libro (principal +10 % / límite +3 %; emergencia +10 % sobre ese límite / +50 %), disparo por ask, latencia DAS 200 ms, fotos de 100 ms, 100 % de lo mostrado al llegar la orden y 50 % en cada foto posterior.
+| Cuenta | Sale en la SUBIDA | Sale en la BAJADA | No sale en 30 min | Pérdida sobre la cuenta: media / mediana / p90 / máx | Pérdida sobre el trade: mediana / p90 |
+|---|---|---|---|---|---|
+| 10 k | 96 % | 4 % | 0 % | 2,6 / 1,3 / 6,2 / 8,3 % | 13 / 62 % |
+| 20 k | 96 % | 4 % | 0 % | 2,8 / 1,5 / 6,2 / 8,4 % | 15 / 62 % |
+| 50 k | 93 % | 7 % | 0 % | 2,9 / 2,4 / 6,4 / 8,4 % | 24 / 64 % |
+| 100 k | 90 % | 10 % | 0 % | 3,0 / 2,6 / 6,5 / 8,4 % | 27 / 65 % |
+| 500 k | 83 % | 16 % | 0-1 % | 3,2 / 3,0 / 6,7 / 8,4 % | 30 / 67 % |
+Solo saltos ≥ 100 % (55): subida 91 % (10 k) → 73 % (500 k); bajada 9 → 27 %; sin salir 0 %; pérdida sobre la cuenta media 2,6-3,5 %, p90 5,9-7,0 %, máx 8,3 %.
+Lecturas: (1) con la emergencia puesta NADIE se queda dentro a los 30 min (1 caso de 251 con 500 k); (2) con cuentas pequeñas se sale en la subida el 96 %, y aun con 500 k el 83 %; (3) pérdida sobre la cuenta con el 10 % por posición: media 2,6-3,2 %, mediana 1,3-3,0 %, peor 10 % ≈ 6,2-6,7 %, máximo 8,4 % (MODD 11-feb-2022: la emergencia compró casi en su techo); con el 3 % por posición dividir por 3,3: media ≈ 0,8-1 %, máximo ≈ 2,5 %; (4) la mediana sube con el tamaño (1,3 % → 3 %) porque la orden grande termina de llenarse más arriba. Cautelas: libro solo Nasdaq (conservador), fotos de 100 ms, consumo del 50 % por foto hasta 30 min (generoso en tamaños grandes), latencia fija 200 ms (medir en sombra). 
+Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal en el 49 % y la emergencia interviene en el 51 % (con 100 k: 40/60; con 500 k: 32/68); en el 47 % de los fogonazos el principal no llena NADA y la emergencia se lleva toda la posición, y siempre llenó. ¿Y sin ningún stop? Cubrir en el pico: pérdida sobre el trade mediana 59 %, p90 194 %, máx 4.836 % (ENSC 11-may-2026); sobre la cuenta con 10 % por posición: 5,9 / 19 / 484 %. Cubrir a la media hora del pico: 10 / 99 / 779 % sobre el trade (TNON); solo en el 33 % de los casos el precio está ya por debajo de la entrada a la media hora. 5 de 251 fogonazos saltan más del 1.000 % (ENSC, CIIT, PLYX, TNON, XHG): con el 10 % por posición cada uno se lleva más que la cuenta entera. Vuelta tras el pico (20-sep, fogonazos_vuelta_30min.csv): a los 30 min del pico el ask está por debajo de la entrada solo en el 33 %, por debajo del límite del principal (+13 %) en el 55 % y por debajo del límite de la emergencia (+87 % sobre la entrada: el 50 % se mide sobre el trigger de la emergencia, no sobre la entrada) en el 88 %; 29 casos (12 %) siguen por encima del +87 % a la media hora, y en saltos > 300 % son el 36 %. TNON 13-sep-2024 (gráfico en bot_ejecucion/TNON_2024-09-13_dia.png): pico 130 $ a las 04:10, +763 % a la media hora, +981 % a la hora, +139 % a las 3 h, cierre +24 %; la emergencia (11,48 $) no se habría llenado en la bajada hasta las 09:07. Lección: la emergencia debe llenarse en la SUBIDA (en los 251 lo hizo siempre); si no, el techo sigue siendo su límite (+87 % del trade, 8,7 % de la cuenta con el 10 %), pero la espera puede ser de horas. Día entero de los 29 lentos (fogonazos_vuelta_dia.csv, velas 1 min Nasdaq): 27 vuelven bajo el límite de la emergencia ese mismo día (la mayoría en el minuto siguiente al pico; los lentos: TNON 4,9 h, ZEO 3,5 h) y 2 NO vuelven nunca ese día (GRYP 12-may-2025 cierra +145 %, HYFM 3-ago-2026 +140 %). Bajo el límite del principal solo vuelven 20 de 29. Total muestra: 249 de 251 bajan del +87 % el mismo día; NO todos. Sesgo conservador del estudio: supone el corto ya abierto justo antes del fogonazo; el 22 % de los fogonazos (56) arrancan antes de las 04:15 (TNON a las 04:10, con 4 min de datos). CORREGIDO el 21-sep: 1B sí entra a las 04:03-04:05 cuando ya hay volumen; lo que descarta TNON/GRYP/HYFM es la falta de volumen previo, no la hora. GRYP y HYFM (los 2 que no vuelven): no son fogonazos dentro de un gap ya hecho, son el ARRANQUE del movimiento del día. GRYP 12-may-2025: cierre anterior 0,49, a las 06:30 cotiza 0,55 (+16 %) con 177 k$ negociados en 2,5 h; salta a 4,91 y se queda entre 1,4 y 2,9 todo el día; cierre 1,40 (+147 % sobre la entrada supuesta = 14,7 % de la cuenta con el 10 %). HYFM 3-ago-2026: cierre anterior 0,55, DOS velas de PM con 22 k$ negociados antes del salto a 4,12; cierre 16:00 2,04 (+172 %, 17,2 % de la cuenta). Ninguna estrategia entra ahí (gap < 20 %, < 1 $, sin volumen): igual que TNON, no cuentan como exposición real. El corto real de esas dos sería el fade posterior (GRYP 2,5 → 1,4; HYFM 3,1 → 2,0), ganador. Criba de arranques (21-sep, informe v11 sección «Quitando los fogonazos de arranque»): exigiendo ANTES del fogonazo gap ≥ 20 %, ≥ 100 k$ negociados y ≥ 15 min de PM quedan 122 de 251 (129 son arranques: 113 sin volumen previo, 56 antes de las 04:15; TNON, ENSC y MODD fuera). Sobre los 122: subida 99 % (10 k) → 93 % (500 k); pérdida sobre la cuenta media 2,3-3,0 %, mediana 1,2 %, p90 6,0-6,5 %, máx 8,3-8,4 % (DGLY, MNTS); la emergencia interviene en el 37 % (51 % en la general). El máximo NO baja. Criba aproximada (gap/volumen/hora), no las condiciones exactas de cada estrategia. **Exposición REAL de 1B (21-sep, cruce_1b_flash.csv, corrida 1B ene-2025→ago-2026):** de los fogonazos de la muestra en ese periodo, 1B estaba DENTRO en 7 (PLYX, SLGB, GLE, AEHL, NIVF, LGHL, GVH) y entró DESPUÉS del fogonazo, en el fade, en 57 (media +5,2 %, 64 % ganadores). CIIT NO la operó. OJO: 4 de los 7 son entradas de 1B a las 04:03-04:05 con fogonazo a las 04:08-04:23 (AEHL, NIVF, GVH, LGHL): 1B SÍ entra en los primeros minutos del PM, así que la criba «antes de las 04:15 no hay señal» NO vale para 1B; lo que distingue es el volumen previo (esas cuatro ya llevaban 140-480 k$ negociados en 3-5 min). Protocolo sobre esos 7 con 10 k: todos salen en la subida; 6 por el principal al 9-12 % del trade (≈ 1 % de la cuenta); LGHL por la emergencia al 65 % (6,5 % de la cuenta; con 100 k sale en la bajada, 5,5 %). **Jaume lo preguntará en el futuro: esta tabla es la referencia para fijar la exposición por posición.** También en el informe de fogonazos v11.
+
+**Conclusión corregida:** que se salga «en la subida» depende de si el ask CAMINA unas décimas o segundos antes de saltar. Cuando camina (AEMD, SLGB), el principal o la emergencia cogen la salida en los primeros segundos y la pérdida queda en el 8-35 % del trade con posición pequeña; cuando salta en seco (PLYX, libro vacío), solo queda la emergencia en la bajada (75 %). La resolución de la simulación y la latencia real de DAS (100-300 ms) marcan la diferencia: en sombra hay que medir esa latencia. En todos los casos y tamaños se sale dentro del +50 %.
+
+**Aclaración (Jaume, 20-sep):** «pillar el stop en la subida» solo pasa cuando el precio CAMINA (la mayoría de los stops normales: principal llena al instante 91-95 %); en AEMD y PLYX el ask saltó los dos triggers en el mismo segundo y solo actúa la emergencia, en la bajada.
+
+**Entrada que cae en el arranque de un cisne negro (Jaume, 20-sep): SIN guardas nuevas.** (1) Si el fill de entrada llega y el ask salta antes de que DAS acepte los stops: R-C-03 (reintentos, aviso) y, con el trigger ya por debajo del precio, protocolo R-G-01. (2) Si la escalera está agregando y el precio sube, la venta pendiente se ejecuta en mitad de la subida: se ACEPTA sin guarda (nada de «cancelar la escalera si el ask sube X % en Y s»: complejiza y puede ser peligroso). Razón con datos: se entra a mejor precio que la señal, y los fogonazos devuelven el 83-98 % del salto en 10-30 s; al cabo de un rato se pierde menos o incluso se gana. Los stops y el protocolo hacen su trabajo.
+
+### R-G-02 · Aviso de halt (PM y RTH)
+- Situación: una acción con posición abierta (o con orden de entrada viva) entra en halt, en premercado o en sesión.
+- Acción: mensaje por Telegram en el momento (nivel Aviso), breve: ticker, tipo de halt si se conoce (LULD / T1 / T12), hora, precio de parada, posición y stop, k (halts del día) y bandas LULD si es en sesión. Al reabrir, segundo mensaje con precio de reapertura y qué hizo el bot (R-F-01). Sin ciclo de 5 minutos.
+- Estado: FIJADA (Jaume, 20-sep). Origen: F, petición del 20-sep.
+
+**G3, G4, G6 y G7 (20-sep): sin decisión automática del bot.** El tope de pérdida por posición, la salida por tiempo, el cierre por tramos y la relación con la pérdida del día son decisiones del HUMANO dentro del protocolo R-G-01, con los datos del informe. G2 (fogonazo vs squeeze) queda como INFORMACIÓN del informe (minutos desde el máximo, si lleva bajando), no como disparador.
+
 **PENDIENTE G3 (14-sep), decisión importante, volver a preguntar:** tope de pérdida por posición y cómo distinguir cisne negro de squeeze. Lo que hay: (1) el tercer trigger N3 hace de tope por posición; no habrá una capa más por posición. (2) Lo que distingue cisne negro de squeeze es el TIEMPO, no el tamaño: si pasados 5-10 minutos de superar N3 el precio sigue arriba (y con volumen), no es fogonazo, es squeeze y se cierra a mercado; si ha vuelto, era fogonazo y se espera (Jaume prefiere 5-10 min a segundos). (3) Un tope de CUENTA como último cinturón («nunca más de X % de la cuenta en una posición, pase lo que pase»), que cierra aunque parezca fogonazo; se gestiona desde el cuadro de mandos. Riesgo que Jaume quiere meditar: un tope del 20 % de la cuenta y el bot confundiendo cisne negro con squeeze normal.
 
 ### Área F · Halts
@@ -266,6 +384,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
   2. **Stop POR DEBAJO del precio** (se lo ha saltado o por cualquier otra causa): se SALE sí o sí, a MERCADO al reabrir, sin tope de subida. Solo se REENTRA si la estrategia lo dice Y la primera vela de 1 min tras la reapertura sube menos de un 6 % Y k < 3. (Dato de Jaume: si la primera vela tras reabrir supera el 6 %, la probabilidad de que encadene otro halt es > 80 %.) Tras reentrar se aplica la misma lógica con el nuevo stop: con k = 1, escenario 1 normal; con k = 2, la salida a mercado a 3-5 % de la banda y mercado al reabrir si para.
 - Quién la ejecuta: ejecutor (órdenes preparadas para la reapertura) + vigilante (recuento k y distancia a la banda) + guarda (reentrada).
 - Parámetros: k máximo = 3; distancia a la banda para salir con k = 2: 3-5 %, salida a mercado; primera vela máxima para reentrar: 6 %; ruta de salida en reapertura (pendiente PDF).
+- **Cómo se sale «al reabrir» (Jaume, 22-sep, de su socio):** la orden de salida a MERCADO se envía DURANTE el halt, no al reabrir: así entra en el cruce de reapertura y no se pierden milisegundos. Momento (regla, Jaume 22-sep): si el halt tiene más de un minuto de espera, la orden se manda UN MINUTO ANTES del fin previsto; si el halt es de menos de un minuto (o la reapertura no tiene hora), en cuanto se decida salir / al abrir. Jaume confirma que DAS acepta órdenes durante el halt; hay que PROBAR qué devuelve el API (log) en demo. Aplica a todos los casos del libro en que la decisión es «fuera al reabrir» (k = 3, k = 2 a 3-5 % de la banda, T1 > 250 %). [API R-23: si DAS acepta órdenes durante el halt y las manda al cruce de reapertura.]
 - Si la acción falla: la orden de cierre en la reapertura no se llena → R-C-01/R-C-02 (niveles) y R-C-03 (sin stop, si DAS lo canceló en el halt).
 - Prueba: replicar sobre los halts de 2B con status exacto (24_status_estrategias.py) y tabla de casos (k = 1, 2, 3; stop encima/debajo; primera vela < / ≥ 6 %).
 - Estado: BORRADOR (14-sep, reescrita tras los datos de `34_tras_reapertura.py`). TODO el área F se repasa con el PDF (fuente de halts y bandas, rutas, qué hace DAS con los stops en un halt). Nota: los máximos de ×10-×44 del histórico son de días con 7-40 halts encadenados, no de lo que pasa tras el tercero; con salida en k = 3 el 90 % de los días con ≥ 3 halts queda por debajo de +144 % sobre el primer halt.
@@ -389,27 +508,35 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 4. Trigger N1: límite L1 + 3 % (p95 de slippage +2,2 %, colgado 1-2 %). Trigger N2: límite L2 + 10 % (colgado ≤ 1 %, p95 +6 %). Trigger N3 (emergencia): límite L3 + 30-50 % (en fogonazos 3 % / 1 % colgado, p95 +29 / +42 %). El margen solo cuesta cuando el precio salta: con M = 3 % la mediana de slippage es +0,3 %.
 5. Cisne negro: un limitado en L se ejecuta en 5 min en el 71 % de los fogonazos a precio ≤ L; la espera tiene base en PM.
 
-### R-B-01 · Orden de entrada en corto: al bid si está cerca, escalera si está lejos, nunca más del 3 %
+### R-B-01 · Orden de entrada en corto (y piramidaciones): un minuto AGREGANDO en el punto medio y, si no, cruzar al bid con tope del 3 %
 - Situación: la estrategia da señal de entrada (o de pirámide) y el bot envía la orden. Vale para PM y RTH.
-- Detección: último precio cruzado (el que usa el backtester) y bid de DAS en el segundo de la señal. Tope T = 3 %.
-- Acción:
-  1. **Bid a menos del 3 % del último precio** (80 de cada 100 señales de 1B, 94 de 2B): venta límite (limitP) a bid × (1 − 0,5 %), al instante. Se ejecuta AL BID (el mejor precio disponible en ese momento); el 0,5 % es solo el techo por si el bid se mueve durante el envío. Sin espera.
-  2. **Bid a más del 3 %**: no se cruza. Se deja una venta límite AGREGANDO liquidez en ESCALERA (Jaume, 16-sep): a −1 % del último precio; a los 10 s, a −2 %; a los 20 s, a −3 %, y ahí se queda lo que resta del minuto; si a los 60 s sigue sin ejecutarse, se cancela y NO se entra. Se cancela antes en cuanto la estrategia deje de decir «dentro».
-  3. Nunca se vende por debajo del último precio × (1 − 3 %). El 3 % es un tope, no un precio: solo se llega a él si no hay nadie más arriba.
-- Quién la ejecuta: ejecutor (guarda: distancia último→bid).
-- Parámetros (cuadro de mandos): tope T = 3 %; techo de la rama 1 = 0,5 %; escalones 1 / 2 / 3 %; cambio de escalón cada 10 s; el tercero espera hasta completar 60 s. Ruta: ARCA en PM; en RTH, SAGEPRO si en sombra llena igual de rápido que ARCA, si no ARCA.
-- Si la acción falla: sin cotización (libro vacío, antes de ~05:30 ET en muchos valores) → no se entra. Orden de la rama 1 no ejecutada porque el bid cayó más del 0,5 % durante el envío → pasa a la rama 2 (escalera) desde el escalón que corresponda.
-- Prueba: sombra, midiendo slippage real frente al precio del backtester y % de señales que se quedan fuera.
-- Estado: FIJADA (Jaume, 16-sep) salvo la ruta (sombra) y el ajuste fino de tiempos con fills reales.
-- Origen: B1, B2 (queda absorbida: no hay reenvíos, la escalera es la persecución), B20. Estudio P12 (`36`/`37` y cálculos del 16-sep).
-- Tiempo total de la escalera (medido el 16-sep, 1B, señales que van a la escalera): 10 s → entran el 39 % (12 de cada 100 señales fuera); 20 s → 55 % (9 fuera); 30 s → 63 % (7 fuera); 45 s → 71 % (6 fuera); 60 s → 74 % (5 fuera); 90-120 s → 74-76 % (5 fuera). Más de 60 s no aporta; menos de 30 s pierde el doble de señales. Se fija 60 s.
+- Detección: bid y ask de DAS en el instante de la señal (t0); bid de la señal = referencia del tope.
+- Acción (**FIJADA por Jaume el 22-sep, sustituye a las dos ramas anteriores: rama rápida al bid + escalera**):
+  1. **Agregar.** Venta límite en el PUNTO MEDIO entre bid y ask (bid + 1 tick si el spread es de 2 ticks o menos), que descansa en el libro AGREGANDO liquidez, hasta 60 s (= la caducidad de la señal, R-B-04). Se cancela antes si la estrategia deja de decir «dentro».
+  2. **Cruzar con tope.** Si a los 60 s no ha llenado (entera o en parte), lo que quede se CRUZA al bid (venta límite a bid × (1 − 0,5 %), removiendo) SOLO si el bid no ha caído más del 3 % respecto al bid de la señal.
+  3. **No entrar.** Si el bid ha caído más del 3 %, se cancela y NO se entra: la señal se ha ido sin nosotros y no se persigue.
+  Lo ejecutado agregando se descuenta; la orden de cruce lleva solo el resto (control de posición neta, R-C-11). Con SSR la venta ya tiene que ir por encima del bid: mismo camino.
+- Medido (22-sep, `42_` y `43_agregar_vs_remover_entrada.py`, 349 entradas reales de 1B/2B con libro NBBO): llena agregando el 71 %; pierde el 11 % de las señales; valor esperado por señal +1,45 % frente a cruzar al instante (contando las perdidas al 4,2 % del trade medio de 1B). Alternativas medidas: 20 s +0,95 %; tope 2 % +1,38 % (pierde el 15 %); al ask en vez del punto medio, peor; «siempre agregar sin cruzar», negativo (pierde el 14 %, y son las mejores señales: bid −5 a −8 % al minuto). Cautelas: llenado supuesto en el primer print a nuestro precio o mejor (optimista), sin re-pegar la orden si el libro se mueve.
+- Principio (Jaume, 22-sep): **se AGREGA siempre** (entradas, pirámides, take profits, salidas con hora conocida donde se pueda), **excepto los stops y las situaciones delicadas** (cerrar todo, TP a medias con rebote, prioridad TP-entrada, halts, cisne negro), que remueven.
+- Quién la ejecuta: ejecutor (guarda: distancia bid de la señal → bid actual).
+- Parámetros (cuadro de mandos): espera agregando = 60 s; nivel = punto medio (bid + 1 tick con spread ≤ 2 ticks); tope de slippage al cruzar = 3 %; techo del cruce = 0,5 %. Ruta al agregar: EDGA de 07:00 en adelante (paga −0,0027 $/acción), ARCA de 04:00 a 07:00 (−0,002); al cruzar, ARCA en PM y SAGEPRO en RTH si en sombra llena igual de rápido.
+- Si la acción falla: sin cotización (libro vacío) → no se entra. El cruce no llena porque el bid se movió durante el envío → se reintenta una vez con el bid nuevo si sigue dentro del 3 %; si no, no se entra.
+- Prueba: sombra, midiendo % que llena agregando, precio medio frente al bid de la señal, % de señales perdidas y su valor; afinar los 60 s y el 3 % con fills reales.
+- Estado: FIJADA (Jaume, 22-sep). Historia: 16-sep rama rápida al bid + escalera −1/−2/−3 %; 22-sep mañana «agregar 2 s y cruzar»; 22-sep tarde esta versión, con datos.
+- Origen: B1, B2, B19; pregunta de Jaume del 22-sep tras lo del socio («siempre agrega»).
+
+**Qué es agregar, exactamente (duda de Jaume, 22-sep):** agregar no es un precio concreto, es que la orden NO se ejecute al llegar y se quede en el libro. Una venta se ejecuta al llegar si su precio es ≤ el mejor bid (es «marketable»: remueve). Cualquier venta con precio > mejor bid se queda esperando: agrega. Por tanto, para vender agregando vale el punto medio, el ask o ask + 0,01; bid − 0,01 NO agrega (cruza el bid y remueve). El punto medio tiene ventaja: mejora el mercado (pasa a ser el nuevo mejor ask), va el primero en la cola y es lo primero que un comprador se lleva; ask + 0,01 queda detrás de todo el ask y llena mucho menos. Restricción: en acciones de 1 $ o más el precio va en céntimos (regla 612), así que el punto medio se redondea al céntimo; con spread de 1 céntimo no hay punto medio y la orden se pone AL ASK (se une al ask, sigue agregando). Por debajo de 1 $ se admiten 0,0001 $. El rebate (ARCA −0,002, EDGA −0,0027) se cobra en cualquier orden que descanse y se ejecute pasivamente, esté donde esté. Con SSR la venta tiene que ir por encima del bid: el punto medio cumple.
+
+**¿DAS «entiende» agregar? (Jaume, 22-sep):** DAS no decide si una orden agrega o remueve; envía la orden límite con su precio a la ruta (ARCA/EDGA) y es la BOLSA la que, al recibirla, la ejecuta si es marketable (remueve) o la deja descansar (agrega). No hay margen mínimo que dar: basta con que el precio esté por encima del mejor bid al llegar. El riesgo real es de TIEMPO: si entre nuestra foto del libro y la llegada de la orden (≈ 100-300 ms) el bid sube hasta nuestro precio, la orden se vuelve marketable y remueve. Dos remedios: (1) las bolsas tienen órdenes «post only» / «add liquidity only» (ARCA ALO) que se rechazan o recolocan en vez de remover: PREGUNTA al bróker si el API de DAS las expone [R-20]. (2) El manual 2021 SÍ tiene la orden **PEG MID** (`NEWORDER token SS símbolo ruta acciones PEG MID [precio límite]`): una orden pegada al punto medio que la propia bolsa recoloca cuando el libro se mueve, con precio límite opcional. Es exactamente «agregar en el punto medio» y además re-pega sola (lo que la simulación no hacía). Pendiente [R-21]: qué rutas la admiten, si en premercado, y qué tarifa lleva (en algunas bolsas las pegged al punto medio cobran un rebate menor o incluso comisión, distinto de una límite normal). Si PEG MID paga rebate y funciona en PM, es la orden de R-B-01; si no, límite normal en el punto medio con re-pegado por el bot cada segundo.
+
+**Hotkeys del socio (22-sep, captura de Jaume):** `ROUTE=SAGEPROL;Price=Ask;Share=N;TIF=DAY;SELL=Send` para entrar en corto (venta límite AL ASK = agrega, se une al ask) y `ROUTE=SAGEPROL;Price=Bid-0.05;...` «Kill» para entrar rápido (venta límite 5 céntimos POR DEBAJO del bid = cruza y remueve con colchón fijo de 5 c). Es la misma idea que R-B-01: agregar por defecto y cruzar con colchón cuando urge; diferencias: él agrega al ask (nosotros en el punto medio, que llena más según los datos) y su colchón es fijo (0,05 $) en vez del 0,5 % del bid. Ruta SAGEPROL = la ruta límite de Sage (SAGEPRO), la gratis en RTH. TIF=DAY: en PM haría falta DAY+ (o la ruta lo maneja) [confirmar con el bróker]. LimitP en DAS Pro es el TIPO de stop (StopLimitP, disparo por último precio); para las entradas lo que cuenta es la expresión del precio límite (Ask, Bid-0.05, punto medio…), no el tipo.
 
 ### R-B-02 · Entrada ejecutada a medias
 - Situación: la orden de entrada se ejecuta solo en parte (p. ej. 400 de 1.000) porque en el bid no había más. Frecuente: en PM una orden de 300 $ cabe entera el 53 % de las veces; de 3.000 $, el 6 %.
 - Detección: fill parcial confirmado por DAS.
 - Acción: el resto (600) sigue con la misma lógica de R-B-01 (al nuevo bid si está a menos del 3 % del último precio; si no, escalera), como máximo hasta completar el minuto desde la señal y sin pasar nunca del 3 %. Al minuto, se acepta la posición que haya (400) con su stop proporcional (R-C-01) y se cancela lo pendiente. No hay mínimo por debajo del cual no compense quedarse: se entra siempre que se pueda y con lo que se pueda.
 - Quién la ejecuta: ejecutor.
-- Parámetros: los de R-B-01.
+- Parámetros: los de R-B-01 (60 s agregando en el punto medio, tope 3 %).
 - Si la acción falla: lo no ejecutado se cancela; la posición parcial queda protegida por su stop.
 - Prueba: sombra (recuento de parciales y tamaño medio conseguido frente al pedido).
 - Estado: FIJADA (Jaume, 16-sep). Pendiente futuro: regla específica para tamaños muy grandes.
@@ -451,7 +578,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Detección: nueva señal sobre un ticker con orden de entrada viva.
 - Acción: se SUMAN las cantidades de todas las estrategias en una sola orden de venta y la escalera se REINICIA desde el primer escalón con el total. El bot registra en el diario qué parte pertenece a cada estrategia (un lote por estrategia, N lotes), para repartir después fills, stops y take profits (áreas C y E).
 - Quién la ejecuta: ejecutor + diario.
-- Parámetros: los de R-B-01.
+- Parámetros: los de R-B-01 (60 s agregando en el punto medio, tope 3 %).
 - Si la acción falla: fill parcial → R-B-02, repartiendo lo ejecutado entre lotes en proporción a lo pedido.
 - Prueba: tabla de casos; sombra.
 - Estado: FIJADA (Jaume, 16-sep). Caso raro: si coinciden, coinciden a la vez (la escalera no dura más de un minuto).
@@ -510,6 +637,17 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 5. **Hasta cuándo**: se sigue intentando hasta conseguir un precio con ventaja; el cuadro de mandos podrá fijar un tiempo o una hora límite de intentos.
 6. **Tope de gasto en locates (medida de emergencia)**: el gasto en locates NUNCA debe superar el 3 % de la cuenta. → R-H-03.
 
+**H6 · Paquetes de 100 y excedente (FIJADA, Jaume 21-sep):** se tira POR LO BAJO. Del último paquete de 100 solo se compra si se van a usar MÁS del 30 % de sus acciones: si la posición pide 1.230, el paquete 13 se usaría al 30 % → NO se compra, se «sacrifican» esas 30 y la posición se ajusta a 1.200; si pide 1.240 (40 %) → SÍ se compran las 100 y sobran 60. El coste de TODOS los locates, incluido el último paquete a medio usar, entra en el cálculo del EV que decide si se entra. Parámetro: umbral de uso del último paquete = 30 % (cuadro de mandos).
+**Recompra (FIJADA, Jaume 21-sep):** si el bróker solo tiene parte de lo pedido (p. ej. 2 paquetes de 100 y hacen falta 300), se busca el resto INMEDIATAMENTE una segunda vez con el mismo tope de EV; si tampoco se cubre, se entra con lo localizado (R-H-04).
+
+### R-H-05 · Cuántos locates comprar cuando varias estrategias pueden entrar (PROPUESTA, 22-sep, a decidir por Jaume)
+- Situación: al entrar una acción en el radar se compran locates pronto y barato (R-H-01), pero no se sabe cuántas estrategias van a dar señal ese día (a veces ninguna, a veces tres) ni, por tanto, cuántas acciones harán falta.
+- Opciones estudiadas: (A) **Máximo teórico**: comprar en el radar la suma de los tamaños de todas las estrategias activas sobre ese ticker. Nunca falta locate y es lo más barato por acción, pero se paga mucho locate que caduca sin usarse (una estrategia que entra el 47 % de los días desperdicia el resto). (B) **Base + ampliación**: comprar en el radar solo la BASE (el tamaño de la estrategia más probable o el común a todas) y AMPLIAR cuando otra estrategia esté a punto de entrar (prealerta del segundo 44-59 de la vela, que ya existe), con el precio del locate de ese momento y su propio EV. (C) **Solo en la señal**: no comprar nada hasta que haya señal. Cero desperdicio, pero el locate más caro y la entrada más lenta.
+- Recomendación: **(B)**. El EV se calcula POR ESTRATEGIA sobre SUS acciones: la base carga con el coste de sus locates; cada ampliación se decide con el precio de locate del momento contra el EV de la estrategia que la pide; si esa ampliación no tiene EV positivo, esa estrategia no entra y las demás siguen. Los paquetes de 100 se rellenan por lo bajo con la regla del 30 % (H6) sobre la suma de lo que se va a usar. Los locates no usados son coste hundido: cuentan en el tope diario del 3 % y se registran en el diario como «locates caducados» para medirlos.
+- Lo que decide entre A y B, y se mide en SOMBRA: (1) la tasa de conversión radar → señal por estrategia (qué % de las acciones en radar acaban dando señal) y (2) cuánto sube el precio del locate entre la entrada en el radar y el momento de la señal (P4). Si el locate apenas sube y la conversión es baja, gana B con base pequeña; si el locate se encarece mucho a lo largo de la mañana, gana A.
+- **FIJADA (Jaume, 22-sep): compra ESCALONADA por la condición de radar de cada estrategia.** En cuanto una acción cumple la condición previa (de radar) de una estrategia, se compran los locates de ESA estrategia: entrada + todas sus piramidaciones «add» (con el riesgo de cada nivel del cuadro), a su EV. Si la acción sigue subiendo y cumple la condición previa de otra estrategia, se buscan y compran los de esa otra, con su propio EV. Caso real: la estrategia A (gap PM > 50 %, dos pirámides) va siempre; la B (gap PM > 150 %, sin pirámide) implica la A, así que A se compra a los 50 % y B se añade al cruzar el 150 %. Las pirámides se localizan CON la entrada porque ocurren más tarde, con el locate más caro. Los paquetes de 100 por lo bajo (30 %) sobre la suma de cada compra. Lo de medir en sombra (conversión y deriva del precio) sigue valiendo para afinar.
+- Estado: FIJADA (Jaume, 22-sep). Origen: pregunta de Jaume del 22-sep.
+
 ### R-H-02 · Parada del proceso de locates: comprar una vez y no volver a comprar
 - Situación: el módulo de locates ha comprado los paquetes necesarios para una acción.
 - Detección: confirmación de compra del locate por DAS.
@@ -547,13 +685,150 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 
 ### Área J · Infraestructura
 
+### R-J-01 · Caída del feed de Massive: prealerta a 30 s, emergencia a 60 s
+- Situación: en horario de mercado dejan de llegar ticks y velas de Massive.
+- Detección: latido del feed.
+- Acción: a los 30 s sin datos, PREALERTA; a los 60 s, ALERTA DE EMERGENCIA y modo degradado de R-D-05 (no abrir, mantener con stops, vigilante con precio de DAS). Se sigue monitorizando: si vuelve el feed, aviso de recuperación y se reanuda.
+- Quién la ejecuta: supervisor + vigilante.
+- Parámetros: 30 s / 60 s.
+- Si la acción falla: —
+- Prueba: simulacro cortando el feed.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J2, A3.
+
+### R-J-02 · Caída de la conexión con DAS o de la aplicación DAS
+- Situación: el socket con DAS se cae, o la aplicación DAS se cierra o pierde la sesión.
+- Detección: latido del socket / proceso de DAS.
+- Acción: (1) AVISO MÁXIMO a la primera. (2) Reconexión automática constante: reintento a los 2 s, 4, 8, 16 y después cada 30 s sin parar (relanzar DAS y reloguear si es la aplicación [API: 2FA]). (3) Mientras siga caída, aviso máximo cada 5 minutos. (4) En el cuadro de mandos, botón para deshabilitar el bot (apagarlo) si el humano decide tomar el control. (5) Al reconectar: aviso de recuperación y reconciliación completa (R-C-10) ANTES de enviar nada. Mientras tanto, lo único que protege son los stops residentes en el servidor de DAS.
+- Quién la ejecuta: supervisor.
+- Parámetros: cadencia 2/4/8/16/30 s; aviso cada 5 min.
+- Si la acción falla: —
+- Prueba: simulacro matando DAS y cortando el socket en demo/sombra.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J3, J4, J15.
+
+### R-J-04 · El bot se cae, se cuelga o se duplica
+- Situación: (a) el ejecutor o el vigilante muere por excepción; (b) sigue vivo pero sin latido (colgado); (c) se arranca una segunda instancia.
+- Detección: supervisor (proceso) y latido cruzado ejecutor↔vigilante; cerrojo de instancia única.
+- Acción (tiempos v2, Jaume 22-sep: «30 s es mucho»): (a) muerto → el supervisor recibe la salida del proceso AL INSTANTE y lo relanza en 1 s; si vuelve a morir seguido, espera 2, 5 y 10 s entre intentos (para no entrar en bucle) y sigue cada 10 s sin límite; lo que tarde en volver a operar es el propio arranque (cargar, conectar a DAS, reconciliar: a MEDIR, objetivo < 10 s); AVISO desde el primer momento (log + Telegram, como todo) y aviso al recuperarse; al volver, reconciliación (R-C-10) antes de nada. (b) colgado → latido cada 1 s; a los 3 s sin latido se mata y se relanza (antes 10 s); reintento igual que (a), avisando de lo que pasa. (c) CERROJO DE INSTANCIA ÚNICA obligatorio en los DOS procesos: al arrancar, si ya hay otra instancia viva, la nueva NO arranca y avisa; el humano conserva el control manual del primero para apagarlo cuando quiera.
+- Quién la ejecuta: supervisor.
+- Parámetros: relanzar 1 s (luego 2/5/10 s si encadena caídas); colgado 3 s sin latido (latido 1 s). Antes: 30 s / 10 s.
+- Si la acción falla: si ejecutor y vigilante mueren a la vez → R-J-05.
+- Prueba: matar cada proceso, colgarlo (bloqueo artificial) y lanzar dos veces, en sombra.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J7, J8, J9.
+
+### R-J-05 · Vigilante externo (latido) y SAI
+- Situación: se apaga la máquina entera (luz, VPS caído): nadie dentro puede avisar.
+- Detección: el vigilante manda un «ping» silencioso cada 60 s a un servicio externo de vigilancia; el servicio da la ALARMA (Telegram + el panel de avisos del cuadro de mandos, que son los mismos logs) cuando faltan 3 pings seguidos (3 min) en horario de mercado. Nada se dice mientras todo va bien.
+- Acción: alarma → control humano (los stops residentes protegen mientras tanto).
+- Quién la ejecuta: servicio externo + humano.
+- Parámetros: latido 60 s; alarma a los 3 fallos.
+- SAI (fase PC): Jaume se compra un SAI; el PC Y EL ROUTER enchufados a él. Protección real: los stops residentes. **PENDIENTE: comprar el SAI** (line-interactive 700-1000 VA con USB: APC Back-UPS BX, Eaton 3S o CyberPower, ≈ 100-150 €).
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: J17, J1.
+
+### R-J-06 · VPS: uno, Windows, DAS dentro; actualizaciones solo con todo apagado
+- Situación: producción en el VPS (M12). De momento UN solo VPS y una sola infraestructura (la de Jaume). Futuro apuntado: el socio podría tener su propio bot con la misma arquitectura, duplicando el VPS o corriendo dos juegos de procesos en uno; no se aborda ahora.
+- Acción: (1) el socio puede actuar en emergencias sin Jaume: apagar el bot (botón / Telegram) y reiniciar el VPS desde el panel del proveedor. (2) Actualizaciones de Windows SOLO con todo apagado (VPS, bot, DAS); nunca con el bot o DAS encendidos; reinicios automáticos desactivados. (3) Al reiniciar el VPS: arranque automático en orden DAS → vigilante → ejecutor, y reconciliación completa (R-C-10) antes de enviar nada. (4) Fase PC: router lejos del PC → segundo SAI pequeño para el router o hotspot del móvil como conexión de respaldo con menor prioridad en Windows.
+- Estado: FIJADA (Jaume, 18-sep). Origen: J10, J20, J1.
+
+**VPS o PC: qué hace falta para que el bot funcione (Jaume, 22-sep):** el bot son dos procesos (ejecutor + vigilante) que hablan con DAS por un socket LOCAL: tienen que correr en la MISMA máquina que DAS. El cuadro de mandos (app del backtester) puede estar en otra máquina: el bot lee un fichero, no la app. Como DAS admite un login por cuenta, solo puede haber UNA máquina operando a la vez: si todo está montado en el PC de casa y Jaume quiere operar desde el portátil, habría que instalar DAS + bot en el portátil y apagar el de casa (posible, no cómodo). Con VPS, el portátil solo se conecta por escritorio remoto para mirar; el bot sigue en el VPS. Exposición a ataques: el riesgo real de un VPS es el escritorio remoto abierto a internet; se cubre con contraseña larga, doble factor, RDP solo desde tus IPs o por VPN, sin ningún otro servicio expuesto y actualizaciones con todo apagado (R-J-06); el PC de casa tiene sus propios riesgos (luz, fibra, alguien tocando). Recomendación: sombra y demo en el PC con SAI; VPS endurecido antes del canario.
+
+### R-J-07 · Reloj, disco y actualización de DAS
+- Reloj: todo en hora de Nueva York; al arrancar se comprueba la sincronización; si el reloj se desvía más de 2 s, el bot se NIEGA a operar y avisa; por debajo, solo aviso si pasa de 0,5 s. Jaume (22-sep): sin hiperestrictez, los umbrales se validan en vivo. (J12)
+- Disco: rotación diaria de logs y diario; aviso si quedan menos de 5 GB libres. (J13)
+- Actualización forzada de DAS: tarea HUMANA. El supervisor detecta que DAS no arranca o pide actualizar, AVISA, y lo actualiza una persona; nunca automático. (J14)
+- Estado: FIJADA (Jaume, 18-sep).
+
+**J18 (Jaume, 18-sep): latencia: PENDIENTE para el repaso final** (nunca ha operado con el API de DAS; sin referencia para fijar un umbral). Lo importante es la información que devuelvan DAS y el bróker cuando una orden no entra, cuando no deja por margen, etc.: lista de códigos y respuestas [API, apartado R punto 14]. El bot mide y registra la latencia orden→confirmación desde el primer día.
+
+### R-J-08 · Telegram caído
+- Situación: Telegram no responde o rechaza los envíos.
+- Acción: el bot sigue operando con normalidad; los avisos quedan siempre en el log y en el panel de avisos del cuadro de mandos; los envíos a Telegram se encolan y se reintentan. Canal de EMERGENCIA alternativo por decidir: propuesta, correo electrónico (gratuito, sin depender de Telegram) para los avisos de nivel máximo, y como segundo escalón un SMS o una llamada automática (servicios de pago por uso, unos céntimos por mensaje) solo para el nivel máximo.
+- Estado: FIJADA en su lógica (Jaume, 18-sep); canal alternativo por decidir en el área M (M4).
+- Origen: J19.
+
+### R-J-03 · Tabla del modo degradado
+| Qué falla | Abrir nuevas | Gestionar abiertas | Stops | Aviso |
+|---|---|---|---|---|
+| Nada | sí | sí | residentes en DAS | normal |
+| Feed de Massive | no | sí, con precio de DAS | residentes | prealerta 30 s, emergencia 60 s (R-J-01) |
+| Conexión con DAS | no | no: solo actúan los stops ya puestos en el servidor de DAS | residentes | máximo a la primera + cada 5 min, reconexión constante (R-J-02) |
+| El ejecutor (bot) | no | el vigilante | residentes | emergencia + relanzar |
+| El vigilante | sí, con aviso | el ejecutor | residentes | aviso + relanzar |
+| Telegram | sí | sí | residentes | por canal alternativo (M4) |
+- Estado: FIJADA (Jaume, 18-sep). Origen: J16.
+
 ### Área K · Estado y reconciliación
+
+### R-K-01 · Reconciliación con DAS: por eventos al instante y barrido completo cada 2 s
+- Situación: marcha normal del bot.
+- Detección: (1) DAS empuja los cambios (fills, cancelaciones, posiciones) al instante: el estado del bot se actualiza con cada evento sin esperar. (2) Además, BARRIDO completo (posiciones, órdenes vivas, cuenta) cada 2 s mientras haya posiciones u órdenes vivas en horario de mercado, cada 10 s si no hay nada abierto, y SIEMPRE tras cada fill, cada cancelación y cada reconexión. El vigilante ya comprueba los stops cada segundo (R-C-04).
+- Acción: cualquier diferencia entre el diario y DAS → R-C-10 (casos 1-4).
+- Quién la ejecuta: reconciliación.
+- Parámetros: 2 s / 10 s (cuadro de mandos). **Matiz (21-sep):** el barrido NO es el mecanismo que evita quedarse largo (eso lo hace el evento de fill de DAS en decenas de ms, R-C-11); es la foto de control. Cadencia ADAPTATIVA: 1 s durante los 60 s siguientes a cualquier fill o disparo de stop y mientras haya una entrada en escalera; 2 s con posiciones abiertas en calma; 10 s sin nada abierto. Carga: un barrido son 2-3 peticiones; a 2 s son ~1,5 peticiones/s, muy por debajo del límite que recuerda Jaume (~500 peticiones cada 5 s; 5.000 órdenes/día) [API: confirmar cuotas].
+- Si la acción falla: R-K-03.
+- Prueba: sombra; medir latencia del barrido y que no compita con el envío de órdenes.
+- Estado: FIJADA (Jaume, 19-sep). Nota: cada segundo también cabría en cuota; se elige 2 s porque el instante lo dan los eventos y el barrido es solo la red de seguridad; si en sombra se ve que el barrido no molesta, se puede bajar a 1 s.
+- Origen: K1.
+
+### R-K-02 · La cuenta es del bot; el humano solo interviene en emergencias
+- Situación: Jaume NO opera a mano en la cuenta del bot. Solo puede cerrar o netear posiciones en una emergencia (y a malas, apagar antes el bot y tomar el mando).
+- Acción: el bot trata toda posición u orden que no esté en su diario como intervención humana de emergencia: aviso, stop de protección (R-C-10 caso 4) y no la deshace. Pendiente el traspaso humano↔bot (marcar «esto lo he hecho yo») ya apuntado.
+- Estado: FIJADA (Jaume, 19-sep). Origen: K5, D11.
+
+### R-K-03 · La reconciliación falla con el socket vivo
+- Situación: DAS no contesta a la consulta de posiciones/órdenes/cuenta pero la conexión sigue viva.
+- Acción: se sigue operando con el último estado bueno durante 30 s; pasados, se pasa a «no abrir nuevas» (las abiertas se gestionan con los stops residentes y los eventos que sí lleguen) y AVISO (importante). Al volver la reconciliación, barrido completo y aviso de recuperación.
+- Parámetros: 30 s.
+- Estado: FIJADA (Jaume, 19-sep). Origen: K11.
+
+### R-I-04 · «Modo trading de seguridad» (PENDIENTE de diseñar)
+- Idea de Jaume (19-sep): un interruptor en el cuadro de mandos que, activado a voluntad (viaje, no poder estar pendiente), BLOQUEA la entrada en cualquier acción que cumpla condiciones de riesgo: float < X, market cap < Y, precio nominal < Z, y otras condiciones que se definan. Las posiciones abiertas se gestionan igual; solo se restringen las entradas.
+- Pendiente: lista de condiciones y valores, y si el modo también reduce el tamaño. Datos ya medidos (otra sesión, 19-sep): NO hay float ni market cap «seguros» (fogonazos y operaciones de 1A son la misma población; cap ≥ 20 M conserva solo el 18 % del retorno de 1A). Lo que sí separa: **precio ≥ 3 $** (quita 22 de 32 monstruos ≥ ×2,5 y conserva el 76 % del retorno de 1A; ≥ 5 $: 26 de 32, 56 %) y la liquidez previa (dólares acumulados > 1 M quita el 81 %), con acciones en circulación ≥ 2-3 M como red (caso VLCN). Propuesta de «modo vacaciones» de esa sesión, sin implementar: tamaño ½, liquidez, ≥ 2-3 M acciones, SIC 6770 e IPO fuera, banda clavada → salir. **Valores de Jaume (19-sep) SOLO para este modo, activado por él desde el cuadro de mandos: precio > 5 $ y dollar volume acumulado > 2 M $.** Massive da market_cap y acciones en circulación a la fecha por REST.
+- **Diseño (21-sep, Jaume): es un FILTRO, no un tamaño reducido: si la señal no cumple los criterios, NO se entra.** SIN suelo permanente en el bot (Jaume, 21-sep): el mínimo de dollar volume lo dicta CADA ESTRATEGIA en sus condiciones (normalmente siempre lleva uno); el dato de apoyo: 8 de los 9 fogonazos que salieron en la bajada tenían < 3.000 $ negociados antes. Lo que sí existe es el MODO DE SEGURIDAD, interruptor del cuadro para cuando Jaume no pueda estar pendiente: precio ≥ 5 $ y Acum. Dollar Volume ≥ 2 M$ (los que Jaume apuntó el 19-sep; datos: precio ≥ 5 $ quita 26 de 32 monstruos y conserva el 56 % del retorno de 1A; > 1 M$ acumulado quita el 81 %). Las posiciones abiertas se gestionan igual en los dos casos. Valores FIJADOS por Jaume (21-sep): precio ≥ 5 $ y Acum. Dollar Volume ≥ 2 M$.
+- Estado: FIJADA (Jaume, 21-sep). Origen: idea del 19-sep; enlaza con A11 (lista negra) y M9.
 
 ### Área A · Señal y datos
 
+### R-A-01 · Señal que llega tarde: no se entra
+- Situación: por retraso del bot o del feed, el último precio se ha alejado del precio con el que se generó la señal más de X %.
+- Acción: NO se entra (además del tope del 3 % de R-B-01). No debería pasar: la captura de la señal es instantánea (R-B-04). Se registra el retraso para medirlo en sombra.
+- Parámetros: X (cuadro de mandos; provisional 1 %).
+- Estado: FIJADA (Jaume, 19-sep). Origen: A2.
+
+### R-A-02 · Prints tardíos y de dark pool en las señales
+- Situación: la cinta de Massive incluye prints de dark pool y tardíos: son ejecuciones REALES pero hechas fuera del libro y publicadas con retraso; su precio NO es accesible para nosotros. Pueden alterar el máximo, mínimo o cierre de una vela y con ello una señal o un nivel de estructura. En el estudio, el 93 % de los «fogonazos» de la cinta eran de este tipo.
+- Detección: el feed de operaciones de Massive trae las dos horas (ejecución y publicación): filtrar es comparar dos números por tick, coste cero de rapidez. La cinta de DAS marca con la bandera de condición si un print vale para el último precio.
+- Acción (Jaume, 19-sep): Massive no «miente»: publica TODOS los prints, también los hechos fuera del libro y publicados tarde. (1) El bot construye sus velas en vivo con el feed de operaciones DESCARTANDO los prints con más de 10-20 ms entre ejecución y publicación (el mismo filtro del estudio de fogonazos; el umbral exacto se fija midiendo); coste de latencia: cero (comparar dos horas por tick). (2) Para NO perder la paridad, las velas del lago de los tickers candidatos (los únicos que dan señal) se reconstruyen desde los ticks con el MISMO filtro y se mide cuántas señales cambian (área P); hasta entonces, la protección real son R-B-01 (tope 3 %: si la señal viene de un print fantasma el bid está lejos) y el disparo de los stops por ask.
+- Latencia: NINGUNA (Jaume preguntó dos veces, 19-sep): el filtro es comparar dos marcas de tiempo por cada tick antes de sumarlo a la vela, microsegundos, y ocurre en la construcción de la vela, no en el envío de la orden; además usa el feed de operaciones, que es MÁS rápido que las velas agregadas de Massive. Cero efecto en el slippage.
+- Estado: FIJADA en su lógica (Jaume, 19-sep); umbral (10 o 20 ms) y reconstrucción del lago pendientes (área P). Origen: A5, A4.
+
+### R-A-04 · Símbolos, duplicados, eventos, histórico e indicadores
+- **A7, símbolos distintos entre Massive y DAS** (clases de acciones, sufijos): tabla de equivalencias mantenida por el bot, construida ANTES de operar y actualizada cada día (bajas, vueltas a cotizar). Si un símbolo no casa, no se opera y se avisa. No debe haber equivalencias corruptas.
+- **A10, eventos programados** (FOMC, resultados): tarea humana; sin regla en el bot.
+- **A12, histórico incompleto al entrar en el radar**: no se opera ese ticker hasta tener el histórico; se reintenta la carga.
+- **A13, indicador que en vivo no existe o no se entiende igual que en el backtest**: el bot tiene que ENTENDER cada indicador exactamente como el backtester desde el arranque; si no puede, AVISA antes de operar nada y esa estrategia queda BLOQUEADA hasta que se arregle entre nosotros.
+- Estado: FIJADAS (Jaume, 19-sep). Origen: A7, A10, A12, A13.
+
+### R-A-05 · Señales duplicadas por reconexión del feed
+- Situación: Massive reenvía velas o ticks ya recibidos tras una reconexión y el motor evalúa el mismo minuto dos veces.
+- Acción: cada evento lleva un identificador estable (ticker | estrategia | minuto | tipo), heredado del bot de avisos; un evento repetido se IGNORA. Nunca dos órdenes por la misma cosa. La idempotencia llega hasta DAS con el token de orden (B5).
+- Estado: FIJADA (Jaume, 19-sep). Origen: A9.
+
+### R-A-03 · Splits, contrasplits, IPOs recientes, SPACs y OPAs: exclusiones del radar
+- Situación: valores que no deben entrar aunque den señal.
+- Detección: (1) Splits / contrasplits del día: lista de acciones corporativas de Nasdaq (Daily List) consultada cada mañana antes del PM; el lago ya anula esos días, y el radar tendrá filtro. (2) IPO / relisting reciente: Massive /v3/reference/tickers/{t} devuelve list_date (fecha de salida a bolsa): no entrar si lleva cotizando menos de X días (Jaume: p. ej. un mes). (3) SPAC: el mismo endpoint da sic_code y sic_description; las SPAC son SIC 6770 «Blank Checks». (4) OPA / fusión con precio clavado: Massive NO lo da directamente. Dos vías a estudiar: noticias de Massive (/v2/reference/news, palabras clave «to be acquired», «definitive agreement», «merger») y la heurística de precio que propone Jaume: tras un gap grande el precio se queda horas en una banda estrecha; medir en el lago la anchura de esa banda en las 340 OPAs de la auditoría del 19-sep para fijar el umbral y usarlo como SALIDA de seguridad (si estamos dentro y el precio se clava, salir).
+- Acción: lista NEGRA manual en el cuadro de mandos (Jaume mete tickers a mano, p. ej. OPAs conocidas) + exclusiones automáticas configurables del radar (IPO < X días, SPAC, split del día) + salida de seguridad por «precio clavado» (pendiente de estudio).
+- Parámetros: X días de IPO (provisional 30); banda de OPA: desde el máximo de PM, 30 min con rango ≤ 1,5 % y ≥ 100 k $ negociados.
+- **El estudio de la banda YA ESTÁ HECHO (otra sesión, 19-sep, memoria «auditoría mergers»):** con esa señal se detecta el 58 % de las OPAs antes de las 09:00 con un 0,8 % de falsos positivos en 522 gaps normales; se dispara sobre todo DESPUÉS de haber entrado → es regla de SALIDA de seguridad, no de veto. Las OPAs que no la disparan (el precio sube en escalera hacia la oferta) son las que hacen daño (4 stops de 1A). Noticias de Massive: PARCIALES (varias OPAs sin noticia el día del gap) → Jaume: inviables como filtro; el dato técnico de las velas es el primer filtro, y las noticias, si acaso, secundario. Massive SÍ da en el momento sic_code (6770 = SPAC), type (UNIT/WARRANT/ADRC), list_date, market_cap y acciones en circulación a la fecha.
+- **Riesgo real de entrar en una OPA que la señal no detecta (el 40 % restante), según la auditoría:** 1A entró en 159 de 340 OPAs; resultado total −5,3 R en 163 operaciones: «dinero muerto, no agujero». Antes de clavarse PF 0,72; después PF 0,25 con el 88 % de las operaciones a ±1 %. Solo 4 stops (entradas tempranas mientras el precio sube en escalera hacia la oferta) y algunas de −9/−15 % sin stop. El peor caso es un stop normal (1 R) y capital parado horas; NO es riesgo de cola: en las OPAs el precio se clava, no se dispara. Los fogonazos siguen siendo el peligro, no las OPAs. Además, en el 26 % hubo un halt T1 ~35 min ANTES del gap (no se está dentro). **¿Y una OPA que se «clave» a una distancia enorme (+1.000 %)?** El gap de la OPA ocurre antes de que entremos (es lo que nos hace entrar); una vez dentro, lo que puede pasar es que el precio siga subiendo en escalera hacia el precio de la oferta (los 4 stops de 1A, −9/−15 % sin stop). El caso de cola de verdad es una OPA ANUNCIADA con la posición abierta: halt T1 y reapertura al precio de la oferta; eso ya está cubierto por R-F-05 con datos: en 8 años el T1 que más alto reabrió en horario fue +329 % (CAPR) y +475 % en after-hours (ABVX); mercado al reabrir hasta +250 %, por encima alerta máxima y humano.
+- Estado: FIJADA (Jaume, 19 y 20-sep): lista negra manual + IPO < 30 días + SPAC (SIC 6770) + split del día fuera. **OPAs (decidido el 20-sep): la banda clavada (30 min ≤ 1,5 % desde el máximo de PM, ≥ 100 k $) es un AVISO por Telegram, no una salida automática: Jaume mira el gráfico y sale a mano si ve que es una OPA.** Base: en una OPA clavada el precio no se mueve el resto de la sesión (sin riesgo de cola; en la auditoría el peor caso fue un stop normal y dinero parado) y la liquidez sobra (spread 0,085 % tras clavarse, más $ negociados que la media). Origen: A8, A11, A14.
+
 ### Área D · Salidas y pirámides
 
-### R-D-01 · Salida por hora de la estrategia: escalera de compra y, si no, al ask
+### R-D-01 · Salida por hora de la estrategia: un minuto antes agregando en el punto medio y, a la hora, al ask (v2, 22-sep; la escalera de abajo es la versión del 17-sep, sustituida por R-D-08)
 - Situación: la estrategia manda salir por hora (cierre de la estrategia, «Partial TP (Hour)», salida por tiempo). Se compra para cubrir.
 - Detección: reloj de la estrategia (hora de salida definida en su JSON) y ask/último precio de DAS.
 - Acción: misma lógica que la entrada pero al revés. Escalera de COMPRA agregando liquidez: +1 % sobre el último precio; a los 10 s, +2 %; a los 20 s, +3 %, y ahí hasta completar el minuto. Si al minuto no se ha ejecutado (entera o en parte), lo que quede se compra AL ASK (remover) para asegurar la salida. Lógica estricta «si / si no»: lo ejecutado en la escalera se DESCUENTA y la orden al ask lleva solo el resto; jamás se compra dos veces la misma cantidad (mismo control que R-C-11: posición neta real).
@@ -563,6 +838,8 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 - Prueba: tabla de casos (ejecuta en escalón 1/2/3, parcial + resto al ask, nada + todo al ask); sombra.
 - Estado: FIJADA (Jaume, 17-sep).
 - Origen: D3.
+
+**Matiz de liquidez en las salidas (22-sep):** en una compra para cubrir, AGREGAR es dejar la orden por DEBAJO del ask (al bid o entre bid y ask) y esperar; REMOVER es comprar al ask. La escalera de R-D-01 (+1/+2/+3 % sobre el último) solo agrega cuando el ask está lejos (más de un 1 % por encima del último); si el ask está cerca, el primer escalón ya lo cruza y remueve al instante con techo del 1 %. Así que hoy, de las salidas: el TAKE PROFIT agrega (orden en su nivel, cobra rebate); la salida por hora agrega solo con spread ancho; EOD, cerrar todo, TP a medias, prioridad de R-D-07 y todos los stops REMUEVEN. **R-D-08 (FIJADA, Jaume 22-sep): salidas con hora conocida (salida por hora y EOD) AGREGANDO.** Un minuto ANTES de la hora se pone la compra para cubrir en el PUNTO MEDIO bid-ask, agregando (misma mecánica que R-B-01 al revés). Al llegar la hora, lo que no haya llenado se cruza AL ASK, sin tope: la hora de salida no se negocia. Sustituye a la escalera +1/+2/+3 % de R-D-01, que queda como historia. El TP sigue agregando en su nivel. Se mide en sombra igual que la entrada. Los stops quedan fuera de esto: siempre remueven.
 
 ### R-D-02 · Fin de día (EOD) POR ESTRATEGIA y botón «control humano»
 - Situación: llega el EOD de una estrategia. OJO: el EOD es la hora FINAL de cada estrategia (p. ej. una estrategia de 8:00 a 9:00 tiene EOD a las 9:00), no las 09:30 ni las 16:00. Cada estrategia tiene el suyo.
@@ -578,7 +855,7 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 ### R-D-03 · Take profit ejecutado a medias y el precio rebota
 - Situación: la orden de take profit (compra agregando en el nivel) se ejecuta en parte (300 de 500) y el precio se da la vuelta hacia arriba.
 - Detección: fill parcial del take profit + precio por encima del nivel.
-- Acción: (1) el resto (200) se cierra con una compra limitP al ask con TECHO del 3 % sobre el último precio (misma protección que el stop principal); en un rebote normal se ejecuta al instante. (2) Si NO se ejecuta porque el precio se ha ido más del 3 %, NO se persigue: la posición sigue en manos de sus dos stops residentes (principal y emergencia), que ya llevan la lógica de squeeze y cisne negro. Nunca una compra a mercado sin techo en ese momento (libro posiblemente vacío). (3) Si no se ejecuta, AVISO al humano: la posición puede quedar en el «limbo» entre el límite y el stop hasta que el precio vuelva a uno de los dos. (4) El bot ajusta en todo momento la cantidad de los stops a la posición que queda «en el aire» (R-C-07: reducir el stop a lo que sigue en corto). (5) Si por un fogonazo se ejecutan compras de más y quedan acciones LARGAS, se venden al instante (R-C-11).
+- Acción (v2, Jaume 22-sep: mismo patrón que la entrada, agregar primero): (1) el resto (200) se pone como compra AGREGANDO en el punto medio bid-ask hasta 60 s; si no llena, lo que quede se cruza AL ASK con TECHO del 3 % sobre el último precio DE ESE MOMENTO (no el de hace un minuto; misma protección que el stop principal). Redacción anterior (17-sep): directamente al ask con techo 3 %. (2) Si NO se ejecuta porque el precio se ha ido más del 3 %, NO se persigue: la posición sigue en manos de sus dos stops residentes (principal y emergencia), que ya llevan la lógica de squeeze y cisne negro. Nunca una compra a mercado sin techo en ese momento (libro posiblemente vacío). (3) Si no se ejecuta, AVISO al humano: la posición puede quedar en el «limbo» entre el límite y el stop hasta que el precio vuelva a uno de los dos. (4) El bot ajusta en todo momento la cantidad de los stops a la posición que queda «en el aire» (R-C-07: reducir el stop a lo que sigue en corto). (5) Si por un fogonazo se ejecutan compras de más y quedan acciones LARGAS, se venden al instante (R-C-11).
 - Quién la ejecuta: ejecutor + vigilante (posición neta, aviso).
 - Parámetros: techo 3 % (el de R-C-01).
 - Si la acción falla: —
@@ -615,32 +892,240 @@ Camino del ask tras el disparo (stops normales): máximo a 60 s mediana +4-5 % s
 ### R-D-06 · «Cerrar todo» desde Telegram (incluye posiciones manuales)
 - Situación: el humano manda por Telegram el comando «cerrar todo» (con confirmación, M1).
 - Detección: comando autorizado por chat_id.
-- Acción: el bot cierra TODAS las posiciones de la cuenta, incluidas las que no abrió él (manuales): los cortos comprando AL ASK y los largos vendiendo AL BID (remover, rápido). Cancela antes las órdenes vivas de cada posición para no comprar/vender de más (R-C-11). Techo del límite: por decidir (propuesta: el mismo 3 % y, si algo no entra, aviso inmediato con lo que queda).
+- Acción: el bot cierra TODAS las posiciones de la cuenta, incluidas las que no abrió él (manuales): los cortos comprando AL ASK y los largos vendiendo AL BID (remover, rápido). Cancela antes las órdenes vivas de cada posición para no comprar/vender de más (R-C-11). **Techo (Jaume, 20-sep): 5 % sobre el ask (o bajo el bid) del momento; si no entra, reintenta DOS veces más con el 5 % desde el precio de ese momento; si sigue sin entrar, AVISO con el precio actual y decide Jaume.** Mismo procedimiento para /cerrar TICKER SI y /cerrar TICKER N SI.
 - Quién la ejecuta: ejecutor por orden del humano.
-- Parámetros: techo (por decidir).
-- Si la acción falla: aviso con la lista de lo que sigue abierto.
+- Parámetros: techo 5 %; reintentos 2.
+- Si la acción falla: aviso con la lista de lo que sigue abierto y su precio actual.
 - Prueba: simulacro en demo/sombra con posiciones del bot y manuales.
-- Estado: FIJADA en su lógica (Jaume, 17-sep); techo pendiente.
+- Estado: FIJADA (Jaume, 17 y 20-sep).
 - Origen: D11, M1.
 
 **RECORDATORIO para el día del PDF (Jaume, 17-sep): pedirle las REGLAS DE MARGEN / BUYING POWER de su bróker.** Tiene reglas particulares (margen intradía, PM, autoliquidación en RTH) que pueden afectar a la ejecución y habrá que configurar cosas en función de ellas. → área E (E6) y R-I-01.
 
 ### Área E · Capital compartido entre estrategias
 
+### R-E-01 · Lados opuestos sobre el mismo ticker: prohibido
+- Situación: una estrategia está corta en un ticker y otra da señal de LARGO en el mismo ticker (o viceversa).
+- Detección: señal de sentido contrario al lote abierto en ese ticker.
+- Acción: PROHIBIDO hasta nuevo aviso: la señal contraria se descarta y se registra. Una compra sobre un corto solo puede venir de un stop, de un take profit o de una compra de emergencia para netear la posición (R-C-11); nunca de una entrada de otra estrategia.
+- Quién la ejecuta: guarda.
+- Parámetros: ninguno.
+- Si la acción falla: —
+- Prueba: tabla de casos.
+- Estado: FIJADA (Jaume, 18-sep). Hoy todas las estrategias son cortas.
+- Origen: E2.
+
+**E3 (Jaume, 18-sep): sin tope por ticker.** La exposición por ticker la controla el reparto del cuadro de mandos: si se quiere un 6 % máximo en total con tres estrategias, se asigna un 2 % a cada una; es imposible acumular más de lo previsto en un solo valor.
+
+### R-E-02 · Sin capital para todas: orden de llegada
+- Situación: varias señales (o pirámides) a la vez y no hay capital libre para todas.
+- Detección: capital libre de DAS frente a lo pedido (R-I-01).
+- Acción: por ORDEN DE LLEGADA. La primera entra entera; la siguiente recibe el capital que sobre (si sobra algo, solo eso); si no queda nada, no entra. Lo mismo con las pirámides: si no hay dinero, no se piramida. Sin reparto proporcional.
+- Quién la ejecuta: guarda.
+- Parámetros: ninguno.
+- Si la acción falla: —
+- Prueba: tabla de casos.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: E5, E4.
+
+### R-E-03 · Estrategia desactivada o cambiada de versión con posiciones vivas
+- Situación: se desactiva una estrategia en el cuadro de mandos, o se carga una versión nueva, mientras tiene un lote abierto.
+- Detección: cambio en el cuadro de mandos con lote vivo.
+- Acción: el cuadro de mandos muestra en ese momento los botones para elegir: «cerrar posiciones y reiniciar con la nueva estrategia» (cierre con R-D-01 y arranque de la versión nueva) o «esperar a que la estrategia antigua termine el día» (el lote se gestiona hasta su salida normal con las reglas de la versión vieja; la nueva empieza al día siguiente). Nada automático: lo elige el humano.
+- Quién la ejecuta: cuadro de mandos + ejecutor.
+- Parámetros: ninguno.
+- Si la acción falla: sin elección del humano → se espera a que termine el día (opción segura).
+- Prueba: sombra.
+- Estado: FIJADA (Jaume, 18-sep).
+- Origen: E7, O4.
+
+**E8 (Jaume, 18-sep): cada estrategia y cada pirámide tiene su propia unidad de riesgo.** El cuadro de mandos solo registra el número (como el cuadro actual de las alarmas); cómo se usa lo dicta la estrategia: p. ej. la entrada por distancia al stop y riesgo normal (market value) y las pirámides en dólares fijos. El bot interpreta el riesgo según lo que diga cada estrategia.
+
+**E9 (Jaume, 18-sep): el locate se carga a la PRIMERA estrategia que da señal;** si sobran acciones del paquete, a la siguiente; si faltan, se compran más (R-H-01, coste total acumulado). En principio no debería faltar: se compran al principio previendo las acciones necesarias.
+
+### R-D-07 · Take profit de una estrategia y entrada de otra en el mismo instante
+- Situación: en el mismo minuto (o instante) coinciden un take profit de la estrategia A y una entrada de la estrategia B en el mismo ticker. Muy raro, pero previsto.
+- Acción: PRIORIDAD al take profit: primero se ejecuta el take profit de A, después la entrada de B, una tras otra, nunca juntas. Si se detectan a la vez, el take profit se tira AL ASK (remover) para que sea lo más rápido posible, porque libera buying power y margen para la entrada. Añadir en un ticker tras una reducción está permitido sin más; no hay veto temporal.
+- Estado: FIJADA (Jaume, 19-sep). Origen: D5.
+
+**I3 (Jaume, 19-sep): sin regla de racha; manda la estrategia. El bot solo está ajustado para límites estrictos por stop loss y las reglas de proceso de este libro.**
+
+**Recordatorio del área E (ya decidido en C, B y D):** un lote por estrategia en el diario; entradas simultáneas sumadas en una orden (R-B-03); stop único si coinciden en nivel, uno por lote si difieren (R-C-06 + nota de R-C-11); take profits por lote (R-D-03); la suma de órdenes nunca supera la posición.
+
 ### Área L · Calendario
+
+**Resueltas de rebote:** L1 ventanas por estrategia (JSON); L2 festivos y medias sesiones por el calendario de Massive (F12); L3 horario de verano (R-J-07, todo en ET); L4 sin posiciones overnight (R-D-02); L7 eventos macro = tarea humana (A10).
+
+### R-L-01 · Horario de encendido: solo PM y la parte de sesión que interese
+- Situación: el bot NO está encendido las 24 horas (Jaume, 19-sep).
+- Acción: el supervisor arranca DAS → vigilante → ejecutor antes de las 04:00 ET de cada día de mercado (con reconciliación) y los apaga tras el último EOD de las estrategias activas más el margen de R-D-02. Fines de semana y festivos: apagado. El latido externo (R-J-05) solo vigila dentro de la ventana de encendido.
+- Parámetros: hora de arranque y de apagado (cuadro de mandos; hoy PM y parte de RTH).
+- Estado: FIJADA (Jaume, 19-sep). Origen: L5.
+
+### R-L-02 · Ventana horaria de cada estrategia: revisión manual + comprobación del bot
+- Situación: trampa conocida del backtester: la sesión «se sumaba» (RTH + personalizada corría hasta las 16:00); corregido en la interfaz, pero las estrategias antiguas guardadas pueden seguir así.
+- Acción: el bot interpreta el JSON EXACTAMENTE como el backtester (paridad). Antes de estrenar cada estrategia, Jaume revisa a mano su ventana horaria; el bot, al cargarla, comprueba coherencia (ventana, EOD, sesión) y avisa si ve algo raro.
+- Estado: FIJADA (Jaume, 19-sep). Origen: L6.
 
 ### Área M · Control humano
 
+### R-M-01 · Tres niveles de aviso, resumen diario y comando de detalle
+- Niveles: **Informativo** (entradas, salidas, pirámides, take profits); **Aviso** (incidentes que el bot resolvió solo: stop repuesto, entrada parcial, locate no disponible, reconexión); **Máximo** (necesita humano: posición sin stop, DAS caído, cisne negro, posición desconocida, compras de más, EOD sin cerrar, bucle de locates). Sin prealertas en este bot (M8).
+- Todo aviso va a la vez a Telegram, al log y al panel de avisos del cuadro de mandos (mismos mensajes).
+- Resumen al cierre de cada día: operaciones, resultado por estrategia, incidentes, coste de locates, slippage medido.
+- Comando de Telegram «detalle» para pedir la explicación completa de cualquier aviso o incidente (sobre todo de los niveles Aviso y Máximo).
+- Estado: FIJADA (Jaume, 19-sep). Origen: M2, M3.
+
+**R-M-05 · Un solo bot, una sola cuenta de Massive: el ejecutor también manda las alarmas (Jaume, 22-sep, FIJADA en su forma).** No hacen falta dos cuentas de Massive ni dos bots: el bot de ejecución consume el feed UNA vez y, por cada señal, hace dos cosas: envía la orden (si la estrategia está activa para operar) y publica la alarma en un grupo de Telegram distinto del de los fills, para el socio que no opera con bot. Las prealertas (segundo 44-59) son opcionales por interruptor: si meten ruido, solo las alarmas de vela cerrada. Esto sustituye al bot de alarmas actual (D:ot_senales) cuando el ejecutor esté en producción; hasta entonces conviven en máquinas distintas, cada uno con su conexión al socket [confirmar con Massive el número de conexiones simultáneas por clave]. Canales de Telegram: (1) alarmas de señales, para los socios; (2) operativa del bot (fills, stops, avisos, comandos), solo Jaume; (3) emergencias nivel 3.
+
+### R-M-02 · Canales: Telegram siempre; correo y SMS para el nivel Máximo
+- Reparto FIJADO (Jaume, 19-sep): Telegram → niveles 1, 2 y 3 (en cola con reintentos, R-J-08). Correo (Gmail) → niveles 2 y 3. SMS → SOLO nivel 3 (Máximo); llega por red móvil, no necesita Internet en el móvil de Jaume. Sin llamada de voz.
+- SMS: servicio de pago por uso, sin suscripción mensual: Amazon SNS (≈ 0,05-0,10 € por SMS a España, sin cuota) o Twilio (parecido por mensaje; puede exigir alquilar un número ≈ 1 €/mes salvo remitente alfanumérico). Coste real esperado: céntimos al mes, porque el nivel Máximo es raro. El envío lo hace el bot por Internet desde el VPS; solo la recepción va por red móvil.
+- Estado: FIJADA en su lógica (Jaume, 19-sep); proveedor de SMS por elegir (preferencia: sin suscripción). Origen: M4, J19.
+
+### R-M-03 · Intervención humana detectada: proteger, avisar y pausar entradas
+- Situación: aparece en DAS una orden o posición que no es del bot (Jaume o el socio han actuado a mano, en emergencia).
+- Acción: el bot AVISA (log + Telegram), protege la posición (R-C-10 caso 4) y SE PONE EN PAUSA de nuevas entradas hasta que un humano le diga «sigue» (comando de Telegram o botón del cuadro de mandos). Las posiciones propias siguen gestionándose. Esto resuelve el traspaso humano↔bot que estaba pendiente: la señal de «esto lo he hecho yo» es el propio «sigue».
+- Estado: FIJADA (Jaume, 19-sep). Origen: M6, K5, pendiente de R-C-10.
+
+### R-M-04 · Comandos de Telegram (lista acordada el 19-sep)
+- Solo desde los dos chat_id autorizados (Jaume y socio). Los de consulta van sin confirmación; los de acción sobre el bot con confirmación en dos pasos; los de acción sobre el mercado con «SI» explícito.
+- Consulta: /estado (encendido o pausado, posiciones por estrategia, PnL del día, últimos incidentes); /posiciones (cada lote: entrada, stop, take profit, PnL latente); /ordenes (órdenes vivas en DAS); /locates (comprados hoy, precio, usados o no, gasto frente al 3 %); /estrategias (activas, ventana, tamaño); /detalle id; /salud (conexiones Massive/DAS/servidor de órdenes, latido, latencia, reloj); /log n.
+- Acción sobre el bot: /pausar y /reanudar (no abrir nuevas); /sigue (tras intervención humana, R-M-03); /modo_seguridad on|off (R-I-04); /desactivar y /activar estrategia; /apagar («control humano») y /encender (arranca con reconciliación).
+- Acción sobre el mercado: /cerrar_todo SI; /cerrar ticker SI (ask para cortos, bid para largos); /cancelar_ordenes ticker SI (deja la posición sin órdenes vivas para actuar a mano); /stop ticker precio SI (mover el stop a mano).
+- **Coherencia tras un cierre por Telegram (Jaume, 19-sep):** cuando se cierra una posición o un lote por Telegram, el bot lo REGISTRA como cerrado y CANCELA todas las órdenes asociadas a ese lote (stops, take profits, escaleras) y desactiva sus salidas por hora: nunca ejecutar un take profit ni una salida por hora sobre una posición que ya no existe (compraría a mercado sin posición). Todo se comprueba contra la posición neta real de DAS (R-C-11).
+- Estado: FIJADA en su lista (Jaume, 19-sep); runbook borrador en docs/BOT_EJECUCION_RUNBOOK.md. Origen: M1, M5.
+
+**M7 (Jaume, 19-sep): el bot NO pide confirmación humana antes de operar; es autónomo dentro de sus reglas. Las primeras semanas se va con capital mínimo o en demo (se concreta en el área O).**
+**M8 (Jaume, 19-sep): día en que ni Jaume ni el socio pueden vigilar: se apaga el bot ese día o se pone en «modo trading de seguridad» (R-I-04).**
+
 ### Área N · Registro y contabilidad
+
+### R-N-01 · El diario
+- Qué se guarda por cada decisión: hora exacta, estrategia y lote, señal y sus datos (precio, bid, ask, distancia), regla aplicada, orden enviada (token, tipo, precio, ruta), respuesta de DAS (aceptada, rechazada con motivo, fill con precio y cantidad), stops puestos y cambiados, locates (precio, cantidad, usado o no), avisos emitidos, y las métricas de ejecución (slippage frente al backtester, latencia orden→confirmación, fracción del volumen).
+- Cómo: ficheros por día, escritos ANTES de enviar y DESPUÉS de la respuesta (M6); texto (JSONL) para el día en curso y, si crece, parquet para el histórico (ocupa poco). Los precios que vio el bot se guardan también, para poder reproducir cualquier día sin el feed (los del lago llegan con la actualización, pero el diario guarda los que el bot usó en el instante). Copia fuera del VPS siempre (Q4). Conservación: todo.
+- Comisiones, tasas y PnL neto: NO hace falta que el bot los calcule ni los cuadre con el bróker (lo tiene el bróker); se REGISTRAN por tener base de datos, sin regla de cuadre.
+- Métricas de ejecución: en el resumen DIARIO (R-M-01), no en el cuadro de mandos (no inundarlo; el cuadro se repasa al final).
+- Estado: FIJADA (Jaume, 19-sep). Origen: N1-N6.
 
 ### Área O · Pruebas y despliegue
 
+**O2 y O3 (Jaume, 19-sep): el orden sombra → demo → canario y el número de sesiones de cada fase se DECIDEN AL FINAL, con todo hecho; puede hacer falta más o menos. Las fases y criterios del 5-sep siguen como referencia.**
+
+### R-O-01 · Cambios solo con el bot apagado, y versión registrada
+- Los cambios de código y de estrategias se hacen SIEMPRE con todo el bot apagado (fuera de la ventana de R-L-01): apagar del todo, actualizar, reiniciar. Nunca en caliente. El bot escribe en el diario, en cada arranque, la versión de código y el hash y fecha del JSON de estrategias con que arranca.
+- Estado: FIJADA (Jaume, 19-sep). Origen: O4, O5.
+
+### R-O-02 · Repetición de un día grabado y vuelta atrás (PROPUESTA, pendiente de Jaume)
+- Antes de estrenar cada versión: (1) pasar las tablas de casos de las reglas de este libro; (2) REPETIR un día grabado (las grabaciones del bot de avisos) contra el ejecutor EN SECO (sin DAS: decide y escribe en el diario, no envía), comparando con la versión anterior; sirve además para provocar casos raros (halt, fogonazo, entrada a medias) que el canario quizá no muestre. (3) Vuelta atrás: cada versión de bot y de estrategias etiquetada con fecha; mando de «volver a la anterior» en el arranque, en minutos.
+- Estado: FIJADA (Jaume, 19-sep): repetición de días grabados obligatoria (dejará el bot de avisos encendido más tiempo para grabar más días y probar todo antes de entrar en vivo) y vuelta atrás formal con versiones guardadas por fecha (ocupan poco). Origen: O7, O8.
+
+**O9 (Jaume, 19-sep):** lo que solo se puede probar con dinero (locates reales, rechazos, halts) se descubre en el canario a tamaño mínimo y cada caso nuevo se anota en el libro; pero no todo aparecerá en el canario (hay casos raros) y no es plan alargarlo mucho → por eso importa la repetición de días grabados (R-O-02).
+
 ### Área P · Backtester vs vivo
 
+**P1 y P5 (Jaume, 19-sep):** el backtester se deja como está (llena los stops en reaperturas al nivel, no modela halts ni SSR); se MIDE en sombra la diferencia real y solo se toca el motor si es relevante (igual que con los prints tardíos, R-A-02).
+**Comisiones para backtests de 1B (22-sep, sobre 3.024 trades reales de 1B ene-2025→ago-2026, precio de entrada mediana 3,59 $, 9 % por debajo de 1 $):** ida y vuelta TODO removiendo (entrada rama rápida + salida al ask + SEC/TAF): mediana 0,19 %, media 0,27 %, p90 0,65 %, ponderado por nocional 0,26 %; con la entrada agregando (escalera): media 0,07 %. Recomendación para backtests: **0,25 % por trade completo** (conservador; 0,12 % por lado si el parámetro es por lado), aparte del slippage (≈ 0,3 % que baraja Jaume; medido 0,9 % PM / 0,6 % RTH en el estudio de entradas) y de los locates. En 1B el 71 % de las salidas son EOD y el 29 % SL: casi todas remueven. **P2 y P3 (19-sep):** el backtester no tiene slippage de base: lo pone quien lo configura. Recomendación para EVALUAR estrategias (no regla del bot): usar los valores medidos (1 % PM, 0,7 % RTH) hasta tener los reales de la sombra. Al bot le entra la estrategia normalizada: solo reglas, sin comisiones ni slippage.
+**P4 (Jaume, 19-sep):** el bot registra cada precio real de locate con fecha (R-H-01) y con eso se recalibra la banda de locates del backtester cada cierto tiempo; a futuro, modelar «ciclos» de precios de locates. De momento, registrar basta.
+**P6:** resuelto en R-A-02 (mismo filtro de prints en lago y bot cuando se decida).
+**P7 (Jaume, 19-sep):** SIN criterio de parada automática por divergencia. El bot registra el slippage medio (R-N-01); si se fuera de madre, tocaría buscar estrategias nuevas, y eso no es cosa del bot.
+**P8:** resuelto en R-A-04 (indicador que no existe en vivo → estrategia bloqueada + aviso).
+
 ### Área Q · Seguridad
+
+### R-Q-01 · Seguridad (todo FIJADO, Jaume, 19-sep)
+- Credenciales de DAS, token de Telegram y claves solo en el .env del VPS, fuera del repo.
+- Acceso al VPS con usuario propio para Jaume y otro para el socio; RDP solo por VPN o con IP fija.
+- Comandos de Telegram solo desde los dos chat_id autorizados (Jaume y socio), con confirmación en los que cambian algo.
+- La fuga del token de Telegram en los logs (httpx), aplazada hasta ahora, se ARREGLA ANTES de pasar a dinero real.
+- Copias del diario y del estado fuera del VPS (R-N-01).
+- El bot no tiene ningún permiso de mover dinero ni cambiar ajustes de cuenta [API: confirmar que el CMD API no lo permite o cómo se bloquea].
+- Origen: Q1-Q6.
 
 ## 4. Registro de cambios
 
 | Fecha | Qué | Quién |
 |---|---|---|
 | 2026-09-12 | Se abre el fichero con el formato, los principios marco y el índice de áreas. Ninguna regla aún. | Jaume + Claude |
+
+### R-A-06 · Canal de datos de Massive: ticks y cotizaciones, no agregados por segundo
+- Situación: el bot de señales actual se suscribe al canal A (agregados por segundo) y AM (velas). Medido el 21-sep con 22.215 mensajes del día: el agregado llega 3,4 s DESPUÉS de cerrar su segundo (p90 3,5 s, máx 7,7 s; reloj del PC corregido con w32tm). Medido en vivo el mismo día: el canal T (operaciones) y el canal Q (cotizaciones bid/ask) llegan a 0,70 s (p90 0,73 s), y el A a 2,6 s.
+- Acción: el bot de ejecución se suscribe a T y Q de los tickers del radar y construye las velas él mismo a partir de las operaciones; el A y el AM quedan solo como comprobación. Para los precios de ejecución (bid/ask al enviar, puerta del 3 %, escalera, vigilancia de posiciones) se usa la cotización de DAS ($Quote, Level 1 del bróker), que es en tiempo real; Massive solo genera señales.
+- Consecuencia: la vela se cierra a los 0,7 s en vez de a los 3,4 s; la puerta de entrada de R-B-01 mira un bid de DAS, no uno de Massive con 3 s de retraso. Los stops residentes no dependen de nada de esto.
+- Parámetros: ninguno.
+- Prueba: repetir la medida de latencia por canal en sombra, cada día, y guardarla en el diario.
+- Estado: **FIJADA por Jaume (21-sep):** dos capas: Massive vigila el MERCADO ENTERO y detecta cada día qué acciones saltan; solo esas (las que saltan ese día, que no pasan de 50) entran en el radar de DAS, que es el que construye sus velas y da los precios. El tope de 50 de DAS no preocupa porque se aplica a la segunda capa, no al mercado entero. Massive es imprescindible para el radar (qué acciones saltan). Los datos que alimentan al bot NO pueden llegar cada 3 s. Decisión: las velas de los tickers que Massive pone en el radar se construyen por API de DAS (manda DAS por rapidez si se puede sacar de ahí) y, EN PARALELO, por Massive con ticks, desde la sombra o antes y durante todo el canario, comparando vela a vela hasta demostrar paridad exacta. Montaje simple: coger de los dos sitios a la vez. **Al recibir el PDF / la clave del API, lo PRIMERO que se prueba es esto** (R-18, R-19 del apartado R). Pendiente aparte: aplicar lo mismo al bot de señales actual si Jaume quiere prealertas más tempranas.
+- Origen: pregunta de Jaume del 21-sep (otro chat detectó los 3 s).
+- **Matiz (21-sep, tarde):** Jaume prefiere UN solo proveedor de datos (Massive) para señales y velas, y DAS solo para ejecutar, como sus socios. Recomendación aceptada: por defecto las velas se construyen desde los ticks de Massive (misma fuente que el backtester: paridad por construcción); DAS aporta únicamente el bid/ask al que se envía cada orden y los stops. La variante DAS de abajo pasa a ser una PRUEBA OPCIONAL: solo si en sombra la latencia de los ticks de Massive medida desde el VPS supera ~0,5 s se monta la doble vía y se compara.
+- **Variante DAS (21-sep):** construir las velas de los tickers del radar desde el Time & Sales de DAS (100-300 ms) en vez de los ticks de Massive (0,7 s). Condiciones: (a) que el tope de símbolos del Level 1 por API (≈ 50 según el manual) cubra el radar del día [API R-18]; (b) que las velas salgan IGUALES que las de Massive, que son las del backtester (feed consolidado de todas las bolsas, mismas exclusiones de prints) [API R-19]; (c) Massive queda para el radar, los cierres de ayer y como respaldo de velas si DAS cae. Decisión: en SOMBRA se construyen por las dos vías a la vez y se comparan varios días; si coinciden y caben, manda DAS; si no, Massive con ticks.
+
+### R-O-03 · Fases de puesta en marcha: sombra → demo → canario (FIJADA, Jaume 21-sep)
+| Fase | Duración | Qué se hace | Para pasar a la siguiente |
+|---|---|---|---|
+| Sombra | 1 semana de mercado | Bot con datos reales y DAS conectado, SIN enviar órdenes. Mide latencia por canal (Massive T/Q, DAS), slippage teórico contra el libro, paridad de señales con el backtester, estabilidad de los procesos. | Cero caídas sin recuperación automática; paridad de señales 100 %; latencias registradas en el diario. |
+| Demo | 1 semana | Mismo bot contra la cuenta DEMO de DAS: órdenes reales con dinero falso. Fills, stops residentes (principal + emergencia), cancelaciones, limpieza de R-C-11, EOD, y los simulacros del runbook que se puedan PROVOCAR (matar DAS, cortar feed, matar ejecutor/vigilante, doble instancia, Telegram caído). | Los simulacros provocables superados; ninguna posición larga no deseada; reconciliación sin diferencias. **Aviso de Jaume (21-sep): las casuísticas del libro son muy amplias y una semana de mercado NO las cubre todas (halts, fogonazos, OPAs…); es posible entrar a real sin haberlas visto en demo. Por eso lo que valida el resto es el CÓDIGO: tests unitarios de cada regla con casos grabados (repetición de días, R-O-02) antes de la demo, no la demo.** Pendiente: cómo se configura la cuenta demo en DAS/Sage [API]. |
+| Canario | 1-2 semanas (Jaume lo va diciendo) | Dinero real, tamaño mínimo, una estrategia. | Jaume sube el tamaño cambiando el riesgo en el cuadro (R-I-02); criterio orientativo: sin intervención humana no prevista durante la fase. |
+- La FASE se gestiona desde el cuadro de mandos: selector sombra / demo / real, visible siempre en la cabecera y en cada aviso de Telegram (para no confundir un fill de demo con uno real). Cambiar de fase exige bot apagado y sin posiciones (R-O-01). En «sombra» el ejecutor tiene prohibido enviar órdenes a nivel de código, no solo de configuración.
+- Origen: repaso final del 21-sep.
+
+## 4. Cuadro de mandos: inventario (borrador del 20-sep, en repaso con Jaume)
+
+Todo lo que el libro dice «va al cuadro de mandos», recogido en un sitio. Tres columnas: qué es, valor hoy, de dónde sale. Regla de oro (R-I-03): si el JSON de la estrategia y el cuadro difieren, manda el cuadro. El bot lee el cuadro en la siguiente señal, nunca reabre lo ya abierto.
+
+### 4.1 Por estrategia (una fila por estrategia activa, hasta 20)
+| Campo | Valor hoy | Origen |
+|---|---|---|
+| Activa (sí/no) + botones al desactivar (cancelar entradas / dejar salidas) | — | R-E-03 |
+| Tamaño: riesgo fijo por entrada y por cada piramidación (unidad de la estrategia) | lo pone Jaume | R-I-02 |
+| EV mínimo del locate para entrar (por rango de precio si aplica) | de la puerta por EV del backtester | R-H-01 |
+| Hora EOD y hora de fin de ventana de entrada | JSON | R-D-02 |
+| Reentradas (accept_reentries / max_reentries; −1 = sin tope numérico) | JSON | R-D-04 |
+| Niveles de stop N1 / N2 / N3 en % o estructura + márgenes del límite (3 % / 50 %) | 10 % / +3 % / ×1,10 / +50 % | R-C-01 |
+| Take profit (parciales y cómo reduce el stop) | JSON | R-C-05, R-D-03 |
+| Sesiones permitidas (PM / RTH) y ruta por sesión | ARCA PM; RTH SAGEPRO o ARCA (sombra) | R-B-01 |
+
+### 4.2 Globales de la cuenta
+| Campo | Valor hoy | Origen |
+|---|---|---|
+| Tope de gasto en locates sobre la cuenta (por día) | 3 % | R-H-03 |
+| Entrada: espera agregando · nivel · tope de slippage al cruzar · techo del cruce | 60 s · punto medio · 3 % · 0,5 % | R-B-01 |
+| Salida por hora: escalera y tiempos | 1/2/3 % · 10 s · 60 s | R-D-01 |
+| Caducidad de una señal sin llenar | 60 s | R-B-04 |
+| Fracción máxima del volumen acumulado | desactivado | R-B-05 |
+| Techo «cerrar todo» y reintentos | 5 % · 2 | R-D-06 |
+| Halts: k máximo, distancia a la banda con k = 2, vela máxima para reentrar, T1 tope | 3 · 3-5 % · 6 % · 250 % | R-F-01, R-F-05 |
+| Margen del stop bajo limit up | 1-2 % | R-F-02 |
+| Stop de protección para posiciones desconocidas al arrancar | 20-30 % | R-C-10 |
+| Exclusiones: días de IPO, banda de OPA (min, rango, $) | 30 d · 30 min ≤ 1,5 % ≥ 100 k $ | R-A-03 |
+| Modo trading de seguridad (precio mín., $ acumulados) | > 5 $ · > 2 M $ (pendiente) | R-I-04 |
+| Horas de encendido y apagado | PM + parte RTH | R-L-01 |
+| Fase: sombra / demo / real | sombra | R-O-03 |
+| Modo de seguridad (interruptor): precio ≥ 5 $, Acum. Dollar Volume ≥ 2 M$ | apagado | R-I-04 |
+
+### 4.3 Técnicos (raramente se tocan)
+| Campo | Valor hoy | Origen |
+|---|---|---|
+| Barrido de reconciliación / posiciones | 2 s / 10 s | R-K-01 |
+| Feed: prealerta / emergencia | 30 s / 60 s | R-J-01 |
+| Reconexión DAS y aviso | 2/4/8/16/30 s · 5 min | R-J-02 |
+| Vigilante: relanzar / colgado / latido | 30 s / 10 s / 60 s ×3 | R-J-03, R-J-05 |
+| Reloj y disco | 2 s · 5 GB | R-J-07 |
+| Cadencia de informes en cisne negro | 5 min | R-G-01 |
+| Comprobación del stop tras aviso DAS | 1 s | R-C-04 |
+| Filtro de prints tardíos | 10-20 ms | R-A-02 |
+| Intentos y ventana del stop rechazado | 5 · 5 min · 100 % | R-C-03 |
+
+### 4.4 Lo que el cuadro muestra (solo lectura)
+Posiciones y órdenes vivas con su estado (principal / emergencia / TP), BP y equity de DAS, locates comprados hoy y gasto acumulado frente al tope, señales del día y qué pasó con cada una (entró / caducó / rechazada), estado del feed, de DAS y del vigilante, última reconciliación, y el botón «Control humano» por estrategia.
+
+### 4.4b Piramidaciones en el cuadro (comprobado 22-sep)
+El cuadro del bot de señales YA tiene una casilla de riesgo por cada piramidación de la estrategia, en el orden de su definición (desde el 16-sep: lista `riesgos_piramide`, una por nivel; si una casilla va vacía cae al riesgo de pirámide global). La lista incluye también los pasos «reduce» (salidas parciales), que no piden riesgo. El cuadro del bot de ejecución hereda esto tal cual: tantas casillas como pirámides tenga cada estrategia, y el locate de cada estrategia se dimensiona con entrada + suma de sus «add» (R-H-05).
+
+### 4.5 Decisiones tomadas
+- **CM1 (21-sep, FIJADA):** el cuadro vive DENTRO de la app del backtester, como ampliación del panel del bot de señales. Condición: el bot NO llama al backend en caliente; la app escribe un fichero de configuración al guardar, el bot lo lee y lo guarda en su disco; si el backend cae, sigue con el último conocido y avisa (R-I-03).
+- **CM2 (21-sep, FIJADA):** en caliente, con efecto en la siguiente señal: activar/desactivar estrategia, riesgo por entrada y pirámide, EV mínimo del locate, tope diario de locates, umbrales del modo de seguridad, horas de encendido/apagado, hora EOD (si hay que cerrar antes, se usa el botón o /cerrar, no el parámetro) y todos los botones de intervención. Solo con el bot apagado y sin posiciones: niveles y márgenes de stops, puerta del 3 %/techo 0,5 %/escalera y tiempos, reglas de halts, exclusiones, caducidad de la señal (60 s), fracción de volumen y todos los técnicos. Bajar un tamaño en caliente solo afecta a entradas siguientes; reducir lo abierto es un botón de cierre parcial.
+
+- **CM3 (21-sep, FIJADA):** historial de cambios del cuadro: cada cambio va al diario del bot con fecha y hora, campo, valor anterior, valor nuevo y quién lo hizo; el cuadro enseña los últimos cambios.
+- **CM4 (21-sep, FIJADA por Jaume):** en el cuadro SOLO se ajusta lo operativo: EV mínimo del locate (fijo o por rango de precio), activación de cada estrategia, topes (locates, seguridad, exposición), riesgo por entrada y por piramidación, y los botones. TODO lo que define la estrategia (condiciones, tipo de stop y sus variables, sesiones, EOD, reentradas, TP) se cambia en el backtester y se sobrescribe la exportación al bot. Las estrategias llegan al bot NORMALIZADAS: sin slippage, sin locates ni gastos, para que no haya fricción entre los datos del backtester y los del bot. Un dato, un sitio.
+
+**Preguntas del inventario: CM1-CM4 respondidas el 21-sep (arriba).**

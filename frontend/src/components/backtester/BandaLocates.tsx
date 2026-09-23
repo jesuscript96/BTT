@@ -212,8 +212,8 @@ export default function BandaLocates({ result, initCash, backtestParams, ultimaP
   // solo trae el resumen de lo sorteado (su min es el minimo observado, no el
   // del rango) y con el la factura no cuadra con la del motor.
   const num0 = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-  const [minimo, setMinimo] = useState<number>(num0(backtestParams?.locates_random_min) ?? rnd?.min ?? 1);
-  const [maximo, setMaximo] = useState<number>(num0(backtestParams?.locates_random_max) ?? rnd?.max ?? 10);
+  const [minimo, setMinimo] = useState<number>(num0(backtestParams?.locates_random_min) ?? rnd?.p10 ?? 0.3);
+  const [maximo, setMaximo] = useState<number>(num0(backtestParams?.locates_random_max) ?? rnd?.p90 ?? 15);
   const [nSem, setNSem] = useState(50);
   const [base, setBase] = useState(1);
   const [nRep, setNRep] = useState(1000);
@@ -307,7 +307,7 @@ export default function BandaLocates({ result, initCash, backtestParams, ultimaP
           </button>
           <span style={{ fontSize: 11, color: color.textMuted }}>
             {cortos === 0 ? "no hay cortos: los locates no aplican"
-              : rnd ? `esta corrida se hizo con la semilla ${rnd.seed}; sorteos entre ${f2(rnd.min)} y ${f2(rnd.max)} $ (media ${f2(rnd.media ?? 0)})`
+              : rnd ? `esta corrida se hizo con la semilla ${rnd.seed}; sorteos: mediana ${f2(rnd.p50 ?? rnd.media ?? 0)} $, 9 de cada 10 entre ${f2(rnd.p10 ?? rnd.min)} y ${f2(rnd.p90 ?? rnd.max)} $ (mín ${f2(rnd.min)}, máx ${f2(rnd.max)})`
                 : "esta corrida no llevaba locates aleatorios: la referencia de precio es la entrada"}
           </span>
           {error && <span style={{ fontSize: 11.5, color: color.loss }}>{error}</span>}

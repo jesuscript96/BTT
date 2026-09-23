@@ -1,7 +1,7 @@
 "use client";
 
-// Pestaña Baul: el baul generico con todas las estrategias guardadas y los
-// dos cuadros de destino (portfolio e incubadora). Las asignaciones se
+// Pestaña «Baul»: el baul generico con todas las estrategias guardadas y los dos cuadros de
+// destino (portfolio e incubadora). Las asignaciones se
 // guardan en el backend (tabla portfolio_lab_assignments) y por eso
 // sobreviven a recargas y reinicios.
 
@@ -290,7 +290,7 @@ export function BaulTab({
         onOpen={cargarCurva}
         onMove={onMove}
         title="Portfolio"
-        hint="las que se estudian juntas en la pestaña Portfolio"
+        hint="las que se estudian juntas en «Análisis de portfolio» (el botón «las del cuadro Portfolio» del paso 1)"
         strategies={inPortfolio}
         emptyText={filtroActivo ? "Ninguna pasa el filtro." : "Vacío. Añade estrategias desde el baúl genérico con «+ Portfolio»."}
         actions={removeFrom("portfolio")}
@@ -315,7 +315,7 @@ export function BaulTab({
 
       <p style={{ margin: 0, fontSize: 11, fontFamily: font.sans, color: color.textMuted, lineHeight: 1.5 }}>
         Con <strong>▲ ▼</strong> subes o bajas una estrategia en la lista; es un solo orden para todas las listas
-        (Baúl, cuadros, «En crudo», Robustez) y se recuerda en este navegador. Una estrategia puede estar en los dos cuadros a la vez. <strong>Quitarla</strong> de un cuadro
+        (Baúl, cuadros, «Análisis de portfolio», Robustez) y se recuerda en este navegador. Una estrategia puede estar en los dos cuadros a la vez. <strong>Quitarla</strong> de un cuadro
         no borra nada: la estrategia y sus corridas siguen en el baúl genérico. <strong>Borrar</strong>,
         en el baúl genérico, no deja rastro: se lleva la estrategia, todas sus corridas guardadas (con
         sus ficheros de disco) y sus asignaciones. También caen las <strong>corridas de cartera</strong>

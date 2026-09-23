@@ -655,6 +655,9 @@ export default function Home() {
       halts_mode: p?.halts_mode,
       halts_n: p?.halts_n,
       halts_slippage_pct: p?.halts_slippage_pct,
+      margin_enabled: p?.margin_enabled,
+      margin_broker: p?.margin_broker,
+      margin_capacity_pct: p?.margin_capacity_pct,
       is_percent: p?.is_percent,
       risk_type: p?.risk_type,
       fixed_ratio_delta: p?.fixed_ratio_delta,
@@ -725,6 +728,9 @@ export default function Home() {
       halts_mode: p?.halts_mode,
       halts_n: p?.halts_n,
       halts_slippage_pct: p?.halts_slippage_pct,
+      margin_enabled: p?.margin_enabled,
+      margin_broker: p?.margin_broker,
+      margin_capacity_pct: p?.margin_capacity_pct,
         monthly_expenses: p?.monthly_expenses,
         look_ahead_prevention: p?.look_ahead_prevention ?? true,
         // PRD_METRICAS_Y_OOS P1: la ruta de borrador tampoco enviaba el split
@@ -797,6 +803,9 @@ export default function Home() {
     halts_mode?: "primero" | "n";
     halts_n?: number;
     halts_slippage_pct?: number;
+    margin_enabled?: boolean;
+    margin_broker?: string;
+    margin_capacity_pct?: number;
   }) => {
     const isDraftId = params.strategy_id === "draft" ||
                       params.strategy_id === "wizard_draft" || 
@@ -982,6 +991,9 @@ export default function Home() {
       halts_mode: params.halts_mode,
       halts_n: params.halts_n,
       halts_slippage_pct: params.halts_slippage_pct,
+      margin_enabled: params.margin_enabled,
+      margin_broker: params.margin_broker,
+      margin_capacity_pct: params.margin_capacity_pct,
       is_percent: params.is_percent,
       risk_type: (params as any).risk_type,
       fixed_ratio_delta: (params as any).fixed_ratio_delta,
@@ -1192,6 +1204,21 @@ export default function Home() {
         // Sin el dataset restaurado, tras un F5 loadCandles sale en silencio y
         // el visor queda mudo para TODOS los trades (fix e886ecd de staging).
         if (saved.datasetId) datasetIdRef.current = saved.datasetId;
+        // LOS PARAMETROS DE LA CORRIDA (19-sep-2026). Sin esto, tras un F5 o al
+        // volver de otra pagina, el resultado revivia pero initCash/riskR/tipo
+        // de riesgo se quedaban en los valores por defecto (10.000, 100 $, sin
+        // tipo): el bloque de gastos fijos de Edge tomaba una corrida a 1 $ por
+        // operacion como si fuera a 100 $ y pedia 83 millones de capital para
+        // que los gastos fueran ruido; y el calendario en R dividia por la R
+        // equivocada. Un bug que no da error.
+        if (saved.backtestParams && typeof saved.backtestParams === "object") {
+          backtestParamsRef.current = saved.backtestParams;
+          const ic = Number(saved.backtestParams.init_cash);
+          const rr = Number(saved.backtestParams.risk_r);
+          if (Number.isFinite(ic) && ic > 0) initCashRef.current = ic;
+          if (Number.isFinite(rr) && rr > 0) riskRRef.current = rr;
+        }
+        if (saved.strategyId) strategyIdRef.current = saved.strategyId;
         if (saved.activeStrategy) {
           setActiveStrategy(saved.activeStrategy);
         }
@@ -1224,6 +1251,10 @@ export default function Home() {
       // Sin el dataset, tras un F5 loadCandles salia en silencio y el visor
       // decia «No hay velas para este trade» para TODOS los trades (18-sep).
       datasetId: datasetIdRef.current,
+      // Los parametros con los que se lanzo (capital, 1R, tipo de riesgo,
+      // gastos, locates...): las pestanas los necesitan tras un F5.
+      backtestParams: backtestParamsRef.current,
+      strategyId: strategyIdRef.current,
       activeStrategy,
       selectedDay,
       mode,
@@ -1238,6 +1269,8 @@ export default function Home() {
         // Fallback 1: Save result metadata and summary stats, but exclude trades as well
         const lightState = {
           result: lightweightResult ? { ...lightweightResult, trades: [], day_results: [] } : null,
+          backtestParams: backtestParamsRef.current,
+          strategyId: strategyIdRef.current,
           activeStrategy,
           selectedDay,
           mode,

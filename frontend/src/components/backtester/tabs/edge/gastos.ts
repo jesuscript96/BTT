@@ -23,10 +23,17 @@
 // COMPONE: los ultimos meses pesan mucho mas que los primeros y la media
 // mensual no es una escala de nada (medido en una corrida real: 7.358 $/mes
 // «a 500 $ por operacion», que era un 16 % por operacion, imposible). Se
-// DESCOMPONE con `return_pct`, que el motor define como pnl / capital en
-// riesgo: `return_pct / 100 x R0` es el PnL que habria tenido ese mismo trade
-// con un riesgo fijo R0 en $ (el del primer dia: capital x %). Los locates se
-// escalan con el mismo factor. A partir de ahi, todo igual que con riesgo fijo.
+// DESCOMPONE con `r_multiple`: el motor lo define como pnl / (riesgo de ESE
+// dia = capital del dia x %), asi que `r_multiple x R0` es el PnL que habria
+// tenido ese mismo trade con un riesgo fijo R0 en $ (el del primer dia:
+// capital x %). Los locates se escalan con el mismo factor. A partir de ahi,
+// todo igual que con riesgo fijo.
+//
+// (Hasta el 19-sep-2026 se descomponia con `return_pct`, que es pnl / nocional
+// DEL LEG: con piramides y salidas parciales cada leg tiene su propio nocional
+// y la suma no es la del trade a riesgo fijo. En PM (A), con piramide y tres
+// parciales, salia 4 veces corto: 0,34 R/mes en vez de 7,6, y de ahi que
+// «para que los gastos sean ruido» pidiera 290.000 $ de capital. Jaume lo vio.)
 //
 // Y en small caps la escala lineal miente a partir de cierto tamano: una
 // posicion de 40.000 $ en un chicharro no se llena al precio del backtest.
@@ -47,10 +54,17 @@ export interface MesBruto {
 
 /** PnL del trade y factor de escala respecto al PnL real.
  *  Con riesgo fijo: el pnl tal cual (factor 1). Con riesgo en % del equity
- *  (`r0` dado): el pnl descompuesto a un riesgo fijo r0. */
-function pnlBase(t: TradeRecord, r0?: number): { pnl: number; factor: number } {
+ *  (`r0` dado): el pnl descompuesto a un riesgo fijo r0 via `r_multiple`
+ *  (exacto tambien con piramides y parciales: el motor mide la R del trade
+ *  contra el riesgo del dia). Sin `r_multiple`, respaldo con `return_pct`. */
+export function pnlBase(t: TradeRecord, r0?: number): { pnl: number; factor: number } {
   const pnl = Number(t.pnl) || 0;
   if (!r0 || r0 <= 0) return { pnl, factor: 1 };
+  const rm = Number(t.r_multiple);
+  if (Number.isFinite(rm)) {
+    const fijo = rm * r0;
+    return { pnl: fijo, factor: pnl !== 0 ? fijo / pnl : 1 };
+  }
   const ret = Number(t.return_pct);
   if (!Number.isFinite(ret)) return { pnl, factor: 1 };
   const fijo = (ret / 100) * r0;

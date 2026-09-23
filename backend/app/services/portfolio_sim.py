@@ -115,6 +115,13 @@ def vwap_para_stop(arrays: dict):
     return _vwap(h, l, c, v)
 
 
+# Valores JSON del modo NUEVO del stop de estructura (2026-09-20): maximo/minimo
+# corrido INCLUYENDO la vela de la senal. Es opt-in; "Previous Max" a secas es
+# el de siempre (hasta la vela anterior). Se acepta con y sin tilde.
+PREVMAX_VELA_SENAL = ("Previous Max (vela de la señal)", "Previous Max (vela de la senal)", "PrevMax+0")
+PREVMIN_VELA_SENAL = ("Previous Min (vela de la señal)", "Previous Min (vela de la senal)", "PrevMin+0")
+
+
 def _structural_level(
     value, i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows,
     pivot_highs=None, pivot_lows=None, vwaps=None,
@@ -125,18 +132,29 @@ def _structural_level(
     Previous Min) o 0.0 si no está disponible (array ausente o valor 0);
     el caller decide el default cuando es 0.0.
     """
-    if value == "HOD" and hods is not None:
+    # DOS MODOS DE «PREVIOUS MAX/MIN» (2026-09-20, Jaume):
+    #  * "Previous Max" -> EL DE SIEMPRE, y el por defecto: maximo corrido
+    #    HASTA la vela anterior a la senal (`prev_highs`, HOD desplazado 1).
+    #  * "Previous Max (vela de la señal)" -> opt-in: maximo corrido del dia
+    #    INCLUYENDO la vela de la senal (`hods`). Para gaps que rompen de golpe:
+    #    con el modo de siempre el nivel es el precio de ANTES de la rotura, el
+    #    stop del corto cae bajo la entrada, se descarta y el ticker no se
+    #    opera (AEMD 17-sep: max previo 1,42, entrada 2,97). La orden sigue en
+    #    i+1; solo cambia desde que vela se mira hacia atras.
+    # "HOD"/"LOD" siguen aceptados (estrategias guardadas, lot_stop) y valen lo
+    # mismo que el modo «vela de la señal»; la interfaz ya no los ofrece.
+    if value in ("Previous Max", "PrevMax") and prev_highs is not None:
+        return prev_highs[i] if prev_highs[i] > 0 else 0.0
+    if value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
+        return prev_lows[i] if prev_lows[i] > 0 else 0.0
+    if (value == "HOD" or value in PREVMAX_VELA_SENAL) and hods is not None:
         return hods[i] if hods[i] > 0 else 0.0
-    if value == "LOD" and lods is not None:
+    if (value == "LOD" or value in PREVMIN_VELA_SENAL) and lods is not None:
         return lods[i] if lods[i] > 0 else 0.0
     if value == "PMH" and pm_highs is not None:
         return pm_highs[i] if pm_highs[i] > 0 else 0.0
     if value == "PML" and pm_lows is not None:
         return pm_lows[i] if pm_lows[i] > 0 else 0.0
-    if value in ("Previous Max", "PrevMax") and prev_highs is not None:
-        return prev_highs[i] if prev_highs[i] > 0 else 0.0
-    if value in ("Previous Min", "PrevMin", "Previous Low", "PrevLow") and prev_lows is not None:
-        return prev_lows[i] if prev_lows[i] > 0 else 0.0
     # ULTIMO PIVOTE (2026-09-10). A diferencia de HOD/Previous Max, que son
     # extremos CORRIDOS y no bajan nunca, el pivote es el ultimo sitio donde el
     # precio giro de verdad — asi que el stop queda pegado al nivel que el
@@ -588,6 +606,9 @@ def simulate(
                     "Pivot High" if ls.get("swing") == "up" else "Pivot Low",
                     i, hods, lods, pm_highs, pm_lows, prev_highs, prev_lows, ph, pl)
             nombre = {"previous_max": "Previous Max",
+                      "previous_min": "Previous Min",
+                      "previous_max_senal": PREVMAX_VELA_SENAL[0],
+                      "previous_min_senal": PREVMIN_VELA_SENAL[0],
                       "hod": "HOD", "lod": "LOD"}.get(ls["level"])
             if nombre is None:
                 return 0.0
@@ -632,7 +653,6 @@ def simulate(
     ht_eventos: list = []    # halts que pillaron la posicion (vacio sin coste)
 
     total_trades = 0
-    prev_signal = False
 
     for i in range(n):
         # Misprint patch removed: intraday source data is now NBBO-clipped at the
@@ -643,7 +663,6 @@ def simulate(
         # Halts: velas entre la parada y la reapertura de un cierre por halt ya
         # resuelto (equity escrita al cerrar). Nada que evaluar en ellas.
         if ht_on and i <= ht_saltar:
-            prev_signal = bool(entries[i])
             continue
         # Black Swan en modo manual: mientras se espera al cierre diferido no
         # hay stop, TP, parciales ni salida por senal (modela un stop MENTAL,
@@ -755,8 +774,6 @@ def simulate(
                 for _k in range(i, _xi + 1):
                     equity[_k] = init_cash + realized_pnl
                 if _xi > i:
-                    # Mantener el flanco de la senal coherente al reanudar.
-                    prev_signal = bool(entries[_xi]) if _xi < n else prev_signal
                     _saltar_hasta = _xi
                 else:
                     _saltar_hasta = -1
@@ -1328,7 +1345,6 @@ def simulate(
                         trades[-1]["pyr_executions"] = pyr_exec
                         pyr_exec = []
                     equity[i] = init_cash + realized_pnl
-                    prev_signal = bool(entries[i])
                     continue
 
             # Track MAE and MFE as positive percentages based on absolute price excursions
@@ -2277,11 +2293,20 @@ def simulate(
                         break
 
         # --- check entries ---
-        # Edge Detection: only enter when signal turns from False to True.
-        # This prevents re-entering in the same 'signal block'.
+        # SENAL POR NIVEL (2026-09-20, Jaume). Antes se entraba solo en el
+        # FLANCO (apagada -> encendida) y un flanco se consumia aunque el
+        # intento se descartara (stop del lado ganador, sin cash...) o la
+        # posicion saliera por stop. Con condiciones que no se apagan en todo
+        # el dia (gap > X, precio > X) eso dejaba UN solo intento por ticker-dia
+        # y cero reentradas aunque `max_reentries` lo permitiera: AEMD 17-sep
+        # no se operaba y 12 de 12 tickers de una corrida faltaban por eso.
+        # Ahora: fuera de posicion y con la senal encendida, se intenta entrar.
+        # Lo que acota las reentradas es `max_reentries` y el cooldown, no el
+        # parpadeo de la condicion. El bot (bot_alerts_engine) sigue avisando
+        # por flanco: hay que alinearlo aparte.
         current_signal = bool(entries[i])
-        is_signal_trigger = current_signal and not prev_signal
-        
+        is_signal_trigger = current_signal
+
         if not in_position and is_signal_trigger and i < n - 1 and not is_restricted and not riesgo_bloqueado \
                 and not ht_bloqueado:
             # Re-entry logic:
@@ -2304,7 +2329,6 @@ def simulate(
                 available_cash = init_cash + realized_pnl
                 if available_cash <= 0:
                     equity[i] = init_cash + realized_pnl
-                    prev_signal = current_signal # Update for next loop
                     continue
 
                 if look_ahead_prevention:
@@ -2320,7 +2344,6 @@ def simulate(
                 entry_price = (ep + slip) if is_long else (ep - slip)
                 if entry_price <= 0:
                     equity[i] = init_cash + realized_pnl
-                    prev_signal = current_signal # Update for next loop
                     continue
 
                 # Fees are now calculated purely on exit Gross PnL
@@ -2387,7 +2410,6 @@ def simulate(
                                     stop_loss_price = fb_stop
                         if not _sl_side_valid(stop_loss_price, entry_price, is_long):
                             equity[i] = init_cash + realized_pnl
-                            prev_signal = current_signal
                             continue
                 elif hs_type == "Fixed Amount":
                     # El importe es en DOLARES y va sobre el precio de ENTRADA.
@@ -2397,14 +2419,12 @@ def simulate(
                         imp = 0.0
                     if imp <= 0.0:
                         equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
                         continue
                     stop_loss_price = (entry_price - imp) if is_long else (entry_price + imp)
                     if not _sl_side_valid(stop_loss_price, entry_price, is_long):
                         # Un importe mayor que el precio deja el stop de un largo
                         # bajo cero.
                         equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
                         continue
                 elif hs_type == "ATR Multiplier":
                     # Nivel del stop con el ATR DE ESTA BARRA. Nada de medias
@@ -2422,7 +2442,6 @@ def simulate(
                         fb = float(hs_atr_fallback_pct or 0.0)
                         if fb <= 0.0:
                             equity[i] = init_cash + realized_pnl
-                            prev_signal = current_signal
                             continue
                         stop_loss_price = (entry_price * (1.0 - fb / 100.0)) if is_long \
                             else (entry_price * (1.0 + fb / 100.0))
@@ -2433,7 +2452,6 @@ def simulate(
                         # Solo puede pasar si el ATR es tan grande que el stop de
                         # un largo se va por debajo de cero.
                         equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
                         continue
                 elif sl_stop is not None and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
@@ -2512,7 +2530,6 @@ def simulate(
                     ev_gate_log.append(_veredicto)
                     if not _veredicto["entra"]:
                         equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
                         continue
 
                 if size > 0:
@@ -2579,9 +2596,6 @@ def simulate(
                     total_trades += 1
                 else:
                     equity[i] = available_cash
-        
-        # Always update signal state for next bar's edge detection
-        prev_signal = current_signal
 
         # --- equity ---
         current_equity = init_cash + realized_pnl
@@ -2637,9 +2651,6 @@ def simulate(
         # but applying at EOF keeps accounting perfectly aligned with the total.
         for i in range(len(equity)):
             equity[i] -= daily_locates_fee
-
-    # Always update signal state for next bar's edge detection
-    prev_signal = current_signal
 
     # Finalize result
     results = {"equity": equity, "trades": trades, "locates_fee": daily_locates_fee}

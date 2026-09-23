@@ -64,10 +64,12 @@ class Indicador:
     # Una linea para la pantalla: que hace y para que sirve, no la formula.
     ayuda: str = ""
     # Si viene marcado al abrir la pagina. SOLO los siete de la v1, que son
-    # los que Jaume ya venia usando. Marcar los 26 dispararia el espacio de
-    # busqueda y contradice lo que dice la propia pantalla: «menos
-    # indicadores bien elegidos buscan mejor que el catalogo entero, cada
-    # uno que no aporta anyade formas de encontrar casualidades».
+    # los que Jaume ya venia usando, y los nueve niveles base (que siempre
+    # entraron como destino; la casilla es para poder QUITARLOS). Marcar los
+    # demas dispararia el espacio de busqueda y contradice lo que dice la
+    # propia pantalla: «menos indicadores bien elegidos buscan mejor que el
+    # catalogo entero, cada uno que no aporta anyade formas de encontrar
+    # casualidades».
     por_defecto: bool = False
     # NIVEL OPCIONAL: no forma condiciones por si mismo («Punto de control > 3»
     # no dice nada). Marcarlo en la pagina lo mete como DESTINO de Bar Close /
@@ -77,10 +79,19 @@ class Indicador:
     solo_destino: bool = False
 
     def etiqueta(self, params: dict) -> str:
-        if not params:
-            return self.nombre
-        partes = [f"{v}" for _, v in sorted(params.items()) if v is not None]
-        return f"{self.nombre}({', '.join(partes)})" if partes else self.nombre
+        return etiqueta(self.nombre, params)
+
+
+def etiqueta(nombre: str, params: dict | None) -> str:
+    """«RSI(14)», «Darvas Box(Lower, 3)»… y para la familia de picos «Pico
+    nº2(3, up)»: el numero de giro va fuera del parentesis porque es lo que
+    distingue «Pico nº1 < Pico nº2» de «Pico nº2 < Pico nº1», y entre tres
+    parametros sueltos no se leia."""
+    params = params or {}
+    rank = params.get("pivot_rank")
+    resto = [f"{v}" for k, v in sorted(params.items()) if v is not None and k != "pivot_rank"]
+    base = f"{nombre} nº{rank}" if rank is not None else nombre
+    return f"{base}({', '.join(resto)})" if resto else base
 
 
 # Indicadores que solo sirven como lado DERECHO (niveles / velas previas).
@@ -89,6 +100,12 @@ class Indicador:
 # «Prev. Bar Low > 3» no dice nada — lo que interesa es que el precio los cruce.
 NIVELES = ("Prev. Bar Low", "Prev. Bar High", "Prev. Bar Close", "Prev. Bar Open",
            "VWAP", "PM High", "PM Low", "Previous max", "Previous min")
+# 21-sep-2026: estos nueve tambien salen en la pagina, con su casilla y marcados
+# de serie (Jaume: «no tiene en cuenta ... previous max y min, Prev. Bar
+# close...»; no era que no entraran, era que no se veian ni se podian quitar).
+# Ver `objetivos_permitidos`: un config sin `niveles_explicitos` (los
+# anteriores a hoy) sigue sorteando los nueve como siempre.
+NIVELES_BASE = NIVELES
 
 # Niveles que ADEMAS tienen parametros propios. El cromosoma se los sortea igual
 # que al lado izquierdo: sin esto un Donchian saldria siempre con el periodo por
@@ -140,13 +157,139 @@ NIVELES_CON_PARAMS: dict[str, dict] = {
 # informacion y si se cruzan.
 NIVELES_OPCIONALES: dict[str, dict] = {
     "Ultimo pivote": {"pivot_window": [2, 3, 5], "swing_dir": ["up", "down"]},
+    # El pico/valle ENUMERADO (PRD 18-sep-2026) como destino de Bar Close /
+    # High / Low: «Bar Close cruza arriba Pico nº2» = recupera el techo
+    # anterior. El nº1 es exactamente «Ultimo pivote», asi que aqui se sortean
+    # del 2 al 4: ofrecer el 1 seria el mismo gen dos veces con dos huellas
+    # distintas (se evaluaria dos veces lo mismo). Como lado IZQUIERDO
+    # («Pico nº1 < Pico nº2», maximos decrecientes) va en CATALOGO con su
+    # propia rejilla, que si incluye el 1.
+    "Pico": {"pivot_window": [2, 3, 5], "swing_dir": ["up", "down"], "pivot_rank": [2, 3, 4]},
     "Punto de control": {"bin_pct": [0.5, 1.0, 2.0]},
     "Zona alta": {"bin_pct": [0.5, 1.0, 2.0], "zona_pct": [50, 70, 85]},
     "Zona baja": {"bin_pct": [0.5, 1.0, 2.0], "zona_pct": [50, 70, 85]},
 }
 NIVELES_CON_PARAMS.update(NIVELES_OPCIONALES)
 
-TODOS_LOS_NIVELES = NIVELES + tuple(NIVELES_CON_PARAMS)
+# «Previous max/min» tienen un parametro que CAMBIA el resultado y que el
+# genetico nunca sorteo: `ap_session`, desde cuando cuenta el maximo corrido.
+# Sin el, el motor cuenta desde las 04:00 (ap.PM), mientras que el constructor
+# de condiciones pone ap.RTH (desde las 09:30) por defecto — o sea que la misma
+# receta guardada desde el genetico y hecha a mano no eran la misma estrategia.
+# Lo cazo test_no_queda_ninguna_rama_del_indicador_sin_probar al darles casilla
+# (21-sep-2026). Se sortean las dos.
+NIVELES_CON_PARAMS["Previous max"] = {"ap_session": ["ap.PM", "ap.RTH"]}
+NIVELES_CON_PARAMS["Previous min"] = {"ap_session": ["ap.PM", "ap.RTH"]}
+
+# Los nueve de siempre primero y en su orden, y despues los que llevan
+# parametros (sin repetir Previous max/min, que estan en las dos listas).
+TODOS_LOS_NIVELES = NIVELES + tuple(n for n in NIVELES_CON_PARAMS if n not in NIVELES)
+
+
+# ── Parametros FIJADOS por el usuario en la pagina (21-sep-2026) ───────────
+#
+# Jaume: «previous max y min tienen que tener en cuenta la sesion en la que
+# fijo que se corran las pruebas, y mejor si puedo seleccionar el periodo en el
+# que quiero que se enfoquen (igual que el fade, que no lo tiene)».
+#
+# El motor calcula los indicadores sobre el DIA ENTERO y recorta la sesion
+# despues (backtest_service: «indicators have full-day context»), asi que en
+# una corrida RTH un «Previous max» con ap.PM incluye el maximo del premercado:
+# es otro indicador. `config["params_fijos"]` = {nombre: {param: valor}} con
+# valor:
+#   "auto"   -> segun la sesion de la corrida (`sesion_de_referencia`)
+#   "*"      -> sortear toda la rejilla del catalogo (lo de antes)
+#   otro     -> ese valor fijo ("ap.PM", "ap.RTH", "ap.AM")
+# Sin la clave (corridas antiguas) se sortea la rejilla, como siempre.
+PARAMS_FIJABLES = {
+    "ap_session": ("Previous max", "Previous min", "% Fade"),
+}
+AUTO, SORTEAR = "auto", "*"
+# Lo que ofrece el desplegable de la pagina para cada parametro fijable, en
+# este orden. El primero es el defecto.
+OPCIONES_FIJABLES = {
+    "ap_session": (
+        # Cortas a proposito: el desplegable vive en una columna de ~180 px.
+        (AUTO, "Sesión de la corrida"),
+        ("ap.PM", "Desde 04:00 (con PM)"),
+        ("ap.RTH", "Desde 09:30 (RTH)"),
+        ("ap.AM", "Desde 16:00 (after)"),
+        (SORTEAR, "Sortear 04:00 / 09:30"),
+    ),
+}
+
+
+def sesion_de_referencia(config: dict | None) -> str:
+    """El `ap_session` que corresponde a la sesion de la corrida.
+
+    rth -> ap.RTH (desde las 09:30) · pre -> ap.PM (desde la primera vela) ·
+    post -> ap.AM (desde las 16:00) · custom -> segun la hora de inicio ·
+    varias sesiones -> la mas temprana (el maximo tiene que incluir todo lo que
+    ve el simulador).
+    """
+    cfg = config or {}
+    sesiones = [str(x).lower() for x in (cfg.get("sesiones") or ["rth"])]
+    if "custom" in sesiones or "all" in sesiones:
+        try:
+            h, _, m = str(cfg.get("hora_ini") or "09:30").partition(":")
+            mins = int(h) * 60 + int(m)
+        except (TypeError, ValueError):
+            mins = 570
+        if "all" in sesiones or mins < 570:
+            return "ap.PM"
+        return "ap.RTH" if mins < 960 else "ap.AM"
+    if "pre" in sesiones:
+        return "ap.PM"
+    if "rth" in sesiones:
+        return "ap.RTH"
+    if "post" in sesiones:
+        return "ap.AM"
+    return "ap.RTH"
+
+
+def rejilla_params(nombre: str, config: dict | None, base: dict | None = None) -> dict:
+    """La rejilla de parametros de `nombre` en ESTA corrida: la del catalogo
+    (`base`, o `CATALOGO[nombre].params` si no se da) con los fijados por el
+    usuario reducidos a un solo valor."""
+    if base is None:
+        base = CATALOGO[nombre].params if nombre in CATALOGO else NIVELES_CON_PARAMS.get(nombre, {})
+    rej = {k: list(v) for k, v in base.items()}
+    fijos = ((config or {}).get("params_fijos") or {}).get(nombre) or {}
+    for k, v in fijos.items():
+        if k not in rej or v is None or v == SORTEAR:
+            continue
+        rej[k] = [sesion_de_referencia(config) if v == AUTO else v]
+    return rej
+
+
+# ── Prioridades por indicador (21-sep-2026) ─────────────────────────────────
+#
+# Jaume: los niveles base salian 0-1 veces por corrida porque el sorteo los
+# trata como una opcion mas de Bar Close (1 de 27 a la izquierda, cara o cruz
+# contra numero, 1 de ~20 destinos). La pagina pinta un desplegable por
+# indicador marcado y manda config["prioridades"] = {nombre: "alta"|"baja"};
+# «normal» no viaja. El peso multiplica la probabilidad de salir en CADA
+# sorteo donde el nombre compite (lado izquierdo, destino, cambio de indicador
+# al mutar). Con todo en «normal» el sorteo es EXACTAMENTE `rng.choice`: misma
+# semilla, misma corrida que antes de existir esto.
+PESO_PRIORIDAD = {"alta": 3.0, "normal": 1.0, "baja": 1.0 / 3.0}
+
+
+def peso(nombre: str, config: dict | None) -> float:
+    pri = ((config or {}).get("prioridades") or {}).get(nombre, "normal")
+    return PESO_PRIORIDAD.get(pri, 1.0)
+
+
+def elegir(rng, opciones, config: dict | None, pesos: list[float] | None = None):
+    """`rng.choice(opciones)` con las prioridades de la pagina (o con `pesos`
+    ya calculados). Si todos los pesos son iguales se llama a `rng.choice` tal
+    cual (mismo consumo de azar)."""
+    opciones = list(opciones)
+    if pesos is None:
+        pesos = [peso(n, config) for n in opciones]
+    if len(set(pesos)) <= 1:
+        return rng.choice(opciones)
+    return rng.choices(opciones, weights=pesos, k=1)[0]
 
 
 def lado_izquierdo(nombres) -> list[str]:
@@ -157,12 +300,37 @@ def lado_izquierdo(nombres) -> list[str]:
     return [n for n in nombres if not CATALOGO[n].solo_destino]
 
 
-def objetivos_permitidos(ind: "Indicador", marcados) -> tuple:
-    """Los destinos de `ind` que valen en ESTA corrida: los de siempre, mas los
-    niveles opcionales que esten marcados. `marcados` es el catalogo elegido en
-    la pagina (config["catalogo"])."""
+def objetivos_permitidos(ind: "Indicador", marcados, explicitos=None) -> tuple:
+    """Los destinos de `ind` que valen en ESTA corrida, EN EL ORDEN DE SIEMPRE.
+
+    `marcados` es el catalogo elegido en la pagina (config["catalogo"]).
+
+    - Los niveles OPCIONALES (pivote, Pico, perfil) entran solo si estan marcados.
+    - Los niveles BASE (Prev. Bar..., Previous max/min, VWAP, PM High/Low)
+      entran todos SALVO que la corrida los elija uno a uno (`explicitos`):
+      desde el 21-sep-2026 la pagina los pinta con casilla y manda
+      `niveles_explicitos: true`, y entonces solo entran los marcados.
+    - `explicitos=None` (config antiguo, tests, consola): se deduce. Si en
+      `marcados` hay algun nivel base es que quien lo mando sabia que existian
+      las casillas; si no hay ninguno, es un config de antes y se sortean los
+      nueve como siempre — misma lista, mismo orden, misma semilla.
+    - SMA/EMA/bandas/Donchian/Darvas/Overhead siguen entrando siempre: nadie
+      pidio quitarlos y son lo que garantiza que la lista nunca quede vacia.
+    """
     m = set(marcados or ())
-    return tuple(o for o in ind.objetivos if o not in NIVELES_OPCIONALES or o in m)
+    if explicitos is None:
+        explicitos = bool(m & set(NIVELES_BASE))
+    out = []
+    for o in ind.objetivos:
+        if o in NIVELES_OPCIONALES:
+            if o in m:
+                out.append(o)
+        elif o in NIVELES_BASE:
+            if o in m or not explicitos:
+                out.append(o)
+        else:
+            out.append(o)
+    return tuple(out)
 
 
 CATALOGO: dict[str, Indicador] = {
@@ -308,7 +476,9 @@ CATALOGO: dict[str, Indicador] = {
     # ── Caídas y gaps ───────────────────────────────────────────────────
     "% Fade": Indicador(
         nombre="% Fade", familia="caidas", por_defecto=True,
-        params={"fade_ref": ["previous_max", "vwap_cross"], "ap_session": [None, "ap.PM", "ap.RTH"]},
+        # `ap_session` None y "ap.PM" son lo mismo para el motor (desde la primera
+        # vela): se sortean solo los dos distintos. Fijable en la pagina.
+        params={"fade_ref": ["previous_max", "vwap_cross"], "ap_session": ["ap.PM", "ap.RTH"]},
         valores=(3, 5, 8, 10, 15, 20, 25, 30, 40, 50),
         comparadores=(GT, LT),
         ayuda="Caída VIVA desde una referencia que se reancla sola: el máximo previo, "
@@ -420,6 +590,76 @@ CATALOGO: dict[str, Indicador] = {
               "situaciones opuestas. 0 cuando no se cumple; se reinicia cada sesión. "
               "Se sortean el nivel y el lado.",
     ),
+    # VOLUMEN CONTRA EL UNIVERSO (22-sep-2026). El unico de los tres que
+    # necesita algo de fuera es «RVOL universo»: el perfil del universo
+    # (backend/scripts/perfil_volumen_universo.py). Sin el vale NaN y la
+    # condicion no se cumple nunca — la corrida no falla, pero ese gen no
+    # sirve para nada; comprobarlo antes de marcarlo en una corrida larga.
+    # ROTACION: el volumen del dia contra las ACCIONES EN CIRCULACION (no el
+    # float: ese dato no existe con historico). Necesita la tabla que construye
+    # backend/scripts/acciones_circulacion_etl.py; sin ella vale NaN y el gen
+    # no sirve — comprobarlo antes de marcarlo en una corrida larga.
+    "Rotacion": Indicador(
+        nombre="Rotacion", familia="volumen",
+        params={},
+        valores=(0.5, 1, 2, 3, 5, 10), comparadores=(GT, LT),
+        ayuda="Cuantas veces se han cambiado de manos hoy TODAS las acciones que "
+              "existen (volumen del dia / acciones en circulacion). Rotacion 3 = "
+              "casi nadie que la tenga la compro por debajo del precio de hoy, y esa "
+              "es la gente que vende en cuanto se gira. < 0,5 dia normal · 1-3 el "
+              "papel ya cambio de manos entero · > 5 pump de manual. OJO: es "
+              "CIRCULACION, no float: el float es menor, asi que la rotacion real es "
+              "MAYOR que este numero.",
+    ),
+    "Rotacion en X min": Indicador(
+        nombre="Rotacion en X min", familia="volumen",
+        params={"range_minutes": [15, 30, 60]},
+        valores=(0.05, 0.1, 0.3, 0.5), comparadores=(GT, LT),
+        ayuda="La rotacion de los ultimos X minutos: la VELOCIDAD, no el total. "
+              "0,5 en media hora es media empresa cambiando de manos en media hora "
+              "— el climax en directo. < 0,05 esta parado. Mismo aviso: circulacion, "
+              "no float.",
+    ),
+    "RVOL universo": Indicador(
+        nombre="RVOL universo", familia="alternativos",
+        params={"range_minutes": [5, 10, 30]},
+        valores=(0.5, 0.8, 1.5, 3, 5, 10), comparadores=(GT, LT),
+        ayuda="Cuanto volumen hay AHORA frente al que toca A ESTA HORA en un dia de "
+              "gap (1 = normal, 3 = el triple, 0,4 = seco). No es el RVOL de siempre: "
+              "la referencia son LOS DEMAS GAPPERS, no los dias previos del ticker "
+              "(un gapper del +50 % no tiene dias normales). Perfil medido en 14.418 "
+              "ticker-dias de 2019-2023, o sea fuera de muestra para 2024 en "
+              "adelante. < 0,5 seco · 0,8-1,5 normal · > 3 climax. MEDIDO sobre "
+              "24.750 maximos del dia reales: con RVOL < 0,5 el corto toca -8 % "
+              "antes que +8 % el 72,7 % de las veces (base 64 %) y solo sube un "
+              "5,8 % en contra; con RVOL > 10 acierta igual que la base pero la "
+              "subida mediana en contra es del 22,9 % — el climax parece la senal "
+              "buena y es la trampa.",
+    ),
+    "Minutos desde el pico de volumen": Indicador(
+        nombre="Minutos desde el pico de volumen", familia="alternativos",
+        params={},
+        valores=(5, 10, 20, 40, 60), comparadores=(GT, LT),
+        ayuda="Minutos desde la vela de mas volumen del dia. En un gapper el pico de "
+              "VOLUMEN llega antes que el maximo del PRECIO: ese hueco es donde vive "
+              "el corto. MEDIDO sobre 24.750 maximos del dia reales: con el pico a "
+              "< 5 min el corto toca -8 % antes que +8 % el 65,7 % de las veces pero "
+              "sube un 13,5 % en contra; a 15-60 min acierta el 60,5 % con solo un "
+              "7 % en contra. Esperar no mejora el acierto: baja el RIESGO. Causal: "
+              "el maximo es corrido.",
+    ),
+    "Pendiente del volumen": Indicador(
+        nombre="Pendiente del volumen", familia="alternativos",
+        params={"range_minutes": [5, 10, 20]},
+        valores=(0.3, 0.6, 1, 2, 3), comparadores=(GT, LT),
+        ayuda="Volumen de los ultimos X minutos entre el de los X anteriores: si el "
+              "volumen acelera (> 2) o se apaga (< 0,5). Con el precio subiendo y la "
+              "pendiente baja, sube por falta de vendedores y no por compras. OJO: "
+              "medido sobre 24.750 maximos del dia reales, apenas separa (58-65 % "
+              "frente al 64 % de base) y la pendiente baja sale algo PEOR que la "
+              "alta: compara con hace un rato, no con lo normal del dia. Para «se ha "
+              "secado» usa «RVOL universo». No necesita tabla ninguna.",
+    ),
     "Absorption": Indicador(
         nombre="Absorption", familia="alternativos",
         params={"range_minutes": [3, 5, 10]},
@@ -462,7 +702,79 @@ CATALOGO: dict[str, Indicador] = {
               "en una zona muy negociada (freno); bajo = en el vacío, donde el "
               "precio se mueve rápido porque nadie compró ahí.",
     ),
+
+    # ── Picos y valles ENUMERADOS (PRD 18-sep-2026; en el genetico 21-sep) ──
+    #
+    # «Pico» tiene DOS papeles y los dos van con el mismo interruptor:
+    #   · a la izquierda, contra otro Pico: «Pico nº1 < Pico nº2» son maximos
+    #     decrecientes, «Valle nº1 > Valle nº2» minimos crecientes. El destino
+    #     se sortea con la MISMA ventana y direccion que el origen y OTRO
+    #     numero de giro (cromosoma.objetivo_aleatorio): un techo contra un
+    #     suelo es siempre verdad y el mismo giro contra si mismo siempre
+    #     falso — dos condiciones muertas que no hay que sortear.
+    #   · como destino de Bar Close / High Bar / Low Bar (NIVELES_OPCIONALES):
+    #     «Bar Close cruza arriba Pico nº2» = recupera el techo anterior.
+    # Las dos medidas de la familia van contra una cifra, como en el
+    # constructor. Los tres se reinician cada dia y valen NaN hasta que hay N
+    # giros confirmados: con 2-3 velas de confirmacion eso es pronto.
+    "Pico": Indicador(
+        nombre="Pico", familia="alternativos",
+        params={"pivot_window": [2, 3, 5], "swing_dir": ["up", "down"], "pivot_rank": [1, 2, 3]},
+        objetivos=("Pico",), comparadores=(GT, LT),
+        ayuda="El techo (o suelo, con «down») nº N de la lista de giros del día, "
+              "como PRECIO: nº1 es el último confirmado (= «Ultimo pivote»), nº2 el "
+              "anterior… Se compara con OTRO giro de la misma lista: «Pico nº1 < "
+              "Pico nº2» son máximos decrecientes, «Valle nº1 > Valle nº2» suelos "
+              "crecientes; con nº3 caben un hombro-cabeza-hombro o un doble techo. "
+              "Marcado, entra ADEMÁS como destino de Bar Close / High Bar / Low Bar "
+              "(«Bar Close cruza arriba Pico nº2»), con los giros nº2-4: el nº1 ya "
+              "lo cubre «Ultimo pivote». Un giro es una vela con el máximo por "
+              "encima de las N velas de cada lado, y se conoce N velas después.",
+    ),
+    "Edad del pico": Indicador(
+        nombre="Edad del pico", familia="alternativos",
+        params={"pivot_window": [2, 3, 5], "swing_dir": ["up", "down"], "pivot_rank": [1, 2, 3]},
+        valores=(5, 10, 15, 30, 60, 120), comparadores=(GT, LT),
+        ayuda="Minutos de RELOJ desde que se formó el giro nº N (nº1 = el último "
+              "techo o suelo confirmado). Crece cada minuto mientras el giro siga "
+              "en la lista. «> 30» = el último techo lleva media hora aguantando; "
+              "«nº3 < 90» = las tres cimas caben en hora y media. NaN hasta que "
+              "existe el giro nº N; se reinicia cada día.",
+    ),
+    "Volumen del pico": Indicador(
+        nombre="Volumen del pico", familia="alternativos",
+        params={"pivot_window": [2, 3, 5], "swing_dir": ["up", "down"], "pivot_rank": [1, 2, 3]},
+        # En ACCIONES, que es como viaja en la definicion (el constructor
+        # escribe la casilla en millones y multiplica por 10^6 al guardar).
+        valores=(100_000, 250_000, 500_000, 1_000_000, 2_500_000), comparadores=(GT, LT),
+        ayuda="Volumen (en acciones) de la vela en la que se formó el giro nº N. "
+              "Dice si el techo se hizo con dinero de verdad o fue una mecha en un "
+              "libro vacío: dos techos a la misma altura son cosas distintas si uno "
+              "negoció 2 millones y el otro 50.000. Rejilla de 100 k a 2,5 M. NaN "
+              "hasta que existe el giro nº N; se reinicia cada día.",
+    ),
 }
+
+# Los NUEVE NIVELES BASE, con casilla (21-sep-2026). Marcados de serie, para
+# que una corrida recien abierta sortee exactamente lo de siempre; desmarcar
+# uno lo quita de los destinos de Bar Close / High Bar / Low Bar. Son
+# `solo_destino` como los opcionales: «Prev. Bar Low > 3» no dice nada.
+_AYUDA_NIVELES_BASE = {
+    "Prev. Bar Low": "El mínimo de la vela ANTERIOR. «Bar Close < Prev. Bar Low» es la rotura clásica del mínimo previo.",
+    "Prev. Bar High": "El máximo de la vela anterior. Espejo del anterior, para roturas al alza.",
+    "Prev. Bar Close": "El cierre de la vela anterior. Contra el cierre actual dice si la vela subió o bajó respecto a la de antes.",
+    "Prev. Bar Open": "La apertura de la vela anterior.",
+    "VWAP": "Precio medio ponderado por volumen del día. El nivel de referencia del fade: por encima manda el comprador, por debajo el vendedor.",
+    "PM High": "Máximo del premercado. Perderlo o recuperarlo es la referencia de casi todos los gaps.",
+    "PM Low": "Mínimo del premercado.",
+    "Previous max": "El máximo corrido de la sesión HASTA LA VELA ANTERIOR: solo sube. No es «Ultimo pivote» (aquel baja al confirmarse un techo nuevo). Se sortea desde cuándo cuenta: ap.PM (desde las 04:00, con premercado) o ap.RTH (desde las 09:30).",
+    "Previous min": "El mínimo corrido de la sesión hasta la vela anterior: solo baja. Se sortea desde cuándo cuenta (ap.PM / ap.RTH), igual que el máximo.",
+}
+for _n in NIVELES_BASE:
+    CATALOGO[_n] = Indicador(nombre=_n, familia="precio", comparadores=(),
+                             params=dict(NIVELES_CON_PARAMS.get(_n, {})),
+                             ayuda=_AYUDA_NIVELES_BASE[_n], solo_destino=True, por_defecto=True)
+del _n
 
 # Los niveles opcionales (cuatro: el pivote, el punto de control y la zona de
 # valor), como entradas del catalogo para que salgan en la pagina con su casilla. No forman condiciones solos (`solo_destino`): marcarlos
@@ -488,6 +800,8 @@ _AYUDA_NIVELES = {
         "compró.",
 }
 for _n, _rejilla in NIVELES_OPCIONALES.items():
+    if _n in CATALOGO:
+        continue      # «Pico» ya esta arriba con su papel de lado izquierdo
     CATALOGO[_n] = Indicador(nombre=_n, familia="alternativos", params=dict(_rejilla),
                              comparadores=(), ayuda=_AYUDA_NIVELES[_n], solo_destino=True)
 del _n, _rejilla
@@ -500,9 +814,12 @@ STOP_OFFSET_PCT = (0, 3, 5, 10, 15)
 # Niveles estructurales del motor (RiskManagement.tsx): el stop de un corto va
 # ARRIBA (maximos), el de un largo ABAJO (minimos). Operador como en las
 # estrategias guardadas de Jaume.
+# 2026-09-20: HOD/LOD fuera del sorteo; en su lugar «Previous Max/Min (vela de
+# la señal)», que es lo mismo (maximo corrido CON la vela de la senal). «Previous
+# Max» a secas sigue siendo el de siempre (hasta la vela anterior).
 STOP_NIVELES = {
-    "short": (("HOD", ">="), ("PMH", ">="), ("Previous Max", ">=")),
-    "long": (("LOD", "<="), ("PML", "<="), ("Previous Min", "<=")),
+    "short": (("PMH", ">="), ("Previous Max", ">="), ("Previous Max (vela de la señal)", ">=")),
+    "long": (("PML", "<="), ("Previous Min", "<="), ("Previous Min (vela de la señal)", "<=")),
 }
 # El ultimo pivote como stop de estructura (10-sep-2026), SOLO si «Ultimo
 # pivote» esta marcado en el catalogo: es el mismo interruptor que lo mete como

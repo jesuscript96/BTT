@@ -1,6 +1,6 @@
 import React from 'react';
 import { PyramidingConfig, PyramidGroup, PyramidLevel, Timeframe, emptyPyramidLevel } from '@/types/strategy';
-import { GroupDisplay } from './ConditionBuilder';
+import { AyudaIndicadores, GroupDisplay } from './ConditionBuilder';
 import InfoTooltip from '@/components/backtester/InfoTooltip';
 
 /**
@@ -75,7 +75,7 @@ const selectStyle: React.CSSProperties = {
     cursor: 'pointer',
 };
 
-export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
+const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
     const active = config.active === true;
 
     // Vista normalizada de los grupos: sin `groups` (estrategia de antes) hay
@@ -320,6 +320,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     <option value="individual">Individual</option>
                                     <option value="sequential">Secuencial</option>
                                 </select>
+                                <InfoTooltip variant="i" width={300} text="Individual: cada pirámide del grupo vigila su disparo en paralelo. Secuencial: dentro del grupo, cada pirámide solo se arma cuando la anterior ya ha disparado al menos una vez. Los otros grupos van a su aire." />
                                 {grupos.length > 1 && (
                                     <button
                                         type="button"
@@ -387,6 +388,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     <option value="add">Añadir</option>
                                     <option value="reduce">Quitar</option>
                                 </select>
+                                <InfoTooltip variant="i" width={260} text="Añadir = abre más posición en el sentido del trade (un lote nuevo). Quitar = cierra una parte de la posición flotante." />
                                 <input
                                     type="number"
                                     min={0.1}
@@ -405,11 +407,11 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                 />
                                 <InfoTooltip variant="i" width={280} text={(lv.unit ?? 'pct') === 'usd'
                                     ? (lv.action === 'add'
-                                        ? 'Dólares fijos que se añaden a la posición, convertidos a acciones al precio de la barra'
-                                        : 'Dólares de posición que se cierran, convertidos a acciones al precio de la barra')
+                                        ? 'Dólares fijos que se añaden a la posición, convertidos a acciones al precio de la barra.'
+                                        : 'Dólares de posición que se cierran, convertidos a acciones al precio de la barra.')
                                     : (lv.action === 'add'
-                                        ? '% del equity de la cuenta que se añade a la posición'
-                                        : '% de la posición flotante que se cierra')} />
+                                        ? (lv.size_by_sl ? 'Con el modo por distancia al stop, esta cantidad es la PÉRDIDA MÁXIMA del añadido (% del equity), no capital.' : '% del equity de la cuenta que se añade a la posición.')
+                                        : '% de la posición flotante que se cierra.')} />
                                 <select
                                     value={lv.unit ?? 'pct'}
                                     onChange={(e) => setLevel(idx, { ...lv, unit: e.target.value as 'pct' | 'usd' })}
@@ -450,9 +452,9 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                         <option value="hibrido">híbrido (stop + techo)</option>
                                     </select>
                                     <InfoTooltip variant="i" width={300} text={'Cómo se convierte la cantidad en acciones:\n'
-                                        + '· Valor de mercado — se divide por el precio (como siempre)\n'
-                                        + '· Distancia al stop — la cantidad es la PÉRDIDA máxima\n'
-                                        + '· Híbrido — por stop, pero con techo de exposición'} />
+                                        + '· Valor de mercado — se divide por el precio (como siempre).\n'
+                                        + '· Distancia al stop — la cantidad es la PÉRDIDA máxima; las acciones salen de la distancia al SL (el del lote si lo tiene, si no el del trade).\n'
+                                        + '· Híbrido — por stop, pero con techo de exposición.'} />
                                     </>
                                 )}
                                 {lv.action === 'add' && lv.hybrid_stop && (
@@ -465,7 +467,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                             onChange={(e) => setLevel(idx, { ...lv, hybrid_black_swan_pct: e.target.value === '' ? null : Number(e.target.value) })}
                                             style={{ ...selectStyle, width: 76, cursor: 'text' }}
                                         />
-                                        <InfoTooltip variant="i" width={260} text="El peor movimiento en contra que quieres contemplar, en %." />
+                                        <InfoTooltip variant="i" width={260} text="Evento: el peor movimiento en contra que quieres contemplar, en %." />
                                         <input
                                             type="number" min={1} max={100} step={5}
                                             value={lv.hybrid_max_loss_pct ?? ''}
@@ -474,7 +476,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                             onChange={(e) => setLevel(idx, { ...lv, hybrid_max_loss_pct: e.target.value === '' ? null : Number(e.target.value) })}
                                             style={{ ...selectStyle, width: 76, cursor: 'text' }}
                                         />
-                                        <InfoTooltip variant="i" width={280} text="Cuánto de tu CUENTA ENTERA aceptas perder si eso pasa, en %. Repártelo con el de la entrada." />
+                                        <InfoTooltip variant="i" width={280} text="Cuenta: cuánto de tu CUENTA ENTERA aceptas perder si ese evento pasa, en %. Repártelo con el de la entrada." />
                                     </>
                                 )}
                                 {/* Texto corto: el detalle completo está en el
@@ -501,7 +503,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     style={{ ...selectStyle, width: 48, cursor: 'text' }}
                                     title="Cuántas veces puede disparar esta pirámide por trade (cada cumplimiento nuevo de la condición cuenta una vez)"
                                 />
-                                <InfoTooltip variant="i" width={280} text="Cuántas veces puede disparar esta pirámide por trade (cada cumplimiento nuevo de la condición cuenta una vez)." />
+                                <InfoTooltip variant="i" width={280} text="Cuántas veces puede disparar esta pirámide por trade: cada cumplimiento NUEVO de la condición (o cada escalón del recorrido) cuenta una vez." />
                             </div>
                             {/* DISPARO: por condiciones (como siempre) o por RECORRIDO
                                 del precio. Con recorrido, las condiciones de abajo son
@@ -524,6 +526,8 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                     <option value="conditions">condiciones</option>
                                     <option value="move">recorrido del precio</option>
                                 </select>
+                                <InfoTooltip variant="i" width={320} text={'· Condiciones — el grupo de condiciones de abajo, como la entrada.\n'
+                                    + '· Recorrido del precio — cuando el precio lleva X % a favor o en contra, medido desde la entrada o desde el último añadido/quita. Es el take profit / stop loss de la propia pirámide. Si además pones condiciones, hacen falta las dos.'} />
                                 {lv.trigger === 'move' && (
                                     <>
                                         <select
@@ -535,6 +539,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                             <option value="favor">a favor</option>
                                             <option value="contra">en contra</option>
                                         </select>
+                                        <InfoTooltip variant="i" width={260} text="A favor = en el sentido del trade (en un corto, hacia abajo). En contra = al revés." />
                                         <input
                                             type="number"
                                             min={0.1}
@@ -545,6 +550,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                             style={{ ...selectStyle, width: 62, cursor: 'text' }}
                                             title="Recorrido del PRECIO en % (acumulado, no el de una vela). Se mide con el cierre de cada vela y se opera en la siguiente."
                                         />
+                                        <InfoTooltip variant="i" width={280} text="Recorrido del PRECIO en % (acumulado, no el de una vela). Se mide con el cierre de cada vela y se opera en la siguiente." />
                                         <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>%</span>
                                         <select
                                             value={lv.move_ref ?? 'entry'}
@@ -558,6 +564,9 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                             <option value="entry">desde la entrada</option>
                                             <option value="last">desde el último disparo</option>
                                         </select>
+                                        <InfoTooltip variant="i" width={300} text={'Desde dónde se mide el recorrido:\n'
+                                            + '· la entrada — el precio al que se abrió la operación.\n'
+                                            + '· el último disparo — el precio del último añadido o quita DE ESTE GRUPO en esta posición (sin ninguno, la entrada). Con varias «veces», encadena escalones: +5 %, otro +5 % desde ahí…'} />
                                         {esCamino(lv) ? (
                                             <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}
                                                   title="Con el camino encendido, el recorrido es lo PRIMERO: en cuanto el precio lleve ese recorrido queda cumplido (aunque luego se vuelva) y empiezan los pasos del camino, en su orden.">
@@ -579,7 +588,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                             {lv.action === 'add' && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                     <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>SL del lote:</span>
-                                    <InfoTooltip position="top" width={320} title="SL del lote" text="Stop propio de CADA añadido de este nivel. Al romperse cierra SOLO ese lote, con su PnL contra su precio de entrada; el stop del trade sigue mandando sobre el conjunto (en la misma vela manda el global). «%»: distancia fija desde el precio del lote. «Estructura»: un nivel del día, congelado en la vela de señal del añadido. Con «—» el lote vive y muere con el stop del trade, como siempre. Si el añadido se dimensiona por distancia al stop, la distancia es la de ESTE SL: el lote arriesga exactamente lo que el nivel declara." />
+                                    <InfoTooltip variant="i" position="top" width={320} title="SL del lote" text="Stop propio de CADA añadido de este nivel. Al romperse cierra SOLO ese lote, con su PnL contra su precio de entrada; el stop del trade sigue mandando sobre el conjunto (en la misma vela manda el global). «%»: distancia fija desde el precio del lote. «Estructura»: un nivel del día, congelado en la vela de señal del añadido. Con «—» el lote vive y muere con el stop del trade, como siempre. Si el añadido se dimensiona por distancia al stop, la distancia es la de ESTE SL: el lote arriesga exactamente lo que el nivel declara." />
                                     <select
                                         value={lv.lot_stop?.mode ?? ''}
                                         onChange={(e) => {
@@ -643,8 +652,9 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                                 <option value="Ultimo pivote alto">Último pivote alto</option>
                                                 <option value="Ultimo pivote bajo">Último pivote bajo</option>
                                                 <option value="Previous Max">Previous Max</option>
-                                                <option value="HOD">HOD</option>
-                                                <option value="LOD">LOD</option>
+                                                <option value="Previous Min">Previous Min</option>
+                                                <option value="Previous Max (vela de la señal)">Previous Max (vela de la señal)</option>
+                                                <option value="Previous Min (vela de la señal)">Previous Min (vela de la señal)</option>
                                             </select>
                                             <InfoTooltip variant="i" width={340} title="Nivel del stop del lote" text={
                                                 "El nivel del día vigente en la vela de señal del añadido, y ahí se CONGELA: no persigue al precio después. Qué es cada uno:\n" +
@@ -783,7 +793,7 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
                                 bloque, como siempre. */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                                 <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>Camino (condiciones en secuencia)</span>
-                                <InfoTooltip position="top" width={320} title="Camino de condiciones" text="Apagado: una única condición, como siempre. Encendido: cadena ordenada de condiciones — primero se cumple la 1.ª, luego la 2.ª (aunque la 1.ª ya no se cumpla)… y al engancharse la ÚLTIMA se ejecuta la acción. Los pasos intermedios no operan: solo abren la puerta. Con «misma vela» encendido el camino puede completarse dentro de una sola vela." />
+                                <InfoTooltip variant="i" position="top" width={320} title="Camino de condiciones" text="Apagado: una única condición, como siempre. Encendido: cadena ordenada de condiciones — primero se cumple la 1.ª, luego la 2.ª (aunque la 1.ª ya no se cumpla)… y al engancharse la ÚLTIMA se ejecuta la acción. Los pasos intermedios no operan: solo abren la puerta. Con «misma vela» encendido el camino puede completarse dentro de una sola vela." />
                                 <div
                                     className={`w-8 h-4 rounded-full relative cursor-pointer transition-colors ${esCamino(lv) ? 'bg-ec-copper/70' : 'bg-muted'}`}
                                     onClick={() => toggleCamino(idx, !esCamino(lv))}
@@ -967,4 +977,13 @@ export const PyramidingBuilder = React.memo(({ config, onChange }: Props) => {
         </div>
     );
 });
-PyramidingBuilder.displayName = "PyramidingBuilder";
+PyramidingBuilderInner.displayName = "PyramidingBuilderInner";
+
+/** Las condiciones de las pirámides usan el mismo GroupDisplay que la entrada
+ *  y la salida, pero fuera de LogicBuilder: sin este proveedor los desplegables
+ *  de indicadores salían sin icono de ayuda (Jaume, 18-sep). */
+export const PyramidingBuilder = (props: Props) => (
+    <AyudaIndicadores>
+        <PyramidingBuilderInner {...props} />
+    </AyudaIndicadores>
+);

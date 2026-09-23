@@ -241,6 +241,18 @@ export interface BSwanSummary {
 }
 
 /** Resumen del coste de halts de la corrida. Solo viene con el coste activo. */
+/** Resumen de margen y buying power (solo con el bloque activo). */
+export interface MargenSummary {
+  enabled: boolean;
+  broker: string; broker_nombre: string; capacidad_pct: number; reglas: string;
+  /** Días simulados, días con algún corte y cortes (entradas/añadidos que no cupieron). */
+  dias: number; dias_con_bloqueo: number; bloqueos: number;
+  /** Margen usado en el pico del día, % de la capacidad: media y máximo. */
+  pico_medio_pct: number; pico_max_pct: number;
+  log: { date: string; capacidad: number; pico: number; pico_pct: number;
+         bloqueos: { ticker: string; t: number; requisito?: number; usado?: number; capacidad?: number; precio?: number; acciones?: number; nota?: string }[] }[];
+}
+
 export interface HaltsSummary {
   enabled: boolean;
   modo: "primero" | "n";
@@ -463,6 +475,8 @@ export interface BacktestResult {
   bswan?: BSwanSummary;
   /** Coste de halts: resumen de la corrida. Solo con el coste activo. */
   halts?: HaltsSummary;
+  /** Margen y buying power: resumen de la corrida. Solo con el bloque activo. */
+  margen?: MargenSummary;
   /** Reconciliación candidatos vs ejecutados. El motor la calcula SIEMPRE; si
    *  falta intradía de algún ticker-día, ese día se descarta en silencio y el
    *  resultado es parcial. Se pinta como aviso cuando no llega al 100%. */
@@ -614,6 +628,10 @@ export async function runBacktest(params: {
   halts_mode?: "primero" | "n";
   halts_n?: number;
   halts_slippage_pct?: number;
+  /** Criterios de margen y buying power (19-sep): apagado = el motor ni lo mira. */
+  margin_enabled?: boolean;
+  margin_broker?: string;
+  margin_capacity_pct?: number;
   /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): el motor corre todo y añade is_oos
    *  al resultado cuando es < 100; el servidor guarda los dos bloques. Antes
    *  solo lo recortaba el navegador y se perdía. */
@@ -672,6 +690,10 @@ export async function runBacktestWithDefinition(params: {
   halts_mode?: "primero" | "n";
   halts_n?: number;
   halts_slippage_pct?: number;
+  /** Criterios de margen y buying power (19-sep): apagado = el motor ni lo mira. */
+  margin_enabled?: boolean;
+  margin_broker?: string;
+  margin_capacity_pct?: number;
   look_ahead_prevention?: boolean;
   monthly_expenses?: number;
   /** Split IS/OOS (PRD_METRICAS_Y_OOS P1): mismo significado que en
@@ -903,6 +925,10 @@ export async function runOptimizationSurface(params: {
   halts_mode?: "primero" | "n";
   halts_n?: number;
   halts_slippage_pct?: number;
+  /** Criterios de margen y buying power (19-sep): apagado = el motor ni lo mira. */
+  margin_enabled?: boolean;
+  margin_broker?: string;
+  margin_capacity_pct?: number;
   monthly_expenses?: number;
   fixed_ratio_delta?: number;
   look_ahead_prevention?: boolean;

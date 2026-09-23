@@ -119,6 +119,11 @@ class BacktestRequest(BaseModel):
     halts_mode: str = "primero"
     halts_n: int = 1
     halts_slippage_pct: float = 5.0
+    # CRITERIOS DE MARGEN Y BUYING POWER (Jaume 2026-09-19). Ver
+    # backend/app/services/margen.py. Apagado = el motor ni lo mira.
+    margin_enabled: bool = False
+    margin_broker: str = "sagetrader"
+    margin_capacity_pct: float = 100.0
     # Corte IS/OOS (PRD Alvaro 2026-09-08, P1). La UI lo mandaba desde siempre y
     # Pydantic lo tiraba: ahora se persisten `is_metrics` y `oos_metrics`,
     # calculados igual que los pinta el navegador. El motor sigue corriendo el
@@ -486,6 +491,16 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         # Coste de halts: config validada (400 legible) + la tabla del rango,
         # cargada UNA vez por corrida. Si la tabla esta vacia se avisa en el
         # resultado en vez de fallar: el backtest sale igual, sin cierres.
+        # Margen y buying power: config validada (400 legible).
+        _cfg_margen = None
+        if req.margin_enabled:
+            from app.services.margen import ConfigMargen
+            try:
+                _cfg_margen = ConfigMargen(broker=str(req.margin_broker or "sagetrader"),
+                                           capacidad_pct=float(req.margin_capacity_pct or 100.0))
+            except (TypeError, ValueError) as _e_m:
+                raise HTTPException(status_code=400, detail=f"Margen y BP: {_e_m}")
+
         _cfg_halts = None
         _aviso_halts = None
         if req.halts_enabled:
@@ -534,6 +549,7 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
             locates_seed=req.locates_seed,
             bswan=_cfg_bswan,
             halts=_cfg_halts,
+            margen=_cfg_margen,
             look_ahead_prevention=req.look_ahead_prevention,
             monthly_expenses=req.monthly_expenses,
             progress_callback=update_prog,

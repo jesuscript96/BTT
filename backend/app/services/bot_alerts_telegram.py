@@ -102,110 +102,143 @@ def _num(v: float | None, dec: int = 4) -> str:
     return s.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
+SEPARADOR = "------"
+
+
+def clave_grupo(ev: "Evento") -> tuple:
+    """Lo que hace que dos avisos sean LA MISMA senal en cuentas distintas:
+    mismo ticker, estrategia, tipo, minuto, motivo/nivel y estado. Solo cambia
+    la cuenta (y con ella las acciones)."""
+    return (ev.ticker, ev.strategy_id, ev.tipo, str(ev.momento)[:16],
+            getattr(ev, "motivo", None), getattr(ev, "nivel", None),
+            getattr(ev, "accion_piramide", None), getattr(ev, "estado", "alerta"))
+
+
+def agrupar(eventos: Iterable["Evento"]) -> list[list["Evento"]]:
+    """Junta los avisos hermanos (misma senal, distinta cuenta) en el orden en
+    que aparecio la senal. Dentro del grupo, la cuenta de MAS riesgo primero
+    (Jaume, 18-sep-2026) y, a igual riesgo, la principal."""
+    grupos: dict[tuple, list] = {}
+    for ev in eventos:
+        grupos.setdefault(clave_grupo(ev), []).append(ev)
+    out = []
+    for g in grupos.values():
+        g.sort(key=lambda e: (-(getattr(e, "riesgo_usd", None) or 0), 1 if getattr(e, "cuenta", None) else 0))
+        out.append(g)
+    return out
+
+
+def _etiqueta(ev: "Evento", varias: bool) -> str:
+    """El prefijo de cuenta de una linea: solo cuando hay varias cuentas."""
+    if not varias:
+        return ""
+    return f"<b>[{_esc(getattr(ev, 'cuenta', None) or 'principal')}]</b> "
+
+
 def formatear(ev: "Evento") -> str:
-    """El texto del aviso, en HTML de Telegram.
+    """El texto de UN aviso (una cuenta). Ver `formatear_grupo`."""
+    return formatear_grupo([ev])
 
-    SOBRE EL COLOR: Telegram no permite colorear texto — solo negrita, cursiva,
-    subrayado, tachado, monoespaciado y enlaces. Para que el stop y el riesgo
-    canten a simple vista se usan emojis de color como marca de linea, que es lo
-    mas parecido que existe.
 
-    Lleva SIEMPRE stop y riesgo, no solo las acciones: si el precio se ha movido
-    desde el aviso, con esos dos numeros se rehace la cuenta. El numero al precio
-    del momento vive en el cuadro de mandos, que lo recalcula solo.
+def formatear_grupo(eventos: list["Evento"]) -> str:
+    """El texto del aviso, en HTML de Telegram, con un bloque POR CUENTA.
+
+    FORMATO AL GRANO (Jaume, 18-sep-2026: «hay que ir al grano en las alertas,
+    prealertas, stops, anyadir y take profits»). Tres o cuatro lineas: que es
+    (icono + ticker + que hacer), a que precio, y las cantidades. Con varias
+    cuentas, la cabecera y el precio van una sola vez, un separador `------`
+    y debajo una linea por cuenta con sus acciones, la de mas riesgo primero.
+    Asi un take profit en dos cuentas es UN mensaje y no dos.
+
+    SOBRE EL COLOR: Telegram no colorea texto; los emojis marcan la linea.
+    Lleva siempre stop y riesgo en las entradas: si el precio se ha movido,
+    con esos dos numeros se rehace la cuenta.
     """
+    if not eventos:
+        return ""
+    evs = agrupar(eventos)[0] if len(eventos) > 1 else list(eventos)
+    ev = evs[0]
+    varias = len(evs) > 1
     hora = str(ev.momento)[11:16]
     largo = (ev.direccion or "").lower().startswith("long")
     lado = "LONG" if largo else "SHORT"
     tk = _esc(ev.ticker)
     est = _esc(ev.estrategia or "")
-
-    # PREALERTA: misma estructura, con una cabecera que la distinga de un
-    # vistazo y el rombo naranja en lugar del icono del lado. Telegram no tiene
-    # tamanyos de letra, asi que «grande» se consigue con negrita y mayusculas.
     prea = getattr(ev, "estado", "alerta") == "prealerta"
-    cabecera = ["🔸 <b>PREALERTA</b>", ""] if prea else []
+    pie = f"<i>— {est} · {hora} —</i>"
+    cabecera = ["🔸 <b>PREALERTA</b>"] if prea else []
 
     if ev.tipo == "entrada":
-        # El rombo va SOLO en la cabecera de prealerta. En la linea del ticker
-        # se mantiene el triangulo del lado, igual que en una alerta: asi el
-        # icono siempre significa lo mismo (largo o corto) y no hay que
-        # reaprenderlo segun el estado del aviso.
         icono = "🔺" if largo else "🔻"
-        lineas = cabecera + [
-            f"{icono} <b>Ticker:</b> {tk}  ({lado})",
-            "",
-            f"Precio: <b>{_num(ev.precio)}</b>",
-            f"Acciones: <b>{_num(ev.acciones, 0)}</b>",
-        ]
+        lineas = cabecera + [f"{icono} <b>{tk}</b> · {lado}"]
+        precio = f"Precio: <b>{_num(ev.precio)}</b>"
         if ev.stop is not None:
-            lineas.append(f"🔴 Stop: {_num(ev.stop)}")
-        if ev.riesgo_usd is not None:
-            lineas.append(f"🟠 Riesgo: {_num(ev.riesgo_usd, 0)}")
-        lineas += ["", f"<i>— {est} · {hora} —</i>"]
+            precio += f" · 🔴 Stop: {_num(ev.stop)}"
+        lineas.append(precio)
+        bloques = []
+        for e in evs:
+            b = f"{_etiqueta(e, varias)}Acciones: <b>{_num(e.acciones, 0)}</b>"
+            if e.riesgo_usd is not None:
+                b += f" (R:{_num(e.riesgo_usd, 0)})"
+            bloques.append(b)
+        lineas += _unir(bloques) + [pie]
         return "\n".join(lineas)
 
     if ev.tipo == "piramide":
         reduce = ev.accion_piramide == "reduce"
         icono = "➖" if reduce else "➕"
         verbo = "REDUCIR" if reduce else "AÑADIR"
-        lineas = cabecera + [
-            f"{icono} <b>Ticker:</b> {tk}  ({verbo})",
-            "",
-            f"Precio: <b>{_num(ev.precio)}</b>",
-            f"Acciones: <b>{_num(ev.acciones, 0)}</b>",
-        ]
-        if ev.posicion_total is not None:
-            # Entre parentesis y debajo de las acciones: lo que se teclea en el
-            # broker es el anyadido, no el total. El total es contexto — sirve
-            # para comprobar que la posicion cuadra, no para operar con el.
-            lineas.append(f"<i>(posición total: {_num(ev.posicion_total, 0)})</i>")
-        lineas += ["", f"<i>— {est} · {hora} —</i>"]
+        lineas = cabecera + [f"{icono} <b>{tk}</b> · {verbo}", f"Precio: <b>{_num(ev.precio)}</b>"]
+        bloques = []
+        for e in evs:
+            b = f"{_etiqueta(e, varias)}Acciones: <b>{_num(e.acciones, 0)}</b>"
+            if e.posicion_total is not None:
+                # Lo que se teclea es el anyadido; el total es para comprobar
+                # que la posicion cuadra.
+                b += f" <i>(posición total: {_num(e.posicion_total, 0)})</i>"
+            bloques.append(b)
+        lineas += _unir(bloques) + [pie]
         return "\n".join(lineas)
 
-    # Salida: el MISMO icono para todos los cierres, salte el stop o llegue el
-    # objetivo. Distinguirlos con iconos de alarma (🛑) hacia parecer un problema
-    # lo que es una orden mas que meter; el motivo ya lo dice la linea de abajo.
-    #
-    # LLEVA LAS ACCIONES, y hasta el 9-sep-2026 no las llevaba. Con un cierre
-    # PARCIAL —un take profit del 25 %— saber el precio no basta: hay que saber
-    # CUANTAS se venden. Se dan las dos cosas, la cifra y el porcentaje, porque
-    # la estrategia se piensa en porcentaje («que cierre un 25 %») pero en el
-    # broker se teclea un numero de acciones.
-    total_ev = getattr(ev, "posicion_total", None)
-    queda_ev = getattr(ev, "posicion_restante", None)
-    # QUE CIERRE DEL TODO NO ES QUE CIERRE EL 100 % DE GOLPE. El tercer tramo de
-    # 1B es un 25 %, pero deja la posicion a cero: eso es un CIERRE POS., no un
-    # parcial. Manda lo que queda abierto; el tamanyo del tramo solo se mira si
+    # Salida: mismo icono para todos los cierres; el motivo lo dice la linea.
+    # QUE CIERRE DEL TODO NO ES QUE CIERRE EL 100 % DE GOLPE: manda lo que
+    # queda abierto (posicion_restante); el tamanyo del tramo solo se mira si
     # no lo sabemos (avisos viejos, sin el campo).
-    if queda_ev is not None:
-        cierre_entero = queda_ev < 0.5
-    else:
-        cierre_entero = (ev.acciones is not None and total_ev
-                         and abs(ev.acciones - total_ev) < 0.5)
+    def _entero(e):
+        queda_e = getattr(e, "posicion_restante", None)
+        total_e = getattr(e, "posicion_total", None)
+        if queda_e is not None:
+            return queda_e < 0.5
+        return bool(e.acciones is not None and total_e and abs(e.acciones - total_e) < 0.5)
+
+    cierre_entero = _entero(ev)
     titulo = "CIERRE POS." if (cierre_entero or ev.acciones is None) else "CIERRE PARCIAL"
-    lineas = [
-        f"✅ <b>Ticker:</b> {tk}  ({titulo})",
-        "",
-        f"Precio: <b>{_num(ev.precio)}</b>",
-    ]
-    if ev.acciones is not None:
-        lineas.append(f"Acciones a cerrar: <b>{_num(ev.acciones, 0)}</b>")
-        if total_ev and not cierre_entero:
-            # El PORCENTAJE va sobre la posicion original —«que cierre un 25 %»
-            # es como lo piensa Jaume y como lo dice la estrategia— pero lo que
-            # QUEDA es lo que queda de verdad, descontando los tramos que ya se
-            # cerraron antes. Son dos bases distintas a proposito.
-            pct = ev.acciones / total_ev * 100
-            queda = queda_ev if queda_ev is not None else (total_ev - ev.acciones)
-            lineas.append(f"<i>({pct:.0f} % de {_num(total_ev, 0)} · "
-                          f"quedan {_num(queda, 0)})</i>")
-    lineas += [
-        f"⚫ Motivo: {_esc(ev.motivo or '?')}",
-        "",
-        f"<i>— {est} · {hora} —</i>",
-    ]
+    lineas = [f"✅ <b>{tk}</b> · {titulo}",
+              f"Precio: <b>{_num(ev.precio)}</b> · ⚫ {_esc(ev.motivo or '?')}"]
+    bloques = []
+    for e in evs:
+        if e.acciones is None:
+            continue
+        b = f"{_etiqueta(e, varias)}Acciones a cerrar: <b>{_num(e.acciones, 0)}</b>"
+        total_e = getattr(e, "posicion_total", None)
+        queda_e = getattr(e, "posicion_restante", None)
+        if total_e and not _entero(e):
+            # El PORCENTAJE va sobre la posicion original («que cierre un 25 %»,
+            # como lo piensa Jaume); lo que QUEDA descuenta los tramos ya
+            # cerrados. Dos bases distintas a proposito.
+            pct = e.acciones / total_e * 100
+            queda = queda_e if queda_e is not None else (total_e - e.acciones)
+            b += f" <i>({pct:.0f} % de {_num(total_e, 0)} · quedan {_num(queda, 0)})</i>"
+        bloques.append(b)
+    lineas += _unir(bloques) + [pie]
     return "\n".join(lineas)
+
+
+def _unir(bloques: list[str]) -> list[str]:
+    """Un separador tras el precio/stop y, debajo, una linea por cuenta, una
+    encima de otra (Jaume, 18-sep-2026: «colocar precio y stop como estan, un
+    separador, y despues las lineas por cuenta»)."""
+    return [SEPARADOR] + list(bloques) if bloques else []
 
 
 def _post(texto: str) -> tuple[bool, bool, str]:

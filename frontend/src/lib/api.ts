@@ -997,54 +997,6 @@ export function getHistoricalData(params: {
 }
 
 // ─── Screener ───────────────────────────────────────────────
-export interface ScreenerRecord {
-  ticker: string;
-  name: string;
-  price: number;
-  change_pct: number;
-  return_pct: number;
-  gap_pct: number;
-  volume: number;
-  prev_close: number;
-  open: number;
-  high: number;
-  low: number;
-  prev_volume: number;
-  high_spike_pct: number;
-  low_spike_pct: number;
-  range_pct: number;
-  // Live screener (real-time) extras — optional so the daily EOD payload still fits.
-  pmh_gap_pct?: number;
-  amh_gap_pct?: number;
-  rvol?: number;
-  // Day-vs-session model (screener-dia-sesion PRD). Optional: tabs that don't
-  // carry them still satisfy the type.
-  day_change_pct?: number;
-  day_volume?: number;
-  after_pct?: number;       // move since the RTH close (Aftermarket tab)
-  after_volume?: number;
-  after_high?: number;
-  pre_pct?: number;         // pre-market peak gap (Premarket tab)
-  pre_volume?: number;
-  pre_high?: number;
-}
-
-export interface ScreenerDailyResponse {
-  date: string | null;
-  total_records: number;
-  gainers: ScreenerRecord[];
-  losers: ScreenerRecord[];
-  premarket: ScreenerRecord[];
-  aftermarket: ScreenerRecord[];
-}
-
-export function getScreenerDaily(limit = 100): Promise<ScreenerDailyResponse> {
-  return apiRequest<ScreenerDailyResponse>(
-    `/screener/daily?limit=${limit}`,
-    { timeoutMs: 60_000 },
-  );
-}
-
 // ─── Export ─────────────────────────────────────────────────
 export function exportData(filters: unknown): Promise<Blob> {
   const url = `${API_BASE}/export`;

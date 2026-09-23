@@ -437,6 +437,13 @@ class RawEvRangoIn(BaseModel):
     ev_pct: float | None = None
 
 
+class RawMarginIn(BaseModel):
+    """Criterios de margen y buying power del broker (19-sep). Ver margen.py."""
+    enabled: bool = False
+    broker: str = "sagetrader"
+    capacity_pct: float = Field(default=100.0, gt=0, le=1000)
+
+
 class RawGateIn(BaseModel):
     """Puerta de los cortos. mode "ev": la cuenta del backtester (locates_gate)
     con el EV rodante de la estrategia (EV por defecto hasta que hay
@@ -472,25 +479,28 @@ class RawLocatesIn(BaseModel):
     band_seeds: int = Field(default=0, ge=0, le=500)
 
 
-class RawScalingIn(BaseModel):
-    """Escalado y pesos sobre las corridas en crudo (ver _Escalado): riesgo
-    TOTAL por trade repartido entre estrategias; los R de las filas se
-    ignoran. cap_pct: tope de la SUMA, % del capital del dia."""
-    model: Literal["fixed", "percent", "kelly", "fixed_ratio"] = "kelly"
-    base_risk: float = Field(default=100.0, ge=0)
-    pct: float = Field(default=1.0, ge=0)
-    delta: float = Field(default=500.0, ge=0)
-    # Fraccion de Kelly: 1 = la optima; 0.5 / 0.25 las de la practica; se
-    # admite cualquier valor (hasta 3, por si se quiere ver el sobre-Kelly).
-    kelly_mult: float = Field(default=0.5, gt=0, le=3)
-    # per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
-    # global: la Kelly del conjunto repartida por las Kellys propias.
-    kelly_scope: Literal["per_strategy", "global"] = "per_strategy"
-    cap_pct: float = Field(default=10.0, ge=0)
-    rebalance: Literal["D", "W", "M"] = "M"
-    lookback_days: int = Field(default=90, ge=1)
-    weighting: Literal["equal", "hrp", "momentum", "ev", "dd"] = "hrp"
-    floor: float = Field(default=0.05, ge=0, le=1)
+class RawRotationIn(BaseModel):
+    """Rotacion por ranking (20-sep tarde, ver escalado_auto): cada semana /
+    mes / N sesiones se ordenan las estrategias por lo que rindieron por
+    unidad de tamano en la ventana y se les da el % por trade del patron
+    segun su puesto, con un suelo por estrategia."""
+    enabled: bool = True
+    lookback_days: int = Field(default=126, ge=5)
+    rebalance: Literal["W", "M", "N"] = "M"
+    every_days: int = Field(default=20, ge=1)
+    # % por trade por puesto (mejor primero). None = los % del paso 1 ordenados.
+    pattern: list[float] | None = None
+    min_pct: float = Field(default=1.0, ge=0)
+    metric: Literal["return", "ev_trade", "per_hour", "sharpe"] = "return"
+
+
+class RawBrakeIn(BaseModel):
+    """Freno por caida de la cuenta: con la caida desde el maximo por encima
+    de dd_pct, todos los tamanos x mult hasta que vuelva por encima de exit_dd_pct."""
+    enabled: bool = True
+    dd_pct: float = Field(default=10.0, gt=0)
+    mult: float = Field(default=0.5, ge=0, le=1)
+    exit_dd_pct: float = Field(default=5.0, ge=0)
 
 
 class RawReq(BaseModel):
@@ -507,19 +517,22 @@ class RawReq(BaseModel):
     cap_mode: Literal["skip", "trim"] = "skip"
     # Solo una estrategia abierta a la vez por accion (ver portfolio_lab_raw).
     one_per_ticker: bool = False
+    # Tope POR ACCION (19-sep): lo abierto a la vez en un ticker sumando
+    # estrategias, % del equity del dia; 0 = sin tope. En riesgo o nocional.
+    max_ticker_pct: float = Field(default=0.0, ge=0)
+    ticker_cap_basis: Literal["risk", "notional", "trade"] = "risk"
     monthly_expenses: float = Field(default=0.0, ge=0)
     # 16-sep: locates de la cuenta (compartidos + puerta + banda) y escalado.
     locates: RawLocatesIn | None = None
-    scaling: RawScalingIn | None = None
+    rotation: RawRotationIn | None = None
+    brake: RawBrakeIn | None = None
+    margin: RawMarginIn | None = None
     start_date: str | None = None
     end_date: str | None = None
 
 
-@router.post("/raw")
-def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
-    """Portfolio en crudo: N corridas con la ejecucion fijada por estrategia y
-    la exposicion medida al minuto. Milisegundos sobre trades guardados."""
-    _guard()
+def _cargar_runs(req: "RawReq", user_id) -> list[dict]:
+    """Las corridas guardadas mas recientes de las estrategias pedidas."""
     if not req.strategy_ids:
         raise HTTPException(status_code=400, detail="Elige al menos una estrategia")
     con = get_user_db_connection(read_only=True)
@@ -544,30 +557,297 @@ def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
         loaded = plr.load_runs(con, wanted)
     finally:
         con.close()
-
     runs = []
     for sid in req.strategy_ids:
         run = loaded.get(sid)
         if not run:
             raise HTTPException(status_code=404, detail=f"La corrida de {names[sid]} ya no existe")
         runs.append({"strategy_id": sid, "name": names[sid], **run})
+    return runs
+
+
+def _cfg_crudo(req: "RawReq") -> dict:
+    return {
+        "capital": req.capital,
+        "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
+        "default_exec": req.default_exec.model_dump(),
+        "max_exposure_usd": req.max_exposure_usd,
+        "max_exposure_pct": req.max_exposure_pct,
+        "cap_mode": req.cap_mode,
+        "one_per_ticker": req.one_per_ticker,
+        "max_ticker_pct": req.max_ticker_pct,
+        "ticker_cap_basis": req.ticker_cap_basis,
+        "monthly_expenses": req.monthly_expenses,
+        "locates": req.locates.model_dump() if req.locates else None,
+        "rotation": req.rotation.model_dump() if req.rotation else None,
+        "brake": req.brake.model_dump() if req.brake else None,
+        "margin": req.margin.model_dump() if req.margin else None,
+        "start_date": req.start_date,
+        "end_date": req.end_date,
+    }
+
+
+@router.post("/raw")
+def raw(req: RawReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Portfolio en crudo: N corridas con la ejecucion fijada por estrategia y
+    la exposicion medida al minuto. Milisegundos sobre trades guardados."""
+    _guard()
+    runs = _cargar_runs(req, user_id)
     try:
-        return plr.simulate(runs, {
-            "capital": req.capital,
-            "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
-            "default_exec": req.default_exec.model_dump(),
-            "max_exposure_usd": req.max_exposure_usd,
-            "max_exposure_pct": req.max_exposure_pct,
-            "cap_mode": req.cap_mode,
-            "one_per_ticker": req.one_per_ticker,
-            "monthly_expenses": req.monthly_expenses,
-            "locates": req.locates.model_dump() if req.locates else None,
-            "scaling": req.scaling.model_dump() if req.scaling else None,
-            "start_date": req.start_date,
-            "end_date": req.end_date,
-        })
+        out = plr.simulate(runs, _cfg_crudo(req))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    _bitacora_crudo(req, runs, out)
+    return out
+
+
+class RawNivelesReq(RawReq):
+    """El nivel de la cuenta por la caida (20-sep): la misma configuracion
+    con los % del paso 1 multiplicados por cada factor, y para cada uno la
+    caida real, el peor dia, el final y el Monte Carlo (bootstrap por dias):
+    la DD que hay que tragar para que solo 1 de 20 (o 1 de 100) recorridos
+    la supere. Se elige el mayor factor cuya DD p95 se aguanta."""
+    factors: list[float] = [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+    mc_sims: int = Field(default=2000, ge=100, le=20000)
+    ruin_pct: float = Field(default=50.0, gt=0, le=100)
+
+
+@router.post("/raw/niveles")
+def raw_niveles(req: RawNivelesReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    _guard()
+    runs = _cargar_runs(req, user_id)
+    base_cfg = _cfg_crudo(req)
+    filas = []
+    factores = sorted({round(float(f), 4) for f in req.factors if f and f > 0})[:12] or [1.0]
+    for k in factores:
+        cfg = json.loads(json.dumps(base_cfg))
+        for ex in [cfg["default_exec"], *cfg["per_strategy"].values()]:
+            ex["size_value"] = float(ex.get("size_value") or 0.0) * k
+        try:
+            out = plr.simulate(runs, cfg)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cap0 = float(out["config"]["capital"]); eq = out["equity"]; pnl = out["daily_pnl"]
+        rets = []
+        for i, v in enumerate(pnl):
+            open_ = cap0 if i == 0 else eq[i - 1]
+            rets.append((v / open_) * 100.0 if open_ > 0 else 0.0)
+        peak = cap0; mdd = 0.0
+        for e in eq:
+            peak = max(peak, e)
+            mdd = min(mdd, (e / peak - 1.0) * 100.0 if peak > 0 else 0.0)
+        mc = None
+        try:
+            mc = run_bootstrap(rets, init_cash=cap0, simulations=req.mc_sims, method="bootstrap", mode="compound",
+                               risk_pct=1.0, ruin_pct=req.ruin_pct, seed=1)
+        except ValueError:
+            mc = None
+        total_pct = sum(float(ex.get("size_value") or 0.0) for ex in cfg["per_strategy"].values()) if cfg["per_strategy"] else float(cfg["default_exec"].get("size_value") or 0.0) * len(runs)
+        filas.append({
+            "factor": k,
+            "total_pct": round(total_pct, 4),
+            "per_strategy_pct": {sid: round(float(ex.get("size_value") or 0.0), 4) for sid, ex in cfg["per_strategy"].items()},
+            "final_equity": eq[-1] if eq else cap0,
+            "return_pct": round((eq[-1] / cap0 - 1.0) * 100.0, 2) if eq and cap0 > 0 else 0.0,
+            "max_dd_pct": round(mdd, 2),
+            "worst_day_pct": round(min(rets), 2) if rets else 0.0,
+            "ruined": bool(out.get("ruined")),
+            "trades": int(out["cap_report"]["taken"]),
+            "mc": ({"dd_p95": mc["dd_tolerance"]["p95"], "dd_p99": mc["dd_tolerance"]["p99"], "dd_median": mc["drawdown"]["p50"],
+                    "final_p5": mc["final_balance"]["p5"], "final_p50": mc["final_balance"]["p50"], "final_p95": mc["final_balance"]["p95"],
+                    "prob_ruin_pct": mc["prob_ruin_pct"], "prob_losing_pct": mc["prob_losing_pct"]} if mc else None),
+        })
+    return {"capital": req.capital, "ruin_pct": req.ruin_pct, "mc_sims": req.mc_sims, "niveles": filas}
+
+
+class RawCaminosReq(RawReq):
+    """Caminos de la simulacion segun los locates (Jaume, 20-sep tarde): la
+    misma configuracion corrida ENTERA N veces con semillas distintas del
+    sorteo de locates (cambia el precio de cada accion-dia y, con puerta, que
+    cortos entran), para uno o varios rangos de precios. Devuelve los
+    percentiles de los caminos de equity, del final, de la caida y del coste,
+    para ver entre que bandas cae lo que se va ganando de verdad."""
+    seeds: int = Field(default=30, ge=2, le=200)
+    # Rangos [lo, hi] del sorteo a probar; vacio = el del paso 1.
+    rangos: list[list[float]] = []
+
+
+@router.post("/raw/caminos")
+def raw_caminos(req: RawCaminosReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    _guard()
+    import numpy as np
+    runs = _cargar_runs(req, user_id)
+    base_cfg = _cfg_crudo(req)
+    loc = base_cfg.get("locates") or {}
+    if not loc or str(loc.get("mode")) != "random":
+        raise HTTPException(status_code=400, detail="Los caminos necesitan los locates ALEATORIOS del paso 1 (es el precio sorteado lo que cambia de un camino a otro)")
+    rangos = [[float(r[0]), float(r[1])] for r in req.rangos if len(r) >= 2 and float(r[1]) > float(r[0]) >= 0][:6]
+    if not rangos:
+        rangos = [[float(loc.get("min") or 1.0), float(loc.get("max") or 10.0)]]
+    cap0 = float(req.capital)
+    salida = []
+    calendar = None
+    for lo, hi in rangos:
+        curvas = []; finales = []; dds = []; costes = []; trades = []
+        for s in range(1, req.seeds + 1):
+            cfg = json.loads(json.dumps(base_cfg))
+            cfg["locates"]["min"] = lo; cfg["locates"]["max"] = hi; cfg["locates"]["seed"] = s
+            cfg["locates"]["band_seeds"] = 0
+            try:
+                o = plr.simulate(runs, cfg)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            if calendar is None:
+                calendar = o["calendar"]
+            eq = np.asarray(o["equity"], dtype=float)
+            if len(eq) != len(calendar):
+                continue
+            peak = np.maximum(np.maximum.accumulate(eq), cap0)
+            curvas.append(eq); finales.append(float(eq[-1])); dds.append(float(((eq - peak) / peak).min() * 100.0))
+            costes.append(float(o["costs"]["locates"])); trades.append(int(o["cap_report"]["taken"]))
+        if not curvas:
+            continue
+        M = np.vstack(curvas)
+        q = lambda xs, p: round(float(np.percentile(np.asarray(xs), p)), 2)
+        salida.append({
+            "lo": lo, "hi": hi, "seeds": len(curvas),
+            "final": {k: q(finales, p) for k, p in (("p05", 5), ("p25", 25), ("p50", 50), ("p75", 75), ("p95", 95))},
+            "max_dd_pct": {k: q(dds, p) for k, p in (("p05", 5), ("p50", 50), ("p95", 95))},
+            "cost": {k: q(costes, p) for k, p in (("p05", 5), ("p50", 50), ("p95", 95))},
+            "trades": {"p05": q(trades, 5), "p50": q(trades, 50), "p95": q(trades, 95)},
+            "bands": {k: [round(float(x), 2) for x in np.percentile(M, p, axis=0)] for k, p in (("p05", 5), ("p25", 25), ("p50", 50), ("p75", 75), ("p95", 95))},
+        })
+    return {"capital": cap0, "calendar": calendar or [], "seeds": req.seeds, "rangos": salida}
+
+
+class KellyRealRow(BaseModel):
+    date: str
+    pnl: float
+    notional: float = 0.0
+
+
+class KellyRealEstrategia(BaseModel):
+    name: str
+    kelly_pct: float = 0.0
+    basis: Literal["risk", "capital"] = "risk"
+
+
+class KellyRealReq(BaseModel):
+    """Kelly sobre la cuenta REAL (ver portfolio_lab_raw.kelly_cuenta_real)."""
+    rows: list[KellyRealRow] = []
+    # El CSV tal cual (DAS «Transactions» o fecha;pnl): si viene, manda sobre rows.
+    csv_text: str | None = None
+    # O el FICHERO subido (20-sep, Jaume: «meterle el csv o excel en archivo»):
+    # .csv/.txt o .xlsx en base64 con su nombre; manda sobre csv_text.
+    file_b64: str | None = None
+    filename: str | None = None
+    # notional: R = pnl / valor de la posicion de cada operacion (sin stop; lo
+    # que trae DAS). usd / pct: riesgo por trade fijo o % del equity del dia.
+    risk_mode: Literal["usd", "pct", "notional"] = "notional"
+    risk_value: float = Field(default=100.0, gt=0)
+    capital_inicial: float = Field(default=10000.0, gt=0)
+    kelly_mult: float = Field(default=0.5, gt=0, le=3)
+    cap_pct: float = Field(default=5.0, ge=0)
+    cap_strategy_pct: float = Field(default=2.0, ge=0)
+    lookback_days: int = Field(default=90, ge=0)
+    estrategias: list[KellyRealEstrategia] = []
+    capital_siguiente: float = Field(default=10000.0, gt=0)
+    kelly_base: Literal["exacta", "clasica"] = "clasica"
+    # El freno por caida del paso 4, aplicado a la curva REAL del CSV: si la
+    # cuenta real esta frenada, el total del siguiente periodo va x mult.
+    brake: RawBrakeIn | None = None
+
+
+@router.post("/raw/kelly-real")
+def kelly_real(req: KellyRealReq, user_id: Optional[str] = Depends(get_current_user_id)):
+    """Cuanto apostar el siguiente periodo segun la cuenta real, repartido
+    entre las estrategias por sus Kellys del backtest."""
+    _guard()
+    try:
+        rows = [r.model_dump() for r in req.rows]
+        parseo = None
+        texto = req.csv_text
+        if req.file_b64:
+            import base64
+            from app.services.cuenta_real import texto_de_fichero
+            try:
+                contenido = base64.b64decode(req.file_b64, validate=False)
+            except Exception:
+                raise ValueError("El fichero no llegó bien (base64)")
+            if len(contenido) > 25_000_000:
+                raise ValueError("El fichero pasa de 25 MB")
+            texto = texto_de_fichero(contenido, req.filename or "")
+        if texto and texto.strip():
+            from app.services.cuenta_real import parse_csv
+            parseo = parse_csv(texto)
+            rows = [{"date": f["date"], "pnl": f["pnl"], "notional": f.get("notional", 0.0)} for f in parseo["filas"]]
+        out = plr.kelly_cuenta_real(
+            rows, req.risk_mode, req.risk_value, req.capital_inicial,
+            req.kelly_mult, req.cap_pct, req.cap_strategy_pct, req.lookback_days,
+            [e.model_dump() for e in req.estrategias], req.capital_siguiente, req.kelly_base,
+        )
+        if parseo is not None:
+            out["csv"] = {"formato": parseo["formato"], "n_fills": parseo["n_fills"], "n_ops": len(parseo["filas"]), "aviso": parseo["aviso"],
+                          "ops": parseo["filas"][-400:]}
+        # Freno por caida sobre la curva real (capital inicial + PnL diario acumulado).
+        out["freno"] = None
+        if req.brake and req.brake.enabled:
+            from app.services import escalado_auto as ea
+            curva = []
+            acc = float(req.capital_inicial)
+            for fila in out.get("serie") or []:
+                acc += float(fila.get("pnl") or 0.0)
+                curva.append(acc)
+            fr = ea.freno_sobre_curva(ea.brake_cfg(req.brake.model_dump()), curva, float(req.capital_inicial))
+            hoy = fr["hoy"]
+            out["freno"] = {**hoy, "dias_frenado": fr["dias_frenado"], "episodios": fr["episodios"],
+                            "total_pct_con_freno": (round(float(out["total_pct"]) * hoy["mult"], 4) if out.get("total_pct") is not None else None),
+                            "total_usd_con_freno": (round(float(out["total_usd"]) * hoy["mult"], 2) if out.get("total_usd") is not None else None)}
+        return out
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _bitacora_crudo(req: "RawReq", runs: list[dict], out: dict) -> None:
+    """Una linea JSON por calculo en data/portfolio_crudo.jsonl: la config y
+    los totales por estrategia. Para poder mirar «lo ultimo que he corrido»
+    (Jaume, 19-sep) sin tener que adivinar la configuracion. Nunca rompe."""
+    try:
+        import datetime as _dt
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+        os.makedirs(base, exist_ok=True)
+        fila = {
+            "ts": _dt.datetime.now().isoformat(timespec="seconds"),
+            "strategies": [{"id": r.get("strategy_id"), "name": r.get("name"), "run_id": r.get("run_id")} for r in runs],
+            "config": {
+                "capital": req.capital, "cap_mode": req.cap_mode, "one_per_ticker": req.one_per_ticker,
+                "max_exposure_usd": req.max_exposure_usd, "max_exposure_pct": req.max_exposure_pct,
+                "max_ticker_pct": req.max_ticker_pct, "ticker_cap_basis": req.ticker_cap_basis,
+                "monthly_expenses": req.monthly_expenses, "start_date": req.start_date, "end_date": req.end_date,
+                "default_exec": req.default_exec.model_dump(),
+                "per_strategy": {k: v.model_dump() for k, v in req.per_strategy.items()},
+                "locates": req.locates.model_dump() if req.locates else None,
+                "rotation": req.rotation.model_dump() if req.rotation else None,
+                "brake": req.brake.model_dump() if req.brake else None,
+                "margin": req.margin.model_dump() if req.margin else None,
+            },
+            "result": {
+                "final_equity": (out.get("equity") or [None])[-1],
+                "total_return_pct": (out.get("metrics") or {}).get("total_return_pct"),
+                "ruined": out.get("ruined"),
+                "per_strategy": [
+                    {"name": p.get("name"), "n_trades": (p.get("totals") or {}).get("n_trades"),
+                     "pnl_net": (p.get("totals") or {}).get("pnl_net"), "locates": (p.get("totals") or {}).get("locates"),
+                     "cap_report": p.get("cap_report")}
+                    for p in (out.get("per_strategy") or [])
+                ],
+                "rotation_hoy": ((out.get("rotation") or {}).get("hoy")),
+            },
+        }
+        with open(os.path.join(base, "portfolio_crudo.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(fila, ensure_ascii=False, default=str) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # ── Monitorizacion (F3) ────────────────────────────────────────────────

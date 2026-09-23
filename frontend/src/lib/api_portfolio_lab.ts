@@ -569,23 +569,60 @@ export interface RawLocatesIn {
   band_seeds: number;
 }
 
-/** Escalado y pesos sobre las corridas en crudo: riesgo TOTAL por trade
- *  (X) repartido entre estrategias (i arriesga X * w_i, sum w = 1); el tope
- *  recorta la SUMA. Los R de las filas se ignoran. */
-export interface RawScalingIn {
-  model: "fixed" | "percent" | "kelly" | "fixed_ratio";
-  base_risk: number;
-  pct: number;
-  delta: number;
-  kelly_mult: number;
-  /** per_strategy: la Kelly de cada estrategia, suma topada en proporcion;
-   *  global: la Kelly del conjunto repartida por las Kellys propias. */
-  kelly_scope?: "per_strategy" | "global";
-  cap_pct: number;
-  rebalance: RebalanceFreq;
+/** Rotacion por ranking (20-sep tarde): cada semana / mes / N sesiones se
+ *  ordenan las estrategias por lo que rindieron por unidad de tamano en la
+ *  ventana y se les da el % por trade del patron segun su puesto. */
+export interface RawRotationIn {
+  enabled: boolean;
+  /** Sesiones de la ventana de ranking. */
   lookback_days: number;
-  weighting: WeightModel;
-  floor: number;
+  rebalance: "W" | "M" | "N";
+  every_days: number;
+  /** % por trade por puesto (mejor primero); null = los % del paso 1 ordenados. */
+  pattern: number[] | null;
+  /** Suelo por estrategia (% por trade); 0 = sin suelo. */
+  min_pct: number;
+  /** return: lo ganado por 1 % en la ventana; ev_trade: EV por trade; per_hour: por hora con posicion; sharpe: media / desviacion diaria. */
+  metric: "return" | "ev_trade" | "per_hour" | "sharpe";
+}
+
+/** Freno por caida de la cuenta: con la caida desde el maximo por encima de
+ *  dd_pct, todos los tamanos x mult hasta que vuelva por encima de exit_dd_pct. */
+export interface RawBrakeIn {
+  enabled: boolean;
+  dd_pct: number;
+  mult: number;
+  exit_dd_pct: number;
+}
+
+export interface RawRotationPeriod {
+  from: string;
+  sizes: number[];
+  /** Puesto de cada estrategia (1 = la mejor); null en el arranque sin historia. */
+  ranks: number[] | null;
+  scores: Array<number | null>;
+  nota: string;
+}
+
+export interface RawRotationOut {
+  cfg: RawRotationIn & { pattern: number[] };
+  periods: RawRotationPeriod[];
+  /** Lo que toca el siguiente periodo, con toda la historia. */
+  hoy: { sizes: number[]; ranks: number[] | null; scores: Array<number | null>; weights: number[]; total_pct: number; nota: string; desde: string | null };
+  size_medio: number[];
+  rebalanceos: number;
+  cambios_de_ranking: number;
+  dias_con_rotacion: number;
+  /** La puntuacion de cada estrategia a cada dia (misma ventana y metrica): el oscilador. null hasta tener ventana. */
+  scores_daily?: { dates: string[]; por_estrategia: Array<Array<number | null>> };
+}
+
+export interface RawBrakeOut {
+  cfg: RawBrakeIn;
+  dias_frenado: number;
+  episodios: number;
+  eventos: Array<{ date: string; que: "freno" | "suelta"; dd_pct: number }>;
+  hoy: { frenado: boolean; dd_pct: number; mult: number; peak: number };
 }
 
 export interface RawConfigIn {
@@ -603,10 +640,18 @@ export interface RawConfigIn {
   /** Solo una estrategia abierta a la vez por accion: entra la primera que da
    *  senal y las demas no entran en ese ticker hasta que sale. */
   one_per_ticker?: boolean;
+  /** Tope POR ACCION (19-sep): lo abierto a la vez en un mismo ticker sumando
+   *  estrategias, % del equity del dia (0 = sin tope), en riesgo o nocional. */
+  max_ticker_pct?: number;
+  /** trade = el tope es lo que arriesga UN trade de la estrategia que entra (su Kelly o su % por trade); el numero no se usa. */
+  ticker_cap_basis?: "risk" | "notional" | "trade";
   /** Gastos fijos del portfolio (una cuenta); los de las corridas no cuentan. */
   monthly_expenses: number;
   locates?: RawLocatesIn | null;
-  scaling?: RawScalingIn | null;
+  rotation?: RawRotationIn | null;
+  brake?: RawBrakeIn | null;
+  /** Criterios de margen y buying power del broker (19-sep). Apagado = nada cambia. */
+  margin?: { enabled: boolean; broker: string; capacity_pct: number } | null;
   start_date?: string | null;
   end_date?: string | null;
 }
@@ -629,61 +674,6 @@ export interface RawLocatesBand {
   max_dd_pct: { p05: number; p50: number; p95: number };
   cost: { p05: number; p50: number; p95: number };
   bands: { p05: number[]; p50: number[]; p95: number[] };
-}
-
-export interface RawScalingPeriod {
-  period: string;
-  from: string;
-  alive: number;
-  weights: number[];
-  weights_fallback: boolean;
-  /** Kelly EXACTA de la ventana (la f que maximiza el log-crecimiento empirico), % del capital por trade. */
-  kelly_raw_pct: number | null;
-  /** La aproximacion mu/sigma^2, solo para compararla. */
-  kelly_quad_pct?: number | null;
-  /** Lo que PEDIA el modelo (tras la fraccion de Kelly), % del capital del dia. */
-  x_pct: number | null;
-  /** Lo APLICADO el primer dia del periodo, tras el tope del usuario. */
-  applied_pct?: number | null;
-  /** Riesgo por trade aplicado de cada estrategia (% del capital del dia) y su Kelly propia. */
-  risk_pct?: number[];
-  kelly_por_estrategia_pct?: Array<number | null>;
-  note: string | null;
-  capped?: boolean;
-}
-
-export interface RawScalingToday {
-  date: string;
-  equity: number;
-  window: { from: string; to: string };
-  model: RawScalingIn["model"];
-  kelly_scope?: "per_strategy" | "global" | null;
-  /** Kelly global exacta (solo con kelly_scope = global). */
-  kelly_raw_pct: number | null;
-  kelly_quad_pct?: number | null;
-  kelly_mult: number;
-  x_pct: number;
-  cap_pct: number;
-  applied_pct: number;
-  applied_usd: number;
-  capped: boolean;
-  note: string | null;
-  weights_fallback: boolean;
-  per_strategy: Array<{
-    idx: number; name: string; alive: boolean;
-    /** Kelly propia exacta (% del capital por trade) y su aproximacion mu/sigma^2. */
-    kelly_pct?: number | null; kelly_quad_pct?: number | null;
-    /** Lo que pedia (tras la fraccion) y lo aplicado (tras el tope), % del capital del dia. */
-    asked_pct?: number; weight: number; risk_pct: number; risk_usd: number;
-  }>;
-}
-
-export interface RawScalingOut {
-  cfg: RawScalingIn;
-  periods: RawScalingPeriod[];
-  today: RawScalingToday;
-  no_stop: number;
-  no_weight: number;
 }
 
 /** Con que se corrio la corrida guardada (para la fila del selector). */
@@ -716,9 +706,6 @@ export interface RawCapReport {
   /** Cortos que la puerta por EV dejo fuera / que cabian en lo alquilado (gratis). */
   gate_out?: number;
   gate_free?: number;
-  /** Escalado: sin stop (no se puede dimensionar por riesgo) / con peso 0. */
-  no_stop?: number;
-  no_weight?: number;
   notional_usd?: number;
 }
 
@@ -801,9 +788,12 @@ export interface RawOut {
     max_exposure_pct?: number;
     cap_mode: "skip" | "trim";
     one_per_ticker?: boolean;
+    max_ticker_pct?: number;
+    ticker_cap_basis?: "risk" | "notional" | "trade";
     monthly_expenses: number;
     locates?: RawLocatesIn | null;
-    scaling?: RawScalingIn | null;
+      rotation?: RawRotationIn | null;
+    brake?: RawBrakeIn | null;
     start_date: string | null;
     end_date: string | null;
   };
@@ -811,7 +801,8 @@ export interface RawOut {
   locates_report?: RawLocatesReport;
   locates_band?: RawLocatesBand | null;
   locates_analysis?: RawLocatesAnalysis | null;
-  scaling?: RawScalingOut | null;
+  rotation?: RawRotationOut | null;
+  brake?: RawBrakeOut | null;
   ruined?: boolean;
   /** Percentiles del sorteo de locates aleatorios de esta llamada. */
   locates_random?: { n: number; media?: number; p10?: number; p50?: number; p90?: number; min?: number; max?: number } | null;
@@ -825,6 +816,10 @@ export interface RawOut {
     cap_usd: number;
   };
   cap_report: RawCapReport;
+  /** Margen y BP (solo con el bloque activo): trades fuera/recortados por margen y el pico de margen usado. */
+  margin_report?: { enabled: boolean; broker: string; capacity_pct: number; skipped: number; trimmed: number; pico_medio_pct: number; pico_max_pct: number } | null;
+  /** Tope por accion (solo con el tope > 0): trades fuera/recortados y los sin stop (en riesgo no se pueden medir). */
+  ticker_cap_report?: { pct: number; basis: "risk" | "notional" | "trade"; skipped: number; trimmed: number; sin_stop: number } | null;
   metrics: CombineMetrics;
   costs: { fees: number; slippage?: number; locates: number; expenses: number };
   var: CombineVar | null;
@@ -835,10 +830,116 @@ export interface RawOut {
   trades: RawTrades;
 }
 
+/** Kelly sobre la cuenta REAL (19-sep): PnL diario real + riesgo por trade
+ *  usado -> R diaria -> Kelly -> total del siguiente periodo, repartido entre
+ *  las estrategias por sus Kellys del backtest. */
+export interface KellyRealIn {
+  rows?: Array<{ date: string; pnl: number; notional?: number }>;
+  /** El CSV tal cual (DAS «Transactions» o fecha;pnl): si viene, manda sobre rows. */
+  csv_text?: string;
+  /** O el fichero (.csv/.txt/.xlsx) en base64 con su nombre: manda sobre csv_text. */
+  file_b64?: string;
+  filename?: string;
+  /** notional: R = pnl / valor de la posicion (sin stop, lo que trae DAS). */
+  risk_mode: "usd" | "pct" | "notional";
+  kelly_base?: "exacta" | "clasica";
+  risk_value: number;
+  capital_inicial: number;
+  kelly_mult: number;
+  cap_pct: number;
+  cap_strategy_pct: number;
+  lookback_days: number;
+  estrategias: Array<{ name: string; kelly_pct: number; basis?: "risk" | "capital" }>;
+  capital_siguiente: number;
+  /** El freno por caida del paso 4 aplicado a la curva REAL del CSV. */
+  brake?: RawBrakeIn | null;
+}
+
+export interface KellyRealOut {
+  dias: number; dias_ventana: number; dias_con_operaciones: number;
+  desde: string | null; hasta: string | null;
+  equity_final: number; risk_mode: "usd" | "pct" | "notional"; risk_value: number;
+  r_media_dia: number; r_peor_dia: number; r_mejor_dia: number; r_total_ventana: number;
+  kelly_raw_pct: number | null; kelly_quad_pct: number | null; kelly_mult: number;
+  kelly_base?: "exacta" | "clasica"; kelly_exacta_pct?: number | null; kelly_clasica_pct?: number | null;
+  pnl_total?: number;
+  ops?: { n: number; ganadoras: number; perdedoras: number; win_rate: number; ganancia_media: number; perdida_media: number; kelly_clasica_pct: number | null };
+  csv?: { formato: string; n_fills: number; n_ops: number; aviso: string | null; ops: Array<{ date: string; symbol: string; pnl: number; notional: number; lado: string | null; fees: number; locates: number; n_fills: number; plano: boolean }> };
+  total_pedido_pct: number | null; cap_pct: number; cap_strategy_pct: number; capped: boolean; capped_strategy: boolean;
+  total_pct: number | null; total_usd: number | null; capital_siguiente: number; nota: string | null;
+  per_strategy: Array<{ name: string; kelly_pct: number; share: number; risk_pct: number | null; risk_usd: number | null; basis: "risk" | "capital" }>;
+  serie: Array<{ date: string; r: number; pnl: number; riesgo: number }>;
+  /** Estado del freno sobre la cuenta real (solo si se manda `brake`). */
+  freno?: { frenado: boolean; dd_pct: number; mult: number; peak: number; dias_frenado: number; episodios: number; total_pct_con_freno: number | null; total_usd_con_freno: number | null } | null;
+}
+
+export function kellyCuentaReal(body: KellyRealIn): Promise<KellyRealOut> {
+  return apiRequest<KellyRealOut>("/portfolio-lab/raw/kelly-real", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 60_000,
+  });
+}
+
 export function runPortfolioRaw(body: RawConfigIn): Promise<RawOut> {
   return apiRequest<RawOut>("/portfolio-lab/raw", {
     method: "POST",
     body: JSON.stringify(body),
     timeoutMs: 120_000,
+  });
+}
+
+/** El nivel de la cuenta por la caida (20-sep): la misma configuracion con los
+ *  % del paso 1 x cada factor; para cada uno lo real y el Monte Carlo. */
+export interface RawNivel {
+  factor: number;
+  total_pct: number;
+  per_strategy_pct: Record<string, number>;
+  final_equity: number;
+  return_pct: number;
+  max_dd_pct: number;
+  worst_day_pct: number;
+  ruined: boolean;
+  trades: number;
+  mc: { dd_p95: number; dd_p99: number; dd_median: number; final_p5: number; final_p50: number; final_p95: number; prob_ruin_pct: number; prob_losing_pct: number } | null;
+}
+export interface RawNivelesOut {
+  capital: number;
+  ruin_pct: number;
+  mc_sims: number;
+  niveles: RawNivel[];
+}
+export function runPortfolioNiveles(body: RawConfigIn & { factors?: number[]; mc_sims?: number; ruin_pct?: number }): Promise<RawNivelesOut> {
+  return apiRequest<RawNivelesOut>("/portfolio-lab/raw/niveles", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 300_000,
+  });
+}
+
+/** Caminos de la simulacion segun los locates (20-sep tarde): la misma
+ *  configuracion corrida ENTERA N veces con semillas distintas del sorteo,
+ *  para uno o varios rangos de precios; percentiles de los caminos. */
+export interface RawCaminosRango {
+  lo: number;
+  hi: number;
+  seeds: number;
+  final: { p05: number; p25: number; p50: number; p75: number; p95: number };
+  max_dd_pct: { p05: number; p50: number; p95: number };
+  cost: { p05: number; p50: number; p95: number };
+  trades: { p05: number; p50: number; p95: number };
+  bands: { p05: number[]; p25: number[]; p50: number[]; p75: number[]; p95: number[] };
+}
+export interface RawCaminosOut {
+  capital: number;
+  calendar: string[];
+  seeds: number;
+  rangos: RawCaminosRango[];
+}
+export function runPortfolioCaminos(body: RawConfigIn & { seeds?: number; rangos?: number[][] }): Promise<RawCaminosOut> {
+  return apiRequest<RawCaminosOut>("/portfolio-lab/raw/caminos", {
+    method: "POST",
+    body: JSON.stringify(body),
+    timeoutMs: 600_000,
   });
 }

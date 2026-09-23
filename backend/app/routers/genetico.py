@@ -100,6 +100,14 @@ def catalogo():
         # genetico, las fija Jaume.
         "guardas": [{"clave": k, "indicador": n, "etiqueta": e, "comparador": c,
                      "ayuda": a} for k, n, e, c, a in C.GUARDAS],
+        # Parametros que el usuario puede FIJAR al marcar el indicador (21-sep):
+        # hoy solo `ap_session` de Previous max/min y % Fade. La pagina pinta un
+        # desplegable con estas opciones y manda config["params_fijos"].
+        "params_fijables": [
+            {"param": p, "indicadores": list(inds),
+             "opciones": [{"value": v, "label": l} for v, l in C.OPCIONES_FIJABLES[p]]}
+            for p, inds in C.PARAMS_FIJABLES.items()
+        ],
         "stops": {"pct": list(C.STOP_PCT), "offset_pct": list(C.STOP_OFFSET_PCT),
                   "niveles": {k: [n for n, _ in v] for k, v in C.STOP_NIVELES.items()}},
         "tps": {"pct": list(C.TP_PCT), "hora": list(C.TP_HORA),
@@ -450,7 +458,53 @@ def _genes_extra(d: dict) -> list[dict]:
                 "min": 1, "max": 10, "step": 1, "is_int": True,
                 "current_value": int(cd), "unit": None,
             })
+
+    # CONTRA QUE NIVEL COMPARA (21-sep-2026). «Bar Close < Prev. Bar Low» no
+    # tiene ningun numero que mover: Prev. Bar Low es un precio sin parametros
+    # (salvo el `offset`, que ya sale). Asi que en modo mejorar esa condicion
+    # estaba congelada del todo — Jaume: «no tiene en cuenta ... previous max y
+    # min, Prev. Bar close, prev bar open, high, low». El gen es CATEGORICO: el
+    # nivel del lado derecho se cambia por otro de los nueve niveles base del
+    # catalogo del explorador (Prev. Bar x4, Previous max/min, VWAP, PM High/
+    # Low). Cambia la estrategia, si; igual que los parciales como estructura,
+    # y por eso empieza desmarcado como todos.
+    #
+    # Solo se ofrece cuando el destino YA es uno de esos niveles: convertir
+    # «Bar Close cruza SMA(20)» en «Bar Close cruza VWAP» es otra idea, no un
+    # ajuste. Los params del destino (offset, ap_session) se dejan como estan:
+    # el motor ignora los que no le aplican.
+    C = _catalogo_modulo()
+    niveles = list(C.NIVELES_BASE)
+    for clave, etiqueta, bloque in (("entry_logic", "Entrada", "entrada"),
+                                    ("exit_logic", "Salida", "salida")):
+        raiz = (d.get(clave) or {}).get("root_condition") or {}
+        for ruta, cond in _condiciones_con_ruta(raiz, f"{clave}.root_condition"):
+            tgt = cond.get("target")
+            if not isinstance(tgt, dict) or tgt.get("name") not in niveles:
+                continue
+            src = (cond.get("source") or {}).get("name", "?")
+            out.append({
+                "id": f"{ruta}.target.nivel",
+                "label": f"{etiqueta}: nivel contra el que compara {src} (hoy {tgt['name']})",
+                "path": f"{ruta}.target.name", "bloque": bloque,
+                "opciones": niveles, "current_value": tgt["name"], "unit": None,
+            })
     return out
+
+
+def _condiciones_con_ruta(grupo: dict, ruta: str):
+    """(ruta, condicion) de cada `indicator_comparison` del arbol, con la MISMA
+    numeracion por posicion que usa `extract_parameters` — las guardas se meten
+    despues de escribir los genes (afinar.a_definicion), asi que las rutas
+    calculadas aqui sobre la estrategia sin guardas siguen valiendo."""
+    for i, c in enumerate((grupo or {}).get("conditions") or []):
+        if not isinstance(c, dict):
+            continue
+        r = f"{ruta}.conditions.{i}"
+        if c.get("type") == "group":
+            yield from _condiciones_con_ruta(c, r)
+        elif c.get("type") == "indicator_comparison":
+            yield r, c
 
 
 class GenesRequest(BaseModel):

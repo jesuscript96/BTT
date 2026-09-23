@@ -120,9 +120,19 @@ def limpiar_inactivo(strategy_id: str, user_id: Optional[str] = Depends(get_curr
             con.close()
 
 
+class CuentaReq(BaseModel):
+    """Otra cuenta de trading que opera la MISMA estrategia con otro riesgo
+    (18-sep-2026). La principal es la de `riesgo_usd`/`riesgo_piramide_usd`."""
+    nombre: Optional[str] = None
+    riesgo_usd: float = Field(gt=0)
+    riesgo_piramide_usd: Optional[float] = Field(default=None, gt=0)
+
+
 class WatchReq(BaseModel):
     strategy_id: str
     activa: bool
+    # Otras cuentas con otro riesgo. None o [] = solo la principal, como siempre.
+    cuentas: Optional[list[CuentaReq]] = None
     # gt=0 y no ge=0: un riesgo de cero daria cero acciones en toda alerta, que
     # es un bot encendido que no sirve para nada. Mejor rechazarlo aqui.
     riesgo_usd: float = Field(gt=0)
@@ -244,7 +254,8 @@ def guardar(req: WatchReq, user_id: Optional[str] = Depends(get_current_user_id)
 
             return bas.set_watch(con, req.strategy_id, req.activa, req.riesgo_usd,
                                  req.riesgo_piramide_usd, req.capital_usd,
-                                 req.ev_pct, req.riesgos_piramide, req.ev_rangos)
+                                 req.ev_pct, req.riesgos_piramide, req.ev_rangos,
+                                 [c.model_dump() for c in (req.cuentas or [])] or None)
         finally:
             con.close()
 
@@ -278,6 +289,8 @@ class EventoIn(BaseModel):
     # comparten id, asi que el siguiente ACTUALIZA la fila del anterior en vez
     # de anyadir otra.
     estado: str = "alerta"
+    # La cuenta de trading (18-sep-2026); None = la principal.
+    cuenta: Optional[str] = None
 
 
 class EventosReq(BaseModel):

@@ -189,7 +189,6 @@ def _core_simulate_jit(
     risk_amount = risk_r
     max_short_size_today = 0.0
     total_trades = 0
-    prev_signal = False
 
     for i in range(n):
         # Misprint patch removed (data NBBO-clipped at source): no bar restriction.
@@ -549,7 +548,6 @@ def _core_simulate_jit(
                                     break
                 if not in_position:
                     equity[i] = init_cash + realized_pnl
-                    prev_signal = entries[i]
                     continue
 
             # Track MAE / MFE
@@ -665,8 +663,9 @@ def _core_simulate_jit(
                 size = 0.0
 
         # --- check entries ---
+        # Senal por NIVEL, no por flanco (2026-09-20): ver portfolio_sim.py.
         current_signal = entries[i]
-        is_signal_trigger = current_signal and not prev_signal
+        is_signal_trigger = current_signal
 
         if (not in_position) and is_signal_trigger and i < n - 1 and (not is_restricted) and (not riesgo_bloqueado):
             can_enter = True
@@ -680,7 +679,6 @@ def _core_simulate_jit(
                 available_cash = init_cash + realized_pnl
                 if available_cash <= 0:
                     equity[i] = init_cash + realized_pnl
-                    prev_signal = current_signal
                     continue
 
                 if look_ahead_prevention:
@@ -694,7 +692,6 @@ def _core_simulate_jit(
                 entry_price = (ep + slip) if is_long else (ep - slip)
                 if entry_price <= 0:
                     equity[i] = init_cash + realized_pnl
-                    prev_signal = current_signal
                     continue
 
                 # Risk amount ($)
@@ -773,12 +770,10 @@ def _core_simulate_jit(
                         sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
                         if not sl_valid:
                             equity[i] = init_cash + realized_pnl
-                            prev_signal = current_signal
                             continue
                 elif hs_type_code == 3:  # Fixed Amount
                     if fixed_amount <= 0.0:
                         equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
                         continue
                     if is_long:
                         stop_loss_price = entry_price - fixed_amount
@@ -787,7 +782,6 @@ def _core_simulate_jit(
                     sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
                     if not sl_valid:
                         equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
                         continue
                 elif hs_type_code == 2:  # ATR Multiplier
                     # Nivel con el ATR DE ESTA BARRA. Paridad exacta con
@@ -798,7 +792,6 @@ def _core_simulate_jit(
                         # Paridad exacta con portfolio_sim.py.
                         if atr_fallback_pct <= 0.0:
                             equity[i] = init_cash + realized_pnl
-                            prev_signal = current_signal
                             continue
                         if is_long:
                             stop_loss_price = entry_price * (1.0 - atr_fallback_pct / 100.0)
@@ -811,7 +804,6 @@ def _core_simulate_jit(
                     sl_valid = (stop_loss_price > entry_price) if (not is_long) else (0.0 < stop_loss_price < entry_price)
                     if not sl_valid:
                         equity[i] = init_cash + realized_pnl
-                        prev_signal = current_signal
                         continue
                 elif has_sl_stop and sl_stop > 0:
                     stop_loss_price = entry_price * (1 - sl_stop) if is_long else entry_price * (1 + sl_stop)
@@ -877,7 +869,6 @@ def _core_simulate_jit(
                 else:
                     equity[i] = available_cash
 
-        prev_signal = current_signal
 
         # --- equity ---
         current_equity = init_cash + realized_pnl

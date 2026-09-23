@@ -27,7 +27,11 @@ const isVolumeIndicator = (name?: string): boolean => {
         name === IndicatorType.ACCUMULATED_VOLUME ||
         name === IndicatorType.ACCUM_DOLLAR_VOLUME ||
         name === IndicatorType.DOLLAR_VOLUME ||
-        name === IndicatorType.YESTERDAY_VOLUME
+        name === IndicatorType.YESTERDAY_VOLUME ||
+        // El volumen de la vela del giro nº N va en acciones, como «Volume»:
+        // la casilla en millones (con la M), que es como se escribe sin
+        // equivocarse en los ceros (Jaume, 18-sep).
+        name === IndicatorType.VOLUMEN_PICO
     );
 };
 
@@ -55,6 +59,11 @@ export const isMeasureIndicator = (name?: string): boolean => {
     if (!name) return false;
     return (
         name === IndicatorType.VOL_BIN_PCT ||
+        name === IndicatorType.ROTACION ||
+        name === IndicatorType.ROTACION_VENTANA ||
+        name === IndicatorType.RVOL_UNIVERSO ||
+        name === IndicatorType.MIN_DESDE_PICO_VOL ||
+        name === IndicatorType.PENDIENTE_VOLUMEN ||
         name === IndicatorType.RETRACEMENT ||
         name === IndicatorType.ABSORPTION ||
         name === IndicatorType.WICK_RATIO ||
@@ -175,6 +184,14 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         case IndicatorType.VOL_ZONE_HIGH:
         case IndicatorType.VOL_ZONE_LOW:
             return { bin_pct: 1.0, zona_pct: 70 };
+        // 10 minutos de reloj: un climax de volumen dura mas que una vela y
+        // menos que media hora. «Minutos desde el pico» no lleva parametros.
+        case IndicatorType.RVOL_UNIVERSO:
+        case IndicatorType.PENDIENTE_VOLUMEN:
+            return { range_minutes: 10 };
+        // Media hora: el tramo en el que una rotacion fuerte significa algo.
+        case IndicatorType.ROTACION_VENTANA:
+            return { range_minutes: 30 };
         case IndicatorType.ABSORPTION:
             return { range_minutes: 5 };
         case IndicatorType.WICK_RATIO:
@@ -274,10 +291,39 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         // solo contra una cifra (igual que las demás de este bloque).
         IndicatorType.EDAD_PICO,
         IndicatorType.VOLUMEN_PICO,
+        // Volumen contra EL UNIVERSO, no contra el propio ticker (22-sep-2026).
+        IndicatorType.RVOL_UNIVERSO,
+        IndicatorType.MIN_DESDE_PICO_VOL,
+        IndicatorType.PENDIENTE_VOLUMEN,
+        IndicatorType.ROTACION,
+        IndicatorType.ROTACION_VENTANA,
     ],
 };
 
 // Human-readable labels for comparators using symbols
+/** Etiqueta corta de un lado de una condicion para los RESUMENES del panel
+ *  (tarjeta de la estrategia, desplegable). Para la familia de picos/valles
+ *  lleva la direccion y el numero de giro: sin ellos «Pico(1) < Pico(2)» se
+ *  leia como «Pico / valle (nº N) < Pico / valle (nº N)» (pendiente que dejo
+ *  Alvaro el 18-sep). Para el resto, la etiqueta de siempre. */
+export const etiquetaCorta = (cfg?: { name?: string; pivot_rank?: number; swing_dir?: string } | null): string => {
+    const name = cfg?.name || "";
+    if (name === IndicatorType.PICO || name === IndicatorType.EDAD_PICO || name === IndicatorType.VOLUMEN_PICO) {
+        const num = cfg?.pivot_rank ?? 1;
+        const dir = cfg?.swing_dir === 'down' ? 'valle' : 'pico';
+        if (name === IndicatorType.EDAD_PICO) return `Edad del ${dir} nº${num}`;
+        if (name === IndicatorType.VOLUMEN_PICO) return `Vol. del ${dir} nº${num}`;
+        return `${dir === 'valle' ? 'Valle' : 'Pico'} nº${num}`;
+    }
+    // «Último pivote > Último pivote» no dice nada sin la dirección (Jaume,
+    // 18-sep, con la 1B de Álvaro): alto/bajo y la ventana de confirmación.
+    if (name === IndicatorType.LAST_PIVOT) {
+        const cfg2 = cfg as { swing_dir?: string; pivot_window?: number } | null | undefined;
+        return `Último pivote ${cfg2?.swing_dir === 'down' ? 'bajo' : 'alto'} (${cfg2?.pivot_window ?? 3})`;
+    }
+    return INDICATOR_LABELS[name] || name;
+};
+
 export const COMPARATOR_LABELS: Record<string, string> = {
     [Comparator.GT]: ">",
     [Comparator.LT]: "<",
@@ -368,6 +414,11 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.EDAD_PICO]: "Edad del pico (min)",
     [IndicatorType.VOLUMEN_PICO]: "Volumen del pico",
     [IndicatorType.RETRACEMENT]: "Retroceso (%)",
+    [IndicatorType.ROTACION]: "Rotación del día (×)",
+    [IndicatorType.ROTACION_VENTANA]: "Rotación en X min (×)",
+    [IndicatorType.RVOL_UNIVERSO]: "RVOL universo (×)",
+    [IndicatorType.MIN_DESDE_PICO_VOL]: "Min. desde el pico de volumen",
+    [IndicatorType.PENDIENTE_VOLUMEN]: "Pendiente del volumen (×)",
     [IndicatorType.ABSORPTION]: "Absorción (M$ por 1%)",
     [IndicatorType.WICK_RATIO]: "Ratio de mecha",
     [IndicatorType.ABSORPTION_WICK]: "Absorción + Mecha",
@@ -383,6 +434,89 @@ interface TooltipContextType {
     containerRef: React.RefObject<HTMLDivElement | null>;
 }
 const TooltipContext = React.createContext<TooltipContextType | null>(null);
+
+/** El cartel que se abre al pasar por el (?) de un indicador. Ancho (380 px),
+ *  a la DERECHA del icono y siempre dentro de la pantalla: se mide después de
+ *  pintarse y se recoloca (si no cabe a la derecha va a la izquierda; arriba y
+ *  abajo se acota al viewport). Antes era una columna de 185 px anclada por
+ *  encima del ratón: con las descripciones largas se salía por arriba (Jaume,
+ *  19-sep). */
+const CartelAyudaIndicador = ({ text, x, y, title }: { text: string; x: number; y: number; width?: number; title?: string }) => {
+    const ANCHO = 380;
+    const ref = React.useRef<HTMLDivElement>(null);
+    const [pos, setPos] = React.useState<{ top: number; left: number }>({ top: y, left: x + 18 });
+    React.useLayoutEffect(() => {
+        const el = ref.current;
+        if (!el) return;
+        const vw = window.innerWidth, vh = window.innerHeight, margen = 8;
+        const w = Math.min(ANCHO, vw - 2 * margen);
+        const h = el.offsetHeight;
+        let left = x + 18;
+        if (left + w > vw - margen) left = Math.max(margen, x - 18 - w);   // no cabe a la derecha: a la izquierda
+        let top = y - h / 2;                                                 // centrado en el ratón…
+        top = Math.min(Math.max(top, margen), Math.max(margen, vh - margen - h));   // …y dentro de la pantalla
+        setPos({ top, left });
+    }, [x, y, text]);
+    return (
+        <div
+            ref={ref}
+            style={{
+                position: "fixed",
+                top: pos.top,
+                left: pos.left,
+                width: `min(${ANCHO}px, calc(100vw - 16px))`,
+                maxHeight: "calc(100vh - 16px)",
+                overflowY: "auto",
+                backgroundColor: "var(--color-ec-bg-elevated)",
+                color: "var(--color-ec-text-primary)",
+                border: "0.5px solid var(--color-ec-border)",
+                borderRadius: 5,
+                padding: "8px 11px",
+                lineHeight: 1.4,
+                zIndex: 100005,
+                pointerEvents: "none",
+                boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                fontFamily: "var(--color-ec-sans)",
+                whiteSpace: "normal",
+                display: "flex",
+                flexDirection: "column",
+                gap: 3,
+                textAlign: 'left',
+            }}
+        >
+            {title && (
+                <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>
+                    {title}
+                </strong>
+            )}
+            <span
+                style={{ fontSize: 10.5, color: "var(--color-ec-text-high)", lineHeight: 1.4 }}
+                dangerouslySetInnerHTML={{ __html: text }}
+            />
+        </div>
+    );
+};
+
+/** Proveedor de los iconos de ayuda de los indicadores para quien use
+ *  GroupDisplay FUERA de LogicBuilder (las condiciones de las pirámides, los
+ *  pasos del camino). Sin él, TooltipIcon devuelve null en silencio y los
+ *  desplegables salen sin icono — es lo que vio Jaume el 18-sep. Mismo cartel
+ *  flotante que LogicBuilder. */
+export const AyudaIndicadores = ({ children }: { children: React.ReactNode }) => {
+    const [activeTooltip, setActiveTooltip] = React.useState<{
+        text: string; x: number; y: number; width?: number; title?: string;
+    } | null>(null);
+    const containerRef = React.useRef<HTMLDivElement>(null);
+    return (
+        <TooltipContext.Provider value={{ setActiveTooltip, containerRef }}>
+            {children}
+            {activeTooltip && typeof document !== "undefined" && createPortal(
+                <CartelAyudaIndicador {...activeTooltip} />,
+                document.body
+            )}
+        </TooltipContext.Provider>
+    );
+};
 
 export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.BAR_CLOSE]: "Precio de cierre de la barra actual.",
@@ -466,10 +600,15 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.VOL_NODE_UP]: "El precio de la primera franja POR ENCIMA de la actual que tiene volumen suficiente para contar como zona: la resistencia real del día, la que sale del dinero cruzado y no de unir dos máximos con una regla. Es un PRECIO: se cruza, se compara y sirve de stop de estructura. EL LISTÓN es lo que decide qué cuenta como zona — una franja es nodo si tiene al menos ese % del volumen de la franja más gorda. Con 85 solo pasan las zonas grandes; con 60 salen las de verdad (dos o tres en un día normal); con 30 pasa casi todo y aparece ruido. Fíjate en que NO le dices cuántas zonas quieres: le dices cuánto tiene que pesar una franja para contar, y el número de zonas lo pone el día. Si hubo una zona sale una, si hubo tres salen tres. USO NATURAL EN CORTO: es el stop. Por encima hay oferta acumulada que te protege, así que el stop tiene una razón detrás en vez de ser una distancia inventada. EJEMPLO REAL (OLB, 9-sep-2026, listón 60): a las 14:33, con el precio en 0,3624, el nodo de arriba estaba en 0,4027 — todo el papel que se había acumulado por la mañana. VALE NaN cuando por encima no hay ninguna zona, y eso es un aviso en sí mismo: no hay techo conocido por delante. Comparar contra NaN da falso, así que una condición con este indicador no dispara mientras no haya nodo.",
     [IndicatorType.VOL_NODE_DOWN]: "Lo mismo hacia abajo: el primer precio con volumen suficiente por DEBAJO del actual. El soporte real del día. Es un PRECIO y sirve de stop, de objetivo y de cruce. Y AQUÍ ESTÁ LA SEÑAL MÁS ÚTIL DE TODO EL PERFIL: cuando vale NaN significa que POR DEBAJO NO HAY NADIE. No queda gente con su coste ahí, así que no hay nada que frene una caída. EJEMPLO REAL (OLB, 9-sep-2026, listón 60): a las 12:33 el nodo de abajo estaba en 0,4194, justo debajo del precio. A las 13:33 desapareció. Entre ese momento y el cierre el precio se fue de 0,3895 a 0,3394. La DESAPARICIÓN del soporte llegó antes que la caída. USOS: como objetivo de un corto (ahí es donde se va a frenar), como stop de un largo, y sobre todo el cruce — «Bar Close cruza por debajo del Nodo de abajo» es literalmente «acaba de comerse el soporte real y entra en el vacío». COMBINACIONES: con «Absorción» baja no hay nadie que lo pare y la caída es limpia; con «Absorción» alta hay alguien recogiendo abajo y el corto es mucho más peligroso. El listón funciona igual que en «Nodo de arriba».",
     [IndicatorType.LAST_PIVOT]: "El último techo (o suelo) que dejó el mercado, como PRECIO. Un techo es una vela cuyo máximo es mayor que el de las N velas de su izquierda Y el de las N de su derecha; el suelo es el espejo con los mínimos. NO ES LO MISMO QUE «Previous max», y la diferencia importa: aquel es el máximo corrido del día y NUNCA baja. Con la secuencia 10 → 15 → 12 → 14 → 11, «Previous max» se queda en 15 para siempre, mientras que el último pivote alto es 14 (el techo que el mercado acaba de dejar) y el último pivote bajo es 12 (el suelo, cuando «Previous min» daría 10). Para un stop eso lo cambia todo: 15 está lejísísimos y 14 está pegado. EL PARÁMETRO son las velas de CONFIRMACIÓN a cada lado, y es un intercambio real: con 1 o 2 salen pivotes de ruido; con 8 o más son fiables pero llegan tarde. 3 es un punto de partida razonable. OJO AL RETARDO, que no es un defecto sino la naturaleza de la cosa: un pivote no se puede confirmar hasta que pasan N velas sin superarlo, así que el nivel aparece N velas DESPUÉS de haber ocurrido. Eso es justo lo que lo hace causal: nunca se mira una vela que aún no existe. Vale NaN hasta que se confirma el primero del día, y se reinicia cada sesión. Como es un precio y no una medida, se puede comparar contra el precio y contra otros niveles, y también se puede elegir como stop de estructura.",
-    [IndicatorType.PICO]: "El techo (o suelo) nº N de la lista de giros del día, como PRECIO. Es el MISMO pivote que «Último pivote», con toda la lista: con nº 1 son exactamente lo mismo; nº 2 es el giro ANTERIOR, nº 3 el de antes... y eso es lo que «Último pivote» no podía hacer: COMPARAR un techo con otro. «Pico(1) < Pico(2)» es «el último techo quedó por debajo del anterior» — el corazón de un hombro-cabeza-hombro (nº 1 = hombro derecho, nº 2 = cabeza, nº 3 = hombro izquierdo), de un doble techo o de una divergencia de estructura. CON «Pivote bajo» el pico se convierte en VALLE (mismos parámetros, mínimos en vez de máximos). El retardo de confirmación es el mismo y NO es un defecto: el giro solo aparece N velas DESPUÉS de ocurrir, porque hasta que pasan N velas sin superarlo no se puede saber que era un techo — eso es lo que lo hace causal. Se reinicia cada día: el patrón tiene que caber en una sesión (por eso en temporalidad 1d no funciona y da NaN siempre). Vale NaN mientras no se hayan confirmado N giros ese día — nunca el de ayer, nunca un 0 — y por encima de nº 16 también da NaN. Los empates exactos no cuentan como giro nuevo (comparación estricta).",
-    [IndicatorType.EDAD_PICO]: "Los MINUTOS DE RELOJ transcurridos desde que se formó el giro nº N (el mismo pivote que «Último pivote»; nº 1 = el último confirmado). Minutos de reloj y no velas porque las velas del lago son dispersas: en un premercado ilíquido «20 velas atrás» es una ventana distinta en cada ticker. USO NATURAL: acotar el patrón en el tiempo — «Edad del pico(3) < 90» pide que las tres cimas de un hombro-cabeza-hombro hayan cabido en hora y media. Con «Pivote bajo» mide la edad del valle. El retardo de confirmación es el mismo de la familia y no es un defecto: la edad empieza a contarse en la vela del giro, pero el dato solo existe N velas después, cuando el pivote se confirma. Se reinicia cada día (en 1d da NaN siempre) y vale NaN mientras no exista el giro nº N, o por encima de nº 16. Es una MEDIDA, no un nivel: solo se compara contra una cifra.",
-    [IndicatorType.VOLUMEN_PICO]: "El VOLUMEN de la vela en la que se formó el giro nº N (el mismo pivote que «Último pivote»; nº 1 = el último confirmado). Dice si el techo se hizo con dinero de verdad o fue una mecha suelta en un libro vacío — dos techos a la misma altura son cosas muy distintas si uno negoció 5 millones y el otro 50.000 $. CON «Pivote bajo» mira el volumen del valle. Mismo retardo de confirmación que la familia: el dato solo existe N velas después del giro, y eso lo hace causal. Se reinicia cada día (en 1d da NaN siempre) y vale NaN mientras no exista el giro nº N, o por encima de nº 16. Es una MEDIDA, no un nivel: solo se compara contra una cifra.",
+    [IndicatorType.PICO]: "Es un NIVEL DE PRECIO (como «Último pivote», «Previous Max» o «PM High»), no una medida: se compara con otros precios, no con un número fijo. Es el techo (o suelo) nº N de la lista de giros del día: nº 1 = el último confirmado (idéntico a «Último pivote»), nº 2 = el anterior, nº 3 = el de antes… hasta 16. Con «Valle (suelo)» la lista es de suelos. Un techo es una vela con el máximo por encima de las N velas de cada lado (N = velas de confirmación); se conoce N velas después de ocurrir (causal, nunca mira una vela que aún no existe) y NO cambia cuando el precio lo rompe: solo cuando se confirma un giro nuevo. Se reinicia cada día (en 1d da NaN siempre); vale NaN mientras no haya N giros ese día.<br/><br/><b>CÓMO SE USA</b>, tres maneras:<br/>(1) <b>COMO NIVEL QUE EL PRECIO ROMPE</b> — variable de entrada Bar Close, cruce «Pico / valle»: «Bar Close cruza por debajo de Valle nº1» = rompe el último suelo; «Bar Close cruza por encima de Pico nº2» = recupera el techo anterior.<br/>(2) <b>COMPARANDO GIROS ENTRE SÍ</b> — para esto existe: «Pico nº1 < Pico nº2» = máximos decrecientes; «Valle nº1 < Valle nº2» = mínimos decrecientes; con «Distancia %», «Dist(Pico nº1, Pico nº2) < 1 %» = doble techo; un hombro-cabeza-hombro son estas mismas piezas (nº1 hombro derecho, nº2 cabeza, nº3 hombro izquierdo) más la rotura del Valle nº1.<br/>(3) <b>CONTRA OTROS NIVELES</b>, como contexto: «Pico nº2 > VWAP» = la cabeza se hizo por encima del VWAP; «Valle nº1 < PM Low».<br/><br/>Las dos medidas de la familia («Edad del pico» y «Volumen del pico») son las que van contra una cifra. Los empates exactos no cuentan como giro nuevo (comparación estricta).",
+    [IndicatorType.EDAD_PICO]: "Los MINUTOS DE RELOJ transcurridos desde que se formó el giro nº N (el mismo pivote que «Último pivote» / «Pico / valle»; nº 1 = el último confirmado). Es una MEDIDA: se compara contra una cifra. La edad se cuenta desde la vela del giro hasta la vela actual y CRECE cada minuto mientras el giro siga en la lista; no es la ventana de confirmación (esa solo decide cuándo te enteras del giro). Minutos de reloj y no velas porque las velas del lago son dispersas.<br/><br/><b>USO NATURAL</b>: acotar el patrón en el tiempo — «Edad del pico nº3 < 90» = las tres cimas de un hombro-cabeza-hombro caben en hora y media; «Edad del valle nº1 > 15» = el último suelo lleva un cuarto de hora aguantando. Con «Valle (suelo)» mide la edad del suelo. Se reinicia cada día (en 1d da NaN siempre) y vale NaN mientras no exista el giro nº N o por encima de nº 16.",
+    [IndicatorType.VOLUMEN_PICO]: "El VOLUMEN (en acciones) de la vela en la que se formó el giro nº N (el mismo pivote que «Último pivote» / «Pico / valle»; nº 1 = el último confirmado). Es una MEDIDA: se compara contra una cifra, y la casilla se escribe en millones (2,5 = 2,5 M). Dice si el techo se hizo con dinero de verdad o fue una mecha suelta en un libro vacío: dos techos a la misma altura son cosas muy distintas si uno negoció 5 millones y el otro 50.000.<br/><br/><b>USO NATURAL</b>: «Volumen del pico nº1 > 2 M» = el último techo tuvo volumen (hay vendedor de verdad); «Volumen del pico nº2 > Volumen del pico nº1» no se puede escribir (es medida contra cifra), así que el peso relativo se mira a ojo o por tramos. Con «Valle (suelo)» mira el volumen del suelo. Mismo retardo de confirmación que la familia; se reinicia cada día (en 1d da NaN siempre) y vale NaN mientras no exista el giro nº N o por encima de nº 16.",
     [IndicatorType.RETRACEMENT]: "Qué fracción del impulso se ha devuelto ya, en % del propio impulso (no del precio). EJEMPLO: el precio sube de 10,00 a 15,00 — ha ganado 5,00. Si baja a 14,00 ha devuelto 1 de 5, o sea 20. A 13,00 son 40. A 11,00 son 80 y el impulso está prácticamente roto. Por encima de 100 ha perforado la base de la que salió. Al hacer un máximo nuevo el impulso se reancla y vuelve casi a 0, igual que «Previous max» se actualiza vela a vela. CÓMO SE DEFINE EL IMPULSO, y esto importa: el máximo es el mayor high corrido y la base es el menor low ANTERIOR a la vela en que se hizo ese máximo. Todo pasado, así que NO mira al futuro — a diferencia de un pivote clásico, que necesita ver N velas por delante para confirmarse. POR QUÉ NO ES LO MISMO QUE «% Fade»: el fade mide la caída en % del PRECIO, así que un 8% significa cosas distintas en un ticker que se movió un 10% y en uno que se movió un 200%. Esto lo normaliza por el tamaño del impulso, y por eso el mismo umbral vale para todo el universo. NIVELES ORIENTATIVOS: por debajo de 30 el impulso aguanta y el comprador sigue ahí; entre 40 y 60 es un retroceso normal; por encima de 70 el que compró arriba está atrapado y la continuación es bastante menos probable. Los números de Fibonacci (38,2 y 61,8) no tienen ninguna evidencia detrás: mide dónde está el corte real en TU universo, que para eso tienes el lago. La ventana en minutos limita el impulso a ese tramo de reloj; déjala en 0 para medir el impulso del día entero. Vale NaN mientras no haya impulso que medir (primera vela del día, o precio plano).",
+    [IndicatorType.ROTACION]: "Cuántas veces se han cambiado de manos HOY todas las acciones que existen de esta empresa: volumen acumulado del día dividido entre las acciones en circulación. 1 = se ha negociado el equivalente a la compañía entera; 3 = tres veces. PARA QUÉ SIRVE: si una acción ha rotado tres veces, prácticamente NADIE que la tenga ahora la compró por debajo del precio de hoy — todos los que la tienen son de hoy, compraron caro y están mirando la pantalla. Esa es la gente que vende en cuanto el precio se gira, y por eso las rotaciones altas van con desplomes violentos por la tarde. Es la misma idea que el perfil de volumen (la gente vende en su precio de compra), pero a escala de la empresa entera. POR QUÉ NO VALE EL VOLUMEN A SECAS: 15 millones de acciones son enormes con 3 millones en circulación y nada con 200 millones. EJEMPLO REAL (OCTO, 8-sep-2025): tenía 3,04 millones de acciones en circulación según su informe de junio; ese día negoció muchísimas veces esa cifra mientras multiplicaba por 32 el precio — y acabó devolviéndolo casi todo. NIVELES: por debajo de 0,5 es un día normal; de 1 a 3 el papel ya ha cambiado de manos entero; por encima de 5 estás en un pump de manual. OJO, ES «CIRCULACIÓN» Y NO «FLOAT»: el float (lo que de verdad puede moverse, quitando insiders y acciones restringidas) es MENOR, así que la rotación real es MAYOR que este número — nunca al revés. No existe fuente histórica fiable y gratuita del float; la circulación sale de los informes que la empresa presenta a la SEC, y se usa el último informe ANTERIOR a ese día, que es importante porque estas empresas amplían capital cada dos por tres (OCTO pasó de 3,04 a 46,3 millones de acciones en seis meses). Vale NaN si no hay dato para ese ticker o si el día es anterior a su primer informe.",
+    [IndicatorType.ROTACION_VENTANA]: "Lo mismo que «Rotación del día» pero solo con los últimos X minutos: qué parte de la empresa ha cambiado de manos AHORA MISMO. Mide la velocidad, no el total. EJEMPLO: la rotación del día va por 4 (ya se negoció cuatro veces la compañía), pero la de los últimos 30 minutos es 0,05 — el pump ya pasó y ahora no se mueve nada. Al revés, una rotación de 0,8 en 30 minutos es medio float cambiando de manos en media hora: eso es el clímax en directo. NIVELES: por debajo de 0,05 en 30 minutos está parado; de 0,1 a 0,3 hay actividad de verdad; por encima de 0,5 en media hora es un evento. Mismo aviso que el otro: es circulación, no float, así que la cifra real es mayor.",
+    [IndicatorType.RVOL_UNIVERSO]: "Cuánto volumen hay AHORA comparado con el que debería haber A ESTA HORA en un día de gap. Es un multiplicador: 1 = lo normal, 3 = el triple de lo normal, 0,4 = se ha secado. POR QUÉ NO VALE UN UMBRAL FIJO: el volumen de un día tiene forma de U —mucho al abrir, poco a mediodía, repunte al cerrar—, así que «volumen > 500.000» mide LA HORA tanto como la noticia. Medido en 14.418 días de gap (2019-2023): en el minuto de la apertura se hace el 3,3 % de todo el volumen del día, a mediodía un 0,18 % por minuto, y en todo el premercado (04:00-09:30) solo el 12 %. POR QUÉ NO ES EL «RVOL» DE SIEMPRE: aquel compara la acción con SUS días anteriores, y un gapper del +50 % no tiene días normales —ayer negociaba cien veces menos—. Este compara con LOS DEMÁS GAPPERS a esa hora, que es la referencia que sí existe. CÓMO SE CALCULA: con lo que lleva acumulado hoy se proyecta el día entero («si a las 09:00 lleva 2 M y a esa hora suele ir el 8 %, el día pinta 25 M») y se mira si la ventana actual va por encima o por debajo de lo que le tocaría. Por eso no depende del tamaño del ticker: un día de 500.000 $ y otro de 50 millones dan el mismo número si se comportan igual. EJEMPLO: son las 10:40, el precio hace máximo del día y el RVOL(10) marca 4,2 — está entrando cuatro veces el volumen normal de esa hora. Veinte minutos después el precio sigue arriba pero el RVOL ha caído a 0,5: el clímax pasó y ya no hay quien compre. Ese desplome del volumen con el precio quieto es la señal de agotamiento. NIVELES: por debajo de 0,5 se ha secado (nadie opera; ojo, también significa que tu orden moverá el precio); de 0,8 a 1,5 es lo normal; por encima de 3 es un clímax; por encima de 10, un evento (noticia, halt que acaba de abrir, squeeze). AVISOS: vale NaN en las primeras velas del día (con menos del 0,5 % del día acumulado el cociente es inestable) y también si falta el perfil del universo. El perfil se hizo con días de 2019 a 2023 A PROPÓSITO, para que backtestear 2024 en adelante sea fuera de muestra; si algún día se recalcula con todo, deja de serlo. NIVELES MEDIDOS sobre 24.750 máximos del día reales del universo (1.551 ticker-días de 2024-2025), mirando qué pasa en los 30 minutos siguientes: de base, un corto abierto en un máximo del día toca −8 % antes que +8 % el 64 % de las veces, y la subida MEDIANA en contra antes de eso es del 6,6 %. Por tramos de RVOL: por debajo de 0,5 acierta el 72,7 % con solo un 5,8 % de subida en contra — el mejor de toda la tabla; de 1 a 3, el 63-64 % con un 7-8 % en contra (o sea, la media); y por encima de 10 sigue acertando un 64 %, PERO la subida mediana en contra es del 22,9 % y la media del 24,5 %. Lee eso último despacio: en el clímax el precio acaba bajando casi siempre, pero antes te puede subir un 23 % — con un stop del 8 % te saca SIEMPRE. Por eso el RVOL bajo es la señal buena para cortar y el RVOL altísimo es la trampa que parece la buena.",
+    [IndicatorType.MIN_DESDE_PICO_VOL]: "Cuántos MINUTOS han pasado desde la vela de más volumen del día (hasta ahora). 0 = el pico es esta misma vela. PARA QUÉ SIRVE: en un gapper el máximo del PRECIO casi nunca coincide con el pico de VOLUMEN — el volumen llega primero, en el clímax de compras, y el precio aguanta un rato más subiendo con cada vez menos gente detrás. Ese hueco entre los dos es donde vive el corto. EJEMPLO: a las 07:12 entra una vela con 4 millones de acciones, la más gorda del día con diferencia; el precio hace máximo a las 07:31. Con este indicador, a las 07:31 el valor es 19: han pasado 19 minutos desde que se agotó el empuje. Una condición como «máximo del día Y minutos desde el pico > 10» separa el techo del arranque. ES CAUSAL: el pico es el máximo CORRIDO, así que si más tarde llega una vela mayor el contador se reinicia a 0 en ese momento, pero nunca se sabe antes de tiempo. NIVELES: 0 a 5 estás DENTRO del clímax (aún entra dinero; cortar aquí es cortar contra el empuje); 10 a 40 es la zona donde el empuje ya se agotó y el precio suele empezar a devolverlo; más de 90 minutos el día ya es otra cosa y el pico de la mañana no dice nada. OJO: con el volumen totalmente plano (nunca pasa en un gapper real) cuenta desde la primera vela, no desde la actual. NIVELES MEDIDOS (mismos 24.750 máximos del día): cortando en el máximo con el pico de volumen a menos de 5 minutos, el corto acierta el 65,7 % pero la subida mediana en contra es del 13,5 %; con el pico hace 15-60 minutos acierta un 60,5 % con solo un 7 % en contra; y pasadas 2 horas, el 59,6 % con un 6,5 %. O sea: esperar NO mejora el acierto, lo baja un poco — lo que hace es reducir mucho el riesgo. Sirve para decidir el tamaño y el stop, no tanto para decidir si entrar.",
+    [IndicatorType.PENDIENTE_VOLUMEN]: "Si el volumen ACELERA o se APAGA: el volumen de los últimos X minutos dividido entre el de los X minutos anteriores. 1 = igual, 2 = el doble que antes, 0,3 = se ha quedado en un tercio. Es la pareja de «RVOL universo»: aquel dice CUÁNTO volumen hay, este dice HACIA DÓNDE va. No necesita ninguna tabla ni referencia externa: solo compara el ticker consigo mismo hace un rato. EJEMPLO: el precio lleva veinte minutos subiendo y la pendiente marca 0,35 — el precio sube, pero con un tercio del volumen de hace un rato: está subiendo por falta de vendedores, no por compras. Es la subida que se devuelve entera. Al revés, una pendiente de 3 con el precio cayendo es una caída con convicción. NIVELES: por debajo de 0,5 el volumen se está apagando (agotamiento si el precio sigue subiendo); de 0,7 a 1,5 es continuidad normal; por encima de 2 está entrando dinero de golpe (noticia, ruptura, cierre de cortos). COMBINACIÓN ÚTIL: «máximo del día + pendiente < 0,6 + mecha superior alta» es el techo de libro: el precio marca máximo, ya no viene volumen y encima se lo devuelven. Vale NaN en el primer tramo del día, cuando todavía no hay dos ventanas completas por detrás con las que comparar. OJO, MEDIDO Y NO CONFIRMADO: sobre los 24.750 máximos del día reales del universo, los tramos de este indicador apenas separan (58-65 % de acierto frente al 64 % de base) y, al revés de lo que dice la teoría, la pendiente BAJA sale algo PEOR que la alta. La combinación «pico hace >10 min Y pendiente <0,6», que parece el techo de libro, acierta el 56 % — por debajo de la base. La explicación es que este indicador compara con hace un rato, no con lo normal del día: justo después de un clímax la pendiente cae aunque siga entrando muchísimo volumen. Para «se ha secado de verdad» usa «RVOL universo», que compara con el universo y ahí sí separa (72,7 % con RVOL < 0,5). Este déjalo para confirmar, no para decidir.",
     [IndicatorType.ABSORPTION]: "Cuántos MILLONES de dólares hicieron falta para mover el precio un 1%, en una ventana de X MINUTOS DE RELOJ. Es la profundidad del mercado y se lee al derecho: cuanto MÁS ALTO, más caro es moverlo, o sea más absorción. EJEMPLO: en 5 minutos se negocian 2 millones de dólares y el precio acaba un 0,35% por encima de donde empezó → 2 / 0,35 = 5,7. Eso no es calma, es que alguien está poniendo a la venta exactamente tanto como le compran; en una small cap suele ser un ATM, un insider o un fondo saliendo — gente sin prisa y con tamaño que colocar, y por eso el nivel aguanta. NIVELES MEDIDOS sobre 2.461 lecturas reales del universo del bot (8-9 sep 2026, ventana de 5 min): la mitad están por debajo de 0,26; el percentil 75 es 0,85; el 90 es 2,6; el 95 es 5,1 y el 99 es 17,5. Léelo así: por debajo de 0,3 el precio se mueve con nada (código de barras); a partir de 2,5 hay alguien al otro lado; por encima de 5 es un muro. OJO al denominador: es el desplazamiento NETO de la ventana, no el rango. Una vela que sube y vuelve al mismo sitio ha avanzado cero y por eso puntúa alto — que es justo lo que se busca. Vale NaN si la ventana solo tiene una vela.",
     [IndicatorType.WICK_RATIO]: "Qué fracción de todo lo que recorrió el precio en la ventana se devolvió en forma de mecha, de 0 a 1. Con «arriba» mide el rechazo de las subidas (alguien vende cada empujón); con «abajo», el de las caídas (alguien compra cada hundimiento). EJEMPLO: una vela abre en 5,00, sube a 5,40 y cierra en 5,05, con mínimo en 4,98. Recorrido total 0,42, mecha superior 0,35 → 0,83: le devolvieron el 83% de lo que subió. Se suma sobre toda la ventana para no depender de una vela suelta, que puede ser un mal print. NIVELES MEDIDOS sobre 2.474 lecturas reales (8-9 sep 2026, ventana de 5 min, mecha superior): la MEDIANA es 0,21 — en un día normal siempre se devuelve una quinta parte del recorrido y eso no significa nada; el percentil 75 es 0,29; el 90 es 0,37; el 95 es 0,43 y el 99 es 0,58. Pedir «> 0,5» deja fuera al 97% de las lecturas y casi no dispara nunca: para un filtro que salte de vez en cuando, 0,40 es un punto de partida razonable.",
     [IndicatorType.ABSORPTION_WICK]: "Devuelve 1 cuando se cumplen LAS DOS condiciones a la vez y 0 cuando no (se compara contra 0: «> 0» es «se cumplen las dos»). Existe porque por separado ninguna de las dos dice gran cosa — la lectura de una depende de cómo esté la otra: ▸ ABSORCIÓN ALTA + MECHA ALTA = hay un vendedor real y además defendido; ese nivel es el techo. Es la combinación que se busca para cortar. ▸ ABSORCIÓN ALTA + MECHA BAJA = alguien absorbe pero sin rechazo visible; puede ser acumulación, y ahí cortarse es peligroso. ▸ ABSORCIÓN BAJA + MECHA ALTA = mecha sin dinero detrás; es ruido de libro vacío y no significa nada. ▸ ABSORCIÓN BAJA + MECHA BAJA = sube sin encontrar resistencia, no hay nadie vendiendo; NO es sitio para cortos. Fíjate en que la cuarta combinación te evita más pérdidas de las que ganancias te da la primera, que suele ser el reparto real de este negocio. Los umbrales por defecto (2,5 y 0,40) son el percentil 90 de cada medida sobre el universo real del bot, así que de salida marcan «esto es raro» en vez de dispararse en cualquier vela."
@@ -1375,6 +1514,21 @@ export const IndicatorParams = ({
                                     <option value="down">Impulso a la baja</option>
                                 </select>
                             </div>
+                        );
+                    case IndicatorType.ROTACION_VENTANA:
+                    case IndicatorType.RVOL_UNIVERSO:
+                    case IndicatorType.PENDIENTE_VOLUMEN:
+                        return (
+                            <input
+                                type="number"
+                                min={1}
+                                value={value.range_minutes ?? ''}
+                                onChange={(e) => onChange({ ...value, range_minutes: e.target.value === '' ? undefined : Number(e.target.value) })}
+                                onFocus={(e) => e.target.select()}
+                                placeholder="Minutos"
+                                style={{ ...PARAM_FIELD_STYLE, flex: '1 1 70px', minWidth: '70px' }}
+                                title="Ventana en MINUTOS DE RELOJ, no en velas: con velas dispersas «10 velas» pueden ser 40 minutos. 10 es un punto de partida; 5 reacciona antes y con mas ruido, 30 mide la fase del dia."
+                            />
                         );
                     case IndicatorType.ABSORPTION:
                     case IndicatorType.WICK_RATIO:
@@ -2575,8 +2729,10 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
         const esFamiliaPicos = (cfg?: { name?: IndicatorType }) =>
             cfg?.name === IndicatorType.PICO ||
             cfg?.name === IndicatorType.EDAD_PICO ||
-            cfg?.name === IndicatorType.VOLUMEN_PICO;
+            cfg?.name === IndicatorType.VOLUMEN_PICO ||
+            cfg?.name === IndicatorType.LAST_PIVOT;
         const etiquetaFamiliaPicos = (cfg: IndicatorConfig) => {
+            if (cfg.name === IndicatorType.LAST_PIVOT) return etiquetaCorta(cfg);
             const num = cfg.pivot_rank ?? 1;
             const dir = cfg.swing_dir === 'down' ? 'valle' : 'pico';
             if (cfg.name === IndicatorType.EDAD_PICO) return `Edad del ${dir} nº${num}`;
@@ -4030,40 +4186,7 @@ Con esta función podrás asegurarte de que tu sistema sigue siendo rentable inc
                 {children}
 
                 {activeTooltip && typeof document !== "undefined" && createPortal(
-                    <div
-                        style={{
-                            position: "fixed",
-                            top: activeTooltip.y,
-                            left: activeTooltip.x,
-                            transform: "translate(0, -100%)",
-                            backgroundColor: "var(--color-ec-bg-elevated)",
-                            color: "var(--color-ec-text-primary)",
-                            border: "0.5px solid var(--color-ec-border)",
-                            borderRadius: 4,
-                            padding: "6px 8px",
-                            lineHeight: 1.3,
-                            width: 185,
-                            zIndex: 100005,
-                            pointerEvents: "none",
-                            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
-                            fontFamily: "var(--color-ec-sans)",
-                            whiteSpace: "normal",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 2,
-                            textAlign: 'left',
-                        }}
-                    >
-                        {activeTooltip.title && (
-                            <strong style={{ display: 'block', color: 'var(--color-ec-copper)', fontSize: 9.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', marginBottom: 2 }}>
-                                {activeTooltip.title}
-                            </strong>
-                        )}
-                        <span 
-                            style={{ fontSize: 9.5, color: "var(--color-ec-text-high)", lineHeight: 1.3 }}
-                            dangerouslySetInnerHTML={{ __html: activeTooltip.text }}
-                        />
-                    </div>,
+                    <CartelAyudaIndicador {...activeTooltip} />,
                     document.body
                 )}
             </div>

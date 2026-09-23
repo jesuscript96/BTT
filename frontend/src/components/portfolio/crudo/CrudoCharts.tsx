@@ -10,6 +10,7 @@
 import React, { useMemo, useState } from "react";
 import { color, font, hairline } from "@/components/ui/tokens";
 import { n, usdCorto } from "./hoja";
+import { CartelPuntero, type Puntero } from "@/components/portfolio/charts/puntero";
 
 export interface Serie {
   name: string;
@@ -78,6 +79,7 @@ export function PnlDdChart({
   height?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
   const PAD = PAD_PNL;
   const GAP = 26;                       // hueco entre paneles (con el eje x del de arriba)
@@ -116,9 +118,13 @@ export function PnlDdChart({
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const cont = (e.currentTarget.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? rect;
     const fx = ((e.clientX - rect.left) / rect.width) * W;
     const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (labels.length - 1));
-    setHover(i >= 0 && i < labels.length ? i : null);
+    const ok = i >= 0 && i < labels.length;
+    setHover(ok ? i : null);
+    // Posicion del raton en el marco, para el cartel (que no escala con el viewBox).
+    setPt(ok ? { idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height } : null);
   };
 
   // Etiquetas de valor final en el borde derecho, sin que se pisen.
@@ -138,7 +144,7 @@ export function PnlDdChart({
 
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); setPt(null); }}>
         {/* ── Panel de arriba: PnL acumulado ── */}
         {geom.tTicks.map((t) => (
           <g key={`t${t}`}>
@@ -191,9 +197,21 @@ export function PnlDdChart({
           </g>
         )}
       </svg>
+      {pt && hover != null && (
+        <CartelPuntero
+          puntero={pt}
+          titulo={labels[hover]}
+          subtitulo={`sesión ${hover + 1} de ${labels.length}`}
+          filas={pnl.map((s, k) => ({
+            color: s.color, nombre: s.name, grueso: !!(s.width && s.width > 1.5),
+            valor: Number.isFinite(s.values[hover]) ? hoverFormat(s.values[hover]) : "—",
+            extra: dd[k] && Number.isFinite(dd[k].values[hover]) ? `dd ${n(dd[k].values[hover], 1)} %` : undefined,
+          }))}
+        />
+      )}
 
       {/* Lectura: valor final o el del cursor, PnL y drawdown de cada serie. */}
-      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "center", lineHeight: "13px" }}>
         <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{hover != null ? labels[hover] : "final"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>
           {pnl.map((s, k) => {
@@ -233,6 +251,7 @@ export function ExposureChart({
   height?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
   const PAD = PAD_EXP;
   const geom = useMemo(() => {
@@ -249,16 +268,20 @@ export function ExposureChart({
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const cont = (e.currentTarget.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? rect;
     const fx = ((e.clientX - rect.left) / rect.width) * W;
     const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (labels.length - 1));
-    setHover(i >= 0 && i < labels.length ? i : null);
+    const ok = i >= 0 && i < labels.length;
+    setHover(ok ? i : null);
+    // Posicion del raton en el marco, para el cartel (que no escala con el viewBox).
+    setPt(ok ? { idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height } : null);
   };
   const iMax = pct.reduce((b, v, i) => (v > pct[b] ? i : b), 0);
   const k = hover ?? iMax;
 
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); setPt(null); }}>
         {geom.ticks.map((t) => (
           <g key={t}>
             <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke={color.border} strokeWidth={0.5} strokeDasharray="2 4" />
@@ -287,6 +310,18 @@ export function ExposureChart({
           </g>
         )}
       </svg>
+      {pt && hover != null && (
+        <CartelPuntero
+          puntero={pt}
+          titulo={labels[hover]}
+          subtitulo={`sesión ${hover + 1} de ${labels.length}`}
+          filas={[
+            { color: color.info, nombre: "del capital del día", valor: `${n(pct[hover], 0)} %`, grueso: true },
+            { color: color.info, nombre: "en posiciones", valor: `${usdCorto(usd[hover] || 0)} $` },
+            { color: color.info, nombre: "posiciones a la vez", valor: String(maxOpen[hover] || 0) },
+          ]}
+        />
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 18px", padding: "6px 4px 2px", borderTop: hairline, fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
         <span style={{ fontFamily: font.mono, color: color.textMuted, minWidth: 90 }}>{hover != null ? labels[hover] : `máximo · ${labels[iMax] || ""}`}</span>
         <span>del capital del día <span style={{ fontFamily: font.mono, color: pct[k] > 100 ? color.warning : color.textHigh }}>{n(pct[k], 0)} %</span></span>
@@ -312,6 +347,7 @@ export function LinesChart({
   height = 260,
   titulo,
   conCero = true,
+  width,
 }: {
   labels: string[];
   series: Serie[];
@@ -322,9 +358,13 @@ export function LinesChart({
   height?: number;
   titulo?: string;
   conCero?: boolean;
+  /** Ancho del viewBox; con el ancho real del contenedor el dibujo sale a tamano real (no escala). */
+  width?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
+  const W = width && width > 100 ? width : 1000;
   const PAD = PAD_PNL;
   const geom = useMemo(() => {
     const len = Math.max(labels.length, 2);
@@ -354,13 +394,17 @@ export function LinesChart({
     }
     const marks = xMarks(labels);
     return { xOf, yOf, path, bandPath, yTicks: niceTicks(r.lo, r.hi, 5), years: marks.years, xt: marks.ticks };
-  }, [labels, series, band, H, conCero]);
+  }, [labels, series, band, H, W, conCero]);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const cont = (e.currentTarget.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? rect;
     const fx = ((e.clientX - rect.left) / rect.width) * W;
     const i = Math.round(((fx - PAD.l) / (W - PAD.l - PAD.r)) * (labels.length - 1));
-    setHover(i >= 0 && i < labels.length ? i : null);
+    const ok = i >= 0 && i < labels.length;
+    setHover(ok ? i : null);
+    // Posicion del raton en el marco, para el cartel (que no escala con el viewBox).
+    setPt(ok ? { idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height } : null);
   };
   const endLabels = useMemo(() => {
     const items = series
@@ -374,7 +418,7 @@ export function LinesChart({
 
   return (
     <div style={{ position: "relative" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); setPt(null); }}>
         {geom.yTicks.map((t) => (
           <g key={`t${t}`}>
             <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke={color.border} strokeWidth={Math.abs(t) < 1e-9 ? 1 : 0.5} strokeDasharray={Math.abs(t) < 1e-9 ? undefined : "2 4"} />
@@ -403,7 +447,18 @@ export function LinesChart({
           </g>
         )}
       </svg>
-      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "baseline" }}>
+      {pt && hover != null && (
+        <CartelPuntero
+          puntero={pt}
+          titulo={labels[hover]}
+          subtitulo={`sesión ${hover + 1} de ${labels.length}`}
+          filas={[
+            ...series.map((s) => ({ color: s.color, nombre: s.name, grueso: !!(s.width && s.width > 1.5), valor: Number.isFinite(s.values[hover]) ? hoverFormat(s.values[hover]) : "—" })),
+            ...(band && Number.isFinite(band.lo[hover]) ? [{ color: band.color, nombre: band.name, valor: `${hoverFormat(band.lo[hover])} … ${hoverFormat(band.hi[hover])}` }] : []),
+          ]}
+        />
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "center", lineHeight: "13px" }}>
         <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{hover != null ? labels[hover] : "final"}</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>
           {series.map((s) => {
@@ -428,83 +483,153 @@ export function LinesChart({
 }
 
 /**
- * Como se repartio el riesgo entre estrategias, periodo a periodo: barras
- * apiladas al 100 % (el peso de cada una) y, encima, el riesgo total por trade
- * que mandaba ese periodo (% del capital del dia) en cobre.
+ * Riesgo por trade de cada estrategia, periodo a periodo (rebalanceo a
+ * rebalanceo). Barras apiladas en % REAL del capital del dia: la altura de
+ * cada tramo es lo que ARRIESGABA por trade esa estrategia ese periodo, y la
+ * barra entera es la suma (lo que hay en juego si entran todas a la vez). Raya
+ * cobre: el tope de la suma. Triangulo ambar: ese periodo el modelo pedia mas y
+ * mando el tope (lo pedido se lee en el cartel). Jaume, 19-sep: «no el % de
+ * cada Kelly natural sino el equivalente real, y mas tecnico».
  */
 export function WeightsChart({
   periods,
   names,
   colors,
-  height = 200,
+  capPct = 0,
+  height = 240,
 }: {
-  periods: Array<{ period: string; weights: number[]; x_pct: number | null; applied_pct?: number | null; capped?: boolean }>;
+  periods: Array<{ period: string; from?: string; weights: number[]; risk_pct?: number[]; kelly_por_estrategia_pct?: Array<number | null>; bases?: Array<"risk" | "capital">; x_pct: number | null; applied_pct?: number | null; capped?: boolean; alive?: number }>;
   names: string[];
   colors: string[];
+  capPct?: number;
   height?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  const [pt, setPt] = useState<Puntero | null>(null);
   const H = height;
-  const PAD = { t: 14, r: 56, b: 26, l: 40 };
+  const PAD = { t: 18, r: 22, b: 30, l: 50 };
   const nP = Math.max(periods.length, 1);
   const bw = (W - PAD.l - PAD.r) / nP;
   const hBars = H - PAD.t - PAD.b;
-  // Se pinta lo APLICADO (tras el tope); lo que pedia el modelo sale al pasar el raton.
-  const aplicado = (p: { x_pct: number | null; applied_pct?: number | null }) => (p.applied_pct ?? p.x_pct ?? NaN);
-  const xs = periods.map((p) => aplicado(p)).filter(Number.isFinite);
-  const xMax = Math.max(1, ...xs) * 1.15;
-  const yX = (v: number) => PAD.t + (1 - v / xMax) * hBars;
-  const step = Math.max(1, Math.ceil(nP / 8));
+  // % por trade de cada estrategia: lo aplicado del backend; si la corrida es
+  // anterior a ese campo, el peso por la suma aplicada.
+  const riesgos = (p: (typeof periods)[number]): number[] =>
+    p.risk_pct && p.risk_pct.length ? p.risk_pct : (p.weights || []).map((w) => w * (p.applied_pct ?? p.x_pct ?? 0));
+  const aplicado = (p: (typeof periods)[number]) => {
+    const r = riesgos(p).reduce((a, b) => a + (b > 0 ? b : 0), 0);
+    return r > 0 ? r : (p.applied_pct ?? p.x_pct ?? NaN);
+  };
+  const geom = useMemo(() => {
+    const apl = periods.map(aplicado).filter(Number.isFinite);
+    const top = Math.max(0.5, ...apl, capPct > 0 ? capPct : 0);
+    const yMax = top * 1.18;
+    const yOf = (v: number) => PAD.t + (1 - Math.max(0, Math.min(v, yMax)) / yMax) * hBars;
+    const xOf = (i: number) => PAD.l + i * bw;
+    // Etiquetas del eje X: las que quepan (~62 px por etiqueta), siempre la ultima.
+    const salto = Math.max(1, Math.ceil(62 / bw));
+    const etiquetas = periods.map((_, i) => (nP - 1 - i) % salto === 0);
+    // Cambios de ano: raya vertical y el ano arriba.
+    const anios: Array<{ i: number; anio: string }> = [];
+    periods.forEach((p, i) => {
+      const a = p.period.slice(0, 4);
+      if (i === 0 || a !== periods[i - 1].period.slice(0, 4)) anios.push({ i, anio: a });
+    });
+    return { yMax, yOf, xOf, etiquetas, anios, ticks: niceTicks(0, yMax, 4) };
+  }, [periods, capPct, hBars, bw, nP]);
+
+  const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cont = (e.currentTarget.parentElement as HTMLElement | null)?.getBoundingClientRect() ?? rect;
+    const fx = ((e.clientX - rect.left) / rect.width) * W;
+    const i = Math.floor((fx - PAD.l) / bw);
+    const ok = i >= 0 && i < periods.length;
+    setHover(ok ? i : null);
+    setPt(ok ? { idx: i, px: e.clientX - cont.left, py: e.clientY - cont.top, cw: cont.width, ch: cont.height } : null);
+  };
   const k = hover;
+  const pk = k != null ? periods[k] : periods[periods.length - 1];
+  const filasCartel = (p: (typeof periods)[number]) => {
+    const r = riesgos(p);
+    const ks = p.kelly_por_estrategia_pct || [];
+    const filas = names.map((nm, j) => ({
+      color: colors[j % colors.length], nombre: nm,
+      valor: r[j] > 0 ? `${n(r[j], 2)} % ${p.bases && p.bases[j] === "capital" ? "en posición" : "en riesgo"}` : "—",
+      extra: ks[j] != null ? `Kelly ${n(ks[j] as number, 0)} %` : (r[j] > 0 ? "respaldo" : "fuera"),
+    }));
+    const apl = aplicado(p);
+    filas.push({
+      color: color.copper, nombre: "Suma (si entran todas a la vez)",
+      valor: Number.isFinite(apl) ? `${n(apl, 2)} %` : "—",
+      extra: p.x_pct != null ? (p.capped ? `pedía ${n(p.x_pct, 1)} % → tope` : `pedía ${n(p.x_pct, 1)} %`) : "",
+    });
+    return filas;
+  };
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseLeave={() => setHover(null)}>
+    <div style={{ position: "relative" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block", background: color.bgBase }} onMouseMove={onMove} onMouseLeave={() => { setHover(null); setPt(null); }}>
+        {geom.ticks.map((t) => (
+          <g key={`t${t}`}>
+            <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(t)} y2={geom.yOf(t)} stroke={color.border} strokeWidth={t === 0 ? 1 : 0.5} strokeDasharray={t === 0 ? undefined : "2 4"} />
+            <text x={PAD.l - 7} y={geom.yOf(t) + 3.5} textAnchor="end" fontSize={9.5} fontFamily={MONO} fill={color.textMuted}>{n(t, 1)} %</text>
+          </g>
+        ))}
+        {geom.anios.map(({ i, anio }) => (
+          <g key={`a${i}`}>
+            {i > 0 && <line x1={geom.xOf(i)} x2={geom.xOf(i)} y1={PAD.t} y2={H - PAD.b} stroke={color.border} strokeWidth={0.8} strokeDasharray="1 3" />}
+            <text x={geom.xOf(i) + 4} y={PAD.t - 6} fontSize={9} fontFamily={MONO} fill={color.textMuted}>{anio}</text>
+          </g>
+        ))}
+        {hover != null && <rect x={geom.xOf(hover)} y={PAD.t} width={bw} height={hBars} fill={color.textHigh} opacity={0.06} />}
         {periods.map((p, i) => {
+          const r = riesgos(p);
           let acc = 0;
-          const x0 = PAD.l + i * bw;
+          const x0 = geom.xOf(i);
+          const apl = aplicado(p);
           return (
-            <g key={p.period} onMouseEnter={() => setHover(i)}>
-              {p.weights.map((w, j) => {
-                const h = Math.max(0, w) * hBars;
-                const y0 = PAD.t + hBars - acc - h;
-                acc += h;
-                return w > 0 ? <rect key={j} x={x0 + 0.5} y={y0} width={Math.max(0.5, bw - 1)} height={h} fill={colors[j % colors.length]} opacity={hover == null || hover === i ? 0.75 : 0.35} /> : null;
+            <g key={p.period}>
+              {r.map((v, j) => {
+                if (!(v > 0)) return null;
+                const y1 = geom.yOf(acc), y0 = geom.yOf(acc + v);
+                acc += v;
+                return <rect key={j} x={x0 + 1} y={y0} width={Math.max(0.5, bw - 2)} height={Math.max(0, y1 - y0)} fill={colors[j % colors.length]} opacity={hover == null || hover === i ? 0.82 : 0.45} />;
               })}
+              {p.capped && Number.isFinite(apl) && (
+                <path d={`M${(x0 + bw / 2).toFixed(1)},${(geom.yOf(apl) - 8).toFixed(1)} l-3.5,5 h7 z`} fill={color.warning} />
+              )}
             </g>
           );
         })}
-        {periods.length > 1 && (
-          <path
-            d={periods.map((p, i) => (Number.isFinite(aplicado(p)) ? `${i === 0 || !Number.isFinite(aplicado(periods[i - 1])) ? "M" : "L"}${(PAD.l + (i + 0.5) * bw).toFixed(1)},${yX(aplicado(p)).toFixed(1)}` : "")).join("")}
-            fill="none" stroke={color.copper} strokeWidth={2} strokeLinejoin="round"
-          />
+        {capPct > 0 && (
+          <g>
+            <line x1={PAD.l} x2={W - PAD.r} y1={geom.yOf(capPct)} y2={geom.yOf(capPct)} stroke={color.copper} strokeWidth={1} strokeDasharray="6 3" />
+            <text x={W - PAD.r - 4} y={geom.yOf(capPct) - 4} textAnchor="end" fontSize={9} fontFamily={MONO} fill={color.copper}>tope {n(capPct, 1)} %</text>
+          </g>
         )}
-        {periods.map((p, i) => Number.isFinite(aplicado(p)) && (
-          <circle key={`c${p.period}`} cx={PAD.l + (i + 0.5) * bw} cy={yX(aplicado(p))} r={p.capped ? 3 : 2} fill={p.capped ? color.warning : color.copper} stroke={color.bgBase} />
-        ))}
         <rect x={PAD.l} y={PAD.t} width={W - PAD.l - PAD.r} height={hBars} fill="none" stroke={color.border} strokeWidth={1} />
-        {[0, 0.5, 1].map((f) => (
-          <text key={f} x={PAD.l - 6} y={PAD.t + (1 - f) * hBars + 3.5} textAnchor="end" fontSize={9.5} fontFamily={MONO} fill={color.textMuted}>{Math.round(f * 100)} %</text>
-        ))}
-        {niceTicks(0, xMax, 3).map((t) => (
-          <text key={`r${t}`} x={W - PAD.r + 6} y={yX(t) + 3.5} fontSize={9.5} fontFamily={MONO} fill={color.copper}>{n(t, 1)} %</text>
-        ))}
-        {periods.map((p, i) => (i % step === 0 || i === periods.length - 1) && (
-          <text key={`x${p.period}`} x={PAD.l + (i + 0.5) * bw} y={H - PAD.b + 14} textAnchor="middle" fontSize={9} fontFamily={MONO} fill={color.textMuted}>{p.period}</text>
+        <text x={PAD.l + 6} y={PAD.t + 12} fontSize={9} fontFamily="var(--color-ec-sans)" fill={color.textMuted} letterSpacing="0.8">RIESGO POR TRADE · % DEL CAPITAL DEL DÍA</text>
+        {periods.map((p, i) => geom.etiquetas[i] && (
+          <text key={`x${p.period}`} x={geom.xOf(i) + bw / 2} y={H - PAD.b + 15} textAnchor="middle" fontSize={9.5} fontFamily={MONO} fill={i === periods.length - 1 ? color.textHigh : color.textMuted}>{p.period}</text>
         ))}
       </svg>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 16px", padding: "6px 4px 2px", borderTop: hairline, fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
-        <span style={{ fontFamily: font.mono, color: color.textMuted, minWidth: 70 }}>{k != null ? periods[k].period : "periodo"}</span>
-        {k != null ? (
-          <>
-            <span>riesgo total por trade aplicado <span style={{ fontFamily: font.mono, color: periods[k].capped ? color.warning : color.copper }}>{Number.isFinite(aplicado(periods[k])) ? `${n(aplicado(periods[k]), 2)} %` : "—"}</span>{periods[k].capped ? ` (el modelo pedía ${n(periods[k].x_pct, 2)} %, manda el tope)` : ""}</span>
-            {periods[k].weights.map((w, j) => w > 0 && (
-              <span key={j} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 9, height: 9, background: colors[j % colors.length], display: "inline-block" }} />{names[j]} <span style={{ fontFamily: font.mono, color: color.textHigh }}>{n(w * 100, 0)} %</span></span>
-            ))}
-          </>
-        ) : (
-          <span>pasa el ratón por un periodo: barras = reparto entre estrategias · línea cobre = riesgo total por trade aplicado (% del capital del día) · punto ámbar = el tope recortó lo que pedía el modelo</span>
-        )}
+      {pt && k != null && (
+        <CartelPuntero puntero={pt} titulo={periods[k].period} subtitulo={periods[k].from ? `desde ${periods[k].from}${periods[k].capped ? " · mandó el tope" : ""}` : undefined} filas={filasCartel(periods[k])} />
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "90px 1fr", gap: "2px 12px", padding: "6px 4px 2px", borderTop: hairline, alignItems: "center", lineHeight: "13px" }}>
+        <span style={{ fontFamily: font.mono, fontSize: 10.5, color: color.textMuted }}>{pk ? pk.period : "periodo"}</span>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 16px" }}>
+          {pk && riesgos(pk).map((v, j) => (
+            <span key={j} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
+              <span style={{ width: 9, height: 9, background: colors[j % colors.length], display: "inline-block" }} />
+              <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names[j]}</span>
+              <span style={{ fontFamily: font.mono, color: v > 0 ? color.textHigh : color.textMuted }}>{v > 0 ? `${n(v, 2)} %` : "—"}</span>
+            </span>
+          ))}
+          {pk && (
+            <span style={{ fontSize: 10.5, fontFamily: font.sans, color: color.textSecondary }}>
+              suma <span style={{ fontFamily: font.mono, color: pk.capped ? color.warning : color.copper }}>{Number.isFinite(aplicado(pk)) ? `${n(aplicado(pk), 2)} %` : "—"}</span>{pk.x_pct != null ? <span style={{ color: color.textMuted }}> · pedía {n(pk.x_pct, 1)} %</span> : null}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -38,12 +38,20 @@ def _vecino(valor, rejilla, rng: random.Random):
 def _mutar_condicion(c: dict, config: dict, rng: random.Random) -> dict:
     c = copy.deepcopy(c)
     ind = C.CATALOGO[c["ind"]]
-    que = rng.choice(["objetivo", "comparador", "param", "param"] if ind.params else ["objetivo", "comparador"])
+    # Solo mutan los parametros con mas de un valor en ESTA corrida: uno fijado
+    # en la pagina (ap_session de Previous max) no es un gen, y sortearlo solo
+    # devolveria un clon que ya esta en la cache.
+    rejilla = C.rejilla_params(ind.nombre, config, ind.params)
+    mutables = [k for k, v in rejilla.items() if len(v) > 1]
+    que = rng.choice(["objetivo", "comparador", "param", "param"] if mutables else ["objetivo", "comparador"])
     if que == "comparador":
         c["comp"] = rng.choice(ind.comparadores)
     elif que == "param":
-        k = rng.choice(list(ind.params))
-        c["params"][k] = _vecino(c["params"].get(k), ind.params[k], rng)
+        k = rng.choice(mutables)
+        c["params"][k] = _vecino(c["params"].get(k), rejilla[k], rng)
+        # «Pico contra Pico»: si el origen cambia de giro, ventana o direccion,
+        # el destino se realinea (mismo giro contra si mismo = condicion muerta).
+        cromosoma.coherencia(c)
     else:
         obj = c["objetivo"]
         if isinstance(obj, dict):
@@ -52,7 +60,8 @@ def _mutar_condicion(c: dict, config: dict, rng: random.Random) -> dict:
             # periodo (volvia a los defectos del motor, sin avisar). Y solo
             # entre los destinos permitidos en esta corrida: los niveles
             # opcionales (perfil, pivote) no se cuelan si no estan marcados.
-            c["objetivo"] = cromosoma.objetivo_aleatorio(rng, ind, config.get("catalogo"))
+            c["objetivo"] = cromosoma.objetivo_aleatorio(
+                rng, ind, config.get("catalogo"), config.get("niveles_explicitos"), c["params"], config)
         else:
             c["objetivo"] = _vecino(obj, ind.valores, rng)
     return c
@@ -116,7 +125,7 @@ def mutar(ind: dict, config: dict, rng: random.Random) -> dict:
                     [n for n in config["catalogo"] if n not in {x["ind"] for x in nuevo["condiciones"]}])
                 if otros:
                     nuevo["condiciones"][i] = cromosoma._condicion_aleatoria(
-                        rng, otros, config["catalogo"])
+                        rng, otros, config["catalogo"], config.get("niveles_explicitos"), config)
                     tocado = True
                     continue
             nuevo["condiciones"][i] = _mutar_condicion(c, config, rng)

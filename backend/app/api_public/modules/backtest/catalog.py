@@ -18,7 +18,9 @@ _CATEGORY = {
         "Squeeze",
     ],
     "Volatility": ["ATR", "ADX", "Bollinger Bands", "Donchian", "Parabolic SAR"],
-    "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "Accumulated Dollar Volume", "Dollar Volume", "SMA Volume", "Volumen del pico"],
+    "Volume": ["OBV", "Volume", "RVOL by bar", "Accumulated Volume", "Accumulated Dollar Volume", "Dollar Volume", "SMA Volume", "Volumen del pico",
+               "RVOL universo", "Minutos desde el pico de volumen", "Pendiente del volumen",
+               "Rotacion", "Rotacion en X min"],
     "Price": [
         "Bar Close", "Bar Open", "High Bar", "Low Bar", "PM High", "PM Low", "PM Open",
         "AM Open", "RTH High", "RTH Low", "RTH Open", "Yesterday High", "Yesterday Low",
@@ -107,6 +109,11 @@ _PARAMS = {
     # zona_pct = % del volumen del dia que abarca la banda (70 clasico).
     "Zona alta": ["bin_pct", "zona_pct"],
     "Zona baja": ["bin_pct", "zona_pct"],
+    # Los tres de volumen contra el universo: ventana de RELOJ en minutos.
+    # «Minutos desde el pico» no lleva parametros (mira el dia entero).
+    "RVOL universo": ["range_minutes"],
+    "Rotacion en X min": ["range_minutes"],
+    "Pendiente del volumen": ["range_minutes"],
     "Absorption": ["range_minutes"],
     "Wick Ratio": ["range_minutes", "wick_side"],
     "Absorption + Wick": ["range_minutes", "wick_side", "abs_op", "abs_level",

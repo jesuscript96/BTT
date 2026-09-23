@@ -38,6 +38,9 @@ export interface CatalogoGenetico {
   familias: Array<{ clave: string; etiqueta: string }>;
   guardas: GuardaCatalogo[];
   stops: { pct: number[]; offset_pct: number[]; niveles: Record<string, string[]> };
+  // Parámetros que se pueden FIJAR al marcar el indicador (p.ej. `ap_session`
+  // de Previous max/min y % Fade). `opciones[0]` es el defecto.
+  params_fijables?: Array<{ param: string; indicadores: string[]; opciones: Array<{ value: string; label: string }> }>;
   tps: {
     pct: number[]; hora: string[]; tiempo: number[];
     parcial_cierre: number[]; parcial_max: number;
@@ -106,6 +109,19 @@ export interface ConfigCorrida {
   ventana_entrada: Array<{ from_time: string; to_time: string }> | null;
   guardas: CondicionMotor[];
   catalogo: string[];
+  // 21-sep-2026: los nueve niveles base (Prev. Bar…, Previous max/min, VWAP,
+  // PM High/Low) van con casilla dentro de `catalogo`, y esta clave le dice al
+  // genético que los elija uno a uno. Un config sin ella (corridas antiguas)
+  // sortea los nueve como siempre.
+  niveles_explicitos?: boolean;
+  // {indicador: {param: valor}} — "auto" = según la sesión de la corrida,
+  // "*" = sortear la rejilla del catálogo, otro = ese valor fijo.
+  params_fijos?: Record<string, Record<string, string>>;
+  // Prioridad por indicador (21-sep-2026): «alta» pesa x3 y «baja» /3 en cada
+  // sorteo donde el nombre compite (lado izquierdo, destino de Bar Close /
+  // High / Low, cambio de indicador al mutar). Solo viajan las que no son
+  // «normal»; sin ninguna, la corrida es idéntica a la de siempre.
+  prioridades?: Record<string, PrioridadGen>;
   n_condiciones: number;
   stops: string[];
   tps: string[];
@@ -235,6 +251,13 @@ export interface DatasetResumen {
   min_date?: string | null;
   max_date?: string | null;
 }
+
+export type PrioridadGen = "alta" | "normal" | "baja";
+export const PRIORIDADES: Array<{ value: PrioridadGen; label: string }> = [
+  { value: "normal", label: "Prioridad normal" },
+  { value: "alta", label: "Prioridad alta (×3)" },
+  { value: "baja", label: "Prioridad baja (÷3)" },
+];
 
 export const getCatalogo = () => apiRequest<CatalogoGenetico>("/genetico/catalogo");
 /** Qué se le puede mover a una estrategia, agrupado por bloque (modo «mejorar»). */

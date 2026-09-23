@@ -209,7 +209,12 @@ def var_stats(daily_ret: list[float]) -> dict | None:
     tail95 = ret_pct[ret_pct <= v95]
     tail99 = ret_pct[ret_pct <= v99]
     bins = min(40, max(10, len(ret_pct) // 10))
-    counts, edges = np.histogram(ret_pct, bins=bins)
+    # Con todos los dias iguales (una serie sintetica, o una cuenta plana)
+    # numpy no puede repartir los bins: se abre un rango minimo alrededor.
+    lo, hi = float(ret_pct.min()), float(ret_pct.max())
+    if hi - lo < 1e-9:
+        lo, hi = lo - 0.5, hi + 0.5
+    counts, edges = np.histogram(ret_pct, bins=bins, range=(lo, hi))
     return {
         "var95": _r6(v95),
         "cvar95": _r6(tail95.mean() if len(tail95) else v95),

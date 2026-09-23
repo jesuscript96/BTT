@@ -29,6 +29,16 @@ const PERFIL_VOLUMEN = [
     IndicatorType.VOL_ZONE_HIGH, IndicatorType.VOL_ZONE_LOW,
 ];
 
+// Los dos NIVELES de giro («Ultimo pivote» y «Pico / valle (nº N)») como
+// destino de las variables de la vela actual y de la anterior: «Bar Close
+// cruza por debajo de Valle nº 1» es la entrada del hombro-cabeza-hombro del
+// PRD de picos y valles, y sin esto el desplegable no lo ofrecia (peticion de
+// Jaume, 18-sep-2026). El motor no restringe pares; el tope estaba aqui.
+const NIVELES_DE_GIRO = [
+    IndicatorType.LAST_PIVOT,
+    IndicatorType.PICO,
+];
+
 const ALL_BEHAVIOUR = [
     IndicatorType.OPENING_RANGE_PLUS, IndicatorType.OPENING_RANGE_MINUS,
     IndicatorType.OPENING_RANGE_AM_PLUS, IndicatorType.OPENING_RANGE_AM_MINUS,
@@ -79,13 +89,13 @@ const RTH_YESTERDAY_INDICATORS = [
 export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // Price Variables — Full
     [IndicatorType.BAR_CLOSE]: [
-        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+        ...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.BAR_OPEN]: [
-        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+        ...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.HIGH_BAR]: [
-        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+        ...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
     [IndicatorType.LOW_BAR]: [
-        ...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+        ...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
     // PM variables
     [IndicatorType.PM_OPEN]: [
@@ -264,10 +274,10 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // (peticion de Jaume, 10-sep-2026). Tenian la lista VACIA, que es por lo
     // que el desplegable solo ofrecia «Fixed Value»: no es que faltaran
     // destinos, es que no tenian ninguno.
-    [IndicatorType.PREV_BAR_CLOSE]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.PREV_BAR_OPEN]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.PREV_BAR_HIGH]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
-    [IndicatorType.PREV_BAR_LOW]: [...PERFIL_VOLUMEN, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PREV_BAR_CLOSE]: [...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PREV_BAR_OPEN]: [...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PREV_BAR_HIGH]: [...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
+    [IndicatorType.PREV_BAR_LOW]: [...PERFIL_VOLUMEN, ...NIVELES_DE_GIRO, ...ALL_PRICE_VARIABLES, ...ALL_BEHAVIOUR, ...ALL_INDICATORS],
 
     // Behaviour & Patterns — standalone (sin cruces)
     [IndicatorType.CONSEC_HIGHER_HIGHS]: [],
@@ -317,6 +327,12 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // a otro indicador no significaria nada, asi que van standalone.
     // El percentil es una MEDIDA: solo contra una cifra.
     [IndicatorType.VOL_BIN_PCT]: [],
+    // Los tres de volumen contra el universo: MEDIDAS, solo contra una cifra.
+    [IndicatorType.ROTACION]: [],
+    [IndicatorType.ROTACION_VENTANA]: [],
+    [IndicatorType.RVOL_UNIVERSO]: [],
+    [IndicatorType.MIN_DESDE_PICO_VOL]: [],
+    [IndicatorType.PENDIENTE_VOLUMEN]: [],
     [IndicatorType.RETRACEMENT]: [],
     [IndicatorType.ABSORPTION]: [],
     [IndicatorType.WICK_RATIO]: [],
@@ -353,10 +369,12 @@ const DISTANCE_ALLOWED_TARGETS = [
 ];
 
 export const DISTANCE_TARGETS: Record<string, IndicatorType[]> = {
-    [IndicatorType.BAR_CLOSE]: [...DISTANCE_ALLOWED_TARGETS],
-    [IndicatorType.BAR_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
-    [IndicatorType.HIGH_BAR]: [...DISTANCE_ALLOWED_TARGETS],
-    [IndicatorType.LOW_BAR]: [...DISTANCE_ALLOWED_TARGETS],
+    // La vela actual tambien mide su distancia a los dos niveles de giro
+    // («Bar Close a menos de 1 % del Pico nº 2»).
+    [IndicatorType.BAR_CLOSE]: [...DISTANCE_ALLOWED_TARGETS, ...NIVELES_DE_GIRO],
+    [IndicatorType.BAR_OPEN]: [...DISTANCE_ALLOWED_TARGETS, ...NIVELES_DE_GIRO],
+    [IndicatorType.HIGH_BAR]: [...DISTANCE_ALLOWED_TARGETS, ...NIVELES_DE_GIRO],
+    [IndicatorType.LOW_BAR]: [...DISTANCE_ALLOWED_TARGETS, ...NIVELES_DE_GIRO],
     [IndicatorType.PM_OPEN]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.PM_HIGH]: [...DISTANCE_ALLOWED_TARGETS],
     [IndicatorType.PM_LOW]: [...DISTANCE_ALLOWED_TARGETS],

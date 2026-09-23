@@ -63,10 +63,23 @@ export function Paso({ num, title, help, summary, open, onToggle, disabled, disa
   );
 }
 
-/** La tira de arriba: los pasos y en cual estas. Pulsar uno lo abre. */
-export function PasoBar({ pasos, activo, onGo }: { pasos: Array<{ num: number; label: string; hecho: boolean; disponible: boolean }>; activo: number; onGo: (num: number) => void }) {
+export type ModoVista = "vertical" | "uno";
+
+/** La tira de arriba: los pasos y en cual estas. Pulsar uno lo abre (en
+ *  vertical, baja hasta el; de uno en uno, lo muestra ahi mismo). A la
+ *  derecha, el conmutador de las dos formas de verlo (21-sep-2026). */
+export function PasoBar({ pasos, activo, onGo, modo, setModo }: { pasos: Array<{ num: number; label: string; hecho: boolean; disponible: boolean }>; activo: number; onGo: (num: number) => void; modo: ModoVista; setModo: (m: ModoVista) => void }) {
+  const opcion = (m: ModoVista, label: string, title: string) => {
+    const on = modo === m;
+    return (
+      <button key={m} type="button" onClick={() => setModo(m)} title={title} style={{
+        padding: "0 9px", height: 22, background: on ? color.bgElevated : "transparent", border: `1px solid ${on ? color.copper : color.border}`,
+        color: on ? color.textHigh : color.textMuted, fontFamily: font.sans, fontSize: 10.5, fontWeight: on ? 600 : 500, cursor: "pointer", whiteSpace: "nowrap",
+      }}>{label}</button>
+    );
+  };
   return (
-    <div style={{ display: "flex", border: hairline, marginBottom: 14, background: color.bgSurface }}>
+    <div style={{ display: "flex", alignItems: "stretch", border: hairline, marginBottom: 14, background: color.bgSurface }}>
       {pasos.map((p, i) => {
         const on = p.num === activo;
         return (
@@ -80,6 +93,10 @@ export function PasoBar({ pasos, activo, onGo }: { pasos: Array<{ num: number; l
           </button>
         );
       })}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "0 10px", borderLeft: hairline, flexShrink: 0 }} title="Cómo ver los pasos">
+        {opcion("vertical", "todo en vertical", "Los cinco pasos, uno debajo de otro; la tira baja hasta el que pulses")}
+        {opcion("uno", "de uno en uno", "Solo el paso que elijas en la tira, aquí mismo, sin bajar")}
+      </div>
     </div>
   );
 }

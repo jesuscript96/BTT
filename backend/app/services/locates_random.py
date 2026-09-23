@@ -18,14 +18,30 @@ LAS TRES REGLAS DEL SORTEO
    otro orden, y cambiar un parametro cualquiera no mueve ni un locate: la
    diferencia que veas es del parametro, no de la suerte del sorteo.
 
-3. **Las caras salen caras, sin anclas del usuario.** El precio de la accion fija
-   el CENTRO dentro del rango [minimo, maximo] en escala logaritmica entre el
-   suelo del universo (0,10 $, el mismo que ya filtra el backtest) y un techo de
-   30 $; y alrededor de ese centro se sortea con una dispersion lognormal
-   moderada, recortada al rango. Medido con rango 1-10 (dos de cada tres
-   sorteos): una accion de 0,30 $ sale en torno a 2,7 (2-3,9), una de 3 $ en
-   torno a 6,4 (4,6-9), una de 15 $ en torno a 8,9 (6,4-10). Jaume no quiso
-   poner anclas: «que se distribuya solo».
+3. **El rango del usuario es «lo normal», no un suelo y un techo.** «De 0,3 a
+   15» quiere decir: 9 de cada 10 locates de una corrida caen ahi, 1 de cada 20
+   sale por debajo y 1 de cada 20 por encima (la cola cara existe: como mucho
+   5 veces el maximo). Con eso el sorteo fija dos cosas: el NIVEL (lo que paga
+   la accion de 2 $, la mediana de los gappers: la media geometrica del rango)
+   y el RUIDO (lo que falta para que la banda sea el 80 % central). La forma
+   viene del mercado y es fija: el locate crece con el precio de la accion
+   como precio^0,6 (una de 20 $ paga 4 veces lo que una de 2 $, no 10), y
+   alrededor de esa curva la dispersion es enorme, porque manda la
+   disponibilidad de prestamo, no el precio.
+
+   Todo lo de arriba esta MEDIDO el 18-sep sobre 99 locates reales del socio de
+   Jaume (un mes, DAS): $/paquete = 1,49 x precio^0,62 con una dispersion
+   (sigma en log) de 1,15 alrededor; p10 0,06 (el suelo del broker: 1 de cada 7
+   dias la accion es facil de prestar y cuesta 0,0006 $/accion), p50 1,96,
+   p90 12,1, max 25,9; sus precios: p10 0,45, p50 2,1, p90 6. Con la banda
+   0,3-15 el modelo reproduce eso (cobertura 79 %, poblacion p10 0,23, p50 1,8,
+   p90 11,6). La banda 1-20 que usaba Jaume es el doble de cara que su broker.
+
+   Historia: hasta el 18-sep el rango era un suelo y un techo duros, el centro
+   iba lineal en log-precio entre 0,10 $ y 30 $ y el ruido era sigma 0,35. Con
+   1-20, ningun ticker-dia de 3.445 bajaba de 2,69 y una accion de 0,50-1 $
+   pagaba 7,6 $ el paquete (10 % de fade); frente a los locates reales la
+   cobertura era del 21 %.
 
 El precio de referencia es la PRIMERA vela del frame del dia (arranca a las
 04:00): es causal —se conoce antes de cualquier entrada— y es lo que mira un
@@ -38,16 +54,15 @@ import math
 import random
 from typing import Iterable
 
-# Escala de precios del universo. El suelo es el mismo que aplica
-# `data_service._filtrar_universo`; el techo es donde estas acciones dejan de
-# ser «small caps» a efectos de locate. No son parametros del usuario a proposito.
-PRECIO_SUELO = 0.10
-PRECIO_TECHO = 30.0
-
-# Dispersion (sigma del lognormal) alrededor del centro. Con 0,35, dos de cada
-# tres sorteos caen entre x0,7 y x1,4 del centro. Si algun dia hace falta, es un
-# deslizador; hoy es una constante para no anadir un campo mas a la pantalla.
-SIGMA = 0.35
+# Forma del mercado, medida sobre los locates reales (18-sep). No son
+# parametros del usuario a proposito: su mando es el rango.
+EXPONENTE_PRECIO = 0.6      # $/paquete ~ precio^0,6 (medido 0,62)
+PRECIO_MEDIANO = 2.0        # $ de la accion a la que el nivel es la media geometrica del rango
+SIGMA_PRECIOS = 1.0         # dispersion (log) de los precios de los gappers que se operan
+Z_P90 = 1.2816              # la banda p10-p90 son +-1,28 sigmas
+RUIDO_MINIMO = 0.2          # por si alguien pide una banda mas estrecha que el propio efecto del precio
+SUELO_PAQUETE = 0.05        # $/paquete: el suelo del broker es 0,06 (0,0006 $/accion)
+COLA_MAXIMA = 5.0           # nunca mas de 5 veces el maximo de la banda
 
 
 def _rng(seed: int, ticker: str, fecha: str) -> random.Random:
@@ -59,12 +74,32 @@ def _rng(seed: int, ticker: str, fecha: str) -> random.Random:
     return random.Random(entero)
 
 
-def posicion_por_precio(precio: float) -> float:
-    """Donde cae ese precio en el universo, de 0 (suelo) a 1 (techo), en log."""
-    if not precio or precio <= 0:
+def parametros_banda(minimo: float, maximo: float) -> tuple[float, float, float]:
+    """(nivel, ruido, techo) de una banda p10-p90.
+
+    `nivel` = lo que paga la accion de PRECIO_MEDIANO $ en la mediana (media
+    geometrica del rango); `ruido` = sigma del lognormal alrededor de la curva,
+    lo que falta, descontado el efecto del precio, para que 9 de cada 10 caigan
+    en la banda; `techo` = COLA_MAXIMA x maximo. Un minimo de 0 se trata como
+    maximo/100 (no hay media geometrica con 0)."""
+    lo, hi = float(min(minimo, maximo)), float(max(minimo, maximo))
+    if hi <= 0:
+        return 0.0, 0.0, 0.0
+    lo_ef = lo if lo > 0 else hi / 100.0
+    nivel = math.sqrt(lo_ef * hi)
+    sigma_total = math.log(hi / lo_ef) / (2.0 * Z_P90)
+    ruido = math.sqrt(max(sigma_total ** 2 - (EXPONENTE_PRECIO * SIGMA_PRECIOS) ** 2, RUIDO_MINIMO ** 2))
+    return nivel, ruido, COLA_MAXIMA * hi
+
+
+def centro_por_precio(precio: float, minimo: float, maximo: float) -> float:
+    """Locate tipico (mediana del sorteo) para ese precio de accion:
+    nivel x (precio / 2 $)^0,6."""
+    nivel, _, _ = parametros_banda(minimo, maximo)
+    if nivel <= 0:
         return 0.0
-    p = min(max(precio, PRECIO_SUELO), PRECIO_TECHO)
-    return math.log(p / PRECIO_SUELO) / math.log(PRECIO_TECHO / PRECIO_SUELO)
+    p = max(float(precio or 0.0), 0.01)
+    return nivel * (p / PRECIO_MEDIANO) ** EXPONENTE_PRECIO
 
 
 def precio_locate(
@@ -78,25 +113,23 @@ def precio_locate(
     """Precio del paquete de 100 para ese ticker-dia.
 
     Devuelve un dict con el precio y las piezas del calculo (para poder
-    ensenarlas en el trade): referencia, posicion en el universo y centro.
+    ensenarlas en el trade): referencia, centro (el tipico a ese precio) y el
+    ruido de la banda.
     """
-    lo, hi = float(min(minimo, maximo)), float(max(minimo, maximo))
-    if lo < 0:
-        lo = 0.0
-    pos = posicion_por_precio(precio_ref)
-    centro = lo + (hi - lo) * pos
-    if hi <= lo or centro <= 0:
-        precio = lo
+    _nivel, ruido, techo = parametros_banda(minimo, maximo)
+    centro = centro_por_precio(precio_ref, minimo, maximo)
+    if centro <= 0:
+        precio = 0.0
     else:
         # Lognormal centrado en `centro`: multiplicativo, asi que la cola larga
         # queda hacia arriba (los dias carisimos existen, los negativos no).
-        factor = math.exp(_rng(seed, ticker, fecha).gauss(0.0, SIGMA))
-        precio = min(hi, max(lo, centro * factor))
+        factor = math.exp(_rng(seed, ticker, fecha).gauss(0.0, ruido))
+        precio = min(techo, max(SUELO_PAQUETE, centro * factor))
     return {
         "precio": round(precio, 4),
         "precio_ref": round(float(precio_ref or 0.0), 4),
-        "posicion": round(pos, 4),
         "centro": round(centro, 4),
+        "ruido": round(ruido, 4),
     }
 
 

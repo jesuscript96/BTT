@@ -90,7 +90,15 @@ def ensure_watch_table(con) -> None:
                               ("capital_usd", "DOUBLE"),
                               ("ev_pct", "DOUBLE"),
                               ("riesgos_piramide_json", "VARCHAR"),
-                              ("ev_rangos_json", "VARCHAR")):
+                              ("ev_rangos_json", "VARCHAR"),
+                              # cuentas_json (18-sep-2026): OTRAS cuentas de trading
+                              # que operan esta misma estrategia con otro riesgo,
+                              # [{nombre, riesgo_usd, riesgo_piramide_usd}]. La
+                              # principal sigue siendo riesgo_usd/riesgo_piramide_usd
+                              # de siempre. Jaume opera a veces con dos cuentas
+                              # (300/300 y 200/200) y quiere UN mensaje con las
+                              # cantidades de cada una, no dos mensajes.
+                              ("cuentas_json", "VARCHAR")):
             try:
                 con.execute(f"ALTER TABLE bot_alert_watch ADD COLUMN {columna} {tipo}")
             except Exception:
@@ -151,6 +159,10 @@ def ensure_eventos_table(con) -> None:
         # prealerta del segundo 50 y la alerta del cierre de ESE MISMO minuto
         # comparten id, y el INSERT OR REPLACE actualiza la fila que ya existe.
         con.execute("ALTER TABLE bot_alert_eventos ADD COLUMN IF NOT EXISTS estado VARCHAR DEFAULT 'alerta'")
+        # `cuenta` (18-sep-2026): con varias cuentas por estrategia, cada aviso
+        # va POR CUENTA (sus acciones son distintas). NULL = la principal. El id
+        # lleva la cuenta cuando no es la principal, asi que no pisan.
+        con.execute("ALTER TABLE bot_alert_eventos ADD COLUMN IF NOT EXISTS cuenta VARCHAR")
         # Estado del bot. Una sola fila: la pagina escribe `vigilando` y el bot
         # lo consulta. Asi la pagina lo enciende sin tener que hablar con el
         # proceso del bot, que vive aparte y no expone nada hacia dentro.
@@ -302,6 +314,7 @@ def guardar_eventos(con, eventos: list[dict]) -> int:
             e.get("motivo"), e.get("nivel"), e.get("accion_piramide"),
             e.get("posicion_total"), e.get("origen") or "portfolio",
             e.get("modo") or "vivo", e.get("estado") or "alerta",
+            e.get("cuenta"),
         )
         for e in eventos
     ]
@@ -309,8 +322,8 @@ def guardar_eventos(con, eventos: list[dict]) -> int:
         "INSERT OR REPLACE INTO bot_alert_eventos "
         "(id, fecha, momento, tipo, ticker, strategy_id, estrategia, direccion, "
         " precio, acciones, stop, riesgo_usd, motivo, nivel, accion_piramide, "
-        " posicion_total, origen, modo, estado) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " posicion_total, origen, modo, estado, cuenta) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         filas,
     )
     _invalidar_cache_eventos()
@@ -459,7 +472,8 @@ def get_watch(con) -> dict[str, dict]:
     ensure_watch_table(con)
     rows = con.execute(
         "SELECT strategy_id, activa, riesgo_usd, updated_at, "
-        "riesgo_piramide_usd, capital_usd, ev_pct, riesgos_piramide_json, ev_rangos_json FROM bot_alert_watch"
+        "riesgo_piramide_usd, capital_usd, ev_pct, riesgos_piramide_json, ev_rangos_json, cuentas_json "
+        "FROM bot_alert_watch"
     ).fetchall()
     return {
         r[0]: {
@@ -473,9 +487,47 @@ def get_watch(con) -> dict[str, dict]:
             "ev_pct": float(r[6]) if r[6] is not None else None,
             "riesgos_piramide": _leer_riesgos_piramide(r[7]),
             "ev_rangos": _leer_ev_rangos(r[8]),
+            "cuentas": _leer_cuentas(r[9]),
         }
         for r in rows
     }
+
+
+def _leer_cuentas(raw) -> Optional[list]:
+    """Las otras cuentas, [{nombre, riesgo_usd, riesgo_piramide_usd}], o None."""
+    if not raw:
+        return None
+    try:
+        v = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return None
+    return limpiar_cuentas(v)
+
+
+def limpiar_cuentas(cuentas) -> Optional[list]:
+    """Normaliza lo que manda el cuadro: riesgo > 0 obligatorio, nombre libre
+    (vacio -> «cuenta N»), riesgo de piramide opcional (None = el de entrada).
+    Devuelve None si no queda ninguna valida."""
+    if not cuentas or not isinstance(cuentas, list):
+        return None
+    out = []
+    for k, c in enumerate(cuentas, 1):
+        if not isinstance(c, dict):
+            continue
+        try:
+            riesgo = float(c.get("riesgo_usd") or 0)
+        except (TypeError, ValueError):
+            continue
+        if riesgo <= 0:
+            continue
+        try:
+            rp = c.get("riesgo_piramide_usd")
+            rp = float(rp) if rp is not None and float(rp) > 0 else None
+        except (TypeError, ValueError):
+            rp = None
+        nombre = str(c.get("nombre") or "").strip() or f"cuenta {k + 1}"
+        out.append({"nombre": nombre[:40], "riesgo_usd": riesgo, "riesgo_piramide_usd": rp})
+    return out or None
 
 
 def _leer_ev_rangos(raw) -> Optional[list]:
@@ -527,10 +579,12 @@ def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
               capital_usd: float | None = None,
               ev_pct: float | None = None,
               riesgos_piramide: list | None = None,
-              ev_rangos: list | None = None) -> dict:
+              ev_rangos: list | None = None,
+              cuentas: list | None = None) -> dict:
     """Guarda (o actualiza) la vigilancia de una estrategia. Devuelve su fila."""
     ensure_watch_table(con)
     riesgos_piramide = _limpiar_riesgos_piramide(riesgos_piramide)
+    cuentas = limpiar_cuentas(cuentas)
     from app.services.locates_gate import rangos_ev_normalizados
     ev_rangos_l = rangos_ev_normalizados(ev_rangos)
     if not any(r.get("ev_pct") for r in ev_rangos_l):
@@ -538,14 +592,15 @@ def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
     con.execute(
         "INSERT OR REPLACE INTO bot_alert_watch "
         "(strategy_id, activa, riesgo_usd, updated_at, riesgo_piramide_usd, capital_usd, ev_pct, "
-        "riesgos_piramide_json, ev_rangos_json) "
-        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?)",
+        "riesgos_piramide_json, ev_rangos_json, cuentas_json) "
+        "VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)",
         [strategy_id, bool(activa), float(riesgo_usd),
          float(riesgo_piramide_usd) if riesgo_piramide_usd is not None else None,
          float(capital_usd) if capital_usd is not None else None,
          float(ev_pct) if ev_pct is not None else None,
          json.dumps(riesgos_piramide) if riesgos_piramide else None,
-         json.dumps(ev_rangos_l) if ev_rangos_l else None],
+         json.dumps(ev_rangos_l) if ev_rangos_l else None,
+         json.dumps(cuentas) if cuentas else None],
     )
     marcar_cambio_estrategias()
     return {
@@ -556,6 +611,7 @@ def set_watch(con, strategy_id: str, activa: bool, riesgo_usd: float,
         "ev_pct": ev_pct,
         "ev_rangos": ev_rangos_l or None,
         "riesgos_piramide": riesgos_piramide,
+        "cuentas": cuentas,
     }
 
 
@@ -692,6 +748,8 @@ def listar_candidatas(con, scope_sql: str = "", scope_params: Optional[list] = N
             # piramides para pedirlas una a una, y lo ya guardado.
             "piramides": describir_piramides(definition),
             "riesgos_piramide": cfg.get("riesgos_piramide"),
+            # Otras cuentas (18-sep-2026), con su riesgo de entrada y de piramide.
+            "cuentas": cfg.get("cuentas"),
             # La ventana de ENTRADAS, distinta de la de sesion.
             "ventana_entradas": [
                 {"inicio": w.get("from_time"), "fin": w.get("to_time")}
@@ -748,6 +806,9 @@ def vigiladas(con, scope_sql: str = "", scope_params: Optional[list] = None) -> 
             "ev_pct": cfg.get("ev_pct"),
             "ev_rangos": cfg.get("ev_rangos"),
             "capital_usd": cfg.get("capital_usd"),
+            # Otras cuentas con otro riesgo (18-sep-2026): el motor corre el
+            # simulador una vez por cuenta y Telegram junta los bloques.
+            "cuentas": cfg.get("cuentas"),
             "definition": definition,
             "ventana": ventana_operativa(definition),
             # La de SESION. La de ENTRADAS es otra cosa y vive en

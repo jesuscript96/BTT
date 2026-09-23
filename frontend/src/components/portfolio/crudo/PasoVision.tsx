@@ -59,6 +59,8 @@ export function PasoVision({ m }: { m: VisionModel }) {
             <Stat label="En posiciones a la vez (máx.)" value={`${n(exposicion.max, 0)} %`} sub={`del capital del día · hasta ${usd(out.exposure.max_usd)} · ${Math.max(0, ...out.exposure.max_open_daily)} posiciones`} tone={exposicion.max > 100 ? "warning" : undefined} help="El mayor porcentaje del capital del día que llegó a estar metido en posiciones abiertas simultáneamente, sumando todas (medido al minuto: un trade de premercado y uno de RTH no coinciden si no se solapan)." />
             <Stat label="Costes" value={usd(costesTot)} sub={`comis. ${usd(out.costs.fees)} · slippage ${usd(out.costs.slippage || 0)} · locates ${usd(out.costs.locates)} · fijos ${usd(out.costs.expenses)}`} tone="loss" />
             {out.cap_report.skipped > 0 && <Stat label="Fuera por el tope" value={n(out.cap_report.skipped, 0)} sub={`trades de ${n(out.cap_report.taken + out.cap_report.skipped, 0)}`} tone="warning" />}
+            {out.ticker_cap_report && <Stat label="Tope por acción" value={`${n(out.ticker_cap_report.skipped + out.ticker_cap_report.trimmed, 0)} trades`} sub={`fuera/recortados · ${out.ticker_cap_report.basis === "trade" ? "tope = un trade de la estrategia" : `${n(out.ticker_cap_report.pct, 1)} % del día en ${out.ticker_cap_report.basis === "notional" ? "nocional" : "riesgo"}`}${out.ticker_cap_report.sin_stop > 0 ? ` · ${n(out.ticker_cap_report.sin_stop, 0)} sin stop` : ""}`} help="Trades que llegaron con su acción ya llena (otra estrategia dentro a la vez, o el propio trade pedía más que el tope) y se quedaron fuera («saltar») o recortados a lo que quedaba («recortar»). «Sin stop»: trades cuyo riesgo no se puede medir (la corrida no dimensionó por stop y no guardó uno): no consumen ni se topan." tone={(out.ticker_cap_report.skipped + out.ticker_cap_report.trimmed) > 0 ? "warning" : undefined} />}
+            {out.margin_report && <Stat label="Margen y BP" value={`${n(out.margin_report.skipped + out.margin_report.trimmed, 0)} trades`} sub={`fuera/recortados por margen · pico medio ${n(out.margin_report.pico_medio_pct, 0)} %, máx ${n(out.margin_report.pico_max_pct, 0)} % de la capacidad`} help={`Trades que no cupieron en el margen del bróker (${out.margin_report.broker}) en su momento: cada posición abierta consume margen según su precio y lado (cortos por debajo de 2,50 $: 2,50 $ por acción), contra el equity del día. El pico es cuánto de esa capacidad llegó a usarse en el peor momento de cada día.`} tone={(out.margin_report.skipped + out.margin_report.trimmed) > 0 ? "warning" : undefined} />}
             {(out.cap_report.blocked || 0) > 0 && <Stat label="Bloqueadas" value={n(out.cap_report.blocked, 0)} sub="señales con otra estrategia ya dentro" help="Trades de las corridas que no entran porque otra estrategia ya tenía posición abierta en esa acción (opción «una a la vez por acción»)." tone="warning" />}
             {lr && lr.mode !== "none" && lr.mode !== "per_row" && (
               <Stat label="Locates" value={usd(lr.cost)} sub={`${n(lr.packages, 0)} paquetes en ${n(lr.ticker_days, 0)} acción-días${lr.shared ? ` · ${n(lr.gate_free, 0)} entradas gratis` : ""}`} help="Paquetes de 100 alquilados y lo que costaron. «Entradas gratis»: cortos que cabían en lo ya alquilado ese día por otra estrategia (o por una reentrada) y no pagaron nada." />
@@ -66,6 +68,19 @@ export function PasoVision({ m }: { m: VisionModel }) {
             {lr && lr.gate && <Stat label="Fuera por la puerta" value={n(lr.gate_out, 0)} sub="cortos cuyo EV no pagaba el locate" tone="warning" />}
           </div>
           {out.ruined && <Nota tone="loss">La cuenta llegó a cero antes del final: a partir de ahí no se abre ningún trade más.</Nota>}
+          {(() => {
+            // Locates que se comen el bruto (19-sep): con posiciones pequenas se
+            // paga el paquete de 100 entero por 30 acciones, y una estrategia
+            // ganadora sale perdedora sin que nada falle.
+            const bruto = out.per_strategy.reduce((a, p) => a + Math.max(0, p.totals.gross ?? 0), 0);
+            const loc = out.costs.locates || 0;
+            if (!(loc > 0) || !(bruto > 0) || loc / bruto < 0.5) return null;
+            return (
+              <Nota tone="warning">
+                Los locates se llevan el <strong>{n((loc / bruto) * 100, 0)} %</strong> del bruto ({usd(loc as number)} de {usd(bruto)}). Se paga el paquete de 100 acciones entero: con posiciones pequeñas (pocas acciones por trade) el alquiler pesa mucho más que en la corrida original, y una estrategia ganadora sale perdedora sin que nada falle. Sube el % por trade, quita el bloque de locates de la cuenta o mira la puerta por EV.
+              </Nota>
+            );
+          })()}
           {met.total_return_pct > 100000 && (
             <Nota tone="warning">Un R en % del capital compone cada día: con varios trades al día y PF &gt; 1 la cifra se dispara y deja de decir nada. Baja el %, ponlo en $ fijos, o acorta el periodo.</Nota>
           )}

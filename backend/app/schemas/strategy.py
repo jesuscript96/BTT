@@ -66,6 +66,15 @@ class IndicatorType(str, Enum):
     EDAD_PICO = "Edad del pico"
     VOLUMEN_PICO = "Volumen del pico"
     RETRACEMENT = "Retroceso (%)"
+    # VOLUMEN CONTRA EL UNIVERSO (22-sep-2026). Los tres son MEDIDAS: solo se
+    # comparan contra una cifra, nunca contra otro indicador.
+    # Volumen del dia contra las ACCIONES EN CIRCULACION (no el float: ese
+    # dato no existe con historico. Ver scripts/acciones_circulacion_etl.py).
+    ROTACION = "Rotacion"
+    ROTACION_VENTANA = "Rotacion en X min"
+    RVOL_UNIVERSO = "RVOL universo"
+    MIN_DESDE_PICO_VOL = "Minutos desde el pico de volumen"
+    PENDIENTE_VOLUMEN = "Pendiente del volumen"
     ABSORPTION = "Absorption"
     WICK_RATIO = "Wick Ratio"
     ABSORPTION_WICK = "Absorption + Wick"

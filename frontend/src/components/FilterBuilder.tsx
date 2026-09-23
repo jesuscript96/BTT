@@ -65,7 +65,14 @@ const METRICS: Record<string, string[]> = {
         "High Spike Price", "Low Spike Price"
     ],
     volume: [
-        "EOD Volume", "Premarket Volume"
+        "EOD Volume", "Premarket Volume",
+        // Volumen RELATIVO a lo normal de ESA accion (22-sep-2026): el mismo
+        // numero de acciones es enorme en un ticker y nada en otro. Se calculan
+        // contra la media de los 20 dias anteriores.
+        "Volume vs 20d avg", "PM Volume vs 20d avg", "Volume 3 prev days vs 20d avg",
+        // Acciones en circulacion (NO float: el float real es menor y la
+        // rotacion real, mayor) y cuantas veces ha rotado el dia.
+        "Shares Outstanding", "Day Rotation (vol / shares)"
     ],
     gap_run: [
         "Open Gap %", "RTH Run %", "PMH Gap %", "PMH Fade to Open %", "RTH Fade to Close %"
