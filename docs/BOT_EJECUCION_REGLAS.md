@@ -1076,6 +1076,12 @@ Ninguna IPO ni SPAC tuvo cisne negro salvo PLYX (1B, 15 días cotizando, fogonaz
 
 ### Área N · Registro y contabilidad
 
+### R-M-06 · Asistente de IA en el Telegram del bot: SOLO consulta (Jaume, 24-sep; para después del canario)
+- Qué: en el chat del bot, cualquier mensaje que no sea un comando (/estado, /cerrar…) se manda a un modelo de lenguaje barato (GLM por API, la capa gratuita de Gemini, o Claude Haiku) junto con el estado sacado del DIARIO, y el modelo responde en llano: qué posiciones hay, por qué no entró en un ticker, qué significa un rechazo, resumen del día.
+- Límite duro: el modelo NUNCA envía órdenes ni toca el cuadro de mandos ni ejecuta comandos. Si el texto libre pide una acción («cierra XYZ»), responde con el comando que hay que escribir (/cerrar XYZ SI) y no hace nada. Los comandos de R-M-04 siguen siendo los únicos que actúan.
+- Funciona igual en el VPS (son llamadas por internet); coste céntimos por pregunta; el modelo solo ve lo que ya está en el diario (sin claves ni credenciales en el contexto).
+- Estado: PROPUESTA aceptada en su forma; se implementa después del canario.
+
 ### R-N-01 · El diario
 - Qué se guarda por cada decisión: hora exacta, estrategia y lote, señal y sus datos (precio, bid, ask, distancia), regla aplicada, orden enviada (token, tipo, precio, ruta), respuesta de DAS (aceptada, rechazada con motivo, fill con precio y cantidad), stops puestos y cambiados, locates (precio, cantidad, usado o no), avisos emitidos, y las métricas de ejecución (slippage frente al backtester, latencia orden→confirmación, fracción del volumen).
 - Cómo: ficheros por día, escritos ANTES de enviar y DESPUÉS de la respuesta (M6); texto (JSONL) para el día en curso y, si crece, parquet para el histórico (ocupa poco). Los precios que vio el bot se guardan también, para poder reproducir cualquier día sin el feed (los del lago llegan con la actualización, pero el diario guarda los que el bot usó en el instante). Copia fuera del VPS siempre (Q4). Conservación: todo.
