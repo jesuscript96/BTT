@@ -832,6 +832,13 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Latencia: NINGUNA (Jaume preguntó dos veces, 19-sep): el filtro es comparar dos marcas de tiempo por cada tick antes de sumarlo a la vela, microsegundos, y ocurre en la construcción de la vela, no en el envío de la orden; además usa el feed de operaciones, que es MÁS rápido que las velas agregadas de Massive. Cero efecto en el slippage.
 - Estado: FIJADA en su lógica (Jaume, 19-sep); umbral (10 o 20 ms) y reconstrucción del lago pendientes (área P). Origen: A5, A4.
 
+**Medido el 24-sep (`46_ipo_spac_massive.py` + `47_ipo_spac_analisis.py`, solo lectura; list_date y SIC de Massive a la fecha del trade; 1B 2024-01→2026-09 y 2B 2024-09→2026-09; 1A y 2019-2023 sin datos locales, exigirían backtests):**
+| | 1B (4.424 trades) | 2B (1.323 trades) |
+|---|---|---|
+| IPO < 30 días | 177 trades (4 %), ret medio **+10,7 %** (resto +3,2 %), 71 % ganadores, 1 fogonazo dentro (PLYX, cubierto por el protocolo) | 40 trades (3 %), ret medio +2,6 % (resto +3,2 %), pero **≥ 2 halts durante el trade en el 35 %** (resto 16 %) |
+| SPAC (SIC 6770) | 26 trades, ret medio **−2,8 %**, SL 35 % | 4 trades, ret medio **−20,6 %**, SL 50 % |
+Ninguna IPO ni SPAC tuvo cisne negro salvo PLYX (1B, 15 días cotizando, fogonazo +2.247 %, salió por el SL al −32 %). Lectura: excluir las SPAC está bien en las dos (pierden). Excluir las IPO < 30 días en 1B QUITA sus mejores trades (+1.900 % de retorno sumado en 177 trades); en 2B son neutras en rentabilidad pero doblan los halts. **Propuesta: la exclusión de IPO deja de ser global y pasa a ser por estrategia (casilla): apagada en 1B, encendida en 2B; la de SPAC sigue global.** Pendiente de Jaume.
+
 ### R-A-04 · Símbolos, duplicados, eventos, histórico e indicadores
 - **A7, símbolos distintos entre Massive y DAS** (clases de acciones, sufijos): tabla de equivalencias mantenida por el bot, construida ANTES de operar y actualizada cada día (bajas, vueltas a cotizar). Si un símbolo no casa, no se opera y se avisa. No debe haber equivalencias corruptas.
 - **A10, eventos programados** (FOMC, resultados): tarea humana; sin regla en el bot.
