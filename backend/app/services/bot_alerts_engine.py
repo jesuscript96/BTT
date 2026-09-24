@@ -677,11 +677,12 @@ def _entrada_avisada(estado: "_EstadoPar", entry_idx: int) -> Optional[float]:
 _KINDS_LOTE = ("lot_stop", "lot_tp")
 
 
-def _es_leg_de_lote(t: dict) -> bool:
-    """El leg que cierra un lote: se avisa como piramide (STOP/TP DE LOTE), no
-    como salida, o las cantidades se contarian dos veces."""
+def _es_leg_de_piramide(t: dict) -> bool:
+    """El leg de una reduccion o del cierre de un lote: ya se avisa como
+    piramide (REDUCIR / STOP DE LOTE / TP DE LOTE); avisarlo ademas como salida
+    contaba la misma orden dos veces y descuadraba el cierre final."""
     motivo = str(t.get("exit_reason") or "")
-    return motivo == "Pyramid Lot Stop" or motivo.startswith("Lot TP")
+    return motivo in ("Pyramid Reduce", "Pyramid Lot Stop") or motivo.startswith("Lot TP")
 
 
 def _clave_ex(ex: dict) -> tuple:
@@ -709,25 +710,51 @@ def _ejecuciones_de(trades: list[dict], entry_idx: int) -> list[dict]:
         1 if ex.get("kind") in _KINDS_LOTE else 0, int(ex.get("rung") or 0)))
 
 
-def _total_avisado(estado: "_EstadoPar", trades: list[dict], entry_idx: int,
-                   hasta_idx: Optional[int] = None,
-                   antes_de: Optional[tuple] = None) -> Optional[float]:
-    """Entrada avisada + anyadidos − reducciones − cierres de lote (enteros), o
-    None si la entrada no se aviso. Con `hasta_idx`, solo las ejecuciones hasta
-    esa vela incluida (para decir «posicion queda en» en el aviso de una
-    piramide); con `antes_de` (una `_clave_ex`), las anteriores a esa."""
+def _libro_avisado(estado: "_EstadoPar", trades: list[dict],
+                   entry_idx: int) -> Optional[list[tuple[dict, float, float]]]:
+    """(ejecucion, antes, despues) en acciones AVISADAS, enteras, en orden; o
+    None si la entrada no se aviso (posicion heredada: no hay verdad avisada).
+
+    - anyadido: + lo que dice el simulador, redondeado (como siempre);
+    - reduccion: la MISMA fraccion de la posicion que en el simulador, pero
+      sobre lo avisado (como los tramos parciales);
+    - cierre de lote: el lote tal cual se aviso al anyadirlo;
+    - si el simulador deja la posicion a cero, se cierra todo lo avisado."""
     base = _entrada_avisada(estado, entry_idx)
     if base is None:
         return None
     total = float(round(base))
+    libro = []
     for ex in _ejecuciones_de(trades, entry_idx):
+        antes = total
+        kind = str(ex.get("kind") or "add")
+        size = float(ex.get("size") or 0.0)
+        queda_sim = float(ex.get("position_size") or 0.0)
+        if kind != "reduce" and kind not in _KINDS_LOTE:
+            total = antes + float(round(size))
+        elif queda_sim <= 1e-4:
+            total = 0.0
+        elif kind == "reduce":
+            frac = size / (size + queda_sim) if size + queda_sim > 0 else 0.0
+            total = antes - min(float(round(antes * frac)), antes)
+        else:
+            total = antes - min(float(round(size)), antes)
+        libro.append((ex, antes, total))
+    return libro
+
+
+def _total_avisado(estado: "_EstadoPar", trades: list[dict], entry_idx: int,
+                   hasta_idx: Optional[int] = None) -> Optional[float]:
+    """Lo que queda avisado tras las piramides (ver `_libro_avisado`), o None si
+    la entrada no se aviso. Con `hasta_idx`, solo hasta esa vela incluida."""
+    libro = _libro_avisado(estado, trades, entry_idx)
+    if libro is None:
+        return None
+    total = float(round(_entrada_avisada(estado, entry_idx)))
+    for ex, _antes, despues in libro:
         if hasta_idx is not None and int(ex.get("idx", -1)) > hasta_idx:
             break
-        if antes_de is not None and _clave_ex(ex) == antes_de:
-            break
-        cantidad = float(round(float(ex.get("size") or 0.0)))
-        kind = str(ex.get("kind") or "add")
-        total += -cantidad if (kind == "reduce" or kind in _KINDS_LOTE) else cantidad
+        total = despues
     return max(total, 0.0)
 
 
@@ -1013,24 +1040,21 @@ class MotorAlertas:
                 if clave in estado.piramides_avisadas:
                     continue
                 estado.piramides_avisadas.add(clave)
-                # «Posicion queda en»: sobre lo AVISADO (entrada avisada + estos
-                # anyadidos), no sobre el relleno del simulador. Ver `_cuadre`.
-                cuadrado = _total_avisado(estado, trades, entry_idx, hasta_idx=int(ex.get("idx", -1)))
+                # «Posicion queda en» y la cantidad: sobre lo AVISADO, no sobre
+                # el relleno del simulador. Ver `_cuadre` y `_libro_avisado`.
                 cantidad = float(ex.get("size", 0.0))
-                if cuadrado is not None:
-                    cantidad = float(round(cantidad))
-                if ex.get("kind") in _KINDS_LOTE:
-                    # Nunca mas de lo que se tiene; y si el lote deja la
-                    # posicion a cero en el simulador, se cierra todo lo avisado
-                    # y la senal se rearma (su leg no se avisa como salida).
-                    vacia = float(ex.get("position_size") or 0.0) <= 1e-4
-                    if cuadrado is not None:
-                        antes = _total_avisado(estado, trades, entry_idx, antes_de=_clave_ex(ex)) or 0.0
-                        cantidad = antes if vacia else min(cantidad, antes)
-                        cuadrado = max(antes - cantidad, 0.0)
-                    if vacia:
-                        estado.idx_ultimo_cierre_avisado = max(
-                            estado.idx_ultimo_cierre_avisado, int(ex.get("idx", i)))
+                cuadrado = None
+                libro = _libro_avisado(estado, trades, entry_idx)
+                fila = next((f for f in (libro or []) if _clave_ex(f[0]) == _clave_ex(ex)), None)
+                if fila is not None:
+                    cantidad = abs(fila[2] - fila[1])
+                    cuadrado = fila[2]
+                # Una reduccion o un cierre de lote que deja la posicion a cero:
+                # su leg no se avisa como salida, asi que la senal se rearma aqui.
+                if (str(ex.get("kind") or "add") in ("reduce",) + _KINDS_LOTE
+                        and float(ex.get("position_size") or 0.0) <= 1e-4):
+                    estado.idx_ultimo_cierre_avisado = max(
+                        estado.idx_ultimo_cierre_avisado, int(ex.get("idx", i)))
                 eventos.append(Evento(
                     tipo="piramide", ticker=ticker, cuenta=est.get("cuenta"),
                     riesgo_usd=est["riesgo_usd"],   # para ordenar los bloques por cuenta
@@ -1057,8 +1081,8 @@ class MotorAlertas:
         # los tramos siempre en el mismo orden, asi que es estable.
         tramo_de: dict[int, int] = {}
         for t in trades:
-            if _es_leg_de_lote(t):
-                continue   # ya avisado arriba como STOP/TP DE LOTE
+            if _es_leg_de_piramide(t):
+                continue   # ya avisado arriba como REDUCIR / STOP o TP DE LOTE
             entry_idx = int(t.get("entry_idx", -1))
             n_tramo = tramo_de.get(entry_idx, 0)
             tramo_de[entry_idx] = n_tramo + 1
@@ -1083,7 +1107,7 @@ class MotorAlertas:
             # salida («que cierre un 25 %»). El total es lo que se abrio: la
             # suma de lo que cierran todos los tramos de esta misma entrada.
             tramos = [float(x.get("size") or 0.0) for x in trades
-                      if int(x.get("entry_idx", -2)) == entry_idx and not _es_leg_de_lote(x)]
+                      if int(x.get("entry_idx", -2)) == entry_idx and not _es_leg_de_piramide(x)]
             total = sum(tramos) or None
             # Y LO QUE QUEDA ABIERTO: el total menos todo lo cerrado hasta aqui,
             # este tramo incluido. `n_tramo` es su posicion en la lista, asi que

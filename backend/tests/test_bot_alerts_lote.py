@@ -47,6 +47,12 @@ def _senal(*barras):
     return s
 
 
+def _reduce(barra, frac):
+    return {"signals": _senal(barra), "action": "reduce", "capital_frac": frac,
+            "max_fires": 1, "unit": "pct", "amount_usd": 0.0, "size_by_sl": False,
+            "hybrid_stop": False, "hybrid_black_swan_pct": None, "hybrid_max_loss_pct": None}
+
+
 def _nivel(lot_stop=None, lot_tp=None, max_fires=1):
     nv = {"signals": _senal(4), "action": "add", "capital_frac": 0.0,
           "max_fires": max_fires, "unit": "usd", "amount_usd": 100.0,
@@ -95,6 +101,7 @@ def _correr_bot(monkeypatch, dia, niveles, avisadas=10.0):
     avisos = []
     for n in range(2, N + 1):
         avisos += m._procesar_estrategia("T", frame.iloc[:n].reset_index(drop=True), {}, EST)
+    _correr_bot.motor = m
     return avisos
 
 
@@ -151,6 +158,53 @@ def test_con_lo_avisado_distinto_del_simulador(monkeypatch):
         ("piramide", "lot_stop", 10.0, 9.0),
         ("salida", None, 9.0, 9.0),
     ]
+
+
+# ── REDUCIR (24-sep): se avisaba DOS veces y el cierre final descuadraba ──
+# Antes: «➖ REDUCIR 5» + «CIERRE PARCIAL · Pyramid Reduce» + un cierre final
+# que no cuadraba con lo que quedaba.
+
+def test_reducir_se_avisa_una_vez_y_el_cierre_cuadra(monkeypatch):
+    av = _correr_bot(monkeypatch, _dia(), [_reduce(4, 0.5)])
+    assert _resumen(av) == [
+        ("entrada", None, 10.0, None),
+        ("piramide", "reduce", 5.0, 5.0),
+        ("salida", None, 5.0, 5.0),
+    ]
+    assert "REDUCIR" in formatear(av[1])
+    assert av[2].posicion_restante == 0.0
+
+
+def test_anyadir_y_luego_reducir(monkeypatch):
+    av = _correr_bot(monkeypatch, _dia(), [_nivel(), _reduce(7, 0.5)])
+    assert _resumen(av) == [
+        ("entrada", None, 10.0, None),
+        ("piramide", "add", 10.0, 20.0),
+        ("piramide", "reduce", 10.0, 10.0),
+        ("salida", None, 10.0, 10.0),
+    ]
+
+
+def test_reducir_con_lo_avisado_distinto_del_simulador(monkeypatch):
+    """Se avisaron 9 (el simulador lleva 10): la reduccion es la MISMA fraccion
+    sobre lo avisado y todo lo que se cierra suma exactamente lo abierto."""
+    av = _correr_bot(monkeypatch, _dia(), [_nivel(), _reduce(7, 0.5)], avisadas=9.0)
+    _ent, add, red, sal = av
+    assert (add.acciones, add.posicion_total) == (10.0, 19.0)
+    assert red.acciones + red.posicion_total == 19.0
+    assert sal.acciones == red.posicion_total and sal.posicion_restante == 0.0
+
+
+def test_reducir_el_100_cierra_todo_y_rearma(monkeypatch):
+    """La reduccion vacia la posicion: no hay trade de cierre, asi que no hay
+    aviso de salida; la piramide cierra todo lo avisado y la senal se rearma."""
+    av = _correr_bot(monkeypatch, _dia(), [_reduce(4, 1.0)], avisadas=9.0)
+    assert _resumen(av) == [
+        ("entrada", None, 9.0, None),
+        ("piramide", "reduce", 9.0, 0.0),
+    ]
+    estado = next(iter(_correr_bot.motor._estado.values()))
+    assert estado.idx_ultimo_cierre_avisado > estado.idx_ultima_entrada_avisada
 
 
 def test_la_prealerta_no_avisa_cierres_de_lote(monkeypatch):
