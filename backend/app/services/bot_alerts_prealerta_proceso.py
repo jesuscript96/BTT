@@ -60,6 +60,54 @@ RESUELTAS = "resueltas"         # hijo -> bot: que paso con las de un minuto
 METRICAS = "metricas"           # hijo -> bot: para el log de cada 5 min
 
 
+def clave_prealerta(e) -> tuple:
+    """Lo que hace que dos prealertas sean LA MISMA: ticker, ESTRATEGIA, tipo,
+    minuto y cuenta. La usan este proceso Y el bot, para que no puedan
+    desincronizarse.
+
+    LA ESTRATEGIA VA DENTRO (24-sep-2026, Jaume: «tienen que haber prealertas,
+    alertas y demas por cada estrategia»). Antes no iba: con dos estrategias
+    sobre el mismo ticker la segunda tenia la misma matricula que la primera y
+    se tiraba como repetida. Medido ese dia: 10 prealertas, las 10 de una sola
+    estrategia, aunque las alertas de cierre salieron para las dos.
+
+    LA CUENTA TAMBIEN, pero no separa mensajes: una estrategia con varias
+    cuentas emite un evento por cuenta (otras acciones), y Telegram los junta en
+    UN mensaje por estrategia (`bot_alerts_telegram.clave_grupo`). Asi que sale
+    una prealerta por estrategia, con un bloque por cuenta dentro.
+    """
+    return (e.ticker, e.strategy_id, e.tipo, str(e.momento)[:16],
+            getattr(e, "cuenta", None))
+
+
+# Posicion del minuto dentro de `clave_prealerta`, para cerrar las de un minuto.
+_MINUTO = 3
+
+
+def filtrar_nuevas(eventos, vivas: set) -> list:
+    """De lo que devuelve el motor en un segundo, solo lo que aun no se ha
+    avisado; y lo apunta en `vivas`.
+
+    Es lo que sustituye a cerrar el minuto con el primer aviso. Antes, en cuanto
+    UNA estrategia prealertaba, la vela a medias se marcaba como evaluada y ya
+    no se miraba mas ese minuto: si la otra estrategia se cumplia unos segundos
+    despues, no se enteraba nadie. Ahora se sigue mirando cada segundo hasta el
+    59 (como mucho 16 evaluaciones por minuto y ticker, lo mismo que cuesta un
+    minuto sin avisos) y lo ya avisado se filtra aqui, por estrategia. El
+    motivo por el que existia el cierre —que la misma prealerta no saliera
+    en el 52, 53, 54... hasta el 59: ocho mensajes iguales— lo cubre este
+    filtro igual que antes.
+    """
+    nuevas = []
+    for e in eventos:
+        k = clave_prealerta(e)
+        if k in vivas:
+            continue
+        vivas.add(k)
+        nuevas.append(e)
+    return nuevas
+
+
 def _hijo(tuberia, cada_seg: float = 300.0) -> None:
     sys.path.insert(0, r"D:\Backtester\backend")
     import time as _time
@@ -73,6 +121,13 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
     # mismas lineas, y los dos hijos comparten el fichero de log. Visto en vivo
     # el 23-sep nada mas arrancar: «[BOT] EDVA hidratado» salia dos veces. Lo
     # que este proceso tenga que decir sale por `AVISO`, que lo escribe el bot.
+    #
+    # EL NOMBRE IMPORTA. El 23-sep se silencio `bot` y no sirvio de nada: las
+    # lineas repetidas («[BOT] X hidratado», «[BOT] [ENTRADA] ...») no salen del
+    # logger del bot sino del motor y su runner, `btt.bot_alerts` y
+    # `btt.bot_alerts.runner`. Silenciando el padre, `btt.bot_alerts`, callan los
+    # dos. Solo INFO: los WARNING (un fallo de verdad) siguen saliendo.
+    logging.getLogger("btt.bot_alerts").setLevel(logging.WARNING)
     logging.getLogger("bot").setLevel(logging.WARNING)
 
     runner = RunnerAlertas([])
@@ -107,11 +162,14 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
             # 59. Medido en su dia: de 86 % a 100 % de captura, y el margen
             # solo baja de 10 a 9,4 s.
             return
-        parcial.evaluada = True
+        # NO se cierra el minuto con el primer aviso (`parcial.evaluada`): otra
+        # estrategia puede cumplirse unos segundos despues. Lo ya avisado se
+        # filtra por estrategia en `filtrar_nuevas`.
+        nuevas = filtrar_nuevas(eventos, vivas)
+        if not nuevas:
+            return
         minuto = str(ts)[:16]
-        for e in eventos:
-            vivas.add((e.ticker, e.tipo, minuto, getattr(e, "cuenta", None)))
-        tuberia.send({"t": PREALERTA, "eventos": list(eventos), "via": via,
+        tuberia.send({"t": PREALERTA, "eventos": nuevas, "via": via,
                       "segundo": segundo, "latencia": latencia,
                       "margen": 60 - segundo - latencia, "minuto": minuto})
 
@@ -153,11 +211,10 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
             constructor.marcar_cerrada(tk, vela.get("timestamp"))
             ultimo_seg.pop(tk, None)
             minuto = str(vela.get("timestamp"))[:16]
-            confirmados = {(e.ticker, e.tipo, str(e.momento)[:16], getattr(e, "cuenta", None))
-                           for e in eventos}
+            confirmados = {clave_prealerta(e) for e in eventos}
             descartadas = []
             for clave in list(vivas):
-                if clave[0] != tk or clave[2] != minuto:
+                if clave[0] != tk or clave[_MINUTO] != minuto:
                     continue
                 vivas.discard(clave)
                 if clave not in confirmados:

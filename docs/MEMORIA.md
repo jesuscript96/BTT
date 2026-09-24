@@ -30,6 +30,67 @@
 
 ---
 
+## 2026-09-24 (Sailor, bot de alertas) — Primer día completo con cuatro procesos: 44 avisos, los 44 en el segundo 1; y tres cambios para mañana
+
+**La sesión (09:59 → 15:15), auditada al parar:**
+- **44 avisos, los 44 en el segundo 1**, todos por las dos estrategias (PM. 1A
+  TTP y la de Álvaro): 5 entradas (WETO, GCTK, YMAT, AIXI, PFSA), 2 pirámides y
+  los 3 tramos de salida parcial por horario de los cinco.
+- **Latencia de la vela:** 63 ventanas, mediana medida 1,33 s, p90 1,43 s, peor
+  p90 2,07 s; 62/63 por debajo de 1,6 s. Parecía bajar de 1,56 a 1,20 s a lo
+  largo del día, pero era **el reloj absorbiendo el desfase** (0,58 s a las 09:19,
+  0,12 s a las 15:15): la latencia real se quedó en **~1,0-1,1 s todo el día**.
+- **Prealertas:** 10, con ~15,5 s de margen, 7 de 10 confirmadas (las 3 que no,
+  todas de PFSA antes de entrar de verdad a las 13:51). **Las 10 de una sola
+  estrategia**: el fallo que se arregla hoy (abajo).
+- **Cero cortes, cero 1008/1011, cero errores, cero resurrecciones** del
+  vigilante en cinco horas.
+- **Tres huecos del lector** entre las 11:15 y las 12:29 (5,35 s, 6,90 s y
+  11,97 s), en el rato más parado del premercado. Ninguno tocó una alerta. Lo
+  que llegó justo después venía retrasado lo mismo que el hueco, así que los
+  datos existían y alguien los retuvo; pero desde dentro no se distingue si fue
+  nuestro bucle o Massive. Descartada una búsqueda huérfana (`find / -iname
+  margen.py`, lanzada a las 07:12 por otro chat y colgada 5 horas): ya había
+  terminado cuando llegó el de 12 s. Jaume: «seguramente sea Massive; por el
+  momento, solucionado». Para salir de dudas, el reloj interno (abajo).
+
+**Tres cambios hechos al parar (entran en el próximo arranque):**
+
+1. **Prealertas POR ESTRATEGIA** (Jaume: «por cada estrategia, que no por cada
+   cuenta»). La matrícula de una prealerta no llevaba la estrategia, así que la
+   segunda se tiraba como repetida; y el primer aviso cerraba el minuto, así que
+   la que se cumplía después ni se miraba. Ahora `clave_prealerta` (ticker,
+   **estrategia**, tipo, minuto, cuenta) vive en `bot_alerts_prealerta_proceso`
+   y la usan el proceso y el bot, y `filtrar_nuevas` sustituye al cierre del
+   minuto: se sigue mirando hasta el 59 y lo ya avisado se filtra. Las cuentas
+   de una estrategia siguen saliendo en **un solo mensaje** (Telegram ya
+   agrupaba por estrategia). Coste: como mucho 16 evaluaciones por minuto y
+   ticker, lo mismo que un minuto sin avisos.
+2. **El reloj interno del lector** (`FeedEnVivo._pulso`): un pulso cada 0,1 s en
+   el mismo bucle que lee, con `time.monotonic()` (no se mueve cuando Windows
+   corrige la hora). Cada hueco o parada ≥ 2 s sale en el log con su hora:
+   `[FEED] N s sin recibir nada del socket` y, si es nuestro,
+   `[FEED] el bucle que lee el socket se ha quedado N s PARADO`. Y el resumen de
+   5 min dice «el bucle llegó a ir N s tarde» al lado de «sin leer». **Hueco sin
+   parada = Massive; hueco con parada = nuestro.** Solo mide, no toca datos.
+3. **El log duplicado, arreglado de verdad.** El 23-sep se silenció el logger
+   `bot` y no sirvió: las líneas repetidas salen de `btt.bot_alerts` (motor y
+   runner). Ahora se silencia ese en el proceso de prealertas. Nunca afectó a
+   Telegram ni al cuadro de mandos (comprobado: 4 avisos guardados, sin dobles).
+
+**Pruebas:** `test_bot_alerts_prealertas_por_estrategia.py` (7: dos estrategias
+dan dos prealertas, la que llega tarde también sale, no se repite cada segundo,
+el minuto siguiente vuelve a avisar, varias cuentas = un mensaje, dos
+estrategias con cuentas = un mensaje cada una, la matrícula) y
+`test_bot_alerts_reloj_interno.py` (3: un bloqueo de 0,6 s se ve, esperar datos
+no es un atasco, el reloj se para con el feed). 380 verdes en la zona del bot.
+`pyflakes` sin nombres sin definir en `bot.py`.
+
+**Pendiente para mañana:** ver en vivo las prealertas de las dos estrategias, y
+si hay huecos, leer las dos líneas de `[FEED]` para saber de quién son.
+
+---
+
 ## 2026-09-24 (Sailor, máquina de Jaume) — El reloj del PC: por qué deriva, cómo quedó y qué afecta
 
 **Por qué se desviaba.** Windows, en un PC que no está en un dominio, solo

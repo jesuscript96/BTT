@@ -228,6 +228,17 @@ class FeedEnVivo:
         self.lat_socket: list = []
         self.hueco_lectura = 0.0
         self._ultima_lectura: Optional[float] = None
+        # EL RELOJ INTERNO (24-sep-2026). `hueco_lectura` no distingue entre «el
+        # bucle estaba atascado» y «Massive no mandaba nada»: los dos se ven como
+        # un rato sin leer. El 24-sep hubo tres huecos de 5-12 s en premercado y
+        # lo que llego despues venia retrasado lo mismo que el hueco, pero no
+        # habia forma de saber de quien era. Este pulso se despierta cada 0,1 s
+        # en el MISMO bucle que lee: si durante un hueco el pulso tambien llega
+        # tarde, el bucle estaba bloqueado (es nuestro); si llega a su hora, el
+        # bucle estaba libre esperando datos (es de Massive o de la red). Usa
+        # `time.monotonic()`, que no se mueve cuando Windows corrige la hora.
+        self.retraso_bucle = 0.0
+        self._tarea_pulso = None
         self._caido_desde: Optional[float] = None
         # Suscribirse al mercado entero para que el radar pueda descubrir gaps.
         # `al_mercado` recibe TODOS los agregados de minuto, incluidos los de
@@ -242,6 +253,24 @@ class FeedEnVivo:
 
     def parar(self) -> None:
         self._parar = True
+
+    # Por encima de esto, cada hueco o parada se apunta en el log con su hora,
+    # para poder cruzarlos. Por debajo es ruido normal del bucle.
+    AVISO_HUECO_S = 2.0
+
+    async def _pulso(self, paso: float = 0.1) -> None:
+        """El reloj interno: ver `retraso_bucle`. No toca ningun dato."""
+        t = time.monotonic()
+        while not self._parar:
+            await asyncio.sleep(paso)
+            ahora = time.monotonic()
+            tarde = ahora - t - paso
+            if tarde > self.retraso_bucle:
+                self.retraso_bucle = tarde
+            if tarde >= self.AVISO_HUECO_S:
+                logger.warning("[FEED] el bucle que lee el socket se ha quedado %.1f s "
+                               "PARADO (el atasco es nuestro)", tarde)
+            t = ahora
 
     def quitar(self, fuera: Iterable[str]) -> list[str]:
         """Deja de seguir tickers. Devuelve los que se quitaron.
@@ -292,6 +321,10 @@ class FeedEnVivo:
             )
 
         espera = ESPERA_RECONEXION
+        # El reloj interno corre en ESTE bucle y vive lo que viva el lector,
+        # a traves de las reconexiones: se para solo cuando se para el feed.
+        if self._tarea_pulso is None:
+            self._tarea_pulso = asyncio.get_event_loop().create_task(self._pulso())
         while not self._parar:
             conectado_en = None
             try:
@@ -341,7 +374,12 @@ class FeedEnVivo:
                     async for crudo in ws:
                         _ahora = time.time()
                         if self._ultima_lectura is not None:
-                            self.hueco_lectura = max(self.hueco_lectura, _ahora - self._ultima_lectura)
+                            _hueco = _ahora - self._ultima_lectura
+                            self.hueco_lectura = max(self.hueco_lectura, _hueco)
+                            if _hueco >= self.AVISO_HUECO_S:
+                                logger.warning("[FEED] %.1f s sin recibir nada del socket "
+                                               "(si no hay «bucle PARADO» a la vez, es de Massive)",
+                                               _hueco)
                         self._ultima_lectura = _ahora
                         if self._parar:
                             break
@@ -364,6 +402,8 @@ class FeedEnVivo:
                 await asyncio.sleep(espera)
                 espera = min(espera * 2, ESPERA_RECONEXION_MAX)
         self.conectado = False
+        if self._tarea_pulso is not None:
+            self._tarea_pulso.cancel()
 
     def _procesar(self, crudo: Any) -> None:
         try:
