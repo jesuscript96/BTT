@@ -1,164 +1,40 @@
-# Preguntas para el bróker (Sage) y el manual del API de DAS · 2026-09-23
+# Preguntas NETEADAS para DAS y Sage · 2026-09-24
 
-Listado limpio para el día que pidamos el PDF del API. Referencias entre paréntesis: pregunta del banco o punto del apartado R.
+Tras el repaso de Jaume (PDF «Preguntas API y Broker», 24-sep): las de negro las contestó él o esperan al PDF; las de rojo van a DAS; las de azul a Sage.
 
-## 1. Conexión y sesión del API / 1. API connection and session
+## Para DAS (API)
 
-1. **ES:** ¿El API de DAS (CMD API) está disponible en nuestra cuenta? ¿Qué versión del manual es la vigente? Necesitamos el PDF actualizado; el que hemos visto es de noviembre de 2021.  
-   **EN:** Is the DAS CMD API enabled on our account? Which manual version is current? We need the up-to-date PDF; the one we have seen is from November 2021.  *(2b)*
+1. **ES:** ¿Existe una cuenta demo o de simulación que funcione con el mismo API? ¿Cómo se accede y se configura? ¿Ese acceso lo da DAS o el bróker?  
+   **EN:** Is there a demo or simulation account that works with the same API? How is it accessed and set up? Is that access provided by DAS or by the broker?
 
-2. **ES:** ¿Cuántas conexiones simultáneas admite una cuenta? Si abrimos DAS en otro ordenador, ¿se desconecta el bot? ¿Existe un modo de solo lectura («watch») además del de operar?  
-   **EN:** How many simultaneous connections does one account allow? If we open DAS on another computer, does the bot get disconnected? Is there a read-only ("watch") mode besides trading mode?  *(J11, C12, R-10)*
+2. **ES:** ¿Se puede modificar una orden viva (precio, cantidad) sin cancelarla y volver a enviarla (comando REPLACE o equivalente)?  
+   **EN:** Can a live order be modified (price, quantity) without cancelling and resubmitting it (REPLACE command or equivalent)?
 
-3. **ES:** ¿La sesión caduca de noche? ¿Hay que volver a iniciar sesión antes de las 04:00 ET? ¿Hay doble factor (2FA) y se puede automatizar el reinicio de sesión?  
-   **EN:** Does the session expire overnight? Do we need to log in again before 4:00 AM ET? Is there two-factor authentication, and can re-login be automated?  *(J15, J3)*
+3. **ES:** Rutas: ¿cuáles operan en premercado desde las 04:00 y cuáles en after-hours? ¿Cuál recomiendan para salir con urgencia? ¿Qué es exactamente la ruta SMAT y a qué ruta manda cada tipo de orden? Entendemos que esto puede ser del bróker, pero por si saben algo.  
+   **EN:** Routes: which ones work in pre-market from 4:00 AM and which in after-hours? Which one do you recommend for urgent exits? What exactly is the SMAT route and where does it send each order type? We understand this may be a broker matter, but in case you know.
 
-4. **ES:** ¿Cuál es el límite de mensajes o peticiones por segundo del API, y qué pasa al superarlo (rechazo, desconexión)? ¿Hay límite de órdenes por día?  
-   **EN:** What is the API rate limit (messages or requests per second) and what happens when it is exceeded (rejection, disconnection)? Is there a daily order limit?  *(J18, R-11)*
+4. **ES:** La orden PEG MID (pegada al punto medio): ¿qué rutas la admiten? ¿Funciona en premercado? ¿Se considera «agregar» liquidez y no «remover»? ¿Admite precio límite y Display=0?  
+   **EN:** The PEG MID order (pegged to the midpoint): which routes support it? Does it work in pre-market? Is it treated as adding liquidity rather than removing? Does it accept a limit price and Display=0?
 
-5. **ES:** ¿Existe una cuenta demo o de simulación con el mismo API? ¿Cómo se configura y qué diferencias tiene con la real (fills, locates, datos)?  
-   **EN:** Is there a demo or simulation account with the same API? How is it set up, and how does it differ from the live account (fills, locates, market data)?  *(O1, R-12)*
+5. **ES:** La plataforma tiene órdenes OCO, Trigger Orders (WithTrigger) y Stop Range. ¿Están disponibles por el API? ¿Un Trigger Order dispara con una ejecución parcial de la orden principal o solo cuando está completa?  
+   **EN:** The platform has OCO orders, Trigger Orders (WithTrigger) and Stop Range. Are they available through the API? Does a Trigger Order fire on a partial fill of the primary order or only when it is fully executed?
 
-6. **ES:** La certificación del API: ¿qué hay que entregar y cuánto tarda? ¿Se exige también para la cuenta demo? ¿La facturación empieza al pedir la activación o al aprobar? ¿Qué nivel (símbolos y órdenes por día) recomiendan para un bot con hasta 50 símbolos y unas 200 órdenes al día?  
-   **EN:** API certification: what must we submit and how long does it take? Is it also required for the demo account? Does billing start when we request activation or when approved? Which tier (symbols and daily orders) do you recommend for a bot with up to 50 symbols and about 200 orders per day?  *(KB)*
+6. **ES:** Los ajustes de la plataforma que abren ventanas de confirmación (Send Order Confirm, Same Order in 10 seconds, Price Check, aviso de stop demasiado lejos, Fast Stop Limit Order): ¿afectan a las órdenes enviadas por el API? ¿Cómo dejarlos desactivados para el bot, por el API o en el perfil?  
+   **EN:** Platform settings that open confirmation pop-ups (Send Order Confirm, Same Order in 10 seconds, Price Check, stop-too-far warning, Fast Stop Limit Order): do they affect orders sent through the API? How do we keep them disabled for the bot, via the API or in the profile?
 
-7. **ES:** Con 2FA activado, ¿puede el API iniciar sesión automáticamente? Si no, ¿recomiendan dejar 2FA desactivado en la cuenta del bot?  
-   **EN:** With 2FA enabled, can the API log in automatically? If not, do you recommend leaving 2FA disabled on the bot's account?  *(KB)*
+7. **ES:** ¿Se pueden tener dos órdenes stop de compra vivas sobre la misma posición corta a la vez (una principal y una de emergencia), cada una con su cantidad?  
+   **EN:** Can we have two live buy-stop orders on the same short position at the same time (a main one and an emergency one), each with its own quantity?
 
-8. **ES:** ¿Qué NO se puede hacer por el API (transferencias, cambios de cuenta, etc.)?  
-   **EN:** What can NOT be done through the API (transfers, account changes, etc.)?  *(Q6)*
+8. **ES:** Órdenes durante un halt: ¿acepta el API una orden a mercado o límite mientras la acción está parada y la envía al cruce de reapertura? ¿Se puede cancelar antes de la reapertura? ¿Qué mensajes devuelve el API en ese caso?  
+   **EN:** Orders during a halt: does the API accept a market or limit order while the stock is halted and route it to the reopening cross? Can it be cancelled before the reopening? What messages does the API return in that case?
 
-## 2. Órdenes / 2. Orders
+9. **ES:** [Propuesta de añadir] ¿El API admite órdenes «post only» / «add liquidity only» (por ejemplo ARCA ALO), que se rechazan o recolocan en vez de ejecutarse contra el libro? ¿Con qué sintaxis?  
+   **EN:** [Proposed addition] Does the API support "post only" / "add liquidity only" orders (e.g. ARCA ALO) that are rejected or repriced instead of executing against the book? What is the syntax?
 
-1. **ES:** ¿Podemos asignar nuestro propio identificador (token) a cada orden y recibirlo en todas las respuestas (aceptada, rechazada, ejecutada, cancelada)? ¿Qué pasa si no recibimos respuesta: cómo consultamos el estado de una orden concreta para no duplicarla?  
-   **EN:** Can we attach our own identifier (token) to every order and get it back in all responses (accepted, rejected, filled, cancelled)? If we get no response, how do we query one specific order's status so we do not duplicate it?  *(B5, B16, R-1)*
+## Para Sage
 
-2. **ES:** Lista completa de motivos de rechazo de una orden y el formato exacto en que se devuelven (sin locate, sin capital, halt, precio fuera de banda, lote, ruta cerrada, etc.).  
-   **EN:** Full list of order rejection reasons and the exact format in which they are returned (no locate, insufficient buying power, halt, price outside band, lot size, route closed, etc.).  *(B4, R-5, R-14)*
+1. **ES:** ¿Dos órdenes stop de compra vivas sobre la misma posición corta retienen buying power cada una? ¿Se valora la orden al precio límite?  
+   **EN:** Do two live buy-stop orders on the same short position each reserve buying power? Is the order valued at its limit price?
 
-3. **ES:** Lista completa de códigos de log y de error que puede devolver el API (órdenes, locates, conexión), con su significado.  
-   **EN:** Full list of log and error codes the API can return (orders, locates, connection), with their meaning.  *(R-14)*
-
-4. **ES:** Tipos de orden y tiempos en vigor admitidos por el API: mercado, límite, stop-market, stop-limit, trailing, ocultas; DAY, DAY+ (extended hours), IOC, GTC. ¿Cuáles funcionan en premercado y after-hours?  
-   **EN:** Order types and time-in-force supported by the API: market, limit, stop-market, stop-limit, trailing, hidden; DAY, DAY+ (extended hours), IOC, GTC. Which ones work in pre-market and after-hours?  *(B7, B17, R-3)*
-
-5. **ES:** ¿Existen órdenes OCO o bracket (una cancela la otra) por el API? Si no, ¿se pueden ligar dos órdenes de alguna forma?  
-   **EN:** Are OCO or bracket orders (one cancels the other) available through the API? If not, is there any way to link two orders?  *(D1, R-3)*
-
-6. **ES:** ¿Se puede modificar una orden viva (precio, cantidad) sin cancelarla y volver a enviarla (comando REPLACE)?  
-   **EN:** Can a live order be modified (price, quantity) without cancelling and resubmitting it (REPLACE command)?  *(R-2)*
-
-7. **ES:** Cancelación: si no llega confirmación, ¿la orden sigue viva? Si se confirma la cancelación y después llega una ejecución, ¿cómo se resuelve?  
-   **EN:** Cancellation: if no confirmation arrives, is the order still live? If the cancellation is confirmed and then a fill arrives, how is that resolved?  *(B16)*
-
-8. **ES:** Rutas disponibles: cuáles operan en premercado (desde las 04:00), cuáles en after-hours, coste de cada una (añadir/quitar liquidez), y cuál recomiendan para salir con urgencia. ¿Qué es exactamente la ruta SMAT?  
-   **EN:** Available routes: which ones work in pre-market (from 4:00 AM), which in after-hours, cost of each (adding/removing liquidity), and which one you recommend for urgent exits. What exactly is the SMAT route?  *(B7, D9, R-4)*
-
-9. **ES:** ¿El API admite órdenes «post only» o «add liquidity only» (por ejemplo ARCA ALO), que se rechazan o se recolocan en vez de ejecutarse contra el libro? ¿Con qué sintaxis se envían?  
-   **EN:** Does the API support "post only" / "add liquidity only" orders (e.g. ARCA ALO) that are rejected or repriced instead of executing against the book? What is the syntax?  *(R-20)*
-
-10. **ES:** La orden PEG MID (pegada al punto medio) del manual: ¿qué rutas la admiten? ¿Funciona en premercado? ¿Cobra el mismo rebate que una orden límite que descansa en el libro, o tiene una tarifa distinta? ¿Admite precio límite y Display=0?  
-   **EN:** The PEG MID order (pegged to the midpoint) in the manual: which routes support it? Does it work in pre-market? Does it earn the same rebate as a resting limit order, or is it priced differently? Does it accept a limit price and Display=0?  *(R-21)*
-
-11. **ES:** La plataforma tiene órdenes OCO, Trigger Orders (WithTrigger) y Stop Range. ¿Están disponibles por el API? ¿Un Trigger Order dispara con una ejecución parcial de la orden principal o solo cuando está completa?  
-   **EN:** The platform has OCO orders, Trigger Orders (WithTrigger) and Stop Range. Are they available through the API? Does a Trigger Order fire on a partial fill of the primary order or only when it is fully executed?  *(KB)*
-
-12. **ES:** Los ajustes de la plataforma que abren ventanas de confirmación (Send Order Confirm, Same Order in 10 seconds, Price Check, aviso de stop demasiado lejos, Fast Stop Limit Order): ¿afectan a las órdenes enviadas por el API? ¿Cómo dejarlos desactivados en el perfil del bot?  
-   **EN:** Platform settings that open confirmation pop-ups (Send Order Confirm, Same Order in 10 seconds, Price Check, stop too far warning, Fast Stop Limit Order): do they affect orders sent through the API? How do we keep them disabled in the bot's profile?  *(KB)*
-
-13. **ES:** ¿Dos órdenes stop de compra vivas sobre la misma posición corta retienen buying power cada una? ¿Se valora la orden al precio límite? ¿Qué tope de órdenes abiertas por símbolo y lado tiene nuestra cuenta?  
-   **EN:** Do two live buy-stop orders on the same short position each reserve buying power? Is the order valued at its limit price? What is our account's limit on open orders per symbol and side?  *(KB)*
-
-14. **ES:** Precios por debajo de 1 $: ¿cuántos decimales admite el límite y cómo se redondea? ¿Hay tamaño máximo de orden y cómo se parte?  
-   **EN:** Prices below $1: how many decimals does a limit price accept and how is it rounded? Is there a maximum order size, and how should it be split?  *(B9, B10, R-6)*
-
-## 3. Stops / 3. Stops
-
-1. **ES:** Las órdenes stop y stop-limit, ¿viven en el servidor de DAS o del bróker, o en nuestro ordenador? Es decir, ¿siguen activas si nuestro programa o nuestra conexión se caen?  
-   **EN:** Do stop and stop-limit orders live on the DAS/broker server or on our computer? In other words, do they stay active if our program or our connection goes down?  *(C2)*
-
-2. **ES:** ¿Con qué precio dispara un stop: último precio, bid, ask? ¿Se puede elegir? ¿Disparan en premercado y after-hours?  
-   **EN:** Which price triggers a stop: last, bid, or ask? Can we choose? Do stops trigger in pre-market and after-hours?  *(C3, C6, R-2)*
-
-3. **ES:** En DAS Trader Pro existe la orden StopLimitP («LimitP»), que dispara por el último precio cruzado. ¿Está disponible por el API además del STOPLMT del manual? ¿Cuál es el precio de disparo de cada tipo (último, bid, ask) y cuál recomiendan en premercado? ¿Un print tardío o fuera de secuencia puede dispararla?  
-   **EN:** DAS Trader Pro has the StopLimitP ("LimitP") order, triggered by the last trade price. Is it available through the API in addition to the STOPLMT in the manual? What is the trigger price for each type (last, bid, ask) and which do you recommend in pre-market? Can a late or out-of-sequence print trigger it?  *(R-22)*
-
-4. **ES:** ¿Qué pasa con un stop cuando la acción entra en halt? ¿Se cancela, se mantiene, se ejecuta al reabrir?  
-   **EN:** What happens to a stop when the stock is halted? Is it cancelled, kept, or executed at the reopening?  *(C16)*
-
-5. **ES:** ¿Hay distancia mínima entre el precio actual y el stop para que sea aceptado? ¿Hay límite de órdenes stop vivas por cuenta o por símbolo?  
-   **EN:** Is there a minimum distance between the current price and the stop for it to be accepted? Is there a limit on live stop orders per account or per symbol?  *(C15, C11)*
-
-6. **ES:** ¿Se pueden tener dos órdenes stop de compra sobre la misma posición corta a la vez (una principal y una de emergencia), cada una con su cantidad?  
-   **EN:** Can we have two buy-stop orders on the same short position at the same time (a main one and an emergency one), each with its own quantity?  *(C1, R-C-11)*
-
-## 4. Datos de mercado por el API / 4. Market data through the API
-
-1. **ES:** ¿Cuántos símbolos admite a la vez el Level 1 y el Time & Sales por el API? ¿Depende del plan de datos contratado?  
-   **EN:** How many symbols can be subscribed at once to Level 1 and Time & Sales through the API? Does it depend on the market data plan?  *(R-18)*
-
-2. **ES:** ¿El feed de precios es consolidado de todas las bolsas (SIP) o solo Nasdaq? ¿Qué operaciones excluye el Time & Sales (lotes sueltos, prints tardíos, condiciones)?  
-   **EN:** Is the price feed consolidated across all exchanges (SIP) or Nasdaq only? Which trades does Time & Sales exclude (odd lots, late prints, conditions)?  *(R-19)*
-
-3. **ES:** ¿El API indica si una acción está en halt y el motivo (LULD, T1, T12)? ¿Y las bandas LULD? ¿Con qué latencia?  
-   **EN:** Does the API indicate whether a stock is halted and why (LULD, T1, T12)? Does it provide the LULD bands? With what latency?  *(F1, F9, R-8)*
-
-4. **ES:** ¿El API indica si una acción está en SSR (restricción de ventas en corto)? Si no, ¿cómo lo sabemos antes de enviar la orden?  
-   **EN:** Does the API indicate whether a stock is under SSR (short sale restriction)? If not, how can we know before sending the order?  *(B14, F2, R-8)*
-
-## 5. Locates (préstamo de acciones para cortos) / 5. Locates (stock borrow for shorts)
-
-1. **ES:** ¿Qué comandos del API hay para consultar precio y disponibilidad de locates, comprarlos y aceptar o rechazar la oferta? ¿Qué devuelve cuando no hay acciones disponibles?  
-   **EN:** Which API commands exist to query locate price and availability, buy locates, and accept or reject the offer? What is returned when no shares are available?  *(H16, R-7, R-15)*
-
-2. **ES:** El precio del locate, ¿se indica por acción o por paquete de 100? ¿Se cobra por paquetes enteros?  
-   **EN:** Is the locate price quoted per share or per 100-share lot? Is it charged in whole lots?  *(H1, R-15)*
-
-3. **ES:** ¿Los locates caducan al cierre del día? ¿Sirven para volver a entrar en la misma acción el mismo día (reentradas)? ¿Se pueden devolver y con qué reembolso?  
-   **EN:** Do locates expire at the end of the day? Can they be reused to re-enter the same stock the same day? Can they be returned, and with what refund?  *(H7)*
-
-4. **ES:** ¿A qué hora empieza el servicio de locates? ¿Hay locates desde las 04:00 ET?  
-   **EN:** At what time does the locate service start? Are locates available from 4:00 AM ET?  *(H11)*
-
-5. **ES:** ¿Hay varios proveedores de locates? ¿El API elige el más barato o hay que elegir ruta? ¿Cómo se sabe si una acción es ETB (no necesita locate)?  
-   **EN:** Are there several locate providers? Does the API pick the cheapest or do we choose a route? How do we know a stock is ETB (no locate needed)?  *(H9, H10)*
-
-6. **ES:** Si el precio del locate cambia entre la consulta y la aceptación, ¿qué precio se aplica?  
-   **EN:** If the locate price changes between the quote and the acceptance, which price applies?  *(H8)*
-
-7. **ES:** Con el locate aceptado, ¿puede DAS rechazar igualmente la orden de venta en corto? ¿En qué casos?  
-   **EN:** With a locate accepted, can DAS still reject the short sale order? In which cases?  *(B15)*
-
-## 6. Margen, capital y cuenta / 6. Margin, buying power and account
-
-1. **ES:** ¿Qué devuelve exactamente la consulta de buying power (intradía, overnight, premercado)? ¿Ya descuenta el margen especial de cada símbolo?  
-   **EN:** What exactly does the buying power query return (intraday, overnight, pre-market)? Does it already account for each symbol's special margin requirement?  *(E6, I1, R-9)*
-
-2. **ES:** ¿Con qué criterio se clasifica un valor como «alto riesgo» a efectos de margen para cortos, y cómo podemos consultarlo por el API antes de operar?  
-   **EN:** By what criteria is a stock classified as "high risk" for short margin purposes, and how can we query it through the API before trading?  *(2c, R-16)*
-
-3. **ES:** Autoliquidación: ¿a qué hora y con qué aviso se liquida una posición por margen? ¿Solo en sesión regular?  
-   **EN:** Auto-liquidation: at what time and with what notice is a position liquidated for margin? Only during regular hours?  *(2c, R-16)*
-
-4. **ES:** Llamadas de margen y buy-in forzoso (obligación de cubrir un corto): ¿cómo se comunican y con qué plazo? ¿Se ven por el API?  
-   **EN:** Margin calls and forced buy-ins (being forced to cover a short): how are they communicated and with what notice? Are they visible through the API?  *(I9, G8)*
-
-5. **ES:** Controles de riesgo de la cuenta (Account Risk Params): ¿cuáles están activos en nuestra cuenta (MaxLoss, Max Unreal, Position Unreal Loss, Max Ord Cap, Max Pos Val, Symbols/Route Control, Max Total Locate Fee, horario)? ¿Podemos verlos por el API? Pedimos activar «Always allow unwind positions» para que un bloqueo por pérdida nunca impida cerrar un corto.  
-   **EN:** Account risk controls (Account Risk Params): which ones are active on our account (MaxLoss, Max Unreal, Position Unreal Loss, Max Ord Cap, Max Pos Val, Symbols/Route Control, Max Total Locate Fee, trading hours)? Can we read them through the API? We ask you to enable "Always allow unwind positions" so that a loss-based block can never prevent us from covering a short.  *(KB)*
-
-6. **ES:** ¿Tiene nuestra cuenta activado algún cierre automático del bróker (Auto Stop, Unwind all SHORT at 3:59 PM, Total Loss)? ¿Con qué umbrales y aviso?  
-   **EN:** Does our account have any broker-side automatic liquidation enabled (Auto Stop, Unwind all SHORT at 3:59 PM, Total Loss)? With which thresholds and warning?  *(KB)*
-
-7. **ES:** Regla PDT (pattern day trader) con cuenta por debajo de 25.000 $: ¿cómo la aplican?  
-   **EN:** PDT (pattern day trader) rule with an account below $25,000: how do you apply it?  *(R-16)*
-
-## 7. Halts largos y costes / 7. Long halts and costs
-
-1. **ES:** Si un corto queda atrapado en un halt de varios días (T12), ¿qué comisiones, coste de préstamo (hard-to-borrow) o cargos por locate se cobran por cada día? ¿Puede haber buy-in forzoso durante el halt?  
-   **EN:** If a short is stuck in a multi-day halt (T12), what commissions, hard-to-borrow fees or locate charges are billed per day? Can there be a forced buy-in during the halt?  *(R-17)*
-
-2. **ES:** Órdenes durante un halt: ¿acepta el API una orden a mercado o límite mientras la acción está parada y la envía al cruce de reapertura? ¿Se puede cancelar antes de la reapertura? ¿Qué mensajes devuelve el API en ese caso?  
-   **EN:** Orders during a halt: does the API accept a market or limit order while the stock is halted and route it to the reopening cross? Can it be cancelled before the reopening? What messages does the API return in that case?  *(R-23)*
-
-3. **ES:** Comisiones y tarifas de rutas actualizadas (confirmar las de la web: comisión por acción, añadir/quitar liquidez por ruta, horarios).  
-   **EN:** Current commissions and route fees (confirm the ones on the website: per-share commission, add/remove liquidity by route, hours).  *(B7)*
+2. **ES:** ¿Qué pasa con un stop cuando la acción entra en halt? ¿Se cancela, se mantiene, se ejecuta al reabrir? ¿Cambia según la ruta a la que se envió (SMAT o ruta directa)?  
+   **EN:** What happens to a stop when the stock is halted? Is it cancelled, kept, or executed at the reopening? Does it depend on the route it was sent to (SMAT or a direct route)?

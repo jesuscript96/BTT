@@ -139,6 +139,16 @@ Responde total o parcialmente 35 de las 42 preguntas, casi siempre para la plata
 10. **GUI**: ajustes que abren ventanas («Send Order Confirm», «Same Order in 10 seconds», «Price Check», stop «too low or too high», «Enable Fast Stop Limit Order») → desactivar en el perfil del bot y preguntar si afectan al API. Rutas con sufijo L/M/S; «Don't automatically load route list». «Auto Save Trade» cada N s = fuente de reconciliación sin gastar cuota.
 11. **Suscriptor profesional**: usar capital de otros o repartir beneficios pasa los datos a tarifa profesional; revisar el cuestionario antes de pedir el API.
 
+## 2e. Respuestas de Jaume al listado del bróker (24-sep, PDF «Preguntas API y Broker») y neteo
+Jaume revisó las 49 preguntas: las contestadas por él o que esperan al PDF quedan fuera; a DAS van 8 (+1 propuesta, post only); a Sage 2. Lo que fija:
+1. **Una cuenta DAS = un usuario = una máquina**: no puede haber dos ordenadores con la misma cuenta abierta. El login, el 2FA y encender/apagar el bot los hace Jaume a mano (EP-7 cerrado).
+2. **DAS ya contestó por correo sobre los rechazos**: «no list of reject messages is available, as it would vary a ton based on rejects from the OMS, rejections from the individual routes, broker-specific rejects, and so on. Any reject would be returned to the API though.» → confirma el diseño de R-B-07: catálogo propio que se llena en demo/sombra a partir del texto literal que devuelve el API; no existe lista oficial.
+3. Tipos de orden, TIF (DAY+ en PM), token de orden, consulta de estado, estados de una orden sin confirmación, decimales bajo 1 $ (redondeo a 2-3 decimales), comandos de locates, ETB y proveedores: **esperan al PDF nuevo**; el de 2021 ya orienta.
+4. **Locates (Jaume)**: caducan al cierre del día, no se devuelven ni reembolsan, sirven para reentrar el mismo día en la misma acción SALVO los de un solo uso → PENDIENTE: detectar el indicativo de «locate de un solo uso» en la respuesta del bróker/API (EP-9). El servicio empieza a primera hora: por eso se buscan al saltar la acción al radar. Proveedores: los que ofrece el bróker; se coge el más barato. Precio: el de la aceptación, y se acepta rápido.
+5. **Datos por API**: LULD, T1, T12 y bandas llegan como avisos; SSR igual; las cuotas de datos las gestiona Jaume. La API es solo para ejecución: transferencias y cambios de cuenta, fuera.
+6. **Margen, BP, comisiones, costes de halts largos, buy-in**: los gestiona Jaume con el bróker, no el bot; el bot solo mira los controles de riesgo que devuelva el API.
+7. Distancia mínima del stop y tope de stops vivos: no hace falta preguntarlo, se verá en el momento.
+
 ## 3. Reglas
 
 *(Ninguna todavía. Se van añadiendo por área a medida que se contesta el banco
@@ -1114,6 +1124,7 @@ Escenarios que se han detectado y NO están decididos del todo. No bloquean el b
 | EP-3 | Dos stops de compra residentes retienen BP dos veces o chocan con «Max Ord Cap» / «Max Pos Val» valorados al límite (+87 %) | Pregunta al bróker (KB) | Si retienen BP doble: bajar el límite de la emergencia, o ponerla solo cuando el principal falle (con la latencia que eso añade), o pedir excepción a Sage |
 | EP-4 | Trigger Order del API (stop pegado a la entrada) solo dispara con la entrada «fully executed»: una entrada llenada a medias (R-B-02) no tendría stop automático | El bot pone los stops él mismo tras cada fill parcial (diseño actual) | Si el API expone Trigger Orders, decidir si se usan solo cuando la entrada llena entera |
 | EP-5 | Techo de la emergencia | **CERRADO (23-sep): márgenes SUMADOS sobre el nivel del stop: +3 / +13 / +63 %; estudio repetido, idéntico (máx 7,7 % en vez de 8,4 %)** | — |
+| EP-9 | Locates «de un solo uso»: algunos proveedores no permiten reutilizar el locate para reentrar el mismo día | El bot lleva locates comprados − usados por ticker y recompra si hace falta (R-B-07 punto de Jaume) | Detectar el INDICATIVO de «un solo uso» en la respuesta del API/bróker para no dar por disponible lo que no lo está; hasta entonces, tratar toda recompra rechazada como «sin locate» y recomprar |
 | EP-6 | Limbo entre niveles con varias estrategias: rara vez el precio rebasa el principal de B sin llenarlo y sin llegar al de A | Sumar las acciones de B al principal de A (fijado) | Comprobar en demo el neteo de cantidades cuando A y B tienen fills parciales a la vez |
 | EP-7 | 2FA en la cuenta del bot | **CERRADO (Jaume, 23-sep): 2FA activado; el login de DAS lo hace Jaume A MANO cada día al encender el bot.** El relogin automático de R-J-02 queda solo para la reconexión del socket con DAS ya logueado; si DAS pide login, aviso máximo y lo hace el humano | — |
 
