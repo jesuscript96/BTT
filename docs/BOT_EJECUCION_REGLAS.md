@@ -546,7 +546,7 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Medido (22-sep, `42_` y `43_agregar_vs_remover_entrada.py`, 349 entradas reales de 1B/2B con libro NBBO): llena agregando el 71 %; pierde el 11 % de las señales; valor esperado por señal +1,45 % frente a cruzar al instante (contando las perdidas al 4,2 % del trade medio de 1B). Alternativas medidas: 20 s +0,95 %; tope 2 % +1,38 % (pierde el 15 %); al ask en vez del punto medio, peor; «siempre agregar sin cruzar», negativo (pierde el 14 %, y son las mejores señales: bid −5 a −8 % al minuto). Cautelas: llenado supuesto en el primer print a nuestro precio o mejor (optimista), sin re-pegar la orden si el libro se mueve.
 - Principio (Jaume, 22-sep): **se AGREGA siempre** (entradas, pirámides, take profits, salidas con hora conocida donde se pueda), **excepto los stops y las situaciones delicadas** (cerrar todo, TP a medias con rebote, prioridad TP-entrada, halts, cisne negro), que remueven.
 - Quién la ejecuta: ejecutor (guarda: distancia bid de la señal → bid actual).
-- Parámetros (cuadro de mandos): espera agregando = 60 s; nivel = punto medio (bid + 1 tick con spread ≤ 2 ticks); tope de slippage al cruzar = 3 %; techo del cruce = 0,5 %. Ruta al agregar: EDGA de 07:00 en adelante (paga −0,0027 $/acción), ARCA de 04:00 a 07:00 (−0,002); al cruzar, ARCA en PM y SAGEPRO en RTH si en sombra llena igual de rápido.
+- Parámetros (cuadro de mandos): espera agregando = 60 s; nivel = punto medio (bid + 1 tick con spread ≤ 2 ticks); tope de slippage al cruzar = 3 %; techo del cruce = 0,5 %. Rutas (24-sep, tabla del socio): agregar por SAGEREBL (≥ 1 $) / MIAXL (< 1 $); cruzar por SAGEPROL (≥ 1 $) / EDGAL desde las 07:00 o MIAXL de 04:00 a 07:00 (< 1 $). Sustituye a ARCA/EDGA directas.
 - Si la acción falla: sin cotización (libro vacío) → no se entra. El cruce no llena porque el bid se movió durante el envío → se reintenta una vez con el bid nuevo si sigue dentro del 3 %; si no, no se entra.
 - Prueba: sombra, midiendo % que llena agregando, precio medio frente al bid de la señal, % de señales perdidas y su valor; afinar los 60 s y el 3 % con fills reales.
 - Estado: FIJADA (Jaume, 22-sep). Historia: 16-sep rama rápida al bid + escalera −1/−2/−3 %; 22-sep mañana «agregar 2 s y cruzar»; 22-sep tarde esta versión, con datos.
@@ -568,6 +568,14 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Parámetros: reintentos con motivo conocido = 2; la pausa es por ticker y solo la quita el humano.
 - Prueba: en demo, provocar cada rechazo del catálogo y comprobar texto recibido, tratamiento, pausa y reanudación.
 - Estado: FIJADA en su forma (Jaume, 23-sep); el catálogo se rellena en demo. Origen: pregunta de Jaume del 23-sep; tabla C del informe de la KB.
+
+**Tabla de RUTAS (24-sep, estudio del socio, encaja con el libro; FIJADA en su forma, tarifas/horarios PM a confirmar con Sage):**
+| Qué | Acciones ≥ 1 $ | Acciones < 1 $ («pennies», tarifas en % del valor) |
+|---|---|---|
+| Fase AGREGAR de la entrada, pirámides y TP (orden que descansa: punto medio / nivel del TP) | **SAGEREBL** (postea, paga −0,0025 $/acción) | **MIAXL** (paga −0,15 % del valor) |
+| Fase CRUZAR (al bid al minuto con tope 3 %, «kills», salidas por hora y EOD al ask, cerrar todo, TP a medias) | **SAGEPROL** (smart: barre todos los mercados; 0 $ desde las 07:00, 0,003 $ de 04:00 a 07:00) | **EDGAL** desde las 07:00 (0,15 %) / **MIAXL** de 04:00 a 07:00 |
+| Stops principal y emergencia (LimitP) | **Route=STOP de DAS** (smart router: los guarda DAS y disparan tras un halt) | igual |
+Principio del socio (traducido): «La rapidez no la da la ruta, la da cruzar con precio agresivo; entre rutas, la smart barre todos los mercados incluida ARCA; ARCA o EDGA directas no son más rápidas, solo ven un libro y arriesgas no llenar. Cruces por SAGEPRO (gratis en sesión), pasivos por SAGEREB (te paga), pennies por EDGA/MIAX.» Encaja: nuestra entrada tiene dos fases y cada una va por su ruta (descansar en SAGEREBL, cruzar en SAGEPROL); las rutas directas ARCA/EDGA del libro anterior quedan sustituidas. Vocabulario del socio: cruzar = agresivo (comprar al ask / vender al bid, inmediato); agregar = pasivo (comprar al bid / vender al ask, esperar). Pendiente con Sage: rebate y horario de SAGEREB en premercado; si SAGEREBL acepta una venta en el punto medio (mejorando el mercado) y la paga igual; ruta para la orden a mercado durante un halt (EP-2).
 
 ### R-B-02 · Entrada ejecutada a medias
 - Situación: la orden de entrada se ejecuta solo en parte (p. ej. 400 de 1.000) porque en el bid no había más. Frecuente: en PM una orden de 300 $ cabe entera el 53 % de las veces; de 3.000 $, el 6 %.
@@ -1142,7 +1150,7 @@ Todo lo que el libro dice «va al cuadro de mandos», recogido en un sitio. Tres
 | Reentradas (accept_reentries / max_reentries; −1 = sin tope numérico) | JSON | R-D-04 |
 | Niveles de stop N1 / N2 / N3 en % o estructura + márgenes del límite (3 % / 50 %) | 10 % / +3 % / ×1,10 / +50 % | R-C-01 |
 | Take profit (parciales y cómo reduce el stop) | JSON | R-C-05, R-D-03 |
-| Sesiones permitidas (PM / RTH) y ruta por sesión | ARCA PM; RTH SAGEPRO o ARCA (sombra) | R-B-01 |
+| Rutas: agregar / cruzar / stops, por tramo de precio | SAGEREBL·MIAXL / SAGEPROL·EDGAL·MIAXL / STOP | R-B-01 tabla de rutas |
 
 ### 4.2 Globales de la cuenta
 | Campo | Valor hoy | Origen |
