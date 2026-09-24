@@ -30,6 +30,51 @@
 
 ---
 
+## 2026-09-24 (Sailor, máquina de Jaume) — El reloj del PC: por qué deriva, cómo quedó y qué afecta
+
+**Por qué se desviaba.** Windows, en un PC que no está en un dominio, solo
+sincroniza la hora con internet **una vez por semana**. El reloj de esta
+máquina deriva **~0,6 s al día** (medido: 0,57 s entre el 23-sep 10:29 y el
+24-sep 09:13), así que en una semana acumula unos 4 s. Los 2,53 s del 23-sep
+eran eso.
+
+**Cómo quedó (24-sep, lo hizo Jaume como administrador):**
+- Sincronización **cada hora**: `SpecialPollInterval = 3600` en
+  `HKLM\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient`,
+  aplicado con `w32tm /config /update`.
+- Fuente: `time.windows.com`. Comprobado sano: «Indicador de salto: 0».
+
+**Por qué cada hora y no cada día.** Cuanto más a menudo, más suave. Con un
+desfase por debajo de **1 s** (`MaxAllowedPhaseOffset = 1`) Windows no salta la
+hora: la absorbe poco a poco acelerando o frenando el reloj. Cada hora las
+correcciones son de ~25 ms y nunca hay salto; cada día serían de 0,6 s y, si
+cayeran en plena sesión, descolocarían un minuto de métricas.
+
+**Lo que SÍ afecta y lo que NO.** Comprobado en el código el 24-sep:
+- **NO afecta a cuándo saltan las alertas ni las prealertas.** La alerta sale
+  cuando llega la vela de Massive; la ventana de la prealerta (segundos 44-59)
+  se calcula con la hora de cada print que manda la bolsa (`ms_ejec` en
+  `ConstructorParcial.aplicar_operacion`), no con la del ordenador.
+- **SÍ falsea las métricas de latencia del log** (`[LATENCIA ...]`,
+  `[OPERACIONES]`), que restan la hora del ordenador a la del dato. Un reloj
+  adelantado N segundos las infla N segundos.
+
+**Si algún día las latencias salen raras, lo primero es esto:**
+
+```
+w32tm /stripchart /computer:time.windows.com /samples:3 /dataonly
+```
+
+El número de la derecha es el desfase: negativo = el ordenador va adelantado.
+Para forzar la corrección (PowerShell como administrador):
+`w32tm /resync /force`. Si el desfase es menor de 1 s no la verás al instante:
+se va absorbiendo en las horas siguientes, y es lo correcto.
+
+**Tras el cambio quedaban 0,58 s** que se irán absorbiendo durante el día. Las
+latencias del 24-sep por la mañana llevan ese extra.
+
+---
+
 ## 2026-09-23 (Sailor) — Integrado lo de Álvaro: TP por lote, Fase 2 de picos, etiquetas y dos fixes (sailor y staging a la par)
 
 Traído de `alvaro-rama-desarrollo` por cherry-pick selectivo, siguiendo su
