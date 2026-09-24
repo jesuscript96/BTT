@@ -547,7 +547,7 @@ Complemento (20-sep, misma muestra): ¿quién saca? Con 10 k basta el principal 
 - Situación: la estrategia da señal de entrada (o de pirámide) y el bot envía la orden. Vale para PM y RTH.
 - Detección: bid y ask de DAS en el instante de la señal (t0); bid de la señal = referencia del tope.
 - Acción (**FIJADA por Jaume el 22-sep, sustituye a las dos ramas anteriores: rama rápida al bid + escalera**):
-  1. **Agregar.** Venta límite en el PUNTO MEDIO entre bid y ask (bid + 1 tick si el spread es de 2 ticks o menos), que descansa en el libro AGREGANDO liquidez, hasta 60 s (= la caducidad de la señal, R-B-04). Se cancela antes si la estrategia deja de decir «dentro».
+  1. **Agregar.** Venta límite en el PUNTO MEDIO entre bid y ask REDONDEADO HACIA ARRIBA al siguiente tick (Jaume, 24-sep: alejarlo del bid para que no acabe removiendo mientras llega; con spread de 1 tick es el ask, con 2 ticks bid + 1), que descansa en el libro AGREGANDO liquidez, hasta 60 s (= la caducidad de la señal, R-B-04). Se cancela antes si la estrategia deja de decir «dentro».
   2. **Cruzar con tope.** Si a los 60 s no ha llenado (entera o en parte), lo que quede se CRUZA al bid (venta límite a bid × (1 − 0,5 %), removiendo) SOLO si el bid no ha caído más del 3 % respecto al bid de la señal.
   3. **No entrar.** Si el bid ha caído más del 3 %, se cancela y NO se entra: la señal se ha ido sin nosotros y no se persigue.
   Lo ejecutado agregando se descuenta; la orden de cruce lleva solo el resto (control de posición neta, R-C-11). Con SSR la venta ya tiene que ir por encima del bid: mismo camino.
