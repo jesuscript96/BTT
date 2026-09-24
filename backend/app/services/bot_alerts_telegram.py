@@ -185,9 +185,10 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
         return "\n".join(lineas)
 
     if ev.tipo == "piramide":
-        reduce = ev.accion_piramide == "reduce"
+        lote = {"lot_stop": "STOP DE LOTE", "lot_tp": "TP DE LOTE"}.get(ev.accion_piramide)
+        reduce = ev.accion_piramide == "reduce" or lote is not None
         icono = "➖" if reduce else "➕"
-        verbo = "REDUCIR" if reduce else "AÑADIR"
+        verbo = lote or ("REDUCIR" if reduce else "AÑADIR")
         lineas = cabecera + [f"{icono} <b>{tk}</b> · {verbo}", f"Precio: <b>{_num(ev.precio)}</b>"]
         bloques = []
         for e in evs:
