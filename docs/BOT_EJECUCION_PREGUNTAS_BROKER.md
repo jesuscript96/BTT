@@ -28,8 +28,8 @@ Tras el repaso de Jaume (PDF «Preguntas API y Broker», 24-sep): las de negro l
 8. **ES:** Órdenes durante un halt: ¿acepta el API una orden a mercado o límite mientras la acción está parada y la envía al cruce de reapertura? ¿Se puede cancelar antes de la reapertura? ¿Qué mensajes devuelve el API en ese caso?  
    **EN:** Orders during a halt: does the API accept a market or limit order while the stock is halted and route it to the reopening cross? Can it be cancelled before the reopening? What messages does the API return in that case?
 
-9. **ES:** [Propuesta de añadir] ¿El API admite órdenes «post only» / «add liquidity only» (por ejemplo ARCA ALO), que se rechazan o recolocan en vez de ejecutarse contra el libro? ¿Con qué sintaxis?  
-   **EN:** [Proposed addition] Does the API support "post only" / "add liquidity only" orders (e.g. ARCA ALO) that are rejected or repriced instead of executing against the book? What is the syntax?
+9. **ES:** ¿El API admite órdenes «post only» / «add liquidity only» (por ejemplo ARCA ALO), que se rechazan o recolocan en vez de ejecutarse contra el libro? ¿Con qué sintaxis?  
+   **EN:** Does the API support "post only" / "add liquidity only" orders (e.g. ARCA ALO) that are rejected or repriced instead of executing against the book? What is the syntax?
 
 ## Para Sage
 
@@ -38,3 +38,9 @@ Tras el repaso de Jaume (PDF «Preguntas API y Broker», 24-sep): las de negro l
 
 2. **ES:** ¿Qué pasa con un stop cuando la acción entra en halt? ¿Se cancela, se mantiene, se ejecuta al reabrir? ¿Cambia según la ruta a la que se envió (SMAT o ruta directa)?  
    **EN:** What happens to a stop when the stock is halted? Is it cancelled, kept, or executed at the reopening? Does it depend on the route it was sent to (SMAT or a direct route)?
+
+3. **ES:** SAGEREBL: si dejamos una venta límite en el punto medio entre bid y ask (mejorando el mercado), ¿la acepta y paga el mismo rebate (−0,0025 $/acción) que una orden en el ask? ¿El rebate es el mismo de 04:00 a 20:00?  
+   **EN:** SAGEREBL: if we post a limit sell at the midpoint between bid and ask (improving the market), is it accepted and paid the same rebate (−$0.0025/share) as an order at the ask? Is the rebate the same from 4:00 AM to 8:00 PM?
+
+4. **ES:** Para salir de un corto durante un halt con una orden a mercado enviada antes de la reapertura, ¿qué ruta recomiendan (STOP/SMAT, SAGEPROM u otra) para que entre en el cruce de reapertura? ¿La orden puede quedar rechazada o colgada en la ruta?  
+   **EN:** To cover a short during a halt with a market order sent before the reopening, which route do you recommend (STOP/SMAT, SAGEPROM or another) so that it takes part in the reopening cross? Can the order be rejected or left hanging at the route?
