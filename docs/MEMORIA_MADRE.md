@@ -6486,3 +6486,74 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **Autorización:** petición literal de Álvaro en esta sesión («subelo a mi rama alvaro rama desarrollo y un super PRD y BIEN REPORTADO EN MEMORIA MADRE de STAGING»); mismo conducto docs-only que la entrada [INTEGRACIÓN · 2026-09-23 · 02].
 - **Código tocado:** NINGUNO (docs).
 - **Estado:** HECHO (`staging` a92a5b7→e048dd5 · rama personal hasta `2f9a6c8` + este commit).
+
+### [HALLAZGO · 2026-09-24 · 01] Con custom_end_time = HH:MM, un parcial HOUR:HH:MM se ejecuta en la vela de HH:MM−1 por el cierre anticipado de sesión
+- **Reporta:** GLM (ZCode) (para Álvaro)
+- **Severidad:** duda
+- **Dónde:** `backend/app/services/portfolio_sim.py` (~L1080-1129, bloque de TP parciales por hora; ~L1442-1446, cierre EOD forzado en la última vela de sesión)
+- **Qué observé:** cuando el fin de sesión custom coincide con la hora de un parcial (`custom_end_time = "08:45"` y parcial `HOUR:08:45`), ese parcial NO dispara en su vela (08:45): dispara en la anterior (08:44), etiquetado como cierre de fin de sesión. Con `custom_end_time = "08:46"` (un minuto más) el mismo parcial dispara en su vela correcta (08:45). Es semántica dudosa, no necesariamente bug: podría ser decisión («al cierre de sesión»), pero hoy no está documentada y cambia resultados sin ningún aviso.
+- **Cómo reproducir:** GET `/api/strategies/ff96e0c4-…` (copia C2 del estudio 1B), clonar la definición poniendo SOLO el nivel de pirámide a `unit usd / capital_pct 300` (para el frame de estudio) y correr `POST /api/backtest` en el dataset IS `c8bcddc7-…` (2025-01-01→2025-12-31), `risk_type FIXED`, `risk_r 400`, sin costes, dos veces idénticas salvo `custom_end_time`: `08:45` (job `a807fe94-…`, tag `CHK-C2-end0845`) vs `08:46` (job `407135fc-…`, tag `3B-T3`).
+- **Evidencia:** IS 2025, mismos 1.831 trades: con `08:45` PnL 50.409,00 $ · DD −7,2781 % · ret +504,09 %; con `08:46` PnL 50.158,73 $ · DD −7,1104 % · ret +501,59 %. Diferencia +250,27 $ y 0,17 pp de DD por UN minuto de fin de sesión. Bitácora `executions[]`: la pierna del 50 % sale a las 08:44 con `08:45` y a las 08:45 con `08:46`.
+- **Impacto:** cualquier estrategia cuya última salida por hora coincida con el fin de sesión custom ejecuta esa salida una vela antes — incluida la «Estrategia 1B» original (`5ed17d89`): su 25 % de las 08:45 cierra en la vela de las 08:44. En el estudio 1B se corrigió en las copias del baúl (C2/C4 a 08:46, C5 a 08:51); la `5ed17d89` se dejó intacta por decisión de Álvaro.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-25 · 01] `prev_close` persistida de daily_metrics ≠ `close` de la fila previa → el gap que sirve el motor y el que recalcula el processor difieren (mediana 13,3 pp)
+- **Reporta:** GLM (ZCode) (para Álvaro)
+- **Severidad:** inconsistencia
+- **Dónde:** `backend/app/services/processor_service.py:62-76` (recalcula `prev_close` con `SELECT close ... WHERE timestamp < fecha` de la propia daily_metrics) vs la columna `prev_close` persistida por el ETL del lake (`backend/app/services/lake_db_loader.py:241-242` documenta que el ETL de Sailor hornea el factor de split DENTRO de `prev_close`)
+- **Qué observé:** el `Gap (%)` que el backtest exporta por trade (= `(rth_open − prev_close)/prev_close × 100` con la COLUMNA persistida, vía `qual_lookup` → `backtest_service.py:670/1312`) reproduce al 99,4 % (|dif| ≤ 0,5 pp, mediana 0,00), mientras que la misma fórmula con el `close` de la fila previa de daily_metrics solo reproduce el 11,6 % (dif mediana 13,31 pp, máx 519 pp) sobre los 1.831 trades del CSV del estudio RANGO_PREV (IS 2025).
+- **Cómo reproducir:** `backend/.venv/Scripts/python.exe .tmp_rango_prev/paso3_gapcheck.py` (compara 5 fórmulas candidatas del gap contra el CSV `estrategia-1b-modelizaci-n-sobri-3_trades_1831_202609250845.csv` sobre los RTH extraídos de daily_metrics local).
+- **Evidencia:** candidata B `(rth_open − prev_close_col)/prev_close_col` → 99,4 % de acierto; candidata A `(rth_open − close_fila_previa)/close_fila_previa` → 11,6 %, dif mediana 13,31 pp. Ambas "deberían" medir el mismo gap de apertura.
+- **Hipótesis de causa:** HIPÓTESIS — la `prev_close` persistida viene del ETL del lake (ajustada por splits y/o con otra sesión de referencia) y el `close` local incluye after-hours sin ajustar; dos definiciones de «cierre previo» conviven.
+- **Impacto:** cualquier análisis o réplica que recalcule gaps desde daily_metrics local con `close` shifteado discrepa del gap que ven la UI, el CSV de trades y los filtros `min_gap_pct` del qualifying. Los 117 trades con `Gap (%)` ≤ 0 del CSV (fade completado antes de las 09:30, win rate 94,9 %) quedan explicados por esta semántica — NO es bug del export.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-25 · 02] `rth_range_pct` de daily_metrics es (H−L)/rth_low en el 100 % de esta muestra — difiere materialmente de (H−L)/rth_open (media +5,77 pp)
+- **Reporta:** GLM (ZCode) (para Álvaro)
+- **Severidad:** inconsistencia (ya conocida de oídas; aquí cuantificada)
+- **Dónde:** `backend/app/services/processor_service.py:121` — `rth_range_pct = ((rth_high - rth_low) / rth_low) * 100`. El usuario la citaba como «mezcla ÷low/÷open según el script que la escribió».
+- **Qué observé:** sobre las 1.819 filas previas a los trades del estudio RANGO_PREV (815 tickers, 2024-12-16 → 2025-12-31 de daily_metrics local), `rth_range_pct` reproduce la fórmula ÷rth_low en el 100,0 % de las filas (tolerancia 0,01) y la ÷rth_open en el 12,0 % (filas donde open ≈ low). Diferencia vs (H−L)/÷open: media +5,77 pp, mediana +0,58 pp, >5 pp en el 17,2 % de filas, máx +515,69 pp. Spearman 0,9976 (el ORDEN casi no cambia; el VALOR sí).
+- **Cómo reproducir:** `backend/.venv/Scripts/python.exe .tmp_rango_prev/paso2_estudio.py` (sección 2 del volcado `resultados_paso2.txt`), sobre `.tmp_rango_prev/daily_rth_815tickers.parquet`.
+- **Evidencia:** ver arriba, sección 2 de `resultados_paso2.txt`.
+- **Hipótesis de causa:** HIPÓTESIS — en el tramo dic-2024→dic-2025 de la BD local escribió todo el mismo script (÷low); la mezcla ÷open/÷low que se temía no aparece en este rango, pero la unidad de la columna es ÷low y conviene fijarla documentalmente.
+- **Impacto:** el filtro de dataset «Gap -1» sobre `lag_rth_range_pct_1` (UI) opera en unidades ÷rth_low: un umbral pensado como «rango 15 %» estilo ÷open equivale a ~15,9 % en esta unidad (equivalencias medidas: 10→10,56 · 15→15,92, mismo cuantil). Comparar rth_range_pct con rangos ÷open de otras herramientas da diferencias grandes en colas (rangos altos).
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-25 · 03] WAL de `backend/local_data.duckdb` dañado: DuckDB no puede reabrir la BD (INTERNAL Error al replay) — recurrencia del corrupto del 07-sep
+- **Reporta:** GLM (ZCode) (para Álvaro)
+- **Severidad:** bug (operacional)
+- **Dónde:** `backend/local_data.duckdb.wal` (160 bytes, mtime 2026-09-24 16:26 — creado por el arranque del backend de esa sesión, PID 32588)
+- **Qué observé:** tras parar el backend, `duckdb.connect("backend/local_data.duckdb", read_only=True)` Y también en modo escritura fallan con `INTERNAL Error: Failure while replaying WAL file ... Calling DatabaseManager::GetDefaultDatabase with no default database set`. Es decir, NINGÚN proceso puede reabrir la BD con el WAL presente, tampoco el propio backend al rearrancar.
+- **Cómo reproducir:** con el backend parado: `backend/.venv/Scripts/python.exe -c "import duckdb; duckdb.connect(r'backend/local_data.duckdb', read_only=True)"`.
+- **Evidencia:** error reproducido 4 veces (reintentos) en read-only y 4 veces en write sobre una copia física idéntica (`.tmp_rango_prev/copia_local_data.duckdb` + su `.wal`). Renombrando SOLO el `.wal` de la copia, la BD abre y lee con normalidad (187.282 filas extraídas y verificadas). El .duckdb principal no se escribió desde el 07-sep 16:15 (mtime), y convive con un `local_data.duckdb.corrupto_20260907.wal` renombrado a mano — segunda incidencia de WAL en 18 días.
+- **Hipótesis de causa:** HIPÓTESIS — el backend fue terminado (taskkill /F del 25-sep, y quizá también terminaciones abruptas anteriores) dejando un WAL a medio serializar; el replay de DuckDB tropieza con un registro de catálogo (el hexdump muestra `local_data/main/strategies/tags`).
+- **Impacto:** el backend local de Álvaro puede no arrancar hasta renombrar/mover el `.wal` (el contenido del WAL eran 160 B de metadatos de catálogo; el archivo principal conserva todos los datos hasta el último checkpoint del 07-sep). `run_backend_safe.py` podría gestionarlo — sin verificar.
+- **Código tocado:** NINGUNO (confirmado; ni el .duckdb ni el .wal originales se modificaron: el estudio trabajó sobre una copia física ya sin WAL, borrada al acabar)
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-25 · 04] Recurrencia del WAL stall de local_data.duckdb: 3 WAL de 160 B idénticos; contenido = DDL de arranque de init_db (strategies/tags), no de las vistas del lago; y el watchdog queda en crash-loop hasta renombrar a mano
+- **Reporta:** GLM (ZCode) (para Álvaro)
+- **Severidad:** bug (operacional, recurrente)
+- **Dónde:** `backend/app/init_db.py:172-200` (contenido del WAL) · `backend/scripts/run_backend_forever.bat` (watchdog que expone el crash-loop en `backend_watchdog.log`) · `backend/local_data.duckdb.wal`
+- **Qué observé:** (1) TRES WAL de 160 B: activo del 23-sep 19:11 (renombrado a mano por Álvaro → `.wal.stalled_20260924`), activo del 24-sep 16:26 (renombrado hoy con su autorización → `.wal.stalled_20260925`) y el recién creado HOY 25-sep 11:59 tras el arranque actual. Los dos renombrados son **idénticos byte a byte** (MD5 `06ae4f70a837d982e9cd820049923f82`); el activo no se puede hashear en caliente (locked por el backend), pero pesa otros 160 B. (2) El hexdump muestra `local_data · main · strategies · tags` — casa con el DDL de arranque de `init_db.py` (`CREATE TABLE IF NOT EXISTS strategies` + `ALTER TABLE strategies ADD COLUMN IF NOT EXISTS tags`), y la columna `tags` se añadió al código el **2026-09-23** (comentario propio de init_db:191): el mismo día del primer stall. (3) Tras renombrar el WAL, el backend arrancó normal y recreó un `.wal` de 160 B al instante → el patrón es sistemático del arranque.
+- **Cómo reproducir:** observar `backend_watchdog.log` (líneas 1906-1910): desde el taskkill del 24-sep por la noche, el watchdog reintentó cada 30 s muriendo con **exit 3** («DuckDB retenido» — en realidad el replay del WAL dañado) SIN levantar nada; a las 11:59:02 de hoy, 12 min después de mi renombrado del WAL, su siguiente reintento arrancó limpio.
+- **Evidencia:** `backend_watchdog.log:1906-1910` (11:57:54 exit 3 · 11:58:28 exit 3 · 11:59:02 arranque que sigue vivo) · `backend_prof.log:17332` `[INFO] GCS sync disabled by environment variable (DISABLE_GCS_SYNC=true).` (arranque de hoy correcto; `[OK] LIVE_SCREENER_ENABLED=false` en la 17315) · `GET /health` → `{"status":"ok"}` · md5 de los dos stalled idénticos · ls del `.wal` nuevo: 160 B a las 11:59.
+- **Hipótesis de causa:** HIPÓTESIS (la de Álvaro era «create_lake_views falla al arrancar»): `create_lake_views` NO EXISTE en el repo; lo análogo es el bloque de vistas `massive.*` de `database.py:31-55`, que en modo local va a un `ATTACH ':memory:'` y no toca el archivo físico. El CONTENIDO del WAL apunta al DDL de `init_db` (strategies/tags). Mecánica propuesta: cada arranque abre local_data.duckdb en write y ese DDL deja 160 B en el WAL; la parada documentada del backend (`taskkill /T /F`) muere sin checkpoint; y el replay de ese WAL al reabrir dispara el INTERNAL Error (fallo de DuckDB) → BD inarrancable + watchdog en crash-loop hasta renombrado manual. Queda por explicar por qué el DDL idempotente (`IF NOT EXISTS`) escribe esos 160 B en CADA arranque.
+- **Impacto:** cada parada abrupta del backend local (taskkill, crash, apagón) deja la BD bloqueada para el siguiente arranque, y el watchdog la reintenta en bucle cada 30 s sin que nadie lo note salvo leyendo `backend_watchdog.log`. Ya son 3 incidencias en 3 días (23, 24 y 25-sep) + la del 07-sep (`corrupto_20260907.wal`, aquella de 1,9 MB).
+- **Código tocado:** NINGUNO (confirmado). Ficheros renombrados con autorización expresa de Álvaro: `local_data.duckdb.wal` → `local_data.duckdb.wal.stalled_20260925` (su instrucción literal de hoy).
+- **Estado:** ABIERTO
+
+### [HALLAZGO · 2026-09-25 · 05] Dos fórmulas conviven en el CÓDIGO para `day_return_pct` y `rth_range_pct` (processor vs catchup_gcs); hoy la BD local está escrita uniformemente con las del processor (verificado al 100 % por año)
+- **Reporta:** GLM (ZCode) (para Álvaro)
+- **Severidad:** inconsistencia (latente — los datos actuales están limpios)
+- **Dónde:** `backend/app/services/processor_service.py:121-122` (`rth_range_pct` ÷rth_low; `day_return_pct` = (rth_close−rth_open)/rth_open) vs `backend/scripts/catchup_gcs.py:517-518` (`rth_range_pct` ÷rth_open; `day_return_pct` = (rth_close−prev_close)/prev_close)
+- **Qué observé:** sobre TODA `daily_metrics` de la BD local (19.355.041 filas, 2019–2026, por año, tolerancia 0,01): `day_return_pct` casa con la fórmula del processor en el **100,0 %** de las filas de cada uno de los 8 años (la variante `catchup` solo "cae" por coincidencia en 5,9–8,1 % de filas, días con `rth_open ≈ prev_close`); `rth_range_pct` casa con ÷rth_low en el **100,0 %** de las filas de cada año (÷open coincide por azar en 39–52 %). **No hay mezcla en los datos.**
+- **Cómo reproducir:** `backend/.venv/Scripts/python.exe .tmp_rango_prev/paso5e_extraccion.py` (SQL agregado por año; CSVs en `.tmp_rango_prev/puntoD_*.csv`). Ejecutado con el backend parado (ciclo autorizado por Álvaro), conexión read-only.
+- **Evidencia:** tablas del punto D en `docs/INFORME_RANGO_PREV_RTH_20260925.md` §Confirmación/4.
+- **Hipótesis de causa:** HIPÓTESIS — el `catchup_gcs.py` escribe (o escribiría) por otra vía (p. ej. recuperación GCS / lake) y hoy o no ha corrido sobre esta tabla o sus filas fueron reescritas después por el processor. Si un día catchup repuebla tramos, LA MISMA COLUMNA cambiaría de definición sin error visible.
+- **Impacto:** cualquier filtro de dataset sobre `lag_day_return_pct_1` o `lag_rth_range_pct_1` (UI «Gap -1») asume la fórmula del processor; una repoblación vía catchup_gcs rompería silenciosamente la semántica del umbral. Base del futuro filtro NETO_PREV: hoy la columna ES la fórmula correcta (intra-RTH ÷open) al 100 %.
+- **Código tocado:** NINGUNO (confirmado)
+- **Estado:** ABIERTO
