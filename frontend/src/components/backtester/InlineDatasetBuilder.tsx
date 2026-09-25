@@ -21,10 +21,10 @@ interface Props {
    pinta con otro estilo. Una segunda lista no daría error — se quedaría corta
    en una de las dos pantallas y nadie lo notaría. */
 import {
-  PARAMETROS_UNIVERSO as SECTION_PARAMS,
   DESCRIPCIONES_UNIVERSO as PARAM_DESCRIPTIONS,
   SECCIONES_UNIVERSO as SECTION_LABELS,
   construirFiltros,
+  paramsDisponibles,
   type ParametroUniverso as ParameterConfig,
   type SeccionUniverso as SectionId,
 } from "@/lib/universoFiltros";
@@ -471,7 +471,7 @@ export default function InlineDatasetBuilder({
               {/* Section Body */}
               {isExpanded && (
                 <div style={{ padding: "12px 12px 20px 12px", display: "flex", flexDirection: "column", gap: 10, maxHeight: "200px", overflowY: "auto", overscrollBehaviorY: "contain" }}>
-                  {SECTION_PARAMS.map((param) => {
+                  {paramsDisponibles(sectionId).map((param) => {
                     const obj = getParamValueObj(sectionId, param.key);
                     const validationErr = getValidationError(param, obj.op, obj.val1, obj.val2);
                     const included = isConditionIncluded(sectionId, param.key);

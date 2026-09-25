@@ -31,6 +31,9 @@ export const PARAMETROS_UNIVERSO: ParametroUniverso[] = [
   { key: "gap_pct", label: "Gap", unit: "%", placeholder: "0.0" },
   { key: "rth_volume", label: "RTH Total volume", unit: "M", placeholder: "0.0" },
   { key: "rth_range_pct", label: "Bar RTH Range", unit: "%", placeholder: "0.0" },
+  // Filtro 1.6 del Bloque 1 (2026-09-25): solo tiene columna en Gap -1, por eso
+  // `paramsDisponibles` no lo ofrece en las demás secciones.
+  { key: "day_return_pct", label: "Day Return % (RTH, cierre vs apertura)", unit: "%", placeholder: "0.0" },
 ];
 
 export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
@@ -44,6 +47,8 @@ export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
     "Volumen total durante la sesión de mercado regular (RTH Total volume) - Especificado en millones (M)",
   rth_range_pct:
     "Rango de la vela en la sesión regular (máximo a mínimo o porcentaje de movimiento)",
+  day_return_pct:
+    "Retorno intra-RTH del día ((cierre RTH − apertura RTH) / apertura RTH). Negativo = vela roja: en Gap -1 es la «víspera roja» del Bloque 1. NO es contra el cierre del día anterior.",
 };
 
 export type SeccionUniverso =
@@ -78,6 +83,7 @@ export function campoDeRegla(section: SeccionUniverso, paramKey: string): string
       pmh_gap_pct: "lag_pmh_gap_pct_1", pm_volume: "lag_pm_volume_1",
       gap_pct: "lag_gap_pct_1", rth_volume: "lag_rth_volume_1",
       rth_range_pct: "lag_rth_range_pct_1",
+      day_return_pct: "lag_day_return_pct_1",
     }[paramKey] ?? "";
   }
   if (section === "gap_day") {
@@ -102,6 +108,13 @@ export function campoDeRegla(section: SeccionUniverso, paramKey: string): string
 /** Los volúmenes se piden en MILLONES y viajan en unidades. */
 export const esVolumen = (paramKey: string) =>
   paramKey === "pm_volume" || paramKey === "rth_volume";
+
+/** Parámetros que tienen columna real en una sección. Los que no (p. ej.
+ *  Day Return % en Gap +1/+2, que no tiene LEAD) ni se ofrecen: una métrica
+ *  sin columna se ignoraría en silencio al construir los filtros. */
+export function paramsDisponibles(section: SeccionUniverso): ParametroUniverso[] {
+  return PARAMETROS_UNIVERSO.filter((p) => campoDeRegla(section, p.key) !== "");
+}
 
 /** El objeto de filtros que entiende el backend. */
 export function construirFiltros(

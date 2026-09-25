@@ -14,7 +14,7 @@ import { Table, Th, Td, Tr } from "@/components/ui";
 import { Help } from "@/components/robustez/help";
 import {
   PARAMETROS_UNIVERSO, DESCRIPCIONES_UNIVERSO, SECCIONES_UNIVERSO,
-  construirFiltros, leeCondicion,
+  construirFiltros, leeCondicion, paramsDisponibles,
   type CondicionUniverso, type SeccionUniverso, type OperadorUniverso,
 } from "@/lib/universoFiltros";
 import {
@@ -1191,11 +1191,18 @@ export default function GeneticoPage() {
 
           <Row label="Añadir filtro" help="La misma lista de métricas que al crear un dataset en el Backtester: el día del gap, el anterior (GAP-1) y los dos siguientes.">
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-              <Sel value={uSec} onChange={(v) => setUSec(v as SeccionUniverso)}
+              <Sel value={uSec} onChange={(v) => {
+                setUSec(v as SeccionUniverso);
+                // Si el parámetro elegido no tiene columna en la nueva sección
+                // (p. ej. Day Return % en Gap+1), vuelve al primero disponible.
+                if (paramsDisponibles(v as SeccionUniverso).every((p) => p.key !== uParam)) {
+                  setUParam(paramsDisponibles(v as SeccionUniverso)[0]?.key ?? PARAMETROS_UNIVERSO[0].key);
+                }
+              }}
                 options={(Object.keys(SECCIONES_UNIVERSO) as SeccionUniverso[])
                   .map((k) => ({ value: k, label: SECCIONES_UNIVERSO[k] }))} />
               <Sel value={uParam} onChange={setUParam}
-                options={PARAMETROS_UNIVERSO.map((p) => ({ value: p.key, label: `${p.label} (${p.unit})` }))} />
+                options={paramsDisponibles(uSec).map((p) => ({ value: p.key, label: `${p.label} (${p.unit})` }))} />
             </div>
           </Row>
           <Row label={DESCRIPCIONES_UNIVERSO[uParam] ? " " : ""}>
