@@ -6557,3 +6557,10 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **Impacto:** cualquier filtro de dataset sobre `lag_day_return_pct_1` o `lag_rth_range_pct_1` (UI «Gap -1») asume la fórmula del processor; una repoblación vía catchup_gcs rompería silenciosamente la semántica del umbral. Base del futuro filtro NETO_PREV: hoy la columna ES la fórmula correcta (intra-RTH ÷open) al 100 %.
 - **Código tocado:** NINGUNO (confirmado)
 - **Estado:** ABIERTO
+
+### [DOCS · 2026-09-25 · 06] Push a `alvaro-rama-desarrollo` (solo docs): hallazgos 24/25-sep, informe del día anterior y estudio 1B Sobri3
+- **Reporta:** Claude (para Álvaro), por petición expresa suya.
+- **Qué sube:** `252afcc` (hallazgos 24-sep·01 y 25-sep·01-05 + `docs/INFORME_RANGO_PREV_RTH_20260925.md`) y `79f9318` (`docs/INFORME_ESTUDIO_1B_SOBRI3_20260924.md`, su PRD, `docs/3A_edge_por_hora_20260924.png`, `Criterios_Entrada_1B_Sobri3.pdf` y `docs/MEMORIA.md` 24/25-sep). Más esta entrada.
+- **Código tocado:** NINGUNO. Solo rama personal; ni `staging` ni `main`.
+- **Conclusión del día:** el filtro de universo por rango/neto RTH de la víspera NO se confirma fuera de muestra (2024/2026) → no se añade. Siguiente: cribado de criterios del día anterior sobre el universo entero (sin estrategia), con años de búsqueda/confirmación fijados de antemano.
+- **Pendiente:** revisar lo que haya subido Jaime a `staging`.
