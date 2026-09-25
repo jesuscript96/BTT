@@ -30,6 +30,48 @@
 
 ---
 
+## 2026-09-25 (Sailor, bot de alertas) — Prealertas por estrategia en vivo, los huecos son de Massive (demostrado), un 1008 del socio y el fallo de recuperación que destapó
+
+**La sesión (09:59 → 15:37), auditada al parar:**
+- **28 avisos, los 28 en el segundo 1**, 14 por cada estrategia (PM. 1A TTP y
+  la de Álvaro).
+- **Prealertas: 18, nueve por estrategia** — el arreglo del 24-sep funciona en
+  vivo. 14 de 18 confirmadas, margen mediano 15,7 s. **Log sin duplicar**: 8
+  líneas «hidratado» para 8 altas.
+- **Latencia de la vela:** 67 ventanas, mediana 1,33 s (mejor 1,14, peor 1,46),
+  **67 de 67 por debajo de 1,5 s**; p90 mediano 1,42 s. El reloj ya no falsea
+  nada: sincroniza cada hora.
+- **El reloj interno del lector** ha zanjado lo de los huecos: el bucle llegó a
+  ir como mucho **0,29 s** tarde en todo el día (mediana 0,04 s) y **no hubo ni
+  una línea «bucle PARADO»**. Hubo huecos de 10,8 s (13:52) y 13,8 s (15:34):
+  **son de Massive**, demostrado, como sospechaba Jaume. El de las 13:52 cayó
+  sobre las velas de ese minuto (llegaron a ~11 s) pero ese minuto no había
+  señal.
+- **Un `1008` a las 10:04:43**: *«connection limit for your account»*. Es la
+  cuenta de Massive (UNA cuenta, TRES sockets, TRES socios, siempre llena) y el
+  reinicio diario del sistema de un socio a las 04:00-04:05 NY; histórico
+  idéntico el 16, 17 y 18-sep. No fue nuestro bot (sin `1011`, bucle a
+  0,02 s, y en la máquina solo el bot abre websocket). Se recuperó en 15 s sin
+  perder nada. Jaume enciende a las 09:59 a propósito; el arreglo de verdad es
+  un 4.º socket o que el sistema del socio espere antes de reconectar.
+- Backtests lanzados por Jaume durante la sesión: el bucle subió a 0,13-0,29 s
+  un rato, sin tocar ninguna alerta ni dejar avisos sin publicar.
+
+**El fallo que destapó el `1008` (mío, del cambio a cuatro procesos):** al
+reconectar, el bot manda el día entero por REST a los dos procesos. El de
+alertas filtraba las velas que ya tenía; **el de prealertas no**, y las volvió a
+aplicar todas (`RunnerAlertas.nueva_vela` añade sin mirar): INLF y CTNT se
+quedaron con 04:00-04:04 duplicadas y sus prealertas calcularon el resto del día
+con ese volumen de más. Las alertas, bien. Arreglado al parar: el proceso de
+prealertas filtra como el de alertas y avisa de cuántas aplicó. Y el log del bot
+ya no dice «8 velas recuperadas» cuando no faltaba ninguna (contaba las
+ENVIADAS): lo dicen los hijos. Test nuevo en `test_bot_alerts_procesos.py`; y
+`ProcesoHijo.al_aviso` para que las pruebas no dependan del log (en la suite
+completa otra prueba cambiaba el registro y el texto capturado llegaba vacío).
+381 verdes en la zona del bot.
+
+---
+
 ## 2026-09-24 (Sailor, bot de alertas) — Primer día completo con cuatro procesos: 44 avisos, los 44 en el segundo 1; y tres cambios para mañana
 
 **La sesión (09:59 → 15:15), auditada al parar:**

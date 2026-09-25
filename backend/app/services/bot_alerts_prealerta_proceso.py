@@ -198,8 +198,24 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
                     _prealertar(listo, lat, "agregado")
 
         elif t == VELAS:
+            # LA RECUPERACION TRAS UN CORTE: el bot manda el DIA ENTERO por
+            # REST, y aqui solo entran las velas que este motor no tiene. Sin
+            # este filtro se aplicaban todas otra vez y quedaban REPETIDAS
+            # (`nueva_vela` anyade sin mirar). Paso el 25-sep a las 10:04, en la
+            # primera reconexion con los procesos separados (un 1008): INLF y
+            # CTNT se quedaron con 04:00-04:04 dobles, y sus prealertas
+            # calcularon el resto del dia con ese volumen de mas. El proceso de
+            # alertas ya filtraba asi (`RECUPERAR`); este no.
+            tk = msg["ticker"]
+            ultima = runner.ultima_vela_ts(tk)
+            puestas = 0
             for v in msg["velas"]:
-                manejador({"t": VELA, "ticker": msg["ticker"], "vela": v})
+                if ultima is not None and pd.Timestamp(v.get("timestamp")) <= pd.Timestamp(ultima):
+                    continue
+                manejador({"t": VELA, "ticker": tk, "vela": v})
+                puestas += 1
+            if puestas:
+                tuberia.send({"t": AVISO, "texto": f"{tk}: {puestas} vela(s) del hueco aplicadas"})
 
         elif t == VELA:
             # El minuto YA ESTA CERRADO. Se aplica al motor para seguir en

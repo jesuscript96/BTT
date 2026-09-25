@@ -131,6 +131,11 @@ class ProcesoHijo:
         self.reinicios = 0
         self.ultimo_mensaje = 0.0       # cuando contesto por ultima vez
         self.al_resucitar: Optional[Callable[["ProcesoHijo"], None]] = None
+        # Ademas del log, quien quiera los avisos del hijo los recibe aqui. Lo
+        # usan las pruebas: fiarse del log no vale, porque otra prueba puede
+        # haber cambiado la configuracion del registro (25-sep: en la suite
+        # completa el texto capturado llegaba vacio).
+        self.al_aviso: Optional[Callable[[str], None]] = None
 
     # ── arrancar y parar ──────────────────────────────────────────────────
     def arrancar(self) -> None:
@@ -233,6 +238,11 @@ class ProcesoHijo:
             self.ultimo_mensaje = time.time()
             if msg.get("t") == AVISO:
                 logger.info("[%s] %s", self.nombre, msg.get("texto"))
+                if self.al_aviso is not None:
+                    try:
+                        self.al_aviso(msg.get("texto") or "")
+                    except Exception:           # noqa: BLE001
+                        pass
                 continue
             if self.al_recibir is not None:
                 try:

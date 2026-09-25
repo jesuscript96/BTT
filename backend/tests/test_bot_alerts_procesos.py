@@ -196,3 +196,35 @@ def test_el_resumen_del_vigilante_dice_quien_esta_vivo():
     texto = v.resumen()
     assert "alerta" in texto and "prealerta" in texto
     assert "MUERTO" in texto          # aun no se han arrancado
+
+
+# ── 5. la recuperacion tras un corte no repite velas ──────────────────────
+@pytest.mark.timeout(120)
+def test_prealerta_recuperar_tras_un_corte_no_repite_velas():
+    """EL FALLO DEL 25-sep. Al reconectar, el bot manda el DIA ENTERO por REST
+    a los dos procesos. El de prealertas las aplicaba todas otra vez y quedaban
+    REPETIDAS (INLF y CTNT, 04:00-04:04 dobles, tras un 1008). Ahora solo entra
+    lo que falta, como en el de alertas."""
+    avisos = []
+    p = pp.PrealertaEnProceso()
+    p.al_aviso = avisos.append
+    p.arrancar()
+    try:
+        p.configurar([])
+        filas = _velas(n=22)
+        p.hidratar("AAA", filas[:20], {"prev_close": 1.0})
+        p.tickers(["AAA"])
+        # El dia entero, 20 que ya tiene + 2 que faltan: solo deben entrar 2.
+        p.vela_lote("AAA", filas)
+        assert _esperar(lambda: any("del hueco aplicadas" in a for a in avisos), segundos=30), \
+            f"no aplico ninguna vela del hueco: {avisos}"
+        assert "AAA: 2 vela(s) del hueco aplicadas" in avisos, \
+            f"debia aplicar exactamente las 2 que faltaban: {avisos}"
+        # Otra vez el mismo dia: ya no falta ninguna, no debe aplicar nada.
+        avisos.clear()
+        p.vela_lote("AAA", filas)
+        time.sleep(3)
+        assert not any("del hueco aplicadas" in a for a in avisos), \
+            f"volvio a aplicar velas que ya tenia: {avisos}"
+    finally:
+        p.parar()
