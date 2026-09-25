@@ -50,6 +50,25 @@ en `docs/MEMORIA_MADRE.md` (TRABAJO 18-09·4 y ESTADO 22-09·1).
   no los arranques ni los configures.** Si algo de ahí te bloquea una tarea
   legítima, díselo a Jaume; la decisión es suya, no del agente.
 
+### 🪨 REGLA EN PIEDRA — el bot en la rama de Álvaro (fijada por Álvaro, 2026-09-25)
+
+El código del bot está en esta rama **dormido**: llega con los merges de
+`staging` y **aquí nunca se ejecuta**. El bot vive y opera SOLO con Jaume.
+Ninguna IA ni persona se salta esto, por ningún motivo:
+
+1. **Nunca se arranca el bot en el equipo de Álvaro.** Ni `arrancar_bot.bat`,
+   ni `D:\bot_senales\`, ni ningún proceso `bot_alerts_*`, ni «para probar un
+   momento». Una sola conexión a Massive: arrancarlo aquí deja sordo el de Jaume.
+2. **En `backend/.env` de Álvaro, `BOT_ALERTS_ENABLED` y `BOT_ALERTS_TELEGRAM`
+   no se ponen nunca a `true`** (por defecto están apagados; se dejan sin poner).
+3. **Los ficheros del bot NO se borran ni se excluyen de esta rama.** Si se
+   borraran, el día que algo de aquí llegue a `staging` borraría el bot de Jaume.
+   Se quedan tal cual `staging`.
+4. **En un merge de `staging`, cualquier conflicto en la zona del bot se resuelve
+   cogiendo la versión de `staging` literal.** Nunca se edita a mano.
+5. **Ningún cambio del bot sale de esta rama.** Si una tarea pide tocarlo: parar y
+   preguntar a Jaume.
+
 ## Seguridad en local (imprescindible)
 - `backend/.env` con `DISABLE_GCS_SYNC=true` y `LIVE_SCREENER_ENABLED=false`.
 - Nunca commitear `.env`, `.env.local`, `gcs-key.json`, `*.duckdb*`, `data/`, `.cache/`.
