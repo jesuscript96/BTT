@@ -68,10 +68,14 @@ medido (archivado como curiosidad, no filtro): víspera con volumen alto → net
 del día del gap algo más flojo (D1 −1,1 % vs D10 −4,8 %, 6/8 años, |ρ|≤0,06) —
 el fade no lo confirma y los trades no lo muestran.
 
-### Bloque 3 — Historial reciente (¿es reincidente?) · PENDIENTE
-- Días desde el último gap grande.
-- Retorno acumulado de 3, 5 y 10 días.
-- Nº de gaps grandes en los últimos 30–90 días.
+### Bloque 3 — Historial reciente (¿es reincidente?) · ✅ CERRADO (25-sep)
+- Días desde el último gap grande. → 🟡 DUDOSO (A apunta a «reincidente → menos fade» pero vive en 2023-26 y los trades de la 1B invierten el signo).
+- Retorno acumulado de 3, 5 y 10 días. → **✅ SIRVE (el mejor desde 1.6): venía subiendo → MENOS fade; 8/8 años, ambos periodos, parcial −0,10 ctrl 1.6 en los 8 años y en cada quintil de 1.6; 1B confirma 3/3. NO filtrable hoy (falta columna de retorno acumulado).**
+- Nº de gaps grandes en los últimos 30–90 días. → 🟡 DUDOSO (espejo del primero, corr −0,43; misma inconsistencia).
+
+Informe: `docs/INFORME_BLOQUE3_REINCIDENCIA_20260925.md`. Pendiente de decisión
+de Álvaro: construir el filtro de retorno acumulado (como el 1.6 pero con
+ventana N-días, columna nueva en las tres vías).
 
 ### Bloque 4 — Dónde está el precio · PENDIENTE
 - Cierre de la víspera frente a su máximo/mínimo de 20 días y de 52 semanas.
@@ -149,6 +153,9 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-25 | B2·2.1 Volumen víspera/20d (deciles, 2019-26 + trades) | ❌ NO SIRVE — plano (rho ±0,01-0,07 signos mezclados); sin aporte sobre 1.6 (parcial ≈ simple) | `INFORME_BLOQUE2_ACTIVIDAD_VISPERA_20260925.md` |
 | 2026-09-25 | B2·2.2 Rotación víspera | ⏭️ SALTADO — falta `shares_outstanding` (extracción pendiente con backend parado) | ídem §5 |
 | 2026-09-25 | B2·2.3 Volumen 3d/20d | ❌ NO SIRVE — corr 0,49 con 2.1, misma nada; curiosidad archivada: víspera activa → neto del gap algo más flojo (6/8 años, \|ρ\|≤0,06, fade no confirma) | ídem |
+| 2026-09-25 | B3·3.1 Días desde último gap (tramos) | 🟡 DUDOSO — «reincidente → menos fade» 6/8 años pero plano en 2019-22; trades 1B invierten el signo | `INFORME_BLOQUE3_REINCIDENCIA_20260925.md` |
+| 2026-09-25 | B3·3.2 Retorno acumulado 3/5/10d (deciles) | ✅ SIRVE — 24/24 celdas ρ<0 (8 años × 3 ventanas), ambos periodos; parcial ctrl 1.6 −0,10 en 8/8; quintiles de 1.6 todos negativos; 1B 3/3 (2024 plano) | ídem |
+| 2026-09-25 | B3·3.3 Nº gaps 30/90d (tramos) | 🟡 DUDOSO — espejo de 3.1 (corr −0,43), mismo perfil inconsistente | ídem |
 
 ## Pendientes fuera de la investigación
 - Punto 5 CERRADO (25-sep): 1.6 probado en DT (misma dirección, débil — §8) y en la
