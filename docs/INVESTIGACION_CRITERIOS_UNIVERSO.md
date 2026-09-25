@@ -58,10 +58,15 @@ anterior (04:00–09:30). Se hace al terminar los demás bloques si da mucho tra
 - Ojo: 1.4 (PMH Gap de la víspera) ya salió ❌ — medir cómo se COMPORTÓ el PM, no
   cuánto subió. Muchas vísperas tienen el PM casi muerto (en 1.4 faltaba el 21 %).
 
-### Bloque 2 — Actividad de la víspera · PENDIENTE
-- Volumen de la víspera frente a su media de 20 días (`vol_rel_20`).
-- Rotación de la víspera (volumen ÷ acciones en circulación).
-- Volumen de los 3 días previos frente a su media (`vol_prev3_rel_20`).
+### Bloque 2 — Actividad de la víspera · ✅ CERRADO (25-sep)
+- Volumen de la víspera frente a su media de 20 días (`vol_rel_20`). → ❌ NO SIRVE (plano, sin consistencia, sin aporte sobre 1.6).
+- Rotación de la víspera (volumen ÷ acciones en circulación). → ⏭️ SALTADO sin datos de circulación (pendiente de extracción con backend parado).
+- Volumen de los 3 días previos frente a su media (`vol_prev3_rel_20`). → ❌ NO SIRVE (corr 0,49 con el 2.1, misma nada).
+
+Informe: `docs/INFORME_BLOQUE2_ACTIVIDAD_VISPERA_20260925.md`. Único matiz
+medido (archivado como curiosidad, no filtro): víspera con volumen alto → neto
+del día del gap algo más flojo (D1 −1,1 % vs D10 −4,8 %, 6/8 años, |ρ|≤0,06) —
+el fade no lo confirma y los trades no lo muestran.
 
 ### Bloque 3 — Historial reciente (¿es reincidente?) · PENDIENTE
 - Días desde el último gap grande.
@@ -141,6 +146,9 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-25 | Punto 5 · 1.2 Fade en 3ª estrategia (2B RTH) | ⬜ Plana | ídem §9 |
 | 2026-09-25 | Punto 5 · DECISIÓN | 1.6 se construye como filtro de umbral movible SOLO para estrategias PM de fade (keep-roja); en RTH no aporta ni perjudica. 1.2 no prosigue | ídem §9.3 |
 | 2026-09-25 | B1·1.6 IMPLEMENTADO | ✅ HECHO — «Gap -1 · Day Return %» en las tres vías + tres UIs (commit `f1e401b`, SIN push); 22 tests, tsc, paridad 1502↔1507 (dif = hallazgo 15), navegador e2e | MEMORIA_MADRE (FEATURE 25-sep) |
+| 2026-09-25 | B2·2.1 Volumen víspera/20d (deciles, 2019-26 + trades) | ❌ NO SIRVE — plano (rho ±0,01-0,07 signos mezclados); sin aporte sobre 1.6 (parcial ≈ simple) | `INFORME_BLOQUE2_ACTIVIDAD_VISPERA_20260925.md` |
+| 2026-09-25 | B2·2.2 Rotación víspera | ⏭️ SALTADO — falta `shares_outstanding` (extracción pendiente con backend parado) | ídem §5 |
+| 2026-09-25 | B2·2.3 Volumen 3d/20d | ❌ NO SIRVE — corr 0,49 con 2.1, misma nada; curiosidad archivada: víspera activa → neto del gap algo más flojo (6/8 años, \|ρ\|≤0,06, fade no confirma) | ídem |
 
 ## Pendientes fuera de la investigación
 - Punto 5 CERRADO (25-sep): 1.6 probado en DT (misma dirección, débil — §8) y en la
