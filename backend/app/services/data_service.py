@@ -971,14 +971,65 @@ def _fetch_qualifying_data_uncached(
             # el fichero no existe, o hay preconditions con SMA (columnas
             # dinamicas por periodo que el parquet no puede llevar).
             # ⚠️ Regenerar tras cada actualizacion del lago.
+            #
+            # Columnas de ventana que faltan en el parquet (p. ej. una fuente
+            # de Gap -1 añadida después de generarlo — hallazgo 25-sep·16): se
+            # calculan AL VUELO con la misma SQL de stage-2, solo las que
+            # falten, en una subquery antes del WHERE. Ver qualifying_windows.
             _win = os.getenv("QUALIFYING_WINDOWED_PARQUET", "").strip()
             if _win and not sma_periods:
                 import glob as _glob
-                if _glob.glob(_win):
+                _matches = _glob.glob(_win)
+                if _matches:
                     logger.info(f"[QUALIFYING] via materializada: {_win}")
+                    _win_sql = _win.replace(chr(92), "/")
+                    _from = f"read_parquet('{_win_sql}')"
+                    try:
+                        _pq_cols = set(
+                            con.execute(
+                                f"DESCRIBE SELECT * FROM read_parquet('{_matches[0].replace(chr(92), '/')}')"
+                            ).fetchdf()["column_name"].tolist()
+                        )
+                        import re as _re
+                        from app.services.qualifying_windows import (
+                            on_the_fly_window_selects,
+                            window_alias_to_expr,
+                        )
+                        # SOLO las columnas de ventana que faltan en el parquet
+                        # Y referencia el where: tokens lag_*/lead_* de la SQL,
+                        # más cualquier alias del registro que la regla use
+                        # (p. ej. una ventana futura no lag/lead). El resto de
+                        # palabras de la SQL no deben ensuciar el aviso.
+                        _tokens = set(_re.findall(r"[A-Za-z_][A-Za-z0-9_]*", where_clause))
+                        _candidatas = (
+                            {t for t in _tokens if _re.match(r"^(?:lag|lead)_", t)}
+                            | (_tokens & set(window_alias_to_expr()))
+                        )
+                        _extra, _desc = on_the_fly_window_selects(
+                            _candidatas - _pq_cols)
+                        if _extra:
+                            logger.info(
+                                f"[QUALIFYING] al-vuelo ({len(_extra)}): "
+                                + ", ".join(e.split(" AS ")[-1] for e in _extra)
+                            )
+                            _from = (
+                                f"(SELECT *, {', '.join(_extra)} "
+                                f"FROM read_parquet('{_win_sql}'))"
+                            )
+                        if _desc:
+                            logger.warning(
+                                f"[QUALIFYING] columnas de ventana que ni el parquet "
+                                f"ni el registro al-vuelo pueden producir: {_desc} "
+                                f"(la query fallará si la regla las usa de verdad)"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[QUALIFYING] no pude preparar las ventanas al-vuelo "
+                            f"({type(e).__name__}: {e}); sigo con el parquet tal cual"
+                        )
                     df = con.execute(
                         f'SELECT *, CAST("timestamp" AS DATE) AS date '
-                        f"FROM read_parquet('{_win.replace(chr(92), '/')}') "
+                        f"FROM {_from} "
                         f"WHERE {where_clause}"
                     ).fetchdf()
                     if not df.empty:
