@@ -34,6 +34,30 @@
 | 1.5 | Rango RTH de la víspera (umbral movible) | (high − low) / open. Descartado como filtro fijo el 25-sep; se revisa por tramos | diario |
 | 1.6 | Neto RTH de la víspera (umbral movible) | (close − open) / open. Descartado como filtro fijo el 25-sep; se revisa por tramos | diario |
 
+**Decisión 2026-09-25:** se construye 1.6 como filtro de dataset «Gap -1 · Day
+Return %» (umbral movible), para estrategias de short premarket de fade. En RTH
+no aporta (2B de Sailor plana).
+
+**✅ CONSTRUIDO (2026-09-25, commit `f1e401b` en `alvaro-rama-desarrollo`, SIN
+push):** `day_return_pct` en `PREV_DAY_LAG_SOURCES` (alias `lag_day_return_pct_1`
+en las tres vías: datasets, qualifying local y GCS/Parquet) + UI en dataset
+builder, strategy builder y genético, con la etiqueta «Day Return % (RTH, cierre
+vs apertura)». Verificado: 22 tests, tsc limpio, paridad motor↔estudio (1502 vs
+1507; 5 difs del 31-dic = hallazgo 15, `date_to` exclusivo preexistente) y UI
+end-to-end. Detalle en MEMORIA_MADRE (FEATURE 25-sep · FILTRO 1.6).
+
+### Bloque 1-bis — El PREMARKET de la víspera · PENDIENTE (al final, baja prioridad)
+Idea de Álvaro (25-sep): lo mismo que el Bloque 1 pero con el premarket del día
+anterior (04:00–09:30). Se hace al terminar los demás bloques si da mucho trabajo.
+- Rango del PM de la víspera: (pm_high − pm_low). ✅ diario.
+- Fade del PM de la víspera: `pmh_fade_pct` del día anterior (PMH → apertura). ✅ diario.
+- Neto del PM de la víspera (04:00 → 09:29, rojo/verde). 🕐 necesita velas de 1 min
+  (el diario no guarda apertura ni cierre del PM). Aproximación: rth_open de la
+  víspera vs su prev_close.
+- Volumen del PM de la víspera. ✅ diario.
+- Ojo: 1.4 (PMH Gap de la víspera) ya salió ❌ — medir cómo se COMPORTÓ el PM, no
+  cuánto subió. Muchas vísperas tienen el PM casi muerto (en 1.4 faltaba el 21 %).
+
 ### Bloque 2 — Actividad de la víspera · PENDIENTE
 - Volumen de la víspera frente a su media de 20 días (`vol_rel_20`).
 - Rotación de la víspera (volumen ÷ acciones en circulación).
@@ -116,12 +140,14 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-25 | Punto 5 · 1.6 Neto en 3ª estrategia (2B RTH de Sailor, RTH short) | ⬜ PLANA — no se invierte, se apaga (ρ +0,05/−0,01/−0,03; roja vs verde +0,3…+1,2 pp = ruido) | ídem §9 |
 | 2026-09-25 | Punto 5 · 1.2 Fade en 3ª estrategia (2B RTH) | ⬜ Plana | ídem §9 |
 | 2026-09-25 | Punto 5 · DECISIÓN | 1.6 se construye como filtro de umbral movible SOLO para estrategias PM de fade (keep-roja); en RTH no aporta ni perjudica. 1.2 no prosigue | ídem §9.3 |
+| 2026-09-25 | B1·1.6 IMPLEMENTADO | ✅ HECHO — «Gap -1 · Day Return %» en las tres vías + tres UIs (commit `f1e401b`, SIN push); 22 tests, tsc, paridad 1502↔1507 (dif = hallazgo 15), navegador e2e | MEMORIA_MADRE (FEATURE 25-sep) |
 
 ## Pendientes fuera de la investigación
 - Punto 5 CERRADO (25-sep): 1.6 probado en DT (misma dirección, débil — §8) y en la
   2B RTH de Sailor (plana; NO se invierte — §9). Decisión: filtro de umbral movible
-  keep-roja SOLO para la familia premarket-fade. Pendiente de implementar:
-  `lag_day_return_pct_1` en `PREV_DAY_LAG_SOURCES` de `qualifying_windows.py`.
+  keep-roja SOLO para la familia premarket-fade. ✅ **IMPLEMENTADO** el mismo día:
+  `lag_day_return_pct_1` en `PREV_DAY_LAG_SOURCES` de `qualifying_windows.py`
+  (commit `f1e401b`, SIN push) — ver «CONSTRUIDO» más arriba.
 - ✅ **Creación de datasets en local ARREGLADA** (25-sep, con OK de Álvaro): hallazgos
   11/12 (recursión de la vista `tickers`: duckdb moderno re-resuelve `main.X` dentro
   de la db attachada) → fix con nombre 3-part dinámico, commit `cd180fa` en
