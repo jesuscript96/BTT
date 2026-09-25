@@ -88,3 +88,58 @@ def dataset_pairs_subquery_lagged_sql() -> str:
         "                    FROM daily_metrics\n"
         "                ) dm_lagged"
     )
+
+
+# ── Columnas de ventana calculables AL VUELO (vía materializada) ────────────
+#
+# La vía materializada (QUALIFYING_WINDOWED_PARQUET, data_service.py) lee un
+# parquet generado offline que trae las ventanas QUE EXISTÍAN cuando se generó.
+# Una regla que use una columna de ventana añadida después (p. ej. una fuente
+# nueva de PREV_DAY_LAG_SOURCES) revienta con "Binder Error: Referenced column
+# … not found" (hallazgo 25-sep·16: el filtro 1.6 y, preexistente, cualquier
+# Gap -1 de fuente añadida tras generar el parquet). En vez de obligar a
+# regenerar el parquet, la vía materializada calcula al vuelo SOLO las
+# columnas que falten, con la MISMA SQL con la que se materializa (paridad por
+# construcción), sobre las columnas BASE del propio parquet.
+#
+# Registro genérico: alias -> expresión SELECT. Las LAG/LEAD estándar se
+# generan programaticamente; una columna futura que NO sea LAG/LEAD (p. ej. un
+# retorno acumulado de N días) se añade aquí con su expresión y la vía
+# materializada la cubrirá sin más cambios.
+
+_ON_THE_FLY_BASE_SOURCES = list(dict.fromkeys([
+    "rth_open", "rth_close", "rth_high", "rth_low", "rth_volume", "pm_high",
+    "open", "timestamp",
+    *PREV_DAY_LAG_SOURCES,
+]))
+
+
+def window_alias_to_expr() -> dict[str, str]:
+    """Alias de columna de ventana -> expresión SELECT equivalente (parquet)."""
+    out: dict[str, str] = {}
+    for src in _ON_THE_FLY_BASE_SOURCES:
+        for n in (1, 2):
+            out[f"lag_{src}_{n}"] = (
+                f'LAG("{src}", {n}) OVER (PARTITION BY ticker ORDER BY "timestamp") '
+                f'AS lag_{src}_{n}'
+            )
+            out[f"lead_{src}_{n}"] = (
+                f'LEAD("{src}", {n}) OVER (PARTITION BY ticker ORDER BY "timestamp") '
+                f'AS lead_{src}_{n}'
+            )
+    return out
+
+
+def on_the_fly_window_selects(missing) -> tuple[list[str], list[str]]:
+    """Expresiones SELECT para columnas de ventana ausentes en el parquet.
+
+    Devuelve (selects, desconocidas): `selects` son las expresiones de las
+    columnas que este módulo sabe computar; `desconocidas` son las que no
+    (esas seguirán fallando en el Binder, ruido a propósito: una regla que
+    referencia algo que ni el parquet ni este registro pueden producir debe
+    romper ruidosamente, no filtrar en silencio).
+    """
+    registro = window_alias_to_expr()
+    faltan = [c for c in missing if c in registro]
+    desconocidas = [c for c in missing if c not in registro]
+    return [registro[c] for c in faltan], desconocidas
