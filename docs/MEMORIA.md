@@ -1882,3 +1882,58 @@ cosmética entre versiones; config drift de "Definitiva 2.3" ya resuelto.
 - Nuestros: `PRD_ADOPCION_QUALIFYING_BYGAP_ALVARO.md`, `RECONCILIACION_QUALIFYING_STAGING.md`,
   `opt_por_gap.py`.
 - En el repo: `backend/tests/test_bygap_parity.py`.
+
+## 2026-09-24 — Estudio 1B Sobri3: sizing, corte de precio y salidas (completado)
+
+**Qué se hizo** — Estudio de backtests del PRD `PRD_ESTUDIO_1B_SOBRI3_SIZING_PRECIO_SALIDAS_20260924.md`
+contra el motor real vía API (49 corridas, todas con `look_ahead_prevention: true` y SIN costes,
+decisión de Álvaro). Informe completo: `docs/INFORME_ESTUDIO_1B_SOBRI3_20260924.md`.
+
+**Resultados clave**
+- **Sizing:** la pirámide 4% MV + 3% MV gana en riesgo-ajustado al 7% de golpe y al nocional
+  plano equivalente (574,49$), en IS y en ambos OOS (2024/2026). Cerrado: quedarse con 4+3.
+- **Corte de precio:** bajar de 0,70$ a 0,30$ gana en los tres años (más retorno, menos DD,
+  mejor MAR), pero es el tramo que puede tumbar el estudio de BP de Sage (PENDIENTE).
+- **Salidas:** el edge temporal está en 08:25→08:40 (+3.654$/5min en el mejor tramo);
+  08:40→08:45 ligeramente negativo. El calendario exacto no es la palanca: basta con no
+  vender antes de las 08:30. T3 (08:30 50 · 08:45 50) elegido por simplicidad.
+- **Ganadora: C4** (corte 0,30 + T3), mejor que lo de hoy en MAR, DD y retorno en los tres
+  años. Plan B si el BP castiga el sub-1$: C2 (0,70+T3) o C1 (lo de hoy).
+
+**Corrección sobre la estrategia del baúl**
+- `5ed17d89` tenía la pirámide en `unit:"usd", capital_pct:1` (= 1$ fijo por añadido, no
+  3% MV). Corregida a `pct/3` con OK explícito de Álvaro (diff de 2 campos verificado,
+  backups en `.tmp_estudio_1b/`). La UI pinta exactamente lo guardado — sin hallazgo.
+- Copias nuevas en el baúl (la 5ed17d89 intacta): C1 `8e4f648a`, C2 `ff96e0c4`,
+  C4 (ganadora) `70dcb6e3`, C5 (ref) `3595c470`.
+
+**Notas de semántica del motor verificadas** (documentadas en el informe §7)
+- `executions[]`: el agrupador renombra `pyr_executions` → `executions[]` y solo existe en
+  trades multi-pierna; el nocional desplegado es exacto vía `size × avg_entry_price`.
+- Robustez MC: los percentiles de DD van con signo (la cola mala es `dd_tolerance.p95`);
+  `prob_ruin_pct` se mide contra `init_cash×(1−x)` desde el arranque, no desde el pico.
+- `size_by_sl` de la PETICIÓN es OR con la estrategia (la plantilla vieja de `.tmp_scalp`
+  llevaba `true` — cuidado al reutilizarla).
+
+**Estado**: informe entregado, sin commit ni push (regla: OK explícito de Álvaro).
+Pendiente decidido: estudio de buying power Sage sobre C4 (`margin_enabled`,
+`margin_capacity_pct` = poder de compra real).
+
+## 2026-09-25 — Estudio: filtro de universo por el día anterior (rango / neto RTH)
+
+**Qué se hizo** — GLM, guiado por Claude, sobre la 1B Sobri3 (short premarket, universo
+PMH Gap ≥ 50). Informe: `docs/INFORME_RANGO_PREV_RTH_20260925.md`.
+- **Rango RTH de la víspera:** no sirve (ruido en 2025).
+- **Neto RTH de la víspera** (close−open)/open: en 2025 la víspera roja rendía +4,57 %/trade
+  vs +1,36 % la verde (p≈0,001). **No se confirma fuera de muestra**: en 2024 y 2026 la
+  diferencia cae a ~0,8 pp (p≈0,5), y el filtro «víspera ≤ +10 %» se invierte en 2026.
+  Decisión: **no se añade ningún filtro**.
+- Hallazgos 25-sep·01-05 en MEMORIA_MADRE (prev_close persistida, rth_range_pct ÷low,
+  WAL de 160 B que deja el DDL de init_db y bloquea el arranque, fórmulas duplicadas en
+  catchup_gcs). `day_return_pct` = intra-RTH en el 100 % de filas.
+
+**Método acordado para nuevos criterios de universo**: cribado sobre el universo entero
+(sin estrategia), años de búsqueda y de confirmación fijados antes, y solo lo que pase se
+prueba en 2-3 estrategias con el motor. Registrar también lo descartado.
+
+**Pendiente**: cribado de criterios del día anterior; revisar lo que ha subido Jaime a staging.
