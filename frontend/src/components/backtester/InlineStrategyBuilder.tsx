@@ -116,6 +116,7 @@ function getFriendlyMetricLabel(metric: string): string {
     "lag_gap_pct_1": "gap de apertura día anterior %",
     "lag_rth_volume_1": "volumen rth día anterior",
     "lag_rth_range_pct_1": "rango rth día anterior %",
+    "lag_day_return_pct_1": "day return rth (cierre vs apertura) día anterior %",
   };
   if (labelMap[m]) return labelMap[m];
   return m.replace(/_/g, " ").toLowerCase();
@@ -1195,7 +1196,17 @@ export default function InlineStrategyBuilder({
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                       <select
                         value={tempUnivDay}
-                        onChange={(e) => setTempUnivDay(e.target.value as any)}
+                        onChange={(e) => {
+                          const val = e.target.value as any;
+                          setTempUnivDay(val);
+                          // Day Return % solo tiene columna en Gap -1
+                          // (lag_day_return_pct_1); en otra sección la regla no
+                          // existiría y el botón no haría nada.
+                          if (val !== 'gap_prev_day' && tempUnivParam === 'day_return_pct') {
+                            setTempUnivParam('gap_pct');
+                            setTempUnivVal1('2.0');
+                          }
+                        }}
                         style={{
                           background: 'var(--color-ec-bg-surface)',
                           border: '0.5px solid var(--color-ec-border)',
@@ -1221,6 +1232,8 @@ export default function InlineStrategyBuilder({
                             setTempUnivVal1('1.0');
                           } else if (param === 'gap_pct' || param === 'rth_range_pct') {
                             setTempUnivVal1('2.0');
+                          } else if (param === 'day_return_pct') {
+                            setTempUnivVal1('0.0');
                           } else {
                             setTempUnivVal1('5.0');
                           }
@@ -1242,6 +1255,9 @@ export default function InlineStrategyBuilder({
                         <option value="pm_open">Precio PM ($)</option>
                         <option value="pmh_gap_pct">PM High Gap (%)</option>
                         <option value="rth_range_pct">Rango RTH (%)</option>
+                        {tempUnivDay === 'gap_prev_day' && (
+                          <option value="day_return_pct">Day Return % (RTH, cierre vs apertura)</option>
+                        )}
                       </select>
 
                       <select
@@ -1317,6 +1333,7 @@ export default function InlineStrategyBuilder({
                             else if (tempUnivParam === "gap_pct") fieldName = "lag_gap_pct_1";
                             else if (tempUnivParam === "rth_volume") fieldName = "lag_rth_volume_1";
                             else if (tempUnivParam === "rth_range_pct") fieldName = "lag_rth_range_pct_1";
+                            else if (tempUnivParam === "day_return_pct") fieldName = "lag_day_return_pct_1";
                           } else if (tempUnivDay === "gap_day") {
                             if (tempUnivParam === "rth_close") fieldName = "Close Price";
                             else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";

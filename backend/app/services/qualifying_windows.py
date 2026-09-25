@@ -17,6 +17,12 @@ aqui actualiza las tres.
 # una es lag_<fuente>_1. rth_close y rth_volume ya existian como LAG 1 en las
 # vias qualifying; se listan aqui para que la materializacion de datasets
 # (que solo tenia LEADs) tambien las tenga.
+#
+# day_return_pct (2026-09-25): filtro 1.6 del Bloque 1 de la investigacion de
+# criterios (docs/INFORME_BLOQUE1_VELA_VISPERA_20260925.md) — la vispera roja
+# (neto RTH < umbral) sube el fade premarket del gap. Columna intra-RTH
+# ((rth_close-rth_open)/rth_open) presente en la tabla local y en el parquet
+# del lago; util SOLO para estrategias PM de fade, neutra en RTH.
 PREV_DAY_LAG_SOURCES = [
     "rth_close",
     "rth_volume",
@@ -25,6 +31,7 @@ PREV_DAY_LAG_SOURCES = [
     "open",
     "pmh_gap_pct",
     "rth_range_pct",
+    "day_return_pct",
 ]
 
 # Fuentes LAG 1 que el stage-2 del qualifying (data_service / gcs_cache) ya

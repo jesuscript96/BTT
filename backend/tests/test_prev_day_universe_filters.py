@@ -45,23 +45,26 @@ def _make_mini_lake() -> duckdb.DuckDBPyConnection:
             pm_volume BIGINT,
             "open" DOUBLE,
             pmh_gap_pct DOUBLE,
-            rth_range_pct DOUBLE
+            rth_range_pct DOUBLE,
+            day_return_pct DOUBLE
         )
     """)
     rows = [
-        # AAA: volumen del dia anterior 1M -> 3M (creciendo)
-        ("AAA", "2024-01-02", 10.0, 1_000_000),
-        ("AAA", "2024-01-03", 11.0, 3_000_000),
-        ("AAA", "2024-01-04", 12.0, 9_000_000),
-        # BBB: volumen del dia anterior 2M -> 1M (decreciendo)
-        ("BBB", "2024-01-02", 20.0, 2_000_000),
-        ("BBB", "2024-01-03", 21.0, 1_000_000),
-        ("BBB", "2024-01-04", 22.0, 1_000_000),
+        # AAA: volumen del dia anterior 1M -> 3M (creciendo);
+        # neto RTH (day_return_pct): roja, roja, verde
+        ("AAA", "2024-01-02", 10.0, 1_000_000, -1.0),
+        ("AAA", "2024-01-03", 11.0, 3_000_000, -2.0),
+        ("AAA", "2024-01-04", 12.0, 9_000_000, 3.0),
+        # BBB: volumen del dia anterior 2M -> 1M (decreciente);
+        # neto RTH: verde, verde, roja
+        ("BBB", "2024-01-02", 20.0, 2_000_000, 2.0),
+        ("BBB", "2024-01-03", 21.0, 1_000_000, 1.0),
+        ("BBB", "2024-01-04", 22.0, 1_000_000, -0.5),
     ]
-    for t, d, close, vol in rows:
+    for t, d, close, vol, day_ret in rows:
         con.execute(
-            'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 5.0, 500_000, ?, 10.0, 3.0)',
-            [t, d, close, vol, close],
+            'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 5.0, 500_000, ?, 10.0, 3.0, ?)',
+            [t, d, close, vol, close, day_ret],
         )
     con.execute("INSERT INTO massive.tickers VALUES ('AAA', 'CS'), ('BBB', 'CS')")
     return con
@@ -149,6 +152,37 @@ class TestDatasetPairsPrevDayFilter:
         # close del dia anterior: AAA siempre < 15 (no pasa nunca);
         # BBB 20/21/22 en 01-02/03/04 -> pasan 01-03 y 01-04.
         assert got == {("BBB", "2024-01-03"), ("BBB", "2024-01-04")}
+
+
+    def test_prev_day_return_rule_filters_pairs(self):
+        """Filtro 1.6 del Bloque 1: víspera roja (lag_day_return_pct_1 < 0)."""
+        con = _make_mini_lake()
+        filters = {
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "rules": [
+                {
+                    "metric": "lag_day_return_pct_1",
+                    "operator": "LESS_THAN",
+                    "value": "0",
+                }
+            ],
+        }
+        _, params, _, _, where_m_stats, _ = build_screener_query(filters, limit=100000)
+        assert "lag_day_return_pct_1 < ?" in where_m_stats
+
+        subquery_lagged = dataset_pairs_subquery_lagged_sql()
+        select_sql = f"""
+            SELECT ticker, CAST(CAST("timestamp" AS DATE) AS VARCHAR) as date
+            FROM {subquery_lagged}
+            WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
+        """
+        df = con.execute(select_sql, params).fetchdf()
+
+        got = set(zip(df["ticker"], df["date"]))
+        # lag de AAA: NULL, -1.0, -2.0 -> pasan 01-03 y 01-04 (víspera roja)
+        # lag de BBB: NULL, 2.0, 1.0   -> no pasa ningún día (víspera verde)
+        assert got == {("AAA", "2024-01-03"), ("AAA", "2024-01-04")}
 
 
 class TestWhereClausePassthrough:
