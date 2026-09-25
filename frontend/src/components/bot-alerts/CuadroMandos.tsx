@@ -816,7 +816,9 @@ export default function CuadroMandos() {
               </Td>
               <Td tono={tonoTipo}>
                 {e.tipo === "piramide"
-                  ? (e.accion_piramide === "reduce" ? "Reducir" : "Añadir")
+                  ? (e.accion_piramide === "lot_stop" ? "Stop de lote"
+                    : e.accion_piramide === "lot_tp" ? "TP de lote"
+                    : e.accion_piramide === "reduce" ? "Reducir" : "Añadir")
                   : e.tipo === "entrada" ? "Entrada" : "Salida"}
                 {e.modo === "reproduccion" && (
                   <span style={{ color: color.textMuted, fontSize: 9 }}> ·rep</span>

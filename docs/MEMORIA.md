@@ -30,6 +30,317 @@
 
 ---
 
+## 2026-09-25 (Sailor, bot de alertas) — Prealertas por estrategia en vivo, los huecos son de Massive (demostrado), un 1008 del socio y el fallo de recuperación que destapó
+
+**La sesión (09:59 → 15:37), auditada al parar:**
+- **28 avisos, los 28 en el segundo 1**, 14 por cada estrategia (PM. 1A TTP y
+  la de Álvaro).
+- **Prealertas: 18, nueve por estrategia** — el arreglo del 24-sep funciona en
+  vivo. 14 de 18 confirmadas, margen mediano 15,7 s. **Log sin duplicar**: 8
+  líneas «hidratado» para 8 altas.
+- **Latencia de la vela:** 67 ventanas, mediana 1,33 s (mejor 1,14, peor 1,46),
+  **67 de 67 por debajo de 1,5 s**; p90 mediano 1,42 s. El reloj ya no falsea
+  nada: sincroniza cada hora.
+- **El reloj interno del lector** ha zanjado lo de los huecos: el bucle llegó a
+  ir como mucho **0,29 s** tarde en todo el día (mediana 0,04 s) y **no hubo ni
+  una línea «bucle PARADO»**. Hubo huecos de 10,8 s (13:52) y 13,8 s (15:34):
+  **son de Massive**, demostrado, como sospechaba Jaume. El de las 13:52 cayó
+  sobre las velas de ese minuto (llegaron a ~11 s) pero ese minuto no había
+  señal.
+- **Un `1008` a las 10:04:43**: *«connection limit for your account»*. Es la
+  cuenta de Massive (UNA cuenta, TRES sockets, TRES socios, siempre llena) y el
+  reinicio diario del sistema de un socio a las 04:00-04:05 NY; histórico
+  idéntico el 16, 17 y 18-sep. No fue nuestro bot (sin `1011`, bucle a
+  0,02 s, y en la máquina solo el bot abre websocket). Se recuperó en 15 s sin
+  perder nada. Jaume enciende a las 09:59 a propósito; el arreglo de verdad es
+  un 4.º socket o que el sistema del socio espere antes de reconectar.
+- Backtests lanzados por Jaume durante la sesión: el bucle subió a 0,13-0,29 s
+  un rato, sin tocar ninguna alerta ni dejar avisos sin publicar.
+
+**El fallo que destapó el `1008` (mío, del cambio a cuatro procesos):** al
+reconectar, el bot manda el día entero por REST a los dos procesos. El de
+alertas filtraba las velas que ya tenía; **el de prealertas no**, y las volvió a
+aplicar todas (`RunnerAlertas.nueva_vela` añade sin mirar): INLF y CTNT se
+quedaron con 04:00-04:04 duplicadas y sus prealertas calcularon el resto del día
+con ese volumen de más. Las alertas, bien. Arreglado al parar: el proceso de
+prealertas filtra como el de alertas y avisa de cuántas aplicó. Y el log del bot
+ya no dice «8 velas recuperadas» cuando no faltaba ninguna (contaba las
+ENVIADAS): lo dicen los hijos. Test nuevo en `test_bot_alerts_procesos.py`; y
+`ProcesoHijo.al_aviso` para que las pruebas no dependan del log (en la suite
+completa otra prueba cambiaba el registro y el texto capturado llegaba vacío).
+381 verdes en la zona del bot.
+
+---
+
+## 2026-09-24 (Sailor, bot de alertas) — Primer día completo con cuatro procesos: 44 avisos, los 44 en el segundo 1; y tres cambios para mañana
+
+**La sesión (09:59 → 15:15), auditada al parar:**
+- **44 avisos, los 44 en el segundo 1**, todos por las dos estrategias (PM. 1A
+  TTP y la de Álvaro): 5 entradas (WETO, GCTK, YMAT, AIXI, PFSA), 2 pirámides y
+  los 3 tramos de salida parcial por horario de los cinco.
+- **Latencia de la vela:** 63 ventanas, mediana medida 1,33 s, p90 1,43 s, peor
+  p90 2,07 s; 62/63 por debajo de 1,6 s. Parecía bajar de 1,56 a 1,20 s a lo
+  largo del día, pero era **el reloj absorbiendo el desfase** (0,58 s a las 09:19,
+  0,12 s a las 15:15): la latencia real se quedó en **~1,0-1,1 s todo el día**.
+- **Prealertas:** 10, con ~15,5 s de margen, 7 de 10 confirmadas (las 3 que no,
+  todas de PFSA antes de entrar de verdad a las 13:51). **Las 10 de una sola
+  estrategia**: el fallo que se arregla hoy (abajo).
+- **Cero cortes, cero 1008/1011, cero errores, cero resurrecciones** del
+  vigilante en cinco horas.
+- **Tres huecos del lector** entre las 11:15 y las 12:29 (5,35 s, 6,90 s y
+  11,97 s), en el rato más parado del premercado. Ninguno tocó una alerta. Lo
+  que llegó justo después venía retrasado lo mismo que el hueco, así que los
+  datos existían y alguien los retuvo; pero desde dentro no se distingue si fue
+  nuestro bucle o Massive. Descartada una búsqueda huérfana (`find / -iname
+  margen.py`, lanzada a las 07:12 por otro chat y colgada 5 horas): ya había
+  terminado cuando llegó el de 12 s. Jaume: «seguramente sea Massive; por el
+  momento, solucionado». Para salir de dudas, el reloj interno (abajo).
+
+**Tres cambios hechos al parar (entran en el próximo arranque):**
+
+1. **Prealertas POR ESTRATEGIA** (Jaume: «por cada estrategia, que no por cada
+   cuenta»). La matrícula de una prealerta no llevaba la estrategia, así que la
+   segunda se tiraba como repetida; y el primer aviso cerraba el minuto, así que
+   la que se cumplía después ni se miraba. Ahora `clave_prealerta` (ticker,
+   **estrategia**, tipo, minuto, cuenta) vive en `bot_alerts_prealerta_proceso`
+   y la usan el proceso y el bot, y `filtrar_nuevas` sustituye al cierre del
+   minuto: se sigue mirando hasta el 59 y lo ya avisado se filtra. Las cuentas
+   de una estrategia siguen saliendo en **un solo mensaje** (Telegram ya
+   agrupaba por estrategia). Coste: como mucho 16 evaluaciones por minuto y
+   ticker, lo mismo que un minuto sin avisos.
+2. **El reloj interno del lector** (`FeedEnVivo._pulso`): un pulso cada 0,1 s en
+   el mismo bucle que lee, con `time.monotonic()` (no se mueve cuando Windows
+   corrige la hora). Cada hueco o parada ≥ 2 s sale en el log con su hora:
+   `[FEED] N s sin recibir nada del socket` y, si es nuestro,
+   `[FEED] el bucle que lee el socket se ha quedado N s PARADO`. Y el resumen de
+   5 min dice «el bucle llegó a ir N s tarde» al lado de «sin leer». **Hueco sin
+   parada = Massive; hueco con parada = nuestro.** Solo mide, no toca datos.
+3. **El log duplicado, arreglado de verdad.** El 23-sep se silenció el logger
+   `bot` y no sirvió: las líneas repetidas salen de `btt.bot_alerts` (motor y
+   runner). Ahora se silencia ese en el proceso de prealertas. Nunca afectó a
+   Telegram ni al cuadro de mandos (comprobado: 4 avisos guardados, sin dobles).
+
+**Pruebas:** `test_bot_alerts_prealertas_por_estrategia.py` (7: dos estrategias
+dan dos prealertas, la que llega tarde también sale, no se repite cada segundo,
+el minuto siguiente vuelve a avisar, varias cuentas = un mensaje, dos
+estrategias con cuentas = un mensaje cada una, la matrícula) y
+`test_bot_alerts_reloj_interno.py` (3: un bloqueo de 0,6 s se ve, esperar datos
+no es un atasco, el reloj se para con el feed). 380 verdes en la zona del bot.
+`pyflakes` sin nombres sin definir en `bot.py`.
+
+**Pendiente para mañana:** ver en vivo las prealertas de las dos estrategias, y
+si hay huecos, leer las dos líneas de `[FEED]` para saber de quién son.
+
+---
+
+## 2026-09-24 (Sailor, máquina de Jaume) — El reloj del PC: por qué deriva, cómo quedó y qué afecta
+
+**Por qué se desviaba.** Windows, en un PC que no está en un dominio, solo
+sincroniza la hora con internet **una vez por semana**. El reloj de esta
+máquina deriva **~0,6 s al día** (medido: 0,57 s entre el 23-sep 10:29 y el
+24-sep 09:13), así que en una semana acumula unos 4 s. Los 2,53 s del 23-sep
+eran eso.
+
+**Cómo quedó (24-sep, lo hizo Jaume como administrador):**
+- Sincronización **cada hora**: `SpecialPollInterval = 3600` en
+  `HKLM\SYSTEM\CurrentControlSet\Services\W32Time\TimeProviders\NtpClient`,
+  aplicado con `w32tm /config /update`.
+- Fuente: `time.windows.com`. Comprobado sano: «Indicador de salto: 0».
+
+**Por qué cada hora y no cada día.** Cuanto más a menudo, más suave. Con un
+desfase por debajo de **1 s** (`MaxAllowedPhaseOffset = 1`) Windows no salta la
+hora: la absorbe poco a poco acelerando o frenando el reloj. Cada hora las
+correcciones son de ~25 ms y nunca hay salto; cada día serían de 0,6 s y, si
+cayeran en plena sesión, descolocarían un minuto de métricas.
+
+**Lo que SÍ afecta y lo que NO.** Comprobado en el código el 24-sep:
+- **NO afecta a cuándo saltan las alertas ni las prealertas.** La alerta sale
+  cuando llega la vela de Massive; la ventana de la prealerta (segundos 44-59)
+  se calcula con la hora de cada print que manda la bolsa (`ms_ejec` en
+  `ConstructorParcial.aplicar_operacion`), no con la del ordenador.
+- **SÍ falsea las métricas de latencia del log** (`[LATENCIA ...]`,
+  `[OPERACIONES]`), que restan la hora del ordenador a la del dato. Un reloj
+  adelantado N segundos las infla N segundos.
+
+**Si algún día las latencias salen raras, lo primero es esto:**
+
+```
+w32tm /stripchart /computer:time.windows.com /samples:3 /dataonly
+```
+
+El número de la derecha es el desfase: negativo = el ordenador va adelantado.
+Para forzar la corrección (PowerShell como administrador):
+`w32tm /resync /force`. Si el desfase es menor de 1 s no la verás al instante:
+se va absorbiendo en las horas siguientes, y es lo correcto.
+
+**Tras el cambio quedaban 0,58 s** que se irán absorbiendo durante el día. Las
+latencias del 24-sep por la mañana llevan ese extra.
+
+---
+
+## 2026-09-23 (Sailor) — Integrado lo de Álvaro: TP por lote, Fase 2 de picos, etiquetas y dos fixes (sailor y staging a la par)
+
+Traído de `alvaro-rama-desarrollo` por cherry-pick selectivo, siguiendo su
+`PRD_PARA_SAILOR_TRAER_ALVARO_20260923.md` (nunca un merge de su rama entera:
+mantiene 17 ficheros del bot ausentes).
+
+| Commit suyo | Qué | Conflictos |
+|---|---|---|
+| `328bc0d` | **Fase 2 de picos y valles** al carril nativo (sigue APAGADO por defecto, `BTT_N2A_NATIVE_ENABLED=0`) | ninguno |
+| `149cacb` | Fix del dropdown `ap_session`: mostraba `ap.RTH` y el motor usa `ap.PM` | solo memoria |
+| `38fa515` | Fix del modal del calendario: **R total** del día, y la media etiquetada | solo memoria |
+| `eaa7ce1` | **TP por lote** (`lot_tp`) + su PRD | solo memoria y el PRD |
+| `9016fb1` | **Etiquetas** de estrategias (columna `tags`, `TagEditor`, filtros) | `portfolio/page.tsx` |
+
+**El conflicto de verdad, y cómo se resolvió** (Jaume: «el nuestro va por
+delante, no cojas el suyo»): su `portfolio/page.tsx` todavía llevaba la pestaña
+`PortfolioTab`, que aquí se borró el 21-sep al dejar Portfolio en dos pestañas.
+Se conservó **nuestra** estructura y solo se le añadió su `onTags={etiquetar}`.
+
+**El fallo silencioso que esto cierra.** Sin `eaa7ce1`, una estrategia con
+`lot_tp` guardado **lo ignoraba sin dar ningún error**: el bloque se caía al
+hidratar la definición. Por eso él retiró la compartida `c2a24250` y la
+definitiva `aa06` va sin `lot_tp`.
+
+**Migración obligatoria en local, ya hecha:** `ALTER TABLE strategies ADD COLUMN
+IF NOT EXISTS tags VARCHAR` sobre `backend/users.duckdb` (copia previa en
+`users.duckdb.bak-2026-09-23`, 3,7 GB; 19 estrategias intactas). Sin la columna,
+`test_strategy_api` revienta con `Binder Error: Referenced column "tags" not
+found`.
+
+**Verificación: 1.691 pasan, 32 se saltan, 2 fallan — y los 2 fallos son
+PREVIOS, no de esto:**
+- `test_filtros_metric_map`: `METRIC_MAP` apunta a 5 columnas que no existen en
+  `daily_metrics` (`vol_rel_20`, `rotacion_dia`, `shares_outstanding`,
+  `pm_vol_rel_20`, `vol_prev3_rel_20`). Vienen de `13e901af` (los filtros de
+  volumen contra el universo, del otro chat); faltan por generar en el lago.
+  **Comprobado:** ninguno de los 5 cherry-picks toca `METRIC_MAP` ni
+  `daily_metrics` (0 coincidencias), y el único cambio de `data.py` es el de las
+  etiquetas.
+- `test_prefetch_parity`: busca `indicators._ticker_daily_ohlc_cache`, que
+  tampoco existía antes del merge. El cambio de `indicators.py` de la Fase 2 es
+  **solo comentarios** (comprobado línea a línea).
+
+`npx tsc --noEmit` limpio. Y de los 1.691, **398 son de la zona sensible** (bot
+de alertas, pirámides, TP por lote, etiquetas y picos): todos verdes. Importaba
+porque `eaa7ce1` toca `strategy_engine.py` y `portfolio_sim.py`, dos de los tres
+ficheros que el bot comparte con el backtester.
+
+**Sailor y staging quedan a la par.**
+
+**Pendiente de Álvaro, no traído:** el feat completo de Scalping UI (`62fc54e`,
+renombres al vocabulario de trading); en staging solo viaja su PRD.
+
+---
+
+## 2026-09-23 (Sailor, bot de alertas) — El cuello era la PREALERTA (97 % de un núcleo), y el bot pasa a CUATRO PROCESOS en paralelo
+
+**Resumen del día.** Por la mañana las alertas se degradaron hasta 15 s de
+mediana y Massive nos cortó la conexión dos veces. La causa no era el radar
+(arreglado ayer) ni Massive: era la prealerta evaluándose **con cada print**
+dentro del hilo que lee el socket. Un parche de tres líneas lo arregló en
+caliente, y por la tarde, con el dato ya medido, se rehízo el bot en cuatro
+procesos para que no pueda volver a pasar.
+
+**El reloj del PC iba 2,53 s adelantado.** Medido contra `time.windows.com`.
+Todas las métricas de latencia salían infladas 2,5 s, incluidas las de las
+primeras horas de hoy. Corregido con `w32tm /resync /force` a las 10:29 (el
+comando dice «no había información de hora disponible» y entra igual). **Ojo
+retroactivo:** no se sabe desde cuándo derivaba, así que las cifras del 22-sep
+pueden estar infladas también.
+
+**Lo que frenaba de verdad: la ventana de prealertas 44-59.** Sacado de la
+grabación segundo a segundo: la latencia era de **2,07 s clavados** en los
+segundos :08 a :42 de cada minuto, empezaba a subir **exactamente en el :43-44**
+(`SEGUNDO_DECISION = 44`) hasta 12-26 s, y luego bajaba 1 s por segundo hasta
+recuperarse en el :08 siguiente. Esa forma de sierra es una **cola drenándose**,
+no un parón: el «mayor rato sin leer del socket» nunca pasó de 0,9 s. Con 300
+prints/s y una llamada a `evaluar_parcial` por print, son ~3.600 evaluaciones
+por minuto concentradas en 16 segundos. El bot llegó al **97 % de su único
+núcleo mientras la máquina entera marcaba 3 %** (19 núcleos parados: en Python
+un proceso usa un núcleo, hagas los hilos que hagas).
+
+**Y por eso se cayó la conexión.** El `ping` de Massive (cada 20 s) lo contesta
+el mismo bucle que lee. Con el p90 en 30,78 s no llegaba a tiempo → `1011
+keepalive ping timeout` a las 14:05:32, **sin que nadie tocara nada**. Antes
+otro a las 10:42:26, ese sí junto al trasiego de estrategias de Jaume. Importa
+más de lo que parece: cada corte nuestro provoca una reconexión a los 5 s que
+puede solaparse con la conexión zombi, pasar del tope de la cuenta y **hacer
+que Massive eche al socio** — que es lo que le pasó.
+
+**El parche (tres líneas): una evaluación por segundo y ticker.** El print se
+aplica igual, la vela a medias es idéntica; solo se deja de repetir el cálculo.
+Probado en vivo a las 15:40 con **380 prints/s (más que el peor momento de la
+mañana)**: CPU del 97 % al **7,7 %**, mediana de la alerta de 15,36 s a
+**2,03 s**, p90 de 30,78 a 2,26 s, prints descartados por tardíos de 22.594 a
+**0**, margen de la prealerta de −2,6 s a **+12,1 s**.
+
+**Los dos cinturones** (`bot_alerts_feed.py`): `ping_timeout=60` (valía lo mismo
+que `ping_interval`, 20 s) y `ESPERA_RECONEXION` de 5 → **15 s**. Los 5 s se
+pusieron el 21-sep cuando la zombi era la del socio; hoy la zombi es la nuestra
+y volver al segundo 5 es justo lo que le cuesta la conexión a él. Lo que costaba
+esperar ya no aplica: `al_reconectar` recupera por REST desde el 22-sep.
+
+**La arquitectura nueva, decisión de Jaume («de cara a automatizar voy a
+necesitar paralelizar todo»):**
+
+```
+Massive ──(1 conexión)──▶ LECTOR ──┬──▶ RADAR      velas de todo el mercado
+                          (bot.py) ├──▶ ALERTA     velas de minuto
+                                   ├──▶ PREALERTA  prints y agregados
+                                   └──  VIGILANTE  levanta al que se caiga
+```
+
+La condición que lo hace funcionar: **el lector no calcula nada**. Coge el
+mensaje, mira el prefijo y lo empuja por su tubería. Su coste es diminuto y
+constante, así que no crece con los tickers ni con las estrategias. Sigue
+habiendo **una sola conexión a Massive**: las tuberías son locales.
+
+**Probado en producción 4 horas con el mercado abierto (16:21 → 20:22), 48
+ventanas:** mediana de las medianas **2,28 s**, peor mediana 2,64 s, p90 típico
+2,44 s, peor p90 de todo el día 3,66 s, 45 de 48 ventanas por debajo de 2,5 s.
+Mayor rato sin leer el socket: mediana 0,48 s, peor 1,33 s. 1.196.326 prints →
+35.855 evaluaciones (**1 de cada 33**). Cero cortes, cero `1008`, cero `1011`,
+y el vigilante no tuvo que levantar a nadie. Las 8 alertas salieron en el
+**segundo 1-2**. CPU: **8,3 % repartido en 4 núcleos**; RAM 682 MB (antes 330).
+
+**Honestamente: la arquitectura no es más rápida que el parche solo** (2,28 s
+frente a 2,03-2,15 s, la misma cosa dentro del ruido; esos ~2 s son el suelo de
+Massive). Lo que gana es **margen** —ya no hay nada caro en el bucle que lee, y
+la línea `[TIEMPOS]` ha desaparecido del log, que es la señal— y es la base
+para el bot automático.
+
+**Dos fallos míos, de los que no dan error, cazados por los tests y por mirar el
+log en vivo:**
+1. Mandaba **un mensaje por print** en vez de en lote. El test lo destapó: de
+   800 prints llegaban 21 y el resto los tiraba la cola acotada — la vela a
+   medias habría salido falsa. Es la trampa nº 1 que yo mismo había escrito en
+   el módulo base.
+2. La recuperación tras un corte recorría `runner.tickers`, que en el diseño
+   nuevo está vacío (el motor vive en el hijo): **no habría recuperado ninguna
+   vela**.
+3. Y uno cosmético visto en vivo: el hijo de prealertas escribía las mismas
+   líneas que el de alertas en el log (dos `[BOT] X hidratado`). Comprobado que
+   **no llegó ni a Telegram ni al cuadro de mandos**; silenciado su logger.
+
+**También de hoy:** la página de Portfolio daba 404 por caché rancia de
+turbopack (el chunk compilado era del 22-ago con el fuente del 21-sep);
+arreglado borrando `.next/dev` y reiniciando el front. Y la retención de
+grabaciones sube de 30 a **60 días** (35 ficheros de 16 sesiones = 53 MB).
+
+**Lección de método, la segunda vez esta semana:** Jaume me paró dos veces
+(«te estás rallando muchísimo», «las alertas me están llegando bien») y las dos
+tenía razón: estaba mirando la métrica agregada en vez de las alertas reales,
+que salían en el segundo 1-4. Mirar el agregado dice que hay un problema; mirar
+lo que el usuario recibe dice si importa.
+
+**Pendiente para mañana:** probarlo en premercado desde cero (tickers entrando y
+alertas de ENTRADA saltando en vivo, hoy solo hubo pirámides y salidas);
+confirmar con el socio la hora exacta de sus cortes para cerrar lo del `1008`
+encadenado; decidir si la ADMISIÓN de tickers baja de 30 s.
+
+---
+
 ## 2026-09-22 (Sailor, bot de alertas) — El radar a un proceso aparte, las alertas vuelven a la vela OFICIAL, y tres diagnósticos míos que eran falsos (`51acbc4`, en sailor Y staging)
 
 **Resumen honesto del día:** el trabajo del 21-sep (velas propias montadas con

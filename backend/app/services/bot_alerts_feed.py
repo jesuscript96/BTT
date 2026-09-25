@@ -65,11 +65,21 @@ ET = "America/New_York"
 # hacia atras al reconectar (una vela de minuto de cada ticker vigilado sin
 # evaluar). En premercado a las 04:02 NY no hay posiciones y da igual; en la
 # apertura RTH seria la primera vela. Decision de Jaume; ajustable por .env.
-ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "5"))
-# 21-sep-2026 (Jaume): la primera vuelta a los 5 s —el corte real dura 1-2 s y
-# la conexion sobrante del socio ya no suele estar—; si nos vuelven a echar sin
-# aguantar un minuto, la siguiente espera se dobla (10, 20, 40) hasta el tope.
-# Las velas que falten se recuperan por REST al reconectar (`al_reconectar`).
+#
+# CINTURON 2 (23-sep-2026, Jaume). Sube de 5 a 15 s. El 21-sep se bajo a 5
+# porque el corte tipico duraba 1-2 s y la conexion sobrante era DEL SOCIO, que
+# ya no solia estar. El 23-sep aparecio el caso contrario: nos echan a NOSOTROS
+# por ping timeout (1011) y la conexion zombi es la NUESTRA. Volver al segundo
+# 5 nos solapa con ella, la cuenta se pasa de tope y Massive echa a otro — al
+# socio. 15 s da margen a que Massive la suelte.
+#
+# Lo que costaba esperar (que el motor no rellenaba el hueco) ya no aplica:
+# desde el 22-sep `al_reconectar` recupera por REST las velas que falten, y el
+# 23-sep funciono en los dos cortes («tras el corte no faltaba ninguna vela»).
+ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "15"))
+# Si nos vuelven a echar sin aguantar un minuto, la siguiente espera se dobla
+# (30, 60) hasta el tope. Las velas que falten se recuperan por REST al
+# reconectar (`al_reconectar`).
 ESPERA_RECONEXION_MAX = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION_MAX", "60"))
 
 
@@ -218,6 +228,17 @@ class FeedEnVivo:
         self.lat_socket: list = []
         self.hueco_lectura = 0.0
         self._ultima_lectura: Optional[float] = None
+        # EL RELOJ INTERNO (24-sep-2026). `hueco_lectura` no distingue entre «el
+        # bucle estaba atascado» y «Massive no mandaba nada»: los dos se ven como
+        # un rato sin leer. El 24-sep hubo tres huecos de 5-12 s en premercado y
+        # lo que llego despues venia retrasado lo mismo que el hueco, pero no
+        # habia forma de saber de quien era. Este pulso se despierta cada 0,1 s
+        # en el MISMO bucle que lee: si durante un hueco el pulso tambien llega
+        # tarde, el bucle estaba bloqueado (es nuestro); si llega a su hora, el
+        # bucle estaba libre esperando datos (es de Massive o de la red). Usa
+        # `time.monotonic()`, que no se mueve cuando Windows corrige la hora.
+        self.retraso_bucle = 0.0
+        self._tarea_pulso = None
         self._caido_desde: Optional[float] = None
         # Suscribirse al mercado entero para que el radar pueda descubrir gaps.
         # `al_mercado` recibe TODOS los agregados de minuto, incluidos los de
@@ -232,6 +253,24 @@ class FeedEnVivo:
 
     def parar(self) -> None:
         self._parar = True
+
+    # Por encima de esto, cada hueco o parada se apunta en el log con su hora,
+    # para poder cruzarlos. Por debajo es ruido normal del bucle.
+    AVISO_HUECO_S = 2.0
+
+    async def _pulso(self, paso: float = 0.1) -> None:
+        """El reloj interno: ver `retraso_bucle`. No toca ningun dato."""
+        t = time.monotonic()
+        while not self._parar:
+            await asyncio.sleep(paso)
+            ahora = time.monotonic()
+            tarde = ahora - t - paso
+            if tarde > self.retraso_bucle:
+                self.retraso_bucle = tarde
+            if tarde >= self.AVISO_HUECO_S:
+                logger.warning("[FEED] el bucle que lee el socket se ha quedado %.1f s "
+                               "PARADO (el atasco es nuestro)", tarde)
+            t = ahora
 
     def quitar(self, fuera: Iterable[str]) -> list[str]:
         """Deja de seguir tickers. Devuelve los que se quitaron.
@@ -282,11 +321,24 @@ class FeedEnVivo:
             )
 
         espera = ESPERA_RECONEXION
+        # El reloj interno corre en ESTE bucle y vive lo que viva el lector,
+        # a traves de las reconexiones: se para solo cuando se para el feed.
+        if self._tarea_pulso is None:
+            self._tarea_pulso = asyncio.get_event_loop().create_task(self._pulso())
         while not self._parar:
             conectado_en = None
             try:
+                # CINTURON 1 (23-sep-2026). `ping_timeout` vale por defecto lo
+                # mismo que `ping_interval` (20 s): si el bucle va tan por
+                # detras que tarda mas de 20 s en llegar al ping, Massive nos da
+                # por muertos y corta con 1011. Paso ese dia a las 14:05:32 sin
+                # que nadie tocara nada — el p90 de la ventana anterior era
+                # 30,78 s, o sea que el corte era inevitable. Con 60 s un pico
+                # puntual ya no tira la conexion, y eso importa mas de lo que
+                # parece: cada corte nuestro provoca una reconexion que puede
+                # echar a un socio de la cuenta (ver ESPERA_RECONEXION).
                 async with websockets.connect(
-                    WS_URL, ssl=_ssl_ctx(), ping_interval=20,
+                    WS_URL, ssl=_ssl_ctx(), ping_interval=20, ping_timeout=60,
                     max_size=2**22, open_timeout=30,
                 ) as ws:
                     await ws.send(json.dumps({"action": "auth", "params": key}))
@@ -322,7 +374,12 @@ class FeedEnVivo:
                     async for crudo in ws:
                         _ahora = time.time()
                         if self._ultima_lectura is not None:
-                            self.hueco_lectura = max(self.hueco_lectura, _ahora - self._ultima_lectura)
+                            _hueco = _ahora - self._ultima_lectura
+                            self.hueco_lectura = max(self.hueco_lectura, _hueco)
+                            if _hueco >= self.AVISO_HUECO_S:
+                                logger.warning("[FEED] %.1f s sin recibir nada del socket "
+                                               "(si no hay «bucle PARADO» a la vez, es de Massive)",
+                                               _hueco)
                         self._ultima_lectura = _ahora
                         if self._parar:
                             break
@@ -345,6 +402,8 @@ class FeedEnVivo:
                 await asyncio.sleep(espera)
                 espera = min(espera * 2, ESPERA_RECONEXION_MAX)
         self.conectado = False
+        if self._tarea_pulso is not None:
+            self._tarea_pulso.cancel()
 
     def _procesar(self, crudo: Any) -> None:
         try:
