@@ -38,20 +38,20 @@
 - [x] B1. → R-B-01 FIJADA (al bid si <3 %, escalera 1/2/3 % en 60 s si no; tope 3 %). Si al enviar el precio ya se ha movido, ¿se pone un límite a qué distancia (ask/bid ± X % o X ticks)? ¿Se persigue al precio hasta un tope y luego se abandona?
 - [x] B2. → absorbida por R-B-01 (sin reenvíos: la escalera es la persecución; a los 60 s se cancela). ¿Cuántas veces se reintenta una entrada no ejecutada y con qué separación? ¿Tras el último intento se descarta la señal para el día?
 - [x] B3. → R-B-02 (sigue con R-B-01 hasta el minuto; se acepta lo que haya; sin mínimo). Ejecución parcial: ¿se acepta el resto, se cancela el resto y se protege lo lleno, o hay un mínimo por debajo del cual no compensa (comisión mínima, paquetes de locate de 100)?
-- [ ] B4. Orden rechazada: ¿qué motivos puede dar el bróker (sin locate, sin buying power, halt, precio fuera de banda, lote, ruta cerrada) y hay una respuesta distinta por motivo? **[API]**
-- [ ] B5. Orden enviada sin respuesta (timeout): ¿se asume no enviada, enviada, o se consulta el estado antes de reintentar? ¿Cómo se evita la orden doble? **[API: identificador de orden propio]**
+- [x] B4. (manual 2025: `%OrderAct … Send_Rej … notes` trae el texto; no hay lista oficial → catálogo R-B-07) Orden rechazada: ¿qué motivos puede dar el bróker (sin locate, sin buying power, halt, precio fuera de banda, lote, ruta cerrada) y hay una respuesta distinta por motivo? **[API]**
+- [x] B5. (manual 2025: token en %ORDER y %OrderAct; acción TimeOut; `GET ORDERS` para consultar) Orden enviada sin respuesta (timeout): ¿se asume no enviada, enviada, o se consulta el estado antes de reintentar? ¿Cómo se evita la orden doble? **[API: identificador de orden propio]**
 - [x] B6. → R-B-03 (se suman cantidades en una orden, escalera reiniciada, lotes por estrategia en el diario). ¿Puede haber dos órdenes vivas del mismo lado sobre el mismo ticker? ¿Cerrojo por ticker mientras haya una orden en vuelo?
 - [ ] B7. Ruta: ¿cuál por defecto, cuál en premercado, cuál cuando urge salir, y quién decide el cambio? **[API: rutas, horarios y tipos de orden por ruta]**
 - [x] B8. → R-B-05 (acumulado del día; se mide siempre, tope desactivado). Tamaño frente a liquidez: ¿tope de acciones por orden como fracción del volumen reciente y del tamaño visible en el ask/bid? ¿Se trocea la orden en tramos?
-- [ ] B9. Precio por debajo de 1 $: ¿decimales admitidos y cómo se redondea el límite? **[API]**
-- [ ] B10. ¿Lote máximo por orden del bróker y cómo se parte? **[API]**
+- [x] B9. (Jaume: se redondea a 2-3 decimales; se ve en el canario) Precio por debajo de 1 $: ¿decimales admitidos y cómo se redondea el límite? **[API]**
+- [x] B10. (manual 2025: `$SHORTINFO shortsize` = tamaño máximo por orden corta) ¿Lote máximo por orden del bróker y cómo se parte? **[API]**
 - [x] B11. → sin excepciones en PM (R-B-01). Orden límite en premercado que no se ejecuta en N s: ¿se recoloca, se cancela o se deja viva hasta una hora?
 - [x] B12. → R-B-04 (en el instante del cierre de la vela i, por ticks; = open de i+1 del backtest). ¿Se entra en la vela siguiente (i+1) como el backtester o al instante? Si el precio de i+1 ya está peor que el tope de entrada, ¿se salta?
 - [x] B13. → mejor: se acepta; peor por fallo: avisar y mantener con stop. Si el fill llega a un precio mucho mejor o peor del esperado (más de X %), ¿se avisa, se recalcula el tamaño o se cierra?
 - [x] B14. → R-B-01 (suelo bid + 0,01 en SSR); cómo se lee la bandera [API]. Antes de vender en corto, ¿el bot comprueba SSR (solo se puede vender por encima del bid)? ¿Cómo lo sabe? **[API]**
 - [ ] B15. Locate aceptado y DAS rechaza el corto igualmente: ¿qué se hace y cómo se registra? **[API]**
-- [ ] B16. Cancelación no confirmada: ¿se asume viva? Cancelación confirmada y después llega un fill (carrera): ¿cómo se reconcilia? **[API]**
-- [ ] B17. ¿Órdenes ocultas o iceberg? ¿Aportan algo en small caps o no? **[API]**
+- [x] B16. (manual 2025: acciones Canceling/Canceled/CancelRej en %OrderAct; reconciliar con GET ORDERS) Cancelación no confirmada: ¿se asume viva? Cancelación confirmada y después llega un fill (carrera): ¿cómo se reconcilia? **[API]**
+- [x] B17. (manual 2025: `Display=0/num`; no las usamos) ¿Órdenes ocultas o iceberg? ¿Aportan algo en small caps o no? **[API]**
 - [x] B18. → sí: halt cancela la escalera; al reabrir, nueva solo si «dentro» (R-F-04). Orden de entrada que sigue viva cuando llega un halt: ¿se cancela siempre antes de la reapertura?
 - [x] B19. → sí se entra; escalera con suelo bid + 0,01 (R-B-01); bandera SSR [API]. ¿Se entra en una acción que ya está en SSR? (idea de Jaume: no, favorecen squeezes). ¿Regla fija o parámetro?
 - [x] B20. → R-B-01: tope 3 % por distancia último precio→bid (FIJADO el 16-sep; la guarda por spread descartada). ¿Se entra si el spread supera X % del precio? ¿Y si el tamaño del bid es menor que la orden?
@@ -59,8 +59,8 @@
 ## C. Stop y protección de la posición
 
 - [x] C1. → R-C-01 + R-C-11 (tres stop limit residentes; RTH y socio pendientes). Tipo de stop por defecto: ¿mercado, limitado o limitado con banda ancha? ¿Distinto en premercado y en sesión? **[dato]** el precio camina: un limitado a +20 % se ejecutó en 654 de 678 casos; un stop a mercado de 300 $ se ejecutó una vez contra un print suelto a 5,6× el nivel; el limitado lo tapa. (P2, PUNTO ABIERTO)
-- [ ] C2. ¿El stop vive en el servidor de DAS o en el bot? Si vive en el bot, ¿qué protege la posición cuando el bot muere? **[API]**
-- [ ] C3. ¿Los stops de DAS disparan en premercado? ¿Con qué precio: último, bid/ask, print tardío? **[API]**
+- [x] C2. (Jaume + KB: en el servidor del bróker/SMAT) ¿El stop vive en el servidor de DAS o en el bot? Si vive en el bot, ¿qué protege la posición cuando el bot muere? **[API]**
+- [x] C3. (DAS 24-sep + manual 2025: STOPLMTP dispara en pre/post; el precio de disparo se comprueba en el canario) ¿Los stops de DAS disparan en premercado? ¿Con qué precio: último, bid/ask, print tardío? **[API]**
 - [x] C4. → R-C-03 (borrador; el cierre tras 5 intentos se repregunta con el PDF). ¿Cuánto tiempo puede estar una posición sin stop residente? Pasados N s, ¿se cierra a mercado?
 - [x] C5. → R-C-02 (borrador, bloqueado por el PDF: triggers en DAS). Stop limitado disparado y no ejecutado en N s porque el precio siguió subiendo: ¿se recoloca más arriba, se convierte a mercado o se aplica la espera de fogonazo?
 - [x] C6. → decidido (nota bajo R-C-09): el stop dispara por ask/bid («Ask + 0,01»); pendiente solo la sintaxis en el API. Stop disparado por un print suelto tardío: ¿se puede pedir un stop que mire bid/ask en vez del último precio? ¿Lo permite DAS? **[API]**
@@ -77,7 +77,7 @@
 
 ## D. Salidas, take profit y pirámides
 
-- [ ] D1. Take profit: ¿límite residente en DAS unido al stop (OCO/bracket) o gestionado por el bot? ¿DAS lo admite? **[API]**
+- [x] D1. (DAS 24-sep: sin OCO nativo; TP = límite residente gestionado por el bot) Take profit: ¿límite residente en DAS unido al stop (OCO/bracket) o gestionado por el bot? ¿DAS lo admite? **[API]**
 - [x] D2. → R-D-03 (resto al ask con techo 3 %; si no, stops + aviso; stops ajustados a lo que queda). Take profit ejecutado a medias y el precio vuelve: ¿se deja el resto o se cancela?
 - [x] D3. → R-D-01 (escalera de compra 1/2/3 % en 60 s y luego al ask; sin doble compra). Salida por hora de la estrategia: ¿límite, mercado, o límite y a los N s mercado? ¿Y si no hay liquidez?
 - [x] D4. → R-D-02 (EOD por estrategia, margen, aviso máximo y botón «control humano»). Cierre forzoso de fin de día: ¿a qué hora, con qué margen antes del cierre, y qué pasa si no se consigue (posición overnight no deseada)? **[dato]** quien aguanta al cierre se lleva el T12 a casa (INHD, TENK).
@@ -99,14 +99,14 @@
 - [x] E3. → sin tope: lo controla el reparto del cuadro de mandos. ¿Tope de capital por ticker sumando estrategias? Si no cabe, ¿cede la última en llegar o la de menor EV?
 - [x] E4. → R-I-01 + R-E-02 (capital libre, orden de llegada; pirámide sin dinero no se hace). ¿Tope de capital total y por sesión (PM frente a RTH)? ¿Reserva para pirámides ya previstas?
 - [x] E5. → R-E-02 (orden de llegada; lo que sobre; sin proporcional). Señales simultáneas en tickers distintos sin capital para todas: ¿prioridad por orden de llegada, por EV o por riesgo?
-- [ ] E6. **RECORDAR: pedir a Jaume las reglas de margen/buying power de su bróker con el PDF (17-sep).** Buying power distinto en PM, intradía y overnight: ¿cómo lo sabe el bot y cómo lo respeta? **[API]**
+- [x] E6. (Jaume: margen/BP los gestiona él; el bot usa GET BP y $SHORTINFO) **RECORDAR: pedir a Jaume las reglas de margen/buying power de su bróker con el PDF (17-sep).** Buying power distinto en PM, intradía y overnight: ¿cómo lo sabe el bot y cómo lo respeta? **[API]**
 - [x] E7. → R-E-03 (botones en el cuadro de mandos: cerrar y reiniciar / esperar al fin del día). Si una estrategia se retira o cambia de versión, ¿qué pasa con sus posiciones vivas?
 - [x] E8. → unidad propia por estrategia y por pirámide; el bot la interpreta según la estrategia. Estrategias con distinto riesgo por operación: ¿unidad de riesgo común o por estrategia? (afecta a congelar el motor)
 - [x] E9. → a la primera que da señal; el sobrante a la siguiente; si falta, se compra más. ¿El locate es de la posición o de la estrategia? Si dos estrategias lo usan, ¿quién paga?
 
 ## F. Halts
 
-- [ ] F1. ¿Cómo sabe el bot que hay halt: L1 de DAS, ausencia de prints, fuente externa (Nasdaq Trader)? ¿Con qué latencia? **[API]**
+- [x] F1. (manual 2025: `GET SymStatus` → TA:H/P/Q/T + hora; `$LDLU` bandas) ¿Cómo sabe el bot que hay halt: L1 de DAS, ausencia de prints, fuente externa (Nasdaq Trader)? ¿Con qué latencia? **[API]**
 - [x] F2. → R-F-01 (borrador; ruta de salida pendiente PDF). Halt con posición dentro: ¿DAS cancela el stop residente? ¿Se prepara orden para la reapertura, límite o mercado en la subasta? **[API]**
 - [x] F3. → R-F-04 (cancelar y reevaluar al reabrir). Halt con orden de entrada en vuelo: ¿se cancela siempre?
 - [x] F4. → R-F-01 (reabre por encima del stop → mercado; por debajo → nada). Reapertura: ¿precio de referencia para decidir si salir (stop saltado, reabre por encima)? ¿Se sale en el primer print o se espera N s? **[dato]** el SL en la vela de reapertura se llena de mediana −3 % y p90 +4,8 % peor que el nivel, máx +14,5 %.
@@ -114,7 +114,7 @@
 - [x] F6. → R-F-05. T1 (noticia pendiente) con posición: puede durar horas. ¿Aviso y esperar? ¿Y si dura hasta el cierre?
 - [x] F7. → R-F-05 (aviso y control humano). T12 con posición: capital bloqueado días, locate que sigue corriendo, posible buy-in. ¿Cómo se contabiliza y quién avisa al socio?
 - [x] F8. → R-F-06 (límite removiendo liquidez, ruta rápida pendiente PDF). Halt en premercado (raro, existe: NEXI): ¿mismas reglas que en sesión?
-- [ ] F9. ¿Tratamiento distinto para LULD, T1, T12 y halts de otras bolsas? **[API: códigos que entrega DAS]**
+- [x] F9. (manual 2025: TA:P = pausa LULD 5 min prorrogable; H = halted; el motivo T1/T12 NO viene → fuente externa) ¿Tratamiento distinto para LULD, T1, T12 y halts de otras bolsas? **[API: códigos que entrega DAS]**
 - [x] F10. → decidido: sí se entra en SSR; sin regla de salida por SSR. SSR activado a mitad de sesión: no afecta a cubrir, sí a abrir cortos nuevos. ¿Cómo se sabe y cuál es la regla? **[API]**
 - [x] F11. → R-F-02 (stop 1-2 % bajo la banda si queda por encima; la banda llega como dato, confirmar [API]). Bandas LULD: ¿DAS las da? Si no, ¿se calculan (5/10/20 % según precio y hora)? **[API]**
 - [x] F12. → decidido: se opera normal; el calendario ya está en el sistema. Media sesión o cierre anticipado: ¿el bot lo sabe y adelanta el cierre forzoso?
@@ -129,7 +129,7 @@
 - [x] G5. → R-C-01 (limitP con techo; nunca mercado sin techo). Orden basura en el libro (25 $, 10.000 $): ¿cómo se protege un cierre a mercado? ¿Siempre limitado con banda? **[dato]** 7 de 56 disparos tenían una orden basura en los 10 niveles.
 - [x] G6. → R-G-01 (/cerrar TICKER N SI). Cierre por tramos durante un pico: ¿la mitad al +50 % y el resto cuando devuelve?
 - [x] G7. → R-G-01 (dato del informe; humano). Si la pérdida latente de una posición supera la pérdida diaria, ¿se cierra esa posición o todo?
-- [ ] G8. Buy-in del bróker (te obligan a cubrir): ¿cómo se entera el bot y cómo lo contabiliza? **[API]**
+- [x] G8. (Jaume: lo gestiona él) Buy-in del bróker (te obligan a cubrir): ¿cómo se entera el bot y cómo lo contabiliza? **[API]**
 - [x] G9. → R-A-01 + R-B-01 (tope 3 %: no se entra). El precio se dispara con una orden de ENTRADA viva (aún no dentro): ¿se cancela por distancia al precio de señal (A2) o se deja?
 - [x] G10. → R-G-01 (4): se registra cada fogonazo. ¿Se registra cada fogonazo visto en vivo (con o sin posición) para calibrar X, Y, N con datos propios?
 
@@ -141,15 +141,15 @@
 - [x] H4. → coste hundido aceptado; tope R-H-03 (3 % de la cuenta). Locate comprado y operación que no se da: ¿coste hundido aceptado? ¿Tope diario de locates «desperdiciados»?
 - [x] H5. → R-H-03: nunca más del 3 % de la cuenta. Tope diario y por operación de gasto en locates. **[dato]** una operación se llevó 7.000 $ de 10.000 en el backtest.
 - [ ] H6. Paquetes de 100: ¿se ajusta el tamaño de la posición al múltiplo del locate? **[dato]** se cobra por paquetes enteros, no es lineal. **PREGUNTAR A JAUME (lo pidió el 15-sep): ¿a partir de cuántas acciones de excedente merece la pena pagar un paquete de locate más?** Ejemplo: el cálculo pide 105 acciones → 2 locates; pagar un locate por 5 acciones es tirar el dinero, así que se juega con 100 y se sacrifican esas 5. Hay que fijar el umbral (en acciones o en % del paquete, o en coste del locate frente al beneficio esperado de esas acciones).
-- [ ] H7. ¿Los locates caducan al cierre? ¿Sirven para reentradas el mismo día? ¿Se pueden devolver y con qué reembolso? **[API]**
+- [x] H7. (Jaume + manual 2025: caducan; reutilizables salvo `SLReuseQuery`=No; sin devolución) ¿Los locates caducan al cierre? ¿Sirven para reentradas el mismo día? ¿Se pueden devolver y con qué reembolso? **[API]**
 - [ ] H8. El precio del locate cambia entre la consulta y la aceptación: ¿se acepta hasta +X %? **[API]**
-- [ ] H9. Varios proveedores: ¿se elige el más barato automáticamente? **[API]**
-- [ ] H10. ETB (no hace falta locate): ¿cómo se sabe y se salta el paso? HTB imposible: ¿se descarta la señal y se registra? **[API]**
+- [x] H9. (manual 2025: `SLPRICEINQUIRE … ALLROUTE` consulta todas las rutas; se elige la más barata; `SLRouteMinCharge`) Varios proveedores: ¿se elige el más barato automáticamente? **[API]**
+- [x] H10. (manual 2025: `%SLRET` tipo 2 «AlreadyShortable»; `$SHORTINFO shortable`) ETB (no hace falta locate): ¿cómo se sabe y se salta el paso? HTB imposible: ¿se descarta la señal y se registra? **[API]**
 - [ ] H11. ¿Hay locates en premercado a cualquier hora (04:00)? ¿A qué hora empieza el servicio? **[API]**
 - [x] H12. → avisar; lo gestiona el humano con el bróker. Locate aceptado y luego halt o T12: ¿coste del préstamo por días? ¿Quién lo vigila?
 - [x] H13. → R-H-01 (registrado). Registro de cada locate (precio, hora, usado o no) para alimentar la puerta por EV con datos reales.
 - [x] H14. → no aplica: sin posiciones overnight (R-D-02). Dividendos con corto: si por error queda una posición overnight en fecha ex-dividendo, ¿quién lo detecta?
-- [ ] H16. **(Añadida por Jaume, 16-sep, problema real del socio)** Al hacer «inquire» de locates el bróker no devuelve nada, o no hay locates disponibles para esa acción: ¿qué hace el bot? ¿Reintenta (cuántas veces, cada cuánto), prueba otro proveedor, descarta la señal y lo registra, avisa? ¿Y si la falta de locates llega en una PIRÁMIDE con posición ya abierta? **[API: qué respuesta da DAS cuando no hay locates]**
+- [x] H16. (manual 2025: `%SLRET` tipo 2 con motivo; OfferSize 0 = no hay; consulta cada 3 s como máximo) **(Añadida por Jaume, 16-sep, problema real del socio)** Al hacer «inquire» de locates el bróker no devuelve nada, o no hay locates disponibles para esa acción: ¿qué hace el bot? ¿Reintenta (cuántas veces, cada cuánto), prueba otro proveedor, descarta la señal y lo registra, avisa? ¿Y si la falta de locates llega en una PIRÁMIDE con posición ya abierta? **[API: qué respuesta da DAS cuando no hay locates]**
 - [x] H15. → R-H-03. ¿Tope de locates «en reserva» a la vez (comprados y sin usar) para no quemar la cuenta en prealertas?
 
 ## I. Capital, riesgo y cortacircuitos
@@ -162,7 +162,7 @@
 - [x] I6. → R-B-05 (acumulado del día, tope desactivado). Fracción máxima del volumen reciente (M9): ¿de qué ventana y qué múltiplo? ¿Se aplica también a la salida?
 - [x] I7. → bot: capital libre = BP real (R-I-01, 2c); qué hace Sage: pregunta al bróker (apartado R 16). Cuenta muy en negativo en premercado: ¿qué hace Sage? (P1) ¿Y el bot: deja de abrir por debajo de X de equity?
 - [x] I8. → pregunta al bróker (PDT con < 25 k$, apartado R 16). PDT y mínimos de cuenta: ¿el bot vigila el número de day trades y el equity mínimo?
-- [ ] I9. Llamada de margen: ¿reacciona el bot o es humano? **[API]**
+- [x] I9. (Jaume: lo gestiona él) Llamada de margen: ¿reacciona el bot o es humano? **[API]**
 - [x] I10. → R-I-02 (tamaños y escalones en el cuadro de mandos, no el bot). Escalón inicial (canario): ¿1 acción, 100 $, 1 % del tamaño final? ¿Quién autoriza subir y con qué criterio?
 - [x] I11. → R-I-02 (tamaño fijo hasta que el humano lo cambie). ¿Reducción automática del tamaño tras días malos o tamaño fijo hasta que un humano lo cambie?
 - [x] I12. → R-I-03 (siguiente señal; cuadro de mandos manda). Los topes viven en el JSON de la estrategia y en el cuadro de mandos: si difieren, ¿cuál manda? ¿Se pueden cambiar en caliente y desde dónde?
@@ -181,14 +181,14 @@
 - [x] J8. → R-J-04 (10 s). Bot colgado sin morir (latido parado): ¿quién lo mata y lo relanza?
 - [x] J9. → R-J-04 (cerrojo obligatorio). Dos instancias del bot a la vez (dos PIDs, relanzar sin matar): ¿cerrojo de instancia única?
 - [x] J10. → R-J-06. VPS: proveedor, ubicación (cerca de NY), Windows Update forzado (ventana de mantenimiento fuera de mercado), reinicios, una sola sesión RDP, coste.
-- [ ] J11. Un solo login de DAS por cuenta: si Jaume abre DAS en casa, expulsa al bot. ¿Segunda cuenta? (P1) **[API]**
+- [x] J11. (Jaume: una máquina por cuenta; el API admite varias conexiones a la misma instancia, `CLIENT`, y una «watch» para el vigilante) Un solo login de DAS por cuenta: si Jaume abre DAS en casa, expulsa al bot. ¿Segunda cuenta? (P1) **[API]**
 - [x] J12. → R-J-07 (ET; desvío > 2 s = no operar). Reloj y zona horaria del VPS (todo en ET; DST distinto al de España).
 - [x] J13. → R-J-07 (rotación diaria; aviso < 5 GB). Disco lleno por logs y diario: ¿rotación y tope?
 - [x] J14. → R-J-07 (humano; el bot avisa). Actualización forzada de DAS: ¿cómo se detecta y quién la hace?
 - [ ] J15. Sesión de DAS que caduca de noche: ¿relogin antes de las 04:00 y comprobación? **[API]**
 - [x] J16. → R-J-03 (tabla). Modo degradado: tabla de qué se permite en cada estado (todo bien / sin feed / sin DAS / sin bot / sin Telegram).
 - [x] J17. → R-J-05 (ping 60 s, alarma a los 3 min). Vigilante externo: si el bot no da señal de vida en N min, ¿alguien recibe aviso aunque el propio bot esté muerto?
-- [ ] J18. **PENDIENTE para el repaso final (Jaume, 18-sep): sin referencia hasta operar con el API.** Latencia: ¿se mide ida y vuelta orden→confirmación y a partir de cuánto no se opera?
+- [x] J18. (manual 2025: 50 órdenes/s, 100 cancel/min, 100 replace/min; latencia se mide en sombra) **PENDIENTE para el repaso final (Jaume, 18-sep): sin referencia hasta operar con el API.** Latencia: ¿se mide ida y vuelta orden→confirmación y a partir de cuánto no se opera?
 - [x] J19. → R-J-08 (sigue operando, reintenta; canal alternativo en M4: correo + SMS/llamada para el nivel máximo). Caída del proveedor de Telegram: ¿el bot sigue operando o se pausa por falta de canal de aviso?
 - [x] J20. → R-J-06 (DAS → vigilante → ejecutor + reconciliación). Reinicio del VPS por el panel del proveedor (el socio): ¿arranque automático de DAS y bot con reconciliación antes de nada?
 
