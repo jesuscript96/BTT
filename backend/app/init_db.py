@@ -127,10 +127,14 @@ def init_db():
                 if "already exists" not in str(e).lower():
                     print(f"[WARN] Warning attaching massive: {e}")
                     
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.tickers AS SELECT * FROM main.tickers")
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.splits AS SELECT * FROM main.splits")
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM main.daily_metrics")
-            cur.execute("CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM main.intraday_1m")
+            # Nombre 3-part obligatorio (igual que _init_connection_views):
+            # en duckdb moderno un 2-part se re-resuelve en el catalogo de la
+            # db donde vive la vista -> recursion infinita (hallazgo 12).
+            cur_db = cur.execute("SELECT current_database()").fetchone()[0]
+            cur.execute(f"CREATE VIEW IF NOT EXISTS massive.tickers AS SELECT * FROM {cur_db}.main.tickers")
+            cur.execute(f"CREATE VIEW IF NOT EXISTS massive.splits AS SELECT * FROM {cur_db}.main.splits")
+            cur.execute(f"CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM {cur_db}.main.daily_metrics")
+            cur.execute(f"CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM {cur_db}.main.intraday_1m")
             
             # In local mode, we do NOT create aliases in the main schema pointing to massive views,
             # because they are already tables in the main schema.

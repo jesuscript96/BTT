@@ -49,10 +49,17 @@ def _init_connection_views(con, provider):
                 if "already exists" not in str(e).lower():
                     print(f"[WARN] Warning attaching massive: {e}")
             
-            con.execute("CREATE VIEW IF NOT EXISTS massive.tickers AS SELECT * FROM main.tickers")
-            con.execute("CREATE VIEW IF NOT EXISTS massive.splits AS SELECT * FROM main.splits")
-            con.execute("CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM main.daily_metrics")
-            con.execute("CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM main.intraday_1m")
+            # Nombre 3-part obligatorio: en duckdb moderno (venv: 1.5.5) un nombre
+            # 2-part dentro de una vista almacenada en OTRA db se re-resuelve en
+            # el catalogo de ESA db -> "main.tickers" apuntaba a la propia vista
+            # massive.main.tickers = recursion infinita al consultarla
+            # (MEMORIA_MADRE hallazgo 12). Con la db explicita apunta siempre a
+            # las tablas locales. En 1.1.3 ambas formas funcionan.
+            cur_db = con.execute("SELECT current_database()").fetchone()[0]
+            con.execute(f"CREATE VIEW IF NOT EXISTS massive.tickers AS SELECT * FROM {cur_db}.main.tickers")
+            con.execute(f"CREATE VIEW IF NOT EXISTS massive.splits AS SELECT * FROM {cur_db}.main.splits")
+            con.execute(f"CREATE VIEW IF NOT EXISTS massive.daily_metrics AS SELECT * FROM {cur_db}.main.daily_metrics")
+            con.execute(f"CREATE VIEW IF NOT EXISTS massive.intraday_1m AS SELECT * FROM {cur_db}.main.intraday_1m")
     except Exception as e:
         print(f"[WARN] Failed to setup massive views on connection: {e}")
 
