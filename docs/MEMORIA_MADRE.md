@@ -6681,3 +6681,12 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **⚠️ Aviso para Jaime y Sailor:** este filtro codifica el hallazgo del Bloque 1 — la víspera roja SIRVE para **shorts premarket de fade** (misma dirección del gap, efecto +2-4 pp); en estrategias **RTH no aporta** (probado con la 2B de Sailor: la curva por deciles queda plana, el efecto NO se invierte). No lo uséis como filtro en universos RTH esperando señal contraria.
 - **Código tocado:** 6 ficheros (qualifying_windows.py, test_prev_day_universe_filters.py, universoFiltros.ts, InlineDatasetBuilder.tsx, InlineStrategyBuilder.tsx, genetico/page.tsx), todos leídos ENTEROS antes (regla del repo) + esta memoria y la hoja de ruta. Zona bot de alertas: INTACTA.
 - **Estado:** HECHO y verificado en `alvaro-rama-desarrollo` (`f1e401b`), SIN push.
+
+### [DOCS · 2026-09-25 · 16] Push a `alvaro-rama-desarrollo`: fix de datasets + filtro 1.6 «Gap -1 · Day Return %» — para Jaime (integración a staging) y Sailor
+- **Reporta:** Claude (para Álvaro), por petición expresa suya.
+- **Qué sube (solo rama personal):** `cd180fa` (fix vistas `massive.*` 3-part: crear datasets en local con duckdb ≥1.5 — hallazgos 11/12), `f1e23f4` (docs Bloque 1 §8-§9 + hallazgos 11-14), `f1e401b` (filtro 1.6: `day_return_pct` en `PREV_DAY_LAG_SOURCES` + UI Gap -1), `72f2e63` (FEATURE + hallazgo 15), y esta entrada.
+- **Para Jaime (staging, decide él):** dos piezas de código candidatas: (1) `cd180fa` — le pasa a cualquier `DB_PROVIDER=local` con duckdb moderno (Sailor incluido); (2) `f1e401b` — filtro nuevo, solo añade opción. Antes de integrar (2): confirmar que `day_return_pct` existe en el Parquet de GCS de producción (verificado en el lago local, no en prod).
+- **Uso del filtro:** «Gap -1 · Day Return % (RTH, cierre vs apertura)» = (rth_close − rth_open) / rth_open × 100 del día anterior. Sirve para shorts premarket de fade (1B fuerte, Doble Techo débil); en RTH no aporta (2B plana). Umbral movible.
+- **`staging`:** NO se ha tocado.
+- **Código tocado en este paso:** NINGUNO (push de commits ya existentes + esta entrada).
+- **Estado:** HECHO.
