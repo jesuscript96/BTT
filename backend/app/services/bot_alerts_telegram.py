@@ -175,6 +175,10 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
         if ev.stop is not None:
             precio += f" · 🔴 Stop: {_num(ev.stop)}"
         lineas.append(precio)
+        if prea and ev.motivo and str(ev.motivo).startswith("Falta:"):
+            # Prealerta SIMPLE (26-sep-2026): cumple todo menos una condición;
+            # se dice cuál. Sin acciones: aún no hay señal.
+            return "\n".join(lineas + [f"⏳ {_esc(ev.motivo)}", pie])
         bloques = []
         for e in evs:
             b = f"{_etiqueta(e, varias)}Acciones: <b>{_num(e.acciones, 0)}</b>"

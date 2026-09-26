@@ -130,6 +130,15 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
     logging.getLogger("btt.bot_alerts").setLevel(logging.WARNING)
     logging.getLogger("bot").setLevel(logging.WARNING)
 
+    import os as _os
+    from app.services.bot_alerts_prealerta_simple import PrealertaSimple
+    # MODO (26-sep-2026, Jaume): 'ticks' = la de siempre (segundos 44-59 con
+    # prints); 'simple' = «todas las condiciones menos una» sobre la vela
+    # oficial cerrada, sin prints. BOT_PREALERTA_MODO en backend/.env.
+    modo = _os.getenv("BOT_PREALERTA_MODO", "ticks").strip().lower()
+    simple = (PrealertaSimple(cada_min=int(_os.getenv("BOT_PREALERTA_SIMPLE_MIN", "10") or 10))
+              if modo == "simple" else None)
+
     runner = RunnerAlertas([])
     constructor = ConstructorParcial()
     vigilados: set = set()
@@ -177,6 +186,10 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
         t = msg.get("t")
 
         if t == DATOS:
+            if simple is not None:
+                # Modo simple: los prints no se usan. Se cuentan y fuera.
+                m["prints"] += sum(1 for clase, _ev in msg["lote"] if clase == "T")
+                return
             # EN LOTE, SIEMPRE. Un mensaje por print desbordaba la cola: con
             # 300 prints/s y la cola acotada, medido el 23-sep, de 800 prints
             # solo llegaban 21 y la vela a medias salia falsa. La trampa numero
@@ -225,6 +238,18 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
             tk, vela = msg["ticker"], msg["vela"]
             eventos = runner.nueva_vela(tk, vela) or []
             constructor.marcar_cerrada(tk, vela.get("timestamp"))
+            if simple is not None and tk in vigilados:
+                # Modo simple: con la vela YA cerrada, «falta una». No entra en
+                # `vivas` (no hay nada que resolver al minuto siguiente): el
+                # freno vive dentro de `simple`.
+                t0 = _time.perf_counter()
+                avisos = simple.evaluar(runner, tk)
+                m["evaluaciones"] += 1
+                m["coste"] += _time.perf_counter() - t0
+                if avisos:
+                    tuberia.send({"t": PREALERTA, "eventos": avisos, "via": "simple",
+                                  "segundo": 60, "latencia": 0.0, "margen": 0.0,
+                                  "minuto": str(vela.get("timestamp"))[:16]})
             ultimo_seg.pop(tk, None)
             minuto = str(vela.get("timestamp"))[:16]
             confirmados = {clave_prealerta(e) for e in eventos}
@@ -259,10 +284,14 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
             ultimo_seg.pop(tk, None)
             constructor.olvidar(tk)
             runner.soltar(tk)
+            if simple is not None:
+                simple.soltar(tk)
 
         elif t == DIA_NUEVO:
             runner.reiniciar()
             constructor.reiniciar()
+            if simple is not None:
+                simple.reiniciar()
             vivas.clear()
             ultimo_seg.clear()
             tuberia.send({"t": AVISO, "texto": "dia nuevo: prealertas a cero"})
