@@ -668,6 +668,9 @@ export default function GeneticoPage() {
   const [uOp, setUOp] = useState<OperadorUniverso>(">=");
   const [uVal1, setUVal1] = useState(50);
   const [uVal2, setUVal2] = useState(0);
+  /* "Si falta el dato: incluir" — solo GAP-1: sin dato (IPO, recién llegada)
+     la regla los descarta en silencio. */
+  const [uSinDato, setUSinDato] = useState(false);
 
   const filtrosUniverso = useMemo(
     () => (condUniverso.length ? construirFiltros(condUniverso, uDesde, uHasta) : null),
@@ -1221,10 +1224,20 @@ export default function GeneticoPage() {
               ) : (
                 <Num value={uVal1} onChange={setUVal1} step={0.5} />
               )}
+              {uSec === "gap_prev_day" && (
+                <label
+                  title="Incluir acciones sin histórico suficiente (IPO, recién listadas): si falta el dato de Gap -1, pasan la regla en vez de excluirse."
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: font.sans, fontSize: 10, fontWeight: 600, color: uSinDato ? color.copper : color.textMuted, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}
+                >
+                  <input type="checkbox" checked={uSinDato} onChange={(e) => setUSinDato(e.target.checked)} style={{ margin: 0, accentColor: color.copper }} />
+                  sin dato: incluye
+                </label>
+              )}
               <Btn onClick={() => {
                 const nueva: CondicionUniverso = {
                   section: uSec, paramKey: uParam, op: uOp,
                   val1: uVal1, ...(uOp === "between" ? { val2: uVal2 } : {}),
+                  ...(uSec === "gap_prev_day" && uSinDato ? { missing: "include" as const } : {}),
                 };
                 setCondUniverso((p) => [
                   // Una métrica repetida en la misma sección y con el mismo

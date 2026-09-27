@@ -163,8 +163,9 @@ def test_registro_conoce_la_ventana_ret5d():
 
 @pytest.fixture()
 def entorno_ret5d(tmp_path, monkeypatch):
-    """Mini-lago 1 ticker × 7 días con r = −0,1 por sesión y parquet bygap
-    SIN lag_ret5d_pct_1 (como el real del 7-sep: la ventana no existe allí)."""
+    """Mini-lago 1 ticker × 7 días con r = −0,1 por sesión (AAA) + BBB de 2
+    días (ventana SIEMPRE NULL) y parquet bygap SIN lag_ret5d_pct_1 (como el
+    real del 7-sep: la ventana no existe allí)."""
     ruta = str(tmp_path / "bygap_ret5d.parquet")
     con = duckdb.connect(":memory:")
     # columnas base completas: la vía stage-2 selecciona todo su repertorio
@@ -181,6 +182,12 @@ def entorno_ret5d(tmp_path, monkeypatch):
             "1000000, 13.0, 7.0, 5.0, 500000, 10.0, 50.0, 3.0, 1.0)",
             ["AAA", f"2024-01-{i + 1:02d}", 10.0 * 0.9 ** i,
              10.0 * 0.9 ** (i - 1) if i else 10.0],
+        )
+    for i in range(2):
+        con.execute(
+            'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 10.0, 12.0, 8.0, 10.0, '
+            "1000000, 13.0, 7.0, 5.0, 500000, 10.0, 50.0, 3.0, 1.0)",
+            ["BBB", f"2024-01-{i + 1:02d}", 10.0, 10.0],
         )
     con.execute(
         f"COPY (SELECT * FROM daily_metrics) TO '{ruta}' (FORMAT PARQUET)"
@@ -212,3 +219,23 @@ def test_materializada_ret5d_no_falla_y_paridad_con_stage2(entorno_ret5d):
     s = df_s2.set_index(["ticker", "date"])["lag_ret5d_pct_1"].to_dict()
     for k in m:
         assert m[k] == pytest.approx(s[k])
+
+
+def test_missing_include_en_materializada_y_stage2(entorno_ret5d):
+    """"Si falta el dato: incluir" — los NULL (BBB sin historial y los primeros
+    días de AAA) pasan la regla, en la vía materializada Y en stage-2."""
+    filtros_inc = {
+        "start_date": "2024-01-01", "end_date": "2024-12-31",
+        "rules": [{"metric": "lag_ret5d_pct_1", "operator": "LESS_THAN",
+                   "valueType": "static", "value": "0", "missing": "include"}],
+    }
+    df_mat = _fetch_qualifying_data_uncached("dataset-test", filtros=filtros_inc)
+    # por valor: AAA 6/7-ene (−34,4 / −41,0 %); por NULL: AAA 1-5-ene (ventanas
+    # incompletas) y BBB 1/2-ene (sin historial)
+    assert _td(df_mat) == sorted(
+        [("AAA", f"2024-01-0{d}") for d in range(1, 8)]
+        + [("BBB", "2024-01-01"), ("BBB", "2024-01-02")]
+    )
+    entorno_ret5d[2].delenv("QUALIFYING_WINDOWED_PARQUET")
+    df_s2 = _fetch_qualifying_data_uncached("dataset-test", filtros=filtros_inc)
+    assert _td(df_s2) == _td(df_mat)

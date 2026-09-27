@@ -272,7 +272,7 @@ def build_screener_query(
             if metric and op and val is not None:
                 # Map metric using field_map if possible
                 col = field_map.get(metric, metric)
-                
+
                 # Convert rule operator to SQL operator
                 sql_op = {
                     "GREATER_THAN": ">",
@@ -288,13 +288,20 @@ def build_screener_query(
                     "<": "<",
                     "<=": "<="
                 }.get(op, op)
-                
+
+                # "Si falta el dato: incluir" (reglas Gap -1): mismo contrato
+                # que _build_where_clause — el ticker-día sin dato pasa la
+                # regla. Sin la clave, NULL no pasa (como siempre).
+                cond = f"{col} {sql_op} ?"
+                if rule.get("missing") == "include":
+                    cond = f"({cond} OR {col} IS NULL)"
+
                 try:
                     val_float = float(val)
-                    m_filters.append(f"{col} {sql_op} ?")
+                    m_filters.append(cond)
                     sql_p.append(val_float)
                 except ValueError:
-                    m_filters.append(f"{col} {sql_op} ?")
+                    m_filters.append(cond)
                     sql_p.append(val)
 
     # Join with massive.tickers for type filtering

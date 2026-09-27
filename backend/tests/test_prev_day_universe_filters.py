@@ -284,6 +284,83 @@ class TestRet5dRuleFiltersPairs:
         assert df["lag_ret5d_pct_1"].isna().all()
 
 
+class TestMissingOption:
+    """"Si falta el dato: incluir" en reglas Gap -1: con missing=include el
+    ticker-día con columna NULL pasa la regla (cond OR col IS NULL); sin la
+    clave, NULL no pasa (comportamiento de siempre, cubierto por los tests de
+    arriba)."""
+
+    def test_where_clause_or_is_null(self):
+        filters = {
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "rules": [
+                {
+                    "metric": "lag_rth_close_1",
+                    "operator": "GREATER_THAN_OR_EQUAL",
+                    "value": "5.0",
+                    "missing": "include",
+                }
+            ],
+        }
+        where = data_service._build_where_clause(filters)
+        assert "(lag_rth_close_1 >= 5.0 OR lag_rth_close_1 IS NULL)" in where
+
+    def test_where_clause_sin_clave_no_cambia(self):
+        filters = {
+            "rules": [
+                {"metric": "lag_rth_close_1", "operator": "GREATER_THAN_OR_EQUAL",
+                 "value": "5.0"}
+            ],
+        }
+        assert data_service._build_where_clause(filters) == "lag_rth_close_1 >= 5.0"
+
+    def test_dataset_pairs_include_pasa_los_null(self):
+        con = TestRet5dRuleFiltersPairs()._make_ret5d_lake()
+        filters = {
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "rules": [
+                {
+                    "metric": "lag_ret5d_pct_1",
+                    "operator": "LESS_THAN",
+                    "value": "0",
+                    "missing": "include",
+                }
+            ],
+        }
+        _, params, _, _, where_m_stats, _ = build_screener_query(filters, limit=100000)
+        assert "(lag_ret5d_pct_1 < ? OR lag_ret5d_pct_1 IS NULL)" in where_m_stats
+        subquery_lagged = dataset_pairs_subquery_lagged_sql()
+        df = con.execute(
+            f'SELECT ticker, CAST(CAST("timestamp" AS DATE) AS VARCHAR) as date '
+            f"FROM {subquery_lagged} "
+            f"WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}",
+            params,
+        ).fetchdf()
+        got = set(zip(df["ticker"], df["date"]))
+        # con include pasan TODOS los NULL: ventanas incompletas (primeros días
+        # de cada ticker), CCC sin historial y DDD con el día inválido. Solo
+        # cae lo que tiene valor y no cumple: BBB 6-ene (+61,05 % >= 0).
+        todos = {("AAA", f"2024-01-0{d}") for d in range(1, 7)} \
+            | {("BBB", f"2024-01-0{d}") for d in range(1, 6)} \
+            | {("CCC", f"2024-01-0{d}") for d in range(1, 4)} \
+            | {("DDD", f"2024-01-0{d}") for d in range(1, 7)}
+        assert got == todos
+
+    def test_evaluate_rules_on_df_include_pasa_nan(self):
+        import pandas as pd
+        df = pd.DataFrame({
+            "lag_ret5d_pct_1": [-40.9, 61.0, None, None],
+            "otra": [1.0, 2.0, 3.0, 4.0],
+        })
+        rules = [{"metric": "lag_ret5d_pct_1", "operator": "LESS_THAN",
+                  "value": "0", "missing": "include"}]
+        out = data_service._evaluate_rules_on_df(df, rules)
+        # pasa por valor (fila 0) y por NULL (filas 2 y 3); la de +61 no
+        assert list(out.index) == [0, 2, 3]
+
+
 class TestWhereClausePassthrough:
     def test_build_where_clause_keeps_lag_column(self):
         filters = {

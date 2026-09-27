@@ -580,6 +580,9 @@ export default function InlineStrategyBuilder({
   const [tempUnivOp, setTempUnivOp] = useState<string>('>=');
   const [tempUnivVal1, setTempUnivVal1] = useState<string>('2.0');
   const [tempUnivVal2, setTempUnivVal2] = useState<string>('');
+  // "Si falta el dato: incluir" — solo Gap -1 (columnas lag_*): sin dato (IPO,
+  // recién llegada) la regla los descarta en silencio; con la casilla pasan.
+  const [tempUnivMissing, setTempUnivMissing] = useState<boolean>(false);
 
   useEffect(() => {
     // Disable expanding the drawer when 'between' is selected
@@ -1319,6 +1322,31 @@ export default function InlineStrategyBuilder({
                         />
                       )}
 
+                      {tempUnivDay === 'gap_prev_day' && (
+                        <label
+                          title="Incluir acciones sin histórico suficiente (IPO, recién listadas): si falta el dato de Gap -1, pasan la regla en vez de excluirse."
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 3,
+                            fontSize: 9,
+                            fontWeight: 600,
+                            color: tempUnivMissing ? 'var(--color-ec-copper)' : 'var(--color-ec-text-muted)',
+                            cursor: 'pointer',
+                            userSelect: 'none',
+                            flexShrink: 0,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={tempUnivMissing}
+                            onChange={(e) => setTempUnivMissing(e.target.checked)}
+                            style={{ margin: 0, cursor: 'pointer', accentColor: 'var(--color-ec-copper)' }}
+                          />
+                          sin dato: incluye
+                        </label>
+                      )}
+
                       <button
                         type="button"
                         onClick={() => {
@@ -1364,19 +1392,24 @@ export default function InlineStrategyBuilder({
                           const multiplier = isVol ? 1000000 : 1;
 
                           const newRules = [...(universeFilters.rules || [])];
+                          // "Si falta el dato: incluir" viaja con la regla Gap -1
+                          const missing = tempUnivDay === "gap_prev_day" && tempUnivMissing
+                            ? { missing: "include" as const } : {};
 
                           if (tempUnivOp === 'between') {
                             newRules.push({
                               metric: fieldName,
                               operator: "GREATER_THAN_OR_EQUAL",
                               valueType: "static",
-                              value: (val1 * multiplier).toString()
+                              value: (val1 * multiplier).toString(),
+                              ...missing,
                             });
                             newRules.push({
                               metric: fieldName,
                               operator: "LESS_THAN_OR_EQUAL",
                               valueType: "static",
-                              value: (val2! * multiplier).toString()
+                              value: (val2! * multiplier).toString(),
+                              ...missing,
                             });
                           } else {
                             let opName = "";
@@ -1389,7 +1422,8 @@ export default function InlineStrategyBuilder({
                               metric: fieldName,
                               operator: opName,
                               valueType: "static",
-                              value: (val1 * multiplier).toString()
+                              value: (val1 * multiplier).toString(),
+                              ...missing,
                             });
                           }
 
@@ -1446,6 +1480,9 @@ export default function InlineStrategyBuilder({
                           >
                             <span>{friendlyName}:</span>
                             <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{friendlyOp} {friendlyVal}</strong>
+                            {r.missing === 'include' && (
+                              <em style={{ color: 'var(--color-ec-copper)', marginLeft: 3, fontSize: 9 }}>· sin dato: incluye</em>
+                            )}
                             <span style={{ fontWeight: 700, marginLeft: 3 }}>×</span>
                           </span>
                         );
@@ -2671,6 +2708,9 @@ export default function InlineStrategyBuilder({
                         }}>
                           <span style={{ color: 'var(--color-ec-text-secondary)' }}>{friendlyName}:</span>
                           <strong style={{ color: 'var(--color-ec-text-high)', marginLeft: 3 }}>{friendlyOp} {friendlyVal}</strong>
+                          {r.missing === 'include' && (
+                            <em style={{ color: 'var(--color-ec-copper)', marginLeft: 3, fontSize: 9 }}>· sin dato: incluye</em>
+                          )}
                         </span>
                       );
                     })}

@@ -306,7 +306,14 @@ def _build_where_clause(filters: dict) -> str:
                         float(val)
                     except ValueError:
                         val = f"'{val}'"
-            where_parts.append(f"{field} {sql_op} {val}")
+            cond = f"{field} {sql_op} {val}"
+            # "Si falta el dato: incluir" (reglas Gap -1): el ticker-día sin
+            # dato (IPO, recién llegada, ventana inválida) PASA la regla en
+            # vez de descartarse en silencio. Sin la clave (o con otro valor)
+            # el NULL no pasa, exactamente como siempre.
+            if rule.get("missing") == "include":
+                cond = f"({cond} OR {field} IS NULL)"
+            where_parts.append(cond)
 
     return " AND ".join(where_parts) if where_parts else "1=1"
 
@@ -577,16 +584,20 @@ def _evaluate_rules_on_df(df: pd.DataFrame, rules: list) -> pd.DataFrame:
                 pass
             
             col_series = df[field]
+            # "Si falta el dato: incluir": mismo contrato que en
+            # _build_where_clause (reglas Gap -1) para la vía pandas.
+            def _cumple(cmp):
+                return (cmp | col_series.isna()) if rule.get("missing") == "include" else cmp
             if op == "GREATER_THAN":
-                mask = mask & (col_series > val)
+                mask = mask & _cumple(col_series > val)
             elif op == "GREATER_THAN_OR_EQUAL":
-                mask = mask & (col_series >= val)
+                mask = mask & _cumple(col_series >= val)
             elif op == "LESS_THAN":
-                mask = mask & (col_series < val)
+                mask = mask & _cumple(col_series < val)
             elif op == "LESS_THAN_OR_EQUAL":
-                mask = mask & (col_series <= val)
+                mask = mask & _cumple(col_series <= val)
             elif op == "EQUAL":
-                mask = mask & (col_series == val)
+                mask = mask & _cumple(col_series == val)
             elif op == "CONTAINS":
                 mask = mask & (col_series.astype(str).str.contains(str(val), case=False, na=False))
                 
