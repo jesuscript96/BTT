@@ -92,10 +92,14 @@ estudio + 7 hueco − 1 borde, 0 intrusos. Detalle en MEMORIA_MADRE (FEATURE
 27-sep · FILTRO 3.2). Aviso: en la 1B vale como SIZING/prioridad, no como
 exclusión («venía subiendo» también gana); DT y 2B no aportaban.
 
-### Bloque 4 — Dónde está el precio · PENDIENTE
-- Cierre de la víspera frente a su máximo/mínimo de 20 días y de 52 semanas.
-- Distancia a la media de 20 o 50 días.
-- Gap de hoy ÷ volatilidad típica (ATR 14 días). Candidato fuerte.
+### Bloque 4 — Dónde está el precio · ✅ CERRADO (27-sep)
+- Cierre de la víspera vs MÁX/MÍN de 20 y 250 sesiones. → 🟡 DUDOSOS y REDUNDANTES: miden «víspera débil», que ya vive en 3.2 (corr 0,75-0,87; parcial ctrl 1.6+3.2 con signo mezclado 4-5/8).
+- Distancia a la media de 20/50 sesiones. → 🟡 igual (corr 0,87 con 3.2).
+- Gap de hoy ÷ ATR%14. → **✅ SIRVE (con asterisco): en PM, gap grande en ATRs = trade PEOR (1B D10 −8,7 %/trade, ρ −0,19 3/3; DT −0,16); en RTH (2B) se invierte (+0,10 3/3). Cartera 1B igual riesgo: recortar D8-10 a 0,5 → Calmar 40,9→79,7 y Sharpe 6,0→8,9, 3/3 años. Asterisco: ~2/3 del edge es el gap CRUDO (tope de PMH Gap % filtrable HOY); la normalización ATR añade −0,05..−0,08 (3/3).**
+
+Informe: `docs/INFORME_BLOQUE4_PRECIO_20260927.md`. Pendiente de Álvaro: su
+prueba en Portfolio (tope de PMH Gap y/o gap÷ATR como sizing) antes de decidir
+si se construye la columna ATR%14.
 
 ### Bloque 5 — Entre el cierre y el premarket (necesita intradía) · PENDIENTE
 - Movimiento en el after-hours de la víspera.
@@ -178,6 +182,8 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-27 | B3·3.2 IMPLEMENTADO | ✅ HECHO — «Gap -1 · Retorno 5 días %» (`lag_ret5d_pct_1`, definición EXACTA del estudio) en las tres vías + tres UIs, umbral movible. Verificado con BACKTEST: dataset cae 2024-26 = 3.128 pares vs 3.102 del estudio (dif = corte hueco>7 del estudio); 1B real → **1.374 trades** (= 1.368 estudio + 7 hueco − 1 borde, 0 intrusos, WR 65,7 %, +5.206 %). 4 tests nuevos (1.653 OK) + tsc. Aviso: usar como SIZING/prioridad en 1B, no exclusión; DT/2B no aporta | MEMORIA_MADRE (FEATURE 27-sep · FILTRO 3.2) |
 | 2026-09-27 | 3.2 en Portfolio (app), 1B 2024→sep-2026 | 🟡 MEJORA MODERADA, sobre todo de drawdown. A (cae/sube, sin los 356 trades sin dato): 1/1 Calmar 40,4 · 1,2/0,8 **47,2** · 1,5/0,5 41,3. B (cartera completa): todos 1 → Calmar 59,5 · Sharpe 8,72 · DD −4,1 % | todos 1,15 (mismo riesgo total) → 66,6 · 8,72 · −4,8 % | **todos 1 + cae 0,5 → 75,0 · 8,61 · −4,4 %**. A igual riesgo, la regla sube CAGR y baja DD (+13 % Calmar) pero el Sharpe no mejora (8,61 vs 8,72): recorta la peor caída, no la volatilidad diaria. Uso: regla de tamaño opcional en la 1B (+50 % a «venía cayendo»), vigilar exposición (35 % vs 32 %). Los 356 trades sin dato 5d son muy buenos: no usar el 3.2 para excluir | prueba manual de Álvaro |
 | 2026-09-27 | Opción «si falta el dato: excluir/incluir» en reglas Gap -1 | ✅ HECHO — `missing: "include"` → (cond OR IS NULL) en las tres vías; default excluir BIT-IDÉNTICO (1.374 trades reproducido). En la 1B con incluir: 1.374 + **356 NULL** = 1.730 trades (WR 67,1 %, 0 intrusos). Desglose de los 356: 144 IPO/nuevos +13,1 % · 212 saltos de split sin ajustar +7,7 % — ambos buenos, meterlos todos es correcto. Nota: features_b3 del estudio tenía valor en 203 de los 212 «inválidos» (artefacto del parquet del estudio, no del filtro) | MEMORIA_MADRE (FEATURE 27-sep · MISSING) |
+| 2026-09-27 | B4·4.1-4.3 Cierre vs máx/mín 20-250 y SMA 20/50 (deciles, 2019-26 + trades) | 🟡 DUDOSOS Y REDUNDANTES — dirección «víspera débil → más fade» 8/8 en A y 3/3 en 1B pero débil, y NO aportan sobre 3.2: corr 0,75-0,87 con c32_5, parcial ctrl 1.6+3.2 con signo mezclado. Sin dato: 1.497 (20s) / 6.840 (250) en A, +31,8/+29,2 de fade (mejores). No construir | `INFORME_BLOQUE4_PRECIO_20260927.md` |
+| 2026-09-27 | B4·4.4 PMH Gap ÷ ATR%14 (deciles, 2019-26 + trades + cartera) | ✅ SIRVE (asterisco) — PM: gap grande en ATRs → trade PEOR: 1B ρ −0,19 3/3, D8-10 (32 % de trades, >7,6 ATRs) **−3,8 %/trade** (D10 −8,7); DT −0,16 3/3; parcial ctrl 1.6+3.2 −0,17..−0,22 3/3. RTH (2B) se INVIETE (+0,10 3/3). CARTERA igual riesgo: todos 1 + D8-10 a 0,5 → Calmar 40,9→**79,7** y Sharpe 6,0→**8,9**, 3/3 años (uniforme no cambia: reasignación pura). Asterisco: ~2/3 del edge es el gap CRUDO (ρ −0,24; tope de PMH Gap filtrable HOY); ÷ATR añade −0,05..−0,08 (3/3); en la vista A el fade lo explica el gap crudo. Pendiente: prueba de Álvaro en Portfolio | ídem |
 
 ## Pendientes fuera de la investigación
 - Punto 5 CERRADO (25-sep): 1.6 probado en DT (misma dirección, débil — §8) y en la
