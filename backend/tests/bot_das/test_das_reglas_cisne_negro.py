@@ -406,8 +406,8 @@ CASOS_DURANTE_BS = [
     pytest.param(_pos(neta=0, estado=EstadoTicker.BS), [_emergencia(1000)], "nada", id="R-G-03-sin-corto-nada"),
     pytest.param(_pos(neta=-700, neta_das=-1000, estado=EstadoTicker.BS), [_emergencia(1000)], "consultar",
                  id="riesgo8-discrepancia-solo-get-positions"),
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(1000), _principal()], "reduce",
-                 id="R-G-03-el-principal-no-se-toca"),
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(1000), _principal()], "ambos",
+                 id="E2-01-el-principal-tambien-baja-a-700"),
 ]
 
 
@@ -421,12 +421,67 @@ def test_acciones_durante_bs_nunca_envia_ni_cancela(pos, vivas, esperado):
         assert acciones == []
     elif esperado == "consultar":
         assert acciones == [Consultar("GET POSITIONS")]
+    elif esperado == "ambos":
+        # E2-01 (antes «el principal no se toca», que dejaba la cuenta LARGA): la emergencia primero y luego el principal,
+        # los dos bajados a 700 sin tocar disparo ni límite.
+        reemplazos = [a for a in acciones if isinstance(a, Reemplazar)]
+        assert [(r.id_das, r.qty, r.stop, r.precio) for r in reemplazos] == [
+            (5001, 700, D("2.26"), D("3.26")), (5000, 700, D("2.00"), D("2.06"))]
+        assert all((r.version, r.serie) == (7, "stops:XYZ") for r in reemplazos)
     else:
         r, p = acciones
         assert isinstance(r, Reemplazar) and isinstance(p, Programar)
         assert (r.id_das, r.token, r.qty, r.stop, r.precio) == (5001, 100200010, 700, D("2.26"), D("3.26"))
         assert (r.version, r.serie) == (7, "stops:XYZ")
         assert p.clave == CLAVE_VERIFICAR_REPLACE and p.datos["qty_objetivo"] == 700
+
+
+def test_E2_01_emergencia_parcial_y_principal_disparado_no_dejan_la_cuenta_larga():
+    """E2-01: neta −400 en BS; principal TRIGGERED por 1.000 sin llenar y emergencia PARTIAL (600 llenas, 400 vivas).
+
+    Antes: [] (el principal podía comprar sus 1.000 con solo 400 cortas → LARGA 600). Ahora el principal baja a 400;
+    la emergencia (400 vivas) ya cuadra y no se toca.
+    """
+    vivas = [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400),
+             _principal(estado=EstadoOrden.TRIGGERED, lvqty=1000)]
+    acciones = acciones_durante_bs(_pos(neta=-400, estado=EstadoTicker.BS), vivas, CFG, version=3)
+    reemplazos = [a for a in acciones if isinstance(a, Reemplazar)]
+    assert [(r.id_das, r.qty, r.stop, r.precio) for r in reemplazos] == [(5000, 400, D("2.00"), D("2.06"))]
+    verificar = [a for a in acciones if isinstance(a, Programar)]
+    assert [p.datos["qty_objetivo"] for p in verificar] == [400] and verificar[0].clave == CLAVE_VERIFICAR_REPLACE
+    assert not any(isinstance(a, (EnviarOrden, Cancelar)) for a in acciones)
+
+
+def test_E2_01_emergencias_duplicadas_bajan_todas():
+    """E2-01: dos emergencias vivas (ejecutor + vigilante) → las dos bajan (la más antigua primero); nunca suben."""
+    vieja, nueva = _emergencia(1000, id_das=5001), _emergencia(1000, id_das=5002)
+    pequena = _orden(100200011, Proposito.STOP_EMERGENCIA, 300, precio=NIV.emergencia_limite,
+                     stop=NIV.emergencia_disparo, id_das=5003)
+    acciones = acciones_durante_bs(_pos(neta=-700, estado=EstadoTicker.BS), [nueva, pequena, vieja], CFG, version=1)
+    assert [(a.id_das, a.qty) for a in acciones if isinstance(a, Reemplazar)] == [(5001, 700), (5002, 700)]
+
+
+@pytest.mark.parametrize("share_es_abierta, esperado", [(True, 400), (False, 1000), (None, 400)],
+                         ids=["A-02-abierta", "A-02-total", "A-02-defecto-tipos"])
+def test_A_02_share_del_replace_durante_bs(share_es_abierta, esperado):
+    """A-02: el `share` sale de tipos.share_de_replace (abierta o llenas + abierta según la config)."""
+    cfg = copy.deepcopy(CFG)
+    if share_es_abierta is None:
+        cfg["stops"].pop("replace_share_es_abierta", None)
+    else:
+        cfg["stops"]["replace_share_es_abierta"] = share_es_abierta
+    vivas = [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400),
+             _principal(estado=EstadoOrden.TRIGGERED, lvqty=1000)]
+    acciones = acciones_durante_bs(_pos(neta=-400, estado=EstadoTicker.BS), vivas, cfg, version=3)
+    r = next(a for a in acciones if isinstance(a, Reemplazar))
+    assert r.id_das == 5000 and r.qty == 400        # el principal no tiene llenas: share = abierta en los dos modos
+    parcial = [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400)]
+    r2 = next(a for a in acciones_durante_bs(_pos(neta=-100, estado=EstadoTicker.BS), parcial, cfg, version=3)
+              if isinstance(a, Reemplazar))
+    assert r2.qty == (100 if esperado == 400 else 700)
+    datos = next(a for a in acciones_durante_bs(_pos(neta=-100, estado=EstadoTicker.BS), parcial, cfg, version=3)
+                 if isinstance(a, Programar)).datos
+    assert datos["qty_objetivo"] == 100             # la verificación siempre en cantidad ABIERTA
 
 
 def test_acciones_durante_bs_descuenta_el_cierre_humano_en_curso():
@@ -513,20 +568,76 @@ def _cierre_humano(pos=None, vivas=None, cot=None, n=None, **kw):
 
 
 def test_cierre_humano_cancela_la_emergencia_antes_de_comprar():
+    """R-G-03 (3) + E2-03: primero SOLO los Cancelar (la emergencia, luego el principal) y una espera de 0,5 s.
+
+    Antes la compra salía en la MISMA tanda que el Cancelar: si la emergencia llenaba antes de que DAS procesara la
+    cancelación, compraban las dos y la cuenta quedaba LARGA. La compra sale en la vuelta en que ya figuran canceladas.
+    """
     acciones = _cierre_humano()
-    assert _tipos(acciones) == ["Anotar", "Cancelar", "Cancelar", "EnviarOrden", "Programar"]
+    assert _tipos(acciones) == ["Anotar", "Cancelar", "Cancelar", "Anotar", "Programar"]
     assert acciones[1].id_das == 5001                     # la emergencia, PRIMERO (R-G-03 (3))
     assert acciones[2].id_das == 5000                     # luego el principal, para que no compre de más
-    orden = acciones[3].orden
+    assert acciones[3].tipo == "cierre_humano_espera"
+    assert set(acciones[3].datos["esperando"]) == {100200009, 100200010}
+    p = acciones[4]
+    assert p.clave == f"{CLAVE_CIERRE_REINTENTO}:XYZ" and p.en_s == cisne_negro.ESPERA_CANCEL_S == 0.5
+    assert p.datos == {"ticker": T, "intento": 0, "objetivo": 0, "signo": -1, "n": None, "esperas": 1}
+    # vuelta siguiente: DAS ya confirmó las dos cancelaciones → sale la compra por la neta de fills de ESE momento
+    canceladas = [_emergencia(1000, estado=EstadoOrden.CANCELED),
+                  _principal(estado=EstadoOrden.CANCELED, llenas=300, lvqty=0)]
+    acciones = _cierre_humano(vivas=canceladas, intento=0, objetivo=0, signo=-1, esperas=1)
+    assert _tipos(acciones) == ["Anotar", "EnviarOrden", "Programar"]
+    orden = acciones[1].orden
     assert (orden.lado, orden.qty, orden.tipo, orden.precio) == (Lado.COMPRA, 700, TipoOrden.LIMITE, D("4.31"))
     assert (orden.ruta, orden.proposito, orden.post_only) == ("SAGEPRO", Proposito.CIERRE_HUMANO, False)
-    p = acciones[4]
+    p = acciones[2]
     assert p.clave == f"{CLAVE_CIERRE_REINTENTO}:XYZ" and p.en_s == 2.0
     assert p.datos == {"ticker": T, "intento": 1, "objetivo": 0, "signo": -1, "n": None}
 
 
+def test_E2_03_la_emergencia_lleno_mientras_se_cancelaba_se_compra_solo_lo_que_queda():
+    """E2-03: la emergencia llenó 500 antes de cancelarse (Executed): la compra es por la neta de fills (−200), no 700."""
+    vivas = [_emergencia(1000, estado=EstadoOrden.EXECUTED, llenas=500)]
+    acciones = _cierre_humano(pos=_pos(neta=-200, estado=EstadoTicker.BS), vivas=vivas, intento=0, objetivo=0,
+                              signo=-1, esperas=1)
+    assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [200]
+
+
+def test_E2_03_emergencia_sin_id_bloquea_hasta_tenerlo():
+    """Una emergencia aún Sending (sin id) no se puede cancelar pero SÍ podría comprar: se espera, no se compra."""
+    vivas = [_emergencia(1000, id_das=None, estado=EstadoOrden.SENDING)]
+    acciones = _cierre_humano(vivas=vivas)
+    assert not any(isinstance(a, (EnviarOrden, Cancelar)) for a in acciones)
+    assert isinstance(acciones[-1], Programar) and acciones[-1].datos["esperas"] == 1
+
+
+def test_E2_03_ventas_vivas_no_bloquean_el_cierre_de_un_corto():
+    """Una venta viva (p. ej. una entrada que DAS aún no canceló) no compra: se cancela en la misma tanda y no bloquea."""
+    entrada = _orden(100200020, Proposito.ENTRADA_AGREGAR, 100, tipo=TipoOrden.LIMITE, lado=Lado.CORTO,
+                     precio=D("4.00"), id_das=5020)
+    acciones = _cierre_humano(vivas=[entrada])
+    assert _tipos(acciones) == ["Anotar", "Cancelar", "EnviarOrden", "Programar"]
+
+
+def test_E2_03_esperas_agotadas_avisa_cerrar_a_mano_sin_comprar():
+    acciones = _cierre_humano(intento=0, objetivo=0, signo=-1, esperas=cisne_negro.ESPERAS_CANCEL_MAX)
+    assert not any(isinstance(a, (EnviarOrden, Programar, Cancelar)) for a in acciones)
+    aviso = next(a for a in acciones if isinstance(a, Avisar))
+    assert aviso.nivel is Nivel.MAXIMO and "A MANO" in aviso.texto and "LARGA" in aviso.texto
+    assert aviso.clave.endswith(":agotado")               # el decisor suelta el cierre humano con este sufijo
+
+
+@pytest.mark.parametrize("esperas", [-1, True, 1.5, "2"], ids=["negativa", "bool", "float", "texto"])
+def test_E2_03_esperas_invalidas_lanzan(esperas):
+    with pytest.raises(ValueError):
+        _cierre_humano(esperas=esperas)
+
+
 def test_cierre_humano_por_tramos_no_deja_el_resto_desnudo():
-    """/cerrar X 300 SI: la emergencia NO se cancela; se baja a las 400 que quedan (G6, R-G-03 (1))."""
+    """/cerrar X 300 SI: la emergencia NO se cancela; se baja a las 400 que quedan (G6, R-G-03 (1)).
+
+    E2-03: la compra de 300 sale cuando DAS ya muestra los stops reducidos, no en la misma tanda que el REPLACE.
+    """
     acciones = _cierre_humano(n=300)
     assert not any(isinstance(a, Cancelar) for a in acciones)
     reemplazos = [a for a in acciones if isinstance(a, Reemplazar)]
@@ -534,14 +645,20 @@ def test_cierre_humano_por_tramos_no_deja_el_resto_desnudo():
         (5001, 400, D("2.26"), D("3.26"), 4, "stops:XYZ"),
         (5000, 400, D("2.00"), D("2.06"), 4, "stops:XYZ"),
     ]
-    envio = [a for a in acciones if isinstance(a, EnviarOrden)]
+    assert not any(isinstance(a, EnviarOrden) for a in acciones)
+    assert acciones[-1].datos["objetivo"] == -400 and acciones[-1].datos["esperas"] == 1
+    reducidas = [_emergencia(400), _principal(estado=EstadoOrden.PARTIAL, llenas=300, lvqty=400)]
+    siguiente = _cierre_humano(vivas=reducidas, n=300, intento=0, objetivo=-400, signo=-1, esperas=1)
+    envio = [a for a in siguiente if isinstance(a, EnviarOrden)]
     assert len(envio) == 1 and envio[0].orden.qty == 300
-    assert acciones.index(reemplazos[0]) < acciones.index(envio[0])
-    assert acciones[-1].datos["objetivo"] == -400
+    assert not any(isinstance(a, Reemplazar) for a in siguiente)
+    assert siguiente[-1].datos["objetivo"] == -400
 
 
 def test_cierre_humano_n_mayor_que_la_posicion_cierra_todo():
     acciones = _cierre_humano(n=5000)
+    assert acciones[-1].datos["objetivo"] == 0 and any(isinstance(a, Cancelar) for a in acciones)
+    acciones = _cierre_humano(n=5000, vivas=[], intento=0, objetivo=0, signo=-1, esperas=1)
     assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [700]
     assert acciones[-1].datos["objetivo"] == 0
 
@@ -614,7 +731,9 @@ def test_cierre_humano_sin_posicion_avisa_y_no_envia():
     pytest.param(400, None, True, id="riesgo8-das-otro-signo-no-se-envia-nada"),
 ])
 def test_cierre_humano_con_discrepancia(neta_das, qty, bloqueado):
-    acciones = _cierre_humano(pos=_pos(neta=-700, neta_das=neta_das, estado=EstadoTicker.BS))
+    # sin stops vivos (ya cancelados) para ver la cantidad; con ellos la compra espera a su cancelación (E2-03)
+    acciones = _cierre_humano(pos=_pos(neta=-700, neta_das=neta_das, estado=EstadoTicker.BS),
+                              vivas=None if bloqueado else [])
     assert Consultar("GET POSITIONS") in acciones
     assert any(isinstance(a, Anotar) and a.tipo == "discrepancia" for a in acciones)
     envios = [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)]

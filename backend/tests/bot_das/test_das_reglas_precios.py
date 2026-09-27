@@ -197,6 +197,19 @@ def test_ruta_acepta_hora_naive_ya_en_et(cfg_rutas):
     assert ruta(cfg_rutas, "cruzar", D("0.45"), datetime(2026, 9, 25, 7, 0)) == "EDGA"
 
 
+def test_L0_04_ruta_convierte_a_et_una_hora_aware_en_otra_zona(cfg_rutas):
+    """L0-04: 11:30 UTC = 07:30 ET → EDGA; 10:30 UTC = 06:30 ET → MIAX (EDGA cerrada); Madrid 13:30 = 07:30 ET."""
+    from datetime import timezone
+    from zoneinfo import ZoneInfo
+
+    assert ruta(cfg_rutas, "cruzar", D("0.45"), datetime(2026, 9, 25, 11, 30, tzinfo=timezone.utc)) == "EDGA"
+    assert ruta(cfg_rutas, "cruzar", D("0.45"), datetime(2026, 9, 25, 10, 30, tzinfo=timezone.utc)) == "MIAX"
+    madrid = ZoneInfo("Europe/Madrid")
+    assert ruta(cfg_rutas, "cruzar", D("0.45"), datetime(2026, 9, 25, 13, 30, tzinfo=madrid)) == "EDGA"
+    assert ruta(cfg_rutas, "cruzar", D("0.45"), datetime(2026, 9, 25, 12, 30, tzinfo=madrid)) == "MIAX"
+    assert ruta(cfg_rutas, "cruzar", D("0.45"), datetime(2026, 9, 25, 7, 0, tzinfo=ET)) == "EDGA"
+
+
 # ── distancias ──────────────────────────────────────────────────────────
 @pytest.mark.parametrize("a,b,esperado", [
     pytest.param(D("10.30"), D("10"), D("3"), id="+3%"),

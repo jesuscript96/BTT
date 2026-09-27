@@ -17,6 +17,7 @@ import pytest
 
 from app.bot_das.reglas import locates as L
 from app.bot_das.reglas.locates import (
+    COMPRA_SIN_RESPUESTA_S,
     ESTADO_BUSCANDO,
     ESTADO_COMPRANDO,
     ESTADO_LOCALIZADO,
@@ -31,7 +32,9 @@ from app.bot_das.reglas.locates import (
     cantidad_a_localizar,
     clave_temporizador,
     compra_repetida,
+    consulta_locates,
     consulta_reuso,
+    gasto_comprometido,
     gasto_de,
     paquetes,
     siguiente_paso,
@@ -562,7 +565,7 @@ def test_maquina_compra_cuando_el_ev_compensa_y_hasta_entonces_solo_anota() -> N
     assert tipos_de(caro) == ["locate_inquire"] and caro[0].datos["entra"] is False
     assert m.loc.estado == ESTADO_BUSCANDO
     acciones = m.paso(1004.0, ret=slret(1, "0.02", 5000))
-    assert tipos_de(acciones) == ["locate_intencion", "LocateComprar", "Desprogramar"]   # write-ahead primero
+    assert tipos_de(acciones) == ["locate_intencion", "LocateComprar", "Programar"]   # write-ahead primero
     compra = acciones[1]
     assert (compra.ticker, compra.qty, compra.ruta) == (X, 1200, "LOC3")
     partes = descomponer(compra.token)
@@ -571,7 +574,10 @@ def test_maquina_compra_cuando_el_ev_compensa_y_hasta_entonces_solo_anota() -> N
     assert datos["token"] == compra.token and datos["estado"] == ESTADO_COMPRANDO
     assert (datos["paquetes"], datos["qty_comprar"], datos["qty_ajustada"]) == (12, 1200, 1200)
     assert datos["coste_nuevo"] == D("24") and datos["entra"] is True
-    assert acciones[2] == Desprogramar(CLAVE)
+    # E2-04: en vez de desprogramar, el temporizador vigila la compra (30 s sin %SLOrder → aviso); la intención
+    # anota la hora de la compra
+    assert acciones[2] == Programar(CLAVE, COMPRA_SIN_RESPUESTA_S, {"ticker": X, "strategy_id": "est-a"})
+    assert datos["ultimo_inquire_en"] == 1004.0
     assert (m.loc.estado, m.loc.token) == (ESTADO_COMPRANDO, compra.token)
 
 
@@ -624,7 +630,7 @@ def test_maquina_parcial_sigue_buscando_el_resto_con_coste_total() -> None:
     assert (m.loc.estado, m.loc.localizadas, m.loc.coste, m.loc.compras) == (ESTADO_BUSCANDO, 200, D("2"), 1)
     # la segunda compra se decide con el coste TOTAL: 2 + 100 · 0,01 = 3 $ sobre 300 acciones a 1 $ = 1 %
     acciones = m.paso(1003.0, ret=slret(1, "0.01", 100, ruta="LOC7"))
-    assert tipos_de(acciones) == ["locate_intencion", "LocateComprar", "Desprogramar"]
+    assert tipos_de(acciones) == ["locate_intencion", "LocateComprar", "Programar"]          # E2-04
     assert acciones[0].datos["coste_total"] == D("3") and acciones[0].datos["fade_pct"] == D("1")
     segunda = acciones[1]
     assert (segunda.qty, segunda.ruta) == (100, "LOC7") and segunda.token != compra.token
@@ -787,15 +793,146 @@ def test_maquina_estado_das_desconocido_se_registra_sin_cambiar() -> None:
 
 
 def test_maquina_tope_3_pct_no_compra_y_avisa() -> None:
-    """R-H-03: 3 % de 1.000 $ = 30 $; con 10 $ gastados, una compra de 24 $ pasaría a 34 $."""
+    """R-H-03: 3 % de 1.000 $ = 30 $; con 10 $ gastados, una compra de 24 $ pasaría a 34 $.
+
+    E2-06: el tope por gasto YA PAGADO para el locate («parado») y avisa UNA vez: antes seguía «buscando» y el aviso
+    (Telegram + correo) se repetía cada 60 s todo el día.
+    """
     m = Maquina(equity="1000", gasto="10")
     m.paso(1000.0, qty=1230)
     acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
-    assert tipos_de(acciones) == ["locate_inquire", "Avisar"]
-    assert acciones[1].clave == "locates_tope" and acciones[1].nivel is Nivel.AVISO
-    assert m.loc.estado == ESTADO_BUSCANDO
-    # con un precio que cabe (20 $ → 30 $ justo en el tope) sí compra
-    assert "LocateComprar" in tipos_de(m.paso(1004.0, ret=slret(1, "0.0166", 5000)))
+    assert tipos_de(acciones) == ["locate_estado", "Desprogramar", "Avisar"]
+    assert acciones[2].clave == "locates_tope" and acciones[2].nivel is Nivel.AVISO
+    assert m.loc.estado == ESTADO_PARADO and m.loc.coste == D("0")       # la previsión NO es gasto pagado
+    assert acciones[0].datos["coste_nuevo_previsto"] == D("24") and "coste_total" not in acciones[0].datos
+    # E2-06: dos %SLRET seguidos por encima del tope → un solo aviso
+    assert m.paso(1004.0, ret=slret(1, "0.02", 5000)) == []
+    assert m.paso(1007.0) == []
+    assert sum(isinstance(a, Avisar) for a in m.historial) == 1
+
+
+def test_maquina_tope_justo_en_el_limite_compra() -> None:
+    """R-H-03: «que haga SUPERAR»: 10 $ + 20 $ = 30 $ justo en el tope sí compra."""
+    m = Maquina(equity="1000", gasto="10")
+    m.paso(1000.0, qty=1230)
+    assert "LocateComprar" in tipos_de(m.paso(1001.0, ret=slret(1, "0.0166", 5000)))
+
+
+def test_E2_02_dos_estrategias_a_la_vez_no_superan_el_tope() -> None:
+    """E2-02: equity 10.000 (tope 300 $), coste 200 $ cada una; la segunda con la primera en «comprando» → tope.
+
+    Sin contar el gasto COMPROMETIDO, las dos compraban y el total (400 $) superaba el 3 %.
+    """
+    a = Maquina(e=estrategia(strategy_id="est-a"), equity="8000")         # tope 3 % = 240 $
+    b = Maquina(e=estrategia(strategy_id="est-b"), equity="8000")
+    compra_a = a.comprada(1000, precio_locate="0.15")                        # 10 paquetes · 100 · 0,15 = 150 $
+    assert compra_a.qty == 1000 and a.loc.estado == ESTADO_COMPRANDO
+    registro = {(X, "est-a"): a.loc}
+    assert gasto_comprometido(registro) == D("150")
+    b.paso(1000.0, qty=1000)
+    # sin el registro (llamador antiguo) la segunda compraría: 150 + 150 = 300 $ > 240 $
+    assert "LocateComprar" in tipos_de(siguiente_paso(
+        b.loc, b.e, X, b.precio, 1001.0, b.cfg, b.gasto, b.equity, False, slret(1, "0.15", 10_000), b.tokens))
+    acciones = b.paso(1001.0, ret=slret(1, "0.15", 10_000), locates={**registro, (X, "est-b"): b.loc})
+    assert "LocateComprar" not in tipos_de(acciones)
+    assert tipos_de(acciones) == ["locate_inquire"]                           # solo lo comprometido: sin aviso
+    assert acciones[0].datos["gasto_en_curso_otros"] == D("150")
+    assert b.loc.estado == ESTADO_BUSCANDO                                    # si la de A falla, B podrá comprar
+    # A falla (Rejected, sin localizar): lo comprometido desaparece y B compra
+    a.paso(1002.0, orden=slorder(70, "Rejected", 1000, 0, "0", compra_a.token))
+    acciones = b.paso(1004.0, ret=slret(1, "0.15", 10_000), locates={(X, "est-a"): a.loc, (X, "est-b"): b.loc})
+    assert "LocateComprar" in tipos_de(acciones)
+
+
+def test_E2_04_compra_sin_respuesta_avisa_una_vez_y_nunca_recompra() -> None:
+    """E2-04: «comprando» sin %SLOrder: a los 30 s GET LOCATES + Avisar(2) + parado; nunca otra LocateComprar."""
+    m = Maquina()
+    compra = m.comprada(1230)                                                # compra a t = 1001
+    assert m.paso(1001.0 + COMPRA_SIN_RESPUESTA_S - 0.1) == []               # aún dentro del plazo: cerrojo
+    acciones = m.paso(1001.0 + COMPRA_SIN_RESPUESTA_S)                        # salta el temporizador
+    assert tipos_de(acciones) == ["locate_estado", "Consultar", "Avisar", "Desprogramar"]
+    assert acciones[1] == consulta_locates() == Consultar("GET LOCATES")
+    assert acciones[2].nivel is Nivel.AVISO and acciones[2].clave == f"locate_sin_respuesta:{X}:est-a"
+    assert m.loc.estado == ESTADO_PARADO
+    assert m.paso(1100.0) == [] and m.paso(1101.0, ret=slret(1, "0.001", 5000)) == []
+    assert sum(isinstance(a, LocateComprar) for a in m.historial) == 1                  # riesgo 11: nunca recompra
+    # si por fin llega el Located de ESA compra (por su token), se cobra: el dinero ya se gastó
+    m.paso(1102.0, orden=slorder(70, "Located", 1200, 1200, "0.02", compra.token))
+    assert (m.loc.estado, m.gasto) == (ESTADO_LOCALIZADO, D("24"))
+
+
+def test_E2_04_tras_un_reinicio_la_compra_cuenta_desde_ahora() -> None:
+    """El diario no guarda la hora de la compra: sin ella se ancla a ahora (+ Programar) y a los 30 s avisa."""
+    loc = replace(Locate(ticker=X, strategy_id="est-a", pedidas=1200), estado=ESTADO_COMPRANDO, token=123)
+    m = Maquina()
+    m.loc = loc
+    acciones = m.paso(5000.0)
+    assert tipos_de(acciones) == ["locate_inquire", "Programar"] and m.loc.ultimo_inquire_en == 5000.0
+    assert acciones[1] == Programar(CLAVE, COMPRA_SIN_RESPUESTA_S, {"ticker": X, "strategy_id": "est-a"})
+    assert m.paso(5010.0) == []
+    assert "Avisar" in tipos_de(m.paso(5030.0))
+
+
+def test_E2_04_located_tardio_por_token_no_es_compra_repetida() -> None:
+    """Un Located que llega tras el «parado» por silencio, con el token de NUESTRA compra, no es R-H-02."""
+    loc = replace(Locate(ticker=X, strategy_id="est-a", pedidas=1200), estado=ESTADO_PARADO, token=555, compras=1,
+                  id_das=70)
+    registro = {(X, "est-a"): loc}
+    assert compra_repetida(registro, X, "est-a", id_das=71) is True               # sin token: como antes
+    assert compra_repetida(registro, X, "est-a", id_das=71, token=555) is False
+    assert compra_repetida(registro, X, "est-a", id_das=71, token=556) is True
+
+
+def test_E2_08_recompra_de_un_resto_pequeno_no_compra_otro_paquete() -> None:
+    """E2-08: 1.220 localizadas de 1.240 → falta 20 (20 % ≤ 30 %): no se compran 100 para usar 20."""
+    v = veredicto_ev(estrategia(), D("5"), 1240, D("0.01"), D("12"), ya_localizadas=1220)
+    assert (v["paquetes"], v["qty_comprar"], v["qty_ajustada"], v["entra"]) == (0, 0, 1220, False)
+    assert "umbral" in v["motivo"]
+    # un resto que SÍ pasa del umbral se compra (40 de 100)
+    v2 = veredicto_ev(estrategia(), D("5"), 1240, D("0.01"), D("12"), ya_localizadas=1200)
+    assert (v2["paquetes"], v2["qty_comprar"], v2["qty_ajustada"]) == (1, 100, 1240)
+    # sin nada cubierto, el mínimo de un paquete sigue (H-7: locates siempre ≥ 100)
+    v3 = veredicto_ev(estrategia(), D("5"), 20, D("0.01"), D("0"))
+    assert (v3["paquetes"], v3["qty_comprar"]) == (1, 100)
+
+
+def test_E2_08_la_maquina_no_sigue_buscando_un_resto_pequeno() -> None:
+    """Un Located parcial que deja un resto ≤ 30 % de un paquete cierra la búsqueda (sin bucle de consultas)."""
+    m = Maquina()
+    compra = m.comprada(1240)                                                # compra 1.300
+    hecho = m.paso(1002.0, orden=slorder(70, "Located", 1300, 1220, "0.02", compra.token))
+    assert tipos_de(hecho) == ["locate_estado", "Consultar", "Desprogramar"]
+    assert m.paso(1010.0) == []
+
+
+def test_A_06_consultas_con_protocolo():
+    """A-06: SLReuseQuery y GET LOCATES salen de protocolo.cmd_* (nombre cerrado, símbolo validado)."""
+    from app.bot_das import protocolo
+    assert consulta_reuso(X) == Consultar(protocolo.cmd_sl_reuse(X))
+    assert consulta_locates() == Consultar(protocolo.cmd_get("LOCATES"))
+
+
+def test_D2_08_avisos_de_locates_escapan_el_html() -> None:
+    """D2-08: un «<» o «&» del texto de DAS o del nombre no puede perder el aviso (Telegram con parse_mode HTML)."""
+    m = Maquina(e=estrategia(name="A&B <x>"))
+    compra = m.comprada(1230)
+    acciones = m.paso(1002.0, orden=slorder(70, "Rejected", 1200, 0, "0", compra.token, notas="Qty > <Max> & co"))
+    texto = next(a for a in acciones if isinstance(a, Avisar)).texto
+    assert "A&amp;B &lt;x&gt;" in texto and "Qty &gt; &lt;Max&gt; &amp; co" in texto and "<Max>" not in texto
+
+
+def test_E2_02_gasto_comprometido_suma_pagado_y_en_curso() -> None:
+    pagado = replace(Locate(ticker=X, strategy_id="p", pedidas=1000), estado=ESTADO_LOCALIZADO, localizadas=1000,
+                     coste=D("50"))
+    en_curso = replace(Locate(ticker=X, strategy_id="c", pedidas=1230), estado="Pending", precio_accion=D("0.02"))
+    oferta = replace(Locate(ticker="ABC", strategy_id="o", pedidas=300), estado="Offered", precio_accion=D("0.10"),
+                     localizadas=100, coste=D("5"))
+    parado = replace(Locate(ticker=X, strategy_id="z", pedidas=500), estado=ESTADO_PARADO, precio_accion=D("1"))
+    registro = {(X, "p"): pagado, (X, "c"): en_curso, ("ABC", "o"): oferta, (X, "z"): parado}
+    # 50 + 5 pagados; en curso: 12 paquetes · 100 · 0,02 = 24 y 2 paquetes · 100 · 0,10 = 20
+    assert gasto_comprometido(registro) == D("99")
+    assert gasto_comprometido(registro, excluir=(X, "c")) == D("75")
+    assert gasto_comprometido({}) == D("0")
 
 
 def test_maquina_sin_equity_no_compra_ni_avisa() -> None:

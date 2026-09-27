@@ -288,12 +288,70 @@ def test_plana_con_stops_huerfanos_los_cancela_si_el_ejecutor_esta_muerto(cfg):
 
 
 def test_cuenta_larga_el_vigilante_no_vende_solo_avisa_y_no_compra_mas(cfg):
-    """R-C-11 (3) + R-C-08: larga con lotes cortos → aviso 3 y cancelar las compras vivas; la venta del exceso es del ejecutor."""
-    acc = comprobar(foto(neta=20, ordenes=(emergencia_das(),), latido=None), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP,
-                    True)
-    assert not de_tipo(acc, EnviarOrden)
-    assert [c.id_das for c in de_tipo(acc, Cancelar)] == [12]
+    """E2c-02 (antes «el vigilante no vende»): con el ejecutor MUERTO y la cuenta LARGA 20 con lotes cortos, el vigilante
+    vende SOLO el exceso (20) con SU token, tras cancelar todas las compras (R-C-11 (3): «ejecutor + vigilante»)."""
+    tokens = TokensVigilante()
+    acc = comprobar(foto(neta=20, ordenes=(emergencia_das(),), latido=None), cfg, AHORA, tokens, HORA, RUTA_STOP, True)
+    ventas = [a.orden for a in de_tipo(acc, EnviarOrden)]
+    assert [(o.lado, o.qty, o.proposito, origen(o.token)) for o in ventas] == [
+        (Lado.VENTA, 20, Proposito.VENTA_EXCESO, Origen.VIGILANTE)]
+    assert ventas[0].precio == D("9.69")                                   # D2a-04: bid 9,79 · (1 − 1 %) abajo
+    tipos = [type(a).__name__ for a in acc]
+    assert tipos.index("CancelarTicker") < tipos.index("EnviarOrden")       # ninguna compra viva antes de vender
+    assert not any(type(a).__name__ in ("Programar", "Consultar", "InvalidarSerie") for a in acc)
     assert any(a.nivel is Nivel.MAXIMO and "VENDER A MANO" in a.texto for a in de_tipo(acc, Avisar))
+    assert anotacion(acc)["actua"] is True
+    assert acc.index(next(a for a in acc if isinstance(a, Anotar) and a.tipo == "vigilancia")) < tipos.index("EnviarOrden")
+
+
+def test_E2c_02_con_la_venta_en_marcha_no_vende_otra_vez(cfg):
+    """La venta del exceso que el vigilante acaba de mandar (pendiente) se descuenta: nunca vende dos veces."""
+    tokens = TokensVigilante()
+    primera = comprobar(foto(neta=20, latido=None), cfg, AHORA, tokens, HORA, RUTA_STOP, True)
+    venta = de_tipo(primera, EnviarOrden)[0].orden
+    pendiente = Orden(token=venta.token, ticker=X, lado=Lado.VENTA, tipo=TipoOrden.LIMITE, qty=venta.qty,
+                      precio=venta.precio, stop=None, ruta=venta.ruta, proposito=Proposito.VENTA_EXCESO, lote_id=None,
+                      nivel=None, origen=Origen.VIGILANTE, estado=EstadoOrden.SENDING)
+    segunda = comprobar(foto(neta=20, latido=None, pendientes=[pendiente]), cfg, AHORA + 1, tokens, HORA, RUTA_STOP, True)
+    assert not de_tipo(segunda, EnviarOrden) and tokens.usados == 1
+
+
+def test_E2c_02_con_el_ejecutor_vivo_no_vende(cfg):
+    acc = comprobar(foto(neta=20, ordenes=(emergencia_das(),), latido=1.0), cfg, AHORA, TokensVigilante(), HORA,
+                    RUTA_STOP, True)
+    assert ordenes_de(acc) == [] and anotacion(acc)["actua"] is False
+
+
+def test_E2c_02_sin_conexion_de_accion_no_vende_y_pide_relanzar(cfg):
+    acc = comprobar(foto(neta=20, latido=None), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, False)
+    assert ordenes_de(acc) == [] and not de_tipo(acc, vigilancia.CancelarTicker)
+    assert de_tipo(acc, PedirAlSupervisor) == [PedirAlSupervisor(PETICION_RELANZAR_EJECUTOR)]
+
+
+# ── E2c-04: con el ejecutor vivo no se anota lo mismo cada segundo ─────────
+def test_E2c_04_misma_propuesta_se_anota_una_vez(cfg):
+    f = foto(ordenes=(principal_das(),))                                    # falta la emergencia; ejecutor vivo
+    acc1, firmas = vigilancia.comprobar_con_firmas(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
+    assert len([a for a in acc1 if isinstance(a, Anotar) and a.tipo == "vigilancia"]) == 1 and X in firmas
+    # pasada siguiente con la firma anterior: nada que anotar (el latido cambia, la propuesta no)
+    f2 = replace(foto(ordenes=(principal_das(),), latido=1.7), anotado=firmas)
+    acc2, firmas2 = vigilancia.comprobar_con_firmas(f2, cfg, AHORA + 1, TokensVigilante(), HORA, RUTA_STOP, True)
+    assert not [a for a in acc2 if isinstance(a, Anotar) and a.tipo == "vigilancia"] and firmas2 == firmas
+    # cambia la propuesta (ahora falta también el principal): se anota
+    f3 = replace(foto(ordenes=()), anotado=firmas)
+    acc3, _ = vigilancia.comprobar_con_firmas(f3, cfg, AHORA + 2, TokensVigilante(), HORA, RUTA_STOP, True)
+    assert len([a for a in acc3 if isinstance(a, Anotar) and a.tipo == "vigilancia"]) == 1
+    # sin `anotado` (llamador antiguo) se anota como antes, y `comprobar` sigue devolviendo solo las acciones
+    assert anotacion(comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True))["firma"] == firmas[X]
+
+
+def test_E2c_04_lo_que_hace_el_vigilante_se_anota_siempre(cfg):
+    """Write-ahead (§8): cuando actúa, se anota antes de sus órdenes aunque la firma sea la misma."""
+    f = foto(ordenes=(principal_das(),), latido=None)
+    _, firmas = vigilancia.comprobar_con_firmas(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
+    acc = vigilancia.comprobar_con_firmas(replace(f, anotado=firmas), cfg, AHORA + 1, TokensVigilante(), HORA,
+                                          RUTA_STOP, True)[0]
+    assert de_tipo(acc, EnviarOrden) and anotacion(acc)["actua"] is True
 
 
 # ── (g) corrección 16: sin conexión de acción ────────────────────────────
@@ -482,8 +540,8 @@ def test_debe_hacer_ping_umbral_propio():
 # ── pureza ───────────────────────────────────────────────────────────────
 def test_modulo_puro_solo_importa_lo_permitido():
     arbol = ast.parse(Path(vigilancia.__file__).read_text(encoding="utf-8"))
-    permitidos = {"__future__", "collections.abc", "dataclasses", "datetime", "decimal", "typing", "app.bot_das.reglas",
-                  "app.bot_das.reglas.precios", "app.bot_das.tipos"}
+    permitidos = {"__future__", "html", "collections.abc", "dataclasses", "datetime", "decimal", "typing",
+                  "app.bot_das.reglas", "app.bot_das.reglas.precios", "app.bot_das.tipos"}   # html: D2-08
     modulos = set()
     for nodo in ast.walk(arbol):
         if isinstance(nodo, ast.ImportFrom):

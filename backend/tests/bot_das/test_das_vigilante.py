@@ -909,7 +909,7 @@ def test_h5_una_pasada_que_revienta_no_para_la_vigilancia(montar, monkeypatch: p
     """H-5: una excepción en la pasada se anota (con traza) y avisa (2); la vigilancia sigue en la pasada siguiente."""
     libro.sembrar_posicion(TICKER, -100, D("3.45"))
     escribir_diario_ejecutor(dir_bot, reloj)
-    original = vg.vigilancia.comprobar
+    original = vg.vigilancia.comprobar_con_firmas            # E2c-04: el proceso llama a la variante con firmas
     llamadas = {"n": 0}
 
     def rota(*a: Any, **k: Any) -> Any:
@@ -918,7 +918,7 @@ def test_h5_una_pasada_que_revienta_no_para_la_vigilancia(montar, monkeypatch: p
             raise ZeroDivisionError("fallo inventado")
         return original(*a, **k)
 
-    monkeypatch.setattr(vg.vigilancia, "comprobar", rota)     # antes del volcado: la primera pasada útil revienta
+    monkeypatch.setattr(vg.vigilancia, "comprobar_con_firmas", rota)   # antes del volcado: la primera pasada útil revienta
     m = montar()
     m.bombear(lambda: len(stops_vivos(libro)) == 2, "vigilancia tras la excepción")
     excepciones = de_tipo(m.regs(), "excepcion")
@@ -1136,3 +1136,107 @@ def test_r_c_07_con_menos_posicion_reduce_los_stops_por_replace(montar, reloj: R
     assert neworders(m.recibidas()) == []
     assert len(de_tipo(m.regs(), "replace_intencion")) == 2
     assert simulador.errores() == []
+
+
+# ═══════════════════════════ correcciones de la revisión (E2c-02, E2c-04, G2-05) ═══
+def test_e2c_02_con_el_ejecutor_muerto_y_la_cuenta_larga_vende_solo_el_exceso(montar, reloj: RelojSimulado,
+                                                                             dir_bot: Path, libro: Any,
+                                                                             simulador: Any) -> None:
+    """E2c-02 (director, R-C-11 (3)): lotes cortos en el diario, cuenta LARGA 20 en DAS y el ejecutor muerto ⇒ el
+    vigilante VENDE las 20 (solo el exceso) con SU token, write-ahead en su diario, UNA sola vez; nunca compra."""
+    libro.sembrar_posicion(TICKER, 20, D("3.45"))
+    libro.cotizar(TICKER, D("3.44"), D("3.46"), last=D("3.45"), volumen=500_000)
+    escribir_diario_ejecutor(dir_bot, reloj)
+    m = montar()
+    m.listo()
+    m.bombear(lambda: [x for x in neworders(m.recibidas(), TICKER) if x.split()[2] == "S"], "venta del exceso")
+    m.bombear(lambda: libro.posiciones().get(TICKER, 0) == 0, "cuenta plana")
+    m.pasadas(4)
+    ventas = [x for x in neworders(m.recibidas(), TICKER) if x.split()[2] == "S"]
+    assert len(ventas) == 1 and ventas[0].split()[5] == "20"
+    assert descomponer(int(ventas[0].split()[1]))[0] is Origen.VIGILANTE
+    assert not [x for x in neworders(m.recibidas(), TICKER) if x.split()[2] in ("B", "SS")]
+    intencion = [r for r in de_tipo(m.regs(), "orden_intencion") if r.datos["token"] == int(ventas[0].split()[1])]
+    assert intencion and intencion[0].datos["proposito"] == Proposito.VENTA_EXCESO.value
+    assert m.avisos.con_clave(f"vigilante_larga:{TICKER}")
+    assert simulador.errores() == []
+
+
+def test_e2c_04_con_el_ejecutor_vivo_la_misma_propuesta_se_anota_una_vez(montar, reloj: RelojSimulado,
+                                                                         dir_bot: Path, libro: Any) -> None:
+    """E2c-04: con el ejecutor vivo y la misma propuesta (cuenta larga que limpiará el ejecutor), el diario del vigilante
+    recibe UNA línea «vigilancia», no una por segundo ni una por minuto; si la propuesta cambia, se anota otra."""
+    libro.sembrar_posicion(TICKER, 20, D("3.45"))
+    escribir_diario_ejecutor(dir_bot, reloj)
+    escribir_latido_ejecutor(dir_bot, reloj.epoch())
+    m = montar()
+    m.listo()
+    m.pasadas(3)
+    for _ in range(3):                                    # 3 minutos con el ejecutor latiendo
+        reloj.avanzar(61.0)
+        escribir_latido_ejecutor(dir_bot, reloj.epoch())
+        m.pasadas(2)
+    vigilancias = [r for r in de_tipo(m.regs(), "vigilancia") if r.datos.get("ticker") == TICKER]
+    assert len(vigilancias) == 1 and vigilancias[0].datos["actua"] is False and vigilancias[0].datos.get("firma")
+    assert neworders(m.recibidas()) == []                  # el ejecutor vivo limpia; el vigilante no vende
+    reloj.avanzar(5.0)                                     # el ejecutor deja de latir: la propuesta cambia → otra línea
+    m.bombear(lambda: len([r for r in de_tipo(m.regs(), "vigilancia") if r.datos.get("ticker") == TICKER]) == 2,
+              "nueva anotación al cambiar la propuesta")
+
+
+class ClienteQueDescarta:
+    """Conexión de acción cuyo `enviar` devuelve False (cola llena / sin conexión): G2-05."""
+
+    def __init__(self) -> None:
+        self.conectado = True
+        self.lineas: list[str] = []
+
+    def conectar(self) -> bool:
+        self.conectado = True
+        return True
+
+    def cerrar(self) -> None:
+        self.conectado = False
+
+    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> bool:
+        self.lineas.append(linea)
+        return False
+
+
+def test_g2_05_lo_que_el_cliente_descarta_no_se_da_por_enviado_ni_por_pendiente(montar, reloj: RelojSimulado,
+                                                                                dir_bot: Path, libro: Any) -> None:
+    """G2-05 en el vigilante: `enviar` → False ⇒ `envio_fallido` (no `orden_enviada`) y NO queda en `pendientes`: la
+    pasada siguiente lo vuelve a intentar en vez de creer puesto un stop que no salió."""
+    libro.sembrar_posicion(TICKER, -100, D("3.45"))
+    escribir_diario_ejecutor(dir_bot, reloj)
+    clientes: list[ClienteQueDescarta] = []
+
+    def abrir() -> ClienteQueDescarta:
+        clientes.append(ClienteQueDescarta())
+        return clientes[-1]
+
+    m = montar(accion=abrir)
+    m.listo()
+    m.bombear(lambda: de_tipo(m.regs(), "envio_fallido"), "envío descartado")
+    assert not de_tipo(m.regs(), "orden_enviada") and m.v.pendientes == []
+    fallo = de_tipo(m.regs(), "envio_fallido")[0].datos
+    assert fallo["regla"] == "G2-05" and fallo["accion"] == "EnviarOrden"
+
+
+def test_d2a_06_un_neworder_que_el_emisor_purga_deja_de_estar_pendiente(montar, reloj: RelojSimulado, dir_bot: Path,
+                                                                         libro: Any) -> None:
+    """D2a-06: si el emisor de la conexión de acción purga un NEWORDER del vigilante (`al_descartar`), deja de contar
+    como pendiente: la pasada siguiente lo repone YA (sin esperar los 5 s de caducidad del riesgo 11)."""
+    from app.bot_das.tipos import OrdenDescartada
+    libro.sembrar_posicion(TICKER, -100, D("3.45"))
+    escribir_diario_ejecutor(dir_bot, reloj)
+    grabador = ClienteGrabador()
+    m = montar(accion=lambda: grabador)
+    m.listo()
+    m.bombear(lambda: len(neworders(grabador.lineas)) >= 2, "primer par")
+    primero = int(neworders(grabador.lineas)[0].split()[1])
+    m.cola.al_descartar(OrdenDescartada(token=primero, serie="stops:XYZ", version=1,
+                                        motivo="descartada por versión", ticker=TICKER))
+    m.bombear(lambda: len(neworders(grabador.lineas)) >= 3, "reposición tras el descarte")
+    assert [r for r in de_tipo(m.regs(), "orden_descartada") if r.datos["token"] == primero]
+    assert len(neworders(grabador.lineas)) == 3                        # solo el descartado se repone (el otro sigue)

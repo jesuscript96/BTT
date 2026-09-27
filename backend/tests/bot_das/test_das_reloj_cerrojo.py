@@ -121,6 +121,24 @@ def test_hora_das_a_et_rechaza_mal_formadas(texto):
         hora_das_a_et(texto, date(2026, 9, 25))
 
 
+def test_L0_05_desfase_hora_das_detecta_un_das_en_hora_de_madrid(reloj):
+    """L0-05: la hora de un %ORDER recién enviado casa con ET (±60 s) o DAS no está en ET (Madrid = +6 h)."""
+    from app.bot_das.reloj import DESFASE_HORA_DAS_MAX_S, desfase_hora_das_s, hora_das_es_et
+
+    ahora = datetime(2026, 9, 25, 9, 30, 10, tzinfo=ET)
+    assert desfase_hora_das_s("09:30:12", ahora) == pytest.approx(2.0)
+    assert desfase_hora_das_s("09:29:40", ahora) == pytest.approx(-30.0)
+    assert hora_das_es_et("09:30:12", ahora) and DESFASE_HORA_DAS_MAX_S == 60.0
+    assert desfase_hora_das_s("15:30:10", ahora) == pytest.approx(6 * 3600)      # DAS en hora de Madrid
+    assert not hora_das_es_et("15:30:10", ahora)
+    assert hora_das_es_et("09:30:10", ahora.astimezone(timezone.utc))            # un aware en UTC se convierte a ET
+    cerca_medianoche = datetime(2026, 9, 25, 23, 59, 50, tzinfo=ET)
+    assert desfase_hora_das_s("00:00:05", cerca_medianoche) == pytest.approx(15.0)   # no es un desfase de 24 h
+    assert hora_das_es_et("09:31:30", ahora, tolerancia_s=90.0) and not hora_das_es_et("09:31:30", ahora)
+    with pytest.raises(ValueError):
+        desfase_hora_das_s("9:30", ahora)
+
+
 def test_a_hora_et_respeta_el_horario_de_verano():
     invierno = a_hora_et("03:55", date(2026, 1, 15))
     verano = a_hora_et("03:55", date(2026, 7, 15))
@@ -459,3 +477,99 @@ def test_hilo_vigilado_rechaza_parametros_negativos():
         HiloVigilado("x", lambda: None, lambda *_a: None, max_relanzos=-1)
     with pytest.raises(ValueError):
         HiloVigilado("x", lambda: None, lambda *_a: None, espera_s=-0.1)
+    with pytest.raises(ValueError):
+        HiloVigilado("x", lambda: None, lambda *_a: None, estable_s=-1.0)
+
+
+class _MonoFalso:
+    """Reloj monotónico a mano: el cuerpo lo adelanta para simular que corrió mucho rato antes de caer."""
+
+    def __init__(self) -> None:
+        self.t = 5_000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_L0_02_seis_caidas_aisladas_tras_rachas_estables_siguen_relanzando():
+    """L0-02: seis caídas separadas por ≥ 60 s de cuerpo estable NO agotan max_relanzos=5 (fallos sueltos en 16 h)."""
+    mono = _MonoFalso()
+    llamadas, relanzos = [], []
+
+    def cuerpo():
+        llamadas.append(1)
+        if len(llamadas) <= 6:
+            mono.t += 61.0                               # corrió 61 s «estable» y luego cae
+            raise RuntimeError(f"fallo suelto {len(llamadas)}")
+        # la séptima vuelta termina por las buenas
+
+    hilo = HiloVigilado("avisos-envio", cuerpo, lambda n, e, r: relanzos.append(r), max_relanzos=5, espera_s=0.0,
+                        mono=mono)
+    hilo.arrancar()
+    assert _esperar(lambda: not hilo.vivo)
+    assert relanzos == [True] * 6 and len(llamadas) == 7
+    assert hilo.caidas == 6 and hilo.caidas_seguidas == 1          # el total se sigue contando (métrica)
+
+
+def test_L0_02_seis_caidas_seguidas_paran_el_hilo():
+    """L0-02: seis caídas SIN racha estable entre ellas (un bucle de caída) paran el hilo con relanzado=False."""
+    mono = _MonoFalso()
+    relanzos = []
+
+    def cuerpo():
+        mono.t += 1.0                                    # cae al segundo: bucle de caída
+        raise RuntimeError("bucle")
+
+    hilo = HiloVigilado("das-lector", cuerpo, lambda n, e, r: relanzos.append(r), max_relanzos=5, espera_s=0.0,
+                        mono=mono)
+    hilo.arrancar()
+    assert _esperar(lambda: not hilo.vivo)
+    assert relanzos == [True] * 5 + [False] and hilo.caidas_seguidas == 6
+
+
+def test_L0_02_arrancar_tras_agotar_pone_las_seguidas_a_cero():
+    """L0-02: un `arrancar()` tras un paro por agotamiento empieza con la cuenta de seguidas a 0 (no cae «a la primera»)."""
+    mono = _MonoFalso()
+    relanzos = []
+
+    def cuerpo():
+        raise RuntimeError("cae")
+
+    hilo = HiloVigilado("config-vigia", cuerpo, lambda n, e, r: relanzos.append(r), max_relanzos=1, espera_s=0.0,
+                        mono=mono)
+    hilo.arrancar()
+    assert _esperar(lambda: not hilo.vivo)
+    assert relanzos == [True, False]
+    hilo.arrancar()
+    assert _esperar(lambda: not hilo.vivo)
+    assert relanzos == [True, False, True, False] and hilo.caidas == 4
+
+
+# ── CanalFalso: el ORDEN invalidar → enviar (L0-01, riesgo 7, injerto §8.6) ──
+def test_L0_01_canal_falso_graba_invalidar_y_enviar_en_una_sola_secuencia():
+    """L0-01: `eventos` guarda invalidar y enviar en el orden real; un decisor que invalidara DESPUÉS de encolar
+    el stop nuevo ya no pasa el test (antes eran dos listas separadas sin orden común)."""
+    from canal_falso import EVENTO_ENVIAR, EVENTO_INVALIDAR, CanalFalso
+
+    bien = CanalFalso()
+    bien.enviar("NEWORDER 126800001 SS XYZ SAGEREB 100 3.45 PostOnly TIF=DAY+")
+    bien.invalidar("stops:XYZ", 1)
+    bien.enviar("NEWORDER 126800002 B XYZ STOP 100 STOPLMTP 4 4.12 TIF=DAY+", "stops:XYZ", 1)
+    assert bien.eventos == [
+        (EVENTO_ENVIAR, "NEWORDER 126800001 SS XYZ SAGEREB 100 3.45 PostOnly TIF=DAY+", None, 0),
+        (EVENTO_INVALIDAR, "stops:XYZ", 1),
+        (EVENTO_ENVIAR, "NEWORDER 126800002 B XYZ STOP 100 STOPLMTP 4 4.12 TIF=DAY+", "stops:XYZ", 1),
+    ]
+    assert bien.indice_invalidar("stops:XYZ", 1) == 1 and bien.indice_primer_envio("stops:XYZ", 1) == 2
+    assert bien.invalida_antes_de_enviar("stops:XYZ", 1)
+    # compatibilidad: las dos listas de antes siguen igual
+    assert bien.series_invalidadas == [("stops:XYZ", 1)] and len(bien.lineas) == 2
+
+    mal = CanalFalso()
+    mal.enviar("NEWORDER 126800002 B XYZ STOP 100 STOPLMTP 4 4.12 TIF=DAY+", "stops:XYZ", 1)
+    mal.invalidar("stops:XYZ", 1)
+    assert not mal.invalida_antes_de_enviar("stops:XYZ", 1)
+    assert not CanalFalso().invalida_antes_de_enviar("stops:XYZ", 1)              # sin invalidar no vale
+    solo = CanalFalso()
+    solo.invalidar("stops:XYZ", 2)
+    assert solo.invalida_antes_de_enviar("stops:XYZ", 2) and solo.indice_primer_envio("stops:XYZ") is None

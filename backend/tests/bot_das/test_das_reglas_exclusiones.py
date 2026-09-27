@@ -175,6 +175,22 @@ def test_banda_opa_config_sin_bloque_usa_defectos():
     assert banda_opa(velas(30, "9.99", "9.90", "5000"), D("10"), {}) is True
 
 
+# ── E1-08: el aviso de OPA listo para el decisor ─────────────────────────
+def test_E1_08_aviso_opa(cfg_ex):
+    """E1-08: con la banda clavada → Avisar(2) al grupo B con clave «opa:X» (el decisor lo manda una vez por día)."""
+    from app.bot_das.tipos import Avisar, Grupo, Nivel
+    aviso = exclusiones.aviso_opa(" xyz ", velas(30, "9.99", "9.90", "5000"), D("10"), cfg_ex)
+    assert isinstance(aviso, Avisar) and (aviso.nivel, aviso.grupo, aviso.clave) == (Nivel.AVISO, Grupo.B, "opa:XYZ")
+    assert "OPA" in aviso.texto and "XYZ" in aviso.texto and "a mano" in aviso.texto
+    assert exclusiones.aviso_opa("XYZ", velas(10, "9.99", "9.90", "5000"), D("10"), cfg_ex) is None   # sin cubrir
+    assert exclusiones.aviso_opa("XYZ", [], None, cfg_ex) is None
+
+
+def test_E1_08_aviso_opa_escapa_el_ticker(cfg_ex):
+    aviso = exclusiones.aviso_opa("A<B", velas(30, "9.99", "9.90", "5000"), D("10"), cfg_ex)
+    assert "A&lt;B" in aviso.texto and "A<B" not in aviso.texto
+
+
 # ── simbolo_das (A7) ────────────────────────────────────────────────────
 @pytest.mark.parametrize("entrada, esperado", [("XYZ", "XYZ"), (" abc ", "ABC"), ("BRK.B", "BRK.B")],
                          ids=["A7-identidad", "A7-mayusculas-espacios", "A7-sufijo-tal-cual"])

@@ -534,8 +534,24 @@ def test_reinicio_con_fichero_bloqueado_renumera_pendientes_detras_del_maximo(di
 
 
 # ── lectura ────────────────────────────────────────────────────────────
+def test_DC_06_la_fixture_usa_la_forma_real_del_decisor(registros_fixture: list[Registro]) -> None:
+    """DC-06: la fixture lleva las claves que escriben de verdad decisor y reconciliación: fill del Execute con
+    id_trade null + su eco del %TRADE, `neta_fills` (no `neta_fills_tras`), «Replaced» tras el REPLACE, la pausa
+    global del caso 4 y el /sigue de `_anotar_comando`."""
+    fills = [r.datos for r in registros_fixture if r.tipo == "fill"]
+    assert all("neta_fills" in d and "neta_fills_tras" not in d and {"eco", "origen", "simulado", "proposito"} <= set(d)
+               for d in fills)
+    assert [d["origen"] for d in fills if d["id_trade"] is None] == ["execute"]
+    assert [d["id_trade"] for d in fills if d["eco"]] == [7001]
+    assert len([r for r in registros_fixture if r.tipo == "orden_act" and r.datos["accion"] == "Replaced"]) == 2
+    pausa = next(r for r in registros_fixture if r.tipo == "pausa" and "ticker" not in r.datos)
+    assert pausa.datos["pausa_global"] is True and pausa.datos["ticker_ajeno"] == "QRS"
+    sigue = next(r for r in registros_fixture if r.tipo == "comando")
+    assert sigue.datos["original"] == "sigue" and sigue.datos["confirmado"] is True
+
+
 def test_leer_une_y_ordena_los_dos_diarios(registros_fixture: list[Registro]) -> None:
-    assert len(registros_fixture) == 93 + 12
+    assert len(registros_fixture) == 95 + 12
     claves = [(r.t, r.proceso, r.seq) for r in registros_fixture]
     assert claves == sorted(claves)
     assert {r.proceso for r in registros_fixture} == {"ejecutor", "vigilante"}
@@ -785,10 +801,30 @@ def test_fills_simulados_solo_cuentan_en_sombra(fase: str, esperado: int) -> Non
 
 
 def test_discrepancia_caso_6_neta_fills_toma_la_de_das() -> None:
+    """Caso 6 con las claves REALES de `reconciliacion._caso_neta_distinta` (`caso: 6`): manda DAS (M7)."""
     registros = [reg("fill", ticker="XYZ", id_trade=1, token=126800001, lado="SS", qty=400, precio="3"),
-                 reg("discrepancia", ticker="XYZ", detalle="caso 6", neta_fills=-400, neta_das=-300)]
+                 reg("discrepancia", ticker="XYZ", caso=6, detalle="caso 6", neta_fills=-400, neta_das=-300,
+                     regla="M7 / corrección 2: manda DAS")]
     pos = reconstruir(registros, HOY).posiciones["XYZ"]
     assert pos.neta_fills == -300 and pos.neta_das == -300
+
+
+def test_discrepancia_caso_5_plana_en_das() -> None:
+    registros = [reg("fill", ticker="XYZ", id_trade=1, token=126800001, lado="SS", qty=400, precio="3"),
+                 reg("discrepancia", ticker="XYZ", caso=5, neta_fills=-400, neta_das=0, regla="R-C-10 (5) / M7")]
+    pos = reconstruir(registros, HOY).posiciones["XYZ"]
+    assert pos.neta_fills == 0 and pos.neta_das == 0
+
+
+@pytest.mark.parametrize("origen", ["cierre_humano", None], ids=["cisne_negro.cierre_humano", "salidas.cerrar_todo"])
+def test_discrepancia_detectada_sin_caso_no_cambia_la_neta(origen) -> None:
+    """La `discrepancia` que anotan cerrar_todo / cierre_humano al DETECTAR una diferencia (sin `caso`) solo pide
+    GET POSITIONS: el decisor no toca su neta y reconstruir tampoco (alineado con las claves reales)."""
+    extra = {"origen": origen} if origen else {}
+    registros = [reg("fill", ticker="XYZ", id_trade=1, token=126800001, lado="SS", qty=400, precio="3"),
+                 reg("discrepancia", ticker="XYZ", neta_fills=-400, neta_das=-300, **extra)]
+    pos = reconstruir(registros, HOY).posiciones["XYZ"]
+    assert pos.neta_fills == -400 and pos.neta_das is None
 
 
 def test_pos_de_das_no_toca_neta_fills_correccion_2() -> None:
@@ -966,3 +1002,497 @@ def test_reconstruir_no_mira_el_dia_del_reloj() -> None:
     registros = [intencion(126800001)]
     assert 126800001 in reconstruir(registros, HOY).ordenes
     assert reconstruir(registros, HOY + timedelta(days=1)).ordenes == {}
+
+
+# ── claves REALES de decisor / ejecutor / vigilante (DC-01, DC-02, DC-04, DC-05) ──
+def fill_decisor(token: int, id_trade, id_orden: int, qty: int, *, lado: str = "SS", precio: str = "3.45",
+                 origen: str = "trade", eco: bool = False, simulado: bool = False, proposito: str = "entrada_agregar",
+                 ticker: str = "XYZ", t: str = "09:31:20.000", **extra) -> Registro:
+    """Un `fill` con EXACTAMENTE las claves de `decisor._datos_fill` (id_trade None en el Execute, eco en su %TRADE)."""
+    return reg("fill", t=t, id_trade=id_trade, token=token, id_orden=id_orden, ticker=ticker, lado=lado, qty=qty,
+               precio=precio, ruta="SAGEREB", hora="09:31:20", liq=None if id_trade is None else "A",
+               ecn_fee=None if id_trade is None else "-0.80", simulado=simulado, origen=origen, eco=eco,
+               proposito=proposito, neta_fills=None, version_stops=None, **extra)
+
+
+def test_DC_02_execute_sin_trade_cuenta_y_el_eco_no_suma_dos_veces() -> None:
+    """DC-02: Execute → fill(id_trade=None) cuenta; el %TRADE posterior (eco=True) solo le pone el id real."""
+    base = [arranque("real"), intencion(126800001, qty=1200),
+            reg("orden_act", ticker="XYZ", token=126800001, id=501, accion="Accept", qty=1200, precio="3.45"),
+            reg("orden_act", ticker="XYZ", token=126800001, id=501, accion="Execute", qty=400, precio="3.45"),
+            fill_decisor(126800001, None, 501, 400, origen="execute")]
+    # 1) crash entre el Execute y el %TRADE: la neta NO se pierde
+    tras_crash = reconstruir(base, HOY)
+    assert tras_crash.posiciones["XYZ"].neta_fills == -400
+    (solo,) = tras_crash.fills[126800001]
+    assert solo.id_trade < 0 and solo.qty == 400                   # id sintético negativo, como el decisor
+    assert tras_crash.ordenes[126800001].llenas == 400 and tras_crash.posiciones["XYZ"].version_stops == 1
+    # 2) llega el %TRADE (eco): mismo resultado, con el id real puesto y sin sumar dos veces
+    con_eco = reconstruir(base + [fill_decisor(126800001, 7001, 501, 400, eco=True)], HOY)
+    assert con_eco.posiciones["XYZ"].neta_fills == -400
+    assert [f.id_trade for f in con_eco.fills[126800001]] == [7001]
+    assert con_eco.fills[126800001][0].liq == "A" and con_eco.fills[126800001][0].ecn_fee == Decimal("-0.80")
+    assert con_eco.ordenes[126800001].llenas == 400 and con_eco.posiciones["XYZ"].version_stops == 1
+    # 3) y el volcado del #Trade tras una reconexión (mismo id, sin eco) tampoco suma
+    repetido = reconstruir(base + [fill_decisor(126800001, 7001, 501, 400, eco=True),
+                                   fill_decisor(126800001, 7001, 501, 400)], HOY)
+    assert repetido.posiciones["XYZ"].neta_fills == -400
+
+
+def test_DC_02_dos_execute_iguales_sin_trade_cuentan_los_dos() -> None:
+    """Dos Execute de 100 de la misma orden sin %TRADE: 200 (el dedupe por id solo es para ids reales)."""
+    registros = [intencion(126800001, qty=1200), fill_decisor(126800001, None, 501, 100, origen="execute"),
+                 fill_decisor(126800001, None, 501, 100, origen="execute"),
+                 fill_decisor(126800001, 7001, 501, 100, eco=True)]
+    estado = reconstruir(registros, HOY)
+    assert estado.posiciones["XYZ"].neta_fills == -200
+    assert sorted(f.id_trade for f in estado.fills[126800001])[-1] == 7001
+    assert len([f for f in estado.fills[126800001] if f.id_trade < 0]) == 1
+
+
+def test_DC_02_eco_sin_su_execute_en_el_diario_cuenta() -> None:
+    """Si la línea del Execute se perdió (línea partida), el eco es la única huella del fill: cuenta."""
+    estado = reconstruir([intencion(126800001), fill_decisor(126800001, 7001, 501, 300, eco=True)], HOY)
+    assert estado.posiciones["XYZ"].neta_fills == -300 and [f.id_trade for f in estado.fills[126800001]] == [7001]
+
+
+def test_DC_02_lado_desconocido_toma_el_de_su_orden() -> None:
+    estado = reconstruir([intencion(126800001), fill_decisor(126800001, 9, 501, 300, lado="??")], HOY)
+    assert estado.posiciones["XYZ"].neta_fills == -300
+
+
+def test_DC_01_orden_simulada_no_machaca_la_intencion_en_sombra() -> None:
+    """DC-01: en SOMBRA el ejecutor escribe orden_simulada {token, ticker, proposito, fills_simulados, regla}."""
+    registros = [arranque("sombra"),
+                 intencion(126800001, qty=1200, lado="SS", tipo_orden="LMT", precio="3.45", t="09:31:00.000"),
+                 reg("orden_simulada", t="09:31:00.010", token=126800001, ticker="XYZ", proposito="entrada_agregar",
+                     fills_simulados=[], regla="R-O-03", mono=20862.43),
+                 intencion(126800002, lado="B", qty=400, tipo_orden="STOPLMTP", precio="4.02", stop="3.90",
+                       ruta="STOP", proposito="stop_principal", t="09:31:20.110"),
+                 reg("orden_simulada", t="09:31:20.115", token=126800002, ticker="XYZ", proposito="stop_principal",
+                     fills_simulados=[], regla="R-O-03", mono=20880.115)]
+    estado = reconstruir(registros, HOY)
+    entrada, stop = estado.ordenes[126800001], estado.ordenes[126800002]
+    assert (entrada.lado, entrada.qty, entrada.tipo, entrada.precio, entrada.lote_id) == (
+        Lado.CORTO, 1200, TipoOrden.LIMITE, Decimal("3.45"), "XYZ|e|2026-09-25 09:30:00|entrada")
+    assert entrada.enviada_en == pytest.approx(20862.43)
+    assert (stop.lado, stop.qty, stop.tipo, stop.stop, stop.precio, stop.proposito) == (
+        Lado.COMPRA, 400, TipoOrden.STOP_LIMITE_PP, Decimal("3.90"), Decimal("4.02"), Proposito.STOP_PRINCIPAL)
+
+
+def test_DC_01_orden_simulada_con_bug_no_salio_y_sin_intencion_se_crea() -> None:
+    bug = reconstruir([intencion(126800001),
+                       reg("orden_simulada", token=126800001, ticker="XYZ", bug=True, error="x", fills_simulados=[],
+                           regla="R-O-03", mono=5.0)], HOY)
+    assert bug.ordenes[126800001].enviada_en == 0.0 and bug.ordenes[126800001].qty == 1000
+    sola = reconstruir([reg("orden_simulada", token=126800009, ticker="XYZ", proposito="stop_principal", mono=7.0)],
+                       HOY)
+    assert sola.ordenes[126800009].proposito is Proposito.STOP_PRINCIPAL and sola.ordenes[126800009].enviada_en == 7.0
+
+
+def _con_stop_y_replace(*acciones: str) -> list[Registro]:
+    """Stop aceptado + replace_intencion y, DESPUÉS (seq mayor), un `orden_act` por cada acción pedida."""
+    base = [arranque("real"),
+            intencion(126800002, lado="B", qty=400, tipo_orden="STOPLMTP", precio="4.02", stop="3.90", ruta="STOP",
+                      proposito="stop_principal"),
+            reg("orden_act", ticker="XYZ", token=126800002, id=502, accion="Accept", qty=400, precio="4.02"),
+            # el ejecutor NO pone ticker en replace_intencion (ejecutor._reemplazar): se casa por token
+            reg("replace_intencion", id_das=502, token=126800002, qty=800, stop="3.80", precio="3.92", version=2,
+                serie="stops:XYZ", motivo="neta 800", linea="REPLACE 502 800 STOPLMTP 3.8 3.92", regla="M6")]
+    return base + [reg("orden_act", ticker="XYZ", token=126800002, id=502, accion=a, qty=800, precio="3.92",
+                       notas="too late" if a == "ReplaceRej" else "") for a in acciones]
+
+
+def test_DC_04_replace_confirmado_aplica_qty_precio_y_stop() -> None:
+    """DC-04: intención + replace_intencion + «Replaced» → el stop NUEVO (como decisor._reemplazo_pedido)."""
+    estado = reconstruir(_con_stop_y_replace("Replaced"), HOY)
+    o = estado.ordenes[126800002]
+    assert (o.qty, o.lvqty, o.stop, o.precio) == (800, 800, Decimal("3.80"), Decimal("3.92"))
+
+
+def test_DC_04_replace_rechazado_conserva_el_viejo() -> None:
+    estado = reconstruir(_con_stop_y_replace("ReplaceRej", "Replaced"), HOY)
+    o = estado.ordenes[126800002]
+    assert (o.qty, o.stop, o.precio) == (400, Decimal("3.90"), Decimal("4.02"))
+
+
+def test_DC_04_replace_sin_confirmar_no_cambia_nada() -> None:
+    o = reconstruir(_con_stop_y_replace(), HOY).ordenes[126800002]
+    assert (o.qty, o.stop, o.precio) == (400, Decimal("3.90"), Decimal("4.02"))
+
+
+def test_DC_04_con_parte_llena_y_share_abierta_o_total_A_02() -> None:
+    """Stop con 100 llenas: share ABIERTA (defecto) → qty = 100 + 300; con share TOTAL → qty = 300 (A-02)."""
+    registros = [intencion(126800002, lado="B", qty=400, tipo_orden="STOPLMTP", precio="4.02", stop="3.90",
+                           proposito="stop_principal"),
+                 reg("orden_act", ticker="XYZ", token=126800002, id=502, accion="Accept"),
+                 fill_decisor(126800002, 11, 502, 100, lado="B", proposito="stop_principal"),
+                 reg("replace_intencion", id_das=502, token=126800002, qty=300, stop="3.90", precio="4.02"),
+                 reg("orden_act", ticker="XYZ", token=126800002, id=502, accion="Replaced")]
+    abierta = reconstruir(registros, HOY).ordenes[126800002]
+    assert (abierta.qty, abierta.lvqty, abierta.llenas) == (400, 300, 100)
+    total = reconstruir(registros, HOY, replace_share_es_abierta=False).ordenes[126800002]
+    assert (total.qty, total.lvqty) == (300, 200)
+
+
+def test_DC_05_dentro_de_un_proceso_manda_el_seq_aunque_el_reloj_retroceda() -> None:
+    """DC-05: el reloj de pared da un paso atrás (orden_act con t ANTERIOR a su intención, seq posterior)."""
+    registros = [reg("arranque", t="09:30:00.000", seq=1, fase="real"),
+                 reg("orden_intencion", t="09:31:02.500", seq=2, ticker="XYZ", token=126800001, lado="SS", qty=100,
+                     tipo_orden="LMT", precio="3.45", proposito="entrada_agregar"),
+                 reg("orden_act", t="09:31:00.100", seq=3, ticker="XYZ", token=126800001, id=501, accion="Accept"),
+                 reg("fill", t="09:31:00.200", seq=4, ticker="XYZ", id_trade=7001, id_orden=501, lado="SS", qty=100,
+                     precio="3.45")]
+    ordenados = mod_diario.ordenar_registros(list(reversed(registros)))
+    assert [r.seq for r in ordenados] == [1, 2, 3, 4]
+    estado = reconstruir(registros, HOY)
+    assert estado.id_a_token == {501: 126800001}                     # el %TRADE sin token se casa por id
+    assert estado.posiciones["XYZ"].neta_fills == -100
+
+
+def test_DC_05_entre_procesos_se_mezcla_por_t() -> None:
+    ejecutor = [reg("x", t="09:31:00.000", seq=10), reg("y", t="09:32:00.000", seq=11)]
+    vigilante = [reg("v", t="09:31:30.000", seq=3, proceso="vigilante")]
+    assert [r.tipo for r in mod_diario.ordenar_registros(ejecutor + vigilante)] == ["x", "v", "y"]
+    assert [r.tipo for r in mod_diario.ordenar_registros(vigilante + ejecutor)] == ["x", "v", "y"]
+
+
+# ── E2c-01: órdenes ajenas tratadas ─────────────────────────────────────
+def test_E2c_01_ajenas_tratadas_sobreviven_al_reinicio() -> None:
+    """E2c-01: `ajenas_tratadas {ids, ticker}` (y la pausa global del caso 4) rellenan `estado.ordenes_ajenas`:
+    tras /sigue y un reinicio, el volcado de GET ORDERS no vuelve a pausar por las mismas órdenes manuales."""
+    from app.bot_das.reglas import reconciliacion
+
+    registros = [reg("orden_ajena_vista", id=900, token=None, ticker="QRS", lado="B", qty=200, order_src="Manual",
+                     estado="Accepted", regla="R-K-02"),
+                 reg("ajenas_tratadas", ids=[900], ticker="QRS"),
+                 reg("pausa", pausa_global=True, intervencion_humana=True, ticker_ajeno="QRS", ordenes_ajenas=[900, 901],
+                     motivo="intervención humana", regla="R-M-03"),
+                 reg("comando", nombre="sigue", args=[], confirmado=True)]
+    estado = reconstruir(registros, HOY)
+    assert sorted(estado.ordenes_ajenas) == [900, 901] and estado.pausa_global is False
+    ajena = estado.ordenes_ajenas[900]
+    assert (ajena.ticker, ajena.lado, ajena.qty, ajena.estado, ajena.order_src) == (
+        "QRS", "B", 200, EstadoOrden.ACCEPTED, "Manual")
+    assert estado.ordenes_ajenas[901].estado is EstadoOrden.DESCONOCIDO and estado.ordenes_ajenas[901].ticker == "QRS"
+    assert reconciliacion.PETICION_PAUSA_GLOBAL == "pausa"
+    # `orden_ajena_vista` sola (vista, aún sin tratar) NO cuenta: si el proceso murió antes, se trata al volver
+    assert reconstruir(registros[:1], HOY).ordenes_ajenas == {}
+
+
+# ── /apagar y /encender ────────────────────────────────────────────────
+def test_apagar_y_encender_reconstruyen_vigilando() -> None:
+    """Alineado con decisor._ejecutar_comando: /apagar → vigilando=False + control_humano; /encender lo deshace."""
+    apagado = reconstruir([reg("comando", nombre="apagar", args=[], confirmado=True)], HOY)
+    assert apagado.vigilando is False and apagado.control_humano is True
+    encendido = reconstruir([reg("comando", nombre="apagar", args=[], confirmado=True),
+                             reg("comando", nombre="encender", args=[], confirmado=True)], HOY)
+    assert encendido.vigilando is True and encendido.control_humano is False
+
+
+def test_DC_03_sigue_ticker_con_la_forma_del_decisor_levanta_el_veto() -> None:
+    """DC-03 / G1A-08: el decisor anota /sigue X con `_anotar_comando` (nombre, args=[X], chat_id, id, confirmado,
+    original); reconstruir levanta el veto R-G-03 de ESE ticker y no la pausa global."""
+    registros = [reg("bs", ticker="XYZ", evento="activado", primer_stop="3.9", emergencia_limite="6.36", max_visto="6.5"),
+                 reg("bs", ticker="XYZ", evento="cerrado", dentro_de_emergencia=True, regla="R-G-03"),
+                 reg("pausa", motivo="caso 4"),
+                 reg("comando", nombre="sigue", args=["XYZ"], chat_id=111, id=7, confirmado=True, original="sigue")]
+    estado = reconstruir(registros, HOY)
+    assert estado.posiciones["XYZ"].sin_reentrada_hasta_sigue is False and estado.pausa_global is True
+
+
+# ── memoria_decisor (E1-03, G1A-18/G1B-18, G1A-12/G1B-10, G1B-09) ──────
+def test_E1_03_k_de_halts_por_ticker_desde_el_diario() -> None:
+    """E1-03: k se SIEMBRA al arrancar con el mayor `k` de los `halt`/`halt_reapertura` del día (claves del decisor
+    y de halts.al_entrar_en_halt)."""
+    registros = [reg("halt", ticker="XYZ", ta="LUDP", tat="09:35:00", k=1, sin_posicion=True),
+                 reg("halt_reapertura", ticker="XYZ", k=1, precio="4.10", decision=None),
+                 reg("halt", ticker="XYZ", ta="LUDP", tipo="LULD", franja="RTH", precio_parada="4.50", neta=-300, k=2,
+                     decision=None),
+                 reg("halt", ticker="ABC", ta="T1", k=0)]
+    memoria = mod_diario.memoria_decisor(registros, HOY)
+    assert memoria.k_halts_up == {"XYZ": 2, "ABC": 0}
+    assert memoria.halt_hoy == {"XYZ", "ABC"}
+    assert mod_diario.memoria_decisor([], HOY) == mod_diario.MemoriaDecisor()
+
+
+def test_G1A_18_veto_R_F_03_stop_hoy_y_reapertura() -> None:
+    """G1A-18 / G1B-18: stop_hoy con fills de stop o de salida del halt (HALT_*); reapertura_ok con la primera vela."""
+    registros = [intencion(126800002, lado="B", tipo_orden="STOPLMTP", proposito="desconocida", qty=100),
+                 reg("halt", ticker="XYZ", k=1),
+                 fill_decisor(126800002, 21, 502, 100, lado="B", proposito="desconocida"),   # stop sin propósito
+                 fill_decisor(126800003, 22, 503, 100, lado="B", proposito="halt_open", ticker="ABC"),
+                 fill_decisor(126800004, 23, 504, 100, lado="B", proposito="tp_agregar", ticker="MNO"),
+                 fill_decisor(126800005, 24, 505, 100, lado="B", proposito="stop_principal", ticker="EFG", eco=True),
+                 reg("halt_primera_vela", ticker="XYZ", pct="2.1", k=1, reentrada=True)]
+    memoria = mod_diario.memoria_decisor(registros, HOY)
+    assert memoria.stop_hoy == {"XYZ", "ABC"}                     # el TP no veta; el eco no es un fill nuevo
+    assert memoria.reapertura_ok == {"XYZ"}
+    # un halt posterior vuelve a exigir la primera vela
+    assert mod_diario.memoria_decisor(registros + [reg("halt", ticker="XYZ", k=2)], HOY).reapertura_ok == set()
+
+
+def test_G1A_12_control_manual_sobrevive_al_reinicio() -> None:
+    """G1A-12 / G1B-10: /cancelar_ordenes X confirmado → manual hasta /reanudar X (nombre reanudar_ticker)."""
+    cancelar = reg("comando", nombre="cancelar_ordenes", args=["QRS"], chat_id=1, id=3, confirmado=True,
+                   original="cancelar_ordenes")
+    memoria = mod_diario.memoria_decisor([cancelar], HOY)
+    assert memoria.manual == {"QRS"}
+    sin_confirmar = reg("comando", nombre="cancelar_ordenes", args=["ABC"], confirmado=False)
+    assert mod_diario.memoria_decisor([sin_confirmar], HOY).manual == set()
+    reanudado = reg("comando", nombre="reanudar_ticker", args=["QRS"], confirmado=True, original="reanudar")
+    assert mod_diario.memoria_decisor([cancelar, reanudado], HOY).manual == set()
+    todo = reg("comando", nombre="reanudar_todo", args=[], confirmado=True)
+    assert mod_diario.memoria_decisor([cancelar, todo], HOY).manual == set()
+
+
+def test_G1B_09_cambios_por_telegram_se_reaplican_y_el_fichero_los_suelta() -> None:
+    """G1B-09: /desactivar y /modo_seguridad (config_cambio origen telegram) sobreviven; un config_cambio CM3 del
+    fichero aplicado sobre la misma ruta los suelta (decisor._soltar_override)."""
+    desactivar = reg("config_cambio", ruta="estrategias.prueba-1.ejecutar", antes=True, despues=False, caliente=True,
+                     aplicado=True, origen="telegram")
+    seguridad = reg("config_cambio", ruta="modo_seguridad.activo", antes=False, despues=True, caliente=True,
+                    aplicado=True, origen="telegram")
+    al_desactivar = reg("comando", nombre="cerrar_y_reiniciar", args=["PM (A) prueba"], confirmado=True)
+    memoria = mod_diario.memoria_decisor([desactivar, seguridad, al_desactivar], HOY)
+    assert memoria.override_estrategia == {"prueba-1": {"ejecutar": False}}
+    assert memoria.override_modo_seguridad is True
+    assert memoria.al_desactivar_por_arg == {"PM (A) prueba": "cerrar_y_reiniciar"}
+    del_fichero = reg("config_cambio", ruta="estrategias.prueba-1.ejecutar", antes=True, despues=True, caliente=True,
+                      aplicado=True, config_version=5, regla="CM3")
+    rechazado = reg("config_cambio", ruta="modo_seguridad.activo", antes=False, despues=False, caliente=True,
+                    aplicado=False, config_version=5, regla="CM3")
+    tras = mod_diario.memoria_decisor([desactivar, seguridad, del_fichero, rechazado], HOY)
+    assert tras.override_estrategia == {} and tras.override_modo_seguridad is True
+
+
+# ── DC-06: el diario que escribe el EJECUTOR REAL se reconstruye igual que el estado vivo ──
+_TICKER_VIVO = "XYZ"
+_SID_VIVO = "prueba-1"
+_PLAZO_VIVO_S = 10.0
+
+
+class _CalendarioVivo:
+    """Franja por la hora ET, sin festivos ni red (como el doble de test_das_ejecutor)."""
+
+    def franja_de_mercado(self, ahora: datetime) -> str:
+        minutos = ahora.hour * 60 + ahora.minute
+        if 4 * 60 <= minutos < 9 * 60 + 30:
+            return "premercado"
+        if 9 * 60 + 30 <= minutos < 16 * 60:
+            return "RTH"
+        if 16 * 60 <= minutos < 20 * 60:
+            return "postmercado"
+        return "cerrado"
+
+    def media_sesion(self, dia: date):
+        return None
+
+
+class _ReferenciaVivo:
+    """Ficha de Massive en memoria: acción común vieja, sin splits (no se excluye)."""
+
+    def ficha(self, ticker: str):
+        from app.bot_das.tipos import Ficha
+        return Ficha(ticker=ticker, list_date=date(2020, 1, 1), sic_code="1234", tipo="CS",
+                     market_cap=Decimal("100000000"), nombre="Prueba SA")
+
+    def splits_de_hoy(self, dia: date) -> set:
+        return set()
+
+
+@pytest.fixture
+def motor_de_prueba(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Motor de alertas con el traductor sustituido: `guion["entradas_en"]` = índices de vela con entrada."""
+    np = pytest.importorskip("numpy")
+    from app.services import bot_alerts_engine as eng
+
+    guion: dict = {"entradas_en": set()}
+
+    def traductor(frame, sdef, stats, compiled=None):
+        entradas = np.zeros(len(frame), dtype=bool)
+        for k in guion["entradas_en"]:
+            if 0 <= k < len(frame):
+                entradas[k] = True
+        return {"direction": "Short", "entries": entradas, "exits": np.zeros(len(frame), dtype=bool),
+                "accept_reentries": True, "max_reentries": -1}
+
+    monkeypatch.setattr(eng, "translate_strategy", traductor)
+    monkeypatch.setattr(eng, "simulate", lambda **kw: {"trades": []})
+    monkeypatch.setattr(eng, "_kwargs_simulate", lambda *a, **k: {})
+    monkeypatch.setattr(eng, "compile_strategy_def", lambda sdef: {})
+    monkeypatch.setattr(eng, "calcular_acciones", lambda *a, **k: 100.0)
+    return guion
+
+
+def _velas(n: int = 30, precio: float = 3.45) -> list[dict]:
+    import pandas as pd
+    t0 = pd.Timestamp("2026-09-25 09:29:00") - pd.Timedelta(minutes=n)
+    return [{"timestamp": str(t0 + pd.Timedelta(minutes=i)), "open": precio, "high": precio * 1.01,
+             "low": precio * 0.99, "close": precio, "volume": 100000.0} for i in range(n)]
+
+
+def _vela_senal(precio: float = 3.45) -> dict:
+    import pandas as pd
+    return {"timestamp": pd.Timestamp("2026-09-25 09:29:00"), "open": precio, "high": precio * 1.01,
+            "low": precio * 0.99, "close": precio, "volume": 100000.0}
+
+
+class _EjecutorVivo:
+    """Un ejecutor de producción contra el simulador, bombeado desde el test (mismo guion que test_das_ejecutor)."""
+
+    def __init__(self, e, sim, libro, reloj: RelojSimulado, dir_bot: Path, motor: dict) -> None:
+        self.e, self.sim, self.libro, self.reloj, self.dir_bot, self.motor = e, sim, libro, reloj, dir_bot, motor
+
+    def paso_hasta(self, cond, que: str) -> None:
+        import time
+        limite = time.monotonic() + _PLAZO_VIVO_S
+        while not cond():
+            if time.monotonic() > limite:
+                pytest.fail(f"plazo vencido esperando: {que}; diario {[r.tipo for r in self.regs()][-15:]}")
+            assert self.e.paso(0.02) is None, f"el ejecutor salió esperando {que}"
+
+    def drenar(self, quieto_s: float = 0.3) -> None:
+        import time
+        limite = time.monotonic() + _PLAZO_VIVO_S
+        callado = time.monotonic()
+        while time.monotonic() - callado < quieto_s:
+            if time.monotonic() > limite:
+                pytest.fail("DAS no deja de hablar")
+            seq, habia = self.e.diario.seq, self.e.buzon.tamano()
+            assert self.e.paso(0.02) is None
+            if habia or self.e.diario.seq != seq:
+                callado = time.monotonic()
+
+    def regs(self) -> list[Registro]:
+        return LectorDiario(self.dir_bot / "diario").leer(HOY)
+
+    def preparar(self) -> None:
+        from app.bot_das.tipos import Senal
+        self.libro.cotizar(_TICKER_VIVO, Decimal("3.44"), Decimal("3.46"), last=Decimal("3.45"), volumen=500_000,
+                           vwap=Decimal("3.40"))
+        from app.bot_das import ejecutor as ej
+        assert self.e.arrancar() == ej.CODIGO_OK
+        self.e.buzon.al_senal(Senal(clase="radar", ticker=_TICKER_VIVO, id=None, recibida_en=self.reloj.mono(),
+                                    estimacion=[{"strategy_id": _SID_VIVO, "acciones": 1000.0, "riesgo_usd": 300.0}],
+                                    precio_radar=Decimal("3.45"), origen="proceso"))
+
+        def locate_listo() -> bool:
+            loc = self.e.decisor.estado.locates.get((_TICKER_VIVO, _SID_VIVO))
+            return loc is not None and loc.estado == "Located" and loc.localizadas > 0
+
+        self.paso_hasta(locate_listo, "locate")
+        self.paso_hasta(lambda: self.e.mercado.cotizacion(_TICKER_VIVO) is not None, "cotización")
+        self.drenar()
+
+    def senal(self) -> None:
+        self.motor["entradas_en"] = set()
+        self.e.fuente.hidratar(_TICKER_VIVO, _velas())
+        self.motor["entradas_en"] = {30}
+        self.e.fuente.vela(_TICKER_VIVO, _vela_senal())
+
+
+def _comparar_con_el_vivo(reconstruido, vivo) -> None:
+    """DC-06: lo que `reconstruir` saca del diario REAL coincide, campo a campo, con lo que el decisor tiene en memoria."""
+    assert reconstruido.fase is vivo.fase
+    assert reconstruido.senales_vistas == vivo.senales_vistas
+    assert sorted(reconstruido.ordenes) == sorted(vivo.ordenes)
+    for token, o in vivo.ordenes.items():
+        r = reconstruido.ordenes[token]
+        assert (r.ticker, r.lado, r.tipo, r.qty, r.precio, r.stop, r.lote_id, r.proposito, r.llenas, r.origen) == (
+            o.ticker, o.lado, o.tipo, o.qty, o.precio, o.stop, o.lote_id, o.proposito, o.llenas, o.origen), token
+        assert r.id_das == o.id_das, token
+    assert reconstruido.id_a_token == vivo.id_a_token
+    assert {t: sorted(f.qty for f in fs) for t, fs in reconstruido.fills.items()} == {
+        t: sorted(f.qty for f in fs) for t, fs in vivo.fills.items()}
+    assert {t: sorted(f.id_trade for f in fs if f.id_trade > 0) for t, fs in reconstruido.fills.items()} == {
+        t: sorted(f.id_trade for f in fs if f.id_trade > 0) for t, fs in vivo.fills.items()}
+    for ticker, pos in vivo.posiciones.items():
+        rp = reconstruido.posiciones.get(ticker)
+        if pos.neta_fills == 0 and not pos.lotes and rp is None:
+            continue
+        assert rp is not None, ticker
+        assert (rp.neta_fills, rp.version_stops, rp.estado, rp.sin_reentrada_hasta_sigue) == (
+            pos.neta_fills, pos.version_stops, pos.estado, pos.sin_reentrada_hasta_sigue), ticker
+        assert sorted(rp.lotes) == sorted(pos.lotes), ticker
+        for lote_id, lote in pos.lotes.items():
+            rl = rp.lotes[lote_id]
+            assert (rl.llenas, rl.pedidas, rl.estado, rl.nivel_stop, rl.precio_medio, rl.principal_consumido) == (
+                lote.llenas, lote.pedidas, lote.estado, lote.nivel_stop, lote.precio_medio,
+                lote.principal_consumido), lote_id
+    for clave, loc in vivo.locates.items():
+        rl = reconstruido.locates[clave]
+        assert (rl.estado, rl.localizadas, rl.usadas, rl.compras, rl.token, rl.coste) == (
+            loc.estado, loc.localizadas, loc.usadas, loc.compras, loc.token, loc.coste), clave
+    assert reconstruido.gasto_locates_dia == vivo.gasto_locates_dia
+    assert (reconstruido.pausa_global, reconstruido.control_humano) == (vivo.pausa_global, vivo.control_humano)
+    from app.bot_das.tokens import descomponer
+    seqs = [partes[2] for partes in (descomponer(t) for t in vivo.ordenes) if partes and partes[0] is Origen.EJECUTOR]
+    assert reconstruido.ultimo_seq_token >= max(seqs, default=0)          # no reutiliza un token tras el reinicio
+
+
+@pytest.mark.parametrize("fase", ["sombra", "canario"], ids=["DC-06-sombra", "DC-06-canario"])
+def test_DC_06_reinicio_con_el_diario_del_ejecutor_real(fase: str, cfg, reloj: RelojSimulado, dir_bot: Path, libro,
+                                                         simulador, direccion_simulador, motor_de_prueba,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    """DC-06 (y DC-01/DC-02/DC-04 de punta a punta): el ejecutor REAL (construir_desde_env) contra el SimuladorDAS
+    en SOMBRA y en CANARIO: locate, señal de la vela, SS, fill, stops residentes y (canario) el stop que dispara.
+    Después se relee SU diario con LectorDiario y `reconstruir` debe dar el mismo estado que el decisor vivo."""
+    import dataclasses as dc
+
+    from app.bot_das import ejecutor as ej
+    from app.bot_das.tipos import Fase as F
+
+    host, puerto = direccion_simulador
+    for nombre, valor in {"DAS_API_HOST": host, "DAS_API_PORT": str(puerto), "DAS_USUARIO": "usuario_prueba",
+                          "DAS_CLAVE": "clave-inventada-para-tests-7731", "DAS_CUENTA": "CUENTA_PRUEBA",
+                          "BOT_DAS_FUENTE": ej.FUENTE_PROCESO, "BOT_DAS_PERMITIR_ORDENES": "1"}.items():
+        monkeypatch.setenv(nombre, valor)
+    c = dc.replace(cfg, fase=F(fase))
+    e = ej.construir_desde_env(c, reloj, BACKEND, referencia=_ReferenciaVivo(), calendario=_CalendarioVivo(),
+                               hash_motor=lambda base: c.motor_hash, medir_desvio=lambda: 0.0, canales=[])
+    v = _EjecutorVivo(e, simulador, libro, reloj, dir_bot, motor_de_prueba)
+    try:
+        v.preparar()
+        v.senal()
+        tipo_envio = "orden_simulada" if fase == "sombra" else "orden_enviada"
+        v.paso_hasta(lambda: any(r.tipo == tipo_envio and r.datos.get("proposito") == "entrada_agregar"
+                                 for r in v.regs()), "envío de la entrada")
+        simulador.cotizar(_TICKER_VIVO, Decimal("3.45"), Decimal("3.47"), last=Decimal("3.45"), volumen=500_000)
+        libro_ordenes = e.cliente.emparejador.libro if fase == "sombra" else libro
+
+        def stops_vivos() -> list[dict]:
+            return [o for o in libro_ordenes.ordenes() if o["ticker"] == _TICKER_VIVO and o["tipo"] == "STOPLMTP"
+                    and o["estado"] in ("Accepted", "Partial")]
+
+        v.paso_hasta(lambda: len(stops_vivos()) == 2, "principal + emergencia")
+        v.drenar()
+        regs = v.regs()
+        fills = [r for r in regs if r.tipo == "fill"]
+        assert fills and (fase != "sombra" or all(f.datos["simulado"] is True for f in fills))
+        # el simulador manda el Execute ANTES del %TRADE: el caso de DC-02 (fill sin id + eco) está en este diario
+        assert [(f.datos["id_trade"] is None, f.datos["eco"]) for f in fills] == [(True, False), (False, True)]
+        assert (fase == "sombra") == any(r.tipo == "orden_simulada" for r in regs)
+        vivo = e.decisor.estado
+        assert vivo.posiciones[_TICKER_VIVO].neta_fills == -100
+        _comparar_con_el_vivo(reconstruir(regs, HOY), vivo)
+        if fase == "canario":
+            principal = min(stops_vivos(), key=lambda o: o["stop"])
+            simulador.cotizar(_TICKER_VIVO, principal["stop"] + Decimal("0.05"), principal["stop"] + Decimal("0.10"),
+                              last=principal["stop"] + Decimal("0.10"), volumen=500_000)
+            v.paso_hasta(lambda: libro.posiciones().get(_TICKER_VIVO) == 0 and not stops_vivos(), "stop y limpieza")
+            v.drenar()
+            assert vivo.posiciones[_TICKER_VIVO].neta_fills == 0
+            _comparar_con_el_vivo(reconstruir(v.regs(), HOY), vivo)
+            memoria = mod_diario.memoria_decisor(v.regs(), HOY)
+            assert memoria.stop_hoy == {_TICKER_VIVO}                    # el fill del stop quedó en el diario
+    finally:
+        e.parar()
+
+
+def test_memoria_decisor_idempotente_y_sin_orden() -> None:
+    registros = [reg("halt", ticker="XYZ", k=1), reg("halt", ticker="XYZ", k=2),
+                 reg("comando", nombre="cancelar_ordenes", args=["XYZ"], confirmado=True)]
+    primero = mod_diario.memoria_decisor(registros, HOY)
+    assert mod_diario.memoria_decisor(registros + registros, HOY) == primero
+    assert mod_diario.memoria_decisor(list(reversed(registros)), HOY) == primero

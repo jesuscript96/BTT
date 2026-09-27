@@ -20,7 +20,8 @@ from app.bot_das.reglas.halts import (
 from app.bot_das.reloj import ET
 from app.bot_das.tipos import (
     HALT_ENVIAR_ANTES_FIN_S, Anotar, Avisar, Cancelar, Config, Cotizacion, EstadoLote, EstadoOrden, EstadoSimbolo, Fase,
-    Grupo, Lado, Lote, Nivel, NivelesStop, Orden, OrdenNueva, Origen, PosicionTicker, Proposito, Senal, TipoOrden,
+    Grupo, Lado, Lote, Nivel, NivelesStop, Orden, OrdenNueva, Origen, PosicionTicker, Programar, Proposito, Reemplazar,
+    Senal, TipoOrden,
 )
 
 D = Decimal
@@ -94,8 +95,9 @@ def orden_viva(token: int, proposito: Proposito, id_das: Optional[int] = 500, es
 # ── es_halt / es_luld / tipo_halt / fin_previsto ─────────────────────────
 @pytest.mark.parametrize("ta, esperado_halt, esperado_luld", [
     ("H", True, False), ("P", True, True), ("h", True, False), (" P ", True, True),
-    ("T", False, False), ("Q", False, False), (None, False, False), ("", False, False),
-], ids=["L1113-H", "L1128-P", "H-minuscula", "P-espacios", "T-reabre", "Q-cotiza", "sin-TA-normal", "TA-vacio"])
+    ("T", False, False), ("Q", True, False), (" q ", True, False), (None, False, False), ("", False, False),
+], ids=["L1113-H", "L1128-P", "H-minuscula", "P-espacios", "T-reabre", "E1-05-Q-sigue-parado", "E1-05-q-normalizado",
+        "sin-TA-normal", "TA-vacio"])
 def test_es_halt_y_es_luld(ta, esperado_halt, esperado_luld):
     s = simbolo(ta=ta)
     assert es_halt(s) is esperado_halt
@@ -104,7 +106,8 @@ def test_es_halt_y_es_luld(ta, esperado_halt, esperado_luld):
 
 @pytest.mark.parametrize("ta, franja, contiene", [
     ("P", "RTH", "LULD"), ("H", "RTH", "T1/T12"), ("H", "premercado", "premercado"), (None, "RTH", "desconocido"),
-], ids=["R-G-02-luld", "R-G-02-h-rth", "R-G-02-h-pm", "R-G-02-sin-ta"])
+    ("Q", "RTH", "cotización"),
+], ids=["R-G-02-luld", "R-G-02-h-rth", "R-G-02-h-pm", "R-G-02-sin-ta", "E1-05-Q"])
 def test_tipo_halt(ta, franja, contiene):
     assert contiene in tipo_halt(simbolo(ta=ta), franja)
 
@@ -262,6 +265,11 @@ def test_sin_posicion_mantener_aunque_sea_t12(cfg_halts):
         "R-F-06-T1-pm-250-limite", "R-F-05-LULD-sin-tope", "T1-sin-parada-prima-cerrar", "ya-reabierto-aplica-tope",
         "T1-stop-encima-mantener"])
 def test_t1_tope_250(ta, parada, last, stop, franja, esperado, cfg_halts):
+    """La función en aislado con un `last` YA de reapertura (así la llama el decisor al reabrir, E1-02).
+
+    E1-09: durante un halt H el `last` es el de antes de parar; ese flujo real
+    lo prueban `test_E1_09_flujo_real_*` (la orden nunca paga más de parada · 3,5).
+    """
     pos = posicion(-100, (D(stop),))
     s = simbolo(ta=ta, k=1, parada=parada)
     assert decidir_reapertura(pos, s, niveles(stop), cot(last=last), cfg_halts, franja, 30) == esperado
@@ -370,6 +378,166 @@ def test_orden_reapertura_config_sin_rutas():
         orden_reapertura(posicion(-100, (D("9"),)), 100, cot(last="10"), "cerrar_mercado", {"halts": {}}, 1, HORA_RTH)
 
 
+# ── E1-01 / E1-02 / E1-09: el tope del 250 % en un halt H (T1/T12) ─────────
+@pytest.mark.parametrize("ta, parada, esperado", [
+    ("H", D("1"), D("3.50")), ("Q", D("1"), D("3.50")), ("T", D("1"), D("3.50")), (None, D("1"), D("3.50")),
+    ("H", D("0.4567"), D("1.59")), ("H", D("2.97"), D("10.39")), ("P", D("1"), None), ("H", None, None),
+    ("H", D("0"), None),
+], ids=["E1-01-H", "E1-01-Q", "E1-01-reabierto", "E1-01-sin-TA", "E1-01-redondeo-abajo-sub-dolar",
+        "E1-01-redondeo-abajo", "E1-01-LULD-sin-tope", "sin-parada", "parada-cero"])
+def test_E1_01_precio_tope_t1(ta, parada, esperado, cfg_halts, config):
+    """E1-01: parada · (1 + 250/100) redondeado ABAJO al tick; en LULD no hay tope; sin parada, None."""
+    s = simbolo(ta=ta, parada=parada)
+    assert halts.precio_tope_t1(s, cfg_halts) == esperado
+    assert halts.precio_tope_t1(s, config) == esperado             # también con la Config entera
+
+
+def test_E1_01_precio_tope_t1_de_la_config(cfg_halts):
+    assert halts.precio_tope_t1(simbolo(ta="H", parada=D("1")), dict(cfg_halts, t1_subida_max_cierre_pct=100.0)) == D("2")
+
+
+def test_E1_09_flujo_real_halt_H_last_igual_a_parada_no_sale_a_mercado(cfg_halts, config):
+    """E1-01 / E1-09: halt H, corto con el stop por DEBAJO, `last` = el print de antes de parar (lo único que hay).
+
+    La decisión sale «cerrar_mercado» (la subida medida es 0 %), pero la orden
+    ya NO es una MKT sin tope: es un LÍMITE por OPEN a parada · 3,5. Si el T1
+    reabre a +300 % no llena y el decisor pasa a control humano.
+    """
+    pos = posicion(-300, (D("1.50"),))
+    s = simbolo(ta="H", tat=None, k=0, parada=D("2.00"), limit_up=None, limit_down=None)
+    decision = decidir_reapertura(pos, s, niveles("1.50"), cot(last="2.00"), cfg_halts, "RTH", 0.0)
+    assert decision == "cerrar_mercado"
+    o = orden_reapertura(pos, 300, cot(last="2.00"), decision, config, 11, HORA_RTH, simb=s)
+    assert (o.tipo, o.precio, o.ruta, o.proposito, o.lado, o.qty) == \
+        (TipoOrden.LIMITE, D("7.00"), "OPEN", Proposito.HALT_OPEN, Lado.COMPRA, 300)
+    assert o.tipo is not TipoOrden.MERCADO and o.precio <= s.precio_parada * D("3.5")
+    # al reabrir a +300 % (8,00) la función única manda control humano (E1-02)
+    assert halts.tope_t1_superado(s, D("8.00"), cfg_halts) is True
+    assert halts.tope_t1_superado(s, D("7.00"), cfg_halts) is False
+
+
+def test_E1_01_luld_sigue_a_mercado(config):
+    """En una pausa LULD (P) manda k y no hay tope: la salida por OPEN sigue siendo a MERCADO."""
+    pos = posicion(-300, (D("9"),))
+    o = orden_reapertura(pos, 300, cot(last="10"), "cerrar_mercado", config, 42, HORA_RTH,
+                         simb=simbolo(ta="P", parada=D("10")))
+    assert o.tipo is TipoOrden.MERCADO and o.precio is None
+
+
+def test_E1_01_sin_simb_comportamiento_anterior(config):
+    """Sin `simb` (llamador sin actualizar) la orden es la de antes: MKT por OPEN (compatibilidad aditiva)."""
+    o = orden_reapertura(posicion(-300, (D("9"),)), 300, cot(last="10"), "cerrar_mercado", config, 42, HORA_RTH)
+    assert o.tipo is TipoOrden.MERCADO
+
+
+def test_E1_01_largo_no_se_capa(config):
+    """El tope del 250 % es de SUBIDA (cubrir un corto): una neta larga vende a mercado igual."""
+    o = orden_reapertura(posicion(200, (D("9"),)), 200, cot(last="10"), "cerrar_mercado", config, 43, HORA_RTH,
+                         simb=simbolo(ta="H", parada=D("10")))
+    assert o.tipo is TipoOrden.MERCADO and o.lado is Lado.VENTA
+
+
+def test_E1_01_limite_pm_capado_al_tope_t1(config):
+    """El límite de premercado / reintento (ask + 5 %) tampoco paga más de parada · 3,5 en un halt no LULD."""
+    pos = posicion(-100, (D("1"),))
+    s = simbolo(ta="H", parada=D("1"))
+    o = orden_reapertura(pos, 100, cot(bid="3.90", ask="4.00"), "cerrar_limite_pm", config, 7, HORA_PM, simb=s)
+    assert o.precio == D("3.50") and o.tipo is TipoOrden.LIMITE and o.proposito is Proposito.HALT_PM_LIMITE
+    # por debajo del tope, el límite normal
+    o2 = orden_reapertura(pos, 100, cot(bid="1.90", ask="2.00"), "cerrar_limite_pm", config, 8, HORA_PM, simb=s)
+    assert o2.precio == D("2.10")
+
+
+@pytest.mark.parametrize("ta, parada, precio, luld, esperado", [
+    ("H", D("1"), D("3.51"), None, True), ("H", D("1"), D("3.50"), None, False), ("T", D("1"), D("3.51"), None, True),
+    ("T", D("1"), D("3.51"), True, False), ("P", D("1"), D("9"), None, False), ("T", D("1"), D("9"), False, True),
+    ("H", None, D("9"), None, False), ("H", D("1"), None, None, False), ("H", D("1"), D("0"), None, False),
+], ids=["E1-02-supera", "E1-02-250-exacto-no", "E1-02-reabierto-sin-saber-aplica", "E1-02-paro-en-LULD",
+        "E1-02-LULD-sin-tope", "E1-02-luld-false-explicito", "sin-parada", "sin-precio", "precio-cero"])
+def test_E1_02_tope_t1_superado(ta, parada, precio, luld, esperado, cfg_halts):
+    """E1-02: la función ÚNICA que el decisor usa al reabrir con el precio real (y decidir_reapertura por dentro)."""
+    assert halts.tope_t1_superado(simbolo(ta=ta, parada=parada), precio, cfg_halts, luld=luld) is esperado
+
+
+# ── E1-04: R-F-06 2.ª parte, ensanchar el stop límite en un halt H de premercado ─
+def stop_vivo(token: int, proposito: Proposito, stop: str, limite: str, qty: int = 100, llenas: int = 0,
+              id_das: Optional[int] = 700, estado: EstadoOrden = EstadoOrden.ACCEPTED, ticker: str = X,
+              lvqty: int = 0) -> Orden:
+    return Orden(token=token, ticker=ticker, lado=Lado.COMPRA, tipo=TipoOrden.STOP_LIMITE_PP, qty=qty, precio=D(limite),
+                 stop=D(stop), ruta="STOP", proposito=proposito, lote_id=None, nivel=None, origen=Origen.EJECUTOR,
+                 id_das=id_das, estado=estado, llenas=llenas, lvqty=lvqty)
+
+
+def test_E1_04_ensancha_solo_el_limite_del_principal(config):
+    """E1-04: halt H en premercado + «mantener» → REPLACE del límite a disparo · 1,05; mismo disparo y cantidad."""
+    pos = posicion(-300, (D("2"),))
+    pos.version_stops = 7
+    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=300, id_das=701),
+             stop_vivo(2, Proposito.STOP_EMERGENCIA, "2.26", "3.26", qty=300, id_das=702)]
+    acciones = halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="H", parada=D("1.9")), "premercado", config)
+    assert [type(a) for a in acciones] == [Anotar, Reemplazar, Programar]
+    r = acciones[1]
+    assert (r.id_das, r.token, r.qty, r.stop, r.precio, r.version, r.serie) == (701, 1, 300, D("2.00"), D("2.10"), 7,
+                                                                                 "stops:XYZ")
+    assert acciones[2].clave == "replace_verificar" and acciones[2].datos["qty_objetivo"] == 300
+    assert acciones[0].tipo == halts.ANOTACION_STOPS_PM and acciones[0].datos["stops"][0]["limite_nuevo"] == "2.10"
+    json.dumps(acciones[0].datos)
+
+
+@pytest.mark.parametrize("ta, franja, neta", [
+    ("P", "premercado", -300), ("H", "RTH", -300), ("H", "postmercado", -300), (None, "premercado", -300),
+    ("T", "premercado", -300), ("H", "premercado", 300), ("H", "premercado", 0),
+], ids=["LULD-no", "RTH-no", "post-no", "sin-halt-no", "reabierto-no", "largo-no", "plano-no"])
+def test_E1_04_no_aplica(ta, franja, neta, config):
+    pos = posicion(neta, (D("2"),)) if neta else PosicionTicker(ticker=X)
+    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=300)]
+    assert halts.ensanchar_stops_pm(pos, vivas, simbolo(ta=ta), franja, config) == []
+
+
+def test_E1_04_q_en_premercado_tambien(config):
+    pos = posicion(-300, (D("2"),))
+    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=300)]
+    assert any(isinstance(a, Reemplazar) for a in halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="Q"), "premercado",
+                                                                           config))
+
+
+def test_E1_04_ignora_lo_que_no_es_stop_de_compra_vivo(config):
+    pos = posicion(-300, (D("2"),))
+    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", id_das=None),
+             stop_vivo(2, Proposito.STOP_PRINCIPAL, "2.00", "2.06", estado=EstadoOrden.CANCELED),
+             stop_vivo(3, Proposito.STOP_PRINCIPAL, "2.00", "2.06", ticker="OTRO"),
+             orden_viva(4, Proposito.TP_AGREGAR, lado=Lado.COMPRA),
+             stop_vivo(5, Proposito.STOP_PRINCIPAL, "2.00", "2.10")]          # ya tiene el margen: no se toca
+    assert halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="H"), "premercado", config) == []
+
+
+@pytest.mark.parametrize("share_es_abierta, esperado", [(True, 60), (False, 100), (None, 60)],
+                         ids=["A-02-abierta", "A-02-total", "A-02-defecto"])
+def test_E1_04_share_parcial(share_es_abierta, esperado, cfg_json):
+    """A-02: el `share` del REPLACE sale de tipos.share_de_replace según stops.replace_share_es_abierta."""
+    stops_cfg = dict(cfg_json["stops"])
+    if share_es_abierta is not None:
+        stops_cfg["replace_share_es_abierta"] = share_es_abierta
+    else:
+        stops_cfg.pop("replace_share_es_abierta", None)
+    cfg = {"halts": cfg_json["halts"], "stops": stops_cfg, "rutas": cfg_json["rutas"]}
+    pos = posicion(-60, (D("2"),))
+    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=100, llenas=40, lvqty=60,
+                       estado=EstadoOrden.PARTIAL)]
+    r = [a for a in halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="H"), "premercado", cfg) if isinstance(a, Reemplazar)]
+    assert r[0].qty == esperado and r[0].precio == D("2.10")
+
+
+def test_E1_04_cadenas_iguales_que_el_modulo_de_stops():
+    """halts no importa el módulo de stops (ajuste (a)): la serie, la clave y el interruptor deben coincidir."""
+    from app.bot_das.reglas import stops as mod_stops
+    assert halts._SERIE_STOPS.format(X) == mod_stops.serie_stops(X)
+    assert halts._CLAVE_VERIFICAR_REPLACE == mod_stops.CLAVE_VERIFICAR_REPLACE
+    assert halts._VERIFICAR_REPLACE_EN_S == mod_stops.VERIFICAR_REPLACE_EN_S
+    assert halts._CLAVE_SHARE_ES_ABIERTA == mod_stops.CLAVE_SHARE_ES_ABIERTA
+    assert set(halts._ESTADOS_VIVOS) == set(mod_stops.ESTADOS_VIVOS)
+
+
 # ── al_entrar_en_halt (B18, R-F-04 a, R-G-02) ────────────────────────────
 def test_al_entrar_en_halt_cancela_solo_entradas_vivas_y_avisa():
     pos = posicion(-300, (D("11"), D("11.5")))
@@ -423,6 +591,14 @@ def test_al_entrar_en_halt_sin_posicion_con_entrada_viva():
     acciones = al_entrar_en_halt(pos, [orden_viva(1, Proposito.ENTRADA_AGREGAR, id_das=9)], simbolo(), None, "RTH")
     assert isinstance(acciones[0], Cancelar)
     assert "sin lotes" in acciones[-1].texto and "parada 10" in acciones[-1].texto
+
+
+def test_D2_08_aviso_de_halt_escapado():
+    """D2-08: el TAT y el ticker vienen de DAS; un «<» o «&» no puede perder el aviso (Telegram con parse_mode HTML)."""
+    pos = posicion(-100, (D("11"),), ticker="A&B")
+    s = EstadoSimbolo(ticker="A&B", ta="H", tat="<10:00>", k_halts_up=0, precio_parada=D("10"))
+    texto = al_entrar_en_halt(pos, [], s, None, "RTH")[-1].texto
+    assert "A&amp;B" in texto and "&lt;10:00&gt;" in texto and "<10:00>" not in texto
 
 
 def test_claves_de_aviso_distintas_por_halt():

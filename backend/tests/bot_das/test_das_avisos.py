@@ -497,6 +497,7 @@ class ServidorTelegramFalso:
         self.estado = 200
         self.respuesta: bytes = b'{"ok": true, "result": {}}'
         self.retraso_s = 0.0
+        self.secuencia: list[tuple[int, bytes]] = []    # (estado, respuesta) por petición; vacía → estado/respuesta
         servidor = self
 
         class Manejador(http.server.BaseHTTPRequestHandler):
@@ -507,11 +508,13 @@ class ServidorTelegramFalso:
                                             "json": json.loads(cuerpo.decode("utf-8"))})
                 if servidor.retraso_s:
                     time.sleep(servidor.retraso_s)
-                self.send_response(servidor.estado)
+                estado, respuesta = (servidor.secuencia.pop(0) if servidor.secuencia
+                                     else (servidor.estado, servidor.respuesta))
+                self.send_response(estado)
                 self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(servidor.respuesta)))
+                self.send_header("Content-Length", str(len(respuesta)))
                 self.end_headers()
-                self.wfile.write(servidor.respuesta)
+                self.wfile.write(respuesta)
 
             def log_message(self, *args) -> None:   # el log de http.server llevaría la ruta con el token
                 return
@@ -612,6 +615,56 @@ def test_telegram_texto_largo_se_recorta_sin_html(servidor_tg):
     assert "<b>" not in cuerpo["text"]
     assert unidades_utf16(cuerpo["text"]) <= 4096
     assert cuerpo["text"].endswith("…")
+
+
+_ERROR_ENTIDADES = (b'{"ok": false, "error_code": 400, "description": '
+                    b'"Bad Request: can\'t parse entities: Unsupported start tag \\"x\\" at byte offset 20"}')
+
+
+def test_D2_08_telegram_400_entidades_reenvia_una_vez_sin_parse_mode(servidor_tg, caplog):
+    """D2-08: un «<» del bróker sin escapar → 400 «can't parse entities» → UN reenvío sin parse_mode: el aviso llega."""
+    caplog.set_level(logging.DEBUG)
+    servidor_tg.secuencia = [(400, _ERROR_ENTIDADES)]
+    canal = _canal_tg(servidor_tg.api)
+    texto = "[REAL] ⛔ <b>RECHAZO</b> ABC · DAS dice: «Qty <x> MaxShare & y» · 1 &amp; 2"
+    assert canal.enviar(texto) is True
+    assert canal.enviados == 1 and canal.fallos == 0
+    primero, segundo = (p["json"] for p in servidor_tg.peticiones)
+    assert primero["parse_mode"] == "HTML" and primero["text"] == texto
+    assert "parse_mode" not in segundo
+    assert segundo["text"] == "[REAL] ⛔ RECHAZO ABC · DAS dice: «Qty <x> MaxShare & y» · 1 & 2", \
+        "sin las etiquetas del bot, con el texto del bróker ENTERO"
+    assert "sin formato" in caplog.text and TOKEN_PRUEBA not in caplog.text
+
+
+def test_D2_08_telegram_reenvio_sin_formato_que_falla_cuenta_un_fallo(servidor_tg):
+    """D2-08: el reenvío es UNO solo; si también falla, enviar devuelve False (la cola reintenta como siempre)."""
+    servidor_tg.secuencia = [(400, _ERROR_ENTIDADES), (500, b"error interno")]
+    canal = _canal_tg(servidor_tg.api)
+    assert canal.enviar("<b>x</b> <y>") is False
+    assert len(servidor_tg.peticiones) == 2 and canal.fallos == 1 and canal.enviados == 0
+
+
+def test_D2_08_otro_400_no_se_reenvia(servidor_tg):
+    """D2-08: un 400 que NO es de entidades (chat not found) no provoca reenvío."""
+    servidor_tg.secuencia = [(400, b'{"ok": false, "description": "Bad Request: chat not found"}')]
+    canal = _canal_tg(servidor_tg.api)
+    assert canal.enviar("<b>hola</b>") is False
+    assert len(servidor_tg.peticiones) == 1
+
+
+def test_D2_08_escapar_es_html_escape_sin_comillas():
+    """D2-08: `escapar` es el helper público (= html.escape(quote=False)); `escapar_html` da lo mismo."""
+    crudo = "<b>x & y</b> \"comillas\" 'simples' Qty > MaxShare"
+    assert avisos.escapar(crudo) == "&lt;b&gt;x &amp; y&lt;/b&gt; \"comillas\" 'simples' Qty &gt; MaxShare"
+    assert avisos.escapar_html(crudo) == avisos.escapar(crudo)
+    assert avisos.escapar(1234) == "1234"
+
+
+def test_D2_08_texto_plano_telegram_solo_quita_etiquetas_de_formato():
+    """D2-08: el reenvío sin formato quita <b>/<i>/<a …> y deshace entidades, pero conserva «< 5 y 7 >» del bróker."""
+    texto = '<b>ABC</b> <i>x</i> <a href="https://x">enlace</a> · DAS: «qty < 5 y 7 > 3» &lt;b&gt;'
+    assert avisos.texto_plano_telegram(texto) == "ABC x enlace · DAS: «qty < 5 y 7 > 3» <b>"
 
 
 @pytest.mark.parametrize(("token", "chat"), [
@@ -813,12 +866,63 @@ def test_filtro_limpia_exc_text_ya_formateado_por_otro_handler():
 
 
 @pytest.mark.parametrize(("secretos", "esperados"), [
-    pytest.param(["abcde", "", None, "  "], (), id="R-Q-01-cortos-y-vacios-ignorados"),
+    pytest.param(["abc", "", None, "  "], (), id="R-Q-01-cortos-y-vacios-ignorados"),
+    pytest.param(["abcde", "abcd"], ("abcde", "abcd"), id="SEG-04-4-y-5-caracteres-se-tapan"),
     pytest.param(["abcdef", "abcdefghij"], ("abcdefghij", "abcdef"), id="R-Q-01-el-mas-largo-primero"),
     pytest.param([" abcdef "], ("abcdef",), id="R-Q-01-sin-espacios"),
 ])
 def test_filtro_solo_secretos_de_longitud_minima(secretos, esperados):
     assert FiltroSecretos(secretos).secretos == esperados
+
+
+def test_SEG_04_clave_de_das_de_5_caracteres_se_tapa():
+    """SEG-04: una DAS_CLAVE corta (5 caracteres) ya no sale en claro en el log, el diario ni /log."""
+    filtro = FiltroSecretos(["abc12"])
+    assert filtro.limpiar("clave abc12 aqui") == f"clave {MASCARA} aqui"
+    assert filtro.cortos == 0
+
+
+def test_SEG_04_secretos_demasiado_cortos_se_cuentan_y_se_avisan_sin_su_valor(dir_bot, reloj, caplog):
+    """SEG-04: un secreto de < 4 caracteres no se puede tapar: se cuenta y instalar_logging avisa (sin el valor)."""
+    filtro = FiltroSecretos(["xq9", "", None, CLAVE_DAS_PRUEBA])
+    assert filtro.cortos == 1 and filtro.secretos == (CLAVE_DAS_PRUEBA,)
+    caplog.set_level(logging.WARNING, logger=LOGGER_AVISOS)
+    try:
+        instalar_logging("ejecutor", dir_bot / "logs", ["xq9"], consola=False, reloj=reloj)
+    finally:
+        desinstalar_logging()
+    avisos_cortos = [r.getMessage() for r in caplog.records if "NO se pueden tapar" in r.getMessage()]
+    assert len(avisos_cortos) == 1 and "xq9" not in avisos_cortos[0]
+
+
+@pytest.mark.parametrize(("formato", "valor", "esperado"), [
+    pytest.param("cuenta %d", 987654321, f"cuenta {MASCARA}", id="C-03-entero-%d"),
+    pytest.param("importe %.2f", 987654321.5, f"importe {MASCARA}.50", id="C-03-float-%.2f"),
+    pytest.param("id %d y n=%d", 19876543210, f"id 1{MASCARA}0 y n=5", id="C-03-cifras-dentro-de-un-numero"),
+])
+def test_C_03_secreto_numerico_en_un_arg_no_str_no_rompe_el_formateo(formato, valor, esperado):
+    """C-03: un secreto de solo cifras en un arg %d/%.2f se tapa y la línea NO se pierde («--- Logging error ---»)."""
+    registro = logging.getLogger("prueba.bot_das.filtro_numerico")
+    handler = ListaHandler()
+    handler.addFilter(FiltroSecretos(["987654321"]))
+    registro.addHandler(handler)
+    registro.setLevel(logging.DEBUG)
+    registro.propagate = False
+    try:
+        args = (valor, 5) if formato.count("%") == 2 else (valor,)
+        registro.warning(formato, *args)
+    finally:
+        registro.removeHandler(handler)
+        registro.propagate = True
+    assert handler.lineas == [esperado]
+    assert "987654321" not in handler.lineas[0]
+
+
+def test_C_03_arg_numerico_sin_secreto_conserva_el_formateo_perezoso(log_filtrado):
+    """C-03: sin secreto en los números, `args` sigue intacto (el % lo hace el Formatter, como antes)."""
+    registro, handler = log_filtrado
+    registro.warning("n=%d x=%.3f", 42, 0.5)
+    assert handler.lineas == ["n=42 x=0.500"]
 
 
 def test_filtro_el_mas_largo_se_tapa_entero():
@@ -1021,3 +1125,27 @@ def test_importar_avisos_no_arranca_hilos_ni_carga_pandas():
 def test_avisos_no_usa_httpx_riesgo_20():
     fuente = Path(avisos.__file__).read_text(encoding="utf-8")
     assert "import httpx" not in fuente and "httpx." not in fuente
+
+
+def test_SEG_05_importar_avisos_no_carga_httpx():
+    """SEG-05: importar avisos (y por él ejecutor, vigilante, supervisor, comprobar_das) NO mete httpx en el proceso."""
+    codigo = ("import sys; sys.path.insert(0, '.'); import app.bot_das.avisos; "
+              "print('httpx' in sys.modules, 'app.services.bot_alerts_telegram' in sys.modules)")
+    salida = subprocess.run([sys.executable, "-c", codigo], cwd=BACKEND, capture_output=True, text=True, timeout=60)
+    assert salida.returncode == 0, salida.stderr
+    assert salida.stdout.split() == ["False", "False"]
+
+
+def test_C_04_texto_rechazo_no_esta_en_el_camino_de_ordenes():
+    """C-04: el aviso de rechazo que sale a Telegram es el de reglas.rechazos (un solo contrato vivo).
+
+    `avisos.texto_rechazo` queda como formato de consulta: ningún módulo del
+    paquete lo usa para avisar (si alguien lo engancha, que sea a propósito
+    y cambiando este test y el contrato de rechazos a la vez).
+    """
+    paquete = Path(avisos.__file__).resolve().parent
+    usos = [p.relative_to(paquete).as_posix() for p in paquete.rglob("*.py")
+            if p.name != "avisos.py" and "texto_rechazo" in p.read_text(encoding="utf-8")]
+    assert usos == []
+    fuente_rechazos = (paquete / "reglas" / "rechazos.py").read_text(encoding="utf-8")
+    assert "def _texto_aviso" in fuente_rechazos and "html.escape" in fuente_rechazos

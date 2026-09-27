@@ -27,14 +27,26 @@ LAS TRAMPAS.
   * `fresca()` mira `actualizada_en` (monotónico del reloj inyectado), no la
     hora del servidor; y un libro cruzado (ask < bid) no es fresco: la
     aritmética de `reglas.precios` lanzaría con él.
-  * k cuenta SOLO halts UP en RTH (R-F-01): `last` ≥ limit_up · (1 − 0,5 %) y
-    franja «RTH». Un halt en premercado (T1/T12) o un halt DOWN no suman. k
-    incluye los halts anteriores a nuestra entrada: se cuenta desde que el
-    ticker entra en el libro, no desde el primer fill.
+  * k cuenta SOLO halts UP en RTH (R-F-01). E1-06: infracontar k es el lado
+    peligroso para un corto, así que en una pausa LULD (`TA:P`) se clasifica
+    por CERCANÍA (precio de parada más cerca de limit_up que de limit_down, o
+    en el medio → UP) y, sin las dos bandas, cuenta como UP (anotado en
+    `clasificacion_halt`). En un `TA:H` (T1/T12, no LULD) sigue la regla de la
+    banda: precio ≥ limit_up · (1 − 0,5 %); sin banda no suma. Un halt en
+    premercado o un halt DOWN no suman. k incluye los halts anteriores a
+    nuestra entrada: se cuenta desde que el ticker entra en el libro, y
+    `sembrar_k` lo repone tras un reinicio (E1-03, nunca lo baja).
   * `marcar_halt` decide la transición por `halt_desde`, no por el `ta`
     anterior: da igual si el decisor llamó antes a `aplicar` con el mismo
     mensaje. `$IssueStatus` repetido con `H` → None (sin transición) y la
-    guardia `orden_open_enviada` se conserva (injerto A §8.23).
+    guardia `orden_open_enviada` se conserva (injerto A §8.23). E1-05: `Q`
+    (solo cotización antes del cruce) sigue PARADO; se reabre con `T` o sin
+    TA. E1-10: el TA se normaliza aquí (sin espacios, en mayúsculas) y se
+    guarda así en `EstadoSimbolo.ta`: `reglas.halts` y este módulo ven lo
+    mismo.
+  * `velas_minuto` (E1-08) arma velas de 1 min con los `$Quote` (máximo,
+    mínimo del `last` y dólares = Δvolumen · last) para `exclusiones.banda_opa`;
+    el minuto es el del reloj monotónico (la ventana es relativa).
   * `suscripciones` aplica el tope sobre el conjunto DESEADO ordenado por
     prioridad; lo que no cabe se cuenta (`descartados_por_tope`) y sale en la
     foto. Tras una reconexión de DAS hay que llamar a `reiniciar_suscripciones`
@@ -42,13 +54,16 @@ LAS TRAMPAS.
 """
 from __future__ import annotations
 
+from collections import deque
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Iterable, Optional
 
+from app.bot_das.reglas.halts import TA_PARADO
 from app.bot_das.reglas.precios import de_float
 from app.bot_das.reloj import ET, hora_das_a_et
 from app.bot_das.tipos import (
+    COTIZACION_FRESCA_MAX_S,
     MAX_LV1,
     Cotizacion,
     EstadoSimbolo,
@@ -60,8 +75,15 @@ from app.bot_das.tipos import (
 )
 
 TOLERANCIA_BANDA_PCT = Decimal("0.5")   # técnico: el último print antes del halt puede quedar un tick bajo la banda
-FRESCA_MAX_S = 5.0                      # §3.12: defecto de `fresca` y `sin_cotizacion_desde`
+FRESCA_MAX_S = COTIZACION_FRESCA_MAX_S  # §3.12 / D1-12: UNA constante (tipos) para `fresca`, `sin_cotizacion_desde` y la entrada
+VELAS_MINUTO_MAX = 60                   # E1-08: velas de 1 min que se guardan por ticker (la banda de OPA mira 30)
+# E1-06: cómo se clasificó el último halt de cada ticker (va a la foto; el decisor lo puede anotar)
+CLASIF_UP = "up"                        # cuenta en k
+CLASIF_UP_SIN_BANDAS = "up_sin_bandas"  # P en RTH sin las dos bandas: cuenta como UP (lo conservador para un corto)
+CLASIF_DOWN = "down"
+CLASIF_NO_CUENTA = "no_cuenta"          # fuera de RTH, H sin banda o por debajo de la tolerancia, Q
 _CIEN = Decimal("100")
+_DOS = Decimal("2")
 _CAMPOS_PRECIO = {"a": "ask", "b": "bid", "l": "last", "hi": "hi", "lo": "lo", "vwap": "vwap"}   # manual L1248-1316, en minúsculas
 _CAMPOS_ENTERO = {"asz": "asz", "bsz": "bsz", "v": "volumen"}
 _CAMPO_HORA = "t"
@@ -85,6 +107,10 @@ class MercadoDAS:
         self._descartados = 0
         self._quotes = 0
         self._campos_ignorados = 0
+        self._ta_halt: dict[str, str] = {}              # E1-02: TA con el que paró el último halt (P = LULD)
+        self._clasif_halt: dict[str, str] = {}          # E1-06: clasificación del último halt (CLASIF_*)
+        self._velas: dict[str, deque] = {}              # E1-08: [t_inicio_s, high, low, dólares] por minuto monotónico
+        self._volumen_previo: dict[str, int] = {}
 
     # ── mensajes de DAS ─────────────────────────────────────────────────
     def aplicar(self, msg: MensajeDAS) -> Optional[str]:
@@ -125,6 +151,7 @@ class MercadoDAS:
         if cot is None:
             cot = Cotizacion(ticker=ticker)
             self._cotizaciones[ticker] = cot
+        last_nuevo: Optional[Decimal] = None
         for clave_cruda, valor in msg.campos.items():
             clave = str(clave_cruda).strip().lower()
             if clave in _CAMPOS_PRECIO:
@@ -133,6 +160,8 @@ class MercadoDAS:
                     self._campos_ignorados += 1
                     continue
                 setattr(cot, _CAMPOS_PRECIO[clave], precio if precio > 0 else None)
+                if clave == "l" and precio > 0:
+                    last_nuevo = precio
             elif clave in _CAMPOS_ENTERO:
                 entero = _entero_o_none(valor)
                 if entero is None:
@@ -144,12 +173,43 @@ class MercadoDAS:
             # op, ycl, tcl, PE, RVOL, tradesAllDay y claves futuras: se ignoran (especificación §3.10)
         cot.actualizada_en = self._reloj.mono()
         self._quotes += 1
+        self._vela(ticker, cot, last_nuevo, cot.actualizada_en)
         return ticker
+
+    def _vela(self, ticker: str, cot: Cotizacion, last_nuevo: Optional[Decimal], mono: float) -> None:
+        """E1-08: suma el `$Quote` a la vela de 1 min (minuto monotónico): high/low del `last`, dólares = Δvolumen · last."""
+        volumen = cot.volumen
+        previo = self._volumen_previo.get(ticker)
+        if volumen is not None:
+            self._volumen_previo[ticker] = volumen
+        precio = last_nuevo if last_nuevo is not None else cot.last
+        if precio is None or precio <= 0:
+            return
+        delta = volumen - previo if (volumen is not None and previo is not None and volumen > previo) else 0
+        if last_nuevo is None and delta == 0:
+            return                                   # ni print nuevo ni volumen: nada que sumar a la vela
+        inicio = float(int(mono // 60) * 60)
+        velas = self._velas.setdefault(ticker, deque(maxlen=VELAS_MINUTO_MAX))
+        if velas and velas[-1][0] == inicio:
+            vela = velas[-1]
+            vela[1] = max(vela[1], precio)
+            vela[2] = min(vela[2], precio)
+            vela[3] += Decimal(delta) * precio
+        else:
+            velas.append([inicio, precio, precio, Decimal(delta) * precio])
+
+    def velas_minuto(self, ticker: str) -> list[tuple[float, Decimal, Decimal, Decimal]]:
+        """E1-08: [(t_inicio_s, high, low, dólares)] de las velas de 1 min del ticker, de la más vieja a la más nueva.
+
+        Es la entrada de `exclusiones.banda_opa` (el tiempo es el monotónico:
+        la banda solo mira la ventana relativa). Vacía si no hubo prints.
+        """
+        return [(v[0], v[1], v[2], v[3]) for v in self._velas.get(_norm(ticker), ())]
 
     def _aplicar_estado(self, simb: EstadoSimbolo, msg: MsgIssueStatus) -> None:
         if msg.ssr is not None:
             simb.ssr = msg.ssr
-        simb.ta = msg.ta
+        simb.ta = _ta_normalizado(msg.ta)
         simb.tat = msg.tat
         simb.consultado_en = self._reloj.mono()
 
@@ -186,24 +246,31 @@ class MercadoDAS:
     # ── halts (R-F-01) ──────────────────────────────────────────────────
     def marcar_halt(self, ticker: str, msg: MsgIssueStatus, ahora: datetime, last: Optional[Decimal],
                     franja: str) -> Optional[str]:
-        """Transición del símbolo con un `$IssueStatus`: «halt» (nuevo), «reapertura» (TA Q/T/ausente tras un halt) o None.
+        """Transición del símbolo con un `$IssueStatus`: «halt» (nuevo), «reapertura» (TA T/ausente tras un halt) o None.
 
         En un halt nuevo guarda `halt_desde` (TAT del mensaje si es válido, si
         no `ahora`), `precio_parada` (`last` o el último del libro), pone
-        `orden_open_enviada = False` y suma k SOLO si es UP (`last` ≥ limit_up
-        · (1 − tolerancia)) y la franja es RTH. En la reapertura borra
+        `orden_open_enviada = False` y suma k SOLO si el halt es UP y la franja
+        es RTH (E1-06: `P` por cercanía a las bandas y, sin ellas, UP; `H` por
+        la tolerancia bajo limit_up; `Q` no suma). En la reapertura borra
         `halt_desde` y la guardia; `precio_parada` se conserva para medir la
-        subida (R-F-05) hasta el siguiente halt.
+        subida (R-F-05) hasta el siguiente halt. E1-05: `Q` es PARADO (solo
+        cotiza antes del cruce); H → Q no es transición. E1-10: el TA se
+        compara normalizado.
         """
         simb = self.simbolo(ticker)
         self._aplicar_estado(simb, msg)
-        parado = msg.ta in ("H", "P")
+        ta = simb.ta or ""
+        parado = ta in TA_PARADO
         if parado and simb.halt_desde is None:
             simb.halt_desde = self._inicio_halt(msg.tat, ahora)
             precio = last if last is not None else self._ultimo_precio(simb.ticker)
             simb.precio_parada = _precio_o_none(precio)
             simb.orden_open_enviada = False
-            if franja.startswith("RTH") and self._es_halt_up(simb.precio_parada, simb.limit_up):
+            clasif = self._clasificar(ta, simb, franja)
+            self._ta_halt[simb.ticker] = ta
+            self._clasif_halt[simb.ticker] = clasif
+            if clasif in (CLASIF_UP, CLASIF_UP_SIN_BANDAS):
                 simb.k_halts_up += 1
             return "halt"
         if not parado and simb.halt_desde is not None:
@@ -211,6 +278,37 @@ class MercadoDAS:
             simb.orden_open_enviada = False
             return "reapertura"
         return None
+
+    def _clasificar(self, ta: str, simb: EstadoSimbolo, franja: str) -> str:
+        """E1-06: UP / UP sin bandas / DOWN / no cuenta para k (solo en RTH)."""
+        if not str(franja).startswith("RTH") or ta not in ("H", "P"):
+            return CLASIF_NO_CUENTA
+        precio, up, down = simb.precio_parada, simb.limit_up, simb.limit_down
+        if ta == "H":
+            return CLASIF_UP if self._es_halt_up(precio, up) else CLASIF_NO_CUENTA
+        if precio is None or up is None or down is None or up <= down:
+            return CLASIF_UP_SIN_BANDAS
+        return CLASIF_UP if precio >= (up + down) / _DOS else CLASIF_DOWN
+
+    def ta_ultimo_halt(self, ticker: str) -> Optional[str]:
+        """E1-02: el TA (normalizado) con el que paró el último halt del ticker; «P» = LULD. None si no paró hoy."""
+        return self._ta_halt.get(_norm(ticker))
+
+    def clasificacion_halt(self, ticker: str) -> Optional[str]:
+        """E1-06: cómo se clasificó el último halt (CLASIF_UP, CLASIF_UP_SIN_BANDAS, CLASIF_DOWN o CLASIF_NO_CUENTA)."""
+        return self._clasif_halt.get(_norm(ticker))
+
+    def sembrar_k(self, ticker: str, k: int) -> int:
+        """E1-03: repone k (halts UP del día) tras un reinicio o desde otra fuente; NUNCA lo baja. Devuelve el k vigente.
+
+        ValueError si `k` no es un int ≥ 0 (un bool tampoco).
+        """
+        if type(k) is not int or k < 0:
+            raise ValueError(f"k debe ser un int ≥ 0: {k!r}")
+        simb = self.simbolo(ticker)
+        if k > simb.k_halts_up:
+            simb.k_halts_up = k
+        return simb.k_halts_up
 
     def _inicio_halt(self, tat: Optional[str], ahora: datetime) -> datetime:
         ahora_et = ahora.replace(tzinfo=ET) if ahora.tzinfo is None else ahora.astimezone(ET)
@@ -316,6 +414,8 @@ class MercadoDAS:
                 "limit_down": _txt(simb.limit_down),
                 "limit_up": _txt(simb.limit_up),
                 "orden_open_enviada": simb.orden_open_enviada,
+                "ta_ultimo_halt": self._ta_halt.get(ticker),
+                "clasificacion": self._clasif_halt.get(ticker),
             }
         return {
             "max_lv1": self._max_lv1,
@@ -332,6 +432,14 @@ class MercadoDAS:
 # ── auxiliares ──────────────────────────────────────────────────────────
 def _norm(ticker: object) -> str:
     return str(ticker).strip().upper()
+
+
+def _ta_normalizado(ta: object) -> Optional[str]:
+    """E1-10: TA sin espacios y en mayúsculas; vacío o ausente → None (sin TA = normal)."""
+    if ta is None:
+        return None
+    texto = str(ta).strip().upper()
+    return texto or None
 
 
 def _decimal_o_none(valor: object) -> Optional[Decimal]:

@@ -8,9 +8,11 @@ propio de posiciones y órdenes. Cada segundo junta la `vigilancia.Foto`
 cotizaciones de DAS + locates + equity), llama a `reglas.vigilancia.comprobar`
 y ejecuta lo que devuelve: reponer el par principal + emergencia si el
 ejecutor calla (plan B de R-C-07), proteger una posición que ningún diario
-conoce (R-C-10 caso 4), cancelar sobrantes, avisar (R-C-08 a, R-H-02/03, 2c) y,
-si no puede enviar, pedir al supervisor que relance el ejecutor (corrección
-16). Las órdenes salen por una SEGUNDA conexión normal que abre bajo demanda
+conoce (R-C-10 caso 4), cancelar sobrantes, VENDER SOLO el exceso de una
+cuenta que quedó LARGA con el ejecutor muerto (E2c-02, R-C-11 (3)), avisar
+(R-C-08 a, R-H-02/03, 2c) y, si no puede enviar, pedir al supervisor que
+relance el ejecutor (corrección 16). La misma propuesta no se anota en cada
+pasada (E2c-04: `comprobar_con_firmas` + `Foto.anotado`). Las órdenes salen por una SEGUNDA conexión normal que abre bajo demanda
 (`abrir_accion`). Además manda el ping externo de R-J-05 (`PingExterno`, cada
 60 s y solo si todo va bien: su silencio es la alarma), late para el
 supervisor (R-J-04) y escribe su propio diario (`diario_vigilante_…`,
@@ -152,6 +154,7 @@ from app.bot_das.tipos import (
     MsgShortInfo,
     Nivel,
     Orden,
+    OrdenDescartada,
     OrdenNueva,
     Origen,
     PedirAlSupervisor,
@@ -173,7 +176,7 @@ __all__ = [
     "NOMBRE_LATIDO", "NOMBRE_CERROJO", "NOMBRE_LATIDO_EJECUTOR", "NOMBRE_ORDEN_SUPERVISOR", "NOMBRE_FOTO_EJECUTOR",
     "SUBCARPETAS_BOT", "ENV_DIR", "ENV_CUENTA", "ENV_PING_URL",
     "EVENTO_WATCH", "EVENTO_ESTADO_WATCH", "EVENTO_ACCION", "EVENTO_ESTADO_ACCION", "EVENTO_HILO",
-    "EVENTO_INTENTO_WATCH",
+    "EVENTO_INTENTO_WATCH", "EVENTO_DESCARTE",
 ]
 
 logger = logging.getLogger(__name__)
@@ -228,6 +231,7 @@ EVENTO_ACCION = "accion"                  # (EVENTO_ACCION, MsgOrderAct) de la c
 EVENTO_ESTADO_ACCION = "estado_accion"    # (EVENTO_ESTADO_ACCION, conectado, motivo)
 EVENTO_HILO = "hilo"                      # (EVENTO_HILO, nombre, error, relanzado)
 EVENTO_INTENTO_WATCH = "intento_watch"    # (EVENTO_INTENTO_WATCH, conectado): resultado de un intento de conexión
+EVENTO_DESCARTE = "descarte"              # (EVENTO_DESCARTE, OrdenDescartada): el emisor de acción NO mandó un NEWORDER
 
 # Registros de los diarios que cambian lo que ve el vigilante (lotes, pausas/BS, locates, fase).
 TIPOS_RELEVANTES = frozenset({"arranque", "config", "lote", "pausa", "reanudar", "bs", "bs_informe", "comando",
@@ -295,6 +299,10 @@ class ColaVigilante:
     def al_intento_watch(self, conectado: bool) -> None:
         """Resultado de un intento de conexión watch (lo pone el hilo de reconexión)."""
         self._cola.put((EVENTO_INTENTO_WATCH, bool(conectado)))
+
+    def al_descartar(self, msg: OrdenDescartada) -> None:
+        """D2a-06 / G2-05: `ClienteDAS.al_descartar` de la conexión de ACCIÓN (un NEWORDER que no salió)."""
+        self._cola.put((EVENTO_DESCARTE, msg))
 
     def al_aviso(self, texto: str) -> None:
         """Aviso de nivel 2 de un hilo de borde (firma de `ClienteDAS.al_aviso`)."""
@@ -685,6 +693,7 @@ class VigilanteDAS:
         self._tokens_rechazados: set[int] = set()
         # dedupe del diario, de los avisos y de las peticiones
         self._anotado: dict[str, tuple[str, float]] = {}
+        self._firmas_vigilancia: dict[str, str] = {}      # E2c-04: lo último anotado por ticker (Foto.anotado)
         self._avisado_en: dict[str, float] = {}
         self._peticion_en: dict[str, float] = {}
         # ejecutor callado (R-C-08 c)
@@ -923,6 +932,16 @@ class VigilanteDAS:
             self._hilo_caido(evento[1], evento[2], evento[3])
         elif etiqueta == EVENTO_INTENTO_WATCH:
             self._intento_watch(evento[1])
+        elif etiqueta == EVENTO_DESCARTE:
+            self._descartada(evento[1])
+
+    def _descartada(self, msg: Any) -> None:
+        """D2a-06 / G2-05: lo que el emisor no mandó deja de ser «pendiente»: la pasada siguiente lo repone ya."""
+        token = getattr(msg, "token", None)
+        if token is None or self._pend_nuevas.pop(token, None) is None:
+            return
+        self._diario.anotar("orden_descartada", token=token, ticker=getattr(msg, "ticker", None),
+                            motivo=str(getattr(msg, "motivo", "")), regla="D2a-06")
 
     def _de_watch(self, msg: MensajeDAS) -> None:
         """Libro propio (R-C-08): %IPOS/%IORDER por clave, cotizaciones al mercado, marcadores del volcado."""
@@ -1086,17 +1105,24 @@ class VigilanteDAS:
         """Corrección 16: pasada en seco (¿hace falta enviar?) → conexión de acción solo si hace falta → pasada real."""
         ruta_stop = precios.ruta(self._cfg.rutas, "stop", Decimal("1"), ahora_et)
         previsto = self._token_previsto(hoy)
-        seco = vigilancia.comprobar(foto, self._cfg, ahora, previsto, ahora_et, ruta_stop, True)
+        # E2c-04: `comprobar_con_firmas` + `Foto.anotado`: la misma propuesta no se anota en cada pasada (1 s)
+        seco, firmas = vigilancia.comprobar_con_firmas(foto, self._cfg, ahora, previsto, ahora_et, ruta_stop, True)
         if not any(isinstance(a, vigilancia.MUTANTES) for a in seco):
+            self._firmas_vigilancia = dict(firmas)
             return seco                              # sin nada que mandar la pasada real sería idéntica
         tokens = self._tokens
         if tokens is None:
             raise RuntimeError("el vigilante no arrancó: sin generador de tokens")
         if self._sombra:
-            return vigilancia.comprobar(foto, self._cfg, ahora, tokens.siguiente, ahora_et, ruta_stop, True)
-        puede = self._asegurar_accion()
-        return vigilancia.comprobar(foto, self._cfg, ahora, tokens.siguiente if puede else previsto, ahora_et,
-                                    ruta_stop, puede)
+            acciones, firmas = vigilancia.comprobar_con_firmas(foto, self._cfg, ahora, tokens.siguiente, ahora_et,
+                                                               ruta_stop, True)
+        else:
+            puede = self._asegurar_accion()
+            acciones, firmas = vigilancia.comprobar_con_firmas(foto, self._cfg, ahora,
+                                                               tokens.siguiente if puede else previsto, ahora_et,
+                                                               ruta_stop, puede)
+        self._firmas_vigilancia = dict(firmas)
+        return acciones
 
     def _token_previsto(self, hoy: date) -> Callable[[], int]:
         """El token que saldría ahora SIN consumirlo (pasada en seco o bloqueada): la secuencia no se gasta."""
@@ -1125,7 +1151,7 @@ class VigilanteDAS:
             compras_locate=[r for r in self._registros if r.tipo in _TIPOS_LOCATE],
             equity=self._equity_ejecutor(ahora), descubierta_desde=dict(self._descubierta_desde), limit_up=limit_up,
             pendientes=[orden for orden, _ in self._pend_nuevas.values()], estados_ticker=estados,
-            locates_deshabilitados=estado.locates_deshabilitados)
+            locates_deshabilitados=estado.locates_deshabilitados, anotado=dict(self._firmas_vigilancia))
 
     def _ordenes_vista(self, ahora: float) -> dict[int, MsgOrden]:
         """El libro con lo pendiente aplicado: un CANCEL enviado cuenta como hecho y un REPLACE con su cantidad nueva."""
@@ -1347,13 +1373,20 @@ class VigilanteDAS:
             self._soltar_accion("sin conexión al enviar")
             return False
         try:
-            cliente.enviar(linea, serie, version)
+            encolada = cliente.enviar(linea, serie, version)
         except Exception as exc:  # noqa: BLE001 — frontera de red/mensaje: EnvioProhibido (bug), línea inválida o socket
             self._diario.anotar("envio_fallido", accion=que, error=f"{type(exc).__name__}: {exc}", linea=linea,
                                 regla="corrección 16", **datos)
             self._avisar(Nivel.MAXIMO, f"R-C-08: el vigilante NO pudo enviar {que} ({type(exc).__name__}); "
                                        f"se reintenta con otra conexión", f"vigilante_envio:{que}", ahora)
             self._soltar_accion("fallo al enviar")
+            return False
+        if encolada is False:
+            # G2-05: el cliente la descartó en el acto (conexión caída o cola llena): no se anota como enviada y la
+            # pasada siguiente la repite (no queda como pendiente que tape la falta)
+            self._diario.anotar("envio_fallido", accion=que, motivo="el cliente no la encoló", linea=linea,
+                                regla="G2-05", **datos)
+            self._soltar_accion("el cliente descartó la línea")
             return False
         with self._cerrojo_accion:
             self._accion_usada_en = time.monotonic()
@@ -1586,6 +1619,7 @@ class VigilanteDAS:
         self._rechazos.clear()
         self._tokens_rechazados.clear()
         self._descubierta_desde.clear()
+        self._firmas_vigilancia.clear()
 
     # ── ejecutor, ventana, equity, supervisor, latido ──
     def _revisar_ejecutor(self, latido_ejecutor: Optional[float], ahora: float, dentro: bool) -> None:
@@ -1879,7 +1913,8 @@ def construir_desde_env(cfg: Config, reloj: Any, *, canales: Optional[list] = No
                                   margen=min(_numero_positivo(cuotas.get("margen"), 0.9), 1.0))
             cliente = ClienteDAS.desde_env(watch=False, solo_lectura=False, al_mensaje=cola.al_mensaje_accion,
                                            al_estado=cola.al_estado_accion, reloj=reloj, cuota=cuota,
-                                           al_aviso=cola.al_aviso, al_caida_hilo=cola.al_caida_hilo)
+                                           al_aviso=cola.al_aviso, al_caida_hilo=cola.al_caida_hilo,
+                                           al_descartar=cola.al_descartar)
         except RuntimeError as exc:  # entorno incompleto: sin conexión de acción (corrección 16)
             logger.error("[VIGILANTE] conexión de acción imposible: %s", exc)
             return None

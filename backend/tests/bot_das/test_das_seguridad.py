@@ -82,6 +82,7 @@ print(json.dumps({
     "pandas": "pandas" in sys.modules,
     "runner": "app.services.bot_alerts_runner" in sys.modules,
     "websockets": "websockets" in sys.modules,
+    "httpx": "httpx" in sys.modules,
     "hilos": threading.active_count(),
     "fuente": type(e.fuente).__name__,
     "conectado": e.cliente.conectado,
@@ -100,9 +101,21 @@ def test_injerto_8_25_con_tuberia_el_ejecutor_no_importa_pandas(dir_bot: Path) -
                                cwd=str(BACKEND), env=env, capture_output=True, text=True, timeout=60)
     assert resultado.returncode == 0, resultado.stderr[-3000:]
     datos = json.loads(resultado.stdout.strip().splitlines()[-1])
-    assert datos == {"pandas": False, "runner": False, "websockets": False, "hilos": 1,
+    assert datos == {"pandas": False, "runner": False, "websockets": False, "httpx": False, "hilos": 1,
                      "fuente": "FuenteTuberia", "conectado": False}
     assert SECRETOS["DAS_CLAVE"] not in resultado.stdout + resultado.stderr
+
+
+@pytest.mark.parametrize("modulo", ["ejecutor", "vigilante", "supervisor", "herramientas.comprobar_das"])
+def test_seg_05_importar_los_procesos_no_carga_httpx_ni_pandas(modulo: str) -> None:
+    """SEG-05 (memoria «httpx filtra tokens»): importar cada proceso del bot en un intérprete limpio no mete httpx ni
+    pandas en `sys.modules` (el paquete usa urllib; httpx solo lo traería un import de otro paquete)."""
+    codigo = (f"import sys; sys.path.insert(0, '.'); import app.bot_das.{modulo}; "
+              f"print('httpx' in sys.modules, 'pandas' in sys.modules)")
+    salida = subprocess.run([sys.executable, "-c", codigo], cwd=str(BACKEND), capture_output=True, text=True,
+                            timeout=60)
+    assert salida.returncode == 0, salida.stderr[-2000:]
+    assert salida.stdout.split() == ["False", "False"]
 
 
 # ═══════════════════════════ (2) secretos: log y diario de un replay ══════

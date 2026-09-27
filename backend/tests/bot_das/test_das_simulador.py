@@ -590,6 +590,61 @@ def test_replace_inaceptable(libro, emp, comando, nota):
     assert (act.accion, act.notas) == ("ReplaceRej", nota)
 
 
+def _orden_de_2_con_1_llena(libro: LibroSimulado, emp: Emparejador) -> int:
+    """Canario de A-02: una límite de 2 acciones que llena 1 y deja 1 viva (la sonda de comprobar_das)."""
+    libro.llenar_parcial(D("0.5"), ticker="ABCD")
+    libro.cotizar("ABCD", D("2.45"), D("2.47"))
+    msgs = parsear(emp.recibir(f"NEWORDER {T1} SS ABCD SAGEPRO 2 2.44 TIF=DAY+"))
+    o = ultima_orden(msgs)
+    assert (o.estado.value, o.qty, o.lvqty) == ("Partial", 2, 1)
+    libro.llenar_parcial(D("1"), ticker="ABCD")
+    libro.cotizar("ABCD", D("2.40"), D("2.42"))       # que el REPLACE no cruce: la orden reposa
+    return o.id
+
+
+@pytest.mark.parametrize("share_es_abierta, share, qty, lvqty", [
+    pytest.param(True, 1, 2, 1, id="A-02-abierta-share-1-deja-1-viva"),
+    pytest.param(True, 2, 3, 2, id="A-02-abierta-share-2-deja-2-vivas"),
+    pytest.param(False, 2, 2, 1, id="A-02-total-share-2-deja-1-viva"),
+    pytest.param(False, 3, 3, 2, id="A-02-total-share-3-deja-2-vivas"),
+])
+def test_A_02_replace_share_en_los_dos_modos(libro, reloj, share_es_abierta, share, qty, lvqty):
+    """A-02: sobre una orden parcialmente llena, `share` es la ABIERTA o la TOTAL según el interruptor."""
+    emp = Emparejador(libro, reloj, replace_share_es_abierta=share_es_abierta)
+    id_das = _orden_de_2_con_1_llena(libro, emp)
+    msgs = parsear(emp.recibir(f"REPLACE {id_das} {share} 2.5"))
+    assert [a.accion for a in de_tipo(msgs, MsgOrderAct)] == ["Replacing", "Replaced"]
+    o = ultima_orden(msgs)
+    assert (o.qty, o.lvqty, o.precio) == (qty, lvqty, D("2.5"))
+
+
+@pytest.mark.parametrize("share", [1, 0])
+def test_A_02_modo_total_share_no_mayor_que_llenas_se_rechaza(libro, reloj, share):
+    """A-02: en el modo TOTAL un share ≤ llenas dejaría 0 abiertas: ReplaceRej y la orden sigue como estaba."""
+    emp = Emparejador(libro, reloj, replace_share_es_abierta=False)
+    id_das = _orden_de_2_con_1_llena(libro, emp)
+    (act,) = de_tipo(parsear(emp.recibir(f"REPLACE {id_das} {share} 2.5")), MsgOrderAct)
+    assert (act.accion, act.notas) == ("ReplaceRej", "Invalid quantity")
+    assert (orden(libro, id_das)["lvqty"], orden(libro, id_das)["qty"]) == (1, 2)
+
+
+@pytest.mark.parametrize("share_es_abierta", [True, False])
+@pytest.mark.parametrize("abierta", [1, 3])
+def test_A_02_share_de_replace_y_simulador_coinciden(libro, reloj, share_es_abierta, abierta):
+    """A-02: el share que calcula `tipos.share_de_replace` deja viva EXACTAMENTE la cantidad pedida en los dos modos."""
+    from app.bot_das.tipos import share_de_replace
+    emp = Emparejador(libro, reloj, replace_share_es_abierta=share_es_abierta)
+    id_das = _orden_de_2_con_1_llena(libro, emp)
+    share = share_de_replace(abierta, llenas=1, share_es_abierta=share_es_abierta)
+    o = ultima_orden(parsear(emp.recibir(f"REPLACE {id_das} {share} 2.5")))
+    assert o.lvqty == abierta
+
+
+def test_A_02_defecto_es_el_de_tipos(libro, reloj):
+    from app.bot_das.tipos import REPLACE_SHARE_ES_ABIERTA
+    assert Emparejador(libro, reloj).replace_share_es_abierta is REPLACE_SHARE_ES_ABIERTA
+
+
 def test_replace_postonly_que_cruzaria_se_rechaza(libro, emp):
     libro.cotizar("ABCD", D("2.45"), D("2.47"))
     id_das = ultima_orden(parsear(emp.recibir(f"NEWORDER {T1} SS ABCD SAGEREB 100 2.5 PostOnly TIF=DAY+"))).id
@@ -727,6 +782,7 @@ def test_qty_corto_negativa(libro, reloj, negativa, qty_cruda):
     pytest.param({"orden_mensajes": ("OrderAct", "TRADE")}, id="orden-incompleto"),
     pytest.param({"orden_mensajes": ("OrderAct", "TRADE", "TRADE")}, id="orden-repetido"),
     pytest.param({"open_en_halt": "ignorar"}, id="open-en-halt-desconocido"),
+    pytest.param({"replace_share_es_abierta": 1}, id="A-02-share-no-bool"),
 ])
 def test_emparejador_valida_parametros(libro, reloj, kwargs):
     with pytest.raises(ValueError):
@@ -1264,6 +1320,21 @@ def test_main_arranca_aplica_guion_y_para(capsys):
     assert sd.main(["--puerto", "0", "--guion", str(GUION), "--segundos", "0.3"]) == 0
     salida = capsys.readouterr().out
     assert "simulador DAS escuchando en 127.0.0.1:" in salida
+
+
+def test_A_02_main_replace_share_total(monkeypatch):
+    """A-02: `--replace-share-total` arranca el simulador con el emparejador en modo TOTAL; sin él, ABIERTA."""
+    vistos: list[bool] = []
+    original = sd.SimuladorDAS.__init__
+
+    def espia(self, libro, reloj, *a, **kw):
+        vistos.append(kw["emparejador"].replace_share_es_abierta)
+        original(self, libro, reloj, *a, **kw)
+
+    monkeypatch.setattr(sd.SimuladorDAS, "__init__", espia)
+    assert sd.main(["--puerto", "0", "--segundos", "0", "--replace-share-total"]) == 0
+    assert sd.main(["--puerto", "0", "--segundos", "0"]) == 0
+    assert vistos == [False, True]
 
 
 def test_main_usuario_sin_clave_es_error():

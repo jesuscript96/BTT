@@ -64,7 +64,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 
 from app.bot_das.cerrojo import HiloVigilado
 from app.bot_das.reloj import ET
-from app.bot_das.tipos import Config, EstrategiaConfig, Fase
+from app.bot_das.tipos import REPLACE_SHARE_ES_ABIERTA, Config, EstrategiaConfig, Fase
 
 logger = logging.getLogger("btt.bot_das.config")
 
@@ -75,6 +75,7 @@ FICHEROS_MOTOR = ("app/services/strategy_engine.py",   # memoria «tres ficheros
                   "app/services/portfolio_sim.py")
 NOMBRE_FICHERO_CONFIG = "bot_das_config.json"           # BOT_DAS_DIR/config/… (§1)
 NOMBRE_ULTIMO_BUENO = "ultimo_bueno.json"               # BOT_DAS_DIR/config/… (H-4)
+AVISO_FASE_FORZADA = "fase forzada a SOMBRA"            # SEG-02: marca del aviso cuando el respaldo venía en canario/real
 DIR_BOT_POR_DEFECTO = r"D:\bot_senales\bot_ejecucion\vivo"   # §1: BOT_DAS_DIR si no está en el entorno
 URL_BACKEND_POR_DEFECTO = "http://127.0.0.1:8010"       # igual que bot_alerts_cliente._base (BOT_ALERTS_API)
 RUTA_VIGILADAS = "/bot-alerts/vigiladas"                # routers/bot_alerts.py l.725 (prefijo /api/bot-alerts)
@@ -138,7 +139,8 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
               "emergencia_limite_pct": "num", "proteccion_desconocidas_pct": "num+",
               "margen_bajo_limit_up_pct": "num0", "reintentos": "int0", "separacion_reintentos_s": "num0",
               "ventana_min": "num0", "subida_max_cierre_pct": "num+", "comprobacion_s": "num+",
-              "debounce_s": "num0", "tipo_esperado_en_order": "str?", "ruta": "ruta"},
+              "debounce_s": "num0", "tipo_esperado_en_order": "str?", "ruta": "ruta",
+              "replace_share_es_abierta": "bool"},
     "halts": {"k_max": "int", "distancia_banda_k2_pct": "num0", "primera_vela_max_reentrada_pct": "num0",
               "primera_vela_max_senal_guardada_pct": "num0", "t1_subida_max_cierre_pct": "num+",
               "t12_min": "num+", "ruta_reapertura": "ruta", "enviar_antes_fin_halt_s": "num0",
@@ -168,6 +170,11 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
     "alertas_grupo_a": {"activo": "bool", "prealerta_simple": "bool", "prealerta_freno_min": "num0",
                         "prealerta_ticks": "bool"},
 }
+# Hojas OPCIONALES (ruta → defecto): si faltan, el fichero sigue siendo válido y `_construir` pone el defecto;
+# si están, se validan con su tipo del esquema. Así un fichero viejo (y config_ejemplo.json, con su sha256) vale.
+_OPCIONALES: dict[str, Any] = {
+    "stops.replace_share_es_abierta": REPLACE_SHARE_ES_ABIERTA,   # A-02: share del REPLACE = abierta (True) o total
+}
 _ESQUEMA_RAIZ: dict[str, Any] = {
     "schema_version": "int", "config_version": "int0", "generado_at": "str",
     "motor_hash": "hash", "estrategias_hash": "hash", "sha256": "hex",
@@ -179,9 +186,12 @@ _RE_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")          # fichero del cuadr
 _RE_HORA_DEF = re.compile(r"^(\d{1,2}):(\d{2})$")           # definition: como la parte el motor (split(":"))
 _RE_HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _SESIONES = {                                              # minutos desde medianoche, fin EXCLUSIVO (motor)
-    "pre": (240, 570), "premarket": (240, 570),
+    # DC-08: SOLO los nombres que entiende `_get_market_sessions_mask` (backtest_service): pre, rth, regular,
+    # market, post (+ custom aparte). «premarket»/«afterhours» NO: el motor no da ninguna vela con ellos y el bot
+    # tiene que decirlo como «sesiones desconocidas» (R-L-02), no inventarse una sesión que el motor no corre.
+    "pre": (240, 570),
     "rth": (570, 960), "regular": (570, 960), "market": (570, 960),
-    "post": (960, 1200), "afterhours": (960, 1200),
+    "post": (960, 1200),
 }
 _CUSTOM_POR_DEFECTO = ("09:30", "16:00")                   # backtest_service l.2452-2453
 _APERTURA_RTH_MIN = 570                                    # 09:30
@@ -337,7 +347,8 @@ def _comprobar_bloque(prefijo: str, esquema: dict, valor: Any, errores: list[str
     for clave, tipo in esquema.items():
         ruta = f"{prefijo}.{clave}"
         if clave not in valor:
-            errores.append(f"{ruta}: falta")
+            if ruta not in _OPCIONALES:
+                errores.append(f"{ruta}: falta")
         elif isinstance(tipo, dict):
             _comprobar_bloque(ruta, tipo, valor[clave], errores)
         else:
@@ -717,7 +728,18 @@ def _construir(crudo: dict, cuenta_das: str) -> Config:
         estrategias[e.strategy_id] = e
     if errores:
         raise ConfigInvalida(errores)
-    bloque = lambda k: copy.deepcopy(crudo[k])  # noqa: E731
+    def bloque(k: str) -> Any:
+        valor = copy.deepcopy(crudo[k])
+        for ruta, defecto in _OPCIONALES.items():                  # hojas opcionales ausentes → su defecto
+            partes = ruta.split(".")
+            if partes[0] != k or not isinstance(valor, dict):
+                continue
+            destino = valor
+            for parte in partes[1:-1]:
+                destino = destino.setdefault(parte, {})
+            destino.setdefault(partes[-1], copy.deepcopy(defecto))
+        return valor
+
     return Config(
         schema_version=crudo["schema_version"], config_version=crudo["config_version"], sha256=crudo["sha256"],
         motor_hash=crudo["motor_hash"], estrategias_hash=crudo["estrategias_hash"], generado_at=crudo["generado_at"],
@@ -777,6 +799,12 @@ def _cargar_con_respaldo_crudo(ruta: Path, ultimo_bueno: Path,
         resumen = "; ".join(exc1.errores[:3]) + ("; …" if len(exc1.errores) > 3 else "")
         aviso = (f"Configuración del cuadro inválida ({resumen}): se usa el último bueno "
                  f"(config_version {cfg.config_version}) (H-4)")
+        if cfg.fase is not Fase.SOMBRA:
+            # SEG-02 / R-O-03: el respaldo NUNCA sube la fase. Si Jaume bajaba de REAL a SOMBRA y el fichero nuevo
+            # está roto, arrancar con el último bueno en REAL sería mandar dinero que pidió no mandar.
+            aviso += (f" · {AVISO_FASE_FORZADA}: el último bueno estaba en {cfg.fase.value.upper()} y con el "
+                      f"fichero del cuadro roto no se opera con dinero; corrige el fichero (SEG-02, R-O-03)")
+            cfg = dataclasses.replace(cfg, fase=Fase.SOMBRA)
         return cfg, aviso, None
 
 

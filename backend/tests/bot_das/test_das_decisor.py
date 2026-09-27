@@ -16,7 +16,14 @@ reconciliación), F11 (modos degradados), F12/F13 (arranque desde el diario)
 y F14 (estrategia desactivada). Y las trampas: H-5, señal repetida,
 multicuenta, largo con corto abierto, config en caliente, fill con un
 REPLACE pendiente, grupo A primero, comandos de R-M-04 y la coherencia con
-`diario.reconstruir` (H-2).
+`diario.reconstruir` (H-2). Al final, un escenario por cada hallazgo de la
+revisión del 27-sep (el id va en el nombre del test: halt escenario 2 con
+los stops reducidos y restaurados, cisne negro + halt, rearranque con EOD
+vencido, intento cancelado al quedar plana la posición, dos /cerrar
+seguidos, TP antes que la entrada, OrdenDescartada, referencia lenta…).
+
+`Banco` hace también de hilo «referencia» del ejecutor (G1A-03): entre
+mensajes precarga los splits del día y las fichas que el decisor pidió.
 
 POR QUÉ ASÍ. El decisor es puro respecto a la E/S: `Banco` hace de
 ejecutor (ejecuta las acciones en orden, guarda los temporizadores y los
@@ -88,6 +95,7 @@ from app.bot_das.tipos import (
     EstadoTicker,
     EstrategiaConfig,
     Fase,
+    Fill,
     Grupo,
     HiloCaido,
     InvalidarSerie,
@@ -100,6 +108,7 @@ from app.bot_das.tipos import (
     Mensaje,
     Nivel,
     Orden,
+    OrdenDescartada,
     OrdenNueva,
     Origen,
     PosicionTicker,
@@ -137,6 +146,12 @@ PERMUTACIONES = [
 ]
 HASH_B = "sha256:" + "b" * 64
 STOPS = (Proposito.STOP_PRINCIPAL, Proposito.STOP_EMERGENCIA, Proposito.STOP_PROTECCION)
+# D2-09: el catálogo real ya no tiene ninguna entrada «reintentar» (PostOnly pasa al cruce); la mecánica del
+# reintento con token nuevo se prueba con una entrada sintética delante de las reales
+CATALOGO_CON_REINTENTO = rechazos.validar_catalogo(
+    [{"clave": "rechazo_de_prueba", "regex": r"rechazo\s+de\s+prueba", "accion": "reintentar", "nivel": 2,
+      "fuente": "test_das_decisor (entrada sintética)", "ejemplos": ["Rechazo de prueba"]}]
+    + rechazos.cargar_catalogo(rechazos.RUTA_CATALOGO))
 
 
 # ═══════════════════════════ dobles: calendario y Massive ════════════════
@@ -203,7 +218,8 @@ class Banco:
 
     def __init__(self, cfg: Config, directorio: Path, *, orden_mensajes: tuple = ORDEN_DEFECTO,
                  estado: Optional[EstadoBot] = None, massive: Optional[MassiveFalso] = None,
-                 replace_conserva_pp: bool = True, latidos: bool = True, inicio: datetime = INICIO) -> None:
+                 replace_conserva_pp: bool = True, latidos: bool = True, inicio: datetime = INICIO,
+                 catalogo: Optional[list] = None, referencia: Any = None, memoria: Any = None) -> None:
         self.reloj = RelojSimulado(inicio)
         self.hoy = self.reloj.hoy()
         self.libro = LibroSimulado()
@@ -213,13 +229,14 @@ class Banco:
         self.canal = CanalFalso()
         self.mercado = MercadoDAS(self.reloj)
         self.massive = massive if massive is not None else MassiveFalso()
-        self.referencia = Referencia(CLAVE_MASSIVE, directorio / "cache", self.reloj, abrir=self.massive)
+        self.referencia = (referencia if referencia is not None
+                           else Referencia(CLAVE_MASSIVE, directorio / "cache", self.reloj, abrir=self.massive))
         self.estado = estado if estado is not None else EstadoBot(fase=Fase.SOMBRA, dia=self.hoy)
         self.tokens = GeneradorTokens(Origen.EJECUTOR, self.hoy, self.estado.ultimo_seq_token)
         self.disco_roto = False
         self.decisor = Decisor(cfg, self.estado, self.mercado, self.referencia, self.tokens,
-                               rechazos.cargar_catalogo(rechazos.RUTA_CATALOGO), lambda: self.disco_roto,
-                               calendario=CalendarioPrueba())
+                               catalogo if catalogo is not None else rechazos.cargar_catalogo(rechazos.RUTA_CATALOGO),
+                               lambda: self.disco_roto, calendario=CalendarioPrueba(), memoria=memoria)
         self.temporizadores: dict[str, tuple[float, int, dict]] = {}
         self._orden_temporizador = 0
         self.cola: deque[Mensaje] = deque()
@@ -230,6 +247,8 @@ class Banco:
         self._ultimo_latido: Optional[float] = None
         self._proximo_tic: Optional[float] = None
         self._comandos = 0
+        self.precarga_auto = True                                 # el hilo «referencia» del ejecutor (G1A-03)
+        self._splits_precargados = False
 
     # ── reloj y cola ──
     def ahora(self) -> float:
@@ -240,9 +259,27 @@ class Banco:
         self.historial.extend(acciones)
         for a in acciones:
             self._ejecutar(a)
+        if self.precarga_auto:
+            self.precargar_referencia()
         if bombear:
             self.bombear()
         return acciones
+
+    def precargar_referencia(self) -> None:
+        """Lo que hace el HiloVigilado «referencia» del ejecutor (G1A-03): los splits del día al arrancar y las fichas
+        que el decisor pidió. Aquí va sincrónico ENTRE mensajes (nunca dentro de `procesar`)."""
+        if not hasattr(self.referencia, "tomar_pendientes"):
+            return
+        if not self._splits_precargados:
+            self._splits_precargados = True
+            self.referencia.precargar_splits(self.hoy)
+        for t in self.referencia.tomar_pendientes():
+            self.referencia.precargar_ficha(t)
+
+    def simstatus(self, ticker: str = TICKER) -> None:
+        """El estado del símbolo recién preguntado a DAS (G1A-05: un ticker plano no abre sin él)."""
+        self._a_das(protocolo.cmd_get("SymStatus", ticker))
+        self.bombear()
 
     def bombear(self) -> None:
         vueltas = 0
@@ -360,6 +397,9 @@ class Banco:
         self.arrancar()
         for ticker, bid, ask, last in cotizaciones:
             self.cotizar(ticker, bid, ask, last)
+        for ticker in sorted({TICKER, OTRO} | {c[0] for c in cotizaciones}):
+            self.referencia.pedir_ficha(ticker)                   # como si el radar ya los hubiera visto (G1A-03)
+        self.precargar_referencia()
         for ticker, sid, n in locates:
             self.estado.locates[(ticker, sid)] = Locate(ticker=ticker, strategy_id=sid, pedidas=n, localizadas=n,
                                                         estado="Located")
@@ -509,12 +549,21 @@ def banco(cfg: Config, tmp_path: Path) -> Banco:
 
 # ═══════════════════════════ F1: la entrada entera, exacta ═══════════════
 def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
-    """F1 (R-B-01 v3, R-C-01 v3, F1.9): la señal, el fill y el cierre del intento con sus acciones EXACTAS y en orden."""
+    """F1 (R-B-01 v3, R-C-01 v3, F1.9): la señal, el fill y el cierre del intento con sus acciones EXACTAS y en orden.
+
+    COB-03: la primera métrica es `retraso_senal_pct` (último de DAS contra el
+    precio de la señal). G1A-05: el estado del símbolo está fresco (si no, la
+    señal esperaría al `GET SymStatus`). COB-05: la métrica del slippage se
+    llama `slippage_vs_senal_pct`. L0-01: la serie de stops se invalida ANTES
+    de enviar los stops nuevos.
+    """
     b = banco
     ev = evento()
     lote_id = lote_de(ev)
+    b.simstatus()
     acciones = b.senal(ev, bombear=False)
     assert [resumen(a) for a in acciones] == [
+        ("Anotar", "metrica"),
         ("Anotar", "senal"),
         ("Anotar", "lote"),
         ("Anotar", "locate_estado"),
@@ -524,6 +573,8 @@ def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
         ("Programar", T_CRUCE, 60.0),
         ("Anotar", "metrica"),
     ]
+    retraso = anotaciones(acciones, "metrica")[0].datos
+    assert (retraso["nombre"], retraso["valor"]) == ("retraso_senal_pct", D("0"))      # COB-03: último 3,45 = señal
     assert anotaciones(acciones, "lote")[0].datos["estado"] == "abriendo"
     assert anotaciones(acciones, "locate_estado")[0].datos["usadas"] == 100
     assert anotaciones(acciones, "metrica")[-1].datos["nombre"] == "senal_a_orden_ms"
@@ -572,11 +623,15 @@ def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
     assert f"cruce:{TICKER}" not in b.temporizadores
     avisos_fill = [a for a in execute if isinstance(a, Avisar) and a.clave == f"fill:{lote_id}"]
     assert avisos_fill and avisos_fill[0].texto.startswith("[SOMBRA]")
+    slippage = [a.datos for a in anotaciones(execute, "metrica") if a.datos["nombre"].startswith("slippage")]
+    assert [m["nombre"] for m in slippage] == ["slippage_vs_senal_pct"]                  # COB-05 (§11.1)
+    assert slippage[0]["valor"] == D("0") and slippage[0]["bps"] == D("0")
     principal, emergencia = b.enviadas(*STOPS)
     assert b.orden(principal.token).estado is EstadoOrden.ACCEPTED
     assert b.orden(emergencia.token).estado is EstadoOrden.ACCEPTED
     assert all(isinstance(a.datos.get("mono"), float) for a in anotaciones(b.historial, "fill"))
     assert b.canal.series_invalidadas == [("stops:XYZ", 1)]
+    assert b.canal.invalida_antes_de_enviar("stops:XYZ", 1)                              # L0-01 / riesgo 7
     lineas_stop = [(linea, serie, version) for linea, serie, version in b.canal.lineas if "STOPLMTP" in linea]
     assert lineas_stop == [(f"NEWORDER {principal.token} B XYZ STOP 100 STOPLMTP 4 4.12 TIF=DAY+", "stops:XYZ", 1),
                            (f"NEWORDER {emergencia.token} B XYZ STOP 100 STOPLMTP 4.52 6.52 TIF=DAY+", "stops:XYZ", 1)]
@@ -858,7 +913,13 @@ def test_f3_segunda_senal_suma_y_reinicia_con_el_total(cfg: Config, tmp_path: Pa
 
 # ═══════════════════════════ F4: take profit ═════════════════════════════
 def test_f4_tp_con_prioridad_sobre_la_entrada_viva(cfg: Config, tmp_path: Path) -> None:
-    """F4 / R-D-07: con una entrada viva en el ticker, el TP va PRIMERO al ask y la entrada espera; luego se retoma."""
+    """F4 / R-D-07: con una entrada viva en el ticker, el TP va PRIMERO al ask y la entrada espera; luego se retoma.
+
+    G1A-06 (b) / D2-06 (decisión del director): «una tras otra, nunca juntas»:
+    al llegar el TP solo se cancela la entrada de B; el TP sale al ask cuando
+    DAS confirma el Canceled (antes, la compra al ask convivía con nuestra
+    venta que agregaba: autonegociación).
+    """
     config = cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)])
     b = Banco(config, tmp_path)
     b.preparar(locates=((TICKER, SID, 1000), (TICKER, SID2, 1000)))
@@ -871,13 +932,19 @@ def test_f4_tp_con_prioridad_sobre_la_entrada_viva(cfg: Config, tmp_path: Path) 
     acciones = b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(salida()),
                                               evento=salida(), momento=salida().momento, recibida_en=b.ahora())),
                           bombear=False)
-    tps = [a for a in acciones if isinstance(a, EnviarOrden)]
-    assert [(o.orden.proposito, o.orden.lado, o.orden.qty, o.orden.precio) for o in tps] == \
-           [(Proposito.TP_CRUCE, Lado.COMPRA, 50, D("3.46"))]
+    assert not acciones_de(acciones, EnviarOrden)                       # nunca juntas: el TP espera al Canceled
     cancelacion = acciones_de(acciones, Cancelar)
     assert [c.token for c in cancelacion] == [entrada_b.token]
-    assert acciones.index(tps[0]) < acciones.index(cancelacion[0])      # el TP sale ANTES de pausar la entrada
     b.bombear()
+    tps = b.enviadas(Proposito.TP_CRUCE, desde=marca)
+    assert [(o.lado, o.qty, o.precio) for o in tps] == [(Lado.COMPRA, 50, D("3.46"))]
+    assert b.orden(entrada_b.token).estado is EstadoOrden.CANCELED
+    historial = b.desde(marca)
+    cancelado = next(i for i, a in enumerate(historial) if isinstance(a, Anotar) and a.tipo == "orden_act"
+                     and a.datos["token"] == entrada_b.token and a.datos["accion"] == "Canceled")
+    envio_tp = next(i for i, a in enumerate(historial) if isinstance(a, EnviarOrden)
+                    and a.orden.proposito is Proposito.TP_CRUCE)
+    assert cancelado < envio_tp                                         # el TP sale DESPUÉS del Canceled
     assert b.pos().neta_fills == -50
     assert b.pos().intento is not None and f"tp_espera_entrada:{TICKER}" in b.temporizadores
     tras_tp = b.desde(marca)
@@ -891,7 +958,10 @@ def test_f4_tp_con_prioridad_sobre_la_entrada_viva(cfg: Config, tmp_path: Path) 
 
 
 def test_f4_tp_parcial_agrega_y_cruza_el_resto_con_techo(banco: Banco) -> None:
-    """R-D-03 v2: sin conflicto el TP agrega 60 s en el punto medio; luego, CONFIRMADO el Canceled, al ask con techo 3 %."""
+    """R-D-03 v2: sin conflicto el TP agrega 60 s en el punto medio; luego, CONFIRMADO el Canceled, al ask con techo 3 %.
+
+    D2-07: el temporizador del cruce es POR ORDEN (`tp_cruce:<lote>:<token>`): dos TP del mismo lote no se pisan.
+    """
     b = banco
     abrir_posicion(b)
     b.cotizar(TICKER, "3.44", "3.46", "3.45")
@@ -900,7 +970,7 @@ def test_f4_tp_parcial_agrega_y_cruza_el_resto_con_techo(banco: Banco) -> None:
                                               momento=ev.momento, recibida_en=b.ahora())))
     tp = [a.orden for a in acciones if isinstance(a, EnviarOrden)]
     assert [(o.proposito, o.qty, o.precio, o.post_only) for o in tp] == [(Proposito.TP_AGREGAR, 50, D("3.45"), True)]
-    clave = f"tp_cruce:{lote_de(evento())}"
+    clave = f"tp_cruce:{lote_de(evento())}:{tp[0].token}"
     assert clave in b.temporizadores
     marca = b.marca()
     b.avanzar(60.5)
@@ -913,24 +983,53 @@ def test_f4_tp_parcial_agrega_y_cruza_el_resto_con_techo(banco: Banco) -> None:
     assert b.pos().lotes[lote_de(evento())].llenas == 50
 
 
-def test_f4_tp_rechazado_se_reintenta_y_conserva_su_cruce(banco: Banco) -> None:
-    """R-B-07 + R-D-03 v2: el TP rechazado («PostOnly would cross») sale con token nuevo y SU `tp_cruce` sigue a la orden nueva."""
-    b = banco
+def test_f4_tp_rechazado_se_reintenta_y_conserva_su_cruce(cfg: Config, tmp_path: Path) -> None:
+    """R-B-07 + R-D-03 v2 / D2-07: un TP rechazado con un motivo conocido de «reintentar» sale con token nuevo y SU
+    `tp_cruce:<lote>:<token>` pasa a la orden nueva (el de la rechazada se desprograma)."""
+    b = Banco(cfg, tmp_path, catalogo=CATALOGO_CON_REINTENTO)
+    b.preparar()
     abrir_posicion(b)
     b.cotizar(TICKER, "3.44", "3.46", "3.45")
-    b.libro.rechazar_siguiente("PostOnly would cross")
+    b.libro.rechazar_siguiente("Rechazo de prueba")
     ev = salida()
     b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(ev), evento=ev, momento=ev.momento,
                                    recibida_en=b.ahora())))
     rechazado, reintento = b.enviadas(Proposito.TP_AGREGAR)
     assert b.orden(rechazado.token).estado is EstadoOrden.REJECTED
     assert b.orden(reintento.token).intentos == 1 and reintento.qty == 50
-    clave = f"tp_cruce:{lote_de(evento())}"
-    assert b.temporizadores[clave][2]["token"] == reintento.token
+    lote_id = lote_de(evento())
+    assert b.temporizadores[f"tp_cruce:{lote_id}:{reintento.token}"][2]["token"] == reintento.token
+    assert f"tp_cruce:{lote_id}:{rechazado.token}" not in b.temporizadores
     assert b.pos().estado is EstadoTicker.NORMAL                         # reintento conocido: sin pausa
     marca = b.marca()
     b.avanzar(60.5)
     assert [(o.qty, o.precio) for o in b.enviadas(Proposito.TP_CRUCE, desde=marca)] == [(50, D("3.46"))]
+
+
+def test_d2_09_tp_rechazado_por_postonly_cruza_ya_con_techo_y_vigila_el_limbo(banco: Banco) -> None:
+    """D2-09 (decisión del director) / D2-13: el TP rechazado por «PostOnly would cross» NO se reintenta al mismo precio:
+    pasa YA al cruce (al ask con techo 3 %), sin pausa, y se programa el aviso de limbo de ESA orden."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    b.libro.rechazar_siguiente("PostOnly would cross")
+    ev = salida()
+    b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(ev), evento=ev, momento=ev.momento,
+                                   recibida_en=b.ahora())), bombear=False)
+    rechazado = b.enviadas(Proposito.TP_AGREGAR)[0]
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)                # el cruce no encuentra acciones al ask
+    cruce = b.enviadas(Proposito.TP_CRUCE)
+    assert [(o.qty, o.precio, o.post_only) for o in cruce] == [(50, D("3.46"), False)]
+    assert len(b.enviadas(Proposito.TP_AGREGAR)) == 1                   # nunca otro agregar al mismo precio
+    assert b.orden(rechazado.token).estado is EstadoOrden.REJECTED
+    assert b.pos().estado is EstadoTicker.NORMAL
+    lote_id = lote_de(evento())
+    assert f"tp_cruce:{lote_id}:{rechazado.token}" not in b.temporizadores
+    assert f"tp_limbo:{lote_id}:{cruce[0].token}" in b.temporizadores
+    marca = b.marca()
+    b.avanzar(5.5)
+    limbo = [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("limbo:")]
+    assert len(limbo) == 1 and limbo[0].nivel is Nivel.AVISO
 
 
 # ═══════════════════════════ F5: hora y EOD ══════════════════════════════
@@ -1012,6 +1111,7 @@ def test_f7_cisne_negro_informes_con_cadencia_y_cierre_humano(banco: Banco) -> N
     acciones = b.comando("/cerrar XYZ SI")
     cancelados = [a.token for a in acciones if isinstance(a, Cancelar)]
     assert cancelados[:2] == [emergencia.token, principal.token]        # la emergencia PRIMERO (R-G-03 (3))
+    b.avanzar(1.0)                         # E2-03: la compra sale en la vuelta en que la emergencia ya figura cancelada
     cierre = b.enviadas(Proposito.CIERRE_HUMANO, desde=marca)
     assert [(o.qty, o.precio) for o in cierre] == [(100, D("7.46"))]   # techo 5 % sobre el ask (R-D-06)
     assert b.pos().neta_fills == 0
@@ -1052,20 +1152,40 @@ def test_f7_parar_avisos_silencia_solo_los_informes(banco: Banco) -> None:
 
 
 # ═══════════════════════════ F8: rechazos ════════════════════════════════
-def test_f8_rechazo_conocido_reintenta_con_token_nuevo_y_nunca_un_tercero(banco: Banco) -> None:
-    """R-B-07: «PostOnly would cross» → 2 reintentos con token NUEVO (re-preciados al libro) y al tercero, pausa."""
-    b = banco
+def test_f8_rechazo_conocido_reintenta_con_token_nuevo_y_nunca_un_tercero(cfg: Config, tmp_path: Path) -> None:
+    """R-B-07: un rechazo conocido de «reintentar» → 2 reintentos con token NUEVO (re-preciados al libro) y al tercero,
+    pausa. (D2-09: «PostOnly would cross» ya no es de «reintentar»; la mecánica va con una entrada sintética.)"""
+    b = Banco(cfg, tmp_path, catalogo=CATALOGO_CON_REINTENTO)
+    b.preparar()
     for _ in range(3):
-        b.libro.rechazar_siguiente("PostOnly would cross")
+        b.libro.rechazar_siguiente("Rechazo de prueba")
     b.senal(evento())
     envios = b.enviadas(Proposito.ENTRADA_AGREGAR)
     assert len(envios) == 3 and len({o.token for o in envios}) == 3
     assert [b.orden(o.token).intentos for o in envios] == [0, 1, 2]
     assert all(b.orden(o.token).estado is EstadoOrden.REJECTED for o in envios)
     avisos_rechazo = [a for a in b.historial if isinstance(a, Avisar) and (a.clave or "").startswith(f"rechazo:{TICKER}:")]
-    assert len(avisos_rechazo) == 3 and all("PostOnly would cross" in a.texto for a in avisos_rechazo)
+    assert len(avisos_rechazo) == 3 and all("Rechazo de prueba" in a.texto for a in avisos_rechazo)
     assert b.pos().estado is EstadoTicker.PAUSADO and b.pos().intento is None
     assert anotaciones(b.historial, "rechazo")[-1].datos["decision"] == rechazos.DECISION_PAUSA
+
+
+def test_d2_09_entrada_rechazada_por_postonly_pasa_al_cruce_sin_pausa(banco: Banco) -> None:
+    """D2-09 (decisión del director): el agregar de la entrada rechazado por «PostOnly would cross» NO se reintenta al
+    mismo precio ni pausa el ticker: pasa YA a la fase de cruce de R-B-01 v3 (bid · (1 − 0,5 %))."""
+    b = banco
+    b.libro.rechazar_siguiente("PostOnly would cross")
+    b.simstatus()
+    b.senal(evento())
+    assert b.temporizadores[next(k for k in b.temporizadores if k.startswith("cruce_postonly:"))][0] == b.ahora()
+    b.avanzar(0)                                                        # el temporizador de 0 s: el cruce sale ya
+    agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)
+    cruce = b.enviadas(Proposito.ENTRADA_CRUCE)
+    assert len(agregar) == 1 and b.orden(agregar[0].token).estado is EstadoOrden.REJECTED
+    assert [(o.qty, o.precio, o.post_only) for o in cruce] == [(100, D("3.42"), False)]
+    assert b.pos().estado is EstadoTicker.NORMAL
+    assert f"cruce:{TICKER}" not in b.temporizadores                   # ya no se espera a t_limite
+    assert any(a.datos.get("fase") == "cruzando" for a in anotaciones(b.historial, "intento"))
 
 
 def test_f8_rechazo_desconocido_con_la_posicion_cubierta_pausa(banco: Banco) -> None:
@@ -1142,6 +1262,8 @@ def test_f9_locates_escalonados_de_dos_estrategias_con_su_coste(cfg: Config, tmp
     consultas = [a for a in acciones if isinstance(a, LocateInquire)]
     assert [(c.ticker, c.qty, c.ruta) for c in consultas] == [(TICKER, 1000, "ALLROUTEWTTYPE1"),
                                                              (TICKER, 500, "ALLROUTEWTTYPE1")]
+    assert not [a for a in b.historial if isinstance(a, LocateComprar)]  # E2-05: las ofertas se recogen 0,5 s
+    b.avanzar(1)
     compras = [a for a in b.historial if isinstance(a, LocateComprar)]
     assert [(c.qty, c.ruta) for c in compras] == [(1000, "LOCSIM"), (500, "LOCSIM")]
     assert all(descomponer(c.token)[0] is Origen.EJECUTOR_LOCATE for c in compras)
@@ -1546,7 +1668,8 @@ ACCIONES_COMANDO: list[tuple[str, Optional[Callable[[Banco], None]], Callable[[B
      or pytest.fail("no cerró")),
     ("/cerrar XYZ SI", None, lambda b, a: (b.enviadas(Proposito.CIERRE_HUMANO) and b.pos().neta_fills == 0)
      or pytest.fail("no cerró")),
-    ("/cerrar XYZ 40 SI", None, lambda b, a: b.pos().neta_fills == -60 or pytest.fail("no cerró 40")),
+    ("/cerrar XYZ 40 SI", None,       # E2-03: la compra sale tras ver la emergencia reducida (una vuelta de 0,5 s)
+     lambda b, a: (b.avanzar(1.0), b.pos().neta_fills == -60)[1] or pytest.fail("no cerró 40")),
     ("/cancelar_ordenes XYZ SI", None,
      lambda b, a: (acciones_de(a, CancelarTicker) and b.pos().estado is EstadoTicker.CONTROL_HUMANO)
      or pytest.fail("no canceló")),
@@ -1672,3 +1795,1366 @@ def test_importar_el_decisor_no_carga_pandas_ni_arranca_hilos() -> None:
                              capture_output=True, text=True, timeout=120)
     assert salida_.returncode == 0, salida_.stderr
     assert salida_.stdout.split() == ["False", "0"]
+
+
+# ═══════════════════════════ correcciones de la revisión (27-sep) ════════
+# Un escenario por hallazgo (el id va en el nombre); las decisiones del director mandan sobre el arreglo del revisor.
+def _vivas_compra(b: Banco, *propositos: Proposito, ticker: str = TICKER) -> int:
+    """Acciones que las compras VIVAS del ticker (de esos propósitos, o todas) aún pueden ejecutar."""
+    return sum(max(min(o.lvqty, o.qty - o.llenas) if o.lvqty > 0 else o.qty - o.llenas, 0)
+               for o in b.estado.ordenes.values()
+               if o.ticker == ticker and o.lado is Lado.COMPRA and (not propositos or o.proposito in propositos)
+               and o.estado in (EstadoOrden.SENDING, EstadoOrden.ACCEPTED, EstadoOrden.PARTIAL, EstadoOrden.HOLD,
+                                EstadoOrden.TRIGGERED))
+
+
+def _sin_compra_doble(b: Banco, corto: int, ticker: str = TICKER) -> bool:
+    """Riesgo 6 / G1A-01: cada «capa» de stops (principal o emergencia, que cubren las MISMAS acciones por diseño) más
+    las compras de cierre vivas nunca pasa de lo que queda corto."""
+    cierre = _vivas_compra(b, Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA,
+                           Proposito.CIERRE_HUMANO, ticker=ticker)
+    principal = _vivas_compra(b, Proposito.STOP_PRINCIPAL, Proposito.STOP_PROTECCION, ticker=ticker)
+    emergencia = _vivas_compra(b, Proposito.STOP_EMERGENCIA, ticker=ticker)
+    return principal + cierre <= corto and emergencia + cierre <= corto
+
+
+def _a_halt(b: Banco, ta: str = "P", tat: str = "09:27:00", cot: tuple = ("4.04", "4.06", "4.05"),
+            ev: Optional[Evento] = None) -> None:
+    """Posición corta de 100 (principal 4,00/4,12 y emergencia 4,52/6,52 con el evento por defecto) y el símbolo
+    parado a `cot`."""
+    abrir_posicion(b, ev)
+    b.libro.halt(TICKER, ta, tat)
+    b.cotizar(TICKER, *cot)
+    b.avanzar(1.5)
+    assert b.pos().estado is EstadoTicker.HALT
+
+
+def test_g1a_01_g1b_04_halt_escenario_2_reabre_sobre_el_stop_sin_compra_doble(banco: Banco) -> None:
+    """G1A-01 / G1B-04 / D2a-09 (decisión del director): la salida del halt por OPEN por Q acciones BAJA antes principal y
+    emergencia en Q (aquí se cancelan: Q = toda la posición). Reabriendo POR ENCIMA del disparo del principal (escenario
+    2) la cuenta queda plana: ninguna compra doble, ninguna venta del exceso, ningún incidente de cuenta larga."""
+    b = banco
+    _a_halt(b)
+    principal, emergencia = b.enviadas(*STOPS)
+    marca = b.marca()
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 1, tzinfo=ET))
+    tanda = b.desde(marca)
+    envio = next(i for i, a in enumerate(tanda) if isinstance(a, EnviarOrden) and a.orden.proposito is Proposito.HALT_OPEN)
+    cancelados = {a.token: i for i, a in enumerate(tanda) if isinstance(a, Cancelar)}
+    assert {principal.token, emergencia.token} <= set(cancelados)
+    assert max(cancelados[principal.token], cancelados[emergencia.token]) < envio     # los stops bajan ANTES
+    assert _vivas_compra(b, *STOPS) == 0 and _sin_compra_doble(b, 100)  # nunca dos compras sobre las mismas acciones
+    b.libro.reabrir(TICKER, D("4.10"))                                  # sobre el disparo del principal (4,00)
+    b.avanzar(4)
+    assert b.pos().neta_fills == 0 and b.pos().neta_das == 0
+    assert not b.enviadas(Proposito.VENTA_EXCESO)
+    assert not [a for a in anotaciones(b.historial, "incidente") if a.datos.get("tipo") == "cuenta_larga"]
+
+
+def test_g1a_01_salida_del_halt_rechazada_restaura_los_stops_y_avisa(banco: Banco) -> None:
+    """G1A-01 (director): si la salida del halt recibe Send_Rej, `plan()` devuelve principal y emergencia a la posición
+    entera y se avisa nivel 2."""
+    b = banco
+    _a_halt(b)
+    b.rechazar[Proposito.HALT_OPEN] = "Route is closed"
+    marca = b.marca()
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 1, tzinfo=ET))
+    salida_halt = b.enviadas(Proposito.HALT_OPEN, desde=marca)
+    assert len(salida_halt) == 1 and b.orden(salida_halt[0].token).estado is EstadoOrden.REJECTED
+    repuestos = b.enviadas(*STOPS, desde=marca)
+    assert sorted((o.proposito.value, o.qty) for o in repuestos) == [("stop_emergencia", 100), ("stop_principal", 100)]
+    aviso = [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("halt_salida_sin_llenar:")]
+    assert len(aviso) == 1 and aviso[0].nivel is Nivel.AVISO
+    assert _vivas_compra(b, Proposito.STOP_EMERGENCIA) == 100 and _sin_compra_doble(b, 100)   # cubierta otra vez
+    assert anotaciones(b.desde(marca), "halt_salida_sin_llenar")[0].datos["regla"] == "G1A-01"
+
+
+def test_g1a_01_salida_del_halt_sin_llenar_a_los_2_s_se_retira_y_vuelven_los_stops(banco: Banco) -> None:
+    """G1A-01 (director): 2 s después de la reapertura, la salida del halt que no ha llenado se RETIRA y, con su
+    Canceled, los stops vuelven por lo que queda corto (aviso 2)."""
+    b = banco
+    _a_halt(b)
+    b.libro.llenar_parcial(D("0.5"), TICKER)                            # la subasta solo llenará la mitad
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 1, tzinfo=ET))
+    salida_halt = b.enviadas(Proposito.HALT_OPEN)[0]
+    b.libro.llenar_parcial(D("1"), TICKER)
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("3.95"))
+    b.avanzar(1.5)
+    assert b.pos().neta_fills == -50
+    assert f"halt_cierre_verificar:{TICKER}" in b.temporizadores
+    b.avanzar(3)
+    assert salida_halt.token in [c.token for c in acciones_de(b.desde(marca), Cancelar)]
+    assert b.orden(salida_halt.token).estado is EstadoOrden.CANCELED
+    repuestos = b.enviadas(*STOPS, desde=marca)
+    assert sorted((o.proposito.value, o.qty) for o in repuestos) == [("stop_emergencia", 50), ("stop_principal", 50)]
+    assert _vivas_compra(b, Proposito.STOP_EMERGENCIA) == 50 and _sin_compra_doble(b, 50)
+    assert any(isinstance(a, Avisar) and (a.clave or "").startswith("halt_salida_sin_llenar:") for a in b.desde(marca))
+
+
+def test_g1a_04_halt_con_cisne_negro_no_manda_ordenes_y_avisa_3(banco: Banco) -> None:
+    """G1A-04 (R-G-01: «cierra el HUMANO»): con el cisne negro activo, halt_decidir y la reapertura NO envían órdenes;
+    solo anotan y avisan nivel 3 con la decisión que habrían tomado."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "6.90", "7.10", "7.00")                          # fogonazo: cisne negro
+    b.tic_das()
+    assert b.pos().estado is EstadoTicker.BS
+    b.libro.halt(TICKER, "P", "09:27:00")
+    b.avanzar(1.5)
+    marca = b.marca()
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 1, tzinfo=ET))
+    salidas_halt = (Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA)
+    assert not b.enviadas(*salidas_halt)
+    sin_orden = anotaciones(b.desde(marca), "halt_sin_orden")
+    assert sin_orden and sin_orden[0].datos["motivo"] == "cisne negro"
+    avisos3 = [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("halt_sin_orden:")]
+    assert len(avisos3) == 1 and avisos3[0].nivel is Nivel.MAXIMO and "cierra el humano" in avisos3[0].texto
+    b.libro.reabrir(TICKER, D("7.00"))
+    b.avanzar(3)
+    assert not b.enviadas(*salidas_halt)
+    assert b.pos().neta_fills == -100 and b.pos().estado is EstadoTicker.BS
+
+
+def test_g1b_01_rearranque_con_eod_vencido_y_das_plano_no_compra_hasta_reconciliar(cfg: Config, tmp_path: Path) -> None:
+    """G1B-01 (director, R-J-02.5): al rearrancar con la hora/EOD del lote YA vencida y DAS plano, ninguna salida por
+    temporizador sale antes de reconciliar (se reprograma a 0,5 s); la reconciliación (caso 5) cierra el lote y NO se
+    compra nada: la cuenta nunca queda larga."""
+    estado = _estado_con_lote()
+    next(iter(estado.posiciones[TICKER].lotes.values())).eod = "09:20:00"
+    b = Banco(cfg, tmp_path, estado=estado)
+    b.libro.sembrar_posicion(TICKER, 0, D("3.45"))                      # el humano (o el vigilante) ya la cerró
+    b.preparar(locates=(), reconciliar=False)
+    assert "reconciliacion" in b.estado.modo_degradado
+    b.avanzar(5)
+    assert not [o for o in b.enviadas() if o.lado is Lado.COMPRA]
+    aplazadas = anotaciones(b.historial, "salida_aplazada")
+    assert aplazadas and "reconciliacion" in aplazadas[0].datos["motivo"]
+    assert b.pos().neta_fills == 0 and b.pos().neta_das == 0
+    assert all(lote.estado is EstadoLote.CERRADO for lote in b.pos().lotes.values())
+    assert "reconciliacion" not in b.estado.modo_degradado
+
+
+def test_g1b_02_intento_cancelado_al_quedar_plana_la_posicion(banco: Banco) -> None:
+    """G1B-02 (director, R-C-11 a): el stop deja plana la posición con el intento de entrada vivo → el intento se CANCELA
+    y se cierra con lo llenado: ninguna venta en corto posterior (antes reentraba en un lote CERRADO sin stops)."""
+    b = banco
+    b.libro.llenar_parcial(D("0.3"), TICKER)                            # la venta agregada llenará 30 de 100
+    b.simstatus()
+    b.senal(evento())
+    b.libro.llenar_parcial(D("1"), TICKER)
+    llenar_entrada(b)
+    assert b.pos().neta_fills == -30 and b.pos().intento is not None
+    marca = b.marca()
+    b.cotizar(TICKER, "4.00", "4.05", "4.01")                          # el principal (4,00) llena las 30
+    b.tic_das()
+    b.avanzar(3)
+    assert b.pos().neta_fills == 0 and b.pos().intento is None
+    assert not [o for o in b.enviadas(desde=marca) if o.lado is Lado.CORTO]
+    assert anotaciones(b.desde(marca), "intento_fin")
+    lote = b.pos().lotes[lote_de(evento())]
+    assert lote.estado is EstadoLote.CERRADO and lote.llenas == 0
+
+
+def test_g1b_02_cob_01_tp_de_la_misma_estrategia_con_su_entrada_viva_cancela_el_intento(banco: Banco) -> None:
+    """G1B-02 / COB-01 (director): el TP del motor de la MISMA estrategia con su entrada viva cancela el intento (R-D-07
+    es solo entre estrategias DISTINTAS) y el TP sale, tras el Canceled, por lo llenado (30), nunca por las 100 del
+    evento; después ninguna venta en corto."""
+    b = banco
+    b.libro.llenar_parcial(D("0.3"), TICKER)
+    b.simstatus()
+    b.senal(evento())
+    agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
+    b.libro.llenar_parcial(D("1"), TICKER)
+    llenar_entrada(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    marca = b.marca()
+    ev = salida(acciones=100.0)
+    acciones = b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(ev), evento=ev,
+                                              momento=ev.momento, recibida_en=b.ahora())), bombear=False)
+    assert agregar.token in [c.token for c in acciones_de(acciones, Cancelar)]
+    assert not acciones_de(acciones, EnviarOrden)                       # nunca juntas: el TP espera al Canceled
+    b.bombear()
+    b.avanzar(1)
+    assert b.orden(agregar.token).estado is EstadoOrden.CANCELED and b.pos().intento is None
+    tp = b.enviadas(Proposito.TP_AGREGAR, Proposito.TP_CRUCE, desde=marca)
+    assert [o.qty for o in tp] == [30]
+    assert not [o for o in b.enviadas(desde=marca) if o.lado is Lado.CORTO]
+    assert anotaciones(b.desde(marca), "salida_proporcion")[0].datos["qty"] == 30          # G1A-16: siempre anotado
+
+
+def test_cob_01_salida_del_motor_sin_fills_cancela_el_intento_y_no_cruza(banco: Banco) -> None:
+    """COB-01 (R-B-01 v3 punto 1: «se cancela antes si la estrategia deja de decir dentro»): la salida del motor (SL) de
+    la MISMA estrategia con su orden agregando SIN fills cancela el intento; al vencer t_limite no se cruza nada."""
+    b = banco
+    b.simstatus()
+    b.senal(evento())
+    agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
+    ev = salida(motivo="SL", acciones=100.0)
+    b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(ev), evento=ev, momento=ev.momento,
+                                   recibida_en=b.ahora())))
+    assert b.orden(agregar.token).estado is EstadoOrden.CANCELED
+    b.avanzar(61)
+    assert not b.enviadas(Proposito.ENTRADA_CRUCE)
+    assert b.pos().intento is None and b.pos().neta_fills == 0
+    assert any(a.datos.get("estrategia_fuera") == SID for a in anotaciones(b.historial, "intento"))
+
+
+def test_cob_01_salida_con_fills_parciales_retira_el_intento_y_protege_lo_llenado(banco: Banco) -> None:
+    """COB-01 (variante del revisor): SL del motor con fills parciales → el intento se cancela (nada se cruza) y lo
+    llenado queda con su par de stops."""
+    b = banco
+    b.libro.llenar_parcial(D("0.4"), TICKER)
+    b.simstatus()
+    b.senal(evento())
+    b.libro.llenar_parcial(D("1"), TICKER)
+    llenar_entrada(b)
+    assert b.pos().neta_fills == -40
+    ev = salida(motivo="SL", acciones=100.0)
+    b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(ev), evento=ev, momento=ev.momento,
+                                   recibida_en=b.ahora())))
+    b.avanzar(61)
+    assert not b.enviadas(Proposito.ENTRADA_CRUCE)
+    assert b.pos().intento is None and b.pos().neta_fills == -40
+    assert sorted((o.proposito.value, o.qty) for o in b.enviadas(*STOPS)) == [("stop_emergencia", 40),
+                                                                               ("stop_principal", 40)]
+
+
+def _dos_posiciones(b: Banco) -> None:
+    b.preparar(locates=((TICKER, SID, 1000), (OTRO, SID, 1000)),
+               cotizaciones=((TICKER, "3.44", "3.46", "3.45"), (OTRO, "3.44", "3.46", "3.45")))
+    abrir_posicion(b)
+    b.senal(evento(ticker=OTRO))
+    b.cotizar(OTRO, "3.45", "3.47", "3.45")
+    b.tic_das()
+    assert b.pos(OTRO).neta_fills == -100
+
+
+def test_g1b_03_dos_cerrar_seguidos_cada_uno_con_sus_reintentos_aviso_y_stops(cfg: Config, tmp_path: Path) -> None:
+    """G1B-03 / D2-01 (director): «/cerrar X» y «/cerrar Y» seguidos: el reintento es POR TICKER (`cerrar_todo:<t>`),
+    así que cada uno hace sus reintentos, al agotarse RETIRA su orden de cierre (D2-04), avisa nivel 3 con su clave y
+    vuelve a tener stops. Antes el segundo borraba el reintento del primero y X quedaba corto sin stops."""
+    b = Banco(cfg, tmp_path)
+    _dos_posiciones(b)
+    for t in (TICKER, OTRO):
+        b.cotizar(t, "3.44", "3.46", "3.45", tam_ask=0)                 # sin liquidez: el cierre no llena
+    marca = b.marca()
+    b.comando("/cerrar XYZ SI")
+    b.avanzar(0.5)
+    b.comando("/cerrar ABC SI")
+    assert {k for k in b.temporizadores if k.startswith("cerrar_todo:")} == {"cerrar_todo:XYZ", "cerrar_todo:ABC"}
+    b.avanzar(12)
+    for t in (TICKER, OTRO):
+        cierres = [o for o in b.enviadas(Proposito.CIERRE_HUMANO, desde=marca) if o.ticker == t]
+        assert len(cierres) == 3                                        # el primero y sus 2 reintentos (R-D-06)
+        assert all(b.orden(o.token).estado is EstadoOrden.CANCELED for o in cierres)   # el último, RETIRADO
+        agotado = [a for a in b.desde(marca) if isinstance(a, Avisar) and a.clave == f"cerrar_todo:{t}:agotado"]
+        assert len(agotado) == 1 and agotado[0].nivel is Nivel.MAXIMO and "RETIRADO" in agotado[0].texto
+        repuestos = [o for o in b.enviadas(*STOPS, desde=marca) if o.ticker == t]
+        assert sorted((o.proposito.value, o.qty) for o in repuestos) == [("stop_emergencia", 100),
+                                                                          ("stop_principal", 100)]
+        assert _sin_compra_doble(b, 100, ticker=t)
+    assert not [k for k in b.temporizadores if k.startswith("cerrar_todo:")]
+
+
+def test_d2_03_g1b_15_cerrar_cancela_primero_y_la_orden_sale_tras_el_canceled(banco: Banco) -> None:
+    """D2-03 / G1B-15: «/cerrar X SI» en dos pasos: CancelarTicker y, con órdenes vivas, la orden de cierre sale SOLO
+    tras el Canceled de todo lo vivo, por la neta de ESE momento."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    b.das_contesta = False
+    acciones = b.comando("/cerrar XYZ SI")
+    assert acciones_de(acciones, CancelarTicker) and not b.enviadas(Proposito.CIERRE_HUMANO)
+    assert b.temporizadores["cerrar_todo:XYZ"][2]["fase"] == "enviar"
+    b.das_contesta = True
+    principal, emergencia = b.enviadas(*STOPS)
+    marca = b.marca()
+    b.dar(b.das.recibir(f"CANCEL {b.orden(principal.token).id_das}") +
+          b.das.recibir(f"CANCEL {b.orden(emergencia.token).id_das}"))
+    cierre = b.enviadas(Proposito.CIERRE_HUMANO, desde=marca)
+    assert [(o.qty, o.precio) for o in cierre] == [(100, D("3.64"))]    # ask 3,46 · 1,05 al tick de arriba (R-D-06)
+    assert b.pos().neta_fills == 0
+
+
+def test_d2a_06_orden_descartada_por_el_emisor_se_cierra_y_se_replanifica(banco: Banco) -> None:
+    """D2a-06 (director): el emisor devuelve `OrdenDescartada` por un NEWORDER que no salió → la orden pasa a CLOSED con
+    el motivo (nunca se cree viva) y el plan de stops del ticker se relanza EN EL ACTO."""
+    b = banco
+    abrir_posicion(b)
+    emergencia = b.enviadas(Proposito.STOP_EMERGENCIA)[0]
+    b.das_contesta = False                                              # la emergencia nueva se queda sin salir
+    b.dar(b.das.recibir(f"CANCEL {b.orden(emergencia.token).id_das}"))
+    nueva = b.enviadas(Proposito.STOP_EMERGENCIA)[-1]
+    assert nueva.token != emergencia.token and b.orden(nueva.token).estado is EstadoOrden.SENDING
+    b.das_contesta = True
+    marca = b.marca()
+    acciones = b.procesar(OrdenDescartada(token=nueva.token, serie="stops:XYZ", version=nueva.version,
+                                          motivo="descartada por versión", ticker=TICKER))
+    assert b.orden(nueva.token).estado is EstadoOrden.CLOSED
+    assert b.orden(nueva.token).notas == "descartada por versión"
+    assert anotaciones(acciones, "orden_descartada")[0].datos["resultado"] == "CLOSED y plan de stops"
+    repuesta = b.enviadas(Proposito.STOP_EMERGENCIA, desde=marca)
+    assert [(o.qty, o.stop) for o in repuesta] == [(100, D("4.52"))] and repuesta[0].token != nueva.token
+    otra = b.procesar(OrdenDescartada(token=emergencia.token, ticker=TICKER))
+    assert anotaciones(otra, "orden_descartada")[0].datos["resultado"].startswith("se ignora")
+
+
+class ReferenciaLenta:
+    """G1A-03: una referencia cuya RED tarda 5 s; el decisor solo puede leer su caché (que nunca abre red)."""
+
+    def __init__(self) -> None:
+        self.llamadas_red = 0
+        self.pedidas: list[str] = []
+
+    def ficha(self, ticker: str) -> None:
+        self.llamadas_red += 1
+        import time
+        time.sleep(5)
+
+    def splits_de_hoy(self, hoy: Any) -> None:
+        self.llamadas_red += 1
+        import time
+        time.sleep(5)
+
+    def ficha_en_cache(self, ticker: str) -> None:
+        self.pedidas.append(ticker)
+        return None
+
+    def pedir_ficha(self, ticker: str) -> None:
+        self.pedidas.append(ticker)
+
+    def splits_en_cache(self, hoy: Any) -> None:
+        return None
+
+    def splits_pendientes(self, hoy: Any) -> bool:
+        return True
+
+
+def test_g1a_03_g1b_08_referencia_lenta_no_bloquea_al_decisor(cfg: Config, tmp_path: Path) -> None:
+    """G1A-03 / G1B-08 (director): el decisor NUNCA hace red: radar e hidratado solo PIDEN la ficha a la precarga y una
+    señal sin ficha en la caché es A12 (no se opera) sin esperar; `procesar` vuelve en milisegundos."""
+    import time
+    lenta = ReferenciaLenta()
+    b = Banco(cfg, tmp_path, referencia=lenta)
+    b.preparar()
+    inicio = time.perf_counter()
+    b.procesar(SenalRecibida(Senal(clase="radar", ticker=TICKER, id=None, estimacion=[], precio_radar=D("3.45"),
+                                   recibida_en=b.ahora())))
+    b.simstatus()
+    acciones = b.senal(evento())
+    assert time.perf_counter() - inicio < 1.0
+    assert lenta.llamadas_red == 0 and TICKER in lenta.pedidas
+    assert anotaciones(acciones, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_EXCLUIDA
+    assert anotaciones(acciones, "referencia")[0].datos["ficha"] is None
+    assert not b.enviadas()
+
+
+def _dos_estrategias(cfg: Config, tmp_path: Path) -> Banco:
+    b = Banco(cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)]), tmp_path)
+    b.preparar(locates=((TICKER, SID, 1000), (TICKER, SID2, 1000)))
+    return b
+
+
+def _salida_motor(b: Banco, ev: Evento, bombear: bool = True) -> list[Accion]:
+    return b.procesar(SenalRecibida(Senal(clase="evento", ticker=ev.ticker, id=id_de_evento(ev), evento=ev,
+                                          momento=ev.momento, recibida_en=b.ahora())), bombear=bombear)
+
+
+def test_g1a_06_tp_antes_que_la_entrada_pasa_al_ask_y_la_entrada_espera(cfg: Config, tmp_path: Path) -> None:
+    """G1A-06 (a) / R-D-07 (director): con el TP de A AGREGANDO, llega la entrada de B → el TP pasa AL ASK (Cancelar y,
+    con el Canceled, `orden_al_ask` sin techo) y la entrada espera SOLO a que el TP termine; luego entra."""
+    b = _dos_estrategias(cfg, tmp_path)
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    _salida_motor(b, salida())
+    tp = b.enviadas(Proposito.TP_AGREGAR)[0]
+    b.avanzar(2)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)                # el ask aún sin acciones
+    marca = b.marca()
+    acciones = b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
+                              momento=momento_de(b.reloj.ahora())), bombear=False)
+    assert [c.token for c in acciones_de(acciones, Cancelar)] == [tp.token]
+    assert anotaciones(acciones, "senal_en_espera") and not acciones_de(acciones, EnviarOrden)
+    b.bombear()
+    al_ask = b.enviadas(Proposito.TP_CRUCE, desde=marca)
+    assert [(o.qty, o.precio) for o in al_ask] == [(50, D("3.46"))]    # al ask SIN techo
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)      # nunca juntas
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")                          # el ask ya tiene acciones: el TP llena
+    b.tic_das()
+    assert b.pos().neta_fills == -50
+    b.avanzar(2)
+    entrada_b = b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)
+    assert [o.qty for o in entrada_b] == [50]
+
+
+def test_g1a_06_la_entrada_retenida_nunca_espera_mas_que_su_caducidad(cfg: Config, tmp_path: Path) -> None:
+    """G1A-06 (director): la entrada que espera al TP nunca pasa de su caducidad (R-B-04): caducada, se descarta y avisa;
+    no se reevalúa tarde cuando el TP termina."""
+    b = _dos_estrategias(cfg, tmp_path)
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
+    _salida_motor(b, salida())
+    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
+                   momento=momento_de(b.reloj.ahora())))
+    b.avanzar(63)
+    descartada = [a for a in anotaciones(b.historial, "senal_descartada") if SID2 in str(a.datos.get("senal_id"))]
+    assert descartada and reglas_entrada.MOTIVO_CADUCADA in descartada[0].datos["motivo"]
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    b.tic_das()
+    b.avanzar(3)
+    assert not [o for o in b.enviadas(Proposito.ENTRADA_AGREGAR) if o.lote_id and SID2 in o.lote_id]
+
+
+def test_g1a_02_g1b_05_halt_con_eod_no_compra_por_hora_y_nunca_queda_larga(cfg: Config, tmp_path: Path) -> None:
+    """G1A-02 (a) / G1B-05 (director): el EOD vence DURANTE el halt: hora_agregar y hora_ask se aplazan (guarda HALT) en
+    vez de comprar encima de la salida del halt; al reabrir la salida cierra la posición y no queda larga."""
+    config = cfg_con(cfg, estrategias=[dataclasses.replace(cfg.estrategias[SID], hora_fin_sesion="09:33")])
+    b = Banco(config, tmp_path)
+    b.preparar()
+    _a_halt(b)                                                          # LULD 09:27: la OPEN sale a las 09:31
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 30, tzinfo=ET))
+    assert [(o.tipo, o.qty) for o in b.enviadas(Proposito.HALT_OPEN)] == [(TipoOrden.MERCADO, 100)]
+    b.libro.halt(TICKER, "P", "09:28:45")                               # la bolsa alarga la pausa hasta 09:33:45
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 33, 40, tzinfo=ET))        # hora_agregar (09:32) y hora_ask (09:33)
+    assert not b.enviadas(Proposito.HORA_AGREGAR, Proposito.HORA_ASK)
+    assert any("halt" in a.datos["motivo"] for a in anotaciones(b.historial, "salida_aplazada"))
+    assert _sin_compra_doble(b, 100)
+    b.libro.reabrir(TICKER, D("3.95"))
+    b.avanzar(4)
+    assert b.pos().neta_fills == 0 and b.pos().neta_das == 0
+    assert not b.enviadas(Proposito.HORA_AGREGAR, Proposito.HORA_ASK, Proposito.VENTA_EXCESO)
+
+
+def test_g1a_02_tp_con_control_manual_no_cruza(banco: Banco) -> None:
+    """G1A-02 (b): con /cancelar_ordenes (control manual) el `tp_cruce` del TP que agregaba NO compra: se aplaza."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    _salida_motor(b, salida())
+    b.comando("/cancelar_ordenes XYZ SI")
+    marca = b.marca()
+    b.avanzar(65)
+    assert not b.enviadas(desde=marca)
+    assert b.pos().neta_fills == -100
+    aplazadas = [a for a in anotaciones(b.desde(marca), "salida_aplazada") if a.datos["clave"].startswith("tp_cruce:")]
+    assert len(aplazadas) == 1 and aplazadas[0].datos["motivo"] == "control manual"      # una vez, no cada 0,5 s
+
+
+def test_g1a_02_tp_con_cierre_humano_no_cruza(banco: Banco) -> None:
+    """G1A-02 (c): con «/cerrar X SI» en curso el `tp_cruce` NO manda otra compra: solo el cierre humano cierra."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    _salida_motor(b, salida())
+    b.comando("/cerrar XYZ SI")
+    b.avanzar(65)
+    assert not b.enviadas(Proposito.TP_CRUCE)
+    assert [o.qty for o in b.enviadas(Proposito.CIERRE_HUMANO)] == [100]
+    assert b.pos().neta_fills == 0
+
+
+def test_g1b_06_stop_tras_cancelar_ordenes_pone_el_stop_y_dice_lo_enviado(banco: Banco) -> None:
+    """G1B-06 (director): «/stop X PRECIO SI» es una orden explícita del humano: saca el ticker del control manual, pone
+    el stop de verdad y contesta con lo ENVIADO (tokens y cantidades); las salidas del bot siguen paradas hasta
+    /reanudar X."""
+    b = banco
+    abrir_posicion(b)
+    b.comando("/cancelar_ordenes XYZ SI")
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO
+    marca = b.marca()
+    acciones = b.comando("/stop XYZ 4.50 SI")
+    stops_ = b.enviadas(*STOPS, desde=marca)
+    assert sorted((o.proposito.value, o.qty, o.stop) for o in stops_) == [("stop_emergencia", 100, D("5.09")),
+                                                                          ("stop_principal", 100, D("4.50"))]
+    respuesta = _respuesta(acciones)
+    assert all(str(o.token) in respuesta for o in stops_) and "NO se ha enviado" not in respuesta
+    b.avanzar(3)
+    assert len(b.enviadas(*STOPS, desde=marca)) == 2                    # el barrido no los duplica
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO                # las entradas y salidas, con /reanudar
+
+
+def test_g1b_06_stop_en_cisne_negro_contesta_que_no_puso_nada(banco: Banco) -> None:
+    """G1B-06: en cisne negro el stop no se mueve (R-G-01/03) y la respuesta lo DICE (antes contestaba «stop a PRECIO»)."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "6.90", "7.10", "7.00")
+    b.tic_das()
+    marca = b.marca()
+    acciones = b.comando("/stop XYZ 8.00 SI")
+    assert not b.enviadas(desde=marca)
+    assert "NO se ha puesto nada" in _respuesta(acciones)
+
+
+def test_g1b_06_stop_sin_lotes_mueve_la_proteccion_existente_sin_duplicarla(cfg: Config, tmp_path: Path) -> None:
+    """G1B-06: sin lotes vivos, /stop MUEVE (REPLACE) la protección propia que ya cubre la posición en vez de poner otra
+    encima (antes salía una segunda protección por la neta entera: dos stops sobre las mismas acciones)."""
+    estado = EstadoBot(fase=Fase.SOMBRA, dia=HOY)
+    estado.posiciones[TICKER] = PosicionTicker(ticker=TICKER, neta_fills=-100)
+    b = Banco(cfg, tmp_path, estado=estado)
+    b.libro.sembrar_posicion(TICKER, -100, D("3.45"))
+    b.preparar(locates=(), reconciliar=False)
+    b.avanzar(3)
+    proteccion = b.enviadas(Proposito.STOP_PROTECCION)
+    assert [(o.qty, o.lote_id) for o in proteccion] == [(100, None)]
+    marca = b.marca()
+    acciones = b.comando("/stop XYZ 4.50 SI")
+    movida = [r for r in acciones_de(acciones, Reemplazar) if r.token == proteccion[0].token]
+    assert [(r.qty, r.stop, r.precio) for r in movida] == [(100, D("4.50"), D("4.64"))]
+    assert not b.enviadas(*STOPS, desde=marca)                          # ninguna protección nueva encima
+    assert "reemplazo token" in _respuesta(acciones)
+    b.avanzar(2)
+    o = b.orden(proteccion[0].token)
+    assert (o.stop, o.precio) == (D("4.50"), D("4.64")) and _vivas_compra(b, *STOPS) == 100
+
+
+def test_g1b_06_stop_en_una_posicion_que_no_es_del_bot_dice_por_que_no_pone_nada(cfg: Config, tmp_path: Path) -> None:
+    """G1B-06 (respuesta veraz): una posición que solo conoce DAS (sin fills del bot) no se toca con /stop y la respuesta
+    lo dice (antes: «no hay corto»)."""
+    b = Banco(cfg, tmp_path)
+    b.libro.sembrar_posicion(TICKER, -100, D("3.45"))
+    b.preparar(locates=(), reconciliar=False)
+    b.avanzar(3)
+    marca = b.marca()
+    acciones = b.comando("/stop XYZ 4.50 SI")
+    assert not b.enviadas(desde=marca)
+    assert "no es del bot" in _respuesta(acciones)
+
+
+def test_g1b_07_g1a_11_agotado_r_c_03_solo_bloquea_ese_proposito(banco: Banco) -> None:
+    """G1B-07 / G1A-11 (director): con R-C-03 agotado en el principal solo se bloquea CREAR otro principal; tras un TP
+    que llena, la emergencia SÍ baja a lo que queda (antes el ticker entero quedaba congelado y un stop de 100 cubría
+    40: cuenta larga si saltaba)."""
+    b = banco
+    b.rechazar[Proposito.STOP_PRINCIPAL] = "Algo raro 123"
+    abrir_posicion(b)
+    b.avanzar(20, tic=0.5)
+    assert len(b.enviadas(Proposito.STOP_PRINCIPAL)) == 6                # agotado
+    emergencia = b.enviadas(Proposito.STOP_EMERGENCIA)[0]
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    _salida_motor(b, salida(acciones=60.0))
+    marca = b.marca()
+    b.cotizar(TICKER, "3.43", "3.45", "3.44")                          # el TP (compra 3,45) llena 60
+    b.tic_das()
+    assert b.pos().neta_fills == -40
+    reemplazos = [(r.token, r.qty) for r in acciones_de(b.desde(marca), Reemplazar)]
+    assert (emergencia.token, 40) in reemplazos
+    b.avanzar(3)
+    assert len(b.enviadas(Proposito.STOP_PRINCIPAL)) == 6                # el principal sigue sin reponerse
+    assert _vivas_compra(b, Proposito.STOP_EMERGENCIA) == 40
+
+
+def test_e1_01_e1_09_halt_h_sale_con_limite_al_tope_y_no_a_mercado(banco: Banco) -> None:
+    """E1-01 / E1-09 (director): en un halt H (T1, no LULD) la salida por OPEN es un LÍMITE a parada · 3,5 redondeado
+    abajo, NUNCA una MKT; si reabre por debajo del tope llena y la cuenta queda plana."""
+    b = banco
+    _a_halt(b, ta="H")
+    salida_halt = b.enviadas(Proposito.HALT_OPEN)
+    assert [(o.tipo, o.ruta, o.precio) for o in salida_halt] == [(TipoOrden.LIMITE, "OPEN", D("14.17"))]
+    b.libro.reabrir(TICKER, D("5.00"))
+    b.cotizar(TICKER, "4.99", "5.01", "5.00")
+    b.avanzar(3)
+    assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
+
+
+def test_e1_02_f6_t1_no_cierra_sin_tope(cfg: Config, tmp_path: Path) -> None:
+    """E1-02 (director) / E1-09 «test_f6_t1_no_cierra_sin_tope»: halt H con k = 3 (se cierra); reabre a +300 %: la
+    salida límite no llena, el reintento vuelve a mirar el tope del T1 con el precio REAL → control humano con aviso 3,
+    la salida viva se RETIRA y ninguna orden de cierre pasa del tope (parada · 3,5)."""
+    from app.bot_das.diario import MemoriaDecisor
+    b = Banco(cfg, tmp_path, memoria=MemoriaDecisor(k_halts_up={TICKER: 3}))
+    b.preparar()
+    ev = evento(stop=20.0)                                              # stops lejos: el salto no es un cisne negro
+    _a_halt(b, ta="H", ev=ev)
+    salida_halt = b.enviadas(Proposito.HALT_OPEN)
+    assert [(o.tipo, o.precio) for o in salida_halt] == [(TipoOrden.LIMITE, D("14.17"))]
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("16.20"))                                 # +300 % sobre la parada (4,05)
+    b.cotizar(TICKER, "16.10", "16.30", "16.20")
+    b.avanzar(3)
+    cierres = b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA, Proposito.CIERRE_HUMANO)
+    assert all(o.tipo is TipoOrden.LIMITE and o.precio <= D("14.17") for o in cierres)
+    assert b.pos().neta_fills == -100
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO
+    assert anotaciones(b.desde(marca), "halt_tope_t1")
+    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_humano:{TICKER}"
+               for a in b.desde(marca))
+    assert b.orden(salida_halt[0].token).estado is EstadoOrden.CANCELED   # la salida viva se retira
+    assert ev.stop == 20.0
+
+
+def test_g1a_05_ticker_plano_en_halt_no_recibe_la_orden_y_la_senal_se_guarda(banco: Banco) -> None:
+    """G1A-05 (director): un ticker PLANO sin estado de símbolo fresco pregunta `GET SymStatus X` antes de abrir; si DAS
+    dice que está parado, la señal se GUARDA (R-F-04 b) y no se manda ninguna orden al símbolo parado."""
+    b = banco
+    b.libro.halt(TICKER, "H", "09:29:00")                               # parado y el bot aún no lo sabe
+    acciones = b.senal(evento(), bombear=False)
+    assert Consultar(f"GET SymStatus {TICKER}") in acciones and not acciones_de(acciones, EnviarOrden)
+    assert not anotaciones(acciones, "senal")                          # la decisión espera a la respuesta
+    b.bombear()
+    assert not b.enviadas()
+    assert anotaciones(b.historial, "senal_guardada") and b.pos().senal_guardada_halt is not None
+
+
+def test_g1a_05_g1a_13_halt_que_deja_plano_detecta_la_reapertura_y_la_senal_guardada_agrega(cfg: Config,
+                                                                                              tmp_path: Path) -> None:
+    """G1A-05 / G1A-13 (director): el halt cancela la entrada sin fills (ticker plano) y aun así se sigue preguntando su
+    estado: la reapertura se detecta, la señal guardada entra tras la primera vela y AGREGA sus 60 s (t_cierre = el
+    momento en que se abre, no el de la reapertura)."""
+    b = _dos_estrategias(cfg, tmp_path)
+    b.simstatus()
+    b.senal(evento())
+    primera = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
+    b.libro.halt(TICKER, "P", "09:30:10")
+    b.avanzar(2)
+    assert b.orden(primera.token).estado is EstadoOrden.CANCELED and b.pos().neta_fills == 0
+    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, momento=momento_de(b.reloj.ahora())))
+    assert b.pos().senal_guardada_halt is not None
+    b.libro.reabrir(TICKER, D("3.45"))
+    b.avanzar(3)
+    assert any(a.datos.get("ticker") == TICKER for a in anotaciones(b.historial, "halt_reapertura"))
+    b.avanzar(55)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")                          # libro fresco al cerrar la primera vela
+    b.avanzar(5)
+    assert anotaciones(b.historial, "halt_primera_vela")[-1].datos["reentrada"] is True
+    segunda = [o for o in b.enviadas(Proposito.ENTRADA_AGREGAR) if o.token != primera.token]
+    assert [o.qty for o in segunda] == [50]
+    vence = b.temporizadores[f"cruce:{TICKER}"][0]
+    assert vence - b.ahora() > 50                                       # agrega ~60 s, no cruza al instante
+
+
+def test_g1a_08_g1b_12_sigue_x_levanta_el_veto_del_cisne_negro(banco: Banco) -> None:
+    """G1A-08 / G1B-12 (director): tras el cierre de un cisne negro el ticker queda vetado; «/sigue X» (dos pasos) levanta
+    ESE veto y la señal siguiente entra; «/sigue» a secas no lo levanta."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "6.90", "7.10", "7.00")
+    b.tic_das()
+    b.cotizar(TICKER, "5.95", "6.00", "6.00")                           # la emergencia saca la posición
+    b.tic_das()
+    assert b.pos().sin_reentrada_hasta_sigue is True
+    b.comando("/sigue")
+    assert b.pos().sin_reentrada_hasta_sigue is True                    # sin ticker: solo la pausa global
+    acciones = b.comando("/sigue XYZ")
+    assert b.pos().sin_reentrada_hasta_sigue is False and b.pos().intervencion_humana is False
+    assert [a.datos["args"] for a in anotaciones(acciones, "comando") if a.datos.get("confirmado")] == [[TICKER]]
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    marca = b.marca()
+    b.senal(evento(momento=otra_vela(b)))
+    assert b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)
+
+
+def test_e1_03_k_se_siembra_de_la_memoria_y_el_radar_se_vigila_en_rth(cfg: Config, tmp_path: Path) -> None:
+    """E1-03 (director): k de halts UP se SIEMBRA al arrancar (memoria del diario) y, en RTH, el SymStatus cubre también
+    los tickers del radar suscritos (los halts anteriores a la entrada cuentan)."""
+    from app.bot_das.diario import MemoriaDecisor
+    b = Banco(cfg, tmp_path, memoria=MemoriaDecisor(k_halts_up={TICKER: 2}))
+    assert b.mercado.simbolo(TICKER).k_halts_up == 2
+    b.preparar()
+    b.procesar(SenalRecibida(Senal(clase="radar", ticker=OTRO, id=None, estimacion=[], precio_radar=D("3.45"),
+                                   recibida_en=b.ahora())))
+    b.cotizar(OTRO, "3.44", "3.46", "3.45")
+    marca = b.marca()
+    b.avanzar(3)
+    assert Consultar(f"GET SymStatus {OTRO}") in b.desde(marca)
+
+
+def test_cob_02_resumen_del_dia_con_operaciones_resultado_locates_slippage_e_incidentes(cfg: Config,
+                                                                                        tmp_path: Path) -> None:
+    """COB-02 (R-M-01): tras el último EOD + 30 s, UN aviso con operaciones y resultado por estrategia, gasto de locates,
+    slippage medido e incidentes (antes era solo la respuesta de /estado)."""
+    config = cfg_con(cfg, estrategias=[dataclasses.replace(cfg.estrategias[SID], hora_fin_sesion="09:33")])
+    b = Banco(config, tmp_path)
+    b.preparar()
+    abrir_posicion(b)
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 33, 5, tzinfo=ET))
+    b.cotizar(TICKER, "3.40", "3.42", "3.41")
+    b.tic_das()
+    assert b.pos().neta_fills == 0
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 34, 0, tzinfo=ET))
+    resumen_ = [a for a in b.historial if isinstance(a, Avisar) and (a.clave or "").startswith("resumen:")]
+    assert len(resumen_) == 1 and resumen_[0].nivel is Nivel.INFO
+    texto = resumen_[0].texto
+    for trozo in ("Por estrategia", "PM (A) prueba: 1 operaciones", "Locates:", "Slippage medio", "Incidentes:"):
+        assert trozo in texto, trozo
+    datos = anotaciones(b.historial, "resumen_diario")[0].datos
+    assert datos["por_estrategia"][0]["strategy_id"] == SID and datos["por_estrategia"][0]["operaciones"] == 1
+    flujo = sum((-f.qty if f.lado == "B" else f.qty) * f.precio for lista in b.estado.fills.values() for f in lista)
+    assert datos["por_estrategia"][0]["resultado"] == flujo.quantize(D("0.01"))           # ventas − compras
+    assert datos["entradas_medidas"] == 1
+
+
+def test_cob_03_retraso_de_la_senal_se_mide_tambien_si_se_descarta(banco: Banco) -> None:
+    """COB-03 (R-A-01): `metrica retraso_senal_pct` también en una señal DESCARTADA (aquí por el propio retraso)."""
+    b = banco
+    b.simstatus()
+    acciones = b.senal(evento(precio=3.20))                              # el último de DAS (3,45) está un 7,8 % arriba
+    metrica = [a.datos for a in anotaciones(acciones, "metrica") if a.datos["nombre"] == "retraso_senal_pct"]
+    assert len(metrica) == 1 and metrica[0]["valor"] > D("7")
+    assert anotaciones(acciones, "senal_descartada")
+    assert not b.enviadas()
+
+
+def test_cob_04_get_con_simbolo_false_pregunta_sin_simbolo(cfg: Config, tmp_path: Path) -> None:
+    """COB-04 (§5.8, pregunta 10): con `tecnicos.get_con_simbolo` false el SymStatus sale SIN símbolo (antes el ajuste
+    era un fantasma: siempre «GET SymStatus X»)."""
+    b = Banco(cfg_con(cfg, tecnicos={**cfg.tecnicos, "get_con_simbolo": False}), tmp_path)
+    b.preparar()
+    abrir_posicion(b)
+    marca = b.marca()
+    b.avanzar(3)
+    consultas = [a.comando for a in b.desde(marca) if isinstance(a, Consultar) and "SymStatus" in a.comando]
+    assert consultas and set(consultas) == {"GET SymStatus"}
+
+
+def test_d1_05_g1b_19_cruce_al_tick_permisivo_no_da_falso_aviso_b13(cfg: Config, tmp_path: Path) -> None:
+    """D1-05 / G1B-19: bid de la señal 1,34 y bid al cruzar 1,30 (−2,99 %: se cruza); el cruce 1,30 · 0,995 = 1,2935 va
+    a 1,29 (tick de abajo) y llena ahí: es legal y NO avisa «fill peor de lo permitido» (antes sí, por el redondeo)."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(cotizaciones=((TICKER, "1.34", "1.36", "1.35"),))
+    b.simstatus()
+    b.senal(evento(precio=1.35, stop=1.60))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 59, tzinfo=ET))
+    b.cotizar(TICKER, "1.30", "1.32", "1.31", tam_bid=0)
+    b.avanzar(1.5)
+    cruce = b.enviadas(Proposito.ENTRADA_CRUCE)
+    assert [(o.qty, o.precio) for o in cruce] == [(100, D("1.29"))]
+    b.cotizar(TICKER, "1.29", "1.31", "1.30")                          # el bid baja a nuestro límite: llena a 1,29
+    b.tic_das()
+    assert b.pos().neta_fills == -100
+    assert not [a for a in b.historial if isinstance(a, Avisar) and "peor" in a.texto.lower()]
+
+
+def test_e2_05_varios_slret_de_una_consulta_se_elige_el_mas_barato(cfg: Config, tmp_path: Path) -> None:
+    """E2-05: los %SLRET de una consulta «Inquire All» (uno por ruta) se juntan 0,5 s y se compra el MÁS BARATO con
+    tamaño; ninguno se atribuye a la consulta de otra estrategia."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.das_contesta = False
+    b.procesar(SenalRecibida(Senal(clase="radar", ticker=TICKER, id=None,
+                                   estimacion=[{"strategy_id": SID, "acciones": 1000.0, "riesgo_usd": 300.0}],
+                                   precio_radar=D("3.45"), recibida_en=b.ahora())))
+    b.das_contesta = True
+    b.dar([f"%SLRET 1 {TICKER} 0.05 1000 LOCX  {CUENTA}", f"%SLRET 1 {TICKER} 0.01 1000 LOCSIM  {CUENTA}"])
+    assert not [a for a in b.historial if isinstance(a, LocateComprar)]
+    b.avanzar(1)
+    compras = [a for a in b.historial if isinstance(a, LocateComprar)]
+    assert [(c.qty, c.ruta) for c in compras] == [(1000, "LOCSIM")]
+    elegido = anotaciones(b.historial, "slret_elegido")[0].datos
+    assert (elegido["respuestas"], elegido["ruta"], elegido["estrategias"]) == (2, "LOCSIM", [SID])
+
+
+def test_e2_05_con_el_reloj_parado_la_ventana_cierra_en_el_segundo_tic(cfg: Config, tmp_path: Path) -> None:
+    """E2-05: la ventana también se cierra en el 2.º Tic tras abrirla (ráfaga ya entrada): con el reloj parado (replay,
+    arneses del ejecutor) la compra del locate no queda colgada de un temporizador que no vence."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.das_contesta = False
+    b.procesar(SenalRecibida(Senal(clase="radar", ticker=TICKER, id=None,
+                                   estimacion=[{"strategy_id": SID, "acciones": 1000.0, "riesgo_usd": 300.0}],
+                                   precio_radar=D("3.45"), recibida_en=b.ahora())))
+    b.das_contesta = True
+    b.dar([f"%SLRET 1 {TICKER} 0.01 1000 LOCSIM  {CUENTA}"])
+    b.procesar(Tic())
+    assert not [a for a in b.historial if isinstance(a, LocateComprar)]
+    acciones = b.procesar(Tic())
+    assert [(c.qty, c.ruta) for c in acciones_de(acciones, LocateComprar)] == [(1000, "LOCSIM")]
+    assert Desprogramar(f"slret_ventana:{TICKER}") in acciones
+
+
+def test_e2_07_con_el_diario_roto_no_se_compra_el_locate_ni_queda_comprando(cfg: Config, tmp_path: Path) -> None:
+    """E2-07 / corrección 4: disco roto + %SLRET favorable → ni LocateComprar ni el locate atascado en «comprando»; y si
+    una compra llegara al filtro de `_finalizar`, el locate vuelve a «buscando» y a consultar."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.das_contesta = False
+    b.procesar(SenalRecibida(Senal(clase="radar", ticker=TICKER, id=None,
+                                   estimacion=[{"strategy_id": SID, "acciones": 1000.0, "riesgo_usd": 300.0}],
+                                   precio_radar=D("3.45"), recibida_en=b.ahora())))
+    b.disco_roto = True
+    b.das_contesta = True
+    b.dar([f"%SLRET 1 {TICKER} 0.01 1000 LOCSIM  {CUENTA}"])
+    b.avanzar(1)
+    assert not [a for a in b.historial if isinstance(a, LocateComprar)]
+    assert b.estado.locates[(TICKER, SID)].estado != "comprando"
+    loc = b.estado.locates[(TICKER, SID)]
+    b.estado.locates[(TICKER, SID)] = dataclasses.replace(loc, estado="comprando", token=424242)
+    filtrado = b.decisor._finalizar([LocateComprar(TICKER, 1000, "LOCSIM", 424242)])   # la 2.ª barrera
+    assert not [a for a in filtrado if isinstance(a, LocateComprar)]
+    assert anotaciones(filtrado, "locate_bloqueado")
+    assert b.estado.locates[(TICKER, SID)].estado == "buscando"
+    assert any(isinstance(a, Programar) and a.clave.startswith("locate_inquire:") for a in filtrado)
+
+
+def test_g1a_09_las_salidas_avisan_y_la_posicion_cerrada_libera_y_pide_equity(banco: Banco) -> None:
+    """G1A-09 (R-M-01, F5): el TP que cuadra avisa al grupo B (nivel 1) una vez; al quedar plana, aviso con el
+    resultado, `liberar_reservas` y `GET AccountInfo`."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    _salida_motor(b, salida(acciones=100.0))
+    b.cotizar(TICKER, "3.43", "3.45", "3.44")
+    marca = b.marca()
+    b.tic_das()
+    assert b.pos().neta_fills == 0
+    tras = b.desde(marca)
+    salida_ = [a for a in tras if isinstance(a, Avisar) and (a.clave or "").startswith("salida:")]
+    assert len(salida_) == 1 and salida_[0].nivel is Nivel.INFO and "COMPRA 100 @ 3.45" in salida_[0].texto
+    cerrada = [a for a in tras if isinstance(a, Avisar) and (a.clave or "").startswith(f"posicion_cerrada:{TICKER}")]
+    assert len(cerrada) == 1 and "resultado 0.00 $" in cerrada[0].texto
+    assert Consultar("GET AccountInfo") in tras
+    assert b.estado.cuenta.bp_reservado == 0
+
+
+def test_g1a_10_d1_08_excepcion_en_orden_agregar_no_deja_nada_a_medias(banco: Banco,
+                                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """G1A-10 / D1-08 (H-5): si `entrada.orden_agregar` lanza, no queda lote ABRIENDO, intento zombi, locates gastados
+    ni margen reservado: lo puro se calcula ANTES de mutar el estado."""
+    b = banco
+    b.simstatus()
+
+    def rota(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("ruta «agregar» no configurada (simulado)")
+
+    monkeypatch.setattr(reglas_entrada, "orden_agregar", rota)
+    acciones = b.senal(evento())
+    assert anotaciones(acciones, "excepcion") and b.pos().estado is EstadoTicker.PAUSADO
+    assert b.pos().intento is None and not b.pos().lotes
+    assert b.estado.locates[(TICKER, SID)].usadas == 0 and b.estado.cuenta.bp_reservado == 0
+    assert id_de_evento(evento()) not in b.estado.senales_vistas
+    assert not b.enviadas()
+
+
+def test_g1b_13_rama_rota_tras_registrar_stops_no_deja_stops_fantasma(banco: Banco,
+                                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    """G1B-13 (H-5): la rama lanza DESPUÉS de que el plan registrara principal y emergencia (que no van a salir) → se
+    cierran («no salió») y se piden barrido y plan inmediatos: el par sale en el paso siguiente."""
+    from app.bot_das import avisos as mod_avisos
+    b = banco
+    b.simstatus()
+    b.senal(evento())
+
+    def rota(*args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("texto del aviso roto (simulado)")
+
+    monkeypatch.setattr(mod_avisos, "texto_fill", rota)
+    llenar_entrada(b)
+    assert b.pos().neta_fills == -100
+    fantasmas = [o for o in b.estado.ordenes.values() if o.proposito in STOPS]
+    assert fantasmas and all(o.estado is EstadoOrden.CLOSED and o.notas == "no salió (H-5)" for o in fantasmas)
+    assert not b.enviadas(*STOPS)
+    monkeypatch.undo()
+    b.avanzar(1)
+    reales = b.enviadas(*STOPS)
+    assert sorted((o.proposito.value, o.qty) for o in reales) == [("stop_emergencia", 100), ("stop_principal", 100)]
+    assert all(b.orden(o.token).estado is EstadoOrden.ACCEPTED for o in reales)
+
+
+def test_g1a_12_g1b_10_control_manual_sobrevive_al_reinicio(cfg: Config, tmp_path: Path) -> None:
+    """G1A-12 / G1B-10: tras /cancelar_ordenes y un reinicio (estado del diario o su memoria) el bot NO vuelve a poner
+    stops en el ticker que gestiona el humano."""
+    from app.bot_das.diario import MemoriaDecisor
+    for via in ("estado", "memoria"):
+        estado = _estado_con_lote()
+        memoria = None
+        if via == "estado":
+            pos = estado.posiciones[TICKER]
+            pos.estado = EstadoTicker.CONTROL_HUMANO
+            pos.motivo_estado = "órdenes canceladas a mano (/cancelar_ordenes)"
+        else:
+            memoria = MemoriaDecisor(manual={TICKER})
+        b = Banco(cfg, tmp_path / via, estado=estado, memoria=memoria)
+        b.libro.sembrar_posicion(TICKER, -100, D("3.45"))
+        b.preparar(locates=())
+        b.avanzar(5)
+        assert not b.enviadas(*STOPS), via
+
+
+def test_g1b_09_cambios_de_telegram_sobreviven_al_reinicio(cfg: Config, tmp_path: Path) -> None:
+    """G1B-09: /desactivar, /modo_seguridad y al_desactivar hechos por Telegram se reaplican al construir el decisor con
+    la memoria del diario (antes, tras un relanzamiento, la estrategia desactivada volvía a operar)."""
+    from app.bot_das.diario import MemoriaDecisor
+    memoria = MemoriaDecisor(override_modo_seguridad=True,
+                             override_estrategia={SID: {"ejecutar": False}, "desconocida": {"ejecutar": True}},
+                             al_desactivar_por_arg={"PM (A) prueba": "esperar_fin_dia"})
+    b = Banco(cfg, tmp_path, memoria=memoria)
+    assert b.decisor.cfg.estrategias[SID].ejecutar is False
+    assert b.decisor.cfg.estrategias[SID].al_desactivar == "esperar_fin_dia"
+    assert b.decisor.cfg.modo_seguridad["activo"] is True
+    b.preparar()
+    b.simstatus()
+    acciones = b.senal(evento())
+    assert anotaciones(acciones, "senal_descartada") and not b.enviadas()
+
+
+def test_g1b_09_al_desactivar_por_telegram_se_anota_para_rehacerlo(banco: Banco) -> None:
+    """G1B-09: «/esperar_fin_dia X» deja `config_cambio` con origen telegram (la forma que `memoria_decisor` rehace)."""
+    acciones = banco.comando("/esperar_fin_dia prueba-1")
+    cambio = anotaciones(acciones, "config_cambio")
+    assert [(a.datos["ruta"], a.datos["despues"], a.datos["origen"]) for a in cambio] == \
+           [(f"estrategias.{SID}.al_desactivar", "esperar_fin_dia", "telegram")]
+
+
+def test_g1a_14_fill_tardio_en_un_halt_h_programa_la_decision(banco: Banco) -> None:
+    """G1A-14: la entrada cancelada al detectar un halt H llena TARDE: la neta pasa de 0 a −100 con el símbolo parado →
+    se programa `halt_decidir` (antes dependía de un $IssueStatus con otro fin, que en un H nunca llega)."""
+    b = banco
+    b.simstatus()
+    b.senal(evento())
+    agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
+    id_das = b.orden(agregar.token).id_das
+    b.das_contesta = False
+    b.libro.halt(TICKER, "H", "09:30:05")
+    b.dar(b.das.recibir(f"GET SymStatus {TICKER}"))
+    assert TICKER in {a.datos["ticker"] for a in anotaciones(b.historial, "halt")}
+    assert f"halt_decidir:{TICKER}" not in b.temporizadores              # plano: nada que decidir aún
+    b.dar([_linea_act("Execute", agregar, id_das, 100, "3.45")])
+    assert b.pos().neta_fills == -100
+    assert f"halt_decidir:{TICKER}" in b.temporizadores
+    assert b.pos().estado is EstadoTicker.HALT
+
+
+def test_g1a_15_fill_tardio_de_una_entrada_cerrada_va_a_su_lote_no_al_intento_nuevo(cfg: Config,
+                                                                                     tmp_path: Path) -> None:
+    """G1A-15: la entrada de A se cierra sin confirmar su cancelación, B abre OTRO intento y llega el fill tardío de A:
+    va entero al lote de A (reabierto), nada al de B ni a su intento."""
+    b = _dos_estrategias(cfg, tmp_path)
+    b.simstatus()
+    b.senal(evento())
+    agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
+    id_das = b.orden(agregar.token).id_das
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 59, tzinfo=ET))
+    b.das_contesta = False
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 4, tzinfo=ET))
+    lote_a = lote_de(evento())
+    assert b.pos().intento is None and b.pos().lotes[lote_a].estado is EstadoLote.CANCELADO
+    b.das_contesta = True
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    ev_b = evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, momento=momento_de(b.reloj.ahora()))
+    b.simstatus()
+    b.senal(ev_b)
+    assert b.pos().intento is not None and b.pos().intento.lotes == [lote_de(ev_b)]
+    b.dar([_linea_act("Execute", agregar, id_das, 100, "3.45")])
+    lotes = b.pos().lotes
+    assert (lotes[lote_a].estado, lotes[lote_a].llenas) == (EstadoLote.ABIERTO, 100)
+    assert lotes[lote_de(ev_b)].llenas == 0 and b.pos().intento.llenas == 0
+
+
+def test_g1a_18_g1b_18_veto_r_f_03_se_siembra_y_la_salida_del_halt_cuenta_como_stop(cfg: Config,
+                                                                                    tmp_path: Path) -> None:
+    """G1A-18 / G1B-18: el veto R-F-03 (stop + halt sin reapertura válida) sale de la memoria del diario tras un
+    reinicio, y una salida del halt por OPEN lo activa igual que un stop."""
+    from app.bot_das.diario import MemoriaDecisor
+    b = Banco(cfg, tmp_path, memoria=MemoriaDecisor(halt_hoy={TICKER}, stop_hoy={TICKER}))
+    b.preparar()
+    b.simstatus()
+    acciones = b.senal(evento())
+    assert "R-F-03" in anotaciones(acciones, "senal_descartada")[0].datos["motivo"]
+    otro = Banco(cfg, tmp_path / "otro")
+    otro.preparar()
+    _a_halt(otro)
+    otro.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 1, tzinfo=ET))
+    otro.libro.reabrir(TICKER, D("3.95"))
+    otro.avanzar(3)
+    assert otro.pos().neta_fills == 0                                   # salió por la OPEN, no por un stop
+    otro.cotizar(TICKER, "3.94", "3.96", "3.95")
+    acciones = otro.senal(evento(momento=otra_vela(otro)))
+    assert "R-F-03" in anotaciones(acciones, "senal_descartada")[0].datos["motivo"]
+
+
+def _dos_cisnes(b: Banco) -> None:
+    _dos_posiciones(b)
+    for t in (TICKER, OTRO):
+        b.cotizar(t, "6.90", "7.10", "7.00")
+    b.tic_das()
+    assert b.pos().estado is EstadoTicker.BS and b.pos(OTRO).estado is EstadoTicker.BS
+
+
+def test_g1a_19_parar_avisos_x_bs_calla_solo_ese_cisne_negro(cfg: Config, tmp_path: Path) -> None:
+    """G1A-19 (R-G-01): con dos cisnes negros vivos, «/parar_avisos X BS» calla SOLO los de X; sin ticker, se pide cuál
+    (nunca se callan todos a la vez). Se anota con args [X, "BS"] (lo que rehace el diario)."""
+    b = Banco(cfg, tmp_path)
+    _dos_cisnes(b)
+    acciones = b.comando("/parar_avisos")
+    assert "indica cuál" in _respuesta(acciones)
+    assert b.pos().bs.silenciado is False and b.pos(OTRO).bs.silenciado is False
+    acciones = b.comando("/parar_avisos XYZ BS")
+    assert b.pos().bs.silenciado is True and b.pos(OTRO).bs.silenciado is False
+    assert [a.datos["args"] for a in anotaciones(acciones, "comando") if a.datos.get("confirmado")] == [[TICKER, "BS"]]
+
+
+def test_g1a_20_g1b_20_la_emergencia_descuenta_primero_los_lotes_con_el_principal_consumido(banco: Banco) -> None:
+    """G1A-20 / G1B-20 (criterio decidido): el fill de la emergencia descuenta primero los lotes cuyo principal ya se
+    consumió y, dentro de cada grupo, desde el L más alto; el lote con su principal pendiente conserva sus acciones."""
+    b = banco
+    pos = PosicionTicker(ticker=TICKER, neta_fills=-130)
+    b.estado.posiciones[TICKER] = pos
+    a = Lote(id="A", strategy_id=SID, estrategia="A", ticker=TICKER, direccion="Short", pedidas=100, llenas=80,
+             precio_medio=D("3.45"), nivel_stop=D("4.00"), estado=EstadoLote.ABIERTO, eod="11:30:00",
+             principal_consumido=True)
+    bl = Lote(id="B", strategy_id=SID2, estrategia="B", ticker=TICKER, direccion="Short", pedidas=50, llenas=50,
+              precio_medio=D("3.45"), nivel_stop=D("4.20"), estado=EstadoLote.ABIERTO, eod="11:30:00")
+    pos.lotes = {"A": a, "B": bl}
+    acciones, cerrados = b.decisor._reducir_lotes(pos, 60, [], mas_alto_primero=True, consumidos_primero=True)
+    assert (a.llenas, bl.llenas, cerrados) == (20, 50, [])
+    acciones, cerrados = b.decisor._reducir_lotes(pos, 30, [], mas_alto_primero=True, consumidos_primero=True)
+    assert (a.llenas, bl.llenas, cerrados) == (0, 40, ["A"])
+
+
+def test_g1a_21_g1b_14_stop_cancelado_en_un_halt_se_repone_al_reabrir(banco: Banco) -> None:
+    """G1A-21 / G1B-14 (R-C-04, excepción del halt): DAS cancela la emergencia con el símbolo parado → aviso, NADA se
+    repone durante el halt (ni se gastan intentos de R-C-03) y la emergencia vuelve al reabrir."""
+    b = banco
+    _a_halt(b, cot=("3.94", "3.96", "3.95"))
+    emergencia = b.enviadas(Proposito.STOP_EMERGENCIA)[0]
+    marca = b.marca()
+    b.dar(b.das.recibir(f"CANCEL {b.orden(emergencia.token).id_das}"))
+    aviso = [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith(f"stop_cancelado:{TICKER}")]
+    assert len(aviso) == 1 and "HALT" in aviso[0].texto
+    b.avanzar(3)
+    assert not b.enviadas(*STOPS, desde=marca)
+    b.libro.reabrir(TICKER, D("3.95"))
+    b.avanzar(2)
+    repuesta = b.enviadas(*STOPS, desde=marca)
+    assert [(o.proposito, o.qty) for o in repuesta] == [(Proposito.STOP_EMERGENCIA, 100)]
+    assert anotaciones(b.desde(marca), "stops_reponer_reapertura")
+
+
+def test_a_06_todas_las_consultas_get_salen_de_protocolo_cmd_get(banco: Banco) -> None:
+    """A-06 (§4.1): cada `Consultar("GET …")` del decisor es exactamente lo que construye `protocolo.cmd_get` (conjunto
+    cerrado de nombres y símbolo validado)."""
+    b = banco
+    abrir_posicion(b)
+    b.avanzar(65)
+    consultas = {a.comando for a in b.historial if isinstance(a, Consultar) and a.comando.startswith("GET ")}
+    assert consultas
+    for comando in consultas:
+        partes = comando.split()
+        assert protocolo.cmd_get(*partes[1:]) == comando, comando
+
+
+def test_d1_07_alto_riesgo_con_criterio_usa_la_mitad_del_equity(cfg: Config, tmp_path: Path) -> None:
+    """D1-07 (2c consecuencia 2): con `entrada.alto_riesgo_si` (p. ej. precio < 5 $) el corto usa 0,5× el equity (antes
+    `_ALTO_RIESGO` era siempre False); sin criterio, el tope de siempre."""
+    tamanos = {}
+    for nombre, criterio in (("sin", None), ("con", {"precio_max": 5})):
+        entrada_cfg = dict(cfg.entrada)
+        if criterio is not None:
+            entrada_cfg["alto_riesgo_si"] = criterio
+        b = Banco(cfg_con(cfg, entrada=entrada_cfg), tmp_path / nombre)
+        b.preparar()
+        b.estado.cuenta.equity = D("500")
+        b.simstatus()
+        b.senal(evento())
+        tamanos[nombre] = sum(o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR))
+    assert tamanos["con"] < tamanos["sin"] <= 100 and tamanos["con"] > 0
+
+
+def test_d1_10_equity_se_relee_y_sin_equity_se_pide_con_aviso(banco: Banco) -> None:
+    """D1-10: `GET AccountInfo` se pide periódicamente (el tope corto no usa el equity de la mañana) y, sin equity, la
+    entrada se descarta, se vuelve a pedir y se avisa nivel 2."""
+    b = banco
+    marca = b.marca()
+    b.avanzar(35)
+    assert Consultar("GET AccountInfo") in b.desde(marca)
+    b.estado.cuenta.equity = None
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    b.simstatus()
+    acciones = b.senal(evento(momento=momento_de(b.reloj.ahora())))
+    assert Consultar("GET AccountInfo") in acciones
+    assert any(isinstance(a, Avisar) and a.clave == "sin_equity" and a.nivel is Nivel.AVISO for a in acciones)
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR)
+
+
+def test_dc_07_la_linea_cruda_de_das_va_al_diario(banco: Banco) -> None:
+    """DC-07 (§8): «cruda» en orden_act, orden_estado, fill y pos."""
+    b = banco
+    abrir_posicion(b)
+    for tipo in ("orden_act", "orden_estado", "fill", "pos"):
+        registros = [a for a in anotaciones(b.historial, tipo) if a.datos.get("cruda")]
+        assert registros, tipo
+        assert isinstance(registros[0].datos["cruda"], str) and registros[0].datos["cruda"].startswith(("%", "$"))
+
+
+def test_dc_02_fill_sintetico_reconstruido_no_se_cuenta_dos_veces_con_su_trade(cfg: Config, tmp_path: Path) -> None:
+    """DC-02: `reconstruir` deja con id NEGATIVO el fill de un Execute sin su %TRADE; tras el reinicio, cuando DAS manda
+    ese %TRADE, es su eco: la neta NO se duplica."""
+    estado = _estado_con_lote()
+    token = GeneradorTokens(Origen.EJECUTOR, HOY).siguiente()
+    estado.ultimo_seq_token = descomponer(token)[2]
+    lote_id = lote_de(evento())
+    estado.ordenes[token] = Orden(token=token, ticker=TICKER, lado=Lado.CORTO, tipo=TipoOrden.LIMITE, qty=100,
+                                  precio=D("3.45"), stop=None, ruta="SAGEREB", proposito=Proposito.ENTRADA_AGREGAR,
+                                  lote_id=lote_id, nivel=D("4.0"), origen=Origen.EJECUTOR, id_das=77,
+                                  estado=EstadoOrden.EXECUTED, llenas=100)
+    estado.id_a_token[77] = token
+    estado.fills[token] = [Fill(id_trade=-1, token=token, id_orden=77, ticker=TICKER, lado="SS", qty=100,
+                                precio=D("3.45"), ruta="SAGEREB", hora="09:29:30", liq=None, ecn_fee=None)]
+    b = Banco(cfg, tmp_path, estado=estado)
+    b.libro.sembrar_posicion(TICKER, -100, D("3.45"))
+    b.preparar(locates=())
+    marca = b.marca()
+    b.dar([f"%TRADE 9001 {TICKER} SS 100 3.45 SAGEREB 09:29:30 77 + 0 0.00"])
+    assert b.pos().neta_fills == -100
+    assert b.estado.fills[token][0].id_trade == 9001
+    fill = anotaciones(b.desde(marca), "fill")
+    assert len(fill) == 1 and fill[0].datos["eco"] is True
+
+
+def test_d2a_04_venta_del_exceso_que_no_llena_se_persigue_al_bid(cfg: Config, tmp_path: Path) -> None:
+    """D2a-04 (director): la venta del exceso sale a bid · (1 − 1 %) y, 1 s después, si no llenó y la cuenta sigue larga,
+    `exceso_verificar` la REEMPLAZA al bid nuevo con el mismo margen (antes el temporizador no tenía manejador)."""
+    b = Banco(cfg, tmp_path)
+    b.preparar()
+    abrir_posicion(b)
+    b.cotizar(TICKER, "4.00", "4.05", "4.01", tam_ask=20)
+    lineas = b.das.tic()                                                # el principal llena 20
+    b.das_contesta = False                                              # su REPLACE / CANCEL quedan en vuelo
+    b.dar(lineas)
+    b.das_contesta = True
+    b.cotizar(TICKER, "4.58", "4.60", "4.60", tam_bid=0)               # la emergencia (100 en DAS) llena: larga 20
+    b.tic_das()
+    ventas = b.enviadas(Proposito.VENTA_EXCESO)
+    assert [(o.lado, o.qty, o.precio) for o in ventas] == [(Lado.VENTA, 20, D("4.53"))]     # 4,58 · 0,99
+    assert f"exceso_verificar:{TICKER}" in b.temporizadores
+    b.cotizar(TICKER, "4.50", "4.52", "4.51", tam_bid=0)
+    b.avanzar(1.2)
+    perseguida = [r for r in b.historial if isinstance(r, Reemplazar) and r.token == ventas[0].token]
+    assert [(r.qty, r.precio) for r in perseguida] == [(20, D("4.45"))]  # 4,50 · 0,99 redondeado abajo
+    assert anotaciones(b.historial, "venta_exceso_perseguida")
+    assert not anotaciones(b.historial, "temporizador_desconocido")
+
+
+def test_d2a_07_cantidad_viva_con_lvqty_viejo_tras_el_execute() -> None:
+    """D2a-07: el Execute sube `llenas` sin tocar un `lvqty` viejo → viva = min(lvqty, qty − llenas) (70, no 100)."""
+    from app.bot_das.decisor import _qty_viva
+    o = Orden(token=1, ticker=TICKER, lado=Lado.COMPRA, tipo=TipoOrden.STOP_LIMITE_PP, qty=100, precio=D("4.12"),
+              stop=D("4.00"), ruta="STOP", proposito=Proposito.STOP_PRINCIPAL, lote_id=None, nivel=None,
+              origen=Origen.EJECUTOR, estado=EstadoOrden.PARTIAL, lvqty=100, llenas=30)
+    assert _qty_viva(o) == 70
+    o.lvqty = 50
+    assert _qty_viva(o) == 50
+    o.estado, o.llenas = EstadoOrden.ACCEPTED, 0
+    assert _qty_viva(o) == 100
+
+
+def test_d2a_08_a_02_replace_con_share_total_no_compra_de_mas(cfg: Config, tmp_path: Path) -> None:
+    """D2a-08 / A-02: con `stops.replace_share_es_abierta` false DAS lee el share como TOTAL: la persecución de una orden
+    con 30 llenas manda share 100 (30 + 70) y, al «Replaced», el decisor deja qty 100 y 70 vivas; la cuenta acaba plana
+    (nunca larga)."""
+    config = cfg_con(cfg, stops={**cfg.stops, "replace_share_es_abierta": False},
+                     estrategias=[dataclasses.replace(cfg.estrategias[SID], hora_fin_sesion="09:33")])
+    b = Banco(config, tmp_path)
+    b.das.replace_share_es_abierta = False
+    b.preparar()
+    abrir_posicion(b)
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 32, 30, tzinfo=ET))
+    b.cotizar(TICKER, "3.45", "3.47", "3.46", tam_ask=30)
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 33, 0, 100_000, tzinfo=ET))
+    al_ask = b.enviadas(Proposito.HORA_ASK)[0]
+    assert b.orden(al_ask.token).llenas == 30
+    b.cotizar(TICKER, "3.47", "3.50", "3.48", tam_ask=0)
+    b.avanzar(1.2)
+    reemplazo = [r for r in b.historial if isinstance(r, Reemplazar) and r.token == al_ask.token]
+    assert [(r.qty, r.precio) for r in reemplazo] == [(100, D("3.50"))]
+    o = b.orden(al_ask.token)
+    assert (o.qty, o.llenas, o.lvqty) == (100, 30, 70)
+    b.cotizar(TICKER, "3.48", "3.50", "3.49")
+    b.tic_das()
+    assert b.pos().neta_fills == 0 and b.pos().neta_das == 0
+    assert not b.enviadas(Proposito.VENTA_EXCESO)
+
+
+def test_d2_05_salida_por_tiempo_va_al_ask_sin_techo_con_la_qty_del_evento(banco: Banco) -> None:
+    """D2-05 (director): «Partial TP (Hour)» → la qty DEL EVENTO al ask sin techo (HORA_ASK) y a perseguir (R-D-08);
+    antes solo se anotaba."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
+    _salida_motor(b, salida(motivo="Partial TP (Hour)", acciones=40.0))
+    hora = b.enviadas(Proposito.HORA_ASK)
+    assert [(o.qty, o.precio, o.post_only) for o in hora] == [(40, D("3.46"), False)]
+    assert f"perseguir_ask:{hora[0].token}" in b.temporizadores
+    b.cotizar(TICKER, "3.47", "3.50", "3.48", tam_ask=0)
+    b.avanzar(1.5)
+    assert [r.precio for r in b.historial if isinstance(r, Reemplazar) and r.token == hora[0].token] == [D("3.50")]
+
+
+def test_d2_12_tp_sin_libro_no_lanza_y_cruza_con_techo_a_los_2_s(banco: Banco) -> None:
+    """D2-12: con el libro CRUZADO (normal en premercado) el TP no puede agregar: no lanza (antes H-5 pausaba el ticker),
+    se anota y a los 2 s `tp_al_vencer` cruza al ask con techo."""
+    b = banco
+    abrir_posicion(b)
+    b.dar([f"$Quote {TICKER} A:3.44 B:3.46 V:500000 L:3.45"])          # ask < bid: DAS lo manda así en PM
+    acciones = _salida_motor(b, salida())
+    assert anotaciones(acciones, "salida_sin_libro") and not anotaciones(acciones, "excepcion")
+    assert not b.enviadas(Proposito.TP_AGREGAR) and b.pos().estado is EstadoTicker.NORMAL
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
+    b.avanzar(2.5)
+    assert [(o.qty, o.precio) for o in b.enviadas(Proposito.TP_CRUCE)] == [(50, D("3.46"))]
+
+
+def _banco_premercado(cfg: Config, tmp_path: Path) -> Banco:
+    inicio = datetime(2026, 9, 25, 8, 0, tzinfo=ET)
+    b = Banco(cfg, tmp_path, inicio=inicio)
+    b.preparar()
+    abrir_posicion(b, evento(momento=momento_de(inicio)))
+    return b
+
+
+def test_e1_04_halt_h_en_premercado_con_mantener_ensancha_el_limite_de_los_stops(cfg: Config, tmp_path: Path) -> None:
+    """E1-04 (director, R-F-06 2.ª parte): halt H de premercado con decisión «mantener» → el límite del stop residente sube
+    a disparo · (1 + 5 %) (más liquidez) sin mover el disparo; la emergencia (ya a +63 %) no se toca."""
+    b = _banco_premercado(cfg, tmp_path)
+    principal, _emergencia = b.enviadas(*STOPS)
+    b.libro.halt(TICKER, "H", "08:00:30")
+    b.cotizar(TICKER, "3.60", "3.62", "3.61")                           # bajo el principal: escenario 1, k < 3
+    marca = b.marca()
+    b.avanzar(2)
+    reemplazos = acciones_de(b.desde(marca), Reemplazar)
+    assert [(r.token, r.stop, r.precio) for r in reemplazos] == [(principal.token, D("4.00"), D("4.20"))]
+    assert anotaciones(b.desde(marca), "halt_stops_pm")
+    assert not b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE)
+
+
+def test_e1_06_halt_luld_pide_las_bandas_al_momento(cfg: Config, tmp_path: Path) -> None:
+    """E1-06: con TA:P se pide `GET LDLU X` al detectar el halt (clasificar UP/DOWN y recortar los stops), también fuera
+    de RTH donde no hay sondeo por minuto."""
+    b = _banco_premercado(cfg, tmp_path)
+    b.libro.halt(TICKER, "P", "08:00:30")
+    marca = b.marca()
+    b.avanzar(2)
+    assert Consultar(f"GET LDLU {TICKER}") in b.desde(marca)
+
+
+def test_e1_08_aviso_de_opa_una_vez_al_dia(banco: Banco, monkeypatch: pytest.MonkeyPatch) -> None:
+    """E1-08 (R-A-03 v2): con posición, el decisor revisa la banda de OPA con las velas de DAS y el máximo de premercado
+    y manda el aviso UNA vez al día por ticker."""
+    from app.bot_das.reglas import exclusiones
+    llamadas: list[tuple] = []
+
+    def falso(ticker: str, velas: Any, max_pm: Any, cfg_ex: Any) -> Avisar:
+        llamadas.append((ticker, max_pm))
+        return Avisar(Nivel.AVISO, Grupo.B, f"posible OPA en {ticker}", clave=f"opa:{ticker}")
+
+    monkeypatch.setattr(exclusiones, "aviso_opa", falso)
+    b = banco
+    abrir_posicion(b)
+    for _ in range(3):
+        b.cotizar(TICKER, "3.44", "3.46", "3.45")
+        b.avanzar(61)
+    avisos_opa = [a for a in b.historial if isinstance(a, Avisar) and a.clave == f"opa:{TICKER}"]
+    assert len(avisos_opa) == 1 and llamadas and llamadas[0][0] == TICKER
+
+
+def test_e2_02_el_tope_de_locates_ve_las_compras_en_curso(cfg: Config, tmp_path: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2-02: `locates.siguiente_paso` recibe TODOS los locates (el 3 % cuenta lo comprometido por las demás)."""
+    from app.bot_das.reglas import locates as mod_locates
+    original = mod_locates.siguiente_paso
+    vistos: list[Any] = []
+
+    def espia(*args: Any, **kwargs: Any) -> Any:
+        vistos.append(kwargs.get("locates"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mod_locates, "siguiente_paso", espia)
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.procesar(SenalRecibida(Senal(clase="radar", ticker=TICKER, id=None,
+                                   estimacion=[{"strategy_id": SID, "acciones": 1000.0, "riesgo_usd": 300.0}],
+                                   precio_radar=D("3.45"), recibida_en=b.ahora())))
+    assert vistos and all(v is b.estado.locates for v in vistos)
+
+
+def test_e2_03_el_cierre_humano_en_cisne_negro_pasa_las_esperas(banco: Banco, monkeypatch: pytest.MonkeyPatch) -> None:
+    """E2-03: `_t_bs_cierre` pasa `esperas` (la espera del Canceled tiene tope) y la compra sale tras la emergencia."""
+    original = cisne_negro.cierre_humano
+    esperas: list[int] = []
+
+    def espia(*args: Any, **kwargs: Any) -> Any:
+        esperas.append(kwargs.get("esperas", 0))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(cisne_negro, "cierre_humano", espia)
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "6.90", "7.10", "7.00")
+    b.tic_das()
+    b.das_contesta = False                                              # el Canceled de la emergencia aún no llega
+    b.comando("/cerrar XYZ SI")
+    b.avanzar(0.6)
+    b.das_contesta = True
+    b.avanzar(1.5)
+    assert esperas[:2] == [0, 1]
+    assert b.pos().neta_fills == 0
+
+
+def test_c_02_un_comando_con_el_mismo_id_no_se_ejecuta_dos_veces(banco: Banco) -> None:
+    """C-02 (red extra): Telegram reentrega el último update tras un reinicio; «/cerrar X 40 SI» con el MISMO id no cierra
+    40 acciones más: se anota y no se contesta."""
+    b = banco
+    abrir_posicion(b)
+    c = comandos.parsear("/cerrar XYZ 40 SI", CHAT, AUTORIZADOS, id_comando="tg:77")
+    b.procesar(ComandoRecibido(c))
+    b.avanzar(1)
+    assert b.pos().neta_fills == -60
+    acciones = b.procesar(ComandoRecibido(c))
+    b.avanzar(1)
+    assert b.pos().neta_fills == -60
+    assert anotaciones(acciones, "comando_repetido") and not acciones_de(acciones, Avisar)
+
+
+def test_g1a_07_g1b_11_e9_sin_locate_propio_entra_con_el_sobrante_o_el_etb(cfg: Config, tmp_path: Path) -> None:
+    """G1A-07 / G1B-11 / D1-02 (director): la estrategia SIN locate propio entra con el sobrante de otra (E9) o sin locate
+    si el ticker es ETB (antes se descartaba la señal entera «sin acciones»)."""
+    from app.bot_das.reglas import locates as mod_locates
+    for caso in ("sobrante", "etb"):
+        b = Banco(cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)]), tmp_path / caso)
+        b.preparar(locates=())
+        if caso == "sobrante":
+            b.estado.locates[(TICKER, SID)] = Locate(ticker=TICKER, strategy_id=SID, pedidas=300, localizadas=1000,
+                                                     usadas=300, estado="Located")
+        else:
+            b.estado.locates[(TICKER, SID)] = Locate(ticker=TICKER, strategy_id=SID, pedidas=0,
+                                                     estado=mod_locates.ESTADO_NO_HACE_FALTA)
+        b.simstatus()
+        b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=100.0))
+        assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [100], caso
+
+
+def test_g1a_05_sin_respuesta_al_symstatus_en_1_s_la_entrada_sigue(banco: Banco) -> None:
+    """G1A-05 (director: «se espera la respuesta, máx. 1 s»): si DAS no contesta al `GET SymStatus X` en 1 s, la entrada
+    sigue (el halt lo detecta el sondeo de cada segundo) y se anota."""
+    b = banco
+    b.das_contesta = False
+    acciones = b.senal(evento())
+    assert Consultar(f"GET SymStatus {TICKER}") in acciones and not b.enviadas()
+    b.avanzar(1.2)
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [100]
+    assert anotaciones(b.historial, "simstatus_sin_respuesta")
+    assert anotaciones(b.historial, "senal")[-1].datos["espera_simstatus"] is True
+
+
+def test_d2_04_cierre_agotado_sin_confirmar_la_retirada_repone_solo_lo_no_cubierto(banco: Banco) -> None:
+    """D2-04 (director): agotado R-D-06, la orden de cierre se RETIRA; si su Canceled no llega en 1 s, los stops vuelven
+    por lo que esa orden aún viva NO cubre (aquí nada: nunca dos compras) y, con el Canceled, vuelven enteros."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
+    b.comando("/cerrar XYZ SI")
+    b.avanzar(5)
+    b.das_contesta = False                                              # la retirada no llega a DAS
+    marca = b.marca()
+    b.avanzar(3)
+    assert any(isinstance(a, Avisar) and a.clave == f"cerrar_todo:{TICKER}:agotado" for a in b.desde(marca))
+    repuesto = anotaciones(b.desde(marca), "cierre_stops_repuestos")
+    assert repuesto and "respaldo" in repuesto[0].datos["motivo"]
+    assert not b.enviadas(*STOPS, desde=marca) and _sin_compra_doble(b, 100)
+    viva = [o for o in b.estado.ordenes.values() if o.proposito is Proposito.CIERRE_HUMANO
+            and o.estado in (EstadoOrden.ACCEPTED, EstadoOrden.SENDING)]
+    assert len(viva) == 1
+    b.das_contesta = True
+    b.dar(b.das.recibir(f"CANCEL {viva[0].id_das}"))
+    stops_ = b.enviadas(*STOPS, desde=marca)
+    assert sorted((o.proposito.value, o.qty) for o in stops_) == [("stop_emergencia", 100), ("stop_principal", 100)]

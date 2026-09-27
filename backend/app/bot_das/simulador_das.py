@@ -53,8 +53,12 @@ LAS TRAMPAS.
   * `$Quote` lleva los tamaños en LOTES (manual L1283-1289: «Number of
     lots»); el libro los guarda en ACCIONES. `tamano_*` None = liquidez sin
     tope.
-  * `REPLACE id share …`: `share` se interpreta como la NUEVA cantidad
-    ABIERTA (lvqty); el manual no lo precisa (anotado como duda).
+  * `REPLACE id share …`: el manual no precisa si `share` es la NUEVA
+    cantidad ABIERTA (lvqty) o la TOTAL (llenas + abierta). A-02: el
+    `Emparejador` sigue el mismo interruptor que el decisor
+    (`replace_share_es_abierta`, defecto `tipos.REPLACE_SHARE_ES_ABIERTA`;
+    en `main`, `--replace-share-total`), así el bot se prueba con las dos
+    lecturas y el canario de `comprobar_das` decide cuál es la real.
   * Nada se ejecuta al importar: ni sockets ni hilos. Los hilos son daemon y
     `parar()` los une con plazo; la emisión va bajo un cerrojo para que el
     orden de las líneas sea el mismo en todas las conexiones.
@@ -84,7 +88,7 @@ from typing import Any, Optional, Sequence
 from app.bot_das.protocolo import CODIFICACION, FIN_LINEA
 from app.bot_das.reglas.precios import de_float
 from app.bot_das.reloj import Reloj
-from app.bot_das.tipos import EstadoOrden, TipoOrden, al_tick, en_tick, tick_de
+from app.bot_das.tipos import REPLACE_SHARE_ES_ABIERTA, EstadoOrden, TipoOrden, al_tick, en_tick, tick_de
 
 # ── constantes públicas del simulador ─────────────────────────────────
 CUENTA_SIMULADA = "CUENTA_PRUEBA"          # inventada; la misma que usan las fixtures de los tests
@@ -563,12 +567,15 @@ class Emparejador:
     un mutante); `qty_corto_negativa` (signo de `%POS` en cortos);
     `orden_mensajes` (permutación de "OrderAct", "TRADE", "POS" en cada
     fill; "OrderAct" incluye el `%ORDER` actualizado); `open_en_halt`
-    ("aceptar" | "rechazar").
+    ("aceptar" | "rechazar"); `replace_share_es_abierta` (A-02: True →
+    `share` de un REPLACE = nueva cantidad ABIERTA; False → TOTAL, llenas +
+    abierta, y un `share ≤ llenas` se rechaza con `ReplaceRej`).
     """
 
     def __init__(self, libro: LibroSimulado, reloj: Reloj, variante_order: int = 19, tipo_stop_crudo: str = "SLP",
                  replace_conserva_pp: bool = True, latencia_s: float = 0.0, qty_corto_negativa: bool = False,
-                 orden_mensajes: tuple[str, ...] = ORDEN_MENSAJES_DEFECTO, open_en_halt: str = "aceptar") -> None:
+                 orden_mensajes: tuple[str, ...] = ORDEN_MENSAJES_DEFECTO, open_en_halt: str = "aceptar",
+                 replace_share_es_abierta: bool = REPLACE_SHARE_ES_ABIERTA) -> None:
         if not isinstance(libro, LibroSimulado):
             raise TypeError(f"libro debe ser un LibroSimulado: {libro!r}")
         if not callable(getattr(reloj, "ahora", None)):
@@ -590,6 +597,8 @@ class Emparejador:
             raise ValueError(f"orden_mensajes debe ser una permutación de {ORDEN_MENSAJES_DEFECTO}: {orden_mensajes!r}")
         if open_en_halt not in OPEN_EN_HALT:
             raise ValueError(f"open_en_halt debe ser uno de {OPEN_EN_HALT}: {open_en_halt!r}")
+        if not isinstance(replace_share_es_abierta, bool):
+            raise ValueError(f"replace_share_es_abierta debe ser bool: {replace_share_es_abierta!r}")
         self._libro = libro
         self._reloj = reloj
         self.variante_order = variante_order
@@ -599,6 +608,7 @@ class Emparejador:
         self.qty_corto_negativa = bool(qty_corto_negativa)
         self.orden_mensajes = orden
         self.open_en_halt = open_en_halt
+        self.replace_share_es_abierta = replace_share_es_abierta
         self._incidencias: list[str] = []
         self._manejadores = {
             "NEWORDER": self._neworder, "CANCEL": self._cancel, "REPLACE": self._replace,
@@ -787,16 +797,21 @@ class Emparejador:
     def _replace(self, p: list[str]) -> list[str]:
         """«REPLACE id share price» / «REPLACE id share STOPLMT stop price» / «REPLACE id share MKT» (L819-854; §5.6).
 
-        `share` = nueva cantidad ABIERTA (el manual no lo precisa). Sobre un
-        STOPLMTP, con `replace_conserva_pp=False` el tipo pasa a «SL: …»
-        (así `tipo_conserva_pp` del decisor tiene algo que detectar, 2h.8).
+        `share` = nueva cantidad ABIERTA con `replace_share_es_abierta=True`
+        (defecto) o TOTAL (llenas + abierta) con False (A-02: el manual no lo
+        precisa). En el modo total, `share ≤ llenas` dejaría 0 abiertas o
+        menos: `ReplaceRej` «Invalid quantity» (lo prudente: la orden sigue
+        como estaba). Sobre un STOPLMTP, con `replace_conserva_pp=False` el
+        tipo pasa a «SL: …» (así `tipo_conserva_pp` del decisor tiene algo que
+        detectar, 2h.8).
         """
         if len(p) < 4:
             raise _ComandoMalo("REPLACE incompleto")
         o = self._libro._ordenes.get(_int(p[1]))
         if o is None:
             raise _ComandoMalo(f"REPLACE de una orden desconocida {p[1]}")
-        qty = _int(p[2])
+        share = _int(p[2])
+        qty = share if self.replace_share_es_abierta else share - o.llenas     # nueva cantidad ABIERTA (A-02)
         resto = p[3:]
         nuevo_tipo: str
         precio: Optional[Decimal] = None
@@ -1663,6 +1678,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--usuario", default=None)
     parser.add_argument("--clave", default=None)
     parser.add_argument("--segundos", type=float, default=None)
+    parser.add_argument("--replace-share-total", action="store_true",
+                        help="A-02: el share de REPLACE es la cantidad TOTAL (llenas + abierta), no la abierta")
     args = parser.parse_args(list(argv) if argv is not None else None)
     if (args.usuario is None) != (args.clave is None):
         parser.error("--usuario y --clave van juntos")
@@ -1672,7 +1689,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if programa is not None:
         programa.aplicar_inicio(libro)
     usuarios = {args.usuario: args.clave} if args.usuario is not None else None
-    simulador = SimuladorDAS(libro, reloj, host=args.host, puerto=args.puerto, usuarios=usuarios)
+    emparejador = Emparejador(libro, reloj, replace_share_es_abierta=not args.replace_share_total)
+    simulador = SimuladorDAS(libro, reloj, host=args.host, puerto=args.puerto, usuarios=usuarios,
+                             emparejador=emparejador)
     host, puerto = simulador.arrancar()
     print(f"simulador DAS escuchando en {host}:{puerto}", flush=True)
     limite = time.monotonic() + args.segundos if args.segundos is not None else None

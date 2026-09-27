@@ -63,12 +63,14 @@ LAS TRAMPAS.
 from __future__ import annotations
 
 import dataclasses
+import html
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Iterable, Mapping, Optional, Union
 from zoneinfo import ZoneInfo
 
+from app.bot_das.protocolo import cmd_get, cmd_sl_reuse
 from app.bot_das.reglas.precios import de_float
 from app.bot_das.tipos import (
     LOCATES_INQUIRE_S,
@@ -122,6 +124,7 @@ ANOTACION_CADUCADOS = "locates_caducados"
 TIPOS_ANOTACION = (ANOTACION_INQUIRE, ANOTACION_INTENCION, ANOTACION_ESTADO)
 
 CLAVE_AVISO_TOPE = "locates_tope"
+COMPRA_SIN_RESPUESTA_S = 30.0                   # E2-04: tiempo máximo en «comprando» sin %SLOrder antes de avisar
 
 _NOTA_YA_SHORTABLE = "alreadyshortable"
 _ESTADOS_DAS_CANONICOS = {e.lower(): e for e in
@@ -139,9 +142,34 @@ def clave_temporizador(ticker: str, strategy_id: str) -> str:
 
 
 def consulta_reuso(ticker: str) -> Consultar:
-    """EP-9: `SLReuseQuery X` (manual L1810-1817), al comprar y tras cada reentrada."""
+    """EP-9: `SLReuseQuery X` (manual L1810-1817), al comprar y tras cada reentrada (A-06: `protocolo.cmd_sl_reuse`)."""
     _exigir_ticker(ticker)
-    return Consultar(f"SLReuseQuery {ticker}")
+    return Consultar(cmd_sl_reuse(ticker))
+
+
+def consulta_locates() -> Consultar:
+    """E2-04: `GET LOCATES` (A-06: `protocolo.cmd_get`) para rescatar una compra que no ha devuelto `%SLOrder`."""
+    return Consultar(cmd_get("LOCATES"))
+
+
+def gasto_comprometido(locates: Mapping[tuple[str, str], Locate],
+                       umbral_ultimo_pct: Union[Decimal, int, float, str] = LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT,
+                       excluir: Optional[tuple[str, str]] = None) -> Decimal:
+    """E2-02 (R-H-03, riesgo 11): gasto del día YA pagado (Located) + el previsto de las compras EN CURSO.
+
+    Pagado = Σ `coste` de cada locate (solo lo mueve un Located: es lo mismo
+    que `estado.gasto_locates_dia`). En curso (comprando, Pending, Waiting,
+    Offered) = paquetes que faltan por cubrir · 100 · `precio_accion` del
+    `%SLRET`/oferta con el que se decidió (lo que la compra va a cobrar; un
+    mínimo por ruta no se conoce aquí: el tope puede quedarse un poco corto,
+    nunca largo por esto). `excluir` = (ticker, strategy_id) cuyo previsto no
+    se cuenta (el locate que se está evaluando: su coste nuevo ya entra aparte).
+    Así dos estrategias o dos tickers con compras a la vez no superan juntos el 3 %.
+    """
+    pagado = sum((loc.coste for loc in locates.values()
+                  if isinstance(loc, Locate) and isinstance(loc.coste, Decimal) and loc.coste.is_finite()
+                  and loc.coste > 0), _CERO)
+    return pagado + _previsto_en_curso(locates, umbral_ultimo_pct, excluir=excluir)
 
 
 def paquetes(qty: int, umbral_ultimo_pct: Union[Decimal, int, float, str] = LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT) -> tuple[int, int]:
@@ -188,6 +216,15 @@ def cantidad_a_localizar(e: EstrategiaConfig, estimacion: Optional[list[dict]], 
     `bot_alerts_engine._riesgo_del_nivel` más el riesgo de entrada como último
     respaldo). `precio` solo se valida (finito > 0; si no → 0): la fila ya
     viene calculada a ese precio.
+
+    APROXIMACIÓN (E2-09, a documentar en §14): cuando el nivel no tiene riesgo
+    propio ni global, el motor (`bot_alerts_engine._riesgo_del_nivel` → None)
+    usa «lo que diga la estrategia»; aquí se usa el riesgo de ENTRADA y se
+    escala en proporción suponiendo la MISMA distancia al stop que la entrada.
+    Puede localizar de más o de menos respecto a lo que la pirámide pedirá de
+    verdad. Lo exacto sería que la fuente del radar añadiera a cada fila las
+    acciones por nivel calculadas por el motor (otra unidad). Nunca compra a
+    ciegas: sigue pasando por el EV con el coste TOTAL y el tope del 3 %.
     """
     if not _decimal_positivo(precio):
         return 0
@@ -253,9 +290,11 @@ def veredicto_ev(e: EstrategiaConfig, precio: Decimal, qty: int, precio_accion_l
     ev = de_float(ev_float)
     _, qty_aj = paquetes(qty, umbral_ultimo_pct)
     cubiertas = min(ya_localizadas, qty_aj)
-    falta = qty_aj - cubiertas
+    falta = _falta_comprable(qty_aj, cubiertas, umbral_ultimo_pct)
     n_nuevo, falta_aj = paquetes(falta, umbral_ultimo_pct) if falta > 0 else (0, 0)
-    motivo: Optional[str] = None if falta > 0 else "nada que localizar"
+    motivo: Optional[str] = None if falta > 0 else (
+        "nada que localizar" if qty_aj - cubiertas <= 0 else
+        "el resto no llega al umbral de un paquete (H6, E2-08): se opera con lo ya localizado")
     if disponibles is not None and n_nuevo > max(0, disponibles) // PAQUETE:
         n_nuevo = max(0, disponibles) // PAQUETE
         falta_aj = min(falta_aj, n_nuevo * PAQUETE)
@@ -308,7 +347,7 @@ def tope_superado(gasto_dia: Decimal, coste_nuevo: Decimal, equity: Optional[Dec
 
 
 def compra_repetida(locates: Mapping[tuple[str, str], Locate], ticker: str, strategy_id: str, *,
-                    id_das: Optional[int] = None) -> bool:
+                    id_das: Optional[int] = None, token: Optional[int] = None) -> bool:
     """R-H-02 (FIJADA 16-sep): ¿un Located que llega ahora es una SEGUNDA compra NO pedida? → deshabilitar el módulo.
 
     El decisor la llama al recibir `%SLOrder … Located` de (ticker, estrategia)
@@ -320,11 +359,16 @@ def compra_repetida(locates: Mapping[tuple[str, str], Locate], ticker: str, stra
     legítimas (parcial R-H-04, reentrada sin reutilización EP-9) pasan antes por
     `locate_intencion` y llegan con el estado «comprando». Sin registro → False
     (no es una SEGUNDA compra; una orden ajena la trata la reconciliación).
+    `token` (opcional, E2-04): el `%SLOrder` trae el token de NUESTRA última
+    compra pedida → no es repetida aunque el locate ya esté «parado» (una
+    compra sin respuesta en 30 s que por fin llega).
     """
     loc = locates.get((ticker, strategy_id))
     if loc is None or loc.compras < 1:
         return False
     if id_das is not None and loc.id_das == id_das:
+        return False
+    if token is not None and loc.token is not None and token == loc.token:
         return False
     return loc.estado not in ESTADOS_EN_CURSO
 
@@ -405,7 +449,8 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
                    cfg_loc: Mapping[str, Any], gasto_dia: Decimal, equity: Optional[Decimal], deshabilitado: bool,
                    ret: Optional[MsgSLRet], tokens: Union[Callable[[], int], Any], *, qty: Optional[int] = None,
                    orden: Optional[MsgSLOrder] = None, minimo_cargo: Optional[Decimal] = None,
-                   ahora_et: Optional[datetime] = None) -> list[Accion]:
+                   ahora_et: Optional[datetime] = None,
+                   locates: Optional[Mapping[tuple[str, str], Locate]] = None) -> list[Accion]:
     """R-H-01..R-H-04 + H6 + EP-9, manual L1648-1838: el siguiente paso de la máquina de un (ticker, estrategia).
 
     Entradas: `loc` (None = aún no hay; entonces `qty` = acciones de
@@ -432,6 +477,22 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
     (R-H-04) → buscando + consulta INMEDIATA; Canceled/Rejected/Closed/
     Declined → parado + `Avisar(2)` (H16: fallos por definir → humano).
     Located cubriendo lo pedido, parado y no_hace_falta → [] (cerrojo R-H-02).
+
+    Correcciones de la revisión (todas aditivas):
+      * E2-02: `locates` (solo por nombre; el decisor pasa `estado.locates`)
+        suma al gasto del tope el coste PREVISTO de las compras en curso de
+        los demás locates (`gasto_comprometido`): dos compras a la vez no
+        superan juntas el 3 %. Sin `locates`, el tope ve solo `gasto_dia`.
+      * E2-04: al comprar se PROGRAMA el temporizador a `COMPRA_SIN_RESPUESTA_S`
+        (30 s) en vez de desprogramarlo, y la intención anota
+        `ultimo_inquire_en = ahora` (la hora de la compra). Si en «comprando»
+        pasan 30 s sin `%SLOrder` → `GET LOCATES` + `Avisar(2)` + parado. NUNCA
+        se recompra (riesgo 11); un Located que llegue después se contabiliza.
+      * E2-06: el tope por gasto YA PAGADO pasa el locate a «parado» (un solo
+        aviso por locate, no uno por minuto); si solo lo superan las compras
+        en curso, se anota sin aviso y se sigue buscando (puede fallar alguna).
+      * E2-08: el «mínimo un paquete» solo vale cuando no hay nada cubierto: un
+        resto ≤ 30 % de un paquete sobre acciones ya localizadas no se compra.
     """
     if deshabilitado:
         return []
@@ -447,12 +508,16 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
         raise ValueError(f"el locate ({loc.ticker}, {loc.strategy_id}) no es de ({ticker}, {e.strategy_id})")
     cfg = _ConfigLocates.de(cfg_loc)
     fuera_de_hora = _hora_limite_pasada(cfg.hora_limite, ahora_et)
+    en_curso = _previsto_en_curso(locates, cfg.umbral, excluir=(loc.ticker, loc.strategy_id)) if locates else _CERO
     ctx = _Contexto(loc=loc, e=e, ticker=ticker, precio=precio, ahora=ahora, cfg=cfg, gasto_dia=gasto_dia,
-                    equity=equity, tokens=tokens, minimo_cargo=minimo_cargo, fuera_de_hora=fuera_de_hora)
+                    equity=equity, tokens=tokens, minimo_cargo=minimo_cargo, fuera_de_hora=fuera_de_hora,
+                    gasto_en_curso=en_curso)
     if orden is not None:
         return _tras_orden(ctx, orden)
     if loc.estado == ESTADO_COMPRANDO and ret is not None:
         return _fallo_durante_compra(ctx, ret)
+    if loc.estado == ESTADO_COMPRANDO:
+        return _compra_sin_respuesta(ctx)
     if loc.estado != ESTADO_BUSCANDO:
         return []                                   # Located (cerrojo), en curso, parado, no_hace_falta u otro
     if fuera_de_hora:
@@ -557,17 +622,24 @@ class _Contexto:
     tokens: Any
     minimo_cargo: Optional[Decimal]
     fuera_de_hora: bool
+    gasto_en_curso: Decimal = _CERO                    # E2-02: previsto de las compras en curso de los demás
 
     @property
     def clave(self) -> str:
         return clave_temporizador(self.ticker, self.loc.strategy_id)
+
+    @property
+    def gasto_tope(self) -> Decimal:
+        """E2-02: el gasto contra el que se mide el 3 %: lo pagado + lo comprometido por otras compras en curso."""
+        return self.gasto_dia + self.gasto_en_curso
 
     def objetivo(self) -> int:
         """Acciones que la posición usará tras H6 (qty_ajustada de lo pedido)."""
         return paquetes(max(0, self.loc.pedidas), self.cfg.umbral)[1]
 
     def falta_por_cubrir(self) -> int:
-        return max(0, self.objetivo() - _libres(self.loc))
+        """Lo que falta y MERECE comprarse (E2-08: un resto ≤ umbral sobre acciones ya cubiertas no)."""
+        return _falta_comprable(self.objetivo(), _libres(self.loc), self.cfg.umbral)
 
     def qty_consulta(self) -> int:
         """Acciones a consultar/comprar ahora: los paquetes (H6) de lo que falta, · 100."""
@@ -616,16 +688,45 @@ def _tras_ret(ctx: _Contexto, ret: MsgSLRet) -> list[Accion]:
     datos = _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio, disponibles=ret.tamano, **_de_veredicto(ver))
     if not ver["entra"]:
         return [Anotar(ANOTACION_INQUIRE, datos)]
-    if tope_superado(ctx.gasto_dia, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
-        return _tope(ctx, datos)
+    if tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
+        return _tope(ctx, datos, ver["coste_nuevo"])
     if not ret.ruta.strip() or any(c.isspace() for c in ret.ruta.strip()):
         return [Anotar(ANOTACION_INQUIRE, {**datos, "motivo": "%SLRET sin ruta: no se puede comprar"})]
     token = _token_locate(ctx.tokens)
     ruta = ret.ruta.strip()
     return [Anotar(ANOTACION_INTENCION, {**datos, "estado": ESTADO_COMPRANDO, "token": token, "ruta": ruta,
                                          "qty": ver["qty_comprar"], "qty_ajustada": ctx.objetivo(),
-                                         "qty_usable": ver["qty_ajustada"]}),
+                                         "qty_usable": ver["qty_ajustada"], "ultimo_inquire_en": ctx.ahora,
+                                         "gasto_en_curso_otros": ctx.gasto_en_curso}),
             LocateComprar(ctx.ticker, ver["qty_comprar"], ruta, token),
+            _programar(ctx, COMPRA_SIN_RESPUESTA_S)]
+
+
+def _compra_sin_respuesta(ctx: _Contexto) -> list[Accion]:
+    """E2-04: una compra en «comprando» sin `%SLOrder` que case. Nunca se recompra (riesgo 11).
+
+    La hora de la compra es `ultimo_inquire_en` (la anota la intención). Sin
+    ella (tras un reinicio: el diario no la guarda) se empieza a contar desde
+    ahora (+ `Programar` de 30 s). Antes de `COMPRA_SIN_RESPUESTA_S` → nada
+    (el temporizador de la compra sigue en marcha; cerrojo R-H-02: ni consulta
+    ni compra). Pasado → `GET LOCATES` (el barrido puede rescatarla por su
+    token) + `Avisar(2)` + «parado» para esta estrategia (un aviso, no uno por
+    minuto) + `Desprogramar`. Si luego llega su Located (por token), se
+    contabiliza igual: el dinero ya se gastó.
+    """
+    desde = ctx.loc.ultimo_inquire_en
+    if desde is None or ctx.ahora < desde:
+        return [Anotar(ANOTACION_INQUIRE, _datos(ctx, ultimo_inquire_en=ctx.ahora,
+                                                 motivo="compra en curso sin hora conocida: se cuenta desde ahora (E2-04)")),
+                _programar(ctx, COMPRA_SIN_RESPUESTA_S)]
+    transcurrido = ctx.ahora - desde
+    if transcurrido < COMPRA_SIN_RESPUESTA_S:
+        return []
+    texto = (f"Locate {_esc(ctx.ticker)} ({_esc(ctx.e.name)}): la compra (token {ctx.loc.token}) lleva {int(transcurrido)} s sin "
+             f"respuesta de DAS (%SLOrder). No se recompra; se pide GET LOCATES. Revisar a mano en DAS (R-H-01, H16).")
+    return [_anotar_estado(ctx, ESTADO_PARADO, motivo=f"compra sin %SLOrder en {int(COMPRA_SIN_RESPUESTA_S)} s (E2-04)"),
+            consulta_locates(),
+            Avisar(Nivel.AVISO, Grupo.B, texto, clave=f"locate_sin_respuesta:{ctx.ticker}:{ctx.loc.strategy_id}"),
             Desprogramar(ctx.clave)]
 
 
@@ -642,8 +743,8 @@ def _fallo_durante_compra(ctx: _Contexto, ret: MsgSLRet) -> list[Accion]:
     if _es_ya_shortable(ret.notas):
         return [_anotar_estado(ctx, ESTADO_NO_HACE_FALTA, motivo="AlreadyShortable (ETB)", notas=ret.notas),
                 Desprogramar(ctx.clave)]
-    texto = (f"Locate {ctx.ticker} ({ctx.e.name}): DAS devolvió un fallo con la compra en curso: "
-             f"«{ret.notas}» (ruta {ret.ruta}). Si no llega %SLOrder, revisar a mano (R-H-01, H16).")
+    texto = (f"Locate {_esc(ctx.ticker)} ({_esc(ctx.e.name)}): DAS devolvió un fallo con la compra en curso: "
+             f"«{_esc(ret.notas)}» (ruta {_esc(ret.ruta)}). Si no llega %SLOrder, revisar a mano (R-H-01, H16).")
     return [Anotar(ANOTACION_ESTADO, _datos(ctx, ruta=ret.ruta, fallo=ret.notas)),
             Avisar(Nivel.AVISO, Grupo.B, texto, clave=f"locate_fallo:{ctx.ticker}:{ctx.loc.strategy_id}")]
 
@@ -701,7 +802,7 @@ def _oferta(ctx: _Contexto, orden: MsgSLOrder) -> list[Accion]:
             motivo = ver["motivo"] or "el EV no compensa el coste total"
         elif orden.pedidas > ver["qty_comprar"]:
             motivo = "la oferta pide más acciones de las decididas"
-        elif tope_superado(ctx.gasto_dia, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
+        elif tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
             motivo = "tope de gasto en locates (R-H-03)"
     if motivo is None:
         return [_anotar_estado(ctx, ESTADO_OFRECIDO, **{**datos, "id_das": orden.id, "precio_accion": orden.precio}),
@@ -732,7 +833,7 @@ def _localizado(ctx: _Contexto, orden: MsgSLOrder, seguir_buscando: bool) -> lis
                        coste_nuevo=coste_nuevo, coste_total=loc.coste + coste_nuevo, comprado_en=ctx.ahora),
         consulta_reuso(ctx.ticker),
     ]
-    falta = ctx.objetivo() - libres_despues
+    falta = _falta_comprable(ctx.objetivo(), libres_despues, ctx.cfg.umbral)     # E2-08: un resto pequeño no se busca
     if not seguir_buscando or falta <= 0 or ctx.fuera_de_hora:
         acciones.append(Desprogramar(ctx.clave))
         return acciones
@@ -749,7 +850,7 @@ def _localizado(ctx: _Contexto, orden: MsgSLOrder, seguir_buscando: bool) -> lis
 def _parar(ctx: _Contexto, orden: MsgSLOrder, estado_das: str, motivo: Optional[str] = None) -> list[Accion]:
     """Fallo de la ruta (H16 «por definir»): parado + aviso nivel 2 con el texto de DAS; nunca un bucle de recompras (riesgo 11)."""
     motivo = motivo or f"%SLOrder {estado_das}"
-    texto = (f"Locate {ctx.ticker} ({ctx.e.name}): {motivo}. Notas de DAS: «{orden.notas}». "
+    texto = (f"Locate {_esc(ctx.ticker)} ({_esc(ctx.e.name)}): {_esc(motivo)}. Notas de DAS: «{_esc(orden.notas)}». "
              f"Se deja de buscar para esta estrategia (R-H-01, H16).")
     return [_anotar_estado(ctx, ESTADO_PARADO, id_das=orden.id, estado_das=estado_das, motivo=motivo,
                            notas=orden.notas),
@@ -757,17 +858,29 @@ def _parar(ctx: _Contexto, orden: MsgSLOrder, estado_das: str, motivo: Optional[
             Desprogramar(ctx.clave)]
 
 
-def _tope(ctx: _Contexto, datos: dict) -> list[Accion]:
-    """R-H-03: no se compra; se anota y, con equity conocida, aviso nivel 2 (uno por día: clave fija)."""
-    acciones: list[Accion] = [Anotar(ANOTACION_INQUIRE, {**datos, "motivo": (
-        "tope de gasto en locates (R-H-03)" if ctx.equity is not None and ctx.equity > 0
-        else "sin equity de la cuenta: no se compran locates (R-H-03)")})]
-    if ctx.equity is not None and ctx.equity > 0:
-        acciones.append(Avisar(Nivel.AVISO, Grupo.B,
-                               f"Tope de gasto en locates alcanzado ({ctx.cfg.tope_pct} % de la cuenta): "
-                               f"no se compra el locate de {ctx.ticker} ({ctx.e.name}) (R-H-03).",
-                               clave=CLAVE_AVISO_TOPE))
-    return acciones
+def _tope(ctx: _Contexto, datos: dict, coste_nuevo: Decimal) -> list[Accion]:
+    """R-H-03: no se compra. E2-06: UN aviso por locate, no uno por minuto.
+
+    Sin equity legible → se anota y se sigue buscando (la cuenta puede llegar;
+    sin aviso). Tope superado con el gasto YA PAGADO (`gasto_dia`, que solo
+    sube) → «parado» + `Desprogramar` + `Avisar(2)`: la máquina deja de
+    consultar y el aviso no se repite cada 60 s. Superado solo por el coste
+    previsto de otras compras EN CURSO (E2-02) → se anota sin aviso y se
+    sigue buscando: si alguna falla, el gasto baja y esta puede comprar.
+    """
+    if ctx.equity is None or ctx.equity <= 0:
+        return [Anotar(ANOTACION_INQUIRE, {**datos, "motivo": "sin equity de la cuenta: no se compran locates (R-H-03)"})]
+    if not tope_superado(ctx.gasto_dia, coste_nuevo, ctx.equity, ctx.cfg.tope_pct):
+        return [Anotar(ANOTACION_INQUIRE, {**datos, "gasto_en_curso_otros": ctx.gasto_en_curso, "motivo": (
+            "tope de gasto en locates (R-H-03) contando las compras en curso (E2-02): se espera")})]
+    texto = (f"Tope de gasto en locates alcanzado ({ctx.cfg.tope_pct} % de la cuenta): no se compra el locate de "
+             f"{_esc(ctx.ticker)} ({_esc(ctx.e.name)}) y se deja de buscar para esa estrategia hoy (R-H-03).")
+    # `locate_estado` NO lleva `coste_total`/`coste_nuevo`: el reductor (y el diario) los tomarían como gasto pagado.
+    return [_anotar_estado(ctx, ESTADO_PARADO, motivo="tope de gasto en locates (R-H-03)", ruta=datos.get("ruta"),
+                           precio_accion=datos.get("precio_accion"), coste_nuevo_previsto=coste_nuevo,
+                           gasto_dia=ctx.gasto_dia),
+            Desprogramar(ctx.clave),
+            Avisar(Nivel.AVISO, Grupo.B, texto, clave=CLAVE_AVISO_TOPE)]
 
 
 # ── piezas ────────────────────────────────────────────────────────────
@@ -839,6 +952,50 @@ def _aplicar_una(loc: Locate, tipo: str, datos: Mapping[str, Any]) -> Locate:
 def _libres(loc: Locate) -> int:
     """R-H-04: localizadas − usadas (lo mismo que `entrada._locates_libres`)."""
     return max(0, loc.localizadas - loc.usadas)
+
+
+def _falta_comprable(objetivo: int, cubiertas: int, umbral_ultimo_pct: Union[Decimal, int, float, str]) -> int:
+    """E2-08 (H6 «sobre la suma de cada compra»): lo que falta y merece una compra más.
+
+    El «mínimo un paquete» de `paquetes()` es para posiciones de menos de 100
+    acciones SIN nada cubierto. Con acciones ya localizadas, un resto de menos
+    de 100 que no pasa del umbral (30 %) no se compra: se opera con lo
+    cubierto (1.220 localizadas de 1.240 → no se compran 100 para usar 20).
+    """
+    falta = max(0, objetivo - cubiertas)
+    if falta <= 0 or cubiertas <= 0 or falta >= PAQUETE:
+        return falta
+    if Decimal(falta) * _CIEN / PAQUETE > de_float(umbral_ultimo_pct):
+        return falta
+    return 0
+
+
+def _coste_previsto(loc: Locate, umbral_ultimo_pct: Union[Decimal, int, float, str]) -> Decimal:
+    """E2-02: lo que va a cobrar una compra en curso: paquetes de lo que falta · 100 · precio por acción decidido."""
+    precio = loc.precio_accion
+    if not isinstance(precio, Decimal) or not precio.is_finite() or precio <= 0:
+        return _CERO
+    objetivo = paquetes(max(0, int(loc.pedidas)), umbral_ultimo_pct)[1]
+    falta = _falta_comprable(objetivo, _libres(loc), umbral_ultimo_pct)
+    n = paquetes(falta, umbral_ultimo_pct)[0] if falta > 0 else 0
+    return Decimal(n * PAQUETE) * precio
+
+
+def _previsto_en_curso(locates: Optional[Mapping[tuple[str, str], Locate]],
+                       umbral_ultimo_pct: Union[Decimal, int, float, str],
+                       excluir: Optional[tuple[str, str]] = None) -> Decimal:
+    """E2-02: Σ coste previsto de los locates en comprando / Pending / Waiting / Offered (salvo `excluir`)."""
+    total = _CERO
+    for clave, loc in (locates or {}).items():
+        if clave == excluir or not isinstance(loc, Locate) or loc.estado not in ESTADOS_EN_CURSO:
+            continue
+        total += _coste_previsto(loc, umbral_ultimo_pct)
+    return total
+
+
+def _esc(texto: Any) -> str:
+    """D2-08: todo texto variable que va a Telegram (parse_mode HTML) se escapa: un «<» de DAS no pierde el aviso."""
+    return html.escape(str(texto), quote=False)
 
 
 def _es_nuestra(loc: Locate, orden: MsgSLOrder) -> bool:

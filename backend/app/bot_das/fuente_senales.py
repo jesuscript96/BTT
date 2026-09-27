@@ -31,13 +31,27 @@ LAS TRAMPAS.
   * `pandas` y `RunnerAlertas` se importan DENTRO de `FuenteEnProceso.__init__`
     (y de `vela_de_grabacion`), nunca al importar este módulo: `test_das_seguridad`
     comprueba que el ejecutor en modo tubería no tiene pandas en `sys.modules`.
-    Ojo: un `Evento` picklado lleva `momento` como `pd.Timestamp`; despicklarlo
-    en el ejecutor SÍ importa pandas en ese momento (es el diseño «Evento viaja
-    como hoy por Pipe», §6.1); el criterio de §12 es al IMPORTAR.
+  * F-01: por la tubería NO viajan `pd.Timestamp` ni clases de `app.services`.
+    `EnlaceEjecutor` manda cada `Evento` como dict de primitivos (`momento`
+    como texto «AAAA-MM-DD HH:MM:SS») y `FuenteTuberia` lo reconstruye como
+    `EventoLigero` (mismos atributos que `Evento`). Además la tubería despickla
+    con un `Unpickler` que solo admite `decimal.Decimal`: un pickle con otra
+    clase (un enlace viejo que mande el `Evento` tal cual) se descarta como
+    ilegible con aviso en vez de cargar pandas en la ruta de la primera señal.
   * `bot_alerts_cliente` importa `httpx` y `bot_alerts_feed` importa `httpx` y
-    `websockets` al cargarse: `id_evento` se importa perezosamente dentro de
-    `id_de_evento` y `vela_de_mensaje` (feed l.177-187) se REPLICA aquí en
-    `vela_de_grabacion` en vez de importarse.
+    `websockets` al cargarse: `id_de_evento` REPLICA `id_evento` (R-A-05; un
+    test comprueba la paridad con la original) y `vela_de_mensaje` (feed
+    l.177-187) se REPLICA en `vela_de_grabacion` en vez de importarse.
+  * F-02: el saludo HMAC de `multiprocessing.connection` lee SIN tiempo límite.
+    El Listener se abre SIN authkey y la autenticación (las mismas
+    `deliver_challenge` + `answer_challenge` que haría `accept`) se hace
+    aquí con un plazo (`espera_auth_s`): un cliente local que conecta y no
+    habla ya no deja sorda la tubería. Si el cliente manda medio mensaje y
+    calla, `SO_RCVTIMEO` saca al `recv` bloqueado (en Windows un `shutdown`
+    desde otro hilo no lo despierta).
+  * D2-06 / R-D-07: la tanda de `Evento` de UNA vela se entrega ordenada con
+    `reglas.salidas.prioridad` (salidas/TP → pirámides reduce/lot_* → pirámides
+    add → entradas): el TP de A llega al decisor antes que la entrada de B.
   * Las grabaciones reales (comprobado el 26-sep sobre AM_2026-09-2x) NO
     guardan el mensaje crudo de Massive sino la vela YA convertida (`timestamp`
     naive ET como texto, open/high/low/close/volume) más `_r` y `sym`.
@@ -69,13 +83,18 @@ LAS TRAMPAS.
 from __future__ import annotations
 
 import gzip
+import io
 import json
+import pickle
 import socket
+import struct
+import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from decimal import Decimal
 from multiprocessing import AuthenticationError
-from multiprocessing.connection import Listener
+from multiprocessing.connection import Listener, answer_challenge, deliver_challenge
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
@@ -98,6 +117,7 @@ ORIGEN_TUBERIA = "tuberia"
 ORIGEN_GRABACION = "grabacion"
 ET_NOMBRE = "America/New_York"          # el de bot_alerts_feed.ET (los frames van en hora de Nueva York, sin zona)
 _ESPERA_HOLA_S = 5.0                    # cuánto espera el Listener el «hola» tras aceptar
+_ESPERA_AUTH_S = 5.0                    # F-02: plazo del saludo HMAC tras aceptar (antes no tenía)
 _POLL_S = 0.2                           # granularidad con la que el hilo de la tubería mira `parando`
 _ACCEPT_FALLOS_MAX = 20                 # accept() fallando seguido → listener roto → se recrea vía HiloVigilado
 _DRENAJE_MAX = 10_000                   # mensajes que se apuran del socket al parar (acotado)
@@ -115,16 +135,96 @@ class FuenteSenales(Protocol):
     def salud(self) -> dict: ...          # {"viva": bool, "ultimo_en": epoch | None, "origen": str, ...}
 
 
+# ── el Evento tal y como llega por la tubería (F-01) ────────────────────
+@dataclass
+class EventoLigero:
+    """Los MISMOS campos que `bot_alerts_engine.Evento`, reconstruidos de un dict de primitivos (F-01).
+
+    `momento` es texto «AAAA-MM-DD HH:MM:SS» (INICIO del minuto, naive ET);
+    `entrada.t_cierre_vela` y `id_de_evento` lo aceptan igual que un
+    `pd.Timestamp`. Los campos que falten quedan en None (riesgo 18:
+    `campo_ausente` los detecta); los que no existan en `Evento` van a `extra`
+    y se leen como atributos (un `Evento` de una versión más nueva no pierde
+    nada). Es un dataclass: el diario lo serializa campo a campo. Un test
+    comprueba que los campos coinciden con los de `Evento`.
+    """
+    tipo: Optional[str] = None
+    ticker: Optional[str] = None
+    strategy_id: Optional[str] = None
+    estrategia: Optional[str] = None
+    momento: Any = None
+    precio: Optional[float] = None
+    direccion: Optional[str] = None
+    estado: str = "alerta"
+    acciones: Optional[float] = None
+    stop: Optional[float] = None
+    distancia_stop: Optional[float] = None
+    riesgo_usd: Optional[float] = None
+    motivo: Optional[str] = None
+    entrada_idx: Optional[int] = None
+    posicion_restante: Optional[float] = None
+    nivel: Optional[int] = None
+    accion_piramide: Optional[str] = None
+    posicion_total: Optional[float] = None
+    cuenta: Optional[str] = None
+    extra: dict = field(default_factory=dict)
+
+    def __getattr__(self, nombre: str) -> Any:
+        """Solo se llama si el atributo NO existe: busca en `extra` (campos de otra versión del motor)."""
+        if nombre.startswith("__"):
+            raise AttributeError(nombre)
+        extra = self.__dict__.get("extra")
+        if extra is not None and nombre in extra:
+            return extra[nombre]
+        raise AttributeError(f"{type(self).__name__} no tiene {nombre!r}")
+
+    @classmethod
+    def desde_dict(cls, datos: dict) -> "EventoLigero":
+        """Dict de primitivos (lo que manda `EnlaceEjecutor`) → `EventoLigero`; claves desconocidas a `extra`."""
+        conocidos = _CAMPOS_EVENTO_LIGERO
+        propios = {k: v for k, v in datos.items() if k in conocidos}
+        extra = {str(k): v for k, v in datos.items() if k not in conocidos and k != "extra"}
+        if isinstance(datos.get("extra"), dict):
+            extra = {**datos["extra"], **extra}
+        if "estado" in propios and propios["estado"] is None:
+            propios.pop("estado")                    # como `Evento`: sin estado → «alerta»
+        return cls(**propios, extra=extra)
+
+
+_CAMPOS_EVENTO_LIGERO = frozenset(f for f in EventoLigero.__dataclass_fields__ if f != "extra")
+
+
 # ── utilidades puras (sin pandas) ──────────────────────────────────────
 def id_de_evento(ev: Any) -> str:
-    """`bot_alerts_cliente.id_evento(ev)` (R-A-05: ticker | estrategia | minuto | tipo [| cuenta]).
+    """Réplica de `bot_alerts_cliente.id_evento(ev)` (R-A-05: ticker | estrategia | minuto | tipo [| cuenta]).
 
-    Import perezoso: `bot_alerts_cliente` carga `httpx` al importarse y este
-    módulo debe cargar ligero. Después de la primera llamada el `import` es una
-    búsqueda en `sys.modules`.
+    Se replica en vez de importarse porque `bot_alerts_cliente` carga `httpx`
+    al importarse (F-01: el ejecutor en modo tubería no paga ni httpx ni pandas
+    en la primera señal). `test_id_de_evento_paridad_con_id_evento` compara las
+    dos sobre `Evento` reales, con y sin cuenta, y sobre `EventoLigero`.
     """
-    from app.services.bot_alerts_cliente import id_evento
-    return id_evento(ev)
+    base = f"{ev.ticker}|{ev.strategy_id}|{str(ev.momento)[:19]}|{ev.tipo}"
+    cuenta = getattr(ev, "cuenta", None)
+    return f"{base}|{cuenta}" if cuenta else base
+
+
+def ordenar_tanda(senales: list[Senal]) -> list[Senal]:
+    """D2-06 / R-D-07: la tanda de UNA vela ordenada con `reglas.salidas.prioridad` (salidas/TP → reduce/lot_* → add → entradas).
+
+    Import perezoso de `reglas.salidas` (no carga nada pesado, pero así este
+    módulo sigue importándose ligero). Si la ordenación fallara, se entrega en
+    el orden del motor: nunca se pierde una señal por ordenarla.
+    """
+    if len(senales) < 2:
+        return list(senales)
+    try:
+        from app.bot_das.reglas.salidas import prioridad
+        ordenadas = list(prioridad(list(senales)))
+    except Exception:  # noqa: BLE001 — frontera con otra unidad: un fallo al ordenar no puede perder la tanda (R-M-05)
+        return list(senales)
+    if len(ordenadas) != len(senales):
+        return list(senales)
+    return ordenadas
 
 
 def campo_ausente(ev: Any) -> Optional[str]:
@@ -319,6 +419,11 @@ class _FuenteBase:
         self.entregadas += 1
         return True
 
+    def _entregar_tanda(self, senales: list[Senal]) -> None:
+        """D2-06: las señales de UNA vela, ordenadas por `salidas.prioridad` (R-D-07) antes de entregarlas."""
+        for senal in ordenar_tanda(senales):
+            self._entregar(senal)
+
     # ── avisos ──
     def _avisar(self, nivel: int, texto: str) -> None:
         self.avisos += 1
@@ -404,8 +509,7 @@ class FuenteEnProceso(_FuenteBase):
         self._entregar(Senal(clase="hidratado", ticker=ticker, id=None, recibida_en=self._reloj.mono(),
                              feed={"n_velas": int(len(df)), "prev_close": (stats or {}).get("prev_close")},
                              origen=self.origen))
-        for ev in eventos:
-            self._entregar(self._senal_evento(ev))
+        self._entregar_tanda([self._senal_evento(ev) for ev in eventos])
 
     def vela(self, ticker: str, vela: dict) -> None:
         """`runner.nueva_vela` → una `Senal("evento")` por `Evento`, con `id = id_evento` (R-A-05) y `recibida_en = reloj.mono()`."""
@@ -415,8 +519,7 @@ class FuenteEnProceso(_FuenteBase):
             self._fallo_motor(ticker, "vela", exc)
             return
         self._ultimo_en = self._reloj.epoch()
-        for ev in eventos:
-            self._entregar(self._senal_evento(ev))
+        self._entregar_tanda([self._senal_evento(ev) for ev in eventos])
 
     def radar(self, ticker: str, precio: Decimal) -> None:
         """`runner.estimacion_locates(ticker, float(precio))` + `strategy_id` por nombre → `Senal("radar")` (corrección 6, riesgo 25).
@@ -472,8 +575,13 @@ class FuenteTuberia(_FuenteBase):
 
     def __init__(self, direccion: "tuple[str, int] | str", authkey: bytes, destino: Destino, reloj,
                  motor_hash_esperado: str, version_minima: str,
-                 al_aviso: Optional[AlAviso] = None, espera_hola_s: float = _ESPERA_HOLA_S) -> None:
+                 al_aviso: Optional[AlAviso] = None, espera_hola_s: float = _ESPERA_HOLA_S,
+                 espera_auth_s: float = _ESPERA_AUTH_S) -> None:
         super().__init__(destino, reloj, al_aviso)
+        if not float(espera_auth_s) > 0:
+            raise ValueError(f"espera_auth_s debe ser > 0: {espera_auth_s!r}")
+        self._espera_auth_s = float(espera_auth_s)
+        self.autenticaciones_caducadas = 0      # F-02: clientes que conectaron y no completaron el HMAC a tiempo
         self._authkey = authkey_valida(authkey)
         self._direccion = direccion_valida(direccion)
         if not isinstance(motor_hash_esperado, str):
@@ -504,7 +612,7 @@ class FuenteTuberia(_FuenteBase):
         if self._hilo is not None and self._hilo.vivo:
             return
         if self._listener is None:
-            self._listener = Listener(self._direccion, authkey=self._authkey)
+            self._listener = Listener(self._direccion, authkey=None)   # F-02: el HMAC se hace en `_autenticar`, con plazo
         self._hilo = HiloVigilado("fuente-tuberia", self._bucle, self._al_caida)
         self._hilo.arrancar()
         self._viva = True
@@ -539,6 +647,7 @@ class FuenteTuberia(_FuenteBase):
             "malformados": self.malformados, "desconocidos": self.desconocidos,
             "conexiones": self.conexiones, "desconexiones": self.desconexiones,
             "autenticaciones_fallidas": self.autenticaciones_fallidas,
+            "autenticaciones_caducadas": self.autenticaciones_caducadas,
             "caidas": self._hilo.caidas if self._hilo is not None else 0,
         })
         return salud
@@ -551,13 +660,8 @@ class FuenteTuberia(_FuenteBase):
         while not parando.is_set():
             listener = self._asegurar_listener()
             try:
-                conn = listener.accept()
-            except AuthenticationError as exc:   # frontera de red: cliente sin la clave correcta (riesgo 19): se rechaza y se sigue
-                self.autenticaciones_fallidas += 1
-                self._avisar_una_vez("auth", Nivel.AVISO,
-                                     f"tubería: conexión rechazada por clave incorrecta ({exc}) (riesgo 19)")
-                continue
-            except (OSError, EOFError) as exc:   # frontera de red: listener cerrado por `parar`, o cliente que cortó durante el saludo HMAC
+                conn = listener.accept()         # sin authkey: vuelve en cuanto hay un cliente (F-02)
+            except (OSError, EOFError) as exc:   # frontera de red: listener cerrado por `parar`
                 if parando.is_set():
                     return
                 self.errores_accept += 1
@@ -572,12 +676,47 @@ class FuenteTuberia(_FuenteBase):
             if parando.is_set():
                 _cerrar_silencioso(conn)
                 return
+            if not self._autenticar(conn):
+                _cerrar_silencioso(conn)
+                continue
+            if parando.is_set():
+                _cerrar_silencioso(conn)
+                return
             self._servir(conn)
+
+    def _autenticar(self, conn: Any) -> bool:
+        """F-02: el saludo HMAC de `Listener.accept` (deliver_challenge + answer_challenge) con PLAZO.
+
+        Cada lectura espera como mucho lo que queda de `espera_auth_s` (`poll`)
+        y, además, el socket lleva `SO_RCVTIMEO` con ese mismo resto: si un
+        cliente manda medio mensaje y calla, el `recv` bloqueado sale con
+        TimeoutError (en Windows un `shutdown` desde otro hilo NO lo despierta;
+        comprobado). Clave incorrecta → aviso (riesgo 19, una vez al día); plazo
+        vencido o corte → se cuenta. En los dos casos la conexión se cierra
+        (la cierra `_bucle`) y se vuelve a aceptar. True = autenticado.
+        """
+        limite = time.monotonic() + self._espera_auth_s
+        try:
+            con_plazo = _ConexionConPlazo(conn, limite)
+            deliver_challenge(con_plazo, self._authkey)
+            answer_challenge(con_plazo, self._authkey)
+            return True
+        except (AuthenticationError, AssertionError) as exc:   # frontera de red: cliente sin la clave correcta (riesgo 19)
+            self.autenticaciones_fallidas += 1
+            self._avisar_una_vez("auth", Nivel.AVISO,
+                                 f"tubería: conexión rechazada por clave incorrecta ({exc}) (riesgo 19)")
+            return False
+        except (OSError, EOFError) as exc:   # frontera de red: cliente callado (TimeoutError) o que cortó durante el HMAC
+            self.autenticaciones_caducadas += 1
+            self.ultimo_error = f"autenticación: {type(exc).__name__}: {exc}"
+            return False
+        finally:
+            _plazo_de_lectura(conn, None)          # la conexión autenticada vuelve a leer sin plazo (el «hola» usa poll)
 
     def _asegurar_listener(self) -> Listener:
         """Recrea el Listener si un relanzamiento del hilo lo encontró cerrado (accept roto)."""
         if self._listener is None:
-            self._listener = Listener(self._direccion, authkey=self._authkey)
+            self._listener = Listener(self._direccion, authkey=None)   # F-02: el HMAC va en `_autenticar`
         return self._listener
 
     def _servir(self, conn: Any) -> None:
@@ -635,11 +774,16 @@ class FuenteTuberia(_FuenteBase):
         return True
 
     def _recibir(self, conn: Any) -> Any:
-        """`conn.recv()`; None si el mensaje no se puede despicklar (riesgo 18). EOF/OSError se propagan (conexión muerta)."""
+        """`conn.recv_bytes()` + `Unpickler` restringido (F-01); None si no se puede despicklar (riesgo 18). EOF/OSError se propagan.
+
+        Solo se admiten primitivos y `decimal.Decimal`: un pickle que nombre
+        otra clase (un `Evento` con `pd.Timestamp` de un enlace viejo) se
+        descarta ANTES de importar su módulo; el ejecutor nunca carga pandas
+        por la tubería.
+        """
+        datos = conn.recv_bytes()                  # EOFError/OSError: conexión muerta → frontera en `_servir`
         try:
-            return conn.recv()
-        except (EOFError, OSError):
-            raise
+            return _DespickladorPrimitivos(io.BytesIO(datos)).load()
         except Exception as exc:  # noqa: BLE001 — frontera de mensaje: pickle de otra versión o clase desconocida; el flujo sigue en sincronía (mensajes con longitud)
             self.malformados += 1
             self.ultimo_error = f"mensaje ilegible: {type(exc).__name__}: {exc}"
@@ -688,16 +832,24 @@ class FuenteTuberia(_FuenteBase):
             self._avisar_una_vez(f"t:{t!r}", Nivel.AVISO, f"tubería: mensaje con tipo desconocido {t!r} ignorado")
 
     def _eventos(self, ticker: Any, eventos: Any, recuperada: bool) -> None:
-        """Una `Senal("evento")` por `Evento` válido; los que no traen los 4 campos obligatorios se descartan (riesgo 18)."""
+        """Una `Senal("evento")` por `Evento` válido, la tanda ordenada por prioridad (D2-06); los incompletos fuera (riesgo 18).
+
+        Cada evento llega como dict de primitivos (F-01) y se reconstruye como
+        `EventoLigero`; lo que no es dict se lee tal cual con `getattr`.
+        """
         lista = list(eventos or [])
         faltan: list[str] = []
+        tanda: list[Senal] = []
         for ev in lista:
+            if isinstance(ev, dict):
+                ev = EventoLigero.desde_dict(ev)
             campo = campo_ausente(ev)
             if campo is not None:
                 self.descartados += 1
                 faltan.append(campo)
                 continue
-            self._entregar(self._senal_evento(ev, recuperada))
+            tanda.append(self._senal_evento(ev, recuperada))
+        self._entregar_tanda(tanda)
         if faltan:
             campos = sorted(set(faltan))
             self._avisar_una_vez(f"evento_incompleto:{campos}", Nivel.AVISO,
@@ -737,14 +889,28 @@ class FuenteTuberia(_FuenteBase):
                                   f"{'relanzado' if relanzado else 'NO relanzado: sin tubería de señales'}")
 
     def _despertar_accept(self) -> None:
-        """Conexión de cortesía para sacar al hilo de `accept()` (en Windows basta con cerrar el socket; esto vale en todos)."""
+        """Conexión de cortesía para sacar al hilo de `accept()`.
+
+        TCP: un `connect` crudo. Tubería con nombre de Windows (F-05): cerrar el
+        Listener NO despierta el `ConnectNamedPipe` pendiente, así que se abre
+        un `Client` sin authkey (el Listener ya no autentica en `accept`, F-02) y
+        se cierra en el acto; el hilo ve `parando` y sale.
+        """
         listener = self._listener
-        if listener is None or not isinstance(listener.address, tuple):
+        if listener is None:
+            return
+        direccion = listener.address
+        if isinstance(direccion, tuple):
+            try:
+                with socket.create_connection(direccion, timeout=0.5):
+                    pass
+            except OSError:   # frontera de red: si ya está cerrado, no hay a quién despertar
+                return
             return
         try:
-            with socket.create_connection(listener.address, timeout=0.5):
-                pass
-        except OSError:   # frontera de red: si ya está cerrado, no hay a quién despertar
+            from multiprocessing.connection import Client
+            _cerrar_silencioso(Client(direccion))
+        except (OSError, EOFError, ValueError):   # frontera de red: tubería ya cerrada u ocupada: nada que despertar
             return
 
     def _cerrar_listener(self) -> None:
@@ -902,6 +1068,62 @@ def _a_et(dt: datetime) -> datetime:
     if not isinstance(dt, datetime):
         raise ValueError(f"se esperaba un datetime: {dt!r}")
     return dt.replace(tzinfo=ET) if dt.tzinfo is None else dt.astimezone(ET)
+
+
+class _DespickladorPrimitivos(pickle.Unpickler):
+    """F-01: despickla SOLO primitivos (dict, list, str, int, float, bool, None, bytes, set) y `decimal.Decimal`.
+
+    Esas estructuras se codifican con opcodes propios y no pasan por
+    `find_class`; cualquier otra clase se rechaza SIN importar su módulo.
+    """
+
+    _PERMITIDAS = frozenset({("decimal", "Decimal"), ("_pydecimal", "Decimal")})
+
+    def find_class(self, module: str, name: str) -> Any:
+        if (module, name) in self._PERMITIDAS:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"clase no admitida por la tubería: {module}.{name} (F-01: solo primitivos)")
+
+
+class _ConexionConPlazo:
+    """F-02: envoltorio de una `Connection` para el saludo HMAC: cada `recv_bytes` espera como mucho hasta `limite` (monotónico)."""
+
+    def __init__(self, conn: Any, limite: float) -> None:
+        self._conn = conn
+        self._limite = limite
+
+    def send_bytes(self, datos: bytes) -> None:
+        self._conn.send_bytes(datos)
+
+    def recv_bytes(self, maxlength: Optional[int] = None) -> bytes:
+        queda = self._limite - time.monotonic()
+        if queda <= 0 or not self._conn.poll(queda):
+            raise TimeoutError("el cliente no completó el saludo HMAC a tiempo (F-02)")
+        _plazo_de_lectura(self._conn, max(self._limite - time.monotonic(), 0.05))
+        return self._conn.recv_bytes(maxlength)
+
+
+def _plazo_de_lectura(conn: Any, segundos: Optional[float]) -> None:
+    """F-02: `SO_RCVTIMEO` del socket de `conn` (None = sin plazo). No cierra el socket: el handle sigue siendo de `conn`.
+
+    Con una tubería con nombre (no es un socket) no hace nada: allí solo
+    protege el `poll` de `_ConexionConPlazo`.
+    """
+    try:
+        s = socket.socket(fileno=conn.fileno())
+    except (OSError, ValueError, TypeError):   # frontera de red: tubería con nombre o conexión ya cerrada: nada que ajustar
+        return
+    try:
+        if sys.platform == "win32":
+            valor: Any = 0 if segundos is None else max(int(segundos * 1000), 1)
+        else:
+            seg = 0.0 if segundos is None else max(segundos, 0.001)
+            valor = struct.pack("ll", int(seg), int((seg - int(seg)) * 1_000_000))
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVTIMEO, valor)
+    except OSError:   # frontera de red: socket ya cortado; la lectura fallará sola
+        pass
+    finally:
+        s.detach()
 
 
 def _cerrar_silencioso(conn: Any) -> None:

@@ -158,7 +158,10 @@ _CANALES = {c.upper(): c for c in CANALES_SB}
 _RE_HORA = re.compile(r"\d{2}:\d{2}:\d{2}")
 _RE_ENTERO = re.compile(r"[+-]?\d+")
 _RE_STINFOEX = re.compile(r"(\w+):\s*([\d.]+)%")                # §5.21: tolerante (ConcShr vs ConcShrt)
-_RE_LOGIN = re.compile(r"((?<!\S)login[ \t]+\S+[ \t]+)(\S+)", re.IGNORECASE)
+# A-03: el LOGIN puede ir pegado a comillas, paréntesis, corchetes o «=» (repr, JSON, f-string con !r,
+# str(bytes), «cmd=LOGIN …»): basta con que delante no haya una letra o un dígito. La clave se tapa
+# hasta el siguiente blanco (comillas y paréntesis de cierre incluidos: tapar de más es inofensivo).
+_RE_LOGIN = re.compile(r"((?<![A-Za-z0-9])login[ \t]+\S+[ \t]+)(\S+)", re.IGNORECASE)
 _RE_TOKEN_TELEGRAM = re.compile(r"bot\d+:[A-Za-z0-9_-]+", re.IGNORECASE)
 _RE_TOKEN_TELEGRAM_SUELTO = re.compile(r"(?<![\w*])\d{5,}:[A-Za-z0-9_-]{30,}")   # forma real: 8-10 dígitos + «:» + 35 caracteres
 _MAX_INT32 = 2**31 - 1
@@ -215,9 +218,14 @@ def _trozo_mutante(trozo: str) -> bool:
 
 
 def cmd_login(usuario: str, clave: str, cuenta: str, watch: bool) -> str:
-    """«LOGIN Trader Password Account 1/0» (L243-251): 1 = watch (vigilante), 0 = normal (ejecutor)."""
-    return (f"LOGIN {_palabra('usuario', usuario)} {_palabra('clave', clave)} "
-            f"{_palabra('cuenta', cuenta)} {1 if watch else 0}")
+    """«LOGIN Trader Password Account 1/0» (L243-251): 1 = watch (vigilante), 0 = normal (ejecutor).
+
+    A-05 / SEG-03 (R-Q-01): un campo inválido lanza `ValueError` SIN el
+    valor (ni la clave, ni el usuario, ni la cuenta): el mensaje dice solo
+    qué campo falla y por qué.
+    """
+    return (f"LOGIN {_palabra('usuario', usuario, secreto=True)} {_palabra('clave', clave, secreto=True)} "
+            f"{_palabra('cuenta', cuenta, secreto=True)} {1 if watch else 0}")
 
 
 def cmd_neworder(o: OrdenNueva) -> str:
@@ -839,7 +847,10 @@ def redactar(linea: str) -> str:
     repetirse, así que se tapan TODAS las apariciones (tapar de más es
     inofensivo; de menos, una fuga); el token de Telegram se tapa con y sin
     el prefijo `bot` (`bot123:AA…` en una URL, `123:AA…` suelto). NUNCA
-    lanza: un objeto que no es texto se convierte con `str`.
+    lanza: un objeto que no es texto se convierte con `str`. A-03: el LOGIN
+    se reconoce también pegado a comillas, paréntesis, corchetes, «=» o «_»
+    (repr, JSON, `str(bytes)`, «cmd=LOGIN …»); solo una letra o un dígito
+    delante lo descartan («relogin»).
     """
     if not isinstance(linea, str):
         linea = str(linea)
@@ -910,9 +921,16 @@ def _si_no_o_none(x: str) -> Optional[bool]:
     return None
 
 
-def _palabra(nombre: str, valor: str) -> str:
-    """Un campo de comando: texto no vacío y sin espacios ni saltos (un espacio desplazaría los campos)."""
+def _palabra(nombre: str, valor: str, secreto: bool = False) -> str:
+    """Un campo de comando: texto no vacío y sin espacios ni saltos (un espacio desplazaría los campos).
+
+    `secreto=True` (los tres campos del LOGIN, A-05 / SEG-03): el error NO
+    lleva el valor, ni siquiera su tipo con repr; solo el campo y el motivo.
+    """
     if not isinstance(valor, str) or not valor or valor != valor.strip() or any(ch.isspace() for ch in valor):
+        if secreto:
+            raise ValueError(f"{nombre} inválido para el protocolo: debe ser un texto de una sola palabra, "
+                             f"sin espacios (valor oculto, R-Q-01)")
         raise ValueError(f"{nombre} inválido para el protocolo: {valor!r}")
     return valor
 

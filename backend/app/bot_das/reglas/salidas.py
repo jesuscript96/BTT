@@ -6,9 +6,12 @@ posición corta (y, por simetría, de una larga):
     escribe el motor (`portfolio_sim.py` l.745-2265, más el «?» de
     `bot_alerts_engine.py` l.1142) → `ClaseSalida`; lo desconocido es MOTOR.
   * `tratamiento` / `avisos_de_tratamiento`: qué hace el ejecutor con cada
-    clase (TP → F4; hora y EOD → solo se anotan, manda el reloj; SL del motor
-    con la posición abierta → divergencia sin perseguir; Daily Limit →
-    ignorar + aviso; Signal/Trailing/Time Limit/Escalera/? → como TP).
+    clase (TP → F4; «Partial TP (Hour)», «Partial TP (Time)» y «Time Limit»
+    → `hora_evento`: la qty del evento al ask sin tope y a perseguir, D2-05;
+    EOD → solo se anota, manda el reloj; SL del motor con la posición abierta
+    → divergencia sin perseguir; Daily Limit → ignorar + aviso;
+    Signal/Trailing/Escalera/? → como TP). Todo literal desconocido avisa
+    nivel 2 (D2-16).
   * `horas_de_salida`, `ultimo_eod`, `temporizadores_lote`: la hora de salida
     y el EOD de cada estrategia en ET y los tres temporizadores por lote de
     R-D-08/R-D-02 (t − 60 s agregar, t al ask, t + 30 s comprobar).
@@ -16,10 +19,37 @@ posición corta (y, por simetría, de una larga):
     salida por hora (punto medio PostOnly, luego al ask sin tope y como mucho 3
     REPLACE de precio, corrección 11).
   * `tp_parcial`, `tp_al_vencer`: R-D-03 v2 (agregar 60 s en el punto medio;
-    luego al ask con techo 3 % sobre el último DE ESE MOMENTO, o limbo).
+    luego al ask con techo 3 % sobre el último DE ESE MOMENTO, o limbo);
+    `programa_limbo_tp` / `comprobar_limbo_tp`: si la orden de cruce del TP
+    no llena, aviso de limbo sin perseguir (D2-13).
+  * `orden_hora_evento`: la orden de una salida del motor por tiempo (D2-05).
   * `prioridad`: R-D-07 (salidas/TP → pirámides reduce/lot_* → pirámides add
     → entradas).
-  * `cerrar_todo`, `orden_cierre_posicion`, `comprobar_eod`: R-D-06 y R-D-02.
+  * `cerrar_todo`, `neta_para_cerrar`, `orden_cierre_posicion`,
+    `comprobar_eod`: R-D-06 y R-D-02.
+
+CLAVES DE TEMPORIZADOR QUE PROGRAMA ESTE MÓDULO (el decisor despacha por el
+prefijo anterior al primer «:»; §6.1: una clave repetida SUSTITUYE):
+  * `hora_agregar:<lote_id>`, `hora_ask:<lote_id>`, `eod_comprobar:<lote_id>`
+    (`temporizadores_lote`, `al_desactivar`).
+  * `tp_cruce:<lote_id>:<token>` (D2-07): POR ORDEN, no por lote; dos TP del
+    mismo lote no se pisan. `datos` = {lote_id, ticker, token, qty}. Con
+    `tp_parcial(..., sin_libro_espera_s=…)` y el libro inutilizable la clave
+    lleva un token reservado y `datos["token"]` es None con
+    `datos["sin_libro"] = True`: el decisor debe llamar entonces a
+    `tp_al_vencer(lote, min(datos["qty"], libres), …)` (D2-12). El decisor
+    desprograma las de un lote cerrado por PREFIJO `tp_cruce:<lote_id>:`.
+  * `tp_limbo:<lote_id>:<token>` (D2-13, `programa_limbo_tp`): comprobar a
+    los `tp_parcial.limbo_comprobar_s` (5 s) si la orden TP_CRUCE sigue viva
+    sin llenar → `comprobar_limbo_tp` (aviso 2, sin perseguir).
+  * `cerrar_todo:<ticker>` (D2-01 / G1B-03): UNA por ticker, nunca global.
+    `datos` = {intento, tickers: [ticker], ticker, proposito, fase}. `fase`
+    «cancelar» (paso 1 de R-D-06: CancelarTicker) o «enviar» (paso 2: la orden
+    de cierre por la neta de ESE momento menos las compras aún en vuelo,
+    D2-03). El decisor la pasa tal cual a `cerrar_todo(..., fase=datos["fase"],
+    vivas_de=…)`; si con el paso 1 pendiente llega el Canceled de todo lo vivo
+    del ticker, puede llamar ya con `fase="enviar"`: la Programar que devuelve
+    lleva la MISMA clave y sustituye al temporizador de respaldo.
   * `puede_reentrar`: R-D-04 con el mismo if/elif que el backtester, más los
     vetos de R-G-03 / R-F-03.
   * `al_desactivar`: R-E-03 (esperar fin de día | cerrar y reiniciar).
@@ -51,8 +81,19 @@ LAS TRAMPAS.
     BID) del momento, es decir, un límite agresivo que barre el libro hasta
     ese precio. Por eso `cerrar_todo` usa `orden_cierre_posicion` y no
     `orden_al_ask` (que limita a min(ask, last·(1 + techo))). Y cierra también
-    las posiciones MANUALES, que no tienen lote: la cantidad sale de
-    `neta_das` (lo que dice DAS de la cuenta) cuando se conoce.
+    las posiciones MANUALES, que no tienen lote.
+  * La neta de «cerrar todo» (D2-02): `neta_das` se actualiza con %POS, no con
+    los fills, y puede ir ATRASADA justo después de un cierre. Con neta_das ≠
+    neta_fills NUNCA se compra lo que dice DAS a ciegas: mismo signo → el
+    MÍNIMO de las dos (el resto, al reintento tras GET POSITIONS); signos
+    distintos o una en 0 → solo consultar y reintentar. Solo una posición
+    manual pura (sin fills ni lotes con acciones del bot) se cierra por
+    `neta_das`.
+  * «Cerrar todo» en dos pasos (D2-03): primero se cancela lo vivo del ticker
+    y la orden de cierre sale DESPUÉS, por la neta de ese momento menos lo que
+    las compras aún vivas pueden ejecutar (nunca comprar de más, riesgo 6).
+    Al agotar los reintentos se RETIRA la orden de cierre viva antes de avisar
+    (D2-04): si Jaume cierra a mano, la del bot ya no puede llenar después.
   * Sobrecompra (riesgo 6): si un lote ya tiene una orden de cierre TOTAL en
     curso (hora, cierre humano o reinicio), un TP o una salida del motor NO
     añade otra orden (`tratamiento` → «anotar»): dos órdenes de compra sobre
@@ -74,9 +115,14 @@ LAS TRAMPAS.
   * Con el libro BLOQUEADO (bid == ask) el punto medio de una compra PostOnly
     tocaría el ask y DAS la rechazaría; se deja un tick por debajo del ask
     (por encima del bid en las ventas) para que siga agregando.
+  * Telegram recibe los avisos con parse_mode HTML (D2-08): todo texto
+    variable de un `Avisar` (ticker, estrategia, literal del motor, texto de
+    una excepción) pasa por `html.escape(x, quote=False)`. Los `Anotar` van
+    al diario SIN escapar (el literal tal cual).
 """
 from __future__ import annotations
 
+import html
 import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -90,6 +136,7 @@ from app.bot_das.reglas.precios import (
     redondear_abajo,
     redondear_arriba,
 )
+from app.bot_das.protocolo import cmd_get
 from app.bot_das.reglas.precios import ruta as ruta_de
 from app.bot_das.reloj import ET
 from app.bot_das.tipos import (
@@ -102,6 +149,7 @@ from app.bot_das.tipos import (
     Accion,
     Anotar,
     Avisar,
+    Cancelar,
     CancelarTicker,
     ClaseSalida,
     Consultar,
@@ -123,17 +171,23 @@ from app.bot_das.tipos import (
     Reemplazar,
     Senal,
     TipoOrden,
+    share_de_replace,
     tick_de,
 )
 
 # ── literales de exit_reason (riesgo 24; corrección 5 del juez; ajuste (f)) ──
+# D2-05: HORA = salida del motor POR TIEMPO que ningún temporizador del bot
+# cubre («Partial TP (Hour)» parcial a una hora del reloj, «Partial TP (Time)»
+# parcial a N minutos de la entrada, «Time Limit» total por tiempo) → se
+# ejecuta al recibir el evento (`hora_evento`). EOD = la cubre el reloj del
+# ejecutor (`temporizadores_lote`) → solo se anota.
 LITERALES_EXIT_REASON: dict[str, ClaseSalida] = {
     "TP": ClaseSalida.TP,
     "Partial TP": ClaseSalida.TP,
     "Lot TP": ClaseSalida.TP,                    # PREFIJO de f"Lot TP ({n}/{m})" (portfolio_sim.py l.1607, ajuste (f))
     "Partial TP (Hour)": ClaseSalida.HORA,
     "Partial TP (EOD)": ClaseSalida.EOD,
-    "Partial TP (Time)": ClaseSalida.EOD,
+    "Partial TP (Time)": ClaseSalida.HORA,       # D2-05: parcial por MINUTOS desde la entrada, no es EOD
     "EOD": ClaseSalida.EOD,
     "SL": ClaseSalida.STOP,
     "Pyramid Lot Stop": ClaseSalida.STOP_LOTE,
@@ -141,7 +195,7 @@ LITERALES_EXIT_REASON: dict[str, ClaseSalida] = {
     "Escalera": ClaseSalida.MOTOR,
     "Signal": ClaseSalida.MOTOR,
     "Trailing": ClaseSalida.MOTOR,
-    "Time Limit": ClaseSalida.MOTOR,
+    "Time Limit": ClaseSalida.HORA,              # D2-05: salida total por tiempo: «la hora no se negocia» (R-D-08)
     "?": ClaseSalida.MOTOR,                      # bot_alerts_engine.py l.1142: motivo ausente
     "Halt": ClaseSalida.HALT,
     "Halt (atrapado)": ClaseSalida.HALT,
@@ -155,17 +209,24 @@ PREFIJOS_EXIT_REASON: tuple[str, ...] = ("Lot TP",)
 # ── códigos de tratamiento (§3.17) ──────────────────────────────────────
 TRATAR_TP = "tp"                    # F4 / R-D-03 v2
 TRATAR_COMO_TP = "como_tp"          # REDUCE / STOP_LOTE (qty del evento) y MOTOR provisional (pregunta 3)
-TRATAR_ANOTAR = "anotar"            # HORA / EOD / HALT / BS, o nada que cerrar
+TRATAR_ANOTAR = "anotar"            # EOD / HALT / BS, o nada que cerrar
 TRATAR_DIVERGENCIA = "divergencia"  # SL del motor con la posición abierta: NO perseguir (pregunta 4)
 TRATAR_IGNORAR = "ignorar"          # Daily Limit (I1: sin cortacircuito) o salida_motor = "ignorar"
-TRATAMIENTOS = (TRATAR_TP, TRATAR_COMO_TP, TRATAR_ANOTAR, TRATAR_DIVERGENCIA, TRATAR_IGNORAR)
+TRATAR_HORA_EVENTO = "hora_evento"  # D2-05: HORA (Partial TP (Hour)/(Time), Time Limit) → `orden_hora_evento` + persecución
+TRATAMIENTOS = (TRATAR_TP, TRATAR_COMO_TP, TRATAR_ANOTAR, TRATAR_DIVERGENCIA, TRATAR_IGNORAR, TRATAR_HORA_EVENTO)
 
 # ── claves de temporizador (§3.26 _temporizador; F4/F5; R-D-06) ─────────
 CLAVE_HORA_AGREGAR = "hora_agregar"
 CLAVE_HORA_ASK = "hora_ask"
 CLAVE_EOD_COMPROBAR = "eod_comprobar"
-CLAVE_TP_CRUCE = "tp_cruce"
-CLAVE_CERRAR_TODO = "cerrar_todo_reintento"
+CLAVE_TP_CRUCE = "tp_cruce"          # «tp_cruce:<lote_id>:<token>» (D2-07: por ORDEN)
+CLAVE_TP_LIMBO = "tp_limbo"          # «tp_limbo:<lote_id>:<token>» (D2-13)
+CLAVE_CERRAR_TODO = "cerrar_todo"    # «cerrar_todo:<ticker>» (D2-01 / G1B-03: por TICKER, nunca global)
+
+# ── fases de «cerrar todo» (D2-03: R-D-06 en dos pasos) ───────────────────
+FASE_CANCELAR = "cancelar"           # paso 1: CancelarTicker y esperar el Canceled (o el temporizador de respaldo)
+FASE_ENVIAR = "enviar"               # paso 2: la orden de cierre por la neta de ESE momento menos lo que sigue en vuelo
+FASES_CERRAR_TODO = (FASE_CANCELAR, FASE_ENVIAR)
 
 # ── motivos de puede_reentrar (R-D-04, R-F-03, R-G-03) ──────────────────
 MOTIVO_REENTRADA_PRIMERA = "primera entrada del día en este ticker (R-D-04)"
@@ -185,6 +246,16 @@ AL_DESACTIVAR_REINICIAR = "cerrar_y_reiniciar"
 
 EOD_POR_DEFECTO = "16:00"            # sin hora_fin_sesion: cierre de RTH (L4: sin posiciones overnight)
 ESPERA_REINTENTO_CERRAR_TODO_S = 2.0  # R-D-06: pausa entre intentos de «cerrar todo» si el cuadro no la fija
+ESPERA_CANCEL_CERRAR_TODO_S = 1.0     # D2-03: respaldo si el Canceled no llega (cerrar_todo.espera_cancel_s) [PROVISIONAL]
+TP_LIMBO_COMPROBAR_S = 5.0            # D2-13: comprobar la orden de cruce del TP (tp_parcial.limbo_comprobar_s) [PROVISIONAL]
+COMANDO_POSICIONES = cmd_get("POSITIONS")   # A-06: «GET POSITIONS» por protocolo.cmd_get (conjunto cerrado)
+COMANDO_ORDENES = cmd_get("ORDERS")         # A-06: «GET ORDERS»
+
+# Neta de «cerrar todo» (D2-02): de dónde sale la cantidad (va al diario).
+NETA_FILLS = "fills"                 # DAS no la ha dicho o coincide con los fills
+NETA_DAS_MANUAL = "das_manual"       # posición manual pura: solo DAS la conoce
+NETA_MINIMO = "minimo"               # discrepan con el mismo signo: el mínimo en valor absoluto
+NETA_DISCREPANCIA = "discrepancia"   # signos distintos o una en 0: no se envía nada, se consulta
 
 _ESTADOS_VIVOS = (EstadoOrden.SENDING, EstadoOrden.ACCEPTED, EstadoOrden.PARTIAL, EstadoOrden.HOLD,
                   EstadoOrden.TRIGGERED)
@@ -241,8 +312,11 @@ def tratamiento(clase: ClaseSalida, pos: PosicionTicker, lote: Optional[Lote], v
                 salida_motor: str = SALIDA_MOTOR_COMO_TP) -> str:
     """§3.17 / F4 / F5: qué hace el ejecutor con una salida del motor de clase `clase` (uno de TRATAMIENTOS).
 
-    TP → «tp» (R-D-03 v2: agregar 60 s y cruzar con techo 3 %). HORA / EOD →
-    «anotar» (manda el reloj del ejecutor, R-D-08 / R-D-02). REDUCE /
+    TP → «tp» (R-D-03 v2: agregar 60 s y cruzar con techo 3 %). HORA
+    («Partial TP (Hour)», «Partial TP (Time)», «Time Limit») → «hora_evento»
+    (D2-05: ningún temporizador del bot cierra esa fracción; el decisor manda
+    `orden_hora_evento` con la qty del evento y la persigue como mucho 3
+    veces, R-D-08). EOD → «anotar» (manda el reloj del ejecutor, R-D-02). REDUCE /
     STOP_LOTE → «como_tp» con la qty del evento. STOP con la posición aún
     abierta (neta de fills o de DAS ≠ 0 y el lote con acciones) →
     «divergencia»: NO se persigue, la STOPLMTP residente manda (pregunta 4);
@@ -253,15 +327,17 @@ def tratamiento(clase: ClaseSalida, pos: PosicionTicker, lote: Optional[Lote], v
     cortacircuito). Trampa de sobrecompra (riesgo 6): si el lote no tiene
     acciones libres (`llenas − tp_pendiente ≤ 0`), no existe, está cerrado o
     ya tiene viva una orden de cierre TOTAL (hora, cierre humano, reinicio),
-    un «tp» / «como_tp» baja a «anotar».
+    un «tp» / «como_tp» / «hora_evento» baja a «anotar».
     """
     if clase is ClaseSalida.DAILY_LIMIT:
         return TRATAR_IGNORAR
-    if clase in (ClaseSalida.HORA, ClaseSalida.EOD, ClaseSalida.HALT, ClaseSalida.BS):
+    if clase in (ClaseSalida.EOD, ClaseSalida.HALT, ClaseSalida.BS):
         return TRATAR_ANOTAR
     if clase is ClaseSalida.STOP:
         return TRATAR_DIVERGENCIA if _posicion_abierta(pos) and _lote_con_acciones(lote) else TRATAR_ANOTAR
-    if clase is ClaseSalida.TP:
+    if clase is ClaseSalida.HORA:
+        codigo = TRATAR_HORA_EVENTO
+    elif clase is ClaseSalida.TP:
         codigo = TRATAR_TP
     elif clase in (ClaseSalida.REDUCE, ClaseSalida.STOP_LOTE):
         codigo = TRATAR_COMO_TP
@@ -280,11 +356,15 @@ def avisos_de_tratamiento(codigo: str, clase: ClaseSalida, motivo: Optional[str]
     """Las acciones de diario y aviso que acompañan a cada tratamiento (§3.17; riesgo 24).
 
     Siempre `Anotar("salida_motor", …)` con el literal, la clase y el código;
-    además: literal desconocido → `Anotar("salida_desconocida")`;
-    «divergencia» → `Anotar("divergencia_sl")` + `Avisar(2)` (pregunta 4);
-    MOTOR «como_tp» → `Avisar(1)` (tratamiento provisional, pregunta 3);
+    además: literal desconocido → `Anotar("salida_desconocida")` + `Avisar(2)`
+    con clave `salida_desconocida:<literal>` SIEMPRE, sea cual sea el
+    tratamiento (D2-16: aunque baje a «anotar», el humano se entera de que el
+    motor emite algo que el bot no conoce); «divergencia» →
+    `Anotar("divergencia_sl")` + `Avisar(2)` (pregunta 4); MOTOR conocido
+    «como_tp» → `Avisar(1)` (tratamiento provisional, pregunta 3);
     DAILY_LIMIT → `Avisar(2)` con clave `daily_limit:<estrategia>` (el decisor
-    lo manda una vez al día; I1: sin cortacircuito). No crea órdenes.
+    lo manda una vez al día; I1: sin cortacircuito). No crea órdenes. Los
+    textos van escapados para el HTML de Telegram (D2-08).
     """
     ticker = pos.ticker
     estrategia = lote.estrategia if lote is not None else "?"
@@ -292,23 +372,29 @@ def avisos_de_tratamiento(codigo: str, clase: ClaseSalida, motivo: Optional[str]
     literal = motivo if isinstance(motivo, str) else repr(motivo)
     datos = {"ticker": ticker, "lote_id": lote_id, "motivo": literal, "clase": clase.value, "tratamiento": codigo}
     acciones: list[Accion] = [Anotar("salida_motor", datos)]
-    if not es_literal_conocido(motivo):
+    cabecera = f"{_h(ticker)} · {_h(estrategia)}"
+    desconocido = not es_literal_conocido(motivo)
+    if desconocido:
         acciones.append(Anotar("salida_desconocida", {"ticker": ticker, "lote_id": lote_id, "motivo": literal,
                                                       "regla": "riesgo 24"}))
+        acciones.append(Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"salida_desconocida:{literal}",
+                               texto=(f"{cabecera}: el motor emitió una salida DESCONOCIDA «{_h(literal)}» "
+                                      f"(riesgo 24); el bot la trata como «{_h(codigo)}». Revisar "
+                                      f"salidas.LITERALES_EXIT_REASON")))
     if codigo == TRATAR_DIVERGENCIA:
         acciones.append(Anotar("divergencia_sl", {"ticker": ticker, "lote_id": lote_id, "neta_fills": pos.neta_fills,
                                                   "neta_das": pos.neta_das, "regla": "pregunta 4"}))
         acciones.append(Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"divergencia_sl:{ticker}",
-                               texto=(f"{ticker} · {estrategia}: el motor cerró por SL pero la posición sigue abierta "
+                               texto=(f"{cabecera}: el motor cerró por SL pero la posición sigue abierta "
                                       f"en DAS (neta {pos.neta}); no se persigue, manda la STOPLMTP residente")))
-    elif codigo == TRATAR_COMO_TP and clase is ClaseSalida.MOTOR:
+    elif codigo == TRATAR_COMO_TP and clase is ClaseSalida.MOTOR and not desconocido:
         acciones.append(Avisar(nivel=Nivel.INFO, grupo=Grupo.B, clave=f"salida_motor:{lote_id or ticker}",
-                               texto=(f"{ticker} · {estrategia}: salida del motor «{literal}» tratada como TP "
+                               texto=(f"{cabecera}: salida del motor «{_h(literal)}» tratada como TP "
                                       f"(agregar 60 s, luego al ask con techo 3 %; provisional, pregunta 3)")))
     elif clase is ClaseSalida.DAILY_LIMIT:
         clave_estrategia = lote.strategy_id if lote is not None else ticker
         acciones.append(Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"daily_limit:{clave_estrategia}",
-                               texto=(f"{ticker} · {estrategia}: el motor marcó «Daily Limit»; el bot NO tiene "
+                               texto=(f"{cabecera}: el motor marcó «Daily Limit»; el bot NO tiene "
                                       f"cortacircuito diario (I1) y lo ignora")))
     return acciones
 
@@ -410,24 +496,47 @@ def orden_hora_agregar(lote: Lote, qty: int, cot: Optional[Cotizacion], cfg: Any
     el libro cruzado (el decisor pausa el ticker, H-5) y `OrdenNueva` si
     `qty` no es int > 0.
     """
-    bid, ask = _libro(cot, lote.ticker)
-    if _es_largo(lote):
-        lado = Lado.VENTA
-        precio = punto_medio_arriba(bid, ask)
-        if precio <= bid:
-            precio = bid + tick_de(bid)
-    else:
-        lado = Lado.COMPRA
-        precio = punto_medio_abajo(bid, ask)
-        if precio >= ask:
-            precio = ask - tick_de(ask)
-            if precio > 0 and tick_de(precio) < tick_de(ask):
-                precio = ask - tick_de(precio)       # 1,00 bloqueado → 0,9999 (el tick de abajo es otro)
-            if precio <= 0:
-                raise ValueError(f"{lote.ticker}: libro bloqueado en el tick mínimo, no hay precio para agregar")
+    lado, precio = _precio_agregar(cot, lote.ticker, _es_largo(lote))
     ruta = ruta_de(_bloque(cfg, "rutas"), "agregar", precio, hora_et)
     return OrdenNueva(token=_token(token), lado=lado, ticker=lote.ticker, ruta=ruta, qty=qty, tipo=TipoOrden.LIMITE,
                       precio=precio, tif="DAY+", post_only=True, proposito=proposito, lote_id=lote.id)
+
+
+def libro_para_agregar(cot: Optional[Cotizacion], largo: bool = False) -> bool:
+    """D2-12: True si `orden_hora_agregar` (y por tanto `tp_parcial`) tendría precio con esta cotización. Nunca lanza.
+
+    False sin bid/ask válidos, con el libro CRUZADO (bid > ask, normal en PM)
+    o bloqueado en el tick mínimo. El decisor lo consulta ANTES de pedir una
+    orden de agregar, para no convertir un libro raro en una excepción que
+    pausa el ticker y pierde el TP.
+    """
+    try:
+        _precio_agregar(cot, "?", largo)
+    except ValueError:
+        return False
+    return True
+
+
+def orden_hora_evento(lote: Lote, evento_qty: int, cot: Optional[Cotizacion], cfg: Any, token: TokenOFabrica,
+                      hora_et: datetime) -> OrdenNueva:
+    """D2-05 (R-D-01 / R-D-08): la orden de una salida del motor POR TIEMPO («Partial TP (Hour)», «(Time)», «Time Limit»).
+
+    Ningún temporizador del bot cubre esas horas, así que la salida se hace al
+    recibir el evento: el minuto de agregar ya pasó y la hora no se negocia →
+    AL ASK SIN TOPE (`orden_al_ask(techo=None)`, propósito HORA_ASK) con qty =
+    min(`evento_qty`, llenas − tp_pendiente): nunca más de lo libre del lote
+    (área E). El decisor la persigue como mucho 3 veces con `perseguir_ask`
+    (corrección 11) y a los +30 s manda `eod_comprobar`. ValueError si
+    `evento_qty` no es un int > 0 (sin cantidad del evento NO se cierra de
+    más: el EOD cierra el resto), si el lote no tiene acciones libres o sin
+    el lado del libro (sin ask no hay orden: el decisor reintenta o avisa).
+    """
+    if type(evento_qty) is not int or evento_qty <= 0:
+        raise ValueError(f"{lote.ticker}: evento_qty debe ser un int > 0, no {evento_qty!r}")
+    qty = min(evento_qty, _acciones_libres(lote))
+    if qty <= 0:
+        raise ValueError(f"{lote.ticker}: el lote {lote.id} no tiene acciones libres para la salida por tiempo")
+    return orden_al_ask(lote, qty, cot, cfg, token, hora_et, None, Proposito.HORA_ASK)
 
 
 def orden_al_ask(lote: Lote, qty: int, cot: Optional[Cotizacion], cfg: Any, token: TokenOFabrica, hora_et: datetime,
@@ -464,15 +573,20 @@ def orden_al_ask(lote: Lote, qty: int, cot: Optional[Cotizacion], cfg: Any, toke
 
 
 def perseguir_ask(orden: Orden, cot: Optional[Cotizacion], persecuciones: int,
-                  max_persecuciones: int = PERSEGUIR_ASK_MAX) -> Optional[Reemplazar]:
+                  max_persecuciones: int = PERSEGUIR_ASK_MAX,
+                  share_es_abierta: Optional[bool] = None) -> Optional[Reemplazar]:
     """Corrección 11 (F5): a la hora, si no llenó, `Reemplazar` de PRECIO al ask nuevo; como mucho `max_persecuciones` (3).
 
     Nunca `Cancelar` + nueva: la cuota de 100 CANCEL/min es compartida con los
     stops. None si ya se persiguió `max_persecuciones` veces, si la orden no
     tiene `id_das` o no está viva, si no le quedan acciones (lvqty, o qty −
     llenas si DAS aún no la dijo: nunca lo pedido), si no hay ask (bid en una
-    venta) o si su precio ya alcanza el libro. La qty del REPLACE es la que
-    QUEDA viva (nunca más). Después manda `eod_comprobar` (+30 s → humano).
+    venta) o si su precio ya alcanza el libro. La cantidad que queda viva es
+    la ABIERTA (nunca más); el `share` del REPLACE sale de
+    `tipos.share_de_replace` (A-02: abierta, o llenas + abierta según
+    `stops.replace_share_es_abierta`, que el decisor pasa en
+    `share_es_abierta`; None = el defecto de tipos). Después manda
+    `eod_comprobar` (+30 s → humano).
     """
     if persecuciones >= max_persecuciones or orden.id_das is None or orden.estado not in _ESTADOS_VIVOS:
         return None
@@ -486,35 +600,59 @@ def perseguir_ask(orden: Orden, cot: Optional[Cotizacion], persecuciones: int,
     if orden.precio is not None and (nuevo <= orden.precio if compra else nuevo >= orden.precio):
         return None
     lado_libro = "ask" if compra else "bid"
-    return Reemplazar(id_das=orden.id_das, token=orden.token, qty=restante, stop=None, precio=nuevo,
+    share = (share_de_replace(restante, max(int(orden.llenas), 0)) if share_es_abierta is None
+             else share_de_replace(restante, max(int(orden.llenas), 0), bool(share_es_abierta)))
+    return Reemplazar(id_das=orden.id_das, token=orden.token, qty=share, stop=None, precio=nuevo,
                       motivo=(f"corrección 11: persecución {persecuciones + 1}/{max_persecuciones} "
                               f"al {lado_libro} {nuevo} (R-D-08)"))
 
 
+def clave_tp_cruce(lote_id: str, token: Any) -> str:
+    """D2-07: la clave del cruce de un TP es POR ORDEN: «tp_cruce:<lote_id>:<token>» (dos TP del mismo lote no se pisan)."""
+    return f"{CLAVE_TP_CRUCE}:{lote_id}:{token}"
+
+
 def tp_parcial(lote: Lote, evento_qty: int, cot: Optional[Cotizacion], cfg: Any, token: TokenOFabrica,
-               hora_et: datetime) -> tuple[OrdenNueva, Programar]:
+               hora_et: datetime, sin_libro_espera_s: Optional[float] = None
+               ) -> tuple[Optional[OrdenNueva], Programar]:
     """R-D-03 v2 (1) / F4.2: el TP agrega hasta 60 s en el punto medio y luego se cruza (`tp_al_vencer`).
 
     qty = min(`evento_qty`, llenas − tp_pendiente del lote): la suma de órdenes
     nunca supera la posición (recordatorio del área E). Devuelve la orden
     (`orden_hora_agregar` con propósito TP_AGREGAR) y `Programar("tp_cruce:
-    <lote_id>", tp_parcial.agregar_s, {lote_id, token, qty})`. Lanza
-    ValueError si no queda nada que cerrar o `evento_qty` no es int.
+    <lote_id>:<token>", tp_parcial.agregar_s, {lote_id, ticker, token, qty})`
+    (D2-07: la clave va POR ORDEN). Lanza ValueError si no queda nada que
+    cerrar o `evento_qty` no es int.
+
+    D2-12 (opcional, aditivo): con `sin_libro_espera_s` y un libro con el que
+    no se puede agregar (cruzado, bloqueado en el tick mínimo, sin bid/ask) NO
+    lanza: devuelve `(None, Programar("tp_cruce:<lote_id>:<token reservado>",
+    sin_libro_espera_s, {lote_id, ticker, token: None, token_reservado, qty,
+    sin_libro: True}))` para que, a su vencimiento, el decisor llame a
+    `tp_al_vencer` con esa qty (cruza con techo o avisa de limbo). Sin el
+    parámetro se conserva el contrato de siempre (ValueError sin libro).
     """
     if type(evento_qty) is not int:
         raise ValueError(f"evento_qty debe ser int, no {evento_qty!r}")
     qty = min(evento_qty, _acciones_libres(lote))
     if qty <= 0:
         raise ValueError(f"{lote.ticker}: el lote {lote.id} no tiene acciones libres para el TP")
+    if sin_libro_espera_s is not None and not libro_para_agregar(cot, _es_largo(lote)):
+        espera_sin_libro = _segundos({"s": sin_libro_espera_s}, "s", 0.0)
+        reservado = _token(token)
+        return None, Programar(clave=clave_tp_cruce(lote.id, reservado), en_s=espera_sin_libro,
+                               datos={"lote_id": lote.id, "ticker": lote.ticker, "token": None,
+                                      "token_reservado": reservado, "qty": qty, "sin_libro": True})
     orden = orden_hora_agregar(lote, qty, cot, cfg, token, hora_et, Proposito.TP_AGREGAR)
     espera = _segundos(_sub(_bloque(cfg, "salidas"), "tp_parcial"), "agregar_s", SALIDA_ANTICIPO_S)
-    programa = Programar(clave=clave_lote(CLAVE_TP_CRUCE, lote.id), en_s=espera,
+    programa = Programar(clave=clave_tp_cruce(lote.id, orden.token), en_s=espera,
                          datos={"lote_id": lote.id, "ticker": lote.ticker, "token": orden.token, "qty": qty})
     return orden, programa
 
 
 def tp_al_vencer(lote: Lote, resto: int, cot: Optional[Cotizacion], cfg: Any, token: TokenOFabrica,
-                 hora_et: datetime) -> tuple[Optional[OrdenNueva], Optional[Avisar]]:
+                 hora_et: datetime, proposito: Proposito = Proposito.TP_CRUCE
+                 ) -> tuple[Optional[OrdenNueva], Optional[Avisar]]:
     """R-D-03 v2 (1)-(3) / F4.3: el resto del TP se cruza AL ASK con techo 3 % sobre el `last` DE ESE MOMENTO.
 
     Corto: ask ≤ last·(1 + techo) → orden al ask (TP_CRUCE); ask > techo →
@@ -522,6 +660,9 @@ def tp_al_vencer(lote: Lote, resto: int, cot: Optional[Cotizacion], cfg: Any, to
     residentes. Largo: simétrico con el bid y last·(1 − techo). Sin último o
     sin el lado del libro → limbo (sin techo no hay orden). `resto ≤ 0` →
     (None, None). Techo = salidas.tp_parcial.techo_ask_pct (3 %).
+    `proposito` (aditivo) permite el mismo cruce para una salida del motor
+    (SALIDA_MOTOR_CRUCE). Si la orden no llena, el decisor programa
+    `programa_limbo_tp` y avisa con `comprobar_limbo_tp` (D2-13).
     """
     if type(resto) is not int or resto <= 0:
         return None, None
@@ -535,7 +676,40 @@ def tp_al_vencer(lote: Lote, resto: int, cot: Optional[Cotizacion], cfg: Any, to
     if (libro < limite) if largo else (libro > limite):
         lado_libro = "bid" if largo else "ask"
         return None, _aviso_limbo(lote, resto, f"{lado_libro} {libro} fuera del techo {limite} (último {last})", techo)
-    return orden_al_ask(lote, resto, cot, cfg, token, hora_et, techo, Proposito.TP_CRUCE), None
+    return orden_al_ask(lote, resto, cot, cfg, token, hora_et, techo, proposito), None
+
+
+def programa_limbo_tp(lote: Lote, orden: Union[OrdenNueva, Orden], cfg: Any) -> Programar:
+    """D2-13 (R-D-03 v2 (3)): tras enviar la orden de cruce del TP, comprobar a los `limbo_comprobar_s` (5 s) si llenó.
+
+    Clave «tp_limbo:<lote_id>:<token>» (por orden), `datos` = {lote_id,
+    ticker, token, qty}. Al vencer, el decisor llama a `comprobar_limbo_tp`
+    con la `Orden` de ese token. ValueError si el tiempo de la config es
+    negativo.
+    """
+    espera = _segundos(_sub(_bloque(cfg, "salidas"), "tp_parcial"), "limbo_comprobar_s", TP_LIMBO_COMPROBAR_S)
+    return Programar(clave=f"{CLAVE_TP_LIMBO}:{lote.id}:{orden.token}", en_s=espera,
+                     datos={"lote_id": lote.id, "ticker": lote.ticker, "token": orden.token, "qty": orden.qty})
+
+
+def comprobar_limbo_tp(lote: Lote, orden: Orden) -> Optional[Avisar]:
+    """D2-13 (R-D-03 v2 (3) «si no se ejecuta, AVISO al humano: limbo»): la orden de cruce del TP sigue viva sin llenar.
+
+    Devuelve `Avisar(2, B, «limbo…», clave «limbo:<lote_id>:<token>»)` si la
+    orden está viva y le quedan acciones (lvqty, o qty − llenas); None si
+    llenó, se canceló, se rechazó o no le queda nada. NO persigue ni cancela:
+    mandan los stops residentes (el humano decide).
+    """
+    if orden.estado not in _ESTADOS_VIVOS:
+        return None
+    restante = orden.lvqty if orden.lvqty > 0 else orden.qty - orden.llenas
+    if restante <= 0:
+        return None
+    precio = "?" if orden.precio is None else str(orden.precio)
+    return Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"limbo:{lote.id}:{orden.token}",
+                  texto=(f"limbo: {_h(lote.ticker)} · {_h(lote.estrategia)}: la orden de cruce del TP (token "
+                         f"{orden.token}, límite {_h(precio)}) no ha llenado {restante} acciones. No se persigue; "
+                         f"mandan los stops residentes (R-D-03 v2)"))
 
 
 # ── prioridad en la misma tanda (R-D-07, D13) ────────────────────────────
@@ -560,7 +734,10 @@ def orden_cierre_posicion(ticker: str, neta: int, cot: Optional[Cotizacion], cfg
 
     `neta` signada: < 0 (corta) → COMPRA |neta| con límite ask·(1 + techo)
     redondeado arriba; > 0 (larga) → VENTA neta con límite bid·(1 − techo)
-    redondeado abajo. Ruta «cruzar», TIF DAY+. Lo usa `cerrar_todo` y lo puede
+    redondeado abajo. Ruta «cruzar», TIF DAY+, elegida por el precio de la
+    ACCIÓN (el ask en las compras, el bid en las ventas) y no por el límite
+    con techo (D2-14, tabla de RUTAS del 24-sep: una acción de 0,97 $ con
+    límite 1,02 va por la ruta de < 1 $). Lo usa `cerrar_todo` y lo puede
     usar el cierre humano durante un cisne negro (§3.19). Lanza ValueError
     con neta 0 o sin el lado del libro.
     """
@@ -569,80 +746,170 @@ def orden_cierre_posicion(ticker: str, neta: int, cot: Optional[Cotizacion], cfg
     pct = _pct_valido(techo_pct)
     if neta < 0:
         ask = _exigir_precio(getattr(cot, "ask", None), f"{ticker}: sin ask para cerrar el corto")
-        precio, lado = con_techo(ask, pct, arriba=True), Lado.COMPRA
+        precio, lado, precio_accion = con_techo(ask, pct, arriba=True), Lado.COMPRA, ask
     else:
         bid = _exigir_precio(getattr(cot, "bid", None), f"{ticker}: sin bid para cerrar el largo")
-        precio, lado = con_techo(bid, pct, arriba=False), Lado.VENTA
+        precio, lado, precio_accion = con_techo(bid, pct, arriba=False), Lado.VENTA, bid
         if precio <= 0:
             raise ValueError(f"{ticker}: el suelo {precio} no es un precio")
-    ruta = ruta_de(_bloque(cfg, "rutas"), "cruzar", precio, hora_et)
+    ruta = ruta_de(_bloque(cfg, "rutas"), "cruzar", precio_accion, hora_et)
     return OrdenNueva(token=_token(token), lado=lado, ticker=ticker, ruta=ruta, qty=abs(neta), tipo=TipoOrden.LIMITE,
                       precio=precio, tif="DAY+", post_only=False, proposito=proposito, lote_id=lote_id)
 
 
+def neta_para_cerrar(pos: PosicionTicker) -> tuple[int, str]:
+    """D2-02 (riesgo 8, corrección 2, R-D-06): la neta SIGNADA que «cerrar todo» puede cerrar sin comprar de más, y de dónde sale.
+
+    `neta_das` solo cambia con %POS / GET POSITIONS: justo después de un
+    cierre por fills (o de un stop que acaba de llenar) puede ir ATRASADA.
+    Por eso:
+      * DAS no la ha dicho, o coincide con los fills → la de fills («fills»);
+      * posición manual pura (fills 0 y ningún lote con acciones del bot:
+        sin lotes, o solo lotes CANCELADOS sin llenar) → `neta_das`
+        («das_manual»: solo DAS la conoce, M7);
+      * discrepan con el MISMO signo → el mínimo en valor absoluto
+        («minimo»): nunca más de lo que las dos fuentes dicen a la vez; el
+        resto lo cierra el reintento tras GET POSITIONS;
+      * signos distintos o una en 0 → 0 («discrepancia»): no se envía nada,
+        solo se consulta y se reintenta.
+    """
+    fills = int(pos.neta_fills)
+    das = pos.neta_das
+    if das is None or das == fills:
+        return fills, NETA_FILLS
+    das = int(das)
+    if fills == 0 and _manual_pura(pos):
+        return das, NETA_DAS_MANUAL
+    if fills != 0 and das != 0 and (fills < 0) == (das < 0):
+        minimo = min(abs(fills), abs(das))
+        return (-minimo if fills < 0 else minimo), NETA_MINIMO
+    return 0, NETA_DISCREPANCIA
+
+
+def clave_cerrar_todo(ticker: str) -> str:
+    """D2-01 / G1B-03: el temporizador de «cerrar todo» es POR TICKER: «cerrar_todo:<ticker>» (nunca una clave global)."""
+    return f"{CLAVE_CERRAR_TODO}:{ticker}"
+
+
 def cerrar_todo(posiciones: dict[str, PosicionTicker], cot_de: Callable[[str], Optional[Cotizacion]], cfg: Any,
                 tokens: Callable[[], int], hora_et: datetime, proposito: Proposito = Proposito.CIERRE_HUMANO,
-                intento: int = 0, tickers: Optional[Iterable[str]] = None) -> list[Accion]:
+                intento: int = 0, tickers: Optional[Iterable[str]] = None,
+                vivas_de: Optional[Callable[[str], Iterable[Orden]]] = None,
+                fase: Optional[str] = None) -> list[Accion]:
     """R-D-06 («/cerrar_todo SI», «/cerrar X SI»): cierra TODAS las posiciones de la cuenta, manuales incluidas.
 
-    Por ticker (en orden alfabético) con neta ≠ 0 — `neta_das` si DAS la ha
-    dicho (incluye lo manual, M7), si no la neta de fills —: `CancelarTicker`
-    ANTES (nada vivo puede comprar de más, R-C-11) y `EnviarOrden` con
-    `orden_cierre_posicion` (techo cerrar_todo.techo_pct, 5 %, sobre el ask o
-    bajo el bid del momento). Neta de fills ≠ neta de DAS → además
-    `Consultar("GET POSITIONS")` + `Anotar("discrepancia")`. Sin cotización →
-    `Avisar(3)` «cerrar a mano» para ese ticker. `intento` 0 es el primero;
-    mientras `intento < reintentos` (2) se añade `Programar("cerrar_todo_
-    reintento", espera, {intento + 1, tickers})` y el decisor vuelve a llamar
-    con la neta de ESE momento; con `intento > reintentos` no se envía nada:
-    `Avisar(3)` con lo que sigue abierto y su precio (decide Jaume).
-    `tickers` limita a esos (cierre de un ticker). Todo `Anotar("cerrar_todo")`.
+    Por ticker (en orden alfabético) con posición: la neta sale de
+    `neta_para_cerrar` (D2-02: con neta_das ≠ neta_fills nunca se compra lo
+    de DAS a ciegas; además `Consultar("GET POSITIONS")`, uno por llamada, y
+    `Anotar("discrepancia")`). La orden es `orden_cierre_posicion` (techo
+    cerrar_todo.techo_pct, 5 %, sobre el ask o bajo el bid del momento). Sin
+    cotización → `Avisar(3)` «cerrar a mano» para ese ticker (y el reintento
+    sigue).
+
+    Dos pasos (D2-03 / G1B-15; «cancela ANTES las órdenes vivas para no
+    comprar de más»):
+      * `fase="cancelar"`: `CancelarTicker`. Si `vivas_de(ticker)` dice que hay
+        órdenes vivas del ticker, NO se envía todavía: `Programar("cerrar_todo:
+        <ticker>", espera_cancel_s (1 s), {intento, fase: "enviar"})` de
+        respaldo; el decisor puede adelantarlo al recibir el Canceled de todo
+        lo vivo llamando con `fase="enviar"`. Sin nada vivo conocido se pasa al
+        paso 2 en la misma llamada (nada que esperar).
+      * `fase="enviar"`: orden de cierre por |neta de ESE momento| menos lo que
+        las órdenes vivas del lado que cierra (compras para un corto; stops
+        incluidos) aún pueden ejecutar; si no queda nada, solo se anota. Si
+        aún hay algo vivo, además `Consultar("GET ORDERS")`.
+      * `fase=None` (el contrato anterior, para un llamador que no pasa la
+        fase): `CancelarTicker` y la orden en la misma llamada, descontando lo
+        que `vivas_de` diga que sigue vivo (sin `vivas_de`, nada).
+    Tras enviar (o intentar enviar) se programa el siguiente intento:
+    `Programar("cerrar_todo:<ticker>", espera_s (2 s), {intento + 1,
+    tickers: [ticker], ticker, proposito, fase: "cancelar"})` — UNA clave por
+    ticker (D2-01: un «/cerrar Y» no borra el reintento de X).
+
+    Agotado (`intento > reintentos`, 2): no se envía nada nuevo; se RETIRA
+    antes la orden de cierre viva (D2-04: `Cancelar` por id de cada orden viva
+    del ticker con este `proposito`; si alguna no tiene id aún, o `vivas_de`
+    no se conoce, `CancelarTicker`) y `Avisar(3)` por ticker (clave
+    «cerrar_todo:<ticker>:agotado») con la neta y el precio actual, diciendo
+    que el bot retiró su orden y repone los stops (decide Jaume). `tickers`
+    limita a esos (cierre de un ticker). Todo `Anotar("cerrar_todo")`.
+    ValueError con una `fase` desconocida.
     """
+    if fase is not None and fase not in FASES_CERRAR_TODO:
+        raise ValueError(f"fase de cerrar_todo desconocida: {fase!r} (admitidas {FASES_CERRAR_TODO})")
     bloque = _sub(_bloque(cfg, "salidas"), "cerrar_todo")
     techo = _pct(bloque, "techo_pct", CERRAR_TODO_TECHO_PCT)
     reintentos = _entero(bloque, "reintentos", CERRAR_TODO_REINTENTOS)
     espera = _segundos(bloque, "espera_s", ESPERA_REINTENTO_CERRAR_TODO_S)
+    espera_cancel = _segundos(bloque, "espera_cancel_s", ESPERA_CANCEL_CERRAR_TODO_S)
     filtro = None if tickers is None else {str(t) for t in tickers}
-    abiertas: list[tuple[str, int, PosicionTicker]] = []
+    abiertas: list[tuple[str, int, str, PosicionTicker]] = []
     for ticker in sorted(posiciones):
         if filtro is not None and ticker not in filtro:
             continue
         pos = posiciones[ticker]
-        neta = pos.neta_das if pos.neta_das is not None else pos.neta_fills
+        neta, fuente = neta_para_cerrar(pos)
         if neta != 0 or _discrepa(pos):
-            abiertas.append((ticker, neta, pos))
-    acciones: list[Accion] = [Anotar("cerrar_todo", {"intento": intento, "tickers": [t for t, _, _ in abiertas],
-                                                     "techo_pct": str(techo), "regla": "R-D-06"})]
+            abiertas.append((ticker, neta, fuente, pos))
+    acciones: list[Accion] = [Anotar("cerrar_todo", {"intento": intento, "tickers": [t for t, _, _, _ in abiertas],
+                                                     "techo_pct": str(techo), "fase": fase, "regla": "R-D-06"})]
     if not abiertas:
         return acciones
     if intento > reintentos:
-        lineas = []
-        for ticker, neta, _ in abiertas:
+        for ticker, neta, _, pos in abiertas:
+            acciones += _retirar_cierre(ticker, _vivas_del_ticker(vivas_de, ticker), proposito)
             cot = cot_de(ticker)
-            lineas.append(f"{ticker} neta {neta} (bid {getattr(cot, 'bid', None)} / ask {getattr(cot, 'ask', None)} "
-                          f"/ último {getattr(cot, 'last', None)})")
-        acciones.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave="cerrar_todo:agotado",
-                               texto=(f"R-D-06: tras {reintentos} reintentos siguen abiertas: " + "; ".join(lineas)
-                                      + ". Decide Jaume")))
+            mostrada = neta if neta != 0 else pos.neta_fills
+            das = "?" if pos.neta_das is None else pos.neta_das
+            acciones.append(Avisar(
+                nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"{CLAVE_CERRAR_TODO}:{ticker}:agotado",
+                texto=(f"R-D-06: tras {reintentos} reintentos sigue abierta: {_h(ticker)} neta {mostrada} "
+                       f"(fills {pos.neta_fills}, DAS {das}) (bid {_h(getattr(cot, 'bid', None))} / ask "
+                       f"{_h(getattr(cot, 'ask', None))} / último {_h(getattr(cot, 'last', None))}). El bot ha "
+                       f"RETIRADO su orden de cierre y vuelve a poner los stops. Decide Jaume")))
         return acciones
-    for ticker, neta, pos in abiertas:
-        acciones.append(CancelarTicker(ticker=ticker, motivo=f"R-D-06: cerrar todo (intento {intento})"))
+    consultado = False
+    for ticker, neta, fuente, pos in abiertas:
+        vivas = _vivas_del_ticker(vivas_de, ticker)
+        if fase != FASE_ENVIAR:
+            acciones.append(CancelarTicker(ticker=ticker, motivo=f"R-D-06: cerrar todo (intento {intento})"))
         if _discrepa(pos):
-            acciones.append(Consultar("GET POSITIONS"))
+            if not consultado:
+                acciones.append(Consultar(COMANDO_POSICIONES))
+                consultado = True
             acciones.append(Anotar("discrepancia", {"ticker": ticker, "neta_fills": pos.neta_fills,
-                                                    "neta_das": pos.neta_das, "usada": neta, "regla": "R-D-06 / M7"}))
-        if neta == 0:
-            continue                                 # DAS dice plana y los fills no: el reintento lo vuelve a mirar
-        try:
-            orden = orden_cierre_posicion(ticker, neta, cot_de(ticker), cfg, tokens, hora_et, techo, proposito)
-        except ValueError as exc:
-            acciones.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"cerrar_todo:{ticker}",
-                                   texto=f"R-D-06: {ticker} neta {neta} sin cotización válida en DAS ({exc}): CERRAR A MANO"))
+                                                    "neta_das": pos.neta_das, "usada": neta, "fuente": fuente,
+                                                    "regla": "R-D-06 / M7 / D2-02"}))
+        if fase == FASE_CANCELAR and vivas:
+            acciones.append(Anotar("cerrar_todo_espera", {"ticker": ticker, "intento": intento,
+                                                          "vivas": [o.token for o in vivas],
+                                                          "regla": "R-D-06 / D2-03: la orden sale tras el Canceled"}))
+            acciones.append(Programar(clave=clave_cerrar_todo(ticker), en_s=espera_cancel,
+                                      datos=_datos_cerrar_todo(ticker, intento, proposito, FASE_ENVIAR)))
             continue
-        acciones.append(EnviarOrden(orden=orden))
-    acciones.append(Programar(clave=CLAVE_CERRAR_TODO, en_s=espera,
-                              datos={"intento": intento + 1, "tickers": [t for t, _, _ in abiertas],
-                                     "proposito": proposito.value}))
+        en_vuelo = _en_vuelo_de_cierre(vivas or [], neta)
+        if fase == FASE_ENVIAR and vivas:
+            acciones.append(Consultar(COMANDO_ORDENES))
+            acciones.append(Anotar("cerrar_todo_vivas", {"ticker": ticker, "vivas": [o.token for o in vivas],
+                                                         "en_vuelo": en_vuelo,
+                                                         "regla": "R-D-06 / D2-03: se descuenta lo que sigue vivo"}))
+        if neta != 0:
+            qty = abs(neta) - en_vuelo
+            if qty <= 0:
+                acciones.append(Anotar("cerrar_todo_en_vuelo", {"ticker": ticker, "neta": neta, "en_vuelo": en_vuelo,
+                                                                "regla": "riesgo 6: nunca comprar de más"}))
+            else:
+                try:
+                    orden = orden_cierre_posicion(ticker, -qty if neta < 0 else qty, cot_de(ticker), cfg, tokens,
+                                                  hora_et, techo, proposito)
+                except ValueError as exc:
+                    acciones.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"cerrar_todo_mano:{ticker}",
+                                           texto=(f"R-D-06: {_h(ticker)} neta {neta} sin cotización válida en DAS "
+                                                  f"({_h(exc)}): CERRAR A MANO")))
+                else:
+                    acciones.append(EnviarOrden(orden=orden))
+        acciones.append(Programar(clave=clave_cerrar_todo(ticker), en_s=espera,
+                                  datos=_datos_cerrar_todo(ticker, intento + 1, proposito, FASE_CANCELAR)))
     return acciones
 
 
@@ -659,7 +926,7 @@ def comprobar_eod(lote: Lote, pos: PosicionTicker) -> Optional[Avisar]:
     if pos.neta == 0 and pos.neta_das in (None, 0):
         return None
     return Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"eod:{lote.id}",
-                  texto=(f"EOD sin cerrar: control humano. {lote.ticker} · {lote.estrategia}: al lote le quedan "
+                  texto=(f"EOD sin cerrar: control humano. {_h(lote.ticker)} · {_h(lote.estrategia)}: al lote le quedan "
                          f"{lote.llenas} acciones (neta fills {pos.neta_fills}, DAS {pos.neta_das}) (R-D-02)"))
 
 
@@ -753,7 +1020,7 @@ def al_desactivar(e_vieja: EstrategiaConfig, e_nueva: Optional[EstrategiaConfig]
                                                "version_nueva": e_nueva.definition_hash if e_nueva else None,
                                                "regla": "R-E-03"}))
     acciones.append(Avisar(nivel=Nivel.INFO, grupo=Grupo.B, clave=f"cierre_reinicio:{e_vieja.strategy_id}",
-                           texto=(f"R-E-03: {e_vieja.name}: se cierran {len(cerrados)} lote(s) vivos (agregar "
+                           texto=(f"R-E-03: {_h(e_vieja.name)}: se cierran {len(cerrados)} lote(s) vivos (agregar "
                                   f"{int(anticipo)} s, luego al ask sin tope); la versión nueva opera desde la "
                                   f"siguiente señal")))
     return acciones
@@ -898,8 +1165,80 @@ def _cierre_total_en_curso(lote: Lote, vivas: list[Orden]) -> bool:
 
 def _aviso_limbo(lote: Lote, resto: int, causa: str, techo: Decimal) -> Avisar:
     return Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"limbo:{lote.id}",
-                  texto=(f"limbo: {lote.ticker} · {lote.estrategia}: el resto del TP ({resto} acciones) no se cruza: "
-                         f"{causa}; techo {techo} %. No se persigue; mandan los stops residentes (R-D-03 v2)"))
+                  texto=(f"limbo: {_h(lote.ticker)} · {_h(lote.estrategia)}: el resto del TP ({resto} acciones) no se "
+                         f"cruza: {_h(causa)}; techo {techo} %. No se persigue; mandan los stops residentes (R-D-03 v2)"))
+
+
+def _h(valor: Any) -> str:
+    """D2-08: texto variable para un aviso con parse_mode HTML («<», «>», «&» escapados; comillas tal cual)."""
+    return html.escape(str(valor), quote=False)
+
+
+def _precio_agregar(cot: Optional[Cotizacion], ticker: str, largo: bool) -> tuple[Lado, Decimal]:
+    """(lado, precio) de la orden que AGREGA: punto medio hacia dentro, un tick por dentro con el libro bloqueado.
+
+    ValueError sin bid/ask válidos, con el libro cruzado o bloqueado en el
+    tick mínimo (no hay precio que agregue sin tocar el otro lado).
+    """
+    bid, ask = _libro(cot, ticker)
+    if largo:
+        precio = punto_medio_arriba(bid, ask)
+        if precio <= bid:
+            precio = bid + tick_de(bid)
+        return Lado.VENTA, precio
+    precio = punto_medio_abajo(bid, ask)
+    if precio >= ask:
+        precio = ask - tick_de(ask)
+        if precio > 0 and tick_de(precio) < tick_de(ask):
+            precio = ask - tick_de(precio)       # 1,00 bloqueado → 0,9999 (el tick de abajo es otro)
+        if precio <= 0:
+            raise ValueError(f"{ticker}: libro bloqueado en el tick mínimo, no hay precio para agregar")
+    return Lado.COMPRA, precio
+
+
+def _manual_pura(pos: PosicionTicker) -> bool:
+    """D2-02: sin fills del bot ni lotes que hayan tenido acciones (solo lotes CANCELADOS sin llenar, o ninguno)."""
+    return all(lote.estado is EstadoLote.CANCELADO and lote.llenas <= 0 for lote in pos.lotes.values())
+
+
+def _vivas_del_ticker(vivas_de: Optional[Callable[[str], Iterable[Orden]]], ticker: str) -> Optional[list[Orden]]:
+    """Las órdenes VIVAS de `ticker` según `vivas_de`; None si el llamador no las da (contrato anterior)."""
+    if vivas_de is None:
+        return None
+    return [o for o in (vivas_de(ticker) or []) if o.ticker == ticker and o.estado in _ESTADOS_VIVOS]
+
+
+def _restante(o: Orden) -> int:
+    """Lo que una orden viva aún puede ejecutar: lvqty si DAS la dijo, si no qty − llenas (nunca negativo)."""
+    return max(o.lvqty if o.lvqty > 0 else o.qty - o.llenas, 0)
+
+
+def _en_vuelo_de_cierre(vivas: list[Orden], neta: int) -> int:
+    """D2-03: acciones que las órdenes vivas del lado que CIERRA `neta` aún pueden ejecutar (stops incluidos)."""
+    if neta < 0:
+        lados = (Lado.COMPRA,)
+    elif neta > 0:
+        lados = (Lado.VENTA, Lado.CORTO)
+    else:
+        return 0
+    return sum(_restante(o) for o in vivas if o.lado in lados)
+
+
+def _retirar_cierre(ticker: str, vivas: Optional[list[Orden]], proposito: Proposito) -> list[Accion]:
+    """D2-04: al agotar R-D-06 se retira la orden de cierre viva (nunca puede llenar después de que Jaume cierre a mano)."""
+    motivo = "R-D-06 agotado: el bot retira su orden de cierre (D2-04)"
+    if vivas is None:
+        return [CancelarTicker(ticker=ticker, motivo=motivo)]
+    cierres = [o for o in vivas if o.proposito is proposito]
+    if not cierres:
+        return []
+    if any(o.id_das is None for o in cierres):
+        return [CancelarTicker(ticker=ticker, motivo=motivo)]
+    return [Cancelar(id_das=o.id_das, token=o.token, motivo=motivo) for o in cierres if o.id_das is not None]
+
+
+def _datos_cerrar_todo(ticker: str, intento: int, proposito: Proposito, fase: str) -> dict[str, Any]:
+    return {"intento": intento, "tickers": [ticker], "ticker": ticker, "proposito": proposito.value, "fase": fase}
 
 
 def _campo(evento: Any, nombre: str) -> Any:

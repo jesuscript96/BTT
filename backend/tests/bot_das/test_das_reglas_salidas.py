@@ -44,6 +44,7 @@ from app.bot_das.reglas.salidas import (
     TRATAR_ANOTAR,
     TRATAR_COMO_TP,
     TRATAR_DIVERGENCIA,
+    TRATAR_HORA_EVENTO,
     TRATAR_IGNORAR,
     TRATAR_TP,
     al_desactivar,
@@ -236,10 +237,10 @@ def test_el_motor_de_alertas_emite_interrogacion_si_falta_el_motivo():
 
 @pytest.mark.parametrize("literal, clase", [
     ("TP", ClaseSalida.TP), ("Partial TP", ClaseSalida.TP), ("Partial TP (Hour)", ClaseSalida.HORA),
-    ("Partial TP (EOD)", ClaseSalida.EOD), ("Partial TP (Time)", ClaseSalida.EOD), ("EOD", ClaseSalida.EOD),
+    ("Partial TP (EOD)", ClaseSalida.EOD), ("Partial TP (Time)", ClaseSalida.HORA), ("EOD", ClaseSalida.EOD),
     ("SL", ClaseSalida.STOP), ("Pyramid Lot Stop", ClaseSalida.STOP_LOTE), ("Pyramid Reduce", ClaseSalida.REDUCE),
     ("Escalera", ClaseSalida.MOTOR), ("Signal", ClaseSalida.MOTOR), ("Trailing", ClaseSalida.MOTOR),
-    ("Time Limit", ClaseSalida.MOTOR), ("?", ClaseSalida.MOTOR), ("Halt", ClaseSalida.HALT),
+    ("Time Limit", ClaseSalida.HORA), ("?", ClaseSalida.MOTOR), ("Halt", ClaseSalida.HALT),
     ("Halt (atrapado)", ClaseSalida.HALT), ("BS", ClaseSalida.BS), ("BS Manual", ClaseSalida.BS),
     ("Daily Limit", ClaseSalida.DAILY_LIMIT), ("Lot TP (1/3)", ClaseSalida.TP), ("Lot TP (3/3)", ClaseSalida.TP),
 ], ids=lambda v: f"§3.17-{v}" if isinstance(v, str) else v.value)
@@ -274,7 +275,7 @@ def test_es_literal_conocido_distingue_desconocidos():
 
 # ── tratamiento por clase (§3.17, preguntas 3 y 4, I1) ───────────────────
 @pytest.mark.parametrize("clase, esperado", [
-    (ClaseSalida.TP, TRATAR_TP), (ClaseSalida.HORA, TRATAR_ANOTAR), (ClaseSalida.EOD, TRATAR_ANOTAR),
+    (ClaseSalida.TP, TRATAR_TP), (ClaseSalida.HORA, TRATAR_HORA_EVENTO), (ClaseSalida.EOD, TRATAR_ANOTAR),
     (ClaseSalida.STOP, TRATAR_DIVERGENCIA), (ClaseSalida.STOP_LOTE, TRATAR_COMO_TP),
     (ClaseSalida.REDUCE, TRATAR_COMO_TP), (ClaseSalida.MOTOR, TRATAR_COMO_TP), (ClaseSalida.HALT, TRATAR_ANOTAR),
     (ClaseSalida.BS, TRATAR_ANOTAR), (ClaseSalida.DAILY_LIMIT, TRATAR_IGNORAR),
@@ -327,7 +328,10 @@ def test_daily_limit_se_ignora_con_aviso_2():
 
 
 def test_motor_como_tp_avisa_nivel_1_y_ignorar_por_config():
-    """Pregunta 3: Signal/Trailing/Time Limit → como TP (provisional) con aviso 1; salida_motor=ignorar → ignorar."""
+    """Pregunta 3: Signal/Trailing/Escalera → como TP (provisional) con aviso 1; salida_motor=ignorar → ignorar.
+
+    («Time Limit» ya no es MOTOR: es una salida por tiempo, D2-05.)
+    """
     lote = _lote()
     pos = _pos(lotes=[lote])
     codigo = tratamiento(ClaseSalida.MOTOR, pos, lote, [])
@@ -632,7 +636,7 @@ def test_tp_parcial_agrega_en_el_punto_medio_y_programa_el_cruce():
     orden, prog = tp_parcial(lote, 300, _cot("10.00", "10.04"), CFG, 126800009, HORA)
     assert (orden.lado, orden.precio, orden.post_only, orden.qty) == (Lado.COMPRA, D("10.02"), True, 300)
     assert orden.proposito is Proposito.TP_AGREGAR and orden.ruta == "SAGEREB"
-    assert prog.clave == "tp_cruce:L1" and prog.en_s == 60.0
+    assert prog.clave == "tp_cruce:L1:126800009" and prog.en_s == 60.0      # D2-07: por ORDEN
     assert prog.datos == {"lote_id": "L1", "ticker": "XYZ", "token": 126800009, "qty": 300}
 
 
@@ -758,16 +762,22 @@ def test_cerrar_todo_incluye_manuales_y_cancela_antes():
                    or (isinstance(a, EnviarOrden) and a.orden.ticker == ticker)]
         assert isinstance(acciones[indices[0]], CancelarTicker), f"{ticker}: CancelarTicker ANTES de la orden"
     prog = [a for a in acciones if isinstance(a, Programar)]
-    assert len(prog) == 1 and prog[0].clave == CLAVE_CERRAR_TODO
-    assert prog[0].datos["intento"] == 1 and prog[0].datos["tickers"] == ["BOT", "MANC", "MANL"]
+    # D2-01: UN temporizador por ticker («cerrar_todo:<ticker>»), nunca una clave global
+    assert [p.clave for p in prog] == [f"{CLAVE_CERRAR_TODO}:BOT", f"{CLAVE_CERRAR_TODO}:MANC",
+                                       f"{CLAVE_CERRAR_TODO}:MANL"]
+    assert all(p.datos["intento"] == 1 and p.datos["tickers"] == [p.datos["ticker"]] for p in prog)
     assert isinstance(acciones[0], Anotar) and acciones[0].tipo == "cerrar_todo"
 
 
 def test_cerrar_todo_neta_das_manda_y_discrepancia_pide_posiciones():
-    """M7: la neta de DAS incluye lo manual; si discrepa de los fills se pide GET POSITIONS y se anota."""
+    """M7 + D2-02: con fills −100 y DAS −150 se cierra el MÍNIMO (100), nunca lo de DAS a ciegas; se pide GET POSITIONS.
+
+    Antes este test esperaba 150 (consagraba el fallo: con %POS atrasado el reintento compraba de más). El resto lo
+    cierra el reintento con la neta que devuelva GET POSITIONS.
+    """
     acciones = cerrar_todo({"X": _pos("X", neta_fills=-100, neta_das=-150)}, _cot_de({"X": _cot("10", "10.1", ticker="X")}),
                            CFG, _tokens(), HORA)
-    assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [150]
+    assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [100]
     assert any(isinstance(a, Consultar) and a.comando == "GET POSITIONS" for a in acciones)
     assert any(isinstance(a, Anotar) and a.tipo == "discrepancia" for a in acciones)
 
@@ -1020,3 +1030,316 @@ def test_modulo_puro_sin_reloj_io_ni_logging():
     for prohibido in ("datetime.now", "time.time", "time.monotonic", "import logging", "os.environ", "open(",
                       "import time", "httpx", "socket"):
         assert prohibido not in fuente, prohibido
+
+
+# ═══════════ correcciones de la revisión del 27-sep (hallazgos D2-*) ═══════════
+# ── D2-05: salidas del motor por tiempo → hora_evento ───────────────────
+@pytest.mark.parametrize("literal", ["Partial TP (Hour)", "Partial TP (Time)", "Time Limit"])
+def test_D2_05_salidas_por_tiempo_son_hora_evento(literal):
+    """D2-05: ningún temporizador del bot cubre esas horas: el evento se ejecuta (no solo se anota)."""
+    lote = _lote()
+    pos = _pos(lotes=[lote])
+    assert clasificar(literal) is ClaseSalida.HORA
+    assert tratamiento(clasificar(literal), pos, lote, []) == TRATAR_HORA_EVENTO
+    acciones = avisos_de_tratamiento(TRATAR_HORA_EVENTO, ClaseSalida.HORA, literal, pos, lote)
+    assert [a.tipo for a in acciones if isinstance(a, Anotar)] == ["salida_motor"]
+    assert not any(isinstance(a, Avisar) for a in acciones)
+
+
+@pytest.mark.parametrize("literal", ["Partial TP (EOD)", "EOD"])
+def test_D2_05_eod_lo_sigue_cubriendo_el_reloj(literal):
+    lote = _lote()
+    assert tratamiento(clasificar(literal), _pos(lotes=[lote]), lote, []) == TRATAR_ANOTAR
+
+
+@pytest.mark.parametrize("lote, vivas", [
+    (None, []),
+    (_lote(estado=EstadoLote.CERRADO), []),
+    (_lote(llenas=100, tp_pendiente=100), []),
+    (_lote(), [_orden(proposito=Proposito.HORA_ASK)]),
+], ids=["sin_lote", "lote_cerrado", "sin_libres", "cierre_total_en_curso"])
+def test_D2_05_hora_evento_sin_nada_que_cerrar_solo_se_anota(lote, vivas):
+    """Riesgo 6: la salida por tiempo tampoco añade una segunda orden de compra sobre las mismas acciones."""
+    assert tratamiento(ClaseSalida.HORA, _pos(lotes=[lote] if lote else []), lote, vivas) == TRATAR_ANOTAR
+
+
+def test_D2_05_orden_hora_evento_al_ask_sin_techo_con_la_qty_del_evento():
+    lote = _lote(llenas=500, tp_pendiente=100)
+    orden = salidas.orden_hora_evento(lote, 300, _cot("11.90", "12.00", last="10.00"), CFG, 7, HORA)
+    assert (orden.lado, orden.qty, orden.precio, orden.post_only) == (Lado.COMPRA, 300, D("12.00"), False)
+    assert orden.proposito is Proposito.HORA_ASK and orden.lote_id == "L1" and orden.ruta == "SAGEPRO"
+    tope = salidas.orden_hora_evento(lote, 1000, _cot("10", "10.05", last="10"), CFG, 8, HORA)
+    assert tope.qty == 400, "nunca más de llenas − tp_pendiente (área E)"
+
+
+@pytest.mark.parametrize("lote, qty, cot", [
+    (_lote(), 0, _cot("10", "10.05")),
+    (_lote(), -5, _cot("10", "10.05")),
+    (_lote(), None, _cot("10", "10.05")),
+    (_lote(llenas=100, tp_pendiente=100), 50, _cot("10", "10.05")),
+    (_lote(), 50, _cot("10", None)),
+], ids=["cero", "negativa", "sin_qty", "sin_libres", "sin_ask"])
+def test_D2_05_orden_hora_evento_errores(lote, qty, cot):
+    with pytest.raises(ValueError):
+        salidas.orden_hora_evento(lote, qty, cot, CFG, 1, HORA)
+
+
+# ── D2-16: literal desconocido → aviso 2 siempre ─────────────────────────
+@pytest.mark.parametrize("codigo", [TRATAR_ANOTAR, TRATAR_COMO_TP, TRATAR_IGNORAR])
+def test_D2_16_literal_desconocido_avisa_nivel_2_aunque_se_anote(codigo):
+    lote = _lote()
+    acciones = avisos_de_tratamiento(codigo, ClaseSalida.MOTOR, "Motivo Nuevo", _pos(lotes=[lote]), lote)
+    avisos = [a for a in acciones if isinstance(a, Avisar)]
+    assert [(a.nivel, a.clave) for a in avisos] == [(Nivel.AVISO, "salida_desconocida:Motivo Nuevo")]
+    assert "DESCONOCIDA" in avisos[0].texto and "Motivo Nuevo" in avisos[0].texto
+    assert [a.tipo for a in acciones if isinstance(a, Anotar)] == ["salida_motor", "salida_desconocida"]
+
+
+def test_D2_16_sin_lote_tambien_avisa():
+    acciones = avisos_de_tratamiento(TRATAR_ANOTAR, ClaseSalida.MOTOR, None, _pos(), None)
+    assert [a.nivel for a in acciones if isinstance(a, Avisar)] == [Nivel.AVISO]
+
+
+# ── D2-08: textos de aviso escapados para el HTML de Telegram ────────────
+def test_D2_08_avisos_de_salidas_escapan_el_html():
+    lote = Lote(id="L1", strategy_id="s1", estrategia="PM <A> & B", ticker="XYZ", direccion="Short", pedidas=100,
+                llenas=100, precio_medio=D("10"), nivel_stop=D("11"), estado=EstadoLote.ABIERTO)
+    pos = _pos(neta_fills=-100, neta_das=-100, lotes=[lote])
+    textos = [a.texto for a in avisos_de_tratamiento(TRATAR_COMO_TP, ClaseSalida.MOTOR, "Raro <x>", pos, lote)
+              if isinstance(a, Avisar)]
+    textos += [a.texto for a in avisos_de_tratamiento(TRATAR_DIVERGENCIA, ClaseSalida.STOP, "SL", pos, lote)
+               if isinstance(a, Avisar)]
+    textos.append(comprobar_eod(lote, pos).texto)
+    textos.append(tp_al_vencer(lote, 100, _cot("10", "12", last="10"), CFG, 1, HORA)[1].texto)
+    textos.append(cerrar_todo({"XYZ": pos}, _cot_de({}), CFG, _tokens(), HORA)[-2].texto)
+    for texto in textos:
+        assert "<A>" not in texto and "<x>" not in texto and "& B" not in texto, texto
+    assert any("PM &lt;A&gt; &amp; B" in t for t in textos)
+    assert any("Raro &lt;x&gt;" in t for t in textos)
+
+
+# ── D2-07: tp_cruce por ORDEN ────────────────────────────────────────────
+def test_D2_07_dos_tp_del_mismo_lote_no_se_pisan():
+    lote = _lote(llenas=500)
+    _, p1 = tp_parcial(lote, 100, _cot("10.00", "10.04"), CFG, 1, HORA)
+    _, p2 = tp_parcial(lote, 100, _cot("10.00", "10.04"), CFG, 2, HORA)
+    assert (p1.clave, p2.clave) == ("tp_cruce:L1:1", "tp_cruce:L1:2")
+    assert (p1.datos["token"], p2.datos["token"]) == (1, 2)
+    assert salidas.clave_tp_cruce("L1", 7) == "tp_cruce:L1:7"
+    assert p1.clave.startswith(f"{salidas.CLAVE_TP_CRUCE}:L1:"), "el decisor desprograma por prefijo del lote"
+
+
+# ── D2-12: libro inutilizable no se convierte en excepción ───────────────
+@pytest.mark.parametrize("cot, ok", [
+    (_cot("10.00", "10.04"), True), (_cot("10.05", "10.00"), False), (_cot(None, "10"), False), (None, False),
+    (_cot("0.0001", "0.0001"), False), (_cot("10.00", "10.00"), True),
+], ids=["normal", "cruzado", "sin_bid", "sin_cot", "bloqueado_tick_minimo", "bloqueado"])
+def test_D2_12_libro_para_agregar(cot, ok):
+    assert salidas.libro_para_agregar(cot) is ok
+
+
+def test_D2_12_tp_parcial_sin_libro_programa_el_cruce_en_vez_de_lanzar():
+    lote = _lote(llenas=500)
+    orden, prog = tp_parcial(lote, 300, _cot("10.05", "10.00", last="10"), CFG, 41, HORA, sin_libro_espera_s=2.0)
+    assert orden is None
+    assert prog.clave == "tp_cruce:L1:41" and prog.en_s == 2.0
+    assert prog.datos == {"lote_id": "L1", "ticker": "XYZ", "token": None, "token_reservado": 41, "qty": 300,
+                          "sin_libro": True}
+    normal, prog_normal = tp_parcial(lote, 300, _cot("10.00", "10.04"), CFG, 42, HORA, sin_libro_espera_s=2.0)
+    assert normal is not None and prog_normal.datos["token"] == 42
+    with pytest.raises(ValueError):
+        tp_parcial(lote, 300, _cot("10.05", "10.00"), CFG, 43, HORA)     # sin el parámetro: el contrato de siempre
+
+
+# ── D2-13: la orden de cruce del TP que no llena → aviso de limbo ────────
+def test_D2_13_programa_y_comprobacion_del_limbo_del_tp():
+    lote = _lote()
+    orden, _ = tp_al_vencer(lote, 100, _cot("10.00", "10.10", last="10.00"), CFG, 55, HORA)
+    prog = salidas.programa_limbo_tp(lote, orden, CFG)
+    assert prog.clave == "tp_limbo:L1:55" and prog.en_s == 5.0
+    assert prog.datos == {"lote_id": "L1", "ticker": "XYZ", "token": 55, "qty": 100}
+    viva = _orden(token=55, proposito=Proposito.TP_CRUCE, qty=100, lvqty=60, llenas=40, precio="10.10")
+    aviso = salidas.comprobar_limbo_tp(lote, viva)
+    assert aviso is not None and aviso.nivel is Nivel.AVISO and aviso.clave == "limbo:L1:55"
+    assert "60 acciones" in aviso.texto and "No se persigue" in aviso.texto
+    assert salidas.comprobar_limbo_tp(lote, _orden(token=55, estado=EstadoOrden.EXECUTED)) is None
+    assert salidas.comprobar_limbo_tp(lote, _orden(token=55, qty=100, llenas=100)) is None
+    cfg = _config({"tp_parcial": {"limbo_comprobar_s": 3}})
+    assert salidas.programa_limbo_tp(lote, orden, cfg).en_s == 3.0
+
+
+# ── D2-14: la ruta de cierre por el precio de la ACCIÓN ──────────────────
+def test_D2_14_ruta_de_cierre_por_el_precio_de_la_accion():
+    compra = orden_cierre_posicion("X", -100, _cot("0.9600", "0.9700"), CFG, 1, HORA)
+    assert compra.precio == D("1.02") and compra.ruta == "EDGA", "0,97 $ es de < 1 $ aunque el límite pase de 1 $"
+    venta = orden_cierre_posicion("X", 100, _cot("1.02", "1.03"), CFG, 1, HORA)
+    assert venta.precio < 1 and venta.ruta == "SAGEPRO", "1,02 $ es de ≥ 1 $ aunque el suelo baje de 1 $"
+
+
+# ── D2-02: la neta de «cerrar todo» nunca compra de más ──────────────────
+@pytest.mark.parametrize("fills, das, lotes, esperado", [
+    (-100, None, [], (-100, "fills")),
+    (-100, -100, [], (-100, "fills")),
+    (0, -30, [], (-30, "das_manual")),
+    (0, 50, [_lote("C", estado=EstadoLote.CANCELADO, llenas=0)], (50, "das_manual")),
+    (-100, -150, [], (-100, "minimo")),
+    (-150, -100, [], (-100, "minimo")),
+    (0, -100, [_lote("C", estado=EstadoLote.CERRADO, llenas=0)], (0, "discrepancia")),
+    (-100, 0, [], (0, "discrepancia")),
+    (-100, 50, [], (0, "discrepancia")),
+], ids=["D2-02-sin_das", "D2-02-coinciden", "D2-02-manual_pura", "D2-02-manual_con_lote_cancelado",
+        "D2-02-min_das_mayor", "D2-02-min_fills_mayor", "D2-02-cerrado_por_fills_pos_atrasado",
+        "D2-02-das_plana", "D2-02-signos_opuestos"])
+def test_D2_02_neta_para_cerrar(fills, das, lotes, esperado):
+    assert salidas.neta_para_cerrar(_pos(neta_fills=fills, neta_das=das, lotes=lotes)) == esperado
+
+
+def test_D2_02_primer_cierre_lleno_y_pos_atrasado_no_vuelve_a_comprar():
+    """D2-02: tras llenar el cierre (fills 0) DAS aún dice −100: el reintento NO compra; consulta y reintenta."""
+    pos = _pos("X", neta_fills=0, neta_das=-100, lotes=[_lote("L1", ticker="X", estado=EstadoLote.CERRADO, llenas=0)])
+    acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA, intento=1)
+    assert not any(isinstance(a, EnviarOrden) for a in acciones)
+    assert [a.comando for a in acciones if isinstance(a, Consultar)] == ["GET POSITIONS"]
+    assert [a.clave for a in acciones if isinstance(a, Programar)] == ["cerrar_todo:X"]
+
+
+def test_D2_02_un_solo_get_positions_por_llamada():
+    posiciones = {t: _pos(t, neta_fills=-100, neta_das=-150) for t in ("A", "B")}
+    acciones = cerrar_todo(posiciones, _cot_de({t: _cot("10", "10.1", ticker=t) for t in ("A", "B")}), CFG,
+                           _tokens(), HORA)
+    assert len([a for a in acciones if isinstance(a, Consultar)]) == 1
+    assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [100, 100]
+
+
+# ── D2-01: un temporizador por ticker ────────────────────────────────────
+def test_D2_01_cerrar_x_y_luego_y_no_se_pisan():
+    posiciones = {"X": _pos("X", neta_fills=-100), "Y": _pos("Y", neta_fills=-50)}
+    cots = _cot_de({"X": _cot("10", "10.1", ticker="X"), "Y": _cot("5", "5.05", ticker="Y")})
+    px = [a for a in cerrar_todo(posiciones, cots, CFG, _tokens(), HORA, tickers=["X"]) if isinstance(a, Programar)]
+    py = [a for a in cerrar_todo(posiciones, cots, CFG, _tokens(), HORA, tickers=["Y"]) if isinstance(a, Programar)]
+    assert [p.clave for p in px] == ["cerrar_todo:X"] and [p.clave for p in py] == ["cerrar_todo:Y"]
+    assert px[0].datos["tickers"] == ["X"] and py[0].datos["tickers"] == ["Y"]
+    assert salidas.clave_cerrar_todo("X") == "cerrar_todo:X"
+
+
+def test_D2_01_aviso_de_agotado_por_ticker():
+    posiciones = {"X": _pos("X", neta_fills=-100), "Y": _pos("Y", neta_fills=-50)}
+    acciones = cerrar_todo(posiciones, _cot_de({}), CFG, _tokens(), HORA, intento=3)
+    assert [a.clave for a in acciones if isinstance(a, Avisar)] == ["cerrar_todo:X:agotado", "cerrar_todo:Y:agotado"]
+
+
+# ── D2-03 / G1B-15: primero cancelar, después la orden por la neta de ese momento ──
+def _viva(token: int, qty: int, *, proposito: Proposito = Proposito.CIERRE_HUMANO, ticker: str = "X",
+          lado: Lado = Lado.COMPRA, id_das: Optional[int] = 900, lvqty: int = 0, llenas: int = 0,
+          estado: EstadoOrden = EstadoOrden.ACCEPTED) -> Orden:
+    return Orden(token=token, ticker=ticker, lado=lado, tipo=TipoOrden.LIMITE, qty=qty, precio=D("10.61"), stop=None,
+                 ruta="SAGEPRO", proposito=proposito, lote_id=None, nivel=None, origen=Origen.EJECUTOR, id_das=id_das,
+                 estado=estado, lvqty=lvqty, llenas=llenas)
+
+
+def _vivas_de(tabla: dict[str, list[Orden]]):
+    return lambda t: tabla.get(t, [])
+
+
+def test_D2_03_con_algo_vivo_cancela_y_espera_el_canceled():
+    pos = {"X": _pos("X", neta_fills=-100)}
+    vivas = _vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP_PRINCIPAL)]})
+    acciones = cerrar_todo(pos, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
+                           vivas_de=vivas, fase=salidas.FASE_CANCELAR)
+    assert [type(a) for a in acciones if not isinstance(a, Anotar)] == [CancelarTicker, Programar]
+    prog = next(a for a in acciones if isinstance(a, Programar))
+    assert prog.clave == "cerrar_todo:X" and prog.en_s == 1.0
+    assert prog.datos["fase"] == "enviar" and prog.datos["intento"] == 0
+    assert not any(isinstance(a, EnviarOrden) for a in acciones), "la orden sale DESPUÉS del Canceled"
+
+
+def test_D2_03_sin_nada_vivo_envia_en_la_misma_llamada():
+    acciones = cerrar_todo({"X": _pos("X", neta_fills=-100)}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG,
+                           _tokens(), HORA, vivas_de=_vivas_de({}), fase=salidas.FASE_CANCELAR)
+    tipos_ = [type(a) for a in acciones if not isinstance(a, Anotar)]
+    assert tipos_ == [CancelarTicker, EnviarOrden, Programar]
+    prog = acciones[-1]
+    assert prog.datos == {"intento": 1, "tickers": ["X"], "ticker": "X", "proposito": "cierre_humano",
+                          "fase": "cancelar"}
+
+
+def test_D2_03_reintento_con_la_orden_anterior_viva_no_compra_hasta_el_canceled():
+    """G1B-15: neta −100 y la orden de cierre anterior (100) viva: el paso «enviar» no compra otra vez."""
+    pos = {"X": _pos("X", neta_fills=-100)}
+    vivas = _vivas_de({"X": [_viva(5, 100)]})
+    acciones = cerrar_todo(pos, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA, intento=1,
+                           vivas_de=vivas, fase=salidas.FASE_ENVIAR)
+    assert not any(isinstance(a, (EnviarOrden, CancelarTicker)) for a in acciones)
+    assert any(isinstance(a, Consultar) and a.comando == "GET ORDERS" for a in acciones)
+    assert any(isinstance(a, Anotar) and a.tipo == "cerrar_todo_en_vuelo" for a in acciones)
+    prog = [a for a in acciones if isinstance(a, Programar)]
+    assert prog[0].clave == "cerrar_todo:X" and prog[0].datos["intento"] == 2 and prog[0].datos["fase"] == "cancelar"
+
+
+@pytest.mark.parametrize("vivas, esperado", [
+    ([], 100),
+    ([_viva(5, 100, lvqty=40, llenas=60)], 60),
+    ([_viva(5, 30, proposito=Proposito.STOP_EMERGENCIA)], 70),
+    ([_viva(5, 100, lado=Lado.CORTO)], 100),                     # una venta no compra: no descuenta
+    ([_viva(5, 100, estado=EstadoOrden.CANCELED)], 100),         # terminada: no cuenta
+    ([_viva(5, 100, ticker="OTRO")], 100),
+], ids=["D2-03-nada", "D2-03-parcial", "D2-03-stop-en-vuelo", "D2-03-venta", "D2-03-cancelada", "D2-03-otro-ticker"])
+def test_D2_03_enviar_descuenta_las_compras_en_vuelo(vivas, esperado):
+    acciones = cerrar_todo({"X": _pos("X", neta_fills=-100)}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG,
+                           _tokens(), HORA, vivas_de=_vivas_de({"X": vivas}), fase=salidas.FASE_ENVIAR)
+    assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [esperado]
+
+
+def test_D2_03_sin_fase_descuenta_lo_vivo_en_la_misma_llamada():
+    """Contrato anterior (fase None): cancelar y enviar juntos, pero sin comprar lo que los stops vivos aún pueden comprar."""
+    vivas = _vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP_PRINCIPAL),
+                             _viva(6, 100, proposito=Proposito.STOP_EMERGENCIA)]})
+    acciones = cerrar_todo({"X": _pos("X", neta_fills=-100)}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG,
+                           _tokens(), HORA, vivas_de=vivas)
+    assert isinstance(acciones[1], CancelarTicker) and not any(isinstance(a, EnviarOrden) for a in acciones)
+    assert [a.clave for a in acciones if isinstance(a, Programar)] == ["cerrar_todo:X"]
+
+
+def test_D2_03_fase_desconocida_lanza():
+    with pytest.raises(ValueError):
+        cerrar_todo({"X": _pos("X")}, _cot_de({}), CFG, _tokens(), HORA, fase="ya")
+
+
+# ── D2-04: al agotar se retira la orden de cierre viva antes de avisar ───
+def test_D2_04_agotado_cancela_la_orden_de_cierre_por_id_antes_de_avisar():
+    vivas = _vivas_de({"X": [_viva(5, 100, id_das=901), _viva(6, 100, proposito=Proposito.STOP_EMERGENCIA,
+                                                                id_das=902)]})
+    acciones = cerrar_todo({"X": _pos("X", neta_fills=-100)}, _cot_de({"X": _cot("10", "10.1", last="10", ticker="X")}),
+                           CFG, _tokens(), HORA, intento=3, vivas_de=vivas)
+    cancelaciones = [a for a in acciones if isinstance(a, Cancelar)]
+    assert [(c.id_das, c.token) for c in cancelaciones] == [(901, 5)], "solo la orden de cierre, no el stop"
+    aviso = next(a for a in acciones if isinstance(a, Avisar))
+    assert acciones.index(cancelaciones[0]) < acciones.index(aviso)
+    assert aviso.nivel is Nivel.MAXIMO and "RETIRADO" in aviso.texto and "stops" in aviso.texto
+    assert not any(isinstance(a, (EnviarOrden, Programar)) for a in acciones)
+
+
+@pytest.mark.parametrize("vivas_de, esperado", [
+    (None, [CancelarTicker]),
+    (_vivas_de({"X": [_viva(5, 100, id_das=None)]}), [CancelarTicker]),
+    (_vivas_de({"X": []}), []),
+], ids=["D2-04-sin-vivas-conocidas", "D2-04-orden-sin-id", "D2-04-nada-que-retirar"])
+def test_D2_04_agotado_sin_ids_cancela_el_ticker(vivas_de, esperado):
+    acciones = cerrar_todo({"X": _pos("X", neta_fills=-100)}, _cot_de({}), CFG, _tokens(), HORA, intento=3,
+                           vivas_de=vivas_de)
+    assert [type(a) for a in acciones if isinstance(a, (Cancelar, CancelarTicker))] == esperado
+
+
+# ── A-02: el share del REPLACE sale de tipos.share_de_replace ────────────
+def test_A_02_perseguir_ask_usa_share_de_replace():
+    orden = _orden(qty=100, lvqty=60, llenas=40, precio="10.00")
+    assert perseguir_ask(orden, _cot("10.05", "10.10"), 0).qty == 60
+    assert perseguir_ask(orden, _cot("10.05", "10.10"), 0, share_es_abierta=True).qty == 60
+    assert perseguir_ask(orden, _cot("10.05", "10.10"), 0, share_es_abierta=False).qty == 100
+
+
+# ── A-06: los GET por protocolo.cmd_get ──────────────────────────────────
+def test_A_06_consultas_por_protocolo():
+    from app.bot_das.protocolo import cmd_get
+    assert salidas.COMANDO_POSICIONES == cmd_get("POSITIONS") == "GET POSITIONS"
+    assert salidas.COMANDO_ORDENES == cmd_get("ORDERS") == "GET ORDERS"

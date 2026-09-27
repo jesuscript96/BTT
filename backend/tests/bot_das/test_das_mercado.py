@@ -13,9 +13,20 @@ from decimal import Decimal
 
 import pytest
 
-from app.bot_das.mercado_das import FRESCA_MAX_S, TOLERANCIA_BANDA_PCT, MercadoDAS
+from app.bot_das.mercado_das import (
+    CLASIF_DOWN,
+    CLASIF_NO_CUENTA,
+    CLASIF_UP,
+    CLASIF_UP_SIN_BANDAS,
+    FRESCA_MAX_S,
+    TOLERANCIA_BANDA_PCT,
+    VELAS_MINUTO_MAX,
+    MercadoDAS,
+)
+from app.bot_das.reglas.exclusiones import banda_opa
 from app.bot_das.reloj import ET
 from app.bot_das.tipos import (
+    COTIZACION_FRESCA_MAX_S,
     MAX_LV1,
     MsgBP,
     MsgIssueStatus,
@@ -60,6 +71,51 @@ def test_defectos():
     assert MAX_LV1 == 100
     assert TOLERANCIA_BANDA_PCT == Decimal("0.5")
     assert FRESCA_MAX_S == 5.0
+
+
+def test_D1_12_fresca_max_s_es_la_de_tipos():
+    """D1-12: una sola constante (tipos.COTIZACION_FRESCA_MAX_S); el nombre de aquí se conserva (el decisor lo importa)."""
+    import app.bot_das.mercado_das as mod
+    assert FRESCA_MAX_S == COTIZACION_FRESCA_MAX_S
+    fuente = open(mod.__file__, encoding="utf-8").read()
+    assert "FRESCA_MAX_S = COTIZACION_FRESCA_MAX_S" in fuente
+
+
+# ── velas de 1 min para la banda de OPA (E1-08) ─────────────────────────
+def test_E1_08_velas_minuto(mercado, reloj):
+    """E1-08: los $Quote arman velas de 1 min (high/low del last, dólares = Δvolumen · last) para banda_opa."""
+    assert mercado.velas_minuto("ABC") == []
+    reloj.avanzar(60 - (reloj.mono() % 60))                   # empieza en el borde de un minuto
+    t0 = reloj.mono()
+    mercado.aplicar(quote("ABC", L="2.00", V="1000"))          # primer volumen: sin delta
+    mercado.aplicar(quote("ABC", L="2.10", V="1500"))          # +500 a 2,10
+    mercado.aplicar(quote("ABC", L="1.95"))                    # print sin volumen
+    mercado.aplicar(quote("ABC", B="1.90"))                    # ni print ni volumen: no toca la vela
+    reloj.avanzar(61)
+    mercado.aplicar(quote("abc", V="1600"))                    # +100 al último (1,95), minuto siguiente
+    velas = mercado.velas_minuto("ABC")
+    assert len(velas) == 2
+    assert velas[0] == (float(t0), Decimal("2.10"), Decimal("1.95"), Decimal("1050.00"))
+    assert velas[1][1:] == (Decimal("1.95"), Decimal("1.95"), Decimal("195.00"))
+    assert velas[1][0] - velas[0][0] == 60.0
+
+
+def test_E1_08_velas_minuto_con_tope(mercado, reloj):
+    for i in range(VELAS_MINUTO_MAX + 5):
+        mercado.aplicar(quote("ABC", L=str(2 + i / 100)))
+        reloj.avanzar(60)
+    assert len(mercado.velas_minuto("ABC")) == VELAS_MINUTO_MAX
+
+
+def test_E1_08_velas_alimentan_banda_opa(mercado, reloj):
+    """E1-08: 30 velas clavadas bajo el máximo de PM con volumen → banda_opa da True (el aviso lo manda el decisor)."""
+    volumen = 0
+    for _ in range(31):
+        volumen += 10_000
+        mercado.aplicar(quote("ABC", L="10.00", V=str(volumen)))
+        mercado.aplicar(quote("ABC", L="9.95"))
+        reloj.avanzar(60)
+    assert banda_opa(mercado.velas_minuto("ABC"), Decimal("10.05"), {}) is True
 
 
 # ── $Quote como parche (riesgo 15) ──────────────────────────────────────
@@ -230,14 +286,17 @@ def _preparar(mercado, last="2.20", up="2.20", down="1.80"):
 
 @pytest.mark.parametrize("franja, last, k", [
     ("RTH", "2.20", 1),                    # en la banda
-    ("RTH", "2.189", 1),                   # a 0,5 % de la banda (tolerancia)
-    ("RTH", "2.1889", 0),                  # justo por debajo de la tolerancia
+    ("RTH", "2.189", 1),                   # a 0,5 % de la banda
+    ("RTH", "2.1889", 1),                  # E1-06: una P se clasifica por cercanía (más cerca de la banda UP)
+    ("RTH", "2.00", 1),                    # E1-06: justo en el medio → UP (infracontar es el lado peligroso)
+    ("RTH", "1.99", 0),                    # E1-06: más cerca de limit_down → DOWN
     ("RTH (media sesion)", "2.20", 1),
     ("premercado", "2.20", 0),             # T1/T12: no suma k
     ("postmercado", "2.20", 0),
     ("RTH", "1.80", 0),                    # halt DOWN
-], ids=["R-F-01-up-rth", "R-F-01-tolerancia", "R-F-01-bajo-tolerancia", "R-F-01-media-sesion",
-        "R-F-01-pm-no-cuenta", "R-F-01-post-no-cuenta", "R-F-01-down-no-cuenta"])
+], ids=["R-F-01-up-rth", "R-F-01-tolerancia", "E1-06-P-por-cercania", "E1-06-P-en-el-medio-up",
+        "E1-06-P-mas-cerca-de-down", "R-F-01-media-sesion", "R-F-01-pm-no-cuenta", "R-F-01-post-no-cuenta",
+        "R-F-01-down-no-cuenta"])
 def test_marcar_halt_k(mercado, franja, last, k):
     _preparar(mercado)
     r = mercado.marcar_halt("ABC", estado("ABC", ta="P", tat="10:15:00"), AHORA_ET, Decimal(last), franja)
@@ -250,8 +309,55 @@ def test_marcar_halt_k(mercado, franja, last, k):
 
 
 def test_marcar_halt_sin_bandas_no_cuenta(mercado):
+    """Un TA:H (T1/T12, no LULD) sin banda no se puede decir UP: no suma (la regla de la banda sigue para H)."""
     r = mercado.marcar_halt("ABC", estado("ABC", ta="H"), AHORA_ET, Decimal("5"), "RTH")
     assert r == "halt" and mercado.simbolo("ABC").k_halts_up == 0
+    assert mercado.clasificacion_halt("ABC") == CLASIF_NO_CUENTA
+
+
+@pytest.mark.parametrize("ta, last, up, down, clasif, k", [
+    ("H", "2.20", "2.20", "1.80", CLASIF_UP, 1),
+    ("H", "2.1889", "2.20", "1.80", CLASIF_NO_CUENTA, 0),
+    ("P", None, None, None, CLASIF_UP_SIN_BANDAS, 1),
+    ("P", "5", None, None, CLASIF_UP_SIN_BANDAS, 1),
+    ("P", "2.10", "2.20", None, CLASIF_UP_SIN_BANDAS, 1),
+    ("P", "1.81", "2.20", "1.80", CLASIF_DOWN, 0),
+], ids=["E1-06-H-en-banda-up", "E1-06-H-bajo-tolerancia-no", "E1-06-P-sin-nada-cuenta-up",
+        "E1-06-P-sin-bandas-cuenta-up", "E1-06-P-sin-limit-down-cuenta-up", "E1-06-P-down"])
+def test_E1_06_clasificacion_del_halt(mercado, ta, last, up, down, clasif, k):
+    """E1-06: una pausa LULD se clasifica por cercanía y, sin bandas, cuenta UP (lo conservador para un corto)."""
+    if up is not None:
+        simb = mercado.simbolo("ABC")
+        simb.limit_up = Decimal(up)
+        simb.limit_down = Decimal(down) if down is not None else None
+    precio = Decimal(last) if last is not None else None
+    assert mercado.marcar_halt("ABC", estado("ABC", ta=ta), AHORA_ET, precio, "RTH") == "halt"
+    assert mercado.clasificacion_halt("ABC") == clasif and mercado.simbolo("ABC").k_halts_up == k
+    assert mercado.ta_ultimo_halt("ABC") == ta
+    foto = mercado.foto()
+    json.dumps(foto)
+    assert foto["halts"]["ABC"]["clasificacion"] == clasif and foto["halts"]["ABC"]["ta_ultimo_halt"] == ta
+
+
+def test_E1_06_fuera_de_rth_no_cuenta_ni_sin_bandas(mercado):
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="P"), AHORA_ET, None, "premercado") == "halt"
+    assert mercado.simbolo("ABC").k_halts_up == 0 and mercado.clasificacion_halt("ABC") == CLASIF_NO_CUENTA
+
+
+def test_E1_03_sembrar_k_nunca_baja(mercado):
+    """E1-03: k se siembra al arrancar (diario u otra fuente) y nunca baja; los halts nuevos suman encima."""
+    assert mercado.sembrar_k("abc", 2) == 2
+    assert mercado.simbolo("ABC").k_halts_up == 2
+    assert mercado.sembrar_k("ABC", 1) == 2
+    _preparar(mercado)
+    mercado.marcar_halt("ABC", estado("ABC", ta="P"), AHORA_ET, Decimal("2.2"), "RTH")
+    assert mercado.simbolo("ABC").k_halts_up == 3
+
+
+@pytest.mark.parametrize("k", [-1, True, 1.0, "2"], ids=["negativo", "bool", "float", "texto"])
+def test_E1_03_sembrar_k_rechaza(mercado, k):
+    with pytest.raises(ValueError):
+        mercado.sembrar_k("ABC", k)
 
 
 def test_marcar_halt_ciclo_completo_y_repetido(mercado):
@@ -273,10 +379,42 @@ def test_marcar_halt_ciclo_completo_y_repetido(mercado):
     assert simb.k_halts_up == 2 and simb.precio_parada == Decimal("2.64")
 
 
-@pytest.mark.parametrize("ta", ["Q", "T", None], ids=["R-F-01-Q", "R-F-01-T", "R-F-01-sin-TA"])
+@pytest.mark.parametrize("ta", ["T", None, " t "], ids=["R-F-01-T", "R-F-01-sin-TA", "E1-10-t-minuscula"])
 def test_reapertura_con_cualquier_ta_no_parado(mercado, ta):
     mercado.marcar_halt("ABC", estado("ABC", ta="H"), AHORA_ET, Decimal("2"), "RTH")
     assert mercado.marcar_halt("ABC", estado("ABC", ta=ta), AHORA_ET, None, "RTH") == "reapertura"
+
+
+def test_E1_05_Q_sigue_parado_y_reabre_con_T(mercado):
+    """E1-05: TA:Q (solo cotización antes del cruce) NO es reapertura; la guardia de la OPEN se conserva."""
+    mercado.marcar_halt("ABC", estado("ABC", ta="H"), AHORA_ET, Decimal("2"), "RTH")
+    simb = mercado.simbolo("ABC")
+    simb.orden_open_enviada = True
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="Q"), AHORA_ET, Decimal("2"), "RTH") is None
+    assert simb.halt_desde is not None and simb.orden_open_enviada is True and simb.ta == "Q"
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="T"), AHORA_ET, Decimal("2.3"), "RTH") == "reapertura"
+    assert simb.orden_open_enviada is False
+
+
+def test_E1_05_Q_sin_halt_previo_es_halt_sin_k(mercado):
+    """Un Q visto sin halt previo (arranque a mitad): el símbolo no se negocia → «halt», pero Q no suma k."""
+    _preparar(mercado)
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="Q"), AHORA_ET, Decimal("2.2"), "RTH") == "halt"
+    assert mercado.simbolo("ABC").k_halts_up == 0
+
+
+@pytest.mark.parametrize("ta", ["h", " P ", "p"], ids=["h-minuscula", "P-espacios", "p-minuscula"])
+def test_E1_10_ta_normalizado(mercado, ta):
+    """E1-10: el TA se normaliza en marcar_halt (y se guarda así): «h» o « P » son un halt, como en reglas.halts."""
+    _preparar(mercado)
+    assert mercado.marcar_halt("ABC", estado("ABC", ta=ta), AHORA_ET, Decimal("2.2"), "RTH") == "halt"
+    assert mercado.simbolo("ABC").ta == ta.strip().upper()
+    assert mercado.simbolo("ABC").k_halts_up == 1
+
+
+def test_E1_10_ta_vacio_es_none(mercado):
+    mercado.aplicar(estado("ABC", ta="  "))
+    assert mercado.simbolo("ABC").ta is None
 
 
 def test_marcar_halt_sin_estado_previo_no_es_reapertura(mercado):

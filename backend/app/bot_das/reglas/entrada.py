@@ -17,8 +17,11 @@ QUÉ HACE. Dos cosas, las dos PURAS:
 
 POR QUÉ ESTÁ AQUÍ. El decisor es el único que muta `EstadoBot` (H-5, §6.1);
 todo lo que se puede decidir sin reloj ni socket vive aquí y se prueba con
-tablas. Solo importa de `tipos` y de `reglas.precios`: nada de red, ni de
-`time`, ni `datetime.now()`, ni logging, ni variables de entorno. Recibe
+tablas. Solo importa de `tipos`, de `reglas.precios` y de dos reglas puras
+hermanas para no duplicar su verdad: `reglas.locates.asignar_a_lote`
+(comprobación 16, E9: D1-02/G1A-07) y `reglas.salidas.puede_reentrar`
+(comprobación 14, R-D-04 con paridad del backtester: D1-04). Nada de red, ni
+de `time`, ni `datetime.now()`, ni logging, ni variables de entorno. Recibe
 `ahora` (monotónico) y `ahora_et` (datetime aware ET) como parámetros.
 
 LAS TRAMPAS.
@@ -48,7 +51,10 @@ LAS TRAMPAS.
   * Una señal guardada por halt (comprobación 7) NO debe entrar en
     `senales_vistas` hasta que se ejecute o se descarte: la comprobación 1 la
     rechazaría en la reapertura. En la reapertura se evalúa con
-    `es_reapertura=True`, que solo se salta la caducidad (13).
+    `es_reapertura=True`, que se salta la caducidad (13) y el retraso (10,
+    D1-03): el filtro de la reapertura es `halts.senal_guardada_valida`
+    (primera vela < X %, R-F-04 b); el precio de la señal es el de ANTES del
+    halt y un LULD mueve el 5-10 %, así que la 10 la descartaría siempre.
   * Los parámetros de la config llegan como float del JSON (3.0, 0.5): se
     convierten con `precios.de_float`, nunca se opera con float.
 """
@@ -64,6 +70,7 @@ from functools import lru_cache
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
 
+from app.bot_das.reglas.locates import asignar_a_lote
 from app.bot_das.reglas.precios import (
     bajo_bid,
     de_float,
@@ -72,7 +79,9 @@ from app.bot_das.reglas.precios import (
     redondear_arriba,
     ruta,
 )
+from app.bot_das.reglas.salidas import puede_reentrar
 from app.bot_das.tipos import (
+    COTIZACION_FRESCA_MAX_S,
     ENTRADA_AGREGAR_S,
     ENTRADA_CADUCIDAD_S,
     ENTRADA_CRUCE_BAJO_BID_PCT,
@@ -146,7 +155,6 @@ _TICKER_BLOQUEADO = frozenset({EstadoTicker.PAUSADO, EstadoTicker.BS,
 _TA_HALT = frozenset({"H", "P"})                     # manual L1101-1133: H halted, P paused
 _PIRAMIDE_ADD = frozenset({"add"})
 _PIRAMIDE_REDUCE = frozenset({"reduce", "lot_stop", "lot_tp"})
-_LOCATE_NO_HACE_FALTA = "no_hace_falta"              # §3.22: AlreadyShortable (RetType 2)
 _AL_DESACTIVAR_REINICIAR = "cerrar_y_reiniciar"      # R-E-03; cualquier otro valor = esperar fin de día
 
 
@@ -250,7 +258,7 @@ def nivel_de_senal(estado: EstadoBot, evento: Any) -> Optional[Decimal]:
 def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Cotizacion],
                   simb: EstadoSimbolo, exclusion: Optional[str], franja: str, ahora: float,
                   ahora_et: datetime, diario_degradado: bool, *, es_reapertura: bool = False,
-                  max_edad_cot_s: float = 5.0) -> Veredicto:
+                  max_edad_cot_s: float = COTIZACION_FRESCA_MAX_S) -> Veredicto:
     """¿Se opera esta señal? 16 comprobaciones en ORDEN FIJO (§3.15, ajuste (c)); la primera que falla decide.
 
      1 repetida: `senal.id` ∈ `senales_vistas` (R-A-05).
@@ -261,18 +269,25 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
      6 `exclusion` (motivo de `reglas.exclusiones.excluida`, calculado por el decisor; None = operable).
      7 halt en curso (TA H/P o ticker en HALT) → no, y `guardar_para_reapertura` (R-F-04 b, B18).
      8 cotización de DAS: bid, ask y último presentes y > 0, libro no cruzado y de hace ≤ `max_edad_cot_s`
-       (R-B-01 «sin cotización no se entra»; mismo defecto de 5 s que `MercadoDAS.fresca`).
+       (R-B-01 «sin cotización no se entra»; defecto `tipos.COTIZACION_FRESCA_MAX_S`, la MISMA constante
+       que `MercadoDAS.fresca`: D1-12).
      9 modo de seguridad activo: último ≥ precio_min y volumen × VWAP ≥ acum_dollar_volume_min (R-I-04; ≥ pasa).
     10 retraso: |último − precio_señal| / precio_señal > retraso_max_senal_pct → no (R-A-01; igual pasa).
+       null o ausente en el cuadro = el defecto del libro (1 %), NUNCA «apagada» (D1-09: el filtro de
+       R-A-01 no se apaga en silencio). Se salta con `es_reapertura=True` (D1-03, R-F-04 b): el precio
+       de la señal es el de antes del halt y el filtro de la reapertura es `halts.senal_guardada_valida`.
     11 B20 bis: (último − bid) / último > distancia_max_ultimo_bid_pct → no (null = apagada; igual pasa).
     12 nivel L (`nivel_de_senal`) None → no (A12); L ≤ último → no (R-C-09).
     13 caducidad: `ahora_et` > cierre de la vela + caducidad_senal_s → no (R-B-04; igual pasa). Se salta
        con `es_reapertura=True` (señal guardada por halt, validada antes por `halts.senal_guardada_valida`).
     14 reentrada: `sin_reentrada_hasta_sigue` (R-G-03, R-F-03); lote de una versión anterior de la
-       estrategia (R-E-03); lote base de la misma estrategia aún vivo; accept_reentries / max_reentries
-       (R-D-04: −1 = sin tope numérico, 0 = ninguna, N = hasta N).
+       estrategia (R-E-03); y el resto (lote base vivo, accept_reentries / max_reentries) lo decide
+       `salidas.puede_reentrar`, con el MISMO if/elif que el backtester (D1-04, R-D-04: −1 = manda
+       accept_reentries; 0 = ninguna; N > 0 = hasta N aunque accept_reentries sea false).
     15 degradado: `diario_degradado` (corrección 4) o `estado.modo_degradado` no vacío (R-J-03).
-    16 acciones = min(qty_de_evento, locates libres = localizadas − usadas) (R-H-04); 0 → no.
+    16 acciones = min(qty_de_evento, lo que cubre `locates.asignar_a_lote`) (R-H-04, E9: D1-02/G1A-07):
+       locate propio + sobrantes de las demás estrategias del ticker + ETB en CUALQUIER registro del
+       ticker; la misma regla con la que el decisor reparte después. 0 → no.
 
     `franja` no cambia ninguna comprobación a propósito: B11 (PM sin excepciones)
     y F10 (con SSR SÍ se entra; el precio ya va ≥ bid + 1 tick, B19). `ahora` es
@@ -326,10 +341,11 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
     # 9 (desde aquí bid, ask y último son Decimal > 0: lo garantiza la 8)
     if _modo_seguridad_bloquea(cfg.modo_seguridad, cot):
         return _descartar(MOTIVO_MODO_SEGURIDAD)
-    # 10
-    retraso_max = _pct(cfg.entrada, "retraso_max_senal_pct", ENTRADA_RETRASO_MAX_PCT)
-    if abs(distancia_pct(cot.last, precio_senal)) > retraso_max:
-        return _descartar(MOTIVO_RETRASO)
+    # 10 (D1-03: no en la reapertura; D1-09: null = defecto del libro, nunca apagada)
+    if not es_reapertura:
+        retraso_max = _pct(cfg.entrada, "retraso_max_senal_pct", ENTRADA_RETRASO_MAX_PCT)
+        if abs(distancia_pct(cot.last, precio_senal)) > retraso_max:
+            return _descartar(MOTIVO_RETRASO)
     # 11
     distancia_max = _pct_opcional(cfg.entrada, "distancia_max_ultimo_bid_pct", ENTRADA_DISTANCIA_ULTIMO_BID_PCT)
     if distancia_max is not None and -distancia_pct(cot.bid, cot.last) > distancia_max:
@@ -351,7 +367,7 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
         return _descartar(MOTIVO_DEGRADADO)
     # 16
     pedidas = qty_de_evento(getattr(evento, "acciones", None))
-    qty = min(pedidas, _locates_libres(estado, ticker, strategy_id, pedidas))
+    qty = min(pedidas, _locates_libres(estado, ticker, strategy_id, pedidas))     # E9 (D1-02, G1A-07)
     if qty <= 0:
         return _descartar(MOTIVO_SIN_ACCIONES)
     return Veredicto(ok=True, motivo=MOTIVO_OK, qty=qty)
@@ -675,14 +691,23 @@ def cerrar_intento(intento: IntentoEntrada, lotes: list[Lote]) -> list[Lote]:
     return resultado
 
 
-def fill_peor_de_lo_permitido(precio_fill: Decimal, bid_senal: Decimal, tope_pct: Decimal) -> bool:
-    """B13: ¿una venta en corto se llenó por DEBAJO de bid_senal · (1 − tope_pct/100)? → aviso y se MANTIENE.
+def fill_peor_de_lo_permitido(precio_fill: Decimal, bid_senal: Decimal, tope_pct: Decimal, *,
+                              cruce_pct: Optional[Decimal] = None, ssr: bool = False) -> bool:
+    """B13: ¿una venta en corto se llenó por DEBAJO de lo peor que permite la regla? → aviso y se MANTIENE.
 
-    Estricto: el propio suelo no es «peor». Lo peor que permite R-B-01 v3 es
-    el cruce a (bid_senal · 0,97) · 0,995 ≈ −3,485 %, redondeado abajo al tick:
-    el decisor pasa un `tope_pct` que lo cubra (tope de caída + techo del
-    cruce). Un fill mejor que el último se acepta sin más (B13). Lanza
-    ValueError con precios no positivos o tope negativo.
+    Dos formas (estrictas: el propio suelo no es «peor»):
+      * `cruce_pct` None (forma antigua): suelo = bid_senal · (1 − tope_pct/100),
+        con `tope_pct` = tope de caída + cruce. En 1-3 $ da falsos avisos: no
+        cuenta el redondeo al tick del cruce (D1-05, G1B-19).
+      * `cruce_pct` dado (D1-05): `tope_pct` es SOLO el tope de caída del bid
+        y el suelo es el PEOR precio legal de R-B-01 v3: el bid más bajo con
+        el que aún se cruza (bid_senal · (1 − tope/100) llevado ARRIBA al
+        tick: un bid real está en la rejilla) y, desde él, el cruce
+        `bajo_bid(bid, cruce_pct)` redondeado ABAJO (§3.14, el mismo cálculo
+        que `orden_cruce`). Con `ssr` el cruce va a bid + 1 tick (B19). Así
+        un cruce hecho según la regla nunca avisa y uno de un tick menos, sí.
+    Un fill mejor que el último se acepta sin más (B13). Lanza ValueError con
+    precios no positivos o porcentajes negativos.
     """
     for nombre, valor in (("precio_fill", precio_fill), ("bid_senal", bid_senal)):
         if not isinstance(valor, Decimal) or not valor.is_finite() or valor <= 0:
@@ -690,7 +715,16 @@ def fill_peor_de_lo_permitido(precio_fill: Decimal, bid_senal: Decimal, tope_pct
     tope = de_float(tope_pct)
     if tope < 0:
         raise ValueError(f"tope_pct negativo: {tope_pct!r}")
-    return precio_fill < bid_senal * (_CIEN - tope) / _CIEN
+    if cruce_pct is None:
+        return precio_fill < bid_senal * (_CIEN - tope) / _CIEN
+    cruce = de_float(cruce_pct)
+    if cruce < 0:
+        raise ValueError(f"cruce_pct negativo: {cruce_pct!r}")
+    bid_minimo = redondear_arriba(bid_senal * (_CIEN - tope) / _CIEN)
+    if bid_minimo <= 0:
+        return False
+    peor = _suelo_sobre_bid(bid_minimo) if ssr else bajo_bid(bid_minimo, cruce)
+    return precio_fill < peor
 
 
 # ── auxiliares privados ───────────────────────────────────────────────
@@ -867,7 +901,18 @@ def _lote_base_vivo(pos: Optional[PosicionTicker], evento: Any) -> Optional[Lote
 
 
 def _reentrada_prohibida(pos: Optional[PosicionTicker], estrategia: EstrategiaConfig, evento: Any) -> bool:
-    """Comprobación 14 (R-D-04, R-F-03, R-G-03, R-E-03). Una pirámide «add» no es reentrada (solo le afecta el veto)."""
+    """Comprobación 14 (R-D-04, R-F-03, R-G-03, R-E-03). Una pirámide «add» no es reentrada (solo le afecta el veto).
+
+    Aquí quedan solo lo que `salidas.puede_reentrar` no mira: el veto
+    `sin_reentrada_hasta_sigue` (también lo mira ella), R-E-03 (versiones
+    viejas de la estrategia) y la exención de la pirámide «add». Todo lo
+    demás (lote base vivo, entradas previas, accept_reentries /
+    max_reentries) lo decide `puede_reentrar`, que tiene el MISMO if/elif que
+    el backtester (`portfolio_sim.py` l.2314-2318) y el motor de alertas: una
+    sola fuente de verdad (D1-04, D2-salidas-rechazos-11; memoria
+    «max_reentries = -1»): −1 → manda accept_reentries; 0 → ninguna; N > 0 →
+    hasta N aunque accept_reentries sea false; < −1 → no (conservador).
+    """
     if pos is None:
         return False
     if pos.sin_reentrada_hasta_sigue:
@@ -882,27 +927,17 @@ def _reentrada_prohibida(pos: Optional[PosicionTicker], estrategia: EstrategiaCo
         return True
     if es_piramide_add(evento):
         return False
-    bases = [lote for lote in propios
-             if lote.nivel_piramide is None and (lote.estado in _VIVOS or lote.llenas > 0)]
-    if any(lote.estado in _VIVOS for lote in bases):
-        return True                    # un lote base por estrategia y ticker: nunca dos a la vez
-    previas = len(bases)               # entradas anteriores que llegaron a operar (las CANCELADAS sin fill no cuentan)
-    if previas == 0:
-        return False
-    if not estrategia.accept_reentries:
-        return True
-    if estrategia.max_reentries == -1:  # centinela: sin tope numérico, manda accept_reentries
-        return False
-    if estrategia.max_reentries < 0:
-        return True                    # valor imposible: lo conservador es no reentrar
-    return previas > estrategia.max_reentries
+    permitida, _motivo = puede_reentrar(estrategia, None, pos)
+    return not permitida
 
 
 def _locates_libres(estado: EstadoBot, ticker: str, strategy_id: Optional[str], pedidas: int) -> int:
-    """R-H-04: localizadas − usadas de (ticker, estrategia); «no_hace_falta» (ETB) no limita; sin registro → 0."""
-    loc = estado.locates.get((ticker, strategy_id)) if strategy_id is not None else None
-    if loc is None:
+    """R-H-04 + E9 (D1-02, G1A-07): lo que cubre `locates.asignar_a_lote`, la MISMA regla que usa el decisor.
+
+    Propias (localizadas − usadas) + sobrantes de las demás estrategias del
+    ticker (sin quitarles lo que necesitan para sí) + ETB («no_hace_falta»
+    en CUALQUIER registro del ticker: no limita). Sin nada → 0.
+    """
+    if not strategy_id or type(pedidas) is not int or pedidas <= 0:
         return 0
-    if loc.estado == _LOCATE_NO_HACE_FALTA:
-        return pedidas
-    return max(0, loc.localizadas - loc.usadas)
+    return sum(n for _, n in asignar_a_lote(estado.locates, ticker, pedidas, strategy_id))

@@ -2,8 +2,9 @@
 
 QUÉ HACE. `excluida` aplica R-A-03 v2 en un orden fijo y devuelve el MOTIVO
 (texto) o None; `banda_opa` detecta el precio clavado en una banda estrecha
-tras el máximo de premercado (aviso, nunca salida automática); `simbolo_das`
-es la equivalencia Massive → DAS (A7), hoy la identidad.
+tras el máximo de premercado (aviso, nunca salida automática) y `aviso_opa`
+(E1-08) construye ese aviso con las velas de `MercadoDAS.velas_minuto`;
+`simbolo_das` es la equivalencia Massive → DAS (A7), hoy la identidad.
 
 POR QUÉ ESTÁ AQUÍ. Son guardas puras: reciben la `Ficha` que trajo
 `referencia_massive.py` (o None si no se pudo), el conjunto de splits del día
@@ -32,6 +33,7 @@ LAS TRAMPAS.
 """
 from __future__ import annotations
 
+import html
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
@@ -43,11 +45,15 @@ from app.bot_das.tipos import (
     OPA_DOLARES_MIN,
     OPA_RANGO_MAX_PCT,
     SPAC_SIC,
+    Avisar,
     EstrategiaConfig,
     Ficha,
+    Grupo,
+    Nivel,
 )
 
 MOTIVOS = ("lista_negra", "sin_ficha", "spac", "ipo", "split")
+CLAVE_AVISO_OPA = "opa"                  # E1-08: «opa:X»; el decisor lo manda una vez por día y ticker
 _CIEN = Decimal("100")
 
 
@@ -120,6 +126,28 @@ def banda_opa(muestras: list[tuple[float, Decimal, Decimal, Decimal]], max_pm: O
         return False
     rango_pct = (tope - minimo) / tope * _CIEN
     return rango_pct <= rango_max and dolares >= dolares_min
+
+
+def aviso_opa(ticker: str, muestras: list[tuple[float, Decimal, Decimal, Decimal]], max_pm: Optional[Decimal],
+              cfg_ex: dict) -> Optional[Avisar]:
+    """E1-08 (R-A-03 v2, OPA = AVISO): el `Avisar(2)` listo para el decisor si `banda_opa` da True; si no, None.
+
+    El decisor lo llama con la posición abierta, con las velas de
+    `MercadoDAS.velas_minuto(ticker)` y el máximo de premercado, y lo manda UNA
+    vez por día y ticker (la clave `opa:X` sola solo deduplica 60 s en
+    `avisos`). Nunca es una salida automática: Jaume mira el gráfico y sale a
+    mano si quiere. El texto va escapado (D2-08).
+    """
+    if not banda_opa(muestras, max_pm, cfg_ex):
+        return None
+    cfg = cfg_ex.get("opa_banda") or {}
+    minutos = _entero(cfg.get("minutos", OPA_BANDA_MIN), "opa_banda.minutos")
+    rango = de_float(cfg.get("rango_max_pct", OPA_RANGO_MAX_PCT))
+    t = html.escape(_norm(ticker), quote=False)
+    tope = f" bajo el máximo de PM {max_pm}" if max_pm is not None else ""
+    return Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"{CLAVE_AVISO_OPA}:{_norm(ticker)}",
+                  texto=(f"Posible OPA en {t}: {minutos} min clavado en una banda ≤ {rango} %{tope} con volumen "
+                         f"(R-A-03 v2). Es un AVISO: el bot no sale solo; mirar el gráfico y decidir a mano."))
 
 
 def simbolo_das(ticker_massive: str) -> str:

@@ -49,9 +49,14 @@ LAS TRAMPAS.
     protección al 25 %, para no dejarla desnuda.
   * De lo que devuelve `plan` se quitan `Programar` y `Consultar` (son
     temporizadores y consultas del ejecutor; el vigilante vuelve a mirar en
-    1 s). El vigilante NUNCA vende ni cierra: una posición LARGA solo se avisa
-    (y, con el ejecutor muerto, se cancelan las compras que la agrandarían);
-    la venta del exceso la hace el ejecutor al volver (R-C-11, caso 6).
+    1 s). El vigilante NUNCA cierra una posición corta. E2c-02 (R-C-11 (3):
+    «ejecutor + vigilante», el libro manda sobre §3.25): con el ejecutor
+    MUERTO y la cuenta LARGA con lotes cortos, el vigilante vende SOLO el
+    exceso con sus tokens (`stops.limpieza_tras_fill_stop`, sujeto a
+    `puede_enviar`); con el ejecutor vivo solo avisa (lo limpia el ejecutor).
+  * E2c-04: con el ejecutor vivo, la misma propuesta no se anota cada segundo:
+    `comprobar_con_firmas` devuelve una firma por ticker que el proceso pasa
+    en `Foto.anotado`; se vuelve a anotar al cambiar o al actuar.
   * (d) no dispara si la foto ya dice `locates_deshabilitados` (no se repite
     cada segundo). Una segunda compra PEDIDA (un «locate_intencion» por
     compra: parcial de R-H-04, reentrada de EP-9) no es repetida. Sin equity
@@ -64,6 +69,7 @@ LAS TRAMPAS.
 """
 from __future__ import annotations
 
+import html
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -148,6 +154,8 @@ class Foto:
     pendientes: list[Orden] = field(default_factory=list)
     estados_ticker: dict[str, EstadoTicker] = field(default_factory=dict)
     locates_deshabilitados: bool = False
+    anotado: dict[str, str] = field(default_factory=dict)   # E2c-04: firma de lo último anotado por ticker (la devuelve
+    #                                                         `comprobar_con_firmas`; el proceso la trae a la foto siguiente)
 
 
 @dataclass
@@ -174,6 +182,22 @@ def comprobar(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[], int], hor
     salida: por ticker (alfabético) `Anotar("vigilancia")` ANTES de sus
     órdenes (write-ahead, §8) y sus avisos de precio; después (g), (d) y (e).
     """
+    return comprobar_con_firmas(foto, cfg, ahora, tokens, hora_et, ruta_stop, puede_enviar)[0]
+
+
+def comprobar_con_firmas(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[], int], hora_et: datetime,
+                         ruta_stop: str, puede_enviar: bool) -> tuple[list[Accion], dict[str, str]]:
+    """`comprobar` + las firmas de lo propuesto por ticker (E2c-04: no llenar el diario con una línea por segundo).
+
+    Devuelve (acciones, firmas). `firmas` = {ticker: firma} de los tickers con
+    algo que proponer en esta pasada; el proceso vigilante la guarda y la pasa
+    en `Foto.anotado` de la pasada siguiente. Con el ejecutor vivo y la MISMA
+    propuesta que ya se anotó, no se vuelve a anotar; en cuanto cambia (o el
+    vigilante actúa, o el ticker cuadra y vuelve a descuadrar) se anota. Con
+    `Foto.anotado` vacío (llamador antiguo) se anota en cada pasada, como antes.
+    Lo que el vigilante HACE (acciones reales) se anota siempre antes de hacerlo
+    (write-ahead, §8).
+    """
     cfg_stops = _bloque(cfg, "stops", requerido=True)
     vig = _bloque(_bloque(cfg, "tecnicos"), "vigilante")
     plan_b_latido = _segundos(vig.get("plan_b_latido_s"), PLAN_B_LATIDO_S)
@@ -181,23 +205,29 @@ def comprobar(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[], int], hor
     hoy = hora_et.date()
     muerto = foto.latido_ejecutor_s is None or foto.latido_ejecutor_s > plan_b_latido
     salida: list[Accion] = []
+    firmas: dict[str, str] = {}
     bloqueadas = False
     for vista in _vistas(foto, cfg_stops, hoy):
         desc = _descubiertas(vista, cfg_stops)
         desde = foto.descubierta_desde.get(vista.ticker)
         actua = muerto or (desc > 0 and desde is not None and ahora - desde > plan_b_descubierta)
-        propuesta, reales, motivo = _que_hacer(vista, cfg_stops, tokens, hora_et, ruta_stop, actua, muerto)
+        propuesta, reales, motivo = _que_hacer(vista, cfg, cfg_stops, tokens, hora_et, ruta_stop, actua, muerto)
         if propuesta:
             enviar = [a for a in reales if isinstance(a, MUTANTES)]
             bloqueo = bool(enviar) and not puede_enviar
             bloqueadas = bloqueadas or bloqueo
-            salida.append(Anotar(TIPO_ANOTACION, {
+            datos = {
                 "ticker": vista.ticker, "neta": vista.neta, "descubiertas": desc, "actua": actua and not bloqueo,
                 "motivo": motivo, "latido_ejecutor_s": foto.latido_ejecutor_s, "puede_enviar": puede_enviar,
                 "faltan": [_describir(a) for a in propuesta if isinstance(a, EnviarOrden)],
                 "sobran": [_describir(a) for a in propuesta if isinstance(a, (Cancelar, CancelarTicker))],
                 "ajustes": [_describir(a) for a in propuesta if isinstance(a, Reemplazar)],
-                "acciones": [_describir(a, con_token=True) for a in reales], "bloqueado": bloqueo, "regla": "R-C-07 plan B / R-C-08"}))
+                "acciones": [_describir(a, con_token=True) for a in reales], "bloqueado": bloqueo,
+                "regla": "R-C-07 plan B / R-C-08"}
+            firma = _firma(datos)
+            firmas[vista.ticker] = firma
+            if any(isinstance(a, MUTANTES) for a in reales) or foto.anotado.get(vista.ticker) != firma:
+                salida.append(Anotar(TIPO_ANOTACION, {**datos, "firma": firma}))
             salida.extend(a for a in reales if not (bloqueo and isinstance(a, MUTANTES)))
         salida.extend(_avisos_precio(vista, foto, cfg_stops, muerto))
     if bloqueadas:
@@ -207,7 +237,7 @@ def comprobar(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[], int], hor
         salida.append(PedirAlSupervisor(PETICION_RELANZAR_EJECUTOR))
     salida.extend(_locates(foto, cfg, hoy))
     salida.extend(_margen(foto, vig))
-    return salida
+    return salida, firmas
 
 
 def descubiertas_por_ticker(foto: Foto, cfg: Any, hoy: date) -> dict[str, int]:
@@ -397,8 +427,8 @@ def _cancelar(ordenes: Iterable[Orden], motivo: str) -> list[Accion]:
     return [Cancelar(id_das=o.id_das, token=o.token, motivo=motivo) for o in ordenes if o.id_das is not None]
 
 
-def _que_hacer(vista: _Vista, cfg_stops: Mapping, tokens: Callable[[], int], hora_et: datetime, ruta_stop: str,
-               actua: bool, muerto: bool) -> tuple[list[Accion], list[Accion], str]:
+def _que_hacer(vista: _Vista, cfg: Any, cfg_stops: Mapping, tokens: Callable[[], int], hora_et: datetime,
+               ruta_stop: str, actua: bool, muerto: bool) -> tuple[list[Accion], list[Accion], str]:
     """(lo que haría falta, lo que se hace AHORA, motivo). `propuesta` vacía = todo cuadra (no se anota nada)."""
     t, neta = vista.ticker, vista.neta
     if neta < 0 and vista.lotes:
@@ -427,12 +457,30 @@ def _que_hacer(vista: _Vista, cfg_stops: Mapping, tokens: Callable[[], int], hor
         return avisos + cancelaciones, proteccion + cancelaciones + avisos, "R-C-10 (4): posición sin lote en ningún diario"
     sobran = reconciliacion.huerfanas(vista.vivas, t, neta)
     if neta > 0 and vista.lotes:
+        if muerto:
+            # E2c-02 (R-C-11 (3) «ejecutor + vigilante»; el libro manda sobre §3.25): con el ejecutor muerto el
+            # vigilante VENDE SOLO el exceso con SUS tokens (Origen.VIGILANTE), sujeto a `puede_enviar`. La venta
+            # que ya esté viva (suya o del ejecutor) se descuenta: nunca vende de más ni deja un corto sin stops.
+            limpieza = _sin_temporizadores(stops.limpieza_tras_fill_stop(
+                vista.pos, vista.vivas, vista.cot, tokens, cfg, hora_et, 0, limit_up=vista.limit_up))
+            vende = sum(a.orden.qty for a in limpieza if isinstance(a, EnviarOrden))
+            if not any(isinstance(a, MUTANTES) for a in limpieza):
+                # la venta del exceso ya está en marcha (suya o del ejecutor): nada que hacer, se anota al cambiar
+                return ([Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_larga:{t}",
+                                texto=(f"R-C-11 (3): {_esc(t)} sigue LARGA {neta} con el ejecutor caído y la venta del "
+                                       f"exceso en marcha. Si no llena, VENDER A MANO (cancelando antes la del bot)."))],
+                        [], "R-C-11 (3) / E2c-02: venta del exceso ya en marcha")
+            aviso = Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_larga:{t}",
+                           texto=(f"R-C-11 (3): {_esc(t)} está LARGA {neta} con lotes cortos y el ejecutor caído: el "
+                                  f"vigilante VENDE el exceso ({vende} acciones) y cancela las compras. Si no llena, "
+                                  f"VENDER A MANO (cancelando antes la venta del bot)."))
+            reales = limpieza + [aviso]
+            return reales, reales, "R-C-11 (3) / E2c-02: cuenta larga con el ejecutor muerto: el vigilante vende el exceso"
         propuesta = [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_larga:{t}",
-                            texto=(f"R-C-11 (3): {t} está LARGA {neta} con lotes cortos en el diario; el vigilante no vende: "
-                                   f"lo hará el ejecutor al volver. Si no vuelve, VENDER A MANO {neta}"))]
+                            texto=(f"R-C-11 (3): {_esc(t)} está LARGA {neta} con lotes cortos en el diario; la venta del "
+                                   f"exceso la hace el ejecutor (vivo). Si no, VENDER A MANO {neta}"))]
         propuesta.extend(_cancelar(sobran, f"R-C-11 (3): {t} larga: no se compra más"))
-        return (propuesta, propuesta, "R-C-11 (3): cuenta larga con el ejecutor muerto") if muerto else \
-            (propuesta, [], "cuenta larga: la limpia el ejecutor (R-C-11)")
+        return propuesta, [], "cuenta larga: la limpia el ejecutor (R-C-11)"
     if not sobran:
         return [], [], ""
     propuesta = _cancelar(sobran, f"R-C-11 (2): {t} plana: se cancela lo nuestro que queda vivo")
@@ -463,6 +511,19 @@ def _proteccion(vista: _Vista, falta: int, cfg_stops: Mapping, tokens: Callable[
     pct = _pct(cfg_stops.get("proteccion_desconocidas_pct"), STOP_PROTECCION_PCT)
     orden = stops.stop_proteccion(t, falta, neta < 0, precio, pct, tokens(), ruta_stop, 0)
     return [EnviarOrden(orden=orden)]
+
+
+def _firma(datos: Mapping[str, Any]) -> str:
+    """E2c-04: lo que identifica una propuesta (sin el latido ni los tokens, que cambian en cada pasada)."""
+    partes = [str(datos.get(clave)) for clave in ("motivo", "neta", "descubiertas", "actua", "bloqueado", "puede_enviar")]
+    for clave in ("faltan", "sobran", "ajustes"):
+        partes.append(",".join(sorted(str(x) for x in datos.get(clave) or ())))
+    return "|".join(partes)
+
+
+def _esc(texto: Any) -> str:
+    """D2-08: texto variable hacia Telegram (parse_mode HTML) escapado."""
+    return html.escape(str(texto), quote=False)
 
 
 def _describir(a: Accion, con_token: bool = False) -> str:

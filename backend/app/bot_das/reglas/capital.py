@@ -42,12 +42,24 @@ LAS TRAMPAS.
     del 30 % al 100 %): `requiere_mas_margen` compara tramos, no dólares.
   * Los tramos FINRA están duplicados en `reglas.vigilancia` (regla de
     reparto del §12); su test compara las dos copias.
+  * D1-01: GET BP es el «current day buying power» (manual L988-1003), que
+    en Sage es 4× el equity (2c). Comparar el margen solo con el BP deja
+    dimensionar hasta 4× por encima del ejemplo del libro (10 k$ a 1 $ →
+    4.000 acciones). Por eso hay un TERCER límite, independiente de lo que
+    signifique GET BP: el margen inicial de lo ya abierto y pendiente más
+    el de la nueva no puede pasar del equity (× 0,5 en «alto riesgo»).
+  * D1-06: `liberar_reservas` suelta todo con cada MsgBP (cada 2 s); si DAS
+    no retiene el BP de una venta pendiente, la segunda señal vería BP ya
+    comprometido. `acciones_que_caben` descuenta además, si el decisor se lo
+    pasa, el margen de lo PENDIENTE de los intentos vivos
+    (`margen_pendiente`). Si DAS ya lo descuenta, se cuenta dos veces: es
+    lo conservador hasta medirlo en canario.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from app.bot_das.tipos import (
     RECONCILIACION_CADUCA_S,
@@ -66,6 +78,8 @@ MOTIVO_SIN_EQUITY = "sin equity"
 MOTIVO_BP_AGOTADO = "BP agotado"
 MOTIVO_TOPE_ALCANZADO = "tope corto alcanzado"
 MOTIVO_NADA_PEDIDO = "nada pedido"
+MOTIVO_PARCIAL_EQUITY = "cabe parte: margen sobre equity"          # D1-01
+MOTIVO_EQUITY_AGOTADO = "margen sobre equity agotado"              # D1-01
 
 # ── 2c: reglas de margen de Sage (página pública leída el 19-sep) ──────
 TOPE_CORTO_EQUITY = Decimal("1")               # 2c: corto máximo 1× el equity
@@ -157,7 +171,9 @@ def requiere_mas_margen(precio_antes: Decimal, precio_ahora: Decimal) -> bool:
 # ── dimensionado ──────────────────────────────────────────────────────
 def acciones_que_caben(qty_pedida: int, precio: Decimal, cuenta: Cuenta, tasa_simbolo: Optional[Decimal],
                        exposicion_corta_usd: Decimal, alto_riesgo: bool, ahora: float,
-                       max_edad_s: float = RECONCILIACION_CADUCA_S) -> tuple[int, str]:
+                       max_edad_s: float = RECONCILIACION_CADUCA_S, *,
+                       margen_corto_abierto_usd: Optional[Decimal] = None,
+                       margen_pendiente_usd: Optional[Decimal] = None) -> tuple[int, str]:
     """(acciones que caben, motivo) para un corto de `qty_pedida` a `precio` — R-I-01, R-E-02, R-K-03, libro 2c.
 
     1. BP no legible → (0, MOTIVO_SIN_BP): `cuenta.bp` o `cuenta.leida_en`
@@ -167,16 +183,27 @@ def acciones_que_caben(qty_pedida: int, precio: Decimal, cuenta: Cuenta, tasa_si
     2. Sin `cuenta.equity` → (0, MOTIVO_SIN_EQUITY): no hay tope corto que
        comprobar (2c consecuencia 2).
     3. BP libre = `cuenta.bp` − `cuenta.bp_reservado` (R-E-02: lo ya aceptado
-       desde el último GET BP no está en el BP de DAS). Caben
-       floor(BP libre / margen inicial de una acción) (2c consecuencia 1).
+       desde el último GET BP no está en el BP de DAS) − `margen_pendiente_usd`
+       (D1-06: margen de lo pendiente de los intentos vivos, de
+       `margen_pendiente`; None = 0). Caben floor(BP libre / margen inicial
+       de una acción) (2c consecuencia 1).
     4. Tope corto total = equity × 1 (× 0,5 si `alto_riesgo`) menos
        `exposicion_corta_usd` (la de `exposicion_corta`); caben
        floor(resto / precio) acciones de nominal.
-    5. Se entra con lo que quepa (R-I-01: «si queda solo una parte, se entra
+    5. D1-01, margen sobre el equity (independiente de lo que signifique GET
+       BP): caben floor((equity × factor − margen de lo abierto y pendiente
+       − `bp_reservado`) / margen inicial de una acción). El margen de lo
+       abierto es `margen_corto_abierto_usd` (de `margen_corto_abierto`);
+       si el llamador no lo pasa (None) se usa `exposicion_corta_usd` como
+       aproximación (el nominal: exacto a 2,50-4,99 $, por encima del
+       margen desde 5 $ y por debajo bajo 2,50 $).
+    6. Se entra con lo que quepa (R-I-01: «si queda solo una parte, se entra
        con lo que quede»; múltiplo de una acción). El motivo dice qué limitó:
-       MOTIVO_ENTERA, MOTIVO_PARCIAL_BP / MOTIVO_PARCIAL_TOPE, o con 0
-       MOTIVO_BP_AGOTADO / MOTIVO_TOPE_ALCANZADO (si limitan los dos por
-       igual se nombra el BP). `qty_pedida` 0 → (0, MOTIVO_NADA_PEDIDO).
+       MOTIVO_ENTERA; MOTIVO_PARCIAL_BP / MOTIVO_PARCIAL_TOPE /
+       MOTIVO_PARCIAL_EQUITY; con 0, MOTIVO_BP_AGOTADO /
+       MOTIVO_TOPE_ALCANZADO / MOTIVO_EQUITY_AGOTADO. Si limitan varios por
+       igual se nombra, por este orden, el BP, el tope y el equity.
+       `qty_pedida` 0 → (0, MOTIVO_NADA_PEDIDO).
 
     No reserva nada: el decisor llama a `reservar` con el margen de la
     cantidad FINAL (tras locates y `entrada.qty_final`). Lanza `ValueError`
@@ -186,6 +213,9 @@ def acciones_que_caben(qty_pedida: int, precio: Decimal, cuenta: Cuenta, tasa_si
     p = _precio(precio, "precio")
     tasa = _tasa(tasa_simbolo)
     exposicion = _importe(exposicion_corta_usd, "exposicion_corta_usd")
+    margen_abierto = (exposicion if margen_corto_abierto_usd is None
+                      else _importe(margen_corto_abierto_usd, "margen_corto_abierto_usd"))
+    pendiente = _CERO if margen_pendiente_usd is None else _importe(margen_pendiente_usd, "margen_pendiente_usd")
     if not isinstance(alto_riesgo, bool):
         raise ValueError(f"alto_riesgo debe ser bool, no {alto_riesgo!r}")
     ahora_s = _segundos(ahora, "ahora")
@@ -202,23 +232,49 @@ def acciones_que_caben(qty_pedida: int, precio: Decimal, cuenta: Cuenta, tasa_si
     reservado = _importe(cuenta.bp_reservado, "cuenta.bp_reservado")
     equity = _importe_signado(cuenta.equity, "cuenta.equity")
 
-    bp_libre = bp - reservado
     por_accion = margen_inicial_corto(p, 1, tasa)
-    caben_bp = _cociente_entero(bp_libre, por_accion)
-    while caben_bp > 0 and margen_inicial_corto(p, caben_bp, tasa) > bp_libre:   # red: el margen es lineal
-        caben_bp -= 1
+    caben_bp = _caben_por_margen(bp - reservado - pendiente, p, tasa, por_accion)
 
     factor = TOPE_CORTO_EQUITY_ALTO_RIESGO if alto_riesgo else TOPE_CORTO_EQUITY
     resto_tope = equity * factor - exposicion
     caben_tope = _cociente_entero(resto_tope, p)
 
-    qty = min(pedidas, caben_bp, caben_tope)
+    caben_equity = _caben_por_margen(equity * factor - margen_abierto - reservado, p, tasa, por_accion)
+
+    qty = min(pedidas, caben_bp, caben_tope, caben_equity)
     if qty == pedidas:
         return qty, MOTIVO_ENTERA
-    limita_bp = caben_bp <= caben_tope
-    if qty == 0:
-        return 0, MOTIVO_BP_AGOTADO if limita_bp else MOTIVO_TOPE_ALCANZADO
-    return qty, MOTIVO_PARCIAL_BP if limita_bp else MOTIVO_PARCIAL_TOPE
+    # Qué limitó: el primero (BP, tope, equity) que da exactamente qty.
+    if caben_bp == qty:
+        return qty, MOTIVO_PARCIAL_BP if qty > 0 else MOTIVO_BP_AGOTADO
+    if caben_tope == qty:
+        return qty, MOTIVO_PARCIAL_TOPE if qty > 0 else MOTIVO_TOPE_ALCANZADO
+    return qty, MOTIVO_PARCIAL_EQUITY if qty > 0 else MOTIVO_EQUITY_AGOTADO
+
+
+def es_alto_riesgo(precio: Decimal, tasa_simbolo: Optional[Decimal],
+                   criterio: Optional[Mapping[str, Any]] = None) -> bool:
+    """¿Corto «de alto riesgo» (2c consecuencia 2: tope 0,5× el equity)? — D1-07, criterio pendiente del bróker.
+
+    `criterio` es el bloque del cuadro que lo define; None o vacío → False
+    (el comportamiento de hoy, hasta que Jaume/Sage fijen el criterio).
+    Claves admitidas (las dos opcionales; basta con que se cumpla UNA):
+      * `precio_max`: precio < precio_max → alto riesgo.
+      * `tasa_corta_min_pct`: shortMarginRate de $SHORTINFO ≥ este % → alto
+        riesgo (100 = todo en efectivo; 300 = HTB típico).
+    Pura. Lanza ValueError con precio/tasa no Decimal o un umbral no numérico.
+    """
+    p = _precio(precio, "precio")
+    tasa = _tasa(tasa_simbolo)
+    if not criterio:
+        return False
+    precio_max = criterio.get("precio_max")
+    if precio_max is not None and p < _umbral(precio_max, "precio_max"):
+        return True
+    tasa_min = criterio.get("tasa_corta_min_pct")
+    if tasa_min is not None and tasa > 0 and tasa >= _umbral(tasa_min, "tasa_corta_min_pct"):
+        return True
+    return False
 
 
 def reservar(cuenta: Cuenta, margen: Decimal) -> None:
@@ -238,10 +294,12 @@ def liberar_reservas(cuenta: Cuenta) -> None:
     """Suelta todas las reservas: el `MsgBP` recién llegado ya refleja lo consumido (R-E-02, §3.21).
 
     El decisor la llama con CADA `MsgBP` (junto con `cuenta.bp` y
-    `cuenta.leida_en`). Trampa (duda para Jaume): si DAS respondió al GET BP
-    antes de registrar una orden recién enviada, esa orden deja de contar
-    hasta la lectura siguiente; el tope corto la sigue contando por el
-    intento vivo de `exposicion_corta`.
+    `cuenta.leida_en`). Trampa (D1-06, duda para Jaume): si DAS respondió al
+    GET BP antes de registrar una orden recién enviada, o no retiene el BP
+    de las ventas pendientes, esa orden deja de contar en la reserva. Por
+    eso el decisor pasa a `acciones_que_caben` el `margen_pendiente` de los
+    intentos vivos, que no depende de la reserva; el tope corto la sigue
+    contando por el intento vivo de `exposicion_corta`.
     """
     cuenta.bp_reservado = Decimal("0")
 
@@ -265,13 +323,64 @@ def exposicion_corta(posiciones: dict[str, PosicionTicker],
     """
     total = _CERO
     for ticker, pos in posiciones.items():
-        cortas = max(-pos.neta_fills, -pos.neta_das if pos.neta_das is not None else 0, 0)
-        intento = pos.intento
-        if intento is not None and intento.fase is not FaseIntento.TERMINADO:
-            cortas += max(intento.qty_total - intento.llenas, 0)
+        cortas = _cortas_abiertas(pos) + _cortas_pendientes(pos)
         if cortas == 0:
             continue
         total += _precio(_precio_de_valoracion(ticker, pos, cot_de), f"precio de {ticker}") * cortas
+    return total
+
+
+def margen_corto_abierto(posiciones: dict[str, PosicionTicker],
+                         cot_de: Callable[[str], Optional[Cotizacion]],
+                         tasa_de: Optional[Callable[[str], Optional[Decimal]]] = None, *,
+                         excluir_pendiente_de: Optional[str] = None) -> Decimal:
+    """Margen INICIAL de toda la exposición corta abierta y pendiente (D1-01; libro 2c consecuencia 1).
+
+    Por ticker: `margen_inicial_corto(precio, cortas, tasa)` con las MISMAS
+    cortas y el MISMO precio que `exposicion_corta` (abiertas = la neta más
+    corta entre fills y DAS; pendientes = qty_total − llenas del intento
+    vivo). `tasa_de(ticker)` da el shortMarginRate del símbolo (None = por
+    defecto). `excluir_pendiente_de`: ticker cuyo intento NO se cuenta como
+    pendiente (el reintento R-B-07 de ese mismo intento no debe competir
+    consigo mismo); sus acciones ya llenas sí cuentan. Es lo que
+    `acciones_que_caben` resta del equity en `margen_corto_abierto_usd`.
+    Lanza ValueError como `exposicion_corta` (ticker corto sin precio).
+    """
+    total = _CERO
+    for ticker, pos in posiciones.items():
+        cortas = _cortas_abiertas(pos)
+        if ticker != excluir_pendiente_de:
+            cortas += _cortas_pendientes(pos)
+        if cortas == 0:
+            continue
+        precio = _precio(_precio_de_valoracion(ticker, pos, cot_de), f"precio de {ticker}")
+        total += margen_inicial_corto(precio, cortas, _tasa(tasa_de(ticker)) if tasa_de is not None else None)
+    return total
+
+
+def margen_pendiente(posiciones: dict[str, PosicionTicker],
+                     cot_de: Callable[[str], Optional[Cotizacion]],
+                     tasa_de: Optional[Callable[[str], Optional[Decimal]]] = None, *,
+                     excluir_pendiente_de: Optional[str] = None) -> Decimal:
+    """Margen inicial de lo PENDIENTE de los intentos de entrada vivos (D1-06, R-E-02).
+
+    Σ `margen_inicial_corto(precio, qty_total − llenas, tasa)` de cada
+    intento con fase ≠ TERMINADO, al mismo precio de valoración que
+    `exposicion_corta`. Es lo que `acciones_que_caben` resta del BP en
+    `margen_pendiente_usd`: no depende de una reserva que cada MsgBP borra.
+    Si DAS ya descuenta las órdenes pendientes del BP, se cuenta dos veces
+    (lo conservador; se mide en canario). `excluir_pendiente_de` como en
+    `margen_corto_abierto`.
+    """
+    total = _CERO
+    for ticker, pos in posiciones.items():
+        if ticker == excluir_pendiente_de:
+            continue
+        cortas = _cortas_pendientes(pos)
+        if cortas == 0:
+            continue
+        precio = _precio(_precio_de_valoracion(ticker, pos, cot_de), f"precio de {ticker}")
+        total += margen_inicial_corto(precio, cortas, _tasa(tasa_de(ticker)) if tasa_de is not None else None)
     return total
 
 
@@ -285,6 +394,40 @@ def _tramo_mantenimiento(p: Decimal) -> int:
     if p >= _MANT_TRAMO_1:
         return 2
     return 3
+
+
+def _cortas_abiertas(pos: PosicionTicker) -> int:
+    """La neta MÁS corta entre fills y DAS (R-K-02: incluye la intervención humana); largos → 0."""
+    return max(-pos.neta_fills, -pos.neta_das if pos.neta_das is not None else 0, 0)
+
+
+def _cortas_pendientes(pos: PosicionTicker) -> int:
+    """Lo pedido y aún no llenado del intento de entrada vivo (fase ≠ TERMINADO)."""
+    intento = pos.intento
+    if intento is None or intento.fase is FaseIntento.TERMINADO:
+        return 0
+    return max(intento.qty_total - intento.llenas, 0)
+
+
+def _caben_por_margen(libre: Decimal, p: Decimal, tasa: Decimal, por_accion: Decimal) -> int:
+    """Máximo q con margen_inicial_corto(p, q, tasa) ≤ libre (0 si libre ≤ 0)."""
+    caben = _cociente_entero(libre, por_accion)
+    while caben > 0 and margen_inicial_corto(p, caben, tasa) > libre:   # red: el margen es lineal
+        caben -= 1
+    return caben
+
+
+def _umbral(x: object, nombre: str) -> Decimal:
+    """Umbral del cuadro (JSON: int/float/str) en Decimal finito ≥ 0, sin pasar por float binario."""
+    if isinstance(x, bool) or not isinstance(x, (int, float, str, Decimal)):
+        raise ValueError(f"{nombre} no es un número: {x!r}")
+    try:
+        valor = Decimal(str(x))
+    except Exception as exc:  # decimal.InvalidOperation
+        raise ValueError(f"{nombre} no es un número: {x!r}") from exc
+    if not valor.is_finite() or valor < 0:
+        raise ValueError(f"{nombre} fuera de rango: {x!r}")
+    return valor
 
 
 def _bp_legible(cuenta: Cuenta, ahora: float, max_edad: float) -> bool:

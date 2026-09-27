@@ -51,7 +51,12 @@ LAS TRAMPAS.
     vuelta siguiente, no se descarta como JSON roto.
   * Idempotencia del fichero: se persiste `ultimo_id`/`offset` ANTES de
     entregar el comando (como mucho una vez: preferible perder un botón a
-    cerrar dos veces una posición).
+    cerrar dos veces una posición). Telegram, igual (C-02): el receptor
+    persiste su offset en `estado/telegram_offset` antes de entregar y lo
+    confirma a Telegram al parar; un reinicio no repite un «/cerrar X N SI».
+  * «/sigue TICKER» y «/parar_avisos TICKER [BS]» / «/reanudar_avisos
+    TICKER [BS]» llevan el ticker en `args` (C-01, G1A-08, G1A-19); el
+    decisor es quien levanta el veto de reentrada o calla solo ese cisne.
 """
 from __future__ import annotations
 
@@ -120,7 +125,7 @@ USO: dict[str, str] = {
     "log": "/log [N] (1-50, por defecto 20)",
     "pausar": "/pausar",
     "reanudar": "/reanudar [TICKER]",
-    "sigue": "/sigue",
+    "sigue": "/sigue [TICKER] (con TICKER: levanta el veto de reentrada tras un cisne negro)",
     "modo_seguridad": "/modo_seguridad on|off",
     "desactivar": "/desactivar ESTRATEGIA",
     "activar": "/activar ESTRATEGIA",
@@ -128,8 +133,8 @@ USO: dict[str, str] = {
     "encender": "/encender",
     "reanudar_ticker": "/reanudar_ticker TICKER",
     "reanudar_todo": "/reanudar_todo",
-    "parar_avisos": "/parar_avisos",
-    "reanudar_avisos": "/reanudar_avisos",
+    "parar_avisos": "/parar_avisos [TICKER [BS]]",
+    "reanudar_avisos": "/reanudar_avisos [TICKER [BS]]",
     "control_humano": "/control_humano [TICKER]",
     "cerrar_y_reiniciar": "/cerrar_y_reiniciar ESTRATEGIA",
     "esperar_fin_dia": "/esperar_fin_dia ESTRATEGIA",
@@ -153,6 +158,7 @@ FILAS_MAX = 40                            # filas por respuesta (Telegram corta 
 ARG_MAX_CARACTERES = 80
 CHAT_ID_CUADRO = 0                        # los botones del cuadro no tienen chat
 MASCARA = "*****"
+FICHERO_OFFSET_TELEGRAM = "telegram_offset"   # C-02: estado/telegram_offset (el ejecutor pasa dir_estado / esto)
 
 _PATRON_TICKER = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _PATRON_TOKEN_URL = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
@@ -252,9 +258,25 @@ def _libre(arg: str) -> Optional[str]:
 def _validar_args(nombre: str, args: list[str]) -> Optional[list[str]]:
     """Args normalizados según `USO`, o None si no cuadran (número o forma)."""
     n = len(args)
-    if nombre in ("estado", "posiciones", "ordenes", "locates", "estrategias", "salud", "pausar", "sigue",
-                  "apagar", "encender", "reanudar_todo", "parar_avisos", "reanudar_avisos", "cerrar_todo"):
+    if nombre in ("estado", "posiciones", "ordenes", "locates", "estrategias", "salud", "pausar",
+                  "apagar", "encender", "reanudar_todo", "cerrar_todo"):
         return [] if n == 0 else None
+    if nombre == "sigue":
+        # C-01 / DC-03 / G1A-08 (R-G-03): «/sigue TICKER» levanta el veto de reentrada tras un cisne negro;
+        # «/sigue» a secas solo la pausa global. El decisor aplica el ticker (args = [TICKER]).
+        if n == 0:
+            return []
+        v = _ticker(args[0]) if n == 1 else None
+        return [v] if v is not None else None
+    if nombre in ("parar_avisos", "reanudar_avisos"):
+        # C-01 / G1A-19 (R-G-01, §5 F7): «/parar_avisos X BS» calla SOLO los informes del cisne negro de X.
+        # «BS» es opcional y se normaliza fuera: args = [TICKER]. Sin args: lo que decida el decisor.
+        if n == 0:
+            return []
+        if n > 2 or (n == 2 and args[1].upper() != "BS"):
+            return None
+        v = _ticker(args[0])
+        return [v] if v is not None else None
     if nombre == "log":
         if n == 0:
             return []
@@ -772,7 +794,14 @@ class ReceptorTelegram:
     """getUpdates por long polling → `al_comando(Comando)` (R-M-04, R-Q-01; §3.10, §6.1 hilo «telegram-recibo»).
 
     HiloVigilado; `urllib` (nunca httpx: la URL lleva el token); `offset` =
-    último update_id + 1 (confirma lo leído). Filtra el chat_id ANTES de
+    último update_id + 1 (confirma lo leído). C-02: con `ruta_offset`
+    (`estado/telegram_offset`, lo pasa el ejecutor) el offset y el último
+    update_id se persisten de forma atómica ANTES de entregar cada comando y
+    se cargan al construir: tras un reinicio rápido no se repite el último
+    «/cerrar X N SI» (los update_id < offset se ignoran), y `parar()` hace un
+    getUpdates final con timeout 0 para que Telegram dé lo leído por
+    confirmado. Sin `ruta_offset` el offset vive solo en memoria (tests).
+    Filtra el chat_id ANTES de
     parsear; ignora lo que no sea un mensaje de texto (fotos, ediciones) y
     los mensajes más viejos que `caducidad_s` (reinicio con cola vieja).
     Nunca lanza por red: registra el error sin la URL, espera
@@ -784,7 +813,8 @@ class ReceptorTelegram:
     def __init__(self, token: str, autorizados: frozenset[int], al_comando: Callable[[Comando], None], reloj,
                  *, api: str = API_TELEGRAM, espera_polling_s: int = ESPERA_POLLING_S,
                  caducidad_s: float = CADUCIDAD_COMANDO_S, espera_error_s: float = ESPERA_ERROR_RED_S,
-                 al_caida: Optional[Callable[[str, str, bool], None]] = None) -> None:
+                 al_caida: Optional[Callable[[str, str, bool], None]] = None,
+                 ruta_offset: Optional[Path] = None) -> None:
         if not token:
             raise ValueError("ReceptorTelegram necesita un token")
         self._token = token
@@ -797,15 +827,59 @@ class ReceptorTelegram:
         self._espera_error_s = float(espera_error_s)
         self._ssl = _contexto_ssl() if self._api.startswith("https") else None
         self.offset = 0
+        self.ultimo_update_id: Optional[int] = None
         self.errores = 0
         self.entregados = 0
+        self._ruta_offset = Path(ruta_offset) if ruta_offset is not None else None
+        self._cargar_offset()
         self._hilo = HiloVigilado("telegram-recibo", self._cuerpo, al_caida or _al_caida_log)
 
     def arrancar(self) -> None:
         self._hilo.arrancar()
 
     def parar(self, espera_s: float = 5.0) -> None:
+        """Para el hilo y hace un getUpdates FINAL (timeout 0) con el offset: Telegram da por leído lo entregado (C-02).
+
+        Sin ese sondeo, Telegram guarda como no leído el último lote entregado
+        y lo devolvería al arrancar (el «/cerrar X N SI» se repetiría).
+        """
         self._hilo.parar(espera_s)
+        if self.offset > 0:
+            if self._get_updates(timeout_s=0, limite=1) is None:
+                logger.warning("[COMANDOS] no se pudo confirmar a Telegram lo leído al parar; queda el offset en disco")
+
+    # ── offset persistido (C-02) ──
+    def _cargar_offset(self) -> None:
+        """Lee `estado/telegram_offset` si existe: lo ya entregado no se vuelve a entregar tras un reinicio (C-02)."""
+        if self._ruta_offset is None:
+            return
+        try:
+            datos = json.loads(self._ruta_offset.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as exc:  # noqa: BLE001 — frontera de fichero: sin estado se empieza de 0 (la caducidad protege)
+            logger.warning("[COMANDOS] %s ilegible (%s): se empieza sin offset", self._ruta_offset.name, exc)
+            return
+        if not isinstance(datos, dict):
+            return
+        offset = datos.get("offset")
+        if type(offset) is int and offset >= 0:
+            self.offset = offset
+        ultimo = datos.get("ultimo_update_id")
+        if type(ultimo) is int:
+            self.ultimo_update_id = ultimo
+
+    def _guardar_offset(self) -> None:
+        """Escritura atómica (tmp + replace) de {offset, ultimo_update_id}, ANTES de entregar (como mucho una vez)."""
+        if self._ruta_offset is None:
+            return
+        tmp = self._ruta_offset.with_name(self._ruta_offset.name + ".tmp")
+        try:
+            tmp.write_text(json.dumps({"offset": self.offset, "ultimo_update_id": self.ultimo_update_id}),
+                           encoding="utf-8")
+            tmp.replace(self._ruta_offset)
+        except OSError as exc:  # noqa: BLE001 — frontera de fichero: se sigue; en memoria el offset ya avanzó
+            logger.warning("[COMANDOS] no puedo guardar %s: %s", self._ruta_offset.name, exc)
 
     @property
     def vivo(self) -> bool:
@@ -827,21 +901,32 @@ class ReceptorTelegram:
         if datos is None:
             return None
         entregados = 0
+        avanzado = False
         for u in datos:
             if not isinstance(u, dict):
                 continue
             uid = u.get("update_id")
             if type(uid) is int:
-                self.offset = max(self.offset, uid + 1)
+                if uid < self.offset:
+                    # C-02: ya entregado (offset persistido); Telegram lo repite si no llegó a confirmarlo
+                    logger.info("[COMANDOS] update %d ya entregado antes: se ignora", uid)
+                    continue
+                self.offset = uid + 1
+                self.ultimo_update_id = uid
+                avanzado = True
             comando = self._comando_de(u)
             if comando is None:
                 continue
+            self._guardar_offset()      # C-02: consta como leído ANTES de entregarlo (como mucho una vez)
+            avanzado = False
             try:
                 self._al_comando(comando)
                 entregados += 1
                 self.entregados += 1
             except Exception as exc:  # noqa: BLE001 — frontera de callback: un al_comando que falla no para el receptor
                 logger.error("[COMANDOS] al_comando falló con /%s: %s", comando.nombre, exc)
+        if avanzado:
+            self._guardar_offset()      # updates sin comando (fotos, chats ajenos): también constan como leídos
         return entregados
 
     def _comando_de(self, u: dict) -> Optional[Comando]:
@@ -862,12 +947,15 @@ class ReceptorTelegram:
             return None
         return parsear(texto, chat_id, self._autorizados, id_comando=f"tg:{u.get('update_id')}")
 
-    def _get_updates(self) -> Optional[list]:
-        consulta = urllib.parse.urlencode({"offset": self.offset, "timeout": self._espera_polling_s,
-                                           "allowed_updates": '["message"]'})
+    def _get_updates(self, timeout_s: Optional[int] = None, limite: Optional[int] = None) -> Optional[list]:
+        espera = self._espera_polling_s if timeout_s is None else int(timeout_s)
+        parametros: dict[str, Any] = {"offset": self.offset, "timeout": espera, "allowed_updates": '["message"]'}
+        if limite is not None:
+            parametros["limit"] = int(limite)
+        consulta = urllib.parse.urlencode(parametros)
         peticion = urllib.request.Request(f"{self._api}/bot{self._token}/getUpdates?{consulta}", method="GET")
         try:
-            with urllib.request.urlopen(peticion, timeout=self._espera_polling_s + 10, context=self._ssl) as r:
+            with urllib.request.urlopen(peticion, timeout=espera + 10, context=self._ssl) as r:
                 cuerpo = json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:  # noqa: BLE001 — frontera de red (R-Q-01: sin URL en el log)
             self.errores += 1
@@ -1087,7 +1175,7 @@ class LectorComandosFichero:
 
 __all__ = [
     "API_TELEGRAM", "CADUCIDAD_COMANDO_S", "CHAT_ID_CUADRO", "CONFIRMAR", "CONSULTA", "CON_SI", "DOS_PASOS",
-    "EJECUTABLES", "ESPERA_POLLING_S", "LECTURA_FICHERO_S", "LOG_LINEAS_DEFECTO", "LOG_LINEAS_MAX",
+    "EJECUTABLES", "ESPERA_POLLING_S", "FICHERO_OFFSET_TELEGRAM", "LECTURA_FICHERO_S", "LOG_LINEAS_DEFECTO", "LOG_LINEAS_MAX",
     "REQUIERE_ARGS_INVALIDOS", "REQUIERE_CONFIRMACION", "REQUIERE_CONFIRMADO", "REQUIERE_CONFIRMAR",
     "REQUIERE_DESCONOCIDO", "REQUIERE_NADA", "REQUIERE_SI", "REQUIERE_SI_FALTANTE", "TTL_CONFIRMACION_S", "USO",
     "Confirmaciones", "LectorComandosFichero", "ReceptorTelegram", "parsear", "respuesta_previa",

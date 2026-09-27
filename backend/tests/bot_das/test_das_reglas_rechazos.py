@@ -4,6 +4,14 @@ Fila de §10: cada entrada del catálogo casa su propio texto (y no los de las
 demás); desconocido → cubierta pausa / no cubierta nivel 3 sin `EnviarOrden`;
 2 reintentos y no 3, con token nuevo; `reintento_stop` 5 y para;
 `tras_cancel_o_replace_rej` → barrido. Todo puro, en Decimal y sin red.
+
+Ampliada tras la revisión (27-sep): «PostOnly would cross» pasa al cruce sin
+reintento ni pausa (D2-09); el reenvío de una salida nunca supera la posición
+(D2-10); los avisos escapan el HTML (D2-08); `reintento_stop` mide la subida
+desde el primer intento (D2-15); los GET salen de protocolo.cmd_get (A-06).
+Los tests de la MECÁNICA de «reintentar» (contador, tokens, qty pendiente,
+PostOnly conservado) usan una entrada sintética `REINTENTAR`: el catálogo real
+ya no tiene ninguna entrada con esa acción (el PostOnly era la única).
 """
 from __future__ import annotations
 
@@ -42,6 +50,7 @@ from app.bot_das.tipos import (
     Consultar,
     Cotizacion,
     EnviarOrden,
+    EstadoLote,
     EstadoOrden,
     EstadoTicker,
     Grupo,
@@ -68,7 +77,13 @@ CFG: dict[str, Any] = {
     "rutas": {"agregar": {"ge_1": "SAGEREB", "lt_1": "MIAX"},
               "cruzar": {"ge_1": "SAGEPRO", "lt_1_desde_0700": "EDGA", "lt_1_antes_0700": "MIAX"},
               "stop": "STOP", "halt": "OPEN"},
+    "salidas": {"tp_parcial": {"agregar_s": 60, "techo_ask_pct": 3.0}},
 }
+
+# Entrada sintética con la acción «reintentar» (la mecánica del reintento idéntico sigue existiendo para
+# cualquier motivo futuro que la lleve; el PostOnly ya no: pasa al cruce, D2-09).
+REINTENTAR = Tratamiento(conocido=True, clave="prueba_reintentar", accion="reintentar")
+LOTE_ID = "XYZ|prueba-1|2026-09-25 09:30:00|entrada"
 
 
 # ── fábricas ────────────────────────────────────────────────────────────────
@@ -122,6 +137,9 @@ def posicion(neta: int = 0, estado: EstadoTicker = EstadoTicker.NORMAL) -> Posic
         lotes["L1"] = Lote(id="L1", strategy_id="prueba-1", estrategia="PM (A) prueba", ticker=TICKER,
                            direccion="Short", pedidas=-neta, llenas=-neta, precio_medio=D("9.50"),
                            nivel_stop=D("10"))
+        lotes[LOTE_ID] = Lote(id=LOTE_ID, strategy_id="prueba-1", estrategia="PM (A) prueba", ticker=TICKER,
+                              direccion="Short", pedidas=-neta, llenas=-neta, precio_medio=D("9.50"),
+                              nivel_stop=D("10"), estado=EstadoLote.ABIERTO)
     return PosicionTicker(ticker=TICKER, lotes=lotes, neta_fills=neta, neta_das=neta, estado=estado)
 
 
@@ -168,7 +186,7 @@ def test_catalogo_real_carga_y_esta_completo(catalogo: list[dict]) -> None:
     pytest.param("ruta_cerrada", "ninguna", id="R-B-07-ruta-cerrada"),
     pytest.param("simbolo_en_halt", "ninguna", id="R-B-07-halt"),
     pytest.param("precio_fuera_de_tick", "ninguna", id="R-B-07-tick"),
-    pytest.param("postonly_cruza", "reintentar", id="R-B-07-postonly"),
+    pytest.param("postonly_cruza", "pasar_a_cruce", id="R-B-07-postonly-D2-09"),
     pytest.param("cantidad_invalida", "ninguna", id="R-B-07-cantidad"),
     pytest.param("tif_invalido", "ninguna", id="R-B-07-tif"),
     pytest.param("sesion_cerrada", "ninguna", id="R-B-07-sesion"),
@@ -334,9 +352,10 @@ def test_tratamiento_nivel_entero_pasa_a_nivel() -> None:
     pytest.param(3, False, id="R-B-07-ni-cuarto"),
 ])
 def test_dos_reintentos_y_no_tres_con_token_nuevo(catalogo: list[dict], intentos: int, reintenta: bool) -> None:
+    """R-B-07 (2): la mecánica de «reintentar» (entrada sintética; el PostOnly ya no la usa, D2-09)."""
     tokens = Tokens()
     o = orden(intentos=intentos)
-    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(), [], CFG, tokens, cot(), HORA)
+    acciones = decidir(o, REINTENTAR, posicion(), [], CFG, tokens, cot(), HORA)
     enviadas = de_tipo(acciones, EnviarOrden)
     rechazo = anotacion(acciones, "rechazo")
     assert rechazo is not None and rechazo["notas"] == "PostOnly would cross"
@@ -361,7 +380,7 @@ def test_dos_reintentos_y_no_tres_con_token_nuevo(catalogo: list[dict], intentos
 
 def test_reintentos_en_cadena_dan_tokens_distintos(catalogo: list[dict]) -> None:
     tokens = Tokens()
-    t = tratamiento(catalogo, "postonly_cruza")
+    t = REINTENTAR
     primero = de_tipo(decidir(orden(intentos=0), t, posicion(), [], CFG, tokens, cot(), HORA), EnviarOrden)
     segundo = de_tipo(decidir(orden(intentos=1, token=primero[0].orden.token), t, posicion(), [], CFG, tokens,
                               cot(), HORA), EnviarOrden)
@@ -376,7 +395,7 @@ def test_reintentos_en_cadena_dan_tokens_distintos(catalogo: list[dict]) -> None
 def test_reintentos_de_la_config(catalogo: list[dict], valor: Any, reintenta: bool) -> None:
     cfg = copy.deepcopy(CFG)
     cfg["entrada"]["reintentos_rechazo_conocido"] = valor
-    acciones = decidir(orden(), tratamiento(catalogo, "postonly_cruza"), posicion(), [], cfg, Tokens(), cot(), HORA)
+    acciones = decidir(orden(), REINTENTAR, posicion(), [], cfg, Tokens(), cot(), HORA)
     assert bool(de_tipo(acciones, EnviarOrden)) is reintenta
 
 
@@ -392,11 +411,9 @@ def test_reintentos_de_la_config_invalidos(catalogo: list[dict], valor: Any) -> 
 
 
 def test_reintentar_usa_la_cantidad_pendiente(catalogo: list[dict]) -> None:
-    acciones = decidir(orden(qty=500, llenas=200), tratamiento(catalogo, "postonly_cruza"), posicion(), [], CFG,
-                       Tokens(), cot(), HORA)
+    acciones = decidir(orden(qty=500, llenas=200), REINTENTAR, posicion(), [], CFG, Tokens(), cot(), HORA)
     assert de_tipo(acciones, EnviarOrden)[0].orden.qty == 300
-    nada = decidir(orden(qty=500, llenas=500), tratamiento(catalogo, "postonly_cruza"), posicion(), [], CFG,
-                   Tokens(), cot(), HORA)
+    nada = decidir(orden(qty=500, llenas=500), REINTENTAR, posicion(), [], CFG, Tokens(), cot(), HORA)
     assert de_tipo(nada, EnviarOrden) == [] and anotacion(nada, "pausa") is not None
 
 
@@ -411,8 +428,9 @@ def test_reintentar_conserva_post_only(catalogo: list[dict], proposito: Proposit
     cfg = copy.deepcopy(CFG)
     cfg["entrada"]["post_only"] = post_only_cfg
     lado = Lado.COMPRA if proposito is Proposito.TP_AGREGAR else Lado.CORTO
-    acciones = decidir(orden(proposito=proposito, lado=lado), tratamiento(catalogo, "postonly_cruza"),
-                       posicion(), [], cfg, Tokens(), cot(), HORA)
+    # la cuenta corta 500: el reenvío de la salida cabe entero (D2-10 no lo recorta)
+    acciones = decidir(orden(proposito=proposito, lado=lado), REINTENTAR, posicion(-500), [], cfg, Tokens(), cot(),
+                       HORA)
     assert de_tipo(acciones, EnviarOrden)[0].orden.post_only is esperado
 
 
@@ -590,8 +608,9 @@ def test_estado_nunca_se_rebaja(catalogo: list[dict], actual: EstadoTicker, neta
 ])
 def test_reintento_segun_estado_del_ticker(catalogo: list[dict], estado: EstadoTicker, o: Orden,
                                            reintenta: bool) -> None:
+    """R-B-07 / R-F-01 / R-G-03: qué se reintenta según el estado (cuenta corta 500: las salidas caben, D2-10)."""
     tokens = Tokens()
-    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(0, estado), [], CFG, tokens, cot(), HORA)
+    acciones = decidir(o, REINTENTAR, posicion(-500, estado), [], CFG, tokens, cot(), HORA)
     assert bool(de_tipo(acciones, EnviarOrden)) is reintenta
     assert bool(tokens.dados) is reintenta
 
@@ -699,8 +718,13 @@ def test_decidir_no_muta_nada(catalogo: list[dict]) -> None:
 
 
 def test_decidir_con_la_config_real(cfg: Any, catalogo: list[dict]) -> None:
-    acciones = decidir(orden(), tratamiento(catalogo, "postonly_cruza"), posicion(), [], cfg, Tokens(), cot(), HORA)
+    acciones = decidir(orden(), REINTENTAR, posicion(), [], cfg, Tokens(), cot(), HORA)
     assert len(de_tipo(acciones, EnviarOrden)) == 1
+    po = decidir(orden(), tratamiento(catalogo, "postonly_cruza"), posicion(), [], cfg, Tokens(), cot(), HORA)
+    assert de_tipo(po, EnviarOrden) == [] and de_tipo(po, Programar)[0].clave.startswith("cruce_postonly:")
+    tp = decidir(orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID),
+                 tratamiento(catalogo, "postonly_cruza"), posicion(-100), [], cfg, Tokens(), cot(), HORA)
+    assert [e.orden.proposito for e in de_tipo(tp, EnviarOrden)] == [Proposito.TP_CRUCE]
     o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, notas="???")
     prog = de_tipo(decidir(o, DESCONOCIDO, posicion(-100), [], cfg, Tokens(), cot(), HORA, ahora=5.0), Programar)
     assert prog[0].en_s == 2.0 and prog[0].datos["reintentos"] == 5
@@ -824,9 +848,11 @@ def test_tras_cancel_o_replace_rej_barrido(accion: Optional[str], rotulo: str) -
 # ── pureza del módulo ───────────────────────────────────────────────────────
 def test_modulo_puro() -> None:
     fuente = Path(R.__file__).read_text(encoding="utf-8")
-    permitidos = {"__future__", "json", "math", "re", "collections.abc", "dataclasses", "datetime", "decimal",
-                  "pathlib", "typing", "app.bot_das.tipos", "app.bot_das.reglas.precios",
-                  "app.bot_das.reglas.stops"}
+    # html (D2-08: escapar los avisos), protocolo (A-06: cmd_get) y reglas.salidas (D2-09: el cruce del
+    # PostOnly usa tp_al_vencer / orden_al_ask) son puros.
+    permitidos = {"__future__", "html", "json", "math", "re", "collections.abc", "dataclasses", "datetime", "decimal",
+                  "pathlib", "typing", "app.bot_das.tipos", "app.bot_das.protocolo", "app.bot_das.reglas",
+                  "app.bot_das.reglas.precios", "app.bot_das.reglas.stops"}
     importados: set[str] = set()
     nombres: set[str] = set()
     atributos: set[str] = set()
@@ -845,3 +871,212 @@ def test_modulo_puro() -> None:
     # la única lectura de fichero es la de cargar_catalogo (Path.read_bytes), fuera del camino por mensaje
     assert fuente.count("read_bytes") == 1 and "read_text" not in fuente
     assert isinstance(RUTA_CATALOGO, Path) and RUTA_CATALOGO.is_file()
+
+
+# ── D2-09: «PostOnly would cross» pasa al cruce, sin reintento ni pausa ─────
+@pytest.mark.parametrize("intentos", [0, 2, 5], ids=["D2-09-primero", "D2-09-agotados-igual", "D2-09-muchos"])
+def test_D2_09_postonly_en_la_entrada_pasa_al_cruce_sin_pausa(catalogo: list[dict], intentos: int) -> None:
+    """D2-09: la entrada PostOnly rechazada NO se reintenta al mismo precio: temporizador del cruce de R-B-01 v3."""
+    tokens = Tokens()
+    o = orden(intentos=intentos, qty=500, llenas=100)
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(), [], CFG, tokens, cot(), HORA)
+    assert de_tipo(acciones, EnviarOrden) == [] and tokens.dados == [], "ni orden al mismo precio ni token"
+    assert anotacion(acciones, "pausa") is None, "un PostOnly rechazado no es un error: sin pausa"
+    prog = de_tipo(acciones, Programar)
+    assert len(prog) == 1 and prog[0].clave == f"cruce_postonly:{TOKEN_RECHAZADO}" and prog[0].en_s == 0.0
+    assert prog[0].datos["qty"] == 400 and prog[0].datos["token_rechazado"] == TOKEN_RECHAZADO
+    assert prog[0].datos["proposito"] == "entrada_agregar" and prog[0].datos["ticker"] == TICKER
+    rechazo = anotacion(acciones, "rechazo")
+    assert rechazo["decision"] == "pasar_a_cruce" and rechazo["estado_nuevo"] is None
+    assert aviso(acciones).nivel is Nivel.AVISO and "cruce" in aviso(acciones).texto
+
+
+def test_D2_09_postonly_del_tp_cruza_al_ask_con_techo(catalogo: list[dict]) -> None:
+    """D2-09: el TP que agregaba pasa YA al cruce de R-D-03 v2 (al ask con techo 3 %), con token nuevo y sin pausa."""
+    tokens = Tokens()
+    o = orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID, intentos=1)
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(-100), [], CFG, tokens, cot(), HORA)
+    enviadas = de_tipo(acciones, EnviarOrden)
+    assert len(enviadas) == 1
+    nueva = enviadas[0].orden
+    assert (nueva.proposito, nueva.lado, nueva.qty, nueva.precio, nueva.post_only) == (
+        Proposito.TP_CRUCE, Lado.COMPRA, 100, D("3.46"), False)
+    assert nueva.ruta == "SAGEPRO" and nueva.lote_id == LOTE_ID and tokens.dados == [nueva.token]
+    rechazo = anotacion(acciones, "rechazo")
+    assert rechazo["decision"] == "pasar_a_cruce" and rechazo["token_nuevo"] == nueva.token
+    assert rechazo["intentos_nuevo"] == 1, "el cruce no gasta un reintento"
+    assert anotacion(acciones, "pausa") is None
+
+
+def test_D2_09_postonly_del_tp_fuera_del_techo_es_limbo_sin_orden(catalogo: list[dict]) -> None:
+    """D2-09 + R-D-03 v2 (3): con el ask fuera del techo no hay orden ni token: limbo en el aviso, sin pausa."""
+    tokens = Tokens()
+    o = orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID)
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(-100), [], CFG, tokens,
+                       cot("3.50", "3.70", "3.45"), HORA)
+    assert de_tipo(acciones, EnviarOrden) == [] and tokens.dados == []
+    assert anotacion(acciones, "rechazo")["decision"] == "pasar_a_cruce_limbo"
+    assert anotacion(acciones, "pausa") is None and "LIMBO" in aviso(acciones).texto
+
+
+@pytest.mark.parametrize("proposito, esperado", [
+    pytest.param(Proposito.HORA_AGREGAR, Proposito.HORA_ASK, id="D2-09-hora-al-ask"),
+    pytest.param(Proposito.CIERRE_REINICIO, Proposito.CIERRE_REINICIO, id="D2-09-reinicio-al-ask"),
+])
+def test_D2_09_postonly_de_la_hora_va_al_ask_sin_techo(catalogo: list[dict], proposito: Proposito,
+                                                      esperado: Proposito) -> None:
+    """D2-09 + R-D-08: la hora no se negocia: al ask SIN techo aunque esté un 20 % sobre el último."""
+    o = orden(proposito=proposito, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID)
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(-100), [], CFG, Tokens(),
+                       cot("4.10", "4.14", "3.45"), HORA)
+    nueva = de_tipo(acciones, EnviarOrden)[0].orden
+    assert (nueva.proposito, nueva.precio, nueva.qty, nueva.post_only) == (esperado, D("4.14"), 100, False)
+    assert anotacion(acciones, "pausa") is None
+
+
+def test_D2_09_postonly_de_la_salida_del_motor_cruza_como_salida_del_motor(catalogo: list[dict]) -> None:
+    o = orden(proposito=Proposito.SALIDA_MOTOR_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID)
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(-100), [], CFG, Tokens(), cot(), HORA)
+    assert [e.orden.proposito for e in de_tipo(acciones, EnviarOrden)] == [Proposito.SALIDA_MOTOR_CRUCE]
+
+
+@pytest.mark.parametrize("o, pos, decision", [
+    pytest.param(orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id="OTRO"), posicion(-100),
+                 "sin_cruce", id="D2-09-sin-lote"),
+    pytest.param(orden(), posicion(0, EstadoTicker.PAUSADO), "sin_cruce", id="D2-09-entrada-en-pausa"),
+    pytest.param(orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID),
+                 posicion(-100, EstadoTicker.BS), "sin_cruce", id="D2-09-bs-nada"),
+    pytest.param(orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID), posicion(0),
+                 "sin_cruce", id="D2-09-plana-sin-lote-vivo"),
+])
+def test_D2_09_postonly_sin_cruce_posible_no_pausa(catalogo: list[dict], o: Orden, pos: PosicionTicker,
+                                                  decision: str) -> None:
+    tokens = Tokens()
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), pos, [], CFG, tokens, cot(), HORA)
+    assert de_tipo(acciones, EnviarOrden) == [] and tokens.dados == []
+    assert anotacion(acciones, "rechazo")["decision"] == decision
+    assert anotacion(acciones, "pausa") is None, "D2-09: nunca pausa por un PostOnly"
+    assert len(de_tipo(acciones, Avisar)) == 1
+
+
+def test_D2_09_postonly_en_una_orden_que_no_agregaba_se_reintenta_como_antes(catalogo: list[dict]) -> None:
+    """D2-09: fuera de los propósitos que agregan (no debería llegar un PostOnly) se trata como «reintentar»."""
+    o = orden(proposito=Proposito.TP_CRUCE, lado=Lado.COMPRA, qty=100, intentos=2)
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(0), [], CFG, Tokens(), cot(), HORA)
+    assert anotacion(acciones, "rechazo")["decision"] == "pausa", "agotado como cualquier reintento"
+
+
+# ── D2-10: el reenvío de una salida nunca supera la posición ───────────────
+def _tp_vivo(qty: int, token: int = 126800077, **extra: Any) -> Orden:
+    campos: dict[str, Any] = {"estado": EstadoOrden.ACCEPTED}
+    campos.update(extra)
+    return Orden(token=token, ticker=TICKER, lado=Lado.COMPRA, tipo=TipoOrden.LIMITE, qty=qty, precio=D("3.45"),
+                 stop=None, ruta="SAGEREB", proposito=Proposito.TP_AGREGAR, lote_id="L1", nivel=None,
+                 origen=Origen.EJECUTOR, **campos)
+
+
+def test_D2_10_reintento_de_salida_con_la_posicion_plana_no_compra(catalogo: list[dict]) -> None:
+    """D2-10: TP_AGREGAR BUY 500 rechazado con la posición ya plana → sin reintento, sin token, sin pausa."""
+    tokens = Tokens()
+    o = orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=500)
+    acciones = decidir(o, REINTENTAR, posicion(0), [], CFG, tokens, cot(), HORA)
+    assert de_tipo(acciones, EnviarOrden) == [] and tokens.dados == []
+    assert anotacion(acciones, "rechazo")["decision"] == "nada_que_reducir"
+    assert anotacion(acciones, "pausa") is None
+
+
+@pytest.mark.parametrize("neta, vivas, esperado", [
+    pytest.param(-500, [], 500, id="D2-10-cabe-entera"),
+    pytest.param(-500, [_tp_vivo(300)], 200, id="D2-10-otra-salida-viva"),
+    pytest.param(-500, [_tp_vivo(300, lvqty=100, llenas=200)], 400, id="D2-10-cuenta-lo-vivo-de-la-otra"),
+    pytest.param(-100, [stop_compra(Proposito.STOP_EMERGENCIA, qty=100)], 100, id="D2-10-los-stops-no-descuentan"),
+    pytest.param(-100, [_tp_vivo(300, estado=EstadoOrden.CANCELED)], 100, id="D2-10-terminadas-no-cuentan"),
+    pytest.param(-500, [_tp_vivo(300, token=TOKEN_RECHAZADO)], 500, id="D2-10-la-rechazada-no-cuenta"),
+])
+def test_D2_10_reintento_recortado_a_la_posicion(catalogo: list[dict], neta: int, vivas: list[Orden],
+                                                 esperado: int) -> None:
+    o = orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=500)
+    acciones = decidir(o, REINTENTAR, posicion(neta), vivas, CFG, Tokens(), cot(), HORA)
+    assert [e.orden.qty for e in de_tipo(acciones, EnviarOrden)] == [esperado]
+
+
+def test_D2_10_otras_salidas_cubren_toda_la_posicion(catalogo: list[dict]) -> None:
+    acciones = decidir(orden(proposito=Proposito.HORA_ASK, lado=Lado.COMPRA, qty=100), REINTENTAR, posicion(-100),
+                       [_tp_vivo(100)], CFG, Tokens(), cot(), HORA)
+    assert de_tipo(acciones, EnviarOrden) == [] and anotacion(acciones, "rechazo")["decision"] == "nada_que_reducir"
+
+
+def test_D2_10_recalcular_bp_de_una_salida_lleva_la_qty_recortada(catalogo: list[dict]) -> None:
+    o = orden(proposito=Proposito.TP_CRUCE, lado=Lado.COMPRA, qty=500, notas="Not Enough Buying Power")
+    acciones = decidir(o, tratamiento(catalogo, "bp_insuficiente"), posicion(-100), [], CFG, Tokens(), cot(), HORA)
+    assert de_tipo(acciones, Programar)[0].datos["qty"] == 100
+
+
+def test_D2_10_postonly_del_tp_cruza_solo_lo_que_queda(catalogo: list[dict]) -> None:
+    o = orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID)
+    acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(-100), [_tp_vivo(60)], CFG, Tokens(),
+                       cot(), HORA)
+    assert [e.orden.qty for e in de_tipo(acciones, EnviarOrden)] == [40]
+
+
+def test_D2_10_las_entradas_no_se_recortan(catalogo: list[dict]) -> None:
+    acciones = decidir(orden(qty=500), REINTENTAR, posicion(0), [], CFG, Tokens(), cot(), HORA)
+    assert [e.orden.qty for e in de_tipo(acciones, EnviarOrden)] == [500]
+
+
+# ── D2-08: avisos con el HTML escapado (parse_mode HTML de Telegram) ───────
+def test_D2_08_aviso_de_rechazo_escapa_el_html_y_el_diario_guarda_el_literal(catalogo: list[dict]) -> None:
+    o = orden(notas="<b>x & y</b> Qty > MaxShare")
+    acciones = decidir(o, clasificar(o.notas, catalogo), posicion(), [], CFG, Tokens(), cot(), HORA)
+    texto = aviso(acciones).texto
+    assert "«&lt;b&gt;x &amp; y&lt;/b&gt; Qty &gt; MaxShare»" in texto
+    assert "<b>" not in texto and "& y" not in texto and "> MaxShare" not in texto
+    assert anotacion(acciones, "rechazo")["notas"] == "<b>x & y</b> Qty > MaxShare", "el diario: literal crudo"
+
+
+def test_D2_08_cancel_replace_rej_escapa_el_html() -> None:
+    o = stop_compra(Proposito.STOP_EMERGENCIA, id_das=502, notas="Order <42> not found & gone")
+    texto = de_tipo(tras_cancel_o_replace_rej(o, "Cancel<Rej>"), Avisar)[0].texto
+    assert "«Order &lt;42&gt; not found &amp; gone»" in texto and "[Cancel&lt;Rej&gt;]" in texto
+    assert "<42>" not in texto
+
+
+# ── D2-15: R-C-03 (3) mide la subida desde el primer intento ───────────────
+def test_D2_15_reintento_stop_anota_precio_del_primer_intento_y_subida() -> None:
+    o = stop_compra(Proposito.STOP_EMERGENCIA, intentos=2, primer_intento_en=1000.0)
+    d = reintento_stop(o, CFG["stops"], 1010.0, cot=cot(last="7.00"), precio_primer_intento=D("3.45")).datos
+    assert (d["precio_primer_intento"], d["precio_actual"], d["subida_pct"], d["supera_subida_max"]) == (
+        "3.45", "7.00", "102.90", True)
+    json.dumps(d)
+    sin_primero = reintento_stop(o, CFG["stops"], 1010.0, cot=cot(last="7.00")).datos
+    assert (sin_primero["precio_primer_intento"], sin_primero["subida_pct"],
+            sin_primero["supera_subida_max"]) == ("7.00", "0.00", False)
+    sin_cot = reintento_stop(o, CFG["stops"], 1010.0).datos
+    assert sin_cot["subida_pct"] is None and sin_cot["supera_subida_max"] is None
+
+
+def test_D2_15_umbral_de_la_config_y_ask_si_no_hay_ultimo() -> None:
+    o = stop_compra(Proposito.STOP_EMERGENCIA)
+    c = Cotizacion(ticker=TICKER, bid=D("5.00"), ask=D("5.20"), last=None)
+    d = reintento_stop(o, {"subida_max_cierre_pct": 50}, 1.0, cot=c, precio_primer_intento=D("4.00")).datos
+    assert (d["precio_actual"], d["subida_pct"], d["supera_subida_max"]) == ("5.20", "30.00", False)
+    d2 = reintento_stop(o, {"subida_max_cierre_pct": 20}, 1.0, cot=c, precio_primer_intento=D("4.00")).datos
+    assert d2["supera_subida_max"] is True
+
+
+def test_D2_15_decidir_anota_la_subida_del_stop_tambien_al_agotar(catalogo: list[dict]) -> None:
+    o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, intentos=5, notas="???")
+    acciones = decidir(o, DESCONOCIDO, posicion(-100), [o], CFG, Tokens(), cot(last="8.00"), HORA, ahora=1500.0,
+                       precio_primer_intento=D("4.00"))
+    rechazo = anotacion(acciones, "rechazo")
+    assert rechazo["decision"] == "stop_agotado"
+    assert (rechazo["subida_pct"], rechazo["supera_subida_max"]) == ("100.00", False)
+    json.dumps(rechazo)
+    assert de_tipo(acciones, EnviarOrden) == [] and de_tipo(acciones, CancelarTicker) == [], "no cierra (EP-1)"
+
+
+# ── A-06: los GET salen de protocolo.cmd_get ───────────────────────────────
+def test_A_06_comandos_por_protocolo() -> None:
+    from app.bot_das.protocolo import cmd_get
+    assert R.COMANDO_BP == cmd_get("BP") == "GET BP"
+    assert R.COMANDO_ORDENES == cmd_get("ORDERS") == "GET ORDERS"

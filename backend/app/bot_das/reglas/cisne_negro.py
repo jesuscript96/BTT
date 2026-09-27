@@ -10,8 +10,9 @@ el límite de la orden de emergencia y quedan acciones cortas al descubierto:
     silencia SOLO ese mensaje) sin mutar el estado.
   * `informe`: el mensaje «Posible BS <TICKER>» con los 16 campos de R-G-01
     (2) en HTML de Telegram (`ETIQUETAS_INFORME`).
-  * `acciones_durante_bs`: R-G-03 (1): SOLO se BAJA la cantidad de la
-    emergencia a las acciones que siguen cortas. Nada más.
+  * `acciones_durante_bs`: R-G-03 (1): SOLO se BAJA la cantidad de los
+    stops de compra vivos (emergencias, duplicadas y principales, E2-01) a
+    las acciones que siguen cortas. Nada más.
   * `al_cerrar`: R-G-01 (3) y el veto de reentrada de R-G-03.
   * `fogonazo_visto`: R-G-01 (4): máximo, duración y devolución para el diario.
   * `cierre_humano`: `/cerrar X SI` y `/cerrar X N SI` durante el protocolo
@@ -29,7 +30,10 @@ LAS TRAMPAS.
   * El bot NO decide en un cisne negro (R-G-01, Jaume 20-sep): ni persigue
     al precio, ni repone la emergencia si DAS la cancela, ni mueve su límite
     o su disparo (R-G-03). `acciones_durante_bs` nunca devuelve `EnviarOrden`
-    ni `Cancelar`: solo `Reemplazar` de CANTIDAD a la baja (con su
+    ni `Cancelar`: solo `Reemplazar` de CANTIDAD a la baja de TODA STOPLMTP de
+    compra viva (un principal disparado sin llenar compraría encima de la
+    emergencia y dejaría la cuenta LARGA, E2-01; el `share` sale de
+    `tipos.share_de_replace`, A-02) (con su
     `Programar("replace_verificar")`, 2h.8: el REPLACE de un STOPLMTP no
     está documentado) o, si DAS y los fills discrepan, `Consultar("GET
     POSITIONS")` sin tocar nada (riesgo 8: una emergencia con más acciones
@@ -55,7 +59,9 @@ LAS TRAMPAS.
     `salidas.orden_cierre_posicion`, no `salidas.orden_al_ask` (que limita a
     min(ask, last·1,05) y en un cisne negro no llenaría nunca). Si no hay
     cotización NO se cancela nada: cancelar la emergencia sin poder comprar
-    dejaría la posición desnuda. Con `N` (cierre por tramos, G6) la
+    dejaría la posición desnuda. E2-03: la compra de cierre sale DESPUÉS de
+    ver la emergencia Canceled/Executed (o reducida), nunca en la misma tanda
+    que su `Cancelar`/`Reemplazar` (esperas de 0,5 s). Con `N` (cierre por tramos, G6) la
     emergencia NO se cancela: se baja a lo que va a quedar, para que el resto
     siga cubierto y ella no compre también lo que compra el humano. En cada
     reintento las órdenes de cierre vivas se REEMPLAZAN al precio del momento
@@ -83,6 +89,7 @@ from typing import Any, Callable, Optional
 from app.bot_das.reglas.precios import con_techo, de_float
 from app.bot_das.reglas.salidas import ESPERA_REINTENTO_CERRAR_TODO_S, orden_cierre_posicion
 from app.bot_das.reglas.stops import (
+    CLAVE_SHARE_ES_ABIERTA,
     CLAVE_VERIFICAR_REPLACE,
     COMANDO_POSICIONES,
     ESTADOS_VIVOS,
@@ -97,6 +104,8 @@ from app.bot_das.tipos import (
     BS_PRIMEROS_INFORMES,
     CERRAR_TODO_REINTENTOS,
     CERRAR_TODO_TECHO_PCT,
+    REPLACE_SHARE_ES_ABIERTA,
+    share_de_replace,
     Accion,
     Anotar,
     Avisar,
@@ -147,11 +156,13 @@ ETIQUETAS_INFORME: tuple[str, ...] = (
 )
 CLAVE_AVISO_BS = "bs"                    # F7: Avisar(3, informe, clave="bs:X") en la activación
 CLAVE_INFORME = "bs_informe"             # F7: Temporizador("bs_informe"); el decisor la compone con el ticker
-CLAVE_CIERRE_REINTENTO = "bs_cierre"     # R-D-06 aplicado a /cerrar X [N] SI: «bs_cierre:X» con {intento, objetivo, signo}
+CLAVE_CIERRE_REINTENTO = "bs_cierre"     # R-D-06 aplicado a /cerrar X [N] SI: «bs_cierre:X» con {intento, objetivo, signo, esperas}
+ESPERA_CANCEL_S = 0.5                    # E2-03: vuelta de espera hasta ver la emergencia Canceled/Executed (o reducida)
+ESPERAS_CANCEL_MAX = 6                   # E2-03: 6 × 0,5 s sin confirmación → aviso 3 «cerrar a mano», sin comprar
 _ESTADOS_LLENA = (EstadoOrden.EXECUTED,)
 _LADOS_VENTA = frozenset({"S", "SS", "SELL", "SHORT", "SHRT"})
 _LADOS_COMPRA = frozenset({"B", "BUY"})
-_TA_PARADA = frozenset({"H", "P"})
+_TA_PARADA = frozenset({"H", "P", "Q"})  # E1-05: Q (solo cotización antes del cruce) también es «parada»
 _LOTE_MUERTO = (EstadoLote.CERRADO, EstadoLote.CANCELADO)
 _HOLGURA_S = 1e-6                        # sumas de floats del reloj monotónico (60.0 puede llegar como 59.99999999)
 _CIEN = Decimal("100")
@@ -336,20 +347,25 @@ def informe(pos: PosicionTicker, bs: EstadoBS, stops: NivelesStop, cot: Optional
 
 # ── durante el protocolo (R-G-03) ────────────────────────────────────────
 def acciones_durante_bs(pos: PosicionTicker, vivas: list[Orden], cfg: Any, version: int) -> list[Accion]:
-    """R-G-03 (1): SOLO se BAJA la cantidad de la emergencia a las acciones que siguen cortas. Nada más.
+    """R-G-03 (1) + R-C-11: SOLO se BAJA la cantidad de los stops de compra vivos a las acciones que siguen cortas.
 
     Objetivo = −neta (fills) − lo que ya compran los cierres humanos vivos
-    del ticker. Si la emergencia viva más antigua (con `id_das`, disparo y
-    límite conocidos) tiene más acciones vivas que el objetivo →
-    `Reemplazar(qty=objetivo, mismo disparo, mismo límite, version, serie
-    "stops:X")` + `Programar("replace_verificar")` (2h.8). Nunca
-    `EnviarOrden`, nunca `Cancelar`, nunca sube la cantidad, nunca toca el
-    precio ni el disparo, y NO repone una emergencia que DAS haya cancelado
-    (R-G-03 (2)). Sin corto, sin emergencia, objetivo ≤ 0 o nada que bajar →
-    []. Neta de DAS conocida y distinta de la de fills → solo
-    `Consultar("GET POSITIONS")` (riesgo 8). `cfg` (Config o dict) aporta el
-    bloque `stops` para reconocer la emergencia del vigilante; `version` es
-    la versión vigente del objetivo del ticker.
+    del ticker. E2-01: TODA STOPLMTP de COMPRA viva del ticker (las
+    emergencias, también las duplicadas, primero y de la más antigua a la más
+    nueva; después los principales, disparados o no, y cualquier otra) con
+    `id_das`, disparo y límite conocidos y más acciones vivas que el objetivo
+    → `Reemplazar(share de tipos.share_de_replace(objetivo, llenas), mismo
+    disparo, mismo límite, version, serie "stops:X")` +
+    `Programar("replace_verificar")` (2h.8). Así un principal disparado sin
+    llenar no compra sus 1.000 cuando solo quedan 400 cortas (la cuenta
+    quedaría LARGA). Nunca `EnviarOrden`, nunca `Cancelar`, nunca sube la
+    cantidad, nunca toca el precio ni el disparo (no persigue al precio), y NO
+    repone una emergencia que DAS haya cancelado (R-G-03 (2)). Sin corto,
+    objetivo ≤ 0 o nada que bajar → []. Neta de DAS conocida y distinta de la
+    de fills → solo `Consultar("GET POSITIONS")` (riesgo 8). `cfg` (Config o
+    dict) aporta el bloque `stops` para reconocer la emergencia del vigilante y
+    el interruptor `replace_share_es_abierta` (A-02); `version` es la versión
+    vigente del objetivo del ticker.
     """
     n = -pos.neta
     if n <= 0:
@@ -359,18 +375,24 @@ def acciones_durante_bs(pos: PosicionTicker, vivas: list[Orden], cfg: Any, versi
     objetivo = n - _pendiente_cierre(pos, vivas, signo=-1)
     if objetivo <= 0:
         return []
-    emergencias = _emergencias(pos, vivas, _bloque_stops(cfg), incluir_ejecutadas=False)
-    if not emergencias:
-        return []
-    e = emergencias[0]
-    viva = _qty_viva(e)
-    if viva <= objetivo or e.id_das is None or e.stop is None or e.precio is None:
-        return []
-    return [Reemplazar(id_das=e.id_das, token=e.token, qty=objetivo, stop=e.stop, precio=e.precio,
-                       motivo=f"R-G-03 (1): emergencia de {pos.ticker} a {objetivo} acciones (tenía {viva})",
-                       version=version, serie=serie_stops(pos.ticker)),
-            Programar(CLAVE_VERIFICAR_REPLACE, VERIFICAR_REPLACE_EN_S,
-                      {"token": e.token, "ticker": pos.ticker, "qty_objetivo": objetivo})]
+    cfg_stops = _bloque_stops(cfg)
+    emergencias = _emergencias(pos, vivas, cfg_stops, incluir_ejecutadas=False)
+    ids = {id(o) for o in emergencias}
+    otros = sorted((o for o in _unicas(vivas) if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS
+                    and _es_stop_compra(o) and id(o) not in ids), key=_antiguedad)
+    acciones: list[Accion] = []
+    for o in emergencias + otros:
+        viva = _qty_viva(o)
+        if viva <= objetivo or o.id_das is None or o.stop is None or o.precio is None:
+            continue
+        nombre = "emergencia" if id(o) in ids else o.proposito.value
+        acciones += [Reemplazar(id_das=o.id_das, token=o.token, qty=_share(o, objetivo, cfg), stop=o.stop,
+                                precio=o.precio,
+                                motivo=f"R-G-03 (1) / E2-01: {nombre} de {pos.ticker} a {objetivo} acciones (tenía {viva})",
+                                version=version, serie=serie_stops(pos.ticker)),
+                     Programar(CLAVE_VERIFICAR_REPLACE, VERIFICAR_REPLACE_EN_S,
+                               {"token": o.token, "ticker": pos.ticker, "qty_objetivo": objetivo})]
+    return acciones
 
 
 def al_cerrar(pos: PosicionTicker, dentro_de_emergencia: bool, *,
@@ -457,7 +479,7 @@ def fogonazo_visto(cot_hist: Sequence[tuple[float, Any]], umbral_pct: Any) -> Op
 # ── cierre humano durante el protocolo (R-G-03 (3), R-D-06) ──────────────
 def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizacion], n: Optional[int], cfg: Any,
                   tokens: Callable[[], int], hora_et: datetime, *, intento: int = 0, objetivo: Optional[int] = None,
-                  signo: Optional[int] = None) -> list[Accion]:
+                  signo: Optional[int] = None, esperas: int = 0) -> list[Accion]:
     """R-G-03 (3) + R-D-06: `/cerrar X SI` (todo) o `/cerrar X N SI` (solo N) durante el protocolo.
 
     Primera llamada (`intento=0`): cierra `min(N, |neta|)` o todo. Orden de
@@ -481,12 +503,27 @@ def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizac
     `Anotar("cierre_humano_fin")`. Sin cotización o con DAS diciendo plana /
     otro signo → NO se cancela nada, `Avisar(3)` y se reprograma. ValueError
     si `n` no es un int > 0, `intento` < 0 u `objetivo` no es int. Parámetros solo por nombre
-    añadidos sobre §3.19: `intento`, `objetivo`, `signo`.
+    añadidos sobre §3.19: `intento`, `objetivo`, `signo` y `esperas`.
+    E2-03 (R-G-03 (3) «cancela ANTES … para no comprar de más», riesgo 5): la
+    compra de cierre NUNCA sale en la misma tanda que el `Cancelar` de la
+    emergencia (cierre total) o el `Reemplazar` que la baja (cierre de N).
+    Mientras quede una orden viva que compraría encima (cierre total: toda
+    compra viva del ticker que no es un cierre, con o sin `id_das`; de N: todo
+    stop de compra vivo con más acciones que las que van a quedar) se emiten
+    sus `Cancelar`/`Reemplazar`, `Anotar("cierre_humano_espera")` y
+    `Programar("bs_cierre:X", ESPERA_CANCEL_S, {…, intento (el MISMO),
+    esperas + 1})`, sin `EnviarOrden`: la compra sale en la vuelta en que la
+    emergencia ya figura Canceled/Executed (o reducida), por la neta de fills de
+    ESE momento. Con `esperas` ≥ `ESPERAS_CANCEL_MAX` → `Avisar(3)` «cerrar a
+    mano» (clave «…:cancel:agotado») y nada más: el bot no compra a ciegas.
+    El decisor devuelve `esperas` de los datos del temporizador.
     """
     if n is not None and (type(n) is not int or n <= 0):
         raise ValueError(f"/cerrar: N debe ser un entero > 0, no {n!r}")
     if type(intento) is not int or intento < 0:
         raise ValueError(f"intento debe ser un entero ≥ 0, no {intento!r}")
+    if type(esperas) is not int or esperas < 0:
+        raise ValueError(f"esperas debe ser un entero ≥ 0, no {esperas!r}")
     if objetivo is not None and type(objetivo) is not int:
         raise ValueError(f"objetivo debe ser la neta entera que debe quedar, no {objetivo!r}")
     ticker = pos.ticker
@@ -541,9 +578,34 @@ def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizac
         return acciones
 
     if objetivo == 0:
-        acciones += _cancelaciones_cierre_total(pos, vivas, cierres, cfg)
+        previas = _cancelaciones_cierre_total(pos, vivas, cierres, cfg)
+        bloqueantes = _bloqueantes_cierre_total(pos, vivas, cierres, signo)
     else:
-        acciones += _ajustes_cierre_parcial(pos, vivas, abs(objetivo), signo, cfg)
+        previas = _ajustes_cierre_parcial(pos, vivas, abs(objetivo), signo, cfg)
+        bloqueantes = _bloqueantes_cierre_parcial(pos, vivas, abs(objetivo), signo)
+    if bloqueantes:
+        # E2-03 (R-G-03 (3) «cancela ANTES», riesgo 5): la compra de cierre NO sale en la misma tanda que el
+        # Cancelar/Reemplazar de la emergencia: si la emergencia llenara antes de que DAS procese la cancelación,
+        # las dos comprarían y la cuenta quedaría LARGA. Se espera a verla Canceled/Executed (o reducida).
+        esperando = [o.token for o in bloqueantes]
+        if esperas >= ESPERAS_CANCEL_MAX:
+            acciones.append(Avisar(
+                nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"{CLAVE_CIERRE_REINTENTO}:{ticker}:cancel:agotado",
+                texto=(f"CIERRE {html.escape(ticker, quote=False)} DETENIDO: DAS no confirma la cancelación (o la "
+                       f"reducción) de {len(bloqueantes)} stop(s) de compra tras {esperas} esperas; el bot NO compra "
+                       f"para no dejar la cuenta LARGA. {q} acciones por cerrar: revisar en DAS y cerrar A MANO "
+                       f"(R-G-03 (3), R-D-06).")))
+            acciones.append(Anotar("cierre_humano_espera", {"ticker": ticker, "intento": intento, "esperas": esperas,
+                                                            "esperando": esperando, "agotado": True}))
+            return acciones
+        acciones += previas
+        acciones.append(Anotar("cierre_humano_espera", {"ticker": ticker, "intento": intento, "esperas": esperas,
+                                                        "esperando": esperando, "regla": "R-G-03 (3) / E2-03"}))
+        acciones.append(Programar(f"{CLAVE_CIERRE_REINTENTO}:{ticker}", ESPERA_CANCEL_S,
+                                  {"ticker": ticker, "intento": intento, "objetivo": objetivo, "signo": signo, "n": n,
+                                   "esperas": esperas + 1}))
+        return acciones
+    acciones += previas
     restante = q - sum(_qty_viva(o) for o in cierres if o.id_das is None)
     for o in sorted((o for o in cierres if o.id_das is not None), key=_antiguedad):
         viva = _qty_viva(o)
@@ -555,7 +617,8 @@ def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizac
             acciones.append(Cancelar(id_das=o.id_das, token=o.token,   # type: ignore[arg-type]
                                      motivo=f"R-D-06: el cierre de {ticker} ya está cubierto por otras órdenes"))
             continue
-        acciones.append(Reemplazar(id_das=o.id_das, token=o.token, qty=asignar, stop=None, precio=limite,   # type: ignore[arg-type]
+        acciones.append(Reemplazar(id_das=o.id_das, token=o.token, qty=_share(o, asignar, cfg), stop=None,   # type: ignore[arg-type]
+                                   precio=limite,
                                    motivo=f"R-D-06: reintento {intento} de cerrar {ticker} al {techo} % del libro"))
         restante -= asignar
     if restante > 0:
@@ -788,6 +851,43 @@ def _cancelaciones_cierre_total(pos: PosicionTicker, vivas: Optional[Sequence[An
     return acciones
 
 
+def _lado_que_cierra(o: Orden, signo: int) -> bool:
+    """La orden opera en el MISMO sentido que el cierre: compra si se cierra un corto; venta/corto si un largo."""
+    if signo < 0:
+        return o.lado == Lado.COMPRA
+    return o.lado in (Lado.VENTA, Lado.CORTO)
+
+
+def _bloqueantes_cierre_total(pos: PosicionTicker, vivas: Optional[Sequence[Any]], cierres: list[Orden],
+                              signo: int) -> list[Orden]:
+    """E2-03: órdenes vivas del ticker (no cierres) que comprarían (o venderían) ENCIMA del cierre; con o sin id_das."""
+    ids_cierre = {id(o) for o in cierres}
+    return sorted((o for o in _unicas(vivas)
+                   if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS and id(o) not in ids_cierre
+                   and _lado_que_cierra(o, signo) and _qty_viva(o) > 0), key=_antiguedad)
+
+
+def _bloqueantes_cierre_parcial(pos: PosicionTicker, vivas: Optional[Sequence[Any]], quedan: int,
+                                signo: int) -> list[Orden]:
+    """E2-03 (cierre de N): stops de compra vivos que aún cubren MÁS de lo que va a quedar (su REPLACE no se ha visto)."""
+    if signo >= 0:
+        return []
+    return sorted((o for o in _unicas(vivas)
+                   if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS and _es_stop_compra(o)
+                   and _qty_viva(o) > quedan), key=_antiguedad)
+
+
+def _share_es_abierta(cfg: Any) -> bool:
+    """A-02: `stops.replace_share_es_abierta` si la config lo fija como bool; si no, el defecto de tipos."""
+    valor = _bloque_stops(cfg).get(CLAVE_SHARE_ES_ABIERTA)
+    return valor if isinstance(valor, bool) else REPLACE_SHARE_ES_ABIERTA
+
+
+def _share(o: Orden, abierta: int, cfg: Any) -> int:
+    """A-02: el `share` de un REPLACE que deja `abierta` acciones vivas (el helper único de tipos)."""
+    return share_de_replace(abierta, max(int(o.llenas), 0), _share_es_abierta(cfg))
+
+
 def _ajustes_cierre_parcial(pos: PosicionTicker, vivas: Optional[Sequence[Any]], quedan: int, signo: int,
                             cfg: Any) -> list[Accion]:
     """`/cerrar X N SI`: ningún stop vivo cubre más de lo que va a quedar; la emergencia primero (R-G-03 (1): solo cantidad)."""
@@ -802,7 +902,7 @@ def _ajustes_cierre_parcial(pos: PosicionTicker, vivas: Optional[Sequence[Any]],
         viva = _qty_viva(o)
         if viva <= quedan or o.id_das is None or o.stop is None or o.precio is None:
             continue
-        acciones += [Reemplazar(id_das=o.id_das, token=o.token, qty=quedan, stop=o.stop, precio=o.precio,
+        acciones += [Reemplazar(id_das=o.id_das, token=o.token, qty=_share(o, quedan, cfg), stop=o.stop, precio=o.precio,
                                 motivo=(f"R-G-03 (1) / G6: /cerrar {pos.ticker} N SI: {o.proposito.value} a las "
                                         f"{quedan} acciones que quedan (tenía {viva})"),
                                 version=pos.version_stops, serie=serie_stops(pos.ticker)),

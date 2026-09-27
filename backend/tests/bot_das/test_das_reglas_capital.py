@@ -10,8 +10,8 @@ import pytest
 
 from app.bot_das.reglas import capital
 from app.bot_das.reglas.capital import (
-    MOTIVO_BP_AGOTADO, MOTIVO_ENTERA, MOTIVO_NADA_PEDIDO, MOTIVO_PARCIAL_BP, MOTIVO_PARCIAL_TOPE, MOTIVO_SIN_BP,
-    MOTIVO_SIN_EQUITY, MOTIVO_TOPE_ALCANZADO, TOPE_CORTO_EQUITY, TOPE_CORTO_EQUITY_ALTO_RIESGO,
+    MOTIVO_BP_AGOTADO, MOTIVO_ENTERA, MOTIVO_EQUITY_AGOTADO, MOTIVO_NADA_PEDIDO, MOTIVO_PARCIAL_BP,
+    MOTIVO_PARCIAL_EQUITY, MOTIVO_PARCIAL_TOPE, MOTIVO_SIN_BP, MOTIVO_SIN_EQUITY, MOTIVO_TOPE_ALCANZADO, TOPE_CORTO_EQUITY, TOPE_CORTO_EQUITY_ALTO_RIESGO,
     acciones_que_caben, exposicion_corta, liberar_reservas, margen_inicial_corto, margen_mantenimiento,
     requiere_mas_margen, reservar,
 )
@@ -180,7 +180,8 @@ def test_requiere_mas_margen_rechaza_float():
                  id="SHORTINFO-tasa-300-limita-mas"),
     pytest.param(1000, "0.1234", _cuenta(), None, "0", False, (1000, MOTIVO_ENTERA),
                  id="2c-penny-2.50-por-accion-cabe"),
-    pytest.param(5000, "0.1234", _cuenta(bp="11111.11"), None, "0", False, (4444, MOTIVO_PARCIAL_BP),
+    # D1-01: con equity 10.000 el margen sobre el equity (4.000) mandaría; el equity alto aísla el BP.
+    pytest.param(5000, "0.1234", _cuenta(bp="11111.11", equity="1000000"), None, "0", False, (4444, MOTIVO_PARCIAL_BP),
                  id="2c-penny-floor-multiplo-de-una-accion"),
     pytest.param(0, "1", _cuenta(), None, "0", False, (0, MOTIVO_NADA_PEDIDO), id="R-I-01-nada-pedido"),
     pytest.param(1000, "1", _cuenta(equity="-100"), None, "0", False, (0, MOTIVO_TOPE_ALCANZADO),
@@ -239,14 +240,173 @@ def test_acciones_que_caben_es_el_maximo_exacto_por_bp(precio, tasa, bp):
 
 
 def test_acciones_que_caben_tope_es_nominal_exacto():
-    """2c consecuencia 2: q·precio + exposición ≤ tope y (q+1)·precio lo supera."""
+    """2c consecuencia 2: q·precio + exposición ≤ tope y (q+1)·precio lo supera.
+
+    D1-01 (corregido): bajo 5 $ el margen (≥ 100 % del valor) exige más que el
+    nominal, así que ahí manda el tercer límite (margen sobre el equity) y el
+    test lo exige; desde 5 $ el tope nominal sigue mandando (a 4,99 empatan y
+    se nombra el tope).
+    """
     for precio in ("0.0123", "1.01", "4.99", "6.66", "17"):
         for alto in (False, True):
-            qty, motivo = acciones_que_caben(10**9, D(precio), _cuenta(bp="1000000000"), None, D("1234.56"), alto,
-                                             AHORA)
-            tope = D("10000") * (TOPE_CORTO_EQUITY_ALTO_RIESGO if alto else TOPE_CORTO_EQUITY) - D("1234.56")
-            assert qty * D(precio) <= tope < (qty + 1) * D(precio)
-            assert motivo == MOTIVO_PARCIAL_TOPE
+            p = D(precio)
+            qty, motivo = acciones_que_caben(10**9, p, _cuenta(bp="1000000000"), None, D("1234.56"), alto, AHORA)
+            factor = TOPE_CORTO_EQUITY_ALTO_RIESGO if alto else TOPE_CORTO_EQUITY
+            tope = D("10000") * factor - D("1234.56")
+            # sin margen_corto_abierto_usd, lo abierto se aproxima por su nominal (1.234,56)
+            libre_equity = D("10000") * factor - D("1234.56")
+            caben_tope = int(tope // p)
+            caben_equity = int(libre_equity // margen_inicial_corto(p, 1, None))
+            assert qty == min(caben_tope, caben_equity)
+            assert qty * p <= tope
+            assert margen_inicial_corto(p, qty, None) <= libre_equity
+            assert motivo == (MOTIVO_PARCIAL_TOPE if caben_tope <= caben_equity else MOTIVO_PARCIAL_EQUITY)
+            if p >= D("4.99"):
+                assert motivo == MOTIVO_PARCIAL_TOPE
+            else:
+                assert motivo == MOTIVO_PARCIAL_EQUITY
+
+
+# ── D1-01: tercer límite, margen inicial sobre el equity ─────────────────
+@pytest.mark.parametrize("qty,precio,cuenta,alto,kw,esperado", [
+    pytest.param(20000, "1", _cuenta(bp="40000"), False, {}, (4000, MOTIVO_PARCIAL_EQUITY),
+                 id="D1-01-libro-2c-10k-a-1-con-BP-4x-caben-4000"),
+    pytest.param(20000, "0.20", _cuenta(bp="40000"), False, {}, (4000, MOTIVO_PARCIAL_EQUITY),
+                 id="D1-01-a-0.20-el-BP-daria-16000-el-equity-4000"),
+    pytest.param(20000, "1", _cuenta(bp="40000"), True, {}, (2000, MOTIVO_PARCIAL_EQUITY),
+                 id="D1-01-alto-riesgo-la-mitad"),
+    pytest.param(20000, "1", _cuenta(bp="40000"), False, {"margen_corto_abierto_usd": D("5000")},
+                 (2000, MOTIVO_PARCIAL_EQUITY), id="D1-01-descuenta-el-margen-de-lo-abierto"),
+    pytest.param(20000, "1", _cuenta(bp="40000", reservado="2500"), False, {"margen_corto_abierto_usd": D("0")},
+                 (3000, MOTIVO_PARCIAL_EQUITY), id="D1-01-descuenta-la-reserva"),
+    pytest.param(20000, "1", _cuenta(bp="40000"), False, {"margen_corto_abierto_usd": D("10000")},
+                 (0, MOTIVO_EQUITY_AGOTADO), id="D1-01-margen-abierto-igual-al-equity-no-entra"),
+    pytest.param(20000, "1", _cuenta(bp="40000"), False, {"margen_corto_abierto_usd": D("12000")},
+                 (0, MOTIVO_EQUITY_AGOTADO), id="D1-01-margen-abierto-supera-el-equity"),
+    pytest.param(1000, "1", _cuenta(bp="40000"), False, {"margen_corto_abierto_usd": D("7500")},
+                 (1000, MOTIVO_ENTERA), id="D1-01-cabe-entera-con-margen-justo"),
+    pytest.param(20000, "1", _cuenta(bp="40000"), False, {}, (4000, MOTIVO_PARCIAL_EQUITY),
+                 id="D1-01-sin-margen-abierto-usa-el-nominal-0"),
+    pytest.param(20000, "1", _cuenta(bp="40000"), False, {"margen_corto_abierto_usd": None},
+                 (4000, MOTIVO_PARCIAL_EQUITY), id="D1-01-None-explicito-igual-que-omitido"),
+    pytest.param(3000, "5", _cuenta(bp="40000"), False, {"margen_corto_abierto_usd": D("0")},
+                 (2000, MOTIVO_PARCIAL_TOPE), id="D1-01-a-5-dolares-empata-con-el-tope-se-nombra-el-tope"),
+])
+def test_D1_01_margen_sobre_equity(qty, precio, cuenta, alto, kw, esperado):
+    """D1-01: GET BP es 4× el equity en Sage (2c); el margen inicial nunca pasa del equity (× 0,5 alto riesgo)."""
+    assert _caben(qty, precio, cuenta, alto_riesgo=alto, **kw) == esperado
+
+
+def test_D1_01_proxy_nominal_cuando_no_llega_el_margen_abierto():
+    """D1-01: sin `margen_corto_abierto_usd` se resta el nominal abierto (exposición) del equity."""
+    # 6.000 $ nominales abiertos, nueva a 1 $: equity libre 4.000 → 1.600 acciones (2,50 $ cada una)
+    assert _caben(20000, "1", _cuenta(bp="40000"), exposicion="6000") == (1600, MOTIVO_PARCIAL_EQUITY)
+    # con el margen exacto de lo abierto (6.000 cortas a 1 $ = 15.000 $), no cabe nada
+    assert _caben(20000, "1", _cuenta(bp="40000"), exposicion="6000",
+                  margen_corto_abierto_usd=D("15000")) == (0, MOTIVO_EQUITY_AGOTADO)
+
+
+def test_D1_01_margen_corto_abierto_alimenta_el_tercer_limite():
+    """D1-01, F1 paso 3: 1.000 cortas a 2 $ abiertas + 500 pendientes a 2 $ → margen 3.750 $; caben (10.000 − 3.750)/2,50."""
+    posiciones = {"AAA": PosicionTicker(ticker="AAA", neta_fills=-1000, intento=_intento("AAA", 1500, 1000))}
+    cots = _cot_de({"AAA": _cot("AAA", "1.99", "2.00", "2.00")})
+    margen = capital.margen_corto_abierto(posiciones, cots)
+    assert margen == D("3750.00")
+    expo = exposicion_corta(posiciones, cots)
+    assert _caben(20000, "1", _cuenta(bp="40000"), exposicion=str(expo), margen_corto_abierto_usd=margen) == \
+        (2500, MOTIVO_PARCIAL_EQUITY)
+
+
+def test_D1_01_margen_corto_abierto_tramos_tasa_y_exclusion():
+    cots = _cot_de({"AAA": _cot("AAA", "1", "1"), "BBB": _cot("BBB", "20", "20"), "CCC": _cot("CCC", "9", "9")})
+    posiciones = {
+        "AAA": PosicionTicker(ticker="AAA", neta_fills=-100),                       # < 5 $: 2,50 $/acción → 250
+        "BBB": PosicionTicker(ticker="BBB", neta_fills=-100,                        # ≥ 5 $: 30 % → 600
+                              intento=_intento("BBB", 300, 100, precio_senal="20")),   # + 200 pendientes → 1.200
+        "CCC": PosicionTicker(ticker="CCC", neta_fills=50),                         # largo: no cuenta
+    }
+    assert capital.margen_corto_abierto(posiciones, cots) == D("250") + D("1800")
+    assert capital.margen_corto_abierto({}, cots) == D("0")
+    # tasa del símbolo (SHORTINFO 100 % en BBB): 300 × 20 = 6.000
+    tasas = {"BBB": D("100")}
+    assert capital.margen_corto_abierto(posiciones, cots, tasas.get) == D("250") + D("6000")
+    # el reintento R-B-07 del intento de BBB no compite consigo mismo: solo cuentan sus 100 llenas
+    assert capital.margen_corto_abierto(posiciones, cots, excluir_pendiente_de="BBB") == D("250") + D("600")
+    with pytest.raises(ValueError):
+        capital.margen_corto_abierto({"ZZZ": PosicionTicker(ticker="ZZZ", neta_fills=-1)}, _cot_de({}))
+
+
+@pytest.mark.parametrize("kw", [
+    pytest.param({"margen_corto_abierto_usd": D("-1")}, id="D1-01-margen-abierto-negativo"),
+    pytest.param({"margen_corto_abierto_usd": 100.0}, id="D1-01-R12-margen-abierto-float"),
+    pytest.param({"margen_pendiente_usd": D("-1")}, id="D1-06-margen-pendiente-negativo"),
+    pytest.param({"margen_pendiente_usd": D("NaN")}, id="D1-06-margen-pendiente-NaN"),
+])
+def test_D1_01_D1_06_rechaza_margenes_invalidos(kw):
+    with pytest.raises(ValueError):
+        _caben(100, "1", _cuenta(), **kw)
+
+
+# ── D1-06: el BP descuenta lo PENDIENTE aunque la reserva se haya soltado ─
+def test_D1_06_margen_pendiente_sobrevive_al_msgbp():
+    """D1-06: la reserva se suelta con cada MsgBP; el margen pendiente de los intentos vivos sigue descontando.
+
+    Primera señal: 1.000 a 1 $ aceptadas (intento vivo sin fills). Llega un
+    MsgBP que (si DAS no retiene las ventas pendientes) sigue diciendo 5.000 $
+    y suelta la reserva. Sin el margen pendiente la segunda vería 2.000
+    acciones; con él, solo (5.000 − 2.500)/2,50 = 1.000.
+    """
+    cuenta = _cuenta(bp="5000")
+    qty1, _ = acciones_que_caben(1000, D("1"), cuenta, None, D("0"), False, AHORA)
+    assert qty1 == 1000
+    reservar(cuenta, margen_inicial_corto(D("1"), qty1, None))
+    posiciones = {"AAA": PosicionTicker(ticker="AAA", intento=_intento("AAA", 1000, 0, precio_senal="1"))}
+    cots = _cot_de({"AAA": _cot("AAA", "1", "1")})
+
+    cuenta.bp, cuenta.leida_en = D("5000"), AHORA + 2.0             # MsgBP del barrido
+    liberar_reservas(cuenta)
+    sin_pendiente = acciones_que_caben(5000, D("1"), cuenta, None, D("0"), False, AHORA + 2.5)
+    assert sin_pendiente == (2000, MOTIVO_PARCIAL_BP)               # el hueco que describe D1-06
+    pendiente = capital.margen_pendiente(posiciones, cots)
+    assert pendiente == D("2500")
+    assert acciones_que_caben(5000, D("1"), cuenta, None, D("0"), False, AHORA + 2.5,
+                              margen_pendiente_usd=pendiente) == (1000, MOTIVO_PARCIAL_BP)
+
+
+def test_D1_06_margen_pendiente_solo_intentos_vivos():
+    cots = _cot_de({"AAA": _cot("AAA", "3", "3"), "BBB": _cot("BBB", "3", "3")})
+    posiciones = {
+        "AAA": PosicionTicker(ticker="AAA", neta_fills=-400, intento=_intento("AAA", 1000, 400)),   # 600 × 3
+        "BBB": PosicionTicker(ticker="BBB", neta_fills=-400,
+                              intento=_intento("BBB", 1000, 400, fase=FaseIntento.TERMINADO)),
+    }
+    assert capital.margen_pendiente(posiciones, cots) == D("1800")
+    assert capital.margen_pendiente(posiciones, cots, excluir_pendiente_de="AAA") == D("0")
+    assert capital.margen_pendiente({}, cots) == D("0")
+
+
+# ── D1-07: criterio de «alto riesgo» (pendiente del bróker) ──────────────
+@pytest.mark.parametrize("precio,tasa,criterio,esperado", [
+    pytest.param("1", None, None, False, id="D1-07-sin-criterio-como-hoy"),
+    pytest.param("1", D("300"), {}, False, id="D1-07-criterio-vacio"),
+    pytest.param("0.99", None, {"precio_max": 1}, True, id="D1-07-precio-bajo-el-umbral"),
+    pytest.param("1", None, {"precio_max": 1}, False, id="D1-07-precio-en-el-umbral-no"),
+    pytest.param("3", D("100"), {"tasa_corta_min_pct": 100}, True, id="D1-07-tasa-SHORTINFO-100"),
+    pytest.param("3", D("50"), {"tasa_corta_min_pct": 100}, False, id="D1-07-tasa-menor"),
+    pytest.param("3", None, {"tasa_corta_min_pct": 0}, False, id="D1-07-sin-tasa-no-es-alto-riesgo"),
+    pytest.param("3", D("300"), {"precio_max": "1.5", "tasa_corta_min_pct": 250.0}, True, id="D1-07-basta-una"),
+])
+def test_D1_07_es_alto_riesgo(precio, tasa, criterio, esperado):
+    assert capital.es_alto_riesgo(D(precio), tasa, criterio) is esperado
+
+
+def test_D1_07_es_alto_riesgo_rechaza_basura():
+    with pytest.raises(ValueError):
+        capital.es_alto_riesgo(1.0, None, {"precio_max": 1})
+    with pytest.raises(ValueError):
+        capital.es_alto_riesgo(D("1"), None, {"precio_max": "uno"})
+    with pytest.raises(ValueError):
+        capital.es_alto_riesgo(D("1"), None, {"precio_max": True})
 
 
 @pytest.mark.parametrize("kw", [
@@ -441,7 +601,8 @@ def test_capital_es_puro_por_sus_imports():
 
 def test_motivos_distintos_y_estables():
     motivos = [MOTIVO_ENTERA, MOTIVO_PARCIAL_BP, MOTIVO_PARCIAL_TOPE, MOTIVO_SIN_BP, MOTIVO_SIN_EQUITY,
-               MOTIVO_BP_AGOTADO, MOTIVO_TOPE_ALCANZADO, MOTIVO_NADA_PEDIDO]
+               MOTIVO_BP_AGOTADO, MOTIVO_TOPE_ALCANZADO, MOTIVO_NADA_PEDIDO,
+               MOTIVO_PARCIAL_EQUITY, MOTIVO_EQUITY_AGOTADO]           # D1-01
     assert len(set(motivos)) == len(motivos)
     assert MOTIVO_SIN_BP == "sin BP"           # §3.21 lo fija literal
     assert (TOPE_CORTO_EQUITY, TOPE_CORTO_EQUITY_ALTO_RIESGO) == (D("1"), D("0.5"))   # 2c

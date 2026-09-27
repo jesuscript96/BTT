@@ -26,6 +26,9 @@ LAS TRAMPAS.
     ajena ya tratada está en `estado.ordenes_ajenas` y no se vuelve a avisar;
     las canceladas o rechazadas sin nada ejecutado no afectan a la posición y
     no se consideran (si no, cada reinicio pausaría por órdenes muertas).
+    E2c-01: cada caso 4 anota SIEMPRE `ajenas_tratadas` {ticker, ids}; el
+    diario las repone en `estado.ordenes_ajenas` al reconstruir, así un
+    reinicio no vuelve a pausar por las mismas órdenes manuales.
   * Un barrido puede llegar INCOMPLETO (un BP empujado que cierra el volcado
     antes de tiempo, un volcado sin marcadores, §5.11). Por eso: (a) un ticker
     AUSENTE de las posiciones de DAS es «sin información», nunca «plano»: los
@@ -57,6 +60,7 @@ LAS TRAMPAS.
 """
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -65,6 +69,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from app.bot_das import tokens as mod_tokens
+from app.bot_das.protocolo import cmd_get
 from app.bot_das.reglas import stops
 from app.bot_das.reglas.precios import de_float
 from app.bot_das.tipos import (
@@ -116,9 +121,11 @@ ORDER_SRC_PROPIO = "CMDAPI"          # manual L369-371: «CMDAPI means the order
 GRACIA_TRAS_FILL_S = 2.0             # riesgo 8: margen para que %POS alcance a los fills antes de que «DAS mande»
 SIN_ECO_S = 5.0                      # una orden nuestra Sending que DAS no lista pasado esto no salió (riesgo 3)
 ESPERA_SIN_MARCADORES_S = 0.5        # §5.11: volcado sin marcadores = 500 ms sin líneas nuevas
-COMANDOS_BARRIDO = ("GET POSITIONS", "GET ORDERS", "GET BP", "GET LOCATES")   # R-K-01 (+ GET TRADES tras un fill)
-COMANDO_TRADES = "GET TRADES"
+# R-K-01 (+ GET TRADES tras un fill). A-06: con `protocolo.cmd_get` (nombres cerrados); mismas cadenas que antes.
+COMANDOS_BARRIDO = (cmd_get("POSITIONS"), cmd_get("ORDERS"), cmd_get("BP"), cmd_get("LOCATES"))
+COMANDO_TRADES = cmd_get("TRADES")
 PETICION_PAUSA_GLOBAL = "pausa"      # tipo del diario que `reconstruir` convierte en pausa_global (sin «ticker»)
+ANOTACION_AJENAS = "ajenas_tratadas"  # E2c-01: {ticker, ids}; `diario.reconstruir` las mete en `estado.ordenes_ajenas`
 
 _LOTE_MUERTO = (EstadoLote.CERRADO, EstadoLote.CANCELADO)
 _RE_NUMERO = re.compile(r"\d+(?:[.,]\d+)*")
@@ -773,6 +780,11 @@ def _cancelar(ordenes: Iterable[Orden], motivo: str, ya: set[int]) -> list[Accio
     return salida
 
 
+def _esc(texto: Any) -> str:
+    """D2-08: texto variable hacia Telegram (parse_mode HTML) escapado: un «<» de DAS no pierde el aviso."""
+    return html.escape(str(texto), quote=False)
+
+
 def _ids_cancelados(acciones_: Iterable[Accion]) -> set[int]:
     return {a.id_das for a in acciones_ if isinstance(a, Cancelar)}
 
@@ -840,11 +852,23 @@ def _reparar_stops(d: Discrepancia, pos: Optional[PosicionTicker], cot: Optional
 
 def _caso_ajena(d: Discrepancia, estado: EstadoBot, pos: Optional[PosicionTicker], cot: Optional[Cotizacion],
                 cfg_stops: Mapping, tokens: Callable[[], int], ruta_stop: str, version: int) -> list[Accion]:
-    """Caso 4 (R-C-10 4, R-K-02, R-M-03): registrar, pausar (una vez), proteger lo descubierto, avisar 3."""
+    """Caso 4 (R-C-10 4, R-K-02, R-M-03): registrar, pausar (una vez), proteger lo descubierto, avisar 3.
+
+    E2c-01: las ajenas tratadas se anotan SIEMPRE (`Anotar("ajenas_tratadas",
+    {ids, ticker})`, también con la pausa ya puesta) para que
+    `diario.reconstruir` rellene `estado.ordenes_ajenas`: un reinicio no vuelve
+    a pausar por las mismas órdenes manuales tras un /sigue. E2c-03: una
+    posición DESCONOCIDA LARGA → además `Avisar(3)` «VENDER A MANO» (la
+    limpieza R-C-11 solo corre en posiciones conocidas; si saltaron a la vez un
+    stop manual y nuestra protección, nadie más vendería el exceso).
+    """
     ticker = d.ticker
     salida: list[Accion] = []
     for m in d.ajenas:
         estado.ordenes_ajenas[m.id] = m
+    if d.ajenas:
+        salida.append(Anotar(ANOTACION_AJENAS, {"ticker": ticker, "ids": [m.id for m in d.ajenas],
+                                                "regla": "R-K-02 / E2c-01"}))
     if not estado.pausa_global:
         estado.pausa_global = True
         salida.append(Anotar(PETICION_PAUSA_GLOBAL, {
@@ -855,8 +879,14 @@ def _caso_ajena(d: Discrepancia, estado: EstadoBot, pos: Optional[PosicionTicker
     salida.extend(_proteccion(ticker, d.descubiertas, neta, cot, d.avg_das, cfg_stops, tokens, ruta_stop, version))
     salida.extend(_cancelar(d.huerfanas, f"R-C-11: orden nuestra huérfana en {ticker} ({neta})", set()))
     salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"ajena:{ticker}",
-                         texto=(f"R-M-03: intervención humana en {ticker}: {d.detalle}. Se protege lo descubierto y NO se "
-                                f"abre nada nuevo hasta /sigue")))
+                         texto=(f"R-M-03: intervención humana en {_esc(ticker)}: {_esc(d.detalle)}. Se protege lo "
+                                f"descubierto y NO se abre nada nuevo hasta /sigue")))
+    if neta > 0 and not _conocida(pos):
+        salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"desconocida_larga:{ticker}",
+                             texto=(f"VENDER A MANO: la cuenta está LARGA {neta} en {_esc(ticker)} y ningún diario del bot "
+                                    f"conoce esa posición (¿saltaron a la vez un stop manual y la protección del bot?). "
+                                    f"El bot solo pone una protección de venta; no vende el exceso (R-C-10 (4), R-C-11 (3), "
+                                    f"E2c-03).")))
     return salida
 
 

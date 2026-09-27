@@ -61,11 +61,11 @@
   },
   {
     "clave": "postonly_cruza",
-    "descripcion": "Orden PostOnly (solo agregar) que removería liquidez al llegar: el libro se movió hasta nuestro precio.",
+    "descripcion": "Orden PostOnly (solo agregar) que removería liquidez al llegar: el libro se movió hasta nuestro precio. No es un error: NO se reintenta al mismo precio (volvería a cruzar) ni se pausa el ticker; la orden pasa YA a su fase de cruce (R-B-01 v3 en las entradas; tp_al_vencer u orden al ask en las salidas).",
     "regex": "post[\\s_-]*only|would\\s+(?:cross|lock)|add[\\s-]+liquidity[\\s-]+only|\\bALO\\b|locked\\s+or\\s+crossed",
-    "accion": "reintentar",
+    "accion": "pasar_a_cruce",
     "nivel": 2,
-    "fuente": "Documento §3.3 (literal del simulador «PostOnly would cross»); libro R-B-01 (ARCA ALO)",
+    "fuente": "Documento §3.3 (literal del simulador «PostOnly would cross»); libro R-B-01 (ARCA ALO); decisión del director (D2-09, 27-sep): pasar al cruce sin reintento ni pausa",
     "provisional": true,
     "ejemplos": ["PostOnly would cross", "Order would lock or cross the market (Add Liquidity Only)"]
   },

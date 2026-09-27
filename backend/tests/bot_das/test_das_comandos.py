@@ -743,6 +743,128 @@ def test_fichero_en_hilo(ruta_cmd, reloj):
     assert not lector.vivo
 
 
+# ═══════════════ C-01 / DC-03 / G1A-08 / G1A-19: comandos con ticker ═══════════
+@pytest.mark.parametrize("texto,nombre,args", [
+    ("/sigue", "sigue", []),
+    ("/sigue abc", "sigue", ["ABC"]),
+    ("/parar_avisos", "parar_avisos", []),
+    ("/parar_avisos abc", "parar_avisos", ["ABC"]),
+    ("/parar_avisos ABC BS", "parar_avisos", ["ABC"]),
+    ("/reanudar_avisos abc bs", "reanudar_avisos", ["ABC"]),
+    ("/reanudar_avisos ABC", "reanudar_avisos", ["ABC"]),
+], ids=lambda v: v if isinstance(v, str) else None)
+def test_C_01_sigue_y_avisos_aceptan_ticker(texto, nombre, args):
+    """C-01 / DC-03 / G1A-08 (R-G-03: «/sigue TICKER») y G1A-19 (R-G-01: «/parar_avisos X BS»): el ticker viaja en args."""
+    c = parsear(texto, JAUME, AUTORIZADOS)
+    assert (c.nombre, c.args, c.requiere) == (nombre, args, "confirmacion")
+
+
+@pytest.mark.parametrize("texto", [
+    "/sigue ABC DEF", "/sigue 123", "/sigue ABC SI",
+    "/parar_avisos ABC XY", "/parar_avisos ABC BS OTRA", "/parar_avisos 1ABC", "/reanudar_avisos ABC BS X",
+], ids=lambda t: "C-01 " + t)
+def test_C_01_sigue_y_avisos_args_invalidos(texto):
+    """C-01: más de un ticker, un ticker mal formado o algo distinto de «BS» detrás → args_invalidos con el uso nuevo."""
+    c = parsear(texto, JAUME, AUTORIZADOS)
+    assert c.requiere == "args_invalidos"
+    assert "TICKER" in respuesta_previa(c)
+
+
+def test_C_01_sigue_con_ticker_conserva_el_ticker_al_confirmar(reloj):
+    """C-01 / G1A-08: el dos pasos devuelve al decisor el MISMO args=[TICKER] que se pidió."""
+    conf = Confirmaciones(reloj)
+    ident = _id_de(conf.pedir(parsear("/sigue abc", JAUME, AUTORIZADOS)))
+    confirmado = conf.confirmar(JAUME, f"/confirmar {ident}")
+    assert (confirmado.nombre, confirmado.args, confirmado.requiere) == ("sigue", ["ABC"], "confirmado")
+
+
+def test_C_01_boton_del_cuadro_sigue_con_ticker(ruta_cmd, reloj):
+    """C-01: el botón del cuadro «sigue ABC» llega igual que por Telegram (args=[TICKER], ya confirmado)."""
+    recibidos: list[Comando] = []
+    lector = LectorComandosFichero(ruta_cmd, recibidos.append, reloj)
+    _escribir(ruta_cmd, _linea("s1", "sigue", ["abc"], reloj=reloj))
+    _escribir(ruta_cmd, _linea("s2", "parar_avisos", ["abc", "BS"], reloj=reloj))
+    assert lector.leer_ahora() == 2
+    assert [(c.nombre, c.args, c.requiere) for c in recibidos] == [
+        ("sigue", ["ABC"], "confirmado"), ("parar_avisos", ["ABC"], "confirmado")]
+
+
+# ═══════════════ C-02: offset de Telegram persistido ═══════════════════
+def test_C_02_dos_receptores_seguidos_no_repiten_el_mismo_update(servidor_tg, reloj, dir_bot):
+    """C-02: el ejecutor cae tras entregar «/cerrar ABC 100 SI»; Telegram lo devuelve otra vez → el segundo entrega 0."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    ahora = int(reloj.epoch())
+    lote = (200, {"ok": True, "result": [_update(900, JAUME, "/cerrar abc 100 SI", ahora)]})
+    servidor_tg.respuestas.extend([lote, lote])            # Telegram repite lo no confirmado
+    primeros: list[Comando] = []
+    assert _receptor(servidor_tg, reloj, primeros, ruta_offset=ruta).sondear() == 1
+    assert [(c.nombre, c.args) for c in primeros] == [("cerrar", ["ABC", "100"])]
+    assert json.loads(ruta.read_text(encoding="utf-8")) == {"offset": 901, "ultimo_update_id": 900}
+    segundos: list[Comando] = []
+    rec2 = _receptor(servidor_tg, reloj, segundos, ruta_offset=ruta)      # relanzado por el supervisor
+    assert rec2.offset == 901
+    assert rec2.sondear() == 0 and segundos == []
+    consulta = urllib.parse.parse_qs(urllib.parse.urlsplit(servidor_tg.peticiones[1]).query)
+    assert consulta["offset"] == ["901"], "el receptor nuevo pide desde el offset guardado"
+
+
+def test_C_02_offset_se_guarda_antes_de_entregar(servidor_tg, reloj, dir_bot):
+    """C-02: cuando al_comando se ejecuta, el offset YA está en disco (como mucho una vez)."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    ahora = int(reloj.epoch())
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(41, JAUME, "/estado", ahora),
+                                                                 _update(42, JAUME, "/salud", ahora)]}))
+    en_disco: list[int] = []
+
+    def al_comando(c):
+        en_disco.append(json.loads(ruta.read_text(encoding="utf-8"))["offset"])
+
+    rec = ReceptorTelegram(TOKEN_FALSO, AUTORIZADOS, al_comando, reloj, api=servidor_tg.url, espera_polling_s=0,
+                           ruta_offset=ruta)
+    assert rec.sondear() == 2 and en_disco == [42, 43]
+
+
+def test_C_02_updates_sin_comando_tambien_avanzan_el_offset_en_disco(servidor_tg, reloj, dir_bot):
+    """C-02: una foto o un chat ajeno no se entregan, pero constan como leídos en disco."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    ahora = int(reloj.epoch())
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(70, EXTRANO, "/estado", ahora),
+                                                                 _update(71, JAUME, None, ahora)]}))
+    rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
+    assert rec.sondear() == 0
+    assert json.loads(ruta.read_text(encoding="utf-8"))["offset"] == 72
+
+
+def test_C_02_parar_confirma_lo_leido_a_telegram(servidor_tg, reloj, dir_bot):
+    """C-02: parar() hace un getUpdates final con timeout 0 y el offset: Telegram da por leído el último lote."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    ahora = int(reloj.epoch())
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(5, JAUME, "/estado", ahora)]}))
+    rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
+    assert rec.sondear() == 1
+    antes = len(servidor_tg.peticiones)
+    rec.parar(1.0)
+    assert len(servidor_tg.peticiones) == antes + 1
+    consulta = urllib.parse.parse_qs(urllib.parse.urlsplit(servidor_tg.peticiones[-1]).query)
+    assert consulta["offset"] == ["6"] and consulta["timeout"] == ["0"] and consulta["limit"] == ["1"]
+
+
+def test_C_02_parar_sin_nada_leido_no_llama_a_telegram(servidor_tg, reloj):
+    """C-02: con offset 0 no hay nada que confirmar."""
+    rec = _receptor(servidor_tg, reloj, [])
+    rec.parar(1.0)
+    assert servidor_tg.peticiones == []
+
+
+def test_C_02_fichero_de_offset_corrupto_empieza_de_cero(servidor_tg, reloj, dir_bot, caplog):
+    """C-02: un telegram_offset ilegible no tumba el receptor: offset 0 (la caducidad de 120 s protege)."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    ruta.write_text("{roto", encoding="utf-8")
+    caplog.set_level(logging.WARNING, logger="btt.bot_das.comandos")
+    rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
+    assert rec.offset == 0 and "ilegible" in caplog.text
+
+
 # ═══════════════════════════ higiene ═══════════════════════════════════
 def test_importar_en_proceso_limpio_no_arranca_hilos_ni_trae_httpx():
     import subprocess

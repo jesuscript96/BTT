@@ -94,6 +94,11 @@ def test_orden_stoplmtp_limite_igual_al_disparo_se_admite():
                  id="STOPLMTP-disparo-fuera-de-tick"),
     pytest.param(dict(lado=Lado.COMPRA, tipo=TipoOrden.STOP_LIMITE_PP, stop=D("10.00"), precio=D("10.301")),
                  id="STOPLMTP-limite-fuera-de-tick"),
+    pytest.param(dict(lado=Lado.VENTA, tipo=TipoOrden.STOP_LIMITE_PP, stop=D("10.00"), precio=D("10.10")),
+                 id="L0-03-STOPLMTP-venta-limite-sobre-disparo"),
+    pytest.param(dict(lado=Lado.CORTO, tipo=TipoOrden.STOP_LIMITE_PP, stop=D("10.00"), precio=D("10.01")),
+                 id="L0-03-STOPLMTP-corto-limite-sobre-disparo"),
+    pytest.param(dict(stop=D("3.40")), id="L0-03-LMT-con-disparo"),
     pytest.param(dict(tipo=TipoOrden.MERCADO), id="MKT-con-precio"),
     pytest.param(dict(tipo=TipoOrden.MERCADO, precio=None, stop=D("10.00")), id="MKT-con-stop"),
     pytest.param(dict(tipo=TipoOrden.MERCADO, precio=None, post_only=True), id="PostOnly-sin-limite-MKT"),
@@ -107,6 +112,14 @@ def test_orden_stoplmtp_limite_igual_al_disparo_se_admite():
 def test_orden_nueva_rechaza(cambios):
     with pytest.raises(ValueError):
         _orden(**cambios)
+
+
+@pytest.mark.parametrize("lado", [Lado.VENTA, Lado.CORTO])
+@pytest.mark.parametrize("limite", [D("9.90"), D("10.00")], ids=["bajo-disparo", "igual-disparo"])
+def test_L0_03_stoplmtp_venta_con_limite_no_superior_al_disparo_se_admite(lado, limite):
+    """L0-03: la regla simétrica solo rechaza límite > disparo; ≤ sigue valiendo."""
+    o = _orden(lado=lado, tipo=TipoOrden.STOP_LIMITE_PP, stop=D("10.00"), precio=limite)
+    assert o.precio <= o.stop
 
 
 def test_orden_nueva_es_inmutable():
@@ -296,7 +309,7 @@ ACCIONES = (EnviarOrden, Cancelar, CancelarTicker, Reemplazar, InvalidarSerie, C
             LocateInquire, LocateComprar, LocateOferta, Avisar, Anotar, Programar, Desprogramar, PublicarFoto,
             PedirAlSupervisor, Salir)
 MENSAJES = (SenalRecibida, DeDAS, Tic, Temporizador, ConfigNueva, tipos.ConexionDAS, HiloCaido,
-            tipos.ComandoRecibido)
+            tipos.ComandoRecibido, tipos.OrdenDescartada)   # D2a-06: +OrdenDescartada
 
 
 def test_las_17_acciones_del_documento():
@@ -305,8 +318,9 @@ def test_las_17_acciones_del_documento():
         assert dataclasses.is_dataclass(clase) and clase.__dataclass_params__.frozen
 
 
-def test_los_8_mensajes_del_documento():
-    assert set(Mensaje.__subclasses__()) == set(MENSAJES) and len(MENSAJES) == 8
+def test_los_9_mensajes_del_documento():
+    """Los 8 de §2 más `OrdenDescartada` (D2a-06)."""
+    assert set(Mensaje.__subclasses__()) == set(MENSAJES) and len(MENSAJES) == 9
     for clase in MENSAJES:
         assert clase.__dataclass_params__.frozen
 
@@ -401,6 +415,7 @@ def test_lote_e_intento_defaults():
     pytest.param(NivelesStop, ["principal_disparo", "principal_limite", "emergencia_disparo", "emergencia_limite",
                                "bajo_banda"], id="NivelesStop-ajuste-a"),
     pytest.param(StopDeseado, ["proposito", "nivel", "qty", "disparo", "limite"], id="StopDeseado-ajuste-a"),
+    pytest.param(tipos.OrdenDescartada, ["token", "serie", "version", "motivo", "ticker"], id="OrdenDescartada-D2a-06"),
 ])
 def test_orden_de_campos_segun_seccion_2(clase, campos):
     assert [f.name for f in dataclasses.fields(clase)] == campos
@@ -573,3 +588,50 @@ def test_config_ejemplo_sin_credenciales(config_cruda):
     texto = json.dumps(config_cruda).lower()
     for prohibido in ("telegram", "chat_id", "authkey", "password", "das_clave", "cuenta_das", "api_key"):
         assert prohibido not in texto
+
+
+# ── añadidos de la ronda de correcciones (27-sep) ─────────────────────────
+def test_D2a_06_orden_descartada_defaults_e_inmutable():
+    """D2a-06: el emisor avisa al decisor de un NEWORDER purgado por versión; solo `token` es obligatorio."""
+    m = tipos.OrdenDescartada(token=100_269_001)
+    assert (m.serie, m.version, m.motivo, m.ticker) == (None, 0, "descartada por versión", None)
+    assert isinstance(m, Mensaje)
+    completo = tipos.OrdenDescartada(token=100_269_002, serie="stops:XYZ", version=3, motivo="versión 3 < 4",
+                                     ticker="XYZ")
+    assert completo.serie == "stops:XYZ" and completo.version == 3
+    with pytest.raises(FrozenInstanceError):
+        m.token = 1   # type: ignore[misc]
+
+
+@pytest.mark.parametrize("abierta,llenas,es_abierta,esperado", [
+    pytest.param(300, 200, True, 300, id="A-02-abierta"),
+    pytest.param(300, 200, False, 500, id="A-02-total"),
+    pytest.param(300, 0, False, 300, id="A-02-total-sin-fills"),
+    pytest.param(1, 1, True, 1, id="A-02-canario-abierta"),
+    pytest.param(1, 1, False, 2, id="A-02-canario-total"),
+])
+def test_A_02_share_de_replace(abierta, llenas, es_abierta, esperado):
+    assert tipos.share_de_replace(abierta, llenas, share_es_abierta=es_abierta) == esperado
+
+
+def test_A_02_share_de_replace_defecto_es_abierta():
+    assert tipos.REPLACE_SHARE_ES_ABIERTA is True
+    assert tipos.share_de_replace(300, 200) == 300
+
+
+@pytest.mark.parametrize("abierta,llenas", [
+    pytest.param(0, 0, id="abierta-cero-es-un-Cancelar"),
+    pytest.param(-5, 0, id="abierta-negativa"),
+    pytest.param(300.0, 0, id="abierta-float"),
+    pytest.param(True, 0, id="abierta-bool"),
+    pytest.param(300, -1, id="llenas-negativa"),
+    pytest.param(300, 2.0, id="llenas-float"),
+])
+def test_A_02_share_de_replace_rechaza(abierta, llenas):
+    with pytest.raises(ValueError):
+        tipos.share_de_replace(abierta, llenas)
+
+
+def test_D1_12_cotizacion_fresca_max_s_en_tipos():
+    """D1-12: la edad máxima de la cotización vive en tipos (mercado_das y entrada la importan de aquí)."""
+    assert tipos.COTIZACION_FRESCA_MAX_S == 5.0

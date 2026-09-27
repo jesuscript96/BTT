@@ -202,10 +202,11 @@ def tuberia():
     creadas: list[fs.FuenteTuberia] = []
 
     def crear(direccion=("127.0.0.1", 0), authkey: bytes = b"clave-de-test", hash_esperado: str = HASH_BUENO,
-              version_minima: str = VERSION, rec: Optional[Recolector] = None, espera_hola_s: float = 5.0):
+              version_minima: str = VERSION, rec: Optional[Recolector] = None, espera_hola_s: float = 5.0,
+              espera_auth_s: float = 5.0):
         rec = rec if rec is not None else Recolector()
         fuente = fs.FuenteTuberia(direccion, authkey, rec, Reloj(), hash_esperado, version_minima,
-                                  al_aviso=rec.al_aviso, espera_hola_s=espera_hola_s)
+                                  al_aviso=rec.al_aviso, espera_hola_s=espera_hola_s, espera_auth_s=espera_auth_s)
         creadas.append(fuente)
         fuente.arrancar()
         return fuente, rec
@@ -546,14 +547,19 @@ def test_enlace_lee_el_entorno_en_la_llamada(monkeypatch):
 
 
 def test_enlace_encola_sin_bloquear_y_respeta_el_tope():
-    """§6.1: los métodos vuelven al instante aunque no haya ejecutor; al tope se tira lo MÁS VIEJO y se cuenta."""
+    """§6.1: los métodos vuelven al instante aunque no haya ejecutor; al tope se tira lo MÁS VIEJO y se cuenta.
+
+    F-03: antes se probaba con cinco latidos; ahora un latido sustituye al
+    pendiente, así que el tope se prueba con «eventos» (que no se sustituyen)
+    y los latidos van en `test_F_03_*`.
+    """
     enlace = enl.EnlaceEjecutor(_puerto_cerrado(), b"k", tope=3)        # sin arrancar: nada consume
     t0 = time.perf_counter()
     for i in range(5):
-        enlace.latido(float(i), True)
+        enlace.eventos("ABCD", f"09:3{i}", None, [], False)
     assert time.perf_counter() - t0 < 0.5
     assert enlace.pendientes == 3 and enlace.perdidos == 2 and enlace.encolados == 5
-    assert [m["ultima_vela_en"] for m in enlace._cola] == [2.0, 3.0, 4.0]
+    assert [m["minuto"] for m in enlace._cola] == ["09:32", "09:33", "09:34"]
     enlace.parar(vaciar_s=0.0)
     with pytest.raises(ValueError):
         enl.EnlaceEjecutor(_puerto_cerrado(), b"k", tope=0)
@@ -569,7 +575,7 @@ def test_enlace_sin_ejecutor_reintenta_y_conserva(enlaces):
 
 
 def test_tuberia_mensajes_de_todos_los_tipos_en_proceso(tuberia, enlaces, motor_falso):
-    """Los seis mensajes de §3.11 con un `Evento` REAL picklado (momento pd.Timestamp) y el id de R-A-05."""
+    """Los seis mensajes de §3.11 con un `Evento` REAL (momento pd.Timestamp) y el id de R-A-05; viaja como primitivos (F-01)."""
     import pandas as pd
     from app.services.bot_alerts_cliente import id_evento
     from app.services.bot_alerts_engine import Evento
@@ -593,8 +599,12 @@ def test_tuberia_mensajes_de_todos_los_tipos_en_proceso(tuberia, enlaces, motor_
     assert clases == ["hidratado", "evento", "evento", "radar", "latido_feed", "dia_nuevo"]
     hid, ev1, ev2, radar, latido, _dia = rec.senales
     assert hid.ticker == "ABCD" and hid.feed == {"n_velas": 42, "prev_close": 0.99}
-    assert dataclasses.asdict(ev1.evento) == dataclasses.asdict(ev)
-    assert ev1.id == ev2.id == id_evento(ev) and ev1.momento == ev.momento
+    # F-01: llega como EventoLigero con los mismos campos y `momento` en texto (antes: el Evento tal cual)
+    assert type(ev1.evento) is fs.EventoLigero
+    ligero = dataclasses.asdict(ev1.evento)
+    assert ligero.pop("extra") == {}
+    assert ligero == {**dataclasses.asdict(ev), "momento": "2026-09-25 09:31:00"}
+    assert ev1.id == ev2.id == id_evento(ev) and ev1.momento == "2026-09-25 09:31:00"
     assert ev1.recuperada is False and ev2.recuperada is True and ev2.origen == "tuberia"
     assert radar.precio_radar == Decimal("1.25")
     assert radar.estimacion == [{"nombre": "1B", "acciones": 10, "strategy_id": "s1"}]
@@ -868,3 +878,360 @@ def test_las_fuentes_cumplen_el_protocolo(motor_falso):
     assert set(fuente.salud()) >= {"viva", "ultimo_en", "origen"}
     assert isinstance(fs.FuenteTuberia(("127.0.0.1", 0), b"k", Recolector(), Reloj(), HASH_BUENO, VERSION),
                       fs.FuenteSenales)
+
+
+# ═══ 6. arreglos de la revisión (F-01…F-05, D2-06) ══════════════════════
+_HIJO_TUBERIA_LIMPIA = """
+import json, sys, time
+from app.bot_das import VERSION
+from app.bot_das import fuente_senales as fs
+from app.bot_das.reloj import Reloj
+clave, esperados, motor_hash = bytes.fromhex(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
+senales = []
+f = fs.FuenteTuberia(("127.0.0.1", 0), clave, senales.append, Reloj(), motor_hash, VERSION)
+f.arrancar()
+antes = sorted(m for m in ("pandas", "numpy") if m in sys.modules)
+print(json.dumps(list(f.direccion)), flush=True)
+fin = time.monotonic() + 30
+while len([s for s in senales if s.clase == "evento"]) < esperados and time.monotonic() < fin:
+    time.sleep(0.02)
+ev = [s for s in senales if s.clase == "evento"]
+mods = sorted(m for m in ("pandas", "numpy", "httpx", "websockets", "app.services.bot_alerts_engine",
+                          "app.services.bot_alerts_cliente", "app.services.bot_alerts_runner") if m in sys.modules)
+print(json.dumps({"antes": antes, "mods": mods, "ids": [s.id for s in ev], "momentos": [s.momento for s in ev],
+                  "clases": sorted({type(s.evento).__name__ for s in ev}),
+                  "precios": sorted({type(s.evento.precio).__name__ for s in ev}),
+                  "malformados": f.malformados}), flush=True)
+f.parar()
+"""
+
+
+def _eventos_reales():
+    """Tres `Evento` REALES del motor con tipos de pandas/numpy dentro (lo que manda bot.py de verdad)."""
+    np = pytest.importorskip("numpy")
+    import pandas as pd
+    from app.services.bot_alerts_engine import Evento
+    e1 = Evento(tipo="entrada", ticker="ABCD", strategy_id="s1", estrategia="1B",
+                momento=pd.Timestamp("2026-09-25 09:31"), precio=np.float64(1.23), direccion="Short",
+                acciones=np.float64(100.0), stop=np.float64(1.30), entrada_idx=np.int64(7))
+    e2 = Evento(tipo="salida", ticker="ABCD", strategy_id="s2", estrategia="2C",
+                momento=pd.Timestamp("2026-09-25 09:32:00.500"), precio=1.10, direccion="Short",
+                acciones=50.0, motivo="TP", cuenta="B")
+    e3 = Evento(tipo="entrada", ticker="ABCD", strategy_id="s3", estrategia="3D",
+                momento=pd.Timestamp("2026-09-25 09:32"), precio=1.11, direccion="Short", acciones=10.0)
+    return e1, e2, e3
+
+
+def test_F_01_evento_ligero_tiene_los_campos_de_evento():
+    """F-01: `EventoLigero` replica los campos (y el defecto de `estado`) de `bot_alerts_engine.Evento`."""
+    from app.services.bot_alerts_engine import Evento
+    propios = {f.name: f for f in dataclasses.fields(fs.EventoLigero)}
+    del propios["extra"]
+    del propios["estado"]
+    ajenos = {f.name for f in dataclasses.fields(Evento)}
+    assert set(propios) | {"estado"} == ajenos
+    assert fs.EventoLigero().estado == "alerta"
+    ev = fs.EventoLigero.desde_dict({"tipo": "entrada", "estado": None, "seq": 4, "nuevo_campo": "x"})
+    assert ev.estado == "alerta" and ev.seq == 4 and ev.nuevo_campo == "x"
+    assert ev.extra == {"seq": 4, "nuevo_campo": "x"}
+    with pytest.raises(AttributeError):
+        _ = ev.no_existe
+    assert fs.campo_ausente(fs.EventoLigero.desde_dict({"tipo": "entrada", "ticker": "A", "momento": "m"})) \
+        == "strategy_id"
+
+
+def test_F_01_id_de_evento_paridad_con_id_evento():
+    """F-01 / R-A-05: la réplica local da el MISMO id que `bot_alerts_cliente.id_evento`, sobre Evento y sobre EventoLigero."""
+    from app.services.bot_alerts_cliente import id_evento
+    for ev in _eventos_reales():
+        ligero = fs.EventoLigero.desde_dict(enl.a_primitivo(ev))
+        assert fs.id_de_evento(ev) == id_evento(ev) == fs.id_de_evento(ligero) == id_evento(ligero)
+    assert id_evento(_eventos_reales()[1]).endswith("|B")                  # con cuenta
+    falso = EventoFalso("entrada", "X", "s", "2026-09-25 09:30:00.123456", 0)
+    assert fs.id_de_evento(falso) == id_evento(falso)
+
+
+def test_F_01_a_primitivo_no_deja_tipos_de_pandas_ni_numpy():
+    """F-01: el mensaje que sale del enlace solo lleva primitivos; `momento` en texto «AAAA-MM-DD HH:MM:SS»."""
+    import pickle
+    import pandas as pd
+    e1, e2, _ = _eventos_reales()
+    msg = {"t": "eventos", "ticker": "ABCD", "minuto": "09:31", "timestamp": pd.Timestamp("2026-09-25 09:31"),
+           "eventos": [e1, e2], "recuperada": False, "precio": Decimal("1.5"), "tupla": (1, 2)}
+    prim = enl.a_primitivo(msg)
+    assert prim["timestamp"] == "2026-09-25 09:31:00" and prim["tupla"] == [1, 2]
+    assert prim["precio"] == Decimal("1.5")
+    d1, d2 = prim["eventos"]
+    assert d1["momento"] == "2026-09-25 09:31:00" and d2["momento"] == "2026-09-25 09:32:00"
+    assert type(d1["precio"]) is float and type(d1["acciones"]) is float and type(d1["entrada_idx"]) is int
+    assert d2["cuenta"] == "B"
+
+    def tipos(x):
+        if isinstance(x, dict):
+            return set().union(*(tipos(v) for v in x.values())) | {type(k) for k in x}
+        if isinstance(x, list):
+            return set().union(set(), *(tipos(v) for v in x))
+        return {type(x)}
+
+    assert tipos(prim) <= {dict, list, str, int, float, bool, type(None), Decimal}
+    datos = pickle.dumps(prim)
+    assert fs._DespickladorPrimitivos(__import__("io").BytesIO(datos)).load() == prim
+    with pytest.raises(pickle.UnpicklingError):
+        fs._DespickladorPrimitivos(__import__("io").BytesIO(pickle.dumps(e1))).load()
+
+
+def test_F_01_tuberia_descarta_un_pickle_con_clases(tuberia):
+    """F-01: un pickle que nombra una clase (un enlace viejo que manda el Evento tal cual) se descarta como ilegible."""
+    fuente, rec = tuberia()
+    conn = Client(fuente.direccion, authkey=b"clave-de-test")
+    try:
+        conn.send({"t": "hola", "version": VERSION, "motor_hash": HASH_BUENO})
+        assert conn.poll(5) and conn.recv()["t"] == "ok"
+        conn.send({"t": "eventos", "ticker": "ABCD", "eventos": [EventoFalso("entrada", "ABCD", "s1", "m", 0)]})
+        conn.send({"t": "eventos", "ticker": "ABCD", "eventos": [{"tipo": "entrada", "ticker": "ABCD",
+                                                                 "strategy_id": "s1", "momento": "m1"}]})
+        assert _esperar(lambda: len(rec.de_clase("evento")) == 1)
+    finally:
+        conn.close()
+    assert fuente.malformados == 1
+    assert rec.de_clase("evento")[0].evento.momento == "m1"
+    assert len([a for a in rec.avisos if "ilegible" in a[1]]) == 1
+
+
+def test_F_01_ejecutor_limpio_no_carga_pandas_con_la_primera_senal(enlaces):
+    """F-01 / riesgo 29: un proceso LIMPIO con FuenteTuberia recibe Evento reales (pd.Timestamp, np.float64) y no carga pandas, numpy ni httpx."""
+    from app.services.bot_alerts_cliente import id_evento
+    e1, e2, e3 = _eventos_reales()
+    clave = _clave()
+    with subprocess.Popen([sys.executable, "-c", _HIJO_TUBERIA_LIMPIA, clave.hex(), "3", HASH_BUENO],
+                          cwd=str(BACKEND), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          encoding="utf-8", env={**os.environ, "PYTHONPATH": str(BACKEND),
+                                                 "PYTHONIOENCODING": "utf-8"}) as hijo:
+        try:
+            direccion = tuple(json.loads(hijo.stdout.readline()))
+            enlace = enlaces(direccion, authkey=clave)
+            enlace.hidratado("ABCD", 10, [e1], 0.99)
+            enlace.eventos("ABCD", "09:32", e3.momento, [e3, e2], False)   # D2-06: la salida sale antes
+            linea = hijo.stdout.readline()
+            assert linea, hijo.stderr.read()
+            informe = json.loads(linea)
+        finally:
+            try:
+                hijo.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                hijo.kill()
+                hijo.wait(timeout=5)
+    assert informe["antes"] == []
+    assert informe["mods"] == [], f"el ejecutor cargó {informe['mods']} con la primera señal"
+    assert informe["ids"] == [id_evento(e1), id_evento(e2), id_evento(e3)]
+    assert informe["momentos"] == ["2026-09-25 09:31:00", "2026-09-25 09:32:00", "2026-09-25 09:32:00"]
+    assert informe["clases"] == ["EventoLigero"] and informe["precios"] == ["float"]
+    assert informe["malformados"] == 0
+
+
+def test_D2_06_tuberia_entrega_la_tanda_ordenada_por_prioridad(tuberia, enlaces):
+    """D2-06 / R-D-07: [entrada B, pirámide add, pirámide lot_tp, salida A] → salida, lot_tp, add, entrada."""
+    fuente, rec = tuberia()
+    enlace = enlaces(fuente.direccion)
+    tanda = [EventoFalso("entrada", "ABCD", "sB", "m", 0), EventoFalso("piramide", "ABCD", "sC", "m", 1),
+             EventoFalso("piramide", "ABCD", "sD", "m", 2), EventoFalso("salida", "ABCD", "sA", "m", 3)]
+    dicts = [dataclasses.asdict(e) for e in tanda]
+    dicts[1]["accion_piramide"] = "add"
+    dicts[2]["accion_piramide"] = "lot_tp"
+    enlace.eventos("ABCD", "09:31", None, dicts, False)
+    assert _esperar(lambda: len(rec.de_clase("evento")) == 4)
+    assert [s.evento.seq for s in rec.de_clase("evento")] == [3, 2, 1, 0]
+
+
+def test_D2_06_en_proceso_ordena_la_tanda_de_la_vela(motor_falso, monkeypatch):
+    """D2-06: `FuenteEnProceso.vela` entrega el TP de A antes que la entrada de B aunque el motor los dé al revés."""
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso([_estrategia()], rec, RelojSimulado(INICIO_REPLAY))
+    tanda = [EventoFalso("entrada", "ABCD", "sB", "2026-09-25 04:00:00", 0),
+             EventoFalso("salida", "ABCD", "sA", "2026-09-25 04:00:00", 1)]
+    monkeypatch.setattr(fuente.runner, "nueva_vela", lambda *a, **k: list(tanda))
+    fuente.vela("ABCD", _velas(1)[0])
+    assert [s.evento.tipo for s in rec.de_clase("evento")] == ["salida", "entrada"]
+
+
+def test_D2_06_si_ordenar_falla_la_tanda_sale_en_el_orden_del_motor(monkeypatch):
+    """D2-06: un fallo en `salidas.prioridad` no pierde señales: se entregan en el orden del motor."""
+    from app.bot_das.reglas import salidas
+
+    def revienta(_s):
+        raise RuntimeError("prioridad rota")
+
+    monkeypatch.setattr(salidas, "prioridad", revienta)
+    senales = [Senal(clase="evento", ticker="A", id=str(i), evento=EventoFalso(t, "A", "s", "m", i))
+               for i, t in enumerate(("entrada", "salida"))]
+    assert fs.ordenar_tanda(senales) == senales
+
+
+def test_F_02_cliente_callado_no_deja_sorda_la_tuberia(tuberia, enlaces):
+    """F-02: un socket local que conecta y no habla ya no bloquea el accept; el enlace legítimo entra en < 10 s."""
+    fuente, rec = tuberia(espera_auth_s=1.0)
+    callado = socket.create_connection(fuente.direccion, timeout=5)
+    try:
+        time.sleep(0.2)
+        t0 = time.monotonic()
+        bueno = enlaces(fuente.direccion)
+        bueno.dia_nuevo()
+        assert _esperar(lambda: len(rec.de_clase("dia_nuevo")) == 1, segundos=10.0)
+        assert time.monotonic() - t0 < 10.0
+    finally:
+        callado.close()
+    assert fuente.autenticaciones_caducadas >= 1 and fuente.salud()["autenticaciones_caducadas"] >= 1
+
+
+def test_F_02_cliente_que_manda_medio_mensaje_se_corta(tuberia, enlaces):
+    """F-02: medio mensaje y silencio → el `recv` sale por `SO_RCVTIMEO`; la tubería sigue aceptando."""
+    fuente, rec = tuberia(espera_auth_s=1.0)
+    raro = socket.create_connection(fuente.direccion, timeout=5)
+    try:
+        raro.recv(64)                                   # el reto HMAC que manda el Listener
+        raro.sendall(b"\x00\x00\x00\x10\x01")           # cabecera de 16 bytes y solo uno de cuerpo
+        bueno = enlaces(fuente.direccion)
+        bueno.dia_nuevo()
+        assert _esperar(lambda: len(rec.de_clase("dia_nuevo")) == 1, segundos=10.0)
+    finally:
+        raro.close()
+    assert fuente.autenticaciones_caducadas >= 1
+
+
+def test_F_02_clave_incorrecta_cierra_la_conexion(tuberia):
+    """F-02: con un digest malo el servidor contesta FAILURE y CIERRA la conexión (antes quedaba abierta hasta el GC)."""
+    from multiprocessing import connection as mpc
+    fuente, rec = tuberia()
+    conn = Client(fuente.direccion)                     # sin authkey: el saludo lo hace el test a mano
+    try:
+        reto = conn.recv_bytes(256)
+        assert reto.startswith(mpc.CHALLENGE)
+        conn.send_bytes(b"x" * 16)                      # digest incorrecto
+        assert conn.recv_bytes(256) == mpc.FAILURE
+        assert conn.poll(5)
+        with pytest.raises((EOFError, OSError)):
+            conn.recv_bytes()
+    finally:
+        conn.close()
+    assert _esperar(lambda: fuente.autenticaciones_fallidas == 1)
+    assert len([a for a in rec.avisos if "clave incorrecta" in a[1]]) == 1
+
+
+def test_F_03_los_latidos_no_expulsan_eventos():
+    """F-03: tope 3, dos «eventos» y diez latidos → quedan los 2 eventos y el ÚLTIMO latido; nada perdido."""
+    enlace = enl.EnlaceEjecutor(_puerto_cerrado(), b"k", tope=3)
+    enlace.eventos("ABCD", "09:30", None, [], False)
+    for i in range(5):
+        enlace.latido(float(i), True)
+    enlace.eventos("ABCD", "09:31", None, [], False)
+    for i in range(5, 10):
+        enlace.latido(float(i), True)
+    cola = list(enlace._cola)
+    assert [m["t"] for m in cola] == ["eventos", "eventos", "latido"]
+    assert cola[-1]["ultima_vela_en"] == 9.0
+    assert enlace.perdidos == 0 and enlace.latidos_sustituidos == 9 and enlace.encolados == 12
+    assert enlace.salud()["latidos_sustituidos"] == 9
+    enlace.parar(vaciar_s=0.0)
+
+
+def test_F_03_cola_llena_tira_antes_latidos_y_radar():
+    """F-03: con la cola llena se sacrifica el radar/latido más viejo; un latido que no cabe se tira él."""
+    enlace = enl.EnlaceEjecutor(_puerto_cerrado(), b"k", tope=3)
+    enlace.eventos("ABCD", "09:30", None, [], False)
+    enlace.radar([{"ticker": "ABCD", "precio": 1.0, "estimacion": []}], {})
+    enlace.eventos("ABCD", "09:31", None, [], False)
+    enlace.eventos("ABCD", "09:32", None, [], False)               # llena → fuera el radar, no el evento viejo
+    assert [m.get("minuto") for m in enlace._cola] == ["09:30", "09:31", "09:32"] and enlace.perdidos == 1
+    enlace.latido(1.0, True)                                        # llena de eventos → el latido no expulsa nada
+    assert [m.get("minuto") for m in enlace._cola] == ["09:30", "09:31", "09:32"] and enlace.perdidos == 2
+    enlace.dia_nuevo()                                              # sin desechables: se tira el más viejo
+    assert [m["t"] for m in enlace._cola] == ["eventos", "eventos", "dia_nuevo"] and enlace.perdidos == 3
+    enlace.parar(vaciar_s=0.0)
+
+
+def test_F_03_devolver_no_repone_un_latido_viejo():
+    """F-03: un latido que falló al enviarse no vuelve si ya hay otro más nuevo; un evento sí vuelve a la cabeza."""
+    enlace = enl.EnlaceEjecutor(_puerto_cerrado(), b"k", tope=3)
+    enlace.latido(2.0, True)
+    enlace._devolver({"t": "latido", "ultima_vela_en": 1.0, "feed_vivo": True})
+    assert [m["ultima_vela_en"] for m in enlace._cola] == [2.0]
+    enlace._devolver({"t": "eventos", "minuto": "09:30"})
+    assert [m["t"] for m in enlace._cola] == ["eventos", "latido"]
+    enlace.eventos("ABCD", "09:31", None, [], False)
+    enlace._devolver({"t": "eventos", "minuto": "09:29"})             # llena: se sacrifica el latido, no el evento
+    assert [m.get("minuto") for m in enlace._cola] == ["09:29", "09:30", "09:31"]
+    enlace.parar(vaciar_s=0.0)
+
+
+def _velas_de_procesos():
+    """`_velas` de tests/test_bot_alerts_procesos.py (la fila de §10 pide ESAS velas).
+
+    Se extrae SOLO esa función del fichero (ast) en vez de importar el módulo
+    entero, que arrastra los procesos del bot de alertas y sus marcas de pytest.
+    """
+    import ast
+    fuente = (BACKEND / "tests" / "test_bot_alerts_procesos.py").read_text(encoding="utf-8")
+    nodo = next(n for n in ast.parse(fuente).body if isinstance(n, ast.FunctionDef) and n.name == "_velas")
+    espacio: dict = {}
+    exec(compile(ast.Module(body=[nodo], type_ignores=[]), "test_bot_alerts_procesos.py", "exec"), espacio)
+    return espacio["_velas"]
+
+
+ESTRATEGIA_REAL = {
+    "strategy_id": "real-1", "name": "Real mínima", "riesgo_usd": 300.0,
+    "definition": {"bias": "short",
+                   "entry_logic": {"root_condition": {"type": "group", "operator": "AND", "conditions": [
+                       {"type": "indicator_comparison", "source": {"name": "Bar Close"},
+                        "comparator": "GREATER_THAN", "target": 1.095}]}},
+                   "exit_logic": {"root_condition": {"type": "group", "operator": "AND", "conditions": [
+                       {"type": "indicator_comparison", "source": {"name": "Bar Close"},
+                        "comparator": "GREATER_THAN", "target": 1.195}]}},
+                   "risk_management": {"use_stop_loss": True, "stop_loss_mode": "Fixed", "fixed_stop_loss_pct": 50,
+                                       "hard_stop": {"type": "Percentage", "value": 50}}},
+    "ventana": {"inicio": "04:00", "fin": "16:00"},
+}
+
+
+def test_F_04_paridad_con_runner_directo_y_motor_real():
+    """F-04 / R-A-06: SIN motor falso, con una estrategia real mínima y las velas de test_bot_alerts_procesos._velas."""
+    import copy
+    import pandas as pd
+    from app.services.bot_alerts_cliente import id_evento
+    from app.services.bot_alerts_runner import RunnerAlertas
+
+    velas = _velas_de_procesos()(n=30)                                  # 09:30 … 09:59 del 23-sep, 1,00 → 1,29
+    reloj = RelojSimulado(datetime(2026, 9, 23, 9, 35, 5, tzinfo=ET))    # la de 09:34 acaba de cerrar
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso([copy.deepcopy(ESTRATEGIA_REAL)], rec, reloj, al_aviso=rec.al_aviso)
+    directo = RunnerAlertas([copy.deepcopy(ESTRATEGIA_REAL)], al_avisar=None)
+    stats = {"prev_close": 0.9}
+    fuente.hidratar("AAA", velas[:5], stats)
+    esperados = list(directo.hidratar("AAA", pd.DataFrame(velas[:5]), stats,
+                                      ahora=pd.Timestamp("2026-09-23 09:35:05")))
+    for i, v in enumerate(velas[5:], start=5):
+        reloj.fijar(datetime(2026, 9, 23, 9, 30, tzinfo=ET) + timedelta(minutes=i + 1, seconds=2))
+        vela = dict(v, timestamp=pd.Timestamp(v["timestamp"]))
+        fuente.vela("AAA", vela)
+        esperados.extend(directo.nueva_vela("AAA", dict(vela)))
+    senales = rec.de_clase("evento")
+    assert {e.tipo for e in esperados} == {"entrada", "salida"}, "la estrategia real debía entrar y salir"
+    assert [dataclasses.asdict(s.evento) for s in senales] == [dataclasses.asdict(e) for e in esperados]
+    assert [s.id for s in senales] == [id_evento(e) for e in esperados]
+    assert fuente.fallos_motor == 0 and rec.avisos == []
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="tubería con nombre de Windows")
+def test_F_05_parar_despierta_una_tuberia_con_nombre(tuberia, enlaces):
+    """F-05: con `\\\\.\\pipe\\…` el accept se despierta al parar (antes el hilo se abandonaba a los 5 s)."""
+    nombre = "\\\\.\\pipe\\bot_das_test_" + os.urandom(6).hex()
+    fuente, rec = tuberia(direccion=nombre)
+    enlace = enlaces(nombre)
+    enlace.dia_nuevo()
+    assert _esperar(lambda: len(rec.de_clase("dia_nuevo")) == 1)
+    enlace.parar(vaciar_s=0.0)
+    time.sleep(0.3)                                                     # el hilo vuelve a quedarse en accept()
+    t0 = time.monotonic()
+    fuente.parar()
+    assert time.monotonic() - t0 < 3.0
+    assert fuente._hilo is not None and not fuente._hilo.vivo
+    assert fuente.salud()["viva"] is False

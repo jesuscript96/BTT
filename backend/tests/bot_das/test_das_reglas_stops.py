@@ -162,9 +162,15 @@ def test_niveles_limit_up_10_50_baja_la_emergencia_bajo_la_banda(cfg_stops):
 
 
 def test_niveles_limit_up_bajo_el_nivel_recorta_los_dos_disparos(cfg_stops):
-    """R-F-02: banda 9,90 < L: principal Y emergencia bajan a 9,75 / 10,05 («por encima o coincide»)."""
+    """R-F-02: banda 9,90 < L: principal Y emergencia bajan a 9,75 / 10,05 («por encima o coincide»).
+
+    Son los PRECIOS; D2a-01: con los dos disparos iguales `conjunto_deseado` pone SOLO la emergencia (nunca dos stops
+    sobre las mismas acciones al mismo precio).
+    """
     n = niveles(D("10"), cfg_stops, D("9.9"))
     assert n == NivelesStop(D("9.75"), D("10.05"), D("9.75"), D("10.05"), True)
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    assert conjunto_deseado(pos, cfg_stops, D("9.9")) == [StopDeseado(Proposito.STOP_EMERGENCIA, D("10"), 100, D("9.75"), D("10.05"))]
 
 
 def test_niveles_banda_igual_al_disparo_tambien_recorta(cfg_stops):
@@ -175,10 +181,16 @@ def test_niveles_banda_igual_al_disparo_tambien_recorta(cfg_stops):
 
 
 def test_niveles_emergencia_recortada_puede_quedar_bajo_el_principal(cfg_stops):
-    """Trampa documentada: L a menos de 1,5 % de la banda → emergencia recortada (9,89) POR DEBAJO del principal (10,00). Se deja así (cubre TODA la posición y evita dos disparos pegados)."""
+    """D2a-01 (corregido): L a menos de 1,5 % de la banda → la emergencia recortada (9,89) queda POR DEBAJO del principal (10,00).
+
+    `niveles` da los precios tal cual; lo que NO se hace es poner los dos: la emergencia dispararía primero con toda
+    la posición y el principal compraría encima (cuenta LARGA). `conjunto_deseado` quita el principal.
+    """
     n = niveles(D("10"), cfg_stops, D("10.05"))
     assert n.principal_disparo == D("10.00") and n.emergencia_disparo == D("9.89") and n.emergencia_limite == D("10.19")
     assert n.emergencia_disparo < n.principal_disparo and n.bajo_banda is True
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    assert conjunto_deseado(pos, cfg_stops, D("10.05")) == [StopDeseado(Proposito.STOP_EMERGENCIA, D("10"), 100, D("9.89"), D("10.19"))]
 
 
 @pytest.mark.parametrize("banda", [None, D("0"), D("-1"), D("NaN"), D("Infinity"), D("16.30"), "no-es-precio"],
@@ -292,6 +304,86 @@ def test_conjunto_pasa_la_banda_a_niveles(cfg_stops):
     pos = posicion([lote("A", 10, 100)], neta_fills=-100)
     deseados = conjunto_deseado(pos, cfg_stops, D("10.5"))
     assert deseados[-1] == StopDeseado(Proposito.STOP_EMERGENCIA, D("10"), 100, D("10.34"), D("10.66"))
+
+
+# ── D2a-01: bajo la banda, un principal que no dispara ANTES que la emergencia no se pone ──
+def test_D2a_01_L_sobre_la_banda_solo_emergencia(cfg_stops, tokens):
+    """D2a-01 (R-C-11 b, R-F-02): L 10,60 ≥ banda 10,50 → principal y emergencia serían los dos 10,34/10,66: SOLO la emergencia."""
+    pos = posicion([lote("A", "10.6", 100)], neta_fills=-100)
+    n = niveles(D("10.6"), cfg_stops, D("10.5"))
+    assert (n.principal_disparo, n.principal_limite) == (n.emergencia_disparo, n.emergencia_limite) == (D("10.34"), D("10.66"))
+    assert conjunto_deseado(pos, cfg_stops, D("10.5")) == [
+        StopDeseado(Proposito.STOP_EMERGENCIA, D("10.6"), 100, D("10.34"), D("10.66"))]
+    acciones = plan(pos, [], cfg_stops, D("10.5"), tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(type(a), a.orden.proposito, a.orden.qty, a.orden.stop, a.orden.precio) for a in acciones] == [
+        (EnviarOrden, Proposito.STOP_EMERGENCIA, 100, D("10.34"), D("10.66"))]     # jamás 200 acciones a 10,34 sobre 100 cortas
+
+
+def test_D2a_01_L_a_menos_de_1_5_pct_de_la_banda_solo_emergencia(cfg_stops, tokens):
+    """D2a-01: L 10,00 con banda 10,05 → la emergencia recortada (9,89) dispara ANTES que el principal: el principal no se pone y
+    plan cancela el que hubiera (R-C-05: primero la emergencia nueva, luego las viejas)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    assert conjunto_deseado(pos, cfg_stops, D("10.05")) == [
+        StopDeseado(Proposito.STOP_EMERGENCIA, D("10"), 100, D("9.89"), D("10.19"))]
+    vivas = [orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10),
+             orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)]
+    acciones = plan(pos, vivas, cfg_stops, D("10.05"), tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [type(a) for a in acciones] == [EnviarOrden, Cancelar, Cancelar]
+    assert (acciones[0].orden.proposito, acciones[0].orden.stop, acciones[0].orden.qty) == (Proposito.STOP_EMERGENCIA, D("9.89"), 100)
+    assert sorted(a.id_das for a in de_tipo(acciones, Cancelar)) == [1, 2]
+    del_principal = next(a for a in de_tipo(acciones, Cancelar) if a.id_das == 1)
+    assert del_principal.motivo.startswith("D2a-01") and "9.89" in del_principal.motivo   # el motivo queda en el diario
+
+
+def test_D2a_01_dos_niveles_recortados_solo_emergencia(cfg_stops):
+    """D2a-01: banda 10,10 → los principales de 10,20 y 10,50 bajarían los dos a 9,94 = disparo de la emergencia: solo la emergencia."""
+    pos = posicion([lote("A", "10.2", 60), lote("B", "10.5", 40)], neta_fills=-100)
+    assert conjunto_deseado(pos, cfg_stops, D("10.1")) == [
+        StopDeseado(Proposito.STOP_EMERGENCIA, D("10.5"), 100, D("9.94"), D("10.24"))]
+
+
+def test_D2a_01_solo_se_quita_el_principal_que_no_dispara_antes(cfg_stops):
+    """D2a-01: lotes en 10 y 11 con banda 10,50: el principal de 10 (10,00) dispara antes que la emergencia (10,34) y se queda;
+    el de 11 (recortado a 10,34, igual que la emergencia) no. La emergencia sigue con TODA la posición."""
+    pos = posicion([lote("A", 10, 60), lote("B", 11, 40)], neta_fills=-100)
+    assert conjunto_deseado(pos, cfg_stops, D("10.5")) == [
+        StopDeseado(Proposito.STOP_PRINCIPAL, D("10"), 60, D("10.00"), D("10.30")),
+        StopDeseado(Proposito.STOP_EMERGENCIA, D("11"), 100, D("10.34"), D("10.66"))]
+
+
+def test_D2a_01_primer_disparo_es_el_del_primer_stop_que_salta(cfg_stops):
+    """D2a-01 (interfaz para halts/decisor): el primer stop que salta es el menor disparo DESEADO, no el principal de niveles(L)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    assert stops.primer_disparo(pos, cfg_stops, None) == D("10.00")
+    assert stops.primer_disparo(pos, cfg_stops, D("10.05")) == D("9.89")       # sin principal: salta antes la emergencia
+    assert niveles(D("10"), cfg_stops, D("10.05")).principal_disparo == D("10.00")   # lo que se comparaba antes
+    consumido = posicion([lote("A", 10, 60, consumido=True), lote("B", 11, 40)], neta_fills=-100)
+    assert stops.primer_disparo(consumido, cfg_stops, None) == D("11.00")      # el principal de 10 ya no está
+    assert stops.primer_disparo(posicion([lote("A", 10, 100)], neta_fills=0), cfg_stops, None) is None
+
+
+def test_D2a_01_principal_al_ask_por_encima_de_la_emergencia_se_cancela(cfg_stops, tokens):
+    """D2a-01 en el escalón principal: una banda nueva deja la emergencia (10,34) por DEBAJO del principal al ask (10,40) → se
+    cancela (la emergencia ya lo cubre); sin banda (emergencia 11,30) se queda como estaba."""
+    pos = posicion([lote("A", 10, 100, consumido=True)], neta_fills=-100)
+    al_ask = orden(100000005, Proposito.STOP_PROTECCION, "10.40", "10.72", 100, id_das=5, lote_id="A")
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "10.34", "10.66", 100, id_das=2)
+    acciones = plan(pos, [al_ask, emergencia], cfg_stops, D("10.5"), tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(type(a), a.id_das) for a in acciones] == [(Cancelar, 5)] and "D2a-01" in acciones[0].motivo
+    emergencia_sin_banda = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    assert plan(pos, [al_ask, emergencia_sin_banda], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+
+
+def test_D2a_01_la_emergencia_recortada_del_vigilante_se_reconoce_como_emergencia(cfg_stops, tokens):
+    """D2a-01 + corrección 3: con L ≥ banda el principal quitado y la emergencia comparten 10,34: la orden del vigilante ahí es la
+    EMERGENCIA (leída como principal, el ejecutor la cancelaría y pondría otra, y el vigilante se vería descubierto: bucle)."""
+    pos = posicion([lote("A", "10.6", 100)], neta_fills=-100)
+    vig = orden(200000001, Proposito.DESCONOCIDA, "10.34", "10.66", 100, id_das=11, origen=Origen.VIGILANTE)
+    assert inferir_proposito(vig, [D("10.6")], cfg_stops, limit_up=D("10.5")) is Proposito.STOP_EMERGENCIA
+    assert descubiertas(pos, [vig], cfg_stops, D("10.5")) == 0
+    assert plan(pos, [vig], cfg_stops, D("10.5"), tokens.siguiente, HORA, RUTA_STOP, VERSION) == []   # la adopta: no pone otra
+    assert inferir_proposito(vig, [D("10.6")], cfg_stops) is Proposito.STOP_PROTECCION               # sin banda no casa con nada
+    assert tokens.ultimo_seq == 0
 
 
 def test_conjunto_no_muta_la_posicion(cfg_stops):
@@ -496,32 +588,86 @@ def test_plan_la_mas_nueva_es_la_de_id_das_mayor_aunque_enviada_en_diga_otra_cos
     assert acciones == [Programar(CLAVE_REPLANIFICAR, REPLANIFICAR_EN_S, {"ticker": X})]   # se conserva la CONFIRMADA
 
 
-def test_plan_desempata_por_nivel_cuando_la_banda_iguala_los_disparos(cfg_stops, tokens):
-    """R-F-02: con banda 10,10 los principales de 10,20 y 10,50 bajan los dos a 9,94; cada orden casa con SU nivel (sin cruzar cantidades)."""
+def test_plan_desempata_por_nivel_cuando_dos_principales_comparten_disparo(cfg_stops, tokens):
+    """D2a-01 (corregido): con banda 10,10 los principales de 10,20 y 10,50 bajarían a 9,94 = disparo de la emergencia → NO hay
+    principales deseados y plan cancela los dos (antes pedía 60 + 40 + 100 = 200 acciones a 9,94 sobre 100 cortas).
+
+    El desempate por nivel sigue probado sin banda: 10,201 y 10,209 son niveles distintos con el MISMO disparo (10,21); cada
+    orden casa con SU nivel (sin cruzar cantidades: si no, el segundo plan las intercambiaría).
+    """
     pos = posicion([lote("A", "10.2", 60), lote("B", "10.5", 40)], neta_fills=-100)
-    deseados = conjunto_deseado(pos, cfg_stops, D("10.1"))
-    assert [(d.proposito, d.nivel, d.disparo, d.qty) for d in deseados] == [
-        (Proposito.STOP_PRINCIPAL, D("10.2"), D("9.94"), 60), (Proposito.STOP_PRINCIPAL, D("10.5"), D("9.94"), 40),
+    assert [(d.proposito, d.nivel, d.disparo, d.qty) for d in conjunto_deseado(pos, cfg_stops, D("10.1"))] == [
         (Proposito.STOP_EMERGENCIA, D("10.5"), D("9.94"), 100)]
     p_b = orden(100000001, Proposito.STOP_PRINCIPAL, "9.94", "10.24", 40, id_das=1, nivel="10.5")   # la MÁS antigua
     p_a = orden(100000002, Proposito.STOP_PRINCIPAL, "9.94", "10.24", 60, id_das=2, nivel="10.2")
     emergencia = orden(100000003, Proposito.STOP_EMERGENCIA, "9.94", "10.24", 100, id_das=3, nivel="10.5")
-    assert plan(pos, [p_b, p_a, emergencia], cfg_stops, D("10.1"), tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+    acciones = plan(pos, [p_b, p_a, emergencia], cfg_stops, D("10.1"), tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(type(a), a.id_das) for a in acciones] == [(Cancelar, 1), (Cancelar, 2)]
+    pos = posicion([lote("A", "10.201", 60), lote("B", "10.209", 40)], neta_fills=-100)
+    deseados = conjunto_deseado(pos, cfg_stops, None)
+    assert [(d.proposito, d.nivel, d.disparo, d.qty) for d in deseados] == [
+        (Proposito.STOP_PRINCIPAL, D("10.201"), D("10.21"), 60), (Proposito.STOP_PRINCIPAL, D("10.209"), D("10.21"), 40),
+        (Proposito.STOP_EMERGENCIA, D("10.209"), D("11.54"), 100)]
+    p_b = orden(100000001, Proposito.STOP_PRINCIPAL, "10.21", "10.52", 40, id_das=1, nivel="10.209")   # la MÁS antigua
+    p_a = orden(100000002, Proposito.STOP_PRINCIPAL, "10.21", "10.51", 60, id_das=2, nivel="10.201")
+    emergencia = orden(100000003, Proposito.STOP_EMERGENCIA, "11.54", "16.65", 100, id_das=3)
+    assert plan(pos, [p_b, p_a, emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
 
 
-def test_plan_neta_das_distinta_pide_get_positions_y_no_toca_nada(cfg_stops, tokens):
-    """Corrección 2 / riesgo 8: neta_das ≠ neta_fills → GET POSITIONS + stops_plan y NADA más, aunque la emergencia esté mal."""
+CONSULTA = [Consultar(COMANDO_POSICIONES), Programar(CLAVE_REPLANIFICAR, REPLANIFICAR_EN_S, {"ticker": X})]
+
+
+def test_plan_neta_das_distinta_solo_baja_con_n_minimo_y_pide_get_positions(cfg_stops, tokens):
+    """D2a-05 (corrige la corrección 2 / riesgo 8): neta_das −90 ≠ fills −100 → deseado con n = min(100, 90) = 90: la emergencia
+    de 150 BAJA a 90 (bajar nunca deja la cuenta larga); el principal que falta NO se crea; GET POSITIONS + stops_plan al final."""
     pos = posicion([lote("A", 10, 100)], neta_fills=-100, neta_das=-90)
     vivas = [orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 150, id_das=5)]
     acciones = plan(pos, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
-    assert acciones == [Consultar(COMANDO_POSICIONES), Programar(CLAVE_REPLANIFICAR, REPLANIFICAR_EN_S, {"ticker": X})]
-    assert tokens.ultimo_seq == 0                            # no se gastó ningún token
-    assert plan(posicion([lote("A", 10, 100)], neta_fills=0, neta_das=-100), vivas, cfg_stops, None, tokens.siguiente,
-                HORA, RUTA_STOP, VERSION) == acciones        # tampoco cancela con fills a cero y DAS aún corto
+    assert acciones == [Reemplazar(id_das=5, token=100000002, qty=90, stop=D("11.30"), precio=D("16.30"),
+                                   motivo=acciones[0].motivo, version=VERSION, serie=serie_stops(X)),
+                        verificar(100000002, 90)] + CONSULTA
+    assert tokens.ultimo_seq == 0                            # no se gastó ningún token: no se crea nada
     cuadra = posicion([lote("A", 10, 100)], neta_fills=-100, neta_das=-100)
-    assert de_tipo(plan(cuadra, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION), Reemplazar)
+    acciones = plan(cuadra, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(5, 100)] and len(de_tipo(acciones, EnviarOrden)) == 1
     sin_das = posicion([lote("A", 10, 100)], neta_fills=-100, neta_das=None)
-    assert de_tipo(plan(sin_das, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION), Reemplazar)
+    assert [(a.id_das, a.qty) for a in de_tipo(plan(sin_das, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP,
+                                                    VERSION), Reemplazar)] == [(5, 100)]
+
+
+@pytest.mark.parametrize("fills,das", [(0, -100), (-100, 0), (-100, 20), (20, -100), (30, 20)],
+                         ids=["fills-a-cero-DAS-corto", "DAS-a-cero", "signos-opuestos", "signos-opuestos-2", "las-dos-largas"])
+def test_D2a_05_signos_opuestos_o_una_a_cero_solo_consulta(cfg_stops, tokens, fills, das):
+    """D2a-05: con signos opuestos o una neta a cero no se toca NADA (ni cancelar con fills a cero y DAS aún corto): solo consultar."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=fills, neta_das=das)
+    vivas = [orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10),
+             orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 150, id_das=2)]
+    assert plan(pos, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == CONSULTA
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_05_con_das_mas_corto_nunca_sube_ni_crea(cfg_stops, tokens):
+    """D2a-05: fills −120 / DAS −100 → n = 100: con la emergencia en 100 no hay nada que bajar; con 90 NO sube; sin emergencia
+    NO la crea y tampoco quita el principal (sería la única cobertura). Solo GET POSITIONS: tras el %POS, plan normal."""
+    pos = posicion([lote("A", 10, 120)], neta_fills=-120, neta_das=-100)
+    p = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
+    e100 = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    e90 = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 90, id_das=2)
+    for vivas in ([p, e100], [p, e90], [p]):
+        assert plan(pos, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == CONSULTA
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_05_con_banda_nueva_y_netas_en_desacuerdo_no_se_quita_la_unica_emergencia(cfg_stops, tokens):
+    """D2a-05: la banda nueva pide la emergencia en 10,34 y la viva está en 11,30; con las netas en desacuerdo la nueva NO se crea,
+    así que la vieja NO se cancela (es la única cobertura). El principal sí baja a min = 90. Se espera al GET POSITIONS."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100, neta_das=-90)
+    p = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
+    e = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    acciones = plan(pos, [p, e], cfg_stops, D("10.5"), tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert de_tipo(acciones, Cancelar) == [] and de_tipo(acciones, EnviarOrden) == []
+    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(1, 90)]
+    assert acciones[-2:] == CONSULTA
 
 
 def test_plan_cantidad_distinta_reemplaza_con_version_y_serie(cfg_stops, tokens):
@@ -587,10 +733,107 @@ def test_plan_banda_nueva_tambien_mueve_el_par_adoptado_del_vigilante(cfg_stops,
     pytest.param(orden(200000009, Proposito.DESCONOCIDA, "15.00", "15.45", 100, id_das=9, origen=Origen.VIGILANTE), id="del-vigilante-que-no-casa-es-proteccion"),
 ])
 def test_plan_ni_cuenta_ni_cancela_lo_que_no_gestiona(cfg_stops, tokens, ajena):
+    """Lo que no gestiona ni cuenta ni se cancela. D2a-10: el stop NUESTRO del vigilante que no casa se avisa (nivel 2) y se anota."""
     pos = posicion([lote("A", 10, 100)], neta_fills=-100)
     acciones = plan(pos, [ajena], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
-    assert [type(a) for a in acciones] == [EnviarOrden, EnviarOrden]       # principal + emergencia nuevas
+    no_reconocido = ajena.origen is Origen.VIGILANTE
+    assert [type(a) for a in acciones] == [EnviarOrden, EnviarOrden] + ([Avisar, Anotar] if no_reconocido else [])
     assert de_tipo(acciones, Cancelar) == [] and de_tipo(acciones, Reemplazar) == []
+
+
+def test_D2a_10_stop_nuestro_no_reconocido_avisa_al_poner_el_par_y_no_se_toca(cfg_stops, tokens):
+    """D2a-10 / riesgo 1: un principal del vigilante cuyo %ORDER no trae el disparo y da el LÍMITE (10,30) no casa con ningún nivel:
+    se infiere protección. plan pone su par al lado (posible doble cobertura) → Avisar(2) + Anotar("stop_no_reconocido"); la orden
+    rara NO se cancela; con el par ya puesto el plan siguiente no produce nada (ni repite el aviso)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    raro = orden(200000001, Proposito.DESCONOCIDA, None, "10.30", 100, id_das=11, origen=Origen.VIGILANTE)
+    acciones = plan(pos, [raro], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [type(a) for a in acciones] == [EnviarOrden, EnviarOrden, Avisar, Anotar]
+    aviso, nota = acciones[2], acciones[3]
+    assert aviso.nivel is Nivel.AVISO and aviso.grupo is Grupo.B and aviso.clave == f"stop_no_reconocido:{X}"
+    assert "200000001" in aviso.texto and "10.30" in aviso.texto
+    assert nota == Anotar("stop_no_reconocido", {"ticker": X, "tokens": [200000001], "disparos": ["10.30"],
+                                                 "regla": "riesgo 1 (D2a-10)"})
+    puestas = [aceptada(a, id_das=20 + i) for i, a in enumerate(de_tipo(acciones, EnviarOrden))]
+    assert plan(pos, [raro] + puestas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+    propia = orden(100000009, Proposito.STOP_PROTECCION, "12.50", "12.88", 100, id_das=9)   # R-C-10.4 propia: no es «rara»
+    assert de_tipo(plan(pos, [propia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION), Avisar) == []
+
+
+def test_D2a_06_un_stop_sin_id_cuenta_vivo_y_se_repone_cuando_el_decisor_lo_descarta(cfg_stops, tokens):
+    """D2a-06: el NEWORDER de la emergencia aún en la cola (Sending, sin id) cuenta como viva: plan no la duplica. Si el emisor
+    lo purga por versión, el decisor lo pasa a CLOSED (`OrdenDescartada`) y el plan siguiente la REPONE."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
+    en_cola = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=None, estado=EstadoOrden.SENDING)
+    assert plan(pos, [principal, en_cola], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+    en_cola.estado = EstadoOrden.CLOSED                       # «descartada por versión»
+    acciones = plan(pos, [principal, en_cola], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(type(a), a.orden.proposito, a.orden.qty, a.orden.stop) for a in acciones] == [
+        (EnviarOrden, Proposito.STOP_EMERGENCIA, 100, D("11.30"))]
+    assert "OrdenDescartada" in (stops.__doc__ or "")
+
+
+def test_D2a_07_cantidad_viva_con_lvqty_viejo_tras_el_execute(cfg_stops, tokens):
+    """D2a-07: el Execute de 30 llega antes que el %ORDER: PARTIAL qty 100, llenas 30, lvqty aún 100 → vivas 70, no 100.
+    Si la neta vuelve a −100 (una entrada que llena en plena subida), descubiertas ve las 30 al aire y plan SUBE la emergencia."""
+    pos = posicion([lote("A", 10, 100, consumido=True)], neta_fills=-100)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2, estado=EstadoOrden.PARTIAL,
+                       llenas=30, lvqty=100)
+    assert stops._qty_viva(emergencia) == 70
+    assert descubiertas(pos, [emergencia]) == 30
+    acciones = plan(pos, [emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(2, 100)]
+    for estado in (EstadoOrden.PARTIAL, EstadoOrden.TRIGGERED):   # el %ORDER llegó ANTES que el Execute: manda lvqty
+        adoptada = orden(200000002, Proposito.DESCONOCIDA, "11.30", "16.30", 100, id_das=12, estado=estado, llenas=0,
+                         lvqty=70, origen=Origen.VIGILANTE)
+        assert stops._qty_viva(adoptada) == 70
+    llena_del_todo = orden(100000003, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=3,
+                           estado=EstadoOrden.PARTIAL, llenas=100, lvqty=40)
+    assert stops._qty_viva(llena_del_todo) == 0               # un lvqty viejo no resucita una orden ya llena
+
+
+@pytest.mark.parametrize("interruptor,share,aviso", [
+    pytest.param(None, 50, True, id="sin-interruptor-share-ABIERTA-y-aviso-2"),
+    pytest.param(True, 50, False, id="interruptor-true-share-ABIERTA"),
+    pytest.param(False, 80, False, id="interruptor-false-share-TOTAL-llenas-mas-abiertas"),
+])
+def test_D2a_08_share_del_replace_sobre_una_orden_parcial(cfg_stops, tokens, interruptor, share, aviso):
+    """A-02 / D2a-08: el `share` del REPLACE sale de tipos.share_de_replace con `stops.replace_share_es_abierta`; `qty_objetivo` es
+    siempre la ABIERTA. Mientras la config no fije el interruptor, un REPLACE sobre una orden con llenas lleva Avisar(2)."""
+    cfg = dict(cfg_stops) if interruptor is None else {**cfg_stops, "replace_share_es_abierta": interruptor}
+    pos = posicion([lote("A", 10, 100, consumido=True)], neta_fills=-50)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2, estado=EstadoOrden.PARTIAL,
+                       llenas=30, lvqty=70)
+    acciones = plan(pos, [emergencia], cfg, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(2, share)]
+    assert de_tipo(acciones, Programar) == [verificar(100000002, 50)]
+    avisos_ = de_tipo(acciones, Avisar)
+    assert bool(avisos_) is aviso
+    if aviso:
+        assert avisos_[0].nivel is Nivel.AVISO and avisos_[0].clave == "replace_parcial:100000002"
+        assert "30 llenas" in avisos_[0].texto and "share=50" in avisos_[0].texto
+    sin_fills = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)   # sin llenas: nunca avisa
+    assert de_tipo(plan(pos, [sin_fills], cfg, None, tokens.siguiente, HORA, RUTA_STOP, VERSION), Avisar) == []
+
+
+def test_D2a_09_compras_cierre_baja_principal_y_emergencia_y_al_quitarla_vuelven(cfg_stops, tokens):
+    """D2a-09 / G1A-01 (interfaz para el decisor): con la MKT por OPEN del halt viva por 30 de 100 cortas, principal y emergencia
+    bajan a 70 (nunca MKT + stops por la posición entera); por las 100, fuera los dos; sin ella (Send_Rej), vuelven a 100."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100, estado=EstadoTicker.HALT)
+    p = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
+    e = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    acciones = plan(pos, [p, e], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION, compras_cierre=30)
+    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(1, 70), (2, 70)]
+    acciones = plan(pos, [p, e], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION, compras_cierre=100)
+    assert sorted(a.id_das for a in de_tipo(acciones, Cancelar)) == [1, 2] and de_tipo(acciones, EnviarOrden) == []
+    for basura in (0, -5, True, 30.0):                       # 0, negativo, bool o float: como si no hubiera compra de cierre
+        assert plan(pos, [p, e], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION, compras_cierre=basura) == []
+    p.qty = e.qty = 70                                        # tras los Replaced
+    acciones = plan(pos, [p, e], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(1, 100), (2, 100)]
+    assert descubiertas(pos, [e]) == 30 and descubiertas(pos, [e], compras_cierre=30) == 0
+    assert tokens.ultimo_seq == 0
 
 
 def test_plan_orden_sin_id_das_no_se_puede_tocar_y_reprograma(cfg_stops, tokens):
@@ -684,6 +927,19 @@ def test_plan_principal_al_ask_sin_capacidad_se_cancela(cfg_stops, tokens):
     assert [(type(a), a.id_das) for a in acciones] == [(Cancelar, 5)]
 
 
+def test_E1_04_plan_no_deshace_el_limite_ensanchado_en_un_halt_de_premercado(cfg_stops, tokens):
+    """E1-04 (R-F-06, halts): si halts reemplaza los límites de los stops por otros más anchos sin mover el disparo, plan los
+    sigue casando (por disparo) y NO los devuelve al límite de siempre; si hay que cambiar la cantidad, conserva el límite ancho."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100, estado=EstadoTicker.HALT)
+    p = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.80", 100, id_das=1, nivel=10)     # límite ensanchado (+8 %)
+    e = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "18.00", 100, id_das=2)
+    assert plan(pos, [p, e], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+    menos = posicion([lote("A", 10, 100)], neta_fills=-60, estado=EstadoTicker.HALT)
+    acciones = plan(menos, [p, e], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(a.id_das, a.qty, a.stop, a.precio) for a in de_tipo(acciones, Reemplazar)] == [
+        (1, 60, D("10.00"), D("10.80")), (2, 60, D("11.30"), D("18.00"))]
+
+
 def test_plan_en_cisne_negro_no_hace_nada(cfg_stops, tokens):
     """R-G-03: en cisne negro el bot NO repone si DAS cancela; la emergencia se ajusta solo por cisne_negro.acciones_durante_bs."""
     pos = posicion([lote("A", 10, 100)], neta_fills=-100, estado=EstadoTicker.BS)
@@ -724,9 +980,17 @@ def _efectivo(o: Orden, pos: PosicionTicker, cfg: dict, limit_up) -> Proposito:
 
 
 def _viva(o: Orden) -> int:
+    """Misma cantidad viva que el módulo (D2a-07): min(lvqty, qty − llenas) si DAS dio lvqty; si no, qty − llenas."""
     if o.estado in (EstadoOrden.PARTIAL, EstadoOrden.TRIGGERED) and o.lvqty > 0:
-        return o.lvqty
-    return o.qty - o.llenas
+        return max(min(o.lvqty, o.qty - o.llenas), 0)
+    return max(o.qty - o.llenas, 0)
+
+
+def _principales_antes_que_la_emergencia(pos: PosicionTicker, cfg: dict, limit_up) -> bool:
+    """D2a-01: todo principal DESEADO dispara estrictamente antes que la emergencia (nunca dos stops al mismo precio)."""
+    deseados = conjunto_deseado(pos, cfg, limit_up)
+    emergencias = [d for d in deseados if d.proposito is Proposito.STOP_EMERGENCIA]
+    return all(d.disparo < emergencias[0].disparo for d in deseados if d.proposito is Proposito.STOP_PRINCIPAL)
 
 
 def _aplicar(acciones, vivas: list[Orden], ids) -> list[Orden]:
@@ -830,6 +1094,7 @@ def test_plan_idempotente_e_invariantes_en_300_escenarios_aleatorios(cfg_stops, 
         deseados = [d for d in conjunto_deseado(pos, cfg_stops, limit_up) if d.proposito is Proposito.STOP_PRINCIPAL]
         assert len(principales) == len(deseados)
         assert sum(_viva(o) for o in principales) + sum(_viva(o) for o in al_ask) <= n
+        assert _principales_antes_que_la_emergencia(pos, cfg_stops, limit_up)          # D2a-01
 
 
 # ── limpieza tras el fill de un stop (R-C-11, injerto A §8.6) ────────────
@@ -842,21 +1107,26 @@ def test_limpieza_neta_cero_invalida_la_serie_y_cancela_todo(config, tokens, cot
 
 
 def test_limpieza_larga_vende_solo_el_exceso_20_jamas_100(config, tokens, cotizacion):
-    """R-C-11 (b), libro L261: 100 cortas, principal 20, emergencia 100 → larga 20 → se venden 20 al bid, JAMÁS 100 (riesgo 6)."""
+    """R-C-11 (b), libro L261: 100 cortas, principal 20, emergencia 100 → larga 20 → se venden 20, JAMÁS 100 (riesgo 6).
+
+    D2a-04: a bid·(1 − 1 %) redondeado abajo (9,50 → 9,40: vendible, no el bid exacto) y `exceso_verificar:X` a 1 s.
+    """
     pos = posicion([lote("A", 10, 100)], neta_fills=20)
     vivas = [orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, estado=EstadoOrden.PARTIAL, llenas=20, lvqty=80),
              orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2, estado=EstadoOrden.EXECUTED, llenas=100)]
     acciones = limpieza_tras_fill_stop(pos, vivas, cotizacion(X, "9.50", "9.52", last="9.51"), tokens.siguiente, config, HORA, 4)
-    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar]
+    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
     assert acciones[0] == InvalidarSerie(serie_stops(X), 4)
     venta = acciones[2].orden
     assert (venta.lado, venta.qty, venta.tipo, venta.precio, venta.ruta, venta.proposito, venta.version, venta.tif) == (
-        Lado.VENTA, 20, TipoOrden.LIMITE, D("9.50"), "SAGEPRO", Proposito.VENTA_EXCESO, 4, "DAY+")
+        Lado.VENTA, 20, TipoOrden.LIMITE, D("9.40"), "SAGEPRO", Proposito.VENTA_EXCESO, 4, "DAY+")
     assert acciones[2].serie is None and venta.post_only is False     # sin serie: un InvalidarSerie posterior no la descarta
     sin_float(venta)
     assert acciones[3].nivel is Nivel.AVISO and acciones[3].grupo is Grupo.B and "20" in acciones[3].texto
     assert acciones[3].clave == f"exceso:{X}:4"                       # un incidente nuevo (otra versión) no lo calla el dedupe
     assert acciones[4].tipo == "incidente" and acciones[4].datos["vendidas"] == 20 and acciones[4].datos["neta"] == 20
+    assert acciones[4].datos["referencia"] == "9.50" and acciones[4].datos["precio"] == "9.40"
+    assert acciones[5] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
     assert all(not (isinstance(a, EnviarOrden) and a.orden.qty == 100) for a in acciones)
 
 
@@ -869,25 +1139,28 @@ def test_limpieza_larga_cuenta_lo_que_dice_das_si_discrepa(config, tokens, cotiz
 
 
 def test_limpieza_larga_en_pennies_va_por_la_ruta_de_cruzar_de_la_hora(config, tokens, cotizacion):
+    """Pennies: 0,4800 − 1 % = 0,4752 (tick 0,0001, D2a-04) por la ruta de cruzar de la hora."""
     pos = posicion([lote("A", "0.5", 1000)], neta_fills=150)
     acciones = limpieza_tras_fill_stop(pos, [], cotizacion(X, "0.4800", "0.4810"), tokens.siguiente, config, HORA, 2)
     venta = de_tipo(acciones, EnviarOrden)[0].orden
-    assert (venta.qty, venta.precio, venta.ruta) == (150, D("0.4800"), "EDGA")       # 09:30 ET ≥ 07:00 → EDGA
+    assert (venta.qty, venta.precio, venta.ruta) == (150, D("0.4752"), "EDGA")       # 09:30 ET ≥ 07:00 → EDGA
     antes_de_las_7 = datetime(2026, 9, 25, 5, 0, tzinfo=ET)
     acciones = limpieza_tras_fill_stop(pos, [], cotizacion(X, "0.4800", "0.4810"), tokens.siguiente, config, antes_de_las_7, 2)
     assert de_tipo(acciones, EnviarOrden)[0].orden.ruta == "MIAX"
 
 
 def test_limpieza_larga_sin_bid_usa_last_y_sin_nada_avisa_nivel_3_sin_orden(config, tokens):
+    """Sin bid, el último precio con el mismo margen; sin ningún precio, aviso nivel 3 y NINGÚN temporizador (vende el humano)."""
     pos = posicion([lote("A", 10, 100)], neta_fills=20)
     solo_last = Cotizacion(ticker=X, last=D("9.4567"))
     acciones = limpieza_tras_fill_stop(pos, [], solo_last, tokens.siguiente, config, HORA, 4)
-    assert de_tipo(acciones, EnviarOrden)[0].orden.precio == D("9.45")            # redondeo ABAJO (lado permisivo de la venta)
+    assert de_tipo(acciones, EnviarOrden)[0].orden.precio == D("9.36")            # 9,4567·0,99 = 9,3621… → ABAJO (lado permisivo)
     acciones = limpieza_tras_fill_stop(pos, [], Cotizacion(ticker=X, bid=D("0"), last=D("NaN")), tokens.siguiente, config, HORA, 4)
     assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, Avisar, Anotar]
     assert acciones[2].nivel is Nivel.MAXIMO and "VENDER A MANO" in acciones[2].texto
     acciones = limpieza_tras_fill_stop(pos, [], None, tokens.siguiente, config, HORA, 4)
     assert de_tipo(acciones, EnviarOrden) == [] and de_tipo(acciones, Avisar)[0].nivel is Nivel.MAXIMO
+    assert de_tipo(acciones, Programar) == []
 
 
 @pytest.mark.parametrize("con_orden_stop", [True, False], ids=["orden_stop-explicita", "deducida-de-las-vivas"])
@@ -956,8 +1229,15 @@ def test_limpieza_con_banda_el_principal_recortado_que_llena_consume_su_nivel(co
     acciones = limpieza_tras_fill_stop(pos, [p10, p11, emergencia], cotizacion(X, "10.36", "10.38"), tokens.siguiente, config,
                                        HORA, 9, orden_stop=p11, limit_up=D("10.5"))
     assert (pos.lotes["A"].principal_consumido, pos.lotes["B"].principal_consumido) == (True, True)
-    assert sorted(a.id_das for a in de_tipo(acciones, Cancelar)) == [1, 2]
-    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(3, 80)]
+    if nivel_en_la_orden:
+        assert sorted(a.id_das for a in de_tipo(acciones, Cancelar)) == [1, 2]
+        assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(3, 80)]
+    else:
+        # D2a-01: en 10,34 el único stop deseado es la EMERGENCIA; la del vigilante (sin etiqueta) se lee como emergencia y,
+        # con dos emergencias iguales, R-C-07 plan B conserva la más antigua (id 2) y cancela la más nueva (id 3)
+        assert sorted(a.id_das for a in de_tipo(acciones, Cancelar)) == [1, 3]
+        assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(2, 80)]
+    assert de_tipo(acciones, EnviarOrden) == []                                        # una sola emergencia, con 80 abiertas
 
 
 @pytest.mark.parametrize("cot,consumidos", [
@@ -974,11 +1254,72 @@ def test_limpieza_sin_saber_que_stop_lleno_decide_por_el_precio(config, tokens, 
 
 
 def test_limpieza_corta_respeta_la_precondicion_de_plan_y_acepta_config_como_dict(cfg_json, tokens, cotizacion):
+    """D2a-05: con el %POS atrasado y SIN emergencia viva, el principal consumido NO se cancela (es la única cobertura): solo GET POSITIONS."""
     pos = posicion([lote("A", 10, 100)], neta_fills=-80, neta_das=-100)
     principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, estado=EstadoOrden.PARTIAL, llenas=20, lvqty=80)
     acciones = limpieza_tras_fill_stop(pos, [principal], cotizacion(X, "10.05", "10.07"), tokens.siguiente, cfg_json, HORA, 3)
     assert acciones == [InvalidarSerie(serie_stops(X), 3), lote_anotado("A", "R-C-11 (c)", principal_consumido=True),
                         Consultar(COMANDO_POSICIONES), Programar(CLAVE_REPLANIFICAR, REPLANIFICAR_EN_S, {"ticker": X})]
+
+
+def test_D2a_05_limpieza_con_el_pos_atrasado_baja_la_emergencia_y_cancela_el_principal_consumido(cfg_json, tokens, cotizacion):
+    """D2a-05 / R-C-11 (1): fills −80, %POS aún −100 tras el fill del principal: la emergencia BAJA de 100 a 80 y el principal
+    consumido se cancela AL INSTANTE (justo la ventana del fogonazo), sin esperar al GET POSITIONS, que se pide igual."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-80, neta_das=-100)
+    principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, estado=EstadoOrden.PARTIAL, llenas=20, lvqty=80)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    acciones = limpieza_tras_fill_stop(pos, [principal, emergencia], cotizacion(X, "10.05", "10.07"), tokens.siguiente, cfg_json,
+                                       HORA, 3)
+    assert acciones == [InvalidarSerie(serie_stops(X), 3), lote_anotado("A", "R-C-11 (c)", principal_consumido=True),
+                        Reemplazar(id_das=2, token=100000002, qty=80, stop=D("11.30"), precio=D("16.30"),
+                                   motivo=acciones[2].motivo, version=3, serie=serie_stops(X)),
+                        verificar(100000002, 80), Cancelar(1, 100000001, acciones[4].motivo)] + CONSULTA
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_05_pedidos_en_vuelo_no_se_repiten(cfg_stops, tokens):
+    """D2a-05 (interfaz para el decisor): el plan del fill, con el %POS atrasado, ya BAJÓ la emergencia a 80 y canceló el principal;
+    cuando llega el %POS que cuadra, el plan con esas peticiones EN VUELO no las repite (sin ellas saldrían REPLACE y CANCEL otra vez).
+    Un REPLACE en vuelo a otra cantidad se corrige; lo que no es None ni int ≥ 0 se ignora; el CANCEL en vuelo de la única emergencia
+    cuenta como ya cancelada → se repone."""
+    pos = posicion([lote("A", 10, 100, consumido=True)], neta_fills=-80, neta_das=-80)
+    principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, estado=EstadoOrden.PARTIAL,
+                      llenas=20, lvqty=80)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    sin = plan(pos, [principal, emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(type(a), a.id_das) for a in sin if isinstance(a, (Reemplazar, Cancelar))] == [(Reemplazar, 2), (Cancelar, 1)]
+    assert plan(pos, [principal, emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION,
+                pedidos_en_vuelo={100000002: 80, 100000001: None}) == []
+    otra = plan(pos, [principal, emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION,
+                pedidos_en_vuelo={100000002: 90, 100000001: None})
+    assert [(type(a), a.id_das, a.qty) for a in otra if isinstance(a, (Reemplazar, Cancelar))] == [(Reemplazar, 2, 80)]
+    assert plan(pos, [principal, emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION,
+                pedidos_en_vuelo={100000002: True, 100000001: "x", "100000002": 80}) == sin
+    repone = plan(pos, [emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION,
+                  pedidos_en_vuelo={100000002: None})
+    assert [(type(a), a.orden.proposito, a.orden.qty) for a in repone] == [(EnviarOrden, Proposito.STOP_EMERGENCIA, 80)]
+
+
+def test_D2a_05_limpieza_larga_no_repite_el_cancel_en_vuelo(config, tokens, cotizacion):
+    """D2a-05 + D2a-03: con la venta del exceso viva, las compras se cancelan una a una, salvo la que ya tiene el CANCEL en vuelo."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=50)
+    principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2, estado=EstadoOrden.PARTIAL,
+                       llenas=60, lvqty=40)
+    acciones = limpieza_tras_fill_stop(pos, [_venta(qty=10), principal, emergencia], cotizacion(X, "9.50", "9.52"),
+                                       tokens.siguiente, config, HORA, 6, pedidos_en_vuelo={100000001: None})
+    assert [a.id_das for a in de_tipo(acciones, Cancelar)] == [2]
+
+
+def test_D2a_09_limpieza_pasa_compras_cierre_a_plan(config, tokens, cotizacion):
+    """D2a-09: en un halt con la MKT de salida viva por las 80 que quedan, el fill del principal no repone stops encima de ella."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-80, estado=EstadoTicker.HALT)
+    principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, estado=EstadoOrden.PARTIAL, llenas=20, lvqty=80)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    acciones = limpieza_tras_fill_stop(pos, [principal, emergencia], cotizacion(X, "10.05", "10.07"), tokens.siguiente, config,
+                                       HORA, 5, orden_stop=principal, compras_cierre=80)
+    assert sorted(a.id_das for a in de_tipo(acciones, Cancelar)) == [1, 2]
+    assert de_tipo(acciones, Reemplazar) == [] and de_tipo(acciones, EnviarOrden) == []
 
 
 def test_limpieza_rechaza_una_config_sin_bloques(tokens, cotizacion):
@@ -1038,9 +1379,171 @@ def test_fogonazo_principal_y_emergencia_llenan_a_la_vez_se_vende_solo_el_exceso
     _llenar(emergencia, 80, pos)
     acciones = limpieza_tras_fill_stop(pos, [p11, emergencia], cotizacion(X, "12.55", "12.60"), tokens.siguiente, config,
                                        HORA, 6, orden_stop=emergencia)
-    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar]
+    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
     venta = acciones[2].orden
-    assert (venta.lado, venta.qty, venta.precio, venta.proposito) == (Lado.VENTA, 40, D("12.55"), Proposito.VENTA_EXCESO)
+    assert (venta.lado, venta.qty, venta.precio, venta.proposito) == (Lado.VENTA, 40, D("12.42"), Proposito.VENTA_EXCESO)
+
+
+# ── venta del exceso: lo que ya está en vuelo (D2a-03) y la persecución (D2a-04) ──
+def _venta(qty: int = 20, precio: str = "9.40", id_das: Optional[int] = 9, token: int = 100000009,
+           estado: EstadoOrden = EstadoOrden.ACCEPTED, proposito: Proposito = Proposito.VENTA_EXCESO,
+           origen: Origen = Origen.EJECUTOR) -> Orden:
+    return orden(token, proposito, None, precio, qty, id_das=id_das, estado=estado, lado=Lado.VENTA, tipo=TipoOrden.LIMITE,
+                 origen=origen)
+
+
+def test_D2a_03_con_una_venta_del_exceso_viva_vende_solo_la_diferencia_y_no_cancel_allsymb(config, tokens, cotizacion):
+    """D2a-03: larga 10 → S1 de 10 viva; otro print deja la cuenta larga 50 → se venden 40 (no 50) y NO CANCEL ALLSYMB (se
+    llevaría S1): se cancelan una a una las COMPRAS vivas con id; S1 sigue; la compra aún sin id la cancela el barrido."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=50)
+    s1 = _venta(qty=10)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2, estado=EstadoOrden.PARTIAL,
+                       llenas=60, lvqty=40)
+    principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1)
+    enviando = orden(100000003, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=None, estado=EstadoOrden.SENDING)
+    acciones = limpieza_tras_fill_stop(pos, [s1, emergencia, principal, enviando], cotizacion(X, "9.50", "9.52"),
+                                       tokens.siguiente, config, HORA, 6)
+    assert acciones[0] == InvalidarSerie(serie_stops(X), 6)
+    assert de_tipo(acciones, CancelarTicker) == []
+    assert [a.id_das for a in de_tipo(acciones, Cancelar)] == [1, 2]        # compras con id; la venta S1 NO se toca
+    assert [(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(acciones, EnviarOrden)] == [(Lado.VENTA, 40, D("9.40"))]
+    incidente = de_tipo(acciones, Anotar)[0]
+    assert (incidente.datos["vendidas"], incidente.datos["en_vuelo"], incidente.datos["neta"]) == (40, 10, 50)
+    assert "10 ya se están vendiendo" in de_tipo(acciones, Avisar)[0].texto
+    assert de_tipo(acciones, Programar) == [Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})]
+
+
+def test_D2a_03_con_la_venta_viva_que_ya_cubre_la_larga_no_sale_otra(config, tokens, cotizacion):
+    """D2a-03: larga 10 con la venta de 10 viva → ninguna orden nueva ni CANCEL ALLSYMB; solo el incidente (vendidas 0)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=10)
+    acciones = limpieza_tras_fill_stop(pos, [_venta(qty=10)], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 6)
+    assert [type(a) for a in acciones] == [InvalidarSerie, Anotar]
+    assert (acciones[1].datos["vendidas"], acciones[1].datos["en_vuelo"]) == (0, 10)
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_03_lo_que_se_vende_nunca_pasa_de_la_larga(config, tokens, cotizacion):
+    """D2a-03 (nunca un corto sin stops): 60 en ventas vivas sobre una larga de 50 → se recorta la MÁS NUEVA (10 → Cancelar);
+    con 55 sobre 50, la más nueva baja de 10 a 5 (REPLACE de cantidad, mismo precio). Ninguna venta nueva."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=50)
+    vieja = _venta(qty=50, id_das=8, token=100000008)
+    nueva = _venta(qty=10, precio="9.30", id_das=9, token=100000009)
+    acciones = limpieza_tras_fill_stop(pos, [nueva, vieja], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 7)
+    assert [(type(a), a.id_das) for a in acciones if isinstance(a, (Cancelar, Reemplazar))] == [(Cancelar, 9)]
+    assert de_tipo(acciones, EnviarOrden) == [] and de_tipo(acciones, CancelarTicker) == []
+    assert de_tipo(acciones, Anotar)[0].datos["tipo"] == "venta_exceso_de_mas"
+    vieja.qty = 45
+    acciones = limpieza_tras_fill_stop(pos, [nueva, vieja], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 7)
+    assert [(type(a), a.id_das, a.qty, a.precio) for a in de_tipo(acciones, Reemplazar)] == [(Reemplazar, 9, 5, D("9.30"))]
+    ajena_de_mas = _venta(qty=60, id_das=7, token=200000007, proposito=Proposito.DESCONOCIDA, origen=Origen.VIGILANTE)
+    acciones = limpieza_tras_fill_stop(pos, [ajena_de_mas], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 7)
+    avisos_ = de_tipo(acciones, Avisar)                                     # no es nuestra: no se toca, pero se avisa
+    assert de_tipo(acciones, Reemplazar) == [] and avisos_ and avisos_[0].nivel is Nivel.MAXIMO and "CORTA" in avisos_[0].texto
+
+
+def test_D2a_03_en_vuelo_cuenta_toda_venta_no_stop_pero_no_la_proteccion_de_un_largo(config, tokens, cotizacion):
+    """D2a-03: la venta del vigilante sin etiqueta (20) cuenta como en vuelo → se venden 30; una VENTA STOPLMTP (protección de un
+    largo, R-C-10.4) no está en vuelo → se vende todo y CANCEL ALLSYMB como siempre."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=50)
+    vig = _venta(qty=20, id_das=7, token=200000007, proposito=Proposito.DESCONOCIDA, origen=Origen.VIGILANTE)
+    acciones = limpieza_tras_fill_stop(pos, [vig], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 8)
+    assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [30] and de_tipo(acciones, CancelarTicker) == []
+    proteccion = orden(100000006, Proposito.STOP_PROTECCION, "7.50", "7.27", 50, id_das=6, lado=Lado.VENTA)
+    acciones = limpieza_tras_fill_stop(pos, [proteccion], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 8)
+    assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [50] and len(de_tipo(acciones, CancelarTicker)) == 1
+
+
+def test_D2a_04_la_venta_del_exceso_sale_vendible_y_programa_la_comprobacion(config, tokens, cotizacion):
+    """D2a-04: a bid·(1 − 1 %) redondeado abajo, no al bid exacto; `exceso_verificar:X` a 1 s con 0 persecuciones hechas."""
+    assert (stops.VENTA_EXCESO_MARGEN_PCT, stops.VENTA_EXCESO_PERSECUCIONES, stops.EXCESO_VERIFICAR_EN_S) == (D("1"), 3, 1.0)
+    assert stops.CLAVE_EXCESO_VERIFICAR == "exceso_verificar" and stops.clave_exceso_verificar(X) == f"exceso_verificar:{X}"
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    acciones = limpieza_tras_fill_stop(pos, [], cotizacion(X, "10.05", "10.07"), tokens.siguiente, config, HORA, 4)
+    venta = de_tipo(acciones, EnviarOrden)[0].orden
+    assert venta.precio == D("9.94") and en_tick(venta.precio)                 # 10,05·0,99 = 9,9495 → 9,94
+    assert acciones[-1] == Programar(stops.clave_exceso_verificar(X), stops.EXCESO_VERIFICAR_EN_S, {"ticker": X, "persecuciones": 0})
+
+
+def test_D2a_04_verificar_con_el_exceso_ya_vendido_no_hace_nada(config, tokens, cotizacion):
+    for neta in (0, -10):
+        pos = posicion([lote("A", 10, 100)], neta_fills=neta)
+        assert stops.verificar_venta_exceso(pos, [_venta()], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA, 5,
+                                            1) == []
+
+
+def test_D2a_04_verificar_persigue_al_bid_nuevo_con_el_mismo_margen(config, tokens, cotizacion):
+    """D2a-04: la venta de 20 a 9,40 sigue viva y la cuenta larga: el bid cae a 9,20 → REPLACE a 9,10 (mismo 1 %); si el bid no
+    bajó, nada que reemplazar pero la vuelta cuenta (Programar con una persecución más)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    venta = _venta()
+    acciones = stops.verificar_venta_exceso(pos, [venta], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA, 5, 0)
+    assert [type(a) for a in acciones] == [Reemplazar, Anotar, Programar]
+    r = acciones[0]
+    assert (r.id_das, r.token, r.qty, r.precio, r.stop, r.serie, r.version) == (9, 100000009, 20, D("9.10"), None, None, 5)
+    assert acciones[1].tipo == "venta_exceso_perseguida" and acciones[1].datos["persecucion"] == 1
+    assert acciones[2] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 1})
+    acciones = stops.verificar_venta_exceso(pos, [venta], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 5, 1)
+    assert [type(a) for a in acciones] == [Anotar, Programar] and acciones[1].datos["persecuciones"] == 2
+    acciones = stops.verificar_venta_exceso(pos, [venta], None, tokens.siguiente, config, HORA, 5, 2)   # sin cotización: cuenta
+    assert [type(a) for a in acciones] == [Anotar, Programar] and acciones[1].datos["persecuciones"] == 3
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_04_verificar_con_una_venta_viva_no_abre_otra_por_la_diferencia(config, tokens, cotizacion):
+    """D2a-04: larga 50 con solo 20 en vuelo → la vuelta persigue esos 20 pero NO abre otra venta por los 30 (los vende la limpieza
+    del fill o el barrido; si aquella no tenía precio ya pidió «vender a mano» y aquí se vendería dos veces)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=50)
+    acciones = stops.verificar_venta_exceso(pos, [_venta(qty=20)], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config,
+                                            HORA, 5, 0)
+    assert de_tipo(acciones, EnviarOrden) == [] and de_tipo(acciones, CancelarTicker) == []
+    assert [(a.id_das, a.qty, a.precio) for a in de_tipo(acciones, Reemplazar)] == [(9, 20, D("9.10"))]
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_04_tras_tres_persecuciones_aviso_3_vender_a_mano_sin_cancelar_la_venta(config, tokens, cotizacion):
+    """D2a-04: tras 3 persecuciones la cuenta sigue LARGA → Avisar(3) «VENDER A MANO: la cuenta está LARGA» y ningún temporizador.
+    La venta del bot NO se cancela (el barrido pondría otra); el aviso pide cancelarla antes de vender a mano."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    acciones = stops.verificar_venta_exceso(pos, [_venta()], cotizacion(X, "9.00", "9.02"), tokens.siguiente, config, HORA, 5, 3)
+    assert [type(a) for a in acciones] == [Avisar, Anotar]
+    aviso = acciones[0]
+    assert aviso.nivel is Nivel.MAXIMO and aviso.grupo is Grupo.B and aviso.clave == f"exceso_a_mano:{X}"
+    assert "VENDER A MANO: la cuenta está LARGA" in aviso.texto and f"/cancelar_ordenes {X} SI" in aviso.texto
+    assert acciones[1].datos["tipo"] == "venta_exceso_sin_llenar" and acciones[1].datos["persecuciones"] == 3
+    acciones = stops.verificar_venta_exceso(pos, [], cotizacion(X, "9.00", "9.02"), tokens.siguiente, config, HORA, 5, 3)
+    assert [type(a) for a in acciones] == [Avisar, Anotar] and "ninguna venta viva" in acciones[0].texto
+
+
+def test_D2a_04_verificar_sin_venta_viva_y_aun_larga_vuelve_a_vender(config, tokens, cotizacion):
+    """D2a-04: la venta desapareció (Send_Rej o cancelada por DAS) y la cuenta sigue larga → CANCEL ALLSYMB + venta de la neta
+    con el mismo margen; la vuelta cuenta para el tope de 3."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    rechazada = _venta(estado=EstadoOrden.REJECTED)
+    acciones = stops.verificar_venta_exceso(pos, [rechazada], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 5, 1)
+    assert [type(a) for a in acciones] == [CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
+    assert (acciones[1].orden.qty, acciones[1].orden.precio) == (20, D("9.40")) and acciones[-1].datos["persecuciones"] == 2
+
+
+def test_D2a_04_recorrido_la_venta_no_llena_tres_persecuciones_y_aviso(config, tokens, cotizacion):
+    """D2a-04 de punta a punta: limpieza vende 20; el bid cae en cada vuelta → 3 REPLACE; a la 4.ª aviso 3; jamás otra venta."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    acciones = limpieza_tras_fill_stop(pos, [], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 4)
+    venta = aceptada(de_tipo(acciones, EnviarOrden)[0], id_das=9)
+    programar = de_tipo(acciones, Programar)[0]
+    reemplazos = 0
+    for bid in ("9.20", "9.00", "8.80", "8.60", "8.40"):
+        acciones = stops.verificar_venta_exceso(pos, [venta], cotizacion(X, bid, str(D(bid) + D("0.02"))), tokens.siguiente,
+                                                config, HORA, 4, programar.datos["persecuciones"])
+        assert de_tipo(acciones, EnviarOrden) == [] and de_tipo(acciones, Cancelar) == []
+        for r in de_tipo(acciones, Reemplazar):
+            venta.precio = r.precio
+            reemplazos += 1
+        siguiente = de_tipo(acciones, Programar)
+        if not siguiente:
+            break
+        programar = siguiente[0]
+    assert reemplazos == 3 and venta.precio == D("8.71")
+    assert de_tipo(acciones, Avisar)[0].nivel is Nivel.MAXIMO
 
 
 def _stops_de_compra(vivas: list[Orden]) -> list[Orden]:
@@ -1100,6 +1603,7 @@ def test_paseos_aleatorios_del_precio_plan_reasignar_y_limpieza_juntos(config, t
                        or (p is Proposito.STOP_PROTECCION and o.lote_id is not None)]
             assert len(emergencias) == 1 and _viva(emergencias[0]) == -pos.neta
             assert sum(_viva(o) for o in escalon) <= -pos.neta
+            assert _principales_antes_que_la_emergencia(pos, config.stops, limit_up)   # D2a-01
     assert set(modos) == {"sumar_al_superior", "principal_nuevo_al_ask", "cubierto_por_emergencia"}   # las tres ramas
 
 
@@ -1153,7 +1657,7 @@ def test_reasignar_suma_al_principal_del_nivel_superior(cfg_stops, tokens, cotiz
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 60, id_das=1, nivel=10)
     p11 = orden(100000002, Proposito.STOP_PRINCIPAL, "11.00", "11.33", 40, id_das=2, nivel=11)
     emergencia = orden(100000003, Proposito.STOP_EMERGENCIA, "12.43", "17.93", 100, id_das=3)
-    acciones = reasignar_principal_rebasado(pos, [p10, p11, emergencia], cotizacion(X, "10.38", "10.40"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p10, p11, emergencia], cotizacion(X, "10.38", "10.40", last="10.40"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert [type(a) for a in acciones] == [Anotar, Cancelar, Reemplazar, Programar, Anotar]
     assert acciones[0] == lote_anotado("A", "R-C-01 (a)", nivel_stop="11")          # H-2: write-ahead del cambio de nivel
@@ -1168,7 +1672,7 @@ def test_reasignar_suma_al_principal_del_nivel_superior(cfg_stops, tokens, cotiz
         StopDeseado(Proposito.STOP_PRINCIPAL, D("11"), 100, D("11.00"), D("11.33")),
         StopDeseado(Proposito.STOP_EMERGENCIA, D("11"), 100, D("12.43"), D("17.93"))]
     # riesgo 11: otro $Quote ANTES del Canceled → nada (idempotente)
-    assert reasignar_principal_rebasado(pos, [p10, p11, emergencia], cotizacion(X, "10.39", "10.41"), cfg_stops,
+    assert reasignar_principal_rebasado(pos, [p10, p11, emergencia], cotizacion(X, "10.39", "10.41", last="10.41"), cfg_stops,
                                         tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
     p11.qty = 100                                                        # tras el Replaced de DAS, plan() ya no toca nada
     assert plan(pos, [p11, emergencia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
@@ -1179,7 +1683,7 @@ def test_reasignar_el_mas_alto_pone_principal_nuevo_al_ask_mas_3_y_no_mueve_la_e
     pos = posicion([lote("A", 10, 100)], neta_fills=-100)
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
     emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
-    acciones = reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "10.38", "10.40"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "10.38", "10.40", last="10.40"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert [type(a) for a in acciones] == [Anotar, Cancelar, EnviarOrden, Anotar]
     assert acciones[0] == lote_anotado("A", "R-C-01 (a)", principal_consumido=True)
@@ -1191,7 +1695,7 @@ def test_reasignar_el_mas_alto_pone_principal_nuevo_al_ask_mas_3_y_no_mueve_la_e
     sin_float(nueva)
     assert pos.lotes["A"].principal_consumido is True and pos.lotes["A"].nivel_stop == D("10")
     # riesgo 11: otro $Quote antes del Canceled NO pone un segundo principal al ask
-    assert reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "10.39", "10.41"), cfg_stops,
+    assert reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "10.39", "10.41", last="10.41"), cfg_stops,
                                         tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
     assert plan(pos, [emergencia, aceptada(acciones[2], id_das=9)], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
 
@@ -1201,7 +1705,7 @@ def test_reasignar_dos_rebasados_a_la_vez_suben_juntos_al_siguiente(cfg_stops, t
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 30, id_das=1, nivel=10)
     p1020 = orden(100000002, Proposito.STOP_PRINCIPAL, "10.20", "10.51", 30, id_das=2, nivel="10.20")
     p11 = orden(100000003, Proposito.STOP_PRINCIPAL, "11.00", "11.33", 40, id_das=3, nivel=11)
-    acciones = reasignar_principal_rebasado(pos, [p10, p1020, p11], cotizacion(X, "10.58", "10.60"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p10, p1020, p11], cotizacion(X, "10.58", "10.60", last="10.60"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert sorted(a.id_das for a in de_tipo(acciones, Cancelar)) == [1, 2]
     assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(3, 100)]
@@ -1214,7 +1718,7 @@ def test_reasignar_solo_mueve_los_lotes_del_nivel_exacto_cancelado(cfg_stops, to
     p1020 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.20", "10.51", 60, id_das=1, nivel="10.2")
     p1021 = orden(100000002, Proposito.STOP_PRINCIPAL, "10.21", "10.52", 40, id_das=None, nivel="10.21", estado=EstadoOrden.SENDING)
     p11 = orden(100000003, Proposito.STOP_PRINCIPAL, "11.00", "11.33", 50, id_das=3, nivel=11)
-    acciones = reasignar_principal_rebasado(pos, [p1020, p1021, p11], cotizacion(X, "10.51", "10.53"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p1020, p1021, p11], cotizacion(X, "10.51", "10.53", last="10.53"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert [a.id_das for a in de_tipo(acciones, Cancelar)] == [1]
     assert (pos.lotes["A"].nivel_stop, pos.lotes["B"].nivel_stop) == (D("11"), D("10.21"))
@@ -1244,7 +1748,7 @@ def test_reasignar_el_superior_que_tambien_paso_su_limite_no_recibe_acciones(cfg
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 60, id_das=1, nivel=10)
     p1020 = orden(100000002, Proposito.STOP_PRINCIPAL, "10.20", "10.51", 40, id_das=2, nivel="10.2", estado=EstadoOrden.PARTIAL,
                   llenas=10, lvqty=30)                                  # llenando: su limpieza va por el evento del fill
-    acciones = reasignar_principal_rebasado(pos, [p10, p1020], cotizacion(X, "10.58", "10.60"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p10, p1020], cotizacion(X, "10.58", "10.60", last="10.60"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert [type(a) for a in acciones] == [Anotar, Cancelar, EnviarOrden, Anotar] and acciones[1].id_das == 1
     assert (acciones[2].orden.qty, acciones[2].orden.stop, acciones[2].orden.lote_id) == (60, D("10.60"), "A")
@@ -1256,7 +1760,7 @@ def test_reasignar_no_pone_principal_al_ask_si_el_ask_ya_llega_a_la_emergencia(c
     pos = posicion([lote("A", 10, 100)], neta_fills=-100)
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
     emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
-    acciones = reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "11.38", "11.40"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "11.38", "11.40", last="11.40"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert [type(a) for a in acciones] == [Anotar, Cancelar, Anotar]
     assert acciones[2].datos["modo"] == "cubierto_por_emergencia" and pos.lotes["A"].principal_consumido is True
@@ -1268,7 +1772,7 @@ def test_reasignar_con_banda_el_principal_al_ask_recortado_coincide_con_la_emerg
     pos = posicion([lote("A", 10, 100)], neta_fills=-100)
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
     emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "10.24", "10.55", 100, id_das=2)
-    acciones = reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "10.38", "10.40"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p10, emergencia], cotizacion(X, "10.38", "10.40", last="10.40"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION, limit_up=D("10.40"))
     assert [type(a) for a in acciones] == [Anotar, Cancelar, Anotar] and acciones[2].datos["hacia"] == "10.24"
 
@@ -1278,43 +1782,74 @@ def test_reasignar_adopta_el_principal_del_vigilante_sin_nivel(cfg_stops, tokens
     pos = posicion([lote("A", 10, 60), lote("B", 11, 40)], neta_fills=-100)
     p10 = orden(200000001, Proposito.DESCONOCIDA, "10.00", "10.30", 60, id_das=11, origen=Origen.VIGILANTE)
     p11 = orden(200000002, Proposito.DESCONOCIDA, "11.00", "11.33", 40, id_das=12, origen=Origen.VIGILANTE)
-    acciones = reasignar_principal_rebasado(pos, [p10, p11], cotizacion(X, "10.38", "10.40"), cfg_stops,
+    acciones = reasignar_principal_rebasado(pos, [p10, p11], cotizacion(X, "10.38", "10.40", last="10.40"), cfg_stops,
                                             tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert [(type(a), getattr(a, "id_das", None)) for a in acciones if not isinstance(a, (Programar, Anotar))] == [
         (Cancelar, 11), (Reemplazar, 12)]
     assert de_tipo(acciones, Reemplazar)[0].qty == 100
 
 
-@pytest.mark.parametrize("ask,llenas,estado,neta,neta_das", [
-    pytest.param("10.30", 0, EstadoTicker.NORMAL, -100, None, id="ask-igual-al-limite-no-rebasa"),
-    pytest.param("10.29", 0, EstadoTicker.NORMAL, -100, None, id="ask-bajo-el-limite"),
-    pytest.param("10.40", 20, EstadoTicker.NORMAL, -80, None, id="principal-con-fill-no-se-reasigna-(va-por-limpieza)"),
-    pytest.param("10.40", 0, EstadoTicker.BS, -100, None, id="R-G-01-cisne-negro-no-persigue"),
-    pytest.param("10.40", 0, EstadoTicker.HALT, -100, None, id="R-F-01-en-halt-manda-la-reapertura"),
-    pytest.param("10.40", 0, EstadoTicker.NORMAL, 0, None, id="sin-corto"),
-    pytest.param("10.40", 0, EstadoTicker.NORMAL, -100, -90, id="correccion-2-neta-das-distinta"),
-    pytest.param(None, 0, EstadoTicker.NORMAL, -100, None, id="sin-ask"),
-    pytest.param("0", 0, EstadoTicker.NORMAL, -100, None, id="ask-cero"),
+@pytest.mark.parametrize("ask,ultimo,llenas,estado,neta,neta_das", [
+    pytest.param("10.30", "10.40", 0, EstadoTicker.NORMAL, -100, None, id="ask-igual-al-limite-no-rebasa"),
+    pytest.param("10.29", "10.40", 0, EstadoTicker.NORMAL, -100, None, id="ask-bajo-el-limite"),
+    pytest.param("10.40", "10.40", 20, EstadoTicker.NORMAL, -80, None, id="principal-con-fill-no-se-reasigna-(va-por-limpieza)"),
+    pytest.param("10.40", "10.40", 0, EstadoTicker.BS, -100, None, id="R-G-01-cisne-negro-no-persigue"),
+    pytest.param("10.40", "10.40", 0, EstadoTicker.HALT, -100, None, id="R-F-01-en-halt-manda-la-reapertura"),
+    pytest.param("10.40", "10.40", 0, EstadoTicker.NORMAL, 0, None, id="sin-corto"),
+    pytest.param("10.40", "10.40", 0, EstadoTicker.NORMAL, -100, -90, id="correccion-2-neta-das-distinta"),
+    pytest.param(None, "10.40", 0, EstadoTicker.NORMAL, -100, None, id="sin-ask"),
+    pytest.param("0", "10.40", 0, EstadoTicker.NORMAL, -100, None, id="ask-cero"),
+    pytest.param("10.35", "9.90", 0, EstadoTicker.NORMAL, -100, None, id="D2a-02-ultimo-bajo-el-limite-spread-ancho-de-PM"),
+    pytest.param("10.40", "10.30", 0, EstadoTicker.NORMAL, -100, None, id="D2a-02-ultimo-igual-al-limite-no-rebasa"),
+    pytest.param("10.40", None, 0, EstadoTicker.NORMAL, -100, None, id="D2a-02-sin-ultimo"),
+    pytest.param("10.40", "0", 0, EstadoTicker.NORMAL, -100, None, id="D2a-02-ultimo-cero"),
 ])
-def test_reasignar_no_actua(cfg_stops, tokens, cotizacion, ask, llenas, estado, neta, neta_das):
+def test_reasignar_no_actua(cfg_stops, tokens, cotizacion, ask, ultimo, llenas, estado, neta, neta_das):
     pos = posicion([lote("A", 10, 100)], neta_fills=neta, neta_das=neta_das, estado=estado)
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10, llenas=llenas,
                 estado=EstadoOrden.PARTIAL if llenas else EstadoOrden.ACCEPTED, lvqty=100 - llenas)
-    cot = Cotizacion(ticker=X, bid=D("10.36"), ask=None if ask is None else D(ask))
+    cot = Cotizacion(ticker=X, bid=D("10.36"), ask=None if ask is None else D(ask), last=None if ultimo is None else D(ultimo))
     assert reasignar_principal_rebasado(pos, [p10], cot, cfg_stops, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
     assert pos.lotes["A"].principal_consumido is False and pos.lotes["A"].nivel_stop == D("10")
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_02_reasignar_con_el_ultimo_bajo_el_limite_no_empeora_el_stop(cfg_stops, tokens):
+    """D2a-02: en PM con spread ancho (bid 9,80 / ask 10,35) el último (9,90) ni llegó al disparo: NADA; y un $Quote con un ask
+    absurdo (11,40, que antes dejaba solo la emergencia) tampoco. Los lotes siguen intactos (nada anotado que deshacer)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    for ask in ("10.35", "11.40"):
+        cot = Cotizacion(ticker=X, bid=D("9.80"), ask=D(ask), last=D("9.90"))
+        assert reasignar_principal_rebasado(pos, [p10, emergencia], cot, cfg_stops, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+    assert pos.lotes["A"].principal_consumido is False and pos.lotes["A"].nivel_stop == D("10")
+    assert tokens.ultimo_seq == 0
+
+
+def test_D2a_02_reasignar_con_el_ultimo_por_encima_del_limite_actua_como_siempre(cfg_stops, tokens):
+    """D2a-02: último 10,35 y ask 10,36 por encima del límite 10,30 sin fill → principal nuevo al ask (+3 %), como antes."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
+    emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
+    cot = Cotizacion(ticker=X, bid=D("10.34"), ask=D("10.36"), last=D("10.35"))
+    acciones = reasignar_principal_rebasado(pos, [p10, emergencia], cot, cfg_stops, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [type(a) for a in acciones] == [Anotar, Cancelar, EnviarOrden, Anotar]
+    assert (acciones[2].orden.stop, acciones[2].orden.precio, acciones[2].orden.qty) == (D("10.36"), D("10.68"), 100)
+    assert acciones[3].datos["last"] == "10.35" and "último 10.35" in acciones[1].motivo
+    assert pos.lotes["A"].principal_consumido is True
 
 
 def test_reasignar_sin_principales_o_sin_id_das_no_hace_nada(cfg_stops, tokens, cotizacion):
     pos = posicion([lote("A", 10, 100)], neta_fills=-100)
     emergencia = orden(100000002, Proposito.STOP_EMERGENCIA, "11.30", "16.30", 100, id_das=2)
-    assert reasignar_principal_rebasado(pos, [emergencia], cotizacion(X, "10.38", "10.40"), cfg_stops, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+    assert reasignar_principal_rebasado(pos, [emergencia], cotizacion(X, "10.38", "10.40", last="10.40"), cfg_stops, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
     enviando = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=None, estado=EstadoOrden.SENDING, nivel=10)
-    assert reasignar_principal_rebasado(pos, [enviando, emergencia], cotizacion(X, "10.38", "10.40"), cfg_stops, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
+    assert reasignar_principal_rebasado(pos, [enviando, emergencia], cotizacion(X, "10.38", "10.40", last="10.40"), cfg_stops, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
     assert pos.lotes["A"].principal_consumido is False
     consumido = posicion([lote("A", 10, 100, consumido=True)], neta_fills=-100)   # su principal ya no corresponde a ningún lote
     p10 = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, nivel=10)
-    assert reasignar_principal_rebasado(consumido, [p10, emergencia], cotizacion(X, "10.38", "10.40"), cfg_stops,
+    assert reasignar_principal_rebasado(consumido, [p10, emergencia], cotizacion(X, "10.38", "10.40", last="10.40"), cfg_stops,
                                         tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
 
 
@@ -1441,3 +1976,9 @@ def test_modulo_puro_solo_importa_tipos_precios_y_biblioteca_estandar():
 
 def test_serie_stops_es_la_del_injerto_8_6():
     assert serie_stops("ABC") == "stops:ABC"
+
+
+def test_A_06_comando_posiciones_es_el_de_protocolo_cmd_get():
+    """A-06 (nombra stops.py): el módulo es PURO y no puede importar protocolo; su literal es EXACTAMENTE cmd_get("POSITIONS")."""
+    from app.bot_das import protocolo
+    assert COMANDO_POSICIONES == protocolo.cmd_get("POSITIONS") == "GET POSITIONS"

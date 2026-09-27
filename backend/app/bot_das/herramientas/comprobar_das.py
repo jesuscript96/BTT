@@ -1,14 +1,17 @@
 """Comprobación de DAS real el PRIMER DÍA (§3.27, §10 «lo que NO se puede probar sin DAS real», lote H).
 
 QUÉ HACE
-  `python -m app.bot_das.herramientas.comprobar_das` recorre los 9 pasos de
+  `python -m app.bot_das.herramientas.comprobar_das` recorre los 10 pasos de
   §3.27 contra el DAS de verdad, UNO A UNO y con confirmación por consola:
   1 rutas (`GET RouteStatus`), 2 `GET SymStatus`/`GET LDLU` con y sin
-  símbolo, 3 el `%ORDER` crudo de un STOPLMTP, 4 si un `REPLACE` de cantidad
+  símbolo, 3 el `%ORDER` crudo de un STOPLMTP (y la ZONA HORARIA de DAS,
+  L0-05: si su hora no casa con ET se aborta), 4 si un `REPLACE` de cantidad
   conserva el pre/post, 5 PostOnly en SAGEREB y SMAT, 6 el BP que retienen
   los dos stops, 7 qué llega por una conexión watch y si una segunda
-  conexión normal entra, 8 el signo de `%POS` en un corto, 9 `%SLRET` real y
-  `SLRouteMinCharge ALLROUTE`. Cada paso va al diario (`comprobacion_das`:
+  conexión normal entra, 8 el signo de `%POS` en un corto, 9 `%SLRET` real
+  (cuántos llegan por consulta, E2-05) y `SLRouteMinCharge ALLROUTE`, 10 qué
+  es el `share` de un `REPLACE` sobre una orden PARCIAL (A-02 / D2a-08:
+  cantidad abierta o total). Cada paso va al diario (`comprobacion_das`:
   paso, comando, respuesta_cruda, conclusion) y a un informe de texto en
   `BOT_DAS_DIR/informes/`. `--ayuda` imprime los pasos sin tocar nada.
 
@@ -29,7 +32,16 @@ LAS TRAMPAS
   * Las órdenes canario son de 1 acción, de COMPRA y lejos del mercado
     (stops con disparo un 50 % por encima del ask; límites PostOnly un 30 %
     por debajo del bid): no deben llenarse. Todas se cancelan al terminar el
-    paso y, por si acaso, otra vez al salir.
+    paso y, por si acaso, otra vez al salir. G2-07: una orden aceptada con
+    eco TARDÍO no está en la lista de vivas; por eso, tras cada paso canario
+    y al salir, se pide `GET ORDERS` y se cancela TODA orden viva con token
+    canario (seq ≥ `SEQ_COMPROBACION_DESDE`) que no se conozca.
+  * El paso 10 es el único que PUEDE llenarse: compra 2 acciones (al precio
+    que diga la persona; por defecto al bid) y espera un parcial de 1 hasta
+    `ESPERA_PARCIAL_S`. Lo comprado se VENDE después (con «SI») por lo
+    llenado de ESA orden, nunca por la posición entera. Un parcial no se
+    puede forzar en DAS real: si no llega, el paso lo dice y la pregunta
+    queda para el soporte de DAS.
   * El bot tiene que estar APAGADO: una orden con token nuestro que el
     ejecutor no tiene en su diario sería para él una orden ajena (caso 4,
     pausa global). Si algún cerrojo de supervisor/ejecutor/vigilante está
@@ -58,6 +70,8 @@ from app.bot_das import VERSION
 from app.bot_das import avisos as mod_avisos
 from app.bot_das import config as mod_config
 from app.bot_das import protocolo
+from app.bot_das import reloj as mod_reloj
+from app.bot_das import tokens as mod_tokens
 from app.bot_das.cerrojo import CerrojoInstancia
 from app.bot_das.cliente import ENV_PERMITIR_ORDENES, ClienteDAS
 from app.bot_das.diario import Diario
@@ -67,6 +81,7 @@ from app.bot_das.reloj import Reloj
 from app.bot_das.tipos import (
     STOP_EMERGENCIA_DISPARO_PCT,
     STOP_PRINCIPAL_LIMITE_PCT,
+    EstadoOrden,
     Fase,
     Lado,
     MensajeDAS,
@@ -105,6 +120,12 @@ LIMITE_BAJO_BID_PCT = Decimal("30")      # PostOnly canario: lejos del mercado (
 SEQ_COMPROBACION_DESDE = 99_000          # tokens canario: lejos de las secuencias del ejecutor en un día
 PROCESOS_BOT = ("supervisor", "ejecutor", "vigilante")
 CONFIRMACION_CANARIO = "SI"
+ESPERA_PARCIAL_S = 60.0                  # paso 10: cuánto se espera a que la compra de 2 quede parcial (1 llena)
+QTY_PARCIAL = 2                          # paso 10: la orden que debe quedar parcial
+SHARE_REPLACE_PARCIAL = 2                # paso 10: abierta → qty 3 / lvqty 2; total → qty 2 / lvqty 1
+MARGEN_VENTA_PCT = Decimal("1")          # paso 10: lo comprado se vende a bid × (1 − 1 %) (vendible)
+ESTADOS_VIVOS = frozenset({EstadoOrden.SENDING, EstadoOrden.ACCEPTED, EstadoOrden.PARTIAL, EstadoOrden.HOLD,
+                           EstadoOrden.TRIGGERED})
 
 
 @dataclass(frozen=True)
@@ -124,7 +145,8 @@ PASOS: tuple[PasoComprobacion, ...] = (
                      "Qué contesta DAS a cada forma (§5.8) → valor propuesto de tecnicos.get_con_simbolo."),
     PasoComprobacion(3, "%ORDER crudo de un STOPLMTP", True,
                      "NEWORDER B STOPLMTP de 1 acción lejos del mercado → línea %ORDER CRUDA (propuesta para "
-                     "fixtures/lineas_das.txt) y valor propuesto de stops.tipo_esperado_en_order (riesgo 1)."),
+                     "fixtures/lineas_das.txt), valor propuesto de stops.tipo_esperado_en_order (riesgo 1), qué es "
+                     "su precio (disparo o límite, D2a-10) y la hora de DAS contra ET (L0-05: si no casa, se aborta)."),
     PasoComprobacion(4, "REPLACE de cantidad sobre el STOPLMTP", True,
                      "¿Conserva el pre/post? (2h.8) Compara el tipo del %ORDER antes y después; luego cancela."),
     PasoComprobacion(5, "PostOnly en SAGEREB y SMAT", True,
@@ -138,12 +160,17 @@ PASOS: tuple[PasoComprobacion, ...] = (
     PasoComprobacion(8, "Signo de %POS en un corto", False,
                      "Lee %POS; si no hay cortos, pide abrir uno de 1 acción A MANO → qty_corto_negativa."),
     PasoComprobacion(9, "Locates: %SLRET real y mínimo por ruta", False,
-                     f"SLPRICEINQUIRE X {QTY_INQUIRE} {RUTA_INQUIRE} → %SLRET real; SLRouteMinCharge {RUTA_MIN_CHARGE}."),
+                     f"SLPRICEINQUIRE X {QTY_INQUIRE} {RUTA_INQUIRE} → %SLRET real y CUÁNTOS llegan por consulta "
+                     f"(E2-05); SLRouteMinCharge {RUTA_MIN_CHARGE}."),
+    PasoComprobacion(10, "REPLACE sobre una orden PARCIAL: ¿share abierto o total?", True,
+                     f"Compra límite de {QTY_PARCIAL} acciones que quede parcial (1 llena) → REPLACE id "
+                     f"{SHARE_REPLACE_PARCIAL} → lvqty/qty del %ORDER → propuesta stops.replace_share_es_abierta "
+                     f"(A-02 / D2a-08); luego cancela y VENDE lo comprado."),
 )
 
 
 def texto_ayuda() -> str:
-    """Los 9 pasos, para `--ayuda` (sin red, sin ficheros)."""
+    """Los 10 pasos, para `--ayuda` (sin red, sin ficheros)."""
     lineas = ["Comprobación de DAS real (primer día, bot APAGADO). Cada paso pide confirmación por consola.",
               f"Los pasos CANARIO mandan órdenes de 1 acción y exigen {ENV_PERMITIR_ORDENES}=1 y escribir "
               f"«{CONFIRMACION_CANARIO}».", ""]
@@ -197,6 +224,8 @@ class Comprobador:
         self._mercado = MercadoDAS(reloj)
         self._vivas: dict[int, str] = {}           # id_das → descripción de las órdenes canario sin cancelar
         self._stop_paso3: Optional[tuple[int, int, str, Decimal, Decimal, str]] = None
+        self._abortado: Optional[str] = None       # L0-05: DAS no está en ET → no se sigue
+        self._envio_canario = False                # G2-07: se mandó algún mutante canario (hay que barrer al salir)
 
     # ── orquestación ──
     def ejecutar(self, numeros: Sequence[int]) -> int:
@@ -207,6 +236,9 @@ class Comprobador:
                     continue
                 self._consola.decir(f"\n── Paso {paso.numero}: {paso.titulo}{' [CANARIO]' if paso.canario else ''}")
                 self._consola.decir(f"   {paso.detalle}")
+                if self._abortado is not None:
+                    self._registrar(paso.numero, [], [], f"saltado: comprobación ABORTADA ({self._abortado})")
+                    continue
                 if paso.canario and not self._canario:
                     self._registrar(paso.numero, [], [], f"saltado: sin permiso canario ({ENV_PERMITIR_ORDENES}=1 + "
                                                           f"{CONFIRMACION_CANARIO})")
@@ -218,16 +250,44 @@ class Comprobador:
                     getattr(self, f"_paso_{paso.numero}")()
                 except Exception as exc:  # noqa: BLE001 — frontera (DAS real): un paso que falla no impide los demás
                     self._registrar(paso.numero, [], [], f"ERROR {type(exc).__name__}: {exc}")
+                if paso.canario or paso.numero == 7:
+                    self._barrer_canario(paso.numero, conocidas=False)   # G2-07: eco tardío de lo de ESTE paso
         finally:
             self.cancelar_vivas()
         return CODIGO_OK
 
     def cancelar_vivas(self) -> None:
-        """Cancela TODA orden canario que siga viva (también al salir por error)."""
+        """Cancela TODA orden canario que siga viva (también al salir por error) y barre las de eco tardío (G2-07)."""
         for id_das, que in list(self._vivas.items()):
             mensajes = self._enviar(protocolo.cmd_cancel(id_das))
             self._vivas.pop(id_das, None)
             self._registrar(0, [f"CANCEL {id_das}"], mensajes, f"limpieza: cancelada {que}")
+        if self._envio_canario:
+            self._barrer_canario(0, conocidas=True)
+
+    def _barrer_canario(self, paso: int, conocidas: bool) -> None:
+        """G2-07 (riesgo 11): `GET ORDERS` y CANCEL de toda orden VIVA con token canario de hoy (seq ≥ 99 000).
+
+        Una orden aceptada con eco tardío no entró en `_vivas` y quedaría viva
+        en la cuenta real. Con `conocidas=False` (tras un paso) se respetan las
+        de `_vivas` (el STOPLMTP del paso 3 sigue para el paso 4); al salir se
+        cancela todo.
+        """
+        if not self._envio_canario:
+            return
+        mensajes = self._enviar(protocolo.cmd_get("ORDERS"))
+        ultimas: dict[int, MsgOrden] = {}
+        for m in mensajes:
+            if isinstance(m, MsgOrden) and _es_token_canario(m.token, self._reloj.hoy()):
+                ultimas[m.id] = m
+        # una VENTA canario (la que cierra lo comprado en el paso 10) no se cancela nunca: dejaría la cuenta larga
+        huerfanas = [m for m in ultimas.values()
+                     if m.estado in ESTADOS_VIVOS and not str(m.lado).upper().startswith("S")
+                     and (conocidas or m.id not in self._vivas)]
+        for m in huerfanas:
+            respuesta = self._cancelar(m.id)
+            self._registrar(paso, [protocolo.cmd_get("ORDERS"), f"CANCEL {m.id}"], [m] + respuesta,
+                            f"limpieza G2-07: orden canario con eco tardío (token {m.token}, {m.ticker}) cancelada")
 
     # ── los 9 pasos ──
     def _paso_1(self) -> None:
@@ -282,10 +342,30 @@ class Comprobador:
             return
         self._vivas[viva.id] = f"STOPLMTP {ticker} (paso 3)"
         self._stop_paso3 = (viva.id, orden.token, ticker, disparo, limite, viva.tipo)
+        if viva.precio == disparo:
+            campo_precio = f"el precio del %ORDER ({viva.precio}) es el DISPARO"
+        elif viva.precio == limite:
+            campo_precio = (f"el precio del %ORDER ({viva.precio}) es el LÍMITE: con un Type sin números el bot "
+                            f"tomaría el límite por disparo (D2a-10): fijar stops.tipo_esperado_en_order")
+        else:
+            campo_precio = f"el precio del %ORDER ({viva.precio}) no es ni el disparo {disparo} ni el límite {limite}"
         conclusion = (f"%ORDER crudo: {viva.cruda!r}; tipo leído «{viva.tipo}» → propuesta "
-                      f"stops.tipo_esperado_en_order = «{viva.tipo}»; añadir la línea a fixtures/lineas_das.txt con "
-                      f"sus asertos (riesgo 1)")
+                      f"stops.tipo_esperado_en_order = «{viva.tipo}»; {campo_precio}; añadir la línea a "
+                      f"fixtures/lineas_das.txt con sus asertos (riesgo 1); {self._comprobar_zona(viva)}")
         self._registrar(3, [comando], mensajes, conclusion)
+
+    def _comprobar_zona(self, viva: MsgOrden) -> str:
+        """L0-05 (riesgo 13): la hora del %ORDER recién recibido contra `ahora()` ET; si no casa (> 60 s), se ABORTA."""
+        try:
+            desfase = mod_reloj.desfase_hora_das_s(viva.hora, self._reloj.ahora())
+        except ValueError:
+            self._abortado = f"hora ilegible en el %ORDER: {viva.hora!r} (L0-05)"
+            return f"ABORTO: {self._abortado}"
+        if mod_reloj.hora_das_es_et(viva.hora, self._reloj.ahora()):
+            return f"hora de DAS {viva.hora} = ET (desfase {desfase:+.0f} s, L0-05)"
+        self._abortado = (f"la hora de DAS ({viva.hora}) no es ET (desfase {desfase:+.0f} s): configura DAS en hora "
+                          f"de Nueva York; el bot NO debe operar así (halts y fills desplazados, L0-05)")
+        return f"ABORTO: {self._abortado}"
 
     def _paso_4(self) -> None:
         if self._stop_paso3 is None:
@@ -424,6 +504,7 @@ class Comprobador:
                            ruta=str(self._rutas_cfg.get("stop") or "STOP"), qty=1, tipo=TipoOrden.STOP_LIMITE_PP,
                            stop=disparo, precio=precios.con_techo(disparo, STOP_PRINCIPAL_LIMITE_PCT, arriba=True),
                            proposito=Proposito.STOP_PRINCIPAL)
+        self._envio_canario = True                    # G2-07: si el eco llega tarde, el barrido la encuentra
         cliente.enviar(protocolo.cmd_neworder(orden))
         recibidos = _sacar(cola, ESPERA_RESPUESTA_S)
         mensajes += recibidos
@@ -461,14 +542,112 @@ class Comprobador:
         cargos = self._enviar(minimo)
         rets = [(m.tipo, m.ruta, str(m.precio), m.tamano, m.notas) for m in slret if isinstance(m, MsgSLRet)]
         minimos = [(m.ruta, str(m.minimo)) for m in cargos if isinstance(m, MsgSLMinCharge)]
-        self._registrar(9, [inquire, minimo], slret + cargos, f"%SLRET: {rets or 'ninguno'}; mínimos: {minimos or 'ninguno'}")
+        rutas = sorted({str(r[1]) for r in rets})
+        if len(rets) <= 1:
+            cuantos = f"{len(rets)} %SLRET por consulta: la atribución por consulta del decisor vale tal cual (E2-05)"
+        else:
+            cuantos = (f"{len(rets)} %SLRET por UNA consulta (rutas {rutas}): DAS contesta una vez por ruta; el "
+                       f"decisor los recoge en su ventana y elige el más barato (E2-05)")
+        self._registrar(9, [inquire, minimo], slret + cargos,
+                        f"%SLRET: {rets or 'ninguno'}; {cuantos}; mínimos: {minimos or 'ninguno'}")
+
+    def _paso_10(self) -> None:
+        """A-02 / D2a-08: ¿el `share` de un REPLACE sobre una orden PARCIAL es la cantidad ABIERTA o la TOTAL?
+
+        Compra límite de 2 acciones que quede parcial (1 llena) → REPLACE id 2
+        precio → abierta: qty 3 / lvqty 2; total: qty 2 / lvqty 1. Después se
+        cancela lo vivo y se VENDE lo que llenó ESA orden (nunca la posición
+        entera del ticker).
+        """
+        if not self._consola.confirmar_canario(f"El paso 10 COMPRA hasta {QTY_PARCIAL} acciones REALES (y las vende "
+                                               f"después)."):
+            self._registrar(10, [], [], "saltado: sin «SI»")
+            return
+        ticker = self._ticker()
+        bid, ask = self._cotizacion(ticker)
+        if bid is None or ask is None:
+            self._registrar(10, [], [], f"sin cotización de {ticker}: no se manda nada")
+            return
+        precio = self._precio_paso_10(bid)
+        ruta = str(_primera_ruta(self._rutas_cfg, "agregar") or "SAGEREB")
+        orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=QTY_PARCIAL,
+                           tipo=TipoOrden.LIMITE, precio=precio, proposito=Proposito.TP_AGREGAR)
+        comandos = [protocolo.cmd_neworder(orden)]
+        mensajes = self._enviar(comandos[0])
+        viva = _orden_por_token(mensajes, orden.token)
+        if viva is not None and viva.estado in ESTADOS_VIVOS:
+            self._vivas[viva.id] = f"LMT {QTY_PARCIAL} {ticker} (paso 10)"
+        esperas = max(int(ESPERA_PARCIAL_S // max(_espera_respuesta(), 0.001)), 1)
+        for _ in range(esperas):
+            if viva is None or _llenas(viva) >= 1 or viva.estado not in ESTADOS_VIVOS:
+                break
+            comandos.append(protocolo.cmd_get("ORDERS"))
+            mensajes += self._enviar(comandos[-1])
+            viva = _orden_por_token(mensajes, orden.token) or viva
+        if viva is None:
+            self._registrar(10, comandos, mensajes, f"sin %ORDER del token {orden.token}: {_rechazo(mensajes, orden.token)}")
+            return
+        conclusion = "sin parcial de 1: no se pudo medir el share (preguntar al soporte de DAS, D2a-08)"
+        if viva.estado in ESTADOS_VIVOS and _llenas(viva) == 1 and viva.lvqty == QTY_PARCIAL - 1:
+            reemplazo = protocolo.cmd_replace(viva.id, SHARE_REPLACE_PARCIAL, TipoOrden.LIMITE, precio, None)
+            comandos.append(reemplazo)
+            respuesta = self._enviar(reemplazo)
+            mensajes += respuesta
+            despues = [m for m in respuesta if isinstance(m, MsgOrden) and m.id == viva.id]
+            if not despues:
+                comandos.append(protocolo.cmd_get("ORDERS"))
+                mensajes += self._enviar(comandos[-1])
+                despues = [m for m in mensajes if isinstance(m, MsgOrden) and m.id == viva.id]
+            conclusion = _conclusion_share(despues[-1] if despues else None, mensajes)
+        final = self._cerrar_paso_10(viva, ticker, mensajes, comandos)
+        self._registrar(10, comandos, mensajes, f"{ticker}: {conclusion}; {final}")
+
+    def _precio_paso_10(self, bid: Decimal) -> Decimal:
+        texto = self._consola.preguntar(f"Precio límite de la compra de {QTY_PARCIAL} (Intro = bid {bid}; para que "
+                                        f"quede PARCIAL elige uno que solo encuentre 1 acción): ")
+        if not texto:
+            return bid
+        try:
+            precio = Decimal(texto.replace(",", "."))
+        except ArithmeticError:
+            self._consola.decir(f"   precio no válido: se usa el bid {bid}")
+            return bid
+        return precio if precio.is_finite() and precio > 0 else bid
+
+    def _cerrar_paso_10(self, viva: MsgOrden, ticker: str, mensajes: list, comandos: list) -> str:
+        """Cancela lo vivo de la orden del paso 10 y VENDE lo que llenó (solo eso), con «SI»."""
+        if viva.id in self._vivas:
+            comandos.append(f"CANCEL {viva.id}")
+            mensajes += self._cancelar(viva.id)
+            finales = [m for m in mensajes if isinstance(m, MsgOrden) and m.id == viva.id]
+            viva = finales[-1] if finales else viva
+        llenas = _llenas(viva)
+        if llenas <= 0:
+            return "nada comprado"
+        bid, _ask = self._cotizacion(ticker)
+        if bid is None or not self._consola.confirmar_canario(f"Se compraron {llenas} {ticker}: ¿las vendo ya?"):
+            return f"COMPRADAS {llenas} {ticker}: VENDER A MANO"
+        venta = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.VENTA, ticker=ticker,
+                           ruta=str(_primera_ruta(self._rutas_cfg, "cruzar") or "SAGEPRO"), qty=llenas,
+                           tipo=TipoOrden.LIMITE, precio=precios.bajo_bid(bid, MARGEN_VENTA_PCT),
+                           proposito=Proposito.VENTA_EXCESO)
+        comandos.append(protocolo.cmd_neworder(venta))
+        respuesta = self._enviar(comandos[-1])
+        mensajes += respuesta
+        vendida = _orden_por_token(respuesta, venta.token)
+        if vendida is not None and vendida.estado is EstadoOrden.EXECUTED:
+            return f"vendidas las {llenas} compradas"
+        # una venta aún viva NO va a `_vivas`: cancelarla al salir dejaría la cuenta larga
+        return f"venta de {llenas} {ticker} enviada ({vendida.estado.value if vendida else 'sin %ORDER'}): COMPRUEBA en DAS"
 
     # ── ayudas de red ──
-    def _enviar(self, linea: str, espera_s: float = ESPERA_RESPUESTA_S) -> list[MensajeDAS]:
-        """Manda `linea` y devuelve lo que llegue en `espera_s` (también lo alimenta al libro de cotizaciones)."""
+    def _enviar(self, linea: str, espera_s: Optional[float] = None) -> list[MensajeDAS]:
+        """Manda `linea` y devuelve lo que llegue en `espera_s` (defecto `ESPERA_RESPUESTA_S`; también alimenta el libro)."""
         _sacar(self._cola, 0.0)
+        if protocolo.es_mutante(linea):
+            self._envio_canario = True               # G2-07: al salir se barre GET ORDERS
         self._cliente.enviar(linea)
-        recibidos = _sacar(self._cola, espera_s)
+        recibidos = _sacar(self._cola, _espera_respuesta() if espera_s is None else espera_s)
         for m in recibidos:
             self._mercado.aplicar(m)
         return recibidos
@@ -535,6 +714,48 @@ def _sacar(cola: "queue.Queue[Any]", espera_s: float) -> list[MensajeDAS]:
             return salida
         if isinstance(item, MensajeDAS):
             salida.append(item)
+
+
+def _espera_respuesta() -> float:
+    """`ESPERA_RESPUESTA_S` leído en la llamada (los tests lo acortan)."""
+    return float(ESPERA_RESPUESTA_S)
+
+
+def _es_token_canario(token: Optional[int], hoy: Any) -> bool:
+    """G2-07: token del esquema del bot (Origen.EJECUTOR), de HOY y con seq ≥ `SEQ_COMPROBACION_DESDE`."""
+    if token is None:
+        return False
+    partes = mod_tokens.descomponer(token)
+    if partes is None:
+        return False
+    origen, dia, seq = partes
+    return origen is Origen.EJECUTOR and dia == hoy.timetuple().tm_yday and seq >= SEQ_COMPROBACION_DESDE
+
+
+def _llenas(m: MsgOrden) -> int:
+    """Acciones llenas de una orden según su %ORDER: qty − abiertas − canceladas (nunca negativo)."""
+    return max(int(m.qty) - int(m.lvqty) - int(m.cxlqty), 0)
+
+
+def _primera_ruta(rutas: Any, clave: str) -> Optional[str]:
+    """La primera ruta que nombra `rutas[clave]` (texto o bloque anidado), o None."""
+    valores = _valores_ruta(rutas.get(clave)) if isinstance(rutas, dict) else []
+    return valores[0] if valores else None
+
+
+def _conclusion_share(despues: Optional[MsgOrden], mensajes: list) -> str:
+    """A-02 / D2a-08: lectura del %ORDER tras `REPLACE id 2` sobre una orden de 2 con 1 llena."""
+    if despues is None:
+        return f"sin %ORDER tras el REPLACE: {_rechazo(mensajes, None)} (share sin medir)"
+    llenas = _llenas(despues)
+    if despues.lvqty == SHARE_REPLACE_PARCIAL and despues.qty == llenas + SHARE_REPLACE_PARCIAL:
+        return (f"tras REPLACE {SHARE_REPLACE_PARCIAL}: qty {despues.qty}, lvqty {despues.lvqty} → el share es la "
+                f"cantidad ABIERTA → propuesta stops.replace_share_es_abierta = true (A-02)")
+    if despues.qty == SHARE_REPLACE_PARCIAL and despues.lvqty == SHARE_REPLACE_PARCIAL - llenas:
+        return (f"tras REPLACE {SHARE_REPLACE_PARCIAL}: qty {despues.qty}, lvqty {despues.lvqty} → el share es la "
+                f"cantidad TOTAL → propuesta stops.replace_share_es_abierta = false (A-02)")
+    return (f"tras REPLACE {SHARE_REPLACE_PARCIAL}: qty {despues.qty}, lvqty {despues.lvqty}, cxlqty "
+            f"{despues.cxlqty}: lectura AMBIGUA, revisar a mano (A-02)")
 
 
 def _orden_por_token(mensajes: list, token: int) -> Optional[MsgOrden]:

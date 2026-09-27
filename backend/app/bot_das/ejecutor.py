@@ -87,6 +87,27 @@ LAS TRAMPAS.
     escribirse; el log tiene el filtro instalado por `main` ANTES de la
     primera línea (el `.env` se carga antes, en silencio, para conocer los
     valores que hay que tapar).
+  * G2-02: en `arrancar()` el SNTP (hasta 3 s), el hash del motor (disco
+    mecánico) y el `connect` con DAS (hasta 5 s) corren en un hilo de un
+    solo uso mientras el principal toca el latido cada `LATIDO_ARRANQUE_S`:
+    nada bloquea el hilo principal más de 1 s y el supervisor no mata por
+    «colgado» a un ejecutor que solo espera a la red.
+  * G2-05: `cliente.enviar` devuelve False cuando DESCARTA la línea en el acto
+    (sin conexión o cola llena): entonces NO se anota `orden_enviada`, se
+    anota `orden_descartada` y el decisor recibe `OrdenDescartada` (la orden
+    pasa a CLOSED y se replanifican los stops, D2a-06). Lo que el emisor purga
+    después (versión vieja, sesión caída) llega por `ClienteDAS.al_descartar`
+    a la misma cola.
+  * G1A-03 / G1B-08: la referencia de Massive (REST, 8 s de timeout, hasta 50
+    páginas) NUNCA corre en el hilo del decisor. El `HiloVigilado`
+    «referencia» precarga los splits del día al arrancar (reintento cada
+    `REFERENCIA_SPLITS_REINTENTO_S` si fallan) y, en bucle, las fichas que el
+    decisor dejó pedidas (`tomar_pendientes` + `precargar_ficha`). Sin ese
+    hilo, con la `Referencia` real toda señal sería A12 y no se operaría: si
+    muere sin relanzarse, aviso 3.
+  * H-2 fuera de `EstadoBot`: tras `reconstruir` se siembra el decisor con
+    `diario.memoria_decisor` (k de halts, veto R-F-03, control manual,
+    cambios de Telegram) y los ids de comando ya vistos hoy (C-02).
   * Importar este módulo no abre red, no lee ficheros, no arranca hilos y no
     importa pandas (`BOT_DAS_FUENTE=tuberia`, injerto §8.25; lo comprueba
     `test_das_seguridad`).
@@ -95,6 +116,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import dataclasses
 import heapq
 import json
 import logging
@@ -107,6 +129,7 @@ import sys
 import threading
 import time
 import traceback
+import types
 from collections import deque
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -119,11 +142,11 @@ from app.bot_das import config as mod_config
 from app.bot_das import protocolo
 from app.bot_das import reloj as mod_reloj
 from app.bot_das import tokens as mod_tokens
-from app.bot_das.cerrojo import CerrojoInstancia, Latido
+from app.bot_das.cerrojo import CerrojoInstancia, HiloVigilado, Latido
 from app.bot_das.cliente import ClienteDAS, ClienteSombra, CuotaComandos, EnvioProhibido, PlanReconexion
-from app.bot_das.comandos import LectorComandosFichero, ReceptorTelegram
+from app.bot_das.comandos import FICHERO_OFFSET_TELEGRAM, LectorComandosFichero, ReceptorTelegram
 from app.bot_das.decisor import Decisor
-from app.bot_das.diario import Diario, LectorDiario, reconstruir
+from app.bot_das.diario import Diario, LectorDiario, memoria_decisor, reconstruir
 from app.bot_das.enlace_bot_alertas import authkey_de_entorno, direccion_de_entorno
 from app.bot_das.fuente_senales import FuenteEnProceso, FuenteGrabacion, FuenteTuberia
 from app.bot_das.mercado_das import MercadoDAS
@@ -136,6 +159,7 @@ from app.bot_das.tipos import (
     MAX_LV1,
     RELOJ_AVISO_S,
     RELOJ_NEGARSE_S,
+    REPLACE_SHARE_ES_ABIERTA,
     Accion,
     Anotar,
     Avisar,
@@ -173,6 +197,7 @@ from app.bot_das.tipos import (
     MsgSLReuse,
     MsgTrade,
     Nivel,
+    OrdenDescartada,
     OrdenNueva,
     Origen,
     PedirAlSupervisor,
@@ -195,7 +220,8 @@ __all__ = [
     "CODIGO_OK", "CODIGO_ERROR", "CODIGO_RELOJ", "CODIGO_DOBLE_INSTANCIA", "CODIGO_MOTOR", "CODIGO_CONFIG",
     "ESPERA_COLA_S", "TIC_MAX_S", "TEMPORIZADORES_POR_PASO", "ESPERA_RECONCILIACION_S", "RELOJ_REVISION_S",
     "ESPERA_AVISOS_S", "REPLAY_PASO_S", "REPLAY_TICS_FINALES", "REPLAY_ESPERA_S", "AVISOS_BORDE_TOPE",
-    "LATIDO_FEED_S", "RUTA_DOTENV",
+    "LATIDO_FEED_S", "RUTA_DOTENV", "LATIDO_ARRANQUE_S", "REFERENCIA_ESPERA_S", "REFERENCIA_SPLITS_REINTENTO_S",
+    "PETICION_REPETIR_S", "MOTIVO_NO_ENCOLADA",
     "NOMBRE_FOTO", "NOMBRE_ORDEN_SUPERVISOR", "NOMBRE_LATIDO", "NOMBRE_CERROJO", "NOMBRE_COMANDOS",
     "SUBCARPETAS_BOT", "ENV_FUENTE", "ENV_CHAT_IDS", "FUENTE_TUBERIA", "FUENTE_PROCESO", "FUENTE_GRABACION",
     "CONSULTAS_DE_CUENTA", "MENSAJES_DE_CUENTA",
@@ -225,6 +251,12 @@ REPLAY_TICS_FINALES = 3         # grabación agotada: Tics con la cola vacía an
 REPLAY_ESPERA_S = 0.02          # replay: espera real por la respuesta de DAS cuando salió algo por el socket
 AVISOS_BORDE_TOPE = 1000        # avisos de los hilos de borde pendientes de pasar al hilo principal
 LATIDO_FEED_S = 5.0             # F11 b: cadencia del latido del feed de una fuente en proceso (la de bot.py)
+LATIDO_ARRANQUE_S = 0.5         # G2-02: mientras arrancar() espera a la red (SNTP, connect) el latido se toca cada 0,5 s
+REFERENCIA_ESPERA_S = 0.25      # G1A-03: el hilo «referencia» mira las fichas pedidas cada 0,25 s
+REFERENCIA_SPLITS_REINTENTO_S = 60.0   # G1A-03: splits del día que fallaron se reintentan cada minuto
+PETICION_REPETIR_S = 10.0       # la misma petición al supervisor como mucho cada 10 s (dedupe, como el vigilante)
+CUOTA_AGOTADA_TOPE = 1000       # A-07 (sombra): anotaciones «cuota_agotada» pendientes del hilo principal
+MOTIVO_NO_ENCOLADA = "descartada: el cliente no la encoló (sin conexión con DAS o cola de salida llena)"
 SERVIDOR_SNTP = "time.windows.com"
 RUTA_DOTENV: Optional[Path] = None   # None = backend/.env (lo carga SOLO main; un test lo apunta a otro sitio)
 
@@ -276,6 +308,7 @@ class Buzon:
         self._cerrojo = threading.Lock()
         self._captura: Optional[list[MensajeDAS]] = None
         self._hilo_captura: Optional[int] = None
+        self._cuotas: deque[tuple[str, float]] = deque(maxlen=CUOTA_AGOTADA_TOPE)
         self.avisos_perdidos = 0
 
     # ── cola ──
@@ -324,6 +357,28 @@ class Buzon:
     def al_caida_hilo(self, nombre: str, error: str, relanzado: bool) -> None:
         """Caída de un `HiloVigilado` de borde → `HiloCaido` (F11 g)."""
         self.poner(HiloCaido(str(nombre), str(error), bool(relanzado)))
+
+    def al_descartar(self, msg: OrdenDescartada) -> None:
+        """D2a-06 / G2-05: `ClienteDAS.al_descartar` (un NEWORDER que el emisor NO mandó) → la cola del decisor."""
+        if not isinstance(msg, OrdenDescartada):
+            raise TypeError(f"al_descartar espera una OrdenDescartada, no {type(msg).__name__}")
+        self.poner(msg)
+
+    def al_cuota_agotada(self, linea: str, espera_s: float) -> None:
+        """A-07 (sombra): `ClienteSombra.al_cuota_agotada`; el hilo principal lo anota como «cuota_agotada»."""
+        try:
+            espera = float(espera_s)
+        except (TypeError, ValueError):
+            espera = float("nan")
+        with self._cerrojo:
+            self._cuotas.append((str(linea), espera))
+
+    def cuotas_pendientes(self) -> list[tuple[str, float]]:
+        """Saca (y vacía) las cuotas agotadas de la sombra pendientes de anotar."""
+        with self._cerrojo:
+            salida = list(self._cuotas)
+            self._cuotas.clear()
+        return salida
 
     def al_aviso(self, texto: str) -> None:
         """Aviso del cliente de DAS (nivel 2: cola de salida llena, líneas descartadas sin conexión)."""
@@ -444,8 +499,12 @@ class Ejecutor:
     `medir_desvio` (inyectables en tests), `lector` (por defecto
     `ruta_estado/../diario`), `plan_reconexion`, `aviso_config` (H-4, se
     avisa al arrancar), `limpiar` (FiltroSecretos para la foto),
-    `espera_reconciliacion_s`, `espera_avisos_s` y `paso_replay` (gancho
-    `(t, vela)` de `FuenteGrabacion.reproducir`).
+    `espera_reconciliacion_s`, `espera_avisos_s`, `paso_replay` (gancho
+    `(t, vela)` de `FuenteGrabacion.reproducir`) y `referencia` (la
+    `referencia_massive.Referencia` que usa el decisor: si ofrece la precarga
+    —`precargar_splits`, `tomar_pendientes`, `precargar_ficha`— el ejecutor
+    arranca el `HiloVigilado` «referencia», G1A-03; una referencia en
+    memoria o None no arranca nada).
 
     Hilos: `arrancar`, `paso`, `correr`, `ejecutar` y `parar` se llaman
     desde el hilo principal; `pedir_parada` desde cualquiera.
@@ -461,7 +520,8 @@ class Ejecutor:
                  aviso_config: Optional[str] = None, limpiar: Optional[Callable[[str], str]] = None,
                  espera_reconciliacion_s: float = ESPERA_RECONCILIACION_S,
                  espera_avisos_s: float = ESPERA_AVISOS_S,
-                 paso_replay: Optional[Callable[[datetime, dict], None]] = None) -> None:
+                 paso_replay: Optional[Callable[[datetime, dict], None]] = None,
+                 referencia: Any = None) -> None:
         if not isinstance(cfg, Config):
             raise TypeError(f"cfg debe ser una Config, no {type(cfg).__name__}")
         for nombre in ("enviar", "invalidar", "conectar", "cerrar"):
@@ -524,6 +584,10 @@ class Ejecutor:
         self._espera_reconciliacion_s = float(espera_reconciliacion_s)
         self._espera_avisos_s = float(espera_avisos_s)
         self._paso_replay = paso_replay
+        self._referencia = referencia
+        self._hilo_referencia: Optional[HiloVigilado] = None
+        self._aviso_referencia_dado = False
+        self._peticion_en: dict[str, float] = {}
         self._sombra = isinstance(cliente, ClienteSombra)
         self._parser_sombra: Optional[protocolo.Parser] = (
             protocolo.Parser(cliente.real.es_nuestro, watch=False, cuenta=cliente.real.cuenta) if self._sombra else None)
@@ -659,20 +723,16 @@ class Ejecutor:
                                            f"Ya hay un ejecutor en marcha (PID {pid}): esta instancia NO arranca "
                                            f"(R-J-04 c). La viva sigue al mando.")
         self._tocar_latido()
-        # 2. reloj (R-J-07)
-        desvio = self._medir_desvio_seguro()
+        # 2. reloj (R-J-07); G2-02: el UDP puede tardar 3 s → en un hilo, con latido
+        desvio = self._con_latido("reloj-sntp-arranque", self._medir_desvio_seguro)
         puede, texto_reloj = mod_reloj.veredicto_reloj(desvio, *self._umbrales_reloj())
         self._reloj_revisado_en = self._reloj.mono()
         if not puede:
             return self._fallo_de_arranque(CODIGO_RELOJ, "reloj",
                                            f"Reloj desviado {desvio:+.2f} s respecto a SNTP: el ejecutor se NIEGA a "
                                            f"operar (R-J-07). Sincroniza la hora y relanza.")
-        # 3. hash del motor compartido (H-6, R-O-01)
-        try:
-            hash_real: Optional[str] = self._hash_motor(self._base)
-            error_hash: Optional[str] = None
-        except Exception as exc:  # noqa: BLE001 — frontera de fichero (H-6): sin motor legible no hay hash; se niega igual
-            hash_real, error_hash = None, f"{type(exc).__name__}: {exc}"
+        # 3. hash del motor compartido (H-6, R-O-01); G2-02: lee ficheros (disco mecánico) → en un hilo, con latido
+        hash_real, error_hash = self._con_latido("hash-motor", self._hash_motor_seguro)
         if hash_real != self._cfg.motor_hash:
             detalle = f"no se pudo calcular ({error_hash})" if error_hash else f"calculado {hash_real}"
             return self._fallo_de_arranque(CODIGO_MOTOR, "motor_hash",
@@ -696,9 +756,11 @@ class Ejecutor:
             self._avisar_directo(Nivel.AVISO, f"Reloj: {texto_reloj} (R-J-07)", "reloj_arranque")
         if self._aviso_config:
             self._avisar_directo(Nivel.AVISO, self._aviso_config, "config_respaldo")
-        # 5. estado desde el diario (H-2)
-        registros = self._lector.leer(hoy)
-        estado = reconstruir(registros, hoy)
+        # 5. estado desde el diario (H-2); A-02: el REPLACE confirmado se lee con el interruptor de la config
+        # G2-02: un diario grande en el disco mecánico puede tardar: se lee y se reconstruye con el latido tocándose
+        registros = self._con_latido("diario-leer", lambda: self._lector.leer(hoy))
+        estado = self._con_latido("diario-reconstruir", lambda: reconstruir(
+            registros, hoy, replace_share_es_abierta=_share_es_abierta(self._cfg)))
         if estado.fase is not self._cfg.fase:
             self._diario.anotar("fase", diario=estado.fase.value, config=self._cfg.fase.value,
                                 nota="manda la fase de la config (R-O-03)")
@@ -712,9 +774,11 @@ class Ejecutor:
         if decisor.estado is not estado:
             raise ValueError("la fábrica del decisor debe usar el estado reconstruido que recibe (H-2)")
         self._decisor = decisor
+        self._sembrar_memoria(registros, hoy)
+        self._arrancar_referencia()
         self._tocar_latido()
-        # 6. conexión con DAS (R-J-02)
-        conectado = self._conectar_seguro()
+        # 6. conexión con DAS (R-J-02); G2-02: el connect puede tardar 5 s → en un hilo, con latido
+        conectado = self._con_latido("das-conexion-arranque", self._conectar_seguro)
         if not conectado:
             self._buzon.poner(ConexionDAS(False, "no se pudo conectar con DAS al arrancar (R-J-02)"))
         # 7. F12/F13 del decisor: nada que abra sale hasta reconciliar (el decisor arranca degradado)
@@ -816,6 +880,9 @@ class Ejecutor:
         hilo = self._hilo_reconexion
         if hilo is not None:
             hilo.join(ESPERA_HILO_RECONEXION_S)
+        if self._hilo_referencia is not None:
+            # G1A-03: un GET a Massive en curso tarda como mucho su timeout; el hilo es daemon y no retiene el proceso
+            self._seguro("referencia.parar", lambda: self._hilo_referencia.parar(0.5))
         self._seguro("cliente.cerrar", self._cliente.cerrar)
         self._seguro("avisos.parar", lambda: self._avisos.parar(self._espera_avisos_s))
         self._seguro("diario.cerrar", self._diario.cerrar)
@@ -893,7 +960,7 @@ class Ejecutor:
                 "motivo": "diario no escribible: sin orden_intencion en disco no sale una orden que abre"})
             return
         try:
-            simulados = self._enviar_linea(linea, a.serie, o.version)
+            simulados, encolada = self._enviar_linea(linea, a.serie, o.version)
         except EnvioProhibido as exc:  # frontera (R-O-03): no debería pasar nunca; si pasa es un bug y no sale nada
             self._diario.anotar("orden_simulada", token=o.token, ticker=o.ticker, bug=True, error=str(exc),
                                 fills_simulados=[], regla="R-O-03")
@@ -903,6 +970,15 @@ class Ejecutor:
             return
         except (TypeError, ValueError) as exc:  # frontera de mensaje: línea inválida para el socket
             self._accion_invalida("EnviarOrden", exc, token=o.token, ticker=o.ticker)
+            return
+        if not encolada:
+            # G2-05 (M6, riesgo 3): el cliente la DESCARTÓ en el acto: el diario no puede decir que salió. El decisor la
+            # pasa a CLOSED y replanifica los stops (D2a-06); con DAS caído lo hace la reconciliación al reconectar.
+            self._diario.anotar("orden_descartada", token=o.token, ticker=o.ticker, proposito=o.proposito.value,
+                                serie=a.serie, version=o.version, motivo=MOTIVO_NO_ENCOLADA, donde="ejecutor",
+                                regla="G2-05")
+            self._buzon.poner(OrdenDescartada(token=o.token, serie=a.serie, version=o.version,
+                                              motivo=MOTIVO_NO_ENCOLADA, ticker=o.ticker))
             return
         self._enviadas += 1
         if self._sombra:
@@ -992,38 +1068,53 @@ class Ejecutor:
         self._mandar_protegido(que, linea, None, 0)
 
     def _mandar_protegido(self, que: str, linea: str, serie: Optional[str], version: int) -> None:
-        """`_enviar_linea` con las fronteras de envío: EnvioProhibido (bug, aviso 3) y línea inválida (aviso 2)."""
+        """`_enviar_linea` con las fronteras de envío: EnvioProhibido (bug, aviso 3) y línea inválida (aviso 2).
+
+        G2-05: un MUTANTE (CANCEL, REPLACE, locates…) que el cliente descarta
+        en el acto se anota como `linea_descartada` (el diario no finge que
+        salió); una lectura descartada no se anota (con DAS caído serían
+        muchas y el decisor ya está en modo degradado «das»).
+        """
         try:
-            self._enviar_linea(linea, serie, version)
+            _, encolada = self._enviar_linea(linea, serie, version)
         except EnvioProhibido as exc:  # frontera (R-O-03): un mutante al cliente de solo lectura es un bug; no sale
             self._diario.anotar("envio_prohibido", accion=que, error=str(exc), regla="R-O-03")
             self._avisar_directo(Nivel.MAXIMO, f"BUG: {que} mutante bloqueado por el candado de sombra (R-O-03)",
                                  f"envio_prohibido:{que}")
+            return
         except (TypeError, ValueError) as exc:  # frontera de mensaje
             self._accion_invalida(que, exc)
+            return
+        if not encolada and protocolo.es_mutante(linea):
+            self._diario.anotar("linea_descartada", accion=que, linea=linea, motivo=MOTIVO_NO_ENCOLADA, regla="G2-05")
 
-    def _enviar_linea(self, linea: str, serie: Optional[str], version: int) -> list[MensajeDAS]:
-        """Una línea hacia DAS; en sombra, las consultas de CUENTA al emparejador. Devuelve los mensajes simulados.
+    def _enviar_linea(self, linea: str, serie: Optional[str], version: int) -> tuple[list[MensajeDAS], bool]:
+        """Una línea hacia DAS; en sombra, las consultas de CUENTA al emparejador. Devuelve (mensajes simulados, encolada).
 
         R-O-03: en sombra la cuenta que opera el bot es la del emparejador
         (sus órdenes, fills, posiciones y BP); el DAS real solo aporta el
         mercado. Los mensajes simulados se ENCOLAN (orden de la cola) y además
-        se devuelven para `orden_simulada`.
+        se devuelven para `orden_simulada`. G2-05: `encolada` es False solo si
+        el cliente devolvió False (la descartó en el acto); un doble que no
+        devuelve nada (None) cuenta como encolada.
         """
         if not self._sombra:
-            self._cliente.enviar(linea, serie, version)
-            self._al_socket += 1
-            return []
+            resultado = self._cliente.enviar(linea, serie, version)
+            encolada = resultado is not False
+            if encolada:
+                self._al_socket += 1
+            return [], encolada
         if _es_consulta_de_cuenta(linea):
-            return self._consulta_sombra(linea)
-        if not protocolo.es_mutante(linea):
-            self._al_socket += 1                         # lecturas al DAS real: su respuesta llega por el socket
+            return self._consulta_sombra(linea), True
         self._buzon.empezar_captura()
         try:
-            self._cliente.enviar(linea, serie, version)
+            resultado = self._cliente.enviar(linea, serie, version)
         finally:
             capturados = self._buzon.terminar_captura()
-        return capturados
+        encolada = resultado is not False
+        if encolada and not protocolo.es_mutante(linea):
+            self._al_socket += 1                         # lecturas al DAS real: su respuesta llega por el socket
+        return capturados, encolada
 
     def _consulta_sombra(self, linea: str) -> list[MensajeDAS]:
         mensajes: list[MensajeDAS] = []
@@ -1103,9 +1194,15 @@ class Ejecutor:
         Formato de `tipos.PedirAlSupervisor`: «relanzar X» viaja además como
         `{"relanzar": "X"}`, que es lo que lee el supervisor. Nunca se escribe
         `{"parar": …}`: esa orden es del supervisor hacia los hijos (y este
-        mismo proceso la leería).
+        mismo proceso la leería). Dedupe (como el vigilante): la MISMA petición
+        como mucho cada `PETICION_REPETIR_S` (reloj inyectado); un decisor que
+        la repitiera en cada Tic no relanza en bucle ni llena el fichero.
         """
         peticion = str(a.peticion)
+        ahora = self._reloj.mono()
+        anterior = self._peticion_en.get(peticion)
+        if anterior is not None and ahora - anterior < PETICION_REPETIR_S:
+            return
         cuerpo: dict[str, Any] = {"t": self._reloj.ahora().isoformat(), "proceso": "ejecutor", "pid": os.getpid(),
                                   "peticion": peticion}
         palabras = peticion.split()
@@ -1122,6 +1219,7 @@ class Ejecutor:
             self._avisar_directo(Nivel.AVISO, f"No se pudo escribir la petición al supervisor ({a.peticion})",
                                  "peticion_supervisor")
             return
+        self._peticion_en[peticion] = ahora
         self._diario.anotar("peticion_supervisor", peticion=a.peticion)
 
     def _salir(self, codigo: Any, motivo: str) -> None:
@@ -1207,6 +1305,7 @@ class Ejecutor:
         self._revisar_cola()
         self._revisar_dia()
         self._revisar_reloj()
+        self._revisar_referencia()
         if not self._diario.degradado:
             self._aviso_disco = False
         if not cola_vacia:
@@ -1224,6 +1323,9 @@ class Ejecutor:
     def _drenar_avisos_de_borde(self) -> None:
         for nivel, texto, clave in self._buzon.avisos_pendientes():
             self._avisar_directo(nivel, texto, clave)
+        for linea, espera in self._buzon.cuotas_pendientes():
+            # A-07: en sombra el DAS real habría retenido este mutante por cuota (se cuenta, no se espera)
+            self._diario.anotar("cuota_agotada", linea=linea, espera_s=espera, regla="A-07")
 
     def _tras_conexion(self, msg: ConexionDAS) -> None:
         """R-J-02 (2): conectado → el plan vuelve a 2 s; caída → reconexión a 2/4/8/16/30 s (la lleva el ejecutor)."""
@@ -1475,7 +1577,7 @@ class Ejecutor:
         if proximo is not None:
             limite = min(limite, ahora + timedelta(seconds=max(0.0, proximo - self._reloj.mono())))
         try:
-            fuente.reproducir(hasta=limite, paso=self._paso_replay)
+            fuente.reproducir(hasta=limite, paso=self._paso_de_replay)
         except Exception as exc:  # noqa: BLE001 — frontera del replay: el guion o el fichero fallan → fin con error, registrado
             self._diario.anotar("excepcion", donde="grabacion.reproducir", error=f"{type(exc).__name__}: {exc}",
                                 traceback=traceback.format_exc(limit=12))
@@ -1483,6 +1585,30 @@ class Ejecutor:
             return
         if self._reloj.ahora() < limite:
             self._reloj.fijar(limite)
+
+    def _paso_de_replay(self, t: datetime, vela: dict) -> None:
+        """R-O-02 / G2-06: el gancho del guion y, si devuelve las líneas de DAS de esa vela, su `$Quote` al libro YA.
+
+        La cotización que el DAS simulado manda por el socket llega DESPUÉS de
+        la señal de la misma vela (la fuente la entrega en el acto): sin esto,
+        toda entrada del replay se descartaba «sin cotización fresca de DAS».
+        Un gancho que devuelve las líneas (`SimuladorDAS.desde_vela`) hace que
+        el `$Quote` se aplique a `MercadoDAS` (y al libro de la sombra) antes
+        de la señal; uno que no devuelve nada se comporta como antes. El
+        `$Quote` pasa por el decisor como cualquier mensaje de DAS (él es quien
+        aplica el libro y reacciona); la copia que llegue luego por el socket
+        repite los mismos valores.
+        """
+        lineas = self._paso_replay(t, vela) if self._paso_replay is not None else None
+        if lineas is None or isinstance(lineas, (str, bytes)):
+            lineas = [lineas] if isinstance(lineas, str) else []
+        parser = protocolo.Parser(lambda token: False)
+        for cruda in lineas:
+            if not isinstance(cruda, str):
+                continue
+            msg = parser.parsear(cruda)
+            if isinstance(msg, MsgQuote):
+                self._procesar(DeDAS(msg, False))
 
     # ── latido (R-J-04 b, injerto §8.11) ──
     def _tocar_latido(self) -> None:
@@ -1544,6 +1670,117 @@ class Ejecutor:
         self._codigo = codigo
         self._motivo_salida = texto
         return codigo
+
+    def _con_latido(self, nombre: str, fn: Callable[[], Any]) -> Any:
+        """G2-02 (R-J-04 b, §6): `fn()` en un hilo de un solo uso; el principal toca el latido cada `LATIDO_ARRANQUE_S`.
+
+        Devuelve lo que devuelva `fn` y relanza en el principal lo que `fn`
+        lance (las funciones que se pasan aquí ya son fronteras que no lanzan).
+        Un SNTP o un `connect` lentos ya no dejan el latido sin tocar > 1 s:
+        el supervisor no mata por «colgado» a un ejecutor que solo espera.
+        """
+        resultado: list[Any] = [None]
+        error: list[Optional[BaseException]] = [None]
+
+        def cuerpo() -> None:
+            try:
+                resultado[0] = fn()
+            except BaseException as exc:  # noqa: BLE001 — se relanza en el hilo principal tal cual
+                error[0] = exc
+
+        hilo = threading.Thread(target=cuerpo, name=nombre, daemon=True)
+        hilo.start()
+        while True:
+            hilo.join(LATIDO_ARRANQUE_S)
+            if not hilo.is_alive():
+                break
+            self._tocar_latido()
+        if error[0] is not None:
+            raise error[0]
+        return resultado[0]
+
+    def _hash_motor_seguro(self) -> tuple[Optional[str], Optional[str]]:
+        """(hash, error): H-6 con la frontera de fichero dentro (se ejecuta en el hilo de `_con_latido`)."""
+        try:
+            return self._hash_motor(self._base), None
+        except Exception as exc:  # noqa: BLE001 — frontera de fichero (H-6): sin motor legible no hay hash; se niega igual
+            return None, f"{type(exc).__name__}: {exc}"
+
+    def _sembrar_memoria(self, registros: list, hoy: date) -> None:
+        """H-2 fuera de `EstadoBot`: `diario.memoria_decisor` + ids de comando ya vistos hoy (C-02) → `decisor.sembrar_memoria`.
+
+        E1-03 (k de halts), G1A-18/G1B-18 (veto R-F-03), G1A-12/G1B-10
+        (control manual) y G1B-09 (cambios de Telegram) se pierden en un
+        reinicio sin esto. Un decisor sin `sembrar_memoria` (doble de test) se
+        deja como está. Un fallo aquí no impide arrancar (H-5): se anota y se
+        avisa 2, porque la protección no depende de la memoria.
+        """
+        sembrar = getattr(self._decisor, "sembrar_memoria", None)
+        if not callable(sembrar):
+            return
+        try:
+            memoria = memoria_decisor(registros, hoy)
+            ids = sorted({str(r.datos.get("id")) for r in registros
+                          if r.tipo in ("comando", "comando_repetido") and isinstance(r.datos, dict)
+                          and isinstance(r.datos.get("id"), str) and r.datos.get("id")})
+            campos = {campo.name: getattr(memoria, campo.name) for campo in _campos_dataclass(memoria)}
+            sembrar(types.SimpleNamespace(**campos, comandos_ids=ids))
+        except Exception as exc:  # noqa: BLE001 — frontera (H-5): la memoria es una mejora; sin ella se arranca igual
+            self._diario.anotar("excepcion", donde="sembrar_memoria", error=f"{type(exc).__name__}: {exc}",
+                                traceback=traceback.format_exc(limit=12), regla="H-5")
+            self._avisar_directo(Nivel.AVISO, f"No se pudo rehacer la memoria del decisor del diario "
+                                              f"({mod_avisos.escapar_html(exc)}): k de halts, control manual y "
+                                              f"cambios de Telegram empiezan de cero (H-2)", "memoria_decisor")
+            return
+        self._diario.anotar("memoria_decisor", k_halts_up=dict(memoria.k_halts_up), halt_hoy=sorted(memoria.halt_hoy),
+                            stop_hoy=sorted(memoria.stop_hoy), manual=sorted(memoria.manual),
+                            override_modo_seguridad=memoria.override_modo_seguridad,
+                            override_estrategia=dict(memoria.override_estrategia), comandos_ids=len(ids), regla="H-2")
+
+    def _arrancar_referencia(self) -> None:
+        """G1A-03 / G1B-08: el `HiloVigilado` «referencia» (Massive por REST) si la referencia ofrece la precarga."""
+        if self._hilo_referencia is not None or not _tiene_precarga(self._referencia):
+            return
+        self._hilo_referencia = HiloVigilado("referencia", self._cuerpo_referencia, self._buzon.al_caida_hilo)
+        self._hilo_referencia.arrancar()
+        self._diario.anotar("referencia_precarga", hilo="referencia", regla="G1A-03")
+
+    def _cuerpo_referencia(self) -> None:
+        """Hilo «referencia»: splits del día (reintento cada minuto si fallan) y, en bucle, las fichas pedidas.
+
+        La red se hace AQUÍ, nunca en el hilo del decisor; el resultado queda
+        en la caché de solo lectura de la `Referencia` (con su lock). Termina
+        cuando se pide parar.
+        """
+        hilo = self._hilo_referencia
+        parando = hilo.parando if hilo is not None else threading.Event()
+        ref = self._referencia
+        splits_listos: Optional[date] = None
+        intento: Optional[tuple[date, float]] = None
+        while not parando.is_set():
+            hoy = self._reloj.hoy()
+            ahora = time.monotonic()
+            if splits_listos != hoy and (intento is None or intento[0] != hoy
+                                         or ahora - intento[1] >= REFERENCIA_SPLITS_REINTENTO_S):
+                intento = (hoy, ahora)
+                if ref.precargar_splits(hoy) is not None:
+                    splits_listos = hoy
+            for ticker in ref.tomar_pendientes():
+                if parando.is_set():
+                    return
+                ref.precargar_ficha(ticker)
+            parando.wait(REFERENCIA_ESPERA_S)
+
+    def _revisar_referencia(self) -> None:
+        """G1A-03: si el hilo «referencia» murió y no se relanza, sin fichas no se abre nada (A12): aviso 3 una vez."""
+        hilo = self._hilo_referencia
+        if hilo is None or hilo.vivo or hilo.parando.is_set() or self._aviso_referencia_dado:
+            return
+        self._aviso_referencia_dado = True
+        self._diario.anotar("referencia_muerta", caidas=hilo.caidas, regla="G1A-03")
+        self._avisar_directo(Nivel.MAXIMO, "El hilo de la referencia de Massive murió y no se relanza: sin fichas no "
+                                           "se abre ninguna entrada (A12); los stops siguen. Relanza el ejecutor "
+                                           "(G1A-03)", "referencia_muerta")
 
     def _medir_desvio_seguro(self) -> Optional[float]:
         try:
@@ -1621,7 +1858,8 @@ def construir_desde_env(cfg: Config, reloj: Any, base: Path, *, ruta_config: Opt
     `BOT_DAS_CHAT_IDS`. Diario con el limpiador de `FiltroSecretos` de los
     valores de `secretos_desde_env()` (ajuste h). Los argumentos por nombre
     son para tests y replay (sin red): `referencia` (objeto con ficha/
-    splits_de_hoy o None), `abrir_referencia` (el `urlopen` de Massive),
+    splits_de_hoy o None; por defecto la `Referencia` real, cuya red hace el
+    hilo «referencia» del ejecutor y nunca el decisor, G1A-03), `abrir_referencia` (el `urlopen` de Massive),
     `calendario`, `hash_motor`, `medir_desvio`, `canales` de avisos.
     Construir NO abre red, NO arranca hilos y NO escribe el diario: todo eso
     ocurre en `arrancar()`. Lanza RuntimeError/ValueError con el entorno
@@ -1639,11 +1877,14 @@ def construir_desde_env(cfg: Config, reloj: Any, base: Path, *, ruta_config: Opt
     cola_avisos = mod_avisos.ColaAvisos(canales if canales is not None else mod_avisos.canales_desde_env(cfg), reloj)
     mercado = MercadoDAS(reloj, max_lv1=_entero_positivo(cfg.tecnicos.get("max_lv1"), MAX_LV1))
     comun = dict(al_mensaje=buzon.al_mensaje, al_estado=buzon.al_estado, reloj=reloj, cuota=_cuota_de(cfg, reloj),
-                 al_aviso=buzon.al_aviso, al_caida_hilo=buzon.al_caida_hilo)
+                 al_aviso=buzon.al_aviso, al_caida_hilo=buzon.al_caida_hilo,
+                 al_descartar=buzon.al_descartar)           # D2a-06: lo que el emisor purga vuelve al decisor
     cliente: Any
     if cfg.fase is Fase.SOMBRA:
         real = ClienteDAS.desde_env(watch=False, solo_lectura=True, **comun)
-        cliente = ClienteSombra(real, Emparejador(LibroSimulado(cuenta=real.cuenta), reloj), buzon.al_mensaje)
+        emparejador = Emparejador(LibroSimulado(cuenta=real.cuenta), reloj,
+                                  replace_share_es_abierta=_share_es_abierta(cfg))       # A-02: el simulador lo respeta
+        cliente = ClienteSombra(real, emparejador, buzon.al_mensaje, al_cuota_agotada=buzon.al_cuota_agotada)
     else:
         cliente = ClienteDAS.desde_env(watch=False, solo_lectura=False, **comun)
     fuente = _fuente_desde_env(cfg, buzon, reloj)
@@ -1662,7 +1903,9 @@ def construir_desde_env(cfg: Config, reloj: Any, base: Path, *, ruta_config: Opt
     token_b = os.environ.get(ENV_TOKEN_B, "").strip()
     autorizados = _chat_ids_de_entorno()
     if token_b and autorizados:
-        receptores.append(ReceptorTelegram(token_b, autorizados, buzon.al_comando, reloj, al_caida=buzon.al_caida_hilo))
+        # C-02: el offset se persiste en estado/telegram_offset ANTES de entregar: un reinicio no repite «/cerrar X N SI»
+        receptores.append(ReceptorTelegram(token_b, autorizados, buzon.al_comando, reloj, al_caida=buzon.al_caida_hilo,
+                                           ruta_offset=ruta_estado / FICHERO_OFFSET_TELEGRAM))
     elif token_b:
         logger.warning("[EJECUTOR] hay %s pero no %s: no se reciben comandos por Telegram (R-Q-01)",
                        ENV_TOKEN_B, ENV_CHAT_IDS)
@@ -1675,7 +1918,7 @@ def construir_desde_env(cfg: Config, reloj: Any, base: Path, *, ruta_config: Opt
     return Ejecutor(cfg, cliente, fuente, diario, cola_avisos, mercado, fabrica, reloj, latido, cerrojo, receptores,
                     config_watch, ruta_estado, buzon=buzon, base=Path(base), hash_motor=hash_motor,
                     medir_desvio=medir_desvio, lector=LectorDiario(dir_bot / "diario"), aviso_config=aviso_config,
-                    limpiar=filtro.limpiar, paso_replay=paso_replay)
+                    limpiar=filtro.limpiar, paso_replay=paso_replay, referencia=referencia)
 
 
 def _fuente_desde_env(cfg: Config, buzon: Buzon, reloj: Any) -> Any:
@@ -1748,6 +1991,24 @@ def _chat_ids_de_entorno() -> frozenset[int]:
 # ══════════════════════════════════════════════════════════════════════
 # Ayudas puras
 # ══════════════════════════════════════════════════════════════════════
+def _share_es_abierta(cfg: Config) -> bool:
+    """A-02: `cfg.stops.replace_share_es_abierta` si es un bool; si no, el defecto de tipos (lo mismo que reglas.stops)."""
+    bloque = cfg.stops if isinstance(cfg.stops, dict) else {}
+    valor = bloque.get("replace_share_es_abierta")
+    return valor if isinstance(valor, bool) else REPLACE_SHARE_ES_ABIERTA
+
+
+def _tiene_precarga(referencia: Any) -> bool:
+    """G1A-03: la referencia ofrece la precarga para un hilo de borde (la `Referencia` real; no la de memoria)."""
+    return referencia is not None and all(callable(getattr(referencia, nombre, None))
+                                          for nombre in ("precargar_splits", "tomar_pendientes", "precargar_ficha"))
+
+
+def _campos_dataclass(objeto: Any) -> tuple:
+    """Los campos de una dataclass (MemoriaDecisor) o () si no lo es."""
+    return dataclasses.fields(objeto) if dataclasses.is_dataclass(objeto) else ()
+
+
 def _es_apertura(o: OrdenNueva) -> bool:
     """Corrección 4: abre posición toda entrada (agregar/cruce, pirámides «add» incluidas) y toda venta en CORTO."""
     return o.proposito in _PROPOSITOS_APERTURA or o.lado is Lado.CORTO

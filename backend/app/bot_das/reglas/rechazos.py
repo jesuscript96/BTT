@@ -18,6 +18,20 @@ QUÉ HACE. Todo lo que el bot decide cuando DAS dice que no a una orden:
     `stops.separacion_reintentos_s` (2 s) entre intentos.
   * `tras_cancel_o_replace_rej`: injerto A §8.7, CancelRej/ReplaceRej →
     aviso 2 + `GET ORDERS` + barrido inmediato.
+  * «PostOnly would cross» (acción `pasar_a_cruce`, decisión del director,
+    D2-09): un agregar rechazado por PostOnly NO se reintenta al mismo precio
+    (volvería a cruzar) ni pausa el ticker: pasa YA a su fase de cruce.
+      - Entrada (ENTRADA_AGREGAR): `Programar("cruce_postonly:<token>", 0,
+        {ticker, token_rechazado, proposito, lote_id, qty})`; el decisor, al
+        vencer, pasa el intento a la fase de cruce de R-B-01 v3
+        (bid·(1 − 0,5 %) si el bid no cayó > 3 %: su `_enviar_cruce`). Sin
+        ese manejador el intento se cierra con lo llenado (sin pausa).
+      - TP / salida del motor que agregaba: `salidas.tp_al_vencer` (al ask
+        con techo 3 % sobre el último, o limbo con el aviso).
+      - Hora / cierre y reinicio que agregaba: `salidas.orden_al_ask` sin
+        techo (la hora no se negocia); el decisor la persigue como siempre.
+    La cantidad de toda salida reenviada se recorta a la posición actual
+    menos lo que ya pueden ejecutar las otras salidas vivas (D2-10).
 
 POR QUÉ ESTÁ AQUÍ. Es lógica PURA (sin reloj, sin red, sin logging, sin
 variables de entorno): el decisor le pasa la orden, la posición, las vivas,
@@ -62,9 +76,16 @@ LAS TRAMPAS.
     rechaza al cargar y se ignora en `clasificar`.
   * Precios `Decimal` y acciones `int`: «subir un tick» usa el tick del precio
     (regla 612) y, si el precio cruza 1 $, recalcula la ruta del tramo nuevo.
+  * Una salida reenviada NUNCA supera la posición (D2-10, riesgo 6): entre el
+    envío y el Send_Rej otra salida o un stop pueden haberla reducido. Si no
+    queda nada que reducir, no hay reintento ni pausa (`nada_que_reducir`).
+  * Telegram manda los avisos con parse_mode HTML (D2-08): el texto literal
+    de DAS y todo lo variable van por `html.escape(x, quote=False)` en el
+    `Avisar` (se ve igual en pantalla); los `Anotar` guardan el literal crudo.
 """
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -75,6 +96,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
+from app.bot_das.protocolo import cmd_get
+from app.bot_das.reglas import salidas
 from app.bot_das.reglas.precios import redondear_arriba, tramo
 from app.bot_das.reglas.precios import ruta as ruta_de
 from app.bot_das.reglas.stops import PROPOSITOS_STOP, descubiertas
@@ -88,6 +111,8 @@ from app.bot_das.tipos import (
     Consultar,
     Cotizacion,
     EnviarOrden,
+    EstadoLote,
+    EstadoOrden,
     EstadoTicker,
     Grupo,
     Lado,
@@ -104,7 +129,9 @@ from app.bot_das.tipos import (
 
 # ── catálogo ──────────────────────────────────────────────────────────────
 RUTA_CATALOGO = Path(__file__).with_name("catalogo_rechazos.json")   # solo la ruta: importar no lee nada
-ACCIONES_TRATAMIENTO = ("recalcular_bp", "recomprar_locate", "subir_tick_ssr", "reintentar", "ninguna")
+ACCION_PASAR_A_CRUCE = "pasar_a_cruce"           # D2-09: PostOnly rechazado → fase de cruce, sin reintento ni pausa
+ACCIONES_TRATAMIENTO = ("recalcular_bp", "recomprar_locate", "subir_tick_ssr", "reintentar", "ninguna",
+                        ACCION_PASAR_A_CRUCE)
 NIVELES_CATALOGO = (int(Nivel.AVISO), int(Nivel.MAXIMO))
 CLAVE_DESCONOCIDO = "desconocido"
 CAMPOS_OBLIGATORIOS = ("clave", "regex", "accion", "nivel", "fuente")
@@ -116,10 +143,12 @@ CLAVE_REINTENTO_RECHAZO = "reintento_rechazo"   # R-B-07 (2) recalcular_bp: reen
 CLAVE_LOCATE_RECOMPRAR = "locate_recomprar"     # R-B-07 caso locate → F9 (recomprar con su EV) y reenviar
 CLAVE_STOP_REINTENTO = "stop_reintento"         # R-C-03 (1): el decisor vuelve a llamar a stops.plan
 CLAVE_BARRIDO = "barrido"                       # injerto A §8.7: barrido inmediato tras CancelRej/ReplaceRej
-COMANDO_BP = "GET BP"
-COMANDO_ORDENES = "GET ORDERS"
+CLAVE_CRUCE_POSTONLY = "cruce_postonly"         # D2-09: «cruce_postonly:<token rechazado>»: el decisor pasa el intento al cruce
+COMANDO_BP = cmd_get("BP")                      # A-06: «GET BP» por protocolo.cmd_get (conjunto cerrado)
+COMANDO_ORDENES = cmd_get("ORDERS")             # A-06: «GET ORDERS»
 ESPERA_RESPUESTA_BP_S = 1.0                     # PROVISIONAL: GET BP contesta en < 1 s en el simulador; se mide en canario
 SEPARACION_REINTENTOS_STOP_S = 2.0              # R-C-03 «separación: por definir» → 2 s [PENDIENTE] (§3.20)
+SUBIDA_MAX_CIERRE_PCT = Decimal("100")          # R-C-03 (3): subida máxima para cerrar (solo se MIDE y anota: D2-15)
 
 # ── decisiones que se anotan (campo `decision` de `Anotar("rechazo")`) ──
 DECISION_REINTENTO = "reintento"
@@ -128,13 +157,24 @@ DECISION_STOP_AGOTADO = "stop_agotado"
 DECISION_PAUSA = "pausa"
 DECISION_CONTROL_HUMANO = "control_humano"
 DECISION_SIN_REINTENTO_BS = "sin_reintento_bs"
+DECISION_CRUCE = "pasar_a_cruce"                # D2-09: orden de cruce enviada (o temporizador del cruce de la entrada)
+DECISION_CRUCE_LIMBO = "pasar_a_cruce_limbo"    # D2-09: el TP no se cruza (techo 3 % o sin libro): limbo, mandan los stops
+DECISION_SIN_CRUCE = "sin_cruce"                # D2-09: no se puede cruzar ahora (estado, sin lote, sin libro): sin pausa
+DECISION_NADA_QUE_REDUCIR = "nada_que_reducir"  # D2-10: la salida ya no tiene acciones que reducir: sin reintento ni pausa
 
 _PROPOSITOS_ENTRADA = (Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE)
 _PROPOSITOS_AGREGAR = (Proposito.ENTRADA_AGREGAR, Proposito.TP_AGREGAR, Proposito.HORA_AGREGAR,
                        Proposito.SALIDA_MOTOR_AGREGAR)
+# D2-09: propósitos que salen PostOnly y tienen fase de cruce (CIERRE_REINICIO agrega con PostOnly en R-E-03).
+_PROPOSITOS_PO_CRUCE = (Proposito.ENTRADA_AGREGAR, Proposito.TP_AGREGAR, Proposito.SALIDA_MOTOR_AGREGAR,
+                        Proposito.HORA_AGREGAR, Proposito.CIERRE_REINICIO)
 _ESTADOS_SIN_REINTENTO = (EstadoTicker.BS, EstadoTicker.CONTROL_HUMANO, EstadoTicker.SIN_SIMBOLO)
 _ESTADOS_SIN_ABRIR = (EstadoTicker.PAUSADO, EstadoTicker.HALT)
+_ESTADOS_VIVOS = (EstadoOrden.SENDING, EstadoOrden.ACCEPTED, EstadoOrden.PARTIAL, EstadoOrden.HOLD,
+                  EstadoOrden.TRIGGERED)
+_LOTE_VIVO = (EstadoLote.ABRIENDO, EstadoLote.ABIERTO, EstadoLote.CERRANDO)
 _MOTIVO_MAX = 200
+_NADA_QUE_REDUCIR = object()                    # centinela de `_reintento` (D2-10)
 
 
 @dataclass(frozen=True)
@@ -241,7 +281,7 @@ def clasificar(notas: Optional[str], catalogo: Iterable[Mapping]) -> Tratamiento
 # ── R-B-07: decidir qué hacer con un Send_Rej ─────────────────────────────
 def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: list[Orden], cfg: Any,
             tokens: Callable[[], int], cot: Optional[Cotizacion], hora_et: datetime,
-            ahora: Optional[float] = None) -> list[Accion]:
+            ahora: Optional[float] = None, precio_primer_intento: Optional[Decimal] = None) -> list[Accion]:
     """R-B-07 (1)-(4), R-C-03 (1)-(2), EP-1: acciones ante un `Send_Rej` de `orden` (texto literal en `orden.notas`).
 
     Devuelve, EN ESTE ORDEN:
@@ -265,6 +305,12 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
     está cubierta) o control humano (si no), y los reintentos del stop siguen
     («los stops siguen», R-B-07 (3)).
 
+    PostOnly rechazado (acción `pasar_a_cruce`) de una orden que agregaba
+    (entrada, TP, salida del motor, hora, cierre y reinicio): NO se reintenta
+    al mismo precio ni se pausa el ticker; pasa YA a la fase de cruce (ver la
+    cabecera del módulo, D2-09). No gasta reintentos: `intentos_nuevo` =
+    `orden.intentos`. En cualquier otro propósito se trata como «reintentar».
+
     Resto: motivo conocido, acción ≠ «ninguna», `orden.intentos <
     cfg.entrada["reintentos_rechazo_conocido"]` (2) y el estado del ticker lo
     permite → reintento con token NUEVO:
@@ -275,13 +321,20 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
         1 s)`: el decisor redimensiona con el BP leído y envía con `token_nuevo`;
       * recomprar_locate → `Programar("locate_recomprar", 0)` (F9; solo ventas
         en corto): el decisor recompra con su EV y reenvía con `token_nuevo`.
+    Una orden que REDUCE la posición (compra con la cuenta corta, venta con
+    la cuenta larga; no entradas ni stops) se recorta a |neta de fills| menos
+    lo que las otras salidas vivas del mismo lado pueden ejecutar (D2-10); si
+    no queda nada: sin reintento, sin token y sin pausa (`nada_que_reducir`).
     Si no → posición cubierta (`descubiertas() == 0`): PAUSADO + aviso 2;
     sin cubrir: CONTROL_HUMANO + aviso 3 y NINGUNA orden (EP-1).
 
     `ahora` (monotónico) solo lo usa el stop para medir la ventana de R-C-03;
-    sin él vale `orden.ultima_act`. ValueError si la orden y la posición son
-    de tickers distintos o el ticker está vacío (una pausa sin ticker sería
-    GLOBAL), o si `cfg` no trae los bloques `entrada` y `stops`.
+    sin él vale `orden.ultima_act`. `precio_primer_intento` (aditivo, D2-15):
+    el precio del primer intento de la cadena de un stop, que el decisor
+    arrastra desde los `datos` del `stop_reintento` anterior; sin él, el
+    precio de ahora. ValueError si la orden y la posición son de tickers
+    distintos o el ticker está vacío (una pausa sin ticker sería GLOBAL), o
+    si `cfg` no trae los bloques `entrada` y `stops`.
     """
     ticker = orden.ticker
     if not isinstance(ticker, str) or not ticker.strip():
@@ -303,11 +356,14 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
     token_nuevo: Optional[int] = None
     intentos_nuevo: Optional[int] = None
     partes: list[str] = []
+    subida: dict[str, Any] = {}
 
     if _es_stop(orden):
         programa = None
+        subida = _subida_desde_primero(cot, precio_primer_intento, cfg_stops)
         if pos.estado is not EstadoTicker.BS:
-            programa = reintento_stop(orden, cfg_stops, orden.ultima_act if ahora is None else ahora)
+            programa = reintento_stop(orden, cfg_stops, orden.ultima_act if ahora is None else ahora,
+                                      cot=cot, precio_primer_intento=precio_primer_intento)
         if programa is not None:
             decision = DECISION_STOP_REINTENTO
             intentos_nuevo = int(programa.datos["intento"])
@@ -324,16 +380,28 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
             nivel = Nivel.MAXIMO
             estado_nuevo = estado_persistente
             partes.append(f"STOP SIN PONER tras {orden.intentos} reintentos (R-C-03); el bot NO cierra (EP-1)")
+    elif (tratamiento.conocido and tratamiento.accion == ACCION_PASAR_A_CRUCE
+          and orden.proposito in _PROPOSITOS_PO_CRUCE):
+        decision, tratamiento_acciones, token_nuevo, texto_cruce = _pasar_a_cruce(
+            orden, pos, vivas, cfg, tokens, cot, hora_et)
+        intentos_nuevo = orden.intentos if token_nuevo is not None else None
+        partes.append(texto_cruce)
     else:
-        reintento = None
-        if (tratamiento.conocido and tratamiento.accion != "ninguna" and orden.intentos < max_reintentos
+        accion = "reintentar" if tratamiento.accion == ACCION_PASAR_A_CRUCE else tratamiento.accion
+        reintento: Any = None
+        if (tratamiento.conocido and accion != "ninguna" and orden.intentos < max_reintentos
                 and _estado_permite_reintento(pos, orden)):
-            reintento = _reintento(orden, tratamiento, cot, cfg, tokens, hora_et, orden.intentos + 1)
-        if reintento is not None:
+            reintento = _reintento(orden, tratamiento, cot, cfg, tokens, hora_et, orden.intentos + 1,
+                                   accion=accion, tope=_tope_reduccion(orden, pos, vivas))
+        if reintento is _NADA_QUE_REDUCIR:
+            decision = DECISION_NADA_QUE_REDUCIR
+            partes.append(f"sin reintento: la posición ya no tiene acciones que esta orden deba reducir "
+                          f"(neta {pos.neta}; otras salidas vivas cubren el resto; riesgo 6)")
+        elif reintento is not None:
             decision = DECISION_REINTENTO
             tratamiento_acciones, token_nuevo = reintento
             intentos_nuevo = orden.intentos + 1
-            partes.append(f"reintento {intentos_nuevo}/{max_reintentos} ({tratamiento.accion}) con token "
+            partes.append(f"reintento {intentos_nuevo}/{max_reintentos} ({accion}) con token "
                           f"{token_nuevo}")
         else:
             decision = DECISION_PAUSA if cubierta else DECISION_CONTROL_HUMANO
@@ -367,6 +435,7 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
         "cotizacion": _cot_dict(cot),
         "hora": hora_et.isoformat(),
         "regla": "R-B-07",
+        **subida,
     })]
     if estado_aplicado is not None:
         acciones.append(Anotar("pausa", {
@@ -388,7 +457,8 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
 
 
 # ── R-C-03: reintento del stop ────────────────────────────────────────────
-def reintento_stop(orden: Orden, cfg_stops: Mapping, ahora: float) -> Optional[Programar]:
+def reintento_stop(orden: Orden, cfg_stops: Mapping, ahora: float, cot: Optional[Cotizacion] = None,
+                   precio_primer_intento: Optional[Decimal] = None) -> Optional[Programar]:
     """R-C-03 (1)-(2): el siguiente reintento de un stop rechazado o cancelado, o None si ya no quedan.
 
     Hay reintento mientras `orden.intentos < cfg_stops["reintentos"]` (5 por
@@ -397,9 +467,15 @@ def reintento_stop(orden: Orden, cfg_stops: Mapping, ahora: float) -> Optional[P
     `ticker`, `token_rechazado`, `intento` (= intentos + 1), `reintentos`,
     `proposito`, `lote_id`, `nivel`, `primer_intento_en`,
     `segundos_desde_primero` y `fuera_de_ventana` (> `ventana_min` minutos: se
-    calcula y se ANOTA para el informe; no cierra nada). Al agotarlos → None y
-    el llamador avisa nivel 3 (`decidir` ya lo hace). El punto (3) «cerrar
-    tras 5 intentos» NO se implementa: prima R-B-07/EP-1 (control humano).
+    calcula y se ANOTA para el informe; no cierra nada). Con `cot` (aditivo,
+    D2-15) se mide también la SUBIDA desde el primer intento, la otra mitad de
+    la condición de R-C-03 (3): `precio_primer_intento` (el de la cadena, que
+    el decisor arrastra desde estos mismos `datos`; sin él, el de ahora),
+    `precio_actual` (último, o ask sin último), `subida_pct` (texto Decimal) y
+    `supera_subida_max` (> stops.subida_max_cierre_pct, 100 %). Al agotarlos
+    → None y el llamador avisa nivel 3 (`decidir` ya lo hace). El punto (3)
+    «cerrar tras 5 intentos» NO se implementa: prima R-B-07/EP-1 (control
+    humano).
 
     El decisor, al vencer el temporizador, vuelve a llamar a `stops.plan`
     (idempotente: pone solo lo que falta) o a `stops.stop_proteccion` si era
@@ -432,6 +508,7 @@ def reintento_stop(orden: Orden, cfg_stops: Mapping, ahora: float) -> Optional[P
         "segundos_desde_primero": transcurrido,
         "fuera_de_ventana": transcurrido > ventana_min * 60.0,
         "regla": "R-C-03 (1)",
+        **_subida_desde_primero(cot, precio_primer_intento, cfg_stops),
     })
 
 
@@ -446,9 +523,9 @@ def tras_cancel_o_replace_rej(orden: Orden, accion: Optional[str] = None) -> lis
     """
     que = accion.strip() if isinstance(accion, str) and accion.strip() else "CancelRej/ReplaceRej"
     notas = orden.notas or ""
-    texto = (f"[{que}] {orden.ticker}: DAS no aceptó cancelar/reemplazar la orden.\n"
-             f"DAS dice: «{notas or '(sin texto)'}»\n"
-             f"Orden: {_orden_texto(orden)}\n"
+    texto = (f"[{_h(que)}] {_h(orden.ticker)}: DAS no aceptó cancelar/reemplazar la orden.\n"
+             f"DAS dice: «{_h(notas or '(sin texto)')}»\n"
+             f"Orden: {_h(_orden_texto(orden))}\n"
              f"Barrido inmediato (GET ORDERS): no se supone nada hasta ver su estado real.")
     return [
         Avisar(Nivel.AVISO, Grupo.B, texto, clave=f"cancel_replace_rej:{orden.ticker}:{orden.token}"),
@@ -582,17 +659,21 @@ def _sube(actual: EstadoTicker, nuevo: EstadoTicker) -> bool:
 
 
 def _reintento(orden: Orden, tratamiento: Tratamiento, cot: Optional[Cotizacion], cfg: Any,
-               tokens: Callable[[], int], hora_et: datetime, intentos_nuevo: int
-               ) -> Optional[tuple[list[Accion], int]]:
-    """Las acciones del tratamiento y el token nuevo, o None si el tratamiento no se puede aplicar a esta orden.
+               tokens: Callable[[], int], hora_et: datetime, intentos_nuevo: int,
+               accion: Optional[str] = None, tope: Optional[int] = None) -> Any:
+    """Las acciones del tratamiento y el token nuevo, None si el tratamiento no se puede aplicar a esta orden,
+    o `_NADA_QUE_REDUCIR` si se podría pero la posición ya no deja nada que reducir (D2-10).
 
-    El token se pide SOLO cuando el reintento es posible (un token no se
-    gasta en balde, y nunca se reutiliza el rechazado).
+    `accion` sustituye a la del tratamiento (PostOnly fuera de un agregar →
+    «reintentar»). `tope` (None = sin tope) es lo máximo que una orden que
+    REDUCE puede llevar sin superar la posición (`_tope_reduccion`). El token
+    se pide SOLO cuando el reintento es posible (un token no se gasta en
+    balde, y nunca se reutiliza el rechazado).
     """
     qty = orden.qty - orden.llenas
     if type(qty) is not int or qty <= 0:
         return None
-    accion = tratamiento.accion
+    accion = tratamiento.accion if accion is None else accion
     if accion in ("reintentar", "subir_tick_ssr"):
         precio = orden.precio
         ruta = orden.ruta
@@ -603,6 +684,10 @@ def _reintento(orden: Orden, tratamiento: Tratamiento, cot: Optional[Cotizacion]
             ruta = _ruta_reenvio(orden, precio, cfg, hora_et)
         if not _orden_reenviable(orden, precio):
             return None
+        if tope is not None:
+            qty = min(qty, tope)
+            if qty <= 0:
+                return _NADA_QUE_REDUCIR
         token = tokens()
         nueva = OrdenNueva(token=token, lado=orden.lado, ticker=orden.ticker, ruta=ruta, qty=qty, tipo=orden.tipo,
                            precio=precio if orden.tipo is not TipoOrden.MERCADO else None, stop=None, tif="DAY+",
@@ -613,6 +698,10 @@ def _reintento(orden: Orden, tratamiento: Tratamiento, cot: Optional[Cotizacion]
         return None
     if accion not in ("recalcular_bp", "recomprar_locate"):
         return None
+    if tope is not None:
+        qty = min(qty, tope)
+        if qty <= 0:
+            return _NADA_QUE_REDUCIR
     token = tokens()
     datos = {
         "ticker": orden.ticker,
@@ -631,6 +720,112 @@ def _reintento(orden: Orden, tratamiento: Tratamiento, cot: Optional[Cotizacion]
     if accion == "recalcular_bp":
         return [Consultar(COMANDO_BP), Programar(CLAVE_REINTENTO_RECHAZO, ESPERA_RESPUESTA_BP_S, datos)], token
     return [Programar(CLAVE_LOCATE_RECOMPRAR, 0.0, datos)], token
+
+
+def _tope_reduccion(orden: Orden, pos: PosicionTicker, vivas: Iterable[Orden]) -> Optional[int]:
+    """D2-10: lo máximo que puede llevar el reenvío de una orden que REDUCE la posición; None si no reduce.
+
+    Reduce = compra con la cuenta corta o venta con la cuenta larga (no las
+    entradas ni los stops, que tienen sus reglas). Tope = |neta de fills| −
+    lo que las OTRAS salidas vivas del mismo lado (no stops) aún pueden
+    ejecutar; nunca negativo. Los stops conviven con las salidas por diseño
+    (un fill de TP los reduce), por eso no descuentan aquí.
+    """
+    if orden.proposito in _PROPOSITOS_ENTRADA or _es_stop(orden):
+        return None
+    neta = int(pos.neta)
+    if orden.lado is Lado.COMPRA:
+        base = max(-neta, 0)
+    elif orden.lado is Lado.VENTA:
+        base = max(neta, 0)
+    else:
+        return None
+    en_vuelo = 0
+    for o in vivas:
+        if (o.token != orden.token and o.ticker == orden.ticker and o.lado is orden.lado
+                and o.estado in _ESTADOS_VIVOS and not _es_stop(o)):
+            en_vuelo += max(o.lvqty if o.lvqty > 0 else o.qty - o.llenas, 0)
+    return max(base - en_vuelo, 0)
+
+
+def _pasar_a_cruce(orden: Orden, pos: PosicionTicker, vivas: Iterable[Orden], cfg: Any, tokens: Callable[[], int],
+                   cot: Optional[Cotizacion], hora_et: datetime) -> tuple[str, list[Accion], Optional[int], str]:
+    """D2-09 (decisión del director): PostOnly rechazado en un agregar → su fase de cruce YA; nunca pausa.
+
+    Devuelve (decisión, acciones, token nuevo o None, texto para el aviso).
+    Entrada → `Programar("cruce_postonly:<token>", 0)` (el cruce de R-B-01 v3
+    lo hace el decisor, que tiene el intento). TP / salida del motor →
+    `salidas.tp_al_vencer` (al ask con techo 3 %, o limbo). Hora / cierre y
+    reinicio → `salidas.orden_al_ask` sin techo. La qty de una salida se
+    recorta con `_tope_reduccion` (D2-10). El token solo se gasta si sale una
+    orden.
+    """
+    if not _estado_permite_reintento(pos, orden):
+        return DECISION_SIN_CRUCE, [], None, (f"PostOnly rechazado: el ticker está en «{pos.estado.value}» y no se "
+                                              f"cruza; sin reintento y sin pausa (D2-09)")
+    pendiente = orden.qty - orden.llenas
+    if pendiente <= 0:
+        return DECISION_SIN_CRUCE, [], None, "PostOnly rechazado: no queda nada pendiente de la orden (D2-09)"
+    if orden.proposito is Proposito.ENTRADA_AGREGAR:
+        programa = Programar(f"{CLAVE_CRUCE_POSTONLY}:{orden.token}", 0.0, {
+            "ticker": orden.ticker,
+            "token_rechazado": orden.token,
+            "proposito": orden.proposito.value,
+            "lote_id": orden.lote_id,
+            "qty": pendiente,
+            "regla": "R-B-01 v3 / D2-09",
+        })
+        return DECISION_CRUCE, [programa], None, ("PostOnly rechazado: la entrada pasa YA a la fase de cruce de R-B-01 "
+                                                  "v3 (bid·(1 − 0,5 %) si el bid no cayó > 3 %); sin reintento al "
+                                                  "mismo precio y sin pausa (D2-09)")
+    lote = pos.lotes.get(orden.lote_id) if orden.lote_id is not None else None
+    if lote is None or lote.estado not in _LOTE_VIVO:
+        return DECISION_SIN_CRUCE, [], None, ("PostOnly rechazado: la salida no tiene lote vivo y no se cruza; "
+                                              "sin pausa (D2-09)")
+    tope = _tope_reduccion(orden, pos, vivas)
+    qty = pendiente if tope is None else min(pendiente, tope)
+    if qty <= 0:
+        return DECISION_NADA_QUE_REDUCIR, [], None, ("PostOnly rechazado: la posición ya no tiene acciones que esta "
+                                                     "salida deba reducir; no se cruza (D2-10)")
+    try:
+        if orden.proposito in (Proposito.TP_AGREGAR, Proposito.SALIDA_MOTOR_AGREGAR):
+            proposito = (Proposito.TP_CRUCE if orden.proposito is Proposito.TP_AGREGAR
+                         else Proposito.SALIDA_MOTOR_CRUCE)
+            nueva, _ = salidas.tp_al_vencer(lote, qty, cot, cfg, tokens, hora_et, proposito=proposito)
+            if nueva is None:
+                return DECISION_CRUCE_LIMBO, [], None, (
+                    f"PostOnly rechazado; el cruce del TP ({qty} acciones) queda en LIMBO: ask fuera del techo del "
+                    f"3 % o sin libro en DAS. No se persigue; mandan los stops residentes (R-D-03 v2, D2-09)")
+        else:
+            proposito = (Proposito.CIERRE_REINICIO if orden.proposito is Proposito.CIERRE_REINICIO
+                         else Proposito.HORA_ASK)
+            nueva = salidas.orden_al_ask(lote, qty, cot, cfg, tokens, hora_et, None, proposito)
+    except ValueError as exc:
+        return DECISION_SIN_CRUCE, [], None, (f"PostOnly rechazado; no se puede cruzar ahora ({exc}): lo hará el "
+                                              f"temporizador de la salida; sin pausa (D2-09)")
+    return DECISION_CRUCE, [EnviarOrden(nueva, serie=None)], nueva.token, (
+        f"PostOnly rechazado: pasa YA al cruce ({nueva.lado.value} {nueva.qty} a {nueva.precio}, "
+        f"{nueva.proposito.value}) con token {nueva.token}; sin reintento al mismo precio y sin pausa (D2-09)")
+
+
+def _subida_desde_primero(cot: Optional[Cotizacion], precio_primer_intento: Optional[Decimal],
+                          cfg_stops: Mapping) -> dict[str, Any]:
+    """D2-15 / R-C-03 (3): precio del primer intento, precio actual y subida (texto Decimal) para el informe; no cierra nada."""
+    actual = None
+    if cot is not None:
+        for candidato in (cot.last, cot.ask):
+            if _es_precio(candidato):
+                actual = candidato
+                break
+    primero = precio_primer_intento if _es_precio(precio_primer_intento) else actual
+    maximo = Decimal(str(_segundos(cfg_stops, "subida_max_cierre_pct", float(SUBIDA_MAX_CIERRE_PCT))))
+    datos: dict[str, Any] = {"precio_primer_intento": _texto_decimal(primero), "precio_actual": _texto_decimal(actual),
+                             "subida_pct": None, "supera_subida_max": None}
+    if actual is not None and primero is not None:
+        subida = ((actual - primero) / primero * 100).quantize(Decimal("0.01"))
+        datos["subida_pct"] = str(subida)
+        datos["supera_subida_max"] = subida > maximo
+    return datos
 
 
 def _precio_ssr(orden: Orden, cot: Optional[Cotizacion]) -> Optional[Decimal]:
@@ -733,8 +928,13 @@ def _texto_aviso(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, cu
     neta_das = "?" if pos.neta_das is None else str(pos.neta_das)
     cobertura = "cubierta" if cubierta else f"{n_descubiertas} acciones SIN STOP aceptado"
     motivo = tratamiento.clave if tratamiento.conocido else "DESCONOCIDO (no está en el catálogo)"
-    return (f"RECHAZO DAS {orden.ticker}\n"
-            f"DAS dice: «{notas or '(sin texto)'}»\n"
-            f"Orden: {_orden_texto(orden)} · intentos previos {orden.intentos}\n"
-            f"Ticker: {pos.estado.value}, neta {pos.neta} (DAS {neta_das}), {cobertura}\n"
-            f"Motivo: {motivo} → " + "; ".join(partes))
+    return (f"RECHAZO DAS {_h(orden.ticker)}\n"
+            f"DAS dice: «{_h(notas or '(sin texto)')}»\n"
+            f"Orden: {_h(_orden_texto(orden))} · intentos previos {orden.intentos}\n"
+            f"Ticker: {_h(pos.estado.value)}, neta {pos.neta} (DAS {neta_das}), {cobertura}\n"
+            f"Motivo: {_h(motivo)} → " + "; ".join(_h(p) for p in partes))
+
+
+def _h(valor: Any) -> str:
+    """D2-08: texto variable para un aviso con parse_mode HTML («<», «>», «&» escapados; comillas tal cual)."""
+    return html.escape(str(valor), quote=False)

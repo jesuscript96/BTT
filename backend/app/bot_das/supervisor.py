@@ -130,6 +130,9 @@ DISCO_AVISO_CADA_S = 3600.0     # y con poco disco se avisa como mucho cada hora
 TASKLIST_TIMEOUT_S = 10.0
 ESPERA_AVISOS_S = 30.0          # §6.2.5: avisos.parar(30)
 TOLERANCIA_LATIDO_S = 0.5       # un latido escrito «a la vez» que el lanzamiento cuenta como posterior
+DAS_VIGILAR_CADA_S = 30.0       # G2-03: durante toda la ventana, el proceso DAS se mira cada 30 s
+CODIGOS_SIN_RELANZAR = frozenset({4, 5})   # G2-08: motor distinto (H-6) y config/entorno: relanzar no lo arregla
+RELOJ_RELANZOS_MAX = 3          # G2-08: tras 3 salidas seguidas por reloj (código 2) se deja a control humano
 HORA_ENCENDER_DEFECTO = "03:55"     # R-L-01 / §7 horario.encender
 HORA_APAGAR_SIN_CONFIG = "20:00"    # sin config legible: ventana larga (apagar antes nunca es lo conservador)
 EOD_SIN_ESTRATEGIAS = salidas.EOD_POR_DEFECTO   # 16:00 (L4)
@@ -355,6 +358,8 @@ class EstadoHijo:
     parado_a_mano: bool = False
     ultimo_codigo: Optional[int] = None
     ultima_espera: Optional[float] = None
+    salidas_reloj: int = 0                   # G2-08: salidas seguidas con código 2 (reloj desviado)
+    parado_por_codigo: Optional[int] = None  # G2-08: 4/5 (o 2 agotado): no se relanza hasta cambiar la config o el día
 
     @property
     def corriendo(self) -> bool:
@@ -479,6 +484,11 @@ class Supervisor:
         self._disco_aviso_en: Optional[float] = None
         self._apagado_hecho = False
         self._posicion_avisada = False
+        self._prorroga = False                          # G2-01: fuera de la ventana con posición, los hijos siguen
+        self._firma_al_parar: dict[str, Optional[tuple]] = {}   # G2-08: firma del fichero del cuadro al dejar un hijo
+        self._das_vigilado_en: Optional[float] = None   # G2-03: última mirada al proceso DAS
+        self._das_caido_desde: Optional[float] = None
+        self._das_login_pendiente = False
         self._dentro_anterior: Optional[bool] = None
         self._vigilante_lanzado_mono: Optional[float] = None
         self._pasadas = 0
@@ -752,6 +762,7 @@ class Supervisor:
         if hoy != self._dia:
             self._dia_nuevo(hoy)
         self.recargar_config()
+        self._reintentar_si_config_cambia()
         self._revisar_peticiones()
         self._revisar_disco()
         inicio, fin = self.ventana(hoy)
@@ -759,11 +770,19 @@ class Supervisor:
         if dentro != self._dentro_anterior:
             self._dentro_anterior = dentro
             self._diario.anotar("ventana", dentro=dentro, encender=inicio, apagar=fin, regla="R-L-01")
-        self._vigilar_hijos(apagando=not dentro)
         if dentro:
+            self._prorroga = False
+            self._vigilar_hijos(apagando=False)
             self._apagado_hecho = False
             self._posicion_avisada = False
             self._gestionar_dentro()
+            return self._periodo_s
+        # G2-01 (L4 / R-D-02): fuera de la ventana con posición u órdenes vivas los hijos SIGUEN al mando: se vigilan
+        # colgados y se relanzan como dentro (sin esperar a DAS); solo se apaga cuando la foto dice que no queda nada.
+        prorroga = self._en_prorroga()
+        self._vigilar_hijos(apagando=not prorroga)
+        if prorroga:
+            self._gestionar_prorroga()
             return self._periodo_s
         self._apagar_fuera()
         if any(h.corriendo for h in self._hijos.values()):
@@ -771,6 +790,105 @@ class Supervisor:
         if inicio is not None and ahora_et < inicio:
             return max(min(self._espera_fuera_s, (inicio - ahora_et).total_seconds()), self._periodo_s)
         return self._espera_fuera_s
+
+    def _en_prorroga(self) -> bool:
+        """G2-01: fuera de la ventana, ¿siguen los hijos al mando? Sí mientras la foto diga posición/órdenes vivas (o no se
+        pueda leer) y el bot estuviera en marcha (algún hijo corriendo o ya en prórroga). Avisa 3 UNA vez por episodio."""
+        if not any(h.corriendo for h in self._hijos.values()) and not self._prorroga:
+            return False
+        posicion = self.hay_posicion()
+        if posicion is False:
+            if self._prorroga:
+                self._prorroga = False
+                self._diario.anotar("prorroga_fin", regla="L4 / G2-01")
+            return False
+        if not self._posicion_avisada:
+            self._posicion_avisada = True
+            que = "hay posición abierta u órdenes vivas" if posicion else "no puedo leer la foto del ejecutor"
+            self._diario.anotar("apagado_con_posicion", posicion=posicion, regla="L4 / R-D-02")
+            self._avisar(Nivel.MAXIMO, f"Supervisor: fin de la ventana y {que}: NO apago el bot (sin posiciones "
+                                       f"overnight, L4): sigo vigilando y relanzando vigilante y ejecutor hasta que no "
+                                       f"quede nada; CONTROL HUMANO", "apagado_con_posicion")
+        self._prorroga = True
+        return True
+
+    def _gestionar_prorroga(self) -> None:
+        """G2-01: como dentro de la ventana pero SIN esperar a DAS: relanza por plan al hijo muerto (vigilante primero)."""
+        self._vigilar_das()
+        if self._cfg is None:
+            return
+        ahora = self._reloj.mono()
+        vigilante, ejecutor = self._hijos["vigilante"], self._hijos["ejecutor"]
+        if self._puede_lanzar(vigilante, ahora):
+            if self._lanzar_hijo(vigilante):
+                self._vigilante_lanzado_mono = ahora
+        if self._puede_lanzar(ejecutor, ahora) and self._vigilante_permite_ejecutor(ahora):
+            self._lanzar_hijo(ejecutor)
+
+    def _vigilar_das(self) -> None:
+        """G2-03 (R-J-02 (2), EP-7): cada `DAS_VIGILAR_CADA_S` se mira que la aplicación DAS viva (tasklist).
+
+        Si falta, se abre (`_lanzar_das`, aviso 3 «LOGIN/2FA a mano»; como mucho
+        cada `das_aviso_cada_s`, 5 min) y, hasta que su API vuelva a aceptar
+        (sonda del puerto), se repite el aviso 3 cada 5 min. Sin `DAS_EXE` no se
+        puede relanzar: no se hace nada (los hijos llevan su reconexión).
+        """
+        if self._das_exe is None:
+            return
+        ahora = self._reloj.mono()
+        if self._das_vigilado_en is not None and ahora - self._das_vigilado_en < DAS_VIGILAR_CADA_S:
+            return
+        self._das_vigilado_en = ahora
+        vivo = self._das_vivo() if self._das_vivo is not None else das_en_tasklist(self._das_exe.name)
+        if vivo is False:
+            if self._das_caido_desde is None:
+                self._das_caido_desde = ahora
+                self._diario.anotar("das_caido", exe=str(self._das_exe), regla="R-J-02 / G2-03")
+            if self._das_lanzado_en is None or ahora - self._das_lanzado_en >= self._das_aviso_cada_s:
+                self._lanzar_das(ahora)
+                self._das_login_pendiente = True
+            return
+        if self._das_caido_desde is not None:
+            self._das_caido_desde = None
+            self._diario.anotar("das_proceso_vuelve", regla="R-J-02 / G2-03")
+        if not self._das_login_pendiente:
+            return
+        try:
+            acepta = self._sonda_das()
+        except Exception as exc:  # noqa: BLE001 — frontera (sonda inyectada o de red): no se sabe → se reintenta
+            self._diario.anotar("sonda_das_fallo", error=f"{type(exc).__name__}: {exc}")
+            return
+        if acepta is not False:
+            self._das_login_pendiente = False
+            self._diario.anotar("das_listo", tras="relanzamiento", regla="G2-03")
+            self._avisar(Nivel.INFO, "Supervisor: DAS vuelve a aceptar conexiones del API (G2-03)", "das_listo")
+            return
+        if self._das_aviso_en is None or ahora - self._das_aviso_en >= self._das_aviso_cada_s:
+            self._das_aviso_en = ahora
+            self._diario.anotar("das_sin_api", tras="relanzamiento", regla="EP-7 / G2-03")
+            self._avisar(Nivel.MAXIMO, "Supervisor: DAS se cerró a media sesión y lo he abierto, pero su API no "
+                                       "responde: haz el LOGIN/2FA A MANO (EP-7)", "das_sin_api")
+
+    def _reintentar_si_config_cambia(self) -> None:
+        """G2-08: un hijo dejado por código 4/5 se vuelve a lanzar UNA vez cuando cambia el fichero del cuadro.
+
+        Se mira solo el fichero PRINCIPAL (el ejecutor reescribe el último bueno
+        en cada arranque: mirarlo daría un bucle de relanzamientos).
+        """
+        for h in self._hijos.values():
+            if h.parado_por_codigo not in CODIGOS_SIN_RELANZAR:
+                continue
+            firma = _firma_fichero(self._cfg_ruta)
+            if firma == self._firma_al_parar.get(h.nombre):
+                continue
+            codigo = h.parado_por_codigo
+            h.parado_a_mano = False
+            h.parado_por_codigo = None
+            h.relanzar_en = None
+            self._firma_al_parar.pop(h.nombre, None)
+            self._diario.anotar("hijo_reintento_config", hijo=h.nombre, codigo_anterior=codigo, regla="G2-08")
+            self._avisar(Nivel.INFO, f"Supervisor: la config del cuadro cambió: vuelvo a lanzar el {h.nombre} (había "
+                                     f"salido con código {codigo})", f"hijo_reintento_config:{h.nombre}")
 
     def _dia_nuevo(self, hoy: date) -> None:
         """Día nuevo: diario del día, planes a cero, DAS por comprobar y los «parados a mano» vuelven a poder arrancar."""
@@ -784,12 +902,16 @@ class Supervisor:
         for h in self._hijos.values():
             h.plan.reiniciar()
             h.parado_a_mano = False
+            h.parado_por_codigo = None
+            h.salidas_reloj = 0
+        self._firma_al_parar.clear()
 
     # ── dentro de la ventana ──────────────────────────────────────────
     def _gestionar_dentro(self) -> None:
-        """§6.2.2-3: DAS listo → vigilante → (latido del vigilante o 10 s) → ejecutor."""
+        """§6.2.2-3: DAS listo → vigilante → (latido del vigilante o 10 s) → ejecutor. G2-03: DAS vigilado toda la ventana."""
         if not self._das_listo_hoy and not self._asegurar_das():
             return
+        self._vigilar_das()
         if self._cfg is None:
             return                                   # H-4: sin config los hijos saldrían con código 5 en bucle
         ahora = self._reloj.mono()
@@ -819,6 +941,7 @@ class Supervisor:
         ahora = self._reloj.mono()
         if self._das_exe is not None:
             vivo = self._das_vivo() if self._das_vivo is not None else das_en_tasklist(self._das_exe.name)
+            self._das_vigilado_en = ahora                   # G2-03: la vigilancia periódica cuenta desde aquí
             if vivo is False and (self._das_lanzado_en is None
                                   or ahora - self._das_lanzado_en >= self._das_aviso_cada_s):
                 self._lanzar_das(ahora)
@@ -951,6 +1074,21 @@ class Supervisor:
             self._avisar(Nivel.MAXIMO if h.nombre == "ejecutor" else Nivel.AVISO,
                          f"Supervisor: el {h.nombre} se ha parado de forma ordenada sin que yo lo pidiera: NO lo "
                          f"relanzo hoy (control humano)", f"hijo_parado_a_mano:{h.nombre}")
+            return
+        h.salidas_reloj = h.salidas_reloj + 1 if codigo == 2 else 0
+        if codigo in CODIGOS_SIN_RELANZAR or (codigo == 2 and h.salidas_reloj >= RELOJ_RELANZOS_MAX):
+            # G2-08: «relanzar no lo arregla» (motor distinto, config/entorno imposibles, reloj que no se corrige):
+            # relanzarlo cada 10 s solo daría un aviso 3 cada 10 s todo el día → control humano
+            h.parado_a_mano = True
+            h.parado_por_codigo = codigo
+            self._firma_al_parar[h.nombre] = _firma_fichero(self._cfg_ruta)
+            cuando ="si cambias la config lo reintento; si no, mañana" if codigo in CODIGOS_SIN_RELANZAR else \
+                "sincroniza la hora; mañana lo relanzo (o relanza el supervisor)"
+            self._diario.anotar("hijo_no_relanzable", hijo=h.nombre, pid=h.pid, codigo=codigo, significado=texto_codigo,
+                                salidas_reloj=h.salidas_reloj, regla="R-J-04 a / G2-08")
+            self._avisar(Nivel.MAXIMO, f"Supervisor: el {h.nombre} ha salido con código {codigo} ({texto_codigo}): "
+                                       f"relanzarlo no lo arregla y NO lo relanzo: CONTROL HUMANO ({cuando})",
+                         f"hijo_no_relanzable:{h.nombre}")
             return
         espera = self._programar_relanzamiento(h)
         self._diario.anotar("hijo_muerto", hijo=h.nombre, pid=h.pid, codigo=codigo, significado=texto_codigo,
@@ -1162,7 +1300,13 @@ class Supervisor:
         self._diario.anotar("orden_parar", para=destino, regla="§6.2.5")
 
     def hay_posicion(self) -> Optional[bool]:
-        """L4: ¿dice `estado/foto.json` que hay posición o intento vivo? False sin foto; None si no se puede leer."""
+        """L4: ¿dice `estado/foto.json` que hay posición, intento u ORDEN viva? False sin foto; None si no se puede leer.
+
+        G2-04: una orden viva sin posición (una entrada límite que no se
+        canceló, un stop que quedó en el libro) también cuenta: si se llenara
+        con el bot apagado quedaría un corto sin stop ni gestión overnight.
+        `ordenes` que no es una lista → None (no se sabe: no se apaga).
+        """
         try:
             texto = self.ruta_foto.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -1173,6 +1317,12 @@ class Supervisor:
             foto = json.loads(texto)
         except ValueError:
             return None
+        ordenes = foto.get("ordenes") if isinstance(foto, dict) else None
+        if ordenes is not None:
+            if not isinstance(ordenes, list):
+                return None
+            if ordenes:
+                return True
         posiciones = foto.get("posiciones") if isinstance(foto, dict) else None
         if posiciones is None:
             return False

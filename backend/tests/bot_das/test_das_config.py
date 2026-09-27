@@ -266,6 +266,63 @@ def test_respaldo_avisa_si_no_puede_guardar_el_ultimo_bueno(tmp_path, monkeypatc
     assert cfg.sha256 == SHA_FIXTURE and aviso is not None and "sin permiso" in aviso
 
 
+@pytest.mark.parametrize("fase_respaldo", ["canario", "real"], ids=["SEG-02-canario", "SEG-02-real"])
+def test_SEG_02_el_respaldo_nunca_sube_la_fase(tmp_path, fase_respaldo):
+    """SEG-02 / R-O-03: fichero del cuadro roto + último bueno en CANARIO/REAL → se arranca en SOMBRA con aviso."""
+    ruta, bueno = tmp_path / "c.json", tmp_path / "ultimo_bueno.json"
+    crudo = _crudo()
+    crudo["fase"] = fase_respaldo
+    C.escribir_atomico(bueno, _firmar(crudo))
+    assert C.cargar(bueno, CUENTA).fase is Fase(fase_respaldo)
+    _escribir(ruta, {"roto": True})                          # Jaume bajaba a sombra y el fichero nuevo no valida
+    cfg, aviso = C.cargar_con_respaldo(ruta, bueno, CUENTA)
+    assert cfg.fase is Fase.SOMBRA
+    assert aviso is not None and C.AVISO_FASE_FORZADA in aviso and fase_respaldo.upper() in aviso
+    assert C.cargar(bueno, CUENTA).fase is Fase(fase_respaldo)           # el último bueno no se toca
+    # el resto de la config del respaldo se conserva
+    assert cfg.config_version == C.cargar(bueno, CUENTA).config_version and cfg.estrategias.keys() == {"prueba-1"}
+
+
+def test_SEG_02_respaldo_en_sombra_no_marca_fase_forzada(tmp_path):
+    ruta, bueno = tmp_path / "c.json", tmp_path / "ultimo_bueno.json"
+    crudo = _crudo()
+    crudo["fase"] = "sombra"
+    C.escribir_atomico(bueno, _firmar(crudo))
+    _escribir(ruta, {"roto": True})
+    cfg, aviso = C.cargar_con_respaldo(ruta, bueno, CUENTA)
+    assert cfg.fase is Fase.SOMBRA and aviso is not None and C.AVISO_FASE_FORZADA not in aviso
+
+
+def test_SEG_02_un_fichero_valido_en_real_no_se_toca(tmp_path):
+    """El candado solo actúa sobre el RESPALDO: una config buena en REAL arranca en REAL (el .env pone el otro candado)."""
+    crudo = _crudo()
+    crudo["fase"] = "real"
+    C.escribir_atomico(tmp_path / "c.json", _firmar(crudo))
+    cfg, aviso = C.cargar_con_respaldo(tmp_path / "c.json", tmp_path / "ub.json", CUENTA)
+    assert cfg.fase is Fase.REAL and aviso is None
+
+
+def test_A_02_replace_share_es_abierta_es_opcional_con_defecto_de_tipos():
+    """A-02: `stops.replace_share_es_abierta` (defecto tipos.REPLACE_SHARE_ES_ABIERTA = True). Un fichero sin la clave
+    (config_ejemplo.json, con su sha256 de siempre) valida y la Config la lleva con el defecto; con la clave, manda."""
+    from app.bot_das.tipos import REPLACE_SHARE_ES_ABIERTA
+
+    assert "replace_share_es_abierta" not in _crudo()["stops"]
+    cfg = C.cargar(RUTA_EJEMPLO, CUENTA)
+    assert cfg.sha256 == SHA_FIXTURE and cfg.stops["replace_share_es_abierta"] is REPLACE_SHARE_ES_ABIERTA is True
+    crudo = _crudo()
+    crudo["stops"]["replace_share_es_abierta"] = False
+    assert C.validar(_firmar(crudo)) == []
+    assert _cfg(crudo).stops["replace_share_es_abierta"] is False
+    malo = _crudo()
+    malo["stops"]["replace_share_es_abierta"] = "si"
+    assert any("replace_share_es_abierta" in e for e in C.validar(_firmar(malo)))
+    # cambiarla es una diferencia EN FRÍO ([A]): no entra en CALIENTE
+    assert "stops.replace_share_es_abierta" not in C.CALIENTE
+    difs = {r: cal for r, _a, _d, cal in C.diferencias(cfg, _cfg(crudo))}
+    assert difs.get("stops.replace_share_es_abierta") is False
+
+
 def test_guardar_ultimo_bueno_no_guarda_lo_invalido(tmp_path):
     malo = _crudo()
     malo["fase"] = "demo"
@@ -539,6 +596,161 @@ def test_comprobar_coherencia_no_lanza_con_definicion_rota():
     e = dataclasses.replace(_est(_definicion()), definition={"market_sessions": ["custom"], "custom_start_time": "x"})
     avisos = C.comprobar_coherencia(e)
     assert len(avisos) == 1 and "mal formadas" in avisos[0]
+
+
+@pytest.mark.parametrize("alias", ["premarket", "afterhours", "PreMarket"], ids=lambda a: f"DC-08-{a}")
+def test_DC_08_alias_que_el_motor_no_reconoce_salen_como_sesion_desconocida(alias):
+    """DC-08: `_get_market_sessions_mask` solo entiende pre/rth/regular/market/post/custom: «premarket» o «afterhours»
+    no dan ninguna vela en el motor, así que el bot NO puede inventarse una sesión: aviso R-L-02 y sin sesión."""
+    d = _definicion(market_sessions=[alias], entry_logic__entry_time_windows=[])
+    e = _est(d)
+    avisos = C.comprobar_coherencia(e)
+    assert any("desconocidas" in a and alias.lower() in a for a in avisos), avisos
+    assert e.hora_fin_sesion is None
+
+
+# ── DC-09: las marcas [C] del documento y las estrategias reales de sailor ─────
+RUTA_DOC = BACKEND.parent / "docs" / "BOT_DAS_ARQUITECTURA.md"
+DIR_SAILOR = BACKEND.parent / "estrategias_compartidas" / "sailor"
+
+
+def _bloque_json_de_la_seccion_7(texto: str) -> str:
+    inicio = texto.index("## 7. Configuración")
+    abre = texto.index("```json", inicio) + len("```json")
+    return texto[abre:texto.index("```", abre)]
+
+
+def _fichas_json(codigo: str) -> list[tuple[str, str]]:
+    """Trocea el código JSON de una línea en fichas: ("cad", texto), ("sig", un signo de {}[]:,) y ("val", escalar)."""
+    fichas: list[tuple[str, str]] = []
+    i = 0
+    while i < len(codigo):
+        c = codigo[i]
+        if c.isspace():
+            i += 1
+        elif c == '"':
+            fin = codigo.index('"', i + 1)
+            fichas.append(("cad", codigo[i + 1:fin]))
+            i = fin + 1
+        elif c in "{}[]:,":
+            fichas.append(("sig", c))
+            i += 1
+        else:
+            j = i
+            while j < len(codigo) and not codigo[j].isspace() and codigo[j] not in "{}[]:,":
+                j += 1
+            fichas.append(("val", codigo[i:j]))
+            i = j
+    return fichas
+
+
+def _rutas_marcadas(bloque: str, marca: str = "[C]") -> set[str]:
+    """Rutas con punto de las HOJAS del JSON comentado de §7 cuya marca (la de su línea o, si no tiene, la heredada
+    de su contenedor) es `marca`.
+
+    Hoja = clave con valor escalar o cadena, o con un array de UNA línea (lista_negra, riesgos_piramide,
+    ev_rangos). Un objeto (de una línea o no) es contenedor: sus claves son las hojas. Un objeto dentro de un array
+    multilínea (estrategias) es el comodín «*». Lo que va dentro de un array de una línea no genera rutas.
+    """
+    rutas: set[str] = set()
+    pila: list[dict] = []           # contenedores abiertos: {"nombre", "tipo" ({ o [), "marca", "linea"}
+    for n_linea, linea in enumerate(bloque.splitlines()):
+        codigo, _, comentario = linea.partition("//")
+        marca_linea = next((m for m in ("[C]", "[A]", "[T]") if m in comentario), None)
+        fichas = _fichas_json(codigo)
+        clave: Optional[str] = None
+        k = 0
+        while k < len(fichas):
+            tipo, texto = fichas[k]
+            heredada = marca_linea or (pila[-1]["marca"] if pila else None)
+            dentro_de_array_en_linea = any(c["tipo"] == "[" and c["linea"] == n_linea for c in pila)
+            if tipo == "cad" and k + 1 < len(fichas) and fichas[k + 1] == ("sig", ":"):
+                clave = texto
+                k += 2
+                continue
+            if tipo in ("cad", "val"):
+                if clave is not None and not dentro_de_array_en_linea and heredada == marca:
+                    rutas.add(".".join([c["nombre"] for c in pila if c["nombre"]] + [clave]))
+                clave = None
+            elif texto in "{[":
+                if clave is not None:
+                    nombre = clave
+                elif pila and pila[-1]["tipo"] == "[":
+                    nombre = "*"
+                else:
+                    nombre = ""
+                pila.append({"nombre": nombre, "tipo": texto, "marca": heredada, "linea": n_linea})
+                clave = None
+            elif texto in "}]":
+                cerrado = pila.pop()
+                if (cerrado["tipo"] == "[" and cerrado["linea"] == n_linea and cerrado["nombre"] not in ("", "*")
+                        and not any(c["tipo"] == "[" and c["linea"] == n_linea for c in pila)
+                        and cerrado["marca"] == marca):
+                    rutas.add(".".join([c["nombre"] for c in pila if c["nombre"]] + [cerrado["nombre"]]))
+            k += 1
+    return rutas
+
+
+def test_DC_09_caliente_es_exactamente_lo_marcado_C_en_el_bloque_de_s7():
+    """DC-09: CALIENTE se compara con las marcas [C] LEÍDAS del documento (no con una copia a mano de la lista)."""
+    bloque = _bloque_json_de_la_seccion_7(RUTA_DOC.read_text(encoding="utf-8"))
+    marcadas = _rutas_marcadas(bloque, "[C]")
+    assert len(marcadas) == 26
+    assert C.CALIENTE == frozenset(marcadas)
+    # y ninguna [A]/[T] se cuela en CALIENTE (los vecinos de las [C] siguen siendo en frío)
+    frias = _rutas_marcadas(bloque, "[A]") | _rutas_marcadas(bloque, "[T]")
+    assert {"fase", "locates.umbral_ultimo_paquete_pct", "estrategias.*.definition_hash",
+            "stops.principal_limite_pct"} <= frias
+    assert not (frias & C.CALIENTE)
+
+
+def test_G2_09_la_marca_slow_esta_registrada_en_el_conftest(pytestconfig):
+    """G2-09: `@pytest.mark.slow` (replay de días grabados) está registrada: con -W error la colección no falla."""
+    assert any(m.split(":", 1)[0].strip() == "slow" for m in pytestconfig.getini("markers"))
+
+
+def _sailor() -> list[Path]:
+    return sorted(DIR_SAILOR.glob("*.json")) if DIR_SAILOR.is_dir() else []
+
+
+def _fin_de_sesion_del_motor(definicion: dict) -> Optional[str]:
+    """Fin de sesión («HH:MM», exclusivo) según `_get_market_sessions_mask` del MOTOR sobre los 1 440 minutos del día."""
+    pd = pytest.importorskip("pandas")
+    from app.services.backtest_service import _get_market_sessions_mask
+
+    minutos = pd.Series(pd.date_range("2026-09-25 00:00", periods=24 * 60, freq="min"))
+    mascara = _get_market_sessions_mask(minutos, list(definicion.get("market_sessions") or []),
+                                        definicion.get("custom_start_time"), definicion.get("custom_end_time"))
+    if mascara.all():
+        return None
+    activos = [i for i, v in enumerate(mascara) if v]
+    if not activos:
+        return "vacía"
+    fin = activos[-1] + 1
+    return f"{fin // 60:02d}:{fin % 60:02d}"
+
+
+@pytest.mark.parametrize("ruta", _sailor(), ids=lambda p: f"DC-09-{p.stem}")
+def test_DC_09_extraer_estrategia_con_las_definiciones_reales_de_sailor(ruta: Path):
+    """DC-09 / CM4: cada estrategia compartida de sailor se extrae con el fin de sesión y las reentradas que usa el
+    MOTOR (paridad calculada con el propio motor, sin copiar valores a mano) y `comprobar_coherencia` no lanza."""
+    compartida = json.loads(ruta.read_text(encoding="utf-8"))
+    definicion = compartida["definition"]
+    e = C.extraer_estrategia({"strategy_id": compartida.get("source_strategy_id") or ruta.stem,
+                              "name": compartida.get("name"), "ev_pct": 4, "riesgo_usd": 300,
+                              "definition": definicion})
+    fin_motor = _fin_de_sesion_del_motor(definicion)
+    if fin_motor == "vacía":
+        assert e.hora_fin_sesion is None or e.hora_fin_sesion == "00:00"
+    else:
+        assert e.hora_fin_sesion == fin_motor
+    rm = definicion.get("risk_management") or {}
+    accept = rm.get("accept_reentries", False)
+    assert (e.accept_reentries, e.max_reentries) == (bool(accept), rm.get("max_reentries", -1 if accept else 0))
+    niveles = (definicion.get("pyramiding") or {}).get("levels")
+    assert e.niveles_piramide == (niveles or [])
+    assert isinstance(C.comprobar_coherencia(e), list)
+    assert e.definition_hash == "sha256:" + C.hash_canonico(definicion)
 
 
 # ── diferencias y aplicar (CM2, CM3, R-O-01) ───────────────────────────

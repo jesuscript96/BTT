@@ -30,7 +30,20 @@ LAS TRAMPAS.
     `orden_open_enviada` y, si el fill de la primera MKT aún no ha llegado,
     una segunda MKT dejaría la cuenta del otro lado (riesgo 6 y 27).
   * `TA` se compara normalizado (sin espacios, en mayúsculas): el parser lo
-    deja tal cual llega del socket.
+    deja tal cual llega del socket. `Q` («quotation resumed», manual
+    L1113-1124) es todavía PARADO (E1-05): solo cotiza antes del cruce de
+    reapertura; se reabre con `T` o sin TA.
+  * E1-01: en un halt que NO es LULD (`H`/`Q`) el `last` durante el halt es el
+    print de ANTES de parar, así que la subida medida sale ~0 % y el tope del
+    250 % de R-F-05 no se puede medir al decidir. Por eso la salida por OPEN
+    no es una MKT sin tope: es un LÍMITE a `precio_parada · (1 + t1/100)`
+    redondeado abajo (si reabre por encima, no llena y decide el humano). Lo
+    mismo capa el límite del reintento. `tope_t1_superado` es la función ÚNICA
+    que el decisor usa al reabrir con el precio real (E1-02).
+  * E1-04 (R-F-06, 2.ª parte): en un halt `H` de premercado con decisión
+    «mantener», `ensanchar_stops_pm` REEMPLAZA el límite de los stops de compra
+    residentes por `con_techo(disparo, margen_limite_pm_pct)` (nunca lo baja,
+    nunca mueve el disparo): remueve más liquidez al reabrir.
   * En premercado no hay órdenes a mercado (R-F-06): `decidir_reapertura`
     devuelve «cerrar_limite_pm» en cualquier franja que no sea RTH, y
     `orden_reapertura` pone un LÍMITE que cruza el ask con margen y TIF DAY+.
@@ -44,6 +57,8 @@ LAS TRAMPAS.
 """
 from __future__ import annotations
 
+import html
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any, Optional
@@ -56,6 +71,7 @@ from app.bot_das.tipos import (
     HALT_K_MAX,
     HALT_PRIMERA_VELA_MAX_PCT,
     HALT_T1_SUBIDA_MAX_PCT,
+    REPLACE_SHARE_ES_ABIERTA,
     Accion,
     Anotar,
     Avisar,
@@ -71,25 +87,44 @@ from app.bot_das.tipos import (
     Orden,
     OrdenNueva,
     PosicionTicker,
+    Programar,
     Proposito,
+    Reemplazar,
     Senal,
     TipoOrden,
+    al_tick,
+    share_de_replace,
 )
 
 DECISIONES = ("mantener", "cerrar_mercado", "cerrar_limite_pm", "control_humano")
 PAUSA_LULD_MIN = 5              # manual L1128-1130: «If TA is P, the trading pause will be 5 minutes»
 T12_MIN_DEFECTO = 240           # §3.18: T12 presunto por duración [PENDIENTE fuente externa]; el cuadro lo trae en halts.t12_min
 MARGEN_LIMITE_PM_PCT_DEFECTO = Decimal("5")   # §7 halts.margen_limite_pm_pct (R-F-06: límite que remueve liquidez)
+TA_PARADO = ("H", "P", "Q")     # E1-05: Q = solo cotización antes del cruce; se reabre con T o sin TA
+ANOTACION_STOPS_PM = "halt_stops_pm"          # E1-04: el diario registra el ensanche de los stops en premercado
+# E1-04: la serie/versión y la clave del temporizador son las MISMAS cadenas que usa el módulo de stops
+# (ajuste (a): aquí no se importa); un test comprueba que coinciden.
+_SERIE_STOPS = "stops:{}"
+_CLAVE_VERIFICAR_REPLACE = "replace_verificar"
+_VERIFICAR_REPLACE_EN_S = 1.0
+_CLAVE_SHARE_ES_ABIERTA = "replace_share_es_abierta"
 _CIEN = Decimal("100")
 _PROPOSITOS_ENTRADA = (Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE)
 _ESTADOS_MUERTOS = (EstadoOrden.CANCELED, EstadoOrden.REJECTED, EstadoOrden.EXECUTED, EstadoOrden.CLOSED)
+_ESTADOS_VIVOS = (EstadoOrden.SENDING, EstadoOrden.ACCEPTED, EstadoOrden.PARTIAL, EstadoOrden.HOLD,
+                  EstadoOrden.TRIGGERED)
 _LOTES_VIVOS = (EstadoLote.ABRIENDO, EstadoLote.ABIERTO, EstadoLote.CERRANDO)
 
 
 # ── estado del halt ─────────────────────────────────────────────────────
 def es_halt(simb: EstadoSimbolo) -> bool:
-    """True si el símbolo está parado: TA ∈ {H, P} (manual L1113-1124; sin TA, Q o T = se negocia o reabre)."""
-    return _ta(simb) in ("H", "P")
+    """True si el símbolo está parado: TA ∈ {H, P, Q} (manual L1113-1124; sin TA o T = se negocia o reabre).
+
+    E1-05: `Q` (quotation resumed) es el periodo de solo cotización antes del
+    cruce de reapertura: todavía no se negocia y el `last` es el de antes de
+    parar. Una orden por OPEN en `Q` entra en ese cruce.
+    """
+    return _ta(simb) in TA_PARADO
 
 
 def es_luld(simb: EstadoSimbolo) -> bool:
@@ -104,6 +139,8 @@ def tipo_halt(simb: EstadoSimbolo, franja: str) -> str:
         return "LULD (pausa de volatilidad)"
     if ta == "H":
         return "H en premercado (T1/T12, sin LULD)" if _es_premercado(franja) else "H (T1/T12: DAS no lo distingue)"
+    if ta == "Q":
+        return "Q (solo cotización: cruce de reapertura inminente)"
     return "desconocido"
 
 
@@ -190,7 +227,7 @@ def texto_halt(pos: PosicionTicker, simb: EstadoSimbolo, franja: str, precio_par
     partes.append(franja)
     if canceladas:
         partes.append(f"entradas canceladas: {len(canceladas)} (B18)")
-    return " · ".join(partes)
+    return html.escape(" · ".join(partes), quote=False)   # D2-08: va a Telegram con parse_mode HTML
 
 
 # ── decisión de reapertura (R-F-01, R-F-05, R-F-06) ──────────────────────
@@ -227,11 +264,54 @@ def decidir_reapertura(pos: PosicionTicker, simb: EstadoSimbolo, stops: Optional
     k_max = _cfg_int(cfg_halts, "k_max", HALT_K_MAX)
     if stop_salvo and simb.k_halts_up < k_max:
         return "mantener"
-    if not es_luld(simb) and simb.precio_parada is not None and simb.precio_parada > 0:
-        tope = _cfg_decimal(cfg_halts, "t1_subida_max_cierre_pct", HALT_T1_SUBIDA_MAX_PCT)
-        if subida_pct(simb.precio_parada, precio) > tope:
-            return "control_humano"
+    if tope_t1_superado(simb, precio, cfg_halts):
+        return "control_humano"
     return "cerrar_mercado" if _es_rth(franja) else "cerrar_limite_pm"
+
+
+def tope_t1_superado(simb: EstadoSimbolo, precio_reapertura: Optional[Decimal], cfg_halts: Any,
+                     luld: Optional[bool] = None) -> bool:
+    """E1-01 / E1-02 (R-F-05 a): ¿la subida desde el precio de parada supera `t1_subida_max_cierre_pct` (250 %)?
+
+    Función ÚNICA para los dos sitios: al decidir durante el halt y, sobre
+    todo, al REABRIR con el precio real (el decisor la llama antes del
+    reintento con el `last` de la reapertura; True → control humano, aviso
+    máximo, ninguna orden). En LULD no hay tope (manda k) → False. `luld` None
+    → se deduce del TA actual; si el símbolo ya reabrió (TA T o ausente) no se
+    sabe si fue LULD y se aplica el tope, que es lo conservador (el decisor
+    puede pasar `luld` con el TA con el que paró, `MercadoDAS.ta_ultimo_halt`).
+    Sin precio de parada o sin precio de reapertura válidos no se puede medir
+    → False (prima cerrar: los stops residentes no cubren un hueco así).
+    Estricto: 250 % exacto NO supera. `cfg_halts` es el bloque «halts» (o la
+    `Config` / un dict con «halts»).
+    """
+    if luld is None:
+        luld = es_luld(simb)
+    if luld:
+        return False
+    parada = simb.precio_parada
+    if parada is None or not parada.is_finite() or parada <= 0:
+        return False
+    if precio_reapertura is None or not precio_reapertura.is_finite() or precio_reapertura <= 0:
+        return False
+    tope = _cfg_decimal(_bloque_halts(cfg_halts), "t1_subida_max_cierre_pct", HALT_T1_SUBIDA_MAX_PCT)
+    return subida_pct(parada, precio_reapertura) > tope
+
+
+def precio_tope_t1(simb: EstadoSimbolo, cfg_halts: Any) -> Optional[Decimal]:
+    """E1-01: `precio_parada · (1 + t1_subida_max_cierre_pct / 100)` redondeado ABAJO al tick; None si no aplica.
+
+    No aplica (None) en LULD (`P`: manda k, sin tope) ni sin precio de parada
+    válido. Es el límite máximo que paga una salida de un halt H/Q: por
+    encima, R-F-05 manda control humano.
+    """
+    if es_luld(simb):
+        return None
+    parada = simb.precio_parada
+    if parada is None or not parada.is_finite() or parada <= 0:
+        return None
+    tope = _cfg_decimal(_bloque_halts(cfg_halts), "t1_subida_max_cierre_pct", HALT_T1_SUBIDA_MAX_PCT)
+    return al_tick(parada * (_CIEN + tope) / _CIEN, arriba=False)
 
 
 def cerca_de_banda(cot: Optional[Cotizacion], simb: EstadoSimbolo, k: int, cfg_halts: dict) -> bool:
@@ -250,17 +330,26 @@ def cerca_de_banda(cot: Optional[Cotizacion], simb: EstadoSimbolo, k: int, cfg_h
 
 
 def orden_reapertura(pos: PosicionTicker, qty: int, cot: Optional[Cotizacion], decision: str, cfg: Any,
-                     token: int, hora_et: datetime) -> OrdenNueva:
-    """La orden de salida del halt (EP-2 / R-F-06).
+                     token: int, hora_et: datetime, *, simb: Optional[EstadoSimbolo] = None) -> OrdenNueva:
+    """La orden de salida del halt (EP-2 / R-F-06 / R-F-05).
 
-    «cerrar_mercado» → compra (cubre el corto) a MERCADO por la ruta `rutas.halt`
-    (OPEN, Sage 24-sep) con propósito HALT_OPEN. «cerrar_limite_pm» → LÍMITE que
-    cruza el ask con `halts.margen_limite_pm_pct` (redondeado al lado que llena)
-    por la ruta de cruzar de la tabla, TIF DAY+, propósito HALT_PM_LIMITE. Una
-    neta LARGA vende de forma simétrica (bid · (1 − margen)). `cfg` es la
-    `Config` entera (o un dict con «rutas» y «halts»). Lanza ValueError con otra
-    decisión, sin posición, con `qty` mayor que la posición (jamás quedar del
-    otro lado: riesgo 6) o, en PM, sin ningún precio del que partir.
+    «cerrar_mercado» → compra (cubre el corto) por la ruta `rutas.halt` (OPEN,
+    Sage 24-sep) con propósito HALT_OPEN: a MERCADO en una pausa LULD (`P`) y,
+    con `simb` (solo por nombre, E1-01) de un halt que NO es LULD (`H`/`Q`, o ya
+    reabierto) y con precio de parada, un LÍMITE a `precio_tope_t1` (parada ·
+    3,5 redondeado abajo): durante el halt el `last` es el de antes de parar y
+    el 250 % no se puede medir; si reabre por encima, la orden no llena y el
+    decisor pasa a control humano (`tope_t1_superado`). «cerrar_limite_pm» →
+    LÍMITE que cruza el ask con `halts.margen_limite_pm_pct` (redondeado al lado
+    que llena) por la ruta de cruzar de la tabla, TIF DAY+, propósito
+    HALT_PM_LIMITE; con `simb` de un halt no LULD ese límite se CAPA también al
+    tope del T1 (nunca se paga más de parada · 3,5). Una neta LARGA vende de
+    forma simétrica (bid · (1 − margen)) y sin tope (el 250 % es de subida;
+    una venta a MERCADO sigue siendo MERCADO). Sin `simb` el comportamiento es
+    el de antes (MKT). `cfg` es la `Config` entera (o un dict con «rutas» y
+    «halts»). Lanza ValueError con otra decisión, sin posición, con `qty` mayor
+    que la posición (jamás quedar del otro lado: riesgo 6) o, en PM, sin ningún
+    precio del que partir.
     """
     if decision not in ("cerrar_mercado", "cerrar_limite_pm"):
         raise ValueError(f"decisión sin orden: {decision!r}")
@@ -271,9 +360,14 @@ def orden_reapertura(pos: PosicionTicker, qty: int, cot: Optional[Cotizacion], d
     corto = pos.neta < 0
     lado = Lado.COMPRA if corto else Lado.VENTA
     rutas = _bloque(cfg, "rutas")
+    tope_t1 = precio_tope_t1(simb, cfg) if (simb is not None and corto) else None
     if decision == "cerrar_mercado":
         # `precios.ruta` ignora el precio para «halt» (rutas.halt vale para todo tramo): se pasa un Decimal cualquiera.
-        return OrdenNueva(token=token, lado=lado, ticker=pos.ticker, ruta=ruta(rutas, "halt", Decimal("1"), hora_et),
+        ruta_open = ruta(rutas, "halt", Decimal("1"), hora_et)
+        if tope_t1 is not None:
+            return OrdenNueva(token=token, lado=lado, ticker=pos.ticker, ruta=ruta_open, qty=qty,
+                              tipo=TipoOrden.LIMITE, precio=tope_t1, proposito=Proposito.HALT_OPEN)
+        return OrdenNueva(token=token, lado=lado, ticker=pos.ticker, ruta=ruta_open,
                           qty=qty, tipo=TipoOrden.MERCADO, proposito=Proposito.HALT_OPEN)
     margen = _cfg_decimal(_bloque(cfg, "halts"), "margen_limite_pm_pct", MARGEN_LIMITE_PM_PCT_DEFECTO)
     base = None
@@ -284,8 +378,63 @@ def orden_reapertura(pos: PosicionTicker, qty: int, cot: Optional[Cotizacion], d
     if base is None:
         raise ValueError(f"{pos.ticker}: sin ask/bid/last para el límite de salida en premercado")
     precio = con_techo(base, margen, arriba=corto)
+    if tope_t1 is not None and precio > tope_t1:
+        precio = tope_t1
     return OrdenNueva(token=token, lado=lado, ticker=pos.ticker, ruta=ruta(rutas, "cruzar", precio, hora_et),
                       qty=qty, tipo=TipoOrden.LIMITE, precio=precio, tif="DAY+", proposito=Proposito.HALT_PM_LIMITE)
+
+
+def ensanchar_stops_pm(pos: PosicionTicker, vivas: list[Orden], simb: EstadoSimbolo, franja: str, cfg: Any,
+                       version: Optional[int] = None) -> list[Accion]:
+    """E1-04 (R-F-06, 2.ª parte): halt H de PREMERCADO con decisión «mantener» → stops límite con más margen.
+
+    «Si ya hay un stop limit puesto y se entra en T1/T12 en PM, ese stop se
+    cambia por otro que remueva más liquidez». Solo con la franja de
+    premercado, el símbolo parado sin ser LULD (`H`/`Q`) y la posición CORTA:
+    cada STOPLMTP de COMPRA viva del ticker con `id_das`, disparo y límite
+    conocidos cuyo límite quede por debajo de `con_techo(disparo,
+    margen_limite_pm_pct)` (5 %, redondeado arriba) → `Reemplazar` con el
+    MISMO disparo, la MISMA cantidad abierta (`share` de
+    `tipos.share_de_replace` según `stops.replace_share_es_abierta`) y el
+    límite nuevo, con la serie «stops:X» y la versión vigente (`version` o
+    `pos.version_stops`), + `Programar("replace_verificar")` (2h.8). Nunca baja
+    un límite (la emergencia ya está a +63 %), nunca mueve el disparo, nunca
+    envía ni cancela nada. Si cambia algo, `Anotar("halt_stops_pm")` delante.
+    El plan de stops casa por disparo y solo corrige cantidades: no deshace el
+    ensanche. `cfg` es la `Config` (o un dict con «halts» y «stops»).
+    """
+    if pos.neta >= 0 or not _es_premercado(franja) or not es_halt(simb) or es_luld(simb):
+        return []
+    margen = _cfg_decimal(_bloque_halts(cfg), "margen_limite_pm_pct", MARGEN_LIMITE_PM_PCT_DEFECTO)
+    share_es_abierta = _share_es_abierta(cfg)
+    vigente = pos.version_stops if version is None else version
+    cambios: list[Accion] = []
+    anotados: list[dict] = []
+    for o in sorted(_unicas(vivas), key=_antiguedad):
+        if (o.ticker != pos.ticker or o.lado is not Lado.COMPRA or o.tipo is not TipoOrden.STOP_LIMITE_PP
+                or o.estado not in _ESTADOS_VIVOS or o.id_das is None or o.stop is None or o.precio is None
+                or not o.stop.is_finite() or o.stop <= 0):
+            continue
+        abierta = _qty_viva(o)
+        if abierta <= 0:
+            continue
+        nuevo = con_techo(o.stop, margen, arriba=True)
+        if nuevo <= o.precio:
+            continue
+        cambios += [Reemplazar(id_das=o.id_das, token=o.token,
+                               qty=share_de_replace(abierta, max(int(o.llenas), 0), share_es_abierta),
+                               stop=o.stop, precio=nuevo,
+                               motivo=(f"R-F-06 / E1-04: halt en premercado en {pos.ticker}: límite del stop "
+                                       f"{o.precio} → {nuevo} (disparo {o.stop} + {margen} %)"),
+                               version=vigente, serie=_SERIE_STOPS.format(pos.ticker)),
+                    Programar(_CLAVE_VERIFICAR_REPLACE, _VERIFICAR_REPLACE_EN_S,
+                              {"token": o.token, "ticker": pos.ticker, "qty_objetivo": abierta})]
+        anotados.append({"token": o.token, "disparo": str(o.stop), "limite_antes": str(o.precio),
+                         "limite_nuevo": str(nuevo), "qty": abierta})
+    if not cambios:
+        return []
+    return [Anotar(ANOTACION_STOPS_PM, {"ticker": pos.ticker, "ta": simb.ta, "franja": franja,
+                                        "margen_pct": str(margen), "stops": anotados, "regla": "R-F-06 / E1-04"})] + cambios
 
 
 # ── cuándo y si se envía la MKT por OPEN (injerto A §8.23, riesgo 27) ────
@@ -396,6 +545,45 @@ def _marca_halt(simb: EstadoSimbolo) -> str:
 
 def _txt(valor: Optional[Decimal]) -> Optional[str]:
     return None if valor is None else str(valor)
+
+
+def _bloque_halts(cfg: Any) -> Mapping:
+    """El bloque «halts»: el propio dict si ya lo es (no trae la clave «halts»), o el de una `Config` / dict con bloques."""
+    if isinstance(cfg, Mapping):
+        valor = cfg.get("halts")
+        return valor if isinstance(valor, Mapping) else cfg
+    valor = getattr(cfg, "halts", None)
+    return valor if isinstance(valor, Mapping) else {}
+
+
+def _share_es_abierta(cfg: Any) -> bool:
+    """A-02: `stops.replace_share_es_abierta` si la config lo fija como bool; si no, el defecto de tipos."""
+    bloque = cfg.get("stops") if isinstance(cfg, Mapping) else getattr(cfg, "stops", None)
+    valor = bloque.get(_CLAVE_SHARE_ES_ABIERTA) if isinstance(bloque, Mapping) else None
+    return valor if isinstance(valor, bool) else REPLACE_SHARE_ES_ABIERTA
+
+
+def _unicas(vivas: Any) -> list[Orden]:
+    vistas: set[int] = set()
+    salida: list[Orden] = []
+    for o in vivas or ():
+        if isinstance(o, Orden) and id(o) not in vistas:
+            vistas.add(id(o))
+            salida.append(o)
+    return salida
+
+
+def _antiguedad(o: Orden) -> tuple[int, int, float]:
+    if o.id_das is not None:
+        return (0, int(o.id_das), o.enviada_en)
+    return (1, 0, o.enviada_en)
+
+
+def _qty_viva(o: Orden) -> int:
+    """Acciones que la orden aún puede ejecutar: `lvqty` en Partial/Triggered si > 0; si no, qty − llenas."""
+    if o.estado in (EstadoOrden.PARTIAL, EstadoOrden.TRIGGERED) and o.lvqty > 0:
+        return max(int(o.lvqty), 0)
+    return max(int(o.qty) - int(o.llenas), 0)
 
 
 def _bloque(cfg: Any, nombre: str) -> dict:

@@ -271,6 +271,14 @@ def _lote_vivo_misma_estrategia(e: Escenario) -> None:
     e.lote_previo("base-viva", estado=EstadoLote.ABIERTO)
 
 
+def _solo_locate_de_otra(e: Escenario, *, ticker: str = TICKER, pedidas: int = 1200, localizadas: int = 5000,
+                         usadas: int = 0, estado_loc: str = "hecho") -> None:
+    """E9 (D1-02, G1A-07): la estrategia de la señal NO tiene locate propio; otra estrategia sí."""
+    e.estado.locates.clear()
+    e.estado.locates[(ticker, "otra")] = Locate(ticker=ticker, strategy_id="otra", pedidas=pedidas,
+                                                localizadas=localizadas, usadas=usadas, estado=estado_loc)
+
+
 # (id que cita la regla, cambio sobre el escenario base, motivo esperado)
 FILAS_MOTIVOS: list[tuple[str, Callable[[Escenario], None], str]] = [
     ("1-R-A-05-repetida", lambda e: e.estado.senales_vistas.add(e.senal.id), MOTIVO_REPETIDA),
@@ -333,6 +341,10 @@ FILAS_MOTIVOS: list[tuple[str, Callable[[Escenario], None], str]] = [
     ("15-R-K-03-reconciliacion", lambda e: e.estado.modo_degradado.add("reconciliacion"), MOTIVO_DEGRADADO),
     ("16-R-H-04-sin-locate", lambda e: e.estado.locates.clear(), MOTIVO_SIN_ACCIONES),
     ("16-R-H-04-locates-gastados", lambda e: setattr(e.estado.locates[(TICKER, SID)], "usadas", 1200),
+     MOTIVO_SIN_ACCIONES),
+    ("16-E9-D1-02-otra-sin-sobrante", lambda e: _solo_locate_de_otra(e, pedidas=1200, localizadas=1200),
+     MOTIVO_SIN_ACCIONES),
+    ("16-E9-D1-02-locate-de-otro-ticker", lambda e: _solo_locate_de_otra(e, ticker="OTRO", localizadas=5000),
      MOTIVO_SIN_ACCIONES),
     ("16-acciones-none", lambda e: e.evento(acciones=None), MOTIVO_SIN_ACCIONES),
     ("16-acciones-0.4", lambda e: e.evento(acciones=0.4), MOTIVO_SIN_ACCIONES),
@@ -428,6 +440,64 @@ def test_retraso_borde_del_1_por_ciento(esc: Escenario, last: str, entra: bool) 
     assert esc.evaluar().ok is entra
 
 
+@pytest.mark.parametrize("valor", [None, "ausente"], ids=["D1-09-null-es-el-defecto", "D1-09-ausente-es-el-defecto"])
+def test_D1_09_retraso_null_no_apaga_el_filtro(esc: Escenario, valor) -> None:
+    """D1-09: `retraso_max_senal_pct` null (config «num?») o ausente = 1 % del libro; R-A-01 no se apaga en silencio."""
+    if valor == "ausente":
+        esc.cfg = dataclasses.replace(esc.cfg, entrada={k: v for k, v in esc.cfg.entrada.items()
+                                                        if k != "retraso_max_senal_pct"})
+    else:
+        esc.bloque("entrada", retraso_max_senal_pct=None)
+    esc.cot = _cot(bid="3.41", ask="3.49", last="3.4845")          # +1 % exacto: pasa
+    assert esc.evaluar().ok
+    esc.cot = _cot(bid="3.41", ask="3.49", last="3.4846")          # un pelo más: descarta
+    assert esc.evaluar().motivo == MOTIVO_RETRASO
+    esc.bloque("entrada", retraso_max_senal_pct=2.0)               # un número sí cambia el umbral
+    assert esc.evaluar().ok
+
+
+def test_D1_03_reapertura_salta_el_retraso(esc: Escenario) -> None:
+    """D1-03 (R-F-04 b): en la reapertura el último está a +4 % del precio de ANTES del halt y la señal entra.
+
+    El filtro de la reapertura es `halts.senal_guardada_valida` (primera vela
+    < X %); la 10 (R-A-01) es para el retraso del bot o del feed. Fuera de la
+    reapertura, la misma cotización se descarta por retraso.
+    """
+    esc.cot = _cot(bid="3.58", ask="3.60", last="3.59")            # señal a 3,45, stop 3,80: +4,06 %
+    esc.ahora_et = CIERRE + timedelta(minutes=7)                   # reabre ~minuto después de un LULD de 5 min
+    esc.es_reapertura = True
+    assert esc.evaluar() == Veredicto(ok=True, motivo=MOTIVO_OK, qty=1200)
+    esc.es_reapertura = False
+    esc.ahora_et = AHORA_ET
+    assert esc.evaluar().motivo == MOTIVO_RETRASO
+
+
+def test_D1_03_reapertura_mantiene_las_demas_comprobaciones(esc: Escenario) -> None:
+    """D1-03: saltar la 10 no salta la 11 (B20 bis) ni la 12 (nivel del stop sobre el último)."""
+    esc.es_reapertura = True
+    esc.ahora_et = CIERRE + timedelta(minutes=7)
+    esc.cot = _cot(bid="3.40", ask="3.90", last="3.85")            # stop 3,80 ≤ último 3,85 y bid a −11,7 %
+    assert esc.evaluar().motivo == MOTIVO_DISTANCIA_BID
+    esc.cot = _cot(bid="3.84", ask="3.86", last="3.85")
+    assert esc.evaluar().motivo == MOTIVO_NIVEL_STOP
+
+
+def test_D1_12_frescura_por_defecto_es_la_constante_de_tipos() -> None:
+    """D1-12: la comprobación 8 usa `tipos.COTIZACION_FRESCA_MAX_S` (la misma que mercado_das), no un 5.0 suelto."""
+    import inspect
+    from app.bot_das import tipos
+    defecto = inspect.signature(evaluar_senal).parameters["max_edad_cot_s"].default
+    assert defecto is tipos.COTIZACION_FRESCA_MAX_S
+
+
+def test_D1_12_frescura_borde(esc: Escenario) -> None:
+    from app.bot_das.tipos import COTIZACION_FRESCA_MAX_S
+    esc.cot = _cot(edad=COTIZACION_FRESCA_MAX_S)                    # justo en el límite: vale
+    assert esc.evaluar().ok
+    esc.cot = _cot(edad=COTIZACION_FRESCA_MAX_S + 0.001)
+    assert esc.evaluar().motivo == MOTIVO_SIN_COTIZACION
+
+
 def test_b20bis_borde_exacto_pasa_y_null_la_apaga(esc: Escenario) -> None:
     esc.cot = _cot(bid="3.2775", ask="3.46", last="3.45")          # (3,45 − 3,2775) / 3,45 = 5 % exacto
     assert esc.evaluar().ok
@@ -492,18 +562,48 @@ def test_locates_libres_limitan_la_qty(esc: Escenario, localizadas, usadas, esta
     assert type(v.qty) is int
 
 
+@pytest.mark.parametrize("sobrante_de, qty", [
+    (dict(pedidas=1200, localizadas=5000), 1200),
+    (dict(pedidas=300, localizadas=1000, usadas=300), 700),
+    (dict(pedidas=0, localizadas=0, estado_loc="no_hace_falta"), 1200),
+], ids=["D1-02-E9-sobrante-de-otra-entra", "G1B-11-A-1000-usadas-300-B-sin-registro-700",
+        "G1A-07-ETB-en-el-registro-de-otra-entra"])
+def test_E9_sin_locate_propio_usa_sobrantes_y_ETB(esc: Escenario, sobrante_de: dict, qty: int) -> None:
+    """D1-02 / G1A-07 / G1B-11: la comprobación 16 aplica la MISMA regla que `locates.asignar_a_lote` (E9)."""
+    from app.bot_das.reglas.locates import asignar_a_lote
+    _solo_locate_de_otra(esc, **sobrante_de)
+    v = esc.evaluar()
+    assert (v.ok, v.motivo, v.qty) == (True, MOTIVO_OK, qty)
+    assert sum(n for _, n in asignar_a_lote(esc.estado.locates, TICKER, 1200, SID)) == qty
+
+
+def test_E9_propio_mas_sobrante_de_otra(esc: Escenario) -> None:
+    """D1-02: propio con 500 libres + 400 sobrantes de otra → 900 (antes: solo las 500 propias)."""
+    loc = esc.estado.locates[(TICKER, SID)]
+    loc.localizadas, loc.usadas = 1200, 700
+    esc.estado.locates[(TICKER, "otra")] = Locate(ticker=TICKER, strategy_id="otra", pedidas=600, localizadas=1000,
+                                                  estado="hecho")
+    assert esc.evaluar() == Veredicto(ok=True, motivo=MOTIVO_OK, qty=900)
+
+
+# R-D-04 con paridad del backtester (portfolio_sim.py l.2314-2318, bot_alerts_engine.py l.994-998; memoria
+# «max_reentries = -1»): −1 → manda accept_reentries; N ≥ 0 → hasta N entradas previas, IGNORANDO accept.
 @pytest.mark.parametrize("previas, accept, maximo, entra", [
     (1, True, -1, True),
     (1, False, -1, False),
     (1, True, 0, False),
     (1, False, 0, False),
     (1, True, 1, True),
-    (1, False, 1, False),
+    (1, False, 1, True),       # D1-04: antes se consagraba «no entra»; el backtester entra (max manda)
     (2, True, 1, False),
     (2, True, 2, True),
     (3, True, -1, True),
+    (2, False, 1, False),      # D1-04: con accept false el tope N sigue mandando
+    (2, False, 3, True),       # D1-04
+    (1, True, -2, False),      # valor imposible: lo conservador es no reentrar
 ], ids=["R-D-04--1-true", "R-D-04--1-false", "R-D-04-0-true", "R-D-04-0-false", "R-D-04-1-true",
-        "R-D-04-1-false", "R-D-04-2a-con-tope-1", "R-D-04-2a-con-tope-2", "R-D-04-sin-tope-numerico"])
+        "R-D-04-1-false-D1-04-manda-N", "R-D-04-2a-con-tope-1", "R-D-04-2a-con-tope-2", "R-D-04-sin-tope-numerico",
+        "D1-04-2a-tope-1-accept-false", "D1-04-3a-tope-3-accept-false", "R-D-04-menos-2-no"])
 def test_reentradas_tabla(esc: Escenario, previas: int, accept: bool, maximo: int, entra: bool) -> None:
     for n in range(previas):
         esc.lote_previo(f"previa-{n}")
@@ -530,6 +630,50 @@ def test_r_e_03_cerrar_y_reiniciar_deja_entrar_a_la_version_nueva(esc: Escenario
 def test_otra_estrategia_con_lote_vivo_no_es_reentrada(esc: Escenario) -> None:
     esc.lote_previo("otra-viva", strategy_id="otra", estado=EstadoLote.ABIERTO)
     assert esc.evaluar().ok
+
+
+def _reentrada_backtester(previas: int, accept: bool, maximo: int) -> bool:
+    """Referencia: el if/elif de `portfolio_sim.py` l.2314-2318 (total_trades = entradas previas).
+
+    Única diferencia a propósito: max_reentries < −1 (imposible desde la UI)
+    no reentra (lo conservador), donde el backtester miraría accept.
+    """
+    if maximo >= 0:
+        return previas <= maximo
+    if maximo == -1:
+        return accept or previas == 0
+    return previas == 0
+
+
+@pytest.mark.parametrize("accept", [True, False], ids=["accept-true", "accept-false"])
+@pytest.mark.parametrize("maximo", [-2, -1, 0, 1, 2, 3], ids=lambda m: f"max{m}")
+@pytest.mark.parametrize("previas", [0, 1, 2, 3], ids=lambda p: f"previas{p}")
+def test_D1_04_paridad_entrada_salidas_y_backtester(previas: int, accept: bool, maximo: int) -> None:
+    """D1-04 / D2-salidas-rechazos-11: la comprobación 14 y `salidas.puede_reentrar` dicen lo mismo en toda la
+    rejilla, y los dos coinciden con el backtester: una sola fuente de verdad para R-D-04."""
+    from app.bot_das.reglas.salidas import puede_reentrar
+    e = _escenario()
+    for n in range(previas):
+        e.lote_previo(f"previa-{n}")
+    e.estrategia(accept_reentries=accept, max_reentries=maximo)
+    entra = e.evaluar().ok
+    permitida, _ = puede_reentrar(e.cfg.estrategias[SID], None, e.estado.posiciones.get(TICKER))
+    assert entra is permitida
+    assert entra is _reentrada_backtester(previas, accept, maximo)
+
+
+def test_D1_04_la_guarda_de_entrada_llama_a_puede_reentrar(esc: Escenario, monkeypatch) -> None:
+    """D1-04: la comprobación 14 DELEGA en `salidas.puede_reentrar` (no hay una segunda implementación)."""
+    llamadas = []
+
+    def falsa(e, lote_anterior, pos):
+        llamadas.append((e.strategy_id, lote_anterior, pos.ticker))
+        return False, "vetada por la prueba"
+
+    esc.lote_previo("previa")
+    monkeypatch.setattr(ent, "puede_reentrar", falsa)
+    assert esc.evaluar().motivo == MOTIVO_REENTRADA
+    assert llamadas == [(SID, None, TICKER)]
 
 
 # ── pirámides (D13) ────────────────────────────────────────────────────
@@ -873,9 +1017,25 @@ def test_al_vencer_usa_la_config_congelada() -> None:
 def test_resto_a_cruzar_solo_tras_canceled() -> None:
     assert resto_a_cruzar(_intento(llenas=400, token_agregar=TOKEN)) == 0      # Cancel pedido, Canceled sin llegar
     assert resto_a_cruzar(_intento(llenas=400, token_cruce=TOKEN)) == 0
-    assert resto_a_cruzar(_intento(llenas=400, canceladas=600)) == 600         # Canceled confirmado: token a None
+    assert resto_a_cruzar(_intento(llenas=400)) == 600                         # Canceled confirmado: token a None
     assert resto_a_cruzar(_intento(llenas=1000)) == 0
     assert resto_a_cruzar(_intento(llenas=1100)) == 0
+
+
+@pytest.mark.parametrize("canceladas", [0, 600, 9999], ids=["D1-11-canceladas-0", "D1-11-canceladas-600",
+                                                             "D1-11-canceladas-acumuladas"])
+def test_D1_11_resto_a_cruzar_no_depende_de_canceladas(canceladas: int) -> None:
+    """D1-11: `resto_a_cruzar` usa SOLO qty_total − llenas y los tokens; `IntentoEntrada.canceladas` no entra.
+
+    La garantía del riesgo 5 (no cruzar de más) es del DECISOR: suelta el
+    token solo con la orden cuadrada (terminal y llenas + canceladas ≥
+    pedidas, `_soltar_cuadrados`) y suma cada fill a `llenas`. `canceladas`
+    es ACUMULADO de todas las órdenes del intento (tras un R-B-03 incluye la
+    orden reiniciada), así que no sirve de tope: un min() con él cruzaría de
+    menos o de más según la historia. Con token vivo, 0 pase lo que pase.
+    """
+    assert resto_a_cruzar(_intento(llenas=400, canceladas=canceladas)) == 600
+    assert resto_a_cruzar(_intento(llenas=400, canceladas=canceladas, token_agregar=TOKEN)) == 0
 
 
 @pytest.mark.parametrize("bid, precio", [("10.00", "9.95"), ("3.00", "2.98"), ("3.33", "3.31"), ("0.5000", "0.4975")],
@@ -1029,6 +1189,49 @@ def test_fill_peor_de_lo_permitido_rechaza_basura() -> None:
         fill_peor_de_lo_permitido(D("0"), D("10"), D("3"))
     with pytest.raises(ValueError):
         fill_peor_de_lo_permitido(D("9"), D("10"), D("-1"))
+    with pytest.raises(ValueError):
+        fill_peor_de_lo_permitido(D("9"), D("10"), D("3"), cruce_pct=D("-0.5"))
+
+
+@pytest.mark.parametrize("fill, bid_senal, peor", [
+    ("1.00", "1.04", False),     # D1-05: bid 1,01 (−2,88 %) → cruce 1,00: legal, no avisa
+    ("0.99", "1.04", True),      # un tick por debajo del peor cruce legal
+    ("1.29", "1.34", False),     # G1B-19: bid 1,30 (−2,99 %) → cruce 1,2935 → 1,29: legal
+    ("1.28", "1.34", True),
+    ("9.65", "10.00", False),    # 10 $: bid 9,70 → 9,6515 → 9,65
+    ("9.64", "10.00", True),
+    ("0.4825", "0.5000", False),  # penny (tick 0,0001): bid 0,4850 → 0,482575 → 0,4825
+    ("0.4824", "0.5000", True),
+], ids=["D1-05-1,04-cruce-legal", "D1-05-1,04-un-tick-peor", "G1B-19-1,34-cruce-legal", "G1B-19-1,34-peor",
+        "D1-05-10$-legal", "D1-05-10$-peor", "D1-05-penny-legal", "D1-05-penny-peor"])
+def test_D1_05_fill_peor_cuenta_el_redondeo_del_cruce(fill: str, bid_senal: str, peor: bool) -> None:
+    """D1-05 / G1B-19: con `cruce_pct` el suelo es el PEOR cruce legal (bid mínimo al tick, × (1 − 0,5 %) abajo)."""
+    assert fill_peor_de_lo_permitido(D(fill), D(bid_senal), D("3"), cruce_pct=D("0.5")) is peor
+
+
+def test_D1_05_el_suelo_coincide_con_orden_cruce() -> None:
+    """D1-05: un cruce hecho por `orden_cruce` con el bid más bajo permitido NUNCA avisa, y uno de un tick menos sí."""
+    for bid_senal in ("1.04", "1.34", "2.17", "3.33", "10.00", "0.5000", "0.1234"):
+        b = D(bid_senal)
+        intento = _intento(fase=FaseIntento.CRUZANDO, llenas=400, bid_senal=b)
+        bid_min = ent.redondear_arriba(b * D("0.97"))
+        o = orden_cruce(intento, 600, _cot(bid=str(bid_min), ask=str(bid_min), last=str(bid_min)), _config_base(),
+                        TOKEN, HORA_RTH)
+        assert o is not None, bid_senal
+        assert fill_peor_de_lo_permitido(o.precio, b, D("3"), cruce_pct=D("0.5")) is False
+        assert fill_peor_de_lo_permitido(o.precio - tick_de(o.precio), b, D("3"), cruce_pct=D("0.5")) is True
+
+
+def test_D1_05_con_ssr_el_suelo_es_bid_mas_un_tick() -> None:
+    """D1-05 + B19: con SSR el cruce va a bid + 1 tick; bid mínimo 1,01 → suelo 1,02."""
+    assert fill_peor_de_lo_permitido(D("1.02"), D("1.04"), D("3"), cruce_pct=D("0.5"), ssr=True) is False
+    assert fill_peor_de_lo_permitido(D("1.01"), D("1.04"), D("3"), cruce_pct=D("0.5"), ssr=True) is True
+
+
+def test_D1_05_sin_cruce_pct_la_forma_antigua_no_cambia() -> None:
+    """D1-05: el llamador que aún pasa el tope total (3,5) obtiene lo mismo que antes (cambio aditivo)."""
+    assert fill_peor_de_lo_permitido(D("1.00"), D("1.04"), D("3.5")) is True        # el falso aviso de la revisión
+    assert fill_peor_de_lo_permitido(D("9.65"), D("10.00"), D("3.5")) is False
 
 
 # ── nivel_de_senal y pureza del módulo ─────────────────────────────────
@@ -1038,7 +1241,12 @@ def test_nivel_de_senal_de_una_entrada_es_decimal_exacto(esc: Escenario) -> None
 
 
 def test_modulo_puro_solo_importa_lo_permitido() -> None:
-    """reglas/*: sin I/O, sin reloj, sin logging, sin entorno; solo tipos y precios del paquete (§3, §12)."""
+    """reglas/*: sin I/O, sin reloj, sin logging, sin entorno; solo tipos, precios y dos reglas puras hermanas (§3, §12).
+
+    `reglas.locates` (D1-02/G1A-07: la comprobación 16 usa `asignar_a_lote`)
+    y `reglas.salidas` (D1-04: la 14 usa `puede_reentrar`) los permite el
+    director: son puros y no importan `entrada` (sin ciclo).
+    """
     arbol = ast.parse(Path(ent.__file__).read_text(encoding="utf-8"))
     modulos = set()
     for nodo in ast.walk(arbol):
@@ -1047,7 +1255,8 @@ def test_modulo_puro_solo_importa_lo_permitido() -> None:
         elif isinstance(nodo, ast.ImportFrom):
             modulos.add(nodo.module)
     permitidos = {"__future__", "copy", "dataclasses", "math", "datetime", "decimal", "functools", "typing",
-                  "zoneinfo", "app.bot_das.tipos", "app.bot_das.reglas.precios"}
+                  "zoneinfo", "app.bot_das.tipos", "app.bot_das.reglas.precios",
+                  "app.bot_das.reglas.locates", "app.bot_das.reglas.salidas"}
     assert modulos <= permitidos, modulos - permitidos
     llamadas = set()
     for nodo in ast.walk(arbol):
@@ -1056,3 +1265,18 @@ def test_modulo_puro_solo_importa_lo_permitido() -> None:
             llamadas.add(funcion.attr if isinstance(funcion, ast.Attribute) else getattr(funcion, "id", ""))
     prohibidas = {"now", "utcnow", "today", "time", "monotonic", "sleep", "open", "print", "getenv", "input"}
     assert not (llamadas & prohibidas), llamadas & prohibidas
+
+
+def test_D1_02_D1_04_sin_ciclo_de_importacion() -> None:
+    """D1-02 / D1-04: `reglas.locates` y `reglas.salidas` no importan `reglas.entrada` (ni `capital`): sin ciclo."""
+    from app.bot_das.reglas import locates, salidas
+    for modulo in (locates, salidas):
+        arbol = ast.parse(Path(modulo.__file__).read_text(encoding="utf-8"))
+        importados = set()
+        for nodo in ast.walk(arbol):
+            if isinstance(nodo, ast.Import):
+                importados.update(alias.name for alias in nodo.names)
+            elif isinstance(nodo, ast.ImportFrom):
+                importados.add(nodo.module or "")
+                importados.update(f"{nodo.module}.{alias.name}" for alias in nodo.names)
+        assert not any(m.endswith("reglas.entrada") or m.endswith("reglas.capital") for m in importados), modulo

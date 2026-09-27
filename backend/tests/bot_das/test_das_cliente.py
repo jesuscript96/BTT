@@ -35,6 +35,9 @@ import pytest
 import app.bot_das.cliente as cliente_mod
 from app.bot_das.cliente import (
     ESPERA_COLA_LLENA_S,
+    MOTIVO_COLA_LLENA,
+    MOTIVO_SESION,
+    MOTIVO_VERSION,
     TOPE_LINEA_BYTES,
     ClienteDAS,
     ClienteSombra,
@@ -59,6 +62,7 @@ from app.bot_das.tipos import (
     MsgQuote,
     MsgTrade,
     Origen,
+    OrdenDescartada,
     OrdenNueva,
     TipoOrden,
 )
@@ -143,6 +147,13 @@ def linea_neworder(reloj: RelojSimulado, seq: int, precio: str = "3.1") -> str:
     token = componer(Origen.EJECUTOR, reloj.hoy().timetuple().tm_yday, seq)
     return cmd_neworder(OrdenNueva(token=token, lado=Lado.CORTO, ticker="ABCD", ruta="SAGEREB", qty=100,
                                    tipo=TipoOrden.LIMITE, precio=Decimal(precio)))
+
+
+def linea_stop(reloj: RelojSimulado, seq: int, ticker: str, qty: int = 100) -> str:
+    """NEWORDER STOPLMTP de compra (un stop de la serie «stops:TICKER»), lejos del mercado."""
+    token = componer(Origen.EJECUTOR, reloj.hoy().timetuple().tm_yday, seq)
+    return cmd_neworder(OrdenNueva(token=token, lado=Lado.COMPRA, ticker=ticker, ruta="STOP", qty=qty,
+                                   tipo=TipoOrden.STOP_LIMITE_PP, stop=Decimal("9.9"), precio=Decimal("10")))
 
 
 def linea_replace_stop(qty: int) -> str:
@@ -726,6 +737,7 @@ def test_das_cola_llena_no_bloquea_y_descarta_la_nueva(fabrica, sim):
 
 
 def test_das_cola_llena_descarta_la_mas_vieja_de_la_misma_serie(fabrica, sim):
+    """A-04 (corregido): con la cola llena solo se tira la más vieja de la serie con versión ANTERIOR a la nueva."""
     cuota = CuotaControlada(bloqueada=True)
     c, g = fabrica(solo_lectura=False, cuota=cuota, tope_cola=4)
     assert c.conectar()
@@ -734,7 +746,7 @@ def test_das_cola_llena_descarta_la_mas_vieja_de_la_misma_serie(fabrica, sim):
     c.enviar("SB BBBB Lv1")
     c.enviar(linea_replace_stop(90), serie="stops:ABCD", version=0)
     t0 = time.perf_counter()
-    c.enviar(linea_replace_stop(80), serie="stops:ABCD", version=0)
+    assert c.enviar(linea_replace_stop(80), serie="stops:ABCD", version=1) is True
     assert time.perf_counter() - t0 < ESPERA_COLA_LLENA_S   # había sitio que hacer: no espera
     assert c.pendientes == 4 and c.descartadas == 1
     assert len(g.avisos) == 1 and "serie stops:ABCD" in g.avisos[0]
@@ -742,6 +754,38 @@ def test_das_cola_llena_descarta_la_mas_vieja_de_la_misma_serie(fabrica, sim):
     assert esperar(lambda: c.pendientes == 0)
     assert esperar(lambda: len(recibidas_sin_login(sim)) == 4)
     assert recibidas_sin_login(sim) == ["SB AAAA Lv1", "SB BBBB Lv1", linea_replace_stop(90), linea_replace_stop(80)]
+
+
+def test_A_04_cola_llena_no_tira_un_stop_hermano_de_la_misma_version(fabrica, sim, reloj):
+    """A-04: dos NEWORDER de «stops:ABCD» v1 en la cola llena y llega un tercero v1 → no se tira ninguno de los dos."""
+    cuota = CuotaControlada(bloqueada=True)
+    c, g = fabrica(solo_lectura=False, cuota=cuota, tope_cola=2)
+    assert c.conectar()
+    primero, segundo, tercero = (linea_stop(reloj, i, "ABCD") for i in (1, 2, 3))
+    assert c.enviar(primero, serie="stops:ABCD", version=1) is True
+    assert c.enviar(segundo, serie="stops:ABCD", version=1) is True
+    t0 = time.perf_counter()
+    assert c.enviar(tercero, serie="stops:ABCD", version=1) is False     # G2-05: descartada la NUEVA, se sabe en el acto
+    assert time.perf_counter() - t0 >= ESPERA_COLA_LLENA_S * 0.8         # esperó sus 50 ms antes de descartarla
+    assert c.pendientes == 2 and c.descartadas == 1
+    assert len(g.avisos) == 1 and "descartada la línea nueva" in g.avisos[0]
+    cuota.bloqueada = False
+    assert esperar(lambda: len([x for x in recibidas_sin_login(sim) if x.startswith("NEWORDER")]) == 2)
+    assert recibidas_sin_login(sim) == [primero, segundo]
+
+
+def test_A_04_D2a_06_cola_llena_la_version_vieja_purgada_avisa_al_decisor(fabrica, sim, reloj):
+    """A-04 + D2a-06: el NEWORDER v0 que se tira para hacer sitio a una v1 llega como OrdenDescartada."""
+    descartes: list[OrdenDescartada] = []
+    cuota = CuotaControlada(bloqueada=True)
+    c, _g = fabrica(solo_lectura=False, cuota=cuota, tope_cola=2, al_descartar=descartes.append)
+    assert c.conectar()
+    viejo = linea_stop(reloj, 1, "ABCD")
+    c.enviar(viejo, serie="stops:ABCD", version=0)
+    c.enviar("SB AAAA Lv1")
+    assert c.enviar(linea_stop(reloj, 2, "ABCD"), serie="stops:ABCD", version=1) is True
+    assert [(d.token, d.serie, d.version, d.ticker, d.motivo) for d in descartes] == [
+        (componer(Origen.EJECUTOR, 268, 1), "stops:ABCD", 0, "ABCD", MOTIVO_COLA_LLENA)]
 
 
 def test_das_cola_llena_espera_y_entra_si_se_libera(fabrica, sim, monkeypatch):
@@ -762,6 +806,247 @@ def test_das_cola_llena_espera_y_entra_si_se_libera(fabrica, sim, monkeypatch):
         liberador.join()
     assert esperar(lambda: "SB CCCC Lv1" in sim.recibidas())
     assert g.avisos == [] and c.descartadas == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# A-01 / SEG-01: el emisor no se bloquea en cabeza
+# ══════════════════════════════════════════════════════════════════════
+def _agotar(cuota: CuotaComandos, comando: str) -> None:
+    """Gasta toda la cabida de la categoría de `comando` en el instante actual del reloj simulado."""
+    _ventana, cabida = cuota.limites[comando.split()[0].upper()]
+    for _ in range(cabida):
+        cuota.anotar(comando)
+    assert cuota.espera_para(comando) > 0
+
+
+def _mutantes_recibidos(sim) -> list[str]:
+    return [x for x in recibidas_sin_login(sim) if es_mutante(x)]
+
+
+def test_A_01_cancel_91_en_cabeza_no_retiene_el_neworder_stop_de_detras(fabrica, sim, reloj):
+    """A-01 / SEG-01 (director): CANCEL nº 91 del minuto en cabeza y un NEWORDER STOPLMTP detrás → el NEWORDER sale ya."""
+    cuota = CuotaComandos(reloj)
+    _agotar(cuota, "CANCEL 1")
+    c, _g = fabrica(solo_lectura=False, cuota=cuota)
+    assert c.conectar()
+    stop = linea_stop(reloj, 1, "WXYZ")
+    assert c.enviar("CANCEL 424242") is True
+    assert c.enviar(stop, serie="stops:WXYZ", version=0) is True
+    assert esperar(lambda: stop in sim.recibidas(), plazo_s=2.0)          # sin mover el reloj
+    assert "CANCEL 424242" not in sim.recibidas() and c.pendientes == 1   # el CANCEL sigue esperando su cuota
+    reloj.avanzar(60.0)
+    assert esperar(lambda: "CANCEL 424242" in sim.recibidas())
+    assert _mutantes_recibidos(sim) == [stop, "CANCEL 424242"]
+
+
+def test_A_01_replace_91_en_cabeza_no_retiene_el_stop_ni_el_get_de_otro_ticker(fabrica, sim, reloj):
+    cuota = CuotaComandos(reloj)
+    _agotar(cuota, "REPLACE 1 1 1")
+    c, _g = fabrica(solo_lectura=False, cuota=cuota)
+    assert c.conectar()
+    replace = linea_replace_stop(80)
+    stop = linea_stop(reloj, 2, "WXYZ")
+    c.enviar(replace, serie="stops:ABCD", version=0)
+    c.enviar(stop, serie="stops:WXYZ", version=0)
+    c.enviar("GET POSITIONS")
+    assert esperar(lambda: stop in sim.recibidas() and "GET POSITIONS" in sim.recibidas())
+    assert replace not in sim.recibidas()
+    reloj.avanzar(60.0)
+    assert esperar(lambda: replace in sim.recibidas())
+
+
+def test_SEG_01_dos_inquire_y_el_neworder_sale_antes_de_la_ventana(fabrica, sim, reloj):
+    """SEG-01: SLPRICEINQUIRE ×2 y luego NEWORDER: el NEWORDER no espera los 3,33 s del segundo inquire."""
+    c, _g = fabrica(solo_lectura=False, cuota=CuotaComandos(reloj))
+    assert c.conectar()
+    inquire_1 = "SLPRICEINQUIRE ABCD 100 ALLROUTEWTTYPE1"
+    inquire_2 = "SLPRICEINQUIRE EFGH 100 ALLROUTEWTTYPE1"
+    stop = linea_stop(reloj, 3, "ABCD")
+    for linea in (inquire_1, inquire_2):
+        c.enviar(linea)
+    c.enviar(stop, serie="stops:ABCD", version=0)
+    assert esperar(lambda: stop in sim.recibidas())
+    assert inquire_1 in sim.recibidas() and inquire_2 not in sim.recibidas()
+    reloj.avanzar(3.4)
+    assert esperar(lambda: inquire_2 in sim.recibidas())
+
+
+def test_A_01_misma_serie_no_adelanta_a_la_que_espera(fabrica, sim, reloj):
+    """A-01: un NEWORDER de la MISMA serie que un REPLACE que espera cuota NO lo adelanta (orden dentro de la serie)."""
+    cuota = CuotaComandos(reloj)
+    _agotar(cuota, "REPLACE 1 1 1")
+    c, _g = fabrica(solo_lectura=False, cuota=cuota)
+    assert c.conectar()
+    replace = linea_replace_stop(80)
+    misma = linea_stop(reloj, 4, "ABCD")
+    otra = linea_stop(reloj, 5, "WXYZ")
+    c.enviar(replace, serie="stops:ABCD", version=0)
+    c.enviar(misma, serie="stops:ABCD", version=0)
+    c.enviar(otra, serie="stops:WXYZ", version=0)
+    assert esperar(lambda: otra in sim.recibidas())
+    time.sleep(0.2)
+    assert misma not in sim.recibidas() and c.pendientes == 2
+    reloj.avanzar(60.0)
+    assert esperar(lambda: misma in sim.recibidas())
+    assert _mutantes_recibidos(sim) == [otra, replace, misma]
+
+
+def test_A_01_mismo_id_no_adelanta(fabrica, sim, reloj):
+    """A-01: un CANCEL de la MISMA orden que un REPLACE que espera cuota no sale antes que él; el de otra orden sí."""
+    cuota = CuotaComandos(reloj)
+    _agotar(cuota, "REPLACE 1 1 1")
+    c, _g = fabrica(solo_lectura=False, cuota=cuota)
+    assert c.conectar()
+    replace = linea_replace_stop(80)                  # REPLACE 1001 …
+    c.enviar(replace)
+    c.enviar("CANCEL 1001")
+    c.enviar("CANCEL 2002")
+    assert esperar(lambda: "CANCEL 2002" in sim.recibidas())
+    time.sleep(0.2)
+    assert "CANCEL 1001" not in sim.recibidas()
+    reloj.avanzar(60.0)
+    assert esperar(lambda: "CANCEL 1001" in sim.recibidas())
+    assert _mutantes_recibidos(sim) == ["CANCEL 2002", replace, "CANCEL 1001"]
+
+
+def test_A_01_mismo_ticker_por_el_id_aprendido_no_adelanta(fabrica, sim, reloj):
+    """A-01: el lector aprende id → ticker de los %ORDER; un NEWORDER del MISMO ticker no adelanta al REPLACE de su orden.
+
+    Si lo adelantara, un stop nuevo convivería con el viejo aún sin reducir: la cuenta podría quedar larga.
+    """
+    cuota = CuotaComandos(reloj)
+    c, g = fabrica(solo_lectura=False, cuota=cuota)
+    assert c.conectar()
+    c.enviar(linea_stop(reloj, 6, "ABCD"))
+    assert esperar(lambda: any(isinstance(m, MsgOrden) and m.ticker == "ABCD" for m in g.todos()))
+    id_das = next(m.id for m in g.todos() if isinstance(m, MsgOrden) and m.ticker == "ABCD")
+    _agotar(cuota, "REPLACE 1 1 1")
+    replace = cmd_replace(id_das, 50, TipoOrden.STOP_LIMITE_PP, precio=Decimal("10"), stop=Decimal("9.9"))
+    mismo_ticker = linea_stop(reloj, 7, "ABCD")
+    otro_ticker = linea_stop(reloj, 8, "WXYZ")
+    c.enviar(replace)                                 # sin serie: el orden lo da el ticker aprendido
+    c.enviar(mismo_ticker)
+    c.enviar(otro_ticker)
+    assert esperar(lambda: otro_ticker in sim.recibidas())
+    time.sleep(0.2)
+    assert mismo_ticker not in sim.recibidas()
+    reloj.avanzar(60.0)
+    assert esperar(lambda: mismo_ticker in sim.recibidas())
+    assert _mutantes_recibidos(sim)[1:] == [otro_ticker, replace, mismo_ticker]
+
+
+def test_A_01_cancel_all_es_barrera_para_los_mutantes_no_para_las_lecturas(fabrica, sim, reloj):
+    cuota = CuotaComandos(reloj)
+    _agotar(cuota, "CANCEL 1")
+    c, _g = fabrica(solo_lectura=False, cuota=cuota)
+    assert c.conectar()
+    stop = linea_stop(reloj, 9, "WXYZ")
+    c.enviar("CANCEL ALL")
+    c.enviar(stop)
+    c.enviar("GET BP")
+    assert esperar(lambda: "GET BP" in sim.recibidas())
+    time.sleep(0.2)
+    assert stop not in sim.recibidas()
+    reloj.avanzar(60.0)
+    assert esperar(lambda: stop in sim.recibidas())
+    assert _mutantes_recibidos(sim) == ["CANCEL ALL", stop]
+
+
+def test_A_01_cancel_allsymb_no_lo_adelanta_un_neworder_de_su_ticker(fabrica, sim, reloj):
+    cuota = CuotaComandos(reloj)
+    _agotar(cuota, "CANCEL 1")
+    c, _g = fabrica(solo_lectura=False, cuota=cuota)
+    assert c.conectar()
+    mismo, otro = linea_stop(reloj, 10, "ABCD"), linea_stop(reloj, 11, "WXYZ")
+    c.enviar("CANCEL ALLSYMB ABCD")
+    c.enviar(mismo)
+    c.enviar(otro)
+    assert esperar(lambda: otro in sim.recibidas())
+    time.sleep(0.2)
+    assert mismo not in sim.recibidas()
+    reloj.avanzar(60.0)
+    assert esperar(lambda: mismo in sim.recibidas())
+    assert _mutantes_recibidos(sim) == [otro, "CANCEL ALLSYMB ABCD", mismo]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# D2a-06: nada se purga en silencio
+# ══════════════════════════════════════════════════════════════════════
+def test_D2a_06_invalidar_avisa_de_cada_neworder_purgado(fabrica, sim, reloj):
+    """D2a-06: stop v0 encolado, fill → invalidar v1: la orden v0 llega al decisor como OrdenDescartada."""
+    descartes: list[OrdenDescartada] = []
+    cuota = CuotaControlada(bloqueada=True)
+    c, _g = fabrica(solo_lectura=False, cuota=cuota, al_descartar=descartes.append)
+    assert c.conectar()
+    stop_v0 = linea_stop(reloj, 1, "ABCD")
+    c.enviar(stop_v0, serie="stops:ABCD", version=0)
+    c.enviar(linea_replace_stop(90), serie="stops:ABCD", version=0)    # REPLACE: sin token, no hay nada que cerrar
+    c.enviar(linea_stop(reloj, 2, "WXYZ"), serie="stops:WXYZ", version=0)
+    c.invalidar("stops:ABCD", 1)
+    assert descartes == [OrdenDescartada(token=componer(Origen.EJECUTOR, 268, 1), serie="stops:ABCD", version=0,
+                                         motivo=MOTIVO_VERSION, ticker="ABCD")]
+    assert c.pendientes == 1
+    cuota.bloqueada = False
+    assert esperar(lambda: c.pendientes == 0)
+    assert stop_v0 not in sim.recibidas()
+
+
+def test_D2a_06_el_emisor_avisa_del_neworder_que_llega_tarde_con_version_vieja(fabrica, sim, reloj):
+    descartes: list[OrdenDescartada] = []
+    cuota = CuotaControlada(bloqueada=True)
+    c, _g = fabrica(solo_lectura=False, cuota=cuota, al_descartar=descartes.append)
+    assert c.conectar()
+    c.invalidar("stops:ABCD", 3)
+    tardio = linea_stop(reloj, 4, "ABCD")
+    assert c.enviar(tardio, serie="stops:ABCD", version=2) is True       # encolada: la purga el emisor
+    cuota.bloqueada = False
+    assert esperar(lambda: len(descartes) == 1)
+    assert (descartes[0].token, descartes[0].version, descartes[0].motivo) == (
+        componer(Origen.EJECUTOR, 268, 4), 2, MOTIVO_VERSION)
+    time.sleep(0.1)
+    assert tardio not in sim.recibidas() and c.pendientes == 0
+
+
+def test_D2a_06_G2_05_corte_avisa_de_los_neworder_que_no_salieron(fabrica, sim, reloj):
+    """D2a-06 / G2-05: al caer la sesión, los NEWORDER encolados se comunican; lo descartado en `enviar` devuelve False."""
+    descartes: list[OrdenDescartada] = []
+    cuota = CuotaControlada(bloqueada=True)
+    c, _g = fabrica(solo_lectura=False, cuota=cuota, al_descartar=descartes.append)
+    assert c.conectar()
+    c.enviar(linea_stop(reloj, 1, "ABCD"), serie="stops:ABCD", version=0)
+    c.enviar("GET BP")
+    sim.cortar()
+    assert esperar(lambda: not c.conectado)
+    assert [(d.token, d.motivo) for d in descartes] == [(componer(Origen.EJECUTOR, 268, 1), MOTIVO_SESION)]
+    assert c.enviar(linea_stop(reloj, 2, "ABCD"), serie="stops:ABCD", version=0) is False   # sin conexión
+    assert len(descartes) == 1                       # lo descartado en el acto NO pasa por al_descartar (sin bucles)
+
+
+def test_D2a_06_al_descartar_que_falla_no_para_el_cliente(fabrica, sim, reloj):
+    def roto(_d: OrdenDescartada) -> None:
+        raise RuntimeError("callback roto")
+
+    cuota = CuotaControlada(bloqueada=True)
+    c, _g = fabrica(solo_lectura=False, cuota=cuota, al_descartar=roto)
+    assert c.conectar()
+    c.enviar(linea_stop(reloj, 1, "ABCD"), serie="stops:ABCD", version=0)
+    c.invalidar("stops:ABCD", 1)                      # no lanza
+    cuota.bloqueada = False
+    c.enviar("GET BP")
+    assert esperar(lambda: "GET BP" in sim.recibidas())
+    assert c.hilos_vivos
+
+
+def test_D2a_06_al_descartar_debe_ser_funcion(reloj):
+    with pytest.raises(TypeError, match="al_descartar"):
+        ClienteDAS("127.0.0.1", 9, USUARIO, CLAVE, CUENTA, False, True, lambda m: None, lambda e, m: None, reloj,
+                   al_descartar=3)
+
+
+def test_G2_05_enviar_devuelve_true_si_encola(fabrica, sim):
+    c, _g = fabrica()
+    assert c.conectar()
+    assert c.enviar("GET BP") is True
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1059,6 +1344,62 @@ def test_das_sombra_al_mensaje_que_falla_no_pierde_los_siguientes(fabrica, reloj
     cliente = ClienteSombra(real, simulador_das.Emparejador(libro_sombra, reloj), al_mensaje)
     cliente.enviar(linea_neworder(reloj, 9, precio="2.99"))
     assert len(vistos) > 3 and any(isinstance(m, MsgTrade) for m in vistos)
+
+
+def test_A_07_sombra_cuenta_la_cuota_agotada_sin_esperar(fabrica, reloj):
+    """A-07: en sombra el mutante nº 46 del segundo (cabida 45 al 90 %) se cuenta y se avisa, pero NO espera."""
+    real, _g = fabrica()
+    libro_sombra = simulador_das.LibroSimulado()
+    agotadas: list[tuple[str, float]] = []
+    cliente = ClienteSombra(real, simulador_das.Emparejador(libro_sombra, reloj), lambda m, s: None,
+                            al_cuota_agotada=lambda linea, espera: agotadas.append((linea, espera)))
+    _ventana, cabida = CuotaComandos(reloj).limites["NEWORDER"]
+    t0 = time.perf_counter()
+    for i in range(1, cabida + 2):
+        assert cliente.enviar(linea_neworder(reloj, i, precio="3.1")) is True
+    assert time.perf_counter() - t0 < 1.0             # nunca espera
+    assert cliente.cuota_agotada == 1
+    assert len(agotadas) == 1 and agotadas[0][0].startswith("NEWORDER") and 0 < agotadas[0][1] <= 1.0
+    assert len(libro_sombra.ordenes()) == cabida + 1  # todas llegaron al emparejador
+    reloj.avanzar(1.0)
+    cliente.enviar(linea_neworder(reloj, 99, precio="3.1"))
+    assert cliente.cuota_agotada == 1                 # pasado el segundo vuelve a caber
+
+
+def test_A_07_sombra_cuota_de_cancel_por_minuto(fabrica, reloj):
+    real, _g = fabrica()
+    cuota = CuotaComandos(reloj)
+    cliente = ClienteSombra(real, simulador_das.Emparejador(simulador_das.LibroSimulado(), reloj),
+                            lambda m, s: None, cuota=cuota)
+    _ventana, cabida = cuota.limites["CANCEL"]
+    for _ in range(cabida + 3):
+        cliente.enviar("CANCEL 424242")
+    assert cliente.cuota_agotada == 3
+
+
+def test_A_07_sombra_valida_la_cuota(fabrica, reloj):
+    real, _g = fabrica()
+    emparejador = simulador_das.Emparejador(simulador_das.LibroSimulado(), reloj)
+    with pytest.raises(TypeError, match="cuota"):
+        ClienteSombra(real, emparejador, lambda m, s: None, cuota=object())
+    with pytest.raises(ValueError, match="cuota"):
+        ClienteSombra(real, emparejador, lambda m, s: None, cuota=real._cuota)
+    with pytest.raises(TypeError, match="al_cuota_agotada"):
+        ClienteSombra(real, emparejador, lambda m, s: None, al_cuota_agotada=3)
+
+
+def test_A_07_sombra_al_cuota_agotada_que_falla_no_para_la_simulacion(fabrica, reloj):
+    real, _g = fabrica()
+    libro_sombra = simulador_das.LibroSimulado()
+
+    def roto(_linea: str, _espera: float) -> None:
+        raise RuntimeError("callback roto")
+
+    cliente = ClienteSombra(real, simulador_das.Emparejador(libro_sombra, reloj), lambda m, s: None,
+                            al_cuota_agotada=roto)
+    for _ in range(3):
+        cliente.enviar("SLPRICEINQUIRE ABCD 100 ALLROUTE")      # mutante en sombra; 1 cada 3,33 s
+    assert cliente.cuota_agotada == 2
 
 
 def test_das_sombra_delega_en_el_real(sombra, sim):

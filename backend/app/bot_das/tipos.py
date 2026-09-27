@@ -97,6 +97,8 @@ STOP_DEBOUNCE_S = 0.3                           # técnico (F1.6): coalescer REP
 PLAN_B_LATIDO_S = 3.0                           # vigilancia: actúa si el ejecutor calla > 3 s
 PLAN_B_DESCUBIERTA_S = 5.0                      # vigilancia: o si una posición lleva > 5 s descubierta con el ejecutor vivo
 MAX_LV1 = 100                                   # manual L1996: símbolos Lv1 por defecto
+COTIZACION_FRESCA_MAX_S = 5.0                   # D1-12: edad máx. de la cotización (mercado_das.FRESCA_MAX_S y entrada comprobación 8)
+REPLACE_SHARE_ES_ABIERTA = True                 # A-02: defecto de `stops.replace_share_es_abierta` (el canario de comprobar_das lo confirma)
 COLA_AVISOS_TOPE = 10_000
 COLA_SALIDA_TOPE = 1_000
 
@@ -243,6 +245,25 @@ def al_tick(precio: Decimal, arriba: bool) -> Decimal:
     """
     t = tick_de(precio)
     return (precio / t).to_integral_value(rounding=ROUND_CEILING if arriba else ROUND_FLOOR) * t
+
+
+def share_de_replace(abierta: int, llenas: int = 0,
+                     share_es_abierta: bool = REPLACE_SHARE_ES_ABIERTA) -> int:
+    """A-02: el `share` de un REPLACE a partir de la cantidad ABIERTA que se quiere dejar viva.
+
+    El manual no aclara si `share` es la cantidad abierta nueva o la total
+    (llenas + abierta). Un único helper para el decisor, las reglas y el
+    simulador, gobernado por `stops.replace_share_es_abierta`:
+      * True  → share = abierta            (lectura actual del simulador)
+      * False → share = llenas + abierta   (DAS lo trata como total)
+    `abierta` debe ser int > 0 (dejar 0 vivas es un Cancelar, no un REPLACE) y
+    `llenas` int ≥ 0; lo demás lanza `ValueError`.
+    """
+    if type(abierta) is not int or abierta <= 0:
+        raise ValueError(f"abierta debe ser int > 0, no {abierta!r}")
+    if type(llenas) is not int or llenas < 0:
+        raise ValueError(f"llenas debe ser int ≥ 0, no {llenas!r}")
+    return abierta if share_es_abierta else llenas + abierta
 
 
 # ── lo que llega de DAS ya parseado (protocolo.py) ────────────────────
@@ -520,6 +541,11 @@ class OrdenNueva:
                 raise ValueError(f"STOPLMTP fuera del tick: stop={self.stop} límite={self.precio}")
             if self.lado is Lado.COMPRA and self.precio < self.stop:
                 raise ValueError("compra STOPLMTP con límite por debajo del disparo")
+            # L0-03: la simétrica para VENTA/CORTO (límite ≤ disparo); hoy el bot no la usa
+            if self.lado in (Lado.VENTA, Lado.CORTO) and self.precio > self.stop:
+                raise ValueError("venta STOPLMTP con límite por encima del disparo")
+        if self.tipo is TipoOrden.LIMITE and self.stop is not None:
+            raise ValueError("LMT no lleva disparo (stop)")   # L0-03: nada se ignora en silencio
         if self.tipo is TipoOrden.MERCADO and (self.precio is not None or self.stop is not None):
             raise ValueError("MKT no lleva precio")
         if self.post_only and self.tipo is not TipoOrden.LIMITE:
@@ -958,6 +984,22 @@ class HiloCaido(Mensaje):          # un hilo de borde murió y se relanzó (Hilo
     nombre: str
     error: str
     relanzado: bool
+
+
+@dataclass(frozen=True)
+class OrdenDescartada(Mensaje):    # D2a-06: el emisor purgó un NEWORDER por versión vieja de su serie
+    """El emisor (cliente.py) avisa al decisor de cada NEWORDER que NO llegó a salir.
+
+    Nada se purga en silencio: el decisor pasa la orden `token` a CLOSED con la
+    nota «descartada por versión» y relanza en el acto el plan de stops del
+    ticker. `ticker` es opcional (el decisor lo sabe por el token); se rellena
+    cuando el emisor lo tiene a mano.
+    """
+    token: int
+    serie: Optional[str] = None
+    version: int = 0
+    motivo: str = "descartada por versión"
+    ticker: Optional[str] = None
 
 
 # ── configuración (config.py la carga; el esquema es el de §7) ─────────

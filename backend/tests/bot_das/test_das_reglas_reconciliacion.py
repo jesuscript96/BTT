@@ -286,6 +286,78 @@ def test_orden_ajena_es_caso_4_pausa_y_aviso(cfg, order_src, token):
     assert casos(comparar(estado, {X: pos_das(-100)}, ord_das, HOY, cfg)) == [(X, CASO_COINCIDE)]
 
 
+def test_E2c_01_ajenas_tratadas_se_anotan_siempre_y_un_reinicio_no_vuelve_a_pausar(cfg):
+    """E2c-01: el caso 4 anota SIEMPRE «ajenas_tratadas» {ticker, ids}, también con la pausa ya puesta.
+
+    Con esos ids repuestos en `estado.ordenes_ajenas` (lo que hará `diario.reconstruir`) y un /sigue, el mismo
+    volcado del LOGIN tras un reinicio ya no da caso 4 ni vuelve a pausar.
+    """
+    p, e = principal(), emergencia()
+    ajena = msg_crudo(90, None, lado="B", tipo="L", qty=50, precio="9.90", order_src="Montage",
+                      estado=EstadoOrden.EXECUTED, lvqty=0)
+    otra = msg_crudo(93, None, lado="B", tipo="L", qty=10, precio="9.90", order_src="Hotkey", ticker="ABC")
+    ord_das = {**ids([p, e]), 90: ajena}
+    estado = estado_con(corto_conocido(), ordenes=(p, e))
+    acc = acciones(comparar(estado, {X: pos_das(-100)}, ord_das, HOY, cfg), estado, cot_de(cot()), cfg, Contador(),
+                   HORA, RUTA_STOP)
+    tratadas = [a for a in de_tipo(acc, Anotar) if a.tipo == rc.ANOTACION_AJENAS]
+    assert [a.datos for a in tratadas] == [{"ticker": X, "ids": [90], "regla": "R-K-02 / E2c-01"}]
+    assert estado.pausa_global is True
+    # otra ajena nueva con la pausa YA puesta: se anota igual (antes solo iba dentro del registro «pausa»)
+    acc2 = acciones(comparar(estado, {X: pos_das(-100), "ABC": pos_das(0, ticker="ABC")}, {**ord_das, 93: otra}, HOY,
+                             cfg), estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
+    assert [a.datos["ids"] for a in de_tipo(acc2, Anotar) if a.tipo == rc.ANOTACION_AJENAS] == [[93]]
+    assert not [a for a in de_tipo(acc2, Anotar) if a.tipo == "pausa"]
+    json.dumps([a.datos for a in de_tipo(acc + acc2, Anotar) if a.tipo == rc.ANOTACION_AJENAS])
+    # reinicio: el diario repone los ids tratados y Jaume ya dio /sigue
+    reiniciado = estado_con(corto_conocido(), ordenes=(p, e))
+    for a in de_tipo(acc + acc2, Anotar):
+        if a.tipo == rc.ANOTACION_AJENAS:
+            for i in a.datos["ids"]:
+                reiniciado.ordenes_ajenas[i] = None   # type: ignore[assignment]  # la clave es lo que cuenta
+    ds = comparar(reiniciado, {X: pos_das(-100)}, ord_das, HOY, cfg)
+    assert CASO_AJENA not in [d.caso for d in ds]
+    acciones(ds, reiniciado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
+    assert reiniciado.pausa_global is False
+
+
+def test_E2c_03_desconocida_larga_avisa_vender_a_mano(cfg):
+    """E2c-03: posición DESCONOCIDA LARGA (p. ej. saltaron el stop manual y nuestra protección) → aviso 3 «VENDER A MANO».
+
+    La limpieza R-C-11 solo corre en posiciones conocidas: sin este aviso el exceso largo no lo vendería nadie. Se sigue
+    poniendo la protección de VENTA (no se deshace lo humano).
+    """
+    estado = estado_con()
+    ds = comparar(estado, {X: pos_das(150)}, {}, HOY, cfg)
+    assert casos(ds) == [(X, CASO_AJENA)]
+    acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
+    assert [(a.orden.lado, a.orden.qty) for a in de_tipo(acc, EnviarOrden)] == [(Lado.VENTA, 150)]
+    vender = [a for a in de_tipo(acc, Avisar) if a.clave == f"desconocida_larga:{X}"]
+    assert len(vender) == 1 and vender[0].nivel is Nivel.MAXIMO and "VENDER A MANO" in vender[0].texto
+    # una desconocida CORTA no lleva ese aviso
+    corta = estado_con()
+    acc_c = acciones(comparar(corta, {X: pos_das(-150)}, {}, HOY, cfg), corta, cot_de(cot()), cfg, Contador(), HORA,
+                     RUTA_STOP)
+    assert not [a for a in de_tipo(acc_c, Avisar) if (a.clave or "").startswith("desconocida_larga")]
+
+
+def test_D2_08_aviso_de_ajena_escapa_el_texto_de_das(cfg):
+    """D2-08: el detalle lleva el tipo y el orderSrc que manda DAS: un «<» no puede romper el HTML de Telegram."""
+    p, e = principal(), emergencia()
+    ajena = msg_crudo(90, None, tipo="<L&>", order_src="Mont<age>")
+    estado = estado_con(corto_conocido(), ordenes=(p, e))
+    acc = acciones(comparar(estado, {X: pos_das(-100)}, {**ids([p, e]), 90: ajena}, HOY, cfg), estado, cot_de(cot()),
+                   cfg, Contador(), HORA, RUTA_STOP)
+    texto = next(a for a in de_tipo(acc, Avisar) if a.clave == f"ajena:{X}").texto
+    assert "&lt;L&amp;&gt;" in texto and "Mont&lt;age&gt;" in texto and "<L&>" not in texto
+
+
+def test_A_06_comandos_del_barrido_salen_de_protocolo():
+    from app.bot_das import protocolo
+    assert rc.COMANDOS_BARRIDO == tuple(protocolo.cmd_get(n) for n in ("POSITIONS", "ORDERS", "BP", "LOCATES"))
+    assert rc.COMANDO_TRADES == protocolo.cmd_get("TRADES")
+
+
 @pytest.mark.parametrize("estado_ajena,cxl,lv,cuenta", [
     pytest.param(EstadoOrden.CANCELED, 50, 0, False, id="R-M-03-cancelada-sin-ejecutar-no-afecta"),
     pytest.param(EstadoOrden.REJECTED, 0, 0, False, id="R-M-03-rechazada-no-afecta"),
@@ -394,7 +466,11 @@ def test_dos_emergencias_la_mas_nueva_sobra(cfg):
 
 # ── casos límite de las acciones ─────────────────────────────────────────
 def test_caso_6_a_larga_vende_solo_el_exceso(cfg):
-    """R-C-11 (b) por reconciliación: el diario cree −100 y DAS dice +20 → CancelarTicker y vende 20 al bid, JAMÁS 100."""
+    """R-C-11 (b) por reconciliación: el diario cree −100 y DAS dice +20 → CancelarTicker y vende 20, JAMÁS 100.
+
+    D2a-04 (decisión del director): la venta sale a bid · (1 − 1 %) redondeado abajo (vendible), no al bid exacto:
+    9,79 · 0,99 = 9,6921 → 9,69.
+    """
     p, e = principal(), emergencia()
     estado = estado_con(corto_conocido(), ordenes=(p, e))
     ds = comparar(estado, {X: pos_das(20)}, ids([p, e]), HOY, cfg)
@@ -402,7 +478,7 @@ def test_caso_6_a_larga_vende_solo_el_exceso(cfg):
     acc = acciones(ds, estado, cot_de(cot(bid="9.79")), cfg, Contador(), HORA, RUTA_STOP)
     assert isinstance(acc[2], InvalidarSerie) and isinstance(acc[3], CancelarTicker)
     ventas = [a.orden for a in de_tipo(acc, EnviarOrden)]
-    assert [(o.lado, o.qty, o.precio, o.proposito) for o in ventas] == [(Lado.VENTA, 20, D("9.79"), Proposito.VENTA_EXCESO)]
+    assert [(o.lado, o.qty, o.precio, o.proposito) for o in ventas] == [(Lado.VENTA, 20, D("9.69"), Proposito.VENTA_EXCESO)]
 
 
 def test_larga_conocida_con_venta_en_marcha_no_repite(cfg):
@@ -773,10 +849,14 @@ def test_acumulador_espera_invalida():
 
 # ── pureza del módulo ────────────────────────────────────────────────────
 def test_modulo_puro_solo_importa_lo_permitido():
-    """reglas/*: sin I/O, sin reloj, sin red; solo tipos, tokens, reglas.precios, reglas.stops y la biblioteca estándar (§12)."""
+    """reglas/*: sin I/O, sin reloj, sin red; solo tipos, tokens, reglas.precios, reglas.stops y la biblioteca estándar (§12).
+
+    A-06: también `protocolo` (puro: solo construye cadenas con `cmd_get`); D2-08: `html` (escapar avisos).
+    """
     arbol = ast.parse(Path(rc.__file__).read_text(encoding="utf-8"))
-    permitidos = {"__future__", "re", "collections.abc", "dataclasses", "datetime", "decimal", "typing", "app.bot_das",
-                  "app.bot_das.reglas", "app.bot_das.reglas.precios", "app.bot_das.tipos"}
+    permitidos = {"__future__", "re", "html", "collections.abc", "dataclasses", "datetime", "decimal", "typing",
+                  "app.bot_das", "app.bot_das.protocolo", "app.bot_das.reglas", "app.bot_das.reglas.precios",
+                  "app.bot_das.tipos"}
     modulos = set()
     for nodo in ast.walk(arbol):
         if isinstance(nodo, ast.ImportFrom):

@@ -347,3 +347,134 @@ def test_modulo_sin_websocket_ni_httpx():
     fuente = Path(rm.__file__).read_text(encoding="utf-8")
     for prohibido in ("import websocket", "from websocket", "import httpx", "from httpx"):
         assert prohibido not in fuente
+
+
+# ── E1-07: la clave no sigue a una redirección a otro host ni viaja en claro ─
+def _peticion_con_clave(url: str = f"{BASE}/v3/reference/tickers/ABCD"):
+    import urllib.request
+    return urllib.request.Request(url, headers={"Authorization": f"Bearer {CLAVE}"})
+
+
+@pytest.mark.parametrize("destino", [
+    "https://otro-host.example/v3/reference/tickers/ABCD",
+    "http://api.massive.com/v3/reference/tickers/ABCD",
+    "http://otro-host.example/x",
+], ids=["E1-07-otro-host", "E1-07-https-a-http", "E1-07-otro-host-en-claro"])
+def test_E1_07_redireccion_fuera_no_se_sigue(destino):
+    """Un 302 de Massive (o de un proxy) a otro host o a http NO se sigue: urllib reenviaría la cabecera con la clave."""
+    manejador = rm._RedireccionSegura()
+    assert manejador.redirect_request(_peticion_con_clave(), None, 302, "Found", {}, destino) is None
+
+
+@pytest.mark.parametrize("destino", [f"{BASE}/v3/reference/tickers/ABCD/", "/v3/reference/tickers/ABCD?x=1"],
+                         ids=["E1-07-mismo-host-https", "E1-07-relativa-mismo-host"])
+def test_E1_07_redireccion_al_mismo_host_https_si(destino):
+    nueva = rm._RedireccionSegura().redirect_request(_peticion_con_clave(), None, 302, "Found", {}, destino)
+    assert nueva is not None and nueva.full_url.startswith(BASE)
+
+
+def test_E1_07_el_abrir_por_defecto_es_el_seguro(dir_bot, reloj):
+    import inspect
+    assert inspect.signature(Referencia.__init__).parameters["abrir"].default is rm.abrir_seguro
+    assert inspect.signature(Referencia.desde_env).parameters["abrir"].default is rm.abrir_seguro
+    opener_handlers = []
+
+    class Espia:
+        def __init__(self, *manejadores):
+            opener_handlers.extend(manejadores)
+
+        def open(self, peticion, timeout=None):
+            raise urllib.error.URLError("sin red en los tests")
+
+    import urllib.request
+    original = urllib.request.build_opener
+    try:
+        urllib.request.build_opener = lambda *m: Espia(*m)
+        ref = Referencia(CLAVE, dir_bot / "cache", reloj)
+        assert ref.ficha("ABCD") is None
+    finally:
+        urllib.request.build_opener = original
+    assert opener_handlers == [rm._RedireccionSegura]
+
+
+@pytest.mark.parametrize("base", ["http://api.massive.com", "http://espejo.example/"],
+                         ids=["E1-07-base-http", "E1-07-espejo-http"])
+def test_E1_07_base_sin_https_no_envia_la_clave(dir_bot, reloj, base):
+    abrir = AbrirFalso(error=AssertionError("no debía abrir"))
+    ref = Referencia(CLAVE, dir_bot / "cache", reloj, abrir=abrir, base_url=base)
+    assert ref.ficha("ABCD") is None and ref.splits_de_hoy(HOY) is None
+    assert abrir.peticiones == [] and "https" in ref.ultimo_error and CLAVE not in ref.ultimo_error
+
+
+def test_E1_07_next_url_en_claro_no_se_sigue(dir_bot, reloj):
+    abrir = AbrirFalso({URL_SPLITS: {"results": [{"ticker": "AAA"}],
+                                     "next_url": "http://api.massive.com/v3/reference/splits?cursor=P1"}})
+    assert referencia(dir_bot, reloj, abrir).splits_de_hoy(HOY) is None
+    assert len(abrir.peticiones) == 1
+
+
+# ── G1A-03 / G1B-08: caché de solo lectura para el decisor ───────────────
+def test_G1A_03_ficha_en_cache_nunca_abre_red(dir_bot, reloj):
+    """El decisor solo consulta la caché: sin ficha → None (A12) y queda pedida; la precarga la trae."""
+    abrir = AbrirFalso({URL_FICHA: FICHA_JSON})
+    ref = referencia(dir_bot, reloj, abrir)
+    assert ref.ficha_en_cache("abcd") is None and abrir.peticiones == []
+    assert ref.tomar_pendientes() == ["ABCD"]
+    assert ref.precargar_ficha("ABCD") is not None and len(abrir.peticiones) == 1
+    assert ref.ficha_en_cache("ABCD").ticker == "ABCD" and len(abrir.peticiones) == 1
+    assert ref.tomar_pendientes() == []
+
+
+def test_G1A_03_pedir_ficha_al_ver_el_radar(dir_bot, reloj):
+    ref = referencia(dir_bot, reloj, AbrirFalso({URL_FICHA: FICHA_JSON}))
+    ref.pedir_ficha(" abcd ")
+    ref.pedir_ficha("")
+    assert ref.tomar_pendientes() == ["ABCD"]
+
+
+def test_G1A_03_una_ficha_fallida_no_se_repide_antes_de_60s(dir_bot, reloj):
+    abrir = AbrirFalso(error=urllib.error.URLError("caída"))
+    ref = referencia(dir_bot, reloj, abrir)
+    ref.ficha_en_cache("ABCD")
+    assert ref.precargar_ficha("ABCD") is None
+    assert ref.tomar_pendientes() == []
+    reloj.avanzar(rm.REINTENTO_FICHA_S)
+    assert ref.tomar_pendientes() == ["ABCD"]
+
+
+def test_G1A_03_splits_en_cache_sin_red(dir_bot, reloj):
+    abrir = AbrirFalso({URL_SPLITS: {"results": [{"ticker": "AAA"}]}})
+    ref = referencia(dir_bot, reloj, abrir)
+    assert ref.splits_en_cache(HOY) is None and ref.splits_pendientes(HOY) is True and abrir.peticiones == []
+    assert ref.precargar_splits(HOY) == {"AAA"}
+    s = ref.splits_en_cache(HOY)
+    s.add("ZZZ")                                                    # copia: la caché no cambia
+    assert ref.splits_en_cache(HOY) == {"AAA"} and ref.splits_pendientes(HOY) is False
+    fallo = referencia(dir_bot / "otro", reloj, AbrirFalso(error=urllib.error.URLError("caída")))
+    assert fallo.precargar_splits(HOY) is None
+    assert fallo.splits_en_cache(HOY) is None and fallo.splits_pendientes(HOY) is False   # falló: avisar, no esperar
+
+
+def test_G1A_03_la_lectura_no_espera_a_una_precarga_lenta(dir_bot, reloj):
+    """Una Referencia cuya red tarda (8 s en la vida real) no puede frenar al decisor: la red va SIN el lock."""
+    import threading
+    import time as _time
+    dentro, soltar = threading.Event(), threading.Event()
+
+    def abrir_lento(peticion, timeout=None):
+        dentro.set()
+        soltar.wait(5.0)
+        return _Respuesta(json.dumps(FICHA_JSON).encode("utf-8"), AbrirFalso())
+
+    ref = referencia(dir_bot, reloj, abrir_lento)
+    hilo = threading.Thread(target=ref.precargar_ficha, args=("ABCD",), daemon=True)
+    hilo.start()
+    assert dentro.wait(2.0)
+    inicio = _time.perf_counter()
+    for _ in range(100):
+        assert ref.ficha_en_cache("OTRA") is None
+        ref.splits_en_cache(HOY)
+    assert _time.perf_counter() - inicio < 0.5                     # milisegundos, con la precarga bloqueada en la red
+    soltar.set()
+    hilo.join(5.0)
+    assert ref.ficha_en_cache("ABCD") is not None

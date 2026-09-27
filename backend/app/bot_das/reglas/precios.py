@@ -24,18 +24,22 @@ LAS TRAMPAS.
     `ValueError` y el decisor pausa ese ticker (H-5) en vez de mandar una
     orden a un precio inventado.
   * La ruta de cruce en pennies cambia a las 07:00 ET (EDGA cerrada de 04:00
-    a 07:00): se compara hora y minuto de `hora_et`, que debe venir ya en ET
-    (es lo que devuelve `reloj.ahora()`).
+    a 07:00): se compara hora y minuto de `hora_et` EN ET. Un datetime aware
+    en otra zona (UTC, hora de Madrid del VPS) se convierte antes a ET
+    (L0-04); uno naive se toma como ET (es lo que devuelve `reloj.ahora()`
+    sin zona en los tests viejos).
 """
 from __future__ import annotations
 
 import math
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 from app.bot_das.tipos import al_tick, tick_de
 
 ACCIONES_RUTA = ("agregar", "cruzar", "stop", "halt")
+_ET = ZoneInfo("America/New_York")   # la misma zona que reloj.ET (aquí sin importar reloj: módulo puro)
 _CIEN = Decimal("100")
 _HORA_EDGA = (7, 0)           # tabla de rutas: EDGA solo desde las 07:00 ET; antes, MIAX
 
@@ -134,7 +138,7 @@ def ruta(cfg_rutas: dict, accion: str, precio: Decimal, hora_et: datetime) -> st
     elif accion == "cruzar":
         if tramo(precio) == "ge_1":
             clave = ("cruzar", "ge_1")
-        elif (hora_et.hour, hora_et.minute) >= _HORA_EDGA:
+        elif _hora_minuto_et(hora_et) >= _HORA_EDGA:
             clave = ("cruzar", "lt_1_desde_0700")
         else:
             clave = ("cruzar", "lt_1_antes_0700")
@@ -162,6 +166,13 @@ def distancia_pct(a: Decimal, b: Decimal) -> Decimal:
 def subida_pct(desde: Decimal, hasta: Decimal) -> Decimal:
     """(hasta − desde) / desde · 100: subida desde un precio (R-F-05 T1, R-C-03, informe BS)."""
     return distancia_pct(hasta, desde)
+
+
+def _hora_minuto_et(hora: datetime) -> tuple[int, int]:
+    """(hora, minuto) EN ET (L0-04): un aware en otra zona se convierte; un naive se toma como ET."""
+    if hora.tzinfo is not None and hora.utcoffset() is not None:
+        hora = hora.astimezone(_ET)
+    return hora.hour, hora.minute
 
 
 def _comprobar_positivo(nombre: str, valor: Decimal) -> None:

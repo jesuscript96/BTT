@@ -20,13 +20,31 @@ fase del fichero del cuadro no basta para pasar a dinero).
 
 LAS TRAMPAS.
   * El principal NUNCA se bloquea en `enviar` (§3.2): encola y vuelve. Con
-    la cola llena se descarta la línea más vieja de la MISMA serie (una
-    versión posterior la hace inútil); si no hay ninguna se espera 50 ms una
-    sola vez y, si sigue llena, se descarta la NUEVA con aviso: el `plan()`
-    idempotente y el barrido la repondrán (riesgo 17).
+    la cola llena se descarta la línea más vieja de la MISMA serie y de
+    versión ANTERIOR (A-04: solo lo que una versión posterior hace inútil;
+    nunca un stop hermano de la misma versión); si no hay ninguna se espera
+    50 ms una sola vez y, si sigue llena, se descarta la NUEVA con aviso y
+    `enviar` devuelve False (G2-05): el `plan()` idempotente y el barrido
+    la repondrán (riesgo 17).
   * Un `REPLACE` de stops con la cantidad ANTERIOR no puede salir después
     del fill (riesgo 7, injerto §8.6): `invalidar(serie, version)` purga la
     cola y el emisor vuelve a comprobarlo justo antes de mandar la línea.
+  * Nada se purga en silencio (D2a-06): cada NEWORDER que ya estaba ENCOLADO
+    y no llega a salir (versión vieja, cola llena, sesión caída) se comunica
+    con `al_descartar(OrdenDescartada(token, serie, version, motivo,
+    ticker))`, que SOLO encola (el ejecutor lo conecta a su cola de entrada y
+    el decisor pasa la orden a CLOSED y relanza el plan). Lo que se descarta
+    en el acto dentro de `enviar` se comunica con el valor de retorno
+    (False) y NO por `al_descartar`: así un plan que se relanza con la cola
+    llena o sin conexión no entra en bucle.
+  * El emisor NO se bloquea en cabeza (A-01 / SEG-01): si la primera línea
+    espera su cuota, sale la primera de detrás cuya cuota SÍ cabe y que no
+    tenga delante, aún pendiente, otra línea con la que deba guardar el
+    orden: misma `serie`, misma orden (`id_das` de CANCEL/REPLACE), mismo
+    ticker en NEWORDER/CANCEL/REPLACE (el ticker de un id lo aprende el
+    lector de los `%ORDER`/`%OrderAct`), mismo ticker o id de locate, y un
+    `CANCEL ALL` que ningún mutante adelanta ni él adelanta a ninguno.
+    Nada se reordena DENTRO de una categoría de cuota (esperan todas igual).
   * Lo encolado pertenece a UNA sesión. Si el socket cae, la cola se vacía
     y se avisa; `enviar` sin conexión descarta y avisa (el primer descarte
     de cada caída). Así nada viejo sale al reconectar ANTES de la
@@ -79,6 +97,9 @@ from app.bot_das.tipos import (
     LOCATES_INQUIRE_S,
     MensajeDAS,
     MsgConexion,
+    MsgOrden,
+    MsgOrderAct,
+    OrdenDescartada,
 )
 from app.bot_das.tokens import es_nuestro as _token_es_nuestro
 
@@ -96,6 +117,12 @@ PASO_ESPERA_S = 0.05                # el emisor re-pregunta a la cuota como much
 TOLERANCIA_CUOTA_S = 1e-6           # sumas de float (0,02 × 49 + 0,02 ≠ 1,0): una marca que caduca «ahora» ya caducó
 ESPERA_UNION_S = 2.0                # plazo para unir los hilos al cerrar
 SERVIDORES_LOGON = ("OrderServer", "QuoteServer")
+TOPE_IDS_CONOCIDOS = 50_000         # id_das → ticker que aprende el lector (A-01); memoria acotada, se olvida lo más viejo
+
+# ── motivos de OrdenDescartada (D2a-06): el decisor los anota tal cual ──
+MOTIVO_VERSION = "descartada por versión"
+MOTIVO_COLA_LLENA = "descartada por versión (cola de salida llena)"
+MOTIVO_SESION = "descartada: la conexión con DAS terminó antes de enviarla"
 
 # ── variables de entorno (leídas en la llamada, nunca al importar) ────
 ENV_HOST = "DAS_API_HOST"
@@ -244,14 +271,28 @@ class PlanReconexion:
 # Cliente
 # ══════════════════════════════════════════════════════════════════════
 class _Linea:
-    """Una línea en la cola de salida. Objeto propio: el emisor compara por IDENTIDAD al sacarla."""
+    """Una línea en la cola de salida. Objeto propio: el emisor compara por IDENTIDAD al sacarla.
 
-    __slots__ = ("texto", "serie", "version")
+    `claves`, `barrera` y `mutante` deciden qué líneas de detrás pueden
+    adelantarla cuando espera su cuota (A-01); `token` y `ticker` (solo
+    NEWORDER) sirven para avisar al decisor si se purga sin salir (D2a-06).
+    """
 
-    def __init__(self, texto: str, serie: Optional[str], version: int) -> None:
+    __slots__ = ("texto", "serie", "version", "categoria", "claves", "barrera", "mutante", "token", "ticker")
+
+    def __init__(self, texto: str, serie: Optional[str], version: int, claves: frozenset[str] = frozenset(),
+                 barrera: bool = False, mutante: bool = False, token: Optional[int] = None,
+                 ticker: Optional[str] = None) -> None:
         self.texto = texto
         self.serie = serie
         self.version = version
+        partes = texto.split(None, 1)
+        self.categoria = partes[0].upper() if partes else ""
+        self.claves = claves
+        self.barrera = barrera
+        self.mutante = mutante
+        self.token = token
+        self.ticker = ticker
 
 
 class _Sesion:
@@ -278,6 +319,14 @@ class ClienteDAS:
     caídas de los `HiloVigilado` (el ejecutor las convierte en `HiloCaido`).
     `parser` opcional: si no se da, cada sesión estrena un `Parser` con
     `es_nuestro` = token del esquema y del día de `reloj.hoy()`.
+    `al_descartar(OrdenDescartada)` (opcional, D2a-06): cada NEWORDER que
+    estaba encolado y se purga sin salir (versión vieja, cola llena, sesión
+    caída). Se llama desde el hilo que purga (emisor, lector o el que llama
+    a `enviar`/`invalidar`) y debe SOLO encolar; el ejecutor le pasa el
+    `poner` de su cola de entrada. Se eligió un callback propio (y no
+    `al_mensaje`) porque `al_mensaje` es de `MensajeDAS` (lo que dice DAS) y
+    `OrdenDescartada` es un `Mensaje` de la cola del ejecutor (lo que dice
+    el propio bot).
     """
 
     def __init__(self, host: str, puerto: int, usuario: str, clave: str, cuenta: str, watch: bool,
@@ -285,7 +334,8 @@ class ClienteDAS:
                  reloj, cuota: Optional[CuotaComandos] = None, timeout_s: float = 5.0,
                  parser: Optional[Parser] = None, al_aviso: Optional[Callable[[str], None]] = None,
                  al_caida_hilo: Optional[Callable[[str, str, bool], None]] = None,
-                 tope_cola: int = COLA_SALIDA_TOPE) -> None:
+                 tope_cola: int = COLA_SALIDA_TOPE,
+                 al_descartar: Optional[Callable[[OrdenDescartada], None]] = None) -> None:
         if not isinstance(host, str) or not host.strip():
             raise ValueError("host debe ser un texto no vacío")
         if type(puerto) is not int or not (1 <= puerto <= 65535):
@@ -300,6 +350,8 @@ class ClienteDAS:
             raise TypeError("al_aviso debe ser una función texto -> None")
         if al_caida_hilo is not None and not callable(al_caida_hilo):
             raise TypeError("al_caida_hilo debe ser una función (nombre, error, relanzado) -> None")
+        if al_descartar is not None and not callable(al_descartar):
+            raise TypeError("al_descartar debe ser una función OrdenDescartada -> None")
         if not callable(getattr(reloj, "mono", None)) or not callable(getattr(reloj, "hoy", None)):
             raise TypeError(f"reloj debe tener mono() y hoy(): {reloj!r}")
         if cuota is not None and not (callable(getattr(cuota, "espera_para", None))
@@ -323,6 +375,7 @@ class ClienteDAS:
         self._al_estado = al_estado
         self._al_aviso = al_aviso
         self._al_caida_hilo = al_caida_hilo
+        self._al_descartar = al_descartar
         self._reloj = reloj
         self._cuota = cuota if cuota is not None else CuotaComandos(reloj)
         self._timeout_s = float(timeout_s)
@@ -334,6 +387,7 @@ class ClienteDAS:
         self._cond = threading.Condition(threading.Lock())
         self._cola: deque[_Linea] = deque()
         self._vigentes: dict[str, int] = {}
+        self._ticker_de_id: dict[int, str] = {}             # id_das → ticker (A-01), lo aprende el lector
         self._sesion: Optional[_Sesion] = None
         self._numero = 0
         self._logon: dict[str, Optional[bool]] = {s: None for s in SERVIDORES_LOGON}
@@ -384,7 +438,11 @@ class ClienteDAS:
 
     @property
     def descartadas(self) -> int:
-        """Líneas descartadas en total (cola llena, sin conexión o sesión caída; NO cuenta las obsoletas por serie)."""
+        """Líneas descartadas en total (cola llena, sin conexión o sesión caída; NO cuenta las obsoletas por serie).
+
+        Las purgadas por versión vieja con la cola llena (A-04) sí cuentan: se
+        tiraron para hacer sitio.
+        """
         with self._cond:
             return self._descartadas
 
@@ -443,7 +501,8 @@ class ClienteDAS:
             with self._cond:
                 self._numero += 1
                 s = _Sesion(self._numero, sock, parser)
-                viejas = len(self._cola)
+                perdidas = list(self._cola)
+                viejas = len(perdidas)
                 self._cola.clear()                          # nada de otra sesión sale en esta (R-J-02.5)
                 self._descartadas += viejas
                 self._sesion = s
@@ -451,6 +510,7 @@ class ClienteDAS:
                 self._sin_conexion = 0
             if viejas:
                 logger.warning("descartadas %d líneas de una sesión anterior", viejas)
+                self._reportar_descartes(perdidas, MOTIVO_SESION)
             s.emisor = HiloVigilado("das-emisor", lambda: self._cuerpo_emisor(s), self._caida_hilo)
             s.lector = HiloVigilado("das-lector", lambda: self._cuerpo_lector(s), self._caida_hilo)
             s.emisor.arrancar()
@@ -479,7 +539,7 @@ class ClienteDAS:
             self._unir(s)
 
     # ── envío ─────────────────────────────────────────────────────────
-    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> None:
+    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> bool:
         """Encola `linea` para el emisor. NO bloquea (salvo 50 ms con la cola llena). R-O-03, riesgos 7, 10 y 17.
 
         Orden de comprobaciones: (1) `TypeError` si no es texto; (2)
@@ -488,6 +548,11 @@ class ClienteDAS:
         `ValueError` si la línea está vacía, lleva saltos dentro o no cabe en
         latin-1, o si `serie`/`version` no son válidas. Sin conexión la línea
         se descarta y se avisa (el primer descarte de cada caída).
+
+        Devuelve True si la línea quedó ENCOLADA y False si se descartó en el
+        acto (sin conexión o cola llena): G2-05, el ejecutor no debe anotar
+        `orden_enviada` de una línea que no salió. Encolada no es enviada: si
+        después se purga sin salir, llega `al_descartar` (D2a-06).
         """
         if not isinstance(linea, str):
             raise TypeError(f"enviar espera una línea de texto, no {type(linea).__name__}")
@@ -499,17 +564,21 @@ class ClienteDAS:
             raise ValueError(f"serie debe ser un texto no vacío o None: {serie!r}")
         if type(version) is not int:
             raise ValueError(f"version debe ser un entero: {version!r}")
-        item = _Linea(linea, serie, version)
         avisos: list[str] = []
+        purgadas: list[_Linea] = []
+        encolada = False
         with self._cond:
+            item = self._linea_nueva(linea, serie, version)
             sesion = self._sesion
             if sesion is not None and sesion.viva and len(self._cola) >= self._tope_cola and serie is not None:
-                vieja = next((x for x in self._cola if x.serie == serie), None)
+                # A-04: solo lo que una versión POSTERIOR hace inútil; un stop hermano de la misma versión no
+                vieja = next((x for x in self._cola if x.serie == serie and x.version < version), None)
                 if vieja is not None:
                     self._cola.remove(vieja)
                     self._descartadas += 1
+                    purgadas.append(vieja)
                     avisos.append(f"cola de salida llena ({self._tope_cola}): descartada la línea más vieja "
-                                  f"de la serie {serie}: {redactar(vieja.texto)}")
+                                  f"de la serie {serie} (v{vieja.version} < v{version}): {redactar(vieja.texto)}")
             if sesion is not None and sesion.viva and len(self._cola) >= self._tope_cola:
                 self._cond.wait(ESPERA_COLA_LLENA_S)        # §3.2: 50 ms y un solo reintento
             if sesion is None or not sesion.viva or self._sesion is not sesion:
@@ -525,14 +594,18 @@ class ClienteDAS:
             else:
                 self._cola.append(item)
                 self._cond.notify_all()
+                encolada = True
+        self._reportar_descartes(purgadas, MOTIVO_COLA_LLENA)
         for texto in avisos:
             self._avisar(texto)
+        return encolada
 
     def invalidar(self, serie: str, version: int) -> None:
         """Injerto A §8.6 (riesgo 7): las líneas de `serie` con versión < `version` no salen (ni las ya encoladas).
 
         La versión vigente de cada serie solo sube. El emisor lo vuelve a
-        comprobar justo antes del `sendall`.
+        comprobar justo antes del `sendall`. Cada NEWORDER purgado se
+        comunica con `al_descartar` (D2a-06): nada se purga en silencio.
         """
         if not isinstance(serie, str) or not serie.strip():
             raise ValueError(f"serie debe ser un texto no vacío: {serie!r}")
@@ -546,9 +619,7 @@ class ClienteDAS:
                 self._cola.remove(x)
             if fuera:
                 self._cond.notify_all()
-        for x in fuera:
-            logger.info("descartada por versión vieja (serie %s v%d < v%d): %s",
-                        x.serie, x.version, version, redactar(x.texto))
+        self._reportar_descartes(fuera, MOTIVO_VERSION)
 
     # ── construcción desde el entorno (corrección 15) ─────────────────
     @staticmethod
@@ -614,6 +685,8 @@ class ClienteDAS:
 
     def _entregar(self, s: _Sesion, cruda: bytes) -> None:
         msg = s.parser.parsear(cruda.decode(CODIFICACION, errors="replace"))   # parsear NUNCA lanza
+        if isinstance(msg, (MsgOrden, MsgOrderAct)):
+            self._aprender_ticker(msg.id, msg.ticker)
         if isinstance(msg, MsgConexion) and msg.servidor in SERVIDORES_LOGON:
             with self._cond:
                 if self._sesion is s:
@@ -627,7 +700,12 @@ class ClienteDAS:
             logger.error("al_mensaje falló con %s: %s", redactar(msg.cruda), redactar(f"{type(exc).__name__}: {exc}"))
 
     def _cuerpo_emisor(self, s: _Sesion) -> None:
-        """das-emisor: saca en orden, descarta lo obsoleto por serie, espera la cuota, sendall y anota (§3.2)."""
+        """das-emisor: descarta lo obsoleto por serie, elige la primera línea que cabe en su cuota, sendall y anota.
+
+        §3.2 con A-01 / SEG-01: la cabeza que espera su cuota NO retiene lo de
+        detrás; sale la primera línea cuya cuota cabe y que no deba guardar
+        el orden con otra anterior aún pendiente (`_elegir`).
+        """
         while not s.fin.is_set():
             with self._cond:
                 if not s.viva:
@@ -635,23 +713,27 @@ class ClienteDAS:
                 if not self._cola:
                     self._cond.wait(0.2)
                     continue
-                item = self._cola[0]
-                if self._obsoleta(item):
-                    self._cola.popleft()
+                obsoletas = [x for x in self._cola if self._obsoleta(x)]
+                for x in obsoletas:
+                    self._cola.remove(x)
+                if obsoletas:
                     self._cond.notify_all()
-                    logger.info("descartada por versión vieja (serie %s v%d): %s",
-                                item.serie, item.version, redactar(item.texto))
-                    continue
-            espera = self._cuota.espera_para(item.texto)
-            if espera > 0:
+                vistas = list(self._cola)
+            if obsoletas:
+                self._reportar_descartes(obsoletas, MOTIVO_VERSION)
+            if not vistas:
+                continue
+            item, espera = self._elegir(vistas)
+            if item is None:
                 s.fin.wait(min(espera, PASO_ESPERA_S))
                 continue
             with self._cond:
                 if not s.viva:
                     return
-                if not self._cola or self._cola[0] is not item or self._obsoleta(item):
+                # delante de `item` solo pudo DESAPARECER algo (se encola al final): lo que se decidió sigue valiendo
+                if self._obsoleta(item) or not any(x is item for x in self._cola):
                     continue                                # cambió mientras se miraba la cuota: se re-evalúa
-                self._cola.popleft()
+                self._cola.remove(item)
                 self._cond.notify_all()
             try:
                 with self._cerrojo_envio:
@@ -671,11 +753,13 @@ class ClienteDAS:
             s.viva = False
             s.fin.set()
             actual = self._sesion is s
-            perdidas = len(self._cola) if actual else 0
+            lineas_perdidas = list(self._cola) if actual else []
+            perdidas = len(lineas_perdidas)
             if actual:
                 self._cola.clear()
                 self._descartadas += perdidas
                 self._cond.notify_all()
+        self._reportar_descartes(lineas_perdidas, MOTIVO_SESION)   # D2a-06: el decisor no las cree vivas
         _cerrar_socket(s.sock)
         if actual:
             logger.log(logging.WARNING if avisar else logging.INFO, "conexión con DAS terminada: %s", redactar(motivo))
@@ -696,6 +780,98 @@ class ClienteDAS:
     def _obsoleta(self, item: _Linea) -> bool:
         """Con `_cond` tomado: la serie del item fue invalidada con una versión posterior (injerto §8.6)."""
         return item.serie is not None and item.serie in self._vigentes and item.version < self._vigentes[item.serie]
+
+    def _linea_nueva(self, texto: str, serie: Optional[str], version: int) -> _Linea:
+        """Con `_cond` tomado: la `_Linea` con sus claves de orden (A-01) y, si es NEWORDER, token y ticker (D2a-06).
+
+        Claves: `serie:S`; `ticker:T` para NEWORDER, CANCEL ALLSYMB y los
+        CANCEL/REPLACE cuyo id ya se vio en un `%ORDER`/`%OrderAct`; `id:N`
+        para CANCEL/REPLACE por id; `locate:T` y `locate_id:N` para los SL*.
+        `CANCEL ALL` es una barrera para todo mutante.
+        """
+        partes = texto.split()
+        palabra = partes[0].upper()
+        claves: set[str] = set()
+        if serie is not None:
+            claves.add("serie:" + serie)
+        barrera = False
+        token: Optional[int] = None
+        ticker: Optional[str] = None
+        if palabra == "NEWORDER" and len(partes) > 3:
+            ticker = partes[3]
+            claves.add("ticker:" + ticker.upper())
+            token = _entero_o_none(partes[1])
+        elif palabra in ("CANCEL", "REPLACE") and len(partes) > 1:
+            arg = partes[1].upper()
+            if palabra == "CANCEL" and arg == "ALL":
+                barrera = True
+            elif palabra == "CANCEL" and arg == "ALLSYMB" and len(partes) > 2:
+                claves.add("ticker:" + partes[2].upper())
+            else:
+                id_das = _entero_o_none(partes[1])
+                if id_das is not None:
+                    claves.add(f"id:{id_das}")
+                    conocido = self._ticker_de_id.get(id_das)
+                    if conocido is not None:
+                        claves.add("ticker:" + conocido)
+        elif palabra in ("SLPRICEINQUIRE", "SLNEWORDER") and len(partes) > 1:
+            claves.add("locate:" + partes[1].upper())
+        elif palabra in ("SLOFFEROPERATION", "SLCANCELORDER") and len(partes) > 1:
+            claves.add("locate_id:" + partes[1])
+        return _Linea(texto, serie, version, frozenset(claves), barrera, es_mutante(texto), token, ticker)
+
+    def _elegir(self, vistas: list[_Linea]) -> tuple[Optional[_Linea], float]:
+        """A-01 / SEG-01: la primera línea que cabe en su cuota y no adelanta a otra con la que guarda el orden.
+
+        Devuelve (línea, 0.0) o (None, espera mínima). Una línea no adelanta a
+        otra anterior aún pendiente si comparten alguna clave (serie, orden,
+        ticker, locate) o si una de las dos es `CANCEL ALL` y la otra es un
+        mutante. La cuota se consulta una vez por categoría (la
+        `CuotaComandos` clasifica por la primera palabra): dentro de una
+        categoría nada se reordena.
+        """
+        claves_previas: set[str] = set()
+        barrera_previa = False
+        mutante_previo = False
+        esperas: dict[str, float] = {}
+        espera_min = math.inf
+        for x in vistas:
+            bloqueada = (bool(x.claves & claves_previas) or (barrera_previa and x.mutante)
+                         or (x.barrera and mutante_previo))
+            if not bloqueada:
+                espera = esperas.get(x.categoria)
+                if espera is None:
+                    espera = float(self._cuota.espera_para(x.texto))
+                    esperas[x.categoria] = espera
+                if espera <= 0:
+                    return x, 0.0
+                espera_min = min(espera_min, espera)
+            claves_previas |= x.claves
+            barrera_previa = barrera_previa or x.barrera
+            mutante_previo = mutante_previo or x.mutante
+        return None, (espera_min if math.isfinite(espera_min) else PASO_ESPERA_S)
+
+    def _aprender_ticker(self, id_das: int, ticker: str) -> None:
+        """id_das → ticker de lo que dice DAS (A-01): así un CANCEL/REPLACE por id guarda el orden con su ticker."""
+        if type(id_das) is not int or not isinstance(ticker, str) or not ticker:
+            return
+        with self._cond:
+            if id_das not in self._ticker_de_id and len(self._ticker_de_id) >= TOPE_IDS_CONOCIDOS:
+                self._ticker_de_id.pop(next(iter(self._ticker_de_id)))     # se olvida el más viejo
+            self._ticker_de_id[id_das] = ticker.upper()
+
+    def _reportar_descartes(self, lineas: list[_Linea], motivo: str) -> None:
+        """D2a-06: registra cada línea purgada sin salir y avisa al decisor de cada NEWORDER. Sin `_cond` tomado."""
+        for x in lineas:
+            logger.info("%s (serie %s v%d): %s", motivo, x.serie, x.version, redactar(x.texto))
+            if x.token is None or self._al_descartar is None:
+                continue
+            try:
+                self._al_descartar(OrdenDescartada(token=x.token, serie=x.serie, version=x.version, motivo=motivo,
+                                                   ticker=x.ticker))
+            except Exception as exc:  # noqa: BLE001 — frontera de callback: un al_descartar que falla no para el emisor
+                logger.error("al_descartar falló con %s: %s", redactar(x.texto),
+                             redactar(f"{type(exc).__name__}: {exc}"))
 
     @staticmethod
     def _validar_linea(linea: str) -> None:
@@ -742,10 +918,19 @@ class ClienteSombra:
     `al_mensaje(msg, True)` recibe cada línea sintética ya parseada; se llama
     en el hilo que envía (el principal) y debe SOLO encolar. La `latencia_s`
     del emparejador NO se aplica aquí: `enviar` nunca bloquea.
+
+    A-07: cada mutante pasa por una `CuotaComandos` propia SOLO para CONTAR
+    (no espera): si el DAS real lo habría retenido por cuota, suma
+    `cuota_agotada` y llama a `al_cuota_agotada(linea_redactada, espera_s)`
+    (opcional; el ejecutor lo anota en el diario como «cuota_agotada»).
+    `cuota` opcional (por defecto una `CuotaComandos` con el reloj del
+    cliente real); nunca la del cliente real, que usa otro hilo.
     """
 
     def __init__(self, real: ClienteDAS, emparejador: "Emparejador",
-                 al_mensaje: Callable[[MensajeDAS, bool], None], parser: Optional[Parser] = None) -> None:
+                 al_mensaje: Callable[[MensajeDAS, bool], None], parser: Optional[Parser] = None,
+                 cuota: Optional[CuotaComandos] = None,
+                 al_cuota_agotada: Optional[Callable[[str, float], None]] = None) -> None:
         if not isinstance(real, ClienteDAS):
             raise TypeError("real debe ser un ClienteDAS")
         if not real.solo_lectura:
@@ -756,11 +941,21 @@ class ClienteSombra:
             raise TypeError("al_mensaje debe ser una función (msg, simulado) -> None")
         if parser is not None and not isinstance(parser, Parser):
             raise TypeError("parser debe ser un protocolo.Parser")
+        if cuota is not None and not (callable(getattr(cuota, "espera_para", None))
+                                      and callable(getattr(cuota, "anotar", None))):
+            raise TypeError("cuota debe tener espera_para(linea) y anotar(linea)")
+        if cuota is not None and cuota is real._cuota:
+            raise ValueError("la cuota de la sombra no puede ser la del cliente real (la usa el hilo emisor)")
+        if al_cuota_agotada is not None and not callable(al_cuota_agotada):
+            raise TypeError("al_cuota_agotada debe ser una función (linea, espera_s) -> None")
         self._real = real
         self._emparejador = emparejador
         self._al_mensaje = al_mensaje
         self._parser = parser or Parser(real.es_nuestro, watch=False, cuenta=real.cuenta)
         self._cerrojo = threading.Lock()                    # el parser tiene estado ($INTMSG, bloques)
+        self._cuota = cuota if cuota is not None else CuotaComandos(real._reloj)
+        self._al_cuota_agotada = al_cuota_agotada
+        self._cuota_agotada = 0
 
     @property
     def real(self) -> ClienteDAS:
@@ -770,19 +965,26 @@ class ClienteSombra:
     def emparejador(self) -> "Emparejador":
         return self._emparejador
 
-    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> None:
+    @property
+    def cuota_agotada(self) -> int:
+        """A-07: mutantes que el DAS real habría retenido por cuota (la sombra no espera, solo cuenta)."""
+        return self._cuota_agotada
+
+    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> bool:
         """Mutante → `emparejador.recibir` → mensajes simulados; el resto → `real.enviar` (R-O-03, §9).
 
         Una línea con varios comandos dentro nunca llega al DAS real: si
-        alguno es mutante, entera al emparejador.
+        alguno es mutante, entera al emparejador. Devuelve True si el mutante
+        llegó al emparejador o lo que devuelva `real.enviar` (G2-05).
         """
         if not isinstance(linea, str):
             raise TypeError(f"enviar espera una línea de texto, no {type(linea).__name__}")
         if es_mutante(linea):
             logger.info("[SOMBRA] al emparejador: %s", redactar(linea))
+            self._contar_cuota(linea)
             self._entregar(self._emparejador.recibir(linea))
-            return
-        self._real.enviar(linea, serie, version)
+            return True
+        return self._real.enviar(linea, serie, version)
 
     def tic(self) -> None:
         """`emparejador.tic()`: stops y órdenes que reposan en el libro simulado se llenan (mensajes simulados).
@@ -817,6 +1019,26 @@ class ClienteSombra:
     def ultimo_recibido_en(self) -> Optional[float]:
         return self._real.ultimo_recibido_en
 
+    def _contar_cuota(self, linea: str) -> None:
+        """A-07: ¿el DAS real habría esperado su cuota? Se cuenta y se avisa; la sombra NO espera."""
+        try:
+            espera = float(self._cuota.espera_para(linea))
+            self._cuota.anotar(linea)
+        except (TypeError, ValueError) as exc:  # frontera: una cuota rara no impide la simulación
+            logger.error("[SOMBRA] cuota: %s", redactar(f"{type(exc).__name__}: {exc}"))
+            return
+        if espera <= 0:
+            return
+        self._cuota_agotada += 1
+        texto = redactar(linea)
+        logger.warning("[SOMBRA] cuota agotada: el DAS real habría retenido %.2f s: %s", espera, texto)
+        if self._al_cuota_agotada is None:
+            return
+        try:
+            self._al_cuota_agotada(texto, espera)
+        except Exception as exc:  # noqa: BLE001 — frontera de callback: contar no puede parar la simulación
+            logger.error("[SOMBRA] al_cuota_agotada falló: %s", redactar(f"{type(exc).__name__}: {exc}"))
+
     def _entregar(self, lineas: list[str]) -> None:
         for cruda in lineas:
             with self._cerrojo:
@@ -826,6 +1048,15 @@ class ClienteSombra:
             except Exception as exc:  # noqa: BLE001 — frontera de callback: un mensaje simulado que falla no pierde los siguientes
                 logger.error("[SOMBRA] al_mensaje falló con %s: %s", redactar(cruda),
                              redactar(f"{type(exc).__name__}: {exc}"))
+
+
+def _entero_o_none(texto: str) -> Optional[int]:
+    """int32 con signo o None (token de NEWORDER, id de CANCEL/REPLACE)."""
+    try:
+        valor = int(texto)
+    except ValueError:
+        return None
+    return valor if -(2**31) <= valor <= 2**31 - 1 and texto.strip().lstrip("+-").isdigit() else None
 
 
 def _cerrar_socket(sock: socket.socket) -> None:

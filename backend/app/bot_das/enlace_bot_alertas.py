@@ -40,17 +40,31 @@ LAS TRAMPAS.
     (R-A-05), así que repetir nunca duplica órdenes.
   * Un mensaje que no se puede picklar (un objeto raro en el Evento) se
     descarta y se cuenta: reencolarlo bloquearía la cola para siempre.
+  * F-01: por la tubería viajan SOLO primitivos (dict, list, str, int, float,
+    bool, None, Decimal). `a_primitivo` convierte cada mensaje en el hilo del
+    enlace, justo antes de picklarlo: un `Evento` pasa a dict con `momento`
+    como texto «AAAA-MM-DD HH:MM:SS» (`str(ts)[:19]`, lo mismo que corta
+    `id_evento`), los escalares de numpy a su tipo de Python y un
+    `pd.Timestamp` a texto. Así despicklar en el ejecutor NUNCA importa pandas
+    ni numpy (riesgo 29).
+  * F-03: solo el ÚLTIMO latido vale. Un latido nuevo sustituye al pendiente
+    (sale al final de la cola) y, con la cola llena, se tiran antes los
+    latidos y radares más viejos que un «eventos»/«hidratado»/«dia_nuevo».
+    Con el ejecutor caído horas, los latidos ya no expulsan salidas.
   * El PID/hilo: el hilo es daemon; `parar` intenta vaciar la cola `vaciar_s`
     segundos y luego cierra. Un `Client()` colgado en el saludo de un Listener
     ocupado no impide que `parar` vuelva (join con tiempo).
 """
 from __future__ import annotations
 
+import dataclasses
 import logging
 import os
 import threading
 import time
 from collections import deque
+from datetime import date, datetime, time as dt_time, timedelta
+from decimal import Decimal
 from multiprocessing.connection import Client
 from multiprocessing.reduction import ForkingPickler
 from typing import Any, Iterable, Optional
@@ -77,6 +91,70 @@ RECONECTAR_S = 5.0                # §6.1: «reconecta cada 5 s»
 ESPERA_OK_S = 5.0                 # cuánto espera la respuesta al «hola»
 _ESPERA_COLA_S = 0.25             # granularidad con la que el hilo mira la conexión y `parando`
 _PREFIJO_TUBERIA_WINDOWS = "\\\\.\\pipe\\"
+TIPOS_DESECHABLES = (T_LATIDO, T_RADAR)   # F-03: lo primero que se tira con la cola llena (el siguiente lo repone)
+CAMPO_MOMENTO = "momento"
+
+
+# ── primitivos para la tubería (F-01: el ejecutor no despickla pandas ni numpy) ──
+def momento_texto(valor: Any) -> Any:
+    """`Evento.momento` → texto «AAAA-MM-DD HH:MM:SS» (F-01).
+
+    `str(pd.Timestamp)[:19]` y `str(datetime)[:19]` dan justo ese formato, que es
+    lo que `id_evento` corta (R-A-05: el id sale idéntico) y lo que
+    `entrada.t_cierre_vela` ya acepta. None sigue siendo None (riesgo 18: el
+    ejecutor lo descarta); un texto viaja tal cual.
+    """
+    if valor is None or isinstance(valor, str):
+        return valor
+    return str(valor)[:19]
+
+
+def a_primitivo(valor: Any) -> Any:
+    """Copia de `valor` hecha solo de dict/list/str/int/float/bool/None/Decimal (F-01).
+
+    Un dataclass (el `Evento` del motor) o un objeto con `__dict__` pasa a dict
+    con sus campos, y el campo `momento` va por `momento_texto`. Los escalares
+    de numpy (`np.float64`, `np.int64`, `np.bool_`) pasan a su tipo de Python;
+    fechas y horas (incluido `pd.Timestamp`) a texto; tuplas y conjuntos a
+    listas. Lo que no se reconoce viaja como `str(valor)`: nunca un objeto cuya
+    clase obligue al ejecutor a importar un módulo al despicklar.
+    """
+    if valor is None or type(valor) in (bool, int, float, str, Decimal):
+        return valor
+    if isinstance(valor, bool):
+        return bool(valor)
+    if isinstance(valor, int):
+        return int(valor)
+    if isinstance(valor, float):                       # np.float64 es subclase de float
+        return float(valor)
+    if isinstance(valor, str):
+        return str(valor)
+    if isinstance(valor, Decimal):
+        return Decimal(valor)
+    if isinstance(valor, (datetime, date, dt_time, timedelta)):
+        return str(valor)
+    if isinstance(valor, dict):
+        return {_clave_primitiva(k): (momento_texto(v) if k == CAMPO_MOMENTO else a_primitivo(v))
+                for k, v in valor.items()}
+    if isinstance(valor, (list, tuple, set, frozenset)):
+        return [a_primitivo(v) for v in valor]
+    if dataclasses.is_dataclass(valor) and not isinstance(valor, type):
+        return {f.name: (momento_texto(getattr(valor, f.name, None)) if f.name == CAMPO_MOMENTO
+                         else a_primitivo(getattr(valor, f.name, None)))
+                for f in dataclasses.fields(valor)}
+    modulo = type(valor).__module__ or ""
+    if modulo.split(".")[0] == "numpy" and callable(getattr(valor, "item", None)):
+        try:
+            return a_primitivo(valor.item())
+        except (TypeError, ValueError):   # frontera de conversión: un array de numpy no es escalar → texto
+            return str(valor)
+    if hasattr(valor, "__dict__") and not isinstance(valor, type) and modulo.split(".")[0] not in ("pandas", "numpy"):
+        return a_primitivo(dict(vars(valor)))
+    return str(valor)
+
+
+def _clave_primitiva(clave: Any) -> Any:
+    return clave if type(clave) in (str, int) else str(a_primitivo(clave))
 
 
 # ── configuración (leída en la LLAMADA, nunca al importar) ─────────────
@@ -240,6 +318,7 @@ class EnlaceEjecutor:
         self.encolados = 0
         self.enviados = 0
         self.perdidos = 0
+        self.latidos_sustituidos = 0      # F-03: latidos pendientes que un latido más nuevo dejó sin valor
         self.impicklables = 0
         self.conexiones = 0
         self.desconexiones = 0
@@ -286,6 +365,7 @@ class EnlaceEjecutor:
             "viva": bool(self._hilo is not None and self._hilo.is_alive()),
             "conectado": self.conectado, "pendientes": self.pendientes, "encolados": self.encolados,
             "enviados": self.enviados, "perdidos": self.perdidos, "impicklables": self.impicklables,
+            "latidos_sustituidos": self.latidos_sustituidos,
             "conexiones": self.conexiones, "desconexiones": self.desconexiones, "rechazos": self.rechazos,
             "intentos_fallidos": self.intentos_fallidos, "motivo_rechazo": self.motivo_rechazo,
             "ultimo_error": self.ultimo_error, "ultimo_envio_en": self.ultimo_envio_en,
@@ -293,7 +373,7 @@ class EnlaceEjecutor:
 
     # ── lo que llama bot.py (encola y vuelve; §3.11) ──
     def eventos(self, ticker: str, minuto: str, timestamp: Any, eventos: list, recuperada: bool) -> None:
-        """«eventos» {ticker, minuto, timestamp, eventos, recuperada}: los `Evento` de una vela, tal cual (viajan picklados, §6.1)."""
+        """«eventos» {ticker, minuto, timestamp, eventos, recuperada}: los `Evento` de una vela (viajan como dict de primitivos, F-01)."""
         self._encolar({"t": T_EVENTOS, "ticker": ticker, "minuto": minuto, "timestamp": timestamp,
                        "eventos": list(eventos or []), "recuperada": bool(recuperada)})
 
@@ -327,16 +407,51 @@ class EnlaceEjecutor:
 
     # ── tripas ──
     def _encolar(self, msg: dict) -> None:
-        """O(1) bajo un cerrojo que el hilo solo retiene para sacar un elemento. Cola llena → se tira el MÁS VIEJO."""
+        """Encola bajo un cerrojo corto (F-03).
+
+        Un latido SUSTITUYE al latido pendiente (se quita el viejo y el nuevo va
+        al final): solo el último dice algo del feed. Cola llena → se tira el
+        latido o radar MÁS VIEJO; si no hay ninguno, el mensaje más viejo; y si
+        lo que llega es un latido/radar y la cola solo tiene mensajes que no se
+        pueden tirar, se tira el que llega. Recorrer la cola (≤ `tope`) cuesta
+        microsegundos y solo pasa con un latido o con la cola llena.
+        """
         with self._cond:
-            if len(self._cola) >= self.tope:
-                self._cola.popleft()
-                self.perdidos += 1
-                if self.perdidos == 1 or self.perdidos % 500 == 0:
-                    log.warning("[ENLACE] cola al tope (%d): %d mensaje(s) viejo(s) tirado(s)", self.tope, self.perdidos)
-            self._cola.append(msg)
             self.encolados += 1
+            if msg.get("t") == T_LATIDO:
+                i = _ultimo_indice(self._cola, T_LATIDO)
+                if i is not None:
+                    del self._cola[i]
+                    self.latidos_sustituidos += 1
+            if len(self._cola) >= self.tope:
+                if not self._hacer_hueco(msg):
+                    self._contar_perdido()
+                    return
+                self._contar_perdido()
+            self._cola.append(msg)
             self._cond.notify()
+
+    def _hacer_hueco(self, entrante: dict) -> bool:
+        """Con la cola llena, saca un mensaje para que quepa `entrante`; False = no se saca nada (se tira `entrante`).
+
+        Orden de sacrificio (F-03): el latido/radar más viejo; si no hay y
+        `entrante` también es desechable, se tira `entrante`; si no, el mensaje
+        más viejo (una señal de hace horas ya está caducada, R-B-04). Se llama con
+        el cerrojo tomado.
+        """
+        i = _primer_indice(self._cola, TIPOS_DESECHABLES)
+        if i is not None:
+            del self._cola[i]
+            return True
+        if entrante.get("t") in TIPOS_DESECHABLES:
+            return False
+        self._cola.popleft()
+        return True
+
+    def _contar_perdido(self) -> None:
+        self.perdidos += 1
+        if self.perdidos == 1 or self.perdidos % 500 == 0:
+            log.warning("[ENLACE] cola al tope (%d): %d mensaje(s) tirado(s)", self.tope, self.perdidos)
 
     def _bucle(self) -> None:
         """Cuerpo del hilo: conectar → saludar → vaciar; ante cualquier fallo de red, cerrar y reintentar a los `reconectar_s`."""
@@ -401,7 +516,7 @@ class EnlaceEjecutor:
                     conn.recv()              # EOFError → frontera en _bucle
                 continue
             try:
-                datos = bytes(ForkingPickler.dumps(msg))
+                datos = bytes(ForkingPickler.dumps(a_primitivo(msg)))     # F-01: solo primitivos por la tubería
             except Exception as exc:  # noqa: BLE001 — frontera de mensaje: un objeto no picklable no puede atascar la cola
                 self._en_vuelo = False
                 self.impicklables += 1
@@ -419,17 +534,45 @@ class EnlaceEjecutor:
             self.ultimo_envio_en = time.time()
 
     def _devolver(self, msg: dict) -> None:
-        """El mensaje que no salió vuelve a la CABEZA (orden intacto); si la cola ya está al tope, se cuenta como perdido."""
+        """El mensaje que no salió vuelve a la CABEZA (orden intacto).
+
+        F-03: un latido que ya tiene otro más nuevo en la cola no vuelve (no dice
+        nada). Con la cola al tope se hace hueco igual que al encolar: primero se
+        sacrifica un latido/radar pendiente; si no lo hay, se pierde el devuelto
+        (es el más viejo) y se cuenta.
+        """
         with self._cond:
+            if msg.get("t") == T_LATIDO and _ultimo_indice(self._cola, T_LATIDO) is not None:
+                self.latidos_sustituidos += 1
+                return
             if len(self._cola) >= self.tope:
-                self.perdidos += 1
-            else:
-                self._cola.appendleft(msg)
+                i = _primer_indice(self._cola, TIPOS_DESECHABLES)
+                self._contar_perdido()
+                if i is None or msg.get("t") in TIPOS_DESECHABLES:
+                    return
+                del self._cola[i]
+            self._cola.appendleft(msg)
 
     def _cerrar_conexion(self) -> None:
         conn, self._conn = self._conn, None
         if conn is not None:
             _cerrar(conn)
+
+
+def _ultimo_indice(cola: deque, tipo: str) -> Optional[int]:
+    """Índice del ÚLTIMO mensaje de tipo `tipo` en la cola, o None."""
+    for i in range(len(cola) - 1, -1, -1):
+        if cola[i].get("t") == tipo:
+            return i
+    return None
+
+
+def _primer_indice(cola: deque, tipos: tuple) -> Optional[int]:
+    """Índice del PRIMER (más viejo) mensaje cuyo tipo está en `tipos`, o None."""
+    for i, m in enumerate(cola):
+        if m.get("t") in tipos:
+            return i
+    return None
 
 
 def _cerrar(conn: Any) -> None:

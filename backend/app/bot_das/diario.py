@@ -74,10 +74,38 @@ LAS TRAMPAS.
   * Un fill sin token NUESTRO (orden ajena o token que no cuadra) NO suma a
     `neta_fills` ni entra en `fills`: `neta_fills` es «suma signada de fills
     por token» (corrección 2) y las ajenas las reconcilia `%POS` (R-K-02).
-    Un fill con lado desconocido tampoco la mueve (mejor que la reconciliación
+    Un fill con lado desconocido toma el lado de SU orden (es la misma
+    orden); si tampoco se sabe, no mueve la neta (mejor que la reconciliación
     lo corrija que sumarlo con el signo equivocado). Los fills SIMULADOS solo
     cuentan si la fase reconstruida es SOMBRA (es la posición que el decisor
     llevaba en seco); en canario/real solo cuentan los reales.
+  * Los fills como los escribe el DECISOR (DC-02): un `Execute` que llega
+    antes que su `%TRADE` se anota con `id_trade: null` y CUENTA (recibe un
+    id sintético NEGATIVO, como en el decisor: −1, −2…); cuando llega el
+    `%TRADE` se anota otra vez con `eco: true`, que NO suma: solo pone el
+    id real al fill sin id del mismo (id_orden, qty). Un eco sin su Execute
+    en el diario (línea perdida) cuenta como fill normal. El dedupe por
+    `id_trade` es solo para los ids reales (el volcado del `#Trade` tras una
+    reconexión repite ids).
+  * `orden_simulada` (SOMBRA, DC-01) solo trae token, ticker y propósito:
+    con la `orden_intencion` ya leída es un `orden_enviada` (no la machaca);
+    solo crea la orden si falta la intención. `bug: true` (EnvioProhibido)
+    NO salió: se deja como estaba.
+  * REPLACE (DC-04): `replace_intencion` queda pendiente por token y se
+    aplica con el `orden_act` «Replaced» como en el decisor (qty = llenas +
+    qty pedida, lvqty, precio y stop nuevos; con `replace_share_es_abierta`
+    = False la qty pedida ya es la total). «ReplaceRej» la descarta.
+  * Orden de relectura (DC-05): dentro de un proceso manda el `seq` (el
+    reloj de pared puede dar un paso atrás); entre procesos, `t` con el
+    máximo acumulado del proceso (`ordenar_registros`).
+  * `discrepancia` solo ADOPTA la neta de DAS si es un caso 5 o 6 de la
+    reconciliación (`caso`); la que anotan `cerrar_todo`/`cierre_humano`
+    al detectar una diferencia es informativa (piden GET POSITIONS, no
+    cambian la neta del decisor).
+  * Lo que el decisor guarda FUERA de `EstadoBot` (k de halts, veto R-F-03,
+    control manual, cambios por Telegram) lo devuelve `memoria_decisor`
+    (pura, sobre los mismos registros), para que el decisor lo siembre al
+    arrancar.
 """
 from __future__ import annotations
 
@@ -96,6 +124,7 @@ from typing import IO, Any, Optional
 
 from app.bot_das import tokens as mod_tokens
 from app.bot_das.tipos import (
+    REPLACE_SHARE_ES_ABIERTA,
     EstadoBot,
     EstadoBS,
     EstadoLote,
@@ -106,6 +135,7 @@ from app.bot_das.tipos import (
     Lado,
     Locate,
     Lote,
+    MsgOrden,
     Orden,
     Origen,
     PosicionTicker,
@@ -139,6 +169,14 @@ _ESTADO_POR_ACCION = {
 }
 _LADOS_COMPRA = frozenset({"B", "BUY"})
 _LADOS_VENTA = frozenset({"S", "SS", "SELL", "SHRT", "SHORT"})
+TIPO_AJENAS_TRATADAS = "ajenas_tratadas"   # E2c-01: {ids, ticker} que `_caso_ajena` ya trató (no se vuelve a pausar)
+CASOS_ADOPTA_DAS = frozenset({5, 6})       # reconciliación: caso 5 (plana en DAS) y 6 (neta distinta): manda DAS (M7)
+_PROPOSITOS_VETO_STOP = frozenset({         # R-F-03 (G1A-18): salidas que activan el veto de reentrada tras un halt
+    Proposito.STOP_PRINCIPAL.value, Proposito.STOP_EMERGENCIA.value, Proposito.STOP_PROTECCION.value,
+    Proposito.HALT_OPEN.value, Proposito.HALT_PM_LIMITE.value, Proposito.HALT_BANDA.value,
+})
+_RUTA_MODO_SEGURIDAD = "modo_seguridad.activo"
+_CAMPOS_OVERRIDE_ESTRATEGIA = ("ejecutar", "al_desactivar")
 
 
 class DiarioNoDisponible(RuntimeError):
@@ -572,7 +610,37 @@ def registro_a_linea(registro: Registro) -> dict:
 
 
 def _clave_orden(registro: Registro) -> tuple[str, str, int]:
+    """Clave ingenua (t, proceso, seq). Se conserva por compatibilidad; para ordenar usar `ordenar_registros` (DC-05)."""
     return registro.t, registro.proceso, registro.seq
+
+
+def ordenar_registros(registros: Iterable[Registro]) -> list[Registro]:
+    """Orden de relectura (DC-05, H-2, riesgo 22). PURA; estable.
+
+    Dentro de UN proceso manda el `seq` (monótono por construcción): si el
+    reloj de pared da un paso atrás (Windows corrigiendo 2,5 s), un
+    `orden_estado` escrito después de su `orden_intencion` NO se adelanta.
+    Entre procesos se mezcla por `t` usando el MÁXIMO acumulado de `t` del
+    proceso hasta ese registro (así el paso atrás no lo recoloca respecto al
+    otro proceso de forma que rompa su propio orden). Los registros con
+    `seq ≤ 0` (sintéticos) usan su propio `t`.
+    """
+    por_proceso: dict[str, list[tuple[int, Registro]]] = {}
+    for posicion, registro in enumerate(registros):
+        por_proceso.setdefault(registro.proceso, []).append((posicion, registro))
+    claves: list[tuple[tuple[str, str, int, str, int], Registro]] = []
+    for proceso, lista in por_proceso.items():
+        lista.sort(key=lambda par: (par[1].seq, par[1].t, par[0]))
+        t_max = ""
+        for posicion, registro in lista:
+            if registro.seq > 0:
+                t_max = max(t_max, registro.t)
+                t_efectivo = t_max
+            else:
+                t_efectivo = registro.t
+            claves.append(((t_efectivo, proceso, registro.seq, registro.t, posicion), registro))
+    claves.sort(key=lambda par: par[0])
+    return [registro for _, registro in claves]
 
 
 def leer_texto(texto: str, proceso: str, origen: str = "", cola_sin_fin: bool = True) -> list[Registro]:
@@ -614,7 +682,7 @@ def leer_texto(texto: str, proceso: str, origen: str = "", cola_sin_fin: bool = 
 
 
 class LectorDiario:
-    """Relee los diarios del día (§8): une procesos, ordena por (t, proceso, seq) y tolera líneas partidas."""
+    """Relee los diarios del día (§8): une procesos, ordena con `ordenar_registros` (DC-05) y tolera líneas partidas."""
 
     def __init__(self, directorio: Path) -> None:
         self._directorio = Path(directorio)
@@ -627,7 +695,7 @@ class LectorDiario:
         return self._directorio / nombre_fichero(proceso, dia)
 
     def leer(self, dia: date, procesos: tuple[str, ...] = ("ejecutor", "vigilante")) -> list[Registro]:
-        """Registros de `dia` de todos los `procesos` ordenados por (t, proceso, seq) (§8, H-2).
+        """Registros de `dia` de todos los `procesos` en orden de relectura (`ordenar_registros`, §8, H-2, DC-05).
 
         Un fichero ausente o ilegible cuenta como vacío (el vigilante sin
         diario del ejecutor trata toda posición como desconocida: riesgo 22).
@@ -637,8 +705,7 @@ class LectorDiario:
         registros: list[Registro] = []
         for proceso in procesos:
             registros.extend(self._leer_fichero(dia, proceso, cola_sin_fin=True))
-        registros.sort(key=_clave_orden)
-        return registros
+        return ordenar_registros(registros)
 
     def seguir(self, dia: date, proceso: str, desde_seq: int) -> list[Registro]:
         """Lo nuevo de `proceso` con `seq > desde_seq`, en orden de fichero (el vigilante sigue al ejecutor, riesgo 22).
@@ -871,6 +938,24 @@ def _aplicar_orden_enviada(estado: EstadoBot, registro: Registro, hoy: date) -> 
         orden.ultima_act = mono
 
 
+def _aplicar_orden_simulada(estado: EstadoBot, registro: Registro, hoy: date) -> None:
+    """`orden_simulada` (SOMBRA, R-O-03; DC-01): el ejecutor solo escribe token, ticker, propósito y los fills simulados.
+
+    Con la orden ya creada por su `orden_intencion` es un `orden_enviada`
+    (pone `enviada_en`/`ultima_act`) y NUNCA machaca lado, qty, tipo, precio,
+    stop ni lote. Sin intención previa (línea perdida) se crea con lo que
+    trae, como antes. `bug: true` (EnvioProhibido) no salió: no se toca.
+    """
+    if registro.datos.get("bug") is True:
+        return
+    token = _token_de_hoy(registro.datos.get("token"), hoy)
+    if token is not None and token in estado.ordenes:
+        _aplicar_orden_enviada(estado, registro, hoy)
+        return
+    _aplicar_orden_intencion(estado, registro, hoy)
+    _aplicar_orden_enviada(estado, registro, hoy)
+
+
 def _aplicar_orden_estado(estado: EstadoBot, registro: Registro, hoy: date) -> None:
     """`orden_estado` (`%ORDER`): último estado, qty (tras un REPLACE), lvqty/cxlqty, id y tipo crudo (§8, riesgo 1)."""
     datos = registro.datos
@@ -891,20 +976,65 @@ def _aplicar_orden_estado(estado: EstadoBot, registro: Registro, hoy: date) -> N
         orden.ultima_act = mono
 
 
-def _aplicar_orden_act(estado: EstadoBot, registro: Registro, hoy: date) -> None:
+_Reemplazo = tuple[Optional[int], Optional[Decimal], Optional[Decimal]]   # (qty pedida, precio, stop)
+
+
+def _aplicar_replace_intencion(estado: EstadoBot, registro: Registro, hoy: date,
+                               reemplazos: dict[int, _Reemplazo]) -> None:
+    """`replace_intencion` (M6, DC-04): el REPLACE pedido queda PENDIENTE por token hasta su «Replaced».
+
+    El token sale de `datos.token` o, sin él, del `id_das` ya casado. Un
+    segundo REPLACE antes de la confirmación sustituye al primero (como
+    `decisor._reemplazo_pedido`).
+    """
+    datos = registro.datos
+    orden = _orden_por_registro(estado, {"token": datos.get("token"), "id": datos.get("id_das")}, hoy)
+    if orden is None:
+        return
+    reemplazos[orden.token] = (_entero(datos.get("qty")), _decimal(datos.get("precio")), _decimal(datos.get("stop")))
+
+
+def _aplicar_reemplazo(orden: Orden, pedido: _Reemplazo, share_es_abierta: bool) -> None:
+    """«Replaced» (DC-04): lo mismo que hace el decisor con `_reemplazo_pedido` (qty, lvqty, precio, stop)."""
+    qty, precio, stop = pedido
+    if qty is not None and qty >= 0:
+        if share_es_abierta:
+            orden.qty = orden.llenas + qty
+            orden.lvqty = qty
+        else:                                     # A-02: el share del REPLACE ya es la cantidad TOTAL
+            orden.qty = max(qty, orden.llenas)
+            orden.lvqty = max(qty - orden.llenas, 0)
+    if precio is not None:
+        orden.precio = precio
+    if stop is not None:
+        orden.stop = stop
+
+
+def _aplicar_orden_act(estado: EstadoBot, registro: Registro, hoy: date,
+                       reemplazos: Optional[dict[int, _Reemplazo]] = None,
+                       share_es_abierta: bool = REPLACE_SHARE_ES_ABIERTA) -> None:
     """`orden_act` (`%OrderAct`): id de DAS, notas y el estado que implica la acción (manual L434-494).
 
     `cxlqty` NO se toca: la cantidad cancelada sale de `cxlqty` de `%ORDER`
-    (injerto §8.7), nunca del `qty` del `%OrderAct`.
+    (injerto §8.7), nunca del `qty` del `%OrderAct`. «Replaced» aplica el
+    REPLACE pendiente de ese token y «ReplaceRej» lo descarta (DC-04).
     """
     datos = registro.datos
     orden = _orden_por_registro(estado, datos, hoy)
     if orden is None:
         return
     _casar_id(estado, orden, _entero(datos.get("id", datos.get("id_das"))))
-    nuevo = _ESTADO_POR_ACCION.get(str(datos.get("accion", "")))
+    accion = str(datos.get("accion", "")).strip()
+    nuevo = _ESTADO_POR_ACCION.get(accion)
     if nuevo is not None:
         orden.estado = nuevo
+    if reemplazos is not None:
+        if accion == "Replaced":
+            pedido = reemplazos.pop(orden.token, None)
+            if pedido is not None:
+                _aplicar_reemplazo(orden, pedido, share_es_abierta)
+        elif accion == "ReplaceRej":
+            reemplazos.pop(orden.token, None)
     if datos.get("notas") is not None:
         orden.notas = str(datos["notas"])
     mono = _mono(registro)
@@ -924,31 +1054,87 @@ def _signo(lado: Optional[str]) -> Optional[int]:
     return None
 
 
-def _aplicar_fill(estado: EstadoBot, registro: Registro, hoy: date, vistos: set[int]) -> None:
-    """`fill`: libro por token con dedupe por `id_trade`; `neta_fills` = suma signada (corrección 2, riesgo 8).
+class _LibroFills:
+    """Estado de la relectura de fills (DC-02): ids reales vistos, fills sin id pendientes de su `%TRADE` y el id sintético."""
 
-    Sin token en el registro se busca por `id_orden` en `id_a_token` (el
-    `%TRADE` no trae token). Ajeno → no cuenta. Simulado → solo en SOMBRA.
-    """
-    datos = registro.datos
-    id_trade = _entero(datos.get("id_trade"))
-    if id_trade is None or id_trade in vistos:
-        return
+    def __init__(self) -> None:
+        self.vistos: set[int] = set()
+        self.sin_id: dict[tuple[Optional[int], int], list[Fill]] = {}
+        self.sintetico = 0
+
+    def nuevo_sintetico(self) -> int:
+        self.sintetico -= 1
+        return self.sintetico
+
+
+def _token_del_fill(estado: EstadoBot, datos: dict, hoy: date) -> tuple[Optional[int], Optional[int]]:
     id_orden = _entero(datos.get("id_orden"))
     token = _token_de_hoy(datos.get("token"), hoy)
     if token is None and id_orden is not None:
         token = estado.id_a_token.get(id_orden)
+    return token, id_orden
+
+
+def _casar_eco(estado: EstadoBot, registro: Registro, hoy: date, libro: _LibroFills) -> bool:
+    """Un fill `eco: true` (el `%TRADE` de un `Execute` ya contado, DC-02): pone el id real al fill sin id y NO suma.
+
+    True si lo casó con un fill sin id del mismo (id_orden, qty) o si el id
+    ya estaba visto; False si no hay nada que casar (el Execute se perdió del
+    diario): entonces se cuenta como un fill normal.
+    """
+    datos = registro.datos
+    id_trade = _entero(datos.get("id_trade"))
+    if id_trade is not None and id_trade in libro.vistos:
+        return True
+    _, id_orden = _token_del_fill(estado, datos, hoy)
+    qty = _entero_o(datos.get("qty"), 0)
+    pendientes = libro.sin_id.get((id_orden, qty))
+    if not pendientes:
+        return False
+    fill = pendientes.pop(0)
+    if id_trade is not None:
+        fill.id_trade = id_trade
+        libro.vistos.add(id_trade)
+    fill.liq = _texto_o(datos.get("liq"), fill.liq)
+    fill.ecn_fee = _decimal(datos.get("ecn_fee")) if datos.get("ecn_fee") is not None else fill.ecn_fee
+    return True
+
+
+def _aplicar_fill(estado: EstadoBot, registro: Registro, hoy: date, libro: _LibroFills) -> None:
+    """`fill`: libro por token; `neta_fills` = suma signada (corrección 2, riesgo 8), con los registros REALES del decisor.
+
+    DC-02: `eco: true` no suma (solo casa el id); `id_trade: null` (Execute
+    antes del %TRADE) SÍ suma con un id sintético negativo; el dedupe por
+    `id_trade` es solo para ids reales. Sin token en el registro se busca
+    por `id_orden` en `id_a_token` (el `%TRADE` no trae token). Ajeno → no
+    cuenta. Simulado → solo en SOMBRA. Lado desconocido → el de su orden.
+    """
+    datos = registro.datos
+    if datos.get("eco") is True and _casar_eco(estado, registro, hoy, libro):
+        return
+    id_trade = _entero(datos.get("id_trade"))
+    if id_trade is None and datos.get("id_trade") is not None:
+        return   # un id que no es un número: registro roto, no se inventa un fill
+    if id_trade is not None and id_trade in libro.vistos:
+        return
+    token, id_orden = _token_del_fill(estado, datos, hoy)
     if token is None:
         return   # ajena o sin token: la reconcilia %POS (R-K-02)
     orden = estado.ordenes.get(token)
     ticker = _ticker_de(registro) or (orden.ticker if orden is not None else None)
     if ticker is None:
         return
-    vistos.add(id_trade)
-    lado = _texto_o(datos.get("lado"), orden.lado.value if orden is not None else None)
     qty = _entero_o(datos.get("qty"), 0)
+    if id_trade is None:
+        id_fill = libro.nuevo_sintetico()
+    else:
+        id_fill = id_trade
+        libro.vistos.add(id_trade)
+    lado = _texto_o(datos.get("lado"), None)
+    if _signo(lado) is None and orden is not None:
+        lado = orden.lado.value                   # el fill es de SU orden: mismo lado (el decisor no escribe otro)
     fill = Fill(
-        id_trade=id_trade,
+        id_trade=id_fill,
         token=token,
         id_orden=id_orden,
         ticker=ticker,
@@ -962,6 +1148,8 @@ def _aplicar_fill(estado: EstadoBot, registro: Registro, hoy: date, vistos: set[
         simulado=bool(datos.get("simulado", False)),
     )
     estado.fills.setdefault(token, []).append(fill)
+    if id_trade is None:
+        libro.sin_id.setdefault((id_orden, qty), []).append(fill)   # su %TRADE (eco) le pondrá el id real
     pos = _posicion(estado, ticker)
     signo = _signo(lado)
     cuenta = (not fill.simulado) or estado.fase is Fase.SOMBRA
@@ -1189,10 +1377,14 @@ def _aplicar_comando(estado: EstadoBot, registro: Registro) -> None:
         estado.pausa_global = True
     elif nombre == "reanudar":
         estado.pausa_global = False
-    elif nombre in ("apagar", "control_humano"):
+    elif nombre == "apagar":                      # decisor: vigilando=False y control_humano=True
         estado.control_humano = True
-    elif nombre == "encender":
+        estado.vigilando = False
+    elif nombre == "control_humano":
+        estado.control_humano = True
+    elif nombre == "encender":                    # decisor: vigilando=True y control_humano=False
         estado.control_humano = False
+        estado.vigilando = True
     elif nombre == "reanudar_ticker" and ticker is not None and ticker in estado.posiciones:
         _reanudar_ticker(estado.posiciones[ticker], mono)
     elif nombre == "reanudar_todo":
@@ -1205,10 +1397,15 @@ def _aplicar_comando(estado: EstadoBot, registro: Registro) -> None:
 
 
 def _aplicar_discrepancia(estado: EstadoBot, registro: Registro) -> None:
-    """Caso 6 de la reconciliación (F10, M7): el decisor hizo `neta_fills := neta_das` y lo anotó; se reproduce."""
+    """Casos 5 y 6 de la reconciliación (F10, M7): el decisor hizo `neta_fills := neta_das` y lo anotó; se reproduce.
+
+    Solo con `caso` ∈ {5, 6} (claves reales de `reconciliacion._caso_cerrada_en_das/_caso_neta_distinta`). La
+    `discrepancia` que anotan `salidas.cerrar_todo` y `cisne_negro.cierre_humano` al DETECTAR una diferencia
+    (sin `caso`) solo pide GET POSITIONS: no cambia la neta del decisor y aquí tampoco.
+    """
     ticker = _ticker_de(registro)
     neta_das = _entero(registro.datos.get("neta_das"))
-    if ticker is None or neta_das is None:
+    if ticker is None or neta_das is None or _entero(registro.datos.get("caso")) not in CASOS_ADOPTA_DAS:
         return
     pos = _posicion(estado, ticker)
     pos.neta_fills = neta_das
@@ -1216,6 +1413,39 @@ def _aplicar_discrepancia(estado: EstadoBot, registro: Registro) -> None:
     mono = _mono(registro)
     if mono is not None:
         pos.neta_das_en = mono
+
+
+def _ajena_tratada(estado: EstadoBot, id_das: int, ticker: Optional[str], vistas: dict[int, dict]) -> None:
+    """Una orden ajena ya tratada (caso 4) vuelve a `estado.ordenes_ajenas` con lo que se sepa de ella (E2c-01)."""
+    if id_das in estado.ordenes_ajenas:
+        return
+    vista = vistas.get(id_das, {})
+    token = _entero(vista.get("token"))
+    estado.ordenes_ajenas[id_das] = MsgOrden(
+        cruda="", id=id_das, token=token, ticker=str(vista.get("ticker") or ticker or ""),
+        lado=str(vista.get("lado") or ""), tipo="", qty=_entero_o(vista.get("qty"), 0), lvqty=0, cxlqty=0,
+        precio=Decimal("0"), ruta="", estado=_enum(EstadoOrden, vista.get("estado"), EstadoOrden.DESCONOCIDO),
+        hora="", origoid=0, cuenta="", trader="", order_src=_texto_o(vista.get("order_src"), None), tif=None,
+        pref=None, watch=False)
+
+
+def _aplicar_ajenas(estado: EstadoBot, registro: Registro, vistas: dict[int, dict]) -> None:
+    """E2c-01 (R-K-02, R-M-03): `ajenas_tratadas {ids, ticker}` y la `pausa` global del caso 4 (`ordenes_ajenas`).
+
+    Las órdenes ajenas que la reconciliación ya trató (pausó por ellas) vuelven a `estado.ordenes_ajenas`: tras un
+    reinicio, el volcado de GET ORDERS las vuelve a listar y, sin esto, cada relanzamiento pausaría otra vez por las
+    mismas órdenes manuales aunque Jaume ya hubiera dado /sigue. `orden_ajena_vista` (el decisor la VIO, aún no la
+    trató) NO cuenta: si el proceso muere antes de tratarla, se trata al volver.
+    """
+    datos = registro.datos
+    ids = datos.get("ids") if registro.tipo == TIPO_AJENAS_TRATADAS else datos.get("ordenes_ajenas")
+    if not isinstance(ids, list):
+        return
+    ticker = _ticker_de(registro) or _texto_o(datos.get("ticker_ajeno"), None)
+    for valor in ids:
+        id_das = _entero(valor)
+        if id_das is not None:
+            _ajena_tratada(estado, id_das, ticker, vistas)
 
 
 def _aplicar_pos(estado: EstadoBot, registro: Registro) -> None:
@@ -1245,7 +1475,8 @@ def _sin_duplicados(registros: list[Registro]) -> list[Registro]:
     return unicos
 
 
-def reconstruir(registros: Iterable[Registro], hoy: date) -> EstadoBot:
+def reconstruir(registros: Iterable[Registro], hoy: date,
+                replace_share_es_abierta: bool = REPLACE_SHARE_ES_ABIERTA) -> EstadoBot:
     """Estado del bot a partir de los registros del día (PURA, H-2, §8). Idempotente; no modifica los registros.
 
     `fase` sale del último `arranque` (sin él: SOMBRA, lo más conservador) y
@@ -1261,16 +1492,29 @@ def reconstruir(registros: Iterable[Registro], hoy: date) -> EstadoBot:
     neta_das (`pos`) y el caso 6 (`discrepancia`); pausas por ticker y
     global, control humano, BS, intervención humana y
     sin_reentrada_hasta_sigue (pausa/reanudar/bs/bs_informe/comando);
-    config_version (último `config`). NO reconstruye lo vivo (conexión,
-    cotizaciones, modo_degradado): eso lo mide el proceso al arrancar.
+    config_version (último `config`); órdenes ajenas ya tratadas
+    (`ajenas_tratadas` y la `pausa` global del caso 4, E2c-01); `vigilando`
+    (/apagar, /encender). Con las claves REALES que escriben decisor,
+    ejecutor, vigilante y reglas (DC-01, DC-02, DC-04, DC-05): ver las
+    trampas del módulo. `replace_share_es_abierta` (A-02) dice cómo leer la
+    qty de un REPLACE confirmado (defecto el de tipos). NO reconstruye lo
+    vivo (conexión, cotizaciones, modo_degradado): eso lo mide el proceso al
+    arrancar; lo que el decisor guarda fuera de `EstadoBot` sale de
+    `memoria_decisor`.
     """
-    lista = _sin_duplicados(sorted(registros, key=_clave_orden))
+    lista = _sin_duplicados(ordenar_registros(registros))
     fase = Fase.SOMBRA
+    vistas: dict[int, dict] = {}
     for registro in lista:
         if registro.tipo == TIPO_ARRANQUE:
             fase = _enum(Fase, registro.datos.get("fase"), fase)
+        elif registro.tipo == "orden_ajena_vista":
+            id_das = _entero(registro.datos.get("id"))
+            if id_das is not None:
+                vistas[id_das] = registro.datos
     estado = EstadoBot(fase=fase, dia=hoy)
-    trades_vistos: set[int] = set()
+    libro = _LibroFills()
+    reemplazos: dict[int, _Reemplazo] = {}
     for registro in lista:
         tipo = registro.tipo
         datos = registro.datos
@@ -1279,16 +1523,20 @@ def reconstruir(registros: Iterable[Registro], hoy: date) -> EstadoBot:
                 estado.senales_vistas.add(str(datos["senal_id"]))
         elif tipo == "lote":
             _aplicar_lote(estado, registro)
-        elif tipo in ("orden_intencion", "orden_simulada"):
+        elif tipo == "orden_intencion":
             _aplicar_orden_intencion(estado, registro, hoy)
+        elif tipo == "orden_simulada":
+            _aplicar_orden_simulada(estado, registro, hoy)
         elif tipo == "orden_enviada":
             _aplicar_orden_enviada(estado, registro, hoy)
+        elif tipo == "replace_intencion":
+            _aplicar_replace_intencion(estado, registro, hoy, reemplazos)
         elif tipo == "orden_estado":
             _aplicar_orden_estado(estado, registro, hoy)
         elif tipo == "orden_act":
-            _aplicar_orden_act(estado, registro, hoy)
+            _aplicar_orden_act(estado, registro, hoy, reemplazos, replace_share_es_abierta)
         elif tipo == "fill":
-            _aplicar_fill(estado, registro, hoy, trades_vistos)
+            _aplicar_fill(estado, registro, hoy, libro)
         elif tipo == "pos":
             _aplicar_pos(estado, registro)
         elif tipo == "discrepancia":
@@ -1299,8 +1547,12 @@ def reconstruir(registros: Iterable[Registro], hoy: date) -> EstadoBot:
             _aplicar_locate_estado(estado, registro, hoy)
         elif tipo == "locates_deshabilitar":
             estado.locates_deshabilitados = True
+        elif tipo == TIPO_AJENAS_TRATADAS:
+            _aplicar_ajenas(estado, registro, vistas)
         elif tipo == "pausa":
             _aplicar_pausa(estado, registro)
+            if _ticker_de(registro) is None:
+                _aplicar_ajenas(estado, registro, vistas)
         elif tipo == "reanudar":
             _aplicar_reanudar(estado, registro)
         elif tipo == "bs":
@@ -1316,3 +1568,144 @@ def reconstruir(registros: Iterable[Registro], hoy: date) -> EstadoBot:
     maximos = ultimo_seq_por_origen(lista, hoy)
     estado.ultimo_seq_token = max(maximos[Origen.EJECUTOR], maximos[Origen.EJECUTOR_LOCATE])
     return estado
+
+
+# ── memoria del decisor que no vive en EstadoBot (PURA, H-2) ────────────
+@dataclasses.dataclass
+class MemoriaDecisor:
+    """Lo que el decisor guarda FUERA de `EstadoBot` y el diario permite rehacer tras un reinicio (H-2).
+
+    * `k_halts_up` (E1-03, R-F-01): k por ticker = el MAYOR `k` de sus
+      registros `halt` / `halt_reapertura` del día (el `k` que anota el
+      decisor ya es el acumulado).
+    * `halt_hoy`, `stop_hoy`, `reapertura_ok` (R-F-03, G1A-18/G1B-18): ticker
+      con halt hoy; ticker con un fill de stop (principal, emergencia,
+      protección) o de salida del halt (HALT_OPEN, HALT_PM_LIMITE,
+      HALT_BANDA); ticker cuya primera vela tras el halt permitió reentrar
+      (`halt_primera_vela` con `reentrada: true`), que se pierde con un halt
+      posterior.
+    * `manual` (G1A-12/G1B-10): tickers en control manual por
+      `/cancelar_ordenes X` confirmado, hasta `/reanudar X` (o
+      `reanudar_todo`).
+    * `override_modo_seguridad` / `override_estrategia` (G1B-09): los
+      `config_cambio` con `origen: telegram` aplicados (/modo_seguridad,
+      /activar, /desactivar; y `estrategias.SID.al_desactivar` si el decisor
+      lo anota así), soltados por un `config_cambio` del fichero (CM3)
+      aplicado sobre la misma ruta, como `decisor._soltar_override`.
+    * `al_desactivar_por_arg`: /cerrar_y_reiniciar y /esperar_fin_dia
+      confirmados, por el ARGUMENTO tal cual (nombre o strategy_id: lo
+      resuelve el decisor con `_estrategia_por_arg`).
+    """
+
+    k_halts_up: dict[str, int] = dataclasses.field(default_factory=dict)
+    halt_hoy: set[str] = dataclasses.field(default_factory=set)
+    stop_hoy: set[str] = dataclasses.field(default_factory=set)
+    reapertura_ok: set[str] = dataclasses.field(default_factory=set)
+    manual: set[str] = dataclasses.field(default_factory=set)
+    override_modo_seguridad: Optional[bool] = None
+    override_estrategia: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
+    al_desactivar_por_arg: dict[str, str] = dataclasses.field(default_factory=dict)
+
+
+def _args_comando(datos: dict) -> list[str]:
+    args = datos.get("args") or []
+    return [str(a) for a in args] if isinstance(args, list) else [str(args)]
+
+
+def _memoria_comando(memoria: MemoriaDecisor, datos: dict) -> None:
+    if datos.get("confirmado") is not True:
+        return
+    nombre = str(datos.get("nombre", "")).strip().lower().lstrip("/")
+    args = _args_comando(datos)
+    primero = args[0].strip() if args and args[0].strip() else None
+    if nombre == "cancelar_ordenes" and primero is not None:
+        memoria.manual.add(primero.upper())
+    elif nombre in ("reanudar_ticker", "reanudar") and primero is not None:
+        memoria.manual.discard(primero.upper())
+    elif nombre == "reanudar_todo":
+        memoria.manual.clear()
+    elif nombre in ("cerrar_y_reiniciar", "esperar_fin_dia") and primero is not None:
+        memoria.al_desactivar_por_arg[primero] = nombre
+
+
+def _soltar_override(memoria: MemoriaDecisor, ruta: str) -> None:
+    """Igual que `decisor._soltar_override`: un cambio del FICHERO aplicado sobre la ruta manda sobre Telegram."""
+    if ruta == _RUTA_MODO_SEGURIDAD:
+        memoria.override_modo_seguridad = None
+        return
+    partes = ruta.split(".")
+    if len(partes) == 3 and partes[0] == "estrategias" and partes[2] in _CAMPOS_OVERRIDE_ESTRATEGIA:
+        campos = memoria.override_estrategia.get(partes[1])
+        if campos is not None:
+            campos.pop(partes[2], None)
+            if not campos:
+                memoria.override_estrategia.pop(partes[1], None)
+        if partes[2] == "al_desactivar":
+            memoria.al_desactivar_por_arg.pop(partes[1], None)
+    elif len(partes) == 2 and partes[0] == "estrategias":
+        memoria.override_estrategia.pop(partes[1], None)
+        memoria.al_desactivar_por_arg.pop(partes[1], None)
+
+
+def _memoria_config_cambio(memoria: MemoriaDecisor, datos: dict) -> None:
+    ruta = datos.get("ruta")
+    if not isinstance(ruta, str) or datos.get("aplicado") is False:
+        return
+    if datos.get("origen") != "telegram":
+        _soltar_override(memoria, ruta)
+        return
+    despues = datos.get("despues")
+    if ruta == _RUTA_MODO_SEGURIDAD and isinstance(despues, bool):
+        memoria.override_modo_seguridad = despues
+        return
+    partes = ruta.split(".")
+    if len(partes) == 3 and partes[0] == "estrategias" and partes[2] in _CAMPOS_OVERRIDE_ESTRATEGIA:
+        if partes[2] == "ejecutar" and not isinstance(despues, bool):
+            return
+        if partes[2] == "al_desactivar" and not isinstance(despues, str):
+            return
+        memoria.override_estrategia.setdefault(partes[1], {})[partes[2]] = despues
+
+
+def memoria_decisor(registros: Iterable[Registro], hoy: date) -> MemoriaDecisor:
+    """`MemoriaDecisor` a partir de los registros del día (PURA, idempotente, mismo orden que `reconstruir`).
+
+    La usa el decisor al arrancar tras `reconstruir` (E1-03, G1A-12, G1A-18,
+    G1B-09, G1B-10, G1B-18): sin ella, un reinicio a media sesión pone k a 0,
+    levanta el veto R-F-03, devuelve los stops a un ticker que gestiona el
+    humano y deshace un /desactivar o un /modo_seguridad de Telegram.
+    """
+    lista = _sin_duplicados(ordenar_registros(registros))
+    memoria = MemoriaDecisor()
+    intenciones: dict[int, tuple[Optional[str], Optional[str]]] = {}     # token → (lado, tipo_orden)
+    for registro in lista:
+        tipo = registro.tipo
+        datos = registro.datos
+        ticker = _ticker_de(registro)
+        if tipo == "orden_intencion":
+            token = _token_de_hoy(datos.get("token"), hoy)
+            if token is not None:
+                intenciones[token] = (_texto_o(datos.get("lado"), None), _texto_o(datos.get("tipo_orden"), None))
+        elif tipo in ("halt", "halt_reapertura") and ticker is not None:
+            k = _entero(datos.get("k"))
+            if k is not None and k >= 0:
+                memoria.k_halts_up[ticker] = max(memoria.k_halts_up.get(ticker, 0), k)
+            if tipo == "halt":
+                memoria.halt_hoy.add(ticker)
+                memoria.reapertura_ok.discard(ticker)
+        elif tipo == "halt_primera_vela" and ticker is not None:
+            if datos.get("reentrada") is True:
+                memoria.reapertura_ok.add(ticker)
+        elif tipo == "fill" and ticker is not None and datos.get("eco") is not True:
+            proposito = _texto_o(datos.get("proposito"), None)
+            token = _token_de_hoy(datos.get("token"), hoy)
+            lado, tipo_orden = intenciones.get(token, (None, None)) if token is not None else (None, None)
+            stop_sin_proposito = (proposito in (None, Proposito.DESCONOCIDA.value) and lado == Lado.COMPRA.value
+                                  and tipo_orden == TipoOrden.STOP_LIMITE_PP.value)
+            if proposito in _PROPOSITOS_VETO_STOP or stop_sin_proposito:
+                memoria.stop_hoy.add(ticker)
+        elif tipo == "comando":
+            _memoria_comando(memoria, datos)
+        elif tipo == "config_cambio":
+            _memoria_config_cambio(memoria, datos)
+    return memoria

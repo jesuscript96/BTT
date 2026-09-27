@@ -31,8 +31,13 @@ LAS TRAMPAS.
   * La referencia de Massive (ficha/splits) y el calendario son dobles fijos
     y sin red: el replay es reproducible (en vivo, Massive podría excluir un
     ticker que aquí se opera; eso no es comportamiento del bot).
-  * `@pytest.mark.slow`: el conftest no registra la marca; pytest avisa
-    `PytestUnknownMarkWarning` y la acepta.
+  * `@pytest.mark.slow`: el conftest la registra (G2-09); se excluye con
+    `-m "not slow"`.
+  * G2-06: el gancho `paso` DEVUELVE las líneas de la vela y el ejecutor
+    aplica su `$Quote` antes de la señal (sin eso el dorado compararía un día
+    sin una sola orden). El `esperado_*.jsonl` de un día real lo genera y lo
+    REVISA una persona (entrada, stop y salida a la vista); hasta entonces el
+    dorado se salta con motivo.
 """
 from __future__ import annotations
 
@@ -274,10 +279,13 @@ def test_r_o_02_dorado_de_un_dia_grabado(dia: Optional[date], dir_bot: Path, mon
                           "BOT_DAS_FUENTE": f"grabacion={grabacion}"}.items():
         monkeypatch.setenv(nombre, valor)
 
-    def paso(t: datetime, vela: dict) -> None:
-        """Guion del replay: halts/reaperturas a su hora y la vela como cotización con el spread declarado."""
+    def paso(t: datetime, vela: dict) -> list[str]:
+        """Guion del replay: halts/reaperturas a su hora y la vela como cotización con el spread declarado.
+
+        G2-06: devuelve las líneas de DAS de la vela; el ejecutor aplica su `$Quote` ANTES de la señal (si no, toda
+        entrada del replay salía descartada «sin cotización fresca de DAS»)."""
         programa.aplicar_hasta(simulador, t)
-        simulador.desde_vela(vela["ticker"], vela, programa.spread)
+        return simulador.desde_vela(vela["ticker"], vela, programa.spread)
 
     e = ejecutor_mod.construir_desde_env(cfg, reloj, BACKEND, referencia=_ReferenciaFija(),
                                          calendario=_CalendarioFijo(), hash_motor=lambda base: cfg.motor_hash,

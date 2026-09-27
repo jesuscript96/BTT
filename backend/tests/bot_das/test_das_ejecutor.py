@@ -87,6 +87,7 @@ from app.bot_das.tipos import (
     LocateInquire,
     LocateOferta,
     Nivel,
+    OrdenDescartada,
     OrdenNueva,
     Origen,
     PedirAlSupervisor,
@@ -340,7 +341,8 @@ def _montar(cfg: Config, reloj: RelojSimulado, dir_bot: Path, *, cliente: Option
             fuente: Optional[FuenteManual] = None, avisos: Optional[AvisosGrabados] = None,
             hash_motor: Optional[Callable[[Path], str]] = None, medir: Optional[Callable[[], Any]] = None,
             limpiar: Optional[Callable[[str], str]] = None, arrancar: bool = True,
-            espera_reconciliacion_s: float = 0.2) -> Montaje:
+            espera_reconciliacion_s: float = 0.2, latido: Optional[Latido] = None, referencia: Any = None,
+            preparar_estado: Optional[Callable[[Any], None]] = None) -> Montaje:
     traza: list = []
     cliente = cliente if cliente is not None else ClienteFalso(traza)
     cliente._traza = traza
@@ -353,18 +355,23 @@ def _montar(cfg: Config, reloj: RelojSimulado, dir_bot: Path, *, cliente: Option
     buzon = ej.Buzon()
     cliente.al_estado = buzon.al_estado
 
+    ref = referencia if referencia is not None else ReferenciaFalsa()
+
     def fabrica(estado):
+        if preparar_estado is not None:
+            preparar_estado(estado)
         tokens = GeneradorTokens(Origen.EJECUTOR, estado.dia, estado.ultimo_seq_token)
-        return Decisor(cfg, estado, mercado, ReferenciaFalsa(), tokens, catalogo, lambda: diario.degradado,
+        return Decisor(cfg, estado, mercado, ref, tokens, catalogo, lambda: diario.degradado,
                        calendario=CalendarioPrueba())
 
     estado_dir = dir_bot / "estado"
     e = ej.Ejecutor(cfg, cliente, fuente, diario, avisos, mercado, fabrica, reloj,
-                    Latido(estado_dir / ej.NOMBRE_LATIDO, reloj), CerrojoInstancia(estado_dir / ej.NOMBRE_CERROJO),
+                    latido if latido is not None else Latido(estado_dir / ej.NOMBRE_LATIDO, reloj),
+                    CerrojoInstancia(estado_dir / ej.NOMBRE_CERROJO),
                     [], None, estado_dir, buzon=buzon,
                     hash_motor=hash_motor if hash_motor is not None else (lambda base: cfg.motor_hash),
                     medir_desvio=medir if medir is not None else (lambda: 0.0), limpiar=limpiar,
-                    espera_reconciliacion_s=espera_reconciliacion_s, espera_avisos_s=0.5)
+                    espera_reconciliacion_s=espera_reconciliacion_s, espera_avisos_s=0.5, referencia=ref)
     m = Montaje(e, diario, cliente, fuente, avisos, mercado, reloj, dir_bot, traza)
     if arrancar:
         assert e.arrancar() == ej.CODIGO_OK
@@ -652,6 +659,7 @@ def test_cancelar_reemplazar_e_invalidar_escriben_su_intencion_antes(montar, dir
     m.e.ejecutar(Reemplazar(1236, 126800003, 60, None, D("3.50"), "perseguir"))
     m.e.ejecutar(Cancelar(1237, 126800004, "sobrante"))
     assert m.cliente.series_invalidadas == [("stops:XYZ", 3)]
+    assert m.cliente.invalida_antes_de_enviar("stops:XYZ", 3)          # L0-01 / riesgo 7: invalidar PRECEDE al plan
     assert m.cliente.lineas[-3:] == [("REPLACE 1235 60 STOPLMT 4 4.12", "stops:XYZ", 3),
                                      ("REPLACE 1236 60 3.5", None, 0), ("CANCEL 1237", None, 0)]
     assert orden_visto == [("REPLACE 1235 60 STOPLMT 4 4.12", True), ("REPLACE 1236 60 3.5", True),
@@ -912,6 +920,325 @@ def test_el_constructor_rechaza_piezas_equivocadas(cfg: Config, reloj: RelojSimu
         ej.Ejecutor(**base, espera_reconciliacion_s=-1)
     with pytest.raises(RuntimeError):
         ej.Ejecutor(**base).correr()
+
+
+# ═══════════════════════════ 3b. correcciones de la revisión (G2, D2a-06, G1A-03, G1B-01, H-2) ═══
+class RelojReal:
+    """Reloj de pared para medir el latido de verdad (el simulado de conftest está PARADO)."""
+
+    def mono(self) -> float:
+        return time.monotonic()
+
+    def epoch(self) -> float:
+        return time.time()
+
+
+class LatidoEspia(Latido):
+    """Latido que apunta cuándo (tiempo real) escribió de verdad."""
+
+    def __init__(self, ruta: Path) -> None:
+        super().__init__(ruta, RelojReal(), cada_s=0.1)
+        self.escrito_en: list[float] = []
+
+    def tocar(self, todo_vivo: bool = True) -> None:
+        antes = self.escrituras
+        super().tocar(todo_vivo)
+        if self.escrituras != antes:
+            self.escrito_en.append(time.monotonic())
+
+
+class ClienteLento(ClienteFalso):
+    """`connect` que tarda (DAS que acepta tarde): el hilo principal no puede quedarse sin latido."""
+
+    def __init__(self, tarda_s: float) -> None:
+        super().__init__()
+        self.tarda_s = tarda_s
+
+    def conectar(self) -> bool:
+        time.sleep(self.tarda_s)
+        return super().conectar()
+
+
+class ClienteQueDescarta(ClienteFalso):
+    """`enviar` devuelve False para los mutantes (sin conexión o cola llena): G2-05."""
+
+    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> Optional[bool]:
+        super().enviar(linea, serie, version)
+        return False if protocolo.es_mutante(linea) else True
+
+
+def test_g2_02_sntp_hash_y_connect_lentos_no_dejan_el_latido_sin_tocar(montar, dir_bot: Path) -> None:
+    """G2-02 (R-J-04 b, §6): con un SNTP que tarda 1,6 s y un connect de 1,6 s el latido se sigue tocando cada ≤ 1 s
+    durante `arrancar()` (el supervisor mata a los 3 s): la red corre en un hilo de un solo uso."""
+    latido = LatidoEspia(dir_bot / "estado" / ej.NOMBRE_LATIDO)
+
+    def sntp_lento() -> float:
+        time.sleep(1.6)
+        return 0.0
+
+    def hash_lento(base: Path) -> str:
+        time.sleep(1.2)
+        return m.e.cfg.motor_hash
+
+    m = montar(arrancar=False, medir=sntp_lento, cliente=ClienteLento(1.6), latido=latido)
+    m.e._hash_motor = hash_lento
+    inicio = time.monotonic()
+    assert m.e.arrancar() == ej.CODIGO_OK
+    fin = time.monotonic()
+    marcas = [inicio] + [t for t in latido.escrito_en if inicio <= t <= fin] + [fin]
+    huecos = [b - a for a, b in zip(marcas, marcas[1:])]
+    assert fin - inicio >= 4.0 and max(huecos) <= 1.0, huecos
+    assert m.cliente.conexiones == 1 and m.e.decisor.estado.das_conectado
+
+
+def test_g2_02_una_excepcion_en_el_hilo_auxiliar_llega_al_principal(montar) -> None:
+    """G2-02: `_con_latido` devuelve el resultado o relanza en el hilo principal lo que lanzó el hilo auxiliar."""
+    m = montar()
+    assert m.e._con_latido("prueba", lambda: 7) == 7
+    with pytest.raises(ZeroDivisionError):
+        m.e._con_latido("prueba", lambda: 1 / 0)
+
+
+def test_g2_05_una_orden_que_el_cliente_descarta_no_se_anota_como_enviada(montar, dir_bot: Path) -> None:
+    """G2-05 (M6, riesgo 3): `cliente.enviar` → False ⇒ `orden_intencion` + `orden_descartada`, NUNCA `orden_enviada`, y
+    el decisor recibe `OrdenDescartada` (D2a-06: la cierra y replanifica). Un CANCEL descartado → `linea_descartada`."""
+    m = montar(cliente=ClienteQueDescarta())
+    o = orden(Proposito.STOP_PRINCIPAL, Lado.COMPRA, seq=950, tipo=TipoOrden.STOP_LIMITE_PP)
+    enviadas_antes = m.e._enviadas
+    m.e.ejecutar(EnviarOrden(o, serie="stops:XYZ"))
+    regs = m.regs()
+    assert [r for r in de_tipo(regs, "orden_intencion") if r.datos["token"] == o.token]
+    assert not [r for r in de_tipo(regs, "orden_enviada") if r.datos["token"] == o.token]
+    descartada = [r for r in de_tipo(regs, "orden_descartada") if r.datos["token"] == o.token]
+    assert len(descartada) == 1 and descartada[0].datos["regla"] == "G2-05"
+    assert m.e._enviadas == enviadas_antes
+    msg = m.e.buzon.sacar(0)
+    assert isinstance(msg, OrdenDescartada) and msg.token == o.token and msg.ticker == TICKER
+    assert msg.serie == "stops:XYZ" and msg.motivo == ej.MOTIVO_NO_ENCOLADA
+    m.e.buzon.poner(msg)
+    m.pasos(2)
+    assert [r for r in de_tipo(m.regs(), "orden_descartada") if r.datos.get("regla") == "D2a-06"]   # lo vio el decisor
+    m.e.ejecutar(Cancelar(id_das=4242, token=o.token, motivo="prueba"))
+    assert [r for r in de_tipo(m.regs(), "linea_descartada") if r.datos["accion"] == "Cancelar"]
+
+
+def test_g2_05_d2a_06_construir_conecta_al_descartar_del_cliente_con_la_cola(cfg: Config, reloj: RelojSimulado,
+                                                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    """D2a-06: `construir_desde_env` da al `ClienteDAS` el `al_descartar` del buzón; lo que el emisor purga llega al
+    decisor como `OrdenDescartada` (también en sombra, con el emparejador respetando A-02)."""
+    _entorno_das(monkeypatch)
+    monkeypatch.setenv("BOT_DAS_PERMITIR_ORDENES", "1")
+    e = _construir(dataclasses.replace(cfg, fase=Fase.CANARIO), reloj)
+    assert e.cliente._al_descartar == e.buzon.al_descartar
+    e.cliente._al_descartar(OrdenDescartada(token=123, serie="stops:XYZ", version=1, motivo="descartada por versión"))
+    assert isinstance(e.buzon.sacar(0), OrdenDescartada)
+    with pytest.raises(TypeError):
+        e.buzon.al_descartar("no es un mensaje")  # type: ignore[arg-type]
+    sombra_cfg = dataclasses.replace(cfg, fase=Fase.SOMBRA, stops={**cfg.stops, "replace_share_es_abierta": False})
+    s = _construir(sombra_cfg, reloj)
+    assert s.cliente.real._al_descartar == s.buzon.al_descartar
+    assert s.cliente.emparejador.replace_share_es_abierta is False
+
+
+class ReferenciaCacheLenta:
+    """La caché de `referencia_massive.Referencia` (G1A-03) con una «red» que tarda: registra las precargas."""
+
+    def __init__(self, tarda_s: float = 0.0, splits_revienta: bool = False) -> None:
+        import threading
+        self.tarda_s = tarda_s
+        self.splits_revienta = splits_revienta
+        self._lock = threading.Lock()
+        self._fichas: dict[str, Ficha] = {}
+        self._pendientes: set[str] = set()
+        self._splits: Optional[set[str]] = None
+        self.precargas_splits: list[date] = []
+        self.precargas_ficha: list[str] = []
+
+    def ficha_en_cache(self, ticker: str) -> Optional[Ficha]:
+        with self._lock:
+            if ticker in self._fichas:
+                return self._fichas[ticker]
+            self._pendientes.add(ticker)
+            return None
+
+    def pedir_ficha(self, ticker: str) -> None:
+        with self._lock:
+            if ticker not in self._fichas:
+                self._pendientes.add(ticker)
+
+    def splits_en_cache(self, dia: date) -> Optional[set[str]]:
+        with self._lock:
+            return None if self._splits is None else set(self._splits)
+
+    def splits_pendientes(self, dia: date) -> bool:
+        with self._lock:
+            return self._splits is None and not self.precargas_splits
+
+    def tomar_pendientes(self) -> list[str]:
+        with self._lock:
+            return sorted(self._pendientes)
+
+    def precargar_splits(self, dia: date) -> Optional[set[str]]:
+        if self.splits_revienta:
+            raise OSError("Massive caído (simulado)")
+        time.sleep(self.tarda_s)
+        with self._lock:
+            self.precargas_splits.append(dia)
+            self._splits = set()
+        return set()
+
+    def precargar_ficha(self, ticker: str) -> Optional[Ficha]:
+        time.sleep(self.tarda_s)
+        ficha = ReferenciaFalsa().ficha(ticker)
+        with self._lock:
+            self.precargas_ficha.append(ticker)
+            self._fichas[ticker] = ficha
+            self._pendientes.discard(ticker)
+        return ficha
+
+
+def test_g1a_03_g1b_08_el_hilo_referencia_precarga_sin_frenar_el_bucle(montar) -> None:
+    """G1A-03 / G1B-08: el HiloVigilado «referencia» precarga los splits del día al arrancar y las fichas que el decisor
+    pide; cada vuelta del bucle sigue durando milisegundos aunque cada petición a Massive tarde 1 s."""
+    ref = ReferenciaCacheLenta(tarda_s=1.0)
+    m = montar(referencia=ref)
+    assert de_tipo(m.regs(), "referencia_precarga")
+    ref.pedir_ficha(TICKER)
+    limite = time.monotonic() + PLAZO_S
+    duraciones: list[float] = []
+    while TICKER not in ref.precargas_ficha:
+        assert time.monotonic() < limite, "el hilo referencia no precargó la ficha"
+        antes = time.monotonic()
+        m.pasos(1, espera_s=0.02)
+        duraciones.append(time.monotonic() - antes)
+    assert ref.precargas_splits == [HOY]
+    assert ref.ficha_en_cache(TICKER) is not None
+    assert max(duraciones) < 0.5, max(duraciones)
+    assert m.e._hilo_referencia.vivo
+    m.e.parar()
+    assert m.e._hilo_referencia.parando.is_set()
+
+
+def test_g1a_03_sin_precarga_no_hay_hilo_y_si_muere_avisa_3(montar, monkeypatch: pytest.MonkeyPatch) -> None:
+    """G1A-03: una referencia en memoria (replay, tests) no arranca hilo; si el hilo de la real muere sin relanzarse, sin
+    fichas no se abre nada (A12): aviso 3 una sola vez."""
+    m = montar()
+    assert m.e._hilo_referencia is None
+    m.e.parar()                                              # suelta el cerrojo: el segundo ejecutor es otra instancia
+    import functools
+    from app.bot_das.cerrojo import HiloVigilado
+    monkeypatch.setattr(ej, "HiloVigilado", functools.partial(HiloVigilado, max_relanzos=0, espera_s=0.0))
+    m2 = montar(referencia=ReferenciaCacheLenta(splits_revienta=True))
+    limite = time.monotonic() + PLAZO_S
+    while m2.e._hilo_referencia.vivo:
+        assert time.monotonic() < limite
+        time.sleep(0.02)
+    m2.pasos(3)
+    m2.e.buzon.poner(Tic())
+    m2.pasos(2)
+    muertas = [a for a in m2.avisos.avisos if a.clave == "referencia_muerta"]
+    assert len(muertas) == 1 and muertas[0].nivel is Nivel.MAXIMO and "A12" in muertas[0].texto
+    assert de_tipo(m2.regs(), "referencia_muerta")
+
+
+def _escribir_diario_previo(dir_bot: Path, reloj: RelojSimulado, cfg: Config, registros_previos: list) -> None:
+    previo = Diario(dir_bot / "diario", reloj, "ejecutor", VERSION, cfg.fase)
+    previo.abrir_dia(HOY, motor_hash=cfg.motor_hash, config_version=cfg.config_version,
+                     estrategias_hash=cfg.estrategias_hash)
+    for tipo, datos in registros_previos:
+        previo.anotar(tipo, **datos)
+    previo.cerrar()
+
+
+def test_h2_e1_03_g1b_09_c_02_la_memoria_del_decisor_se_siembra_del_diario(montar, cfg: Config, reloj: RelojSimulado,
+                                                                           dir_bot: Path) -> None:
+    """E1-03 / G1B-09 / C-02 (lo que el decisor dejó pendiente al ejecutor): al arrancar, el decisor se siembra con
+    `diario.memoria_decisor`: k de halts, /modo_seguridad de Telegram y los ids de comando ya vistos (un «/estado» con
+    el mismo id que Telegram reentrega tras el reinicio se ignora)."""
+    from app.bot_das import comandos as mod_comandos
+    from app.bot_das.tipos import Comando, ComandoRecibido
+    _escribir_diario_previo(dir_bot, reloj, cfg, [
+        ("halt", {"ticker": TICKER, "k": 2, "ta": "H"}),
+        ("config_cambio", {"ruta": "modo_seguridad.activo", "antes": False, "despues": True, "caliente": True,
+                           "aplicado": True, "origen": "telegram"}),
+        ("comando", {"nombre": "estado", "args": [], "chat_id": 1, "id": "tg:77", "confirmado": True}),
+    ])
+    m = montar()
+    memoria = de_tipo(m.regs(), "memoria_decisor")
+    assert memoria and memoria[-1].datos["k_halts_up"] == {TICKER: 2} and memoria[-1].datos["comandos_ids"] == 1
+    assert m.mercado.simbolo(TICKER).k_halts_up == 2
+    assert m.e.decisor.cfg.modo_seguridad.get("activo") is True
+    m.e.buzon.poner(ComandoRecibido(Comando(nombre="estado", args=[], chat_id=1, requiere=mod_comandos.REQUIERE_NADA,
+                                            id="tg:77", texto="/estado")))
+    m.pasos(2)
+    assert [r for r in de_tipo(m.regs(), "comando_repetido") if r.datos.get("id") == "tg:77"]
+
+
+def test_g1b_01_rearranque_con_eod_vencido_no_compra_nada_antes_de_reconciliar(montar) -> None:
+    """G1B-01 (R-J-02.5): el ejecutor arranca con un lote cuyo EOD ya venció y DAS sin volcado (no hay reconciliación):
+    los temporizadores vencidos pasan por el decisor, que los aplaza; en 5 s ningún NEWORDER de compra sale a DAS."""
+    from app.bot_das.tipos import EstadoLote, Lote, PosicionTicker
+
+    def con_lote(estado) -> None:
+        pos = PosicionTicker(ticker=TICKER, neta_fills=-100)
+        lote = Lote(id=f"{TICKER}|{SID}|2026-09-25 09:00:00|entrada", strategy_id=SID, estrategia=NOMBRE_ESTRATEGIA,
+                    ticker=TICKER, direccion="Short", pedidas=100, llenas=100, precio_medio=D("3.45"),
+                    nivel_stop=D("4.0"), estado=EstadoLote.ABIERTO, eod="09:20:00")
+        pos.lotes[lote.id] = lote
+        estado.posiciones[TICKER] = pos
+
+    m = montar(preparar_estado=con_lote)
+    assert "reconciliacion" in m.e.decisor.estado.modo_degradado
+    for _ in range(10):
+        m.reloj.avanzar(0.5)
+        m.pasos(2)
+    assert neworders(m.cliente.enviadas(), "B", TICKER) == []
+    assert de_tipo(m.regs(), "salida_aplazada")
+
+
+@pytest.mark.parametrize("valor, esperado", [(False, False), (True, True), (None, True)],
+                         ids=["A-02-total", "A-02-abierta", "A-02-sin-clave-defecto"])
+def test_a_02_reconstruir_lee_el_replace_con_el_interruptor_de_la_config(montar, cfg: Config,
+                                                                         monkeypatch: pytest.MonkeyPatch,
+                                                                         valor: Any, esperado: bool) -> None:
+    """A-02 (pendiente del decisor para el ejecutor): `reconstruir` recibe `stops.replace_share_es_abierta` de la config
+    (sin la clave, el defecto de tipos): un REPLACE confirmado se relee tras un reinicio igual que lo mandó el decisor."""
+    vistos: list[bool] = []
+    original = ej.reconstruir
+
+    def espia(registros, hoy, replace_share_es_abierta=True):
+        vistos.append(replace_share_es_abierta)
+        return original(registros, hoy, replace_share_es_abierta=replace_share_es_abierta)
+
+    monkeypatch.setattr(ej, "reconstruir", espia)
+    stops = {k: v for k, v in cfg.stops.items() if k != "replace_share_es_abierta"}
+    if valor is not None:
+        stops["replace_share_es_abierta"] = valor
+    montar(config=dataclasses.replace(cfg, stops=stops))
+    assert vistos == [esperado]
+
+
+def test_pedir_al_supervisor_se_deduplica_10_s(montar, dir_bot: Path) -> None:
+    """Dedupe de PedirAlSupervisor (como el vigilante, corrección 16): la misma petición como mucho cada 10 s."""
+    m = montar()
+    for _ in range(3):
+        m.e.ejecutar(PedirAlSupervisor("relanzar vigilante"))
+    ruta = dir_bot / "estado" / ej.NOMBRE_ORDEN_SUPERVISOR
+    assert len(lineas_jsonl(ruta)) == 1
+    m.reloj.avanzar(ej.PETICION_REPETIR_S)
+    m.e.ejecutar(PedirAlSupervisor("relanzar vigilante"))
+    m.e.ejecutar(PedirAlSupervisor("relanzar ejecutor"))
+    assert [p["peticion"] for p in lineas_jsonl(ruta)] == ["relanzar vigilante", "relanzar vigilante",
+                                                           "relanzar ejecutor"]
+
+
+def test_a_07_la_cuota_agotada_de_la_sombra_se_anota(montar) -> None:
+    """A-07: lo que `ClienteSombra.al_cuota_agotada` cuenta llega al diario como «cuota_agotada» desde el hilo principal."""
+    m = montar()
+    m.e.buzon.al_cuota_agotada("CANCEL 1", 0.4)
+    m.pasos(1)
+    registro = de_tipo(m.regs(), "cuota_agotada")
+    assert registro and registro[0].datos["linea"] == "CANCEL 1" and registro[0].datos["espera_s"] == 0.4
 
 
 # ═══════════════════════════ 4. integración con el simulador de DAS ═══════
@@ -1275,6 +1602,36 @@ def test_r_o_02_replay_de_una_grabacion_avanza_el_reloj_y_termina(cfg: Config, d
     assert not [linea for linea in simulador.recibidas() if protocolo.es_mutante(linea)]
 
 
+def test_g2_06_replay_con_la_cotizacion_de_la_vela_ya_no_descarta_por_falta_de_cotizacion(
+        cfg: Config, dir_bot: Path, libro: LibroSimulado, simulador: SimuladorDAS,
+        direccion_simulador: tuple[str, int], motor_falso: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """G2-06 (R-O-02): el gancho del guion devuelve las líneas de DAS de la vela (`SimuladorDAS.desde_vela`) y el
+    ejecutor aplica su `$Quote` ANTES de entregar la señal: ninguna entrada se descarta «sin cotización fresca de DAS»
+    (antes era el destino de TODAS); en el recorte, sin radar ni locates, pasan esa puerta y caen en la de locates."""
+    from app.bot_das.simulador_das import ProgramaGuion
+    reloj = RelojSimulado(datetime(2026, 9, 25, 3, 55, tzinfo=ET))
+    host, puerto = direccion_simulador
+    ruta_am = Path(__file__).parent / "fixtures" / "AM_recorte.jsonl.gz"
+    for nombre, valor in {"DAS_API_HOST": host, "DAS_API_PORT": str(puerto), "DAS_USUARIO": USUARIO,
+                          "DAS_CLAVE": CLAVE_DAS, "DAS_CUENTA": CUENTA, "BOT_DAS_FUENTE": f"grabacion={ruta_am}"}.items():
+        monkeypatch.setenv(nombre, valor)
+    motor_falso["entradas_en"] = {5}
+    programa = ProgramaGuion({})
+    c = dataclasses.replace(cfg, fase=Fase.SOMBRA)
+    e = ej.construir_desde_env(c, reloj, BACKEND, referencia=ReferenciaFalsa(), calendario=CalendarioPrueba(),
+                               hash_motor=lambda base: c.motor_hash, medir_desvio=lambda: 0.0, canales=[],
+                               paso_replay=lambda t, vela: simulador.desde_vela(vela["ticker"], vela, programa.spread))
+    try:
+        assert e.arrancar() == ej.CODIGO_OK
+        assert e.correr() == ej.CODIGO_OK
+    finally:
+        e.parar()
+    regs = registros(dir_bot)
+    motivos = [str(r.datos.get("motivo", "")) for r in de_tipo(regs, "senal_descartada")]
+    assert motivos and not [m for m in motivos if "cotiz" in m.lower()], motivos
+    assert not [linea for linea in simulador.recibidas() if protocolo.es_mutante(linea)]
+
+
 # ═══════════════════════════ 5. reinicio a mitad (H-2) en subprocesos ═════
 DRIVER = r"""
 import sys, time
@@ -1561,6 +1918,19 @@ def test_construir_telegram_solo_con_token_y_chats_autorizados(cfg: Config, relo
     assert ("ReceptorTelegram" in nombres) is con_telegram
     if con_telegram:
         assert ej._chat_ids_de_entorno() == frozenset({111, 222})
+
+
+def test_c_02_el_receptor_de_telegram_persiste_su_offset_en_estado(cfg: Config, reloj: RelojSimulado, dir_bot: Path,
+                                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-02: `construir_desde_env` da al `ReceptorTelegram` la ruta `estado/telegram_offset` (lo leído no se repite al
+    relanzar el ejecutor: un «/cerrar X N SI» entregado no cierra N acciones más)."""
+    from app.bot_das.comandos import FICHERO_OFFSET_TELEGRAM
+    _entorno_das(monkeypatch)
+    monkeypatch.setenv(ej.ENV_TOKEN_B, "token-inventado-b")
+    monkeypatch.setenv(ej.ENV_CHAT_IDS, "111")
+    e = _construir(cfg, reloj)
+    telegram = [r for r in e.receptores if type(r).__name__ == "ReceptorTelegram"]
+    assert len(telegram) == 1 and telegram[0]._ruta_offset == dir_bot / "estado" / FICHERO_OFFSET_TELEGRAM
 
 
 def test_main_sin_cuenta_sale_con_5_sin_tocar_el_env_real(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

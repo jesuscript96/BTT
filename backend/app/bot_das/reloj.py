@@ -14,6 +14,13 @@ miden con `mono()` y la hora de pared se contrasta al arrancar y cada hora.
 LAS TRAMPAS.
   * `%ORDER` trae `HH:MM:SS` sin fecha (riesgo 10): `hora_das_a_et` lo
     combina con `hoy` del reloj, nunca con la fecha local del VPS.
+  * Y SIN zona (L0-05): DAS Trader pinta las horas en la zona que tenga
+    configurada. `hora_das_a_et` supone ET, y nadie lo ha verificado contra
+    el DAS real; si el DAS del VPS estuviera en hora de Madrid, el TAT de un
+    halt y las horas de los fills vendrían 6 h desplazados. El paso canario
+    de `comprobar_das` debe comparar la hora de un `%ORDER` recién enviado
+    con `ahora()` usando `hora_das_es_et` (tolerancia 60 s) y abortar si no
+    casa.
   * `RelojSimulado.mono()` avanza EXACTAMENTE lo que se avanza la hora, y
     nunca retrocede aunque `fijar` vaya hacia atrás: monotónico es monotónico.
     Arranca en 1 000,0 para que ningún «0.0 = sin valor» del estado coincida
@@ -42,6 +49,7 @@ _MONO_INICIAL_SIMULADO = 1_000.0
 _NTP_DELTA = 2_208_988_800          # segundos entre 1900-01-01 y 1970-01-01
 _SNTP_PUERTO = 123
 _SNTP_PETICION = b"\x1b" + 47 * b"\0"   # LI=0, VN=3, Mode=3 (cliente); 48 bytes
+DESFASE_HORA_DAS_MAX_S = 60.0       # L0-05: más que esto entre la hora de un %ORDER recién enviado y ET → DAS no está en ET
 
 
 class Reloj:
@@ -167,9 +175,37 @@ def a_hora_et(hhmm: str, dia: date) -> datetime:
 
 
 def hora_das_a_et(hhmmss: str, hoy: date) -> datetime:
-    """«HH:MM:SS» de `%ORDER`/`%OrderAct`/`%TRADE` (sin fecha) → datetime aware ET del día `hoy` (riesgo 10)."""
+    """«HH:MM:SS» de `%ORDER`/`%OrderAct`/`%TRADE` (sin fecha) → datetime aware ET del día `hoy` (riesgo 10).
+
+    Da por hecho que DAS emite en ET (L0-05: NO verificado; depende de la
+    zona configurada en DAS Trader). `desfase_hora_das_s` / `hora_das_es_et`
+    permiten comprobarlo con un `%ORDER` recién enviado (paso canario de
+    `comprobar_das`) antes de fiarse de las horas de halts y fills.
+    """
     horas, minutos, segundos = _partir_hora(hhmmss, 3)
     return datetime(hoy.year, hoy.month, hoy.day, horas, minutos, segundos, tzinfo=ET)
+
+
+def desfase_hora_das_s(hhmmss: str, ahora: datetime) -> float:
+    """Segundos (con signo) entre la hora «HH:MM:SS» de una línea de DAS recién recibida y `ahora` en ET (L0-05).
+
+    Positivo = DAS va por delante de ET. Se lleva al intervalo [−12 h, +12 h)
+    para que una línea emitida justo antes de medianoche no parezca un
+    desfase de 24 h. `ahora` aware (se convierte a ET) o naive (se toma
+    como ET). Lanza ValueError con una hora mal formada.
+    """
+    horas, minutos, segundos = _partir_hora(hhmmss, 3)
+    if ahora.tzinfo is not None and ahora.utcoffset() is not None:
+        ahora = ahora.astimezone(ET)
+    das = horas * 3600 + minutos * 60 + segundos
+    local = ahora.hour * 3600 + ahora.minute * 60 + ahora.second + ahora.microsecond / 1_000_000
+    medio_dia = 12 * 3600
+    return ((das - local + medio_dia) % (24 * 3600)) - medio_dia
+
+
+def hora_das_es_et(hhmmss: str, ahora: datetime, tolerancia_s: float = DESFASE_HORA_DAS_MAX_S) -> bool:
+    """True si la hora de DAS casa con `ahora` ET dentro de `tolerancia_s` (60 s): DAS está configurado en ET (L0-05)."""
+    return abs(desfase_hora_das_s(hhmmss, ahora)) <= tolerancia_s
 
 
 def _partir_hora(texto: str, partes: int) -> tuple[int, ...]:

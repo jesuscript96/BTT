@@ -888,10 +888,60 @@ _TOKEN_TG_FALSO = "987654321:" + "A" * 20 + "b_c-" * 4        # inventado: forma
     pytest.param("%OrderAct 1 Send_Rej Buy ABCD 1 2 SMAT 09:00:00 Logon:Failed 5",
                  "%OrderAct 1 Send_Rej Buy ABCD 1 2 SMAT 09:00:00 Logon:Failed 5", id="logon-no-es-login"),
     pytest.param("#OrderServer:Logon:Successful", "#OrderServer:Logon:Successful", id="conexion-intacta"),
+    # A-03: el LOGIN pegado a comillas, paréntesis, corchetes o «=» también se tapa
+    pytest.param("'LOGIN prueba s3cr3ta CUENTA_PRUEBA 0'", "'LOGIN prueba ***** CUENTA_PRUEBA 0'", id="A-03-repr"),
+    pytest.param('"LOGIN prueba s3cr3ta CUENTA_PRUEBA 0"', '"LOGIN prueba ***** CUENTA_PRUEBA 0"', id="A-03-json"),
+    pytest.param("cmd=LOGIN prueba s3cr3ta CUENTA_PRUEBA 0", "cmd=LOGIN prueba ***** CUENTA_PRUEBA 0",
+                 id="A-03-igual"),
+    pytest.param("(LOGIN prueba s3cr3ta CUENTA_PRUEBA 0)", "(LOGIN prueba ***** CUENTA_PRUEBA 0)",
+                 id="A-03-parentesis"),
+    pytest.param("[LOGIN prueba s3cr3ta CUENTA_PRUEBA 0]", "[LOGIN prueba ***** CUENTA_PRUEBA 0]",
+                 id="A-03-corchete"),
+    pytest.param("b'LOGIN prueba s3cr3ta CUENTA_PRUEBA 0\\r\\n'", "b'LOGIN prueba ***** CUENTA_PRUEBA 0\\r\\n'",
+                 id="A-03-str-bytes"),
+    pytest.param("('LOGIN prueba s3cr3ta')", "('LOGIN prueba *****", id="A-03-clave-al-final-pegada-a-comilla"),
+    pytest.param("cmd_LOGIN prueba s3cr3ta CUENTA_PRUEBA 0", "cmd_LOGIN prueba ***** CUENTA_PRUEBA 0",
+                 id="A-03-guion-bajo"),
+    pytest.param("relogin prueba nada", "relogin prueba nada", id="A-03-letra-delante-no-es-login"),
 ])
 def test_redactar_login(linea, esperado):
+    """R-Q-01 y A-03: ninguna representación del LOGIN deja la clave en claro."""
     assert redactar(linea) == esperado
     assert "s3cr3ta" not in redactar(linea)
+
+
+def test_A_03_redactar_repr_de_bytes_del_login_real():
+    """A-03: `str(bytes)` y `repr` de la línea que sale por el socket no llevan la clave."""
+    login = cmd_login("prueba", "s3cr3ta", CUENTA, False)
+    for texto in (repr(login), str((login + "\r\n").encode("latin-1")), f"{login!r}", str({"cmd": login})):
+        assert "s3cr3ta" not in redactar(texto), texto
+
+
+@pytest.mark.parametrize("usuario, clave, cuenta", [
+    pytest.param("u", "mi s3cr3ta", "ACC", id="clave-con-espacio"),
+    pytest.param("u", " s3cr3ta", "ACC", id="clave-con-espacio-delante"),
+    pytest.param("u", "s3cr3ta\n", "ACC", id="clave-con-salto"),
+    pytest.param("u s3cr3ta", "x", "ACC", id="usuario-con-espacio"),
+    pytest.param("u", "x", "AC s3cr3ta", id="cuenta-con-espacio"),
+])
+def test_A_05_SEG_03_cmd_login_no_pone_el_valor_en_el_error(usuario, clave, cuenta):
+    """A-05 / SEG-03 (R-Q-01): el ValueError de cmd_login nombra el campo, nunca su valor."""
+    with pytest.raises(ValueError) as exc:
+        cmd_login(usuario, clave, cuenta, False)
+    assert "s3cr3ta" not in str(exc.value)
+    assert "valor oculto" in str(exc.value)
+
+
+def test_A_05_cmd_login_con_bytes_no_muestra_el_valor():
+    with pytest.raises(ValueError) as exc:
+        cmd_login("u", b"s3cr3ta", "ACC", False)          # type: ignore[arg-type]
+    assert "s3cr3ta" not in str(exc.value)
+
+
+def test_A_05_otros_campos_siguen_mostrando_el_valor():
+    """Solo los campos del LOGIN se ocultan: un ticker inválido se sigue viendo en el error (depuración)."""
+    with pytest.raises(ValueError, match="AB CD"):
+        cmd_sb("AB CD")
 
 
 @pytest.mark.parametrize("linea", [

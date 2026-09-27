@@ -800,7 +800,11 @@ def test_r_l_01_el_hijo_que_obedece_el_parar_no_se_termina(montar: Montaje, dir_
     ({"posiciones": {}}, True),
     ("{roto", False),
     (None, True),
-], ids=["L4-corto-vivo", "L4-intento-vivo", "posicion-cerrada", "sin-posiciones", "foto-ilegible", "sin-foto"])
+    ({"posiciones": {}, "ordenes": [{"token": 1, "ticker": "XYZ", "estado": "Accepted"}]}, False),
+    ({"posiciones": {}, "ordenes": "raro"}, False),
+    ({"posiciones": {}, "ordenes": []}, True),
+], ids=["L4-corto-vivo", "L4-intento-vivo", "posicion-cerrada", "sin-posiciones", "foto-ilegible", "sin-foto",
+        "G2-04-orden-viva-sin-posicion", "G2-04-ordenes-ilegibles", "G2-04-sin-ordenes-vivas"])
 def test_l4_con_posicion_a_la_hora_de_apagar_avisa_3_y_no_apaga(montar: Montaje, dir_bot: Path, foto: Any,
                                                                   apaga: bool) -> None:
     popen = PopenEspia()
@@ -809,6 +813,8 @@ def test_l4_con_posicion_a_la_hora_de_apagar_avisa_3_y_no_apaga(montar: Montaje,
     if foto is not None:
         s.ruta_foto.write_text(foto if isinstance(foto, str) else json.dumps(foto), encoding="utf-8")
     montar.reloj.fijar(datetime(2026, 9, 25, 11, 45, tzinfo=ET))
+    for nombre in sup_mod.HIJOS:          # G2-01: fuera de la ventana con posición se siguen vigilando los colgados
+        latir(montar.dir_bot, nombre, montar.reloj)
     s.paso()
     s.paso()
     assert all(p.terminado or p.codigo is not None for p in popen.procesos) is apaga
@@ -818,6 +824,140 @@ def test_l4_con_posicion_a_la_hora_de_apagar_avisa_3_y_no_apaga(montar: Montaje,
         s.ruta_foto.write_text(json.dumps({"posiciones": {}}), encoding="utf-8")
         s.paso()
         assert all(p.terminado for p in popen.procesos)
+
+
+def test_g2_01_fuera_de_ventana_con_posicion_relanza_al_muerto_y_mata_al_colgado(montar: Montaje) -> None:
+    """G2-01 (L4 / R-D-02): pasada la ventana con un corto vivo, un ejecutor que sale con 1 se RELANZA a 1 s (el aviso
+    dice la verdad) y uno que deja de latir se mata y se relanza; al cerrarse la posición, apagado ordenado."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    arrancar_con_vigilante_latiendo(montar, s)
+    s.ruta_foto.write_text(json.dumps({"posiciones": {"XYZ": {"neta_fills": -100, "neta_das": -100, "intento": None}},
+                                       "ordenes": []}), encoding="utf-8")
+    montar.reloj.fijar(datetime(2026, 9, 25, 11, 45, tzinfo=ET))
+    for nombre in sup_mod.HIJOS:
+        latir(montar.dir_bot, nombre, montar.reloj)
+    s.paso()
+    ejecutor = s.hijo("ejecutor")
+    ejecutor.proceso.salir(1)
+    s.paso()
+    assert not ejecutor.corriendo and ejecutor.ultima_espera == 1.0
+    montar.reloj.avanzar(1.1)
+    latir(montar.dir_bot, "vigilante", montar.reloj)
+    s.paso()
+    assert ejecutor.corriendo and ejecutor.lanzamientos == 2                         # relanzado fuera de la ventana
+    latir(montar.dir_bot, "ejecutor", montar.reloj)
+    montar.reloj.avanzar(3.5)                                                          # deja de latir: colgado
+    latir(montar.dir_bot, "vigilante", montar.reloj)
+    colgado = ejecutor.proceso
+    s.paso()
+    assert colgado.terminado and [r["datos"]["hijo"] for r in de_tipo(montar.dir_bot, "hijo_colgado")] == ["ejecutor"]
+    assert len([c for c in montar.avisos.claves() if c == "apagado_con_posicion"]) == 1
+    s.ruta_foto.write_text(json.dumps({"posiciones": {}, "ordenes": []}), encoding="utf-8")
+    montar.reloj.avanzar(1.1)
+    s.paso()
+    assert not any(h.corriendo for h in s.hijos.values()) and de_tipo(montar.dir_bot, "apagado")
+
+
+def test_g2_01_sin_bot_en_marcha_una_foto_vieja_no_lanza_nada_fuera_de_ventana(montar: Montaje) -> None:
+    """G2-01: la prórroga es para el bot que YA estaba en marcha; una foto vieja con posición no arranca hijos de noche."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    s.arrancar()
+    s.ruta_foto.write_text(json.dumps({"posiciones": {"XYZ": {"neta_fills": -100, "neta_das": -100}}}),
+                           encoding="utf-8")
+    montar.reloj.fijar(datetime(2026, 9, 25, 21, 0, tzinfo=ET))
+    s.paso()
+    assert popen.llamadas == []
+
+
+def test_g2_03_das_que_se_cierra_a_media_sesion_se_relanza_y_se_avisa_cada_5_min(montar: Montaje,
+                                                                              tmp_path: Path) -> None:
+    """G2-03 (R-J-02 (2), EP-7): con DAS ya listo, si su proceso desaparece el supervisor lo nota en ≤ 30 s, lo abre y
+    avisa 3 «LOGIN/2FA a mano»; mientras su API no responda, repite el aviso cada 5 min; al volver, aviso 1."""
+    exe = tmp_path / "DAS" / "DASTrader.exe"
+    popen = PopenEspia()
+    estado = {"vivo": True, "api": True}
+    s = montar(popen=popen, das_exe=exe, das_vivo=lambda: estado["vivo"], sonda_das=lambda: estado["api"])
+    arrancar_con_vigilante_latiendo(montar, s)
+    assert s.das_listo_hoy and not [a for a, _ in popen.llamadas if a == [str(exe)]]
+    estado["vivo"], estado["api"] = False, False
+    for _ in range(3):
+        montar.reloj.avanzar(10.0)
+        for nombre in sup_mod.HIJOS:
+            latir(montar.dir_bot, nombre, montar.reloj)
+        s.paso()
+    lanzados_das = [a for a, _ in popen.llamadas if a == [str(exe)]]
+    assert len(lanzados_das) == 1 and de_tipo(montar.dir_bot, "das_caido")
+    assert any("LOGIN/2FA A MANO" in t for t in montar.avisos.de_nivel(Nivel.MAXIMO))
+    estado["vivo"] = True                                   # el proceso vuelve, pero sin LOGIN
+    avisos_api = lambda: len([c for c in montar.avisos.claves() if c == "das_sin_api"])   # noqa: E731
+    montar.reloj.avanzar(30.0)
+    for nombre in sup_mod.HIJOS:
+        latir(montar.dir_bot, nombre, montar.reloj)
+    s.paso()
+    assert avisos_api() == 1
+    montar.reloj.avanzar(120.0)
+    for nombre in sup_mod.HIJOS:
+        latir(montar.dir_bot, nombre, montar.reloj)
+    s.paso()
+    assert avisos_api() == 1                                 # como mucho cada 5 min
+    montar.reloj.avanzar(200.0)
+    for nombre in sup_mod.HIJOS:
+        latir(montar.dir_bot, nombre, montar.reloj)
+    s.paso()
+    assert avisos_api() == 2
+    estado["api"] = True
+    montar.reloj.avanzar(30.0)
+    for nombre in sup_mod.HIJOS:
+        latir(montar.dir_bot, nombre, montar.reloj)
+    s.paso()
+    assert "das_listo" in montar.avisos.claves()
+    assert len([a for a, _ in popen.llamadas if a == [str(exe)]]) == 1
+
+
+@pytest.mark.parametrize("codigo", [4, 5], ids=["G2-08-motor-distinto", "G2-08-config-imposible"])
+def test_g2_08_codigos_que_relanzar_no_arregla_quedan_a_control_humano(montar: Montaje, codigo: int) -> None:
+    """G2-08: un ejecutor que sale con 4 (motor distinto) o 5 (config/entorno) NO se relanza cada 10 s: control humano
+    con aviso 3; si el fichero del cuadro cambia, se reintenta UNA vez."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    arrancar_con_vigilante_latiendo(montar, s)
+    ejecutor = s.hijo("ejecutor")
+    ejecutor.proceso.salir(codigo)
+    s.paso()
+    assert ejecutor.parado_a_mano and ejecutor.parado_por_codigo == codigo
+    for _ in range(3):
+        montar.reloj.avanzar(10.0)
+        latir(montar.dir_bot, "vigilante", montar.reloj)
+        s.paso()
+    assert ejecutor.lanzamientos == 1
+    assert de_tipo(montar.dir_bot, "hijo_no_relanzable") and \
+        len([c for c in montar.avisos.claves() if c == "hijo_no_relanzable:ejecutor"]) == 1
+    escribir_config(montar.dir_bot, lambda crudo: crudo.update({"config_version": crudo["config_version"] + 1}))
+    latir(montar.dir_bot, "vigilante", montar.reloj)
+    s.paso()
+    assert ejecutor.lanzamientos == 2 and de_tipo(montar.dir_bot, "hijo_reintento_config")
+
+
+def test_g2_08_el_reloj_desviado_se_relanza_por_plan_y_a_la_tercera_queda_a_mano(montar: Montaje) -> None:
+    """G2-08: el código 2 (reloj, R-J-07) se relanza por plan (puede ser un SNTP puntual) y, tras 3 seguidos, control
+    humano; el 1 y el 3 siguen el plan sin límite."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    arrancar_con_vigilante_latiendo(montar, s)
+    ejecutor = s.hijo("ejecutor")
+    for n in range(1, 4):
+        ejecutor.proceso.salir(2)
+        latir(montar.dir_bot, "vigilante", montar.reloj)
+        s.paso()
+        if n < 3:
+            assert not ejecutor.parado_a_mano
+            montar.reloj.avanzar(ejecutor.ultima_espera + 0.1)
+            latir(montar.dir_bot, "vigilante", montar.reloj)
+            s.paso()
+            assert ejecutor.corriendo
+    assert ejecutor.parado_a_mano and ejecutor.parado_por_codigo == 2 and ejecutor.lanzamientos == 3
 
 
 # ═══════════════════════════ 10. disco (R-J-07) ══════════════════════════
@@ -855,9 +995,9 @@ def test_dia_nuevo_abre_el_diario_del_dia_y_perdona_la_parada_a_mano(montar: Mon
 
 
 # ═══════════════════════════ 11. comprobar_das: SOLO --ayuda ═════════════
-def test_comprobar_das_ayuda_lista_los_9_pasos_sin_tocar_nada(dir_bot: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """§3.27: `--ayuda` imprime los 9 pasos (3-6 marcados CANARIO) y sale con 0 sin leer el entorno, sin red y sin
-    escribir nada. La herramienta NUNCA se ejecuta de verdad en los tests (va contra DAS real)."""
+def test_comprobar_das_ayuda_lista_los_10_pasos_sin_tocar_nada(dir_bot: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """§3.27: `--ayuda` imprime los 10 pasos (3-6 y el 10 de A-02 marcados CANARIO) y sale con 0 sin leer el entorno,
+    sin red y sin escribir nada. La herramienta NUNCA se ejecuta de verdad en los tests (va contra DAS real)."""
     from app.bot_das.herramientas import comprobar_das as cd
 
     def prohibido(*a: Any, **k: Any) -> Any:
@@ -870,23 +1010,173 @@ def test_comprobar_das_ayuda_lista_los_9_pasos_sin_tocar_nada(dir_bot: Path, mon
     texto = "\n".join(salida)
     for paso in cd.PASOS:
         assert f"  {paso.numero}. {paso.titulo}" in texto
-    assert [p.numero for p in cd.PASOS] == list(range(1, 10))
-    assert [p.numero for p in cd.PASOS if p.canario] == [3, 4, 5, 6]
-    assert texto.count("[CANARIO]") == 4 and "BOT_DAS_PERMITIR_ORDENES=1" in texto
+    assert [p.numero for p in cd.PASOS] == list(range(1, 11))
+    assert [p.numero for p in cd.PASOS if p.canario] == [3, 4, 5, 6, 10]
+    assert texto.count("[CANARIO]") == 5 and "BOT_DAS_PERMITIR_ORDENES=1" in texto
     assert sorted(p for p in dir_bot.rglob("*")) == antes
 
 
-@pytest.mark.parametrize("texto,esperado", [(None, list(range(1, 10))), ("1, 9", [1, 9]), ("3", [3])],
-                         ids=["todos", "lista", "uno"])
+@pytest.mark.parametrize("texto,esperado", [(None, list(range(1, 11))), ("1, 9", [1, 9]), ("3", [3]), ("10", [10])],
+                         ids=["todos", "lista", "uno", "A-02-paso-10"])
 def test_comprobar_das_lista_de_pasos(texto: Optional[str], esperado: list[int]) -> None:
     from app.bot_das.herramientas import comprobar_das as cd
     assert cd._pasos_de(texto) == esperado
 
 
-@pytest.mark.parametrize("texto", ["0", "10", "uno", "1,,2"], ids=["cero", "diez", "texto", "vacio"])
+@pytest.mark.parametrize("texto", ["0", "11", "uno", "1,,2"], ids=["cero", "once", "texto", "vacio"])
 def test_comprobar_das_pasos_mal_escritos_salen_con_5_sin_red(texto: str, monkeypatch: pytest.MonkeyPatch) -> None:
     from app.bot_das.herramientas import comprobar_das as cd
     monkeypatch.setattr(cd.ClienteDAS, "desde_env", staticmethod(lambda *a, **k: pytest.fail("sin red")))
     salida: list[str] = []
     assert cd.main(["--pasos", texto], consola=cd.Consola(salida=salida.append)) == cd.CODIGO_ENTORNO
     assert "paso desconocido" in salida[0]
+
+
+# ═══════════════════════════ 12. comprobar_das: la lógica de los pasos con un DAS simulado ═══
+TICKER_CD = "ABCD"
+CUENTA_CD = "CUENTA_PRUEBA"
+
+
+class ClienteEmparejado:
+    """Un «DAS» en memoria para el `Comprobador`: cada línea va al `Emparejador` y lo que contesta, parseado, a la
+    cola. `SB` devuelve la cotización del libro. `tragar` = cuántas respuestas se pierden (eco tardío, G2-07)."""
+
+    def __init__(self, emparejador: Any, libro: Any, cola: Any) -> None:
+        from app.bot_das.protocolo import Parser
+        self.emp = emparejador
+        self.libro = libro
+        self.cola = cola
+        self.parser = Parser(lambda t: True, watch=False, cuenta=CUENTA_CD)
+        self.enviadas: list[str] = []
+        self.tragar = 0
+
+    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> bool:
+        self.enviadas.append(linea)
+        palabras = linea.split()
+        if palabras[0].upper() in ("SB", "UNSB"):
+            crudas = [] if palabras[0].upper() == "UNSB" else list(self.libro.cotizar(
+                palabras[1], self._cot["bid"], self._cot["ask"], last=self._cot["ask"]))
+        else:
+            crudas = self.emp.recibir(linea)
+        if self.tragar > 0:
+            self.tragar -= 1
+            return True
+        for cruda in crudas:
+            self.cola.put(self.parser.parsear(cruda))
+        return True
+
+    def cotizar(self, bid: str, ask: str) -> None:
+        from decimal import Decimal as Dec
+        self._cot = {"bid": Dec(bid), "ask": Dec(ask)}
+        self.libro.cotizar(TICKER_CD, Dec(bid), Dec(ask), last=Dec(ask))
+
+
+def _respuestas(precio: str = "") -> Callable[[str], str]:
+    def responder(pregunta: str) -> str:
+        if "Escribe SI" in pregunta:
+            return "SI"
+        if "[s/N]" in pregunta:
+            return "s"
+        if "Ticker" in pregunta:
+            return TICKER_CD
+        if "Precio" in pregunta:
+            return precio
+        return ""
+    return responder
+
+
+def _comprobador(dir_bot: Path, reloj_das: RelojSimulado, reloj: RelojSimulado, share_es_abierta: bool = True,
+                 precio: str = "") -> tuple[Any, ClienteEmparejado, Any, list[str]]:
+    import queue
+    from app.bot_das.herramientas import comprobar_das as cd
+    from app.bot_das.simulador_das import Emparejador, LibroSimulado
+    libro = LibroSimulado(cuenta=CUENTA_CD)
+    emp = Emparejador(libro, reloj_das, replace_share_es_abierta=share_es_abierta)
+    cola: "queue.Queue[Any]" = queue.Queue()
+    cliente = ClienteEmparejado(emp, libro, cola)
+    cliente.cotizar("2.45", "2.47")
+    salida: list[str] = []
+    diario = Diario(dir_bot / "diario", reloj, "supervisor", VERSION, Fase.CANARIO)
+    diario.abrir_dia(reloj.hoy())
+    comprobador = cd.Comprobador(cliente, cola, reloj, diario, dir_bot / "informes" / "prueba.txt",
+                                 cd.Consola(entrada=_respuestas(precio), salida=salida.append), True,
+                                 {"stop": "STOP", "agregar": {"ge_1": "SAGEREB"}, "cruzar": {"ge_1": "SAGEPRO"}},
+                                 lambda texto: texto, lambda **kw: pytest.fail("sin segunda conexión"))
+    return comprobador, cliente, libro, salida
+
+
+def _conclusiones(dir_bot: Path, paso: int) -> list[str]:
+    return [r["datos"]["conclusion"] for r in de_tipo(dir_bot, "comprobacion_das") if r["datos"]["paso"] == paso]
+
+
+@pytest.mark.parametrize("share_es_abierta, propuesta", [(True, "replace_share_es_abierta = true"),
+                                                         (False, "replace_share_es_abierta = false")],
+                         ids=["A-02-DAS-abierta", "A-02-DAS-total"])
+def test_a_02_d2a_08_paso_10_mide_el_share_de_un_replace_parcial_y_vende_lo_comprado(
+        dir_bot: Path, reloj: RelojSimulado, monkeypatch: pytest.MonkeyPatch, share_es_abierta: bool,
+        propuesta: str) -> None:
+    """A-02 / D2a-08 (director): el paso canario 10 compra 2 que quedan parciales (1 llena), hace REPLACE id 2 y lee
+    lvqty/qty: propone el interruptor que corresponde en cada lectura de DAS; después VENDE solo la 1 comprada."""
+    from decimal import Decimal as Dec
+    from app.bot_das.herramientas import comprobar_das as cd
+    monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.01)
+    comprobador, cliente, libro, _ = _comprobador(dir_bot, reloj, reloj, share_es_abierta, precio="2.47")
+    libro.llenar_parcial(Dec("0.5"), ticker=TICKER_CD)
+    assert comprobador.ejecutar([10]) == cd.CODIGO_OK
+    conclusion = _conclusiones(dir_bot, 10)[0]
+    assert propuesta in conclusion and "vendidas las 1 compradas" in conclusion
+    assert libro.posiciones().get(TICKER_CD) == 0                       # la cuenta no queda larga
+    assert [x for x in cliente.enviadas if x.startswith("REPLACE")] and \
+        [x for x in cliente.enviadas if x.split()[:3][-1:] == ["S"]]
+
+
+def test_g2_07_una_orden_canario_con_eco_tardio_se_cancela_al_terminar_el_paso(dir_bot: Path, reloj: RelojSimulado,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """G2-07 (riesgo 11): el %ORDER del STOPLMTP del paso 3 no llega (ni tras el primer GET ORDERS): el paso lo registra
+    «sin %ORDER», pero el barrido de GET ORDERS al terminar el paso la encuentra (token canario) y la CANCELA."""
+    from app.bot_das.herramientas import comprobar_das as cd
+    monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.01)
+    comprobador, cliente, libro, _ = _comprobador(dir_bot, reloj, reloj)
+    cliente.tragar = 0
+
+    original = cliente.enviar
+
+    def enviar_con_eco_tardio(linea: str, serie: Optional[str] = None, version: int = 0) -> bool:
+        if linea.startswith("NEWORDER"):
+            cliente.tragar = 2                                     # el eco del NEWORDER y el del GET ORDERS siguiente
+        return original(linea, serie, version)
+
+    cliente.enviar = enviar_con_eco_tardio
+    comprobador.ejecutar([3])
+    assert "sin %ORDER" in _conclusiones(dir_bot, 3)[0]
+    stop = [o for o in libro.ordenes() if o["tipo"] == "STOPLMTP"]
+    assert len(stop) == 1 and stop[0]["estado"] == "Canceled"
+    assert f"CANCEL {stop[0]['id']}" in cliente.enviadas
+    assert any("G2-07" in c for c in _conclusiones(dir_bot, 3))
+
+
+def test_l0_05_d2a_10_paso_3_compara_la_hora_de_das_con_et_y_aborta_si_no_casa(dir_bot: Path, reloj: RelojSimulado,
+                                                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    """L0-05 (riesgo 13): la hora del %ORDER del paso 3 se compara con ET; si DAS pinta en otra zona (6 h) se ABORTA
+    (el paso 4 no se hace) y el stop canario se cancela al salir. D2a-10: se dice si el precio del %ORDER es el disparo
+    o el límite."""
+    from app.bot_das.herramientas import comprobar_das as cd
+    monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.01)
+    reloj_das = RelojSimulado(datetime(2026, 9, 25, 15, 30, tzinfo=ET))          # DAS en hora de Madrid
+    comprobador, cliente, libro, _ = _comprobador(dir_bot, reloj_das, reloj)
+    comprobador.ejecutar([3, 4])
+    paso3 = _conclusiones(dir_bot, 3)[0]
+    assert "ABORTO" in paso3 and "L0-05" in paso3
+    assert "DISPARO" in paso3 or "LÍMITE" in paso3 or "ni el disparo" in paso3
+    assert "ABORTADA" in _conclusiones(dir_bot, 4)[0]
+    assert not [x for x in cliente.enviadas if x.startswith("REPLACE")]
+    assert all(o["estado"] == "Canceled" for o in libro.ordenes() if o["tipo"] == "STOPLMTP")
+
+
+def test_l0_05_con_das_en_et_no_aborta(dir_bot: Path, reloj: RelojSimulado, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.bot_das.herramientas import comprobar_das as cd
+    monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.01)
+    comprobador, cliente, libro, _ = _comprobador(dir_bot, reloj, reloj)
+    comprobador.ejecutar([3, 4])
+    assert "= ET" in _conclusiones(dir_bot, 3)[0] and "ABORT" not in _conclusiones(dir_bot, 4)[0]
+    assert [x for x in cliente.enviadas if x.startswith("REPLACE")]

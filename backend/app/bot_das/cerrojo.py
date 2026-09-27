@@ -27,9 +27,13 @@ LAS TRAMPAS.
   * El latido se escribe en un `.tmp` y se renombra con `os.replace`: quien
     lo lee nunca ve un fichero a medias. Si el disco falla, `tocar` no lanza
     (frontera de fichero): cuenta el fallo y el supervisor hará su trabajo.
-  * `HiloVigilado` relanza como mucho `max_relanzos` veces; la última caída
-    llega a `al_caida` con `relanzado=False` y ahí el ejecutor debe dejar de
-    latir (`todo_vivo=False`). Un cuerpo que TERMINA sin excepción se da por
+  * `HiloVigilado` relanza como mucho `max_relanzos` veces SEGUIDAS; la
+    última caída llega a `al_caida` con `relanzado=False` y ahí el ejecutor
+    debe dejar de latir (`todo_vivo=False`). Una caída tras ≥ `estable_s`
+    (60 s, reloj monotónico) de cuerpo corriendo sin lanzar pone la cuenta
+    de seguidas a 0, y `arrancar()` también (L0-02): el freno es contra los
+    bucles de caída, no contra seis fallos sueltos en 16 h. `caidas` sigue
+    contando el total (métrica). Un cuerpo que TERMINA sin excepción se da por
     acabado (no se relanza): así `parar()` funciona con un cuerpo que mira
     `parando`.
 """
@@ -38,6 +42,7 @@ from __future__ import annotations
 import msvcrt
 import os
 import threading
+import time
 import traceback
 from pathlib import Path
 from typing import Callable, Optional
@@ -45,6 +50,7 @@ from typing import Callable, Optional
 from app.bot_das.tipos import LATIDO_S
 
 OFFSET_CERROJO = 1 << 20     # byte bloqueado: a 1 MiB, nunca solapa con el PID (ver trampas)
+ESTABLE_S = 60.0             # L0-02: un cuerpo que corrió ≥ 60 s antes de caer no cuenta como caída «seguida»
 
 
 class CerrojoInstancia:
@@ -170,25 +176,32 @@ class HiloVigilado:
     """
 
     def __init__(self, nombre: str, cuerpo: Callable[[], None], al_caida: Callable[[str, str, bool], None],
-                 max_relanzos: int = 5, espera_s: float = 1.0) -> None:
+                 max_relanzos: int = 5, espera_s: float = 1.0, estable_s: float = ESTABLE_S,
+                 mono: Callable[[], float] = time.monotonic) -> None:
         if max_relanzos < 0:
             raise ValueError(f"max_relanzos debe ser ≥ 0: {max_relanzos}")
         if espera_s < 0:
             raise ValueError(f"espera_s debe ser ≥ 0: {espera_s}")
+        if estable_s < 0:
+            raise ValueError(f"estable_s debe ser ≥ 0: {estable_s}")
         self.nombre = nombre
         self._cuerpo = cuerpo
         self._al_caida = al_caida
         self._max_relanzos = max_relanzos
         self._espera_s = float(espera_s)
+        self._estable_s = float(estable_s)
+        self._mono = mono
         self.parando = threading.Event()
         self._hilo: Optional[threading.Thread] = None
         self._caidas = 0
+        self._caidas_seguidas = 0
         self.ultima_traza: Optional[str] = None
 
     def arrancar(self) -> None:
-        """Arranca el hilo (una sola vez; si ya está vivo no hace nada)."""
+        """Arranca el hilo (una sola vez; si ya está vivo no hace nada). Pone a 0 las caídas SEGUIDAS (L0-02)."""
         if self._hilo is not None and self._hilo.is_alive():
             return
+        self._caidas_seguidas = 0
         self.parando.clear()
         self._hilo = threading.Thread(target=self._correr, name=self.nombre, daemon=True)
         self._hilo.start()
@@ -206,18 +219,28 @@ class HiloVigilado:
 
     @property
     def caidas(self) -> int:
+        """Caídas de TODA la vida del objeto (métrica; no decide el relanzamiento)."""
         return self._caidas
+
+    @property
+    def caidas_seguidas(self) -> int:
+        """Caídas sin una racha estable (≥ `estable_s`) entre ellas: son las que agotan `max_relanzos` (L0-02)."""
+        return self._caidas_seguidas
 
     def _correr(self) -> None:
         while not self.parando.is_set():
+            inicio = self._mono()
             try:
                 self._cuerpo()
                 return                              # terminó por las buenas: no se relanza
             except Exception as exc:  # noqa: BLE001 — frontera de callback: un hilo de borde que muere se registra y se relanza (injerto §8.11)
+                if self._mono() - inicio >= self._estable_s:
+                    self._caidas_seguidas = 0       # L0-02: corrió estable antes de caer → un fallo aislado, no un bucle
                 self._caidas += 1
+                self._caidas_seguidas += 1
                 self.ultima_traza = traceback.format_exc()
                 error = "".join(traceback.format_exception_only(type(exc), exc)).strip()
-                relanzado = (not self.parando.is_set()) and self._caidas <= self._max_relanzos
+                relanzado = (not self.parando.is_set()) and self._caidas_seguidas <= self._max_relanzos
                 try:
                     self._al_caida(self.nombre, error, relanzado)
                 except Exception:  # noqa: BLE001 — frontera de callback: un aviso que falla no puede impedir el relanzamiento

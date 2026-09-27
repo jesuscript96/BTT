@@ -9,7 +9,10 @@ R-M-02, R-J-08). `CanalTelegram` habla con la API por `urllib.request`;
 (`ProveedorSMSNulo` mientras Jaume elige uno, R-M-02). `canales_desde_env`
 construye los canales con las credenciales del `.env` (R-Q-01).
 `texto_grupo_a` reutiliza el formato de hoy del bot de alertas (R-M-05);
-`texto_fill` y `texto_rechazo` son los textos del grupo B (R-O-03, R-B-07).
+`texto_fill` es el texto de fill del grupo B (R-O-03); el aviso de un
+rechazo que sale a Telegram lo redacta `reglas.rechazos` (C-04), y
+`texto_rechazo` queda solo como formato de consulta. `escapar` es el helper
+único para escapar todo texto variable de un aviso (D2-08).
 `FiltroSecretos` tapa los VALORES literales de los secretos (y la forma URL
 del token de Telegram) en `msg`, `args` y trazas de cada `LogRecord`
 (corrección 8, riesgo 20); `instalar_logging` monta el log por proceso y día
@@ -42,23 +45,31 @@ LAS TRAMPAS.
     (fichero, consola y memoria), nunca solo en el logger raíz.
   * `FiltroSecretos` sustituye en `record.msg` y en cada `record.args` sin
     cambiar su forma (tupla sigue tupla, dict sigue dict): el `%` del
-    formateo posterior no se rompe. La traza de una excepción se formatea y
-    limpia en el propio filtro (`exc_text`), porque el `Formatter` la
-    generaría después, ya sin filtro.
+    formateo posterior no se rompe. Si el secreto va dentro de un arg que NO
+    es str (un número para `%d`, un objeto), taparlo cambiaría su tipo y el
+    `%d` lanzaría: entonces se formatea primero y se tapa el texto ya
+    formateado (C-03). La traza de una excepción se formatea y limpia en el
+    propio filtro (`exc_text`), porque el `Formatter` la generaría después,
+    ya sin filtro. Los secretos de menos de `SECRETO_LONGITUD_MIN` (4)
+    caracteres no se pueden tapar sin destrozar el log: `instalar_logging`
+    avisa de cuántos hay (SEG-04), nunca de su valor.
   * Telegram limita a 4.096 unidades UTF-16 (un emoji cuenta 2, así que
     `len()` no sirve) y con HTML mal cerrado devuelve 400
     para siempre: un texto que no cabe se recorta SIN etiquetas HTML y se
-    manda sin `parse_mode`, para que no se pierda el aviso entero.
+    manda sin `parse_mode`, para que no se pierda el aviso entero. Y un 400
+    «can't parse entities» (un «<» del bróker sin escapar) se reenvía UNA vez
+    sin `parse_mode` (D2-08).
   * `CanalTelegram`, `CanalCorreo` y `CanalSMS` NUNCA lanzan y nunca
     escriben su token/clave: lo que llega al log de un error pasa antes por
     `_sin_secreto` del propio canal (además del `FiltroSecretos` global).
-  * Importar este módulo no abre red ni arranca hilos: `bot_alerts_telegram`
-    importa `httpx` pero no lo usa al cargar (comprobado el 26-sep; no trae
-    pandas); las variables de entorno se leen en `canales_desde_env` y
-    `secretos_desde_env`, nunca al importar.
+  * Importar este módulo no abre red, no arranca hilos y NO carga `httpx`:
+    `bot_alerts_telegram` (que importa `httpx`) se importa de forma perezosa
+    dentro de `texto_grupo_a` (SEG-05); las variables de entorno se leen en
+    `canales_desde_env` y `secretos_desde_env`, nunca al importar.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -77,8 +88,6 @@ from decimal import Decimal
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Iterable, Optional, Protocol, runtime_checkable
-
-from app.services.bot_alerts_telegram import agrupar, formatear_grupo
 
 from app.bot_das.cerrojo import HiloVigilado
 from app.bot_das.reloj import Reloj
@@ -111,7 +120,7 @@ NIVELES_SMS = frozenset({Nivel.MAXIMO})                     # R-M-02: SMS → SO
 NIVELES_GRUPO_A = frozenset({Nivel.INFO})                   # R-M-05: el grupo A recibe alarmas, no incidentes del bot
 VARIABLES_SECRETAS = ("TELEGRAM_BOT_TOKEN_A", "TELEGRAM_BOT_TOKEN_B", "DAS_CLAVE",
                       "BOT_DAS_AUTHKEY", "MASSIVE_BOT_API_KEY", "SMTP_PASS")   # corrección 8
-SECRETO_LONGITUD_MIN = 6
+SECRETO_LONGITUD_MIN = 4             # SEG-04: una DAS_CLAVE de 4-5 caracteres también se tapa; < 4 se avisa al arrancar
 MASCARA = "*****"
 PATRON_TOKEN_URL = re.compile(r"bot\d+:[A-Za-z0-9_-]+")     # forma URL del token: /bot123456:ABC-def/sendMessage
 MEMORIA_LOG_LINEAS = 500
@@ -119,18 +128,41 @@ SMTP_PUERTO_DEFECTO = 587
 _NIVEL_LOG = {Nivel.INFO: logging.INFO, Nivel.AVISO: logging.WARNING, Nivel.MAXIMO: logging.ERROR}
 _LADO_LEGIBLE = {"B": "COMPRA", "S": "VENTA", "SS": "CORTO"}
 _PATRON_HTML = re.compile(r"<[^<>]+>")
+_PATRON_ETIQUETA_TELEGRAM = re.compile(
+    r"</?(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|span|tg-spoiler|tg-emoji|blockquote)(?:\s[^<>]*)?>",
+    re.IGNORECASE)
 
 
 # ── utilidades de texto ─────────────────────────────────────────────────
+def escapar(texto: Any) -> str:
+    """`html.escape(str(texto), quote=False)`: EL helper para todo texto variable que va a Telegram (D2-08).
+
+    Telegram manda con `parse_mode=HTML`: un «<», «>» o «&» sin escapar (el
+    texto literal de DAS, el nombre de una estrategia) hace que rechace el
+    mensaje entero con 400. Úsalo en cada valor dinámico de un `Avisar`.
+    """
+    return html.escape(str(texto), quote=False)
+
+
 def escapar_html(texto: Any) -> str:
-    """Escapa lo que va dentro del HTML de Telegram (un ticker con `<` rompería el mensaje entero)."""
-    return str(texto).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    """Escapa lo que va dentro del HTML de Telegram (un ticker con `<` rompería el mensaje entero). Igual que `escapar`."""
+    return escapar(texto)
 
 
 def sin_html(texto: str) -> str:
     """Quita las etiquetas HTML y deshace las entidades: para correo, SMS y recortes."""
     plano = _PATRON_HTML.sub("", texto)
     return plano.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+
+
+def texto_plano_telegram(texto: str) -> str:
+    """Quita SOLO las etiquetas de formato de Telegram y deshace las entidades (D2-08, reenvío sin `parse_mode`).
+
+    A diferencia de `sin_html`, no se come un «< 5 y 7 >» del bróker: solo
+    quita `<b>`, `<i>`, `<a href=…>`… (lo que el bot pone), así el texto que
+    no se pudo mandar con formato llega entero.
+    """
+    return html.unescape(_PATRON_ETIQUETA_TELEGRAM.sub("", texto))
 
 
 def recortar(texto: str, maximo: int) -> str:
@@ -264,8 +296,33 @@ class CanalTelegram:
         return cuerpo
 
     def enviar(self, texto: str) -> bool:
-        """POST `{api}/bot{token}/sendMessage`; True solo con HTTP 200 y `ok: true`. Un intento; nunca lanza (R-J-08)."""
-        datos = json.dumps(self._cuerpo(texto), ensure_ascii=False).encode("utf-8")
+        """POST `{api}/bot{token}/sendMessage`; True solo con HTTP 200 y `ok: true`. Un intento; nunca lanza (R-J-08).
+
+        D2-08: si Telegram contesta 400 «can't parse entities» (HTML mal
+        formado: un «<» del bróker sin escapar), se reenvía UNA vez el mismo
+        aviso sin `parse_mode` y con las etiquetas de formato quitadas: ningún
+        aviso se pierde por un «<». Ese reenvío es parte del mismo intento.
+        """
+        cuerpo = self._cuerpo(texto)
+        ok, error_400 = self._post(cuerpo)
+        if not ok and error_400 is not None and "parse_mode" in cuerpo and _es_error_de_entidades(error_400):
+            logger.warning("[%s] Telegram no entiende el HTML del aviso (HTTP 400): se reenvía sin formato (D2-08)",
+                           self.nombre)
+            ok, _ = self._post(self._cuerpo_sin_formato(texto))
+        if ok:
+            self.enviados += 1
+        else:
+            self.fallos += 1
+        return ok
+
+    def _cuerpo_sin_formato(self, texto: str) -> dict:
+        """JSON de `sendMessage` SIN `parse_mode`: etiquetas de Telegram fuera y entidades deshechas (D2-08)."""
+        return {"chat_id": self._chat_id, "disable_web_page_preview": True,
+                "text": recortar_telegram(texto_plano_telegram(texto))}
+
+    def _post(self, cuerpo_json: dict) -> tuple[bool, Optional[str]]:
+        """Un POST. Devuelve (salió, detalle del error si fue un HTTP 400, sin secretos). Nunca lanza."""
+        datos = json.dumps(cuerpo_json, ensure_ascii=False).encode("utf-8")
         peticion = urllib.request.Request(self._url, data=datos, method="POST",
                                           headers={"Content-Type": "application/json; charset=utf-8"})
         try:
@@ -273,20 +330,22 @@ class CanalTelegram:
                 estado = int(respuesta.status)
                 cuerpo = respuesta.read(4096)
         except urllib.error.HTTPError as exc:      # frontera de red (R-J-08): Telegram contestó 4xx/5xx; el detalle va sin URL (R-Q-01)
-            self.fallos += 1
-            logger.warning("[%s] rechazado (HTTP %s): %s", self.nombre, exc.code, self._sin_secreto(_leer_error(exc)))
-            return False
+            detalle = self._sin_secreto(_leer_error(exc))
+            logger.warning("[%s] rechazado (HTTP %s): %s", self.nombre, exc.code, detalle)
+            return False, (detalle if exc.code == 400 else None)
         except Exception as exc:  # noqa: BLE001 — frontera de red (R-J-08): timeout, DNS, SSL o URL rota; nunca se loguea la URL (R-Q-01)
-            self.fallos += 1
             logger.warning("[%s] fallo de envío: %s", self.nombre, self._sin_secreto(f"{type(exc).__name__}: {exc}"))
-            return False
+            return False, None
         if estado != 200 or not _respuesta_ok(cuerpo):
-            self.fallos += 1
-            logger.warning("[%s] respuesta no válida (HTTP %s): %s", self.nombre, estado,
-                           self._sin_secreto(cuerpo[:300].decode("utf-8", "replace")))
-            return False
-        self.enviados += 1
-        return True
+            detalle = self._sin_secreto(cuerpo[:300].decode("utf-8", "replace"))
+            logger.warning("[%s] respuesta no válida (HTTP %s): %s", self.nombre, estado, detalle)
+            return False, (detalle if estado == 400 else None)
+        return True, None
+
+
+def _es_error_de_entidades(detalle: str) -> bool:
+    """El 400 de Telegram por HTML mal formado: «Bad Request: can't parse entities: …» (D2-08)."""
+    return "can't parse entities" in detalle.lower() or "can\\u0027t parse entities" in detalle.lower()
 
 
 def _leer_error(exc: urllib.error.HTTPError) -> str:
@@ -644,7 +703,15 @@ def canales_desde_env(cfg: Config) -> list[Canal]:
 
 # ── textos ──────────────────────────────────────────────────────────────
 def texto_grupo_a(eventos: list) -> list[str]:
-    """R-M-05: el mismo formato que hoy para el socio; reutiliza `agrupar`/`formatear_grupo` del bot de alertas."""
+    """R-M-05: el mismo formato que hoy para el socio; reutiliza `agrupar`/`formatear_grupo` del bot de alertas.
+
+    SEG-05: el import es PEREZOSO. `bot_alerts_telegram` carga `httpx` (que
+    registra la URL con el token): importar `avisos` —y con él el ejecutor, el
+    vigilante, el supervisor y comprobar_das— no debe meter `httpx` en el
+    proceso. Solo lo carga la primera señal del grupo A (una vez).
+    """
+    from app.services.bot_alerts_telegram import agrupar, formatear_grupo   # SEG-05: perezoso a propósito
+
     return [formatear_grupo(g) for g in agrupar(eventos)]
 
 
@@ -666,7 +733,15 @@ def texto_fill(lote: Lote, fill: Fill, cfg: Config, fase: Fase) -> str:
 
 
 def texto_rechazo(orden: Orden, notas: str, pos: PosicionTicker, fase: Optional[Fase] = None) -> str:
-    """R-B-07 (1): SIEMPRE el texto LITERAL de DAS (`notes`), la orden que se intentó y el estado del ticker."""
+    """R-B-07 (1): SIEMPRE el texto LITERAL de DAS (`notes`), la orden que se intentó y el estado del ticker.
+
+    C-04: NO es el texto que sale a Telegram. El aviso de un rechazo lo
+    redacta `reglas.rechazos` (`_texto_aviso` / `tras_cancel_o_replace_rej`,
+    literal de DAS escapado con `html.escape`, D2-08) dentro de las acciones
+    de `rechazos.decidir`, y el decisor le pone la fase. Ese es el ÚNICO
+    contrato vivo; esta función queda como formato de consulta (p. ej. para
+    `/detalle` o herramientas) y ningún módulo del camino de órdenes la usa.
+    """
     lado = _LADO_LEGIBLE.get(orden.lado.value, orden.lado.value)
     if orden.tipo is TipoOrden.MERCADO:
         precio = "a mercado"
@@ -702,7 +777,8 @@ def texto_rechazo(orden: Orden, notas: str, pos: PosicionTicker, fase: Optional[
 class FiltroSecretos(logging.Filter):
     """Sustituye los VALORES literales de los secretos (y la forma URL `bot\\d+:…`) por «*****» en cada LogRecord.
 
-    Se construye con los valores (longitud ≥ 6, vacíos ignorados); actúa
+    Se construye con los valores (longitud ≥ `SECRETO_LONGITUD_MIN`, vacíos ignorados; los más cortos se cuentan
+    en `cortos`, SEG-04); actúa
     sobre `msg`, cada elemento de `args` (tupla, dict o escalar), la traza
     de la excepción y `stack_info`, sin cambiar la forma de `args` para no
     romper el formateo `%`. `limpiar` es la misma sustitución para texto
@@ -712,11 +788,18 @@ class FiltroSecretos(logging.Filter):
     def __init__(self, secretos: Iterable[str]) -> None:
         super().__init__()
         valores = {str(s).strip() for s in secretos if s is not None}
+        valores.discard("")
         self._secretos = tuple(sorted((v for v in valores if len(v) >= SECRETO_LONGITUD_MIN), key=len, reverse=True))
+        self._cortos = sum(1 for v in valores if len(v) < SECRETO_LONGITUD_MIN)
 
     @property
     def secretos(self) -> tuple[str, ...]:
         return self._secretos
+
+    @property
+    def cortos(self) -> int:
+        """SEG-04: cuántos secretos NO se pueden tapar por ser más cortos que `SECRETO_LONGITUD_MIN` (se avisa al arrancar)."""
+        return self._cortos
 
     def limpiar(self, texto: str) -> str:
         """Texto con cada secreto (más largo primero) y la forma URL del token sustituidos por «*****»."""
@@ -738,7 +821,31 @@ class FiltroSecretos(logging.Filter):
         limpio = self.limpiar(texto)
         return valor if limpio == texto else limpio
 
+    def _tapa_un_no_str(self, valor: Any) -> bool:
+        """¿Algún valor NO str (int, float, objeto) lleva un secreto en su texto? (C-03: taparlo cambiaría su tipo)."""
+        if isinstance(valor, str):
+            return False
+        if isinstance(valor, (tuple, list)):
+            return any(self._tapa_un_no_str(v) for v in valor)
+        if isinstance(valor, dict):
+            return any(self._tapa_un_no_str(k) or self._tapa_un_no_str(v) for k, v in valor.items())
+        try:
+            texto = str(valor)
+        except Exception:  # noqa: BLE001 — frontera de formateo: un __str__ roto no tumba el log
+            return False
+        return self.limpiar(texto) != texto
+
     def filter(self, record: logging.LogRecord) -> bool:
+        if record.args and self._tapa_un_no_str(record.args):
+            # C-03: un %d/%.2f que recibiera «*****» rompería el formateo y la línea se perdería.
+            # Se formatea PRIMERO con los valores reales y se tapa el texto ya formateado.
+            try:
+                formateado = record.getMessage()
+            except Exception:  # noqa: BLE001 — frontera de formateo: si ni siquiera formatea, sigue el camino de siempre
+                formateado = None
+            if formateado is not None:
+                record.msg = self.limpiar(formateado)
+                record.args = None
         if isinstance(record.msg, str):
             record.msg = self.limpiar(record.msg)
         else:
@@ -856,6 +963,9 @@ def instalar_logging(proceso: str, directorio_logs: Path, secretos: Iterable[str
     for ruidoso in ("httpx", "httpcore", "urllib3"):
         logging.getLogger(ruidoso).setLevel(logging.WARNING)
     logger.info("[LOG] %s escribe en %s (%d secreto(s) tapados)", proceso, handlers[0].baseFilename, len(filtro.secretos))
+    if filtro.cortos:                       # SEG-04: nunca el valor, solo cuántos
+        logger.warning("[LOG] %d secreto(s) de menos de %d caracteres NO se pueden tapar en el log: "
+                       "usa claves más largas", filtro.cortos, SECRETO_LONGITUD_MIN)
 
 
 def desinstalar_logging() -> None:
