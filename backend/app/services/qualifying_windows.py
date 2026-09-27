@@ -46,6 +46,43 @@ def _lag1_select(src: str) -> str:
     return f'LAG({src}, 1) OVER (PARTITION BY ticker ORDER BY "timestamp") AS lag_{src}_1'
 
 
+# ── Filtro 3.2 del Bloque 3 (2026-09-27): retorno acumulado 5 días ──────────
+#
+# Definición EXACTA del estudio (docs/INFORME_BLOQUE3_REINCIDENCIA_20260925.md
+# §1 y .tmp_bloque3/paso1_features.py, la misma con la que salieron los grupos
+# de la prueba de cartera): retorno del cierre de la víspera frente al cierre
+# de 5 sesiones antes, en % — implementado como producto de los retornos
+# diarios r = close/prev_close − 1 de las 5 sesiones D−5..D−1 (prev_close
+# PERSISTIDA del ETL, splits horneados, para que la ventana no explote al
+# cruzar splits — hallazgo 25-sep·01). Si algún día de la ventana es inválido
+# (prev_close ≤ 0 o |r| > 500 %) o faltan las 5 sesiones, la columna queda
+# NULL y la regla no selecciona ese ticker-día (igual que el estudio lo dejaba
+# NaN). En % (×100): el estudio medía el ratio; el umbral movible de la UI va
+# en puntos de porcentaje.
+#
+# Ventanas de D-1 referidas al día del gap D → alias de la familia Gap -1.
+RET5D_WINDOW_ALIAS = "lag_ret5d_pct_1"
+
+_RET5D_FRAME = (
+    'PARTITION BY ticker ORDER BY "timestamp" '
+    "ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING"
+)
+
+
+def _ret5d_select() -> str:
+    return (
+        "CASE WHEN COUNT(*) OVER (" + _RET5D_FRAME + ") = 5 "
+        'AND COUNT(CASE WHEN "prev_close" > 0 '
+        'AND abs("close" / "prev_close" - 1) <= 5.0 THEN 1 END) '
+        "OVER (" + _RET5D_FRAME + ") = 5 "
+        'THEN 100.0 * (EXP(SUM(CASE WHEN "prev_close" > 0 '
+        'AND abs("close" / "prev_close" - 1) <= 5.0 '
+        'THEN ln("close" / "prev_close") ELSE 0 END) '
+        "OVER (" + _RET5D_FRAME + ")) - 1) "
+        f"ELSE NULL END AS {RET5D_WINDOW_ALIAS}"
+    )
+
+
 def prev_day_lag1_selects() -> list[str]:
     """Selects LAG 1 completos (todas las fuentes UI de Gap -1)."""
     return [_lag1_select(src) for src in PREV_DAY_LAG_SOURCES]
@@ -56,12 +93,13 @@ def prev_day_lag1_aliases() -> list[str]:
 
 
 def stage2_prev_day_lag1_selects() -> list[str]:
-    """Selects LAG 1 que el stage-2 del qualifying NO tenia ya hardcodeados."""
+    """Selects de Gap −1 que el stage-2 del qualifying NO tenía ya hardcodeados:
+    los LAG 1 de PREV_DAY_LAG_SOURCES + la ventana compuesta 3.2 (ret 5 d)."""
     return [
         _lag1_select(src)
         for src in PREV_DAY_LAG_SOURCES
         if src not in STAGE2_BUILTIN_LAG1_SOURCES
-    ]
+    ] + [_ret5d_select()]
 
 
 # Fuentes LEAD de la subquery de materializacion de pares (query.py). Mismo
@@ -87,6 +125,7 @@ def dataset_pairs_subquery_lagged_sql() -> str:
                 f'AS lead_{src}_{n}'
             )
     cols.extend(prev_day_lag1_selects())
+    cols.append(_ret5d_select())
     inner = ",\n                           ".join(cols)
     return (
         "(\n"
@@ -134,6 +173,10 @@ def window_alias_to_expr() -> dict[str, str]:
                 f'LEAD("{src}", {n}) OVER (PARTITION BY ticker ORDER BY "timestamp") '
                 f'AS lead_{src}_{n}'
             )
+    # Ventanas compuestas (no LAG/LEAD de una columna base): la primera real es
+    # el 3.2 (retorno acumulado 5 días, Gap −1). Necesita "close"/"prev_close"
+    # en el parquet (verificado en bygap y en el lago = mismo ETL que GCS).
+    out[RET5D_WINDOW_ALIAS] = _ret5d_select()
     return out
 
 

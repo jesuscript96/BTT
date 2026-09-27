@@ -34,6 +34,8 @@ export const PARAMETROS_UNIVERSO: ParametroUniverso[] = [
   // Filtro 1.6 del Bloque 1 (2026-09-25): solo tiene columna en Gap -1, por eso
   // `paramsDisponibles` no lo ofrece en las demás secciones.
   { key: "day_return_pct", label: "Day Return % (RTH, cierre vs apertura)", unit: "%", placeholder: "0.0" },
+  // Filtro 3.2 del Bloque 3 (2026-09-27): igual que el 1.6, solo en Gap -1.
+  { key: "ret_5d_pct", label: "Retorno 5 días % (cierre víspera vs 5 sesiones antes)", unit: "%", placeholder: "0.0" },
 ];
 
 export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
@@ -49,6 +51,8 @@ export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
     "Rango de la vela en la sesión regular (máximo a mínimo o porcentaje de movimiento)",
   day_return_pct:
     "Retorno intra-RTH del día ((cierre RTH − apertura RTH) / apertura RTH). Negativo = vela roja: en Gap -1 es la «víspera roja» del Bloque 1. NO es contra el cierre del día anterior.",
+  ret_5d_pct:
+    "Retorno del cierre de la víspera frente al cierre de 5 sesiones antes, en % (producto de los retornos diarios de esas 5 sesiones, con el cierre previo ajustado por splits). Criterio 3.2 del Bloque 3: «venía cayendo» (< 0) da más fade premarket. En la 1B se validó como herramienta de SIZING (más peso a «venía cayendo»); en DT y 2B no aportaba.",
 };
 
 export type SeccionUniverso =
@@ -84,6 +88,7 @@ export function campoDeRegla(section: SeccionUniverso, paramKey: string): string
       gap_pct: "lag_gap_pct_1", rth_volume: "lag_rth_volume_1",
       rth_range_pct: "lag_rth_range_pct_1",
       day_return_pct: "lag_day_return_pct_1",
+      ret_5d_pct: "lag_ret5d_pct_1",
     }[paramKey] ?? "";
   }
   if (section === "gap_day") {
