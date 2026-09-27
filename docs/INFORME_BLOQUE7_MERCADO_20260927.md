@@ -121,3 +121,61 @@ obligatorias antes de creérsela del todo.
   5d con alineación al último día de bolsa; contadores de gaps).
 - Vistas: `paso2_vistas.py` → `resultados_A.txt`, `resultados_trades.txt`.
 - Controles de la 7.2b (hora/día) y cartera: impresos en la sesión (§3-4).
+
+## 8. ROBUSTEZ de 7.2b (28-sep, antes de plantearse construirlo) — `paso8_robustez.py`
+
+**Sobrevive TODO, y con una sorpresa sobre DÓNDE vive el efecto.**
+
+**(2) Pureza del contador (sin look-ahead):** el contador es SOLO «cruces de
++50 % sobre la `prev_close` persistida en la línea AH-víspera→09:30, con
+minuto ≤ la vela de entrada», computado de velas 1m. SIN filtros del dataset
+(tipo, volumen, rth_*, pmh final): la población de tickers contables es «los
+que cruzaron +50 % alguna vez ese día» — por definición, quien cruza antes de
+tu entrada es contable y quien cruza después no. Cobertura de la población:
+106 % del PMH≥50 de vistaA (6 % extra = velas que cruzan +50 % pero cuyo
+pmh_gap del ETL quedó < 50 — mismatch menor de base; el contador cuenta
+cruces reales de vela, no métricas del día). **Nada que rehacer.**
+
+**(3) Curva de umbral — GRADUAL, no cuchillo:** grupo `n_gaps_pre ≥ X`, Calmar
+del mixto: X=3 → 44,0 · 5 → 52,0 · 8 → 69,8 · **10 → 78,3 (máximo)** ·
+15 → 46,9 · 20 → 43,0. El retorno del grupo cae monótono (+2,97 → −3,67).
+Meseta 8-12; el 10 del informe está en el centro, no en un borde.
+
+**(1) Días — no concentrado y a prueba de bootstrap:** el grupo ≥10 toca
+**416 días distintos de 668** (5,5 trades/día). Quitando los 3/5/10 peores
+días del grupo: ρ −0,230/−0,228/−0,223 y el Calmar del mixto SUBE
+(79,3/80,0/80,7). **Bootstrap por día (1.000×)**: ΔCalmar mediana **+27,7**
+(p5 +13,1) · ΔSharpe mediana **+2,84** (p5 +2,35) — **el 100 % de las
+iteraciones mejoran ambos**. Ningún día ni episodio lleva el efecto.
+
+**(4) Los días más calientes:** 2026-06-10 (44 gaps) · 09-jun (39) · 11-jun
+(37) · 2025-09-10/11 (33) · 2024-12-26 (31) · 2025-09-09 (29) · 2024-12-19
+(27) · 2024-02-14 (26) · 2024-12-24 (26). **Van en racimos de días
+consecutivos** (jun-26, sep-25, dic-24, feb-24 — frenesí retail por olas),
+pero el efecto NO depende de ellos (punto 1). Media por año estable
+(10-12 gaps/día).
+
+**(6) DÓNDE vive — SOLO EN ENTRADAS TEMPRANAS (el giro):** antes de 05:30 →
+ρ **−0,285** y grupo≥10 **−4,51 %**; después de 05:30 → ρ −0,154 y grupo≥10
+**+0,34 % (¡positivo!)**. Es decir: el daño es entrar PRONTO en una mañana
+que YA venía caliente de madrugada/after-hours (≥10 gaps arrancados antes de
+tu entrada temprana = frenesí nocturno); entrar más tarde en un día caliente
+no penaliza (para entonces el conteo alto es normal). El efecto es
+«frescura del frenesí», no «hora».
+
+**(7)+(5) El proxy a hora fija NO SIRVE — y eso cierra la implementación
+barata:** nº de cruces ya hechos a las 05:00 (para entradas ≥05:30) y a las
+06:00 (entradas ≥06:30): ρ **+0,05 (signo equivocado)**, grupo ≥10
+**+4,12 %/+2,28 %** (positivo), cartera del proxy 44,4/44,0 (nada). Razón:
+el efecto vive en las entradas tempranas, donde el corte fijo aún no sabe
+nada útil — y en las tardías el conteo fijo no penaliza. **Conclusión de
+implementación:** ninguna aproximación a nivel dataset lo captura (no puede
+condicionar a la hora de entrada, y los cortes fijos salen con el signo
+cruzado). La forma simple real: tabla precomputada (fecha, minuto) con el
+contador running de cruces (una pasada sobre el 1m del lago, como esta
+extracción) + condición de ENTRADA en el motor que la consulte por (fecha,
+minuto). Eso NO toca `market_frame.py` (el contador viajaría como constante
+por fecha en el frame/`ds`), pero SÍ toca `strategy_engine`/simulador —
+ficheros COMPARTIDOS con el bot en vivo: **avisar a Jaume antes de nada**
+(regla del repo). Mientras tanto queda como hallazgo + la prueba de
+Portfolio de Álvaro.
