@@ -40,7 +40,11 @@ def _make_con(ruta_parquet: str) -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(":memory:")
     estaticas = ["ticker VARCHAR", '"timestamp" TIMESTAMP', "rth_open DOUBLE",
                  "rth_high DOUBLE", "rth_low DOUBLE", "rth_close DOUBLE",
-                 "rth_volume BIGINT", "pm_high DOUBLE", "pm_low DOUBLE"]
+                 "rth_volume BIGINT", "pm_high DOUBLE", "pm_low DOUBLE",
+                 # el select 3.2 (lag_ret5d_pct_1) viaja SIEMPRE en stage-2 y
+                 # usa close/prev_close: el mini-lago las necesita aunque ningún
+                 # test de este fichero filtre por la ventana
+                 '"close" DOUBLE', '"prev_close" DOUBLE']
     for src in PREV_DAY_LAG_SOURCES:
         if any(c.startswith(f"{src} ") for c in estaticas):
             continue  # rth_close / rth_volume ya están
@@ -64,7 +68,7 @@ def _make_con(ruta_parquet: str) -> duckdb.DuckDBPyConnection:
                            [1.0, 0.5, -3.0, 2.0, -0.5]),
     }
     fijos = {"rth_open": 10.0, "rth_high": 12.0, "rth_low": 8.0,
-             "pm_high": 13.0, "pm_low": 7.0}
+             "pm_high": 13.0, "pm_low": 7.0, "close": 10.0, "prev_close": 10.0}
     for i, d in enumerate(dias):
         for t, j in (("AAA", 0), ("BBB", 1)):
             fila = {"ticker": t, "timestamp": d, **fijos}
@@ -147,3 +151,64 @@ def test_columna_desconocida_siguen_fallando_ruidosamente(entorno):
         _fetch_qualifying_data_uncached(
             "dataset-test", filtros=_filtros("lag_inventada_del_future_1"))
     assert "lag_inventada_del_future_1" in str(ei.value)
+
+
+# ─── Filtro 3.2 (lag_ret5d_pct_1): ventana compuesta, no LAG de una columna ──
+
+def test_registro_conoce_la_ventana_ret5d():
+    sel, desc = on_the_fly_window_selects({"lag_ret5d_pct_1"})
+    assert [s.split(" AS ")[-1] for s in sel] == ["lag_ret5d_pct_1"]
+    assert desc == []
+
+
+@pytest.fixture()
+def entorno_ret5d(tmp_path, monkeypatch):
+    """Mini-lago 1 ticker × 7 días con r = −0,1 por sesión y parquet bygap
+    SIN lag_ret5d_pct_1 (como el real del 7-sep: la ventana no existe allí)."""
+    ruta = str(tmp_path / "bygap_ret5d.parquet")
+    con = duckdb.connect(":memory:")
+    # columnas base completas: la vía stage-2 selecciona todo su repertorio
+    con.execute(
+        'CREATE TABLE daily_metrics (ticker VARCHAR, "timestamp" TIMESTAMP, '
+        '"close" DOUBLE, "prev_close" DOUBLE, rth_open DOUBLE, rth_high DOUBLE, '
+        "rth_low DOUBLE, rth_close DOUBLE, rth_volume BIGINT, pm_high DOUBLE, "
+        "pm_low DOUBLE, gap_pct DOUBLE, pm_volume BIGINT, \"open\" DOUBLE, "
+        "pmh_gap_pct DOUBLE, rth_range_pct DOUBLE, day_return_pct DOUBLE)"
+    )
+    for i in range(7):
+        con.execute(
+            'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 10.0, 12.0, 8.0, 10.0, '
+            "1000000, 13.0, 7.0, 5.0, 500000, 10.0, 50.0, 3.0, 1.0)",
+            ["AAA", f"2024-01-{i + 1:02d}", 10.0 * 0.9 ** i,
+             10.0 * 0.9 ** (i - 1) if i else 10.0],
+        )
+    con.execute(
+        f"COPY (SELECT * FROM daily_metrics) TO '{ruta}' (FORMAT PARQUET)"
+    )
+    monkeypatch.setenv("DB_PROVIDER", "local")
+    monkeypatch.setenv("QUALIFYING_WINDOWED_PARQUET", ruta)
+    monkeypatch.setattr("app.database.get_db_connection", lambda: con)
+    yield ruta, con, monkeypatch
+    con.close()
+
+
+def test_materializada_ret5d_no_falla_y_paridad_con_stage2(entorno_ret5d):
+    # antes de la ventana: Binder Error "Referenced column lag_ret5d_pct_1 not found"
+    df_mat = _fetch_qualifying_data_uncached(
+        "dataset-test", filtros=_filtros("lag_ret5d_pct_1"))
+    # la ventana de 5 sesiones está completa desde el 6-ene. La del 6-ene
+    # incluye el día 0 (r = 0: close = prev_close = 10, válido pero plano) →
+    # producto 0,9⁴; la del 7-ene son los cinco r = −0,1 → 0,9⁵.
+    assert _td(df_mat) == [("AAA", "2024-01-06"), ("AAA", "2024-01-07")]
+    valores = df_mat.set_index("date")["lag_ret5d_pct_1"].to_dict()
+    assert valores["2024-01-06"] == pytest.approx(100 * (0.9 ** 4 - 1))
+    assert valores["2024-01-07"] == pytest.approx(100 * (0.9 ** 5 - 1))
+
+    entorno_ret5d[2].delenv("QUALIFYING_WINDOWED_PARQUET")
+    df_s2 = _fetch_qualifying_data_uncached(
+        "dataset-test", filtros=_filtros("lag_ret5d_pct_1"))
+    assert _td(df_s2) == _td(df_mat)
+    m = df_mat.set_index(["ticker", "date"])["lag_ret5d_pct_1"].to_dict()
+    s = df_s2.set_index(["ticker", "date"])["lag_ret5d_pct_1"].to_dict()
+    for k in m:
+        assert m[k] == pytest.approx(s[k])

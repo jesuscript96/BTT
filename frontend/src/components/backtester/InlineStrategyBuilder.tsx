@@ -117,6 +117,7 @@ function getFriendlyMetricLabel(metric: string): string {
     "lag_rth_volume_1": "volumen rth día anterior",
     "lag_rth_range_pct_1": "rango rth día anterior %",
     "lag_day_return_pct_1": "day return rth (cierre vs apertura) día anterior %",
+    "lag_ret5d_pct_1": "retorno 5 días (cierre víspera vs 5 sesiones antes) %",
   };
   if (labelMap[m]) return labelMap[m];
   return m.replace(/_/g, " ").toLowerCase();
@@ -1199,10 +1200,11 @@ export default function InlineStrategyBuilder({
                         onChange={(e) => {
                           const val = e.target.value as any;
                           setTempUnivDay(val);
-                          // Day Return % solo tiene columna en Gap -1
-                          // (lag_day_return_pct_1); en otra sección la regla no
-                          // existiría y el botón no haría nada.
-                          if (val !== 'gap_prev_day' && tempUnivParam === 'day_return_pct') {
+                          // Day Return % y Retorno 5 días solo tienen columna
+                          // en Gap -1 (lag_day_return_pct_1 / lag_ret5d_pct_1);
+                          // en otra sección la regla no existiría y el botón
+                          // no haría nada.
+                          if (val !== 'gap_prev_day' && (tempUnivParam === 'day_return_pct' || tempUnivParam === 'ret_5d_pct')) {
                             setTempUnivParam('gap_pct');
                             setTempUnivVal1('2.0');
                           }
@@ -1232,7 +1234,7 @@ export default function InlineStrategyBuilder({
                             setTempUnivVal1('1.0');
                           } else if (param === 'gap_pct' || param === 'rth_range_pct') {
                             setTempUnivVal1('2.0');
-                          } else if (param === 'day_return_pct') {
+                          } else if (param === 'day_return_pct' || param === 'ret_5d_pct') {
                             setTempUnivVal1('0.0');
                           } else {
                             setTempUnivVal1('5.0');
@@ -1257,6 +1259,9 @@ export default function InlineStrategyBuilder({
                         <option value="rth_range_pct">Rango RTH (%)</option>
                         {tempUnivDay === 'gap_prev_day' && (
                           <option value="day_return_pct">Day Return % (RTH, cierre vs apertura)</option>
+                        )}
+                        {tempUnivDay === 'gap_prev_day' && (
+                          <option value="ret_5d_pct">Retorno 5 días % (cierre víspera vs 5 sesiones antes)</option>
                         )}
                       </select>
 
@@ -1334,6 +1339,7 @@ export default function InlineStrategyBuilder({
                             else if (tempUnivParam === "rth_volume") fieldName = "lag_rth_volume_1";
                             else if (tempUnivParam === "rth_range_pct") fieldName = "lag_rth_range_pct_1";
                             else if (tempUnivParam === "day_return_pct") fieldName = "lag_day_return_pct_1";
+                            else if (tempUnivParam === "ret_5d_pct") fieldName = "lag_ret5d_pct_1";
                           } else if (tempUnivDay === "gap_day") {
                             if (tempUnivParam === "rth_close") fieldName = "Close Price";
                             else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";
