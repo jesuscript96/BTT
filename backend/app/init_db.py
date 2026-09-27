@@ -1,5 +1,59 @@
 from app.database import get_db_connection, get_user_db_connection
 
+
+def _table_exists(conn, table_name):
+    """Consulta de catalogo (read-only): la tabla ya existe en main de la BD
+    actual. Se usa para SALTAR el DDL de arranque cuando no hace falta —
+    ver _checkpoint."""
+    row = conn.execute(
+        "SELECT COUNT(*) FROM duckdb_tables() "
+        "WHERE database_name = current_database() AND schema_name = 'main' "
+        "AND table_name = ?",
+        [table_name],
+    ).fetchone()
+    return bool(row and row[0] > 0)
+
+
+def _column_exists(conn, table_name, column_name):
+    row = conn.execute(
+        "SELECT COUNT(*) FROM duckdb_columns() "
+        "WHERE database_name = current_database() AND schema_name = 'main' "
+        "AND table_name = ? AND column_name = ?",
+        [table_name, column_name],
+    ).fetchone()
+    return bool(row and row[0] > 0)
+
+
+def _ensure_table(conn, table_name, ddl):
+    if _table_exists(conn, table_name):
+        return
+    conn.execute(ddl)
+
+
+def _ensure_column(conn, table_name, column_name, ddl):
+    if _column_exists(conn, table_name, column_name):
+        return
+    conn.execute(ddl)
+
+
+def _checkpoint(conn, label):
+    """CHECKPOINT best-effort tras el DDL de arranque: vuelca el WAL al
+    fichero y lo deja vacio.
+
+    Sin esto, una parada abrupta (taskkill /F, el ciclo documentado del
+    watchdog) deja el WAL sin volcar y duckdb 1.5.5 no puede replayarlo:
+    INTERNAL Error "Failure while replaying WAL file ... GetDefaultDatabase"
+    -> run_backend_safe exit 3 -> watchdog en crash-loop hasta renombrar el
+    .wal a mano (hallazgos 03/04, 15 renames entre el 23-sep y el 27-sep).
+    Con el CHECKPOINT, lo que el arranque escribio aterriza en el fichero y
+    un taskkill posterior no deja nada pendiente de replay."""
+    try:
+        conn.execute("CHECKPOINT")
+        print(f"[INFO] CHECKPOINT tras DDL de arranque: {label} (WAL vacio)")
+    except Exception as e:
+        print(f"[WARN] CHECKPOINT de {label} fallo: {e}")
+
+
 def init_db():
     """Create strategies and saved_queries tables if they do not exist."""
     import os
@@ -55,10 +109,12 @@ def init_db():
                     cur.execute(f"DROP VIEW IF EXISTS main.{table_name}")
                 except Exception as e:
                     pass
-            # 1. Create empty local tables in local_data.duckdb so they exist
-            cur.execute("CREATE TABLE IF NOT EXISTS tickers (ticker VARCHAR PRIMARY KEY, name VARCHAR, type VARCHAR)")
-            cur.execute("CREATE TABLE IF NOT EXISTS splits (ticker VARCHAR, execution_date DATE, PRIMARY KEY(ticker, execution_date))")
-            cur.execute("""
+            # 1. Create empty local tables in local_data.duckdb so they exist.
+            # _ensure_table consulta el catalogo antes de escribir: si la tabla
+            # ya existe, el arranque no toca el WAL (hallazgos 03/04).
+            _ensure_table(cur, "tickers", "CREATE TABLE IF NOT EXISTS tickers (ticker VARCHAR PRIMARY KEY, name VARCHAR, type VARCHAR)")
+            _ensure_table(cur, "splits", "CREATE TABLE IF NOT EXISTS splits (ticker VARCHAR, execution_date DATE, PRIMARY KEY(ticker, execution_date))")
+            _ensure_table(cur, "daily_metrics", """
                 CREATE TABLE IF NOT EXISTS daily_metrics (
                     ticker VARCHAR,
                     timestamp TIMESTAMP,
@@ -100,7 +156,7 @@ def init_db():
                     transactions DOUBLE
                 )
             """)
-            cur.execute("""
+            _ensure_table(cur, "intraday_1m", """
                 CREATE TABLE IF NOT EXISTS intraday_1m (
                     ticker VARCHAR,
                     date DATE,
@@ -160,7 +216,13 @@ def init_db():
     db_connections = [get_db_connection(), get_user_db_connection()]
 
     for conn in db_connections:
-        conn.execute("""
+        # _ensure_table/_ensure_column (hallazgos 03/04): consultar el catalogo
+        # es read-only; ejecutar el DDL "idempotente" cuando la tabla/columna
+        # ya existe en el FICHERO era lo que dejaba 160 B en el WAL de
+        # local_data.duckdb en cada arranque (el ALTER de strategies/tags
+        # añadia la columna DE VERDAD porque el fichero no la tenia: solo
+        # habia llegado a WALs que los taskkill descartaban).
+        _ensure_table(conn, "saved_queries", """
             CREATE TABLE IF NOT EXISTS saved_queries (
                 id VARCHAR PRIMARY KEY,
                 name VARCHAR,
@@ -169,8 +231,8 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        
-        conn.execute("""
+
+        _ensure_table(conn, "strategies", """
             CREATE TABLE IF NOT EXISTS strategies (
                 id VARCHAR PRIMARY KEY,
                 name VARCHAR,
@@ -184,7 +246,8 @@ def init_db():
         # (PRD_persistir_backtests_ANTIGRAVITY — Parte C). Self-healing &
         # idempotent: runs on every startup so existing DBs get the column.
         try:
-            conn.execute(
+            _ensure_column(
+                conn, "strategies", "in_incubator",
                 "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS in_incubator BOOLEAN DEFAULT FALSE"
             )
         except Exception as e:
@@ -195,13 +258,14 @@ def init_db():
         # parte de la definición ni afecta a ningún backtest. Self-healing
         # igual que in_incubator. Ver app/services/strategy_tags.py.
         try:
-            conn.execute(
+            _ensure_column(
+                conn, "strategies", "tags",
                 "ALTER TABLE strategies ADD COLUMN IF NOT EXISTS tags VARCHAR DEFAULT '[]'"
             )
         except Exception as e:
             print(f"[WARN] Could not add tags to strategies: {e}")
 
-        conn.execute("""
+        _ensure_table(conn, "datasets", """
             CREATE TABLE IF NOT EXISTS datasets (
                 id VARCHAR PRIMARY KEY,
                 name VARCHAR,
@@ -209,7 +273,7 @@ def init_db():
             )
         """)
 
-        conn.execute("""
+        _ensure_table(conn, "dataset_pairs", """
             CREATE TABLE IF NOT EXISTS dataset_pairs (
                 dataset_id VARCHAR,
                 ticker VARCHAR,
@@ -221,7 +285,7 @@ def init_db():
         # ticker_analysis_cache: persistent stale-while-revalidate cache for the
         # Ticker Analysis endpoints (yfinance/Finviz/SEC are slow and flaky).
         # Survives restarts/deploys via the users.duckdb GCS sync cycle.
-        conn.execute("""
+        _ensure_table(conn, "ticker_analysis_cache", """
             CREATE TABLE IF NOT EXISTS ticker_analysis_cache (
                 ticker VARCHAR,
                 endpoint VARCHAR,
@@ -235,7 +299,7 @@ def init_db():
         # dilusores extraídos por Edgie de los filings SEC. Cada análisis inserta
         # los bancos detectados; los conteos por banco elevan el rating de riesgo
         # de dilución en análisis posteriores. Ver routers/assistant.py.
-        conn.execute("""
+        _ensure_table(conn, "dilution_banks_registry", """
             CREATE TABLE IF NOT EXISTS dilution_banks_registry (
                 ticker VARCHAR NOT NULL,
                 bank_name VARCHAR NOT NULL,
@@ -249,7 +313,7 @@ def init_db():
         # Survives restarts so the backtest endpoint and clients can know whether
         # a precache is still running, finished, or failed without relying on
         # in-process dicts that die with the worker.
-        conn.execute("""
+        _ensure_table(conn, "precache_state", """
             CREATE TABLE IF NOT EXISTS precache_state (
                 dataset_id VARCHAR PRIMARY KEY,
                 status VARCHAR,
@@ -259,7 +323,7 @@ def init_db():
         """)
 
         # backtest_results table
-        conn.execute("""
+        _ensure_table(conn, "backtest_results", """
             CREATE TABLE IF NOT EXISTS backtest_results (
                 id VARCHAR PRIMARY KEY,
                 strategy_ids JSON,
@@ -282,7 +346,7 @@ def init_db():
         # feature_options: the single-answer list shown in the widget.
         # feature_votes:   one vote per user per release (PK round_id+user_id).
         # feature_suggestions: free-text "¿Qué echas de menos en Edgecute?".
-        conn.execute("""
+        _ensure_table(conn, "feature_options", """
             CREATE TABLE IF NOT EXISTS feature_options (
                 id VARCHAR PRIMARY KEY,
                 label VARCHAR,
@@ -292,7 +356,7 @@ def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        conn.execute("""
+        _ensure_table(conn, "feature_votes", """
             CREATE TABLE IF NOT EXISTS feature_votes (
                 round_id VARCHAR,
                 user_id VARCHAR,
@@ -301,7 +365,7 @@ def init_db():
                 PRIMARY KEY (round_id, user_id)
             )
         """)
-        conn.execute("""
+        _ensure_table(conn, "feature_suggestions", """
             CREATE TABLE IF NOT EXISTS feature_suggestions (
                 id VARCHAR PRIMARY KEY,
                 user_id VARCHAR,
@@ -337,7 +401,10 @@ def init_db():
         # working — reads use NULL-tolerant scoping (see app.auth.scope_clause).
         for table_name in ("strategies", "saved_queries", "datasets", "backtest_results"):
             try:
-                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS user_id VARCHAR")
+                _ensure_column(
+                    conn, table_name, "user_id",
+                    f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS user_id VARCHAR"
+                )
             except Exception as e:
                 print(f"[WARN] Could not add user_id to {table_name}: {e}")
 
@@ -355,6 +422,18 @@ def init_db():
         print("[INFO] Successfully migrated local daily_metrics pmh_gap_pct calculation")
     except Exception as e:
         print(f"[WARN] Could not update local daily_metrics pmh_gap_pct: {e}")
+
+    # ── Anti-stall del WAL (hallazgos 03/04, fix 2026-09-27) ────────────────
+    # Cualquier DDL/UPDATE que el arranque haya escrito queda volcado al
+    # fichero y el WAL se queda vacio: un taskkill /F posterior no deja nada
+    # pendiente de replay (ver _checkpoint). Solo donde hay fichero fisico
+    # propio: en local, local_data.duckdb y users.duckdb; en gcs, users.duckdb
+    # (la conexion de datos es in-memory). MotherDuck gestiona el suyo.
+    if provider == "local":
+        _checkpoint(db_connections[0], "local_data.duckdb")
+        _checkpoint(db_connections[1], "users.duckdb")
+    elif provider == "gcs":
+        _checkpoint(db_connections[1], "users.duckdb")
 
 if __name__ == "__main__":
     init_db()
