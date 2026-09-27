@@ -156,6 +156,8 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-25 | B3·3.1 Días desde último gap (tramos) | 🟡 DUDOSO — «reincidente → menos fade» 6/8 años pero plano en 2019-22; trades 1B invierten el signo | `INFORME_BLOQUE3_REINCIDENCIA_20260925.md` |
 | 2026-09-25 | B3·3.2 Retorno acumulado 3/5/10d (deciles) | ✅ SIRVE — 24/24 celdas ρ<0 (8 años × 3 ventanas), ambos periodos; parcial ctrl 1.6 −0,10 en 8/8; quintiles de 1.6 todos negativos; 1B 3/3 (2024 plano) | ídem |
 | 2026-09-25 | B3·3.3 Nº gaps 30/90d (tramos) | 🟡 DUDOSO — espejo de 3.1 (corr −0,43), mismo perfil inconsistente | ídem |
+| 2026-09-27 | 1.6 en la app, 1B 2025 (1R fijo 1 $): sin filtro / `<0` / `≤5` / `≥5` | Calmar 39,7 / **44,0** / 32,6 / 10,7. Efecto de 2 escalones: roja ~0,10 $/trade, verdes (pequeñas o grandes) ~0,05 $/trade; todas positivas → excluir verdes tira dinero | prueba manual de Álvaro |
+| 2026-09-27 | 1.6 para SIZING, 1B 2024→sep-2026, Portfolio (rojas/verdes) | ❌ No mejora: 1/1 Calmar 56,7 · Sharpe 8,54 · DD −4,1 % → 1,2/0,8: 55,8 · 8,52 · −4,4 % → 1,5/0,5: 50,8 · 8,03 · −5,2 %. Más peso a rojas = más agresivo, no mejor (se pierde diversificación con las verdes). **Conclusión 1B: operar todo por igual.** El filtro queda como herramienta para priorizar si falta poder de compra. 34 trades sin víspera (IPO) = 0,26 $/trade, el mejor grupo → Bloque 6 | prueba manual de Álvaro |
 
 ## Pendientes fuera de la investigación
 - Punto 5 CERRADO (25-sep): 1.6 probado en DT (misma dirección, débil — §8) y en la
