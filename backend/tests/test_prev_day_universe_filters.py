@@ -425,3 +425,58 @@ class TestHotCacheGuard:
 
     def test_accepts_min_gap_pct_without_rules(self):
         assert data_service._can_use_hot_cache({"min_gap_pct": 6.0}) is True
+
+
+class TestDaysSinceFirstDay:
+    """Filtro 6.1 del Bloque 6: días entre el día del gap y el PRIMER día del
+    ticker en el lago (proxy IPO; propiedad del ticker, evaluada en día D)."""
+
+    def _make_lake(self):
+        con = duckdb.connect(":memory:")
+        con.execute("CREATE SCHEMA massive")
+        con.execute("CREATE TABLE massive.tickers (ticker VARCHAR, type VARCHAR)")
+        con.execute("CREATE TABLE massive.splits (ticker VARCHAR, execution_date DATE)")
+        con.execute(
+            'CREATE TABLE daily_metrics (ticker VARCHAR, "timestamp" TIMESTAMP, '
+            '"close" DOUBLE, "prev_close" DOUBLE, rth_close DOUBLE, rth_volume BIGINT, '
+            "gap_pct DOUBLE, pm_volume BIGINT, \"open\" DOUBLE, pmh_gap_pct DOUBLE, "
+            "rth_range_pct DOUBLE, day_return_pct DOUBLE)"
+        )
+        # AAA nace el 1-ene (3 días); BBB el 3-ene (mismo día del gap)
+        filas = [("AAA", "2024-01-01"), ("AAA", "2024-01-02"), ("AAA", "2024-01-03"),
+                 ("BBB", "2024-01-03")]
+        for t, d in filas:
+            con.execute(
+                'INSERT INTO daily_metrics VALUES (?, ?, 10.0, 10.0, 10.0, 1000000, '
+                "5.0, 500000, 10.0, 50.0, 3.0, 1.0)", [t, d])
+        con.execute("INSERT INTO massive.tickers VALUES ('AAA','CS'), ('BBB','CS')")
+        return con
+
+    def test_dataset_pairs_days_since(self):
+        con = self._make_lake()
+        filters = {
+            "start_date": "2024-01-01", "end_date": "2024-01-31",
+            "rules": [{"metric": "days_since_first_day",
+                       "operator": "LESS_THAN", "value": "2"}],
+        }
+        _, params, _, _, where_m_stats, _ = build_screener_query(filters, limit=100000)
+        assert "days_since_first_day < ?" in where_m_stats
+        df = con.execute(
+            f'SELECT ticker, CAST(CAST("timestamp" AS DATE) AS VARCHAR) as date, '
+            f"days_since_first_day FROM {dataset_pairs_subquery_lagged_sql()} "
+            f"WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}", params
+        ).fetchdf()
+        # AAA: 1-ene = dia 0, 2-ene = 1, 3-ene = 2 -> <2 pasan 1 y 2-ene;
+        # BBB nace el 3-ene (dia 0) -> pasa
+        got = set(zip(df["ticker"], df["date"]))
+        assert got == {("AAA", "2024-01-01"), ("AAA", "2024-01-02"), ("BBB", "2024-01-03")}
+
+    def test_registro_y_subquery_la_traen(self):
+        from app.services.qualifying_windows import (
+            DAYS_SINCE_FIRST_DAY_ALIAS, dataset_pairs_subquery_lagged_sql,
+            stage2_prev_day_lag1_selects, window_alias_to_expr,
+        )
+        sql = dataset_pairs_subquery_lagged_sql()
+        assert f"AS {DAYS_SINCE_FIRST_DAY_ALIAS}" in sql
+        assert any(DAYS_SINCE_FIRST_DAY_ALIAS in s for s in stage2_prev_day_lag1_selects())
+        assert DAYS_SINCE_FIRST_DAY_ALIAS in window_alias_to_expr()

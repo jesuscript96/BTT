@@ -239,3 +239,27 @@ def test_missing_include_en_materializada_y_stage2(entorno_ret5d):
     entorno_ret5d[2].delenv("QUALIFYING_WINDOWED_PARQUET")
     df_s2 = _fetch_qualifying_data_uncached("dataset-test", filtros=filtros_inc)
     assert _td(df_s2) == _td(df_mat)
+
+
+def test_materializada_days_since_first_day_y_paridad(entorno_ret5d):
+    """6.1: la vía materializada computa days_since_first_day al vuelo (el
+    parquet bygap no lo trae) y coincide con stage-2 (AAA nace el 1-ene)."""
+    filtros_61 = {
+        "start_date": "2024-01-01", "end_date": "2024-12-31",
+        "rules": [{"metric": "days_since_first_day", "operator": "LESS_THAN",
+                   "valueType": "static", "value": "5"}],
+    }
+    df_mat = _fetch_qualifying_data_uncached("dataset-test", filtros=filtros_61)
+    # AAA: 1-ene = dia 0 .. 7-ene = dia 6 -> <5 son 1..5-ene (dias 0..4);
+    # BBB (nace 1-ene, 2 dias): 1..2-ene
+    assert _td(df_mat) == sorted(
+        [("AAA", f"2024-01-0{d}") for d in range(1, 6)]
+        + [("BBB", "2024-01-01"), ("BBB", "2024-01-02")]
+    )
+    entorno_ret5d[2].delenv("QUALIFYING_WINDOWED_PARQUET")
+    df_s2 = _fetch_qualifying_data_uncached("dataset-test", filtros=filtros_61)
+    assert _td(df_s2) == _td(df_mat)
+    m = df_mat.set_index(["ticker", "date"])["days_since_first_day"].to_dict()
+    s = df_s2.set_index(["ticker", "date"])["days_since_first_day"].to_dict()
+    for k in m:
+        assert m[k] == s[k]

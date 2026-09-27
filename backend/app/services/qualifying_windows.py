@@ -83,6 +83,25 @@ def _ret5d_select() -> str:
     )
 
 
+# ── Filtro 6.1 del Bloque 6 (2026-09-27): días desde el PRIMER DÍA del ticker
+# en el lago (proxy IPO — el lago empieza en 2019, así que un listado anterior
+# aparece con la edad truncada; NO es la IPO real, y la etiqueta de la UI lo
+# dice). Evaluado en el DÍA del gap (D), no en la víspera: es una propiedad
+# del ticker, no de una sesión. Umbral movible (p. ej. < 30 / < 90 días).
+#
+# ⚠️ La vía GCS lee por años: sin ayuda, MIN(timestamp) sobre la partición
+# daría el primer día DEL AÑO LEÍDO (primera fecha falsa). gcs_cache amplía la
+# lectura a TODO el lago cuando la regla usa esta columna (ver ahí).
+DAYS_SINCE_FIRST_DAY_ALIAS = "days_since_first_day"
+
+
+def _days_since_first_day_select() -> str:
+    return (
+        'DATEDIFF(\'day\', MIN("timestamp") OVER (PARTITION BY ticker), "timestamp") '
+        f'AS {DAYS_SINCE_FIRST_DAY_ALIAS}'
+    )
+
+
 def prev_day_lag1_selects() -> list[str]:
     """Selects LAG 1 completos (todas las fuentes UI de Gap -1)."""
     return [_lag1_select(src) for src in PREV_DAY_LAG_SOURCES]
@@ -94,12 +113,13 @@ def prev_day_lag1_aliases() -> list[str]:
 
 def stage2_prev_day_lag1_selects() -> list[str]:
     """Selects de Gap −1 que el stage-2 del qualifying NO tenía ya hardcodeados:
-    los LAG 1 de PREV_DAY_LAG_SOURCES + la ventana compuesta 3.2 (ret 5 d)."""
+    los LAG 1 de PREV_DAY_LAG_SOURCES + la ventana compuesta 3.2 (ret 5 d) +
+    days_since_first_day (6.1)."""
     return [
         _lag1_select(src)
         for src in PREV_DAY_LAG_SOURCES
         if src not in STAGE2_BUILTIN_LAG1_SOURCES
-    ] + [_ret5d_select()]
+    ] + [_ret5d_select(), _days_since_first_day_select()]
 
 
 # Fuentes LEAD de la subquery de materializacion de pares (query.py). Mismo
@@ -126,6 +146,7 @@ def dataset_pairs_subquery_lagged_sql() -> str:
             )
     cols.extend(prev_day_lag1_selects())
     cols.append(_ret5d_select())
+    cols.append(_days_since_first_day_select())
     inner = ",\n                           ".join(cols)
     return (
         "(\n"
@@ -177,6 +198,10 @@ def window_alias_to_expr() -> dict[str, str]:
     # el 3.2 (retorno acumulado 5 días, Gap −1). Necesita "close"/"prev_close"
     # en el parquet (verificado en bygap y en el lago = mismo ETL que GCS).
     out[RET5D_WINDOW_ALIAS] = _ret5d_select()
+    # 6.1 (2026-09-27): días desde el primer día del ticker. En la vía
+    # materializada el glob cubre el lago COMPLETO → el MIN por partición es
+    # la primera fecha real. OJO en GCS: gcs_cache amplía la lectura.
+    out[DAYS_SINCE_FIRST_DAY_ALIAS] = _days_since_first_day_select()
     return out
 
 

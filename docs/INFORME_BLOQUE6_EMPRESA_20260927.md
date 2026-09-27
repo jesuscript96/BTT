@@ -12,7 +12,7 @@
 
 | Criterio | Veredicto | Dirección (1B) | ¿Aporta sobre 1.6/3.2? | ¿Filtrable hoy? |
 |---|---|---|---|---|
-| 6.1 Días desde la IPO (primera fila en el lago) | ✅ SEÑAL PER-TRADE (priorizador; cartera plana) | **recién listado = mucho mejor: <30 d +9,96 %/trade · 30-90 d +4,83 · >5 y +2,15 (monótono), ρ 3/3 (−0,06/−0,09/−0,07), parcial 3/3**; 2B también 3/3 (−0,07); DT plano. Universo: celda <30 d fade 34,3 % vs ~27 el resto | SÍ (parcial ctrl 1.6+3.2: −0,03/−0,06/−0,06) — eje propio (juventud), no el de 1.6/3.2/2.4 | No (columna derivada de primera fecha; fácil) |
+| 6.1 Días desde la IPO (primera fila en el lago) | ✅ SEÑAL PER-TRADE (priorizador; cartera plana) | **recién listado = mucho mejor: <30 d +10,25 %/trade (n=239; ver corrección §8) · 30-90 d +4,83 · >5 y +2,15 (monótono), ρ 3/3 (−0,06/−0,09/−0,07), parcial 3/3**; 2B también 3/3 (−0,07); DT plano. Universo: celda <30 d fade 34,3 % vs ~27 el resto | SÍ (parcial ctrl 1.6+3.2: −0,03/−0,06/−0,06) — eje propio (juventud), no el de 1.6/3.2/2.4 | No (columna derivada de primera fecha; fácil) |
 | 6.2 SPAC | ⬜ YA EXCLUIDO DE SERIE | — | — | Ya filtrado por tipo (CS/ADRC/OS): **0 SPAC en el universo A y en los trades**. La regla de Jaume (SPAC pierden: 26 % de los T12) queda como fundamento del filtro existente |
 | 6.3 Contrasplit reciente (días desde el último) | 🟡 DUDOSO | reciente → algo más fade en universo (monótono: <30 d 30,4 vs >1 y 26,9; parcial −0,08); trades 1B −0,04 (3/3 flojo), DT +0,01, 2B +0,02 (sin cruzar) | Poco | No (necesita splits con fecha en la query) |
 | 6.4 Dilución 3 m / 6 m (crecimiento de shares entre informes) | ❌ NO SIRVE | PLANA en universo (26,1-27,1 en todos los tramos) y trades (ρ ≈ 0) | NO | No |
@@ -119,3 +119,10 @@ señal y es el más fácil de construir.
 - Parciales por año y cartera del 6.1: impresos en la sesión (en §3-4).
 - Higiene documentada: dilución <−50 % = sin dato; ventanas que cruzan
   splits = sin dato; csplit «nunca» = grupo aparte.
+
+## 8. Corrección (28-sep mismo informe) — el tramo «<30 d» subcontado por pd.cut
+
+El bin `(0, 30]` de `pd.cut` EXCLUIA el día 0 (ipo_dias == 0, el día de IPO
+pura: 31 trades) — la tabla de §3 decía n=208/+9,96 %. Correcto: **n=239,
++10,25 %** (verificado bit-exacto contra el backtest del filtro construido,
+FEATURE 27-sep · FILTRO 6.1 en MEMORIA_MADRE). ρ y parciales no cambian.

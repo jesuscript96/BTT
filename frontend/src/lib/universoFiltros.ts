@@ -36,6 +36,10 @@ export const PARAMETROS_UNIVERSO: ParametroUniverso[] = [
   { key: "day_return_pct", label: "Day Return % (RTH, cierre vs apertura)", unit: "%", placeholder: "0.0" },
   // Filtro 3.2 del Bloque 3 (2026-09-27): igual que el 1.6, solo en Gap -1.
   { key: "ret_5d_pct", label: "Retorno 5 días % (cierre víspera vs 5 sesiones antes)", unit: "%", placeholder: "0.0" },
+  // Filtro 6.1 del Bloque 6 (2026-09-27): propiedad del TICKER (día del gap,
+  // no víspera). "Primer día en el lago" NO es la IPO real (el lago empieza
+  // en 2019: lo listado antes llega con la edad truncada).
+  { key: "days_since_first_day", label: "Días desde 1er día en lago (≈IPO, lago 2019+)", unit: "d", placeholder: "90" },
 ];
 
 export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
@@ -53,6 +57,8 @@ export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
     "Retorno intra-RTH del día ((cierre RTH − apertura RTH) / apertura RTH). Negativo = vela roja: en Gap -1 es la «víspera roja» del Bloque 1. NO es contra el cierre del día anterior.",
   ret_5d_pct:
     "Retorno del cierre de la víspera frente al cierre de 5 sesiones antes, en % (producto de los retornos diarios de esas 5 sesiones, con el cierre previo ajustado por splits). Criterio 3.2 del Bloque 3: «venía cayendo» (< 0) da más fade premarket. En la 1B se validó como herramienta de SIZING (más peso a «venía cayendo»); en DT y 2B no aportaba.",
+  days_since_first_day:
+    "Días entre el día del gap y el PRIMER DÍA del ticker en el lago. Es un PROXY de la IPO, no la IPO real: el lago empieza en 2019, así que lo listado antes de 2019 llega con la edad recortada (un ticker de 2015 aparece como «~N años» según 2019). Criterio 6.1 del Bloque 6: los recién listados son los mejores trades de la 1B (monótono: <30 d +10 % → >5 y +2 %) y el 2B lo replica. Úsalo para PRIORIZAR poder de compra, no para excluir (los viejos también ganan).",
 };
 
 export type SeccionUniverso =
@@ -97,12 +103,14 @@ export function campoDeRegla(section: SeccionUniverso, paramKey: string): string
   }
   if (section === "gap_day") {
     // El día del gap va por ETIQUETA, no por columna: `_build_where_clause`
-    // las traduce con su `field_map`.
+    // las traduce con su `field_map`. days_since_first_day viaja como nombre
+    // de columna directo (passthrough, igual que las lag_*).
     return {
       rth_close: "Close Price", pm_open: "Min Open PM price",
       pmh_gap_pct: "PMH Gap %", pm_volume: "Premarket Volume",
       gap_pct: "Open Gap %", rth_volume: "EOD Volume",
       rth_range_pct: "RTH Range %",
+      days_since_first_day: "days_since_first_day",
     }[paramKey] ?? "";
   }
   const suf = section === "gap_plus_1_day" ? "_1" : "_2";

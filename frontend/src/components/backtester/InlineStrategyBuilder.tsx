@@ -1211,6 +1211,11 @@ export default function InlineStrategyBuilder({
                             setTempUnivParam('gap_pct');
                             setTempUnivVal1('2.0');
                           }
+                          // days_since_first_day solo tiene columna en Gap Day
+                          if (val !== 'gap_day' && tempUnivParam === 'days_since_first_day') {
+                            setTempUnivParam('gap_pct');
+                            setTempUnivVal1('2.0');
+                          }
                         }}
                         style={{
                           background: 'var(--color-ec-bg-surface)',
@@ -1239,6 +1244,8 @@ export default function InlineStrategyBuilder({
                             setTempUnivVal1('2.0');
                           } else if (param === 'day_return_pct' || param === 'ret_5d_pct') {
                             setTempUnivVal1('0.0');
+                          } else if (param === 'days_since_first_day') {
+                            setTempUnivVal1('90');
                           } else {
                             setTempUnivVal1('5.0');
                           }
@@ -1265,6 +1272,9 @@ export default function InlineStrategyBuilder({
                         )}
                         {tempUnivDay === 'gap_prev_day' && (
                           <option value="ret_5d_pct">Retorno 5 días % (cierre víspera vs 5 sesiones antes)</option>
+                        )}
+                        {tempUnivDay === 'gap_day' && (
+                          <option value="days_since_first_day">Días desde 1er día en lago (≈IPO, lago 2019+)</option>
                         )}
                       </select>
 
@@ -1376,6 +1386,7 @@ export default function InlineStrategyBuilder({
                             else if (tempUnivParam === "gap_pct") fieldName = "Open Gap %";
                             else if (tempUnivParam === "rth_volume") fieldName = "EOD Volume";
                             else if (tempUnivParam === "rth_range_pct") fieldName = "RTH Range %";
+                            else if (tempUnivParam === "days_since_first_day") fieldName = "days_since_first_day";
                           } else {
                             if (tempUnivParam === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
                             else if (tempUnivParam === "pm_open") fieldName = `lead_open${lagSuffix}`;

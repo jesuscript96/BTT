@@ -52,7 +52,10 @@ CACHE_DIR = os.getenv("CACHE_DIR", ".cache/intraday")
 LOCAL_LAKE_DIR = os.getenv("LOCAL_LAKE_DIR", "").strip().rstrip("/")
 
 from app.db.connection import get_connection
-from app.services.qualifying_windows import stage2_prev_day_lag1_selects
+from app.services.qualifying_windows import (
+    DAYS_SINCE_FIRST_DAY_ALIAS,
+    stage2_prev_day_lag1_selects,
+)
 
 logger = logging.getLogger("backtester.cache")
 
@@ -516,6 +519,16 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
             read_filters["start_date"] = (
                 pd.Timestamp(str(d_from)[:10]) - pd.Timedelta(days=10)
             ).strftime("%Y-%m-%d")
+    # days_since_first_day (filtro 6.1): MIN(timestamp) por ticker solo es la
+    # PRIMERA FECHA REAL si el scan ve todo el historial — leer por años daría
+    # "días desde el 1 de enero del primer año leído" (falsos <30d en enero).
+    # Se amplía la lectura a TODO el lago (2019 en adelante, sin acotar meses);
+    # el RESULTADO sigue acotado por hive_pred/where. Solo pasa cuando la regla
+    # lo usa: el coste extra se paga una vez por backtest que filtre por él.
+    if DAYS_SINCE_FIRST_DAY_ALIAS in where_clause and years:
+        read_years = set(range(2019, max(years) + 1))
+        read_filters = {k: v for k, v in filters.items()
+                        if k not in ("start_date", "date_from")}
     year_paths = _daily_metrics_read_paths(conn, read_years, read_filters)
     logger.info(
         f"  qualifying query (years={list(years)}, {len(year_paths)} path group(s)): {where_clause}"
