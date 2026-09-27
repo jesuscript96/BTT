@@ -3365,3 +3365,141 @@ def test_r2_dec_4_cancelar_al_tener_id_de_stops_se_cancela_al_llegar_el_accept(b
     b.dar(b.das.recibir(protocolo.cmd_neworder(tp)))                    # llega el Accept con id
     assert [c.token for c in acciones_de(b.desde(marca), Cancelar)] == [tp.token]
     assert b.orden(tp.token).estado is EstadoOrden.CANCELED
+
+
+# ═══════════════════════════ ronda 3: R3-DEC-1 / R3-DEC-2 ═════════════════
+def _callar_pos(b: Banco, monkeypatch: pytest.MonkeyPatch) -> None:
+    """El DAS falso deja de mandar `%POS` (ni por evento ni en GET POSITIONS): la última cifra de DAS queda ATRASADA."""
+    recibir, tic = b.das.recibir, b.das.tic
+    monkeypatch.setattr(b.das, "recibir", lambda linea: [x for x in recibir(linea) if not x.startswith("%POS")])
+    monkeypatch.setattr(b.das, "tic", lambda: [x for x in tic() if not x.startswith("%POS")])
+
+
+def _cierre_del_bot_con_pos_atrasado(b: Banco, monkeypatch: pytest.MonkeyPatch) -> float:
+    """Corto de 100 (fills y DAS −100); 1 s después salta el principal y llena 100 SIN que llegue el %POS nuevo."""
+    abrir_posicion(b)
+    assert b.pos().neta_das == -100 and b.pos().neta_das_en is not None
+    b.avanzar(1)
+    b.reloj.avanzar(0.5)                                                # el último %POS (−100) es de hace 0,5 s
+    _callar_pos(b, monkeypatch)
+    b.cotizar(TICKER, "4.00", "4.05", "4.01")                          # el principal (4,00) llena las 100
+    b.tic_das()
+    pos = b.pos()
+    assert pos.neta_fills == 0 and pos.neta_das == -100                 # el -100 de DAS es de ANTES del fill
+    assert pos.ultimo_fill_en == b.ahora() and pos.neta_das_en < pos.ultimo_fill_en
+    return b.ahora()
+
+
+def test_r3_dec_1_cerrar_todo_justo_tras_el_fill_del_cierre_con_pos_atrasado_no_compra(
+        banco: Banco, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3-DEC-1 (R3-SAL-1 / D2-02): el decisor apunta `pos.ultimo_fill_en` en cada fill; «/cerrar_todo SI» justo tras el
+    fill del cierre del bot, con el %POS aún ATRASADO (−100 de antes del fill), no compra NADA: GET POSITIONS, anota
+    «cerrar_todo_das_sin_confirmar» y programa el reintento. Antes compraba 100 y dejaba la cuenta LARGA."""
+    b = banco
+    _cierre_del_bot_con_pos_atrasado(b, monkeypatch)
+    marca = b.marca()
+    acciones = b.comando("/cerrar_todo SI")
+    assert not b.enviadas(Proposito.CIERRE_HUMANO, desde=marca)
+    assert Consultar(protocolo.cmd_get("POSITIONS")) in acciones_de(acciones, Consultar)
+    assert anotaciones(acciones, "cerrar_todo_das_sin_confirmar")
+    assert b.temporizadores[f"cerrar_todo:{TICKER}"][2]["intento"] == 1
+    b.avanzar(10)                                                       # los reintentos, con el %POS aún callado
+    assert not b.enviadas(Proposito.CIERRE_HUMANO, desde=marca)
+    assert not [o for o in b.enviadas(desde=marca) if o.lado is Lado.COMPRA and o.proposito not in STOPS]
+    assert b.pos().neta_fills == 0
+
+
+def test_r3_dec_1_con_el_pos_posterior_al_fill_cierra_la_manual(banco: Banco, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3-DEC-1 (R3-SAL-1): tras el fill del cierre del bot llega un %POS POSTERIOR (neta_das_en > ultimo_fill_en) con
+    −50 que el bot no tiene (Jaume vendió 50 a mano): la cifra está CONFIRMADA y «/cerrar_todo SI» cierra esas 50."""
+    b = banco
+    _cierre_del_bot_con_pos_atrasado(b, monkeypatch)
+    b.reloj.avanzar(0.5)
+    b.dar([f"%POS {TICKER} 3 50 4.0100 0 0 0.00 2026/09/25-09:30:05 0.00"])
+    pos = b.pos()
+    assert pos.neta_das == -50 and pos.neta_das_en > pos.ultimo_fill_en
+    b.das_contesta = False
+    marca = b.marca()
+    acciones = b.comando("/cerrar_todo SI")
+    cierres = b.enviadas(Proposito.CIERRE_HUMANO, desde=marca)
+    assert [(o.lado, o.qty) for o in cierres] == [(Lado.COMPRA, 50)]
+    assert not anotaciones(acciones, "cerrar_todo_das_sin_confirmar")
+
+
+def test_r3_dec_1_ultimo_fill_en_con_fill_simulado_y_sin_moverlo_un_trade_repetido(banco: Banco) -> None:
+    """R3-DEC-1: un fill SIMULADO (sombra) también apunta la hora en `pos.ultimo_fill_en`; un %TRADE repetido (mismo
+    id) no es un fill nuevo y no la mueve."""
+    b = banco
+    abrir_posicion(b)
+    principal = b.orden(b.enviadas(Proposito.STOP_PRINCIPAL)[0].token)
+    assert b.pos().ultimo_fill_en is not None
+    b.reloj.avanzar(1)
+    linea = f"%TRADE 9201 {TICKER} B 10 4.00 SAGEREB 09:30:05 {principal.id_das} + 0 0.00"
+    b.procesar(DeDAS(b.parser.parsear(linea), simulado=True))
+    hora = b.ahora()
+    assert b.pos().ultimo_fill_en == hora and b.pos().neta_fills == -90
+    b.reloj.avanzar(1)
+    b.procesar(DeDAS(b.parser.parsear(linea), simulado=True))
+    assert b.pos().ultimo_fill_en == hora and b.pos().neta_fills == -90
+
+
+def test_r3_dec_2_entrada_sin_id_con_la_cuenta_larga_se_cancela_al_aceptar_y_no_se_repite(cfg: Config,
+                                                                                         tmp_path: Path) -> None:
+    """R3-DEC-2 (R2-STOPS-1 / D2a-05): la cuenta queda LARGA con una entrada de B aún sin id (Sending):
+    `stops.limpieza_tras_fill_stop` la deja en `Anotar("cancelar_al_tener_id")` y el decisor la cancela en cuanto
+    llega su Accept con id. Después, `exceso_verificar` (con `pedidos_en_vuelo`) NO repite ese CANCEL en vuelo."""
+    b = _dos_estrategias(cfg, tmp_path)
+    abrir_posicion(b)
+    b.cotizar(TICKER, "4.00", "4.05", "4.01", tam_ask=20)
+    lineas = b.das.tic()                                                # el principal llena 20
+    b.das_contesta = False                                              # su REPLACE / CANCEL quedan en vuelo
+    b.dar(lineas)
+    assert b.pos().neta_fills == -80
+    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, precio=4.01, stop=4.8,
+                   distancia_stop=0.79, momento=momento_de(b.reloj.ahora())))
+    entradas = [o for o in b.enviadas(Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE)
+                if b.orden(o.token).id_das is None]
+    assert len(entradas) == 1
+    entrada_b = entradas[0]
+    b.das_contesta = True
+    marca = b.marca()
+    b.cotizar(TICKER, "4.58", "4.60", "4.60", tam_bid=0)               # la emergencia (100 en DAS) llena: larga 20
+    b.tic_das()
+    assert b.pos().neta_fills == 20
+    assert [a.datos["token"] for a in anotaciones(b.desde(marca), "cancelar_al_tener_id")] == [entrada_b.token]
+    assert entrada_b.token in b.decisor._cancelar_al_aceptar
+    b.cotizar(TICKER, "4.00", "4.05", "4.01", tam_bid=0)               # el libro vuelve: la venta no cruza
+    lineas = b.das.recibir(protocolo.cmd_neworder(entrada_b))           # DAS la acepta DESPUÉS del CANCEL ALLSYMB
+    b.das_contesta = False                                              # el CANCEL del decisor queda en vuelo
+    marca = b.marca()
+    b.dar(lineas)
+    assert b.orden(entrada_b.token).id_das is not None and b.orden(entrada_b.token).estado is EstadoOrden.ACCEPTED
+    assert [c.token for c in acciones_de(b.desde(marca), Cancelar)] == [entrada_b.token]
+    assert b.decisor._pedidos_en_vuelo(TICKER).get(entrada_b.token, 0) is None
+    _, _, datos = b.temporizadores.pop(f"exceso_verificar:{TICKER}")
+    acciones = b.procesar(Temporizador(f"exceso_verificar:{TICKER}", datos))
+    assert not [c for c in acciones_de(acciones, Cancelar) if c.token == entrada_b.token]
+    assert not [c for c in acciones_de(acciones, CancelarTicker)]
+
+
+def test_r3_dec_1_la_cifra_de_das_del_volcado_vale_desde_que_se_pidio(banco: Banco,
+                                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    """R3-DEC-1: cuando la reconciliación (casos 2/3 resueltos por `_plan`) escribe `neta_das` desde el volcado de GET
+    POSITIONS, `neta_das_en` pasa a la hora en que se PIDIÓ el volcado (DAS ya conocía todo fill anterior), no se queda
+    con la hora de un %POS viejo que confirmaría una cifra de otra época. Con la misma cifra no se toca."""
+    from app.bot_das.reglas import reconciliacion as mod_rec
+    b = banco
+    abrir_posicion(b)
+    pos = b.pos()
+    b.decisor._stop_bloqueo[(TICKER, Proposito.STOP_EMERGENCIA)] = b.ahora() + 3600    # el caso lo resuelve `_plan`
+    disc = [mod_rec.Discrepancia(TICKER, mod_rec.CASO_STOP_DIFIERE, "prueba R3-DEC-1", neta_das=-60, neta_fills=-100)]
+    monkeypatch.setattr(mod_rec, "comparar", lambda *a, **k: list(disc))
+    pedido = b.ahora() - 0.7
+    b.decisor._barrido_pedido_en = pedido
+    b.reloj.avanzar(1)
+    b.procesar(Tic(), bombear=False)                                   # el decisor toma la hora nueva
+    b.decisor._reconciliar(({}, {}, {}))
+    assert pos.neta_das == -60 and pos.neta_das_en == pedido
+    b.decisor._barrido_pedido_en = b.ahora()
+    b.decisor._reconciliar(({}, {}, {}))
+    assert pos.neta_das == -60 and pos.neta_das_en == pedido            # misma cifra: la hora no se mueve

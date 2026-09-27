@@ -1474,8 +1474,10 @@ def test_R2_STOPS_1_en_vuelo_solo_la_venta_exceso_ni_la_ajena_ni_la_proteccion_d
 
 def _entrada(proposito: Proposito = Proposito.ENTRADA_AGREGAR, qty: int = 100, precio: str = "10.50", id_das: Optional[int] = 10,
              token: int = 100000010, estado: EstadoOrden = EstadoOrden.ACCEPTED) -> Orden:
-    """Una venta CORTA de entrada viva (R-B-01): LMT de venta, jamás cubre una larga."""
-    return orden(token, proposito, None, precio, qty, id_das=id_das, estado=estado, lado=Lado.VENTA, tipo=TipoOrden.LIMITE)
+    """Una venta CORTA de entrada viva (R-B-01): LMT con lado `SS` (el REAL de `entrada.orden_agregar`), jamás cubre una larga.
+
+    27-sep (director): antes se construía con `S` y el módulo solo miraba `S`; una entrada real (`SS`) no se cancelaba."""
+    return orden(token, proposito, None, precio, qty, id_das=id_das, estado=estado, lado=Lado.CORTO, tipo=TipoOrden.LIMITE)
 
 
 @pytest.mark.parametrize("proposito", [Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE])

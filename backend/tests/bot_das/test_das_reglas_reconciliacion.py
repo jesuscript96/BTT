@@ -499,6 +499,42 @@ def test_larga_conocida_sin_venta_pasa_por_la_limpieza(cfg):
     assert [(a.orden.lado, a.orden.qty) for a in de_tipo(acc, EnviarOrden)] == [(Lado.VENTA, 20)]
 
 
+@pytest.mark.parametrize("proposito, lado", [
+    (Proposito.ENTRADA_AGREGAR, Lado.VENTA), (Proposito.ENTRADA_CRUCE, Lado.VENTA),
+    (Proposito.ENTRADA_AGREGAR, Lado.CORTO), (Proposito.CIERRE_HUMANO, Lado.VENTA),
+], ids=["R3-REC-1-entrada_agregar", "R3-REC-1-entrada_cruce", "R3-REC-1-entrada_corta", "R3-REC-1-otra_venta"])
+def test_R3_REC_1_larga_con_solo_una_entrada_viva_pasa_por_la_limpieza(cfg, proposito, lado):
+    """R3-REC-1: larga 20 y una entrada viva de 100 → la entrada NO es «la venta del exceso en marcha»: el barrido
+    llama a la limpieza (stops.limpieza_tras_fill_stop) igual que sin nada vivo y vende 20 como VENTA_EXCESO."""
+    entrada = orden(tok(9), proposito, None, "9.90", 100, 70, lado=lado, tipo=TipoOrden.LIMITE, nivel=None)
+    assert rc._vendiendo([entrada], X) == 0
+    estado = estado_con(posicion(20, (lote(llenas=100),)), ordenes=(entrada,))
+    ds = comparar(estado, {X: pos_das(20)}, ids([entrada]), HOY, cfg)
+    assert casos(ds) == [(X, CASO_STOP_DIFIERE)]
+    acc = acciones(ds, estado, cot_de(cot(bid="9.79")), cfg, Contador(), HORA, RUTA_STOP)
+    ventas = [a.orden for a in de_tipo(acc, EnviarOrden)]
+    assert [(o.lado, o.qty, o.proposito) for o in ventas] == [(Lado.VENTA, 20, Proposito.VENTA_EXCESO)]
+    estado_vacio = estado_con(posicion(20, (lote(llenas=100),)))
+    sin_nada = acciones(comparar(estado_vacio, {X: pos_das(20)}, {}, HOY, cfg), estado_vacio,
+                        cot_de(cot(bid="9.79")), cfg, Contador(), HORA, RUTA_STOP)
+    assert ([(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(acc, EnviarOrden)]
+            == [(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(sin_nada, EnviarOrden)])
+    assert de_tipo(acc, CancelarTicker) or [c.id_das for c in de_tipo(acc, Cancelar)] == [70], \
+        "la entrada viva se retira antes de vender el exceso"
+
+
+def test_R3_REC_1_vendiendo_solo_cuenta_venta_exceso_viva():
+    """R3-REC-1: _vendiendo suma SOLO las VENTA_EXCESO vivas (qty viva), nunca entradas ni otras ventas ni muertas."""
+    exceso = orden(tok(9), Proposito.VENTA_EXCESO, None, "9.79", 20, 50, lado=Lado.VENTA, tipo=TipoOrden.LIMITE, nivel=None)
+    muerta = orden(tok(10), Proposito.VENTA_EXCESO, None, "9.79", 30, 51, lado=Lado.VENTA, tipo=TipoOrden.LIMITE,
+                   nivel=None, estado=EstadoOrden.CANCELED)
+    entrada = orden(tok(11), Proposito.ENTRADA_CRUCE, None, "9.90", 100, 52, lado=Lado.VENTA, tipo=TipoOrden.LIMITE,
+                    nivel=None)
+    otra = orden(tok(12), Proposito.CIERRE_HUMANO, None, "9.70", 40, 53, lado=Lado.VENTA, tipo=TipoOrden.LIMITE, nivel=None)
+    assert rc._vendiendo([exceso, muerta, entrada, otra], X) == 20
+    assert rc._vendiendo([exceso], "OTRO") == 0
+
+
 def test_ticker_plano_con_proteccion_huerfana_se_cancela(cfg):
     """R-C-11 (2): el humano cerró la posición desconocida y quedó viva nuestra protección → se cancela (compraría en largo)."""
     prot = orden(tok(5), Proposito.STOP_PROTECCION, "10.00", "10.30", 200, 60, nivel="10.00", lote_id=None)

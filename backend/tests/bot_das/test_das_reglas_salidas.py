@@ -155,9 +155,11 @@ def _lote(id_: str = "L1", *, strategy_id: str = "s1", ticker: str = "XYZ", dire
 
 def _pos(ticker: str = "XYZ", *, neta_fills: int = -100, neta_das: Optional[int] = None,
          lotes: Optional[list[Lote]] = None, estado: EstadoTicker = EstadoTicker.NORMAL,
-         sin_reentrada: bool = False) -> PosicionTicker:
+         sin_reentrada: bool = False, das_en: Optional[float] = None,
+         fill_en: Optional[float] = None) -> PosicionTicker:
     return PosicionTicker(ticker=ticker, lotes={lote.id: lote for lote in (lotes or [])}, neta_fills=neta_fills,
-                          neta_das=neta_das, estado=estado, sin_reentrada_hasta_sigue=sin_reentrada)
+                          neta_das=neta_das, estado=estado, sin_reentrada_hasta_sigue=sin_reentrada,
+                          neta_das_en=das_en, ultimo_fill_en=fill_en)
 
 
 def _cot(bid, ask, last=None, ticker: str = "XYZ") -> Cotizacion:
@@ -773,13 +775,19 @@ def test_cerrar_todo_neta_das_manda_y_discrepancia_pide_posiciones():
     """M7 + D2-02: con fills −100 y DAS −150 se cierra el MÍNIMO (100), nunca lo de DAS a ciegas; se pide GET POSITIONS.
 
     Antes este test esperaba 150 (consagraba el fallo: con %POS atrasado el reintento compraba de más). El resto lo
-    cierra el reintento con la neta que devuelva GET POSITIONS.
+    cierra el reintento con la neta que devuelva GET POSITIONS. R3-SAL-1: el mínimo solo con la cifra de DAS
+    CONFIRMADA (%POS posterior a nuestro último fill); atrasada no se compra nada.
     """
-    acciones = cerrar_todo({"X": _pos("X", neta_fills=-100, neta_das=-150)}, _cot_de({"X": _cot("10", "10.1", ticker="X")}),
-                           CFG, _tokens(), HORA)
+    cots = _cot_de({"X": _cot("10", "10.1", ticker="X")})
+    confirmada = _pos("X", neta_fills=-100, neta_das=-150, das_en=DESPUES, fill_en=FILL)
+    acciones = cerrar_todo({"X": confirmada}, cots, CFG, _tokens(), HORA)
     assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [100]
     assert any(isinstance(a, Consultar) and a.comando == "GET POSITIONS" for a in acciones)
     assert any(isinstance(a, Anotar) and a.tipo == "discrepancia" for a in acciones)
+    atrasada = _pos("X", neta_fills=-100, neta_das=-150, das_en=ANTES, fill_en=FILL)
+    acciones = cerrar_todo({"X": atrasada}, cots, CFG, _tokens(), HORA)
+    assert not any(isinstance(a, EnviarOrden) for a in acciones)
+    assert any(isinstance(a, Consultar) and a.comando == "GET POSITIONS" for a in acciones)
 
 
 def test_cerrar_todo_das_plana_con_fills_cortos_no_compra_pero_reintenta():
@@ -1176,64 +1184,166 @@ def test_D2_14_ruta_de_cierre_por_el_precio_de_la_accion():
     assert venta.precio < 1 and venta.ruta == "SAGEPRO", "1,02 $ es de ≥ 1 $ aunque el suelo baje de 1 $"
 
 
-# ── D2-02: la neta de «cerrar todo» nunca compra de más ──────────────────
-@pytest.mark.parametrize("fills, das, lotes, esperado", [
-    (-100, None, [], (-100, "fills")),
-    (-100, -100, [], (-100, "fills")),
-    (0, -30, [], (-30, "das")),
-    (0, 50, [_lote("C", estado=EstadoLote.CANCELADO, llenas=0)], (50, "das")),
-    (-100, -150, [], (-100, "minimo")),
-    (-150, -100, [], (-100, "minimo")),
-    # R2-SAL-1: un lote CERRADO de hoy ya no cuenta (antes daba (0, "discrepancia")); el %POS atrasado lo
-    # frena cerrar_todo fuera de la primera mirada (ver test_D2_02_primer_cierre_lleno_y_pos_atrasado_…).
-    (0, -100, [_lote("C", estado=EstadoLote.CERRADO, llenas=0)], (-100, "das")),
-    (-100, 0, [], (0, "discrepancia")),
-    (-100, 50, [], (0, "discrepancia")),
-    (0, -50, [_lote("C", estado=EstadoLote.CERRADO, llenas=100)], (-50, "das")),
-    (0, -50, [_lote("C", estado=EstadoLote.CERRADO, llenas=100), _lote("K", estado=EstadoLote.CANCELADO, llenas=0)],
-     (-50, "das")),
-    (0, -50, [_lote("V", estado=EstadoLote.ABIERTO, llenas=0)], (0, "discrepancia")),
-    (0, -50, [_lote("V", estado=EstadoLote.ABRIENDO, llenas=0)], (0, "discrepancia")),
-    (0, -50, [_lote("V", estado=EstadoLote.CERRANDO, llenas=0), _lote("C", estado=EstadoLote.CERRADO, llenas=100)],
-     (0, "discrepancia")),
-    (-100, -150, [_lote("C", estado=EstadoLote.CERRADO, llenas=100)], (-100, "minimo")),
-    (-100, 50, [_lote("C", estado=EstadoLote.CERRADO, llenas=100)], (0, "discrepancia")),
-], ids=["D2-02-sin_das", "D2-02-coinciden", "D2-02-manual_pura", "D2-02-manual_con_lote_cancelado",
-        "D2-02-min_das_mayor", "D2-02-min_fills_mayor", "R2-SAL-1-cerrado_sin_acciones_no_cuenta",
-        "D2-02-das_plana", "D2-02-signos_opuestos", "R2-SAL-1-manual_tras_lote_cerrado",
-        "R2-SAL-1-cerrado_y_cancelado_no_cuentan", "R2-SAL-1-lote_abierto_si_cuenta",
-        "R2-SAL-1-lote_abriendo_si_cuenta", "R2-SAL-1-lote_cerrando_si_cuenta",
-        "R2-SAL-1-mismo_signo_sigue_minimo", "R2-SAL-1-signos_distintos_siguen_en_0"])
-def test_D2_02_neta_para_cerrar(fills, das, lotes, esperado):
-    assert salidas.neta_para_cerrar(_pos(neta_fills=fills, neta_das=das, lotes=lotes)) == esperado
+# ── D2-02 / R3-SAL-1: la neta de «cerrar todo» nunca compra de más ───────
+# Horas en el monotónico del decisor: FILL = nuestro último fill en el ticker; el %POS llegó ANTES o DESPUÉS.
+FILL, ANTES, DESPUES = 100.0, 90.0, 110.0
 
 
-def test_R2_SAL_1_reproduccion_del_verificador():
-    """R2-SAL-1: fills 0, DAS −50 y un lote CERRADO con 100 llenas → (−50, 'das'): el bot ya no tiene nada ahí."""
-    pos = _pos(neta_fills=0, neta_das=-50, lotes=[_lote("C", estado=EstadoLote.CERRADO, llenas=100)])
-    assert salidas.neta_para_cerrar(pos) == (-50, "das") == (-50, salidas.NETA_DAS)
-    assert salidas.NETA_DAS_MANUAL == salidas.NETA_DAS, "el nombre anterior sigue existiendo"
+def _cerrado(llenas: int = 100, ticker: str = "XYZ") -> Lote:
+    return _lote("C", ticker=ticker, estado=EstadoLote.CERRADO, llenas=llenas)
 
 
-@pytest.mark.parametrize("fills, das, lotes, esperado", [
-    (0, -50, [], False),
-    (0, -50, [_lote("K", estado=EstadoLote.CANCELADO, llenas=0)], False),
-    (0, -50, [_lote("C", estado=EstadoLote.CERRADO, llenas=100)], True),
-    (0, -50, [_lote("C", estado=EstadoLote.CERRADO, llenas=0)], True),
-    (0, -50, [_lote("K", estado=EstadoLote.CANCELADO, llenas=30)], True),
-    (-100, -100, [_lote("C", estado=EstadoLote.CERRADO, llenas=0)], False),
-    (0, -50, [_lote("V", estado=EstadoLote.ABIERTO, llenas=0)], False),
-], ids=["R2-SAL-1-sin_lotes", "R2-SAL-1-cancelado_sin_llenar", "R2-SAL-1-cerrado_con_llenas",
-        "R2-SAL-1-cerrado_sin_llenas", "R2-SAL-1-cancelado_con_llenas", "R2-SAL-1-fuente_fills",
-        "R2-SAL-1-lote_vivo_es_discrepancia"])
-def test_R2_SAL_1_das_sin_confirmar(fills, das, lotes, esperado):
-    """R2-SAL-1: la cifra de DAS solo está «sin confirmar» si sale de DAS y el bot tuvo lotes con acciones hoy."""
-    assert salidas.das_sin_confirmar(_pos(neta_fills=fills, neta_das=das, lotes=lotes)) is esperado
+@pytest.mark.parametrize("fills, das, das_en, fill_en, lotes, esperado", [
+    pytest.param(-100, None, None, FILL, [], (-100, "fills"), id="D2-02-sin_das"),
+    pytest.param(-100, -100, ANTES, FILL, [], (-100, "fills"), id="D2-02-coinciden_aunque_sea_anterior"),
+    # sin ningún rastro del bot (D2-02 «manual pura»): nada nuestro puede dejar atrasado el %POS
+    pytest.param(0, -30, None, None, [], (-30, "das"), id="R3-SAL-1-manual_pura_sin_hora"),
+    pytest.param(0, 50, None, None, [_lote("K", estado=EstadoLote.CANCELADO, llenas=0)], (50, "das"),
+                 id="R3-SAL-1-manual_pura_con_lote_cancelado_sin_llenar"),
+    pytest.param(0, -30, DESPUES, None, [], (-30, "das"), id="R3-SAL-1-manual_pura_con_hora"),
+    # CONFIRMADA: el %POS llegó después de nuestro último fill
+    pytest.param(0, -50, DESPUES, FILL, [_cerrado()], (-50, "das"), id="R3-SAL-1-ronda1_lote_cerrado_das_confirmada"),
+    pytest.param(0, -50, DESPUES, FILL, [_cerrado(), _lote("V", estado=EstadoLote.ABIERTO, llenas=0)], (-50, "das"),
+                 id="R3-SAL-1-manual_con_lote_vivo_sin_acciones"),
+    pytest.param(0, -50, DESPUES, None, [_lote("V", estado=EstadoLote.ABIERTO, llenas=0)], (-50, "das"),
+                 id="R3-SAL-1-entrada_viva_sin_fills_y_das_con_hora"),
+    pytest.param(-100, -150, DESPUES, FILL, [], (-100, "minimo"), id="R3-SAL-1-confirmada_min_das_mayor"),
+    pytest.param(-150, -100, DESPUES, FILL, [], (-100, "minimo"), id="R3-SAL-1-confirmada_min_fills_mayor"),
+    pytest.param(-100, 0, DESPUES, FILL, [], (0, "cerrada_en_das"), id="R3-SAL-1-das_plana_confirmada"),
+    pytest.param(-100, 50, DESPUES, FILL, [], (0, "discrepancia"), id="R3-SAL-1-signos_opuestos_confirmada"),
+    # SIN CONFIRMAR: nunca se compra nada
+    pytest.param(0, -100, ANTES, FILL, [_cerrado()], (0, "sin_confirmar"), id="R3-SAL-1-pos_atrasado_tras_el_cierre"),
+    pytest.param(0, -100, FILL, FILL, [_cerrado()], (0, "sin_confirmar"), id="R3-SAL-1-misma_hora_no_confirma"),
+    pytest.param(0, -100, None, FILL, [_cerrado()], (0, "sin_confirmar"), id="R3-SAL-1-das_sin_hora"),
+    pytest.param(0, -100, DESPUES, None, [_cerrado()], (0, "sin_confirmar"),
+                 id="R3-SAL-1-lote_con_acciones_sin_hora_de_fill"),
+    pytest.param(0, -100, DESPUES, None, [_cerrado(llenas=0)], (0, "sin_confirmar"),
+                 id="R3-SAL-1-lote_cerrado_sin_hora_de_fill"),
+    pytest.param(-40, -100, DESPUES, None, [], (0, "sin_confirmar"), id="R3-SAL-1-fills_sin_hora_de_fill"),
+    pytest.param(0, -50, None, None, [_lote("V", estado=EstadoLote.ABIERTO, llenas=0)], (0, "sin_confirmar"),
+                 id="R3-SAL-1-entrada_viva_y_das_sin_hora"),
+    pytest.param(-100, -150, ANTES, FILL, [], (0, "sin_confirmar"), id="R3-SAL-1-mismo_signo_atrasada_no_da_minimo"),
+    pytest.param(-100, 0, ANTES, FILL, [], (0, "sin_confirmar"), id="R3-SAL-1-das_plana_atrasada"),
+    pytest.param(-100, 50, ANTES, FILL, [], (0, "sin_confirmar"), id="R3-SAL-1-signos_opuestos_atrasada"),
+])
+def test_R3_SAL_1_neta_para_cerrar(fills, das, das_en, fill_en, lotes, esperado):
+    """R3-SAL-1: la cifra de DAS solo vale CONFIRMADA (%POS posterior a nuestro último fill); si no, 0 y consultar."""
+    pos = _pos(neta_fills=fills, neta_das=das, lotes=lotes, das_en=das_en, fill_en=fill_en)
+    assert salidas.neta_para_cerrar(pos) == esperado
+    assert salidas.das_sin_confirmar(pos) is (esperado[1] == salidas.NETA_SIN_CONFIRMAR)
+    if das is not None and das != fills:
+        assert salidas.das_confirmada(pos) is (esperado[1] != salidas.NETA_SIN_CONFIRMAR)
+
+
+def test_R3_SAL_1_constantes_de_fuente():
+    assert (salidas.NETA_SIN_CONFIRMAR, salidas.NETA_CERRADA_EN_DAS) == ("sin_confirmar", "cerrada_en_das")
+    assert salidas.NETA_DAS_MANUAL == salidas.NETA_DAS == "das", "el nombre anterior sigue existiendo"
+    assert salidas.das_confirmada(_pos(neta_das=None, das_en=DESPUES)) is False, "sin cifra de DAS no hay nada que confirmar"
+
+
+@pytest.mark.parametrize("fase, intento", [
+    (None, 0), (salidas.FASE_CANCELAR, 0), (salidas.FASE_ENVIAR, 0), (salidas.FASE_CANCELAR, 1),
+    (salidas.FASE_ENVIAR, 2),
+], ids=["R3-SAL-1-a-fase_none", "R3-SAL-1-a-primera_mirada", "R3-SAL-1-a-enviar", "R3-SAL-1-a-reintento",
+        "R3-SAL-1-a-ultimo_reintento"])
+def test_R3_SAL_1_verificador_a_pos_atrasado_tras_el_cierre_no_compra(fase, intento):
+    """R3-SAL-1, caso (a) del verificador: el bot acaba de cerrar su lote (fills 0, último fill en 100) y el %POS
+    sigue en −100 (llegó en 90). Sin órdenes vivas, TAMBIÉN en la primera mirada: 0 compras, GET POSITIONS y reintento."""
+    pos = _pos("X", neta_fills=0, neta_das=-100, lotes=[_cerrado(ticker="X")], das_en=ANTES, fill_en=FILL)
+    acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
+                           intento=intento, vivas_de=_vivas_de({}), fase=fase)
+    assert not any(isinstance(a, EnviarOrden) for a in acciones), "nunca comprar el %POS atrasado (cuenta larga)"
+    assert [a.comando for a in acciones if isinstance(a, Consultar)] == ["GET POSITIONS"]
+    assert [(p.clave, p.datos["intento"], p.datos["fase"]) for p in acciones if isinstance(p, Programar)] == [
+        ("cerrar_todo:X", intento + 1, "cancelar")]
+    nota = [a.datos for a in acciones if isinstance(a, Anotar) and a.tipo == "cerrar_todo_das_sin_confirmar"]
+    assert len(nota) == 1 and nota[0]["neta_das_en"] == ANTES and nota[0]["ultimo_fill_en"] == FILL
+    assert not any(isinstance(a, Avisar) for a in acciones)
+
+
+def test_R3_SAL_1_verificador_a_el_pos_posterior_cierra_el_ciclo_sin_comprar():
+    """R3-SAL-1: tras el GET POSITIONS llega el %POS de después del fill (0): fills y DAS coinciden, nada que cerrar."""
+    atrasado = _pos("X", neta_fills=0, neta_das=-100, lotes=[_cerrado(ticker="X")], das_en=ANTES, fill_en=FILL)
+    cots = _cot_de({"X": _cot("10", "10.1", ticker="X")})
+    primero = cerrar_todo({"X": atrasado}, cots, CFG, _tokens(), HORA, vivas_de=_vivas_de({}),
+                          fase=salidas.FASE_CANCELAR)
+    assert not any(isinstance(a, EnviarOrden) for a in primero)
+    al_dia = _pos("X", neta_fills=0, neta_das=0, lotes=[_cerrado(ticker="X")], das_en=DESPUES, fill_en=FILL)
+    segundo = cerrar_todo({"X": al_dia}, cots, CFG, _tokens(), HORA, intento=1, vivas_de=_vivas_de({}),
+                          fase=salidas.FASE_CANCELAR)
+    assert [type(a) for a in segundo] == [Anotar], "plano en las dos fuentes: ni orden, ni consulta, ni reintento"
+
+
+@pytest.mark.parametrize("intento", [0, 1, 2], ids=["R3-SAL-1-b-intento_0", "R3-SAL-1-b-intento_1",
+                                                     "R3-SAL-1-b-intento_2"])
+def test_R3_SAL_1_verificador_b_manual_con_lote_cerrado_y_orden_viva_se_cierra(intento):
+    """R3-SAL-1, caso (b) del verificador: posición manual (DAS −50 confirmada) en un ticker con un lote del bot
+    CERRADO hoy y una orden viva: el paso «cancelar» espera el Canceled y el paso «enviar» compra 50, en CUALQUIER
+    intento (antes quedaba sin cerrar para siempre)."""
+    pos = _pos("X", neta_fills=0, neta_das=-50, lotes=[_cerrado(ticker="X")], das_en=DESPUES, fill_en=FILL)
+    cots = _cot_de({"X": _cot("10", "10.1", ticker="X")})
+    paso1 = cerrar_todo({"X": pos}, cots, CFG, _tokens(), HORA, intento=intento,
+                        vivas_de=_vivas_de({"X": [_viva(7, 50, proposito=Proposito.STOP_PROTECCION)]}),
+                        fase=salidas.FASE_CANCELAR)
+    assert any(isinstance(a, CancelarTicker) for a in paso1) and not any(isinstance(a, EnviarOrden) for a in paso1)
+    assert [p.datos["fase"] for p in paso1 if isinstance(p, Programar)] == ["enviar"]
+    paso2 = cerrar_todo({"X": pos}, cots, CFG, _tokens(), HORA, intento=intento, vivas_de=_vivas_de({}),
+                        fase=salidas.FASE_ENVIAR)
+    assert [(a.orden.lado, a.orden.qty) for a in paso2 if isinstance(a, EnviarOrden)] == [(Lado.COMPRA, 50)]
+    disc = [a.datos for a in paso2 if isinstance(a, Anotar) and a.tipo == "discrepancia"]
+    assert disc and disc[0]["usada"] == -50 and disc[0]["fuente"] == "das"
+
+
+def test_R3_SAL_1_verificador_b_orden_viva_en_el_paso_enviar_se_descuenta():
+    """R3-SAL-1: si en «enviar» aún vive una compra de 50 (el Canceled no llegó), no se compra otra (riesgo 6)."""
+    pos = _pos("X", neta_fills=0, neta_das=-50, lotes=[_cerrado(ticker="X")], das_en=DESPUES, fill_en=FILL)
+    acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
+                           vivas_de=_vivas_de({"X": [_viva(7, 50, proposito=Proposito.STOP_PROTECCION)]}),
+                           fase=salidas.FASE_ENVIAR)
+    assert not any(isinstance(a, EnviarOrden) for a in acciones)
+    assert any(isinstance(a, Anotar) and a.tipo == "cerrar_todo_en_vuelo" for a in acciones)
+
+
+@pytest.mark.parametrize("fase", [None, salidas.FASE_CANCELAR], ids=["R3-SAL-1-ronda1-fase_none",
+                                                                     "R3-SAL-1-ronda1-fase_cancelar"])
+def test_R3_SAL_1_ronda1_lote_cerrado_con_100_llenas_cierra_la_manual(fase):
+    """R3-SAL-1 (caso de la ronda 1, R-D-06 «incluidas las manuales»): lote CERRADO con 100 llenas, fills 0 y DAS −50
+    CONFIRMADA → compra 50 y consulta."""
+    pos = _pos("X", neta_fills=0, neta_das=-50, lotes=[_cerrado(ticker="X")], das_en=DESPUES, fill_en=FILL)
+    acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
+                           intento=0, vivas_de=_vivas_de({}), fase=fase)
+    assert [(a.orden.lado, a.orden.qty) for a in acciones if isinstance(a, EnviarOrden)] == [(Lado.COMPRA, 50)]
+    assert [a.comando for a in acciones if isinstance(a, Consultar)] == ["GET POSITIONS"]
+    assert not any(isinstance(a, Anotar) and a.tipo == "cerrar_todo_das_sin_confirmar" for a in acciones)
+
+
+@pytest.mark.parametrize("fase, cancela", [(None, True), (salidas.FASE_CANCELAR, True), (salidas.FASE_ENVIAR, False)],
+                         ids=["R3-SAL-1-cerrada-fase_none", "R3-SAL-1-cerrada-cancelar", "R3-SAL-1-cerrada-enviar"])
+def test_R3_SAL_1_das_plana_confirmada_se_trata_como_cerrada(fase, cancela):
+    """R3-SAL-1: fills −100 y DAS 0 CONFIRMADA (Jaume la cerró a mano) → sin orden ni reintento; se anota; lo vivo se
+    cancela en el paso 1 (una compra viva sobre una cuenta plana la dejaría larga)."""
+    pos = _pos("X", neta_fills=-100, neta_das=0, lotes=[_lote("L1", ticker="X")], das_en=DESPUES, fill_en=FILL)
+    acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
+                           vivas_de=_vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP_PRINCIPAL)]}), fase=fase)
+    assert not any(isinstance(a, (EnviarOrden, Programar, Avisar)) for a in acciones)
+    assert any(isinstance(a, CancelarTicker) for a in acciones) is cancela
+    nota = [a.datos for a in acciones if isinstance(a, Anotar) and a.tipo == "cerrar_todo_cerrada_en_das"]
+    assert len(nota) == 1 and nota[0]["neta_fills"] == -100 and nota[0]["neta_das"] == 0
+
+
+def test_R3_SAL_1_das_plana_confirmada_sin_aviso_de_agotado():
+    """R3-SAL-1: al agotar, una cerrada en DAS no avisa «sigue abierta»; solo retira la orden de cierre y se anota."""
+    pos = _pos("X", neta_fills=-100, neta_das=0, das_en=DESPUES, fill_en=FILL)
+    acciones = cerrar_todo({"X": pos}, _cot_de({}), CFG, _tokens(), HORA, intento=3,
+                           vivas_de=_vivas_de({"X": [_viva(5, 100, id_das=901)]}))
+    assert not any(isinstance(a, Avisar) for a in acciones)
+    assert [(a.id_das, a.token) for a in acciones if isinstance(a, Cancelar)] == [(901, 5)]
+    assert any(isinstance(a, Anotar) and a.tipo == "cerrar_todo_cerrada_en_das" for a in acciones)
 
 
 def test_D2_02_primer_cierre_lleno_y_pos_atrasado_no_vuelve_a_comprar():
-    """D2-02 / R2-SAL-1: tras llenar el cierre (fills 0, lote CERRADO) DAS aún dice −100: el reintento NO compra;
-    consulta y reintenta (la cifra de DAS solo se envía en la primera mirada)."""
+    """D2-02 / R3-SAL-1: tras llenar el cierre (fills 0, lote CERRADO, sin hora de fill) DAS aún dice −100: no se
+    compra; consulta y reintenta."""
     pos = _pos("X", neta_fills=0, neta_das=-100, lotes=[_lote("L1", ticker="X", estado=EstadoLote.CERRADO, llenas=0)])
     acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA, intento=1)
     assert not any(isinstance(a, EnviarOrden) for a in acciones)
@@ -1243,31 +1353,8 @@ def test_D2_02_primer_cierre_lleno_y_pos_atrasado_no_vuelve_a_comprar():
             and a.tipo == "cerrar_todo_das_sin_confirmar"] == ["X"]
 
 
-@pytest.mark.parametrize("fase", [None, salidas.FASE_CANCELAR], ids=["R2-SAL-1-fase_none", "R2-SAL-1-fase_cancelar"])
-def test_R2_SAL_1_cerrar_todo_cierra_la_manual_tras_lotes_cerrados_en_la_primera_mirada(fase):
-    """R2-SAL-1 (R-D-06 «incluidas las manuales»): fills 0, DAS −50 y el lote del bot CERRADO → compra 50 y consulta."""
-    pos = _pos("X", neta_fills=0, neta_das=-50, lotes=[_lote("L1", ticker="X", estado=EstadoLote.CERRADO, llenas=100)])
-    acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
-                           intento=0, vivas_de=_vivas_de({}), fase=fase)
-    ordenes = [a.orden for a in acciones if isinstance(a, EnviarOrden)]
-    assert [(o.lado, o.qty) for o in ordenes] == [(Lado.COMPRA, 50)]
-    assert [a.comando for a in acciones if isinstance(a, Consultar)] == ["GET POSITIONS"]
-    disc = [a.datos for a in acciones if isinstance(a, Anotar) and a.tipo == "discrepancia"]
-    assert disc and disc[0]["usada"] == -50 and disc[0]["fuente"] == "das"
-
-
-def test_R2_SAL_1_la_manual_tras_lotes_con_algo_vivo_espera_el_canceled():
-    """R2-SAL-1: primera mirada con órdenes vivas → primero el Canceled (D2-03); nada se compra en esta llamada."""
-    pos = _pos("X", neta_fills=0, neta_das=-50, lotes=[_lote("L1", ticker="X", estado=EstadoLote.CERRADO, llenas=0)])
-    acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
-                           vivas_de=_vivas_de({"X": [_viva(7, 50, proposito=Proposito.STOP_PROTECCION)]}),
-                           fase=salidas.FASE_CANCELAR)
-    assert not any(isinstance(a, EnviarOrden) for a in acciones)
-    assert [a.datos["fase"] for a in acciones if isinstance(a, Programar)] == ["enviar"]
-
-
 def test_D2_02_un_solo_get_positions_por_llamada():
-    posiciones = {t: _pos(t, neta_fills=-100, neta_das=-150) for t in ("A", "B")}
+    posiciones = {t: _pos(t, neta_fills=-100, neta_das=-150, das_en=DESPUES, fill_en=FILL) for t in ("A", "B")}
     acciones = cerrar_todo(posiciones, _cot_de({t: _cot("10", "10.1", ticker=t) for t in ("A", "B")}), CFG,
                            _tokens(), HORA)
     assert len([a for a in acciones if isinstance(a, Consultar)]) == 1
@@ -1409,15 +1496,15 @@ def test_A_06_consultas_por_protocolo():
 
 
 # ── R2-SAL-3: la fase «enviar» usa neta_para_cerrar y el agotado da la cantidad real ──
-@pytest.mark.parametrize("fills, das, lotes, esperado", [
-    (-100, -150, [], 100),
-    (0, -80, [], 80),
-    (0, -80, [_lote("K", ticker="X", estado=EstadoLote.CANCELADO, llenas=0)], 80),
-    (-100, None, [], 100),
-], ids=["R2-SAL-3-minimo", "R2-SAL-3-manual_pura", "R2-SAL-3-manual_con_cancelado", "R2-SAL-3-fills"])
-def test_R2_SAL_3_fase_enviar_usa_neta_para_cerrar(fills, das, lotes, esperado):
+@pytest.mark.parametrize("fills, das, das_en, fill_en, lotes, esperado", [
+    (-100, -150, DESPUES, FILL, [], 100),
+    (0, -80, None, None, [], 80),
+    (0, -80, None, None, [_lote("K", ticker="X", estado=EstadoLote.CANCELADO, llenas=0)], 80),
+    (-100, None, None, FILL, [], 100),
+], ids=["R2-SAL-3-minimo_confirmado", "R2-SAL-3-manual_pura", "R2-SAL-3-manual_con_cancelado", "R2-SAL-3-fills"])
+def test_R2_SAL_3_fase_enviar_usa_neta_para_cerrar(fills, das, das_en, fill_en, lotes, esperado):
     """R2-SAL-3: en el paso «enviar» (tras el Canceled) la cantidad es la de neta_para_cerrar de ESE momento."""
-    pos = _pos("X", neta_fills=fills, neta_das=das, lotes=lotes)
+    pos = _pos("X", neta_fills=fills, neta_das=das, lotes=lotes, das_en=das_en, fill_en=fill_en)
     acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
                            intento=0, vivas_de=_vivas_de({}), fase=salidas.FASE_ENVIAR)
     assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [esperado]
@@ -1439,8 +1526,10 @@ def test_R2_SAL_3_fase_enviar_no_compra_la_cifra_de_das_sin_confirmar(intento):
 
 
 def test_R2_SAL_3_agotado_dice_la_cantidad_real_de_una_manual_tras_lotes():
-    """R2-SAL-3: agotado con fills 0, DAS −50 y lote CERRADO → «neta -50», no «neta 0», marcada como sin confirmar."""
-    pos = _pos("X", neta_fills=0, neta_das=-50, lotes=[_lote("L1", ticker="X", estado=EstadoLote.CERRADO, llenas=100)])
+    """R2-SAL-3 / R3-SAL-1: agotado con fills 0, DAS −50 SIN CONFIRMAR (el %POS es anterior al último fill) y lote
+    CERRADO → «neta -50», no «neta 0», marcada como sin confirmar."""
+    pos = _pos("X", neta_fills=0, neta_das=-50, lotes=[_lote("L1", ticker="X", estado=EstadoLote.CERRADO, llenas=100)],
+               das_en=ANTES, fill_en=FILL)
     acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
                            intento=3, vivas_de=_vivas_de({}))
     avisos_ = [a for a in acciones if isinstance(a, Avisar)]
@@ -1451,16 +1540,28 @@ def test_R2_SAL_3_agotado_dice_la_cantidad_real_de_una_manual_tras_lotes():
     assert not any(isinstance(a, EnviarOrden) for a in acciones)
 
 
-@pytest.mark.parametrize("fills, das, mostrada", [
-    (0, -30, "neta -30 (fills 0, DAS -30)"),
-    (-100, -150, "neta -100 (fills -100, DAS -150)"),
-    (-100, None, "neta -100 (fills -100, DAS ?)"),
-    (-100, 50, "neta -100 (fills -100, DAS 50)"),
+@pytest.mark.parametrize("fills, das, das_en, fill_en, mostrada", [
+    (0, -30, None, None, "neta -30 (fills 0, DAS -30)"),
+    (-100, -150, DESPUES, FILL, "neta -100 (fills -100, DAS -150)"),
+    (-100, None, None, FILL, "neta -100 (fills -100, DAS ?)"),
+    (-100, 50, DESPUES, FILL, "neta -100 (fills -100, DAS 50)"),
 ], ids=["R2-SAL-3-agotado_manual_pura", "R2-SAL-3-agotado_minimo", "R2-SAL-3-agotado_sin_das",
         "R2-SAL-3-agotado_signos_distintos"])
-def test_R2_SAL_3_agotado_neta_real(fills, das, mostrada):
+def test_R2_SAL_3_agotado_neta_real(fills, das, das_en, fill_en, mostrada):
     """R2-SAL-3: el aviso de agotado da la neta de neta_para_cerrar (o la de fills si esa es 0) y las dos fuentes."""
-    pos = _pos("X", neta_fills=fills, neta_das=das)
+    pos = _pos("X", neta_fills=fills, neta_das=das, das_en=das_en, fill_en=fill_en)
     texto = next(a.texto for a in cerrar_todo({"X": pos}, _cot_de({}), CFG, _tokens(), HORA, intento=3)
                  if isinstance(a, Avisar))
     assert mostrada in texto and "SIN CONFIRMAR" not in texto
+
+
+@pytest.mark.parametrize("fills, das, mostrada", [
+    (-100, -150, "neta -100 (fills -100, DAS -150)"),
+    (-100, 50, "neta -100 (fills -100, DAS 50)"),
+], ids=["R3-SAL-1-agotado_mismo_signo_sin_confirmar", "R3-SAL-1-agotado_signos_distintos_sin_confirmar"])
+def test_R3_SAL_1_agotado_con_das_sin_confirmar_lo_marca(fills, das, mostrada):
+    """R3-SAL-1: al agotar con la cifra de DAS sin confirmar, el aviso la marca y da la neta de fills."""
+    pos = _pos("X", neta_fills=fills, neta_das=das, das_en=ANTES, fill_en=FILL)
+    texto = next(a.texto for a in cerrar_todo({"X": pos}, _cot_de({}), CFG, _tokens(), HORA, intento=3)
+                 if isinstance(a, Avisar))
+    assert mostrada in texto and "SIN CONFIRMAR" in texto

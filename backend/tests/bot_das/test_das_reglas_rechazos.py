@@ -1083,9 +1083,17 @@ def test_A_06_comandos_por_protocolo() -> None:
 
 
 # ── R2-SAL-2 (D2-10): el cierre humano rechazado usa la neta de «cerrar todo» ─
-def _pos_cierre(fills: int, das: Optional[int], lotes: Optional[list[Lote]] = None) -> PosicionTicker:
+def _pos_cierre(fills: int, das: Optional[int], lotes: Optional[list[Lote]] = None,
+                das_en: Optional[float] = "defecto", fill_en: Optional[float] = "defecto") -> PosicionTicker:
+    """R3-SAL-1: la cifra de DAS solo vale CONFIRMADA (`neta_das_en` posterior a `ultimo_fill_en`). Por defecto el %POS
+    llega a 110,0 y el último fill del bot (si `fills` ≠ 0) fue a 100,0: confirmada. Con fills 0 y un lote CERRADO sin
+    hora de fill la cifra queda SIN confirmar (puede ser el %POS atrasado del cierre del bot: D2-02)."""
+    if das_en == "defecto":
+        das_en = 110.0 if das is not None else None
+    if fill_en == "defecto":
+        fill_en = 100.0 if fills != 0 else None
     return PosicionTicker(ticker=TICKER, lotes={lote.id: lote for lote in (lotes or [])}, neta_fills=fills,
-                          neta_das=das)
+                          neta_das=das, neta_das_en=das_en, ultimo_fill_en=fill_en)
 
 
 def _lote_cerrado(llenas: int = 0) -> Lote:

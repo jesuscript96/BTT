@@ -1417,7 +1417,14 @@ def _precio_venta_exceso(cot: Optional[Cotizacion]) -> tuple[Optional[Decimal], 
 
 
 def _es_venta_viva(o: Orden, ticker: str) -> bool:
-    return o.ticker == ticker and o.lado is Lado.VENTA and o.estado in ESTADOS_VIVOS and _qty_viva(o) > 0
+    """Venta viva del ticker por CUALQUIERA de los dos lados vendedores de DAS: `S` (venta) y `SS` (venta corta).
+
+    Las entradas del bot van con `SS` (`entrada.orden_agregar` / `orden_cruce`, manual L671-694): mirar solo `S`
+    dejaría viva una entrada corta con la cuenta larga (27-sep, lectura del director; los tests construían las
+    entradas con `S` y no lo veían).
+    """
+    return (o.ticker == ticker and o.lado in (Lado.VENTA, Lado.CORTO) and o.estado in ESTADOS_VIVOS
+            and _qty_viva(o) > 0)
 
 
 def _ventas_exceso_vivas(ticker: str, vivas: Iterable[Any]) -> list[Orden]:

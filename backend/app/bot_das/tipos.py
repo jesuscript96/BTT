@@ -723,6 +723,9 @@ class PosicionTicker:
     version_stops: int = 0                                       # injerto A §8.6: sube con cada fill; invalida REPLACE viejos
     descubierta_desde: Optional[float] = None
     persecuciones_ask: int = 0
+    # R3-SAL-1: monotónico del ÚLTIMO fill aplicado en ESTE ticker (lo rellena el decisor). «Cerrar todo» solo se
+    # fía de neta_das si el %POS llegó DESPUÉS (neta_das_en > ultimo_fill_en): si no, puede ir atrasado.
+    ultimo_fill_en: Optional[float] = None
 
     @property
     def neta(self) -> int:

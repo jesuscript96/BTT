@@ -40,9 +40,6 @@ RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
 SHA_FIXTURE = "557e511537f3a83789f29604ce3bbae601528c23cfd228e4cd3043ea0d7d4146"   # R2-PER-1: + entrada.alto_riesgo_si
-# Rutas [C] añadidas en el código después del bloque JSON de §7 del documento (hasta que §7 las marque; el test
-# DC-09 comprueba que el documento no las marca ya como [A]/[T] y que no hay más que estas).
-CALIENTE_FUERA_DEL_DOC = frozenset({"entrada.alto_riesgo_si"})   # R2-PER-1 / D1-07
 
 
 # ── utilidades ─────────────────────────────────────────────────────────
@@ -759,16 +756,17 @@ def _rutas_marcadas(bloque: str, marca: str = "[C]") -> set[str]:
 
 
 def test_DC_09_caliente_es_exactamente_lo_marcado_C_en_el_bloque_de_s7():
-    """DC-09: CALIENTE se compara con las marcas [C] LEÍDAS del documento (no con una copia a mano de la lista)."""
+    """DC-09: CALIENTE se compara con las marcas [C] LEÍDAS del documento (no con una copia a mano de la lista).
+
+    R3-CFG-1: §7 ya marca `alto_riesgo_si` como [C]; sin excepciones: CALIENTE es EXACTAMENTE lo marcado (27 rutas).
+    """
     bloque = _bloque_json_de_la_seccion_7(RUTA_DOC.read_text(encoding="utf-8"))
     marcadas = _rutas_marcadas(bloque, "[C]")
-    assert len(marcadas) == 26
-    # CALIENTE = lo marcado [C] en §7 más, como única excepción declarada, las [C] nuevas que §7 aún no lista
-    assert C.CALIENTE == frozenset(marcadas) | CALIENTE_FUERA_DEL_DOC
-    assert not (CALIENTE_FUERA_DEL_DOC & frozenset(marcadas))
+    assert len(marcadas) == 27
+    assert "entrada.alto_riesgo_si" in marcadas, "R3-CFG-1: la línea de §7 lleva la marca [C]"
+    assert C.CALIENTE == frozenset(marcadas)
     # y ninguna [A]/[T] se cuela en CALIENTE (los vecinos de las [C] siguen siendo en frío)
     frias = _rutas_marcadas(bloque, "[A]") | _rutas_marcadas(bloque, "[T]")
-    assert not (CALIENTE_FUERA_DEL_DOC & frias)
     assert {"fase", "locates.umbral_ultimo_paquete_pct", "estrategias.*.definition_hash",
             "stops.principal_limite_pct"} <= frias
     assert not (frias & C.CALIENTE)

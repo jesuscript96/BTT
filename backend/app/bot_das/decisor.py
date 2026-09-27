@@ -2784,6 +2784,9 @@ class Decisor:
             self._pnl_episodio[ticker] = self._pnl_episodio.get(ticker, Decimal("0")) + flujo
         pos.version_stops += 1
         estado.ultimo_fill_en = self._ahora
+        # R3-DEC-1 (R3-SAL-1): la hora del último fill de ESTE ticker (real o simulado, Execute o %TRADE no duplicado):
+        # «cerrar todo» solo se fía de neta_das si el %POS llegó después (salidas.das_confirmada)
+        pos.ultimo_fill_en = self._ahora
         o.llenas += qty
         o.ultima_act = self._ahora
         if o.estado not in _TERMINALES:
@@ -4095,6 +4098,10 @@ class Decisor:
                 propios.append(d.ticker)
                 pos = estado.posiciones.get(d.ticker)
                 if pos is not None and d.neta_das is not None:
+                    if pos.neta_das != d.neta_das:
+                        # R3-DEC-1: la cifra del volcado vale desde que se PIDIÓ (DAS ya conocía todo fill anterior);
+                        # sin hora del pedido queda sin hora (salidas.das_confirmada: sin confirmar si hubo fills)
+                        pos.neta_das_en = self._barrido_pedido_en
                     pos.neta_das = d.neta_das
                 normales.append(dataclasses.replace(d, caso=reconciliacion.CASO_COINCIDE))   # solo adopta sus órdenes
             else:

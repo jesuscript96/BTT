@@ -351,6 +351,11 @@ def acciones(discrepancias: Iterable[Discrepancia], estado: EstadoBot, cot_de: C
         version = pos.version_stops if pos is not None else 0
         if d.caso in (CASO_STOP_DIFIERE, CASO_SIN_STOP):
             if pos is not None and d.neta_das is not None:
+                if pos.neta_das != d.neta_das:
+                    # R3-SAL-1: una cifra nueva sin hora conocida queda SIN confirmar (`salidas.das_confirmada`): la
+                    # hora de un %POS viejo no puede dar por buena la cifra de este volcado. El decisor, que sí sabe
+                    # cuándo pidió el barrido, la fecha por su cuenta antes de llegar aquí.
+                    pos.neta_das_en = None
                 pos.neta_das = d.neta_das
             salida.extend(_reparar_stops(d, pos, cot, cfg, cfg_stops, tokens, hora_et, ruta_stop, version, limit_up))
             if d.caso == CASO_SIN_STOP:
@@ -819,9 +824,18 @@ def _proteccion(ticker: str, falta: int, neta: int, cot: Optional[Cotizacion], a
 
 
 def _vendiendo(vivas: Iterable[Any], ticker: str) -> int:
-    """Acciones que ya se están vendiendo con órdenes NUESTRAS vivas (la venta del exceso de R-C-11 b)."""
+    """Acciones que ya se están vendiendo con la venta del exceso de R-C-11 b: SOLO las VENTA_EXCESO nuestras vivas.
+
+    R3-REC-1 (mismo criterio que `stops.limpieza_tras_fill_stop`, D2a-03 /
+    R2-STOPS-1): una ENTRADA_AGREGAR/ENTRADA_CRUCE es una venta CORTA que
+    jamás cubre la larga, y ninguna otra venta cuenta como «la venta del
+    exceso en marcha». Con la cuenta larga y solo una entrada viva el
+    barrido llama a la limpieza como si no hubiera nada (la limpieza cancela
+    esa entrada y vende el exceso).
+    """
     return sum(_qty_viva(o) for o in _unicas(vivas)
-               if o.ticker == ticker and o.lado is Lado.VENTA and o.estado in stops.ESTADOS_VIVOS)
+               if o.ticker == ticker and o.lado is Lado.VENTA and o.proposito is Proposito.VENTA_EXCESO
+               and o.estado in stops.ESTADOS_VIVOS)
 
 
 def _reparar_stops(d: Discrepancia, pos: Optional[PosicionTicker], cot: Optional[Cotizacion], cfg: Any, cfg_stops: Mapping,

@@ -777,9 +777,12 @@ def _neta_de_reduccion(orden: Orden, pos: PosicionTicker) -> int:
 
 
 def _neta_mostrada(orden: Orden, pos: PosicionTicker) -> int:
-    """La neta que el aviso da como real: en un CIERRE_HUMANO la de `neta_para_cerrar` (también la de DAS sin
-    confirmar); en el resto, la de fills."""
+    """La neta que el aviso da como real: en un CIERRE_HUMANO la de `neta_para_cerrar`; si la cifra de DAS está SIN
+    confirmar (R3-SAL-1: `neta_para_cerrar` devuelve 0 para que nadie compre a ciegas) el aviso enseña la cifra de
+    DAS tal cual, que es lo que el humano necesita ver; en el resto, la de fills."""
     if orden.proposito is Proposito.CIERRE_HUMANO:
+        if salidas.das_sin_confirmar(pos) and pos.neta_das is not None:
+            return int(pos.neta_das)
         return salidas.neta_para_cerrar(pos)[0]
     return int(pos.neta)
 
