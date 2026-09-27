@@ -69,6 +69,10 @@ Thumbs.db
 backend/*.json
 # Golden-test fixtures must be committed (regression anchors, no secrets)
 !backend/tests/fixtures/*.json
+# Bot de ejecucion en DAS (26-sep-2026): catalogo de rechazos y fixtures de
+# configuracion de ejemplo, sin secretos (las credenciales van en .env).
+!backend/app/bot_das/**/*.json
+!backend/tests/bot_das/fixtures/*.json
 # Estrategias compartidas entre devs (Alvaro/Sailor): ficheros que SI se commitean,
 # cada uno solo los que decide compartir. Ver estrategias_compartidas/README.md
 !estrategias_compartidas/**/*.json

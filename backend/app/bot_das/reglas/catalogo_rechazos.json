@@ -1,0 +1,182 @@
+[
+  {
+    "clave": "bp_insuficiente",
+    "descripcion": "Poder de compra insuficiente (< 5 $ exige 100 % o 50 % en efectivo; mercado retiene +5 %, simulador +10 %).",
+    "regex": "buying[\\s_-]*power|insufficient\\s+(?:funds|bp)\\b|not\\s+enough\\s+(?:funds|bp)\\b|\\bexceeds?\\s+(?:the\\s+)?(?:available\\s+)?bp\\b",
+    "accion": "recalcular_bp",
+    "nivel": 2,
+    "fuente": "KB tabla C: not-enough-buying-power, how-do-i-check-the-required-bp (INFORME_KB_DAS.md); R-B-07 (2) «recalcular BP»",
+    "provisional": true,
+    "ejemplos": ["Not Enough Buying Power", "Rejected: insufficient buying power", "Order exceeds available BP"]
+  },
+  {
+    "clave": "sin_locate",
+    "descripcion": "No se puede tomar prestada (lista del bróker o de la bolsa) o hace falta locate; incluye el locate de un solo uso ya consumido (R-B-07: NO es desconocido).",
+    "regex": "not\\s+shortable|non[\\s-]*shortable|un[\\s-]*shortable|\\bhard[\\s-]+to[\\s-]+borrow\\b|\\bHTB\\b|locates?\\s+(?:is\\s+|are\\s+)?required|needs?\\s+(?:a\\s+)?locate|no\\s+locates?\\b|locates?\\s+(?:not\\s+available|exhausted|consumed|used)|\\b(?:0|no|zero)\\s+shares?\\s+(?:available|to\\s+short|to\\s+borrow)",
+    "accion": "recomprar_locate",
+    "nivel": 2,
+    "fuente": "KB tabla C: security-not-shortable; KB 5.7; R-B-07 caso concreto de Jaume (locates de un solo uso); diario de ejemplo «Rejected: 0 shares available»",
+    "provisional": true,
+    "ejemplos": ["Security Not Shortable", "Locate required", "Rejected: 0 shares available", "No locate available for this symbol"]
+  },
+  {
+    "clave": "ssr",
+    "descripcion": "Regla SSR (Rule 201): corto al bid o por debajo con SSR activa; hay que vender al menos un tick sobre el bid.",
+    "regex": "\\bSSR\\b|short[\\s-]+sale[\\s-]+restrict|prohibited\\s+from\\s+shorting|\\brule\\s*201\\b|\\bup[\\s-]*tick\\s+rule\\b|short(?:ing)?\\s+(?:on|at)\\s+(?:the\\s+)?bid",
+    "accion": "subir_tick_ssr",
+    "nivel": 2,
+    "fuente": "KB tabla C: ssr-rejection-message, trading-settings-control; KB 4.4",
+    "provisional": true,
+    "ejemplos": ["SSR stocks are prohibited from shorting on the BID or lower", "Short sale restriction in effect", "Rule 201 violation"]
+  },
+  {
+    "clave": "ruta_cerrada",
+    "descripcion": "La ruta no admite la orden ahora (cerrada, deshabilitada, bloqueada por Route Control o inexistente).",
+    "regex": "route\\s+(?:is\\s+)?(?:closed|disabled|unavailable|not\\s+(?:available|open|enabled|allowed))|invalid\\s+route|unknown\\s+route|route\\s+control|no\\s+route\\b",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB tabla C: risk-control (Route Control); KB B.14; R-B-07 (3) demo: «ruta cerrada»",
+    "provisional": true,
+    "ejemplos": ["Route is closed", "Invalid route", "Route Control"]
+  },
+  {
+    "clave": "simbolo_en_halt",
+    "descripcion": "Símbolo parado (halt o pausa LULD): la orden no entra hasta la reapertura; manda R-F-01.",
+    "regex": "\\bhalt(?:ed)?\\b|trading\\s+(?:is\\s+)?(?:halted|paused|suspended)|symbol\\s+(?:is\\s+)?(?:halted|paused|suspended)|\\bLULD\\b|limit\\s+(?:up|down)\\s+(?:limit\\s+down\\s+)?pause",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB D.2 (mercado durante el halt); R-B-07 (3) demo: «símbolo en halt»",
+    "provisional": true,
+    "ejemplos": ["Symbol halted", "Trading is halted for this security", "LULD pause"]
+  },
+  {
+    "clave": "precio_fuera_de_tick",
+    "descripcion": "Precio fuera del incremento mínimo (regla 612: 0,01 $ ≥ 1 $, 0,0001 $ < 1 $).",
+    "regex": "sub[\\s-]*penny|tick\\s+(?:size|increment)|invalid\\s+(?:price\\s+)?(?:increment|tick)|price\\s+(?:increment|variation)|minimum\\s+price\\s+variation|\\bMPV\\b|decimal\\s+places|too\\s+many\\s+decimals",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "Regla 612 de Reg NMS (reglas.precios); R-B-07 (3) demo: «precio fuera de rango»",
+    "provisional": true,
+    "ejemplos": ["Invalid price increment", "Sub-penny pricing not allowed", "Price exceeds allowed decimal places"]
+  },
+  {
+    "clave": "postonly_cruza",
+    "descripcion": "Orden PostOnly (solo agregar) que removería liquidez al llegar: el libro se movió hasta nuestro precio.",
+    "regex": "post[\\s_-]*only|would\\s+(?:cross|lock)|add[\\s-]+liquidity[\\s-]+only|\\bALO\\b|locked\\s+or\\s+crossed",
+    "accion": "reintentar",
+    "nivel": 2,
+    "fuente": "Documento §3.3 (literal del simulador «PostOnly would cross»); libro R-B-01 (ARCA ALO)",
+    "provisional": true,
+    "ejemplos": ["PostOnly would cross", "Order would lock or cross the market (Add Liquidity Only)"]
+  },
+  {
+    "clave": "cantidad_invalida",
+    "descripcion": "Cantidad de acciones no válida (cero, fraccionaria o fuera de los límites de la ruta).",
+    "regex": "invalid\\s+(?:order\\s+)?(?:qty|quantity|shares|size)|(?:qty|quantity)\\s+(?:is\\s+)?(?:invalid|must|too\\s+(?:small|large))|\\bodd[\\s-]+lot\\b|zero\\s+(?:qty|quantity)",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "Manual L466 (Send_Rej: «Rejected shares»); R-B-07 (3) demo",
+    "provisional": true,
+    "ejemplos": ["Invalid quantity", "Order qty must be greater than zero"]
+  },
+  {
+    "clave": "tif_invalido",
+    "descripcion": "Duración (TIF) no admitida por la ruta o en esa sesión (p. ej. DAY+ en una ruta que no la acepta).",
+    "regex": "invalid\\s+(?:tif|time[\\s-]+in[\\s-]+force|duration)|(?:\\btif\\b|time[\\s-]+in[\\s-]+force)\\s+(?:is\\s+)?(?:invalid|not\\s+(?:supported|allowed|valid))|day\\+\\s+(?:is\\s+)?not\\s+(?:supported|allowed)",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB tabla C (Overnight: solo límite, TIF NIGHT); hotkeys del socio (TIF=DAY vs DAY+); R-B-07 (3) demo",
+    "provisional": true,
+    "ejemplos": ["Invalid TIF", "Time in force not supported for this route"]
+  },
+  {
+    "clave": "sesion_cerrada",
+    "descripcion": "Fuera del horario de negociación de la sesión o de la cuenta (Trade Start/Stop Time).",
+    "regex": "market\\s+(?:is\\s+)?closed|outside\\s+(?:of\\s+)?(?:regular\\s+)?(?:trading|market)\\s+hours|(?:session|exchange)\\s+(?:is\\s+)?closed|not\\s+(?:in\\s+)?trading\\s+hours|trade\\s+(?:start|stop)\\s+time|extended[\\s-]+hours\\s+(?:is\\s+)?not",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB tabla C: risk-control (StartTime / StopTime); R-B-07 (3) demo",
+    "provisional": true,
+    "ejemplos": ["Market is closed", "Outside trading hours", "Trade Start Time"]
+  },
+  {
+    "clave": "cuenta_perdida_maxima",
+    "descripcion": "Cortacircuitos de la cuenta (MaxLoss, Total Loss, Max Unreal, Current Equity Limit, Remaining Equity %): el bróker rechaza TODA orden nueva ese día.",
+    "regex": "\\bmax\\s*loss\\b|(?<!position\\s)(?<!pos\\s)\\btotal\\s+loss\\b|\\bmax\\s*unreal|current\\s+equity\\s+limit|remaining\\s+equity|all\\s+new\\s+orders",
+    "accion": "ninguna",
+    "nivel": 3,
+    "fuente": "KB tabla C: risk-control (MaxLoss / Total Loss / Current Equity Limit / Remaining Equity % / Max Unreal)",
+    "provisional": true,
+    "ejemplos": ["MaxLoss reached: all new orders will be rejected", "Current Equity Limit", "Max Unreal"]
+  },
+  {
+    "clave": "posicion_perdida",
+    "descripcion": "Control por posición (Position Total/Unreal Loss, Pos Mkt Val Loss, Pos Mkt Px deviate): «no more trades for this symbol»; puede impedir reponer stops.",
+    "regex": "position\\s+(?:total\\s+|unreal(?:ized)?\\s+)loss|\\bpos\\s+(?:total\\s+loss|unreal\\s+loss|mkt\\s+val\\s+loss|mkt\\s+px\\s+deviate)|mkt\\s+px\\s+deviate|no\\s+more\\s+trades\\s+for\\s+this\\s+symbol",
+    "accion": "ninguna",
+    "nivel": 3,
+    "fuente": "KB tabla C: risk-control; KB B.6 y D.7 (reposición del stop bloqueada)",
+    "provisional": true,
+    "ejemplos": ["Position Unreal Loss: no more trades for this symbol", "Pos Mkt Px deviate (%)"]
+  },
+  {
+    "clave": "cuenta_restringida",
+    "descripcion": "La cuenta no puede operar (fondos no liberados, cuenta bloqueada o deshabilitada).",
+    "regex": "no\\s+trades?\\s+(?:are\\s+)?currently\\s+allowed|account\\s+(?:is\\s+)?(?:restricted|disabled|locked|blocked|frozen|suspended)",
+    "accion": "ninguna",
+    "nivel": 3,
+    "fuente": "KB tabla C: no-trades-currently-allowed-rejection-message",
+    "provisional": true,
+    "ejemplos": ["No Trades Currently Allowed", "Account is restricted"]
+  },
+  {
+    "clave": "pdt",
+    "descripcion": "Control de 3 round trips en 5 días (cuentas < 25.000 $).",
+    "regex": "round[\\s-]*trip|pattern\\s+day\\s+trad|\\bPDT\\b|day[\\s-]*trad(?:e|es|ing)\\s+(?:limit|restriction|call)",
+    "accion": "ninguna",
+    "nivel": 3,
+    "fuente": "KB tabla C: what-is-3-roundtrip-control",
+    "provisional": true,
+    "ejemplos": ["3 Roundtrip Control", "Pattern day trader restriction"]
+  },
+  {
+    "clave": "simbolo_bloqueado",
+    "descripcion": "Símbolo bloqueado para la cuenta (Symbols Control, Account Untradable List, Symbol Margin List).",
+    "regex": "symbols?\\s+control|untradable|(?:symbol|security|stock)\\s+(?:is\\s+)?(?:restricted|blocked|not\\s+(?:allowed|permitted|tradable|tradeable))|restricted\\s+(?:symbol|security|list)|symbol\\s+margin\\s+list",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB tabla C: risk-control (Symbols Control / Account Untradable List / Symbol Margin List); KB B.14",
+    "provisional": true,
+    "ejemplos": ["Symbols Control", "Symbol is restricted", "Account Untradable List"]
+  },
+  {
+    "clave": "tope_de_la_cuenta",
+    "descripcion": "Topes de la cuenta por orden, posición o día (MaxShare, Share/Symbol, Max long/short position shares, Low Price max short position shares, TotalShare, TotalSymbols, Max Mkt/Lmt Ord, Max Ord Cap, Order Cap Lmt, Max Pos Val, órdenes abiertas, fills, ADV, % del equity).",
+    "regex": "max\\s*share|share\\s*/\\s*symbol|total\\s*shares?\\b|total\\s*symbols|max\\s+(?:long|short)\\s+position|low\\s+price\\s+max|max\\s+(?:mkt|lmt)\\s+ord|max\\s+ord(?:er)?\\s+cap|order\\s+cap|max\\s+pos(?:ition)?\\s+val|open\\s+orders\\s+per\\s+symbol|max\\s+filled\\s+order|\\bADV\\b|equity\\s+percentage|position\\s+limit",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB tabla C: risk-control (MaxShare, Share/Symbol, Max long/short position shares, Max Mkt/Lmt Ord, Max Ord Cap, Max Pos Val, open orders per symbol, Max filled order number, ADV, Equity percentage)",
+    "provisional": true,
+    "ejemplos": ["Max short position shares exceeded", "Max Ord Cap", "Max num of open orders per symbol/side"]
+  },
+  {
+    "clave": "precio_fuera_de_rango",
+    "descripcion": "Precio fuera del rango permitido (Min/Max stock price, Price Check, stop demasiado bajo o alto).",
+    "regex": "(?:min|max)(?:imum)?\\s+stock\\s+price|price\\s+(?:is\\s+)?(?:out\\s+of|outside)\\s+(?:the\\s+)?(?:allowed\\s+)?range|price\\s+check|too\\s+far\\s+(?:from|away)|\\btoo\\s+(?:low|high)\\b|price\\s+(?:band|collar)",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB tabla C: risk-control (Min / Max stock price), trading-settings-control (Price Check, stop «too low or too high»); R-B-07 (3) demo: «precio fuera de rango»",
+    "provisional": true,
+    "ejemplos": ["Min stock price", "Price is out of range", "Stop price too low or too high"]
+  },
+  {
+    "clave": "orden_duplicada",
+    "descripcion": "Orden o token repetido («Same Order in 10 seconds»): un reintento idéntico también lo sería.",
+    "regex": "duplicated?\\s+(?:order|token|client\\s*order)|same\\s+order\\s+in\\s+\\d+\\s+sec",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "KB tabla C: trading-settings-control («Same Order in 10 seconds»); R-B-07 (3) demo: «orden duplicada»",
+    "provisional": true,
+    "ejemplos": ["Duplicate order", "Same Order in 10 seconds"]
+  }
+]

@@ -1,0 +1,870 @@
+"""Tests de `fuente_senales.py` y `enlace_bot_alertas.py` (documento §3.11, §6.1, §10).
+
+QUÉ CUBRE. (1) Paridad `FuenteEnProceso` ↔ `RunnerAlertas` directo: mismos
+`Evento` campo a campo y `Senal.id == id_evento` (R-A-05, R-A-06). (2) El radar
+añade `strategy_id` por nombre y descarta nombres repetidos avisando UNA vez al
+día (corrección 6, riesgo 25). (3) `FuenteTuberia` + `EnlaceEjecutor` en DOS
+procesos (spawn): 5.000 mensajes sin pérdida ni desorden, reconexión tras
+matar y relanzar el Listener, «hola» con hash distinto rechazado con aviso 3
+(H-6), sin authkey → ValueError (riesgo 19). (4) Eventos de otra versión
+descartados con aviso 2 (riesgo 18). (5) `FuenteGrabacion` reproduce
+`AM_recorte.jsonl.gz` en orden de tiempo con el `Guion` y el `RelojSimulado`
+avanza (R-O-02, injerto A §8.24). (6) Importar los módulos no carga pandas,
+httpx ni websockets (injerto A §8.25, riesgo 29).
+
+POR QUÉ ASÍ. Todo sin red exterior: la tubería escucha en 127.0.0.1 con
+puerto 0 y los procesos hijos son funciones a nivel de módulo de este fichero
+(spawn las reimporta). El motor de alertas se sustituye como en
+`tests/test_bot_alerts_hidratar_ultima_vela.py` (translate/simulate falsos)
+para que la señal caiga donde el test decide.
+
+LAS TRAMPAS. Cada proceso hijo y cada fuente se paran en `finally`; las esperas
+son sondeos con tope (≤ 20 s), nunca sleeps largos fijos.
+"""
+from __future__ import annotations
+
+import dataclasses
+import gzip
+import json
+import multiprocessing
+import os
+import socket
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta
+from decimal import Decimal
+from multiprocessing.connection import Client
+from pathlib import Path
+from typing import Any, Optional
+
+import pytest
+
+from app.bot_das import VERSION
+from app.bot_das import enlace_bot_alertas as enl
+from app.bot_das import fuente_senales as fs
+from app.bot_das.reloj import ET, Reloj, RelojSimulado
+from app.bot_das.tipos import Nivel, Senal
+
+FIXTURES = Path(__file__).parent / "fixtures"
+RUTA_AM = FIXTURES / "AM_recorte.jsonl.gz"
+RUTA_GUION = FIXTURES / "guion_replay_ejemplo.json"
+BACKEND = Path(__file__).resolve().parents[2]
+HASH_BUENO = "sha256:motor-de-prueba"
+INICIO_REPLAY = datetime(2026, 9, 25, 4, 0, tzinfo=ET)
+ESPERA_MAX_S = 20.0
+
+
+# ── ayudas a nivel de módulo (spawn las reimporta en el hijo) ───────────
+@dataclasses.dataclass
+class EventoFalso:
+    """Lo mínimo de un `Evento` que la tubería exige (riesgo 18) + un número de secuencia."""
+    tipo: str
+    ticker: str
+    strategy_id: str
+    momento: Any
+    seq: int
+
+
+@dataclasses.dataclass
+class EventoViejo:
+    """Un `Evento` de «otra versión»: sin `strategy_id` (riesgo 18)."""
+    tipo: str
+    ticker: str
+    momento: Any
+
+
+def _clave() -> bytes:
+    return os.urandom(16)
+
+
+def _esperar(cond, segundos: float = ESPERA_MAX_S, paso: float = 0.02) -> bool:
+    fin = time.monotonic() + segundos
+    while time.monotonic() < fin:
+        if cond():
+            return True
+        time.sleep(paso)
+    return bool(cond())
+
+
+def _hijo_eventos(direccion, authkey, n, motor_hash, cola_salud) -> None:
+    """Proceso hijo: un `EnlaceEjecutor` que manda `n` mensajes «eventos» numerados y reporta su salud."""
+    enlace = enl.EnlaceEjecutor(direccion, authkey, tope=n + 10, motor_hash=motor_hash,
+                                reconectar_s=0.2, espera_ok_s=5.0)
+    enlace.arrancar()
+    try:
+        for i in range(n):
+            ev = EventoFalso("entrada", f"T{i % 7}", "s1", f"{i:019d}", i)   # id_evento usa momento[:19]
+            enlace.eventos(ev.ticker, "09:30", i, [ev], False)
+        _esperar(lambda: enlace.enviados >= n, segundos=15.0)
+    finally:
+        enlace.parar(vaciar_s=2.0)
+        cola_salud.put(enlace.salud())
+
+
+def _hijo_latidos(direccion, authkey, parar_ev, cola_salud) -> None:
+    """Proceso hijo: un latido numerado cada 10 ms hasta que el padre diga basta."""
+    enlace = enl.EnlaceEjecutor(direccion, authkey, motor_hash=HASH_BUENO, reconectar_s=0.2, espera_ok_s=5.0)
+    enlace.arrancar()
+    i = 0
+    try:
+        fin = time.monotonic() + 30.0
+        while not parar_ev.is_set() and time.monotonic() < fin:
+            enlace.latido(float(i), True)
+            i += 1
+            time.sleep(0.01)
+    finally:
+        enlace.parar(vaciar_s=1.0)
+        cola_salud.put(enlace.salud())
+
+
+def _hijo_hash_viejo(direccion, authkey, segundos, cola_salud) -> None:
+    """Proceso hijo: un enlace con OTRO hash del motor; reintenta varias veces y reporta."""
+    enlace = enl.EnlaceEjecutor(direccion, authkey, motor_hash="sha256:motor-viejo",
+                                reconectar_s=0.2, espera_ok_s=5.0)
+    enlace.arrancar()
+    try:
+        for i in range(3):
+            enlace.eventos("ABCD", "09:30", i, [EventoFalso("entrada", "ABCD", "s1", f"m{i}", i)], False)
+        _esperar(lambda: enlace.rechazos >= 3, segundos=segundos)
+    finally:
+        enlace.parar(vaciar_s=0.0)
+        cola_salud.put(enlace.salud())
+
+
+# ── fixtures ───────────────────────────────────────────────────────────
+@pytest.fixture
+def motor_falso(monkeypatch):
+    """Motor de alertas con traductor y simulador sustituidos (forma de test_bot_alerts_hidratar_ultima_vela.py).
+
+    `guion["entradas_en"]` = índices de vela (del frame del día) donde la entrada está encendida.
+    """
+    np = pytest.importorskip("numpy")
+    from app.services import bot_alerts_engine as eng
+
+    guion: dict = {"entradas_en": set()}
+
+    def falso_translate(frame, sdef, stats, compiled=None):
+        n = len(frame)
+        ent = np.zeros(n, dtype=bool)
+        for k in guion["entradas_en"]:
+            if 0 <= k < n:
+                ent[k] = True
+        return {"direction": "Short", "entries": ent, "exits": np.zeros(n, dtype=bool),
+                "accept_reentries": True, "max_reentries": -1}
+
+    monkeypatch.setattr(eng, "translate_strategy", falso_translate)
+    monkeypatch.setattr(eng, "simulate", lambda **kw: {"trades": []})
+    monkeypatch.setattr(eng, "_kwargs_simulate", lambda *a, **k: {})
+    monkeypatch.setattr(eng, "compile_strategy_def", lambda sdef: {})
+    monkeypatch.setattr(eng, "calcular_acciones", lambda *a, **k: 100.0)
+    return guion
+
+
+def _estrategia(sid: str = "s1", nombre: str = "1B") -> dict:
+    return {"strategy_id": sid, "name": nombre, "riesgo_usd": 300.0,
+            "definition": {"bias": "short", "risk_management": {}},
+            "ventana": {"inicio": "04:00", "fin": "16:00"}}
+
+
+def _velas(n: int = 30, precio: float = 1.0, base: str = "2026-09-25 04:00:00") -> list[dict]:
+    """`n` velas de minuto consecutivas (forma de test_bot_alerts_procesos._velas, en el día del reloj)."""
+    import pandas as pd
+    t0 = pd.Timestamp(base)
+    filas = []
+    for i in range(n):
+        p = precio + i * 0.01
+        filas.append({"timestamp": str(t0 + pd.Timedelta(minutes=i)),
+                      "open": p, "high": p * 1.02, "low": p * 0.99, "close": p, "volume": 100000.0})
+    return filas
+
+
+class Recolector:
+    """Destino de señales y receptor de avisos (thread-safe: list.append)."""
+
+    def __init__(self) -> None:
+        self.senales: list[Senal] = []
+        self.avisos: list[tuple[int, str]] = []
+
+    def __call__(self, senal: Senal) -> None:
+        self.senales.append(senal)
+
+    def al_aviso(self, nivel: int, texto: str) -> None:
+        self.avisos.append((nivel, texto))
+
+    def de_clase(self, clase: str) -> list[Senal]:
+        return [s for s in list(self.senales) if s.clase == clase]
+
+
+@pytest.fixture
+def tuberia():
+    """Fábrica de `FuenteTuberia` en 127.0.0.1:0, paradas todas en el finally."""
+    creadas: list[fs.FuenteTuberia] = []
+
+    def crear(direccion=("127.0.0.1", 0), authkey: bytes = b"clave-de-test", hash_esperado: str = HASH_BUENO,
+              version_minima: str = VERSION, rec: Optional[Recolector] = None, espera_hola_s: float = 5.0):
+        rec = rec if rec is not None else Recolector()
+        fuente = fs.FuenteTuberia(direccion, authkey, rec, Reloj(), hash_esperado, version_minima,
+                                  al_aviso=rec.al_aviso, espera_hola_s=espera_hola_s)
+        creadas.append(fuente)
+        fuente.arrancar()
+        return fuente, rec
+
+    try:
+        yield crear
+    finally:
+        for fuente in creadas:
+            fuente.parar()
+
+
+@pytest.fixture
+def enlaces():
+    """Fábrica de `EnlaceEjecutor` en este proceso, parados en el finally."""
+    creados: list[enl.EnlaceEjecutor] = []
+
+    def crear(direccion, authkey: bytes = b"clave-de-test", **kw):
+        kw.setdefault("motor_hash", HASH_BUENO)
+        kw.setdefault("reconectar_s", 0.2)
+        enlace = enl.EnlaceEjecutor(direccion, authkey, **kw)
+        creados.append(enlace)
+        enlace.arrancar()
+        return enlace
+
+    try:
+        yield crear
+    finally:
+        for enlace in creados:
+            enlace.parar(vaciar_s=0.0)
+
+
+def _puerto_cerrado() -> tuple[str, int]:
+    """Un puerto local donde nadie escucha (se liga y se suelta)."""
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()
+    finally:
+        s.close()
+
+
+def _proceso(objetivo, *args):
+    ctx = multiprocessing.get_context("spawn")
+    cola = ctx.Queue()
+    return ctx, cola, (lambda *extra: ctx.Process(target=objetivo, args=args + extra + (cola,), daemon=True))
+
+
+def _cerrar_proceso(p) -> None:
+    if p is None:
+        return
+    p.join(timeout=10)
+    if p.is_alive():
+        p.terminate()
+        p.join(timeout=5)
+
+
+# ═══ 0. importar no carga nada pesado (injerto A §8.25, riesgo 29) ═════
+def test_importar_no_carga_pandas_ni_red():
+    """Riesgo 29: el ejecutor en modo tubería no paga pandas; ningún módulo abre httpx ni websockets al importarse."""
+    codigo = ("import sys; import app.bot_das.fuente_senales, app.bot_das.enlace_bot_alertas; "
+              "import threading; "
+              "print(sorted(m for m in ('pandas', 'httpx', 'websockets', 'app.services.bot_alerts_runner') "
+              "if m in sys.modules), threading.active_count())")
+    salida = subprocess.run([sys.executable, "-c", codigo], cwd=str(BACKEND), capture_output=True,
+                            text=True, timeout=60, env={**os.environ, "PYTHONPATH": str(BACKEND)})
+    assert salida.returncode == 0, salida.stderr
+    assert salida.stdout.strip() == "[] 1"
+
+
+# ═══ 1. utilidades puras ═══════════════════════════════════════════════
+@pytest.mark.parametrize("estrategias, mapa, repetidos", [
+    pytest.param([{"name": "1B", "strategy_id": "a"}, {"name": "2C", "strategy_id": "b"}],
+                 {"1B": "a", "2C": "b"}, set(), id="correccion6-nombres-unicos"),
+    pytest.param([{"name": "1B", "strategy_id": "a"}, {"name": "1B", "strategy_id": "b"},
+                  {"name": "2C", "strategy_id": "c"}],
+                 {"2C": "c"}, {"1B"}, id="correccion6-repetido-ids-distintos-fuera"),
+    pytest.param([{"name": "1B", "strategy_id": "a"}, {"name": "1B", "strategy_id": "a"}],
+                 {"1B": "a"}, set(), id="correccion6-multicuenta-mismo-id-no-es-ambiguo"),
+    pytest.param([{"name": "", "strategy_id": "a"}, {"name": "X"}, "no-dict", {"strategy_id": "z"}],
+                 {}, set(), id="correccion6-entradas-incompletas-ignoradas"),
+    pytest.param([{"name": "1B", "strategy_id": "a"}, {"name": "1B", "strategy_id": "b"},
+                  {"name": "1B", "strategy_id": "a"}],
+                 {}, {"1B"}, id="correccion6-ambiguo-no-reaparece"),
+])
+def test_mapa_nombres(estrategias, mapa, repetidos):
+    assert enl.mapa_nombres(estrategias) == (mapa, repetidos)
+
+
+def test_anadir_y_anotar_strategy_id_no_mutan_y_descartan():
+    """Corrección 6 / riesgo 25: la fila ambigua o desconocida no viaja con id; la original no se toca."""
+    filas = [{"nombre": "1B", "acciones": 100}, {"nombre": "2C", "acciones": 5},
+             {"nombre": "ZZ", "acciones": 1}, {"nombre": "2C", "strategy_id": "falso"}, "basura"]
+    copia = json.loads(json.dumps(filas))
+    validas, descartados = enl.anadir_strategy_id(filas, {"1B": "a", "2C": "b"}, repetidos={"2C"})
+    assert validas == [{"nombre": "1B", "acciones": 100, "strategy_id": "a"}]
+    assert descartados == ["2C", "ZZ", "2C", "None"]
+    assert filas == copia
+    anotadas = enl.anotar_strategy_id(filas, {"1B": "a", "2C": "b"}, repetidos={"2C"})
+    assert anotadas == [{"nombre": "1B", "acciones": 100, "strategy_id": "a"}, {"nombre": "2C", "acciones": 5},
+                        {"nombre": "ZZ", "acciones": 1}, {"nombre": "2C"}]
+
+
+@pytest.mark.parametrize("version, motor_hash, rechaza", [
+    pytest.param(VERSION, HASH_BUENO, None, id="H-6-mismo-hash-y-version-acepta"),
+    pytest.param("2099.01.01", HASH_BUENO, None, id="R-O-01-version-posterior-acepta"),
+    pytest.param(VERSION, "sha256:otro", "hash", id="H-6-hash-distinto-rechaza"),
+    pytest.param(VERSION, "", "hash", id="H-6-hash-vacio-rechaza"),
+    pytest.param(VERSION, None, "hash", id="H-6-hash-ausente-rechaza"),
+    pytest.param("2020.01.01", HASH_BUENO, "anterior", id="R-O-01-version-vieja-rechaza"),
+    pytest.param("v1", HASH_BUENO, "ilegible", id="R-O-01-version-ilegible-rechaza"),
+    pytest.param(None, HASH_BUENO, "ilegible", id="R-O-01-sin-version-rechaza"),
+])
+def test_motivo_rechazo_hola(version, motor_hash, rechaza):
+    motivo = fs.motivo_rechazo_hola(version, motor_hash, VERSION, HASH_BUENO)
+    if rechaza is None:
+        assert motivo is None
+    else:
+        assert motivo is not None and rechaza in motivo
+
+
+@pytest.mark.parametrize("texto, esperado", [
+    pytest.param("127.0.0.1:8765", ("127.0.0.1", 8765), id="3.11-host-puerto"),
+    pytest.param(" localhost:9000 ", ("localhost", 9000), id="3.11-espacios"),
+    pytest.param("\\\\.\\pipe\\bot_das", "\\\\.\\pipe\\bot_das", id="3.11-tuberia-con-nombre"),
+])
+def test_direccion_de_texto(texto, esperado):
+    assert enl.direccion_de_texto(texto) == esperado
+
+
+@pytest.mark.parametrize("texto", [
+    pytest.param("", id="3.11-vacia"), pytest.param("127.0.0.1", id="3.11-sin-puerto"),
+    pytest.param(":8765", id="3.11-sin-host"), pytest.param("h:0", id="3.11-puerto-cero"),
+    pytest.param("h:70000", id="3.11-puerto-fuera"), pytest.param("h:-1", id="3.11-puerto-negativo"),
+    pytest.param("h:80a", id="3.11-puerto-no-numero"),
+])
+def test_direccion_de_texto_invalida(texto):
+    with pytest.raises(ValueError):
+        enl.direccion_de_texto(texto)
+
+
+@pytest.mark.parametrize("ev, falta", [
+    pytest.param(EventoFalso("entrada", "A", "s1", "m", 0), None, id="riesgo18-completo"),
+    pytest.param(EventoViejo("entrada", "A", "m"), "strategy_id", id="riesgo18-sin-strategy_id"),
+    pytest.param(EventoFalso("entrada", "A", "s1", None, 0), "momento", id="riesgo18-momento-None"),
+    pytest.param(object(), "tipo", id="riesgo18-objeto-ajeno"),
+])
+def test_campo_ausente(ev, falta):
+    assert fs.campo_ausente(ev) == falta
+
+
+def test_vela_de_grabacion_igual_que_vela_de_mensaje_del_feed():
+    """R-A-06: la réplica de `bot_alerts_feed.vela_de_mensaje` (l.177-187) da la MISMA vela, cruda o ya convertida."""
+    import pandas as pd
+    from app.services.bot_alerts_feed import vela_de_mensaje
+
+    s_ms = int(pd.Timestamp("2026-09-25 09:31", tz="America/New_York").timestamp() * 1000)
+    crudo = {"ev": "AM", "sym": "ABCD", "s": s_ms, "e": s_ms + 60_000, "o": 1.1, "h": 1.3, "l": 1.0,
+             "c": 1.2, "v": 5000, "_r": s_ms + 61_500}
+    s_leido, ticker, vela = fs.vela_de_grabacion(crudo)
+    assert (s_leido, ticker) == (s_ms, "ABCD")
+    assert vela == vela_de_mensaje(crudo)
+    assert vela["timestamp"] == pd.Timestamp("2026-09-25 09:31")        # naive ET, INICIO del minuto
+    convertida = {"timestamp": "2026-09-25 09:31:00", "open": 1.1, "high": 1.3, "low": 1.0, "close": 1.2,
+                  "volume": 5000.0, "_r": s_ms + 61_500, "sym": "ABCD"}
+    assert fs.vela_de_grabacion(convertida) == (s_ms, "ABCD", vela)
+    assert fs.vela_de_grabacion({"sym": "ABCD", "s": s_ms, "o": 1, "h": 1, "l": 1}) is None
+    assert fs.vela_de_grabacion({"s": s_ms, "o": 1, "h": 1, "l": 1, "c": 1}) is None
+    sin_volumen = fs.vela_de_grabacion(dict(crudo, v=None))
+    assert sin_volumen is not None and sin_volumen[2]["volume"] == 0.0
+
+
+# ═══ 2. FuenteEnProceso: paridad con RunnerAlertas (R-A-05, R-A-06) ═════
+def test_fuente_en_proceso_paridad_con_runner_directo(motor_falso):
+    import pandas as pd
+    from app.services.bot_alerts_cliente import id_evento
+    from app.services.bot_alerts_runner import RunnerAlertas
+
+    motor_falso["entradas_en"] = {9, 14, 22}
+    velas = _velas(30)
+    reloj = RelojSimulado(datetime(2026, 9, 25, 4, 10, 5, tzinfo=ET))     # la vela de 04:09 acaba de cerrar
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso([_estrategia()], rec, reloj, al_aviso=rec.al_aviso)
+    directo = RunnerAlertas([_estrategia()], al_avisar=None)
+    stats = {"prev_close": 0.8}
+
+    fuente.arrancar()
+    fuente.hidratar("ABCD", velas[:10], stats)
+    esperados = list(directo.hidratar("ABCD", pd.DataFrame(velas[:10]), stats,
+                                      ahora=pd.Timestamp("2026-09-25 04:10:05")))
+    assert [s.clase for s in rec.senales][:1] == ["hidratado"]
+    assert rec.senales[0].feed == {"n_velas": 10, "prev_close": 0.8}
+    for i, v in enumerate(velas[10:], start=10):
+        reloj.fijar(datetime(2026, 9, 25, 4, 0, tzinfo=ET) + timedelta(minutes=i + 1, seconds=2))
+        vela = dict(v, timestamp=pd.Timestamp(v["timestamp"]))
+        antes = len(rec.senales)
+        fuente.vela("ABCD", vela)
+        nuevos = directo.nueva_vela("ABCD", dict(vela))
+        esperados.extend(nuevos)
+        for s in rec.senales[antes:]:
+            assert s.recibida_en == reloj.mono()
+
+    senales = rec.de_clase("evento")
+    assert len(esperados) >= 3, "el motor falso debía dar al menos las tres entradas"
+    assert [dataclasses.asdict(s.evento) for s in senales] == [dataclasses.asdict(e) for e in esperados]
+    for s, e in zip(senales, esperados):
+        assert s.id == id_evento(e)
+        assert s.ticker == e.ticker and s.momento == e.momento
+        assert s.origen == "proceso" and s.recuperada is False
+    assert fuente.salud()["viva"] is True and fuente.salud()["origen"] == "proceso"
+    assert fuente.salud()["ultimo_en"] == reloj.epoch()
+    fuente.parar()
+    assert fuente.salud()["viva"] is False
+    assert rec.avisos == []
+
+
+def test_fuente_en_proceso_hidratar_ultima_vela_es_presente(motor_falso):
+    """Memoria ELMT (14-sep): la entrada en la última vela completa al hidratar SE entrega; el corte sale del reloj inyectado."""
+    motor_falso["entradas_en"] = {9}
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso([_estrategia()], rec, RelojSimulado(datetime(2026, 9, 25, 4, 10, 7, tzinfo=ET)))
+    fuente.hidratar("ELMT", _velas(10))
+    assert [s.clase for s in rec.senales] == ["hidratado", "evento"]
+    assert rec.senales[1].evento.tipo == "entrada"
+
+
+def test_fuente_en_proceso_fallo_del_motor_no_propaga(motor_falso, monkeypatch):
+    """H-5: una vela que revienta el motor se cuenta y se avisa UNA vez al día; la fuente sigue."""
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso([_estrategia()], rec, RelojSimulado(INICIO_REPLAY), al_aviso=rec.al_aviso)
+
+    def revienta(*a, **k):
+        raise RuntimeError("motor roto")
+
+    monkeypatch.setattr(fuente.runner, "nueva_vela", revienta)
+    fuente.vela("ABCD", _velas(1)[0])
+    fuente.vela("ABCD", _velas(1)[0])
+    assert fuente.fallos_motor == 2
+    assert len(rec.avisos) == 1 and rec.avisos[0][0] == Nivel.AVISO
+    assert rec.senales == []
+
+
+def test_fuente_destino_que_lanza_no_propaga(motor_falso):
+    """Frontera de callback: si el destino lanza, se cuenta y se avisa; la fuente no revienta."""
+    avisos: list = []
+
+    def destino(_s):
+        raise RuntimeError("cola rota")
+
+    fuente = fs.FuenteEnProceso([_estrategia()], destino, RelojSimulado(INICIO_REPLAY),
+                                al_aviso=lambda n, t: avisos.append((n, t)))
+    fuente.radar("NADA", Decimal("1"))
+    fuente.radar("NADA", Decimal("1"))
+    assert fuente.fallos_destino == 2 and fuente.entregadas == 0
+    assert len(avisos) == 1
+
+
+def test_fuente_en_proceso_dia_nuevo_reinicia_runner(motor_falso):
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso([_estrategia()], rec, RelojSimulado(datetime(2026, 9, 25, 4, 30, tzinfo=ET)))
+    fuente.hidratar("ABCD", _velas(20))
+    assert fuente.runner.tickers == ["ABCD"]
+    fuente.dia_nuevo()
+    assert fuente.runner.tickers == []
+    assert rec.senales[-1].clase == "dia_nuevo" and rec.senales[-1].ticker is None
+
+
+# ═══ 3. radar: strategy_id por nombre (corrección 6, riesgo 25) ═════════
+def test_radar_anade_strategy_id_y_descarta_repetidos_una_vez_al_dia(motor_falso):
+    estrategias = [_estrategia("s-1b-a", "1B"), _estrategia("s-1b-b", "1B"), _estrategia("s-2c", "2C")]
+    reloj = RelojSimulado(datetime(2026, 9, 25, 4, 30, tzinfo=ET))
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso(estrategias, rec, reloj, al_aviso=rec.al_aviso)
+    fuente.hidratar("ABCD", _velas(20))
+    rec.senales.clear()
+
+    fuente.radar("ABCD", Decimal("1.23"))
+    fuente.radar("ABCD", Decimal("1.25"))
+    radar = rec.de_clase("radar")
+    assert len(radar) == 2
+    assert radar[0].precio_radar == Decimal("1.23") and isinstance(radar[0].precio_radar, Decimal)
+    assert radar[0].ticker == "ABCD" and radar[0].id is None and radar[0].origen == "proceso"
+    assert [f["strategy_id"] for f in radar[0].estimacion] == ["s-2c"]
+    assert [f["nombre"] for f in radar[0].estimacion] == ["2C"]
+    assert all("strategy_id" in f for s in radar for f in s.estimacion)
+    avisos_1b = [a for a in rec.avisos if "1B" in a[1]]
+    assert len(avisos_1b) == 1 and avisos_1b[0][0] == Nivel.AVISO     # una vez al día, nivel 2
+
+    reloj.avanzar(24 * 3600)                                            # otro día → vuelve a avisar
+    fuente.radar("ABCD", Decimal("1.30"))
+    assert len([a for a in rec.avisos if "1B" in a[1]]) == 2
+
+
+def test_radar_precio_float_se_convierte_una_vez_y_sin_velas_da_lista_vacia(motor_falso):
+    rec = Recolector()
+    fuente = fs.FuenteEnProceso([_estrategia()], rec, RelojSimulado(INICIO_REPLAY))
+    fuente.radar("NADA", 2.5)
+    assert rec.senales[-1].estimacion == [] and rec.senales[-1].precio_radar == Decimal("2.5")
+
+
+# ═══ 4. FuenteTuberia + EnlaceEjecutor (§6.1) ═══════════════════════════
+@pytest.mark.parametrize("clave", [
+    pytest.param(None, id="riesgo19-authkey-None"), pytest.param(b"", id="riesgo19-authkey-vacia"),
+    pytest.param("", id="riesgo19-authkey-texto-vacio"), pytest.param(123, id="riesgo19-authkey-no-bytes"),
+])
+def test_tuberia_sin_authkey_no_arranca(clave):
+    with pytest.raises(ValueError):
+        fs.FuenteTuberia(("127.0.0.1", 0), clave, Recolector(), Reloj(), HASH_BUENO, VERSION)
+
+
+def test_tuberia_argumentos_invalidos():
+    with pytest.raises(ValueError):
+        fs.FuenteTuberia(("127.0.0.1", 70000), b"k", Recolector(), Reloj(), HASH_BUENO, VERSION)
+    with pytest.raises(ValueError):
+        fs.FuenteTuberia(("127.0.0.1", 0), b"k", Recolector(), Reloj(), HASH_BUENO, "ayer")
+    with pytest.raises(ValueError):
+        fs.FuenteTuberia(("127.0.0.1", 0), b"k", "no-callable", Reloj(), HASH_BUENO, VERSION)
+
+
+def test_enlace_sin_authkey_ni_entorno_no_arranca():
+    """Riesgo 19: BOT_DAS_AUTHKEY obligatoria (la fixture autouse la borra del entorno)."""
+    with pytest.raises(ValueError):
+        enl.EnlaceEjecutor(("127.0.0.1", 8765))
+    with pytest.raises(ValueError):
+        enl.EnlaceEjecutor(("127.0.0.1", 8765), authkey=b"")
+
+
+def test_enlace_lee_el_entorno_en_la_llamada(monkeypatch):
+    """§3.11: BOT_DAS_TUBERIA (defecto 127.0.0.1:8765) y BOT_DAS_AUTHKEY se leen en __init__, no al importar."""
+    monkeypatch.setenv("BOT_DAS_AUTHKEY", "clave-local-de-test")
+    enlace = enl.EnlaceEjecutor()
+    assert enlace.direccion == ("127.0.0.1", 8765) and enlace._authkey == b"clave-local-de-test"
+    assert enlace.tope == 2000 and enlace.reconectar_s == 5.0 and enlace.version == VERSION
+    monkeypatch.setenv("BOT_DAS_TUBERIA", "127.0.0.1:9001")
+    assert enl.EnlaceEjecutor().direccion == ("127.0.0.1", 9001)
+    monkeypatch.setenv("BOT_DAS_TUBERIA", "basura")
+    with pytest.raises(ValueError):
+        enl.EnlaceEjecutor()
+
+
+def test_enlace_encola_sin_bloquear_y_respeta_el_tope():
+    """§6.1: los métodos vuelven al instante aunque no haya ejecutor; al tope se tira lo MÁS VIEJO y se cuenta."""
+    enlace = enl.EnlaceEjecutor(_puerto_cerrado(), b"k", tope=3)        # sin arrancar: nada consume
+    t0 = time.perf_counter()
+    for i in range(5):
+        enlace.latido(float(i), True)
+    assert time.perf_counter() - t0 < 0.5
+    assert enlace.pendientes == 3 and enlace.perdidos == 2 and enlace.encolados == 5
+    assert [m["ultima_vela_en"] for m in enlace._cola] == [2.0, 3.0, 4.0]
+    enlace.parar(vaciar_s=0.0)
+    with pytest.raises(ValueError):
+        enl.EnlaceEjecutor(_puerto_cerrado(), b"k", tope=0)
+
+
+def test_enlace_sin_ejecutor_reintenta_y_conserva(enlaces):
+    """§6.1: sin Listener el enlace cuenta intentos fallidos, no pierde lo encolado y sigue vivo."""
+    enlace = enlaces(_puerto_cerrado(), reconectar_s=0.05)
+    enlace.dia_nuevo()
+    assert _esperar(lambda: enlace.intentos_fallidos >= 2, segundos=15.0)
+    salud = enlace.salud()
+    assert salud["viva"] is True and salud["conectado"] is False and salud["pendientes"] == 1
+
+
+def test_tuberia_mensajes_de_todos_los_tipos_en_proceso(tuberia, enlaces, motor_falso):
+    """Los seis mensajes de §3.11 con un `Evento` REAL picklado (momento pd.Timestamp) y el id de R-A-05."""
+    import pandas as pd
+    from app.services.bot_alerts_cliente import id_evento
+    from app.services.bot_alerts_engine import Evento
+
+    fuente, rec = tuberia()
+    enlace = enlaces(fuente.direccion)
+    assert _esperar(lambda: enlace.conectado)
+    ev = Evento(tipo="entrada", ticker="ABCD", strategy_id="s1", estrategia="1B",
+                momento=pd.Timestamp("2026-09-25 09:31"), precio=1.23, direccion="Short", acciones=100.0,
+                stop=1.30)
+    mapa, repetidos = enl.mapa_nombres([_estrategia("s1", "1B"), _estrategia("s2", "2C"), _estrategia("s3", "2C")])
+    enlace.hidratado("ABCD", 42, [ev], 0.99)
+    enlace.eventos("ABCD", "09:31", pd.Timestamp("2026-09-25 09:31"), [ev], True)
+    enlace.radar([{"ticker": "ABCD", "precio": 1.25, "estimacion": [{"nombre": "1B", "acciones": 10},
+                                                                     {"nombre": "2C", "acciones": 5}]},
+                  "no-dict"], mapa, repetidos)
+    enlace.latido(1790323321.5, True)
+    enlace.dia_nuevo()
+    assert _esperar(lambda: len(rec.senales) >= 6)
+    clases = [s.clase for s in rec.senales]
+    assert clases == ["hidratado", "evento", "evento", "radar", "latido_feed", "dia_nuevo"]
+    hid, ev1, ev2, radar, latido, _dia = rec.senales
+    assert hid.ticker == "ABCD" and hid.feed == {"n_velas": 42, "prev_close": 0.99}
+    assert dataclasses.asdict(ev1.evento) == dataclasses.asdict(ev)
+    assert ev1.id == ev2.id == id_evento(ev) and ev1.momento == ev.momento
+    assert ev1.recuperada is False and ev2.recuperada is True and ev2.origen == "tuberia"
+    assert radar.precio_radar == Decimal("1.25")
+    assert radar.estimacion == [{"nombre": "1B", "acciones": 10, "strategy_id": "s1"}]
+    assert latido.feed == {"ultima_vela_en": 1790323321.5, "vivo": True}
+    assert fuente.descartados == 1                                    # la fila 2C (ambigua) sin strategy_id
+    assert len([a for a in rec.avisos if "2C" in a[1]]) == 1
+    salud = fuente.salud()
+    assert salud["viva"] is True and salud["origen"] == "tuberia" and salud["conectado"] is True
+    assert salud["ultimo_en"] is not None and abs(salud["ultimo_en"] - time.time()) < 60
+    assert salud["cliente_version"] == VERSION
+
+
+def test_tuberia_evento_de_otra_version_descartado(tuberia, enlaces):
+    """Riesgo 18: un Evento sin strategy_id se descarta con aviso 2 (una vez al día) y los buenos pasan."""
+    fuente, rec = tuberia()
+    enlace = enlaces(fuente.direccion)
+    buenos = [EventoFalso("entrada", "ABCD", "s1", f"m{i}", i) for i in range(2)]
+    for _ in range(3):
+        enlace.eventos("ABCD", "09:31", None, [EventoViejo("entrada", "ABCD", "m"), *buenos], False)
+    assert _esperar(lambda: fuente.recibidos >= 3)
+    assert len(rec.de_clase("evento")) == 6 and fuente.descartados == 3
+    avisos = [a for a in rec.avisos if "riesgo 18" in a[1]]
+    assert len(avisos) == 1 and avisos[0][0] == Nivel.AVISO
+
+
+def test_tuberia_mensajes_raros_no_tumban_el_hilo(tuberia):
+    """Frontera de mensaje: no-dict, tipo desconocido y dict roto se cuentan; el hilo sigue sirviendo."""
+    fuente, rec = tuberia()
+    conn = Client(fuente.direccion, authkey=b"clave-de-test")
+    try:
+        conn.send({"t": "hola", "version": VERSION, "motor_hash": HASH_BUENO})
+        assert conn.poll(5) and conn.recv()["t"] == "ok"
+        conn.send(["no", "soy", "un", "dict"])
+        conn.send({"t": "desconocido"})
+        conn.send({"t": "hidratado", "ticker": None})
+        conn.send({"t": "radar", "candidatos": [{"ticker": "", "precio": 1}, {"ticker": "X", "precio": "nan"}]})
+        conn.send({"t": "hola", "version": VERSION, "motor_hash": HASH_BUENO})
+        conn.send({"t": "dia_nuevo"})
+        assert _esperar(lambda: len(rec.de_clase("dia_nuevo")) == 1)
+    finally:
+        conn.close()
+    assert fuente.malformados == 2 and fuente.desconocidos == 2 and fuente.descartados == 2
+    assert fuente.salud()["viva"] is True
+
+
+def test_tuberia_primer_mensaje_no_hola_se_rechaza(tuberia):
+    fuente, rec = tuberia()
+    conn = Client(fuente.direccion, authkey=b"clave-de-test")
+    try:
+        conn.send({"t": "eventos", "eventos": []})
+        assert conn.poll(5) and conn.recv()["t"] == "rechazado"
+    finally:
+        conn.close()
+    assert _esperar(lambda: fuente.saludos_fallidos == 1)
+    assert rec.senales == []
+
+
+def test_tuberia_clave_incorrecta_se_rechaza(tuberia, enlaces):
+    """Riesgo 19: un cliente con otra clave no llega a saludar; la fuente sigue aceptando al bueno."""
+    fuente, rec = tuberia()
+    malo = enlaces(fuente.direccion, authkey=b"otra-clave")
+    assert _esperar(lambda: fuente.autenticaciones_fallidas >= 1)
+    assert malo.conectado is False and malo.intentos_fallidos >= 1
+    malo.parar(vaciar_s=0.0)
+    bueno = enlaces(fuente.direccion)
+    bueno.dia_nuevo()
+    assert _esperar(lambda: len(rec.de_clase("dia_nuevo")) == 1)
+    assert len([a for a in rec.avisos if "clave incorrecta" in a[1]]) == 1
+
+
+def test_tuberia_parar_es_idempotente_y_salud_refleja(tuberia):
+    fuente, _ = tuberia()
+    assert fuente.salud()["viva"] is True
+    fuente.parar()
+    fuente.parar()
+    assert fuente.salud()["viva"] is False
+
+
+def test_dos_procesos_5000_mensajes_sin_perdida_ni_desorden(tuberia):
+    """§10: 5.000 mensajes de un proceso a otro, completos y en orden, con authkey."""
+    n = 5000
+    clave = _clave()
+    fuente, rec = tuberia(authkey=clave)
+    _ctx, cola, hacer = _proceso(_hijo_eventos, fuente.direccion, clave, n, HASH_BUENO)
+    p = hacer()
+    try:
+        p.start()
+        assert _esperar(lambda: len(rec.senales) >= n, segundos=ESPERA_MAX_S), \
+            f"llegaron {len(rec.senales)} de {n}"
+        salud_hijo = cola.get(timeout=ESPERA_MAX_S)
+    finally:
+        _cerrar_proceso(p)
+    assert [s.evento.seq for s in rec.senales] == list(range(n))
+    assert len({s.id for s in rec.senales}) == n
+    assert all(s.clase == "evento" and s.origen == "tuberia" for s in rec.senales)
+    assert salud_hijo["enviados"] == n and salud_hijo["perdidos"] == 0 and salud_hijo["conexiones"] == 1
+    assert fuente.descartados == 0 and fuente.malformados == 0
+
+
+def test_dos_procesos_reconexion_tras_matar_y_relanzar_el_listener(tuberia):
+    """§6.1: el Listener muere, vuelve en la misma dirección y el enlace reconecta solo; orden intacto."""
+    clave = _clave()
+    rec1 = Recolector()
+    fuente1, _ = tuberia(authkey=clave, rec=rec1)
+    direccion = fuente1.direccion
+    ctx, cola, _hacer = _proceso(_hijo_latidos)
+    parar_ev = ctx.Event()
+    p = ctx.Process(target=_hijo_latidos, args=(direccion, clave, parar_ev, cola), daemon=True)
+    try:
+        p.start()
+        assert _esperar(lambda: len(rec1.senales) >= 20), "el primer Listener no recibió latidos"
+        fuente1.parar()
+        n1 = len(rec1.senales)
+        rec2 = Recolector()
+        fuente2 = None
+        fin = time.monotonic() + 5.0
+        while fuente2 is None:
+            try:
+                fuente2, _ = tuberia(direccion=direccion, authkey=clave, rec=rec2)
+            except OSError:
+                if time.monotonic() > fin:
+                    raise
+                time.sleep(0.1)
+        assert _esperar(lambda: len(rec2.senales) >= 20), "el enlace no reconectó con el Listener nuevo"
+        parar_ev.set()
+        salud_hijo = cola.get(timeout=ESPERA_MAX_S)
+    finally:
+        parar_ev.set()
+        _cerrar_proceso(p)
+    assert len(rec1.senales) == n1                                     # el muerto no recibe nada más
+    v1 = [s.feed["ultima_vela_en"] for s in rec1.senales]
+    v2 = [s.feed["ultima_vela_en"] for s in rec2.senales]
+    assert v1 == sorted(set(v1)) and v2 == sorted(set(v2))             # sin desorden ni duplicados dentro de cada conexión
+    assert v2[0] >= v1[-1]
+    assert fuente2.conexiones == 1
+    assert salud_hijo["conexiones"] == 2 and salud_hijo["desconexiones"] >= 1
+
+
+def test_dos_procesos_hola_con_hash_distinto_se_rechaza(tuberia):
+    """H-6: el ejecutor se niega a un bot.py con otro motor; aviso 3 UNA vez aunque reintente; no entra nada."""
+    clave = _clave()
+    fuente, rec = tuberia(authkey=clave)
+    _ctx, cola, hacer = _proceso(_hijo_hash_viejo, fuente.direccion, clave, 15.0)
+    p = hacer()
+    try:
+        p.start()
+        salud_hijo = cola.get(timeout=ESPERA_MAX_S)
+    finally:
+        _cerrar_proceso(p)
+    assert rec.senales == []
+    assert fuente.rechazados >= 3
+    maximos = [a for a in rec.avisos if a[0] == Nivel.MAXIMO]
+    assert len(maximos) == 1 and "RECHAZADO" in maximos[0][1]
+    assert salud_hijo["rechazos"] >= 3 and salud_hijo["enviados"] == 0
+    assert salud_hijo["pendientes"] == 3 and "hash" in (salud_hijo["motivo_rechazo"] or "")
+
+
+# ═══ 5. FuenteGrabacion + Guion (R-O-02, injerto A §8.24) ═══════════════
+def test_am_recorte_es_la_fixture_pedida():
+    """3 tickers × 40 velas consecutivas, claves de grabador.py, un solo miembro gzip."""
+    import zlib
+    datos = RUTA_AM.read_bytes()
+    d = zlib.decompressobj(31)
+    d.decompress(datos)
+    assert d.eof and d.unused_data == b""
+    por_ticker: dict[str, list[str]] = {}
+    with gzip.open(RUTA_AM, "rt", encoding="utf-8") as f:
+        for linea in f:
+            m = json.loads(linea)
+            assert set(m) == {"timestamp", "open", "high", "low", "close", "volume", "_r", "sym"}
+            por_ticker.setdefault(m["sym"], []).append(m["timestamp"])
+    assert len(por_ticker) == 3 and all(len(v) == 40 for v in por_ticker.values())
+    for ts in por_ticker.values():
+        minutos = [datetime.fromisoformat(t) for t in ts]
+        assert all(b - a == timedelta(minutes=1) for a, b in zip(minutos, minutos[1:]))
+
+
+def test_guion_carga_la_fixture_y_valida():
+    guion = fs.Guion.cargar(RUTA_GUION)
+    assert guion.spread.pct == Decimal("0.5") and isinstance(guion.spread.pct, Decimal)
+    assert (guion.spread.minimo_ticks, guion.spread.tamano_bid, guion.spread.tamano_ask) == (1, 500, 500)
+    assert len(guion.halts) == 1 and len(guion.rechazos) == 1 and len(guion.fills_parciales) == 1
+    assert fs.Guion.desde_dict({}) == fs.Guion()
+    for malo in ({"halts": {}}, {"rechazos": [1]}, {"spread": {"pct": "nan"}}, {"spread": {"pct": -1}},
+                 {"spread": {"tamano_bid": 0}}, {"spread": {"minimo_ticks": 1.5}}, []):
+        with pytest.raises(ValueError):
+            fs.Guion.desde_dict(malo)
+
+
+def test_guion_construye_el_modelo_spread_del_simulador():
+    sim = pytest.importorskip("app.bot_das.simulador_das")
+    modelo = fs.Guion.cargar(RUTA_GUION).spread.como(sim.ModeloSpread)
+    assert isinstance(modelo, sim.ModeloSpread) and modelo.pct == Decimal("0.5")
+
+
+def test_fuente_grabacion_reproduce_en_orden_y_avanza_el_reloj(motor_falso):
+    motor_falso["entradas_en"] = {5}
+    reloj = RelojSimulado(INICIO_REPLAY)
+    rec = Recolector()
+    guion = fs.Guion.cargar(RUTA_GUION)
+    fuente = fs.FuenteGrabacion(RUTA_AM, [_estrategia()], rec, reloj, guion=guion, al_aviso=rec.al_aviso)
+    pasos: list[tuple[datetime, str, float, float]] = []
+    mono_inicial = reloj.mono()
+
+    def paso(t, vela):
+        assert reloj.ahora() == t                                     # el reloj ya está en el cierre
+        assert t - timedelta(seconds=60) == vela["timestamp"].to_pydatetime().replace(tzinfo=ET)
+        pasos.append((t, vela["ticker"], reloj.mono(), vela["close"]))
+
+    fuente.arrancar()
+    assert fuente.salud()["pendientes"] == 120
+    aplicadas = fuente.reproducir(paso=paso)
+    assert aplicadas == 120 and fuente.pendientes == 0
+    tiempos = [p[0] for p in pasos]
+    assert tiempos == sorted(tiempos)
+    monos = [p[2] for p in pasos]
+    assert monos == sorted(monos) and monos[-1] > mono_inicial
+    assert reloj.ahora() == tiempos[-1] == datetime(2026, 9, 25, 7, 41, tzinfo=ET)
+    assert {p[1] for p in pasos} == {"INLF", "CTNT", "MGLD"}
+    assert len(rec.de_clase("hidratado")) == 3
+    eventos = rec.de_clase("evento")
+    assert eventos and all(s.origen == "grabacion" for s in eventos)
+    assert fuente.salud()["aplicadas"] == 120 and fuente.salud()["lineas_malas"] == 0
+    assert fuente.reproducir() == 0
+
+
+def test_fuente_grabacion_hasta_filtro_y_reanudar(motor_falso):
+    reloj = RelojSimulado(INICIO_REPLAY)
+    rec = Recolector()
+    fuente = fs.FuenteGrabacion(RUTA_AM, [_estrategia()], rec, reloj, tickers={"INLF"})
+    assert fuente.reproducir(hasta=datetime(2026, 9, 25, 4, 11)) == 10     # cierres 04:02 … 04:11 (naive = ET)
+    assert reloj.ahora() == datetime(2026, 9, 25, 4, 11, tzinfo=ET)
+    assert fuente.reproducir() == 30
+    assert fuente.salud()["lineas_filtradas"] == 80
+    assert fuente.runner.tickers == ["INLF"]
+
+
+def test_fuente_grabacion_hidrata_con_corte_en_la_primera_vela(motor_falso, tmp_path):
+    """Memoria ELMT: el pasado de `hidratar_desde` hasta el minuto anterior se sella; lo solapado no se duplica."""
+    import pandas as pd
+    lineas = []
+    for i in range(3):
+        ts = pd.Timestamp("2026-09-25 04:10") + pd.Timedelta(minutes=i)
+        lineas.append(json.dumps({"timestamp": str(ts), "open": 1.0, "high": 1.1, "low": 0.9, "close": 1.0,
+                                  "volume": 1000.0, "_r": 0, "sym": "ABCD"}))
+    ruta = tmp_path / "AM_2026-09-25.jsonl.gz"
+    with open(ruta, "wb") as f:                                        # dos miembros gzip, como grabador.py
+        f.write(gzip.compress(("\n".join(lineas[:2]) + "\n").encode()))
+        f.write(gzip.compress((lineas[2] + "\n{roto\n").encode()))
+    pasado = _velas(12, base="2026-09-25 03:59:00")                    # 03:59 … 04:10 (la de 04:10 solapa)
+    rec = Recolector()
+    fuente = fs.FuenteGrabacion(ruta, [_estrategia()], rec, RelojSimulado(INICIO_REPLAY),
+                                hidratar_desde=lambda tk: (pasado, {"prev_close": 0.5}))
+    assert fuente.reproducir() == 3
+    assert fuente.salud()["lineas_malas"] == 1
+    assert rec.de_clase("hidratado")[0].feed == {"n_velas": 12, "prev_close": 0.5}
+    velas = [str(pd.Timestamp(v["timestamp"]))[:16] for v in fuente.runner._velas["ABCD"]]
+    assert velas == sorted(set(velas)) and len(velas) == 11 + 3
+
+
+def test_fuente_grabacion_exige_reloj_simulado_y_guion(motor_falso):
+    with pytest.raises(ValueError):
+        fs.FuenteGrabacion(RUTA_AM, [_estrategia()], Recolector(), Reloj())
+    with pytest.raises(ValueError):
+        fs.FuenteGrabacion(RUTA_AM, [_estrategia()], Recolector(), RelojSimulado(INICIO_REPLAY), guion={"spread": {}})
+
+
+def test_las_fuentes_cumplen_el_protocolo(motor_falso):
+    fuente = fs.FuenteEnProceso([_estrategia()], Recolector(), RelojSimulado(INICIO_REPLAY))
+    assert isinstance(fuente, fs.FuenteSenales)
+    assert set(fuente.salud()) >= {"viva", "ultimo_en", "origen"}
+    assert isinstance(fs.FuenteTuberia(("127.0.0.1", 0), b"k", Recolector(), Reloj(), HASH_BUENO, VERSION),
+                      fs.FuenteSenales)

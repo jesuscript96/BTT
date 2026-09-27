@@ -1,0 +1,162 @@
+# caso: order_19 | %ORDER de 19 campos (formato vigente, manual L343-351); token nuestro de hoy (2026-09-25, día 268)
+%ORDER 7001 126800001 ABCD SS L 300 300 0 2.45 SAGEREB Accepted 09:49:27 0 CUENTA_PRUEBA TRPRUEBA CMDAPI DAY+ N/A
+# caso: order_15 | %ORDER de 15 campos (sin orderSrc/TIF/Pref, manual L930-932)
+%ORDER 7002 126800002 ABCD B L 100 0 0 2.4 SAGEPRO Executed 09:50:01 0 CUENTA_PRUEBA TRPRUEBA
+# caso: order_tipo_slp | %ORDER de un STOPLMTP con Type de varias palabras «SLP: 2.97 2.99» (riesgo 1, §5.2)
+%ORDER 7003 126800003 ABCD B SLP: 2.97 2.99 300 300 0 2.99 STOP Accepted 09:51:10 0 CUENTA_PRUEBA TRPRUEBA CMDAPI DAY+ N/A
+# caso: order_ajena | %ORDER puesta a mano (token 0, no nuestro) en estado Partial
+%ORDER 7004 0 WXYZ S L 50 20 0 10.3 SMAT Partial 10:00:00 0 CUENTA_PRUEBA TRPRUEBA Montage DAY N/A
+# caso: order_token_de_ayer | %ORDER con un token del esquema del bot pero de AYER (día 267): se trata como ajena (riesgo 2)
+%ORDER 7005 126700009 ABCD SS L 100 100 0 2.5 SAGEREB Accepted 09:30:00 0 CUENTA_PRUEBA TRPRUEBA CMDAPI DAY+ N/A
+# caso: order_precio_no_numerico | %ORDER a mercado con precio «solo de referencia» no numérico (L475-477): precio 0, la orden no se pierde
+%ORDER 7006 126800004 ABCD B MKT 100 100 0 MKT OPEN Hold 09:25:00 0 CUENTA_PRUEBA TRPRUEBA CMDAPI DAY N/A
+# caso: order_cuenta_con_nombre_de_estado | %ORDER cuyo trader se llama como un estado: el ancla prefiere 3 o 6 campos tras la hora
+%ORDER 7007 126800005 ABCD SS L 100 100 0 2.5 SAGEREB Accepted 09:31:00 0 Closed 12:00:00 CMDAPI DAY+ N/A
+# caso: iorder | %IORDER por la conexión watch («Same definition with %ORDER», L1436-1440)
+%IORDER 7008 126800006 ABCD SS L 200 200 0 2.5 SAGEREB Accepted 09:52:00 0 CUENTA_PRUEBA TRPRUEBA CMDAPI DAY+ N/A
+# caso: orderact_notas_vacias | %OrderAct con notas vacías (DOS espacios, L934-936), lado Shrt y token nuestro
+%OrderAct 7001 Accept Shrt ABCD 300 2.45 SAGEREB 09:49:27  126800001
+# caso: orderact_buy | %OrderAct Execute con lado Buy (§5.5)
+%OrderAct 7002 Execute Buy ABCD 100 2.4 SAGEPRO 09:50:01  126800002
+# caso: orderact_numero_final_ajeno | %OrderAct cuyas notas acaban en un número que NO es token nuestro (riesgo 2)
+%OrderAct 7010 Send_Rej Shrt ABCD 300 2.45 SAGEREB 09:49:28 No shares to short 12345
+# caso: orderact_notas_y_token | %OrderAct con notas con espacios y token nuestro al final
+%OrderAct 7011 Send_Rej Buy ABCD 100 2.5 SAGEREB 09:49:28 PostOnly would cross 126800007
+# caso: orderact_sin_notas_ni_token | %OrderAct de 8 campos (servidor anterior a 2023-11-15, sin notes ni token)
+%OrderAct 7012 Canceled S WXYZ 30 10.3 SMAT 10:01:00
+# caso: orderact_solo_numero_ajeno | %OrderAct con notas vacías y un número final que no es nuestro: va a notas
+%OrderAct 7013 Accept Sell WXYZ 50 10.3 SMAT 10:00:00  77
+# caso: orderact_minusculas | palabra clave en minúsculas: se reconoce igual
+%orderact 7014 Replaced Shrt ABCD 200 2.46 SAGEREB 09:55:00  126800008
+# caso: trade_8 | %TRADE de 8 campos (los ejemplos del manual, L508-513)
+%TRADE 9001 ABCD SS 300 2.45 SAGEREB 09:49:30 7001
+# caso: trade_11 | %TRADE de 11 campos con Liq, EcnFee y PL
+%TRADE 9002 ABCD B 100 2.4 SAGEPRO 09:50:01 7002 - 0.3 -15.5
+# caso: itrade | %ITRADE: OTRO orden de campos, cuenta primero y trader al final (L1446-1458)
+%ITRADE CUENTA_PRUEBA 9003 ABCD SS 200 2.5 SAGEREB 09:52:05 7008 TRPRUEBA
+# caso: pos_9_corto_negativo | %POS corto (tipo 3) con Quantity negativa y Unrealized
+%POS ABCD 3 -300 2.45 0 0 0 2026/09/25-09:49:30 -12
+# caso: pos_9_corto_positivo | %POS corto (tipo 3) con Quantity POSITIVA (signo no documentado, §5.12): neta −100 igualmente
+%POS EFGH 3 100 5.1 0 0 0 2026/09/25-09:40:00 25
+# caso: pos_8 | %POS de 8 campos (sin Unrealized, L267-270), margen
+%POS WXYZ 2 100 10.3 0 0 0 2026/09/25-10:00:00
+# caso: ipos | %IPOS por la conexión watch
+%IPOS ABCD 3 300 2.45 0 0 0 2026/09/25-09:49:30 -12
+# caso: marca_pos | #POS con nombres de campo detrás (L272-276): marcador
+#POS symb type qty avgcost initqty initprice Realized CreateTime Unrealized
+# caso: marca_posend | #POSEND
+#POSEND
+# caso: marca_order | #Order con encabezado (L343-346)
+#Order id token symb b/s mkt/lmt qty lvqty cxlqty price route status time origoid account trader orderSrc TIF Pref
+# caso: marca_orderend | #OrderEnd
+#OrderEnd
+# caso: marca_trade | #Trade con encabezado (L506)
+#Trade id symb B/S qty price route time orderid Liq EcnFee PL
+# caso: marca_tradeend | #TradeEnd
+#TradeEnd
+# caso: marca_slorder | #SLOrder con encabezado
+#SLOrder id symb shares openshares exeshares exeprice status route time lmtPrice token notes
+# caso: marca_slorderend | #SLOrderEnd
+#SLOrderEnd
+# caso: marca_buyingpower | #buyingpower bp,nbp antes de BP (L999, §5.14)
+#buyingpower bp,nbp
+# caso: bp | BP CurrentBP CurrentOverNightBP (L993-1004)
+BP 94339.5 100000
+# caso: conexion_order_logon_ok | L1477
+#OrderServer:Logon:Successful
+# caso: conexion_order_logon_ko | L1478
+#OrderServer:Logon:Failed
+# caso: conexion_order_connect_ok | L1479
+#OrderServer:Connect:Successful
+# caso: conexion_order_connect_ko | L1480
+#OrderServer:Connect:Failed
+# caso: conexion_quote_logon_ok | L1481
+#QuoteServer:Logon:Successful
+# caso: conexion_quote_logon_ko | L1482
+#QuoteServer:Logon:Failed
+# caso: conexion_quote_connect_ok | L1483
+#QuoteServer:Connect:Successful
+# caso: conexion_quote_connect_ko | L1484
+#QuoteServer:Connect:Failed
+# caso: conexion_quote_heartbeat | L1485, lleva ESPACIO (§5.26)
+#QuoteServer:Missing heartbeat
+# caso: conexion_order_heartbeat | L1486, lleva ESPACIO (§5.26)
+#OrderServer:Missing heartbeat
+# caso: conexion_quote_perdida | L1489, lleva ESPACIO (§5.26)
+#QuoteServer:Lost Connection
+# caso: conexion_order_perdida | L1490, lleva ESPACIO (§5.26)
+#OrderServer:Lost Connection
+# caso: quote_completo | $Quote con todas las claves de la línea de formato (L1248-1262)
+$Quote ABCD A:2.46 Asz:5 B:2.45 Bsz:3 V:1234567 L:2.45 Hi:3.1 Lo:2.2 op:0 ycl:1.7 tcl:0 PE:Q VWAP:2.61 T:094930
+# caso: quote_parcial | $Quote PARCHE con solo el volumen (§5.19): NO significa bid/ask nulos (riesgo 15)
+$Quote ABCD V:1240000
+# caso: quote_claves_desconocidas | $Quote con RVOL y tradesAllDay (no están en la línea de formato): se conservan
+$Quote ABCD RVOL:3.5 tradesAllDay:15230 L:2.44
+# caso: issuestatus_sin_ta | $IssueStatus sin TA = normal para operar (L1117-1120)
+$IssueStatus ABCD SSR:Y
+# caso: issuestatus_halt | $IssueStatus con halt (TA:H) y hora
+$IssueStatus ABCD SSR:N TA:H TAT:10:15:00
+# caso: symstatus | $SymStatus (encabezado del manual, §5.9) con las claves en otro orden
+$SymStatus WXYZ TAT:10:20:00 TA:T SSR:N
+# caso: shortinfo_7 | $SHORTINFO sin RegSho (ejemplo del manual, L1029-1030)
+$SHORTINFO ABCD Y 10000 Y 0 0 N
+# caso: shortinfo_8 | $SHORTINFO con RegSho (añadido 2024-07-02)
+$SHORTINFO ABCD N 0 Y 0 100 N Y
+# caso: stinfoex | $STINFOEX texto libre (§5.21)
+$STINFOEX ABCD ConcLong: 200%,ConcShr: 50%;
+# caso: ldlu | $LDLU symbol limitDown limitUp (L1079-1090)
+$LDLU ABCD 2.2 2.7
+# caso: accountinfo | $AccountInfo con 10 números (L1143-1158)
+$AccountInfo 25000.00 25310.50 310.50 -12.00 298.50 1.20 0.05 0.01 0.30 2.00
+# caso: slret_notas_vacias_con_cuenta | %SLRET con notas vacías (DOS espacios) y cuenta al final (L1710)
+%SLRET 1 ABCD 0.01 300 LOC3  CUENTA_PRUEBA
+# caso: slret_fallo_con_cuenta | %SLRET de fallo con motivo y cuenta (L1712-1718)
+%SLRET 2 ABCD 0 0 LOC3 AlreadyShortable CUENTA_PRUEBA
+# caso: slret_sin_cuenta | %SLRET de un servidor anterior a 2025-07-31 (sin Account)
+%SLRET 2 ABCD 0 0 LOC3 AlreadyShortable
+# caso: slret_notas_con_espacios | %SLRET con notas de varias palabras y cuenta
+%SLRET 2 ABCD 0 0 LOC3 Not enough shares CUENTA_PRUEBA
+# caso: slorder_con_token | %SLOrder con token de locate nuestro (Origen 3, hoy) y notas
+%SLOrder 5001 ABCD 300 0 300 0.012 Located LOC3 09:40:02 0 326800001 located ok
+# caso: slorder_sin_token | %SLOrder sin token (servidor anterior a 2024-05-09) con notas
+%SLOrder 5002 ABCD 300 300 0 0 Offered LOC7 09:40:05 0 offer pending
+# caso: slmincharge_sin_dolar | SLRouteMinChargeRet sin $ en la palabra clave (formato y ejemplo, L1836-1837)
+SLRouteMinChargeRet LOC7 1
+# caso: slmincharge_con_dolar | $SLRouteMinChargeRet con $ en la palabra clave (encabezado, L1833) y en el importe
+$SLRouteMinChargeRet LOC3 $2.5
+# caso: slreuse | $SLReuseQueryRet Symbol Yes/No (L1818-1822)
+$SLReuseQueryRet ABCD No
+# caso: slavail | $SLAvailQueryRet Account Symbol AvailableLocateShares (L1804-1809)
+$SLAvailQueryRet CUENTA_PRUEBA ABCD 200
+# caso: routestatus_enabled | $RouteStatus (L1567-1574)
+$RouteStatus SAGEREB Enabled
+# caso: routestatus_disabled | $RouteStatus deshabilitada
+$RouteStatus ALGO Disabled
+# caso: intmsg | $INTMSG multilínea (L1575-1610): cinco partes; en Msg el tabulador es un salto de línea
+$INTMSG Send Time: 2026/09/25 10:12:38
+$INTMSG From: BROKER
+$INTMSG To: ALL
+$INTMSG Title: Aviso interno de prueba
+$INTMSG Msg: Linea uno.	Linea dos.	Fin.
+# caso: ts | $T&S symbol price volume flag time Exchange B/S/I condition (L1317-1360), condición decimal (§5.20)
+$T&S ABCD 2.45 100 R 09:49:30 Q B 32
+# caso: bar_dia | $Bar diaria: High Low Open Close Volume (HLOC, no OHLC)
+$Bar ABCD 2026/09/24 1.9 1.6 1.7 1.75 18000917
+# caso: bar_minuto | $Bar de minuto con MinType
+$Bar ABCD 2026/09/25-09:49 2.5 2.4 2.48 2.45 50000 1
+# caso: toplst | $TopLst: informativo (no se usa, R-A-06)
+$TopLst NASGain ABCD WXYZ
+# caso: lv2 | $Lv2: informativo
+$Lv2 ABCD 0 ARCA 2.45 300 UPDATED 09:49:30
+# caso: echo | respuesta de ECHO (formato no documentado, §5.25): informativo
+ECHO ON
+# caso: client | respuesta de CLIENT (formato no documentado, §5.25): informativo
+CLIENT 2
+# caso: almohadilla_no_listada | cualquier «#…» no listado: informativo
+#ServidorNuevo:Algo:Distinto
+# caso: basura | palabra desconocida
+HOLA MUNDO 123
+# caso: order_truncada | %ORDER sin estado ni hora: desconocido, nunca excepción
+%ORDER 7001 126800001 ABCD SS L 300
+# caso: trade_truncado | %TRADE con menos de 8 campos
+%TRADE 9001 ABCD SS

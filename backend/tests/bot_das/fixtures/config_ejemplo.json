@@ -1,0 +1,324 @@
+{
+  "schema_version": 1,
+  "config_version": 1,
+  "generado_at": "2026-09-26T10:15:03-04:00",
+  "generado_por": "fixture:tests/bot_das",
+  "motor_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "estrategias_hash": "sha256:2fbf7294b1c4ab42568ff343fe0ab12db9a2954c8e5e3b3d0f08b55554b57bc6",
+  "sha256": "46b3934d4ebf644fcf3067158723b34f96e3fcc8934a5f9b3b73ec74b4dc607b",
+  "fase": "sombra",
+  "vigilando": true,
+  "pausar_entradas": false,
+  "horario": {
+    "tz": "America/New_York",
+    "encender": "03:55",
+    "apagar": null
+  },
+  "modo_seguridad": {
+    "activo": false,
+    "precio_min": 5.0,
+    "acum_dollar_volume_min": 2000000
+  },
+  "lista_negra": [],
+  "locates": {
+    "tope_gasto_pct_cuenta": 3.0,
+    "hora_limite_intentos": null,
+    "umbral_ultimo_paquete_pct": 30,
+    "inquiry_intervalo_s": 3,
+    "ruta_inquire": "ALLROUTEWTTYPE1"
+  },
+  "entrada": {
+    "agregar_s": 60,
+    "nivel": "punto_medio_redondeo_arriba",
+    "post_only": true,
+    "tope_caida_bid_pct": 3.0,
+    "cruce_bajo_bid_pct": 0.5,
+    "cruce_espera_s": 2,
+    "caducidad_senal_s": 60,
+    "distancia_max_ultimo_bid_pct": 5.0,
+    "retraso_max_senal_pct": 1.0,
+    "fraccion_max_volumen_acum": null,
+    "reintentos_rechazo_conocido": 2
+  },
+  "salidas": {
+    "por_hora": {
+      "anticipo_s": 60,
+      "nivel": "punto_medio",
+      "al_ask_sin_tope": true,
+      "perseguir_ask_max": 3,
+      "perseguir_ask_s": 1
+    },
+    "eod": {
+      "lanzar_antes_s": 60,
+      "comprobar_despues_s": 30
+    },
+    "tp_parcial": {
+      "agregar_s": 60,
+      "techo_ask_pct": 3.0
+    },
+    "cerrar_todo": {
+      "techo_pct": 5.0,
+      "reintentos": 2
+    },
+    "salida_motor": "como_tp",
+    "sl_motor_con_posicion_abierta": "no_perseguir"
+  },
+  "stops": {
+    "tipo": "STOPLMTP",
+    "principal_limite_pct": 3.0,
+    "emergencia_disparo_pct": 13.0,
+    "emergencia_limite_pct": 63.0,
+    "proteccion_desconocidas_pct": 25.0,
+    "margen_bajo_limit_up_pct": 1.5,
+    "reintentos": 5,
+    "separacion_reintentos_s": 2,
+    "ventana_min": 5,
+    "subida_max_cierre_pct": 100,
+    "comprobacion_s": 1,
+    "debounce_s": 0.3,
+    "tipo_esperado_en_order": null,
+    "ruta": "STOP"
+  },
+  "halts": {
+    "k_max": 3,
+    "distancia_banda_k2_pct": 4.0,
+    "primera_vela_max_reentrada_pct": 6.0,
+    "primera_vela_max_senal_guardada_pct": 6.0,
+    "t1_subida_max_cierre_pct": 250,
+    "t12_min": 240,
+    "ruta_reapertura": "OPEN",
+    "enviar_antes_fin_halt_s": 60,
+    "margen_limite_pm_pct": 5.0
+  },
+  "exclusiones": {
+    "spac_sic": [
+      "6770"
+    ],
+    "ipo_dias": 30,
+    "split_del_dia": true,
+    "fuente_splits": "massive",
+    "opa_banda": {
+      "minutos": 30,
+      "rango_max_pct": 1.5,
+      "dolares_min": 100000
+    }
+  },
+  "rutas": {
+    "agregar": {
+      "ge_1": "SAGEREB",
+      "lt_1": "MIAX"
+    },
+    "cruzar": {
+      "ge_1": "SAGEPRO",
+      "lt_1_desde_0700": "EDGA",
+      "lt_1_antes_0700": "MIAX"
+    },
+    "stop": "STOP",
+    "halt": "OPEN"
+  },
+  "tecnicos": {
+    "barrido_s": {
+      "tras_fill": 1,
+      "ventana_tras_fill_s": 60,
+      "con_posiciones": 2,
+      "sin_nada": 10
+    },
+    "reconciliacion_fallida_s": 30,
+    "feed": {
+      "prealerta_s": 30,
+      "emergencia_s": 60
+    },
+    "das_reconexion_s": [
+      2,
+      4,
+      8,
+      16,
+      30
+    ],
+    "das_aviso_cada_min": 5,
+    "vigilante": {
+      "relanzar_s": [
+        1,
+        2,
+        5,
+        10
+      ],
+      "colgado_s": 3,
+      "latido_s": 1,
+      "ping_externo_s": 60,
+      "ping_fallos_alarma": 3,
+      "plan_b_latido_s": 3,
+      "plan_b_descubierta_s": 5,
+      "cerrar_si_descubierta": false,
+      "margen_aviso": 0.8
+    },
+    "reloj": {
+      "negarse_s": 2.0,
+      "aviso_s": 0.5,
+      "sntp": "time.windows.com"
+    },
+    "disco_min_gb": 5,
+    "cisne_negro_informes": {
+      "primeros": 5,
+      "cadencia_inicial_s": 60,
+      "cadencia_despues_s": 300
+    },
+    "filtro_prints_ms": 20,
+    "get_con_simbolo": true,
+    "max_lv1": 100,
+    "cuotas": {
+      "ordenes_s": 50,
+      "cancel_min": 100,
+      "replace_min": 100,
+      "locate_min": 100,
+      "margen": 0.9
+    },
+    "cola_aviso_umbral": 10000,
+    "foto_cada_s": 2
+  },
+  "alertas_grupo_a": {
+    "activo": false,
+    "prealerta_simple": false,
+    "prealerta_freno_min": 5,
+    "prealerta_ticks": false
+  },
+  "estrategias": [
+    {
+      "strategy_id": "prueba-1",
+      "name": "PM (A) prueba",
+      "origen": "portfolio",
+      "ejecutar": true,
+      "avisar_grupo_a": false,
+      "riesgo_usd": 300,
+      "riesgo_piramide_usd": null,
+      "riesgos_piramide": [],
+      "capital_usd": null,
+      "ev_pct": 4.0,
+      "ev_rangos": [],
+      "cuentas": null,
+      "excluir_ipo": false,
+      "al_desactivar": "esperar_fin_dia",
+      "definition_hash": "sha256:0d1a8140a09a386cf42a1da44e01a6b95312a8630d75422c67bc2208339504d3",
+      "definition": {
+        "bias": "short",
+        "apply_day": "gap_day",
+        "postgap_preconditions": null,
+        "universe_filters": {
+          "min_market_cap": null,
+          "max_market_cap": null,
+          "min_price": null,
+          "max_price": null,
+          "min_volume": null,
+          "max_shares_float": null,
+          "require_shortable": true,
+          "exclude_dilution": true,
+          "whitelist_sectors": [],
+          "date_from": "2024-01-01",
+          "date_to": "2026-09-04",
+          "rules": [
+            {
+              "metric": "Open Gap %",
+              "operator": "GREATER_THAN_OR_EQUAL",
+              "valueType": "static",
+              "value": "45"
+            }
+          ]
+        },
+        "entry_logic": {
+          "timeframe": "1m",
+          "root_condition": {
+            "type": "group",
+            "operator": "AND",
+            "conditions": [
+              {
+                "type": "indicator_comparison",
+                "source": {
+                  "name": "Bar Close",
+                  "offset": 0
+                },
+                "comparator": "GREATER_THAN",
+                "target": 0.7,
+                "timeframe": "1m"
+              },
+              {
+                "type": "indicator_comparison",
+                "source": {
+                  "name": "Dollar Volume",
+                  "offset": 0
+                },
+                "comparator": "GREATER_THAN",
+                "target": 500000,
+                "timeframe": "1m"
+              }
+            ]
+          },
+          "entry_time_windows": [
+            {
+              "from_time": "04:00",
+              "to_time": "09:29"
+            }
+          ],
+          "candle_delay": null
+        },
+        "exit_logic": {
+          "timeframe": "1m",
+          "root_condition": {
+            "type": "group",
+            "operator": "AND",
+            "conditions": []
+          },
+          "candle_delay": null
+        },
+        "risk_management": {
+          "size_by_sl": true,
+          "hybrid_stop": false,
+          "hybrid_black_swan_pct": null,
+          "hybrid_max_loss_pct": null,
+          "cangrejo_active": false,
+          "cangrejo_mode": "perdida",
+          "cangrejo_max_sl_dist_pct": null,
+          "cangrejo_max_loss_at_sl_pct": null,
+          "cangrejo_max_mv_entry_pct": null,
+          "cangrejo_max_mv_pyr_pct": null,
+          "use_hard_stop": true,
+          "use_take_profit": false,
+          "take_profit_mode": "Full",
+          "accept_reentries": true,
+          "max_reentries": -1,
+          "hard_stop": {
+            "type": "Market Structure (HOD/LOD)",
+            "value": "Previous Max",
+            "offset_pct": 1
+          },
+          "take_profit": {
+            "type": "Percentage",
+            "value": 6
+          },
+          "partial_take_profits": [],
+          "trailing_stop": {
+            "active": false,
+            "type": "Percentage",
+            "buffer_pct": 0.5
+          },
+          "swing_option": {
+            "active": false,
+            "target_day": "gap_1_day"
+          },
+          "max_drawdown_daily": null,
+          "daily_loss_limit": null
+        },
+        "is_wizard": false,
+        "market_sessions": [
+          "custom"
+        ],
+        "custom_start_time": "04:00",
+        "custom_end_time": "11:30",
+        "pyramiding": {
+          "timeframe": "1m",
+          "mode": "individual",
+          "levels": []
+        }
+      }
+    }
+  ]
+}

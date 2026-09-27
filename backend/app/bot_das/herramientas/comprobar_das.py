@@ -1,0 +1,683 @@
+"""Comprobación de DAS real el PRIMER DÍA (§3.27, §10 «lo que NO se puede probar sin DAS real», lote H).
+
+QUÉ HACE
+  `python -m app.bot_das.herramientas.comprobar_das` recorre los 9 pasos de
+  §3.27 contra el DAS de verdad, UNO A UNO y con confirmación por consola:
+  1 rutas (`GET RouteStatus`), 2 `GET SymStatus`/`GET LDLU` con y sin
+  símbolo, 3 el `%ORDER` crudo de un STOPLMTP, 4 si un `REPLACE` de cantidad
+  conserva el pre/post, 5 PostOnly en SAGEREB y SMAT, 6 el BP que retienen
+  los dos stops, 7 qué llega por una conexión watch y si una segunda
+  conexión normal entra, 8 el signo de `%POS` en un corto, 9 `%SLRET` real y
+  `SLRouteMinCharge ALLROUTE`. Cada paso va al diario (`comprobacion_das`:
+  paso, comando, respuesta_cruda, conclusion) y a un informe de texto en
+  `BOT_DAS_DIR/informes/`. `--ayuda` imprime los pasos sin tocar nada.
+
+POR QUÉ ESTÁ AQUÍ
+  Hay cosas que el manual no dice y ningún simulador puede inventar (formato
+  real del `%ORDER` de un STOPLMTP, riesgo 1; textos de rechazo; rutas de
+  Sage; 2FA). Se miden una vez, a mano, con el bot apagado, y sus
+  conclusiones pasan a la config (`stops.tipo_esperado_en_order`,
+  `tecnicos.get_con_simbolo`), a `fixtures/lineas_das.txt` y al catálogo de
+  rechazos: la herramienta PROPONE los valores en el informe y no reescribe
+  ningún fichero del repo ni la config firmada.
+
+LAS TRAMPAS
+  * NADA se ejecuta solo: cada paso pide «s»; los pasos CANARIO (3, 4, 5, 6
+    y el 7c) exigen además `BOT_DAS_PERMITIR_ORDENES=1` en el entorno y
+    escribir «SI» (corrección 15); sin eso el cliente es de SOLO LECTURA y
+    `ClienteDAS` prohíbe cualquier mutante por código (R-O-03).
+  * Las órdenes canario son de 1 acción, de COMPRA y lejos del mercado
+    (stops con disparo un 50 % por encima del ask; límites PostOnly un 30 %
+    por debajo del bid): no deben llenarse. Todas se cancelan al terminar el
+    paso y, por si acaso, otra vez al salir.
+  * El bot tiene que estar APAGADO: una orden con token nuestro que el
+    ejecutor no tiene en su diario sería para él una orden ajena (caso 4,
+    pausa global). Si algún cerrojo de supervisor/ejecutor/vigilante está
+    tomado, la herramienta no arranca. Los tokens canario usan secuencias
+    desde `SEQ_COMPROBACION_DESDE` (99.000), lejos de las del ejecutor.
+  * El paso 8 no abre posiciones: lee `%POS`; si no hay ningún corto, pide
+    a la persona que abra uno de 1 acción A MANO y lo vuelve a leer.
+  * Todo lo que se escribe (diario, informe, consola) pasa por
+    `protocolo.redactar` y el `FiltroSecretos` del entorno (riesgo 20).
+  * Importar el módulo no abre red, no lee ficheros y no arranca hilos.
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import queue
+import sys
+import time
+from collections import Counter
+from dataclasses import dataclass
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Callable, Optional, Sequence
+
+from app.bot_das import VERSION
+from app.bot_das import avisos as mod_avisos
+from app.bot_das import config as mod_config
+from app.bot_das import protocolo
+from app.bot_das.cerrojo import CerrojoInstancia
+from app.bot_das.cliente import ENV_PERMITIR_ORDENES, ClienteDAS
+from app.bot_das.diario import Diario
+from app.bot_das.mercado_das import MercadoDAS
+from app.bot_das.reglas import precios
+from app.bot_das.reloj import Reloj
+from app.bot_das.tipos import (
+    STOP_EMERGENCIA_DISPARO_PCT,
+    STOP_PRINCIPAL_LIMITE_PCT,
+    Fase,
+    Lado,
+    MensajeDAS,
+    MsgBP,
+    MsgConexion,
+    MsgIssueStatus,
+    MsgLDLU,
+    MsgMarcador,
+    MsgOrden,
+    MsgOrderAct,
+    MsgPos,
+    MsgRouteStatus,
+    MsgSLMinCharge,
+    MsgSLRet,
+    OrdenNueva,
+    Origen,
+    Proposito,
+    TipoOrden,
+)
+from app.bot_das.tokens import GeneradorTokens
+
+CODIGO_OK = 0
+CODIGO_ERROR = 1
+CODIGO_BOT_ENCENDIDO = 3
+CODIGO_ENTORNO = 5
+
+RUTAS_TABLA = ("SAGEREB", "SAGEPRO", "EDGA", "MIAX", "STOP", "SMAT", "OPEN")   # §3.27 paso 1 (TABLA-RUTAS)
+RUTAS_POST_ONLY = ("SAGEREB", "SMAT")                                          # paso 5
+RUTA_INQUIRE = "ALLROUTEWTTYPE1"                                               # R-H-01 (no es mutante)
+RUTA_MIN_CHARGE = "ALLROUTE"
+QTY_INQUIRE = 100
+ESPERA_RESPUESTA_S = 3.0          # cuánto se escucha tras cada comando
+ESPERA_WATCH_S = 10.0             # paso 7: escucha de la conexión watch
+DISPARO_SOBRE_ASK_PCT = Decimal("50")    # stops canario: lejos del mercado (no deben dispararse)
+LIMITE_BAJO_BID_PCT = Decimal("30")      # PostOnly canario: lejos del mercado (no debe llenarse)
+SEQ_COMPROBACION_DESDE = 99_000          # tokens canario: lejos de las secuencias del ejecutor en un día
+PROCESOS_BOT = ("supervisor", "ejecutor", "vigilante")
+CONFIRMACION_CANARIO = "SI"
+
+
+@dataclass(frozen=True)
+class PasoComprobacion:
+    """Un paso de §3.27 (`canario` = manda órdenes reales de 1 acción)."""
+    numero: int
+    titulo: str
+    canario: bool
+    detalle: str
+
+
+PASOS: tuple[PasoComprobacion, ...] = (
+    PasoComprobacion(1, "Rutas habilitadas", False,
+                     "GET RouteStatus → lista de rutas y aviso de las de la tabla que falten "
+                     "(SAGEREB, SAGEPRO, EDGA, MIAX, STOP/SMAT, OPEN)."),
+    PasoComprobacion(2, "GET SymStatus / GET LDLU con y sin símbolo", False,
+                     "Qué contesta DAS a cada forma (§5.8) → valor propuesto de tecnicos.get_con_simbolo."),
+    PasoComprobacion(3, "%ORDER crudo de un STOPLMTP", True,
+                     "NEWORDER B STOPLMTP de 1 acción lejos del mercado → línea %ORDER CRUDA (propuesta para "
+                     "fixtures/lineas_das.txt) y valor propuesto de stops.tipo_esperado_en_order (riesgo 1)."),
+    PasoComprobacion(4, "REPLACE de cantidad sobre el STOPLMTP", True,
+                     "¿Conserva el pre/post? (2h.8) Compara el tipo del %ORDER antes y después; luego cancela."),
+    PasoComprobacion(5, "PostOnly en SAGEREB y SMAT", True,
+                     "Compra límite PostOnly de 1 acción lejos del mercado en cada ruta → aceptada o rechazada "
+                     "con el texto literal; luego cancela."),
+    PasoComprobacion(6, "BP retenido por principal + emergencia", True,
+                     "GET BP antes y después de poner dos stops de 1 acción (EP-3); luego los cancela."),
+    PasoComprobacion(7, "Conexión watch y segunda conexión normal", False,
+                     "Qué llega por watch (%OrderAct? $Quote? marcadores?) y si una segunda conexión normal entra "
+                     "(R-C-08); 7c opcional CANARIO: si esa segunda conexión puede enviar una orden."),
+    PasoComprobacion(8, "Signo de %POS en un corto", False,
+                     "Lee %POS; si no hay cortos, pide abrir uno de 1 acción A MANO → qty_corto_negativa."),
+    PasoComprobacion(9, "Locates: %SLRET real y mínimo por ruta", False,
+                     f"SLPRICEINQUIRE X {QTY_INQUIRE} {RUTA_INQUIRE} → %SLRET real; SLRouteMinCharge {RUTA_MIN_CHARGE}."),
+)
+
+
+def texto_ayuda() -> str:
+    """Los 9 pasos, para `--ayuda` (sin red, sin ficheros)."""
+    lineas = ["Comprobación de DAS real (primer día, bot APAGADO). Cada paso pide confirmación por consola.",
+              f"Los pasos CANARIO mandan órdenes de 1 acción y exigen {ENV_PERMITIR_ORDENES}=1 y escribir "
+              f"«{CONFIRMACION_CANARIO}».", ""]
+    for p in PASOS:
+        marca = " [CANARIO]" if p.canario else ""
+        lineas.append(f"  {p.numero}. {p.titulo}{marca}: {p.detalle}")
+    lineas += ["", "Uso: python -m app.bot_das.herramientas.comprobar_das [--pasos 1,2,9] [--config ruta] [--ayuda]"]
+    return "\n".join(lineas)
+
+
+class Consola:
+    """Entrada/salida de la persona (inyectable). `confirmar` = «s»/«si»; `confirmar_canario` = «SI» exacto."""
+
+    def __init__(self, entrada: Callable[[str], str] = input, salida: Callable[[str], None] = print) -> None:
+        self._entrada = entrada
+        self._salida = salida
+
+    def decir(self, texto: str) -> None:
+        self._salida(_para_consola(texto))
+
+    def preguntar(self, texto: str) -> str:
+        try:
+            return self._entrada(_para_consola(texto)).strip()
+        except EOFError:   # frontera de consola: sin teclado, la respuesta es «no»
+            return ""
+
+    def confirmar(self, texto: str) -> bool:
+        return self.preguntar(f"{texto} [s/N] ").lower() in ("s", "si", "sí")
+
+    def confirmar_canario(self, texto: str) -> bool:
+        return self.preguntar(f"{texto} Escribe {CONFIRMACION_CANARIO} para seguir: ") == CONFIRMACION_CANARIO
+
+
+class Comprobador:
+    """Ejecuta los pasos sobre UNA conexión normal con DAS (`cliente`, que entrega en `cola`)."""
+
+    def __init__(self, cliente: ClienteDAS, cola: "queue.Queue[Any]", reloj: Any, diario: Diario, informe: Path,
+                 consola: Consola, canario_permitido: bool, rutas_cfg: dict, limpiar: Callable[[str], str],
+                 fabrica_cliente: Callable[..., ClienteDAS]) -> None:
+        self._cliente = cliente
+        self._cola = cola
+        self._reloj = reloj
+        self._diario = diario
+        self._informe = informe
+        self._consola = consola
+        self._canario = canario_permitido
+        self._rutas_cfg = rutas_cfg
+        self._limpiar = limpiar
+        self._fabrica = fabrica_cliente
+        self._tokens = GeneradorTokens(Origen.EJECUTOR, reloj.hoy(), SEQ_COMPROBACION_DESDE)
+        self._mercado = MercadoDAS(reloj)
+        self._vivas: dict[int, str] = {}           # id_das → descripción de las órdenes canario sin cancelar
+        self._stop_paso3: Optional[tuple[int, int, str, Decimal, Decimal, str]] = None
+
+    # ── orquestación ──
+    def ejecutar(self, numeros: Sequence[int]) -> int:
+        """Cada paso pide confirmación; los canario, además, permiso. Devuelve 0 (los fallos quedan en el informe)."""
+        try:
+            for paso in PASOS:
+                if paso.numero not in numeros:
+                    continue
+                self._consola.decir(f"\n── Paso {paso.numero}: {paso.titulo}{' [CANARIO]' if paso.canario else ''}")
+                self._consola.decir(f"   {paso.detalle}")
+                if paso.canario and not self._canario:
+                    self._registrar(paso.numero, [], [], f"saltado: sin permiso canario ({ENV_PERMITIR_ORDENES}=1 + "
+                                                          f"{CONFIRMACION_CANARIO})")
+                    continue
+                if not self._consola.confirmar(f"¿Ejecutar el paso {paso.numero}?"):
+                    self._registrar(paso.numero, [], [], "saltado por la persona")
+                    continue
+                try:
+                    getattr(self, f"_paso_{paso.numero}")()
+                except Exception as exc:  # noqa: BLE001 — frontera (DAS real): un paso que falla no impide los demás
+                    self._registrar(paso.numero, [], [], f"ERROR {type(exc).__name__}: {exc}")
+        finally:
+            self.cancelar_vivas()
+        return CODIGO_OK
+
+    def cancelar_vivas(self) -> None:
+        """Cancela TODA orden canario que siga viva (también al salir por error)."""
+        for id_das, que in list(self._vivas.items()):
+            mensajes = self._enviar(protocolo.cmd_cancel(id_das))
+            self._vivas.pop(id_das, None)
+            self._registrar(0, [f"CANCEL {id_das}"], mensajes, f"limpieza: cancelada {que}")
+
+    # ── los 9 pasos ──
+    def _paso_1(self) -> None:
+        comando = protocolo.cmd_get("RouteStatus")
+        mensajes = self._enviar(comando)
+        rutas = {m.ruta.upper(): m.habilitada for m in mensajes if isinstance(m, MsgRouteStatus)}
+        esperadas = sorted(set(RUTAS_TABLA) | {str(v).upper() for v in _valores_ruta(self._rutas_cfg)})
+        faltan = [r for r in esperadas if r not in rutas]
+        apagadas = [r for r in esperadas if rutas.get(r) is False]
+        conclusion = (f"rutas vistas: {sorted(rutas)}; faltan: {faltan or 'ninguna'}; deshabilitadas: "
+                      f"{apagadas or 'ninguna'}")
+        self._registrar(1, [comando], mensajes, conclusion)
+
+    def _paso_2(self) -> None:
+        ticker = self._ticker()
+        comandos = [protocolo.cmd_get("SymStatus", ticker), protocolo.cmd_get("LDLU", ticker)]
+        con = [m for c in comandos for m in self._enviar(c)]
+        sb = protocolo.cmd_sb(ticker)
+        sin_cmds = [protocolo.cmd_get("SymStatus"), protocolo.cmd_get("LDLU")]
+        sin = self._enviar(sb) + [m for c in sin_cmds for m in self._enviar(c)]
+        self._enviar(protocolo.cmd_unsb(ticker))
+        responde = any(isinstance(m, (MsgIssueStatus, MsgLDLU)) and m.ticker.upper() == ticker for m in con)
+        responde_sin = any(isinstance(m, (MsgIssueStatus, MsgLDLU)) and m.ticker.upper() == ticker for m in sin)
+        conclusion = (f"con símbolo: {'contesta' if responde else 'NO contesta'}; sin símbolo (con SB): "
+                      f"{'contesta' if responde_sin else 'NO contesta'} → propuesta tecnicos.get_con_simbolo = "
+                      f"{'true' if responde else 'false'} (§5.8)")
+        self._registrar(2, comandos + [sb] + sin_cmds, con + sin, conclusion)
+
+    def _paso_3(self) -> None:
+        if not self._consola.confirmar_canario("El paso 3 manda UNA orden STOPLMTP real de 1 acción."):
+            self._registrar(3, [], [], "saltado: sin «SI»")
+            return
+        ticker = self._ticker()
+        bid, ask = self._cotizacion(ticker)
+        if ask is None:
+            self._registrar(3, [], [], f"sin cotización de {ticker}: no se manda nada")
+            return
+        disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
+        limite = precios.con_techo(disparo, STOP_PRINCIPAL_LIMITE_PCT, arriba=True)
+        ruta = str(self._rutas_cfg.get("stop") or "STOP")
+        orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
+                           tipo=TipoOrden.STOP_LIMITE_PP, precio=limite, stop=disparo,
+                           proposito=Proposito.STOP_PRINCIPAL)
+        comando = protocolo.cmd_neworder(orden)
+        mensajes = self._enviar(comando)
+        viva = _orden_por_token(mensajes, orden.token)
+        if viva is None:
+            mensajes += self._enviar(protocolo.cmd_get("ORDERS"))
+            viva = _orden_por_token(mensajes, orden.token)
+        if viva is None:
+            self._registrar(3, [comando], mensajes, f"sin %ORDER del token {orden.token}: {_rechazo(mensajes, orden.token)}")
+            return
+        self._vivas[viva.id] = f"STOPLMTP {ticker} (paso 3)"
+        self._stop_paso3 = (viva.id, orden.token, ticker, disparo, limite, viva.tipo)
+        conclusion = (f"%ORDER crudo: {viva.cruda!r}; tipo leído «{viva.tipo}» → propuesta "
+                      f"stops.tipo_esperado_en_order = «{viva.tipo}»; añadir la línea a fixtures/lineas_das.txt con "
+                      f"sus asertos (riesgo 1)")
+        self._registrar(3, [comando], mensajes, conclusion)
+
+    def _paso_4(self) -> None:
+        if self._stop_paso3 is None:
+            self._registrar(4, [], [], "saltado: hace falta el STOPLMTP vivo del paso 3")
+            return
+        if not self._consola.confirmar_canario("El paso 4 hace un REPLACE real de la orden del paso 3 (1 → 2)."):
+            self._registrar(4, [], [], "saltado: sin «SI»")
+            return
+        id_das, _token, ticker, disparo, limite, tipo_antes = self._stop_paso3
+        comando = protocolo.cmd_replace(id_das, 2, TipoOrden.STOP_LIMITE_PP, limite, disparo)
+        mensajes = self._enviar(comando) + self._enviar(protocolo.cmd_get("ORDERS"))
+        despues = [m for m in mensajes if isinstance(m, MsgOrden) and m.id == id_das]
+        tipo_despues = despues[-1].tipo if despues else None
+        if tipo_despues is None:
+            conclusion = f"sin %ORDER tras el REPLACE: {_rechazo(mensajes, None)}"
+        elif tipo_despues == tipo_antes:
+            conclusion = f"conserva el tipo «{tipo_antes}» → el REPLACE conserva pre/post (2h.8)"
+        else:
+            conclusion = f"CAMBIA el tipo «{tipo_antes}» → «{tipo_despues}»: el REPLACE pierde pre/post (2h.8)"
+        mensajes += self._cancelar(id_das)
+        self._stop_paso3 = None
+        self._registrar(4, [comando, f"CANCEL {id_das}"], mensajes, f"{ticker}: {conclusion}")
+
+    def _paso_5(self) -> None:
+        if not self._consola.confirmar_canario(f"El paso 5 manda {len(RUTAS_POST_ONLY)} compras PostOnly de 1 acción."):
+            self._registrar(5, [], [], "saltado: sin «SI»")
+            return
+        ticker = self._ticker()
+        bid, _ask = self._cotizacion(ticker)
+        if bid is None:
+            self._registrar(5, [], [], f"sin cotización de {ticker}: no se manda nada")
+            return
+        precio = precios.bajo_bid(bid, LIMITE_BAJO_BID_PCT)
+        for ruta in RUTAS_POST_ONLY:
+            orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
+                               tipo=TipoOrden.LIMITE, precio=precio, post_only=True,
+                               proposito=Proposito.TP_AGREGAR)
+            comando = protocolo.cmd_neworder(orden)
+            mensajes = self._enviar(comando)
+            viva = _orden_por_token(mensajes, orden.token)
+            if viva is not None:
+                self._vivas[viva.id] = f"PostOnly {ticker} {ruta} (paso 5)"
+                mensajes += self._cancelar(viva.id)
+                conclusion = f"{ruta}: ACEPTADA ({viva.estado.value}); cancelada"
+            else:
+                conclusion = f"{ruta}: {_rechazo(mensajes, orden.token)}"
+            self._registrar(5, [comando], mensajes, conclusion)
+
+    def _paso_6(self) -> None:
+        if not self._consola.confirmar_canario("El paso 6 pone DOS stops reales de 1 acción y mira el BP."):
+            self._registrar(6, [], [], "saltado: sin «SI»")
+            return
+        ticker = self._ticker()
+        _bid, ask = self._cotizacion(ticker)
+        if ask is None:
+            self._registrar(6, [], [], f"sin cotización de {ticker}: no se manda nada")
+            return
+        antes = self._enviar(protocolo.cmd_get("BP"))
+        principal = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
+        emergencia = precios.con_techo(principal, STOP_EMERGENCIA_DISPARO_PCT, arriba=True)
+        ruta = str(self._rutas_cfg.get("stop") or "STOP")
+        mensajes = list(antes)
+        ids: list[int] = []
+        comandos = [protocolo.cmd_get("BP")]
+        for disparo, proposito in ((principal, Proposito.STOP_PRINCIPAL), (emergencia, Proposito.STOP_EMERGENCIA)):
+            orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
+                               tipo=TipoOrden.STOP_LIMITE_PP, stop=disparo,
+                               precio=precios.con_techo(disparo, STOP_PRINCIPAL_LIMITE_PCT, arriba=True),
+                               proposito=proposito)
+            comandos.append(protocolo.cmd_neworder(orden))
+            recibidos = self._enviar(comandos[-1])
+            mensajes += recibidos
+            viva = _orden_por_token(recibidos, orden.token)
+            if viva is not None:
+                ids.append(viva.id)
+                self._vivas[viva.id] = f"STOPLMTP {ticker} (paso 6)"
+        despues = self._enviar(protocolo.cmd_get("BP"))
+        mensajes += despues
+        for id_das in ids:
+            mensajes += self._cancelar(id_das)
+        bp_antes, bp_despues = _ultimo_bp(antes), _ultimo_bp(despues)
+        if bp_antes is None or bp_despues is None:
+            conclusion = f"sin #BP antes o después (antes {bp_antes}, después {bp_despues})"
+        else:
+            conclusion = (f"BP antes {bp_antes}, con {len(ids)} stops {bp_despues}: retenido {bp_antes - bp_despues} "
+                          f"(EP-3)")
+        self._registrar(6, comandos + [protocolo.cmd_get("BP")], mensajes, conclusion)
+
+    def _paso_7(self) -> None:
+        cola_watch: "queue.Queue[Any]" = queue.Queue()
+        watch = self._fabrica(watch=True, solo_lectura=True, al_mensaje=cola_watch.put,
+                              al_estado=lambda c, m: cola_watch.put(("estado", c, m)))
+        recibidos: list[MensajeDAS] = []
+        conectado = False
+        try:
+            conectado = watch.conectar()
+            fin = time.monotonic() + ESPERA_WATCH_S
+            while conectado and time.monotonic() < fin:
+                recibidos += _sacar(cola_watch, 0.2)
+        finally:
+            watch.cerrar()
+        clases = Counter(type(m).__name__ for m in recibidos)
+        marcadores = sorted({m.nombre for m in recibidos if isinstance(m, MsgMarcador)})
+        self._registrar(7, ["LOGIN … 1 (watch)"], recibidos,
+                        f"watch {'conectada' if conectado else 'NO conectó'}: {dict(clases)}; marcadores {marcadores}")
+        cola_2: "queue.Queue[Any]" = queue.Queue()
+        segunda = self._fabrica(watch=False, solo_lectura=True, al_mensaje=cola_2.put,
+                                al_estado=lambda c, m: cola_2.put(("estado", c, m)))
+        mensajes: list[MensajeDAS] = []
+        entra, logon, puede = False, {}, None
+        try:
+            entra = segunda.conectar()
+            mensajes = _sacar(cola_2, ESPERA_RESPUESTA_S)
+            logon = dict(segunda.logon)
+            if entra and self._canario and self._consola.confirmar_canario(
+                    "7c: ¿mandar por la SEGUNDA conexión un STOPLMTP de 1 acción (y cancelarlo)?"):
+                segunda.cerrar()
+                segunda = self._fabrica(watch=False, solo_lectura=False, al_mensaje=cola_2.put,
+                                        al_estado=lambda c, m: cola_2.put(("estado", c, m)))
+                puede = self._probar_envio(segunda, cola_2, mensajes)
+        finally:
+            segunda.cerrar()
+        conclusion = (f"segunda conexión normal: {'conecta' if entra else 'NO conecta'}; logon {logon}; "
+                      f"envío por ella: {'no probado' if puede is None else ('SÍ' if puede else 'NO')} (R-C-08)")
+        self._registrar(7, ["LOGIN … 0 (segunda)"], mensajes, conclusion)
+
+    def _probar_envio(self, cliente: ClienteDAS, cola: "queue.Queue[Any]", mensajes: list) -> bool:
+        if not cliente.conectar():
+            return False
+        ticker = self._ticker()
+        _bid, ask = self._cotizacion(ticker)
+        if ask is None:
+            return False
+        disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
+        orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker,
+                           ruta=str(self._rutas_cfg.get("stop") or "STOP"), qty=1, tipo=TipoOrden.STOP_LIMITE_PP,
+                           stop=disparo, precio=precios.con_techo(disparo, STOP_PRINCIPAL_LIMITE_PCT, arriba=True),
+                           proposito=Proposito.STOP_PRINCIPAL)
+        cliente.enviar(protocolo.cmd_neworder(orden))
+        recibidos = _sacar(cola, ESPERA_RESPUESTA_S)
+        mensajes += recibidos
+        viva = _orden_por_token(recibidos, orden.token)
+        if viva is None:
+            return False
+        self._vivas[viva.id] = f"STOPLMTP {ticker} (paso 7c)"
+        cliente.enviar(protocolo.cmd_cancel(viva.id))
+        mensajes += _sacar(cola, ESPERA_RESPUESTA_S)
+        self._vivas.pop(viva.id, None)
+        return True
+
+    def _paso_8(self) -> None:
+        comando = protocolo.cmd_get("POSITIONS")
+        mensajes = self._enviar(comando)
+        cortos = [m for m in mensajes if isinstance(m, MsgPos) and m.tipo == 3]
+        if not cortos and self._consola.confirmar("No hay cortos. ¿Abres uno de 1 acción A MANO en DAS y lo leo?"):
+            self._consola.preguntar("Abre el corto en DAS y pulsa Intro cuando esté hecho… ")
+            mensajes += self._enviar(comando)
+            cortos = [m for m in mensajes if isinstance(m, MsgPos) and m.tipo == 3]
+        if not cortos:
+            conclusion = "sin cortos que leer: qty_corto_negativa sigue sin saberse"
+        else:
+            negativos = {m.qty_cruda < 0 for m in cortos}
+            valor = "true" if negativos == {True} else "false" if negativos == {False} else "MIXTO (revisar)"
+            conclusion = (f"%POS de cortos: {[(m.ticker, m.qty_cruda) for m in cortos]} → propuesta "
+                          f"qty_corto_negativa = {valor}")
+        self._registrar(8, [comando], mensajes, conclusion)
+
+    def _paso_9(self) -> None:
+        ticker = self._ticker()
+        inquire = protocolo.cmd_sl_inquire(ticker, QTY_INQUIRE, RUTA_INQUIRE)
+        minimo = protocolo.cmd_sl_min_charge(RUTA_MIN_CHARGE)
+        slret = self._enviar(inquire)
+        cargos = self._enviar(minimo)
+        rets = [(m.tipo, m.ruta, str(m.precio), m.tamano, m.notas) for m in slret if isinstance(m, MsgSLRet)]
+        minimos = [(m.ruta, str(m.minimo)) for m in cargos if isinstance(m, MsgSLMinCharge)]
+        self._registrar(9, [inquire, minimo], slret + cargos, f"%SLRET: {rets or 'ninguno'}; mínimos: {minimos or 'ninguno'}")
+
+    # ── ayudas de red ──
+    def _enviar(self, linea: str, espera_s: float = ESPERA_RESPUESTA_S) -> list[MensajeDAS]:
+        """Manda `linea` y devuelve lo que llegue en `espera_s` (también lo alimenta al libro de cotizaciones)."""
+        _sacar(self._cola, 0.0)
+        self._cliente.enviar(linea)
+        recibidos = _sacar(self._cola, espera_s)
+        for m in recibidos:
+            self._mercado.aplicar(m)
+        return recibidos
+
+    def _cancelar(self, id_das: int) -> list[MensajeDAS]:
+        mensajes = self._enviar(protocolo.cmd_cancel(id_das))
+        self._vivas.pop(id_das, None)
+        return mensajes
+
+    def _ticker(self) -> str:
+        while True:
+            ticker = self._consola.preguntar("Ticker para la prueba (una acción líquida, p. ej. la que uses a diario): ")
+            ticker = ticker.upper()
+            if ticker and ticker.isascii() and " " not in ticker:
+                return ticker
+            self._consola.decir("Ticker no válido.")
+
+    def _cotizacion(self, ticker: str) -> tuple[Optional[Decimal], Optional[Decimal]]:
+        self._enviar(protocolo.cmd_sb(ticker))
+        cot = self._mercado.cotizacion(ticker)
+        self._enviar(protocolo.cmd_unsb(ticker), espera_s=0.5)
+        bid = cot.bid if cot is not None else None
+        ask = cot.ask if cot is not None else None
+        self._consola.decir(f"   {ticker}: bid {bid}, ask {ask}")
+        return bid, ask
+
+    # ── registro ──
+    def _registrar(self, paso: int, comandos: list[str], mensajes: list, conclusion: str) -> None:
+        crudas = [self._limpiar(protocolo.redactar(m.cruda)) for m in mensajes if isinstance(m, MensajeDAS)]
+        comandos_limpios = [self._limpiar(protocolo.redactar(c)) for c in comandos]
+        conclusion = self._limpiar(conclusion)
+        self._diario.anotar("comprobacion_das", paso=paso, comando=comandos_limpios, respuesta_cruda=crudas,
+                            conclusion=conclusion)
+        texto = [f"[paso {paso}] {conclusion}"] + [f"    > {c}" for c in comandos_limpios] + \
+                [f"    < {c}" for c in crudas]
+        try:
+            self._informe.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._informe, "a", encoding="utf-8", newline="\n") as fichero:
+                fichero.write("\n".join(texto) + "\n")
+        except OSError as exc:   # frontera de fichero: queda en el diario y en la consola
+            self._consola.decir(f"   (no se pudo escribir el informe: {type(exc).__name__})")
+        self._consola.decir(f"   → {conclusion}")
+
+
+# ── funciones sueltas ──────────────────────────────────────────────────
+def _para_consola(texto: str) -> str:
+    """El texto con lo que la consola no sabe escribir sustituido («?»): la de Windows es cp1252 y no tiene «→»."""
+    codificacion = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        return texto.encode(codificacion, errors="replace").decode(codificacion, errors="replace")
+    except LookupError:   # codificación desconocida: ASCII seguro
+        return texto.encode("ascii", errors="replace").decode("ascii")
+
+
+def _sacar(cola: "queue.Queue[Any]", espera_s: float) -> list[MensajeDAS]:
+    """Los mensajes de DAS que lleguen a `cola` durante `espera_s` (los estados de conexión se descartan)."""
+    fin = time.monotonic() + max(espera_s, 0.0)
+    salida: list[MensajeDAS] = []
+    while True:
+        restante = fin - time.monotonic()
+        try:
+            item = cola.get(timeout=restante) if restante > 0 else cola.get_nowait()
+        except queue.Empty:
+            return salida
+        if isinstance(item, MensajeDAS):
+            salida.append(item)
+
+
+def _orden_por_token(mensajes: list, token: int) -> Optional[MsgOrden]:
+    for m in reversed(mensajes):
+        if isinstance(m, MsgOrden) and m.token == token:
+            return m
+    return None
+
+
+def _rechazo(mensajes: list, token: Optional[int]) -> str:
+    """El texto literal de un rechazo (`%OrderAct Send_Rej` o `%ORDER Rejected`), o lo que se sepa."""
+    for m in mensajes:
+        if isinstance(m, MsgOrderAct) and m.accion in ("Send_Rej", "CancelRej", "ReplaceRej") \
+                and (token is None or m.token in (None, token)):
+            return f"RECHAZADA ({m.accion}): «{m.notas}»"
+        if isinstance(m, MsgConexion):
+            return f"conexión: {m.servidor} {m.evento}"
+    return "sin respuesta de DAS"
+
+
+def _ultimo_bp(mensajes: list) -> Optional[Decimal]:
+    bps = [m.bp for m in mensajes if isinstance(m, MsgBP)]
+    return bps[-1] if bps else None
+
+
+def _valores_ruta(rutas: Any) -> list[str]:
+    """Todas las rutas que nombra el bloque `rutas` de la config (anidado)."""
+    if isinstance(rutas, str):
+        return [rutas]
+    if isinstance(rutas, dict):
+        return [r for v in rutas.values() for r in _valores_ruta(v)]
+    return []
+
+
+def _pasos_de(texto: Optional[str]) -> list[int]:
+    if not texto:
+        return [p.numero for p in PASOS]
+    numeros = []
+    for trozo in texto.split(","):
+        trozo = trozo.strip()
+        if not trozo.isdigit() or int(trozo) not in {p.numero for p in PASOS}:
+            raise ValueError(f"paso desconocido: {trozo!r} (1-{len(PASOS)})")
+        numeros.append(int(trozo))
+    return numeros
+
+
+def _bot_encendido(dir_bot: Path) -> list[str]:
+    """Procesos del bot cuyo cerrojo está tomado (el bot tiene que estar APAGADO)."""
+    encendidos = []
+    for proceso in PROCESOS_BOT:
+        ruta = dir_bot / "estado" / f"cerrojo_{proceso}.lock"
+        if not ruta.exists():
+            continue
+        cerrojo = CerrojoInstancia(ruta)
+        if cerrojo.adquirir():
+            cerrojo.soltar()
+        else:
+            encendidos.append(proceso)
+    return encendidos
+
+
+def main(argv: Optional[Sequence[str]] = None, consola: Optional[Consola] = None) -> int:
+    """`python -m app.bot_das.herramientas.comprobar_das [--ayuda] [--pasos 1,2] [--config ruta]` (§3.27).
+
+    `--ayuda` imprime los pasos y sale (0) sin leer el entorno ni abrir red.
+    Códigos: 0 hecho, 1 DAS no conecta, 3 bot encendido, 5 entorno
+    incompleto o pasos mal escritos.
+    """
+    consola = consola or Consola()
+    parser = argparse.ArgumentParser(prog="python -m app.bot_das.herramientas.comprobar_das", add_help=False,
+                                     description="Comprobación de DAS real (primer día)")
+    parser.add_argument("--ayuda", "-h", "--help", action="store_true", help="muestra los pasos y sale")
+    parser.add_argument("--pasos", default=None, help="lista de pasos separados por comas (defecto: todos)")
+    parser.add_argument("--config", type=Path, default=None, help="fichero del cuadro (rutas)")
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.ayuda:
+        consola.decir(texto_ayuda())
+        return CODIGO_OK
+    try:
+        numeros = _pasos_de(args.pasos)
+    except ValueError as exc:
+        consola.decir(f"comprobar_das: {exc}")
+        return CODIGO_ENTORNO
+    backend = Path(__file__).resolve().parents[3]
+    ruta_env = backend / ".env"
+    if ruta_env.is_file():
+        try:
+            from dotenv import load_dotenv   # perezoso
+            load_dotenv(ruta_env, override=False)
+        except ImportError:
+            pass
+    dir_bot = Path(os.environ.get("BOT_DAS_DIR", "").strip() or mod_config.DIR_BOT_POR_DEFECTO)
+    encendidos = _bot_encendido(dir_bot)
+    if encendidos:
+        consola.decir(f"comprobar_das: el bot está encendido ({', '.join(encendidos)}): apágalo antes.")
+        return CODIGO_BOT_ENCENDIDO
+    reloj = Reloj()
+    secretos = mod_avisos.secretos_desde_env()
+    filtro = mod_avisos.FiltroSecretos(secretos)
+    mod_avisos.instalar_logging("comprobar_das", dir_bot / "logs", secretos, consola=False, reloj=reloj)
+    try:
+        rutas_cfg: dict = {}
+        cuenta = os.environ.get("DAS_CUENTA", "").strip()
+        ruta_cfg = args.config or dir_bot / "config" / mod_config.NOMBRE_FICHERO_CONFIG
+        if cuenta:
+            try:
+                rutas_cfg = dict(mod_config.cargar(ruta_cfg, cuenta).rutas)
+            except mod_config.ConfigInvalida:
+                consola.decir("   (config no válida: se usa la tabla de rutas de §3.27)")
+        hay_canario = any(p.canario for p in PASOS if p.numero in numeros) or 7 in numeros
+        canario = False
+        if hay_canario and os.environ.get(ENV_PERMITIR_ORDENES, "").strip() == "1":
+            canario = consola.confirmar_canario("Hay pasos CANARIO (órdenes REALES de 1 acción).")
+        cola: "queue.Queue[Any]" = queue.Queue()
+
+        def fabrica(**kw: Any) -> ClienteDAS:
+            return ClienteDAS.desde_env(reloj=reloj, **kw)
+
+        try:
+            cliente = fabrica(watch=False, solo_lectura=not canario, al_mensaje=cola.put,
+                              al_estado=lambda c, m: cola.put(("estado", c, m)))
+        except RuntimeError as exc:
+            consola.decir(f"comprobar_das: {exc}")
+            return CODIGO_ENTORNO
+        diario = Diario(dir_bot / "diario", reloj, "supervisor", VERSION, Fase.CANARIO if canario else Fase.SOMBRA,
+                        limpiar=filtro.limpiar)
+        informe = dir_bot / "informes" / f"comprobar_das_{reloj.ahora().strftime('%Y-%m-%d_%H%M%S')}.txt"
+        try:
+            if not cliente.conectar():
+                consola.decir("comprobar_das: DAS no acepta la conexión (¿abierto y con LOGIN hecho?)")
+                return CODIGO_ERROR
+            _sacar(cola, ESPERA_RESPUESTA_S)             # el volcado del LOGIN
+            comprobador = Comprobador(cliente, cola, reloj, diario, informe, consola, canario, rutas_cfg,
+                                      filtro.limpiar, fabrica)
+            codigo = comprobador.ejecutar(numeros)
+            consola.decir(f"\nInforme: {informe}")
+            return codigo
+        finally:
+            cliente.cerrar()
+            diario.cerrar()
+    finally:
+        mod_avisos.desinstalar_logging()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,569 @@
+"""Lo que comprueba el vigilante en cada pasada: stops de cada posición, plan B, locates, margen, precio y ping externo.
+
+QUÉ HACE. `comprobar` recibe una `Foto` (lo que el vigilante ve por su
+conexión watch + los diarios) y devuelve las acciones del vigilante:
+  (a) por posición corta con lotes: exactamente UN principal por nivel (si no
+      está consumido) y UNA emergencia con −neta → `stops.plan` con los
+      tokens del vigilante (Origen.VIGILANTE) y el propósito de lo ajeno al
+      diario inferido (`stops.inferir_proposito`, corrección 3);
+  (b) sobrantes → cancelar la más nueva (lo hace el mismo `plan`);
+  (c) posición que no está en ningún diario → `stops.stop_proteccion` por lo
+      descubierto + Avisar(3) (R-C-10 caso 4);
+  (d) R-H-02 (dos compras Located no pedidas del mismo ticker-estrategia-día)
+      y R-H-03 (gasto > 3 % del equity) → Avisar(3) + Anotar
+      («locates_deshabilitar»);
+  (e) 2c: margen de mantenimiento de los cortos > equity·margen_aviso → Avisar(2);
+  (f) R-C-08 (a): el precio pasó el límite de un principal sin fill → SOLO
+      aviso (cerrar queda [PENDIENTE]; `cerrar_si_descubierta` no se usa);
+  (g) corrección 16: si hay que enviar y `puede_enviar` es False → Avisar(3) +
+      PedirAlSupervisor("relanzar ejecutor").
+`debe_hacer_ping` es R-J-05. `descubiertas_por_ticker` y
+`actualizar_descubierta_desde` ayudan al proceso vigilante a llevar la cuenta
+de cuánto lleva cada posición descubierta.
+
+POR QUÉ ESTÁ AQUÍ. Lógica PURA: el proceso `vigilante.py` (lote G) solo
+junta la foto, ejecuta lo que esto devuelve y escribe su propio diario. Toda
+la aritmética de stops es la de `reglas.stops` (una sola): el ejecutor y el
+vigilante calculan EXACTAMENTE lo mismo y por eso el neteo por propósito y
+disparo es inequívoco (R-C-07 plan B).
+
+LAS TRAMPAS.
+  * Cerrojo sin lock (R-C-08.2, §6.1): con el ejecutor VIVO (latido ≤
+    `plan_b_latido_s`) el vigilante NO actúa aunque falte un stop; solo si la
+    posición lleva DESCUBIERTA (sin emergencia/protección confirmada, R-C-03)
+    más de `plan_b_descubierta_s`. Con el ejecutor muerto o sin latido,
+    actúa en la primera pasada. Si hay algo raro y no le toca actuar, solo
+    `Anotar("vigilancia")`; si todo cuadra, nada (el diario no se llena cada
+    segundo).
+  * La cuenta de «descubierta desde» NO la lleva esta función (es pura): la
+    trae la foto (`descubierta_desde`), y el proceso la actualiza con
+    `actualizar_descubierta_desde(…, descubiertas_por_ticker(…), ahora)`.
+  * Lo que el vigilante acaba de enviar y DAS aún no ha devuelto por watch
+    viaja en `Foto.pendientes`: sin eso, la pasada siguiente pondría otra
+    protección igual (riesgo 11).
+  * Solo se tocan órdenes NUESTRAS (`reconciliacion.es_ajena`): una orden
+    manual que casara con un disparo nunca se reemplaza ni se cancela.
+  * Una posición que la foto no lista es «sin información»: no se toca.
+  * Un lote sin nivel de stop válido (A12) no cuenta: si NINGÚN lote de la
+    posición lo tiene, nadie puede calcular su par y se trata como (c),
+    protección al 25 %, para no dejarla desnuda.
+  * De lo que devuelve `plan` se quitan `Programar` y `Consultar` (son
+    temporizadores y consultas del ejecutor; el vigilante vuelve a mirar en
+    1 s). El vigilante NUNCA vende ni cierra: una posición LARGA solo se avisa
+    (y, con el ejecutor muerto, se cancelan las compras que la agrandarían);
+    la venta del exceso la hace el ejecutor al volver (R-C-11, caso 6).
+  * (d) no dispara si la foto ya dice `locates_deshabilitados` (no se repite
+    cada segundo). Una segunda compra PEDIDA (un «locate_intencion» por
+    compra: parcial de R-H-04, reentrada de EP-9) no es repetida. Sin equity
+    no se evalúa el 3 % (el vigilante no puede pedir AccountInfo por watch):
+    la guarda del ejecutor (`locates.tope_superado`, equity None → True) ya
+    no compra.
+  * El margen de mantenimiento (2c) se calcula aquí con los tramos FINRA:
+    `reglas.capital` es de otro lote y la regla de reparto (§12) prohíbe
+    importarlo; el test compara las dos si existen.
+"""
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Optional
+
+from app.bot_das.reglas import reconciliacion, stops
+from app.bot_das.reglas.precios import de_float
+from app.bot_das.tipos import (
+    LOCATES_TOPE_GASTO_PCT,
+    PLAN_B_DESCUBIERTA_S,
+    PLAN_B_LATIDO_S,
+    STOP_PROTECCION_PCT,
+    Accion,
+    Anotar,
+    Avisar,
+    Cancelar,
+    CancelarTicker,
+    Consultar,
+    Cotizacion,
+    EnviarOrden,
+    EstadoLote,
+    EstadoTicker,
+    Grupo,
+    InvalidarSerie,
+    Lote,
+    MsgOrden,
+    MsgPos,
+    Nivel,
+    Orden,
+    PedirAlSupervisor,
+    PosicionTicker,
+    Programar,
+    Reemplazar,
+    Registro,
+)
+
+PETICION_RELANZAR_EJECUTOR = "relanzar ejecutor"     # corrección 16 / riesgo 31 (§3.25 g)
+TIPO_ANOTACION = "vigilancia"                        # §8: registro del vigilante en cada pasada con algo que decir
+TIPO_DESHABILITAR_LOCATES = "locates_deshabilitar"   # §8: `reconstruir` pone locates_deshabilitados = True
+LOCATE_LOCATED = "Located"                           # estado de %SLOrder que cobra (manual L1722-1795)
+MARGEN_AVISO_DEFECTO = Decimal("0.8")                # §7 tecnicos.vigilante.margen_aviso
+MUTANTES = (EnviarOrden, Cancelar, Reemplazar, CancelarTicker)   # lo que necesita la conexión de acción
+
+_LOTE_MUERTO = (EstadoLote.CERRADO, EstadoLote.CANCELADO)
+_D = Decimal
+_TRAMO_2_50 = _D("2.50")
+_TRAMO_5 = _D("5")
+_TRAMO_16_67 = _D("16.67")
+_TREINTA_PCT = _D("0.30")
+_CIEN = _D("100")
+
+
+@dataclass(frozen=True)
+class Foto:
+    """Lo que el vigilante ve en una pasada (§3.25). Los campos tras `equity` son opcionales sobre el documento.
+
+    posiciones: %IPOS por ticker (neta SIGNADA, `protocolo.normalizar_pos`).
+    ordenes: %IORDER por id de DAS (todas: propias, del ejecutor y ajenas).
+    lotes: lotes por ticker según los diarios (`diario.reconstruir`).
+    latido_ejecutor_s: edad del latido del ejecutor (None = no hay latido).
+    cotizaciones: $Quote de DAS por ticker. gasto_locates: gasto del día en
+    locates (diario). compras_locate: registros «locate_intencion» y
+    «locate_estado» del día. equity: None si no se conoce.
+    descubierta_desde: monotónico desde el que cada ticker está descubierto
+    (lo lleva el proceso con `actualizar_descubierta_desde`). limit_up:
+    banda por ticker (R-F-02). pendientes: órdenes que el vigilante envió y
+    DAS aún no ha devuelto. estados_ticker: estado de cada ticker según el
+    diario (BS → no se repone, R-G-03). locates_deshabilitados: ya se
+    deshabilitaron (no se repite (d)).
+    """
+    posiciones: dict[str, MsgPos]
+    ordenes: dict[int, MsgOrden]
+    lotes: dict[str, list[Lote]]
+    latido_ejecutor_s: Optional[float]
+    cotizaciones: dict[str, Cotizacion]
+    gasto_locates: Decimal
+    compras_locate: list[Registro]
+    equity: Optional[Decimal]
+    descubierta_desde: dict[str, float] = field(default_factory=dict)
+    limit_up: dict[str, Decimal] = field(default_factory=dict)
+    pendientes: list[Orden] = field(default_factory=list)
+    estados_ticker: dict[str, EstadoTicker] = field(default_factory=dict)
+    locates_deshabilitados: bool = False
+
+
+@dataclass
+class _Vista:
+    """Un ticker tal como lo ve el vigilante (interno)."""
+    ticker: str
+    neta: int
+    pos: PosicionTicker
+    lotes: list[Lote]
+    vivas: list[Orden]
+    limit_up: Optional[Decimal]
+    cot: Optional[Cotizacion]
+    avg: Optional[Decimal]
+
+
+# ── API pública ──────────────────────────────────────────────────────────
+def comprobar(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[], int], hora_et: datetime, ruta_stop: str,
+              puede_enviar: bool) -> list[Accion]:
+    """R-C-07 plan B, R-C-08, R-C-10 (4), R-C-11 (c), R-H-02/03, 2c, corrección 16: una pasada del vigilante (ver QUÉ HACE).
+
+    `tokens` es el generador del VIGILANTE (`GeneradorTokens(Origen.VIGILANTE,
+    hoy).siguiente`): el token dice quién puso cada orden. `cfg` es la
+    `Config` (o un dict con «stops», «tecnicos» y «locates»). Orden de la
+    salida: por ticker (alfabético) `Anotar("vigilancia")` ANTES de sus
+    órdenes (write-ahead, §8) y sus avisos de precio; después (g), (d) y (e).
+    """
+    cfg_stops = _bloque(cfg, "stops", requerido=True)
+    vig = _bloque(_bloque(cfg, "tecnicos"), "vigilante")
+    plan_b_latido = _segundos(vig.get("plan_b_latido_s"), PLAN_B_LATIDO_S)
+    plan_b_descubierta = _segundos(vig.get("plan_b_descubierta_s"), PLAN_B_DESCUBIERTA_S)
+    hoy = hora_et.date()
+    muerto = foto.latido_ejecutor_s is None or foto.latido_ejecutor_s > plan_b_latido
+    salida: list[Accion] = []
+    bloqueadas = False
+    for vista in _vistas(foto, cfg_stops, hoy):
+        desc = _descubiertas(vista, cfg_stops)
+        desde = foto.descubierta_desde.get(vista.ticker)
+        actua = muerto or (desc > 0 and desde is not None and ahora - desde > plan_b_descubierta)
+        propuesta, reales, motivo = _que_hacer(vista, cfg_stops, tokens, hora_et, ruta_stop, actua, muerto)
+        if propuesta:
+            enviar = [a for a in reales if isinstance(a, MUTANTES)]
+            bloqueo = bool(enviar) and not puede_enviar
+            bloqueadas = bloqueadas or bloqueo
+            salida.append(Anotar(TIPO_ANOTACION, {
+                "ticker": vista.ticker, "neta": vista.neta, "descubiertas": desc, "actua": actua and not bloqueo,
+                "motivo": motivo, "latido_ejecutor_s": foto.latido_ejecutor_s, "puede_enviar": puede_enviar,
+                "faltan": [_describir(a) for a in propuesta if isinstance(a, EnviarOrden)],
+                "sobran": [_describir(a) for a in propuesta if isinstance(a, (Cancelar, CancelarTicker))],
+                "ajustes": [_describir(a) for a in propuesta if isinstance(a, Reemplazar)],
+                "acciones": [_describir(a, con_token=True) for a in reales], "bloqueado": bloqueo, "regla": "R-C-07 plan B / R-C-08"}))
+            salida.extend(a for a in reales if not (bloqueo and isinstance(a, MUTANTES)))
+        salida.extend(_avisos_precio(vista, foto, cfg_stops, muerto))
+    if bloqueadas:
+        salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave="vigilante_sin_envio",
+                             texto=("R-C-07 plan B: el vigilante tiene que reponer stops y NO puede enviar órdenes (sin "
+                                    "conexión de acción); se pide al supervisor relanzar el ejecutor")))
+        salida.append(PedirAlSupervisor(PETICION_RELANZAR_EJECUTOR))
+    salida.extend(_locates(foto, cfg, hoy))
+    salida.extend(_margen(foto, vig))
+    return salida
+
+
+def descubiertas_por_ticker(foto: Foto, cfg: Any, hoy: date) -> dict[str, int]:
+    """R-C-03 / plan B: acciones cortas (o largas desconocidas) sin emergencia ni protección CONFIRMADA, por ticker (> 0).
+
+    Es lo que el proceso vigilante pasa a `actualizar_descubierta_desde` en
+    cada pasada. Con lotes: `stops.descubiertas` (emergencia o protección
+    Accepted/Partial/Hold/Triggered); sin lotes: lo que no cubre una STOPLMTP
+    nuestra confirmada del lado que reduce.
+    """
+    cfg_stops = _bloque(cfg, "stops", requerido=True)
+    salida: dict[str, int] = {}
+    for vista in _vistas(foto, cfg_stops, hoy):
+        desc = _descubiertas(vista, cfg_stops)
+        if desc > 0:
+            salida[vista.ticker] = desc
+    return salida
+
+
+def actualizar_descubierta_desde(previas: Mapping[str, float], actuales: Mapping[str, int], ahora: float) -> dict[str, float]:
+    """Plan B (PLAN_B_DESCUBIERTA_S): conserva el inicio de las que siguen descubiertas, estrena las nuevas y olvida las cubiertas."""
+    return {ticker: previas.get(ticker, ahora) for ticker, qty in actuales.items() if qty > 0}
+
+
+def debe_hacer_ping(watch_conectado: bool, latido_ejecutor_s: Optional[float], dentro_de_ventana: bool,
+                    max_latido_s: float = PLAN_B_LATIDO_S) -> bool:
+    """R-J-05: el ping externo (cada 60 s) solo sale si TODO va bien; su silencio es la alarma (3 fallos = 3 min).
+
+    Fuera de la ventana de encendido (R-L-01) no se pinga. Dentro, hace falta
+    la conexión watch viva y un latido del ejecutor fresco (≤ `max_latido_s`,
+    opcional sobre §3.25): un ejecutor que no vuelve en 3 min lo ve el
+    servicio externo aunque el vigilante siga vivo.
+    """
+    if not dentro_de_ventana or not watch_conectado or latido_ejecutor_s is None:
+        return False
+    return 0 <= latido_ejecutor_s <= max_latido_s
+
+
+def compras_repetidas(registros: Iterable[Registro], hoy: date) -> list[dict]:
+    """R-H-02: (ticker, estrategia) del día con más compras Located que peticiones («locate_intencion»), y al menos dos.
+
+    Una compra = entrar en Located (o un Located con un id de DAS distinto del
+    anterior). Una actualización del mismo Located (usadas, coste) no cuenta.
+    Sin ninguna intención registrada, dos compras ya son repetidas. Solo
+    registros del día `hoy` (por el prefijo de `t`).
+    """
+    compras: dict[tuple[str, str], int] = {}
+    pedidas: dict[tuple[str, str], int] = {}
+    previo: dict[tuple[str, str], Optional[str]] = {}
+    ultimo_id: dict[tuple[str, str], Optional[int]] = {}
+    for r in sorted(registros, key=lambda r: (str(r.t), str(r.proceso), r.seq)):
+        if r.tipo not in ("locate_intencion", "locate_estado") or not _es_de_hoy(r, hoy):
+            continue
+        ticker, sid = r.datos.get("ticker"), r.datos.get("strategy_id")
+        if ticker is None or sid is None or not str(ticker).strip():
+            continue
+        clave = (str(ticker).strip(), str(sid))
+        if r.tipo == "locate_intencion":
+            pedidas[clave] = pedidas.get(clave, 0) + 1
+            continue
+        estado = r.datos.get("estado")
+        id_das = _entero(r.datos.get("id_das"))
+        if estado == LOCATE_LOCATED:
+            anterior = ultimo_id.get(clave)
+            if previo.get(clave) != LOCATE_LOCATED or (id_das is not None and anterior is not None and id_das != anterior):
+                compras[clave] = compras.get(clave, 0) + 1
+            if id_das is not None:
+                ultimo_id[clave] = id_das
+        if estado is not None:
+            previo[clave] = str(estado)
+    return [{"ticker": t, "strategy_id": s, "compras": n, "pedidas": pedidas.get((t, s), 0)}
+            for (t, s), n in sorted(compras.items()) if n >= 2 and n > max(pedidas.get((t, s), 0), 1)]
+
+
+def margen_mantenimiento_corto(precio: Decimal, qty: int) -> Decimal:
+    """2c (FINRA 4210, cortos): < 2,50 $ → 2,50 $/acción; 2,50-4,99 → 100 % del valor; 5-16,66 → 5 $/acción; ≥ 16,67 → 30 %."""
+    p = de_float(precio)
+    if p <= 0 or type(qty) is not int or qty < 0:
+        raise ValueError(f"precio o cantidad inválidos para el margen: {precio!r} × {qty!r}")
+    if p < _TRAMO_2_50:
+        return _TRAMO_2_50 * qty
+    if p < _TRAMO_5:
+        return p * qty
+    if p < _TRAMO_16_67:
+        return _TRAMO_5 * qty
+    return _TREINTA_PCT * p * qty
+
+
+# ── privados (puros) ──────────────────────────────────────────────────────
+def _bloque(cfg: Any, nombre: str, requerido: bool = False) -> Mapping:
+    valor = cfg.get(nombre) if isinstance(cfg, Mapping) else getattr(cfg, nombre, None)
+    if isinstance(valor, Mapping):
+        return valor
+    if requerido:
+        raise ValueError(f"el bloque {nombre!r} de la config falta o no es un dict")
+    return {}
+
+
+def _segundos(valor: Any, defecto: float) -> float:
+    if isinstance(valor, bool) or not isinstance(valor, (int, float, Decimal)):
+        return float(defecto)
+    segundos = float(valor)
+    return segundos if segundos > 0 else float(defecto)
+
+
+def _entero(x: Any) -> Optional[int]:
+    if isinstance(x, bool):
+        return None
+    try:
+        return int(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def _es_de_hoy(r: Registro, hoy: date) -> bool:
+    t = str(r.t)
+    return len(t) < 10 or t[:10] == hoy.isoformat()
+
+
+def _precio(x: Any) -> Optional[Decimal]:
+    if x is None or isinstance(x, bool):
+        return None
+    try:
+        valor = de_float(x)
+    except ValueError:
+        return None
+    return valor if valor > 0 else None
+
+
+def _lote_vivo(lote: Lote) -> bool:
+    return lote.estado not in _LOTE_MUERTO and type(lote.llenas) is int and lote.llenas > 0
+
+
+def _nivel_valido(lote: Lote) -> Optional[Decimal]:
+    nivel = lote.nivel_stop
+    return nivel if isinstance(nivel, Decimal) and nivel.is_finite() and nivel > 0 else None
+
+
+def _vistas(foto: Foto, cfg_stops: Mapping, hoy: date) -> list[_Vista]:
+    """Por ticker listado en las posiciones: neta de DAS, lotes vivos del diario y órdenes NUESTRAS vivas (+ pendientes)."""
+    vivas: dict[str, list[Orden]] = {}
+    tokens_das: set[int] = set()
+    for id_das in sorted(foto.ordenes):
+        m = foto.ordenes[id_das]
+        if reconciliacion.es_ajena(m, hoy):
+            continue
+        tokens_das.add(m.token)   # type: ignore[arg-type]
+        if m.estado in stops.ESTADOS_VIVOS:
+            o = reconciliacion.orden_de_msg(m, hoy, None, cfg_stops)
+            if o is not None:
+                vivas.setdefault(o.ticker, []).append(o)
+    for o in foto.pendientes:
+        if isinstance(o, Orden) and o.token not in tokens_das and o.estado in stops.ESTADOS_VIVOS:
+            vivas.setdefault(o.ticker, []).append(o)
+    salida: list[_Vista] = []
+    for ticker in sorted(foto.posiciones):
+        neta = int(foto.posiciones[ticker].neta)
+        lotes = [lote for lote in foto.lotes.get(ticker, [])
+                 if isinstance(lote, Lote) and _lote_vivo(lote) and _nivel_valido(lote) is not None]
+        pos = PosicionTicker(ticker=ticker, lotes={lote.id: lote for lote in lotes}, neta_fills=neta, neta_das=neta,
+                             estado=foto.estados_ticker.get(ticker, EstadoTicker.NORMAL))
+        salida.append(_Vista(ticker=ticker, neta=neta, pos=pos, lotes=lotes, vivas=vivas.get(ticker, []),
+                             limit_up=_precio(foto.limit_up.get(ticker)), cot=foto.cotizaciones.get(ticker),
+                             avg=_precio(foto.posiciones[ticker].avg)))
+    return salida
+
+
+def _descubiertas(vista: _Vista, cfg_stops: Mapping) -> int:
+    """Acciones sin emergencia/protección CONFIRMADA (R-C-03). Con lotes cortos: `stops.descubiertas`; sin lotes: por cobertura."""
+    if vista.neta == 0:
+        return 0
+    if vista.lotes:
+        return stops.descubiertas(vista.pos, vista.vivas, cfg_stops, vista.limit_up) if vista.neta < 0 else 0
+    return max(abs(vista.neta) - reconciliacion.cobertura(vista.vivas, vista.ticker, vista.neta, solo_confirmadas=True), 0)
+
+
+def _token_prueba() -> int:
+    """Token de la simulación: lo que no se envía no gasta la secuencia del vigilante."""
+    return 1
+
+
+def _sin_temporizadores(acciones_: Iterable[Accion]) -> list[Accion]:
+    return [a for a in acciones_ if not isinstance(a, (Programar, Consultar, InvalidarSerie))]
+
+
+def _cancelar(ordenes: Iterable[Orden], motivo: str) -> list[Accion]:
+    return [Cancelar(id_das=o.id_das, token=o.token, motivo=motivo) for o in ordenes if o.id_das is not None]
+
+
+def _que_hacer(vista: _Vista, cfg_stops: Mapping, tokens: Callable[[], int], hora_et: datetime, ruta_stop: str,
+               actua: bool, muerto: bool) -> tuple[list[Accion], list[Accion], str]:
+    """(lo que haría falta, lo que se hace AHORA, motivo). `propuesta` vacía = todo cuadra (no se anota nada)."""
+    t, neta = vista.ticker, vista.neta
+    if neta < 0 and vista.lotes:
+        prueba = stops.plan(vista.pos, vista.vivas, cfg_stops, vista.limit_up, _token_prueba, hora_et, ruta_stop, 0)
+        propuesta = [a for a in prueba if isinstance(a, MUTANTES + (Avisar,))]
+        if not propuesta:
+            return [], [], ""
+        if not actua:
+            return propuesta, [], "ejecutor vivo y la posición no lleva descubierta el plazo del plan B"
+        reales = _sin_temporizadores(stops.plan(vista.pos, vista.vivas, cfg_stops, vista.limit_up, tokens, hora_et,
+                                                ruta_stop, 0))
+        return propuesta, reales, "R-C-07 plan B: el vigilante repone el par principal + emergencia"
+    if neta != 0 and not vista.lotes:
+        falta = abs(neta) - reconciliacion.cobertura(vista.vivas, t, neta)
+        sobran = reconciliacion.huerfanas(vista.vivas, t, neta)
+        if falta <= 0 and not sobran:
+            return [], [], ""
+        avisos = [] if falta <= 0 else [Avisar(
+            nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_desconocida:{t}",
+            texto=(f"R-C-10 (4): {t} tiene una posición ({neta}) sin lote con nivel de stop en ningún diario; "
+                   f"{falta} acciones sin stop"))]
+        cancelaciones = _cancelar(sobran, f"R-C-11: orden huérfana en {t} ({neta})")
+        if not actua:
+            return avisos + cancelaciones, [], "posición desconocida: la protege el ejecutor (R-C-10 caso 4)"
+        proteccion = _proteccion(vista, falta, cfg_stops, tokens, ruta_stop) if falta > 0 else []
+        return avisos + cancelaciones, proteccion + cancelaciones + avisos, "R-C-10 (4): posición sin lote en ningún diario"
+    sobran = reconciliacion.huerfanas(vista.vivas, t, neta)
+    if neta > 0 and vista.lotes:
+        propuesta = [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_larga:{t}",
+                            texto=(f"R-C-11 (3): {t} está LARGA {neta} con lotes cortos en el diario; el vigilante no vende: "
+                                   f"lo hará el ejecutor al volver. Si no vuelve, VENDER A MANO {neta}"))]
+        propuesta.extend(_cancelar(sobran, f"R-C-11 (3): {t} larga: no se compra más"))
+        return (propuesta, propuesta, "R-C-11 (3): cuenta larga con el ejecutor muerto") if muerto else \
+            (propuesta, [], "cuenta larga: la limpia el ejecutor (R-C-11)")
+    if not sobran:
+        return [], [], ""
+    propuesta = _cancelar(sobran, f"R-C-11 (2): {t} plana: se cancela lo nuestro que queda vivo")
+    if not propuesta:
+        return [], [], ""
+    return (propuesta, propuesta, "R-C-11 (2): órdenes huérfanas con el ejecutor muerto") if muerto else \
+        (propuesta, [], "órdenes huérfanas: las cancela el ejecutor (R-C-11)")
+
+
+def _proteccion(vista: _Vista, falta: int, cfg_stops: Mapping, tokens: Callable[[], int], ruta_stop: str) -> list[Accion]:
+    """R-C-10 (4) por el vigilante: `stops.stop_proteccion` sobre el último precio de DAS.
+
+    Sin último: el lado que dispararía (ask si corta, bid si larga), el otro y,
+    sin cotización, el precio medio de la posición en DAS. Sin ningún precio,
+    aviso 3 para ponerla a mano. Porcentaje: `stops.proteccion_desconocidas_pct`
+    (defecto `STOP_PROTECCION_PCT`, 25 %).
+    """
+    t, neta = vista.ticker, vista.neta
+    precio: Optional[Decimal] = None
+    for campo in (("last", "ask", "bid") if neta < 0 else ("last", "bid", "ask")):
+        precio = _precio(getattr(vista.cot, campo, None))
+        if precio is not None:
+            break
+    precio = precio if precio is not None else vista.avg
+    if precio is None:
+        return [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_sin_precio:{t}",
+                       texto=f"R-C-10 (4): {t} tiene {falta} acciones sin stop y no hay precio: PONER LA PROTECCIÓN A MANO")]
+    pct = _pct(cfg_stops.get("proteccion_desconocidas_pct"), STOP_PROTECCION_PCT)
+    orden = stops.stop_proteccion(t, falta, neta < 0, precio, pct, tokens(), ruta_stop, 0)
+    return [EnviarOrden(orden=orden)]
+
+
+def _describir(a: Accion, con_token: bool = False) -> str:
+    """Texto corto de una acción para el diario (el token solo en las REALES: el de la simulación no existe)."""
+    if isinstance(a, EnviarOrden):
+        o = a.orden
+        texto = f"{o.proposito.value} {o.lado.value} {o.qty} {o.stop}/{o.precio}"
+        return f"{texto} token {o.token}" if con_token else texto
+    if isinstance(a, Reemplazar):
+        return f"reemplazar {a.id_das} a {a.qty}"
+    if isinstance(a, Cancelar):
+        return f"cancelar {a.id_das}"
+    if isinstance(a, CancelarTicker):
+        return f"cancelar todo {a.ticker}"
+    if isinstance(a, Avisar):
+        return f"aviso {int(a.nivel)}"
+    return type(a).__name__
+
+
+def _avisos_precio(vista: _Vista, foto: Foto, cfg_stops: Mapping, muerto: bool) -> list[Accion]:
+    """R-C-08 (a), SOLO aviso: el ask pasó el límite de un principal sin consumir; con el ejecutor muerto, también el de la emergencia."""
+    if vista.neta >= 0 or not vista.lotes:
+        return []
+    cot = foto.cotizaciones.get(vista.ticker)
+    precio = _precio(getattr(cot, "ask", None)) or _precio(getattr(cot, "last", None))
+    if precio is None:
+        return []
+    salida: list[Accion] = []
+    niveles_vivos = sorted({n for n in (_nivel_valido(lote) for lote in vista.lotes) if n is not None})
+    sin_consumir = sorted({n for n in (_nivel_valido(lote) for lote in vista.lotes if not lote.principal_consumido)
+                           if n is not None})
+    for L in sin_consumir:
+        limite = stops.niveles(L, cfg_stops, vista.limit_up).principal_limite
+        if precio > limite:
+            salida.append(Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"vigilante_nivel:{vista.ticker}:{L}",
+                                 texto=(f"R-C-08 (a): el precio {precio} de {vista.ticker} pasó el límite {limite} del "
+                                        f"principal de {L} sin fill; el vigilante solo avisa (cerrar: PENDIENTE)")))
+    if muerto and niveles_vivos and vista.pos.estado is not EstadoTicker.BS:
+        emergencia = stops.niveles(niveles_vivos[-1], cfg_stops, vista.limit_up).emergencia_limite
+        if precio > emergencia:
+            salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_bs:{vista.ticker}",
+                                 texto=(f"R-G-01 / R-C-08: {vista.ticker} a {precio}, por encima del límite de emergencia "
+                                        f"{emergencia} con el ejecutor caído: CISNE NEGRO, el vigilante NO cierra")))
+    return salida
+
+
+def _locates(foto: Foto, cfg: Any, hoy: date) -> list[Accion]:
+    """(d) R-H-02 y R-H-03: el vigilante corta las compras de locates si el ejecutor se descontrola."""
+    if foto.locates_deshabilitados:
+        return []
+    motivos: list[str] = []
+    datos: dict[str, Any] = {}
+    repetidas = compras_repetidas(foto.compras_locate, hoy)
+    if repetidas:
+        motivos.append("R-H-02")
+        datos["repetidas"] = repetidas
+    tope_pct = _pct(_bloque(cfg, "locates").get("tope_gasto_pct_cuenta"), LOCATES_TOPE_GASTO_PCT)
+    gasto = _precio(foto.gasto_locates) or _D("0")
+    if foto.equity is not None:
+        tope = foto.equity * tope_pct / _CIEN
+        if gasto > tope:
+            motivos.append("R-H-03")
+            datos.update({"gasto": str(gasto), "equity": str(foto.equity), "tope_pct": str(tope_pct), "tope": str(tope)})
+    if not motivos:
+        return []
+    texto = "; ".join(
+        (f"R-H-02: compra de locate repetida no pedida en {', '.join(r['ticker'] + '/' + r['strategy_id'] for r in repetidas)}"
+         if m == "R-H-02" else f"R-H-03: gasto en locates {gasto} > {tope_pct} % del equity {foto.equity}")
+        for m in motivos)
+    return [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave="vigilante_locates",
+                   texto=f"{texto}. El vigilante DESHABILITA las compras de locates"),
+            Anotar(TIPO_DESHABILITAR_LOCATES, {**datos, "motivos": motivos, "regla": "/".join(motivos)})]
+
+
+def _pct(valor: Any, defecto: Decimal) -> Decimal:
+    if valor is None:
+        return defecto
+    pct = de_float(valor)
+    if pct < 0:
+        raise ValueError(f"porcentaje negativo en la config: {valor!r}")
+    return pct
+
+
+def _margen(foto: Foto, vig: Mapping) -> list[Accion]:
+    """(e) 2c: margen de mantenimiento total de los cortos frente a equity·margen_aviso → Avisar(2). Sin equity no se evalúa."""
+    if foto.equity is None:
+        return []
+    fraccion = _pct(vig.get("margen_aviso"), MARGEN_AVISO_DEFECTO)
+    total = _D("0")
+    for ticker in sorted(foto.posiciones):
+        msg = foto.posiciones[ticker]
+        if int(msg.neta) >= 0:
+            continue
+        cot = foto.cotizaciones.get(ticker)
+        precio = (_precio(getattr(cot, "last", None)) or _precio(getattr(cot, "ask", None))
+                  or _precio(getattr(cot, "bid", None)) or _precio(msg.avg))
+        if precio is not None:
+            total += margen_mantenimiento_corto(precio, -int(msg.neta))
+    umbral = foto.equity * fraccion
+    if total <= umbral:
+        return []
+    return [Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave="vigilante_margen",
+                   texto=(f"2c: margen de mantenimiento de los cortos {total.quantize(_D('0.01'))} $ supera "
+                          f"{fraccion} × equity ({foto.equity} $): riesgo de autoliquidación en RTH"))]

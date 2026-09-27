@@ -1,0 +1,12 @@
+{
+  "spread": {"pct": "0.5", "minimo_ticks": 1, "tamano_bid": 500, "tamano_ask": 500},
+  "halts": [
+    {"ticker": "ABCD", "desde": "09:45:00", "hasta": "09:50:00", "ta": "H", "tat": "09:45:00", "precio_reapertura": "3.1"}
+  ],
+  "rechazos": [
+    {"token_o_orden": 126800001, "notas": "No shares to short", "accion": "Send_Rej"}
+  ],
+  "fills_parciales": [
+    {"ticker": "ABCD", "fraccion": "0.4"}
+  ]
+}
