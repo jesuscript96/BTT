@@ -99,3 +99,50 @@ distinto. Lección que se repite: para la 1B, ningún criterio del día D
   números falsos en la 1B; corregido cargando los trades de sus JSON fuente
   (fila = trade con SU entrada). Los números de este informe son los
   corregidos.
+
+## 7. 5.2-bis — HORA DE INICIO DEL GAP en línea de tiempo continua (16:00 víspera → 09:30), pedido de Álvaro
+
+Misma mecánica que 5.2 pero con el after-hours de la VÍSPERA delante: running
+max del high sobre AH(16:00-19:59 de D−1) + PM(04:00-09:29 de D) contra la
+`prev_close` persistida; hora del primer cruce de +20 %/+50 %; tramos AH /
+04-05 / 05-06 / 06-07 / 07-08 / 08-09:30. Scripts `paso4_gap_inicio.py` →
+`resultados_52bis.txt`, `features_b5bis.parquet`.
+
+**Universo (fade PREMARKET primario, n=13.920, todos cruzan +50 % por
+definición):**
+
+| Tramo de inicio (+50 %) | n | fade PM | día |
+|---|---|---|---|
+| AH víspera (16-20h) | 2.294 | 26,4 % | −4,4 % |
+| **04-05** | 3.431 | **32,5 %** | −2,2 % |
+| **05-06** | 966 | **33,7 %** | +0,1 % |
+| 06-07 | 1.257 | 30,8 % | −0,8 % |
+| 07-08 | 2.322 | 24,7 % | −3,5 % |
+| 08-09:30 | 3.650 | 23,8 % | −3,4 % |
+
+ρ(g50, fadePM) **8/8 negativo** (−0,04..−0,27), pooled −0,156, parcial ctrl
+1.6+3.2 **−0,208**. El +20 % como inicio es más flojo (−0,046). **¿Cambia
+algo vs el 5.2 sin AH? La conclusión no cambia** (madrugada ≫ tarde, misma
+fuerza); lo que añade el AH es una celda nueva con sentido propio: el 16 % de
+los gaps del universo YA había cruzado el +50 % en el AH de la víspera, y su
+fade queda ENTRE medias (26,4 %) — el gap «de ayer por la tarde» es menos
+fresco que el de madrugada pero más que el de última hora.
+
+**Trades (causal CONFIRMADO: 0 de 4.482/11.426/1.656 trades con cruce
+posterior a la entrada — la condición de entrada «PM High Gap ≥ 50 en su
+vela» lo garantiza):** 1B plana otra vez (ρ +0,014; AH-inicio +2,26 % vs
+04-05 +3,76 %: forma sin señal); DT −0,048 3/3 con el mapa completo (tarde
++0,40 % vs madrugada ~+2 %); 2B plano (−0,02). Sin dato: los IPOs de siempre
+(34/11/14 trades, +12,7/+7,5/+10,4 %).
+
+**Qué haría falta para construirlo como filtro de dataset («Hora de inicio
+del gap»):** no es expresable con columnas de daily_metrics (es intradía).
+Dos vías: (a) columna derivada en el ETL del lago — minuto del primer cruce
+de +50 % en la línea continua, por ticker-día, computada de las velas 1m
+(una pasada offline como la del parquet bygap); viaja luego como cualquier
+`lag`/columna de ventana en las tres vías; o (b) indicador de vela en el
+motor: «minutos desde que el PM High Gap superó +50 %» (running, causal —
+mismo patrón que Elapsed Time Last High). **Dónde tendría más sentido:** en
+estrategias que cobran el fade TARDE — fade en la apertura / RTH contra el
+máximo premarket (ahí el día completo pesa y es donde la vista A dice que
+vive la señal: 33 % vs 24 % de fade); para la 1B/DT tal cual no añade nada.
