@@ -1186,19 +1186,49 @@ def test_echo_y_client(servidor, clientes):
 
 
 def test_latencia_retrasa_la_respuesta(libro, reloj):
+    """R2-RED-2: determinista, sin reloj de pared. El `dormir` inyectado recibe
+    exactamente `latencia_s` y BLOQUEA hasta que el test lo suelta: mientras está
+    dormido no llega ninguna respuesta al NEWORDER; al soltarlo llega el `%ORDER`
+    cuyo token es T1 (no cualquier `%ORDER`)."""
+    import threading
+
+    llamadas: list[float] = []
+    dormido = threading.Event()
+    soltar = threading.Event()
+
+    def dormir(segundos: float) -> None:
+        llamadas.append(segundos)
+        dormido.set()
+        assert soltar.wait(10.0), "el test no soltó al simulador"
+
     emp = Emparejador(libro, reloj, latencia_s=0.2)
-    sim = SimuladorDAS(libro, reloj, emparejador=emp)
+    sim = SimuladorDAS(libro, reloj, emparejador=emp, dormir=dormir)
     sim.arrancar()
     c = ClientePrueba(sim.direccion)
     try:
         c.login()
-        inicio = time.monotonic()
+        antes = len(c.lineas)
         c.enviar(f"NEWORDER {T1} SS ABCD SAGEREB 100 2.5 TIF=DAY+")
-        c.esperar_linea("%ORDER ")
-        assert time.monotonic() - inicio >= 0.19
+        assert dormido.wait(PLAZO_S), "el simulador no aplicó la latencia"
+        assert llamadas == [0.2]
+        for _ in range(5):                       # el hilo del simulador está parado dentro de dormir
+            c._leer()
+        assert c.lineas[antes:] == [], "llegó respuesta antes de cumplirse la latencia"
+        soltar.set()
+        c.esperar(lambda ls: any(getattr(m, "token", None) == T1
+                                 for m in parsear([x for x in ls[antes:] if x.startswith("%ORDER ")])))
+        assert llamadas == [0.2]
     finally:
+        soltar.set()
         c.cerrar()
         sim.parar()
+
+
+def test_latencia_por_defecto_duerme_con_time_sleep(libro, reloj):
+    """R2-RED-2: sin `dormir` inyectado la latencia la aplica `time.sleep`; un `dormir` no invocable se rechaza."""
+    assert SimuladorDAS(libro, reloj)._dormir is time.sleep
+    with pytest.raises(TypeError):
+        SimuladorDAS(libro, reloj, dormir=0.2)
 
 
 def test_reabrir_por_simulador_difunde_el_fill(servidor, clientes, libro):

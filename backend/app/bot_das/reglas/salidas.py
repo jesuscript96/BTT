@@ -253,7 +253,8 @@ COMANDO_ORDENES = cmd_get("ORDERS")         # A-06: «GET ORDERS»
 
 # Neta de «cerrar todo» (D2-02): de dónde sale la cantidad (va al diario).
 NETA_FILLS = "fills"                 # DAS no la ha dicho o coincide con los fills
-NETA_DAS_MANUAL = "das_manual"       # posición manual pura: solo DAS la conoce
+NETA_DAS = "das"                     # posición manual pura (fills 0, ningún lote VIVO): solo DAS la conoce
+NETA_DAS_MANUAL = NETA_DAS           # nombre anterior (R2-SAL-1: el valor pasa de "das_manual" a "das")
 NETA_MINIMO = "minimo"               # discrepan con el mismo signo: el mínimo en valor absoluto
 NETA_DISCREPANCIA = "discrepancia"   # signos distintos o una en 0: no se envía nada, se consulta
 
@@ -764,26 +765,45 @@ def neta_para_cerrar(pos: PosicionTicker) -> tuple[int, str]:
     cierre por fills (o de un stop que acaba de llenar) puede ir ATRASADA.
     Por eso:
       * DAS no la ha dicho, o coincide con los fills → la de fills («fills»);
-      * posición manual pura (fills 0 y ningún lote con acciones del bot:
-        sin lotes, o solo lotes CANCELADOS sin llenar) → `neta_das`
-        («das_manual»: solo DAS la conoce, M7);
+      * posición manual pura (R2-SAL-1): fills 0 y NINGÚN lote VIVO
+        (ABRIENDO/ABIERTO/CERRANDO); los lotes CERRADOS o CANCELADOS de hoy
+        no cuentan, el bot ya no tiene nada ahí → `neta_das` («das»: solo
+        DAS la conoce, M7). Si el bot tuvo lotes con acciones hoy, esa cifra
+        también puede ser el %POS ATRASADO de un cierre del propio bot (el
+        caso crítico de D2-02): lo dice `das_sin_confirmar`, y `cerrar_todo`
+        y el reintento de un rechazo actúan en consecuencia;
       * discrepan con el MISMO signo → el mínimo en valor absoluto
         («minimo»): nunca más de lo que las dos fuentes dicen a la vez; el
         resto lo cierra el reintento tras GET POSITIONS;
-      * signos distintos o una en 0 → 0 («discrepancia»): no se envía nada,
-        solo se consulta y se reintenta.
+      * signos distintos, fills ≠ 0 con DAS en 0, o fills 0 con un lote vivo
+        → 0 («discrepancia»): no se envía nada, solo se consulta y se
+        reintenta.
     """
     fills = int(pos.neta_fills)
     das = pos.neta_das
     if das is None or das == fills:
         return fills, NETA_FILLS
     das = int(das)
-    if fills == 0 and _manual_pura(pos):
-        return das, NETA_DAS_MANUAL
+    if fills == 0 and not any(lote.estado in _LOTE_VIVO for lote in pos.lotes.values()):
+        return das, NETA_DAS
     if fills != 0 and das != 0 and (fills < 0) == (das < 0):
         minimo = min(abs(fills), abs(das))
         return (-minimo if fills < 0 else minimo), NETA_MINIMO
     return 0, NETA_DISCREPANCIA
+
+
+def das_sin_confirmar(pos: PosicionTicker) -> bool:
+    """R2-SAL-1: la neta de `neta_para_cerrar` sale de DAS (fuente «das») pero el bot tuvo hoy lotes CON acciones en el ticker.
+
+    Con fills 0 y DAS ≠ 0 caben dos cosas que la posición no distingue: una
+    posición manual abierta después de que el bot cerrase sus lotes (DAS
+    manda), o el %POS ATRASADO del cierre que el bot acaba de llenar (comprar
+    esa cifra dejaría la cuenta LARGA: el caso crítico de D2-02). Sin lotes,
+    o con solo lotes CANCELADOS sin llenar (la manual pura de la decisión del
+    director), no hay nada del bot que pueda ir atrasado → False.
+    """
+    _, fuente = neta_para_cerrar(pos)
+    return fuente == NETA_DAS and not _manual_pura(pos)
 
 
 def clave_cerrar_todo(ticker: str) -> str:
@@ -801,7 +821,14 @@ def cerrar_todo(posiciones: dict[str, PosicionTicker], cot_de: Callable[[str], O
     Por ticker (en orden alfabético) con posición: la neta sale de
     `neta_para_cerrar` (D2-02: con neta_das ≠ neta_fills nunca se compra lo
     de DAS a ciegas; además `Consultar("GET POSITIONS")`, uno por llamada, y
-    `Anotar("discrepancia")`). La orden es `orden_cierre_posicion` (techo
+    `Anotar("discrepancia")`), en las dos fases. Una posición manual en un
+    ticker donde el bot tuvo lotes hoy (`das_sin_confirmar`, R2-SAL-1) se
+    cierra con la cifra de DAS solo en la PRIMERA mirada (intento 0, fase
+    «cancelar» o None): después de enviar o de esperar un Canceled, fills 0
+    puede ser el cierre del propio bot con el %POS aún atrasado, y comprar
+    esa cifra dejaría la cuenta larga; entonces solo se consulta, se anota
+    («cerrar_todo_das_sin_confirmar») y se reintenta, y el aviso de agotado
+    da esa cifra marcada como sin confirmar. La orden es `orden_cierre_posicion` (techo
     cerrar_todo.techo_pct, 5 %, sobre el ask o bajo el bid del momento). Sin
     cotización → `Avisar(3)` «cerrar a mano» para ese ticker (y el reintento
     sigue).
@@ -861,16 +888,22 @@ def cerrar_todo(posiciones: dict[str, PosicionTicker], cot_de: Callable[[str], O
             cot = cot_de(ticker)
             mostrada = neta if neta != 0 else pos.neta_fills
             das = "?" if pos.neta_das is None else pos.neta_das
+            duda = (" (cifra de DAS SIN CONFIRMAR: el bot tuvo lotes hoy en el ticker; puede ser el %POS atrasado "
+                    "de su propio cierre)") if das_sin_confirmar(pos) else ""
             acciones.append(Avisar(
                 nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"{CLAVE_CERRAR_TODO}:{ticker}:agotado",
                 texto=(f"R-D-06: tras {reintentos} reintentos sigue abierta: {_h(ticker)} neta {mostrada} "
-                       f"(fills {pos.neta_fills}, DAS {das}) (bid {_h(getattr(cot, 'bid', None))} / ask "
+                       f"(fills {pos.neta_fills}, DAS {das}){duda} (bid {_h(getattr(cot, 'bid', None))} / ask "
                        f"{_h(getattr(cot, 'ask', None))} / último {_h(getattr(cot, 'last', None))}). El bot ha "
                        f"RETIRADO su orden de cierre y vuelve a poner los stops. Decide Jaume")))
         return acciones
     consultado = False
-    for ticker, neta, fuente, pos in abiertas:
+    primera_mirada = intento == 0 and fase != FASE_ENVIAR
+    for ticker, neta_real, fuente, pos in abiertas:
         vivas = _vivas_del_ticker(vivas_de, ticker)
+        neta = neta_real
+        if not primera_mirada and das_sin_confirmar(pos):
+            neta = 0      # R2-SAL-1: tras enviar o esperar un Canceled, la cifra de DAS puede ser el %POS atrasado
         if fase != FASE_ENVIAR:
             acciones.append(CancelarTicker(ticker=ticker, motivo=f"R-D-06: cerrar todo (intento {intento})"))
         if _discrepa(pos):
@@ -880,6 +913,12 @@ def cerrar_todo(posiciones: dict[str, PosicionTicker], cot_de: Callable[[str], O
             acciones.append(Anotar("discrepancia", {"ticker": ticker, "neta_fills": pos.neta_fills,
                                                     "neta_das": pos.neta_das, "usada": neta, "fuente": fuente,
                                                     "regla": "R-D-06 / M7 / D2-02"}))
+        if neta != neta_real:
+            acciones.append(Anotar("cerrar_todo_das_sin_confirmar", {
+                "ticker": ticker, "neta_das": pos.neta_das, "intento": intento, "fase": fase,
+                "regla": "R2-SAL-1 / D2-02: el bot tuvo lotes hoy; la cifra de DAS solo se envía en la primera "
+                         "mirada (después puede ser el %POS atrasado de su propio cierre); se consulta y se "
+                         "reintenta"}))
         if fase == FASE_CANCELAR and vivas:
             acciones.append(Anotar("cerrar_todo_espera", {"ticker": ticker, "intento": intento,
                                                           "vivas": [o.token for o in vivas],

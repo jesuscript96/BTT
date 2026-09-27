@@ -83,7 +83,7 @@ from datetime import datetime
 from datetime import time as dtime
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from app.bot_das.protocolo import CODIFICACION, FIN_LINEA
 from app.bot_das.reglas.precios import de_float
@@ -1213,7 +1213,13 @@ class SimuladorDAS:
     """
 
     def __init__(self, libro: LibroSimulado, reloj: Reloj, host: str = "127.0.0.1", puerto: int = 0,
-                 usuarios: Optional[dict[str, str]] = None, emparejador: Optional[Emparejador] = None) -> None:
+                 usuarios: Optional[dict[str, str]] = None, emparejador: Optional[Emparejador] = None,
+                 dormir: Optional[Callable[[float], None]] = None) -> None:
+        # R2-RED-2: `dormir` (por defecto `time.sleep`) es quien aplica la `latencia_s`
+        # del emparejador antes de procesar un mutante; los tests lo inyectan para
+        # comprobar la latencia por el orden de los eventos, sin reloj de pared.
+        if dormir is not None and not callable(dormir):
+            raise TypeError(f"dormir debe ser invocable: {dormir!r}")
         if not isinstance(libro, LibroSimulado):
             raise TypeError(f"libro debe ser un LibroSimulado: {libro!r}")
         if emparejador is None:
@@ -1231,6 +1237,7 @@ class SimuladorDAS:
         self._puerto = puerto
         self._usuarios = dict(usuarios) if usuarios is not None else None
         self._emparejador = emparejador
+        self._dormir: Callable[[float], None] = dormir if dormir is not None else time.sleep
         self.fin_linea = FIN_LINEA
         self._cerrojo = threading.RLock()          # emisión ordenada: mismas líneas, mismo orden, en todas las conexiones
         self._conexiones: list[_Conexion] = []
@@ -1462,7 +1469,7 @@ class SimuladorDAS:
                 self._enviar(c, self._emparejador.recibir(texto))
             else:
                 if self._emparejador.latencia_s > 0:
-                    time.sleep(self._emparejador.latencia_s)
+                    self._dormir(self._emparejador.latencia_s)
                 self._distribuir(self._emparejador.recibir(texto), c)
 
     def _login(self, c: _Conexion, p: list[str]) -> None:

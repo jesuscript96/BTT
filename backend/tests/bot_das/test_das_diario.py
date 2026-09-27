@@ -1267,129 +1267,10 @@ def test_G1B_09_cambios_por_telegram_se_reaplican_y_el_fichero_los_suelta() -> N
 
 
 # ── DC-06: el diario que escribe el EJECUTOR REAL se reconstruye igual que el estado vivo ──
-_TICKER_VIVO = "XYZ"
-_SID_VIVO = "prueba-1"
-_PLAZO_VIVO_S = 10.0
-
-
-class _CalendarioVivo:
-    """Franja por la hora ET, sin festivos ni red (como el doble de test_das_ejecutor)."""
-
-    def franja_de_mercado(self, ahora: datetime) -> str:
-        minutos = ahora.hour * 60 + ahora.minute
-        if 4 * 60 <= minutos < 9 * 60 + 30:
-            return "premercado"
-        if 9 * 60 + 30 <= minutos < 16 * 60:
-            return "RTH"
-        if 16 * 60 <= minutos < 20 * 60:
-            return "postmercado"
-        return "cerrado"
-
-    def media_sesion(self, dia: date):
-        return None
-
-
-class _ReferenciaVivo:
-    """Ficha de Massive en memoria: acción común vieja, sin splits (no se excluye)."""
-
-    def ficha(self, ticker: str):
-        from app.bot_das.tipos import Ficha
-        return Ficha(ticker=ticker, list_date=date(2020, 1, 1), sic_code="1234", tipo="CS",
-                     market_cap=Decimal("100000000"), nombre="Prueba SA")
-
-    def splits_de_hoy(self, dia: date) -> set:
-        return set()
-
-
-@pytest.fixture
-def motor_de_prueba(monkeypatch: pytest.MonkeyPatch) -> dict:
-    """Motor de alertas con el traductor sustituido: `guion["entradas_en"]` = índices de vela con entrada."""
-    np = pytest.importorskip("numpy")
-    from app.services import bot_alerts_engine as eng
-
-    guion: dict = {"entradas_en": set()}
-
-    def traductor(frame, sdef, stats, compiled=None):
-        entradas = np.zeros(len(frame), dtype=bool)
-        for k in guion["entradas_en"]:
-            if 0 <= k < len(frame):
-                entradas[k] = True
-        return {"direction": "Short", "entries": entradas, "exits": np.zeros(len(frame), dtype=bool),
-                "accept_reentries": True, "max_reentries": -1}
-
-    monkeypatch.setattr(eng, "translate_strategy", traductor)
-    monkeypatch.setattr(eng, "simulate", lambda **kw: {"trades": []})
-    monkeypatch.setattr(eng, "_kwargs_simulate", lambda *a, **k: {})
-    monkeypatch.setattr(eng, "compile_strategy_def", lambda sdef: {})
-    monkeypatch.setattr(eng, "calcular_acciones", lambda *a, **k: 100.0)
-    return guion
-
-
-def _velas(n: int = 30, precio: float = 3.45) -> list[dict]:
-    import pandas as pd
-    t0 = pd.Timestamp("2026-09-25 09:29:00") - pd.Timedelta(minutes=n)
-    return [{"timestamp": str(t0 + pd.Timedelta(minutes=i)), "open": precio, "high": precio * 1.01,
-             "low": precio * 0.99, "close": precio, "volume": 100000.0} for i in range(n)]
-
-
-def _vela_senal(precio: float = 3.45) -> dict:
-    import pandas as pd
-    return {"timestamp": pd.Timestamp("2026-09-25 09:29:00"), "open": precio, "high": precio * 1.01,
-            "low": precio * 0.99, "close": precio, "volume": 100000.0}
-
-
-class _EjecutorVivo:
-    """Un ejecutor de producción contra el simulador, bombeado desde el test (mismo guion que test_das_ejecutor)."""
-
-    def __init__(self, e, sim, libro, reloj: RelojSimulado, dir_bot: Path, motor: dict) -> None:
-        self.e, self.sim, self.libro, self.reloj, self.dir_bot, self.motor = e, sim, libro, reloj, dir_bot, motor
-
-    def paso_hasta(self, cond, que: str) -> None:
-        import time
-        limite = time.monotonic() + _PLAZO_VIVO_S
-        while not cond():
-            if time.monotonic() > limite:
-                pytest.fail(f"plazo vencido esperando: {que}; diario {[r.tipo for r in self.regs()][-15:]}")
-            assert self.e.paso(0.02) is None, f"el ejecutor salió esperando {que}"
-
-    def drenar(self, quieto_s: float = 0.3) -> None:
-        import time
-        limite = time.monotonic() + _PLAZO_VIVO_S
-        callado = time.monotonic()
-        while time.monotonic() - callado < quieto_s:
-            if time.monotonic() > limite:
-                pytest.fail("DAS no deja de hablar")
-            seq, habia = self.e.diario.seq, self.e.buzon.tamano()
-            assert self.e.paso(0.02) is None
-            if habia or self.e.diario.seq != seq:
-                callado = time.monotonic()
-
-    def regs(self) -> list[Registro]:
-        return LectorDiario(self.dir_bot / "diario").leer(HOY)
-
-    def preparar(self) -> None:
-        from app.bot_das.tipos import Senal
-        self.libro.cotizar(_TICKER_VIVO, Decimal("3.44"), Decimal("3.46"), last=Decimal("3.45"), volumen=500_000,
-                           vwap=Decimal("3.40"))
-        from app.bot_das import ejecutor as ej
-        assert self.e.arrancar() == ej.CODIGO_OK
-        self.e.buzon.al_senal(Senal(clase="radar", ticker=_TICKER_VIVO, id=None, recibida_en=self.reloj.mono(),
-                                    estimacion=[{"strategy_id": _SID_VIVO, "acciones": 1000.0, "riesgo_usd": 300.0}],
-                                    precio_radar=Decimal("3.45"), origen="proceso"))
-
-        def locate_listo() -> bool:
-            loc = self.e.decisor.estado.locates.get((_TICKER_VIVO, _SID_VIVO))
-            return loc is not None and loc.estado == "Located" and loc.localizadas > 0
-
-        self.paso_hasta(locate_listo, "locate")
-        self.paso_hasta(lambda: self.e.mercado.cotizacion(_TICKER_VIVO) is not None, "cotización")
-        self.drenar()
-
-    def senal(self) -> None:
-        self.motor["entradas_en"] = set()
-        self.e.fuente.hidratar(_TICKER_VIVO, _velas())
-        self.motor["entradas_en"] = {30}
-        self.e.fuente.vela(_TICKER_VIVO, _vela_senal())
+# Montaje del ejecutor REAL contra el SimuladorDAS: se IMPORTA de test_das_ejecutor (a nivel de módulo), sin copiarlo.
+# `vivo` y `motor_falso` son fixtures: importarlas las registra en este módulo.
+from test_das_ejecutor import TICKER as _TICKER_VIVO  # noqa: E402
+from test_das_ejecutor import Vivo, motor_falso, vivo  # noqa: E402,F401
 
 
 def _comparar_con_el_vivo(reconstruido, vivo) -> None:
@@ -1401,7 +1282,7 @@ def _comparar_con_el_vivo(reconstruido, vivo) -> None:
         r = reconstruido.ordenes[token]
         assert (r.ticker, r.lado, r.tipo, r.qty, r.precio, r.stop, r.lote_id, r.proposito, r.llenas, r.origen) == (
             o.ticker, o.lado, o.tipo, o.qty, o.precio, o.stop, o.lote_id, o.proposito, o.llenas, o.origen), token
-        assert r.id_das == o.id_das, token
+        assert (r.id_das, r.estado, r.lvqty) == (o.id_das, o.estado, o.lvqty), token
     assert reconstruido.id_a_token == vivo.id_a_token
     assert {t: sorted(f.qty for f in fs) for t, fs in reconstruido.fills.items()} == {
         t: sorted(f.qty for f in fs) for t, fs in vivo.fills.items()}
@@ -1420,6 +1301,12 @@ def _comparar_con_el_vivo(reconstruido, vivo) -> None:
             assert (rl.llenas, rl.pedidas, rl.estado, rl.nivel_stop, rl.precio_medio, rl.principal_consumido) == (
                 lote.llenas, lote.pedidas, lote.estado, lote.nivel_stop, lote.precio_medio,
                 lote.principal_consumido), lote_id
+        # R2-PER-2: el cisne negro (vivo o cerrado) también sale igual del diario
+        assert (rp.bs is None) == (pos.bs is None), ticker
+        if pos.bs is not None:
+            assert (rp.bs.primer_stop, rp.bs.emergencia_limite, rp.bs.max_visto, rp.bs.informes, rp.bs.silenciado) == (
+                pos.bs.primer_stop, pos.bs.emergencia_limite, pos.bs.max_visto, pos.bs.informes,
+                pos.bs.silenciado), ticker
     for clave, loc in vivo.locates.items():
         rl = reconstruido.locates[clave]
         assert (rl.estado, rl.localizadas, rl.usadas, rl.compras, rl.token, rl.coste) == (
@@ -1431,63 +1318,125 @@ def _comparar_con_el_vivo(reconstruido, vivo) -> None:
     assert reconstruido.ultimo_seq_token >= max(seqs, default=0)          # no reutiliza un token tras el reinicio
 
 
+def _entrada_con_stops(v: Vivo, libro_ordenes) -> list[dict]:
+    """Señal de la vela → SS → fill de las 100 → principal + emergencia residentes; devuelve los dos stops (por disparo)."""
+    v.senal_por_vela(_TICKER_VIVO)
+    tipo_envio = "orden_simulada" if v.e.cfg.fase is Fase.SOMBRA else "orden_enviada"
+    v.paso_hasta(lambda: any(r.tipo == tipo_envio and r.datos.get("proposito") == "entrada_agregar"
+                             for r in v.regs()), "envío de la entrada")
+    v.sim.cotizar(_TICKER_VIVO, Decimal("3.45"), Decimal("3.47"), last=Decimal("3.45"), volumen=500_000)
+
+    def stops_vivos() -> list[dict]:
+        return [o for o in libro_ordenes.ordenes() if o["ticker"] == _TICKER_VIVO and o["tipo"] == "STOPLMTP"
+                and o["estado"] in ("Accepted", "Partial")]
+
+    v.paso_hasta(lambda: len(stops_vivos()) == 2, "principal + emergencia")
+    v.drenar()
+    return sorted(stops_vivos(), key=lambda o: o["stop"])
+
+
 @pytest.mark.parametrize("fase", ["sombra", "canario"], ids=["DC-06-sombra", "DC-06-canario"])
-def test_DC_06_reinicio_con_el_diario_del_ejecutor_real(fase: str, cfg, reloj: RelojSimulado, dir_bot: Path, libro,
-                                                         simulador, direccion_simulador, motor_de_prueba,
-                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+def test_DC_06_reinicio_con_el_diario_del_ejecutor_real(fase: str, vivo) -> None:
     """DC-06 (y DC-01/DC-02/DC-04 de punta a punta): el ejecutor REAL (construir_desde_env) contra el SimuladorDAS
     en SOMBRA y en CANARIO: locate, señal de la vela, SS, fill, stops residentes y (canario) el stop que dispara.
     Después se relee SU diario con LectorDiario y `reconstruir` debe dar el mismo estado que el decisor vivo."""
-    import dataclasses as dc
-
-    from app.bot_das import ejecutor as ej
-    from app.bot_das.tipos import Fase as F
-
-    host, puerto = direccion_simulador
-    for nombre, valor in {"DAS_API_HOST": host, "DAS_API_PORT": str(puerto), "DAS_USUARIO": "usuario_prueba",
-                          "DAS_CLAVE": "clave-inventada-para-tests-7731", "DAS_CUENTA": "CUENTA_PRUEBA",
-                          "BOT_DAS_FUENTE": ej.FUENTE_PROCESO, "BOT_DAS_PERMITIR_ORDENES": "1"}.items():
-        monkeypatch.setenv(nombre, valor)
-    c = dc.replace(cfg, fase=F(fase))
-    e = ej.construir_desde_env(c, reloj, BACKEND, referencia=_ReferenciaVivo(), calendario=_CalendarioVivo(),
-                               hash_motor=lambda base: c.motor_hash, medir_desvio=lambda: 0.0, canales=[])
-    v = _EjecutorVivo(e, simulador, libro, reloj, dir_bot, motor_de_prueba)
-    try:
-        v.preparar()
-        v.senal()
-        tipo_envio = "orden_simulada" if fase == "sombra" else "orden_enviada"
-        v.paso_hasta(lambda: any(r.tipo == tipo_envio and r.datos.get("proposito") == "entrada_agregar"
-                                 for r in v.regs()), "envío de la entrada")
-        simulador.cotizar(_TICKER_VIVO, Decimal("3.45"), Decimal("3.47"), last=Decimal("3.45"), volumen=500_000)
-        libro_ordenes = e.cliente.emparejador.libro if fase == "sombra" else libro
-
-        def stops_vivos() -> list[dict]:
-            return [o for o in libro_ordenes.ordenes() if o["ticker"] == _TICKER_VIVO and o["tipo"] == "STOPLMTP"
-                    and o["estado"] in ("Accepted", "Partial")]
-
-        v.paso_hasta(lambda: len(stops_vivos()) == 2, "principal + emergencia")
+    v = vivo(Fase(fase))
+    v.preparar(_TICKER_VIVO)
+    libro_ordenes = v.e.cliente.emparejador.libro if fase == "sombra" else v.libro
+    _entrada_con_stops(v, libro_ordenes)
+    regs = v.regs()
+    fills = [r for r in regs if r.tipo == "fill"]
+    assert fills and (fase != "sombra" or all(f.datos["simulado"] is True for f in fills))
+    # el simulador manda el Execute ANTES del %TRADE: el caso de DC-02 (fill sin id + eco) está en este diario
+    assert [(f.datos["id_trade"] is None, f.datos["eco"]) for f in fills] == [(True, False), (False, True)]
+    assert (fase == "sombra") == any(r.tipo == "orden_simulada" for r in regs)
+    vivo_estado = v.e.decisor.estado
+    assert vivo_estado.posiciones[_TICKER_VIVO].neta_fills == -100
+    _comparar_con_el_vivo(reconstruir(regs, HOY), vivo_estado)
+    if fase == "canario":
+        principal = min(v.stops_vivos(_TICKER_VIVO), key=lambda o: o["stop"])
+        v.sim.cotizar(_TICKER_VIVO, principal["stop"] + Decimal("0.05"), principal["stop"] + Decimal("0.10"),
+                      last=principal["stop"] + Decimal("0.10"), volumen=500_000)
+        v.paso_hasta(lambda: v.libro.posiciones().get(_TICKER_VIVO) == 0 and not v.stops_vivos(_TICKER_VIVO),
+                     "stop y limpieza")
         v.drenar()
-        regs = v.regs()
-        fills = [r for r in regs if r.tipo == "fill"]
-        assert fills and (fase != "sombra" or all(f.datos["simulado"] is True for f in fills))
-        # el simulador manda el Execute ANTES del %TRADE: el caso de DC-02 (fill sin id + eco) está en este diario
-        assert [(f.datos["id_trade"] is None, f.datos["eco"]) for f in fills] == [(True, False), (False, True)]
-        assert (fase == "sombra") == any(r.tipo == "orden_simulada" for r in regs)
-        vivo = e.decisor.estado
-        assert vivo.posiciones[_TICKER_VIVO].neta_fills == -100
-        _comparar_con_el_vivo(reconstruir(regs, HOY), vivo)
-        if fase == "canario":
-            principal = min(stops_vivos(), key=lambda o: o["stop"])
-            simulador.cotizar(_TICKER_VIVO, principal["stop"] + Decimal("0.05"), principal["stop"] + Decimal("0.10"),
-                              last=principal["stop"] + Decimal("0.10"), volumen=500_000)
-            v.paso_hasta(lambda: libro.posiciones().get(_TICKER_VIVO) == 0 and not stops_vivos(), "stop y limpieza")
-            v.drenar()
-            assert vivo.posiciones[_TICKER_VIVO].neta_fills == 0
-            _comparar_con_el_vivo(reconstruir(v.regs(), HOY), vivo)
-            memoria = mod_diario.memoria_decisor(v.regs(), HOY)
-            assert memoria.stop_hoy == {_TICKER_VIVO}                    # el fill del stop quedó en el diario
-    finally:
-        e.parar()
+        assert vivo_estado.posiciones[_TICKER_VIVO].neta_fills == 0
+        _comparar_con_el_vivo(reconstruir(v.regs(), HOY), vivo_estado)
+        memoria = mod_diario.memoria_decisor(v.regs(), HOY)
+        assert memoria.stop_hoy == {_TICKER_VIVO}                    # el fill del stop quedó en el diario
+
+
+def test_R2_PER_2_DC_06_replace_del_stop_y_cisne_negro_cerrado_se_reconstruyen(vivo) -> None:
+    """R2-PER-2 (DC-06): con el ejecutor REAL contra el SimuladorDAS en CANARIO, (1) el principal se llena en PARTE →
+    el decisor REEMPLAZA la emergencia a lo que sigue corto (%OrderAct Replaced) y (2) el precio pasa de largo el
+    límite de la emergencia → cisne negro activado, informe periódico y «/cerrar XYZ SI». Tras cada paso, `reconstruir`
+    sobre SU diario coincide con decisor.estado: órdenes (qty/lvqty tras el REPLACE), fills, neta, lotes, bs y
+    sin_reentrada_hasta_sigue."""
+    from app.bot_das import comandos
+
+    v = vivo(Fase.CANARIO)
+    v.preparar(_TICKER_VIVO)
+    estado = v.e.decisor.estado
+    principal, emergencia = _entrada_con_stops(v, v.libro)
+    assert (principal["qty"], emergencia["qty"]) == (100, 100)
+    tok_emergencia = emergencia["token"]
+
+    # (1) fill PARCIAL de una salida: el principal dispara y solo hay 50 acciones al ask (la otra mitad queda viva)
+    v.sim.cotizar(_TICKER_VIVO, principal["stop"], principal["stop"] + Decimal("0.01"),
+                  last=principal["stop"] + Decimal("0.01"), volumen=500_000, tamano_ask=50)
+
+    def emergencia_sim() -> dict:
+        return next(o for o in v.libro.ordenes() if o["token"] == tok_emergencia)
+
+    v.paso_hasta(lambda: estado.posiciones[_TICKER_VIVO].neta_fills == -50, "fill parcial del principal")
+    v.paso_hasta(lambda: emergencia_sim()["lvqty"] == 50 and estado.ordenes[tok_emergencia].qty == 50,
+                 "REPLACE de la emergencia a 50")
+    v.drenar()
+    regs = v.regs()
+    assert any(r.tipo == "replace_intencion" and r.datos.get("token") == tok_emergencia for r in regs)
+    assert any(r.tipo == "orden_act" and r.datos.get("accion") == "Replaced" and r.datos.get("token") == tok_emergencia
+               for r in regs)
+    assert v.libro.posiciones()[_TICKER_VIVO] == -50
+    reconstruido = reconstruir(regs, HOY)
+    assert reconstruido.ordenes[tok_emergencia].qty == 50                # la qty TRAS el REPLACE, no la de la intención
+    _comparar_con_el_vivo(reconstruido, estado)
+
+    # (2) cisne negro: el precio pasa de largo el límite de la emergencia (ninguno de los dos stops puede llenar)
+    salto = (emergencia["precio"] * 2).quantize(Decimal("0.01"))
+    v.sim.cotizar(_TICKER_VIVO, salto, salto + Decimal("0.20"), last=salto + Decimal("0.10"), volumen=900_000)
+    v.paso_hasta(lambda: estado.posiciones[_TICKER_VIVO].bs is not None, "activación del cisne negro")
+    v.drenar()
+    assert estado.posiciones[_TICKER_VIVO].estado is EstadoTicker.BS
+    _comparar_con_el_vivo(reconstruir(v.regs(), HOY), estado)
+    # un informe de la cadencia (60 s después de la activación)
+    v.reloj.avanzar(61)
+    v.paso_hasta(lambda: estado.posiciones[_TICKER_VIVO].bs.informes >= 1, "informe periódico del cisne negro")
+    v.drenar()
+    assert estado.posiciones[_TICKER_VIVO].bs is not None
+    _comparar_con_el_vivo(reconstruir(v.regs(), HOY), estado)
+
+    # /cerrar XYZ SI: la emergencia se cancela antes y se compra lo que sigue corto
+    chat = 111
+    c = comandos.parsear(f"/cerrar {_TICKER_VIVO} SI", chat, frozenset({chat}), id_comando="tg:r2per2")
+    assert c is not None and c.requiere == comandos.REQUIERE_SI
+    v.e.buzon.al_comando(c)
+    v.drenar()
+    for _ in range(20):                    # E2-03: la compra sale tras ver la emergencia cancelada (esperas de 0,5 s)
+        if estado.posiciones[_TICKER_VIVO].neta_fills == 0 and estado.posiciones[_TICKER_VIVO].bs is None:
+            break
+        v.reloj.avanzar(0.5)
+        v.drenar(0.1)
+    else:
+        pytest.fail(f"cierre humano del cisne negro sin terminar; diario {[r.tipo for r in v.regs()][-15:]}")
+    v.drenar()
+    pos = estado.posiciones[_TICKER_VIVO]
+    assert pos.sin_reentrada_hasta_sigue is True and v.libro.posiciones()[_TICKER_VIVO] == 0
+    regs = v.regs()
+    assert [r.datos.get("evento") for r in regs if r.tipo == "bs" and r.datos.get("ticker") == _TICKER_VIVO][-1] == "cerrado"
+    reconstruido = reconstruir(regs, HOY)
+    assert reconstruido.posiciones[_TICKER_VIVO].bs is None
+    assert reconstruido.posiciones[_TICKER_VIVO].sin_reentrada_hasta_sigue is True
+    _comparar_con_el_vivo(reconstruido, estado)
 
 
 def test_memoria_decisor_idempotente_y_sin_orden() -> None:

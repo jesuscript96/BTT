@@ -1080,3 +1080,81 @@ def test_A_06_comandos_por_protocolo() -> None:
     from app.bot_das.protocolo import cmd_get
     assert R.COMANDO_BP == cmd_get("BP") == "GET BP"
     assert R.COMANDO_ORDENES == cmd_get("ORDERS") == "GET ORDERS"
+
+
+# ── R2-SAL-2 (D2-10): el cierre humano rechazado usa la neta de «cerrar todo» ─
+def _pos_cierre(fills: int, das: Optional[int], lotes: Optional[list[Lote]] = None) -> PosicionTicker:
+    return PosicionTicker(ticker=TICKER, lotes={lote.id: lote for lote in (lotes or [])}, neta_fills=fills,
+                          neta_das=das)
+
+
+def _lote_cerrado(llenas: int = 0) -> Lote:
+    return Lote(id="LC", strategy_id="prueba-1", estrategia="PM (A) prueba", ticker=TICKER, direccion="Short",
+                pedidas=100, llenas=llenas, precio_medio=D("9.50"), nivel_stop=D("10"), estado=EstadoLote.CERRADO)
+
+
+def _cierre_humano(qty: int = 100, notas: str = "PostOnly would cross") -> Orden:
+    return orden(proposito=Proposito.CIERRE_HUMANO, lado=Lado.COMPRA, qty=qty, notas=notas, lote_id=None, nivel=None)
+
+
+def test_R2_SAL_2_cierre_humano_de_una_manual_pura_se_reintenta_con_la_neta_de_das() -> None:
+    """R2-SAL-2: fills 0 y DAS −100 (sin lotes) → reintento de 100, y el aviso dice «neta -100», no «neta 0»."""
+    tokens = Tokens()
+    acciones = decidir(_cierre_humano(), REINTENTAR, _pos_cierre(0, -100), [], CFG, tokens, cot(), HORA)
+    assert anotacion(acciones, "rechazo")["decision"] == "reintento"
+    assert [(e.orden.lado, e.orden.qty, e.orden.proposito) for e in de_tipo(acciones, EnviarOrden)] == [
+        (Lado.COMPRA, 100, Proposito.CIERRE_HUMANO)]
+    assert len(tokens.dados) == 1
+    texto = aviso(acciones).texto
+    assert "neta -100 (fills 0, DAS -100)" in texto and "neta 0" not in texto
+
+
+def test_R2_SAL_2_cierre_humano_recalcular_bp_lleva_la_neta_de_das(catalogo: list[dict]) -> None:
+    """R2-SAL-2: el caso del verificador («Not Enough Buying Power») → GET BP y el reintento programado con 100."""
+    o = _cierre_humano(notas="Not Enough Buying Power")
+    acciones = decidir(o, tratamiento(catalogo, "bp_insuficiente"), _pos_cierre(0, -100), [], CFG, Tokens(), cot(),
+                       HORA)
+    assert anotacion(acciones, "rechazo")["decision"] == "reintento"
+    assert [p.datos["qty"] for p in de_tipo(acciones, Programar)] == [100]
+    assert "neta -100 (fills 0, DAS -100)" in aviso(acciones).texto
+
+
+@pytest.mark.parametrize("fills, das, vivas, esperado", [
+    pytest.param(0, -60, [], 60, id="R2-SAL-2-manual_pura_recorta_a_das"),
+    pytest.param(-100, -150, [], 100, id="R2-SAL-2-mismo_signo_el_minimo"),
+    pytest.param(-150, -100, [], 100, id="R2-SAL-2-mismo_signo_el_minimo_de_das"),
+    pytest.param(-100, None, [], 100, id="R2-SAL-2-sin_das_los_fills"),
+    pytest.param(0, -100, [_tp_vivo(30)], 70, id="R2-SAL-2-descuenta_otras_salidas_vivas"),
+])
+def test_R2_SAL_2_tope_del_cierre_humano(fills: int, das: Optional[int], vivas: list[Orden], esperado: int) -> None:
+    acciones = decidir(_cierre_humano(), REINTENTAR, _pos_cierre(fills, das), vivas, CFG, Tokens(), cot(), HORA)
+    assert [e.orden.qty for e in de_tipo(acciones, EnviarOrden)] == [esperado]
+
+
+def test_R2_SAL_2_signos_distintos_no_reintenta() -> None:
+    """R2-SAL-2: fills −100 y DAS +50 → neta_para_cerrar 0: sin reintento ni token (nunca comprar a ciegas)."""
+    tokens = Tokens()
+    acciones = decidir(_cierre_humano(), REINTENTAR, _pos_cierre(-100, 50), [], CFG, tokens, cot(), HORA)
+    assert de_tipo(acciones, EnviarOrden) == [] and tokens.dados == []
+    assert anotacion(acciones, "rechazo")["decision"] == "nada_que_reducir"
+
+
+def test_R2_SAL_2_das_sin_confirmar_no_se_compra_en_el_reintento() -> None:
+    """R2-SAL-2 / D2-02: fills 0, DAS −100 y un lote CERRADO hoy: puede ser el %POS atrasado del cierre del bot →
+    sin reintento (lo retoma «cerrar todo» tras GET POSITIONS), y el aviso da la cifra de DAS, no «neta 0»."""
+    tokens = Tokens()
+    acciones = decidir(_cierre_humano(), REINTENTAR, _pos_cierre(0, -100, [_lote_cerrado()]), [], CFG, tokens,
+                       cot(), HORA)
+    assert de_tipo(acciones, EnviarOrden) == [] and tokens.dados == []
+    assert anotacion(acciones, "rechazo")["decision"] == "nada_que_reducir"
+    texto = aviso(acciones).texto
+    assert "DAS dice neta -100" in texto and "neta 0" not in texto and "atrasado" in texto
+
+
+def test_R2_SAL_2_las_salidas_del_bot_siguen_con_la_neta_de_fills() -> None:
+    """R2-SAL-2: solo el CIERRE_HUMANO mira DAS; un TP rechazado con fills 0 y DAS −100 sigue sin reintento (D2-10)."""
+    acciones = decidir(orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100), REINTENTAR,
+                       _pos_cierre(0, -100), [], CFG, Tokens(), cot(), HORA)
+    assert de_tipo(acciones, EnviarOrden) == []
+    assert anotacion(acciones, "rechazo")["decision"] == "nada_que_reducir"
+    assert "Ticker: normal, neta 0 (DAS -100)" in aviso(acciones).texto

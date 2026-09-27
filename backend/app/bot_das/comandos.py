@@ -60,6 +60,7 @@ LAS TRAMPAS.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import logging
@@ -70,6 +71,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -159,6 +161,9 @@ ARG_MAX_CARACTERES = 80
 CHAT_ID_CUADRO = 0                        # los botones del cuadro no tienen chat
 MASCARA = "*****"
 FICHERO_OFFSET_TELEGRAM = "telegram_offset"   # C-02: estado/telegram_offset (el ejecutor pasa dir_estado / esto)
+VIGENCIA_OFFSET_TELEGRAM_S = 6 * 86400.0      # R2-CMD-1: Telegram rebaraja los update_id tras una semana sin updates
+UPDATES_RECORDADOS = 200                      # R2-CMD-1: update_id ya entregados que se recuerdan (deduplicación)
+DESFASE_FUTURO_OFFSET_S = 300.0               # R2-CMD-1: un ts del fichero más adelantado que esto no es de fiar
 
 _PATRON_TICKER = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _PATRON_TOKEN_URL = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
@@ -794,13 +799,20 @@ class ReceptorTelegram:
     """getUpdates por long polling → `al_comando(Comando)` (R-M-04, R-Q-01; §3.10, §6.1 hilo «telegram-recibo»).
 
     HiloVigilado; `urllib` (nunca httpx: la URL lleva el token); `offset` =
-    último update_id + 1 (confirma lo leído). C-02: con `ruta_offset`
-    (`estado/telegram_offset`, lo pasa el ejecutor) el offset y el último
-    update_id se persisten de forma atómica ANTES de entregar cada comando y
-    se cargan al construir: tras un reinicio rápido no se repite el último
-    «/cerrar X N SI» (los update_id < offset se ignoran), y `parar()` hace un
-    getUpdates final con timeout 0 para que Telegram dé lo leído por
-    confirmado. Sin `ruta_offset` el offset vive solo en memoria (tests).
+    último update_id + 1 (confirma lo leído). C-02 / R2-CMD-1: con
+    `ruta_offset` (`estado/telegram_offset`, lo pasa el ejecutor) se persiste
+    de forma atómica, ANTES de entregar cada comando, {offset,
+    ultimo_update_id, token_sha256, ts, entregados} (entregados = los últimos
+    200 update_id procesados). Al construir se cargan SOLO si el sha256 del
+    token coincide y `ts` tiene menos de 6 días (Telegram rebaraja la
+    secuencia tras una semana sin updates; un offset viejo o de otro bot
+    dejaría al receptor sordo); si no, offset 0 y sin memoria (la caducidad de
+    120 s por fecha del mensaje protege). La deduplicación es por PERTENENCIA
+    a `entregados`, no por «uid < offset»: un update_id menor que el offset
+    que no se procesó (la secuencia se reinició) se acepta y el offset se
+    reajusta. Así un reinicio rápido no repite el último «/cerrar X N SI», y
+    `parar()` hace un getUpdates final con timeout 0 para que Telegram dé lo
+    leído por confirmado. Sin `ruta_offset` todo vive solo en memoria (tests).
     Filtra el chat_id ANTES de
     parsear; ignora lo que no sea un mensaje de texto (fotos, ediciones) y
     los mensajes más viejos que `caducidad_s` (reinicio con cola vieja).
@@ -828,6 +840,8 @@ class ReceptorTelegram:
         self._ssl = _contexto_ssl() if self._api.startswith("https") else None
         self.offset = 0
         self.ultimo_update_id: Optional[int] = None
+        self._uids_entregados: deque[int] = deque(maxlen=UPDATES_RECORDADOS)   # R2-CMD-1: dedupe persistido
+        self._hash_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
         self.errores = 0
         self.entregados = 0
         self._ruta_offset = Path(ruta_offset) if ruta_offset is not None else None
@@ -850,7 +864,14 @@ class ReceptorTelegram:
 
     # ── offset persistido (C-02) ──
     def _cargar_offset(self) -> None:
-        """Lee `estado/telegram_offset` si existe: lo ya entregado no se vuelve a entregar tras un reinicio (C-02)."""
+        """Lee `estado/telegram_offset` si es de ESTE token y reciente (C-02, R2-CMD-1); si no, offset 0 y sin memoria.
+
+        Se descarta entero (offset, último update_id y entregados) si falta o
+        no casa el sha256 del token, o si `ts` falta, tiene 6 días o más, o
+        está más de 5 min en el futuro: un offset así puede quedar por encima
+        de la secuencia nueva de Telegram y dejar al bot sordo. Sin estado, la
+        caducidad de 120 s por fecha del mensaje evita repetir comandos viejos.
+        """
         if self._ruta_offset is None:
             return
         try:
@@ -861,6 +882,20 @@ class ReceptorTelegram:
             logger.warning("[COMANDOS] %s ilegible (%s): se empieza sin offset", self._ruta_offset.name, exc)
             return
         if not isinstance(datos, dict):
+            logger.warning("[COMANDOS] %s con forma inesperada: se empieza sin offset", self._ruta_offset.name)
+            return
+        if datos.get("token_sha256") != self._hash_token:
+            logger.warning("[COMANDOS] %s es de otro token (o no lleva huella): se descarta, offset 0",
+                           self._ruta_offset.name)
+            return
+        ts = datos.get("ts")
+        if type(ts) not in (int, float):
+            logger.warning("[COMANDOS] %s sin fecha: se descarta, offset 0", self._ruta_offset.name)
+            return
+        edad = self._reloj.epoch() - float(ts)
+        if not (-DESFASE_FUTURO_OFFSET_S < edad < VIGENCIA_OFFSET_TELEGRAM_S):
+            logger.warning("[COMANDOS] %s de hace %.0f s (vigencia %.0f s): se descarta, offset 0",
+                           self._ruta_offset.name, edad, VIGENCIA_OFFSET_TELEGRAM_S)
             return
         offset = datos.get("offset")
         if type(offset) is int and offset >= 0:
@@ -868,15 +903,25 @@ class ReceptorTelegram:
         ultimo = datos.get("ultimo_update_id")
         if type(ultimo) is int:
             self.ultimo_update_id = ultimo
+        uids = datos.get("entregados")
+        if isinstance(uids, list):
+            self._uids_entregados.extend(u for u in uids if type(u) is int)
 
     def _guardar_offset(self) -> None:
-        """Escritura atómica (tmp + replace) de {offset, ultimo_update_id}, ANTES de entregar (como mucho una vez)."""
+        """Escritura atómica (tmp + replace) de {offset, ultimo_update_id, token_sha256, ts, entregados}.
+
+        Se llama ANTES de entregar cada comando (como mucho una vez). `ts`
+        renueva la vigencia de 6 días; `entregados` son los últimos 200
+        update_id procesados (R2-CMD-1).
+        """
         if self._ruta_offset is None:
             return
         tmp = self._ruta_offset.with_name(self._ruta_offset.name + ".tmp")
+        datos = {"offset": self.offset, "ultimo_update_id": self.ultimo_update_id,
+                 "token_sha256": self._hash_token, "ts": self._reloj.epoch(),
+                 "entregados": list(self._uids_entregados)}
         try:
-            tmp.write_text(json.dumps({"offset": self.offset, "ultimo_update_id": self.ultimo_update_id}),
-                           encoding="utf-8")
+            tmp.write_text(json.dumps(datos), encoding="utf-8")
             tmp.replace(self._ruta_offset)
         except OSError as exc:  # noqa: BLE001 — frontera de fichero: se sigue; en memoria el offset ya avanzó
             logger.warning("[COMANDOS] no puedo guardar %s: %s", self._ruta_offset.name, exc)
@@ -902,16 +947,25 @@ class ReceptorTelegram:
             return None
         entregados = 0
         avanzado = False
+        tope = -1                       # mayor update_id de ESTE lote: el offset nuevo es tope + 1 (R2-CMD-1)
         for u in datos:
             if not isinstance(u, dict):
                 continue
             uid = u.get("update_id")
             if type(uid) is int:
-                if uid < self.offset:
-                    # C-02: ya entregado (offset persistido); Telegram lo repite si no llegó a confirmarlo
+                tope = max(tope, uid)
+                if tope + 1 != self.offset:
+                    if tope + 1 < self.offset:
+                        # R2-CMD-1: la secuencia de Telegram se reinició; se acepta y el offset se reajusta
+                        logger.warning("[COMANDOS] update %d por debajo del offset %d: secuencia nueva, se reajusta",
+                                       uid, self.offset)
+                    self.offset = tope + 1
+                    avanzado = True
+                if uid in self._uids_entregados:
+                    # C-02 / R2-CMD-1: ya procesado (memoria persistida); Telegram lo repite si no llegó a confirmarlo
                     logger.info("[COMANDOS] update %d ya entregado antes: se ignora", uid)
                     continue
-                self.offset = uid + 1
+                self._uids_entregados.append(uid)
                 self.ultimo_update_id = uid
                 avanzado = True
             comando = self._comando_de(u)

@@ -32,7 +32,9 @@ LAS TRAMPAS.
   * `TA` se compara normalizado (sin espacios, en mayúsculas): el parser lo
     deja tal cual llega del socket. `Q` («quotation resumed», manual
     L1113-1124) es todavía PARADO (E1-05): solo cotiza antes del cruce de
-    reapertura; se reabre con `T` o sin TA.
+    reapertura; se reabre con `T` o sin TA. R2-DEC-3: si DAS no manda el `T`,
+    `MercadoDAS` da el símbolo por reabierto con prints nuevos 5 s seguidos en
+    `Q` y le quita el TA (aquí se ve como «se negocia»).
   * E1-01: en un halt que NO es LULD (`H`/`Q`) el `last` durante el halt es el
     print de ANTES de parar, así que la subida medida sale ~0 % y el tope del
     250 % de R-F-05 no se puede medir al decidir. Por eso la salida por OPEN
@@ -100,7 +102,7 @@ DECISIONES = ("mantener", "cerrar_mercado", "cerrar_limite_pm", "control_humano"
 PAUSA_LULD_MIN = 5              # manual L1128-1130: «If TA is P, the trading pause will be 5 minutes»
 T12_MIN_DEFECTO = 240           # §3.18: T12 presunto por duración [PENDIENTE fuente externa]; el cuadro lo trae en halts.t12_min
 MARGEN_LIMITE_PM_PCT_DEFECTO = Decimal("5")   # §7 halts.margen_limite_pm_pct (R-F-06: límite que remueve liquidez)
-TA_PARADO = ("H", "P", "Q")     # E1-05: Q = solo cotización antes del cruce; se reabre con T o sin TA
+TA_PARADO = ("H", "P", "Q")     # E1-05: Q = solo cotiza antes del cruce; reabre con T, sin TA o por prints (R2-DEC-3)
 ANOTACION_STOPS_PM = "halt_stops_pm"          # E1-04: el diario registra el ensanche de los stops en premercado
 # E1-04: la serie/versión y la clave del temporizador son las MISMAS cadenas que usa el módulo de stops
 # (ajuste (a): aquí no se importa); un test comprueba que coinciden.

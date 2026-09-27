@@ -5,7 +5,7 @@
   "generado_por": "fixture:tests/bot_das",
   "motor_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "estrategias_hash": "sha256:2fbf7294b1c4ab42568ff343fe0ab12db9a2954c8e5e3b3d0f08b55554b57bc6",
-  "sha256": "46b3934d4ebf644fcf3067158723b34f96e3fcc8934a5f9b3b73ec74b4dc607b",
+  "sha256": "557e511537f3a83789f29604ce3bbae601528c23cfd228e4cd3043ea0d7d4146",
   "fase": "sombra",
   "vigilando": true,
   "pausar_entradas": false,
@@ -38,7 +38,8 @@
     "distancia_max_ultimo_bid_pct": 5.0,
     "retraso_max_senal_pct": 1.0,
     "fraccion_max_volumen_acum": null,
-    "reintentos_rechazo_conocido": 2
+    "reintentos_rechazo_conocido": 2,
+    "alto_riesgo_si": {}
   },
   "salidas": {
     "por_hora": {

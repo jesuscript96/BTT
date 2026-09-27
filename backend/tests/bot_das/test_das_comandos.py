@@ -5,6 +5,7 @@ El token de los tests es INVENTADO (no es de ninguna cuenta).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import threading
@@ -799,7 +800,10 @@ def test_C_02_dos_receptores_seguidos_no_repiten_el_mismo_update(servidor_tg, re
     primeros: list[Comando] = []
     assert _receptor(servidor_tg, reloj, primeros, ruta_offset=ruta).sondear() == 1
     assert [(c.nombre, c.args) for c in primeros] == [("cerrar", ["ABC", "100"])]
-    assert json.loads(ruta.read_text(encoding="utf-8")) == {"offset": 901, "ultimo_update_id": 900}
+    guardado = json.loads(ruta.read_text(encoding="utf-8"))
+    assert (guardado["offset"], guardado["ultimo_update_id"], guardado["entregados"]) == (901, 900, [900])
+    assert guardado["token_sha256"] == hashlib.sha256(TOKEN_FALSO.encode("utf-8")).hexdigest()
+    assert guardado["ts"] == reloj.epoch() and TOKEN_FALSO not in ruta.read_text(encoding="utf-8")
     segundos: list[Comando] = []
     rec2 = _receptor(servidor_tg, reloj, segundos, ruta_offset=ruta)      # relanzado por el supervisor
     assert rec2.offset == 901
@@ -863,6 +867,106 @@ def test_C_02_fichero_de_offset_corrupto_empieza_de_cero(servidor_tg, reloj, dir
     caplog.set_level(logging.WARNING, logger="btt.bot_das.comandos")
     rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
     assert rec.offset == 0 and "ilegible" in caplog.text
+
+
+# ═══════════ R2-CMD-1: el offset persistido no deja al bot sordo ═══════════
+def _fichero_offset(ruta: Path, *, offset: int, entregados: list[int], ts: float,
+                    token: str = TOKEN_FALSO) -> None:
+    ruta.write_text(json.dumps({"offset": offset, "ultimo_update_id": offset - 1, "ts": ts, "entregados": entregados,
+                                "token_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest()}), encoding="utf-8")
+
+
+def test_R2_CMD_1_offset_de_otro_token_se_descarta(servidor_tg, reloj, dir_bot, caplog):
+    """R2-CMD-1: un telegram_offset escrito con OTRO token (bot cambiado) se descarta: offset 0 y sin memoria."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    _fichero_offset(ruta, offset=901, entregados=[900], ts=reloj.epoch(), token="999:OTRO_token")
+    caplog.set_level(logging.WARNING, logger="btt.bot_das.comandos")
+    rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
+    assert rec.offset == 0 and rec.ultimo_update_id is None and "otro token" in caplog.text
+    ahora = int(reloj.epoch())
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(900, JAUME, "/estado", ahora)]}))
+    assert rec.sondear() == 1, "sin la memoria del otro bot, el 900 de este bot se entrega"
+
+
+def test_R2_CMD_1_offset_sin_huella_del_formato_viejo_se_descarta(servidor_tg, reloj, dir_bot):
+    """R2-CMD-1: el formato de la primera ronda ({offset, ultimo_update_id}, sin hash ni ts) no se usa."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    ruta.write_text(json.dumps({"offset": 901, "ultimo_update_id": 900}), encoding="utf-8")
+    assert _receptor(servidor_tg, reloj, [], ruta_offset=ruta).offset == 0
+
+
+@pytest.mark.parametrize("edad_s", [6 * 86400.0, 30 * 86400.0, -3600.0], ids=["6 dias", "30 dias", "futuro"])
+def test_R2_CMD_1_offset_viejo_se_descarta(servidor_tg, reloj, dir_bot, edad_s):
+    """R2-CMD-1: con ts de 6 días o más (Telegram rebaraja la secuencia) o en el futuro → offset 0."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    _fichero_offset(ruta, offset=901, entregados=[900], ts=reloj.epoch() - edad_s)
+    rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
+    assert rec.offset == 0 and rec.ultimo_update_id is None
+
+
+def test_R2_CMD_1_offset_reciente_del_mismo_token_se_usa(servidor_tg, reloj, dir_bot):
+    """R2-CMD-1: mismo token y menos de 6 días → se recuperan offset y memoria de entregados."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    _fichero_offset(ruta, offset=901, entregados=[899, 900], ts=reloj.epoch() - 5 * 86400.0)
+    rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
+    assert (rec.offset, rec.ultimo_update_id) == (901, 900)
+
+
+def test_R2_CMD_1_uid_menor_que_el_offset_no_entregado_se_entrega(servidor_tg, reloj, dir_bot, caplog):
+    """R2-CMD-1: la secuencia se reinició (uid 5 con offset 901, nunca entregado) → se entrega y el offset se reajusta."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    _fichero_offset(ruta, offset=901, entregados=[899, 900], ts=reloj.epoch())
+    ahora = int(reloj.epoch())
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(5, JAUME, "/cerrar abc 100 SI", ahora),
+                                                                 _update(6, JAUME, "/estado", ahora)]}))
+    servidor_tg.respuestas.append((200, {"ok": True, "result": []}))
+    recibidos: list[Comando] = []
+    caplog.set_level(logging.WARNING, logger="btt.bot_das.comandos")
+    rec = _receptor(servidor_tg, reloj, recibidos, ruta_offset=ruta)
+    assert rec.sondear() == 2
+    assert [(c.nombre, c.args) for c in recibidos] == [("cerrar", ["ABC", "100"]), ("estado", [])]
+    assert rec.offset == 7 and "secuencia nueva" in caplog.text
+    guardado = json.loads(ruta.read_text(encoding="utf-8"))
+    assert guardado["offset"] == 7 and guardado["entregados"][-2:] == [5, 6]
+    rec.sondear()
+    consulta = urllib.parse.parse_qs(urllib.parse.urlsplit(servidor_tg.peticiones[-1]).query)
+    assert consulta["offset"] == ["7"], "la siguiente consulta pide desde el offset reajustado"
+
+
+def test_R2_CMD_1_uid_ya_entregado_no_se_repite(servidor_tg, reloj, dir_bot):
+    """R2-CMD-1: un update_id que está en la memoria persistida no se entrega otra vez, aunque sea >= offset."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    _fichero_offset(ruta, offset=0, entregados=[900], ts=reloj.epoch())
+    ahora = int(reloj.epoch())
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(900, JAUME, "/cerrar abc 100 SI", ahora),
+                                                                 _update(901, JAUME, "/estado", ahora)]}))
+    recibidos: list[Comando] = []
+    rec = _receptor(servidor_tg, reloj, recibidos, ruta_offset=ruta)
+    assert rec.sondear() == 1 and [c.nombre for c in recibidos] == ["estado"]
+    assert rec.offset == 902
+
+
+def test_R2_CMD_1_memoria_de_entregados_acotada_a_200(servidor_tg, reloj, dir_bot):
+    """R2-CMD-1: se recuerdan los ÚLTIMOS 200 update_id (el fichero no crece sin fin)."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    ahora = int(reloj.epoch())
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(i, JAUME, "/estado", ahora)
+                                                                 for i in range(1, 251)]}))
+    rec = _receptor(servidor_tg, reloj, [], ruta_offset=ruta)
+    assert rec.sondear() == 250
+    guardado = json.loads(ruta.read_text(encoding="utf-8"))
+    assert guardado["entregados"] == list(range(51, 251)) and guardado["offset"] == 251
+
+
+def test_R2_CMD_1_caducidad_de_120_s_sigue_vigente_sin_offset(servidor_tg, reloj, dir_bot):
+    """R2-CMD-1: descartado el fichero (offset 0), un comando de hace más de 120 s no se ejecuta."""
+    ruta = dir_bot / "estado" / C.FICHERO_OFFSET_TELEGRAM
+    _fichero_offset(ruta, offset=901, entregados=[900], ts=reloj.epoch() - 7 * 86400.0)
+    viejo = int(reloj.epoch()) - 121
+    servidor_tg.respuestas.append((200, {"ok": True, "result": [_update(900, JAUME, "/cerrar abc 100 SI", viejo)]}))
+    recibidos: list[Comando] = []
+    rec = _receptor(servidor_tg, reloj, recibidos, ruta_offset=ruta)
+    assert rec.offset == 0 and rec.sondear() == 0 and recibidos == []
 
 
 # ═══════════════════════════ higiene ═══════════════════════════════════

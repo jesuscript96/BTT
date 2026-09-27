@@ -755,7 +755,9 @@ class Ejecutor:
             self._diario.anotar("reloj", desvio_s=desvio, puede_operar=True, texto=texto_reloj, regla="R-J-07")
             self._avisar_directo(Nivel.AVISO, f"Reloj: {texto_reloj} (R-J-07)", "reloj_arranque")
         if self._aviso_config:
-            self._avisar_directo(Nivel.AVISO, self._aviso_config, "config_respaldo")
+            # R2-PRO-3 (SEG-02): usar el último bueno bajó la fase a SOMBRA → el bot deja de operar dinero real: aviso 3
+            forzada = mod_config.AVISO_FASE_FORZADA in self._aviso_config
+            self._avisar_directo(Nivel.MAXIMO if forzada else Nivel.AVISO, self._aviso_config, "config_respaldo")
         # 5. estado desde el diario (H-2); A-02: el REPLACE confirmado se lee con el interruptor de la config
         # G2-02: un diario grande en el disco mecánico puede tardar: se lee y se reconstruye con el latido tocándose
         registros = self._con_latido("diario-leer", lambda: self._lector.leer(hoy))

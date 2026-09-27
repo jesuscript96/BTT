@@ -3158,3 +3158,210 @@ def test_d2_04_cierre_agotado_sin_confirmar_la_retirada_repone_solo_lo_no_cubier
     b.dar(b.das.recibir(f"CANCEL {viva[0].id_das}"))
     stops_ = b.enviadas(*STOPS, desde=marca)
     assert sorted((o.proposito.value, o.qty) for o in stops_) == [("stop_emergencia", 100), ("stop_principal", 100)]
+
+
+# ═══════════════════════════ segunda ronda de correcciones (27-sep) ══════
+def _banco_con_banda(cfg: Config, tmp_path: Path) -> Banco:
+    """k = 2 (k_max − 1: la banda de R-F-01 está armada) y una posición corta de 100 abierta en RTH, sin bandas aún."""
+    from app.bot_das.diario import MemoriaDecisor
+    b = Banco(cfg, tmp_path, memoria=MemoriaDecisor(k_halts_up={TICKER: 2}))
+    b.preparar()
+    abrir_posicion(b)
+    return b
+
+
+def _dar_bandas(b: Banco, ld: str = "3.00", lu: str = "4.05") -> None:
+    """Limit up 4,05: por encima del disparo del principal (4,00), que no se recorta ni salta con el precio a 3,91."""
+    b.libro.bandas(TICKER, D(ld), D(lu))
+    b.dar(b.das.recibir(f"GET LDLU {TICKER}"))
+    assert b.mercado.simbolo(TICKER).limit_up == D(lu)
+
+
+def _enviar_banda(b: Banco) -> OrdenNueva:
+    """Con el ask a ≤ 4 % del limit up sale la MKT HALT_BANDA por lo que queda corto; sin tamaño al ask no llena."""
+    b.cotizar(TICKER, "3.90", "3.92", "3.91", tam_ask=0)
+    banda = b.enviadas(Proposito.HALT_BANDA)
+    assert [o.qty for o in banda] == [100]
+    assert b.pos().neta_fills == -100
+    return banda[0]
+
+
+def test_r2_dec_1_tp_sin_libres_por_una_halt_banda_viva_se_reprograma_y_cruza_al_retirarla(cfg: Config,
+                                                                                           tmp_path: Path) -> None:
+    """R2-DEC-1 (G1B-05 parcial, director): el TP sin libro vence con 0 acciones libres (una HALT_BANDA viva cubre toda
+    la posición): NO se pierde en silencio: se anota y el MISMO `tp_cruce` se vuelve a mirar cada 0,5 s; al retirarse la
+    banda a los 2 s (G1A-01), el cruce del TP sale."""
+    b = _banco_con_banda(cfg, tmp_path)
+    b.dar([f"$Quote {TICKER} A:3.44 B:3.46 V:500000 L:3.45"])          # libro cruzado: el TP no puede agregar (D2-12)
+    acciones = _salida_motor(b, salida())
+    assert anotaciones(acciones, "salida_sin_libro")
+    clave = next(k for k in b.temporizadores if k.startswith("tp_cruce:"))
+    b.avanzar(1)
+    _dar_bandas(b)
+    banda = _enviar_banda(b)
+    marca = b.marca()
+    b.avanzar(1.2)                                                      # vence el tp_cruce con la banda viva
+    assert not b.enviadas(Proposito.TP_CRUCE)
+    sin_libres = anotaciones(b.desde(marca), "salida_sin_libres")
+    assert len(sin_libres) == 1 and sin_libres[0].datos["clave"] == clave
+    assert sin_libres[0].datos["regla"].startswith("R2-DEC-1")
+    assert clave in b.temporizadores and b.temporizadores[clave][0] - b.ahora() <= 0.5 + 1e-9
+    b.avanzar(2.5)                                                      # halt_cierre_verificar retira la banda
+    assert b.orden(banda.token).estado is EstadoOrden.CANCELED
+    cruce = b.enviadas(Proposito.TP_CRUCE)
+    assert [(o.qty, o.precio) for o in cruce] == [(50, D("3.92"))]         # al ask, dentro del techo del 3 %
+    assert clave not in b.temporizadores
+    assert len(anotaciones(b.historial, "salida_sin_libres")) == 1       # una vez por clave, no cada 0,5 s
+    assert b.pos().neta_fills == -100
+
+
+def test_r2_dec_1_sin_libres_60_s_avisa_2_y_sigue_mirando_cada_5_s(cfg: Config, tmp_path: Path) -> None:
+    """R2-DEC-1 (tope): si la compra de cierre que deja 0 libres no se retira, a los 60 s reprogramando → Avisar(2) UNA
+    vez y se sigue mirando cada 5 s (nunca se compra de más ni se abandona el TP)."""
+    b = _banco_con_banda(cfg, tmp_path)
+    b.dar([f"$Quote {TICKER} A:3.44 B:3.46 V:500000 L:3.45"])
+    _salida_motor(b, salida())
+    clave = next(k for k in b.temporizadores if k.startswith("tp_cruce:"))
+    b.avanzar(1)
+    _dar_bandas(b)
+    _enviar_banda(b)
+    b.temporizadores.pop(f"halt_cierre_verificar:{TICKER}")             # la banda no se retira (p. ej. DAS no contesta)
+    marca = b.marca()
+    b.avanzar(59.5)
+    assert not [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("sin_libres:")]
+    b.avanzar(1.5)
+    aviso = [a for a in b.desde(marca) if isinstance(a, Avisar) and a.clave == f"sin_libres:{clave}"]
+    assert len(aviso) == 1 and aviso[0].nivel is Nivel.AVISO
+    assert round(b.temporizadores[clave][0] - b.ahora(), 3) > 0.5         # ya cada 5 s
+    b.avanzar(20)
+    assert len([a for a in b.historial if isinstance(a, Avisar) and a.clave == f"sin_libres:{clave}"]) == 1
+    programas = [a for a in b.desde(marca) if isinstance(a, Programar) and a.clave == clave]
+    assert programas[-1].en_s == 5.0
+    assert not b.enviadas(Proposito.TP_CRUCE) and b.pos().neta_fills == -100
+
+
+def test_r2_dec_1_salida_del_motor_sin_libres_espera_y_sale_al_retirar_la_banda(cfg: Config, tmp_path: Path) -> None:
+    """R2-DEC-1: la salida del motor que llega con 0 libres (la HALT_BANDA viva cubre la posición) no se omite: espera
+    (se anota) y, retirada la banda, el TP agrega por lo que pide el evento."""
+    b = _banco_con_banda(cfg, tmp_path)
+    _dar_bandas(b)
+    banda = _enviar_banda(b)
+    acciones = _salida_motor(b, salida())
+    assert not anotaciones(acciones, "salida_omitida") and anotaciones(acciones, "salida_sin_libres")
+    assert anotaciones(acciones, "salida_en_espera") and f"salida_espera:{TICKER}" in b.temporizadores
+    assert not b.enviadas(Proposito.TP_AGREGAR, Proposito.TP_CRUCE)
+    b.cotizar(TICKER, "3.86", "3.92", "3.89", tam_ask=0)                # libro con hueco para agregar
+    b.avanzar(2.5)
+    assert b.orden(banda.token).estado is EstadoOrden.CANCELED
+    assert [o.qty for o in b.enviadas(Proposito.TP_AGREGAR)] == [50]
+
+
+def test_r2_dec_2_t1_con_last_viejo_al_reabrir_y_primer_print_a_300_pct_pasa_a_control_humano(cfg: Config,
+                                                                                               tmp_path: Path) -> None:
+    """R2-DEC-2 (E1-02 parcial): el TA:T llega con el `last` de antes del halt (subida 0 %: el tope no salta al reabrir)
+    y el primer print llega después a +300 %: en `halt_cierre_verificar` se vuelve a mirar el tope del T1 con el last de
+    ESE momento → la salida viva se retira, aviso MÁXIMO y CONTROL_HUMANO."""
+    from app.bot_das.diario import MemoriaDecisor
+    b = Banco(cfg, tmp_path, memoria=MemoriaDecisor(k_halts_up={TICKER: 3}))
+    b.preparar()
+    _a_halt(b, ta="H", ev=evento(stop=20.0))                           # stops lejos: el salto no es un cisne negro
+    salida_halt = b.enviadas(Proposito.HALT_OPEN)
+    assert [(o.tipo, o.precio) for o in salida_halt] == [(TipoOrden.LIMITE, D("14.17"))]
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("16.20"))                                 # la subasta a +300 %: la límite no llena
+    b.avanzar(1.2)                                                      # el T llega; el bot aún ve el last de 4,05
+    assert anotaciones(b.desde(marca), "halt_reapertura") and not anotaciones(b.desde(marca), "halt_tope_t1")
+    assert b.pos().estado is EstadoTicker.NORMAL
+    assert b.temporizadores[f"halt_cierre_verificar:{TICKER}"][2].get("reapertura") is True
+    b.cotizar(TICKER, "16.10", "16.30", "16.20")                        # el primer print real
+    b.avanzar(2)
+    tope = anotaciones(b.desde(marca), "halt_tope_t1")
+    assert len(tope) == 1 and tope[0].datos["cuando"] == "2 s tras reabrir"
+    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_humano:{TICKER}"
+               for a in b.desde(marca))
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO
+    assert b.orden(salida_halt[0].token).estado is EstadoOrden.CANCELED
+    cierres = b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA, Proposito.CIERRE_HUMANO)
+    assert all(o.tipo is TipoOrden.LIMITE and o.precio <= D("14.17") for o in cierres)
+    assert b.pos().neta_fills == -100
+
+
+def test_r2_dec_2_sin_superar_el_tope_la_verificacion_sigue_como_g1a_01(banco: Banco) -> None:
+    """R2-DEC-2: con el primer print por debajo del tope, `halt_cierre_verificar` solo retira la salida que no llenó
+    (G1A-01) y el ticker sigue NORMAL."""
+    b = banco
+    abrir_posicion(b)
+    b.libro.llenar_parcial(D("0.5"), TICKER)                            # la subasta solo llenará la mitad
+    b.libro.halt(TICKER, "H", "09:27:00")
+    b.cotizar(TICKER, "4.04", "4.06", "4.05")
+    b.avanzar(1.5)
+    salida_halt = b.enviadas(Proposito.HALT_OPEN)[0]
+    b.libro.llenar_parcial(D("1"), TICKER)
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("5.00"))
+    b.avanzar(1.2)
+    assert b.temporizadores[f"halt_cierre_verificar:{TICKER}"][2].get("reapertura") is True
+    b.cotizar(TICKER, "4.99", "5.01", "5.00", tam_ask=0)                # +23 %: muy por debajo del tope
+    b.avanzar(2)
+    assert not anotaciones(b.desde(marca), "halt_tope_t1")
+    assert anotaciones(b.desde(marca), "halt_salida_retirada")
+    assert b.pos().estado is EstadoTicker.NORMAL
+    assert b.orden(salida_halt.token).estado is EstadoOrden.CANCELED
+    assert b.pos().neta_fills == -50
+
+
+def test_r2_dec_3_ta_q_sin_t_con_prints_5_s_seguidos_reabre_y_no_vuelve_a_parar(banco: Banco) -> None:
+    """R2-DEC-3 (regresión E1-05): Q sigue siendo «parado», pero si DAS se queda en TA:Q y llegan prints nuevos (el
+    volumen del $Quote crece) durante 5 s seguidos, se trata como REAPERTURA; los TA:Q repetidos del SymStatus ya no
+    vuelven a dejar el ticker en HALT."""
+    b = banco
+    _a_halt(b, ta="H")
+    b.libro.halt(TICKER, "Q", "09:27:00")                               # solo cotización; DAS nunca manda el T
+    b.avanzar(1.5)
+    assert b.pos().estado is EstadoTicker.HALT and TICKER in b.decisor._halt_en_curso
+    marca = b.marca()
+    for i in range(1, 4):                                               # 2 s de prints: todavía parado
+        b.cotizar(TICKER, "4.04", "4.06", "4.05", volumen=500_000 + 1000 * i)
+        b.avanzar(1)
+    assert b.pos().estado is EstadoTicker.HALT and not anotaciones(b.desde(marca), "halt_reapertura_por_prints")
+    for i in range(4, 8):
+        b.cotizar(TICKER, "4.04", "4.06", "4.05", volumen=500_000 + 1000 * i)
+        b.avanzar(1)
+    assert len(anotaciones(b.desde(marca), "halt_reapertura_por_prints")) == 1
+    assert anotaciones(b.desde(marca), "halt_reapertura")
+    assert TICKER not in b.decisor._halt_en_curso and b.pos().estado is not EstadoTicker.HALT
+    halts_antes = len(anotaciones(b.historial, "halt"))
+    b.avanzar(5)                                                        # el SymStatus sigue diciendo Q cada segundo
+    assert len(anotaciones(b.historial, "halt")) == halts_antes
+    assert b.mercado.simbolo(TICKER).halt_desde is None and b.pos().estado is not EstadoTicker.HALT
+
+
+def test_r2_dec_4_cancelar_al_tener_id_de_stops_se_cancela_al_llegar_el_accept(banco: Banco,
+                                                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    """R2-DEC-4 (R2-STOPS-1): `Anotar("cancelar_al_tener_id")` de `stops.verificar_venta_exceso` se registra en el
+    cancelar-al-aceptar del decisor: la orden sin id se cancela en cuanto DAS la acepta. Y `_t_exceso_verificar` pasa
+    `pedidos_en_vuelo` (un CANCEL ya pedido no se repite)."""
+    from app.bot_das.reglas import stops as mod_stops
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.40", "3.46", "3.43")
+    b.das_contesta = False                                              # la orden sale pero DAS aún no la acepta
+    _salida_motor(b, salida(), bombear=False)
+    tp = b.enviadas(Proposito.TP_AGREGAR)[0]
+    assert b.orden(tp.token).id_das is None
+    vistos: list[Any] = []
+
+    def falso(*args: Any, **kwargs: Any) -> list[Accion]:
+        vistos.append(kwargs.get("pedidos_en_vuelo"))
+        return [Anotar("cancelar_al_tener_id", {"token": tp.token, "ticker": TICKER, "proposito": tp.proposito.value,
+                                                "qty": tp.qty, "motivo": "prueba R2-DEC-4", "regla": "R2-STOPS-1"})]
+
+    monkeypatch.setattr(mod_stops, "verificar_venta_exceso", falso)
+    b.procesar(Temporizador(f"exceso_verificar:{TICKER}", {"ticker": TICKER, "persecuciones": 0}))
+    assert vistos and isinstance(vistos[0], dict)
+    assert b.decisor._cancelar_al_aceptar.get(tp.token) == "prueba R2-DEC-4"
+    b.das_contesta = True
+    marca = b.marca()
+    b.dar(b.das.recibir(protocolo.cmd_neworder(tp)))                    # llega el Accept con id
+    assert [c.token for c in acciones_de(b.desde(marca), Cancelar)] == [tp.token]
+    assert b.orden(tp.token).estado is EstadoOrden.CANCELED

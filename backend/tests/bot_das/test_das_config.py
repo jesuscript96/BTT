@@ -39,7 +39,10 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "46b3934d4ebf644fcf3067158723b34f96e3fcc8934a5f9b3b73ec74b4dc607b"
+SHA_FIXTURE = "557e511537f3a83789f29604ce3bbae601528c23cfd228e4cd3043ea0d7d4146"   # R2-PER-1: + entrada.alto_riesgo_si
+# Rutas [C] añadidas en el código después del bloque JSON de §7 del documento (hasta que §7 las marque; el test
+# DC-09 comprueba que el documento no las marca ya como [A]/[T] y que no hay más que estas).
+CALIENTE_FUERA_DEL_DOC = frozenset({"entrada.alto_riesgo_si"})   # R2-PER-1 / D1-07
 
 
 # ── utilidades ─────────────────────────────────────────────────────────
@@ -321,6 +324,70 @@ def test_A_02_replace_share_es_abierta_es_opcional_con_defecto_de_tipos():
     assert "stops.replace_share_es_abierta" not in C.CALIENTE
     difs = {r: cal for r, _a, _d, cal in C.diferencias(cfg, _cfg(crudo))}
     assert difs.get("stops.replace_share_es_abierta") is False
+
+
+def test_R2_PER_1_alto_riesgo_si_en_el_esquema_de_entrada():
+    """R2-PER-1 (D1-07): `entrada.alto_riesgo_si` es un objeto con claves del conjunto cerrado CRITERIOS_ALTO_RIESGO
+    (las que lee capital.es_alto_riesgo) y valor > 0; {} (el defecto) = ningún corto es de alto riesgo."""
+    from app.bot_das.reglas import capital
+
+    D = Decimal
+    # el ejemplo lo lleva vacío y firmado; un fichero sin la clave también vale y sale con {}
+    assert _crudo()["entrada"]["alto_riesgo_si"] == {}
+    cfg = C.cargar(RUTA_EJEMPLO, CUENTA)
+    assert cfg.entrada["alto_riesgo_si"] == {}
+    assert capital.es_alto_riesgo(D("0.50"), D("300"), cfg.entrada.get("alto_riesgo_si") or None) is False
+    viejo = _crudo()
+    del viejo["entrada"]["alto_riesgo_si"]
+    assert C.validar(_firmar(viejo)) == []
+    assert _cfg(viejo).entrada["alto_riesgo_si"] == {}
+    # el conjunto cerrado es exactamente lo que entiende es_alto_riesgo: cada clave sola lo activa
+    assert set(C.CRITERIOS_ALTO_RIESGO) == {"precio_max", "tasa_corta_min_pct"}
+    assert capital.es_alto_riesgo(D("4"), None, {"precio_max": 5}) is True
+    assert capital.es_alto_riesgo(D("4"), D("300"), {"tasa_corta_min_pct": 300}) is True
+    assert capital.es_alto_riesgo(D("4"), D("300"), {"htb": 1}) is False     # una clave ajena se ignoraría: se rechaza
+    # válido: llega tal cual al decisor, que se lo pasa a es_alto_riesgo
+    bueno = _crudo()
+    bueno["entrada"]["alto_riesgo_si"] = {"precio_max": 5, "tasa_corta_min_pct": 300.0}
+    assert C.validar(_firmar(bueno)) == []
+    alto = _cfg(bueno).entrada["alto_riesgo_si"]
+    assert alto == {"precio_max": 5, "tasa_corta_min_pct": 300.0}
+    assert capital.es_alto_riesgo(D("4.99"), None, alto) is True
+    assert capital.es_alto_riesgo(D("5"), D("100"), alto) is False
+    # inválidos: lista, clave fuera del conjunto, umbral 0/negativo/bool/texto/null, no objeto
+    for malo_valor in (["precio_max"], {"htb": True}, {"precio_max": 0}, {"precio_max": -1},
+                       {"precio_max": True}, {"precio_max": "5"}, {"tasa_corta_min_pct": None}, None, 5):
+        malo = _crudo()
+        malo["entrada"]["alto_riesgo_si"] = malo_valor
+        errores = C.validar(_firmar(malo))
+        assert any("entrada.alto_riesgo_si" in e for e in errores), malo_valor
+    errores = []                                         # NaN/inf no pasan por el hash canónico: la hoja sola
+    C._comprobar_hoja("entrada.alto_riesgo_si", "riesgo", {"precio_max": float("nan")}, errores)
+    C._comprobar_hoja("entrada.alto_riesgo_si", "riesgo", {"precio_max": float("inf")}, errores)
+    assert len(errores) == 2
+
+
+def test_R2_PER_1_alto_riesgo_si_es_caliente_y_se_sustituye_entero():
+    """R2-PER-1: `entrada.alto_riesgo_si` es [C]: con el bot encendido se aplica y se sustituye ENTERO (quitar un
+    criterio no deja la clave a None ni se rechaza como [A])."""
+    assert "entrada.alto_riesgo_si" in C.CALIENTE
+    base = _crudo()
+    base["entrada"]["alto_riesgo_si"] = {"precio_max": 5, "tasa_corta_min_pct": 300}
+    actual = _cfg(base)
+    nuevo = _crudo()
+    nuevo["entrada"]["alto_riesgo_si"] = {"precio_max": 2}
+    nueva = _cfg(nuevo)
+    assert C.diferencias(actual, nueva) == [("entrada.alto_riesgo_si", {"precio_max": 5, "tasa_corta_min_pct": 300},
+                                             {"precio_max": 2}, True)]
+    resultante, rechazadas = C.aplicar(actual, nueva, bot_encendido=True, hay_posiciones=True)
+    assert rechazadas == []
+    assert resultante.entrada["alto_riesgo_si"] == {"precio_max": 2}
+    assert actual.entrada["alto_riesgo_si"] == {"precio_max": 5, "tasa_corta_min_pct": 300}   # no muta la vieja
+    # un [A] vecino en el mismo bloque sigue en frío
+    otro = _crudo()
+    otro["entrada"]["agregar_s"] = 30
+    _, rechazadas = C.aplicar(actual, _cfg(otro), bot_encendido=True, hay_posiciones=True)
+    assert "entrada.agregar_s" in rechazadas
 
 
 def test_guardar_ultimo_bueno_no_guarda_lo_invalido(tmp_path):
@@ -696,9 +763,12 @@ def test_DC_09_caliente_es_exactamente_lo_marcado_C_en_el_bloque_de_s7():
     bloque = _bloque_json_de_la_seccion_7(RUTA_DOC.read_text(encoding="utf-8"))
     marcadas = _rutas_marcadas(bloque, "[C]")
     assert len(marcadas) == 26
-    assert C.CALIENTE == frozenset(marcadas)
+    # CALIENTE = lo marcado [C] en §7 más, como única excepción declarada, las [C] nuevas que §7 aún no lista
+    assert C.CALIENTE == frozenset(marcadas) | CALIENTE_FUERA_DEL_DOC
+    assert not (CALIENTE_FUERA_DEL_DOC & frozenset(marcadas))
     # y ninguna [A]/[T] se cuela en CALIENTE (los vecinos de las [C] siguen siendo en frío)
     frias = _rutas_marcadas(bloque, "[A]") | _rutas_marcadas(bloque, "[T]")
+    assert not (CALIENTE_FUERA_DEL_DOC & frias)
     assert {"fase", "locates.umbral_ultimo_paquete_pct", "estrategias.*.definition_hash",
             "stops.principal_limite_pct"} <= frias
     assert not (frias & C.CALIENTE)
@@ -758,7 +828,7 @@ def test_caliente_es_exactamente_lo_marcado_C_en_el_documento():
     assert C.CALIENTE == frozenset({
         "vigilando", "pausar_entradas", "horario.tz", "horario.encender", "horario.apagar",
         "modo_seguridad.activo", "modo_seguridad.precio_min", "modo_seguridad.acum_dollar_volume_min",
-        "lista_negra", "locates.tope_gasto_pct_cuenta", "locates.hora_limite_intentos",
+        "lista_negra", "entrada.alto_riesgo_si", "locates.tope_gasto_pct_cuenta", "locates.hora_limite_intentos",
         "alertas_grupo_a.activo", "alertas_grupo_a.prealerta_simple", "alertas_grupo_a.prealerta_freno_min",
         "alertas_grupo_a.prealerta_ticks",
         "estrategias.*.ejecutar", "estrategias.*.avisar_grupo_a", "estrategias.*.riesgo_usd",

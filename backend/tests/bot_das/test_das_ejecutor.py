@@ -342,7 +342,7 @@ def _montar(cfg: Config, reloj: RelojSimulado, dir_bot: Path, *, cliente: Option
             hash_motor: Optional[Callable[[Path], str]] = None, medir: Optional[Callable[[], Any]] = None,
             limpiar: Optional[Callable[[str], str]] = None, arrancar: bool = True,
             espera_reconciliacion_s: float = 0.2, latido: Optional[Latido] = None, referencia: Any = None,
-            preparar_estado: Optional[Callable[[Any], None]] = None) -> Montaje:
+            preparar_estado: Optional[Callable[[Any], None]] = None, aviso_config: Optional[str] = None) -> Montaje:
     traza: list = []
     cliente = cliente if cliente is not None else ClienteFalso(traza)
     cliente._traza = traza
@@ -371,7 +371,8 @@ def _montar(cfg: Config, reloj: RelojSimulado, dir_bot: Path, *, cliente: Option
                     [], None, estado_dir, buzon=buzon,
                     hash_motor=hash_motor if hash_motor is not None else (lambda base: cfg.motor_hash),
                     medir_desvio=medir if medir is not None else (lambda: 0.0), limpiar=limpiar,
-                    espera_reconciliacion_s=espera_reconciliacion_s, espera_avisos_s=0.5, referencia=ref)
+                    espera_reconciliacion_s=espera_reconciliacion_s, espera_avisos_s=0.5, referencia=ref,
+                    aviso_config=aviso_config)
     m = Montaje(e, diario, cliente, fuente, avisos, mercado, reloj, dir_bot, traza)
     if arrancar:
         assert e.arrancar() == ej.CODIGO_OK
@@ -1232,6 +1233,23 @@ def test_pedir_al_supervisor_se_deduplica_10_s(montar, dir_bot: Path) -> None:
                                                            "relanzar ejecutor"]
 
 
+@pytest.mark.parametrize("forzada,nivel", [(True, Nivel.MAXIMO), (False, Nivel.AVISO)],
+                         ids=["R2-PRO-3-fase-forzada-nivel-3", "R2-PRO-3-respaldo-sin-forzar-nivel-2"])
+def test_r2_pro_3_el_aviso_de_fase_forzada_a_sombra_sale_con_nivel_3(montar, dir_bot: Path, forzada: bool,
+                                                                     nivel: Nivel) -> None:
+    """R2-PRO-3 (SEG-02): si `cargar_con_respaldo` usó el último bueno y bajó la fase a SOMBRA, el aviso del arranque
+    sale con Nivel.MAXIMO (el bot deja de operar dinero real); un respaldo sin forzar la fase sigue siendo nivel 2."""
+    texto = "Configuración del cuadro inválida (x): se usa el último bueno (config_version 1) (H-4)"
+    if forzada:
+        texto += f" · {mod_config.AVISO_FASE_FORZADA}: el último bueno estaba en REAL"
+    m = montar(aviso_config=texto)
+    avisos = [a for a in m.avisos.avisos if a.clave == "config_respaldo"]
+    assert len(avisos) == 1 and avisos[0].nivel is nivel
+    assert (mod_config.AVISO_FASE_FORZADA in avisos[0].texto) is forzada
+    anotado = [r for r in de_tipo(m.regs(), "aviso") if r.datos.get("clave") == "config_respaldo"]
+    assert len(anotado) == 1 and anotado[0].datos["nivel"] == int(nivel)
+
+
 def test_a_07_la_cuota_agotada_de_la_sombra_se_anota(montar) -> None:
     """A-07: lo que `ClienteSombra.al_cuota_agotada` cuenta llega al diario como «cuota_agotada» desde el hilo principal."""
     m = montar()
@@ -1632,6 +1650,70 @@ def test_g2_06_replay_con_la_cotizacion_de_la_vela_ya_no_descarta_por_falta_de_c
     assert not [linea for linea in simulador.recibidas() if protocolo.es_mutante(linea)]
 
 
+def test_r2_pro_4_replay_con_locate_already_shortable_entra_llena_pone_stops_y_sale_por_stop(
+        cfg: Config, dir_bot: Path, libro: LibroSimulado, simulador: SimuladorDAS,
+        direccion_simulador: tuple[str, int], motor_falso: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R2-PRO-4 (G2-06): replay de la grabación recortada con el DAS simulado respondiendo al SLPRICEINQUIRE con
+    `%SLRET 2 … AlreadyShortable`: UNA señal entra de punta a punta en SOMBRA.
+
+    El radar de INLF se inyecta a las 04:29 (la grabación no trae radar): SLPRICEINQUIRE → ETB, «no hace falta»
+    locate. La vela 30 (04:31) enciende la entrada (motor falso) → SS agregar → fill simulado → principal (máximo
+    previo + 1 % = 5,70) + emergencia → INLF sube a 5,89 en las 04:38 → el principal dispara → neta 0 → CANCEL
+    ALLSYMB. El test se
+    corta al acabar INLF (04:41) para no recorrer el hueco hasta MGLD. Sin fichero `esperado_*`."""
+    from app.bot_das.simulador_das import ProgramaGuion
+    reloj = RelojSimulado(datetime(2026, 9, 25, 3, 55, tzinfo=ET))
+    host, puerto = direccion_simulador
+    ruta_am = Path(__file__).parent / "fixtures" / "AM_recorte.jsonl.gz"
+    for nombre, valor in {"DAS_API_HOST": host, "DAS_API_PORT": str(puerto), "DAS_USUARIO": USUARIO,
+                          "DAS_CLAVE": CLAVE_DAS, "DAS_CUENTA": CUENTA, "BOT_DAS_FUENTE": f"grabacion={ruta_am}"}.items():
+        monkeypatch.setenv(nombre, valor)
+    libro.configurar_locate("INLF", fallo="AlreadyShortable")
+    motor_falso["entradas_en"] = {30}                     # la vela de las 04:31 (cierre 5,48; máximo previo 5,6429)
+    programa = ProgramaGuion({})
+    c = dataclasses.replace(cfg, fase=Fase.SOMBRA)
+    caja: dict[str, Any] = {"radar": False}
+    radar_en = datetime(2026, 9, 25, 4, 29, tzinfo=ET)    # tarde: con radar hay SymStatus cada 1 s y el replay va lento
+    corte = datetime(2026, 9, 25, 4, 41, tzinfo=ET)
+
+    def paso(t: datetime, vela: dict) -> list[str]:
+        lineas = simulador.desde_vela(vela["ticker"], vela, programa.spread)
+        if vela["ticker"] == "INLF" and not caja["radar"] and t >= radar_en:
+            caja["radar"] = True
+            caja["e"].buzon.al_senal(Senal(clase="radar", ticker="INLF", id=None, recibida_en=reloj.mono(),
+                                           estimacion=[{"strategy_id": SID, "acciones": 1000.0, "riesgo_usd": 300.0}],
+                                           precio_radar=D(str(vela["close"])), origen="grabacion"))
+        if t >= corte:
+            caja["e"].pedir_parada("R2-PRO-4: INLF terminado", ej.CODIGO_OK)
+        return lineas
+
+    e = ej.construir_desde_env(c, reloj, BACKEND, referencia=ReferenciaFalsa(), calendario=CalendarioPrueba(),
+                               hash_motor=lambda base: c.motor_hash, medir_desvio=lambda: 0.0, canales=[],
+                               paso_replay=paso)
+    caja["e"] = e
+    try:
+        assert e.arrancar() == ej.CODIGO_OK
+        assert e.correr() == ej.CODIGO_OK
+        libro_sombra = e.cliente.emparejador.libro
+    finally:
+        e.parar()
+    regs = [r for r in registros(dir_bot) if r.datos.get("ticker") == "INLF"]
+    assert [r.datos["estado"] for r in de_tipo(regs, "locate_estado")] == ["no_hace_falta"]
+    assert len(de_tipo(regs, "senal")) == 1 and not de_tipo(regs, "senal_descartada")
+    intenciones = [(r.datos["proposito"], r.datos["lado"], r.datos["tipo_orden"]) for r in de_tipo(regs, "orden_intencion")]
+    assert intenciones == [("entrada_agregar", "SS", "LMT"), ("stop_principal", "B", "STOPLMTP"),
+                           ("stop_emergencia", "B", "STOPLMTP")]
+    fills = [(r.datos["proposito"], r.datos["neta_fills"]) for r in de_tipo(regs, "fill") if not r.datos.get("eco")]
+    assert fills == [("entrada_agregar", -100), ("stop_principal", 0)]
+    cerrada = de_tipo(regs, "posicion_cerrada")
+    assert len(cerrada) == 1 and D(cerrada[0].datos["resultado"]) < 0                  # salió por el stop, perdiendo
+    assert [r for r in de_tipo(regs, "cancel_intencion") if r.datos.get("linea") == "CANCEL ALLSYMB INLF"]
+    assert libro_sombra.posiciones().get("INLF") == 0
+    assert e.decisor.estado.posiciones["INLF"].neta_fills == 0
+    assert [linea for linea in simulador.recibidas() if linea.startswith("SLPRICEINQUIRE INLF ")]  # al DAS real
+    assert not [linea for linea in simulador.recibidas() if protocolo.es_mutante(linea)]          # sombra: nada muta
+
+
 # ═══════════════════════════ 5. reinicio a mitad (H-2) en subprocesos ═════
 DRIVER = r"""
 import sys, time
@@ -1931,6 +2013,64 @@ def test_c_02_el_receptor_de_telegram_persiste_su_offset_en_estado(cfg: Config, 
     e = _construir(cfg, reloj)
     telegram = [r for r in e.receptores if type(r).__name__ == "ReceptorTelegram"]
     assert len(telegram) == 1 and telegram[0]._ruta_offset == dir_bot / "estado" / FICHERO_OFFSET_TELEGRAM
+
+
+def test_r2_pro_5_el_offset_de_telegram_sobrevive_al_relanzar_el_ejecutor_solo_con_el_mismo_token(
+        cfg: Config, reloj: RelojSimulado, dir_bot: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R2-PRO-5 (C-02 + R2-CMD-1): lo que guarda el receptor de un ejecutor lo carga el del ejecutor relanzado (mismo
+    token, con el reloj del ejecutor como fecha); con OTRO token el fichero se descarta y se empieza en 0."""
+    _entorno_das(monkeypatch)
+    monkeypatch.setenv(ej.ENV_CHAT_IDS, "111")
+    monkeypatch.setenv(ej.ENV_TOKEN_B, "token-inventado-b")
+
+    def receptor() -> Any:
+        e = _construir(cfg, reloj)
+        return next(r for r in e.receptores if type(r).__name__ == "ReceptorTelegram")
+
+    primero = receptor()
+    primero.offset, primero.ultimo_update_id = 58, 57
+    primero._guardar_offset()
+    reloj.avanzar(3600.0)
+    relanzado = receptor()
+    assert (relanzado.offset, relanzado.ultimo_update_id) == (58, 57)
+    monkeypatch.setenv(ej.ENV_TOKEN_B, "otro-token-inventado")
+    assert receptor().offset == 0
+
+
+def test_r2_pro_5_la_tuberia_exige_la_version_del_paquete(cfg: Config, reloj: RelojSimulado,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    """R2-PRO-5 (R2-FUE-1): `construir_desde_env` monta la tubería con `version_minima = VERSION`: un bot.py con el
+    enlace anterior se rechaza en el «hola» en vez de pasar y perder sus eventos en silencio."""
+    from app.bot_das.fuente_senales import FuenteTuberia
+    _entorno_das(monkeypatch)
+    monkeypatch.setenv(ej.ENV_FUENTE, ej.FUENTE_TUBERIA)
+    e = _construir(cfg, reloj)
+    assert isinstance(e.fuente, FuenteTuberia) and e.fuente.version_minima == VERSION
+
+
+def test_r2_pro_5_el_temporizador_exceso_verificar_llega_al_decisor(montar) -> None:
+    """R2-PRO-5 (D2a-04 / R2-STOPS-2): `Programar("exceso_verificar:X")` del decisor pasa por el heap del ejecutor y,
+    al vencer, lo atiende el decisor (no es un «temporizador_desconocido»)."""
+    from app.bot_das.reglas import stops as reglas_stops
+    m = montar()
+    clave = reglas_stops.clave_exceso_verificar(TICKER)
+    m.e.ejecutar(Programar(clave, reglas_stops.EXCESO_VERIFICAR_EN_S, {"ticker": TICKER, "persecuciones": 0}))
+    m.reloj.avanzar(reglas_stops.EXCESO_VERIFICAR_EN_S + 0.1)
+    m.pasos(2)
+    assert not [r for r in de_tipo(m.regs(), "temporizador_desconocido") if r.datos.get("clave") == clave]
+    assert not de_tipo(m.regs(), "excepcion")
+
+
+def test_r2_pro_5_cancelar_al_tener_id_del_decisor_queda_en_el_diario(montar) -> None:
+    """R2-PRO-5 (R2-DEC-4): el `Anotar("cancelar_al_tener_id")` que el decisor deja pasar llega al diario del ejecutor
+    tal cual (lo lee el vigilante y la persona) y no sale nada hacia DAS."""
+    m = montar()
+    antes = [t for t in m.traza if t[0] == "enviar"]
+    m.e.ejecutar(Anotar("cancelar_al_tener_id", {"token": 126800007, "ticker": TICKER, "proposito": "entrada_agregar",
+                                                 "qty": 100, "motivo": "R-C-11 (3)", "regla": "R2-STOPS-1"}))
+    registro = de_tipo(m.regs(), "cancelar_al_tener_id")
+    assert len(registro) == 1 and registro[0].datos["token"] == 126800007
+    assert [t for t in m.traza if t[0] == "enviar"] == antes
 
 
 def test_main_sin_cuenta_sale_con_5_sin_tocar_el_env_real(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

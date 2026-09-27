@@ -95,6 +95,7 @@ CALIENTE: frozenset[str] = frozenset({
     "horario.tz", "horario.encender", "horario.apagar",
     "modo_seguridad.activo", "modo_seguridad.precio_min", "modo_seguridad.acum_dollar_volume_min",
     "lista_negra",
+    "entrada.alto_riesgo_si",
     "locates.tope_gasto_pct_cuenta", "locates.hora_limite_intentos",
     "alertas_grupo_a.activo", "alertas_grupo_a.prealerta_simple",
     "alertas_grupo_a.prealerta_freno_min", "alertas_grupo_a.prealerta_ticks",
@@ -116,7 +117,7 @@ _DERIVADOS_ESTRATEGIA = ("hora_fin_sesion", "ventana_entradas", "hora_salida", "
 # Tipos de hoja: "bool", "num" (finito), "num+" (> 0), "num0" (≥ 0), "num?" (null o num0),
 # "int0" (entero ≥ 0), "int+" (entero > 0), "str", "str?", "ruta" (texto no vacío),
 # "hhmm" (HH:MM estricto), "hhmm?", "lnum+" (lista no vacía de num+), "lstr" (lista de textos),
-# ("enum", valores…).
+# "riesgo" (objeto cuyas claves son de CRITERIOS_ALTO_RIESGO con valor num+; {} = nunca), ("enum", valores…).
 _ESQUEMA_BLOQUES: dict[str, Any] = {
     "horario": {"tz": "ruta", "encender": "hhmm", "apagar": "hhmm?"},
     "modo_seguridad": {"activo": "bool", "precio_min": "num0", "acum_dollar_volume_min": "num0"},
@@ -125,7 +126,8 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
     "entrada": {"agregar_s": "num0", "nivel": "ruta", "post_only": "bool", "tope_caida_bid_pct": "num0",
                 "cruce_bajo_bid_pct": "num0", "cruce_espera_s": "num0", "caducidad_senal_s": "num+",
                 "distancia_max_ultimo_bid_pct": "num?", "retraso_max_senal_pct": "num?",
-                "fraccion_max_volumen_acum": "num?", "reintentos_rechazo_conocido": "int0"},
+                "fraccion_max_volumen_acum": "num?", "reintentos_rechazo_conocido": "int0",
+                "alto_riesgo_si": "riesgo"},
     "salidas": {
         "por_hora": {"anticipo_s": "num0", "nivel": "ruta", "al_ask_sin_tope": "bool",
                      "perseguir_ask_max": "int0", "perseguir_ask_s": "num0"},
@@ -174,6 +176,7 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
 # si están, se validan con su tipo del esquema. Así un fichero viejo (y config_ejemplo.json, con su sha256) vale.
 _OPCIONALES: dict[str, Any] = {
     "stops.replace_share_es_abierta": REPLACE_SHARE_ES_ABIERTA,   # A-02: share del REPLACE = abierta (True) o total
+    "entrada.alto_riesgo_si": {},                                 # D1-07: {} = ningún corto es de alto riesgo
 }
 _ESQUEMA_RAIZ: dict[str, Any] = {
     "schema_version": "int", "config_version": "int0", "generado_at": "str",
@@ -181,6 +184,11 @@ _ESQUEMA_RAIZ: dict[str, Any] = {
     "fase": ("enum",) + tuple(f.value for f in Fase), "vigilando": "bool", "pausar_entradas": "bool",
     "lista_negra": "lstr",
 }
+
+# D1-07: criterios de «alto riesgo» (tope corto 0,5 × equity, libro 2c) que entiende capital.es_alto_riesgo; es
+# un conjunto CERRADO: cada clave es un umbral > 0 y basta con que se cumpla UNO. `entrada.alto_riesgo_si` es un
+# objeto (el decisor se lo pasa tal cual a es_alto_riesgo como Mapping), no una lista.
+CRITERIOS_ALTO_RIESGO: tuple[str, ...] = ("precio_max", "tasa_corta_min_pct")
 
 _RE_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")          # fichero del cuadro: estricto (reloj.a_hora_et)
 _RE_HORA_DEF = re.compile(r"^(\d{1,2}):(\d{2})$")           # definition: como la parte el motor (split(":"))
@@ -335,6 +343,8 @@ def _comprobar_hoja(ruta: str, tipo: Any, x: Any, errores: list[str]) -> None:
         "lstr": lambda: isinstance(x, list) and all(isinstance(v, str) and v.strip() != "" for v in x),
         "hash": lambda: isinstance(x, str) and x.startswith("sha256:") and _RE_HEX64.match(x[7:]) is not None,
         "hex": lambda: isinstance(x, str) and _RE_HEX64.match(x) is not None,
+        "riesgo": lambda: isinstance(x, dict) and all(k in CRITERIOS_ALTO_RIESGO and _es_num(v) and v > 0
+                                                      for k, v in x.items()),
     }[tipo]()
     if not ok:
         errores.append(f"{ruta}: valor {x!r} no válido (se espera {tipo})")
@@ -832,7 +842,9 @@ def _es_caliente(ruta: tuple[str, ...]) -> bool:
 
 
 def _dif(ruta: tuple[str, ...], a: Any, b: Any, out: list[tuple[tuple[str, ...], Any, Any]]) -> None:
-    if isinstance(a, dict) and isinstance(b, dict):
+    # Una hoja [C] que es un objeto (entrada.alto_riesgo_si, D1-07) se compara y se sustituye ENTERA: sus claves no
+    # son rutas de CALIENTE y, abiertas, saldrían como [A] y se rechazarían; al quitar un criterio quedaría a None.
+    if isinstance(a, dict) and isinstance(b, dict) and ".".join(ruta) not in CALIENTE:
         for k in sorted(set(a) | set(b), key=str):
             _dif(ruta + (str(k),), a.get(k), b.get(k), out)
     elif a != b or (type(a) is not type(b) and (isinstance(a, bool) or isinstance(b, bool))):   # True == 1 no es «igual»

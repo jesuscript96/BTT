@@ -675,6 +675,55 @@ def test_tuberia_clave_incorrecta_se_rechaza(tuberia, enlaces):
     assert len([a for a in rec.avisos if "clave incorrecta" in a[1]]) == 1
 
 
+def test_R2_FUE_1_enlace_con_version_vieja_rechazado_con_un_aviso(tuberia, enlaces):
+    """R2-FUE-1: un bot.py con el enlace de c3a07c9b (VERSION 2026.09.26, anterior a F-01) NO pasa el «hola».
+
+    Antes pasaba el saludo y sus eventos se descartaban como ilegibles en silencio
+    (feed vivo, ninguna señal). Ahora: rechazo, conexión cerrada, aviso 3 UNA vez
+    al día aunque reintente, y no entra nada; el enlace actual sí entra.
+    """
+    assert fs.version_como_tupla(VERSION) > fs.version_como_tupla("2026.09.26")
+    fuente, rec = tuberia(version_minima=VERSION)
+    viejo = enlaces(fuente.direccion, version="2026.09.26")
+    viejo.eventos("ABCD", "09:31", None, [EventoFalso("entrada", "ABCD", "s1", "m", 0)], False)
+    viejo.dia_nuevo()
+    assert _esperar(lambda: fuente.rechazados >= 3)
+    assert viejo.conectado is False and viejo.enviados == 0 and viejo.rechazos >= 3
+    assert "anterior a la mínima" in (viejo.motivo_rechazo or "")
+    assert rec.senales == [] and fuente.recibidos == 0
+    maximos = [a for a in rec.avisos if a[0] == Nivel.MAXIMO]
+    assert len(maximos) == 1 and "RECHAZADO" in maximos[0][1] and "2026.09.26" in maximos[0][1]
+    viejo.parar(vaciar_s=0.0)
+    assert _esperar(lambda: fuente.salud()["conectado"] is False)
+    actual = enlaces(fuente.direccion)                     # EnlaceEjecutor manda su VERSION por defecto
+    assert actual.version == VERSION
+    actual.dia_nuevo()
+    assert _esperar(lambda: len(rec.de_clase("dia_nuevo")) == 1)
+    assert fuente.salud()["cliente_version"] == VERSION
+    assert len([a for a in rec.avisos if a[0] == Nivel.MAXIMO]) == 1
+
+
+def test_R2_FUE_1_hola_sin_version_rechazado_y_conexion_cerrada(tuberia):
+    """R2-FUE-1: un «hola» sin versión se rechaza, se avisa (3) una vez y el ejecutor cierra la conexión."""
+    fuente, rec = tuberia()
+    for _ in range(2):
+        conn = Client(fuente.direccion, authkey=b"clave-de-test")
+        try:
+            conn.send({"t": "hola", "motor_hash": HASH_BUENO})
+            assert conn.poll(5)
+            resp = conn.recv()
+            assert resp["t"] == "rechazado" and "ilegible" in resp["motivo"] and resp["version_minima"] == VERSION
+            assert conn.poll(5)
+            with pytest.raises(EOFError):                  # la fuente cerró su lado
+                conn.recv()
+        finally:
+            conn.close()
+    assert _esperar(lambda: fuente.rechazados == 2)
+    assert rec.senales == []
+    maximos = [a for a in rec.avisos if a[0] == Nivel.MAXIMO]
+    assert len(maximos) == 1 and "RECHAZADO" in maximos[0][1]
+
+
 def test_tuberia_parar_es_idempotente_y_salud_refleja(tuberia):
     fuente, _ = tuberia()
     assert fuente.salud()["viva"] is True

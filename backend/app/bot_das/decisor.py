@@ -268,6 +268,9 @@ ACCOUNTINFO_CADA_S = 30.0        # D1-10: GET AccountInfo en el barrido cada 30 
 OPA_REVISION_S = 60.0            # E1-08: la banda de OPA se mira como mucho una vez por minuto y ticker
 TP_SIN_LIBRO_ESPERA_S = 2.0      # D2-12: TP con el libro inutilizable → el cruce se decide a los 2 s
 CIERRE_REPONER_S = 1.0           # D2-04: respaldo para devolver los stops si el Canceled del cierre retirado no llega
+ANOTAR_CANCELAR_AL_TENER_ID = "cancelar_al_tener_id"   # R2-DEC-4: `stops` pide cancelar una venta aún sin id (R2-STOPS-1)
+SIN_LIBRES_AVISO_S = 60.0       # R2-DEC-1 (G1B-05): 60 s reprogramando una salida sin acciones libres → Avisar(2)
+SIN_LIBRES_LENTO_S = 5.0         # R2-DEC-1: tras el aviso se sigue mirando, pero cada 5 s
 # D1-07: el «alto riesgo» de R-I-01 (tope corto 0,5 × equity) sale de `entrada.alto_riesgo_si` con capital.es_alto_riesgo
 
 # ── motivos por los que se cancela la orden viva de un intento ──
@@ -430,6 +433,8 @@ class Decisor:
         self._verificaciones: dict[int, int] = {}
         self._salidas_avisadas: set[int] = set()
         self._aplazadas: dict[str, str] = {}                # G1A-02: clave del temporizador aplazado → motivo anotado
+        self._sin_libres_desde: dict[str, float] = {}       # R2-DEC-1: clave de la salida sin acciones libres → desde
+        self._sin_libres_avisado: set[str] = set()          # R2-DEC-1: claves con el Avisar(2) de los 60 s ya enviado
         # G1B-13 / G1A-10: lo que una rama registró (se deshace si la rama lanza); se vacía al final de cada mensaje
         self._diario_rama: list[tuple[str, int]] = []
         # posiciones e intentos
@@ -1122,8 +1127,11 @@ class Decisor:
         si la rama lanza, `_proteger` la olvida (esa acción no sale).
         """
         lista = list(acciones)
+        al_tener_id: list[Anotar] = []
         for a in lista:
-            if isinstance(a, EnviarOrden):
+            if isinstance(a, Anotar) and a.tipo == ANOTAR_CANCELAR_AL_TENER_ID:
+                al_tener_id.append(a)
+            elif isinstance(a, EnviarOrden):
                 self._registrar_orden(a.orden)
             elif isinstance(a, Cancelar):
                 token = a.token if a.token is not None else self._estado.id_a_token.get(a.id_das)
@@ -1145,7 +1153,34 @@ class Decisor:
                     o.version = a.version
             elif isinstance(a, Programar) and a.clave == T_STOPS_PLAN and isinstance(a.datos.get("ticker"), str):
                 self._espera_plan.add(a.datos["ticker"])      # F2.1: el %POS que cuadre replanifica sin esperar 0,5 s
+        for a in al_tener_id:                                 # después del CancelarTicker de la misma tanda (no lo borra)
+            lista += self._registrar_cancelar_al_tener_id(a)
         return lista
+
+    def _registrar_cancelar_al_tener_id(self, a: Anotar) -> list[Accion]:
+        """R2-DEC-4 (R2-STOPS-1): `stops` pide cancelar una venta que aún no tiene id → al llegar su Accept (con id).
+
+        Mismo mecanismo que `_cancelar_orden` con una orden sin id
+        (`_cancelar_al_aceptar`). Se registra aunque un CANCEL ALLSYMB vaya en
+        la misma tanda: una orden que DAS acepte DESPUÉS del ALLSYMB seguiría
+        viva (lo conservador; como mucho, un CancelRej). Si entretanto ya tiene
+        id y nadie pidió su CANCEL, el `Cancelar` sale ya.
+        """
+        token = a.datos.get("token") if isinstance(a.datos, dict) else None
+        o = self._estado.ordenes.get(token) if type(token) is int else None
+        if o is None or o.estado not in _VIVOS:
+            return []
+        motivo = str(a.datos.get("motivo") or "R-C-11 (3): cancelar al tener id")
+        if o.id_das is not None:
+            if o.token in self._cancel_pedido:
+                return []
+            cancelar = Cancelar(id_das=o.id_das, token=o.token, motivo=motivo)
+            self._pedir_cancel(o.token, motivo)
+            return [cancelar]
+        if token not in self._cancelar_al_aceptar:
+            self._diario_rama.append(("al_aceptar", token))
+        self._cancelar_al_aceptar[token] = motivo
+        return []
 
     def _pedir_cancel(self, token: int, motivo: str) -> None:
         if token not in self._cancel_pedido:
@@ -2272,8 +2307,15 @@ class Decisor:
         qty = min(pedidas, libres) if pedidas > 0 else libres
         acciones.append(self._anotar_proporcion(s, lote, pedidas, qty))
         if qty <= 0:
+            # R2-DEC-1 (G1B-05): 0 libres con la posición aún corta y acciones en el lote (una HALT_BANDA o un cierre
+            # humano vivos, DAS atrasado) → la salida espera y se vuelve a mirar; no se pierde en silencio
+            espera = self._espera_sin_libres(pos, lote, f"salida_motor:{s.id}", "salida del motor")
+            if espera is not None:
+                en_s, anotado = espera
+                return acciones + anotado + self._salida_en_espera(s, modo, "sin acciones libres (R2-DEC-1)", en_s)
             return acciones + [Anotar("salida_omitida", {"senal_id": s.id, "ticker": ticker,
                                                          "motivo": "el lote no tiene acciones libres"})]
+        self._olvidar_sin_libres(f"salida_motor:{s.id}")
         cot = self._cot(ticker)
         if modo == _SALIDA_PRIORIDAD:
             if cot is None or not _es_precio(cot.ask):
@@ -2337,14 +2379,18 @@ class Decisor:
             "proporcion_aplicada": (Decimal(qty) / Decimal(lote.llenas)) if lote.llenas > 0 and qty > 0 else None,
             "regla": "R-D-03 v2 / F4.1 (G1A-16: acciones del evento, no proporción; pregunta 3)"})
 
-    def _salida_en_espera(self, s: Senal, modo: str, motivo: str) -> list[Accion]:
-        """G1A-06 / G1B-02 / G1B-01: la salida espera (entrada viva, sin ask o modo degradado) y se revisa cada 0,5 s."""
+    def _salida_en_espera(self, s: Senal, modo: str, motivo: str,
+                          en_s: float = SALIDA_REPROGRAMAR_S) -> list[Accion]:
+        """G1A-06 / G1B-02 / G1B-01: la salida espera (entrada viva, sin ask o modo degradado) y se revisa cada 0,5 s.
+
+        R2-DEC-1: `en_s` = 5 s cuando lleva ≥ 60 s sin acciones libres.
+        """
         ticker = s.ticker
         lista = self._salidas_tras_entrada.setdefault(ticker, [])
         if all(x.id != s.id for x, _ in lista):
             lista.append((s, modo))
         return [Anotar("salida_en_espera", {"senal_id": s.id, "ticker": ticker, "modo": modo, "motivo": motivo}),
-                Programar(f"{T_SALIDA_ESPERA}:{ticker}", SALIDA_REPROGRAMAR_S, {"ticker": ticker})]
+                Programar(f"{T_SALIDA_ESPERA}:{ticker}", en_s, {"ticker": ticker})]
 
     def _salidas_pendientes(self, ticker: str) -> list[Accion]:
         """Sin ninguna entrada viva en el ticker, salen (en su orden) las salidas del motor que esperaban."""
@@ -2352,6 +2398,12 @@ class Decisor:
         acciones: list[Accion] = [Desprogramar(f"{T_SALIDA_ESPERA}:{ticker}")] if pendientes else []
         for s, modo in pendientes:
             acciones += self._salida_motor(s, diferida=True, modo=modo)
+        # R2-DEC-1: varias salidas que vuelven a esperar comparten `salida_espera:X`: manda la espera MÁS CORTA
+        clave = f"{T_SALIDA_ESPERA}:{ticker}"
+        programas = [a for a in acciones if isinstance(a, Programar) and a.clave == clave]
+        if len(programas) > 1:
+            corto = min(programas, key=lambda p: p.en_s)
+            acciones = [a for a in acciones if not (isinstance(a, Programar) and a.clave == clave)] + [corto]
         return acciones
 
     def _retirar_estrategia_del_intento(self, pos: PosicionTicker, sid: str) -> list[Accion]:
@@ -3484,11 +3536,49 @@ class Decisor:
                 acciones += self._reintento_reapertura(pos, cot, decision)
             if pos.neta != 0 and any(o.proposito in _PROP_CIERRE_HALT for o in self._vivas(ticker)):
                 acciones.append(Programar(f"{T_HALT_CIERRE_VERIFICAR}:{ticker}", HALT_CIERRE_VERIFICAR_S,
-                                          {"ticker": ticker}))
+                                          {"ticker": ticker, "reapertura": True}))     # R2-DEC-2: mira el tope T1
         if _es_precio(precio):
             acciones.append(Programar(f"{T_HALT_PRIMERA_VELA}:{ticker}", HALT_PRIMERA_VELA_S,
                                       {"ticker": ticker, "precio_reapertura": str(precio),
                                        "reapertura_epoch": self._ahora_et.timestamp()}))
+        return acciones
+
+    def _tope_t1_control_humano(self, pos: PosicionTicker, precio: Optional[Decimal],
+                                cuando: str) -> Optional[list[Accion]]:
+        """E1-02 / R2-DEC-2 (R-F-05 a): ¿la reapertura supera el tope del T1 con `precio` (el `last` de ESE momento)?
+
+        Superado → se retira la salida del halt viva, `Avisar(MAXIMO)` (una vez
+        por día y ticker) y el ticker a CONTROL_HUMANO; devuelve esas acciones.
+        No superado (o sin precio / sin parada / LULD: `halts.tope_t1_superado`)
+        → None. Se mira al reabrir y otra vez en `halt_cierre_verificar`,
+        porque el `T` puede llegar con el `last` de antes del halt (subida 0 %)
+        y el primer print real después.
+        """
+        ticker = pos.ticker
+        simb = self._mercado.simbolo(ticker)
+        luld = self._mercado.ta_ultimo_halt(ticker) == "P"
+        if not halts.tope_t1_superado(simb, precio, self._cfg.halts, luld=luld):
+            return None
+        acciones: list[Accion] = [Anotar("halt_tope_t1", {"ticker": ticker, "precio": precio,
+                                                          "parada": simb.precio_parada, "cuando": cuando,
+                                                          "regla": "R-F-05 (a) / E1-02 / R2-DEC-2"})]
+        for o in self._vivas(ticker):
+            if o.proposito in _PROP_CIERRE_HALT:
+                acciones += self._cancelar_orden(o, "E1-02: reabre por encima del tope del T1; se retira la salida")
+        if ticker not in self._halt_humano_avisado:
+            self._halt_humano_avisado.add(ticker)
+            acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
+                                   f"REABRE {avisos.escapar(ticker)} a {precio}: más del "
+                                   f"{self._cfg.halts.get('t1_subida_max_cierre_pct', 250)} % sobre la parada "
+                                   f"{simb.precio_parada}: CONTROL HUMANO, el bot no cierra (R-F-05 a). Posición "
+                                   f"{pos.neta:+d}; los stops vuelven a la posición",
+                                   clave=f"halt_humano:{ticker}"))
+        if pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT, EstadoTicker.PAUSADO):
+            pos.estado = EstadoTicker.CONTROL_HUMANO
+            pos.motivo_estado = "halt: control humano"
+            pos.desde = self._ahora
+            acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
+                                             "motivo": "halt: T1 por encima del tope (R-F-05 a, E1-02)"}))
         return acciones
 
     def _reintento_reapertura(self, pos: PosicionTicker, cot: Optional[Cotizacion], decision: str) -> list[Accion]:
@@ -3496,28 +3586,9 @@ class Decisor:
         ticker = pos.ticker
         simb = self._mercado.simbolo(ticker)
         precio = cot.last if cot is not None and _es_precio(cot.last) else None
-        luld = self._mercado.ta_ultimo_halt(ticker) == "P"
-        if halts.tope_t1_superado(simb, precio, self._cfg.halts, luld=luld):
-            acciones: list[Accion] = [Anotar("halt_tope_t1", {"ticker": ticker, "precio": precio,
-                                                              "parada": simb.precio_parada, "regla": "R-F-05 (a) / E1-02"})]
-            for o in self._vivas(ticker):
-                if o.proposito in _PROP_CIERRE_HALT:
-                    acciones += self._cancelar_orden(o, "E1-02: reabre por encima del tope del T1; se retira la salida")
-            if ticker not in self._halt_humano_avisado:
-                self._halt_humano_avisado.add(ticker)
-                acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
-                                       f"REABRE {avisos.escapar(ticker)} a {precio}: más del "
-                                       f"{self._cfg.halts.get('t1_subida_max_cierre_pct', 250)} % sobre la parada "
-                                       f"{simb.precio_parada}: CONTROL HUMANO, el bot no cierra (R-F-05 a). Posición "
-                                       f"{pos.neta:+d}; los stops vuelven a la posición",
-                                       clave=f"halt_humano:{ticker}"))
-            if pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT, EstadoTicker.PAUSADO):
-                pos.estado = EstadoTicker.CONTROL_HUMANO
-                pos.motivo_estado = "halt: control humano"
-                pos.desde = self._ahora
-                acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
-                                                 "motivo": "halt: T1 por encima del tope (R-F-05 a, E1-02)"}))
-            return acciones
+        tope = self._tope_t1_control_humano(pos, precio, "al reabrir")
+        if tope is not None:
+            return tope
         bloqueo = self._bloqueo_decision_halt(pos)
         if bloqueo is not None:
             return self._halt_sin_orden(pos, decision, bloqueo, "al reabrir")
@@ -3615,6 +3686,12 @@ class Decisor:
             return []
         cot = self._cot(ticker)
         acciones: list[Accion] = []
+        if self._mercado.tomar_reapertura_q(ticker):
+            # R2-DEC-3: TA:Q sin T posterior pero con prints nuevos 5 s seguidos → se negocia: reapertura
+            acciones.append(Anotar("halt_reapertura_por_prints", {
+                "ticker": ticker, "last": cot.last if cot is not None else None,
+                "volumen": cot.volumen if cot is not None else None, "regla": "R2-DEC-3 (E1-05)"}))
+            acciones += self._al_reabrir(ticker)
         if cot is not None and _es_precio(cot.last):
             historial = self._hist.setdefault(ticker, deque(maxlen=HISTORIAL_MAX))
             historial.append((self._ahora, cot.last))
@@ -4227,6 +4304,72 @@ class Decisor:
                                                        "regla": "G1A-02 / G1B-01"}))
         return acciones + [Programar(clave, SALIDA_REPROGRAMAR_S, dict(datos))]
 
+    def _sigue_sin_libres(self, pos: PosicionTicker, lote: Lote) -> bool:
+        """R2-DEC-1: `_libres` da 0 pero hay algo que cerrar: la posición sigue corta y el lote tiene acciones sin salida.
+
+        Corto = neta de fills y, si DAS ya la dijo, la menor de las dos (como
+        `_libres`). Sin posición corta o con todo el lote ya cubierto por sus
+        propias salidas vivas no hay nada que esperar.
+        """
+        if lote.estado not in _LOTE_VIVO:
+            return False
+        self._refrescar_tp_pendiente(pos)
+        if int(lote.llenas) - int(lote.tp_pendiente) <= 0:
+            return False
+        corto = -int(pos.neta_fills)
+        if pos.neta_das is not None:
+            corto = min(corto, -int(pos.neta_das))
+        return corto > 0
+
+    def _espera_sin_libres(self, pos: PosicionTicker, lote: Lote, clave: str,
+                           paso: str) -> Optional[tuple[float, list[Accion]]]:
+        """R2-DEC-1 (G1B-05, director): una salida con 0 acciones libres NO se pierde en silencio.
+
+        Si la posición sigue corta y el lote tiene acciones (`_sigue_sin_libres`)
+        devuelve `(en_s, acciones)`: se anota UNA vez por clave y la salida se
+        vuelve a mirar a 0,5 s; si lleva ≥ 60 s así, `Avisar(2)` una vez y se
+        sigue mirando cada 5 s. Si no, None (y se olvida la clave): no hay nada
+        que cerrar. Típico: una HALT_BANDA o un cierre humano vivos que luego se
+        retiran, o una neta de DAS atrasada.
+        """
+        if not self._sigue_sin_libres(pos, lote):
+            self._olvidar_sin_libres(clave)
+            return None
+        acciones: list[Accion] = []
+        desde = self._sin_libres_desde.get(clave)
+        if desde is None:
+            desde = self._sin_libres_desde[clave] = self._ahora
+            acciones.append(Anotar("salida_sin_libres", {
+                "ticker": pos.ticker, "lote_id": lote.id, "clave": clave, "paso": paso,
+                "comprando": self._comprando(pos.ticker), "neta_fills": pos.neta_fills, "neta_das": pos.neta_das,
+                "motivo": "compras de cierre vivas o DAS dejan 0 acciones libres; se vuelve a mirar",
+                "regla": "R2-DEC-1 / G1B-05"}))
+        if self._ahora - desde < SIN_LIBRES_AVISO_S:
+            return SALIDA_REPROGRAMAR_S, acciones
+        if clave not in self._sin_libres_avisado:
+            self._sin_libres_avisado.add(clave)
+            acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                   f"{avisos.escapar_html(pos.ticker)}: la salida ({avisos.escapar_html(paso)}) del lote "
+                                   f"{avisos.escapar_html(lote.id)} lleva {int(self._ahora - desde)} s sin acciones "
+                                   f"libres (compras de cierre vivas: {self._comprando(pos.ticker)}; posición "
+                                   f"{pos.neta_fills:+d}, DAS {pos.neta_das}); se sigue mirando cada "
+                                   f"{int(SIN_LIBRES_LENTO_S)} s",
+                                   clave=f"sin_libres:{clave}"))
+        return SIN_LIBRES_LENTO_S, acciones
+
+    def _olvidar_sin_libres(self, clave: str) -> None:
+        self._sin_libres_desde.pop(clave, None)
+        self._sin_libres_avisado.discard(clave)
+
+    def _reprogramar_sin_libres(self, pos: PosicionTicker, lote: Lote, clave: str, datos: dict,
+                                paso: str) -> list[Accion]:
+        """R2-DEC-1: libres ≤ 0 en un temporizador de salida → anotar y el MISMO temporizador otra vez (ver `_espera_sin_libres`)."""
+        espera = self._espera_sin_libres(pos, lote, clave, paso)
+        if espera is None:
+            return []
+        en_s, acciones = espera
+        return acciones + [Programar(clave, en_s, dict(datos))]
+
     def _t_tp_cruce(self, clave: str, datos: dict) -> list[Accion]:
         """F4.3 (R-D-03 v2): el TP no llenó agregando → cancelar y, con el Canceled, `tp_al_vencer` con el resto CONFIRMADO.
 
@@ -4243,7 +4386,7 @@ class Decisor:
             return self._aplazar_salida(pos, clave, datos, guarda)
         token = datos.get("token")
         if token is None and datos.get("sin_libro"):
-            return self._tp_sin_libro(pos, lote, datos)
+            return self._tp_sin_libro(pos, lote, datos, clave)
         o = self._estado.ordenes.get(token) if isinstance(token, int) else None
         if o is None:
             return []
@@ -4252,14 +4395,26 @@ class Decisor:
             return self._cancelar_orden(o, "R-D-03 v2: el TP no llenó agregando; se cruza el resto")
         return self._tp_resto(pos, lote, o) if self._cuadrada(o) else []
 
-    def _tp_sin_libro(self, pos: PosicionTicker, lote: Lote, datos: dict) -> list[Accion]:
-        """D2-12: el TP no pudo agregar (libro cruzado o bloqueado): a su vencimiento se cruza con techo o hay limbo."""
+    def _tp_sin_libro(self, pos: PosicionTicker, lote: Lote, datos: dict,
+                      clave: Optional[str] = None) -> list[Accion]:
+        """D2-12: el TP no pudo agregar (libro cruzado o bloqueado): a su vencimiento se cruza con techo o hay limbo.
+
+        R2-DEC-1: con 0 acciones libres (p. ej. una HALT_BANDA viva) y la
+        posición aún corta, el mismo `tp_cruce` se vuelve a mirar (0,5 s; tras
+        60 s, aviso 2 y cada 5 s): el cruce del TP no se pierde.
+        """
         if lote.estado not in _LOTE_VIVO:
             return []
+        clave = clave or salidas.clave_tp_cruce(lote.id, datos.get("token_reservado"))
         qty = datos.get("qty")
-        resto = min(int(qty) if type(qty) is int else 0, self._libres(pos, lote))
+        pedidas = int(qty) if type(qty) is int else 0
+        libres = self._libres(pos, lote)
+        resto = min(pedidas, libres)
         if resto <= 0:
+            if pedidas > 0 and libres <= 0:
+                return self._reprogramar_sin_libres(pos, lote, clave, datos, "tp sin libro")
             return []
+        self._olvidar_sin_libres(clave)
         return self._cruce_tp(pos, lote, resto)
 
     def _cruce_tp(self, pos: PosicionTicker, lote: Lote, resto: int) -> list[Accion]:
@@ -4275,17 +4430,27 @@ class Decisor:
         return acciones
 
     def _tp_resto(self, pos: PosicionTicker, lote: Lote, o: Orden) -> list[Accion]:
-        """El resto CONFIRMADO del TP tras su Canceled (con la guarda: cerrada → `tp_cruce` de esa orden a 0,5 s)."""
+        """El resto CONFIRMADO del TP tras su Canceled (con la guarda: cerrada → `tp_cruce` de esa orden a 0,5 s).
+
+        R2-DEC-1: con resto por cruzar pero 0 acciones libres y la posición aún
+        corta, el `tp_cruce` de esa orden se vuelve a mirar (0,5 s; tras 60 s,
+        aviso 2 y cada 5 s) en vez de perder el cruce.
+        """
         if lote.estado not in _LOTE_VIVO:
             return []
+        clave = salidas.clave_tp_cruce(lote.id, o.token)
+        datos = {"lote_id": lote.id, "ticker": pos.ticker, "token": o.token, "qty": o.qty}
         guarda = self._puede_gestionar_salida(pos)
         if guarda is not None:
-            return self._aplazar_salida(pos, salidas.clave_tp_cruce(lote.id, o.token),
-                                        {"lote_id": lote.id, "ticker": pos.ticker, "token": o.token, "qty": o.qty},
-                                        guarda)
-        resto = min(max(o.qty - o.llenas, 0), self._libres(pos, lote))
+            return self._aplazar_salida(pos, clave, datos, guarda)
+        pendiente = max(o.qty - o.llenas, 0)
+        libres = self._libres(pos, lote)
+        resto = min(pendiente, libres)
         if resto <= 0:
+            if pendiente > 0 and libres <= 0:
+                return self._reprogramar_sin_libres(pos, lote, clave, datos, "resto del tp")
             return []
+        self._olvidar_sin_libres(clave)
         return self._cruce_tp(pos, lote, resto)
 
     def _t_tp_limbo(self, clave: str, datos: dict) -> list[Accion]:
@@ -4628,7 +4793,8 @@ class Decisor:
         persecuciones = datos.get("persecuciones")
         return self._absorber(stops.verificar_venta_exceso(
             pos, self._ordenes_ticker(ticker), self._cot(ticker), self._tokens.siguiente, self._cfg, self._ahora_et,
-            pos.version_stops, persecuciones=persecuciones if type(persecuciones) is int else 0))
+            pos.version_stops, persecuciones=persecuciones if type(persecuciones) is int else 0,
+            pedidos_en_vuelo=self._pedidos_en_vuelo(ticker)))       # R2-DEC-4: un CANCEL ya pedido no se repite
 
     def _t_cruce_postonly(self, clave: str, datos: dict) -> list[Accion]:
         """D2-09: el agregar de la entrada rechazado por PostOnly pasa YA a la fase de cruce de R-B-01 v3 (sin pausa).
@@ -4655,8 +4821,21 @@ class Decisor:
 
     def _t_halt_cierre_verificar(self, clave: str, datos: dict) -> list[Accion]:
         """G1A-01: 2 s tras reabrir (o tras la MKT de la banda), la salida del halt que no llenó se RETIRA; con su
-        Canceled el plan devuelve los stops a la posición (`_tras_terminal`) y se avisa nivel 2."""
+        Canceled el plan devuelve los stops a la posición (`_tras_terminal`) y se avisa nivel 2.
+
+        R2-DEC-2 (E1-02): tras una REAPERTURA (`datos["reapertura"]`) se vuelve
+        a mirar el tope del T1 con el `last` de ESTE momento (el primer print
+        puede llegar después del `T`): superado → la salida viva se retira,
+        aviso MÁXIMO y CONTROL_HUMANO (`_tope_t1_control_humano`). Tras la MKT
+        de la banda (sin halt) no se mira."""
         ticker = str(datos.get("ticker") or clave.split(":", 1)[1])
+        pos = self._estado.posiciones.get(ticker)
+        if datos.get("reapertura") and pos is not None and pos.neta < 0:
+            cot = self._cot(ticker)
+            tope = self._tope_t1_control_humano(pos, cot.last if cot is not None and _es_precio(cot.last) else None,
+                                                "2 s tras reabrir")
+            if tope is not None:
+                return tope
         acciones: list[Accion] = []
         for o in self._vivas(ticker):
             if o.proposito in _PROP_CIERRE_HALT and _qty_viva(o) > 0:
@@ -5084,6 +5263,8 @@ class Decisor:
         self._comandos_vistos.clear()
         self._salidas_avisadas.clear()
         self._aplazadas.clear()
+        self._sin_libres_desde.clear()
+        self._sin_libres_avisado.clear()
         return acciones
 
     # ═══════════════════════════ comandos (R-M-04) ═════════════════════════

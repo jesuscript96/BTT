@@ -322,7 +322,8 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
       * recomprar_locate → `Programar("locate_recomprar", 0)` (F9; solo ventas
         en corto): el decisor recompra con su EV y reenvía con `token_nuevo`.
     Una orden que REDUCE la posición (compra con la cuenta corta, venta con
-    la cuenta larga; no entradas ni stops) se recorta a |neta de fills| menos
+    la cuenta larga; no entradas ni stops) se recorta a |neta de fills| (en
+    un CIERRE_HUMANO, la de `salidas.neta_para_cerrar`, R2-SAL-2) menos
     lo que las otras salidas vivas del mismo lado pueden ejecutar (D2-10); si
     no queda nada: sin reintento, sin token y sin pausa (`nada_que_reducir`).
     Si no → posición cubierta (`descubiertas() == 0`): PAUSADO + aviso 2;
@@ -395,8 +396,13 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
                                    accion=accion, tope=_tope_reduccion(orden, pos, vivas))
         if reintento is _NADA_QUE_REDUCIR:
             decision = DECISION_NADA_QUE_REDUCIR
-            partes.append(f"sin reintento: la posición ya no tiene acciones que esta orden deba reducir "
-                          f"(neta {pos.neta}; otras salidas vivas cubren el resto; riesgo 6)")
+            if orden.proposito is Proposito.CIERRE_HUMANO and salidas.das_sin_confirmar(pos):
+                partes.append(f"sin reintento: DAS dice neta {_neta_mostrada(orden, pos)} pero el bot tuvo lotes hoy "
+                              f"en el ticker y puede ser el %POS atrasado de su propio cierre (R2-SAL-2 / D2-02); "
+                              f"lo retoma «cerrar todo» tras GET POSITIONS")
+            else:
+                partes.append(f"sin reintento: la posición ya no tiene acciones que esta orden deba reducir "
+                              f"(neta {_neta_mostrada(orden, pos)}; otras salidas vivas cubren el resto; riesgo 6)")
         elif reintento is not None:
             decision = DECISION_REINTENTO
             tratamiento_acciones, token_nuevo = reintento
@@ -726,14 +732,17 @@ def _tope_reduccion(orden: Orden, pos: PosicionTicker, vivas: Iterable[Orden]) -
     """D2-10: lo máximo que puede llevar el reenvío de una orden que REDUCE la posición; None si no reduce.
 
     Reduce = compra con la cuenta corta o venta con la cuenta larga (no las
-    entradas ni los stops, que tienen sus reglas). Tope = |neta de fills| −
-    lo que las OTRAS salidas vivas del mismo lado (no stops) aún pueden
-    ejecutar; nunca negativo. Los stops conviven con las salidas por diseño
+    entradas ni los stops, que tienen sus reglas). Tope = |neta| − lo que las
+    OTRAS salidas vivas del mismo lado (no stops) aún pueden ejecutar; nunca
+    negativo. La neta es la de fills, salvo en un CIERRE_HUMANO, que usa la
+    misma `salidas.neta_para_cerrar` que «cerrar todo» (R2-SAL-2 / D2-10:
+    una posición manual pura con fills 0 y DAS −100 se reintenta con 100;
+    ver `_neta_de_reduccion`). Los stops conviven con las salidas por diseño
     (un fill de TP los reduce), por eso no descuentan aquí.
     """
     if orden.proposito in _PROPOSITOS_ENTRADA or _es_stop(orden):
         return None
-    neta = int(pos.neta)
+    neta = _neta_de_reduccion(orden, pos)
     if orden.lado is Lado.COMPRA:
         base = max(-neta, 0)
     elif orden.lado is Lado.VENTA:
@@ -746,6 +755,33 @@ def _tope_reduccion(orden: Orden, pos: PosicionTicker, vivas: Iterable[Orden]) -
                 and o.estado in _ESTADOS_VIVOS and not _es_stop(o)):
             en_vuelo += max(o.lvqty if o.lvqty > 0 else o.qty - o.llenas, 0)
     return max(base - en_vuelo, 0)
+
+
+def _neta_de_reduccion(orden: Orden, pos: PosicionTicker) -> int:
+    """R2-SAL-2: la neta signada que una salida rechazada puede reducir al reintentarse.
+
+    CIERRE_HUMANO (cierra lo que haya en la cuenta, manuales incluidas,
+    R-D-06) → `salidas.neta_para_cerrar`: con DAS de acuerdo, los fills; una
+    manual pura, la de DAS; discrepancia del mismo signo, el mínimo; signos
+    distintos, 0. Si la cifra de DAS está sin confirmar
+    (`salidas.das_sin_confirmar`: el bot tuvo lotes hoy y fills 0 puede ser
+    su propio cierre con el %POS atrasado) → 0: el reintento inmediato no la
+    compra; la retoma «cerrar todo» tras GET POSITIONS (nunca cuenta larga).
+    El resto de salidas son del bot → la neta de fills (D2-10).
+    """
+    if orden.proposito is Proposito.CIERRE_HUMANO:
+        if salidas.das_sin_confirmar(pos):
+            return 0
+        return salidas.neta_para_cerrar(pos)[0]
+    return int(pos.neta)
+
+
+def _neta_mostrada(orden: Orden, pos: PosicionTicker) -> int:
+    """La neta que el aviso da como real: en un CIERRE_HUMANO la de `neta_para_cerrar` (también la de DAS sin
+    confirmar); en el resto, la de fills."""
+    if orden.proposito is Proposito.CIERRE_HUMANO:
+        return salidas.neta_para_cerrar(pos)[0]
+    return int(pos.neta)
 
 
 def _pasar_a_cruce(orden: Orden, pos: PosicionTicker, vivas: Iterable[Orden], cfg: Any, tokens: Callable[[], int],
@@ -928,10 +964,14 @@ def _texto_aviso(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, cu
     neta_das = "?" if pos.neta_das is None else str(pos.neta_das)
     cobertura = "cubierta" if cubierta else f"{n_descubiertas} acciones SIN STOP aceptado"
     motivo = tratamiento.clave if tratamiento.conocido else "DESCONOCIDO (no está en el catálogo)"
+    if orden.proposito is Proposito.CIERRE_HUMANO:     # R2-SAL-2: la neta real de la cuenta, no «neta 0» de fills
+        fuentes = f"fills {pos.neta_fills}, DAS {neta_das}"
+    else:
+        fuentes = f"DAS {neta_das}"
     return (f"RECHAZO DAS {_h(orden.ticker)}\n"
             f"DAS dice: «{_h(notas or '(sin texto)')}»\n"
             f"Orden: {_h(_orden_texto(orden))} · intentos previos {orden.intentos}\n"
-            f"Ticker: {_h(pos.estado.value)}, neta {pos.neta} (DAS {neta_das}), {cobertura}\n"
+            f"Ticker: {_h(pos.estado.value)}, neta {_neta_mostrada(orden, pos)} ({fuentes}), {cobertura}\n"
             f"Motivo: {_h(motivo)} → " + "; ".join(_h(p) for p in partes))
 
 

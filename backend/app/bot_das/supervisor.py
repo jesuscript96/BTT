@@ -96,6 +96,7 @@ from app.bot_das.tipos import (
     RELANZAR_S,
     Aviso,
     Config,
+    EstadoOrden,
     Fase,
     Grupo,
     Nivel,
@@ -133,6 +134,7 @@ TOLERANCIA_LATIDO_S = 0.5       # un latido escrito «a la vez» que el lanzamie
 DAS_VIGILAR_CADA_S = 30.0       # G2-03: durante toda la ventana, el proceso DAS se mira cada 30 s
 CODIGOS_SIN_RELANZAR = frozenset({4, 5})   # G2-08: motor distinto (H-6) y config/entorno: relanzar no lo arregla
 RELOJ_RELANZOS_MAX = 3          # G2-08: tras 3 salidas seguidas por reloj (código 2) se deja a control humano
+ORDEN_HUERFANA_S = 60.0         # R2-PRO-2: una SENDING sin id de DAS vista más de 60 s no impide el apagado nocturno
 HORA_ENCENDER_DEFECTO = "03:55"     # R-L-01 / §7 horario.encender
 HORA_APAGAR_SIN_CONFIG = "20:00"    # sin config legible: ventana larga (apagar antes nunca es lo conservador)
 EOD_SIN_ESTRATEGIAS = salidas.EOD_POR_DEFECTO   # 16:00 (L4)
@@ -485,6 +487,9 @@ class Supervisor:
         self._apagado_hecho = False
         self._posicion_avisada = False
         self._prorroga = False                          # G2-01: fuera de la ventana con posición, los hijos siguen
+        self._estuvo_dentro = False                     # R2-PRO-1: hubo ventana y aún no se hizo el apagado de su fin
+        self._sending_visto: dict[str, float] = {}      # R2-PRO-2: orden SENDING sin id de DAS → mono de la 1.ª vez
+        self._huerfanas_avisadas: set[str] = set()      # R2-PRO-2: huérfanas ya anotadas y avisadas
         self._firma_al_parar: dict[str, Optional[tuple]] = {}   # G2-08: firma del fichero del cuadro al dejar un hijo
         self._das_vigilado_en: Optional[float] = None   # G2-03: última mirada al proceso DAS
         self._das_caido_desde: Optional[float] = None
@@ -772,6 +777,7 @@ class Supervisor:
             self._diario.anotar("ventana", dentro=dentro, encender=inicio, apagar=fin, regla="R-L-01")
         if dentro:
             self._prorroga = False
+            self._estuvo_dentro = True
             self._vigilar_hijos(apagando=False)
             self._apagado_hecho = False
             self._posicion_avisada = False
@@ -793,8 +799,17 @@ class Supervisor:
 
     def _en_prorroga(self) -> bool:
         """G2-01: fuera de la ventana, ¿siguen los hijos al mando? Sí mientras la foto diga posición/órdenes vivas (o no se
-        pueda leer) y el bot estuviera en marcha (algún hijo corriendo o ya en prórroga). Avisa 3 UNA vez por episodio."""
-        if not any(h.corriendo for h in self._hijos.values()) and not self._prorroga:
+        pueda leer) y el bot estuviera en marcha (algún hijo corriendo o ya en prórroga). Avisa 3 UNA vez por episodio.
+
+        R2-PRO-1: también en el FIN de una ventana que este supervisor vivió
+        aunque en ese momento no corra ningún hijo (los dos murieron o esperan
+        su relanzamiento): con posición o foto ilegible NO se marca el apagado,
+        se avisa 3 una vez y `_gestionar_prorroga` relanza vigilante y
+        ejecutor para que la gestionen. Un supervisor que arranca de noche sin
+        haber visto la ventana no lanza nada por una foto vieja.
+        """
+        if not any(h.corriendo for h in self._hijos.values()) and not self._prorroga \
+                and not (self._estuvo_dentro and not self._apagado_hecho):
             return False
         posicion = self.hay_posicion()
         if posicion is False:
@@ -905,6 +920,7 @@ class Supervisor:
             h.parado_por_codigo = None
             h.salidas_reloj = 0
         self._firma_al_parar.clear()
+        self._huerfanas_avisadas.clear()                 # R2-PRO-2: los tokens llevan el día; se avisa de nuevo
 
     # ── dentro de la ventana ──────────────────────────────────────────
     def _gestionar_dentro(self) -> None:
@@ -1247,6 +1263,9 @@ class Supervisor:
     def _apagar_fuera(self) -> None:
         corriendo = [h for h in self._hijos.values() if h.corriendo]
         if not corriendo:
+            # R2-PRO-1: aquí solo se llega sin hijos si `_en_prorroga` ya consultó `hay_posicion()` y dijo False (o si
+            # este supervisor no vivió la ventana); con posición no se marca el apagado.
+            self._estuvo_dentro = False
             if not self._apagado_hecho:
                 self._apagado_hecho = True
                 for h in self._hijos.values():
@@ -1266,6 +1285,7 @@ class Supervisor:
             h = self._hijos[nombre]
             if h.corriendo:
                 self._parar_hijo(h)
+        self._estuvo_dentro = False                      # R2-PRO-1: apagado hecho con la foto plana
         self._diario.anotar("apagado", regla="R-L-01")
         self._avisar(Nivel.INFO, "Supervisor: fin de la ventana: bot apagado (R-L-01)", "apagado")
 
@@ -1306,6 +1326,12 @@ class Supervisor:
         canceló, un stop que quedó en el libro) también cuenta: si se llenara
         con el bot apagado quedaría un corto sin stop ni gestión overnight.
         `ordenes` que no es una lista → None (no se sabe: no se apaga).
+
+        R2-PRO-2: NO bloquean el apagado (se anotan como «orden_huerfana» y
+        se avisa 2, una vez por orden) una orden SIMULADA (la foto es de fase
+        sombra: no existe en DAS) ni una SENDING sin id de DAS que este
+        supervisor lleva viendo más de `ORDEN_HUERFANA_S` (DAS nunca la
+        aceptó). Cualquier otra orden viva, o una que no es un objeto, sí.
         """
         try:
             texto = self.ruta_foto.read_text(encoding="utf-8")
@@ -1321,8 +1347,13 @@ class Supervisor:
         if ordenes is not None:
             if not isinstance(ordenes, list):
                 return None
-            if ordenes:
+            bloquean = self._ordenes_que_bloquean(ordenes, foto.get("fase"))
+            if bloquean is None:
+                return None
+            if bloquean:
                 return True
+        else:
+            self._sending_visto.clear()
         posiciones = foto.get("posiciones") if isinstance(foto, dict) else None
         if posiciones is None:
             return False
@@ -1335,6 +1366,46 @@ class Supervisor:
                     or pos.get("intento") is not None:
                 return True
         return False
+
+    def _ordenes_que_bloquean(self, ordenes: list, fase: Any) -> Optional[bool]:
+        """R2-PRO-2: ¿alguna orden viva de la foto impide el apagado? None si una no es un objeto (no se sabe).
+
+        Las simuladas (foto de fase sombra) y las SENDING sin id de DAS vistas
+        durante más de `ORDEN_HUERFANA_S` son huérfanas: se anotan y se avisa
+        2 una vez por orden, y no bloquean.
+        """
+        ahora = self._reloj.mono()
+        sombra = str(fase or "").strip().lower() == Fase.SOMBRA.value
+        vistas: set[str] = set()
+        bloquea = False
+        for o in ordenes:
+            if not isinstance(o, dict):
+                return None
+            clave = f"{o.get('token')!r}|{o.get('ticker')!r}"
+            if sombra:
+                self._orden_huerfana(clave, o, "simulada (fase sombra): no existe en DAS")
+                continue
+            if o.get("estado") == EstadoOrden.SENDING.value and o.get("id_das") is None:
+                vistas.add(clave)
+                primera = self._sending_visto.setdefault(clave, ahora)
+                if ahora - primera > ORDEN_HUERFANA_S:
+                    self._orden_huerfana(clave, o, f"SENDING sin id de DAS desde hace más de {ORDEN_HUERFANA_S:g} s")
+                    continue
+            bloquea = True
+        for clave in [c for c in self._sending_visto if c not in vistas]:
+            del self._sending_visto[clave]
+        return bloquea
+
+    def _orden_huerfana(self, clave: str, o: dict, motivo: str) -> None:
+        if clave in self._huerfanas_avisadas:
+            return
+        self._huerfanas_avisadas.add(clave)
+        self._diario.anotar("orden_huerfana", token=o.get("token"), ticker=o.get("ticker"), estado=o.get("estado"),
+                            id_das=o.get("id_das"), proposito=o.get("proposito"), motivo=motivo,
+                            regla="L4 / G2-04 / R2-PRO-2")
+        self._avisar(Nivel.AVISO, f"Supervisor: la orden {o.get('token')} de {o.get('ticker')} ({o.get('estado')}) es "
+                                  f"huérfana — {motivo}: no impide el apagado nocturno; revísala en DAS",
+                     f"orden_huerfana:{clave}")
 
     # ── disco (R-J-07) ────────────────────────────────────────────────
     def _revisar_disco(self) -> None:

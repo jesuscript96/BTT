@@ -333,7 +333,7 @@ def montar(cfg_canario: Config, reloj: RelojSimulado, dir_bot: Path, libro: Any,
     def crear(*, config: Optional[Config] = None, accion: bool | Callable[[], Any] = True,
               ping: Optional[vg.PingExterno] = None, watch: Any = None, cola: Optional[vg.ColaVigilante] = None,
               dentro: Optional[Callable[[datetime], bool]] = None, plan: Optional[PlanReconexion] = None,
-              arrancar: bool = True) -> Montaje:
+              arrancar: bool = True, aviso_config: Optional[str] = None) -> Montaje:
         c = config if config is not None else cfg_canario
         cola = cola if cola is not None else vg.ColaVigilante()
         host, puerto = direccion_simulador
@@ -348,7 +348,7 @@ def montar(cfg_canario: Config, reloj: RelojSimulado, dir_bot: Path, libro: Any,
                             Latido(estado / vg.NOMBRE_LATIDO, reloj), CerrojoInstancia(estado / vg.NOMBRE_CERROJO),
                             estado / vg.NOMBRE_LATIDO_EJECUTOR, ping, estado / vg.NOMBRE_ORDEN_SUPERVISOR, cola=cola,
                             dentro_de_ventana=dentro if dentro is not None else (lambda ahora_et: True),
-                            plan_reconexion=plan, espera_avisos_s=0.1)
+                            plan_reconexion=plan, espera_avisos_s=0.1, aviso_config=aviso_config)
         m = Montaje(v, cola, avisos, abrir, dir_bot, reloj, simulador, libro)
         creados.append(m)
         if arrancar:
@@ -643,7 +643,8 @@ def test_r_c_08_con_el_ejecutor_vivo_espera_el_plazo_de_descubierta(montar, relo
     m.listo()
     m.pasadas(3)
     assert neworders(m.recibidas()) == [] and m.abrir.llamadas == 0
-    anotaciones = de_tipo(m.regs(), "vigilancia")
+    # la línea «sin_watch» sale si una pasada llegó antes del volcado (carrera del socket con la máquina cargada)
+    anotaciones = [r for r in de_tipo(m.regs(), "vigilancia") if not r.datos.get("sin_watch")]
     assert len(anotaciones) == 1 and anotaciones[0].datos["actua"] is False           # sin ruido: una sola línea
     reloj.avanzar(4.0)
     escribir_latido_ejecutor(dir_bot, reloj.epoch())
@@ -888,6 +889,31 @@ def test_r_j_05_sin_url_de_ping_avisa_al_arrancar_una_sola_vez(montar, reloj: Re
     m.pasadas(3)
     assert len(m.avisos.con_clave("ping_sin_url")) == 1 and ping.intentos == 0
     assert [r.datos["clave"] for r in de_tipo(m.regs(), "aviso")].count("ping_sin_url") == 1
+
+
+@pytest.mark.parametrize("forzada,nivel", [(True, Nivel.MAXIMO), (False, Nivel.AVISO)],
+                         ids=["R2-PRO-3-fase-forzada-nivel-3", "R2-PRO-3-respaldo-sin-forzar-nivel-2"])
+def test_r2_pro_3_el_vigilante_avisa_por_avisos_la_fase_forzada_a_sombra(montar, cfg: Config, dir_bot: Path,
+                                                                        forzada: bool, nivel: Nivel) -> None:
+    """R2-PRO-3 (SEG-02): el aviso de `cargar_con_respaldo` ya no se queda en el log del vigilante: sale por la cola de
+    avisos al arrancar (nivel 3 si la fase se forzó a SOMBRA, 2 si no) y queda en su diario."""
+    from app.bot_das import config as mod_config
+    texto = "Configuración del cuadro inválida (x): se usa el último bueno (config_version 1) (H-4)"
+    if forzada:
+        texto += f" · {mod_config.AVISO_FASE_FORZADA}: el último bueno estaba en CANARIO"
+    m = montar(config=dataclasses.replace(cfg, fase=Fase.SOMBRA), aviso_config=texto)
+    avisos = m.avisos.con_clave("config_respaldo_vigilante")
+    assert len(avisos) == 1 and avisos[0].nivel is nivel and texto in avisos[0].texto
+    assert avisos[0].texto.startswith("[SOMBRA]")
+    anotado = [r for r in de_tipo(m.regs(), "aviso") if r.datos.get("clave") == "config_respaldo_vigilante"]
+    assert len(anotado) == 1 and anotado[0].datos["nivel"] == int(nivel)
+
+
+def test_r2_pro_3_construir_y_main_pasan_el_aviso_de_la_config_al_vigilante() -> None:
+    """R2-PRO-3: `main` entrega el aviso de `cargar_con_respaldo` a `construir_desde_env(aviso_config=…)`."""
+    import inspect
+    assert "aviso_config" in inspect.signature(vg.construir_desde_env).parameters
+    assert "construir_desde_env(cfg, reloj, aviso_config=aviso)" in inspect.getsource(vg.main)
 
 
 def test_r_c_08_c_el_ejecutor_callado_se_avisa_pasado_el_plazo(montar, reloj: RelojSimulado, dir_bot: Path) -> None:

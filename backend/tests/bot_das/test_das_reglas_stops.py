@@ -1008,7 +1008,8 @@ def _aplicar(acciones, vivas: list[Orden], ids) -> list[Orden]:
             vivas = [o for o in vivas if o.ticker != a.ticker]
         else:
             assert isinstance(a, (InvalidarSerie, Avisar, Anotar)) or (
-                isinstance(a, Programar) and a.clave == CLAVE_VERIFICAR_REPLACE), a
+                isinstance(a, Programar) and (a.clave == CLAVE_VERIFICAR_REPLACE
+                                              or a.clave == stops.clave_exceso_verificar(X))), a
     return vivas
 
 
@@ -1150,17 +1151,23 @@ def test_limpieza_larga_en_pennies_va_por_la_ruta_de_cruzar_de_la_hora(config, t
 
 
 def test_limpieza_larga_sin_bid_usa_last_y_sin_nada_avisa_nivel_3_sin_orden(config, tokens):
-    """Sin bid, el último precio con el mismo margen; sin ningún precio, aviso nivel 3 y NINGÚN temporizador (vende el humano)."""
+    """Sin bid, el último precio con el mismo margen; sin ningún precio, aviso nivel 3 y sin orden. R2-STOPS-2: la comprobación a
+    1 s se programa IGUAL (con la cuenta larga, SIEMPRE): si al vencer hay precio y sigue larga, se vende tras un CANCEL ALLSYMB."""
     pos = posicion([lote("A", 10, 100)], neta_fills=20)
     solo_last = Cotizacion(ticker=X, last=D("9.4567"))
     acciones = limpieza_tras_fill_stop(pos, [], solo_last, tokens.siguiente, config, HORA, 4)
     assert de_tipo(acciones, EnviarOrden)[0].orden.precio == D("9.36")            # 9,4567·0,99 = 9,3621… → ABAJO (lado permisivo)
     acciones = limpieza_tras_fill_stop(pos, [], Cotizacion(ticker=X, bid=D("0"), last=D("NaN")), tokens.siguiente, config, HORA, 4)
-    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, Avisar, Anotar]
+    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, Avisar, Anotar, Programar]
     assert acciones[2].nivel is Nivel.MAXIMO and "VENDER A MANO" in acciones[2].texto
+    assert acciones[-1] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
     acciones = limpieza_tras_fill_stop(pos, [], None, tokens.siguiente, config, HORA, 4)
     assert de_tipo(acciones, EnviarOrden) == [] and de_tipo(acciones, Avisar)[0].nivel is Nivel.MAXIMO
-    assert de_tipo(acciones, Programar) == []
+    assert de_tipo(acciones, Programar) == [Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})]
+    # al vencer ya hay precio y la cuenta sigue larga sin venta viva → CANCEL ALLSYMB + venta; la vuelta cuenta
+    acciones = stops.verificar_venta_exceso(pos, [], solo_last, tokens.siguiente, config, HORA, 4, 0)
+    assert [type(a) for a in acciones] == [CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
+    assert acciones[1].orden.qty == 20 and acciones[-1].datos["persecuciones"] == 1
 
 
 @pytest.mark.parametrize("con_orden_stop", [True, False], ids=["orden_stop-explicita", "deducida-de-las-vivas"])
@@ -1414,11 +1421,13 @@ def test_D2a_03_con_una_venta_del_exceso_viva_vende_solo_la_diferencia_y_no_canc
 
 
 def test_D2a_03_con_la_venta_viva_que_ya_cubre_la_larga_no_sale_otra(config, tokens, cotizacion):
-    """D2a-03: larga 10 con la venta de 10 viva → ninguna orden nueva ni CANCEL ALLSYMB; solo el incidente (vendidas 0)."""
+    """D2a-03: larga 10 con la venta de 10 viva → ninguna orden nueva ni CANCEL ALLSYMB; el incidente (vendidas 0) y, R2-STOPS-2,
+    la comprobación a 1 s IGUAL (esa venta puede no llenar)."""
     pos = posicion([lote("A", 10, 100)], neta_fills=10)
     acciones = limpieza_tras_fill_stop(pos, [_venta(qty=10)], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 6)
-    assert [type(a) for a in acciones] == [InvalidarSerie, Anotar]
+    assert [type(a) for a in acciones] == [InvalidarSerie, Anotar, Programar]
     assert (acciones[1].datos["vendidas"], acciones[1].datos["en_vuelo"]) == (0, 10)
+    assert acciones[2] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
     assert tokens.ultimo_seq == 0
 
 
@@ -1435,22 +1444,175 @@ def test_D2a_03_lo_que_se_vende_nunca_pasa_de_la_larga(config, tokens, cotizacio
     vieja.qty = 45
     acciones = limpieza_tras_fill_stop(pos, [nueva, vieja], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 7)
     assert [(type(a), a.id_das, a.qty, a.precio) for a in de_tipo(acciones, Reemplazar)] == [(Reemplazar, 9, 5, D("9.30"))]
+    # R2-STOPS-1: una venta ajena (sin etiqueta) NO está en vuelo: sin VENTA_EXCESO viva, CANCEL ALLSYMB se la lleva y se vende la
+    # larga (antes contaba como en vuelo y solo se avisaba: si no llenaba, la cuenta seguía larga sin venta ni comprobación)
     ajena_de_mas = _venta(qty=60, id_das=7, token=200000007, proposito=Proposito.DESCONOCIDA, origen=Origen.VIGILANTE)
     acciones = limpieza_tras_fill_stop(pos, [ajena_de_mas], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 7)
-    avisos_ = de_tipo(acciones, Avisar)                                     # no es nuestra: no se toca, pero se avisa
-    assert de_tipo(acciones, Reemplazar) == [] and avisos_ and avisos_[0].nivel is Nivel.MAXIMO and "CORTA" in avisos_[0].texto
+    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
+    assert de_tipo(acciones, EnviarOrden)[0].orden.qty == 50 and de_tipo(acciones, Reemplazar) == []
 
 
-def test_D2a_03_en_vuelo_cuenta_toda_venta_no_stop_pero_no_la_proteccion_de_un_largo(config, tokens, cotizacion):
-    """D2a-03: la venta del vigilante sin etiqueta (20) cuenta como en vuelo → se venden 30; una VENTA STOPLMTP (protección de un
-    largo, R-C-10.4) no está en vuelo → se vende todo y CANCEL ALLSYMB como siempre."""
+def test_R2_STOPS_1_en_vuelo_solo_la_venta_exceso_ni_la_ajena_ni_la_proteccion_de_un_largo(config, tokens, cotizacion):
+    """R2-STOPS-1 (corrige al viejo test D2a-03 «en vuelo cuenta toda venta no stop»): «en vuelo» son SOLO las VENTA_EXCESO.
+    La venta del vigilante sin etiqueta (20) NO cuenta → CANCEL ALLSYMB + se venden las 50; una VENTA STOPLMTP (protección de un
+    largo, R-C-10.4) tampoco → igual. Con una VENTA_EXCESO de 10 viva y la del vigilante: se cancela la del vigilante por id y se
+    venden 40 (nunca las dos a la vez: la cuenta quedaría corta sin stops)."""
     pos = posicion([lote("A", 10, 100)], neta_fills=50)
     vig = _venta(qty=20, id_das=7, token=200000007, proposito=Proposito.DESCONOCIDA, origen=Origen.VIGILANTE)
     acciones = limpieza_tras_fill_stop(pos, [vig], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 8)
-    assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [30] and de_tipo(acciones, CancelarTicker) == []
+    assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [50] and len(de_tipo(acciones, CancelarTicker)) == 1
+    assert de_tipo(acciones, Anotar)[0].datos["en_vuelo"] == 0
     proteccion = orden(100000006, Proposito.STOP_PROTECCION, "7.50", "7.27", 50, id_das=6, lado=Lado.VENTA)
     acciones = limpieza_tras_fill_stop(pos, [proteccion], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 8)
     assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [50] and len(de_tipo(acciones, CancelarTicker)) == 1
+    acciones = limpieza_tras_fill_stop(pos, [vig, _venta(qty=10)], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config,
+                                       HORA, 8)
+    assert de_tipo(acciones, CancelarTicker) == [] and [a.id_das for a in de_tipo(acciones, Cancelar)] == [7]
+    assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [40]
+    assert acciones.index(de_tipo(acciones, Cancelar)[0]) < acciones.index(de_tipo(acciones, EnviarOrden)[0])
+
+
+def _entrada(proposito: Proposito = Proposito.ENTRADA_AGREGAR, qty: int = 100, precio: str = "10.50", id_das: Optional[int] = 10,
+             token: int = 100000010, estado: EstadoOrden = EstadoOrden.ACCEPTED) -> Orden:
+    """Una venta CORTA de entrada viva (R-B-01): LMT de venta, jamás cubre una larga."""
+    return orden(token, proposito, None, precio, qty, id_das=id_das, estado=estado, lado=Lado.VENTA, tipo=TipoOrden.LIMITE)
+
+
+@pytest.mark.parametrize("proposito", [Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE])
+def test_R2_STOPS_1_larga_20_con_una_entrada_viva_de_100_la_cancela_y_vende_20(config, tokens, cotizacion, proposito):
+    """R2-STOPS-1, el caso del verificador: larga 20 + ENTRADA viva de 100 a 10,50. Antes: [InvalidarSerie, Avisar(3)
+    exceso_de_mas, Anotar] (la entrada «cubría» la larga), sin venta, sin cancelar la entrada y sin comprobación. Ahora: la
+    entrada se CANCELA (sin VENTA_EXCESO viva, el CANCEL ALLSYMB que va delante se la lleva), se venden 20 a bid·0,99 y
+    `exceso_verificar` a 1 s. Con una entrada de 10 se venden también 20 (no 10)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    entrada = _entrada(proposito)
+    acciones = limpieza_tras_fill_stop(pos, [entrada], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 4)
+    assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
+    assert acciones[0] == InvalidarSerie(serie_stops(X), 4)
+    venta = acciones[2].orden
+    assert (venta.lado, venta.qty, venta.precio, venta.proposito) == (Lado.VENTA, 20, D("9.40"), Proposito.VENTA_EXCESO)
+    assert acciones[4].datos["en_vuelo"] == 0 and acciones[4].datos["vendidas"] == 20
+    assert acciones[5] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
+    assert all(not (isinstance(a, Avisar) and a.clave.startswith("exceso_de_mas")) for a in acciones)
+    assert [o for o in _aplicar(acciones, [entrada], itertools.count(50)) if o.proposito is proposito] == []   # la entrada, fuera
+    acciones = limpieza_tras_fill_stop(pos, [_entrada(proposito, qty=10)], cotizacion(X, "9.50", "9.52"), tokens.siguiente,
+                                       config, HORA, 4)
+    assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [20]
+
+
+def test_R2_STOPS_1_con_la_venta_exceso_viva_la_entrada_se_cancela_una_a_una(config, tokens, cotizacion):
+    """R2-STOPS-1: con una VENTA_EXCESO de 10 viva (no CANCEL ALLSYMB, se la llevaría) y la cuenta larga 30: la entrada con id se
+    CANCELA por id (junto a las compras), se venden 20 (30 − 10: la entrada no cuenta) y se programa la comprobación. La entrada
+    aún SIN id → `Anotar("cancelar_al_tener_id", {token…})` para que el decisor la cancele al llegar su Accept; también en la rama
+    del CANCEL ALLSYMB (por si la NEWORDER aún no ha llegado a DAS). La que ya tiene el CANCEL en vuelo no se repite."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=30)
+    ve = _venta(qty=10)
+    principal = orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1)
+    entrada = _entrada()
+    acciones = limpieza_tras_fill_stop(pos, [ve, principal, entrada], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config,
+                                       HORA, 6)
+    assert de_tipo(acciones, CancelarTicker) == []
+    assert [(a.id_das, a.token) for a in de_tipo(acciones, Cancelar)] == [(1, 100000001), (10, 100000010)]
+    assert [(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(acciones, EnviarOrden)] == [(Lado.VENTA, 20, D("9.40"))]
+    assert acciones[-1] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
+    ultimo_cancel = max(i for i, a in enumerate(acciones) if isinstance(a, Cancelar))
+    assert ultimo_cancel < acciones.index(de_tipo(acciones, EnviarOrden)[0])
+    # entrada Sending sin id
+    sin_id = _entrada(id_das=None, estado=EstadoOrden.SENDING, token=100000011)
+    for vivas in ([ve, sin_id], [sin_id]):
+        acciones = limpieza_tras_fill_stop(pos, vivas, cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 6)
+        notas = [a for a in de_tipo(acciones, Anotar) if a.tipo == "cancelar_al_tener_id"]
+        assert [(n.datos["token"], n.datos["ticker"], n.datos["proposito"], n.datos["qty"]) for n in notas] == [
+            (100000011, X, "entrada_agregar", 100)]
+        assert notas[0].datos["motivo"] and "R2-STOPS-1" in notas[0].datos["regla"]
+        assert [a.orden.qty for a in de_tipo(acciones, EnviarOrden)] == [30 - (10 if ve in vivas else 0)]
+        assert de_tipo(acciones, Programar)[-1].clave == f"exceso_verificar:{X}"
+    # el CANCEL ya en vuelo (D2a-05) no se repite, ni el de la entrada
+    acciones = limpieza_tras_fill_stop(pos, [ve, principal, entrada], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config,
+                                       HORA, 6, pedidos_en_vuelo={100000010: None})
+    assert [a.id_das for a in de_tipo(acciones, Cancelar)] == [1]
+
+
+def test_R2_STOPS_2_con_lo_que_ya_se_vende_de_mas_tambien_se_programa_la_comprobacion(config, tokens, cotizacion):
+    """R2-STOPS-2: larga 20 con VENTA_EXCESO de 30 viva (a_vender < 0) → se recorta a 20 y se programa `exceso_verificar` igual."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    acciones = limpieza_tras_fill_stop(pos, [_venta(qty=30)], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 6)
+    assert [(a.id_das, a.qty) for a in de_tipo(acciones, Reemplazar)] == [(9, 20)]
+    assert acciones[-1] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
+    assert de_tipo(acciones, EnviarOrden) == [] and tokens.ultimo_seq == 0
+
+
+def test_R2_STOPS_2_verificar_sin_venta_exceso_viva_y_con_una_entrada_vende_y_sigue_contando(config, tokens, cotizacion):
+    """R2-STOPS-2: al vencer la cuenta sigue larga 20 y solo queda viva una ENTRADA (o una venta ajena): no cuenta como venta del
+    exceso → CANCEL ALLSYMB (se la lleva) + venta de 20 con el mismo margen + la vuelta siguiente (persecuciones + 1). A la 3.ª,
+    aviso «VENDER A MANO»."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    for viva in (_entrada(), _venta(qty=20, id_das=7, token=200000007, proposito=Proposito.DESCONOCIDA, origen=Origen.VIGILANTE)):
+        acciones = stops.verificar_venta_exceso(pos, [viva], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA, 5, 1)
+        assert [type(a) for a in acciones] == [CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
+        assert (acciones[1].orden.qty, acciones[1].orden.precio, acciones[1].orden.proposito) == (20, D("9.10"),
+                                                                                                   Proposito.VENTA_EXCESO)
+        assert acciones[-1] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 2})
+        acciones = stops.verificar_venta_exceso(pos, [viva], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA, 5, 3)
+        assert [type(a) for a in acciones] == [Avisar, Anotar] and "ninguna venta viva" in acciones[0].texto
+
+
+def test_R2_STOPS_1_verificar_con_la_venta_exceso_viva_cancela_la_entrada_que_ya_tiene_id(config, tokens, cotizacion):
+    """R2-STOPS-1 en la persecución: la VENTA_EXCESO de 20 sigue viva y aparece una entrada con id (su Accept llegó tras la
+    limpieza) → Cancelar por id + REPLACE de la venta al bid nuevo; sin repetir un CANCEL que ya está en vuelo."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=20)
+    ve, entrada = _venta(), _entrada()
+    acciones = stops.verificar_venta_exceso(pos, [entrada, ve], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA,
+                                            5, 0)
+    assert [type(a) for a in acciones] == [Cancelar, Reemplazar, Anotar, Programar]
+    assert (acciones[0].id_das, acciones[0].token) == (10, 100000010)
+    assert (acciones[1].id_das, acciones[1].qty, acciones[1].precio) == (9, 20, D("9.10"))
+    assert acciones[2].datos["en_vuelo"] == 20 and acciones[2].datos["tokens"] == [100000009]
+    acciones = stops.verificar_venta_exceso(pos, [entrada, ve], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA,
+                                            5, 0, pedidos_en_vuelo={100000010: None})
+    assert de_tipo(acciones, Cancelar) == []
+    assert tokens.ultimo_seq == 0
+
+
+def test_R2_STOPS_3_ninguna_venta_de_entrada_cubre_nada(config, cfg_stops, tokens, cotizacion):
+    """R2-STOPS-3: ningún camino de stops.py toma una ENTRADA_* (venta corta) como cobertura. Larga: lo vendido es
+    max(neta − VENTA_EXCESO vivas, 0) con o sin entradas; corta: `descubiertas` no la cuenta y `plan` ni la cuenta ni la toca."""
+    for neta in (5, 20, 60):
+        for ve_qty in (0, 10, 20):
+            for entradas in ([], [_entrada()], [_entrada(qty=15), _entrada(Proposito.ENTRADA_CRUCE, qty=40, token=100000012,
+                                                                           id_das=12)]):
+                pos = posicion([lote("A", 10, 100)], neta_fills=neta)
+                vivas = entradas + ([_venta(qty=ve_qty)] if ve_qty else [])
+                acciones = limpieza_tras_fill_stop(pos, vivas, cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 3)
+                vendidas = sum(a.orden.qty for a in de_tipo(acciones, EnviarOrden))
+                assert vendidas == max(neta - ve_qty, 0), (neta, ve_qty, len(entradas))
+                assert de_tipo(acciones, Programar)[-1].clave == f"exceso_verificar:{X}"
+                quedan = _aplicar(acciones, vivas, itertools.count(90))
+                assert [o for o in quedan if o.proposito in (Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE)] == []
+    corta = posicion([lote("A", 10, 100)], neta_fills=-100)
+    assert descubiertas(corta, [_entrada()]) == 100
+    assert [type(a) for a in plan(corta, [_entrada()], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)] == [
+        EnviarOrden, EnviarOrden]
+
+
+def test_R2_STOPS_1_limpieza_larga_no_depende_del_orden_de_las_vivas(config, tokens, cotizacion):
+    """R2-STOPS-1: las 120 permutaciones de [VENTA_EXCESO, entrada con id, entrada sin id, venta ajena, principal] dan las MISMAS
+    acciones (mismo orden de los Cancelar, misma venta de 30 = 40 − 10)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=40)
+    vivas = [_venta(qty=10), _entrada(), _entrada(Proposito.ENTRADA_CRUCE, id_das=None, estado=EstadoOrden.SENDING, token=100000011),
+             _venta(qty=5, id_das=7, token=200000007, proposito=Proposito.DESCONOCIDA, origen=Origen.VIGILANTE),
+             orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1)]
+    firmas = set()
+    for permutacion in itertools.permutations(vivas):
+        acciones = limpieza_tras_fill_stop(pos, list(permutacion), cotizacion(X, "9.50", "9.52"), lambda: 1, config, HORA, 3)
+        firmas.add(tuple((type(a).__name__, getattr(a, "id_das", None), getattr(a, "token", None),
+                          a.orden.qty if isinstance(a, EnviarOrden) else None,
+                          (a.tipo, a.datos.get("token")) if isinstance(a, Anotar) else None) for a in acciones))
+    assert len(firmas) == 1
+    (firma,) = firmas
+    assert [(t, i) for (t, i, *_r) in firma if t == "Cancelar"] == [("Cancelar", 1), ("Cancelar", 7), ("Cancelar", 10)]
+    assert [f[3] for f in firma if f[0] == "EnviarOrden"] == [30]
+    assert [f[4][1] for f in firma if f[0] == "Anotar" and f[4][0] == "cancelar_al_tener_id"] == [100000011]
 
 
 def test_D2a_04_la_venta_del_exceso_sale_vendible_y_programa_la_comprobacion(config, tokens, cotizacion):
@@ -1554,10 +1716,17 @@ def _stops_de_compra(vivas: list[Orden]) -> list[Orden]:
 def test_paseos_aleatorios_del_precio_plan_reasignar_y_limpieza_juntos(config, tokens):
     """Riesgos 6, 7 y 11 juntos: 300 paseos del precio con disparos y fills a trozos (a veces varios en el mismo salto),
     `reasignar` en cada cotización, `limpieza` en cada fill y el `plan` del barrido: tras cada paso UNA emergencia con
-    −neta, escalón principal ≤ posición, plan idempotente; si queda larga se vende EXACTAMENTE la neta."""
+    −neta, escalón principal ≤ posición, plan idempotente; si queda larga se vende EXACTAMENTE la neta.
+
+    R2-STOPS-3: en la mitad de los paseos hay además ventas CORTAS de entrada vivas (ENTRADA_AGREGAR / ENTRADA_CRUCE, con y sin
+    id; con su propio azar para no cambiar los paseos): `plan` no las cuenta ni las toca y, si la cuenta queda larga, NO cubren
+    nada (se vende la neta entera), se cancelan (CANCEL ALLSYMB; sin id, `cancelar_al_tener_id`) y se programa la comprobación;
+    con una VENTA_EXCESO viva añadida, se cancelan por id y se vende max(neta − esa venta, 0)."""
     modos: dict[str, int] = {}
+    largas_con_entrada = 0
     for semilla in range(300):
         rnd = random.Random(semilla)
+        rnd_entradas = random.Random(10_000 + semilla)
         ids = itertools.count(1)
         niveles_base = sorted(rnd.sample(["5", "5.2", "5.5", "6", "6.3"], rnd.randint(1, 3)), key=D)
         pos = posicion([lote(f"L{i}", L, rnd.randint(10, 300)) for i, L in enumerate(niveles_base)], neta_fills=0)
@@ -1565,6 +1734,15 @@ def test_paseos_aleatorios_del_precio_plan_reasignar_y_limpieza_juntos(config, t
         limit_up = rnd.choice([None, None, None, D("6.9"), D("5.8")])
         version = 1
         vivas = _aplicar(plan(pos, [], config.stops, limit_up, tokens.siguiente, HORA, RUTA_STOP, version), [], ids)
+        entradas: list[Orden] = []
+        if rnd_entradas.random() < 0.5:
+            for k in range(rnd_entradas.randint(1, 2)):
+                con_id = rnd_entradas.random() < 0.7
+                entradas.append(_entrada(rnd_entradas.choice([Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE]),
+                                         qty=rnd_entradas.randint(1, 400), precio="4.79",
+                                         id_das=(10_000 + k) if con_id else None, token=100_000_500 + k,
+                                         estado=EstadoOrden.ACCEPTED if con_id else EstadoOrden.SENDING))
+            vivas = vivas + entradas
         precio = D("4.80")
         for _ in range(60):
             precio = max(D("4.00"), precio + D(rnd.choice(["-0.08", "-0.03", "0.02", "0.05", "0.1", "0.25", "0.6"])))
@@ -1578,8 +1756,11 @@ def test_paseos_aleatorios_del_precio_plan_reasignar_y_limpieza_juntos(config, t
             vivas = _aplicar(acciones, vivas, ids)
             llenadas = []
             for o in _stops_de_compra(vivas):
-                if o.stop <= precio and ask <= o.precio:
-                    _llenar(o, rnd.randint(1, _viva(o)), pos)
+                # con entradas: fogonazo. El salto agrega muchos prints: el precio cruza cada disparo por el camino (el límite
+                # era alcanzable al dispararse) y cada stop llena ENTERO → principal y emergencia a la vez → cuenta LARGA
+                if o.stop <= precio and (ask <= o.precio or entradas):
+                    trozo = rnd.randint(1, _viva(o))
+                    _llenar(o, _viva(o) if entradas else trozo, pos)
                     llenadas.append(o)
             for o in llenadas:
                 version += 1
@@ -1588,6 +1769,23 @@ def test_paseos_aleatorios_del_precio_plan_reasignar_y_limpieza_juntos(config, t
                 assert acciones[0] == InvalidarSerie(serie_stops(X), version)
                 if pos.neta > 0:
                     assert [(e.orden.lado, e.orden.qty) for e in de_tipo(acciones, EnviarOrden)] == [(Lado.VENTA, pos.neta)]
+                    assert acciones[-1] == Programar(stops.clave_exceso_verificar(X), 1.0, {"ticker": X, "persecuciones": 0})
+                    vivas_entradas = [e for e in entradas if e in vivas]
+                    if vivas_entradas:
+                        largas_con_entrada += 1
+                        assert len(de_tipo(acciones, CancelarTicker)) == 1
+                        notas = sorted(a.datos["token"] for a in de_tipo(acciones, Anotar) if a.tipo == "cancelar_al_tener_id")
+                        assert notas == sorted(e.token for e in vivas_entradas if e.id_das is None)
+                        en_vuelo = rnd_entradas.randint(1, pos.neta + 20)
+                        con_ve = limpieza_tras_fill_stop(pos, vivas + [_venta(qty=en_vuelo, id_das=20_000, token=100_000_700)],
+                                                         cot, tokens.siguiente, config, HORA, version, orden_stop=o,
+                                                         limit_up=limit_up)
+                        assert de_tipo(con_ve, CancelarTicker) == []
+                        assert sum(e.orden.qty for e in de_tipo(con_ve, EnviarOrden)) == max(pos.neta - en_vuelo, 0)
+                        cancelados = {a.id_das for a in de_tipo(con_ve, Cancelar)}
+                        assert {e.id_das for e in vivas_entradas if e.id_das is not None} <= cancelados
+                        assert 20_000 not in cancelados or pos.neta < en_vuelo       # la VENTA_EXCESO solo se recorta
+                        assert con_ve[-1].clave == stops.clave_exceso_verificar(X)
                     break
                 vivas = _aplicar(acciones, vivas, ids)
                 if pos.neta == 0:
@@ -1605,6 +1803,7 @@ def test_paseos_aleatorios_del_precio_plan_reasignar_y_limpieza_juntos(config, t
             assert sum(_viva(o) for o in escalon) <= -pos.neta
             assert _principales_antes_que_la_emergencia(pos, config.stops, limit_up)   # D2a-01
     assert set(modos) == {"sumar_al_superior", "principal_nuevo_al_ask", "cubierto_por_emergencia"}   # las tres ramas
+    assert largas_con_entrada >= 10                                            # R2-STOPS-3: el caso nuevo se recorre de verdad
 
 
 class _EmisorDeMentira:

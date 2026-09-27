@@ -917,6 +917,38 @@ def test_A_03_redactar_repr_de_bytes_del_login_real():
         assert "s3cr3ta" not in redactar(texto), texto
 
 
+@pytest.mark.parametrize("texto", [
+    pytest.param(repr('QUIT\r\nLOGIN u secreta acc 0'), id="verificador-repr-tras-quit"),
+    pytest.param(str(b'X\r\nLOGIN u secreta acc 0\r\n'), id="verificador-str-bytes"),
+    pytest.param(repr('\tLOGIN u secreta acc 0'), id="verificador-repr-tab"),
+    pytest.param("LOGIN u secreta acc 0", id="linea-suelta"),
+    pytest.param("\r\nlogin u secreta acc 0", id="saltos-reales-minusculas"),
+    pytest.param(r"X\nLogin u secreta acc 0", id="escape-n-mixto"),
+    pytest.param(r"X\RLOGIN u secreta acc 0", id="escape-R-mayuscula"),
+    pytest.param(r"\t\tLOGIN u secreta acc 0", id="dos-tabs-literales"),
+    pytest.param(repr(["QUIT", "LOGIN u secreta acc 0"]), id="repr-lista"),
+    pytest.param(repr(("LOGIN u secreta acc 0",)), id="repr-tupla-parentesis"),
+    pytest.param("cmd=LOGIN u secreta acc 0", id="igual"),
+    pytest.param("enviado:   LOGIN\tu\tsecreta acc 0", id="espacios-y-tabs-reales"),
+    pytest.param(str(("QUIT\r\nLOGIN u secreta acc 0").encode("latin-1")), id="str-bytes-tras-quit"),
+])
+def test_R2_RED_1_redactar_login_tras_escapes_literales(texto):
+    """R2-RED-1: el LOGIN precedido de «\\r», «\\n», «\\t» literales (barra + letra),
+    comillas, corchetes, paréntesis, «=» o blancos, en cualquier caja, pierde la
+    clave; usuario y cuenta se conservan."""
+    tapado = redactar(texto)
+    assert "secreta" not in tapado, tapado
+    assert "u ***** acc 0" in tapado or "u\t***** acc 0" in tapado, tapado
+
+
+def test_R2_RED_1_letra_real_delante_no_es_login():
+    """R2-RED-1: una letra o cifra REAL delante descarta el LOGIN; la barra + r/n/t no."""
+    assert redactar("relogin u nada acc 0") == "relogin u nada acc 0"
+    assert redactar("xLOGIN u nada acc 0") == "xLOGIN u nada acc 0"
+    assert redactar("9login u nada acc 0") == "9login u nada acc 0"
+    assert redactar(r"\nLOGIN u nada acc 0") == r"\nLOGIN u ***** acc 0"
+
+
 @pytest.mark.parametrize("usuario, clave, cuenta", [
     pytest.param("u", "mi s3cr3ta", "ACC", id="clave-con-espacio"),
     pytest.param("u", " s3cr3ta", "ACC", id="clave-con-espacio-delante"),

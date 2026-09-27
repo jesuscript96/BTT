@@ -589,8 +589,10 @@ class VigilanteDAS:
     `PingExterno` o None; `ruta_orden_supervisor`: `estado/orden_supervisor.jsonl`.
     Por nombre: `cola`, `mercado` (libro de cotizaciones de DAS), `ruta_foto_
     ejecutor` (de ella sale el equity), `dentro_de_ventana(ahora_et)` (R-L-01
-    para el ping), `plan_reconexion` (R-J-02), `periodo_s` y
-    `espera_avisos_s`.
+    para el ping), `plan_reconexion` (R-J-02), `periodo_s`,
+    `espera_avisos_s` y `aviso_config` (el aviso de
+    `config.cargar_con_respaldo`; R2-PRO-3: sale al arrancar, nivel 3 si
+    lleva `config.AVISO_FASE_FORZADA`).
     """
 
     def __init__(self, cfg: Config, watch: Any, abrir_accion: Callable[[], Any], lector: LectorDiario,
@@ -600,7 +602,7 @@ class VigilanteDAS:
                  ruta_foto_ejecutor: Optional[Path] = None,
                  dentro_de_ventana: Optional[Callable[[datetime], bool]] = None,
                  plan_reconexion: Optional[PlanReconexion] = None, periodo_s: float = PERIODO_S,
-                 espera_avisos_s: float = ESPERA_AVISOS_S) -> None:
+                 espera_avisos_s: float = ESPERA_AVISOS_S, aviso_config: Optional[str] = None) -> None:
         if not isinstance(cfg, Config):
             raise TypeError(f"cfg debe ser una Config, no {type(cfg).__name__}")
         for nombre in ("conectar", "cerrar", "enviar"):
@@ -637,7 +639,10 @@ class VigilanteDAS:
                 raise ValueError(f"{nombre} debe ser un número finito ≥ 0: {valor!r}")
         if periodo_s <= 0:
             raise ValueError(f"periodo_s debe ser > 0: {periodo_s!r}")
+        if aviso_config is not None and not isinstance(aviso_config, str):
+            raise TypeError("aviso_config debe ser un texto o None")
         self._cfg = cfg
+        self._aviso_config = aviso_config or None       # R2-PRO-3: aviso de cargar_con_respaldo (se da al arrancar)
         self._watch = watch
         self._abrir_accion = abrir_accion
         self._lector = lector
@@ -823,6 +828,11 @@ class VigilanteDAS:
         if self._diario.degradado:
             self._avisar(Nivel.MAXIMO, "El diario del vigilante NO escribe: vigila y protege igual (corrección 4)",
                          "diario_vigilante", self._reloj.mono())
+        if self._aviso_config:
+            # R2-PRO-3 (SEG-02): la fase forzada a SOMBRA por usar el último bueno deja de reponer stops reales → 3
+            forzada = mod_config.AVISO_FASE_FORZADA in self._aviso_config
+            self._avisar(Nivel.MAXIMO if forzada else Nivel.AVISO, f"Vigilante: {self._aviso_config}",
+                         "config_respaldo_vigilante", self._reloj.mono())
         self._leer_diarios(hoy)
         self._tokens = GeneradorTokens(Origen.VIGILANTE, hoy, min(self._ultimo_seq_vigilante, mod_tokens.MAX_SEQ))
         self._orden_offset = _tamano_fichero(self._ruta_orden_supervisor)
@@ -1872,7 +1882,8 @@ def directorio_bot() -> Path:
 def construir_desde_env(cfg: Config, reloj: Any, *, canales: Optional[list] = None,
                         abrir_ping: Optional[Callable[..., Any]] = None,
                         dentro_de_ventana: Optional[Callable[[datetime], bool]] = None,
-                        plan_reconexion: Optional[PlanReconexion] = None) -> VigilanteDAS:
+                        plan_reconexion: Optional[PlanReconexion] = None,
+                        aviso_config: Optional[str] = None) -> VigilanteDAS:
     """Monta el vigilante de producción desde el entorno (§3.27, R-C-08, R-J-05, corrección 15, R-Q-01).
 
     Watch: `ClienteDAS.desde_env(watch=True, solo_lectura=True)` (DAS_API_HOST,
@@ -1935,7 +1946,7 @@ def construir_desde_env(cfg: Config, reloj: Any, *, canales: Optional[list] = No
         Latido(ruta_estado / NOMBRE_LATIDO, reloj, cada_s=_numero_positivo(vig.get("latido_s"), 1.0)),
         CerrojoInstancia(ruta_estado / NOMBRE_CERROJO), ruta_estado / NOMBRE_LATIDO_EJECUTOR, ping,
         ruta_estado / NOMBRE_ORDEN_SUPERVISOR, cola=cola, dentro_de_ventana=dentro_de_ventana,
-        plan_reconexion=plan_reconexion)
+        plan_reconexion=plan_reconexion, aviso_config=aviso_config)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1994,7 +2005,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         try:
             cfg, aviso = mod_config.cargar_con_respaldo(ruta_cfg, dir_bot / "config" / mod_config.NOMBRE_ULTIMO_BUENO,
                                                         cuenta)
-            vigilante = construir_desde_env(cfg, reloj)
+            vigilante = construir_desde_env(cfg, reloj, aviso_config=aviso)   # R2-PRO-3: el aviso va por avisos
         except (mod_config.ConfigInvalida, RuntimeError, ValueError, OSError) as exc:
             logger.error("[VIGILANTE] no arranca: %s: %s", type(exc).__name__, exc)
             return CODIGO_CONFIG

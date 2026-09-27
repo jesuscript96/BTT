@@ -38,6 +38,15 @@ LAS TRAMPAS.
     sin una sola orden). El `esperado_*.jsonl` de un día real lo genera y lo
     REVISA una persona (entrada, stop y salida a la vista); hasta entonces el
     dorado se salta con motivo.
+  * R2-PRO-4: sin esperar a ese fichero, UNA entrada completa del replay
+    (radar → SLPRICEINQUIRE con `%SLRET 2 AlreadyShortable` → entrada → fill
+    → principal + emergencia → salida por el stop) la ejercita con el DAS
+    simulado `test_das_ejecutor.test_r2_pro_4_replay_con_locate_already_
+    shortable_entra_llena_pone_stops_y_sale_por_stop` (grabación recortada
+    de fixtures, motor falso). El guion de un dorado real debe hacer lo
+    mismo: `LibroSimulado.configurar_locate(ticker, fallo="AlreadyShortable")`
+    (o un precio que pase el EV) y el radar del ticker; sin eso toda señal
+    cae en «sin locates libres (R-H-04)».
 """
 from __future__ import annotations
 

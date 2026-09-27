@@ -871,6 +871,112 @@ def test_g2_01_sin_bot_en_marcha_una_foto_vieja_no_lanza_nada_fuera_de_ventana(m
     assert popen.llamadas == []
 
 
+@pytest.mark.parametrize("foto", [
+    {"posiciones": {"XYZ": {"neta_fills": -100, "neta_das": -100, "intento": None}}, "ordenes": []},
+    "{roto",
+], ids=["con-posicion", "foto-ilegible"])
+def test_r2_pro_1_fin_de_ventana_sin_hijos_con_posicion_no_apaga_avisa_3_y_relanza(montar: Montaje, dir_bot: Path,
+                                                                                  foto: Any) -> None:
+    """R2-PRO-1 (G2-01, laguna): al acabar la ventana NO corre ningún hijo (los dos acaban de morir) y la foto dice
+    posición (o no se lee): no se marca el apagado, aviso 3 una sola vez y se relanzan vigilante y ejecutor."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    arrancar_con_vigilante_latiendo(montar, s)
+    s.ruta_foto.write_text(foto if isinstance(foto, str) else json.dumps(foto), encoding="utf-8")
+    for nombre in sup_mod.HIJOS:
+        s.hijo(nombre).proceso.salir(1)
+    s.paso()                                                            # dentro: se ven muertos (relanzar en 1 s)
+    assert not any(h.corriendo for h in s.hijos.values())
+    montar.reloj.fijar(datetime(2026, 9, 25, 11, 45, tzinfo=ET))        # fin de la ventana sin ningún hijo vivo
+    s.paso()
+    assert not de_tipo(dir_bot, "apagado")
+    assert [c for c in montar.avisos.claves() if c == "apagado_con_posicion"] == ["apagado_con_posicion"]
+    assert s.hijo("vigilante").corriendo and s.hijo("vigilante").lanzamientos == 2
+    latir(dir_bot, "vigilante", montar.reloj)
+    montar.reloj.avanzar(1.0)
+    s.paso()
+    assert s.hijo("ejecutor").corriendo and s.hijo("ejecutor").lanzamientos == 2
+    for _ in range(3):
+        montar.reloj.avanzar(0.5)
+        for nombre in sup_mod.HIJOS:
+            latir(dir_bot, nombre, montar.reloj)
+        s.paso()
+    assert [c for c in montar.avisos.claves() if c == "apagado_con_posicion"] == ["apagado_con_posicion"]
+    s.ruta_foto.write_text(json.dumps({"posiciones": {}, "ordenes": []}), encoding="utf-8")
+    s.paso()                                                            # plano: ahora sí, apagado ordenado
+    assert not any(h.corriendo for h in s.hijos.values()) and de_tipo(dir_bot, "apagado")
+
+
+def test_r2_pro_1_fin_de_ventana_sin_hijos_y_plano_apaga_sin_relanzar(montar: Montaje, dir_bot: Path) -> None:
+    """R2-PRO-1: la misma situación con la foto plana apaga como antes (sin aviso 3 ni relanzamientos)."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    arrancar_con_vigilante_latiendo(montar, s)
+    s.ruta_foto.write_text(json.dumps({"posiciones": {}, "ordenes": []}), encoding="utf-8")
+    for nombre in sup_mod.HIJOS:
+        s.hijo(nombre).proceso.salir(1)
+    s.paso()
+    montar.reloj.fijar(datetime(2026, 9, 25, 11, 45, tzinfo=ET))
+    s.paso()
+    montar.reloj.avanzar(5.0)
+    s.paso()
+    assert "apagado_con_posicion" not in montar.avisos.claves()
+    assert all(s.hijo(n).lanzamientos == 1 for n in sup_mod.HIJOS) and not any(h.corriendo for h in s.hijos.values())
+
+
+def _orden_foto(token: int, estado: str, id_das: Optional[int]) -> dict:
+    return {"token": token, "id_das": id_das, "ticker": "XYZ", "lado": "SS", "tipo": "LMT", "qty": 100, "llenas": 0,
+            "lvqty": 100, "precio": "3.45", "stop": None, "estado": estado, "proposito": "entrada_agregar",
+            "lote_id": None, "origen": 1}
+
+
+def test_r2_pro_2_sending_sin_id_mas_de_60_s_es_huerfana_y_no_bloquea_el_apagado(montar: Montaje,
+                                                                                dir_bot: Path) -> None:
+    """R2-PRO-2 (G2-04): una SENDING sin id de DAS bloquea el apagado mientras es reciente; pasados 60 s se anota
+    «orden_huerfana», aviso 2 una sola vez y el bot se apaga. Una SENDING con id sigue bloqueando."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    arrancar_con_vigilante_latiendo(montar, s)
+    s.ruta_foto.write_text(json.dumps({"fase": "canario", "posiciones": {},
+                                       "ordenes": [_orden_foto(126800001, "Sending", None)]}), encoding="utf-8")
+    assert s.hay_posicion() is True                                     # recién vista: bloquea
+    montar.reloj.avanzar(30.0)
+    assert s.hay_posicion() is True
+    montar.reloj.avanzar(31.0)
+    assert s.hay_posicion() is False                                    # > 60 s: huérfana
+    assert s.hay_posicion() is False
+    huerfanas = de_tipo(dir_bot, "orden_huerfana")
+    assert len(huerfanas) == 1 and huerfanas[0]["datos"]["token"] == 126800001
+    claves = [c for c in montar.avisos.claves() if str(c).startswith("orden_huerfana:")]
+    assert len(claves) == 1
+    assert [a for a in montar.avisos.de_nivel(Nivel.AVISO) if "huérfana" in a]
+    s.ruta_foto.write_text(json.dumps({"fase": "canario", "posiciones": {},
+                                       "ordenes": [_orden_foto(126800002, "Sending", 1002)]}), encoding="utf-8")
+    montar.reloj.avanzar(120.0)
+    assert s.hay_posicion() is True                                     # tiene id de DAS: viva de verdad
+    s.ruta_foto.write_text(json.dumps({"fase": "canario", "posiciones": {},
+                                       "ordenes": [_orden_foto(126800001, "Sending", None)]}), encoding="utf-8")
+    assert s.hay_posicion() is True                                     # dejó de verse: el plazo empieza de nuevo
+
+
+def test_r2_pro_2_en_sombra_las_ordenes_simuladas_no_impiden_el_apagado(montar: Montaje, dir_bot: Path) -> None:
+    """R2-PRO-2: con la foto de fase SOMBRA las órdenes son simuladas: al fin de la ventana se anotan huérfanas, aviso 2
+    y el bot se apaga (no se queda toda la noche en prórroga)."""
+    popen = PopenEspia()
+    s = montar(popen=popen)
+    arrancar_con_vigilante_latiendo(montar, s)
+    s.ruta_foto.write_text(json.dumps({"fase": "sombra", "posiciones": {},
+                                       "ordenes": [_orden_foto(126800001, "Accepted", 1001)]}), encoding="utf-8")
+    montar.reloj.fijar(datetime(2026, 9, 25, 11, 45, tzinfo=ET))
+    for nombre in sup_mod.HIJOS:
+        latir(dir_bot, nombre, montar.reloj)
+    s.paso()
+    s.paso()
+    assert all(p.terminado or p.codigo is not None for p in popen.procesos)
+    assert de_tipo(dir_bot, "apagado") and "apagado_con_posicion" not in montar.avisos.claves()
+    assert [r["datos"]["token"] for r in de_tipo(dir_bot, "orden_huerfana")] == [126800001]
+
+
 def test_g2_03_das_que_se_cierra_a_media_sesion_se_relanza_y_se_avisa_cada_5_min(montar: Montaje,
                                                                               tmp_path: Path) -> None:
     """G2-03 (R-J-02 (2), EP-7): con DAS ya listo, si su proceso desaparece el supervisor lo nota en ≤ 30 s, lo abre y

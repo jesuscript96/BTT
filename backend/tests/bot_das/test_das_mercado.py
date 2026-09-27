@@ -546,3 +546,64 @@ def test_foto_serializable(mercado):
     assert foto["tickers"]["ABC"]["bid"] == "2.19"
     assert foto["halts"]["ABC"]["k_halts_up"] == 1
     assert foto["halts"]["ABC"]["halt_desde"].startswith("2026-09-25T10:15:00")
+
+
+# ── R2-DEC-3: TA:Q sin T posterior, con prints ─────────────────────────
+def _en_q(mercado):
+    """ABC parado por H y luego en Q (solo cotización), con volumen 1000 y last 2.20 a las 10:15:00."""
+    mercado.aplicar(quote("ABC", A="2.21", B="2.19", L="2.20", V="1000", T="10:15:00"))
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="H", tat="10:15:00"), AHORA_ET, Decimal("2.2"), "RTH") == "halt"
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="Q", tat="10:15:00"), AHORA_ET, None, "RTH") is None
+    return mercado.simbolo("ABC")
+
+
+def test_R2_DEC_3_prints_5_s_seguidos_en_Q_es_reapertura(mercado, reloj):
+    """R2-DEC-3: en TA:Q el volumen crece durante 5 s seguidos → reapertura UNA vez; el Q que DAS repite no vuelve a
+    parar el ticker (sin T posterior no se queda en HALT todo el día); un H nuevo sí es otro halt."""
+    simb = _en_q(mercado)
+    simb.orden_open_enviada = True
+    for i in range(1, 6):                                    # prints de t+1 a t+5: 4 s seguidos, todavía parado
+        reloj.avanzar(1)
+        mercado.aplicar(quote("ABC", V=str(1000 + 100 * i)))
+        assert mercado.tomar_reapertura_q("ABC") is False
+    assert simb.halt_desde is not None and simb.ta == "Q"
+    reloj.avanzar(1)                                         # el print de t+6: 5 s seguidos desde el primero
+    mercado.aplicar(quote("ABC", V="1600", L="2.60", T="10:20:06"))
+    assert mercado.tomar_reapertura_q("abc") is True
+    assert mercado.tomar_reapertura_q("ABC") is False          # una sola vez
+    assert simb.halt_desde is None and simb.ta is None and simb.orden_open_enviada is False
+    assert simb.precio_parada == Decimal("2.2")                # se conserva para medir la subida (R-F-05)
+    assert mercado.reabierto_por_prints("ABC") and mercado.foto()["halts"]["ABC"]["reabierto_por_prints"] is True
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="Q", tat="10:15:00"), AHORA_ET, None, "RTH") is None
+    assert simb.ta is None and simb.halt_desde is None
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="T", tat="10:15:00"), AHORA_ET, None, "RTH") is None
+    assert not mercado.reabierto_por_prints("ABC")
+    assert mercado.marcar_halt("ABC", estado("ABC", ta="H", tat="10:40:00"), AHORA_ET, Decimal("2.6"), "RTH") == "halt"
+
+
+def test_R2_DEC_3_last_con_hora_nueva_cuenta_como_print(mercado, reloj):
+    """R2-DEC-3: sin volumen, un `last` que cambia con hora nueva también es un print."""
+    _en_q(mercado)
+    for i in range(1, 7):
+        reloj.avanzar(1)
+        mercado.aplicar(quote("ABC", L=f"2.{30 + i}", T=f"10:20:0{i}"))
+        assert mercado.tomar_reapertura_q("ABC") is (i == 6)
+
+
+@pytest.mark.parametrize("caso", ["hueco", "solo_libro", "last_sin_hora", "sin_q"])
+def test_R2_DEC_3_sin_prints_seguidos_no_reabre(mercado, reloj, caso):
+    """R2-DEC-3: un hueco de más de 3 s reinicia el tramo; solo bid/ask, o un last con la MISMA hora, no son prints; y
+    fuera de Q (TA:H) los prints no reabren nada (el T manda)."""
+    simb = _en_q(mercado)
+    if caso == "sin_q":
+        mercado.marcar_halt("ABC", estado("ABC", ta="H", tat="10:15:00"), AHORA_ET, None, "RTH")
+    for i in range(1, 12):
+        reloj.avanzar(4 if caso == "hueco" else 1)
+        if caso == "solo_libro":
+            mercado.aplicar(quote("ABC", A=f"2.{40 + i}", B=f"2.{30 + i}"))
+        elif caso == "last_sin_hora":
+            mercado.aplicar(quote("ABC", L=f"2.{30 + i}", T="10:15:00"))
+        else:
+            mercado.aplicar(quote("ABC", V=str(1000 + 100 * i)))
+        assert mercado.tomar_reapertura_q("ABC") is False, i
+    assert simb.halt_desde is not None and simb.ta in ("Q", "H")

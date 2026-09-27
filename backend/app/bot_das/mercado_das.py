@@ -41,7 +41,9 @@ LAS TRAMPAS.
     mensaje. `$IssueStatus` repetido con `H` → None (sin transición) y la
     guardia `orden_open_enviada` se conserva (injerto A §8.23). E1-05: `Q`
     (solo cotización antes del cruce) sigue PARADO; se reabre con `T` o sin
-    TA. E1-10: el TA se normaliza aquí (sin espacios, en mayúsculas) y se
+    TA. R2-DEC-3: o con prints nuevos durante 5 s seguidos estando en `Q`
+    (`tomar_reapertura_q`): un `Q` sin `T` posterior no deja el ticker
+    parado todo el día; los `Q` repetidos después ya no lo paran. E1-10: el TA se normaliza aquí (sin espacios, en mayúsculas) y se
     guarda así en `EstadoSimbolo.ta`: `reglas.halts` y este módulo ven lo
     mismo.
   * `velas_minuto` (E1-08) arma velas de 1 min con los `$Quote` (máximo,
@@ -77,6 +79,10 @@ from app.bot_das.tipos import (
 TOLERANCIA_BANDA_PCT = Decimal("0.5")   # técnico: el último print antes del halt puede quedar un tick bajo la banda
 FRESCA_MAX_S = COTIZACION_FRESCA_MAX_S  # §3.12 / D1-12: UNA constante (tipos) para `fresca`, `sin_cotizacion_desde` y la entrada
 VELAS_MINUTO_MAX = 60                   # E1-08: velas de 1 min que se guardan por ticker (la banda de OPA mira 30)
+# R2-DEC-3: un TA:Q sin T posterior no deja el ticker parado todo el día: prints nuevos durante 5 s seguidos (sin
+# huecos de más de 3 s entre uno y el siguiente) en estado Q = reapertura. En Q no se negocia: un print es negociación.
+Q_PRINTS_REAPERTURA_S = 5.0
+Q_PRINTS_HUECO_MAX_S = 3.0
 # E1-06: cómo se clasificó el último halt de cada ticker (va a la foto; el decisor lo puede anotar)
 CLASIF_UP = "up"                        # cuenta en k
 CLASIF_UP_SIN_BANDAS = "up_sin_bandas"  # P en RTH sin las dos bandas: cuenta como UP (lo conservador para un corto)
@@ -111,6 +117,9 @@ class MercadoDAS:
         self._clasif_halt: dict[str, str] = {}          # E1-06: clasificación del último halt (CLASIF_*)
         self._velas: dict[str, deque] = {}              # E1-08: [t_inicio_s, high, low, dólares] por minuto monotónico
         self._volumen_previo: dict[str, int] = {}
+        self._q_prints: dict[str, tuple[float, float]] = {}   # R2-DEC-3: ticker en Q → (primer print, último print)
+        self._q_reabierto: set[str] = set()     # R2-DEC-3: reabierto por prints; los TA:Q siguientes no lo vuelven a parar
+        self._reaperturas_q: set[str] = set()   # R2-DEC-3: reaperturas por prints aún no recogidas por el decisor
 
     # ── mensajes de DAS ─────────────────────────────────────────────────
     def aplicar(self, msg: MensajeDAS) -> Optional[str]:
@@ -151,6 +160,7 @@ class MercadoDAS:
         if cot is None:
             cot = Cotizacion(ticker=ticker)
             self._cotizaciones[ticker] = cot
+        volumen_antes, last_antes, hora_antes = cot.volumen, cot.last, cot.hora_servidor
         last_nuevo: Optional[Decimal] = None
         for clave_cruda, valor in msg.campos.items():
             clave = str(clave_cruda).strip().lower()
@@ -174,7 +184,56 @@ class MercadoDAS:
         cot.actualizada_en = self._reloj.mono()
         self._quotes += 1
         self._vela(ticker, cot, last_nuevo, cot.actualizada_en)
+        hay_print = ((cot.volumen is not None and volumen_antes is not None and cot.volumen > volumen_antes)
+                     or (last_nuevo is not None and last_nuevo != last_antes
+                         and cot.hora_servidor is not None and cot.hora_servidor != hora_antes))
+        self._vigilar_q(ticker, hay_print, cot.actualizada_en)
         return ticker
+
+    def _vigilar_q(self, ticker: str, hay_print: bool, mono: float) -> None:
+        """R2-DEC-3: en un halt con TA:Q, prints nuevos durante `Q_PRINTS_REAPERTURA_S` seguidos → reapertura.
+
+        Print = el volumen del `$Quote` crece, o cambia el `last` con una hora
+        nueva. Un hueco de más de `Q_PRINTS_HUECO_MAX_S` entre prints empieza
+        el tramo de nuevo (un print suelto tardío no reabre). Fuera de Q (o sin
+        halt) no se cuenta nada.
+        """
+        simb = self._simbolos.get(ticker)
+        if simb is None or simb.halt_desde is None or simb.ta != "Q":
+            self._q_prints.pop(ticker, None)
+            return
+        if not hay_print:
+            return
+        tramo = self._q_prints.get(ticker)
+        if tramo is None or mono - tramo[1] > Q_PRINTS_HUECO_MAX_S:
+            tramo = (mono, mono)
+        else:
+            tramo = (tramo[0], mono)
+        self._q_prints[ticker] = tramo
+        if tramo[1] - tramo[0] >= Q_PRINTS_REAPERTURA_S:
+            self._q_prints.pop(ticker, None)
+            simb.halt_desde = None
+            simb.orden_open_enviada = False
+            simb.ta = None                      # se negocia: sin TA = normal para reglas.halts, entrada y cisne negro
+            self._q_reabierto.add(ticker)
+            self._reaperturas_q.add(ticker)
+
+    def tomar_reapertura_q(self, ticker: str) -> bool:
+        """R2-DEC-3: True UNA vez si el ticker acaba de reabrir por prints estando en TA:Q (el decisor llama a su reapertura).
+
+        Como la reapertura de `marcar_halt`: `halt_desde` borrado, la guardia
+        de la OPEN a False y `precio_parada` conservado. Los `TA:Q` que DAS siga
+        mandando después ya no lo paran (hasta que llegue otro TA distinto).
+        """
+        clave = _norm(ticker)
+        if clave in self._reaperturas_q:
+            self._reaperturas_q.discard(clave)
+            return True
+        return False
+
+    def reabierto_por_prints(self, ticker: str) -> bool:
+        """R2-DEC-3: True si el ticker se dio por reabierto por prints y DAS aún no ha mandado un TA distinto de Q."""
+        return _norm(ticker) in self._q_reabierto
 
     def _vela(self, ticker: str, cot: Cotizacion, last_nuevo: Optional[Decimal], mono: float) -> None:
         """E1-08: suma el `$Quote` a la vela de 1 min (minuto monotónico): high/low del `last`, dólares = Δvolumen · last."""
@@ -209,7 +268,12 @@ class MercadoDAS:
     def _aplicar_estado(self, simb: EstadoSimbolo, msg: MsgIssueStatus) -> None:
         if msg.ssr is not None:
             simb.ssr = msg.ssr
-        simb.ta = _ta_normalizado(msg.ta)
+        ta = _ta_normalizado(msg.ta)
+        if ta == "Q" and simb.ticker in self._q_reabierto:
+            ta = None                           # R2-DEC-3: ya reabrió por prints; el Q que DAS repite no vuelve a parar
+        elif ta != "Q":
+            self._q_reabierto.discard(simb.ticker)
+        simb.ta = ta
         simb.tat = msg.tat
         simb.consultado_en = self._reloj.mono()
 
@@ -403,7 +467,7 @@ class MercadoDAS:
             }
         halts = {}
         for ticker, simb in sorted(self._simbolos.items()):
-            if simb.halt_desde is None and simb.k_halts_up == 0:
+            if simb.halt_desde is None and simb.k_halts_up == 0 and ticker not in self._q_reabierto:
                 continue
             halts[ticker] = {
                 "ta": simb.ta,
@@ -416,6 +480,7 @@ class MercadoDAS:
                 "orden_open_enviada": simb.orden_open_enviada,
                 "ta_ultimo_halt": self._ta_halt.get(ticker),
                 "clasificacion": self._clasif_halt.get(ticker),
+                "reabierto_por_prints": ticker in self._q_reabierto,      # R2-DEC-3
             }
         return {
             "max_lv1": self._max_lv1,

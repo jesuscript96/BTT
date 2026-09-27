@@ -1509,7 +1509,8 @@ Marcas: **[C]** en caliente (siguiente señal) · **[A]** solo con bot apagado y
     "distancia_max_ultimo_bid_pct": 5.0,                   // [A] B20 bis PROVISIONAL (null = apagada) — pregunta 1
     "retraso_max_senal_pct": 1.0,                          // [A] R-A-01 provisional
     "fraccion_max_volumen_acum": null,                     // [A] R-B-05 desactivado
-    "reintentos_rechazo_conocido": 2                       // [A] R-B-07
+    "reintentos_rechazo_conocido": 2,                      // [A] R-B-07
+    "alto_riesgo_si": []                                   // [C] 2c consecuencia 2 (tope corto 0,5×): criterios de «alto riesgo»; vacío = nunca (pregunta a Jaume)
   },
   "salidas": {
     "por_hora": { "anticipo_s": 60, "nivel": "punto_medio", "al_ask_sin_tope": true, "perseguir_ask_max": 3, "perseguir_ask_s": 1 },   // [A] R-D-08 + corrección 11
@@ -1893,4 +1894,21 @@ Lo que NO pregunto porque ya está decidido en el libro y aquí se aplica tal cu
 
 ---
 
-*Fin del documento. Nada de lo descrito existe todavía en disco salvo este fichero; el orden de construcción es el de §12.*
+## 15. Cambios decididos tras la revisión del código (27-sep-2026)
+
+El paquete se construyó según §1-§12 y después pasó una revisión independiente en 16 grupos (reglas del libro, riesgos de §13, contratos entre unidades, tests, seguridad y cobertura regla a regla): 152 hallazgos, 8 críticos y 46 altos, corregidos y verificados por un segundo agente. Donde el arreglo exigía una decisión, el director la tomó con el criterio «nunca cuenta larga ni descubierta, nunca órdenes duplicadas, nunca un aviso perdido». Estas decisiones PREVALECEN sobre §3 y §5 donde choquen:
+
+- **Ajustes de construcción (a)-(h):** `Ficha`, `NivelesStop` y `StopDeseado` viven en `tipos.py`; `reglas/precios.py` es del lote 0; `entrada.evaluar_senal` recibe `exclusion: Optional[str]` (la calcula el decisor con `exclusiones.excluida`); no existe `avisos.texto_informe_bs`; `cisne_negro` usa `salidas.orden_al_ask`; el literal `Lot TP (n/m)` de `portfolio_sim.py` es TP; las firmas reales mandan; el diario recibe el limpiador de secretos por inyección.
+- **Stops (R-C-01 v3 / R-C-11 / R-F-02):** bajo la banda, todo principal cuyo disparo quede ≥ disparo de la emergencia se elimina (solo emergencia); `reasignar_principal_rebasado` exige `last > límite` (el ask solo no basta); la venta del exceso descuenta las `VENTA_EXCESO` en vuelo, cancela una a una las compras y las ventas de ENTRADA vivas (nunca `CANCEL ALLSYMB` con una venta de exceso viva), sale a `bid × (1 − 1 %)` y se persigue con `exceso_verificar` cada 1 s hasta 3 veces, luego aviso 3 «vender a mano»; con `neta_das ≠ neta_fills` del mismo signo, `plan` solo BAJA cantidades con `n = min(−neta_fills, −neta_das)`; un `NEWORDER` purgado por versión en el emisor vuelve al decisor como `OrdenDescartada` (CLOSED + replan al instante).
+- **Halts (R-F-01/05/06):** al enviar `HALT_OPEN`/`HALT_BANDA` por Q acciones se reducen antes principal y emergencia en Q (a 0 → cancelar) y `plan()` los restaura si la orden se rechaza o no llena 2 s tras la reapertura; en un halt H (no LULD) la orden por OPEN es un LÍMITE a `precio_parada × (1 + 250 %)`, nunca MKT, y el tope T1 se vuelve a medir con el `last` real tras reabrir; con cisne negro activo el bot no cierra en la reapertura (avisa nivel 3); en PM con decisión «mantener» los stops límite se ensanchan (`margen_limite_pm_pct`); k se siembra desde el diario y el `simstatus` cubre en RTH también los tickers del radar suscritos; `TA:Q` es «parado» salvo que lleguen prints nuevos durante 5 s.
+- **Decisor:** una sola guarda para toda salida por temporizador (no BS, no HALT, no control manual/humano, no `modo_degradado` «reconciliacion»/«das»; se reprograma a 0,5 s, nunca se descarta); la cantidad de toda salida por lote se capa a `min(libres, −neta − compras vivas del ticker)`; el intento de entrada se cancela cuando la posición queda plana o un lote del intento cierra (R-D-07 solo entre estrategias distintas); la Referencia de Massive vive en un hilo aparte con caché (el decisor nunca hace red); `/sigue X`, `/parar_avisos X BS` y `/stop X P SI` funcionan como pide el libro; agotar R-C-03 bloquea solo la reposición de ese propósito.
+- **Salidas (R-D-03/06/07/08):** `cerrar_todo` en dos pasos (cancelar → enviar tras el `Canceled` por la neta de ese momento), un temporizador por ticker, con discrepancia de netas cierra el mínimo del mismo signo, y al agotar cancela su orden viva antes de avisar; «Partial TP (Hour)», «Partial TP (Time)» y «Time Limit» se ejecutan como salida por hora con la cantidad del evento; `tp_cruce` es por orden; la tanda de una vela se ordena con `salidas.prioridad` en la fuente; un agregar rechazado por PostOnly pasa directo al cruce.
+- **Entrada y capital:** tercer límite `caben_equity` (margen inicial de Sage contra el equity, no solo contra el BP); la comprobación 16 usa la regla de `locates.asignar_a_lote` (sobrantes de otras estrategias y ETB); en la reapertura de un halt se salta también el filtro de retraso R-A-01; reentradas alineadas con `salidas.puede_reentrar` (−1 / 0 / N).
+- **Persistencia y avisos:** `reconstruir` cuenta los fills anotados antes del `%TRADE`, no machaca la intención con `orden_simulada`, rellena `ordenes_ajenas` y `k`; el offset de Telegram se persiste con hash del token y caducidad de 6 días y la deduplicación es por `update_id` entregados; todo texto variable a Telegram va escapado y `CanalTelegram` reenvía sin formato ante un 400; el emisor no se bloquea en cabeza por cuota (respeta el orden dentro de cada serie e id).
+- **Fuentes y procesos:** por la tubería viajan solo primitivos (nada de pandas en el ejecutor, tampoco en la primera señal) y la versión del enlace se exige en el «hola»; el arranque mide SNTP y conecta en un hilo auxiliar tocando el latido; fuera de la ventana con posición el supervisor sigue relanzando hijos; el proceso de DAS se comprueba cada 30 s; el vigilante con el ejecutor muerto y la cuenta larga vende el exceso (pendiente de confirmar por Jaume).
+
+Las decisiones que Jaume debe confirmar o cambiar están en el resumen de entrega (venta del exceso 1 %/3 vueltas; reducir stops al salir por OPEN; no cerrar en halt con cisne negro; PostOnly → cruce; el vigilante vende el exceso; k de halts anteriores a la entrada; límite T1 por OPEN a ×3,5; y las 12 preguntas de §14).
+
+---
+
+*Fin del documento. El paquete existe en disco (`backend/app/bot_das/`, tests en `backend/tests/bot_das/`) y sigue §1-§12 con los cambios de §15.*

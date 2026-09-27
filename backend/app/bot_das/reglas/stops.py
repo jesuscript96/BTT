@@ -142,14 +142,23 @@ LAS TRAMPAS.
     `compras_cierre` (D2a-09 / G1A-01) deja al decisor decir cuántas acciones
     cierra ya una compra en la que confía (la MKT por OPEN del halt): los
     stops se dimensionan para el resto y no se compra dos veces al reabrir.
-  * Venta del exceso (R-C-11 b-3; D2a-03, D2a-04): se descuenta lo que ya se
-    está vendiendo (toda venta NO stop viva del ticker, la nuestra y la que
-    no sepamos etiquetar: vender de más deja un corto SIN stops) y, si hay una
-    venta viva, NO se usa CANCEL ALLSYMB (se la llevaría): se cancelan una a
-    una las compras vivas con id (las Sending las cancela el barrido: son
-    huérfanas con la cuenta larga). Precio vendible: bid·(1 − 1 %) redondeado
-    abajo; se comprueba a 1 s (`exceso_verificar:X`). 1 % y 3 persecuciones
-    son PROVISIONALES (pregunta a Jaume).
+  * Venta del exceso (R-C-11 b-3; D2a-03, D2a-04, R2-STOPS-1/2): «en vuelo»
+    son SOLO las VENTA_EXCESO vivas del ticker; se vende
+    max(neta − en_vuelo, 0). NINGUNA otra venta cubre la larga: el bot solo
+    va corto, así que una ENTRADA_AGREGAR / ENTRADA_CRUCE viva es una venta
+    CORTA que, si llena, deja la cuenta corta sin stops (los lotes ya están
+    cerrados); con la cuenta larga se CANCELA, igual que toda venta no stop
+    que no sea VENTA_EXCESO (la del vigilante sin etiqueta, una a mano: si
+    llenara junto a la nuestra, venderíamos de más). Sin VENTA_EXCESO viva →
+    CANCEL ALLSYMB (se lo lleva todo) + venta; con una viva NO (se la
+    llevaría): `Cancelar` una a una de las compras y de esas ventas con id.
+    Una venta así SIN id no se puede cancelar aún: `Anotar("cancelar_al_tener_id",
+    {token, …})` para que el decisor la cancele al llegar su Accept (las
+    compras sin id las cancela el barrido: son huérfanas con la cuenta
+    larga). Precio vendible: bid·(1 − 1 %) redondeado abajo. Con la cuenta
+    larga se programa SIEMPRE `exceso_verificar:X` a 1 s (aunque lo que ya se
+    vende cubra la larga: puede no llenar). 1 % y 3 persecuciones son
+    PROVISIONALES (pregunta a Jaume).
   * El tipo de un STOPLMTP en `%ORDER` no está documentado (riesgo 1): se
     reconoce por `TIPO_STOP_EN_ORDER` («SLP: 2.97 2.99», «SL: …», «STOP…») o
     por `stops.tipo_esperado_en_order` cuando `comprobar_das` lo fije.
@@ -547,20 +556,28 @@ def limpieza_tras_fill_stop(pos: PosicionTicker, vivas: list[Orden], cot: Option
     neta == 0 → `CancelarTicker` (R-C-11 a: todo fuera al instante, incluida
     una principal colgada). neta > 0 (LARGA) → vende SOLO el exceso (R-C-11 b:
     100 cortas, principal 20, emergencia 100 → larga 20 → se venden 20, JAMÁS
-    100) descontando lo que ya se está vendiendo (D2a-03: toda venta NO stop
-    viva del ticker); sin ninguna venta viva, `CancelarTicker` antes (ninguna
-    compra pendiente puede seguir viva; supone el emisor FIFO: el CANCEL
-    ALLSYMB sale antes que la venta nueva); con una venta viva NO (se la
-    llevaría): `Cancelar` una a una de las COMPRAS vivas con id. Si lo que se
-    vende pasa de la larga, se recortan las VENTA_EXCESO nuestras de la más
-    nueva a la más vieja (nunca vender de más: dejaría un corto sin stops).
-    La venta nueva: `EnviarOrden(S, LMT a bid·(1 − 1 %) redondeado abajo,
-    ruta cruzar, VENTA_EXCESO)` (D2a-04: vendible, no el bid exacto; sin bid,
-    el último precio) + `Avisar(2)` + `Anotar("incidente")` +
-    `Programar("exceso_verificar:X", 1 s, {ticker, persecuciones: 0})` (ver
-    `verificar_venta_exceso`). Sin ningún precio, aviso nivel 3 (vender a
-    mano) y sin orden. La clave del aviso lleva la versión (un incidente nuevo
-    no se calla por el dedupe de 60 s de `avisos`). neta < 0 (sigue corta) →
+    100) descontando lo que ya se está vendiendo: SOLO las VENTA_EXCESO vivas
+    (D2a-03, R2-STOPS-1; una ENTRADA_* es una venta CORTA, jamás cubre la
+    larga). Sin ninguna VENTA_EXCESO viva, `CancelarTicker` antes (ninguna
+    compra ni venta de entrada puede seguir viva; supone el emisor FIFO: el
+    CANCEL ALLSYMB sale antes que la venta nueva); con una viva NO (se la
+    llevaría): `Cancelar` una a una de las COMPRAS vivas con id y de toda
+    venta no stop que no sea VENTA_EXCESO con id (entradas, la del vigilante
+    sin etiqueta…). Una de esas ventas SIN id (aún Sending) se deja escrita
+    con `Anotar("cancelar_al_tener_id", {token, ticker, proposito, qty,
+    motivo, regla})` en las dos ramas: el decisor la cancela en cuanto llegue
+    su Accept con id (su `_cancelar_al_aceptar`). Si lo que se vende pasa de
+    la larga, se recortan las VENTA_EXCESO nuestras de la más nueva a la más
+    vieja (nunca vender de más: dejaría un corto sin stops). La venta nueva:
+    `EnviarOrden(S, LMT a bid·(1 − 1 %) redondeado abajo, ruta cruzar,
+    VENTA_EXCESO)` (D2a-04: vendible, no el bid exacto; sin bid, el último
+    precio) + `Avisar(2)` + `Anotar("incidente")`. Sin ningún precio, aviso
+    nivel 3 (vender a mano) y sin orden. Con la cuenta larga termina SIEMPRE
+    con `Programar("exceso_verificar:X", 1 s, {ticker, persecuciones: 0})`
+    (R2-STOPS-2: también si lo que ya se vende cubre o pasa la larga, o sin
+    precio: esas ventas pueden no llenar; ver `verificar_venta_exceso`). La
+    clave del aviso lleva la versión (un incidente nuevo no se calla por el
+    dedupe de 60 s de `avisos`). neta < 0 (sigue corta) →
     marca `principal_consumido` en los lotes cuyo principal ya quedó bajo el
     precio (20-sep: «se CANCELA el principal, su momento pasó»): si llenó un
     principal, los de su nivel y los inferiores (por `nivel` o por disparo,
@@ -598,7 +615,8 @@ def limpieza_tras_fill_stop(pos: PosicionTicker, vivas: list[Orden], cot: Option
 
 # ── la venta del exceso no llena (R-C-11 b-3, D2a-04) ───────────────────
 def verificar_venta_exceso(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizacion], tokens: Callable[[], int],
-                           cfg: Any, hora_et: datetime, version: int, persecuciones: int = 0) -> list[Accion]:
+                           cfg: Any, hora_et: datetime, version: int, persecuciones: int = 0,
+                           pedidos_en_vuelo: Optional[Mapping[int, Optional[int]]] = None) -> list[Accion]:
     """D2a-04 / R-C-11 (3): lo que hace el temporizador `exceso_verificar:X` 1 s después de vender el exceso.
 
     Neta ≤ 0 → [] (el exceso ya se vendió; si cruzó a corto lo protege el
@@ -607,19 +625,23 @@ def verificar_venta_exceso(pos: PosicionTicker, vivas: list[Orden], cot: Optiona
     cuenta está LARGA» + `Anotar("incidente")` y nada más: la venta del bot,
     si sigue viva, NO se cancela (el barrido de R-C-11 pondría otra) y el
     aviso lo dice para que el humano la cancele antes de vender a mano y no
-    se venda dos veces. Antes de eso: sin ninguna venta viva → se repite la
-    limpieza de la cuenta larga (CANCEL ALLSYMB + venta de la neta); con
-    ventas vivas → se recortan si pasan de la larga y cada VENTA_EXCESO
-    nuestra con id que esté por encima del precio nuevo (bid·(1 − 1 %), el
-    mismo margen) se REEMPLAZA a ese precio (`share` de
-    `tipos.share_de_replace`); + `Anotar("venta_exceso_perseguida")` y el
-    `Programar` de la vuelta siguiente (`persecuciones` + 1). Aquí NO se abre
-    otra venta por la diferencia con ventas vivas: la vende la limpieza del
-    fill que la creó (o el barrido), y si esa limpieza no tenía precio ya
-    pidió «vender a mano»: venderla aquí podría vender dos veces. Sin
-    cotización, esa vuelta no persigue pero cuenta. `persecuciones` =
-    vueltas ya hechas (0 la primera; llega en los datos del temporizador).
-    PURA: no muta nada.
+    se venda dos veces. Antes de eso: sin ninguna VENTA_EXCESO viva nuestra
+    → se repite la limpieza de la cuenta larga (R2-STOPS-2: CANCEL ALLSYMB,
+    que se lleva también una entrada o una venta ajena viva, + venta de la
+    neta) y la vuelta cuenta; con VENTA_EXCESO vivas → se cancelan las
+    demás ventas no stop vivas con id (una ENTRADA_* no cubre la larga,
+    R2-STOPS-1; sin id, `Anotar("cancelar_al_tener_id")`; las que ya tienen
+    el CANCEL en vuelo según `pedidos_en_vuelo` no se repiten), las
+    VENTA_EXCESO se recortan si pasan de la larga y cada una con id que esté
+    por encima del precio nuevo (bid·(1 − 1 %), el mismo margen) se
+    REEMPLAZA a ese precio (`share` de `tipos.share_de_replace`); +
+    `Anotar("venta_exceso_perseguida")` y el `Programar` de la vuelta
+    siguiente (`persecuciones` + 1). Aquí NO se abre otra venta por la
+    diferencia con VENTA_EXCESO vivas: la vende la limpieza del fill que la
+    creó (o el barrido), y si esa limpieza no tenía precio ya pidió «vender
+    a mano»: venderla aquí podría vender dos veces. Sin cotización, esa
+    vuelta no persigue pero cuenta. `persecuciones` = vueltas ya hechas (0
+    la primera; llega en los datos del temporizador). PURA: no muta nada.
     """
     ticker = pos.ticker
     neta = pos.neta
@@ -628,17 +650,20 @@ def verificar_venta_exceso(pos: PosicionTicker, vivas: list[Orden], cot: Optiona
     cfg_stops = _bloque(cfg, "stops")
     cfg_rutas = _bloque(cfg, "rutas")
     hechas = persecuciones if type(persecuciones) is int and persecuciones > 0 else 0
-    ventas = _ventas_vivas(ticker, vivas)
+    ya_cancelandose = _cancelaciones_en_vuelo(pedidos_en_vuelo)
+    ventas = _ventas_exceso_vivas(ticker, vivas)
     en_vuelo = sum(_qty_viva(o) for o in ventas)
     if hechas >= VENTA_EXCESO_PERSECUCIONES:
         return _aviso_vender_a_mano(pos, ventas, en_vuelo, hechas)
     if not ventas:
-        return _limpieza_larga(pos, vivas, cot, tokens, cfg_stops, cfg_rutas, hora_et, version, hechas + 1)
+        return _limpieza_larga(pos, vivas, cot, tokens, cfg_stops, cfg_rutas, hora_et, version, hechas + 1,
+                               ya_cancelandose)
     siguiente = Programar(clave_exceso_verificar(ticker), EXCESO_VERIFICAR_EN_S,
                           {"ticker": ticker, "persecuciones": hechas + 1})
     referencia, precio = _precio_venta_exceso(cot)
-    acciones = _ajustar_ventas(ticker, ventas, neta, precio, version, cfg_stops,
-                               f"D2a-04: la venta del exceso de {ticker} no llenó: se persigue al bid (vuelta {hechas + 1})")
+    acciones = _cancelar_ventas_ajenas(ticker, vivas, neta, True, ya_cancelandose)
+    acciones += _ajustar_ventas(ticker, ventas, neta, precio, version, cfg_stops,
+                                f"D2a-04: la venta del exceso de {ticker} no llenó: se persigue al bid (vuelta {hechas + 1})")
     acciones.append(Anotar("venta_exceso_perseguida", {
         "ticker": ticker, "neta": neta, "en_vuelo": en_vuelo, "persecucion": hechas + 1,
         "referencia": None if referencia is None else str(referencia), "precio": None if precio is None else str(precio),
@@ -1391,19 +1416,63 @@ def _precio_venta_exceso(cot: Optional[Cotizacion]) -> tuple[Optional[Decimal], 
     return None, None
 
 
-def _ventas_vivas(ticker: str, vivas: Iterable[Any]) -> list[Orden]:
-    """D2a-03: ventas NO stop vivas del ticker (la del exceso, la del vigilante sin etiquetar…), de la más vieja a la más nueva.
+def _es_venta_viva(o: Orden, ticker: str) -> bool:
+    return o.ticker == ticker and o.lado is Lado.VENTA and o.estado in ESTADOS_VIVOS and _qty_viva(o) > 0
 
-    Todas cuentan como «en vuelo»: el bot solo va corto, así que una venta
-    límite o a mercado viva en el ticker solo puede estar cerrando la larga.
-    Una VENTA STOPLMTP (protección de un largo, R-C-10 caso 4) no está en
-    vuelo: solo vende si el precio cae hasta su disparo.
+
+def _ventas_exceso_vivas(ticker: str, vivas: Iterable[Any]) -> list[Orden]:
+    """D2a-03 / R2-STOPS-1: las VENTA_EXCESO vivas del ticker, de la más vieja a la más nueva: lo ÚNICO que está «en vuelo».
+
+    Ninguna otra venta cubre la larga: una ENTRADA_AGREGAR / ENTRADA_CRUCE es
+    una venta CORTA (si llena, la cuenta queda corta sin stops) y una venta
+    sin etiqueta o a mano puede llenar a la vez que la nuestra; todas esas se
+    cancelan (`_cancelar_ventas_ajenas`). Una VENTA STOPLMTP (protección de
+    un largo, R-C-10 caso 4) tampoco: solo vende si el precio cae hasta su
+    disparo.
     """
     salida = [o for o in _unicas(vivas)
-              if o.ticker == ticker and o.lado is Lado.VENTA and o.tipo is not TipoOrden.STOP_LIMITE_PP
-              and o.estado in ESTADOS_VIVOS and _qty_viva(o) > 0]
+              if _es_venta_viva(o, ticker) and o.proposito is Proposito.VENTA_EXCESO
+              and o.tipo is not TipoOrden.STOP_LIMITE_PP]
     salida.sort(key=_clave_antiguedad)
     return salida
+
+
+def _ventas_ajenas_vivas(ticker: str, vivas: Iterable[Any]) -> list[Orden]:
+    """R2-STOPS-1: ventas NO stop vivas del ticker que NO son VENTA_EXCESO (ENTRADA_*, la del vigilante sin etiqueta, una a mano…)."""
+    salida = [o for o in _unicas(vivas)
+              if _es_venta_viva(o, ticker) and o.proposito is not Proposito.VENTA_EXCESO
+              and o.tipo is not TipoOrden.STOP_LIMITE_PP]
+    salida.sort(key=_clave_antiguedad)
+    return salida
+
+
+def _cancelar_ventas_ajenas(ticker: str, vivas: Iterable[Any], neta: int, con_id: bool,
+                            ya_cancelandose: frozenset[int] = frozenset()) -> list[Accion]:
+    """R2-STOPS-1 (R-C-11 a/b «cancelar todo lo que la reabra»): con la cuenta LARGA ninguna venta que no sea VENTA_EXCESO sigue viva.
+
+    `con_id` → `Cancelar` de cada una con id (la rama con una VENTA_EXCESO
+    viva, donde no se puede usar CANCEL ALLSYMB; sin `con_id` el CANCEL
+    ALLSYMB que va delante ya se las lleva). Las que aún NO tienen id (Sending)
+    → `Anotar("cancelar_al_tener_id", {token, ticker, proposito, qty, motivo,
+    regla})`: el decisor la cancela en cuanto llegue su Accept con id (su
+    `_cancelar_al_aceptar`); el barrido no lo haría (una venta con la cuenta
+    larga no es huérfana). Las que ya tienen el CANCEL en vuelo
+    (`ya_cancelandose`, D2a-05) no se repiten.
+    """
+    acciones: list[Accion] = []
+    for o in _ventas_ajenas_vivas(ticker, vivas):
+        if o.token in ya_cancelandose:
+            continue
+        proposito = str(getattr(o.proposito, "value", o.proposito))
+        motivo = (f"R-C-11 (3): {ticker} quedó LARGA {neta}; la venta {proposito} no cubre la larga "
+                  f"(una entrada es una venta CORTA): se cancela")
+        if o.id_das is None:
+            acciones.append(Anotar("cancelar_al_tener_id", {
+                "token": o.token, "ticker": ticker, "proposito": proposito, "qty": _qty_viva(o),
+                "motivo": motivo, "regla": "R-C-11 (3) R2-STOPS-1"}))
+        elif con_id:
+            acciones.append(Cancelar(id_das=o.id_das, token=o.token, motivo=motivo))
+    return acciones
 
 
 def _cancelar_compras(ticker: str, vivas: Iterable[Any], motivo: str,
@@ -1425,7 +1494,7 @@ def _ajustar_ventas(ticker: str, ventas: list[Orden], neta: int, precio_nuevo: O
 
     Si lo que se está vendiendo pasa de la larga se recorta primero la MÁS
     NUEVA (Cancelar si se queda en 0, Reemplazar de cantidad si no); lo que
-    no se pueda recortar (ventas sin id o que no son nuestras) → Avisar(3):
+    no se pueda recortar (VENTA_EXCESO aún sin id) → Avisar(3):
     si llenan, la cuenta queda CORTA sin stops. UNA acción por orden (la
     cantidad y el precio van en el mismo REPLACE).
     """
@@ -1473,7 +1542,10 @@ def _vender_exceso(pos: PosicionTicker, qty: int, en_vuelo: int, cot: Optional[C
     """R-C-11 (b): `EnviarOrden(S qty LMT a bid·(1 − 1 %), ruta cruzar, VENTA_EXCESO)` + `Avisar(2)` + `Anotar("incidente")`.
 
     Sin ningún precio de DAS → `Avisar(3)` «VENDER A MANO» + `Anotar` y sin
-    orden (nada que perseguir: el humano vende).
+    orden. El `exceso_verificar` lo añade siempre `_limpieza_larga`
+    (R2-STOPS-2): si al vencer ya hay precio y la cuenta sigue larga sin
+    VENTA_EXCESO viva, se vende detrás de un CANCEL ALLSYMB (que retira
+    también una venta a mano aún viva: nunca dos ventas a la vez).
     """
     ticker = pos.ticker
     neta = pos.neta
@@ -1504,19 +1576,25 @@ def _vender_exceso(pos: PosicionTicker, qty: int, en_vuelo: int, cot: Optional[C
 def _limpieza_larga(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizacion], tokens: Callable[[], int],
                     cfg_stops: Mapping, cfg_rutas: Mapping, hora_et: datetime, version: int,
                     persecuciones: int, ya_cancelandose: frozenset[int] = frozenset()) -> list[Accion]:
-    """R-C-11 (b)-(3) con la cuenta LARGA (D2a-03, D2a-04): ninguna compra viva, vender SOLO lo que falte y comprobarlo a 1 s."""
+    """R-C-11 (b)-(3) con la cuenta LARGA (D2a-03, D2a-04, R2-STOPS-1/2): nada que la reabra sigue vivo, se vende SOLO lo que
+    falte (en vuelo = VENTA_EXCESO vivas, nunca una entrada) y SIEMPRE se comprueba a 1 s."""
     ticker = pos.ticker
     neta = pos.neta
-    ventas = _ventas_vivas(ticker, vivas)
+    ventas = _ventas_exceso_vivas(ticker, vivas)
     en_vuelo = sum(_qty_viva(o) for o in ventas)
     acciones: list[Accion] = []
     if ventas:
         acciones.extend(_cancelar_compras(ticker, vivas, (f"R-C-11 (3): {ticker} quedó LARGA {neta}; ninguna compra puede "
                                                           f"seguir viva (la venta del exceso en vuelo NO se cancela)"),
                                           ya_cancelandose))
+        acciones.extend(_cancelar_ventas_ajenas(ticker, vivas, neta, True, ya_cancelandose))
     else:
         acciones.append(CancelarTicker(
-            ticker=ticker, motivo=f"R-C-11 (3): {ticker} quedó LARGA {neta}; ninguna compra pendiente puede seguir viva"))
+            ticker=ticker, motivo=(f"R-C-11 (3): {ticker} quedó LARGA {neta}; ninguna compra ni venta de entrada pendiente "
+                                   f"puede seguir viva")))
+        acciones.extend(_cancelar_ventas_ajenas(ticker, vivas, neta, False, ya_cancelandose))
+    verificar = Programar(clave_exceso_verificar(ticker), EXCESO_VERIFICAR_EN_S,
+                          {"ticker": ticker, "persecuciones": persecuciones})
     a_vender = neta - en_vuelo
     if a_vender < 0:
         acciones.extend(_ajustar_ventas(ticker, ventas, neta, None, version, cfg_stops,
@@ -1524,17 +1602,16 @@ def _limpieza_larga(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotiz
         acciones.append(Anotar("incidente", {"tipo": "venta_exceso_de_mas", "ticker": ticker, "neta": neta,
                                              "en_vuelo": en_vuelo, "neta_das": pos.neta_das, "regla": "R-C-11 (b)",
                                              "version_stops": version}))
+        acciones.append(verificar)
         return acciones
     if a_vender == 0:
         acciones.append(Anotar("incidente", {"tipo": "cuenta_larga", "ticker": ticker, "neta": neta, "vendidas": 0,
                                              "en_vuelo": en_vuelo, "neta_das": pos.neta_das, "regla": "R-C-11 (b)",
                                              "version_stops": version}))
+        acciones.append(verificar)
         return acciones
-    venta = _vender_exceso(pos, a_vender, en_vuelo, cot, tokens, cfg_rutas, hora_et, version)
-    acciones.extend(venta)
-    if any(isinstance(a, EnviarOrden) for a in venta):
-        acciones.append(Programar(clave_exceso_verificar(ticker), EXCESO_VERIFICAR_EN_S,
-                                  {"ticker": ticker, "persecuciones": persecuciones}))
+    acciones.extend(_vender_exceso(pos, a_vender, en_vuelo, cot, tokens, cfg_rutas, hora_et, version))
+    acciones.append(verificar)
     return acciones
 
 

@@ -161,7 +161,10 @@ _RE_STINFOEX = re.compile(r"(\w+):\s*([\d.]+)%")                # §5.21: tolera
 # A-03: el LOGIN puede ir pegado a comillas, paréntesis, corchetes o «=» (repr, JSON, f-string con !r,
 # str(bytes), «cmd=LOGIN …»): basta con que delante no haya una letra o un dígito. La clave se tapa
 # hasta el siguiente blanco (comillas y paréntesis de cierre incluidos: tapar de más es inofensivo).
-_RE_LOGIN = re.compile(r"((?<![A-Za-z0-9])login[ \t]+\S+[ \t]+)(\S+)", re.IGNORECASE)
+# R2-RED-1: en un repr o en str(bytes) los saltos y tabuladores salen como DOS caracteres («\r», «\n»,
+# «\t»: barra + letra); esa letra no es una letra real y NO descarta el LOGIN
+# (repr('QUIT\r\nLOGIN u clave acc 0') → «...\r\nLOGIN u clave...»).
+_RE_LOGIN = re.compile(r"((?:(?<![A-Za-z0-9])|(?<=\\[rnt]))login[ \t]+\S+[ \t]+)(\S+)", re.IGNORECASE)
 _RE_TOKEN_TELEGRAM = re.compile(r"bot\d+:[A-Za-z0-9_-]+", re.IGNORECASE)
 _RE_TOKEN_TELEGRAM_SUELTO = re.compile(r"(?<![\w*])\d{5,}:[A-Za-z0-9_-]{30,}")   # forma real: 8-10 dígitos + «:» + 35 caracteres
 _MAX_INT32 = 2**31 - 1
@@ -850,7 +853,9 @@ def redactar(linea: str) -> str:
     lanza: un objeto que no es texto se convierte con `str`. A-03: el LOGIN
     se reconoce también pegado a comillas, paréntesis, corchetes, «=» o «_»
     (repr, JSON, `str(bytes)`, «cmd=LOGIN …»); solo una letra o un dígito
-    delante lo descartan («relogin»).
+    delante lo descartan («relogin»). R2-RED-1: una secuencia de escape
+    literal («\\r», «\\n», «\\t» como barra + letra, lo que deja un repr o un
+    `str(bytes)`) cuenta como separador, no como letra.
     """
     if not isinstance(linea, str):
         linea = str(linea)

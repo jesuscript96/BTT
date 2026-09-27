@@ -45,7 +45,9 @@ def _orden(**cambios) -> OrdenNueva:
 
 # ── OrdenNueva.__post_init__ (injerto A §8.2) ─────────────────────────────
 def test_version_del_paquete():
-    assert VERSION == "2026.09.26"   # R-O-01: va al diario en cada arranque
+    """R-O-01 + R2-FUE-1: subida a 2026.09.27 para que el «hola» rechace a un enlace anterior a F-01 (EventoLigero)."""
+    assert VERSION == "2026.09.27"   # R-O-01: va al diario en cada arranque
+    assert tuple(int(x) for x in VERSION.split(".")) > (2026, 9, 26)   # R2-FUE-1: posterior al enlace de c3a07c9b
 
 
 def test_orden_limite_valida_y_defaults():
