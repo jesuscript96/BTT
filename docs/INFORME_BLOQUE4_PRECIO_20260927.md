@@ -1,5 +1,15 @@
 # INFORME · BLOQUE 4 — Dónde está el precio (2026-09-27)
 
+> ⚠️ **CORRECCIÓN MISMA NOCHE (27-sep, hallazgo de Álvaro): el 4.4 y la tabla
+> de deciles de PMH Gap de este informe tienen LOOK-AHEAD — ver §9.** El
+> `pmh_gap_pct` de daily_metrics usa el máximo del premarket COMPLETO (hasta
+> 09:29), pero la 1B entra 04:00-08:45: un short que entra a +80 % y sigue
+> hasta +300 % pierde Y acaba en el decil alto por su propio fracaso.
+> Remedido con el gap EN EL MOMENTO DE ENTRAR (indicadores de vela del
+> motor): el efecto desaparece por completo (ρ −0,19 → ≈ 0) e incluso se
+> invierte levemente. El veredicto del 4.4 pasa de ✅ a ❌ INVALIDADO POR
+> LOOK-AHEAD; el resto del informe (4.1-4.3) no cambia. Detalle en §9.
+
 > Mismo método que los Bloques 1-3: deciles con bordes fijos sobre la muestra
 > A completa, curva por año, 2019-22 búsqueda / 2023-26 confirmación, trades
 > reales (1B, DT, 2B), Spearman parcial contra 1.6 (c16) y 3.2 (c32_5) ya
@@ -155,3 +165,51 @@ domina) apuntan a señal real. Vigilarlo en vivo antes de construir.
   `resultados_parciales.txt`.
 - Cartera: `paso5_cartera.py` → `resultados_cartera.txt`.
 - Universo A: 13.920 filas (534/1.709/1.112/1.132/1.945/2.551/2.927/2.010).
+
+## 9. CORRECCIÓN (27-sep, misma noche) — 4.4 y los deciles de PMH Gap tenían LOOK-AHEAD
+
+**Hallazgo de Álvaro.** `pmh_gap_pct` (daily_metrics) usa el máximo del
+premarket COMPLETO (04:00-09:29), pero la 1B entra 04:00-08:45: un short que
+entra a +80 % y sigue subiendo hasta +300 % PIERDE y acaba en el decil alto
+POR SU PROPIO FRACASO — el decil estaba contaminado por el resultado. Un tope
+«PM High Gap ≤ X» en el dataset habría quitado a posteriori los trades que
+salieron mal. (El suelo ≥ 50 no tiene el problema: la entrada lo exige como
+condición de vela «[1m] PM High Gap ≥ 50» en el propio minuto.)
+
+**Remedido sin look-ahead**, con el gap EN EL MOMENTO DE ENTRAR, medido
+EXACTAMENTE como los indicadores de vela del motor (indicators.py: PM High
+Gap % ~2370 = PMH acumulado hasta la vela de SEÑAL vs prev_close persistida;
+Current Gap % ~2377 = precio de EJECUCIÓN vs prev_close; velas 1m de la cache
+de los backtests reales, `.tmp_bloque4/paso6_gap_entrada.py`):
+
+**(a) Current Gap (%) en la entrada** — D1 (5-30 %) +2,76 · D5 (51-60) +1,91
+· D8 (85-111) +3,04 · **D10 (158-31.823) +7,35**; ρ +0,046 (3/3 positivo).
+**(b) PM High Gap (%) en la entrada** — D10 (208-31.815) **+7,24**; ρ +0,076
+(3/3). **Todos los grupos «> X» son POSITIVOS y mejores que el resto**
+(Current Gap > 200: n=257, **+9,99 %** vs +2,66 dentro; PMHG > 200: n=435,
++7,03 vs +2,25). Sin dato: (a) 34 trades +12,73; (b) 520 +6,02.
+
+**4.4 rehecho (gap de entrada ÷ ATR%14):** c44_cur ρ pooled −0,004 ·
+c44_pmh +0,012; parciales ≈ 0; deciles planos (+1,6..+3,6). La cartera con
+topes de entrada: ningún escenario mejora de verdad (mejor Calmar 43,6 con
+Sharpe 5,57-5,98 vs base 40,9/6,03; la mayoría PEOR).
+
+**Cuánto sobrevive: NADA.** El efecto entero (ρ −0,19, D10 −8,7 %, Calmar
+40,9→79,7) era look-ahead. Medido causalmente, la relación se INVIETE
+levemente: los trades que ENTRAN con el gap vivo más grande rinden MEJOR
+(ρ +0,05..+0,08) — demasiado débil para actuar, pero desde luego NO hay tope
+que probar: «[1m] Current Gap (%) ≤ X» o «[1m] PM High Gap (%) ≤ X» recortarían
+los MEJORES trades. El punto 4 del pedido queda sin objeto.
+
+**Qué SÍ se salva de este informe:** 4.1-4.3 (datos de la VÍSPERA: sin
+look-ahead posible) y su veredicto 🟡 redundantes con 3.2. La vista A
+(universo, fade del DÍA) sigue siendo válida como descripción del día — pero
+NO como filtro/sizing de estrategias que entran antes de que el día se
+complete. Los filtros 1.6 y 3.2 (datos de D−1) NO están afectados.
+
+**Regla metodológica (a MEMORIA_MADRE):** cualquier criterio que use datos
+del día D que se COMPLETAN después de la entrada (pmh_gap final, hod_time,
+rango del día, fade del día) tiene look-ahead para estrategias PM; en
+trade-level solo valen (i) datos de D−1 o antes, o (ii) datos de vela
+evaluados en el minuto de la señal (como hace el motor con
+look_ahead_prevention).
