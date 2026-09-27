@@ -37,6 +37,9 @@ interface IncludedCondition {
   val1: number;
   val2?: number;
   unit: string;
+  /** Solo GAP-1: "include" = los ticker-día sin dato (IPO, recién llegada)
+   *  pasan la regla en vez de excluirse. */
+  missing?: "include";
 }
 
 const MIN_DATE = "2006-01-01";
@@ -123,7 +126,7 @@ export default function InlineDatasetBuilder({
 
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [tempName, setTempName] = useState("");
-  const [values, setValues] = useState<Record<SectionId, Record<string, { op: string; val1: string; val2: string }>>>({
+  const [values, setValues] = useState<Record<SectionId, Record<string, { op: string; val1: string; val2: string; missing?: "include" }>>>({
     gap_prev_day: {},
     gap_day: {},
     gap_plus_1_day: {},
@@ -229,6 +232,21 @@ export default function InlineDatasetBuilder({
     });
   };
 
+  // "Si falta el dato: incluir" — solo GAP-1: la casilla vive con la fila del
+  // parámetro y viaja en la condición incluida (clave `missing` de la regla).
+  const handleMissingToggle = (section: SectionId, paramKey: string, include: boolean) => {
+    setValues((prev) => {
+      const current = prev[section][paramKey] || { op: ">=", val1: "", val2: "" };
+      return {
+        ...prev,
+        [section]: {
+          ...prev[section],
+          [paramKey]: { ...current, missing: include ? ("include" as const) : undefined },
+        },
+      };
+    });
+  };
+
   const toggleSection = (section: SectionId) => {
     setExpandedSections((prev) => ({
       ...prev,
@@ -282,15 +300,18 @@ export default function InlineDatasetBuilder({
       // Add it
       setIncludedConditions((prev) => [
         ...prev,
-        {
-          section,
-          paramKey: param.key,
-          label: param.label,
-          op,
-          val1,
-          val2,
-          unit: param.unit,
-        },
+          {
+            section,
+            paramKey: param.key,
+            label: param.label,
+            op,
+            val1,
+            val2,
+            unit: param.unit,
+            ...(section === "gap_prev_day" && obj.missing === "include"
+              ? { missing: "include" as const }
+              : {}),
+          },
       ]);
     }
   };
@@ -569,6 +590,36 @@ export default function InlineDatasetBuilder({
 
                         {/* Input & Include Button */}
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          {/* "Si falta el dato" — solo GAP-1: las columnas lag_*
+                              son NULL en IPOs y acciones recién llegadas; sin
+                              esta casilla la regla las descarta en silencio. */}
+                          {sectionId === "gap_prev_day" && (
+                            <label
+                              title="Incluir acciones sin histórico suficiente (IPO, recién listadas): si falta el dato de Gap -1, pasan la regla en vez de excluirse."
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: 4,
+                                fontSize: 9.5,
+                                fontFamily: "var(--color-ec-sans)",
+                                fontWeight: 600,
+                                color: obj.missing === "include" ? "var(--color-ec-copper)" : "var(--color-ec-text-muted)",
+                                cursor: "pointer",
+                                userSelect: "none",
+                                flexShrink: 0,
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={obj.missing === "include"}
+                                onChange={(e) => handleMissingToggle(sectionId, param.key, e.target.checked)}
+                                disabled={included}
+                                style={{ cursor: "pointer", accentColor: "var(--color-ec-copper)", opacity: included ? 0.6 : 1 }}
+                              />
+                              sin dato: incluye
+                            </label>
+                          )}
+
                           {/* Operator Selector */}
                           <select
                             value={obj.op}
@@ -833,6 +884,11 @@ export default function InlineDatasetBuilder({
                           {c.unit === "$" ? `$${c.val1}` : `${c.val1}${c.unit}`}
                         </strong>
                       </>
+                    )}
+                    {c.missing === "include" && (
+                      <em style={{ color: "var(--color-ec-copper)", marginLeft: 4, fontSize: 9 }}>
+                        · sin dato: incluye
+                      </em>
                     )}
                   </span>
                   <button

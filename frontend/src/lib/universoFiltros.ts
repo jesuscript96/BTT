@@ -76,6 +76,10 @@ export interface CondicionUniverso {
   op: OperadorUniverso;
   val1: number;
   val2?: number;
+  /** Solo Gap -1: "include" = los ticker-día SIN dato (IPO, recién llegada,
+   *  ventana inválida) pasan la regla en vez de excluirse. Sin valor = excluir
+   *  (comportamiento de siempre). */
+  missing?: "include";
 }
 
 /** La columna real del lago para (sección, métrica). */
@@ -139,10 +143,14 @@ export function construirFiltros(
     const isVol = esVolumen(c.paramKey);
     const v1 = isVol ? c.val1 * 1_000_000 : c.val1;
     const v2 = c.val2 !== undefined && isVol ? c.val2 * 1_000_000 : c.val2;
+    // "Si falta el dato: incluir" — viaja como clave `missing` en cada regla
+    // Gap -1; el backend la traduce a (condición OR columna IS NULL).
+    const missing = c.section === "gap_prev_day" && c.missing === "include"
+      ? { missing: "include" as const } : {};
 
     if (c.op === "between") {
-      rules.push({ metric: fieldName, operator: "GREATER_THAN_OR_EQUAL", valueType: "static", value: v1.toString() });
-      rules.push({ metric: fieldName, operator: "LESS_THAN_OR_EQUAL", valueType: "static", value: v2!.toString() });
+      rules.push({ metric: fieldName, operator: "GREATER_THAN_OR_EQUAL", valueType: "static", value: v1.toString(), ...missing });
+      rules.push({ metric: fieldName, operator: "LESS_THAN_OR_EQUAL", valueType: "static", value: v2!.toString(), ...missing });
       if (c.section === "gap_day") {
         if (c.paramKey === "gap_pct") { min_gap_pct = v1; max_gap_pct = v2; }
         else if (c.paramKey === "pm_volume") min_pm_volume = v1;
@@ -153,7 +161,7 @@ export function construirFiltros(
         ">=": "GREATER_THAN_OR_EQUAL", "<=": "LESS_THAN_OR_EQUAL",
         ">": "GREATER_THAN", "<": "LESS_THAN",
       }[c.op];
-      rules.push({ metric: fieldName, operator: opName, valueType: "static", value: v1.toString() });
+      rules.push({ metric: fieldName, operator: opName, valueType: "static", value: v1.toString(), ...missing });
       if (c.section === "gap_day") {
         if (c.paramKey === "gap_pct") {
           if (c.op === ">=" || c.op === ">") min_gap_pct = v1;
@@ -180,7 +188,8 @@ export function leeCondicion(c: CondicionUniverso): string {
   const p = PARAMETROS_UNIVERSO.find((x) => x.key === c.paramKey);
   const etq = `${SECCIONES_UNIVERSO[c.section]} · ${p?.label ?? c.paramKey}`;
   const u = p?.unit ?? "";
-  if (c.op === "between") return `${etq} entre ${c.val1}${u} y ${c.val2}${u}`;
+  const sinDato = c.missing === "include" ? " · sin dato: incluye" : "";
+  if (c.op === "between") return `${etq} entre ${c.val1}${u} y ${c.val2}${u}${sinDato}`;
   const signo = { ">=": "≥", "<=": "≤", ">": ">", "<": "<" }[c.op];
-  return `${etq} ${signo} ${c.val1}${u}`;
+  return `${etq} ${signo} ${c.val1}${u}${sinDato}`;
 }
