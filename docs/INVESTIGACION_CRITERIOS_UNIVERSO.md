@@ -77,6 +77,13 @@ Informe: `docs/INFORME_BLOQUE3_REINCIDENCIA_20260925.md`. Pendiente de decisión
 de Álvaro: construir el filtro de retorno acumulado (como el 1.6 pero con
 ventana N-días, columna nueva en las tres vías).
 
+**Cierre con CARTERA (27-sep, §7 del informe):** el 3.2 también mejora la
+cartera de la 1B, no solo el retorno por trade — pesos 1,5/0,5 cae/sube:
+total −6 % pero maxDD −16 %, total÷DD 40,9→45,6 (3/3 años). El mismo test
+con 1.6 EMPEORA (control, reproduce la prueba manual de Álvaro). Bloque 3
+cerrado; pendiente la decisión de construir la columna `ret_cum_Nd` (filtro
+o sizing).
+
 ### Bloque 4 — Dónde está el precio · PENDIENTE
 - Cierre de la víspera frente a su máximo/mínimo de 20 días y de 52 semanas.
 - Distancia a la media de 20 o 50 días.
@@ -158,6 +165,8 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-25 | B3·3.3 Nº gaps 30/90d (tramos) | 🟡 DUDOSO — espejo de 3.1 (corr −0,43), mismo perfil inconsistente | ídem |
 | 2026-09-27 | 1.6 en la app, 1B 2025 (1R fijo 1 $): sin filtro / `<0` / `≤5` / `≥5` | Calmar 39,7 / **44,0** / 32,6 / 10,7. Efecto de 2 escalones: roja ~0,10 $/trade, verdes (pequeñas o grandes) ~0,05 $/trade; todas positivas → excluir verdes tira dinero | prueba manual de Álvaro |
 | 2026-09-27 | 1.6 para SIZING, 1B 2024→sep-2026, Portfolio (rojas/verdes) | ❌ No mejora: 1/1 Calmar 56,7 · Sharpe 8,54 · DD −4,1 % → 1,2/0,8: 55,8 · 8,52 · −4,4 % → 1,5/0,5: 50,8 · 8,03 · −5,2 %. Más peso a rojas = más agresivo, no mejor (se pierde diversificación con las verdes). **Conclusión 1B: operar todo por igual.** El filtro queda como herramienta para priorizar si falta poder de compra. 34 trades sin víspera (IPO) = 0,26 $/trade, el mejor grupo → Bloque 6 | prueba manual de Álvaro |
+| 2026-09-27 | B3·3.2 CARTERA, 1B 2024-26, split cae/sube + pesos 1/1 · 1,2/0,8 · 1,5/0,5 (sizing lineal) | ✅ MEJORA EL RATIO (a diferencia del 1.6): cae 1.368 trades +3,70 %/trade vs sube 2.954 +2,32 % (2024 plano, 2025/26 claros). 1/1: 14.134 pp · DD −346 · ÷DD 40,9 → 1,5/0,5: 13.248 · −290 · **45,6** (+11,6 %, 3/3 años). Total −6 %, DD −16 %: eficiencia de riesgo, no más beneficio. Control 1.6 en la misma base EMPEORA (40,9→36,4), como en la prueba manual. 160 trades sin dato 5d = +13,9 %/trade (eco IPO → Bloque 6) | `INFORME_BLOQUE3_REINCIDENCIA_20260925.md` §7 |
+| 2026-09-27 | B3·3.2 CARTERA 4 grupos (1.6 × 3.2) + CIERRE Bloque 3 | Celdas se apilan: roja_cae 910 +4,15 % > roja_sube 1.126 +3,21 % > verde_cae 458 +2,81 % > verde_sube 1.828 +1,77 %. Ningún reparto de la rejilla le gana al tilt global 3.2 1,5/0,5 (÷DD 45,6 vs base 40,9; tilt 1.6 38,9/36,4 pierde; esquinas y solo-rojas 41,5). **Veredicto: 3.2 mejora la CARTERA (ratio 3/3 años) y el trade; B3 CERRADO. Pendiente decisión: construir columna `ret_cum_Nd` (filtro o sizing)** | ídem §7 |
 
 ## Pendientes fuera de la investigación
 - Punto 5 CERRADO (25-sep): 1.6 probado en DT (misma dirección, débil — §8) y en la

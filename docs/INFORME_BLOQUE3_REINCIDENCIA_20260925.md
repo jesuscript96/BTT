@@ -130,3 +130,56 @@ si se pide, se hace en rama con tests y paridad como el filtro 1.6.
   y condicional por quintiles/tramos).
 - Trades: `paso3_trades.py` → `resultados_trades.txt`.
 - Universo A: 13.920 filas (534/1.709/1.112/1.132/1.945/2.551/2.927/2.010).
+
+## 7. Prueba de CARTERA (2026-09-27) — cierre del bloque
+
+Espejo de la prueba manual de Álvaro con el 1.6 (2 filas del 27-sep en el
+registro de la hoja de ruta). Mismos trades 1B 2024-26 de la vista B
+(4.482: 1.392/1.831/1.259; 34 sin víspera) + `c32_5` del paso 1. Sizing
+LINEAL sin compuesto: cada trade aporta `w_grupo × return_pct`, curva diaria
+= suma por día, total/DD sobre el acumulado llano (unidad: puntos de % del
+nominal por trade). `sin_dato` (c32_5 NaN —153— o hueco>7 —7—) SIEMPRE peso 1.
+Rejilla de pesos declarada antes de mirar. Script `.tmp_bloque3/paso4_cartera.py`
+→ `resultados_cartera.txt`. Sin código del repo, sin backtests, backend intacto.
+
+### 7.1 Grupos por 3.2 (parte los trades en dos)
+
+| Grupo | n | medio/trade | Por año (cae − sube) |
+|---|---|---|---|
+| «venía cayendo» (ret 5d < 0) | 1.368 | **+3,70 %** | 2024 +0,05 (plano) · 2025 +2,52 · 2026 +0,97 |
+| «venía subiendo» (≥ 0) | 2.954 | +2,32 % | — |
+| sin dato 5d | 160 | +13,9 % | eco del hallazgo IPO de Álvaro (34 sin víspera = +12,7 %) → Bloque 6 |
+
+### 7.2 Sizing 2 grupos (cae/sube)
+
+| Pesos | Total (pp) | Max DD (pp) | Total ÷ DD |
+|---|---|---|---|
+| 1/1 | 14.134 | −346 | 40,9 |
+| 1,2/0,8 | 13.780 | −322 | 42,8 |
+| **1,5/0,5** | 13.248 | **−290** | **45,6** |
+
+El 1,5/0,5 mejora el ratio en **3/3 años** (12,2→13,4 · 19,6→24,5 · 14,7→16,3).
+**Control 1.6 en la misma base** (mismos trades, tilt rojas/verdes): 40,9 →
+38,9 (1,2/0,8) → 36,4 (1,5/0,5) — EMPEORA, reproduce cualitativamente la
+prueba manual de Álvaro en Portfolio (Calmar 56,7→55,8→50,8). El control
+pasa y valida el método: el 3.2 va en la dirección contraria al 1.6.
+
+### 7.3 Cuatro grupos (1.6 × 3.2)
+
+Media/trade: roja_cae (910) **+4,15 %** > roja_sube (1.126) +3,21 % >
+verde_cae (458) +2,81 % > verde_sube (1.828) +1,77 % — se apilan; sin_dato
+(39/87/34) entre +12,7 y +16,5 %. Repartos de la rejilla (total ÷ DD):
+tilt 3.2 global 1,5/0,5 **45,6** > esquinas 41,5 ≈ 3.2 solo rojas 41,5 >
+base 1/1/1/1 40,9 > tilt 1.6 38,9/36,4. **Ningún reparto le gana al tilt
+global del 3.2**; el mejor sizing ignora el 1.6.
+
+### 7.4 Veredicto (CIERRE)
+
+**El 3.2 SÍ mejora la CARTERA de la 1B, no solo el retorno por trade — pero
+como eficiencia de riesgo, no como multiplicador de beneficio.** Con 1,5/0,5
+el total baja un 6 % (−886 pp) y el maxDD un 16 % (−56 pp): total÷DD +11,6 %
+(40,9→45,6), consistente en los 3 años. Es justo lo que el 1.6 NO conseguía
+(peso extra = solo más agresivo): aquí el peso extra en «venía cayendo»
+compra más ratio del que cuesta. Queda pendiente la decisión de Álvaro:
+construir la columna `ret_cum_Nd` (como se hizo con `lag_day_return_pct_1`)
+para usarlo como filtro O como sizing en la app.
