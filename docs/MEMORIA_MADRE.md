@@ -6886,3 +6886,13 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **Impacto:** solo local; scripts de verificación apuntados ya a b514d5df. Lección: borrar datasets por id a mano es frágil — candidate a MEJORA (confirmación con nombre del dataset, o soft-delete).
 - **Código tocado:** NINGUNO (borrado previo vía API; hoy solo lecturas y backtests)
 - **Estado:** MITIGADO (dataset gemelo validado); el 97e6151b original no se restaura (equivalente demostrado)
+
+### [HALLAZGO · 2026-09-28 · 22] CIERRE del 19 — verificación completa del 7.2b con contador corregido: el estudio NO tenía el bug AH/PM (14.388/14.388 cruces idénticos) y la señal NO SOBREVIVE; el Calmar ×2 publicado era 100 % artefacto de la colisión de minuto
+- **Reporta:** ZCode (para Álvaro), a petición suya («¿tenía el estudio el mismo fallo? ¿sobrevive el hallazgo?»).
+- **Severidad:** cierre de hallazgo (invalida conclusión publicada del Bloque 7 §7.2b/§8; sin impacto en código de producción)
+- **Dónde:** `.tmp_bloque7/paso1_features.py:74-77` (colisión, hallazgo 19) — verificado que `paso4_gap_inicio.py` (B5) NO tiene el patrón del bug AH/PM.
+- **Qué observé:** (1) g50 del estudio vs tabla corregida en TODOS los ticker-día comunes nivel +50 %: **14.388/14.388 minutos de cruce IDÉNTICOS (100,00 %)** — el contador del estudio siempre tuvo los cruces bien; solo consultaba al minuto equivocado (colisión). (2) Re-derivación con contador limpio (minuto de entrada propio): bloqueados tempranos = 304, Σ+627 pp, +2,06 %/trade, signo por año +1,3/−1,3/+5,6 %; curva de umbral 3→20 SIN ningún grupo perdedor; buckets <3:+6,3 % / ≥10:+2,8 % (gradiente suave). (3) Cartera igual riesgo: el skip CONTAMINADO reproduce el Calmar ×2 del informe (32,1→62,2 · 35,4→67,4 · 26,4→54,1); el skip LIMPIO empeora el Calmar en 2024 (32,1→20,5) y 2026 (26,4→21,6) y no mejora consistente el Sharpe.
+- **Cómo reproducir:** `.tmp_wal_fix/rederiv_72b.py` (tres contadores: contaminado/limpio/motor + cartera por año).
+- **Impacto:** informe B7 §7.2b/§8/§9 quedan como historial (§11 los sustituye). El indicador «Gappers activos» PERMANECE construido y correcto (causal, flag OFF) pero sin regla con edge; si el bot (Jaume) algún día lo pedía para «mañanas calientes», los datos dicen que no hay señal explotable.
+- **Código tocado:** NINGUNO (el fix del generator ya estaba commiteado en `b29a401`; hoy solo análisis y docs).
+- **Estado:** 19 CERRADO (artefacto confirmado y cuantificado)

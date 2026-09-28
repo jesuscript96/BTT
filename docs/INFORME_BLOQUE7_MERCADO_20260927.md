@@ -291,3 +291,65 @@ Recuperado sin tocar la BD: el dataset b514d5df (mismos filtros PMH≥50,
 **BIT-IDÉNTICO** (4.482 trades, misma tupla ticker/fecha/hora/ret, Σ igual) —
 y de paso verifica que la materialización de pares es determinista. Hallazgo
 21 en MEMORIA_MADRE.
+
+## 11. VERIFICACIÓN PEDIDA POR ÁLVARO (28-sep tarde) — ¿tenía el estudio el bug AH/PM? y re-derivación COMPLETA del 7.2b con el contador corregido
+
+### 11.1 ¿El contador del estudio tenía el mismo fallo de clasificar velas PM como AH?
+
+**NO.** Prueba: cruce de los g50 del estudio (features_b5bis) contra la tabla
+corregida en TODOS los ticker-día comunes del nivel +50 %: **14.388/14.388 con
+minuto de cruce IDÉNTICO (100,00 %)**. El paso4 del B5 calculaba el split
+AH/PM por máscara de fila SIN ningún merge en medio (mi bug nació de una
+máscara pre-merge reindexada después). La única contaminación del estudio fue
+la **colisión del minuto de entrada** (hallazgo 19: `ent_min_de` guardaba un
+minuto por ticker-día y las entradas posteriores pisaban el de la 1B). Dicho
+de otro modo: los **cruces** del estudio siempre estuvieron bien; lo que
+estaba mal era **a qué minuto se consultaban**.
+
+### 11.2 Re-derivación del 7.2b con el contador CORREGIDO
+
+Contador LIMPIO = g50 del propio estudio consultado al minuto de ENTRADA
+PROPIA del trade. Contador MOTOR = tabla corregida a la vela de señal.
+
+**Bloqueados tempranos (<05:30 con ≥10 gappers):**
+
+| contador | n | Σ pp | ret medio | resto | 2024 | 2025 | 2026 |
+|---|---|---|---|---|---|---|---|
+| CONTAMINADO (publicado) | 1.057 | **−4.762** | −4,51 % | +5,52 % | −5,24 %/287 | −6,54 %/416 | −1,52 %/354 |
+| **LIMPIO (ent. propia)** | 304 | **+627** | **+2,06 %** | +3,23 % | +1,27 %/69 | −1,29 %/113 | +5,62 %/122 |
+| MOTOR (tabla, señal) | 532 | +798 | +1,50 % | +3,38 % | −2,43 %/125 | +0,88 %/210 | +4,65 %/197 |
+
+Con contador limpio el grupo «bloqueado» es POSITIVO y el signo cambia por
+año. **Curva de umbral (tempranos con g≥X, contador limpio):** X=3: +3,00 % ·
+5: +3,07 % · 8: +2,27 % · 10: +2,06 % · 12: +3,67 % · 15: +4,30 % · 20:
++3,93 % — **ningún umbral produce un grupo perdedor** (la «meseta 8-12» del §8
+era del contador contaminado). Buckets del estudio re-hechos: contaminado
+<3: +12,11 % / ≥10: −1,90 % (el corte espectacular) → limpio <3: +6,29 % /
+3-9: +3,09 % / ≥10: **+2,81 %** — queda un gradiente SUAVE (menos gappers =
+algo mejor: +6,3 % → +1,9-2,8 %), sin acantilado y con todos los grupos
+positivos.
+
+**Cartera igual riesgo por año (lineal 1R; skip = no entrar en bloqueados):**
+
+| política | 2024 ΣR/Sh/Calmar | 2025 | 2026 |
+|---|---|---|---|
+| base 1B | +73,6 / 6,67 / 32,1 | +120,2 / 9,51 / 35,4 | +101,5 / 10,29 / 26,4 |
+| skip CONTAMINADO (repro del estudio) | +88,3 / 9,44 / **62,2** | +147,0 / 13,76 / **67,4** | +96,2 / 13,93 / **54,1** |
+| **skip LIMPIO ≥10** | +70,5 / 6,79 / **20,5** | +117,7 / 9,64 / 34,7 | +87,9 / 10,83 / 21,6 |
+| skip MOTOR ≥10 | +74,8 / 7,61 / 41,1 | +109,0 / 9,12 / 32,2 | +81,3 / 10,86 / 27,8 |
+
+El skip contaminado REPRODUCE el Calmar ×2 del estudio (32→62 etc.) — ese era
+el número publicado. Con el contador limpio el skip **empeora el Calmar en 2
+de 3 años** (quita trades positivos) y no mejora el Sharpe de forma
+consistente. El motor va en ambas direcciones según el año = ruido.
+
+### 11.3 Veredicto
+
+**El 7.2b NO SOBREVIVE: era un artefacto del contador contaminado.** Con el
+contador corregido no existe grupo perdedor a ningún umbral, los signos por
+año se cruzan y la cartera no mejora. Queda un **gradiente suave y no
+accionable** (trades con menos gappers activos van algo mejor: +6 % → +2 %
+de media). El indicador «Gappers activos» ya construido queda como herramienta
+disponible (causal, correcta, flag OFF) — sin regla con edge que usar con él
+por ahora. El §7.2b/§8/§9 de este informe quedan como historial; esta sección
+los sustituye a efectos de conclusiones.
