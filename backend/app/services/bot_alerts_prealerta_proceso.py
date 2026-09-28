@@ -136,7 +136,10 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
     # prints); 'simple' = «todas las condiciones menos una» sobre la vela
     # oficial cerrada, sin prints. BOT_PREALERTA_MODO en backend/.env.
     modo = _os.getenv("BOT_PREALERTA_MODO", "ticks").strip().lower()
-    simple = (PrealertaSimple(cada_min=int(_os.getenv("BOT_PREALERTA_SIMPLE_MIN", "10") or 10))
+    # BOT_PREALERTA_SIMPLE_MAX (28-sep-2026, Jaume): tras N prealertas seguidas con la misma condicion pendiente y
+    # sin entrar, silencio hasta que cambie la condicion que falta (0 = sin silencio).
+    simple = (PrealertaSimple(cada_min=int(_os.getenv("BOT_PREALERTA_SIMPLE_MIN", "10") or 10),
+                              max_seguidas=int(_os.getenv("BOT_PREALERTA_SIMPLE_MAX", "3") or 3))
               if modo == "simple" else None)
 
     runner = RunnerAlertas([])

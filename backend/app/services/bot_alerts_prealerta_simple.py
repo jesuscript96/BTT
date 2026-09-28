@@ -75,16 +75,36 @@ def _en_ventana(compiled: dict, momento) -> bool:
 class PrealertaSimple:
     """Guarda solo el freno. Una instancia por proceso."""
 
-    def __init__(self, cada_min: int = 10):
+    def __init__(self, cada_min: int = 10, max_seguidas: int = 3):
         self.cada_min = int(cada_min)
+        # SILENCIO (28-sep-2026, Jaume): tras `max_seguidas` prealertas seguidas del mismo ticker y estrategia
+        # con la MISMA condicion pendiente y sin llegar a entrar, se calla hasta que cambie la condicion que
+        # falta (o entre). 0 = sin silencio.
+        self.max_seguidas = int(max_seguidas)
         self._ultimo: dict[tuple[str, str], pd.Timestamp] = {}
+        self._racha: dict[tuple[str, str], tuple[str, int]] = {}   # (condicion que falta, avisos seguidos)
 
     def reiniciar(self) -> None:
         self._ultimo.clear()
+        self._racha.clear()
 
     def soltar(self, ticker: str) -> None:
         for k in [k for k in self._ultimo if k[0] == ticker]:
             self._ultimo.pop(k, None)
+        for k in [k for k in self._racha if k[0] == ticker]:
+            self._racha.pop(k, None)
+
+    def _silenciada(self, clave: tuple[str, str], falta: str) -> bool:
+        """Cuenta la racha por condicion pendiente; True si ya se avisó `max_seguidas` veces seguidas por la misma."""
+        if self.max_seguidas <= 0:
+            return False
+        previa, n = self._racha.get(clave, (None, 0))
+        if previa != falta:
+            n = 0                                  # cambio la condicion que falta: la racha empieza de nuevo
+        if n >= self.max_seguidas:
+            return True
+        self._racha[clave] = (falta, n + 1)
+        return False
 
     def evaluar(self, runner, ticker: str) -> list[Evento]:
         """Los avisos «falta una» del ticker con su última vela cerrada."""
@@ -143,6 +163,8 @@ class PrealertaSimple:
             ultimo = self._ultimo.get(clave)
             ts = pd.Timestamp(momento)
             if ultimo is not None and (ts - ultimo) < pd.Timedelta(minutes=self.cada_min):
+                continue
+            if self._silenciada(clave, falta):
                 continue
             self._ultimo[clave] = ts
 
