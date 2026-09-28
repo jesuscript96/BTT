@@ -141,6 +141,12 @@ export enum IndicatorType {
     ABSORPTION_WICK = "Absorption + Wick",
     // Minutos SEGUIDOS por encima (o por debajo) de un nivel: la "aceptacion".
     TIME_VS_LEVEL = "Time vs Level",
+    // «Gappers activos (+X %)» (7.2b del Bloque 7, 2026-09-28): contador
+    // cross-sectional de cuántas acciones del universo ya cruzaron +X % sobre
+    // su cierre de ayer (línea continua AH-víspera + PM) al minuto de la vela.
+    // MEDIDA (solo contra una cifra). Detrás de GAPPERS_ACTIVE_ENABLED y de
+    // una tabla precomputada; sin flag la UI ni lo ofrece.
+    GAPPERS_ACTIVE = "Gappers activos",
 
     // Momentum clasico. El backend ya los calculaba (y por la via rapida), pero
     // no estaban en ESTE enum, asi que no se podian usar en las condiciones.
@@ -297,6 +303,10 @@ export interface IndicatorConfig {
     // lo clasico). Distinto de `liston_pct`, que es lo que necesita UNA franja
     // para contar como nodo.
     zona_pct?: number;
+    // "Gappers activos (+X %)" (7.2b del Bloque 7): el nivel X del contador.
+    // SOLO admite los niveles precomputados en la tabla del backend (los
+    // ofrece el selector); 50 es el valor inicial del campo.
+    gap_pct?: number;
 }
 
 export interface ComparisonCondition {

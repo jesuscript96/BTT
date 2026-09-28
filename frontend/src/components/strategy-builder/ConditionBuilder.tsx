@@ -10,6 +10,9 @@ import {
 } from '@/types/strategy';
 import { Plus, Trash2, GitBranch, Clock } from 'lucide-react';
 import { getAllowedTargets, isOnlyTarget } from '@/lib/indicatorValidation';
+import {
+    cargarGappersActive, estadoGappersActive, suscribirGappers,
+} from '@/lib/api_gappers';
 
 // ----------------------------------------------------------------------
 // Constants & Helpers
@@ -78,7 +81,8 @@ export const isMeasureIndicator = (name?: string): boolean => {
         name === IndicatorType.CURRENT_GAP ||
         name === IndicatorType.OPEN_GAP ||
         name === IndicatorType.SESSION_FADE ||
-        name === IndicatorType.FADE
+        name === IndicatorType.FADE ||
+        name === IndicatorType.GAPPERS_ACTIVE
     );
 };
 
@@ -212,6 +216,10 @@ export const getDefaultParamsForIndicator = (name: IndicatorType): Partial<Indic
         // desinflo el PM antes de abrir el mercado).
         case IndicatorType.SESSION_FADE:
             return { session_ref: "pm" };
+        // «Gappers activos»: 50 % es el nivel del estudio (el universo de los
+        // gappers); solo contra una cifra (contador).
+        case IndicatorType.GAPPERS_ACTIVE:
+            return { gap_pct: 50 };
         // Fade vivo contra el maximo previo, con la misma sesion por defecto que
         // "Previous Max" para que los dos digan lo mismo cuando se combinan.
         case IndicatorType.FADE:
@@ -297,6 +305,9 @@ export const INDICATOR_CATEGORIES: Record<string, IndicatorType[]> = {
         IndicatorType.PENDIENTE_VOLUMEN,
         IndicatorType.ROTACION,
         IndicatorType.ROTACION_VENTANA,
+        // Contador cross-sectional del universo (7.2b). La UI lo OCULTA si
+        // el backend no tiene GAPPERS_ACTIVE_ENABLED (ver IndicatorSelector).
+        IndicatorType.GAPPERS_ACTIVE,
     ],
 };
 
@@ -423,6 +434,7 @@ export const INDICATOR_LABELS: Record<string, string> = {
     [IndicatorType.WICK_RATIO]: "Ratio de mecha",
     [IndicatorType.ABSORPTION_WICK]: "Absorción + Mecha",
     [IndicatorType.TIME_VS_LEVEL]: "Time vs Level (min)",
+    [IndicatorType.GAPPERS_ACTIVE]: "Gappers activos (nº)",
     [IndicatorType.RSI]: "RSI",
     [IndicatorType.MACD]: "MACD",
     [IndicatorType.MACD_SIGNAL]: "MACD Signal",
@@ -611,7 +623,8 @@ export const INDICATOR_DESCRIPTIONS: Record<string, string> = {
     [IndicatorType.PENDIENTE_VOLUMEN]: "Si el volumen ACELERA o se APAGA: el volumen de los últimos X minutos dividido entre el de los X minutos anteriores. 1 = igual, 2 = el doble que antes, 0,3 = se ha quedado en un tercio. Es la pareja de «RVOL universo»: aquel dice CUÁNTO volumen hay, este dice HACIA DÓNDE va. No necesita ninguna tabla ni referencia externa: solo compara el ticker consigo mismo hace un rato. EJEMPLO: el precio lleva veinte minutos subiendo y la pendiente marca 0,35 — el precio sube, pero con un tercio del volumen de hace un rato: está subiendo por falta de vendedores, no por compras. Es la subida que se devuelve entera. Al revés, una pendiente de 3 con el precio cayendo es una caída con convicción. NIVELES: por debajo de 0,5 el volumen se está apagando (agotamiento si el precio sigue subiendo); de 0,7 a 1,5 es continuidad normal; por encima de 2 está entrando dinero de golpe (noticia, ruptura, cierre de cortos). COMBINACIÓN ÚTIL: «máximo del día + pendiente < 0,6 + mecha superior alta» es el techo de libro: el precio marca máximo, ya no viene volumen y encima se lo devuelven. Vale NaN en el primer tramo del día, cuando todavía no hay dos ventanas completas por detrás con las que comparar. OJO, MEDIDO Y NO CONFIRMADO: sobre los 24.750 máximos del día reales del universo, los tramos de este indicador apenas separan (58-65 % de acierto frente al 64 % de base) y, al revés de lo que dice la teoría, la pendiente BAJA sale algo PEOR que la alta. La combinación «pico hace >10 min Y pendiente <0,6», que parece el techo de libro, acierta el 56 % — por debajo de la base. La explicación es que este indicador compara con hace un rato, no con lo normal del día: justo después de un clímax la pendiente cae aunque siga entrando muchísimo volumen. Para «se ha secado de verdad» usa «RVOL universo», que compara con el universo y ahí sí separa (72,7 % con RVOL < 0,5). Este déjalo para confirmar, no para decidir.",
     [IndicatorType.ABSORPTION]: "Cuántos MILLONES de dólares hicieron falta para mover el precio un 1%, en una ventana de X MINUTOS DE RELOJ. Es la profundidad del mercado y se lee al derecho: cuanto MÁS ALTO, más caro es moverlo, o sea más absorción. EJEMPLO: en 5 minutos se negocian 2 millones de dólares y el precio acaba un 0,35% por encima de donde empezó → 2 / 0,35 = 5,7. Eso no es calma, es que alguien está poniendo a la venta exactamente tanto como le compran; en una small cap suele ser un ATM, un insider o un fondo saliendo — gente sin prisa y con tamaño que colocar, y por eso el nivel aguanta. NIVELES MEDIDOS sobre 2.461 lecturas reales del universo del bot (8-9 sep 2026, ventana de 5 min): la mitad están por debajo de 0,26; el percentil 75 es 0,85; el 90 es 2,6; el 95 es 5,1 y el 99 es 17,5. Léelo así: por debajo de 0,3 el precio se mueve con nada (código de barras); a partir de 2,5 hay alguien al otro lado; por encima de 5 es un muro. OJO al denominador: es el desplazamiento NETO de la ventana, no el rango. Una vela que sube y vuelve al mismo sitio ha avanzado cero y por eso puntúa alto — que es justo lo que se busca. Vale NaN si la ventana solo tiene una vela.",
     [IndicatorType.WICK_RATIO]: "Qué fracción de todo lo que recorrió el precio en la ventana se devolvió en forma de mecha, de 0 a 1. Con «arriba» mide el rechazo de las subidas (alguien vende cada empujón); con «abajo», el de las caídas (alguien compra cada hundimiento). EJEMPLO: una vela abre en 5,00, sube a 5,40 y cierra en 5,05, con mínimo en 4,98. Recorrido total 0,42, mecha superior 0,35 → 0,83: le devolvieron el 83% de lo que subió. Se suma sobre toda la ventana para no depender de una vela suelta, que puede ser un mal print. NIVELES MEDIDOS sobre 2.474 lecturas reales (8-9 sep 2026, ventana de 5 min, mecha superior): la MEDIANA es 0,21 — en un día normal siempre se devuelve una quinta parte del recorrido y eso no significa nada; el percentil 75 es 0,29; el 90 es 0,37; el 95 es 0,43 y el 99 es 0,58. Pedir «> 0,5» deja fuera al 97% de las lecturas y casi no dispara nunca: para un filtro que salte de vez en cuando, 0,40 es un punto de partida razonable.",
-    [IndicatorType.ABSORPTION_WICK]: "Devuelve 1 cuando se cumplen LAS DOS condiciones a la vez y 0 cuando no (se compara contra 0: «> 0» es «se cumplen las dos»). Existe porque por separado ninguna de las dos dice gran cosa — la lectura de una depende de cómo esté la otra: ▸ ABSORCIÓN ALTA + MECHA ALTA = hay un vendedor real y además defendido; ese nivel es el techo. Es la combinación que se busca para cortar. ▸ ABSORCIÓN ALTA + MECHA BAJA = alguien absorbe pero sin rechazo visible; puede ser acumulación, y ahí cortarse es peligroso. ▸ ABSORCIÓN BAJA + MECHA ALTA = mecha sin dinero detrás; es ruido de libro vacío y no significa nada. ▸ ABSORCIÓN BAJA + MECHA BAJA = sube sin encontrar resistencia, no hay nadie vendiendo; NO es sitio para cortos. Fíjate en que la cuarta combinación te evita más pérdidas de las que ganancias te da la primera, que suele ser el reparto real de este negocio. Los umbrales por defecto (2,5 y 0,40) son el percentil 90 de cada medida sobre el universo real del bot, así que de salida marcan «esto es raro» en vez de dispararse en cualquier vela."
+    [IndicatorType.ABSORPTION_WICK]: "Devuelve 1 cuando se cumplen LAS DOS condiciones a la vez y 0 cuando no (se compara contra 0: «> 0» es «se cumplen las dos»). Existe porque por separado ninguna de las dos dice gran cosa — la lectura de una depende de cómo esté la otra: ▸ ABSORCIÓN ALTA + MECHA ALTA = hay un vendedor real y además defendido; ese nivel es el techo. Es la combinación que se busca para cortar. ▸ ABSORCIÓN ALTA + MECHA BAJA = alguien absorbe pero sin rechazo visible; puede ser acumulación, y ahí cortarse es peligroso. ▸ ABSORCIÓN BAJA + MECHA ALTA = mecha sin dinero detrás; es ruido de libro vacío y no significa nada. ▸ ABSORCIÓN BAJA + MECHA BAJA = sube sin encontrar resistencia, no hay nadie vendiendo; NO es sitio para cortos. Fíjate en que la cuarta combinación te evita más pérdidas de las que ganancias te da la primera, que suele ser el reparto real de este negocio. Los umbrales por defecto (2,5 y 0,40) son el percentil 90 de cada medida sobre el universo real del bot, así que de salida marcan «esto es raro» en vez de dispararse en cualquier vela.",
+    [IndicatorType.GAPPERS_ACTIVE]: "Cuántas acciones del universo ya han cruzado +X % sobre su cierre de ayer, contadas en la línea continua del after-hours de la víspera (16:00) y el premarket de hoy (hasta las 09:29), AL MINUTO DE LA VELA. Es una medida del DÍA DE MERCADO, no del ticker: un contador que sube cada vez que un gapper nuevo arranca, y que en la vela de la entrada solo cuenta los cruces YA OCURRIDOS (causal por construcción — nunca usa el PMH final ni datos del día completo). EL PARÁMETRO X es el umbral de gapper (+20, +30, +40, +50…): con 50 % cuentas los gappers «de los grandes»; con 20 %, todos. EL HALLAZGO (Bloque 7 del programa de criterios): para las estrategias de FADE PREMARKET, entrar cuando ≥10 gaps llevan ya empezados es PERDER (−1,9 %/trade de media, 3/3 años en la 1B y en la Doble Techo), y el daño vive sobre todo en las entradas tempranas de mañanas ya calientes (antes de las 05:30: −4,5 %); con menos de 3 gaps empezados, +12,8 %/trade. La regla que lo explota: «Gappers activos (+50 %) < 10» como condición de entrada (o en un grupo OR con «Elapsed Time ≥ 90», que deja pasar las entradas a partir de las 05:30). En RTH la señal se INVIETE (a la 2B le gustan los días calientes). REQUISITOS: indicador detrás del flag GAPPERS_ACTIVE_ENABLED y de una tabla precomputada que se regenera con cada actualización del lago (backend/scripts/construir_gappers_activos.py); sin ellos vale NaN y la condición no dispara. SOLO se compara contra una cifra. OJO: el bot de alertas en vivo NO ve este indicador (no tiene la tabla); solo backtester.",
 };
 
 /* Traído de la rama de Álvaro (a03e057) al integrar picos y valles: aquí NO se usa
@@ -858,16 +871,21 @@ export const getInitialTargetForSource = (sourceName: IndicatorType): IndicatorC
 // ----------------------------------------------------------------------
 // Generic Selector
 // ----------------------------------------------------------------------
-export const IndicatorSelector = ({ 
-    value, 
-    onChange, 
+// Niveles X que admite «Gappers activos». ESPEJO del backend
+// (gappers_active.GAPPERS_ACTIVE_LEVELS): la fuente de verdad es la tabla
+// precomputada; si algún día cambian allí, hay que traerlos aquí.
+export const GAPPERS_LEVELS = [20, 30, 40, 50, 60, 75, 100, 150, 200];
+
+export const IndicatorSelector = ({
+    value,
+    onChange,
     isTarget,
     allowedTargets,
     exclude = [],
     width = '100%'
-}: { 
-    value: string, 
-    onChange: (val: string) => void, 
+}: {
+    value: string,
+    onChange: (val: string) => void,
     isTarget?: boolean,
     allowedTargets?: IndicatorType[],
     exclude?: IndicatorType[],
@@ -875,6 +893,15 @@ export const IndicatorSelector = ({
 }) => {
     const [isOpen, setIsOpen] = React.useState(false);
     const dropdownRef = React.useRef<HTMLDivElement>(null);
+    // «Gappers activos» solo se ofrece si el backend tiene el flag puesto;
+    // sin flag, el indicador no aparece (regla nº1 del repo: nada cambia).
+    const [gappersOn, setGappersOn] = React.useState(
+        () => estadoGappersActive()?.enabled === true);
+    React.useEffect(() => {
+        cargarGappersActive();
+        return suscribirGappers(() =>
+            setGappersOn(estadoGappersActive()?.enabled === true));
+    }, []);
 
     React.useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
@@ -948,9 +975,10 @@ export const IndicatorSelector = ({
                     fontFamily: 'var(--color-ec-sans)',
                 }}>
                     {Object.entries(INDICATOR_CATEGORIES).map(([category, indicators]) => {
-                        const filtered = indicators.filter(t => 
-                            (allowedTargets ? allowedTargets.includes(t) : true) && 
-                            !exclude.includes(t)
+                        const filtered = indicators.filter(t =>
+                            (allowedTargets ? allowedTargets.includes(t) : true) &&
+                            !exclude.includes(t) &&
+                            (t !== IndicatorType.GAPPERS_ACTIVE || gappersOn)
                         );
                         if (filtered.length === 0) return null;
                         
@@ -1477,6 +1505,19 @@ export const IndicatorParams = ({
                                 style={{ ...PARAM_FIELD_STYLE, flex: '1 1 70px', minWidth: '70px' }}
                                 title="Ventana en MINUTOS DE RELOJ, no en velas: con velas dispersas «10 velas» pueden ser 40 minutos. 10 es un punto de partida; 5 reacciona antes y con mas ruido, 30 mide la fase del dia."
                             />
+                        );
+                    case IndicatorType.GAPPERS_ACTIVE:
+                        return (
+                            <select
+                                value={String(value.gap_pct ?? 50)}
+                                onChange={(e) => onChange({ ...value, gap_pct: Number(e.target.value) })}
+                                style={{ ...PARAM_FIELD_STYLE, flex: '1 1 110px', minWidth: '110px', cursor: 'pointer' }}
+                                title="El nivel X del gapper: qué % sobre el cierre de ayer tiene que haber cruzado una acción para que CUENTE en el contador. Solo se ofrecen los niveles que trae la tabla precomputada; con 50 % cuentas los gappers «de los grandes» (el umbral del estudio del Bloque 7)."
+                            >
+                                {GAPPERS_LEVELS.map((n) => (
+                                    <option key={n} value={n}>+{n} %</option>
+                                ))}
+                            </select>
                         );
                     case IndicatorType.ABSORPTION:
                     case IndicatorType.WICK_RATIO:
@@ -2695,6 +2736,8 @@ export const formatConditionText = (c: AnyCondition): { source: string; target: 
             ? `% Session Fade (${c.source.session_ref === 'rth' ? 'RTH' : c.source.session_ref === 'full' ? 'día completo' : 'PM'})`
             : c.source.name === IndicatorType.FADE
             ? `% Fade (${c.source.fade_ref === 'vwap_cross' ? 'cruce VWAP' : `máx. previo ${c.source.ap_session || 'ap.PM'}`})`
+            : c.source.name === IndicatorType.GAPPERS_ACTIVE
+            ? `Gappers activos (+${c.source.gap_pct ?? 50} %)`
             : `${INDICATOR_LABELS[c.source.name] || c.source.name}${c.source.offset ? `[t-${c.source.offset}]` : ''}`;
         const compStr = COMPARATOR_LABELS[c.comparator] || c.comparator;
         let targetStr = '';

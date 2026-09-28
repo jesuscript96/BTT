@@ -1200,11 +1200,15 @@ def compute_indicator(
     liston_pct: float | None = None,
     # "Zona alta"/"Zona baja": que % del volumen del dia abarca la banda.
     zona_pct: float | None = None,
+    # "Gappers activos" (7.2b, 2026-09-28): el nivel X del contador (+X %),
+    # de los precomputados en la tabla (gappers_active.GAPPERS_ACTIVE_LEVELS).
+    # Va en la CLAVE DE CACHE: sin el, dos niveles distintos compartirian serie.
+    gap_pct: float | None = None,
 ) -> pd.Series:
     # N1d: name already normalized by compile_strategy_def; normalize here for legacy callers
     name = normalize_indicator_name(name)
     # N1b: simplified cache key — string instead of 17-tuple
-    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}|{bin_pct}|{liston_pct}|{zona_pct}|{pivot_rank}"
+    cache_key = f"{name}|{period}|{period2}|{period3}|{std_dev}|{multiplier}|{offset}|{days_lookback}|{calc_on_heikin}|{time_hour}|{time_minute}|{time_condition}|{band_line}|{orb_minutes}|{ap_session}|{range_minutes}|{pivot_window}|{tri_lookback}|{slope_tolerance}|{min_r_squared}|{min_pivots}|{session_ref}|{squeeze_direction}|{fade_ref}|{overhead_extreme}|{overhead_ref}|{overhead_vol_rule}|{ref_level}|{level_dir}|{wick_side}|{abs_op}|{abs_level}|{wick_op}|{wick_level}|{swing_dir}|{bin_pct}|{liston_pct}|{zona_pct}|{pivot_rank}|{gap_pct}"
     if cache is not None and cache_key in cache:
         return cache[cache_key]
 
@@ -1241,6 +1245,7 @@ def compute_indicator(
         wick_op=wick_op, wick_level=wick_level, swing_dir=swing_dir,
         bin_pct=bin_pct, liston_pct=liston_pct, zona_pct=zona_pct,
         pivot_rank=pivot_rank,
+        gap_pct=gap_pct,
     )
 
     if offset and offset != 0:
@@ -2299,6 +2304,7 @@ def _compute_raw(
     liston_pct: float | None = None,
     zona_pct: float | None = None,
     pivot_rank: int | None = None,
+    gap_pct: float | None = None,
 ) -> pd.Series:
     ds = daily_stats or {}
 
@@ -2751,6 +2757,20 @@ def _compute_raw(
             open_, close, ts_col, ds.get("ticker"), str(ds.get("date") or "")[:10],
             "down" if name == "Halt Down" else "up",
         )
+
+    if name == "Gappers activos":
+        # «Gappers activos (+X %)» (7.2b del Bloque 7, 2026-09-28): cuántas
+        # acciones del universo ya han cruzado +X % sobre su cierre de ayer en
+        # la línea continua AH-víspera+PM, al minuto de la vela. CROSS-SECTIONAL:
+        # sale de una tabla precomputada (fecha, nivel, minuto de cruce), no del
+        # frame del ticker. Gated por GAPPERS_ACTIVE_ENABLED (default OFF): sin
+        # flag o sin tabla vale NaN (condición nunca dispara) + ERROR único.
+        # Solo contra una cifra (MEDIDA). El bot en vivo NO lo ve.
+        from app.services.gappers_active import serie_gappers_activos
+        s = serie_gappers_activos(df, ds, gap_pct)
+        if s is None:
+            return pd.Series(np.nan, index=close.index)
+        return s
 
     if name == "RVOL by bar" or name == "RVOL":
         # Relative Volume: current cumulative volume / average cumulative volume at same time

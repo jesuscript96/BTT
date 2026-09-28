@@ -350,6 +350,8 @@ export const INDICATOR_TARGETS: Record<IndicatorType, IndicatorType[]> = {
     // a otro indicador no significaria nada. Solo contra una cifra.
     [IndicatorType.SESSION_FADE]: [],
     [IndicatorType.FADE]: [],
+    // Contador cross-sectional del universo (7.2b): MEDIDA, solo contra cifra.
+    [IndicatorType.GAPPERS_ACTIVE]: [],
 
     // Momentum clasico. El RSI va de 0 a 100 y se compara contra sus niveles
     // (70/30) o contra otro RSI de distinta temporalidad; contra un precio no
