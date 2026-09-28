@@ -22,6 +22,24 @@
    y, si mejora varias, se construye como filtro en la app.
 6. Se registra TODO, también lo descartado (tabla del final).
 
+## ▶ ORDEN DE TRABAJO (decidido por Álvaro, 2026-09-28)
+
+1. ~~Línea «Aguantar en RTH / peores operaciones» (1B)~~ **HECHA (28-sep):**
+   `INFORME_AGUANTAR_RTH_1B_20260928.md`. Sin corte por «% camino» (lo muy
+   recorrido es lo MEJOR de aguantar); el discriminador es el **VWAP del
+   premarket a las 08:30** (regla: aguantar solo si precio ≤ VWAP−4 %; paridad
+   de Σ con aguantar-todo y la mitad de stops). Peores trades = monster-gap
+   (pmh≥200 % | ≥150 % ∧ vol<5 M$), excluible a la entrada (−54 R, 3/3 años).
+   La salida condicional exige tocar el motor compartido → decisión de Álvaro
+   + Jaume. El «cerrar IPO<90 d a las 08:30» de Portfolio quedó superado por
+   la regla VWAP (el filtro IPO<365 d ya está DENTRO de la variante robusta).
+2. ~~Reconciliación del indicador «Gappers activos» (7.2b)~~ **CERRADA (28-sep):**
+   ΔΣ cuadra EXACTO (−[1]+[2]+[3] = +518,16) y el 7.2b era un ARTEFACTO del
+   contador del estudio (hallazgo 19; invalidado). Indicador OK, regla muerta.
+3. **AHORA — retomar los bloques de criterios de universo por orden:**
+   Bloque 8 → Bloque 9 → Bloque 1-bis. (5, 6 y 7 ya están hechos aunque su
+   cabecera diga PENDIENTE; ver Registro.)
+
 ## Bloques
 
 ### Bloque 1 — La vela de la víspera · COMPLETADO 2026-09-25 (umbral movible, 2019-2026 + trades 1B)
@@ -232,3 +250,4 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-28 | B7·7.2b ROBUSTEZ (antes de construir) | ✅ SOBREVIVE TODO — umbral GRADUAL (meseta 8-12, pico 10); 416/668 días, sin 3/5/10 peores días el efecto intacto (Calmar hasta sube); bootstrap por día: 100 % de iteraciones mejoran Calmar y Sharpe; contador limpio (solo cruces de vela previos a la entrada). GIRO: el daño vive SOLO en entradas tempranas (<05:30: −4,5 %; tardías: +0,3 %) = frenesí nocturno; el proxy a hora fija (05:00/06:00) sale con signo CRUZADO → ninguna vía dataset lo captura; implementación real = tabla (fecha,minuto) + condición de entrada (toca motor compartido: avisar a Jaume) | `INFORME_BLOQUE7_MERCADO_20260927.md` §8 |
 | 2026-09-28 | B7·7.2b CONSTRUIDO como indicador «Gappers activos (+X %)» | ✅ HECHO — indicador de vela causal (tabla fecha×nivel×minuto, 206.547 cruces, 9 niveles X movibles, inicial 50), solo aditivo, tras GAPPERS_ACTIVE_ENABLED (OFF por defecto) y sin tocar market_frame/bot. No-regresión BIT-IDÉNTICA (hash 0401ce44); backtest real con OR(Gappers+50<10, Range≥90): 3.541 trades (−941 vs 4.482), WR 66,4 %, DD −10,5 %, ret/trade +3,36 % (el Σtotal baja vs el skip puro del estudio porque el OR re-admite desde las 05:30 — decisión de diseño, no fallo). 1.667 tests + tsc | MEMORIA_MADRE (FEATURE 28-sep · GAPPERS) |
 | 2026-09-28 | B7·7.2b INVALIDADO (reconciliación trade a trade) | ❌ ERA UN ARTEFACTO — el n_gaps_pre del estudio estaba contaminado (colisión de minuto de entrada: reentradas/DT/2B pisaban el minuto de la 1B; 56,6 % de trades inflados +3,45 de media). Con contador LIMPIO: bloqueados 304 Σ+627 (+2,06 %/trade) vs resto +3,23 % — **sin edge**; con el del motor: 532 Σ+798 (+1,50 %) — tampoco. Backtest real de la guarda OR(Gappers+50<10, **Time of Day≥330**): 4.265 trades (−217), Σ +518 pp netos que salen de la CASCADA (entrar más tarde), no de podar perdedores — los 119 borrados eran ganadores (Σ+2.053, +17 % medio). Reconciliación EXACTA: −[1]+[2]+[3] = +518,16 = ΔΣ. De paso: 2 bugs de MI generator corregidos (tabla 216.102 cruces, cruces bit-idénticos al estudio) y «Range of Time» NO es hora de reloj (cuenta desde la 1ª vela). El INDICADOR «Gappers activos» sigue siendo válido y causal; la REGLA umbral-10 no | `INFORME_BLOQUE7_MERCADO_20260927.md` §10 · MEMORIA hallazgos 19-21 |
+| 2026-09-28 | Línea «Aguantar en RTH» (1B, 4.482 trades 2024-26, % camino = precios, hold 08:45→11:00 simulado con velas) | ✅ CON REGLA — (A) NO hay corte por «% camino a las 08:30»: lo muy recorrido (<−100) es lo MEJOR de aguantar (−11 camino pp, 2 % stops) y el daño vive en camino>0 (22-58 % stops); el discriminador real es el **precio vs VWAP del premarket** (≥VWAP: efecto +1,3/+0,4 y 27-42 % stops → NO aguantar; ≤−4 % bajo VWAP: −6,5 y ~6 % stops). Regla: aguantar solo si ≤VWAP−4 % (+IPO<365 d blinda 2026, único 3/3): misma Σ que aguantar-todo con la MITAD de stops (5,8 % vs 11,6 %) — el DD−7,6 % de Portfolio es sizing-$, la regla ataca su causa (frecuencia de stops). (B) Peor 10 % (448, 444 stops): **PMH +166 % vs +96 %, vol$ 3,4 M vs 6,0 M, víspera RTH +17 % vs +10 %, entrada <04:30 y piramidando**; exclusión «pmh≥200 % ∨ (≥150 % ∧ vol<5 M$)» quita 997 trades que pierden solos −54,5 R (3/3 años) — in-sample, confirmar. Gappers/contador: sin separación (re-invalida 7.2b) | `INFORME_AGUANTAR_RTH_1B_20260928.md` |
