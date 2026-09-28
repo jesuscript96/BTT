@@ -1016,16 +1016,34 @@ def _fetch_qualifying_data_uncached(
                             {t for t in _tokens if _re.match(r"^(?:lag|lead)_", t)}
                             | (_tokens & set(window_alias_to_expr()))
                         )
-                        _extra, _desc = on_the_fly_window_selects(
-                            _candidatas - _pq_cols)
+                        # lag_gappers_prev_1 necesita DOS niveles (cuenta por
+                        # fecha y luego LAG por ticker): envoltorio propio ANTES
+                        # del aviso de desconocidas, que no la debe acusar.
+                        from app.services.qualifying_windows import (
+                            GAPPERS_PREV_ALIAS as _GPA,
+                            _gappers_dia_select as _gds,
+                            _gappers_prev_select as _gps,
+                        )
+                        _faltan = _candidatas - _pq_cols
+                        if _GPA in _faltan:
+                            _from = (
+                                f"(SELECT *, {_gps()} "
+                                f"FROM (SELECT *, {_gds()} "
+                                f"FROM read_parquet('{_win_sql}')))"
+                            )
+                            _faltan = _faltan - {_GPA}
+                        _extra, _desc = on_the_fly_window_selects(_faltan)
                         if _extra:
                             logger.info(
                                 f"[QUALIFYING] al-vuelo ({len(_extra)}): "
                                 + ", ".join(e.split(" AS ")[-1] for e in _extra)
                             )
+                            # Envolver el _from VIGENTE (no el parquet pelado):
+                            # si lag_gappers_prev_1 ya montó su envoltorio de
+                            # dos niveles, estas selects van ENCIMA y no lo pisan.
                             _from = (
                                 f"(SELECT *, {', '.join(_extra)} "
-                                f"FROM read_parquet('{_win_sql}'))"
+                                f"FROM {_from})"
                             )
                         if _desc:
                             logger.warning(
@@ -1058,6 +1076,10 @@ def _fetch_qualifying_data_uncached(
             stage_1_sql_cols = "*"
             if stage_1_smas:
                 stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
+            # gappers de cada FECHA (7.2a): el stage-2 la laguea por ticker
+            # (lag_gappers_prev_1). Ventanas anidadas no las admite DuckDB.
+            from app.services.qualifying_windows import _gappers_dia_select
+            stage_1_sql_cols += ", " + _gappers_dia_select()
 
             # Build Stage 2 select list (LEADs, LAGs, and SMA LEADs/LAGs)
             stage_2_cols = [

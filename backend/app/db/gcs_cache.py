@@ -553,6 +553,13 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
         stage_1_smas.append(f'AVG(rth_close) OVER (PARTITION BY ticker ORDER BY "timestamp" ROWS BETWEEN {P - 1} PRECEDING AND CURRENT ROW) as sma_{P}')
 
     stage_1_sql_cols = "* EXCLUDE (pmh_gap_pct), ((pm_high - prev_close) / NULLIF(prev_close, 0) * 100) as pmh_gap_pct"
+    # gappers de cada FECHA (7.2a → lag_gappers_prev_1 en stage-2). Aquí la
+    # pmh_gap_pct va EXCLUIDA y recalculada como expresión: el FILTER usa la
+    # MISMA fórmula (un alias del propio SELECT no es visible en ventanas).
+    stage_1_sql_cols += (
+        ", COUNT(*) FILTER (WHERE (pm_high - prev_close) / NULLIF(prev_close, 0) * 100 >= 50)"
+        ' OVER (PARTITION BY CAST("timestamp" AS DATE)) AS n_gappers_dia'
+    )
     if stage_1_smas:
         stage_1_sql_cols += ", " + ", ".join(stage_1_smas)
 

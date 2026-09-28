@@ -50,7 +50,9 @@ def _make_mini_lake() -> duckdb.DuckDBPyConnection:
             rth_range_pct DOUBLE,
             day_return_pct DOUBLE,
             "close" DOUBLE,
-            "prev_close" DOUBLE
+            "prev_close" DOUBLE,
+            "high" DOUBLE,
+            "low" DOUBLE
         )
     """)
     rows = [
@@ -67,7 +69,7 @@ def _make_mini_lake() -> duckdb.DuckDBPyConnection:
     ]
     for t, d, close, vol, day_ret in rows:
         con.execute(
-            'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 5.0, 500_000, ?, 10.0, 3.0, ?, 10.0, 10.0)',
+            'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 5.0, 500_000, ?, 10.0, 3.0, ?, 10.0, 10.0, 11.0, 9.0)',
             [t, d, close, vol, close, day_ret],
         )
     con.execute("INSERT INTO massive.tickers VALUES ('AAA', 'CS'), ('BBB', 'CS')")
@@ -205,14 +207,15 @@ class TestRet5dRuleFiltersPairs:
             'CREATE TABLE daily_metrics (ticker VARCHAR, "timestamp" TIMESTAMP, '
             '"close" DOUBLE, "prev_close" DOUBLE, rth_close DOUBLE, rth_volume BIGINT, '
             "gap_pct DOUBLE, pm_volume BIGINT, \"open\" DOUBLE, pmh_gap_pct DOUBLE, "
-            "rth_range_pct DOUBLE, day_return_pct DOUBLE)"
+            "rth_range_pct DOUBLE, day_return_pct DOUBLE, "
+            '"high" DOUBLE, "low" DOUBLE)'
         )
 
         def ins(t: str, i: int, close: float, prev: float):
             dia = f"2024-01-{i + 1:02d}"
             con.execute(
                 'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 10.0, 1000000, '
-                "5.0, 500000, 10.0, 50.0, 3.0, 1.0)",
+                "5.0, 500000, 10.0, 50.0, 3.0, 1.0, 11.0, 9.0)",
                 [t, dia, close, prev],
             )
 
@@ -440,7 +443,8 @@ class TestDaysSinceFirstDay:
             'CREATE TABLE daily_metrics (ticker VARCHAR, "timestamp" TIMESTAMP, '
             '"close" DOUBLE, "prev_close" DOUBLE, rth_close DOUBLE, rth_volume BIGINT, '
             "gap_pct DOUBLE, pm_volume BIGINT, \"open\" DOUBLE, pmh_gap_pct DOUBLE, "
-            "rth_range_pct DOUBLE, day_return_pct DOUBLE)"
+            "rth_range_pct DOUBLE, day_return_pct DOUBLE, "
+            '"high" DOUBLE, "low" DOUBLE)'
         )
         # AAA nace el 1-ene (3 días); BBB el 3-ene (mismo día del gap)
         filas = [("AAA", "2024-01-01"), ("AAA", "2024-01-02"), ("AAA", "2024-01-03"),
@@ -448,7 +452,7 @@ class TestDaysSinceFirstDay:
         for t, d in filas:
             con.execute(
                 'INSERT INTO daily_metrics VALUES (?, ?, 10.0, 10.0, 10.0, 1000000, '
-                "5.0, 500000, 10.0, 50.0, 3.0, 1.0)", [t, d])
+                "5.0, 500000, 10.0, 50.0, 3.0, 1.0, 11.0, 9.0)", [t, d])
         con.execute("INSERT INTO massive.tickers VALUES ('AAA','CS'), ('BBB','CS')")
         return con
 
