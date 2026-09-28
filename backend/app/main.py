@@ -352,6 +352,11 @@ app.include_router(locates.router)
 if os.getenv("GENETICO_ENABLED", "").strip().lower() in ("1", "true", "yes", "on"):
     from app.routers import genetico as _genetico
     app.include_router(_genetico.router)
+# Estado del indicador «Gappers activos (+X %)» (7.2b, 2026-09-28): la UI
+# pregunta aqui si ofrecerlo (GAPPERS_ACTIVE_ENABLED, default OFF). Solo
+# lectura de entorno/disco; aditivo.
+from app.routers import gappers_active
+app.include_router(gappers_active.router, prefix="/api/gappers-active", tags=["Gappers Activos"])
 
 @app.get("/health")
 def read_health():

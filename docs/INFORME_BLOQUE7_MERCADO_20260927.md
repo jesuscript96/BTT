@@ -179,3 +179,18 @@ por fecha en el frame/`ds`), pero SÍ toca `strategy_engine`/simulador —
 ficheros COMPARTIDOS con el bot en vivo: **avisar a Jaume antes de nada**
 (regla del repo). Mientras tanto queda como hallazgo + la prueba de
 Portfolio de Álvaro.
+
+## 9. CONSTRUIDO como indicador (28-sep) — «Gappers activos (+X %)», aditivo y con flag
+
+Por pedido de Álvaro. Indicador de vela del bloque «Alternativos»: nº de
+acciones que ya cruzaron +X % sobre su cierre de ayer (línea continua
+AH-víspera+PM) al minuto de la vela. X = parámetro (20/30/40/50/60/75/100/
+150/200; inicial 50). Tabla precomputada (fecha, nivel, minuto de cruce) desde
+el lago (`backend/scripts/construir_gappers_activos.py`; regenerar con cada
+actualización del lago). Flag `GAPPERS_ACTIVE_ENABLED` (apagado por defecto);
+sin él no aparece en la UI y el motor da NaN. `market_frame.py` y el bot:
+INTACTOS. No-regresión bit-idéntica (4.482 trades, hash `0401ce44`). Backtest
+real con la regla OR(Gappers<10, Range of Time≥90): 3.541 trades (−941),
+WR 66,4 %, DD −10,5 %, ret/trade +3,36 % — el total baja vs la suma pura del
+estudio porque la condición OR re-admite entradas desde las 05:30 (ver
+MEMORIA_MADRE, FEATURE 28-sep · GAPPERS). Detalle y guía de uso ahí.

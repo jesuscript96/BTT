@@ -2161,6 +2161,9 @@ def _compute_from_config(
         # reenvio el rank se pierde MUDO y el indicador calcularia con rank=1
         # (mismo fallo que ya tuvieron otros indicadores, PRD §5).
         pivot_rank=cfg.get("pivot_rank"),
+        # "Gappers activos (+X %)" (7.2b, 2026-09-28). Sin este reenvio el
+        # nivel X se perderia MUDO y el contador saldria siempre a +50 %.
+        gap_pct=cfg.get("gap_pct"),
     )
 
 
