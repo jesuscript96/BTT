@@ -6,6 +6,7 @@ Optimized (N1+N2a): dict dispatch for comparators, pre-normalized indicator name
 unified timestamp parsing, and native numpy array evaluation path.
 """
 import logging
+import os
 import numpy as np
 import pandas as pd
 from app.services.indicators import (
@@ -962,6 +963,48 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             "cooldown_bars": max(0, cooldown),
         }
 
+    # ── SALIDA PROGRAMADA CONDICIONAL (2026-09-28, línea «Gestión por hora») ──
+    # «a las HH:MM, si condición, acción». Gated por SCHEDULED_EXITS_ENABLED
+    # (apagado por defecto): sin flag, lista vacía y NADA cambia. La condición
+    # es el mismo árbol de entrada/salida (normalizado igual). La evaluación
+    # por vela la hace translate_strategy; el disparo (una vez por operación,
+    # en la primera vela >= hour con posición abierta) y la acción las ejecuta
+    # el motor Python (sim_dispatch desvía; el kernel JIT no lo implementa).
+    sched_rules = []
+    _raw_sched = risk.get("scheduled_exits") or [] if isinstance(risk, dict) else []
+    if _raw_sched and os.getenv("SCHEDULED_EXITS_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on"):
+        for _r in _raw_sched:
+            if not isinstance(_r, dict):
+                continue
+            _hour = str(_r.get("hour") or "").strip()
+            try:
+                _hh, _mm = _hour.split(":")[:2]
+                _h, _m = int(_hh), int(_mm)
+                assert 0 <= _h <= 23 and 0 <= _m <= 59
+            except Exception:
+                logger.warning(f"[SCHEDULED_EXITS] hora inválida {_hour!r}: regla ignorada")
+                continue
+            _root = _r.get("condition") or {}
+            if isinstance(_root, dict) and _root.get("conditions"):
+                _normalize_tree(_root)
+            else:
+                _root = {}
+            _action = str(_r.get("action") or "none")
+            if _action not in ("close_pct", "move_stop", "none"):
+                _action = "none"
+            try:
+                _cpct = min(100.0, max(1.0, float(_r.get("close_pct", 100.0))))
+            except (TypeError, ValueError):
+                _cpct = 100.0
+            try:
+                _soff = float(_r.get("stop_offset_pct", 0.0))
+            except (TypeError, ValueError):
+                _soff = 0.0
+            sched_rules.append({
+                "hour_min": (_h, _m), "root_condition": _root, "action": _action,
+                "close_frac": _cpct / 100.0, "stop_offset": _soff,
+            })
+
     compiled = {
         "bias": bias,
         "direction": "longonly" if bias == "long" else "shortonly",
@@ -985,6 +1028,11 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         # None si la estrategia no scalpea. Lo consume translate_strategy.
         "scalping": scalp_def,
     }
+    # OJO: SOLO cuando hay reglas. El dict compilado se hashea en dorados de
+    # tests (test_lot_stop_nivel): una clave siempre-presente los romperia
+    # sin cambiar nada real. Ausente = inerte para todos los .get().
+    if sched_rules:
+        compiled["scheduled_exits"] = sched_rules
 
     # N2a: generate indicator plan for native evaluation
     compiled["_indicator_plan"] = _extract_indicator_plan(compiled)
@@ -1396,6 +1444,21 @@ def translate_strategy(
         risk_scale = float(scalp.get("capital_frac", 1.0))
         ladder_cfg = scalp.get("ladder")
 
+    # SALIDAS PROGRAMADAS CONDICIONALES: condición de cada regla por vela.
+    # Misma maquinaria que entrada/salida (misma caché de indicadores).
+    sched_out = []
+    for _sr in compiled.get("scheduled_exits") or []:
+        _cond = _evaluate_condition_group(
+            _sr["root_condition"], df, "1m", daily_stats, entry_cache
+        ) if _sr["root_condition"].get("conditions") else pd.Series(True, index=df.index)
+        sched_out.append({
+            "cond": _cond.astype(bool),
+            "hour_min": _sr["hour_min"],
+            "action": _sr["action"],
+            "close_frac": _sr["close_frac"],
+            "stop_offset": _sr["stop_offset"],
+        })
+
     return {
         "entries": entries.astype(bool),
         "exits": exits.astype(bool),
@@ -1418,6 +1481,8 @@ def translate_strategy(
         "risk_scale": risk_scale,
         # Escalera del scalping complejo (ConfigEscalera) o None = como siempre.
         "ladder": ladder_cfg,
+        # Salidas programadas condicionales (lista vacía = inerte).
+        "scheduled_exits": sched_out,
     }
 
 

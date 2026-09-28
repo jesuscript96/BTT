@@ -177,7 +177,8 @@ def _compute_signals_for_pair(
 
     indicator_plan = compiled_strategy.get("_indicator_plan") if compiled_strategy else None
 
-    if n2a_native_enabled() and indicator_plan is not None and not indicator_plan.get("has_special"):
+    if n2a_native_enabled() and indicator_plan is not None and not indicator_plan.get("has_special") \
+            and not (compiled_strategy or {}).get("scheduled_exits"):
         # ═══ N2a FAST PATH: numpy arrays nativos, sin DataFrames ═══
         arrays_native = {
             "open": O, "high": H, "low": L, "close": C, "volume": V,
@@ -208,6 +209,7 @@ def _compute_signals_for_pair(
         sig_tp_time_limit = signals.get("tp_time_limit")
         sig_trail_pct = signals.get("trail_pct")
         sig_partial_tps = signals.get("partial_take_profits")
+        sig_sched = signals.get("scheduled_exits") or []
         # El fast-path nativo no evalua piramide (con piramide, has_special
         # fuerza el camino clasico), pero la variable debe existir aguas abajo.
         sig_pyramid_levels = []
@@ -257,6 +259,7 @@ def _compute_signals_for_pair(
         sig_tp_time_limit = signals.get("tp_time_limit")
         sig_trail_pct = signals.get("trail_pct")
         sig_partial_tps = signals.get("partial_take_profits")
+        sig_sched = signals.get("scheduled_exits") or []
         sig_pyramid_levels = signals.get("pyramid_levels") or []
         sig_pyramid_sequential = bool(signals.get("pyramid_sequential"))
         sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
@@ -318,6 +321,11 @@ def _compute_signals_for_pair(
 
     entries_arr = entries_arr[session_mask_np]
     exits_arr = exits_arr[session_mask_np]
+    if sig_sched:
+        for _sr in sig_sched:
+            _c = np.asarray(_sr["cond"])
+            if len(_c) == len(session_mask_np):
+                _sr["cond"] = _c[session_mask_np]
     if sig_pyramid_levels:
         sig_pyramid_levels = [
             # Recorte de sesión a cada paso igual que al array único de un
@@ -430,6 +438,7 @@ def _compute_signals_for_pair(
         "sig_tp_time_limit": sig_tp_time_limit,
         "sig_trail_pct": sig_trail_pct,
         "sig_partial_tps": sig_partial_tps,
+        "sig_sched": sig_sched,
         "sig_pyramid_levels": sig_pyramid_levels,
         "sig_pyramid_sequential": sig_pyramid_sequential,
         "sig_cooldown": sig_cooldown,
@@ -1103,6 +1112,7 @@ def simulate_and_accumulate(signals_sorted, params):
                 trail_pct=sig["sig_trail_pct"],
                 accumulate=sig["sig_accept_reentries"],
                 max_reentries=sig["sig_max_reentries"],
+                scheduled_exits=sig.get("sig_sched") or None,
                 partial_take_profits=sig["sig_partial_tps"],
                 pyramid_levels=sig.get("sig_pyramid_levels") or [],
                 pyramid_sequential=bool(sig.get("sig_pyramid_sequential")),

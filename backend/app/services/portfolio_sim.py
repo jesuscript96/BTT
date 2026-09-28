@@ -491,6 +491,16 @@ def simulate(
     # stop y el take profit en % pasan a medirse sobre el precio MEDIO. Solo lo
     # implementa este motor: `sim_dispatch` lo desvia del kernel JIT.
     ladder=None,
+    # SALIDA PROGRAMADA CONDICIONAL (2026-09-28). None/[] = ni una rama nueva
+    # (bit-identico). Lista de reglas ya traducidas por strategy_engine:
+    #   {"cond": np.ndarray(bool) por vela, "hour_min": (h, m),
+    #    "action": "close_pct"|"move_stop"|"none", "close_frac": float,
+    #    "stop_offset": float}
+    # Semantica (linea «Gestion por hora»): cada regla se evalua UNA vez por
+    # operacion, en la PRIMERA vela >= hour con posicion abierta; si la
+    # condicion es cierta ahi, ejecuta la accion. Solo este motor la implementa
+    # (sim_dispatch desvia del kernel JIT, como bswan/halts/ladder).
+    scheduled_exits=None,
 ) -> dict:
     n = len(close)
     is_long = direction == "longonly"
@@ -539,6 +549,21 @@ def simulate(
     # habria dimensionado para otro. Con el stop estructural no haria falta
     # (`trade_sl_price` ya guarda el apretado), pero se rellena igual.
     sl_cangrejo_px = 0.0
+    # Salidas programadas condicionales: cond como numpy bool + flags de
+    # disparo por operacion (reset en cada entrada, como partial_tp_hits).
+    sched_rules = []
+    if scheduled_exits:
+        for _sr in scheduled_exits or []:
+            _c = np.asarray(_sr.get("cond"), dtype=bool)
+            if len(_c) != n:
+                continue  # desalineada con el frame: esa regla se ignora
+            sched_rules.append({
+                "cond": _c, "hm": tuple(_sr.get("hour_min") or (0, 0)),
+                "action": _sr.get("action") or "none",
+                "close_frac": float(_sr.get("close_frac", 1.0) or 1.0),
+                "stop_offset": float(_sr.get("stop_offset", 0.0) or 0.0),
+            })
+    sched_fired = [False] * len(sched_rules)
     trail_extreme = 0.0
     mae = 0.0  # Maximum Adverse Excursion
     mfe = 0.0  # Maximum Favorable Excursion
@@ -1346,6 +1371,82 @@ def simulate(
                         pyr_exec = []
                     equity[i] = init_cash + realized_pnl
                     continue
+
+            # --- SALIDA PROGRAMADA CONDICIONAL (2026-09-28) ---
+            # DESPUES de los parciales a proposito: en la misma vela, primero
+            # sale el parcial programado de la estrategia y la regla gestiona
+            # LO QUE QUEDE (igual que en el estudio de la linea Gestion por
+            # hora). Una vez por operacion, en la primera vela >= hour.
+            if sched_rules and in_position and not exit_triggered and not skip_exits:
+                _dt = None
+                if timestamps is not None:
+                    _dt = datetime.fromtimestamp(timestamps[i] / 1e9, tz=timezone.utc)
+                if _dt is not None:
+                    for _sri, _sr in enumerate(sched_rules):
+                        if sched_fired[_sri]:
+                            continue
+                        _h, _m = _sr["hm"]
+                        if _dt.hour < _h or (_dt.hour == _h and _dt.minute < _m):
+                            continue
+                        sched_fired[_sri] = True  # se evalua UNA vez, aqui
+                        if not bool(_sr["cond"][i]):
+                            continue
+                        if _sr["action"] == "close_pct":
+                            _sched_size = min(size, size * _sr["close_frac"])
+                            if _sched_size > 0:
+                                _sched_px = close[i]
+                                slip = _sched_px * slippage
+                                net_sched = (_sched_px - slip) if is_long else (_sched_px + slip)
+                                if is_long:
+                                    gross_pnl = (net_sched - avg_entry_price) * _sched_size
+                                else:
+                                    gross_pnl = (avg_entry_price - net_sched) * _sched_size
+                                if fee_type == "FLAT":
+                                    fee_amount = fees * _sched_size * 2
+                                else:
+                                    fee_amount = (avg_entry_price + net_sched) * _sched_size * fees
+                                pnl = gross_pnl - fee_amount
+                                realized_pnl += pnl
+                                capital_at_risk = avg_entry_price * _sched_size
+                                ret_pct = (pnl / capital_at_risk) * 100 if capital_at_risk > 0 else 0.0
+                                trades.append({
+                                    "entry_idx": entry_idx,
+                                    "exit_idx": i,
+                                    "entry_price": round(entry_price, 6),
+                                    "avg_entry_price": round(avg_entry_price, 6),
+                                    "exit_price": round(net_sched, 6),
+                                    "pnl": round(pnl, 4),
+                                    "return_pct": round(ret_pct, 4),
+                                    "direction": "Long" if is_long else "Short",
+                                    "status": "Closed",
+                                    "size": round(_sched_size, 6),
+                                    "exit_reason": "Scheduled Exit",
+                                    "fees": round(fee_amount, 4),
+                                    "mae": round(mae, 4),
+                                    "mfe": round(mfe, 4),
+                                    "stop_loss": round(trade_sl_price, 6),
+                                })
+                                size -= _sched_size
+                                if size <= 0.0001:
+                                    if pyramid_mode and pyr_exec and trades:
+                                        trades[-1]["pyr_executions"] = pyr_exec
+                                        pyr_exec = []
+                                    in_position = False
+                                    size = 0.0
+                        elif _sr["action"] == "move_stop":
+                            # Stop a la entrada +/- offset (0 = break-even).
+                            # Corto: por ENCIMA de la entrada; largo: debajo.
+                            # Se pisa `trade_sl_price` (stop de nivel) y
+                            # `sl_cangrejo_px` (override de los stops en %,
+                            # mismo mecanismo del Modo A de Cangrejo). Si el
+                            # precio ya lo paso, dispara en la SIGUIENTE vela
+                            # (la comprobacion de esta barra ya corrio).
+                            if is_long:
+                                _new_sl = entry_price * (1.0 - _sr["stop_offset"] / 100.0)
+                            else:
+                                _new_sl = entry_price * (1.0 + _sr["stop_offset"] / 100.0)
+                            trade_sl_price = _new_sl
+                            sl_cangrejo_px = _new_sl
 
             # Track MAE and MFE as positive percentages based on absolute price excursions
             # We calculate this *before* forcing 'EOD' exits so we don't accidentally ignore wicks.
@@ -2626,6 +2727,7 @@ def simulate(
                     # propio, asi que sin esto no deja ningun rastro.
                     pyr_exec = []
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
+                    sched_fired = [False] * len(sched_rules)
                     total_trades += 1
                 else:
                     equity[i] = available_cash

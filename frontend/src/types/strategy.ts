@@ -394,6 +394,31 @@ export interface TrailingStopSettings {
     buffer_r?: number;
 }
 
+/** SALIDA PROGRAMADA CONDICIONAL (2026-09-28): «a las HH:MM, si se cumple
+ *  la condición, haz una acción sobre la posición abierta». Varias reglas por
+ *  estrategia, en orden. Tras SCHEDULED_EXITS_ENABLED (apagado por defecto). */
+export interface ScheduledExitRule {
+    /** "HH:MM" (reloj del frame, como los parciales HOUR:) */
+    hour: string;
+    /** Grupo AND con una condición de comparación de indicador. */
+    condition?: {
+        type: 'group';
+        operator: 'AND' | 'OR';
+        conditions: Array<{
+            type: 'indicator_comparison';
+            source: { name: string };
+            comparator: string;
+            target: number | { name: string };
+            timeframe: string;
+        }>;
+    } | null;
+    action: 'close_pct' | 'move_stop' | 'none';
+    /** % del tamaño RESTANTE a cerrar (1-100). */
+    close_pct?: number;
+    /** Stop movido a entrada +/- este % (0 = break-even; corto: +offset). */
+    stop_offset_pct?: number;
+}
+
 export interface RiskManagement {
     use_hard_stop?: boolean;
     use_take_profit?: boolean;
@@ -403,6 +428,8 @@ export interface RiskManagement {
     hard_stop: RiskSettings;
     take_profit: RiskSettings;
     partial_take_profits: PartialTakeProfit[];
+    /** Salidas programadas condicionales (flag SCHEDULED_EXITS_ENABLED). */
+    scheduled_exits?: ScheduledExitRule[];
     trailing_stop: TrailingStopSettings;
     /** OJO: `max_drawdown_daily` no lo lee ningun motor; la UI lo pinta pero no
      *  hace nada. El cortacircuitos real es `daily_loss_limit`. */
