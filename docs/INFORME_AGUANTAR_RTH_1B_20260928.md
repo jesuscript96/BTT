@@ -200,3 +200,27 @@ si precio ≤ VWAP_PM−4 % aguantar hasta 11:00/stop; si no, cerrar» no existe
 hoy como primitiva del motor (parciales por hora sí; condicionar el parcial a
 una condición de vela, no). Tocaría `strategy_engine`/simulador — ficheros
 compartidos con el bot: decisión de Álvaro + aviso a Jaume antes de nada.*
+
+## Verificación manual vela a vela (28-sep noche, tras la lección de los 3 falsos)
+
+Petición de Álvaro: comprobar la regla del VWAP a mano en ~20 trades concretos
+antes de plantear nada a Jaume, porque los tres últimos resultados
+espectacares de GLM eran artefactos (gap÷ATR y peores-trades por look-ahead,
+mañanas calientes por cruce de datos). Hecho sobre las velas CRUDAS con
+recalculo independiente (`verifica_vwap.py` en scratch):
+
+- **19/19 trades recalculan IDÉNTICO** (VWAP, precio 08:30, camino, stop del
+  hold y efecto: Δ=0.000 en todos). Muestra adversarial: los 4 peores efectos
+  del grupo regla (stops reales al aguantar), los 4 mejores del grupo
+  sobre-VWAP (lo que la regla se ahorra), frontera, y casos de velas ralas.
+- **Familias de artefacto descartadas globalmente:** (a) stop estático de
+  estructura confirmado — S = PMH_a_la_entrada·1,10 en el 96 % (mediana
+  1,0000); (b) 0 velas duplicadas en 6,7 M; (c) precio fresco: 99 % con vela
+  EN las 08:30 y 95 % con vela en las 11:00 (>15 min rancio: 0,1 %);
+  (d) el edge NO vive en los rancios — con vela fresca en 08:30 (n=2.344) el
+  efecto del grupo regla es −6,0 con 5,8 % de stops.
+- **Qué NO prueba esto:** que la regla gane ejecutada de verdad. Verifica que
+  el CÁLCULO es fiel a las velas (sin artefacto de datos). Queda pendiente el
+  backtest en la app, que exige la salida condicional («aguanta solo si…») →
+  motor compartido → decisión de Álvaro + aviso a Jaume. Hasta entonces, la
+  regla sigue en estado «prometedora, sin verificar en la app».
