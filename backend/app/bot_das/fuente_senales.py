@@ -444,9 +444,14 @@ class _FuenteBase:
         self._avisar(nivel, texto)
         return True
 
-    def _senal_evento(self, ev: Any, recuperada: bool = False) -> Senal:
+    def _senal_evento(self, ev: Any, recuperada: bool = False, close: Any = None) -> Senal:
+        """`close` (ensayo 28-sep): el cierre de la vela que disparó el evento, en `Senal.feed["close"]`. Una pirámide
+        lleva en `Evento.precio` el precio del nivel (la apertura de la vela en la que el motor ejecuta el añadido), no
+        el último precio: R-A-01 (retraso) debe compararse con el cierre, si no toda pirámide en un tramo rápido
+        se descarta como «tardía»."""
+        feed = {"close": close} if close is not None else None
         return Senal(clase="evento", ticker=ev.ticker, id=id_de_evento(ev), evento=ev, momento=ev.momento,
-                     recibida_en=self._reloj.mono(), recuperada=bool(recuperada), origen=self.origen)
+                     recibida_en=self._reloj.mono(), recuperada=bool(recuperada), origen=self.origen, feed=feed)
 
     def _salud_base(self) -> dict:
         return {"viva": self._viva, "ultimo_en": self._ultimo_en, "origen": self.origen,
@@ -519,7 +524,7 @@ class FuenteEnProceso(_FuenteBase):
             self._fallo_motor(ticker, "vela", exc)
             return
         self._ultimo_en = self._reloj.epoch()
-        self._entregar_tanda([self._senal_evento(ev) for ev in eventos])
+        self._entregar_tanda([self._senal_evento(ev, close=vela.get("close")) for ev in eventos])
 
     def radar(self, ticker: str, precio: Decimal) -> None:
         """`runner.estimacion_locates(ticker, float(precio))` + `strategy_id` por nombre → `Senal("radar")` (corrección 6, riesgo 25).
@@ -807,7 +812,8 @@ class FuenteTuberia(_FuenteBase):
             raise TypeError(f"se esperaba un dict y llegó {type(msg).__name__}")
         t = msg.get("t")
         if t == T_EVENTOS:
-            self._eventos(msg.get("ticker"), msg.get("eventos"), bool(msg.get("recuperada", False)))
+            self._eventos(msg.get("ticker"), msg.get("eventos"), bool(msg.get("recuperada", False)),
+                          close=msg.get("close"))
         elif t == T_HIDRATADO:
             ticker = _ticker_valido(msg.get("ticker"))
             self._entregar(Senal(clase="hidratado", ticker=ticker, id=None, recibida_en=self._reloj.mono(),
@@ -831,11 +837,13 @@ class FuenteTuberia(_FuenteBase):
             self.desconocidos += 1
             self._avisar_una_vez(f"t:{t!r}", Nivel.AVISO, f"tubería: mensaje con tipo desconocido {t!r} ignorado")
 
-    def _eventos(self, ticker: Any, eventos: Any, recuperada: bool) -> None:
+    def _eventos(self, ticker: Any, eventos: Any, recuperada: bool, close: Any = None) -> None:
         """Una `Senal("evento")` por `Evento` válido, la tanda ordenada por prioridad (D2-06); los incompletos fuera (riesgo 18).
 
         Cada evento llega como dict de primitivos (F-01) y se reconstruye como
-        `EventoLigero`; lo que no es dict se lee tal cual con `getattr`.
+        `EventoLigero`; lo que no es dict se lee tal cual con `getattr`. `close`
+        (opcional, campo «close» del mensaje) es el cierre de la vela: va en
+        `Senal.feed` para el retraso de las pirámides (R-A-01).
         """
         lista = list(eventos or [])
         faltan: list[str] = []
@@ -848,7 +856,7 @@ class FuenteTuberia(_FuenteBase):
                 self.descartados += 1
                 faltan.append(campo)
                 continue
-            tanda.append(self._senal_evento(ev, recuperada))
+            tanda.append(self._senal_evento(ev, recuperada, close=close))
         self._entregar_tanda(tanda)
         if faltan:
             campos = sorted(set(faltan))

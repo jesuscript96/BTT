@@ -260,6 +260,7 @@ RESUMEN_TRAS_EOD_S = 30.0        # R-M-01: resumen del día tras el último EOD 
 FOTO_CADA_S = 2.0                # `tecnicos.foto_cada_s` manda si está
 BARRIDO_VIGILANCIA_S = 5.0       # si el temporizador «barrido» se pierde, el Tic lo rearma
 SALIDA_REPROGRAMAR_S = 0.5       # G1A-02 / G1B-01: salida con la guarda cerrada → se reprograma, nunca se descarta
+REPLACE_EN_VUELO_MAX_S = 30.0    # ensayo 28-sep: un REPLACE idéntico pedido hace menos de 30 s no se vuelve a mandar
 HALT_CIERRE_VERIFICAR_S = 2.0    # G1A-01: la salida del halt que no llenó 2 s tras reabrir se retira (stops de vuelta)
 SIMSTATUS_ESPERA_S = 1.0         # G1A-05: como mucho 1 s esperando `GET SymStatus X` antes de abrir un ticker plano
 SIMSTATUS_FRESCO_S = 5.0         # G1A-05: un estado de símbolo de hace ≤ 5 s vale sin volver a preguntar
@@ -427,6 +428,7 @@ class Decisor:
         self._cancelar_al_aceptar: dict[int, str] = {}
         # token → (share enviado, precio, stop, versión, cantidad ABIERTA pedida) (D2a-05, D2a-08)
         self._reemplazo_pedido: dict[int, tuple[int, Optional[Decimal], Optional[Decimal], int, int]] = {}
+        self._reemplazo_pedido_en: dict[int, float] = {}   # ensayo 28-sep: cuándo se pidió (un REPLACE igual no se repite)
         self._meta_orden: dict[int, tuple[int, float]] = {}
         self._continuacion: dict[int, tuple[str, dict]] = {}
         self._persecuciones: dict[int, int] = {}
@@ -1126,8 +1128,25 @@ class Decisor:
         Cada petición nueva queda también en el diario de la rama (G1B-13):
         si la rama lanza, `_proteger` la olvida (esa acción no sale).
         """
-        lista = list(acciones)
+        lista = []
         al_tener_id: list[Anotar] = []
+        for a in acciones:
+            if isinstance(a, Reemplazar):
+                # Ensayo 28-sep (DCOY 07:38): un REPLACE idéntico al que ya está en vuelo (misma cantidad, precio y
+                # disparo) no se repite. Sin esta guarda, cada barrido de 1 s reenviaba el mismo REPLACE mientras el
+                # primero esperaba su cuota: 4.530 REPLACE y la cuota de 100/min agotada (riesgo 11).
+                pendiente = self._reemplazo_pedido.get(a.token)
+                pedido_en = self._reemplazo_pedido_en.get(a.token)
+                reciente = pedido_en is not None and self._ahora - pedido_en < REPLACE_EN_VUELO_MAX_S
+                if (pendiente is not None and reciente and pendiente[0] == a.qty and pendiente[1] == a.precio
+                        and pendiente[2] == a.stop):
+                    orden = self._estado.ordenes.get(a.token)
+                    lista.append(Anotar("replace_repetido", {"ticker": orden.ticker if orden is not None else None,
+                                                             "token": a.token, "qty": a.qty,
+                                                             "regla": "riesgo 11 / D2a-05"}))
+                    continue
+                self._reemplazo_pedido_en[a.token] = self._ahora
+            lista.append(a)
         for a in lista:
             if isinstance(a, Anotar) and a.tipo == ANOTAR_CANCELAR_AL_TENER_ID:
                 al_tener_id.append(a)
@@ -2619,7 +2638,17 @@ class Decisor:
                 self._reemplazo_pedido.pop(o.token, None)
             else:
                 self._cancel_pedido.pop(o.token, None)      # D2a-05: la orden sigue viva; ya no hay CANCEL en vuelo
-            acciones += self._absorber(rechazos.tras_cancel_o_replace_rej(o, accion))
+            terminal = (o.estado in (EstadoOrden.EXECUTED, EstadoOrden.CANCELED, EstadoOrden.CLOSED,
+                                     EstadoOrden.REJECTED) or (o.qty > 0 and o.llenas >= o.qty))
+            if accion == "CancelRej" and terminal:
+                # Ensayo 28-sep: el CANCEL llegó justo detrás del fill (o del Canceled) de esa misma orden y DAS
+                # contesta «Order not open». No hay nada que reparar ni que avisar: se anota y se barre igual.
+                acciones += [Anotar("cancel_rej_benigno", {"ticker": o.ticker, "token": o.token, "id_das": o.id_das,
+                                                           "estado": o.estado.value, "notas": m.notas,
+                                                           "regla": "R-C-11 / D2a-05"}),
+                             Programar(T_BARRIDO, 0.0, {})]
+            else:
+                acciones += self._absorber(rechazos.tras_cancel_o_replace_rej(o, accion))
         elif accion == "Replaced":
             pedido = self._reemplazo_pedido.pop(o.token, None)
             if pedido is not None:
@@ -3922,8 +3951,8 @@ class Decisor:
             estado.locates[(ticker, e.strategy_id)] = nuevo
         estado.gasto_locates_dia += locates.gasto_de(crudas)
         for a in crudas:
-            if isinstance(a, LocateInquire):
-                self._inquires.append((ticker, e.strategy_id))
+            if isinstance(a, LocateInquire) and (ticker, e.strategy_id) not in self._inquires:
+                self._inquires.append((ticker, e.strategy_id))   # ensayo 28-sep: una consulta pendiente por estrategia
         return crudas
 
     def _t_locate_inquire(self, clave: str, datos: dict) -> list[Accion]:
@@ -3952,7 +3981,12 @@ class Decisor:
             self._slret_ventana[ticker].append(m)
             return [Anotar("slret_ventana", {"ticker": ticker, "tipo": m.tipo, "ruta": m.ruta, "precio": m.precio,
                                              "tamano": m.tamano, "regla": "E2-05"})]
-        if any(t == ticker for t, _ in self._inquires):
+        # Ensayo 28-sep: la respuesta vale también si la consulta ya no está apuntada (la ventana se cerró vacía
+        # porque DAS tardó más de 0,5 s, o tras un reinicio) mientras alguna estrategia del ticker siga BUSCANDO;
+        # antes esas respuestas se anotaban «sin consulta» y el bot volvía a preguntar cada 3 s sin fin.
+        buscando = any(t == ticker and loc.estado == locates.ESTADO_BUSCANDO
+                       for (t, _s), loc in self._estado.locates.items())
+        if any(t == ticker for t, _ in self._inquires) or buscando:
             self._slret_ventana[ticker] = [m]
             self._slret_tics[ticker] = 0
             return [Programar(f"{T_SLRET_VENTANA}:{ticker}", SLRET_VENTANA_S, {"ticker": ticker})]
@@ -3984,6 +4018,8 @@ class Decisor:
         ticker = str(datos.get("ticker") or (partes[1] if len(partes) > 1 else ""))
         self._slret_tics.pop(ticker, None)
         respuestas = self._slret_ventana.pop(ticker, [])
+        if not respuestas:
+            return []                                        # ensayo 28-sep: sin respuesta la consulta sigue pendiente
         sids: list[str] = []
         quedan: deque[tuple[str, str]] = deque()
         for t, s in self._inquires:
@@ -3993,8 +4029,9 @@ class Decisor:
             else:
                 quedan.append((t, s))
         self._inquires = quedan
-        if not respuestas:
-            return []
+        if not sids:                                         # respuesta sin consulta apuntada: a las que siguen buscando
+            sids = [s for (t, s), loc in sorted(self._estado.locates.items())
+                    if t == ticker and loc.estado == locates.ESTADO_BUSCANDO]
         elegido = _slret_elegido(respuestas)
         acciones: list[Accion] = [Anotar("slret_elegido", {"ticker": ticker, "estrategias": list(sids),
                                                            "respuestas": len(respuestas), "tipo": elegido.tipo,

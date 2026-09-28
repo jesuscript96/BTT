@@ -1985,6 +1985,22 @@ def test_construir_grabacion_con_ruta(cfg: Config, reloj: RelojSimulado, monkeyp
     assert type(fuente).__name__ == "FuenteGrabacion" and fuente.ruta_am == ruta
 
 
+def test_construir_grabacion_con_gancho_de_hidratacion(cfg: Config, reloj: RelojSimulado,
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ensayo 28-sep: `construir_desde_env(hidratar_desde=f)` llega a `FuenteGrabacion` (el pasado de cada ticker, como
+    el REST en vivo); sin el gancho la fuente hidrata vacío y la reproducción se queda muda. Con la tubería se ignora."""
+    _entorno_das(monkeypatch)
+    ruta = Path(__file__).parent / "fixtures" / "AM_recorte.jsonl.gz"
+    monkeypatch.setenv(ej.ENV_FUENTE, f"grabacion={ruta}")
+
+    def gancho(ticker: str):
+        return [], {"prev_close": 1.0}
+
+    fuente = _construir(cfg, reloj, hidratar_desde=gancho).fuente
+    assert type(fuente).__name__ == "FuenteGrabacion" and fuente._hidratar_desde is gancho
+    assert _construir(cfg, reloj).fuente._hidratar_desde is None
+
+
 @pytest.mark.parametrize("token, chats, con_telegram", [
     ("", "111", False), ("token-inventado-b", "", False), ("token-inventado-b", "111, x, 222", True),
 ], ids=["R-Q-01-sin-token", "R-Q-01-sin-chat-ids", "R-Q-01-token-y-chats"])

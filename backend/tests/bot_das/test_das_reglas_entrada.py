@@ -685,6 +685,23 @@ def _piramide(e: Escenario, **cambios) -> None:
     e.senal = dataclasses.replace(e.senal, id=f"{TICKER}|{SID}|2026-09-25 09:30:00|piramide|1")
 
 
+@pytest.mark.parametrize("feed, last, entra", [
+    ({"close": 2.6627}, "2.6627", True),     # ensayo LXEH 04:50: nivel 2,4562, cierre 2,6627, último = cierre → entra
+    ({"close": 2.6627}, "2.75", False),      # el último se alejó > 1 % del CIERRE → tardía
+    (None, "2.75", True),                    # sin cierre en la señal no se mide (R-B-04 y R-B-01 siguen protegiendo)
+], ids=["R-A-01-piramide-contra-el-cierre", "R-A-01-piramide-tardia-vs-cierre", "R-A-01-piramide-sin-cierre-no-mide"])
+def test_R_A_01_piramide_mide_el_retraso_contra_el_cierre_de_la_vela(esc: Escenario, feed, last, entra) -> None:
+    """Ensayo 28-sep (LXEH 04:50): `Evento.precio` de una pirámide es el precio del NIVEL (apertura de la vela del
+    añadido), no el último; medir R-A-01 contra él descartaba toda pirámide en un tramo rápido. Se mide contra
+    `Senal.feed["close"]`, que la fuente rellena con el cierre de la vela."""
+    esc.lote_previo("base", estado=EstadoLote.ABIERTO, entrada_idx=7, nivel_stop=D("3.90"))
+    _piramide(esc, precio=2.4562)
+    esc.senal = dataclasses.replace(esc.senal, feed=feed)
+    esc.cot = _cot(bid=str(D(last) - D("0.01")), ask=str(D(last) + D("0.01")), last=last)
+    v = esc.evaluar()
+    assert v.ok is entra and (entra or v.motivo == MOTIVO_RETRASO)
+
+
 def test_piramide_add_usa_el_nivel_de_su_lote_base_y_no_es_reentrada(esc: Escenario) -> None:
     esc.lote_previo("base", estado=EstadoLote.ABIERTO, entrada_idx=7, nivel_stop=D("3.90"))
     _piramide(esc)

@@ -788,6 +788,24 @@ def test_A_04_D2a_06_cola_llena_la_version_vieja_purgada_avisa_al_decisor(fabric
         (componer(Origen.EJECUTOR, 268, 1), "stops:ABCD", 0, "ABCD", MOTIVO_COLA_LLENA)]
 
 
+def test_get_identico_en_cola_no_se_repite(fabrica, sim):
+    """Ensayo 28-sep: un `GET SymStatus X` por segundo y por ticker llenaba la cola de salida con consultas idénticas.
+    Una consulta GET que ya espera en la cola no se encola otra vez (se cuenta en `deduplicadas`); los mutantes y las
+    suscripciones sí se repiten."""
+    cuota = CuotaControlada(bloqueada=True)
+    c, g = fabrica(cuota=cuota)
+    assert c.conectar()
+    assert c.enviar("GET SymStatus ABCD") and c.enviar("GET SymStatus ABCD") and c.enviar("GET SymStatus ABCD")
+    c.enviar("GET BP")
+    c.enviar("SB ABCD Lv1")
+    c.enviar("SB ABCD Lv1")
+    assert c.pendientes == 4 and c.deduplicadas == 2 and c.descartadas == 0 and g.avisos == []
+    cuota.bloqueada = False
+    assert esperar(lambda: c.pendientes == 0, plazo_s=5.0)
+    assert recibidas_sin_login(sim).count("GET SymStatus ABCD") == 1
+    assert c.enviar("GET SymStatus ABCD") and esperar(lambda: recibidas_sin_login(sim).count("GET SymStatus ABCD") == 2)
+
+
 def test_das_cola_llena_espera_y_entra_si_se_libera(fabrica, sim, monkeypatch):
     """§3.2: con la cola llena `enviar` espera (50 ms; aquí 0,5 s para no depender del planificador) y reintenta."""
     monkeypatch.setattr(cliente_mod, "ESPERA_COLA_LLENA_S", 0.5)

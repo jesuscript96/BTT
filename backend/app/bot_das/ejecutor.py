@@ -1845,7 +1845,8 @@ def construir_desde_env(cfg: Config, reloj: Any, base: Path, *, ruta_config: Opt
                         calendario: Any = None, hash_motor: Optional[Callable[[Path], str]] = None,
                         medir_desvio: Optional[Callable[[], Optional[float]]] = None,
                         canales: Optional[list] = None, aviso_config: Optional[str] = None,
-                        paso_replay: Optional[Callable[[datetime, dict], None]] = None) -> Ejecutor:
+                        paso_replay: Optional[Callable[[datetime, dict], None]] = None,
+                        hidratar_desde: Optional[Callable[[str], Any]] = None) -> Ejecutor:
     """Monta el ejecutor de producción desde el entorno (§3.27, corrección 15, R-O-03, R-Q-01).
 
     Cliente: fase SOMBRA → `ClienteDAS.desde_env(watch=False,
@@ -1889,7 +1890,7 @@ def construir_desde_env(cfg: Config, reloj: Any, base: Path, *, ruta_config: Opt
         cliente = ClienteSombra(real, emparejador, buzon.al_mensaje, al_cuota_agotada=buzon.al_cuota_agotada)
     else:
         cliente = ClienteDAS.desde_env(watch=False, solo_lectura=False, **comun)
-    fuente = _fuente_desde_env(cfg, buzon, reloj)
+    fuente = _fuente_desde_env(cfg, buzon, reloj, hidratar_desde=hidratar_desde)
     if referencia is _POR_DEFECTO:
         kw = {"abrir": abrir_referencia} if abrir_referencia is not None else {}
         referencia = Referencia.desde_env(dir_bot / "cache", reloj, **kw)
@@ -1923,8 +1924,16 @@ def construir_desde_env(cfg: Config, reloj: Any, base: Path, *, ruta_config: Opt
                     limpiar=filtro.limpiar, paso_replay=paso_replay, referencia=referencia)
 
 
-def _fuente_desde_env(cfg: Config, buzon: Buzon, reloj: Any) -> Any:
-    """`BOT_DAS_FUENTE` = tuberia (defecto) | proceso | grabacion=<ruta> (§3.27; injerto §8.25: solo la tubería evita pandas)."""
+def _fuente_desde_env(cfg: Config, buzon: Buzon, reloj: Any,
+                      hidratar_desde: Optional[Callable[[str], Any]] = None) -> Any:
+    """`BOT_DAS_FUENTE` = tuberia (defecto) | proceso | grabacion=<ruta> (§3.27; injerto §8.25: solo la tubería evita pandas).
+
+    `hidratar_desde` (solo grabación; ensayo del 28-sep): el pasado de cada
+    ticker antes de su primera vela grabada, como en vivo lo da el REST al
+    entrar en el radar. Sin él, los indicadores que dependen del día anterior
+    o de las velas previas (gap, PM high…) no pueden dar señal y la
+    reproducción se queda muda: no es un fallo del bot, es que falta el pasado.
+    """
     texto = os.environ.get(ENV_FUENTE, "").strip() or FUENTE_TUBERIA
     if texto == FUENTE_TUBERIA:
         return FuenteTuberia(direccion_de_entorno(), authkey_de_entorno(), buzon.al_senal, reloj,
@@ -1935,7 +1944,7 @@ def _fuente_desde_env(cfg: Config, buzon: Buzon, reloj: Any) -> Any:
     prefijo = FUENTE_GRABACION + "="
     if texto.startswith(prefijo) and texto[len(prefijo):].strip():
         return FuenteGrabacion(Path(texto[len(prefijo):].strip()), _estrategias_para_motor(cfg), buzon.al_senal, reloj,
-                               al_aviso=buzon.al_aviso_nivel)
+                               hidratar_desde=hidratar_desde, al_aviso=buzon.al_aviso_nivel)
     raise ValueError(f"{ENV_FUENTE} debe ser «{FUENTE_TUBERIA}», «{FUENTE_PROCESO}» o «{FUENTE_GRABACION}=<ruta>»")
 
 

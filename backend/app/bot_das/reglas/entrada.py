@@ -344,7 +344,8 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
     # 10 (D1-03: no en la reapertura; D1-09: null = defecto del libro, nunca apagada)
     if not es_reapertura:
         retraso_max = _pct(cfg.entrada, "retraso_max_senal_pct", ENTRADA_RETRASO_MAX_PCT)
-        if abs(distancia_pct(cot.last, precio_senal)) > retraso_max:
+        referencia = _referencia_retraso(senal, evento, precio_senal)
+        if referencia is not None and abs(distancia_pct(cot.last, referencia)) > retraso_max:
             return _descartar(MOTIVO_RETRASO)
     # 11
     distancia_max = _pct_opcional(cfg.entrada, "distancia_max_ultimo_bid_pct", ENTRADA_DISTANCIA_ULTIMO_BID_PCT)
@@ -740,6 +741,30 @@ def _descartar(motivo: str) -> Veredicto:
 
 def _tipo_de(evento: Any) -> str:
     return str(getattr(evento, "tipo", "") or "").strip().lower()
+
+
+def _referencia_retraso(senal: Senal, evento: Any, precio_senal: Decimal) -> Optional[Decimal]:
+    """R-A-01: contra qué precio se mide el retraso (ensayo 28-sep, LXEH 04:50).
+
+    Entrada: `Evento.precio` es el cierre de la vela de la señal. Pirámide:
+    `Evento.precio` es el precio del NIVEL (la apertura de la vela en la que el
+    motor ejecuta el añadido), que puede quedar muy lejos del último precio
+    aunque la señal sea fresca: se mide contra el cierre de la vela que trae la
+    fuente en `Senal.feed["close"]`; sin cierre (fuente que no lo manda) no se
+    mide: la caducidad (R-B-04) y el tope de caída del bid (R-B-01) siguen
+    protegiendo. Devuelve None cuando no hay referencia válida.
+    """
+    if _tipo_de(evento) != "piramide":
+        return precio_senal
+    feed = getattr(senal, "feed", None)
+    cierre = feed.get("close") if isinstance(feed, dict) else None
+    if cierre is None:
+        return None
+    try:
+        valor = de_float(cierre)
+    except (ValueError, TypeError, ArithmeticError):
+        return None
+    return valor if valor > 0 else None
 
 
 def _accion_piramide(evento: Any) -> str:

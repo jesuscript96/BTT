@@ -393,6 +393,7 @@ class ClienteDAS:
         self._logon: dict[str, Optional[bool]] = {s: None for s in SERVIDORES_LOGON}
         self._ultimo_recibido_en: Optional[float] = None
         self._descartadas = 0
+        self._deduplicadas = 0          # ensayo 28-sep: GET idénticos que ya esperaban en la cola (no se repiten)
         self._sin_conexion = 0
         self._cerrojo_envio = threading.Lock()              # sendall del emisor y QUIT de cerrar() no se intercalan
         self._cerrojo_ciclo = threading.Lock()              # conectar/cerrar en serie
@@ -445,6 +446,12 @@ class ClienteDAS:
         """
         with self._cond:
             return self._descartadas
+
+    @property
+    def deduplicadas(self) -> int:
+        """Consultas GET que no se encolaron porque una idéntica ya esperaba en la cola (ensayo 28-sep)."""
+        with self._cond:
+            return self._deduplicadas
 
     @property
     def solo_lectura(self) -> bool:
@@ -570,6 +577,11 @@ class ClienteDAS:
         with self._cond:
             item = self._linea_nueva(linea, serie, version)
             sesion = self._sesion
+            if item.categoria == "GET" and any(x.texto == linea for x in self._cola):
+                # Ensayo 28-sep: una consulta idéntica ya espera en la cola (GET SymStatus X cada segundo por ticker):
+                # repetirla no añade información y llenaba la cola de salida. Se cuenta y se da por encolada.
+                self._deduplicadas += 1
+                return True
             if sesion is not None and sesion.viva and len(self._cola) >= self._tope_cola and serie is not None:
                 # A-04: solo lo que una versión POSTERIOR hace inútil; un stop hermano de la misma versión no
                 vieja = next((x for x in self._cola if x.serie == serie and x.version < version), None)

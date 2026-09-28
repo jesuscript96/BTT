@@ -372,10 +372,14 @@ class EnlaceEjecutor:
         }
 
     # ── lo que llama bot.py (encola y vuelve; §3.11) ──
-    def eventos(self, ticker: str, minuto: str, timestamp: Any, eventos: list, recuperada: bool) -> None:
-        """«eventos» {ticker, minuto, timestamp, eventos, recuperada}: los `Evento` de una vela (viajan como dict de primitivos, F-01)."""
+    def eventos(self, ticker: str, minuto: str, timestamp: Any, eventos: list, recuperada: bool,
+                close: Any = None) -> None:
+        """«eventos» {ticker, minuto, timestamp, eventos, recuperada, close}: los `Evento` de una vela (viajan como dict de
+        primitivos, F-01). `close` (opcional): el cierre de la vela; con él el ejecutor mide el retraso de las
+        pirámides contra el cierre y no contra el precio del nivel (ensayo 28-sep)."""
         self._encolar({"t": T_EVENTOS, "ticker": ticker, "minuto": minuto, "timestamp": timestamp,
-                       "eventos": list(eventos or []), "recuperada": bool(recuperada)})
+                       "eventos": list(eventos or []), "recuperada": bool(recuperada),
+                       "close": None if close is None else float(close)})
 
     def hidratado(self, ticker: str, n_velas: int, eventos: list, prev_close: Any) -> None:
         """«hidratado» {ticker, n_velas, eventos, prev_close}: resultado de hidratar un ticker (memoria ELMT: sus eventos son PRESENTE)."""

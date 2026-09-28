@@ -99,6 +99,7 @@ from app.services.locates_gate import ev_fijo_para_precio
 
 # ── constantes del módulo ─────────────────────────────────────────────
 PAQUETE = 100                                   # H6: los locates van en paquetes de 100
+PARCIAL_BUSCAR_MAX_S = 60.0                     # R-H-04 con tope (ensayo 28-sep): tras un parcial, el resto se busca 60 s
 RUTA_INQUIRE_DEFECTO = "ALLROUTEWTTYPE1"        # R-H-01; ALLROUTE crea órdenes Offered (§5.22)
 
 ESTADO_BUSCANDO = "buscando"                    # consultando precio cada 3 s (R-H-01)
@@ -528,6 +529,14 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
                 Desprogramar(ctx.clave)]
     if ret is not None:
         return _tras_ret(ctx, ret)
+    if (loc.localizadas > 0 and loc.comprado_en is not None
+            and ahora - loc.comprado_en > PARCIAL_BUSCAR_MAX_S):
+        # Ensayo 28-sep (R-H-04 con tope): un parcial ya cobrado no busca el resto para siempre. La ruta dio 800 de
+        # 8.772 y el bot consultó cada 3 s durante horas (903 consultas). Pasado el tope se opera con lo localizado;
+        # el siguiente radar (que llega solo) vuelve a pedir si de verdad falta.
+        return [_anotar_estado(ctx, ESTADO_LOCALIZADO, motivo=(f"parcial aceptado: {PARCIAL_BUSCAR_MAX_S:g} s buscando "
+                                                                 f"el resto sin oferta; se opera con lo localizado (R-H-04)")),
+                Desprogramar(ctx.clave)]
     return _consultar_si_toca(ctx)
 
 

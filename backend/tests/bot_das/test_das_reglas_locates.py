@@ -642,6 +642,23 @@ def test_maquina_parcial_sigue_buscando_el_resto_con_coste_total() -> None:
     assert m.paso(1010.0) == []                                                     # cubierto: cerrojo
 
 
+def test_R_H_04_parcial_deja_de_buscar_el_resto_pasado_el_tope_y_opera_con_lo_localizado() -> None:
+    """Ensayo 28-sep: la ruta dio 800 de 8.772 y el bot consultó cada 3 s durante horas (903 consultas). Tras un
+    parcial, el resto se busca `PARCIAL_BUSCAR_MAX_S` (60 s); después Located con lo que hay y sin temporizador."""
+    from app.bot_das.reglas.locates import PARCIAL_BUSCAR_MAX_S
+    m = Maquina(precio="1")
+    compra = m.comprada(300, precio_locate="0.01", tamano=200)
+    m.paso(1002.0, orden=slorder(70, "Located", 200, 200, "0.01", compra.token))
+    assert m.loc.estado == ESTADO_BUSCANDO and m.loc.comprado_en == 1002.0
+    dentro = m.paso(1002.0 + PARCIAL_BUSCAR_MAX_S - 1)                # aún dentro del tope: sigue consultando
+    assert any(isinstance(a, LocateInquire) for a in dentro) or any(isinstance(a, Programar) for a in dentro)
+    fuera = m.paso(1002.0 + PARCIAL_BUSCAR_MAX_S + 1)
+    assert tipos_de(fuera) == ["locate_estado", "Desprogramar"]
+    assert "parcial aceptado" in fuera[0].datos["motivo"]
+    assert (m.loc.estado, m.loc.localizadas) == (ESTADO_LOCALIZADO, 200)
+    assert m.paso(1100.0) == []                                         # Located: cerrojo, no se vuelve a consultar
+
+
 def test_maquina_parcial_rechaza_la_segunda_compra_si_el_total_no_compensa() -> None:
     m = Maquina(precio="1")
     compra = m.comprada(300, precio_locate="0.03", tamano=200)                     # 6 $ / 200 = 3 %
