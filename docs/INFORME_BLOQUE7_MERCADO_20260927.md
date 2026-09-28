@@ -194,3 +194,100 @@ real con la regla OR(Gappers<10, Range of Time≥90): 3.541 trades (−941),
 WR 66,4 %, DD −10,5 %, ret/trade +3,36 % — el total baja vs la suma pura del
 estudio porque la condición OR re-admite entradas desde las 05:30 (ver
 MEMORIA_MADRE, FEATURE 28-sep · GAPPERS). Detalle y guía de uso ahí.
+
+## 10. RECONCILIACIÓN trade-a-trade (28-sep) — y INVALIDACIÓN del 7.2b: la señal era un artefacto del contador del estudio
+
+Pedido de Álvaro: el backtest no cuadraba con el estudio (el estudio proyectaba
+Σ≈18.897 saltándose los 1.057 bloqueados; el backtest daba menos Σ que el
+baseline). Reconcilié trade a trade hasta cerrar la diferencia EXACTA, y el
+camino destapó tres cosas — dos mías (corregidas) y una del estudio que
+**tumba la conclusión del 7.2b**.
+
+### 10.1 Dos bugs en MI generator de la tabla (corregidos en la sesión)
+
+1. **Máscara AH/PM desalineada**: `m_ah` se computaba ANTES del merge con
+   prev_close y se reindexaba por etiquetas DESPUÉS → booleanos de otras filas
+   → velas PM clasificadas AH (t negativos −720..−391; el 69,4 % de la tabla
+   tenía t<240). El contador sobrevaloraba gappers "ya cruzados" a primera
+   hora y la guarda inicial bloqueó 596 GANADORAS (Σ+8.246).
+2. **`drop_duplicates` sin ticker**: cruces del mismo minuto de tickers
+   distintos colapsaban (la tabla ni siquiera tenía columna ticker).
+
+Tabla regenerada: 216.102 cruces · 1.943 fechas · 9 niveles · t∈[0,1049] ·
+0 negativos. Verificado contra el estudio: los tiempos de cruce del +50 %
+son **bit-idénticos** a los g50 del 5.2-bis en los ticker-días comunes
+(p. ej. 2024-01-03: 14/14 iguales, misma prev_close).
+
+### 10.2 «Range of Time ≥ 90» NO es «entrada ≥ 05:30»
+
+Range of Time cuenta minutos desde la PRIMERA VELA del ticker en el frame, no
+desde las 04:00: muchos microcaps abren ~07:00 → 232 trades con entrada
+≥05:30 fueron bloqueados sin motivo (muestra 8/8 con primera vela 06:04-07:30,
+elapsed 5-56 min). Corregido: el motor tiene **«Time of Day»** (minuto del día
+absoluto 0-1439) → la segunda rama de la guarda es `Time of Day ≥ 330`
+EXACTO. Tras el cambio: 0 desapariciones ≥05:30.
+
+### 10.3 La reconciliación EXACTA (tabla sana + Time of Day)
+
+Baseline 1B: 4.482 trades, Σ=+14.134,4 · Guarda OR(Gappers activos +50 < 10,
+Time of Day ≥ 330): **4.265 trades, Σ=+14.652,6** · WR 64,10→65,06 % ·
+DD −14,76→−12,98 % · ret/trade +3,15→+3,44 %.
+
+| pieza | n | Σ pp | detalle |
+|---|---|---|---|
+| [1] desaparecen | 97 días / 119 trades | **+2.053,19** | 94 con ambos contadores ≥10 (Σ+1.305) + 25 solo-motor por población más ancha (Σ+748, ret medio +29,9 %). 0 con entrada ≥05:30 |
+| [2] aparecen | 0 | 0 | — |
+| [3] cambian | 3.395 días comunes | **+2.571,35** | al bloquear la 1ª señal, el día entra más tarde (≥05:30 u otra vela) a otro precio — a veces mejor |
+| **ΔΣ = −[1]+[2]+[3]** | | **+518,16** | = ΔΣ directo, cierre EXACTO (Decimal) |
+
+Ojo al signo: los 119 trades que la guarda BORRA son GANADORES (Σ+2.053,
+ret medio +17 %). El Σ sube pese a ellos por [3] (cascada). Eso ya avisaba de
+que algo no cuadraba con la señal "los días calientes queman".
+
+### 10.4 La causa raíz: el contador del estudio estaba CONTAMINADO
+
+`paso1_features.py` (B7) guardaba UN minuto de entrada por (ticker, fecha):
+`ent_min_de[(ticker, date)]` — y `T` recorre 1B, luego DT, luego 2B. Cualquier
+entrada POSTERIOR del mismo ticker-día (reentrada de la 1B o trade DT/2B en
+RTH ≥09:30) PISABA el minuto de la 1B temprana → ese trade recibía el
+contador de las 09:30+ ≈ el TOTAL del día. Ejemplo verificado: SASI
+2024-01-03, entrada 04:15 → contador almacenado 14 (= total del día) cuando
+el array g50 del propio estudio a t=735 da **4** (SASI 4, FWBI 29, CLEU 725,
+SDOT 732; CREV cruza a 745).
+
+Alcance sobre el baseline: **56,6 % de los trades con n_gaps_pre inflado**
+(dif media +3,45). Re-derivando la tabla del 7.2b con contador limpio (mismo
+g50, minuto de entrada PROPIO):
+
+| contador | bloqueados (<05:30 y g≥10) | Σ bloqueados | ret medio bloqueados | ret medio resto |
+|---|---|---|---|---|
+| almacenado (estudio, contaminado) | 1.057 | **−4.762** | −4,51 % | +5,52 % |
+| limpio (entrada propia, g50 estudio) | 304 | **+627** | +2,06 % | +3,23 % |
+| motor (tabla, población ancha, vela señal) | 532 | **+798** | +1,50 % | +3,38 % |
+
+**Con contador limpio la señal DESAPARECE**: los "bloqueados" dejan de ser
+perdedores (pasan a +2 %/+1,5 % de media). El −4,51 % del estudio venía de la
+correlación "este ticker-día tuvo entradas posteriores" (las reentradas
+ocurren tras stops → días perdedores), NO del número de gappers activos.
+El 7.2b queda **INVALIDADO como regla de decisión** (hallazgo 19 en
+MEMORIA_MADRE). El indicador «Gappers activos» en sí está bien construido y es
+causal (cruces bit-idénticos a los del estudio); lo que no sobrevive es la
+REGLA "bloquear si ≥10 antes de las 05:30".
+
+Diferencias residuales motor vs estudio (documentadas, ambas direcciones):
+la tabla cuenta población mercado-ancha pmh≥20 de daily_metrics (incluye
+**1.669 tickers-warrant** y cruces AH que se desinflaron a pmh<50; media
++1,5 warrants/trade) y excluye por diseño los AH-spikers con pmh<20 que el
+estudio sí veía si eran día de trade.
+
+### 10.5 Incidente durante la verificación: dataset 97e6151b BORRADO
+
+Los backtests de verificación dieron 0 días: el dataset 97e6151b (universo 1B
+del estudio) ya NO estaba en users.duckdb — borrado en la limpieza del 27-sep
+(casi seguro mía; sin audit trail). SIN impacto fuera de esta máquina
+(`DISABLE_GCS_SYNC=true` bloquea también el upload → GCS/prod intactos).
+Recuperado sin tocar la BD: el dataset b514d5df (mismos filtros PMH≥50,
+2024-01-01..2026-09-04, creado 27-sep 14:40) reproduce el baseline
+**BIT-IDÉNTICO** (4.482 trades, misma tupla ticker/fecha/hora/ret, Σ igual) —
+y de paso verifica que la materialización de pares es determinista. Hallazgo
+21 en MEMORIA_MADRE.
