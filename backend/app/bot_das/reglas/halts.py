@@ -100,7 +100,7 @@ from app.bot_das.tipos import (
 
 DECISIONES = ("mantener", "cerrar_mercado", "cerrar_limite_pm", "control_humano")
 PAUSA_LULD_MIN = 5              # manual L1128-1130: «If TA is P, the trading pause will be 5 minutes»
-T12_MIN_DEFECTO = 240           # §3.18: T12 presunto por duración [PENDIENTE fuente externa]; el cuadro lo trae en halts.t12_min
+T12_MIN_DEFECTO = 240           # halts.t12_min del cuadro: se valida pero YA NO decide (Jaume 28-sep: T1 y T12, mismo protocolo)
 MARGEN_LIMITE_PM_PCT_DEFECTO = Decimal("5")   # §7 halts.margen_limite_pm_pct (R-F-06: límite que remueve liquidez)
 TA_PARADO = ("H", "P", "Q")     # E1-05: Q = solo cotiza antes del cruce; reabre con T, sin TA o por prints (R2-DEC-3)
 ANOTACION_STOPS_PM = "halt_stops_pm"          # E1-04: el diario registra el ensanche de los stops en premercado
@@ -239,7 +239,8 @@ def decidir_reapertura(pos: PosicionTicker, simb: EstadoSimbolo, stops: Optional
 
     Orden de comprobación:
       0. Sin posición (neta 0) → mantener: no hay nada que decidir (ni que pasar a un humano).
-      1. T12 presunto (R-F-05 b): `duracion_min` > `t12_min` → control_humano (DAS no distingue T1/T12).
+      1. (Jaume 28-sep) T1 y T12 llevan el MISMO protocolo: la duración del halt no decide nada (antes, > `t12_min`
+         pasaba a control humano). Al reabrir, lo único que importa es el precio de reapertura frente al stop y al tope.
       2. Precio de referencia = último conocido (`cot.last`) o el precio de parada; sin ninguno, o sin
          niveles de stop con los que comparar (`stops` None), → control_humano (no se decide a ciegas).
       3. Escenario 1 (R-F-01): el stop principal queda POR ENCIMA del precio (corto) → mantener si k < k_max;
@@ -256,8 +257,7 @@ def decidir_reapertura(pos: PosicionTicker, simb: EstadoSimbolo, stops: Optional
     """
     if pos.neta == 0:
         return "mantener"
-    if duracion_min > _cfg_float(cfg_halts, "t12_min", float(T12_MIN_DEFECTO)):
-        return "control_humano"
+    _cfg_float(cfg_halts, "t12_min", float(T12_MIN_DEFECTO))     # solo valida el cuadro; no decide (Jaume 28-sep)
     precio = _precio_ultimo(cot, simb)
     if precio is None or stops is None:
         return "control_humano"

@@ -251,7 +251,7 @@ def test_sin_posicion_mantener_aunque_sea_t12(cfg_halts):
     assert decidir_reapertura(pos, simbolo(ta="H"), None, None, cfg_halts, "RTH", 10_000) == "mantener"
 
 
-# ── T1 (> 250 %) y T12 (duración) ─────────────────────────────────────────
+# ── T1 (> 250 %); T12 = mismo protocolo, la duración no decide (Jaume 28-sep) ─────────────────────────────────────────
 @pytest.mark.parametrize("ta, parada, last, stop, franja, esperado", [
     ("H", D("1"), "3.51", "2", "RTH", "control_humano"),
     ("H", D("1"), "3.50", "2", "RTH", "cerrar_mercado"),
@@ -276,9 +276,10 @@ def test_t1_tope_250(ta, parada, last, stop, franja, esperado, cfg_halts):
 
 
 @pytest.mark.parametrize("duracion, t12_min, esperado", [
-    (240.0, None, "cerrar_mercado"), (240.01, None, "control_humano"), (61, 60, "control_humano"), (60, 60, "cerrar_mercado"),
-], ids=["R-F-05-T12-240-exacto-no", "R-F-05-T12-presunto", "t12-config-60", "t12-config-60-exacto"])
-def test_t12_por_duracion(duracion, t12_min, esperado, cfg_halts):
+    (240.0, None, "cerrar_mercado"), (240.01, None, "cerrar_mercado"), (61, 60, "cerrar_mercado"), (10_000, 60, "cerrar_mercado"),
+], ids=["240-exacto", "241-antes-T12-presunto", "config-60-superado", "horas"])
+def test_t12_por_duracion_ya_no_decide(duracion, t12_min, esperado, cfg_halts):
+    """Jaume 28-sep: T1 y T12 llevan el mismo protocolo; un halt largo cierra igual al reabrir por encima del stop."""
     cfg = dict(cfg_halts) if t12_min is None else dict(cfg_halts, t12_min=t12_min)
     pos = posicion(-100, (D("9"),))
     assert decidir_reapertura(pos, simbolo(ta="H", k=1), niveles("9"), cot(last="10"), cfg, "RTH", duracion) == esperado
@@ -288,7 +289,7 @@ def test_config_vacia_usa_defectos_del_libro():
     pos = posicion(-100, (D("11"),))
     assert decidir_reapertura(pos, simbolo(k=2), niveles("11"), cot(last="10"), {}, "RTH", 1) == "mantener"
     assert decidir_reapertura(pos, simbolo(k=3), niveles("11"), cot(last="10"), {}, "RTH", 1) == "cerrar_mercado"
-    assert decidir_reapertura(pos, simbolo(ta="H", k=1), niveles("9"), cot(last="10"), {}, "RTH", 241) == "control_humano"
+    assert decidir_reapertura(pos, simbolo(ta="H", k=1), niveles("9"), cot(last="10"), {}, "RTH", 241) == "cerrar_mercado"
 
 
 @pytest.mark.parametrize("cfg", [{"k_max": 2.5}, {"k_max": True}, {"t12_min": True}],

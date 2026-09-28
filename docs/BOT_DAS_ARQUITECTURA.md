@@ -1118,7 +1118,7 @@ def al_entrar_en_halt(pos: PosicionTicker, vivas: list[Orden], simb: EstadoSimbo
 def decidir_reapertura(pos, simb, stops: NivelesStop, cot: Cotizacion, cfg_halts: dict, franja: str, duracion_min: float) -> str
     # "mantener" | "cerrar_mercado" | "cerrar_limite_pm" | "control_humano"
     # esc.1 stop por ENCIMA del precio de reapertura (o del último conocido): mantener si k < 3; k == 3 → cerrar. esc.2 stop por DEBAJO → cerrar sí o sí.
-    # T1 (halt largo sin P): subida desde precio_parada > 250 % → control_humano. T12: DAS no lo distingue → control_humano si duracion_min > cfg["t12_min"] (defecto 240) [PENDIENTE fuente externa].
+    # T1 (halt largo sin P): subida desde precio_parada > 250 % → control_humano. T12: mismo protocolo que T1 (Jaume 28-sep); cfg["t12_min"] se valida pero no decide (defecto 240) [PENDIENTE fuente externa].
     # franja == "premercado" → cerrar_limite_pm (R-F-06).
 def cerca_de_banda(cot: Cotizacion, simb: EstadoSimbolo, k: int, cfg_halts: dict) -> bool   # k == 2 y ask ≥ limit_up·(1 − dist) → salir a mercado ANTES de que pare (ruta cruzar, HALT_BANDA)
 def orden_reapertura(pos, qty: int, cot, decision: str, cfg, token: int, hora_et) -> OrdenNueva   # "cerrar_mercado" → B OPEN qty MKT (EP-2); "cerrar_limite_pm" → B límite ask·(1 + margen_pm) ruta cruzar
@@ -1537,7 +1537,7 @@ Marcas: **[C]** en caliente (siguiente señal) · **[A]** solo con bot apagado y
     "k_max": 3, "distancia_banda_k2_pct": 4.0, "primera_vela_max_reentrada_pct": 6.0,   // [A] R-F-01
     "primera_vela_max_senal_guardada_pct": 6.0,            // [A] R-F-04 (b) X % PENDIENTE (defecto = 6)
     "t1_subida_max_cierre_pct": 250,                       // [A] R-F-05
-    "t12_min": 240,                                        // [A] PENDIENTE fuente externa: halt sin P más largo que esto = control humano
+    "t12_min": 240,                                        // sin efecto desde el 28-sep (T1 y T12, mismo protocolo); se valida por compatibilidad
     "ruta_reapertura": "OPEN", "enviar_antes_fin_halt_s": 60,   // [A] EP-2
     "margen_limite_pm_pct": 5.0                            // [A] R-F-06 PENDIENTE (más ancho que +3 %)
   },
