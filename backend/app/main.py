@@ -358,6 +358,9 @@ if os.getenv("GENETICO_ENABLED", "").strip().lower() in ("1", "true", "yes", "on
 from app.routers import gappers_active
 app.include_router(gappers_active.router, prefix="/api/gappers-active", tags=["Gappers Activos"])
 
+from app.routers import scheduled_exits
+app.include_router(scheduled_exits.router, prefix="/api/scheduled-exits", tags=["Scheduled Exits"])
+
 @app.get("/health")
 def read_health():
     return {"status": "ok"}

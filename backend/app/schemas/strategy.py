@@ -532,6 +532,31 @@ class RiskManagement(BaseModel):
     #    "value": float,
     #    "on_open_positions": "LET_RUN" | "CLOSE_ALL"}
     daily_loss_limit: Optional[dict] = None
+    # SALIDA PROGRAMADA CONDICIONAL (2026-09-28, línea «Gestión por hora» de
+    # Álvaro): «a las HH:MM, si se cumple una condición de indicador, haz una
+    # ACCIÓN sobre la posición abierta». Acciones: cerrar X % de lo que
+    # quede, mover el stop a la entrada +/- un offset (0 = break-even) o nada.
+    # La condición es el MISMO árbol que las de entrada/salida (grupos,
+    # comparaciones de indicador, distancias a nivel), evaluada por vela.
+    # Semántica: cada regla se evalúa UNA vez por operación, en la primera
+    # vela >= hour en la que haya posición abierta (igual que el estudio de la
+    # línea Gestión por hora). Varias reglas por estrategia, en orden.
+    # Gated por SCHEDULED_EXITS_ENABLED (apagado por defecto): sin el flag el
+    # motor las ignora por completo y el resultado no cambia ni un bit.
+    # DECLARADO AQUÍ por la lección de las TRES CAPAS (extra="ignore" tira
+    # campos sin declarar SIN error ni log).
+    scheduled_exits: Optional[List['ScheduledExitRule']] = Field(default_factory=list)
+
+class ScheduledExitRule(BaseModel):
+    # "HH:MM" (reloj local del frame, igual que los parciales HOUR:HH:MM)
+    hour: str
+    # Árbol de condiciones (None/{} = dispara siempre a la hora)
+    condition: Optional[ConditionGroup] = None
+    action: Optional[Literal['close_pct', 'move_stop', 'none']] = 'none'
+    # % del TAMAÑO RESTANTE a cerrar (1-100; 100 = cerrar todo lo que quede)
+    close_pct: Optional[float] = 100.0
+    # Stop movido a entrada +/- este % (corto: +offset encima; 0 = break-even)
+    stop_offset_pct: Optional[float] = 0.0
 
 class PostGapPrecondition(BaseModel):
     id: str

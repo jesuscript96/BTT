@@ -945,6 +945,7 @@ def run_backtest(
             sig_cooldown = int(signals.get("reentry_cooldown_bars", 0) or 0)
             sig_risk_scale = float(signals.get("risk_scale", 1.0) or 1.0)
             sig_ladder = signals.get("ladder")
+            sig_sched = signals.get("scheduled_exits") or []
 
             # Populate cache for subsequent optimization iterations
             if _signal_cache is not None:
@@ -964,6 +965,9 @@ def run_backtest(
                     "reentry_cooldown_bars": sig_cooldown,
                     "risk_scale": sig_risk_scale,
                     "ladder": sig_ladder,
+                    "scheduled_exits": [
+                        {**r, "cond": np.asarray(r["cond"]).copy()} for r in sig_sched
+                    ],
                 }
 
         # If swing option is active, only allow entries on the first day (Day 1 / qualifying day)
@@ -1027,6 +1031,11 @@ def run_backtest(
             _sess_mask_np = session_mask_np
             entries_arr = entries_arr[session_mask_np]
             exits_arr = exits_arr[session_mask_np]
+            if sig_sched:
+                for _sr in sig_sched:
+                    _c = np.asarray(_sr["cond"])
+                    if len(_c) == len(session_mask_np):
+                        _sr["cond"] = _c[session_mask_np]
             if sig_pyramid_levels:
                 sig_pyramid_levels = [
                     # El recorte de sesión llega a cada paso igual que al
@@ -1242,6 +1251,7 @@ def run_backtest(
                 trail_pct=sig_trail_pct,
                 accumulate=sig_accept_reentries,
                 max_reentries=sig_max_reentries,
+                scheduled_exits=sig_sched or None,
                 partial_take_profits=sig_partial_tps,
                 pyramid_levels=sig_pyramid_levels,
                 pyramid_sequential=sig_pyramid_sequential,

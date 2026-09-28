@@ -93,6 +93,13 @@ def simulate(**kwargs) -> dict:
     if kwargs.get("ladder") is not None:
         return _legacy_simulate(**kwargs)
     kwargs.pop("ladder", None)
+    # SALIDA PROGRAMADA CONDICIONAL (2026-09-28): idem. Solo el motor Python;
+    # sin este desvio, con el kernel activo cada ticker-dia moriria con
+    # «unexpected keyword argument 'scheduled_exits'» y la corrida acabaria
+    # con CERO trades. Sin reglas, el kwarg se retira y el kernel ni se entera.
+    if kwargs.get("scheduled_exits"):
+        return _legacy_simulate(**kwargs)
+    kwargs.pop("scheduled_exits", None)
     kwargs.pop("hybrid_stop", None)
     kwargs.pop("hybrid_black_swan_pct", None)
     kwargs.pop("hybrid_max_loss_pct", None)

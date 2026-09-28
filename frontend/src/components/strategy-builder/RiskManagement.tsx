@@ -2,6 +2,7 @@
 import React from 'react';
 import { RiskManagement, RiskType, RiskSettings, TakeProfitMode, PartialTakeProfit } from '@/types/strategy';
 import { PlusCircle, Trash2, Info, HelpCircle } from 'lucide-react';
+import { ScheduledExitsBuilder } from './ScheduledExitsBuilder';
 
 interface Props {
     risk: RiskManagement;
@@ -2171,6 +2172,7 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 )}
             </div>
 
+            <ScheduledExitsBuilder risk={risk} onChange={onChange} />
         </div>
     );
 };
