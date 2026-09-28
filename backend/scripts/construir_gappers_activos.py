@@ -135,25 +135,31 @@ def main() -> int:
             pob[["ticker", "fecha", "prev_close"]].rename(columns={"fecha": "fecha_gap"}),
             on=["ticker", "fecha_gap"], how="left")
         velas = velas[velas["prev_close"] > 0]
-        velas["t"] = np.where(m_ah.reindex(velas.index, fill_value=False),
-                              velas["minuto"] - 960,
+        # ⚠️ t SIEMPRE después del merge: la máscara AH/PM se recalcula sobre
+        # el índice FINAL. Una máscara pre-merge reindexada por etiquetas tras
+        # el merge alineaba booleanos de OTRAS filas y mandaba velas PM a la
+        # escala AH (t negativos) — bug de la primera versión, corregido
+        # 2026-09-28 tras la reconciliación trade a trade.
+        es_ah = velas["minuto"] >= 960
+        velas["t"] = np.where(es_ah, velas["minuto"] - 960,
                               velas["minuto"] + (720 - 240))
         velas = velas.sort_values(["ticker", "fecha_gap", "t"])
         velas["ratio"] = velas["high"] / velas["prev_close"]
         velas["cummax"] = velas.groupby(["ticker", "fecha_gap"])["ratio"].cummax()
         for nivel in GAPPERS_ACTIVE_LEVELS:
             d = velas[velas["cummax"] >= 1 + nivel / 100.0]
-            c = d.groupby(["fecha_gap", "ticker"])["t"].min().reset_index()
+            c = d.groupby(["fecha_gap", "ticker"], as_index=False)["t"].min()
             if len(c):
                 cruces.append(pd.DataFrame({
-                    "fecha": c["fecha_gap"], "nivel": nivel, "t": c["t"]}))
+                    "ticker": c["ticker"], "fecha": c["fecha_gap"],
+                    "nivel": nivel, "t": c["t"]}))
         print(f"      {ym}: {len(velas):,} velas", flush=True)
 
     print("[3/3] escribiendo tabla...", flush=True)
     if not cruces:
         print("SIN CRUCES — no se escribe nada raro; revisa el lago.")
         return 1
-    out = pd.concat(cruces, ignore_index=True).drop_duplicates(["fecha", "nivel", "t"])
+    out = pd.concat(cruces, ignore_index=True).drop_duplicates(["ticker", "fecha", "nivel"])
     out = out.sort_values(["fecha", "nivel", "t"])
     tmp = out_ruta + ".tmp"
     out.to_parquet(tmp, index=False)
