@@ -224,3 +224,74 @@ recalculo independiente (`verifica_vwap.py` en scratch):
   backtest en la app, que exige la salida condicional («aguanta solo si…») →
   motor compartido → decisión de Álvaro + aviso a Jaume. Hasta entonces, la
   regla sigue en estado «prometedora, sin verificar en la app».
+
+## Gestión por hora (28-sep noche) — «a una HORA, si CONDICIÓN, ACCIÓN» (línea nueva de Álvaro)
+
+Herramienta GENÉRICA pedida por Álvaro. Primero el dato: combinaciones de
+HORA (08:30/09:00/09:30) × CONDICIÓN (precio vs VWAP-PM a esa hora:
+encima/debajo/≥4 % debajo; % camino: a favor >15 % / 0-15 % / en contra;
+cruces) × ACCIÓN (cerrar todo / cerrar 50 % / stop a BE=entrada / nada), sobre
+la porción que hoy sale ~08:45. Para 09:00/09:30 el mundo es «aguantar»
+(presuponen extender la sesión a 11:00). Métrica: camino pp de la porción y
+cartera 1R lineal por año; comparado contra salida actual y aguantar-todo.
+
+### El mapa (Δcamino de la porción vs no hacer nada; negativo = la acción GANA)
+
+1. **La hora de gestionar es las 08:30.** A las 09:00 la señal se ha
+   debilitado (wsup: −1,2) y a las 09:30 no queda nada consistente (todo
+   favorece aguantar: cerrar sale +2 a +12 PEOR). Decidir tarde = no decidir.
+2. Las celdas que separan a las 08:30 (cerrar todo vs aguantar):
+   - **«a favor PERO sobre el VWAP» (cf15∧wsup, n=128): −9,1** — la más
+     afilada: ganas >15 % del camino pero el precio recuperó el VWAP.
+   - **Álvaro-(i) «sobre el VWAP y por debajo de la entrada» (n=214): −7,5**.
+   - wsup genérico (n=517): −2,9 · winf: cerrar +7,3 PEOR (aguanta) ·
+     cf15: cerrar +6,7 PEOR (no cortes ganadores).
+3. **Álvaro-(ii) no sale bien**: cerrar todo lo que no esté >15 % a favor
+   tira +2,5 de media por trade regalado (los 0-15 % a favor y hasta los en
+   contra aguantan mejor la media — el daño está en la cola, no en la media).
+
+### Cartera por año (1R lineal; «else» = aguantar a 11:00 con stop original)
+
+| política (todas a las 08:30) | 2024 ΣR/Sh | 2025 | 2026 | ΣR 3a | Δ vs current | stops* | siguen >08:45 |
+|---|---|---|---|---|---|---|---|
+| current (salida actual) | +73,6/6,67 | +120,2/9,51 | +101,5/10,29 | +295,3 | — | 0 | 0 % |
+| aguantar TODO | +85,2/7,54 | +131,3/10,20 | +97,1/10,16 | +313,6 | +18,3 | 403 (12,2 %) | 100 % |
+| **P3 sobre-VWAP→cerrar** (n=517) | +86,0/7,62 | +130,9/10,19 | +98,6/10,31 | **+315,5** | +20,2 | **212 (−47 %)** | 84 % |
+| **P4 no ≥4 % bajo VWAP→cerrar** (= regla VWAP de §A, n=915) | +84,4/7,45 | +130,2/10,07 | +98,4/10,35 | +313,0 | +17,7 | **138 (−66 %)** | 72 % |
+| **P2 sobre-VWAP→BE** (idea (i) de Álvaro; n=517) | +86,2/7,66 | +131,1/10,14 | +98,0/10,22 | +315,2 | +20,0 | convierte: 171 salen al BE, 303 cierre inmediato (ya >E), 43 aguantan | 84 % |
+| P1 cf15∧wsup→cerrar (la celda afilada, n=128) | +86,3/7,63 | +131,2/10,20 | +97,6/10,18 | +315,1 | +19,8 | 359 | 96 % |
+| P5 Álvaro-(ii) cf15→BE, resto cerrar | +82,7/7,32 | +126,3/9,73 | +99,0/10,36 | +308,0 | +12,7 | — | — |
+
+*porciones que acaban en stop (S o BE) de las 3.290 gestionadas. La variante
+exacta de Álvaro-(i) (solo los que están a favor) da 315,6 — idéntica a P2/P3
+(entre sí son ruido de ±2 R en 3 años: elegir por perfil de riesgo, no por Σ).
+
+**Lectura:** todas las políticas VWAP se quedan el Sharpe del aguantar-todo
+con MENOS stops (la causa del DD en $ de Portfolio) y algo menos de
+exposición. P4 es la más defensiva (2/3 de los stops fuera, 72 % de
+exposición), P3/P2 el equilibrio, P1 la más quirúrgica (toca 128 trades en 3
+años y aún así +19,8 R vs current). La (ii) de Álvaro, descartada.
+
+**Verificación (regla fija 3): 20/20 trades adversariales recomputados a mano
+de las velas crudas — precio 08:30, VWAP y las tres salidas del BE (inmediato,
+stop en E, 11:00) IDÉNTICOS.** (El resto del pipeline ya estaba verificado
+19/19 en la sección anterior.) Regla 2 aplicada: un trade = una fila con clave
+(ticker, fecha, minuto de entrada), sin duplicados; cierre a vela rancia
+descartado (99 % fresca a las 08:30).
+
+### Qué permite YA la app y qué falta (para el futuro PRD a Jaume — sin escribir código)
+
+**Existe hoy:** parciales por HORA (`HOUR:08:30` — incondicionales) · salida
+total por hora (take_profit Hour) · trailing stop por % con activación (por
+precio, sin disparador horario) · stops por estructura/fijos · y **VWAP/AVWAP
+ya son indicadores de condición** (la CONDICIÓN de esta línea es expresable
+hoy en entradas).
+
+**Falta la pieza genérica «salida programada condicional»**: un plan de reglas
+`(hora, condición-de-indicador, acción)` evaluado por vela sobre la POSICIÓN
+abierta, con acciones: {cerrar X % · mover el stop a un nivel (BE/precio/otro
+indicador) · nada}. Hoy las salidas programadas no consultan estado, y los
+stops no tienen disparador horario ni condición. Vive en el gestor de posición
+(`strategy_engine`/simulador, compartido con el bot) → decisión de Álvaro y
+aviso a Jaume antes de construirla. Con esa pieza, P2/P3/P4 y la regla VWAP
+del §A son UNA sola configuración de la herramienta.

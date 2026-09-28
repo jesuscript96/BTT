@@ -22,25 +22,27 @@
    y, si mejora varias, se construye como filtro en la app.
 6. Se registra TODO, también lo descartado (tabla del final).
 
-## ▶ ORDEN DE TRABAJO (decidido por Álvaro, 2026-09-28)
+## ▶ ORDEN DE TRABAJO (reordenado por Álvaro, 28-sep tarde)
 
-1. ~~Línea «Aguantar en RTH / peores operaciones» (1B)~~ **HECHA (28-sep):**
-   `INFORME_AGUANTAR_RTH_1B_20260928.md`. Sin corte por «% camino» (lo muy
-   recorrido es lo MEJOR de aguantar); el discriminador es el **VWAP del
-   premarket a las 08:30** (regla: aguantar solo si precio ≤ VWAP−4 %; paridad
-   de Σ con aguantar-todo y la mitad de stops). Peores trades = monster-gap
-   (pmh≥200 % | ≥150 % ∧ vol<5 M$), excluible a la entrada (−54 R, 3/3 años).
-   La salida condicional exige tocar el motor compartido → decisión de Álvaro
-   + Jaume. El «cerrar IPO<90 d a las 08:30» de Portfolio quedó superado por
-   la regla VWAP (el filtro IPO<365 d ya está DENTRO de la variante robusta).
-   §B CORREGIDO por look-ahead (hallazgo 18, detectado por Álvaro): sin
-   exclusiones gratis — ver fila de registro del 28-sep (tarde).
-2. ~~Reconciliación del indicador «Gappers activos» (7.2b)~~ **CERRADA (28-sep):**
-   ΔΣ cuadra EXACTO (−[1]+[2]+[3] = +518,16) y el 7.2b era un ARTEFACTO del
-   contador del estudio (hallazgo 19; invalidado). Indicador OK, regla muerta.
-3. **AHORA — retomar los bloques de criterios de universo por orden:**
-   ~~Bloque 8~~ HECHO (28-sep: sin construcción — ver registro) → Bloque 9 →
-   Bloque 1-bis. (5, 6 y 7 ya están hechos aunque su
+1. **AHORA — Línea «Gestión por hora» (1B, genérica):** herramienta
+   «a una HORA → si se cumple una CONDICIÓN → haz una ACCIÓN». Primero el
+   DATO (combos 08:30/09:00/09:30 × VWAP/camino × cerrar todo/50 %/BE/nada,
+   vs salida actual y vs aguantar-todo, por año, con las dos ideas de Álvaro),
+   sin tocar código; luego descripción de la pieza que faltaría (PRD a Jaume,
+   motor compartido). Informe: §nueva del `INFORME_AGUANTAR_RTH_1B_20260928.md`.
+2. **Paquete de filtros para ESTRATEGIAS NUEVAS:** construir como filtros de
+   dataset (umbral movible) los criterios con evidencia sólida en el universo
+   aunque la 1B no los cobre — vol$ de la víspera, nº de gappers de la
+   víspera (día caliente) y mecha superior de la víspera. (Idea de Álvaro: el
+   semillero no es «no sirve», es material para diseñar estrategias distintas
+   de la 1B.) NO EMPEZAR hasta que Álvaro lo diga.
+3. **Hora de inicio del gap (con after-hours) como filtro** (tarea aparte,
+   más pesada). NO EMPEZAR sin orden.
+4. **Bloque 9 (overhead).**
+5. **Bloque 1-bis (premarket de la víspera).**
+   — Cerradas ya: Aguantar RTH §A/§B + regla VWAP verificada a mano (28-sep);
+   reconciliación 7.2b + invalidación (28-sep, hallazgos 19-22); Bloque 8
+   forma de velas (28-sep, sin construcción). (5, 6 y 7 ya están hechos aunque su
    cabecera diga PENDIENTE; ver Registro.)
 
 ## Bloques
@@ -258,3 +260,4 @@ el fade debería ser más fácil; si rompe a "cielo abierto", menos.
 | 2026-09-28 | B7·7.2b VERIFICACIÓN FINAL (pedido de Álvaro) | ❌ NO SOBREVIVE — el estudio NO tenía el bug AH/PM (14.388/14.388 cruces IDÉNTICOS a la tabla corregida; su única contaminación fue la colisión de minuto del hallazgo 19). Re-derivado con contador limpio: bloqueados 304 Σ**+627** (+2,06 %/trade, signo cruzado por año: +1,3/−1,3/+5,6 %); NINGÚN umbral da grupo perdedor (curva +2 a +4,3 %); buckets <3:+6,3 % / ≥10:+2,8 % (gradiente suave, sin acantilado); cartera: el skip contaminado reproduce el Calmar ×2 (32→62) pero el skip limpio EMPEORA el Calmar 2/3 años. El Calmar ×2 publicado era 100 % artefacto. Indicador construido queda disponible (flag OFF) sin regla con edge | `INFORME_BLOQUE7_MERCADO_20260927.md` §11 |
 | 2026-09-28 | Regla VWAP aguantar-RTH · verificación MANUAL vela a vela (lección de los 3 falsos) | ✅ EL CÁLCULO ES FIEL — 19/19 trades recalculan IDÉNTICO (Δ=0.000: VWAP, precio 08:30, camino, stop del hold, efecto); stop estático confirmado (S=PMH_ent·1,10 en 96 %), 0 velas duplicadas (6,7 M), precio fresco (99 % vela en 08:30, 95 % en 11:00) y el edge NO vive en trades rancios (frescos n=2.344: efecto −6,0, 5,8 % stops). NO prueba que gane ejecutada: falta backtest en la app (salida condicional → motor compartido → Jaume). Estado: prometedora, cálculo limpio, sin verificar en app | `INFORME_AGUANTAR_RTH_1B_20260928.md` §Verificación manual |
 | 2026-09-28 | B8·8.1-8.2 Forma de las últimas velas (solo víspera: compresión rango÷rango, racha estrechando, 3d÷ATR14-20; mechas sup/inf÷rango, mecha÷cuerpo, 1d y media 2-3d) | ❌ SIN CONSTRUCCIÓN — compresión: NADA (comp1 2/8 años; comp3_atr 7/8 pero ρ≈−0,03; racha 4/8). Mecha inferior: NADA. **Mecha superior víspera: descriptor de universo DÉBIL** (ws1 7/8 años —solo 2021 en contra—, buscar +0,02→confirmar +0,06, parcial +0,067 ctrl 1.6/3.2/6.1, deciles monótonos fade 25,4→31,4 %: víspera con rechazo arriba → al día siguiente más fade) que NO se cobra: 1B plano/ruido (parcial +0,011, mitades cruzan signo por año) y 2B inconsistente (2024 al revés, 2025 plano, 2026 sí). Features verificadas 6/6 a mano del OHLC crudo; reglas fijas aplicadas (solo ≤D-1, dedup, un trade una fila) | `INFORME_BLOQUE8_FORMA_VELAS_20260928.md` |
+| 2026-09-28 | Línea «Gestión por hora» (1B, hora×condición×acción, 9.812 filas trade×hora) | ✅ LA HORA ES LAS 08:30 — a 09:00 débil, a 09:30 nada (decidir tarde = no decidir). Celdas afiladas 08:30: «a favor pero sobre VWAP» cerrar −9,1 camino pp (n=128); Álvaro-(i) sobre-VWAP→BE −6,0 (n=214). Cartera (1R lineal, else=aguantar a 11:00): todas las políticas VWAP ≈ +315 R 3a (vs current 295,3 / hold 313,6; entre sí ruido) — lo que cambian es el RIESGO: P4 (≥4 % bajo VWAP o cierra) baja stops 403→138 (−66 %) con 72 % exposición; P3 (sobre-VWAP cierra) −47 %; P2/BE (i) convierte paradas en scratches; P1 quirúrgica (128 disparos, +19,8 R). **Álvaro-(ii) descartada** (−5,6 vs hold: los 0-15 % a favor aguantan mejor). Verificado 20/20 adversarial a mano. Pieza nueva para la app: «salida programada condicional» (hora+condición+acción sobre la posición) — motor compartido, PRD a Jaume | `INFORME_AGUANTAR_RTH_1B_20260928.md` §Gestión por hora |
