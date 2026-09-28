@@ -295,7 +295,7 @@ def test_cuenta_larga_el_vigilante_no_vende_solo_avisa_y_no_compra_mas(cfg):
     ventas = [a.orden for a in de_tipo(acc, EnviarOrden)]
     assert [(o.lado, o.qty, o.proposito, origen(o.token)) for o in ventas] == [
         (Lado.VENTA, 20, Proposito.VENTA_EXCESO, Origen.VIGILANTE)]
-    assert ventas[0].precio == D("9.69")                                   # D2a-04: bid 9,79 · (1 − 1 %) abajo
+    assert ventas[0].precio == D("9.59")                                   # D2a-04: bid 9,79 · (1 − 2 %) abajo
     tipos = [type(a).__name__ for a in acc]
     assert tipos.index("CancelarTicker") < tipos.index("EnviarOrden")       # ninguna compra viva antes de vender
     assert not any(type(a).__name__ in ("Programar", "Consultar", "InvalidarSerie") for a in acc)

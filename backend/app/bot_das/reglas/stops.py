@@ -224,7 +224,7 @@ EXCESO_VERIFICAR_EN_S = 1.0
 COMANDO_POSICIONES = "GET POSITIONS"
 
 # ── venta del exceso (R-C-11 b-3; D2a-04, PROVISIONAL: pregunta 1 a Jaume) ──
-VENTA_EXCESO_MARGEN_PCT = Decimal("1")          # se vende a bid·(1 − 1 %) redondeado abajo: vendible, no el bid exacto
+VENTA_EXCESO_MARGEN_PCT = Decimal("2")          # Jaume 28-sep: bid·(1 − 2 %) redondeado abajo; el límite solo acota lo peor, llena al mejor precio del libro
 VENTA_EXCESO_PERSECUCIONES = 3                  # REPLACE al bid nuevo hasta 3 veces; después Avisar(3) «VENDER A MANO»
 
 # ── REPLACE (A-02 / D2a-08): interruptor de cfg.stops que decide qué es el `share` ──

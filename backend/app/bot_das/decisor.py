@@ -467,6 +467,7 @@ class Decisor:
         self._halt_en_curso: set[str] = set()
         self._halt_fin: dict[str, Optional[datetime]] = {}
         self._halt_decision: dict[str, str] = {}
+        self._halt_luld: dict[str, bool] = {}       # D4 (Jaume 28-sep): si el halt en curso era una pausa LULD (P)
         self._halt_decidir_programado: set[str] = set()   # G1A-14: el halt en curso ya tiene su halt_decidir
         self._halt_humano_avisado: set[str] = set()
         self._halt_hoy: set[str] = set()
@@ -3381,11 +3382,16 @@ class Decisor:
             acciones += self._programar_halt_decidir(pos)
         return acciones + ldlu
 
-    def _bloqueo_decision_halt(self, pos: PosicionTicker) -> Optional[str]:
+    def _bloqueo_decision_halt(self, pos: PosicionTicker, era_luld: Optional[bool] = None) -> Optional[str]:
         """G1A-04 (R-G-01 «cierra el HUMANO»): con el ticker en cisne negro, control humano, manual o cierre humano, el
         halt no manda órdenes: solo se anota y se avisa nivel 3 con la decisión que se habría tomado."""
         ticker = pos.ticker
         if pos.estado is EstadoTicker.BS or pos.bs is not None:
+            # Jaume 28-sep (D4): en premercado solo hay halts T1/T12 y ahí manda su protocolo (límite a parada × 3,5,
+            # R-F-05) aunque el ticker esté en cisne negro; el «cierra el humano» queda para el LULD (P) de RTH.
+            luld = era_luld if era_luld is not None else halts.es_luld(self._mercado.simbolo(ticker))
+            if not luld:
+                return None
             return "cisne negro"
         if pos.estado is EstadoTicker.CONTROL_HUMANO:
             return "control humano"
@@ -3432,6 +3438,7 @@ class Decisor:
         decision = halts.decidir_reapertura(pos, simb, self._niveles_principal(pos), cot, dict(self._cfg.halts), franja,
                                             duracion)
         self._halt_decision[ticker] = decision
+        self._halt_luld[ticker] = halts.es_luld(simb)
         acciones: list[Accion] = [Anotar("halt_decision", {"ticker": ticker, "decision": decision,
                                                            "k": simb.k_halts_up, "duracion_min": duracion,
                                                            "franja": franja, "regla": "R-F-01"})]
@@ -3547,6 +3554,7 @@ class Decisor:
         cot = self._cot(ticker)
         precio = cot.last if cot is not None and cot.last is not None else simb.precio_parada
         decision = self._halt_decision.pop(ticker, None)
+        era_luld = self._halt_luld.pop(ticker, halts.es_luld(simb))
         acciones: list[Accion] = [Anotar("halt_reapertura", {"ticker": ticker, "k": simb.k_halts_up, "precio": precio,
                                                              "decision": decision}),
                                   Desprogramar(f"{T_HALT_DECIDIR}:{ticker}")]
@@ -3565,7 +3573,7 @@ class Decisor:
                 acciones.append(Anotar("stops_reponer_reapertura", {"ticker": ticker, "regla": "R-C-04 / G1B-14"}))
                 acciones += self._plan(ticker)
             if pos.neta < 0 and decision in ("cerrar_mercado", "cerrar_limite_pm"):
-                acciones += self._reintento_reapertura(pos, cot, decision)
+                acciones += self._reintento_reapertura(pos, cot, decision, era_luld)
             if pos.neta != 0 and any(o.proposito in _PROP_CIERRE_HALT for o in self._vivas(ticker)):
                 acciones.append(Programar(f"{T_HALT_CIERRE_VERIFICAR}:{ticker}", HALT_CIERRE_VERIFICAR_S,
                                           {"ticker": ticker, "reapertura": True}))     # R2-DEC-2: mira el tope T1
@@ -3613,7 +3621,8 @@ class Decisor:
                                              "motivo": "halt: T1 por encima del tope (R-F-05 a, E1-02)"}))
         return acciones
 
-    def _reintento_reapertura(self, pos: PosicionTicker, cot: Optional[Cotizacion], decision: str) -> list[Accion]:
+    def _reintento_reapertura(self, pos: PosicionTicker, cot: Optional[Cotizacion], decision: str,
+                              era_luld: Optional[bool] = None) -> list[Accion]:
         """EP-2 / E1-02 / G1A-04 / G1A-01: el cierre decidido en el halt, con el precio real de la reapertura."""
         ticker = pos.ticker
         simb = self._mercado.simbolo(ticker)
@@ -3621,7 +3630,7 @@ class Decisor:
         tope = self._tope_t1_control_humano(pos, precio, "al reabrir")
         if tope is not None:
             return tope
-        bloqueo = self._bloqueo_decision_halt(pos)
+        bloqueo = self._bloqueo_decision_halt(pos, era_luld)
         if bloqueo is not None:
             return self._halt_sin_orden(pos, decision, bloqueo, "al reabrir")
         degradados = self._estado.modo_degradado & {"reconciliacion", "das"}

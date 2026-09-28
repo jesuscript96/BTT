@@ -468,7 +468,7 @@ def test_dos_emergencias_la_mas_nueva_sobra(cfg):
 def test_caso_6_a_larga_vende_solo_el_exceso(cfg):
     """R-C-11 (b) por reconciliación: el diario cree −100 y DAS dice +20 → CancelarTicker y vende 20, JAMÁS 100.
 
-    D2a-04 (decisión del director): la venta sale a bid · (1 − 1 %) redondeado abajo (vendible), no al bid exacto:
+    D2a-04 (decisión del director): la venta sale a bid · (1 − 2 %) redondeado abajo (vendible), no al bid exacto:
     9,79 · 0,99 = 9,6921 → 9,69.
     """
     p, e = principal(), emergencia()
@@ -478,7 +478,7 @@ def test_caso_6_a_larga_vende_solo_el_exceso(cfg):
     acc = acciones(ds, estado, cot_de(cot(bid="9.79")), cfg, Contador(), HORA, RUTA_STOP)
     assert isinstance(acc[2], InvalidarSerie) and isinstance(acc[3], CancelarTicker)
     ventas = [a.orden for a in de_tipo(acc, EnviarOrden)]
-    assert [(o.lado, o.qty, o.precio, o.proposito) for o in ventas] == [(Lado.VENTA, 20, D("9.69"), Proposito.VENTA_EXCESO)]
+    assert [(o.lado, o.qty, o.precio, o.proposito) for o in ventas] == [(Lado.VENTA, 20, D("9.59"), Proposito.VENTA_EXCESO)]
 
 
 def test_larga_conocida_con_venta_en_marcha_no_repite(cfg):

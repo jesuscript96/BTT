@@ -1110,7 +1110,7 @@ def test_limpieza_neta_cero_invalida_la_serie_y_cancela_todo(config, tokens, cot
 def test_limpieza_larga_vende_solo_el_exceso_20_jamas_100(config, tokens, cotizacion):
     """R-C-11 (b), libro L261: 100 cortas, principal 20, emergencia 100 → larga 20 → se venden 20, JAMÁS 100 (riesgo 6).
 
-    D2a-04: a bid·(1 − 1 %) redondeado abajo (9,50 → 9,40: vendible, no el bid exacto) y `exceso_verificar:X` a 1 s.
+    D2a-04: a bid·(1 − 2 %) redondeado abajo (9,50 → 9,31: vendible, no el bid exacto) y `exceso_verificar:X` a 1 s.
     """
     pos = posicion([lote("A", 10, 100)], neta_fills=20)
     vivas = [orden(100000001, Proposito.STOP_PRINCIPAL, "10.00", "10.30", 100, id_das=1, estado=EstadoOrden.PARTIAL, llenas=20, lvqty=80),
@@ -1120,13 +1120,13 @@ def test_limpieza_larga_vende_solo_el_exceso_20_jamas_100(config, tokens, cotiza
     assert acciones[0] == InvalidarSerie(serie_stops(X), 4)
     venta = acciones[2].orden
     assert (venta.lado, venta.qty, venta.tipo, venta.precio, venta.ruta, venta.proposito, venta.version, venta.tif) == (
-        Lado.VENTA, 20, TipoOrden.LIMITE, D("9.40"), "SAGEPRO", Proposito.VENTA_EXCESO, 4, "DAY+")
+        Lado.VENTA, 20, TipoOrden.LIMITE, D("9.31"), "SAGEPRO", Proposito.VENTA_EXCESO, 4, "DAY+")
     assert acciones[2].serie is None and venta.post_only is False     # sin serie: un InvalidarSerie posterior no la descarta
     sin_float(venta)
     assert acciones[3].nivel is Nivel.AVISO and acciones[3].grupo is Grupo.B and "20" in acciones[3].texto
     assert acciones[3].clave == f"exceso:{X}:4"                       # un incidente nuevo (otra versión) no lo calla el dedupe
     assert acciones[4].tipo == "incidente" and acciones[4].datos["vendidas"] == 20 and acciones[4].datos["neta"] == 20
-    assert acciones[4].datos["referencia"] == "9.50" and acciones[4].datos["precio"] == "9.40"
+    assert acciones[4].datos["referencia"] == "9.50" and acciones[4].datos["precio"] == "9.31"
     assert acciones[5] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
     assert all(not (isinstance(a, EnviarOrden) and a.orden.qty == 100) for a in acciones)
 
@@ -1140,11 +1140,11 @@ def test_limpieza_larga_cuenta_lo_que_dice_das_si_discrepa(config, tokens, cotiz
 
 
 def test_limpieza_larga_en_pennies_va_por_la_ruta_de_cruzar_de_la_hora(config, tokens, cotizacion):
-    """Pennies: 0,4800 − 1 % = 0,4752 (tick 0,0001, D2a-04) por la ruta de cruzar de la hora."""
+    """Pennies: 0,4800 − 2 % = 0,4704 (tick 0,0001, D2a-04) por la ruta de cruzar de la hora."""
     pos = posicion([lote("A", "0.5", 1000)], neta_fills=150)
     acciones = limpieza_tras_fill_stop(pos, [], cotizacion(X, "0.4800", "0.4810"), tokens.siguiente, config, HORA, 2)
     venta = de_tipo(acciones, EnviarOrden)[0].orden
-    assert (venta.qty, venta.precio, venta.ruta) == (150, D("0.4752"), "EDGA")       # 09:30 ET ≥ 07:00 → EDGA
+    assert (venta.qty, venta.precio, venta.ruta) == (150, D("0.4704"), "EDGA")       # 09:30 ET ≥ 07:00 → EDGA
     antes_de_las_7 = datetime(2026, 9, 25, 5, 0, tzinfo=ET)
     acciones = limpieza_tras_fill_stop(pos, [], cotizacion(X, "0.4800", "0.4810"), tokens.siguiente, config, antes_de_las_7, 2)
     assert de_tipo(acciones, EnviarOrden)[0].orden.ruta == "MIAX"
@@ -1156,7 +1156,7 @@ def test_limpieza_larga_sin_bid_usa_last_y_sin_nada_avisa_nivel_3_sin_orden(conf
     pos = posicion([lote("A", 10, 100)], neta_fills=20)
     solo_last = Cotizacion(ticker=X, last=D("9.4567"))
     acciones = limpieza_tras_fill_stop(pos, [], solo_last, tokens.siguiente, config, HORA, 4)
-    assert de_tipo(acciones, EnviarOrden)[0].orden.precio == D("9.36")            # 9,4567·0,99 = 9,3621… → ABAJO (lado permisivo)
+    assert de_tipo(acciones, EnviarOrden)[0].orden.precio == D("9.26")            # 9,4567·0,98 = 9,2675… → ABAJO (lado permisivo)
     acciones = limpieza_tras_fill_stop(pos, [], Cotizacion(ticker=X, bid=D("0"), last=D("NaN")), tokens.siguiente, config, HORA, 4)
     assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, Avisar, Anotar, Programar]
     assert acciones[2].nivel is Nivel.MAXIMO and "VENDER A MANO" in acciones[2].texto
@@ -1388,11 +1388,11 @@ def test_fogonazo_principal_y_emergencia_llenan_a_la_vez_se_vende_solo_el_exceso
                                        HORA, 6, orden_stop=emergencia)
     assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
     venta = acciones[2].orden
-    assert (venta.lado, venta.qty, venta.precio, venta.proposito) == (Lado.VENTA, 40, D("12.42"), Proposito.VENTA_EXCESO)
+    assert (venta.lado, venta.qty, venta.precio, venta.proposito) == (Lado.VENTA, 40, D("12.29"), Proposito.VENTA_EXCESO)
 
 
 # ── venta del exceso: lo que ya está en vuelo (D2a-03) y la persecución (D2a-04) ──
-def _venta(qty: int = 20, precio: str = "9.40", id_das: Optional[int] = 9, token: int = 100000009,
+def _venta(qty: int = 20, precio: str = "9.31", id_das: Optional[int] = 9, token: int = 100000009,
            estado: EstadoOrden = EstadoOrden.ACCEPTED, proposito: Proposito = Proposito.VENTA_EXCESO,
            origen: Origen = Origen.EJECUTOR) -> Orden:
     return orden(token, proposito, None, precio, qty, id_das=id_das, estado=estado, lado=Lado.VENTA, tipo=TipoOrden.LIMITE,
@@ -1413,7 +1413,7 @@ def test_D2a_03_con_una_venta_del_exceso_viva_vende_solo_la_diferencia_y_no_canc
     assert acciones[0] == InvalidarSerie(serie_stops(X), 6)
     assert de_tipo(acciones, CancelarTicker) == []
     assert [a.id_das for a in de_tipo(acciones, Cancelar)] == [1, 2]        # compras con id; la venta S1 NO se toca
-    assert [(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(acciones, EnviarOrden)] == [(Lado.VENTA, 40, D("9.40"))]
+    assert [(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(acciones, EnviarOrden)] == [(Lado.VENTA, 40, D("9.31"))]
     incidente = de_tipo(acciones, Anotar)[0]
     assert (incidente.datos["vendidas"], incidente.datos["en_vuelo"], incidente.datos["neta"]) == (40, 10, 50)
     assert "10 ya se están vendiendo" in de_tipo(acciones, Avisar)[0].texto
@@ -1492,7 +1492,7 @@ def test_R2_STOPS_1_larga_20_con_una_entrada_viva_de_100_la_cancela_y_vende_20(c
     assert [type(a) for a in acciones] == [InvalidarSerie, CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
     assert acciones[0] == InvalidarSerie(serie_stops(X), 4)
     venta = acciones[2].orden
-    assert (venta.lado, venta.qty, venta.precio, venta.proposito) == (Lado.VENTA, 20, D("9.40"), Proposito.VENTA_EXCESO)
+    assert (venta.lado, venta.qty, venta.precio, venta.proposito) == (Lado.VENTA, 20, D("9.31"), Proposito.VENTA_EXCESO)
     assert acciones[4].datos["en_vuelo"] == 0 and acciones[4].datos["vendidas"] == 20
     assert acciones[5] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
     assert all(not (isinstance(a, Avisar) and a.clave.startswith("exceso_de_mas")) for a in acciones)
@@ -1515,7 +1515,7 @@ def test_R2_STOPS_1_con_la_venta_exceso_viva_la_entrada_se_cancela_una_a_una(con
                                        HORA, 6)
     assert de_tipo(acciones, CancelarTicker) == []
     assert [(a.id_das, a.token) for a in de_tipo(acciones, Cancelar)] == [(1, 100000001), (10, 100000010)]
-    assert [(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(acciones, EnviarOrden)] == [(Lado.VENTA, 20, D("9.40"))]
+    assert [(a.orden.lado, a.orden.qty, a.orden.precio) for a in de_tipo(acciones, EnviarOrden)] == [(Lado.VENTA, 20, D("9.31"))]
     assert acciones[-1] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 0})
     ultimo_cancel = max(i for i, a in enumerate(acciones) if isinstance(a, Cancelar))
     assert ultimo_cancel < acciones.index(de_tipo(acciones, EnviarOrden)[0])
@@ -1552,7 +1552,7 @@ def test_R2_STOPS_2_verificar_sin_venta_exceso_viva_y_con_una_entrada_vende_y_si
     for viva in (_entrada(), _venta(qty=20, id_das=7, token=200000007, proposito=Proposito.DESCONOCIDA, origen=Origen.VIGILANTE)):
         acciones = stops.verificar_venta_exceso(pos, [viva], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA, 5, 1)
         assert [type(a) for a in acciones] == [CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
-        assert (acciones[1].orden.qty, acciones[1].orden.precio, acciones[1].orden.proposito) == (20, D("9.10"),
+        assert (acciones[1].orden.qty, acciones[1].orden.precio, acciones[1].orden.proposito) == (20, D("9.01"),
                                                                                                    Proposito.VENTA_EXCESO)
         assert acciones[-1] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 2})
         acciones = stops.verificar_venta_exceso(pos, [viva], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA, 5, 3)
@@ -1568,7 +1568,7 @@ def test_R2_STOPS_1_verificar_con_la_venta_exceso_viva_cancela_la_entrada_que_ya
                                             5, 0)
     assert [type(a) for a in acciones] == [Cancelar, Reemplazar, Anotar, Programar]
     assert (acciones[0].id_das, acciones[0].token) == (10, 100000010)
-    assert (acciones[1].id_das, acciones[1].qty, acciones[1].precio) == (9, 20, D("9.10"))
+    assert (acciones[1].id_das, acciones[1].qty, acciones[1].precio) == (9, 20, D("9.01"))
     assert acciones[2].datos["en_vuelo"] == 20 and acciones[2].datos["tokens"] == [100000009]
     acciones = stops.verificar_venta_exceso(pos, [entrada, ve], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA,
                                             5, 0, pedidos_en_vuelo={100000010: None})
@@ -1618,13 +1618,13 @@ def test_R2_STOPS_1_limpieza_larga_no_depende_del_orden_de_las_vivas(config, tok
 
 
 def test_D2a_04_la_venta_del_exceso_sale_vendible_y_programa_la_comprobacion(config, tokens, cotizacion):
-    """D2a-04: a bid·(1 − 1 %) redondeado abajo, no al bid exacto; `exceso_verificar:X` a 1 s con 0 persecuciones hechas."""
-    assert (stops.VENTA_EXCESO_MARGEN_PCT, stops.VENTA_EXCESO_PERSECUCIONES, stops.EXCESO_VERIFICAR_EN_S) == (D("1"), 3, 1.0)
+    """D2a-04: a bid·(1 − 2 %) redondeado abajo, no al bid exacto; `exceso_verificar:X` a 1 s con 0 persecuciones hechas."""
+    assert (stops.VENTA_EXCESO_MARGEN_PCT, stops.VENTA_EXCESO_PERSECUCIONES, stops.EXCESO_VERIFICAR_EN_S) == (D("2"), 3, 1.0)
     assert stops.CLAVE_EXCESO_VERIFICAR == "exceso_verificar" and stops.clave_exceso_verificar(X) == f"exceso_verificar:{X}"
     pos = posicion([lote("A", 10, 100)], neta_fills=20)
     acciones = limpieza_tras_fill_stop(pos, [], cotizacion(X, "10.05", "10.07"), tokens.siguiente, config, HORA, 4)
     venta = de_tipo(acciones, EnviarOrden)[0].orden
-    assert venta.precio == D("9.94") and en_tick(venta.precio)                 # 10,05·0,99 = 9,9495 → 9,94
+    assert venta.precio == D("9.84") and en_tick(venta.precio)                 # 10,05·0,98 = 9,849 → 9,84
     assert acciones[-1] == Programar(stops.clave_exceso_verificar(X), stops.EXCESO_VERIFICAR_EN_S, {"ticker": X, "persecuciones": 0})
 
 
@@ -1636,14 +1636,14 @@ def test_D2a_04_verificar_con_el_exceso_ya_vendido_no_hace_nada(config, tokens, 
 
 
 def test_D2a_04_verificar_persigue_al_bid_nuevo_con_el_mismo_margen(config, tokens, cotizacion):
-    """D2a-04: la venta de 20 a 9,40 sigue viva y la cuenta larga: el bid cae a 9,20 → REPLACE a 9,10 (mismo 1 %); si el bid no
+    """D2a-04: la venta de 20 a 9,31 sigue viva y la cuenta larga: el bid cae a 9,20 → REPLACE a 9,01 (mismo 2 %); si el bid no
     bajó, nada que reemplazar pero la vuelta cuenta (Programar con una persecución más)."""
     pos = posicion([lote("A", 10, 100)], neta_fills=20)
     venta = _venta()
     acciones = stops.verificar_venta_exceso(pos, [venta], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config, HORA, 5, 0)
     assert [type(a) for a in acciones] == [Reemplazar, Anotar, Programar]
     r = acciones[0]
-    assert (r.id_das, r.token, r.qty, r.precio, r.stop, r.serie, r.version) == (9, 100000009, 20, D("9.10"), None, None, 5)
+    assert (r.id_das, r.token, r.qty, r.precio, r.stop, r.serie, r.version) == (9, 100000009, 20, D("9.01"), None, None, 5)
     assert acciones[1].tipo == "venta_exceso_perseguida" and acciones[1].datos["persecucion"] == 1
     assert acciones[2] == Programar(f"exceso_verificar:{X}", 1.0, {"ticker": X, "persecuciones": 1})
     acciones = stops.verificar_venta_exceso(pos, [venta], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 5, 1)
@@ -1660,7 +1660,7 @@ def test_D2a_04_verificar_con_una_venta_viva_no_abre_otra_por_la_diferencia(conf
     acciones = stops.verificar_venta_exceso(pos, [_venta(qty=20)], cotizacion(X, "9.20", "9.22"), tokens.siguiente, config,
                                             HORA, 5, 0)
     assert de_tipo(acciones, EnviarOrden) == [] and de_tipo(acciones, CancelarTicker) == []
-    assert [(a.id_das, a.qty, a.precio) for a in de_tipo(acciones, Reemplazar)] == [(9, 20, D("9.10"))]
+    assert [(a.id_das, a.qty, a.precio) for a in de_tipo(acciones, Reemplazar)] == [(9, 20, D("9.01"))]
     assert tokens.ultimo_seq == 0
 
 
@@ -1685,7 +1685,7 @@ def test_D2a_04_verificar_sin_venta_viva_y_aun_larga_vuelve_a_vender(config, tok
     rechazada = _venta(estado=EstadoOrden.REJECTED)
     acciones = stops.verificar_venta_exceso(pos, [rechazada], cotizacion(X, "9.50", "9.52"), tokens.siguiente, config, HORA, 5, 1)
     assert [type(a) for a in acciones] == [CancelarTicker, EnviarOrden, Avisar, Anotar, Programar]
-    assert (acciones[1].orden.qty, acciones[1].orden.precio) == (20, D("9.40")) and acciones[-1].datos["persecuciones"] == 2
+    assert (acciones[1].orden.qty, acciones[1].orden.precio) == (20, D("9.31")) and acciones[-1].datos["persecuciones"] == 2
 
 
 def test_D2a_04_recorrido_la_venta_no_llena_tres_persecuciones_y_aviso(config, tokens, cotizacion):
@@ -1706,7 +1706,7 @@ def test_D2a_04_recorrido_la_venta_no_llena_tres_persecuciones_y_aviso(config, t
         if not siguiente:
             break
         programar = siguiente[0]
-    assert reemplazos == 3 and venta.precio == D("8.71")
+    assert reemplazos == 3 and venta.precio == D("8.62")
     assert de_tipo(acciones, Avisar)[0].nivel is Nivel.MAXIMO
 
 

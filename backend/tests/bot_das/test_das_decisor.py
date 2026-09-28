@@ -1916,6 +1916,25 @@ def test_g1a_04_halt_con_cisne_negro_no_manda_ordenes_y_avisa_3(banco: Banco) ->
     assert b.pos().neta_fills == -100 and b.pos().estado is EstadoTicker.BS
 
 
+def test_g1a_04b_halt_T1_T12_en_cisne_negro_sigue_el_protocolo_del_limite_pm(banco: Banco) -> None:
+    """D4 (Jaume 28-sep): en premercado solo hay halts T1/T12 (`H`): con el cisne negro activo, el halt NO espera al humano,
+    manda su protocolo (límite a parada × 3,5, R-F-05). El «cierra el humano» de G1A-04 queda para la pausa LULD (`P`)."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "6.90", "7.10", "7.00")                          # fogonazo: cisne negro
+    b.tic_das()
+    assert b.pos().estado is EstadoTicker.BS
+    b.libro.halt(TICKER, "H", "09:27:00")
+    b.avanzar(1.5)
+    marca = b.marca()
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 1, tzinfo=ET))
+    salidas = b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE)          # E1-01: en H la salida es un LÍMITE al tope
+    assert len(salidas) == 1 and salidas[0].lado is Lado.COMPRA and salidas[0].qty == 100
+    assert salidas[0].tipo is TipoOrden.LIMITE
+    assert not anotaciones(b.desde(marca), "halt_sin_orden")
+    assert not [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("halt_sin_orden:")]
+
+
 def test_g1b_01_rearranque_con_eod_vencido_y_das_plano_no_compra_hasta_reconciliar(cfg: Config, tmp_path: Path) -> None:
     """G1B-01 (director, R-J-02.5): al rearrancar con la hora/EOD del lote YA vencida y DAS plano, ninguna salida por
     temporizador sale antes de reconciliar (se reprograma a 0,5 s); la reconciliación (caso 5) cierra el lote y NO se
@@ -2902,7 +2921,7 @@ def test_dc_02_fill_sintetico_reconstruido_no_se_cuenta_dos_veces_con_su_trade(c
 
 
 def test_d2a_04_venta_del_exceso_que_no_llena_se_persigue_al_bid(cfg: Config, tmp_path: Path) -> None:
-    """D2a-04 (director): la venta del exceso sale a bid · (1 − 1 %) y, 1 s después, si no llenó y la cuenta sigue larga,
+    """D2a-04 (director): la venta del exceso sale a bid · (1 − 2 %) y, 1 s después, si no llenó y la cuenta sigue larga,
     `exceso_verificar` la REEMPLAZA al bid nuevo con el mismo margen (antes el temporizador no tenía manejador)."""
     b = Banco(cfg, tmp_path)
     b.preparar()
@@ -2915,12 +2934,12 @@ def test_d2a_04_venta_del_exceso_que_no_llena_se_persigue_al_bid(cfg: Config, tm
     b.cotizar(TICKER, "4.58", "4.60", "4.60", tam_bid=0)               # la emergencia (100 en DAS) llena: larga 20
     b.tic_das()
     ventas = b.enviadas(Proposito.VENTA_EXCESO)
-    assert [(o.lado, o.qty, o.precio) for o in ventas] == [(Lado.VENTA, 20, D("4.53"))]     # 4,58 · 0,99
+    assert [(o.lado, o.qty, o.precio) for o in ventas] == [(Lado.VENTA, 20, D("4.48"))]     # 4,58 · 0,98
     assert f"exceso_verificar:{TICKER}" in b.temporizadores
     b.cotizar(TICKER, "4.50", "4.52", "4.51", tam_bid=0)
     b.avanzar(1.2)
     perseguida = [r for r in b.historial if isinstance(r, Reemplazar) and r.token == ventas[0].token]
-    assert [(r.qty, r.precio) for r in perseguida] == [(20, D("4.45"))]  # 4,50 · 0,99 redondeado abajo
+    assert [(r.qty, r.precio) for r in perseguida] == [(20, D("4.41"))]  # 4,50 · 0,98 redondeado abajo
     assert anotaciones(b.historial, "venta_exceso_perseguida")
     assert not anotaciones(b.historial, "temporizador_desconocido")
 

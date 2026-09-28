@@ -53,16 +53,16 @@ cd D:\Backtester\backend && .venv\Scripts\python.exe -m pytest tests/bot_das -q
 
 - El plazo de 60 s de una orden `SENDING` huérfana en el apagado nocturno se mide sobre `foto.json`, que un ejecutor recién relanzado puede tardar en reescribir.
 - El tope T1 tras reabrir se vuelve a mirar una vez a los 2 s; si el primer print llega más tarde, lo cubre el control humano de R-F-05 por aviso.
-- Los parámetros marcados PROVISIONAL (venta del exceso 1 %/3 vueltas, separación 2 s de los reintentos de stop, espera 1 s tras `GET BP`, tolerancia 0,5 % de la banda para contar un halt UP) se miden en sombra y canario.
+- Los parámetros marcados PROVISIONAL (venta del exceso 2 %/3 vueltas, separación 2 s de los reintentos de stop, espera 1 s tras `GET BP`, tolerancia 0,5 % de la banda para contar un halt UP) se miden en sombra y canario.
 
 ## 7. Decisiones que necesitan tu confirmación (cada una lleva el DEFECTO ya implementado)
 
 ### A. Dinero y stops
-1. Venta del exceso cuando la cuenta queda larga (R-C-11): sale a bid × (1 − 1 %) y se persigue al bid cada 1 s hasta 3 veces; después aviso máximo «vender a mano». ¿Valen 1 % y 3?
-2. Salida de un halt por OPEN (R-F-01 esc. 2): al mandar la orden por Q acciones se REDUCEN antes principal y emergencia en Q (a 0 se cancelan) y se reponen si la orden se rechaza o no llena 2 s tras reabrir. Alternativa: dejar los stops y no usar OPEN.
-3. Halt H (T1/T12, sin hora de fin): la orden por OPEN es un LÍMITE a precio_parada × 3,5 (el tope del 250 %); si reabre más arriba no llena y pasa a control humano.
-4. Cisne negro y halt a la vez: manda R-G-01 (el bot NO cierra; avisa nivel 3 con la decisión que habría tomado).
-5. Stops bajo la banda LULD: si el disparo del principal recortado queda ≥ el de la emergencia, se quita el principal (solo emergencia). Si solo se ACERCAN (p. ej. a +1,4 %), hoy se mantienen los dos. ¿Fijamos una distancia mínima (p. ej. 2 %) por debajo de la cual también se quita el principal?
+1. **CONFIRMADA (28-sep).** Venta del exceso cuando la cuenta queda larga (R-C-11): sale a bid × (1 − 2 %) (Jaume: más margen; el límite solo acota lo peor, llena al mejor precio del libro) y se persigue al bid cada 1 s hasta 3 veces; después aviso máximo «vender a mano».
+2. **CONFIRMADA (28-sep).** Salida de un halt por OPEN (R-F-01 esc. 2): al mandar la orden por Q acciones se REDUCEN antes principal y emergencia en Q (a 0 se cancelan) y se reponen si la orden se rechaza o no llena 2 s tras reabrir. Alternativa: dejar los stops y no usar OPEN.
+3. **CONFIRMADA (28-sep).** Halt H (T1/T12, sin hora de fin): la orden por OPEN es un LÍMITE a precio_parada × 3,5 (el tope del 250 %); si reabre más arriba no llena y pasa a control humano.
+4. **CAMBIADA (28-sep, Jaume).** Cisne negro y halt a la vez: si el halt es T1/T12 (`H`, el único posible en premercado) manda su protocolo (límite a parada × 3,5) aunque el ticker esté en cisne negro; el «cierra el humano» de R-G-01 queda solo para la pausa LULD (`P`) de RTH. El bot recuerda si el halt era LULD para aplicar lo mismo al reabrir.
+5. **CONFIRMADA (28-sep, lo hace el vigilante).** Stops bajo la banda LULD: si el disparo del principal recortado queda ≥ el de la emergencia, se quita el principal (solo emergencia). Si solo se ACERCAN (p. ej. a +1,4 %), hoy se mantienen los dos. ¿Fijamos una distancia mínima (p. ej. 2 %) por debajo de la cual también se quita el principal?
 6. Tras 5 rechazos seguidos al reponer un stop (R-C-03): el bot deja de reponer ESE stop, sigue reduciendo los demás y avisa nivel 3 (no cierra). ¿Vale, o el punto (3) del borrador (cerrar salvo subida > 100 %)?
 7. Vigilante con el ejecutor muerto y la cuenta LARGA: vende él mismo el exceso (R-C-11 lo asigna también al vigilante).
 8. TP parcial cuando nuestro lote es menor que el del backtest (capital, locates, fill a medias): se cierran las acciones LITERALES del evento (tope: lo que hay) y se anota la proporción. Alternativa: la misma PROPORCIÓN.
