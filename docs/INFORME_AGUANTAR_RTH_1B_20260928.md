@@ -118,39 +118,63 @@ variante que mejora al «no aguantar» en los TRES años (ΣR +77,3/+123,5/+102,
 
 ## B5 · Las peores operaciones de la 1B en general (peor 10 % = 448 trades, 444 por stop, ΣR −237)
 
+> **CORREGIDO el 28-sep tarde (look-ahead detectado por Álvaro — es mi propio
+> hallazgo 18 aplicado a mi análisis).** La primera versión de esta sección
+> usaba el **PMH FINAL del día** (que los propios perdedores empujan hacia
+> arriba al subir hasta el stop) y «piramidó» (pasa DESPUÉS de entrar). Con el
+> PMH final, el peor 10 % parecía tener gaps monstruosos (mediana +166 % vs
+> +96 %) y una exclusión «pmh≥200 % ∨ (≥150 % ∧ vol<5 M$)» parecía quitar
+> −54 R. **Todo eso era un artefacto.** Re-hecho abajo SOLO con lo conocido en
+> el minuto de entrada o antes: PM High Gap % ACUMULADO hasta la vela de
+> entrada, Current Gap % al precio de entrada, vol$ del premarket HASTA la
+> entrada, caída desde el PMH-hasta-entonces, precio vs VWAP-hasta-entonces,
+> hora de entrada, primera/reentrada, variables de la víspera (1.6 neto RTH,
+> 3.2 retorno), shares, días IPO, gappers a la entrada.
+
 Medido en R (= camino acumulado) con la salida actual. Qué hacen a la ENTRADA
-frente al resto:
+frente al resto (mediana):
 
-| variable (a la entrada) | peor 10 % | resto |
+| variable CAUSAL a la entrada | peor 10 % | resto |
 |---|---|---|
-| PMH Gap % (mediana) | **+166 %** | +96 % |
-| vol$ premarket (mediana) | **3,4 M$** | 6,0 M$ |
-| · tramo <5 M$ | **62,9 %** | 45,2 % |
-| · tramo >150 M$ | **0,0 %** | 0,9 % |
-| neto RTH víspera (1.6, mediana) | **+17,4 %** | +10,1 % |
-| entrada antes de 04:30 | **50,4 %** | 34,4 % |
-| primera entrada (no reentrada) | **90,4 %** | 76,5 % |
-| piramidó | **70,8 %** | 58,3 % |
-| caída desde PMH a la entrada | −19,1 % | −14,9 % |
-| precio vs VWAP | −3,0 % | −0,3 % |
+| **vol$ premarket hasta la entrada** | **3,4 M$** | 6,1 M$ |
+| · tramo <3 M$ | **45,3 %** | 32,6 % |
+| · tramo ≥20 M$ | **1,6 %** | 15,1 % |
+| **neto RTH víspera (1.6)** | **+17,4 %** | +10,1 % |
+| · tramo ≥40 % | **38,1 %** | 31,4 % |
+| **hora de entrada <04:30** | **50,4 %** | 34,4 % |
+| **primera entrada (no reentrada)** | **90,4 %** | 76,5 % |
+| caída desde el PMH-acumulado a la entrada | −19,1 % | −14,9 % |
+| precio vs VWAP (hasta la entrada) | −3,0 % | −0,3 % |
 | shares (mediana) | 2,5 M | 4,8 M |
-| días IPO / gappers activos | ≈ igual | ≈ igual |
+| **PMH Gap % ACUMULADO a la entrada** | +87,5 % | **+84,5 % (= NADA)** |
+| Current Gap % a la entrada | +56 % | +57 % (= nada) |
+| días IPO / gappers activos a la entrada | ≈ igual | ≈ igual |
+| piramidó *(descriptivo, post-entrada — no filtrable)* | 70,8 % | 58,3 % |
 
-**El patrón evitable:** el monster-gap de premarket fino que ya se disparó
-AYER — gap ≥150-200 %, vol$ <5 M$, víspera RTH fuerte. Cuantificado como
-exclusión a la entrada (candidata; medir R del grupo excluido):
+**Lo que queda en pie (causal):** el peor 10 % se CONCENTRA en el premarket
+fino (vol$ <3 M$ a la entrada), víspera RTH fuerte, primera entrada temprana
+tras una caída ya grande desde el PMH. La celda más enriquecida: **vol<3 M$ y
+víspera RTH ≥+40 %** (20,1 % del peor-10 vs 12,7 % del resto, 1,6×).
 
-| excluir si… | n fuera | % del peor-10 % | ΣR del grupo excluido |
-|---|---|---|---|
-| **pmh ≥ 200 %, o ≥ 150 % con vol<5 M$** | 997 | 22,4 % | **−54,5 R** (−18,0/−19,3/−17,3 por año) |
-| pmh ≥ 150 % y víspera RTH ≥ +20 % | 600 | 21,3 % | −20,1 R (−2,7/−13,5/−3,9) |
-| vol < 5 M$ (solo) | 2.104 | 13,4 % | +112,9 R (grupo bueno, NO excluir) |
+**Lo que NO sobrevive:** el «gap monstruoso». Con el PMH acumulado HASTA la
+entrada, el peor 10 % tiene +87,5 % vs +84,5 % del resto (nada) y el tramo
+causal ≥200 % es de los MEJORES (+0,146 R de media). **Ninguna exclusión
+causal quita un grupo perdedor** — todas las candidatas dejan fuera grupos
+POSITIVOS (+16 a +87 R):
 
-Es decir: **quitar «pmh≥200 % o (≥150 % y vol<5 M$)» elimina un grupo que
-pierde por sí mismo los tres años** (≈ +54 R al total y una cola izquierda
-más corta), sin tocar el 75 % del resto. Caveat: regla elegida tras ver los
-datos (in-sample); confirmar antes de construirla (y los años 2019-2023 con
-otra estrategia si se quiere más fuerza).
+| celda causal | n | % del peor-10 | % del resto | R medio de la celda |
+|---|---|---|---|---|
+| vol<3 M$ ∧ víspera RTH ≥+40 % | 603 | 20,1 % | 12,7 % | **+0,025** (3/3 años) |
+| vol<5 M$ ∧ 1ª entrada ∧ <04:30 | 1.141 | 37,7 % | 24,1 % | +0,052 |
+| vol ≥20 M$ (control «rico») | 945 | 8,0 % | 22,5 % | **+0,070** |
+
+**Conclusión honesta de la Parte B:** no hay regla de EXCLUSIÓN gratis a la
+entrada (el look-ahead la fabricó). Lo que sí hay es un gradiente de edge por
+liquidez medido causalmente: de **+0,025 R/trade** (premarket <3 M$ con
+víspera ≥+40 %) a **+0,070 R/trade** (vol ≥20 M$) — ≈3× de diferencia. La
+acción correcta es **tamaño/prioridad de poder de compra** (más pequeño o
+último en la celda fina-fuerte-víspera; tamaño pleno en premarket rico), no
+excluir. Coherente con el uso ya validado de 6.1 y 3.2 como priorizadores.
 
 ## Conclusiones
 
@@ -163,9 +187,11 @@ otra estrategia si se quiere más fuerza).
    aguantar-todo de Portfolio.
 3. Lo que NO separa: el propio % camino, el precio, las shares, el contador de
    gappers (re-invalida 7.2b por la vía práctica).
-4. Peores operaciones = monster-gap + premarket fino + víspera que ya corrió +
-   primera entrada temprana piramidando. Excluible a la entrada con
-   «pmh≥200 % | (≥150 % ∧ vol<5 M$)»: −54 R consistentes.
+4. Peores operaciones = premarket fino (vol$ <3 M$ a la entrada), víspera RTH
+   fuerte (≥+40 %), primera entrada temprana. Con variables causales NO hay
+   exclusión gratis (la de «gaps monstruosos» era look-ahead): hay un gradiente
+   de edge +0,025 R (celda fina-fuerte) → +0,070 R (vol ≥20 M$) → usar como
+   TAMAÑO/prioridad, no como exclusión.
 5. 2026 advertencia: aguantar sin filtro fue MALO ese año (solo la versión con
    IPO<365 d se mantuvo positiva).
 
