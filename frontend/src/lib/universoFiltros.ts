@@ -40,6 +40,12 @@ export const PARAMETROS_UNIVERSO: ParametroUniverso[] = [
   // no víspera). "Primer día en el lago" NO es la IPO real (el lago empieza
   // en 2019: lo listado antes llega con la edad truncada).
   { key: "days_since_first_day", label: "Días desde 1er día en lago (≈IPO, lago 2019+)", unit: "d", placeholder: "90" },
+  // Paquete «estrategias nuevas» (2026-09-28, ORDEN §2): evidencia sólida en el
+  // UNIVERSO aunque la 1B no la cobre — material para diseñar estrategias
+  // distintas de la 1B. Solo en Gap -1 (son de la víspera).
+  { key: "volusd_prev", label: "Vol. $ víspera (cierre×vol RTH)", unit: "$", placeholder: "5000000" },
+  { key: "gappers_prev", label: "Gappers víspera (nº con PMH≥50 %)", unit: "nº", placeholder: "20" },
+  { key: "wick_sup_prev", label: "Mecha superior víspera (% del rango)", unit: "%", placeholder: "40" },
 ];
 
 export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
@@ -57,6 +63,12 @@ export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
     "Retorno intra-RTH del día ((cierre RTH − apertura RTH) / apertura RTH). Negativo = vela roja: en Gap -1 es la «víspera roja» del Bloque 1. NO es contra el cierre del día anterior.",
   ret_5d_pct:
     "Retorno del cierre de la víspera frente al cierre de 5 sesiones antes, en % (producto de los retornos diarios de esas 5 sesiones, con el cierre previo ajustado por splits). Criterio 3.2 del Bloque 3: «venía cayendo» (< 0) da más fade premarket. En la 1B se validó como herramienta de SIZING (más peso a «venía cayendo»); en DT y 2B no aportaba.",
+  volusd_prev:
+    "Volumen en DÓLARES del día anterior (cierre RTH × volumen RTH de la víspera). Criterio 2.4 del B2-bis: la víspera con poco dinero recorrido va con peores trades; el descriptor de liquidez más causal que hay (tramos del estudio: 0,25-10 M$). Para estrategias nuevas y prioridad de poder de compra.",
+  gappers_prev:
+    "Número de acciones que cerraron la VÍSPERA con PMH Gap ≥ 50 % (el «día caliente» del criterio 7.2a): víspera con >20 gappers → el fade del día sube a 35-40 % (8/8 años). Cuenta el lago entero (no el universo filtrado) y hereda el último día con gappers si la víspera no tuvo ninguno. La 2B ya cobra parte de esta señal.",
+  wick_sup_prev:
+    "Mecha superior de la vela de la VÍSPERA, en % del rango del día ((high − máx(apertura, cierre)) ÷ (high − low) × 100). Bloque 8: la víspera con rechazo arriba → el gap de hoy se desinfla ~6 pp más (7/8 años). Descriptor que ni la 1B ni la 2B cobran: para estrategias nuevas (fade tarde).",
   days_since_first_day:
     "Días entre el día del gap y el PRIMER DÍA del ticker en el lago. Es un PROXY de la IPO, no la IPO real: el lago empieza en 2019, así que lo listado antes de 2019 llega con la edad recortada (un ticker de 2015 aparece como «~N años» según 2019). Criterio 6.1 del Bloque 6: los recién listados son los mejores trades de la 1B (monótono: <30 d +10 % → >5 y +2 %) y el 2B lo replica. Úsalo para PRIORIZAR poder de compra, no para excluir (los viejos también ganan).",
 };
@@ -99,6 +111,9 @@ export function campoDeRegla(section: SeccionUniverso, paramKey: string): string
       rth_range_pct: "lag_rth_range_pct_1",
       day_return_pct: "lag_day_return_pct_1",
       ret_5d_pct: "lag_ret5d_pct_1",
+      volusd_prev: "lag_volusd_1",
+      gappers_prev: "lag_gappers_prev_1",
+      wick_sup_prev: "lag_wick_sup_1",
     }[paramKey] ?? "";
   }
   if (section === "gap_day") {

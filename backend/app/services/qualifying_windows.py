@@ -102,6 +102,60 @@ def _days_since_first_day_select() -> str:
     )
 
 
+# ── Paquete «estrategias nuevas» (2026-09-28, ORDEN §2 de Álvaro) ─────────────
+# Tres ventanas compuestas de VÍSPERA con evidencia sólida en el universo
+# aunque la 1B no las cobre — material para diseñar estrategias distintas.
+#
+# vol $ de la víspera (criterio 2.4 del B2-bis): rth_close × rth_volume del
+# día anterior, en DÓLARES (el estudio medía tramos 0,25-10 M$).
+VOLUSD_PREV_ALIAS = "lag_volusd_1"
+
+# Mecha superior de la víspera (Bloque 8): (high − máx(open, close)) /
+# (high − low) del día anterior, EN % DEL RANGO (0-100). Descriptor débil del
+# universo (7/8 años) que la 1B/2B no cobran: para estrategias nuevas.
+WICK_SUP_PREV_ALIAS = "lag_wick_sup_1"
+
+# Nº de gappers de la víspera (criterio 7.2a, «día caliente»): cruces del
+# mercado ESE día (cuenta de filas pmh_gap_pct >= 50 por FECHA) referida a la
+# sesión anterior disponible del ticker. Verificado INMUNE a la colisión del
+# 7.2b (60/60: es un lookup por fecha, nunca usa minutos de entrada). NOTA de
+# población: cuenta el lago ENTERO (no el universo filtrado del estudio) y en
+# días sin ningún gapper hereda el último día con gappers (semántica LAG).
+GAPPERS_PREV_ALIAS = "lag_gappers_prev_1"
+_N_GAPPERS_DIA = "n_gappers_dia"
+
+
+def _volusd_prev_select() -> str:
+    return (
+        'LAG("rth_close" * "rth_volume", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") '
+        f"AS {VOLUSD_PREV_ALIAS}"
+    )
+
+
+def _wick_sup_prev_select() -> str:
+    return (
+        'LAG(100.0 * ("high" - GREATEST("open", "close")) / NULLIF("high" - "low", 0), 1) '
+        'OVER (PARTITION BY ticker ORDER BY "timestamp") '
+        f"AS {WICK_SUP_PREV_ALIAS}"
+    )
+
+
+def _gappers_dia_select() -> str:
+    """Nivel 1 (stage-1 / subquery base): gappers de CADA fecha."""
+    return (
+        'COUNT(*) FILTER (WHERE pmh_gap_pct >= 50) '
+        f'OVER (PARTITION BY CAST("timestamp" AS DATE)) AS {_N_GAPPERS_DIA}'
+    )
+
+
+def _gappers_prev_select() -> str:
+    """Nivel 2 (stage-2): la cuenta del día anterior, LAG por ticker."""
+    return (
+        f'LAG("{_N_GAPPERS_DIA}", 1) OVER (PARTITION BY ticker ORDER BY "timestamp") '
+        f"AS {GAPPERS_PREV_ALIAS}"
+    )
+
+
 def prev_day_lag1_selects() -> list[str]:
     """Selects LAG 1 completos (todas las fuentes UI de Gap -1)."""
     return [_lag1_select(src) for src in PREV_DAY_LAG_SOURCES]
@@ -119,7 +173,8 @@ def stage2_prev_day_lag1_selects() -> list[str]:
         _lag1_select(src)
         for src in PREV_DAY_LAG_SOURCES
         if src not in STAGE2_BUILTIN_LAG1_SOURCES
-    ] + [_ret5d_select(), _days_since_first_day_select()]
+    ] + [_ret5d_select(), _days_since_first_day_select(),
+         _volusd_prev_select(), _wick_sup_prev_select(), _gappers_prev_select()]
 
 
 # Fuentes LEAD de la subquery de materializacion de pares (query.py). Mismo
@@ -147,12 +202,21 @@ def dataset_pairs_subquery_lagged_sql() -> str:
     cols.extend(prev_day_lag1_selects())
     cols.append(_ret5d_select())
     cols.append(_days_since_first_day_select())
+    cols.append(_volusd_prev_select())
+    cols.append(_wick_sup_prev_select())
+    # El conteo de gappers necesita la columna por FECHA antes del LAG por
+    # ticker: un nivel base más (ventanas anidadas no las admite DuckDB).
+    cols.append(_gappers_prev_select())
     inner = ",\n                           ".join(cols)
     return (
         "(\n"
         "                    SELECT *,\n"
         f"                           {inner}\n"
-        "                    FROM daily_metrics\n"
+        "                    FROM (\n"
+        "                        SELECT *,\n"
+        f"                               {_gappers_dia_select()}\n"
+        "                        FROM daily_metrics\n"
+        "                    ) dm_base\n"
         "                ) dm_lagged"
     )
 
@@ -202,6 +266,11 @@ def window_alias_to_expr() -> dict[str, str]:
     # materializada el glob cubre el lago COMPLETO → el MIN por partición es
     # la primera fecha real. OJO en GCS: gcs_cache amplía la lectura.
     out[DAYS_SINCE_FIRST_DAY_ALIAS] = _days_since_first_day_select()
+    # Paquete «estrategias nuevas» (2026-09-28): nivel único, calculables al
+    # vuelo sobre el parquet bygap (que trae rth_close/rth_volume/high/low/
+    # open — columnas BASE del ETL).
+    out[VOLUSD_PREV_ALIAS] = _volusd_prev_select()
+    out[WICK_SUP_PREV_ALIAS] = _wick_sup_prev_select()
     return out
 
 

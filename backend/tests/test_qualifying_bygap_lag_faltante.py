@@ -44,7 +44,9 @@ def _make_con(ruta_parquet: str) -> duckdb.DuckDBPyConnection:
                  # el select 3.2 (lag_ret5d_pct_1) viaja SIEMPRE en stage-2 y
                  # usa close/prev_close: el mini-lago las necesita aunque ningún
                  # test de este fichero filtre por la ventana
-                 '"close" DOUBLE', '"prev_close" DOUBLE']
+                 '"close" DOUBLE', '"prev_close" DOUBLE',
+                 # mecha sup víspera (paquete 28-sep): OHLC diario completo
+                 '"high" DOUBLE', '"low" DOUBLE']
     for src in PREV_DAY_LAG_SOURCES:
         if any(c.startswith(f"{src} ") for c in estaticas):
             continue  # rth_close / rth_volume ya están
@@ -68,7 +70,8 @@ def _make_con(ruta_parquet: str) -> duckdb.DuckDBPyConnection:
                            [1.0, 0.5, -3.0, 2.0, -0.5]),
     }
     fijos = {"rth_open": 10.0, "rth_high": 12.0, "rth_low": 8.0,
-             "pm_high": 13.0, "pm_low": 7.0, "close": 10.0, "prev_close": 10.0}
+             "pm_high": 13.0, "pm_low": 7.0, "close": 10.0, "prev_close": 10.0,
+             "high": 11.0, "low": 9.0}
     for i, d in enumerate(dias):
         for t, j in (("AAA", 0), ("BBB", 1)):
             fila = {"ticker": t, "timestamp": d, **fijos}
@@ -174,19 +177,21 @@ def entorno_ret5d(tmp_path, monkeypatch):
         '"close" DOUBLE, "prev_close" DOUBLE, rth_open DOUBLE, rth_high DOUBLE, '
         "rth_low DOUBLE, rth_close DOUBLE, rth_volume BIGINT, pm_high DOUBLE, "
         "pm_low DOUBLE, gap_pct DOUBLE, pm_volume BIGINT, \"open\" DOUBLE, "
-        "pmh_gap_pct DOUBLE, rth_range_pct DOUBLE, day_return_pct DOUBLE)"
+        "pmh_gap_pct DOUBLE, rth_range_pct DOUBLE, day_return_pct DOUBLE, "
+        # mecha sup víspera (paquete 28-sep): OHLC diario completo
+        '"high" DOUBLE, "low" DOUBLE)'
     )
     for i in range(7):
         con.execute(
             'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 10.0, 12.0, 8.0, 10.0, '
-            "1000000, 13.0, 7.0, 5.0, 500000, 10.0, 50.0, 3.0, 1.0)",
+            "1000000, 13.0, 7.0, 5.0, 500000, 10.0, 50.0, 3.0, 1.0, 11.0, 9.0)",
             ["AAA", f"2024-01-{i + 1:02d}", 10.0 * 0.9 ** i,
              10.0 * 0.9 ** (i - 1) if i else 10.0],
         )
     for i in range(2):
         con.execute(
             'INSERT INTO daily_metrics VALUES (?, ?, ?, ?, 10.0, 12.0, 8.0, 10.0, '
-            "1000000, 13.0, 7.0, 5.0, 500000, 10.0, 50.0, 3.0, 1.0)",
+            "1000000, 13.0, 7.0, 5.0, 500000, 10.0, 50.0, 3.0, 1.0, 11.0, 9.0)",
             ["BBB", f"2024-01-{i + 1:02d}", 10.0, 10.0],
         )
     con.execute(
