@@ -3036,6 +3036,31 @@ def test_e1_04_halt_h_en_premercado_con_mantener_ensancha_el_limite_de_los_stops
     assert not b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE)
 
 
+def test_r_f_06_halt_de_premercado_que_reabre_en_rth_cambia_la_limite_pm_por_open(cfg: Config, tmp_path: Path) -> None:
+    """R-F-06 (Jaume 29-sep): un halt H que empieza en premercado casi siempre reabre en RTH. La límite de PM (que no entra
+    en el cruce de reapertura) se RETIRA al llegar RTH y sale la orden por OPEN (límite al tope por ser H); los stops se
+    reducen antes de mandarla y no queda ninguna compra doble."""
+    b = _banco_premercado(cfg, tmp_path)
+    b.libro.halt(TICKER, "H", "08:00:30")
+    b.cotizar(TICKER, "4.08", "4.10", "4.09")                           # sobre el principal (4,00), dentro de su límite: escenario 2
+    b.avanzar(2)
+    pm = b.enviadas(Proposito.HALT_PM_LIMITE)
+    assert len(pm) == 1 and pm[0].tipo is TipoOrden.LIMITE and pm[0].ruta != "OPEN"
+    assert not b.enviadas(Proposito.HALT_OPEN)
+    marca = b.marca()
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 5, tzinfo=ET))
+    tanda = b.desde(marca)
+    assert [c.token for c in acciones_de(tanda, Cancelar) if c.token == pm[0].token]
+    assert anotaciones(tanda, "halt_pm_limite_a_open")
+    abiertas = b.enviadas(Proposito.HALT_OPEN)
+    assert [(o.tipo, o.ruta, o.qty) for o in abiertas] == [(TipoOrden.LIMITE, "OPEN", 100)]
+    assert _vivas_compra(b, Proposito.HALT_PM_LIMITE) == 0 and _vivas_compra(b, Proposito.HALT_OPEN) == 100
+    b.libro.reabrir(TICKER, D("5.00"))
+    b.cotizar(TICKER, "4.99", "5.01", "5.00")
+    b.avanzar(3)
+    assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
+
+
 def test_e1_06_halt_luld_pide_las_bandas_al_momento(cfg: Config, tmp_path: Path) -> None:
     """E1-06: con TA:P se pide `GET LDLU X` al detectar el halt (clasificar UP/DOWN y recortar los stops), también fuera
     de RTH donde no hay sondeo por minuto."""

@@ -468,6 +468,7 @@ class Decisor:
         self._halt_fin: dict[str, Optional[datetime]] = {}
         self._halt_decision: dict[str, str] = {}
         self._halt_luld: dict[str, bool] = {}       # D4 (Jaume 28-sep): si el halt en curso era una pausa LULD (P)
+        self._halt_pm_a_open: set[str] = set()      # R-F-06 (Jaume 29-sep): límite de PM retirada para salir por OPEN en RTH
         self._halt_decidir_programado: set[str] = set()   # G1A-14: el halt en curso ya tiene su halt_decidir
         self._halt_humano_avisado: set[str] = set()
         self._halt_hoy: set[str] = set()
@@ -3458,8 +3459,25 @@ class Decisor:
             if decision == "cerrar_mercado" and not halts.debe_enviar_open(simb):
                 return acciones + [Anotar("halt_guardia", {"ticker": ticker, "motivo": "la MKT por OPEN ya salió",
                                                            "regla": "injerto A §8.23"})]
+            pm_vivas = [o for o in self._vivas(ticker) if o.proposito is Proposito.HALT_PM_LIMITE]
+            if decision == "cerrar_mercado" and pm_vivas:
+                # R-F-06 (Jaume 29-sep): el halt empezó en premercado y sigue en RTH: la límite de PM no entra en el
+                # cruce de reapertura; se retira y, cuando DAS confirme, sale la orden por OPEN (con tope si es H).
+                if ticker not in self._halt_pm_a_open:
+                    self._halt_pm_a_open.add(ticker)
+                    acciones += [Cancelar(id_das=o.id_das, token=o.token, motivo="halt: de límite PM a OPEN (R-F-06)")
+                                 for o in pm_vivas if o.id_das is not None]
+                    acciones.append(Anotar("halt_pm_limite_a_open", {"ticker": ticker,
+                                                                    "tokens": [o.token for o in pm_vivas],
+                                                                    "regla": "R-F-06"}))
+                acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", SALIDA_REPROGRAMAR_S, {"ticker": ticker}))
+                return acciones
+            self._halt_pm_a_open.discard(ticker)
             if self._orden_halt_viva(ticker):
-                return acciones + [Anotar("halt_guardia", {"ticker": ticker, "motivo": "orden de salida del halt viva"})]
+                acciones.append(Anotar("halt_guardia", {"ticker": ticker, "motivo": "orden de salida del halt viva"}))
+                if pm_vivas:            # la límite de PM espera: al llegar RTH se cambia por OPEN (R-F-06)
+                    acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
+                return acciones
             qty = abs(pos.neta) - self._comprando(ticker)
             if qty <= 0:
                 return acciones
@@ -3470,6 +3488,8 @@ class Decisor:
             acciones += reduccion + envio
             if decision == "cerrar_mercado":
                 simb.orden_open_enviada = True
+            else:                       # R-F-06: si el halt de PM llega a RTH, la límite se cambia por OPEN
+                acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
             tipo = "MKT" if orden.tipo is TipoOrden.MERCADO else f"LMT {orden.precio}"
             acciones.append(Avisar(Nivel.AVISO, Grupo.B,
                                    f"HALT {avisos.escapar(ticker)}: se sale ({avisos.escapar(decision)}) con {qty} "
@@ -3551,6 +3571,7 @@ class Decisor:
         self._halt_en_curso.discard(ticker)
         self._halt_fin.pop(ticker, None)
         self._halt_decidir_programado.discard(ticker)
+        self._halt_pm_a_open.discard(ticker)
         cot = self._cot(ticker)
         precio = cot.last if cot is not None and cot.last is not None else simb.precio_parada
         decision = self._halt_decision.pop(ticker, None)
