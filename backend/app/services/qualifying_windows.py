@@ -156,6 +156,57 @@ def _gappers_prev_select() -> str:
     )
 
 
+# ── Filtro «Hora de inicio del gap» (5.2-bis, ORDEN §3 de Álvaro) ─────────────
+#
+# t del PRIMER cruce de +X % sobre el cierre de la víspera en la línea
+# continua 16:00 víspera → 09:30 (AH de la víspera: t 0-239; PM: t 720-1049,
+# es decir, minuto-del-día + 480). Fuente: el PIVOTE gap_start.parquet que
+# escribe scripts/construir_gappers_activos.py junto a la tabla del indicador
+# «Gappers activos» (misma pasada sobre el lago 1m; regenerar en el mismo
+# ciclo que el bygap). Columnas gap_start_min_<nivel> para los mismos
+# GAPPERS_ACTIVE_LEVELS; NULL = ese ticker-día no cruzó el nivel («sin dato»).
+#
+# La consulta viaja como UMBRAL MOVIBLE sobre t: p. ej. «empezó antes de las
+# 05:00» = gap_start_min_50 <= 780 (780 = 5*60+480). TABLA DE CONVERSIÓN para
+# la UI: 240 = 20:00 víspera · 720 = 04:00 · 780 = 05:00 · 840 = 06:00 ·
+# 900 = 07:00 · 960 = 08:00 · 1049 = 09:29.
+#
+# SIN LOOK-AHEAD SOLO SI la estrategia entra DESPUÉS del cruce: p. ej.
+# exigiendo «PM High Gap % >= X» en la vela de entrada (el PMH acumulado ya
+# >= X implica que el cruce de +X ya ocurrió). La UI lo avisa.
+GAP_START_LEVELS = (20, 30, 40, 50, 60, 75, 100, 150, 200)
+
+
+def gap_start_columns() -> list[str]:
+    return [f"gap_start_min_{n}" for n in GAP_START_LEVELS]
+
+
+def gap_start_parquet_path() -> str:
+    import os
+    ruta = os.getenv("GAP_START_TABLE", "").strip()
+    if ruta:
+        return ruta.replace("\\", "/")
+    base = os.getenv("CACHE_DIR", ".cache/intraday")
+    return os.path.join(base, "gappers_activos", "gap_start.parquet").replace("\\", "/")
+
+
+def needs_gap_start(where_sql: str) -> bool:
+    """¿El WHERE referencia alguna columna gap_start_min_*? (gate del join)"""
+    import re
+    return re.search(r"\bgap_start_min_\d+\b", where_sql or "") is not None
+
+
+def gap_start_join_sql(source: str) -> str:
+    """LEFT JOIN con el pivote. `source` es el alias/tabla con timestamp y
+    ticker (p. ej. 'dm_lagged' o una subquery envuelta). Las columnas del
+    pivote llegan SIN prefijo: el WHERE las referencia tal cual."""
+    return (
+        f" LEFT JOIN read_parquet('{gap_start_parquet_path()}') gs "
+        f"ON gs.ticker = {source}.ticker "
+        f"AND CAST(gs.fecha AS DATE) = CAST({source}.\"timestamp\" AS DATE)"
+    )
+
+
 def prev_day_lag1_selects() -> list[str]:
     """Selects LAG 1 completos (todas las fuentes UI de Gap -1)."""
     return [_lag1_select(src) for src in PREV_DAY_LAG_SOURCES]

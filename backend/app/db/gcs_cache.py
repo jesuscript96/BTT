@@ -636,9 +636,11 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
     ) i
     """
     
+    from app.services.qualifying_windows import gap_start_join_sql, needs_gap_start
+    _gs_join = gap_start_join_sql("i") if needs_gap_start(where_full) else ""
     sql = f"""
     SELECT *, CAST("timestamp" AS DATE) AS date
-    FROM {subquery}
+    FROM {subquery}{_gs_join}
     WHERE {where_full}
     """
     
@@ -653,9 +655,10 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
                 "  qualifying: hive year/month predicate failed (%s); retrying without it",
                 e,
             )
+            _gs_join_fb = gap_start_join_sql("i") if needs_gap_start(where_clause) else ""
             sql_fallback = f"""
     SELECT *, CAST("timestamp" AS DATE) AS date
-    FROM {subquery}
+    FROM {subquery}{_gs_join_fb}
     WHERE {where_clause}
     """
             try:

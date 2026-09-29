@@ -514,6 +514,11 @@ def _can_use_hot_cache(filters: dict) -> bool:
         field = rule.get("field") or rule.get("metric")
         if isinstance(field, str) and (field.startswith("lead_") or field.startswith("lag_")):
             return False
+        # «Hora de inicio del gap»: columna de un parquet externo (LEFT JOIN en
+        # las vias autoritativas); el hot cache no la tiene y la regla se
+        # ignoraria EN SILENCIO. Igual que las lag_/lead_.
+        if isinstance(field, str) and field.startswith("gap_start_"):
+            return False
 
     # Check top-level min_gap_pct
     min_gap_raw = filters.get("min_gap_pct")
@@ -1056,9 +1061,18 @@ def _fetch_qualifying_data_uncached(
                             f"[QUALIFYING] no pude preparar las ventanas al-vuelo "
                             f"({type(e).__name__}: {e}); sigo con el parquet tal cual"
                         )
+                    from app.services.qualifying_windows import (
+                        gap_start_join_sql, needs_gap_start,
+                    )
+                    _gs_join = gap_start_join_sql("gsbase") if needs_gap_start(where_clause) else ""
+                    # Alias DIRECTO, sin paréntesis: DuckDB no admite una
+                    # función de tabla parentizada — (read_parquet(..)) gsbase
+                    # es Parser Error; read_parquet(..) gsbase y (SELECT..)
+                    # gsbase son ambos válidos.
+                    _gs_from = _from if not _gs_join else f"{_from} gsbase"
                     df = con.execute(
                         f'SELECT *, CAST("timestamp" AS DATE) AS date '
-                        f"FROM {_from} "
+                        f"FROM {_gs_from}{_gs_join} "
                         f"WHERE {where_clause}"
                     ).fetchdf()
                     if not df.empty:
@@ -1153,9 +1167,13 @@ def _fetch_qualifying_data_uncached(
                 FROM raw_daily
             ) i
             """
+            from app.services.qualifying_windows import (
+                gap_start_join_sql, needs_gap_start,
+            )
+            _gs_join = gap_start_join_sql("i") if needs_gap_start(where_clause) else ""
             sql = f"""
             SELECT *, CAST("timestamp" AS DATE) AS date
-            FROM {subquery}
+            FROM {subquery}{_gs_join}
             WHERE {where_clause}
             """
             df = con.execute(sql).fetchdf()

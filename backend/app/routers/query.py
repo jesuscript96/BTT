@@ -206,10 +206,18 @@ def _compute_dataset_pairs(filters: dict):
     # `open` viaja solo para poder aplicar el suelo de precio con la MISMA
     # funcion que el universo del backtest; se descarta justo despues, porque
     # dataset_pairs solo guarda (dataset_id, ticker, date).
+    from app.services.qualifying_windows import gap_start_join_sql, needs_gap_start
+    _where_pairs = where_m_stats.replace('daily_metrics.', 'dm_lagged.')
+    _gs_join = gap_start_join_sql("dm_lagged") if needs_gap_start(_where_pairs) else ""
+    # Con el JOIN activo, `ticker` es ambiguo (dm_lagged y gs lo tienen):
+    # columnas calificadas. Sin join, la SQL queda EXACTAMENTE como siempre.
+    _sel = ("dm_lagged.ticker, CAST(CAST(dm_lagged.timestamp AS DATE) AS VARCHAR) as date, dm_lagged.open"
+            if _gs_join
+            else "ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date, open")
     select_sql = f"""
-        SELECT ticker, CAST(CAST(timestamp AS DATE) AS VARCHAR) as date, open
-        FROM {subquery_lagged}
-        WHERE {where_m_stats.replace('daily_metrics.', 'dm_lagged.')}
+        SELECT {_sel}
+        FROM {subquery_lagged}{_gs_join}
+        WHERE {_where_pairs}
     """
 
     # Heavy phase WITHOUT the global lock: a read-only scan over daily_metrics
