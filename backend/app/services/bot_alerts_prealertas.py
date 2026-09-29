@@ -246,6 +246,15 @@ class ConstructorParcial:
         self._cerradas.clear()
         self._terminadas.clear()
 
+    def en_curso(self, ticker: str) -> Optional[VelaEnCurso]:
+        """La vela que se está formando, EN CUALQUIER SEGUNDO (no solo 44-59), o
+        None si no hay o su minuto ya cerró. Solo lectura: la usa la prealerta
+        por distancia (29-sep-2026), que mira el precio en vivo cada segundo."""
+        v = self._curso.get(ticker)
+        if v is None or v.minuto <= self._cerradas.get(ticker, -1):
+            return None
+        return v
+
     def marcar_cerrada(self, ticker: str, ts) -> None:
         """Avisa de que la vela de ese minuto YA CERRO. Llamar al recibir `AM`.
 

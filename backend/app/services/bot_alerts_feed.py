@@ -76,11 +76,21 @@ ET = "America/New_York"
 # Lo que costaba esperar (que el motor no rellenaba el hueco) ya no aplica:
 # desde el 22-sep `al_reconectar` recupera por REST las velas que falten, y el
 # 23-sep funciono en los dos cortes («tras el corte no faltaba ninguna vela»).
-ESPERA_RECONEXION = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION", "15"))
-# Si nos vuelven a echar sin aguantar un minuto, la siguiente espera se dobla
-# (30, 60) hasta el tope. Las velas que falten se recuperan por REST al
-# reconectar (`al_reconectar`).
-ESPERA_RECONEXION_MAX = float(os.getenv("MASSIVE_WS_ESPERA_RECONEXION_MAX", "60"))
+#
+# ESCALERA (29-sep-2026, Jaume: «15 segundos es mucho si el problema no es
+# nuestro»). Ese dia, 1008 a las 10:03:39 con el bot conectado desde las 09:41:
+# el corte no lo provocamos nosotros y los 15 s eran hueco puro. Ahora el primer
+# reintento va a los 3 s y, si Massive nos vuelve a echar sin aguantar un
+# minuto (la cuenta sigue llena: el socio o la zombi siguen dentro), se sube un
+# peldaño: 5, 15, 30, 60. Asi se vuelve casi al instante cuando el hueco es
+# nuestro y no se martillea cuando no lo es. El chat del bot de DAS lo aceptó con
+# una condicion: medirlo en el log los primeros dias (la linea «reintento en N s
+# (peldaño k)»). Las velas del hueco se recuperan por REST (`al_reconectar`).
+ESCALERA_RECONEXION = tuple(
+    float(x) for x in os.getenv("MASSIVE_WS_ESCALERA_RECONEXION", "3,5,15,30,60").split(",")
+    if x.strip())
+ESPERA_RECONEXION = ESCALERA_RECONEXION[0]
+ESPERA_RECONEXION_MAX = ESCALERA_RECONEXION[-1]
 
 
 def clave_bot() -> str:
@@ -320,7 +330,7 @@ class FeedEnVivo:
                 "MASSIVE_API_KEY"
             )
 
-        espera = ESPERA_RECONEXION
+        peldano = 0
         # El reloj interno corre en ESTE bucle y vive lo que viva el lector,
         # a traves de las reconexiones: se para solo cuando se para el feed.
         if self._tarea_pulso is None:
@@ -391,16 +401,18 @@ class FeedEnVivo:
                 self._ws = None
                 if self._caido_desde is None:
                     self._caido_desde = time.time()
-                # 5 s la primera vez; si la conexion NO aguanto ni un minuto (nos
-                # han vuelto a echar: la conexion sobrante seguia contando), se
-                # dobla hasta ESPERA_RECONEXION_MAX. Un rechazo repetido no se
-                # martillea, y volver despacio no tira a otro cliente de la cuenta.
+                # El primer peldaño de la ESCALERA; si la conexion NO aguanto ni
+                # un minuto (nos han vuelto a echar: la conexion sobrante seguia
+                # contando), el siguiente, hasta el ultimo. Un rechazo repetido no
+                # se martillea, y volver despacio no tira a otro cliente.
                 ahora = asyncio.get_event_loop().time()
                 if conectado_en is not None and ahora - conectado_en >= 60:
-                    espera = ESPERA_RECONEXION
-                logger.warning("[FEED] desconectado (%s); reintento en %.0f s", exc, espera)
+                    peldano = 0
+                espera = ESCALERA_RECONEXION[min(peldano, len(ESCALERA_RECONEXION) - 1)]
+                logger.warning("[FEED] desconectado (%s); reintento en %.0f s (peldaño %d de %d)",
+                               exc, espera, peldano + 1, len(ESCALERA_RECONEXION))
                 await asyncio.sleep(espera)
-                espera = min(espera * 2, ESPERA_RECONEXION_MAX)
+                peldano += 1
         self.conectado = False
         if self._tarea_pulso is not None:
             self._tarea_pulso.cancel()

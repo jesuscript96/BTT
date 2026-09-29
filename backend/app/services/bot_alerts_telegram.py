@@ -89,6 +89,11 @@ def motivo_inactivo() -> str:
     return ""
 
 
+# Prealertas «por condiciones» (modos simple y distancia): dicen que falta o que
+# ya se cumple, y no llevan acciones porque aún no hay señal.
+_MOTIVOS_PREALERTA = ("Falta:", "Se cumple")
+
+
 def _esc(t: Any) -> str:
     """Escapa lo que va dentro del HTML de Telegram."""
     return (str(t).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
@@ -175,7 +180,7 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
         if ev.stop is not None:
             precio += f" · 🔴 Stop: {_num(ev.stop)}"
         lineas.append(precio)
-        if prea and ev.motivo and str(ev.motivo).startswith("Falta:"):
+        if prea and ev.motivo and str(ev.motivo).startswith(_MOTIVOS_PREALERTA):
             # Prealerta SIMPLE (26-sep-2026): cumple todo menos una condición;
             # se dice cuál. Sin acciones: aún no hay señal.
             return "\n".join(lineas + [f"⏳ {_esc(ev.motivo)}", pie])
@@ -194,7 +199,7 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
         icono = "➖" if reduce else "➕"
         verbo = lote or ("REDUCIR" if reduce else "AÑADIR")
         lineas = cabecera + [f"{icono} <b>{tk}</b> · {verbo}", f"Precio: <b>{_num(ev.precio)}</b>"]
-        if prea and ev.motivo and str(ev.motivo).startswith("Falta:"):
+        if prea and ev.motivo and str(ev.motivo).startswith(_MOTIVOS_PREALERTA):
             # Prealerta SIMPLE de un anyadido (29-sep-2026): como la de entrada,
             # dice que condicion falta y no lleva acciones (aun no hay senal).
             return "\n".join(lineas + [f"⏳ {_esc(ev.motivo)}", pie])

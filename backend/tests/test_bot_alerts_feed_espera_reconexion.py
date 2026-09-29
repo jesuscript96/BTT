@@ -1,4 +1,4 @@
-"""El feed espera ESPERA_RECONEXION antes de volver a conectar, siempre.
+"""El feed espera antes de volver a conectar, siempre (escalera desde el 29-sep).
 
 18-sep-2026: la cuenta de Massive la comparten dos claves; reconectar al
 segundo tras un corte sucio suma una conexion de mas y Massive echa a otro
@@ -31,38 +31,46 @@ def _feed():
     return feed_mod.FeedEnVivo(["AAA"], al_cerrar_vela=lambda *a, **k: None)
 
 
-@pytest.mark.parametrize("espera_env", [5.0, 20.0])
-def test_espera_configurada_antes_de_cada_reconexion(monkeypatch, espera_env):
+def _esperas_con_rechazos(monkeypatch, n: int) -> list[float]:
+    """Massive nos rechaza `n` veces seguidas: las esperas que hace el feed."""
     monkeypatch.setenv("MASSIVE_BOT_API_KEY", "clave")
-    monkeypatch.setattr(feed_mod, "ESPERA_RECONEXION", espera_env)
     monkeypatch.setattr(feed_mod.websockets, "connect", _ConexionQueFalla)
     esperas: list[float] = []
 
     async def sleep_falso(segundos):
         esperas.append(segundos)
-        if len(esperas) >= 3:
+        if len(esperas) >= n:
             f._parar = True
 
     monkeypatch.setattr(feed_mod.asyncio, "sleep", sleep_falso)
     f = _feed()
     asyncio.run(f.correr())
-    assert esperas[0] == espera_env, "la primera reconexion ya espera el minimo"
-    assert all(e >= espera_env for e in esperas), esperas
-    assert esperas[1] == min(espera_env * 2, feed_mod.ESPERA_RECONEXION_MAX), "sin aguantar un minuto, se dobla hasta el tope (no se martillea)"
+    return esperas
 
 
-def test_por_defecto_quince_segundos_y_tope_de_un_minuto():
-    """23-sep-2026: de 5 a 15 s, y el ping aguanta 60 s.
+def test_la_escalera_sube_un_peldano_por_rechazo_y_se_queda_en_el_ultimo(monkeypatch):
+    """29-sep-2026. Sin aguantar un minuto conectados (la cuenta sigue llena),
+    cada reintento espera el peldaño siguiente; no se martillea."""
+    esperas = _esperas_con_rechazos(monkeypatch, 7)
+    assert esperas == [3.0, 5.0, 15.0, 30.0, 60.0, 60.0, 60.0]
 
-    El 21-sep se bajo a 5 s porque el corte tipico duraba 1-2 s y la conexion
-    sobrante era la DEL SOCIO, que ya no solia estar. El 23-sep aparecio el
-    caso contrario: a las 14:05:32 Massive nos echo a NOSOTROS por ping
-    timeout (1011) estando el bot saturado, y entonces la conexion zombi es la
-    nuestra. Volver a los 5 s se solapa con ella, la cuenta se pasa del tope y
-    Massive echa a otro — al socio. Las velas del hueco ya no se pierden:
-    `al_reconectar` las recupera por REST desde el 22-sep.
+
+def test_escalera_configurable(monkeypatch):
+    monkeypatch.setattr(feed_mod, "ESCALERA_RECONEXION", (2.0, 10.0))
+    assert _esperas_con_rechazos(monkeypatch, 3) == [2.0, 10.0, 10.0]
+
+
+def test_por_defecto_tres_segundos_y_tope_de_un_minuto():
+    """29-sep-2026, Jaume: «15 segundos es mucho si el problema no es nuestro».
+
+    Ese dia, 1008 a las 10:03:39 con el bot conectado desde las 09:41: la
+    conexion de mas no era nuestra y los 15 s fijos (23-sep) eran hueco puro.
+    El primer reintento va a los 3 s; si Massive nos vuelve a echar, sube la
+    escalera 5 → 15 → 30 → 60, que es lo que protegia el 15 fijo: no solaparnos
+    con una zombi (nuestra o del socio) y echar a otro de la cuenta.
     """
-    assert feed_mod.ESPERA_RECONEXION == 15.0
+    assert feed_mod.ESCALERA_RECONEXION == (3.0, 5.0, 15.0, 30.0, 60.0)
+    assert feed_mod.ESPERA_RECONEXION == 3.0
     assert feed_mod.ESPERA_RECONEXION_MAX == 60.0
 
 

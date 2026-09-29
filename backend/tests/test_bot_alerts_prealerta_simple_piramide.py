@@ -76,18 +76,21 @@ def test_dentro_prealerta_el_anyadido_y_no_la_entrada():
     evs = PrealertaSimple().evaluar(_runner(_estrategia([_nivel([SI, NO])]), _dentro()), TK)
     assert len(evs) == 1
     e = evs[0]
-    assert (e.tipo, e.nivel, e.accion_piramide, e.estado) == ("piramide", 0, "add", "prealerta")
+    assert (e.tipo, e.nivel, e.accion_piramide, e.estado) == ("piramide", 1, "add", "prealerta")
     assert e.motivo == "Falta: Bar Close > 5.0"
 
 
 def test_nivel_ya_disparado_sus_veces_no_prealerta():
-    estado = _dentro(piramides_avisadas={(11, 0, 15)})
+    """EL FALLO DEL 29-sep. El simulador numera el nivel desde 1 («lv_idx + 1»);
+    se comparaba con el índice desde 0 y el añadido hecho no contaba: BKYI
+    añadió a las 11:21 (times=1) y siguió prealertando hasta el cierre."""
+    estado = _dentro(piramides_avisadas={(11, 1, 15)})
     evs = PrealertaSimple().evaluar(_runner(_estrategia([_nivel([SI, NO])]), estado), TK)
     assert evs == []
 
 
 def test_un_disparo_de_una_posicion_anterior_no_cuenta():
-    estado = _dentro(piramides_avisadas={(3, 0, 5)})     # de la entrada de antes
+    estado = _dentro(piramides_avisadas={(3, 1, 5)})     # de la entrada de antes
     evs = PrealertaSimple().evaluar(_runner(_estrategia([_nivel([SI, NO])]), estado), TK)
     assert [e.tipo for e in evs] == ["piramide"]
 
@@ -109,7 +112,7 @@ def test_a_mas_de_una_condicion_o_ya_cumplido_no_prealerta():
 def test_dos_niveles_a_una_condicion_dan_dos_prealertas():
     niveles = [_nivel([SI, NO]), _nivel([NO, SI])]
     evs = PrealertaSimple().evaluar(_runner(_estrategia(niveles), _dentro()), TK)
-    assert sorted(e.nivel for e in evs) == [0, 1]
+    assert sorted(e.nivel for e in evs) == [1, 2]
 
 
 def test_el_freno_va_por_nivel():

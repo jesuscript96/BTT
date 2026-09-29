@@ -135,7 +135,8 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
     logging.getLogger("bot").setLevel(logging.WARNING)
 
     import os as _os
-    from app.services.bot_alerts_prealerta_simple import PrealertaSimple
+    from app.services.bot_alerts_prealerta_simple import PrealertaDistancia, PrealertaSimple
+    from app.services.bot_alerts_prealertas import ET as _ET
     # MODO (26-sep-2026, Jaume): 'ticks' = la de siempre (segundos 44-59 con
     # prints); 'simple' = «todas las condiciones menos una» sobre la vela
     # oficial cerrada, sin prints. BOT_PREALERTA_MODO en backend/.env.
@@ -145,6 +146,16 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
     simple = (PrealertaSimple(cada_min=int(_os.getenv("BOT_PREALERTA_SIMPLE_MIN", "10") or 10),
                               max_seguidas=int(_os.getenv("BOT_PREALERTA_SIMPLE_MAX", "3") or 3))
               if modo == "simple" else None)
+    # 'distancia' (29-sep-2026, Jaume): cada segundo, con la vela EN CURSO que
+    # ya montan los agregados `A.` (precio en vivo, sin socket nuevo), avisa si
+    # la condición de precio que falta está a menos de BOT_PREALERTA_DISTANCIA_PCT
+    # (2 % por defecto). Mismo freno y silencio que el simple.
+    distancia = (PrealertaDistancia(cada_min=int(_os.getenv("BOT_PREALERTA_SIMPLE_MIN", "10") or 10),
+                                    max_seguidas=int(_os.getenv("BOT_PREALERTA_SIMPLE_MAX", "3") or 3),
+                                    umbral_pct=float(_os.getenv("BOT_PREALERTA_DISTANCIA_PCT", "2") or 2))
+                 if modo == "distancia" else None)
+    # Los dos modos «por condiciones» comparten soltar/reiniciar.
+    por_condiciones = simple or distancia
 
     runner = RunnerAlertas([])
     constructor = ConstructorParcial()
@@ -193,6 +204,41 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
         t = msg.get("t")
 
         if t == DATOS:
+            if distancia is not None:
+                # Modo distancia: los prints no se usan; los agregados `A.`
+                # mueven la vela en curso y, una vez por segundo y ticker, se
+                # juzga con su cierre (el precio en vivo).
+                for clase, ev in msg["lote"]:
+                    if clase == "T":
+                        m["prints"] += 1
+                        continue
+                    constructor.aplicar(ev)
+                    tk = ev.get("sym")
+                    if tk not in vigilados:
+                        continue
+                    v = constructor.en_curso(tk)
+                    if v is None:
+                        continue
+                    ms = int(ev.get("s") or ev.get("t") or 0)
+                    seg = (v.minuto, ms // 1000)
+                    if ultimo_seg.get(tk) == seg:
+                        continue
+                    ultimo_seg[tk] = seg
+                    ts = pd.Timestamp(v.minuto, unit="s", tz="UTC").tz_convert(_ET).tz_localize(None)
+                    t0 = _time.perf_counter()
+                    avisos = distancia.evaluar_vivo(runner, tk, v.como_vela(ts))
+                    coste = _time.perf_counter() - t0
+                    m["evaluaciones"] += 1
+                    m["coste"] += coste
+                    m["peor"] = max(m["peor"], coste)
+                    if avisos:
+                        lat = max(0.0, _time.time() - ms / 1000.0) if ms else 0.0
+                        segundo = (ms // 1000) % 60
+                        tuberia.send({"t": PREALERTA, "eventos": avisos, "via": "distancia",
+                                      "segundo": segundo, "latencia": lat,
+                                      "margen": max(0.0, 60 - segundo - lat),
+                                      "minuto": str(ts)[:16]})
+                return
             if simple is not None:
                 # Modo simple: los prints no se usan. Se cuentan y fuera.
                 m["prints"] += sum(1 for clase, _ev in msg["lote"] if clase == "T")
@@ -291,14 +337,14 @@ def _hijo(tuberia, cada_seg: float = 300.0) -> None:
             ultimo_seg.pop(tk, None)
             constructor.olvidar(tk)
             runner.soltar(tk)
-            if simple is not None:
-                simple.soltar(tk)
+            if por_condiciones is not None:
+                por_condiciones.soltar(tk)
 
         elif t == DIA_NUEVO:
             runner.reiniciar()
             constructor.reiniciar()
-            if simple is not None:
-                simple.reiniciar()
+            if por_condiciones is not None:
+                por_condiciones.reiniciar()
             vivas.clear()
             ultimo_seg.clear()
             tuberia.send({"t": AVISO, "texto": "dia nuevo: prealertas a cero"})
