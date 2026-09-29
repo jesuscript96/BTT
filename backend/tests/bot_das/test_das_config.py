@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "1e3e5b73678e0c0a0d26fca47eecf135e17930cd411a173ee91d7277e6c6499c"   # Jaume 29-sep: + locates.espera_intento_s
+SHA_FIXTURE = "233c4fc23be89d961d978e2e5228ac6b3f5316d281b60cce8e25d67d273723f1"   # Jaume 29-sep: + locates.espera_intento_s
 
 
 # ── utilidades ─────────────────────────────────────────────────────────

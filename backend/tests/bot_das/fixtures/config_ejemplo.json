@@ -5,7 +5,7 @@
   "generado_por": "fixture:tests/bot_das",
   "motor_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "estrategias_hash": "sha256:2fbf7294b1c4ab42568ff343fe0ab12db9a2954c8e5e3b3d0f08b55554b57bc6",
-  "sha256": "1e3e5b73678e0c0a0d26fca47eecf135e17930cd411a173ee91d7277e6c6499c",
+  "sha256": "233c4fc23be89d961d978e2e5228ac6b3f5316d281b60cce8e25d67d273723f1",
   "fase": "sombra",
   "vigilando": true,
   "pausar_entradas": false,
@@ -26,7 +26,7 @@
     "umbral_ultimo_paquete_pct": 30,
     "inquiry_intervalo_s": 3,
     "ruta_inquire": "ALLROUTEWTTYPE1",
-    "espera_intento_s": 20
+    "espera_intento_s": 10
   },
   "entrada": {
     "agregar_s": 60,

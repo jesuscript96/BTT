@@ -3916,7 +3916,7 @@ def test_fase_C_piramide_parcial_50_de_70_y_la_pareja_queda_parada(cfg: Config, 
 
 
 def test_fase_B3_sin_respuesta_de_das_la_espera_vence_y_pierde_la_entrada(cfg: Config, tmp_path: Path) -> None:
-    """B3: si DAS no contesta a la consulta, la señal espera como mucho `locates.espera_intento_s` (20 s): la
+    """B3: si DAS no contesta a la consulta, la señal espera como mucho `locates.espera_intento_s` (10 s): la
     pareja queda PARADA, la entrada se pierde (aviso 2) y no se entra más tarde con una respuesta tardía."""
     b = Banco(cfg, tmp_path)
     b.preparar(locates=())
@@ -3924,9 +3924,9 @@ def test_fase_B3_sin_respuesta_de_das_la_espera_vence_y_pierde_la_entrada(cfg: C
     b.senal(evento())
     assert f"locate_senal:{TICKER}:{SID}" in b.temporizadores
     marca = b.marca()
-    b.avanzar(15)
-    assert not anotaciones(b.desde(marca), "locate_perdida_entrada")      # a los 15 s aún espera
-    b.avanzar(6)
+    b.avanzar(8)
+    assert not anotaciones(b.desde(marca), "locate_perdida_entrada")       # a los 8 s aún espera
+    b.avanzar(3)
     tras = b.desde(marca)
     assert anotaciones(tras, "locate_perdida_entrada")
     assert b.estado.locates[(TICKER, SID)].estado == "parado"
