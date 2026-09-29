@@ -1693,6 +1693,10 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 )}
             </div>
 
+            {/* Salidas programadas condicionales: justo tras el Take Profit/parciales
+                (son salidas y se combinan con ellas). Oculta sin flag del backend. */}
+            <ScheduledExitsBuilder risk={risk} onChange={onChange} />
+
             {/* Re-entries Card */}
             <div style={{
                 display: 'flex',
@@ -2172,7 +2176,6 @@ const RiskManagementComponentInner: React.FC<Props> = ({ risk, onChange, applyDa
                 )}
             </div>
 
-            <ScheduledExitsBuilder risk={risk} onChange={onChange} />
         </div>
     );
 };
