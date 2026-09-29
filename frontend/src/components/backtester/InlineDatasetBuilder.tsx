@@ -27,6 +27,8 @@ import {
   paramsDisponibles,
   type ParametroUniverso as ParameterConfig,
   type SeccionUniverso as SectionId,
+  esValorHora,
+  parseHoraGapStart,
 } from "@/lib/universoFiltros";
 
 interface IncludedCondition {
@@ -34,7 +36,9 @@ interface IncludedCondition {
   paramKey: string;
   label: string;
   op: string; // '>=', '<=', '>', '<', 'between'
-  val1: number;
+  /** number; «Hora inicio gap» conserva la cadena "05:00"/"ayer 18:00"
+   *  (la convierte construirFiltros). */
+  val1: number | string;
   val2?: number;
   unit: string;
   /** Solo GAP-1: "include" = los ticker-día sin dato (IPO, recién llegada)
@@ -257,10 +261,16 @@ export default function InlineDatasetBuilder({
   const getValidationError = (param: ParameterConfig, op: string, val1Str: string, val2Str: string): string | null => {
     if (!val1Str && !val2Str) return null;
     if (val1Str) {
-      const val1 = parseFloat(val1Str);
-      if (isNaN(val1)) return "Valor 1 inválido";
-      if (param.min !== undefined && val1 < param.min) {
-        return `Mínimo ${param.min}%`;
+      if (esValorHora(param.key)) {
+        if (parseHoraGapStart(val1Str) === null) {
+          return "Usa HH:MM (04:00-09:29), «ayer HH:MM» (16:00-19:59) o t (780=05:00)";
+        }
+      } else {
+        const val1 = parseFloat(val1Str);
+        if (isNaN(val1)) return "Valor 1 inválido";
+        if (param.min !== undefined && val1 < param.min) {
+          return `Mínimo ${param.min}%`;
+        }
       }
     }
     if (op === "between") {
@@ -287,7 +297,9 @@ export default function InlineDatasetBuilder({
     const error = getValidationError(param, op, val1Str, val2Str);
     if (error) return;
 
-    const val1 = parseFloat(val1Str);
+    // «Hora inicio gap»: la cadena tal cual ("05:00" / "ayer 18:00");
+    // construirFiltros la convierte a t.
+    const val1 = esValorHora(param.key) ? val1Str : parseFloat(val1Str);
     const val2 = op === "between" ? parseFloat(val2Str) : undefined;
     const exists = isConditionIncluded(section, param.key);
 
@@ -656,10 +668,10 @@ export default function InlineDatasetBuilder({
                                   <span style={{ position: "absolute", left: 8, fontSize: 11, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>$</span>
                                 )}
                                 <input
-                                  type="number"
+                                  type={esValorHora(param.key) ? "text" : "number"}
                                   step="any"
                                   value={obj.val1}
-                                  placeholder="min"
+                                  placeholder={esValorHora(param.key) ? "05:00 / ayer 18:00" : "min"}
                                   onChange={(e) => handleVal1Change(sectionId, param.key, e.target.value)}
                                   disabled={included}
                                   style={{

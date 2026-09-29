@@ -85,7 +85,18 @@ def main() -> int:
         WHERE pmh_gap_pct >= {MIN_POB} AND prev_close > 0
     """).fetchdf()
     pob["fecha"] = pd.to_datetime(pob["fecha"]).dt.strftime("%Y-%m-%d")
-    pob["fecha_prev"] = (pd.to_datetime(pob["fecha"]) - pd.Timedelta(days=1)).dt.strftime("%Y-%m-%d")
+    # VÍSPERA = SESIÓN HÁBIL ANTERIOR (28-sep, pedido de Álvaro): un gap del
+    # lunes que empezó el VIERNES por la tarde cuenta desde el viernes. Antes
+    # era víspera CALENDAR y los lunes (y post-festivos) perdían el AH del día
+    # de bolsa anterior. El calendario hábil sale de las fechas presentes en
+    # daily_metrics (cualquier ticker): es la referencia de sesiones del lago.
+    fechas_habiles = con.execute(f"""
+        SELECT DISTINCT CAST("timestamp" AS DATE) AS f
+        FROM read_parquet('{d_met}', hive_partitioning=true)
+        ORDER BY 1
+    """).fetchdf()["f"].astype(str).tolist()
+    prev_habil = {fechas_habiles[i]: fechas_habiles[i - 1] for i in range(1, len(fechas_habiles))}
+    pob["fecha_prev"] = pob["fecha"].map(prev_habil)
     pob = pob.drop_duplicates(["ticker", "fecha"])
     print(f"      {len(pob):,} ticker-días ({pob['ticker'].nunique():,} tickers) "
           f"en {time.time()-t0:.0f}s", flush=True)
@@ -127,9 +138,9 @@ def main() -> int:
             continue
         velas["fecha"] = pd.to_datetime(velas["fecha"]).dt.strftime("%Y-%m-%d")
         # A qué DÍA DE GAP pertenece cada vela: las PM son de su propio día;
-        # las AH de la víspera calendario (mismo criterio que el estudio),
-        # mapeadas al día siguiente (su día de gap). El dict es 1:1 porque
-        # fecha = fecha_prev + 1 día calendario SIEMPRE.
+        # las AH de la SESIÓN HÁBIL anterior, mapeadas al día de gap siguiente.
+        # El dict sigue siendo 1:1: sesiones hábiles consecutivas distintas
+        # tienen vísperas distintas (inyectivo).
         mapa_prev = dict(zip(pob["fecha_prev"], pob["fecha"]))
         m_ah = velas["minuto"] >= 960
         velas["fecha_gap"] = velas["fecha"]

@@ -21,6 +21,9 @@ export interface ParametroUniverso {
   unit: string;
   placeholder: string;
   min?: number;
+  /** «Hora inicio gap»: el usuario escribe HORA ("05:00" o "ayer 18:00") y
+   *  construirFiltros la convierte a t antes de mandarla al backend. */
+  valorHora?: boolean;
 }
 
 export const PARAMETROS_UNIVERSO: ParametroUniverso[] = [
@@ -48,8 +51,8 @@ export const PARAMETROS_UNIVERSO: ParametroUniverso[] = [
   { key: "wick_sup_prev", label: "Mecha superior víspera (% del rango)", unit: "%", placeholder: "40" },
   // Filtro «Hora de inicio del gap» (5.2-bis, ORDEN §3): propiedad del DÍA del
   // gap (sección gap_day). t = minutos desde las 16:00 de la víspera.
-  { key: "gap_start_20", label: "Hora inicio gap +20 % (min desde 16:00; 780=05:00)", unit: "min", placeholder: "780" },
-  { key: "gap_start_50", label: "Hora inicio gap +50 % (min desde 16:00; 780=05:00)", unit: "min", placeholder: "780" },
+  { key: "gap_start_20", label: "Hora inicio gap +20 % (HH:MM; admite «ayer 18:00»)", unit: "h", placeholder: "05:00", valorHora: true },
+  { key: "gap_start_50", label: "Hora inicio gap +50 % (HH:MM; admite «ayer 18:00»)", unit: "h", placeholder: "05:00", valorHora: true },
 ];
 
 export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
@@ -100,7 +103,9 @@ export interface CondicionUniverso {
   section: SeccionUniverso;
   paramKey: string;
   op: OperadorUniverso;
-  val1: number;
+  /** number; con «Hora inicio gap» puede llegar la cadena "05:00" o
+   *  "ayer 18:00" tal cual (construirFiltros la convierte a t). */
+  val1: number | string;
   val2?: number;
   /** Solo Gap -1: "include" = los ticker-día SIN dato (IPO, recién llegada,
    *  ventana inválida) pasan la regla en vez de excluirse. Sin valor = excluir
@@ -151,6 +156,34 @@ export function campoDeRegla(section: SeccionUniverso, paramKey: string): string
 export const esVolumen = (paramKey: string) =>
   paramKey === "pm_volume" || paramKey === "rth_volume";
 
+/** ¿Este parámetro se escribe en HORA y viaja como t (min desde las 16:00 de
+ *  la víspera)? Por ahora solo la «Hora inicio gap». */
+export const esValorHora = (paramKey: string) =>
+  paramKey === "gap_start_20" || paramKey === "gap_start_50";
+
+/** HORA del usuario -> t de la línea continua 16:00 víspera -> 09:30.
+ *  Acepta "05:00" (hoy, premarket), "ayer 18:00" / "18:00 ayer" (after-hours
+ *  de la víspera) y un número t directo (retrocompatibilidad: 780 = 05:00).
+ *  Devuelve null si no lo puede interpretar. */
+export function parseHoraGapStart(v: string): number | null {
+  const t = v.trim().toLowerCase();
+  if (!t) return null;
+  if (/^-?[0-9]+(.[0-9]+)?$/.test(t)) return Number(t);
+  const ayer = t.startsWith("ayer ") || t.endsWith(" ayer");
+  const m = t.replace(/^ayer[ ]+/, "").replace(/[ ]+ayer$/, "").match(/^([0-9]{1,2}):([0-9]{2})$/);
+  if (!m) return null;
+  const h = Number(m[1]);
+  const mm = Number(m[2]);
+  if (mm > 59) return null;
+  if (ayer) {
+    if (h < 16 || h > 19) return null;
+    return h * 60 + mm - 960;
+  }
+  if (h >= 4 && h <= 9) return h * 60 + mm + 480;
+  if (h >= 16 && h <= 19) return h * 60 + mm - 960;
+  return null;
+}
+
 /** Parámetros que tienen columna real en una sección. Los que no (p. ej.
  *  Day Return % en Gap +1/+2, que no tiene LEAD) ni se ofrecen: una métrica
  *  sin columna se ignoraría en silencio al construir los filtros. */
@@ -174,7 +207,13 @@ export function construirFiltros(
     const fieldName = campoDeRegla(c.section, c.paramKey);
     if (!fieldName) continue;
     const isVol = esVolumen(c.paramKey);
-    const v1 = isVol ? c.val1 * 1_000_000 : c.val1;
+    // «Hora inicio gap»: la hora del usuario ("05:00" / "ayer 18:00") viaja
+    // al backend ya convertida a t. Si no se puede interpretar, se manda TAL
+    // CUAL: el backend reventara ruidosamente antes que filtrar en silencio.
+    const v1raw = esValorHora(c.paramKey) && typeof c.val1 === "string"
+      ? (parseHoraGapStart(c.val1) ?? c.val1)
+      : c.val1;
+    const v1 = isVol ? Number(v1raw) * 1_000_000 : v1raw;
     const v2 = c.val2 !== undefined && isVol ? c.val2 * 1_000_000 : c.val2;
     // "Si falta el dato: incluir" — viaja como clave `missing` en cada regla
     // Gap -1; el backend la traduce a (condición OR columna IS NULL).
@@ -185,9 +224,9 @@ export function construirFiltros(
       rules.push({ metric: fieldName, operator: "GREATER_THAN_OR_EQUAL", valueType: "static", value: v1.toString(), ...missing });
       rules.push({ metric: fieldName, operator: "LESS_THAN_OR_EQUAL", valueType: "static", value: v2!.toString(), ...missing });
       if (c.section === "gap_day") {
-        if (c.paramKey === "gap_pct") { min_gap_pct = v1; max_gap_pct = v2; }
-        else if (c.paramKey === "pm_volume") min_pm_volume = v1;
-        else if (c.paramKey === "rth_volume") min_rth_volume = v1;
+        if (c.paramKey === "gap_pct") { min_gap_pct = Number(v1); max_gap_pct = v2; }
+        else if (c.paramKey === "pm_volume") min_pm_volume = Number(v1);
+        else if (c.paramKey === "rth_volume") min_rth_volume = Number(v1);
       }
     } else {
       const opName = {
@@ -197,12 +236,12 @@ export function construirFiltros(
       rules.push({ metric: fieldName, operator: opName, valueType: "static", value: v1.toString(), ...missing });
       if (c.section === "gap_day") {
         if (c.paramKey === "gap_pct") {
-          if (c.op === ">=" || c.op === ">") min_gap_pct = v1;
-          if (c.op === "<=" || c.op === "<") max_gap_pct = v1;
+          if (c.op === ">=" || c.op === ">") min_gap_pct = Number(v1);
+          if (c.op === "<=" || c.op === "<") max_gap_pct = Number(v1);
         } else if (c.paramKey === "pm_volume" && (c.op === ">=" || c.op === ">")) {
-          min_pm_volume = v1;
+          min_pm_volume = Number(v1);
         } else if (c.paramKey === "rth_volume" && (c.op === ">=" || c.op === ">")) {
-          min_rth_volume = v1;
+          min_rth_volume = Number(v1);
         }
       }
     }
