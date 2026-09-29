@@ -46,6 +46,10 @@ export const PARAMETROS_UNIVERSO: ParametroUniverso[] = [
   { key: "volusd_prev", label: "Vol. $ víspera (cierre×vol RTH)", unit: "$", placeholder: "5000000" },
   { key: "gappers_prev", label: "Gappers víspera (nº con PMH≥50 %)", unit: "nº", placeholder: "20" },
   { key: "wick_sup_prev", label: "Mecha superior víspera (% del rango)", unit: "%", placeholder: "40" },
+  // Filtro «Hora de inicio del gap» (5.2-bis, ORDEN §3): propiedad del DÍA del
+  // gap (sección gap_day). t = minutos desde las 16:00 de la víspera.
+  { key: "gap_start_20", label: "Hora inicio gap +20 % (min desde 16:00; 780=05:00)", unit: "min", placeholder: "780" },
+  { key: "gap_start_50", label: "Hora inicio gap +50 % (min desde 16:00; 780=05:00)", unit: "min", placeholder: "780" },
 ];
 
 export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
@@ -69,6 +73,10 @@ export const DESCRIPCIONES_UNIVERSO: Record<string, string> = {
     "Número de acciones que cerraron la VÍSPERA con PMH Gap ≥ 50 % (el «día caliente» del criterio 7.2a): víspera con >20 gappers → el fade del día sube a 35-40 % (8/8 años). Cuenta el lago entero (no el universo filtrado) y hereda el último día con gappers si la víspera no tuvo ninguno. La 2B ya cobra parte de esta señal.",
   wick_sup_prev:
     "Mecha superior de la vela de la VÍSPERA, en % del rango del día ((high − máx(apertura, cierre)) ÷ (high − low) × 100). Bloque 8: la víspera con rechazo arriba → el gap de hoy se desinfla ~6 pp más (7/8 años). Descriptor que ni la 1B ni la 2B cobran: para estrategias nuevas (fade tarde).",
+  gap_start_20:
+    "Minuto del PRIMER cruce de +20 % sobre el cierre de la víspera, en la línea continua 16:00 víspera → 09:30 (after-hours incluido): t = minutos desde las 16:00. TABLA: 240 = 20:00 víspera · 720 = 04:00 · 780 = 05:00 · 840 = 06:00 · 900 = 07:00 · 960 = 08:00 · 1049 = 09:29. «Empezó antes de las 05:00» = ≤ 780. Sin cruce ese día = sin dato (con «incluir sin dato» pasa la regla). ⚠️ SIN look-ahead SOLO si la estrategia entra DESPUÉS del cruce: exige p. ej. «PM High Gap % ≥ 20» en la vela de entrada (el máximo acumulado ya ≥ 20 % implica que el cruce ya ocurrió). Estudio 5.2-bis: el gap de madrugada deja ~33 % de fade vs ~24 % el tardío.",
+  gap_start_50:
+    "Igual que «Hora inicio gap +20 %» pero para el cruce de +50 %. Misma escala t desde las 16:00 (720 = 04:00, 780 = 05:00…). ⚠️ Mismo aviso de look-ahead: sin problemas solo si entras tras el cruce (p. ej. exigiendo PM High Gap % ≥ 50 en la vela, que es el universo clásico de estas estrategias).",
   days_since_first_day:
     "Días entre el día del gap y el PRIMER DÍA del ticker en el lago. Es un PROXY de la IPO, no la IPO real: el lago empieza en 2019, así que lo listado antes de 2019 llega con la edad recortada (un ticker de 2015 aparece como «~N años» según 2019). Criterio 6.1 del Bloque 6: los recién listados son los mejores trades de la 1B (monótono: <30 d +10 % → >5 y +2 %) y el 2B lo replica. Úsalo para PRIORIZAR poder de compra, no para excluir (los viejos también ganan).",
 };
@@ -126,6 +134,8 @@ export function campoDeRegla(section: SeccionUniverso, paramKey: string): string
       gap_pct: "Open Gap %", rth_volume: "EOD Volume",
       rth_range_pct: "RTH Range %",
       days_since_first_day: "days_since_first_day",
+      gap_start_20: "gap_start_min_20",
+      gap_start_50: "gap_start_min_50",
     }[paramKey] ?? "";
   }
   const suf = section === "gap_plus_1_day" ? "_1" : "_2";

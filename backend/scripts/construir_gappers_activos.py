@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Construye la tabla de «Gappers activos (+X %)» desde el lago 1m.
 
-QUÉ ESCRIBE. Un parquet con (fecha DATE, nivel INT, t INT), una fila por
+QUÉ ESCRIBE. (1) Un parquet con (fecha DATE, nivel INT, t INT), una fila por
 CRUCE: para cada ticker-día con potencial de gap (ver población), y para cada
 nivel de GAPPERS_ACTIVE_LEVELS, el minuto t de la PRIMERA vez que el máximo
 corrido de la línea continua AH-víspera + PM-de-hoy cruza +nivel % sobre la
@@ -24,9 +24,14 @@ Env:
     LOCAL_LAKE_DIR  lago (igual que init_db)
     GAPPERS_ACTIVE_TABLE  ruta de salida (default: {CACHE_DIR}/gappers_activos/gappers_activos.parquet)
 
+(2) Además un PIVOTE gap_start.parquet (ticker, fecha, gap_start_min_<nivel>),
+para el filtro de dataset «Hora de inicio del gap» (5.2-bis): el t del primer
+cruce de +nivel % en esa línea continua. NULL si el nivel no se cruzó.
+
 ⚠️ REGENERAR tras cada actualización del lago (mismo ciclo que el parquet
 bygap). Un lago nuevo sin regenerar deja fechas nuevas fuera de la tabla (el
-indicador da NaN ruidoso en ellas, nunca 0 silencioso).
+indicador da NaN ruidoso en ellas, nunca 0 silencioso) y el filtro de hora de
+inicio no vería los días nuevos (quedan NULL = «sin dato»).
 """
 from __future__ import annotations
 
@@ -163,6 +168,21 @@ def main() -> int:
     out = out.sort_values(["fecha", "nivel", "t"])
     tmp = out_ruta + ".tmp"
     out.to_parquet(tmp, index=False)
+
+    # ── PIVOTE «Hora de inicio del gap» (5.2-bis, ORDEN §3 de Álvaro) ──────────
+    # Una fila por (ticker, fecha) con gap_start_min_<nivel> = t del PRIMER
+    # cruce de +nivel % en la línea continua 16:00 víspera → 09:30 (misma
+    # definición que la tabla de arriba; NULL si ese día no cruzó el nivel).
+    # Lo consume el FILTRO DE DATASET «Hora de inicio del gap» vía LEFT JOIN
+    # en las tres vías del qualifying (ver qualifying_windows.gap_start_*).
+    piv = out.pivot_table(index=["ticker", "fecha"], columns="nivel",
+                          values="t", aggfunc="first").reset_index()
+    piv.columns = [str(c) if c in ("ticker", "fecha") else f"gap_start_min_{c}"
+                   for c in piv.columns]
+    ruta_piv = os.path.join(os.path.dirname(out_ruta), "gap_start.parquet")
+    piv.to_parquet(ruta_piv + ".tmp", index=False)
+    os.replace(ruta_piv + ".tmp", ruta_piv)
+    print(f"[4/4] pivote gap_start: {len(piv):,} ticker-días -> {ruta_piv}")
     os.replace(tmp, out_ruta)
     print(f"-> {out_ruta}: {len(out):,} cruces · {out['fecha'].nunique()} fechas · "
           f"{out['nivel'].nunique()} niveles · {time.time()-t0:.0f}s")
