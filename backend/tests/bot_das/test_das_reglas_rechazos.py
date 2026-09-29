@@ -72,7 +72,7 @@ D = Decimal
 
 CFG: dict[str, Any] = {
     "entrada": {"post_only": True, "reintentos_rechazo_conocido": 2},
-    "stops": {"principal_limite_pct": 3.0, "emergencia_disparo_pct": 13.0, "emergencia_limite_pct": 63.0,
+    "stops": {"limite_pct": 50.0,
               "reintentos": 5, "separacion_reintentos_s": 2, "ventana_min": 5},
     "rutas": {"agregar": {"ge_1": "SAGEREB", "lt_1": "MIAX"},
               "cruzar": {"ge_1": "SAGEPRO", "lt_1_desde_0700": "EDGA", "lt_1_antes_0700": "MIAX"},
@@ -124,7 +124,7 @@ def orden(proposito: Proposito = Proposito.ENTRADA_AGREGAR, lado: Lado = Lado.CO
 
 
 def stop_compra(proposito: Proposito, qty: int = 100, estado: EstadoOrden = EstadoOrden.ACCEPTED,
-                token: int = 126800002, disparo: Decimal = D("11.30"), limite: Decimal = D("16.30"),
+                token: int = 126800002, disparo: Decimal = D("10"), limite: Decimal = D("15"),
                 **extra: Any) -> Orden:
     return Orden(token=token, ticker=TICKER, lado=Lado.COMPRA, tipo=TipoOrden.STOP_LIMITE_PP, qty=qty,
                  precio=limite, stop=disparo, ruta="STOP", proposito=proposito, lote_id="L1", nivel=D("10"),
@@ -437,7 +437,7 @@ def test_reintentar_conserva_post_only(catalogo: list[dict], proposito: Proposit
 def test_reintentar_mercado_sin_precio(catalogo: list[dict]) -> None:
     o = orden(proposito=Proposito.TP_CRUCE, lado=Lado.COMPRA, tipo=TipoOrden.MERCADO, precio=None)
     acciones = decidir(o, tratamiento(catalogo, "postonly_cruza"), posicion(-100), [
-        stop_compra(Proposito.STOP_EMERGENCIA)], CFG, Tokens(), cot(), HORA)
+        stop_compra(Proposito.STOP)], CFG, Tokens(), cot(), HORA)
     nueva = de_tipo(acciones, EnviarOrden)[0].orden
     assert nueva.tipo is TipoOrden.MERCADO and nueva.precio is None and nueva.post_only is False
 
@@ -511,8 +511,8 @@ def test_conocido_sin_tratamiento_pausa_a_la_primera(catalogo: list[dict]) -> No
 # ── decidir: desconocido y persistente (R-B-07 (3), EP-1) ───────────────────
 @pytest.mark.parametrize("neta, vivas", [
     pytest.param(0, [], id="R-B-07-plana-esta-cubierta"),
-    pytest.param(-100, [stop_compra(Proposito.STOP_EMERGENCIA)], id="R-B-07-emergencia-aceptada"),
-    pytest.param(-100, [stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.HOLD)], id="R-B-07-emergencia-hold"),
+    pytest.param(-100, [stop_compra(Proposito.STOP)], id="R-B-07-stop-aceptado"),
+    pytest.param(-100, [stop_compra(Proposito.STOP, estado=EstadoOrden.HOLD)], id="R-B-07-stop-hold"),
     pytest.param(-100, [stop_compra(Proposito.STOP_PROTECCION)], id="R-C-10.4-proteccion-cubre"),
 ])
 def test_desconocido_cubierta_pausa_nivel_2(catalogo: list[dict], neta: int, vivas: list[Orden]) -> None:
@@ -532,10 +532,9 @@ def test_desconocido_cubierta_pausa_nivel_2(catalogo: list[dict], neta: int, viv
 
 @pytest.mark.parametrize("vivas", [
     pytest.param([], id="EP-1-sin-stops"),
-    pytest.param([stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.SENDING)], id="EP-1-emergencia-sending"),
-    pytest.param([stop_compra(Proposito.STOP_PRINCIPAL, disparo=D("10"), limite=D("10.30"))],
-                 id="EP-1-solo-principal-no-cubre"),
-    pytest.param([stop_compra(Proposito.STOP_EMERGENCIA, qty=60)], id="EP-1-emergencia-corta"),
+    pytest.param([stop_compra(Proposito.STOP, estado=EstadoOrden.SENDING)], id="EP-1-stop-sending"),
+    pytest.param([stop_compra(Proposito.STOP, estado=EstadoOrden.CANCELED)], id="EP-1-stop-cancelado-no-cubre"),
+    pytest.param([stop_compra(Proposito.STOP, qty=60)], id="EP-1-stop-corto"),
 ])
 def test_desconocido_sin_cubrir_control_humano_nivel_3_sin_ordenes(catalogo: list[dict], vivas: list[Orden]) -> None:
     tokens = Tokens()
@@ -619,7 +618,7 @@ def test_reintento_segun_estado_del_ticker(catalogo: list[dict], estado: EstadoT
 @pytest.mark.parametrize("intentos", [0, 1, 2, 3, 4])
 def test_stop_rechazado_reintenta_por_r_c_03(catalogo: list[dict], intentos: int) -> None:
     tokens = Tokens()
-    o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, intentos=intentos,
+    o = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, intentos=intentos,
                     notas="Not Enough Buying Power", primer_intento_en=1000.0)
     acciones = decidir(o, tratamiento(catalogo, "bp_insuficiente"), posicion(-100), [o], CFG, tokens, cot(),
                        HORA, ahora=1010.0)
@@ -632,31 +631,53 @@ def test_stop_rechazado_reintenta_por_r_c_03(catalogo: list[dict], intentos: int
 
 
 def test_stop_agotado_avisa_3_y_no_cierra(catalogo: list[dict]) -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, intentos=5, notas="???")
+    """R-C-03 con el stop único (Jaume 29-sep, test 3): tras 5 rechazos la posición queda SIN stop → aviso MÁXIMO, el ticker
+    a CONTROL HUMANO y NINGUNA orden (no se cierra a ciegas, EP-1); el aviso dice que el vigilante sigue intentándolo.
+    Con un motivo CONOCIDO pasa igual (el agotado manda sobre el catálogo)."""
+    o = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, intentos=5, notas="???")
     acciones = decidir(o, DESCONOCIDO, posicion(-100), [o], CFG, Tokens(), cot(), HORA, ahora=1500.0)
     assert de_tipo(acciones, Programar) == [] and de_tipo(acciones, EnviarOrden) == []
-    assert de_tipo(acciones, CancelarTicker) == []
+    assert de_tipo(acciones, CancelarTicker) == [] and de_tipo(acciones, Cancelar) == []
     a = aviso(acciones)
     assert a.nivel is Nivel.MAXIMO and "STOP SIN PONER" in a.texto and "CONTROL HUMANO" in a.texto
+    assert "SIN STOP" in a.texto and "vigilante sigue intentando reponerlo" in a.texto
     assert anotacion(acciones, "pausa")["estado"] == "control_humano"
     assert anotacion(acciones, "rechazo")["decision"] == "stop_agotado"
+    conocido = decidir(stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, intentos=5,
+                                   notas="Not Enough Buying Power"),
+                       tratamiento(catalogo, "bp_insuficiente"), posicion(-100), [], CFG, Tokens(), cot(), HORA,
+                       ahora=1500.0)
+    assert anotacion(conocido, "pausa")["estado"] == "control_humano" and aviso(conocido).nivel is Nivel.MAXIMO
+    assert de_tipo(conocido, Programar) == [] and de_tipo(conocido, EnviarOrden) == []
 
 
-def test_principal_rechazado_con_emergencia_viva(catalogo: list[dict]) -> None:
-    principal = stop_compra(Proposito.STOP_PRINCIPAL, estado=EstadoOrden.REJECTED, token=126800009,
-                            disparo=D("10"), limite=D("10.30"), notas="Not Enough Buying Power")
-    emergencia = stop_compra(Proposito.STOP_EMERGENCIA)
-    acciones = decidir(principal, tratamiento(catalogo, "bp_insuficiente"), posicion(-100), [principal, emergencia],
+def test_stop_rechazado_con_otro_stop_vivo_que_ya_cubre_la_posicion(catalogo: list[dict]) -> None:
+    """Un stop duplicado rechazado con el del nivel vivo cubriendo las 100: cubierta → aviso 2, sin pausa, y R-C-03 sigue."""
+    rechazado = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, token=126800009,
+                            notas="Not Enough Buying Power")
+    vivo = stop_compra(Proposito.STOP)
+    acciones = decidir(rechazado, tratamiento(catalogo, "bp_insuficiente"), posicion(-100), [rechazado, vivo],
                        CFG, Tokens(), cot(), HORA, ahora=1000.0)
     assert aviso(acciones).nivel is Nivel.AVISO and anotacion(acciones, "pausa") is None
     assert de_tipo(acciones, Programar)[0].clave == "stop_reintento"
 
 
+def test_stop_de_un_nivel_rechazado_deja_sus_acciones_al_descubierto(catalogo: list[dict]) -> None:
+    """Jaume 29-sep (stop único): sin emergencia detrás, el stop de un nivel rechazado deja SUS acciones sin stop aunque el
+    de otro nivel siga vivo (40 de 100): aviso MÁXIMO desde el primer rechazo (en v3 la emergencia lo tapaba)."""
+    rechazado = stop_compra(Proposito.STOP, qty=60, estado=EstadoOrden.REJECTED, token=126800009,
+                            notas="Not Enough Buying Power")
+    otro_nivel = stop_compra(Proposito.STOP, qty=40, disparo=D("11"), limite=D("16.50"), token=126800010)
+    acciones = decidir(rechazado, tratamiento(catalogo, "bp_insuficiente"), posicion(-100), [rechazado, otro_nivel],
+                       CFG, Tokens(), cot(), HORA, ahora=1000.0)
+    assert aviso(acciones).nivel is Nivel.MAXIMO and anotacion(acciones, "rechazo")["descubiertas"] == 60
+    assert de_tipo(acciones, Programar)[0].clave == "stop_reintento"
+
+
 def test_stop_desconocido_pausa_y_sigue_reintentando(catalogo: list[dict]) -> None:
-    principal = stop_compra(Proposito.STOP_PRINCIPAL, estado=EstadoOrden.REJECTED, token=126800009,
-                            disparo=D("10"), limite=D("10.30"), notas="???")
-    emergencia = stop_compra(Proposito.STOP_EMERGENCIA)
-    acciones = decidir(principal, DESCONOCIDO, posicion(-100), [principal, emergencia], CFG, Tokens(), cot(), HORA,
+    rechazado = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, token=126800009, notas="???")
+    vivo = stop_compra(Proposito.STOP)
+    acciones = decidir(rechazado, DESCONOCIDO, posicion(-100), [rechazado, vivo], CFG, Tokens(), cot(), HORA,
                        ahora=1000.0)
     assert anotacion(acciones, "pausa")["estado"] == "pausado"
     assert de_tipo(acciones, Programar)[0].clave == "stop_reintento", "R-B-07 (3): los stops siguen"
@@ -669,14 +690,14 @@ def test_stop_desconocida_por_tipo(catalogo: list[dict]) -> None:
 
 
 def test_stop_en_bs_no_se_repone(catalogo: list[dict]) -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, notas="???")
+    o = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, notas="???")
     acciones = decidir(o, DESCONOCIDO, posicion(-100, EstadoTicker.BS), [], CFG, Tokens(), cot(), HORA, ahora=1.0)
     assert de_tipo(acciones, Programar) == [] and anotacion(acciones, "pausa") is None
     assert anotacion(acciones, "rechazo")["decision"] == "sin_reintento_bs"
 
 
 def test_stop_sin_ahora_usa_ultima_act(catalogo: list[dict]) -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, notas="???", primer_intento_en=1000.0,
+    o = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, notas="???", primer_intento_en=1000.0,
                     ultima_act=1400.0)
     prog = de_tipo(decidir(o, DESCONOCIDO, posicion(-100), [], CFG, Tokens(), cot(), HORA), Programar)[0]
     assert prog.datos["segundos_desde_primero"] == 400.0 and prog.datos["fuera_de_ventana"] is True
@@ -709,7 +730,7 @@ def test_aviso_texto_literal_orden_y_estado(catalogo: list[dict]) -> None:
 def test_decidir_no_muta_nada(catalogo: list[dict]) -> None:
     o = orden(notas="SSR stocks are prohibited from shorting on the BID or lower")
     pos = posicion(-100)
-    vivas = [stop_compra(Proposito.STOP_EMERGENCIA)]
+    vivas = [stop_compra(Proposito.STOP)]
     c = cot()
     cfg = copy.deepcopy(CFG)
     antes = copy.deepcopy((o, pos, vivas, c, cfg))
@@ -725,7 +746,7 @@ def test_decidir_con_la_config_real(cfg: Any, catalogo: list[dict]) -> None:
     tp = decidir(orden(proposito=Proposito.TP_AGREGAR, lado=Lado.COMPRA, qty=100, lote_id=LOTE_ID),
                  tratamiento(catalogo, "postonly_cruza"), posicion(-100), [], cfg, Tokens(), cot(), HORA)
     assert [e.orden.proposito for e in de_tipo(tp, EnviarOrden)] == [Proposito.TP_CRUCE]
-    o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, notas="???")
+    o = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, notas="???")
     prog = de_tipo(decidir(o, DESCONOCIDO, posicion(-100), [], cfg, Tokens(), cot(), HORA, ahora=5.0), Programar)
     assert prog[0].en_s == 2.0 and prog[0].datos["reintentos"] == 5
 
@@ -754,7 +775,7 @@ def test_decidir_exige_tratamiento() -> None:
     pytest.param(9, False, id="R-C-03-sigue-parado"),
 ])
 def test_reintento_stop_5_y_para(intentos: int, hay: bool) -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, intentos=intentos, primer_intento_en=1000.0)
+    o = stop_compra(Proposito.STOP, intentos=intentos, primer_intento_en=1000.0)
     p = reintento_stop(o, CFG["stops"], 1010.0)
     if not hay:
         assert p is None
@@ -762,18 +783,18 @@ def test_reintento_stop_5_y_para(intentos: int, hay: bool) -> None:
     assert isinstance(p, Programar) and p.clave == "stop_reintento" and p.en_s == 2.0
     d = p.datos
     assert d["intento"] == intentos + 1 and d["reintentos"] == 5 and d["token_rechazado"] == o.token
-    assert d["ticker"] == TICKER and d["proposito"] == "stop_emergencia" and d["nivel"] == "10"
+    assert d["ticker"] == TICKER and d["proposito"] == "stop" and d["nivel"] == "10"
     assert d["lote_id"] == "L1" and d["primer_intento_en"] == 1000.0 and d["segundos_desde_primero"] == 10.0
     assert d["fuera_de_ventana"] is False
     json.dumps(d)
 
 
 def test_reintento_stop_cuenta_cinco_llamadas_seguidas() -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, primer_intento_en=1.0)
+    o = stop_compra(Proposito.STOP, primer_intento_en=1.0)
     n = 0
     while (p := reintento_stop(o, CFG["stops"], 2.0)) is not None:
         n += 1
-        o = stop_compra(Proposito.STOP_EMERGENCIA, intentos=p.datos["intento"], primer_intento_en=1.0)
+        o = stop_compra(Proposito.STOP, intentos=p.datos["intento"], primer_intento_en=1.0)
         assert n <= 10
     assert n == 5
 
@@ -787,7 +808,7 @@ def test_reintento_stop_cuenta_cinco_llamadas_seguidas() -> None:
     pytest.param({"reintentos": None, "separacion_reintentos_s": None}, 0, 2.0, id="R-C-03-null-defecto"),
 ])
 def test_reintento_stop_config(cfg_stops: dict, intentos: int, esperado: Optional[float]) -> None:
-    p = reintento_stop(stop_compra(Proposito.STOP_PRINCIPAL, intentos=intentos), cfg_stops, 10.0)
+    p = reintento_stop(stop_compra(Proposito.STOP, intentos=intentos), cfg_stops, 10.0)
     assert (p.en_s if p else None) == esperado
 
 
@@ -799,7 +820,7 @@ def test_reintento_stop_config(cfg_stops: dict, intentos: int, esperado: Optiona
     pytest.param(1000.0, 0.0, 900.0, 0.0, False, id="R-C-03-reloj-hacia-atras-no-negativo"),
 ])
 def test_reintento_stop_ventana(primero: float, enviada: float, ahora: float, segundos: float, fuera: bool) -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, primer_intento_en=primero, enviada_en=enviada)
+    o = stop_compra(Proposito.STOP, primer_intento_en=primero, enviada_en=enviada)
     d = reintento_stop(o, CFG["stops"], ahora).datos
     assert d["segundos_desde_primero"] == segundos and d["fuera_de_ventana"] is fuera
 
@@ -816,11 +837,11 @@ def test_reintento_stop_ventana(primero: float, enviada: float, ahora: float, se
 ])
 def test_reintento_stop_errores(cfg_stops: Any, ahora: Any, error: type) -> None:
     with pytest.raises(error):
-        reintento_stop(stop_compra(Proposito.STOP_EMERGENCIA), cfg_stops, ahora)
+        reintento_stop(stop_compra(Proposito.STOP), cfg_stops, ahora)
 
 
 def test_reintento_stop_no_muta() -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, intentos=2)
+    o = stop_compra(Proposito.STOP, intentos=2)
     antes = copy.deepcopy(o)
     reintento_stop(o, CFG["stops"], 5.0)
     assert o == antes
@@ -833,7 +854,7 @@ def test_reintento_stop_no_muta() -> None:
     pytest.param(None, "[CancelRej/ReplaceRej]", id="§8.7-sin-accion"),
 ])
 def test_tras_cancel_o_replace_rej_barrido(accion: Optional[str], rotulo: str) -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, id_das=502, notas="Order not found")
+    o = stop_compra(Proposito.STOP, id_das=502, notas="Order not found")
     acciones = tras_cancel_o_replace_rej(o, accion)
     assert [type(a) for a in acciones] == [Avisar, Consultar, Programar]
     a, consulta, prog = acciones
@@ -989,7 +1010,7 @@ def test_D2_10_reintento_de_salida_con_la_posicion_plana_no_compra(catalogo: lis
     pytest.param(-500, [], 500, id="D2-10-cabe-entera"),
     pytest.param(-500, [_tp_vivo(300)], 200, id="D2-10-otra-salida-viva"),
     pytest.param(-500, [_tp_vivo(300, lvqty=100, llenas=200)], 400, id="D2-10-cuenta-lo-vivo-de-la-otra"),
-    pytest.param(-100, [stop_compra(Proposito.STOP_EMERGENCIA, qty=100)], 100, id="D2-10-los-stops-no-descuentan"),
+    pytest.param(-100, [stop_compra(Proposito.STOP, qty=100)], 100, id="D2-10-los-stops-no-descuentan"),
     pytest.param(-100, [_tp_vivo(300, estado=EstadoOrden.CANCELED)], 100, id="D2-10-terminadas-no-cuentan"),
     pytest.param(-500, [_tp_vivo(300, token=TOKEN_RECHAZADO)], 500, id="D2-10-la-rechazada-no-cuenta"),
 ])
@@ -1035,7 +1056,7 @@ def test_D2_08_aviso_de_rechazo_escapa_el_html_y_el_diario_guarda_el_literal(cat
 
 
 def test_D2_08_cancel_replace_rej_escapa_el_html() -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, id_das=502, notas="Order <42> not found & gone")
+    o = stop_compra(Proposito.STOP, id_das=502, notas="Order <42> not found & gone")
     texto = de_tipo(tras_cancel_o_replace_rej(o, "Cancel<Rej>"), Avisar)[0].texto
     assert "«Order &lt;42&gt; not found &amp; gone»" in texto and "[Cancel&lt;Rej&gt;]" in texto
     assert "<42>" not in texto
@@ -1043,7 +1064,7 @@ def test_D2_08_cancel_replace_rej_escapa_el_html() -> None:
 
 # ── D2-15: R-C-03 (3) mide la subida desde el primer intento ───────────────
 def test_D2_15_reintento_stop_anota_precio_del_primer_intento_y_subida() -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, intentos=2, primer_intento_en=1000.0)
+    o = stop_compra(Proposito.STOP, intentos=2, primer_intento_en=1000.0)
     d = reintento_stop(o, CFG["stops"], 1010.0, cot=cot(last="7.00"), precio_primer_intento=D("3.45")).datos
     assert (d["precio_primer_intento"], d["precio_actual"], d["subida_pct"], d["supera_subida_max"]) == (
         "3.45", "7.00", "102.90", True)
@@ -1056,7 +1077,7 @@ def test_D2_15_reintento_stop_anota_precio_del_primer_intento_y_subida() -> None
 
 
 def test_D2_15_umbral_de_la_config_y_ask_si_no_hay_ultimo() -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA)
+    o = stop_compra(Proposito.STOP)
     c = Cotizacion(ticker=TICKER, bid=D("5.00"), ask=D("5.20"), last=None)
     d = reintento_stop(o, {"subida_max_cierre_pct": 50}, 1.0, cot=c, precio_primer_intento=D("4.00")).datos
     assert (d["precio_actual"], d["subida_pct"], d["supera_subida_max"]) == ("5.20", "30.00", False)
@@ -1065,7 +1086,7 @@ def test_D2_15_umbral_de_la_config_y_ask_si_no_hay_ultimo() -> None:
 
 
 def test_D2_15_decidir_anota_la_subida_del_stop_tambien_al_agotar(catalogo: list[dict]) -> None:
-    o = stop_compra(Proposito.STOP_EMERGENCIA, estado=EstadoOrden.REJECTED, intentos=5, notas="???")
+    o = stop_compra(Proposito.STOP, estado=EstadoOrden.REJECTED, intentos=5, notas="???")
     acciones = decidir(o, DESCONOCIDO, posicion(-100), [o], CFG, Tokens(), cot(last="8.00"), HORA, ahora=1500.0,
                        precio_primer_intento=D("4.00"))
     rechazo = anotacion(acciones, "rechazo")

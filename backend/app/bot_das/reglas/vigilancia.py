@@ -2,10 +2,11 @@
 
 QUÉ HACE. `comprobar` recibe una `Foto` (lo que el vigilante ve por su
 conexión watch + los diarios) y devuelve las acciones del vigilante:
-  (a) por posición corta con lotes: exactamente UN principal por nivel (si no
-      está consumido) y UNA emergencia con −neta → `stops.plan` con los
-      tokens del vigilante (Origen.VIGILANTE) y el propósito de lo ajeno al
-      diario inferido (`stops.inferir_proposito`, corrección 3);
+  (a) por posición corta con lotes: exactamente UN stop por nivel L con las
+      acciones de sus lotes (Jaume 29-sep, stop único, R-C-01 v4: disparo en
+      L, límite L + 50 %) → `stops.plan` con los tokens del vigilante
+      (Origen.VIGILANTE) y el propósito de lo ajeno al diario inferido
+      (`stops.inferir_proposito`, corrección 3);
   (b) sobrantes → cancelar la más nueva (lo hace el mismo `plan`);
   (c) posición que no está en ningún diario → `stops.stop_proteccion` por lo
       descubierto + Avisar(3) (R-C-10 caso 4);
@@ -13,8 +14,9 @@ conexión watch + los diarios) y devuelve las acciones del vigilante:
       y R-H-03 (gasto > 3 % del equity) → Avisar(3) + Anotar
       («locates_deshabilitar»);
   (e) 2c: margen de mantenimiento de los cortos > equity·margen_aviso → Avisar(2);
-  (f) R-C-08 (a): el precio pasó el límite de un principal sin fill → SOLO
-      aviso (cerrar queda [PENDIENTE]; `cerrar_si_descubierta` no se usa);
+  (f) R-C-08 (a): el precio pasó el límite del stop de un nivel sin fill →
+      SOLO aviso (cerrar queda [PENDIENTE]; `cerrar_si_descubierta` no se
+      usa); con el ejecutor muerto, aviso 3 de cisne negro (R-G-01 v4);
   (g) corrección 16: si hay que enviar y `puede_enviar` es False → Avisar(3) +
       PedirAlSupervisor("relanzar ejecutor").
 `debe_hacer_ping` es R-J-05. `descubiertas_por_ticker` y
@@ -30,11 +32,16 @@ disparo es inequívoco (R-C-07 plan B).
 LAS TRAMPAS.
   * Cerrojo sin lock (R-C-08.2, §6.1): con el ejecutor VIVO (latido ≤
     `plan_b_latido_s`) el vigilante NO actúa aunque falte un stop; solo si la
-    posición lleva DESCUBIERTA (sin emergencia/protección confirmada, R-C-03)
-    más de `plan_b_descubierta_s`. Con el ejecutor muerto o sin latido,
-    actúa en la primera pasada. Si hay algo raro y no le toca actuar, solo
-    `Anotar("vigilancia")`; si todo cuadra, nada (el diario no se llena cada
-    segundo).
+    posición lleva DESCUBIERTA (acciones sin un stop de nivel o de protección
+    confirmado, R-C-03) más de `plan_b_descubierta_s`. Con el ejecutor muerto
+    o sin latido, actúa en la primera pasada. Si hay algo raro y no le toca
+    actuar, solo `Anotar("vigilancia")`; si todo cuadra, nada (el diario no se
+    llena cada segundo). Es también lo que repone un stop que el ejecutor dejó
+    de reponer tras los 5 rechazos de R-C-03 (Jaume 29-sep: con el stop único
+    esa posición queda SIN stop): el decisor la pasa a CONTROL HUMANO y el
+    vigilante, que no mira ese estado, la sigue viendo descubierta y lo
+    intenta en cada pasada (con la separación y el tope de rechazos del
+    proceso vigilante, riesgo 11).
   * La cuenta de «descubierta desde» NO la lleva esta función (es pura): la
     trae la foto (`descubierta_desde`), y el proceso la actualiza con
     `actualizar_descubierta_desde(…, descubiertas_por_ticker(…), ahora)`.
@@ -45,7 +52,7 @@ LAS TRAMPAS.
     manual que casara con un disparo nunca se reemplaza ni se cancela.
   * Una posición que la foto no lista es «sin información»: no se toca.
   * Un lote sin nivel de stop válido (A12) no cuenta: si NINGÚN lote de la
-    posición lo tiene, nadie puede calcular su par y se trata como (c),
+    posición lo tiene, nadie puede calcular su stop y se trata como (c),
     protección al 25 %, para no dejarla desnuda.
   * De lo que devuelve `plan` se quitan `Programar` y `Consultar` (son
     temporizadores y consultas del ejecutor; el vigilante vuelve a mirar en
@@ -82,6 +89,7 @@ from app.bot_das.tipos import (
     LOCATES_TOPE_GASTO_PCT,
     PLAN_B_DESCUBIERTA_S,
     PLAN_B_LATIDO_S,
+    STOP_LIMITE_PCT,
     STOP_PROTECCION_PCT,
     Accion,
     Anotar,
@@ -241,12 +249,12 @@ def comprobar_con_firmas(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[]
 
 
 def descubiertas_por_ticker(foto: Foto, cfg: Any, hoy: date) -> dict[str, int]:
-    """R-C-03 / plan B: acciones cortas (o largas desconocidas) sin emergencia ni protección CONFIRMADA, por ticker (> 0).
+    """R-C-03 / plan B: acciones cortas (o largas desconocidas) sin un stop CONFIRMADO que las cubra, por ticker (> 0).
 
     Es lo que el proceso vigilante pasa a `actualizar_descubierta_desde` en
-    cada pasada. Con lotes: `stops.descubiertas` (emergencia o protección
-    Accepted/Partial/Hold/Triggered); sin lotes: lo que no cubre una STOPLMTP
-    nuestra confirmada del lado que reduce.
+    cada pasada. Con lotes: `stops.descubiertas` (el stop de cada nivel o una
+    protección, Accepted/Partial/Hold/Triggered); sin lotes: lo que no cubre
+    una STOPLMTP nuestra confirmada del lado que reduce.
     """
     cfg_stops = _bloque(cfg, "stops", requerido=True)
     salida: dict[str, int] = {}
@@ -406,7 +414,7 @@ def _vistas(foto: Foto, cfg_stops: Mapping, hoy: date) -> list[_Vista]:
 
 
 def _descubiertas(vista: _Vista, cfg_stops: Mapping) -> int:
-    """Acciones sin emergencia/protección CONFIRMADA (R-C-03). Con lotes cortos: `stops.descubiertas`; sin lotes: por cobertura."""
+    """Acciones sin stop CONFIRMADO (R-C-03). Con lotes cortos: `stops.descubiertas`; sin lotes: por cobertura."""
     if vista.neta == 0:
         return 0
     if vista.lotes:
@@ -440,7 +448,7 @@ def _que_hacer(vista: _Vista, cfg: Any, cfg_stops: Mapping, tokens: Callable[[],
             return propuesta, [], "ejecutor vivo y la posición no lleva descubierta el plazo del plan B"
         reales = _sin_temporizadores(stops.plan(vista.pos, vista.vivas, cfg_stops, vista.limit_up, tokens, hora_et,
                                                 ruta_stop, 0))
-        return propuesta, reales, "R-C-07 plan B: el vigilante repone el par principal + emergencia"
+        return propuesta, reales, "R-C-07 plan B: el vigilante repone el stop de cada nivel"
     if neta != 0 and not vista.lotes:
         falta = abs(neta) - reconciliacion.cobertura(vista.vivas, t, neta)
         sobran = reconciliacion.huerfanas(vista.vivas, t, neta)
@@ -496,7 +504,8 @@ def _proteccion(vista: _Vista, falta: int, cfg_stops: Mapping, tokens: Callable[
     Sin último: el lado que dispararía (ask si corta, bid si larga), el otro y,
     sin cotización, el precio medio de la posición en DAS. Sin ningún precio,
     aviso 3 para ponerla a mano. Porcentaje: `stops.proteccion_desconocidas_pct`
-    (defecto `STOP_PROTECCION_PCT`, 25 %).
+    (defecto `STOP_PROTECCION_PCT`, 25 %); límite: el del stop único,
+    `stops.limite_pct` (defecto `STOP_LIMITE_PCT`, 50 %, Jaume 29-sep).
     """
     t, neta = vista.ticker, vista.neta
     precio: Optional[Decimal] = None
@@ -509,7 +518,8 @@ def _proteccion(vista: _Vista, falta: int, cfg_stops: Mapping, tokens: Callable[
         return [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_sin_precio:{t}",
                        texto=f"R-C-10 (4): {t} tiene {falta} acciones sin stop y no hay precio: PONER LA PROTECCIÓN A MANO")]
     pct = _pct(cfg_stops.get("proteccion_desconocidas_pct"), STOP_PROTECCION_PCT)
-    orden = stops.stop_proteccion(t, falta, neta < 0, precio, pct, tokens(), ruta_stop, 0)
+    ancho = _pct(cfg_stops.get("limite_pct"), STOP_LIMITE_PCT)
+    orden = stops.stop_proteccion(t, falta, neta < 0, precio, pct, tokens(), ruta_stop, 0, limite_pct=ancho)
     return [EnviarOrden(orden=orden)]
 
 
@@ -544,7 +554,9 @@ def _describir(a: Accion, con_token: bool = False) -> str:
 
 
 def _avisos_precio(vista: _Vista, foto: Foto, cfg_stops: Mapping, muerto: bool) -> list[Accion]:
-    """R-C-08 (a), SOLO aviso: el ask pasó el límite de un principal sin consumir; con el ejecutor muerto, también el de la emergencia."""
+    """R-C-08 (a), SOLO aviso: el ask pasó el límite del stop de un nivel (L + 50 %) sin fill; con el ejecutor muerto y el
+    primero ya pasado, aviso 3 de cisne negro (R-G-01 v4, Jaume 29-sep: con el stop único el límite pasado es el del
+    stop de ese nivel; en v3 se esperaba al de la emergencia)."""
     if vista.neta >= 0 or not vista.lotes:
         return []
     cot = foto.cotizaciones.get(vista.ticker)
@@ -553,20 +565,19 @@ def _avisos_precio(vista: _Vista, foto: Foto, cfg_stops: Mapping, muerto: bool) 
         return []
     salida: list[Accion] = []
     niveles_vivos = sorted({n for n in (_nivel_valido(lote) for lote in vista.lotes) if n is not None})
-    sin_consumir = sorted({n for n in (_nivel_valido(lote) for lote in vista.lotes if not lote.principal_consumido)
-                           if n is not None})
-    for L in sin_consumir:
-        limite = stops.niveles(L, cfg_stops, vista.limit_up).principal_limite
+    pasados: list[tuple[Decimal, Decimal]] = []
+    for L in niveles_vivos:
+        limite = stops.niveles(L, cfg_stops, vista.limit_up).limite
         if precio > limite:
+            pasados.append((L, limite))
             salida.append(Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"vigilante_nivel:{vista.ticker}:{L}",
                                  texto=(f"R-C-08 (a): el precio {precio} de {vista.ticker} pasó el límite {limite} del "
-                                        f"principal de {L} sin fill; el vigilante solo avisa (cerrar: PENDIENTE)")))
-    if muerto and niveles_vivos and vista.pos.estado is not EstadoTicker.BS:
-        emergencia = stops.niveles(niveles_vivos[-1], cfg_stops, vista.limit_up).emergencia_limite
-        if precio > emergencia:
-            salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_bs:{vista.ticker}",
-                                 texto=(f"R-G-01 / R-C-08: {vista.ticker} a {precio}, por encima del límite de emergencia "
-                                        f"{emergencia} con el ejecutor caído: CISNE NEGRO, el vigilante NO cierra")))
+                                        f"stop de {L} sin fill; el vigilante solo avisa (cerrar: PENDIENTE)")))
+    if muerto and pasados and vista.pos.estado is not EstadoTicker.BS:
+        L, limite = pasados[0]
+        salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"vigilante_bs:{vista.ticker}",
+                             texto=(f"R-G-01 / R-C-08: {vista.ticker} a {precio}, por encima del límite {limite} del stop "
+                                    f"de {L} con el ejecutor caído: CISNE NEGRO, el vigilante NO cierra")))
     return salida
 
 

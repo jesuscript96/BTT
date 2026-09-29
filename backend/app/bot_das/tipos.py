@@ -35,9 +35,7 @@ from enum import Enum, IntEnum
 from typing import Any, Optional
 
 # ── constantes por defecto del libro (VIGENTES; los defaults del cuadro salen de aquí) ──
-STOP_PRINCIPAL_LIMITE_PCT = Decimal("3")        # R-C-01 v3 (23-sep): límite del principal = L + 3 %
-STOP_EMERGENCIA_DISPARO_PCT = Decimal("13")     # R-C-01 v3: disparo de la emergencia = L + 13 %
-STOP_EMERGENCIA_LIMITE_PCT = Decimal("63")      # R-C-01 v3: límite de la emergencia = L + 63 %
+STOP_LIMITE_PCT = Decimal("50")                 # R-C-01 v4 (Jaume 29-sep, stop único): UN stop por nivel, disparo en L, límite L + 50 %
 STOP_PROTECCION_PCT = Decimal("25")             # R-C-10 (4): 20-30 % para posiciones desconocidas
 STOP_MARGEN_BAJO_LIMIT_UP_PCT = Decimal("1.5")  # R-F-02: 1-2 % bajo la banda
 ENTRADA_AGREGAR_S = 60                          # R-B-01 v3: hasta 60 s agregando en el punto medio
@@ -138,8 +136,7 @@ class EstadoOrden(str, Enum):      # manual L379-405, conjunto CERRADO
 class Proposito(str, Enum):        # por qué existe una orden nuestra (va al diario; el vigilante lo infiere si no lo tiene)
     ENTRADA_AGREGAR = "entrada_agregar"
     ENTRADA_CRUCE = "entrada_cruce"
-    STOP_PRINCIPAL = "stop_principal"
-    STOP_EMERGENCIA = "stop_emergencia"
+    STOP = "stop"                                  # R-C-01 v4 (Jaume 29-sep): el stop ÚNICO de cada nivel L
     STOP_PROTECCION = "stop_proteccion"
     TP_AGREGAR = "tp_agregar"
     TP_CRUCE = "tp_cruce"
@@ -667,7 +664,6 @@ class Lote:                        # una estrategia dentro de un ticker (R-B-03:
     hora_salida: Optional[str] = None
     eod: Optional[str] = None
     tp_pendiente: int = 0
-    principal_consumido: bool = False   # R-C-11 (c): tras un fill del principal no se repone
     version_estrategia: str = ""   # R-E-03: hash de la definición con la que nació el lote
 
 
@@ -692,10 +688,10 @@ class IntentoEntrada:              # máquina de estados de R-B-01 v3 para UN ti
 
 
 @dataclass
-class EstadoBS:                    # R-G-01
+class EstadoBS:                    # R-G-01 v4: `limite_stop` = el límite del stop que el precio pasó (L + 50 %)
     activado_en: float
     primer_stop: Decimal
-    emergencia_limite: Decimal
+    limite_stop: Decimal
     max_visto: Decimal
     informes: int = 0
     ultimo_informe: float = 0.0
@@ -732,7 +728,7 @@ class PosicionTicker:
 
     @property
     def neta(self) -> int:
-        """La neta OPERATIVA: fills (inmediata). Si neta_das discrepa, la reconciliación manda un barrido antes de tocar la emergencia."""
+        """La neta OPERATIVA: fills (inmediata). Si neta_das discrepa, la reconciliación manda un barrido antes de tocar los stops."""
         return self.neta_fills
 
 
@@ -814,11 +810,9 @@ class Ficha:                       # /v3/reference/tickers/{t} (R-A-03 v2); la c
 
 
 @dataclass(frozen=True)
-class NivelesStop:                 # R-C-01 v3: +3 / +13 / +63 SUMADOS sobre L; `bajo_banda` = disparo recortado bajo limit up (R-F-02)
-    principal_disparo: Decimal
-    principal_limite: Decimal
-    emergencia_disparo: Decimal
-    emergencia_limite: Decimal
+class NivelesStop:                 # R-C-01 v4 (Jaume 29-sep, stop único): disparo EN L, límite L + 50 % SUMADO; `bajo_banda` = recortado bajo limit up (R-F-02)
+    disparo: Decimal
+    limite: Decimal
     bajo_banda: bool
 
 

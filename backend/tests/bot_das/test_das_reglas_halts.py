@@ -79,10 +79,10 @@ def cot(last=None, bid=None, ask=None) -> Cotizacion:
     return Cotizacion(ticker=X, bid=conv(bid), ask=conv(ask), last=conv(last), actualizada_en=1000.0)
 
 
-def niveles(principal: str) -> NivelesStop:
-    p = D(principal)
-    return NivelesStop(principal_disparo=p, principal_limite=p * D("1.03"), emergencia_disparo=p * D("1.13"),
-                       emergencia_limite=p * D("1.63"), bajo_banda=False)
+def niveles(disparo: str) -> NivelesStop:
+    """R-C-01 v4 (Jaume 29-sep, stop único): el primer stop con disparo en L y límite L + 50 %."""
+    p = D(disparo)
+    return NivelesStop(disparo=p, limite=p * D("1.5"), bajo_banda=False)
 
 
 def orden_viva(token: int, proposito: Proposito, id_das: Optional[int] = 500, estado: EstadoOrden = EstadoOrden.ACCEPTED,
@@ -469,12 +469,21 @@ def stop_vivo(token: int, proposito: Proposito, stop: str, limite: str, qty: int
                  id_das=id_das, estado=estado, llenas=llenas, lvqty=lvqty)
 
 
-def test_E1_04_ensancha_solo_el_limite_del_principal(config):
-    """E1-04: halt H en premercado + «mantener» → REPLACE del límite a disparo · 1,05; mismo disparo y cantidad."""
+def test_E1_04_con_el_stop_unico_no_hay_nada_que_ensanchar(config):
+    """Jaume 29-sep (stop único, decisión sobre el ensanche en PM): el stop de nivel ya lleva límite L + 50 % (2,00 → 3,00),
+    muy por encima de disparo · 1,05: el ensanche de R-F-06 no lo toca (ni lo baja) y no sale nada."""
+    pos = posicion(-300, (D("2"),))
+    vivas = [stop_vivo(1, Proposito.STOP, "2.00", "3.00", qty=300, id_das=701)]
+    assert halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="H", parada=D("1.9")), "premercado", config) == []
+
+
+def test_E1_04_ensancha_solo_un_limite_mas_estrecho_que_el_margen(config):
+    """E1-04 como red: halt H en premercado + «mantener» → un stop de compra con un límite estrecho (una protección o una orden
+    adoptada con otra config, 2,06) se REEMPLAZA a disparo · 1,05; mismo disparo y cantidad. El de nivel (3,00) no se toca."""
     pos = posicion(-300, (D("2"),))
     pos.version_stops = 7
-    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=300, id_das=701),
-             stop_vivo(2, Proposito.STOP_EMERGENCIA, "2.26", "3.26", qty=300, id_das=702)]
+    vivas = [stop_vivo(1, Proposito.STOP_PROTECCION, "2.00", "2.06", qty=300, id_das=701),
+             stop_vivo(2, Proposito.STOP, "2.00", "3.00", qty=300, id_das=702)]
     acciones = halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="H", parada=D("1.9")), "premercado", config)
     assert [type(a) for a in acciones] == [Anotar, Reemplazar, Programar]
     r = acciones[1]
@@ -491,24 +500,25 @@ def test_E1_04_ensancha_solo_el_limite_del_principal(config):
 ], ids=["LULD-no", "RTH-no", "post-no", "sin-halt-no", "reabierto-no", "largo-no", "plano-no"])
 def test_E1_04_no_aplica(ta, franja, neta, config):
     pos = posicion(neta, (D("2"),)) if neta else PosicionTicker(ticker=X)
-    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=300)]
+    vivas = [stop_vivo(1, Proposito.STOP_PROTECCION, "2.00", "2.06", qty=300)]
     assert halts.ensanchar_stops_pm(pos, vivas, simbolo(ta=ta), franja, config) == []
 
 
 def test_E1_04_q_en_premercado_tambien(config):
     pos = posicion(-300, (D("2"),))
-    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=300)]
+    vivas = [stop_vivo(1, Proposito.STOP_PROTECCION, "2.00", "2.06", qty=300)]
     assert any(isinstance(a, Reemplazar) for a in halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="Q"), "premercado",
                                                                            config))
 
 
 def test_E1_04_ignora_lo_que_no_es_stop_de_compra_vivo(config):
     pos = posicion(-300, (D("2"),))
-    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", id_das=None),
-             stop_vivo(2, Proposito.STOP_PRINCIPAL, "2.00", "2.06", estado=EstadoOrden.CANCELED),
-             stop_vivo(3, Proposito.STOP_PRINCIPAL, "2.00", "2.06", ticker="OTRO"),
+    vivas = [stop_vivo(1, Proposito.STOP_PROTECCION, "2.00", "2.06", id_das=None),
+             stop_vivo(2, Proposito.STOP_PROTECCION, "2.00", "2.06", estado=EstadoOrden.CANCELED),
+             stop_vivo(3, Proposito.STOP_PROTECCION, "2.00", "2.06", ticker="OTRO"),
              orden_viva(4, Proposito.TP_AGREGAR, lado=Lado.COMPRA),
-             stop_vivo(5, Proposito.STOP_PRINCIPAL, "2.00", "2.10")]          # ya tiene el margen: no se toca
+             stop_vivo(5, Proposito.STOP_PROTECCION, "2.00", "2.10"),         # ya tiene el margen: no se toca
+             stop_vivo(6, Proposito.STOP, "2.00", "3.00")]                     # el stop único: límite + 50 %
     assert halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="H"), "premercado", config) == []
 
 
@@ -523,7 +533,7 @@ def test_E1_04_share_parcial(share_es_abierta, esperado, cfg_json):
         stops_cfg.pop("replace_share_es_abierta", None)
     cfg = {"halts": cfg_json["halts"], "stops": stops_cfg, "rutas": cfg_json["rutas"]}
     pos = posicion(-60, (D("2"),))
-    vivas = [stop_vivo(1, Proposito.STOP_PRINCIPAL, "2.00", "2.06", qty=100, llenas=40, lvqty=60,
+    vivas = [stop_vivo(1, Proposito.STOP_PROTECCION, "2.00", "2.06", qty=100, llenas=40, lvqty=60,
                        estado=EstadoOrden.PARTIAL)]
     r = [a for a in halts.ensanchar_stops_pm(pos, vivas, simbolo(ta="H"), "premercado", cfg) if isinstance(a, Reemplazar)]
     assert r[0].qty == esperado and r[0].precio == D("2.10")
@@ -546,8 +556,8 @@ def test_al_entrar_en_halt_cancela_solo_entradas_vivas_y_avisa():
         orden_viva(1, Proposito.ENTRADA_AGREGAR, id_das=501),
         orden_viva(2, Proposito.ENTRADA_CRUCE, id_das=502, estado=EstadoOrden.PARTIAL),
         orden_viva(3, Proposito.ENTRADA_AGREGAR, id_das=None, estado=EstadoOrden.SENDING),
-        orden_viva(4, Proposito.STOP_PRINCIPAL, id_das=504, lado=Lado.COMPRA),
-        orden_viva(5, Proposito.STOP_EMERGENCIA, id_das=505, lado=Lado.COMPRA),
+        orden_viva(4, Proposito.STOP, id_das=504, lado=Lado.COMPRA),
+        orden_viva(5, Proposito.STOP_PROTECCION, id_das=505, lado=Lado.COMPRA),
         orden_viva(6, Proposito.ENTRADA_AGREGAR, id_das=506, estado=EstadoOrden.CANCELED),
         orden_viva(7, Proposito.ENTRADA_AGREGAR, id_das=507, estado=EstadoOrden.EXECUTED),
         orden_viva(8, Proposito.ENTRADA_AGREGAR, id_das=508, ticker="OTRO"),

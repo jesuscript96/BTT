@@ -13,7 +13,7 @@ Fuentes cotejadas hoy sobre el disco (rutas absolutas, líneas comprobadas el 26
 3. La señal se calcula UNA vez (mismos `Evento` del hijo de alertas) y entra por una `FuenteSenales` con tres adaptadores: en proceso, por tubería (desde `bot.py`, bandera futura) y por grabación (replay).
 4. DAS se habla por `protocolo.py` (puro, cubre las 29 ambigüedades del manual) y `cliente.py` (socket, cuotas, reconexión); un `simulador_das.py` habla el mismo protocolo para los tests.
 5. Dinero: toda orden lleva token entero de 32 bits con origen/día/secuencia; el diario es write-ahead con `fsync` ANTES del `send` y se relee al arrancar (H-2); precios en `Decimal` y acciones en `int` con validación en el constructor.
-6. Stops: tras cada fill, UN principal por nivel y UNA emergencia STOPLMTP (+3/+13/+63 sumados sobre L), plan idempotente que netea con las órdenes del vigilante y versión del objetivo por ticker para que ningún `REPLACE` viejo salga después de un fill.
+6. Stops: tras cada fill, UN stop STOPLMTP por nivel L (disparo en L, límite L + 50 %; R-C-01 v4, Jaume 29-sep, stop único; hasta el 29-sep era un principal por nivel + una emergencia, +3/+13/+63), plan idempotente que netea con las órdenes del vigilante y versión del objetivo por ticker para que ningún `REPLACE` viejo salga después de un fill.
 7. El vigilante corre aparte con conexión watch (`LOGIN … 1`), repone el par si el ejecutor calla > 3 s, y avisa por ping externo cada 60 s.
 8. Fases: `sombra` (prohibido a nivel de código enviar mutantes: `EnvioProhibido` + `ClienteSombra`) y `canario`/`real`, que además exigen `BOT_DAS_PERMITIR_ORDENES=1` en el `.env` del VPS.
 9. Configuración del cuadro por fichero atómico con versión y hash (H-4), campos en caliente y solo-apagado (CM2), historial al diario (CM3); alarmas al grupo A y avisos del grupo B por una cola en hilo aparte (misma velocidad con o sin alarmas, medida).
@@ -64,7 +64,7 @@ backend/app/bot_das/
     ├── locates.py              # Paquetes 100/30 % (H6), EV con coste TOTAL acumulado (solo ev_fijo_para_precio), escalonado, cerrojo, tope 3 %, parcial (R-H-01..05, EP-9).
     ├── exclusiones.py          # SPAC/IPO/split/lista negra/OPA, símbolo que no casa (R-A-03 v2, R-A-04).
     ├── reconciliacion.py       # Diario+fills vs DAS: 5 casos, barrido adaptativo, caducidad (R-C-10, R-K-01/02/03, R-M-03).
-    └── vigilancia.py           # Lo que comprueba el vigilante: un principal + una emergencia, plan B, bucles, margen, fallback (R-C-07/08/11, R-H-02/03, 2c, R-J-05).
+    └── vigilancia.py           # Lo que comprueba el vigilante: un stop por nivel (Jaume 29-sep, stop único), plan B, bucles, margen, fallback (R-C-07/08/11, R-H-02/03, 2c, R-J-05).
 
 backend/tests/bot_das/            # SIN __init__.py (como tests/): pytest inserta este directorio en sys.path y `import canal_falso` funciona.
 ├── conftest.py                 # Fixtures propias: reloj simulado, config de ejemplo cargada, simulador en 127.0.0.1:0, directorio temporal del bot. NUNCA usa `real_db`.
@@ -125,9 +125,7 @@ from enum import Enum, IntEnum
 from typing import Any, Optional
 
 # ── constantes por defecto del libro (VIGENTES; los defaults del cuadro salen de aquí) ──
-STOP_PRINCIPAL_LIMITE_PCT = Decimal("3")        # R-C-01 v3 (23-sep): límite del principal = L + 3 %
-STOP_EMERGENCIA_DISPARO_PCT = Decimal("13")     # R-C-01 v3: disparo de la emergencia = L + 13 %
-STOP_EMERGENCIA_LIMITE_PCT = Decimal("63")      # R-C-01 v3: límite de la emergencia = L + 63 %
+STOP_LIMITE_PCT = Decimal("50")                # R-C-01 v4 (Jaume 29-sep, stop único): límite del stop = L + 50 % (sustituye a los tres de v3: principal +3 %, emergencia +13 % / +63 %)
 STOP_PROTECCION_PCT = Decimal("25")             # R-C-10 (4): 20-30 % para posiciones desconocidas
 STOP_MARGEN_BAJO_LIMIT_UP_PCT = Decimal("1.5")  # R-F-02: 1-2 % bajo la banda
 ENTRADA_AGREGAR_S = 60                          # R-B-01 v3: hasta 60 s agregando en el punto medio
@@ -206,7 +204,7 @@ class EstadoOrden(str, Enum):                                     # manual L379-
 
 class Proposito(str, Enum):        # por qué existe una orden nuestra (va al diario; el vigilante lo infiere si no lo tiene)
     ENTRADA_AGREGAR = "entrada_agregar"; ENTRADA_CRUCE = "entrada_cruce"
-    STOP_PRINCIPAL = "stop_principal"; STOP_EMERGENCIA = "stop_emergencia"; STOP_PROTECCION = "stop_proteccion"
+    STOP = "stop"; STOP_PROTECCION = "stop_proteccion"      # Jaume 29-sep, stop único: STOP_PRINCIPAL pasa a STOP y STOP_EMERGENCIA desaparece
     TP_AGREGAR = "tp_agregar"; TP_CRUCE = "tp_cruce"
     HORA_AGREGAR = "hora_agregar"; HORA_ASK = "hora_ask"            # R-D-08 (salida por hora y EOD)
     SALIDA_MOTOR_AGREGAR = "salida_motor_agregar"; SALIDA_MOTOR_CRUCE = "salida_motor_cruce"  # Signal/Trailing/Time Limit (pregunta 3 a Jaume)
@@ -439,7 +437,7 @@ class Lote:                        # una estrategia dentro de un ticker (R-B-03:
     pedidas: int; llenas: int = 0; precio_medio: Decimal = Decimal("0"); nivel_stop: Optional[Decimal] = None
     riesgo_usd: Decimal = Decimal("0"); estado: EstadoLote = EstadoLote.ABRIENDO; reentrada_n: int = 0; entrada_idx: Optional[int] = None
     nivel_piramide: Optional[int] = None; hora_salida: Optional[str] = None; eod: Optional[str] = None
-    tp_pendiente: int = 0; principal_consumido: bool = False   # R-C-11 (c): tras un fill del principal no se repone
+    tp_pendiente: int = 0   # (Jaume 29-sep, stop único: `principal_consumido` desaparece: todo lote corto lleva siempre su stop)
     version_estrategia: str = ""   # R-E-03: hash de la definición con la que nació el lote
 
 @dataclass
@@ -452,7 +450,7 @@ class IntentoEntrada:              # máquina de estados de R-B-01 v3 para UN ti
 
 @dataclass
 class EstadoBS:                    # R-G-01
-    activado_en: float; primer_stop: Decimal; emergencia_limite: Decimal; max_visto: Decimal
+    activado_en: float; primer_stop: Decimal; limite_stop: Decimal; max_visto: Decimal   # limite_stop = límite del primer stop (Jaume 29-sep, stop único; antes emergencia_limite)
     informes: int = 0; ultimo_informe: float = 0.0; silenciado: bool = False; perdido_realizado: Decimal = Decimal("0")
 
 @dataclass
@@ -472,7 +470,7 @@ class PosicionTicker:
 
     @property
     def neta(self) -> int:
-        """La neta OPERATIVA: fills (inmediata). Si neta_das discrepa, la reconciliación manda un barrido antes de tocar la emergencia."""
+        """La neta OPERATIVA: fills (inmediata). Si neta_das discrepa, la reconciliación manda un barrido antes de tocar los stops."""
         return self.neta_fills
 
 @dataclass
@@ -865,7 +863,7 @@ class ConfigInvalida(ValueError): errores: list[str]
 def hash_canonico(obj: Any) -> str                        # sha256 de json.dumps(sort_keys=True, separators=(",",":"), ensure_ascii=False)
 def motor_hash(base: Path) -> str                         # sha256 de los tres ficheros concatenados (H-6)
 def escribir_atomico(ruta: Path, obj: dict) -> None       # calcula `sha256` del resto, tmp en el MISMO directorio + os.replace
-def validar(crudo: dict) -> list[str]                     # esquema, sha256, rangos (0 < principal_limite_pct < emergencia_disparo_pct < emergencia_limite_pct; k_max ≥ 1; tope_gasto ∈ (0, 10]; horas HH:MM; fase ∈ Fase)
+def validar(crudo: dict) -> list[str]                     # esquema, sha256, rangos (stops.limite_pct > 0 y un cuadro con las claves de v3 principal_limite_pct/emergencia_*_pct NO carga, Jaume 29-sep, stop único; k_max ≥ 1; tope_gasto ∈ (0, 10]; horas HH:MM; fase ∈ Fase)
 def cargar(ruta: Path, cuenta_das: str) -> Config         # lanza ConfigInvalida con la lista de errores
 def cargar_con_respaldo(ruta: Path, ultimo_bueno: Path, cuenta_das: str) -> tuple[Config, Optional[str]]   # H-4: si falla → último bueno + texto de aviso; si tampoco → ConfigInvalida
 def guardar_ultimo_bueno(cfg_cruda: dict, ultimo_bueno: Path) -> None
@@ -1047,32 +1045,31 @@ def es_piramide_add(evento) -> bool; def es_piramide_reduce(evento) -> bool   # 
 ### 3.16 `reglas/stops.py` (R-C-01 v3, R-C-04, R-C-06, R-C-07, R-C-10.4, R-C-11, R-F-02; injertos A §8.6 y §8.7; corrección 2 y 3)
 
 ```python
-@dataclass(frozen=True) class NivelesStop: principal_disparo: Decimal; principal_limite: Decimal; emergencia_disparo: Decimal; emergencia_limite: Decimal; bajo_banda: bool
+@dataclass(frozen=True) class NivelesStop: disparo: Decimal; limite: Decimal; bajo_banda: bool   # R-C-01 v4 (Jaume 29-sep, stop único)
 def niveles(L: Decimal, cfg_stops: dict, limit_up: Optional[Decimal] = None) -> NivelesStop
-    # SUMADOS sobre L (23-sep): disparo L, límite L·(1+3 %), emergencia L·(1+13 %) / L·(1+63 %); redondeo ARRIBA al tick.
-    # R-F-02: si un disparo ≥ limit_up → disparo = limit_up·(1 − margen) redondeado abajo, límite = disparo·(1+3 %); bajo_banda=True.
+    # SUMADOS sobre L: disparo L, límite L·(1 + limite_pct) con limite_pct = 50 (Jaume 29-sep, stop único; v3: L·1,03 y la emergencia L·1,13 / L·1,63); redondeo ARRIBA al tick.
+    # R-F-02: si el disparo ≥ limit_up·(1 − margen) → disparo = limit_up·(1 − margen) redondeado abajo, límite = disparo·(1 + limite_pct); bajo_banda=True.
 @dataclass(frozen=True) class StopDeseado: proposito: Proposito; nivel: Decimal; qty: int; disparo: Decimal; limite: Decimal
 def conjunto_deseado(pos: PosicionTicker, cfg_stops: dict, limit_up: Optional[Decimal]) -> list[StopDeseado]
-    # Sobre pos.neta (fills). Corto neto n = −neta > 0: UN principal por nivel L distinto con la suma de `llenas` de los lotes de ese nivel
-    # (solo lotes con principal_consumido=False; suma capada a n), UNA emergencia con n entera sobre el L más alto. n ≤ 0 → [].
+    # Sobre pos.neta (fills). Corto neto n = −neta > 0: UN stop (propósito STOP) por nivel L distinto con la suma de `llenas` de los lotes de ese nivel
+    # (acumulado del L más bajo al más alto capado a n; lo que sobra sobre los lotes, al del L más alto). Sin emergencia. n ≤ 0 → [].
 def inferir_proposito(o: MsgOrden | Orden, niveles_lotes: list[Decimal], cfg_stops: dict) -> Proposito
-    # corrección 3: una STOPLMTP de COMPRA nuestra que no está en el diario del ejecutor (la puso el vigilante): disparo ≈ L (±1 tick) → STOP_PRINCIPAL;
-    # disparo ≈ L·1,13 (±1 tick) → STOP_EMERGENCIA; otra cosa → STOP_PROTECCION
+    # corrección 3: una STOPLMTP de COMPRA nuestra que no está en el diario del ejecutor (la puso el vigilante): disparo ≈ L (±1 tick, con o sin banda) → STOP;
+    # otra cosa → STOP_PROTECCION. `nivel_de_stop(o, pos, cfg)` da el L de un stop (por su `nivel` o por su disparo).
 def plan(pos: PosicionTicker, vivas: list[Orden], cfg_stops: dict, limit_up: Optional[Decimal], tokens: Callable[[], int],
          hora_et: datetime, ruta_stop: str, version: int) -> list[Accion]
     # IDEMPOTENTE. deseado ↔ vivas (mismo propósito y nivel ±1 tick, CUALQUIER Origen: aquí está el NETEO de R-C-07):
     # falta → EnviarOrden(STOPLMTP B, serie=f"stops:{ticker}", version); qty distinta → Reemplazar(version) + Programar("replace_verificar"); sobrante → Cancelar la MÁS NUEVA.
-    # Precondición (corrección 2): si pos.neta_das is not None y ≠ pos.neta_fills → devuelve [Consultar("GET POSITIONS"), Programar("stops_plan", 0.5)] y NO toca la emergencia
-    # (una emergencia con más acciones que el corto real deja la cuenta LARGA, R-C-11 b).
-def limpieza_tras_fill_stop(pos: PosicionTicker, vivas: list[Orden], cot: Cotizacion, tokens, cfg, hora_et: datetime, version: int) -> list[Accion]
+    # Precondición (D2a-05): si pos.neta_das is not None y ≠ pos.neta_fills → solo BAJA cantidades con n = min(−neta_fills, −neta_das) y no quita cobertura
+    # (un stop con más acciones que el corto real deja la cuenta LARGA, R-C-11 b).
+def limpieza_tras_fill_stop(pos: PosicionTicker, vivas: list[Orden], cot: Cotizacion, tokens, cfg, hora_et: datetime, version: int, limit_up=None, compras_cierre=0, pedidos_en_vuelo=None) -> list[Accion]
     # R-C-11, por EVENTO. Siempre empieza por InvalidarSerie(f"stops:{ticker}", version) (injerto §8.6).
     # neta == 0 → CancelarTicker; neta > 0 (LARGA) → EnviarOrden(S neta al bid, ruta cruzar, VENTA_EXCESO) + Avisar(2) + Anotar("incidente") (vende SOLO la neta larga, JAMÁS la cantidad inicial);
-    # neta < 0 (sigue corta) → marcar principal_consumido en el lote de ese nivel y plan() (cancela el principal, Reemplazar la emergencia a −neta; si DAS la cancela/rechaza → reponer).
-def reasignar_principal_rebasado(pos, vivas, cot, cfg_stops, tokens, hora_et, ruta_stop, version) -> list[Accion]
-    # R-C-01 decisión (a): ask > límite del principal de un nivel sin fill → Cancelar y sumar su qty al principal del nivel superior; si era el más alto → principal nuevo (disparo ask, límite ask·1,03)
+    # neta < 0 (sigue corta) → plan(): cada stop a las acciones de su nivel (el que llenó en parte sigue vivo con lo que le queda; Jaume 29-sep, stop único).
+# (reasignar_principal_rebasado ya no existe, Jaume 29-sep, stop único: el precio por encima del límite del stop sin llenarlo es cisne negro, R-G-01)
 def tipo_conserva_pp(tipo_das_crudo: Optional[str], patron_esperado: str) -> Optional[bool]   # 2h.8: tras REPLACE; None = aún sin %ORDER; patrón viene de cfg.stops.tipo_esperado_en_order (se fija el primer día con comprobar_das.py)
-def stop_proteccion(ticker: str, qty: int, es_corta: bool, last: Decimal, pct: Decimal, token: int, ruta: str, version: int) -> OrdenNueva   # R-C-10 (4): +pct sobre last si corta / −pct si larga, STOPLMTP con límite +3 %
-def descubiertas(pos: PosicionTicker, vivas: list[Orden]) -> int   # acciones netas cortas sin emergencia viva (Accepted/Partial) que las cubra; > 0 dispara R-C-03 y el plan B
+def stop_proteccion(ticker: str, qty: int, es_corta: bool, last: Decimal, pct: Decimal, token: int, ruta: str, version: int, limite_pct=None) -> OrdenNueva   # R-C-10 (4): +pct sobre last si corta / −pct si larga, STOPLMTP con límite ±limite_pct (50 %, Jaume 29-sep, stop único; antes +3 %)
+def descubiertas(pos: PosicionTicker, vivas: list[Orden], cfg_stops, limit_up, compras_cierre=0) -> int   # acciones cortas sin stop confirmado (STOP o protección) que las cubra; > 0 dispara R-C-03 y el plan B
 def cantidad_cancelada(act: MsgOrderAct | MsgOrden) -> int         # injerto §8.7: SIEMPRE de `%OrderAct Canceled qty` / `%ORDER cxlqty`, nunca de lo pedido
 ```
 
@@ -1133,16 +1130,16 @@ def primera_vela_pct(precio_reapertura: Decimal, cierre_primera_vela: Decimal) -
 ### 3.19 `reglas/cisne_negro.py` (R-G-01, R-G-03)
 
 ```python
-def se_activa(pos: PosicionTicker, stops: NivelesStop, vivas: list[Orden], cot: Cotizacion) -> bool   # last > emergencia_limite y −neta > 0 y la emergencia no se ha llenado del todo (aclaración 24-sep)
+def se_activa(pos: PosicionTicker, stops: NivelesStop, vivas: list[Orden], cot: Cotizacion) -> bool   # last > límite del PRIMER stop (el del L más bajo) y −neta > 0 y ese stop no ha llenado del todo (Jaume 29-sep, stop único; v3: límite de la emergencia)
 def activar(pos: PosicionTicker, stops: NivelesStop, ahora: float) -> EstadoBS
 def toca_informe(bs: EstadoBS, ahora: float, cfg_tec: dict) -> bool          # 60 s × 5, luego cada 300 s; silenciado → False
 def informe(pos, bs, stops, cot, simb, cuenta: Cuenta, ahora_et: datetime, eod: Optional[datetime], franja: str, fills: list[Fill]) -> str
-    # los 16 campos de R-G-01 (2): stop normal y emergencia, bid/ask, minutos desde el evento, acciones al descubierto, % pérdida latente del trade, % y $ sobre la cuenta (con lo ya perdido),
+    # los 16 campos de R-G-01 (2): el stop, los stops por nivel, bid/ask, minutos desde el evento, acciones al descubierto, % pérdida latente del trade, % y $ sobre la cuenta (con lo ya perdido),
     # máx % subida vs primer stop, % actual vs primer stop, pérdida ejecutada en $ y %, comandos, halts (solo RTH: distancia a banda, k), minutos desde el máximo y si lleva N min bajando, minutos hasta EOD, estado de la emergencia
-def acciones_durante_bs(pos, vivas: list[Orden], cfg, version: int) -> list[Accion]   # R-G-03: SOLO Reemplazar qty de la emergencia a −neta; NUNCA reponer, ni mover, ni EnviarOrden
-def al_cerrar(pos, dentro_de_emergencia: bool) -> tuple[Optional[Avisar], bool]   # (3): «POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP DE EMERGENCIA» si cerró dentro; marca sin_reentrada_hasta_sigue
+def acciones_durante_bs(pos, vivas: list[Orden], cfg, version: int) -> list[Accion]   # R-G-03: SOLO Reemplazar qty de los stops (cada uno capado a −neta); NUNCA reponer, ni mover, ni EnviarOrden
+def al_cerrar(pos, dentro_del_margen: bool) -> tuple[Optional[Avisar], bool]   # (3): «POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP» si la cerró un stop dentro de su límite; marca sin_reentrada_hasta_sigue
 def fogonazo_visto(cot_hist: list[tuple[float, Decimal]], umbral_pct: Decimal) -> Optional[dict]   # R-G-01 (4): máximo, duración, devolución → diario (con o sin posición)
-def cierre_humano(pos, vivas, cot, n: Optional[int], cfg, tokens, hora_et) -> list[Accion]   # /cerrar X [N] SI durante BS: Cancelar la emergencia ANTES (R-G-03.3) y luego orden_al_ask techo 5 % (R-D-06)
+def cierre_humano(pos, vivas, cot, n: Optional[int], cfg, tokens, hora_et) -> list[Accion]   # /cerrar X [N] SI durante BS: Cancelar los stops ANTES (R-G-03.3) y luego orden_al_ask techo 5 % (R-D-06)
 ```
 
 ### 3.20 `reglas/rechazos.py` (R-B-07, R-C-03, EP-1)
@@ -1223,7 +1220,7 @@ class AcumuladorVolcado:                                           # junta %POS/
 ```python
 @dataclass(frozen=True) class Foto: posiciones: dict[str, MsgPos]; ordenes: dict[int, MsgOrden]; lotes: dict[str, list[Lote]]; latido_ejecutor_s: Optional[float]; cotizaciones: dict[str, Cotizacion]; gasto_locates: Decimal; compras_locate: list[Registro]; equity: Optional[Decimal]
 def comprobar(foto: Foto, cfg: Config, ahora: float, tokens, hora_et, ruta_stop, puede_enviar: bool) -> list[Accion]
-    # (a) por posición corta (neta_das < 0): exactamente UN principal por nivel (si no consumido) y UNA emergencia con qty = −neta → stops.plan() con Origen.VIGILANTE e inferir_proposito para las suyas.
+    # (a) por posición corta (neta_das < 0): exactamente UN stop por nivel (Jaume 29-sep, stop único) → stops.plan() con Origen.VIGILANTE e inferir_proposito para las suyas.
     #     ACTÚA solo si latido_ejecutor_s is None o > PLAN_B_LATIDO_S, o si la posición lleva descubierta > PLAN_B_DESCUBIERTA_S con el ejecutor vivo. Si no toca actuar → solo Anotar.
     # (b) sobrantes → Cancelar la más nueva · (c) posición sin lote en ningún diario → stop_proteccion + Avisar(3) (R-C-10.4).
     # (d) R-H-02: dos Located para (ticker, estrategia, día) → Avisar(3) + Anotar("locates_deshabilitar") · R-H-03: gasto > 3 % de equity → ídem.
@@ -1293,7 +1290,7 @@ def main(argv) -> int
     # 3 (canario, 1 acción) NEWORDER STOPLMTP → guarda la línea %ORDER CRUDA en fixtures/lineas_das.txt y fija cfg.stops.tipo_esperado_en_order
     # 4 (canario) REPLACE de cantidad sobre esa STOPLMTP → ¿conserva pre/post? (2h.8)
     # 5 (canario) PostOnly en SAGEREB y SMAT → aceptado/rechazado con el texto literal
-    # 6 (canario) GET BP antes/después de poner principal + emergencia → BP retenido por los dos stops (EP-3)
+    # 6 (canario) GET BP antes/después de poner EL stop (Jaume 29-sep, stop único) → BP retenido por el stop (EP-3)
     # 7 conexión watch: qué llega (%OrderAct? $Quote? marcadores?) y si una segunda conexión normal puede enviar (R-C-08)
     # 8 %POS de un corto de 1 acción → signo de qty (qty_corto_negativa)
     # 9 SLPRICEINQUIRE ALLROUTEWTTYPE1 de 100 → %SLRET real y SLRouteMinCharge ALLROUTE
@@ -1313,7 +1310,7 @@ Fuente: `manual_2026.txt` (M), cotejado con la especificación del protocolo (§
 | `LOGIN Trader Password Account 1/0` | `cmd_login(usuario, clave, cuenta, watch)` | ejecutor `0`; vigilante `1` (watch) | L243-255 |
 | `NEWORDER token b/s symbol route share price [PostOnly] TIF=DAY+` | `cmd_neworder(OrdenNueva(tipo=LIMITE))` | entrada agregar/cruce, TP, salidas, venta de exceso, cierre humano | L543-547, L709-728, L767-770 |
 | `NEWORDER token b/s symbol route share MKT TIF=DAY` | `cmd_neworder(tipo=MERCADO)` | solo reapertura tras halt por ruta `OPEN` (R-F-01, EP-2) | L549-553 |
-| `NEWORDER token b/s symbol route share STOPLMTP StopPrice Price TIF=DAY+` | `cmd_neworder(tipo=STOP_LIMITE_PP)` | principal, emergencia, protección (ruta `STOP`/`SMAT`) | L618-624, L698-707 |
+| `NEWORDER token b/s symbol route share STOPLMTP StopPrice Price TIF=DAY+` | `cmd_neworder(tipo=STOP_LIMITE_PP)` | stop de cada nivel, protección (ruta `STOP`/`SMAT`) | L618-624, L698-707 |
 | `CANCEL orderid` | `cmd_cancel(id_das)` | cancelar agregar antes del cruce, stops sobrantes, TP | L802-806 |
 | `CANCEL ALL` | `cmd_cancel_all()` | solo `/cerrar_todo SI` | L808-810 |
 | `CANCEL ALLSYMB ticker` | `cmd_cancel_allsymb(ticker)` | limpieza R-C-11 con neta 0; cierre de lote; halt | L226-229, L812-816 |
@@ -1395,14 +1392,14 @@ Notación: `→` llamada; `⇒` acción devuelta por el decisor y ejecutada por 
 9. Al cerrar el intento ⇒ `Avisar(1, B, texto_fill)` (llenas, precio medio, slippage vs `precio_senal` al diario), `salidas.temporizadores_lote`, `Desprogramar("cruce*")`, `Programar("barrido", 0)`.
 
 **F2. Stops STOPLMTP y limpieza (R-C-01 v3, R-C-11, R-C-06/07, R-F-02, 2h.8; injertos §8.6/§8.7; corrección 2).**
-1. Tras cada fill de entrada/pirámide/TP y tras cada `Canceled/Rejected` de un stop: `stops.plan(pos, vivas, cfg.stops, limit_up, tokens, hora_et, ruta, version=pos.version_stops)`. Precondición: si `neta_das` conocida ≠ `neta_fills` ⇒ `Consultar("GET POSITIONS")` + `Programar("stops_plan", 0.5)` y NO se toca la emergencia. Si cuadra ⇒ `EnviarOrden(B STOPLMTP disparo=L límite=L·1,03 qty=Σ lotes(L), serie="stops:X")` por nivel + `EnviarOrden(B STOPLMTP L_max·1,13 / L_max·1,63 qty=−neta)`. Idempotente: si ya existen (de cualquier `Origen`, incl. VIGILANTE) no duplica; qty distinta ⇒ `Reemplazar(version)` + `Programar("replace_verificar", 1.0, {token})`.
+1. Tras cada fill de entrada/pirámide/TP y tras cada `Canceled/Rejected` de un stop: `stops.plan(pos, vivas, cfg.stops, limit_up, tokens, hora_et, ruta, version=pos.version_stops)`. Precondición (D2a-05): si `neta_das` conocida ≠ `neta_fills` ⇒ solo BAJA cantidades (n = mín de las dos) y no quita cobertura. Si cuadra ⇒ `EnviarOrden(B STOPLMTP disparo=L límite=L·1,50 qty=Σ lotes(L), serie="stops:X")` por nivel (Jaume 29-sep, stop único; hasta el 29-sep: principal L·1,03 por nivel + emergencia L_max·1,13 / L_max·1,63). Idempotente: si ya existen (de cualquier `Origen`, incl. VIGILANTE) no duplica; qty distinta ⇒ `Reemplazar(version)` + `Programar("replace_verificar", 1.0, {token})`.
 2. `Temporizador("replace_verificar")`: `tipo_conserva_pp(orden.tipo_das_crudo, patrón)` → `False` ⇒ `Cancelar` + `EnviarOrden` nueva (2h.8); `None` (sin `%ORDER` aún) ⇒ reprogramar hasta 3 veces; luego `Avisar(2)`.
-3. Fill de un stop (`Execute` con token de propósito `STOP_*`): `limpieza_tras_fill_stop` ⇒ `InvalidarSerie("stops:X", version+1)` (cualquier `Reemplazar` viejo en la cola de salida se descarta); neta 0 ⇒ `CancelarTicker` (al instante, decenas de ms); neta LARGA ⇒ `EnviarOrden(S neta al bid, ruta cruzar, VENTA_EXCESO)` + `Avisar(2)` + diario `incidente` (vende SOLO la neta larga: 100 cortas, principal 20, emergencia 100 → larga 20 → vende 20, JAMÁS 100); sigue CORTA ⇒ `principal_consumido=True` → `plan()` cancela el principal y reemplaza la emergencia a `−neta`. Siempre exactamente una emergencia.
-4. `$Quote`: `reasignar_principal_rebasado` (ask > límite del principal sin fill) ⇒ cancelar y sumar al nivel superior / principal nuevo al ask + 3 %.
+3. Fill de un stop (`Execute` con token de propósito `STOP_*`): `limpieza_tras_fill_stop` ⇒ `InvalidarSerie("stops:X", version+1)` (cualquier `Reemplazar` viejo en la cola de salida se descarta); neta 0 ⇒ `CancelarTicker` (al instante, decenas de ms); neta LARGA ⇒ `EnviarOrden(S neta al bid, ruta cruzar, VENTA_EXCESO)` + `Avisar(2)` + diario `incidente` (vende SOLO la neta larga: 100 cortas, TP de 20 y el stop aún de 100 en DAS → larga 20 → vende 20, JAMÁS 100); sigue CORTA ⇒ `plan()` deja cada stop con las acciones de su nivel (el que llenó en parte sigue vivo con lo que le queda). Un stop por nivel (Jaume 29-sep, stop único).
+4. `$Quote`: (Jaume 29-sep, stop único) ya no hay «principal rebasado» que reasignar: el precio por encima del límite del primer stop sin llenarlo es cisne negro (F7).
 5. `$LDLU` nuevo o al colocar: `niveles(..., limit_up)` baja el disparo bajo la banda (R-F-02); si DAS rechaza ⇒ F8 sobre un stop = R-C-03 (`reintento_stop`, 5 intentos) y, si sigue descubierta, plan B del vigilante (F13).
 6. R-C-04: `Temporizador("barrido")` cada 1 s con posiciones (F10) compara `conjunto_deseado` con las `%ORDER` vivas ⇒ `plan()` repone; `%OrderAct Canceled` de un stop no pedido por nosotros ⇒ `plan()` inmediato + `Avisar(2)`.
 
-**F3. Fill parcial y varias señales (R-B-02, R-B-03).** Segunda señal de otra estrategia con intento vivo: `sumar_senal` ⇒ `Cancelar(agregar)`, nuevo lote en `intento.lotes`, `qty_total += qty`, y al confirmarse `Canceled` (cantidad por `cantidad_cancelada`) se REINICIA desde F1.4 con el total; MISMO `t_limite` (la caducidad es de la primera señal). `repartir_fill` proporcional a lo pedido. Al vencer, cada lote queda con sus `llenas` y `plan()` pone un principal por nivel (dos estrategias, dos L) y una emergencia sobre el L más alto (EP-6 se mide en canario).
+**F3. Fill parcial y varias señales (R-B-02, R-B-03).** Segunda señal de otra estrategia con intento vivo: `sumar_senal` ⇒ `Cancelar(agregar)`, nuevo lote en `intento.lotes`, `qty_total += qty`, y al confirmarse `Canceled` (cantidad por `cantidad_cancelada`) se REINICIA desde F1.4 con el total; MISMO `t_limite` (la caducidad es de la primera señal). `repartir_fill` proporcional a lo pedido. Al vencer, cada lote queda con sus `llenas` y `plan()` pone un stop por nivel (dos estrategias, dos L; Jaume 29-sep, stop único) (EP-6 se mide en canario).
 
 **F4. Take profit parcial (R-D-03 v2, R-D-07, R-C-07).**
 1. `Senal` con `Evento salida` (`clasificar(motivo) == TP`) o pirámide `reduce/lot_tp` → lote por `(ticker, strategy_id)` (+ `entrada_idx` si hay reentradas); qty = `qty_de_evento` (tope `lote.llenas − lote.tp_pendiente`).
@@ -1416,7 +1413,7 @@ Notación: `→` llamada; `⇒` acción devuelta por el decisor y ejecutada por 
 2. `Temporizador("halt_decidir")` (un minuto antes del fin previsto, o al instante si < 1 min, sin hora o ya pasado): `decidir_reapertura` → `"cerrar_mercado"` y `debe_enviar_open` ⇒ `EnviarOrden(B OPEN qty MKT, HALT_OPEN)` + `simb.orden_open_enviada = True` (EP-2: `Send_Rej` ⇒ F8 y reintento al reabrir por ruta cruzar al ask); `"cerrar_limite_pm"` ⇒ límite ask·(1 + margen_pm) ruta cruzar; `"control_humano"` (T1 > 250 %, T12) ⇒ `Avisar(3)` + `CONTROL_HUMANO` para ese ticker; `"mantener"` ⇒ nada. Un `$IssueStatus` repetido reprograma `halt_decidir` pero la guardia impide una segunda MKT.
 3. Reapertura (`TA:T|Q` o cotización viva): segundo `Avisar(2)` con precio y lo hecho; `orden_open_enviada = False`; k actualizado; `senal_guardada_halt` ⇒ `senal_guardada_valida` (primera vela < X %, k < 3) ⇒ F1; reentradas por `puede_reentrar_tras_halt`. Con k = 2 y `cerca_de_banda` en RTH ⇒ salida a mercado por ruta cruzar (`HALT_BANDA`) antes de que pare.
 
-**F7. Cisne negro (R-G-01, R-G-03).** `$Quote` con posición: `se_activa` ⇒ `activar` → `Avisar(3, informe, clave="bs:X")` (Telegram + correo + SMS por niveles), `Programar("bs_informe", 60)`, `pos.estado = BS`, `Anotar(bs)`. Cada `Temporizador("bs_informe")`: `toca_informe` ⇒ `Avisar(3, informe)` y reprogramar (60 s × 5, luego 300 s). Mientras: `acciones_durante_bs` (SOLO `Reemplazar` qty de la emergencia a `−neta`; `plan()` desactivado para ese ticker; NO reponer si DAS cancela). `/cerrar X SI` ⇒ `cierre_humano`: `Cancelar(emergencia)` → `orden_al_ask` techo 5 % × 3 (R-D-06). Cierre dentro de la emergencia ⇒ `al_cerrar` → `Avisar(3, "SACADA CON ÉXITO…")`; `sin_reentrada_hasta_sigue = True`. `/parar_avisos X BS` ⇒ `bs.silenciado`. `fogonazo_visto` con o sin posición ⇒ diario. Si la emergencia o el principal cierran TODA la posición ⇒ no hay protocolo (R-G-03): el ticker sigue operable.
+**F7. Cisne negro (R-G-01, R-G-03).** `$Quote` con posición: `se_activa` (last > límite del primer stop, Jaume 29-sep, stop único) ⇒ `activar` → `Avisar(3, informe, clave="bs:X")` (Telegram + correo + SMS por niveles), `Programar("bs_informe", 60)`, `pos.estado = BS`, `Anotar(bs)`. Cada `Temporizador("bs_informe")`: `toca_informe` ⇒ `Avisar(3, informe)` y reprogramar (60 s × 5, luego 300 s). Mientras: `acciones_durante_bs` (SOLO `Reemplazar` qty de los stops a lo que queda corto; `plan()` desactivado para ese ticker; NO reponer si DAS cancela). `/cerrar X SI` ⇒ `cierre_humano`: `Cancelar` los stops → `orden_al_ask` techo 5 % × 3 (R-D-06). Cierre por un stop dentro de su límite ⇒ `al_cerrar` → `Avisar(3, "SACADA CON ÉXITO…")`; `sin_reentrada_hasta_sigue = True`. `/parar_avisos X BS` ⇒ `bs.silenciado`. `fogonazo_visto` con o sin posición ⇒ diario. Si un stop cierra TODA la posición sin pasar su límite ⇒ no hay protocolo (R-G-03): el ticker sigue operable.
 
 **F8. Rechazo y pausa (R-B-07, R-C-03, EP-1).** `MsgOrderAct Send_Rej` → `rechazos.clasificar(notas)` → `decidir` ⇒ `Avisar(2|3, texto literal + orden + estado)` SIEMPRE; conocido e `intentos < 2` ⇒ tratamiento (`recalcular_bp` → `Consultar("GET BP")` y reenviar; `recomprar_locate` → F9; `subir_tick_ssr` → precio + 1 tick) con token NUEVO; si no: `descubiertas() == 0` ⇒ `PAUSADO` (stops y salidas siguen) + `Avisar(2)`; `> 0` ⇒ `Avisar(3, "CONTROL HUMANO")`, sin cierre. `Send_Rej` de un STOP ⇒ `reintento_stop` hasta 5 (separación 2 s [PENDIENTE]); el vigilante repone en paralelo si pasa `PLAN_B_DESCUBIERTA_S`. `/reanudar X` o `comandos.jsonl {"comando":"reanudar_ticker"}` ⇒ NORMAL. `CancelRej`/`ReplaceRej` ⇒ `tras_cancel_o_replace_rej` (aviso 2 + `GET ORDERS` + barrido inmediato).
 
@@ -1523,10 +1520,8 @@ Marcas: **[C]** en caliente (siguiente señal) · **[A]** solo con bot apagado y
   },
   "stops": {
     "tipo": "STOPLMTP",                                    // [A]
-    "principal_limite_pct": 3.0,                           // [A] R-C-01 v3 (SUMADO sobre L)
-    "emergencia_disparo_pct": 13.0,                        // [A]
-    "emergencia_limite_pct": 63.0,                         // [A]
-    "proteccion_desconocidas_pct": 25.0,                   // [A] R-C-10 (4): 20-30 %
+    "limite_pct": 50.0,                                    // [A] R-C-01 v4 (Jaume 29-sep, stop único): UN stop por nivel, disparo en L, límite L + 50 % SUMADO
+    "proteccion_desconocidas_pct": 25.0,                   // [A] R-C-10 (4): 20-30 % (su límite: + limite_pct)
     "margen_bajo_limit_up_pct": 1.5,                       // [A] R-F-02: 1-2 %
     "reintentos": 5, "separacion_reintentos_s": 2, "ventana_min": 5, "subida_max_cierre_pct": 100,   // [A] R-C-03 (el cierre NO se implementa; separación PENDIENTE)
     "comprobacion_s": 1,                                   // [T] R-C-04
@@ -1587,7 +1582,7 @@ Marcas: **[C]** en caliente (siguiente señal) · **[A]** solo con bot apagado y
 }
 ```
 
-`CALIENTE` (config.py) = exactamente las rutas marcadas [C]. `validar()` rechaza: `principal_limite_pct ≥ emergencia_disparo_pct`, `emergencia_disparo_pct ≥ emergencia_limite_pct`, `k_max < 1`, `tope_gasto_pct_cuenta ∉ (0, 10]`, horas mal formadas, `fase` fuera de `Fase`, `riesgo_usd ≤ 0` en una estrategia con `ejecutar=true`, rutas vacías. `comprobar_coherencia` (R-L-02) avisa por estrategia: ventana de entradas fuera de la sesión, `hora_salida` posterior al fin de sesión, sesión «sumada» (memoria: la sesión se SUMA, no sustituye).
+`CALIENTE` (config.py) = exactamente las rutas marcadas [C]. `validar()` rechaza: `stops.limite_pct` ausente o ≤ 0, un cuadro con las claves de v3 (`principal_limite_pct`, `emergencia_disparo_pct`, `emergencia_limite_pct`: «cuadro de DOS stops», Jaume 29-sep, stop único), `k_max < 1`, `tope_gasto_pct_cuenta ∉ (0, 10]`, horas mal formadas, `fase` fuera de `Fase`, `riesgo_usd ≤ 0` en una estrategia con `ejecutar=true`, rutas vacías. `comprobar_coherencia` (R-L-02) avisa por estrategia: ventana de entradas fuera de la sesión, `hora_salida` posterior al fin de sesión, sesión «sumada» (memoria: la sesión se SUMA, no sustituye).
 
 Fuera del fichero de configuración: los **comandos** (botones) van en `estado/comandos.jsonl` con `id` único (idempotente: `{"id","comando","args","quien","t"}`), y el **estado** del bot (posiciones, órdenes, BP, locates, tickers pausados, señales del día, feed/DAS/vigilante, última reconciliación, cola de avisos) lo publica el ejecutor en `estado/foto.json` cada 2 s (panel 4.4 de solo lectura; en fase 1 no hay endpoints nuevos: pregunta 8). Historial CM3: cada diferencia aplicada o rechazada va al diario como `config_cambio {ruta, antes, despues, caliente, aplicado, quien}`.
 
@@ -1621,7 +1616,7 @@ Tipos de registro y su `datos` mínimo:
 | `stop_plan` | cada `plan()` | `version, deseado[], vivas[], acciones[]` | no |
 | `incidente` / `discrepancia` / `divergencia_sl` | R-C-11 b, F10 caso 6, salida SL del motor | `detalle, neta_fills, neta_das` | no |
 | `locate_inquire` / `locate_intencion` / `locate_estado` / `locates_caducados` | F9 | `strategy_id, qty, qty_ajustada, paquetes, precio_accion, coste_nuevo, coste_total, ev_pct, fade_pct, entra, id_das, estado, localizadas, usadas` | no / sí / no / no |
-| `halt` / `bs` / `bs_informe` / `fogonazo` | F6 / F7 | `ta, tat, k, precio_parada, decision, fin_previsto` / `primer_stop, emergencia_limite, max_visto, informes` | no |
+| `halt` / `bs` / `bs_informe` / `fogonazo` | F6 / F7 | `ta, tat, k, precio_parada, decision, fin_previsto` / `primer_stop, limite_stop (antes emergencia_limite, que se sigue leyendo), max_visto, informes` | no |
 | `rechazo` / `pausa` / `reanudar` | F8 | `notas (cruda), tratamiento, intentos, cubierta, accion` | no |
 | `comando` / `aviso` | comandos.py / cada `Avisar` | `nombre, args, chat_id, requiere, confirmado` / `nivel, grupo, clave, texto` | no (`cierre_humano` sí) |
 | `reconciliacion` | F10/F12 | `caso[], acciones[], duracion_ms` | no |
@@ -1680,17 +1675,17 @@ class CanalFalso(CanalOrdenes):      # grabadora: `lineas`, `series_invalidadas`
 | `test_das_referencia.py` | `Referencia` con `abrir` falso: caché por día; `ficha` None si falla; `splits_de_hoy` None si falla (y el decisor no excluye) |
 | `test_das_reglas_precios.py` | `punto_medio_arriba` (spread 1 tick → ask; 2 → bid + 1; < 1 $ a 0,0001); `punto_medio_abajo`; `con_techo` lado permisivo; `bajo_bid`; `ruta` por tramo/hora (EDGA antes de 07:00 → MIAX; stop → STOP; halt → OPEN); `de_float` con NaN → error; nunca aparece `float` en los resultados |
 | `test_das_reglas_entrada.py` | tabla de 16 motivos de `evaluar_senal`, uno por fila; `t_cierre_vela` contra la vela de `AM_recorte` (momento = `s`, cierre = +60 s); `qty_de_evento` (float 1199.0 → 1199; None → 0); `qty_final`; `al_vencer` con bid −2,9 % (cruza) y −3,1 % (no); `resto_a_cruzar` solo tras `Canceled`; `orden_cruce` a bid·0,995; `repartir_fill` 400 de 1.000 entre 600/400 pedidas (suma exacta); `sumar_senal` conserva `t_limite`; `cerrar_intento` 0/parcial; B13; B19 con SSR; modo seguridad 4,99 $ / 5,00 $ y 1,99 M$ / 2,00 M$; diario degradado → no entra |
-| `test_das_reglas_stops.py` | `niveles(10)` = 10 / 10,30 / 11,30 / 16,30; con `limit_up=10.5` baja el disparo bajo la banda; `conjunto_deseado` con 2 lotes/2 niveles y neta capada; `plan` idempotente (dos veces = 0 acciones), adopta órdenes VIGILANTE por `inferir_proposito`, cancela la más nueva si hay dos emergencias, devuelve `GET POSITIONS` y NO toca la emergencia si `neta_das ≠ neta_fills`; `limpieza_tras_fill_stop` neta 0 / larga 20 (vende 20, JAMÁS 100) / corta 80, siempre con `InvalidarSerie` primero; `reasignar_principal_rebasado`; `tipo_conserva_pp`; `descubiertas`; `stop_proteccion` corta/larga; `cantidad_cancelada` usa `cxlqty` y no `qty` |
+| `test_das_reglas_stops.py` | `niveles(10)` = 10,00 / 15,00 (Jaume 29-sep, stop único); con `limit_up=10.5` baja el disparo bajo la banda; `conjunto_deseado` con 2 lotes/2 niveles y neta capada; `plan` idempotente (dos veces = 0 acciones), adopta órdenes VIGILANTE por `inferir_proposito`, cancela la más nueva si hay dos stops del mismo nivel, solo BAJA si `neta_das ≠ neta_fills`; `limpieza_tras_fill_stop` neta 0 / larga 20 (vende 20, JAMÁS 100) / corta 80, siempre con `InvalidarSerie` primero; `tipo_conserva_pp`; `descubiertas`; `stop_proteccion` corta/larga; `cantidad_cancelada` usa `cxlqty` y no `qty` |
 | `test_das_reglas_salidas.py` | `LITERALES_EXIT_REASON` cubre TODOS los literales `exit_reason` de `portfolio_sim.py` (el test los extrae con regex del fichero real) y `"?"`; `tratamiento` para cada `ClaseSalida` (SL con posición abierta → divergencia sin orden; Daily Limit → ignorar + aviso; MOTOR → como TP); `temporizadores_lote` t−60/t/t+30; `perseguir_ask` máx. 3 y por REPLACE; `tp_al_vencer` dentro/fuera del 3 %; `prioridad`; `cerrar_todo` incluye manuales; `puede_reentrar` (−1/0/N × true/false); `ultimo_eod` con dos estrategias; `al_desactivar` esperar/cerrar |
 | `test_das_reglas_halts.py` | matriz k = 1/2/3 × stop encima/debajo × PM/RTH × vela </≥ 6 %; `momento_envio_open` (P con TAT → fin − 60 s; H sin hora → 0; fin pasado → 0); `debe_enviar_open` impide la segunda MKT tras `$IssueStatus` repetido; T1 > 250 % → control humano; `senal_guardada_valida`; `cerca_de_banda` |
-| `test_das_reglas_cisne_negro.py` | `se_activa` solo pasado el límite de emergencia con corto vivo; cadencia 60 × 5 luego 300 (reloj simulado 40 min); `informe` contiene los 16 campos; `acciones_durante_bs` nunca produce `EnviarOrden`; `al_cerrar`; `cierre_humano` cancela la emergencia antes |
+| `test_das_reglas_cisne_negro.py` | `se_activa` solo pasado el límite del primer stop con corto vivo; cadencia 60 × 5 luego 300 (reloj simulado 40 min); `informe` contiene los 16 campos; `acciones_durante_bs` nunca produce `EnviarOrden`; `al_cerrar`; `cierre_humano` cancela los stops antes |
 | `test_das_reglas_rechazos.py` | cada entrada del catálogo casa su propio texto; desconocido → cubierta pausa / no cubierta nivel 3 sin `EnviarOrden`; 2 reintentos y no 3, con token nuevo; `reintento_stop` 5 y para; `tras_cancel_o_replace_rej` → barrido |
 | `test_das_reglas_capital.py` | márgenes por tramo (0,9 $, 3 $, 5 $, 20 $); tope 1×/0,5×; BP viejo (> 30 s) → 0; orden de llegada (2 señales, cabe 1,5: la segunda recibe el resto); `requiere_mas_margen` |
 | `test_das_reglas_locates.py` | `paquetes(1230) == (12, 1200)`, `(1240) == (13, 1240)`, `(1200) == (12, 1200)`, `(50) == (1, 50)`, `(0) == (0, 0)`; `veredicto_ev` con coste TOTAL (la segunda compra se rechaza si el total no compensa) y usando `ev_fijo_para_precio` por tramo; tope 3 %; cerrojo por (ticker, estrategia, día); parcial sigue buscando; `asignar_a_lote` E9; `cantidad_a_localizar` casa por `strategy_id`; máquina completa con `%SLRET/%SLOrder` sintéticos incl. `Offered` y `AlreadyShortable`; `tras_reentrada` |
 | `test_das_reglas_exclusiones.py` | SPAC siempre; IPO solo RTH y solo con casilla; split; lista negra; `sin_ficha`; `splits_hoy=None` no excluye; `banda_opa` |
 | `test_das_reglas_reconciliacion.py` | los 6 casos; `orderSrc="Montage"` y token de AYER → caso 4; `cadencia_barrido` 1/2/10; `barrido_caducado`; `AcumuladorVolcado` con y sin marcadores |
-| `test_das_reglas_vigilancia.py` | ejecutor vivo → 0 acciones aunque falte un stop (hasta 5 s); ejecutor muerto → repone par con `Origen.VIGILANTE`; dos emergencias → cancela la nueva; posición sin lote → protección + nivel 3; dos `Located` mismo día → deshabilitar; `puede_enviar=False` → `PedirAlSupervisor`; `debe_hacer_ping` |
-| `test_das_decisor.py` | **escenarios enteros en seco** con `CanalFalso` y mensajes DAS sintéticos, en las 6 permutaciones de `%OrderAct/%TRADE/%POS`: F1 completa → secuencia EXACTA de acciones; F2 fill parcial del principal; F3; F4; F5 con persecución; F6 halt; F7 BS; F8 rechazo; F9 locates; F10; F14; H-5: un `Evento` con `precio=None` ⇒ pausa de ese ticker y el siguiente se procesa; señal repetida ⇒ 0 órdenes (R-A-05); multicuenta ignorada; señal Long con corto abierto ⇒ descartada (R-E-01); `config` en caliente entre mensajes y el intento vivo conserva su copia; un fill mientras hay un `Reemplazar` pendiente ⇒ `InvalidarSerie` precede al nuevo plan |
+| `test_das_reglas_vigilancia.py` | ejecutor vivo → 0 acciones aunque falte un stop (hasta 5 s); ejecutor muerto → repone el stop de cada nivel con `Origen.VIGILANTE`; dos stops del mismo nivel → cancela el nuevo; posición sin lote → protección + nivel 3; dos `Located` mismo día → deshabilitar; `puede_enviar=False` → `PedirAlSupervisor`; `debe_hacer_ping` |
+| `test_das_decisor.py` | **escenarios enteros en seco** con `CanalFalso` y mensajes DAS sintéticos, en las 6 permutaciones de `%OrderAct/%TRADE/%POS`: F1 completa → secuencia EXACTA de acciones; F2 fill parcial del stop (sigue vivo con lo que queda); F3; F4; F5 con persecución; F6 halt; F7 BS; F8 rechazo; F9 locates; F10; F14; H-5: un `Evento` con `precio=None` ⇒ pausa de ese ticker y el siguiente se procesa; señal repetida ⇒ 0 órdenes (R-A-05); multicuenta ignorada; señal Long con corto abierto ⇒ descartada (R-E-01); `config` en caliente entre mensajes y el intento vivo conserva su copia; un fill mientras hay un `Reemplazar` pendiente ⇒ `InvalidarSerie` precede al nuevo plan |
 | `test_das_fuente_senales.py` | `FuenteEnProceso` con las velas de `test_bot_alerts_procesos._velas` produce el mismo `Evento` que `RunnerAlertas` directo; `radar` añade `strategy_id` por nombre y descarta nombres repetidos; `FuenteTuberia` + `EnlaceEjecutor` en dos procesos: 5.000 mensajes sin pérdida, reconexión tras matar el Listener, `hola` con hash distinto se rechaza; `FuenteGrabacion` reproduce `AM_recorte` en orden de tiempo con el `Guion` |
 | `test_das_ejecutor.py` | ejecutor real + `SimuladorDAS` + `FuenteGrabacion` en fase CANARIO (simulador, `BOT_DAS_PERMITIR_ORDENES=1` en el entorno del test): entrada → fills → stops residentes → stop dispara → limpieza, comprobado en `simulador.ordenes()`; fase SOMBRA: `simulador.recibidas()` sin NINGÚN mutante y diario con `orden_simulada`; write-ahead visible antes del `NEWORDER`; `anotar` que falla → 0 `NEWORDER SS` y los `NEWORDER B STOPLMTP` siguen; reinicio a mitad (matar y relanzar en subproceso) ⇒ no reentra ni recompra (H-2); `senal_a_orden_ms` con y sin grupo A |
 | `test_das_vigilante.py` | vigilante + simulador con conexión watch: posición sin stop y latido del ejecutor viejo ⇒ par repuesto en < 2 s; luego ejecutor arranca y `plan()` adopta (0 órdenes nuevas); diario del vigilante separado; sin conexión de acción ⇒ `PedirAlSupervisor` escrito |
@@ -1711,12 +1706,12 @@ class CanalFalso(CanalOrdenes):      # grabadora: `lineas`, `series_invalidadas`
 | MARCO M1-M13 | M1 procesos propios (`supervisor/ejecutor/vigilante`); M3 `stops.conjunto_deseado` (posición objetivo); M4 capas = `fuente_senales` / `reglas.entrada` / `ejecutor` / `reglas.reconciliacion` / `diario`+`supervisor`; M5-M6 `ejecutor.ejecutar` (write-ahead) + `stops.plan`; M7 `reconciliacion.acciones` caso 6; M9 `entrada.qty_final`; M10 `precios.ruta`+`entrada.orden_agregar` (límite en PM); M11 `config.py`; M13 `precios.ruta` por hora | `test_das_ejecutor`, `test_das_reglas_stops`, `test_das_reglas_reconciliacion`, `test_das_reglas_entrada` |
 | API-2c (margen Sage) | `capital.margen_inicial_corto/margen_mantenimiento/acciones_que_caben/requiere_mas_margen`; `vigilancia.comprobar` (e) | `test_das_reglas_capital`, `test_das_reglas_vigilancia` |
 | API-2e/2f/2g/2h | `protocolo.py` entero; `tokens.es_nuestro` (DAY+ caduca 20:00); `stops.tipo_conserva_pp` (REPLACE); `cmd_neworder` PostOnly; rutas sin sufijo (`precios.ruta`); `CuotaComandos`; `orderSrc` en `reconciliacion.comparar`; `MsgTrade.liq/ecn_fee`; `cmd_login(watch)`; `herramientas/comprobar_das` (6 puntos abiertos) | `test_das_protocolo`, `test_das_cliente`, `test_das_reglas_stops`, `test_das_reglas_reconciliacion` |
-| R-C-01 v3 | `stops.niveles` (+3/+13/+63 sumados), `stops.conjunto_deseado` (un principal por nivel, una emergencia), `stops.plan`, `stops.reasignar_principal_rebasado` (decisión a) | `test_das_reglas_stops`, `test_das_decisor` F2 |
+| R-C-01 v4 (Jaume 29-sep, stop único) | `stops.niveles` (disparo L, límite L + 50 %), `stops.conjunto_deseado` (un stop por nivel), `stops.plan`, `stops.nivel_de_stop` | `test_das_reglas_stops`, `test_das_decisor` F2 |
 | R-C-11 | `stops.limpieza_tras_fill_stop` (neta 0 / larga / corta), `stops.cantidad_cancelada`, `decisor._de_das` (por evento) | `test_das_reglas_stops` (vende 20, jamás 100), `test_das_decisor` F2.3, `test_das_ejecutor` |
 | R-C-07 plan B | `vigilancia.comprobar` (a)-(b), `stops.plan` neteo por propósito+nivel con `inferir_proposito`, `tokens` (quién la puso) | `test_das_reglas_vigilancia`, `test_das_vigilante` (repone y el ejecutor adopta) |
 | R-C-10 (uso en J/K) | `reconciliacion.comparar/acciones` (casos 1-6), `stops.stop_proteccion`, `ejecutor.arrancar` F12 | `test_das_reglas_reconciliacion`, `test_das_ejecutor` (reinicio) |
 | R-G-01 | `cisne_negro.se_activa/activar/toca_informe/informe` (16 campos), `avisos` niveles 3 (TG+correo+SMS), `fogonazo_visto` | `test_das_reglas_cisne_negro`, `test_das_decisor` F7 |
-| R-G-03 | `cisne_negro.acciones_durante_bs` (solo qty), `cierre_humano` (cancela emergencia antes), `PosicionTicker.sin_reentrada_hasta_sigue`, `salidas.puede_reentrar` | `test_das_reglas_cisne_negro`, `test_das_reglas_salidas` |
+| R-G-03 | `cisne_negro.acciones_durante_bs` (solo qty), `cierre_humano` (cancela los stops antes), `PosicionTicker.sin_reentrada_hasta_sigue`, `salidas.puede_reentrar` | `test_das_reglas_cisne_negro`, `test_das_reglas_salidas` |
 | R-G-02 | `halts.al_entrar_en_halt` (aviso con tipo/hora/precio/posición/stop/k/bandas), reapertura en `decisor` (segundo aviso) | `test_das_reglas_halts`, `test_das_decisor` F6 |
 | G3/G4/G6/G7 | información en `cisne_negro.informe` (minutos desde el máximo, si lleva bajando); ninguna decisión automática (`cerrar_si_descubierta=false`) | `test_das_reglas_cisne_negro` (no `EnviarOrden`) |
 | F10 / F12 | SSR: `entrada.evaluar_senal` no filtra por SSR y `orden_agregar` ya va ≥ bid + 1 tick (B19); medias sesiones: `salidas.horas_de_salida` + `calendario.media_sesion` en `supervisor.ventana` | `test_das_reglas_entrada` (SSR), `test_das_supervisor` |
@@ -1842,9 +1837,9 @@ Criterio de «hecho» de cada lote: (1) tests en verde; (2) `python -c "import a
 | 3 | Orden enviada y proceso muerto antes de anotarla → al arrancar, orden «desconocida» propia | `orden_intencion` con fsync ANTES del `send`; la reconciliación casa por token (nuestro) aunque falte `orden_enviada` |
 | 4 | Doble envío por reintento de red o por señal repetida (R-A-05) | `senales_vistas` reconstruido del diario; un token por intento; `plan()` idempotente; `Cancelar` espera `Canceled` antes del cruce |
 | 5 | Carrera fill↔cancelación: el cruce se envía por más de lo que queda ⇒ más corto de lo pedido | `resto_a_cruzar` solo tras `Canceled` (`cantidad_cancelada` de `qty`/`cxlqty`) o `GET ORDERS`; nunca de lo pedido (injerto §8.7); si aun así sobra ⇒ `VENTA_EXCESO` solo si neta LARGA |
-| 6 | Quedarse LARGO tras principal + emergencia (R-C-11 b) | `limpieza_tras_fill_stop` por evento en decenas de ms; vende SOLO la neta positiva; barrido de control a 1 s |
+| 6 | Quedarse LARGO tras un stop + otra compra (cierre de halt, cierre humano, TP con el REPLACE en vuelo) (R-C-11 b; hasta el 29-sep: principal + emergencia) | `limpieza_tras_fill_stop` por evento en decenas de ms; vende SOLO la neta positiva; barrido de control a 1 s |
 | 7 | Un `REPLACE` de stop con la cantidad ANTERIOR sale después del fill (carrera emisor↔fill) | versión del objetivo por ticker (`version_stops`), `serie="stops:X"` en cada orden/replace, `InvalidarSerie` antes del nuevo plan, el emisor descarta versiones viejas (injerto §8.6); test con REPLACE encolado y fill intermedio |
-| 8 | Orden entre `%OrderAct Execute`, `%TRADE` y `%POS` NO documentado: la neta de `%POS` llega tarde o antes | libro de fills por token = verdad inmediata (`neta_fills`); `%POS` solo reconcilia (caso 6); `plan()` NO toca la emergencia si discrepan y pide `GET POSITIONS` (corrección 2); el simulador permuta los 3 mensajes en los tests |
+| 8 | Orden entre `%OrderAct Execute`, `%TRADE` y `%POS` NO documentado: la neta de `%POS` llega tarde o antes | libro de fills por token = verdad inmediata (`neta_fills`); `%POS` solo reconcilia (caso 6); `plan()` solo BAJA stops si discrepan (D2a-05); el simulador permuta los 3 mensajes en los tests |
 | 9 | Signo de `Quantity` en cortos no documentado | `normalizar_pos` por `tipo == 3` con `abs()`: correcto con signo positivo o negativo; `qty_corto_negativa` se registra el primer día (injerto §8.8) |
 | 10 | Sombra que envía una orden real por un camino no previsto | dos candados de código (`EnvioProhibido` + `ClienteSombra`) más la llave de entorno `BOT_DAS_PERMITIR_ORDENES` para las fases con dinero; test de un día entero sin mutantes |
 | 11 | Bucle de stops/REPLACE (100/min) o de locates | `CuotaComandos` al 90 %; `plan()` cancela la más nueva y nunca crea si ya hay; `compra_repetida` deshabilita locates; el vigilante avisa nivel 3; persecución al ask limitada a 3 REPLACE |
@@ -1900,8 +1895,8 @@ Lo que NO pregunto porque ya está decidido en el libro y aquí se aplica tal cu
 El paquete se construyó según §1-§12 y después pasó una revisión independiente en 16 grupos (reglas del libro, riesgos de §13, contratos entre unidades, tests, seguridad y cobertura regla a regla): 152 hallazgos, 8 críticos y 46 altos, corregidos y verificados por un segundo agente. Donde el arreglo exigía una decisión, el director la tomó con el criterio «nunca cuenta larga ni descubierta, nunca órdenes duplicadas, nunca un aviso perdido». Estas decisiones PREVALECEN sobre §3 y §5 donde choquen:
 
 - **Ajustes de construcción (a)-(h):** `Ficha`, `NivelesStop` y `StopDeseado` viven en `tipos.py`; `reglas/precios.py` es del lote 0; `entrada.evaluar_senal` recibe `exclusion: Optional[str]` (la calcula el decisor con `exclusiones.excluida`); no existe `avisos.texto_informe_bs`; `cisne_negro` usa `salidas.orden_al_ask`; el literal `Lot TP (n/m)` de `portfolio_sim.py` es TP; las firmas reales mandan; el diario recibe el limpiador de secretos por inyección.
-- **Stops (R-C-01 v3 / R-C-11 / R-F-02):** bajo la banda, todo principal cuyo disparo quede ≥ disparo de la emergencia se elimina (solo emergencia); `reasignar_principal_rebasado` exige `last > límite` (el ask solo no basta); la venta del exceso descuenta las `VENTA_EXCESO` en vuelo, cancela una a una las compras y las ventas de ENTRADA vivas (nunca `CANCEL ALLSYMB` con una venta de exceso viva), sale a `bid × (1 − 1 %)` y se persigue con `exceso_verificar` cada 1 s hasta 3 veces, luego aviso 3 «vender a mano»; con `neta_das ≠ neta_fills` del mismo signo, `plan` solo BAJA cantidades con `n = min(−neta_fills, −neta_das)`; un `NEWORDER` purgado por versión en el emisor vuelve al decisor como `OrdenDescartada` (CLOSED + replan al instante).
-- **Halts (R-F-01/05/06):** al enviar `HALT_OPEN`/`HALT_BANDA` por Q acciones se reducen antes principal y emergencia en Q (a 0 → cancelar) y `plan()` los restaura si la orden se rechaza o no llena 2 s tras la reapertura; en un halt H (no LULD) la orden por OPEN es un LÍMITE a `precio_parada × (1 + 250 %)`, nunca MKT, y el tope T1 se vuelve a medir con el `last` real tras reabrir; con cisne negro activo el bot no cierra en la reapertura (avisa nivel 3); en PM con decisión «mantener» los stops límite se ensanchan (`margen_limite_pm_pct`); k se siembra desde el diario y el `simstatus` cubre en RTH también los tickers del radar suscritos; `TA:Q` es «parado» salvo que lleguen prints nuevos durante 5 s.
+- **Stops (R-C-01 v3 / R-C-11 / R-F-02):** bajo la banda, todo principal cuyo disparo quede ≥ disparo de la emergencia se elimina (solo emergencia); `reasignar_principal_rebasado` exige `last > límite` (el ask solo no basta); la venta del exceso descuenta las `VENTA_EXCESO` en vuelo, cancela una a una las compras y las ventas de ENTRADA vivas (nunca `CANCEL ALLSYMB` con una venta de exceso viva), sale a `bid × (1 − 1 %)` y se persigue con `exceso_verificar` cada 1 s hasta 3 veces, luego aviso 3 «vender a mano»; con `neta_das ≠ neta_fills` del mismo signo, `plan` solo BAJA cantidades con `n = min(−neta_fills, −neta_das)`; un `NEWORDER` purgado por versión en el emisor vuelve al decisor como `OrdenDescartada` (CLOSED + replan al instante). *(v4, Jaume 29-sep, stop único: sin par ni emergencia, lo del principal bajo la banda y `reasignar_principal_rebasado` queda sin objeto.)*
+- **Halts (R-F-01/05/06):** al enviar `HALT_OPEN`/`HALT_BANDA` por Q acciones se reducen antes principal y emergencia en Q (a 0 → cancelar) y `plan()` los restaura si la orden se rechaza o no llena 2 s tras la reapertura; en un halt H (no LULD) la orden por OPEN es un LÍMITE a `precio_parada × (1 + 250 %)`, nunca MKT, y el tope T1 se vuelve a medir con el `last` real tras reabrir; con cisne negro activo el bot no cierra en la reapertura (avisa nivel 3); en PM con decisión «mantener» los stops límite se ensanchan (`margen_limite_pm_pct`); k se siembra desde el diario y el `simstatus` cubre en RTH también los tickers del radar suscritos; `TA:Q` es «parado» salvo que lleguen prints nuevos durante 5 s. *(v4, Jaume 29-sep, stop único: se reduce EL stop de cada nivel, del L más alto al más bajo; el ensanche de PM queda sin efecto porque el límite ya es L + 50 %.)*
 - **Decisor:** una sola guarda para toda salida por temporizador (no BS, no HALT, no control manual/humano, no `modo_degradado` «reconciliacion»/«das»; se reprograma a 0,5 s, nunca se descarta); la cantidad de toda salida por lote se capa a `min(libres, −neta − compras vivas del ticker)`; el intento de entrada se cancela cuando la posición queda plana o un lote del intento cierra (R-D-07 solo entre estrategias distintas); la Referencia de Massive vive en un hilo aparte con caché (el decisor nunca hace red); `/sigue X`, `/parar_avisos X BS` y `/stop X P SI` funcionan como pide el libro; agotar R-C-03 bloquea solo la reposición de ese propósito.
 - **Salidas (R-D-03/06/07/08):** `cerrar_todo` en dos pasos (cancelar → enviar tras el `Canceled` por la neta de ese momento), un temporizador por ticker, con discrepancia de netas cierra el mínimo del mismo signo, y al agotar cancela su orden viva antes de avisar; «Partial TP (Hour)», «Partial TP (Time)» y «Time Limit» se ejecutan como salida por hora con la cantidad del evento; `tp_cruce` es por orden; la tanda de una vela se ordena con `salidas.prioridad` en la fuente; un agregar rechazado por PostOnly pasa directo al cruce.
 - **Entrada y capital:** tercer límite `caben_equity` (margen inicial de Sage contra el equity, no solo contra el BP); la comprobación 16 usa la regla de `locates.asignar_a_lote` (sobrantes de otras estrategias y ETB); en la reapertura de un halt se salta también el filtro de retraso R-A-01; reentradas alineadas con `salidas.puede_reentrar` (−1 / 0 / N).

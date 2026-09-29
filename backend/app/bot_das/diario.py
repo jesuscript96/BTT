@@ -174,8 +174,9 @@ CASOS_ADOPTA_DAS = frozenset({5, 6})       # reconciliación: caso 5 (plana en D
 MOTIVO_INTERVENCION_HUMANA = "intervención humana"   # = reconciliacion.MOTIVO_INTERVENCION_HUMANA (R-M-03 por ticker)
 FASES_LOCATE = ("A", "B", "C", "C_piramide", "D")    # = locates.FASES (Jaume 29-sep: locates por fases)
 TIPO_SENAL_PRINCIPAL = "senal_principal"             # Jaume 29-sep: la PRIMERA señal principal del día por pareja
+_PROPOSITOS_STOP_V3 = ("stop_principal", "stop_emergencia")   # diarios de antes del stop único (Jaume 29-sep)
 _PROPOSITOS_VETO_STOP = frozenset({         # R-F-03 (G1A-18): salidas que activan el veto de reentrada tras un halt
-    Proposito.STOP_PRINCIPAL.value, Proposito.STOP_EMERGENCIA.value, Proposito.STOP_PROTECCION.value,
+    Proposito.STOP.value, Proposito.STOP_PROTECCION.value, *_PROPOSITOS_STOP_V3,
     Proposito.HALT_OPEN.value, Proposito.HALT_PM_LIMITE.value, Proposito.HALT_BANDA.value,
 })
 _RUTA_MODO_SEGURIDAD = "modo_seguridad.activo"
@@ -776,6 +777,13 @@ def _flotante(valor: Any) -> Optional[float]:
     return resultado if math.isfinite(resultado) else None
 
 
+def _limite_stop_de(datos: dict) -> Any:
+    """`bs`: el límite del primer stop (`limite_stop`); un diario de antes del stop único (Jaume 29-sep) lo
+    anotaba como `emergencia_limite`, que se lee igual para no perder el umbral del cisne negro al reiniciar."""
+    valor = datos.get("limite_stop")
+    return valor if valor is not None else datos.get("emergencia_limite")
+
+
 def _enum(clase: type, valor: Any, defecto: Any) -> Any:
     if isinstance(valor, clase):
         return valor
@@ -844,7 +852,6 @@ def _aplicar_lote(estado: EstadoBot, registro: Registro) -> None:
     pos = _posicion(estado, ticker)
     viejo = pos.lotes.get(lote_id) or Lote(id=lote_id, strategy_id="", estrategia="", ticker=ticker, direccion="",
                                            pedidas=0)
-    principal = datos.get("principal_consumido")
     pos.lotes[lote_id] = Lote(
         id=lote_id,
         strategy_id=_texto_o(datos.get("strategy_id"), viejo.strategy_id),
@@ -864,7 +871,6 @@ def _aplicar_lote(estado: EstadoBot, registro: Registro) -> None:
         hora_salida=_texto_o(datos.get("hora_salida"), viejo.hora_salida),
         eod=_texto_o(datos.get("eod"), viejo.eod),
         tp_pendiente=_entero_o(datos.get("tp_pendiente"), viejo.tp_pendiente),
-        principal_consumido=bool(principal) if principal is not None else viejo.principal_consumido,
         version_estrategia=_texto_o(datos.get("version_estrategia"), viejo.version_estrategia),
     )
 
@@ -1331,12 +1337,12 @@ def _aplicar_bs(estado: EstadoBot, registro: Registro) -> None:
         activado = _flotante(datos.get("activado_en"))
         pos.bs = EstadoBS(activado_en=activado if activado is not None else (mono if mono is not None else 0.0),
                           primer_stop=_decimal_o(datos.get("primer_stop"), Decimal("0")),
-                          emergencia_limite=_decimal_o(datos.get("emergencia_limite"), Decimal("0")),
+                          limite_stop=_decimal_o(_limite_stop_de(datos), Decimal("0")),
                           max_visto=_decimal_o(datos.get("max_visto"), Decimal("0")))
         pos.desde = mono
     bs = pos.bs
     bs.primer_stop = _decimal_o(datos.get("primer_stop"), bs.primer_stop)
-    bs.emergencia_limite = _decimal_o(datos.get("emergencia_limite"), bs.emergencia_limite)
+    bs.limite_stop = _decimal_o(_limite_stop_de(datos), bs.limite_stop)
     bs.max_visto = max(bs.max_visto, _decimal_o(datos.get("max_visto"), bs.max_visto))
     bs.informes = _entero_o(datos.get("informes"), bs.informes)
     bs.perdido_realizado = _decimal_o(datos.get("perdido_realizado"), bs.perdido_realizado)
@@ -1620,8 +1626,8 @@ class MemoriaDecisor:
       registros `halt` / `halt_reapertura` del día (el `k` que anota el
       decisor ya es el acumulado).
     * `halt_hoy`, `stop_hoy`, `reapertura_ok` (R-F-03, G1A-18/G1B-18): ticker
-      con halt hoy; ticker con un fill de stop (principal, emergencia,
-      protección) o de salida del halt (HALT_OPEN, HALT_PM_LIMITE,
+      con halt hoy; ticker con un fill de stop (el stop del nivel,
+      protección, o principal/emergencia en un diario de antes del 29-sep) o de salida del halt (HALT_OPEN, HALT_PM_LIMITE,
       HALT_BANDA); ticker cuya primera vela tras el halt permitió reentrar
       (`halt_primera_vela` con `reentrada: true`), que se pierde con un halt
       posterior.

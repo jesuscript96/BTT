@@ -1085,7 +1085,7 @@ def test_texto_rechazo_lleva_el_literal_de_das_la_orden_y_el_ticker_R_B_07():
 @pytest.mark.parametrize(("orden", "fragmento"), [
     pytest.param(_orden(tipo=TipoOrden.MERCADO, precio=None), "MKT a mercado", id="R-B-07-mercado"),
     pytest.param(_orden(tipo=TipoOrden.STOP_LIMITE_PP, lado=Lado.COMPRA, stop=Decimal("2.6"), precio=Decimal("2.68"),
-                        proposito=Proposito.STOP_PRINCIPAL), "stop 2,60 · límite 2,68", id="R-B-07-stop-limite"),
+                        proposito=Proposito.STOP), "stop 2,60 · límite 2,68", id="R-B-07-stop-limite"),
 ])
 def test_texto_rechazo_por_tipo_de_orden(orden, fragmento):
     assert fragmento in texto_rechazo(orden, "", _posicion())

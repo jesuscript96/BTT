@@ -180,7 +180,7 @@ class _StrRoto:
         pytest.param(None, None, id="s8-none"),
         pytest.param(Path("a/b"), str(Path("a/b")), id="s8-path"),
         pytest.param(b"\x00ab", "b'\\x00ab'", id="s8-bytes-repr"),
-        pytest.param({Proposito.STOP_PRINCIPAL: 1}, {"stop_principal": 1}, id="s8-clave-enum"),
+        pytest.param({Proposito.STOP: 1}, {"stop": 1}, id="s8-clave-enum"),
     ],
 )
 def test_a_json_seguro(valor, esperado) -> None:
@@ -714,7 +714,8 @@ def test_reconstruir_pausas_y_bs(estado_fixture) -> None:
     assert pos["XYZ"].estado is EstadoTicker.NORMAL
     mnop = pos["MNOP"]
     assert mnop.estado is EstadoTicker.BS and mnop.bs is not None
-    assert (mnop.bs.primer_stop, mnop.bs.emergencia_limite, mnop.bs.max_visto) == (
+    # el fixture es un diario de antes del stop único (Jaume 29-sep): su `emergencia_limite` se lee como `limite_stop`
+    assert (mnop.bs.primer_stop, mnop.bs.limite_stop, mnop.bs.max_visto) == (
         Decimal("1.32"), Decimal("2.16"), Decimal("2.45"))
     assert mnop.bs.informes == 2 and mnop.bs.ultimo_informe == pytest.approx(25854.0)
     assert mnop.bs.activado_en == pytest.approx(25734.02) and mnop.bs.silenciado is False
@@ -872,7 +873,7 @@ def test_locate_intencion_sin_estado_queda_comprando() -> None:
 
 
 def test_bs_cerrado_veta_reentrada_hasta_sigue_ticker_R_G_03() -> None:
-    base = [reg("bs", ticker="XYZ", evento="activado", primer_stop="3.9", emergencia_limite="6.36", max_visto="6.5"),
+    base = [reg("bs", ticker="XYZ", evento="activado", primer_stop="3.9", limite_stop="5.85", max_visto="6.5"),
             reg("bs", ticker="XYZ", evento="cerrado")]
     estado = reconstruir(base, HOY)
     pos = estado.posiciones["XYZ"]
@@ -887,7 +888,7 @@ def test_bs_cerrado_veta_reentrada_hasta_sigue_ticker_R_G_03() -> None:
 
 
 def test_reanudar_no_levanta_un_bs_vivo() -> None:
-    estado = reconstruir([reg("bs", ticker="XYZ", primer_stop="3.9", emergencia_limite="6.36", max_visto="6.5"),
+    estado = reconstruir([reg("bs", ticker="XYZ", primer_stop="3.9", limite_stop="5.85", max_visto="6.5"),
                           reg("reanudar", ticker="XYZ"), reg("comando", nombre="reanudar_todo")], HOY)
     assert estado.posiciones["XYZ"].estado is EstadoTicker.BS
 
@@ -895,14 +896,14 @@ def test_reanudar_no_levanta_un_bs_vivo() -> None:
 @pytest.mark.parametrize("nombre, silenciado", [("parar_avisos", True), ("reanudar_avisos", False)],
                          ids=lambda x: f"F7-{x}")
 def test_parar_y_reanudar_avisos_bs(nombre: str, silenciado: bool) -> None:
-    registros = [reg("bs", ticker="XYZ", primer_stop="3.9", emergencia_limite="6.36", max_visto="6.5",
+    registros = [reg("bs", ticker="XYZ", primer_stop="3.9", limite_stop="5.85", max_visto="6.5",
                      silenciado=not silenciado),
                  reg("comando", nombre=nombre, args=["XYZ", "BS"], confirmado=True)]
     assert reconstruir(registros, HOY).posiciones["XYZ"].bs.silenciado is silenciado
 
 
 def test_bs_informe_sin_campo_informes_suma_uno_y_max_visto_no_baja() -> None:
-    registros = [reg("bs", ticker="XYZ", primer_stop="3.9", emergencia_limite="6.36", max_visto="6.5", informes=1),
+    registros = [reg("bs", ticker="XYZ", primer_stop="3.9", limite_stop="5.85", max_visto="6.5", informes=1),
                  reg("bs_informe", ticker="XYZ", max_visto="6.40"), reg("bs_informe", ticker="XYZ")]
     bs = reconstruir(registros, HOY).posiciones["XYZ"].bs
     assert bs.informes == 3 and bs.max_visto == Decimal("6.5")
@@ -1068,8 +1069,8 @@ def test_DC_01_orden_simulada_no_machaca_la_intencion_en_sombra() -> None:
                  reg("orden_simulada", t="09:31:00.010", token=126800001, ticker="XYZ", proposito="entrada_agregar",
                      fills_simulados=[], regla="R-O-03", mono=20862.43),
                  intencion(126800002, lado="B", qty=400, tipo_orden="STOPLMTP", precio="4.02", stop="3.90",
-                       ruta="STOP", proposito="stop_principal", t="09:31:20.110"),
-                 reg("orden_simulada", t="09:31:20.115", token=126800002, ticker="XYZ", proposito="stop_principal",
+                       ruta="STOP", proposito="stop", t="09:31:20.110"),
+                 reg("orden_simulada", t="09:31:20.115", token=126800002, ticker="XYZ", proposito="stop",
                      fills_simulados=[], regla="R-O-03", mono=20880.115)]
     estado = reconstruir(registros, HOY)
     entrada, stop = estado.ordenes[126800001], estado.ordenes[126800002]
@@ -1077,7 +1078,7 @@ def test_DC_01_orden_simulada_no_machaca_la_intencion_en_sombra() -> None:
         Lado.CORTO, 1200, TipoOrden.LIMITE, Decimal("3.45"), "XYZ|e|2026-09-25 09:30:00|entrada")
     assert entrada.enviada_en == pytest.approx(20862.43)
     assert (stop.lado, stop.qty, stop.tipo, stop.stop, stop.precio, stop.proposito) == (
-        Lado.COMPRA, 400, TipoOrden.STOP_LIMITE_PP, Decimal("3.90"), Decimal("4.02"), Proposito.STOP_PRINCIPAL)
+        Lado.COMPRA, 400, TipoOrden.STOP_LIMITE_PP, Decimal("3.90"), Decimal("4.02"), Proposito.STOP)
 
 
 def test_DC_01_orden_simulada_con_bug_no_salio_y_sin_intencion_se_crea() -> None:
@@ -1085,16 +1086,16 @@ def test_DC_01_orden_simulada_con_bug_no_salio_y_sin_intencion_se_crea() -> None
                        reg("orden_simulada", token=126800001, ticker="XYZ", bug=True, error="x", fills_simulados=[],
                            regla="R-O-03", mono=5.0)], HOY)
     assert bug.ordenes[126800001].enviada_en == 0.0 and bug.ordenes[126800001].qty == 1000
-    sola = reconstruir([reg("orden_simulada", token=126800009, ticker="XYZ", proposito="stop_principal", mono=7.0)],
+    sola = reconstruir([reg("orden_simulada", token=126800009, ticker="XYZ", proposito="stop", mono=7.0)],
                        HOY)
-    assert sola.ordenes[126800009].proposito is Proposito.STOP_PRINCIPAL and sola.ordenes[126800009].enviada_en == 7.0
+    assert sola.ordenes[126800009].proposito is Proposito.STOP and sola.ordenes[126800009].enviada_en == 7.0
 
 
 def _con_stop_y_replace(*acciones: str) -> list[Registro]:
     """Stop aceptado + replace_intencion y, DESPUÉS (seq mayor), un `orden_act` por cada acción pedida."""
     base = [arranque("real"),
             intencion(126800002, lado="B", qty=400, tipo_orden="STOPLMTP", precio="4.02", stop="3.90", ruta="STOP",
-                      proposito="stop_principal"),
+                      proposito="stop"),
             reg("orden_act", ticker="XYZ", token=126800002, id=502, accion="Accept", qty=400, precio="4.02"),
             # el ejecutor NO pone ticker en replace_intencion (ejecutor._reemplazar): se casa por token
             reg("replace_intencion", id_das=502, token=126800002, qty=800, stop="3.80", precio="3.92", version=2,
@@ -1124,9 +1125,9 @@ def test_DC_04_replace_sin_confirmar_no_cambia_nada() -> None:
 def test_DC_04_con_parte_llena_y_share_abierta_o_total_A_02() -> None:
     """Stop con 100 llenas: share ABIERTA (defecto) → qty = 100 + 300; con share TOTAL → qty = 300 (A-02)."""
     registros = [intencion(126800002, lado="B", qty=400, tipo_orden="STOPLMTP", precio="4.02", stop="3.90",
-                           proposito="stop_principal"),
+                           proposito="stop"),
                  reg("orden_act", ticker="XYZ", token=126800002, id=502, accion="Accept"),
-                 fill_decisor(126800002, 11, 502, 100, lado="B", proposito="stop_principal"),
+                 fill_decisor(126800002, 11, 502, 100, lado="B", proposito="stop"),
                  reg("replace_intencion", id_das=502, token=126800002, qty=300, stop="3.90", precio="4.02"),
                  reg("orden_act", ticker="XYZ", token=126800002, id=502, accion="Replaced")]
     abierta = reconstruir(registros, HOY).ordenes[126800002]
@@ -1193,8 +1194,8 @@ def test_apagar_y_encender_reconstruyen_vigilando() -> None:
 def test_DC_03_sigue_ticker_con_la_forma_del_decisor_levanta_el_veto() -> None:
     """DC-03 / G1A-08: el decisor anota /sigue X con `_anotar_comando` (nombre, args=[X], chat_id, id, confirmado,
     original); reconstruir levanta el veto R-G-03 de ESE ticker y no la pausa global."""
-    registros = [reg("bs", ticker="XYZ", evento="activado", primer_stop="3.9", emergencia_limite="6.36", max_visto="6.5"),
-                 reg("bs", ticker="XYZ", evento="cerrado", dentro_de_emergencia=True, regla="R-G-03"),
+    registros = [reg("bs", ticker="XYZ", evento="activado", primer_stop="3.9", limite_stop="5.85", max_visto="6.5"),
+                 reg("bs", ticker="XYZ", evento="cerrado", dentro_del_margen=True, regla="R-G-03"),
                  reg("pausa", motivo="caso 4"),
                  reg("comando", nombre="sigue", args=["XYZ"], chat_id=111, id=7, confirmado=True, original="sigue")]
     estado = reconstruir(registros, HOY)
@@ -1223,13 +1224,34 @@ def test_G1A_18_veto_R_F_03_stop_hoy_y_reapertura() -> None:
                  fill_decisor(126800002, 21, 502, 100, lado="B", proposito="desconocida"),   # stop sin propósito
                  fill_decisor(126800003, 22, 503, 100, lado="B", proposito="halt_open", ticker="ABC"),
                  fill_decisor(126800004, 23, 504, 100, lado="B", proposito="tp_agregar", ticker="MNO"),
-                 fill_decisor(126800005, 24, 505, 100, lado="B", proposito="stop_principal", ticker="EFG", eco=True),
+                 fill_decisor(126800005, 24, 505, 100, lado="B", proposito="stop", ticker="EFG", eco=True),
                  reg("halt_primera_vela", ticker="XYZ", pct="2.1", k=1, reentrada=True)]
     memoria = mod_diario.memoria_decisor(registros, HOY)
     assert memoria.stop_hoy == {"XYZ", "ABC"}                     # el TP no veta; el eco no es un fill nuevo
     assert memoria.reapertura_ok == {"XYZ"}
     # un halt posterior vuelve a exigir la primera vela
     assert mod_diario.memoria_decisor(registros + [reg("halt", ticker="XYZ", k=2)], HOY).reapertura_ok == set()
+
+
+def test_stop_unico_su_fill_veta_y_un_diario_de_antes_del_29_sep_tambien() -> None:
+    """R-F-03 con el stop único (Jaume 29-sep): el fill de `stop` veta la reentrada; un diario escrito ANTES del
+    cambio (propósitos `stop_principal`/`stop_emergencia`, que hoy se leen como DESCONOCIDA) sigue vetando, para que
+    un reinicio con el diario viejo no vuelva a entrar tras un stop."""
+    registros = [fill_decisor(126800002, 21, 502, 100, lado="B", proposito="stop", ticker="XYZ"),
+                 fill_decisor(126800003, 22, 503, 100, lado="B", proposito="stop_principal", ticker="ABC"),
+                 fill_decisor(126800004, 23, 504, 100, lado="B", proposito="stop_emergencia", ticker="EFG")]
+    assert mod_diario.memoria_decisor(registros, HOY).stop_hoy == {"XYZ", "ABC", "EFG"}
+
+
+def test_bs_de_un_diario_viejo_lee_emergencia_limite_y_el_nuevo_manda() -> None:
+    """Cisne negro con el stop único (Jaume 29-sep): el umbral es `limite_stop` (límite del primer stop); un diario
+    de antes lo anotaba como `emergencia_limite` y se sigue leyendo; si hay los dos, manda `limite_stop`."""
+    viejo = reconstruir([reg("bs", ticker="XYZ", primer_stop="3.9", emergencia_limite="6.36", max_visto="6.5")], HOY)
+    assert viejo.posiciones["XYZ"].bs.limite_stop == Decimal("6.36")
+    nuevo = reconstruir([reg("bs", ticker="XYZ", primer_stop="3.9", limite_stop="5.85", emergencia_limite="6.36",
+                             max_visto="6.5")], HOY)
+    assert nuevo.posiciones["XYZ"].bs.limite_stop == Decimal("5.85")
+    assert not hasattr(nuevo.posiciones["XYZ"].bs, "emergencia_limite")
 
 
 def test_G1A_12_control_manual_sobrevive_al_reinicio() -> None:
@@ -1298,14 +1320,13 @@ def _comparar_con_el_vivo(reconstruido, vivo) -> None:
         assert sorted(rp.lotes) == sorted(pos.lotes), ticker
         for lote_id, lote in pos.lotes.items():
             rl = rp.lotes[lote_id]
-            assert (rl.llenas, rl.pedidas, rl.estado, rl.nivel_stop, rl.precio_medio, rl.principal_consumido) == (
-                lote.llenas, lote.pedidas, lote.estado, lote.nivel_stop, lote.precio_medio,
-                lote.principal_consumido), lote_id
+            assert (rl.llenas, rl.pedidas, rl.estado, rl.nivel_stop, rl.precio_medio) == (
+                lote.llenas, lote.pedidas, lote.estado, lote.nivel_stop, lote.precio_medio), lote_id
         # R2-PER-2: el cisne negro (vivo o cerrado) también sale igual del diario
         assert (rp.bs is None) == (pos.bs is None), ticker
         if pos.bs is not None:
-            assert (rp.bs.primer_stop, rp.bs.emergencia_limite, rp.bs.max_visto, rp.bs.informes, rp.bs.silenciado) == (
-                pos.bs.primer_stop, pos.bs.emergencia_limite, pos.bs.max_visto, pos.bs.informes,
+            assert (rp.bs.primer_stop, rp.bs.limite_stop, rp.bs.max_visto, rp.bs.informes, rp.bs.silenciado) == (
+                pos.bs.primer_stop, pos.bs.limite_stop, pos.bs.max_visto, pos.bs.informes,
                 pos.bs.silenciado), ticker
     for clave, loc in vivo.locates.items():
         rl = reconstruido.locates[clave]
@@ -1319,7 +1340,7 @@ def _comparar_con_el_vivo(reconstruido, vivo) -> None:
 
 
 def _entrada_con_stops(v: Vivo, libro_ordenes) -> list[dict]:
-    """Señal de la vela → SS → fill de las 100 → principal + emergencia residentes; devuelve los dos stops (por disparo)."""
+    """Señal de la vela → SS → fill de las 100 → el stop único residente (Jaume 29-sep); devuelve [ese stop]."""
     v.senal_por_vela(_TICKER_VIVO)
     tipo_envio = "orden_simulada" if v.e.cfg.fase is Fase.SOMBRA else "orden_enviada"
     v.paso_hasta(lambda: any(r.tipo == tipo_envio and r.datos.get("proposito") == "entrada_agregar"
@@ -1330,7 +1351,7 @@ def _entrada_con_stops(v: Vivo, libro_ordenes) -> list[dict]:
         return [o for o in libro_ordenes.ordenes() if o["ticker"] == _TICKER_VIVO and o["tipo"] == "STOPLMTP"
                 and o["estado"] in ("Accepted", "Partial")]
 
-    v.paso_hasta(lambda: len(stops_vivos()) == 2, "principal + emergencia")
+    v.paso_hasta(lambda: len(stops_vivos()) == 1, "el stop único")
     v.drenar()
     return sorted(stops_vivos(), key=lambda o: o["stop"])
 
@@ -1354,9 +1375,9 @@ def test_DC_06_reinicio_con_el_diario_del_ejecutor_real(fase: str, vivo) -> None
     assert vivo_estado.posiciones[_TICKER_VIVO].neta_fills == -100
     _comparar_con_el_vivo(reconstruir(regs, HOY), vivo_estado)
     if fase == "canario":
-        principal = min(v.stops_vivos(_TICKER_VIVO), key=lambda o: o["stop"])
-        v.sim.cotizar(_TICKER_VIVO, principal["stop"] + Decimal("0.05"), principal["stop"] + Decimal("0.10"),
-                      last=principal["stop"] + Decimal("0.10"), volumen=500_000)
+        (stop,) = v.stops_vivos(_TICKER_VIVO)
+        v.sim.cotizar(_TICKER_VIVO, stop["stop"] + Decimal("0.05"), stop["stop"] + Decimal("0.10"),
+                      last=stop["stop"] + Decimal("0.10"), volumen=500_000)
         v.paso_hasta(lambda: v.libro.posiciones().get(_TICKER_VIVO) == 0 and not v.stops_vivos(_TICKER_VIVO),
                      "stop y limpieza")
         v.drenar()
@@ -1366,43 +1387,43 @@ def test_DC_06_reinicio_con_el_diario_del_ejecutor_real(fase: str, vivo) -> None
         assert memoria.stop_hoy == {_TICKER_VIVO}                    # el fill del stop quedó en el diario
 
 
-def test_R2_PER_2_DC_06_replace_del_stop_y_cisne_negro_cerrado_se_reconstruyen(vivo) -> None:
-    """R2-PER-2 (DC-06): con el ejecutor REAL contra el SimuladorDAS en CANARIO, (1) el principal se llena en PARTE →
-    el decisor REEMPLAZA la emergencia a lo que sigue corto (%OrderAct Replaced) y (2) el precio pasa de largo el
-    límite de la emergencia → cisne negro activado, informe periódico y «/cerrar XYZ SI». Tras cada paso, `reconstruir`
-    sobre SU diario coincide con decisor.estado: órdenes (qty/lvqty tras el REPLACE), fills, neta, lotes, bs y
-    sin_reentrada_hasta_sigue."""
+def test_R2_PER_2_DC_06_stop_lleno_en_parte_y_cisne_negro_cerrado_se_reconstruyen(vivo) -> None:
+    """R2-PER-2 (DC-06) con el stop único (Jaume 29-sep): ejecutor REAL contra el SimuladorDAS en CANARIO, (1) el
+    stop dispara y se llena en PARTE → sigue vivo con lo que le queda (ninguna compra más, ningún REPLACE: nunca dos
+    compras por las mismas acciones) y (2) el precio pasa de largo su límite (L + 50 %) → cisne negro activado,
+    informe periódico y «/cerrar XYZ SI». Tras cada paso, `reconstruir` sobre SU diario coincide con decisor.estado:
+    órdenes (lvqty tras el parcial), fills, neta, lotes, bs y sin_reentrada_hasta_sigue. (El REPLACE reconstruido
+    lo cubren los DC-04 y el fixture del diario.)"""
     from app.bot_das import comandos
 
     v = vivo(Fase.CANARIO)
     v.preparar(_TICKER_VIVO)
     estado = v.e.decisor.estado
-    principal, emergencia = _entrada_con_stops(v, v.libro)
-    assert (principal["qty"], emergencia["qty"]) == (100, 100)
-    tok_emergencia = emergencia["token"]
+    (stop,) = _entrada_con_stops(v, v.libro)
+    assert stop["qty"] == 100 and stop["precio"] == stop["stop"] * Decimal("1.5")      # R-C-01 v4
+    tok_stop = stop["token"]
+    compras_antes = len([r for r in v.regs() if r.tipo == "orden_enviada" and r.datos.get("lado") == "B"])
 
-    # (1) fill PARCIAL de una salida: el principal dispara y solo hay 50 acciones al ask (la otra mitad queda viva)
-    v.sim.cotizar(_TICKER_VIVO, principal["stop"], principal["stop"] + Decimal("0.01"),
-                  last=principal["stop"] + Decimal("0.01"), volumen=500_000, tamano_ask=50)
+    # (1) el stop dispara y solo hay 50 acciones al ask: se llena en parte y la otra mitad queda viva
+    v.sim.cotizar(_TICKER_VIVO, stop["stop"], stop["stop"] + Decimal("0.01"),
+                  last=stop["stop"] + Decimal("0.01"), volumen=500_000, tamano_ask=50)
 
-    def emergencia_sim() -> dict:
-        return next(o for o in v.libro.ordenes() if o["token"] == tok_emergencia)
+    def stop_sim() -> dict:
+        return next(o for o in v.libro.ordenes() if o["token"] == tok_stop)
 
-    v.paso_hasta(lambda: estado.posiciones[_TICKER_VIVO].neta_fills == -50, "fill parcial del principal")
-    v.paso_hasta(lambda: emergencia_sim()["lvqty"] == 50 and estado.ordenes[tok_emergencia].qty == 50,
-                 "REPLACE de la emergencia a 50")
+    v.paso_hasta(lambda: estado.posiciones[_TICKER_VIVO].neta_fills == -50, "fill parcial del stop")
+    v.paso_hasta(lambda: stop_sim()["lvqty"] == 50, "el stop sigue vivo con 50")
     v.drenar()
     regs = v.regs()
-    assert any(r.tipo == "replace_intencion" and r.datos.get("token") == tok_emergencia for r in regs)
-    assert any(r.tipo == "orden_act" and r.datos.get("accion") == "Replaced" and r.datos.get("token") == tok_emergencia
-               for r in regs)
+    assert not any(r.tipo == "replace_intencion" and r.datos.get("token") == tok_stop for r in regs)
+    assert len([r for r in regs if r.tipo == "orden_enviada" and r.datos.get("lado") == "B"]) == compras_antes
     assert v.libro.posiciones()[_TICKER_VIVO] == -50
     reconstruido = reconstruir(regs, HOY)
-    assert reconstruido.ordenes[tok_emergencia].qty == 50                # la qty TRAS el REPLACE, no la de la intención
+    assert reconstruido.ordenes[tok_stop].lvqty == 50
     _comparar_con_el_vivo(reconstruido, estado)
 
-    # (2) cisne negro: el precio pasa de largo el límite de la emergencia (ninguno de los dos stops puede llenar)
-    salto = (emergencia["precio"] * 2).quantize(Decimal("0.01"))
+    # (2) cisne negro: el precio pasa de largo el límite del stop (lo que le queda ya no puede llenar)
+    salto = (stop["precio"] * 2).quantize(Decimal("0.01"))
     v.sim.cotizar(_TICKER_VIVO, salto, salto + Decimal("0.20"), last=salto + Decimal("0.10"), volumen=900_000)
     v.paso_hasta(lambda: estado.posiciones[_TICKER_VIVO].bs is not None, "activación del cisne negro")
     v.drenar()
@@ -1415,13 +1436,13 @@ def test_R2_PER_2_DC_06_replace_del_stop_y_cisne_negro_cerrado_se_reconstruyen(v
     assert estado.posiciones[_TICKER_VIVO].bs is not None
     _comparar_con_el_vivo(reconstruir(v.regs(), HOY), estado)
 
-    # /cerrar XYZ SI: la emergencia se cancela antes y se compra lo que sigue corto
+    # /cerrar XYZ SI: el stop se cancela antes y se compra lo que sigue corto
     chat = 111
     c = comandos.parsear(f"/cerrar {_TICKER_VIVO} SI", chat, frozenset({chat}), id_comando="tg:r2per2")
     assert c is not None and c.requiere == comandos.REQUIERE_SI
     v.e.buzon.al_comando(c)
     v.drenar()
-    for _ in range(20):                    # E2-03: la compra sale tras ver la emergencia cancelada (esperas de 0,5 s)
+    for _ in range(20):                    # E2-03: la compra sale tras ver el stop cancelado (esperas de 0,5 s)
         if estado.posiciones[_TICKER_VIVO].neta_fills == 0 and estado.posiciones[_TICKER_VIVO].bs is None:
             break
         v.reloj.avanzar(0.5)

@@ -64,16 +64,27 @@ LAS TRAMPAS.
     humano, cierre humano, reconciliación pendiente o DAS caído) NO se pierde:
     se reprograma a 0,5 s (G1A-02, G1B-01). Su cantidad nunca pasa de lo que
     queda corto menos las compras de cierre vivas del ticker (G1B-05).
+  * Stop único (Jaume 29-sep, R-C-01 v4): UN stop residente por nivel L
+    (disparo en L, límite L + 50 %), propósito `Proposito.STOP`; sin
+    principal ni emergencia. Un lote con acciones cortas siempre lleva su
+    stop; el precio por encima del límite del primer stop sin llenarlo es
+    cisne negro (F7), no una reasignación.
   * Halt con stops residentes (G1A-01): la orden de salida del halt y los
     stops nunca suman más que la posición: al enviarla, `stops.plan` recibe
-    `compras_cierre` y BAJA principal y emergencia por esa cantidad; si la
-    orden se rechaza o no llena 2 s tras reabrir, se retira y el plan los
-    restaura (aviso 2).
+    `compras_cierre` y BAJA el stop (una orden por nivel, del más alto al
+    más bajo) por esa cantidad; si la orden se rechaza o no llena 2 s tras
+    reabrir, se retira y el plan lo restaura (aviso 2).
   * R-C-03 agotado bloquea SOLO la reposición de ese propósito (G1B-07): el
-    resto del plan (reducciones, cancelaciones, el otro stop) sigue y el
-    ticker no sale de la reconciliación. Las órdenes que el plan crea se
-    numeran con tokens PROVISIONALES y solo las que salen reciben un token
-    real (un plan filtrado no gasta la secuencia del día).
+    resto del plan (reducciones, cancelaciones) sigue y el ticker no sale de
+    la reconciliación. Con el stop único el propósito es STOP para todos los
+    niveles, así que la cuenta de intentos y el bloqueo van por (ticker,
+    propósito, NIVEL) (`_clave_stop`): el stop sano de un nivel no reinicia
+    la cuenta del otro y un nivel agotado no bloquea a los demás. Las
+    acciones del nivel agotado quedan sin stop: aviso máximo, control humano
+    y el plan B del vigilante lo sigue intentando.
+    Las órdenes que el plan crea se numeran con tokens PROVISIONALES y solo
+    las que salen reciben un token real (un plan filtrado no gasta la
+    secuencia del día).
 """
 from __future__ import annotations
 
@@ -114,7 +125,7 @@ from app.bot_das.tipos import (
     RECONCILIACION_CADUCA_S,
     REPLACE_SHARE_ES_ABIERTA,
     STOP_DEBOUNCE_S,
-    STOP_PRINCIPAL_LIMITE_PCT,
+    STOP_LIMITE_PCT,
     STOP_PROTECCION_PCT,
     Accion,
     Anotar,
@@ -454,9 +465,11 @@ class Decisor:
         self._locates_de_lote: dict[str, list[tuple[str, int]]] = {}
         self._llenas_max_lote: dict[str, int] = {}
         self._espera_plan: set[str] = set()
-        # R-C-03 por (ticker, propósito): hasta cuándo no se REPONE ese propósito (math.inf = agotado; G1B-07)
-        self._stop_bloqueo: dict[tuple[str, Proposito], float] = {}
-        self._stop_intentos: dict[tuple[str, Proposito], tuple[int, float]] = {}
+        # R-C-03 por (ticker, propósito, nivel): hasta cuándo no se REPONE ese stop (math.inf = agotado; G1B-07).
+        # Con el stop único (Jaume 29-sep) todos los niveles comparten `Proposito.STOP`: el nivel separa sus cuentas
+        # (ver `_clave_stop`); el resto de propósitos van con nivel None.
+        self._stop_bloqueo: dict[tuple[str, Proposito, Optional[Decimal]], float] = {}
+        self._stop_intentos: dict[tuple[str, Proposito, Optional[Decimal]], tuple[int, float]] = {}
         self._stops_diferidos_halt: set[str] = set()      # G1B-14 / R-C-04: stops que DAS quitó en un halt → al reabrir
         self._manual: set[str] = set()
         self._cierre_humano: set[str] = set()
@@ -961,7 +974,7 @@ class Decisor:
         return [o for o in self._estado.ordenes.values() if o.ticker == ticker and o.estado in _VIVOS]
 
     def _ordenes_ticker(self, ticker: str) -> list[Orden]:
-        """Órdenes del episodio: las vivas y las terminadas desde que la posición abrió (una emergencia ejecutada cuenta)."""
+        """Órdenes del episodio: las vivas y las terminadas desde que la posición abrió (un stop ejecutado cuenta)."""
         inicio = self._inicio_episodio.get(ticker, -math.inf)
         return [o for o in self._estado.ordenes.values()
                 if o.ticker == ticker and (o.estado in _VIVOS or o.enviada_en >= inicio)]
@@ -970,10 +983,26 @@ class Decisor:
         return any(o.ticker == ticker and o.estado in _VIVOS and o.proposito in _PROP_SALIDA and _qty_viva(o) > 0
                    for o in self._estado.ordenes.values())
 
-    def _emergencia_viva(self, ticker: str) -> bool:
-        return any(o.ticker == ticker and o.estado in _VIVOS and _qty_viva(o) > 0
-                   and o.proposito in (Proposito.STOP_EMERGENCIA, Proposito.STOP_PROTECCION)
-                   for o in self._estado.ordenes.values())
+    def _stop_vivo_en_cada_nivel(self, ticker: str) -> bool:
+        """F1.6 con el stop único (Jaume 29-sep): ¿cada nivel con acciones cortas tiene ya un stop de compra vivo?
+
+        Entonces un fill de entrada solo SUBE cantidades y el plan va con
+        debounce (se coalescen los REPLACE); si algún nivel no tiene stop (el
+        primer fill de su lote) el plan sale AL INSTANTE. En v3 bastaba con
+        que hubiera una emergencia viva (llevaba toda la posición). Sin
+        niveles calculables, cualquier stop de compra vivo vale (como antes).
+        """
+        pos = self._estado.posiciones.get(ticker)
+        vivos = [o for o in self._vivas(ticker)
+                 if o.lado is Lado.COMPRA and o.tipo is TipoOrden.STOP_LIMITE_PP and _qty_viva(o) > 0]
+        if pos is None or not vivos:
+            return False
+        limit_up = self._limit_up(ticker)
+        niveles = {d.nivel for d in stops.conjunto_deseado(pos, self._cfg.stops, limit_up)}
+        if not niveles:
+            return True
+        cubiertos = {stops.nivel_de_stop(o, pos, self._cfg.stops, limit_up) for o in vivos}
+        return niveles <= cubiertos
 
     def _lotes_vivos(self, pos: PosicionTicker) -> list[Lote]:
         return [lote for lote in pos.lotes.values() if lote.estado in _LOTE_VIVO and lote.llenas > 0]
@@ -1126,7 +1155,8 @@ class Decisor:
             return
         partes = descomponer(o.token)
         origen = partes[0] if partes is not None else Origen.EJECUTOR
-        heredado = self._stop_intentos.get((o.ticker, o.proposito)) if o.proposito in _PROP_STOP else None
+        heredado = (self._stop_intentos.get(_clave_stop(o.ticker, o.proposito, o.nivel))
+                    if o.proposito in _PROP_STOP else None)
         intentos, primero = self._meta_orden.pop(o.token, heredado or (0, self._ahora))
         self._estado.ordenes[o.token] = Orden(
             token=o.token, ticker=o.ticker, lado=o.lado, tipo=o.tipo, qty=o.qty, precio=o.precio, stop=o.stop,
@@ -1264,7 +1294,8 @@ class Decisor:
         """
         acciones: list[Accion] = []
         if o.proposito in _PROP_STOP and o.estado in stops.ESTADOS_CONFIRMADOS:
-            self._stop_intentos.pop((o.ticker, o.proposito), None)    # R-C-03: un stop aceptado cierra la cuenta
+            # R-C-03: un stop aceptado cierra la cuenta de SU nivel (el stop sano de otro nivel no la borra)
+            self._stop_intentos.pop(_clave_stop(o.ticker, o.proposito, o.nivel), None)
         if o.estado in _VIVOS and o.id_das is not None and o.token in self._cancelar_al_aceptar:
             motivo = self._cancelar_al_aceptar.pop(o.token)
             acciones += self._absorber([Cancelar(id_das=o.id_das, token=o.token, motivo=motivo)])
@@ -1413,7 +1444,7 @@ class Decisor:
         pasa `compras_cierre` (G1A-01: la salida del halt viva) y
         `pedidos_en_vuelo` (D2a-05: REPLACE/CANCEL sin confirmar, que no se
         repiten). G1B-07 / G1A-11: tras un stop rechazado (R-C-03) solo se
-        filtran las órdenes NUEVAS de ese propósito (separación entre
+        filtran las órdenes NUEVAS de ese propósito y nivel (separación entre
         reintentos o agotado) y, con un stop que DAS quitó en un halt, las de
         cualquier stop hasta reabrir (G1B-14); reducciones, cancelaciones y los
         demás propósitos siguen. Las órdenes nuevas llevan token real solo si
@@ -1445,18 +1476,27 @@ class Decisor:
         return (ticker in self._stops_diferidos_halt or self._compras_cierre(ticker) > 0
                 or any(clave[0] == ticker and hasta > self._ahora for clave, hasta in self._stop_bloqueo.items()))
 
-    def _stop_bloqueado(self, ticker: str, proposito: Proposito) -> bool:
-        """G1B-07 / G1B-14: ¿no se puede CREAR ahora un stop de ese propósito en ese ticker?"""
+    def _stop_bloqueado(self, ticker: str, proposito: Proposito, nivel: Optional[Decimal] = None) -> bool:
+        """G1B-07 / G1B-14: ¿no se puede CREAR ahora un stop de ese propósito (y nivel) en ese ticker?
+
+        Stop único (Jaume 29-sep): el bloqueo de R-C-03 es del NIVEL cuyo stop
+        rechazó DAS; el stop de otro nivel se sigue creando. Un `Proposito.STOP`
+        sin nivel (no debería salir del plan) cuenta como bloqueado si lo está
+        CUALQUIER nivel: ante la duda, no se manda otra compra.
+        """
         if proposito in _PROP_STOP and ticker in self._stops_diferidos_halt:
             return True
-        return self._stop_bloqueo.get((ticker, proposito), -math.inf) > self._ahora
+        if proposito is Proposito.STOP and nivel is None:
+            return any(k[0] == ticker and k[1] is proposito and hasta > self._ahora
+                       for k, hasta in self._stop_bloqueo.items())
+        return self._stop_bloqueo.get(_clave_stop(ticker, proposito, nivel), -math.inf) > self._ahora
 
     def _filtrar_stops_bloqueados(self, ticker: str, acciones: list[Accion]) -> list[Accion]:
         """Quita las órdenes NUEVAS de un propósito bloqueado (R-C-03 separación/agotado, halt); lo demás pasa."""
         filtradas: list[Accion] = []
         quitadas: list[str] = []
         for a in acciones:
-            if isinstance(a, EnviarOrden) and self._stop_bloqueado(ticker, a.orden.proposito):
+            if isinstance(a, EnviarOrden) and self._stop_bloqueado(ticker, a.orden.proposito, a.orden.nivel):
                 quitadas.append(a.orden.proposito.value)
                 continue
             filtradas.append(a)
@@ -2038,7 +2078,7 @@ class Decisor:
             "precio_medio": lote.precio_medio, "nivel_stop": lote.nivel_stop, "riesgo_usd": lote.riesgo_usd,
             "estado": lote.estado.value, "reentrada_n": lote.reentrada_n, "entrada_idx": lote.entrada_idx,
             "nivel_piramide": lote.nivel_piramide, "hora_salida": lote.hora_salida, "eod": lote.eod,
-            "principal_consumido": lote.principal_consumido, "version_estrategia": lote.version_estrategia})
+            "version_estrategia": lote.version_estrategia})
 
     # ── máquina del intento (R-B-01 v3, R-B-02, R-B-03) ─────────────────
     def _preparar_suma(self, pos: PosicionTicker, lote: Lote) -> tuple[Any, list[Accion], Optional[int], Optional[int]]:
@@ -2934,8 +2974,9 @@ class Decisor:
             acciones += [Anotar("incidente", {"tipo": "sobrellenado", "ticker": ticker, "token": o.token,
                                               "qty": fill.qty, "asignadas": asignable_total, "regla": "R-B-02"}),
                          Avisar(Nivel.AVISO, Grupo.B, f"{avisos.escapar_html(ticker)}: fill de {fill.qty} con solo "
-                                                      f"{asignable_total} pendientes en los lotes; la emergencia cubre "
-                                                      f"la neta entera", clave=f"sobrellenado:{ticker}:{o.token}")]
+                                                      f"{asignable_total} pendientes en los lotes; el stop del nivel más "
+                                                      f"alto cubre lo que sobra (la neta entera queda con stop)",
+                                clave=f"sobrellenado:{ticker}:{o.token}")]
         if del_intento and intento is not None:
             bloque = intento.cfg_congelada or self._cfg.entrada
             tope = _pct(bloque, "tope_caida_bid_pct", ENTRADA_TOPE_CAIDA_BID_PCT)
@@ -2948,7 +2989,7 @@ class Decisor:
                                        f"legal (tope {tope} % + cruce {cruce} % bajo el bid de la señal "
                                        f"{intento.bid_senal}); se MANTIENE (B13)",
                                        clave=f"b13:{ticker}:{o.token}"))
-        if self._emergencia_viva(ticker):
+        if self._stop_vivo_en_cada_nivel(ticker):
             debounce = _segundos(self._cfg.stops, "debounce_s", STOP_DEBOUNCE_S)
             acciones.append(Programar(f"{T_STOPS_AJUSTAR}:{ticker}", debounce, {"ticker": ticker}))
         else:
@@ -2957,28 +2998,34 @@ class Decisor:
         return acciones
 
     def _fill_stop(self, pos: PosicionTicker, o: Orden, fill: Fill) -> list[Accion]:
-        """F2.3 / R-C-11: el fill de un stop reduce los lotes y `limpieza_tras_fill_stop` deja UNA emergencia o vende el exceso.
+        """F2.3 / R-C-11: el fill de un stop reduce los lotes de SU nivel y `limpieza_tras_fill_stop` ajusta o vende el exceso.
 
-        A la limpieza se le pasan `compras_cierre` (G1A-01) y
-        `pedidos_en_vuelo` (D2a-05). G1B-02: si la posición queda plana o un
-        lote del intento vivo se cierra, el intento se cancela (nunca vuelve a
-        vender en un lote cerrado).
+        R-C-01 v4 (Jaume 29-sep, stop único): el stop de un nivel lleva las
+        acciones de los lotes de ese nivel, así que su fill se descuenta
+        primero de ellos (el nivel sale de `stops.nivel_de_stop`: por el
+        `nivel` de la orden o, en una adoptada del vigilante, por su disparo);
+        lo que sobre, y el fill de una protección, desde el L más alto. A la
+        limpieza se le pasan `compras_cierre` (G1A-01) y `pedidos_en_vuelo`
+        (D2a-05). G1B-02: si la posición queda plana o un lote del intento
+        vivo se cierra, el intento se cancela (nunca vuelve a vender en un
+        lote cerrado). Con la posición plana, «dentro del margen» (R-G-01 (3))
+        es que la cerró un stop de nivel dentro de su límite.
         """
         ticker = pos.ticker
         self._stop_hoy.add(ticker)
-        preferidos: list[str] = []
-        if o.proposito is Proposito.STOP_PRINCIPAL and o.nivel is not None:
-            preferidos = [lote.id for lote in self._lotes_vivos(pos) if lote.nivel_stop == o.nivel]
-        consumidos_primero = o.proposito is not Proposito.STOP_PRINCIPAL
-        acciones, cerrados = self._reducir_lotes(pos, fill.qty, preferidos, mas_alto_primero=True, precio=fill.precio,
-                                                 consumidos_primero=consumidos_primero)
+        limit_up = self._limit_up(ticker)
+        de_nivel = o.proposito in (Proposito.STOP, Proposito.DESCONOCIDA)
+        nivel = stops.nivel_de_stop(o, pos, self._cfg.stops, limit_up) if de_nivel else None
+        preferidos = ([lote.id for lote in self._lotes_vivos(pos) if lote.nivel_stop == nivel]
+                      if nivel is not None else [])
+        acciones, cerrados = self._reducir_lotes(pos, fill.qty, preferidos, mas_alto_primero=True, precio=fill.precio)
         acciones += self._absorber(self._filtrar_stops_bloqueados(ticker, stops.limpieza_tras_fill_stop(
             pos, self._ordenes_ticker(ticker), self._cot(ticker), self._tokens.siguiente, self._cfg, self._ahora_et,
-            pos.version_stops, orden_stop=o, limit_up=self._limit_up(ticker),
+            pos.version_stops, limit_up=limit_up,
             compras_cierre=self._compras_cierre(ticker), pedidos_en_vuelo=self._pedidos_en_vuelo(ticker))))
         if pos.neta == 0:
-            acciones += self._posicion_cerrada(pos, dentro_de_emergencia=(
-                o.proposito is Proposito.STOP_EMERGENCIA and (o.precio is None or fill.precio <= o.precio)))
+            acciones += self._posicion_cerrada(pos, dentro_del_margen=(
+                de_nivel and (o.precio is None or fill.precio <= o.precio)))
         elif pos.neta < 0:
             acciones += self._capar_salidas(pos)
             acciones += self._intento_con_lote_cerrado(pos, cerrados)
@@ -2999,7 +3046,7 @@ class Decisor:
                 compras_cierre=self._compras_cierre(pos.ticker), pedidos_en_vuelo=self._pedidos_en_vuelo(pos.ticker))))
             acciones += self._intento_con_lote_cerrado(pos, cerrados)
         elif pos.neta == 0:
-            acciones += self._posicion_cerrada(pos, dentro_de_emergencia=False)
+            acciones += self._posicion_cerrada(pos, dentro_del_margen=False)
         else:
             acciones += self._plan(pos.ticker)
             acciones += self._intento_con_lote_cerrado(pos, cerrados)
@@ -3023,23 +3070,19 @@ class Decisor:
         return acciones
 
     def _reducir_lotes(self, pos: PosicionTicker, qty: int, preferidos: list[str], mas_alto_primero: bool,
-                       precio: Optional[Decimal] = None,
-                       consumidos_primero: bool = False) -> tuple[list[Accion], list[str]]:
+                       precio: Optional[Decimal] = None) -> tuple[list[Accion], list[str]]:
         """Las acciones que salen se descuentan de los lotes: primero los `preferidos`, luego el resto (lote a CERRADO en 0).
 
-        G1A-20 / G1B-20 (criterio decidido): el fill de la EMERGENCIA o de una
-        protección (`consumidos_primero`) descuenta primero los lotes cuyo
-        principal ya se consumió (su momento pasó) y, dentro de cada grupo,
-        desde el L más ALTO (la emergencia va sobre el L más alto): así el lote
-        que aún tiene su principal pendiente conserva sus acciones. Devuelve
-        (acciones, ids de los lotes que se cerraron).
+        G1A-20 / G1B-20 con el stop único (Jaume 29-sep): el fill de un stop
+        prefiere los lotes de SU nivel; lo que sobre (y el fill de una
+        protección, sin nivel) sale del L más ALTO (`mas_alto_primero`, donde
+        v3 ponía la emergencia). Una salida prefiere su lote y sigue desde el L
+        más bajo. Devuelve (acciones, ids de los lotes que se cerraron).
         """
         vivos = self._lotes_vivos(pos)
         orden_lotes = [lote for lote in vivos if lote.id in preferidos]
         resto = [lote for lote in vivos if lote.id not in preferidos]
         resto.sort(key=lambda lote: (lote.nivel_stop or Decimal("0")), reverse=mas_alto_primero)
-        if consumidos_primero:
-            resto.sort(key=lambda lote: 0 if lote.principal_consumido else 1)     # estable: conserva el orden por L
         acciones: list[Accion] = []
         cerrados: list[str] = []
         restante = qty
@@ -3073,7 +3116,7 @@ class Decisor:
             acciones.append(locates.consulta_reuso(lote.ticker))
         return acciones
 
-    def _posicion_cerrada(self, pos: PosicionTicker, dentro_de_emergencia: bool) -> list[Accion]:
+    def _posicion_cerrada(self, pos: PosicionTicker, dentro_del_margen: bool) -> list[Accion]:
         """Neta 0: lotes CERRADO, nada vivo en el ticker (R-C-11 a) y, si había cisne negro, su fin (R-G-01 (3)).
 
         G1B-02: el intento de entrada vivo se cancela (MOTIVO_CIERRE: se queda
@@ -3095,7 +3138,7 @@ class Decisor:
             acciones += [Anotar("intento", {"ticker": ticker, "motivo": "G1B-02: posición plana con la entrada viva; "
                                                                         "se cancela (se queda lo llenado)"})]
             acciones += self._cancelar_intento(pos, MOTIVO_CIERRE)
-        acciones += self._cerrar_bs_si_toca(pos, dentro_de_emergencia)
+        acciones += self._cerrar_bs_si_toca(pos, dentro_del_margen)
         self._cierre_humano.discard(ticker)
         self._retirando_cierre.discard(ticker)
         self._cerrar_todo_enviar.pop(ticker, None)
@@ -3285,9 +3328,9 @@ class Decisor:
         return []
 
     def _bloquear_stops_tras_rechazo(self, o: Orden, crudas: list[Accion]) -> list[Accion]:
-        """R-C-03: tras un stop rechazado no se repone ESE propósito hasta su `stop_reintento` (separación) y la cuenta de
-        intentos pasa a la orden siguiente de ese propósito venga de donde venga (plan, barrido); agotados, no se repone
-        solo (G1B-07: solo ese propósito; el resto del plan sigue).
+        """R-C-03: tras un stop rechazado no se repone ESE propósito (y nivel, `_clave_stop`) hasta su `stop_reintento`
+        (separación) y la cuenta de intentos pasa a la orden siguiente de esa clave venga de donde venga (plan, barrido);
+        agotados, no se repone solo (G1B-07: solo esa clave; el resto del plan sigue).
 
         G1B-14 / G1A-21 (R-C-04, excepción del HALT): con el símbolo en halt no
         se gastan intentos: fuera el `stop_reintento`, sin cuenta, y los stops
@@ -3303,13 +3346,13 @@ class Decisor:
         programa = next((a for a in crudas if isinstance(a, Programar) and a.clave == T_STOP_REINTENTO), None)
         if programa is not None:
             primero = programa.datos.get("primer_intento_en")
-            self._stop_intentos[(o.ticker, o.proposito)] = (
+            self._stop_intentos[_clave_stop(o.ticker, o.proposito, o.nivel)] = (
                 int(programa.datos.get("intento") or o.intentos + 1),
                 float(primero) if isinstance(primero, (int, float)) else self._ahora)
             hasta = self._ahora + float(programa.en_s)
         else:
             hasta = math.inf
-        clave = (o.ticker, o.proposito)
+        clave = _clave_stop(o.ticker, o.proposito, o.nivel)
         self._stop_bloqueo[clave] = max(self._stop_bloqueo.get(clave, -math.inf), hasta)
         return crudas
 
@@ -3457,14 +3500,16 @@ class Decisor:
         """F6.2 (R-F-01/05/06, EP-2, injerto §8.23): decidir la reapertura; la orden por OPEN sale UNA vez (guardia).
 
         G1A-01 / G1B-04 / D2a-09: al enviar la salida del halt por Q acciones,
-        principal y emergencia se REDUCEN antes en Q (`stops.plan` con
-        `compras_cierre`): la salida y los stops nunca compran dos veces en la
-        reapertura. E1-01: en un halt H la salida por OPEN es un LÍMITE a
-        parada · (1 + t1) (`orden_reapertura(simb=...)`). G1A-04: en cisne
-        negro / control humano / manual / cierre humano no sale ninguna orden
-        (aviso 3). E1-04: «mantener» en un halt H de premercado ensancha el
-        límite de los stops residentes (R-F-06). D2a-01: el «stop» que se
-        compara con el precio es el primero que DE VERDAD salta.
+        el stop se REDUCE antes en Q (`stops.plan` con `compras_cierre`; con el
+        stop único, una sola orden por nivel, del nivel más alto al más bajo):
+        la salida y los stops nunca compran dos veces en la reapertura. E1-01:
+        en un halt H la salida por OPEN es un LÍMITE a parada · (1 + t1)
+        (`orden_reapertura(simb=...)`). G1A-04: en cisne negro / control
+        humano / manual / cierre humano no sale ninguna orden (aviso 3). E1-04:
+        «mantener» en un halt H de premercado ensancharía el límite de los
+        stops residentes (R-F-06); con el stop único (+50 %) ya no hay nada que
+        ensanchar. El «stop» que se compara con el precio es el primero que
+        salta (el del nivel más bajo, con la banda).
         """
         ticker = str(datos.get("ticker") or clave.split(":", 1)[1])
         simb = self._mercado.simbolo(ticker)
@@ -3474,7 +3519,7 @@ class Decisor:
         franja = self._franja()
         duracion = ((self._ahora_et - simb.halt_desde).total_seconds() / 60.0) if simb.halt_desde is not None else 0.0
         cot = self._cot(ticker)
-        decision = halts.decidir_reapertura(pos, simb, self._niveles_principal(pos), cot, dict(self._cfg.halts), franja,
+        decision = halts.decidir_reapertura(pos, simb, self._niveles_primer_stop(pos), cot, dict(self._cfg.halts), franja,
                                             duracion)
         self._halt_decision[ticker] = decision
         self._halt_luld[ticker] = halts.es_luld(simb)
@@ -3531,7 +3576,7 @@ class Decisor:
             tipo = "MKT" if orden.tipo is TipoOrden.MERCADO else f"LMT {orden.precio}"
             acciones.append(Avisar(Nivel.AVISO, Grupo.B,
                                    f"HALT {avisos.escapar(ticker)}: se sale ({avisos.escapar(decision)}) con {qty} "
-                                   f"acciones {tipo} por {avisos.escapar(orden.ruta)}; principal y emergencia bajan a "
+                                   f"acciones {tipo} por {avisos.escapar(orden.ruta)}; el stop baja a "
                                    f"{max(abs(pos.neta) - self._compras_cierre(ticker), 0)} (G1A-01: nunca dos compras "
                                    f"sobre las mismas acciones)",
                                    clave=f"halt_salida:{ticker}:{simb.tat}"))
@@ -3554,17 +3599,23 @@ class Decisor:
             acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
         return acciones
 
-    def _niveles_principal(self, pos: PosicionTicker) -> Optional[NivelesStop]:
-        """El principal que primero se cruzaría (L más bajo) con el disparo del primer stop que DE VERDAD salta (D2a-01)."""
+    def _niveles_primer_stop(self, pos: PosicionTicker) -> Optional[NivelesStop]:
+        """El stop que primero se cruzaría (R-C-01 v4: el del L más bajo, disparo y límite con la banda).
+
+        Es lo que halts (R-F-01 «stop por encima/debajo del precio») y cisne
+        negro (R-G-01 v4: el precio por encima de SU límite) comparan con el
+        precio. Con el disparo del primer stop que de verdad salta
+        (`stops.primer_disparo`) si difiriera del de `niveles(L más bajo)`.
+        """
         niveles = sorted(lote.nivel_stop for lote in self._lotes_vivos(pos) if _es_precio(lote.nivel_stop))
         if not niveles:
             return None
         limit_up = self._limit_up(pos.ticker)
         base = stops.niveles(niveles[0], self._cfg.stops, limit_up)
         primero = stops.primer_disparo(pos, self._cfg.stops, limit_up)
-        if primero is None or primero == base.principal_disparo:
+        if primero is None or primero == base.disparo:
             return base
-        return dataclasses.replace(base, principal_disparo=primero)
+        return dataclasses.replace(base, disparo=primero)
 
     def _orden_halt_viva(self, ticker: str) -> bool:
         return any(o.ticker == ticker and o.estado in _VIVOS and o.proposito in _PROP_HALT
@@ -3579,9 +3630,9 @@ class Decisor:
 
         Un STOPLMTP de compra con disparo ≤ precio ≤ límite está disparado y
         es ejecutable: sus acciones cuentan como compradas al dimensionar el
-        reintento (la regla del director: `_comprando` con los stops). Como
-        principal y emergencia cubren las mismas acciones, nunca pasa de la
-        posición.
+        reintento (la regla del director: `_comprando` con los stops). Con el
+        stop único cada nivel cubre sus acciones; aun así la suma nunca pasa
+        de la posición (tope).
         """
         if not _es_precio(precio):
             return 0
@@ -3780,7 +3831,7 @@ class Decisor:
         return acciones
 
     def _msg_quote(self, m: MsgQuote) -> list[Accion]:
-        """`$Quote`: el libro y, con posición corta, cisne negro, principal rebasado y banda del halt; y los fogonazos."""
+        """`$Quote`: el libro y, con posición corta, cisne negro y banda del halt; y los fogonazos."""
         ticker = self._mercado.aplicar(m)
         if ticker is None:
             return []
@@ -3807,12 +3858,9 @@ class Decisor:
             self._sin_simbolo_avisado.discard(ticker)
             acciones.append(Anotar("reanudar", {"ticker": ticker, "motivo": "A7: DAS ya cotiza el símbolo"}))
         if pos is not None and pos.neta < 0 and cot is not None:
+            # Jaume 29-sep (stop único): el precio por encima del límite del primer stop es cisne negro (F7); ya no hay
+            # «principal rebasado» que reasignar al nivel de arriba ni al ask (sería perseguir al precio, R-G-01)
             acciones += self._vigilar_bs(pos, cot)
-            if (pos.estado not in (EstadoTicker.BS, EstadoTicker.HALT) and ticker not in self._manual
-                    and ticker not in self._cierre_humano):
-                acciones += self._absorber(self._filtrar_stops_bloqueados(ticker, stops.reasignar_principal_rebasado(
-                    pos, self._ordenes_ticker(ticker), cot, self._cfg.stops, self._tokens.siguiente, self._ahora_et,
-                    self._ruta_stop(), pos.version_stops, self._limit_up(ticker))))
             acciones += self._banda(pos, cot)
             acciones += self._opa(pos)
         acciones += self._fogonazo(ticker)
@@ -3867,27 +3915,18 @@ class Decisor:
         return self._franja().startswith("RTH")
 
     # ── cisne negro (F7) ───────────────────────────────────────────────
-    def _niveles_bs(self, pos: PosicionTicker) -> Optional[NivelesStop]:
-        """El principal del L más bajo y la emergencia del L más alto (la que lleva toda la posición, R-C-01 v3)."""
-        niveles = sorted(lote.nivel_stop for lote in self._lotes_vivos(pos) if _es_precio(lote.nivel_stop))
-        if not niveles:
-            return None
-        limit_up = self._limit_up(pos.ticker)
-        bajo = stops.niveles(niveles[0], self._cfg.stops, limit_up)
-        alto = stops.niveles(niveles[-1], self._cfg.stops, limit_up)
-        primero = stops.primer_disparo(pos, self._cfg.stops, limit_up)     # D2a-01: el primer stop que DE VERDAD salta
-        return NivelesStop(principal_disparo=primero if primero is not None else bajo.principal_disparo,
-                           principal_limite=bajo.principal_limite,
-                           emergencia_disparo=alto.emergencia_disparo, emergencia_limite=alto.emergencia_limite,
-                           bajo_banda=bajo.bajo_banda or alto.bajo_banda)
-
     def _vigilar_bs(self, pos: PosicionTicker, cot: Cotizacion) -> list[Accion]:
-        """F7 (R-G-01): el precio pasa de largo el límite de la emergencia sin llenarla → protocolo, aviso 3 e informes."""
+        """F7 (R-G-01 v4): el precio pasa de largo el límite del primer stop sin llenarlo → protocolo, aviso 3 e informes.
+
+        Jaume 29-sep (stop único): el umbral es el límite (L + 50 %) del stop
+        del nivel más bajo con acciones (`_niveles_primer_stop`), el primero
+        que salta; en v3 era el de la emergencia del L más alto.
+        """
         if pos.bs is not None or pos.estado is EstadoTicker.BS:
             if pos.bs is not None:
                 pos.bs = cisne_negro.actualizar_maximo(pos.bs, cot.last)
             return []
-        niveles = self._niveles_bs(pos)
+        niveles = self._niveles_primer_stop(pos)
         if niveles is None or not cisne_negro.se_activa(pos, niveles, self._ordenes_ticker(pos.ticker), cot,
                                                         self._cfg.stops):
             return []
@@ -3900,9 +3939,9 @@ class Decisor:
         pos.desde = self._ahora
         acciones: list[Accion] = [
             Anotar("bs", {"ticker": ticker, "evento": "activado", "activado_en": bs.activado_en,
-                          "primer_stop": bs.primer_stop, "emergencia_limite": bs.emergencia_limite,
+                          "primer_stop": bs.primer_stop, "limite_stop": bs.limite_stop,
                           "max_visto": bs.max_visto, "informes": 0, "estado_anterior": anterior.value,
-                          "regla": "R-G-01"}),
+                          "regla": "R-G-01 v4"}),
             Avisar(Nivel.MAXIMO, Grupo.B, self._texto_informe(pos, niveles), clave=cisne_negro.clave_aviso_informe(ticker, 0)),
             Programar(f"{T_BS_INFORME}:{ticker}", cisne_negro.segundos_hasta_informe(bs, self._ahora, self._cfg.tecnicos),
                       {"ticker": ticker}),
@@ -3915,9 +3954,7 @@ class Decisor:
         if pos.bs is None:
             raise RuntimeError(f"{pos.ticker}: informe de cisne negro sin protocolo activo")
         ticker = pos.ticker
-        niveles = niveles or self._niveles_bs(pos) or NivelesStop(pos.bs.primer_stop, pos.bs.primer_stop,
-                                                                  pos.bs.emergencia_limite, pos.bs.emergencia_limite,
-                                                                  False)
+        niveles = niveles or self._niveles_primer_stop(pos) or NivelesStop(pos.bs.primer_stop, pos.bs.limite_stop, False)
         eods = [self._hora_del_dia(lote.eod) for lote in self._lotes_vivos(pos) if lote.eod]
         eod = min((e for e in eods if e is not None), default=None)
         fills = [f for lista in self._estado.fills.values() for f in lista if f.ticker == ticker]
@@ -3950,12 +3987,12 @@ class Decisor:
         acciones.append(Programar(f"{T_BS_INFORME}:{ticker}", espera if espera > 0 else 60.0, {"ticker": ticker}))
         return acciones
 
-    def _cerrar_bs_si_toca(self, pos: PosicionTicker, dentro_de_emergencia: bool) -> list[Accion]:
+    def _cerrar_bs_si_toca(self, pos: PosicionTicker, dentro_del_margen: bool) -> list[Accion]:
         """R-G-01 (3) / R-G-03: fin del protocolo con la posición a cero; veto de reentrada hasta /sigue X."""
         if (pos.bs is None and pos.estado is not EstadoTicker.BS) or pos.neta < 0:
             return []
-        texto = self._texto_informe(pos) if (dentro_de_emergencia and pos.bs is not None) else None
-        aviso, veto = cisne_negro.al_cerrar(pos, dentro_de_emergencia, texto_informe=texto)
+        texto = self._texto_informe(pos) if (dentro_del_margen and pos.bs is not None) else None
+        aviso, veto = cisne_negro.al_cerrar(pos, dentro_del_margen, texto_informe=texto)
         acciones: list[Accion] = [aviso] if aviso is not None else []
         pos.bs = None
         if pos.estado is EstadoTicker.BS:
@@ -3964,7 +4001,7 @@ class Decisor:
             pos.desde = self._ahora
         pos.sin_reentrada_hasta_sigue = bool(veto)
         self._cierre_humano.discard(pos.ticker)
-        acciones += [Anotar("bs", {"ticker": pos.ticker, "evento": "cerrado", "dentro_de_emergencia": dentro_de_emergencia,
+        acciones += [Anotar("bs", {"ticker": pos.ticker, "evento": "cerrado", "dentro_del_margen": dentro_del_margen,
                                    "regla": "R-G-03"}),
                      Desprogramar(f"{T_BS_INFORME}:{pos.ticker}")]
         return acciones
@@ -5258,8 +5295,8 @@ class Decisor:
     def _t_stop_reintento(self, clave: str, datos: dict) -> list[Accion]:
         """R-C-03: el stop rechazado se repone con `stops.plan` (idempotente) llevando la cuenta de intentos.
 
-        G1B-07 / G1A-11: la separación era de ESE propósito: al vencer se
-        levanta solo `(ticker, propósito)`; un agotado (`inf`) sigue hasta
+        G1B-07 / G1A-11: la separación era de ESE propósito (y nivel, con el
+        stop único): al vencer se levanta solo esa clave; un agotado (`inf`) sigue hasta
         /stop o /reanudar. Sin propósito en los datos (contrato anterior) se
         levantan las separaciones con fin de ese ticker.
         """
@@ -5268,9 +5305,12 @@ class Decisor:
         if pos is None or pos.estado is EstadoTicker.BS or pos.neta >= 0:
             return []
         proposito = _proposito(datos.get("proposito"), Proposito.DESCONOCIDA)
+        nivel = _clave_stop(ticker, proposito, _decimal_o_none(datos.get("nivel")))[2]
         for clave_bloqueo in [k for k in self._stop_bloqueo if k[0] == ticker]:
             if proposito is not Proposito.DESCONOCIDA and clave_bloqueo[1] is not proposito:
                 continue
+            if nivel is not None and clave_bloqueo[2] is not None and clave_bloqueo[2] != nivel:
+                continue                                        # Jaume 29-sep: la separación era de OTRO nivel
             if self._stop_bloqueo[clave_bloqueo] != math.inf:
                 self._stop_bloqueo.pop(clave_bloqueo, None)     # se acabó la separación de R-C-03: el plan repone
         if (datos.get("proposito") == Proposito.STOP_PROTECCION.value and datos.get("lote_id") is None
@@ -5290,7 +5330,8 @@ class Decisor:
                 return []
             pct = _pct(self._cfg.stops, "proteccion_desconocidas_pct", STOP_PROTECCION_PCT)
             orden = stops.stop_proteccion(ticker, falta, True, ultimo, pct, self._tokens.siguiente(), self._ruta_stop(),
-                                          pos.version_stops)
+                                          pos.version_stops,
+                                          limite_pct=_pct(self._cfg.stops, stops.CLAVE_LIMITE_PCT, STOP_LIMITE_PCT))
             self._meta_orden[orden.token] = (intento, float(primero) if isinstance(primero, (int, float)) else self._ahora)
             return self._absorber([EnviarOrden(orden)])
         return self._plan(ticker)          # la orden nueva hereda la cuenta de intentos de su propósito (_stop_intentos)
@@ -6065,9 +6106,8 @@ class Decisor:
         if vivos:
             for lote in vivos:
                 lote.nivel_stop = precio
-                lote.principal_consumido = False
                 acciones.append(Anotar("lote", {"lote_id": lote.id, "ticker": ticker, "nivel_stop": precio,
-                                                "principal_consumido": False, "motivo": "/stop"}))
+                                                "motivo": "/stop"}))
             acciones += self._plan(ticker)
         elif ticker in self._cierre_humano or self._stop_bloqueado(ticker, Proposito.STOP_PROTECCION):
             pass                                             # el motivo va en la respuesta
@@ -6110,7 +6150,7 @@ class Decisor:
         no salió nada).
         """
         ticker = pos.ticker
-        limite = precios.con_techo(precio, _pct(self._cfg.stops, "principal_limite_pct", STOP_PRINCIPAL_LIMITE_PCT),
+        limite = precios.con_techo(precio, _pct(self._cfg.stops, stops.CLAVE_LIMITE_PCT, STOP_LIMITE_PCT),
                                    arriba=True)
         vivas = self._vivas(ticker)
         propias = sorted((o for o in vivas if o.lado is Lado.COMPRA and o.tipo is TipoOrden.STOP_LIMITE_PP
@@ -6367,6 +6407,30 @@ def _clase_salida(ev: Any) -> ClaseSalida:
         accion = str(getattr(ev, "accion_piramide", "") or "").strip().lower()
         return {"lot_stop": ClaseSalida.STOP_LOTE, "lot_tp": ClaseSalida.TP}.get(accion, ClaseSalida.REDUCE)
     return salidas.clasificar(getattr(ev, "motivo", None))
+
+
+def _clave_stop(ticker: str, proposito: Proposito, nivel: Any) -> tuple[str, Proposito, Optional[Decimal]]:
+    """Clave de R-C-03 (cuenta de intentos y bloqueo) de un stop: (ticker, propósito, nivel).
+
+    Stop único (Jaume 29-sep, R-C-01 v4): todos los niveles comparten
+    `Proposito.STOP`, así que el nivel L entra en la clave (normalizado: 4,2
+    y 4,20 son el mismo); sin él, el stop sano de un nivel reiniciaba la
+    cuenta de rechazos del otro (reintentos sin fin) y un agotado bloqueaba
+    los stops de todos los niveles. El resto de propósitos, nivel None.
+    """
+    if proposito is Proposito.STOP and nivel is not None:
+        try:
+            return (ticker, proposito, Decimal(str(nivel)).normalize())
+        except (ArithmeticError, ValueError):
+            return (ticker, proposito, None)
+    return (ticker, proposito, None)
+
+
+def _decimal_o_none(valor: Any) -> Optional[Decimal]:
+    try:
+        return Decimal(str(valor)) if valor is not None and str(valor) != "" else None
+    except (ArithmeticError, ValueError):
+        return None
 
 
 def _proposito(valor: Any, defecto: Proposito) -> Proposito:

@@ -175,7 +175,7 @@ _PATRON_TOKEN_URL = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
 _PALABRAS_SI = frozenset({"SI", "SÍ"})
 _ESTADOS_TERMINALES = frozenset({EstadoOrden.CANCELED, EstadoOrden.REJECTED, EstadoOrden.EXECUTED, EstadoOrden.CLOSED})
 _LOTES_VIVOS = frozenset({EstadoLote.ABRIENDO, EstadoLote.ABIERTO, EstadoLote.CERRANDO})
-_PROPOSITOS_STOP = frozenset({Proposito.STOP_PRINCIPAL, Proposito.STOP_EMERGENCIA, Proposito.STOP_PROTECCION})
+_PROPOSITOS_STOP = frozenset({Proposito.STOP, Proposito.STOP_PROTECCION})   # stop único (Jaume 29-sep, R-C-01 v4)
 _PROPOSITOS_TP = frozenset({Proposito.TP_AGREGAR, Proposito.TP_CRUCE})
 
 
@@ -619,7 +619,10 @@ def _resp_posiciones(estado: EstadoBot, mercado: Any) -> str:
         tps = [o for o in vivas if o.proposito in _PROPOSITOS_TP]
         for lote in sorted(vivos, key=lambda l: l.id):
             latente = _latente_lote(lote, cot)
-            stop_lote = [o for o in stops if o.lote_id in (None, lote.id)]
+            # el stop único de un nivel lleva el lote_id del primer lote del nivel: los demás lotes de ese L lo
+            # reconocen por su nivel (Jaume 29-sep, R-C-01 v4)
+            stop_lote = [o for o in stops if o.lote_id in (None, lote.id)
+                         or (o.nivel is not None and lote.nivel_stop is not None and o.nivel == lote.nivel_stop)]
             tp_lote = [o for o in tps if o.lote_id == lote.id]
             texto_stop = ", ".join(f"{o.proposito.value} {_precio_txt(o.stop)}/{_precio_txt(o.precio)}"
                                    for o in stop_lote) or f"nivel {_precio_txt(lote.nivel_stop)} SIN ORDEN"

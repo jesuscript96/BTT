@@ -6,7 +6,7 @@ QUÉ PRUEBA. `app.bot_das.vigilante` en tres alturas:
      seguidor incremental del diario y la ventana por horario.
   2. `VigilanteDAS` contra el `SimuladorDAS` en 127.0.0.1:0 con su conexión
      WATCH real (`LOGIN … 1`) y una segunda conexión NORMAL de acción: posición
-     sin stop con el ejecutor callado ⇒ par principal + emergencia repuesto en
+     sin stop con el ejecutor callado ⇒ el stop único (Jaume 29-sep) repuesto en
      < 2 s (R-C-07 plan B); luego un ejecutor REAL arranca y lo adopta sin
      mandar ni una orden (F13); ejecutor vivo ⇒ espera el plazo de
      descubierta; sin conexión de acción ⇒ petición al supervisor
@@ -564,8 +564,8 @@ def _montar_ejecutor(cfg: Config, reloj: RelojSimulado, dir_bot: Path, direccion
 def test_r_c_07_plan_b_repone_el_par_en_menos_de_2_s_y_el_ejecutor_lo_adopta(
         montar, cfg_canario: Config, reloj: RelojSimulado, dir_bot: Path, libro: Any, simulador: Any,
         direccion_simulador: tuple[str, int], latido: str) -> None:
-    """R-C-07 plan B + R-C-08 + F13: posición corta sin stops y el ejecutor callado ⇒ el vigilante pone principal +
-    emergencia (+3/+13/+63 sobre L) en < 2 s por su conexión de acción, con write-ahead en SU diario; después un
+    """R-C-07 plan B + R-C-08 + F13: posición corta sin stops y el ejecutor callado ⇒ el vigilante pone el stop único
+    (disparo en L, límite L + 50 %, Jaume 29-sep) en < 2 s por su conexión de acción, con write-ahead en SU diario; después un
     ejecutor real arranca, reconcilia y ADOPTA esos stops (0 órdenes nuevas, ninguna cancelada)."""
     libro.sembrar_posicion(TICKER, -100, D("3.45"))
     libro.cotizar(TICKER, D("3.44"), D("3.46"), last=D("3.45"), volumen=500_000)
@@ -580,17 +580,15 @@ def test_r_c_07_plan_b_repone_el_par_en_menos_de_2_s_y_el_ejecutor_lo_adopta(
     t0 = time.monotonic()
     hilo.start()
     try:
-        while len(stops_vivos(libro)) < 2:
-            assert time.monotonic() - t0 < PLAZO_S, f"el par no llegó; DAS recibió {simulador.recibidas()[-6:]}"
+        while len(stops_vivos(libro)) < 1:
+            assert time.monotonic() - t0 < PLAZO_S, f"el stop no llegó; DAS recibió {simulador.recibidas()[-6:]}"
             time.sleep(0.01)
         repuesto_s = time.monotonic() - t0
         assert repuesto_s < 2.0, f"el plan B tardó {repuesto_s:.2f} s"
-        principal, emergencia = sorted(stops_vivos(libro), key=lambda o: o["stop"])
-        assert (principal["lado"], principal["qty"], principal["stop"], principal["precio"], principal["ruta"]) == \
-            ("B", 100, D("4"), D("4.12"), "STOP")                                     # R-C-01 v3: L y L·1,03
-        assert (emergencia["lado"], emergencia["qty"], emergencia["stop"], emergencia["precio"]) == \
-            ("B", 100, D("4.52"), D("6.52"))                                          # L·1,13 y L·1,63
-        tokens_vigilante = {principal["token"], emergencia["token"]}
+        (stop,) = stops_vivos(libro)                                                  # uno solo, nunca dos
+        assert (stop["lado"], stop["qty"], stop["stop"], stop["precio"], stop["ruta"]) == \
+            ("B", 100, D("4"), D("6"), "STOP")                                        # R-C-01 v4: L y L·1,50
+        tokens_vigilante = {stop["token"]}
         assert all(descomponer(t)[0] is Origen.VIGILANTE for t in tokens_vigilante)   # quién la puso (R-C-07)
         assert m.abrir.llamadas == 1
         assert ruta_ejecutor.read_bytes() == bytes_ejecutor                           # corrección 3: diarios separados
@@ -612,7 +610,7 @@ def test_r_c_07_plan_b_repone_el_par_en_menos_de_2_s_y_el_ejecutor_lo_adopta(
             assert tocadas == []
             adoptadas = {t: e.decisor.estado.ordenes.get(t) for t in tokens_vigilante}
             assert all(o is not None and o.origen is Origen.VIGILANTE for o in adoptadas.values())
-            assert {o.proposito for o in adoptadas.values()} == {Proposito.STOP_PRINCIPAL, Proposito.STOP_EMERGENCIA}
+            assert {o.proposito for o in adoptadas.values()} == {Proposito.STOP}          # stop único (Jaume 29-sep)
         finally:
             e.parar()
     finally:
@@ -652,8 +650,8 @@ def test_r_c_08_con_el_ejecutor_vivo_espera_el_plazo_de_descubierta(montar, relo
     assert neworders(m.recibidas()) == []                                             # 4 s < 5 s
     reloj.avanzar(1.5)
     escribir_latido_ejecutor(dir_bot, reloj.epoch())
-    m.bombear(lambda: len(stops_vivos(libro)) == 2, "par repuesto tras 5 s descubierta")
-    assert len(neworders(m.recibidas(), TICKER)) == 2
+    m.bombear(lambda: len(stops_vivos(libro)) == 1, "stop repuesto tras 5 s descubierta")
+    assert len(neworders(m.recibidas(), TICKER)) == 1
 
 
 def test_correccion16_sin_conexion_de_accion_pide_relanzar_el_ejecutor(montar, reloj: RelojSimulado, dir_bot: Path,
@@ -692,13 +690,13 @@ def test_r_o_03_sombra_no_envia_ni_un_mutante_ni_abre_la_accion(montar, cfg: Con
     m = montar(config=dataclasses.replace(cfg, fase=Fase.SOMBRA))
     assert m.v.sombra
     m.listo()
-    m.bombear(lambda: len(de_tipo(m.regs(), "vigilancia_simulada")) >= 2, "orden simulada")
+    m.bombear(lambda: len(de_tipo(m.regs(), "vigilancia_simulada")) >= 1, "orden simulada")
     m.pasadas(3)
     assert m.abrir.llamadas == 0
     assert not [linea for linea in m.recibidas() if protocolo.es_mutante(linea)]
     assert stops_vivos(libro) == []
     simuladas = de_tipo(m.regs(), "vigilancia_simulada")
-    assert len(simuladas) == 2 and {r.datos["proposito"] for r in simuladas} == {"stop_principal", "stop_emergencia"}
+    assert len(simuladas) == 1 and {r.datos["proposito"] for r in simuladas} == {"stop"}   # stop único (Jaume 29-sep)
     assert not de_tipo(m.regs(), "orden_intencion") and not de_tipo(m.regs(), "pos")
     assert de_tipo(m.regs(), "pos_watch")                        # la cuenta real, sin contaminar la reconstrucción
 
@@ -712,49 +710,58 @@ def test_r_c_03_un_rechazo_respeta_la_separacion_y_luego_repone(montar, reloj: R
     libro.rechazar_siguiente("Invalid stop price")
     m = montar()
     m.listo()
-    m.bombear(lambda: any(r.datos.get("accion") == "Send_Rej" for r in de_tipo(m.regs(), "orden_act"))
-              and len(stops_vivos(libro)) == 1, "un rechazo y un stop aceptado")
+    m.bombear(lambda: any(r.datos.get("accion") == "Send_Rej" for r in de_tipo(m.regs(), "orden_act")),
+              "un rechazo")
     m.pasadas(5)
-    assert len(neworders(m.recibidas())) == 2                   # separación: no se reintenta todavía
+    assert len(neworders(m.recibidas())) == 1                   # separación: no se reintenta todavía
+    assert stops_vivos(libro) == []                             # stop único: la posición está SIN stop
     assert m.avisos.con_clave(f"vigilante_rechazo:{TICKER}")[0].nivel is Nivel.MAXIMO
     assert de_tipo(m.regs(), "vigilancia_retenida")
     reloj.avanzar(2.5)
-    m.bombear(lambda: len(stops_vivos(libro)) == 2, "reintento tras la separación")
-    assert len(neworders(m.recibidas())) == 3
+    m.bombear(lambda: len(stops_vivos(libro)) == 1, "reintento tras la separación")
+    assert len(neworders(m.recibidas())) == 2
     assert simulador.errores() == []
 
 
 def test_r_c_03_rechazos_agotados_dejan_el_ticker_en_control_humano(montar, reloj: RelojSimulado, dir_bot: Path,
                                                                      libro: Any) -> None:
-    """R-C-03 / riesgo 11: tras `stops.reintentos` (5) rechazos el vigilante deja de mandar y avisa CONTROL HUMANO."""
+    """R-C-03 / riesgo 11: tras `stops.reintentos` (5) rechazos el vigilante deja de mandar y avisa CONTROL HUMANO.
+
+    Stop único (Jaume 29-sep): esas acciones quedan SIN stop, así que en cuanto
+    los rechazos salen de la ventana (`stops.ventana_min`) el vigilante lo
+    vuelve a intentar y, si DAS ya lo acepta, la posición queda cubierta."""
     libro.sembrar_posicion(TICKER, -100, D("3.45"))
     escribir_diario_ejecutor(dir_bot, reloj)
-    for _ in range(20):
+    for _ in range(5):
         libro.rechazar_siguiente("Invalid stop price")
     m = montar()
     m.listo()
-    for ronda in range(3):
+    for ronda in range(5):
         m.bombear(lambda r=ronda: len([x for x in de_tipo(m.regs(), "orden_act") if x.datos.get("accion") == "Send_Rej"])
-                  >= 2 * (r + 1), f"rechazos de la ronda {ronda}")
+                  >= r + 1, f"rechazos de la ronda {ronda}")
         reloj.avanzar(2.5)
     m.pasadas(5)
     reloj.avanzar(2.5)
     m.pasadas(5)
-    assert len(neworders(m.recibidas())) == 6                   # 3 rondas × (principal + emergencia) y se para
+    assert len(neworders(m.recibidas())) == 5                   # 5 rondas × el stop único y se para
+    assert stops_vivos(libro) == []
     humano = m.avisos.con_clave(f"vigilante_control_humano:{TICKER}")
     assert humano and humano[0].nivel is Nivel.MAXIMO and "CONTROL HUMANO" in humano[0].texto
+    reloj.avanzar(m.v._ventana_rechazos_s + 1.0)                # los rechazos caducan: vuelve a intentarlo
+    m.bombear(lambda: len(stops_vivos(libro)) == 1, "el stop repuesto al salir los rechazos de la ventana")
+    assert len(neworders(m.recibidas())) == 6
 
 
 def test_r_c_10_4_posicion_sin_lote_recibe_proteccion_y_aviso_3(montar, dir_bot: Path, libro: Any) -> None:
     """R-C-10 caso 4 (y fixture del diario del vigilante): 200 largas que ningún diario conoce ⇒ STOPLMTP de venta al
-    25 % bajo el precio (7,50 / 7,27 sobre 10,00) con token del vigilante y aviso 3."""
+    25 % bajo el precio (7,50 / 3,75 sobre 10,00: límite a un 50 %, stop único de Jaume 29-sep) con token del vigilante y aviso 3."""
     libro.sembrar_posicion("QRS", 200, D("10.00"))
     m = montar()
     m.listo()
     m.bombear(lambda: stops_vivos(libro, "QRS"), "protección de QRS")
     (proteccion,) = stops_vivos(libro, "QRS")
     assert (proteccion["lado"], proteccion["qty"], proteccion["stop"], proteccion["precio"]) == \
-        ("S", 200, D("7.5"), D("7.27"))
+        ("S", 200, D("7.5"), D("3.75"))
     assert descomponer(proteccion["token"])[0] is Origen.VIGILANTE
     aviso = m.avisos.con_clave("vigilante_desconocida:QRS")
     assert aviso and aviso[0].nivel is Nivel.MAXIMO
@@ -835,7 +842,7 @@ def test_injerto_8_11_el_latido_se_retiene_con_el_watch_sordo(montar, reloj: Rel
 def test_r_j_02_watch_caido_no_vigila_avisa_y_reconecta(montar, reloj: RelojSimulado, dir_bot: Path, libro: Any,
                                                          simulador: Any) -> None:
     """R-J-02 / R-C-08: el watch cae ⇒ aviso 2, sin vigilancia (libro viejo) y reconexión por plan; al volver, volcado
-    nuevo, aviso de recuperación y la vigilancia sigue (repone el par)."""
+    nuevo, aviso de recuperación y la vigilancia sigue (repone el stop)."""
     libro.sembrar_posicion(TICKER, -100, D("3.45"))
     escribir_diario_ejecutor(dir_bot, reloj)
     escribir_latido_ejecutor(dir_bot, reloj.epoch())
@@ -850,7 +857,7 @@ def test_r_j_02_watch_caido_no_vigila_avisa_y_reconecta(montar, reloj: RelojSimu
                   and "conectado" in r.datos]
     assert [r.datos["conectado"] for r in conexiones][-2:] == [False, True]
     escribir_latido_ejecutor(dir_bot, reloj.epoch() - 30)       # el ejecutor muere: el plan B sigue funcionando
-    m.bombear(lambda: len(stops_vivos(libro)) == 2, "par repuesto tras reconectar")
+    m.bombear(lambda: len(stops_vivos(libro)) == 1, "stop repuesto tras reconectar")
 
 
 def test_r_j_05_el_ping_solo_sale_con_watch_y_ejecutor_vivos(montar, reloj: RelojSimulado, dir_bot: Path) -> None:
@@ -946,7 +953,7 @@ def test_h5_una_pasada_que_revienta_no_para_la_vigilancia(montar, monkeypatch: p
 
     monkeypatch.setattr(vg.vigilancia, "comprobar_con_firmas", rota)   # antes del volcado: la primera pasada útil revienta
     m = montar()
-    m.bombear(lambda: len(stops_vivos(libro)) == 2, "vigilancia tras la excepción")
+    m.bombear(lambda: len(stops_vivos(libro)) == 1, "vigilancia tras la excepción")
     excepciones = de_tipo(m.regs(), "excepcion")
     assert len(excepciones) == 1 and "ZeroDivisionError" in excepciones[0].datos["traceback"]
     assert m.avisos.con_clave("excepcion_vigilante:pasada")
@@ -958,7 +965,7 @@ def test_tokens_del_vigilante_siguen_tras_un_reinicio(montar, reloj: RelojSimula
     escribir_diario_ejecutor(dir_bot, reloj)
     primera = montar()
     primera.listo()
-    primera.bombear(lambda: len(stops_vivos(libro)) == 2, "par del primer vigilante")
+    primera.bombear(lambda: len(stops_vivos(libro)) == 1, "stop del primer vigilante")
     usados = {o["token"] for o in stops_vivos(libro)}
     primera.v.parar()
     primera.abrir.cerrar()
@@ -1112,26 +1119,25 @@ def test_riesgo_11_lo_enviado_sin_eco_no_se_duplica_y_caduca(montar, reloj: Relo
     grabador = ClienteGrabador()
     m = montar(accion=lambda: grabador)
     m.listo()
-    m.bombear(lambda: len(grabador.lineas) >= 2, "primer par")
+    m.bombear(lambda: len(grabador.lineas) >= 1, "primer stop")
     m.pasadas(4)
-    assert len(neworders(grabador.lineas)) == 2 and len(m.v.pendientes) == 2
+    assert len(neworders(grabador.lineas)) == 1 and len(m.v.pendientes) == 1
     reloj.avanzar(vg.PENDIENTE_CADUCA_S + 0.1)
     m.pasadas(1)
-    assert len(de_tipo(m.regs(), "pendiente_caducado")) == 2
+    assert len(de_tipo(m.regs(), "pendiente_caducado")) == 1
     tokens = [int(linea.split()[1]) for linea in neworders(grabador.lineas)]
-    assert len(tokens) == 4 and len(set(tokens)) == 4           # un token nunca se reutiliza
+    assert len(tokens) == 2 and len(set(tokens)) == 2           # un token nunca se reutiliza
 
 
-def test_riesgo_11_un_cancel_sin_eco_no_se_repite_y_la_emergencia_duplicada_cae(montar, reloj: RelojSimulado,
-                                                                                dir_bot: Path, libro: Any,
-                                                                                simulador: Any) -> None:
-    """R-C-07 plan B: dos emergencias sobre la misma posición ⇒ se cancela la MÁS NUEVA (una vez; el CANCEL pendiente
+def test_riesgo_11_un_cancel_sin_eco_no_se_repite_y_el_stop_duplicado_cae(montar, reloj: RelojSimulado,
+                                                                          dir_bot: Path, libro: Any,
+                                                                          simulador: Any) -> None:
+    """R-C-07 plan B: dos stops del mismo nivel sobre la misma posición ⇒ se cancela el MÁS NUEVO (una vez; el CANCEL pendiente
     cuenta como hecho hasta que caduca) y nada más."""
     libro.sembrar_posicion(TICKER, -100, D("3.45"))
     escribir_diario_ejecutor(dir_bot, reloj)
-    _sembrar_orden(simulador, f"NEWORDER {tok(2)} B {TICKER} STOP 100 STOPLMTP 4 4.12 TIF=DAY+")
-    _sembrar_orden(simulador, f"NEWORDER {tok(3)} B {TICKER} STOP 100 STOPLMTP 4.52 6.52 TIF=DAY+")
-    nueva = _sembrar_orden(simulador, f"NEWORDER {tok(4)} B {TICKER} STOP 100 STOPLMTP 4.52 6.52 TIF=DAY+")
+    _sembrar_orden(simulador, f"NEWORDER {tok(2)} B {TICKER} STOP 100 STOPLMTP 4 6 TIF=DAY+")
+    nueva = _sembrar_orden(simulador, f"NEWORDER {tok(3)} B {TICKER} STOP 100 STOPLMTP 4 6 TIF=DAY+")
     grabador = ClienteGrabador()
     m = montar(accion=lambda: grabador)
     m.listo()
@@ -1139,7 +1145,7 @@ def test_riesgo_11_un_cancel_sin_eco_no_se_repite_y_la_emergencia_duplicada_cae(
     m.pasadas(4)
     assert grabador.lineas == [f"CANCEL {nueva}"]
     intencion = de_tipo(m.regs(), "cancel_intencion")
-    assert len(intencion) == 1 and intencion[0].datos["id_das"] == nueva and intencion[0].datos["token"] == tok(4)
+    assert len(intencion) == 1 and intencion[0].datos["id_das"] == nueva and intencion[0].datos["token"] == tok(3)
     reloj.avanzar(vg.PENDIENTE_CADUCA_S + 0.1)
     m.pasadas(1)
     assert grabador.lineas == [f"CANCEL {nueva}"] * 2               # DAS no la canceló: se repite tras caducar
@@ -1147,20 +1153,19 @@ def test_riesgo_11_un_cancel_sin_eco_no_se_repite_y_la_emergencia_duplicada_cae(
 
 def test_r_c_07_con_menos_posicion_reduce_los_stops_por_replace(montar, reloj: RelojSimulado, dir_bot: Path,
                                                                 libro: Any, simulador: Any) -> None:
-    """R-C-07: la posición bajó a 60 (TP parcial) y el ejecutor está caído ⇒ el vigilante REDUCE principal y emergencia
+    """R-C-07: la posición bajó a 60 (TP parcial) y el ejecutor está caído ⇒ el vigilante REDUCE el stop único
     a 60 con REPLACE (nunca un stop mayor que la posición) y no lo repite."""
     libro.sembrar_posicion(TICKER, -60, D("3.45"))
     escribir_diario_ejecutor(dir_bot, reloj)
-    principal = _sembrar_orden(simulador, f"NEWORDER {tok(2)} B {TICKER} STOP 100 STOPLMTP 4 4.12 TIF=DAY+")
-    emergencia = _sembrar_orden(simulador, f"NEWORDER {tok(3)} B {TICKER} STOP 100 STOPLMTP 4.52 6.52 TIF=DAY+")
+    stop = _sembrar_orden(simulador, f"NEWORDER {tok(2)} B {TICKER} STOP 100 STOPLMTP 4 6 TIF=DAY+")
     m = montar()
     m.listo()
     m.bombear(lambda: {o["lvqty"] for o in stops_vivos(libro)} == {60}, "stops reducidos a 60")
     m.pasadas(4)
     replaces = [linea for linea in m.recibidas() if linea.startswith("REPLACE")]
-    assert sorted(replaces) == sorted([f"REPLACE {principal} 60 STOPLMT 4 4.12", f"REPLACE {emergencia} 60 STOPLMT 4.52 6.52"])
+    assert replaces == [f"REPLACE {stop} 60 STOPLMT 4 6"]
     assert neworders(m.recibidas()) == []
-    assert len(de_tipo(m.regs(), "replace_intencion")) == 2
+    assert len(de_tipo(m.regs(), "replace_intencion")) == 1
     assert simulador.errores() == []
 
 
@@ -1259,10 +1264,10 @@ def test_d2a_06_un_neworder_que_el_emisor_purga_deja_de_estar_pendiente(montar, 
     grabador = ClienteGrabador()
     m = montar(accion=lambda: grabador)
     m.listo()
-    m.bombear(lambda: len(neworders(grabador.lineas)) >= 2, "primer par")
+    m.bombear(lambda: len(neworders(grabador.lineas)) >= 1, "primer stop")
     primero = int(neworders(grabador.lineas)[0].split()[1])
     m.cola.al_descartar(OrdenDescartada(token=primero, serie="stops:XYZ", version=1,
                                         motivo="descartada por versión", ticker=TICKER))
-    m.bombear(lambda: len(neworders(grabador.lineas)) >= 3, "reposición tras el descarte")
+    m.bombear(lambda: len(neworders(grabador.lineas)) >= 2, "reposición tras el descarte")
     assert [r for r in de_tipo(m.regs(), "orden_descartada") if r.datos["token"] == primero]
-    assert len(neworders(grabador.lineas)) == 3                        # solo el descartado se repone (el otro sigue)
+    assert len(neworders(grabador.lineas)) == 2                        # el descartado se repone una vez

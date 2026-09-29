@@ -45,7 +45,11 @@ LAS TRAMPAS.
   * E1-04 (R-F-06, 2.ª parte): en un halt `H` de premercado con decisión
     «mantener», `ensanchar_stops_pm` REEMPLAZA el límite de los stops de compra
     residentes por `con_techo(disparo, margen_limite_pm_pct)` (nunca lo baja,
-    nunca mueve el disparo): remueve más liquidez al reabrir.
+    nunca mueve el disparo): remueve más liquidez al reabrir. Con el stop
+    único (Jaume 29-sep, R-C-01 v4: límite L + 50 %) el límite ya es mucho
+    más ancho que el 5 % y el ensanche NO cambia nada en los stops de nivel;
+    se conserva como red para un stop de compra con un límite más estrecho
+    (una protección o una orden adoptada puesta con otra config).
   * En premercado no hay órdenes a mercado (R-F-06): `decidir_reapertura`
     devuelve «cerrar_limite_pm» en cualquier franja que no sea RTH, y
     `orden_reapertura` pone un LÍMITE que cruza el ask con margen y TIF DAY+.
@@ -243,15 +247,16 @@ def decidir_reapertura(pos: PosicionTicker, simb: EstadoSimbolo, stops: Optional
          pasaba a control humano). Al reabrir, lo único que importa es el precio de reapertura frente al stop y al tope.
       2. Precio de referencia = último conocido (`cot.last`) o el precio de parada; sin ninguno, o sin
          niveles de stop con los que comparar (`stops` None), → control_humano (no se decide a ciegas).
-      3. Escenario 1 (R-F-01): el stop principal queda POR ENCIMA del precio (corto) → mantener si k < k_max;
-         k ≥ k_max → cerrar. Escenario 2: stop por debajo (o igual) → cerrar sí o sí.
+      3. Escenario 1 (R-F-01): el primer stop (el del nivel más bajo) queda POR ENCIMA del precio (corto) → mantener
+         si k < k_max; k ≥ k_max → cerrar. Escenario 2: stop por debajo (o igual) → cerrar sí o sí.
       4. Al cerrar en un halt que NO es LULD (`TA:H`), R-F-05 a: subida desde el precio de parada > 250 % →
          control_humano (alerta máxima; en LULD no hay tope: manda k). Sin precio de parada no se puede medir y
          prima cerrar.
       5. «cerrar» es cerrar_mercado en RTH y cerrar_limite_pm en cualquier otra franja (R-F-06: en PM no hay MKT).
     Para una neta LARGA la comparación con el stop se refleja (stop por debajo).
-    `stops` son los niveles del principal que primero se cruzaría (con varios lotes, el L más bajo): los pasa el
-    decisor ya calculados por `reglas.stops.niveles` (ajuste (a): aquí no se importa `reglas.stops`). Si el símbolo
+    `stops` son el disparo y el límite del stop que primero se cruzaría (R-C-01 v4, stop único: con varios lotes, el
+    del L más bajo): los pasa el decisor ya calculados por `reglas.stops` (ajuste (a): aquí no se importa
+    `reglas.stops`). Si el símbolo
     ya reabrió (`ta` fuera de {H, P}) no se sabe si el halt fue LULD o T1: el tope del 250 % se aplica igualmente,
     que es lo conservador (un humano decide con los stops residentes).
     """
@@ -262,7 +267,7 @@ def decidir_reapertura(pos: PosicionTicker, simb: EstadoSimbolo, stops: Optional
     if precio is None or stops is None:
         return "control_humano"
     corto = pos.neta < 0
-    stop_salvo = (precio < stops.principal_disparo) if corto else (precio > stops.principal_disparo)
+    stop_salvo = (precio < stops.disparo) if corto else (precio > stops.disparo)
     k_max = _cfg_int(cfg_halts, "k_max", HALT_K_MAX)
     if stop_salvo and simb.k_halts_up < k_max:
         return "mantener"
@@ -400,8 +405,12 @@ def ensanchar_stops_pm(pos: PosicionTicker, vivas: list[Orden], simb: EstadoSimb
     `tipos.share_de_replace` según `stops.replace_share_es_abierta`) y el
     límite nuevo, con la serie «stops:X» y la versión vigente (`version` o
     `pos.version_stops`), + `Programar("replace_verificar")` (2h.8). Nunca baja
-    un límite (la emergencia ya está a +63 %), nunca mueve el disparo, nunca
-    envía ni cancela nada. Si cambia algo, `Anotar("halt_stops_pm")` delante.
+    un límite, nunca mueve el disparo, nunca envía ni cancela nada. Con el
+    stop único (Jaume 29-sep, R-C-01 v4) el límite de cada stop de nivel ya es
+    disparo + 50 %: aquí no hay nada que ensanchar y devuelve []; solo actúa
+    sobre un stop de compra con un límite más estrecho que el margen (red para
+    una protección u orden adoptada con otra config). Si cambia algo,
+    `Anotar("halt_stops_pm")` delante.
     El plan de stops casa por disparo y solo corrige cantidades: no deshace el
     ensanche. `cfg` es la `Config` (o un dict con «halts» y «stops»).
     """

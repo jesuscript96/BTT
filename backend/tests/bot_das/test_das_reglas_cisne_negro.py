@@ -1,13 +1,15 @@
 """Tests de reglas/cisne_negro.py (documento §3.19, flujo F7 y fila de §10; R-G-01, R-G-03, R-D-06).
 
-QUÉ DEMUESTRA. Que `se_activa` solo arranca el protocolo pasado el límite de
-la emergencia con un corto vivo (y no con fills en vuelo ni si ya está
-activo); la cadencia 60 s × 5 y luego 300 s con un reloj simulado de 40
-minutos (y el silencio de `/parar_avisos`); que `informe` lleva los 16
-campos de R-G-01 (2) con sus valores; que `acciones_durante_bs` NUNCA envía
-ni cancela (solo baja la cantidad de la emergencia); `al_cerrar`;
-`fogonazo_visto`; y que `cierre_humano` cancela la emergencia ANTES de
-comprar, con techo del 5 % sobre el ask, sus reintentos y sus guardas.
+QUÉ DEMUESTRA. Que `se_activa` solo arranca el protocolo con el precio por
+encima del límite del stop que salta primero (Jaume 29-sep, stop único:
+disparo en L, límite L + 50 %) con un corto vivo (y no con fills en vuelo
+de ESE stop ni si ya está activo); la cadencia 60 s × 5 y luego 300 s con un
+reloj simulado de 40 minutos (y el silencio de `/parar_avisos`); que
+`informe` lleva los 16 campos de R-G-01 (2) con sus valores; que
+`acciones_durante_bs` NUNCA envía ni cancela (solo baja la cantidad de los
+stops); `al_cerrar`; `fogonazo_visto`; y que `cierre_humano` cancela los
+stops ANTES de comprar, con techo del 5 % sobre el ask, sus reintentos y
+sus guardas.
 
 POR QUÉ ESTÁ AQUÍ. Las reglas son puras: se prueban con tablas sin DAS, sin
 red y con el reloj simulado del conftest. La config sale de
@@ -90,7 +92,7 @@ HORA = datetime(2026, 9, 25, 9, 45, tzinfo=ET)
 EOD = datetime(2026, 9, 25, 11, 30, tzinfo=ET)
 T = "XYZ"
 L = D("2.00")
-NIV = niveles(L, CFG["stops"])          # principal 2,00 / 2,06 · emergencia 2,26 / 3,26 (R-C-01 v3)
+NIV = niveles(L, CFG["stops"])          # stop único 2,00 / 3,00 (R-C-01 v4, Jaume 29-sep)
 
 
 # ── fábricas ─────────────────────────────────────────────────────────────
@@ -114,16 +116,16 @@ def _orden(token: int, proposito: Proposito, qty: int, *, tipo: TipoOrden = Tipo
                  llenas=llenas, lvqty=lvqty)
 
 
-def _emergencia(qty: int = 1000, **kw) -> Orden:
+def _stop(qty: int = 1000, **kw) -> Orden:
+    """El stop del nivel 2,00 (disparo 2,00, límite 3,00), token 100200010, id 5001."""
     kw.setdefault("id_das", 5001)
-    return _orden(100200010, Proposito.STOP_EMERGENCIA, qty, precio=NIV.emergencia_limite,
-                  stop=NIV.emergencia_disparo, **kw)
+    return _orden(100200010, Proposito.STOP, qty, precio=NIV.limite, stop=NIV.disparo, **kw)
 
 
-def _principal(**kw) -> Orden:
+def _otro(**kw) -> Orden:
+    """Otro stop de compra del ticker (el de otro nivel, 1,90 / 2,85; o uno duplicado), token 100200009, id 5000: el MÁS antiguo."""
     kw.setdefault("id_das", 5000)
-    return _orden(100200009, Proposito.STOP_PRINCIPAL, 1000, precio=NIV.principal_limite, stop=NIV.principal_disparo,
-                  **kw)
+    return _orden(100200009, Proposito.STOP, 1000, precio=D("2.85"), stop=D("1.90"), **kw)
 
 
 def _cierre(qty: int, precio: Decimal, **kw) -> Orden:
@@ -146,12 +148,12 @@ def _tokens():
     return itertools.count(100200100).__next__
 
 
-FILLS = [_fill(1, "SS", 1000, "1.80"), _fill(2, "B", 300, "2.05")]   # corto 1.000 a 1,80; el principal cubrió 300 a 2,05
+FILLS = [_fill(1, "SS", 1000, "1.80"), _fill(2, "B", 300, "2.05")]   # corto 1.000 a 1,80; el stop cubrió 300 a 2,05
 
 
 def _bs(activado: float = 1000.0, **kw) -> EstadoBS:
-    base = dict(activado_en=activado, primer_stop=NIV.principal_disparo, emergencia_limite=NIV.emergencia_limite,
-                max_visto=D("4.00"), ultimo_informe=activado)
+    base = dict(activado_en=activado, primer_stop=NIV.disparo, limite_stop=NIV.limite, max_visto=D("4.00"),
+                ultimo_informe=activado)
     base.update(kw)
     return EstadoBS(**base)
 
@@ -160,37 +162,50 @@ def _tipos(acciones) -> list[str]:
     return [type(a).__name__ for a in acciones]
 
 
-# ── se_activa (R-G-01, R-G-03 aclaración 24-sep) ─────────────────────────
+# ── se_activa (R-G-01 v4, R-G-03 aclaración 24-sep) ──────────────────────
 @pytest.mark.parametrize("neta, last, ask, vivas, esperado", [
-    pytest.param(-700, "3.25", "3.30", [], False, id="R-G-01-last-por-debajo-del-limite"),
-    pytest.param(-700, "3.26", "3.30", [], False, id="R-G-01-last-igual-al-limite-no-lo-pasa"),
-    pytest.param(-700, "3.27", "3.30", [], True, id="R-G-01-last-por-encima-con-corto"),
+    pytest.param(-700, "2.99", "3.05", [], False, id="R-G-01-last-por-debajo-del-limite-del-stop"),
+    pytest.param(-700, "3.00", "3.05", [], False, id="R-G-01-last-igual-al-limite-no-lo-pasa"),
+    pytest.param(-700, "3.01", "3.05", [], True, id="R-G-01-v4-last-por-encima-del-limite-L+50-con-corto"),
     pytest.param(0, "5.00", "5.10", [], False, id="R-G-03-plano-no-hay-protocolo"),
     pytest.param(300, "5.00", "5.10", [], False, id="R-G-03-largo-no-hay-protocolo"),
-    pytest.param(-700, "5.00", "5.10", [_emergencia(700, estado=EstadoOrden.EXECUTED, llenas=700)], False,
-                 id="R-G-03-emergencia-ejecutada-fills-en-vuelo"),
-    pytest.param(-700, "5.00", "5.10", [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=1000)], False,
-                 id="riesgo8-emergencia-llena-antes-del-trade"),
-    pytest.param(-700, "5.00", "5.10", [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=200, lvqty=800)], True,
-                 id="R-G-01-emergencia-a-medias-sigue-descubierto"),
-    pytest.param(-700, "5.00", "5.10", [_emergencia(300, estado=EstadoOrden.EXECUTED, llenas=300)], True,
-                 id="R-G-01-emergencia-vieja-llena-pero-queda-corto"),
-    pytest.param(-700, "5.00", "5.10", [_emergencia(1000)], True, id="R-G-01-emergencia-viva-sin-llenar"),
+    pytest.param(-700, "5.00", "5.10", [_stop(700, estado=EstadoOrden.EXECUTED, llenas=700)], False,
+                 id="R-G-03-el-stop-ejecutado-fills-en-vuelo"),
+    pytest.param(-700, "5.00", "5.10", [_stop(1000, estado=EstadoOrden.PARTIAL, llenas=1000)], False,
+                 id="riesgo8-el-stop-lleno-antes-del-trade"),
+    pytest.param(-700, "5.00", "5.10", [_stop(1000, estado=EstadoOrden.PARTIAL, llenas=200, lvqty=800)], True,
+                 id="R-G-01-stop-a-medias-sigue-descubierto"),
+    pytest.param(-700, "5.00", "5.10", [_stop(300, estado=EstadoOrden.EXECUTED, llenas=300)], True,
+                 id="R-G-01-stop-viejo-lleno-pero-queda-corto"),
+    pytest.param(-700, "5.00", "5.10", [_stop(1000)], True, id="R-G-01-stop-disparado-sin-llenar"),
+    pytest.param(-700, "5.00", "5.10", [_otro(estado=EstadoOrden.EXECUTED, llenas=1000)], True,
+                 id="R-G-01-v4-el-stop-de-otro-nivel-que-lleno-antes-no-tapa-el-cisne"),
     pytest.param(-700, None, "3.30", [], True, id="R-G-01-sin-last-manda-el-ask"),
     pytest.param(-700, None, None, [], False, id="R-G-01-sin-precio-no-activa"),
     pytest.param(-700, "5.00", "5.10",
-                 [_emergencia(700, estado=EstadoOrden.EXECUTED, llenas=700, ticker="OTRO")], True,
-                 id="R-G-01-emergencia-de-otro-ticker-no-cuenta"),
+                 [_stop(700, estado=EstadoOrden.EXECUTED, llenas=700, ticker="OTRO")], True,
+                 id="R-G-01-stop-de-otro-ticker-no-cuenta"),
 ])
 def test_se_activa(neta, last, ask, vivas, esperado):
     assert se_activa(_pos(neta=neta), NIV, vivas, _cot(last=last, ask=ask)) is esperado
 
 
-def test_se_activa_emergencia_del_vigilante_sin_etiqueta_se_reconoce():
-    """R-C-07 / corrección 3: una emergencia sin propósito (vigilante) llena del todo también son fills en vuelo."""
-    o = _orden(200200001, Proposito.DESCONOCIDA, 700, precio=NIV.emergencia_limite, stop=NIV.emergencia_disparo,
+def test_se_activa_el_stop_del_vigilante_sin_etiqueta_se_reconoce():
+    """R-C-07 / corrección 3: un stop sin propósito (vigilante) de ese nivel lleno del todo también son fills en vuelo."""
+    o = _orden(200200001, Proposito.DESCONOCIDA, 700, precio=NIV.limite, stop=NIV.disparo,
                id_das=7001, estado=EstadoOrden.EXECUTED, llenas=700, origen=Origen.VIGILANTE)
     assert se_activa(_pos(), NIV, [o], _cot(last="5.00"), cfg_stops=CFG["stops"]) is False
+
+
+def test_se_activa_v4_el_umbral_es_el_limite_del_primer_stop_no_el_del_ultimo():
+    """Jaume 29-sep (stop único): con lotes en 2,00 y 3,00 el primer stop es 2,00 / 3,00; con el precio a 3,50 sus acciones
+    ya no tienen nada que las proteja (el stop de 3,00 es de OTRAS acciones) → cisne negro, aunque el precio no llegue al
+    límite del stop más alto (4,50). En v3 esperaba al de la emergencia del L más alto."""
+    lotes = {"L1": _lote(500, "L1", D("2.00")), "L2": _lote(500, "L2", D("3.00"))}
+    pos = _pos(neta=-1000, lotes=lotes)
+    primero = niveles(D("2.00"), CFG["stops"])
+    assert se_activa(pos, primero, [], _cot(last="3.50", ask="3.55")) is True
+    assert se_activa(pos, primero, [], _cot(last="2.90", ask="2.95")) is False
 
 
 @pytest.mark.parametrize("pos", [
@@ -211,11 +226,11 @@ def test_activar_estado_inicial():
     pos = _pos()
     antes = copy.deepcopy(pos)
     bs = activar(pos, NIV, 1234.5, precio=D("4.40"))
-    assert bs == EstadoBS(activado_en=1234.5, primer_stop=D("2.00"), emergencia_limite=D("3.26"), max_visto=D("4.40"),
+    assert bs == EstadoBS(activado_en=1234.5, primer_stop=D("2.00"), limite_stop=D("3.00"), max_visto=D("4.40"),
                           informes=0, ultimo_informe=1234.5, silenciado=False, perdido_realizado=D("0"))
     assert pos == antes
-    assert activar(pos, NIV, 1.0).max_visto == NIV.emergencia_limite          # sin precio: el límite ya pasado
-    assert activar(pos, NIV, 1.0, precio=D("3.00")).max_visto == NIV.emergencia_limite
+    assert activar(pos, NIV, 1.0).max_visto == NIV.limite                      # sin precio: el límite ya pasado
+    assert activar(pos, NIV, 1.0, precio=D("2.50")).max_visto == NIV.limite
 
 
 def test_actualizar_maximo_no_muta_y_solo_sube():
@@ -300,9 +315,8 @@ def _informe(**kw) -> str:
     base = dict(pos=_pos(), bs=_bs(max_visto=D("4.00")), stops=NIV, cot=_cot(), simb=EstadoSimbolo(
         ticker=T, ta=None, limit_up=D("4.80"), k_halts_up=2), cuenta=Cuenta(equity=D("50000")), ahora_et=HORA,
         eod=EOD, franja="RTH", fills=FILLS)
-    extra = dict(ahora=1600.0, vivas=[_emergencia(1000), _principal(estado=EstadoOrden.PARTIAL, llenas=300,
-                                                                     lvqty=700)],
-                 historial=[(1100.0, D("3.50")), (1300.0, D("5.00")), (1500.0, D("4.20"))])
+    extra = dict(ahora=1600.0, vivas=[_stop(1000, estado=EstadoOrden.PARTIAL, llenas=300, lvqty=700)],
+                 historial=[(1100.0, D("3.50")), (1300.0, D("5.00")), (1500.0, D("4.20"))], cfg_stops=CFG["stops"])
     for clave in list(kw):
         if clave in extra:
             extra[clave] = kw.pop(clave)
@@ -323,8 +337,8 @@ def test_informe_contiene_los_16_campos_con_sus_valores():
     for etiqueta in ETIQUETAS_INFORME:
         assert f"<b>{etiqueta}:</b>" in texto
     assert len(texto.splitlines()) == 17
-    assert _valor(texto, "Stop normal") == "2,00 (límite 2,06)"
-    assert _valor(texto, "Stop de emergencia") == "2,26 (límite 3,26)"
+    assert _valor(texto, "Stop") == "2,00 (límite 3,00)"
+    assert _valor(texto, "Stops por nivel") == "700 a 2,00 (límite 3,00)"
     assert _valor(texto, "Precio") == "4,00 · bid 3,90 / ask 4,10"
     assert _valor(texto, "Minutos desde el evento") == "10,0 min"
     assert _valor(texto, "Al descubierto") == "700 acciones cortas"
@@ -337,7 +351,8 @@ def test_informe_contiene_los_16_campos_con_sus_valores():
     assert _valor(texto, "Minutos desde el máximo") == "5,0 min"
     assert _valor(texto, "Bajando") == "sí, desde hace 5,0 min (-20,0 % desde el máximo)"
     assert _valor(texto, "Minutos hasta EOD") == "105,0 min (EOD 11:30)"
-    assert _valor(texto, "Orden de emergencia") == "viva (Accepted) · disparo 2,26 · límite 3,26 · 1.000 acciones"
+    assert _valor(texto, "Órdenes de stop") == "viva (Partial) disparo 2,00 límite 3,00 700 acciones"
+    assert not any("emergencia" in e.lower() for e in ETIQUETAS_INFORME) and "EMERGENCIA" not in FRASE_EXITO
     comandos = _valor(texto, "Comandos")
     for comando in ("/cerrar XYZ SI", "/cerrar XYZ N SI", "/estado XYZ", "/parar_avisos XYZ BS",
                     "/reanudar_avisos XYZ BS"):
@@ -351,11 +366,16 @@ def test_informe_halts_solo_en_sesion_de_mercado_y_parada():
     assert _valor(parada, "Halts") == "parada: sí · banda LULD s/d · halts hoy k = 1"
 
 
-def test_informe_emergencia_cancelada_y_duplicada():
+def test_informe_stops_cancelados_y_varios_niveles():
+    """R-C-01 v4: el informe lista el stop de CADA nivel (deseado y vivo); sin ninguno vivo lo dice (no se repone, R-G-03)."""
     sin = _informe(vivas=[])
-    assert _valor(sin, "Orden de emergencia").startswith("NO está viva")
-    dos = _informe(vivas=[_emergencia(1000), _emergencia(700, id_das=5009)])
-    assert "¡2 emergencias vivas!" in _valor(dos, "Orden de emergencia")
+    assert _valor(sin, "Órdenes de stop").startswith("NINGUNA viva")
+    dos = _informe(vivas=[_stop(1000), _otro()])
+    assert _valor(dos, "Órdenes de stop") == ("viva (Accepted) disparo 1,90 límite 2,85 1.000 acciones · "
+                                              "viva (Accepted) disparo 2,00 límite 3,00 1.000 acciones")
+    lotes = {"L1": _lote(600, "L1", D("2.00")), "L2": _lote(400, "L2", D("3.00"))}
+    dos_niveles = _informe(pos=_pos(neta=-1000, lotes=lotes))
+    assert _valor(dos_niveles, "Stops por nivel") == "600 a 2,00 (límite 3,00) · 400 a 3,00 (límite 4,50)"
 
 
 def test_informe_nunca_lanza_con_datos_ausentes():
@@ -366,7 +386,7 @@ def test_informe_nunca_lanza_con_datos_ausentes():
     assert _valor(texto, "Minutos desde el evento") == "s/d"
     assert _valor(texto, "Pérdida total sobre la cuenta").startswith("s/d")
     assert _valor(texto, "Minutos hasta EOD") == "s/d"
-    assert _valor(texto, "Orden de emergencia") == "s/d"
+    assert _valor(texto, "Órdenes de stop") == "s/d" and _valor(texto, "Stops por nivel") == "s/d"
 
 
 def test_informe_fallbacks_precio_medio_de_lotes_y_eod_pasado():
@@ -395,19 +415,19 @@ def test_informe_contabilidad_reinicia_en_cada_trade():
 
 # ── acciones_durante_bs (R-G-03 (1)): solo bajar la cantidad ─────────────
 CASOS_DURANTE_BS = [
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(1000)], "reduce", id="R-G-03-baja-a-700"),
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(700)], "nada", id="R-G-03-ya-ajustada"),
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(500)], "nada", id="R-G-03-nunca-sube"),
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [], "nada", id="R-G-03-2-no-repone-si-das-la-cancela"),
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(1000, estado=EstadoOrden.CANCELED)], "nada",
-                 id="R-G-03-2-cancelada-no-se-toca"),
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(1000, id_das=None)], "nada",
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_stop(1000)], "reduce", id="R-G-03-baja-a-700"),
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_stop(700)], "nada", id="R-G-03-ya-ajustado"),
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_stop(500)], "nada", id="R-G-03-nunca-sube"),
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [], "nada", id="R-G-03-2-no-repone-si-das-lo-cancela"),
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_stop(1000, estado=EstadoOrden.CANCELED)], "nada",
+                 id="R-G-03-2-cancelado-no-se-toca"),
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_stop(1000, id_das=None)], "nada",
                  id="R-G-03-sin-id-das-no-se-puede-reemplazar"),
-    pytest.param(_pos(neta=0, estado=EstadoTicker.BS), [_emergencia(1000)], "nada", id="R-G-03-sin-corto-nada"),
-    pytest.param(_pos(neta=-700, neta_das=-1000, estado=EstadoTicker.BS), [_emergencia(1000)], "consultar",
+    pytest.param(_pos(neta=0, estado=EstadoTicker.BS), [_stop(1000)], "nada", id="R-G-03-sin-corto-nada"),
+    pytest.param(_pos(neta=-700, neta_das=-1000, estado=EstadoTicker.BS), [_stop(1000)], "consultar",
                  id="riesgo8-discrepancia-solo-get-positions"),
-    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_emergencia(1000), _principal()], "ambos",
-                 id="E2-01-el-principal-tambien-baja-a-700"),
+    pytest.param(_pos(neta=-700, estado=EstadoTicker.BS), [_stop(1000), _otro()], "ambos",
+                 id="E2-01-el-otro-stop-tambien-baja-a-700"),
 ]
 
 
@@ -422,41 +442,40 @@ def test_acciones_durante_bs_nunca_envia_ni_cancela(pos, vivas, esperado):
     elif esperado == "consultar":
         assert acciones == [Consultar("GET POSITIONS")]
     elif esperado == "ambos":
-        # E2-01 (antes «el principal no se toca», que dejaba la cuenta LARGA): la emergencia primero y luego el principal,
-        # los dos bajados a 700 sin tocar disparo ni límite.
+        # E2-01 (antes «el principal no se toca», que dejaba la cuenta LARGA): todos los stops de compra vivos, del más
+        # antiguo al más nuevo, bajados a 700 sin tocar disparo ni límite.
         reemplazos = [a for a in acciones if isinstance(a, Reemplazar)]
         assert [(r.id_das, r.qty, r.stop, r.precio) for r in reemplazos] == [
-            (5001, 700, D("2.26"), D("3.26")), (5000, 700, D("2.00"), D("2.06"))]
+            (5000, 700, D("1.90"), D("2.85")), (5001, 700, D("2.00"), D("3.00"))]
         assert all((r.version, r.serie) == (7, "stops:XYZ") for r in reemplazos)
     else:
         r, p = acciones
         assert isinstance(r, Reemplazar) and isinstance(p, Programar)
-        assert (r.id_das, r.token, r.qty, r.stop, r.precio) == (5001, 100200010, 700, D("2.26"), D("3.26"))
+        assert (r.id_das, r.token, r.qty, r.stop, r.precio) == (5001, 100200010, 700, D("2.00"), D("3.00"))
         assert (r.version, r.serie) == (7, "stops:XYZ")
         assert p.clave == CLAVE_VERIFICAR_REPLACE and p.datos["qty_objetivo"] == 700
 
 
-def test_E2_01_emergencia_parcial_y_principal_disparado_no_dejan_la_cuenta_larga():
-    """E2-01: neta −400 en BS; principal TRIGGERED por 1.000 sin llenar y emergencia PARTIAL (600 llenas, 400 vivas).
+def test_E2_01_un_stop_parcial_y_otro_disparado_no_dejan_la_cuenta_larga():
+    """E2-01: neta −400 en BS; un stop TRIGGERED por 1.000 sin llenar y otro PARTIAL (600 llenas, 400 vivas).
 
-    Antes: [] (el principal podía comprar sus 1.000 con solo 400 cortas → LARGA 600). Ahora el principal baja a 400;
-    la emergencia (400 vivas) ya cuadra y no se toca.
+    Antes: [] (el disparado podía comprar sus 1.000 con solo 400 cortas → LARGA 600). Ahora baja a 400; el parcial
+    (400 vivas) ya cuadra y no se toca.
     """
-    vivas = [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400),
-             _principal(estado=EstadoOrden.TRIGGERED, lvqty=1000)]
+    vivas = [_stop(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400),
+             _otro(estado=EstadoOrden.TRIGGERED, lvqty=1000)]
     acciones = acciones_durante_bs(_pos(neta=-400, estado=EstadoTicker.BS), vivas, CFG, version=3)
     reemplazos = [a for a in acciones if isinstance(a, Reemplazar)]
-    assert [(r.id_das, r.qty, r.stop, r.precio) for r in reemplazos] == [(5000, 400, D("2.00"), D("2.06"))]
+    assert [(r.id_das, r.qty, r.stop, r.precio) for r in reemplazos] == [(5000, 400, D("1.90"), D("2.85"))]
     verificar = [a for a in acciones if isinstance(a, Programar)]
     assert [p.datos["qty_objetivo"] for p in verificar] == [400] and verificar[0].clave == CLAVE_VERIFICAR_REPLACE
     assert not any(isinstance(a, (EnviarOrden, Cancelar)) for a in acciones)
 
 
-def test_E2_01_emergencias_duplicadas_bajan_todas():
-    """E2-01: dos emergencias vivas (ejecutor + vigilante) → las dos bajan (la más antigua primero); nunca suben."""
-    vieja, nueva = _emergencia(1000, id_das=5001), _emergencia(1000, id_das=5002)
-    pequena = _orden(100200011, Proposito.STOP_EMERGENCIA, 300, precio=NIV.emergencia_limite,
-                     stop=NIV.emergencia_disparo, id_das=5003)
+def test_E2_01_stops_duplicados_bajan_todos():
+    """E2-01: dos stops del mismo nivel vivos (ejecutor + vigilante) → los dos bajan (el más antiguo primero); nunca suben."""
+    vieja, nueva = _stop(1000, id_das=5001), _stop(1000, id_das=5002)
+    pequena = _orden(100200011, Proposito.STOP, 300, precio=NIV.limite, stop=NIV.disparo, id_das=5003)
     acciones = acciones_durante_bs(_pos(neta=-700, estado=EstadoTicker.BS), [nueva, pequena, vieja], CFG, version=1)
     assert [(a.id_das, a.qty) for a in acciones if isinstance(a, Reemplazar)] == [(5001, 700), (5002, 700)]
 
@@ -470,12 +489,12 @@ def test_A_02_share_del_replace_durante_bs(share_es_abierta, esperado):
         cfg["stops"].pop("replace_share_es_abierta", None)
     else:
         cfg["stops"]["replace_share_es_abierta"] = share_es_abierta
-    vivas = [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400),
-             _principal(estado=EstadoOrden.TRIGGERED, lvqty=1000)]
+    vivas = [_stop(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400),
+             _otro(estado=EstadoOrden.TRIGGERED, lvqty=1000)]
     acciones = acciones_durante_bs(_pos(neta=-400, estado=EstadoTicker.BS), vivas, cfg, version=3)
     r = next(a for a in acciones if isinstance(a, Reemplazar))
-    assert r.id_das == 5000 and r.qty == 400        # el principal no tiene llenas: share = abierta en los dos modos
-    parcial = [_emergencia(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400)]
+    assert r.id_das == 5000 and r.qty == 400        # el disparado no tiene llenas: share = abierta en los dos modos
+    parcial = [_stop(1000, estado=EstadoOrden.PARTIAL, llenas=600, lvqty=400)]
     r2 = next(a for a in acciones_durante_bs(_pos(neta=-100, estado=EstadoTicker.BS), parcial, cfg, version=3)
               if isinstance(a, Reemplazar))
     assert r2.qty == (100 if esperado == 400 else 700)
@@ -485,21 +504,21 @@ def test_A_02_share_del_replace_durante_bs(share_es_abierta, esperado):
 
 
 def test_acciones_durante_bs_descuenta_el_cierre_humano_en_curso():
-    """Con /cerrar X 300 SI comprando, la emergencia cubre lo que va a quedar (400), no las 700."""
-    vivas = [_emergencia(1000), _cierre(300, D("4.31"), id_das=6001)]
+    """Con /cerrar X 300 SI comprando, el stop cubre lo que va a quedar (400), no las 700."""
+    vivas = [_stop(1000), _cierre(300, D("4.31"), id_das=6001)]
     r = acciones_durante_bs(_pos(neta=-700, estado=EstadoTicker.BS), vivas, CFG, version=7)[0]
     assert isinstance(r, Reemplazar) and r.qty == 400
-    todo = [_emergencia(1000), _cierre(700, D("4.31"), id_das=6001)]
+    todo = [_stop(1000), _cierre(700, D("4.31"), id_das=6001)]
     assert acciones_durante_bs(_pos(neta=-700, estado=EstadoTicker.BS), todo, CFG, version=7) == []
 
 
 def test_acciones_durante_bs_ajusta_la_mas_antigua_y_la_del_vigilante():
-    vieja = _emergencia(1000, id_das=5001)
-    nueva = _emergencia(1000, id_das=5002)
+    vieja = _stop(1000, id_das=5001)
+    nueva = _stop(1000, id_das=5002)
     acciones = acciones_durante_bs(_pos(neta=-700, estado=EstadoTicker.BS), [nueva, vieja], CFG, version=1)
     assert acciones[0].id_das == 5001
-    del_vigilante = _orden(200200001, Proposito.DESCONOCIDA, 1000, precio=NIV.emergencia_limite,
-                           stop=NIV.emergencia_disparo, id_das=7001, origen=Origen.VIGILANTE)
+    del_vigilante = _orden(200200001, Proposito.DESCONOCIDA, 1000, precio=NIV.limite, stop=NIV.disparo, id_das=7001,
+                           origen=Origen.VIGILANTE)
     acciones = acciones_durante_bs(_pos(neta=-700, estado=EstadoTicker.BS), [del_vigilante], CFG, version=1)
     assert isinstance(acciones[0], Reemplazar) and acciones[0].id_das == 7001
 
@@ -562,29 +581,29 @@ def test_fogonazo_umbral_negativo_lanza():
 # ── cierre_humano (R-G-03 (3) + R-D-06) ──────────────────────────────────
 def _cierre_humano(pos=None, vivas=None, cot=None, n=None, **kw):
     return cierre_humano(pos if pos is not None else _pos(neta=-700, estado=EstadoTicker.BS),
-                         [_emergencia(1000), _principal(estado=EstadoOrden.PARTIAL, llenas=300, lvqty=700)]
+                         [_stop(1000), _otro(estado=EstadoOrden.PARTIAL, llenas=300, lvqty=700)]
                          if vivas is None else vivas,
                          cot if cot is not None else _cot(), n, CFG, kw.pop("tokens", _tokens()), HORA, **kw)
 
 
-def test_cierre_humano_cancela_la_emergencia_antes_de_comprar():
-    """R-G-03 (3) + E2-03: primero SOLO los Cancelar (la emergencia, luego el principal) y una espera de 0,5 s.
+def test_cierre_humano_cancela_los_stops_antes_de_comprar():
+    """R-G-03 (3) + E2-03: primero SOLO los Cancelar (los stops de compra, del más antiguo al más nuevo) y una espera de 0,5 s.
 
-    Antes la compra salía en la MISMA tanda que el Cancelar: si la emergencia llenaba antes de que DAS procesara la
-    cancelación, compraban las dos y la cuenta quedaba LARGA. La compra sale en la vuelta en que ya figuran canceladas.
+    Antes la compra salía en la MISMA tanda que el Cancelar: si un stop llenaba antes de que DAS procesara la cancelación,
+    compraban los dos y la cuenta quedaba LARGA. La compra sale en la vuelta en que ya figuran cancelados.
     """
     acciones = _cierre_humano()
     assert _tipos(acciones) == ["Anotar", "Cancelar", "Cancelar", "Anotar", "Programar"]
-    assert acciones[1].id_das == 5001                     # la emergencia, PRIMERO (R-G-03 (3))
-    assert acciones[2].id_das == 5000                     # luego el principal, para que no compre de más
+    assert [acciones[1].id_das, acciones[2].id_das] == [5000, 5001]   # los dos stops, ANTES de comprar (R-G-03 (3))
+    assert all("se cancela ANTES" in a.motivo for a in acciones[1:3])
     assert acciones[3].tipo == "cierre_humano_espera"
     assert set(acciones[3].datos["esperando"]) == {100200009, 100200010}
     p = acciones[4]
     assert p.clave == f"{CLAVE_CIERRE_REINTENTO}:XYZ" and p.en_s == cisne_negro.ESPERA_CANCEL_S == 0.5
     assert p.datos == {"ticker": T, "intento": 0, "objetivo": 0, "signo": -1, "n": None, "esperas": 1}
     # vuelta siguiente: DAS ya confirmó las dos cancelaciones → sale la compra por la neta de fills de ESE momento
-    canceladas = [_emergencia(1000, estado=EstadoOrden.CANCELED),
-                  _principal(estado=EstadoOrden.CANCELED, llenas=300, lvqty=0)]
+    canceladas = [_stop(1000, estado=EstadoOrden.CANCELED),
+                  _otro(estado=EstadoOrden.CANCELED, llenas=300, lvqty=0)]
     acciones = _cierre_humano(vivas=canceladas, intento=0, objetivo=0, signo=-1, esperas=1)
     assert _tipos(acciones) == ["Anotar", "EnviarOrden", "Programar"]
     orden = acciones[1].orden
@@ -595,17 +614,17 @@ def test_cierre_humano_cancela_la_emergencia_antes_de_comprar():
     assert p.datos == {"ticker": T, "intento": 1, "objetivo": 0, "signo": -1, "n": None}
 
 
-def test_E2_03_la_emergencia_lleno_mientras_se_cancelaba_se_compra_solo_lo_que_queda():
-    """E2-03: la emergencia llenó 500 antes de cancelarse (Executed): la compra es por la neta de fills (−200), no 700."""
-    vivas = [_emergencia(1000, estado=EstadoOrden.EXECUTED, llenas=500)]
+def test_E2_03_el_stop_lleno_mientras_se_cancelaba_se_compra_solo_lo_que_queda():
+    """E2-03: el stop llenó 500 antes de cancelarse (Executed): la compra es por la neta de fills (−200), no 700."""
+    vivas = [_stop(1000, estado=EstadoOrden.EXECUTED, llenas=500)]
     acciones = _cierre_humano(pos=_pos(neta=-200, estado=EstadoTicker.BS), vivas=vivas, intento=0, objetivo=0,
                               signo=-1, esperas=1)
     assert [a.orden.qty for a in acciones if isinstance(a, EnviarOrden)] == [200]
 
 
-def test_E2_03_emergencia_sin_id_bloquea_hasta_tenerlo():
-    """Una emergencia aún Sending (sin id) no se puede cancelar pero SÍ podría comprar: se espera, no se compra."""
-    vivas = [_emergencia(1000, id_das=None, estado=EstadoOrden.SENDING)]
+def test_E2_03_stop_sin_id_bloquea_hasta_tenerlo():
+    """Un stop aún Sending (sin id) no se puede cancelar pero SÍ podría comprar: se espera, no se compra."""
+    vivas = [_stop(1000, id_das=None, estado=EstadoOrden.SENDING)]
     acciones = _cierre_humano(vivas=vivas)
     assert not any(isinstance(a, (EnviarOrden, Cancelar)) for a in acciones)
     assert isinstance(acciones[-1], Programar) and acciones[-1].datos["esperas"] == 1
@@ -634,7 +653,7 @@ def test_E2_03_esperas_invalidas_lanzan(esperas):
 
 
 def test_cierre_humano_por_tramos_no_deja_el_resto_desnudo():
-    """/cerrar X 300 SI: la emergencia NO se cancela; se baja a las 400 que quedan (G6, R-G-03 (1)).
+    """/cerrar X 300 SI: los stops NO se cancelan; se bajan a las 400 que quedan (G6, R-G-03 (1)).
 
     E2-03: la compra de 300 sale cuando DAS ya muestra los stops reducidos, no en la misma tanda que el REPLACE.
     """
@@ -642,12 +661,12 @@ def test_cierre_humano_por_tramos_no_deja_el_resto_desnudo():
     assert not any(isinstance(a, Cancelar) for a in acciones)
     reemplazos = [a for a in acciones if isinstance(a, Reemplazar)]
     assert [(r.id_das, r.qty, r.stop, r.precio, r.version, r.serie) for r in reemplazos] == [
-        (5001, 400, D("2.26"), D("3.26"), 4, "stops:XYZ"),
-        (5000, 400, D("2.00"), D("2.06"), 4, "stops:XYZ"),
+        (5000, 400, D("1.90"), D("2.85"), 4, "stops:XYZ"),
+        (5001, 400, D("2.00"), D("3.00"), 4, "stops:XYZ"),
     ]
     assert not any(isinstance(a, EnviarOrden) for a in acciones)
     assert acciones[-1].datos["objetivo"] == -400 and acciones[-1].datos["esperas"] == 1
-    reducidas = [_emergencia(400), _principal(estado=EstadoOrden.PARTIAL, llenas=300, lvqty=400)]
+    reducidas = [_stop(400), _otro(estado=EstadoOrden.PARTIAL, llenas=300, lvqty=400)]
     siguiente = _cierre_humano(vivas=reducidas, n=300, intento=0, objetivo=-400, signo=-1, esperas=1)
     envio = [a for a in siguiente if isinstance(a, EnviarOrden)]
     assert len(envio) == 1 and envio[0].orden.qty == 300
@@ -664,11 +683,11 @@ def test_cierre_humano_n_mayor_que_la_posicion_cierra_todo():
 
 
 def test_cierre_humano_sin_cotizacion_no_toca_nada():
-    """Cancelar la emergencia sin poder comprar dejaría la posición desnuda."""
+    """Cancelar los stops sin poder comprar dejaría la posición desnuda."""
     acciones = _cierre_humano(cot=_cot(ask=None, bid=None, last=None))
     assert not any(isinstance(a, (Cancelar, Reemplazar, EnviarOrden)) for a in acciones)
     aviso = next(a for a in acciones if isinstance(a, Avisar))
-    assert aviso.nivel is Nivel.MAXIMO and "A MANO" in aviso.texto
+    assert aviso.nivel is Nivel.MAXIMO and "A MANO" in aviso.texto and "ningún stop" in aviso.texto
     assert isinstance(acciones[-1], Programar) and acciones[-1].datos["intento"] == 1
 
 
@@ -719,7 +738,7 @@ def test_cierre_humano_reintento_nunca_cierra_en_sentido_contrario():
 
 
 def test_cierre_humano_sin_posicion_avisa_y_no_envia():
-    acciones = _cierre_humano(pos=_pos(neta=0, estado=EstadoTicker.BS), vivas=[_emergencia(1000)])
+    acciones = _cierre_humano(pos=_pos(neta=0, estado=EstadoTicker.BS), vivas=[_stop(1000)])
     assert not any(isinstance(a, (EnviarOrden, Cancelar)) for a in acciones)
     assert any(isinstance(a, Avisar) and a.nivel is Nivel.INFO for a in acciones)
 
@@ -788,7 +807,7 @@ def test_cierre_humano_techo_y_reintentos_de_la_config():
 # ── pureza del módulo ────────────────────────────────────────────────────
 def test_ninguna_funcion_muta_sus_entradas():
     pos = _pos(neta=-700, estado=EstadoTicker.BS, bs=_bs())
-    vivas = [_emergencia(1000), _principal(), _cierre(100, D("4.31"), id_das=6001)]
+    vivas = [_stop(1000), _otro(), _cierre(100, D("4.31"), id_das=6001)]
     cot, fills = _cot(), list(FILLS)
     antes = copy.deepcopy((pos, vivas, cot, fills, CFG))
     se_activa(pos, NIV, vivas, cot)

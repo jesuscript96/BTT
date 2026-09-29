@@ -818,7 +818,11 @@ def _precio_referencia(cot: Optional[Cotizacion], neta: int, avg: Optional[Decim
 
 def _proteccion(ticker: str, falta: int, neta: int, cot: Optional[Cotizacion], avg: Optional[Decimal], cfg_stops: Mapping,
                 tokens: Callable[[], int], ruta_stop: str, version: int) -> list[Accion]:
-    """R-C-10 (4): `stops.stop_proteccion` por lo descubierto; sin ningún precio, aviso 3 para ponerla a mano."""
+    """R-C-10 (4): `stops.stop_proteccion` por lo descubierto; sin ningún precio, aviso 3 para ponerla a mano.
+
+    UN stop (como siempre) a `proteccion_desconocidas_pct` del precio; su límite es el del stop único
+    (`stops.limite_pct`, Jaume 29-sep; en v3 era el +3 % del principal).
+    """
     if falta <= 0 or neta == 0:
         return []
     precio = _precio_referencia(cot, neta, avg)
@@ -826,7 +830,9 @@ def _proteccion(ticker: str, falta: int, neta: int, cot: Optional[Cotizacion], a
         return [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"proteccion_sin_precio:{ticker}",
                        texto=(f"R-C-10 (4): {ticker} tiene {falta} acciones sin stop y no hay precio para calcular la "
                               f"protección: PONERLA A MANO"))]
-    orden = stops.stop_proteccion(ticker, falta, neta < 0, precio, _pct_proteccion(cfg_stops), tokens(), ruta_stop, version)
+    ancho = cfg_stops.get(stops.CLAVE_LIMITE_PCT)
+    orden = stops.stop_proteccion(ticker, falta, neta < 0, precio, _pct_proteccion(cfg_stops), tokens(), ruta_stop, version,
+                                  limite_pct=ancho)
     return [EnviarOrden(orden=orden)]
 
 

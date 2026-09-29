@@ -58,10 +58,10 @@ class TokensVigilante:
         return self.gen.siguiente()
 
 
-def lote(id_: str = "L1", nivel: Optional[str] = "10", llenas: int = 100, consumido: bool = False,
+def lote(id_: str = "L1", nivel: Optional[str] = "10", llenas: int = 100,
          estado: EstadoLote = EstadoLote.ABIERTO) -> Lote:
     return Lote(id=id_, strategy_id=f"s-{id_}", estrategia="E", ticker=X, direccion="Short", pedidas=llenas, llenas=llenas,
-                nivel_stop=None if nivel is None else D(nivel), estado=estado, principal_consumido=consumido)
+                nivel_stop=None if nivel is None else D(nivel), estado=estado)
 
 
 def stop_das(id_das: int, disparo: str, limite: str, qty: int = 100, token: Optional[int] = None,
@@ -73,12 +73,9 @@ def stop_das(id_das: int, disparo: str, limite: str, qty: int = 100, token: Opti
                     tif="DAY+", pref="N/A", watch=True)
 
 
-def principal_das(id_das: int = 11, qty: int = 100, **kw) -> MsgOrden:
-    return stop_das(id_das, "10", "10.3", qty, **kw)
-
-
-def emergencia_das(id_das: int = 12, qty: int = 100, **kw) -> MsgOrden:
-    return stop_das(id_das, "11.3", "16.3", qty, **kw)
+def nivel_das(id_das: int = 11, qty: int = 100, **kw) -> MsgOrden:
+    """El stop ÚNICO del nivel 10 (Jaume 29-sep, R-C-01 v4): disparo 10, límite 15."""
+    return stop_das(id_das, "10", "15", qty, **kw)
 
 
 def pos_das(neta: int, ticker: str = X, avg: str = "9.50") -> MsgPos:
@@ -125,45 +122,68 @@ def anotacion(acc) -> dict:
     pytest.param(AHORA - PLAN_B_DESCUBIERTA_S, id="R-C-08-2-justo-5s-aun-no"),
 ])
 def test_ejecutor_vivo_no_actua_aunque_falte_un_stop(cfg, desde):
-    """Plan B: con el ejecutor vivo el vigilante NO pone nada durante los primeros 5 s aunque falte la emergencia; solo anota."""
+    """Plan B: con el ejecutor vivo el vigilante NO pone nada durante los primeros 5 s aunque falte el stop; solo anota."""
     extra = {"descubierta_desde": {X: desde}} if desde is not None else {}
     tokens = TokensVigilante()
-    acc = comprobar(foto(ordenes=(principal_das(),), **extra), cfg, AHORA, tokens, HORA, RUTA_STOP, True)
+    acc = comprobar(foto(**extra), cfg, AHORA, tokens, HORA, RUTA_STOP, True)
     assert ordenes_de(acc) == [] and tokens.usados == 0
     datos = anotacion(acc)
-    assert datos["actua"] is False and datos["faltan"] == ["stop_emergencia B 100 11.30/16.30"]
+    assert datos["actua"] is False and datos["faltan"] == ["stop B 100 10.00/15.00"]
     assert datos["latido_ejecutor_s"] == 1.0 and datos["descubiertas"] == 100
 
 
 def test_ejecutor_vivo_actua_pasados_5s_descubierta(cfg):
     """Plan B: la posición lleva > 5 s descubierta con el ejecutor vivo → el vigilante repone (con SU token)."""
-    acc = comprobar(foto(ordenes=(principal_das(),), descubierta_desde={X: AHORA - 5.01}), cfg, AHORA, TokensVigilante(),
-                    HORA, RUTA_STOP, True)
+    acc = comprobar(foto(descubierta_desde={X: AHORA - 5.01}), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     nuevas = [a.orden for a in de_tipo(acc, EnviarOrden)]
-    assert [(o.proposito, o.qty, origen(o.token)) for o in nuevas] == [(Proposito.STOP_EMERGENCIA, 100, Origen.VIGILANTE)]
+    assert [(o.proposito, o.qty, origen(o.token)) for o in nuevas] == [(Proposito.STOP, 100, Origen.VIGILANTE)]
     assert anotacion(acc)["actua"] is True
 
 
-def test_ejecutor_vivo_falta_solo_el_principal_no_es_descubierta(cfg):
-    """R-C-03: con la emergencia confirmada la posición NO está descubierta: el principal lo repone el ejecutor."""
-    f = foto(ordenes=(emergencia_das(),), descubierta_desde={X: AHORA - 60})
+def test_ejecutor_vivo_con_la_posicion_cubierta_no_actua_aunque_sobre_cantidad(cfg):
+    """R-C-03: con el stop confirmado (aunque con 150, más de las 100 cortas) la posición NO está descubierta: el ajuste lo
+    hace el ejecutor; el vigilante solo lo anota."""
+    f = foto(ordenes=(nivel_das(qty=150),), descubierta_desde={X: AHORA - 60})
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
-    faltan = anotacion(acc)["faltan"]
-    assert ordenes_de(acc) == [] and len(faltan) == 1 and faltan[0].startswith("stop_principal B 100 ")
+    datos = anotacion(acc)
+    assert ordenes_de(acc) == [] and datos["faltan"] == [] and datos["ajustes"] == ["reemplazar 11 a 100"]
     assert descubiertas_por_ticker(f, cfg, HOY) == {}
+
+
+def test_R_C_03_agotado_en_el_ejecutor_el_vigilante_repone_el_stop(cfg):
+    """Jaume 29-sep (stop único, test 3): tras 5 rechazos el ejecutor deja de reponer y pasa el ticker a CONTROL HUMANO; la
+    posición queda SIN stop. El vigilante no mira ese estado: pasados los 5 s de descubierta con el ejecutor VIVO repone el
+    stop con SU token, y sigue intentándolo en cada pasada mientras no se vea aceptado (el eco lo deja a cero)."""
+    tokens = TokensVigilante()
+    f = foto(descubierta_desde={X: AHORA - 30}, estados_ticker={X: EstadoTicker.CONTROL_HUMANO})
+    acc = comprobar(f, cfg, AHORA, tokens, HORA, RUTA_STOP, True)
+    nuevas = [a.orden for a in de_tipo(acc, EnviarOrden)]
+    assert [(o.proposito, o.stop, o.precio, o.qty, origen(o.token)) for o in nuevas] == [
+        (Proposito.STOP, D("10.00"), D("15.00"), 100, Origen.VIGILANTE)]
+    assert anotacion(acc)["actua"] is True and descubiertas_por_ticker(f, cfg, HOY) == {X: 100}
+    rechazado = foto(ordenes=(stop_das(90, "10", "15", token=nuevas[0].token, estado=EstadoOrden.REJECTED),),
+                     descubierta_desde={X: AHORA - 31}, estados_ticker={X: EstadoTicker.CONTROL_HUMANO})
+    otra = comprobar(rechazado, cfg, AHORA + 1, tokens, HORA, RUTA_STOP, True)
+    assert [a.orden.proposito for a in de_tipo(otra, EnviarOrden)] == [Proposito.STOP]     # lo vuelve a intentar
+    eco = foto(ordenes=(stop_das(91, "10", "15", token=nuevas[0].token),), estados_ticker={X: EstadoTicker.CONTROL_HUMANO})
+    assert comprobar(eco, cfg, AHORA + 2, tokens, HORA, RUTA_STOP, True) == []
 
 
 @pytest.mark.parametrize("latido", [
     pytest.param(None, id="R-C-07-plan-B-sin-latido"),
     pytest.param(PLAN_B_LATIDO_S + 0.01, id="R-C-07-plan-B-latido-viejo"),
 ])
-def test_ejecutor_muerto_repone_el_par_con_origen_vigilante(cfg, latido):
-    """R-C-07 plan B FIJADO: ejecutor caído y posición sin stops → el vigilante pone principal + emergencia con SUS tokens."""
+def test_ejecutor_muerto_repone_el_stop_de_cada_nivel_con_origen_vigilante(cfg, latido):
+    """R-C-07 plan B FIJADO (v4, Jaume 29-sep): ejecutor caído y posición sin stops → el vigilante pone EL stop de cada nivel
+    (disparo en L, límite L + 50 %) con SUS tokens; con dos niveles, dos órdenes (nunca el par de v3)."""
     acc = comprobar(foto(latido=latido), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     nuevas = [a.orden for a in de_tipo(acc, EnviarOrden)]
     assert [(o.proposito, o.stop, o.precio, o.qty, o.lado, o.tipo, origen(o.token)) for o in nuevas] == [
-        (Proposito.STOP_PRINCIPAL, D("10.00"), D("10.30"), 100, Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, Origen.VIGILANTE),
-        (Proposito.STOP_EMERGENCIA, D("11.30"), D("16.30"), 100, Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, Origen.VIGILANTE)]
+        (Proposito.STOP, D("10.00"), D("15.00"), 100, Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, Origen.VIGILANTE)]
+    dos = comprobar(foto(neta=-100, lotes=[lote(llenas=60), lote("L2", "11", 40)], latido=latido), cfg, AHORA,
+                    TokensVigilante(), HORA, RUTA_STOP, True)
+    assert [(a.orden.nivel, a.orden.stop, a.orden.precio, a.orden.qty) for a in de_tipo(dos, EnviarOrden)] == [
+        (D("10"), D("10.00"), D("15.00"), 60), (D("11"), D("11.00"), D("16.50"), 40)]
     assert all(en_tick(o.stop) and en_tick(o.precio) for o in nuevas)
     assert isinstance(acc[0], Anotar) and acc[0].tipo == "vigilancia"   # write-ahead: la nota va ANTES de las órdenes
 
@@ -175,13 +195,12 @@ def test_latido_justo_en_el_limite_es_ejecutor_vivo(cfg):
 
 def test_ejecutor_muerto_con_todo_en_orden_no_hace_nada(cfg):
     """Todo cuadra: ni órdenes ni nota (el diario no se llena cada segundo)."""
-    acc = comprobar(foto(ordenes=(principal_das(), emergencia_das()), latido=None), cfg, AHORA, TokensVigilante(), HORA,
-                    RUTA_STOP, True)
+    acc = comprobar(foto(ordenes=(nivel_das(),), latido=None), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert acc == []
 
 
 def test_lo_que_pone_el_vigilante_lo_adopta_el_ejecutor(cfg):
-    """R-C-07 neteo: el par del vigilante, visto por el ejecutor en su reconciliación, satisface el deseado (0 órdenes nuevas)."""
+    """R-C-07 neteo: el stop del vigilante, visto por el ejecutor en su reconciliación, satisface el deseado (0 órdenes nuevas)."""
     acc = comprobar(foto(latido=None), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     vistas = {}
     for i, a in enumerate(de_tipo(acc, EnviarOrden)):
@@ -198,17 +217,17 @@ def test_lo_que_pone_el_vigilante_lo_adopta_el_ejecutor(cfg):
 
 
 # ── (b) sobrantes ────────────────────────────────────────────────────────
-def test_dos_emergencias_cancela_la_nueva(cfg):
-    """R-C-07 plan B: «sobrantes → cancelar el más nuevo»: dos emergencias → Cancelar la de id mayor, nada nuevo."""
-    f = foto(ordenes=(principal_das(), emergencia_das(12), emergencia_das(40, token=tok(3, Origen.VIGILANTE))), latido=None)
+def test_dos_stops_del_mismo_nivel_cancela_el_nuevo(cfg):
+    """R-C-07 plan B: «sobrantes → cancelar el más nuevo»: dos stops del nivel → Cancelar el de id mayor, nada nuevo."""
+    f = foto(ordenes=(nivel_das(12), nivel_das(40, token=tok(3, Origen.VIGILANTE))), latido=None)
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert [(c.id_das, c.token) for c in de_tipo(acc, Cancelar)] == [(40, tok(3, Origen.VIGILANTE))]
     assert not de_tipo(acc, EnviarOrden) and anotacion(acc)["sobran"] == ["cancelar 40"]
 
 
-def test_emergencia_con_otra_cantidad_se_reemplaza_sin_temporizadores(cfg):
-    """R-C-07: la emergencia vieja (150) se ajusta a −neta; el `replace_verificar` del ejecutor no sale del vigilante."""
-    f = foto(ordenes=(principal_das(), emergencia_das(qty=150)), latido=None)
+def test_stop_con_otra_cantidad_se_reemplaza_sin_temporizadores(cfg):
+    """R-C-07: el stop viejo (150) se ajusta a −neta; el `replace_verificar` del ejecutor no sale del vigilante."""
+    f = foto(ordenes=(nivel_das(12, qty=150),), latido=None)
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert [(r.id_das, r.qty) for r in de_tipo(acc, Reemplazar)] == [(12, 100)]
     assert not de_tipo(acc, Programar) and not de_tipo(acc, Consultar)
@@ -216,10 +235,10 @@ def test_emergencia_con_otra_cantidad_se_reemplaza_sin_temporizadores(cfg):
 
 def test_orden_manual_nunca_se_toca(cfg):
     """R-K-02: un stop MANUAL (Montage) en el mismo disparo no cuenta ni se cancela: el vigilante pone el suyo."""
-    manual = replace(principal_das(50, order_src="Montage"), token=None)
-    acc = comprobar(foto(ordenes=(manual, emergencia_das()), latido=None), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
+    manual = replace(nivel_das(50, order_src="Montage"), token=None)
+    acc = comprobar(foto(ordenes=(manual,), latido=None), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert not de_tipo(acc, Cancelar)
-    assert [a.orden.proposito for a in de_tipo(acc, EnviarOrden)] == [Proposito.STOP_PRINCIPAL]
+    assert [(a.orden.proposito, a.orden.qty) for a in de_tipo(acc, EnviarOrden)] == [(Proposito.STOP, 100)]
 
 
 def test_cisne_negro_no_se_repone(cfg):
@@ -230,12 +249,13 @@ def test_cisne_negro_no_se_repone(cfg):
 
 # ── (c) posición sin lote en ningún diario ───────────────────────────────
 def test_posicion_sin_lote_proteccion_y_nivel_3(cfg):
-    """R-C-10 (4): posición que no está en ningún diario → STOPLMTP de protección al 25 % del último + Avisar(3)."""
+    """R-C-10 (4): posición que no está en ningún diario → STOPLMTP de protección al 25 % del último (límite + 50 %, el del
+    stop único) + Avisar(3)."""
     f = foto(neta=-200, lotes=[], latido=None, cotizacion=cot(last="8.00"))
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     proteccion = [a.orden for a in de_tipo(acc, EnviarOrden)]
     assert [(o.proposito, o.lado, o.qty, o.stop, o.precio, o.lote_id, origen(o.token)) for o in proteccion] == [
-        (Proposito.STOP_PROTECCION, Lado.COMPRA, 200, D("10.00"), D("10.30"), None, Origen.VIGILANTE)]
+        (Proposito.STOP_PROTECCION, Lado.COMPRA, 200, D("10.00"), D("15.00"), None, Origen.VIGILANTE)]
     assert [(a.nivel, a.grupo) for a in de_tipo(acc, Avisar)] == [(Nivel.MAXIMO, Grupo.B)]
 
 
@@ -258,7 +278,7 @@ def test_proteccion_pendiente_no_se_duplica(cfg):
 
 
 def test_lotes_sin_nivel_se_tratan_como_sin_lote(cfg):
-    """A12: si ningún lote tiene nivel válido nadie puede calcular el par → protección para no dejarla desnuda."""
+    """A12: si ningún lote tiene nivel válido nadie puede calcular su stop → protección para no dejarla desnuda."""
     f = foto(lotes=[lote(nivel=None)], latido=None, cotizacion=cot(last="8.00"))
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert [a.orden.proposito for a in de_tipo(acc, EnviarOrden)] == [Proposito.STOP_PROTECCION]
@@ -274,15 +294,15 @@ def test_sin_precio_avisa_para_ponerla_a_mano(cfg):
 def test_larga_desconocida_proteccion_de_venta(cfg):
     f = foto(neta=100, lotes=[], latido=None, cotizacion=cot(last="8.00"))
     o = de_tipo(comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True), EnviarOrden)[0].orden
-    assert (o.lado, o.stop, o.precio, o.qty) == (Lado.VENTA, D("6.00"), D("5.82"), 100)
+    assert (o.lado, o.stop, o.precio, o.qty) == (Lado.VENTA, D("6.00"), D("3.00"), 100)
 
 
 # ── huérfanas y cuenta larga (R-C-11) ────────────────────────────────────
 def test_plana_con_stops_huerfanos_los_cancela_si_el_ejecutor_esta_muerto(cfg):
-    f_muerto = foto(neta=0, ordenes=(principal_das(), emergencia_das()), latido=None)
+    f_muerto = foto(neta=0, ordenes=(nivel_das(11), nivel_das(12)), latido=None)
     acc = comprobar(f_muerto, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert sorted(c.id_das for c in de_tipo(acc, Cancelar)) == [11, 12]
-    f_vivo = foto(neta=0, ordenes=(principal_das(), emergencia_das()), latido=1.0)
+    f_vivo = foto(neta=0, ordenes=(nivel_das(11), nivel_das(12)), latido=1.0)
     acc = comprobar(f_vivo, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert ordenes_de(acc) == [] and anotacion(acc)["sobran"] == ["cancelar 11", "cancelar 12"]
 
@@ -291,7 +311,7 @@ def test_cuenta_larga_el_vigilante_no_vende_solo_avisa_y_no_compra_mas(cfg):
     """E2c-02 (antes «el vigilante no vende»): con el ejecutor MUERTO y la cuenta LARGA 20 con lotes cortos, el vigilante
     vende SOLO el exceso (20) con SU token, tras cancelar todas las compras (R-C-11 (3): «ejecutor + vigilante»)."""
     tokens = TokensVigilante()
-    acc = comprobar(foto(neta=20, ordenes=(emergencia_das(),), latido=None), cfg, AHORA, tokens, HORA, RUTA_STOP, True)
+    acc = comprobar(foto(neta=20, ordenes=(nivel_das(12),), latido=None), cfg, AHORA, tokens, HORA, RUTA_STOP, True)
     ventas = [a.orden for a in de_tipo(acc, EnviarOrden)]
     assert [(o.lado, o.qty, o.proposito, origen(o.token)) for o in ventas] == [
         (Lado.VENTA, 20, Proposito.VENTA_EXCESO, Origen.VIGILANTE)]
@@ -317,7 +337,7 @@ def test_E2c_02_con_la_venta_en_marcha_no_vende_otra_vez(cfg):
 
 
 def test_E2c_02_con_el_ejecutor_vivo_no_vende(cfg):
-    acc = comprobar(foto(neta=20, ordenes=(emergencia_das(),), latido=1.0), cfg, AHORA, TokensVigilante(), HORA,
+    acc = comprobar(foto(neta=20, ordenes=(nivel_das(12),), latido=1.0), cfg, AHORA, TokensVigilante(), HORA,
                     RUTA_STOP, True)
     assert ordenes_de(acc) == [] and anotacion(acc)["actua"] is False
 
@@ -330,14 +350,14 @@ def test_E2c_02_sin_conexion_de_accion_no_vende_y_pide_relanzar(cfg):
 
 # ── E2c-04: con el ejecutor vivo no se anota lo mismo cada segundo ─────────
 def test_E2c_04_misma_propuesta_se_anota_una_vez(cfg):
-    f = foto(ordenes=(principal_das(),))                                    # falta la emergencia; ejecutor vivo
+    f = foto(ordenes=(nivel_das(qty=60),))                                  # el stop con 60 de 100; ejecutor vivo
     acc1, firmas = vigilancia.comprobar_con_firmas(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert len([a for a in acc1 if isinstance(a, Anotar) and a.tipo == "vigilancia"]) == 1 and X in firmas
     # pasada siguiente con la firma anterior: nada que anotar (el latido cambia, la propuesta no)
-    f2 = replace(foto(ordenes=(principal_das(),), latido=1.7), anotado=firmas)
+    f2 = replace(foto(ordenes=(nivel_das(qty=60),), latido=1.7), anotado=firmas)
     acc2, firmas2 = vigilancia.comprobar_con_firmas(f2, cfg, AHORA + 1, TokensVigilante(), HORA, RUTA_STOP, True)
     assert not [a for a in acc2 if isinstance(a, Anotar) and a.tipo == "vigilancia"] and firmas2 == firmas
-    # cambia la propuesta (ahora falta también el principal): se anota
+    # cambia la propuesta (ahora falta el stop entero): se anota
     f3 = replace(foto(ordenes=()), anotado=firmas)
     acc3, _ = vigilancia.comprobar_con_firmas(f3, cfg, AHORA + 2, TokensVigilante(), HORA, RUTA_STOP, True)
     assert len([a for a in acc3 if isinstance(a, Anotar) and a.tipo == "vigilancia"]) == 1
@@ -347,7 +367,7 @@ def test_E2c_04_misma_propuesta_se_anota_una_vez(cfg):
 
 def test_E2c_04_lo_que_hace_el_vigilante_se_anota_siempre(cfg):
     """Write-ahead (§8): cuando actúa, se anota antes de sus órdenes aunque la firma sea la misma."""
-    f = foto(ordenes=(principal_das(),), latido=None)
+    f = foto(latido=None)
     _, firmas = vigilancia.comprobar_con_firmas(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     acc = vigilancia.comprobar_con_firmas(replace(f, anotado=firmas), cfg, AHORA + 1, TokensVigilante(), HORA,
                                           RUTA_STOP, True)[0]
@@ -367,7 +387,7 @@ def test_puede_enviar_false_pide_relanzar_el_ejecutor(cfg):
 
 
 def test_puede_enviar_false_sin_nada_que_enviar_no_pide_nada(cfg):
-    acc = comprobar(foto(ordenes=(principal_das(),), latido=1.0), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, False)
+    acc = comprobar(foto(ordenes=(nivel_das(),), latido=1.0), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, False)
     assert not de_tipo(acc, PedirAlSupervisor)
 
 
@@ -405,7 +425,7 @@ def test_compras_repetidas(registros, repetida):
 def test_dos_located_mismo_dia_deshabilita_los_locates(cfg):
     """R-H-02: dos compras Located no pedidas del mismo ticker-estrategia-día → Avisar(3) + Anotar(locates_deshabilitar)."""
     compras = (reg(1, "locate_intencion"), reg(2, "locate_estado", "Located", 5), reg(3, "locate_estado", "Located", 9))
-    f = foto(ordenes=(principal_das(), emergencia_das()), compras=compras)
+    f = foto(ordenes=(nivel_das(),), compras=compras)
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     avisos = [a for a in de_tipo(acc, Avisar) if a.clave == "vigilante_locates"]
     assert len(avisos) == 1 and avisos[0].nivel is Nivel.MAXIMO
@@ -413,7 +433,7 @@ def test_dos_located_mismo_dia_deshabilita_los_locates(cfg):
     assert len(anotadas) == 1 and anotadas[0].datos["motivos"] == ["R-H-02"]
     assert anotadas[0].datos["repetidas"] == [{"ticker": X, "strategy_id": "s1", "compras": 2, "pedidas": 1}]
     # ya deshabilitados: no se repite cada segundo
-    ya = foto(ordenes=(principal_das(), emergencia_das()), compras=compras, locates_deshabilitados=True)
+    ya = foto(ordenes=(nivel_das(),), compras=compras, locates_deshabilitados=True)
     assert comprobar(ya, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True) == []
 
 
@@ -423,7 +443,7 @@ def test_dos_located_mismo_dia_deshabilita_los_locates(cfg):
     pytest.param("5000", None, False, id="R-H-03-sin-equity-no-se-evalua"),
 ])
 def test_tope_3pct_de_locates(cfg, gasto, equity, deshabilita):
-    f = foto(ordenes=(principal_das(), emergencia_das()), gasto=gasto, equity=equity)
+    f = foto(ordenes=(nivel_das(),), gasto=gasto, equity=equity)
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     anotadas = [a for a in de_tipo(acc, Anotar) if a.tipo == "locates_deshabilitar"]
     assert bool(anotadas) is deshabilita
@@ -463,24 +483,26 @@ def test_aviso_de_margen(cfg, equity, avisa):
     f = Foto(posiciones={X: pos_das(-1000)}, ordenes={}, lotes={X: [lote(llenas=1000, nivel="2.20")]},
              latido_ejecutor_s=1.0, cotizaciones={X: cot(last="2.00", ask="2.01", bid="1.99")}, gasto_locates=D("0"),
              compras_locate=[], equity=None if equity is None else D(equity))
-    f = replace(f, ordenes={1: stop_das(1, "2.2", "2.27", 1000), 2: stop_das(2, "2.49", "3.59", 1000)})
+    f = replace(f, ordenes={1: stop_das(1, "2.2", "3.3", 1000)})
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     margen = [a for a in de_tipo(acc, Avisar) if a.clave == "vigilante_margen"]
     assert bool(margen) is avisa and all(a.nivel is Nivel.AVISO for a in margen)
 
 
 # ── (f) R-C-08 (a): el precio pasó el nivel sin fill → SOLO aviso ────────
-def test_precio_paso_el_limite_del_principal_solo_avisa(cfg):
-    f = foto(ordenes=(principal_das(), emergencia_das()), cotizacion=cot(last="10.40", ask="10.41", bid="10.39"))
+def test_precio_paso_el_limite_del_stop_de_un_nivel_solo_avisa(cfg):
+    """R-C-08 (a) v4: el ask (15,41) pasó el límite del stop de 10 (15,00) sin fill → aviso 2; el vigilante no cierra."""
+    f = foto(ordenes=(nivel_das(),), cotizacion=cot(last="15.40", ask="15.41", bid="15.39"))
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert ordenes_de(acc) == []
     avisos = de_tipo(acc, Avisar)
     assert [(a.nivel, a.clave) for a in avisos] == [(Nivel.AVISO, f"vigilante_nivel:{X}:10")]
-    assert "solo avisa" in avisos[0].texto
+    assert "solo avisa" in avisos[0].texto and "stop de 10" in avisos[0].texto
 
 
-def test_principal_consumido_no_avisa(cfg):
-    f = foto(ordenes=(emergencia_das(),), lotes=[lote(consumido=True)], cotizacion=cot(ask="10.41"))
+def test_precio_bajo_el_limite_del_stop_no_avisa(cfg):
+    """Con el precio entre el disparo (10) y el límite (15) el stop puede llenar: nada que avisar (en v3 el límite era 10,30)."""
+    f = foto(ordenes=(nivel_das(),), cotizacion=cot(last="10.40", ask="10.41", bid="10.39"))
     assert not de_tipo(comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True), Avisar)
 
 
@@ -490,8 +512,9 @@ def test_principal_consumido_no_avisa(cfg):
     pytest.param(None, EstadoTicker.BS, False, id="R-G-01-ya-en-cisne-negro"),
 ])
 def test_cisne_negro_con_el_ejecutor_caido(cfg, latido, estado, avisa_bs):
-    """R-C-08: pasado el límite de emergencia se asume cisne negro: el vigilante NO cierra, avisa (si nadie más lo hace)."""
-    f = foto(ordenes=(principal_das(), emergencia_das()), latido=latido, cotizacion=cot(last="17", ask="17.01", bid="16.99"),
+    """R-C-08 / R-G-01 v4: pasado el límite del stop (15) se asume cisne negro: el vigilante NO cierra, avisa (si nadie más
+    lo hace)."""
+    f = foto(ordenes=(nivel_das(),), latido=latido, cotizacion=cot(last="17", ask="17.01", bid="16.99"),
              estados_ticker={X: estado})
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert ordenes_de(acc) == []
@@ -500,11 +523,11 @@ def test_cisne_negro_con_el_ejecutor_caido(cfg, latido, estado, avisa_bs):
 
 # ── contabilidad de «descubierta desde» ──────────────────────────────────
 def test_descubiertas_por_ticker_y_seguimiento(cfg):
-    f = foto(ordenes=(principal_das(),))
-    assert descubiertas_por_ticker(f, cfg, HOY) == {X: 100}
-    sending = foto(ordenes=(principal_das(), emergencia_das(estado=EstadoOrden.SENDING)))
+    f = foto(ordenes=(nivel_das(qty=60),))
+    assert descubiertas_por_ticker(f, cfg, HOY) == {X: 40}
+    sending = foto(ordenes=(nivel_das(estado=EstadoOrden.SENDING),))
     assert descubiertas_por_ticker(sending, cfg, HOY) == {X: 100}   # R-C-03: «stop aceptado»; Sending no cubre
-    cubierta = foto(ordenes=(principal_das(), emergencia_das()))
+    cubierta = foto(ordenes=(nivel_das(),))
     assert descubiertas_por_ticker(cubierta, cfg, HOY) == {}
     desconocida = foto(neta=-50, lotes=[])
     assert descubiertas_por_ticker(desconocida, cfg, HOY) == {X: 50}
@@ -557,9 +580,9 @@ def test_modulo_puro_solo_importa_lo_permitido():
 def test_comprobar_no_muta_la_foto(cfg):
     lotes = [lote()]
     f = foto(lotes=lotes, latido=None)
-    antes = (lotes[0].principal_consumido, lotes[0].nivel_stop, lotes[0].estado, dict(f.ordenes))
+    antes = (lotes[0].llenas, lotes[0].nivel_stop, lotes[0].estado, dict(f.ordenes))
     comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
-    assert (lotes[0].principal_consumido, lotes[0].nivel_stop, lotes[0].estado, dict(f.ordenes)) == antes
+    assert (lotes[0].llenas, lotes[0].nivel_stop, lotes[0].estado, dict(f.ordenes)) == antes
 
 
 def test_plan_b_idempotente_tras_el_eco_de_das(cfg):
@@ -568,5 +591,5 @@ def test_plan_b_idempotente_tras_el_eco_de_das(cfg):
     acc = comprobar(foto(latido=None), cfg, AHORA, tokens, HORA, RUTA_STOP, True)
     eco = tuple(stop_das(200 + i, str(a.orden.stop), str(a.orden.precio), a.orden.qty, token=a.orden.token)
                 for i, a in enumerate(de_tipo(acc, EnviarOrden)))
-    assert len(eco) == 2
+    assert len(eco) == 1                                                      # UN stop por nivel (v4)
     assert comprobar(foto(ordenes=eco, latido=None), cfg, AHORA + 1, tokens, HORA, RUTA_STOP, True) == []

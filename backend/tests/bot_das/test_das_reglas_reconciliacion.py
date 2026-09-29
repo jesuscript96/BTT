@@ -95,12 +95,9 @@ def orden(token: int, proposito: Proposito, stop: Optional[str], limite: Optiona
                  lvqty=qty if estado is not EstadoOrden.SENDING else 0, enviada_en=enviada_en)
 
 
-def principal(qty: int = 100, id_das: Optional[int] = 11, token: int = tok(1), **kw) -> Orden:
-    return orden(token, Proposito.STOP_PRINCIPAL, "10.00", "10.30", qty, id_das, **kw)
-
-
-def emergencia(qty: int = 100, id_das: Optional[int] = 12, token: int = tok(2), **kw) -> Orden:
-    return orden(token, Proposito.STOP_EMERGENCIA, "11.30", "16.30", qty, id_das, **kw)
+def stop_nivel(qty: int = 100, id_das: Optional[int] = 11, token: int = tok(1), **kw) -> Orden:
+    """El stop ÚNICO del nivel 10 (Jaume 29-sep, R-C-01 v4): disparo 10,00, límite 15,00."""
+    return orden(token, Proposito.STOP, "10.00", "15.00", qty, id_das, **kw)
 
 
 def msg(o: Orden, estado: Optional[EstadoOrden] = None, qty: Optional[int] = None, order_src: Optional[str] = "CMDAPI",
@@ -158,10 +155,10 @@ def corto_conocido(neta: int = -100) -> PosicionTicker:
 
 # ── los 6 casos (R-C-10 + R-K-02 + M7), uno por fila ─────────────────────
 def test_caso_1_coincide_no_hace_nada(cfg):
-    """R-C-10 (1): posición conocida con el principal y la emergencia que calcula el bot → nada."""
-    p, e = principal(), emergencia()
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    ds = comparar(estado, {X: pos_das(-100)}, ids([p, e]), HOY, cfg)
+    """R-C-10 (1): posición conocida con el stop que calcula el bot (uno por nivel) → nada."""
+    s = stop_nivel()
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    ds = comparar(estado, {X: pos_das(-100)}, ids([s]), HOY, cfg)
     assert casos(ds) == [(X, CASO_COINCIDE)]
     tokens = Contador()
     assert acciones(ds, estado, cot_de(cot()), cfg, tokens, HORA, RUTA_STOP) == []
@@ -169,28 +166,27 @@ def test_caso_1_coincide_no_hace_nada(cfg):
 
 
 def test_caso_2_stop_difiere_se_ajusta_con_plan(cfg):
-    """R-C-10 (2): la emergencia en DAS lleva 150 (se quedó vieja) → manda el cálculo de AHORA: Reemplazar a 100."""
-    p, e = principal(), emergencia(qty=150)
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    ds = comparar(estado, {X: pos_das(-100)}, ids([p, e]), HOY, cfg)
+    """R-C-10 (2): el stop en DAS lleva 150 (se quedó viejo) → manda el cálculo de AHORA: Reemplazar a 100."""
+    s = stop_nivel(qty=150)
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    ds = comparar(estado, {X: pos_das(-100)}, ids([s]), HOY, cfg)
     assert casos(ds) == [(X, CASO_STOP_DIFIERE)]
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     reemplazos = de_tipo(acc, Reemplazar)
-    assert [(r.id_das, r.qty, r.stop, r.precio) for r in reemplazos] == [(12, 100, D("11.30"), D("16.30"))]
+    assert [(r.id_das, r.qty, r.stop, r.precio) for r in reemplazos] == [(11, 100, D("10.00"), D("15.00"))]
     assert reemplazos[0].serie == "stops:X".replace("X", X)
     assert not de_tipo(acc, EnviarOrden)
 
 
-def test_caso_3_sin_stop_repone_el_par_y_avisa(cfg):
-    """R-C-10 (3): posición conocida SIN stop en DAS (halt que cruzó días, 2f.4) → principal + emergencia nuevos + aviso."""
+def test_caso_3_sin_stop_repone_el_stop_y_avisa(cfg):
+    """R-C-10 (3): posición conocida SIN stop en DAS (halt que cruzó días, 2f.4) → el stop del nivel nuevo + aviso."""
     estado = estado_con(corto_conocido())
     ds = comparar(estado, {X: pos_das(-100)}, {}, HOY, cfg)
     assert casos(ds) == [(X, CASO_SIN_STOP)]
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     nuevas = [a.orden for a in de_tipo(acc, EnviarOrden)]
     assert [(o.proposito, o.stop, o.precio, o.qty, o.lado) for o in nuevas] == [
-        (Proposito.STOP_PRINCIPAL, D("10.00"), D("10.30"), 100, Lado.COMPRA),
-        (Proposito.STOP_EMERGENCIA, D("11.30"), D("16.30"), 100, Lado.COMPRA)]
+        (Proposito.STOP, D("10.00"), D("15.00"), 100, Lado.COMPRA)]
     avisos = de_tipo(acc, Avisar)
     assert [(a.nivel, a.grupo) for a in avisos] == [(Nivel.AVISO, Grupo.B)] and "R-C-10 (3)" in avisos[0].texto
 
@@ -215,7 +211,7 @@ def test_caso_4_posicion_desconocida_proteccion_aviso3_y_ticker_al_humano(cfg):
     o = proteccion[0]
     assert (o.lado, o.tipo, o.qty, o.proposito, o.lote_id) == (Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, 200,
                                                                Proposito.STOP_PROTECCION, None)
-    assert o.stop == D("10.00") and o.precio == D("10.30") and en_tick(o.stop) and en_tick(o.precio)   # 8 · 1,25 y +3 %
+    assert o.stop == D("10.00") and o.precio == D("15.00") and en_tick(o.stop) and en_tick(o.precio)   # 8 · 1,25 y +50 %
     assert de_tipo(acc, EnviarOrden)[0].serie is None   # un InvalidarSerie de un fill no la descarta
     avisos = de_tipo(acc, Avisar)
     assert [a.nivel for a in avisos] == [Nivel.MAXIMO] and f"/sigue {X}" in avisos[0].texto
@@ -225,31 +221,31 @@ def test_caso_4_posicion_desconocida_proteccion_aviso3_y_ticker_al_humano(cfg):
 
 def test_caso_5_diario_abierta_das_plana_cierra_lotes(cfg):
     """R-C-10 (5): el diario tiene XYZ abierta y DAS la da plana → lotes CERRADO, neta 0, stops cancelados, aviso 2."""
-    p, e = principal(), emergencia()
+    s = stop_nivel()
     pos = corto_conocido()
-    estado = estado_con(pos, ordenes=(p, e))
-    ds = comparar(estado, {X: pos_das(0)}, ids([p, e]), HOY, cfg)
+    estado = estado_con(pos, ordenes=(s,))
+    ds = comparar(estado, {X: pos_das(0)}, ids([s]), HOY, cfg)
     assert casos(ds) == [(X, CASO_CERRADA_EN_DAS)]
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     assert acc[0] == Anotar("lote", {"lote_id": "L1", "ticker": X, "estado": "cerrado", "regla": "R-C-10 (5)"})
     assert acc[1].tipo == "discrepancia" and acc[1].datos["neta_das"] == 0 and acc[1].datos["neta_fills"] == -100
-    assert sorted(c.id_das for c in de_tipo(acc, Cancelar)) == [11, 12]   # R-C-11 (2): ningún stop de compra con la cuenta plana
+    assert sorted(c.id_das for c in de_tipo(acc, Cancelar)) == [11]   # R-C-11 (2): ningún stop de compra con la cuenta plana
     assert [a.nivel for a in de_tipo(acc, Avisar)] == [Nivel.AVISO]
     assert pos.lotes["L1"].estado is EstadoLote.CERRADO and pos.neta_fills == 0 and pos.neta_das == 0
 
 
 def test_caso_6_das_manda_y_se_recalculan_los_stops(cfg):
     """M7 / corrección 2: neta de fills −100 y DAS −60 → neta_fills := −60, anotado, aviso 2 y stops a 60."""
-    p, e = principal(), emergencia()
+    s = stop_nivel()
     pos = corto_conocido()
-    estado = estado_con(pos, ordenes=(p, e))
-    ds = comparar(estado, {X: pos_das(-60)}, ids([p, e]), HOY, cfg)
+    estado = estado_con(pos, ordenes=(s,))
+    ds = comparar(estado, {X: pos_das(-60)}, ids([s]), HOY, cfg)
     assert casos(ds) == [(X, CASO_NETA_DISTINTA)] and (ds[0].neta_fills, ds[0].neta_das) == (-100, -60)
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     assert acc[0] == Anotar("discrepancia", {"ticker": X, "caso": 6, "neta_fills": -100, "neta_das": -60,
                                              "detalle": ds[0].detalle, "regla": "M7 / corrección 2: manda DAS"})
     assert isinstance(acc[1], Avisar) and acc[1].nivel is Nivel.AVISO
-    assert sorted((r.id_das, r.qty) for r in de_tipo(acc, Reemplazar)) == [(11, 60), (12, 60)]
+    assert sorted((r.id_das, r.qty) for r in de_tipo(acc, Reemplazar)) == [(11, 60)]
     assert pos.neta_fills == -60 and pos.neta_das == -60
     assert not de_tipo(acc, Consultar)   # la precondición de plan ya cuadra: no se pide GET POSITIONS
 
@@ -261,8 +257,8 @@ def test_caso_6_das_manda_y_se_recalculan_los_stops(cfg):
     pytest.param(-140, CASO_NETA_DISTINTA, id="M7-caso-6-DAS-mas-corta"),
 ])
 def test_tabla_de_casos_por_neta(cfg, neta_das, esperado):
-    p, e = principal(), emergencia()
-    ds = comparar(estado_con(corto_conocido(), ordenes=(p, e)), {X: pos_das(neta_das)}, ids([p, e]), HOY, cfg)
+    s = stop_nivel()
+    ds = comparar(estado_con(corto_conocido(), ordenes=(s,)), {X: pos_das(neta_das)}, ids([s]), HOY, cfg)
     assert casos(ds) == [(X, esperado)]
 
 
@@ -276,11 +272,11 @@ def test_tabla_de_casos_por_neta(cfg, neta_das, esperado):
     pytest.param(None, None, id="R-K-02-sin-token-ni-orderSrc"),
 ])
 def test_orden_ajena_es_caso_4_pausa_y_aviso(cfg, order_src, token):
-    p, e = principal(), emergencia()
+    s = stop_nivel()
     ajena = msg_crudo(90, token, lado="B", tipo="L", qty=50, precio="9.90", order_src=order_src)
     assert es_ajena(ajena, HOY)
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    ord_das = {**ids([p, e]), 90: ajena}
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    ord_das = {**ids([s]), 90: ajena}
     ds = comparar(estado, {X: pos_das(-100)}, ord_das, HOY, cfg)
     assert casos(ds) == [(X, CASO_AJENA), (X, CASO_COINCIDE)]
     assert ds[0].descubiertas == 0 and [m.id for m in ds[0].ajenas] == [90]
@@ -299,12 +295,12 @@ def test_E2c_01_ajenas_tratadas_se_anotan_siempre_y_un_reinicio_no_vuelve_a_paus
     Con esos ids repuestos en `estado.ordenes_ajenas` (lo que hará `diario.reconstruir`) y un /sigue, el mismo
     volcado del LOGIN tras un reinicio ya no da caso 4 ni vuelve a pausar.
     """
-    p, e = principal(), emergencia()
+    s = stop_nivel()
     ajena = msg_crudo(90, None, lado="B", tipo="L", qty=50, precio="9.90", order_src="Montage",
                       estado=EstadoOrden.EXECUTED, lvqty=0)
     otra = msg_crudo(93, None, lado="B", tipo="L", qty=10, precio="9.90", order_src="Hotkey", ticker="ABC")
-    ord_das = {**ids([p, e]), 90: ajena}
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
+    ord_das = {**ids([s]), 90: ajena}
+    estado = estado_con(corto_conocido(), ordenes=(s,))
     acc = acciones(comparar(estado, {X: pos_das(-100)}, ord_das, HOY, cfg), estado, cot_de(cot()), cfg, Contador(),
                    HORA, RUTA_STOP)
     tratadas = [a for a in de_tipo(acc, Anotar) if a.tipo == rc.ANOTACION_AJENAS]
@@ -318,7 +314,7 @@ def test_E2c_01_ajenas_tratadas_se_anotan_siempre_y_un_reinicio_no_vuelve_a_paus
     assert [a.datos["ticker"] for a in de_tipo(acc2, Anotar) if a.tipo == "pausa"] == ["ABC"]
     json.dumps([a.datos for a in de_tipo(acc + acc2, Anotar) if a.tipo == rc.ANOTACION_AJENAS])
     # reinicio: el diario repone los ids tratados y Jaume ya dio /sigue
-    reiniciado = estado_con(corto_conocido(), ordenes=(p, e))
+    reiniciado = estado_con(corto_conocido(), ordenes=(s,))
     for a in de_tipo(acc + acc2, Anotar):
         if a.tipo == rc.ANOTACION_AJENAS:
             for i in a.datos["ids"]:
@@ -351,10 +347,10 @@ def test_E2c_03_desconocida_larga_avisa_vender_a_mano(cfg):
 
 def test_D2_08_aviso_de_ajena_escapa_el_texto_de_das(cfg):
     """D2-08: el detalle lleva el tipo y el orderSrc que manda DAS: un «<» no puede romper el HTML de Telegram."""
-    p, e = principal(), emergencia()
+    s = stop_nivel()
     ajena = msg_crudo(90, None, tipo="<L&>", order_src="Mont<age>")
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    acc = acciones(comparar(estado, {X: pos_das(-100)}, {**ids([p, e]), 90: ajena}, HOY, cfg), estado, cot_de(cot()),
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    acc = acciones(comparar(estado, {X: pos_das(-100)}, {**ids([s]), 90: ajena}, HOY, cfg), estado, cot_de(cot()),
                    cfg, Contador(), HORA, RUTA_STOP)
     texto = next(a for a in de_tipo(acc, Avisar) if a.clave == f"ajena:{X}").texto
     assert "&lt;L&amp;&gt;" in texto and "Mont&lt;age&gt;" in texto and "<L&>" not in texto
@@ -374,22 +370,22 @@ def test_A_06_comandos_del_barrido_salen_de_protocolo():
     pytest.param(EstadoOrden.HOLD, 0, 50, True, id="R-M-03-viva-en-hold-si"),
 ])
 def test_ajena_solo_cuenta_si_afecta_a_la_posicion(cfg, estado_ajena, cxl, lv, cuenta):
-    p, e = principal(), emergencia()
+    s = stop_nivel()
     ajena = msg_crudo(91, None, qty=50, estado=estado_ajena, order_src="Montage", lvqty=lv, cxlqty=cxl)
-    ds = comparar(estado_con(corto_conocido(), ordenes=(p, e)), {X: pos_das(-100)}, {**ids([p, e]), 91: ajena}, HOY, cfg)
+    ds = comparar(estado_con(corto_conocido(), ordenes=(s,)), {X: pos_das(-100)}, {**ids([s]), 91: ajena}, HOY, cfg)
     assert (CASO_AJENA in [d.caso for d in ds]) is cuenta
 
 
 def test_manual_que_cubre_parte_es_caso_4_y_6(cfg):
     """R-K-02 + M7: el humano recompra 40 a mano → aviso 3 + ticker al humano y DAS manda sobre la neta (stops a 60)."""
-    p, e = principal(), emergencia()
+    s = stop_nivel()
     manual = msg_crudo(92, None, qty=40, estado=EstadoOrden.EXECUTED, order_src="Montage", lvqty=0)
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    ds = comparar(estado, {X: pos_das(-60)}, {**ids([p, e]), 92: manual}, HOY, cfg)
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    ds = comparar(estado, {X: pos_das(-60)}, {**ids([s]), 92: manual}, HOY, cfg)
     assert casos(ds) == [(X, CASO_AJENA), (X, CASO_NETA_DISTINTA)]
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     assert estado.posiciones[X].intervencion_humana and estado.posiciones[X].neta_fills == -60
-    assert sorted((r.id_das, r.qty) for r in de_tipo(acc, Reemplazar)) == [(11, 60), (12, 60)]
+    assert sorted((r.id_das, r.qty) for r in de_tipo(acc, Reemplazar)) == [(11, 60)]
 
 
 # ── riesgo 8: gracia tras un fill y «sin información» ─────────────────────
@@ -400,36 +396,36 @@ def test_manual_que_cubre_parte_es_caso_4_y_6(cfg):
     pytest.param(None, [(X, CASO_NETA_DISTINTA)], id="sin-ahora-no-hay-gracia-contrato-3-24"),
 ])
 def test_gracia_tras_fill(cfg, ahora, esperado):
-    p, e = principal(qty=100), emergencia(qty=100)
-    estado = estado_con(corto_conocido(-150), ordenes=(p, e))
+    s = stop_nivel(qty=100)
+    estado = estado_con(corto_conocido(-150), ordenes=(s,))
     estado.ultimo_fill_en = 1000.0
-    assert casos(comparar(estado, {X: pos_das(-100)}, ids([p, e]), HOY, cfg, ahora=ahora)) == esperado
+    assert casos(comparar(estado, {X: pos_das(-100)}, ids([s]), HOY, cfg, ahora=ahora)) == esperado
 
 
 def test_ticker_ausente_del_volcado_es_sin_informacion(cfg):
     """Volcado a medias (BP empujado, §5.11): una posición conocida que DAS no lista NO es «plana» (nunca caso 5)."""
-    p, e = principal(), emergencia()
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
+    s = stop_nivel()
+    estado = estado_con(corto_conocido(), ordenes=(s,))
     assert comparar(estado, {}, {}, HOY, cfg) == []
 
 
 def test_volcado_sin_ordenes_no_duplica_stops(cfg):
     """Riesgo 11: si DAS no lista nuestras órdenes (volcado a medias), se dan por vivas: caso 1, cero órdenes nuevas."""
-    p, e = principal(), emergencia()
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
+    s = stop_nivel()
+    estado = estado_con(corto_conocido(), ordenes=(s,))
     ds = comparar(estado, {X: pos_das(-100)}, {}, HOY, cfg)
     assert casos(ds) == [(X, CASO_COINCIDE)]
 
 
 def test_das_contradice_nuestra_vista_el_stop_cancelado_se_repone(cfg):
-    """R-C-04: el bot cree viva la emergencia pero DAS la lista CANCELADA (halt, rechazo tardío) → caso 3 y se repone."""
-    p, e = principal(), emergencia()
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    ord_das = {11: msg(p), 12: msg(e, estado=EstadoOrden.CANCELED)}
+    """R-C-04: el bot cree vivo el stop pero DAS lo lista CANCELADO (halt, rechazo tardío) → caso 3 y se repone."""
+    s = stop_nivel()
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    ord_das = {11: msg(s, estado=EstadoOrden.CANCELED)}
     ds = comparar(estado, {X: pos_das(-100)}, ord_das, HOY, cfg)
     assert casos(ds) == [(X, CASO_SIN_STOP)]
     nuevas = [a.orden for a in de_tipo(acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP), EnviarOrden)]
-    assert [(o.proposito, o.qty) for o in nuevas] == [(Proposito.STOP_EMERGENCIA, 100)]
+    assert [(o.proposito, o.qty) for o in nuevas] == [(Proposito.STOP, 100)]
 
 
 @pytest.mark.parametrize("ahora,esperado", [
@@ -438,35 +434,33 @@ def test_das_contradice_nuestra_vista_el_stop_cancelado_se_repone(cfg):
     pytest.param(None, CASO_COINCIDE, id="riesgo-3-sin-ahora-se-da-por-viva"),
 ])
 def test_orden_sending_sin_eco(cfg, ahora, esperado):
-    p = principal(id_das=None, estado=EstadoOrden.SENDING, enviada_en=1000.0)
-    e = emergencia(id_das=None, estado=EstadoOrden.SENDING, enviada_en=1000.0)
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
+    s = stop_nivel(id_das=None, estado=EstadoOrden.SENDING, enviada_en=1000.0)
+    estado = estado_con(corto_conocido(), ordenes=(s,))
     assert casos(comparar(estado, {X: pos_das(-100)}, {}, HOY, cfg, ahora=ahora)) == [(X, esperado)]
 
 
 # ── F13: adopción de las órdenes del vigilante ───────────────────────────
 def test_adopta_las_ordenes_del_vigilante_sin_duplicar(cfg):
-    """F13 / R-C-07 neteo: el vigilante repuso el par; el ejecutor lo ADOPTA (0 órdenes nuevas) y lo registra."""
-    pv = principal(token=tok(1, Origen.VIGILANTE), id_das=31, origen=Origen.VIGILANTE)
-    ev = emergencia(token=tok(2, Origen.VIGILANTE), id_das=32, origen=Origen.VIGILANTE)
+    """F13 / R-C-07 neteo: el vigilante repuso el stop; el ejecutor lo ADOPTA (0 órdenes nuevas) y lo registra."""
+    sv = stop_nivel(token=tok(2, Origen.VIGILANTE), id_das=32, origen=Origen.VIGILANTE)
     estado = estado_con(corto_conocido())
-    ds = comparar(estado, {X: pos_das(-100)}, ids([pv, ev]), HOY, cfg)
+    ds = comparar(estado, {X: pos_das(-100)}, ids([sv]), HOY, cfg)
     assert casos(ds) == [(X, CASO_COINCIDE)]
     tokens = Contador()
     assert acciones(ds, estado, cot_de(cot()), cfg, tokens, HORA, RUTA_STOP) == [] and tokens.usados == 0
     adoptadas = estado.ordenes[tok(2, Origen.VIGILANTE)]
     assert adoptadas.origen is Origen.VIGILANTE and adoptadas.id_das == 32 and estado.id_a_token[32] == tok(2, Origen.VIGILANTE)
-    assert adoptadas.stop == D("11.30") and adoptadas.precio == D("16.30") and adoptadas.tipo is TipoOrden.STOP_LIMITE_PP
+    assert adoptadas.stop == D("10.00") and adoptadas.precio == D("15.00") and adoptadas.tipo is TipoOrden.STOP_LIMITE_PP
     # idempotente: el siguiente barrido sigue siendo caso 1 y no cambia nada
-    assert casos(comparar(estado, {X: pos_das(-100)}, ids([pv, ev]), HOY, cfg)) == [(X, CASO_COINCIDE)]
+    assert casos(comparar(estado, {X: pos_das(-100)}, ids([sv]), HOY, cfg)) == [(X, CASO_COINCIDE)]
 
 
-def test_dos_emergencias_la_mas_nueva_sobra(cfg):
-    """R-C-07 plan B: ejecutor y vigilante pusieron la emergencia a la vez → caso 2 y se cancela la MÁS NUEVA (id mayor)."""
-    p, e = principal(), emergencia(id_das=12)
-    ev = emergencia(token=tok(2, Origen.VIGILANTE), id_das=40, origen=Origen.VIGILANTE)
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    ds = comparar(estado, {X: pos_das(-100)}, ids([p, e, ev]), HOY, cfg)
+def test_dos_stops_del_mismo_nivel_el_mas_nuevo_sobra(cfg):
+    """R-C-07 plan B: ejecutor y vigilante pusieron el stop del nivel a la vez → caso 2 y se cancela el MÁS NUEVO (id mayor)."""
+    s = stop_nivel(id_das=12)
+    sv = stop_nivel(token=tok(2, Origen.VIGILANTE), id_das=40, origen=Origen.VIGILANTE)
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    ds = comparar(estado, {X: pos_das(-100)}, ids([s, sv]), HOY, cfg)
     assert casos(ds) == [(X, CASO_STOP_DIFIERE)]
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     assert [c.id_das for c in de_tipo(acc, Cancelar)] == [40] and not de_tipo(acc, EnviarOrden)
@@ -479,9 +473,9 @@ def test_caso_6_a_larga_vende_solo_el_exceso(cfg):
     D2a-04 (decisión del director): la venta sale a bid · (1 − 2 %) redondeado abajo (vendible), no al bid exacto:
     9,79 · 0,99 = 9,6921 → 9,69.
     """
-    p, e = principal(), emergencia()
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    ds = comparar(estado, {X: pos_das(20)}, ids([p, e]), HOY, cfg)
+    s = stop_nivel()
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    ds = comparar(estado, {X: pos_das(20)}, ids([s]), HOY, cfg)
     assert casos(ds) == [(X, CASO_NETA_DISTINTA)]
     acc = acciones(ds, estado, cot_de(cot(bid="9.79")), cfg, Contador(), HORA, RUTA_STOP)
     assert isinstance(acc[2], InvalidarSerie) and isinstance(acc[3], CancelarTicker)
@@ -593,7 +587,7 @@ def test_desconocida_larga_proteccion_de_venta_por_debajo(cfg):
     ds = comparar(estado, {X: pos_das(100)}, {}, HOY, cfg)
     acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
     o = de_tipo(acc, EnviarOrden)[0].orden
-    assert (o.lado, o.stop, o.precio, o.qty) == (Lado.VENTA, D("6.00"), D("5.82"), 100)
+    assert (o.lado, o.stop, o.precio, o.qty) == (Lado.VENTA, D("6.00"), D("3.00"), 100)
 
 
 def test_R_M_03_por_ticker_una_pausa_por_ticker_y_una_sola_vez(cfg):
@@ -647,11 +641,11 @@ def test_discrepancia_caso_invalido():
 
 def test_comparar_no_muta_y_no_depende_del_orden(cfg):
     """`comparar` es PURA y el resultado no depende del orden en que llegan las órdenes (riesgo 8: orden no documentado)."""
-    p, e = principal(), emergencia(qty=150)
-    ev = emergencia(token=tok(2, Origen.VIGILANTE), id_das=40, origen=Origen.VIGILANTE)
+    s = stop_nivel(qty=150)
+    sv = stop_nivel(token=tok(2, Origen.VIGILANTE), id_das=40, origen=Origen.VIGILANTE)
     ajena = msg_crudo(90, None, order_src="Montage", ticker="ABC")
-    estado = estado_con(corto_conocido(), ordenes=(p, e))
-    base = [msg(p), msg(e), msg(ev), ajena]
+    estado = estado_con(corto_conocido(), ordenes=(s,))
+    base = [msg(s), msg(sv), ajena]
     referencia = None
     for permutacion in itertools.permutations(base):
         antes = (dict(estado.ordenes), estado.pausa_global, dict(estado.ordenes_ajenas), estado.posiciones[X].neta_fills)
@@ -703,11 +697,11 @@ def test_orden_de_msg_devuelve_none(m):
 
 
 def test_orden_de_msg_con_conocida_copia_lo_de_das_sin_mutar():
-    p = principal(qty=100)
-    m = msg(p, qty=80)
-    o = orden_de_msg(m, HOY, p)
-    assert o is not p and (o.qty, o.proposito, o.lote_id, o.nivel) == (80, Proposito.STOP_PRINCIPAL, "L1", D("10"))
-    assert p.qty == 100
+    s = stop_nivel(qty=100)
+    m = msg(s, qty=80)
+    o = orden_de_msg(m, HOY, s)
+    assert o is not s and (o.qty, o.proposito, o.lote_id, o.nivel) == (80, Proposito.STOP, "L1", D("10"))
+    assert s.qty == 100
 
 
 def test_orden_de_msg_accepted_con_lvqty_cero_no_mata_el_stop():
@@ -717,8 +711,8 @@ def test_orden_de_msg_accepted_con_lvqty_cero_no_mata_el_stop():
 
 
 def test_cobertura_y_huerfanas():
-    compra = principal(qty=100)
-    sending = emergencia(qty=100, id_das=None, estado=EstadoOrden.SENDING)
+    compra = stop_nivel(qty=100)
+    sending = stop_nivel(qty=100, id_das=None, estado=EstadoOrden.SENDING, token=tok(2))
     venta = orden(tok(8), Proposito.STOP_PROTECCION, "6.00", "5.82", 50, 80, lado=Lado.VENTA)
     corto = orden(tok(9), Proposito.ENTRADA_AGREGAR, None, "9.00", 70, 81, lado=Lado.CORTO, tipo=TipoOrden.LIMITE)
     vivas = [compra, sending, venta, corto]
@@ -744,9 +738,9 @@ def _intento() -> IntentoEntrada:
                  BARRIDO_TRAS_FILL_S, id="R-K-01-entrada-en-escalera-1s"),
     pytest.param(lambda e: e.posiciones.update({X: posicion(0, neta_das=-5)}), 500.0, BARRIDO_CON_POSICIONES_S,
                  id="R-K-01-DAS-ve-posicion-2s"),
-    pytest.param(lambda e: e.ordenes.update({1: principal()}), 500.0, BARRIDO_CON_POSICIONES_S,
+    pytest.param(lambda e: e.ordenes.update({1: stop_nivel()}), 500.0, BARRIDO_CON_POSICIONES_S,
                  id="R-K-01-ordenes-vivas-2s"),
-    pytest.param(lambda e: e.ordenes.update({1: principal(estado=EstadoOrden.CANCELED)}), 500.0, BARRIDO_SIN_NADA_S,
+    pytest.param(lambda e: e.ordenes.update({1: stop_nivel(estado=EstadoOrden.CANCELED)}), 500.0, BARRIDO_SIN_NADA_S,
                  id="R-K-01-orden-muerta-no-cuenta-10s"),
     pytest.param(lambda e: None, 500.0, BARRIDO_SIN_NADA_S, id="R-K-01-sin-nada-10s"),
 ])

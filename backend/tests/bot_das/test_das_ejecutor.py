@@ -557,7 +557,7 @@ def test_m6_orden_intencion_en_disco_antes_del_envio_y_enviada_despues(montar, d
     """M6 / riesgo 3: cuando el cliente recibe la línea, `orden_intencion` (fsync) YA está en el fichero; `orden_enviada` después."""
     vistos: list[bool] = []
     ruta = dir_bot / "diario" / nombre_fichero("ejecutor", HOY)
-    o = orden(Proposito.STOP_PRINCIPAL, Lado.COMPRA, seq=900, tipo=TipoOrden.STOP_LIMITE_PP)
+    o = orden(Proposito.STOP, Lado.COMPRA, seq=900, tipo=TipoOrden.STOP_LIMITE_PP)
 
     def comprobar(linea: str) -> None:
         if linea.startswith("NEWORDER"):
@@ -572,7 +572,7 @@ def test_m6_orden_intencion_en_disco_antes_del_envio_y_enviada_despues(montar, d
     intencion = [r for r in de_tipo(regs, "orden_intencion") if r.datos["token"] == o.token][0]
     enviada = [r for r in de_tipo(regs, "orden_enviada") if r.datos["token"] == o.token][0]
     assert intencion.seq < enviada.seq
-    assert intencion.datos["proposito"] == "stop_principal" and intencion.datos["precio"] == "4.12"
+    assert intencion.datos["proposito"] == "stop" and intencion.datos["precio"] == "4.12"
     assert intencion.datos["origen"] == int(Origen.EJECUTOR) and intencion.datos["serie"] == "stops:XYZ"
 
 
@@ -581,8 +581,7 @@ CASOS_DISCO = [
     (Proposito.ENTRADA_CRUCE, Lado.CORTO, TipoOrden.LIMITE, False),
     (Proposito.DESCONOCIDA, Lado.CORTO, TipoOrden.LIMITE, False),
     (Proposito.ENTRADA_AGREGAR, Lado.COMPRA, TipoOrden.LIMITE, False),
-    (Proposito.STOP_PRINCIPAL, Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, True),
-    (Proposito.STOP_EMERGENCIA, Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, True),
+    (Proposito.STOP, Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, True),
     (Proposito.STOP_PROTECCION, Lado.COMPRA, TipoOrden.STOP_LIMITE_PP, True),
     (Proposito.VENTA_EXCESO, Lado.VENTA, TipoOrden.LIMITE, True),
     (Proposito.TP_CRUCE, Lado.COMPRA, TipoOrden.LIMITE, True),
@@ -687,7 +686,7 @@ def test_r_o_03_un_consultar_mutante_no_sale_y_un_envio_prohibido_es_un_bug(mont
     antes = len(m.cliente.lineas)
     m.e.ejecutar(Consultar("CANCEL ALL"))
     m.e.ejecutar(Consultar("get bp\r\nNEWORDER 1 SS XYZ SAGEREB 1 3 TIF=DAY+"))
-    o = orden(Proposito.STOP_PRINCIPAL, Lado.COMPRA, seq=903, tipo=TipoOrden.STOP_LIMITE_PP)
+    o = orden(Proposito.STOP, Lado.COMPRA, seq=903, tipo=TipoOrden.STOP_LIMITE_PP)
     m.e.ejecutar(EnviarOrden(o))
     assert m.cliente.lineas[antes:] == []
     maximos = m.avisos.de_nivel(Nivel.MAXIMO)
@@ -703,7 +702,7 @@ def test_riesgo12_una_accion_imposible_se_descarta_y_las_siguientes_salen(montar
     """Riesgo 12 / H-5: un REPLACE fuera de tick no sale (aviso 2) y el stop de detrás SÍ sale."""
     m = montar()
     antes = len(m.cliente.lineas)
-    stop = orden(Proposito.STOP_EMERGENCIA, Lado.COMPRA, seq=904, tipo=TipoOrden.STOP_LIMITE_PP)
+    stop = orden(Proposito.STOP, Lado.COMPRA, seq=904, tipo=TipoOrden.STOP_LIMITE_PP)
     for a in (Reemplazar(1235, 1, 60, None, D("3.455"), "fuera de tick"), EnviarOrden(stop),
               Avisar(Nivel.INFO, Grupo.B, "hola", None)):
         m.e.ejecutar(a)
@@ -1004,7 +1003,7 @@ def test_g2_05_una_orden_que_el_cliente_descarta_no_se_anota_como_enviada(montar
     """G2-05 (M6, riesgo 3): `cliente.enviar` → False ⇒ `orden_intencion` + `orden_descartada`, NUNCA `orden_enviada`, y
     el decisor recibe `OrdenDescartada` (D2a-06: la cierra y replanifica). Un CANCEL descartado → `linea_descartada`."""
     m = montar(cliente=ClienteQueDescarta())
-    o = orden(Proposito.STOP_PRINCIPAL, Lado.COMPRA, seq=950, tipo=TipoOrden.STOP_LIMITE_PP)
+    o = orden(Proposito.STOP, Lado.COMPRA, seq=950, tipo=TipoOrden.STOP_LIMITE_PP)
     enviadas_antes = m.e._enviadas
     m.e.ejecutar(EnviarOrden(o, serie="stops:XYZ"))
     regs = m.regs()
@@ -1412,8 +1411,9 @@ def vivo(cfg: Config, reloj: RelojSimulado, dir_bot: Path, libro: LibroSimulado,
 
 
 def test_canario_entrada_fills_stops_residentes_el_stop_dispara_y_limpieza(vivo) -> None:
-    """F1 + F2 + R-C-11 de punta a punta por el socket: señal de la vela → SS agregar → fill → principal + emergencia
-    STOPLMTP residentes en DAS → el stop dispara → neta 0 → CANCEL ALLSYMB (la emergencia sobrante cae)."""
+    """F1 + F2 + R-C-11 de punta a punta por el socket: señal de la vela → SS agregar → fill → UN stop STOPLMTP
+    residente en DAS (stop único, Jaume 29-sep: disparo en L, límite L + 50 %) → el stop dispara → neta 0 → CANCEL
+    ALLSYMB."""
     v = vivo(Fase.CANARIO)
     v.preparar(TICKER)
     regs = v.regs()
@@ -1424,18 +1424,20 @@ def test_canario_entrada_fills_stops_residentes_el_stop_dispara_y_limpieza(vivo)
     entrada = neworders(v.recibidas(), "SS", TICKER)
     assert len(entrada) == 1 and entrada[0].endswith("SAGEREB 100 3.45 PostOnly TIF=DAY+")
     v.sim.cotizar(TICKER, D("3.45"), D("3.47"), last=D("3.45"), volumen=500_000)
-    v.paso_hasta(lambda: len(v.stops_vivos()) == 2, "principal + emergencia residentes")
+    v.paso_hasta(lambda: len(v.stops_vivos()) == 1, "el stop único residente")
     assert v.libro.posiciones() == {TICKER: -100}
-    principal, emergencia = sorted(v.stops_vivos(), key=lambda o: o["stop"])
-    assert (principal["qty"], principal["ruta"], emergencia["qty"], emergencia["ruta"]) == (100, "STOP", 100, "STOP")
-    assert principal["stop"] < principal["precio"] < emergencia["stop"] < emergencia["precio"]   # R-C-01 v3
+    (stop,) = v.stops_vivos()
+    assert (stop["qty"], stop["ruta"]) == (100, "STOP")
+    assert stop["precio"] == stop["stop"] * D("1.5")                                # R-C-01 v4: límite L + 50 %
     assert v.e.decisor.estado.posiciones[TICKER].neta_fills == -100
-    v.sim.cotizar(TICKER, principal["stop"] + D("0.05"), principal["stop"] + D("0.10"),
-                  last=principal["stop"] + D("0.10"), volumen=500_000)
+    v.sim.cotizar(TICKER, stop["stop"] + D("0.05"), stop["stop"] + D("0.10"),
+                  last=stop["stop"] + D("0.10"), volumen=500_000)
     v.paso_hasta(lambda: v.libro.posiciones().get(TICKER) == 0 and not v.stops_vivos(), "stop disparado y limpieza")
-    assert f"CANCEL ALLSYMB {TICKER}" in v.recibidas()
+    # R-C-11 (a): con el stop único no queda ninguna orden viva tras su fill (en v3 caía la emergencia sobrante)
+    assert not [o for o in v.libro.ordenes() if o["estado"] == "Accepted"]
     estados = {o["token"]: o["estado"] for o in v.libro.ordenes()}
-    assert estados[principal["token"]] == "Executed" and estados[emergencia["token"]] == "Canceled"
+    assert estados[stop["token"]] == "Executed"
+    assert len(neworders(v.recibidas(), "B", TICKER)) == 1                  # una sola compra: nunca dos stops
     regs = v.regs()
     for linea in neworders(v.recibidas()):                               # M6: cada NEWORDER con su intención y su envío
         token = int(linea.split()[1])
@@ -1457,14 +1459,14 @@ def test_sombra_ni_un_mutante_llega_a_das_y_el_diario_lleva_orden_simulada(vivo)
     v.sim.cotizar(TICKER, D("3.45"), D("3.47"), last=D("3.45"), volumen=500_000)
     libro_sombra = v.e.cliente.emparejador.libro
     v.paso_hasta(lambda: len([o for o in libro_sombra.ordenes() if o["tipo"] == "STOPLMTP"
-                              and o["estado"] == "Accepted"]) == 2, "stops simulados")
+                              and o["estado"] == "Accepted"]) == 1, "stop simulado (único, Jaume 29-sep)")
     assert libro_sombra.posiciones() == {TICKER: -100}
     assert v.libro.posiciones() == {"ZZZ": -50} and v.libro.ordenes() == []     # el DAS de verdad: intacto
     mutantes = [linea for linea in v.recibidas() if protocolo.es_mutante(linea)]
     assert mutantes == []
     regs = v.regs()
     simuladas = de_tipo(regs, "orden_simulada")
-    assert len(simuladas) >= 3 and not de_tipo(regs, "orden_enviada")
+    assert len(simuladas) >= 2 and not de_tipo(regs, "orden_enviada")          # entrada + el stop único
     fills = de_tipo(regs, "fill")
     assert fills and all(f.datos["simulado"] is True for f in fills)
     assert "ZZZ" not in v.e.decisor.estado.posiciones                          # R-O-03: la cuenta de la sombra manda
@@ -1512,12 +1514,12 @@ def test_m6_el_das_recibe_cada_neworder_con_su_intencion_ya_en_disco(cfg: Config
             v.senal_por_vela(TICKER)
             v.paso_hasta(lambda: neworders(sim.recibidas(), "SS"), "NEWORDER SS")
             sim.cotizar(TICKER, D("3.45"), D("3.47"), last=D("3.45"), volumen=500_000)
-            v.paso_hasta(lambda: len(v.stops_vivos()) == 2, "stops")
+            v.paso_hasta(lambda: len(v.stops_vivos()) == 1, "stop")
         finally:
             e.parar()
     finally:
         sim.parar()
-    assert len(vistos) == 3 and all(ok for _, ok in vistos), vistos
+    assert len(vistos) == 2 and all(ok for _, ok in vistos), vistos          # entrada + el stop único (Jaume 29-sep)
 
 
 def test_correccion4_diario_bloqueado_a_mitad_no_abre_pero_los_stops_salen(vivo) -> None:
@@ -1528,8 +1530,8 @@ def test_correccion4_diario_bloqueado_a_mitad_no_abre_pero_los_stops_salen(vivo)
     v.senal_por_vela(TICKER)
     v.paso_hasta(lambda: neworders(v.recibidas(), "SS", TICKER), "entrada de XYZ")
     v.sim.cotizar(TICKER, D("3.45"), D("3.47"), last=D("3.45"), volumen=500_000)
-    v.paso_hasta(lambda: len(v.stops_vivos()) == 2, "stops de XYZ")
-    emergencia = max(v.stops_vivos(), key=lambda o: o["stop"])
+    v.paso_hasta(lambda: len(v.stops_vivos()) == 1, "stop de XYZ")
+    (stop,) = v.stops_vivos()
     n_stops = len(neworders(v.recibidas(), "B", TICKER))
     v.drenar()                                        # el decisor decidirá la señal de ABC con el diario aún «sano»
     with diario_bloqueado(v.e.diario.ruta):
@@ -1539,10 +1541,10 @@ def test_correccion4_diario_bloqueado_a_mitad_no_abre_pero_los_stops_salen(vivo)
         v.paso_hasta(lambda: v.e.decisor.estado.posiciones.get(OTRO) is not None
                      and v.e.decisor.estado.posiciones[OTRO].lotes, "la señal de ABC decidida")
         v.paso_hasta(lambda: v.e.diario.degradado, "diario degradado")
-        for linea in v.sim.emparejador.recibir(f"CANCEL {emergencia['id']}"):    # DAS la cancela por su cuenta
+        for linea in v.sim.emparejador.recibir(f"CANCEL {stop['id']}"):          # DAS lo cancela por su cuenta
             v.sim.emitir(linea)
         v.paso_hasta(lambda: len(neworders(v.recibidas(), "B", TICKER)) > n_stops, "reposición del stop")
-        v.paso_hasta(lambda: len(v.stops_vivos()) == 2, "par de stops completo otra vez")
+        v.paso_hasta(lambda: len(v.stops_vivos()) == 1, "el stop repuesto")
         assert neworders(v.recibidas(), "SS", OTRO) == []
         assert v.e.diario.degradado
     v.e.buzon.poner(Tic())
@@ -1657,8 +1659,8 @@ def test_r2_pro_4_replay_con_locate_already_shortable_entra_llena_pone_stops_y_s
     `%SLRET 2 … AlreadyShortable`: UNA señal entra de punta a punta en SOMBRA.
 
     El radar de INLF se inyecta a las 04:29 (la grabación no trae radar): SLPRICEINQUIRE → ETB, «no hace falta»
-    locate. La vela 30 (04:31) enciende la entrada (motor falso) → SS agregar → fill simulado → principal (máximo
-    previo + 1 % = 5,70) + emergencia → INLF sube a 5,89 en las 04:38 → el principal dispara → neta 0 → CANCEL
+    locate. La vela 30 (04:31) enciende la entrada (motor falso) → SS agregar → fill simulado → el stop único (máximo
+    previo + 1 % = 5,70; límite + 50 %, Jaume 29-sep) → INLF sube a 5,89 en las 04:38 → el stop dispara → neta 0 → CANCEL
     ALLSYMB. El test se
     corta al acabar INLF (04:41) para no recorrer el hueco hasta MGLD. Sin fichero `esperado_*`."""
     from app.bot_das.simulador_das import ProgramaGuion
@@ -1701,10 +1703,9 @@ def test_r2_pro_4_replay_con_locate_already_shortable_entra_llena_pone_stops_y_s
     assert [r.datos["estado"] for r in de_tipo(regs, "locate_estado")] == ["no_hace_falta"]
     assert len(de_tipo(regs, "senal")) == 1 and not de_tipo(regs, "senal_descartada")
     intenciones = [(r.datos["proposito"], r.datos["lado"], r.datos["tipo_orden"]) for r in de_tipo(regs, "orden_intencion")]
-    assert intenciones == [("entrada_agregar", "SS", "LMT"), ("stop_principal", "B", "STOPLMTP"),
-                           ("stop_emergencia", "B", "STOPLMTP")]
+    assert intenciones == [("entrada_agregar", "SS", "LMT"), ("stop", "B", "STOPLMTP")]   # stop único (Jaume 29-sep)
     fills = [(r.datos["proposito"], r.datos["neta_fills"]) for r in de_tipo(regs, "fill") if not r.datos.get("eco")]
-    assert fills == [("entrada_agregar", -100), ("stop_principal", 0)]
+    assert fills == [("entrada_agregar", -100), ("stop", 0)]
     cerrada = de_tipo(regs, "posicion_cerrada")
     assert len(cerrada) == 1 and D(cerrada[0].datos["resultado"]) < 0                  # salió por el stop, perdiendo
     assert [r for r in de_tipo(regs, "cancel_intencion") if r.datos.get("linea") == "CANCEL ALLSYMB INLF"]
@@ -1883,7 +1884,7 @@ def test_h2_reinicio_a_mitad_no_reentra_ni_recompra(cfg: Config, reloj: RelojSim
         _esperar(lambda: neworders(simulador.recibidas(), "SS", TICKER), "NEWORDER SS", primero)
         simulador.cotizar(TICKER, D("3.45"), D("3.47"), last=D("3.45"), volumen=500_000)
         _esperar(lambda: len([o for o in libro.ordenes() if o["tipo"] == "STOPLMTP" and o["estado"] == "Accepted"])
-                 == 2, "stops residentes", primero)
+                 == 1, "stop residente (único, Jaume 29-sep)", primero)
         _esperar(lambda: any(r.get("tipo") == "lote" and r["datos"].get("estado") == "abierto"
                              for r in primero.diario()), "lote abierto en el diario", primero)
         recibidas_antes = simulador.recibidas()
@@ -1902,11 +1903,11 @@ def test_h2_reinicio_a_mitad_no_reentra_ni_recompra(cfg: Config, reloj: RelojSim
         assert [linea for linea in nuevas if linea.startswith("SLNEWORDER")] == []            # R-H-02: no recompra
         assert neworders(nuevas) == []                                                        # H-2: ni reentra ni duplica
         assert libro.posiciones() == {TICKER: -100}
-        assert len([o for o in libro.ordenes() if o["tipo"] == "STOPLMTP" and o["estado"] == "Accepted"]) == 2
+        assert len([o for o in libro.ordenes() if o["tipo"] == "STOPLMTP" and o["estado"] == "Accepted"]) == 1
         diario = segundo.diario()
         reconstruccion = [r for r in diario if r.get("tipo") == "reconstruccion"][-1]["datos"]
         assert reconstruccion["senales_vistas"] >= 1 and TICKER in reconstruccion["posiciones"]
-        assert reconstruccion["ultimo_seq_token"] >= 3
+        assert reconstruccion["ultimo_seq_token"] >= 2          # entrada + el stop único (Jaume 29-sep)
         with open(dir_bot / "estado" / ej.NOMBRE_ORDEN_SUPERVISOR, "a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps({"parar": True}) + "\n")
         codigo = segundo.esperar_fin(20.0)

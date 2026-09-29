@@ -1,7 +1,12 @@
-"""Cisne negro: activación, informe de 16 campos, cadencia, ajuste de la emergencia y cierre humano.
+"""Cisne negro: activación, informe de 16 campos, cadencia, ajuste de los stops y cierre humano.
 
 QUÉ HACE. Las reglas del área G del libro para cuando el precio PASA DE LARGO
-el límite de la orden de emergencia y quedan acciones cortas al descubierto:
+el límite de un stop sin llenarlo y quedan acciones cortas al descubierto.
+Con el stop único (Jaume 29-sep, R-C-01 v4: UN stop por nivel, disparo en L,
+límite L + 50 %) el cisne negro es: el stop del primer nivel con acciones
+(el que salta antes) DISPARADO y sin llenar, con el precio por encima de SU
+límite. En v3 era el límite de la emergencia (L más alto + 63 %); sin
+emergencia, el último límite que protege esas acciones es el de su stop.
   * `se_activa` / `activar`: la condición del protocolo (R-G-01, aclaración
     del 24-sep en R-G-03) y el `EstadoBS` con el que arranca.
   * `toca_informe`, `segundos_hasta_informe`, `registrar_informe`,
@@ -11,12 +16,12 @@ el límite de la orden de emergencia y quedan acciones cortas al descubierto:
   * `informe`: el mensaje «Posible BS <TICKER>» con los 16 campos de R-G-01
     (2) en HTML de Telegram (`ETIQUETAS_INFORME`).
   * `acciones_durante_bs`: R-G-03 (1): SOLO se BAJA la cantidad de los
-    stops de compra vivos (emergencias, duplicadas y principales, E2-01) a
+    stops de compra vivos (el de cada nivel y cualquier duplicado, E2-01) a
     las acciones que siguen cortas. Nada más.
   * `al_cerrar`: R-G-01 (3) y el veto de reentrada de R-G-03.
   * `fogonazo_visto`: R-G-01 (4): máximo, duración y devolución para el diario.
   * `cierre_humano`: `/cerrar X SI` y `/cerrar X N SI` durante el protocolo
-    (R-G-03 (3) + R-D-06): la emergencia se cancela ANTES y se cierra con
+    (R-G-03 (3) + R-D-06): los stops se cancelan ANTES y se cierra con
     techo del 5 % sobre el ask del momento, con dos reintentos.
 
 POR QUÉ ESTÁ AQUÍ. Es lógica PURA (documento §3.19, flujo F7): sin reloj, sin
@@ -28,25 +33,30 @@ el `EstadoBS` ni las órdenes: las que «cambian» el estado devuelven uno nuevo
 
 LAS TRAMPAS.
   * El bot NO decide en un cisne negro (R-G-01, Jaume 20-sep): ni persigue
-    al precio, ni repone la emergencia si DAS la cancela, ni mueve su límite
-    o su disparo (R-G-03). `acciones_durante_bs` nunca devuelve `EnviarOrden`
-    ni `Cancelar`: solo `Reemplazar` de CANTIDAD a la baja de TODA STOPLMTP de
-    compra viva (un principal disparado sin llenar compraría encima de la
-    emergencia y dejaría la cuenta LARGA, E2-01; el `share` sale de
-    `tipos.share_de_replace`, A-02) (con su
+    al precio, ni repone un stop si DAS lo cancela, ni mueve su límite o su
+    disparo (R-G-03). `acciones_durante_bs` nunca devuelve `EnviarOrden` ni
+    `Cancelar`: solo `Reemplazar` de CANTIDAD a la baja de TODA STOPLMTP de
+    compra viva (un stop disparado sin llenar con más acciones de las que
+    quedan dejaría la cuenta LARGA al volver el precio, E2-01; el `share` sale
+    de `tipos.share_de_replace`, A-02) (con su
     `Programar("replace_verificar")`, 2h.8: el REPLACE de un STOPLMTP no
     está documentado) o, si DAS y los fills discrepan, `Consultar("GET
-    POSITIONS")` sin tocar nada (riesgo 8: una emergencia con más acciones
-    que el corto real deja la cuenta LARGA). `stops.plan` ya devuelve [] con
-    el ticker en `EstadoTicker.BS`.
-  * Sin protocolo si la emergencia (o el principal) cierra TODA la posición
-    (aclaración 24-sep): `se_activa` exige −neta > 0 y que la emergencia no
-    se haya llenado del todo. El `%OrderAct Execute` puede llegar ANTES que
-    los `%TRADE` (riesgo 8): una emergencia con `llenas` ≥ lo que queda corto
-    significa «fills en vuelo», no cisne negro.
-  * La emergencia se AJUSTA a lo que queda corto MENOS lo que ya está
+    POSITIONS")` sin tocar nada (riesgo 8: un stop con más acciones que el
+    corto real deja la cuenta LARGA). `stops.plan` ya devuelve [] con el
+    ticker en `EstadoTicker.BS`.
+  * Sin protocolo si los stops cierran TODA la posición (aclaración 24-sep):
+    `se_activa` exige −neta > 0 y que el stop que el precio pasó no se haya
+    llenado del todo. El `%OrderAct Execute` puede llegar ANTES que los
+    `%TRADE` (riesgo 8): ese stop con `llenas` ≥ lo que queda corto significa
+    «fills en vuelo», no cisne negro. Solo cuenta el stop del nivel que se
+    mira (se reconoce por su disparo): el de un nivel más bajo que llenó
+    antes, entero y legítimamente, no tapa el cisne negro del siguiente.
+  * Los stops se AJUSTAN a lo que queda corto MENOS lo que ya está
     comprando un cierre humano vivo: si no, un `/cerrar X N SI` en curso y el
-    ajuste se pisarían y al volver el precio las dos comprarían encima.
+    ajuste se pisarían y al volver el precio las dos comprarían encima. Cada
+    stop se capa por separado a ese objetivo (como el par de v3): con varios
+    niveles la suma puede pasar de lo que queda y, si llenan todos al volver,
+    R-C-11 vende el exceso.
   * `Reemplazar` de un stop lleva `serie="stops:X"` y la versión VIGENTE del
     objetivo (`pos.version_stops` o la que pase el decisor): con versión 0 el
     emisor la descartaría en silencio (injerto A §8.6).
@@ -58,12 +68,12 @@ LAS TRAMPAS.
     sobre el último: en un fogonazo el spread es del 25 %), así que se usa
     `salidas.orden_cierre_posicion`, no `salidas.orden_al_ask` (que limita a
     min(ask, last·1,05) y en un cisne negro no llenaría nunca). Si no hay
-    cotización NO se cancela nada: cancelar la emergencia sin poder comprar
+    cotización NO se cancela nada: cancelar los stops sin poder comprar
     dejaría la posición desnuda. E2-03: la compra de cierre sale DESPUÉS de
-    ver la emergencia Canceled/Executed (o reducida), nunca en la misma tanda
-    que su `Cancelar`/`Reemplazar` (esperas de 0,5 s). Con `N` (cierre por tramos, G6) la
-    emergencia NO se cancela: se baja a lo que va a quedar, para que el resto
-    siga cubierto y ella no compre también lo que compra el humano. En cada
+    ver los stops Canceled/Executed (o reducidos), nunca en la misma tanda
+    que sus `Cancelar`/`Reemplazar` (esperas de 0,5 s). Con `N` (cierre por tramos, G6)
+    los stops NO se cancelan: se bajan a lo que va a quedar, para que el resto
+    siga cubierto y ellos no compren también lo que compra el humano. En cada
     reintento las órdenes de cierre vivas se REEMPLAZAN al precio del momento
     (nunca «cancelar + nueva»: la carrera fill↔cancelación compraría de más,
     riesgo 5) y solo se envía orden nueva por lo que no cubren. Un reintento
@@ -94,6 +104,7 @@ from app.bot_das.reglas.stops import (
     COMANDO_POSICIONES,
     ESTADOS_VIVOS,
     VERIFICAR_REPLACE_EN_S,
+    conjunto_deseado,
     inferir_proposito,
     serie_stops,
 )
@@ -130,15 +141,18 @@ from app.bot_das.tipos import (
     Proposito,
     Reemplazar,
     TipoOrden,
+    tick_de,
 )
 
 # ── textos y claves públicas (R-G-01) ────────────────────────────────────
 TITULO_INFORME = "Posible BS"
-FRASE_EXITO = "POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP DE EMERGENCIA"   # R-G-01 (3), literal
-# Los 16 campos de R-G-01 (2) + «datos añadidos» del 20-sep, en el orden en que salen en el mensaje.
+# R-G-01 (3). Con el stop único (Jaume 29-sep) ya no hay «stop de emergencia»: la frase se refiere al stop que cerró.
+FRASE_EXITO = "POSICIÓN SACADA CON ÉXITO DENTRO DEL MARGEN DEL STOP"
+# Los 16 campos de R-G-01 (2) + «datos añadidos» del 20-sep, en el orden en que salen en el mensaje. Con el stop único
+# (Jaume 29-sep) los dos primeros son el stop que el precio pasó y el stop de cada nivel (antes: normal y emergencia).
 ETIQUETAS_INFORME: tuple[str, ...] = (
-    "Stop normal",                       # precio del stop normal (disparo y límite del principal)
-    "Stop de emergencia",                # precio del de emergencia (disparo y límite)
+    "Stop",                              # el primer stop que salta (disparo y límite): el que el precio ha pasado
+    "Stops por nivel",                   # un stop por nivel L (R-C-01 v4): acciones, disparo y límite
     "Precio",                            # precio en el momento del mensaje, y bid / ask
     "Minutos desde el evento",
     "Al descubierto",                    # acciones cortas que no se han podido cerrar
@@ -146,18 +160,18 @@ ETIQUETAS_INFORME: tuple[str, ...] = (
     "Pérdida total sobre la cuenta",     # % y $ contando lo ya perdido en los stops
     "Máxima subida vs primer stop",      # para saber ante qué fogonazo estamos
     "Actual vs primer stop",             # el slippage que nos comeríamos si cerramos ahora
-    "Pérdida ejecutada",                 # $ y % de lo que sí salió por el principal y la emergencia
+    "Pérdida ejecutada",                 # $ y % de lo que sí salió por los stops
     "Halts",                             # SOLO en sesión de mercado: parada, distancia a la banda LULD, k
     "Minutos desde el máximo",
     "Bajando",                           # si lleva N minutos bajando
     "Minutos hasta EOD",                 # de la estrategia
-    "Orden de emergencia",               # sigue viva, su precio límite
+    "Órdenes de stop",                   # siguen vivas, su disparo y su precio límite
     "Comandos",                          # recordatorio de comandos
 )
 CLAVE_AVISO_BS = "bs"                    # F7: Avisar(3, informe, clave="bs:X") en la activación
 CLAVE_INFORME = "bs_informe"             # F7: Temporizador("bs_informe"); el decisor la compone con el ticker
 CLAVE_CIERRE_REINTENTO = "bs_cierre"     # R-D-06 aplicado a /cerrar X [N] SI: «bs_cierre:X» con {intento, objetivo, signo, esperas}
-ESPERA_CANCEL_S = 0.5                    # E2-03: vuelta de espera hasta ver la emergencia Canceled/Executed (o reducida)
+ESPERA_CANCEL_S = 0.5                    # E2-03: vuelta de espera hasta ver los stops Canceled/Executed (o reducidos)
 ESPERAS_CANCEL_MAX = 6                   # E2-03: 6 × 0,5 s sin confirmación → aviso 3 «cerrar a mano», sin comprar
 _ESTADOS_LLENA = (EstadoOrden.EXECUTED,)
 _LADOS_VENTA = frozenset({"S", "SS", "SELL", "SHORT", "SHRT"})
@@ -173,20 +187,22 @@ _SD = "s/d"
 # ── activación (R-G-01, R-G-03 aclaración 24-sep) ────────────────────────
 def se_activa(pos: PosicionTicker, stops: Optional[NivelesStop], vivas: list[Orden], cot: Optional[Cotizacion],
               cfg_stops: Optional[Mapping] = None) -> bool:
-    """R-G-01 / R-G-03 (aclaración 24-sep): ¿arranca el protocolo de cisne negro en este ticker?
+    """R-G-01 v4 / R-G-03 (aclaración 24-sep): ¿arranca el protocolo de cisne negro en este ticker?
 
+    `stops` es el primer stop que salta (Jaume 29-sep, stop único: el del
+    nivel más bajo con acciones; lo calcula el decisor con `reglas.stops`).
     True solo si a la vez: (1) el precio (`last`; sin último, el `ask`, que es
-    lo que tendría que pagar la emergencia) está POR ENCIMA del límite de la
-    emergencia (`stops.emergencia_limite`); (2) quedan acciones cortas
-    (−neta de fills > 0); (3) la emergencia no se ha llenado del todo: una
-    emergencia (viva o ejecutada) con `llenas` ≥ qty (o Executed) y `llenas`
-    ≥ lo que sigue corto son fills en vuelo (riesgo 8), no un cisne negro; y
-    (4) el protocolo no está ya activo en el ticker (`pos.bs` o estado BS).
-    No exige que la emergencia exista: sin ella y con el precio por encima
-    de su límite la posición está igual de descubierta y decide el humano.
-    Sin niveles o sin precio → False. `cfg_stops` (opcional sobre §3.19)
-    sirve para reconocer con `stops.inferir_proposito` una emergencia sin
-    etiqueta (la del vigilante).
+    lo que tendría que pagar el stop) está POR ENCIMA de su límite
+    (`stops.limite`, L + 50 %): el stop está disparado y ya no puede llenar;
+    (2) quedan acciones cortas (−neta de fills > 0); (3) ESE stop no se ha
+    llenado del todo: una orden de stop suya (viva o ejecutada, reconocida por
+    su disparo ±1 tick) con `llenas` ≥ qty (o Executed) y `llenas` ≥ lo que
+    sigue corto son fills en vuelo (riesgo 8), no un cisne negro; y (4) el
+    protocolo no está ya activo en el ticker (`pos.bs` o estado BS). No exige
+    que el stop exista: sin él y con el precio por encima de su límite la
+    posición está igual de descubierta y decide el humano. Sin niveles o sin
+    precio → False. `cfg_stops` (opcional sobre §3.19) sirve para reconocer
+    con `stops.inferir_proposito` un stop sin etiqueta (el del vigilante).
     """
     if stops is None or pos.bs is not None or pos.estado is EstadoTicker.BS:
         return False
@@ -194,9 +210,11 @@ def se_activa(pos: PosicionTicker, stops: Optional[NivelesStop], vivas: list[Ord
     if n <= 0:
         return False
     precio = _precio_actual(cot)
-    if precio is None or not precio > stops.emergencia_limite:
+    if precio is None or not precio > stops.limite:
         return False
-    for o in _emergencias(pos, vivas, cfg_stops, incluir_ejecutadas=True):
+    for o in _stops_de_nivel(pos, vivas, cfg_stops, incluir_ejecutadas=True):
+        if not _mismo_disparo(o, stops.disparo):
+            continue
         llena = o.estado in _ESTADOS_LLENA or (o.qty > 0 and o.llenas >= o.qty)
         if llena and o.llenas >= n:
             return False
@@ -206,19 +224,18 @@ def se_activa(pos: PosicionTicker, stops: Optional[NivelesStop], vivas: list[Ord
 def activar(pos: PosicionTicker, stops: NivelesStop, ahora: float, precio: Optional[Decimal] = None) -> EstadoBS:
     """R-G-01: estado inicial del protocolo (F7). El decisor lo guarda en `pos.bs` y pone `pos.estado = BS`.
 
-    `primer_stop` = disparo del principal (el «primer stop» contra el que se
-    miden la subida máxima y el slippage del informe); `emergencia_limite`
-    el de `stops`; `max_visto` = el precio de la activación (`precio`,
-    opcional sobre §3.19) o, sin él, el límite de la emergencia (el precio
-    ya lo ha pasado). `ultimo_informe = ahora`: el aviso de la activación es
-    el informe cero de la cadencia. No muta `pos`.
+    `primer_stop` = disparo del primer stop que salta (contra el que se miden
+    la subida máxima y el slippage del informe); `limite_stop` = su límite (el
+    que el precio ha pasado, R-C-01 v4); `max_visto` = el precio de la
+    activación (`precio`, opcional sobre §3.19) o, sin él, ese límite (el
+    precio ya lo ha pasado). `ultimo_informe = ahora`: el aviso de la
+    activación es el informe cero de la cadencia. No muta `pos`.
     """
-    base = stops.emergencia_limite
+    base = stops.limite
     valido = _dec(precio)
     maximo = valido if valido is not None and valido > base else base
-    return EstadoBS(activado_en=float(ahora), primer_stop=stops.principal_disparo,
-                    emergencia_limite=stops.emergencia_limite, max_visto=maximo, informes=0,
-                    ultimo_informe=float(ahora), silenciado=False, perdido_realizado=_CERO)
+    return EstadoBS(activado_en=float(ahora), primer_stop=stops.disparo, limite_stop=stops.limite, max_visto=maximo,
+                    informes=0, ultimo_informe=float(ahora), silenciado=False, perdido_realizado=_CERO)
 
 
 def actualizar_maximo(bs: EstadoBS, precio: Optional[Decimal]) -> EstadoBS:
@@ -275,7 +292,9 @@ def informe(pos: PosicionTicker, bs: EstadoBS, stops: NivelesStop, cot: Optional
             cfg_stops: Optional[Mapping] = None) -> str:
     """R-G-01 (2): el mensaje «Posible BS <TICKER>» con los 16 campos de `ETIQUETAS_INFORME`, en HTML de Telegram.
 
-    Stops normal y de emergencia; precio (último) con bid/ask; minutos desde
+    El stop que el precio ha pasado (`stops`: disparo y límite) y el stop de
+    cada nivel (R-C-01 v4: acciones, disparo y límite, de
+    `stops.conjunto_deseado` con la banda de `simb`); precio (último) con bid/ask; minutos desde
     el evento; acciones al descubierto (−neta); pérdida latente del trade (%
     y $ al precio actual sobre el precio medio del corto); pérdida total
     sobre la cuenta (latente + ejecutada, % sobre `cuenta.equity` y $);
@@ -284,16 +303,16 @@ def informe(pos: PosicionTicker, bs: EstadoBS, stops: NivelesStop, cot: Optional
     que el ticker estuvo plano; sin fills, `bs.perdido_realizado`); halts
     SOLO en RTH (parada sí/no, distancia a la banda LULD, k del día); minutos
     desde el máximo y si lleva bajando; minutos hasta el EOD de la
-    estrategia; estado de la emergencia (viva, disparo, límite, acciones); y
-    el recordatorio de comandos. Lo que no se sabe sale como «s/d»: el
-    informe nunca lanza por un dato ausente.
+    estrategia; estado de las órdenes de stop (vivas, disparo, límite,
+    acciones); y el recordatorio de comandos. Lo que no se sabe sale como
+    «s/d»: el informe nunca lanza por un dato ausente.
     Parámetros solo por nombre añadidos sobre §3.19 (sin ellos esos campos
     salen «s/d»): `ahora` (monotónico; para los minutos desde el evento y
     desde el máximo; sin él se usa `cot.actualizada_en`), `vivas` (el estado
-    de la emergencia), `historial` ([(t_mono, precio)] del movimiento, para
-    el momento del máximo) y `cfg_stops` (para reconocer una emergencia del
-    vigilante). Todo texto variable va escapado (un ticker con «<» rompería
-    el mensaje entero).
+    de las órdenes de stop), `historial` ([(t_mono, precio)] del movimiento,
+    para el momento del máximo) y `cfg_stops` (los stops por nivel y el
+    reconocimiento de un stop del vigilante). Todo texto variable va escapado
+    (un ticker con «<» rompería el mensaje entero).
     """
     t = html.escape(str(pos.ticker), quote=False)
     precio = _precio_actual(cot)
@@ -321,8 +340,8 @@ def informe(pos: PosicionTicker, bs: EstadoBS, stops: NivelesStop, cot: Optional
     total_pct = total_usd / equity * _CIEN if total_usd is not None and equity is not None else None
 
     valores = [
-        f"{_fmt_precio(stops.principal_disparo)} (límite {_fmt_precio(stops.principal_limite)})",
-        f"{_fmt_precio(stops.emergencia_disparo)} (límite {_fmt_precio(stops.emergencia_limite)})",
+        f"{_fmt_precio(stops.disparo)} (límite {_fmt_precio(stops.limite)})",
+        _texto_stops_por_nivel(pos, cfg_stops, simb),
         f"{_fmt_precio(precio)} · bid {_fmt_precio(bid)} / ask {_fmt_precio(ask)}",
         _fmt_min(mono - bs.activado_en) if mono is not None else _SD,
         f"{_fmt_entero(descubiertas)} acciones cortas" + _texto_das(pos),
@@ -335,7 +354,7 @@ def informe(pos: PosicionTicker, bs: EstadoBS, stops: NivelesStop, cot: Optional
         _texto_desde_maximo(precio, maximo, mono, t_maximo),
         _texto_bajando(precio, maximo, mono, t_maximo),
         _texto_eod(ahora_et, eod),
-        _texto_emergencia(pos, vivas, cfg_stops),
+        _texto_stops_vivos(pos, vivas, cfg_stops),
         (f"/cerrar {pos.ticker} SI (todo, al ask con techo) · /cerrar {pos.ticker} N SI (solo N) · "
          f"/estado {pos.ticker} · /parar_avisos {pos.ticker} BS · /reanudar_avisos {pos.ticker} BS"),
     ]
@@ -350,22 +369,21 @@ def acciones_durante_bs(pos: PosicionTicker, vivas: list[Orden], cfg: Any, versi
     """R-G-03 (1) + R-C-11: SOLO se BAJA la cantidad de los stops de compra vivos a las acciones que siguen cortas.
 
     Objetivo = −neta (fills) − lo que ya compran los cierres humanos vivos
-    del ticker. E2-01: TODA STOPLMTP de COMPRA viva del ticker (las
-    emergencias, también las duplicadas, primero y de la más antigua a la más
-    nueva; después los principales, disparados o no, y cualquier otra) con
-    `id_das`, disparo y límite conocidos y más acciones vivas que el objetivo
-    → `Reemplazar(share de tipos.share_de_replace(objetivo, llenas), mismo
-    disparo, mismo límite, version, serie "stops:X")` +
-    `Programar("replace_verificar")` (2h.8). Así un principal disparado sin
-    llenar no compra sus 1.000 cuando solo quedan 400 cortas (la cuenta
-    quedaría LARGA). Nunca `EnviarOrden`, nunca `Cancelar`, nunca sube la
-    cantidad, nunca toca el precio ni el disparo (no persigue al precio), y NO
-    repone una emergencia que DAS haya cancelado (R-G-03 (2)). Sin corto,
-    objetivo ≤ 0 o nada que bajar → []. Neta de DAS conocida y distinta de la
-    de fills → solo `Consultar("GET POSITIONS")` (riesgo 8). `cfg` (Config o
-    dict) aporta el bloque `stops` para reconocer la emergencia del vigilante y
-    el interruptor `replace_share_es_abierta` (A-02); `version` es la versión
-    vigente del objetivo del ticker.
+    del ticker. E2-01: TODA STOPLMTP de COMPRA viva del ticker (el stop de
+    cada nivel, también los duplicados, y cualquier otra; de la más antigua a
+    la más nueva) con `id_das`, disparo y límite conocidos y más acciones
+    vivas que el objetivo → `Reemplazar(share de
+    tipos.share_de_replace(objetivo, llenas), mismo disparo, mismo límite,
+    version, serie "stops:X")` + `Programar("replace_verificar")` (2h.8). Así
+    un stop disparado sin llenar no compra sus 1.000 cuando solo quedan 400
+    cortas (la cuenta quedaría LARGA). Nunca `EnviarOrden`, nunca `Cancelar`,
+    nunca sube la cantidad, nunca toca el precio ni el disparo (no persigue al
+    precio), y NO repone un stop que DAS haya cancelado (R-G-03 (2)). Sin
+    corto, objetivo ≤ 0 o nada que bajar → []. Neta de DAS conocida y distinta
+    de la de fills → solo `Consultar("GET POSITIONS")` (riesgo 8). `cfg`
+    (Config o dict) aporta el interruptor `replace_share_es_abierta` del
+    bloque `stops` (A-02); `version` es la versión vigente del objetivo del
+    ticker.
     """
     n = -pos.neta
     if n <= 0:
@@ -375,44 +393,42 @@ def acciones_durante_bs(pos: PosicionTicker, vivas: list[Orden], cfg: Any, versi
     objetivo = n - _pendiente_cierre(pos, vivas, signo=-1)
     if objetivo <= 0:
         return []
-    cfg_stops = _bloque_stops(cfg)
-    emergencias = _emergencias(pos, vivas, cfg_stops, incluir_ejecutadas=False)
-    ids = {id(o) for o in emergencias}
-    otros = sorted((o for o in _unicas(vivas) if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS
-                    and _es_stop_compra(o) and id(o) not in ids), key=_antiguedad)
+    stops_vivos = sorted((o for o in _unicas(vivas) if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS
+                          and _es_stop_compra(o)), key=_antiguedad)
     acciones: list[Accion] = []
-    for o in emergencias + otros:
+    for o in stops_vivos:
         viva = _qty_viva(o)
         if viva <= objetivo or o.id_das is None or o.stop is None or o.precio is None:
             continue
-        nombre = "emergencia" if id(o) in ids else o.proposito.value
         acciones += [Reemplazar(id_das=o.id_das, token=o.token, qty=_share(o, objetivo, cfg), stop=o.stop,
                                 precio=o.precio,
-                                motivo=f"R-G-03 (1) / E2-01: {nombre} de {pos.ticker} a {objetivo} acciones (tenía {viva})",
+                                motivo=(f"R-G-03 (1) / E2-01: {o.proposito.value} de {pos.ticker} a {objetivo} acciones "
+                                        f"(tenía {viva})"),
                                 version=version, serie=serie_stops(pos.ticker)),
                      Programar(CLAVE_VERIFICAR_REPLACE, VERIFICAR_REPLACE_EN_S,
                                {"token": o.token, "ticker": pos.ticker, "qty_objetivo": objetivo})]
     return acciones
 
 
-def al_cerrar(pos: PosicionTicker, dentro_de_emergencia: bool, *,
+def al_cerrar(pos: PosicionTicker, dentro_del_margen: bool, *,
               texto_informe: Optional[str] = None) -> tuple[Optional[Avisar], bool]:
     """R-G-01 (3) y R-G-03 (reentrada): fin del protocolo. Devuelve (aviso, sin_reentrada_hasta_sigue).
 
-    Sin protocolo activo en el ticker → (None, False): si la emergencia o el
-    principal cerraron TODO no hubo cisne negro y el ticker sigue operable
-    (aclaración 24-sep). Con protocolo y la posición aún corta → (None,
-    True): el protocolo sigue. Con protocolo y la posición cerrada → veto de
-    reentrada hasta `/sigue X` (True) y, si cerró DENTRO del margen de la
-    emergencia, `Avisar(3)` con `FRASE_EXITO` UNA vez (clave «bs_fin:X»),
-    seguido del mismo informe si se pasa `texto_informe` (opcional sobre
-    §3.19). Si cerró de otro modo (el humano) → sin aviso.
+    Sin protocolo activo en el ticker → (None, False): si los stops cerraron
+    TODO no hubo cisne negro y el ticker sigue operable (aclaración 24-sep).
+    Con protocolo y la posición aún corta → (None, True): el protocolo sigue.
+    Con protocolo y la posición cerrada → veto de reentrada hasta `/sigue X`
+    (True) y, si cerró un STOP dentro de su límite (`dentro_del_margen`: el
+    precio volvió y el stop llenó, R-C-01 v4), `Avisar(3)` con `FRASE_EXITO`
+    UNA vez (clave «bs_fin:X»), seguido del mismo informe si se pasa
+    `texto_informe` (opcional sobre §3.19). Si cerró de otro modo (el humano)
+    → sin aviso.
     """
     if pos.bs is None and pos.estado is not EstadoTicker.BS:
         return None, False
     if pos.neta < 0:
         return None, True
-    if not dentro_de_emergencia:
+    if not dentro_del_margen:
         return None, True
     t = html.escape(str(pos.ticker), quote=False)
     texto = (f"<b>{FRASE_EXITO}</b> · {t}\n"
@@ -485,11 +501,11 @@ def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizac
     Primera llamada (`intento=0`): cierra `min(N, |neta|)` o todo. Orden de
     las acciones: `Anotar("cierre_humano")`; con discrepancia DAS/fills
     `Consultar("GET POSITIONS")` + `Anotar("discrepancia")`; si es TODO,
-    `Cancelar` de la emergencia PRIMERO y luego del resto de órdenes vivas del
-    ticker (para que no compren también, R-G-03 (3), R-C-11); si es SOLO N,
-    las STOPLMTP vivas con más acciones que las que van a quedar se
-    `Reemplazar`n a esa cantidad (la emergencia primero; el resto sigue
-    cubierto); después las órdenes de cierre vivas se reemplazan al precio
+    `Cancelar` de los stops de compra PRIMERO y luego del resto de órdenes
+    vivas del ticker (para que no compren también, R-G-03 (3), R-C-11); si es
+    SOLO N, las STOPLMTP vivas con más acciones que las que van a quedar se
+    `Reemplazar`n a esa cantidad (de la más antigua a la más nueva; el resto
+    sigue cubierto); después las órdenes de cierre vivas se reemplazan al precio
     del momento y lo que no cubren va en una `EnviarOrden` nueva
     (`salidas.orden_cierre_posicion`: COMPRA con límite ask·(1 + techo),
     techo `salidas.cerrar_todo.techo_pct`, 5 %, ruta cruzar, CIERRE_HUMANO);
@@ -505,15 +521,15 @@ def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizac
     si `n` no es un int > 0, `intento` < 0 u `objetivo` no es int. Parámetros solo por nombre
     añadidos sobre §3.19: `intento`, `objetivo`, `signo` y `esperas`.
     E2-03 (R-G-03 (3) «cancela ANTES … para no comprar de más», riesgo 5): la
-    compra de cierre NUNCA sale en la misma tanda que el `Cancelar` de la
-    emergencia (cierre total) o el `Reemplazar` que la baja (cierre de N).
+    compra de cierre NUNCA sale en la misma tanda que el `Cancelar` de los
+    stops (cierre total) o el `Reemplazar` que los baja (cierre de N).
     Mientras quede una orden viva que compraría encima (cierre total: toda
     compra viva del ticker que no es un cierre, con o sin `id_das`; de N: todo
     stop de compra vivo con más acciones que las que van a quedar) se emiten
     sus `Cancelar`/`Reemplazar`, `Anotar("cierre_humano_espera")` y
     `Programar("bs_cierre:X", ESPERA_CANCEL_S, {…, intento (el MISMO),
-    esperas + 1})`, sin `EnviarOrden`: la compra sale en la vuelta en que la
-    emergencia ya figura Canceled/Executed (o reducida), por la neta de fills de
+    esperas + 1})`, sin `EnviarOrden`: la compra sale en la vuelta en que los
+    stops ya figuran Canceled/Executed (o reducidos), por la neta de fills de
     ESE momento. Con `esperas` ≥ `ESPERAS_CANCEL_MAX` → `Avisar(3)` «cerrar a
     mano» (clave «…:cancel:agotado») y nada más: el bot no compra a ciegas.
     El decisor devuelve `esperas` de los datos del temporizador.
@@ -572,7 +588,7 @@ def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizac
     if limite is None:
         acciones += [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"{CLAVE_CIERRE_REINTENTO}:{ticker}:sin_cotizacion",
                             texto=(f"CERRAR {html.escape(ticker, quote=False)} A MANO: sin "
-                                   f"{'ask' if signo < 0 else 'bid'} en DAS; no se ha cancelado la emergencia ni "
+                                   f"{'ask' if signo < 0 else 'bid'} en DAS; no se ha cancelado ningún stop ni "
                                    f"enviado nada ({q} acciones por cerrar, R-D-06).")),
                      programa]
         return acciones
@@ -585,8 +601,8 @@ def cierre_humano(pos: PosicionTicker, vivas: list[Orden], cot: Optional[Cotizac
         bloqueantes = _bloqueantes_cierre_parcial(pos, vivas, abs(objetivo), signo)
     if bloqueantes:
         # E2-03 (R-G-03 (3) «cancela ANTES», riesgo 5): la compra de cierre NO sale en la misma tanda que el
-        # Cancelar/Reemplazar de la emergencia: si la emergencia llenara antes de que DAS procese la cancelación,
-        # las dos comprarían y la cuenta quedaría LARGA. Se espera a verla Canceled/Executed (o reducida).
+        # Cancelar/Reemplazar de los stops: si un stop llenara antes de que DAS procese la cancelación, los dos
+        # comprarían y la cuenta quedaría LARGA. Se espera a verlos Canceled/Executed (o reducidos).
         esperando = [o.token for o in bloqueantes]
         if esperas >= ESPERAS_CANCEL_MAX:
             acciones.append(Avisar(
@@ -659,7 +675,7 @@ def _dec_o_cero(x: Any) -> Decimal:
 
 
 def _precio_actual(cot: Optional[Cotizacion]) -> Optional[Decimal]:
-    """El último; sin último válido, el ask (lo que pagaría la emergencia)."""
+    """El último; sin último válido, el ask (lo que pagaría el stop)."""
     precio = _dec(getattr(cot, "last", None))
     return precio if precio is not None else _dec(getattr(cot, "ask", None))
 
@@ -755,9 +771,10 @@ def _es_stop_compra(o: Orden) -> bool:
     return o.lado == Lado.COMPRA and o.tipo == TipoOrden.STOP_LIMITE_PP
 
 
-def _emergencias(pos: PosicionTicker, vivas: Optional[Sequence[Any]], cfg_stops: Optional[Mapping],
-                 incluir_ejecutadas: bool) -> list[Orden]:
-    """STOPLMTP de compra del ticker con propósito emergencia (o sin etiqueta y reconocida como tal), más antigua primero."""
+def _stops_de_nivel(pos: PosicionTicker, vivas: Optional[Sequence[Any]], cfg_stops: Optional[Mapping],
+                    incluir_ejecutadas: bool) -> list[Orden]:
+    """STOPLMTP de compra del ticker que son el stop de un nivel (R-C-01 v4: propósito STOP, o sin etiqueta —la del
+    vigilante— y reconocida como tal), más antigua primero."""
     estados = ESTADOS_VIVOS + (_ESTADOS_LLENA if incluir_ejecutadas else ())
     cfg = cfg_stops if isinstance(cfg_stops, Mapping) else {}
     niveles: Optional[list[Decimal]] = None
@@ -770,10 +787,19 @@ def _emergencias(pos: PosicionTicker, vivas: Optional[Sequence[Any]], cfg_stops:
             if niveles is None:
                 niveles = _niveles_lotes(pos)
             proposito = inferir_proposito(o, niveles, cfg)
-        if proposito is Proposito.STOP_EMERGENCIA:
+        if proposito is Proposito.STOP:
             encontradas.append(o)
     encontradas.sort(key=_antiguedad)
     return encontradas
+
+
+def _mismo_disparo(o: Orden, disparo: Decimal) -> bool:
+    """El disparo de la orden está a ±1 tick de `disparo` (el tick del precio de referencia): es el stop de ESE nivel."""
+    propio = _dec(o.stop)
+    referencia = _dec(disparo)
+    if propio is None or referencia is None:
+        return False
+    return abs(propio - referencia) <= tick_de(referencia)
 
 
 def _cierres_vivos(pos: PosicionTicker, vivas: Optional[Sequence[Any]], signo: int) -> list[Orden]:
@@ -834,17 +860,20 @@ def _limite_cierre(cot: Optional[Cotizacion], signo: int, techo: Decimal) -> Opt
 
 def _cancelaciones_cierre_total(pos: PosicionTicker, vivas: Optional[Sequence[Any]], cierres: list[Orden],
                                 cfg: Any) -> list[Accion]:
-    """R-G-03 (3): la emergencia PRIMERO y luego el resto de órdenes vivas del ticker (salvo los cierres, que se reemplazan)."""
-    emergencias = [o for o in _emergencias(pos, vivas, _bloque_stops(cfg), incluir_ejecutadas=False)
-                   if o.id_das is not None]
-    ids_emergencia = {id(o) for o in emergencias}
+    """R-G-03 (3): los stops de compra PRIMERO (de la más antigua a la más nueva) y luego el resto de órdenes vivas del ticker
+    (salvo los cierres, que se reemplazan). `cfg` se conserva por el contrato (el bloque `stops` ya no hace falta aquí)."""
     ids_cierre = {id(o) for o in cierres}
+    stops_vivos = sorted((o for o in _unicas(vivas)
+                          if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS and o.id_das is not None
+                          and _es_stop_compra(o) and id(o) not in ids_cierre), key=_antiguedad)
+    ids_stops = {id(o) for o in stops_vivos}
     resto = sorted((o for o in _unicas(vivas)
                     if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS and o.id_das is not None
-                    and id(o) not in ids_emergencia and id(o) not in ids_cierre), key=_antiguedad)
+                    and id(o) not in ids_stops and id(o) not in ids_cierre), key=_antiguedad)
     acciones: list[Accion] = [Cancelar(id_das=o.id_das, token=o.token,   # type: ignore[arg-type]
-                                       motivo=f"R-G-03 (3): /cerrar {pos.ticker} SI: la emergencia se cancela ANTES")
-                              for o in emergencias]
+                                       motivo=(f"R-G-03 (3): /cerrar {pos.ticker} SI: el {o.proposito.value} se cancela "
+                                               f"ANTES"))
+                              for o in stops_vivos]
     acciones += [Cancelar(id_das=o.id_das, token=o.token,   # type: ignore[arg-type]
                           motivo=f"R-D-06 / R-C-11: /cerrar {pos.ticker} SI: {o.proposito.value} no debe comprar de más")
                  for o in resto]
@@ -890,15 +919,14 @@ def _share(o: Orden, abierta: int, cfg: Any) -> int:
 
 def _ajustes_cierre_parcial(pos: PosicionTicker, vivas: Optional[Sequence[Any]], quedan: int, signo: int,
                             cfg: Any) -> list[Accion]:
-    """`/cerrar X N SI`: ningún stop vivo cubre más de lo que va a quedar; la emergencia primero (R-G-03 (1): solo cantidad)."""
+    """`/cerrar X N SI`: ningún stop vivo cubre más de lo que va a quedar, de la más antigua a la más nueva (R-G-03 (1): solo
+    cantidad)."""
     if signo >= 0:
         return []
-    emergencias = _emergencias(pos, vivas, _bloque_stops(cfg), incluir_ejecutadas=False)
-    ids = {id(o) for o in emergencias}
-    otros = sorted((o for o in _unicas(vivas) if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS
-                    and _es_stop_compra(o) and id(o) not in ids), key=_antiguedad)
+    stops_vivos = sorted((o for o in _unicas(vivas) if o.ticker == pos.ticker and o.estado in ESTADOS_VIVOS
+                          and _es_stop_compra(o)), key=_antiguedad)
     acciones: list[Accion] = []
-    for o in emergencias + otros:
+    for o in stops_vivos:
         viva = _qty_viva(o)
         if viva <= quedan or o.id_das is None or o.stop is None or o.precio is None:
             continue
@@ -1049,18 +1077,28 @@ def _texto_eod(ahora_et: datetime, eod: Optional[datetime]) -> str:
     return f"{_fmt_min(segundos)} (EOD {e.astimezone(ET):%H:%M})"
 
 
-def _texto_emergencia(pos: PosicionTicker, vivas: Optional[list[Orden]], cfg_stops: Optional[Mapping]) -> str:
+def _texto_stops_por_nivel(pos: PosicionTicker, cfg_stops: Optional[Mapping], simb: Optional[EstadoSimbolo]) -> str:
+    """R-C-01 v4: el stop de cada nivel (acciones, disparo y límite) según `stops.conjunto_deseado` con la banda de `simb`."""
+    cfg = cfg_stops if isinstance(cfg_stops, Mapping) else {}
+    try:
+        deseados = conjunto_deseado(pos, cfg, getattr(simb, "limit_up", None))
+    except (TypeError, ValueError):
+        return _SD                                   # el informe nunca lanza por un dato raro
+    if not deseados:
+        return _SD
+    return " · ".join(f"{_fmt_entero(d.qty)} a {_fmt_precio(d.disparo)} (límite {_fmt_precio(d.limite)})"
+                      for d in deseados)
+
+
+def _texto_stops_vivos(pos: PosicionTicker, vivas: Optional[list[Orden]], cfg_stops: Optional[Mapping]) -> str:
+    """Las órdenes de stop de nivel vivas (R-C-01 v4: una por nivel): estado, disparo, límite y acciones de cada una."""
     if vivas is None:
         return _SD
-    emergencias = _emergencias(pos, vivas, cfg_stops, incluir_ejecutadas=False)
-    if not emergencias:
-        return "NO está viva (DAS la canceló o no existe): no se repone (R-G-03)"
-    e = emergencias[0]
-    texto = (f"viva ({e.estado.value}) · disparo {_fmt_precio(_dec(e.stop))} · límite {_fmt_precio(_dec(e.precio))} · "
-             f"{_fmt_entero(_qty_viva(e))} acciones")
-    if len(emergencias) > 1:
-        texto += f" · ¡{len(emergencias)} emergencias vivas!"
-    return texto
+    vivos = _stops_de_nivel(pos, vivas, cfg_stops, incluir_ejecutadas=False)
+    if not vivos:
+        return "NINGUNA viva (DAS las canceló o no existen): no se reponen (R-G-03)"
+    return " · ".join(f"viva ({o.estado.value}) disparo {_fmt_precio(_dec(o.stop))} límite {_fmt_precio(_dec(o.precio))} "
+                      f"{_fmt_entero(_qty_viva(o))} acciones" for o in vivos)
 
 
 def _escapar_valor(valor: str) -> str:

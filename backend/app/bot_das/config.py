@@ -138,8 +138,7 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
         "salida_motor": ("enum",) + SALIDA_MOTOR,
         "sl_motor_con_posicion_abierta": "ruta",
     },
-    "stops": {"tipo": ("enum",) + TIPOS_STOP, "principal_limite_pct": "num", "emergencia_disparo_pct": "num",
-              "emergencia_limite_pct": "num", "proteccion_desconocidas_pct": "num+",
+    "stops": {"tipo": ("enum",) + TIPOS_STOP, "limite_pct": "num+", "proteccion_desconocidas_pct": "num+",
               "margen_bajo_limit_up_pct": "num0", "reintentos": "int0", "separacion_reintentos_s": "num0",
               "ventana_min": "num0", "subida_max_cierre_pct": "num+", "comprobacion_s": "num+",
               "debounce_s": "num0", "tipo_esperado_en_order": "str?", "ruta": "ruta",
@@ -173,6 +172,9 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
     "alertas_grupo_a": {"activo": "bool", "prealerta_simple": "bool", "prealerta_freno_min": "num0",
                         "prealerta_ticks": "bool"},
 }
+# Jaume 29-sep (stop único, R-C-01 v4): las claves del par principal + emergencia de v3. Un cuadro que las traiga NO
+# carga (`validar`): hoy hay UN stop por nivel con `stops.limite_pct`.
+CLAVES_STOPS_V3: tuple[str, ...] = ("principal_limite_pct", "emergencia_disparo_pct", "emergencia_limite_pct")
 # Hojas OPCIONALES (ruta → defecto): si faltan, el fichero sigue siendo válido y `_construir` pone el defecto;
 # si están, se validan con su tipo del esquema. Así un fichero viejo (y config_ejemplo.json, con su sha256) vale.
 _OPCIONALES: dict[str, Any] = {
@@ -474,11 +476,15 @@ def validar(crudo: dict) -> list[str]:
 
     Comprueba: esquema (claves de §7 y su tipo), `schema_version`, `sha256` =
     hash_canonico(resto), `estrategias_hash` y cada `definition_hash`, y los
-    rangos imposibles de §7: 0 < principal_limite_pct < emergencia_disparo_pct
-    < emergencia_limite_pct (R-C-01 v3), k_max ≥ 1 (R-F-01),
-    tope_gasto_pct_cuenta ∈ (0, 10] (R-H-03), horas HH:MM, fase ∈ Fase
-    (R-O-03; «demo» ya no existe), riesgo_usd > 0 si ejecutar, rutas no
+    rangos imposibles de §7: stops.limite_pct > 0 (R-C-01 v4), k_max ≥ 1
+    (R-F-01), tope_gasto_pct_cuenta ∈ (0, 10] (R-H-03), horas HH:MM, fase ∈
+    Fase (R-O-03; «demo» ya no existe), riesgo_usd > 0 si ejecutar, rutas no
     vacías, tz = America/New_York. Trampa: booleanos no cuentan como números.
+    Un cuadro con las claves del par de stops de v3 (`CLAVES_STOPS_V3`:
+    principal_limite_pct, emergencia_disparo_pct, emergencia_limite_pct) NO
+    carga (Jaume 29-sep, stop único): el esquema ignora las claves que no
+    conoce, y un fichero viejo arrancaría con el 50 % por defecto sin que
+    nadie lo hubiera decidido; el error dice qué hacer.
     """
     if not isinstance(crudo, dict):
         return ["la configuración no es un objeto JSON"]
@@ -498,10 +504,10 @@ def validar(crudo: dict) -> list[str]:
         errores.append(f"horario.tz: {horario['tz']!r}: el bot trabaja en {TZ_BOT}")
     stops = crudo.get("stops")
     if isinstance(stops, dict):
-        p, d, lim = (stops.get(k) for k in ("principal_limite_pct", "emergencia_disparo_pct", "emergencia_limite_pct"))
-        if all(_es_num(v) for v in (p, d, lim)) and not (0 < p < d < lim):
-            errores.append(f"stops: se exige 0 < principal_limite_pct ({p}) < emergencia_disparo_pct ({d}) "
-                           f"< emergencia_limite_pct ({lim}) (R-C-01 v3)")
+        viejas = [k for k in CLAVES_STOPS_V3 if k in stops]
+        if viejas:
+            errores.append(f"stops: cuadro de DOS stops ({', '.join(viejas)}): desde el 29-sep hay un solo stop por "
+                           f"nivel, usa stops.limite_pct (R-C-01 v4, Jaume 29-sep)")
     halts = crudo.get("halts")
     if isinstance(halts, dict) and _es_int(halts.get("k_max")) and halts["k_max"] < 1:
         errores.append(f"halts.k_max: {halts['k_max']} debe ser ≥ 1 (R-F-01)")
@@ -874,7 +880,7 @@ def _diferencias_tupla(vieja: Config, nueva: Config) -> list[tuple[tuple[str, ..
 def diferencias(vieja: Config, nueva: Config) -> list[tuple[str, Any, Any, bool]]:
     """CM2 / CM3: [(ruta con puntos, antes, despues, caliente)] entre dos configs, en orden estable.
 
-    Rutas: "vigilando", "stops.principal_limite_pct", "estrategias.<id>.riesgo_usd";
+    Rutas: "vigilando", "stops.limite_pct", "estrategias.<id>.riesgo_usd";
     una estrategia que aparece o desaparece sale como "estrategias.<id>" (con
     None en el lado que falta; nunca en caliente: R-O-01). Los campos
     derivados de `definition` no salen sueltos: los representa

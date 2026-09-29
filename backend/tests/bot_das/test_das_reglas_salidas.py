@@ -1324,7 +1324,7 @@ def test_R3_SAL_1_das_plana_confirmada_se_trata_como_cerrada(fase, cancela):
     cancela en el paso 1 (una compra viva sobre una cuenta plana la dejaría larga)."""
     pos = _pos("X", neta_fills=-100, neta_das=0, lotes=[_lote("L1", ticker="X")], das_en=DESPUES, fill_en=FILL)
     acciones = cerrar_todo({"X": pos}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
-                           vivas_de=_vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP_PRINCIPAL)]}), fase=fase)
+                           vivas_de=_vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP)]}), fase=fase)
     assert not any(isinstance(a, (EnviarOrden, Programar, Avisar)) for a in acciones)
     assert any(isinstance(a, CancelarTicker) for a in acciones) is cancela
     nota = [a.datos for a in acciones if isinstance(a, Anotar) and a.tipo == "cerrar_todo_cerrada_en_das"]
@@ -1393,7 +1393,7 @@ def _vivas_de(tabla: dict[str, list[Orden]]):
 
 def test_D2_03_con_algo_vivo_cancela_y_espera_el_canceled():
     pos = {"X": _pos("X", neta_fills=-100)}
-    vivas = _vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP_PRINCIPAL)]})
+    vivas = _vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP)]})
     acciones = cerrar_todo(pos, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG, _tokens(), HORA,
                            vivas_de=vivas, fase=salidas.FASE_CANCELAR)
     assert [type(a) for a in acciones if not isinstance(a, Anotar)] == [CancelarTicker, Programar]
@@ -1429,7 +1429,7 @@ def test_D2_03_reintento_con_la_orden_anterior_viva_no_compra_hasta_el_canceled(
 @pytest.mark.parametrize("vivas, esperado", [
     ([], 100),
     ([_viva(5, 100, lvqty=40, llenas=60)], 60),
-    ([_viva(5, 30, proposito=Proposito.STOP_EMERGENCIA)], 70),
+    ([_viva(5, 30, proposito=Proposito.STOP)], 70),
     ([_viva(5, 100, lado=Lado.CORTO)], 100),                     # una venta no compra: no descuenta
     ([_viva(5, 100, estado=EstadoOrden.CANCELED)], 100),         # terminada: no cuenta
     ([_viva(5, 100, ticker="OTRO")], 100),
@@ -1442,8 +1442,8 @@ def test_D2_03_enviar_descuenta_las_compras_en_vuelo(vivas, esperado):
 
 def test_D2_03_sin_fase_descuenta_lo_vivo_en_la_misma_llamada():
     """Contrato anterior (fase None): cancelar y enviar juntos, pero sin comprar lo que los stops vivos aún pueden comprar."""
-    vivas = _vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP_PRINCIPAL),
-                             _viva(6, 100, proposito=Proposito.STOP_EMERGENCIA)]})
+    vivas = _vivas_de({"X": [_viva(5, 100, proposito=Proposito.STOP),
+                             _viva(6, 100, proposito=Proposito.STOP)]})
     acciones = cerrar_todo({"X": _pos("X", neta_fills=-100)}, _cot_de({"X": _cot("10", "10.1", ticker="X")}), CFG,
                            _tokens(), HORA, vivas_de=vivas)
     assert isinstance(acciones[1], CancelarTicker) and not any(isinstance(a, EnviarOrden) for a in acciones)
@@ -1457,7 +1457,7 @@ def test_D2_03_fase_desconocida_lanza():
 
 # ── D2-04: al agotar se retira la orden de cierre viva antes de avisar ───
 def test_D2_04_agotado_cancela_la_orden_de_cierre_por_id_antes_de_avisar():
-    vivas = _vivas_de({"X": [_viva(5, 100, id_das=901), _viva(6, 100, proposito=Proposito.STOP_EMERGENCIA,
+    vivas = _vivas_de({"X": [_viva(5, 100, id_das=901), _viva(6, 100, proposito=Proposito.STOP,
                                                                 id_das=902)]})
     acciones = cerrar_todo({"X": _pos("X", neta_fills=-100)}, _cot_de({"X": _cot("10", "10.1", last="10", ticker="X")}),
                            CFG, _tokens(), HORA, intento=3, vivas_de=vivas)

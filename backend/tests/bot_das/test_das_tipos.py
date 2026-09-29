@@ -62,9 +62,9 @@ def test_orden_mercado_valida():
 
 
 def test_orden_stoplmtp_valida_compra():
-    o = _orden(lado=Lado.COMPRA, tipo=TipoOrden.STOP_LIMITE_PP, stop=D("10.00"), precio=D("10.30"),
-               proposito=Proposito.STOP_PRINCIPAL, nivel=D("10.00"))
-    assert o.stop == D("10.00") and o.precio == D("10.30")
+    o = _orden(lado=Lado.COMPRA, tipo=TipoOrden.STOP_LIMITE_PP, stop=D("10.00"), precio=D("15.00"),
+               proposito=Proposito.STOP, nivel=D("10.00"))
+    assert o.stop == D("10.00") and o.precio == D("15.00")
 
 
 def test_orden_stoplmtp_limite_igual_al_disparo_se_admite():
@@ -189,9 +189,7 @@ def test_tick_de_y_al_tick_rechazan_no_finitos(precio):
 
 # ── constantes por defecto = tabla de reglas VIGENTES (riesgos 21 y 32) ──
 @pytest.mark.parametrize("nombre,esperado", [
-    pytest.param("STOP_PRINCIPAL_LIMITE_PCT", D("3"), id="R-C-01-v3-limite-principal-L+3%"),
-    pytest.param("STOP_EMERGENCIA_DISPARO_PCT", D("13"), id="R-C-01-v3-disparo-emergencia-L+13%"),
-    pytest.param("STOP_EMERGENCIA_LIMITE_PCT", D("63"), id="R-C-01-v3-limite-emergencia-L+63%"),
+    pytest.param("STOP_LIMITE_PCT", D("50"), id="R-C-01-v4-stop-unico-limite-L+50%"),
     pytest.param("STOP_PROTECCION_PCT", D("25"), id="R-C-10-(4)-proteccion-20-30%"),
     pytest.param("STOP_MARGEN_BAJO_LIMIT_UP_PCT", D("1.5"), id="R-F-02-bajo-la-banda-1-2%"),
     pytest.param("ENTRADA_AGREGAR_S", 60, id="R-B-01-v3-agregar-60s"),
@@ -262,9 +260,12 @@ def test_constante_vigente(nombre, esperado):
     assert type(valor) is type(esperado)   # Decimal donde toca, nunca float en porcentajes de precio
 
 
-def test_cadena_de_stops_ordenada():
-    """R-C-01 v3: 0 < límite principal < disparo emergencia < límite emergencia (lo mismo exige config.validar)."""
-    assert D("0") < tipos.STOP_PRINCIPAL_LIMITE_PCT < tipos.STOP_EMERGENCIA_DISPARO_PCT < tipos.STOP_EMERGENCIA_LIMITE_PCT
+def test_stop_unico_sin_constantes_del_par():
+    """R-C-01 v4 (Jaume 29-sep, stop único): un solo margen (límite L + 50 %, > 0, lo mismo exige config.validar);
+    las constantes del principal y la emergencia de v3 ya no existen (nadie puede usarlas por error)."""
+    assert tipos.STOP_LIMITE_PCT > 0
+    for vieja in ("STOP_PRINCIPAL_LIMITE_PCT", "STOP_EMERGENCIA_DISPARO_PCT", "STOP_EMERGENCIA_LIMITE_PCT"):
+        assert not hasattr(tipos, vieja), vieja
 
 
 # ── enumeraciones ───────────────────────────────────────────────────────
@@ -289,9 +290,9 @@ def test_origenes_niveles_grupos():
 
 
 def test_propositos_y_clases_de_salida():
-    assert len(Proposito) == 18 and Proposito.DESCONOCIDA.value == "desconocida"
-    assert {p.value for p in Proposito} == {
-        "entrada_agregar", "entrada_cruce", "stop_principal", "stop_emergencia", "stop_proteccion", "tp_agregar",
+    assert len(Proposito) == 17 and Proposito.DESCONOCIDA.value == "desconocida"
+    assert {p.value for p in Proposito} == {                                  # R-C-01 v4: «stop» sustituye al par
+        "entrada_agregar", "entrada_cruce", "stop", "stop_proteccion", "tp_agregar",
         "tp_cruce", "hora_agregar", "hora_ask", "salida_motor_agregar", "salida_motor_cruce", "halt_open",
         "halt_pm_limite", "halt_banda", "venta_exceso", "cierre_humano", "cierre_reinicio", "desconocida"}
     assert {c.value for c in ClaseSalida} == {"tp", "hora", "eod", "stop", "stop_lote", "reduce", "motor", "halt",
@@ -303,7 +304,8 @@ def test_propositos_y_clases_de_salida():
 
 
 def test_enums_de_texto_comparan_con_su_valor():
-    assert Fase.SOMBRA == "sombra" and Lado.CORTO == "SS" and Proposito.STOP_PRINCIPAL == "stop_principal"
+    assert Fase.SOMBRA == "sombra" and Lado.CORTO == "SS" and Proposito.STOP == "stop"
+    assert not hasattr(Proposito, "STOP_PRINCIPAL") and not hasattr(Proposito, "STOP_EMERGENCIA")   # Jaume 29-sep
 
 
 # ── acciones, mensajes y dataclasses ────────────────────────────────────
@@ -359,7 +361,7 @@ def test_lote_e_intento_defaults():
     lote = Lote(id="XYZ|prueba-1|2026-09-25 09:30:00|entrada", strategy_id="prueba-1", estrategia="PM (A) prueba",
                 ticker="XYZ", direccion="Short", pedidas=1200)
     assert lote.estado is EstadoLote.ABRIENDO and lote.llenas == 0 and lote.precio_medio == D("0")
-    assert lote.principal_consumido is False and lote.version_estrategia == ""
+    assert not hasattr(lote, "principal_consumido") and lote.version_estrategia == ""   # Jaume 29-sep: stop único
     intento = IntentoEntrada(ticker="XYZ", lotes=[lote.id], qty_total=1200, bid_senal=D("3.44"), ask_senal=D("3.46"),
                              precio_senal=D("3.45"), t_cierre_vela=1000.0, t_limite=1060.0)
     assert intento.fase is FaseIntento.AGREGANDO and intento.cfg_congelada is None
@@ -375,7 +377,7 @@ def test_lote_e_intento_defaults():
                         "ecn_fee", "simulado"], id="Fill"),
     pytest.param(Lote, ["id", "strategy_id", "estrategia", "ticker", "direccion", "pedidas", "llenas", "precio_medio",
                         "nivel_stop", "riesgo_usd", "estado", "reentrada_n", "entrada_idx", "nivel_piramide",
-                        "hora_salida", "eod", "tp_pendiente", "principal_consumido", "version_estrategia"], id="Lote"),
+                        "hora_salida", "eod", "tp_pendiente", "version_estrategia"], id="Lote"),
     pytest.param(Senal, ["clase", "ticker", "id", "evento", "momento", "recibida_en", "recuperada", "estimacion",
                          "precio_radar", "feed", "origen"], id="Senal"),
     pytest.param(Cotizacion, ["ticker", "bid", "ask", "bsz", "asz", "last", "volumen", "vwap", "hi", "lo",
@@ -383,7 +385,7 @@ def test_lote_e_intento_defaults():
     pytest.param(EstadoSimbolo, ["ticker", "ssr", "ta", "tat", "limit_down", "limit_up", "consultado_en", "halt_desde",
                                  "k_halts_up", "precio_parada", "orden_open_enviada", "shortable", "tasa_corta",
                                  "reg_sho"], id="EstadoSimbolo"),
-    pytest.param(EstadoBS, ["activado_en", "primer_stop", "emergencia_limite", "max_visto", "informes",
+    pytest.param(EstadoBS, ["activado_en", "primer_stop", "limite_stop", "max_visto", "informes",
                             "ultimo_informe", "silenciado", "perdido_realizado"], id="EstadoBS"),
     pytest.param(PosicionTicker, ["ticker", "lotes", "neta_fills", "neta_das", "avg_das", "tipo_das", "neta_das_en",
                                   "estado", "motivo_estado", "desde", "bs", "intento", "senal_guardada_halt",
@@ -417,8 +419,7 @@ def test_lote_e_intento_defaults():
     pytest.param(Comando, ["nombre", "args", "chat_id", "requiere", "id", "texto"], id="Comando"),
     pytest.param(Registro, ["v", "seq", "t", "proceso", "tipo", "datos"], id="Registro"),
     pytest.param(Ficha, ["ticker", "list_date", "sic_code", "tipo", "market_cap", "nombre"], id="Ficha-ajuste-a"),
-    pytest.param(NivelesStop, ["principal_disparo", "principal_limite", "emergencia_disparo", "emergencia_limite",
-                               "bajo_banda"], id="NivelesStop-ajuste-a"),
+    pytest.param(NivelesStop, ["disparo", "limite", "bajo_banda"], id="NivelesStop-v4-stop-unico"),
     pytest.param(StopDeseado, ["proposito", "nivel", "qty", "disparo", "limite"], id="StopDeseado-ajuste-a"),
     pytest.param(tipos.OrdenDescartada, ["token", "serie", "version", "motivo", "ticker"], id="OrdenDescartada-D2a-06"),
 ])
@@ -441,14 +442,12 @@ def test_campos_con_default_van_despues_de_los_obligatorios():
 
 def test_ficha_niveles_y_stop_deseado_inmutables():
     ficha = Ficha(ticker="XYZ", list_date=None, sic_code="6770", tipo="CS", market_cap=D("12000000"), nombre="XYZ Corp")
-    niveles = NivelesStop(principal_disparo=D("10.00"), principal_limite=D("10.30"), emergencia_disparo=D("11.30"),
-                          emergencia_limite=D("16.30"), bajo_banda=False)
-    deseado = StopDeseado(proposito=Proposito.STOP_PRINCIPAL, nivel=D("10.00"), qty=1200, disparo=D("10.00"),
-                          limite=D("10.30"))
+    niveles = NivelesStop(disparo=D("10.00"), limite=D("15.00"), bajo_banda=False)
+    deseado = StopDeseado(proposito=Proposito.STOP, nivel=D("10.00"), qty=1200, disparo=D("10.00"), limite=D("15.00"))
     for objeto, campo in ((ficha, "ticker"), (niveles, "bajo_banda"), (deseado, "qty")):
         with pytest.raises(FrozenInstanceError):
             setattr(objeto, campo, None)
-    assert niveles.principal_disparo < niveles.principal_limite < niveles.emergencia_disparo < niveles.emergencia_limite
+    assert niveles.disparo < niveles.limite
 
 
 # ── fixtures/config_ejemplo.json: hash canónico FIJADO aquí (lote 0) ─────
@@ -494,9 +493,7 @@ def test_config_ejemplo_tiene_todos_los_bloques_de_seccion_7(config_cruda):
 
 
 @pytest.mark.parametrize("ruta,constante", [
-    pytest.param("stops.principal_limite_pct", "STOP_PRINCIPAL_LIMITE_PCT", id="R-C-01-v3-principal"),
-    pytest.param("stops.emergencia_disparo_pct", "STOP_EMERGENCIA_DISPARO_PCT", id="R-C-01-v3-emergencia-disparo"),
-    pytest.param("stops.emergencia_limite_pct", "STOP_EMERGENCIA_LIMITE_PCT", id="R-C-01-v3-emergencia-limite"),
+    pytest.param("stops.limite_pct", "STOP_LIMITE_PCT", id="R-C-01-v4-stop-unico-limite"),
     pytest.param("stops.proteccion_desconocidas_pct", "STOP_PROTECCION_PCT", id="R-C-10-proteccion"),
     pytest.param("stops.margen_bajo_limit_up_pct", "STOP_MARGEN_BAJO_LIMIT_UP_PCT", id="R-F-02"),
     pytest.param("stops.reintentos", "STOP_REINTENTOS", id="R-C-03-reintentos"),

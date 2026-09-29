@@ -6,8 +6,8 @@ que llegan `%IPOS/%IORDER/%ITRADE` de TODA la cuenta, y con ello lleva un libro
 propio de posiciones y órdenes. Cada segundo junta la `vigilancia.Foto`
 (libro de DAS + lotes de los diarios + edad del latido del ejecutor +
 cotizaciones de DAS + locates + equity), llama a `reglas.vigilancia.comprobar`
-y ejecuta lo que devuelve: reponer el par principal + emergencia si el
-ejecutor calla (plan B de R-C-07), proteger una posición que ningún diario
+y ejecuta lo que devuelve: reponer el stop de cada nivel (stop único, Jaume
+29-sep) si el ejecutor calla (plan B de R-C-07), proteger una posición que ningún diario
 conoce (R-C-10 caso 4), cancelar sobrantes, VENDER SOLO el exceso de una
 cuenta que quedó LARGA con el ejecutor muerto (E2c-02, R-C-11 (3)), avisar
 (R-C-08 a, R-H-02/03, 2c) y, si no puede enviar, pedir al supervisor que
@@ -41,8 +41,10 @@ LAS TRAMPAS.
     (riesgo 11, R-C-03): entre dos intentos pasa `stops.separacion_reintentos_s`
     y, con `stops.reintentos` rechazos dentro de `stops.ventana_min` minutos,
     el ticker queda en CONTROL HUMANO (aviso 3, sin más envíos) hasta que
-    caducan o la posición desaparece. NO se olvidan porque la emergencia
-    cubra la posición: el que se rechaza puede ser el principal.
+    caducan (entonces lo vuelve a intentar: con el stop único, unas
+    acciones sin su stop no tienen otra red) o la posición desaparece. NO
+    se olvidan porque otro stop cubra parte de la posición: el que se
+    rechaza puede ser el de otro nivel.
   * Tokens del vigilante (`Origen.VIGILANTE`, R-C-07 «quién la puso»): el
     generador arranca en el último seq del día que aparezca en CUALQUIER
     registro de los dos diarios (un token no se reutiliza tras un reinicio,

@@ -6,8 +6,8 @@ QUÉ HACE
   1 rutas (`GET RouteStatus`), 2 `GET SymStatus`/`GET LDLU` con y sin
   símbolo, 3 el `%ORDER` crudo de un STOPLMTP (y la ZONA HORARIA de DAS,
   L0-05: si su hora no casa con ET se aborta), 4 si un `REPLACE` de cantidad
-  conserva el pre/post, 5 PostOnly en SAGEREB y SMAT, 6 el BP que retienen
-  los dos stops, 7 qué llega por una conexión watch y si una segunda
+  conserva el pre/post, 5 PostOnly en SAGEREB y SMAT, 6 el BP que retiene
+  el stop (único desde el 29-sep), 7 qué llega por una conexión watch y si una segunda
   conexión normal entra, 8 el signo de `%POS` en un corto, 9 `%SLRET` real
   (cuántos llegan por consulta, E2-05) y `SLRouteMinCharge ALLROUTE`, 10 qué
   es el `share` de un `REPLACE` sobre una orden PARCIAL (A-02 / D2a-08:
@@ -79,8 +79,7 @@ from app.bot_das.mercado_das import MercadoDAS
 from app.bot_das.reglas import precios
 from app.bot_das.reloj import Reloj
 from app.bot_das.tipos import (
-    STOP_EMERGENCIA_DISPARO_PCT,
-    STOP_PRINCIPAL_LIMITE_PCT,
+    STOP_LIMITE_PCT,
     EstadoOrden,
     Fase,
     Lado,
@@ -152,8 +151,9 @@ PASOS: tuple[PasoComprobacion, ...] = (
     PasoComprobacion(5, "PostOnly en SAGEREB y SMAT", True,
                      "Compra límite PostOnly de 1 acción lejos del mercado en cada ruta → aceptada o rechazada "
                      "con el texto literal; luego cancela."),
-    PasoComprobacion(6, "BP retenido por principal + emergencia", True,
-                     "GET BP antes y después de poner dos stops de 1 acción (EP-3); luego los cancela."),
+    PasoComprobacion(6, "BP retenido por el stop", True,
+                     "GET BP antes y después de poner EL stop de 1 acción (stop único, Jaume 29-sep; EP-3); luego "
+                     "lo cancela."),
     PasoComprobacion(7, "Conexión watch y segunda conexión normal", False,
                      "Qué llega por watch (%OrderAct? $Quote? marcadores?) y si una segunda conexión normal entra "
                      "(R-C-08); 7c opcional CANARIO: si esa segunda conexión puede enviar una orden."),
@@ -326,11 +326,11 @@ class Comprobador:
             self._registrar(3, [], [], f"sin cotización de {ticker}: no se manda nada")
             return
         disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
-        limite = precios.con_techo(disparo, STOP_PRINCIPAL_LIMITE_PCT, arriba=True)
+        limite = precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True)
         ruta = str(self._rutas_cfg.get("stop") or "STOP")
         orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
                            tipo=TipoOrden.STOP_LIMITE_PP, precio=limite, stop=disparo,
-                           proposito=Proposito.STOP_PRINCIPAL)
+                           proposito=Proposito.STOP)
         comando = protocolo.cmd_neworder(orden)
         mensajes = self._enviar(comando)
         viva = _orden_por_token(mensajes, orden.token)
@@ -415,7 +415,7 @@ class Comprobador:
             self._registrar(5, [comando], mensajes, conclusion)
 
     def _paso_6(self) -> None:
-        if not self._consola.confirmar_canario("El paso 6 pone DOS stops reales de 1 acción y mira el BP."):
+        if not self._consola.confirmar_canario("El paso 6 pone UN stop real de 1 acción y mira el BP."):
             self._registrar(6, [], [], "saltado: sin «SI»")
             return
         ticker = self._ticker()
@@ -424,16 +424,15 @@ class Comprobador:
             self._registrar(6, [], [], f"sin cotización de {ticker}: no se manda nada")
             return
         antes = self._enviar(protocolo.cmd_get("BP"))
-        principal = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
-        emergencia = precios.con_techo(principal, STOP_EMERGENCIA_DISPARO_PCT, arriba=True)
+        disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
         ruta = str(self._rutas_cfg.get("stop") or "STOP")
         mensajes = list(antes)
         ids: list[int] = []
         comandos = [protocolo.cmd_get("BP")]
-        for disparo, proposito in ((principal, Proposito.STOP_PRINCIPAL), (emergencia, Proposito.STOP_EMERGENCIA)):
+        for disparo, proposito in ((disparo, Proposito.STOP),):     # stop único (Jaume 29-sep, R-C-01 v4)
             orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
                                tipo=TipoOrden.STOP_LIMITE_PP, stop=disparo,
-                               precio=precios.con_techo(disparo, STOP_PRINCIPAL_LIMITE_PCT, arriba=True),
+                               precio=precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True),
                                proposito=proposito)
             comandos.append(protocolo.cmd_neworder(orden))
             recibidos = self._enviar(comandos[-1])
@@ -450,7 +449,7 @@ class Comprobador:
         if bp_antes is None or bp_despues is None:
             conclusion = f"sin #BP antes o después (antes {bp_antes}, después {bp_despues})"
         else:
-            conclusion = (f"BP antes {bp_antes}, con {len(ids)} stops {bp_despues}: retenido {bp_antes - bp_despues} "
+            conclusion = (f"BP antes {bp_antes}, con {len(ids)} stop(s) {bp_despues}: retenido {bp_antes - bp_despues} "
                           f"(EP-3)")
         self._registrar(6, comandos + [protocolo.cmd_get("BP")], mensajes, conclusion)
 
@@ -502,8 +501,8 @@ class Comprobador:
         disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
         orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker,
                            ruta=str(self._rutas_cfg.get("stop") or "STOP"), qty=1, tipo=TipoOrden.STOP_LIMITE_PP,
-                           stop=disparo, precio=precios.con_techo(disparo, STOP_PRINCIPAL_LIMITE_PCT, arriba=True),
-                           proposito=Proposito.STOP_PRINCIPAL)
+                           stop=disparo, precio=precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True),
+                           proposito=Proposito.STOP)
         self._envio_canario = True                    # G2-07: si el eco llega tarde, el barrido la encuentra
         cliente.enviar(protocolo.cmd_neworder(orden))
         recibidos = _sacar(cola, ESPERA_RESPUESTA_S)

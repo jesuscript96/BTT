@@ -41,9 +41,16 @@ lee UN fichero al arrancar (§3.20 la pone aquí); la validación es pura
 (`validar_catalogo`) y es la que se prueba con tablas.
 
 LAS TRAMPAS.
-  * «Cubierta» = `stops.descubiertas(...) == 0`: solo cubren emergencias o
-    protecciones CONFIRMADAS por DAS (Accepted/Partial/Hold/Triggered), nunca
-    una Sending. Una posición plana está cubierta (no hay nada al descubierto).
+  * «Cubierta» = `stops.descubiertas(...) == 0`: solo cubren los stops (el de
+    cada nivel, R-C-01 v4) o protecciones CONFIRMADOS por DAS
+    (Accepted/Partial/Hold/Triggered), nunca una Sending. Una posición plana
+    está cubierta (no hay nada al descubierto).
+  * Stop único (Jaume 29-sep): agotados los 5 reintentos de R-C-03, un nivel
+    queda SIN stop (ya no hay emergencia detrás): aviso MÁXIMO y el ticker a
+    CONTROL HUMANO (`descubiertas` > 0 → `estado_persistente`); el bot NO
+    cierra a ciegas (EP-1) y el plan B del vigilante sigue intentando
+    reponerlo mientras la posición siga descubierta (con su propia
+    separación entre intentos, riesgo 11).
   * El bot NO cierra jamás por un rechazo (R-B-07 (3), EP-1): con acciones al
     descubierto avisa nivel 3 y CONTROL HUMANO; puede ser justo un cisne negro
     en el que no toca cerrar al ask. El punto (3) de R-C-03 («cerrar tras 5
@@ -380,7 +387,9 @@ def decidir(orden: Orden, tratamiento: Tratamiento, pos: PosicionTicker, vivas: 
             decision = DECISION_STOP_AGOTADO
             nivel = Nivel.MAXIMO
             estado_nuevo = estado_persistente
-            partes.append(f"STOP SIN PONER tras {orden.intentos} reintentos (R-C-03); el bot NO cierra (EP-1)")
+            partes.append(f"STOP SIN PONER tras {orden.intentos} reintentos (R-C-03): con el stop único esas acciones "
+                          f"quedan SIN STOP; el bot NO cierra (EP-1) y el vigilante sigue intentando reponerlo "
+                          f"(plan B)")
     elif (tratamiento.conocido and tratamiento.accion == ACCION_PASAR_A_CRUCE
           and orden.proposito in _PROPOSITOS_PO_CRUCE):
         decision, tratamiento_acciones, token_nuevo, texto_cruce = _pasar_a_cruce(

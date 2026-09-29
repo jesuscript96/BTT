@@ -39,7 +39,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "233c4fc23be89d961d978e2e5228ac6b3f5316d281b60cce8e25d67d273723f1"   # Jaume 29-sep: + locates.espera_intento_s
+SHA_FIXTURE = "f6d389a8faad55d1a3d52b4dfa28df59880fb28f9106f6f7136cf60212a6375d"   # Jaume 29-sep: stop único (stops.limite_pct)
+RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 
 # ── utilidades ─────────────────────────────────────────────────────────
@@ -119,7 +120,8 @@ def test_cargar_fixture_tal_cual(cfg):
     assert isinstance(cfg, Config)
     assert cfg.fase is Fase.SOMBRA and cfg.config_version == 1 and cfg.sha256 == SHA_FIXTURE
     assert cfg.cuenta_das == CUENTA and cfg.vigilando is True and cfg.pausar_entradas is False
-    assert cfg.stops["principal_limite_pct"] == 3.0 and cfg.rutas["stop"] == "STOP"
+    assert cfg.stops["limite_pct"] == 50.0 and cfg.rutas["stop"] == "STOP"
+    assert not set(C.CLAVES_STOPS_V3) & set(cfg.stops)                  # Jaume 29-sep: sin el par de v3
     e = cfg.estrategias["prueba-1"]
     assert isinstance(e, EstrategiaConfig)
     assert e.riesgo_usd == Decimal("300") and isinstance(e.riesgo_usd, Decimal)
@@ -133,10 +135,10 @@ def test_cargar_fixture_tal_cual(cfg):
 
 def test_cargar_devuelve_copias_independientes():
     a = C.cargar(RUTA_EJEMPLO, CUENTA)
-    a.stops["principal_limite_pct"] = 99
+    a.stops["limite_pct"] = 99
     a.estrategias["prueba-1"].definition["bias"] = "long"
     b = C.cargar(RUTA_EJEMPLO, CUENTA)
-    assert b.stops["principal_limite_pct"] == 3.0 and b.estrategias["prueba-1"].definition["bias"] == "short"
+    assert b.stops["limite_pct"] == 50.0 and b.estrategias["prueba-1"].definition["bias"] == "short"
 
 
 @pytest.mark.parametrize("cuenta", ["", "   ", None], ids=["R-Q-01 vacia", "R-Q-01 blancos", "R-Q-01 None"])
@@ -414,13 +416,13 @@ def _mutar(ruta: str, valor: Any):
 _BORRAR = object()
 
 CASOS_INVALIDOS = [
-    ("R-C-01 principal = disparo", [_mutar("stops.principal_limite_pct", 13.0)], "principal_limite_pct"),
-    ("R-C-01 principal > disparo", [_mutar("stops.principal_limite_pct", 20.0)], "principal_limite_pct"),
-    ("R-C-01 disparo = limite", [_mutar("stops.emergencia_disparo_pct", 63.0)], "emergencia_limite_pct"),
-    ("R-C-01 disparo > limite", [_mutar("stops.emergencia_limite_pct", 10.0)], "emergencia_limite_pct"),
-    ("R-C-01 principal 0", [_mutar("stops.principal_limite_pct", 0)], "principal_limite_pct"),
-    ("R-C-01 principal negativo", [_mutar("stops.principal_limite_pct", -3.0)], "principal_limite_pct"),
-    ("R-C-01 principal texto", [_mutar("stops.principal_limite_pct", "3")], "principal_limite_pct"),
+    ("R-C-01 v4 limite 0", [_mutar("stops.limite_pct", 0)], "stops.limite_pct"),
+    ("R-C-01 v4 limite negativo", [_mutar("stops.limite_pct", -50.0)], "stops.limite_pct"),
+    ("R-C-01 v4 limite texto", [_mutar("stops.limite_pct", "50")], "stops.limite_pct"),
+    ("R-C-01 v4 limite null", [_mutar("stops.limite_pct", None)], "stops.limite_pct"),
+    ("R-C-01 v4 falta limite", [_mutar("stops.limite_pct", _BORRAR)], "stops.limite_pct"),
+    ("R-C-01 v4 clave vieja principal", [_mutar("stops.principal_limite_pct", 3.0)], "cuadro de DOS stops"),
+    ("R-C-01 v4 clave vieja emergencia", [_mutar("stops.emergencia_disparo_pct", 13.0)], "cuadro de DOS stops"),
     ("R-F-01 k_max 0", [_mutar("halts.k_max", 0)], "k_max"),
     ("R-F-01 k_max negativo", [_mutar("halts.k_max", -1)], "k_max"),
     ("R-F-01 k_max bool", [_mutar("halts.k_max", True)], "k_max"),
@@ -511,6 +513,50 @@ def test_validar_acepta_limites_validos(mutaciones):
 
 def test_validar_fixture_sin_errores():
     assert C.validar(_crudo()) == []
+
+
+def test_cuadro_de_dos_stops_no_carga_y_dice_que_hacer(tmp_path):
+    """Jaume 29-sep (stop único, R-C-01 v4): un cuadro con el par principal + emergencia de v3 NO carga, aunque traiga
+    también `limite_pct` (el esquema ignoraría las claves viejas en silencio y el bot arrancaría con un stop que nadie
+    decidió). El error nombra las claves viejas y dice que se use stops.limite_pct."""
+    viejo = _crudo()
+    stops = viejo["stops"]
+    del stops["limite_pct"]
+    stops.update({"principal_limite_pct": 3.0, "emergencia_disparo_pct": 13.0, "emergencia_limite_pct": 63.0})
+    ruta = tmp_path / "viejo.json"
+    C.escribir_atomico(ruta, viejo)                   # firmado: el sha256 cuadra, el problema es el contenido
+    with pytest.raises(C.ConfigInvalida) as exc:
+        C.cargar(ruta, CUENTA)
+    texto = str(exc.value)
+    assert "cuadro de DOS stops" in texto and "stops.limite_pct" in texto and "29-sep" in texto
+    assert all(clave in texto for clave in C.CLAVES_STOPS_V3)
+    con_las_dos = _crudo()
+    con_las_dos["stops"]["emergencia_limite_pct"] = 63.0
+    errores = C.validar(_firmar(con_las_dos))
+    assert errores == ["stops: cuadro de DOS stops (emergencia_limite_pct): desde el 29-sep hay un solo stop por nivel, "
+                       "usa stops.limite_pct (R-C-01 v4, Jaume 29-sep)"]
+
+
+def test_fixture_y_su_hash_con_el_stop_unico():
+    """Jaume 29-sep: el fixture (plantilla del puente `config exportar`) lleva stops.limite_pct = 50 y ninguna clave de v3;
+    su `sha256` es el canónico recalculado (SHA_FIXTURE)."""
+    crudo = _crudo()
+    assert crudo["stops"]["limite_pct"] == 50.0
+    assert not set(C.CLAVES_STOPS_V3) & set(crudo["stops"])
+    assert C.hash_canonico({k: v for k, v in crudo.items() if k != "sha256"}) == crudo["sha256"] == SHA_FIXTURE
+
+
+@pytest.mark.skipif(not RUTA_ENSAYO.exists(), reason="el fichero del ensayo vive fuera del repo (D:/bot_senales)")
+def test_config_del_ensayo_con_el_stop_unico():
+    """Jaume 29-sep: el cuadro del ensayo (`bot_ejecucion/ensayo/config/bot_das_config.json`) ya va con el stop único:
+    `limite_pct` 50, sin las claves de v3, `sha256` canónico recalculado y ningún error de `stops` al validar.
+    OJO: hoy le falta además `locates.espera_intento_s` (clave del 29-sep ajena a este cambio), así que `validar` aún da
+    ese error y el ensayo no arranca hasta añadirla; este test solo comprueba lo de los stops."""
+    crudo = json.loads(RUTA_ENSAYO.read_text(encoding="utf-8"))
+    assert crudo["stops"]["limite_pct"] == 50.0
+    assert not set(C.CLAVES_STOPS_V3) & set(crudo["stops"])
+    assert C.hash_canonico({k: v for k, v in crudo.items() if k != "sha256"}) == crudo["sha256"]
+    assert [e for e in C.validar(crudo) if "stops" in e] == []
 
 
 @pytest.mark.parametrize("campo, valor", [
@@ -768,7 +814,8 @@ def test_DC_09_caliente_es_exactamente_lo_marcado_C_en_el_bloque_de_s7():
     # y ninguna [A]/[T] se cuela en CALIENTE (los vecinos de las [C] siguen siendo en frío)
     frias = _rutas_marcadas(bloque, "[A]") | _rutas_marcadas(bloque, "[T]")
     assert {"fase", "locates.umbral_ultimo_paquete_pct", "estrategias.*.definition_hash",
-            "stops.principal_limite_pct"} <= frias
+            "stops.limite_pct"} <= frias
+    assert not {f"stops.{clave}" for clave in C.CLAVES_STOPS_V3} & (frias | marcadas)   # Jaume 29-sep: stop único
     assert not (frias & C.CALIENTE)
 
 
@@ -855,7 +902,7 @@ def _nueva(*mutaciones) -> Config:
     (_mutar("estrategias.0.riesgo_usd", 500), "estrategias.prueba-1.riesgo_usd", Decimal("300"), Decimal("500"), True),
     (_mutar("estrategias.0.ejecutar", False), "estrategias.prueba-1.ejecutar", True, False, True),
     (_mutar("estrategias.0.ev_pct", 6.5), "estrategias.prueba-1.ev_pct", Decimal("4.0"), Decimal("6.5"), True),
-    (_mutar("stops.principal_limite_pct", 4.0), "stops.principal_limite_pct", 3.0, 4.0, False),
+    (_mutar("stops.limite_pct", 40.0), "stops.limite_pct", 50.0, 40.0, False),
     (_mutar("salidas.por_hora.perseguir_ask_max", 2), "salidas.por_hora.perseguir_ask_max", 3, 2, False),
     (_mutar("locates.umbral_ultimo_paquete_pct", 40), "locates.umbral_ultimo_paquete_pct", 30, 40, False),
     (_mutar("tecnicos.foto_cada_s", 5), "tecnicos.foto_cada_s", 2, 5, False),
@@ -898,14 +945,14 @@ def test_diferencias_bool_frente_a_entero_es_cambio():
 def test_aplicar_con_bot_encendido_y_posiciones_acepta_C_y_rechaza_A():
     actual = _cfg()
     nueva = _nueva(_mutar("estrategias.0.riesgo_usd", 450), _mutar("vigilando", False),
-                   _mutar("locates.tope_gasto_pct_cuenta", 2.5), _mutar("stops.principal_limite_pct", 4.0),
+                   _mutar("locates.tope_gasto_pct_cuenta", 2.5), _mutar("stops.limite_pct", 40.0),
                    _mutar("estrategias.0.definition.custom_end_time", "12:00"), _mutar("fase", "real"))
     copia_actual, copia_nueva = copy.deepcopy(actual), copy.deepcopy(nueva)
     res, rechazadas = C.aplicar(actual, nueva, bot_encendido=True, hay_posiciones=True)
-    assert sorted(rechazadas) == ["estrategias.prueba-1.definition_hash", "fase", "stops.principal_limite_pct"]
+    assert sorted(rechazadas) == ["estrategias.prueba-1.definition_hash", "fase", "stops.limite_pct"]
     assert res.estrategias["prueba-1"].riesgo_usd == Decimal("450")
     assert res.vigilando is False and res.locates["tope_gasto_pct_cuenta"] == 2.5
-    assert res.stops["principal_limite_pct"] == 3.0 and res.fase is Fase.SOMBRA
+    assert res.stops["limite_pct"] == 50.0 and res.fase is Fase.SOMBRA
     assert res.estrategias["prueba-1"].hora_fin_sesion == "11:30"
     assert res.estrategias["prueba-1"].definition_hash == actual.estrategias["prueba-1"].definition_hash
     assert res.config_version == nueva.config_version and res.sha256 == nueva.sha256     # fichero procesado
@@ -920,13 +967,13 @@ def test_aplicar_con_bot_encendido_y_posiciones_acepta_C_y_rechaza_A():
 ], ids=["CM2 apagado sin posiciones", "CM2 encendido sin posiciones", "CM2 apagado con posiciones",
         "CM2 encendido con posiciones"])
 def test_aplicar_A_solo_con_bot_apagado_y_sin_posiciones(encendido, posiciones, aplica_todo):
-    nueva = _nueva(_mutar("stops.emergencia_disparo_pct", 12.0), _mutar("pausar_entradas", True))
+    nueva = _nueva(_mutar("stops.limite_pct", 45.0), _mutar("pausar_entradas", True))
     res, rechazadas = C.aplicar(_cfg(), nueva, bot_encendido=encendido, hay_posiciones=posiciones)
     assert res.pausar_entradas is True
     if aplica_todo:
         assert res is nueva and rechazadas == []
     else:
-        assert rechazadas == ["stops.emergencia_disparo_pct"] and res.stops["emergencia_disparo_pct"] == 13.0
+        assert rechazadas == ["stops.limite_pct"] and res.stops["limite_pct"] == 50.0
 
 
 def test_aplicar_rechaza_estrategia_nueva_con_bot_vivo():

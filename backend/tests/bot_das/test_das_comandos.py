@@ -5,6 +5,7 @@ El token de los tests es INVENTADO (no es de ninguna cuenta).
 """
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import logging
@@ -297,7 +298,8 @@ def _orden(token, proposito, qty=100, precio=None, stop=None, estado=EstadoOrden
 
 @pytest.fixture
 def estado_ejemplo(reloj) -> EstadoBot:
-    """ABC corto 100 a 2,00 con principal, emergencia y TP vivos; DEF pausado; una orden ajena; un locate."""
+    """ABC corto 100 a 2,00 con su stop (único, Jaume 29-sep), una protección y TP vivos; DEF pausado; una orden ajena;
+    un locate."""
     e = EstadoBot(fase=Fase.SOMBRA, dia=date(2026, 9, 25), das_conectado=True,
                   das_logon={"OrderServer": True, "QuoteServer": None})
     lote = Lote(id="L1", strategy_id="prueba-1", estrategia="PM <A> & prueba", ticker="ABC", direccion="short",
@@ -309,8 +311,9 @@ def estado_ejemplo(reloj) -> EstadoBot:
     e.ordenes = {
         100500001: _orden(100500001, Proposito.ENTRADA_AGREGAR, precio=Decimal("2.00"), estado=EstadoOrden.EXECUTED,
                           tipo=TipoOrden.LIMITE, lado=Lado.CORTO, id_das=41),
-        100500002: _orden(100500002, Proposito.STOP_PRINCIPAL, stop=Decimal("2.10"), precio=Decimal("2.17"), id_das=42),
-        100500003: _orden(100500003, Proposito.STOP_EMERGENCIA, stop=Decimal("2.38"), precio=Decimal("3.43"), id_das=43),
+        100500002: _orden(100500002, Proposito.STOP, stop=Decimal("2.10"), precio=Decimal("3.15"), id_das=42),
+        100500003: _orden(100500003, Proposito.STOP_PROTECCION, stop=Decimal("2.38"), precio=Decimal("3.57"), id_das=43,
+                          lote_id=None),
         100500004: _orden(100500004, Proposito.TP_AGREGAR, qty=50, precio=Decimal("1.88"), tipo=TipoOrden.LIMITE,
                           id_das=44),
     }
@@ -380,7 +383,7 @@ def test_consulta_estado_sin_cotizacion_no_inventa(estado_ejemplo):
 def test_consulta_posiciones(estado_ejemplo, mercado):
     r = responder_consulta(_c("/posiciones"), estado_ejemplo, _cfg(), mercado, 1000.0)
     assert "ABC · neta -100 (DAS -100)" in r and "bid 1.89 ask 1.90" in r
-    assert "stop_principal 2.10/2.17" in r and "stop_emergencia 2.38/3.43" in r
+    assert "stop 2.10/3.15" in r and "stop_proteccion 2.38/3.57" in r
     assert "TP 1.88 ×50" in r and "latente 10.00 $" in r and "100/100 a 2.00" in r
     assert "DEF" not in r                                         # sin neta ni lotes: no es posición
 
@@ -392,6 +395,21 @@ def test_consulta_posiciones_sin_stop_se_ve(estado_ejemplo, mercado):
     assert "nivel 2.10 SIN ORDEN" in r
 
 
+def test_consulta_posiciones_dos_lotes_del_mismo_nivel_comparten_su_stop(estado_ejemplo, mercado):
+    """Stop único (Jaume 29-sep, R-C-01 v4): UN stop por nivel lleva el lote_id del primer lote; el segundo lote del
+    mismo L lo reconoce por su nivel y no sale «SIN ORDEN»."""
+    estado_ejemplo.ordenes[100500003].estado = EstadoOrden.CANCELED
+    l1 = estado_ejemplo.posiciones["ABC"].lotes["L1"]
+    estado_ejemplo.posiciones["ABC"].lotes["L2"] = dataclasses.replace(l1, id="L2", estrategia="segunda")
+    r = responder_consulta(_c("/posiciones"), estado_ejemplo, _cfg(), mercado, 1000.0)
+    filas = [f for f in r.splitlines() if "segunda" in f]
+    assert len(filas) == 1 and "stop stop 2.10/3.15" in filas[0] and "SIN ORDEN" not in r
+    l2 = estado_ejemplo.posiciones["ABC"].lotes["L2"]
+    l2.nivel_stop = Decimal("2.40")                       # otro nivel: ese stop no es el suyo
+    r = responder_consulta(_c("/posiciones"), estado_ejemplo, _cfg(), mercado, 1000.0)
+    assert "nivel 2.40 SIN ORDEN" in r
+
+
 def test_consulta_posiciones_vacio(reloj):
     e = EstadoBot(fase=Fase.REAL, dia=reloj.hoy())
     assert "Sin posiciones" in responder_consulta(_c("/posiciones"), e, _cfg(), None, 1000.0)
@@ -400,7 +418,7 @@ def test_consulta_posiciones_vacio(reloj):
 def test_consulta_ordenes(estado_ejemplo):
     r = responder_consulta(_c("/ordenes"), estado_ejemplo, _cfg(), None, 1000.0)
     assert "100500001" not in r                                   # ejecutada: no está viva
-    assert "ABC B STOPLMTP 0/100 @ 2.10→2.17 · stop_principal · Accepted · token 100500002 · id 42" in r
+    assert "ABC B STOPLMTP 0/100 @ 2.10→3.15 · stop · Accepted · token 100500002 · id 42" in r
     assert "AJENA GHI B Limit 10 @ 5.00" in r and "hace 10.0 s" in r
 
 
@@ -483,7 +501,7 @@ def test_consulta_rechaza_no_consulta(estado_ejemplo):
 
 def test_consulta_recorta_filas(reloj):
     e = EstadoBot(fase=Fase.SOMBRA, dia=reloj.hoy())
-    e.ordenes = {t: _orden(t, Proposito.STOP_PRINCIPAL, stop=Decimal("2.10"), precio=Decimal("2.17"))
+    e.ordenes = {t: _orden(t, Proposito.STOP, stop=Decimal("2.10"), precio=Decimal("3.15"))
                  for t in range(100500001, 100500101)}
     r = responder_consulta(_c("/ordenes"), e, _cfg(), None, 1000.0)
     assert "… y " in r and len(r.splitlines()) == C.FILAS_MAX + 1
