@@ -4,12 +4,26 @@ QUÉ HACE. Todas las reglas del área H del libro (R-H-01..R-H-05, H6, E9,
 EP-9) como funciones PURAS:
   * `paquetes`: H6, paquetes de 100 por lo bajo; el último solo si se usa MÁS
     del 30 % (1.230 → 12 paquetes y la posición se ajusta a 1.200; 1.240 → 13).
+  * `paquetes_marginal` (Jaume 29-sep, REGLA MARGINAL): con el precio del
+    locate conocido, el último paquete se compra si lo que ganan las acciones
+    extra paga el paquete entero: extra · precio · EV/100 ≥ 100 · precio del
+    locate (en el límite, compra). Sin precio del locate (primera consulta,
+    sin %SLRET) → el umbral del 30 % de `paquetes`. La usan `veredicto_ev` y
+    la máquina (`_Contexto.objetivo`, E2-08); el primer paquete y el
+    veredicto global siguen igual (EV contra el fade del coste TOTAL).
   * `cantidad_a_localizar`: R-H-05 escalonado, las acciones de UNA estrategia
     (entrada + sus pirámides «add», con el riesgo de cada nivel del cuadro) a
     partir de la fila del radar que lleva SU `strategy_id` (corrección 6).
   * `veredicto_ev`: R-H-01 + H6 + R-H-05, EV fijo por tramo de precio
     (`locates_gate.ev_fijo_para_precio`, la MISMA definición que la app) contra
     el fade que exige el coste TOTAL de los locates (lo ya pagado + lo nuevo).
+  * FASES (Jaume 29-sep, `Locate.fase`): A radar sin señal (lo de siempre,
+    cada 3 s) · B señal de entrada sin locates y C_piramide pirámide con
+    locates que faltan: UN intento («a tiro» con el 3 % de R-B-01 y
+    compensa) o «parado» el día · C dentro, buscando lo de las pirámides
+    (cada 3 s, sin «a tiro»; lo que usan los lotes vivos cuenta como
+    cubierto) · D posición cerrada, sin consultas. Las transiciones las
+    anota el decisor (`locate_estado` con «fase»); aquí se aplican.
   * `siguiente_paso`: la máquina de un (ticker, estrategia): buscando →
     `LocateInquire` cada 3 s → con `%SLRET` tipo 1 y EV a favor y bajo el tope
     → `locate_intencion` + `LocateComprar` → comprando → `%SLOrder` Pending /
@@ -73,6 +87,7 @@ from zoneinfo import ZoneInfo
 from app.bot_das.protocolo import cmd_get, cmd_sl_reuse
 from app.bot_das.reglas.precios import de_float
 from app.bot_das.tipos import (
+    ENTRADA_TOPE_CAIDA_BID_PCT,
     LOCATES_INQUIRE_S,
     LOCATES_TOPE_GASTO_PCT,
     LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT,
@@ -110,6 +125,15 @@ ESTADO_OFRECIDO = "Offered"
 ESTADO_LOCALIZADO = "Located"                   # cobra; con lo pedido cubierto es TERMINAL (cerrojo R-H-02)
 ESTADO_PARADO = "parado"                        # hora límite, fallo de la ruta o dato imposible
 ESTADO_NO_HACE_FALTA = "no_hace_falta"          # AlreadyShortable (ETB): se opera sin locate
+
+# Jaume 29-sep: locates por FASES, enlazados con la señal (campo `Locate.fase`, persistido como el resto)
+FASE_RADAR = "A"              # en el radar, sin señal: consulta cada 3 s y compra cuando compensa
+FASE_SENAL = "B"              # llegó la señal de entrada sin locates: UN intento (a tiro + compensa) o parado el día
+FASE_DENTRO = "C"             # dentro; faltan locates para las pirámides: cada 3 s, sin mirar «a tiro»
+FASE_PIRAMIDE = "C_piramide"  # llegó la pirámide y faltan: UN intento (a tiro + compensa) o parado el día
+FASE_FUERA = "D"              # posición cerrada: nada hasta una reentrada legítima (que vuelve a B)
+FASES = (FASE_RADAR, FASE_SENAL, FASE_DENTRO, FASE_PIRAMIDE, FASE_FUERA)
+FASES_INTENTO = frozenset({FASE_SENAL, FASE_PIRAMIDE})
 
 ESTADOS_EN_CURSO = frozenset({ESTADO_COMPRANDO, ESTADO_PENDIENTE, ESTADO_ESPERANDO, ESTADO_OFRECIDO})
 ESTADOS_FALLO_DAS = frozenset({"Canceled", "Rejected", "Closed", "Declined"})
@@ -186,19 +210,32 @@ def paquetes(qty: int, umbral_ultimo_pct: Union[Decimal, int, float, str] = LOCA
     umbral no está en [0, 100].
     """
     _exigir_int(qty, "qty")
-    umbral = de_float(umbral_ultimo_pct)
-    if umbral < 0 or umbral > _CIEN:
-        raise ValueError(f"umbral del último paquete fuera de [0, 100]: {umbral_ultimo_pct!r}")
-    if qty <= 0:
-        return 0, 0
-    completos, resto = divmod(qty, PAQUETE)
-    if resto == 0:
-        return completos, qty
-    if Decimal(resto) * _CIEN / PAQUETE > umbral:
-        return completos + 1, qty
-    if completos == 0:
-        return 1, qty
-    return completos, completos * PAQUETE
+    return _paquetes_con(qty, _umbral(umbral_ultimo_pct), None)
+
+
+def paquetes_marginal(qty: int, precio: Optional[Decimal], ev_pct: Optional[Decimal], precio_locate: Optional[Decimal],
+                      umbral_ultimo_pct: Union[Decimal, int, float, str] = LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT
+                      ) -> tuple[int, int]:
+    """Jaume 29-sep: regla MARGINAL del último paquete. Devuelve `(n_paquetes, qty_ajustada)` como `paquetes`.
+
+    Los paquetes completos se compran siempre (por lo bajo); el ÚLTIMO, el que
+    llevaría el resto `acciones_extra = qty − 100·⌊qty/100⌋`, se compra si lo
+    que ganan esas acciones paga el paquete ENTERO:
+
+        acciones_extra · precio · EV/100  ≥  100 · precio_locate   (en el límite exacto, se compra)
+
+    `precio` = precio actual de la acción; `ev_pct` = EV en % (el mismo
+    `ev_fijo_para_precio` que usa `veredicto_ev`); `precio_locate` = precio por
+    acción ofertado o el de la última consulta. Si NO se conoce el precio del
+    locate (None: primera consulta sin %SLRET) o falta el precio o el EV, cae a
+    la regla del umbral (30 %) de `paquetes` (red de seguridad). Mínimo UN
+    paquete (H-7); qty ≤ 0 → (0, 0). Tabla (EV 4 %, 5 $): 113 acciones y
+    locate 0,01 → (2, 113); 0,05 o 0,15 → (1, 100); 160 → (2, 160) salvo con
+    0,15 (60·5·0,04 = 12 < 15 → (1, 100)). ValueError con qty no int, umbral
+    fuera de [0, 100] o importes no Decimal finitos (precio ≤ 0, locate < 0).
+    """
+    _exigir_int(qty, "qty")
+    return _paquetes_con(qty, _umbral(umbral_ultimo_pct), _marginal(precio, ev_pct, precio_locate))
 
 
 def cantidad_a_localizar(e: EstrategiaConfig, estimacion: Optional[list[dict]], precio: Decimal) -> int:
@@ -263,7 +300,9 @@ def veredicto_ev(e: EstrategiaConfig, precio: Decimal, qty: int, precio_accion_l
     float(precio))` (tramo de precio si lo hay, si no el completo), pasado a
     Decimal por `str`. Cuenta: `n_total, qty_aj = paquetes(qty)`; cubiertas =
     min(ya_localizadas, qty_aj); lo que falta se vuelve a pasar por H6 («sobre
-    la suma de cada compra»); con `disponibles` (tamaño de `%SLRET` u oferta)
+    la suma de cada compra»); el ÚLTIMO paquete (y un resto sobre lo cubierto)
+    va por la regla MARGINAL de `paquetes_marginal` con `precio_accion_locate`
+    (Jaume 29-sep); con `disponibles` (tamaño de `%SLRET` u oferta)
     se compran solo los paquetes enteros que hay (R-H-04: se opera con lo que
     hay). coste_nuevo = paquetes · 100 · precio_accion_locate (mínimo de la
     ruta si lo hay, `SLRouteMinCharge`); fade = (coste_ya_pagado +
@@ -289,10 +328,14 @@ def veredicto_ev(e: EstrategiaConfig, precio: Decimal, qty: int, precio_accion_l
 
     ev_float, ev_origen = ev_fijo_para_precio(float(e.ev_pct), e.ev_rangos, float(precio))
     ev = de_float(ev_float)
-    _, qty_aj = paquetes(qty, umbral_ultimo_pct)
+    # Jaume 29-sep: el último paquete (y el resto sobre lo ya cubierto) por la regla MARGINAL con el precio de ESTE
+    # locate; el primer paquete y el veredicto global, como siempre (EV contra el fade del coste TOTAL).
+    umbral = _umbral(umbral_ultimo_pct)
+    marginal = _marginal(precio, ev, precio_accion_locate)
+    _, qty_aj = _paquetes_con(qty, umbral, marginal)
     cubiertas = min(ya_localizadas, qty_aj)
-    falta = _falta_comprable(qty_aj, cubiertas, umbral_ultimo_pct)
-    n_nuevo, falta_aj = paquetes(falta, umbral_ultimo_pct) if falta > 0 else (0, 0)
+    falta = _falta_comprable(qty_aj, cubiertas, umbral, marginal)
+    n_nuevo, falta_aj = _paquetes_con(falta, umbral, marginal) if falta > 0 else (0, 0)
     motivo: Optional[str] = None if falta > 0 else (
         "nada que localizar" if qty_aj - cubiertas <= 0 else
         "el resto no llega al umbral de un paquete (H6, E2-08): se opera con lo ya localizado")
@@ -451,7 +494,9 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
                    ret: Optional[MsgSLRet], tokens: Union[Callable[[], int], Any], *, qty: Optional[int] = None,
                    orden: Optional[MsgSLOrder] = None, minimo_cargo: Optional[Decimal] = None,
                    ahora_et: Optional[datetime] = None,
-                   locates: Optional[Mapping[tuple[str, str], Locate]] = None) -> list[Accion]:
+                   locates: Optional[Mapping[tuple[str, str], Locate]] = None,
+                   tope_a_tiro_pct: Union[Decimal, int, float, str, None] = None,
+                   en_uso_vivo: int = 0) -> list[Accion]:
     """R-H-01..R-H-04 + H6 + EP-9, manual L1648-1838: el siguiente paso de la máquina de un (ticker, estrategia).
 
     Entradas: `loc` (None = aún no hay; entonces `qty` = acciones de
@@ -494,10 +539,22 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
         en curso, se anota sin aviso y se sigue buscando (puede fallar alguna).
       * E2-08: el «mínimo un paquete» solo vale cuando no hay nada cubierto: un
         resto ≤ 30 % de un paquete sobre acciones ya localizadas no se compra.
+
+    Jaume 29-sep (locates por FASES): con `loc.fase` en `FASES_INTENTO` (B en
+    la señal de entrada, C_piramide en la de pirámide) la consulta es UN
+    intento: se compra solo si el precio está «a tiro» (precio actual ≥
+    `loc.precio_senal` · (1 − `tope_a_tiro_pct`/100), el MISMO 3 % de
+    R-B-01, `entrada.tope_caida_bid_pct`) y compensa (EV + regla marginal); si
+    no (o sin tamaño, fallo de la ruta, tope, oferta rechazada) → «parado»
+    para todo el día en esa pareja. En esas fases no rige el tope de 60 s del
+    parcial. `en_uso_vivo` = locates de la pareja que usan lotes VIVOS (lo pasa
+    el decisor): cuentan como cubiertos, así la búsqueda de las pirámides
+    (fase C) no vuelve a comprar lo que ya usa la entrada.
     """
     if deshabilitado:
         return []
     _exigir_ticker(ticker)
+    _exigir_int(en_uso_vivo, "en_uso_vivo")
     if loc is None:
         if qty is None:
             return []
@@ -510,9 +567,12 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
     cfg = _ConfigLocates.de(cfg_loc)
     fuera_de_hora = _hora_limite_pasada(cfg.hora_limite, ahora_et)
     en_curso = _previsto_en_curso(locates, cfg.umbral, excluir=(loc.ticker, loc.strategy_id)) if locates else _CERO
+    tope_tiro = _valor_decimal(tope_a_tiro_pct, ENTRADA_TOPE_CAIDA_BID_PCT)
+    if tope_tiro < 0 or tope_tiro > _CIEN:
+        raise ValueError(f"tope «a tiro» fuera de [0, 100]: {tope_a_tiro_pct!r}")
     ctx = _Contexto(loc=loc, e=e, ticker=ticker, precio=precio, ahora=ahora, cfg=cfg, gasto_dia=gasto_dia,
                     equity=equity, tokens=tokens, minimo_cargo=minimo_cargo, fuera_de_hora=fuera_de_hora,
-                    gasto_en_curso=en_curso)
+                    gasto_en_curso=en_curso, tope_a_tiro=tope_tiro, en_uso=max(0, en_uso_vivo))
     if orden is not None:
         return _tras_orden(ctx, orden)
     if loc.estado == ESTADO_COMPRANDO and ret is not None:
@@ -525,11 +585,17 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
         return [_anotar_estado(ctx, ESTADO_PARADO, motivo="hora límite de intentos (R-H-01.5)"),
                 Desprogramar(ctx.clave)]
     if ctx.falta_por_cubrir() <= 0:
-        return [Anotar(ANOTACION_INQUIRE, _datos(ctx, motivo="nada que localizar: lo pedido ya está cubierto")),
-                Desprogramar(ctx.clave)]
+        if ctx.intento_unico:
+            # Jaume 29-sep: en el intento único un resto pequeño SIN precio de locate conocido se consulta igual (la
+            # regla marginal decide con el %SLRET); si de verdad no queda nada que compre, el intento acaba aquí.
+            if ctx.falta_bruta() <= 0 or ctx.marginal() is not None:
+                return _sin_compra(ctx, _datos(ctx, motivo="nada que comprar que compense (regla marginal / H6)"))
+        else:
+            return [Anotar(ANOTACION_INQUIRE, _datos(ctx, motivo="nada que localizar: lo pedido ya está cubierto")),
+                    Desprogramar(ctx.clave)]
     if ret is not None:
         return _tras_ret(ctx, ret)
-    if (loc.localizadas > 0 and loc.comprado_en is not None
+    if (loc.localizadas > 0 and loc.comprado_en is not None and not ctx.intento_unico
             and ahora - loc.comprado_en > PARCIAL_BUSCAR_MAX_S):
         # Ensayo 28-sep (R-H-04 con tope): un parcial ya cobrado no busca el resto para siempre. La ruta dio 800 de
         # 8.772 y el bot consultó cada 3 s durante horas (903 consultas). Pasado el tope se opera con lo localizado;
@@ -632,31 +698,71 @@ class _Contexto:
     minimo_cargo: Optional[Decimal]
     fuera_de_hora: bool
     gasto_en_curso: Decimal = _CERO                    # E2-02: previsto de las compras en curso de los demás
+    tope_a_tiro: Decimal = Decimal("3")                # Jaume 29-sep: el 3 % de R-B-01 (entrada.tope_caida_bid_pct)
+    en_uso: int = 0                                    # Jaume 29-sep: locates de la pareja que usan lotes vivos
 
     @property
     def clave(self) -> str:
         return clave_temporizador(self.ticker, self.loc.strategy_id)
 
     @property
+    def intento_unico(self) -> bool:
+        """Jaume 29-sep: fase B o C_piramide: la consulta de la señal es UN intento (si no compra → parado el día)."""
+        return self.loc.fase in FASES_INTENTO
+
+    def a_tiro(self) -> bool:
+        """Jaume 29-sep: corto «a tiro» = precio actual ≥ precio de la señal · (1 − 3 %) (el límite exacto está a tiro).
+
+        Sin precio actual o sin precio de la señal → NO está a tiro (no se compra a ciegas)."""
+        referencia = self.loc.precio_senal
+        if not _decimal_positivo(self.precio) or not _decimal_positivo(referencia):
+            return False
+        return self.precio >= referencia * (_CIEN - self.tope_a_tiro) / _CIEN
+
+    def cubiertas(self) -> int:
+        """Lo que ya cubre la pareja: libres (localizadas − usadas) + lo que usan sus lotes vivos (fase C)."""
+        return _libres(self.loc) + self.en_uso
+
+    @property
     def gasto_tope(self) -> Decimal:
         """E2-02: el gasto contra el que se mide el 3 %: lo pagado + lo comprometido por otras compras en curso."""
         return self.gasto_dia + self.gasto_en_curso
 
-    def objetivo(self) -> int:
-        """Acciones que la posición usará tras H6 (qty_ajustada de lo pedido)."""
-        return paquetes(max(0, self.loc.pedidas), self.cfg.umbral)[1]
+    def marginal(self, precio_locate: Optional[Decimal] = None) -> Optional[tuple[Decimal, Decimal, Decimal]]:
+        """Jaume 29-sep: (precio, EV, precio del locate) para la regla marginal; el locate es `precio_locate` o el de
+        la última consulta (`loc.precio_accion`; 0 = aún no se conoce). Sin precio de la acción o del locate → None
+        (umbral del 30 %)."""
+        pl = precio_locate if precio_locate is not None else self.loc.precio_accion
+        if not _decimal_no_negativo(pl) or (precio_locate is None and pl <= 0):
+            return None
+        if not _decimal_positivo(self.precio):
+            return None
+        ev_float, _ = ev_fijo_para_precio(float(self.e.ev_pct), self.e.ev_rangos, float(self.precio))
+        return self.precio, de_float(ev_float), pl
+
+    def objetivo(self, precio_locate: Optional[Decimal] = None) -> int:
+        """Acciones que la posición usará tras H6 / la regla marginal (qty_ajustada de lo pedido)."""
+        return _paquetes_con(max(0, self.loc.pedidas), self.cfg.umbral, self.marginal(precio_locate))[1]
 
     def falta_por_cubrir(self) -> int:
-        """Lo que falta y MERECE comprarse (E2-08: un resto ≤ umbral sobre acciones ya cubiertas no)."""
-        return _falta_comprable(self.objetivo(), _libres(self.loc), self.cfg.umbral)
+        """Lo que falta y MERECE comprarse (E2-08: un resto que no compensa sobre acciones ya cubiertas no)."""
+        return _falta_comprable(self.objetivo(), self.cubiertas(), self.cfg.umbral, self.marginal())
+
+    def falta_bruta(self) -> int:
+        """Lo que falta sin filtrar el resto pequeño (objetivo − cubiertas)."""
+        return max(0, self.objetivo() - self.cubiertas())
 
     def qty_consulta(self) -> int:
-        """Acciones a consultar/comprar ahora: los paquetes (H6) de lo que falta, · 100."""
-        return paquetes(self.falta_por_cubrir(), self.cfg.umbral)[0] * PAQUETE
+        """Acciones a consultar/comprar ahora: los paquetes (H6 / marginal) de lo que falta, · 100. En el intento único
+        (Jaume 29-sep) un resto que el filtro descarta sin precio conocido se consulta igual (un paquete)."""
+        falta = self.falta_por_cubrir()
+        if falta <= 0 and self.intento_unico:
+            falta = self.falta_bruta()
+        return _paquetes_con(falta, self.cfg.umbral, self.marginal())[0] * PAQUETE
 
     def veredicto(self, precio_accion: Decimal, disponibles: Optional[int]) -> dict:
         return veredicto_ev(self.e, self.precio, self.loc.pedidas, precio_accion, self.loc.coste,
-                            ya_localizadas=_libres(self.loc), disponibles=disponibles,
+                            ya_localizadas=self.cubiertas(), disponibles=disponibles,
                             umbral_ultimo_pct=self.cfg.umbral, minimo_cargo=self.minimo_cargo)
 
 
@@ -682,25 +788,31 @@ def _tras_ret(ctx: _Contexto, ret: MsgSLRet) -> list[Accion]:
         if _es_ya_shortable(ret.notas):
             return [_anotar_estado(ctx, ESTADO_NO_HACE_FALTA, motivo="AlreadyShortable (ETB)", notas=ret.notas),
                     Desprogramar(ctx.clave)]
-        return [Anotar(ANOTACION_INQUIRE, _datos(ctx, ruta=ret.ruta, fallo=ret.notas))]
+        return _sin_compra(ctx, _datos(ctx, ruta=ret.ruta, fallo=ret.notas), f"fallo de la ruta: {ret.notas}")
     if ret.tipo != 1:
-        return [Anotar(ANOTACION_INQUIRE, _datos(ctx, ruta=ret.ruta, motivo=f"RetType {ret.tipo} desconocido"))]
+        return _sin_compra(ctx, _datos(ctx, ruta=ret.ruta, motivo=f"RetType {ret.tipo} desconocido"))
     if not _decimal_no_negativo(ret.precio):
-        return [Anotar(ANOTACION_INQUIRE, _datos(ctx, ruta=ret.ruta, motivo="precio del locate no válido"))]
+        return _sin_compra(ctx, _datos(ctx, ruta=ret.ruta, motivo="precio del locate no válido"))
     if ret.tamano <= 0:
-        return [Anotar(ANOTACION_INQUIRE, _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio, disponibles=0,
-                                                 motivo="sin acciones disponibles"))]
+        return _sin_compra(ctx, _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio, disponibles=0,
+                                       motivo="sin acciones disponibles"))
     if not _decimal_positivo(ctx.precio):
-        return [Anotar(ANOTACION_INQUIRE, _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio,
-                                                 motivo="sin precio de la acción para el EV"))]
+        return _sin_compra(ctx, _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio,
+                                       motivo="sin precio de la acción para el EV"))
+    if ctx.intento_unico and not ctx.a_tiro():
+        return _sin_compra(ctx, _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio, precio=ctx.precio,
+                                       precio_senal=ctx.loc.precio_senal, tope_a_tiro_pct=ctx.tope_a_tiro,
+                                       motivo="el precio no está a tiro de la señal (Jaume 29-sep)"))
     ver = ctx.veredicto(ret.precio, ret.tamano)
     datos = _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio, disponibles=ret.tamano, **_de_veredicto(ver))
     if not ver["entra"]:
-        return [Anotar(ANOTACION_INQUIRE, datos)]
+        return _sin_compra(ctx, datos)
     if tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
+        if ctx.intento_unico:
+            return _sin_compra(ctx, {**datos, "motivo": "tope de gasto en locates (R-H-03)"})
         return _tope(ctx, datos, ver["coste_nuevo"])
     if not ret.ruta.strip() or any(c.isspace() for c in ret.ruta.strip()):
-        return [Anotar(ANOTACION_INQUIRE, {**datos, "motivo": "%SLRET sin ruta: no se puede comprar"})]
+        return _sin_compra(ctx, {**datos, "motivo": "%SLRET sin ruta: no se puede comprar"})
     token = _token_locate(ctx.tokens)
     ruta = ret.ruta.strip()
     return [Anotar(ANOTACION_INTENCION, {**datos, "estado": ESTADO_COMPRANDO, "token": token, "ruta": ruta,
@@ -709,6 +821,20 @@ def _tras_ret(ctx: _Contexto, ret: MsgSLRet) -> list[Accion]:
                                          "gasto_en_curso_otros": ctx.gasto_en_curso}),
             LocateComprar(ctx.ticker, ver["qty_comprar"], ruta, token),
             _programar(ctx, COMPRA_SIN_RESPUESTA_S)]
+
+
+def _sin_compra(ctx: _Contexto, datos: dict, motivo: Optional[str] = None) -> list[Accion]:
+    """Un `%SLRET` que no acaba en compra. Fases A/C: se anota y se sigue buscando (lo de siempre). Fases de intento
+    único (B, C_piramide; Jaume 29-sep): era LA oportunidad → «parado» para todo el día en la pareja (sin aviso aquí:
+    el decisor avisa de la entrada o la pirámide perdida)."""
+    if not ctx.intento_unico:
+        return [Anotar(ANOTACION_INQUIRE, datos)]
+    razon = motivo or datos.get("motivo") or "no compensa"
+    extra = {k: v for k, v in datos.items() if k not in ("ticker", "strategy_id", "qty", "qty_ajustada", "qty_pedida",
+                                                        "fase", "motivo", "coste_nuevo", "coste_total", "estado")}
+    return [_anotar_estado(ctx, ESTADO_PARADO, motivo=f"intento único en la señal sin compra: {razon} (Jaume 29-sep)",
+                           **extra),
+            Desprogramar(ctx.clave)]
 
 
 def _compra_sin_respuesta(ctx: _Contexto) -> list[Accion]:
@@ -816,7 +942,7 @@ def _oferta(ctx: _Contexto, orden: MsgSLOrder) -> list[Accion]:
     if motivo is None:
         return [_anotar_estado(ctx, ESTADO_OFRECIDO, **{**datos, "id_das": orden.id, "precio_accion": orden.precio}),
                 LocateOferta(orden.id, True)]
-    if ctx.fuera_de_hora:
+    if ctx.fuera_de_hora or ctx.intento_unico:          # Jaume 29-sep: en el intento único no hay segunda vuelta
         return [LocateOferta(orden.id, False),
                 _anotar_estado(ctx, ESTADO_PARADO, **{**datos, "id_das": orden.id, "motivo": motivo}),
                 Desprogramar(ctx.clave)]
@@ -836,17 +962,20 @@ def _localizado(ctx: _Contexto, orden: MsgSLOrder, seguir_buscando: bool) -> lis
     if ctx.minimo_cargo is not None and coste_nuevo < ctx.minimo_cargo:
         coste_nuevo = ctx.minimo_cargo
     localizadas = loc.localizadas + orden.localizadas
-    libres_despues = _libres(loc) + orden.localizadas
+    libres_despues = ctx.cubiertas() + orden.localizadas
     acciones: list[Accion] = [
         _anotar_estado(ctx, ESTADO_LOCALIZADO, id_das=orden.id, localizadas=localizadas, precio_accion=precio_accion,
                        coste_nuevo=coste_nuevo, coste_total=loc.coste + coste_nuevo, comprado_en=ctx.ahora),
         consulta_reuso(ctx.ticker),
     ]
-    falta = _falta_comprable(ctx.objetivo(), libres_despues, ctx.cfg.umbral)     # E2-08: un resto pequeño no se busca
+    pl = precio_accion if precio_accion > 0 else None
+    marginal = ctx.marginal(pl)
+    falta = _falta_comprable(ctx.objetivo(pl), libres_despues, ctx.cfg.umbral,
+                             marginal)     # E2-08 / Jaume 29-sep: un resto que no compensa no se busca
     if not seguir_buscando or falta <= 0 or ctx.fuera_de_hora:
         acciones.append(Desprogramar(ctx.clave))
         return acciones
-    qty_consulta = paquetes(falta, ctx.cfg.umbral)[0] * PAQUETE
+    qty_consulta = _paquetes_con(falta, ctx.cfg.umbral, marginal)[0] * PAQUETE
     acciones += [
         _anotar_estado(ctx, ESTADO_BUSCANDO, motivo="locate parcial: se busca el resto (R-H-04)",
                        qty_consulta=qty_consulta, ultimo_inquire_en=ctx.ahora),
@@ -896,7 +1025,7 @@ def _tope(ctx: _Contexto, datos: dict, coste_nuevo: Decimal) -> list[Accion]:
 def _datos(ctx: _Contexto, **extra: Any) -> dict:
     """Datos comunes de las anotaciones de locate (§8: ticker dentro de `datos`; Decimal tal cual, el diario los pasa a cadena)."""
     datos = {"ticker": ctx.ticker, "strategy_id": ctx.loc.strategy_id, "qty": ctx.loc.pedidas,
-             "qty_ajustada": ctx.objetivo()}
+             "qty_ajustada": ctx.objetivo(), "qty_pedida": ctx.loc.pedidas, "fase": ctx.loc.fase}
     datos.update(extra)
     return datos
 
@@ -931,8 +1060,19 @@ def _aplicar_una(loc: Locate, tipo: str, datos: Mapping[str, Any]) -> Locate:
     qty = _entero(datos.get("qty_ajustada"))
     if qty is None:
         qty = _entero(datos.get("qty"))
-    if qty is not None:
-        cambios["pedidas"] = max(loc.pedidas, qty)
+    pedida = _entero(datos.get("qty_pedida"))            # Jaume 29-sep: la N original (la regla marginal la necesita)
+    candidatas = [n for n in (qty, pedida) if n is not None]
+    if candidatas:
+        cambios["pedidas"] = max([loc.pedidas] + candidatas)
+    n_nueva = _entero(datos.get("pedidas_n"))           # Jaume 29-sep: N recalculada con el precio actual (manda)
+    if n_nueva is not None and n_nueva >= 0:
+        cambios["pedidas"] = n_nueva
+    fase = datos.get("fase")
+    if isinstance(fase, str) and fase in FASES:
+        cambios["fase"] = fase
+    if "precio_senal" in datos:
+        ps = datos.get("precio_senal")
+        cambios["precio_senal"] = ps if isinstance(ps, Decimal) and ps.is_finite() and ps > 0 else None
     for campo in ("localizadas", "usadas", "id_das", "token"):
         valor = _entero(datos.get(campo))
         if valor is not None:
@@ -963,20 +1103,67 @@ def _libres(loc: Locate) -> int:
     return max(0, loc.localizadas - loc.usadas)
 
 
-def _falta_comprable(objetivo: int, cubiertas: int, umbral_ultimo_pct: Union[Decimal, int, float, str]) -> int:
+def _falta_comprable(objetivo: int, cubiertas: int, umbral_ultimo_pct: Union[Decimal, int, float, str],
+                     marginal: Optional[tuple[Decimal, Decimal, Decimal]] = None) -> int:
     """E2-08 (H6 «sobre la suma de cada compra»): lo que falta y merece una compra más.
 
     El «mínimo un paquete» de `paquetes()` es para posiciones de menos de 100
     acciones SIN nada cubierto. Con acciones ya localizadas, un resto de menos
-    de 100 que no pasa del umbral (30 %) no se compra: se opera con lo
-    cubierto (1.220 localizadas de 1.240 → no se compran 100 para usar 20).
+    de 100 que no compensa no se compra: se opera con lo cubierto (1.220
+    localizadas de 1.240 → no se compran 100 para usar 20). «Compensa» es la
+    regla MARGINAL (Jaume 29-sep) si se conoce `marginal` = (precio, EV,
+    precio del locate); si no, pasar del umbral (30 %).
     """
     falta = max(0, objetivo - cubiertas)
     if falta <= 0 or cubiertas <= 0 or falta >= PAQUETE:
         return falta
-    if Decimal(falta) * _CIEN / PAQUETE > de_float(umbral_ultimo_pct):
+    if _ultimo_compensa(falta, de_float(umbral_ultimo_pct), marginal):
         return falta
     return 0
+
+
+def _umbral(umbral_ultimo_pct: Union[Decimal, int, float, str]) -> Decimal:
+    umbral = de_float(umbral_ultimo_pct)
+    if umbral < 0 or umbral > _CIEN:
+        raise ValueError(f"umbral del último paquete fuera de [0, 100]: {umbral_ultimo_pct!r}")
+    return umbral
+
+
+def _marginal(precio: Optional[Decimal], ev_pct: Optional[Decimal],
+              precio_locate: Optional[Decimal]) -> Optional[tuple[Decimal, Decimal, Decimal]]:
+    """(precio, EV, precio del locate) para la regla marginal, o None (→ umbral del 30 %) si falta alguno.
+
+    Un valor presente pero imposible (no Decimal finito, precio ≤ 0, locate < 0)
+    es un error del llamador: ValueError, nunca una compra por defecto.
+    """
+    if precio_locate is None or precio is None or ev_pct is None:
+        return None
+    _exigir_decimal(precio, "precio", positivo=True)
+    _exigir_decimal(ev_pct, "ev_pct", permitir_negativo=True)
+    _exigir_decimal(precio_locate, "precio_locate")
+    return precio, ev_pct, precio_locate
+
+
+def _ultimo_compensa(extra: int, umbral: Decimal, marginal: Optional[tuple[Decimal, Decimal, Decimal]]) -> bool:
+    """¿Se compra un paquete para `extra` (1-99) acciones? Marginal (Jaume 29-sep; el límite exacto compra) o > umbral %."""
+    if marginal is None:
+        return Decimal(extra) * _CIEN / PAQUETE > umbral
+    precio, ev, precio_locate = marginal
+    return Decimal(extra) * precio * ev / _CIEN >= Decimal(PAQUETE) * precio_locate
+
+
+def _paquetes_con(qty: int, umbral: Decimal, marginal: Optional[tuple[Decimal, Decimal, Decimal]]) -> tuple[int, int]:
+    """H6 / regla marginal: paquetes completos por lo bajo; el último según `_ultimo_compensa`; mínimo uno (H-7)."""
+    if qty <= 0:
+        return 0, 0
+    completos, resto = divmod(qty, PAQUETE)
+    if resto == 0:
+        return completos, qty
+    if _ultimo_compensa(resto, umbral, marginal):
+        return completos + 1, qty
+    if completos == 0:
+        return 1, qty
+    return completos, completos * PAQUETE
 
 
 def _coste_previsto(loc: Locate, umbral_ultimo_pct: Union[Decimal, int, float, str]) -> Decimal:

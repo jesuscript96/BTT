@@ -195,16 +195,21 @@ def test_caso_3_sin_stop_repone_el_par_y_avisa(cfg):
     assert [(a.nivel, a.grupo) for a in avisos] == [(Nivel.AVISO, Grupo.B)] and "R-C-10 (3)" in avisos[0].texto
 
 
-def test_caso_4_posicion_desconocida_proteccion_aviso3_y_pausa_global(cfg):
-    """R-C-10 (4) + R-M-03: posición que no está en ningún diario → protección al 25 %, aviso 3 y pausa global hasta /sigue."""
+def test_caso_4_posicion_desconocida_proteccion_aviso3_y_ticker_al_humano(cfg):
+    """R-C-10 (4) + R-M-03 POR TICKER (Jaume 29-sep): posición que no está en ningún diario → protección al 25 %,
+    aviso 3 y SOLO ese ticker en CONTROL_HUMANO («intervención humana») hasta /sigue X; sin pausa global."""
     estado = estado_con()
     ds = comparar(estado, {X: pos_das(-200)}, {}, HOY, cfg)
     assert casos(ds) == [(X, CASO_AJENA)] and ds[0].descubiertas == 200 and ds[0].neta_das == -200
     acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
     pausa = de_tipo(acc, Anotar)
-    assert len(pausa) == 1 and pausa[0].tipo == "pausa" and "ticker" not in pausa[0].datos   # sin ticker = pausa GLOBAL
-    assert pausa[0].datos["pausa_global"] is True and pausa[0].datos["regla"] == "R-M-03"
-    assert estado.pausa_global is True
+    assert len(pausa) == 1 and pausa[0].tipo == "pausa" and pausa[0].datos["ticker"] == X   # CON ticker
+    assert pausa[0].datos["estado"] == EstadoTicker.CONTROL_HUMANO.value
+    assert pausa[0].datos["intervencion_humana"] is True and "R-M-03" in pausa[0].datos["regla"]
+    assert pausa[0].datos["motivo"].startswith(rc.MOTIVO_INTERVENCION_HUMANA)
+    assert estado.pausa_global is False
+    pos = estado.posiciones[X]
+    assert pos.estado is EstadoTicker.CONTROL_HUMANO and pos.intervencion_humana is True
     proteccion = [a.orden for a in de_tipo(acc, EnviarOrden)]
     assert len(proteccion) == 1
     o = proteccion[0]
@@ -213,7 +218,8 @@ def test_caso_4_posicion_desconocida_proteccion_aviso3_y_pausa_global(cfg):
     assert o.stop == D("10.00") and o.precio == D("10.30") and en_tick(o.stop) and en_tick(o.precio)   # 8 · 1,25 y +3 %
     assert de_tipo(acc, EnviarOrden)[0].serie is None   # un InvalidarSerie de un fill no la descarta
     avisos = de_tipo(acc, Avisar)
-    assert [a.nivel for a in avisos] == [Nivel.MAXIMO] and "/sigue" in avisos[0].texto
+    assert [a.nivel for a in avisos] == [Nivel.MAXIMO] and f"/sigue {X}" in avisos[0].texto
+    assert f"{X} en manos del humano" in avisos[0].texto
     assert acc.index(pausa[0]) < acc.index(de_tipo(acc, EnviarOrden)[0]) < acc.index(avisos[0])
 
 
@@ -280,7 +286,8 @@ def test_orden_ajena_es_caso_4_pausa_y_aviso(cfg, order_src, token):
     assert ds[0].descubiertas == 0 and [m.id for m in ds[0].ajenas] == [90]
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     assert not de_tipo(acc, EnviarOrden)   # la posición es nuestra y está cubierta: no se protege, no se deshace (R-K-02)
-    assert [a.nivel for a in de_tipo(acc, Avisar)] == [Nivel.MAXIMO] and estado.pausa_global is True
+    assert [a.nivel for a in de_tipo(acc, Avisar)] == [Nivel.MAXIMO] and estado.pausa_global is False
+    assert estado.posiciones[X].estado is EstadoTicker.CONTROL_HUMANO and estado.posiciones[X].intervencion_humana
     assert 90 in estado.ordenes_ajenas
     # la misma ajena en el barrido siguiente ya no es nueva: ni otro aviso ni otra pausa
     assert casos(comparar(estado, {X: pos_das(-100)}, ord_das, HOY, cfg)) == [(X, CASO_COINCIDE)]
@@ -302,12 +309,13 @@ def test_E2c_01_ajenas_tratadas_se_anotan_siempre_y_un_reinicio_no_vuelve_a_paus
                    HORA, RUTA_STOP)
     tratadas = [a for a in de_tipo(acc, Anotar) if a.tipo == rc.ANOTACION_AJENAS]
     assert [a.datos for a in tratadas] == [{"ticker": X, "ids": [90], "regla": "R-K-02 / E2c-01"}]
-    assert estado.pausa_global is True
+    assert estado.posiciones[X].intervencion_humana is True and estado.pausa_global is False
     # otra ajena nueva con la pausa YA puesta: se anota igual (antes solo iba dentro del registro «pausa»)
     acc2 = acciones(comparar(estado, {X: pos_das(-100), "ABC": pos_das(0, ticker="ABC")}, {**ord_das, 93: otra}, HOY,
                              cfg), estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
     assert [a.datos["ids"] for a in de_tipo(acc2, Anotar) if a.tipo == rc.ANOTACION_AJENAS] == [[93]]
-    assert not [a for a in de_tipo(acc2, Anotar) if a.tipo == "pausa"]
+    # R-M-03 por ticker: la ajena de ABC pone en manos del humano a ABC (y solo a ABC); XYZ no se vuelve a anotar
+    assert [a.datos["ticker"] for a in de_tipo(acc2, Anotar) if a.tipo == "pausa"] == ["ABC"]
     json.dumps([a.datos for a in de_tipo(acc + acc2, Anotar) if a.tipo == rc.ANOTACION_AJENAS])
     # reinicio: el diario repone los ids tratados y Jaume ya dio /sigue
     reiniciado = estado_con(corto_conocido(), ordenes=(p, e))
@@ -318,7 +326,7 @@ def test_E2c_01_ajenas_tratadas_se_anotan_siempre_y_un_reinicio_no_vuelve_a_paus
     ds = comparar(reiniciado, {X: pos_das(-100)}, ord_das, HOY, cfg)
     assert CASO_AJENA not in [d.caso for d in ds]
     acciones(ds, reiniciado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
-    assert reiniciado.pausa_global is False
+    assert reiniciado.pausa_global is False and reiniciado.posiciones[X].intervencion_humana is False
 
 
 def test_E2c_03_desconocida_larga_avisa_vender_a_mano(cfg):
@@ -373,14 +381,14 @@ def test_ajena_solo_cuenta_si_afecta_a_la_posicion(cfg, estado_ajena, cxl, lv, c
 
 
 def test_manual_que_cubre_parte_es_caso_4_y_6(cfg):
-    """R-K-02 + M7: el humano recompra 40 a mano → aviso 3 + pausa y DAS manda sobre la neta (stops a 60)."""
+    """R-K-02 + M7: el humano recompra 40 a mano → aviso 3 + ticker al humano y DAS manda sobre la neta (stops a 60)."""
     p, e = principal(), emergencia()
     manual = msg_crudo(92, None, qty=40, estado=EstadoOrden.EXECUTED, order_src="Montage", lvqty=0)
     estado = estado_con(corto_conocido(), ordenes=(p, e))
     ds = comparar(estado, {X: pos_das(-60)}, {**ids([p, e]), 92: manual}, HOY, cfg)
     assert casos(ds) == [(X, CASO_AJENA), (X, CASO_NETA_DISTINTA)]
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
-    assert estado.pausa_global and estado.posiciones[X].neta_fills == -60
+    assert estado.posiciones[X].intervencion_humana and estado.posiciones[X].neta_fills == -60
     assert sorted((r.id_das, r.qty) for r in de_tipo(acc, Reemplazar)) == [(11, 60), (12, 60)]
 
 
@@ -588,12 +596,28 @@ def test_desconocida_larga_proteccion_de_venta_por_debajo(cfg):
     assert (o.lado, o.stop, o.precio, o.qty) == (Lado.VENTA, D("6.00"), D("5.82"), 100)
 
 
-def test_pausa_global_se_anota_una_sola_vez(cfg):
+def test_R_M_03_por_ticker_una_pausa_por_ticker_y_una_sola_vez(cfg):
+    """Jaume 29-sep: dos tickers con posición ajena → una «pausa» POR ticker (cada uno al humano), sin pausa global;
+    el barrido siguiente con lo mismo no vuelve a anotar la pausa (el ticker ya está en manos del humano)."""
     estado = estado_con()
     ds = comparar(estado, {X: pos_das(-100), "ABC": pos_das(-50, ticker="ABC")}, {}, HOY, cfg)
     acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
-    assert len([a for a in de_tipo(acc, Anotar) if a.tipo == "pausa"]) == 1
-    assert len(de_tipo(acc, EnviarOrden)) == 2
+    assert sorted(a.datos["ticker"] for a in de_tipo(acc, Anotar) if a.tipo == "pausa") == ["ABC", X]
+    assert len(de_tipo(acc, EnviarOrden)) == 2 and estado.pausa_global is False
+    ds2 = comparar(estado, {X: pos_das(-100), "ABC": pos_das(-50, ticker="ABC")}, {}, HOY, cfg)
+    acc2 = acciones(ds2, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
+    assert not [a for a in de_tipo(acc2, Anotar) if a.tipo == "pausa"]
+
+
+def test_R_M_03_por_ticker_en_cisne_negro_conserva_BS(cfg):
+    """Jaume 29-sep: ajena en un ticker en cisne negro → se marca la intervención pero el BS (y su protocolo) manda."""
+    estado = estado_con(posicion(-100, (lote(),), estado=EstadoTicker.BS))
+    ajena = msg_crudo(95, None, lado="B", tipo="L", qty=10, precio="9.90", order_src="Montage")
+    ds = comparar(estado, {X: pos_das(-100)}, {95: ajena}, HOY, cfg)
+    acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
+    pos = estado.posiciones[X]
+    assert pos.estado is EstadoTicker.BS and pos.intervencion_humana is True
+    assert [a.datos["estado"] for a in de_tipo(acc, Anotar) if a.tipo == "pausa"] == [EstadoTicker.BS.value]
 
 
 def test_cisne_negro_no_se_repone(cfg):

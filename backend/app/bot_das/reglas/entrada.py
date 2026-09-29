@@ -264,7 +264,8 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
      1 repetida: `senal.id` ∈ `senales_vistas` (R-A-05).
      2 bot: `vigilando` False (estado o cuadro), `pausa_global`, `control_humano`, `pausar_entradas` (R-M-03, R-D-02).
      3 estrategia ausente, `ejecutar=False` (CM2) o `Evento.cuenta` de otra cuenta (el ejecutor opera UNA).
-     4 ticker PAUSADO / BS / SIN_SIMBOLO / CONTROL_HUMANO (R-B-07, R-G-03, A7).
+     4 ticker PAUSADO / BS / SIN_SIMBOLO / CONTROL_HUMANO (R-B-07, R-G-03, A7) o pausado por el humano con
+       «/pausar X» (`pausado_por_humano`, Jaume 29-sep).
      5 lado: solo cortos; señal contraria a un lote vivo o con neta larga → no (R-E-01).
      6 `exclusion` (motivo de `reglas.exclusiones.excluida`, calculado por el decisor; None = operable).
      7 halt en curso (TA H/P o ticker en HALT) → no, y `guardar_para_reapertura` (R-F-04 b, B18).
@@ -323,8 +324,8 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
     estrategia = cfg.estrategias.get(strategy_id)
     if estrategia is None or not estrategia.ejecutar or getattr(evento, "cuenta", None) is not None:
         return _descartar(MOTIVO_ESTRATEGIA)
-    # 4
-    if pos is not None and pos.estado in _TICKER_BLOQUEADO:
+    # 4 (Jaume 29-sep: también «/pausar X», `pausado_por_humano`, con el ticker NORMAL)
+    if pos is not None and (pos.estado in _TICKER_BLOQUEADO or pos.pausado_por_humano):
         return _descartar(MOTIVO_TICKER_BLOQUEADO)
     # 5
     if _lado_prohibido(pos, evento):

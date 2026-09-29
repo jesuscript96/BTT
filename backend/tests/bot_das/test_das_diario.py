@@ -1445,3 +1445,22 @@ def test_memoria_decisor_idempotente_y_sin_orden() -> None:
     primero = mod_diario.memoria_decisor(registros, HOY)
     assert mod_diario.memoria_decisor(registros + registros, HOY) == primero
     assert mod_diario.memoria_decisor(list(reversed(registros)), HOY) == primero
+
+
+def test_locates_por_fases_se_reconstruyen_jaume_29_sep() -> None:
+    """H-2 + Jaume 29-sep: la fase del locate, la referencia «a tiro», la N recalculada, la N original (`qty_pedida`)
+    y la PRIMERA señal principal de cada pareja salen del diario igual que en caliente."""
+    registros = [
+        reg("locate_estado", ticker="XYZ", strategy_id="s1", estado="buscando", qty=113, qty_ajustada=100,
+            qty_pedida=113),
+        reg("locate_estado", ticker="XYZ", strategy_id="s1", fase="B", precio_senal="3.45"),
+        reg("senal_principal", ticker="XYZ", strategy_id="s1", senal_id="XYZ|s1|09:29|entrada"),
+        reg("senal_principal", ticker="XYZ", strategy_id="s1", senal_id="XYZ|s1|09:30|entrada"),   # no pisa la 1.ª
+        reg("locate_estado", ticker="ABC", strategy_id="s1", estado="buscando", qty=300),
+        reg("locate_estado", ticker="ABC", strategy_id="s1", pedidas_n=250, fase="C", precio_senal=None),
+    ]
+    estado = reconstruir(registros, HOY)
+    xyz, abc = estado.locates[("XYZ", "s1")], estado.locates[("ABC", "s1")]
+    assert (xyz.fase, xyz.precio_senal, xyz.pedidas) == ("B", Decimal("3.45"), 113)
+    assert (abc.fase, abc.precio_senal, abc.pedidas) == ("C", None, 250)
+    assert estado.senales_principales == {("XYZ", "s1"): "XYZ|s1|09:29|entrada"}

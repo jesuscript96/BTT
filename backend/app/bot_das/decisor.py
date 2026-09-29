@@ -144,6 +144,7 @@ from app.bot_das.tipos import (
     HiloCaido,
     InvalidarSerie,
     Lado,
+    Locate,
     LocateComprar,
     LocateInquire,
     LocateOferta,
@@ -197,7 +198,7 @@ __all__ = [
     "T_LOCATE_INQUIRE", "T_STOP_REINTENTO", "T_REINTENTO_RECHAZO", "T_LOCATE_RECOMPRAR", "T_CERRAR_TODO",
     "T_DAS_AVISO", "T_DAS_RECONECTAR", "T_FOTO",
     "T_EXCESO_VERIFICAR", "T_TP_LIMBO", "T_CRUCE_POSTONLY", "T_HALT_CIERRE_VERIFICAR", "T_SIMSTATUS_ESPERA",
-    "T_PRIORIDAD_ASK", "T_SALIDA_ESPERA", "T_SLRET_VENTANA", "T_CIERRE_REPONER",
+    "T_PRIORIDAD_ASK", "T_SALIDA_ESPERA", "T_SLRET_VENTANA", "T_CIERRE_REPONER", "T_LOCATE_SENAL",
     "MOTIVO_SUMA", "MOTIVO_VENCER", "MOTIVO_CRUCE_ESPERA", "MOTIVO_PRIORIDAD", "MOTIVO_HALT", "MOTIVO_CIERRE",
     "MOTIVO_BLOQUEO", "MOTIVO_RECHAZO", "MOTIVO_SIN_CONFIRMAR", "MOTIVO_CANCELADA_DAS",
 ]
@@ -238,6 +239,8 @@ T_PRIORIDAD_ASK = "prioridad_ask"                   # G1A-06 / R-D-07: el TP pas
 T_SALIDA_ESPERA = "salida_espera"                   # G1A-06 / R-D-07: salida que espera al Canceled de la entrada («…:X»)
 T_SLRET_VENTANA = "slret_ventana"                   # E2-05: %SLRET de UNA consulta («slret_ventana:X:S»)
 T_CIERRE_REPONER = "cierre_reponer"                 # D2-04 / G1B-03: stops de vuelta tras retirar el cierre («…:X»)
+ANOTACION_SENAL_PRINCIPAL = "senal_principal"       # = diario.TIPO_SENAL_PRINCIPAL (Jaume 29-sep)
+T_LOCATE_SENAL = "locate_senal"                     # Jaume 29-sep: la señal espera su intento único de locate («…:X:S»)
 _GLOBALES = frozenset({T_SIMSTATUS, T_BARRIDO, T_DAS_AVISO, T_DAS_RECONECTAR, T_FOTO})
 
 # ── constantes técnicas del decisor (no son reglas del libro: van anotadas en las desviaciones) ──
@@ -485,6 +488,10 @@ class Decisor:
         self._radar: dict[str, float] = {}
         self._radar_precio: dict[str, Decimal] = {}
         self._inquires: deque[tuple[str, str]] = deque()
+        # Jaume 29-sep (locates por fases): la señal que espera su intento único de locate, por (ticker, estrategia),
+        # con las libres que había al empezar; y los ids de señal que ya gastaron su intento (no hay un segundo)
+        self._espera_locate: dict[tuple[str, str], tuple[Senal, int]] = {}
+        self._intento_locate_hecho: set[str] = set()
         self._slret_ventana: dict[str, list[MsgSLRet]] = {}  # E2-05: %SLRET de las consultas de un ticker (0,5 s)
         self._slret_tics: dict[str, int] = {}                # E2-05: Tics vistos con la ventana abierta (cierra al 2.º)
         self._slorders_cobrados: set[int] = set()
@@ -701,12 +708,14 @@ class Decisor:
                        "htb_hoy": _txt(cuenta.htb_hoy), "leida_en": cuenta.leida_en},
             "locates": [{"ticker": loc.ticker, "strategy_id": loc.strategy_id, "estado": loc.estado,
                          "pedidas": loc.pedidas, "localizadas": loc.localizadas, "usadas": loc.usadas,
-                         "coste": _txt(loc.coste)} for _, loc in sorted(estado.locates.items())],
+                         "coste": _txt(loc.coste), "fase": loc.fase} for _, loc in sorted(estado.locates.items())],
             "gasto_locates_dia": _txt(estado.gasto_locates_dia),
             "locates_deshabilitados": estado.locates_deshabilitados,
             "tickers_pausados": [{"ticker": t, "estado": p.estado.value, "motivo": p.motivo_estado, "desde": p.desde}
                                  for t, p in sorted(estado.posiciones.items())
                                  if p.estado is not EstadoTicker.NORMAL],
+            # Jaume 29-sep: /pausar X (el estado del ticker sigue NORMAL: solo no abre)
+            "tickers_pausados_por_humano": sorted(t for t, p in estado.posiciones.items() if p.pausado_por_humano),
             "senales_del_dia": len(estado.senales_vistas),
             "feed": {"ultima_vela_en": feed_en,
                      "edad_s": (self._ahora - feed_en) if feed_en is not None else None,
@@ -1550,6 +1559,7 @@ class Decisor:
                 and ticker not in self._reapertura_ok):
             return self._descartar(s, "R-F-03: stop y halt en el ticker; sin reentrada hasta una reapertura válida",
                                    avisar=True)
+        principal = _tipo_evento(ev) == "entrada"
         acciones: list[Accion] = []
         exclusion: Optional[str] = None
         if e is not None and self._exclusion_necesaria(pos, e, ev):
@@ -1559,6 +1569,12 @@ class Decisor:
         simb = self._mercado.simbolo(ticker)
         ver = entrada.evaluar_senal(estado, cfg, s, cot, simb, exclusion, self._franja(), self._ahora,
                                     self._ahora_et, self._diario_roto(), es_reapertura=es_reapertura)
+        pedidas_ev = entrada.qty_de_evento(getattr(ev, "acciones", None))
+        if e is not None and pedidas_ev > 0 and ver.motivo == entrada.MOTIVO_SIN_ACCIONES:
+            prefijo, fin = self._etapa_locates(s, e, pos, principal, pedidas_ev)     # Jaume 29-sep: B3 / pirámide
+            acciones += prefijo
+            if fin is not None:
+                return acciones + fin
         if not ver.ok:
             if ver.guardar_para_reapertura:
                 pos.senal_guardada_halt = s
@@ -1570,6 +1586,12 @@ class Decisor:
         if (not es_reapertura and not sin_espera_simstatus and self._abre_ticker_plano(pos)
                 and not self._simstatus_fresco(ticker)):
             return acciones + self._esperar_simstatus(s)
+        if pedidas_ev > 0:
+            # Jaume 29-sep: B1/B2 o pirámide a medias (después de la espera del SymStatus, que no escribe en el diario)
+            prefijo, fin = self._etapa_locates(s, e, pos, principal, pedidas_ev)
+            acciones += prefijo
+            if fin is not None:
+                return acciones + fin
         acciones += self._metrica_retraso(s, cot)
         precio_senal = precios.de_float(ev.precio)
         pedidas = entrada.qty_de_evento(getattr(ev, "acciones", None))
@@ -1639,6 +1661,7 @@ class Decisor:
             if pos.intento is intento:
                 acciones.append(Programar(f"{T_CRUCE}:{ticker}", entrada.segundos_hasta_limite(intento, self._ahora_et),
                                           {"ticker": ticker}))
+        acciones += self._fase_tras_entrada(ticker, e)          # Jaume 29-sep: dentro → fase C
         acciones += self._armar_simstatus()
         acciones.append(Anotar("metrica", {"nombre": "senal_a_orden_ms", "ticker": ticker, "senal_id": s.id,
                                            "valor": max(0.0, (self._ahora - float(s.recibida_en)) * 1000.0),
@@ -1782,7 +1805,7 @@ class Decisor:
             return False
         if not e.ejecutar or getattr(ev, "cuenta", None) is not None:
             return False
-        return pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT)
+        return pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT) and not pos.pausado_por_humano
 
     def _exclusion(self, ticker: str, e: EstrategiaConfig) -> tuple[Optional[str], list[Accion]]:
         """R-A-03 v2 (ajuste (b)): `exclusiones.excluida` con la ficha y los splits de Massive; sin lista → no excluye + aviso.
@@ -2106,6 +2129,8 @@ class Decisor:
         pos = estado.posiciones.get(ticker)
         if pos is not None and pos.estado is not EstadoTicker.NORMAL:
             return f"ticker en {pos.estado.value}"
+        if pos is not None and pos.pausado_por_humano:
+            return "ticker pausado por el humano (/pausar X)"          # Jaume 29-sep
         if ticker in self._manual:
             return "ticker en control manual"
         return None
@@ -3954,6 +3979,15 @@ class Decisor:
         return (estado.locates_deshabilitados or estado.control_humano or not self._vigilando_efectivo()
                 or self._diario_roto())
 
+    def _locates_parados_en(self, ticker: str) -> bool:
+        """Locates deshabilitados en general o en ESTE ticker: pausado con «/pausar X» o en manos del humano (R-M-03 por
+        ticker). Jaume 29-sep, lo conservador: si el ticker no puede abrir, no se gasta en locates (la búsqueda sigue
+        con la siguiente fila del radar tras «/sigue X»; una compra ya en vuelo se termina igual)."""
+        if self._locates_deshabilitado():
+            return True
+        pos = self._estado.posiciones.get(ticker)
+        return pos is not None and (pos.pausado_por_humano or pos.estado is EstadoTicker.CONTROL_HUMANO)
+
     def _precio_locate(self, ticker: str) -> Optional[Decimal]:
         cot = self._cot(ticker)
         if cot is not None and _es_precio(cot.last):
@@ -3970,12 +4004,20 @@ class Decisor:
         qty = None
         if loc is None and estimacion is not None and precio is not None:
             qty = locates.cantidad_a_localizar(e, estimacion, precio)
+        previas: list[Accion] = []
+        if loc is not None and ret is None and orden is None:
+            previas, seguir = self._fase_periodica(ticker, e, loc, estimacion, precio)
+            loc = estado.locates.get((ticker, e.strategy_id))
+            if not seguir:
+                return previas
         ruta = ret.ruta if ret is not None else (orden.ruta if orden is not None else None)
         crudas = locates.siguiente_paso(
             loc, e, ticker, precio, self._ahora, self._cfg.locates, estado.gasto_locates_dia, estado.cuenta.equity,
-            self._locates_deshabilitado() if deshabilitado is None else deshabilitado, ret, self._tokens_locate,
+            self._locates_parados_en(ticker) if deshabilitado is None else deshabilitado, ret, self._tokens_locate,
             qty=qty, orden=orden, minimo_cargo=self._minimo_cargo.get(ruta) if ruta else None, ahora_et=self._ahora_et,
-            locates=estado.locates)                          # E2-02: el 3 % cuenta las compras en curso
+            locates=estado.locates,                          # E2-02: el 3 % cuenta las compras en curso
+            tope_a_tiro_pct=(self._cfg.entrada or {}).get("tope_caida_bid_pct"),   # Jaume 29-sep: el 3 % de R-B-01
+            en_uso_vivo=self._en_uso_locate(ticker, e.strategy_id))
         nuevo = locates.aplicar_anotaciones(loc, crudas)
         if nuevo is not None:
             estado.locates[(ticker, e.strategy_id)] = nuevo
@@ -3983,7 +4025,281 @@ class Decisor:
         for a in crudas:
             if isinstance(a, LocateInquire) and (ticker, e.strategy_id) not in self._inquires:
                 self._inquires.append((ticker, e.strategy_id))   # ensayo 28-sep: una consulta pendiente por estrategia
-        return crudas
+        return previas + crudas + self._resolver_espera_locate(ticker, e)
+
+    # ── locates por FASES (Jaume 29-sep) ────────────────────────────────
+    def _anotar_locate(self, ticker: str, sid: str, datos: dict) -> Anotar:
+        """Una transición de fase (o de N) del locate de la pareja: se aplica con el MISMO reductor que el diario."""
+        anotacion = Anotar(locates.ANOTACION_ESTADO, {"ticker": ticker, "strategy_id": sid, **datos})
+        nuevo = locates.aplicar_anotaciones(self._estado.locates.get((ticker, sid)), [anotacion])
+        if nuevo is not None:
+            self._estado.locates[(ticker, sid)] = nuevo
+        return anotacion
+
+    def _fase_periodica(self, ticker: str, e: EstrategiaConfig, loc: Locate, estimacion: Optional[list],
+                        precio: Optional[Decimal]) -> tuple[list[Accion], bool]:
+        """Jaume 29-sep: lo que las FASES deciden antes de un paso periódico (radar o temporizador, sin %SLRET/%SLOrder).
+
+        D (posición cerrada) → nada. C sin lote vivo de la estrategia → pasa a D
+        (sin consultas hasta una reentrada, que vuelve a B en la señal). A
+        buscando: se PARA (terminal) al cerrar la ventana de entrada de la
+        estrategia (fin de la última ventana + la vela + la caducidad de la
+        señal) o al salir del radar (sin fila en `RADAR_VIGENCIA_S`); con una
+        fila del radar, N se recalcula al precio actual (`pedidas_n`) antes de
+        la siguiente compra. Devuelve (acciones, seguir con la máquina).
+        """
+        sid = e.strategy_id
+        clave_t = locates.clave_temporizador(ticker, sid)
+        if loc.fase == locates.FASE_FUERA:
+            return [Desprogramar(clave_t)], False
+        if loc.fase == locates.FASE_DENTRO and not self._lote_vivo_de(ticker, sid):
+            return [self._anotar_locate(ticker, sid, {"fase": locates.FASE_FUERA, "precio_senal": None,
+                                                      "motivo": "posición cerrada: sin consultas hasta una reentrada "
+                                                                "(Jaume 29-sep)"}),
+                    Desprogramar(clave_t)], False
+        if loc.fase != locates.FASE_RADAR or loc.estado != locates.ESTADO_BUSCANDO:
+            return [], True
+        fin = self._fin_ventana_entradas(e)
+        if fin is not None and self._ahora_et >= fin:
+            return [self._anotar_locate(ticker, sid, {"estado": locates.ESTADO_PARADO, "motivo": (
+                        "fase A: cerró la ventana de entrada de la estrategia; no se buscan más locates (Jaume 29-sep)")}),
+                    Desprogramar(clave_t)], False
+        visto = self._radar.get(ticker)
+        if visto is not None and self._ahora - visto > RADAR_VIGENCIA_S:
+            return [self._anotar_locate(ticker, sid, {"estado": locates.ESTADO_PARADO, "motivo": (
+                        "fase A: el ticker salió del radar; no se buscan más locates (Jaume 29-sep)")}),
+                    Desprogramar(clave_t)], False
+        if estimacion is not None and precio is not None:
+            n = locates.cantidad_a_localizar(e, estimacion, precio)
+            if n > 0 and n != loc.pedidas:
+                return [self._anotar_locate(ticker, sid, {"pedidas_n": n, "precio": precio, "antes": loc.pedidas,
+                                                          "motivo": "N recalculada al precio actual (Jaume 29-sep)"})], True
+        return [], True
+
+    def _fin_ventana_entradas(self, e: EstrategiaConfig) -> Optional[datetime]:
+        """Jaume 29-sep: cuándo ya no puede llegar una señal de entrada de la estrategia hoy (hora ET aware).
+
+        Fin de la última `ventana_entradas` (o `hora_fin_sesion` si no hay
+        ventanas) + 60 s (la vela que empieza a esa hora cierra un minuto
+        después) + `entrada.caducidad_senal_s` (su señal aún vale). Sin horas
+        legibles → None (la fase A no se para por la ventana).
+        """
+        finales: list[tuple[int, int]] = []
+        for v in e.ventana_entradas or []:
+            hora = _hora_min(v.get("to_time")) if isinstance(v, dict) else None
+            if hora is not None:
+                finales.append(hora)
+        if not finales and e.hora_fin_sesion:
+            hora = _hora_min(e.hora_fin_sesion)
+            if hora is not None:
+                finales.append(hora)
+        if not finales:
+            return None
+        h, m = max(finales)
+        caducidad = _segundos(self._cfg.entrada, "caducidad_senal_s", float(ENTRADA_CADUCIDAD_S))
+        base = self._ahora_et.replace(hour=h, minute=m, second=0, microsecond=0)
+        return base + timedelta(seconds=60.0 + caducidad)
+
+    def _lote_vivo_de(self, ticker: str, sid: str) -> bool:
+        pos = self._estado.posiciones.get(ticker)
+        return pos is not None and any(lote.strategy_id == sid and lote.estado in _LOTE_VIVO
+                                       for lote in pos.lotes.values())
+
+    def _en_uso_locate(self, ticker: str, sid: str) -> int:
+        """Jaume 29-sep: los locates de la pareja que usan sus lotes VIVOS (cuentan como cubiertos en la fase C).
+
+        Por lote: lo pedido mientras abre; después, lo más que llegó a llenar.
+        Nunca más que `usadas` del locate (lo que otra estrategia prestó no es
+        de esta pareja).
+        """
+        loc = self._estado.locates.get((ticker, sid))
+        pos = self._estado.posiciones.get(ticker)
+        if loc is None or pos is None or loc.usadas <= 0:
+            return 0
+        total = 0
+        for lote in pos.lotes.values():
+            if lote.strategy_id != sid or lote.estado not in _LOTE_VIVO:
+                continue
+            total += (lote.pedidas if lote.estado is EstadoLote.ABRIENDO
+                      else max(lote.llenas, self._llenas_max_lote.get(lote.id, 0)))
+        return max(0, min(loc.usadas, total))
+
+    def _reentrada_legitima(self, pos: PosicionTicker, sid: str) -> bool:
+        """Jaume 29-sep: la pareja ENTRÓ hoy (un lote base con fills) y ya no tiene lote vivo: su reentrada es legítima."""
+        base = [lote for lote in pos.lotes.values() if lote.strategy_id == sid and lote.nivel_piramide is None]
+        return (any(lote.llenas > 0 or self._llenas_max_lote.get(lote.id, 0) > 0 for lote in base)
+                and not any(lote.estado in _LOTE_VIVO for lote in pos.lotes.values() if lote.strategy_id == sid))
+
+    def _senal_perdida_por_locates(self, s: Senal, pos: PosicionTicker, e: EstrategiaConfig) -> Optional[list[Accion]]:
+        """Regla de Jaume (29-sep): la PRIMERA señal principal del día de (ticker, estrategia) es la ÚNICA oportunidad.
+
+        Una señal principal posterior (otra vela que también cumple) se anota
+        `senal_perdida_por_locates` y no se opera ni dispara búsqueda; salvo
+        que la pareja ya entrara y saliera (reentrada legítima, fase D), que
+        sigue su camino normal (las reglas de reentrada deciden).
+        """
+        primera = self._estado.senales_principales.get((s.ticker, e.strategy_id))
+        if primera is None or primera == s.id or self._reentrada_legitima(pos, e.strategy_id):
+            return None
+        return ([Anotar("senal_perdida_por_locates", {"senal_id": s.id, "ticker": s.ticker,
+                                                      "strategy_id": e.strategy_id, "primera": primera,
+                                                      "regla": "Jaume 29-sep: la primera señal principal del día es "
+                                                               "la única oportunidad de entrada"})]
+                + self._descartar(s, "señal principal posterior a la primera del día: no se opera (Jaume 29-sep)",
+                                  avisar=False))
+
+    def _etapa_locates(self, s: Senal, e: EstrategiaConfig, pos: PosicionTicker, principal: bool,
+                       pedidas: int) -> tuple[list[Accion], Optional[list[Accion]]]:
+        """Jaume 29-sep: la señal llegó a los locates (pasó las 15 primeras comprobaciones de `evaluar_senal`).
+
+        Principal: la PRIMERA del día de la pareja es la única oportunidad
+        (`senal_perdida_por_locates` si no, salvo reentrada legítima) y se
+        anota `senal_principal`. Después, la fase de locates en la señal
+        (`_fase_locate_en_senal`). Devuelve (acciones a anteponer, fin): con
+        `fin` la entrada termina ahí (perdida o esperando su intento).
+        """
+        prefijo: list[Accion] = []
+        if principal:
+            perdida = self._senal_perdida_por_locates(s, pos, e)
+            if perdida is not None:
+                return [], perdida
+            prefijo = self._marcar_primera_senal(s, e)
+        return prefijo, self._fase_locate_en_senal(s, e, principal, pedidas)
+
+    def _marcar_primera_senal(self, s: Senal, e: EstrategiaConfig) -> list[Accion]:
+        clave = (s.ticker, e.strategy_id)
+        if clave in self._estado.senales_principales:
+            return []
+        self._estado.senales_principales[clave] = s.id
+        return [Anotar(ANOTACION_SENAL_PRINCIPAL, {"ticker": s.ticker, "strategy_id": e.strategy_id,
+                                                          "senal_id": s.id, "regla": "Jaume 29-sep"})]
+
+    def _fase_locate_en_senal(self, s: Senal, e: EstrategiaConfig, principal: bool,
+                              pedidas: int) -> Optional[list[Accion]]:
+        """Jaume 29-sep, fases B y C en la señal. None = se sigue con la entrada (B1, B2 o pirámide cubierta).
+
+        B1 locates ≥ lo pedido → entra. B2 parciales → entra con lo localizado
+        (y pasa a C). B3 sin locates → UN intento ahora (consulta + compra solo
+        «a tiro» y si compensa): la señal espera (`T_LOCATE_SENAL`, como mucho
+        la caducidad) y, si compra, entra; si no → pareja PARADA el día y
+        `locate_perdida_entrada` + aviso 2. Pirámide «add» con menos locates de
+        los que pide → el mismo intento; compre o no, entra con lo que haya.
+        Un id de señal solo tiene UN intento; con la pareja parada o los
+        locates deshabilitados no hay intento.
+        """
+        estado = self._estado
+        ticker, sid = s.ticker, e.strategy_id
+        clave = (ticker, sid)
+        libres = sum(n for _, n in locates.asignar_a_lote(estado.locates, ticker, pedidas, sid))
+        if libres >= pedidas or (principal and libres > 0):
+            return None
+        if s.id in self._intento_locate_hecho or clave in self._espera_locate:
+            return None
+        loc = estado.locates.get(clave)
+        if (loc is not None and loc.estado == locates.ESTADO_PARADO) or self._locates_deshabilitado():
+            if not principal:
+                return None
+            motivo = ("locates deshabilitados" if self._locates_deshabilitado()
+                      else "la búsqueda de locates de esta pareja está parada hoy")
+            return self._perdida_locate(s, e, motivo)
+        self._intento_locate_hecho.add(s.id)
+        fase = locates.FASE_SENAL if principal else locates.FASE_PIRAMIDE
+        precio_senal = precios.de_float(getattr(s.evento, "precio", None))
+        if precio_senal is not None and not principal:
+            # R-A-01 (ensayo 28-sep): en una pirámide `Evento.precio` es el NIVEL; «a tiro» se mide contra el cierre de la
+            # vela de la señal (`Senal.feed["close"]`), como el retraso. Sin cierre en la fuente, el nivel.
+            precio_senal = entrada._referencia_retraso(s, s.evento, precio_senal) or precio_senal
+        datos: dict = {"fase": fase, "precio_senal": precio_senal, "senal_id": s.id,
+                       "motivo": ("B: señal de entrada sin locates: UN intento (a tiro + compensa)" if principal
+                                  else "C: pirámide con locates que faltan: UN intento (a tiro + compensa)")
+                       + " (Jaume 29-sep)"}
+        if loc is None:
+            datos.update({"estado": locates.ESTADO_BUSCANDO, "qty": pedidas})
+        else:
+            necesarias = pedidas if principal else self._en_uso_locate(ticker, sid) + pedidas
+            if necesarias > loc.pedidas:
+                datos["pedidas_n"] = necesarias
+            if loc.estado not in locates.ESTADOS_EN_CURSO and loc.estado != locates.ESTADO_BUSCANDO:
+                datos["estado"] = locates.ESTADO_BUSCANDO          # un Located que ya no cubre: se reabre para el intento
+        acciones: list[Accion] = [self._anotar_locate(ticker, sid, datos)]
+        self._espera_locate[clave] = (s, libres)
+        espera = _segundos(self._cfg.entrada, "caducidad_senal_s", float(ENTRADA_CADUCIDAD_S))
+        acciones.append(Programar(f"{T_LOCATE_SENAL}:{ticker}:{sid}", espera, {"ticker": ticker, "strategy_id": sid}))
+        acciones += self._paso_locate(ticker, e)
+        return acciones
+
+    def _resolver_espera_locate(self, ticker: str, e: EstrategiaConfig) -> list[Accion]:
+        """Jaume 29-sep: la señal que espera su intento de locate se resuelve cuando la pareja compró algo (→ entra con
+        lo que haya) o quedó parada (entrada → perdida; pirámide → entra con lo localizado, 0 → descartada)."""
+        sid = e.strategy_id
+        clave = (ticker, sid)
+        espera = self._espera_locate.get(clave)
+        if espera is None:
+            return []
+        s, libres_antes = espera
+        estado = self._estado
+        loc = estado.locates.get(clave)
+        pedidas = entrada.qty_de_evento(getattr(s.evento, "acciones", None))
+        libres = sum(n for _, n in locates.asignar_a_lote(estado.locates, ticker, max(pedidas, 1), sid))
+        if loc is not None and loc.estado in locates.ESTADOS_EN_CURSO:
+            return []
+        compro = libres > libres_antes
+        parado = loc is None or loc.estado == locates.ESTADO_PARADO
+        if not compro and not parado:
+            return []
+        return self._soltar_espera_locate(s, e, compro)
+
+    def _soltar_espera_locate(self, s: Senal, e: EstrategiaConfig, compro: bool) -> list[Accion]:
+        ticker, sid = s.ticker, e.strategy_id
+        self._espera_locate.pop((ticker, sid), None)
+        acciones: list[Accion] = [Desprogramar(f"{T_LOCATE_SENAL}:{ticker}:{sid}")]
+        principal = _tipo_evento(s.evento) == "entrada"
+        if principal and not compro:
+            return acciones + self._perdida_locate(s, e, "el intento único en la señal no compró (sin locate a tiro "
+                                                         "que compense)")
+        return acciones + self._proteger(ticker, "senal", lambda: self._entrada(s))
+
+    def _t_locate_senal(self, clave: str, datos: dict) -> list[Accion]:
+        """Jaume 29-sep: vence la espera de la señal por su intento de locate. Sin compra en curso la pareja queda
+        PARADA el día; con una compra en vuelo la señal se pierde igual (la compra, si llega, se contabiliza)."""
+        partes = clave.split(":")
+        ticker = str(datos.get("ticker") or (partes[1] if len(partes) > 1 else ""))
+        sid = str(datos.get("strategy_id") or (partes[2] if len(partes) > 2 else ""))
+        e = self._estrategia(sid)
+        espera = self._espera_locate.get((ticker, sid))
+        if e is None or espera is None:
+            return []
+        loc = self._estado.locates.get((ticker, sid))
+        acciones: list[Accion] = []
+        if (loc is not None and loc.estado not in locates.ESTADOS_EN_CURSO
+                and loc.estado not in locates.ESTADOS_TERMINALES):
+            acciones += [self._anotar_locate(ticker, sid, {"estado": locates.ESTADO_PARADO, "motivo": (
+                             "intento único en la señal sin respuesta a tiempo (Jaume 29-sep)")}),
+                         Desprogramar(locates.clave_temporizador(ticker, sid))]
+        s, libres_antes = espera
+        pedidas = entrada.qty_de_evento(getattr(s.evento, "acciones", None))
+        libres = sum(n for _, n in locates.asignar_a_lote(self._estado.locates, ticker, max(pedidas, 1), sid))
+        return acciones + self._soltar_espera_locate(s, e, libres > libres_antes)
+
+    def _perdida_locate(self, s: Senal, e: EstrategiaConfig, motivo: str) -> list[Accion]:
+        """Jaume 29-sep (B3): la entrada se pierde por locates: anotación, descarte y aviso nivel 2 al grupo B."""
+        ticker = s.ticker
+        texto = (f"{avisos.escapar_html(ticker)} · {avisos.escapar_html(e.name)}: entrada PERDIDA por locates — "
+                 f"{avisos.escapar_html(motivo)}. Esta estrategia no entra hoy en este ticker (Jaume 29-sep)")
+        return ([Anotar("locate_perdida_entrada", {"senal_id": s.id, "ticker": ticker, "strategy_id": e.strategy_id,
+                                                   "motivo": motivo, "regla": "Jaume 29-sep (fase B3)"})]
+                + self._descartar(s, f"sin locates: {motivo} (Jaume 29-sep)", avisar=False)
+                + [Avisar(Nivel.AVISO, Grupo.B, texto, clave=f"locate_perdida:{ticker}:{e.strategy_id}")])
+
+    def _fase_tras_entrada(self, ticker: str, e: EstrategiaConfig) -> list[Accion]:
+        """Jaume 29-sep: tras entrar (o piramidar) la pareja está DENTRO (fase C): se buscan las pirámides cada 3 s sin
+        mirar «a tiro»; con lo pedido cubierto no se consulta nada. Una pareja parada o ETB no cambia."""
+        loc = self._estado.locates.get((ticker, e.strategy_id))
+        if (loc is None or loc.fase == locates.FASE_DENTRO
+                or loc.estado in (locates.ESTADO_PARADO, locates.ESTADO_NO_HACE_FALTA)):
+            return []
+        return [self._anotar_locate(ticker, e.strategy_id, {"fase": locates.FASE_DENTRO, "precio_senal": None,
+                                                            "motivo": "dentro: fase C (Jaume 29-sep)"})]
 
     def _t_locate_inquire(self, clave: str, datos: dict) -> list[Accion]:
         partes = clave.split(":")
@@ -4235,7 +4551,7 @@ class Decisor:
             T_CRUCE_POSTONLY: self._t_cruce_postonly, T_HALT_CIERRE_VERIFICAR: self._t_halt_cierre_verificar,
             T_SIMSTATUS_ESPERA: self._t_simstatus_espera, T_PRIORIDAD_ASK: self._t_prioridad_ask,
             T_SALIDA_ESPERA: self._t_salida_espera, T_SLRET_VENTANA: self._t_slret_ventana,
-            T_CIERRE_REPONER: self._t_cierre_reponer,
+            T_CIERRE_REPONER: self._t_cierre_reponer, T_LOCATE_SENAL: self._t_locate_senal,
         }
 
     def _ticker_de_temporizador(self, base: str, clave: str, datos: dict) -> Optional[str]:
@@ -4252,7 +4568,7 @@ class Decisor:
             return o.ticker if o is not None else None
         if base in (T_TP_CRUCE, T_HORA_AGREGAR, T_HORA_ASK, T_EOD_COMPROBAR, T_TP_LIMBO, T_PRIORIDAD_ASK):
             return resto.split("|", 1)[0] or None
-        if base in (T_LOCATE_INQUIRE, T_SLRET_VENTANA):
+        if base in (T_LOCATE_INQUIRE, T_SLRET_VENTANA, T_LOCATE_SENAL):
             return resto.split(":", 1)[0] or None
         return resto or None
 
@@ -5321,6 +5637,9 @@ class Decisor:
         estado.gasto_locates_dia = Decimal("0")
         estado.locates.clear()
         estado.locates_deshabilitados = False
+        estado.senales_principales.clear()                  # Jaume 29-sep: la «primera señal» es por día
+        self._espera_locate.clear()
+        self._intento_locate_hecho.clear()
         self._avisos_dia.clear()
         self._halt_hoy.clear()
         self._stop_hoy.clear()
@@ -5394,17 +5713,23 @@ class Decisor:
         estado = self._estado
         esc = avisos.escapar_html
         if n == "pausar":
+            if args:
+                return self._pausar_ticker(c, args[0])
             estado.pausa_global = True
             return [self._anotar_comando(c), self._responder("Pausado: no se abren entradas nuevas; stops y salidas siguen")]
         if n == "sigue":
             if args:
                 return self._sigue_ticker(c, args[0])
             estado.pausa_global = False
-            for pos in estado.posiciones.values():
-                pos.intervencion_humana = False
+            # Jaume 29-sep: «/sigue» a secas levanta TODO lo del humano: la pausa global, las pausas por ticker y la
+            # intervención humana (R-M-03 por ticker) de cada ticker. El veto tras un cisne negro exige /sigue X.
+            acciones: list[Accion] = [self._anotar_comando(c)]
+            for t, pos in sorted(estado.posiciones.items()):
+                pos.pausado_por_humano = False
+                acciones += self._levantar_intervencion(pos, "/sigue (R-M-03)")
             vetados = sorted(t for t, p in estado.posiciones.items() if p.sin_reentrada_hasta_sigue)
-            return [self._anotar_comando(c), self._responder(
-                "Sigue: se levanta la pausa por intervención humana (R-M-03)"
+            return acciones + [self._responder(
+                "Sigue: se levantan la pausa global, las pausas por ticker y la intervención humana (R-M-03)"
                 + (f". Siguen vetados tras un cisne negro (se levantan con /sigue TICKER, R-G-03): "
                    f"{esc(', '.join(vetados))}" if vetados else ""))]
         if n in ("reanudar", "reanudar_ticker"):
@@ -5519,6 +5844,7 @@ class Decisor:
         if pos is None:
             return acciones + [self._responder(f"{esc(ticker)}: el bot no tiene estado de este ticker; nada que levantar")]
         pos.sin_reentrada_hasta_sigue = False
+        pos.pausado_por_humano = False                      # Jaume 29-sep: /sigue X levanta la pausa de /pausar X
         pos.intervencion_humana = False
         if pos.estado is EstadoTicker.CONTROL_HUMANO:
             pos.estado = EstadoTicker.NORMAL
@@ -5530,8 +5856,37 @@ class Decisor:
             extra = " (el cisne negro sigue vivo: manda su protocolo)"
         elif ticker in self._manual:
             extra = " (sigue en control manual hasta /reanudar)"
-        return acciones + [self._responder(f"{esc(ticker)}: se levanta el veto de reentrada tras el cisne negro "
-                                           f"(R-G-03){extra}")]
+        return acciones + [self._responder(f"{esc(ticker)}: vuelve a operar: se levantan la pausa, la intervención "
+                                           f"humana y el veto de reentrada tras el cisne negro (R-G-03){extra}")]
+
+    def _pausar_ticker(self, c: Comando, ticker: str) -> list[Accion]:
+        """Jaume 29-sep: «/pausar X» (dos pasos): X no abre entradas nuevas ni pirámides «add»; stops y salidas siguen.
+
+        Pone `pausado_por_humano` de X (el estado del ticker NO cambia: sigue
+        NORMAL para que sus salidas, halts y stops funcionen igual). Una
+        entrada ya en curso no se cancela (como la pausa global). Lo levanta
+        «/sigue X» o «/sigue». Se anota con `args=[X]`, la forma que
+        `diario.reconstruir` rehace.
+        """
+        pos = self._pos(ticker)
+        pos.pausado_por_humano = True
+        return [self._anotar_comando(c, "pausar", [ticker]),
+                self._responder(f"{avisos.escapar_html(ticker)}: pausado: no se abren entradas ni pirámides en este "
+                                f"ticker; stops y salidas siguen (/sigue {avisos.escapar_html(ticker)} lo levanta)")]
+
+    def _levantar_intervencion(self, pos: PosicionTicker, motivo: str) -> list[Accion]:
+        """Jaume 29-sep (R-M-03 por ticker): quita la intervención humana de `pos` y, si su CONTROL_HUMANO venía de
+        ella, lo devuelve a NORMAL (anota «reanudar»). Otros CONTROL_HUMANO (/control_humano X, /cancelar_ordenes,
+        rechazos) no se tocan: esos se levantan con /sigue X o /reanudar X."""
+        era = pos.intervencion_humana
+        pos.intervencion_humana = False
+        if (era and pos.estado is EstadoTicker.CONTROL_HUMANO
+                and str(pos.motivo_estado).startswith(reconciliacion.MOTIVO_INTERVENCION_HUMANA)):
+            pos.estado = EstadoTicker.NORMAL
+            pos.motivo_estado = ""
+            pos.desde = self._ahora
+            return [Anotar("reanudar", {"ticker": pos.ticker, "motivo": motivo})]
+        return []
 
     def _silenciar(self, c: Comando, silenciar: bool) -> list[Accion]:
         """F7 / G1A-19 (R-G-01): «/parar_avisos X BS» calla SOLO los informes del cisne negro de X; «/reanudar_avisos X BS»
@@ -5979,6 +6334,15 @@ def _qty_viva(o: Orden) -> int:
 
 def _tipo_evento(ev: Any) -> str:
     return str(getattr(ev, "tipo", "") or "").strip().lower()
+
+
+def _hora_min(valor: Any) -> Optional[tuple[int, int]]:
+    """«H:MM» / «HH:MM» (o «HH:MM:SS») → (h, m); cualquier otra cosa → None (Jaume 29-sep: fin de la ventana)."""
+    m = _RE_HORA.match(valor) if isinstance(valor, str) else None
+    if m is None:
+        return None
+    h, mi = int(m.group(1)), int(m.group(2))
+    return (h, mi) if h <= 23 and mi <= 59 else None
 
 
 def _clase_salida(ev: Any) -> ClaseSalida:

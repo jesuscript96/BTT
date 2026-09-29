@@ -8,7 +8,8 @@ o el volcado del LOGIN) y lo clasifica en los casos de R-C-10 ampliados:
   que ningún diario conoce: intervención humana, R-K-02 / R-M-03) · 5 el
   diario la tiene abierta y DAS plana · 6 neta de fills ≠ neta de DAS.
 `acciones` convierte cada discrepancia en lo que hay que hacer (plan de stops,
-protección + aviso 3 + pausa global, lotes cerrados, «DAS manda»).
+protección + aviso 3 + el ticker al humano (R-M-03 por ticker, Jaume
+29-sep; antes pausa global), lotes cerrados, «DAS manda»).
 `cadencia_barrido`, `comandos_barrido` y `barrido_caducado` son R-K-01 y
 R-K-03; `AcumuladorVolcado` junta un volcado en una foto completa (§5.11).
 También ofrece las piezas que comparte con `reglas.vigilancia`: `es_ajena`,
@@ -45,7 +46,8 @@ LAS TRAMPAS.
   * `comparar` es PURA. `acciones` MUTA el estado a propósito (como
     `stops.limpieza_tras_fill_stop`) y lo deja escrito con `Anotar` ANTES de
     las órdenes para que `diario.reconstruir` lo reproduzca (H-2): caso 4 →
-    `pausa_global` (registro «pausa» SIN ticker) y `ordenes_ajenas`; caso 5 →
+    ticker en CONTROL_HUMANO + `intervencion_humana` (registro «pausa» CON
+    ticker, Jaume 29-sep) y `ordenes_ajenas`; caso 5 →
     lotes CERRADO + neta 0 («discrepancia»); caso 6 → `neta_fills := neta_das`
     («discrepancia»). Además ADOPTA en `estado.ordenes` las órdenes nuestras
     que DAS tiene y el ejecutor no (las del vigilante, F13): sin eso el plan
@@ -125,6 +127,10 @@ ESPERA_SIN_MARCADORES_S = 0.5        # §5.11: volcado sin marcadores = 500 ms s
 COMANDOS_BARRIDO = (cmd_get("POSITIONS"), cmd_get("ORDERS"), cmd_get("BP"), cmd_get("LOCATES"))
 COMANDO_TRADES = cmd_get("TRADES")
 PETICION_PAUSA_GLOBAL = "pausa"      # tipo del diario que `reconstruir` convierte en pausa_global (sin «ticker»)
+PETICION_PAUSA = PETICION_PAUSA_GLOBAL  # con «ticker»: `reconstruir` pausa ESE ticker (R-M-03 por ticker, Jaume 29-sep)
+MOTIVO_INTERVENCION_HUMANA = "intervención humana"   # prefijo del motivo del CONTROL_HUMANO por R-M-03 (Jaume 29-sep)
+# R-M-03 por ticker: estos estados pasan a CONTROL_HUMANO; BS, SIN_SIMBOLO y CONTROL_HUMANO conservan el suyo.
+_ESTADOS_A_CONTROL_HUMANO = frozenset({EstadoTicker.NORMAL, EstadoTicker.PAUSADO, EstadoTicker.HALT})
 ANOTACION_AJENAS = "ajenas_tratadas"  # E2c-01: {ticker, ids}; `diario.reconstruir` las mete en `estado.ordenes_ajenas`
 
 _LOTE_MUERTO = (EstadoLote.CERRADO, EstadoLote.CANCELADO)
@@ -327,7 +333,8 @@ def acciones(discrepancias: Iterable[Discrepancia], estado: EstadoBot, cot_de: C
     1 → nada. 2/3 → `stops.plan` sobre las órdenes vivas de la discrepancia
     (+ cancelar huérfanas; + protección si hay corto sin ningún stop
     calculable; 3 además Avisar(2) «sin stop»). 4 → registra las ajenas,
-    `pausa_global` hasta /sigue (Anotar «pausa» sin ticker), protección
+    el ticker en CONTROL_HUMANO hasta /sigue X (Anotar «pausa» con ticker;
+    R-M-03 por ticker, Jaume 29-sep), protección
     `stops.stop_proteccion` por lo descubierto (al `proteccion_desconocidas_pct`
     del último precio; sin cotización, del precio medio de DAS; sin nada,
     aviso para ponerla a mano), cancela huérfanas y Avisar(3). 5 → lotes
@@ -866,7 +873,13 @@ def _reparar_stops(d: Discrepancia, pos: Optional[PosicionTicker], cot: Optional
 
 def _caso_ajena(d: Discrepancia, estado: EstadoBot, pos: Optional[PosicionTicker], cot: Optional[Cotizacion],
                 cfg_stops: Mapping, tokens: Callable[[], int], ruta_stop: str, version: int) -> list[Accion]:
-    """Caso 4 (R-C-10 4, R-K-02, R-M-03): registrar, pausar (una vez), proteger lo descubierto, avisar 3.
+    """Caso 4 (R-C-10 4, R-K-02, R-M-03): registrar, pasar el ticker al humano (una vez), proteger lo descubierto, avisar 3.
+
+    Jaume 29-sep (R-M-03 POR TICKER, antes pausa global): el ticker queda con
+    `intervencion_humana=True` y en CONTROL_HUMANO con motivo «intervención
+    humana» (Anotar «pausa» CON ticker, que `diario.reconstruir` rehace); los
+    demás tickers siguen abriendo. «/sigue X» lo devuelve a NORMAL y «/sigue»
+    a secas levanta todos. Sus stops y salidas siguen como antes.
 
     E2c-01: las ajenas tratadas se anotan SIEMPRE (`Anotar("ajenas_tratadas",
     {ids, ticker})`, también con la pausa ya puesta) para que
@@ -883,19 +896,30 @@ def _caso_ajena(d: Discrepancia, estado: EstadoBot, pos: Optional[PosicionTicker
     if d.ajenas:
         salida.append(Anotar(ANOTACION_AJENAS, {"ticker": ticker, "ids": [m.id for m in d.ajenas],
                                                 "regla": "R-K-02 / E2c-01"}))
-    if not estado.pausa_global:
-        estado.pausa_global = True
-        salida.append(Anotar(PETICION_PAUSA_GLOBAL, {
-            "pausa_global": True, "intervencion_humana": True, "ticker_ajeno": ticker,
-            "ordenes_ajenas": [m.id for m in d.ajenas], "motivo": "intervención humana: no se abre nada hasta /sigue",
-            "regla": "R-M-03"}))
+    conocida = _conocida(pos)
+    if pos is None:
+        pos = PosicionTicker(ticker=ticker)
+        estado.posiciones[ticker] = pos
+    if not pos.intervencion_humana:
+        # Jaume 29-sep: R-M-03 POR TICKER. Solo este ticker pasa a manos del humano (CONTROL_HUMANO con motivo
+        # «intervención humana»); el resto sigue entrando. Un cisne negro, un ticker sin símbolo o un control humano
+        # ya puesto conservan su estado (y su protocolo); solo se marca la intervención.
+        pos.intervencion_humana = True
+        if pos.estado in _ESTADOS_A_CONTROL_HUMANO:
+            pos.estado = EstadoTicker.CONTROL_HUMANO
+            pos.motivo_estado = MOTIVO_INTERVENCION_HUMANA + ": no se abre nada en este ticker hasta /sigue " + ticker
+        salida.append(Anotar(PETICION_PAUSA, {
+            "ticker": ticker, "estado": pos.estado.value, "intervencion_humana": True, "ticker_ajeno": ticker,
+            "ordenes_ajenas": [m.id for m in d.ajenas], "motivo": pos.motivo_estado or MOTIVO_INTERVENCION_HUMANA,
+            "regla": "R-M-03 por ticker (Jaume 29-sep)"}))
     neta = d.neta_das or 0
     salida.extend(_proteccion(ticker, d.descubiertas, neta, cot, d.avg_das, cfg_stops, tokens, ruta_stop, version))
     salida.extend(_cancelar(d.huerfanas, f"R-C-11: orden nuestra huérfana en {ticker} ({neta})", set()))
     salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"ajena:{ticker}",
                          texto=(f"R-M-03: intervención humana en {_esc(ticker)}: {_esc(d.detalle)}. Se protege lo "
-                                f"descubierto y NO se abre nada nuevo hasta /sigue")))
-    if neta > 0 and not _conocida(pos):
+                                f"descubierto; {_esc(ticker)} en manos del humano hasta /sigue {_esc(ticker)} (el resto "
+                                f"de tickers sigue operando)")))
+    if neta > 0 and not conocida:
         salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"desconocida_larga:{ticker}",
                              texto=(f"VENDER A MANO: la cuenta está LARGA {neta} en {_esc(ticker)} y ningún diario del bot "
                                     f"conoce esa posición (¿saltaron a la vez un stop manual y la protección del bot?). "

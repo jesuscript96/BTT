@@ -57,6 +57,10 @@ LAS TRAMPAS.
   * «/sigue TICKER» y «/parar_avisos TICKER [BS]» / «/reanudar_avisos
     TICKER [BS]» llevan el ticker en `args` (C-01, G1A-08, G1A-19); el
     decisor es quien levanta el veto de reentrada o calla solo ese cisne.
+  * Jaume 29-sep: «/pausar TICKER» (dos pasos) pausa las entradas y
+    pirámides de ESE ticker; «/sigue TICKER» la levanta junto con la
+    intervención humana (R-M-03, ahora por ticker). Sin TICKER, ambos
+    comandos actúan sobre todo el bot como antes.
 """
 from __future__ import annotations
 
@@ -125,9 +129,10 @@ USO: dict[str, str] = {
     "detalle": "/detalle ID (token, id de DAS, lote, ticker o estrategia)",
     "salud": "/salud",
     "log": "/log [N] (1-50, por defecto 20)",
-    "pausar": "/pausar",
+    "pausar": "/pausar [TICKER] (con TICKER: solo ese ticker deja de abrir entradas y pirámides; stops y salidas siguen)",
     "reanudar": "/reanudar [TICKER]",
-    "sigue": "/sigue [TICKER] (con TICKER: levanta el veto de reentrada tras un cisne negro)",
+    "sigue": ("/sigue [TICKER] (con TICKER: levanta la pausa, la intervención humana y el veto de reentrada tras "
+              "un cisne negro de ese ticker; sin TICKER: la pausa global y las de todos los tickers)"),
     "modo_seguridad": "/modo_seguridad on|off",
     "desactivar": "/desactivar ESTRATEGIA",
     "activar": "/activar ESTRATEGIA",
@@ -263,12 +268,20 @@ def _libre(arg: str) -> Optional[str]:
 def _validar_args(nombre: str, args: list[str]) -> Optional[list[str]]:
     """Args normalizados según `USO`, o None si no cuadran (número o forma)."""
     n = len(args)
-    if nombre in ("estado", "posiciones", "ordenes", "locates", "estrategias", "salud", "pausar",
+    if nombre in ("estado", "posiciones", "ordenes", "locates", "estrategias", "salud",
                   "apagar", "encender", "reanudar_todo", "cerrar_todo"):
         return [] if n == 0 else None
+    if nombre == "pausar":
+        # Jaume 29-sep: «/pausar TICKER» pausa solo ese ticker (dos pasos, como «/pausar»). «SI» no es un ticker
+        # aquí: «/pausar SI» es un error de escritura (R-M-04), no la pausa de un símbolo llamado SI.
+        if n == 0:
+            return []
+        v = _ticker(args[0]) if n == 1 and args[0].upper() not in _PALABRAS_SI else None
+        return [v] if v is not None else None
     if nombre == "sigue":
         # C-01 / DC-03 / G1A-08 (R-G-03): «/sigue TICKER» levanta el veto de reentrada tras un cisne negro;
-        # «/sigue» a secas solo la pausa global. El decisor aplica el ticker (args = [TICKER]).
+        # Jaume 29-sep: también la pausa por ticker y la intervención humana (R-M-03 por ticker) de ESE ticker.
+        # «/sigue» a secas: la pausa global y las de todos los tickers. El decisor aplica el ticker (args = [TICKER]).
         if n == 0:
             return []
         v = _ticker(args[0]) if n == 1 else None
@@ -550,6 +563,13 @@ def _resp_estado(estado: EstadoBot, cfg: Config, mercado: Any, ahora: float) -> 
              _esc(f"DAS: {'conectado' if estado.das_conectado else 'DESCONECTADO'}"
                   + (f" · degradado: {', '.join(sorted(estado.modo_degradado))}" if estado.modo_degradado else "")),
              _esc(f"Modo seguridad: {'ON' if cfg.modo_seguridad.get('activo') else 'off'}")]
+    # Jaume 29-sep: pausas por ticker (/pausar X) e intervención humana por ticker (R-M-03)
+    pausados = sorted(t for t, p in estado.posiciones.items() if p.pausado_por_humano)
+    humanos = sorted(t for t, p in estado.posiciones.items() if p.intervencion_humana)
+    if pausados:
+        filas.append(_esc("Tickers pausados (/sigue TICKER): " + ", ".join(pausados)))
+    if humanos:
+        filas.append(_esc("En manos del humano (/sigue TICKER): " + ", ".join(humanos)))
     por_estrategia: dict[str, int] = {}
     for pos in estado.posiciones.values():
         for lote in pos.lotes.values():
@@ -712,6 +732,7 @@ def _resp_detalle(ident: str, estado: EstadoBot, cfg: Config, mercado: Any) -> s
             + f" · neta {pos.neta} · DAS {pos.neta_das if pos.neta_das is not None else '?'}"
             + f" · lotes {len(pos.lotes)} · órdenes vivas {len(_ordenes_vivas(estado, ticker))}"
             + (" · intervención humana" if pos.intervencion_humana else "")
+            + (" · pausado por el humano (/sigue TICKER)" if pos.pausado_por_humano else "")
             + (" · cisne negro" if pos.bs is not None else "")
             + (f" · entrada en curso ({pos.intento.fase.value})" if pos.intento is not None else ""))]
         pnl = _pnl_dia_ticker(estado, pos, mercado)

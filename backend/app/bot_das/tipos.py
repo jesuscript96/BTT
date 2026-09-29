@@ -726,6 +726,9 @@ class PosicionTicker:
     # R3-SAL-1: monotónico del ÚLTIMO fill aplicado en ESTE ticker (lo rellena el decisor). «Cerrar todo» solo se
     # fía de neta_das si el %POS llegó DESPUÉS (neta_das_en > ultimo_fill_en): si no, puede ir atrasado.
     ultimo_fill_en: Optional[float] = None
+    # Jaume 29-sep: «/pausar X» → X no abre entradas nuevas (ni pirámides «add»); stops y salidas siguen. Lo levanta
+    # «/sigue X» (o «/sigue» a secas). Persistido por el diario (registro «comando» pausar/sigue con args=[X]).
+    pausado_por_humano: bool = False
 
     @property
     def neta(self) -> int:
@@ -749,6 +752,11 @@ class Locate:                      # R-H
     comprado_en: Optional[float] = None
     ultimo_inquire_en: Optional[float] = None
     compras: int = 0
+    # Jaume 29-sep (locates por FASES, `reglas.locates`): "A" radar sin señal · "B" intento único en la señal de
+    # entrada · "C" dentro, faltan para las pirámides · "C_piramide" intento único en la señal de pirámide ·
+    # "D" posición cerrada (sin consultas hasta la reentrada). `precio_senal`: la referencia de «a tiro».
+    fase: str = "A"
+    precio_senal: Optional[Decimal] = None
 
 
 @dataclass
@@ -789,6 +797,9 @@ class EstadoBot:                   # TODO lo que el decisor sabe. Se reconstruye
     ultimo_seq_token: int = 0
     rutas_habilitadas: dict[str, bool] = field(default_factory=dict)   # GET RouteStatus del primer día
     qty_corto_negativa: Optional[bool] = None                          # injerto A §8.8: se confirma el primer día
+    # Jaume 29-sep: (ticker, strategy_id) → id de la PRIMERA señal principal del día que llegó a los locates (la
+    # única oportunidad de entrada; las siguientes se pierden salvo reentrada legítima). Anotación «senal_principal».
+    senales_principales: dict[tuple[str, str], str] = field(default_factory=dict)
 
 
 # ── referencia de Massive y niveles de stop (ajuste (a) del orquestador) ─

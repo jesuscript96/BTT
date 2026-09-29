@@ -171,6 +171,9 @@ _LADOS_COMPRA = frozenset({"B", "BUY"})
 _LADOS_VENTA = frozenset({"S", "SS", "SELL", "SHRT", "SHORT"})
 TIPO_AJENAS_TRATADAS = "ajenas_tratadas"   # E2c-01: {ids, ticker} que `_caso_ajena` ya trató (no se vuelve a pausar)
 CASOS_ADOPTA_DAS = frozenset({5, 6})       # reconciliación: caso 5 (plana en DAS) y 6 (neta distinta): manda DAS (M7)
+MOTIVO_INTERVENCION_HUMANA = "intervención humana"   # = reconciliacion.MOTIVO_INTERVENCION_HUMANA (R-M-03 por ticker)
+FASES_LOCATE = ("A", "B", "C", "C_piramide", "D")    # = locates.FASES (Jaume 29-sep: locates por fases)
+TIPO_SENAL_PRINCIPAL = "senal_principal"             # Jaume 29-sep: la PRIMERA señal principal del día por pareja
 _PROPOSITOS_VETO_STOP = frozenset({         # R-F-03 (G1A-18): salidas que activan el veto de reentrada tras un halt
     Proposito.STOP_PRINCIPAL.value, Proposito.STOP_EMERGENCIA.value, Proposito.STOP_PROTECCION.value,
     Proposito.HALT_OPEN.value, Proposito.HALT_PM_LIMITE.value, Proposito.HALT_BANDA.value,
@@ -1180,11 +1183,23 @@ def _locate(estado: EstadoBot, ticker: str, strategy_id: str) -> Locate:
 
 
 def _datos_comunes_locate(locate: Locate, datos: dict, hoy: date) -> None:
+    """Lo común de `locate_intencion`/`locate_estado`, con las mismas reglas que `locates.aplicar_anotaciones` (H-2)."""
     qty = _entero(datos.get("qty_ajustada"))
     if qty is None:
         qty = _entero(datos.get("qty"))
-    if qty is not None:
-        locate.pedidas = max(locate.pedidas, qty)
+    pedida = _entero(datos.get("qty_pedida"))            # Jaume 29-sep: la N original (regla marginal)
+    candidatas = [n for n in (qty, pedida) if n is not None]
+    if candidatas:
+        locate.pedidas = max([locate.pedidas] + candidatas)
+    n_nueva = _entero(datos.get("pedidas_n"))           # Jaume 29-sep: N recalculada con el precio actual (manda)
+    if n_nueva is not None and n_nueva >= 0:
+        locate.pedidas = n_nueva
+    fase = datos.get("fase")
+    if isinstance(fase, str) and fase in FASES_LOCATE:
+        locate.fase = fase
+    if "precio_senal" in datos:
+        precio_senal = _decimal(datos.get("precio_senal"))
+        locate.precio_senal = precio_senal if precio_senal is not None and precio_senal > 0 else None
     token = _token_de_hoy(datos.get("token"), hoy)
     if token is not None:
         locate.token = token
@@ -1239,6 +1254,17 @@ def _aplicar_locate_estado(estado: EstadoBot, registro: Registro, hoy: date) -> 
                 locate.comprado_en = mono
     elif coste_total is not None:
         locate.coste = coste_total
+
+
+def _aplicar_senal_principal(estado: EstadoBot, registro: Registro) -> None:
+    """`senal_principal` (Jaume 29-sep): la PRIMERA señal principal del día de (ticker, estrategia) que llegó a los
+    locates; la primera anotada manda (las siguientes de la misma pareja se pierden salvo reentrada legítima)."""
+    ticker = _ticker_de(registro)
+    sid = registro.datos.get("strategy_id")
+    senal_id = registro.datos.get("senal_id")
+    if ticker is None or not isinstance(sid, str) or not sid or not isinstance(senal_id, str) or not senal_id:
+        return
+    estado.senales_principales.setdefault((ticker, sid), senal_id)
 
 
 def _aplicar_pausa(estado: EstadoBot, registro: Registro) -> None:
@@ -1342,12 +1368,14 @@ def _aplicar_bs_informe(estado: EstadoBot, registro: Registro) -> None:
 def _aplicar_comando(estado: EstadoBot, registro: Registro) -> None:
     """`comando` confirmado (R-M-04, R-M-03, R-G-03, F7). Los no confirmados (`confirmado: false`) no cuentan.
 
-    * `sigue TICKER` → levanta `sin_reentrada_hasta_sigue` e
-      `intervencion_humana` de ESE ticker (R-G-03) y, si estaba en
-      CONTROL_HUMANO, lo devuelve a NORMAL.
-    * `sigue` sin ticker → levanta `pausa_global` e `intervencion_humana` de
-      todos (R-M-03), pero NO el veto de reentrada tras un BS, que exige
-      `/sigue TICKER` (R-G-03, lo conservador).
+    * `sigue TICKER` → levanta `sin_reentrada_hasta_sigue`,
+      `pausado_por_humano` e `intervencion_humana` de ESE ticker (R-G-03,
+      Jaume 29-sep) y, si estaba en CONTROL_HUMANO, lo devuelve a NORMAL.
+    * `sigue` sin ticker → levanta `pausa_global`, `pausado_por_humano` e
+      `intervencion_humana` de todos (R-M-03 por ticker: el CONTROL_HUMANO
+      con motivo «intervención humana» vuelve a NORMAL), pero NO el veto de
+      reentrada tras un BS, que exige `/sigue TICKER` (R-G-03, lo conservador).
+    * `pausar TICKER` → `pausado_por_humano` de ese ticker (Jaume 29-sep).
     * `pausar`/`reanudar` → `pausa_global`; `apagar`/`control_humano` →
       `control_humano = True`; `encender` → False; `reanudar_ticker X` y
       `reanudar_todo` → NORMAL salvo BS; `parar_avisos X BS` /
@@ -1366,15 +1394,24 @@ def _aplicar_comando(estado: EstadoBot, registro: Registro) -> None:
             pos = estado.posiciones.get(ticker)
             if pos is not None:
                 pos.sin_reentrada_hasta_sigue = False
+                pos.pausado_por_humano = False
                 pos.intervencion_humana = False
                 if pos.estado is EstadoTicker.CONTROL_HUMANO:
                     _reanudar_ticker(pos, mono)
         else:
             estado.pausa_global = False
             for pos in estado.posiciones.values():
+                pos.pausado_por_humano = False
+                era = pos.intervencion_humana
                 pos.intervencion_humana = False
+                if (era and pos.estado is EstadoTicker.CONTROL_HUMANO
+                        and pos.motivo_estado.startswith(MOTIVO_INTERVENCION_HUMANA)):
+                    _reanudar_ticker(pos, mono)
     elif nombre == "pausar":
-        estado.pausa_global = True
+        if ticker is not None:
+            _posicion(estado, ticker).pausado_por_humano = True      # Jaume 29-sep: /pausar X
+        else:
+            estado.pausa_global = True
     elif nombre == "reanudar":
         estado.pausa_global = False
     elif nombre == "apagar":                      # decisor: vigilando=False y control_humano=True
@@ -1489,6 +1526,8 @@ def reconstruir(registros: Iterable[Registro], hoy: date,
     ultimo_fill_en; ultimo_seq_token (máximo de EJECUTOR y EJECUTOR_LOCATE;
     por origen en `ultimo_seq_por_origen`); locates, gasto_locates_dia
     (R-H-03) y locates_deshabilitados (`locates_deshabilitar`, R-H-02);
+    la fase de cada locate y la primera señal principal por pareja
+    (`senal_principal`, Jaume 29-sep);
     neta_das (`pos`) y el caso 6 (`discrepancia`); pausas por ticker y
     global, control humano, BS, intervención humana y
     sin_reentrada_hasta_sigue (pausa/reanudar/bs/bs_informe/comando);
@@ -1547,6 +1586,8 @@ def reconstruir(registros: Iterable[Registro], hoy: date,
             _aplicar_locate_estado(estado, registro, hoy)
         elif tipo == "locates_deshabilitar":
             estado.locates_deshabilitados = True
+        elif tipo == TIPO_SENAL_PRINCIPAL:
+            _aplicar_senal_principal(estado, registro)
         elif tipo == TIPO_AJENAS_TRATADAS:
             _aplicar_ajenas(estado, registro, vistas)
         elif tipo == "pausa":

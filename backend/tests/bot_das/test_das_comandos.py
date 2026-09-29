@@ -99,6 +99,8 @@ def test_texto_libre_es_none_gancho_r_m_06(texto):
     ("/log", "log", [], "nada"),
     ("/log 5", "log", ["5"], "nada"),
     ("/pausar", "pausar", [], "confirmacion"),
+    ("/pausar abc", "pausar", ["ABC"], "confirmacion"),          # Jaume 29-sep: pausa por ticker
+    ("/sigue abc", "sigue", ["ABC"], "confirmacion"),
     ("/reanudar", "reanudar", [], "confirmacion"),
     ("/reanudar abc", "reanudar", ["ABC"], "confirmacion"),
     ("/sigue", "sigue", [], "confirmacion"),
@@ -150,6 +152,7 @@ def test_parsear_r_m_04(texto, nombre, args, requiere):
     "/modo_seguridad",
     "/modo_seguridad quizas",
     "/pausar SI",
+    "/pausar ABC DEF",
     "/reanudar_ticker",
     "/desactivar",
     "/confirmar",
@@ -356,6 +359,17 @@ def test_consulta_estado_marcha(estado_ejemplo, mercado, cambio, esperado):
     for k, v in cambio.items():
         setattr(estado_ejemplo, k, v)
     assert esperado in responder_consulta(_c("/estado"), estado_ejemplo, _cfg(), mercado, 1000.0)
+
+
+def test_consulta_estado_lista_pausas_por_ticker_y_humano(estado_ejemplo, mercado):
+    """Jaume 29-sep: /estado dice qué tickers están pausados con /pausar X y cuáles en manos del humano (R-M-03)."""
+    pos = next(iter(estado_ejemplo.posiciones.values()))
+    pos.pausado_por_humano = True
+    pos.intervencion_humana = True
+    r = responder_consulta(_c("/estado"), estado_ejemplo, _cfg(), mercado, 1000.0)
+    assert f"Tickers pausados (/sigue TICKER): {pos.ticker}" in r
+    assert f"En manos del humano (/sigue TICKER): {pos.ticker}" in r
+    assert "EN MARCHA" in r                                   # la pausa de un ticker no pausa el bot
 
 
 def test_consulta_estado_sin_cotizacion_no_inventa(estado_ejemplo):

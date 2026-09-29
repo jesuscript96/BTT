@@ -257,10 +257,11 @@ def test_cantidad_piramide_redondeo_al_par() -> None:
 
 # ── veredicto_ev (R-H-01, H6, R-H-05, corrección 1) ───────────────────
 def test_veredicto_basico_1230_cobra_12_paquetes() -> None:
-    v = veredicto_ev(estrategia(), D("5"), 1230, D("0.02"), D("0"))
+    """Jaume 29-sep: con el locate a 0,07 las 30 acciones extra ganan 30·5·4 % = 6 < 7 → el paquete 13 no se compra."""
+    v = veredicto_ev(estrategia(), D("5"), 1230, D("0.07"), D("0"))
     assert (v["paquetes"], v["qty_ajustada"], v["qty_comprar"]) == (12, 1200, 1200)
-    assert v["coste_nuevo"] == D("24") and v["coste_total"] == D("24")
-    assert v["fade_pct"] == D("0.4") and v["ev_pct"] == D("4") and v["margen_pct"] == D("3.6")
+    assert v["coste_nuevo"] == D("84") and v["coste_total"] == D("84")
+    assert v["fade_pct"] == D("1.4") and v["ev_pct"] == D("4") and v["margen_pct"] == D("2.6")
     assert v["entra"] is True and v["ev_origen"] == "completo" and v["motivo"] is None
     for clave in ("ev_pct", "fade_pct", "margen_pct", "coste_nuevo", "coste_total"):
         assert isinstance(v[clave], Decimal), clave
@@ -282,7 +283,7 @@ def test_veredicto_no_usa_locates_gate_evaluar(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(gate, "evaluar", prohibido)
     monkeypatch.setattr(gate, "paquetes_marginales", prohibido)
-    assert veredicto_ev(estrategia(), D("5"), 1230, D("0.02"), D("0"))["paquetes"] == 12
+    assert veredicto_ev(estrategia(), D("5"), 1230, D("0.07"), D("0"))["paquetes"] == 12
 
 
 def test_veredicto_usa_ev_fijo_para_precio_con_floats(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -349,7 +350,7 @@ def test_veredicto_minimo_de_la_ruta() -> None:
 
 
 def test_veredicto_nada_que_localizar() -> None:
-    v = veredicto_ev(estrategia(), D("5"), 1230, D("0.02"), D("24"), ya_localizadas=1200)
+    v = veredicto_ev(estrategia(), D("5"), 1230, D("0.07"), D("24"), ya_localizadas=1200)
     assert (v["paquetes"], v["qty_comprar"], v["entra"], v["motivo"]) == (0, 0, False, "nada que localizar")
     assert v["coste_nuevo"] == D("0") and v["coste_total"] == D("24")
 
@@ -538,7 +539,7 @@ def test_tras_reentrada_no_recompra_si_el_total_no_compensa() -> None:
 # ── la máquina: siguiente_paso (R-H-01..04, H6, EP-9, manual L1648-1838) ─
 def test_maquina_arranca_consultando_cada_3_s() -> None:
     m = Maquina()
-    acciones = m.paso(1000.0, qty=1230)
+    acciones = m.paso(1000.0, qty=1200)
     assert tipos_de(acciones) == ["locate_inquire", "LocateInquire", "Programar"]
     assert acciones[1] == LocateInquire(X, 1200, "ALLROUTEWTTYPE1")
     assert acciones[2] == Programar(CLAVE, 3.0, {"ticker": X, "strategy_id": "est-a"})
@@ -560,7 +561,7 @@ def test_maquina_sin_qty_ni_locate_no_hace_nada() -> None:
 def test_maquina_compra_cuando_el_ev_compensa_y_hasta_entonces_solo_anota() -> None:
     """R-H-01: se sigue actualizando HASTA encontrar un precio con ventaja; entonces se compra y se deja de consultar."""
     m = Maquina()
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     caro = m.paso(1001.0, ret=slret(1, "0.25", 5000))               # fade 5 % > EV 4 %
     assert tipos_de(caro) == ["locate_inquire"] and caro[0].datos["entra"] is False
     assert m.loc.estado == ESTADO_BUSCANDO
@@ -591,7 +592,7 @@ def test_maquina_compra_paquetes_enteros_1240_compra_1300() -> None:
 
 def test_maquina_completa_located_y_cerrojo() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     # con la compra en curso: ni consultas ni compras (R-H-02)
     assert m.paso(1002.0, ret=slret(1, "0.01", 5000)) == []
     assert m.paso(1003.0) == []
@@ -673,7 +674,7 @@ def test_maquina_parcial_rechaza_la_segunda_compra_si_el_total_no_compensa() -> 
 
 def test_maquina_oferta_aceptada_si_el_ev_sigue_bien() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, orden=slorder(80, "Offered", 1200, 0, "0.02", compra.token))
     assert tipos_de(acciones) == ["locate_estado", "LocateOferta"]
     assert acciones[1] == LocateOferta(80, True)
@@ -691,7 +692,7 @@ def test_maquina_oferta_aceptada_si_el_ev_sigue_bien() -> None:
 ])
 def test_maquina_oferta_rechazada_vuelve_a_buscar(pedidas: int, precio: str) -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, orden=slorder(80, "Offered", pedidas, 0, precio, compra.token))
     assert tipos_de(acciones) == ["LocateOferta", "locate_estado", "Programar"]
     assert acciones[0] == LocateOferta(80, False)
@@ -703,7 +704,7 @@ def test_maquina_oferta_rechazada_vuelve_a_buscar(pedidas: int, precio: str) -> 
 
 def test_maquina_already_shortable_no_hace_falta() -> None:
     m = Maquina()
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     acciones = m.paso(1001.0, ret=slret(2, "0", 0, notas="AlreadyShortable"))
     assert tipos_de(acciones) == ["locate_estado", "Desprogramar"]
     assert m.loc.estado == ESTADO_NO_HACE_FALTA
@@ -713,7 +714,7 @@ def test_maquina_already_shortable_no_hace_falta() -> None:
 
 def test_maquina_fallo_tipo_2_en_busqueda_sigue_buscando() -> None:
     m = Maquina()
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     acciones = m.paso(1001.0, ret=slret(2, "0", 0, notas="Not available"))
     assert tipos_de(acciones) == ["locate_inquire"] and acciones[0].datos["fallo"] == "Not available"
     assert m.loc.estado == ESTADO_BUSCANDO
@@ -721,7 +722,7 @@ def test_maquina_fallo_tipo_2_en_busqueda_sigue_buscando() -> None:
 
 def test_maquina_sin_disponibles_sigue_buscando() -> None:
     m = Maquina()
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     assert tipos_de(m.paso(1001.0, ret=slret(1, "0.01", 0))) == ["locate_inquire"]
     assert tipos_de(m.paso(1002.0, ret=slret(1, "0.01", 50))) == ["locate_inquire"]      # < 1 paquete
     assert m.loc.estado == ESTADO_BUSCANDO
@@ -729,7 +730,7 @@ def test_maquina_sin_disponibles_sigue_buscando() -> None:
 
 def test_maquina_fallo_tipo_2_durante_la_compra_avisa_sin_darla_por_perdida() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, ret=slret(2, "0", 0, notas="Route error"))
     assert tipos_de(acciones) == ["locate_estado", "Avisar"]
     assert acciones[1].nivel is Nivel.AVISO and acciones[1].grupo is Grupo.B
@@ -740,7 +741,7 @@ def test_maquina_fallo_tipo_2_durante_la_compra_avisa_sin_darla_por_perdida() ->
 
 def test_maquina_already_shortable_durante_la_compra() -> None:
     m = Maquina()
-    m.comprada(1230)
+    m.comprada(1200)
     m.paso(1002.0, ret=slret(2, "0", 0, notas="Already Shortable"))
     assert m.loc.estado == ESTADO_NO_HACE_FALTA
 
@@ -749,7 +750,7 @@ def test_maquina_already_shortable_durante_la_compra() -> None:
 def test_maquina_fallo_de_la_ruta_para_y_avisa(estado_das: str) -> None:
     """H16 (por definir): un rechazo de la ruta no se reintenta en bucle (riesgo 11); lo ve el humano."""
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, orden=slorder(70, estado_das, 1200, 0, "0", compra.token, notas="no inventory"))
     assert tipos_de(acciones) == ["locate_estado", "Avisar", "Desprogramar"]
     assert acciones[1].nivel is Nivel.AVISO and "no inventory" in acciones[1].texto
@@ -759,7 +760,7 @@ def test_maquina_fallo_de_la_ruta_para_y_avisa(estado_das: str) -> None:
 
 def test_maquina_cerrada_con_parte_localizada_cobra_lo_localizado() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, orden=slorder(70, "Canceled", 1200, 400, "0.02", compra.token))
     assert tipos_de(acciones) == ["locate_estado", "Consultar", "locate_estado", "Avisar", "Desprogramar"]
     assert (m.loc.estado, m.loc.localizadas, m.gasto, m.loc.compras) == (ESTADO_PARADO, 400, D("8"), 1)
@@ -768,7 +769,7 @@ def test_maquina_cerrada_con_parte_localizada_cobra_lo_localizado() -> None:
 def test_maquina_located_tardio_de_una_compra_propia_se_cobra() -> None:
     """El dinero ya se gastó: un Located de NUESTRA compra que llega tras «parado» se contabiliza."""
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     m.paso(1002.0, orden=slorder(70, "Rejected", 1200, 0, "0", compra.token))
     assert m.loc.estado == ESTADO_PARADO
     tarde = m.paso(1003.0, orden=slorder(71, "Located", 1200, 1200, "0.02", compra.token))
@@ -778,7 +779,7 @@ def test_maquina_located_tardio_de_una_compra_propia_se_cobra() -> None:
 
 def test_maquina_located_sin_acciones_para() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, orden=slorder(70, "Located", 1200, 0, "0.02", compra.token))
     assert tipos_de(acciones) == ["locate_estado", "Avisar", "Desprogramar"]
     assert m.loc.estado == ESTADO_PARADO and m.gasto == D("0")
@@ -786,7 +787,7 @@ def test_maquina_located_sin_acciones_para() -> None:
 
 def test_maquina_slorder_ajeno_se_ignora() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     assert m.paso(1002.0, orden=slorder(70, "Located", 1200, 1200, "0.02", compra.token + 1)) == []
     assert m.paso(1002.0, orden=slorder(70, "Located", 1200, 1200, "0.02", None)) == []   # sin id conocido
     assert m.paso(1002.0, orden=slorder(70, "Located", 1200, 1200, "0.02", compra.token, ticker="ABC")) == []
@@ -795,7 +796,7 @@ def test_maquina_slorder_ajeno_se_ignora() -> None:
 
 def test_maquina_slorder_sin_token_casa_por_id() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     m.paso(1002.0, orden=slorder(70, "Waiting", 1200, 0, "0", compra.token))
     m.paso(1003.0, orden=slorder(70, "Located", 1200, 1200, "0.02", None))
     assert (m.loc.estado, m.gasto) == (ESTADO_LOCALIZADO, D("24"))
@@ -803,7 +804,7 @@ def test_maquina_slorder_sin_token_casa_por_id() -> None:
 
 def test_maquina_estado_das_desconocido_se_registra_sin_cambiar() -> None:
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, orden=slorder(70, "Raro", 1200, 0, "0", compra.token))
     assert tipos_de(acciones) == ["locate_estado"] and "estado" not in acciones[0].datos
     assert m.loc.estado == ESTADO_COMPRANDO
@@ -816,7 +817,7 @@ def test_maquina_tope_3_pct_no_compra_y_avisa() -> None:
     (Telegram + correo) se repetía cada 60 s todo el día.
     """
     m = Maquina(equity="1000", gasto="10")
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
     assert tipos_de(acciones) == ["locate_estado", "Desprogramar", "Avisar"]
     assert acciones[2].clave == "locates_tope" and acciones[2].nivel is Nivel.AVISO
@@ -831,7 +832,7 @@ def test_maquina_tope_3_pct_no_compra_y_avisa() -> None:
 def test_maquina_tope_justo_en_el_limite_compra() -> None:
     """R-H-03: «que haga SUPERAR»: 10 $ + 20 $ = 30 $ justo en el tope sí compra."""
     m = Maquina(equity="1000", gasto="10")
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     assert "LocateComprar" in tipos_de(m.paso(1001.0, ret=slret(1, "0.0166", 5000)))
 
 
@@ -864,7 +865,7 @@ def test_E2_02_dos_estrategias_a_la_vez_no_superan_el_tope() -> None:
 def test_E2_04_compra_sin_respuesta_avisa_una_vez_y_nunca_recompra() -> None:
     """E2-04: «comprando» sin %SLOrder: a los 30 s GET LOCATES + Avisar(2) + parado; nunca otra LocateComprar."""
     m = Maquina()
-    compra = m.comprada(1230)                                                # compra a t = 1001
+    compra = m.comprada(1200)                                                # compra a t = 1001
     assert m.paso(1001.0 + COMPRA_SIN_RESPUESTA_S - 0.1) == []               # aún dentro del plazo: cerrojo
     acciones = m.paso(1001.0 + COMPRA_SIN_RESPUESTA_S)                        # salta el temporizador
     assert tipos_de(acciones) == ["locate_estado", "Consultar", "Avisar", "Desprogramar"]
@@ -901,12 +902,13 @@ def test_E2_04_located_tardio_por_token_no_es_compra_repetida() -> None:
 
 
 def test_E2_08_recompra_de_un_resto_pequeno_no_compra_otro_paquete() -> None:
-    """E2-08: 1.220 localizadas de 1.240 → falta 20 (20 % ≤ 30 %): no se compran 100 para usar 20."""
-    v = veredicto_ev(estrategia(), D("5"), 1240, D("0.01"), D("12"), ya_localizadas=1220)
+    """E2-08: 1.220 localizadas de 1.240 → falta 20 que no compensan (Jaume 29-sep: 20·5·4 % = 4 < 100·0,05 = 5):
+    no se compran 100 para usar 20."""
+    v = veredicto_ev(estrategia(), D("5"), 1240, D("0.05"), D("12"), ya_localizadas=1220)
     assert (v["paquetes"], v["qty_comprar"], v["qty_ajustada"], v["entra"]) == (0, 0, 1220, False)
     assert "umbral" in v["motivo"]
-    # un resto que SÍ pasa del umbral se compra (40 de 100)
-    v2 = veredicto_ev(estrategia(), D("5"), 1240, D("0.01"), D("12"), ya_localizadas=1200)
+    # un resto que SÍ compensa se compra (40 de 100: 40·5·4 % = 8 ≥ 5)
+    v2 = veredicto_ev(estrategia(), D("5"), 1240, D("0.05"), D("12"), ya_localizadas=1200)
     assert (v2["paquetes"], v2["qty_comprar"], v2["qty_ajustada"]) == (1, 100, 1240)
     # sin nada cubierto, el mínimo de un paquete sigue (H-7: locates siempre ≥ 100)
     v3 = veredicto_ev(estrategia(), D("5"), 20, D("0.01"), D("0"))
@@ -914,10 +916,11 @@ def test_E2_08_recompra_de_un_resto_pequeno_no_compra_otro_paquete() -> None:
 
 
 def test_E2_08_la_maquina_no_sigue_buscando_un_resto_pequeno() -> None:
-    """Un Located parcial que deja un resto ≤ 30 % de un paquete cierra la búsqueda (sin bucle de consultas)."""
+    """Un Located parcial que deja un resto que no compensa (Jaume 29-sep: 20·5·4 % = 4 < 100·0,05) cierra la
+    búsqueda (sin bucle de consultas)."""
     m = Maquina()
     compra = m.comprada(1240)                                                # compra 1.300
-    hecho = m.paso(1002.0, orden=slorder(70, "Located", 1300, 1220, "0.02", compra.token))
+    hecho = m.paso(1002.0, orden=slorder(70, "Located", 1300, 1220, "0.05", compra.token))
     assert tipos_de(hecho) == ["locate_estado", "Consultar", "Desprogramar"]
     assert m.paso(1010.0) == []
 
@@ -932,7 +935,7 @@ def test_A_06_consultas_con_protocolo():
 def test_D2_08_avisos_de_locates_escapan_el_html() -> None:
     """D2-08: un «<» o «&» del texto de DAS o del nombre no puede perder el aviso (Telegram con parse_mode HTML)."""
     m = Maquina(e=estrategia(name="A&B <x>"))
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     acciones = m.paso(1002.0, orden=slorder(70, "Rejected", 1200, 0, "0", compra.token, notas="Qty > <Max> & co"))
     texto = next(a for a in acciones if isinstance(a, Avisar)).texto
     assert "A&amp;B &lt;x&gt;" in texto and "Qty &gt; &lt;Max&gt; &amp; co" in texto and "<Max>" not in texto
@@ -941,7 +944,7 @@ def test_D2_08_avisos_de_locates_escapan_el_html() -> None:
 def test_E2_02_gasto_comprometido_suma_pagado_y_en_curso() -> None:
     pagado = replace(Locate(ticker=X, strategy_id="p", pedidas=1000), estado=ESTADO_LOCALIZADO, localizadas=1000,
                      coste=D("50"))
-    en_curso = replace(Locate(ticker=X, strategy_id="c", pedidas=1230), estado="Pending", precio_accion=D("0.02"))
+    en_curso = replace(Locate(ticker=X, strategy_id="c", pedidas=1200), estado="Pending", precio_accion=D("0.02"))
     oferta = replace(Locate(ticker="ABC", strategy_id="o", pedidas=300), estado="Offered", precio_accion=D("0.10"),
                      localizadas=100, coste=D("5"))
     parado = replace(Locate(ticker=X, strategy_id="z", pedidas=500), estado=ESTADO_PARADO, precio_accion=D("1"))
@@ -954,14 +957,14 @@ def test_E2_02_gasto_comprometido_suma_pagado_y_en_curso() -> None:
 
 def test_maquina_sin_equity_no_compra_ni_avisa() -> None:
     m = Maquina(equity=None)
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
     assert tipos_de(acciones) == ["locate_inquire"] and "sin equity" in acciones[0].datos["motivo"]
 
 
 def test_maquina_sin_precio_de_la_accion_no_compra() -> None:
     m = Maquina()
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     m.precio = None
     acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
     assert tipos_de(acciones) == ["locate_inquire"] and "sin precio" in acciones[0].datos["motivo"]
@@ -978,7 +981,7 @@ def test_maquina_hora_limite() -> None:
     """R-H-01.5: pasada la hora límite de intentos, se deja de buscar."""
     cfg = {**CFG, "hora_limite_intentos": "09:00"}
     m = Maquina(cfg=cfg)
-    assert tipos_de(m.paso(1000.0, qty=1230, ahora_et=et(8, 59))) == ["locate_inquire", "LocateInquire",
+    assert tipos_de(m.paso(1000.0, qty=1200, ahora_et=et(8, 59))) == ["locate_inquire", "LocateInquire",
                                                                       "Programar"]
     acciones = m.paso(1003.0, ahora_et=et(9, 0))
     assert tipos_de(acciones) == ["locate_estado", "Desprogramar"] and m.loc.estado == ESTADO_PARADO
@@ -988,7 +991,7 @@ def test_maquina_hora_limite() -> None:
 def test_maquina_hora_limite_rechaza_la_oferta() -> None:
     cfg = {**CFG, "hora_limite_intentos": "09:00"}
     m = Maquina(cfg=cfg)
-    m.paso(1000.0, qty=1230, ahora_et=et(8, 58))
+    m.paso(1000.0, qty=1200, ahora_et=et(8, 58))
     compra = [a for a in m.paso(1001.0, ret=slret(1, "0.02", 5000), ahora_et=et(8, 58))
               if isinstance(a, LocateComprar)][0]
     acciones = m.paso(1002.0, orden=slorder(80, "Offered", 1200, 0, "0.02", compra.token), ahora_et=et(9, 0))
@@ -1000,7 +1003,7 @@ def test_maquina_hora_limite_convierte_a_et() -> None:
     from datetime import timezone
     cfg = {**CFG, "hora_limite_intentos": "09:00"}
     m = Maquina(cfg=cfg)
-    m.paso(1000.0, qty=1230, ahora_et=datetime(2026, 9, 25, 12, 59, tzinfo=timezone.utc))   # 08:59 ET
+    m.paso(1000.0, qty=1200, ahora_et=datetime(2026, 9, 25, 12, 59, tzinfo=timezone.utc))   # 08:59 ET
     assert m.loc.estado == ESTADO_BUSCANDO
     m.paso(1003.0, ahora_et=datetime(2026, 9, 25, 13, 0, tzinfo=timezone.utc))            # 09:00 ET
     assert m.loc.estado == ESTADO_PARADO
@@ -1009,14 +1012,14 @@ def test_maquina_hora_limite_convierte_a_et() -> None:
 @pytest.mark.parametrize("ahora_et", [None, datetime(2026, 9, 25, 9, 0)], ids=["sin-ahora_et", "naive"])
 def test_maquina_hora_limite_exige_ahora_et_aware(ahora_et: Optional[datetime]) -> None:
     with pytest.raises(ValueError):
-        Maquina(cfg={**CFG, "hora_limite_intentos": "09:00"}).paso(1000.0, qty=1230, ahora_et=ahora_et)
+        Maquina(cfg={**CFG, "hora_limite_intentos": "09:00"}).paso(1000.0, qty=1200, ahora_et=ahora_et)
 
 
 def test_maquina_deshabilitada_no_hace_nada() -> None:
     """R-H-02 / R-H-03: con el módulo deshabilitado por el vigilante, ni consultas, ni compras, ni ofertas."""
     m = Maquina()
-    assert m.paso(1000.0, qty=1230, deshabilitado=True) == []
-    compra = m.comprada(1230)
+    assert m.paso(1000.0, qty=1200, deshabilitado=True) == []
+    compra = m.comprada(1200)
     assert m.paso(1002.0, ret=slret(1, "0.01", 5000), deshabilitado=True) == []
     assert m.paso(1002.0, orden=slorder(70, "Offered", 1200, 0, "0.02", compra.token), deshabilitado=True) == []
 
@@ -1024,24 +1027,24 @@ def test_maquina_deshabilitada_no_hace_nada() -> None:
 def test_maquina_tokens_como_callable_y_de_otro_origen() -> None:
     m = Maquina()
     m.tokens = GeneradorTokens(Origen.EJECUTOR_LOCATE, HOY).siguiente
-    assert m.comprada(1230).token == 326800001
+    assert m.comprada(1200).token == 326800001
     malo = Maquina()
     malo.tokens = GeneradorTokens(Origen.EJECUTOR, HOY)
-    malo.paso(1000.0, qty=1230)
+    malo.paso(1000.0, qty=1200)
     with pytest.raises(ValueError):
         malo.paso(1001.0, ret=slret(1, "0.02", 5000))
 
 
 def test_maquina_no_gasta_token_sin_comprar() -> None:
     m = Maquina()
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     m.paso(1001.0, ret=slret(1, "0.50", 5000))
     assert m.tokens.ultimo_seq == 0
 
 
 def test_maquina_slret_de_otro_ticker_se_ignora() -> None:
     m = Maquina()
-    m.paso(1000.0, qty=1230)
+    m.paso(1000.0, qty=1200)
     assert m.paso(1001.0, ret=slret(1, "0.02", 5000, ticker="ABC")) == []
 
 
@@ -1067,12 +1070,12 @@ def test_maquina_nada_que_localizar_deja_de_consultar() -> None:
 def test_maquina_config_imposible(cfg: Any) -> None:
     with pytest.raises(ValueError):
         siguiente_paso(None, estrategia(), X, D("5"), 1000.0, cfg, D("0"), D("1000"), False, None,
-                       GeneradorTokens(Origen.EJECUTOR_LOCATE, HOY), qty=1230)
+                       GeneradorTokens(Origen.EJECUTOR_LOCATE, HOY), qty=1200)
 
 
 def test_maquina_config_por_defecto() -> None:
     acciones = siguiente_paso(None, estrategia(), X, D("5"), 1000.0, {}, D("0"), D("1000"), False, None,
-                              GeneradorTokens(Origen.EJECUTOR_LOCATE, HOY), qty=1230)
+                              GeneradorTokens(Origen.EJECUTOR_LOCATE, HOY), qty=1200)
     assert acciones[1] == LocateInquire(X, 1200, "ALLROUTEWTTYPE1") and acciones[2].en_s == 3.0
 
 
@@ -1122,7 +1125,7 @@ def test_aplicar_anotaciones_compras_solo_al_entrar_en_located() -> None:
 def test_la_prevision_de_coste_no_cuenta_como_pagada() -> None:
     """Regresión: el `coste_total` PREVISTO de una consulta, una intención o una oferta no es dinero gastado."""
     m = Maquina()
-    compra = m.comprada(1230)
+    compra = m.comprada(1200)
     assert m.loc.coste == D("0") and m.gasto == D("0")
     oferta = m.paso(1002.0, orden=slorder(80, "Offered", 1200, 0, "0.02", compra.token))
     assert "coste_total" not in oferta[0].datos and oferta[0].datos["coste_total_previsto"] == D("24")
@@ -1168,3 +1171,206 @@ def test_modulo_puro() -> None:
     for prohibido in ("import time", "datetime.now", "import logging", "os.environ", "getenv", "httpx",
                       "import socket", "evaluar(", "float(round"):
         assert prohibido not in fuente, prohibido
+
+
+# ── Jaume 29-sep: regla MARGINAL del último paquete ─────────────────────
+@pytest.mark.parametrize("qty, precio_locate, esperado", [
+    pytest.param(113, "0.01", (2, 113), id="113-locate-0.01-paga-el-paquete"),
+    pytest.param(113, "0.05", (1, 100), id="113-locate-0.05-no"),
+    pytest.param(113, "0.15", (1, 100), id="113-locate-0.15-no"),
+    pytest.param(160, "0.01", (2, 160), id="160-locate-0.01"),
+    pytest.param(160, "0.05", (2, 160), id="160-locate-0.05"),
+    pytest.param(160, "0.15", (1, 100), id="160-locate-0.15-12-menor-que-15"),
+    pytest.param(100, "0.15", (1, 100), id="100-exacto-sin-resto"),
+    pytest.param(30, "0.15", (1, 30), id="30-minimo-un-paquete-H-7"),
+    pytest.param(0, "0.01", (0, 0), id="0"),
+    pytest.param(-5, "0.01", (0, 0), id="negativo"),
+])
+def test_paquetes_marginal_tabla_jaume_29_sep(qty: int, precio_locate: str, esperado: tuple[int, int]) -> None:
+    """Jaume 29-sep: el último paquete se compra si extra · precio · EV/100 ≥ 100 · precio del locate (EV 4 %, 5 $)."""
+    assert L.paquetes_marginal(qty, D("5"), D("4"), D(precio_locate)) == esperado
+
+
+def test_paquetes_marginal_limite_exacto_compra() -> None:
+    """En el límite exacto se compra: 25 extra · 5 $ · 4 % = 5 = 100 · 0,05."""
+    assert L.paquetes_marginal(125, D("5"), D("4"), D("0.05")) == (2, 125)
+    assert L.paquetes_marginal(124, D("5"), D("4"), D("0.05")) == (1, 100)
+
+
+@pytest.mark.parametrize("qty", [113, 130, 131, 160, 1230, 1240])
+def test_paquetes_marginal_sin_precio_de_locate_cae_al_umbral(qty: int) -> None:
+    """Sin precio del locate (primera consulta sin %SLRET), o sin precio o EV, → la regla del 30 % de siempre."""
+    assert L.paquetes_marginal(qty, D("5"), D("4"), None) == paquetes(qty)
+    assert L.paquetes_marginal(qty, None, D("4"), D("0.01")) == paquetes(qty)
+    assert L.paquetes_marginal(qty, D("5"), None, D("0.01")) == paquetes(qty)
+
+
+def test_paquetes_marginal_rechaza_valores_imposibles() -> None:
+    with pytest.raises(ValueError):
+        L.paquetes_marginal(113, D("0"), D("4"), D("0.01"))
+    with pytest.raises(ValueError):
+        L.paquetes_marginal(113, D("5"), D("4"), D("-0.01"))
+    with pytest.raises(ValueError):
+        L.paquetes_marginal(113.0, D("5"), D("4"), D("0.01"))  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        L.paquetes_marginal(113, D("5"), D("4"), D("0.01"), umbral_ultimo_pct=101)
+
+
+@pytest.mark.parametrize("precio_locate, paq, usable", [
+    pytest.param("0.01", 2, 113, id="compensa"),
+    pytest.param("0.05", 1, 100, id="no-compensa"),
+])
+def test_veredicto_ev_usa_la_regla_marginal_en_el_ultimo_paquete(precio_locate: str, paq: int, usable: int) -> None:
+    """Jaume 29-sep: `veredicto_ev` decide el último paquete con el precio de ESE locate; el EV global, como siempre."""
+    v = veredicto_ev(estrategia(), D("5"), 113, D(precio_locate), D("0"))
+    assert (v["paquetes"], v["qty_ajustada"], v["qty_comprar"]) == (paq, usable, paq * 100)
+    assert v["fade_pct"] == D(paq * 100) * D(precio_locate) * 100 / (D(usable) * D("5"))
+
+
+def test_veredicto_ev_1230_con_locate_barato_compra_el_13() -> None:
+    """Antes el paquete 13 de 1.230 (30 %) no se compraba; ahora sí si las 30 extra lo pagan: 30·5·4 % = 6 ≥ 2."""
+    v = veredicto_ev(estrategia(), D("5"), 1230, D("0.02"), D("0"))
+    assert (v["paquetes"], v["qty_ajustada"], v["qty_comprar"]) == (13, 1230, 1300)
+
+
+def test_maquina_primera_consulta_con_el_30_y_despues_marginal() -> None:
+    """Jaume 29-sep: la primera consulta (sin precio de locate) pide con el umbral del 30 % (113 → 100); con el
+    %SLRET a 0,01 el último paquete compensa y se compran 200 para usar 113."""
+    m = Maquina()
+    primera = m.paso(1000.0, qty=113)
+    assert [a.qty for a in primera if isinstance(a, LocateInquire)] == [100]
+    compra = [a for a in m.paso(1001.0, ret=slret(1, "0.01", 10_000)) if isinstance(a, LocateComprar)]
+    assert [c.qty for c in compra] == [200]
+    caro = Maquina()
+    caro.paso(1000.0, qty=113)
+    compra_cara = [a for a in caro.paso(1001.0, ret=slret(1, "0.05", 10_000)) if isinstance(a, LocateComprar)]
+    assert [c.qty for c in compra_cara] == [100]
+
+
+# ── Jaume 29-sep: locates por FASES (la parte pura) ─────────────────────
+def _en_fase(m: Maquina, fase: str, precio_senal: Optional[str] = "5", qty: int = 100) -> None:
+    """Arranca la máquina (primera consulta) y la pone en `fase` con la referencia «a tiro» dada."""
+    m.paso(1000.0, qty=qty)
+    datos: dict = {"ticker": X, "strategy_id": "est-a", "fase": fase}
+    if precio_senal is not None:
+        datos["precio_senal"] = D(precio_senal)
+    m.loc = aplicar_anotaciones(m.loc, [Anotar("locate_estado", datos)])
+
+
+@pytest.mark.parametrize("fase", ["B", "C_piramide"])
+def test_intento_unico_a_tiro_y_compensa_compra(fase: str) -> None:
+    m = Maquina()
+    _en_fase(m, fase)
+    acciones = m.paso(1001.0, ret=slret(1, "0.01", 10_000))
+    assert [a.qty for a in acciones if isinstance(a, LocateComprar)] == [100]
+
+
+@pytest.mark.parametrize("precio, a_tiro", [
+    pytest.param("4.85", True, id="justo-el-3pct-esta-a-tiro"),
+    pytest.param("4.84", False, id="mas-del-3pct-no"),
+])
+def test_intento_unico_mira_el_3_pct_de_la_entrada(precio: str, a_tiro: bool) -> None:
+    """Jaume 29-sep: «a tiro» = precio actual ≥ precio de la señal · (1 − 3 %) (el 3 % de R-B-01); 5 · 0,97 = 4,85."""
+    m = Maquina(precio=precio)
+    _en_fase(m, L.FASE_SENAL, precio_senal="5")
+    acciones = m.paso(1001.0, ret=slret(1, "0.01", 10_000))
+    assert bool([a for a in acciones if isinstance(a, LocateComprar)]) is a_tiro
+    if not a_tiro:
+        assert m.loc.estado == ESTADO_PARADO and "a tiro" in acciones[0].datos["motivo"]
+        assert "Desprogramar" in tipos_de(acciones)
+
+
+def test_intento_unico_con_otro_tope_a_tiro() -> None:
+    """El tope «a tiro» es el `entrada.tope_caida_bid_pct` que pase el decisor (aquí 5 %: 4,80 está a tiro)."""
+    m = Maquina(precio="4.80")
+    _en_fase(m, L.FASE_SENAL)
+    acciones = m.paso(1001.0, ret=slret(1, "0.01", 10_000), tope_a_tiro_pct=5)
+    assert [a.qty for a in acciones if isinstance(a, LocateComprar)] == [100]
+
+
+@pytest.mark.parametrize("ret", [
+    pytest.param(slret(1, "0.50", 10_000), id="no-compensa"),
+    pytest.param(slret(1, "0.01", 0), id="sin-tamano"),
+    pytest.param(slret(2, "0", 0, notas="NoInventory"), id="fallo-de-la-ruta"),
+])
+def test_intento_unico_sin_compra_para_la_pareja(ret: MsgSLRet) -> None:
+    """Jaume 29-sep: en B / C_piramide el %SLRET que no acaba en compra deja la pareja PARADA (un solo intento)."""
+    m = Maquina()
+    _en_fase(m, L.FASE_SENAL)
+    acciones = m.paso(1001.0, ret=ret)
+    assert m.loc.estado == ESTADO_PARADO and not [a for a in acciones if isinstance(a, LocateComprar)]
+    assert m.paso(1010.0) == []                                   # terminal: sin más consultas
+
+
+@pytest.mark.parametrize("fase", ["A", "C"])
+def test_fases_A_y_C_siguen_buscando_sin_mirar_a_tiro(fase: str) -> None:
+    """En A (radar) y C (dentro) un %SLRET que no compensa solo se anota y se sigue buscando; «a tiro» no cuenta."""
+    m = Maquina(precio="3")
+    _en_fase(m, fase, precio_senal="5")
+    assert m.loc.estado == ESTADO_BUSCANDO
+    m.paso(1001.0, ret=slret(1, "0.50", 10_000))
+    assert m.loc.estado == ESTADO_BUSCANDO
+    acciones = m.paso(1004.0, ret=slret(1, "0.01", 10_000))
+    assert [a.qty for a in acciones if isinstance(a, LocateComprar)] == [100]      # 3 < 5 · 0,97 y compra igual
+
+
+def test_intento_unico_oferta_rechazada_para_la_pareja() -> None:
+    """Una oferta (ruta tipo 1) que ya no compensa en el intento único → Reject y PARADO (no vuelve a buscar)."""
+    m = Maquina()
+    _en_fase(m, L.FASE_SENAL)
+    compra = [a for a in m.paso(1001.0, ret=slret(1, "0.01", 10_000)) if isinstance(a, LocateComprar)][0]
+    acciones = m.paso(1002.0, orden=slorder(70, "Offered", 100, 0, "0.50", compra.token))
+    assert LocateOferta(70, False) in acciones and m.loc.estado == ESTADO_PARADO
+
+
+def test_intento_unico_sin_nada_que_compense_acaba_sin_consultar() -> None:
+    """C_piramide con el resto que no compensa (precio del locate ya conocido) → parado sin consultar."""
+    m = Maquina()
+    m.loc = Locate(ticker=X, strategy_id="est-a", pedidas=170, localizadas=150, usadas=100, estado=ESTADO_BUSCANDO,
+                   precio_accion=D("0.05"), fase=L.FASE_PIRAMIDE, precio_senal=D("5"))
+    acciones = m.paso(1000.0, en_uso_vivo=100)                   # falta 20: 20 · 5 · 4 % = 4 < 100 · 0,05
+    assert m.loc.estado == ESTADO_PARADO and not [a for a in acciones if isinstance(a, LocateInquire)]
+
+
+def test_intento_unico_resto_sin_precio_conocido_consulta_un_paquete() -> None:
+    """Sin precio de locate conocido el resto de 20 (≤ 30 %) se consulta igual en el intento: decide el %SLRET."""
+    m = Maquina()
+    m.loc = Locate(ticker=X, strategy_id="est-a", pedidas=170, localizadas=150, usadas=100, estado=ESTADO_BUSCANDO,
+                   fase=L.FASE_PIRAMIDE, precio_senal=D("5"))
+    acciones = m.paso(1000.0, en_uso_vivo=100)
+    assert [a.qty for a in acciones if isinstance(a, LocateInquire)] == [100]
+    compra = m.paso(1001.0, ret=slret(1, "0.01", 10_000), en_uso_vivo=100)       # 20 · 5 · 4 % = 4 ≥ 1
+    assert [a.qty for a in compra if isinstance(a, LocateComprar)] == [100]
+
+
+def test_en_uso_vivo_cuenta_como_cubierto_en_la_fase_C() -> None:
+    """Jaume 29-sep: lo que usan los lotes vivos de la pareja cubre N: con 150 localizadas, 100 en la entrada y N = 170
+    faltan 20 (no 120), y sin `en_uso_vivo` se volverían a comprar las 100 de la entrada."""
+    loc = Locate(ticker=X, strategy_id="est-a", pedidas=170, localizadas=150, usadas=100, estado=ESTADO_BUSCANDO,
+                 precio_accion=D("0.01"), fase=L.FASE_DENTRO)
+    con = Maquina()
+    con.loc = loc
+    assert [a.qty for a in con.paso(1000.0, en_uso_vivo=100) if isinstance(a, LocateInquire)] == [100]
+    sin = Maquina()
+    sin.loc = loc
+    assert [a.qty for a in sin.paso(1000.0) if isinstance(a, LocateInquire)] == [200]
+
+
+def test_reductor_aplica_fase_precio_senal_y_N_recalculada() -> None:
+    """El reductor (el mismo que el diario) aplica `fase`, `precio_senal` (None la borra) y `pedidas_n` (manda)."""
+    loc = aplicar_anotaciones(None, [Anotar("locate_estado", {"ticker": X, "strategy_id": "est-a", "qty": 113,
+                                                              "estado": "buscando"})])
+    assert (loc.fase, loc.precio_senal, loc.pedidas) == ("A", None, 113)
+    loc = aplicar_anotaciones(loc, [Anotar("locate_estado", {"ticker": X, "strategy_id": "est-a", "fase": "B",
+                                                             "precio_senal": D("3.45"), "pedidas_n": 90})])
+    assert (loc.fase, loc.precio_senal, loc.pedidas) == ("B", D("3.45"), 90)
+    loc = aplicar_anotaciones(loc, [Anotar("locate_estado", {"ticker": X, "strategy_id": "est-a", "fase": "raro",
+                                                             "precio_senal": None})])
+    assert (loc.fase, loc.precio_senal) == ("B", None)
+
+
+def test_la_pedida_original_sobrevive_al_ajuste_de_H6() -> None:
+    """Jaume 29-sep: `qty_pedida` guarda la N original (113) aunque la primera consulta, sin precio, ajuste a 100."""
+    m = Maquina()
+    m.paso(1000.0, qty=113)
+    assert m.loc.pedidas == 113

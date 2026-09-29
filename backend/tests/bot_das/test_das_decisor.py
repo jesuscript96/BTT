@@ -563,6 +563,7 @@ def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
     b.simstatus()
     acciones = b.senal(ev, bombear=False)
     assert [resumen(a) for a in acciones] == [
+        ("Anotar", "senal_principal"),              # Jaume 29-sep: la primera señal principal del día de la pareja
         ("Anotar", "metrica"),
         ("Anotar", "senal"),
         ("Anotar", "lote"),
@@ -571,6 +572,7 @@ def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
         ("Anotar", "intento"),
         ("EnviarOrden", "SS", "LMT", 100, D("3.45"), None, "entrada_agregar", "SAGEREB", True, None),
         ("Programar", T_CRUCE, 60.0),
+        ("Anotar", "locate_estado"),                 # Jaume 29-sep: dentro → fase C
         ("Anotar", "metrica"),
     ]
     retraso = anotaciones(acciones, "metrica")[0].datos
@@ -1333,7 +1335,9 @@ def test_f10_los_seis_casos_de_la_reconciliacion(cfg: Config, tmp_path: Path, n:
                                                                                       "stop_principal"]
         assert any(isinstance(a, Avisar) and (a.clave or "").startswith("reconciliacion_sin_stop") for a in tras)
     elif n == 4:
-        assert b.estado.pausa_global is True and b.estado.ordenes_ajenas
+        # R-M-03 por ticker (Jaume 29-sep): solo ese ticker en manos del humano, sin pausa global
+        assert b.estado.pausa_global is False and b.estado.ordenes_ajenas
+        assert b.pos().estado is EstadoTicker.CONTROL_HUMANO and b.pos().intervencion_humana is True
         assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and (a.clave or "").startswith("ajena:")
                    for a in tras)
     elif n == 5:
@@ -1598,8 +1602,9 @@ def test_grupo_a_sale_primero_aunque_la_senal_se_descarte(cfg: Config, tmp_path:
     config = cfg_con(cfg, grupo_a=True,
                      estrategias=[dataclasses.replace(cfg.estrategias[SID], avisar_grupo_a=True)])
     b = Banco(config, tmp_path)
-    b.preparar(locates=())                                              # sin locates: la señal se descartará
-    acciones = b.senal(evento(), bombear=False)
+    b.preparar(locates=())
+    # tamaño 0: la señal se descartará (sin locates ya no se descarta: Jaume 29-sep, fase B3 = un intento)
+    acciones = b.senal(evento(acciones=0.0), bombear=False)
     assert isinstance(acciones[0], Avisar) and acciones[0].grupo is Grupo.A and acciones[0].nivel is Nivel.INFO
     assert TICKER in acciones[0].texto
     assert anotaciones(acciones, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_SIN_ACCIONES
@@ -3547,3 +3552,395 @@ def test_r3_dec_1_la_cifra_de_das_del_volcado_vale_desde_que_se_pidio(banco: Ban
     b.decisor._barrido_pedido_en = b.ahora()
     b.decisor._reconciliar(({}, {}, {}))
     assert pos.neta_das == -60 and pos.neta_das_en == pedido            # misma cifra: la hora no se mueve
+
+
+# ═══════════════ Jaume 29-sep: /pausar X, /sigue X y R-M-03 POR TICKER ═══════════════
+def _reconstruir_anotado(b: Banco) -> EstadoBot:
+    """Lo que el decisor anotó (solo los `Anotar`), rehecho por `diario.reconstruir` (H-2)."""
+    anotados = [a for a in b.historial if isinstance(a, Anotar)]
+    registros = [Registro(v=1, seq=i + 1, t="t", proceso="ejecutor", tipo=a.tipo, datos=a_json_seguro(a.datos))
+                 for i, a in enumerate(anotados)]
+    return reconstruir(registros, HOY)
+
+
+def _banco_dos_tickers(cfg: Config, tmp_path: Path, reconciliar: bool = True) -> Banco:
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=((TICKER, SID, 1000), (OTRO, SID, 1000)),
+               cotizaciones=((TICKER, "3.44", "3.46", "3.45"), (OTRO, "3.44", "3.46", "3.45")), reconciliar=reconciliar)
+    return b
+
+
+def _piramide_add(**cambios: Any) -> Evento:
+    base = dict(tipo="piramide", ticker=TICKER, strategy_id=SID, estrategia="PM (A) prueba", precio=3.45,
+                direccion="Short", acciones=70.0, nivel=1, accion_piramide="add", posicion_total=170.0)
+    base.update(cambios)
+    return Evento(**base)
+
+
+def test_pausar_ticker_bloquea_sus_entradas_y_no_las_de_otro(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep: «/pausar X» (dos pasos) → X no abre; Y sí. X sigue NORMAL y no hay pausa global."""
+    b = _banco_dos_tickers(cfg, tmp_path)
+    acciones = b.comando(f"/pausar {TICKER}")
+    assert b.pos().pausado_por_humano is True and b.pos().estado is EstadoTicker.NORMAL
+    assert b.estado.pausa_global is False
+    assert f"{TICKER}: pausado" in _respuesta(acciones)
+    descartada = b.senal(evento())
+    assert anotaciones(descartada, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_TICKER_BLOQUEADO
+    b.senal(evento(ticker=OTRO))
+    assert [o.ticker for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [OTRO]
+    assert b.decisor.foto()["tickers_pausados_por_humano"] == [TICKER]
+
+
+def test_pausar_ticker_bloquea_la_piramide_pero_no_los_stops(banco: Banco) -> None:
+    """Jaume 29-sep: con X pausado la pirámide «add» no entra; los stops de la posición siguen vivos."""
+    b = banco
+    abrir_posicion(b)
+    b.avanzar(2)
+    b.comando(f"/pausar {TICKER}")
+    marca = b.marca()
+    acciones = b.senal(_piramide_add(momento=otra_vela(b)))
+    assert anotaciones(acciones, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_TICKER_BLOQUEADO
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)
+    vivos = [o for o in b.estado.ordenes.values() if o.proposito in STOPS and o.estado not in
+             (EstadoOrden.CANCELED, EstadoOrden.CLOSED, EstadoOrden.REJECTED, EstadoOrden.EXECUTED)]
+    assert sorted(o.proposito.value for o in vivos) == ["stop_emergencia", "stop_principal"]
+
+
+def test_sigue_ticker_reabre_sus_entradas(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep: «/sigue X» levanta la pausa de X; la siguiente señal de X entra."""
+    b = _banco_dos_tickers(cfg, tmp_path)
+    b.comando(f"/pausar {TICKER}")
+    b.senal(evento())
+    b.comando(f"/sigue {TICKER}")
+    assert b.pos().pausado_por_humano is False
+    b.senal(evento(momento=otra_vela(b)))
+    assert [o.ticker for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [TICKER]
+
+
+def test_sigue_sin_ticker_levanta_todas_las_pausas_por_ticker(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep: «/sigue» a secas levanta la pausa global y las de todos los tickers."""
+    b = _banco_dos_tickers(cfg, tmp_path)
+    b.comando(f"/pausar {TICKER}")
+    b.comando(f"/pausar {OTRO}")
+    b.comando("/pausar")
+    b.comando("/sigue")
+    assert (b.estado.pausa_global, b.pos().pausado_por_humano, b.pos(OTRO).pausado_por_humano) == (False, False, False)
+
+
+def test_pausa_por_ticker_sobrevive_a_la_reconstruccion_del_diario(cfg: Config, tmp_path: Path) -> None:
+    """H-2 + Jaume 29-sep: el diario rehace «/pausar X» (y su levantamiento con /sigue X) sin tocar la pausa global."""
+    b = _banco_dos_tickers(cfg, tmp_path)
+    b.comando(f"/pausar {TICKER}")
+    rehecho = _reconstruir_anotado(b)
+    assert rehecho.posiciones[TICKER].pausado_por_humano is True and rehecho.pausa_global is False
+    assert OTRO not in rehecho.posiciones or rehecho.posiciones[OTRO].pausado_por_humano is False
+    b.comando(f"/sigue {TICKER}")
+    assert _reconstruir_anotado(b).posiciones[TICKER].pausado_por_humano is False
+
+
+def test_R_M_03_ajena_en_x_solo_x_al_humano_y_sigue_entrando_y(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep (R-M-03 por ticker): una orden ajena en X pone SOLO X en CONTROL_HUMANO («intervención humana»);
+    Y sigue entrando; «/sigue X» devuelve X a NORMAL y su siguiente señal entra. El diario lo rehace."""
+    b = Banco(cfg, tmp_path)
+    b.das.recibir(f"NEWORDER 12345 SS {TICKER} SAGEREB 100 5.00 TIF=DAY+")                 # la mano humana en X
+    b.preparar(locates=((TICKER, SID, 1000), (OTRO, SID, 1000)),
+               cotizaciones=((TICKER, "3.44", "3.46", "3.45"), (OTRO, "3.44", "3.46", "3.45")), reconciliar=False)
+    marca = b.marca()
+    b.avanzar(3)
+    assert b.estado.pausa_global is False
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO and b.pos().intervencion_humana is True
+    avisos3 = [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("ajena:")]
+    assert avisos3 and f"{TICKER} en manos del humano hasta /sigue {TICKER}" in avisos3[0].texto
+    rehecho = _reconstruir_anotado(b)
+    assert rehecho.posiciones[TICKER].estado is EstadoTicker.CONTROL_HUMANO and rehecho.pausa_global is False
+    momento = momento_de(b.reloj.ahora())
+    descartada = b.senal(evento(momento=momento))
+    assert anotaciones(descartada, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_TICKER_BLOQUEADO
+    b.senal(evento(ticker=OTRO, momento=momento))
+    assert [o.ticker for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [OTRO]
+    b.comando(f"/sigue {TICKER}")
+    assert b.pos().estado is EstadoTicker.NORMAL and b.pos().intervencion_humana is False
+    assert _reconstruir_anotado(b).posiciones[TICKER].estado is EstadoTicker.NORMAL
+    b.avanzar(3)                                         # la misma ajena ya está tratada: no vuelve a pasar al humano
+    assert b.pos().estado is EstadoTicker.NORMAL
+    b.senal(evento(momento=otra_vela(b)))
+    assert [o.ticker for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [OTRO, TICKER]
+
+
+def test_R_M_03_sigue_sin_ticker_devuelve_todos_al_bot(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep: «/sigue» a secas devuelve a NORMAL todo ticker en manos del humano por intervención (y el diario
+    lo rehace igual); un /control_humano X puesto a mano NO se levanta con él."""
+    b = Banco(cfg, tmp_path)
+    b.das.recibir(f"NEWORDER 12345 SS {TICKER} SAGEREB 100 5.00 TIF=DAY+")
+    b.preparar(locates=((TICKER, SID, 1000), (OTRO, SID, 1000)),
+               cotizaciones=((TICKER, "3.44", "3.46", "3.45"), (OTRO, "3.44", "3.46", "3.45")), reconciliar=False)
+    b.avanzar(3)
+    b.comando(f"/control_humano {OTRO}")
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO and b.pos(OTRO).estado is EstadoTicker.CONTROL_HUMANO
+    b.comando("/sigue")
+    assert b.pos().estado is EstadoTicker.NORMAL and b.pos().intervencion_humana is False
+    assert b.pos(OTRO).estado is EstadoTicker.CONTROL_HUMANO
+    rehecho = _reconstruir_anotado(b)
+    assert rehecho.posiciones[TICKER].estado is EstadoTicker.NORMAL
+    assert rehecho.posiciones[OTRO].estado is EstadoTicker.CONTROL_HUMANO
+
+
+# ═══════════════ Jaume 29-sep: locates por FASES enlazados con la señal ═══════════════
+def _radar_de(b: Banco, filas: list[dict], ticker: str = TICKER, precio: str = "3.45") -> list[Accion]:
+    return b.procesar(SenalRecibida(Senal(clase="radar", ticker=ticker, id=None, estimacion=filas,
+                                          precio_radar=D(precio), recibida_en=b.ahora())))
+
+
+def _fila(acciones: float, sid: str = SID, riesgo: float = 55.0) -> dict:
+    return {"strategy_id": sid, "acciones": acciones, "riesgo_usd": riesgo}
+
+
+def _compras(b: Banco, desde: int = 0) -> list[LocateComprar]:
+    return [a for a in b.historial[desde:] if isinstance(a, LocateComprar)]
+
+
+def _consultas(b: Banco, desde: int = 0) -> list[LocateInquire]:
+    return [a for a in b.historial[desde:] if isinstance(a, LocateInquire)]
+
+
+def _cfg_ventana_larga(cfg: Config) -> Config:
+    """La estrategia de ejemplo con la ventana de entradas hasta las 15:00 (la del fixture cierra a las 09:29)."""
+    return cfg_con(cfg, estrategias=[dataclasses.replace(cfg.estrategias[SID],
+                                                         ventana_entradas=[{"from_time": "04:00", "to_time": "15:00"}])])
+
+
+def test_fase_A_se_para_al_cerrar_la_ventana_de_entrada(cfg: Config, tmp_path: Path) -> None:
+    """Fase A (Jaume 29-sep): el locate que no compensa sigue buscando cada 3 s… hasta que cierra la ventana de
+    entrada de la estrategia (09:29 + la vela + la caducidad de 60 s = 09:31:00): entonces PARADO y sin consultas."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.libro.configurar_locate(TICKER, precio=D("0.50"))                  # 14 % de fade: no compensa
+    _radar_de(b, [_fila(100.0)])
+    b.avanzar(10)
+    loc = b.estado.locates[(TICKER, SID)]
+    assert (loc.fase, loc.estado) == ("A", "buscando") and len(_consultas(b)) >= 3 and not _compras(b)
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 2, tzinfo=ET))
+    loc = b.estado.locates[(TICKER, SID)]
+    assert loc.estado == "parado" and "ventana" in [a for a in anotaciones(b.historial, "locate_estado")
+                                                    if a.datos.get("estado") == "parado"][-1].datos["motivo"]
+    marca = b.marca()
+    b.avanzar(10)
+    assert not _consultas(b, marca)
+
+
+def test_fase_A_se_para_al_salir_del_radar(cfg: Config, tmp_path: Path) -> None:
+    """Fase A (Jaume 29-sep): sin fila del radar en 30 min (RADAR_VIGENCIA_S) el ticker salió del radar: PARADO."""
+    b = Banco(_cfg_ventana_larga(cfg), tmp_path)
+    b.preparar(locates=())
+    b.libro.configurar_locate(TICKER, precio=D("0.50"))
+    _radar_de(b, [_fila(100.0)])
+    b.avanzar(4)
+    assert b.estado.locates[(TICKER, SID)].estado == "buscando"
+    b.decisor._radar[TICKER] -= 1801.0                                   # la última fila fue hace más de 30 min
+    b.avanzar(4)
+    loc = b.estado.locates[(TICKER, SID)]
+    assert loc.estado == "parado"
+    assert "salió del radar" in anotaciones(b.historial, "locate_estado")[-1].datos["motivo"]
+    marca = b.marca()
+    b.avanzar(10)
+    assert not _consultas(b, marca)
+
+
+def test_fase_A_recalcula_N_con_el_precio_actual_antes_de_comprar(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep: N (entrada + pirámides al precio actual) se recalcula con cada fila del radar ANTES de comprar."""
+    b = Banco(_cfg_ventana_larga(cfg), tmp_path)
+    b.preparar(locates=())
+    b.libro.configurar_locate(TICKER, precio=D("0.50"))
+    _radar_de(b, [_fila(100.0)])
+    b.avanzar(1)
+    assert b.estado.locates[(TICKER, SID)].pedidas == 100 and not _compras(b)
+    _radar_de(b, [_fila(300.0)], precio="3.00")                          # el precio bajó: la fila pide 300
+    assert b.estado.locates[(TICKER, SID)].pedidas == 300
+    assert anotaciones(b.historial, "locate_estado")[-1].datos["pedidas_n"] == 300
+    b.libro.configurar_locate(TICKER, precio=D("0.01"))
+    b.avanzar(4)
+    assert [c.qty for c in _compras(b)] == [300]
+
+
+def test_dos_estrategias_en_el_mismo_ticker_cada_una_compra_lo_suyo(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep (transversal): 100 de A + 300 de B en el mismo ticker = 1 + 3 = 4 paquetes, cada uno en su locate."""
+    config = cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)])
+    b = Banco(config, tmp_path)
+    b.preparar(locates=())
+    _radar_de(b, [_fila(100.0), _fila(300.0, sid=SID2)])
+    b.avanzar(1)
+    assert sorted(c.qty for c in _compras(b)) == [100, 300]
+    assert sum(c.qty for c in _compras(b)) // 100 == 4
+    locs = b.estado.locates
+    assert (locs[(TICKER, SID)].localizadas, locs[(TICKER, SID2)].localizadas) == (100, 300)
+
+
+def test_fase_B1_con_locates_entra_y_pasa_a_C(banco: Banco) -> None:
+    """B1: locates ≥ lo pedido → entra (lo de siempre); la pareja queda DENTRO (fase C) y la señal es la primera."""
+    b = banco
+    b.senal(evento())
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [100]
+    assert b.estado.locates[(TICKER, SID)].fase == "C"
+    assert anotaciones(b.historial, "senal_principal")[0].datos["senal_id"] == lote_de(evento())
+    assert b.estado.senales_principales[(TICKER, SID)] == lote_de(evento())
+
+
+def test_fase_B2_con_parciales_entra_con_lo_localizado_y_pasa_a_C(banco: Banco, cfg: Config, tmp_path: Path) -> None:
+    """B2: 60 localizadas de 100 → entra con 60 (sin esperar) y la pareja pasa a C (sigue a por las que faltan)."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=((TICKER, SID, 60),))
+    b.senal(evento())
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [60]
+    assert b.estado.locates[(TICKER, SID)].fase == "C" and not _consultas(b)
+
+
+def test_fase_B3_sin_locates_un_intento_que_compra_y_entra(cfg: Config, tmp_path: Path) -> None:
+    """B3: sin locates → UN intento en la señal: consulta, compra (a tiro y compensa) y la señal entra con lo comprado."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    acciones = b.senal(evento())
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR)                    # la señal espera a su locate
+    assert [a.datos["fase"] for a in anotaciones(acciones, "locate_estado") if "fase" in a.datos][0] == "B"
+    assert [c.qty for c in _consultas(b)] == [100]
+    b.avanzar(1)
+    assert [c.qty for c in _compras(b)] == [100]
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [100]
+    loc = b.estado.locates[(TICKER, SID)]
+    assert (loc.fase, loc.localizadas, loc.usadas) == ("C", 100, 100)
+    assert f"locate_senal:{TICKER}:{SID}" not in b.temporizadores
+
+
+@pytest.mark.parametrize("como", ["no-a-tiro", "no-compensa"])
+def test_fase_B3_sin_compra_pierde_la_entrada_y_para_la_pareja(cfg: Config, tmp_path: Path, como: str) -> None:
+    """B3: el intento no compra (el precio cayó más del 3 % desde la señal, o el locate no compensa) → PARADO el día,
+    `locate_perdida_entrada` y aviso nivel 2 al grupo B; no se entra."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    if como == "no-compensa":
+        b.libro.configurar_locate(TICKER, precio=D("0.50"))
+    b.senal(evento())
+    if como == "no-a-tiro":
+        b.cotizar(TICKER, "3.29", "3.31", "3.30")                     # 3,30 < 3,45 · 0,97 = 3,3465
+    marca = b.marca()
+    b.avanzar(1)
+    assert not _compras(b) and not b.enviadas(Proposito.ENTRADA_AGREGAR)
+    assert b.estado.locates[(TICKER, SID)].estado == "parado"
+    tras = b.desde(marca)
+    assert anotaciones(tras, "locate_perdida_entrada")
+    avisos2 = [a for a in tras if isinstance(a, Avisar) and (a.clave or "").startswith("locate_perdida:")]
+    assert avisos2 and avisos2[0].nivel is Nivel.AVISO and avisos2[0].grupo is Grupo.B
+    assert lote_de(evento()) in b.estado.senales_vistas
+
+
+def test_primera_senal_principal_es_la_unica_oportunidad(cfg: Config, tmp_path: Path) -> None:
+    """Regla de Jaume (29-sep): tras perder la primera señal por locates, la de la vela siguiente se anota
+    `senal_perdida_por_locates` y NO se opera ni dispara búsqueda (aunque ahora el locate compensara)."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.libro.configurar_locate(TICKER, precio=D("0.50"))
+    b.senal(evento())
+    b.avanzar(1)
+    b.libro.configurar_locate(TICKER, precio=D("0.01"))
+    marca = b.marca()
+    acciones = b.senal(evento(momento=otra_vela(b)))
+    assert anotaciones(acciones, "senal_perdida_por_locates")
+    b.avanzar(5)
+    assert not _consultas(b, marca) and not b.enviadas(Proposito.ENTRADA_AGREGAR)
+    rehecho = _reconstruir_anotado(b)                               # H-2: la primera señal sobrevive a un reinicio
+    assert rehecho.senales_principales[(TICKER, SID)] == lote_de(evento())
+
+
+def _salta_el_stop(b: Banco) -> None:
+    b.cotizar(TICKER, "4.00", "4.05", "4.01", tam_ask=1000)
+    b.tic_das()
+    assert b.pos().neta_fills == 0
+
+
+def test_reentrada_tras_stop_es_legitima_y_reusa_los_locates_fase_D(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep: si se entró y se salió por stop, la reentrada de la estrategia es legítima (no es «señal
+    perdida»); cerrada la posición la pareja pasa a D (sin consultas) y la reentrada usa los locates que quedan."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=((TICKER, SID, 200),))
+    abrir_posicion(b)
+    _salta_el_stop(b)
+    _radar_de(b, [_fila(100.0)])                                     # un paso periódico: C sin lote vivo → D
+    assert b.estado.locates[(TICKER, SID)].fase == "D"
+    marca = b.marca()
+    b.avanzar(5)
+    assert not _consultas(b, marca)
+    b.cotizar(TICKER, "4.00", "4.02", "4.01")
+    acciones = b.senal(evento(precio=4.01, stop=4.6, momento=momento_de(b.reloj.ahora())))
+    assert not anotaciones(acciones, "senal_perdida_por_locates")
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [100, 100]
+    assert not _compras(b)                                           # quedaban 100 libres: sin comprar nada
+    assert b.estado.locates[(TICKER, SID)].fase == "C"
+
+
+def _abrir_para_piramide(b: Banco, localizadas: int, precio_locate: str = "0.01") -> None:
+    b.estado.locates[(TICKER, SID)] = Locate(ticker=TICKER, strategy_id=SID, pedidas=localizadas,
+                                             localizadas=localizadas, estado="Located", precio_accion=D(precio_locate))
+    abrir_posicion(b)
+    b.avanzar(2)
+
+
+def test_fase_C_piramide_con_tercer_paquete_a_tiempo_entra_entera(cfg: Config, tmp_path: Path) -> None:
+    """C: pirámide de 70 con 50 libres (150 localizadas, 100 en la entrada) → UN intento a tiro: el tercer paquete
+    compensa (20 · 3,45 · 4 % = 2,76 ≥ 1) → se compra y la pirámide entra con 70."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    _abrir_para_piramide(b, 150)
+    marca = b.marca()
+    b.senal(_piramide_add(momento=otra_vela(b)))
+    b.avanzar(1)
+    assert [c.qty for c in _compras(b, marca)] == [100]
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)] == [70]
+    assert b.estado.locates[(TICKER, SID)].fase == "C"
+
+
+def test_fase_C_piramide_parcial_50_de_70_y_la_pareja_queda_parada(cfg: Config, tmp_path: Path) -> None:
+    """C: el tercer paquete NO compensa (20 · 3,45 · 4 % = 2,76 < 100 · 0,05) → la pirámide entra con los 50 que hay
+    y la pareja queda PARADA el día: la pirámide siguiente entra con lo que quede, sin otro intento."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.libro.configurar_locate(TICKER, precio=D("0.05"))
+    _abrir_para_piramide(b, 150, precio_locate="0.05")
+    marca = b.marca()
+    b.senal(_piramide_add(momento=otra_vela(b)))
+    b.avanzar(1)
+    assert not _compras(b, marca)
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)] == [50]
+    assert b.estado.locates[(TICKER, SID)].estado == "parado"
+    marca = b.marca()
+    b.avanzar(10)
+    assert not _consultas(b, marca)
+
+
+def test_fase_B3_sin_respuesta_de_das_la_espera_vence_y_pierde_la_entrada(cfg: Config, tmp_path: Path) -> None:
+    """B3: si DAS no contesta a la consulta, la señal espera como mucho su caducidad (`locate_senal`, 60 s): la
+    pareja queda PARADA, la entrada se pierde (aviso 2) y no se entra más tarde con una respuesta tardía."""
+    b = Banco(cfg, tmp_path)
+    b.preparar(locates=())
+    b.das_contesta = False
+    b.senal(evento())
+    assert f"locate_senal:{TICKER}:{SID}" in b.temporizadores
+    marca = b.marca()
+    b.avanzar(61)
+    tras = b.desde(marca)
+    assert anotaciones(tras, "locate_perdida_entrada")
+    assert b.estado.locates[(TICKER, SID)].estado == "parado"
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR)
+
+
+def test_ticker_pausado_no_gasta_en_locates_hasta_sigue(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 29-sep (lo conservador): con «/pausar X» el radar de X no consulta ni compra locates; tras «/sigue X» la
+    siguiente fila del radar vuelve a buscar."""
+    b = Banco(_cfg_ventana_larga(cfg), tmp_path)
+    b.preparar(locates=())
+    b.comando(f"/pausar {TICKER}")
+    _radar_de(b, [_fila(100.0)])
+    b.avanzar(4)
+    assert not _consultas(b) and not _compras(b)
+    b.comando(f"/sigue {TICKER}")
+    _radar_de(b, [_fila(100.0)])
+    b.avanzar(1)
+    assert [c.qty for c in _compras(b)] == [100]
