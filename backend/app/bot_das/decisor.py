@@ -493,6 +493,7 @@ class Decisor:
         # con las libres que había al empezar; y los ids de señal que ya gastaron su intento (no hay un segundo)
         self._espera_locate: dict[tuple[str, str], tuple[Senal, int]] = {}
         self._intento_locate_hecho: set[str] = set()
+        self._senal_principal_anotada: set[str] = set()   # ids cuya anotación «senal_principal» ya salió al diario
         self._slret_ventana: dict[str, list[MsgSLRet]] = {}  # E2-05: %SLRET de las consultas de un ticker (0,5 s)
         self._slret_tics: dict[str, int] = {}                # E2-05: Tics vistos con la ventana abierta (cierra al 2.º)
         self._slorders_cobrados: set[int] = set()
@@ -1562,6 +1563,14 @@ class Decisor:
                                    avisar=True)
         principal = _tipo_evento(ev) == "entrada"
         acciones: list[Accion] = []
+        if principal and e is not None:
+            # Jaume 29-sep (estricto): la PRIMERA señal principal del día de la pareja es la única oportunidad, se opere
+            # o no (retraso, pausa, exclusión, locates…): entrar en una vela posterior sería un trade que el backtest no
+            # hizo. Se consume aquí, ANTES de las comprobaciones. Excepción: reentrada legítima tras haber entrado.
+            posterior = self._senal_principal_posterior(s, pos, e)
+            if posterior is not None:
+                return posterior
+            acciones += self._marcar_primera_senal(s, e)
         exclusion: Optional[str] = None
         if e is not None and self._exclusion_necesaria(pos, e, ev):
             exclusion, avisos_ex = self._exclusion(ticker, e)
@@ -1586,7 +1595,10 @@ class Decisor:
             raise RuntimeError("evaluar_senal aceptó una señal sin estrategia o sin libro")   # comprobaciones 3 y 8
         if (not es_reapertura and not sin_espera_simstatus and self._abre_ticker_plano(pos)
                 and not self._simstatus_fresco(ticker)):
-            return acciones + self._esperar_simstatus(s)
+            # G1A-05: la espera NO escribe en el diario: la anotación «senal_principal» sale con la decisión (re-run)
+            self._senal_principal_anotada.discard(s.id)
+            return ([a for a in acciones if not (isinstance(a, Anotar) and a.tipo == ANOTACION_SENAL_PRINCIPAL)]
+                    + self._esperar_simstatus(s))
         if pedidas_ev > 0:
             # Jaume 29-sep: B1/B2 o pirámide a medias (después de la espera del SymStatus, que no escribe en el diario)
             prefijo, fin = self._etapa_locates(s, e, pos, principal, pedidas_ev)
@@ -4131,21 +4143,24 @@ class Decisor:
         return (any(lote.llenas > 0 or self._llenas_max_lote.get(lote.id, 0) > 0 for lote in base)
                 and not any(lote.estado in _LOTE_VIVO for lote in pos.lotes.values() if lote.strategy_id == sid))
 
-    def _senal_perdida_por_locates(self, s: Senal, pos: PosicionTicker, e: EstrategiaConfig) -> Optional[list[Accion]]:
-        """Regla de Jaume (29-sep): la PRIMERA señal principal del día de (ticker, estrategia) es la ÚNICA oportunidad.
+    def _senal_principal_posterior(self, s: Senal, pos: PosicionTicker, e: EstrategiaConfig) -> Optional[list[Accion]]:
+        """Regla de Jaume (29-sep, ESTRICTA): la PRIMERA señal principal del día de (ticker, estrategia) es la ÚNICA
+        oportunidad, se operase o no (retraso, pausa, exclusión, sin locates…).
 
         Una señal principal posterior (otra vela que también cumple) se anota
-        `senal_perdida_por_locates` y no se opera ni dispara búsqueda; salvo
-        que la pareja ya entrara y saliera (reentrada legítima, fase D), que
-        sigue su camino normal (las reglas de reentrada deciden).
+        `senal_principal_posterior` y no se opera ni dispara búsqueda: sería
+        un trade que el backtest no hizo. Excepción: la pareja ya entró y
+        salió (reentrada legítima, fase D), que sigue su camino normal (las
+        reglas de reentrada deciden). MEDIR EN SOMBRA cuántas se pierden
+        (contar esta anotación) para decidir si la regla se relaja.
         """
         primera = self._estado.senales_principales.get((s.ticker, e.strategy_id))
         if primera is None or primera == s.id or self._reentrada_legitima(pos, e.strategy_id):
             return None
-        return ([Anotar("senal_perdida_por_locates", {"senal_id": s.id, "ticker": s.ticker,
+        return ([Anotar("senal_principal_posterior", {"senal_id": s.id, "ticker": s.ticker,
                                                       "strategy_id": e.strategy_id, "primera": primera,
                                                       "regla": "Jaume 29-sep: la primera señal principal del día es "
-                                                               "la única oportunidad de entrada"})]
+                                                               "la única oportunidad de entrada, se opere o no"})]
                 + self._descartar(s, "señal principal posterior a la primera del día: no se opera (Jaume 29-sep)",
                                   avisar=False))
 
@@ -4153,25 +4168,23 @@ class Decisor:
                        pedidas: int) -> tuple[list[Accion], Optional[list[Accion]]]:
         """Jaume 29-sep: la señal llegó a los locates (pasó las 15 primeras comprobaciones de `evaluar_senal`).
 
-        Principal: la PRIMERA del día de la pareja es la única oportunidad
-        (`senal_perdida_por_locates` si no, salvo reentrada legítima) y se
-        anota `senal_principal`. Después, la fase de locates en la señal
-        (`_fase_locate_en_senal`). Devuelve (acciones a anteponer, fin): con
-        `fin` la entrada termina ahí (perdida o esperando su intento).
+        La primera señal del día ya se consumió al principio de `_entrada`
+        (regla estricta de Jaume 29-sep). Aquí solo la fase de locates en la
+        señal (`_fase_locate_en_senal`). Devuelve (acciones a anteponer, fin):
+        con `fin` la entrada termina ahí (perdida o esperando su intento).
         """
-        prefijo: list[Accion] = []
-        if principal:
-            perdida = self._senal_perdida_por_locates(s, pos, e)
-            if perdida is not None:
-                return [], perdida
-            prefijo = self._marcar_primera_senal(s, e)
-        return prefijo, self._fase_locate_en_senal(s, e, principal, pedidas)
+        return [], self._fase_locate_en_senal(s, e, principal, pedidas)
 
     def _marcar_primera_senal(self, s: Senal, e: EstrategiaConfig) -> list[Accion]:
+        """Consume la única oportunidad del día (en memoria) y devuelve la anotación «senal_principal» una sola vez por
+        id (un re-run de la misma señal tras la espera del SymStatus la vuelve a emitir si aún no salió al diario)."""
         clave = (s.ticker, e.strategy_id)
-        if clave in self._estado.senales_principales:
+        if self._estado.senales_principales.get(clave) not in (None, s.id):
             return []
         self._estado.senales_principales[clave] = s.id
+        if s.id in self._senal_principal_anotada:
+            return []
+        self._senal_principal_anotada.add(s.id)
         return [Anotar(ANOTACION_SENAL_PRINCIPAL, {"ticker": s.ticker, "strategy_id": e.strategy_id,
                                                           "senal_id": s.id, "regla": "Jaume 29-sep"})]
 

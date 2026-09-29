@@ -1542,8 +1542,9 @@ def test_senal_larga_con_un_corto_abierto_se_descarta(banco: Banco) -> None:
     momento = otra_vela(b)
     marca = b.marca()
     acciones = b.senal(evento(direccion="Long", momento=momento))
-    assert anotaciones(acciones, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_LADO
-    assert [a.nivel for a in acciones if isinstance(a, Avisar)] == [Nivel.INFO]
+    # Jaume 29-sep (estricto): con la primera señal del día ya consumida por la entrada, esta se descarta antes como
+    # «principal posterior»; R-E-01 (solo cortos) sigue cubierto por los tests puros de `evaluar_senal`.
+    assert anotaciones(acciones, "senal_descartada") and anotaciones(acciones, "senal_principal_posterior")
     assert not b.enviadas(desde=marca)
 
 
@@ -3607,14 +3608,20 @@ def test_pausar_ticker_bloquea_la_piramide_pero_no_los_stops(banco: Banco) -> No
 
 
 def test_sigue_ticker_reabre_sus_entradas(cfg: Config, tmp_path: Path) -> None:
-    """Jaume 29-sep: «/sigue X» levanta la pausa de X; la siguiente señal de X entra."""
+    """Jaume 29-sep: «/sigue X» levanta la pausa de X; la siguiente señal de X entra. Y (estricto): una señal que
+    llegó DURANTE la pausa ya consumió la única oportunidad del día de esa estrategia en X."""
     b = _banco_dos_tickers(cfg, tmp_path)
     b.comando(f"/pausar {TICKER}")
-    b.senal(evento())
     b.comando(f"/sigue {TICKER}")
     assert b.pos().pausado_por_humano is False
-    b.senal(evento(momento=otra_vela(b)))
+    b.senal(evento())
     assert [o.ticker for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [TICKER]
+    b2 = _banco_dos_tickers(cfg, tmp_path / "b2")
+    b2.comando(f"/pausar {TICKER}")
+    b2.senal(evento())                                   # descartada por la pausa: consume la oportunidad del día
+    b2.comando(f"/sigue {TICKER}")
+    posterior = b2.senal(evento(momento=otra_vela(b2)))
+    assert anotaciones(posterior, "senal_principal_posterior") and not b2.enviadas(Proposito.ENTRADA_AGREGAR)
 
 
 def test_sigue_sin_ticker_levanta_todas_las_pausas_por_ticker(cfg: Config, tmp_path: Path) -> None:
@@ -3663,8 +3670,9 @@ def test_R_M_03_ajena_en_x_solo_x_al_humano_y_sigue_entrando_y(cfg: Config, tmp_
     assert _reconstruir_anotado(b).posiciones[TICKER].estado is EstadoTicker.NORMAL
     b.avanzar(3)                                         # la misma ajena ya está tratada: no vuelve a pasar al humano
     assert b.pos().estado is EstadoTicker.NORMAL
-    b.senal(evento(momento=otra_vela(b)))
-    assert [o.ticker for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [OTRO, TICKER]
+    posterior = b.senal(evento(momento=otra_vela(b)))   # estricto (Jaume 29-sep): la señal de la pausa consumió el día
+    assert anotaciones(posterior, "senal_principal_posterior")
+    assert [o.ticker for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [OTRO]
 
 
 def test_R_M_03_sigue_sin_ticker_devuelve_todos_al_bot(cfg: Config, tmp_path: Path) -> None:
@@ -3834,7 +3842,7 @@ def test_fase_B3_sin_compra_pierde_la_entrada_y_para_la_pareja(cfg: Config, tmp_
 
 def test_primera_senal_principal_es_la_unica_oportunidad(cfg: Config, tmp_path: Path) -> None:
     """Regla de Jaume (29-sep): tras perder la primera señal por locates, la de la vela siguiente se anota
-    `senal_perdida_por_locates` y NO se opera ni dispara búsqueda (aunque ahora el locate compensara)."""
+    `senal_principal_posterior` y NO se opera ni dispara búsqueda (aunque ahora el locate compensara)."""
     b = Banco(cfg, tmp_path)
     b.preparar(locates=())
     b.libro.configurar_locate(TICKER, precio=D("0.50"))
@@ -3843,11 +3851,24 @@ def test_primera_senal_principal_es_la_unica_oportunidad(cfg: Config, tmp_path: 
     b.libro.configurar_locate(TICKER, precio=D("0.01"))
     marca = b.marca()
     acciones = b.senal(evento(momento=otra_vela(b)))
-    assert anotaciones(acciones, "senal_perdida_por_locates")
+    assert anotaciones(acciones, "senal_principal_posterior")
     b.avanzar(5)
     assert not _consultas(b, marca) and not b.enviadas(Proposito.ENTRADA_AGREGAR)
     rehecho = _reconstruir_anotado(b)                               # H-2: la primera señal sobrevive a un reinicio
     assert rehecho.senales_principales[(TICKER, SID)] == lote_de(evento())
+
+
+def test_primera_senal_descartada_por_retraso_tambien_consume_la_oportunidad(banco: Banco) -> None:
+    """Jaume 29-sep (ESTRICTO): la primera señal principal del día consume la oportunidad aunque se descarte antes de
+    mirar locates (aquí por retraso, R-A-01): la vela siguiente, con locates y a tiro, tampoco se opera."""
+    b = banco
+    b.simstatus()
+    primera = b.senal(evento(precio=3.20))                              # el último (3,45) está un 7,8 % arriba: tardía
+    assert anotaciones(primera, "senal_descartada") and anotaciones(primera, "senal_principal")
+    acciones = b.senal(evento(momento=otra_vela(b)))                    # misma estrategia, otra vela, a tiro
+    assert anotaciones(acciones, "senal_principal_posterior")
+    b.avanzar(3)
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE)
 
 
 def _salta_el_stop(b: Banco) -> None:
@@ -3870,7 +3891,7 @@ def test_reentrada_tras_stop_es_legitima_y_reusa_los_locates_fase_D(cfg: Config,
     assert not _consultas(b, marca)
     b.cotizar(TICKER, "4.00", "4.02", "4.01")
     acciones = b.senal(evento(precio=4.01, stop=4.6, momento=momento_de(b.reloj.ahora())))
-    assert not anotaciones(acciones, "senal_perdida_por_locates")
+    assert not anotaciones(acciones, "senal_principal_posterior")
     assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR)] == [100, 100]
     assert not _compras(b)                                           # quedaban 100 libres: sin comprar nada
     assert b.estado.locates[(TICKER, SID)].fase == "C"
