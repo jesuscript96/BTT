@@ -14,6 +14,16 @@ estrategia cada `cada_min` minutos (por defecto 10), solo dentro de la ventana
 de entrada de la estrategia, y nunca si ya hay posición viva en ese ticker
 (entonces lo que toca es la salida, no la entrada).
 
+AÑADIDOS (29-sep-2026, Jaume: «prefiero que avise añadido por condiciones»).
+Con posición viva en ESA estrategia, en vez de la entrada se miran sus niveles
+de piramidación: el mismo «todas menos una» sobre el `root_condition` de cada
+nivel que AÑADE. Se saltan los que no tienen condiciones que partir: los de
+solo recorrido (dependen del precio de entrada, que aquí no se conoce), los
+caminos por pasos y los que ya se han disparado sus `times` veces en la
+posición actual. Mismo freno y mismo silencio que la entrada, por nivel. La
+posición se mira POR ESTRATEGIA: que otra estrategia esté dentro del ticker ya
+no calla la prealerta de entrada de esta.
+
 CÓMO EVALÚA. Con `_evaluate_single_condition`, la MISMA función con la que el
 motor evalúa cada condición dentro de `translate_strategy`, sobre el frame que
 el runner ya tiene (`build_market_frame` del día entero). Solo para raíces AND:
@@ -111,11 +121,6 @@ class PrealertaSimple:
         velas = getattr(runner, "_velas", {}).get(ticker) or []
         if len(velas) < 2:
             return []
-        try:
-            if runner.tiene_posicion(ticker):
-                return []
-        except Exception:  # noqa: BLE001
-            pass
         stats = getattr(runner, "_stats", {}).get(ticker, {}) or {}
         try:
             frame = build_market_frame(pd.DataFrame(velas), ticker, stats)
@@ -135,46 +140,103 @@ class PrealertaSimple:
             vistas.add(sid)
             sdef = est.get("definition") or {}
             compiled = est.get("compiled") or {}
-            entry = sdef.get("entry_logic") or {}
-            root = entry.get("root_condition") or {}
-            conds = root.get("conditions") or []
-            if str(root.get("operator", "AND")).upper() != "AND" or len(conds) < 2:
-                continue
+            # Un añadido es una entrada: con la ventana cerrada, tampoco.
             if not _en_ventana(compiled, momento):
                 continue
-            tf = entry.get("timeframe", "1m")
-            cache: dict = {}
-            cumple: list[bool] = []
-            try:
-                for c in conds:
-                    serie = _evaluate_single_condition(c, frame, tf, stats, cache)
-                    v = np.asarray(serie, dtype=bool)
-                    cumple.append(bool(v[-1]) if len(v) else False)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[PREALERTA SIMPLE] %s / %s: fallo al evaluar: %s",
-                               ticker, est.get("name"), exc)
-                continue
-            n = len(cumple)
-            if sum(cumple) != n - 1:
-                continue
-            falta = etiqueta(conds[cumple.index(False)])
-
-            clave = (ticker, sid)
-            ultimo = self._ultimo.get(clave)
-            ts = pd.Timestamp(momento)
-            if ultimo is not None and (ts - ultimo) < pd.Timedelta(minutes=self.cada_min):
-                continue
-            if self._silenciada(clave, falta):
-                continue
-            self._ultimo[clave] = ts
-
             direccion = str(compiled.get("direction") or sdef.get("direction") or "shortonly")
             direccion = "Long" if direccion.lower().startswith("long") else "Short"
-            eventos.append(Evento(
-                tipo="entrada", ticker=ticker, strategy_id=sid,
-                estrategia=est.get("name") or sid, momento=momento, precio=precio,
-                direccion=direccion, estado="prealerta",
-                motivo=f"Falta: {falta}", cuenta=None,
-                riesgo_usd=est.get("riesgo_usd"),
-            ))
+            nombre = est.get("name") or sid
+            estado = self._estado_par(runner, ticker, sid)
+
+            if estado is None or len(estado.entradas_avisadas) <= len(estado.salidas_avisadas):
+                # FUERA: la entrada.
+                entry = sdef.get("entry_logic") or {}
+                falta = self._falta_una(entry.get("root_condition") or {}, frame,
+                                        entry.get("timeframe", "1m"), stats, ticker, nombre)
+                if falta is None or not self._pasa_freno((ticker, sid), momento, falta):
+                    continue
+                eventos.append(Evento(
+                    tipo="entrada", ticker=ticker, strategy_id=sid,
+                    estrategia=nombre, momento=momento, precio=precio,
+                    direccion=direccion, estado="prealerta",
+                    motivo=f"Falta: {falta}", cuenta=None,
+                    riesgo_usd=est.get("riesgo_usd"),
+                ))
+                continue
+
+            # DENTRO: los niveles que añaden por condiciones.
+            pyr = sdef.get("pyramiding") or {}
+            tf = pyr.get("timeframe", "1m")
+            for idx, lv in enumerate(pyr.get("levels") or []):
+                if str(lv.get("action", "add")).lower() != "add" or lv.get("steps") is not None:
+                    continue
+                if str(lv.get("trigger", "conditions")).lower() in ("move", "recorrido"):
+                    continue
+                if self._disparos(estado, idx) >= int(lv.get("times") or 1):
+                    continue
+                falta = self._falta_una(lv.get("root_condition") or {}, frame, tf, stats,
+                                        ticker, nombre)
+                if falta is None or not self._pasa_freno((ticker, sid, "pyr", idx), momento, falta):
+                    continue
+                eventos.append(Evento(
+                    tipo="piramide", ticker=ticker, strategy_id=sid,
+                    estrategia=nombre, momento=momento, precio=precio,
+                    direccion=direccion, estado="prealerta",
+                    motivo=f"Falta: {falta}", cuenta=None,
+                    riesgo_usd=est.get("riesgo_usd"),
+                    nivel=idx, accion_piramide="add",
+                ))
         return eventos
+
+    # ── piezas ────────────────────────────────────────────────────────────
+    @staticmethod
+    def _estado_par(runner, ticker: str, sid: str):
+        """Lo que el motor recuerda de (ticker, estrategia), o None."""
+        try:
+            return runner.motor._estado.get((ticker, sid))
+        except Exception:  # noqa: BLE001
+            return None
+
+    @staticmethod
+    def _disparos(estado, nivel: int) -> int:
+        """Añadidos ya avisados de ese nivel en la posición ACTUAL (desde la última
+        entrada avisada). La clave es (entry_idx, nivel, vela[, kind, rung]); los
+        cierres de lote llevan kind y no cuentan."""
+        desde = getattr(estado, "idx_ultima_entrada_avisada", -1)
+        n = 0
+        for k in getattr(estado, "piramides_avisadas", ()) or ():
+            if len(k) == 3 and int(k[1]) == nivel and int(k[0]) >= desde:
+                n += 1
+        return n
+
+    @staticmethod
+    def _falta_una(root: dict, frame, tf: str, stats: dict, ticker: str, nombre: str):
+        """La etiqueta de la ÚNICA condición que falta, o None si no está a una.
+        Solo raíces AND con dos o más condiciones: con OR «falta una» no significa nada."""
+        conds = root.get("conditions") or []
+        if str(root.get("operator", "AND")).upper() != "AND" or len(conds) < 2:
+            return None
+        cache: dict = {}
+        cumple: list[bool] = []
+        try:
+            for c in conds:
+                serie = _evaluate_single_condition(c, frame, tf, stats, cache)
+                v = np.asarray(serie, dtype=bool)
+                cumple.append(bool(v[-1]) if len(v) else False)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PREALERTA SIMPLE] %s / %s: fallo al evaluar: %s", ticker, nombre, exc)
+            return None
+        if sum(cumple) != len(cumple) - 1:
+            return None
+        return etiqueta(conds[cumple.index(False)])
+
+    def _pasa_freno(self, clave: tuple, momento, falta: str) -> bool:
+        """Freno de `cada_min` y silencio por racha. Si pasa, apunta el aviso."""
+        ts = pd.Timestamp(momento)
+        ultimo = self._ultimo.get(clave)
+        if ultimo is not None and (ts - ultimo) < pd.Timedelta(minutes=self.cada_min):
+            return False
+        if self._silenciada(clave, falta):
+            return False
+        self._ultimo[clave] = ts
+        return True

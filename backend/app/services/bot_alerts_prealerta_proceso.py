@@ -75,9 +75,13 @@ def clave_prealerta(e) -> tuple:
     cuentas emite un evento por cuenta (otras acciones), y Telegram los junta en
     UN mensaje por estrategia (`bot_alerts_telegram.clave_grupo`). Asi que sale
     una prealerta por estrategia, con un bloque por cuenta dentro.
+
+    Y EL NIVEL, al final (29-sep-2026): con las prealertas de AÑADIDO, dos
+    niveles de la misma estrategia pueden estar a una condición en el mismo
+    minuto y son dos avisos distintos. En las entradas vale None.
     """
     return (e.ticker, e.strategy_id, e.tipo, str(e.momento)[:16],
-            getattr(e, "cuenta", None))
+            getattr(e, "cuenta", None), getattr(e, "nivel", None))
 
 
 # Posicion del minuto dentro de `clave_prealerta`, para cerrar las de un minuto.

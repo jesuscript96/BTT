@@ -194,6 +194,10 @@ def formatear_grupo(eventos: list["Evento"]) -> str:
         icono = "➖" if reduce else "➕"
         verbo = lote or ("REDUCIR" if reduce else "AÑADIR")
         lineas = cabecera + [f"{icono} <b>{tk}</b> · {verbo}", f"Precio: <b>{_num(ev.precio)}</b>"]
+        if prea and ev.motivo and str(ev.motivo).startswith("Falta:"):
+            # Prealerta SIMPLE de un anyadido (29-sep-2026): como la de entrada,
+            # dice que condicion falta y no lleva acciones (aun no hay senal).
+            return "\n".join(lineas + [f"⏳ {_esc(ev.motivo)}", pie])
         bloques = []
         for e in evs:
             b = f"{_etiqueta(e, varias)}Acciones: <b>{_num(e.acciones, 0)}</b>"
