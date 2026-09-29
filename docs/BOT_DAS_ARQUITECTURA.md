@@ -1496,6 +1496,7 @@ Marcas: **[C]** en caliente (siguiente señal) · **[A]** solo con bot apagado y
     "hora_limite_intentos": null,                          // [C] R-H-01.5 ("HH:MM" ET o null)
     "umbral_ultimo_paquete_pct": 30,                       // [A] H6
     "inquiry_intervalo_s": 3,                              // [T] manual L2000
+    "espera_intento_s": 20,                                // Jaume 29-sep: espera máxima del intento único de locate en la señal
     "ruta_inquire": "ALLROUTEWTTYPE1"                      // [T] §5.22
   },
   "entrada": {

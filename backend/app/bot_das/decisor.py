@@ -262,6 +262,7 @@ REFERENCIA_REINTENTO_S = 60.0    # una ficha o una lista de splits que falló no
 RESUMEN_TRAS_EOD_S = 30.0        # R-M-01: resumen del día tras el último EOD + el margen de R-D-02
 FOTO_CADA_S = 2.0                # `tecnicos.foto_cada_s` manda si está
 BARRIDO_VIGILANCIA_S = 5.0       # si el temporizador «barrido» se pierde, el Tic lo rearma
+LOCATE_ESPERA_INTENTO_S = 20.0    # Jaume 29-sep: espera máxima del intento único de locate en la señal (B3 / C_piramide)
 SALIDA_REPROGRAMAR_S = 0.5       # G1A-02 / G1B-01: salida con la guarda cerrada → se reprograma, nunca se descarta
 REPLACE_EN_VUELO_MAX_S = 30.0    # ensayo 28-sep: un REPLACE idéntico pedido hace menos de 30 s no se vuelve a mandar
 HALT_CIERRE_VERIFICAR_S = 2.0    # G1A-01: la salida del halt que no llenó 2 s tras reabrir se retira (stops de vuelta)
@@ -4223,7 +4224,9 @@ class Decisor:
                 datos["estado"] = locates.ESTADO_BUSCANDO          # un Located que ya no cubre: se reabre para el intento
         acciones: list[Accion] = [self._anotar_locate(ticker, sid, datos)]
         self._espera_locate[clave] = (s, libres)
-        espera = _segundos(self._cfg.entrada, "caducidad_senal_s", float(ENTRADA_CADUCIDAD_S))
+        # Jaume 29-sep: la señal espera su intento de locate como mucho `locates.espera_intento_s` (defecto 20 s, «un
+        # minuto es una eternidad»); pasado, la pareja queda parada y la entrada se pierde con aviso.
+        espera = _segundos(self._cfg.locates, "espera_intento_s", float(LOCATE_ESPERA_INTENTO_S))
         acciones.append(Programar(f"{T_LOCATE_SENAL}:{ticker}:{sid}", espera, {"ticker": ticker, "strategy_id": sid}))
         acciones += self._paso_locate(ticker, e)
         return acciones
