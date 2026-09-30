@@ -724,6 +724,67 @@ def normaliza_steps(steps, same_bar=True) -> dict:
     return {"steps": pasos, "same_bar": bool(same_bar)}
 
 
+# ── FRANJA HORARIA PROPIA POR NIVEL DE PIRÁMIDE (2026-09-30) ──────────────
+#
+# Por defecto un añadido es una entrada y respeta las «Horas de entrada» de la
+# estrategia (`entry_time_windows`). Con `pyramiding.levels[].time_windows`
+# el nivel usa SU franja EN LUGAR de las horas de entrada — no la
+# intersección: el caso que lo motiva (1B «aguantar RTH», Álvaro) entra en
+# premercado 04:00-08:00 y quiere piramidar solo en RTH, y con intersección
+# sería imposible. Mismo formato y misma regla estricta (vela de señal Y vela
+# de relleno dentro) que las horas de entrada.
+#
+# Gated por PYRAMID_LEVEL_WINDOWS_ENABLED, APAGADO por defecto: sin el flag
+# la clave se ignora (con aviso en el log) y el nivel compilado es
+# bit-idéntico al de siempre.
+def pyr_ventanas_nivel_activas() -> bool:
+    return os.getenv("PYRAMID_LEVEL_WINDOWS_ENABLED", "false").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
+def _hhmm_a_minutos(valor, campo: str) -> int:
+    txt = str(valor or "").strip()
+    try:
+        hh, mm = txt.split(":")[:2]
+        h, m = int(hh), int(mm)
+    except (TypeError, ValueError):
+        raise ValueError(f"'{campo}' debe ser una hora HH:MM (llegó {valor!r})") from None
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError(f"'{campo}' fuera de rango (llegó {valor!r})")
+    return h * 60 + m
+
+
+def normaliza_ventanas_nivel(ventanas) -> list:
+    """Valida y normaliza la franja horaria propia de un nivel de pirámide.
+
+    Devuelve la lista canónica `[{"from_time": "HH:MM", "to_time": "HH:MM"}]`
+    (el mismo formato que `entry_time_windows`, para que la resuelva la misma
+    `build_entry_time_mask`). Lista vacía = el nivel no declara franja y sigue
+    las horas de entrada de la estrategia.
+
+    Lanza ValueError (mensaje en claro) si no es una lista, si una franja no
+    trae las dos horas o no son HH:MM, o si «desde» es posterior a «hasta».
+    Misma filosofía que `normaliza_lot_stop`: nada de drops silenciosos.
+    """
+    if ventanas is None:
+        return []
+    if not isinstance(ventanas, list):
+        raise ValueError(f"debe ser una lista de franjas, llegó {type(ventanas).__name__}")
+    out = []
+    for j, v in enumerate(ventanas):
+        if not isinstance(v, dict):
+            raise ValueError(f"[{j}] debe ser un objeto {{from_time, to_time}}")
+        desde = _hhmm_a_minutos(v.get("from_time"), f"[{j}].from_time")
+        hasta = _hhmm_a_minutos(v.get("to_time"), f"[{j}].to_time")
+        if desde > hasta:
+            raise ValueError(
+                f"[{j}]: «desde» ({v.get('from_time')}) es posterior a «hasta» "
+                f"({v.get('to_time')})")
+        out.append({"from_time": f"{desde // 60:02d}:{desde % 60:02d}",
+                    "to_time": f"{hasta // 60:02d}:{hasta % 60:02d}"})
+    return out
+
+
 def compile_strategy_def(strategy_def: dict) -> dict:
     """Pre-extract all per-strategy fields once. N1d: also normalize indicator names."""
     bias = strategy_def.get("bias", "long")
@@ -833,6 +894,22 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             except ValueError as e:
                 raise ValueError(f"pyramiding nivel {len(pyr_levels_def) + 1}, "
                                  f"lot_tp: {e}") from e
+        # FRANJA HORARIA PROPIA (2026-09-30). Sin la clave, o sin el flag, el
+        # nivel compilado sale SIN 'time_windows' y es bit-idéntico al de
+        # siempre (sigue las horas de entrada de la estrategia).
+        ventanas_def = []
+        if lv.get("time_windows"):
+            if pyr_ventanas_nivel_activas():
+                try:
+                    ventanas_def = normaliza_ventanas_nivel(lv["time_windows"])
+                except ValueError as e:
+                    raise ValueError(f"pyramiding nivel {len(pyr_levels_def) + 1}, "
+                                     f"time_windows: {e}") from e
+            else:
+                logger.warning(
+                    "[PYRAMID] el nivel %d declara franja horaria propia pero "
+                    "PYRAMID_LEVEL_WINDOWS_ENABLED está apagado: se ignora y el "
+                    "nivel sigue las horas de entrada", len(pyr_levels_def) + 1)
         nivel_compilado = {
             "action": action,
             "unit": unit,
@@ -878,6 +955,8 @@ def compile_strategy_def(strategy_def: dict) -> dict:
             nivel_compilado["lot_stop"] = lot_stop_def
         if lot_tp_def is not None:
             nivel_compilado["lot_tp"] = lot_tp_def
+        if ventanas_def:
+            nivel_compilado["time_windows"] = ventanas_def
         pyr_levels_def.append(nivel_compilado)
 
     # ── Scalping (2026-09-12) ──
@@ -1325,9 +1404,14 @@ def aplica_ventana_relleno_nivel(lv: dict, minutes, time_windows,
     del ÚLTIMO paso — los intermedios no ejecutan nada, así que la regla de
     la vela de relleno solo les aplica a él (todos los pasos ya llevan la
     máscara de la vela de señal aplicada por el evaluador, a cada uno).
+
+    Un nivel con franja horaria PROPIA (`time_windows`, 2026-09-30) usa la
+    suya en lugar de las horas de entrada de la estrategia.
     """
+    ventanas = lv.get("time_windows") or time_windows
+
     def _fn(arr):
-        return apply_entry_fill_window(arr, minutes, time_windows,
+        return apply_entry_fill_window(arr, minutes, ventanas,
                                        look_ahead_prevention=look_ahead_prevention)
 
     if lv.get("steps_signals") is None:
@@ -1363,14 +1447,18 @@ def translate_strategy(
 
     time_windows = compiled.get("entry_time_windows", [])
     # Se guarda para aplicarsela TAMBIEN a las piramides. Un anyadido es una
-    # entrada: si la ventana de entradas esta cerrada, no se puede piramidar.
+    # entrada: si la ventana de entradas esta cerrada, no se puede piramidar
+    # (salvo en un nivel con franja propia, que manda la suya).
     entry_time_mask = None
-    if time_windows:
+    minutes_since_midnight = None
+    if time_windows or any(lv.get("time_windows")
+                           for lv in compiled.get("pyramid_levels_def") or []):
         if precomputed_minutes is not None:
             minutes_since_midnight = precomputed_minutes
         else:
             ts = pd.to_datetime(df["timestamp"])
             minutes_since_midnight = ts.dt.hour * 60 + ts.dt.minute
+    if time_windows:
         time_mask = pd.Series(
             build_entry_time_mask(time_windows, minutes_since_midnight),
             index=df.index,
@@ -1440,7 +1528,8 @@ def translate_strategy(
         "max_reentries": max_reentries,
         "partial_take_profits": partial_tps,
         "pyramid_levels": _evaluate_pyramid_levels(compiled, df, daily_stats, entry_cache,
-                                                   entry_time_mask),
+                                                   entry_time_mask,
+                                                   minutes=minutes_since_midnight),
         "pyramid_sequential": compiled.get("pyramid_sequential", False),
         # Pausa entre operaciones (scalping). 0 = como siempre.
         "reentry_cooldown_bars": cooldown_bars,
@@ -1456,7 +1545,7 @@ def translate_strategy(
 
 def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                              daily_stats: dict | None, entry_cache: dict,
-                             entry_time_mask=None) -> list:
+                             entry_time_mask=None, minutes=None) -> list:
     """Señales de los niveles de piramidación (2026-08-22).
 
     Cada nivel se evalúa con EXACTAMENTE la misma maquinaria que la entrada y
@@ -1482,6 +1571,11 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
     con la ventana cerrada no engancha ninguno). Si una máscara no cuadra en
     longitud con un paso, el nivel entero se omite con log de error — misma
     regla que hoy, nunca a medias.
+
+    FRANJA PROPIA (2026-09-30): un nivel con `time_windows` usa la máscara de
+    SU franja (resuelta con `minutes`, minutos desde medianoche por vela) en
+    lugar de `entry_time_mask`. El dict de salida lleva entonces la clave
+    `time_windows` para que la vela de relleno aplique la misma franja.
     """
     levels_def = compiled.get("pyramid_levels_def") or []
     if not levels_def:
@@ -1490,6 +1584,18 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
     cache = entry_cache if tf == compiled.get("entry_tf") else {}
     out = []
     for lv in levels_def:
+        # Máscara de ESTE nivel: la de las horas de entrada o, si el nivel
+        # declara franja propia, la suya. Local al nivel: no se arrastra.
+        mascara = entry_time_mask
+        ventanas_nivel = lv.get("time_windows")
+        if ventanas_nivel:
+            if minutes is None:
+                # Sin minutos no se puede resolver la franja: se omite el
+                # nivel ENTERO, nunca se deja sin ventana.
+                logger.error("[PYRAMID] franja propia sin minutos de las velas: "
+                             "el nivel se omite entero")
+                continue
+            mascara = build_entry_time_mask(ventanas_nivel, minutes)
         try:
             if lv.get("steps_def") is not None:
                 steps_arrs = []
@@ -1497,8 +1603,8 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                     sig = _evaluate_condition_group(paso, df, tf, daily_stats, cache)
                     sig_arr = sig.values if hasattr(sig, "values") else np.asarray(sig)
                     sig_arr = sig_arr.astype(bool)
-                    if entry_time_mask is not None:
-                        m = entry_time_mask
+                    if mascara is not None:
+                        m = mascara
                         m = m.values if hasattr(m, "values") else np.asarray(m)
                         if len(m) == len(sig_arr):
                             sig_arr = sig_arr & m.astype(bool)
@@ -1537,6 +1643,8 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                     "sequential": lv.get("sequential", compiled.get("pyramid_sequential", False)),
                     "move": lv.get("move"),
                     "def_index": lv.get("def_index"),
+                    # Franja propia: viaja para que la vela de relleno la use.
+                    **({"time_windows": ventanas_nivel} if ventanas_nivel else {}),
                 })
                 continue
             if (lv.get("root_condition") or {}).get("conditions"):
@@ -1548,8 +1656,8 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 # simulador pone el umbral de precio, que depende del trade
                 # (precio de entrada) y aqui no se conoce.
                 sig_arr = np.ones(len(df), dtype=bool)
-            if entry_time_mask is not None:
-                m = entry_time_mask
+            if mascara is not None:
+                m = mascara
                 m = m.values if hasattr(m, "values") else np.asarray(m)
                 if len(m) == len(sig_arr):
                     sig_arr = sig_arr & m.astype(bool)
@@ -1585,6 +1693,8 @@ def _evaluate_pyramid_levels(compiled: dict, df: pd.DataFrame,
                 **({"lot_stop": lv["lot_stop"]} if lv.get("lot_stop") is not None else {}),
                 # TP por lote: idem (PRD 2026-09-22).
                 **({"lot_tp": lv["lot_tp"]} if lv.get("lot_tp") is not None else {}),
+                # Franja propia (2026-09-30): idem, y la usa la vela de relleno.
+                **({"time_windows": ventanas_nivel} if ventanas_nivel else {}),
             })
         except Exception as e:
             # Un nivel que no se pueda evaluar NO puede convertirse en un nivel

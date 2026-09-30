@@ -401,16 +401,18 @@ def _compute_signals_for_pair(
                 entries_arr, minutes_np[session_mask_np], _tw,
                 look_ahead_prevention=look_ahead_prevention,
             )
-            if sig_pyramid_levels:
-                # Un anyadido es una entrada: mismo criterio que la de apertura.
-                # En un nivel-camino, la vela de relleno manda sobre el
-                # enganche del ÚLTIMO paso (los intermedios no ejecutan nada).
-                sig_pyramid_levels = [
-                    aplica_ventana_relleno_nivel(
-                        lv, minutes_np[session_mask_np], _tw,
-                        look_ahead_prevention=look_ahead_prevention)
-                    for lv in sig_pyramid_levels
-                ]
+        # Un anyadido es una entrada: mismo criterio que la de apertura. En un
+        # nivel-camino, la vela de relleno manda sobre el enganche del ÚLTIMO
+        # paso (los intermedios no ejecutan nada). Un nivel con franja PROPIA
+        # (2026-09-30) usa la suya, y por eso se entra aquí aunque la
+        # estrategia no tenga horas de entrada.
+        if sig_pyramid_levels and (_tw or any(lv.get("time_windows") for lv in sig_pyramid_levels)):
+            sig_pyramid_levels = [
+                aplica_ventana_relleno_nivel(
+                    lv, minutes_np[session_mask_np], _tw,
+                    look_ahead_prevention=look_ahead_prevention)
+                for lv in sig_pyramid_levels
+            ]
 
     if not np.any(entries_arr):
         return None

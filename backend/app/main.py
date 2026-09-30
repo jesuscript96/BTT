@@ -361,6 +361,11 @@ app.include_router(gappers_active.router, prefix="/api/gappers-active", tags=["G
 from app.routers import scheduled_exits
 app.include_router(scheduled_exits.router, prefix="/api/scheduled-exits", tags=["Scheduled Exits"])
 
+# Franja horaria propia por nivel de pirámide (2026-09-30): la UI pregunta aquí
+# si ofrecer el campo (PYRAMID_LEVEL_WINDOWS_ENABLED, default OFF). Aditivo.
+from app.routers import pyramid_level_windows
+app.include_router(pyramid_level_windows.router, prefix="/api/pyramid-level-windows", tags=["Pyramid Level Windows"])
+
 @app.get("/health")
 def read_health():
     return {"status": "ok"}

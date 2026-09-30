@@ -1083,25 +1083,30 @@ def run_backtest(
         # verdad. Ver strategy_engine.apply_entry_fill_window.
         if compiled_strategy:
             _tw = compiled_strategy.get("entry_time_windows") or []
-            if _tw:
+            # Un nivel con franja PROPIA (2026-09-30) usa la suya: por eso se
+            # entra aquí aunque la estrategia no tenga horas de entrada.
+            _tw_niveles = bool(sig_pyramid_levels) and any(
+                lv.get("time_windows") for lv in sig_pyramid_levels)
+            if _tw or _tw_niveles:
                 _mins_trim = (
                     pd.to_datetime(mini_df["timestamp"]).dt.hour * 60
                     + pd.to_datetime(mini_df["timestamp"]).dt.minute
                 ).values
+            if _tw:
                 entries_arr = apply_entry_fill_window(
                     entries_arr, _mins_trim, _tw,
                     look_ahead_prevention=look_ahead_prevention,
                 )
-                if sig_pyramid_levels:
-                    # Un anyadido es una entrada: mismo criterio. En un
-                    # nivel-camino, la vela de relleno manda sobre el enganche
-                    # del ÚLTIMO paso (los intermedios no ejecutan nada).
-                    sig_pyramid_levels = [
-                        aplica_ventana_relleno_nivel(
-                            lv, _mins_trim, _tw,
-                            look_ahead_prevention=look_ahead_prevention)
-                        for lv in sig_pyramid_levels
-                    ]
+            if sig_pyramid_levels and (_tw or _tw_niveles):
+                # Un anyadido es una entrada: mismo criterio. En un
+                # nivel-camino, la vela de relleno manda sobre el enganche
+                # del ÚLTIMO paso (los intermedios no ejecutan nada).
+                sig_pyramid_levels = [
+                    aplica_ventana_relleno_nivel(
+                        lv, _mins_trim, _tw,
+                        look_ahead_prevention=look_ahead_prevention)
+                    for lv in sig_pyramid_levels
+                ]
 
         # ── Modelos avanzados ─────────────────────────────────────────────
         # AQUI y no antes, y la posicion es parte de la correccion (31-ago,
