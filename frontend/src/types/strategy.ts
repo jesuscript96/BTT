@@ -669,6 +669,12 @@ export interface PyramidLevel {
     // cabalga hasta la salida del trade (o su lot_stop). travel estrictamente
     // creciente y Σ capital_pct ≤ 100 (el backend lo valida con 422).
     lot_tp?: LotTpConfig | null;
+    // FRANJA HORARIA PROPIA (2026-09-30, flag PYRAMID_LEVEL_WINDOWS_ENABLED).
+    // Sin declarar (o vacía) = el nivel respeta las horas de entrada de la
+    // estrategia, como siempre. Con franja = el nivel SOLO dispara dentro de
+    // ella, EN LUGAR de las horas de entrada (p. ej. entrar en premercado y
+    // piramidar solo en RTH). Misma regla estricta: vela de señal y de relleno.
+    time_windows?: EntryTimeWindow[];
 }
 
 export interface LotStopConfig {

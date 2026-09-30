@@ -1,7 +1,8 @@
 import React from 'react';
-import { PyramidingConfig, PyramidGroup, PyramidLevel, Timeframe, emptyPyramidLevel } from '@/types/strategy';
+import { EntryTimeWindow, PyramidingConfig, PyramidGroup, PyramidLevel, Timeframe, emptyPyramidLevel } from '@/types/strategy';
 import { AyudaIndicadores, GroupDisplay } from './ConditionBuilder';
 import InfoTooltip from '@/components/backtester/InfoTooltip';
+import { cargarPyrWindows, estadoPyrWindows, suscribirPyrWindows } from '@/lib/api_pyrwindows';
 
 /**
  * Piramidación (2026-08-22): gestión dinámica de la posición.
@@ -75,8 +76,103 @@ const selectStyle: React.CSSProperties = {
     cursor: 'pointer',
 };
 
+// ── FRANJA HORARIA PROPIA DEL NIVEL (2026-09-30) ──
+// Sin franja, el nivel respeta las horas de entrada de la estrategia (un
+// añadido es una entrada). Con franja, SOLO dispara dentro de ella, EN LUGAR
+// de las horas de entrada. Mismo formato y mismo aspecto que «Horas Entrada».
+const TEXTO_FRANJA =
+    'Sin franja («—»), esta pirámide respeta las horas de entrada de la estrategia, como siempre.\n' +
+    'Con franja, SOLO puede disparar dentro de ella, EN LUGAR de las horas de entrada: ' +
+    'así se puede entrar en premercado y piramidar solo en RTH.\n' +
+    'Regla estricta, igual que la entrada: la vela de la señal Y la vela donde se ejecuta ' +
+    'el añadido (la siguiente) tienen que caer dentro. La sesión de la estrategia tiene que ' +
+    'cubrir la franja y la posición tiene que seguir abierta.';
+
+const timeInputStyle: React.CSSProperties = {
+    background: 'var(--color-ec-bg-sidebar)',
+    border: '0.5px solid var(--color-ec-border)',
+    color: 'var(--color-ec-text-primary)',
+    fontSize: 10,
+    padding: '0 6px',
+    height: 24,
+    boxSizing: 'border-box',
+    borderRadius: 4,
+    outline: 'none',
+    fontFamily: 'var(--color-ec-sans)',
+    cursor: 'pointer',
+};
+
+const FranjaNivel = ({ ventanas, onChange }: {
+    ventanas: EntryTimeWindow[];
+    onChange: (v: EntryTimeWindow[] | undefined) => void;
+}) => {
+    const [desde, setDesde] = React.useState('09:30');
+    const [hasta, setHasta] = React.useState('11:00');
+    const invertida = !!desde && !!hasta && desde > hasta;
+    const anadir = () => {
+        if (!desde || !hasta || invertida) return;
+        if (ventanas.some(w => w.from_time === desde && w.to_time === hasta)) return;
+        onChange([...ventanas, { from_time: desde, to_time: hasta }]);
+    };
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>Franja horaria:</span>
+            <InfoTooltip variant="i" position="top" width={330} title="Franja horaria de la pirámide" text={TEXTO_FRANJA} />
+            {ventanas.length === 0 && (
+                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>— (horas de entrada)</span>
+            )}
+            {ventanas.map((w, i) => (
+                <span key={`${w.from_time}-${w.to_time}`} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    backgroundColor: 'rgba(216, 122, 61, 0.08)',
+                    border: '0.5px solid var(--color-ec-copper)',
+                    borderRadius: 4, padding: '3px 6px',
+                    fontFamily: 'var(--color-ec-sans)', fontSize: 10, fontWeight: 600,
+                    color: 'var(--color-ec-text-secondary)',
+                }}>
+                    {w.from_time} - {w.to_time}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            const resto = ventanas.filter((_, j) => j !== i);
+                            onChange(resto.length ? resto : undefined);
+                        }}
+                        style={{ background: 'none', border: 'none', color: 'var(--color-ec-text-muted)', cursor: 'pointer', fontSize: 10, lineHeight: 1, padding: '0 1px' }}
+                        title="Quitar esta franja"
+                    >×</button>
+                </span>
+            ))}
+            <input type="time" value={desde} onChange={(e) => setDesde(e.target.value)} style={timeInputStyle} title="Desde (hora de Nueva York)" />
+            <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)' }}>a</span>
+            <input type="time" value={hasta} onChange={(e) => setHasta(e.target.value)} style={timeInputStyle} title="Hasta (hora de Nueva York)" />
+            <button
+                type="button"
+                onClick={anadir}
+                disabled={invertida}
+                style={{
+                    background: 'transparent', border: 'none',
+                    color: invertida ? 'var(--color-ec-text-muted)' : 'var(--color-ec-copper)',
+                    cursor: invertida ? 'default' : 'pointer',
+                    fontSize: 10.5, fontWeight: 700, padding: 0,
+                }}
+                title="Añadir esta franja a la pirámide"
+            >+ franja</button>
+            {invertida && (
+                <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-loss)' }}>«desde» es posterior a «hasta»</span>
+            )}
+        </div>
+    );
+};
+
 const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
     const active = config.active === true;
+
+    // La franja por nivel solo se ofrece con el flag del backend encendido.
+    const [franjasOn, setFranjasOn] = React.useState<boolean>(estadoPyrWindows()?.enabled ?? false);
+    React.useEffect(() => {
+        cargarPyrWindows();
+        return suscribirPyrWindows(() => setFranjasOn(!!estadoPyrWindows()?.enabled));
+    }, []);
 
     // Vista normalizada de los grupos: sin `groups` (estrategia de antes) hay
     // uno solo con el modo global. Al escribir se guardan los dos, `groups` y
@@ -578,6 +674,16 @@ const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
                                     </>
                                 )}
                             </div>
+                            {/* ── FRANJA HORARIA PROPIA (2026-09-30) ── Solo con el
+                                flag del backend. Un nivel que ya la trae guardada
+                                la enseña aunque el flag esté apagado, para que no
+                                quede invisible (el backend la ignora sin flag). */}
+                            {(franjasOn || (lv.time_windows?.length ?? 0) > 0) && (
+                                <FranjaNivel
+                                    ventanas={lv.time_windows ?? []}
+                                    onChange={(v) => setLevel(idx, { ...lv, time_windows: v })}
+                                />
+                            )}
                             {/* ── SL DEL LOTE (PRD 2026-09-15) ──
                                 Solo en niveles Añadir: cada ejecución del nivel
                                 lleva su propio cinturón, que al romperse cierra
@@ -989,6 +1095,10 @@ const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
                         {' '}Con «Camino», la condición única se sustituye por una CADENA ordenada: cada paso engancha cuando le toca
                         (aunque los anteriores ya no se cumplan) y la acción se ejecuta al engancharse el último; los pasos cuentan solo
                         desde la entrada, y con más de una «vez» el camino se recorre entero una vez por cada disparo.
+                        {franjasOn && (<>
+                            {' '}Un añadido es una entrada y respeta las horas de entrada de la estrategia, salvo que la pirámide tenga su
+                            propia «Franja horaria»: entonces solo dispara dentro de ella, en lugar de las horas de entrada.
+                        </>)}
                     </span>
                 </div>
             )}

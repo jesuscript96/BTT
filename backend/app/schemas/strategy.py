@@ -710,6 +710,30 @@ class StrategyCreate(BaseModel):
                 raise ValueError(f"levels[{j}].steps: {e}") from e
         return v
 
+    @field_validator("pyramiding")
+    @classmethod
+    def _valida_ventanas_por_nivel(cls, v):
+        """FRANJA HORARIA PROPIA POR NIVEL (2026-09-30): valida
+        `time_windows` al GUARDAR. Patrón idéntico al de `lot_stop`: el bloque
+        sigue siendo un dict opaco y la definición de qué es válido vive en
+        `strategy_engine.normaliza_ventanas_nivel`. Horas HH:MM y «desde» no
+        posterior a «hasta»; lo demás rebota con 422.
+        """
+        if not isinstance(v, dict):
+            return v
+        niveles = v.get("levels")
+        if not isinstance(niveles, list):
+            return v
+        from app.services.strategy_engine import normaliza_ventanas_nivel
+        for j, lv in enumerate(niveles):
+            if not isinstance(lv, dict) or not lv.get("time_windows"):
+                continue
+            try:
+                normaliza_ventanas_nivel(lv["time_windows"])
+            except ValueError as e:
+                raise ValueError(f"levels[{j}].time_windows: {e}") from e
+        return v
+
     # Modelos avanzados (XGBoost / HMM). Dict opaco por el mismo motivo que
     # `pyramiding`: la lista de features es el mismo tipo de arbol que las
     # condiciones y ya lo valida `advanced_backtest.parse_config`. Sin este
