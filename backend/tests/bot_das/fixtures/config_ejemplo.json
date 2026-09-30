@@ -5,7 +5,7 @@
   "generado_por": "fixture:tests/bot_das",
   "motor_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "estrategias_hash": "sha256:2fbf7294b1c4ab42568ff343fe0ab12db9a2954c8e5e3b3d0f08b55554b57bc6",
-  "sha256": "f6d389a8faad55d1a3d52b4dfa28df59880fb28f9106f6f7136cf60212a6375d",
+  "sha256": "2fb735cda5bd446384bec28a8151c464f23d1def1552e4f730623d64b6b21531",
   "fase": "sombra",
   "vigilando": true,
   "pausar_entradas": false,
@@ -36,7 +36,7 @@
     "cruce_bajo_bid_pct": 0.5,
     "cruce_espera_s": 2,
     "caducidad_senal_s": 60,
-    "distancia_max_ultimo_bid_pct": 5.0,
+    "distancia_max_ultimo_bid_pct": null,
     "retraso_max_senal_pct": 1.0,
     "fraccion_max_volumen_acum": null,
     "reintentos_rechazo_conocido": 2,
@@ -56,7 +56,9 @@
     },
     "tp_parcial": {
       "agregar_s": 60,
-      "techo_ask_pct": 3.0
+      "techo_ask_pct": 3.0,
+      "perseguir_ask_max": 3,
+      "perseguir_ask_s": 1
     },
     "cerrar_todo": {
       "techo_pct": 5.0,

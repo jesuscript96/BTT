@@ -314,10 +314,28 @@ def test_das_cuota_inquire_menos_de_3_s_espera(reloj, margen, espera_a_2_9, libr
     cuota = CuotaComandos(reloj, margen=margen)
     cuota.anotar("SLPRICEINQUIRE ABCD 100 ALLROUTEWTTYPE1")
     reloj.avanzar(2.9)
-    # la cuota es GLOBAL (riesgo 36): otro ticker espera lo mismo
-    assert cuota.espera_para("SLPRICEINQUIRE WXYZ 300 ALLROUTEWTTYPE1") == pytest.approx(espera_a_2_9)
-    reloj.avanzar(libre_desde - 2.9)
+    # decisión 21 (Jaume 30-sep): la cuota es POR TICKER: el MISMO ticker espera; otro ticker, no
+    assert cuota.espera_para("SLPRICEINQUIRE ABCD 300 ALLROUTEWTTYPE1") == pytest.approx(espera_a_2_9)
     assert cuota.espera_para("SLPRICEINQUIRE WXYZ 300 ALLROUTEWTTYPE1") == 0.0
+    reloj.avanzar(libre_desde - 2.9)
+    assert cuota.espera_para("SLPRICEINQUIRE ABCD 300 ALLROUTEWTTYPE1") == 0.0
+
+
+def test_decision_21_cuota_inquire_por_ticker_diez_tickers_sin_esperar(reloj):
+    """Decisión 21 (Jaume 30-sep): con 10 tickers en el radar cada uno se consulta cada 3 s por su cuenta (antes, con la
+    cuota global, el último esperaba ~30 s). El mismo ticker sigue limitado a 1 cada 3 s (al 90 %: 3,33 s)."""
+    cuota = CuotaComandos(reloj)
+    tickers = [f"T{i:02d}" for i in range(10)]
+    for t in tickers:
+        linea = f"SLPRICEINQUIRE {t} 100 ALLROUTEWTTYPE1"
+        assert cuota.espera_para(linea) == 0.0
+        cuota.anotar(linea)
+    assert cuota.clave_cuota("SLPRICEINQUIRE t05 100 ALLROUTEWTTYPE1") == "SLPRICEINQUIRE:T05"
+    assert cuota.clave_cuota("CANCEL 1001") == "CANCEL" and cuota.clave_cuota("GET BP") is None
+    assert all(cuota.espera_para(f"SLPRICEINQUIRE {t} 100 ALLROUTEWTTYPE1") == pytest.approx(3.0 / 0.9)
+               for t in tickers)
+    reloj.avanzar(3.0 / 0.9)
+    assert all(cuota.espera_para(f"SLPRICEINQUIRE {t} 100 ALLROUTEWTTYPE1") == 0.0 for t in tickers)
 
 
 def test_das_cuota_categorias_independientes_y_sin_cuota(reloj):
@@ -874,11 +892,13 @@ def test_A_01_replace_91_en_cabeza_no_retiene_el_stop_ni_el_get_de_otro_ticker(f
 
 
 def test_SEG_01_dos_inquire_y_el_neworder_sale_antes_de_la_ventana(fabrica, sim, reloj):
-    """SEG-01: SLPRICEINQUIRE ×2 y luego NEWORDER: el NEWORDER no espera los 3,33 s del segundo inquire."""
+    """SEG-01: SLPRICEINQUIRE ×2 y luego NEWORDER: el NEWORDER no espera los 3,33 s del segundo inquire.
+
+    Decisión 21 (Jaume 30-sep): la cuota del inquire es por ticker, así que los dos son del MISMO ticker."""
     c, _g = fabrica(solo_lectura=False, cuota=CuotaComandos(reloj))
     assert c.conectar()
     inquire_1 = "SLPRICEINQUIRE ABCD 100 ALLROUTEWTTYPE1"
-    inquire_2 = "SLPRICEINQUIRE EFGH 100 ALLROUTEWTTYPE1"
+    inquire_2 = "SLPRICEINQUIRE ABCD 200 ALLROUTEWTTYPE1"
     stop = linea_stop(reloj, 3, "ABCD")
     for linea in (inquire_1, inquire_2):
         c.enviar(linea)
@@ -887,6 +907,22 @@ def test_SEG_01_dos_inquire_y_el_neworder_sale_antes_de_la_ventana(fabrica, sim,
     assert inquire_1 in sim.recibidas() and inquire_2 not in sim.recibidas()
     reloj.avanzar(3.4)
     assert esperar(lambda: inquire_2 in sim.recibidas())
+
+
+def test_decision_21_inquire_de_otro_ticker_no_espera_al_primero(fabrica, sim, reloj):
+    """Decisión 21 (Jaume 30-sep): dos SLPRICEINQUIRE de tickers distintos salen seguidos; el segundo del mismo ticker
+    espera su 3,33 s (y no retiene al de otro ticker que va detrás)."""
+    c, _g = fabrica(solo_lectura=False, cuota=CuotaComandos(reloj))
+    assert c.conectar()
+    a1 = "SLPRICEINQUIRE ABCD 100 ALLROUTEWTTYPE1"
+    a2 = "SLPRICEINQUIRE ABCD 200 ALLROUTEWTTYPE1"
+    b1 = "SLPRICEINQUIRE EFGH 100 ALLROUTEWTTYPE1"
+    for linea in (a1, a2, b1):
+        c.enviar(linea)
+    assert esperar(lambda: a1 in sim.recibidas() and b1 in sim.recibidas())
+    assert a2 not in sim.recibidas()
+    reloj.avanzar(3.4)
+    assert esperar(lambda: a2 in sim.recibidas())
 
 
 def test_A_01_misma_serie_no_adelanta_a_la_que_espera(fabrica, sim, reloj):

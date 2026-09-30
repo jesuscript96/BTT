@@ -20,8 +20,10 @@ posición corta (y, por simetría, de una larga):
     REPLACE de precio, corrección 11).
   * `tp_parcial`, `tp_al_vencer`: R-D-03 v2 (agregar 60 s en el punto medio;
     luego al ask con techo 3 % sobre el último DE ESE MOMENTO, o limbo);
-    `programa_limbo_tp` / `comprobar_limbo_tp`: si la orden de cruce del TP
-    no llena, aviso de limbo sin perseguir (D2-13).
+    decisión 13 (Jaume 30-sep): si el cruce no llena, el decisor lo PERSIGUE
+    al ask hasta 3 veces (`persecucion_tp` + `perseguir_ask` con el techo);
+    `programa_limbo_tp` / `comprobar_limbo_tp`: tras la última persecución
+    sin llenar, aviso de limbo (D2-13).
   * `orden_hora_evento`: la orden de una salida del motor por tiempo (D2-05).
   * `proporcion_del_evento`, `proporcion_de_estrategia`, `qty_proporcional`,
     `repartir_salida`, `base_proporcional`: D8 (Jaume 30-sep): una salida
@@ -254,6 +256,7 @@ AL_DESACTIVAR_REINICIAR = "cerrar_y_reiniciar"
 EOD_POR_DEFECTO = "16:00"            # sin hora_fin_sesion: cierre de RTH (L4: sin posiciones overnight)
 ESPERA_REINTENTO_CERRAR_TODO_S = 2.0  # R-D-06: pausa entre intentos de «cerrar todo» si el cuadro no la fija
 ESPERA_CANCEL_CERRAR_TODO_S = 1.0     # D2-03: respaldo si el Canceled no llega (cerrar_todo.espera_cancel_s) [PROVISIONAL]
+TP_PERSEGUIR_ASK_S = 1.0              # decisión 13 (Jaume 30-sep): el cruce del TP se persigue cada 1 s (tp_parcial.perseguir_ask_s)
 TP_LIMBO_COMPROBAR_S = 5.0            # D2-13: comprobar la orden de cruce del TP (tp_parcial.limbo_comprobar_s) [PROVISIONAL]
 COMANDO_POSICIONES = cmd_get("POSITIONS")   # A-06: «GET POSITIONS» por protocolo.cmd_get (conjunto cerrado)
 COMANDO_ORDENES = cmd_get("ORDERS")         # A-06: «GET ORDERS»
@@ -584,8 +587,14 @@ def orden_al_ask(lote: Lote, qty: int, cot: Optional[Cotizacion], cfg: Any, toke
 
 def perseguir_ask(orden: Orden, cot: Optional[Cotizacion], persecuciones: int,
                   max_persecuciones: int = PERSEGUIR_ASK_MAX,
-                  share_es_abierta: Optional[bool] = None) -> Optional[Reemplazar]:
+                  share_es_abierta: Optional[bool] = None,
+                  techo_pct: Optional[Decimal] = None) -> Optional[Reemplazar]:
     """Corrección 11 (F5): a la hora, si no llenó, `Reemplazar` de PRECIO al ask nuevo; como mucho `max_persecuciones` (3).
+
+    Decisión 13 (Jaume 30-sep): el cruce de un TP (y de las salidas del motor «como_tp») también se
+    persigue; con `techo_pct` el precio nuevo es min(ask, último·(1 + techo)) (venta: max(bid,
+    último·(1 − techo))), la MISMA protección del 3 % de R-D-03 v2 sobre el último DE ESE MOMENTO; sin
+    último no se persigue (sin techo no hay orden). `techo_pct=None` = sin tope (la hora no se negocia).
 
     Nunca `Cancelar` + nueva: la cuota de 100 CANCEL/min es compartida con los
     stops. None si ya se persiguió `max_persecuciones` veces, si la orden no
@@ -607,6 +616,13 @@ def perseguir_ask(orden: Orden, cot: Optional[Cotizacion], persecuciones: int,
     nuevo = _precio_valido(getattr(cot, "ask" if compra else "bid", None))
     if nuevo is None:
         return None
+    if techo_pct is not None:                        # decisión 13: el techo del 3 % sobre el último sigue protegiendo
+        last = _precio_valido(getattr(cot, "last", None))
+        if last is None:
+            return None
+        limite = con_techo(last, _pct_valido(techo_pct), arriba=compra)
+        nuevo = min(nuevo, limite) if compra else max(nuevo, limite)
+        nuevo = redondear_arriba(nuevo) if compra else redondear_abajo(nuevo)
     if orden.precio is not None and (nuevo <= orden.precio if compra else nuevo >= orden.precio):
         return None
     lado_libro = "ask" if compra else "bid"
@@ -808,8 +824,10 @@ def tp_al_vencer(lote: Lote, resto: int, cot: Optional[Cotizacion], cfg: Any, to
     sin el lado del libro → limbo (sin techo no hay orden). `resto ≤ 0` →
     (None, None). Techo = salidas.tp_parcial.techo_ask_pct (3 %).
     `proposito` (aditivo) permite el mismo cruce para una salida del motor
-    (SALIDA_MOTOR_CRUCE). Si la orden no llena, el decisor programa
-    `programa_limbo_tp` y avisa con `comprobar_limbo_tp` (D2-13).
+    (SALIDA_MOTOR_CRUCE). Decisión 13 (Jaume 30-sep): si la orden no llena,
+    el decisor la persigue al ask hasta `persecucion_tp` veces (3, cada 1 s,
+    con el mismo techo sobre el último de cada momento) y, tras la última,
+    programa `programa_limbo_tp` y avisa con `comprobar_limbo_tp` (D2-13).
     """
     if type(resto) is not int or resto <= 0:
         return None, None
@@ -824,6 +842,21 @@ def tp_al_vencer(lote: Lote, resto: int, cot: Optional[Cotizacion], cfg: Any, to
         lado_libro = "bid" if largo else "ask"
         return None, _aviso_limbo(lote, resto, f"{lado_libro} {libro} fuera del techo {limite} (último {last})", techo)
     return orden_al_ask(lote, resto, cot, cfg, token, hora_et, techo, proposito), None
+
+
+def persecucion_tp(cfg: Any) -> tuple[int, float, Decimal]:
+    """Decisión 13 (Jaume 30-sep): (máximo de persecuciones, segundos entre ellas, techo %) del cruce de un TP.
+
+    `salidas.tp_parcial.perseguir_ask_max` (3), `salidas.tp_parcial.perseguir_ask_s` (1 s) y
+    `salidas.tp_parcial.techo_ask_pct` (3 %): los mismos 3 × 1 s que las parciales por hora
+    (`salidas.por_hora`), pero con el techo del 3 % sobre el último en cada persecución. Un máximo
+    que no es un entero ≥ 0 vale el defecto (como en la hora).
+    """
+    bloque = _sub(_bloque(cfg, "salidas"), "tp_parcial")
+    maximo = bloque.get("perseguir_ask_max", PERSEGUIR_ASK_MAX)
+    maximo = maximo if type(maximo) is int and maximo >= 0 else PERSEGUIR_ASK_MAX
+    return (maximo, _segundos(bloque, "perseguir_ask_s", TP_PERSEGUIR_ASK_S),
+            _pct(bloque, "techo_ask_pct", TP_TECHO_ASK_PCT))
 
 
 def programa_limbo_tp(lote: Lote, orden: Union[OrdenNueva, Orden], cfg: Any) -> Programar:
@@ -855,8 +888,8 @@ def comprobar_limbo_tp(lote: Lote, orden: Orden) -> Optional[Avisar]:
     precio = "?" if orden.precio is None else str(orden.precio)
     return Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"limbo:{lote.id}:{orden.token}",
                   texto=(f"limbo: {_h(lote.ticker)} · {_h(lote.estrategia)}: la orden de cruce del TP (token "
-                         f"{orden.token}, límite {_h(precio)}) no ha llenado {restante} acciones. No se persigue; "
-                         f"mandan los stops residentes (R-D-03 v2)"))
+                         f"{orden.token}, límite {_h(precio)}) no ha llenado {restante} acciones tras perseguir el "
+                         f"ask (decisión 13). No se persigue más; mandan los stops residentes (R-D-03 v2)"))
 
 
 # ── prioridad en la misma tanda (R-D-07, D13) ────────────────────────────

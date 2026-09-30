@@ -279,6 +279,7 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
        R-A-01 no se apaga en silencio). Se salta con `es_reapertura=True` (D1-03, R-F-04 b): el precio
        de la señal es el de antes del halt y el filtro de la reapertura es `halts.senal_guardada_valida`.
     11 B20 bis: (último − bid) / último > distancia_max_ultimo_bid_pct → no (null = apagada; igual pasa).
+       Decisión 11 (Jaume 30-sep): APAGADA por defecto («la quito porque ya tenemos el 3 %»); un número la enciende.
     12 nivel L (`nivel_de_senal`) None → no (A12); L ≤ último → no (R-C-09).
     13 caducidad: `ahora_et` > cierre de la vela + caducidad_senal_s → no (R-B-04; igual pasa). Se salta
        con `es_reapertura=True` (señal guardada por halt, validada antes por `halts.senal_guardada_valida`).
@@ -865,7 +866,7 @@ def _pct(bloque: Optional[dict], clave: str, defecto: Decimal) -> Decimal:
     return defecto if valor is None else de_float(valor)
 
 
-def _pct_opcional(bloque: Optional[dict], clave: str, defecto: Decimal) -> Optional[Decimal]:
+def _pct_opcional(bloque: Optional[dict], clave: str, defecto: Optional[Decimal]) -> Optional[Decimal]:
     """Como `_pct`, pero null EXPLÍCITO = apagada (B20 bis); clave ausente = defecto del libro."""
     bloque = bloque or {}
     if clave not in bloque:

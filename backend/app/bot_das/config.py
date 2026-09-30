@@ -64,7 +64,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 
 from app.bot_das.cerrojo import HiloVigilado
 from app.bot_das.reloj import ET
-from app.bot_das.tipos import REPLACE_SHARE_ES_ABIERTA, Config, EstrategiaConfig, Fase
+from app.bot_das.tipos import PERSEGUIR_ASK_MAX, REPLACE_SHARE_ES_ABIERTA, Config, EstrategiaConfig, Fase
 
 logger = logging.getLogger("btt.bot_das.config")
 
@@ -133,7 +133,8 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
         "por_hora": {"anticipo_s": "num0", "nivel": "ruta", "al_ask_sin_tope": "bool",
                      "perseguir_ask_max": "int0", "perseguir_ask_s": "num0"},
         "eod": {"lanzar_antes_s": "num0", "comprobar_despues_s": "num0"},
-        "tp_parcial": {"agregar_s": "num0", "techo_ask_pct": "num0"},
+        "tp_parcial": {"agregar_s": "num0", "techo_ask_pct": "num0",
+                       "perseguir_ask_max": "int0", "perseguir_ask_s": "num0"},   # decisión 13 (Jaume 30-sep)
         "cerrar_todo": {"techo_pct": "num0", "reintentos": "int0"},
         "salida_motor": ("enum",) + SALIDA_MOTOR,
         "sl_motor_con_posicion_abierta": "ruta",
@@ -180,6 +181,8 @@ CLAVES_STOPS_V3: tuple[str, ...] = ("principal_limite_pct", "emergencia_disparo_
 _OPCIONALES: dict[str, Any] = {
     "stops.replace_share_es_abierta": REPLACE_SHARE_ES_ABIERTA,   # A-02: share del REPLACE = abierta (True) o total
     "entrada.alto_riesgo_si": {},                                 # D1-07: {} = ningún corto es de alto riesgo
+    "salidas.tp_parcial.perseguir_ask_max": PERSEGUIR_ASK_MAX,     # decisión 13 (Jaume 30-sep): el TP persigue 3 veces
+    "salidas.tp_parcial.perseguir_ask_s": 1,                      # decisión 13: cada 1 s (como salidas.por_hora)
 }
 _ESQUEMA_RAIZ: dict[str, Any] = {
     "schema_version": "int", "config_version": "int0", "generado_at": "str",

@@ -197,7 +197,7 @@ def test_tick_de_y_al_tick_rechazan_no_finitos(precio):
     pytest.param("ENTRADA_CRUCE_BAJO_BID_PCT", D("0.5"), id="R-B-01-v3-cruce-bid-0.5%"),
     pytest.param("ENTRADA_CADUCIDAD_S", 60, id="R-B-04-caducidad-60s"),
     pytest.param("ENTRADA_RETRASO_MAX_PCT", D("1"), id="R-A-01-retraso-1%-provisional"),
-    pytest.param("ENTRADA_DISTANCIA_ULTIMO_BID_PCT", D("5"), id="B20-bis-5%-provisional"),
+    pytest.param("ENTRADA_DISTANCIA_ULTIMO_BID_PCT", None, id="B20-bis-apagada-decision-11"),
     pytest.param("ENTRADA_REINTENTOS_RECHAZO", 2, id="R-B-07-2-reintentos"),
     pytest.param("SALIDA_ANTICIPO_S", 60, id="R-D-08-anticipo-60s"),
     pytest.param("EOD_COMPROBAR_DESPUES_S", 30, id="R-D-02-comprobar-+30s"),
@@ -504,7 +504,6 @@ def test_config_ejemplo_tiene_todos_los_bloques_de_seccion_7(config_cruda):
     pytest.param("entrada.tope_caida_bid_pct", "ENTRADA_TOPE_CAIDA_BID_PCT", id="R-B-01-v3-tope"),
     pytest.param("entrada.cruce_bajo_bid_pct", "ENTRADA_CRUCE_BAJO_BID_PCT", id="R-B-01-v3-cruce"),
     pytest.param("entrada.caducidad_senal_s", "ENTRADA_CADUCIDAD_S", id="R-B-04"),
-    pytest.param("entrada.distancia_max_ultimo_bid_pct", "ENTRADA_DISTANCIA_ULTIMO_BID_PCT", id="B20-bis"),
     pytest.param("entrada.retraso_max_senal_pct", "ENTRADA_RETRASO_MAX_PCT", id="R-A-01"),
     pytest.param("entrada.reintentos_rechazo_conocido", "ENTRADA_REINTENTOS_RECHAZO", id="R-B-07"),
     pytest.param("salidas.por_hora.anticipo_s", "SALIDA_ANTICIPO_S", id="R-D-08-anticipo"),
@@ -557,6 +556,12 @@ def test_config_ejemplo_coincide_con_las_constantes(config_cruda, ruta, constant
     for parte in ruta.split("."):
         valor = valor[parte]
     assert Decimal(str(valor)) == Decimal(str(getattr(tipos, constante)))
+
+
+def test_config_ejemplo_b20bis_apagada_como_la_constante(config_cruda):
+    """Decisión 11 (Jaume 30-sep): la fixture trae `null` (apagada), igual que el defecto del libro."""
+    assert config_cruda["entrada"]["distancia_max_ultimo_bid_pct"] is None
+    assert tipos.ENTRADA_DISTANCIA_ULTIMO_BID_PCT is None
 
 
 def test_config_ejemplo_listas_tecnicas(config_cruda):

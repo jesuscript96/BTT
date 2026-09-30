@@ -148,8 +148,14 @@ class CuotaComandos:
     100/min, SLNEWORDER 100/min y SLPRICEINQUIRE 1 cada 3 s. Con margen 0,9:
     45 órdenes por segundo, 90 CANCEL/REPLACE/SLNEWORDER por minuto y una
     consulta de locate cada 3,33 s. El resto de comandos (GET, SB, …) no tiene
-    cuota documentada y no espera. La cuota del SLPRICEINQUIRE es GLOBAL (la
-    lectura conservadora de la pregunta 7 del §14, riesgo 36).
+    cuota documentada y no espera.
+
+    Decisión 21 (Jaume 30-sep): la cuota del SLPRICEINQUIRE es POR TICKER, no
+    global (antes, la lectura conservadora de la pregunta 7 del §14, riesgo
+    36): cada ticker se consulta cada `inquire_s` por su cuenta, así con 10
+    tickers en el radar el último ya no espera 30 s. Si DAS resultara limitarla
+    de forma global, lo dirá su mensaje de error y el decisor avisa (nivel 2,
+    una vez al día) para verlo en sombra. Las demás cuotas siguen globales.
     """
 
     def __init__(self, reloj, ordenes_s: int = 50, cancel_min: int = 100, replace_min: int = 100,
@@ -176,6 +182,7 @@ class CuotaComandos:
             "SLNEWORDER": (60.0, self._cabida(locate_min)),
             "SLPRICEINQUIRE": (float(inquire_s) / self._margen, 1),   # 1 cada 3 s al 90 % = 1 cada 3,33 s
         }
+        # marcas por CLAVE de cuota (`clave_cuota`): la categoría, o «SLPRICEINQUIRE:<TICKER>» (decisión 21)
         self._marcas: dict[str, deque[float]] = {clave: deque() for clave in self._limites}
 
     @property
@@ -189,12 +196,12 @@ class CuotaComandos:
         La espera es exacta: lo que falta para que caduque la marca que deja
         sitio en la ventana deslizante. Un comando sin cuota devuelve 0.0.
         """
-        categoria = self._categoria(linea)
-        if categoria is None:
+        clave = self.clave_cuota(linea)
+        if clave is None:
             return 0.0
         ahora = float(self._reloj.mono())
-        ventana, cabida = self._limites[categoria]
-        marcas = self._purgar(categoria, ahora)
+        ventana, cabida = self._limites[self._categoria(linea)]
+        marcas = self._purgar(clave, ahora)
         if len(marcas) < cabida:
             return 0.0
         libera = marcas[len(marcas) - cabida] + ventana     # la marca cuya caducidad deja un hueco
@@ -203,11 +210,23 @@ class CuotaComandos:
 
     def anotar(self, linea: str) -> None:
         """Registra que `linea` acaba de salir (lo llama el emisor DESPUÉS del `sendall`)."""
-        categoria = self._categoria(linea)
-        if categoria is None:
+        clave = self.clave_cuota(linea)
+        if clave is None:
             return
         ahora = float(self._reloj.mono())
-        self._purgar(categoria, ahora).append(ahora)
+        self._purgar(clave, ahora).append(ahora)
+
+    def clave_cuota(self, linea: str) -> Optional[str]:
+        """La ventana que comparte `linea`: su categoría o, en SLPRICEINQUIRE, «SLPRICEINQUIRE:<TICKER>» (decisión 21).
+
+        None si el comando no tiene cuota. Un SLPRICEINQUIRE sin ticker (mal
+        formado; el protocolo no lo genera) usa la ventana global de la categoría.
+        """
+        categoria = self._categoria(linea)
+        if categoria != "SLPRICEINQUIRE":
+            return categoria
+        partes = linea.split()
+        return f"{categoria}:{partes[1].upper()}" if len(partes) > 1 else categoria
 
     # ── privados ──────────────────────────────────────────────────────
     def _cabida(self, limite: int) -> int:
@@ -223,9 +242,9 @@ class CuotaComandos:
         clave = partes[0].upper()
         return clave if clave in self._limites else None
 
-    def _purgar(self, categoria: str, ahora: float) -> deque[float]:
-        ventana, _cabida = self._limites[categoria]
-        marcas = self._marcas[categoria]
+    def _purgar(self, clave: str, ahora: float) -> deque[float]:
+        ventana, _cabida = self._limites[clave.split(":", 1)[0]]
+        marcas = self._marcas.setdefault(clave, deque())
         while marcas and marcas[0] <= ahora - ventana + TOLERANCIA_CUOTA_S:
             marcas.popleft()
         return marcas
@@ -851,10 +870,14 @@ class ClienteDAS:
             bloqueada = (bool(x.claves & claves_previas) or (barrera_previa and x.mutante)
                          or (x.barrera and mutante_previo))
             if not bloqueada:
-                espera = esperas.get(x.categoria)
+                # decisión 21 (Jaume 30-sep): la espera se cachea por CLAVE de cuota (el SLPRICEINQUIRE, por ticker)
+                clave_fn = getattr(self._cuota, "clave_cuota", None)
+                clave_cuota = clave_fn(x.texto) if callable(clave_fn) else x.categoria
+                clave_cuota = x.categoria if clave_cuota is None else clave_cuota
+                espera = esperas.get(clave_cuota)
                 if espera is None:
                     espera = float(self._cuota.espera_para(x.texto))
-                    esperas[x.categoria] = espera
+                    esperas[clave_cuota] = espera
                 if espera <= 0:
                     return x, 0.0
                 espera_min = min(espera_min, espera)

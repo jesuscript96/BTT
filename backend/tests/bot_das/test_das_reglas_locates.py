@@ -746,11 +746,17 @@ def test_maquina_already_shortable_durante_la_compra() -> None:
     assert m.loc.estado == ESTADO_NO_HACE_FALTA
 
 
-@pytest.mark.parametrize("estado_das", ["Rejected", "Declined", "Canceled", "Closed"])
-def test_maquina_fallo_de_la_ruta_para_y_avisa(estado_das: str) -> None:
-    """H16 (por definir): un rechazo de la ruta no se reintenta en bucle (riesgo 11); lo ve el humano."""
+@pytest.mark.parametrize("estado_das, fase", [("Canceled", "A"), ("Closed", "A"), ("Canceled", "C"),
+                                              ("Rejected", "B"), ("Declined", "B"), ("Rejected", "C_piramide"),
+                                              ("Declined", "C_piramide")])
+def test_maquina_fallo_de_la_ruta_para_y_avisa(estado_das: str, fase: str) -> None:
+    """H16 (por definir): un fallo de la ruta no se reintenta en bucle (riesgo 11); lo ve el humano.
+
+    Decisión 19 (Jaume 30-sep): Rejected/Declined en fase A o C ya NO para (ver `test_decision_19_*`); en las fases
+    de intento único (B, C_piramide) y con Canceled/Closed en cualquier fase, sigue parando."""
     m = Maquina()
     compra = m.comprada(1200)
+    m.loc = replace(m.loc, fase=fase)
     acciones = m.paso(1002.0, orden=slorder(70, estado_das, 1200, 0, "0", compra.token, notas="no inventory"))
     assert tipos_de(acciones) == ["locate_estado", "Avisar", "Desprogramar"]
     assert acciones[1].nivel is Nivel.AVISO and "no inventory" in acciones[1].texto
@@ -770,11 +776,55 @@ def test_maquina_located_tardio_de_una_compra_propia_se_cobra() -> None:
     """El dinero ya se gastó: un Located de NUESTRA compra que llega tras «parado» se contabiliza."""
     m = Maquina()
     compra = m.comprada(1200)
-    m.paso(1002.0, orden=slorder(70, "Rejected", 1200, 0, "0", compra.token))
+    m.paso(1002.0, orden=slorder(70, "Canceled", 1200, 0, "0", compra.token))   # decisión 19: Rejected en A ya no para
     assert m.loc.estado == ESTADO_PARADO
     tarde = m.paso(1003.0, orden=slorder(71, "Located", 1200, 1200, "0.02", compra.token))
     assert tipos_de(tarde) == ["locate_estado", "Consultar", "Desprogramar"]
     assert (m.loc.estado, m.loc.localizadas, m.gasto) == (ESTADO_LOCALIZADO, 1200, D("24"))
+
+
+@pytest.mark.parametrize("estado_das, fase", [("Rejected", "A"), ("Declined", "A"), ("Rejected", "C"),
+                                              ("Declined", "C")])
+def test_decision_19_rechazo_de_la_compra_en_fase_A_o_C_sigue_buscando(estado_das: str, fase: str) -> None:
+    """Decisión 19 (Jaume 30-sep): un Rejected/Declined de la ruta a la COMPRA no para la pareja en las fases de
+    búsqueda continua: se anota, se avisa nivel 2 (clave por ticker/estrategia, el decisor la deja salir una vez al
+    día) y se sigue buscando con el intervalo normal (3 s) «hasta tener los locates con el protocolo de siempre»."""
+    m = Maquina()
+    compra = m.comprada(1200)
+    m.loc = replace(m.loc, fase=fase)
+    acciones = m.paso(1002.0, orden=slorder(70, estado_das, 1200, 0, "0", compra.token, notas="no inventory"))
+    assert tipos_de(acciones) == ["locate_estado", "Avisar", "Programar"]
+    aviso = acciones[1]
+    assert aviso.nivel is Nivel.AVISO and "no inventory" in aviso.texto
+    assert aviso.clave == f"{L.CLAVE_AVISO_RECHAZO}:{X}:{m.e.strategy_id}"
+    assert acciones[2].en_s == 3.0
+    assert (m.loc.estado, m.loc.fase, m.loc.ultimo_inquire_en) == (ESTADO_BUSCANDO, fase, 1002.0)
+    assert not [a for a in m.paso(1003.0) if isinstance(a, LocateInquire)]     # aún no han pasado los 3 s
+    consulta = m.paso(1005.0)
+    assert [type(a).__name__ for a in consulta if isinstance(a, LocateInquire)] == ["LocateInquire"]
+    nueva = [a for a in m.paso(1006.0, ret=slret(1, "0.02", 10_000)) if isinstance(a, LocateComprar)]
+    assert len(nueva) == 1 and nueva[0].token != compra.token                 # otra compra, por la intención (R-H-02)
+    assert m.loc.estado == ESTADO_COMPRANDO and m.gasto == D("0")
+    assert not L.compra_repetida({(X, m.e.strategy_id): m.loc}, X, m.e.strategy_id, id_das=71, token=nueva[0].token)
+
+
+def test_decision_19_rechazo_con_parte_localizada_cobra_y_sigue_buscando_el_resto() -> None:
+    """Decisión 19: lo que la orden rechazada llegó a localizar se cobra (el dinero ya se gastó) y se sigue buscando."""
+    m = Maquina()
+    compra = m.comprada(1200)
+    acciones = m.paso(1002.0, orden=slorder(70, "Rejected", 1200, 400, "0.02", compra.token))
+    assert tipos_de(acciones) == ["locate_estado", "Consultar", "locate_estado", "Avisar", "Programar"]
+    assert (m.loc.estado, m.loc.localizadas, m.gasto, m.loc.compras) == (ESTADO_BUSCANDO, 400, D("8"), 1)
+
+
+def test_decision_19_rechazo_tras_la_hora_limite_para() -> None:
+    """Decisión 19: fuera de la hora límite de intentos (R-H-01.5) no se sigue buscando: parado como antes."""
+    m = Maquina(cfg={**CFG, "hora_limite_intentos": "10:00"})
+    m.paso(1000.0, qty=1200, ahora_et=et(9, 45))
+    compra = [a for a in m.paso(1001.0, ret=slret(1, "0.02", 10_000), ahora_et=et(9, 45))
+              if isinstance(a, LocateComprar)][0]
+    m.paso(1002.0, orden=slorder(70, "Rejected", 1200, 0, "0", compra.token), ahora_et=et(10, 1))
+    assert m.loc.estado == ESTADO_PARADO
 
 
 def test_maquina_located_sin_acciones_para() -> None:

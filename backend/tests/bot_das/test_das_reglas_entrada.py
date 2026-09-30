@@ -279,6 +279,11 @@ def _solo_locate_de_otra(e: Escenario, *, ticker: str = TICKER, pedidas: int = 1
                                                 localizadas=localizadas, usadas=usadas, estado=estado_loc)
 
 
+def _encender_b20bis(e: Escenario, pct: float = 5.0) -> None:
+    """Decisión 11 (Jaume 30-sep): B20 bis APAGADA por defecto; los tests de la 11 la encienden con un número."""
+    e.bloque("entrada", distancia_max_ultimo_bid_pct=pct)
+
+
 # (id que cita la regla, cambio sobre el escenario base, motivo esperado)
 FILAS_MOTIVOS: list[tuple[str, Callable[[Escenario], None], str]] = [
     ("1-R-A-05-repetida", lambda e: e.estado.senales_vistas.add(e.senal.id), MOTIVO_REPETIDA),
@@ -317,7 +322,7 @@ FILAS_MOTIVOS: list[tuple[str, Callable[[Escenario], None], str]] = [
     ("9-R-I-04-modo-seguridad", lambda e: e.bloque("modo_seguridad", activo=True), MOTIVO_MODO_SEGURIDAD),
     ("10-R-A-01-ultimo-arriba", _cambiar_cot(last=D("3.49"), ask=D("3.50")), MOTIVO_RETRASO),
     ("10-R-A-01-ultimo-abajo", _cambiar_cot(last=D("3.41"), bid=D("3.40")), MOTIVO_RETRASO),
-    ("11-B20bis-bid-lejos", _cambiar_cot(bid=D("3.27")), MOTIVO_DISTANCIA_BID),
+    ("11-B20bis-bid-lejos", lambda e: (_encender_b20bis(e), _cambiar_cot(bid=D("3.27"))(e)), MOTIVO_DISTANCIA_BID),
     ("12-A12-sin-stop", lambda e: e.evento(stop=None), MOTIVO_NIVEL_STOP),
     ("12b-otro-nivel-vivo", lambda e: e.lote_previo("otra", strategy_id="otra", estado=EstadoLote.ABIERTO, nivel_stop=D("4.50")),
      MOTIVO_NIVEL_DISTINTO),
@@ -381,7 +386,7 @@ CAMBIO_POR_COMPROBACION: list[Callable[[Escenario], None]] = [
     lambda e: setattr(e.cot, "actualizada_en", AHORA - 60),
     lambda e: e.bloque("modo_seguridad", activo=True),
     lambda e: setattr(e.cot, "last", D("3.50")),
-    lambda e: setattr(e.cot, "bid", D("3.20")),
+    lambda e: (_encender_b20bis(e), setattr(e.cot, "bid", D("3.20"))),
     lambda e: e.evento(stop=None),
     lambda e: e.lote_previo("otra", strategy_id="otra", estado=EstadoLote.ABIERTO, nivel_stop=D("4.50")),
     lambda e: setattr(e, "ahora_et", CIERRE + timedelta(seconds=120)),
@@ -477,6 +482,7 @@ def test_D1_03_reapertura_salta_el_retraso(esc: Escenario) -> None:
 
 def test_D1_03_reapertura_mantiene_las_demas_comprobaciones(esc: Escenario) -> None:
     """D1-03: saltar la 10 no salta la 11 (B20 bis) ni la 12 (nivel del stop sobre el último)."""
+    _encender_b20bis(esc)                                          # decisión 11: apagada por defecto; aquí, encendida
     esc.es_reapertura = True
     esc.ahora_et = CIERRE + timedelta(minutes=7)
     esc.cot = _cot(bid="3.40", ask="3.90", last="3.85")            # stop 3,80 ≤ último 3,85 y bid a −11,7 %
@@ -502,11 +508,29 @@ def test_D1_12_frescura_borde(esc: Escenario) -> None:
 
 
 def test_b20bis_borde_exacto_pasa_y_null_la_apaga(esc: Escenario) -> None:
+    _encender_b20bis(esc)                                          # con número sigue descartando (decisión 11)
     esc.cot = _cot(bid="3.2775", ask="3.46", last="3.45")          # (3,45 − 3,2775) / 3,45 = 5 % exacto
     assert esc.evaluar().ok
     esc.cot = _cot(bid="3.27", ask="3.46", last="3.45")
     assert esc.evaluar().motivo == MOTIVO_DISTANCIA_BID
-    esc.bloque("entrada", distancia_max_ultimo_bid_pct=None)       # null = apagada (pregunta 1)
+    esc.bloque("entrada", distancia_max_ultimo_bid_pct=None)       # null = apagada (decisión 11, Jaume 30-sep)
+    assert esc.evaluar().ok
+
+
+@pytest.mark.parametrize("valor", [None, "ausente"], ids=["decision-11-null", "decision-11-ausente"])
+def test_decision_11_b20bis_apagada_por_defecto(esc: Escenario, valor) -> None:
+    """Decisión 11 (Jaume 30-sep: «la quito porque ya tenemos el 3 %»): la guarda B20 bis arranca APAGADA.
+
+    La fixture trae `null` y el defecto del libro (`tipos.ENTRADA_DISTANCIA_ULTIMO_BID_PCT`) es None: un bid
+    a −11 % del último ya no descarta por la 11; el filtro de dinero es el tope del 3 % de la entrada v3.
+    """
+    from app.bot_das import tipos
+    assert tipos.ENTRADA_DISTANCIA_ULTIMO_BID_PCT is None
+    assert esc.cfg.entrada["distancia_max_ultimo_bid_pct"] is None
+    if valor == "ausente":
+        esc.cfg = dataclasses.replace(esc.cfg, entrada={k: v for k, v in esc.cfg.entrada.items()
+                                                        if k != "distancia_max_ultimo_bid_pct"})
+    esc.cot = _cot(bid="3.07", ask="3.46", last="3.45")
     assert esc.evaluar().ok
 
 

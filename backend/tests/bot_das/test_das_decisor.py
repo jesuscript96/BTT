@@ -991,11 +991,60 @@ def test_d2_09_tp_rechazado_por_postonly_cruza_ya_con_techo_y_vigila_el_limbo(ba
     assert b.pos().estado is EstadoTicker.NORMAL
     lote_id = lote_de(evento())
     assert f"tp_cruce:{lote_id}:{rechazado.token}" not in b.temporizadores
-    assert f"tp_limbo:{lote_id}:{cruce[0].token}" in b.temporizadores
+    # decisión 13 (Jaume 30-sep): primero se persigue el ask (3 vueltas de 1 s) y, agotada, el limbo a 5 s
+    assert b.temporizadores[f"perseguir_ask:{cruce[0].token}"][2]["tp"] is True
     marca = b.marca()
+    b.avanzar(3.5)
+    assert f"tp_limbo:{lote_id}:{cruce[0].token}" in b.temporizadores
     b.avanzar(5.5)
     limbo = [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("limbo:")]
     assert len(limbo) == 1 and limbo[0].nivel is Nivel.AVISO
+
+
+def test_decision_13_tp_cruce_persigue_el_ask_tres_veces_con_techo_y_luego_limbo(banco: Banco) -> None:
+    """Decisión 13 (Jaume 30-sep): el TP agrega 60 s y, si no llena, REMUEVE al ask persiguiendo hasta 3 veces (REPLACE
+    de precio cada `tp_parcial.perseguir_ask_s`), con el techo del 3 % sobre el último en cada una; tras la 3.ª sin
+    llenar, el aviso de limbo de siempre (D2-13). Nunca una cuarta ni Cancelar + nueva."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)                # nada llena al ask
+    ev = salida()
+    b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(ev), evento=ev, momento=ev.momento,
+                                   recibida_en=b.ahora())))
+    b.avanzar(60.5)
+    cruce = b.enviadas(Proposito.TP_CRUCE)
+    assert [(o.qty, o.precio) for o in cruce] == [(50, D("3.46"))]
+    for ask in ("3.48", "3.50", "3.70", "3.75"):                        # 3,70 > techo 3,46·1,03 = 3,5638 → 3,57
+        b.cotizar(TICKER, "3.44", ask, "3.46", tam_ask=0)
+        b.avanzar(1)
+    persecuciones = [a for a in b.historial if isinstance(a, Reemplazar) and a.token == cruce[0].token]
+    assert [r.precio for r in persecuciones] == [D("3.48"), D("3.50"), D("3.57")]
+    assert all("decisión 13" in r.motivo for r in persecuciones)
+    assert not [a for a in b.historial if isinstance(a, Cancelar) and a.token == cruce[0].token]
+    assert [a.datos["n"] for a in anotaciones(b.historial, "persecucion_ask")] == [1, 2, 3]
+    marca = b.marca()
+    b.avanzar(5)
+    limbo = [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("limbo:")]
+    assert len(limbo) == 1 and "tras perseguir" in limbo[0].texto
+    assert b.pos().estado is EstadoTicker.NORMAL
+
+
+def test_decision_13_tp_cruce_que_llena_no_sigue_persiguiendo(banco: Banco) -> None:
+    """Decisión 13: si la persecución llena, se acaba (sin más REPLACE ni limbo)."""
+    b = banco
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
+    ev = salida()
+    b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(ev), evento=ev, momento=ev.momento,
+                                   recibida_en=b.ahora())))
+    b.avanzar(60.5)
+    cruce = b.enviadas(Proposito.TP_CRUCE)
+    b.cotizar(TICKER, "3.44", "3.48", "3.46")                            # hay liquidez: el REPLACE a 3,48 llena
+    b.avanzar(10)
+    persecuciones = [a for a in b.historial if isinstance(a, Reemplazar) and a.token == cruce[0].token]
+    assert [r.precio for r in persecuciones] == [D("3.48")]
+    assert b.pos().neta_fills == -50
+    assert not [a for a in b.historial if isinstance(a, Avisar) and (a.clave or "").startswith("limbo:")]
 
 
 # ═══════════════════════════ F5: hora y EOD ══════════════════════════════
@@ -3712,6 +3761,55 @@ def test_fase_A_se_para_al_salir_del_radar(cfg: Config, tmp_path: Path) -> None:
     marca = b.marca()
     b.avanzar(10)
     assert not _consultas(b, marca)
+
+
+def test_decision_19_rechazo_de_la_compra_en_fase_A_se_reintenta_y_avisa_una_vez(cfg: Config, tmp_path: Path,
+                                                                                    monkeypatch) -> None:
+    """Decisión 19 (Jaume 30-sep): la ruta rechaza la compra (Rejected) dos veces en fase A: la pareja NO se para,
+    sigue buscando cada 3 s y a la tercera compra; el aviso de nivel 2 sale UNA vez; el cerrojo R-H-02 no salta."""
+    original = Emparejador._localizar
+    rechazos = {"n": 0}
+
+    def localizar(self, loc, cfg_loc):
+        if rechazos["n"] < 2:
+            rechazos["n"] += 1
+            loc["estado"] = "Rejected"
+            return
+        original(self, loc, cfg_loc)
+
+    monkeypatch.setattr(Emparejador, "_localizar", localizar)
+    b = Banco(_cfg_ventana_larga(cfg), tmp_path)
+    b.preparar(locates=())
+    _radar_de(b, [_fila(100.0)])
+    b.avanzar(1)
+    loc = b.estado.locates[(TICKER, SID)]
+    assert len(_compras(b)) == 1 and (loc.fase, loc.estado) == ("A", "buscando")
+    b.avanzar(10)
+    loc = b.estado.locates[(TICKER, SID)]
+    assert len(_compras(b)) == 3 and len({c.token for c in _compras(b)}) == 3
+    assert (loc.estado, loc.localizadas) == ("Located", 100)
+    avisos_rechazo = [a for a in b.historial if isinstance(a, Avisar) and (a.clave or "").startswith("locate_rechazo:")]
+    assert len(avisos_rechazo) == 1 and avisos_rechazo[0].nivel is Nivel.AVISO
+    assert not b.estado.locates_deshabilitados
+
+
+def test_decision_21_das_se_queja_del_intervalo_de_inquiry_aviso_una_vez_al_dia(banco: Banco) -> None:
+    """Decisión 21 (Jaume 30-sep): la cuota de SLPRICEINQUIRE va por ticker; si DAS la rechaza por su intervalo (en un
+    %SLRET 2 o en una línea que el parser no entiende), se anota siempre y se avisa nivel 2 UNA vez al día."""
+    from app.bot_das.tipos import MsgDesconocido, MsgSLRet
+    b = banco
+    marca = b.marca()
+    queja = "Price inquiry interval too short"
+    b.procesar(DeDAS(MsgSLRet(cruda=f"%SLRET 2 {TICKER} 0 0 LOC3 {queja}", tipo=2, ticker=TICKER, precio=D("0"),
+                              tamano=0, ruta="LOC3", notas=queja, cuenta=None)))
+    b.procesar(DeDAS(MsgDesconocido(cruda="#ERROR SLPRICEINQUIRE rejected: inquiry rate limit exceeded",
+                                    palabra="#ERROR")))
+    b.procesar(DeDAS(MsgSLRet(cruda=f"%SLRET 2 {TICKER} 0 0 LOC3 No inventory", tipo=2, ticker=TICKER,
+                              precio=D("0"), tamano=0, ruta="LOC3", notas="No inventory", cuenta=None)))
+    avisos_cuota = [a for a in b.desde(marca) if isinstance(a, Avisar) and a.clave == "locate_cuota_das"]
+    assert len(avisos_cuota) == 1 and avisos_cuota[0].nivel is Nivel.AVISO
+    assert "DAS limita las consultas de locate: ¿cuota global?" in avisos_cuota[0].texto
+    assert len(anotaciones(b.desde(marca), "locate_cuota_das")) == 2      # «No inventory» no es una queja de cuota
 
 
 def test_fase_A_recalcula_N_con_el_precio_actual_antes_de_comprar(cfg: Config, tmp_path: Path) -> None:

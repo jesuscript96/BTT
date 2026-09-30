@@ -68,6 +68,8 @@ from app.bot_das.reglas.salidas import (
 )
 from app.bot_das.reloj import ET
 from app.bot_das.tipos import (
+    PERSEGUIR_ASK_MAX,
+    TP_TECHO_ASK_PCT,
     Anotar,
     Avisar,
     Cancelar,
@@ -630,6 +632,35 @@ def test_perseguir_venta_baja_al_bid():
     r = perseguir_ask(_orden(lado=Lado.VENTA, precio="10.00"), _cot("9.95", "10.00"), 0)
     assert r is not None and r.precio == D("9.95")
     assert perseguir_ask(_orden(lado=Lado.VENTA, precio="9.95"), _cot("9.95", "10.00"), 0) is None
+
+
+# ── decisión 13 (Jaume 30-sep): el cruce del TP se persigue con el techo del 3 % ──
+def test_decision_13_perseguir_con_techo_sobre_el_ultimo():
+    """Con `techo_pct` el precio nuevo es min(ask, último·1,03) al tick hacia arriba; sin último no se persigue."""
+    orden = _orden(precio="10.00", proposito=Proposito.TP_CRUCE)
+    r = perseguir_ask(orden, _cot("10.00", "10.20", "10.10"), 0, techo_pct=D("3"))
+    assert r is not None and r.precio == D("10.20")                          # dentro del techo (10,403 → 10,41)
+    r = perseguir_ask(orden, _cot("10.00", "10.80", "10.10"), 0, techo_pct=D("3"))
+    assert r is not None and r.precio == D("10.41")                          # ask fuera: se queda en el techo
+    assert perseguir_ask(_orden(precio="10.41"), _cot("10.00", "10.80", "10.10"), 0, techo_pct=D("3")) is None
+    assert perseguir_ask(orden, _cot("10.00", "10.20"), 0, techo_pct=D("3")) is None     # sin último
+    assert perseguir_ask(orden, _cot("10.00", "10.80", "10.10"), 0).precio == D("10.80")  # sin techo: al ask
+
+
+def test_decision_13_perseguir_venta_con_suelo():
+    r = perseguir_ask(_orden(lado=Lado.VENTA, precio="10.00"), _cot("9.50", "9.60", "10.00"), 0, techo_pct=D("3"))
+    assert r is not None and r.precio == D("9.70")                           # max(bid 9,50, 10·0,97)
+
+
+def test_decision_13_persecucion_tp_parametros():
+    """`salidas.tp_parcial.perseguir_ask_max` / `perseguir_ask_s` / `techo_ask_pct` (3, 1 s, 3 %); ausentes = defectos."""
+    assert salidas.persecucion_tp(CFG) == (3, 1.0, D("3"))
+    assert salidas.persecucion_tp(_config({"tp_parcial": {"perseguir_ask_max": 5, "perseguir_ask_s": 2}})) == (
+        5, 2.0, D("3"))
+    sin = _config()
+    sin.salidas["tp_parcial"] = {"agregar_s": 60}
+    assert salidas.persecucion_tp(sin) == (PERSEGUIR_ASK_MAX, 1.0, TP_TECHO_ASK_PCT)
+    assert salidas.persecucion_tp(_config({"tp_parcial": {"perseguir_ask_max": -1}}))[0] == PERSEGUIR_ASK_MAX
 
 
 # ── TP parcial (R-D-03 v2, F4) ───────────────────────────────────────────

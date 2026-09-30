@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "f6d389a8faad55d1a3d52b4dfa28df59880fb28f9106f6f7136cf60212a6375d"   # Jaume 29-sep: stop único (stops.limite_pct)
+SHA_FIXTURE = "2fb735cda5bd446384bec28a8151c464f23d1def1552e4f730623d64b6b21531"   # Jaume 30-sep: B20 bis null + TP persigue
 RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 
@@ -499,11 +499,11 @@ def test_validar_rechaza_cada_combinacion_imposible(mutaciones, esperado):
     [_mutar("halts.k_max", 1)],
     [_mutar("estrategias", [])],
     [_mutar("estrategias.0.definition.custom_end_time", "9:45")],
-    [_mutar("entrada.distancia_max_ultimo_bid_pct", None)],
+    [_mutar("entrada.distancia_max_ultimo_bid_pct", 5.0)],
     [_mutar("extra_desconocida", {"a": 1})],
 ], ids=["R-H-03 tope 10 justo", "R-H-03 tope minimo", "CM2 riesgo 0 sin ejecutar", "CM2 riesgo null sin ejecutar",
         "R-L-01 horas validas", "R-O-03 fase real", "R-F-01 k_max 1", "§7 sin estrategias",
-        "R-L-02 hora H:MM en definicion", "B20 bis apagada", "§7 clave extra tolerada"])
+        "R-L-02 hora H:MM en definicion", "B20 bis encendida (decision 11: un numero la enciende)", "§7 clave extra tolerada"])
 def test_validar_acepta_limites_validos(mutaciones):
     obj = _crudo()
     for m in mutaciones:

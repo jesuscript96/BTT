@@ -137,6 +137,9 @@ FASES_INTENTO = frozenset({FASE_SENAL, FASE_PIRAMIDE})
 
 ESTADOS_EN_CURSO = frozenset({ESTADO_COMPRANDO, ESTADO_PENDIENTE, ESTADO_ESPERANDO, ESTADO_OFRECIDO})
 ESTADOS_FALLO_DAS = frozenset({"Canceled", "Rejected", "Closed", "Declined"})
+# Decisión 19 (Jaume 30-sep): un rechazo de la ruta a la COMPRA no para la pareja en las fases de búsqueda continua
+ESTADOS_RECHAZO_RUTA = frozenset({"Rejected", "Declined"})
+CLAVE_AVISO_RECHAZO = "locate_rechazo"          # «locate_rechazo:<ticker>:<estrategia>»: el decisor lo avisa 1 vez al día
 ESTADOS_TERMINALES = frozenset({ESTADO_PARADO, ESTADO_NO_HACE_FALTA})
 
 REUSO_REUTILIZA = "reutiliza"                   # EP-9: Yes
@@ -522,6 +525,12 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
     coste_total)` + `SLReuseQuery` (EP-9) y, si aún faltan acciones, parcial
     (R-H-04) → buscando + consulta INMEDIATA; Canceled/Rejected/Closed/
     Declined → parado + `Avisar(2)` (H16: fallos por definir → humano).
+    Decisión 19 (Jaume 30-sep): Rejected/Declined de la ruta en las fases de
+    búsqueda continua (A radar y C dentro) NO para la pareja: se anota, se
+    avisa (clave `locate_rechazo:X:S`, el decisor la deja salir UNA vez al
+    día) y se sigue buscando con el intervalo normal (3 s), «hasta tener los
+    locates con el protocolo de siempre». En B y C_piramide sigue siendo UN
+    intento (parado). El cerrojo R-H-02 y el tope del 3 % no cambian.
     Located cubriendo lo pedido, parado y no_hace_falta → [] (cerrojo R-H-02).
 
     Correcciones de la revisión (todas aditivas):
@@ -904,6 +913,8 @@ def _tras_orden(ctx: _Contexto, orden: MsgSLOrder) -> list[Accion]:
     if estado_das == ESTADO_LOCALIZADO:
         return _localizado(ctx, orden, seguir_buscando=True)
     if estado_das in ESTADOS_FALLO_DAS:
+        if estado_das in ESTADOS_RECHAZO_RUTA and not ctx.intento_unico and not ctx.fuera_de_hora:
+            return _rechazo_sigue_buscando(ctx, orden, estado_das)
         if orden.localizadas > 0:
             # Cerrada con parte localizada: se cobra lo localizado (el dinero ya se gastó) y no se insiste.
             cobro = [a for a in _localizado(ctx, orden, seguir_buscando=False) if not isinstance(a, Desprogramar)]
@@ -994,6 +1005,30 @@ def _parar(ctx: _Contexto, orden: MsgSLOrder, estado_das: str, motivo: Optional[
                            notas=orden.notas),
             Avisar(Nivel.AVISO, Grupo.B, texto, clave=f"locate_fallo:{ctx.ticker}:{ctx.loc.strategy_id}"),
             Desprogramar(ctx.clave)]
+
+
+def _rechazo_sigue_buscando(ctx: _Contexto, orden: MsgSLOrder, estado_das: str) -> list[Accion]:
+    """Decisión 19 (Jaume 30-sep): Rejected/Declined de la ruta en fase A o C → anotar, aviso 2 y SEGUIR buscando.
+
+    Lo que la orden rechazada llegara a localizar se cobra (el dinero ya se
+    gastó). El locate vuelve a «buscando» con `ultimo_inquire_en = ahora`: la
+    siguiente consulta sale a los `inquiry_intervalo_s` (3 s), no al instante;
+    la compra siguiente pasa otra vez por la intención (cerrojo R-H-02), el EV
+    con el coste TOTAL y el tope del 3 %. El aviso lleva la clave
+    `locate_rechazo:<ticker>:<estrategia>`: el decisor lo deja salir una vez al día.
+    """
+    cobro: list[Accion] = []
+    if orden.localizadas > 0:
+        cobro = [a for a in _localizado(ctx, orden, seguir_buscando=False) if not isinstance(a, Desprogramar)]
+    motivo = f"%SLOrder {estado_das}: la ruta rechazó la compra; se sigue buscando (decisión 19, Jaume 30-sep)"
+    texto = (f"Locate {_esc(ctx.ticker)} ({_esc(ctx.e.name)}): la ruta rechazó la compra (%SLOrder {_esc(estado_das)}). "
+             f"Notas de DAS: «{_esc(orden.notas)}». Se sigue buscando cada {ctx.cfg.intervalo_s:g} s con el protocolo "
+             f"de siempre (decisión 19; aviso una vez al día).")
+    return cobro + [_anotar_estado(ctx, ESTADO_BUSCANDO, id_das=orden.id, estado_das=estado_das, motivo=motivo,
+                                   notas=orden.notas, ultimo_inquire_en=ctx.ahora),
+                    Avisar(Nivel.AVISO, Grupo.B, texto,
+                           clave=f"{CLAVE_AVISO_RECHAZO}:{ctx.ticker}:{ctx.loc.strategy_id}"),
+                    _programar(ctx, ctx.cfg.intervalo_s)]
 
 
 def _tope(ctx: _Contexto, datos: dict, coste_nuevo: Decimal) -> list[Accion]:

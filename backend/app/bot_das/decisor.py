@@ -166,6 +166,7 @@ from app.bot_das.tipos import (
     MsgBP,
     MsgConexion,
     MsgDesconocido,
+    MsgInformativo,
     MsgIntMsg,
     MsgIssueStatus,
     MsgLDLU,
@@ -261,6 +262,11 @@ SIMSTATUS_CADA_S = 1.0           # F6.1
 LDLU_CADA_S = 60.0               # R-F-02: bandas refrescadas cada minuto en RTH
 TP_ESPERA_ENTRADA_S = 1.0        # R-D-07: la entrada retenida se revisa cada segundo
 PERSEGUIR_ASK_CADA_S = 1.0       # F5 («sin fill en 1 s»); `salidas.por_hora.perseguir_ask_s` manda si está
+# Decisión 21 (Jaume 30-sep): la cuota de SLPRICEINQUIRE va POR TICKER; si DAS se queja de su intervalo, aviso 1 vez/día
+CLAVE_AVISO_CUOTA_INQUIRE = "locate_cuota_das"
+_RE_CUOTA_INQUIRE = re.compile(
+    r"inquir\w*.*(interval|limit|too\s*(many|frequent|fast|soon)|exceed|rate)"
+    r"|(interval|limit|too\s*(many|frequent|fast|soon)|exceed|rate).*inquir", re.IGNORECASE)
 REPLACE_VERIFICAR_MAX = 3        # F2.2: tres comprobaciones del tipo tras un REPLACE
 HALT_PRIMERA_VELA_S = 60.0       # R-F-01 esc. 2: la primera vela de 1 min tras reabrir
 HALT_REDECIDIR_S = 60.0          # R-F-05 b: con «mantener» se vuelve a decidir (duración T12)
@@ -1840,15 +1846,30 @@ class Decisor:
         acciones += self._seguimiento_salida(lote, orden)
         return acciones
 
-    def _seguimiento_salida(self, lote: Lote, orden: OrdenNueva) -> list[Accion]:
-        """Tras una orden de salida AL ASK: la hora se persigue (corrección 11) y el cruce del TP vigila el limbo (D2-13)."""
+    def _seguimiento_salida(self, lote: Lote, orden: OrdenNueva, con_techo: bool = False) -> list[Accion]:
+        """Tras una orden de salida AL ASK: se persigue (corrección 11 la hora; decisión 13 el cruce del TP).
+
+        Decisión 13 (Jaume 30-sep): el cruce de un TP (o de una salida del motor «como_tp») ya no es un
+        único cruce: se persigue al ask hasta `salidas.tp_parcial.perseguir_ask_max` (3) veces, cada
+        `perseguir_ask_s` (1 s), y tras la última sin llenar se comprueba el limbo (D2-13, aviso).
+        `con_techo` = el cruce normal del TP (R-D-03 v2: techo 3 % sobre el último en cada persecución);
+        la prioridad de R-D-07 va al ask SIN tope y se persigue sin techo.
+        """
         if orden.proposito in (Proposito.HORA_ASK, Proposito.CIERRE_REINICIO):
             self._persecuciones[orden.token] = 0
             return [Programar(f"{T_PERSEGUIR_ASK}:{orden.token}", self._perseguir_cada(),
                               {"token": orden.token, "ticker": orden.ticker, "lote_id": lote.id})]
         if orden.proposito in (Proposito.TP_CRUCE, Proposito.SALIDA_MOTOR_CRUCE):
-            return [salidas.programa_limbo_tp(lote, orden, self._cfg)]
+            return self._perseguir_tp(orden.token, orden.ticker, lote.id, con_techo)
         return []
+
+    def _perseguir_tp(self, token: int, ticker: str, lote_id: str, con_techo: bool,
+                      hechas: int = 0) -> list[Accion]:
+        """Decisión 13 (Jaume 30-sep): arranca la persecución del cruce de un TP (`perseguir_ask:<token>`, datos «tp»)."""
+        self._persecuciones[token] = hechas
+        _, cada, _ = salidas.persecucion_tp(self._cfg)
+        return [Programar(f"{T_PERSEGUIR_ASK}:{token}", cada,
+                          {"token": token, "ticker": ticker, "lote_id": lote_id, "tp": True, "techo": con_techo})]
 
     def _exclusion_necesaria(self, pos: PosicionTicker, e: EstrategiaConfig, ev: Any) -> bool:
         """La exclusión (que puede abrir red) solo se calcula si las comprobaciones 1-5 de `evaluar_senal` no bastan ya."""
@@ -2715,10 +2736,29 @@ class Decisor:
             texto = "; ".join(f"{k}={v}" for k, v in sorted(m.campos.items()))[:500]
             return [Anotar("intmsg", {"campos": dict(m.campos)}),
                     Avisar(Nivel.AVISO, Grupo.B, f"Mensaje interno de DAS: {avisos.escapar_html(texto)}",
-                           clave=f"intmsg:{hash(texto) & 0xFFFF}")]
+                           clave=f"intmsg:{hash(texto) & 0xFFFF}")] + self._cuota_inquire_das(texto)
         if isinstance(m, MsgDesconocido):
-            return [Anotar("das_desconocido", {"palabra": m.palabra, "cruda": m.cruda[:200]})]
+            return ([Anotar("das_desconocido", {"palabra": m.palabra, "cruda": m.cruda[:200]})]
+                    + self._cuota_inquire_das(m.cruda))
+        if isinstance(m, MsgInformativo):
+            return self._cuota_inquire_das(m.cruda)
         return []
+
+    def _cuota_inquire_das(self, texto: Any, ticker: Optional[str] = None) -> list[Accion]:
+        """Decisión 21 (Jaume 30-sep): la cuota de SLPRICEINQUIRE se lleva POR TICKER; si DAS la rechaza por su
+        intervalo (texto con «inquir…» e «interval/limit/too many…»), se anota siempre y se avisa nivel 2 UNA vez al
+        día: «DAS limita las consultas de locate: ¿cuota global?», para verlo en sombra."""
+        if not isinstance(texto, str) or not _RE_CUOTA_INQUIRE.search(texto):
+            return []
+        acciones: list[Accion] = [Anotar("locate_cuota_das", {"ticker": ticker, "texto": texto[:200],
+                                                              "regla": "decisión 21 (Jaume 30-sep)"})]
+        if self._una_vez_al_dia(CLAVE_AVISO_CUOTA_INQUIRE):
+            acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                   f"DAS limita las consultas de locate: ¿cuota global? El bot consulta cada ticker "
+                                   f"cada {_segundos(self._cfg.locates, 'inquiry_intervalo_s', 3.0):g} s por su cuenta "
+                                   f"(decisión 21). Mensaje de DAS: «{avisos.escapar_html(texto[:200])}»",
+                                   clave=CLAVE_AVISO_CUOTA_INQUIRE))
+        return acciones
 
     # ── órdenes y fills ────────────────────────────────────────────────
     def _orden_de(self, token: Optional[int], id_das: Optional[int]) -> Optional[Orden]:
@@ -3373,9 +3413,9 @@ class Decisor:
                                       {"lote_id": lote_id, "ticker": nueva.ticker, "token": nueva.token,
                                        "qty": nueva.qty})]
         if nueva.proposito in (Proposito.TP_CRUCE, Proposito.SALIDA_MOTOR_CRUCE) and lote_id is not None:
-            pos = self._estado.posiciones.get(nueva.ticker)
-            lote = pos.lotes.get(lote_id) if pos is not None else None
-            return vieja + ([salidas.programa_limbo_tp(lote, nueva, self._cfg)] if lote is not None else [])
+            # decisión 13 (Jaume 30-sep): el cruce que sustituye al rechazado hereda la persecución (con el techo)
+            hechas = self._persecuciones.pop(rechazada.token, 0)
+            return vieja + self._perseguir_tp(nueva.token, nueva.ticker, lote_id, True, hechas)
         if nueva.proposito in (Proposito.HORA_ASK, Proposito.CIERRE_REINICIO) and not nueva.post_only:
             self._persecuciones[nueva.token] = self._persecuciones.pop(rechazada.token, 0)
             return [Programar(f"{T_PERSEGUIR_ASK}:{nueva.token}", self._perseguir_cada(),
@@ -4127,6 +4167,10 @@ class Decisor:
         if nuevo is not None:
             estado.locates[(ticker, e.strategy_id)] = nuevo
         estado.gasto_locates_dia += locates.gasto_de(crudas)
+        # decisión 19 (Jaume 30-sep): el rechazo de la compra en fase A/C se reintenta; el aviso, UNA vez al día por pareja
+        crudas = [a for a in crudas if not (isinstance(a, Avisar) and a.clave
+                                            and a.clave.startswith(locates.CLAVE_AVISO_RECHAZO + ":")
+                                            and not self._una_vez_al_dia(a.clave))]
         for a in crudas:
             if isinstance(a, LocateInquire) and (ticker, e.strategy_id) not in self._inquires:
                 self._inquires.append((ticker, e.strategy_id))   # ensayo 28-sep: una consulta pendiente por estrategia
@@ -4419,6 +4463,10 @@ class Decisor:
         return self._paso_locate(ticker, e)
 
     def _msg_slret(self, m: MsgSLRet) -> list[Accion]:
+        cuota = self._cuota_inquire_das(m.notas, m.ticker) if m.tipo == 2 else []     # decisión 21
+        return cuota + self._msg_slret_consulta(m)
+
+    def _msg_slret_consulta(self, m: MsgSLRet) -> list[Accion]:
         """F9 / E2-05: los `%SLRET` de las consultas de un ticker se juntan `SLRET_VENTANA_S` (0,5 s); un fallo en compra
         (sin consulta pendiente), a la compra.
 
@@ -4927,7 +4975,7 @@ class Decisor:
         acciones: list[Accion] = []
         if orden is not None:
             acciones += self._absorber([EnviarOrden(orden)])
-            acciones += self._seguimiento_salida(lote, orden)
+            acciones += self._seguimiento_salida(lote, orden, con_techo=True)       # decisión 13: persigue con techo
         if aviso is not None:
             acciones.append(aviso)
         return acciones
@@ -5108,7 +5156,13 @@ class Decisor:
         return _segundos((self._cfg.salidas or {}).get("por_hora") or {}, "perseguir_ask_s", PERSEGUIR_ASK_CADA_S)
 
     def _t_perseguir_ask(self, clave: str, datos: dict) -> list[Accion]:
-        """Corrección 11: sin fill, `Reemplazar` de PRECIO al ask nuevo, como mucho 3 veces (nunca cancelar + nueva)."""
+        """Corrección 11: sin fill, `Reemplazar` de PRECIO al ask nuevo, como mucho 3 veces (nunca cancelar + nueva).
+
+        Decisión 13 (Jaume 30-sep): con `datos["tp"]` es el cruce de un TP: parámetros de
+        `salidas.tp_parcial` (`salidas.persecucion_tp`), techo del 3 % sobre el último si `datos["techo"]`,
+        y cada vuelta CUENTA aunque el ask no se haya movido (así la persecución termina siempre); tras la
+        última sin llenar se programa el limbo (D2-13: `tp_limbo`, aviso 2).
+        """
         token = datos.get("token")
         o = self._estado.ordenes.get(token) if isinstance(token, int) else None
         if o is None or o.estado not in _VIVOS or _qty_viva(o) <= 0:
@@ -5117,6 +5171,8 @@ class Decisor:
         guarda = self._puede_gestionar_salida(self._pos(o.ticker))
         if guarda is not None:                              # G1A-02: en BS/halt/manual no se persigue; se espera
             return self._aplazar_salida(self._pos(o.ticker), clave, datos, guarda)
+        if datos.get("tp"):
+            return self._perseguir_tp_vuelta(o, datos)
         bloque = (self._cfg.salidas or {}).get("por_hora") or {}
         maximo = bloque.get("perseguir_ask_max", PERSEGUIR_ASK_MAX)
         maximo = maximo if type(maximo) is int and maximo >= 0 else PERSEGUIR_ASK_MAX
@@ -5134,6 +5190,34 @@ class Decisor:
                                                        "precio": reemplazo.precio, "regla": "corrección 11"}))
         if hechas < maximo:
             acciones.append(Programar(f"{T_PERSEGUIR_ASK}:{o.token}", self._perseguir_cada(), dict(datos)))
+        return acciones
+
+    def _perseguir_tp_vuelta(self, o: Orden, datos: dict) -> list[Accion]:
+        """Decisión 13 (Jaume 30-sep): una vuelta de la persecución del cruce del TP (REPLACE al ask si mejora)."""
+        maximo, cada, techo = salidas.persecucion_tp(self._cfg)
+        hechas = self._persecuciones.get(o.token, 0)
+        acciones: list[Accion] = []
+        if hechas < maximo:
+            reemplazo = salidas.perseguir_ask(o, self._cot(o.ticker), 0, 1, share_es_abierta=self._share_es_abierta(),
+                                              techo_pct=techo if datos.get("techo") else None)
+            hechas += 1
+            self._persecuciones[o.token] = hechas
+            if reemplazo is not None:
+                reemplazo = dataclasses.replace(reemplazo, motivo=(f"decisión 13: persecución del TP {hechas}/{maximo} "
+                                                                   f"al ask {reemplazo.precio} (R-D-03 v2)"))
+                self._pos(o.ticker).persecuciones_ask += 1
+                acciones += self._absorber([reemplazo])
+                acciones.append(Anotar("persecucion_ask", {"ticker": o.ticker, "token": o.token, "n": hechas,
+                                                           "precio": reemplazo.precio, "tp": True,
+                                                           "regla": "decisión 13 (Jaume 30-sep)"}))
+        if hechas < maximo:
+            acciones.append(Programar(f"{T_PERSEGUIR_ASK}:{o.token}", cada, dict(datos)))
+            return acciones
+        self._persecuciones.pop(o.token, None)
+        pos = self._pos(o.ticker)
+        lote = pos.lotes.get(str(datos.get("lote_id"))) if datos.get("lote_id") is not None else None
+        if lote is not None:                                 # agotada: el limbo de D2-13 (aviso si sigue sin llenar)
+            acciones.append(salidas.programa_limbo_tp(lote, o, self._cfg))
         return acciones
 
     def _t_eod_comprobar(self, clave: str, datos: dict) -> list[Accion]:
