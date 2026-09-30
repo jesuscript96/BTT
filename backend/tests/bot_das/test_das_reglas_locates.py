@@ -255,6 +255,14 @@ def test_cantidad_piramide_redondeo_al_par() -> None:
     assert cantidad_a_localizar(e, [fila("est-a", 1001.0)], D("5")) == 1001 + 334
 
 
+@pytest.mark.parametrize("times", [2, 5, 100, -1, "inf", None])
+def test_decision_20_repeticiones_cuentan_el_nivel_una_sola_vez(times) -> None:
+    """Decisión 20 (Jaume 30-sep): aunque llegue una estrategia con repeticiones, el nivel suma UNA vez (nunca × times):
+    no se pueden comprar locates sin tope."""
+    e = estrategia(niveles_piramide=[{"action": "add", "times": times}], riesgos_piramide=[D("150")])
+    assert cantidad_a_localizar(e, [fila("est-a", 1000.0)], D("5")) == 1000 + 500
+
+
 # ── veredicto_ev (R-H-01, H6, R-H-05, corrección 1) ───────────────────
 def test_veredicto_basico_1230_cobra_12_paquetes() -> None:
     """Jaume 29-sep: con el locate a 0,07 las 30 acciones extra ganan 30·5·4 % = 6 < 7 → el paquete 13 no se compra."""

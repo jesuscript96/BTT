@@ -1161,6 +1161,65 @@ def test_cuadro_ejecutar_true_sin_ev_carga_pero_no_ejecuta():
     assert C.extraer_estrategia(crudo["estrategias"][0]).sin_ev is True
 
 
+# ── Decisión 20 (Jaume 30-sep, PENDIENTE FUTURO): pirámides con repeticiones NO ejecutan ──
+def _con_niveles(times_por_nivel: list) -> dict:
+    """Estrategia del cuadro con ejecutar=true y un nivel de pirámide «add» por cada `times` (None = sin la clave)."""
+    crudo = _crudo()
+    e = crudo["estrategias"][0]
+    niveles = []
+    for t in times_por_nivel:
+        nivel = {"action": "add", "unit": "pct", "capital_pct": 10,
+                 "root_condition": {"logic": "AND", "conditions": [{"indicator": "Close", "operator": ">", "value": 1}]}}
+        if t is not None:
+            nivel["times"] = t
+        niveles.append(nivel)
+    e["definition"]["pyramiding"] = {"levels": niveles}
+    e["ejecutar"] = True
+    return crudo
+
+
+@pytest.mark.parametrize("times,ejecuta", [
+    pytest.param([1, 1, 1], True, id="tres-niveles-times-1-normal"),
+    pytest.param([None, None, None], True, id="sin-times-normal"),
+    pytest.param([0, None, 1], True, id="times-0-es-una-vez"),
+    pytest.param([1, 2, 1], False, id="times-2-no-ejecuta"),
+    pytest.param([1, 100, 1], False, id="times-100-no-ejecuta"),
+    pytest.param([1, -1, 1], False, id="ilimitado-menos-1-no-ejecuta"),
+    pytest.param([1, "inf", 1], False, id="ilimitado-inf-no-ejecuta"),
+    pytest.param([1, float("inf"), 1], False, id="ilimitado-infinito-no-ejecuta"),
+    pytest.param([1, "ilimitado", 1], False, id="ilimitado-texto-no-ejecuta"),
+])
+def test_decision_20_repeticiones_no_ejecutan(times, ejecuta):
+    """Decisión 20 (Jaume 30-sep): times=1/ausente/0 → pirámide normal, ejecuta; ≥ 2 o ilimitado → carga sin ejecutar."""
+    crudo = _con_niveles(times)
+    e = C.extraer_estrategia(crudo["estrategias"][0])
+    assert e.ejecutar is ejecuta and e.con_repeticiones is (not ejecuta)
+    assert C.niveles_con_repeticiones(crudo["estrategias"][0]["definition"]["pyramiding"]["levels"]) == (
+        [] if ejecuta else [1])
+
+
+def test_decision_20_exportar_apaga_y_anota_el_motivo(backend, tmp_path, base_motor):
+    """Decisión 20: al exportar, la estrategia con repeticiones queda ejecutar=false con su motivo, aunque estuviera
+    activa; la de times=1 conserva su ejecutar."""
+    rep = _con_niveles([1, 3])["estrategias"][0]["definition"]
+    normal = _con_niveles([1, 1])["estrategias"][0]["definition"]
+    backend.responder({"total": 2, "estrategias": [_fila_backend("s-1", definition=rep),
+                                                   _fila_backend("s-2", definition=normal)]})
+    destino = tmp_path / "c.json"
+    C.exportar_desde_backend(backend.url, destino, RUTA_EJEMPLO, cuenta_das=CUENTA, base_motor=base_motor)
+    crudo = json.loads(destino.read_text(encoding="utf-8"))
+    for e in crudo["estrategias"]:
+        e["ejecutar"] = True                                             # Jaume las activa en el cuadro
+    C.escribir_atomico(destino, _firmar(crudo, definiciones=False))
+    cfg = C.exportar_desde_backend(backend.url, destino, RUTA_EJEMPLO, cuenta_das=CUENTA, base_motor=base_motor)
+    filas = {e["strategy_id"]: e for e in json.loads(destino.read_text(encoding="utf-8"))["estrategias"]}
+    assert filas["s-1"]["ejecutar"] is False
+    assert filas["s-1"]["motivo_no_ejecuta"].startswith(C.MOTIVO_REPETICIONES)
+    assert filas["s-2"]["ejecutar"] is True and "motivo_no_ejecuta" not in filas["s-2"]
+    assert cfg.estrategias["s-1"].ejecutar is False and cfg.estrategias["s-1"].con_repeticiones is True
+    assert cfg.estrategias["s-2"].ejecutar is True
+
+
 def test_exportar_sube_version_y_conserva_ejecutar(backend, tmp_path, base_motor):
     backend.responder({"total": 1, "estrategias": [_fila_backend("s-1")]})
     destino = tmp_path / "c.json"

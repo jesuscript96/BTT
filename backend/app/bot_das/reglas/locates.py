@@ -267,6 +267,11 @@ def cantidad_a_localizar(e: EstrategiaConfig, estimacion: Optional[list[dict]], 
     verdad. Lo exacto sería que la fuente del radar añadiera a cada fila las
     acciones por nivel calculadas por el motor (otra unidad). Nunca compra a
     ciegas: sigue pasando por el EV con el coste TOTAL y el tope del 3 %.
+
+    REPETICIONES (decisión 20, Jaume 30-sep): cada nivel cuenta UNA sola vez
+    aunque lleve `times` ≥ 2 (o ilimitado): nunca se multiplica, para no poder
+    comprar locates sin tope. Esas estrategias, además, no ejecutan
+    (`config.niveles_con_repeticiones`).
     """
     if not _decimal_positivo(precio):
         return 0

@@ -641,15 +641,33 @@ def normaliza_lot_tp(lot_tp) -> dict:
     travel_pct > 0 y ESTRICTAMENTE creciente (dos rungs al mismo nivel o en
     orden decreciente son un 422 — no se reordenan en silencio), capital_pct
     en (0, 100], y la suma de capital_pct ≤ 100 (el resto del lote cabalga).
+
+    UNIDAD (Jaume 30-sep). `unit` opcional en el bloque:
+      * sin `unit` o "pct" → lo de siempre: capital_pct % del tamaño EJECUTADO
+        del lote, en fracción de acción (bit-idéntico; el bloque canónico sale
+        SIN la clave `unit`).
+      * "lot_pct" → «% del lote» en ACCIONES ENTERAS: cada rung cierra
+        round(capital_pct/100 × tamaño inicial del lote) (mitades hacia arriba),
+        mínimo 1, tope lo que quede del lote; el rung con el que el % acumulado
+        llega a 100 cierra el RESTO del lote (33/33/34 sobre 90 → 30/30/30).
+      * "shares" → acciones fijas: cada rung lleva `shares` (entero > 0) en vez
+        de capital_pct; tope lo que quede del lote (sin regla de suma: el
+        tamaño del lote no se conoce al compilar).
     """
     if not isinstance(lot_tp, dict):
         raise ValueError(f"debe ser un objeto, llegó {type(lot_tp).__name__}")
+
+    unidad_raw = lot_tp.get("unit")
+    unidad = "pct" if unidad_raw in (None, "") else str(unidad_raw).strip().lower()
+    if unidad not in ("pct", "lot_pct", "shares"):
+        raise ValueError(
+            f"'unit' debe ser 'pct', 'lot_pct' o 'shares' (llegó {unidad_raw!r})")
 
     rungs_raw = lot_tp.get("rungs")
     if not isinstance(rungs_raw, list) or not rungs_raw:
         raise ValueError(
             "'rungs' debe ser una lista no vacía de objetos "
-            "{travel_pct, capital_pct}")
+            + ("{travel_pct, shares}" if unidad == "shares" else "{travel_pct, capital_pct}"))
 
     rungs = []
     suma_cap = 0.0
@@ -657,9 +675,21 @@ def normaliza_lot_tp(lot_tp) -> dict:
         if not isinstance(r, dict):
             raise ValueError(f"rungs[{j}] debe ser un objeto, llegó {type(r).__name__}")
         t = _numero_lot_stop(r.get("travel_pct"), f"rungs[{j}].travel_pct")
-        c = _numero_lot_stop(r.get("capital_pct"), f"rungs[{j}].capital_pct")
         if t <= 0:
             raise ValueError(f"rungs[{j}].travel_pct debe ser > 0")
+        if unidad == "shares":
+            c = _numero_lot_stop(r.get("shares"), f"rungs[{j}].shares")
+            if c < 1 or c != int(c):
+                raise ValueError(f"rungs[{j}].shares debe ser un entero ≥ 1")
+            c = float(int(c))
+            if rungs and t <= rungs[-1][0]:
+                raise ValueError(
+                    f"rungs[{j}].travel_pct debe ser ESTRICTAMENTE creciente "
+                    f"(llegó {t:g} con el anterior en {rungs[-1][0]:g}: un ladder "
+                    f"desordenado es un error de quien lo escribe, no se reordena)")
+            rungs.append((t, c))
+            continue
+        c = _numero_lot_stop(r.get("capital_pct"), f"rungs[{j}].capital_pct")
         if not (0.0 < c <= 100.0):
             raise ValueError(f"rungs[{j}].capital_pct debe estar en (0, 100]")
         if rungs and t <= rungs[-1][0]:
@@ -673,7 +703,9 @@ def normaliza_lot_tp(lot_tp) -> dict:
         raise ValueError(
             f"la suma de capital_pct no puede pasar de 100 (suma {suma_cap:g}: "
             f"el resto del lote tiene que cabalgar hasta la salida del trade)")
-    return {"rungs": rungs}
+    if unidad == "pct":
+        return {"rungs": rungs}              # regla nº1: bit-idéntico al de siempre
+    return {"unit": unidad, "rungs": rungs}
 
 
 def normaliza_steps(steps, same_bar=True) -> dict:

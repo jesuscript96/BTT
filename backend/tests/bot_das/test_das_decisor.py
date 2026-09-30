@@ -1580,6 +1580,34 @@ def test_estrategia_sin_ev_no_ejecuta_y_avisa_una_vez_al_dia(cfg: Config, tmp_pa
     assert b.decisor._cfg.estrategias[SID].ejecutar is False
 
 
+def test_decision_20_repeticiones_no_ejecuta_y_avisa_una_vez_al_dia(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 20 (Jaume 30-sep): pirámide con repeticiones → señales «sin ejecutar», aviso nivel 2 al B una vez al
+    día (al arrancar; la señal no lo repite) y ni /activar la enciende."""
+    e = dataclasses.replace(cfg.estrategias[SID], ejecutar=False, con_repeticiones=True)
+    b = Banco(cfg_con(cfg, estrategias=[e]), tmp_path)
+    b.conectar()
+    arranque = b.arrancar()
+    b.preparar(locates=((TICKER, SID, 1000),), cotizaciones=((TICKER, "3.44", "3.46", "3.45"),))
+    primera = b.senal(evento())
+    avisos_ = [a for a in arranque if isinstance(a, Avisar) and a.clave == f"repeticiones:{SID}"]
+    assert len(avisos_) == 1 and avisos_[0].nivel == Nivel.AVISO and avisos_[0].grupo == Grupo.B
+    assert "pirámide con repeticiones: no soportada aún" in avisos_[0].texto
+    assert not [a for a in primera if isinstance(a, Avisar) and a.clave == f"repeticiones:{SID}"]
+    assert anotaciones(primera, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_ESTRATEGIA
+    assert not b.enviadas()
+    b.decisor._override_estrategia[SID] = {"ejecutar": True}
+    b.decisor._recomponer_cfg()
+    assert b.decisor._cfg.estrategias[SID].ejecutar is False
+
+
+def test_decision_20_times_1_ejecuta_normal_sin_aviso(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 20: sin repeticiones (times=1) la estrategia ejecuta como siempre y no hay aviso."""
+    b = Banco(cfg, tmp_path)
+    b.conectar()
+    assert b.decisor._cfg.estrategias[SID].con_repeticiones is False
+    assert not [a for a in b.arrancar() if isinstance(a, Avisar) and a.clave == f"repeticiones:{SID}"]
+
+
 def test_estrategia_sin_ev_avisa_al_recargar_el_cuadro_una_sola_vez(cfg: Config, tmp_path: Path) -> None:
     """Jaume 30-sep: si una recarga del cuadro deja una estrategia sin EV, aviso nivel 2 al B ya; otra recarga no lo repite."""
     b = Banco(cfg, tmp_path)
@@ -4577,3 +4605,43 @@ def test_D8_base_60_piramide_30_tres_parciales_dejan_todos_los_lotes_a_cero(banc
     assert totales == [23, 45, 22]
     assert b.pos().neta_fills == 0
     assert b.pos().lotes[base].llenas == 0 and b.pos().lotes[pir].llenas == 0
+
+
+def _tp_de_lote(resto: float, hora: str, **cambios: Any) -> Evento:
+    base = dict(tipo="piramide", ticker=TICKER, strategy_id=SID, estrategia="PM (A) prueba", precio=3.30,
+                direccion="Short", acciones=30.0, nivel=1, accion_piramide="lot_tp", posicion_total=100.0 + resto,
+                momento=pd.Timestamp(f"2026-09-25 {hora}"), fraccion_lote=1 / 3, tamano_lote_backtest=90.0,
+                resto_lote_backtest=resto)
+    base.update(cambios)
+    return Evento(**base)
+
+
+def test_tp_de_lote_nuestro_60_backtest_90_cierra_20_20_y_el_resto(banco: Banco) -> None:
+    """Jaume 30-sep: TP de lote en tres peldaños del 33 % (30/30/30 de un lote de 90 del backtest) → sobre NUESTRO lote
+    de pirámide de 60: 20, 20 y el resto (20), solo de ese lote; el base no se toca."""
+    b = banco
+    base, pir = _abrir_con_piramide(b, 100, 60)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    pedidas = []
+    for resto, hora in ((60.0, "09:31:00"), (30.0, "09:32:00"), (0.0, "09:33:00")):
+        marca = b.marca()
+        acciones = _salida_motor(b, _tp_de_lote(resto, hora))
+        enviadas = b.enviadas(Proposito.TP_AGREGAR, desde=marca)
+        assert {o.lote_id for o in enviadas} <= {pir}
+        pedidas += [o.qty for o in enviadas]
+        nota = anotaciones(acciones, "salida_proporcion")[0].datos
+        assert nota["modo"] == "proporcion"
+        b.avanzar(61)
+    assert pedidas == [20, 20, 20]
+    assert b.pos().lotes[pir].llenas == 0 and b.pos().lotes[base].llenas == 100
+
+
+def test_tp_de_lote_sin_fraccion_sigue_literal(banco: Banco) -> None:
+    """Un TP de lote SIN `fraccion_lote` (motor viejo) → las acciones literales del evento, como antes."""
+    b = banco
+    _base, pir = _abrir_con_piramide(b, 100, 60)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    marca = b.marca()
+    acciones = _salida_motor(b, _tp_de_lote(60.0, "09:31:00", fraccion_lote=None, resto_lote_backtest=None))
+    assert [(o.lote_id, o.qty) for o in b.enviadas(Proposito.TP_AGREGAR, desde=marca)] == [(pir, 30)]
+    assert anotaciones(acciones, "salida_proporcion")[0].datos["modo"] == "literal"

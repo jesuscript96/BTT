@@ -635,13 +635,20 @@ export interface LotTpConfig {
     // Escalera ordenada por travel_pct creciente (el validador del backend
     // rebota con 422 cualquier otra cosa).
     rungs: LotTpRung[];
+    // Unidad de los peldaños (Jaume 30-sep). Ausente/'pct' = % del lote en
+    // fracción de acción (lo de siempre); 'lot_pct' = % del lote en acciones
+    // enteras (el peldaño con el que el % acumulado llega a 100 cierra el
+    // resto); 'shares' = acciones fijas (campo `shares` del peldaño).
+    unit?: 'pct' | 'lot_pct' | 'shares';
 }
 
 export interface LotTpRung {
     // % de recorrido favorable desde el precio del lote (short: caída).
     travel_pct: number;
-    // % del tamaño EJECUTADO del lote que cierra este rung.
-    capital_pct: number;
+    // % del tamaño EJECUTADO del lote que cierra este rung (unit pct/lot_pct).
+    capital_pct?: number;
+    // Acciones fijas que cierra este rung (unit 'shares').
+    shares?: number;
 }
 
 // Un grupo de piramides con su modo. Los grupos corren en paralelo entre si;

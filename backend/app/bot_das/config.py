@@ -51,6 +51,7 @@ import dataclasses
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import tempfile
@@ -114,7 +115,53 @@ _CALIENTE_ESTRATEGIA = frozenset(r[len(_PREFIJO_ESTRATEGIA):] for r in CALIENTE
 _META = ("sha256", "config_version", "generado_at", "estrategias_hash")
 # Campos de EstrategiaConfig que se DERIVAN de `definition`: su cambio ya lo dice `definition_hash`.
 _DERIVADOS_ESTRATEGIA = ("hora_fin_sesion", "ventana_entradas", "hora_salida", "accept_reentries",
-                         "max_reentries", "niveles_piramide", "es_rth", "definition")
+                         "max_reentries", "niveles_piramide", "es_rth", "definition", "con_repeticiones")
+
+# Decisión 20 (Jaume 30-sep): PENDIENTE FUTURO. Por seguridad, una estrategia con algún nivel de pirámide con
+# repeticiones (`times` ≥ 2 o «ilimitado») NO ejecuta: carga, queda con ejecutar=false y avisa (como la de sin EV).
+MOTIVO_REPETICIONES = "pirámide con repeticiones: no soportada aún"
+_TIMES_ILIMITADO = frozenset({"inf", "infinity", "unlimited", "ilimitado", "ilimitadas", "∞"})
+
+
+def _times_con_repeticiones(valor: Any) -> bool:
+    """Decisión 20 (Jaume 30-sep): ¿este `times` de un nivel de pirámide significa MÁS de una vez?
+
+    1, ausente, None, 0 o "" → una vez (lo que hace `strategy_engine.compile_strategy_def`: `max(1, int(times))`),
+    pirámide normal. Un entero ≥ 2 → repeticiones. El motor no tiene un «ilimitado» (tope 100; −1 o texto no
+    numérico los lee como 1), pero por seguridad cualquier valor que pueda significarlo (negativo, infinito,
+    «inf»/«ilimitado»…) o que no se entienda cuenta como repeticiones: mejor no ejecutar que comprar sin tope.
+    """
+    if valor is None or isinstance(valor, bool):
+        return False
+    if isinstance(valor, str):
+        texto = valor.strip().lower()
+        if texto == "":
+            return False
+        if texto in _TIMES_ILIMITADO:
+            return True
+        try:
+            valor = float(texto)
+        except ValueError:
+            return True
+    if not isinstance(valor, (int, float, Decimal)):
+        return True
+    numero = float(valor)
+    if not math.isfinite(numero) or numero < 0:
+        return True
+    return int(numero) >= 2
+
+
+def niveles_con_repeticiones(niveles: Any) -> list[int]:
+    """Decisión 20 (Jaume 30-sep): posiciones (en `pyramiding.levels`) de los niveles con repeticiones. Nunca lanza."""
+    if not isinstance(niveles, list):
+        return []
+    return [k for k, nivel in enumerate(niveles)
+            if isinstance(nivel, dict) and _times_con_repeticiones(nivel.get("times"))]
+
+
+def _niveles_de_definicion(definicion: Any) -> Any:
+    piramide = definicion.get("pyramiding") if isinstance(definicion, dict) else None
+    return piramide.get("levels") if isinstance(piramide, dict) else None
 
 # ── esquema de §7 ──────────────────────────────────────────────────────
 # Tipos de hoja: "bool", "num" (finito), "num+" (> 0), "num0" (≥ 0), "num?" (null o num0),
@@ -673,7 +720,9 @@ def extraer_estrategia(v: dict) -> EstrategiaConfig:
     # Decisión 23 (Jaume 30-sep): EV nulo/ausente → carga, pero NO ejecuta (aunque el cuadro diga ejecutar=true);
     # el decisor descarta sus señales como «sin ejecutar» y avisa una vez al día. Nunca se inventa un EV.
     sin_ev = v.get("ev_pct") is None
-    ejecutar = v.get("ejecutar", False) is True and not sin_ev
+    # Decisión 20 (Jaume 30-sep): pirámide con repeticiones → carga, pero NO ejecuta (aunque diga ejecutar=true).
+    con_repeticiones = bool(niveles_con_repeticiones(niveles))
+    ejecutar = v.get("ejecutar", False) is True and not sin_ev and not con_repeticiones
     riesgo = v.get("riesgo_usd")
     riesgos_p = v.get("riesgos_piramide") or []
     return EstrategiaConfig(
@@ -699,6 +748,7 @@ def extraer_estrategia(v: dict) -> EstrategiaConfig:
         definition_hash=v.get("definition_hash") or _hash_prefijado(definicion),
         definition=definicion,
         sin_ev=sin_ev,
+        con_repeticiones=con_repeticiones,
     )
 
 
@@ -1092,7 +1142,13 @@ def _fila_a_estrategia(fila: Any, plantilla: dict, previa: Optional[dict]) -> di
     # Decisión 22 (Jaume 30-sep): una estrategia NUEVA entra apagada; solo Jaume la activa. Las que ya estaban
     # conservan su `ejecutar`. Decisión 23: sin EV en el cuadro → ev_pct null y ejecutar=false (no el EV de la plantilla).
     ejecutar = previa is not None and previa.get("ejecutar", False) is True and ev is not None
+    # Decisión 20 (Jaume 30-sep): pirámide con repeticiones → ejecutar=false con su motivo en el cuadro.
+    repeticiones = niveles_con_repeticiones(_niveles_de_definicion(definicion))
+    if repeticiones:
+        ejecutar = False
     return {
+        **({"motivo_no_ejecuta": f"{MOTIVO_REPETICIONES} (niveles {[k + 1 for k in repeticiones]})"}
+           if repeticiones else {}),
         "strategy_id": fila["strategy_id"],
         "name": fila.get("name") or fila["strategy_id"],
         "origen": fila.get("origen") or "portfolio",

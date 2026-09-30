@@ -1679,6 +1679,54 @@ def test_D8_qty_proporcional(fraccion, total, base, esperado):
     assert salidas.qty_proporcional(fraccion, total, base) == esperado
 
 
+# ── TP DE LOTE por proporción del lote (Jaume 30-sep) ──
+def test_tp_lote_nuestro_60_backtest_90_peldano_33_cierra_20():
+    """Jaume 30-sep: el backtest cierra 30 de su lote de 90 (el 33 %) → el mismo 33 % de NUESTRO lote de 60 = 20."""
+    ev = _ev(tipo="piramide", accion_piramide="lot_tp", acciones=30.0, posicion_total=70.0,
+             fraccion_lote=30 / 90, tamano_lote_backtest=90.0, resto_lote_backtest=60.0)
+    fraccion, total = salidas.proporcion_del_evento(ev)
+    assert total is False and round(fraccion, 6) == D("0.333333")
+    assert salidas.qty_tp_de_lote(fraccion, total, 60, 60) == 20
+
+
+def test_tp_lote_tres_peldanos_33_33_34_sobre_60_cierran_20_20_y_el_resto():
+    """Peldaños 30/30/30 de un lote de 90 → sobre el nuestro de 60 (inicial): 20, 20 y el resto (resto del backtest 0)."""
+    inicial, libres, cerradas = 60, 60, []
+    for resto in (60.0, 30.0, 0.0):
+        fraccion, total = salidas.proporcion_del_evento(_ev(
+            tipo="piramide", accion_piramide="lot_tp", acciones=30.0, posicion_total=10.0 + resto,
+            fraccion_lote=1 / 3, tamano_lote_backtest=90.0, resto_lote_backtest=resto))
+        q = salidas.qty_tp_de_lote(fraccion, total, inicial, libres)
+        cerradas.append(q)
+        libres -= q
+    assert cerradas == [20, 20, 20] and libres == 0
+
+
+@pytest.mark.parametrize("campos,esperado", [
+    pytest.param(dict(fraccion_lote=0.5, resto_lote_backtest=45.0), (D("0.5"), False), id="fraccion"),
+    pytest.param(dict(fraccion_lote=0.5, resto_lote_backtest=0.0), (D(1), True), id="resto-0-total"),
+    pytest.param(dict(fraccion_lote=1.0), (D(1), True), id="fraccion-1-total"),
+    pytest.param(dict(fraccion_lote=None), None, id="sin-fraccion-literal"),
+    pytest.param(dict(fraccion_lote="x"), None, id="fraccion-no-numerica-literal"),
+    pytest.param(dict(fraccion_lote=0.0), None, id="fraccion-0-literal"),
+])
+def test_tp_lote_proporcion_del_evento(campos, esperado):
+    ev = _ev(tipo="piramide", accion_piramide="lot_tp", acciones=20.0, posicion_total=80.0, **campos)
+    assert salidas.proporcion_del_evento(ev) == esperado
+
+
+@pytest.mark.parametrize("fraccion,total,inicial,libres,esperado", [
+    pytest.param(D("0.001"), False, 60, 60, 1, id="minimo-1"),
+    pytest.param(D("0.5"), False, 61, 61, 31, id="mitades-hacia-arriba"),
+    pytest.param(D("0.5"), False, 60, 10, 10, id="tope-lo-libre"),
+    pytest.param(D("0.25"), True, 60, 37, 37, id="total-cierra-lo-libre"),
+    pytest.param(D("0.25"), False, 60, 0, 0, id="sin-libres-nada"),
+    pytest.param(D("0.5"), False, 0, 20, 10, id="inicial-desconocido-usa-libres"),
+])
+def test_tp_lote_qty(fraccion, total, inicial, libres, esperado):
+    assert salidas.qty_tp_de_lote(fraccion, total, inicial, libres) == esperado
+
+
 def test_D8_repartir_salida_proporcional_y_el_resto_al_base():
     """D8: el reparto entre lotes es proporcional a la base de cada uno (hacia abajo) y el resto va primero al lote BASE
     y luego a las pirámides de nivel más bajo; la suma es exacta y ningún lote pasa de lo suyo libre."""

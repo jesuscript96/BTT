@@ -1042,6 +1042,9 @@ class EstrategiaConfig:
     definition_hash: str
     definition: dict
     sin_ev: bool = False    # Decisión 23 (Jaume 30-sep): ev_pct null en el cuadro → no ejecuta (ev_pct queda a 0) y avisa
+    # Decisión 20 (Jaume 30-sep, PENDIENTE FUTURO): algún nivel de pirámide con repeticiones (`times` ≥ 2 o
+    # ilimitado) → no ejecuta y avisa una vez al día, como `sin_ev`
+    con_repeticiones: bool = False
 
 
 @dataclass(frozen=True)

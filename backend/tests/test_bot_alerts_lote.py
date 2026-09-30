@@ -148,6 +148,19 @@ def test_dos_rungs_del_tp_en_la_misma_vela(monkeypatch):
     assert "TP DE LOTE" in formatear(av[2])
 
 
+def test_tp_de_lote_lleva_fraccion_y_tamano_del_lote(monkeypatch):
+    """Jaume 30-sep: el TP DE LOTE trae la fracción del lote INICIAL, su tamaño
+    y lo que le queda, para que el bot de DAS cierre la misma proporción del
+    suyo. Lote de 10 con 30 % a +5 % y 70 % a +10 % (Σ 100 → el 2.º cierra el resto)."""
+    av = _correr_bot(monkeypatch, _dia(lows={7: 9.4, 9: 8.9}),
+                     [_nivel(lot_tp={"unit": "lot_pct", "rungs": [(5.0, 30.0), (10.0, 70.0)]})])
+    tps = [a for a in av if a.accion_piramide == "lot_tp"]
+    assert [(a.fraccion_lote, a.tamano_lote_backtest, a.resto_lote_backtest) for a in tps] == [
+        (0.3, 10.0, 7.0), (0.7, 10.0, 0.0)]
+    otros = [a for a in av if a.accion_piramide != "lot_tp"]
+    assert all(a.fraccion_lote is None and a.tamano_lote_backtest is None for a in otros)
+
+
 def test_con_lo_avisado_distinto_del_simulador(monkeypatch):
     """Se avisaron 9 (el simulador lleva 10): el lote cierra sus 10 y la salida
     cierra las 9 que quedan de verdad."""

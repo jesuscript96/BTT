@@ -1176,7 +1176,16 @@ class Decisor:
                 acciones.append(Avisar(Nivel.AVISO, Grupo.B,
                                        f"Estrategia {avisos.escapar_html(e.name)} sin EV en el cuadro: no ejecuta "
                                        f"hasta que lo pongas", clave=f"sin_ev:{e.strategy_id}"))
+            acciones += self._aviso_repeticiones(e)
         return acciones
+
+    def _aviso_repeticiones(self, e: EstrategiaConfig) -> list[Accion]:
+        """Decisión 20 (Jaume 30-sep, PENDIENTE FUTURO): pirámide con repeticiones → no ejecuta; aviso nivel 2 una vez al día."""
+        if not e.con_repeticiones or not self._una_vez_al_dia(f"repeticiones:{e.strategy_id}"):
+            return []
+        return [Avisar(Nivel.AVISO, Grupo.B,
+                       f"Estrategia {avisos.escapar_html(e.name)}: {mod_config.MOTIVO_REPETICIONES}; no ejecuta "
+                       f"(decisión 20)", clave=f"repeticiones:{e.strategy_id}")]
 
     def _hora_texto(self) -> str:
         return self._ahora_et.strftime("%H:%M:%S")
@@ -1659,6 +1668,8 @@ class Decisor:
             acciones.append(Avisar(Nivel.AVISO, Grupo.B,
                                    f"Estrategia {avisos.escapar_html(e.name)} sin EV en el cuadro: no ejecuta hasta "
                                    f"que lo pongas", clave=f"sin_ev:{e.strategy_id}"))
+        if e is not None:
+            acciones += self._aviso_repeticiones(e)          # decisión 20 (Jaume 30-sep)
         if principal and e is not None and s.id not in self._sin_base_senales:
             # Jaume 29-sep (estricto): la PRIMERA señal principal del día de la pareja es la única oportunidad, se opere
             # o no (retraso, pausa, exclusión, locates…): entrar en una vela posterior sería un trade que el backtest no
@@ -2486,7 +2497,15 @@ class Decisor:
         # repartida por `salidas.repartir_salida`); en un SL/TP de lote, la de ese lote. Si no, las acciones literales.
         proporcion = salidas.proporcion_del_evento(ev)
         pedidas_literal: Optional[int] = None
-        if proporcion is not None:
+        es_tp_lote = (_tipo_evento(ev) == "piramide"
+                      and str(getattr(ev, "accion_piramide", "") or "").strip().lower() == "lot_tp")
+        if proporcion is not None and es_tp_lote:
+            # TP DE LOTE (Jaume 30-sep): la fracción es del lote INICIAL del backtest → sobre el inicial del nuestro
+            inicial = max(lote.llenas, self._llenas_max_lote.get(lote.id, 0))
+            q = salidas.qty_tp_de_lote(proporcion[0], proporcion[1], inicial, salidas.base_proporcional(lote))
+            partes = [(lote, q)] if q > 0 else []
+            acciones.append(self._anotar_proporcion(s, lote, acciones_ev, q, proporcion, q))
+        elif proporcion is not None:
             vivos = (self._lotes_de_estrategia(pos, lote) if salidas.proporcion_de_estrategia(ev) else [lote])
             base_total = sum(salidas.base_proporcional(x) for x in vivos)
             objetivo = salidas.qty_proporcional(proporcion[0], proporcion[1], base_total)
@@ -6937,8 +6956,10 @@ class Decisor:
             estrategias = dict(base.estrategias)
             for sid, campos in self._override_estrategia.items():
                 if sid in estrategias and campos:
-                    if estrategias[sid].sin_ev and campos.get("ejecutar") is True:
-                        # Decisión 23 (Jaume 30-sep): sin EV en el cuadro, ni /activar la pone a ejecutar
+                    if ((estrategias[sid].sin_ev or estrategias[sid].con_repeticiones)
+                            and campos.get("ejecutar") is True):
+                        # Decisión 23 (Jaume 30-sep): sin EV en el cuadro, ni /activar la pone a ejecutar; ni con
+                        # pirámides con repeticiones (decisión 20)
                         campos = {k: v for k, v in campos.items() if k != "ejecutar"}
                     estrategias[sid] = dataclasses.replace(estrategias[sid], **campos)
             cambios["estrategias"] = estrategias

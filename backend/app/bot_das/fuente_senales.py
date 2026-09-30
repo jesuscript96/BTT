@@ -167,6 +167,9 @@ class EventoLigero:
     accion_piramide: Optional[str] = None
     posicion_total: Optional[float] = None
     cuenta: Optional[str] = None
+    fraccion_lote: Optional[float] = None           # TP DE LOTE (Jaume 30-sep)
+    tamano_lote_backtest: Optional[float] = None
+    resto_lote_backtest: Optional[float] = None
     extra: dict = field(default_factory=dict)
 
     def __getattr__(self, nombre: str) -> Any:

@@ -715,13 +715,44 @@ const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
                                         const rungs = lv.lot_tp.rungs ?? [];
                                         const setRungs = (nr: typeof rungs) =>
                                             setLevel(idx, { ...lv, lot_tp: { ...lv.lot_tp!, rungs: nr } });
-                                        const suma = rungs.reduce((a, r) => a + (Number(r.capital_pct) || 0), 0);
+                                        // Unidad de los peldaños (Jaume 30-sep): '' = % del lote de siempre
+                                        // (fracción de acción), 'lot_pct' = % en acciones enteras, 'shares' = acciones.
+                                        const unidad = lv.lot_tp.unit === 'lot_pct' || lv.lot_tp.unit === 'shares' ? lv.lot_tp.unit : '';
+                                        const enAcciones = unidad === 'shares';
+                                        const campo: 'shares' | 'capital_pct' = enAcciones ? 'shares' : 'capital_pct';
+                                        const setUnidad = (u: string) => {
+                                            const { unit: _u, ...resto } = lv.lot_tp!;
+                                            const nuevaAcc = u === 'shares';
+                                            const nr = rungs.map((x) => nuevaAcc
+                                                ? { travel_pct: x.travel_pct, shares: x.shares ?? 100 }
+                                                : { travel_pct: x.travel_pct, capital_pct: x.capital_pct ?? 25 });
+                                            setLevel(idx, { ...lv, lot_tp: { ...resto, rungs: nr, ...(u ? { unit: u as 'lot_pct' | 'shares' } : {}) } });
+                                        };
+                                        const suma = enAcciones ? 0 : rungs.reduce((a, r) => a + (Number(r.capital_pct) || 0), 0);
                                         const creciente = rungs.every((r, i) => i === 0 || Number(r.travel_pct) > Number(rungs[i - 1].travel_pct));
                                         const viajesPositivos = rungs.every((r) => Number(r.travel_pct) > 0);
-                                        const capsOk = rungs.every((r) => Number(r.capital_pct) > 0 && Number(r.capital_pct) <= 100);
+                                        const capsOk = enAcciones
+                                            ? rungs.every((r) => Number.isInteger(Number(r.shares)) && Number(r.shares) >= 1)
+                                            : rungs.every((r) => Number(r.capital_pct) > 0 && Number(r.capital_pct) <= 100);
                                         const valido = creciente && viajesPositivos && capsOk && suma <= 100;
                                         return (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                                <select
+                                                    value={unidad}
+                                                    onChange={(e) => setUnidad(e.target.value)}
+                                                    style={{ ...selectStyle, alignSelf: 'flex-start' }}
+                                                    title={
+                                                        "Unidad de los peldaños.\n" +
+                                                        "% del lote: fracción del tamaño ejecutado del añadido (como siempre).\n" +
+                                                        "% del lote (acc. enteras): redondea a acciones, mínimo 1; el peldaño que\n" +
+                                                        "llega al 100 % acumulado cierra el resto del lote.\n" +
+                                                        "acciones: número fijo de acciones por peldaño (tope lo que quede del lote)."
+                                                    }
+                                                >
+                                                    <option value="">% del lote</option>
+                                                    <option value="lot_pct">% del lote (acc. enteras)</option>
+                                                    <option value="shares">acciones</option>
+                                                </select>
                                                 {rungs.map((r, ri) => (
                                                     <div key={ri} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                                                         <input
@@ -734,14 +765,14 @@ const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
                                                         />
                                                         <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>% recorrido → saca</span>
                                                         <input
-                                                            type="number" min={1} max={100} step={5}
-                                                            value={r.capital_pct ?? ''}
-                                                            onChange={(e) => setRungs(rungs.map((x, i) => i === ri ? { ...x, capital_pct: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
+                                                            type="number" min={1} max={enAcciones ? undefined : 100} step={enAcciones ? 1 : 5}
+                                                            value={r[campo] ?? ''}
+                                                            onChange={(e) => setRungs(rungs.map((x, i) => i === ri ? { ...x, [campo]: e.target.value === '' ? 0 : Number(e.target.value) } : x))}
                                                             onFocus={(e) => e.target.select()}
                                                             style={{ ...selectStyle, width: 58, cursor: 'text' }}
-                                                            title="% del tamaño del lote que cierra este peldaño."
+                                                            title={enAcciones ? "Acciones que cierra este peldaño (tope lo que quede del lote)." : "% del tamaño del lote que cierra este peldaño."}
                                                         />
-                                                        <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>% del lote</span>
+                                                        <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: 'var(--color-ec-text-muted)', whiteSpace: 'nowrap' }}>{enAcciones ? 'acciones' : '% del lote'}</span>
                                                         <button
                                                             type="button"
                                                             onClick={() => setRungs(rungs.filter((_, i) => i !== ri))}
@@ -753,17 +784,20 @@ const PyramidingBuilderInner = React.memo(({ config, onChange }: Props) => {
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                                                     <button
                                                         type="button"
-                                                        onClick={() => setRungs([...rungs, { travel_pct: (Number(rungs[rungs.length - 1]?.travel_pct) || 5) + 5, capital_pct: 25 }])}
+                                                        onClick={() => setRungs([...rungs, { travel_pct: (Number(rungs[rungs.length - 1]?.travel_pct) || 5) + 5, ...(enAcciones ? { shares: 100 } : { capital_pct: 25 }) }])}
                                                         style={{ background: 'transparent', border: 'none', color: 'var(--color-ec-copper)', cursor: 'pointer', fontSize: 10.5, fontWeight: 700, padding: 0 }}
                                                         title="Añadir un peldaño a la escalera"
                                                     >+ peldaño</button>
                                                     <span style={{ fontFamily: 'var(--color-ec-sans)', fontSize: 10, color: valido ? 'var(--color-ec-text-muted)' : 'var(--color-ec-loss)' }}>
                                                         {valido
-                                                            ? `Σ ${suma % 1 === 0 ? suma : suma.toFixed(1)} % del lote · el resto sale con el trade`
+                                                            ? (enAcciones
+                                                                ? 'acciones fijas por peldaño · tope lo que quede del lote · el resto sale con el trade'
+                                                                : `Σ ${suma % 1 === 0 ? suma : suma.toFixed(1)} % del lote · ` +
+                                                                  (unidad === 'lot_pct' && suma >= 100 ? 'el último peldaño cierra el resto' : 'el resto sale con el trade'))
                                                             : (!viajesPositivos ? 'el % de recorrido debe ser > 0 · '
                                                                : !creciente ? 'el recorrido debe crecer de peldaño a peldaño · '
-                                                               : !capsOk ? 'el % del lote debe estar en (0, 100] · '
-                                                               : '') + `Σ ${suma.toFixed(1)} % > 100 no vale`}
+                                                               : !capsOk ? (enAcciones ? 'las acciones deben ser un entero ≥ 1 · ' : 'el % del lote debe estar en (0, 100] · ')
+                                                               : '') + (enAcciones ? '' : `Σ ${suma.toFixed(1)} % > 100 no vale`)}
                                                     </span>
                                                 </div>
                                             </div>

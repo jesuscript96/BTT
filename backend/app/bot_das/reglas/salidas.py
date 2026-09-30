@@ -29,7 +29,9 @@ posición corta (y, por simetría, de una larga):
     `repartir_salida`, `base_proporcional`: D8 (Jaume 30-sep): una salida
     parcial cierra la MISMA proporción de la posición del bot que el backtest
     de la suya (salida / REDUCIR: toda la estrategia, base + pirámides,
-    repartida entre sus lotes; SL/TP de lote: ese lote).
+    repartida entre sus lotes; SL/TP de lote: ese lote). `qty_tp_de_lote`
+    (Jaume 30-sep): el peldaño del TP de lote cierra la fracción del lote
+    INICIAL que trae el evento (`fraccion_lote`) sobre el inicial del nuestro.
   * `prioridad`: R-D-07 (salidas/TP → pirámides reduce/lot_* → pirámides add
     → entradas).
   * `cerrar_todo`, `neta_para_cerrar`, `orden_cierre_posicion`,
@@ -655,9 +657,12 @@ def proporcion_del_evento(evento: Any) -> Optional[tuple[Decimal, bool]]:
         reducción; antes = acciones + posicion_total. Después 0 → total.
       * «piramide» `lot_stop`: el motor cierra SIEMPRE el lote entero
         (portfolio_sim, `_q_lot = min(_lot["size"], size)`) → total del lote.
-      * «piramide» `lot_tp`: el peldaño es un % del tamaño inicial DE ESE LOTE
-        y el evento no lo trae → proporción desconocida (salvo que deje la
-        posición a cero → total).
+      * «piramide» `lot_tp`: el peldaño es un % del tamaño inicial DE ESE LOTE.
+        Desde el 30-sep (Jaume) el evento trae `fraccion_lote` (del lote
+        INICIAL del backtest) y `resto_lote_backtest`: la fracción devuelta es
+        la del lote inicial (se aplica con `qty_tp_de_lote` al tamaño inicial
+        del NUESTRO) y resto 0 → total. Sin esos campos, proporción
+        desconocida (salvo que deje la posición a cero → total).
     None si el evento no permite conocerla (campos ausentes, no numéricos,
     negativos o sin acciones): el decisor conserva el comportamiento literal y
     lo anota. Fracción ≥ 1 → total. Nunca lanza.
@@ -672,7 +677,15 @@ def proporcion_del_evento(evento: Any) -> Optional[tuple[Decimal, bool]]:
             return Decimal(1), True
         despues = _cantidad(_campo(evento, "posicion_total"))
         if accion == "lot_tp":
-            return (Decimal(1), True) if despues is not None and despues <= _CERO_ACCIONES else None
+            if despues is not None and despues <= _CERO_ACCIONES:
+                return Decimal(1), True
+            resto = _cantidad(_campo(evento, "resto_lote_backtest"))
+            if resto is not None and resto <= _CERO_ACCIONES:
+                return Decimal(1), True
+            fraccion = _cantidad(_campo(evento, "fraccion_lote"))
+            if fraccion is None or fraccion <= 0:
+                return None
+            return (Decimal(1), True) if fraccion >= 1 else (fraccion, False)
         if accion != "reduce":
             return None
     else:
@@ -703,6 +716,26 @@ def qty_proporcional(fraccion: Decimal, total: bool, base: int) -> int:
         return base
     qty = int((Decimal(base) * fraccion).to_integral_value(rounding=ROUND_HALF_UP))
     return min(max(qty, 1), base)
+
+
+def qty_tp_de_lote(fraccion: Decimal, total: bool, inicial: int, libres: int) -> int:
+    """TP DE LOTE (Jaume 30-sep): acciones que cierra el bot en un peldaño del TP de lote.
+
+    `fraccion` es la del lote INICIAL del backtest (`fraccion_lote`), así que se
+    aplica al tamaño inicial de NUESTRO lote (`inicial`, lo máximo que llegó a
+    tener lleno): round(fracción × inicial), mitades hacia arriba, mínimo 1,
+    tope `libres` (lo que le queda sin otra orden viva). `total` → `libres`
+    entero (el peldaño cierra el resto del lote). Lote de 60 contra uno de 90
+    del backtest y peldaño del 33 % (30 de 90) → 20. `libres` ≤ 0 → 0.
+    """
+    libres = max(int(libres), 0)
+    if libres == 0:
+        return 0
+    if total:
+        return libres
+    inicial = max(int(inicial), libres)
+    qty = int((Decimal(inicial) * fraccion).to_integral_value(rounding=ROUND_HALF_UP))
+    return min(max(qty, 1), libres)
 
 
 def proporcion_de_estrategia(evento: Any) -> bool:

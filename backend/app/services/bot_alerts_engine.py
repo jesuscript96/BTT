@@ -100,6 +100,12 @@ class Evento:
     # riesgo_usd del cuadro de mandos); un nombre = una de las «otras
     # cuentas», que opera la misma senal con otro riesgo y otras acciones.
     cuenta: Optional[str] = None
+    # Solo en un TP DE LOTE (Jaume 30-sep): la fracción del lote INICIAL que
+    # cierra el peldaño en el backtest, el tamaño inicial de ese lote y lo que
+    # le queda después. El bot de DAS cierra la misma fracción de SU lote.
+    fraccion_lote: Optional[float] = None
+    tamano_lote_backtest: Optional[float] = None
+    resto_lote_backtest: Optional[float] = None
 
     def __str__(self) -> str:
         cab = f"[{self.tipo.upper()}] {self.ticker} · {self.estrategia}"
@@ -685,6 +691,22 @@ def _es_leg_de_piramide(t: dict) -> bool:
     return motivo in ("Pyramid Reduce", "Pyramid Lot Stop") or motivo.startswith("Lot TP")
 
 
+def _campos_tp_lote(ex: dict) -> dict:
+    """TP DE LOTE (Jaume 30-sep): fracción del lote inicial, tamaño inicial y
+    resto del lote en el backtest, para que el bot de DAS cierre la misma
+    PROPORCIÓN de su lote. Campos ausentes o no numéricos → None (el bot de DAS
+    vuelve entonces al cierre literal)."""
+    def _num(v):
+        try:
+            x = float(v)
+        except (TypeError, ValueError):
+            return None
+        return x if x == x and x not in (float("inf"), float("-inf")) else None
+    return {"fraccion_lote": _num(ex.get("lot_frac")),
+            "tamano_lote_backtest": _num(ex.get("lot_size0")),
+            "resto_lote_backtest": _num(ex.get("lot_rest"))}
+
+
 def _clave_ex(ex: dict) -> tuple:
     """Identidad de una ejecucion. Un lote puede cerrar en la vela de fill de su
     anyadido (mismo nivel y vela) y varios rungs del TP en la misma vela."""
@@ -1068,6 +1090,7 @@ class MotorAlertas:
                     posicion_total=(cuadrado if cuadrado is not None
                                     else float(ex.get("position_size", 0.0))),
                     entrada_idx=entry_idx,
+                    **(_campos_tp_lote(ex) if ex.get("kind") == "lot_tp" else {}),
                 ))
 
         # ── SALIDAS ─────────────────────────────────────────────────────────

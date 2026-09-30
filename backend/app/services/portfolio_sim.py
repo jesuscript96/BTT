@@ -1566,7 +1566,23 @@ def simulate(
                             # anteriores de esta misma vela o parciales/reduce
                             # que adelgazaron el flotante (mismo guard que el
                             # cinturón, §3.4).
-                            _q_rung = _lot["size0"] * _cp / 100.0
+                            _tp_unit = _lot.get("tp_unit", "pct")
+                            if _tp_unit == "shares":
+                                # Acciones fijas (Jaume 30-sep), tope lo vivo.
+                                _q_rung = float(_cp)
+                            elif _tp_unit == "lot_pct":
+                                # % del lote en acciones ENTERAS (Jaume
+                                # 30-sep): round(pct × tamaño inicial),
+                                # mitades arriba, mínimo 1; el rung con el que
+                                # el % acumulado llega a 100 cierra el resto.
+                                _acum_tp = sum(_x[1] for _x in _lot["tp"][:_ri + 1])
+                                if _acum_tp >= 100.0 - 1e-9:
+                                    _q_rung = _lot["size"]
+                                else:
+                                    _q_rung = max(1.0, float(int(
+                                        _lot["size0"] * _cp / 100.0 + 0.5 + 1e-9)))
+                            else:
+                                _q_rung = _lot["size0"] * _cp / 100.0
                             _q_rung = min(_q_rung, _lot["size"], size)
                             if _q_rung <= 0:
                                 continue
@@ -1629,6 +1645,14 @@ def simulate(
                                 "pnl": round(_pnl_tp, 4),
                                 "rung": _ri + 1,
                                 "travel_pct": float(_tv),
+                                # Para el bot de DAS (Jaume 30-sep): qué
+                                # fracción del lote INICIAL cierra el rung, el
+                                # tamaño inicial y lo que le queda al lote; así
+                                # cierra la misma proporción de SU lote.
+                                "lot_size0": round(_lot["size0"], 6),
+                                "lot_frac": (round(_q_rung / _lot["size0"], 9)
+                                             if _lot["size0"] > 0 else None),
+                                "lot_rest": round(max(_lot["size"] - _q_rung, 0.0), 6),
                             })
                             _lot["size"] -= _q_rung
                             if size <= 0.0001:
@@ -2211,6 +2235,10 @@ def simulate(
                                  "sl_px": lot_sl_px if ls is not None else None}
                         if _tp_lote is not None:
                             _lote["tp"] = _tp_lote["rungs"]
+                            # Unidad de los rungs (Jaume 30-sep): sin clave =
+                            # 'pct' de siempre; 'lot_pct' = % del lote en
+                            # acciones enteras; 'shares' = acciones fijas.
+                            _lote["tp_unit"] = _tp_lote.get("unit", "pct")
                             _lote["tp_fired"] = [False] * len(_tp_lote["rungs"])
                             _lote["size0"] = add_size
                             # PRD §4.4: los rungs se vigilan desde la vela
