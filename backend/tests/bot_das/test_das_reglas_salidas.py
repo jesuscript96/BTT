@@ -913,16 +913,20 @@ def _cerrados(n: int, strategy_id: str = "s1") -> list[Lote]:
     (-1, False, 1, False, MOTIVO_REENTRADA_NO_ACEPTA),
     (0, True, 0, True, MOTIVO_REENTRADA_PRIMERA),
     (0, True, 1, False, MOTIVO_REENTRADA_TOPE),
-    (0, False, 1, False, MOTIVO_REENTRADA_TOPE),
+    (0, False, 1, False, MOTIVO_REENTRADA_NO_ACEPTA),   # 30-sep: apagado manda
     (2, True, 1, True, None),
     (2, True, 2, True, None),
     (2, True, 3, False, MOTIVO_REENTRADA_TOPE),
-    (2, False, 2, True, None),          # paridad con el backtester: con N ≥ 0 no mira accept_reentries
-    (2, False, 3, False, MOTIVO_REENTRADA_TOPE),
+    (2, False, 0, True, MOTIVO_REENTRADA_PRIMERA),     # la primera entrada siempre
+    (2, False, 1, False, MOTIVO_REENTRADA_NO_ACEPTA),  # 30-sep: apagado + N=2 → cero reentradas
+    (2, False, 2, False, MOTIVO_REENTRADA_NO_ACEPTA),
+    (2, False, 3, False, MOTIVO_REENTRADA_NO_ACEPTA),
     (-2, True, 1, False, MOTIVO_REENTRADA_INVALIDO),
+    (-2, False, 1, False, MOTIVO_REENTRADA_NO_ACEPTA),
 ], ids=["R-D-04-m1_true_primera", "R-D-04-m1_true_1", "R-D-04-m1_true_5", "R-D-04-m1_false_primera",
         "R-D-04-m1_false_1", "R-D-04-0_true_primera", "R-D-04-0_true_1", "R-D-04-0_false_1", "R-D-04-N2_true_1",
-        "R-D-04-N2_true_2", "R-D-04-N2_true_3", "R-D-04-N2_false_2", "R-D-04-N2_false_3", "R-D-04-m2_imposible"])
+        "R-D-04-N2_true_2", "R-D-04-N2_true_3", "R-D-04-N2_false_primera", "R-D-04-N2_false_1",
+        "R-D-04-N2_false_2", "R-D-04-N2_false_3", "R-D-04-m2_imposible", "R-D-04-m2_false"])
 def test_puede_reentrar_tabla(maxr, accept, previas, permitida, motivo):
     e = _est(accept=accept, maxr=maxr)
     lotes = _cerrados(previas)
@@ -933,13 +937,14 @@ def test_puede_reentrar_tabla(maxr, accept, previas, permitida, motivo):
 
 
 def _backtester_can_enter(max_reentries: int, accept: bool, total_trades: int) -> bool:
-    """Copia literal del if/elif de portfolio_sim.py l.2313-2318 (R-D-04: paridad)."""
+    """Copia literal del if/elif de portfolio_sim.py «Re-entry logic» (R-D-04: paridad; 30-sep)."""
     can_enter = True
-    if max_reentries >= 0:
+    if not accept:
+        if total_trades > 0:
+            can_enter = False
+    elif max_reentries >= 0:
         if total_trades > max_reentries:
             can_enter = False
-    elif not accept and total_trades > 0:
-        can_enter = False
     return can_enter
 
 
@@ -955,8 +960,9 @@ def test_puede_reentrar_paridad_con_el_backtester(maxr, accept, previas):
 def test_el_if_de_paridad_es_el_del_fichero_real():
     """El if/elif copiado en este test sigue siendo el de portfolio_sim.py (si cambia, revisar R-D-04)."""
     fuente = PORTFOLIO_SIM.read_text(encoding="utf-8")
-    assert re.search(r"if max_reentries >= 0:\s*\n\s*if total_trades > max_reentries:\s*\n\s*can_enter = False\s*\n"
-                     r"\s*elif not accumulate and total_trades > 0:\s*\n\s*can_enter = False", fuente)
+    assert re.search(r"if not accumulate:\s*\n\s*if total_trades > 0:\s*\n\s*can_enter = False\s*\n"
+                     r"\s*elif max_reentries >= 0:\s*\n\s*if total_trades > max_reentries:\s*\n\s*can_enter = False",
+                     fuente)
 
 
 def test_lote_cancelado_sin_fills_no_cuenta_como_entrada():

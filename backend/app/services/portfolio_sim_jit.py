@@ -668,12 +668,14 @@ def _core_simulate_jit(
         is_signal_trigger = current_signal
 
         if (not in_position) and is_signal_trigger and i < n - 1 and (not is_restricted) and (not riesgo_bloqueado):
+            # Reentradas (30-sep): apagado = cero; ver portfolio_sim.py.
             can_enter = True
-            if max_reentries >= 0:
+            if not accumulate:
+                if total_trades > 0:
+                    can_enter = False
+            elif max_reentries >= 0:
                 if total_trades > max_reentries:
                     can_enter = False
-            elif (not accumulate) and total_trades > 0:
-                can_enter = False
 
             if can_enter:
                 available_cash = init_cash + realized_pnl

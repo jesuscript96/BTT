@@ -285,8 +285,8 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
        con `es_reapertura=True` (señal guardada por halt, validada antes por `halts.senal_guardada_valida`).
     14 reentrada: `sin_reentrada_hasta_sigue` (R-G-03, R-F-03); lote de una versión anterior de la
        estrategia (R-E-03); y el resto (lote base vivo, accept_reentries / max_reentries) lo decide
-       `salidas.puede_reentrar`, con el MISMO if/elif que el backtester (D1-04, R-D-04: −1 = manda
-       accept_reentries; 0 = ninguna; N > 0 = hasta N aunque accept_reentries sea false).
+       `salidas.puede_reentrar`, con el MISMO if/elif que el backtester (D1-04, R-D-04, Jaume 30-sep:
+       accept_reentries false = cero reentradas SIEMPRE; con true, −1 = sin tope, 0 = ninguna, N = hasta N).
     15 degradado: `diario_degradado` (corrección 4) o `estado.modo_degradado` no vacío (R-J-03).
     16 acciones = min(qty_de_evento, lo que cubre `locates.asignar_a_lote`) (R-H-04, E9: D1-02/G1A-07):
        locate propio + sobrantes de las demás estrategias del ticker + ETB en CUALQUIER registro del
@@ -943,10 +943,10 @@ def _reentrada_prohibida(pos: Optional[PosicionTicker], estrategia: EstrategiaCo
     viejas de la estrategia) y la exención de la pirámide «add». Todo lo
     demás (lote base vivo, entradas previas, accept_reentries /
     max_reentries) lo decide `puede_reentrar`, que tiene el MISMO if/elif que
-    el backtester (`portfolio_sim.py` l.2314-2318) y el motor de alertas: una
-    sola fuente de verdad (D1-04, D2-salidas-rechazos-11; memoria
-    «max_reentries = -1»): −1 → manda accept_reentries; 0 → ninguna; N > 0 →
-    hasta N aunque accept_reentries sea false; < −1 → no (conservador).
+    el backtester (`portfolio_sim.py`, «Re-entry logic») y el motor de
+    alertas: una sola fuente de verdad (D1-04, D2-salidas-rechazos-11; Jaume
+    30-sep): accept_reentries false → cero reentradas siempre; con true,
+    −1 → sin tope; 0 → ninguna; N > 0 → hasta N; < −1 → no (conservador).
     """
     if pos is None:
         return False

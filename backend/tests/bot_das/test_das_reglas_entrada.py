@@ -613,24 +613,25 @@ def test_E9_propio_mas_sobrante_de_otra(esc: Escenario) -> None:
     assert esc.evaluar() == Veredicto(ok=True, motivo=MOTIVO_OK, qty=900)
 
 
-# R-D-04 con paridad del backtester (portfolio_sim.py l.2314-2318, bot_alerts_engine.py l.994-998; memoria
-# «max_reentries = -1»): −1 → manda accept_reentries; N ≥ 0 → hasta N entradas previas, IGNORANDO accept.
+# R-D-04 con paridad del backtester (portfolio_sim.py «Re-entry logic», bot_alerts_engine `_puede_reentrar`;
+# Jaume 30-sep): accept_reentries false → cero reentradas SIEMPRE; con true, −1 → sin tope, N ≥ 0 → hasta N.
 @pytest.mark.parametrize("previas, accept, maximo, entra", [
     (1, True, -1, True),
     (1, False, -1, False),
     (1, True, 0, False),
     (1, False, 0, False),
     (1, True, 1, True),
-    (1, False, 1, True),       # D1-04: antes se consagraba «no entra»; el backtester entra (max manda)
+    (1, False, 1, False),      # 30-sep: apagado manda (antes D1-04 dejaba entrar con N = 1)
     (2, True, 1, False),
     (2, True, 2, True),
     (3, True, -1, True),
-    (2, False, 1, False),      # D1-04: con accept false el tope N sigue mandando
-    (2, False, 3, True),       # D1-04
+    (2, False, 1, False),
+    (2, False, 3, False),      # 30-sep: apagado + N = 3 → no (antes entraba)
+    (1, False, 2, False),      # 30-sep: apagado + N = 2 → cero reentradas
     (1, True, -2, False),      # valor imposible: lo conservador es no reentrar
 ], ids=["R-D-04--1-true", "R-D-04--1-false", "R-D-04-0-true", "R-D-04-0-false", "R-D-04-1-true",
-        "R-D-04-1-false-D1-04-manda-N", "R-D-04-2a-con-tope-1", "R-D-04-2a-con-tope-2", "R-D-04-sin-tope-numerico",
-        "D1-04-2a-tope-1-accept-false", "D1-04-3a-tope-3-accept-false", "R-D-04-menos-2-no"])
+        "R-D-04-1-false-apagado-manda", "R-D-04-2a-con-tope-1", "R-D-04-2a-con-tope-2", "R-D-04-sin-tope-numerico",
+        "D1-04-2a-tope-1-accept-false", "D1-04-3a-tope-3-accept-false", "30sep-apagado-N2-no", "R-D-04-menos-2-no"])
 def test_reentradas_tabla(esc: Escenario, previas: int, accept: bool, maximo: int, entra: bool) -> None:
     for n in range(previas):
         esc.lote_previo(f"previa-{n}")
@@ -660,15 +661,17 @@ def test_otra_estrategia_con_lote_vivo_no_es_reentrada(esc: Escenario) -> None:
 
 
 def _reentrada_backtester(previas: int, accept: bool, maximo: int) -> bool:
-    """Referencia: el if/elif de `portfolio_sim.py` l.2314-2318 (total_trades = entradas previas).
+    """Referencia: el if/elif de `portfolio_sim.py` «Re-entry logic» (total_trades = entradas previas; 30-sep).
 
     Única diferencia a propósito: max_reentries < −1 (imposible desde la UI)
-    no reentra (lo conservador), donde el backtester miraría accept.
+    no reentra (lo conservador), donde el backtester no pondría tope.
     """
+    if not accept:
+        return previas == 0
     if maximo >= 0:
         return previas <= maximo
     if maximo == -1:
-        return accept or previas == 0
+        return True
     return previas == 0
 
 

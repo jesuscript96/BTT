@@ -2309,13 +2309,18 @@ def simulate(
 
         if not in_position and is_signal_trigger and i < n - 1 and not is_restricted and not riesgo_bloqueado \
                 and not ht_bloqueado:
-            # Re-entry logic:
+            # Re-entry logic (Jaume 30-sep): el interruptor MANDA. Apagado ->
+            # cero reentradas valga lo que valga `max_reentries`; encendido ->
+            # N >= 0 acota (0 = ninguna) y -1 es «sin tope». Antes, con N > 0
+            # se reentraba aunque el interruptor estuviera apagado. Replicado
+            # en portfolio_sim_jit, bot_alerts_engine y bot_das/reglas/salidas.
             can_enter = True
-            if max_reentries >= 0:
+            if not accumulate:
+                if total_trades > 0:
+                    can_enter = False
+            elif max_reentries >= 0:
                 if total_trades > max_reentries:
                     can_enter = False
-            elif not accumulate and total_trades > 0:
-                can_enter = False
             # Pausa tras la ultima salida (scalping). `trades[-1]` es el ultimo
             # cierre: estando fuera de posicion, cualquier leg anterior (parcial,
             # reduccion de piramide) ya quedo atras y la ultima fila es la que

@@ -991,11 +991,13 @@ class MotorAlertas:
         contar indices distintos y no filas de trade).
         """
         hechas = len({int(t.get("entry_idx", -1)) for t in trades})
+        # 30-sep (Jaume): el interruptor manda; apagado = cero reentradas
+        # aunque max_reentries sea N > 0 (mismo if/elif que portfolio_sim).
+        if not senales.get("accept_reentries", False):
+            return hechas == 0
         max_re = int(senales.get("max_reentries", -1))
         if max_re >= 0:
             return hechas <= max_re
-        if not senales.get("accept_reentries", False):
-            return hechas == 0
         return True
 
     def _procesar_estrategia(

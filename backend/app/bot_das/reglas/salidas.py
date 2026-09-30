@@ -107,10 +107,11 @@ LAS TRAMPAS.
     curso (hora, cierre humano o reinicio), un TP o una salida del motor NO
     añade otra orden (`tratamiento` → «anotar»): dos órdenes de compra sobre
     las mismas acciones dejan la cuenta LARGA.
-  * `max_reentries = −1` NO es «ninguna» ni «ilimitadas»: «sin tope numérico,
-    manda accept_reentries» (memoria «max_reentries = −1»). Con N ≥ 0 el
-    backtester IGNORA accept_reentries (`portfolio_sim.py` l.2314-2318) y
-    aquí se hace igual por paridad (R-D-04). Un lote CANCELADO sin fills no
+  * Reentradas (R-D-04, Jaume 30-sep): `accept_reentries = false` → cero
+    reentradas SIEMPRE, valga lo que valga `max_reentries`; con true, −1 =
+    sin tope y N ≥ 0 = hasta N (0 = ninguna). Es el mismo if/elif que el
+    backtester (`portfolio_sim.py`, bloque «Re-entry logic») y el bot de
+    alertas, por paridad. Un lote CANCELADO sin fills no
     cuenta como entrada previa (en el backtest no hubo trade).
   * Los temporizadores de un lote llevan el id del lote en la CLAVE
     (`"hora_ask:<lote_id>"`): un `Programar` con una clave ya existente
@@ -243,7 +244,7 @@ MOTIVO_REENTRADA_OK = "reentrada permitida por la estrategia (R-D-04)"
 MOTIVO_REENTRADA_VETO = "veto de reentrada hasta /sigue o reapertura válida (R-G-03, R-F-03)"
 MOTIVO_REENTRADA_BS = "ticker en protocolo de cisne negro (R-G-03)"
 MOTIVO_REENTRADA_LOTE_VIVO = "la estrategia ya tiene un lote vivo en este ticker (R-D-04)"
-MOTIVO_REENTRADA_NO_ACEPTA = "la estrategia no acepta reentradas: accept_reentries = false con max_reentries = −1 (R-D-04)"
+MOTIVO_REENTRADA_NO_ACEPTA = "la estrategia no acepta reentradas: accept_reentries = false (R-D-04)"
 MOTIVO_REENTRADA_TOPE = "tope de reentradas alcanzado: max_reentries (R-D-04)"
 MOTIVO_REENTRADA_INVALIDO = "max_reentries imposible (< −1): no se reentra (R-D-04, conservador)"
 
@@ -1190,16 +1191,17 @@ def comprobar_eod(lote: Lote, pos: PosicionTicker) -> Optional[Avisar]:
 
 # ── reentradas (R-D-04, R-F-03, R-G-03) ─────────────────────────────────
 def puede_reentrar(e: EstrategiaConfig, lote_anterior: Optional[Lote], pos: Optional[PosicionTicker]) -> tuple[bool, str]:
-    """R-D-04 con el MISMO if/elif que el backtester (`portfolio_sim.py` l.2314-2318) + vetos R-G-03 / R-F-03.
+    """R-D-04 con el MISMO if/elif que el backtester (`portfolio_sim.py`, «Re-entry logic») + vetos R-G-03 / R-F-03.
 
     Vetos: `pos.sin_reentrada_hasta_sigue` (R-G-03 tras cisne negro, R-F-03
     tras stop + halt) o `pos.estado == BS` → no. Un lote base de la estrategia
     vivo → no (un lote base por estrategia y ticker). Entradas previas = lotes
     base de la estrategia (más `lote_anterior`) que operaron (no CANCELADOS
     sin fills), o `reentrada_n + 1` si es mayor. 0 previas → sí.
-    max_reentries = −1 → manda accept_reentries; ≥ 0 → sí mientras previas ≤
-    max_reentries (0 = ninguna; accept_reentries no cuenta, como en el
-    backtester); < −1 → no (conservador). Devuelve (permitida, motivo).
+    accept_reentries = false → no, valga lo que valga max_reentries (Jaume
+    30-sep, igual que el backtester). Con true: −1 → sí (sin tope); ≥ 0 → sí
+    mientras previas ≤ max_reentries (0 = ninguna); < −1 → no (conservador).
+    Devuelve (permitida, motivo).
     """
     if pos is not None and pos.sin_reentrada_hasta_sigue:
         return False, MOTIVO_REENTRADA_VETO
@@ -1218,9 +1220,11 @@ def puede_reentrar(e: EstrategiaConfig, lote_anterior: Optional[Lote], pos: Opti
     previas = max([len(operados)] + [lote.reentrada_n + 1 for lote in operados])
     if previas == 0:
         return True, MOTIVO_REENTRADA_PRIMERA
+    if not e.accept_reentries:
+        return False, MOTIVO_REENTRADA_NO_ACEPTA
     maximo = e.max_reentries
     if maximo == -1:
-        return (True, MOTIVO_REENTRADA_OK) if e.accept_reentries else (False, MOTIVO_REENTRADA_NO_ACEPTA)
+        return True, MOTIVO_REENTRADA_OK
     if maximo < -1:
         return False, MOTIVO_REENTRADA_INVALIDO
     if previas > maximo:

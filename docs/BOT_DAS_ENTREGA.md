@@ -48,7 +48,7 @@ cd D:\Backtester\backend && .venv\Scripts\python.exe -m pytest tests/bot_das -q
 5. Canario mínimo (1-100 acciones, una estrategia) con `BOT_DAS_PERMITIR_ORDENES=1`.
 6. Diferidos: pestaña «Ejecución» del cuadro (hoy: `estado/foto.json` y `estado/comandos.jsonl`), asistente de IA en Telegram, envío al grupo A desde el nuevo bot, proveedor de SMS, copia del diario fuera del VPS.
 7. Preguntas pendientes a DAS/Sage: ¿`REPLACE` sobre STOPLMTP conserva el pre/post?; ¿la cuota del `SLPRICEINQUIRE` (1 cada 3 s) es global o por símbolo? (el bot ya la lleva por símbolo, decisión 21, y avisa si DAS se queja); ¿`GET BP` ya descuenta el margen por símbolo?; pedir «Always allow unwind positions».
-8. Pendientes del backtester (motor compartido: con el bot de alertas parado): reentradas apagado = 0 siempre (decisión 16); take profit POR LOTE en % del lote en el backtester.
+8. Pendientes del backtester (motor compartido: con el bot de alertas parado): ~~reentradas apagado = 0 siempre~~ (decisión 16, HECHA 30-sep); take profit POR LOTE en % del lote en el backtester.
 9. Pestaña Ejecución en la MISMA página de alertas (segunda pestaña), a construir durante la sombra.
 
 ## 6. Riesgos residuales conocidos (no bloquean la sombra)
@@ -87,7 +87,7 @@ cd D:\Backtester\backend && .venv\Scripts\python.exe -m pytest tests/bot_das -q
 13. **DECIDIDA (30-sep): persigue 3 veces.** Salidas tipo TP (take profit y las del motor «como_tp»: Signal / Trailing / Escalera / «?»): 60 s agregando en el punto medio y, si no llena, al ask (con el techo del 3 % sobre el último de ese momento, o limbo si el ask ya está por encima) PERSIGUIENDO hasta 3 veces: REPLACE de precio al ask nuevo cada `salidas.tp_parcial.perseguir_ask_s` (1 s), como mucho `salidas.tp_parcial.perseguir_ask_max` (3), cada persecución con el mismo techo del 3 % sobre el último; tras la 3.ª sin llenar, el aviso de limbo de siempre (a los 5 s). La prioridad de R-D-07 (el TP se tira al ask sin tope) también se persigue, sin techo. «Partial TP (Hour)», «(Time)» y «Time Limit» siguen al ask sin tope con su persecución de la hora (`salidas.por_hora`). Código: `reglas/salidas.py` (`perseguir_ask(..., techo_pct)`, `persecucion_tp`) y `decisor._seguimiento_salida` / `_perseguir_tp` / `_perseguir_tp_vuelta`.
 14. **CONFIRMADA (30-sep).** Salida SL del motor con la posición aún abierta en DAS: no se persigue; se anota «divergencia» y aviso nivel 2.
 15. **CONFIRMADA (30-sep).** «Cerrar todo» agotado (3 intentos al 5 %): el bot retira su última orden y repone los stops antes de avisarte.
-16. **PENDIENTE BACKTESTER.** Reentradas: Jaume quiere que con el interruptor de reentradas apagado sean 0 SIEMPRE; hoy el motor reentra N (`max_reentries = N > 0`) aunque `accept_reentries` sea false (−1 → manda `accept_reentries`; 0 → ninguna). El bot sigue al motor hasta arreglarlo (motor compartido: se toca con el bot de alertas parado).
+16. **HECHA (30-sep): apagado = cero reentradas en el motor, el bot de alertas y el bot de DAS.** Con `accept_reentries` false no hay reentradas NUNCA, valga lo que valga `max_reentries`; encendido: N ≥ 0 = hasta N (0 = ninguna) y −1 = sin tope. Mismo if/elif en `portfolio_sim.py`, `portfolio_sim_jit.py`, `bot_alerts_engine._quedan_entradas` y `bot_das/reglas/salidas.puede_reentrar` (que usa la comprobación 14 de `entrada.py`).
 
 ### C. Locates
 17. **CONFIRMADA (30-sep): si el EV lo paga, entra.** ≤ 30 acciones (o resto ≤ 30 en una recompra): se compra el paquete de 100 si el EV lo paga (regla marginal de la 34).
