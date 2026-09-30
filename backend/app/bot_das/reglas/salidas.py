@@ -23,6 +23,11 @@ posición corta (y, por simetría, de una larga):
     `programa_limbo_tp` / `comprobar_limbo_tp`: si la orden de cruce del TP
     no llena, aviso de limbo sin perseguir (D2-13).
   * `orden_hora_evento`: la orden de una salida del motor por tiempo (D2-05).
+  * `proporcion_del_evento`, `proporcion_de_estrategia`, `qty_proporcional`,
+    `repartir_salida`, `base_proporcional`: D8 (Jaume 30-sep): una salida
+    parcial cierra la MISMA proporción de la posición del bot que el backtest
+    de la suya (salida / REDUCIR: toda la estrategia, base + pirámides,
+    repartida entre sus lotes; SL/TP de lote: ese lote).
   * `prioridad`: R-D-07 (salidas/TP → pirámides reduce/lot_* → pirámides add
     → entradas).
   * `cerrar_todo`, `neta_para_cerrar`, `orden_cierre_posicion`,
@@ -127,7 +132,7 @@ from __future__ import annotations
 import html
 import re
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Callable, Iterable, Optional, Union
 
 from app.bot_das.reglas.precios import (
@@ -610,6 +615,143 @@ def perseguir_ask(orden: Orden, cot: Optional[Cotizacion], persecuciones: int,
     return Reemplazar(id_das=orden.id_das, token=orden.token, qty=share, stop=None, precio=nuevo,
                       motivo=(f"corrección 11: persecución {persecuciones + 1}/{max_persecuciones} "
                               f"al {lado_libro} {nuevo} (R-D-08)"))
+
+
+# ── D8 (Jaume 30-sep): las parciales van por PROPORCIÓN de nuestra posición ──
+_CERO_ACCIONES = Decimal("0.0001")          # el mismo umbral de «posición a cero» del motor (bot_alerts_engine)
+
+
+def proporcion_del_evento(evento: Any) -> Optional[tuple[Decimal, bool]]:
+    """D8 (Jaume 30-sep): la fracción de SU posición que cierra el backtest con este evento → (fracción, total).
+
+    `total` = True cuando el evento deja la posición del backtest a cero (la
+    última parcial o una salida total): el bot cierra TODO lo que le quede.
+    La fracción es de TODA la posición del backtest (base + pirámides), así
+    que en una salida o un REDUCIR se aplica a todos los lotes vivos de la
+    estrategia (`proporcion_de_estrategia`, `repartir_salida`).
+    Cómo se deduce (campos de `bot_alerts_engine.Evento`, sin tocar el motor):
+      * «salida»: `acciones` = lo que cierra el tramo y `posicion_restante` =
+        lo que SIGUE abierto después; la posición antes = acciones + restante
+        (NO `posicion_total`, que es lo abierto al principio: solo vale para el
+        primer tramo). Restante 0 → total.
+      * «piramide» `reduce`: `posicion_total` es la posición DESPUÉS de la
+        reducción; antes = acciones + posicion_total. Después 0 → total.
+      * «piramide» `lot_stop`: el motor cierra SIEMPRE el lote entero
+        (portfolio_sim, `_q_lot = min(_lot["size"], size)`) → total del lote.
+      * «piramide» `lot_tp`: el peldaño es un % del tamaño inicial DE ESE LOTE
+        y el evento no lo trae → proporción desconocida (salvo que deje la
+        posición a cero → total).
+    None si el evento no permite conocerla (campos ausentes, no numéricos,
+    negativos o sin acciones): el decisor conserva el comportamiento literal y
+    lo anota. Fracción ≥ 1 → total. Nunca lanza.
+    """
+    tipo = str(_campo(evento, "tipo") or "").strip().lower()
+    acciones = _cantidad(_campo(evento, "acciones"))
+    if tipo == "salida":
+        despues = _cantidad(_campo(evento, "posicion_restante"))
+    elif tipo == "piramide":
+        accion = str(_campo(evento, "accion_piramide") or "").strip().lower()
+        if accion == "lot_stop":
+            return Decimal(1), True
+        despues = _cantidad(_campo(evento, "posicion_total"))
+        if accion == "lot_tp":
+            return (Decimal(1), True) if despues is not None and despues <= _CERO_ACCIONES else None
+        if accion != "reduce":
+            return None
+    else:
+        return None
+    if despues is None:
+        return None
+    if despues <= _CERO_ACCIONES:
+        return Decimal(1), True
+    if acciones is None or acciones <= 0:
+        return None
+    fraccion = acciones / (acciones + despues)
+    if fraccion >= 1:
+        return Decimal(1), True
+    return fraccion, False
+
+
+def qty_proporcional(fraccion: Decimal, total: bool, base: int) -> int:
+    """D8 (Jaume 30-sep): las acciones que cierra el bot = fracción × `base` (su posición en el lote).
+
+    Redondeo al entero más cercano (mitades hacia arriba), mínimo 1 si hay
+    algo, nunca más que `base`; `total` → `base` entera (la última parcial o
+    una salida total cierra todo lo que quede). `base` ≤ 0 → 0.
+    """
+    base = max(int(base), 0)
+    if base == 0:
+        return 0
+    if total:
+        return base
+    qty = int((Decimal(base) * fraccion).to_integral_value(rounding=ROUND_HALF_UP))
+    return min(max(qty, 1), base)
+
+
+def proporcion_de_estrategia(evento: Any) -> bool:
+    """D8 (Jaume 30-sep: «el 25 % de la posición que tengamos»): ¿la fracción es de TODA la posición de la estrategia?
+
+    True en una «salida» y en un REDUCIR de pirámide: el backtest cierra el X %
+    de toda su posición (base + añadidos), así que el bot lo aplica a TODOS
+    sus lotes vivos de esa estrategia en el ticker. False en un SL/TP de lote
+    (`lot_stop` / `lot_tp`): esos cierran SU lote y nada más. Nunca lanza.
+    """
+    tipo = str(_campo(evento, "tipo") or "").strip().lower()
+    if tipo == "salida":
+        return True
+    return tipo == "piramide" and str(_campo(evento, "accion_piramide") or "").strip().lower() == "reduce"
+
+
+def repartir_salida(objetivo: int, lotes: Iterable[Lote]) -> list[tuple[Lote, int]]:
+    """D8 (Jaume 30-sep): reparte las `objetivo` acciones a cerrar entre los lotes de la estrategia. Determinista.
+
+    Cada lote se lleva la parte entera (hacia abajo) proporcional a su base
+    (`base_proporcional`: llenas − tp_pendiente); el resto que queda por el
+    redondeo va de una en una empezando por el lote BASE (sin nivel de
+    pirámide) y siguiendo por las pirámides de nivel más bajo a más alto (a
+    igualdad, por id), nunca más que lo libre de cada lote. La suma es
+    exactamente min(`objetivo`, suma de bases). Devuelve [(lote, qty > 0)] en
+    ese orden. Ej.: 23 sobre base 60 + pirámide 30 → 15 + 7 = 22, el resto al
+    base → (16, 7).
+    """
+    orden = sorted((x for x in lotes if base_proporcional(x) > 0),
+                   key=lambda x: (x.nivel_piramide is not None, x.nivel_piramide or 0, str(x.id)))
+    bases = [base_proporcional(x) for x in orden]
+    total = sum(bases)
+    objetivo = min(max(int(objetivo), 0), total)
+    if objetivo == 0:
+        return []
+    partes = [objetivo * b // total for b in bases]
+    resto = objetivo - sum(partes)
+    while resto > 0:
+        for i, b in enumerate(bases):
+            if resto > 0 and partes[i] < b:
+                partes[i] += 1
+                resto -= 1
+    return [(x, q) for x, q in zip(orden, partes) if q > 0]
+
+
+def base_proporcional(lote: Lote) -> int:
+    """D8 (Jaume 30-sep): la posición del bot en el lote sobre la que se aplica la fracción: llenas − tp_pendiente.
+
+    Lo que ya tiene una orden de TP viva no cuenta: con los tres tramos
+    25/50/25 % sobre 60 acciones, el segundo cierra 2/3 de las 45 que quedan
+    aunque la orden del primero aún no haya llenado.
+    """
+    return _acciones_libres(lote)
+
+
+def _cantidad(valor: Any) -> Optional[Decimal]:
+    """Un número finito ≥ 0 del evento (int/float/Decimal/texto numérico) como Decimal; cualquier otra cosa → None."""
+    if isinstance(valor, bool) or valor is None:
+        return None
+    try:
+        numero = Decimal(str(valor).strip())
+    except (ArithmeticError, ValueError):
+        return None
+    if not numero.is_finite() or numero < 0:
+        return None
+    return numero
 
 
 def clave_tp_cruce(lote_id: str, token: Any) -> str:

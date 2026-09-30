@@ -3947,3 +3947,101 @@ def test_ticker_pausado_no_gasta_en_locates_hasta_sigue(cfg: Config, tmp_path: P
     _radar_de(b, [_fila(100.0)])
     b.avanzar(1)
     assert [c.qty for c in _compras(b)] == [100]
+
+
+# ── D8 (Jaume 30-sep): las salidas parciales van por PROPORCIÓN de nuestra posición ──
+def _abrir_60(b: Banco) -> None:
+    """Entramos con 60 (nuestro tamaño) aunque el backtest vaya con 100."""
+    b.senal(evento(acciones=60.0))
+    llenar_entrada(b)
+    assert b.pos().neta_fills == -60
+
+
+def test_D8_backtest_cierra_25_de_100_nosotros_15_de_60(banco: Banco) -> None:
+    """D8 (Jaume 30-sep): el TP del backtest cierra 25 de sus 100 (quedan 75) → el bot cierra el 25 % de sus 60 = 15,
+    no las 25 literales; el diario lo anota como «proporcion»."""
+    b = banco
+    _abrir_60(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    acciones = _salida_motor(b, salida(acciones=25.0, posicion_total=100.0, posicion_restante=75.0))
+    tp = [a.orden for a in acciones if isinstance(a, EnviarOrden)]
+    assert [(o.proposito, o.qty) for o in tp] == [(Proposito.TP_AGREGAR, 15)]
+    nota = anotaciones(acciones, "salida_proporcion")[0].datos
+    assert (nota["modo"], nota["fraccion_backtest"], nota["total_backtest"], nota["qty"]) == (
+        "proporcion", D("0.25"), False, 15)
+
+
+def test_D8_tres_parciales_25_50_25_dejan_la_posicion_a_cero(banco: Banco) -> None:
+    """D8: los tres tramos de 1B (25/50/25 % sobre 100) con 60 nuestras → 15, 30 y el resto (15): posición a 0."""
+    b = banco
+    _abrir_60(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    tramos = [(25.0, 75.0, "09:31:00"), (50.0, 25.0, "09:32:00"), (25.0, 0.0, "09:33:00")]
+    pedidas = []
+    for acciones_ev, restante, hora in tramos:
+        marca = b.marca()
+        _salida_motor(b, salida(acciones=acciones_ev, posicion_total=100.0, posicion_restante=restante,
+                                momento=pd.Timestamp(f"2026-09-25 {hora}")))
+        pedidas += [o.qty for o in b.enviadas(Proposito.TP_AGREGAR, desde=marca)]
+        b.avanzar(61)                                                      # el resto cruza y llena
+    assert pedidas == [15, 30, 15]
+    assert b.pos().neta_fills == 0
+
+
+def test_D8_sin_proporcion_conocida_cierra_las_acciones_literales(banco: Banco) -> None:
+    """D8: un evento sin `posicion_restante` no permite conocer la proporción → las 25 del evento (tope: lo que hay),
+    como antes, y el diario lo anota como «literal»."""
+    b = banco
+    _abrir_60(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    acciones = _salida_motor(b, salida(acciones=25.0))
+    assert [o.qty for o in (a.orden for a in acciones if isinstance(a, EnviarOrden))] == [25]
+    nota = anotaciones(acciones, "salida_proporcion")[0].datos
+    assert nota["modo"] == "literal" and nota["fraccion_backtest"] is None
+
+
+def _abrir_con_piramide(b: Banco, base: int, piramide: int) -> tuple[str, str]:
+    """D8: entrada de `base` + pirámide «add» de `piramide` (mismo SID) llenas; devuelve (lote base, lote pirámide)."""
+    b.senal(evento(acciones=float(base)))
+    llenar_entrada(b)
+    b.avanzar(2)
+    b.senal(_piramide_add(acciones=float(piramide), posicion_total=float(base + piramide), momento=otra_vela(b)))
+    llenar_entrada(b)
+    b.avanzar(1)
+    assert b.pos().neta_fills == -(base + piramide)
+    lotes = sorted(b.pos().lotes.values(), key=lambda x: x.nivel_piramide is not None)
+    assert [(x.nivel_piramide is None, x.llenas) for x in lotes] == [(True, base), (False, piramide)]
+    return lotes[0].id, lotes[1].id
+
+
+def test_D8_base_100_piramide_50_el_25_por_ciento_son_38_repartidas(banco: Banco) -> None:
+    """D8 (Jaume 30-sep: «el 25 % de la posición que tengamos»): base 100 + pirámide 50 y el backtest cierra el 25 % de
+    su posición → 38 en total (redondeo de 37,5), una orden por lote: 25 + 12 = 37 proporcional y el resto al base
+    (26 + 12). Antes se cerraban 25 del base y la pirámide quedaba entera hasta el EOD."""
+    b = banco
+    base, pir = _abrir_con_piramide(b, 100, 50)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    marca = b.marca()
+    _salida_motor(b, salida(acciones=37.5, posicion_total=150.0, posicion_restante=112.5))
+    tp = b.enviadas(Proposito.TP_AGREGAR, desde=marca)
+    assert sorted((o.lote_id, o.qty) for o in tp) == sorted([(base, 26), (pir, 12)])
+    assert sum(o.qty for o in tp) == 38
+
+
+def test_D8_base_60_piramide_30_tres_parciales_dejan_todos_los_lotes_a_cero(banco: Banco) -> None:
+    """D8: nosotros base 60 + pirámide 30 (backtest 100 + 50); tramos 25/50/25 % → 23, 45 y 22 (suma 90) y todos los
+    lotes de la estrategia quedan a 0."""
+    b = banco
+    base, pir = _abrir_con_piramide(b, 60, 30)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    tramos = [(37.5, 112.5, "09:31:00"), (75.0, 37.5, "09:32:00"), (37.5, 0.0, "09:33:00")]
+    totales = []
+    for acciones_ev, restante, hora in tramos:
+        marca = b.marca()
+        _salida_motor(b, salida(acciones=acciones_ev, posicion_total=150.0, posicion_restante=restante,
+                                momento=pd.Timestamp(f"2026-09-25 {hora}")))
+        totales.append(sum(o.qty for o in b.enviadas(Proposito.TP_AGREGAR, desde=marca)))
+        b.avanzar(61)
+    assert totales == [23, 45, 22]
+    assert b.pos().neta_fills == 0
+    assert b.pos().lotes[base].llenas == 0 and b.pos().lotes[pir].llenas == 0

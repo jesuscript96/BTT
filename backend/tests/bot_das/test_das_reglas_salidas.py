@@ -1565,3 +1565,101 @@ def test_R3_SAL_1_agotado_con_das_sin_confirmar_lo_marca(fills, das, mostrada):
     texto = next(a.texto for a in cerrar_todo({"X": pos}, _cot_de({}), CFG, _tokens(), HORA, intento=3)
                  if isinstance(a, Avisar))
     assert mostrada in texto and "SIN CONFIRMAR" in texto
+
+
+# ── D8 (Jaume 30-sep): las parciales van por PROPORCIÓN de nuestra posición ──
+def _ev(**campos):
+    from types import SimpleNamespace
+    base = dict(tipo="salida", acciones=None, posicion_restante=None, posicion_total=None, accion_piramide=None)
+    base.update(campos)
+    return SimpleNamespace(**base)
+
+
+def test_D8_backtest_100_cierra_25_nosotros_60_cerramos_15():
+    """D8 (Jaume 30-sep): el backtest cierra 25 de sus 100 (quedan 75) → el 25 % de NUESTRAS 60 = 15."""
+    prop = salidas.proporcion_del_evento(_ev(acciones=25.0, posicion_total=100.0, posicion_restante=75.0))
+    assert prop == (D("0.25"), False)
+    assert salidas.qty_proporcional(prop[0], prop[1], 60) == 15
+
+
+def test_D8_tres_parciales_25_50_25_dejan_la_posicion_a_cero():
+    """D8: tramos 25/50/25 % sobre 100 (como 1B). La posición ANTES de cada tramo es acciones + restante (no
+    `posicion_total`): 25/100, 50/75, 25/25 → sobre 60 nuestras: 15, 30 y el resto (15); total 60 y queda 0."""
+    tramos = [(25.0, 75.0), (50.0, 25.0), (25.0, 0.0)]
+    nuestra, cerradas = 60, []
+    for acciones, restante in tramos:
+        fraccion, total = salidas.proporcion_del_evento(_ev(acciones=acciones, posicion_total=100.0,
+                                                            posicion_restante=restante))
+        qty = salidas.qty_proporcional(fraccion, total, nuestra)
+        cerradas.append(qty)
+        nuestra -= qty
+    assert cerradas == [15, 30, 15] and nuestra == 0
+
+
+def test_D8_base_es_lo_libre_del_lote_aunque_el_tp_anterior_no_haya_llenado():
+    """D8: la base es llenas − tp_pendiente: con el TP de 15 aún vivo, el 2.º tramo (2/3) cierra 30 de las 45 libres."""
+    lote = _lote(llenas=60, tp_pendiente=15)
+    assert salidas.base_proporcional(lote) == 45
+    fraccion, total = salidas.proporcion_del_evento(_ev(acciones=50.0, posicion_restante=25.0))
+    assert salidas.qty_proporcional(fraccion, total, salidas.base_proporcional(lote)) == 30
+
+
+@pytest.mark.parametrize("evento,esperado", [
+    pytest.param(dict(acciones=25.0), None, id="salida-sin-posicion_restante-literal"),
+    pytest.param(dict(acciones=None, posicion_restante=75.0), None, id="salida-sin-acciones-literal"),
+    pytest.param(dict(acciones="x", posicion_restante=75.0), None, id="salida-acciones-no-numericas-literal"),
+    pytest.param(dict(acciones=25.0, posicion_restante=float("nan")), None, id="salida-restante-nan-literal"),
+    pytest.param(dict(acciones=25.0, posicion_restante=-1.0), None, id="salida-restante-negativo-literal"),
+    pytest.param(dict(acciones=None, posicion_restante=0.0), (D(1), True), id="salida-restante-0-cierra-todo"),
+    pytest.param(dict(acciones=100.0, posicion_restante=0.0), (D(1), True), id="salida-total"),
+    pytest.param(dict(tipo="piramide", accion_piramide="reduce", acciones=30.0, posicion_total=70.0),
+                 (D("0.3"), False), id="reduce-posicion_total-es-la-de-despues"),
+    pytest.param(dict(tipo="piramide", accion_piramide="reduce", acciones=30.0, posicion_total=0.0),
+                 (D(1), True), id="reduce-a-cero-cierra-todo"),
+    pytest.param(dict(tipo="piramide", accion_piramide="lot_stop", acciones=40.0, posicion_total=60.0),
+                 (D(1), True), id="lot_stop-cierra-el-lote-entero"),
+    pytest.param(dict(tipo="piramide", accion_piramide="lot_tp", acciones=20.0, posicion_total=80.0), None,
+                 id="lot_tp-sin-tamano-del-lote-literal"),
+    pytest.param(dict(tipo="piramide", accion_piramide="lot_tp", acciones=20.0, posicion_total=0.0), (D(1), True),
+                 id="lot_tp-a-cero-cierra-todo"),
+    pytest.param(dict(tipo="piramide", accion_piramide="add", acciones=20.0, posicion_total=120.0), None,
+                 id="add-no-es-salida"),
+    pytest.param(dict(tipo="entrada", acciones=100.0), None, id="entrada-no-es-salida"),
+])
+def test_D8_proporcion_del_evento(evento, esperado):
+    """D8: qué campos del `Evento` dan la proporción; sin ella → None (el decisor cierra las acciones literales)."""
+    assert salidas.proporcion_del_evento(_ev(**evento)) == esperado
+
+
+@pytest.mark.parametrize("fraccion,total,base,esperado", [
+    pytest.param(D("0.001"), False, 10, 1, id="minimo-1-si-hay-algo"),
+    pytest.param(D("0.25"), False, 0, 0, id="sin-posicion-nada"),
+    pytest.param(D("0.5"), False, 15, 8, id="mitades-hacia-arriba"),
+    pytest.param(D("0.99"), False, 10, 10, id="nunca-mas-que-la-base"),
+    pytest.param(D("0.25"), True, 37, 37, id="total-cierra-todo"),
+])
+def test_D8_qty_proporcional(fraccion, total, base, esperado):
+    assert salidas.qty_proporcional(fraccion, total, base) == esperado
+
+
+def test_D8_repartir_salida_proporcional_y_el_resto_al_base():
+    """D8: el reparto entre lotes es proporcional a la base de cada uno (hacia abajo) y el resto va primero al lote BASE
+    y luego a las pirámides de nivel más bajo; la suma es exacta y ningún lote pasa de lo suyo libre."""
+    base, p1, p2 = _lote("B", llenas=60), _lote("P1", llenas=30, nivel_piramide=1), _lote("P2", llenas=1, nivel_piramide=2)
+    assert [(x.id, q) for x, q in salidas.repartir_salida(23, [p1, base])] == [("B", 16), ("P1", 7)]
+    assert [(x.id, q) for x, q in salidas.repartir_salida(38, [_lote("B", llenas=100), _lote("P", llenas=50,
+                                                                     nivel_piramide=1)])] == [("B", 26), ("P", 12)]
+    assert [(x.id, q) for x, q in salidas.repartir_salida(1000, [p2, p1, base])] == [("B", 60), ("P1", 30), ("P2", 1)]
+    assert salidas.repartir_salida(0, [base]) == [] and salidas.repartir_salida(5, []) == []
+    pendiente = _lote("B", llenas=60, tp_pendiente=55)
+    assert [(x.id, q) for x, q in salidas.repartir_salida(10, [pendiente, p1])] == [("B", 2), ("P1", 8)]
+
+
+@pytest.mark.parametrize("evento,esperado", [
+    pytest.param(dict(tipo="salida"), True, id="salida-toda-la-estrategia"),
+    pytest.param(dict(tipo="piramide", accion_piramide="reduce"), True, id="reduce-toda-la-estrategia"),
+    pytest.param(dict(tipo="piramide", accion_piramide="lot_stop"), False, id="lot_stop-su-lote"),
+    pytest.param(dict(tipo="piramide", accion_piramide="lot_tp"), False, id="lot_tp-su-lote"),
+])
+def test_D8_proporcion_de_estrategia(evento, esperado):
+    assert salidas.proporcion_de_estrategia(_ev(**evento)) is esperado

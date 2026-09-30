@@ -59,6 +59,17 @@ LAS TRAMPAS.
     doble compra la limpieza R-C-11 vende el exceso.
   * En cisne negro (`EstadoTicker.BS`) no se repone ni se protege (R-G-03):
     el caso sale 1 con el motivo.
+  * D10 (Jaume 30-sep): en una posición DESCONOCIDA, un stop VIVO del humano
+    (orden ajena de tipo stop del lado que reduce, `cobertura_manual`) hace
+    que el bot SE FÍE: no pone su protección, ni por lo cubierto ni por lo
+    que no. Si cubre menos que la posición, solo Avisar(2) «el stop manual
+    de X cubre N de M acciones» (clave `stop_manual_parcial:X:N:M`, que el
+    decisor deja pasar una vez al día). El stop del humano se mira en TODAS
+    las órdenes de DAS, también en las ajenas ya tratadas. Si el humano pone
+    su stop DESPUÉS de la protección del bot, el bot retira la suya por la
+    parte que el humano cubre (Cancelar, o REPLACE a lo que no cubre; anotado
+    en «stop_manual»). Sin stop del humano, lo de siempre (protección del bot
+    por lo descubierto).
 """
 from __future__ import annotations
 
@@ -132,6 +143,8 @@ MOTIVO_INTERVENCION_HUMANA = "intervención humana"   # prefijo del motivo del C
 # R-M-03 por ticker: estos estados pasan a CONTROL_HUMANO; BS, SIN_SIMBOLO y CONTROL_HUMANO conservan el suyo.
 _ESTADOS_A_CONTROL_HUMANO = frozenset({EstadoTicker.NORMAL, EstadoTicker.PAUSADO, EstadoTicker.HALT})
 ANOTACION_AJENAS = "ajenas_tratadas"  # E2c-01: {ticker, ids}; `diario.reconstruir` las mete en `estado.ordenes_ajenas`
+ANOTACION_STOP_MANUAL = "stop_manual"  # D10 (Jaume 30-sep): el bot se fía del stop del humano (solo diario)
+CLAVE_STOP_MANUAL_PARCIAL = "stop_manual_parcial"   # D10: clave del aviso 2 «cubre N de M» (el decisor, 1 vez al día)
 
 _LOTE_MUERTO = (EstadoLote.CERRADO, EstadoLote.CANCELADO)
 _RE_NUMERO = re.compile(r"\d+(?:[.,]\d+)*")
@@ -163,6 +176,11 @@ class Discrepancia:
     vivas: tuple[Orden, ...] = field(default=(), compare=False, repr=False)
     ajenas: tuple[MsgOrden, ...] = field(default=(), compare=False, repr=False)
     huerfanas: tuple[Orden, ...] = field(default=(), compare=False, repr=False)
+    # D10 (Jaume 30-sep): acciones de una posición desconocida que cubren los stops VIVOS del humano (el bot se fía y
+    # no pone su protección) y las que, aun así, no cubre nadie (solo aviso de cobertura, nunca un stop del bot).
+    cubiertas_manual: int = 0
+    sin_cubrir_manual: int = 0
+    sobra_proteccion: int = 0      # D10: acciones de la protección DEL BOT que ya cubre el humano (se retiran)
 
     def __post_init__(self) -> None:
         if self.caso not in CASOS:
@@ -241,6 +259,39 @@ def cobertura(vivas: Iterable[Any], ticker: str, neta: int, solo_confirmadas: bo
                if o.ticker == ticker and o.tipo is TipoOrden.STOP_LIMITE_PP and o.lado is lado and o.estado in estados)
 
 
+def cobertura_manual(ordenes: Iterable[Any], ticker: str, neta: int, hoy: date,
+                     cfg_stops: Optional[Mapping] = None) -> int:
+    """D10 (Jaume 30-sep): acciones que cubren los stops VIVOS del HUMANO (órdenes ajenas) del lado que reduce.
+
+    `ordenes` son los `%ORDER` de DAS (`MsgOrden`; cualquier otra cosa se
+    ignora), TODOS: también las ajenas ya tratadas (`estado.ordenes_ajenas`),
+    porque el stop manual sigue ahí barrido tras barrido. Cuenta una orden si
+    es ajena (`es_ajena`: orderSrc ≠ CMDAPI o token que no es nuestro hoy),
+    de `ticker`, viva (`stops.ESTADOS_VIVOS`), del lado que reduce (corta →
+    COMPRA; larga → VENTA) y de tipo stop (`stops.TIPO_STOP_EN_ORDER` o
+    `tipo_esperado_en_order`). Cantidad viva: `lvqty` en Partial/Triggered si
+    > 0; si no, qty − cxlqty (un lvqty 0 en Accepted no mata un stop vivo,
+    mismo criterio que `orden_de_msg`). Plana → 0. Nunca lanza.
+    """
+    if neta == 0:
+        return 0
+    lado = Lado.COMPRA if neta < 0 else Lado.VENTA
+    total = 0
+    for m in ordenes:
+        if not isinstance(m, MsgOrden) or str(m.ticker).strip() != ticker or m.estado not in stops.ESTADOS_VIVOS:
+            continue
+        if _LADOS.get(str(m.lado).strip().upper()) is not lado or not _es_tipo_stop(str(m.tipo), cfg_stops):
+            continue
+        if not es_ajena(m, hoy):
+            continue
+        lvqty = _entero_no_negativo(m.lvqty)
+        if m.estado in (EstadoOrden.PARTIAL, EstadoOrden.TRIGGERED) and lvqty > 0:
+            total += lvqty
+        else:
+            total += max(_entero_no_negativo(m.qty) - _entero_no_negativo(m.cxlqty), 0)
+    return total
+
+
 def huerfanas(vivas: Iterable[Any], ticker: str, neta: int) -> list[Orden]:
     """R-C-11 (2)-(3): órdenes NUESTRAS vivas que agrandarían la posición en el sentido equivocado.
 
@@ -301,7 +352,8 @@ def comparar(estado: EstadoBot, pos_das: Mapping[str, MsgPos], ord_das: Mapping[
         neta_d = int(msg.neta)
         avg = _precio_o_none(msg.avg)
         if not conocida:
-            salida.extend(_caso_desconocida(ticker, neta_d, avg, vivas, ajenas, pos))
+            manual = cobertura_manual(ord_das.values(), ticker, neta_d, hoy, cfg_stops)   # D10 (Jaume 30-sep)
+            salida.extend(_caso_desconocida(ticker, neta_d, avg, vivas, ajenas, pos, manual))
             continue
         neta_f = pos.neta_fills   # type: ignore[union-attr]
         if neta_d != neta_f:
@@ -710,8 +762,19 @@ def _texto_ajenas(ajenas: tuple[MsgOrden, ...]) -> str:
 
 
 def _caso_desconocida(ticker: str, neta_d: int, avg: Optional[Decimal], vivas: tuple[Orden, ...],
-                      ajenas: tuple[MsgOrden, ...], pos: Optional[PosicionTicker]) -> list[Discrepancia]:
-    """Posición que ningún diario conoce (R-C-10 4 / R-K-02) o ticker plano con órdenes nuestras huérfanas."""
+                      ajenas: tuple[MsgOrden, ...], pos: Optional[PosicionTicker], manual: int = 0) -> list[Discrepancia]:
+    """Posición que ningún diario conoce (R-C-10 4 / R-K-02) o ticker plano con órdenes nuestras huérfanas.
+
+    D10 (Jaume 30-sep): `manual` = lo que cubren los stops VIVOS del humano
+    (`cobertura_manual`). Con alguno, el bot SE FÍA: `descubiertas` = 0 (sin
+    protección del bot, ni por la parte cubierta ni por la que no);
+    `cubiertas_manual` y `sin_cubrir_manual` llevan la cuenta para el aviso de
+    cobertura. Una protección del bot que ya existía se queda como mucho con
+    lo que el humano NO cubre; lo demás va en `sobra_proteccion` y
+    `_caso_ajena` lo retira. Cubierto del todo, sin nada que retirar y sin
+    ajenas nuevas → caso 1 (o 2 con huérfanas), sin aviso. Sin stop del
+    humano, como siempre.
+    """
     sobrantes = tuple(huerfanas(vivas, ticker, neta_d))
     neta_f = pos.neta_fills if pos is not None else None
     if neta_d == 0:
@@ -722,7 +785,27 @@ def _caso_desconocida(ticker: str, neta_d: int, avg: Optional[Decimal], vivas: t
             return [Discrepancia(ticker, CASO_STOP_DIFIERE, f"R-C-11 (2): {ticker} plana con órdenes nuestras vivas",
                                  neta_das=0, neta_fills=neta_f, vivas=vivas, huerfanas=sobrantes)]
         return []
-    falta = max(abs(neta_d) - cobertura(vivas, ticker, neta_d), 0)
+    propia = cobertura(vivas, ticker, neta_d)
+    falta = max(abs(neta_d) - propia, 0)
+    if manual > 0:
+        # D10: el bot se fía del humano. Su protección se queda como mucho con lo que el humano NO cubre (nunca crece);
+        # lo que sobra se retira (Jaume 30-sep: si el humano pone su stop después, el bot cancela la suya por esa parte)
+        objetivo_bot = min(propia, max(abs(neta_d) - manual, 0))
+        sobra_bot = propia - objetivo_bot
+        sin_cubrir = max(abs(neta_d) - manual - objetivo_bot, 0)
+        if sin_cubrir == 0 and sobra_bot == 0 and not ajenas:
+            caso = CASO_STOP_DIFIERE if sobrantes else CASO_COINCIDE
+            return [Discrepancia(ticker, caso, (f"D10: posición desconocida de {ticker} ({neta_d}) cubierta por el stop "
+                                                f"manual ({manual} acciones): el bot se fía"),
+                                 neta_das=neta_d, neta_fills=neta_f, avg_das=avg, vivas=vivas, huerfanas=sobrantes,
+                                 cubiertas_manual=manual)]
+        detalle = (f"R-C-10 (4): posición de {ticker} ({neta_d}) que no está en ningún diario; el stop manual cubre "
+                   f"{min(manual, abs(neta_d))} de {abs(neta_d)} acciones: el bot se fía y no pone su protección (D10)")
+        if ajenas:
+            detalle += ". " + _texto_ajenas(ajenas)
+        return [Discrepancia(ticker, CASO_AJENA, detalle, neta_das=neta_d, neta_fills=neta_f, descubiertas=0, avg_das=avg,
+                             vivas=vivas, ajenas=ajenas, huerfanas=sobrantes, cubiertas_manual=manual,
+                             sin_cubrir_manual=sin_cubrir, sobra_proteccion=sobra_bot)]
     if falta == 0 and not ajenas:
         caso = CASO_STOP_DIFIERE if sobrantes else CASO_COINCIDE
         return [Discrepancia(ticker, caso, f"R-C-10 (4): posición desconocida de {ticker} ({neta_d}) ya protegida",
@@ -897,6 +980,9 @@ def _caso_ajena(d: Discrepancia, estado: EstadoBot, pos: Optional[PosicionTicker
     """
     ticker = d.ticker
     salida: list[Accion] = []
+    # D10 (Jaume 30-sep): con un stop manual vivo el bot se fía (d.descubiertas = 0, sin protección); si cubre menos que
+    # la posición, aviso 2 «el stop manual de X cubre N de M acciones» (UNA vez por cifra: el decisor lo filtra por día)
+    ya_intervenida = pos is not None and pos.intervencion_humana
     for m in d.ajenas:
         estado.ordenes_ajenas[m.id] = m
     if d.ajenas:
@@ -921,9 +1007,27 @@ def _caso_ajena(d: Discrepancia, estado: EstadoBot, pos: Optional[PosicionTicker
     neta = d.neta_das or 0
     salida.extend(_proteccion(ticker, d.descubiertas, neta, cot, d.avg_das, cfg_stops, tokens, ruta_stop, version))
     salida.extend(_cancelar(d.huerfanas, f"R-C-11: orden nuestra huérfana en {ticker} ({neta})", set()))
+    repetido = not d.ajenas and d.descubiertas == 0 and d.cubiertas_manual > 0 and ya_intervenida
+    retiro = _retirar_proteccion(d, neta, cfg_stops, version) if d.sobra_proteccion > 0 else []
+    if d.cubiertas_manual > 0 and (not repetido or retiro):
+        salida.append(Anotar(ANOTACION_STOP_MANUAL, {
+            "ticker": ticker, "neta_das": neta, "cubiertas_manual": d.cubiertas_manual,
+            "sin_cubrir": d.sin_cubrir_manual, "proteccion_retirada": d.sobra_proteccion if retiro else 0,
+            "regla": "D10 (Jaume 30-sep): el bot se fía del stop del humano"}))
+    salida.extend(retiro)
+    if d.sin_cubrir_manual > 0:
+        cubiertas = min(d.cubiertas_manual, abs(neta))
+        salida.append(Avisar(nivel=Nivel.AVISO, grupo=Grupo.B,
+                             clave=f"{CLAVE_STOP_MANUAL_PARCIAL}:{ticker}:{cubiertas}:{abs(neta)}",
+                             texto=(f"D10: el stop manual de {_esc(ticker)} cubre {cubiertas} de {abs(neta)} acciones; "
+                                    f"el bot NO pone su protección (ni por la parte sin cubrir): revisar el stop a mano")))
+    if repetido:
+        return salida                  # D10: nada nuevo del humano ni que proteger; el R-M-03 ya se avisó
+    proteccion = ("El bot se fía del stop manual y no pone el suyo (D10)" if d.cubiertas_manual > 0
+                  else "Se protege lo descubierto")
     salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"ajena:{ticker}",
-                         texto=(f"R-M-03: intervención humana en {_esc(ticker)}: {_esc(d.detalle)}. Se protege lo "
-                                f"descubierto; {_esc(ticker)} en manos del humano hasta /sigue {_esc(ticker)} (el resto "
+                         texto=(f"R-M-03: intervención humana en {_esc(ticker)}: {_esc(d.detalle)}. {proteccion}; "
+                                f"{_esc(ticker)} en manos del humano hasta /sigue {_esc(ticker)} (el resto "
                                 f"de tickers sigue operando)")))
     if neta > 0 and not conocida:
         salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave=f"desconocida_larga:{ticker}",
@@ -931,6 +1035,35 @@ def _caso_ajena(d: Discrepancia, estado: EstadoBot, pos: Optional[PosicionTicker
                                     f"conoce esa posición (¿saltaron a la vez un stop manual y la protección del bot?). "
                                     f"El bot solo pone una protección de venta; no vende el exceso (R-C-10 (4), R-C-11 (3), "
                                     f"E2c-03).")))
+    return salida
+
+
+def _retirar_proteccion(d: Discrepancia, neta: int, cfg_stops: Mapping, version: int) -> list[Accion]:
+    """D10 (Jaume 30-sep): retira `d.sobra_proteccion` acciones de las protecciones DEL BOT que ya cubre el stop manual.
+
+    Solo órdenes NUESTRAS (las de `d.vivas`: STOPLMTP del lado que reduce,
+    vivas, con id de DAS), de la más NUEVA a la más antigua: la que cabe
+    entera en lo que sobra se cancela; la que no, se reduce con REPLACE
+    (`stops._reemplazo`, sin serie como toda protección). Nunca toca el stop
+    del humano.
+    """
+    lado = Lado.COMPRA if neta < 0 else Lado.VENTA
+    nuestras = [o for o in _unicas(d.vivas) if o.ticker == d.ticker and o.tipo is TipoOrden.STOP_LIMITE_PP
+                and o.lado is lado and o.estado in stops.ESTADOS_VIVOS and o.id_das is not None and _qty_viva(o) > 0]
+    nuestras.sort(key=_clave_antiguedad, reverse=True)
+    motivo = f"D10: el stop manual de {d.ticker} ya cubre estas acciones; el bot retira su protección (Jaume 30-sep)"
+    salida: list[Accion] = []
+    sobra = d.sobra_proteccion
+    for o in nuestras:
+        if sobra <= 0:
+            break
+        viva = _qty_viva(o)
+        if viva <= sobra:
+            salida.append(Cancelar(id_das=o.id_das, token=o.token, motivo=motivo))   # type: ignore[arg-type]
+            sobra -= viva
+        else:
+            salida.extend(stops._reemplazo(o, viva - sobra, o.stop, o.precio, motivo, version, None, cfg_stops))  # type: ignore[arg-type]
+            sobra = 0
     return salida
 
 

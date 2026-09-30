@@ -593,3 +593,37 @@ def test_plan_b_idempotente_tras_el_eco_de_das(cfg):
                 for i, a in enumerate(de_tipo(acc, EnviarOrden)))
     assert len(eco) == 1                                                      # UN stop por nivel (v4)
     assert comprobar(foto(ordenes=eco, latido=None), cfg, AHORA + 1, tokens, HORA, RUTA_STOP, True) == []
+
+
+# ── D10 (Jaume 30-sep): el vigilante también se fía del stop del humano ──
+def _manual(qty: int) -> MsgOrden:
+    return replace(stop_das(60, "10", "10.5", qty=qty, order_src="Montage"), token=None)
+
+
+def test_D10_sin_lote_con_stop_manual_que_cubre_todo_no_protege_ni_avisa(cfg):
+    """D10: posición sin lote (-200) con un stop manual vivo de 200 → ni protección ni aviso, ni con el ejecutor muerto;
+    y no cuenta como descubierta para el plan B."""
+    f = foto(neta=-200, lotes=[], ordenes=(_manual(200),), latido=None, cotizacion=cot(last="8.00"))
+    assert comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True) == []
+    assert descubiertas_por_ticker(f, cfg, HOY) == {}
+
+
+def test_D10_sin_lote_con_stop_manual_que_cubre_parte_avisa_sin_proteger(cfg):
+    """D10: el stop manual cubre 120 de 200 → ninguna protección; con el ejecutor muerto, aviso 2 «cubre 120 de 200»;
+    con el ejecutor vivo solo se anota (el aviso lo da su reconciliación)."""
+    tokens = TokensVigilante()
+    muerto = comprobar(foto(neta=-200, lotes=[], ordenes=(_manual(120),), latido=None, cotizacion=cot(last="8.00")),
+                       cfg, AHORA, tokens, HORA, RUTA_STOP, True)
+    assert not de_tipo(muerto, EnviarOrden) and tokens.usados == 0
+    avisos = de_tipo(muerto, Avisar)
+    assert [a.nivel for a in avisos] == [Nivel.AVISO] and f"el stop manual de {X} cubre 120 de 200" in avisos[0].texto
+    vivo = comprobar(foto(neta=-200, lotes=[], ordenes=(_manual(120),), latido=1.0,
+                          descubierta_desde={X: AHORA - 60}), cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
+    assert not de_tipo(vivo, EnviarOrden) and not de_tipo(vivo, Avisar) and "D10" in anotacion(vivo)["motivo"]
+
+
+def test_D10_sin_lote_sin_stop_manual_protege_como_hoy(cfg):
+    """D10: sin stop del humano, lo de siempre: protección de 200 + aviso 3."""
+    f = foto(neta=-200, lotes=[], latido=None, cotizacion=cot(last="8.00"))
+    acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
+    assert [(a.orden.proposito, a.orden.qty) for a in de_tipo(acc, EnviarOrden)] == [(Proposito.STOP_PROTECCION, 200)]

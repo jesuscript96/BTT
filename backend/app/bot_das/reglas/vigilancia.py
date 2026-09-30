@@ -9,7 +9,9 @@ conexión watch + los diarios) y devuelve las acciones del vigilante:
       (`stops.inferir_proposito`, corrección 3);
   (b) sobrantes → cancelar la más nueva (lo hace el mismo `plan`);
   (c) posición que no está en ningún diario → `stops.stop_proteccion` por lo
-      descubierto + Avisar(3) (R-C-10 caso 4);
+      descubierto + Avisar(3) (R-C-10 caso 4); D10 (Jaume 30-sep): con un
+      stop VIVO del humano en el ticker, ninguna protección del bot (solo
+      aviso 2 si no cubre toda la posición, `_con_stop_manual`);
   (d) R-H-02 (dos compras Located no pedidas del mismo ticker-estrategia-día)
       y R-H-03 (gasto > 3 % del equity) → Avisar(3) + Anotar
       («locates_deshabilitar»);
@@ -177,6 +179,7 @@ class _Vista:
     limit_up: Optional[Decimal]
     cot: Optional[Cotizacion]
     avg: Optional[Decimal]
+    manual: int = 0                 # D10 (Jaume 30-sep): lo que cubren los stops VIVOS del humano en este ticker
 
 
 # ── API pública ──────────────────────────────────────────────────────────
@@ -409,7 +412,8 @@ def _vistas(foto: Foto, cfg_stops: Mapping, hoy: date) -> list[_Vista]:
                              estado=foto.estados_ticker.get(ticker, EstadoTicker.NORMAL))
         salida.append(_Vista(ticker=ticker, neta=neta, pos=pos, lotes=lotes, vivas=vivas.get(ticker, []),
                              limit_up=_precio(foto.limit_up.get(ticker)), cot=foto.cotizaciones.get(ticker),
-                             avg=_precio(foto.posiciones[ticker].avg)))
+                             avg=_precio(foto.posiciones[ticker].avg),
+                             manual=reconciliacion.cobertura_manual(foto.ordenes.values(), ticker, neta, hoy, cfg_stops)))
     return salida
 
 
@@ -419,7 +423,9 @@ def _descubiertas(vista: _Vista, cfg_stops: Mapping) -> int:
         return 0
     if vista.lotes:
         return stops.descubiertas(vista.pos, vista.vivas, cfg_stops, vista.limit_up) if vista.neta < 0 else 0
-    return max(abs(vista.neta) - reconciliacion.cobertura(vista.vivas, vista.ticker, vista.neta, solo_confirmadas=True), 0)
+    # D10 (Jaume 30-sep): sin lotes, el stop VIVO del humano también cubre (el bot se fía de él)
+    return max(abs(vista.neta) - reconciliacion.cobertura(vista.vivas, vista.ticker, vista.neta, solo_confirmadas=True)
+               - vista.manual, 0)
 
 
 def _token_prueba() -> int:
@@ -452,6 +458,8 @@ def _que_hacer(vista: _Vista, cfg: Any, cfg_stops: Mapping, tokens: Callable[[],
     if neta != 0 and not vista.lotes:
         falta = abs(neta) - reconciliacion.cobertura(vista.vivas, t, neta)
         sobran = reconciliacion.huerfanas(vista.vivas, t, neta)
+        if vista.manual > 0 and falta > 0:
+            return _con_stop_manual(vista, falta, sobran, actua, muerto)
         if falta <= 0 and not sobran:
             return [], [], ""
         avisos = [] if falta <= 0 else [Avisar(
@@ -496,6 +504,30 @@ def _que_hacer(vista: _Vista, cfg: Any, cfg_stops: Mapping, tokens: Callable[[],
         return [], [], ""
     return (propuesta, propuesta, "R-C-11 (2): órdenes huérfanas con el ejecutor muerto") if muerto else \
         (propuesta, [], "órdenes huérfanas: las cancela el ejecutor (R-C-11)")
+
+
+def _con_stop_manual(vista: _Vista, falta: int, sobran: list[Orden], actua: bool,
+                     muerto: bool) -> tuple[list[Accion], list[Accion], str]:
+    """D10 (Jaume 30-sep): posición sin lotes con un stop VIVO del humano → el vigilante SE FÍA y nunca pone protección.
+
+    Si el stop cubre menos que lo que falta, Avisar(2) «el stop manual de X
+    cubre N de M acciones»; ese aviso solo SALE con el ejecutor muerto (con el
+    ejecutor vivo ya lo da su reconciliación, una vez al día): si no, queda en
+    la propuesta (se anota con su firma). Las huérfanas se cancelan como
+    siempre cuando le toca actuar.
+    """
+    t, neta = vista.ticker, vista.neta
+    sin_cubrir = max(falta - vista.manual, 0)
+    avisos: list[Accion] = [] if sin_cubrir == 0 else [Avisar(
+        nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"vigilante_stop_manual:{t}",
+        texto=(f"D10: el stop manual de {_esc(t)} cubre {min(vista.manual, abs(neta))} de {abs(neta)} acciones; el bot "
+               f"NO pone su protección (ni por la parte sin cubrir): revisar el stop a mano"))]
+    cancelaciones = _cancelar(sobran, f"R-C-11: orden huérfana en {t} ({neta})")
+    propuesta = avisos + cancelaciones
+    if not propuesta:
+        return [], [], ""
+    reales = (cancelaciones if actua else []) + (avisos if muerto else [])
+    return propuesta, reales, "D10: el bot se fía del stop manual del humano (sin protección del bot)"
 
 
 def _proteccion(vista: _Vista, falta: int, cfg_stops: Mapping, tokens: Callable[[], int], ruta_stop: str) -> list[Accion]:

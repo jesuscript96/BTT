@@ -2401,11 +2401,27 @@ class Decisor:
                 acciones += self._cancelar_intento(pos, MOTIVO_PRIORIDAD)
         if self._entradas_vivas(ticker):
             return acciones + self._salida_en_espera(s, modo, "entrada viva en el ticker (nunca juntas, R-D-07)")
-        libres = self._libres(pos, lote)
-        pedidas = entrada.qty_de_evento(getattr(ev, "acciones", None))
-        qty = min(pedidas, libres) if pedidas > 0 else libres
-        acciones.append(self._anotar_proporcion(s, lote, pedidas, qty))
-        if qty <= 0:
+        acciones_ev = entrada.qty_de_evento(getattr(ev, "acciones", None))
+        # D8 (Jaume 30-sep): si el evento dice qué fracción de SU posición cierra el backtest, el bot cierra esa misma
+        # fracción de la SUYA: en una salida o un REDUCIR, la de TODA la estrategia en el ticker (base + pirámides,
+        # repartida por `salidas.repartir_salida`); en un SL/TP de lote, la de ese lote. Si no, las acciones literales.
+        proporcion = salidas.proporcion_del_evento(ev)
+        pedidas_literal: Optional[int] = None
+        if proporcion is not None:
+            vivos = (self._lotes_de_estrategia(pos, lote) if salidas.proporcion_de_estrategia(ev) else [lote])
+            base_total = sum(salidas.base_proporcional(x) for x in vivos)
+            objetivo = salidas.qty_proporcional(proporcion[0], proporcion[1], base_total)
+            partes = salidas.repartir_salida(objetivo, vivos)
+            for x, q in partes:
+                acciones.append(self._anotar_proporcion(s, x, acciones_ev, q, proporcion, objetivo))
+        else:
+            libres = self._libres(pos, lote)
+            qty = min(acciones_ev, libres) if acciones_ev > 0 else libres
+            partes = [(lote, qty)] if qty > 0 else []
+            pedidas_literal = acciones_ev
+            acciones.append(self._anotar_proporcion(s, lote, acciones_ev, qty, None))
+        # lo que cada lote puede cerrar sin comprar de más (G1A-02, G1B-01, G1B-05); el tope por ticker se mira al enviar
+        if not partes or all(min(q, self._libres(pos, x)) <= 0 for x, q in partes):
             # R2-DEC-1 (G1B-05): 0 libres con la posición aún corta y acciones en el lote (una HALT_BANDA o un cierre
             # humano vivos, DAS atrasado) → la salida espera y se vuelve a mirar; no se pierde en silencio
             espera = self._espera_sin_libres(pos, lote, f"salida_motor:{s.id}", "salida del motor")
@@ -2416,13 +2432,40 @@ class Decisor:
                                                          "motivo": "el lote no tiene acciones libres"})]
         self._olvidar_sin_libres(f"salida_motor:{s.id}")
         cot = self._cot(ticker)
+        sin_ask = cot is None or not _es_precio(cot.ask)
+        if modo == _SALIDA_PRIORIDAD and sin_ask:
+            return acciones + self._salida_en_espera(s, modo, "sin ask en DAS")
+        if modo != _SALIDA_PRIORIDAD and codigo == salidas.TRATAR_HORA_EVENTO and sin_ask:
+            return acciones + [Avisar(Nivel.AVISO, Grupo.B, f"{avisos.escapar(ticker)}: salida por tiempo sin ask en DAS; "
+                                                            f"se reintenta", clave=f"hora_sin_ask:{lote.id}")] + \
+                self._salida_en_espera(s, modo, "sin ask en DAS")
+        for x, q in partes:                                  # D8: una orden por lote (su lote_id, su fill, su TP)
+            qty = min(q, self._libres(pos, x))
+            if qty > 0:
+                acciones += self._orden_de_salida(s, pos, x, codigo, modo, qty, cot,
+                                                  qty if pedidas_literal is None else pedidas_literal)
+        self._refrescar_tp_pendiente(pos)
+        return acciones
+
+    def _lotes_de_estrategia(self, pos: PosicionTicker, lote: Lote) -> list[Lote]:
+        """D8 (Jaume 30-sep): los lotes VIVOS con acciones de la estrategia de `lote` en el ticker (base + pirámides)."""
+        vivos = [x for x in pos.lotes.values()
+                 if x.strategy_id == lote.strategy_id and x.estado in _LOTE_VIVO and x.llenas > 0]
+        return vivos or [lote]
+
+    def _orden_de_salida(self, s: Senal, pos: PosicionTicker, lote: Lote, codigo: str, modo: str, qty: int,
+                         cot: Optional[Cotizacion], pedidas: int) -> list[Accion]:
+        """La orden de salida de UN lote por `qty` (> 0, ya topada por lo libre): prioridad al ask, hora o TP (R-D-03 v2).
+
+        `pedidas` = lo que pide el evento para ESTE lote (literal: las acciones del evento, 0 si no trae; D8: su parte);
+        la salida por tiempo sin cantidad se omite (D2-05: el EOD cierra el resto).
+        """
+        acciones: list[Accion] = []
         if modo == _SALIDA_PRIORIDAD:
-            if cot is None or not _es_precio(cot.ask):
-                return acciones + self._salida_en_espera(s, modo, "sin ask en DAS")
             orden = salidas.orden_al_ask(lote, qty, cot, self._cfg, self._tokens.siguiente, self._ahora_et, None,
                                          Proposito.TP_CRUCE)
             acciones += self._absorber([EnviarOrden(orden)])
-            acciones.append(Anotar("prioridad_tp", {"ticker": ticker, "lote_id": lote.id, "token": orden.token,
+            acciones.append(Anotar("prioridad_tp", {"ticker": pos.ticker, "lote_id": lote.id, "token": orden.token,
                                                     "qty": qty, "regla": "R-D-07"}))
             acciones += self._seguimiento_salida(lote, orden)
         elif codigo == salidas.TRATAR_HORA_EVENTO:
@@ -2433,10 +2476,9 @@ class Decisor:
             if orden_tp is not None:
                 acciones += self._absorber([EnviarOrden(orden_tp)])
             else:
-                acciones.append(Anotar("salida_sin_libro", {"ticker": ticker, "lote_id": lote.id, "qty": qty,
+                acciones.append(Anotar("salida_sin_libro", {"ticker": pos.ticker, "lote_id": lote.id, "qty": qty,
                                                             "regla": "D2-12: el cruce se decide a los 2 s"}))
             acciones.append(programa)
-        self._refrescar_tp_pendiente(pos)
         return acciones
 
     def _salida_por_tiempo(self, s: Senal, pos: PosicionTicker, lote: Lote, pedidas: int, qty: int,
@@ -2468,15 +2510,28 @@ class Decisor:
                                       {"lote_id": lote.id, "ticker": pos.ticker, "motivo": "hora_evento"}))
         return acciones
 
-    def _anotar_proporcion(self, s: Senal, lote: Lote, pedidas: int, qty: int) -> Anotar:
-        """G1A-16 / G1B-16 (pregunta 3 a Jaume): la proporción del motor frente a la aplicada, SIEMPRE al diario."""
+    def _anotar_proporcion(self, s: Senal, lote: Lote, pedidas: int, qty: int,
+                           proporcion: Optional[tuple[Decimal, bool]] = None,
+                           qty_estrategia: Optional[int] = None) -> Anotar:
+        """G1A-16 / G1B-16 y D8 (Jaume 30-sep): la proporción del backtest frente a la aplicada, SIEMPRE al diario.
+
+        `modo` = «proporcion» cuando el evento permitió deducir la fracción de
+        la posición del backtest (`fraccion_backtest`, `total_backtest`) y el
+        bot cerró esa fracción de la suya; «literal» cuando no (se cerraron las
+        acciones del evento, tope lo libre, como antes de D8).
+        """
         motor = self._acciones_motor_lote.get(lote.id)
         return Anotar("salida_proporcion", {
             "senal_id": s.id, "ticker": lote.ticker, "lote_id": lote.id, "acciones_evento": pedidas,
             "acciones_motor_entrada": motor, "lote_llenas": lote.llenas, "qty": qty,
+            "modo": "proporcion" if proporcion is not None else "literal",
+            "fraccion_backtest": proporcion[0] if proporcion is not None else None,
+            "total_backtest": proporcion[1] if proporcion is not None else None,
+            "qty_estrategia": qty_estrategia,
             "proporcion_motor": (Decimal(pedidas) / Decimal(motor)) if motor and pedidas > 0 else None,
             "proporcion_aplicada": (Decimal(qty) / Decimal(lote.llenas)) if lote.llenas > 0 and qty > 0 else None,
-            "regla": "R-D-03 v2 / F4.1 (G1A-16: acciones del evento, no proporción; pregunta 3)"})
+            "regla": ("D8 (Jaume 30-sep): proporción de nuestra posición en el lote" if proporcion is not None else
+                      "D8 (Jaume 30-sep): el evento no permite conocer la proporción → acciones literales del evento")})
 
     def _salida_en_espera(self, s: Senal, modo: str, motivo: str,
                           en_s: float = SALIDA_REPROGRAMAR_S) -> list[Accion]:
@@ -4542,9 +4597,14 @@ class Decisor:
                 normales.append(dataclasses.replace(d, caso=reconciliacion.CASO_COINCIDE))   # solo adopta sus órdenes
             else:
                 normales.append(d)
-        acciones += self._absorber(reconciliacion.acciones(normales, estado, self._cot, self._cfg,
-                                                           self._tokens.siguiente, self._ahora_et, self._ruta_stop(),
-                                                           self._limit_up))
+        reconciliadas = reconciliacion.acciones(normales, estado, self._cot, self._cfg, self._tokens.siguiente,
+                                                self._ahora_et, self._ruta_stop(), self._limit_up)
+        # D10 (Jaume 30-sep): el aviso «el stop manual de X cubre N de M» sale UNA vez al día por cifra, no cada barrido
+        reconciliadas = [a for a in reconciliadas
+                         if not (isinstance(a, Avisar) and a.clave
+                                 and a.clave.startswith(reconciliacion.CLAVE_STOP_MANUAL_PARCIAL + ":")
+                                 and not self._una_vez_al_dia(a.clave))]
+        acciones += self._absorber(reconciliadas)
         for ticker in sorted(set(propios)):
             acciones += self._plan(ticker)
         acciones.append(Anotar("reconciliacion", {"casos": {d.ticker: d.caso for d in discrepancias},

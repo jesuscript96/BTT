@@ -934,3 +934,114 @@ def test_caso_3_idempotente_tras_el_eco_de_das(cfg):
     segunda = comparar(estado, {X: pos_das(-100)}, eco, HOY, cfg)
     assert casos(segunda) == [(X, CASO_COINCIDE)]
     assert acciones(segunda, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP) == []
+
+
+# ── D10 (Jaume 30-sep): el bot se fía del stop que ya puso el humano ─────
+def _stop_manual(id_das: int = 95, qty: int = 200, estado: EstadoOrden = EstadoOrden.ACCEPTED, lado: str = "B",
+                 order_src: Optional[str] = "Montage") -> MsgOrden:
+    return msg_crudo(id_das, None, lado=lado, tipo="SLP: 10.00 10.50", qty=qty, precio="10.50", estado=estado,
+                     order_src=order_src)
+
+
+def test_D10_stop_manual_que_cubre_todo_sin_proteccion_ni_aviso_de_cobertura(cfg):
+    """D10: posición ajena de 200 con un stop manual VIVO de 200 → ni protección del bot ni aviso de cobertura; sí el
+    R-M-03 (intervención humana), que dice que el bot se fía. El barrido siguiente es caso 1 sin acciones."""
+    estado = estado_con()
+    ord_das = {95: _stop_manual()}
+    ds = comparar(estado, {X: pos_das(-200)}, ord_das, HOY, cfg)
+    assert casos(ds) == [(X, CASO_AJENA)]
+    assert (ds[0].descubiertas, ds[0].cubiertas_manual, ds[0].sin_cubrir_manual) == (0, 200, 0)
+    acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
+    assert not de_tipo(acc, EnviarOrden)
+    avisos = de_tipo(acc, Avisar)
+    assert [(a.nivel, a.clave) for a in avisos] == [(Nivel.MAXIMO, f"ajena:{X}")] and "se fía" in avisos[0].texto
+    assert [a.datos["cubiertas_manual"] for a in de_tipo(acc, Anotar) if a.tipo == rc.ANOTACION_STOP_MANUAL] == [200]
+    siguiente = comparar(estado, {X: pos_das(-200)}, ord_das, HOY, cfg)
+    assert casos(siguiente) == [(X, CASO_COINCIDE)]
+    assert acciones(siguiente, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP) == []
+
+
+def test_D10_stop_manual_que_cubre_parte_avisa_y_no_protege_nada(cfg):
+    """D10: el stop manual cubre 120 de 200 → aviso 2 «cubre 120 de 200» y NINGUNA protección del bot (ni por las 80
+    sin cubrir). En los barridos siguientes solo se repite ese aviso (el decisor lo deja pasar una vez al día)."""
+    estado = estado_con()
+    ord_das = {95: _stop_manual(qty=120)}
+    ds = comparar(estado, {X: pos_das(-200)}, ord_das, HOY, cfg)
+    assert casos(ds) == [(X, CASO_AJENA)]
+    assert (ds[0].descubiertas, ds[0].cubiertas_manual, ds[0].sin_cubrir_manual) == (0, 120, 80)
+    tokens = Contador()
+    acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, tokens, HORA, RUTA_STOP)
+    assert not de_tipo(acc, EnviarOrden) and tokens.usados == 0
+    cobertura_ = [a for a in de_tipo(acc, Avisar) if (a.clave or "").startswith(rc.CLAVE_STOP_MANUAL_PARCIAL + ":")]
+    assert len(cobertura_) == 1 and cobertura_[0].nivel is Nivel.AVISO
+    assert f"el stop manual de {X} cubre 120 de 200 acciones" in cobertura_[0].texto
+    assert cobertura_[0].clave == f"{rc.CLAVE_STOP_MANUAL_PARCIAL}:{X}:120:200"
+    siguiente = comparar(estado, {X: pos_das(-200)}, ord_das, HOY, cfg)
+    acc2 = acciones(siguiente, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
+    assert [a.clave for a in acc2] == [f"{rc.CLAVE_STOP_MANUAL_PARCIAL}:{X}:120:200"]   # sin R-M-03 ni protección
+
+
+@pytest.mark.parametrize("ajena", [
+    pytest.param(None, id="sin-ninguna-orden-del-humano"),
+    pytest.param(msg_crudo(96, None, lado="B", tipo="L", qty=200, order_src="Montage"), id="limite-manual-no-es-stop"),
+    pytest.param(_stop_manual(estado=EstadoOrden.CANCELED), id="stop-manual-cancelado"),
+    pytest.param(_stop_manual(lado="S"), id="stop-manual-del-lado-que-agranda"),
+])
+def test_D10_sin_stop_manual_vivo_proteccion_como_hoy(cfg, ajena):
+    """D10: sin un stop VIVO del humano del lado que reduce, lo de siempre: protección del bot por las 200 + aviso 3."""
+    estado = estado_con()
+    ord_das = {} if ajena is None else {ajena.id: ajena}
+    ds = comparar(estado, {X: pos_das(-200)}, ord_das, HOY, cfg)
+    assert casos(ds) == [(X, CASO_AJENA)] and ds[0].descubiertas == 200 and ds[0].cubiertas_manual == 0
+    acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
+    assert [(a.orden.proposito, a.orden.qty) for a in de_tipo(acc, EnviarOrden)] == [(Proposito.STOP_PROTECCION, 200)]
+    assert not [a for a in de_tipo(acc, Avisar) if (a.clave or "").startswith(rc.CLAVE_STOP_MANUAL_PARCIAL)]
+
+
+def test_D10_cobertura_manual_solo_cuenta_stops_ajenos_vivos():
+    """D10: `cobertura_manual` suma los stops AJENOS vivos del lado que reduce; los nuestros (CMDAPI) no cuentan."""
+    nuestro = msg_crudo(97, tok(5), lado="B", tipo="SLP: 10.00 15.00", qty=50)
+    import dataclasses
+    parcial = dataclasses.replace(_stop_manual(98, qty=100, estado=EstadoOrden.PARTIAL), lvqty=30)
+    ordenes = [nuestro, _stop_manual(95, qty=70), parcial, _stop_manual(99, estado=EstadoOrden.EXECUTED)]
+    assert rc.cobertura_manual(ordenes, X, -200, HOY) == 100
+    assert rc.cobertura_manual(ordenes, X, 0, HOY) == 0
+    assert rc.cobertura_manual(ordenes, "ABC", -200, HOY) == 0
+
+
+def _proteccion_bot(qty: int = 200, id_das: int = 50) -> Orden:
+    return orden(tok(3), Proposito.STOP_PROTECCION, "10.00", "15.00", qty, id_das, nivel=None, lote_id=None)
+
+
+def test_D10_stop_manual_puesto_despues_el_bot_cancela_su_proteccion(cfg):
+    """D10 (Jaume 30-sep): el bot ya protegía las 200 y el humano pone DESPUÉS su stop de 200 → el bot CANCELA su
+    protección (se fía del humano) y lo anota; nunca toca el stop del humano."""
+    prot = _proteccion_bot()
+    estado = estado_con(ordenes=(prot,))
+    ord_das = {**ids([prot]), 95: _stop_manual()}
+    ds = comparar(estado, {X: pos_das(-200)}, ord_das, HOY, cfg)
+    assert casos(ds) == [(X, CASO_AJENA)] and ds[0].sobra_proteccion == 200
+    acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
+    assert [(c.id_das, c.token) for c in de_tipo(acc, Cancelar)] == [(50, prot.token)]
+    assert not de_tipo(acc, EnviarOrden) and not de_tipo(acc, Reemplazar)
+    nota = [a.datos for a in de_tipo(acc, Anotar) if a.tipo == rc.ANOTACION_STOP_MANUAL]
+    assert [(n["cubiertas_manual"], n["proteccion_retirada"]) for n in nota] == [(200, 200)]
+
+
+def test_D10_stop_manual_parcial_puesto_despues_el_bot_reduce_su_proteccion(cfg):
+    """D10: protección del bot de 200 y el humano cubre 120 → el bot deja la suya en 80 (REPLACE), lo que el humano no
+    cubre; sin aviso de cobertura (entre los dos cubren todo). Con el eco de DAS, el barrido siguiente cuadra."""
+    prot = _proteccion_bot()
+    estado = estado_con(ordenes=(prot,))
+    estado.ordenes_ajenas[95] = None   # type: ignore[assignment]   # la ajena ya se trató: el caso sale igual
+    estado.posiciones[X] = posicion(0)
+    estado.posiciones[X].intervencion_humana = True
+    ord_das = {**ids([prot]), 95: _stop_manual(qty=120)}
+    ds = comparar(estado, {X: pos_das(-200)}, ord_das, HOY, cfg)
+    assert casos(ds) == [(X, CASO_AJENA)] and (ds[0].sobra_proteccion, ds[0].sin_cubrir_manual) == (120, 0)
+    acc = acciones(ds, estado, cot_de(cot(last="8.00")), cfg, Contador(), HORA, RUTA_STOP)
+    assert [(r.id_das, r.qty) for r in de_tipo(acc, Reemplazar)] == [(50, 80)]
+    assert not de_tipo(acc, Cancelar) and not de_tipo(acc, EnviarOrden) and not de_tipo(acc, Avisar)
+    eco = {50: msg(_proteccion_bot(qty=80)), 95: _stop_manual(qty=120)}
+    siguiente = comparar(estado, {X: pos_das(-200)}, eco, HOY, cfg)
+    assert casos(siguiente) == [(X, CASO_COINCIDE)]
