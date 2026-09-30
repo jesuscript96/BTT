@@ -18,8 +18,9 @@ tiempo llega como parámetro (`ahora_et`, `duracion_min`, `hora_et`).
 LAS TRAMPAS.
   * DAS no dice si un halt es LULD, T1 o T12: solo `TA:H` (halted) o `TA:P`
     (paused, la pausa de volatilidad LULD de 5 min, manual L1128-1133). Aquí
-    `P` = LULD (manda k, sin tope de subida) y `H` = T1/T12 u otro (aplica el
-    tope del 250 % de R-F-05 y, por duración, el T12 pasa a control humano).
+    `P` = LULD (manda k, sin tope de subida) y `H` = T1/T12 u otro, halt de
+    noticia (en RTH se cierra siempre a mercado, decisión 48; en premercado
+    aplica el tope del 250 % de R-F-05; la duración ya no decide, Jaume 28-sep).
   * `fin_previsto` solo existe para `P` (TAT + 5 min). Si la bolsa extiende la
     pausa otros 5 min, el fin queda en el pasado: `momento_envio_open` devuelve
     0 (= ahora) y la orden espera en DAS al cruce de reapertura (riesgo 27).
@@ -35,13 +36,20 @@ LAS TRAMPAS.
     reapertura; se reabre con `T` o sin TA. R2-DEC-3: si DAS no manda el `T`,
     `MercadoDAS` da el símbolo por reabierto con prints nuevos 5 s seguidos en
     `Q` y le quita el TA (aquí se ve como «se negocia»).
-  * E1-01: en un halt que NO es LULD (`H`/`Q`) el `last` durante el halt es el
-    print de ANTES de parar, así que la subida medida sale ~0 % y el tope del
-    250 % de R-F-05 no se puede medir al decidir. Por eso la salida por OPEN
-    no es una MKT sin tope: es un LÍMITE a `precio_parada · (1 + t1/100)`
-    redondeado abajo (si reabre por encima, no llena y decide el humano). Lo
-    mismo capa el límite del reintento. `tope_t1_superado` es la función ÚNICA
-    que el decisor usa al reabrir con el precio real (E1-02).
+  * Decisión 48 (Jaume 30-sep): un halt de NOTICIA (`H`/`Q`, no LULD) en
+    SESIÓN (RTH) con posición se cierra SIEMPRE a MERCADO por OPEN al reabrir,
+    haya parado donde haya parado: ya no hay «reabre por debajo del stop →
+    mantener» ni LÍMITE a parada × 3,5 en RTH (la MKT no tiene techo). La
+    pausa LULD (`P`) no cambia (manda k). El tope del 250 % solo queda en
+    PREMERCADO.
+  * E1-01 (desde la decisión 48, SOLO en premercado): en un halt que NO es
+    LULD el `last` durante el halt es el print de ANTES de parar, así que la
+    subida medida sale ~0 % y el tope del 250 % de R-F-05 no se puede medir al
+    decidir. Por eso el límite de salida de premercado se CAPA a
+    `precio_parada · (1 + t1/100)` redondeado abajo. `tope_t1_superado` es la
+    función ÚNICA que el decisor usa al reabrir con el precio real (E1-02);
+    decisión 49 (Jaume 30-sep): si en premercado reabre por encima del techo,
+    la límite se queda VIVA en el techo, los stops fuera y decide el humano.
   * E1-04 RETIRADO (Decisión 39, Jaume 30-sep): `ensanchar_stops_pm` (en un
     halt `H` de premercado con «mantener», subir el límite de los stops de
     compra a `con_techo(disparo, margen_limite_pm_pct)`) ya NO la llama el
@@ -248,24 +256,30 @@ def decidir_reapertura(pos: PosicionTicker, simb: EstadoSimbolo, stops: Optional
       0. Sin posición (neta 0) → mantener: no hay nada que decidir (ni que pasar a un humano).
       1. (Jaume 28-sep) T1 y T12 llevan el MISMO protocolo: la duración del halt no decide nada (antes, > `t12_min`
          pasaba a control humano). Al reabrir, lo único que importa es el precio de reapertura frente al stop y al tope.
+      1b. Decisión 48 (Jaume 30-sep): en RTH, un halt que NO es LULD (`H`, `Q` o ya reabierto: halt de noticia) con
+         posición → «cerrar_mercado» SIEMPRE, sin mirar precio, stop, k ni tope (paró donde paró; sin datos también:
+         lo conservador es salir). Un halt H de premercado que sigue parado a las 09:30 entra aquí en cuanto el
+         decisor vuelve a decidir con la franja RTH.
       2. Precio de referencia = último conocido (`cot.last`) o el precio de parada; sin ninguno, o sin
          niveles de stop con los que comparar (`stops` None), → control_humano (no se decide a ciegas).
       3. Escenario 1 (R-F-01): el primer stop (el del nivel más bajo) queda POR ENCIMA del precio (corto) → mantener
          si k < k_max; k ≥ k_max → cerrar. Escenario 2: stop por debajo (o igual) → cerrar sí o sí.
-      4. Al cerrar en un halt que NO es LULD (`TA:H`), R-F-05 a: subida desde el precio de parada > 250 % →
-         control_humano (alerta máxima; en LULD no hay tope: manda k). Sin precio de parada no se puede medir y
-         prima cerrar.
+      4. Al cerrar en un halt que NO es LULD fuera de RTH (premercado), R-F-05 a: subida desde el precio de parada
+         > 250 % → control_humano (alerta máxima; en LULD no hay tope: manda k). Sin precio de parada no se puede
+         medir y prima cerrar.
       5. «cerrar» es cerrar_mercado en RTH y cerrar_limite_pm en cualquier otra franja (R-F-06: en PM no hay MKT).
     Para una neta LARGA la comparación con el stop se refleja (stop por debajo).
     `stops` son el disparo y el límite del stop que primero se cruzaría (R-C-01 v4, stop único: con varios lotes, el
     del L más bajo): los pasa el decisor ya calculados por `reglas.stops` (ajuste (a): aquí no se importa
-    `reglas.stops`). Si el símbolo
-    ya reabrió (`ta` fuera de {H, P}) no se sabe si el halt fue LULD o T1: el tope del 250 % se aplica igualmente,
-    que es lo conservador (un humano decide con los stops residentes).
+    `reglas.stops`). Si el símbolo ya reabrió (`ta` fuera de {H, P}) no se sabe si el halt fue LULD o T1: en RTH se
+    trata como noticia (decisión 48: se cierra) y en premercado el tope del 250 % se aplica igualmente; las dos cosas
+    son lo conservador.
     """
     if pos.neta == 0:
         return "mantener"
     _cfg_float(cfg_halts, "t12_min", float(T12_MIN_DEFECTO))     # solo valida el cuadro; no decide (Jaume 28-sep)
+    if _es_rth(franja) and not es_luld(simb):
+        return "cerrar_mercado"           # decisión 48 (Jaume 30-sep): halt de noticia en sesión → MKT por OPEN, siempre
     precio = _precio_ultimo(cot, simb)
     if precio is None or stops is None:
         return "control_humano"
@@ -312,8 +326,9 @@ def precio_tope_t1(simb: EstadoSimbolo, cfg_halts: Any) -> Optional[Decimal]:
     """E1-01: `precio_parada · (1 + t1_subida_max_cierre_pct / 100)` redondeado ABAJO al tick; None si no aplica.
 
     No aplica (None) en LULD (`P`: manda k, sin tope) ni sin precio de parada
-    válido. Es el límite máximo que paga una salida de un halt H/Q: por
-    encima, R-F-05 manda control humano.
+    válido. Es el límite máximo que paga una salida de un halt H/Q de
+    PREMERCADO (en RTH ya no se aplica: decisión 48): por encima, R-F-05 manda
+    control humano y, decisión 49, la límite se queda viva en este precio.
     """
     if es_luld(simb):
         return None
@@ -333,7 +348,9 @@ def decidir_reapertura_pm(precio: Optional[Decimal], limite_stop: Optional[Decim
       * precio ≤ límite (o sin precio / sin límite) → None: lo de siempre (el
         stop residente llena si el precio pasa su disparo).
       * precio > techo del T1 (`tope_t1_superado`, parada · 3,5 estricto) →
-        «control_humano»: no se compra (R-F-05 a, como `_tope_t1_control_humano`).
+        «control_humano» (R-F-05 a, como `_tope_t1_control_humano`); decisión
+        49 (Jaume 30-sep): el decisor deja una compra LÍMITE VIVA en el techo
+        (llena si el precio baja de ahí), quita los stops y pasa al humano.
       * límite < precio ≤ techo → «cerrar_tope»: el stop ya no puede llenar; el
         decisor baja el stop a 0 y compra con un LÍMITE a `precio_tope_t1`
         (`orden_cierre_tope_pm`) en vez de declarar el cisne negro.
@@ -397,19 +414,17 @@ def orden_reapertura(pos: PosicionTicker, qty: int, cot: Optional[Cotizacion], d
     """La orden de salida del halt (EP-2 / R-F-06 / R-F-05).
 
     «cerrar_mercado» → compra (cubre el corto) por la ruta `rutas.halt` (OPEN,
-    Sage 24-sep) con propósito HALT_OPEN: a MERCADO en una pausa LULD (`P`) y,
-    con `simb` (solo por nombre, E1-01) de un halt que NO es LULD (`H`/`Q`, o ya
-    reabierto) y con precio de parada, un LÍMITE a `precio_tope_t1` (parada ·
-    3,5 redondeado abajo): durante el halt el `last` es el de antes de parar y
-    el 250 % no se puede medir; si reabre por encima, la orden no llena y el
-    decisor pasa a control humano (`tope_t1_superado`). «cerrar_limite_pm» →
+    Sage 24-sep) con propósito HALT_OPEN, SIEMPRE a MERCADO: en una pausa LULD
+    (`P`) y, desde la decisión 48 (Jaume 30-sep), también en un halt de noticia
+    (`H`/`Q`) en sesión: la MKT no tiene techo (antes, E1-01, era un LÍMITE a
+    parada · 3,5). «cerrar_limite_pm» →
     LÍMITE que cruza el ask con `halts.margen_limite_pm_pct` (redondeado al lado
     que llena) por la ruta de cruzar de la tabla, TIF DAY+, propósito
-    HALT_PM_LIMITE; con `simb` de un halt no LULD ese límite se CAPA también al
-    tope del T1 (nunca se paga más de parada · 3,5). Una neta LARGA vende de
-    forma simétrica (bid · (1 − margen)) y sin tope (el 250 % es de subida;
-    una venta a MERCADO sigue siendo MERCADO). Sin `simb` el comportamiento es
-    el de antes (MKT). `cfg` es la `Config` entera (o un dict con «rutas» y
+    HALT_PM_LIMITE; con `simb` de un halt no LULD ese límite se CAPA al tope
+    del T1 (nunca se paga más de parada · 3,5); el decisor pasa `simb` solo en
+    premercado (en RTH el tope ya no se aplica, decisión 48). Una neta LARGA
+    vende de forma simétrica (bid · (1 − margen)) y sin tope (el 250 % es de
+    subida). `cfg` es la `Config` entera (o un dict con «rutas» y
     «halts»). Lanza ValueError con otra decisión, sin posición, con `qty` mayor
     que la posición (jamás quedar del otro lado: riesgo 6) o, en PM, sin ningún
     precio del que partir.
@@ -423,13 +438,10 @@ def orden_reapertura(pos: PosicionTicker, qty: int, cot: Optional[Cotizacion], d
     corto = pos.neta < 0
     lado = Lado.COMPRA if corto else Lado.VENTA
     rutas = _bloque(cfg, "rutas")
-    tope_t1 = precio_tope_t1(simb, cfg) if (simb is not None and corto) else None
     if decision == "cerrar_mercado":
         # `precios.ruta` ignora el precio para «halt» (rutas.halt vale para todo tramo): se pasa un Decimal cualquiera.
+        # Decisión 48 (Jaume 30-sep): a MERCADO también en un halt H de sesión (ya no hay límite a parada · 3,5).
         ruta_open = ruta(rutas, "halt", Decimal("1"), hora_et)
-        if tope_t1 is not None:
-            return OrdenNueva(token=token, lado=lado, ticker=pos.ticker, ruta=ruta_open, qty=qty,
-                              tipo=TipoOrden.LIMITE, precio=tope_t1, proposito=Proposito.HALT_OPEN)
         return OrdenNueva(token=token, lado=lado, ticker=pos.ticker, ruta=ruta_open,
                           qty=qty, tipo=TipoOrden.MERCADO, proposito=Proposito.HALT_OPEN)
     margen = _cfg_decimal(_bloque(cfg, "halts"), "margen_limite_pm_pct", MARGEN_LIMITE_PM_PCT_DEFECTO)
@@ -441,6 +453,7 @@ def orden_reapertura(pos: PosicionTicker, qty: int, cot: Optional[Cotizacion], d
     if base is None:
         raise ValueError(f"{pos.ticker}: sin ask/bid/last para el límite de salida en premercado")
     precio = con_techo(base, margen, arriba=corto)
+    tope_t1 = precio_tope_t1(simb, cfg) if (simb is not None and corto) else None
     if tope_t1 is not None and precio > tope_t1:
         precio = tope_t1
     return OrdenNueva(token=token, lado=lado, ticker=pos.ticker, ruta=ruta(rutas, "cruzar", precio, hora_et),

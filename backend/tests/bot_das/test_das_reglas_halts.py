@@ -246,6 +246,28 @@ def test_sin_datos_control_humano(cotizacion, parada, stops, cfg_halts):
     assert decidir_reapertura(pos, simbolo(parada=parada), st, cotizacion, cfg_halts, "RTH", 1) == "control_humano"
 
 
+@pytest.mark.parametrize("ta, cotizacion, parada, stops, k", [
+    ("H", cot(last="3"), D("10"), "11", 1),                   # paró muy por DEBAJO del stop: antes «mantener»
+    ("H", None, None, None, 0),                               # sin datos: antes control humano
+    ("Q", cot(last="10"), D("10"), "11", 1),
+    ("H", cot(last="100"), D("10"), "11", 1),                 # +900 %: antes control humano por el tope
+], ids=["bajo-el-stop", "sin-datos", "Q", "sobre-el-tope"])
+def test_decision_48_halt_de_noticia_en_rth_cierra_siempre_a_mercado(ta, cotizacion, parada, stops, k, cfg_halts):
+    """Decisión 48 (Jaume 30-sep): halt de NOTICIA (no LULD) en sesión con posición → «cerrar_mercado» siempre, paró
+    donde paró; en premercado sigue la matriz de antes y la pausa LULD (P) no cambia (manda k)."""
+    pos = posicion(-100, (D("11"),))
+    st = niveles(stops) if stops else None
+    s = simbolo(ta=ta, k=k, parada=parada)
+    assert decidir_reapertura(pos, s, st, cotizacion, cfg_halts, "RTH", 1) == "cerrar_mercado"
+    assert decidir_reapertura(pos, s, st, cotizacion, cfg_halts, "RTH (media sesion)", 1) == "cerrar_mercado"
+    assert decidir_reapertura(posicion(100, (D("9"),)), s, st, cotizacion, cfg_halts, "RTH", 1) == "cerrar_mercado"
+    # la pausa LULD con el stop por encima sigue en «mantener» (k < 3)
+    assert decidir_reapertura(pos, simbolo(ta="P", k=1), niveles("11"), cot(last="3"), cfg_halts, "RTH", 1) == "mantener"
+    # en premercado, el halt H parado bajo el stop sigue «mantener»
+    assert decidir_reapertura(pos, simbolo(ta="H", k=1), niveles("11"), cot(last="3"), cfg_halts, "premercado",
+                              1) == "mantener"
+
+
 def test_sin_posicion_mantener_aunque_sea_t12(cfg_halts):
     pos = PosicionTicker(ticker=X)
     assert decidir_reapertura(pos, simbolo(ta="H"), None, None, cfg_halts, "RTH", 10_000) == "mantener"
@@ -253,22 +275,25 @@ def test_sin_posicion_mantener_aunque_sea_t12(cfg_halts):
 
 # ── T1 (> 250 %); T12 = mismo protocolo, la duración no decide (Jaume 28-sep) ─────────────────────────────────────────
 @pytest.mark.parametrize("ta, parada, last, stop, franja, esperado", [
-    ("H", D("1"), "3.51", "2", "RTH", "control_humano"),
+    ("H", D("1"), "3.51", "2", "RTH", "cerrar_mercado"),
     ("H", D("1"), "3.50", "2", "RTH", "cerrar_mercado"),
     ("H", D("1"), "3.51", "2", "premercado", "control_humano"),
     ("H", D("1"), "3.50", "2", "premercado", "cerrar_limite_pm"),
     ("P", D("1"), "4.00", "2", "RTH", "cerrar_mercado"),
     ("H", None, "4.00", "2", "RTH", "cerrar_mercado"),
-    ("T", D("1"), "3.51", "2", "RTH", "control_humano"),
-    ("H", D("1"), "3.51", "5", "RTH", "mantener"),
-], ids=["R-F-05-T1-mas-250-humano", "R-F-05-T1-250-exacto-cierra", "R-F-06-T1-pm-mas-250-humano",
-        "R-F-06-T1-pm-250-limite", "R-F-05-LULD-sin-tope", "T1-sin-parada-prima-cerrar", "ya-reabierto-aplica-tope",
-        "T1-stop-encima-mantener"])
+    ("T", D("1"), "3.51", "2", "RTH", "cerrar_mercado"),
+    ("T", D("1"), "3.51", "2", "premercado", "control_humano"),
+    ("H", D("1"), "3.51", "5", "RTH", "cerrar_mercado"),
+    ("H", D("1"), "3.40", "5", "premercado", "mantener"),
+], ids=["decision-48-T1-mas-250-en-RTH-cierra-a-mercado", "R-F-05-T1-250-exacto-cierra", "R-F-06-T1-pm-mas-250-humano",
+        "R-F-06-T1-pm-250-limite", "R-F-05-LULD-sin-tope", "T1-sin-parada-prima-cerrar",
+        "decision-48-ya-reabierto-en-RTH-cierra", "ya-reabierto-en-pm-aplica-tope",
+        "decision-48-T1-stop-encima-en-RTH-cierra", "T1-pm-stop-encima-mantener"])
 def test_t1_tope_250(ta, parada, last, stop, franja, esperado, cfg_halts):
     """La función en aislado con un `last` YA de reapertura (así la llama el decisor al reabrir, E1-02).
 
-    E1-09: durante un halt H el `last` es el de antes de parar; ese flujo real
-    lo prueban `test_E1_09_flujo_real_*` (la orden nunca paga más de parada · 3,5).
+    Decisión 48 (Jaume 30-sep): en RTH un halt de noticia (no LULD) cierra SIEMPRE a mercado (sin tope ni
+    «mantener»); el tope del 250 % y el «mantener» por stop encima solo quedan en premercado.
     """
     pos = posicion(-100, (D(stop),))
     s = simbolo(ta=ta, k=1, parada=parada)
@@ -397,22 +422,18 @@ def test_E1_01_precio_tope_t1_de_la_config(cfg_halts):
     assert halts.precio_tope_t1(simbolo(ta="H", parada=D("1")), dict(cfg_halts, t1_subida_max_cierre_pct=100.0)) == D("2")
 
 
-def test_E1_09_flujo_real_halt_H_last_igual_a_parada_no_sale_a_mercado(cfg_halts, config):
-    """E1-01 / E1-09: halt H, corto con el stop por DEBAJO, `last` = el print de antes de parar (lo único que hay).
-
-    La decisión sale «cerrar_mercado» (la subida medida es 0 %), pero la orden
-    ya NO es una MKT sin tope: es un LÍMITE por OPEN a parada · 3,5. Si el T1
-    reabre a +300 % no llena y el decisor pasa a control humano.
-    """
+def test_decision_48_flujo_real_halt_H_en_rth_sale_a_mercado_sin_techo(cfg_halts, config):
+    """Decisión 48 (Jaume 30-sep; antes E1-01 / E1-09 era un LÍMITE a parada · 3,5): halt H en RTH con el stop por
+    DEBAJO y el `last` de antes de parar → «cerrar_mercado» y la orden es una MKT por OPEN, sin techo. La función del
+    tope sigue igual (la usa el decisor solo en premercado)."""
     pos = posicion(-300, (D("1.50"),))
     s = simbolo(ta="H", tat=None, k=0, parada=D("2.00"), limit_up=None, limit_down=None)
     decision = decidir_reapertura(pos, s, niveles("1.50"), cot(last="2.00"), cfg_halts, "RTH", 0.0)
     assert decision == "cerrar_mercado"
     o = orden_reapertura(pos, 300, cot(last="2.00"), decision, config, 11, HORA_RTH, simb=s)
     assert (o.tipo, o.precio, o.ruta, o.proposito, o.lado, o.qty) == \
-        (TipoOrden.LIMITE, D("7.00"), "OPEN", Proposito.HALT_OPEN, Lado.COMPRA, 300)
-    assert o.tipo is not TipoOrden.MERCADO and o.precio <= s.precio_parada * D("3.5")
-    # al reabrir a +300 % (8,00) la función única manda control humano (E1-02)
+        (TipoOrden.MERCADO, None, "OPEN", Proposito.HALT_OPEN, Lado.COMPRA, 300)
+    # la función única del tope (E1-02) no cambia: el decisor la mira solo en premercado
     assert halts.tope_t1_superado(s, D("8.00"), cfg_halts) is True
     assert halts.tope_t1_superado(s, D("7.00"), cfg_halts) is False
 
@@ -429,6 +450,13 @@ def test_E1_01_sin_simb_comportamiento_anterior(config):
     """Sin `simb` (llamador sin actualizar) la orden es la de antes: MKT por OPEN (compatibilidad aditiva)."""
     o = orden_reapertura(posicion(-300, (D("9"),)), 300, cot(last="10"), "cerrar_mercado", config, 42, HORA_RTH)
     assert o.tipo is TipoOrden.MERCADO
+
+
+def test_decision_48_cerrar_mercado_con_simb_H_es_mercado(config):
+    """Decisión 48: con `simb` de un halt H la «cerrar_mercado» ya no se capa (MKT por OPEN)."""
+    o = orden_reapertura(posicion(-300, (D("9"),)), 300, cot(last="10"), "cerrar_mercado", config, 42, HORA_RTH,
+                         simb=simbolo(ta="H", parada=D("10")))
+    assert (o.tipo, o.precio, o.ruta) == (TipoOrden.MERCADO, None, "OPEN")
 
 
 def test_E1_01_largo_no_se_capa(config):

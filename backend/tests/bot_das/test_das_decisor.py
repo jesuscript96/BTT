@@ -1992,9 +1992,9 @@ def test_g1a_04b_halt_T1_T12_en_cisne_negro_sigue_el_protocolo_del_limite_pm(ban
     b.avanzar(1.5)
     marca = b.marca()
     b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 1, tzinfo=ET))
-    salidas = b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE)          # E1-01: en H la salida es un LÍMITE al tope
+    salidas = b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE)
     assert len(salidas) == 1 and salidas[0].lado is Lado.COMPRA and salidas[0].qty == 100
-    assert salidas[0].tipo is TipoOrden.LIMITE
+    assert salidas[0].tipo is TipoOrden.MERCADO and salidas[0].ruta == "OPEN"   # decisión 48: H en RTH → MKT por OPEN
     assert not anotaciones(b.desde(marca), "halt_sin_orden")
     assert not [a for a in b.desde(marca) if isinstance(a, Avisar) and (a.clave or "").startswith("halt_sin_orden:")]
 
@@ -2401,43 +2401,113 @@ def test_g1b_06_stop_en_una_posicion_que_no_es_del_bot_dice_por_que_no_pone_nada
     assert "no es del bot" in _respuesta(acciones)
 
 
-def test_e1_01_e1_09_halt_h_sale_con_limite_al_tope_y_no_a_mercado(banco: Banco) -> None:
-    """E1-01 / E1-09 (director): en un halt H (T1, no LULD) la salida por OPEN es un LÍMITE a parada · 3,5 redondeado
-    abajo, NUNCA una MKT; si reabre por debajo del tope llena y la cuenta queda plana."""
+def test_decision_48_halt_h_en_rth_bajo_el_stop_sale_a_mercado_por_open_y_el_stop_a_0(banco: Banco) -> None:
+    """Decisión 48 (Jaume 30-sep; antes E1-01/E1-09 «límite a parada · 3,5» y «reabre bajo el stop → mantener»): halt
+    de noticia (H) en sesión, parado POR DEBAJO del stop (3,61 < 4,00) → MKT por OPEN por toda la posición; el stop se
+    CANCELA antes (a 0: nunca un REPLACE a 0) y al reabrir la cuenta queda plana sin compra doble."""
     b = banco
-    _a_halt(b, ta="H")
-    salida_halt = b.enviadas(Proposito.HALT_OPEN)
-    assert [(o.tipo, o.ruta, o.precio) for o in salida_halt] == [(TipoOrden.LIMITE, "OPEN", D("14.17"))]
-    b.libro.reabrir(TICKER, D("5.00"))
-    b.cotizar(TICKER, "4.99", "5.01", "5.00")
+    abrir_posicion(b)
+    (stop,) = b.enviadas(*STOPS)
+    marca = b.marca()
+    b.libro.halt(TICKER, "H", "09:31:00")
+    b.cotizar(TICKER, "3.60", "3.62", "3.61")
+    b.avanzar(1.5)
+    tanda = b.desde(marca)
+    assert {a.datos["decision"] for a in anotaciones(tanda, "halt_decision")} == {"cerrar_mercado"}
+    salida_halt = b.enviadas(Proposito.HALT_OPEN, desde=marca)
+    assert [(o.tipo, o.ruta, o.precio, o.qty, o.lado) for o in salida_halt] == [
+        (TipoOrden.MERCADO, "OPEN", None, 100, Lado.COMPRA)]
+    envio = next(i for i, a in enumerate(tanda) if isinstance(a, EnviarOrden) and a.orden.proposito is Proposito.HALT_OPEN)
+    cancelado = next(i for i, a in enumerate(tanda) if isinstance(a, Cancelar) and a.token == stop.token)
+    assert cancelado < envio                                             # el stop baja a 0 ANTES de la OPEN
+    assert not [a for a in tanda if isinstance(a, Reemplazar) and a.token == stop.token]
+    assert _vivas_compra(b, *STOPS) == 0 and _sin_compra_doble(b, 100)
+    b.libro.reabrir(TICKER, D("3.70"))
+    b.cotizar(TICKER, "3.69", "3.71", "3.70")
     b.avanzar(3)
     assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
 
 
-def test_e1_02_f6_t1_no_cierra_sin_tope(cfg: Config, tmp_path: Path) -> None:
-    """E1-02 (director) / E1-09 «test_f6_t1_no_cierra_sin_tope»: halt H con k = 3 (se cierra); reabre a +300 %: la
-    salida límite no llena, el reintento vuelve a mirar el tope del T1 con el precio REAL → control humano con aviso 3,
-    la salida viva se RETIRA y ninguna orden de cierre pasa del tope (parada · 3,5)."""
+def test_decision_48_vuelve_a_parar_antes_de_llenar_la_salida_sigue_y_se_repite_en_cada_reapertura(
+        banco: Banco) -> None:
+    """Decisión 48 (Jaume 30-sep): si vuelve a parar antes de que la MKT por OPEN llene, la salida viva NO se retira a
+    los 2 s (entra en el cruce siguiente) ni vuelven los stops; si al final se retira sin llenar, en el halt siguiente
+    sale OTRA MKT por lo que queda, hasta salir."""
+    b = banco
+    abrir_posicion(b)
+    b.libro.llenar_parcial(D("0.5"), TICKER)                            # la primera subasta solo llena la mitad
+    b.libro.halt(TICKER, "H", "09:31:00")
+    b.cotizar(TICKER, "3.60", "3.62", "3.61")
+    b.avanzar(1.5)
+    (primera,) = b.enviadas(Proposito.HALT_OPEN)
+    assert (primera.tipo, primera.qty) == (TipoOrden.MERCADO, 100)
+    b.libro.reabrir(TICKER, D("3.70"))
+    b.avanzar(0.5)
+    assert b.pos().neta_fills == -50
+    b.libro.halt(TICKER, "H", "09:31:10")                               # vuelve a parar antes de llenar el resto
+    b.avanzar(3)                                                        # pasa la verificación de los 2 s
+    assert b.orden(primera.token).estado is not EstadoOrden.CANCELED
+    assert anotaciones(b.historial, "halt_salida_se_queda")
+    assert len(b.enviadas(Proposito.HALT_OPEN)) == 1                    # la viva sirve: ninguna MKT de más
+    assert _vivas_compra(b, *STOPS) == 0 and _sin_compra_doble(b, 50)
+    b.libro.reabrir(TICKER, D("3.80"))                                  # el resto tampoco llena aquí (simulador)
+    b.avanzar(3)
+    assert b.orden(primera.token).estado is EstadoOrden.CANCELED       # G1A-01: reabierto y sin llenar → se retira
+    assert _vivas_compra(b, *STOPS) == 50
+    b.libro.llenar_parcial(D("1"), TICKER)
+    b.libro.halt(TICKER, "H", "09:31:30")                               # otro halt: OTRA MKT por lo que queda
+    b.avanzar(1.5)
+    otra = b.enviadas(Proposito.HALT_OPEN)[1:]
+    assert [(o.tipo, o.ruta, o.qty) for o in otra] == [(TipoOrden.MERCADO, "OPEN", 50)]
+    assert _vivas_compra(b, *STOPS) == 0 and _sin_compra_doble(b, 50)
+    b.libro.reabrir(TICKER, D("3.90"))
+    b.avanzar(3)
+    assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
+
+
+def test_decision_48_replace_del_stop_rechazado_con_la_salida_del_halt_viva_se_cancela(banco: Banco) -> None:
+    """Decisión 48 (Jaume 30-sep): con un TP de 50 vivo la MKT por OPEN es de 50 y el stop tiene que BAJAR a 50 con un
+    REPLACE (con toda la posición cubierta el plan lo cancela directamente: nunca un REPLACE a 0). Si DAS rechaza ese
+    REPLACE, el stop se CANCELA y se anota: nunca stop entero + salida del halt a la vez. En el halt nada puede llenar
+    antes del cruce de reapertura, así que el CANCEL llega antes de que la OPEN pueda ejecutarse."""
+    b = banco
+    abrir_posicion(b)
+    (stop,) = b.enviadas(*STOPS)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
+    _salida_motor(b, salida())
+    assert [o.qty for o in b.enviadas(Proposito.TP_AGREGAR)] == [50]
+    b.libro.rechazar_siguiente("Replace blocked", accion="ReplaceRej")
+    marca = b.marca()
+    b.libro.halt(TICKER, "H", "09:31:00")
+    b.avanzar(1.5)
+    tanda = b.desde(marca)
+    assert [(o.tipo, o.qty) for o in b.enviadas(Proposito.HALT_OPEN, desde=marca)] == [(TipoOrden.MERCADO, 50)]
+    assert [a for a in tanda if isinstance(a, Reemplazar) and a.token == stop.token]
+    rechazo = anotaciones(tanda, "halt_stop_cancelado_replace_rej")
+    assert len(rechazo) == 1 and rechazo[0].datos["token"] == stop.token
+    assert stop.token in [c.token for c in acciones_de(tanda, Cancelar)]
+    assert b.orden(stop.token).estado is EstadoOrden.CANCELED
+    assert _sin_compra_doble(b, 100)
+
+
+def test_decision_48_t1_en_rth_sobre_el_tope_cierra_a_mercado(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 48 (Jaume 30-sep; antes E1-02 «test_f6_t1_no_cierra_sin_tope»): en SESIÓN el tope del 250 % ya no se
+    aplica a un halt H: la salida es una MKT por OPEN y, aunque reabra a +300 %, llena y la cuenta queda plana; ni
+    control humano ni «halt_tope_t1»."""
     from app.bot_das.diario import MemoriaDecisor
     b = Banco(cfg, tmp_path, memoria=MemoriaDecisor(k_halts_up={TICKER: 3}))
     b.preparar()
     ev = evento(stop=20.0)                                              # stops lejos: el salto no es un cisne negro
     _a_halt(b, ta="H", ev=ev)
     salida_halt = b.enviadas(Proposito.HALT_OPEN)
-    assert [(o.tipo, o.precio) for o in salida_halt] == [(TipoOrden.LIMITE, D("14.17"))]
+    assert [(o.tipo, o.precio, o.ruta) for o in salida_halt] == [(TipoOrden.MERCADO, None, "OPEN")]
     marca = b.marca()
     b.libro.reabrir(TICKER, D("16.20"))                                 # +300 % sobre la parada (4,05)
     b.cotizar(TICKER, "16.10", "16.30", "16.20")
     b.avanzar(3)
-    cierres = b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA, Proposito.CIERRE_HUMANO)
-    assert all(o.tipo is TipoOrden.LIMITE and o.precio <= D("14.17") for o in cierres)
-    assert b.pos().neta_fills == -100
-    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO
-    assert anotaciones(b.desde(marca), "halt_tope_t1")
-    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_humano:{TICKER}"
-               for a in b.desde(marca))
-    assert b.orden(salida_halt[0].token).estado is EstadoOrden.CANCELED   # la salida viva se retira
-    assert ev.stop == 20.0
+    assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
+    assert b.pos().estado is not EstadoTicker.CONTROL_HUMANO
+    assert not anotaciones(b.desde(marca), "halt_tope_t1")
 
 
 def test_g1a_05_ticker_plano_en_halt_no_recibe_la_orden_y_la_senal_se_guarda(banco: Banco) -> None:
@@ -3110,8 +3180,8 @@ def test_decision_39_el_decisor_ya_no_llama_al_ensanche_pm(cfg: Config, tmp_path
 
 def test_r_f_06_halt_de_premercado_que_reabre_en_rth_cambia_la_limite_pm_por_open(cfg: Config, tmp_path: Path) -> None:
     """R-F-06 (Jaume 29-sep): un halt H que empieza en premercado casi siempre reabre en RTH. La límite de PM (que no entra
-    en el cruce de reapertura) se RETIRA al llegar RTH y sale la orden por OPEN (límite al tope por ser H); los stops se
-    reducen antes de mandarla y no queda ninguna compra doble."""
+    en el cruce de reapertura) se RETIRA al llegar RTH y sale la orden por OPEN (decisión 48: MKT, sin tope); los stops
+    se reducen antes de mandarla y no queda ninguna compra doble."""
     b = _banco_premercado(cfg, tmp_path)
     b.libro.halt(TICKER, "H", "08:00:30")
     b.cotizar(TICKER, "4.08", "4.10", "4.09")                           # sobre el stop (4,00), dentro de su límite: escenario 2
@@ -3125,7 +3195,7 @@ def test_r_f_06_halt_de_premercado_que_reabre_en_rth_cambia_la_limite_pm_por_ope
     assert [c.token for c in acciones_de(tanda, Cancelar) if c.token == pm[0].token]
     assert anotaciones(tanda, "halt_pm_limite_a_open")
     abiertas = b.enviadas(Proposito.HALT_OPEN)
-    assert [(o.tipo, o.ruta, o.qty) for o in abiertas] == [(TipoOrden.LIMITE, "OPEN", 100)]
+    assert [(o.tipo, o.ruta, o.qty) for o in abiertas] == [(TipoOrden.MERCADO, "OPEN", 100)]
     assert _vivas_compra(b, Proposito.HALT_PM_LIMITE) == 0 and _vivas_compra(b, Proposito.HALT_OPEN) == 100
     b.libro.reabrir(TICKER, D("5.00"))
     b.cotizar(TICKER, "4.99", "5.01", "5.00")
@@ -3180,9 +3250,14 @@ def test_decision_46_reabre_sobre_el_limite_y_bajo_el_techo_cierra_sin_compra_do
     assert not [a for a in anotaciones(b.historial, "incidente") if a.datos.get("tipo") == "cuenta_larga"]
 
 
-def test_decision_46_reabre_sobre_el_techo_control_humano_sin_orden(cfg: Config, tmp_path: Path) -> None:
-    """Decisión 46: reabre por encima del techo del T1 (parada · 3,5) → ninguna orden, aviso máximo, CONTROL_HUMANO."""
+def test_decision_49_reabre_sobre_el_techo_limite_viva_stops_fuera_y_llena_al_bajar(cfg: Config,
+                                                                                    tmp_path: Path) -> None:
+    """Decisión 49 (Jaume 30-sep; antes decisión 46 «ninguna orden»): en premercado reabre por encima del techo del T1
+    (parada · 3,5) → una compra LÍMITE VIVA en el techo por toda la posición, el stop CANCELADO (no se repone), aviso
+    máximo y CONTROL_HUMANO; a los 2 s NO se retira, no hay cisne negro, y cuando el precio baja del techo llena y la
+    cuenta queda plana."""
     b = _halt_pm_mantener(cfg, tmp_path)
+    (stop,) = b.enviadas(*STOPS)
     techo = _techo(b, cfg)
     marca = b.marca()
     precio = techo + D("1")
@@ -3190,10 +3265,23 @@ def test_decision_46_reabre_sobre_el_techo_control_humano_sin_orden(cfg: Config,
     b.avanzar(1.2)
     b.cotizar(TICKER, str(precio - D("0.05")), str(precio + D("0.05")), str(precio), tam_ask=0)
     tanda = b.desde(marca)
-    assert not b.enviadas(Proposito.HALT_PM_LIMITE, Proposito.HALT_OPEN, Proposito.HALT_BANDA, desde=marca)
     assert anotaciones(tanda, "halt_pm_sobre_limite")[0].datos["veredicto"] == "control_humano"
-    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_humano:{TICKER}" for a in tanda)
+    (cierre,) = b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca)
+    assert (cierre.tipo, cierre.precio, cierre.qty, cierre.tif) == (TipoOrden.LIMITE, techo, 100, "DAY+")
+    assert anotaciones(tanda, "halt_pm_techo_vivo")
+    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_pm_techo_vivo:{TICKER}"
+               for a in tanda)
     assert b.pos().estado is EstadoTicker.CONTROL_HUMANO and b.pos().neta_fills == -100
+    assert b.orden(stop.token).estado is EstadoOrden.CANCELED and _vivas_compra(b, *STOPS) == 0
+    b.avanzar(5)                                                          # pasa la verificación de los 2 s
+    assert b.orden(cierre.token).estado in (EstadoOrden.ACCEPTED, EstadoOrden.SENDING)
+    assert _vivas_compra(b, *STOPS) == 0 and _sin_compra_doble(b, 100) and b.pos().bs is None
+    assert anotaciones(b.desde(marca), "halt_pm_techo_sigue")
+    b.cotizar(TICKER, str(techo - D("0.10")), str(techo - D("0.05")), str(techo - D("0.05")), tam_ask=1000)
+    b.avanzar(2)
+    assert b.pos().neta_fills == 0 and b.pos().neta_das == 0
+    assert not b.enviadas(Proposito.VENTA_EXCESO) and not b.enviadas(*STOPS, desde=marca)
+    assert not b.decisor._techo_vivo(TICKER)                             # se olvida con la posición cerrada
 
 
 def test_decision_46_reabre_dentro_del_limite_llena_el_stop_como_hoy(cfg: Config, tmp_path: Path) -> None:
@@ -3209,24 +3297,36 @@ def test_decision_46_reabre_dentro_del_limite_llena_el_stop_como_hoy(cfg: Config
                                                                                      "halt_pm_sobre_limite")
 
 
-def test_decision_46_halt_de_pm_que_reabre_en_rth_no_aplica(cfg: Config, tmp_path: Path) -> None:
-    """Decisión 46: el halt empezó en premercado pero reabre ya en RTH → la regla NO aplica (queda lo de hoy: el precio
-    por encima del límite del stop es cisne negro)."""
+def test_decision_48_halt_de_pm_con_mantener_que_sigue_a_las_0930_sale_a_mercado_por_open(cfg: Config,
+                                                                                           tmp_path: Path) -> None:
+    """Decisión 48 (Jaume 30-sep; antes «decisión 46 no aplica» y se quedaba en cisne negro): halt H de premercado con
+    «mantener» (bajo el stop) que sigue parado a las 09:30 → en ese momento (no hasta 60 s después) se decide otra vez:
+    MKT por OPEN por toda la posición con el stop cancelado antes; reabre a 7,00 (sobre el límite del stop), llena y la
+    cuenta queda plana, sin cisne negro ni decisión 46."""
     b = _halt_pm_mantener(cfg, tmp_path)
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 5, tzinfo=ET))
+    (stop,) = b.enviadas(*STOPS)
+    assert not b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE)
     marca = b.marca()
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 1, tzinfo=ET))
+    tanda = b.desde(marca)
+    assert "cerrar_mercado" in {a.datos["decision"] for a in anotaciones(tanda, "halt_decision")}
+    abiertas = b.enviadas(Proposito.HALT_OPEN, desde=marca)
+    assert [(o.tipo, o.ruta, o.qty) for o in abiertas] == [(TipoOrden.MERCADO, "OPEN", 100)]
+    envio = next(i for i, a in enumerate(tanda) if isinstance(a, EnviarOrden) and a.orden.proposito is Proposito.HALT_OPEN)
+    cancelado = next(i for i, a in enumerate(tanda) if isinstance(a, Cancelar) and a.token == stop.token)
+    assert cancelado < envio and _sin_compra_doble(b, 100)
     b.libro.reabrir(TICKER, D("7.00"))
-    b.avanzar(1.2)
-    b.cotizar(TICKER, "6.95", "7.05", "7.00", tam_ask=0)
+    b.cotizar(TICKER, "6.95", "7.05", "7.00", tam_ask=1000)
+    b.avanzar(3)
     assert not anotaciones(b.desde(marca), "halt_pm_sobre_limite")
-    assert not b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca)
-    assert b.pos().bs is not None
+    assert b.pos().neta_fills == 0 and b.pos().bs is None and not b.enviadas(Proposito.VENTA_EXCESO)
 
 
-def test_decision_46_la_compra_al_techo_sin_llenar_en_2_s_vuelve_el_stop_y_control_humano(cfg: Config,
-                                                                                            tmp_path: Path) -> None:
-    """Decisión 46: si la compra al techo no llena en 2 s se retira, el stop vuelve a la posición y el ticker pasa a
-    CONTROL_HUMANO con aviso máximo (sin compra doble en ningún momento)."""
+def test_decision_49_la_compra_al_techo_sin_llenar_en_2_s_se_queda_viva_y_control_humano(cfg: Config,
+                                                                                           tmp_path: Path) -> None:
+    """Decisión 49 (Jaume 30-sep; antes decisión 46 la retiraba y reponía el stop): la compra al techo que no llena en
+    2 s se queda VIVA, el stop NO vuelve (un stop bajo el precio no tiene sentido) y el ticker pasa a CONTROL_HUMANO con
+    aviso máximo; /sigue con la posición abierta retira la límite y el stop vuelve por el plan normal."""
     b = _halt_pm_mantener(cfg, tmp_path)
     marca = b.marca()
     b.libro.reabrir(TICKER, D("7.00"))
@@ -3234,13 +3334,20 @@ def test_decision_46_la_compra_al_techo_sin_llenar_en_2_s_vuelve_el_stop_y_contr
     b.cotizar(TICKER, "6.95", "7.05", "7.00", tam_ask=0)                # sin tamaño en el ask: no llena
     (cierre,) = b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca)
     b.avanzar(3)
-    assert b.orden(cierre.token).estado is EstadoOrden.CANCELED
+    assert b.orden(cierre.token).estado is not EstadoOrden.CANCELED
     tanda = b.desde(marca)
-    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_pm_sin_llenar:{TICKER}"
+    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_pm_techo_vivo:{TICKER}"
                for a in tanda)
-    assert [a for a in anotaciones(tanda, "pausa") if "decisión 46" in str(a.datos.get("motivo"))]
+    assert [a for a in anotaciones(tanda, "pausa") if "decisión 49" in str(a.datos.get("motivo"))]
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO
+    assert _vivas_compra(b, *STOPS) == 0 and _vivas_compra(b, Proposito.HALT_PM_LIMITE) == 100
+    assert _sin_compra_doble(b, 100) and b.pos().neta_fills == -100 and b.pos().bs is None
+    marca = b.marca()
+    b.comando(f"/sigue {TICKER}")
+    b.avanzar(1)
+    assert b.orden(cierre.token).estado is EstadoOrden.CANCELED
     assert _vivas_compra(b, *STOPS) == 100 and _sin_compra_doble(b, 100)
-    assert b.pos().neta_fills == -100
+    assert anotaciones(b.desde(marca), "halt_pm_techo_sigue_humano")
 
 
 def test_e1_06_halt_luld_pide_las_bandas_al_momento(cfg: Config, tmp_path: Path) -> None:
@@ -3482,34 +3589,25 @@ def test_r2_dec_1_salida_del_motor_sin_libres_espera_y_sale_al_retirar_la_banda(
     assert [o.qty for o in b.enviadas(Proposito.TP_AGREGAR)] == [50]
 
 
-def test_r2_dec_2_t1_con_last_viejo_al_reabrir_y_primer_print_a_300_pct_pasa_a_control_humano(cfg: Config,
-                                                                                               tmp_path: Path) -> None:
-    """R2-DEC-2 (E1-02 parcial): el TA:T llega con el `last` de antes del halt (subida 0 %: el tope no salta al reabrir)
-    y el primer print llega después a +300 %: en `halt_cierre_verificar` se vuelve a mirar el tope del T1 con el last de
-    ESE momento → la salida viva se retira, aviso MÁXIMO y CONTROL_HUMANO."""
+def test_r2_dec_2_t1_con_last_viejo_y_primer_print_a_300_pct_en_rth_cierra_a_mercado(cfg: Config,
+                                                                                     tmp_path: Path) -> None:
+    """R2-DEC-2 (E1-02 parcial) tras la decisión 48 (Jaume 30-sep): en SESIÓN el tope del T1 ya no se mira ni al reabrir
+    ni en `halt_cierre_verificar`: la salida es una MKT por OPEN, llena en la subasta a +300 % y la cuenta queda plana
+    (antes: límite a parada · 3,5 sin llenar → control humano)."""
     from app.bot_das.diario import MemoriaDecisor
     b = Banco(cfg, tmp_path, memoria=MemoriaDecisor(k_halts_up={TICKER: 3}))
     b.preparar()
     _a_halt(b, ta="H", ev=evento(stop=20.0))                           # stops lejos: el salto no es un cisne negro
     salida_halt = b.enviadas(Proposito.HALT_OPEN)
-    assert [(o.tipo, o.precio) for o in salida_halt] == [(TipoOrden.LIMITE, D("14.17"))]
+    assert [(o.tipo, o.precio) for o in salida_halt] == [(TipoOrden.MERCADO, None)]
     marca = b.marca()
-    b.libro.reabrir(TICKER, D("16.20"))                                 # la subasta a +300 %: la límite no llena
-    b.avanzar(1.2)                                                      # el T llega; el bot aún ve el last de 4,05
-    assert anotaciones(b.desde(marca), "halt_reapertura") and not anotaciones(b.desde(marca), "halt_tope_t1")
-    assert b.pos().estado is EstadoTicker.NORMAL
-    assert b.temporizadores[f"halt_cierre_verificar:{TICKER}"][2].get("reapertura") is True
+    b.libro.reabrir(TICKER, D("16.20"))                                 # la subasta a +300 %
+    b.avanzar(1.2)
     b.cotizar(TICKER, "16.10", "16.30", "16.20")                        # el primer print real
     b.avanzar(2)
-    tope = anotaciones(b.desde(marca), "halt_tope_t1")
-    assert len(tope) == 1 and tope[0].datos["cuando"] == "2 s tras reabrir"
-    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_humano:{TICKER}"
-               for a in b.desde(marca))
-    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO
-    assert b.orden(salida_halt[0].token).estado is EstadoOrden.CANCELED
-    cierres = b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA, Proposito.CIERRE_HUMANO)
-    assert all(o.tipo is TipoOrden.LIMITE and o.precio <= D("14.17") for o in cierres)
-    assert b.pos().neta_fills == -100
+    assert not anotaciones(b.desde(marca), "halt_tope_t1")
+    assert b.pos().estado is not EstadoTicker.CONTROL_HUMANO
+    assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
 
 
 def test_r2_dec_2_sin_superar_el_tope_la_verificacion_sigue_como_g1a_01(banco: Banco) -> None:

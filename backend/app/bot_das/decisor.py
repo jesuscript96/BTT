@@ -501,6 +501,8 @@ class Decisor:
         self._reapertura_pm: dict[str, tuple[float, Optional[Decimal]]] = {}   # (hasta, last del T) → primer precio real
         self._halt_pm_cierre: dict[str, int] = {}           # token de la compra al techo del T1 (se verifica a los 2 s)
         self._halt_pm_tope_espera: set[str] = set()         # la salida del halt anterior se retira antes de mandarla
+        # Decisión 49 (Jaume 30-sep): en premercado la límite al techo que no llena se queda VIVA (stops fuera, humano)
+        self._halt_pm_techo_vivo: set[str] = set()
         self._halt_hoy: set[str] = set()
         self._stop_hoy: set[str] = set()
         self._reapertura_ok: set[str] = set()
@@ -1351,6 +1353,14 @@ class Decisor:
         ticker = o.ticker
         pos = self._estado.posiciones.get(ticker)
         otra_salida_halt = any(x.proposito in _PROP_CIERRE_HALT and x.token != o.token for x in self._vivas(ticker))
+        if (ticker in self._halt_pm_techo_vivo and o.proposito in _PROP_CIERRE_HALT and not otra_salida_halt
+                and ticker not in self._halt_pm_tope_espera):
+            # decisión 49 (Jaume 30-sep): la límite viva en el techo terminó (llenó, la quitó el humano o DAS): con
+            # posición aún abierta, el elif de abajo devuelve los stops por el plan normal
+            self._halt_pm_techo_vivo.discard(ticker)
+            acciones.append(Anotar("halt_pm_techo_fin", {"ticker": ticker, "token": o.token, "estado": o.estado.value,
+                                                         "llenas": o.llenas, "qty": o.qty,
+                                                         "regla": "decisión 49 (Jaume 30-sep)"}))
         if (ticker in self._halt_pm_tope_espera and o.proposito in _PROP_CIERRE_HALT and not otra_salida_halt
                 and pos is not None and pos.neta < 0):
             # decisión 46 (Jaume 30-sep): retirada la salida del halt que ya no llenaba, sale la compra al techo del T1
@@ -2871,6 +2881,16 @@ class Decisor:
                                                            "regla": "R-C-11 / D2a-05"}),
                              Programar(T_BARRIDO, 0.0, {})]
             else:
+                if (accion == "ReplaceRej" and o.lado is Lado.COMPRA and o.proposito in _PROP_STOP
+                        and o.estado in _VIVOS and self._compras_cierre(o.ticker) > 0):
+                    # Decisión 48 (Jaume 30-sep): con la salida del halt viva el stop tenía que BAJAR (G1A-01); si DAS
+                    # rechaza el REPLACE se CANCELA (el dinero antes que el aviso): nunca stop entero + salida a la vez.
+                    # Con la posición entera cubierta el plan ya lo cancela directamente (nunca un REPLACE a 0).
+                    acciones += [Anotar("halt_stop_cancelado_replace_rej", {
+                        "ticker": o.ticker, "token": o.token, "id_das": o.id_das, "notas": m.notas,
+                        "compras_cierre": self._compras_cierre(o.ticker), "regla": "decisión 48 / G1A-01"})]
+                    acciones += self._cancelar_orden(o, "decisión 48: DAS rechazó bajar el stop con la salida del halt "
+                                                        "viva; se cancela")
                 acciones += self._absorber(rechazos.tras_cancel_o_replace_rej(o, accion))
         elif accion == "Replaced":
             pedido = self._reemplazo_pedido.pop(o.token, None)
@@ -3648,10 +3668,15 @@ class Decisor:
 
         G1A-01 / G1B-04 / D2a-09: al enviar la salida del halt por Q acciones,
         el stop se REDUCE antes en Q (`stops.plan` con `compras_cierre`; con el
-        stop único, una sola orden por nivel, del nivel más alto al más bajo):
-        la salida y los stops nunca compran dos veces en la reapertura. E1-01:
-        en un halt H la salida por OPEN es un LÍMITE a parada · (1 + t1)
-        (`orden_reapertura(simb=...)`). G1A-04: en cisne negro / control
+        stop único, una sola orden por nivel, del nivel más alto al más bajo;
+        con toda la posición cubierta, CANCEL: nunca un REPLACE a 0):
+        la salida y los stops nunca compran dos veces en la reapertura.
+        Decisión 48 (Jaume 30-sep): un halt de noticia (H, no LULD) en RTH con
+        posición sale SIEMPRE a MERCADO por OPEN (sin límite a parada · 3,5);
+        el de premercado que sigue parado a las 09:30 se vuelve a decidir en
+        ese momento (`_en_redecidir_halt`): se retira la límite de PM si la hay
+        y sale la MKT. Con una salida viva se vuelve a decidir cada 60 s: si
+        desaparece sin llenar y sigue parado, sale otra. G1A-04: en cisne negro / control
         humano / manual / cierre humano no sale ninguna orden (aviso 3). E1-04
         RETIRADO (Decisión 39, Jaume 30-sep): «mantener» en un halt H de
         premercado ya NO ensancha el límite de los stops residentes; con el
@@ -3692,7 +3717,7 @@ class Decisor:
             pm_vivas = [o for o in self._vivas(ticker) if o.proposito is Proposito.HALT_PM_LIMITE]
             if decision == "cerrar_mercado" and pm_vivas:
                 # R-F-06 (Jaume 29-sep): el halt empezó en premercado y sigue en RTH: la límite de PM no entra en el
-                # cruce de reapertura; se retira y, cuando DAS confirme, sale la orden por OPEN (con tope si es H).
+                # cruce de reapertura; se retira y, cuando DAS confirme, sale la MKT por OPEN (decisión 48: sin tope).
                 if ticker not in self._halt_pm_a_open:
                     self._halt_pm_a_open.add(ticker)
                     acciones += [Cancelar(id_das=o.id_das, token=o.token, motivo="halt: de límite PM a OPEN (R-F-06)")
@@ -3705,8 +3730,10 @@ class Decisor:
             self._halt_pm_a_open.discard(ticker)
             if self._orden_halt_viva(ticker):
                 acciones.append(Anotar("halt_guardia", {"ticker": ticker, "motivo": "orden de salida del halt viva"}))
-                if pm_vivas:            # la límite de PM espera: al llegar RTH se cambia por OPEN (R-F-06)
-                    acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
+                # la límite de PM espera: al llegar RTH se cambia por OPEN (R-F-06); decisión 48: si la salida viva
+                # desaparece sin llenar mientras sigue parado (vuelve a parar antes de llenar), sale otra al redecidir
+                acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", self._en_redecidir_halt(franja),
+                                          {"ticker": ticker}))
                 return acciones
             qty = abs(pos.neta) - self._comprando(ticker)
             if qty <= 0:
@@ -3719,7 +3746,8 @@ class Decisor:
             if decision == "cerrar_mercado":
                 simb.orden_open_enviada = True
             else:                       # R-F-06: si el halt de PM llega a RTH, la límite se cambia por OPEN
-                acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
+                acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", self._en_redecidir_halt(franja),
+                                          {"ticker": ticker}))
             tipo = "MKT" if orden.tipo is TipoOrden.MERCADO else f"LMT {orden.precio}"
             acciones.append(Avisar(Nivel.AVISO, Grupo.B,
                                    f"HALT {avisos.escapar(ticker)}: se sale ({avisos.escapar(decision)}) con {qty} "
@@ -3741,9 +3769,27 @@ class Decisor:
                     acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
                                                      "motivo": "halt: control humano (R-F-05)"}))
         else:
-            # «mantener»: los stops residentes se quedan como están (E1-04 retirado: Decisión 39, Jaume 30-sep)
-            acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
+            # «mantener»: los stops residentes se quedan como están (E1-04 retirado: Decisión 39, Jaume 30-sep).
+            # Decisión 48: un halt H de premercado se vuelve a decidir JUSTO a las 09:30 (en RTH sale la MKT por OPEN)
+            acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", self._en_redecidir_halt(franja),
+                                      {"ticker": ticker}))
         return acciones
+
+    def _en_redecidir_halt(self, franja: str) -> float:
+        """Segundos hasta volver a decidir un halt: `HALT_REDECIDIR_S` (60 s) o, en premercado, justo al abrir la sesión.
+
+        Decisión 48 (Jaume 30-sep): un halt de noticia que sigue parado a las
+        09:30 se cierra a mercado por OPEN; no se esperan hasta 60 s. Medio
+        segundo después de las 09:30:00 ET para que la franja ya sea RTH; si la
+        hora ya pasó y la franja sigue sin ser RTH (calendario raro), 60 s.
+        """
+        if not franja.startswith("premercado"):
+            return HALT_REDECIDIR_S
+        apertura = self._ahora_et.replace(hour=9, minute=30, second=0, microsecond=0)
+        falta = (apertura - self._ahora_et).total_seconds()
+        if falta < 0:
+            return HALT_REDECIDIR_S
+        return min(HALT_REDECIDIR_S, falta + 0.5)
 
     def _niveles_primer_stop(self, pos: PosicionTicker) -> Optional[NivelesStop]:
         """El stop que primero se cruzaría (R-C-01 v4: el del L más bajo, disparo y límite con la banda).
@@ -3792,10 +3838,10 @@ class Decisor:
     def _al_reabrir(self, ticker: str) -> list[Accion]:
         """F6.3: segundo aviso, ticker a NORMAL, reintento EP-2 por «cruzar» si la salida del halt no salió, y la primera vela.
 
-        E1-02: antes del reintento se vuelve a mirar el tope del T1 con el
-        precio REAL de la reapertura (`halts.tope_t1_superado`): superado →
-        control humano con aviso 3, ninguna orden, y la salida del halt que
-        siga viva se retira (el plan restaura los stops). G1A-04: en cisne
+        E1-02: en PREMERCADO, antes del reintento se vuelve a mirar el tope del
+        T1 con el precio REAL de la reapertura (`halts.tope_t1_superado`):
+        superado → decisión 49 (límite viva en el techo, stops fuera, control
+        humano). En RTH no hay tope (decisión 48: se sale a mercado). G1A-04: en cisne
         negro / control humano / manual / cierre humano, ninguna orden. El
         reintento se dimensiona contando los stops que se disparan a este
         precio y baja los demás antes de salir (G1A-01). G1A-01: 2 s después,
@@ -3858,21 +3904,37 @@ class Decisor:
                                 cuando: str) -> Optional[list[Accion]]:
         """E1-02 / R2-DEC-2 (R-F-05 a): ¿la reapertura supera el tope del T1 con `precio` (el `last` de ESE momento)?
 
-        Superado → se retira la salida del halt viva, `Avisar(MAXIMO)` (una vez
-        por día y ticker) y el ticker a CONTROL_HUMANO; devuelve esas acciones.
-        No superado (o sin precio / sin parada / LULD: `halts.tope_t1_superado`)
-        → None. Se mira al reabrir y otra vez en `halt_cierre_verificar`,
-        porque el `T` puede llegar con el `last` de antes del halt (subida 0 %)
-        y el primer print real después.
+        Superado → decisión 49 (Jaume 30-sep, `_techo_vivo_49`): una compra
+        LÍMITE queda VIVA en el techo (parada · 3,5), los stops fuera, aviso
+        máximo y CONTROL_HUMANO; devuelve esas acciones. No superado (o sin
+        precio / sin parada / LULD: `halts.tope_t1_superado`) → None. En RTH
+        → None siempre (decisión 48: la salida es a mercado, sin techo). Se
+        mira al reabrir y otra vez en `halt_cierre_verificar`, porque el `T`
+        puede llegar con el `last` de antes del halt (subida 0 %) y el primer
+        print real después.
         """
         ticker = pos.ticker
         simb = self._mercado.simbolo(ticker)
+        if self._franja().startswith("RTH"):
+            return None             # decisión 48 (Jaume 30-sep): en sesión la salida es a MERCADO, sin techo del 250 %
         luld = self._mercado.ta_ultimo_halt(ticker) == "P"
         if not halts.tope_t1_superado(simb, precio, self._cfg.halts, luld=luld):
             return None
         acciones: list[Accion] = [Anotar("halt_tope_t1", {"ticker": ticker, "precio": precio,
                                                           "parada": simb.precio_parada, "cuando": cuando,
                                                           "regla": "R-F-05 (a) / E1-02 / R2-DEC-2"})]
+        return acciones + self._techo_vivo_49(pos, precio, cuando)
+
+    def _tope_t1_retirar(self, pos: PosicionTicker, precio: Optional[Decimal]) -> list[Accion]:
+        """R-F-05 a (lo de antes de la decisión 49): se retira la salida del halt, aviso máximo y CONTROL_HUMANO.
+
+        Solo queda para cuando la límite al techo no se puede dejar (sin techo,
+        posición no corta, humano al mando o modo degradado): los stops vuelven
+        con el Canceled de la salida (`_tras_terminal`).
+        """
+        ticker = pos.ticker
+        simb = self._mercado.simbolo(ticker)
+        acciones: list[Accion] = []
         for o in self._vivas(ticker):
             if o.proposito in _PROP_CIERRE_HALT:
                 acciones += self._cancelar_orden(o, "E1-02: reabre por encima del tope del T1; se retira la salida")
@@ -3892,17 +3954,94 @@ class Decisor:
                                              "motivo": "halt: T1 por encima del tope (R-F-05 a, E1-02)"}))
         return acciones
 
+    def _techo_vivo(self, ticker: str) -> bool:
+        """Decisión 49: ¿sigue viva la límite en el techo? (corto y alguna salida del halt viva; si no, se olvida)."""
+        if ticker not in self._halt_pm_techo_vivo:
+            return False
+        pos = self._estado.posiciones.get(ticker)
+        if (pos is not None and pos.neta < 0
+                and (ticker in self._halt_pm_tope_espera
+                     or any(o.proposito in _PROP_CIERRE_HALT for o in self._vivas(ticker)))):
+            return True
+        self._halt_pm_techo_vivo.discard(ticker)
+        return False
+
+    def _techo_vivo_49(self, pos: PosicionTicker, precio: Optional[Decimal], cuando: str) -> list[Accion]:
+        """Decisión 49 (Jaume 30-sep): en premercado la salida del halt no llena porque el precio está sobre el techo.
+
+        NO se reponen los stops (un stop por debajo del precio no tiene
+        sentido): se deja una compra LÍMITE VIVA en el techo del T1 (parada ·
+        3,5, `orden_cierre_tope_pm`) por todo lo que siga corto, que llena en
+        cuanto el precio baje de ahí; los stops quedan cancelados porque esa
+        compra cuenta en `compras_cierre`; el ticker pasa a CONTROL_HUMANO con
+        aviso máximo. Una salida más barata (el límite de premercado a ask +
+        5 %) se retira antes y la del techo sale con su Canceled
+        (`_tras_terminal`, nunca dos compras a la vez); si ya hay una en el
+        techo (la de la decisión 46) se deja esa MISMA. Mientras viva: no se
+        retira a los 2 s, no se declara cisne negro. Al llenar, posición
+        cerrada como cualquier salida de halt; si termina sin llenar (la quita
+        el humano o DAS) o el humano hace /sigue (se retira), vuelven los
+        stops por el plan normal. Idempotente. Sin techo, sin corto, con el
+        humano al mando o en modo degradado → lo de antes (`_tope_t1_retirar`).
+        """
+        ticker = pos.ticker
+        simb = self._mercado.simbolo(ticker)
+        techo = halts.precio_tope_t1(simb, self._cfg.halts)
+        degradados = self._estado.modo_degradado & {"reconciliacion", "das"}
+        bloqueo = self._bloqueo_decision_halt(pos, era_luld=False)
+        vivo = self._techo_vivo(ticker)
+        if not vivo and (techo is None or pos.neta >= 0 or degradados or bloqueo is not None):
+            return [Anotar("halt_pm_techo_omitido", {
+                "ticker": ticker, "techo": techo, "neta": pos.neta, "bloqueo": bloqueo,
+                "degradado": sorted(degradados), "regla": "decisión 49 (Jaume 30-sep)"})] + self._tope_t1_retirar(pos,
+                                                                                                          precio)
+        acciones: list[Accion] = []
+        if not vivo:
+            self._halt_pm_techo_vivo.add(ticker)
+            acciones.append(Anotar("halt_pm_techo_vivo", {"ticker": ticker, "precio": precio, "techo": techo,
+                                                          "parada": simb.precio_parada, "cuando": cuando,
+                                                          "regla": "decisión 49 (Jaume 30-sep)"}))
+            vivas = [o for o in self._vivas(ticker)
+                     if o.proposito in _PROP_CIERRE_HALT and o.lado is Lado.COMPRA and _qty_viva(o) > 0]
+            en_techo = [o for o in vivas if o.tipo is TipoOrden.LIMITE and o.precio is not None and o.precio >= techo]
+            baratas = [o for o in vivas if o not in en_techo]
+            for o in baratas:
+                acciones += self._cancelar_orden(o, "decisión 49: la salida del halt ya no llena; se deja la compra "
+                                                    "viva en el techo del T1")
+            if baratas and not en_techo:
+                self._halt_pm_tope_espera.add(ticker)      # la del techo sale con el Canceled (`_tras_terminal`)
+            elif not en_techo:
+                acciones += self._enviar_cierre_tope_pm(pos, cuando, regla="decisión 49")
+            else:
+                acciones += self._plan(ticker)             # la del techo ya está: los stops a lo que no cubre (0)
+            acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
+                                   f"HALT {avisos.escapar(ticker)} en premercado: la salida no llena (precio {precio}, "
+                                   f"{avisos.escapar(cuando)}; techo del T1 {techo} = parada {simb.precio_parada} · "
+                                   f"3,5). Se deja una compra "
+                                   f"LÍMITE VIVA a {techo} (llena si baja de ahí); los stops, CANCELADOS. CONTROL "
+                                   f"HUMANO. Posición {pos.neta:+d} (decisión 49)",
+                                   clave=f"halt_pm_techo_vivo:{ticker}"))
+        if pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT, EstadoTicker.PAUSADO):
+            pos.estado = EstadoTicker.CONTROL_HUMANO
+            pos.motivo_estado = "halt: control humano"
+            pos.desde = self._ahora
+            acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
+                                             "motivo": "halt de PM sobre el techo: límite viva en el techo "
+                                                       "(decisión 49)"}))
+        return acciones
+
     # ── decisión 46 (Jaume 30-sep): halt de PM que reabre por encima del límite del stop ──
     def _reapertura_sobre_limite_pm(self, pos: PosicionTicker, precio: Optional[Decimal],
                                     cuando: str) -> Optional[list[Accion]]:
         """Decisión 46: con el precio real de la reapertura de un halt H de premercado (y aún en premercado).
 
         None → no aplica (precio dentro del límite del stop o sin datos): lo de
-        siempre. Sobre el techo del T1 → control humano sin orden (como
-        `_tope_t1_control_humano`). Entre el límite (L + 50 %) y el techo → el
+        siempre. Sobre el techo del T1 → `_tope_t1_control_humano`: decisión 49
+        (Jaume 30-sep), compra LÍMITE VIVA en el techo, stops fuera y control
+        humano. Entre el límite (L + 50 %) y el techo → el
         stop baja a 0 (`compras_cierre`) y sale una compra LÍMITE al techo por
-        la ruta de cruzar (HALT_PM_LIMITE); a los 2 s, si no llenó, se retira,
-        vuelven los stops y el ticker pasa a control humano con aviso máximo.
+        la ruta de cruzar (HALT_PM_LIMITE); a los 2 s, si no llenó, decisión 49:
+        se queda viva, los stops NO vuelven y el ticker pasa a control humano.
         Una salida del halt anterior con un límite que ya no llena se retira
         primero y la compra al techo sale con su Canceled (`_tras_terminal`).
         """
@@ -3940,14 +4079,14 @@ class Decisor:
                                          {"ticker": ticker, "reapertura": True, "decision_46": True})]
         return acciones + self._enviar_cierre_tope_pm(pos, cuando)
 
-    def _enviar_cierre_tope_pm(self, pos: PosicionTicker, cuando: str) -> list[Accion]:
-        """Decisión 46: la compra LÍMITE al techo del T1 por lo que siga corto; los stops bajan ANTES (G1A-01)."""
+    def _enviar_cierre_tope_pm(self, pos: PosicionTicker, cuando: str, regla: str = "decisión 46") -> list[Accion]:
+        """Decisión 46 / 49: la compra LÍMITE al techo del T1 por lo que siga corto; los stops bajan ANTES (G1A-01)."""
         ticker = pos.ticker
         simb = self._mercado.simbolo(ticker)
         qty = abs(pos.neta) - self._comprando(ticker)
         if qty <= 0:
             return [Anotar("halt_reintento_omitido", {"ticker": ticker, "motivo": "las salidas vivas ya cubren la "
-                                                      "posición (G1A-01)", "regla": "decisión 46"})]
+                                                      "posición (G1A-01)", "regla": regla})]
         orden = halts.orden_cierre_tope_pm(pos, qty, simb, self._cfg, self._tokens.siguiente(), self._ahora_et)
         envio = self._absorber([EnviarOrden(orden)])
         reduccion = self._plan(ticker)                     # G1A-01: el stop baja a lo que no cubre (aquí, a 0)
@@ -3958,7 +4097,7 @@ class Decisor:
                    Avisar(Nivel.AVISO, Grupo.B,
                           f"REABRE {avisos.escapar(ticker)} por encima del límite del stop ({avisos.escapar(cuando)}): "
                           f"se cierra con {qty} acciones LMT {orden.precio} (techo del T1) por "
-                          f"{avisos.escapar(orden.ruta)}; el stop baja a lo que no cubre (decisión 46)",
+                          f"{avisos.escapar(orden.ruta)}; el stop baja a lo que no cubre ({avisos.escapar(regla)})",
                           clave=f"halt_pm_tope:{ticker}:{simb.tat}")])
 
     def _control_humano_46(self, pos: PosicionTicker, motivo: str) -> list[Accion]:
@@ -3988,6 +4127,8 @@ class Decisor:
         ticker = pos.ticker
         if ticker in self._halt_pm_vigilado and ticker in self._halt_en_curso:
             return [], True
+        if self._techo_vivo(ticker):
+            return [], True         # decisión 49: con la límite viva en el techo no se declara cisne negro (ya avisado)
         ventana = self._reapertura_pm.get(ticker)
         if ventana is not None:
             hasta, last_t = ventana
@@ -4029,8 +4170,9 @@ class Decisor:
         if qty <= 0:
             return [Anotar("halt_reintento_omitido", {"ticker": ticker, "motivo": "los stops que se disparan y las "
                                                       "salidas vivas ya cubren la posición (G1A-01)", "regla": "EP-2"})]
+        # decisión 48 (Jaume 30-sep): en RTH el reintento ya no se capa al techo del T1 (solo en premercado)
         orden = halts.orden_reapertura(pos, qty, cot, "cerrar_limite_pm", self._cfg, self._tokens.siguiente(),
-                                       self._ahora_et, simb=simb)
+                                       self._ahora_et, simb=None if self._es_rth() else simb)
         envio = self._absorber([EnviarOrden(orden)])
         return (self._plan(ticker) + envio
                 + [Anotar("halt_reintento", {"ticker": ticker, "qty": qty, "token": orden.token, "regla": "EP-2"})])
@@ -5827,12 +5969,24 @@ class Decisor:
         a mirar el tope del T1 con el `last` de ESTE momento (el primer print
         puede llegar después del `T`): superado → la salida viva se retira,
         aviso MÁXIMO y CONTROL_HUMANO (`_tope_t1_control_humano`). Tras la MKT
-        de la banda (sin halt) no se mira. Decisión 46 (Jaume 30-sep): si lo que
-        no llenó era la compra al techo del T1 de un halt de PM, además el
-        ticker pasa a CONTROL_HUMANO con aviso máximo."""
+        de la banda (sin halt) no se mira. Decisión 46 (Jaume 30-sep) + 49: si
+        lo que no llenó era la compra al techo del T1 de un halt de PM, NO se
+        retira: se queda viva en el techo, stops fuera y CONTROL_HUMANO con aviso
+        máximo (`_techo_vivo_49`). Decisión 48: si el símbolo vuelve a estar
+        parado, la salida viva se queda para el cruce de la siguiente reapertura."""
         ticker = str(datos.get("ticker") or clave.split(":", 1)[1])
         pos = self._estado.posiciones.get(ticker)
         token_46 = self._halt_pm_cierre.pop(ticker, None)          # decisión 46: la compra al techo del T1
+        if self._techo_vivo(ticker):
+            # decisión 49 (Jaume 30-sep): la límite en el techo se queda VIVA (stops fuera, decide el humano)
+            return [Anotar("halt_pm_techo_sigue", {"ticker": ticker, "token": token_46,
+                                                   "regla": "decisión 49 (Jaume 30-sep)"})]
+        if halts.es_halt(self._mercado.simbolo(ticker)) and any(
+                o.proposito in _PROP_CIERRE_HALT and _qty_viva(o) > 0 for o in self._vivas(ticker)):
+            # decisión 48 (Jaume 30-sep): volvió a parar antes de llenar: la salida viva entra en el cruce de la
+            # siguiente reapertura (no se retira ni vuelven los stops); `halt_decidir` la vigila y repone si falta
+            return [Anotar("halt_salida_se_queda", {"ticker": ticker, "motivo": "vuelve a estar parado",
+                                                    "regla": "decisión 48 (Jaume 30-sep)"})]
         espera_46 = ticker in self._halt_pm_tope_espera
         self._halt_pm_tope_espera.discard(ticker)
         if datos.get("reapertura") and pos is not None and pos.neta < 0:
@@ -5841,6 +5995,14 @@ class Decisor:
                                                 "2 s tras reabrir")
             if tope is not None:
                 return tope
+        if (token_46 is not None and pos is not None and pos.neta < 0
+                and any(o.token == token_46 and _qty_viva(o) > 0 for o in self._vivas(ticker))):
+            # decisión 49 (Jaume 30-sep): la compra al techo no llenó en 2 s → se queda VIVA en el techo (el precio
+            # está sobre el límite del stop: un stop repuesto no llenaría), stops fuera y control humano. Lo
+            # conservador: también si el precio no pasa del techo (no se vuelve a un stop que no puede llenar)
+            cot = self._cot(ticker)
+            return self._techo_vivo_49(pos, cot.last if cot is not None and _es_precio(cot.last) else None,
+                                       "2 s tras la compra al techo")
         acciones: list[Accion] = []
         retirada_46 = False
         for o in self._vivas(ticker):
@@ -6276,6 +6438,7 @@ class Decisor:
         self._reapertura_pm.clear()
         self._halt_pm_cierre.clear()
         self._halt_pm_tope_espera.clear()
+        self._halt_pm_techo_vivo.clear()
         # lo que el resumen del día (COB-02) y la OPA (E1-08) cuentan por día
         self._max_pm.clear()
         self._opa_revisado_en.clear()
@@ -6481,6 +6644,14 @@ class Decisor:
             pos.motivo_estado = ""
             pos.desde = self._ahora
             acciones.append(Anotar("reanudar", {"ticker": ticker, "motivo": "/sigue (R-G-03)"}))
+        if self._techo_vivo(ticker):
+            # decisión 49 (Jaume 30-sep): /sigue con la posición abierta → se retira la límite viva en el techo y, con su
+            # Canceled, el stop vuelve por el plan normal (`_tras_terminal`); nunca stop + límite a la vez
+            for o in self._vivas(ticker):
+                if o.proposito in _PROP_CIERRE_HALT and o.lado is Lado.COMPRA:
+                    acciones += self._cancelar_orden(o, "decisión 49: /sigue; vuelve el stop por el plan normal")
+            acciones.append(Anotar("halt_pm_techo_sigue_humano", {"ticker": ticker,
+                                                                  "regla": "decisión 49 (Jaume 30-sep)"}))
         extra = ""
         if pos.estado is EstadoTicker.BS:
             extra = " (el cisne negro sigue vivo: manda su protocolo)"
