@@ -125,6 +125,7 @@ MOTIVO_MODO_SEGURIDAD = "modo de seguridad: precio o dólares acumulados bajo el
 MOTIVO_RETRASO = "señal tardía: el último se alejó del precio de la señal (R-A-01)"              # 10
 MOTIVO_DISTANCIA_BID = "bid demasiado lejos del último (B20 bis)"                                # 11
 MOTIVO_NIVEL_STOP = "nivel de stop ausente o no por encima del último (R-C-09, A12)"             # 12
+MOTIVO_NIVEL_DISTINTO = "nivel de stop distinto del de los lotes vivos del ticker (Jaume 30-sep: un solo nivel)"  # 12b
 MOTIVO_CADUCADA = "señal caducada (R-B-04)"                                                      # 13
 MOTIVO_REENTRADA = "reentrada no permitida (R-D-04, R-F-03, R-G-03, R-E-03)"                     # 14
 MOTIVO_DEGRADADO = "modo degradado: diario, feed, DAS o reconciliación (corrección 4, R-J-03)"   # 15
@@ -133,7 +134,7 @@ MOTIVO_SIN_ACCIONES = "sin acciones: tamaño 0 o sin locates libres (R-H-04)"   
 MOTIVOS_EN_ORDEN: tuple[str, ...] = (
     MOTIVO_REPETIDA, MOTIVO_BOT_PAUSADO, MOTIVO_ESTRATEGIA, MOTIVO_TICKER_BLOQUEADO,
     MOTIVO_LADO, MOTIVO_EXCLUIDA, MOTIVO_HALT, MOTIVO_SIN_COTIZACION,
-    MOTIVO_MODO_SEGURIDAD, MOTIVO_RETRASO, MOTIVO_DISTANCIA_BID, MOTIVO_NIVEL_STOP,
+    MOTIVO_MODO_SEGURIDAD, MOTIVO_RETRASO, MOTIVO_DISTANCIA_BID, MOTIVO_NIVEL_STOP, MOTIVO_NIVEL_DISTINTO,
     MOTIVO_CADUCADA, MOTIVO_REENTRADA, MOTIVO_DEGRADADO, MOTIVO_SIN_ACCIONES,
 )
 
@@ -356,6 +357,13 @@ def evaluar_senal(estado: EstadoBot, cfg: Config, senal: Senal, cot: Optional[Co
     nivel = nivel_de_senal(estado, evento)
     if nivel is None or nivel <= cot.last:
         return _descartar(MOTIVO_NIVEL_STOP)
+    # 12b (Jaume 30-sep): de momento TODAS las estrategias llevan el MISMO nivel de stop en un ticker y el stop único
+    # (+50 %) aglutina la posición entera. Una señal con otro nivel que el de los lotes vivos NO mete orden y avisa.
+    # PENDIENTE (pregunta 45): varias estrategias con stops de distinto nivel.
+    if pos is not None and any(lote.estado in _VIVOS and isinstance(lote.nivel_stop, Decimal) and lote.nivel_stop.is_finite()
+                               and lote.nivel_stop > 0 and lote.nivel_stop != nivel
+                               for lote in pos.lotes.values()):
+        return _descartar(MOTIVO_NIVEL_DISTINTO)
     # 13
     if not es_reapertura:
         caducidad = _segundos(cfg.entrada, "caducidad_senal_s", ENTRADA_CADUCIDAD_S)

@@ -888,7 +888,7 @@ def test_f3_segunda_senal_suma_y_reinicia_con_el_total(cfg: Config, tmp_path: Pa
     primera = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
     b.avanzar(2)
     b.cotizar(TICKER, "3.44", "3.46", "3.45")
-    ev_b = evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2)
+    ev_b = evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.0)
     marca = b.marca()
     acciones = b.senal(ev_b, bombear=False)
     assert [c.token for c in acciones_de(acciones, Cancelar)] == [primera.token]
@@ -903,86 +903,24 @@ def test_f3_segunda_senal_suma_y_reinicia_con_el_total(cfg: Config, tmp_path: Pa
     assert (lotes[lote_de(ev_a)].llenas, lotes[lote_de(ev_b)].llenas) == (100, 50)
     stops_ = b.enviadas(*STOPS)
     assert sorted((o.proposito, o.stop, o.precio, o.qty) for o in stops_) == [
-        (Proposito.STOP, D("4.00"), D("6.00"), 100), (Proposito.STOP, D("4.20"), D("6.30"), 50)]   # R-C-01 v4
+        (Proposito.STOP, D("4.00"), D("6.00"), 150)]   # R-C-01 v4 + un solo nivel por ticker (Jaume 30-sep): aglutina
 
 
-def test_f1_6_el_primer_fill_de_un_nivel_nuevo_pone_su_stop_al_instante(cfg: Config, tmp_path: Path) -> None:
-    """F1.6 con el stop único (Jaume 29-sep): con el stop de A (4,00) vivo, el primer fill de B (otro nivel, 4,20) pone
-    SU stop en el acto, sin debounce (esas acciones no tienen otra red; en v3 la emergencia de A ya las cubría). Un
-    fill que solo SUBE la cantidad de un nivel que ya tiene stop va con debounce (se coalescen los REPLACE)."""
+def test_f1_6_b_con_otro_nivel_no_entra_un_solo_nivel_por_ticker(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 30-sep: un solo nivel de stop por ticker. Con el stop de A (4,00) vivo, la señal de B con otro nivel
+    (4,20) se descarta con aviso y no manda ninguna orden (el F1.6 de v3, «el primer fill de un nivel nuevo pone su
+    stop», queda sin objeto: no puede haber un segundo nivel)."""
     config = cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)])
     b = Banco(config, tmp_path)
     b.preparar(locates=((TICKER, SID, 1000), (TICKER, SID2, 1000)))
     abrir_posicion(b)
     b.cotizar(TICKER, "3.44", "3.46", "3.45")
-    b.libro.llenar_parcial(D("0.4"), TICKER)                            # la venta de B llenará 20 de 50
     marca = b.marca()
-    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
-                   momento=momento_de(b.reloj.ahora())))
-    llenar_entrada(b)
-    assert b.pos().neta_fills == -120
-    tras = b.desde(marca)
-    nuevos = [a.orden for a in acciones_de(tras, EnviarOrden) if a.orden.proposito is Proposito.STOP]
-    assert [(o.stop, o.precio, o.qty) for o in nuevos] == [(D("4.20"), D("6.30"), 20)]
-    assert not [a for a in tras if isinstance(a, Programar) and a.clave == f"stops_ajustar:{TICKER}"]
-    b.libro.llenar_parcial(D("1"), TICKER)
-    marca = b.marca()
-    b.avanzar(61)                                                       # el resto de B cruza: su stop ya existe
-    assert b.pos().neta_fills == -150
-    tras = b.desde(marca)
-    assert [a for a in tras if isinstance(a, Programar) and a.clave == f"stops_ajustar:{TICKER}"]
-    assert not [a for a in acciones_de(tras, EnviarOrden) if a.orden.proposito is Proposito.STOP]
-    b.avanzar(1)
-    assert sorted((o.stop, o.qty) for o in b.estado.ordenes.values()
-                  if o.proposito is Proposito.STOP and o.estado is EstadoOrden.ACCEPTED) == [
-        (D("4.00"), 100), (D("4.20"), 50)]
-    assert _vivas_compra(b, *STOPS) == 150
-
-
-# ═══════════════════════════ F4: take profit ═════════════════════════════
-def test_f4_tp_con_prioridad_sobre_la_entrada_viva(cfg: Config, tmp_path: Path) -> None:
-    """F4 / R-D-07: con una entrada viva en el ticker, el TP va PRIMERO al ask y la entrada espera; luego se retoma.
-
-    G1A-06 (b) / D2-06 (decisión del director): «una tras otra, nunca juntas»:
-    al llegar el TP solo se cancela la entrada de B; el TP sale al ask cuando
-    DAS confirma el Canceled (antes, la compra al ask convivía con nuestra
-    venta que agregaba: autonegociación).
-    """
-    config = cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)])
-    b = Banco(config, tmp_path)
-    b.preparar(locates=((TICKER, SID, 1000), (TICKER, SID2, 1000)))
-    abrir_posicion(b)
-    b.cotizar(TICKER, "3.44", "3.46", "3.45")
-    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
-                   momento=momento_de(b.reloj.ahora())))
-    entrada_b = b.enviadas(Proposito.ENTRADA_AGREGAR)[-1]
-    marca = b.marca()
-    acciones = b.procesar(SenalRecibida(Senal(clase="evento", ticker=TICKER, id=id_de_evento(salida()),
-                                              evento=salida(), momento=salida().momento, recibida_en=b.ahora())),
-                          bombear=False)
-    assert not acciones_de(acciones, EnviarOrden)                       # nunca juntas: el TP espera al Canceled
-    cancelacion = acciones_de(acciones, Cancelar)
-    assert [c.token for c in cancelacion] == [entrada_b.token]
-    b.bombear()
-    tps = b.enviadas(Proposito.TP_CRUCE, desde=marca)
-    assert [(o.lado, o.qty, o.precio) for o in tps] == [(Lado.COMPRA, 50, D("3.46"))]
-    assert b.orden(entrada_b.token).estado is EstadoOrden.CANCELED
-    historial = b.desde(marca)
-    cancelado = next(i for i, a in enumerate(historial) if isinstance(a, Anotar) and a.tipo == "orden_act"
-                     and a.datos["token"] == entrada_b.token and a.datos["accion"] == "Canceled")
-    envio_tp = next(i for i, a in enumerate(historial) if isinstance(a, EnviarOrden)
-                    and a.orden.proposito is Proposito.TP_CRUCE)
-    assert cancelado < envio_tp                                         # el TP sale DESPUÉS del Canceled
-    assert b.pos().neta_fills == -50
-    assert b.pos().intento is not None and f"tp_espera_entrada:{TICKER}" in b.temporizadores
-    tras_tp = b.desde(marca)
-    reemplazos = acciones_de(tras_tp, Reemplazar)
-    assert sorted(r.qty for r in reemplazos) == [50]                    # el stop único baja a lo que queda
-    assert tras_tp.index(acciones_de(tras_tp, InvalidarSerie)[0]) < tras_tp.index(reemplazos[0])
-    marca = b.marca()
-    b.avanzar(1.5)
-    retomada = b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)
-    assert [o.qty for o in retomada] == [50]                            # la entrada de B se retoma tras el TP
+    acciones = b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
+                              momento=momento_de(b.reloj.ahora())))
+    assert anotaciones(acciones, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_NIVEL_DISTINTO
+    assert any(isinstance(a, Avisar) for a in acciones)
+    assert not b.enviadas(desde=marca) and b.pos().neta_fills == -100
 
 
 def test_f4_tp_parcial_agrega_y_cruza_el_resto_con_techo(banco: Banco) -> None:
@@ -2227,7 +2165,7 @@ def test_g1a_06_tp_antes_que_la_entrada_pasa_al_ask_y_la_entrada_espera(cfg: Con
     b.avanzar(2)
     b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)                # el ask aún sin acciones
     marca = b.marca()
-    acciones = b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
+    acciones = b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.0,
                               momento=momento_de(b.reloj.ahora())), bombear=False)
     assert [c.token for c in acciones_de(acciones, Cancelar)] == [tp.token]
     assert anotaciones(acciones, "senal_en_espera") and not acciones_de(acciones, EnviarOrden)
@@ -2250,7 +2188,7 @@ def test_g1a_06_la_entrada_retenida_nunca_espera_mas_que_su_caducidad(cfg: Confi
     abrir_posicion(b)
     b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
     _salida_motor(b, salida())
-    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
+    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.0,
                    momento=momento_de(b.reloj.ahora())))
     b.avanzar(63)
     descartada = [a for a in anotaciones(b.historial, "senal_descartada") if SID2 in str(a.datos.get("senal_id"))]
@@ -2374,49 +2312,6 @@ def test_g1b_06_stop_en_una_posicion_que_no_es_del_bot_dice_por_que_no_pone_nada
     acciones = b.comando("/stop XYZ 4.50 SI")
     assert not b.enviadas(desde=marca)
     assert "no es del bot" in _respuesta(acciones)
-
-
-def test_g1b_07_g1a_11_agotado_r_c_03_bloquea_crear_pero_no_bajar(cfg: Config, tmp_path: Path) -> None:
-    """G1B-07 / G1A-11 (director) con el stop único (Jaume 29-sep): con R-C-03 agotado en el stop de un nivel solo se
-    bloquea CREAR stops; tras un TP que llena, el stop VIVO del otro nivel SÍ baja a lo que le queda (nunca un stop de
-    100 cubriendo 40: cuenta larga si saltaba). Las acciones del nivel rechazado quedan SIN stop: aviso máximo y
-    control humano (el vigilante lo sigue intentando)."""
-    config = cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)])
-    b = Banco(config, tmp_path)
-    b.preparar(locates=((TICKER, SID, 1000), (TICKER, SID2, 1000)))
-    abrir_posicion(b)                                                   # A: 100 con su stop en 4,00
-    (stop_a,) = b.enviadas(*STOPS)
-    b.rechazar[Proposito.STOP] = "Algo raro 123"                       # desde ahora DAS rechaza todo stop nuevo
-    b.cotizar(TICKER, "3.44", "3.46", "3.45")
-    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, stop=4.2,
-                   momento=momento_de(b.reloj.ahora())))
-    llenar_entrada(b)                                                   # B: 50 más; su stop (4,20) se rechaza
-    assert b.pos().neta_fills == -150
-    b.avanzar(20, tic=0.5)
-    rechazados = [o for o in b.enviadas(Proposito.STOP) if o.token != stop_a.token]
-    assert len(rechazados) == 6 and all(o.stop == D("4.20") for o in rechazados)   # agotado: 1 + 5 reintentos
-    assert [b.orden(o.token).intentos for o in rechazados] == [0, 1, 2, 3, 4, 5]    # el stop sano de A no la reinicia
-    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO
-    assert [a for a in b.historial if isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and "SIN STOP" in a.texto]
-    assert b.orden(stop_a.token).estado is EstadoOrden.ACCEPTED and _vivas_compra(b, *STOPS) == 100
-    b.cotizar(TICKER, "3.44", "3.46", "3.45")
-    _salida_motor(b, salida(acciones=60.0))
-    marca = b.marca()
-    b.cotizar(TICKER, "3.43", "3.45", "3.44")                          # el TP de A (compra 3,45) llena 60
-    b.tic_das()
-    assert b.pos().neta_fills == -90
-    reemplazos = [(r.token, r.qty) for r in acciones_de(b.desde(marca), Reemplazar)]
-    assert (stop_a.token, 40) in reemplazos                             # bajar SÍ: el stop de A a sus 40
-    b.avanzar(3)
-    assert len(b.enviadas(Proposito.STOP)) == 7                          # crear NO: el de B sigue sin reponerse
-    assert _vivas_compra(b, *STOPS) == 40 and _sin_compra_doble(b, 90)
-    # el agotado es del NIVEL 4,20: si DAS quita el stop de A, el de A (4,00) SÍ se repone
-    del b.rechazar[Proposito.STOP]
-    marca = b.marca()
-    b.dar(b.das.recibir(f"CANCEL {b.orden(stop_a.token).id_das}"))
-    b.avanzar(1)
-    assert [(o.stop, o.qty) for o in b.enviadas(Proposito.STOP, desde=marca)] == [(D("4.00"), 40)]
-    assert _sin_compra_doble(b, 90)
 
 
 def test_e1_01_e1_09_halt_h_sale_con_limite_al_tope_y_no_a_mercado(banco: Banco) -> None:
@@ -3569,9 +3464,9 @@ def test_r3_dec_2_entrada_sin_id_con_la_cuenta_larga_se_cancela_al_aceptar_y_no_
     b.das_contesta = False                                              # el REPLACE del stop (100 → 80) queda en vuelo
     b.dar(lineas)
     assert b.pos().neta_fills == -80
-    b.cotizar(TICKER, "4.00", "4.05", "4.01")
-    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, precio=4.01, stop=4.8,
-                   distancia_stop=0.79, momento=momento_de(b.reloj.ahora())))
+    b.cotizar(TICKER, "3.98", "4.00", "3.99")
+    b.senal(evento(strategy_id=SID2, estrategia="PM (B) prueba", acciones=50.0, precio=3.99, stop=4.0,
+                   distancia_stop=0.01, momento=momento_de(b.reloj.ahora())))       # mismo nivel que A (Jaume 30-sep)
     entradas = [o for o in b.enviadas(Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE)
                 if b.orden(o.token).id_das is None]
     assert len(entradas) == 1
@@ -3583,7 +3478,7 @@ def test_r3_dec_2_entrada_sin_id_con_la_cuenta_larga_se_cancela_al_aceptar_y_no_
     assert b.pos().neta_fills == 20
     assert [a.datos["token"] for a in anotaciones(b.desde(marca), "cancelar_al_tener_id")] == [entrada_b.token]
     assert entrada_b.token in b.decisor._cancelar_al_aceptar
-    b.cotizar(TICKER, "4.00", "4.05", "4.01", tam_bid=0)               # el libro vuelve: la venta no cruza
+    b.cotizar(TICKER, "3.98", "4.00", "3.99", tam_bid=0)               # el libro vuelve: la venta no cruza
     lineas = b.das.recibir(protocolo.cmd_neworder(entrada_b))           # DAS la acepta DESPUÉS del CANCEL ALLSYMB
     b.das_contesta = False                                              # el CANCEL del decisor queda en vuelo
     marca = b.marca()
@@ -3846,6 +3741,26 @@ def test_dos_estrategias_en_el_mismo_ticker_cada_una_compra_lo_suyo(cfg: Config,
     assert sum(c.qty for c in _compras(b)) // 100 == 4
     locs = b.estado.locates
     assert (locs[(TICKER, SID)].localizadas, locs[(TICKER, SID2)].localizadas) == (100, 300)
+
+
+def test_senal_con_otro_nivel_de_stop_que_los_lotes_vivos_no_entra_y_avisa(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 30-sep: un solo nivel de stop por ticker (el stop único aglutina la posición). Con A dentro con stop 4,00,
+    una señal de B con stop 4,50 se descarta con aviso y no manda ninguna orden; con el MISMO nivel, entra."""
+    config = cfg_con(cfg, estrategias=[cfg.estrategias[SID], estrategia_b(cfg)])
+    b = Banco(config, tmp_path)
+    b.preparar()
+    abrir_posicion(b)                                                   # A: 100 cortas, stop 4,00
+    marca = b.marca()
+    acciones = b.senal(evento(strategy_id=SID2, stop=4.5, momento=otra_vela(b)))
+    assert anotaciones(acciones, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_NIVEL_DISTINTO
+    assert any(isinstance(a, Avisar) for a in acciones)
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR, Proposito.ENTRADA_CRUCE, desde=marca)
+    b2 = Banco(config, tmp_path / "b2")
+    b2.preparar(locates=((TICKER, SID, 1000), (TICKER, SID2, 1000)))
+    abrir_posicion(b2)
+    marca = b2.marca()
+    b2.senal(evento(strategy_id=SID2, stop=4.0, momento=otra_vela(b2)))       # mismo nivel: entra y suma
+    assert [o.ticker for o in b2.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)] == [TICKER]
 
 
 def test_fase_B1_con_locates_entra_y_pasa_a_C(banco: Banco) -> None:

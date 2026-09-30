@@ -49,7 +49,7 @@ from app.bot_das.reglas.entrada import (
     MOTIVO_HALT,
     MOTIVO_LADO,
     MOTIVO_MODO_SEGURIDAD,
-    MOTIVO_NIVEL_STOP,
+    MOTIVO_NIVEL_STOP, MOTIVO_NIVEL_DISTINTO,
     MOTIVO_OK,
     MOTIVO_REENTRADA,
     MOTIVO_REPETIDA,
@@ -242,15 +242,15 @@ def test_escenario_base_entra_con_todas_las_acciones(esc: Escenario) -> None:
     assert esc.evaluar() == Veredicto(ok=True, motivo=MOTIVO_OK, qty=1200)
 
 
-def test_motivos_son_16_distintos_y_en_el_orden_del_documento() -> None:
-    assert len(MOTIVOS_EN_ORDEN) == 16
-    assert len(set(MOTIVOS_EN_ORDEN)) == 16
+def test_motivos_son_17_distintos_y_en_el_orden_del_documento() -> None:
+    assert len(MOTIVOS_EN_ORDEN) == 17
+    assert len(set(MOTIVOS_EN_ORDEN)) == 17
     assert MOTIVO_OK not in MOTIVOS_EN_ORDEN
     assert MOTIVOS_EN_ORDEN == (
         MOTIVO_REPETIDA, MOTIVO_BOT_PAUSADO, MOTIVO_ESTRATEGIA, MOTIVO_TICKER_BLOQUEADO, MOTIVO_LADO,
         MOTIVO_EXCLUIDA, MOTIVO_HALT, MOTIVO_SIN_COTIZACION, MOTIVO_MODO_SEGURIDAD, MOTIVO_RETRASO,
-        MOTIVO_DISTANCIA_BID, MOTIVO_NIVEL_STOP, MOTIVO_CADUCADA, MOTIVO_REENTRADA, MOTIVO_DEGRADADO,
-        MOTIVO_SIN_ACCIONES,
+        MOTIVO_DISTANCIA_BID, MOTIVO_NIVEL_STOP, MOTIVO_NIVEL_DISTINTO, MOTIVO_CADUCADA, MOTIVO_REENTRADA,
+        MOTIVO_DEGRADADO, MOTIVO_SIN_ACCIONES,
     )
 
 
@@ -319,6 +319,8 @@ FILAS_MOTIVOS: list[tuple[str, Callable[[Escenario], None], str]] = [
     ("10-R-A-01-ultimo-abajo", _cambiar_cot(last=D("3.41"), bid=D("3.40")), MOTIVO_RETRASO),
     ("11-B20bis-bid-lejos", _cambiar_cot(bid=D("3.27")), MOTIVO_DISTANCIA_BID),
     ("12-A12-sin-stop", lambda e: e.evento(stop=None), MOTIVO_NIVEL_STOP),
+    ("12b-otro-nivel-vivo", lambda e: e.lote_previo("otra", strategy_id="otra", estado=EstadoLote.ABIERTO, nivel_stop=D("4.50")),
+     MOTIVO_NIVEL_DISTINTO),
     ("12-A12-stop-nan", lambda e: e.evento(stop=float("nan")), MOTIVO_NIVEL_STOP),
     ("12-R-C-09-stop-igual-ultimo", lambda e: e.evento(stop=3.45), MOTIVO_NIVEL_STOP),
     ("12-R-C-09-stop-bajo-ultimo", lambda e: e.evento(stop=3.30), MOTIVO_NIVEL_STOP),
@@ -363,7 +365,7 @@ def test_evaluar_senal_un_motivo_por_fila(esc: Escenario, cambio, motivo: str) -
     assert v.avisar is (motivo not in MOTIVOS_SIN_AVISO)
 
 
-def test_las_filas_cubren_los_16_motivos() -> None:
+def test_las_filas_cubren_los_17_motivos() -> None:
     assert {m for _, _, m in FILAS_MOTIVOS} == set(MOTIVOS_EN_ORDEN)
 
 
@@ -381,6 +383,7 @@ CAMBIO_POR_COMPROBACION: list[Callable[[Escenario], None]] = [
     lambda e: setattr(e.cot, "last", D("3.50")),
     lambda e: setattr(e.cot, "bid", D("3.20")),
     lambda e: e.evento(stop=None),
+    lambda e: e.lote_previo("otra", strategy_id="otra", estado=EstadoLote.ABIERTO, nivel_stop=D("4.50")),
     lambda e: setattr(e, "ahora_et", CIERRE + timedelta(seconds=120)),
     lambda e: setattr(e.pos(), "sin_reentrada_hasta_sigue", True),
     lambda e: setattr(e, "diario_degradado", True),
@@ -388,7 +391,7 @@ CAMBIO_POR_COMPROBACION: list[Callable[[Escenario], None]] = [
 ]
 
 
-@pytest.mark.parametrize("i", range(16), ids=[f"orden-fijo-{i + 1}" for i in range(16)])
+@pytest.mark.parametrize("i", range(17), ids=[f"orden-fijo-{i + 1}" for i in range(17)])
 def test_orden_fijo_la_primera_que_falla_decide(i: int) -> None:
     e = _escenario()
     for cambio in CAMBIO_POR_COMPROBACION[i:]:
@@ -396,7 +399,7 @@ def test_orden_fijo_la_primera_que_falla_decide(i: int) -> None:
     assert e.evaluar().motivo == MOTIVOS_EN_ORDEN[i]
 
 
-@pytest.mark.parametrize("i", range(16), ids=[f"solo-{i + 1}" for i in range(16)])
+@pytest.mark.parametrize("i", range(17), ids=[f"solo-{i + 1}" for i in range(17)])
 def test_cada_cambio_solo_dispara_su_comprobacion(i: int) -> None:
     e = _escenario()
     CAMBIO_POR_COMPROBACION[i](e)
