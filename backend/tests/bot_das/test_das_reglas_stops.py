@@ -736,10 +736,11 @@ def test_plan_ni_cuenta_ni_cancela_lo_que_no_gestiona(cfg_stops, tokens, ajena):
     assert de_tipo(acciones, Cancelar) == [] and de_tipo(acciones, Reemplazar) == []
 
 
-def test_D2a_10_stop_nuestro_no_reconocido_avisa_al_poner_el_stop_y_no_se_toca(cfg_stops, tokens):
+def test_D2a_10_stop_nuestro_no_reconocido_avisa_al_poner_el_stop_y_luego_se_nivela(cfg_stops, tokens):
     """D2a-10 / riesgo 1: un stop del vigilante cuyo %ORDER no trae el disparo y da el LÍMITE (15,00) no casa con ningún nivel:
-    se infiere protección. plan pone el stop del nivel al lado (posible doble cobertura) → Avisar(2) +
-    Anotar("stop_no_reconocido"); la orden rara NO se cancela; con el stop ya puesto el plan siguiente no produce nada."""
+    se infiere protección. plan pone el stop del nivel al lado → Avisar(2) + Anotar("stop_no_reconocido"); la orden rara
+    NO se cancela mientras el stop del nivel no esté vivo. Decisión 43 (Jaume 30-sep): con el stop ya puesto, el plan
+    siguiente CANCELA la rara (la suma de stops se nivela a la posición) y el de después no produce nada."""
     pos = posicion([lote("A", 10, 100)], neta_fills=-100)
     raro = orden(200000001, Proposito.DESCONOCIDA, None, "15.00", 100, id_das=11, origen=Origen.VIGILANTE)
     acciones = plan(pos, [raro], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
@@ -750,9 +751,74 @@ def test_D2a_10_stop_nuestro_no_reconocido_avisa_al_poner_el_stop_y_no_se_toca(c
     assert nota == Anotar("stop_no_reconocido", {"ticker": X, "tokens": [200000001], "disparos": ["15.00"],
                                                  "regla": "riesgo 1 (D2a-10)"})
     puestas = [aceptada(a, id_das=20 + i) for i, a in enumerate(de_tipo(acciones, EnviarOrden))]
+    segundo = plan(pos, [raro] + puestas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(type(a), a.id_das, a.token) for a in segundo] == [(Cancelar, 11, 200000001)]
+    raro.estado = EstadoOrden.CANCELED
     assert plan(pos, [raro] + puestas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
     propia = orden(100000009, Proposito.STOP_PROTECCION, "12.50", "18.75", 100, id_das=9)   # R-C-10.4 propia: no es «rara»
     assert de_tipo(plan(pos, [propia], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION), Avisar) == []
+
+
+@pytest.mark.parametrize("neta", [0, 50], ids=["plana", "larga"])
+def test_decision_43_stop_sin_posicion_se_quita(cfg_stops, tokens, neta):
+    """Decisión 43 (Jaume 30-sep) (a): «un stop que no tiene contrapartida de una posición abierta hay que quitarlo».
+    Posición 0 (o larga) con el stop del nivel Y una protección nuestra vivos → se cancelan LOS DOS."""
+    pos = posicion([lote("A", 10, 100, estado=EstadoLote.CERRADO)], neta_fills=neta)
+    nivel = stop10(100, id_das=1)
+    prot = orden(100000009, Proposito.STOP_PROTECCION, "12.50", "18.75", 100, id_das=9)
+    acciones = plan(pos, [nivel, prot], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert not de_tipo(acciones, EnviarOrden) and not de_tipo(acciones, Reemplazar)
+    assert sorted(c.id_das for c in de_tipo(acciones, Cancelar)) == [1, 9]
+
+
+def test_decision_43_stops_de_mas_se_nivelan_primero_el_que_no_casa(cfg_stops, tokens):
+    """Decisión 43 (b): corto 100 con el stop del nivel vivo (100) y una adoptada del vigilante que no casa con ningún nivel
+    (inferida protección, 100) → suma 200 > 100: se cancela la que no casa; el stop del nivel no se toca."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    nivel = stop10(100, id_das=1)
+    rara = orden(200000001, Proposito.DESCONOCIDA, "15.00", "22.50", 100, id_das=11, origen=Origen.VIGILANTE)
+    acciones = plan(pos, [nivel, rara], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [(type(a), a.id_das) for a in acciones] == [(Cancelar, 11)]
+
+
+def test_decision_43_proteccion_parcialmente_sobrante_se_reduce_con_replace(cfg_stops, tokens):
+    """Decisión 43 (b): el nivel cubre (vivo) 60 de un corto de 100 y hay una protección propia de 100 → sobran 60:
+    REPLACE de la protección a 40 (no se cancela: esas 40 no las cubre aún nadie más)."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    nivel = stop10(60, id_das=1)
+    prot = orden(100000009, Proposito.STOP_PROTECCION, "12.50", "18.75", 100, id_das=9)
+    acciones = plan(pos, [nivel, prot], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    reemplazos = [a for a in de_tipo(acciones, Reemplazar) if a.id_das == 9]
+    assert [(r.qty, r.stop, r.precio) for r in reemplazos] == [(40, D("12.50"), D("18.75"))]
+    assert not [c for c in de_tipo(acciones, Cancelar) if c.id_das == 9]
+
+
+def test_decision_43_varias_protecciones_se_quita_primero_la_mas_nueva(cfg_stops, tokens):
+    """Decisión 43 (b): dos protecciones (50 + 50) al lado del stop de nivel vivo que ya cubre el corto de 100 → las dos
+    sobran; con el nivel cubriendo solo 50 (el plan lo sube a 100 en el mismo paso, pero aún no cuenta), sobra 50 y se
+    cancela la MÁS NUEVA (id_das mayor), se queda la antigua."""
+    vieja = orden(100000008, Proposito.STOP_PROTECCION, "12.50", "18.75", 50, id_das=8)
+    nueva = orden(100000009, Proposito.STOP_PROTECCION, "12.60", "18.90", 50, id_das=9)
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    todas = plan(pos, [stop10(100, id_das=1), vieja, nueva], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert sorted(c.id_das for c in de_tipo(todas, Cancelar)) == [8, 9]
+    una = plan(pos, [stop10(50, id_das=1), vieja, nueva], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [c.id_das for c in de_tipo(una, Cancelar)] == [9]
+    assert [r.id_das for r in de_tipo(una, Reemplazar)] == [1]          # solo el stop del nivel, a 100
+
+
+def test_decision_43_mientras_el_stop_del_nivel_no_esta_vivo_la_proteccion_no_se_toca(cfg_stops, tokens):
+    """Decisión 43: el stop que aún se va a poner (o sin id) no cuenta: primero lo nuevo; la protección se queda hasta el
+    plan siguiente. Con las netas en desacuerdo (D2a-05) tampoco se toca."""
+    pos = posicion([lote("A", 10, 100)], neta_fills=-100)
+    prot = orden(100000009, Proposito.STOP_PROTECCION, "12.50", "18.75", 100, id_das=9)
+    acciones = plan(pos, [prot], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert [type(a) for a in acciones] == [EnviarOrden]
+    sin_id = stop10(100, id_das=None, estado=EstadoOrden.SENDING)
+    assert not de_tipo(plan(pos, [sin_id, prot], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION), Cancelar)
+    desacuerdo = posicion([lote("A", 10, 100)], neta_fills=-100, neta_das=-150)
+    acc = plan(desacuerdo, [stop10(100, id_das=1), prot], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
+    assert not [c for c in de_tipo(acc, Cancelar) if c.id_das == 9]
 
 
 def test_D2a_06_un_stop_sin_id_cuenta_vivo_y_se_repone_cuando_el_decisor_lo_descarta(cfg_stops, tokens):
@@ -854,7 +920,8 @@ def test_plan_misma_orden_dos_veces_en_la_lista_no_se_cancela_dos_veces(cfg_stop
 
 @pytest.mark.parametrize("neta", [0, 20], ids=["R-C-11-2-neta-cero", "R-C-11-3-larga"])
 def test_plan_sin_corto_cancela_todos_los_stops_gestionados(cfg_stops, tokens, neta):
-    """R-C-11 (2)/(3): sin corto no puede quedar ningún stop de nivel; la protección (R-C-10) y lo ajeno no se tocan."""
+    """R-C-11 (2)/(3): sin corto no puede quedar ningún stop de nivel. Decisión 43 (Jaume 30-sep): tampoco una protección
+    nuestra (id 4, «stop sin contrapartida»); lo de otro ticker y las ventas no se tocan."""
     pos = posicion([lote("A", 10, 60), lote("B", 11, 40)], neta_fills=neta)
     vivas = [stop10(60), stop11(40),
              orden(100000004, Proposito.STOP_PROTECCION, "12.50", "18.75", 100, id_das=4),
@@ -862,7 +929,7 @@ def test_plan_sin_corto_cancela_todos_los_stops_gestionados(cfg_stops, tokens, n
              orden(100000006, STOP, "10.00", "15.00", 100, id_das=6, lado=Lado.VENTA)]
     acciones = plan(pos, vivas, cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION)
     assert all(isinstance(a, Cancelar) for a in acciones)
-    assert sorted(a.id_das for a in acciones) == [1, 2]
+    assert sorted(a.id_das for a in acciones) == [1, 2, 4]
     assert plan(pos, [], cfg_stops, None, tokens.siguiente, HORA, RUTA_STOP, VERSION) == []
 
 
@@ -980,7 +1047,7 @@ def _escenario(rnd: random.Random, ids, cfg: dict, tokens):
     basura = [
         orden(100009001, STOP, "10.00", "15.00", 100, id_das=next(ids), ticker="OTRO"),
         orden(100009002, STOP, "10.00", "15.00", 100, id_das=next(ids), lado=Lado.VENTA),
-        orden(100009003, Proposito.STOP_PROTECCION, "99.00", "148.50", 100, id_das=next(ids)),
+        # (la protección propia ya NO es basura intocable: Decisión 43, Jaume 30-sep, se nivela; tests decision_43_*)
         orden(100009004, Proposito.TP_AGREGAR, None, "9.50", 40, id_das=next(ids), tipo=TipoOrden.LIMITE),
         orden(100009005, STOP, "10.00", "15.00", 100, id_das=next(ids), estado=EstadoOrden.CANCELED),
     ]

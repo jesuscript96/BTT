@@ -461,6 +461,8 @@ def test_E1_02_tope_t1_superado(ta, parada, precio, luld, esperado, cfg_halts):
 
 
 # ── E1-04: R-F-06 2.ª parte, ensanchar el stop límite en un halt H de premercado ─
+# RETIRADO (Decisión 39, Jaume 30-sep): el decisor ya no llama a `ensanchar_stops_pm`; estos tests solo
+# guardan la función pura mientras siga en el código (test_das_decisor lo comprueba en el decisor).
 def stop_vivo(token: int, proposito: Proposito, stop: str, limite: str, qty: int = 100, llenas: int = 0,
               id_das: Optional[int] = 700, estado: EstadoOrden = EstadoOrden.ACCEPTED, ticker: str = X,
               lvqty: int = 0) -> Orden:

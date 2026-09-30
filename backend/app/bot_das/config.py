@@ -105,7 +105,10 @@ CALIENTE: frozenset[str] = frozenset({
     "estrategias.*.cuentas", "estrategias.*.excluir_ipo", "estrategias.*.al_desactivar",
 })
 _PREFIJO_ESTRATEGIA = "estrategias.*."
-_CALIENTE_ESTRATEGIA = frozenset(r[len(_PREFIJO_ESTRATEGIA):] for r in CALIENTE if r.startswith(_PREFIJO_ESTRATEGIA))
+# `sin_ev` se DERIVA de ev_pct (que es [C]): cambia con él en caliente; si no, quitar o poner el EV con el bot
+# encendido lo rechazaba como [A] y dejaba la marca desfasada (Decisión 23, Jaume 30-sep).
+_CALIENTE_ESTRATEGIA = frozenset(r[len(_PREFIJO_ESTRATEGIA):] for r in CALIENTE
+                                 if r.startswith(_PREFIJO_ESTRATEGIA)) | {"sin_ev"}
 
 # Campos de Config que identifican el FICHERO procesado, no su contenido: no son diferencias.
 _META = ("sha256", "config_version", "generado_at", "estrategias_hash")

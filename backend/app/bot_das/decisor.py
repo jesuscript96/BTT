@@ -646,6 +646,7 @@ class Decisor:
             acciones += self._proteger(ticker, "arranque", lambda p=pos: self._arrancar_ticker(p))
         acciones.append(Programar(T_BARRIDO, 0.0, {"motivo": "arranque (F12)"}))
         acciones += self._armar_simstatus()
+        acciones += self._avisos_sin_ev()
         self._diario_rama.clear()
         return self._finalizar_seguro(acciones)
 
@@ -1150,6 +1151,20 @@ class Decisor:
             return False
         self._avisos_dia.add(clave)
         return True
+
+    def _avisos_sin_ev(self) -> list[Accion]:
+        """Decisión 23 (Jaume 30-sep): al arrancar y al recargar el cuadro, un aviso por estrategia `sin_ev`.
+
+        Misma clave `sin_ev:<id>` y mismo «una vez al día» que el aviso de la
+        primera señal: si ya se avisó hoy (aquí o con la señal) no se repite.
+        """
+        acciones: list[Accion] = []
+        for _sid, e in sorted(self._cfg.estrategias.items()):
+            if e.sin_ev and self._una_vez_al_dia(f"sin_ev:{e.strategy_id}"):
+                acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                       f"Estrategia {avisos.escapar_html(e.name)} sin EV en el cuadro: no ejecuta "
+                                       f"hasta que lo pongas", clave=f"sin_ev:{e.strategy_id}"))
+        return acciones
 
     def _hora_texto(self) -> str:
         return self._ahora_et.strftime("%H:%M:%S")
@@ -3605,11 +3620,11 @@ class Decisor:
         la salida y los stops nunca compran dos veces en la reapertura. E1-01:
         en un halt H la salida por OPEN es un LÍMITE a parada · (1 + t1)
         (`orden_reapertura(simb=...)`). G1A-04: en cisne negro / control
-        humano / manual / cierre humano no sale ninguna orden (aviso 3). E1-04:
-        «mantener» en un halt H de premercado ensancharía el límite de los
-        stops residentes (R-F-06); con el stop único (+50 %) ya no hay nada que
-        ensanchar. El «stop» que se compara con el precio es el primero que
-        salta (el del nivel más bajo, con la banda).
+        humano / manual / cierre humano no sale ninguna orden (aviso 3). E1-04
+        RETIRADO (Decisión 39, Jaume 30-sep): «mantener» en un halt H de
+        premercado ya NO ensancha el límite de los stops residentes; con el
+        límite +50 % no hacía nada. El «stop» que se compara con el precio es
+        el primero que salta (el del nivel más bajo, con la banda).
         """
         ticker = str(datos.get("ticker") or clave.split(":", 1)[1])
         simb = self._mercado.simbolo(ticker)
@@ -3694,8 +3709,7 @@ class Decisor:
                     acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
                                                      "motivo": "halt: control humano (R-F-05)"}))
         else:
-            acciones += self._absorber(halts.ensanchar_stops_pm(pos, self._ordenes_ticker(ticker), simb, franja,
-                                                                self._cfg, pos.version_stops))
+            # «mantener»: los stops residentes se quedan como están (E1-04 retirado: Decisión 39, Jaume 30-sep)
             acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
         return acciones
 
@@ -6391,6 +6405,7 @@ class Decisor:
         acciones.append(Anotar("config", {"config_version": self._cfg.config_version, "sha256": self._cfg.sha256,
                                           "rechazadas": list(rechazadas)}))
         acciones += self._al_desactivar_cambios(vieja, self._cfg)
+        acciones += self._avisos_sin_ev()   # Decisión 23 (Jaume 30-sep): estrategia nueva sin EV → aviso ya
         return acciones
 
     def _al_desactivar_cambios(self, vieja: Config, nueva: Config) -> list[Accion]:

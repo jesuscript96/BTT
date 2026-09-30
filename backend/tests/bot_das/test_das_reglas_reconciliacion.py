@@ -547,6 +547,20 @@ def test_ticker_plano_con_proteccion_huerfana_se_cancela(cfg):
     assert [(c.id_das, c.token) for c in acc] == [(60, tok(5))]
 
 
+def test_decision_43_plano_se_quitan_nuestros_stops_y_el_del_humano_no_se_toca(cfg):
+    """Decisión 43 (Jaume 30-sep) (a): posición 0 en DAS con el stop de nivel y una protección NUESTROS vivos y un stop del
+    HUMANO (ajena ya tratada) → se cancelan los dos nuestros; el del humano ni se cancela ni se reemplaza (D10)."""
+    prot = orden(tok(5), Proposito.STOP_PROTECCION, "12.00", "18.00", 100, 60, nivel=None, lote_id=None)
+    s = stop_nivel()
+    humano = msg_crudo(90, None, lado="B", tipo="SLP: 12.00 12.50", qty=100, precio="12.50", order_src="Hotkey")
+    estado = estado_con(ordenes=(prot, s))
+    estado.ordenes_ajenas[90] = humano
+    ds = comparar(estado, {X: pos_das(0)}, {**ids([prot, s]), 90: humano}, HOY, cfg)
+    acc = acciones(ds, estado, cot_de(cot()), cfg, Contador(), HORA, RUTA_STOP)
+    assert sorted(c.id_das for c in de_tipo(acc, Cancelar)) == [11, 60]
+    assert not [a for a in acc if getattr(a, "id_das", None) == 90]
+
+
 def test_desconocida_ya_protegida_es_idempotente(cfg):
     """Riesgo 11: la protección puesta (aún Sending) cubre la posición desconocida: el barrido siguiente no pone otra."""
     estado = estado_con()

@@ -1560,20 +1560,38 @@ def test_estrategia_sin_ev_no_ejecuta_y_avisa_una_vez_al_dia(cfg: Config, tmp_pa
     """Decisión 23 (Jaume 30-sep): sin EV en el cuadro → señales descartadas «sin ejecutar» y aviso nivel 2 al B 1 vez/día."""
     e = dataclasses.replace(cfg.estrategias[SID], ejecutar=False, sin_ev=True, ev_pct=Decimal("0"))
     b = Banco(cfg_con(cfg, estrategias=[e]), tmp_path)
+    b.conectar()
+    arranque = b.arrancar()
     b.preparar(locates=((TICKER, SID, 1000), (OTRO, SID, 1000)),
                cotizaciones=((TICKER, "3.44", "3.46", "3.45"), (OTRO, "3.44", "3.46", "3.45")))
     primera = b.senal(evento())
     segunda = b.senal(evento(ticker=OTRO))
-    avisos_ = [a for a in primera if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
+    # Jaume 30-sep: el aviso sale ya AL ARRANCAR; con la señal no se repite (misma clave, una vez al día)
+    avisos_ = [a for a in arranque if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
     assert len(avisos_) == 1 and avisos_[0].nivel == Nivel.AVISO and avisos_[0].grupo == Grupo.B
     assert "sin EV en el cuadro: no ejecuta hasta que lo pongas" in avisos_[0].texto
-    assert not [a for a in segunda if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
+    for acc in (primera, segunda):
+        assert not [a for a in acc if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
     for acc in (primera, segunda):
         assert anotaciones(acc, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_ESTRATEGIA
     assert not b.enviadas()
     b.decisor._override_estrategia[SID] = {"ejecutar": True}          # /activar no la enciende sin EV
     b.decisor._recomponer_cfg()
     assert b.decisor._cfg.estrategias[SID].ejecutar is False
+
+
+def test_estrategia_sin_ev_avisa_al_recargar_el_cuadro_una_sola_vez(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 30-sep: si una recarga del cuadro deja una estrategia sin EV, aviso nivel 2 al B ya; otra recarga no lo repite."""
+    b = Banco(cfg, tmp_path)
+    b.conectar()
+    assert not [a for a in b.arrancar() if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
+    e = dataclasses.replace(cfg.estrategias[SID], ejecutar=False, sin_ev=True, ev_pct=Decimal("0"))
+    primera = b.procesar(ConfigNueva(dataclasses.replace(cfg, config_version=3, estrategias={SID: e}), None))
+    avisos_ = [a for a in primera if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
+    assert len(avisos_) == 1 and avisos_[0].nivel == Nivel.AVISO and avisos_[0].grupo == Grupo.B
+    segunda = b.procesar(ConfigNueva(dataclasses.replace(cfg, config_version=4, estrategias={SID: e}), None))
+    assert not [a for a in segunda if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
+    assert not [a for a in b.arrancar() if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
 
 
 def test_senal_larga_con_un_corto_abierto_se_descarta(banco: Banco) -> None:
@@ -3066,6 +3084,28 @@ def test_e1_04_halt_h_en_premercado_con_mantener_no_estrecha_el_stop_unico(cfg: 
     assert (b.orden(stop.token).stop, b.orden(stop.token).precio) == (D("4.00"), D("6.00"))
     assert not b.enviadas(Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE)
     assert _vivas_compra(b, *STOPS) == 100
+
+
+def test_decision_39_el_decisor_ya_no_llama_al_ensanche_pm(cfg: Config, tmp_path: Path,
+                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    """Decisión 39 (Jaume 30-sep): E1-04 retirado. Halt H de premercado con «mantener» → el decisor NO llama a
+    `halts.ensanchar_stops_pm` (si la llamara, aquí lanzaría y el ticker quedaría pausado por H-5) y no anota nada."""
+    llamadas: list[str] = []
+
+    def _no(*_a: Any, **_k: Any) -> list:
+        llamadas.append("llamada")
+        raise AssertionError("E1-04 retirado: el decisor no debe ensanchar stops en PM")
+
+    monkeypatch.setattr("app.bot_das.reglas.halts.ensanchar_stops_pm", _no)
+    b = _banco_premercado(cfg, tmp_path)
+    b.libro.halt(TICKER, "H", "08:00:30")
+    b.cotizar(TICKER, "3.60", "3.62", "3.61")
+    marca = b.marca()
+    b.avanzar(2)
+    decisiones = [a.datos["decision"] for a in anotaciones(b.desde(marca), "halt_decision")]
+    assert decisiones and set(decisiones) == {"mantener"}
+    assert llamadas == [] and not anotaciones(b.desde(marca), "halt_stops_pm") and not anotaciones(b.desde(marca),
+                                                                                                    "excepcion")
 
 
 def test_r_f_06_halt_de_premercado_que_reabre_en_rth_cambia_la_limite_pm_por_open(cfg: Config, tmp_path: Path) -> None:

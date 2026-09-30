@@ -95,17 +95,26 @@ LAS TRAMPAS.
     calcular). Una posición sin lotes es de la reconciliación (R-C-10 caso 4).
     Un stop de compra NUESTRO que se infiere como protección teniendo lotes
     vivos (riesgo 1: el %ORDER no trae el disparo y `precio` es el límite)
-    tampoco se toca, pero si `plan` pone su stop al lado avisa nivel 2 y lo
-    anota (`stop_no_reconocido`, D2a-10): no queda en silencio la posible
-    doble cobertura.
+    no se toca mientras sea cobertura: si `plan` pone su stop al lado avisa
+    nivel 2 y lo anota (`stop_no_reconocido`, D2a-10).
+  * Decisión 43 (Jaume 30-sep): «un stop que no tiene contrapartida de una
+    posición abierta no tiene sentido, hay que quitarlo; y si hay más de un
+    stop, se nivelan a la posición abierta». `plan` NIVELA las protecciones
+    nuestras (todo stop de compra nuestro que no es de nivel): cubren solo lo
+    que no cubren ya los stops de nivel VIVOS casados (nunca los que aún se
+    van a poner: así jamás queda un hueco sin stop); lo que sobra se quita
+    de la más nueva a la más antigua (Cancelar, o REPLACE a la baja). Con la
+    posición a 0 (o larga) se quitan todas. Las órdenes del HUMANO (ajenas)
+    no llegan aquí: no se tocan nunca (D10).
   * «Vivas» son Sending/Accepted/Partial y también Hold y Triggered (manual
     L379-405: Hold = «open, but not sent to the exchange», que es como DAS
     guarda un stop hasta el disparo). No contarlas duplicaría el stop
     (riesgo 11). Para `descubiertas` solo cubren las CONFIRMADAS (no Sending):
     R-C-03 habla de «stop aceptado».
   * Protecciones: la de R-C-10 caso 4 (`stop_proteccion`, sin lote) no la
-    toca `plan` nunca: una posición desconocida no tiene conjunto deseado y
-    cancelarla la dejaría desnuda.
+    toca `plan` mientras la posición no tenga conjunto deseado (desconocida):
+    cancelarla la dejaría desnuda. Con stops de nivel vivos, se nivela
+    (Decisión 43, arriba).
   * La cantidad VIVA de una orden es min(`lvqty`, `qty − llenas`) cuando DAS
     ya ha dicho `lvqty` (Partial/Triggered) y `qty − llenas` si no: nunca «lo
     pedido» (injerto A §8.7). El mínimo (D2a-07) vale en los dos órdenes de
@@ -456,7 +465,9 @@ def plan(pos: PosicionTicker, vivas: list[Orden], cfg_stops: Mapping, limit_up: 
     llegar Canceled/Replaced/CancelRej/ReplaceRej, y un REPLACE de una
     versión ya invalidada no cuenta). Otros valores se ignoran. En cisne
     negro devuelve [] (R-G-03). `hora_et` se conserva por el contrato de
-    §3.16 (la ruta ya llega resuelta). No muta nada.
+    §3.16 (la ruta ya llega resuelta). No muta nada. Decisión 43 (Jaume
+    30-sep): las protecciones nuestras se NIVELAN a lo que no cubren los
+    stops de nivel vivos (`_nivelar_protecciones`, van con las cancelaciones).
     """
     ticker = pos.ticker
     if pos.estado is EstadoTicker.BS:
@@ -513,6 +524,11 @@ def plan(pos: PosicionTicker, vivas: list[Orden], cfg_stops: Mapping, limit_up: 
         cancelaciones.append(Cancelar(id_das=o.id_das, token=o.token,
                                       motivo=(f"R-C-07/R-C-11: stop sobrante en {ticker} (disparo {_disparo_de(o)}; "
                                               f"se conserva el más antiguo de cada nivel)")))
+    if not solo_bajar:   # con las netas en desacuerdo la protección puede cubrir justo lo que DAS ve de más: se deja
+        niveladas, esperar = _nivelar_protecciones(pos, vivas, deseados, asignadas, n_stops, en_vuelo, cfg_stops,
+                                                   limit_up, version, serie)
+        cancelaciones.extend(niveladas)
+        replanificar = replanificar or esperar
     acciones = nuevas + ajustes + cancelaciones
     if nuevas:
         acciones.extend(_avisar_no_reconocidas(pos, vivas, cfg_stops, limit_up))
@@ -1083,13 +1099,59 @@ def _avisar_no_reconocidas(pos: PosicionTicker, vivas: list[Orden], cfg_stops: M
     detalle = ", ".join(f"token {o.token} (disparo {_disparo_de(o)})" for o in raras)
     return [Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"stop_no_reconocido:{pos.ticker}",
                    texto=(f"Riesgo 1 (D2a-10): {pos.ticker} tiene stops de compra NUESTROS que no casan con ningún nivel "
-                          f"de sus lotes: {detalle}. Se tratan como protección y NO se tocan; el bot pone el stop de "
-                          f"cada nivel aparte (posible DOBLE cobertura). Revisar el tipo del %ORDER "
-                          f"(comprobar_das, paso 3)")),
+                          f"de sus lotes: {detalle}. Se tratan como protección; el bot pone el stop de cada nivel "
+                          f"aparte y, cuando esté vivo, las nivela a la posición (Decisión 43). Revisar el tipo del "
+                          f"%ORDER (comprobar_das, paso 3)")),
             Anotar("stop_no_reconocido", {"ticker": pos.ticker, "tokens": [o.token for o in raras],
                                           "disparos": [None if _disparo_de(o) is None else str(_disparo_de(o))
                                                        for o in raras],
                                           "regla": "riesgo 1 (D2a-10)"})]
+
+
+def _nivelar_protecciones(pos: PosicionTicker, vivas: list[Orden], deseados: list[StopDeseado],
+                          asignadas: Mapping[int, Orden], n_stops: int, en_vuelo: Mapping[int, Optional[int]],
+                          cfg_stops: Mapping, limit_up: Optional[Decimal], version: int,
+                          serie: str) -> tuple[list[Accion], bool]:
+    """Decisión 43 (Jaume 30-sep): las protecciones nuestras cubren solo lo que no cubren los stops de nivel VIVOS.
+
+    Protección = stop de compra NUESTRO vivo del ticker cuyo propósito
+    efectivo no es de nivel (la propia de R-C-10 caso 4 o de /stop, o una
+    adoptada que no casa con ningún nivel). Objetivo = max(n_stops − lo que
+    cubren ya los stops de nivel casados CONFIRMADOS por DAS, 0) (un stop que
+    aún se va a poner o sigue en Sending no cuenta: primero lo nuevo, luego
+    se quita lo viejo en el plan siguiente). Lo que sobra se quita de la MÁS NUEVA a la más antigua:
+    Cancelar entera o REPLACE a la baja (sin disparo o límite conocidos no
+    se reduce a medias: se deja). Si alguna protección aún no tiene
+    `id_das`, no se toca nada y se pide replanificar (devuelve True).
+    """
+    niveles_lotes = _niveles_de_lotes(pos)
+    protecciones = [o for o in _unicas(vivas) if _es_viva(o, pos.ticker)
+                    and _proposito_efectivo(o, niveles_lotes, cfg_stops, limit_up) is Proposito.STOP_PROTECCION
+                    and _viva_pedida(o, en_vuelo) > 0]
+    if not protecciones:
+        return [], False
+    cubierto = sum(min(_viva_pedida(o, en_vuelo), deseados[i].qty) for i, o in asignadas.items()
+                   if o.id_das is not None and o.estado in ESTADOS_CONFIRMADOS)   # un stop en camino aún no cubre
+    objetivo = max(n_stops - cubierto, 0)
+    sobra = sum(_viva_pedida(o, en_vuelo) for o in protecciones) - objetivo
+    if sobra <= 0:
+        return [], False
+    if any(o.id_das is None for o in protecciones):
+        return [], True
+    acciones: list[Accion] = []
+    for o in sorted(protecciones, key=_clave_antiguedad, reverse=True):
+        if sobra <= 0:
+            break
+        viva = _viva_pedida(o, en_vuelo)
+        motivo = (f"Decisión 43: stop de {pos.ticker} sin contrapartida (disparo {_disparo_de(o)}; posición "
+                  f"{pos.neta:+d}, stops de nivel vivos {cubierto}): se nivela a la posición")
+        if sobra >= viva:
+            acciones.append(Cancelar(id_das=o.id_das, token=o.token, motivo=motivo))   # type: ignore[arg-type]
+            sobra -= viva
+        elif o.stop is not None and o.precio is not None:
+            acciones.extend(_reemplazo(o, viva - sobra, o.stop, o.precio, motivo, version, serie, cfg_stops))
+            sobra = 0
+    return acciones, False
 
 
 def _orden_stop(d: StopDeseado, ticker: str, ruta_stop: str, token: int, version: int, lote_id: Optional[str]) -> OrdenNueva:

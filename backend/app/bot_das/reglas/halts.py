@@ -42,14 +42,12 @@ LAS TRAMPAS.
     redondeado abajo (si reabre por encima, no llena y decide el humano). Lo
     mismo capa el límite del reintento. `tope_t1_superado` es la función ÚNICA
     que el decisor usa al reabrir con el precio real (E1-02).
-  * E1-04 (R-F-06, 2.ª parte): en un halt `H` de premercado con decisión
-    «mantener», `ensanchar_stops_pm` REEMPLAZA el límite de los stops de compra
-    residentes por `con_techo(disparo, margen_limite_pm_pct)` (nunca lo baja,
-    nunca mueve el disparo): remueve más liquidez al reabrir. Con el stop
-    único (Jaume 29-sep, R-C-01 v4: límite L + 50 %) el límite ya es mucho
-    más ancho que el 5 % y el ensanche NO cambia nada en los stops de nivel;
-    se conserva como red para un stop de compra con un límite más estrecho
-    (una protección o una orden adoptada puesta con otra config).
+  * E1-04 RETIRADO (Decisión 39, Jaume 30-sep): `ensanchar_stops_pm` (en un
+    halt `H` de premercado con «mantener», subir el límite de los stops de
+    compra a `con_techo(disparo, margen_limite_pm_pct)`) ya NO la llama el
+    decisor: con el límite +50 % (R-C-01 v4, también en la protección y en
+    /stop, Decisión 42) no hacía nada. La función se queda, pura y probada,
+    solo como referencia; no la uses sin volver a decidirlo con Jaume.
   * En premercado no hay órdenes a mercado (R-F-06): `decidir_reapertura`
     devuelve «cerrar_limite_pm» en cualquier franja que no sea RTH, y
     `orden_reapertura` pone un LÍMITE que cruza el ask con margen y TIF DAY+.
@@ -393,7 +391,9 @@ def orden_reapertura(pos: PosicionTicker, qty: int, cot: Optional[Cotizacion], d
 
 def ensanchar_stops_pm(pos: PosicionTicker, vivas: list[Orden], simb: EstadoSimbolo, franja: str, cfg: Any,
                        version: Optional[int] = None) -> list[Accion]:
-    """E1-04 (R-F-06, 2.ª parte): halt H de PREMERCADO con decisión «mantener» → stops límite con más margen.
+    """RETIRADA (Decisión 39, Jaume 30-sep): el decisor ya no la llama; con el límite +50 % no hacía nada.
+
+    E1-04 (R-F-06, 2.ª parte): halt H de PREMERCADO con decisión «mantener» → stops límite con más margen.
 
     «Si ya hay un stop limit puesto y se entra en T1/T12 en PM, ese stop se
     cambia por otro que remueva más liquidez». Solo con la franja de
