@@ -172,7 +172,7 @@ _LADOS_VENTA = frozenset({"S", "SS", "SELL", "SHRT", "SHORT"})
 TIPO_AJENAS_TRATADAS = "ajenas_tratadas"   # E2c-01: {ids, ticker} que `_caso_ajena` ya trató (no se vuelve a pausar)
 CASOS_ADOPTA_DAS = frozenset({5, 6})       # reconciliación: caso 5 (plana en DAS) y 6 (neta distinta): manda DAS (M7)
 MOTIVO_INTERVENCION_HUMANA = "intervención humana"   # = reconciliacion.MOTIVO_INTERVENCION_HUMANA (R-M-03 por ticker)
-FASES_LOCATE = ("A", "B", "C", "C_piramide", "D")    # = locates.FASES (Jaume 29-sep: locates por fases)
+FASES_LOCATE = ("A", "B", "C", "C_piramide", "D", "P")   # = locates.FASES (Jaume 29-sep; «P»: decisión 47, 30-sep)
 TIPO_SENAL_PRINCIPAL = "senal_principal"             # Jaume 29-sep: la PRIMERA señal principal del día por pareja
 _PROPOSITOS_STOP_V3 = ("stop_principal", "stop_emergencia")   # diarios de antes del stop único (Jaume 29-sep)
 _PROPOSITOS_VETO_STOP = frozenset({         # R-F-03 (G1A-18): salidas que activan el veto de reentrada tras un halt
@@ -1206,6 +1206,21 @@ def _datos_comunes_locate(locate: Locate, datos: dict, hoy: date) -> None:
     if "precio_senal" in datos:
         precio_senal = _decimal(datos.get("precio_senal"))
         locate.precio_senal = precio_senal if precio_senal is not None and precio_senal > 0 else None
+    # decisión 47 (Jaume 30-sep): la fase P (= `locates.campos_sin_base`; aquí sin importar `reglas`)
+    if "stop_perdida" in datos:
+        stop = _decimal(datos.get("stop_perdida"))
+        locate.stop_perdida = stop if stop is not None and stop.is_finite() and stop > 0 else None
+    if "senal_perdida" in datos:
+        senal = datos.get("senal_perdida")
+        locate.senal_perdida = senal if isinstance(senal, str) and senal else None
+    if "piramides_pendientes" in datos:
+        pendientes: list[tuple[int, int]] = []
+        for par in datos.get("piramides_pendientes") or ():
+            if isinstance(par, (list, tuple)) and len(par) == 2:
+                k, n = _entero(par[0]), _entero(par[1])
+                if k is not None and n is not None and k >= 0 and n > 0:
+                    pendientes.append((k, n))
+        locate.piramides_pendientes = tuple(pendientes)
     token = _token_de_hoy(datos.get("token"), hoy)
     if token is not None:
         locate.token = token

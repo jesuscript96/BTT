@@ -132,7 +132,8 @@ FASE_SENAL = "B"              # llegó la señal de entrada sin locates: UN inte
 FASE_DENTRO = "C"             # dentro; faltan locates para las pirámides: cada 3 s, sin mirar «a tiro»
 FASE_PIRAMIDE = "C_piramide"  # llegó la pirámide y faltan: UN intento (a tiro + compensa) o parado el día
 FASE_FUERA = "D"              # posición cerrada: nada hasta una reentrada legítima (que vuelve a B)
-FASES = (FASE_RADAR, FASE_SENAL, FASE_DENTRO, FASE_PIRAMIDE, FASE_FUERA)
+FASE_SIN_BASE = "P"           # decisión 47: entrada perdida por locates; cada 3 s, sin «a tiro», las pirámides pendientes
+FASES = (FASE_RADAR, FASE_SENAL, FASE_DENTRO, FASE_PIRAMIDE, FASE_FUERA, FASE_SIN_BASE)
 FASES_INTENTO = frozenset({FASE_SENAL, FASE_PIRAMIDE})
 
 ESTADOS_EN_CURSO = frozenset({ESTADO_COMPRANDO, ESTADO_PENDIENTE, ESTADO_ESPERANDO, ESTADO_OFRECIDO})
@@ -279,18 +280,37 @@ def cantidad_a_localizar(e: EstrategiaConfig, estimacion: Optional[list[dict]], 
     entrada = int(round(acciones))
     if entrada <= 0:
         return 0
-    total = entrada
-    riesgo_fila = _decimal_positivo(fila.get("riesgo_usd")) or _decimal_positivo(e.riesgo_usd)
-    if riesgo_fila is None:
-        return total
+    return entrada + sum(n for _, n in acciones_piramides(e, acciones, fila.get("riesgo_usd")))
+
+
+def acciones_piramides(e: EstrategiaConfig, acciones_entrada: Any, riesgo_entrada: Any) -> list[tuple[int, int]]:
+    """R-H-05: (k, acciones) de cada nivel «add» de la estrategia, con la MISMA fórmula que `cantidad_a_localizar`.
+
+    k = posición del nivel en `e.niveles_piramide` (`def_index`); acciones =
+    `acciones_entrada · riesgo_nivel / riesgo_entrada` redondeado al par, con
+    el riesgo del nivel de `_riesgo_del_nivel` y el de la entrada (o, sin él,
+    `e.riesgo_usd`). Sin acciones o sin riesgo de entrada válidos → [] (no se
+    localiza a ciegas). Niveles con 0 acciones no se devuelven. Decisión 47
+    (Jaume 30-sep): con la entrada perdida por locates, la fase P busca SOLO
+    estas acciones (las de la entrada perdida no).
+    """
+    acciones = _decimal_positivo(acciones_entrada)
+    if acciones is None:
+        return []
+    riesgo = _decimal_positivo(riesgo_entrada) or _decimal_positivo(e.riesgo_usd)
+    if riesgo is None:
+        return []
+    salida: list[tuple[int, int]] = []
     for k, nivel in enumerate(e.niveles_piramide or []):
         if not _es_nivel_add(nivel):
             continue
         riesgo_nivel = _riesgo_del_nivel(e, k)
         if riesgo_nivel is None:
             continue
-        total += int(round(acciones * riesgo_nivel / riesgo_fila))
-    return total
+        n = int(round(acciones * riesgo_nivel / riesgo))
+        if n > 0:
+            salida.append((k, n))
+    return salida
 
 
 def veredicto_ev(e: EstrategiaConfig, precio: Decimal, qty: int, precio_accion_locate: Decimal,
@@ -1108,6 +1128,7 @@ def _aplicar_una(loc: Locate, tipo: str, datos: Mapping[str, Any]) -> Locate:
     if "precio_senal" in datos:
         ps = datos.get("precio_senal")
         cambios["precio_senal"] = ps if isinstance(ps, Decimal) and ps.is_finite() and ps > 0 else None
+    cambios.update(campos_sin_base(datos))                  # decisión 47 (Jaume 30-sep): fase P
     for campo in ("localizadas", "usadas", "id_das", "token"):
         valor = _entero(datos.get(campo))
         if valor is not None:
@@ -1131,6 +1152,33 @@ def _aplicar_una(loc: Locate, tipo: str, datos: Mapping[str, Any]) -> Locate:
     elif coste_total is not None:
         cambios["coste"] = coste_total
     return dataclasses.replace(loc, **cambios)
+
+
+def campos_sin_base(datos: Mapping[str, Any]) -> dict[str, Any]:
+    """Decisión 47 (Jaume 30-sep): los campos de la fase P de un `locate_estado` (el MISMO reductor para el diario).
+
+    Solo las claves presentes: `stop_perdida` (Decimal > 0, o texto de un
+    Decimal tras el JSON del diario; otro valor → None), `senal_perdida`
+    (texto no vacío o None) y `piramides_pendientes` (lista de [k, acciones]
+    enteros ≥ 0 / > 0; lo que no lo sea se ignora) → tupla de tuplas.
+    """
+    cambios: dict[str, Any] = {}
+    if "stop_perdida" in datos:
+        valor = datos.get("stop_perdida")
+        stop = _decimal_positivo(valor) if isinstance(valor, (Decimal, str)) else None
+        cambios["stop_perdida"] = stop
+    if "senal_perdida" in datos:
+        sid = datos.get("senal_perdida")
+        cambios["senal_perdida"] = sid if isinstance(sid, str) and sid else None
+    if "piramides_pendientes" in datos:
+        pendientes: list[tuple[int, int]] = []
+        for par in datos.get("piramides_pendientes") or ():
+            if isinstance(par, (list, tuple)) and len(par) == 2:
+                k, n = _entero(par[0]), _entero(par[1])
+                if k is not None and n is not None and k >= 0 and n > 0:
+                    pendientes.append((k, n))
+        cambios["piramides_pendientes"] = tuple(pendientes)
+    return cambios
 
 
 def _libres(loc: Locate) -> int:

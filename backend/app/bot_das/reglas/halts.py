@@ -51,6 +51,11 @@ LAS TRAMPAS.
   * En premercado no hay órdenes a mercado (R-F-06): `decidir_reapertura`
     devuelve «cerrar_limite_pm» en cualquier franja que no sea RTH, y
     `orden_reapertura` pone un LÍMITE que cruza el ask con margen y TIF DAY+.
+  * Decisión 46 (Jaume 30-sep): halt H de premercado con posición que reabre
+    (aún en premercado) POR ENCIMA del límite del stop (L + 50 %) y sin pasar
+    el techo del T1 → el decisor cierra con un LÍMITE al techo
+    (`decidir_reapertura_pm` + `orden_cierre_tope_pm`) en vez de dejarlo en
+    cisne negro; por encima del techo, control humano. En RTH no aplica.
   * Sin precio de referencia (ni last ni precio de parada) no se decide a
     ciegas: «control_humano». Sin precio de parada no se puede medir el +250 %
     de T1 y prima cerrar (los stops residentes no cubren un hueco de +250 %).
@@ -317,6 +322,59 @@ def precio_tope_t1(simb: EstadoSimbolo, cfg_halts: Any) -> Optional[Decimal]:
         return None
     tope = _cfg_decimal(_bloque_halts(cfg_halts), "t1_subida_max_cierre_pct", HALT_T1_SUBIDA_MAX_PCT)
     return al_tick(parada * (_CIEN + tope) / _CIEN, arriba=False)
+
+
+def decidir_reapertura_pm(precio: Optional[Decimal], limite_stop: Optional[Decimal], simb: EstadoSimbolo,
+                          cfg_halts: Any) -> Optional[str]:
+    """Decisión 46 (Jaume 30-sep): un halt H (T1/T12) de PREMERCADO con posición corta que REABRE (aún en premercado).
+
+    Con el precio real de la reapertura (`precio`) y el límite del primer stop
+    (`limite_stop`, L + 50 %):
+      * precio ≤ límite (o sin precio / sin límite) → None: lo de siempre (el
+        stop residente llena si el precio pasa su disparo).
+      * precio > techo del T1 (`tope_t1_superado`, parada · 3,5 estricto) →
+        «control_humano»: no se compra (R-F-05 a, como `_tope_t1_control_humano`).
+      * límite < precio ≤ techo → «cerrar_tope»: el stop ya no puede llenar; el
+        decisor baja el stop a 0 y compra con un LÍMITE a `precio_tope_t1`
+        (`orden_cierre_tope_pm`) en vez de declarar el cisne negro.
+    Sin precio de parada no hay techo que medir → None (lo de siempre: el
+    decisor no inventa un límite). La franja (solo premercado, nunca si reabre
+    ya en RTH) y que el halt no sea LULD los comprueba el decisor.
+    Datos (522 halts T1 empezados en PM): el 8-11 % reabre sobre +50 %, casi
+    ninguno sobre +250 %, y tras reabrir suben de mediana +5 %.
+    """
+    if precio is None or not precio.is_finite() or precio <= 0:
+        return None
+    if limite_stop is None or not limite_stop.is_finite() or limite_stop <= 0 or precio <= limite_stop:
+        return None
+    if precio_tope_t1(simb, cfg_halts) is None:
+        return None
+    if tope_t1_superado(simb, precio, cfg_halts, luld=False):
+        return "control_humano"
+    return "cerrar_tope"
+
+
+def orden_cierre_tope_pm(pos: PosicionTicker, qty: int, simb: EstadoSimbolo, cfg: Any, token: int,
+                         hora_et: datetime) -> OrdenNueva:
+    """Decisión 46 (Jaume 30-sep): la compra LÍMITE que cierra el corto al reabrir sobre el límite del stop.
+
+    Precio = `precio_tope_t1` (parada · (1 + t1/100) redondeado abajo): cruza
+    el ask de la reapertura (que está por debajo) y nunca paga más del techo;
+    ruta de cruzar de la tabla, TIF DAY+, propósito HALT_PM_LIMITE (el decisor
+    la cuenta como salida del halt: `compras_cierre`, verificación a los 2 s).
+    ValueError sin posición corta, con `qty` fuera de (0, posición] o sin techo
+    (LULD o sin precio de parada).
+    """
+    if pos.neta >= 0:
+        raise ValueError(f"{pos.ticker}: la decisión 46 solo cierra cortos (neta {pos.neta})")
+    if isinstance(qty, bool) or not isinstance(qty, int) or qty <= 0 or qty > abs(pos.neta):
+        raise ValueError(f"{pos.ticker}: qty {qty!r} fuera de (0, {abs(pos.neta)}] (no se cruza al otro lado)")
+    precio = precio_tope_t1(simb, cfg)
+    if precio is None:
+        raise ValueError(f"{pos.ticker}: sin techo del T1 (LULD o sin precio de parada)")
+    return OrdenNueva(token=token, lado=Lado.COMPRA, ticker=pos.ticker, ruta=ruta(_bloque(cfg, "rutas"), "cruzar",
+                                                                                   precio, hora_et),
+                      qty=qty, tipo=TipoOrden.LIMITE, precio=precio, tif="DAY+", proposito=Proposito.HALT_PM_LIMITE)
 
 
 def cerca_de_banda(cot: Optional[Cotizacion], simb: EstadoSimbolo, k: int, cfg_halts: dict) -> bool:

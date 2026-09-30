@@ -753,6 +753,13 @@ class Locate:                      # R-H
     # "D" posición cerrada (sin consultas hasta la reentrada). `precio_senal`: la referencia de «a tiro».
     fase: str = "A"
     precio_senal: Optional[Decimal] = None
+    # Decisión 47 (Jaume 30-sep): fase "P" = la entrada se perdió por locates y quedan pirámides «add»: se buscan
+    # las acciones de las pirámides PENDIENTES ((k del nivel, acciones), sin las de la entrada perdida) y la
+    # primera pirámide con locates entra SIN base con el nivel de stop de la entrada perdida (`stop_perdida`).
+    # `senal_perdida` = id de esa entrada (tras la salida total del motor, su reentrada es legítima y la cuenta).
+    stop_perdida: Optional[Decimal] = None
+    senal_perdida: Optional[str] = None
+    piramides_pendientes: tuple = ()
 
 
 @dataclass

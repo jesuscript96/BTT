@@ -460,6 +460,39 @@ def test_E1_02_tope_t1_superado(ta, parada, precio, luld, esperado, cfg_halts):
     assert halts.tope_t1_superado(simbolo(ta=ta, parada=parada), precio, cfg_halts, luld=luld) is esperado
 
 
+# ── decisión 46 (Jaume 30-sep): halt H de premercado que reabre por encima del límite del stop ─
+@pytest.mark.parametrize("precio, limite, parada, esperado", [
+    (D("7.00"), D("6.00"), D("3.61"), "cerrar_tope"),
+    (D("12.63"), D("6.00"), D("3.61"), "cerrar_tope"),        # el techo exacto (parada · 3,5 = 12,635) cierra
+    (D("13.00"), D("6.00"), D("3.61"), "control_humano"),
+    (D("6.00"), D("6.00"), D("3.61"), None),                   # dentro del límite: llena el stop (lo de siempre)
+    (D("5.00"), D("6.00"), D("3.61"), None),
+    (D("7.00"), None, D("3.61"), None),
+    (None, D("6.00"), D("3.61"), None),
+    (D("7.00"), D("6.00"), None, None),                        # sin parada no hay techo: lo de siempre
+], ids=["sobre-limite-bajo-techo", "en-el-techo", "sobre-techo", "limite-exacto", "dentro", "sin-limite",
+        "sin-precio", "sin-parada"])
+def test_decision_46_decidir_reapertura_pm(precio, limite, parada, esperado, cfg_halts):
+    assert halts.decidir_reapertura_pm(precio, limite, simbolo(ta="T", parada=parada), cfg_halts) == esperado
+
+
+def test_decision_46_orden_de_cierre_al_techo(config):
+    """Decisión 46: compra LÍMITE al techo del T1 (redondeado abajo) por la ruta de cruzar, DAY+, HALT_PM_LIMITE."""
+    pos = posicion(-100, (D("4"),))
+    o = halts.orden_cierre_tope_pm(pos, 100, simbolo(ta="T", parada=D("3.61")), config, 9, HORA_PM)
+    assert (o.lado, o.tipo, o.precio, o.qty, o.tif, o.proposito) == (
+        Lado.COMPRA, TipoOrden.LIMITE, D("12.63"), 100, "DAY+", Proposito.HALT_PM_LIMITE)
+    assert o.ruta != "OPEN"
+    for malo in (0, 101, True):
+        with pytest.raises(ValueError):
+            halts.orden_cierre_tope_pm(pos, malo, simbolo(ta="T", parada=D("3.61")), config, 9, HORA_PM)
+    with pytest.raises(ValueError):
+        halts.orden_cierre_tope_pm(pos, 100, simbolo(ta="T", parada=None), config, 9, HORA_PM)
+    with pytest.raises(ValueError):
+        halts.orden_cierre_tope_pm(posicion(100, (D("4"),)), 100, simbolo(ta="T", parada=D("3.61")), config, 9,
+                                   HORA_PM)
+
+
 # ── E1-04: R-F-06 2.ª parte, ensanchar el stop límite en un halt H de premercado ─
 # RETIRADO (Decisión 39, Jaume 30-sep): el decisor ya no llama a `ensanchar_stops_pm`; estos tests solo
 # guardan la función pura mientras siga en el código (test_das_decisor lo comprueba en el decisor).

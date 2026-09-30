@@ -394,7 +394,9 @@ def test_lote_e_intento_defaults():
                  id="PosicionTicker-R3-SAL-1"),
     pytest.param(Locate, ["ticker", "strategy_id", "pedidas", "localizadas", "precio_accion", "coste", "id_das", "token",
                           "estado", "usadas", "reutilizable", "comprado_en", "ultimo_inquire_en", "compras",
-                          "fase", "precio_senal"], id="Locate"),
+                          "fase", "precio_senal",
+                          "stop_perdida", "senal_perdida", "piramides_pendientes"],   # decisión 47 (Jaume 30-sep)
+                 id="Locate"),
     pytest.param(EstadoBot, ["fase", "dia", "vigilando", "pausa_global", "control_humano", "senales_vistas", "posiciones",
                              "ordenes", "id_a_token", "fills", "ordenes_ajenas", "locates", "gasto_locates_dia",
                              "locates_deshabilitados", "cuenta", "das_conectado", "das_logon", "reconciliacion_ok_en",

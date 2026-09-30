@@ -3133,6 +3133,116 @@ def test_r_f_06_halt_de_premercado_que_reabre_en_rth_cambia_la_limite_pm_por_ope
     assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
 
 
+# ── decisión 46 (Jaume 30-sep): halt H de premercado que reabre por encima del límite del stop ──
+def _halt_pm_mantener(cfg: Config, tmp_path: Path) -> Banco:
+    """Corto de 100 (stop único 4,00 / límite 6,00) en premercado; halt H con el precio bajo el stop: «mantener»."""
+    b = _banco_premercado(cfg, tmp_path)
+    b.libro.halt(TICKER, "H", "08:00:30")
+    b.cotizar(TICKER, "3.60", "3.62", "3.61")
+    b.avanzar(2)
+    assert b.pos().estado is EstadoTicker.HALT
+    assert {a.datos["decision"] for a in anotaciones(b.historial, "halt_decision")} == {"mantener"}
+    return b
+
+
+def _techo(b: Banco, cfg: Config) -> Decimal:
+    from app.bot_das.reglas import halts as reglas_halts
+    return reglas_halts.precio_tope_t1(b.decisor._mercado.simbolo(TICKER), cfg.halts)
+
+
+def test_decision_46_reabre_sobre_el_limite_y_bajo_el_techo_cierra_sin_compra_doble(cfg: Config,
+                                                                                       tmp_path: Path) -> None:
+    """Decisión 46: el T llega con el last de antes del halt (nada todavía); el primer print real, 7,00, pasa el límite
+    del stop (6,00) sin llegar al techo del T1 → el stop baja a 0 ANTES y sale una compra LÍMITE al techo por la ruta
+    de cruzar. Llena, la cuenta queda plana, sin compra doble ni venta del exceso, y NO se declara cisne negro."""
+    b = _halt_pm_mantener(cfg, tmp_path)
+    (stop,) = b.enviadas(*STOPS)
+    techo = _techo(b, cfg)
+    assert techo is not None and techo > D("7.00")
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("7.00"))
+    b.avanzar(1.2)
+    assert anotaciones(b.desde(marca), "halt_reapertura") and not b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca)
+    b.cotizar(TICKER, "6.95", "7.05", "7.00", tam_ask=1000)
+    tanda = b.desde(marca)
+    cierre = b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca)
+    assert [(o.tipo, o.precio, o.qty, o.tif) for o in cierre] == [(TipoOrden.LIMITE, techo, 100, "DAY+")]
+    assert cierre[0].ruta != "OPEN"
+    envio = next(i for i, a in enumerate(tanda) if isinstance(a, EnviarOrden) and a.orden.token == cierre[0].token)
+    cancelado = next(i for i, a in enumerate(tanda) if isinstance(a, Cancelar) and a.token == stop.token)
+    assert cancelado < envio                                             # el stop baja ANTES (G1A-01)
+    assert _sin_compra_doble(b, 100)
+    assert b.pos().bs is None and not [a for a in anotaciones(tanda, "bs") if a.datos.get("evento") == "activado"]
+    assert anotaciones(tanda, "halt_pm_sobre_limite")[0].datos["veredicto"] == "cerrar_tope"
+    b.avanzar(3)
+    assert b.pos().neta_fills == 0 and b.pos().neta_das == 0
+    assert not b.enviadas(Proposito.VENTA_EXCESO) and b.pos().bs is None
+    assert not [a for a in anotaciones(b.historial, "incidente") if a.datos.get("tipo") == "cuenta_larga"]
+
+
+def test_decision_46_reabre_sobre_el_techo_control_humano_sin_orden(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 46: reabre por encima del techo del T1 (parada · 3,5) → ninguna orden, aviso máximo, CONTROL_HUMANO."""
+    b = _halt_pm_mantener(cfg, tmp_path)
+    techo = _techo(b, cfg)
+    marca = b.marca()
+    precio = techo + D("1")
+    b.libro.reabrir(TICKER, precio)
+    b.avanzar(1.2)
+    b.cotizar(TICKER, str(precio - D("0.05")), str(precio + D("0.05")), str(precio), tam_ask=0)
+    tanda = b.desde(marca)
+    assert not b.enviadas(Proposito.HALT_PM_LIMITE, Proposito.HALT_OPEN, Proposito.HALT_BANDA, desde=marca)
+    assert anotaciones(tanda, "halt_pm_sobre_limite")[0].datos["veredicto"] == "control_humano"
+    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_humano:{TICKER}" for a in tanda)
+    assert b.pos().estado is EstadoTicker.CONTROL_HUMANO and b.pos().neta_fills == -100
+
+
+def test_decision_46_reabre_dentro_del_limite_llena_el_stop_como_hoy(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 46: reabre a 5,00 (sobre el disparo 4,00, dentro del límite 6,00) → lo de siempre: llena el stop."""
+    b = _halt_pm_mantener(cfg, tmp_path)
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("5.00"))
+    b.avanzar(1.2)
+    b.cotizar(TICKER, "4.95", "5.05", "5.00", tam_ask=1000)
+    b.avanzar(2)
+    assert b.pos().neta_fills == 0
+    assert not b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca) and not anotaciones(b.desde(marca),
+                                                                                     "halt_pm_sobre_limite")
+
+
+def test_decision_46_halt_de_pm_que_reabre_en_rth_no_aplica(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 46: el halt empezó en premercado pero reabre ya en RTH → la regla NO aplica (queda lo de hoy: el precio
+    por encima del límite del stop es cisne negro)."""
+    b = _halt_pm_mantener(cfg, tmp_path)
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 5, tzinfo=ET))
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("7.00"))
+    b.avanzar(1.2)
+    b.cotizar(TICKER, "6.95", "7.05", "7.00", tam_ask=0)
+    assert not anotaciones(b.desde(marca), "halt_pm_sobre_limite")
+    assert not b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca)
+    assert b.pos().bs is not None
+
+
+def test_decision_46_la_compra_al_techo_sin_llenar_en_2_s_vuelve_el_stop_y_control_humano(cfg: Config,
+                                                                                            tmp_path: Path) -> None:
+    """Decisión 46: si la compra al techo no llena en 2 s se retira, el stop vuelve a la posición y el ticker pasa a
+    CONTROL_HUMANO con aviso máximo (sin compra doble en ningún momento)."""
+    b = _halt_pm_mantener(cfg, tmp_path)
+    marca = b.marca()
+    b.libro.reabrir(TICKER, D("7.00"))
+    b.avanzar(1.2)
+    b.cotizar(TICKER, "6.95", "7.05", "7.00", tam_ask=0)                # sin tamaño en el ask: no llena
+    (cierre,) = b.enviadas(Proposito.HALT_PM_LIMITE, desde=marca)
+    b.avanzar(3)
+    assert b.orden(cierre.token).estado is EstadoOrden.CANCELED
+    tanda = b.desde(marca)
+    assert any(isinstance(a, Avisar) and a.nivel is Nivel.MAXIMO and a.clave == f"halt_pm_sin_llenar:{TICKER}"
+               for a in tanda)
+    assert [a for a in anotaciones(tanda, "pausa") if "decisión 46" in str(a.datos.get("motivo"))]
+    assert _vivas_compra(b, *STOPS) == 100 and _sin_compra_doble(b, 100)
+    assert b.pos().neta_fills == -100
+
+
 def test_e1_06_halt_luld_pide_las_bandas_al_momento(cfg: Config, tmp_path: Path) -> None:
     """E1-06: con TA:P se pide `GET LDLU X` al detectar el halt (clasificar UP/DOWN y recortar los stops), también fuera
     de RTH donde no hay sondeo por minuto."""
@@ -4090,6 +4200,172 @@ def test_fase_B3_sin_respuesta_de_das_la_espera_vence_y_pierde_la_entrada(cfg: C
     assert anotaciones(tras, "locate_perdida_entrada")
     assert b.estado.locates[(TICKER, SID)].estado == "parado"
     assert not b.enviadas(Proposito.ENTRADA_AGREGAR)
+
+
+# ── decisión 47 (Jaume 30-sep): pirámides SIN base cuando la entrada se perdió por locates ──
+def _cfg_piramides(cfg: Config, *riesgos: str) -> Config:
+    """La estrategia de ejemplo (ventana hasta las 15:00) con un nivel «add» por riesgo: con la entrada de 100 acciones
+    y 55 $ de riesgo, 38,5 $ → 70 acciones y 27,5 $ → 50 (la fórmula de `cantidad_a_localizar`)."""
+    e = dataclasses.replace(cfg.estrategias[SID], ventana_entradas=[{"from_time": "04:00", "to_time": "15:00"}],
+                            niveles_piramide=[{"action": "add"} for _ in riesgos],
+                            riesgos_piramide=[D(r) for r in riesgos])
+    return cfg_con(cfg, estrategias=[e])
+
+
+def _perder_entrada_por_locates(cfg: Config, tmp_path: Path, *riesgos: str) -> Banco:
+    """B3: sin locates y el locate no compensa (0,50 $/acción) → la entrada se pierde por locates."""
+    b = Banco(_cfg_piramides(cfg, *riesgos), tmp_path)
+    b.preparar(locates=())
+    b.libro.configurar_locate(TICKER, precio=D("0.50"))
+    b.senal(evento())
+    b.avanzar(1)
+    assert anotaciones(b.historial, "locate_perdida_entrada") and not b.enviadas(Proposito.ENTRADA_AGREGAR)
+    return b
+
+
+def test_decision_47_entrada_perdida_por_locates_busca_solo_las_acciones_de_la_piramide(cfg: Config,
+                                                                                         tmp_path: Path) -> None:
+    """Decisión 47: con una pirámide «add» pendiente la pareja NO queda parada: fase P, guarda el stop (4,00) y el id
+    de la entrada perdida, y busca cada 3 s SOLO las 70 de la pirámide (no las 100 de la entrada)."""
+    b = _perder_entrada_por_locates(cfg, tmp_path, "38.5")
+    loc = b.estado.locates[(TICKER, SID)]
+    assert (loc.fase, loc.estado, loc.pedidas) == ("P", "buscando", 70)
+    assert (loc.stop_perdida, loc.senal_perdida, loc.piramides_pendientes) == (D("4"), lote_de(evento()), ((0, 70),))
+    marca = b.marca()
+    b.avanzar(4)
+    consultas = anotaciones(b.desde(marca), "locate_inquire")
+    assert consultas and all(a.datos["qty_pedida"] == 70 for a in consultas)    # la consulta va en paquetes de 100
+    assert not _compras(b, marca)                                        # 0,50 $ no compensa
+    b.libro.configurar_locate(TICKER, precio=D("0.01"))
+    b.avanzar(4)
+    assert [c.qty for c in _compras(b, marca)] == [100]                   # un paquete (R-H-04)
+
+
+def test_decision_47_con_locates_la_piramide_entra_sin_base_con_el_stop_guardado(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 47: conseguidos los locates, la pirámide llega sin lote base → entra como ENTRADA con SUS acciones y
+    el nivel de stop de la entrada perdida (4,00); el lote es la base (fase C) y pone su stop al llenar."""
+    b = _perder_entrada_por_locates(cfg, tmp_path, "38.5")
+    b.libro.configurar_locate(TICKER, precio=D("0.01"))
+    b.avanzar(4)
+    marca = b.marca()
+    acciones = b.senal(_piramide_add(momento=otra_vela(b)))
+    assert anotaciones(acciones, "piramide_sin_base")
+    (agregar,) = b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)
+    assert agregar.qty == 70
+    lote = b.pos().lotes[lote_de(_piramide_add(momento=momento_de(b.reloj.ahora())))]
+    assert (lote.nivel_stop, lote.nivel_piramide, lote.pedidas) == (D("4"), None, 70)
+    llenar_entrada(b)
+    b.avanzar(2)
+    assert b.pos().neta_fills == -70
+    assert b.enviadas(*STOPS, desde=marca) and _vivas_compra(b, *STOPS) == 70
+    loc = b.estado.locates[(TICKER, SID)]
+    assert (loc.fase, loc.stop_perdida, loc.piramides_pendientes) == ("C", None, ())
+
+
+def test_decision_47_piramide_sin_locates_intento_unico_se_pierde_y_se_descuenta(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 47: la pirámide llega sin locates → UN intento (a tiro + compensa, como C_piramide); no compra → se
+    pierde ESA pirámide, se descuenta y, sin más pendientes, se deja de buscar."""
+    b = _perder_entrada_por_locates(cfg, tmp_path, "38.5")
+    marca = b.marca()
+    b.senal(_piramide_add(momento=otra_vela(b)))
+    b.avanzar(2)
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca) and not _compras(b, marca)
+    assert anotaciones(b.desde(marca), "piramide_sin_base_perdida")
+    loc = b.estado.locates[(TICKER, SID)]
+    assert (loc.fase, loc.estado, loc.piramides_pendientes) == ("P", "parado", ())
+    marca = b.marca()
+    b.avanzar(10)
+    assert not _consultas(b, marca)
+
+
+def test_decision_47_dos_piramides_la_primera_se_pierde_y_la_segunda_entra(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 47: pendientes 70 + 50 → se buscan 120; la primera pirámide se pierde (no compensa) y se descuenta:
+    se buscan 50; con locates, la segunda entra sin base con sus 50."""
+    b = _perder_entrada_por_locates(cfg, tmp_path, "38.5", "27.5")
+    assert b.estado.locates[(TICKER, SID)].pedidas == 120
+    b.senal(_piramide_add(momento=otra_vela(b)))
+    b.avanzar(2)
+    loc = b.estado.locates[(TICKER, SID)]
+    assert (loc.fase, loc.estado, loc.pedidas, loc.piramides_pendientes) == ("P", "buscando", 50, ((1, 50),))
+    b.libro.configurar_locate(TICKER, precio=D("0.01"))
+    marca = b.marca()
+    b.avanzar(4)
+    assert [c.qty for c in _compras(b, marca)] == [100]
+    b.senal(_piramide_add(nivel=2, acciones=50.0, posicion_total=220.0, momento=otra_vela(b)))
+    assert [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca)] == [50]
+
+
+def test_decision_47_salida_total_del_motor_deja_de_buscar_y_la_entrada_siguiente_es_nueva(cfg: Config,
+                                                                                          tmp_path: Path) -> None:
+    """Decisión 47: el motor sale del todo (el backtest ya salió) → fase D, sin consultas; su siguiente ENTRADA no es
+    «señal principal posterior»: se opera como nueva con sus locates y consume una reentrada del cupo."""
+    b = _perder_entrada_por_locates(cfg, tmp_path, "38.5")
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    acciones = _salida_motor(b, salida(acciones=100.0, posicion_total=100.0, posicion_restante=0.0))
+    assert anotaciones(acciones, "sin_base_fin")
+    assert b.estado.locates[(TICKER, SID)].fase == "D"
+    marca = b.marca()
+    b.avanzar(5)
+    assert not _consultas(b, marca)
+    b.libro.configurar_locate(TICKER, precio=D("0.01"))
+    nueva = evento(momento=otra_vela(b))
+    acciones = b.senal(nueva)
+    assert not anotaciones(acciones, "senal_principal_posterior")
+    b.avanzar(1)
+    assert [c.qty for c in _compras(b, marca)] and [o.qty for o in b.enviadas(Proposito.ENTRADA_AGREGAR,
+                                                                                desde=marca)] == [100]
+    assert b.pos().lotes[lote_de(nueva)].reentrada_n == 1
+
+
+def test_decision_47_salida_total_con_el_cupo_agotado_descarta_la_reentrada(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 47 (lo conservador): la entrada perdida cuenta en el cupo; con reentradas apagadas la entrada siguiente
+    del motor se descarta."""
+    config = _cfg_piramides(cfg, "38.5")
+    config = cfg_con(config, estrategias=[dataclasses.replace(config.estrategias[SID], accept_reentries=False)])
+    b = Banco(config, tmp_path)
+    b.preparar(locates=())
+    b.libro.configurar_locate(TICKER, precio=D("0.50"))
+    b.senal(evento())
+    b.avanzar(1)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    _salida_motor(b, salida(acciones=100.0, posicion_total=100.0, posicion_restante=0.0))
+    b.libro.configurar_locate(TICKER, precio=D("0.01"))
+    marca = b.marca()
+    acciones = b.senal(evento(momento=otra_vela(b)))
+    assert anotaciones(acciones, "senal_descartada")
+    b.avanzar(2)
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca) and not _compras(b, marca)
+
+
+def test_decision_47_entrada_perdida_por_retraso_no_abre_el_camino(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 47 (e): una entrada perdida por OTRO motivo (retraso, R-A-01) no abre la fase P: la pirámide sin base se
+    descarta como siempre (A12) y no se buscan locates para ella."""
+    b = Banco(_cfg_piramides(cfg, "38.5"), tmp_path)
+    b.preparar(locates=())
+    b.simstatus()
+    primera = b.senal(evento(precio=3.20))                              # tardía: descartada por retraso
+    assert anotaciones(primera, "senal_descartada") and not anotaciones(primera, "sin_base_abierta")
+    loc = b.estado.locates.get((TICKER, SID))
+    assert loc is None or loc.fase != "P"
+    marca = b.marca()
+    acciones = b.senal(_piramide_add(momento=otra_vela(b)))
+    assert not anotaciones(acciones, "piramide_sin_base")
+    b.avanzar(2)
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR, desde=marca) and not _compras(b, marca)
+
+
+def test_decision_47_el_diario_conserva_el_stop_guardado_y_la_fase(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 47 (H-2): la fase P, el stop guardado, la señal perdida y las pirámides pendientes sobreviven a un
+    reinicio (`diario.reconstruir` con lo anotado)."""
+    b = _perder_entrada_por_locates(cfg, tmp_path, "38.5", "27.5")
+    b.senal(_piramide_add(momento=otra_vela(b)))
+    b.avanzar(2)
+    rehecho = _reconstruir_anotado(b).locates[(TICKER, SID)]
+    vivo = b.estado.locates[(TICKER, SID)]
+    assert (rehecho.fase, rehecho.stop_perdida, rehecho.senal_perdida, tuple(rehecho.piramides_pendientes)) == (
+        "P", D("4"), lote_de(evento()), ((1, 50),))
+    assert (rehecho.fase, rehecho.stop_perdida, rehecho.senal_perdida, rehecho.pedidas) == (
+        vivo.fase, vivo.stop_perdida, vivo.senal_perdida, vivo.pedidas)
 
 
 def test_ticker_pausado_no_gasta_en_locates_hasta_sigue(cfg: Config, tmp_path: Path) -> None:

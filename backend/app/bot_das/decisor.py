@@ -88,6 +88,7 @@ LAS TRAMPAS.
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
 import math
 import re
@@ -283,6 +284,7 @@ LOCATE_ESPERA_INTENTO_S = 10.0    # Jaume 29-sep: espera máxima del intento ún
 SALIDA_REPROGRAMAR_S = 0.5       # G1A-02 / G1B-01: salida con la guarda cerrada → se reprograma, nunca se descarta
 REPLACE_EN_VUELO_MAX_S = 30.0    # ensayo 28-sep: un REPLACE idéntico pedido hace menos de 30 s no se vuelve a mandar
 HALT_CIERRE_VERIFICAR_S = 2.0    # G1A-01: la salida del halt que no llenó 2 s tras reabrir se retira (stops de vuelta)
+HALT_PM_REAPERTURA_VENTANA_S = 60.0   # decisión 46: tras el T de un halt de PM se espera el primer print real ≤ 60 s
 SIMSTATUS_ESPERA_S = 1.0         # G1A-05: como mucho 1 s esperando `GET SymStatus X` antes de abrir un ticker plano
 SIMSTATUS_FRESCO_S = 5.0         # G1A-05: un estado de símbolo de hace ≤ 5 s vale sin volver a preguntar
 SLRET_VENTANA_S = 0.5            # E2-05: los %SLRET de UNA consulta se juntan 0,5 s y se elige el más barato
@@ -494,6 +496,11 @@ class Decisor:
         self._halt_pm_a_open: set[str] = set()      # R-F-06 (Jaume 29-sep): límite de PM retirada para salir por OPEN en RTH
         self._halt_decidir_programado: set[str] = set()   # G1A-14: el halt en curso ya tiene su halt_decidir
         self._halt_humano_avisado: set[str] = set()
+        # Decisión 46 (Jaume 30-sep): halt H de premercado con posición corta que reabre sobre el límite del stop
+        self._halt_pm_vigilado: set[str] = set()            # halt H empezado en premercado con posición corta
+        self._reapertura_pm: dict[str, tuple[float, Optional[Decimal]]] = {}   # (hasta, last del T) → primer precio real
+        self._halt_pm_cierre: dict[str, int] = {}           # token de la compra al techo del T1 (se verifica a los 2 s)
+        self._halt_pm_tope_espera: set[str] = set()         # la salida del halt anterior se retira antes de mandarla
         self._halt_hoy: set[str] = set()
         self._stop_hoy: set[str] = set()
         self._reapertura_ok: set[str] = set()
@@ -513,6 +520,9 @@ class Decisor:
         self._espera_locate: dict[tuple[str, str], tuple[Senal, int]] = {}
         self._intento_locate_hecho: set[str] = set()
         self._senal_principal_anotada: set[str] = set()   # ids cuya anotación «senal_principal» ya salió al diario
+        # Decisión 47 (Jaume 30-sep): pirámides que entran SIN base (fase P) y reentradas que cuentan la entrada perdida
+        self._sin_base_senales: set[str] = set()
+        self._reentrada_sin_base: set[str] = set()
         self._slret_ventana: dict[str, list[MsgSLRet]] = {}  # E2-05: %SLRET de las consultas de un ticker (0,5 s)
         self._slret_tics: dict[str, int] = {}                # E2-05: Tics vistos con la ventana abierta (cierra al 2.º)
         self._slorders_cobrados: set[int] = set()
@@ -1341,7 +1351,12 @@ class Decisor:
         ticker = o.ticker
         pos = self._estado.posiciones.get(ticker)
         otra_salida_halt = any(x.proposito in _PROP_CIERRE_HALT and x.token != o.token for x in self._vivas(ticker))
-        if (o.proposito in _PROP_CIERRE_HALT and o.lado is Lado.COMPRA and o.llenas < o.qty and pos is not None
+        if (ticker in self._halt_pm_tope_espera and o.proposito in _PROP_CIERRE_HALT and not otra_salida_halt
+                and pos is not None and pos.neta < 0):
+            # decisión 46 (Jaume 30-sep): retirada la salida del halt que ya no llenaba, sale la compra al techo del T1
+            self._halt_pm_tope_espera.discard(ticker)
+            acciones += self._enviar_cierre_tope_pm(pos, "tras retirar la salida del halt anterior")
+        elif (o.proposito in _PROP_CIERRE_HALT and o.lado is Lado.COMPRA and o.llenas < o.qty and pos is not None
                 and pos.neta < 0 and not otra_salida_halt):
             plan = self._plan(ticker)
             acciones += [Anotar("halt_salida_sin_llenar", {"ticker": ticker, "token": o.token, "estado": o.estado.value,
@@ -1623,20 +1638,29 @@ class Decisor:
             return self._descartar(s, "R-F-03: stop y halt en el ticker; sin reentrada hasta una reapertura válida",
                                    avisar=True)
         principal = _tipo_evento(ev) == "entrada"
+        if not principal and e is not None and entrada.es_piramide_add(ev):
+            # decisión 47 (Jaume 30-sep): la entrada se perdió por locates (fase P) → la pirámide entra SIN base
+            sin_base = self._piramide_sin_base(s, e, pos)
+            if sin_base is not None:
+                return sin_base
         acciones: list[Accion] = []
         if e is not None and e.sin_ev and self._una_vez_al_dia(f"sin_ev:{e.strategy_id}"):
             # Decisión 23 (Jaume 30-sep): la señal se descarta como «sin ejecutar» (evaluar_senal) y se avisa 1 vez/día
             acciones.append(Avisar(Nivel.AVISO, Grupo.B,
                                    f"Estrategia {avisos.escapar_html(e.name)} sin EV en el cuadro: no ejecuta hasta "
                                    f"que lo pongas", clave=f"sin_ev:{e.strategy_id}"))
-        if principal and e is not None:
+        if principal and e is not None and s.id not in self._sin_base_senales:
             # Jaume 29-sep (estricto): la PRIMERA señal principal del día de la pareja es la única oportunidad, se opere
             # o no (retraso, pausa, exclusión, locates…): entrar en una vela posterior sería un trade que el backtest no
-            # hizo. Se consume aquí, ANTES de las comprobaciones. Excepción: reentrada legítima tras haber entrado.
+            # hizo. Se consume aquí, ANTES de las comprobaciones. Excepción: reentrada legítima tras haber entrado
+            # (o, decisión 47, tras la salida total del motor de la entrada perdida por locates).
             posterior = self._senal_principal_posterior(s, pos, e)
             if posterior is not None:
                 return posterior
             acciones += self._marcar_primera_senal(s, e)
+            cupo = self._cupo_tras_perdida(s, pos, e)
+            if cupo is not None:
+                return acciones + cupo
         exclusion: Optional[str] = None
         if e is not None and self._exclusion_necesaria(pos, e, ev):
             exclusion, avisos_ex = self._exclusion(ticker, e)
@@ -1694,6 +1718,8 @@ class Decisor:
             return acciones + extra + self._descartar(s, motivo, avisar=True)
         # ── G1A-10 / D1-08: lo puro primero (si algo lanza aquí, el estado sigue intacto) ──
         lote = self._nuevo_lote(s, e, qty, pos)
+        if s.id in self._reentrada_sin_base:
+            lote.reentrada_n += 1           # decisión 47: la entrada perdida por locates cuenta en el cupo de reentradas
         margen = capital.margen_inicial_corto(cot.ask, qty, tasa)
         intento_vivo = pos.intento is not None and pos.intento.fase is not FaseIntento.TERMINADO
         suma = self._preparar_suma(pos, lote) if intento_vivo else None
@@ -1741,6 +1767,7 @@ class Decisor:
                 acciones.append(Programar(f"{T_CRUCE}:{ticker}", entrada.segundos_hasta_limite(intento, self._ahora_et),
                                           {"ticker": ticker}))
         acciones += self._fase_tras_entrada(ticker, e)          # Jaume 29-sep: dentro → fase C
+        acciones += self._tras_entrada_sin_base(s, e, lote)     # decisión 47: cierra la fase P / cuenta las pirámides
         acciones += self._armar_simstatus()
         acciones.append(Anotar("metrica", {"nombre": "senal_a_orden_ms", "ticker": ticker, "senal_id": s.id,
                                            "valor": max(0.0, (self._ahora - float(s.recibida_en)) * 1000.0),
@@ -2403,6 +2430,7 @@ class Decisor:
                                              "accion_piramide": getattr(ev, "accion_piramide", None),
                                              "nivel": getattr(ev, "nivel", None),
                                              "entrada_idx": getattr(ev, "entrada_idx", None)}))
+            acciones += self._fin_sin_base_por_salida(s)       # decisión 47: el motor salió → fin de la fase P
         pos = estado.posiciones.get(ticker)
         if pos is None:
             return acciones + [Anotar("salida_sin_posicion", {"senal_id": s.id, "ticker": ticker})]
@@ -3577,6 +3605,10 @@ class Decisor:
             pos.desde = self._ahora
         if pos.neta != 0:
             acciones += self._programar_halt_decidir(pos)
+        if pos.neta < 0 and franja.startswith("premercado") and not halts.es_luld(simb):
+            self._halt_pm_vigilado.add(ticker)      # decisión 46 (Jaume 30-sep): se decide con el precio de reapertura
+        else:
+            self._halt_pm_vigilado.discard(ticker)
         return acciones + ldlu
 
     def _bloqueo_decision_halt(self, pos: PosicionTicker, era_luld: Optional[bool] = None) -> Optional[str]:
@@ -3769,8 +3801,15 @@ class Decisor:
         precio y baja los demás antes de salir (G1A-01). G1A-01: 2 s después,
         la salida del halt que no haya llenado se retira y los stops vuelven.
         G1B-14: los stops que DAS quitó durante el halt se reponen ahora.
+        Decisión 46 (Jaume 30-sep): tras un halt H empezado en premercado con
+        posición corta, si reabre AÚN en premercado se abre una ventana hasta
+        el primer precio real (el T puede traer el last de antes del halt):
+        sobre el límite del stop y bajo el techo del T1 se cierra al techo
+        (`_reapertura_sobre_limite_pm`) en vez de declarar el cisne negro.
         """
         simb = self._mercado.simbolo(ticker)
+        vigilado = ticker in self._halt_pm_vigilado
+        self._halt_pm_vigilado.discard(ticker)
         self._halt_en_curso.discard(ticker)
         self._halt_fin.pop(ticker, None)
         self._halt_decidir_programado.discard(ticker)
@@ -3796,11 +3835,19 @@ class Decisor:
                 self._stops_diferidos_halt.discard(ticker)
                 acciones.append(Anotar("stops_reponer_reapertura", {"ticker": ticker, "regla": "R-C-04 / G1B-14"}))
                 acciones += self._plan(ticker)
-            if pos.neta < 0 and decision in ("cerrar_mercado", "cerrar_limite_pm"):
-                acciones += self._reintento_reapertura(pos, cot, decision, era_luld)
-            if pos.neta != 0 and any(o.proposito in _PROP_CIERRE_HALT for o in self._vivas(ticker)):
-                acciones.append(Programar(f"{T_HALT_CIERRE_VERIFICAR}:{ticker}", HALT_CIERRE_VERIFICAR_S,
-                                          {"ticker": ticker, "reapertura": True}))     # R2-DEC-2: mira el tope T1
+            decision_46: Optional[list[Accion]] = None
+            if vigilado and pos.neta < 0 and not era_luld and self._franja().startswith("premercado"):
+                self._reapertura_pm[ticker] = (self._ahora + HALT_PM_REAPERTURA_VENTANA_S, precio)
+                decision_46 = self._reapertura_sobre_limite_pm(
+                    pos, cot.last if cot is not None and _es_precio(cot.last) else None, "al reabrir")
+            if decision_46 is not None:
+                acciones += decision_46                 # decisión 46: ya lleva su verificación a los 2 s
+            else:
+                if pos.neta < 0 and decision in ("cerrar_mercado", "cerrar_limite_pm"):
+                    acciones += self._reintento_reapertura(pos, cot, decision, era_luld)
+                if pos.neta != 0 and any(o.proposito in _PROP_CIERRE_HALT for o in self._vivas(ticker)):
+                    acciones.append(Programar(f"{T_HALT_CIERRE_VERIFICAR}:{ticker}", HALT_CIERRE_VERIFICAR_S,
+                                              {"ticker": ticker, "reapertura": True}))     # R2-DEC-2: mira el tope T1
         if _es_precio(precio):
             acciones.append(Programar(f"{T_HALT_PRIMERA_VELA}:{ticker}", HALT_PRIMERA_VELA_S,
                                       {"ticker": ticker, "precio_reapertura": str(precio),
@@ -3844,6 +3891,120 @@ class Decisor:
             acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
                                              "motivo": "halt: T1 por encima del tope (R-F-05 a, E1-02)"}))
         return acciones
+
+    # ── decisión 46 (Jaume 30-sep): halt de PM que reabre por encima del límite del stop ──
+    def _reapertura_sobre_limite_pm(self, pos: PosicionTicker, precio: Optional[Decimal],
+                                    cuando: str) -> Optional[list[Accion]]:
+        """Decisión 46: con el precio real de la reapertura de un halt H de premercado (y aún en premercado).
+
+        None → no aplica (precio dentro del límite del stop o sin datos): lo de
+        siempre. Sobre el techo del T1 → control humano sin orden (como
+        `_tope_t1_control_humano`). Entre el límite (L + 50 %) y el techo → el
+        stop baja a 0 (`compras_cierre`) y sale una compra LÍMITE al techo por
+        la ruta de cruzar (HALT_PM_LIMITE); a los 2 s, si no llenó, se retira,
+        vuelven los stops y el ticker pasa a control humano con aviso máximo.
+        Una salida del halt anterior con un límite que ya no llena se retira
+        primero y la compra al techo sale con su Canceled (`_tras_terminal`).
+        """
+        ticker = pos.ticker
+        simb = self._mercado.simbolo(ticker)
+        niveles = self._niveles_primer_stop(pos)
+        veredicto = halts.decidir_reapertura_pm(precio, niveles.limite if niveles is not None else None, simb,
+                                                self._cfg.halts)
+        if veredicto is None:
+            return None
+        self._reapertura_pm.pop(ticker, None)
+        acciones: list[Accion] = [Anotar("halt_pm_sobre_limite", {
+            "ticker": ticker, "precio": precio, "limite_stop": niveles.limite if niveles is not None else None,
+            "parada": simb.precio_parada, "techo": halts.precio_tope_t1(simb, self._cfg.halts), "veredicto": veredicto,
+            "cuando": cuando, "regla": "decisión 46 (Jaume 30-sep)"})]
+        if veredicto == "control_humano":
+            return acciones + (self._tope_t1_control_humano(pos, precio, cuando) or [])
+        bloqueo = self._bloqueo_decision_halt(pos, era_luld=False)
+        if bloqueo is not None:
+            return acciones + self._halt_sin_orden(pos, "cerrar al techo del T1 (decisión 46)", bloqueo, cuando)
+        degradados = self._estado.modo_degradado & {"reconciliacion", "das"}
+        if degradados:
+            return acciones + [Anotar("halt_reintento_omitido", {"ticker": ticker, "motivo": "modo degradado: "
+                                                                 + ", ".join(sorted(degradados)),
+                                                                 "regla": "G1B-01 / decisión 46"})]
+        baratas = [o for o in self._vivas(ticker)
+                   if o.proposito in _PROP_CIERRE_HALT and o.lado is Lado.COMPRA and _qty_viva(o) > 0
+                   and o.tipo is TipoOrden.LIMITE and o.precio is not None and o.precio < precio]
+        if baratas:
+            self._halt_pm_tope_espera.add(ticker)
+            for o in baratas:
+                acciones += self._cancelar_orden(o, "decisión 46: la salida del halt ya no llena; sale la compra al "
+                                                    "techo del T1")
+            return acciones + [Programar(f"{T_HALT_CIERRE_VERIFICAR}:{ticker}", HALT_CIERRE_VERIFICAR_S,
+                                         {"ticker": ticker, "reapertura": True, "decision_46": True})]
+        return acciones + self._enviar_cierre_tope_pm(pos, cuando)
+
+    def _enviar_cierre_tope_pm(self, pos: PosicionTicker, cuando: str) -> list[Accion]:
+        """Decisión 46: la compra LÍMITE al techo del T1 por lo que siga corto; los stops bajan ANTES (G1A-01)."""
+        ticker = pos.ticker
+        simb = self._mercado.simbolo(ticker)
+        qty = abs(pos.neta) - self._comprando(ticker)
+        if qty <= 0:
+            return [Anotar("halt_reintento_omitido", {"ticker": ticker, "motivo": "las salidas vivas ya cubren la "
+                                                      "posición (G1A-01)", "regla": "decisión 46"})]
+        orden = halts.orden_cierre_tope_pm(pos, qty, simb, self._cfg, self._tokens.siguiente(), self._ahora_et)
+        envio = self._absorber([EnviarOrden(orden)])
+        reduccion = self._plan(ticker)                     # G1A-01: el stop baja a lo que no cubre (aquí, a 0)
+        self._halt_pm_cierre[ticker] = orden.token
+        return (reduccion + envio
+                + [Programar(f"{T_HALT_CIERRE_VERIFICAR}:{ticker}", HALT_CIERRE_VERIFICAR_S,
+                             {"ticker": ticker, "reapertura": True, "decision_46": True}),
+                   Avisar(Nivel.AVISO, Grupo.B,
+                          f"REABRE {avisos.escapar(ticker)} por encima del límite del stop ({avisos.escapar(cuando)}): "
+                          f"se cierra con {qty} acciones LMT {orden.precio} (techo del T1) por "
+                          f"{avisos.escapar(orden.ruta)}; el stop baja a lo que no cubre (decisión 46)",
+                          clave=f"halt_pm_tope:{ticker}:{simb.tat}")])
+
+    def _control_humano_46(self, pos: PosicionTicker, motivo: str) -> list[Accion]:
+        """Decisión 46: la compra al techo no llenó (o no pudo salir) en 2 s → control humano y aviso máximo."""
+        ticker = pos.ticker
+        acciones: list[Accion] = [Avisar(Nivel.MAXIMO, Grupo.B,
+                                         f"HALT {avisos.escapar(ticker)}: {avisos.escapar(motivo)}. CONTROL HUMANO; "
+                                         f"los stops vuelven a la posición {pos.neta:+d} (decisión 46)",
+                                         clave=f"halt_pm_sin_llenar:{ticker}")]
+        if pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT, EstadoTicker.PAUSADO):
+            pos.estado = EstadoTicker.CONTROL_HUMANO
+            pos.motivo_estado = "halt: control humano"
+            pos.desde = self._ahora
+            acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
+                                             "motivo": "halt de PM: la compra al techo no llenó (decisión 46)"}))
+        return acciones
+
+    def _vigilancia_halt_pm(self, pos: PosicionTicker, cot: Cotizacion) -> tuple[list[Accion], bool]:
+        """Decisión 46 en cada `$Quote` con posición corta → (acciones, no mirar el cisne negro en ESTE quote).
+
+        Con el halt de PM en curso no se declara cisne negro (decide la
+        reapertura). Tras el T, el primer `last` distinto del que traía el T
+        (≤ 60 s) es el precio real de la reapertura y se evalúa la regla. Con
+        la compra al techo en vuelo (o esperando el Canceled de la salida
+        anterior) tampoco: son sus 2 s.
+        """
+        ticker = pos.ticker
+        if ticker in self._halt_pm_vigilado and ticker in self._halt_en_curso:
+            return [], True
+        ventana = self._reapertura_pm.get(ticker)
+        if ventana is not None:
+            hasta, last_t = ventana
+            if self._ahora > hasta:
+                self._reapertura_pm.pop(ticker, None)
+            elif _es_precio(cot.last) and cot.last != last_t:
+                self._reapertura_pm.pop(ticker, None)
+                hecho = self._reapertura_sobre_limite_pm(pos, cot.last, "primer precio tras reabrir")
+                if hecho is not None:
+                    return hecho, True
+            else:
+                return [], True     # aún sin el primer print real: no se declara cisne negro antes de decidir (≤ 60 s)
+        token = self._halt_pm_cierre.get(ticker)
+        if ticker in self._halt_pm_tope_espera or (token is not None and any(o.token == token
+                                                                              for o in self._vivas(ticker))):
+            return [], True
+        return [], False
 
     def _reintento_reapertura(self, pos: PosicionTicker, cot: Optional[Cotizacion], decision: str,
                               era_luld: Optional[bool] = None) -> list[Accion]:
@@ -3974,7 +4135,10 @@ class Decisor:
         if pos is not None and pos.neta < 0 and cot is not None:
             # Jaume 29-sep (stop único): el precio por encima del límite del primer stop es cisne negro (F7); ya no hay
             # «principal rebasado» que reasignar al nivel de arriba ni al ask (sería perseguir al precio, R-G-01)
-            acciones += self._vigilar_bs(pos, cot)
+            pm, sin_bs = self._vigilancia_halt_pm(pos, cot)          # decisión 46: primero el cierre al techo
+            acciones += pm
+            if not sin_bs:
+                acciones += self._vigilar_bs(pos, cot)
             acciones += self._banda(pos, cot)
             acciones += self._opa(pos)
         acciones += self._fogonazo(ticker)
@@ -4225,6 +4389,17 @@ class Decisor:
                                                       "motivo": "posición cerrada: sin consultas hasta una reentrada "
                                                                 "(Jaume 29-sep)"}),
                     Desprogramar(clave_t)], False
+        if loc.fase == locates.FASE_SIN_BASE and loc.estado == locates.ESTADO_BUSCANDO:
+            # decisión 47 (Jaume 30-sep): P deja de buscar al pasar la última pirámide o al cerrar la ventana de entrada
+            fin = self._fin_ventana_entradas(e)
+            motivo = ("no quedan pirámides pendientes" if not loc.piramides_pendientes
+                      else "cerró la ventana de entrada de la estrategia" if fin is not None and self._ahora_et >= fin
+                      else None)
+            if motivo is not None:
+                return [self._anotar_locate(ticker, sid, {"estado": locates.ESTADO_PARADO,
+                                                          "motivo": f"fase P: {motivo} (decisión 47)"}),
+                        Desprogramar(clave_t)], False
+            return [], True
         if loc.fase != locates.FASE_RADAR or loc.estado != locates.ESTADO_BUSCANDO:
             return [], True
         fin = self._fin_ventana_entradas(e)
@@ -4295,8 +4470,13 @@ class Decisor:
     def _reentrada_legitima(self, pos: PosicionTicker, sid: str) -> bool:
         """Jaume 29-sep: la pareja ENTRÓ hoy (un lote base con fills) y ya no tiene lote vivo: su reentrada es legítima."""
         base = [lote for lote in pos.lotes.values() if lote.strategy_id == sid and lote.nivel_piramide is None]
+        sin_lote_vivo = not any(lote.estado in _LOTE_VIVO for lote in pos.lotes.values() if lote.strategy_id == sid)
+        loc = self._estado.locates.get((pos.ticker, sid))
+        if (sin_lote_vivo and loc is not None and loc.fase == locates.FASE_FUERA
+                and loc.senal_perdida is not None):
+            return True             # decisión 47: el motor ya salió de la entrada que se perdió por locates
         return (any(lote.llenas > 0 or self._llenas_max_lote.get(lote.id, 0) > 0 for lote in base)
-                and not any(lote.estado in _LOTE_VIVO for lote in pos.lotes.values() if lote.strategy_id == sid))
+                and sin_lote_vivo)
 
     def _senal_principal_posterior(self, s: Senal, pos: PosicionTicker, e: EstrategiaConfig) -> Optional[list[Accion]]:
         """Regla de Jaume (29-sep, ESTRICTA): la PRIMERA señal principal del día de (ticker, estrategia) es la ÚNICA
@@ -4310,8 +4490,9 @@ class Decisor:
         (contar esta anotación) para decidir si la regla se relaja.
         """
         primera = self._estado.senales_principales.get((s.ticker, e.strategy_id))
-        if primera is None or primera == s.id or self._reentrada_legitima(pos, e.strategy_id):
-            return None
+        if (primera is None or primera == s.id or s.id in self._reentrada_sin_base
+                or self._reentrada_legitima(pos, e.strategy_id)):
+            return None             # decisión 47: la reentrada ya admitida sigue siéndolo tras su intento de locate (B)
         return ([Anotar("senal_principal_posterior", {"senal_id": s.id, "ticker": s.ticker,
                                                       "strategy_id": e.strategy_id, "primera": primera,
                                                       "regla": "Jaume 29-sep: la primera señal principal del día es "
@@ -4359,6 +4540,9 @@ class Decisor:
         estado = self._estado
         ticker, sid = s.ticker, e.strategy_id
         clave = (ticker, sid)
+        # decisión 47: la pirámide que entra SIN base va como entrada (con locates libres entra con lo que haya) pero su
+        # intento único es el de una pirámide (C_piramide) y, si no compra, se pierde ESA pirámide, no la pareja
+        sin_base = s.id in self._sin_base_senales
         libres = sum(n for _, n in locates.asignar_a_lote(estado.locates, ticker, pedidas, sid))
         if libres >= pedidas or (principal and libres > 0):
             return None
@@ -4366,22 +4550,24 @@ class Decisor:
             return None
         loc = estado.locates.get(clave)
         if (loc is not None and loc.estado == locates.ESTADO_PARADO) or self._locates_deshabilitado():
-            if not principal:
+            if not principal or sin_base:
                 return None
             motivo = ("locates deshabilitados" if self._locates_deshabilitado()
                       else "la búsqueda de locates de esta pareja está parada hoy")
             return self._perdida_locate(s, e, motivo)
         self._intento_locate_hecho.add(s.id)
-        fase = locates.FASE_SENAL if principal else locates.FASE_PIRAMIDE
+        fase = locates.FASE_SENAL if principal and not sin_base else locates.FASE_PIRAMIDE
         precio_senal = precios.de_float(getattr(s.evento, "precio", None))
         if precio_senal is not None and not principal:
             # R-A-01 (ensayo 28-sep): en una pirámide `Evento.precio` es el NIVEL; «a tiro» se mide contra el cierre de la
             # vela de la señal (`Senal.feed["close"]`), como el retraso. Sin cierre en la fuente, el nivel.
             precio_senal = entrada._referencia_retraso(s, s.evento, precio_senal) or precio_senal
         datos: dict = {"fase": fase, "precio_senal": precio_senal, "senal_id": s.id,
-                       "motivo": ("B: señal de entrada sin locates: UN intento (a tiro + compensa)" if principal
-                                  else "C: pirámide con locates que faltan: UN intento (a tiro + compensa)")
-                       + " (Jaume 29-sep)"}
+                       "motivo": ("P: pirámide sin base sin locates: UN intento (a tiro + compensa) (decisión 47, "
+                                  "Jaume 30-sep)" if sin_base
+                                  else ("B: señal de entrada sin locates: UN intento (a tiro + compensa)" if principal
+                                        else "C: pirámide con locates que faltan: UN intento (a tiro + compensa)")
+                                  + " (Jaume 29-sep)")}
         if loc is None:
             datos.update({"estado": locates.ESTADO_BUSCANDO, "qty": pedidas})
         else:
@@ -4425,6 +4611,8 @@ class Decisor:
         self._espera_locate.pop((ticker, sid), None)
         acciones: list[Accion] = [Desprogramar(f"{T_LOCATE_SENAL}:{ticker}:{sid}")]
         principal = _tipo_evento(s.evento) == "entrada"
+        if s.id in self._sin_base_senales and not compro:
+            return acciones + self._piramide_sin_base_perdida(s, e)
         if principal and not compro:
             return acciones + self._perdida_locate(s, e, "el intento único en la señal no compró (sin locate a tiro "
                                                          "que compense)")
@@ -4453,14 +4641,220 @@ class Decisor:
         return acciones + self._soltar_espera_locate(s, e, libres > libres_antes)
 
     def _perdida_locate(self, s: Senal, e: EstrategiaConfig, motivo: str) -> list[Accion]:
-        """Jaume 29-sep (B3): la entrada se pierde por locates: anotación, descarte y aviso nivel 2 al grupo B."""
+        """Jaume 29-sep (B3): la entrada se pierde por locates: anotación, descarte y aviso nivel 2 al grupo B.
+
+        Decisión 47 (Jaume 30-sep): si la estrategia tiene pirámides «add», la
+        pareja NO queda parada: pasa a la fase P (`_abrir_sin_base`) y busca
+        los locates de sus pirámides pendientes.
+        """
         ticker = s.ticker
+        anotacion = Anotar("locate_perdida_entrada", {"senal_id": s.id, "ticker": ticker, "strategy_id": e.strategy_id,
+                                                      "motivo": motivo, "regla": "Jaume 29-sep (fase B3)"})
+        descarte = self._descartar(s, f"sin locates: {motivo} (Jaume 29-sep)", avisar=False)
+        fase_p = self._abrir_sin_base(s, e)
+        sigue = ("se siguen buscando locates para sus pirámides; la primera que los tenga entra sin base "
+                 "(decisión 47)" if fase_p else "Esta estrategia no entra hoy en este ticker (Jaume 29-sep)")
         texto = (f"{avisos.escapar_html(ticker)} · {avisos.escapar_html(e.name)}: entrada PERDIDA por locates — "
-                 f"{avisos.escapar_html(motivo)}. Esta estrategia no entra hoy en este ticker (Jaume 29-sep)")
-        return ([Anotar("locate_perdida_entrada", {"senal_id": s.id, "ticker": ticker, "strategy_id": e.strategy_id,
-                                                   "motivo": motivo, "regla": "Jaume 29-sep (fase B3)"})]
-                + self._descartar(s, f"sin locates: {motivo} (Jaume 29-sep)", avisar=False)
+                 f"{avisos.escapar_html(motivo)}. {sigue}")
+        return ([anotacion] + descarte + fase_p
                 + [Avisar(Nivel.AVISO, Grupo.B, texto, clave=f"locate_perdida:{ticker}:{e.strategy_id}")])
+
+    # ── decisión 47 (Jaume 30-sep): pirámides SIN base cuando la entrada se perdió por locates ──
+    def _abrir_sin_base(self, s: Senal, e: EstrategiaConfig) -> list[Accion]:
+        """Decisión 47: la entrada principal se perdió por locates y la estrategia tiene pirámides «add» → fase P.
+
+        Se guardan en el locate de la pareja (y en el diario: sobrevive a un
+        reinicio) el NIVEL DE STOP de la señal perdida (`Evento.stop`) y su id,
+        y las pirámides pendientes (k, acciones) con la fórmula de
+        `cantidad_a_localizar` SIN la entrada; la pareja sigue buscando esas
+        acciones cada 3 s sin mirar «a tiro» (como A/C). Sin pirámides, sin
+        stop o con los locates deshabilitados → [] (la regla de siempre: parada).
+        Una compra de locate en vuelo se deja terminar (su estado no se toca).
+        """
+        if s.id in self._sin_base_senales or self._locates_deshabilitado():
+            return []
+        ev = s.evento
+        try:
+            stop = entrada.nivel_de_senal(self._estado, ev)
+        except ValueError:
+            stop = None
+        pendientes = locates.acciones_piramides(e, getattr(ev, "acciones", None), getattr(ev, "riesgo_usd", None))
+        if stop is None or not pendientes:
+            return []
+        ticker, sid = s.ticker, e.strategy_id
+        loc = self._estado.locates.get((ticker, sid))
+        datos: dict = {"fase": locates.FASE_SIN_BASE, "pedidas_n": sum(n for _, n in pendientes),
+                       "precio_senal": None, "stop_perdida": stop, "senal_perdida": s.id,
+                       "piramides_pendientes": [list(p) for p in pendientes],
+                       "motivo": "P: entrada perdida por locates; se buscan las pirámides pendientes (decisión 47)"}
+        if loc is None or loc.estado not in locates.ESTADOS_EN_CURSO:
+            datos["estado"] = locates.ESTADO_BUSCANDO
+        acciones: list[Accion] = [
+            Anotar("sin_base_abierta", {"ticker": ticker, "strategy_id": sid, "senal_id": s.id, "stop": stop,
+                                        "piramides_pendientes": [list(p) for p in pendientes],
+                                        "regla": "decisión 47 (Jaume 30-sep)"}),
+            self._anotar_locate(ticker, sid, datos)]
+        return acciones + self._paso_locate(ticker, e)
+
+    def _piramide_sin_base(self, s: Senal, e: EstrategiaConfig, pos: PosicionTicker) -> Optional[list[Accion]]:
+        """Decisión 47: una pirámide «add» de una pareja en fase P y sin lote vivo → entra como ENTRADA sin base.
+
+        None → no aplica (la regla de siempre: sin base se descarta, A12). Si
+        aplica: la pirámide deja de estar pendiente (se descuentan sus
+        acciones de lo que se busca) y se opera con el protocolo de entrada
+        (R-B-01..03, el 3 % y la referencia de cierre de vela de R-A-01) con
+        SUS acciones (tope: lo localizado) y el NIVEL DE STOP GUARDADO de la
+        entrada perdida (12b: un solo nivel por ticker, decisión 45). Sin
+        locates libres, un intento único como C_piramide
+        (`_fase_locate_en_senal`); si no compra, esa pirámide se pierde
+        (`_piramide_sin_base_perdida`) y se sigue buscando para las demás.
+        """
+        ticker, sid = s.ticker, e.strategy_id
+        loc = self._estado.locates.get((ticker, sid))
+        if (loc is None or loc.fase != locates.FASE_SIN_BASE or loc.stop_perdida is None
+                or self._lote_vivo_de(ticker, sid)):
+            return None
+        ev = s.evento
+        k = self._nivel_pendiente(ev, loc)
+        restantes = tuple(p for p in loc.piramides_pendientes if p[0] != k)
+        acciones: list[Accion] = [
+            Anotar("piramide_sin_base", {"senal_id": s.id, "ticker": ticker, "strategy_id": sid,
+                                         "nivel": getattr(ev, "nivel", None), "k": k, "stop": loc.stop_perdida,
+                                         "senal_perdida": loc.senal_perdida, "pendientes": [list(p) for p in restantes],
+                                         "regla": "decisión 47 (Jaume 30-sep)"}),
+            self._anotar_locate(ticker, sid, {"piramides_pendientes": [list(p) for p in restantes],
+                                              "pedidas_n": sum(n for _, n in restantes),
+                                              "motivo": f"P: pasa la pirámide k={k}; se descuenta (decisión 47)"})]
+        try:
+            nivel_precio = precios.de_float(getattr(ev, "precio", None))
+            referencia = entrada._referencia_retraso(s, ev, nivel_precio) or nivel_precio
+            convertida = dataclasses.replace(s, evento=_como_entrada(ev, loc.stop_perdida, referencia))
+        except (ValueError, TypeError) as exc:
+            return acciones + self._descartar(s, f"pirámide sin base ilegible: {exc} (decisión 47)", avisar=True)
+        self._sin_base_senales.add(s.id)
+        acciones += self._entrada(convertida)
+        if (ticker, sid) not in self._espera_locate and s.id not in (self._estado.posiciones.get(ticker) or pos).lotes:
+            acciones += self._seguir_sin_base(ticker, e)
+        return acciones
+
+    @staticmethod
+    def _nivel_pendiente(ev: Any, loc: Locate) -> Optional[int]:
+        """Decisión 47: el k pendiente de la pirámide que llega (`Evento.nivel` = k + 1 del motor); si no casa con
+        ninguno pendiente, el PRIMERO pendiente (lo conservador: se busca menos, nunca más)."""
+        pendientes = [k for k, _ in loc.piramides_pendientes]
+        nivel = getattr(ev, "nivel", None)
+        if isinstance(nivel, int) and not isinstance(nivel, bool) and nivel - 1 in pendientes:
+            return nivel - 1
+        return pendientes[0] if pendientes else None
+
+    def _piramide_sin_base_perdida(self, s: Senal, e: EstrategiaConfig) -> list[Accion]:
+        """Decisión 47: el intento único de la pirámide sin base no compró → se pierde ESA pirámide; se sigue buscando."""
+        acciones: list[Accion] = [Anotar("piramide_sin_base_perdida", {
+            "senal_id": s.id, "ticker": s.ticker, "strategy_id": e.strategy_id,
+            "regla": "decisión 47 (Jaume 30-sep): intento único sin compra"})]
+        acciones += self._descartar(s, "pirámide sin base: el intento único de locate no compró (decisión 47)",
+                                    avisar=False)
+        return acciones + self._seguir_sin_base(s.ticker, e)
+
+    def _seguir_sin_base(self, ticker: str, e: EstrategiaConfig) -> list[Accion]:
+        """Decisión 47: tras una pirámide que pasó sin entrar, la fase P sigue buscando lo pendiente o, si no queda
+        nada (o los locates están deshabilitados), deja de buscar (PARADO; la fase y el stop guardado se quedan)."""
+        sid = e.strategy_id
+        loc = self._estado.locates.get((ticker, sid))
+        if loc is None or loc.stop_perdida is None:
+            return []
+        clave_t = locates.clave_temporizador(ticker, sid)
+        restantes = sum(n for _, n in loc.piramides_pendientes)
+        if restantes <= 0 or self._locates_deshabilitado():
+            motivo = "no quedan pirámides pendientes" if restantes <= 0 else "locates deshabilitados"
+            if loc.estado in locates.ESTADOS_EN_CURSO:
+                return [self._anotar_locate(ticker, sid, {"fase": locates.FASE_SIN_BASE, "precio_senal": None,
+                                                          "motivo": f"P: {motivo} (decisión 47)"})]
+            return [self._anotar_locate(ticker, sid, {"fase": locates.FASE_SIN_BASE, "estado": locates.ESTADO_PARADO,
+                                                      "precio_senal": None,
+                                                      "motivo": f"P: {motivo}; se deja de buscar (decisión 47)"}),
+                    Desprogramar(clave_t)]
+        datos: dict = {"fase": locates.FASE_SIN_BASE, "pedidas_n": restantes, "precio_senal": None,
+                       "motivo": "P: se sigue buscando para las pirámides pendientes (decisión 47)"}
+        if loc.estado not in locates.ESTADOS_EN_CURSO:
+            datos["estado"] = locates.ESTADO_BUSCANDO
+        return [self._anotar_locate(ticker, sid, datos)] + self._paso_locate(ticker, e)
+
+    def _tras_entrada_sin_base(self, s: Senal, e: EstrategiaConfig, lote: Lote) -> list[Accion]:
+        """Decisión 47, al crear el lote: la pirámide que entró sin base ES la base (fase C, se olvidan el stop y la
+        señal guardados; se buscan las pirámides que queden) y la reentrada tras la salida del motor busca entrada +
+        pirámides."""
+        ticker, sid = s.ticker, e.strategy_id
+        loc = self._estado.locates.get((ticker, sid))
+        if loc is None:
+            return []
+        if s.id in self._sin_base_senales and loc.stop_perdida is not None:
+            restantes = sum(n for _, n in loc.piramides_pendientes)
+            datos: dict = {"fase": locates.FASE_DENTRO, "stop_perdida": None, "senal_perdida": None,
+                           "piramides_pendientes": [], "precio_senal": None, "pedidas_n": lote.pedidas + restantes,
+                           "motivo": "la pirámide entró sin base: es la base de la estrategia, fase C (decisión 47)"}
+            if restantes > 0 and loc.estado == locates.ESTADO_LOCALIZADO:
+                datos["estado"] = locates.ESTADO_BUSCANDO
+            return [self._anotar_locate(ticker, sid, datos)]
+        if s.id in self._reentrada_sin_base and loc.senal_perdida is not None:
+            ev = s.evento
+            piramides = sum(n for _, n in locates.acciones_piramides(e, getattr(ev, "acciones", None),
+                                                                     getattr(ev, "riesgo_usd", None)))
+            datos = {"senal_perdida": None, "pedidas_n": max(loc.pedidas, lote.pedidas + piramides),
+                     "motivo": "reentrada tras la salida del motor: entrada + pirámides (decisión 47)"}
+            if piramides > 0 and loc.estado == locates.ESTADO_LOCALIZADO:
+                datos["estado"] = locates.ESTADO_BUSCANDO
+            return [self._anotar_locate(ticker, sid, datos)]
+        return []
+
+    def _fin_sin_base_por_salida(self, s: Senal) -> list[Accion]:
+        """Decisión 47: la SALIDA total del motor (stop, hora, EOD…) de una pareja en fase P sin lote vivo → deja de
+        buscar (fase D) y su siguiente entrada es una reentrada legítima (`_reentrada_legitima`), que cuenta la
+        perdida en el cupo (`_cupo_tras_perdida`). Una salida sin «lo que queda» se toma como total (lo conservador:
+        deja de buscar)."""
+        ev = s.evento
+        sid = getattr(ev, "strategy_id", None)
+        ticker = s.ticker
+        loc = self._estado.locates.get((ticker, sid)) if isinstance(sid, str) and ticker else None
+        if loc is None or loc.fase != locates.FASE_SIN_BASE or self._lote_vivo_de(ticker, sid):
+            return []
+        tipo = _tipo_evento(ev)
+        proporcion = salidas.proporcion_del_evento(ev)
+        accion = str(getattr(ev, "accion_piramide", "") or "").strip().lower()
+        total = ((tipo == "salida" and (proporcion is None or proporcion[1]))
+                 or (tipo == "piramide" and accion == "reduce" and proporcion is not None and proporcion[1]))
+        if not total:
+            return []
+        datos: dict = {"fase": locates.FASE_FUERA, "stop_perdida": None, "piramides_pendientes": [],
+                       "precio_senal": None,
+                       "motivo": "el motor salió del todo: sin búsqueda; su reentrada es legítima (decisión 47)"}
+        if loc.estado == locates.ESTADO_PARADO:
+            datos["estado"] = locates.ESTADO_BUSCANDO       # la reentrada tendrá su intento (B); D no consulta
+        return [Anotar("sin_base_fin", {"ticker": ticker, "strategy_id": sid, "senal_id": s.id,
+                                        "senal_perdida": loc.senal_perdida, "motivo": getattr(ev, "motivo", None),
+                                        "regla": "decisión 47 (Jaume 30-sep)"}),
+                self._anotar_locate(ticker, sid, datos),
+                Desprogramar(locates.clave_temporizador(ticker, sid))]
+
+    def _cupo_tras_perdida(self, s: Senal, pos: PosicionTicker, e: EstrategiaConfig) -> Optional[list[Accion]]:
+        """Decisión 47: la reentrada tras la salida del motor de una entrada perdida por locates consume una
+        reentrada del cupo (R-D-04 con la perdida como entrada previa: `puede_reentrar` con un lote ficticio). None =
+        sigue; si el cupo o el interruptor no la permiten, se descarta."""
+        sid = e.strategy_id
+        loc = self._estado.locates.get((s.ticker, sid))
+        if loc is None or loc.fase != locates.FASE_FUERA or loc.senal_perdida is None or loc.senal_perdida == s.id:
+            return None
+        if any(lote.strategy_id == sid and lote.nivel_piramide is None
+               and (lote.llenas > 0 or self._llenas_max_lote.get(lote.id, 0) > 0) for lote in pos.lotes.values()):
+            return None
+        perdida = Lote(id=loc.senal_perdida, strategy_id=sid, estrategia=e.name, ticker=s.ticker, direccion="Short",
+                       pedidas=0, estado=EstadoLote.CERRADO, version_estrategia=e.definition_hash)
+        permitida, motivo = salidas.puede_reentrar(e, perdida, pos)
+        if not permitida:
+            return self._descartar(s, f"{entrada.MOTIVO_REENTRADA}: {motivo} (decisión 47: la entrada perdida por "
+                                      f"locates cuenta en el cupo)", avisar=True)
+        self._reentrada_sin_base.add(s.id)
+        return None
 
     def _fase_tras_entrada(self, ticker: str, e: EstrategiaConfig) -> list[Accion]:
         """Jaume 29-sep: tras entrar (o piramidar) la pareja está DENTRO (fase C): se buscan las pirámides cada 3 s sin
@@ -5433,9 +5827,14 @@ class Decisor:
         a mirar el tope del T1 con el `last` de ESTE momento (el primer print
         puede llegar después del `T`): superado → la salida viva se retira,
         aviso MÁXIMO y CONTROL_HUMANO (`_tope_t1_control_humano`). Tras la MKT
-        de la banda (sin halt) no se mira."""
+        de la banda (sin halt) no se mira. Decisión 46 (Jaume 30-sep): si lo que
+        no llenó era la compra al techo del T1 de un halt de PM, además el
+        ticker pasa a CONTROL_HUMANO con aviso máximo."""
         ticker = str(datos.get("ticker") or clave.split(":", 1)[1])
         pos = self._estado.posiciones.get(ticker)
+        token_46 = self._halt_pm_cierre.pop(ticker, None)          # decisión 46: la compra al techo del T1
+        espera_46 = ticker in self._halt_pm_tope_espera
+        self._halt_pm_tope_espera.discard(ticker)
         if datos.get("reapertura") and pos is not None and pos.neta < 0:
             cot = self._cot(ticker)
             tope = self._tope_t1_control_humano(pos, cot.last if cot is not None and _es_precio(cot.last) else None,
@@ -5443,11 +5842,16 @@ class Decisor:
             if tope is not None:
                 return tope
         acciones: list[Accion] = []
+        retirada_46 = False
         for o in self._vivas(ticker):
             if o.proposito in _PROP_CIERRE_HALT and _qty_viva(o) > 0:
+                retirada_46 = retirada_46 or o.token == token_46
                 acciones.append(Anotar("halt_salida_retirada", {"ticker": ticker, "token": o.token, "llenas": o.llenas,
                                                                 "qty": o.qty, "regla": "G1A-01"}))
                 acciones += self._cancelar_orden(o, "G1A-01: la salida del halt no llenó en 2 s; vuelven los stops")
+        if (retirada_46 or espera_46) and pos is not None and pos.neta < 0:
+            acciones += self._control_humano_46(pos, "la compra al techo del T1 no llenó en 2 s" if retirada_46
+                                                else "la salida del halt anterior no se retiró a tiempo")
         return acciones
 
     def _t_simstatus_espera(self, clave: str, datos: dict) -> list[Accion]:
@@ -5860,12 +6264,18 @@ class Decisor:
         estado.senales_principales.clear()                  # Jaume 29-sep: la «primera señal» es por día
         self._espera_locate.clear()
         self._intento_locate_hecho.clear()
+        self._sin_base_senales.clear()
+        self._reentrada_sin_base.clear()
         self._avisos_dia.clear()
         self._halt_hoy.clear()
         self._stop_hoy.clear()
         self._reapertura_ok.clear()
         self._banda_enviada.clear()
         self._halt_humano_avisado.clear()
+        self._halt_pm_vigilado.clear()
+        self._reapertura_pm.clear()
+        self._halt_pm_cierre.clear()
+        self._halt_pm_tope_espera.clear()
         # lo que el resumen del día (COB-02) y la OPA (E1-08) cuentan por día
         self._max_pm.clear()
         self._opa_revisado_en.clear()
@@ -6557,6 +6967,31 @@ def _qty_viva(o: Orden) -> int:
 
 def _tipo_evento(ev: Any) -> str:
     return str(getattr(ev, "tipo", "") or "").strip().lower()
+
+
+def _como_entrada(ev: Any, stop: Decimal, referencia: Optional[Decimal]) -> Any:
+    """Decisión 47 (Jaume 30-sep): la pirámide «add» que entra SIN base, vuelta un `Evento` de ENTRADA.
+
+    Mismas acciones, momento, estrategia y `entrada_idx`; `stop` = el nivel
+    GUARDADO de la entrada perdida por locates; `precio` = la referencia de
+    R-A-01 (cierre de la vela de la señal), contra la que se miden el retraso y
+    el 3 % como en cualquier entrada. Sin `accion_piramide` ni `nivel`: el lote
+    que crea es la BASE de la estrategia. ValueError sin stop o sin referencia
+    válidos (no se entra a ciegas). Funciona con `Evento` y `EventoLigero`
+    (dataclasses) y con cualquier objeto copiable.
+    """
+    if not _es_precio(stop):
+        raise ValueError(f"stop guardado inválido: {stop!r}")
+    if not _es_precio(referencia):
+        raise ValueError(f"sin referencia de precio: {referencia!r}")
+    cambios = {"tipo": "entrada", "stop": float(stop), "precio": float(referencia), "accion_piramide": None,
+               "nivel": None, "distancia_stop": float(stop - referencia), "riesgo_usd": None}
+    if dataclasses.is_dataclass(ev) and not isinstance(ev, type):
+        return dataclasses.replace(ev, **cambios)
+    copia = copy.copy(ev)
+    for campo, valor in cambios.items():
+        setattr(copia, campo, valor)
+    return copia
 
 
 def _hora_min(valor: Any) -> Optional[tuple[int, int]]:
