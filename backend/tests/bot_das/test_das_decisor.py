@@ -1556,6 +1556,26 @@ def test_senal_de_otra_cuenta_se_ignora_con_anotacion(banco: Banco) -> None:
     assert not acciones_de(acciones, Avisar) and not b.enviadas()
 
 
+def test_estrategia_sin_ev_no_ejecuta_y_avisa_una_vez_al_dia(cfg: Config, tmp_path: Path) -> None:
+    """Decisión 23 (Jaume 30-sep): sin EV en el cuadro → señales descartadas «sin ejecutar» y aviso nivel 2 al B 1 vez/día."""
+    e = dataclasses.replace(cfg.estrategias[SID], ejecutar=False, sin_ev=True, ev_pct=Decimal("0"))
+    b = Banco(cfg_con(cfg, estrategias=[e]), tmp_path)
+    b.preparar(locates=((TICKER, SID, 1000), (OTRO, SID, 1000)),
+               cotizaciones=((TICKER, "3.44", "3.46", "3.45"), (OTRO, "3.44", "3.46", "3.45")))
+    primera = b.senal(evento())
+    segunda = b.senal(evento(ticker=OTRO))
+    avisos_ = [a for a in primera if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
+    assert len(avisos_) == 1 and avisos_[0].nivel == Nivel.AVISO and avisos_[0].grupo == Grupo.B
+    assert "sin EV en el cuadro: no ejecuta hasta que lo pongas" in avisos_[0].texto
+    assert not [a for a in segunda if isinstance(a, Avisar) and a.clave == f"sin_ev:{SID}"]
+    for acc in (primera, segunda):
+        assert anotaciones(acc, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_ESTRATEGIA
+    assert not b.enviadas()
+    b.decisor._override_estrategia[SID] = {"ejecutar": True}          # /activar no la enciende sin EV
+    b.decisor._recomponer_cfg()
+    assert b.decisor._cfg.estrategias[SID].ejecutar is False
+
+
 def test_senal_larga_con_un_corto_abierto_se_descarta(banco: Banco) -> None:
     """R-E-01: solo cortos; un largo contra un corto vivo se descarta y se avisa nivel 1."""
     b = banco

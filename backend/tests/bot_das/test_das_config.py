@@ -444,7 +444,8 @@ CASOS_INVALIDOS = [
     ("CM2 riesgo null con ejecutar", [_mutar("estrategias.0.riesgo_usd", None)], "riesgo_usd"),
     ("CM2 riesgo piramide 0", [_mutar("estrategias.0.riesgo_piramide_usd", 0)], "riesgo_piramide_usd"),
     ("CM2 riesgos piramide negativo", [_mutar("estrategias.0.riesgos_piramide", [100, -5])], "riesgos_piramide"),
-    ("CM2 ev_pct null", [_mutar("estrategias.0.ev_pct", None)], "ev_pct"),
+    ("CM2 ev_pct negativo", [_mutar("estrategias.0.ev_pct", -1)], "ev_pct"),   # null ya vale (Decisión 23, Jaume 30-sep)
+    ("CM2 ev_pct ausente", [_mutar("estrategias.0.ev_pct", _BORRAR)], "ev_pct"),
     ("R-E-03 al_desactivar raro", [_mutar("estrategias.0.al_desactivar", "cerrar")], "al_desactivar"),
     ("2h ruta agregar vacia", [_mutar("rutas.agregar.ge_1", "")], "rutas.agregar.ge_1"),
     ("2h ruta cruzar blancos", [_mutar("rutas.cruzar.lt_1_antes_0700", "  ")], "lt_1_antes_0700"),
@@ -650,11 +651,11 @@ def test_extraer_niveles_de_piramide_de_la_definicion():
 
 @pytest.mark.parametrize("fila", [
     {"definition": {}}, {"strategy_id": "", "definition": {}}, {"strategy_id": "s"},
-    {"strategy_id": "s", "definition": {}, "ev_pct": None},
+    {"strategy_id": "s", "definition": {}, "ev_pct": "no"},     # null ya no lanza: sin_ev (Decisión 23, Jaume 30-sep)
     {"strategy_id": "s", "definition": {}, "ev_pct": True},
     {"strategy_id": "s", "definition": {"custom_start_time": "4h", "market_sessions": ["custom"]}, "ev_pct": 1},
     {"strategy_id": "s", "definition": {"risk_management": {"max_reentries": "2"}}, "ev_pct": 1},
-], ids=["CM4 sin id", "CM4 id vacio", "CM4 sin definition", "CM2 ev null", "CM2 ev bool", "R-L-02 hora mala",
+], ids=["CM4 sin id", "CM4 id vacio", "CM4 sin definition", "CM2 ev texto", "CM2 ev bool", "R-L-02 hora mala",
         "R-E-03 max_reentries texto"])
 def test_extraer_rechaza_lo_que_no_se_puede_inventar(fila):
     with pytest.raises(ValueError):
@@ -1109,11 +1110,55 @@ def test_exportar_escribe_un_fichero_valido(backend, tmp_path, base_motor):
     assert leida.fase is Fase.SOMBRA and leida.stops == C.cargar(RUTA_EJEMPLO, CUENTA).stops
     e1, e2 = leida.estrategias["s-1"], leida.estrategias["s-2"]
     assert e1.riesgo_usd == Decimal("250.0") and e1.ev_pct == Decimal("5.0")
-    assert e2.ev_pct == Decimal("4.0")                            # ev null → el de la plantilla
-    assert e1.ejecutar is True and e1.excluir_ipo is False       # de la plantilla de defaults
+    assert e2.sin_ev is True and e2.ejecutar is False and e2.ev_pct == Decimal("0")   # Decisión 23 (Jaume 30-sep)
+    assert e1.sin_ev is False
+    assert e1.ejecutar is False and e1.excluir_ipo is False      # Decisión 22: nueva → apagada; excluir_ipo de la plantilla
     crudo = json.loads(destino.read_text(encoding="utf-8"))
     assert crudo["generado_por"].startswith("puente") and "ventana" not in crudo["estrategias"][0]
+    assert crudo["estrategias"][1]["ev_pct"] is None
+    assert all(e["ejecutar"] is False for e in crudo["estrategias"])
     assert C.validar(crudo) == []
+
+
+def test_exportar_nuevas_apagadas_existentes_conservan(backend, tmp_path, base_motor):
+    """Decisión 22 (Jaume 30-sep): la nueva entra con ejecutar=false; la que Jaume activó sigue activa."""
+    backend.responder({"total": 1, "estrategias": [_fila_backend("s-1")]})
+    destino = tmp_path / "c.json"
+    C.exportar_desde_backend(backend.url, destino, RUTA_EJEMPLO, cuenta_das=CUENTA, base_motor=base_motor)
+    crudo = json.loads(destino.read_text(encoding="utf-8"))
+    assert crudo["estrategias"][0]["ejecutar"] is False
+    crudo["estrategias"][0]["ejecutar"] = True                   # Jaume la activa en el cuadro
+    C.escribir_atomico(destino, _firmar(crudo, definiciones=False))
+    backend.responder({"total": 2, "estrategias": [_fila_backend("s-1"), _fila_backend("s-2")]})
+    cfg = C.exportar_desde_backend(backend.url, destino, RUTA_EJEMPLO, cuenta_das=CUENTA, base_motor=base_motor)
+    assert cfg.estrategias["s-1"].ejecutar is True and cfg.estrategias["s-2"].ejecutar is False
+
+
+def test_exportar_activa_que_pierde_ev_se_apaga(backend, tmp_path, base_motor):
+    """Decisión 23 (Jaume 30-sep): activa pero el cuadro deja de traer EV → ev_pct null y ejecutar=false."""
+    backend.responder({"total": 1, "estrategias": [_fila_backend("s-1")]})
+    destino = tmp_path / "c.json"
+    C.exportar_desde_backend(backend.url, destino, RUTA_EJEMPLO, cuenta_das=CUENTA, base_motor=base_motor)
+    crudo = json.loads(destino.read_text(encoding="utf-8"))
+    crudo["estrategias"][0]["ejecutar"] = True
+    C.escribir_atomico(destino, _firmar(crudo, definiciones=False))
+    backend.responder({"total": 1, "estrategias": [_fila_backend("s-1", ev_pct=None)]})
+    cfg = C.exportar_desde_backend(backend.url, destino, RUTA_EJEMPLO, cuenta_das=CUENTA, base_motor=base_motor)
+    e = json.loads(destino.read_text(encoding="utf-8"))["estrategias"][0]
+    assert e["ev_pct"] is None and e["ejecutar"] is False and cfg.estrategias["s-1"].sin_ev is True
+
+
+def test_cuadro_ejecutar_true_sin_ev_carga_pero_no_ejecuta():
+    """Decisión 23 (Jaume 30-sep): no es error de carga; se degrada a no ejecutar."""
+    crudo = _crudo()
+    crudo["estrategias"][0]["ev_pct"] = None
+    crudo["estrategias"][0]["ejecutar"] = True
+    assert C.validar(_firmar(crudo)) == []
+    e = C.extraer_estrategia(crudo["estrategias"][0])
+    assert e.sin_ev is True and e.ejecutar is False and e.ev_pct == Decimal("0")
+    del crudo["estrategias"][0]["ev_pct"]
+    assert any("ev_pct: falta" in x for x in C.validar(_firmar(crudo)))
+    assert C.extraer_estrategia(crudo["estrategias"][0]).sin_ev is True
 
 
 def test_exportar_sube_version_y_conserva_ejecutar(backend, tmp_path, base_motor):
@@ -1161,8 +1206,8 @@ def test_exportar_backend_apagado_devuelve_none(tmp_path, base_motor):
 
 @pytest.mark.parametrize("filas", [
     [{"name": "sin id", "definition": {}}], [_fila_backend("s-1", definition=None)],
-    [_fila_backend("s-1"), _fila_backend("s-1")], [_fila_backend("s-1", riesgo_usd=0)],
-], ids=["CM4 sin strategy_id", "CM4 sin definition", "CM2 id repetido", "CM2 riesgo 0 ejecutando"])
+    [_fila_backend("s-1"), _fila_backend("s-1")], [_fila_backend("s-1", riesgo_usd=-1)],
+], ids=["CM4 sin strategy_id", "CM4 sin definition", "CM2 id repetido", "CM2 riesgo negativo"])
 def test_exportar_filas_malas_no_escriben(backend, tmp_path, base_motor, filas):
     backend.responder({"total": len(filas), "estrategias": filas})
     destino = tmp_path / "c.json"

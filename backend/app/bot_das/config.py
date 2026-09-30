@@ -433,6 +433,7 @@ def _validar_definicion(prefijo: str, d: Any, errores: list[str]) -> None:
 
 
 def _validar_estrategia(i: int, e: Any, vistos: set[str], errores: list[str]) -> None:
+    # Decisión 23 (Jaume 30-sep): ev_pct null es válido (sin EV → carga pero no ejecuta); ausente sigue siendo error.
     if not isinstance(e, dict):
         errores.append(f"estrategias[{i}]: no es un objeto")
         return
@@ -445,7 +446,7 @@ def _validar_estrategia(i: int, e: Any, vistos: set[str], errores: list[str]) ->
     else:
         vistos.add(sid)
     for clave, tipo in (("name", "str"), ("origen", "str"), ("ejecutar", "bool"), ("avisar_grupo_a", "bool"),
-                        ("excluir_ipo", "bool"), ("ev_pct", "num0"), ("al_desactivar", ("enum",) + AL_DESACTIVAR),
+                        ("excluir_ipo", "bool"), ("ev_pct", "num?"), ("al_desactivar", ("enum",) + AL_DESACTIVAR),
                         ("definition_hash", "hash")):
         if clave not in e:
             errores.append(f"{prefijo}.{clave}: falta")
@@ -666,7 +667,10 @@ def extraer_estrategia(v: dict) -> EstrategiaConfig:
     el = definicion.get("entry_logic") or {}
     ventana_cruda = el.get("entry_time_windows") if isinstance(el, dict) else None
 
-    ejecutar = v.get("ejecutar", False) is True
+    # Decisión 23 (Jaume 30-sep): EV nulo/ausente → carga, pero NO ejecuta (aunque el cuadro diga ejecutar=true);
+    # el decisor descarta sus señales como «sin ejecutar» y avisa una vez al día. Nunca se inventa un EV.
+    sin_ev = v.get("ev_pct") is None
+    ejecutar = v.get("ejecutar", False) is True and not sin_ev
     riesgo = v.get("riesgo_usd")
     riesgos_p = v.get("riesgos_piramide") or []
     return EstrategiaConfig(
@@ -678,7 +682,7 @@ def extraer_estrategia(v: dict) -> EstrategiaConfig:
         riesgo_usd=_dec(riesgo, f"{sid}.riesgo_usd") if riesgo is not None else Decimal("0"),
         riesgos_piramide=[_dec_opcional(x, f"{sid}.riesgos_piramide") for x in riesgos_p],
         riesgo_piramide_usd=_dec_opcional(v.get("riesgo_piramide_usd"), f"{sid}.riesgo_piramide_usd"),
-        ev_pct=_dec(v.get("ev_pct"), f"{sid}.ev_pct"),
+        ev_pct=Decimal("0") if sin_ev else _dec(v.get("ev_pct"), f"{sid}.ev_pct"),
         ev_rangos=copy.deepcopy(list(v.get("ev_rangos") or [])),
         excluir_ipo=v.get("excluir_ipo", True) is True,
         al_desactivar=str(v.get("al_desactivar") or AL_DESACTIVAR[0]),
@@ -691,6 +695,7 @@ def extraer_estrategia(v: dict) -> EstrategiaConfig:
         es_rth=es_rth,
         definition_hash=v.get("definition_hash") or _hash_prefijado(definicion),
         definition=definicion,
+        sin_ev=sin_ev,
     )
 
 
@@ -1075,23 +1080,26 @@ def _pedir_vigiladas(url_base: str, timeout_s: float) -> Optional[list]:
     return datos["estrategias"]
 
 
-def _fila_a_estrategia(fila: Any, plantilla: dict, previa: Optional[dict], ev_por_defecto: Any) -> dict:
+def _fila_a_estrategia(fila: Any, plantilla: dict, previa: Optional[dict]) -> dict:
     if not isinstance(fila, dict) or not isinstance(fila.get("strategy_id"), str) or not isinstance(fila.get("definition"), dict):
         raise ConfigInvalida([f"fila de /vigiladas sin strategy_id o sin definition: {str(fila)[:120]}"])
     base = previa or plantilla
     definicion = copy.deepcopy(fila["definition"])
     ev = fila.get("ev_pct")
+    # Decisión 22 (Jaume 30-sep): una estrategia NUEVA entra apagada; solo Jaume la activa. Las que ya estaban
+    # conservan su `ejecutar`. Decisión 23: sin EV en el cuadro → ev_pct null y ejecutar=false (no el EV de la plantilla).
+    ejecutar = previa is not None and previa.get("ejecutar", False) is True and ev is not None
     return {
         "strategy_id": fila["strategy_id"],
         "name": fila.get("name") or fila["strategy_id"],
         "origen": fila.get("origen") or "portfolio",
-        "ejecutar": base.get("ejecutar", False) is True,
+        "ejecutar": ejecutar,
         "avisar_grupo_a": base.get("avisar_grupo_a", False) is True,
         "riesgo_usd": fila.get("riesgo_usd"),
         "riesgo_piramide_usd": fila.get("riesgo_piramide_usd"),
         "riesgos_piramide": list(fila.get("riesgos_piramide") or []),
         "capital_usd": fila.get("capital_usd"),
-        "ev_pct": ev if ev is not None else ev_por_defecto,
+        "ev_pct": ev,
         "ev_rangos": list(fila.get("ev_rangos") or []),
         "cuentas": fila.get("cuentas"),
         "excluir_ipo": base.get("excluir_ipo", True) is True,
@@ -1108,9 +1116,11 @@ def exportar_desde_backend(url_base: str, destino: Path, defaults: Path, *, cuen
 
     Bloques globales: los de `defaults` (config_ejemplo.json). Por estrategia:
     riesgos, EV, capital, cuentas y definición de la fila del backend (manda
-    el cuadro, R-I-03); ejecutar/avisar_grupo_a/excluir_ipo/al_desactivar del
+    el cuadro, R-I-03); avisar_grupo_a/excluir_ipo/al_desactivar del
     fichero `destino` anterior si ya la tenía, si no de la primera estrategia
-    de `defaults`; ev_pct null → el de esa plantilla. config_version = la del
+    de `defaults`; `ejecutar` del destino anterior y, si es NUEVA, false
+    (Decisión 22, Jaume 30-sep); ev_pct null → queda null y ejecutar=false
+    (Decisión 23: sin EV no ejecuta). config_version = la del
     destino anterior + 1 (1 si no hay), para que el vigilante vea que sube.
     motor_hash con `base_motor` (por defecto el `backend` de este paquete).
     Devuelve None si no se pudo preguntar al backend (no escribe nada); lanza
@@ -1131,8 +1141,8 @@ def exportar_desde_backend(url_base: str, destino: Path, defaults: Path, *, cuen
                    if isinstance(e, dict) and isinstance(e.get("strategy_id"), str)}
     plantillas = base_defaults.get("estrategias") or []
     plantilla = plantillas[0] if plantillas and isinstance(plantillas[0], dict) else {}
-    estrategias = [_fila_a_estrategia(f, plantilla, previas.get(f.get("strategy_id")) if isinstance(f, dict) else None,
-                                      plantilla.get("ev_pct")) for f in filas]
+    estrategias = [_fila_a_estrategia(f, plantilla, previas.get(f.get("strategy_id")) if isinstance(f, dict) else None)
+                   for f in filas]
     version_previa = previo.get("config_version") if previo is not None else None
     obj = {k: copy.deepcopy(v) for k, v in base_defaults.items() if k not in ("sha256", "estrategias")}
     obj.update({

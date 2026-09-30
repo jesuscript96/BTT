@@ -1034,6 +1034,7 @@ class EstrategiaConfig:
     es_rth: bool
     definition_hash: str
     definition: dict
+    sin_ev: bool = False    # Decisión 23 (Jaume 30-sep): ev_pct null en el cuadro → no ejecuta (ev_pct queda a 0) y avisa
 
 
 @dataclass(frozen=True)

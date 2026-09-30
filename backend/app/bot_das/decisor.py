@@ -1609,6 +1609,11 @@ class Decisor:
                                    avisar=True)
         principal = _tipo_evento(ev) == "entrada"
         acciones: list[Accion] = []
+        if e is not None and e.sin_ev and self._una_vez_al_dia(f"sin_ev:{e.strategy_id}"):
+            # Decisión 23 (Jaume 30-sep): la señal se descarta como «sin ejecutar» (evaluar_senal) y se avisa 1 vez/día
+            acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                   f"Estrategia {avisos.escapar_html(e.name)} sin EV en el cuadro: no ejecuta hasta "
+                                   f"que lo pongas", clave=f"sin_ev:{e.strategy_id}"))
         if principal and e is not None:
             # Jaume 29-sep (estricto): la PRIMERA señal principal del día de la pareja es la única oportunidad, se opere
             # o no (retraso, pausa, exclusión, locates…): entrar en una vela posterior sería un trade que el backtest no
@@ -6337,6 +6342,9 @@ class Decisor:
             estrategias = dict(base.estrategias)
             for sid, campos in self._override_estrategia.items():
                 if sid in estrategias and campos:
+                    if estrategias[sid].sin_ev and campos.get("ejecutar") is True:
+                        # Decisión 23 (Jaume 30-sep): sin EV en el cuadro, ni /activar la pone a ejecutar
+                        campos = {k: v for k, v in campos.items() if k != "ejecutar"}
                     estrategias[sid] = dataclasses.replace(estrategias[sid], **campos)
             cambios["estrategias"] = estrategias
         self._cfg = dataclasses.replace(base, **cambios) if cambios else base
