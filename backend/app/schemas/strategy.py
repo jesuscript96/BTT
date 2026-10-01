@@ -199,6 +199,13 @@ class IndicatorType(str, Enum):
     # Existing / Retained Returns
     RET_PCT_PM = "Ret % PM"
     RET_PCT_RTH = "Ret % RTH"
+    # "Dias desde IPO (lago)" (2026-10-01): constante diaria `days_since_first_day`
+    # del filtro de universo 6.1 (dias naturales desde el primer dia del ticker
+    # en el lago — proxy de IPO, lago 2019+), expuesta como indicador para las
+    # salidas programadas condicionales. El literal canonico vive en
+    # services/indicators.py (DAYS_SINCE_IPO_NAME); aqui se replica por la
+    # misma razon que "Bar Close": el enum no puede depender de services.
+    DAYS_SINCE_FIRST_DAY = "Dias desde IPO (lago)"
 
 class Comparator(str, Enum):
     GT = "GREATER_THAN"

@@ -12,12 +12,41 @@ interface Props {
 /** Fuentes admitidas en V1 (nombres EXACTOS del motor). */
 const FUENTES = ['Bar Close', 'VWAP', 'Prev. Bar High', 'Prev. Bar Low'] as const;
 
+/** «Días desde IPO (lago)» (2026-10-01): nombre EXACTO del indicador en el
+ *  motor — `days_since_first_day`, el dato del filtro de universo 6.1 (días
+ *  naturales desde el primer día del ticker en el lago; proxy de IPO, lago
+ *  2019+, día 0 = primer día; lo listado antes de 2019 queda con edad
+ *  truncada ALTA, nunca entra por error en «< N días»). Solo como fuente de
+ *  la regla: contra él el objetivo es siempre un nº de días. */
+const FUENTE_IPO = 'Dias desde IPO (lago)';
+const ETIQUETA_IPO = 'Días desde IPO (lago)';
+const etiquetaFuente = (f: string) => (f === FUENTE_IPO ? ETIQUETA_IPO : f);
+
 const COMPARADORES: { v: string; t: string }[] = [
     { v: 'GREATER_THAN_OR_EQUAL', t: '≥' },
     { v: 'GREATER_THAN', t: '>' },
     { v: 'LESS_THAN_OR_EQUAL', t: '≤' },
     { v: 'LESS_THAN', t: '<' },
 ];
+
+/** Con «Días desde IPO» se añade «=» (los días son enteros: la igualdad es
+ *  real). Sobre precios NO se ofrece: «Bar Close = VWAP» con decimales casi
+ *  nunca sería verdad y la regla parecería no funcionar. */
+const COMPARADORES_IPO: { v: string; t: string }[] = [
+    { v: 'LESS_THAN', t: '<' },
+    { v: 'LESS_THAN_OR_EQUAL', t: '≤' },
+    { v: 'EQUAL', t: '=' },
+    { v: 'GREATER_THAN', t: '>' },
+    { v: 'GREATER_THAN_OR_EQUAL', t: '≥' },
+];
+
+const comparadoresDe = (src?: string) =>
+    src === FUENTE_IPO ? COMPARADORES_IPO : COMPARADORES;
+
+/** Días por defecto al elegir el operando IPO (el mismo del filtro 6.1). */
+const DIAS_IPO_DEFECTO = 90;
+
+const DIAS_IPO_TOOLTIP = 'Días naturales desde el primer día del ticker en el lago (2019+). ≈IPO: lo listado antes de 2019 queda con edad truncada alta. Día 0 = primer día.';
 
 const ACCIONES: { v: ScheduledExitRule['action']; t: string }[] = [
     { v: 'close_pct', t: 'Cerrar % de la posición' },
@@ -39,7 +68,7 @@ function textoRegla(r: ScheduledExitRule): string {
     const [h, m] = (r.hour || '00:00').split(':');
     const cond = r.condition?.conditions?.[0];
     const condTxt = cond
-        ? `${cond.source?.name} ${COMPARADORES.find(c => c.v === cond.comparator)?.t ?? cond.comparator} ${
+        ? `${etiquetaFuente(cond.source?.name ?? '')} ${comparadoresDe(cond.source?.name).find(x => x.v === cond.comparator)?.t ?? cond.comparator} ${
               typeof cond.target === 'number' ? cond.target : cond.target?.name ?? ''
           }`
         : 'siempre';
@@ -150,7 +179,18 @@ export const ScheduledExitsBuilder: React.FC<Props> = ({ risk, onChange }) => {
         setReglas(reglas.map((r, j) => {
             if (j !== i || !r.condition?.conditions?.length) return r;
             const c = { ...r.condition.conditions[0] };
-            if (patch.source !== undefined) c.source = { name: patch.source };
+            if (patch.source !== undefined) {
+                c.source = { name: patch.source };
+                // Al elegir «Días desde IPO» el objetivo pasa a ser un nº de
+                // días (90 por defecto). Al volver a una fuente de precio con
+                // «=» puesto, el comparador se rearma: «=» solo existe para IPO.
+                if (patch.source === FUENTE_IPO && typeof c.target !== 'number') {
+                    c.target = DIAS_IPO_DEFECTO;
+                }
+                if (patch.source !== FUENTE_IPO && c.comparator === 'EQUAL') {
+                    c.comparator = 'GREATER_THAN_OR_EQUAL';
+                }
+            }
             if (patch.comparator !== undefined) c.comparator = patch.comparator;
             if (patch.targetIsNum !== undefined) {
                 c.target = patch.targetIsNum ? 0 : { name: 'VWAP' };
@@ -262,6 +302,7 @@ export const ScheduledExitsBuilder: React.FC<Props> = ({ risk, onChange }) => {
                     {reglas.map((r, i) => {
                         const c = r.condition?.conditions?.[0];
                         const targetIsNum = typeof c?.target === 'number';
+                        const esIpo = c?.source?.name === FUENTE_IPO;
                         return (
                             <div key={i} style={{
                                 backgroundColor: 'var(--color-ec-bg-elevated)',
@@ -283,16 +324,19 @@ export const ScheduledExitsBuilder: React.FC<Props> = ({ risk, onChange }) => {
                                         onChange={(e) => patchRegla(i, { hour: e.target.value || '08:30' })}
                                     />
                                     <span style={{ fontSize: 11, color: 'var(--color-ec-text-muted)' }}>· Si</span>
-                                    <select style={inputStyle} value={c?.source?.name ?? 'Bar Close'}
+                                    <select style={inputStyle} title={esIpo ? DIAS_IPO_TOOLTIP : undefined}
+                                            value={c?.source?.name ?? 'Bar Close'}
                                             onChange={(e) => patchCond(i, { source: e.target.value })}>
                                         {FUENTES.map((f) => <option key={f} value={f}>{f}</option>)}
+                                        <option value={FUENTE_IPO} title={DIAS_IPO_TOOLTIP}>{ETIQUETA_IPO}</option>
                                     </select>
-                                    <select style={{ ...inputStyle, width: 54 }} value={c?.comparator ?? 'GREATER_THAN_OR_EQUAL'}
+                                    <select style={{ ...inputStyle, width: esIpo ? 46 : 54 }} value={c?.comparator ?? 'GREATER_THAN_OR_EQUAL'}
                                             onChange={(e) => patchCond(i, { comparator: e.target.value })}>
-                                        {COMPARADORES.map((x) => <option key={x.v} value={x.v}>{x.t}</option>)}
+                                        {comparadoresDe(c?.source?.name).map((x) => <option key={x.v} value={x.v}>{x.t}</option>)}
                                     </select>
-                                    {targetIsNum ? (
+                                    {esIpo || targetIsNum ? (
                                         <input type="number" step="any" style={{ ...inputStyle, width: 84 }}
+                                               title={esIpo ? 'Días desde el primer día del ticker en el lago' : undefined}
                                                value={Number(c?.target ?? 0)}
                                                onChange={(e) => patchCond(i, { targetNum: Number(e.target.value) })} />
                                     ) : (
@@ -301,12 +345,14 @@ export const ScheduledExitsBuilder: React.FC<Props> = ({ risk, onChange }) => {
                                             {FUENTES.map((f) => <option key={f} value={f}>{f}</option>)}
                                         </select>
                                     )}
-                                    <select style={{ ...inputStyle, width: 36 }} title="Tipo de objetivo"
-                                            value={targetIsNum ? 'num' : 'ind'}
-                                            onChange={(e) => patchCond(i, { targetIsNum: e.target.value === 'num' })}>
-                                        <option value="ind">ind.</option>
-                                        <option value="num">nº</option>
-                                    </select>
+                                    {!esIpo && (
+                                        <select style={{ ...inputStyle, width: 36 }} title="Tipo de objetivo"
+                                                value={targetIsNum ? 'num' : 'ind'}
+                                                onChange={(e) => patchCond(i, { targetIsNum: e.target.value === 'num' })}>
+                                            <option value="ind">ind.</option>
+                                            <option value="num">nº</option>
+                                        </select>
+                                    )}
                                     <span style={{ fontSize: 11, color: 'var(--color-ec-text-muted)' }}>→</span>
                                     <select style={{ ...inputStyle, width: 200 }} value={r.action}
                                             onChange={(e) => patchRegla(i, { action: e.target.value as ScheduledExitRule['action'] })}>
