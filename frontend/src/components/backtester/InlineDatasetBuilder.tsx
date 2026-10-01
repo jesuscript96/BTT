@@ -29,6 +29,9 @@ import {
   type SeccionUniverso as SectionId,
   esValorHora,
   parseHoraGapStart,
+  esCruce,
+  errorCruce,
+  type TramoCruce,
 } from "@/lib/universoFiltros";
 
 interface IncludedCondition {
@@ -36,14 +39,17 @@ interface IncludedCondition {
   paramKey: string;
   label: string;
   op: string; // '>=', '<=', '>', '<', 'between'
-  /** number; «Hora inicio gap» conserva la cadena "05:00"/"ayer 18:00"
+  /** number; «Hora de cruce» conserva la cadena "05:00"/"ayer 18:00"
    *  (la convierte construirFiltros). */
   val1: number | string;
-  val2?: number;
+  val2?: number | string;
   unit: string;
   /** Solo GAP-1: "include" = los ticker-día sin dato (IPO, recién llegada)
    *  pasan la regla en vez de excluirse. */
   missing?: "include";
+  /** Solo «Hora de cruce de gap». */
+  pct?: number;
+  tramo?: TramoCruce;
 }
 
 const MIN_DATE = "2006-01-01";
@@ -130,7 +136,7 @@ export default function InlineDatasetBuilder({
 
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [tempName, setTempName] = useState("");
-  const [values, setValues] = useState<Record<SectionId, Record<string, { op: string; val1: string; val2: string; missing?: "include" }>>>({
+  const [values, setValues] = useState<Record<SectionId, Record<string, { op: string; val1: string; val2: string; missing?: "include"; pct?: string; tramo?: TramoCruce }>>>({
     gap_prev_day: {},
     gap_day: {},
     gap_plus_1_day: {},
@@ -223,6 +229,18 @@ export default function InlineDatasetBuilder({
     });
   };
 
+  // «Hora de cruce de gap»: % y tramo viven en la fila, como op/val1/val2.
+  const handleCruceChange = (section: SectionId, paramKey: string,
+                             patch: { pct?: string; tramo?: TramoCruce }) => {
+    setValues((prev) => {
+      const current = prev[section][paramKey] || { op: ">=", val1: "", val2: "" };
+      return {
+        ...prev,
+        [section]: { ...prev[section], [paramKey]: { ...current, ...patch } },
+      };
+    });
+  };
+
   const handleOpChange = (section: SectionId, paramKey: string, op: string) => {
     setValues((prev) => {
       const current = prev[section][paramKey] || { op: ">=", val1: "", val2: "" };
@@ -260,10 +278,16 @@ export default function InlineDatasetBuilder({
 
   const getValidationError = (param: ParameterConfig, op: string, val1Str: string, val2Str: string): string | null => {
     if (!val1Str && !val2Str) return null;
+    if (esCruce(param.key)) {
+      const o = getParamValueObj("gap_day", param.key);
+      const ts = [parseHoraGapStart(val1Str)];
+      if (op === "between") ts.push(val2Str ? parseHoraGapStart(val2Str) : null);
+      return errorCruce(Number(o.pct ?? "20"), o.tramo ?? "PMH", ts);
+    }
     if (val1Str) {
       if (esValorHora(param.key)) {
         if (parseHoraGapStart(val1Str) === null) {
-          return "Usa HH:MM (04:00-09:29), «ayer HH:MM» (16:00-19:59) o t (780=05:00)";
+          return "Usa HH:MM (04:00-15:59), «ayer HH:MM» (16:00-19:59) o t (780=05:00)";
         }
       } else {
         const val1 = parseFloat(val1Str);
@@ -275,10 +299,17 @@ export default function InlineDatasetBuilder({
     }
     if (op === "between") {
       if (!val1Str || !val2Str) return "Faltan valores";
+      if (esValorHora(param.key)) {
+        if (parseHoraGapStart(val2Str) === null) {
+          return "Valor 2: usa HH:MM (04:00-15:59), «ayer HH:MM» (16:00-19:59) o t";
+        }
+      } else {
+        const val2 = parseFloat(val2Str);
+        if (isNaN(val2)) return "Valor 2 inválido";
+      }
       const val1 = parseFloat(val1Str);
-      const val2 = parseFloat(val2Str);
-      if (isNaN(val2)) return "Valor 2 inválido";
-      if (val1 > val2) return "Mín > Máx";
+      const val2n = parseFloat(val2Str);
+      if (val1 > val2n) return "Mín > Máx";
     }
     return null;
   };
@@ -297,10 +328,13 @@ export default function InlineDatasetBuilder({
     const error = getValidationError(param, op, val1Str, val2Str);
     if (error) return;
 
-    // «Hora inicio gap»: la cadena tal cual ("05:00" / "ayer 18:00");
-    // construirFiltros la convierte a t.
+    // «Hora de cruce»: la cadena tal cual ("05:00" / "ayer 18:00") en los DOS
+    // valores; construirFiltros la convierte a t. parseFloat se comería los ':'
+    // y mandaría 5 en lugar de 300.
     const val1 = esValorHora(param.key) ? val1Str : parseFloat(val1Str);
-    const val2 = op === "between" ? parseFloat(val2Str) : undefined;
+    const val2 = op === "between"
+      ? (esValorHora(param.key) ? val2Str : parseFloat(val2Str))
+      : undefined;
     const exists = isConditionIncluded(section, param.key);
 
     if (exists) {
@@ -315,11 +349,16 @@ export default function InlineDatasetBuilder({
           {
             section,
             paramKey: param.key,
-            label: param.label,
+            label: esCruce(param.key)
+              ? `cruce ${obj.tramo ?? "PMH"} +${obj.pct ?? "20"} %`
+              : param.label,
+            ...(esCruce(param.key)
+              ? { pct: Number(obj.pct ?? "20"), tramo: obj.tramo ?? ("PMH" as TramoCruce) }
+              : {}),
             op,
             val1,
             val2,
-            unit: param.unit,
+            unit: esCruce(param.key) ? "" : param.unit,
             ...(section === "gap_prev_day" && obj.missing === "include"
               ? { missing: "include" as const }
               : {}),
@@ -632,6 +671,59 @@ export default function InlineDatasetBuilder({
                             </label>
                           )}
 
+                          {esCruce(param.key) && (
+                            <>
+                              <select
+                                value={obj.tramo ?? "PMH"}
+                                onChange={(e) => handleCruceChange(sectionId, param.key, { tramo: e.target.value as TramoCruce })}
+                                disabled={included}
+                                title="PMH: el cruce ocurrió antes de las 09:30 (premarket o after-hours de ayer). RTH: ocurrió en sesión regular."
+                                style={{
+                                  backgroundColor: "var(--color-ec-bg-elevated)",
+                                  border: "0.5px solid var(--color-ec-border)",
+                                  borderRadius: 5,
+                                  padding: "6px 4px",
+                                  fontFamily: "var(--color-ec-sans)",
+                                  fontSize: 11,
+                                  fontWeight: 500,
+                                  color: "var(--color-ec-text-primary)",
+                                  outline: "none",
+                                  cursor: "pointer",
+                                  opacity: included ? 0.6 : 1,
+                                }}
+                              >
+                                <option value="PMH">PMH</option>
+                                <option value="RTH">RTH</option>
+                              </select>
+                              <span style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 11, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>
+                                +
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={obj.pct ?? "20"}
+                                  onChange={(e) => handleCruceChange(sectionId, param.key, { pct: e.target.value })}
+                                  disabled={included}
+                                  title="% sobre el cierre de ayer: 20-200, de 5 en 5"
+                                  style={{
+                                    backgroundColor: "var(--color-ec-bg-elevated)",
+                                    border: "0.5px solid var(--color-ec-border)",
+                                    borderRadius: 5,
+                                    padding: "6px 4px",
+                                    fontFamily: "var(--color-ec-sans)",
+                                    fontSize: 11,
+                                    fontWeight: 500,
+                                    color: "var(--color-ec-text-primary)",
+                                    outline: "none",
+                                    width: 36,
+                                    textAlign: "right",
+                                    opacity: included ? 0.6 : 1,
+                                  }}
+                                />
+                                %
+                              </span>
+                            </>
+                          )}
+
                           {/* Operator Selector */}
                           <select
                             value={obj.op}
@@ -699,10 +791,10 @@ export default function InlineDatasetBuilder({
                                   <span style={{ position: "absolute", left: 8, fontSize: 11, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>$</span>
                                 )}
                                 <input
-                                  type="number"
+                                  type={esValorHora(param.key) ? "text" : "number"}
                                   step="any"
                                   value={obj.val2}
-                                  placeholder="max"
+                                  placeholder={esValorHora(param.key) ? "09:00" : "max"}
                                   onChange={(e) => handleVal2Change(sectionId, param.key, e.target.value)}
                                   disabled={included}
                                   style={{
@@ -731,7 +823,7 @@ export default function InlineDatasetBuilder({
                                 <span style={{ position: "absolute", left: 8, fontSize: 11, color: "var(--color-ec-text-muted)", fontFamily: "var(--color-ec-sans)" }}>$</span>
                               )}
                               <input
-                                type="number"
+                                type={esValorHora(param.key) ? "text" : "number"}
                                 step="any"
                                 value={obj.val1}
                                 placeholder={param.placeholder}
