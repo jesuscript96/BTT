@@ -174,7 +174,9 @@ def _gappers_prev_select() -> str:
 # SIN LOOK-AHEAD SOLO SI la estrategia entra DESPUÉS del cruce: p. ej.
 # exigiendo «PM High Gap % >= X» en la vela de entrada (el PMH acumulado ya
 # >= X implica que el cruce de +X ya ocurrió). La UI lo avisa.
-GAP_START_LEVELS = (20, 30, 40, 50, 60, 75, 100, 150, 200)
+# 2026-10-01: de 5 en 5 (20→200) y ventana hasta las 16:00 (PMH = t ≤ 1049,
+# RTH = t ≥ 1050). Lo genera scripts/construir_gap_start.py.
+GAP_START_LEVELS = tuple(range(20, 205, 5))
 
 
 def gap_start_columns() -> list[str]:

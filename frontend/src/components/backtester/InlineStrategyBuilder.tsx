@@ -34,6 +34,60 @@ import { COMPARATOR_LABELS, ConditionRow, isPercentIndicator, etiquetaCorta } fr
 import { normalizaNombresIndicadores } from "@/lib/nombresIndicadores";
 import { Clock, Save } from "lucide-react";
 import { fetchDatasets, fetchAvailableDateRange, type Dataset } from "@/lib/api_backtester";
+import {
+  PARAMETROS_UNIVERSO,
+  DESCRIPCIONES_UNIVERSO,
+  paramsDisponibles,
+  campoDeRegla,
+  esVolumen,
+  esValorHora,
+  parseHoraGapStart,
+  horaDeGapStart,
+  esCruce,
+  errorCruce,
+  reglasCruce,
+  type SeccionUniverso,
+  type TramoCruce,
+  type OperadorUniverso,
+} from "@/lib/universoFiltros";
+
+/* Etiquetas cortas de siempre de este formulario para los 7 parámetros base;
+ * el resto (filtros nuevos) usa la etiqueta del catálogo compartido. La LISTA
+ * de parámetros y su columna salen SIEMPRE de universoFiltros.ts. */
+const ETIQUETAS_FILTRO_MERCADO: Record<string, string> = {
+  gap_pct: "Gap (%)",
+  pm_volume: "Vol. PM (M)",
+  rth_volume: "Vol. RTH (M)",
+  rth_close: "Precio RTH ($)",
+  pm_open: "Precio PM ($)",
+  pmh_gap_pct: "PM High Gap (%)",
+  rth_range_pct: "Rango RTH (%)",
+};
+const etiquetaFiltroMercado = (key: string): string => {
+  if (ETIQUETAS_FILTRO_MERCADO[key]) return ETIQUETAS_FILTRO_MERCADO[key];
+  const p = PARAMETROS_UNIVERSO.find((x) => x.key === key);
+  return p ? p.label : key;
+};
+const valorInicialFiltroMercado = (key: string): string => {
+  if (key === 'pm_volume' || key === 'rth_volume') return '1.0';
+  if (key === 'gap_pct' || key === 'rth_range_pct') return '2.0';
+  if (key === 'day_return_pct' || key === 'ret_5d_pct') return '0.0';
+  if (esValorHora(key)) return '08:00';
+  if (ETIQUETAS_FILTRO_MERCADO[key]) return '5.0';
+  return PARAMETROS_UNIVERSO.find((x) => x.key === key)?.placeholder ?? '0';
+};
+/** Valor de una regla del constructor: hora ("08:00") -> t para «Hora inicio
+ *  gap»; número para el resto. null = no interpretable (no se añade). */
+const valorFiltroMercado = (key: string, raw: string): number | null => {
+  if (esValorHora(key)) {
+    const t = parseHoraGapStart(raw);
+    // NaN cuenta como no interpretable (p.ej. "08:00" con el bug del regex
+    // numérico de parseHoraGapStart): no se añade nunca como valor.
+    return t === null || Number.isNaN(t) ? null : t;
+  }
+  const n = parseFloat(raw);
+  return isNaN(n) ? null : n;
+};
 
 /* ── Date range constants for dataset filter ── */
 const MIN_DATE = "2006-01-01";
@@ -118,8 +172,14 @@ function getFriendlyMetricLabel(metric: string): string {
     "lag_rth_range_pct_1": "rango rth día anterior %",
     "lag_day_return_pct_1": "day return rth (cierre vs apertura) día anterior %",
     "lag_ret5d_pct_1": "retorno 5 días (cierre víspera vs 5 sesiones antes) %",
+    "lag_volusd_1": "vol. $ víspera",
+    "lag_gappers_prev_1": "gappers víspera (nº con pmh≥50 %)",
+    "lag_wick_sup_1": "mecha superior víspera %",
+    "days_since_first_day": "días desde 1er día en lago",
   };
   if (labelMap[m]) return labelMap[m];
+  const cruce = m.match(/^gap_start_min_(\d+)$/);
+  if (cruce) return `hora de cruce +${cruce[1]} %`;
   return m.replace(/_/g, " ").toLowerCase();
 }
 
@@ -130,11 +190,14 @@ function formatRule(rule: any): { label: string; value: string } {
     'GREATER_THAN_OR_EQUAL': '>=', 'LESS_THAN_OR_EQUAL': '<=', 'GREATER_THAN': '>', 'LESS_THAN': '<',
   };
   const op = opMap[rule.operator] || rule.operator;
-  const friendlyMetric = getFriendlyMetricLabel(rule.metric);
+  const friendlyMetric = rule.cruce
+    ? `cruce ${rule.cruce.tramo} +${rule.cruce.pct} %`
+    : getFriendlyMetricLabel(rule.metric);
   let friendlyVal = rule.value;
   const numVal = parseFloat(rule.value);
   if (!isNaN(numVal)) {
-    if (rule.metric.toLowerCase().includes('volume')) {
+    if (/^gap_start_min_\d+$/.test(rule.metric)) friendlyVal = horaDeGapStart(numVal);
+    else if (rule.metric.toLowerCase().includes('volume')) {
       if (numVal >= 1_000_000) friendlyVal = `${(numVal / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
       else if (numVal >= 1_000) friendlyVal = `${(numVal / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
     }
@@ -583,6 +646,10 @@ export default function InlineStrategyBuilder({
   // "Si falta el dato: incluir" — solo Gap -1 (columnas lag_*): sin dato (IPO,
   // recién llegada) la regla los descarta en silencio; con la casilla pasan.
   const [tempUnivMissing, setTempUnivMissing] = useState<boolean>(false);
+  // «Hora de cruce de gap»: % (20-200, de 5 en 5) y tramo del cruce.
+  const [tempUnivPct, setTempUnivPct] = useState<string>('20');
+  const [tempUnivTramo, setTempUnivTramo] = useState<TramoCruce>('PMH');
+  const [tempUnivError, setTempUnivError] = useState<string | null>(null);
 
   useEffect(() => {
     // Disable expanding the drawer when 'between' is selected
@@ -1203,16 +1270,11 @@ export default function InlineStrategyBuilder({
                         onChange={(e) => {
                           const val = e.target.value as any;
                           setTempUnivDay(val);
-                          // Day Return % y Retorno 5 días solo tienen columna
-                          // en Gap -1 (lag_day_return_pct_1 / lag_ret5d_pct_1);
-                          // en otra sección la regla no existiría y el botón
-                          // no haría nada.
-                          if (val !== 'gap_prev_day' && (tempUnivParam === 'day_return_pct' || tempUnivParam === 'ret_5d_pct')) {
-                            setTempUnivParam('gap_pct');
-                            setTempUnivVal1('2.0');
-                          }
-                          // days_since_first_day solo tiene columna en Gap Day
-                          if (val !== 'gap_day' && tempUnivParam === 'days_since_first_day') {
+                          // Cada sección solo ofrece los parámetros con columna
+                          // real (paramsDisponibles); si el elegido no existe en
+                          // la nueva, la regla no existiría y el botón no haría
+                          // nada -> volver a Gap (%).
+                          if (!paramsDisponibles(val as SeccionUniverso).some((p) => p.key === tempUnivParam)) {
                             setTempUnivParam('gap_pct');
                             setTempUnivVal1('2.0');
                           }
@@ -1238,18 +1300,9 @@ export default function InlineStrategyBuilder({
                         onChange={(e) => {
                           const param = e.target.value;
                           setTempUnivParam(param);
-                          if (param === 'pm_volume' || param === 'rth_volume') {
-                            setTempUnivVal1('1.0');
-                          } else if (param === 'gap_pct' || param === 'rth_range_pct') {
-                            setTempUnivVal1('2.0');
-                          } else if (param === 'day_return_pct' || param === 'ret_5d_pct') {
-                            setTempUnivVal1('0.0');
-                          } else if (param === 'days_since_first_day') {
-                            setTempUnivVal1('90');
-                          } else {
-                            setTempUnivVal1('5.0');
-                          }
+                          setTempUnivVal1(valorInicialFiltroMercado(param));
                         }}
+                        title={DESCRIPCIONES_UNIVERSO[tempUnivParam] ?? ''}
                         style={{
                           background: 'var(--color-ec-bg-surface)',
                           border: '0.5px solid var(--color-ec-border)',
@@ -1260,23 +1313,62 @@ export default function InlineStrategyBuilder({
                           outline: 'none',
                         }}
                       >
-                        <option value="gap_pct">Gap (%)</option>
-                        <option value="pm_volume">Vol. PM (M)</option>
-                        <option value="rth_volume">Vol. RTH (M)</option>
-                        <option value="rth_close">Precio RTH ($)</option>
-                        <option value="pm_open">Precio PM ($)</option>
-                        <option value="pmh_gap_pct">PM High Gap (%)</option>
-                        <option value="rth_range_pct">Rango RTH (%)</option>
-                        {tempUnivDay === 'gap_prev_day' && (
-                          <option value="day_return_pct">Day Return % (RTH, cierre vs apertura)</option>
-                        )}
-                        {tempUnivDay === 'gap_prev_day' && (
-                          <option value="ret_5d_pct">Retorno 5 días % (cierre víspera vs 5 sesiones antes)</option>
-                        )}
-                        {tempUnivDay === 'gap_day' && (
-                          <option value="days_since_first_day">Días desde 1er día en lago (≈IPO, lago 2019+)</option>
-                        )}
+                        {/* Orden de siempre: los 7 base primero, luego los
+                            filtros nuevos en el orden del catálogo. */}
+                        {[
+                          ...Object.keys(ETIQUETAS_FILTRO_MERCADO)
+                            .filter((k) => paramsDisponibles(tempUnivDay).some((p) => p.key === k)),
+                          ...paramsDisponibles(tempUnivDay)
+                            .map((p) => p.key)
+                            .filter((k) => !ETIQUETAS_FILTRO_MERCADO[k]),
+                        ].map((k) => (
+                          <option key={k} value={k}>{etiquetaFiltroMercado(k)}</option>
+                        ))}
                       </select>
+
+                      {esCruce(tempUnivParam) && (
+                        <>
+                          <select
+                            value={tempUnivTramo}
+                            onChange={(e) => { setTempUnivTramo(e.target.value as TramoCruce); setTempUnivError(null); }}
+                            title="PMH: el cruce ocurrió antes de las 09:30 (premarket o after-hours de ayer). RTH: ocurrió en sesión regular."
+                            style={{
+                              background: 'var(--color-ec-bg-surface)',
+                              border: '0.5px solid var(--color-ec-border)',
+                              color: 'var(--color-ec-text-primary)',
+                              fontSize: 10,
+                              padding: '3px 4px',
+                              borderRadius: 4,
+                              outline: 'none',
+                            }}
+                          >
+                            <option value="PMH">PMH</option>
+                            <option value="RTH">RTH</option>
+                          </select>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2, fontSize: 10, color: 'var(--color-ec-text-muted)' }}>
+                            +
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={tempUnivPct}
+                              onChange={(e) => { setTempUnivPct(e.target.value); setTempUnivError(null); }}
+                              title="% sobre el cierre de ayer: 20-200, de 5 en 5"
+                              style={{
+                                background: 'var(--color-ec-bg-surface)',
+                                border: '0.5px solid var(--color-ec-border)',
+                                color: 'var(--color-ec-text-primary)',
+                                fontSize: 10,
+                                padding: '3px 4px',
+                                borderRadius: 4,
+                                outline: 'none',
+                                width: 34,
+                                textAlign: 'right',
+                              }}
+                            />
+                            %
+                          </span>
+                        </>
+                      )}
 
                       <select
                         value={tempUnivOp}
@@ -1302,6 +1394,7 @@ export default function InlineStrategyBuilder({
                         type="text"
                         value={tempUnivVal1}
                         onChange={(e) => setTempUnivVal1(e.target.value)}
+                        placeholder={esValorHora(tempUnivParam) ? (tempUnivTramo === 'RTH' ? "10:30" : "08:00") : undefined}
                         style={{
                           background: 'var(--color-ec-bg-surface)',
                           border: '0.5px solid var(--color-ec-border)',
@@ -1360,47 +1453,28 @@ export default function InlineStrategyBuilder({
                       <button
                         type="button"
                         onClick={() => {
-                          const val1 = parseFloat(tempUnivVal1);
-                          const val2 = tempUnivOp === 'between' ? parseFloat(tempUnivVal2) : undefined;
-                          if (isNaN(val1) || (tempUnivOp === 'between' && isNaN(val2 || 0))) return;
-
-                          let fieldName = "";
-                          const lagSuffix = tempUnivDay === "gap_day" ? "" : tempUnivDay === "gap_plus_1_day" ? "_1" : "_2";
-
-                          if (tempUnivDay === "gap_prev_day") {
-                            // Día anterior al gap (D-1): columnas lag_*_1
-                            if (tempUnivParam === "rth_close") fieldName = "lag_rth_close_1";
-                            else if (tempUnivParam === "pm_open") fieldName = "lag_open_1";
-                            else if (tempUnivParam === "pmh_gap_pct") fieldName = "lag_pmh_gap_pct_1";
-                            else if (tempUnivParam === "pm_volume") fieldName = "lag_pm_volume_1";
-                            else if (tempUnivParam === "gap_pct") fieldName = "lag_gap_pct_1";
-                            else if (tempUnivParam === "rth_volume") fieldName = "lag_rth_volume_1";
-                            else if (tempUnivParam === "rth_range_pct") fieldName = "lag_rth_range_pct_1";
-                            else if (tempUnivParam === "day_return_pct") fieldName = "lag_day_return_pct_1";
-                            else if (tempUnivParam === "ret_5d_pct") fieldName = "lag_ret5d_pct_1";
-                          } else if (tempUnivDay === "gap_day") {
-                            if (tempUnivParam === "rth_close") fieldName = "Close Price";
-                            else if (tempUnivParam === "pm_open") fieldName = "Min Open PM price";
-                            else if (tempUnivParam === "pmh_gap_pct") fieldName = "PMH Gap %";
-                            else if (tempUnivParam === "pm_volume") fieldName = "Premarket Volume";
-                            else if (tempUnivParam === "gap_pct") fieldName = "Open Gap %";
-                            else if (tempUnivParam === "rth_volume") fieldName = "EOD Volume";
-                            else if (tempUnivParam === "rth_range_pct") fieldName = "RTH Range %";
-                            else if (tempUnivParam === "days_since_first_day") fieldName = "days_since_first_day";
-                          } else {
-                            if (tempUnivParam === "rth_close") fieldName = `lead_rth_close${lagSuffix}`;
-                            else if (tempUnivParam === "pm_open") fieldName = `lead_open${lagSuffix}`;
-                            else if (tempUnivParam === "pmh_gap_pct") fieldName = `lead_pmh_gap_pct${lagSuffix}`;
-                            else if (tempUnivParam === "pm_volume") fieldName = `lead_pm_volume${lagSuffix}`;
-                            else if (tempUnivParam === "gap_pct") fieldName = `lead_gap_pct${lagSuffix}`;
-                            else if (tempUnivParam === "rth_volume") fieldName = `lead_rth_volume${lagSuffix}`;
-                            else if (tempUnivParam === "rth_range_pct") fieldName = `lead_rth_range_pct${lagSuffix}`;
+                          if (esCruce(tempUnivParam)) {
+                            const t1 = parseHoraGapStart(tempUnivVal1);
+                            const t2 = tempUnivOp === 'between' ? parseHoraGapStart(tempUnivVal2) : undefined;
+                            const pct = Number(tempUnivPct);
+                            const err = errorCruce(pct, tempUnivTramo, tempUnivOp === 'between' ? [t1, t2 ?? null] : [t1]);
+                            setTempUnivError(err);
+                            if (err) return;
+                            setUniverseFilters((prev: any) => ({
+                              ...prev,
+                              rules: [...(prev.rules || []),
+                                ...reglasCruce(pct, tempUnivTramo, tempUnivOp as OperadorUniverso, t1!, t2 ?? undefined)],
+                            }));
+                            return;
                           }
+                          const val1 = valorFiltroMercado(tempUnivParam, tempUnivVal1);
+                          const val2 = tempUnivOp === 'between' ? valorFiltroMercado(tempUnivParam, tempUnivVal2) : undefined;
+                          if (val1 === null || (tempUnivOp === 'between' && val2 === null)) return;
 
+                          const fieldName = campoDeRegla(tempUnivDay, tempUnivParam);
                           if (!fieldName) return;
-                          
-                          const isVol = tempUnivParam === "pm_volume" || tempUnivParam === "rth_volume";
-                          const multiplier = isVol ? 1000000 : 1;
+
+                          const multiplier = esVolumen(tempUnivParam) ? 1000000 : 1;
 
                           const newRules = [...(universeFilters.rules || [])];
                           // "Si falta el dato: incluir" viaja con la regla Gap -1
@@ -1454,17 +1528,26 @@ export default function InlineStrategyBuilder({
                         + Add
                       </button>
                     </div>
+                    {tempUnivError && (
+                      <div style={{ fontSize: 9, fontWeight: 600, color: 'var(--color-ec-loss)' }}>{tempUnivError}</div>
+                    )}
                   </div>
 
                   {/* Rules list */}
                   {universeFilters.rules && universeFilters.rules.length > 0 && (
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
                       {universeFilters.rules.map((r: any, idx: number) => {
-                        const friendlyName = getFriendlyMetricLabel(r.metric);
+                        // «Hora de cruce de gap»: la regla de tramo no se pinta.
+                        if (r.cruce_limite) return null;
+                        const friendlyName = r.cruce
+                          ? `cruce ${r.cruce.tramo} +${r.cruce.pct} %`
+                          : getFriendlyMetricLabel(r.metric);
                         const friendlyOp = r.operator === "GREATER_THAN_OR_EQUAL" ? ">=" : r.operator === "LESS_THAN_OR_EQUAL" ? "<=" : r.operator === "GREATER_THAN" ? ">" : "<";
                         let friendlyVal = r.value;
                         const numVal = parseFloat(r.value);
-                        if (!isNaN(numVal) && r.metric.toLowerCase().includes('volume')) {
+                        if (!isNaN(numVal) && /^gap_start_min_\d+$/.test(r.metric)) {
+                          friendlyVal = horaDeGapStart(numVal);
+                        } else if (!isNaN(numVal) && r.metric.toLowerCase().includes('volume')) {
                           friendlyVal = `${(numVal / 1000000).toFixed(1).replace(/\.0$/, '')}M`;
                         }
                         return (
@@ -1473,7 +1556,10 @@ export default function InlineStrategyBuilder({
                             onClick={() => {
                               setUniverseFilters((prev: any) => ({
                                 ...prev,
-                                rules: prev.rules.filter((_: any, i: number) => i !== idx)
+                                // Un cruce se borra entero (su hora + su tramo).
+                                rules: r.cruce
+                                  ? prev.rules.filter((x: any) => x.cruce?.id !== r.cruce.id)
+                                  : prev.rules.filter((_: any, i: number) => i !== idx)
                               }));
                             }}
                             style={{

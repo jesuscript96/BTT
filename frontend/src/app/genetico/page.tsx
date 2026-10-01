@@ -1205,7 +1205,12 @@ export default function GeneticoPage() {
                 options={(Object.keys(SECCIONES_UNIVERSO) as SeccionUniverso[])
                   .map((k) => ({ value: k, label: SECCIONES_UNIVERSO[k] }))} />
               <Sel value={uParam} onChange={setUParam}
-                options={paramsDisponibles(uSec).map((p) => ({ value: p.key, label: `${p.label} (${p.unit})` }))} />
+                options={paramsDisponibles(uSec)
+                  // «Hora de cruce de gap» necesita % + tramo + hora: esta
+                  // pantalla solo tiene casillas numéricas; se usa desde los
+                  // constructores de estrategia/dataset.
+                  .filter((p) => !p.cruce)
+                  .map((p) => ({ value: p.key, label: `${p.label} (${p.unit})` }))} />
             </div>
           </Row>
           <Row label={DESCRIPCIONES_UNIVERSO[uParam] ? " " : ""}>
