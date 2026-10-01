@@ -182,6 +182,7 @@ from app.bot_das.tipos import (
     HiloCaido,
     InvalidarSerie,
     Lado,
+    LocateCancelar,
     LocateComprar,
     LocateInquire,
     LocateOferta,
@@ -936,6 +937,8 @@ class Ejecutor:
             self._locate_comprar(a)
         elif isinstance(a, LocateOferta):
             self._locate_oferta(a)
+        elif isinstance(a, LocateCancelar):
+            self._locate_cancelar(a)
         elif isinstance(a, Programar):
             self._programar(a)
         elif isinstance(a, Desprogramar):
@@ -1062,6 +1065,17 @@ class Ejecutor:
             return
         self._diario.anotar("locate_oferta", id_das=a.id_das, aceptar=a.aceptar, linea=linea, regla="R-H-01")
         self._mandar_protegido("LocateOferta", linea, None, 0)
+
+    def _locate_cancelar(self, a: LocateCancelar) -> None:
+        """Decisión 50 (Jaume 1-oct): «SLCANCELORDER id» de una compra de locate en vuelo al cortar el tope del día."""
+        try:
+            linea = protocolo.cmd_sl_cancel(a.id_das)
+        except (TypeError, ValueError) as exc:  # frontera de mensaje
+            self._accion_invalida("LocateCancelar", exc, id_das=a.id_das)
+            return
+        self._diario.anotar("locate_cancel_intencion", id_das=a.id_das, motivo=a.motivo, linea=linea,
+                            regla="decisión 50")
+        self._mandar_protegido("LocateCancelar", linea, None, 0)
 
     def _mandar_simple(self, que: str, hacer_linea: Callable[[], str]) -> None:
         try:

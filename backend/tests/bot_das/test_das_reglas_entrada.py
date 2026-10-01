@@ -893,7 +893,7 @@ def test_abrir_intento_suma_lotes_y_congela_la_config() -> None:
     assert intento.qty_total == 1000
     assert (intento.bid_senal, intento.ask_senal, intento.precio_senal) == (D("10.00"), D("10.04"), D("10.02"))
     assert intento.t_cierre_vela == CIERRE.timestamp()
-    assert intento.t_limite == CIERRE.timestamp() + 60
+    assert intento.t_limite == CIERRE.timestamp() + 15                 # decisión 56 (Jaume 1-oct): 15 s agregando
     assert intento.fase is FaseIntento.AGREGANDO
     assert intento.cfg_congelada == cfg.entrada
     cfg.entrada["tope_caida_bid_pct"] = 50.0                       # riesgo 21: la config viva cambia...

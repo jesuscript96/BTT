@@ -85,6 +85,7 @@ from app.bot_das.tipos import (
     Lado,
     LocateComprar,
     LocateInquire,
+    LocateCancelar,
     LocateOferta,
     Nivel,
     OrdenDescartada,
@@ -700,11 +701,12 @@ def test_consultas_suscripciones_y_locates_van_por_protocolo(montar) -> None:
     token_locate = componer(Origen.EJECUTOR_LOCATE, HOY.timetuple().tm_yday, 7)
     for a in (Consultar("GET SymStatus XYZ"), Suscribir(TICKER, True), Suscribir(TICKER, False),
               LocateInquire(TICKER, 1000, "ALLROUTEWTTYPE1"), LocateComprar(TICKER, 1000, "LOCSIM", token_locate),
-              LocateOferta(9001, True)):
+              LocateOferta(9001, True), LocateCancelar(9002, "decisión 50")):
         m.e.ejecutar(a)
     assert [linea for linea, _, _ in m.cliente.lineas[antes:]] == [
         "GET SymStatus XYZ", "SB XYZ Lv1", "UNSB XYZ Lv1", "SLPRICEINQUIRE XYZ 1000 ALLROUTEWTTYPE1",
-        f"SLNEWORDER XYZ 1000 LOCSIM {token_locate}", "SLOFFEROPERATION 9001 Accept"]
+        f"SLNEWORDER XYZ 1000 LOCSIM {token_locate}", "SLOFFEROPERATION 9001 Accept",
+        "SLCANCELORDER 9002"]                                          # decisión 50 (Jaume 1-oct)
 
 
 def test_r_o_03_un_consultar_mutante_no_sale_y_un_envio_prohibido_es_un_bug(montar) -> None:
@@ -1730,9 +1732,10 @@ def test_r2_pro_4_replay_con_locate_already_shortable_entra_llena_pone_stops_y_s
     assert [r.datos["estado"] for r in de_tipo(regs, "locate_estado")] == ["no_hace_falta"]
     assert len(de_tipo(regs, "senal")) == 1 and not de_tipo(regs, "senal_descartada")
     intenciones = [(r.datos["proposito"], r.datos["lado"], r.datos["tipo_orden"]) for r in de_tipo(regs, "orden_intencion")]
-    assert intenciones == [("entrada_agregar", "SS", "LMT"), ("stop", "B", "STOPLMTP")]   # stop único (Jaume 29-sep)
+    # stop único (Jaume 29-sep); decisión 56 (Jaume 1-oct): la entrada agrega solo 15 s y, sin llenar, CRUZA
+    assert intenciones == [("entrada_agregar", "SS", "LMT"), ("entrada_cruce", "SS", "LMT"), ("stop", "B", "STOPLMTP")]
     fills = [(r.datos["proposito"], r.datos["neta_fills"]) for r in de_tipo(regs, "fill") if not r.datos.get("eco")]
-    assert fills == [("entrada_agregar", -100), ("stop", 0)]
+    assert fills == [("entrada_cruce", -100), ("stop", 0)]
     cerrada = de_tipo(regs, "posicion_cerrada")
     assert len(cerrada) == 1 and D(cerrada[0].datos["resultado"]) < 0                  # salió por el stop, perdiendo
     assert [r for r in de_tipo(regs, "cancel_intencion") if r.datos.get("linea") == "CANCEL ALLSYMB INLF"]

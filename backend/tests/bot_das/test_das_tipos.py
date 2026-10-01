@@ -192,7 +192,7 @@ def test_tick_de_y_al_tick_rechazan_no_finitos(precio):
     pytest.param("STOP_LIMITE_PCT", D("50"), id="R-C-01-v4-stop-unico-limite-L+50%"),
     pytest.param("STOP_PROTECCION_PCT", D("25"), id="R-C-10-(4)-proteccion-20-30%"),
     pytest.param("STOP_MARGEN_BAJO_LIMIT_UP_PCT", D("1.5"), id="R-F-02-bajo-la-banda-1-2%"),
-    pytest.param("ENTRADA_AGREGAR_S", 60, id="R-B-01-v3-agregar-60s"),
+    pytest.param("ENTRADA_AGREGAR_S", 15, id="R-B-01-v3-agregar-15s-decision-56"),
     pytest.param("ENTRADA_TOPE_CAIDA_BID_PCT", D("3"), id="R-B-01-v3-tope-caida-bid-3%"),
     pytest.param("ENTRADA_CRUCE_BAJO_BID_PCT", D("0.5"), id="R-B-01-v3-cruce-bid-0.5%"),
     pytest.param("ENTRADA_CADUCIDAD_S", 60, id="R-B-04-caducidad-60s"),
@@ -310,14 +310,15 @@ def test_enums_de_texto_comparan_con_su_valor():
 
 # ── acciones, mensajes y dataclasses ────────────────────────────────────
 ACCIONES = (EnviarOrden, Cancelar, CancelarTicker, Reemplazar, InvalidarSerie, Consultar, Suscribir,
-            LocateInquire, LocateComprar, LocateOferta, Avisar, Anotar, Programar, Desprogramar, PublicarFoto,
-            PedirAlSupervisor, Salir)
+            LocateInquire, LocateComprar, LocateOferta, tipos.LocateCancelar, Avisar, Anotar, Programar, Desprogramar,
+            PublicarFoto, PedirAlSupervisor, Salir)                  # decisión 50 (Jaume 1-oct): +LocateCancelar
 MENSAJES = (SenalRecibida, DeDAS, Tic, Temporizador, ConfigNueva, tipos.ConexionDAS, HiloCaido,
             tipos.ComandoRecibido, tipos.OrdenDescartada)   # D2a-06: +OrdenDescartada
 
 
-def test_las_17_acciones_del_documento():
-    assert set(Accion.__subclasses__()) == set(ACCIONES) and len(ACCIONES) == 17
+def test_las_18_acciones_del_documento():
+    """Las 17 del documento más `LocateCancelar` (decisión 50: SLCANCELORDER al cortar el tope de locates del día)."""
+    assert set(Accion.__subclasses__()) == set(ACCIONES) and len(ACCIONES) == 18
     for clase in ACCIONES:
         assert dataclasses.is_dataclass(clase) and clase.__dataclass_params__.frozen
 
@@ -402,7 +403,7 @@ def test_lote_e_intento_defaults():
                              "locates_deshabilitados", "cuenta", "das_conectado", "das_logon", "reconciliacion_ok_en",
                              "ultima_respuesta_barrido_en", "feed_ultima_vela_en", "modo_degradado", "ultimo_fill_en",
                              "config_version", "ultimo_seq_token", "rutas_habilitadas", "qty_corto_negativa",
-                             "senales_principales"],
+                             "senales_principales", "locates_tope_dia"],                   # decisión 50 (Jaume 1-oct)
                  id="EstadoBot"),
     pytest.param(EstrategiaConfig, ["strategy_id", "name", "origen", "ejecutar", "avisar_grupo_a", "riesgo_usd",
                                     "riesgos_piramide", "riesgo_piramide_usd", "ev_pct", "ev_rangos", "excluir_ipo",
@@ -514,7 +515,7 @@ def test_config_ejemplo_tiene_todos_los_bloques_de_seccion_7(config_cruda):
     pytest.param("salidas.eod.lanzar_antes_s", "SALIDA_ANTICIPO_S", id="R-D-02-lanzar-antes"),
     pytest.param("salidas.eod.comprobar_despues_s", "EOD_COMPROBAR_DESPUES_S", id="R-D-02-comprobar"),
     pytest.param("salidas.tp_parcial.techo_ask_pct", "TP_TECHO_ASK_PCT", id="R-D-03-v2-techo"),
-    pytest.param("salidas.tp_parcial.agregar_s", "ENTRADA_AGREGAR_S", id="R-D-03-v2-agregar-60s"),
+    pytest.param("salidas.tp_parcial.agregar_s", "SALIDA_ANTICIPO_S", id="R-D-03-v2-agregar-60s"),   # decisión 56: el TP sigue 60 s
     pytest.param("salidas.cerrar_todo.techo_pct", "CERRAR_TODO_TECHO_PCT", id="R-D-06-techo"),
     pytest.param("salidas.cerrar_todo.reintentos", "CERRAR_TODO_REINTENTOS", id="R-D-06-reintentos"),
     pytest.param("halts.k_max", "HALT_K_MAX", id="R-F-01-k"),

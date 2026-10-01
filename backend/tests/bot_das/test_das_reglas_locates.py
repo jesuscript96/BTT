@@ -651,21 +651,27 @@ def test_maquina_parcial_sigue_buscando_el_resto_con_coste_total() -> None:
     assert m.paso(1010.0) == []                                                     # cubierto: cerrojo
 
 
-def test_R_H_04_parcial_deja_de_buscar_el_resto_pasado_el_tope_y_opera_con_lo_localizado() -> None:
-    """Ensayo 28-sep: la ruta dio 800 de 8.772 y el bot consultó cada 3 s durante horas (903 consultas). Tras un
-    parcial, el resto se busca `PARCIAL_BUSCAR_MAX_S` (60 s); después Located con lo que hay y sin temporizador."""
-    from app.bot_das.reglas.locates import PARCIAL_BUSCAR_MAX_S
+def test_R_H_04_decision_51_el_parcial_sigue_buscando_el_resto_sin_tope_de_60_s() -> None:
+    """Decisión 51 (Jaume 1-oct; antes «test_R_H_04_parcial_deja_de_buscar_el_resto_pasado_el_tope…»): tras un parcial
+    el resto (`necesarias − localizadas`) se sigue buscando con la cadencia de la fase (3 s) y SIN el tope de 60 s del
+    ensayo del 28-sep; el fin lo ponen las condiciones de la fase (lo aplica el decisor: ver test_das_decisor)."""
+    assert not hasattr(L, "PARCIAL_BUSCAR_MAX_S")                       # la constante se quitó
     m = Maquina(precio="1")
     compra = m.comprada(300, precio_locate="0.01", tamano=200)
     m.paso(1002.0, orden=slorder(70, "Located", 200, 200, "0.01", compra.token))
     assert m.loc.estado == ESTADO_BUSCANDO and m.loc.comprado_en == 1002.0
-    dentro = m.paso(1002.0 + PARCIAL_BUSCAR_MAX_S - 1)                # aún dentro del tope: sigue consultando
-    assert any(isinstance(a, LocateInquire) for a in dentro) or any(isinstance(a, Programar) for a in dentro)
-    fuera = m.paso(1002.0 + PARCIAL_BUSCAR_MAX_S + 1)
-    assert tipos_de(fuera) == ["locate_estado", "Desprogramar"]
-    assert "parcial aceptado" in fuera[0].datos["motivo"]
-    assert (m.loc.estado, m.loc.localizadas) == (ESTADO_LOCALIZADO, 200)
-    assert m.paso(1100.0) == []                                         # Located: cerrojo, no se vuelve a consultar
+    for t in (1062.0, 1300.0, 5000.0):                                  # mucho después de 60 s: sigue consultando
+        acciones = m.paso(t)
+        assert LocateInquire(X, 100, "ALLROUTEWTTYPE1") in acciones, (t, acciones)
+        assert m.loc.estado == ESTADO_BUSCANDO
+    # dentro de la cadencia no consulta dos veces (solo reprograma lo que falta)
+    assert tipos_de(m.paso(5001.0)) == ["Programar"]
+    # el inventario manda: se pide SOLO lo que falta (300 − 200) y, si se compra, se cierra con lo pedido
+    compra2 = [a for a in m.paso(5003.5, ret=slret(1, "0.01", 100)) if isinstance(a, LocateComprar)]
+    assert [c.qty for c in compra2] == [100]
+    m.paso(5004.0, orden=slorder(71, "Located", 100, 100, "0.01", compra2[0].token))
+    assert (m.loc.estado, m.loc.localizadas) == (ESTADO_LOCALIZADO, 300)
+    assert m.paso(5100.0) == []                                         # cubierto: cerrojo
 
 
 def test_maquina_parcial_rechaza_la_segunda_compra_si_el_total_no_compensa() -> None:
@@ -868,23 +874,91 @@ def test_maquina_estado_das_desconocido_se_registra_sin_cambiar() -> None:
     assert m.loc.estado == ESTADO_COMPRANDO
 
 
-def test_maquina_tope_3_pct_no_compra_y_avisa() -> None:
+def test_maquina_tope_3_pct_no_compra_y_dispara_el_corte_global() -> None:
     """R-H-03: 3 % de 1.000 $ = 30 $; con 10 $ gastados, una compra de 24 $ pasaría a 34 $.
 
-    E2-06: el tope por gasto YA PAGADO para el locate («parado») y avisa UNA vez: antes seguía «buscando» y el aviso
-    (Telegram + correo) se repetía cada 60 s todo el día.
+    E2-06: la pareja queda «parada» (no se vuelve a consultar). Decisión 50 (Jaume 1-oct): en vez del aviso por pareja
+    sale `Anotar("locates_tope_global")`: el decisor corta TODOS los tickers y da UN aviso (ver test_das_decisor).
     """
     m = Maquina(equity="1000", gasto="10")
     m.paso(1000.0, qty=1200)
     acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
-    assert tipos_de(acciones) == ["locate_estado", "Desprogramar", "Avisar"]
-    assert acciones[2].clave == "locates_tope" and acciones[2].nivel is Nivel.AVISO
+    assert tipos_de(acciones) == ["locate_estado", "Desprogramar", L.ANOTACION_TOPE_GLOBAL]
+    corte = acciones[2].datos
+    assert (corte["ticker"], corte["strategy_id"], corte["gasto_dia"], corte["coste_nuevo_previsto"],
+            corte["tope"]) == (X, "est-a", D("10"), D("24"), D("30"))
+    assert not any(isinstance(a, Avisar) for a in acciones)             # el aviso ÚNICO lo da el decisor
     assert m.loc.estado == ESTADO_PARADO and m.loc.coste == D("0")       # la previsión NO es gasto pagado
     assert acciones[0].datos["coste_nuevo_previsto"] == D("24") and "coste_total" not in acciones[0].datos
-    # E2-06: dos %SLRET seguidos por encima del tope → un solo aviso
     assert m.paso(1004.0, ret=slret(1, "0.02", 5000)) == []
     assert m.paso(1007.0) == []
-    assert sum(isinstance(a, Avisar) for a in m.historial) == 1
+
+
+def test_decision_50_intento_unico_que_no_cabe_por_lo_pagado_tambien_corta() -> None:
+    """Decisión 50: en el intento único (fase B) la compra que no cabe con lo YA pagado para la pareja y corta el día."""
+    m = Maquina(equity="1000", gasto="10")
+    m.paso(1000.0, qty=1200)
+    m.loc = replace(m.loc, fase=L.FASE_SENAL, precio_senal=D("5"))
+    acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
+    assert L.ANOTACION_TOPE_GLOBAL in tipos_de(acciones) and m.loc.estado == ESTADO_PARADO
+
+
+def test_decision_50_solo_lo_comprometido_en_curso_no_corta_el_dia() -> None:
+    """Decisión 50: si la compra solo no cabe por lo PREVISTO de otras compras en curso (E2-02), no hay corte global:
+    se anota y se espera (esas compras pueden fallar)."""
+    a = Maquina(e=estrategia(strategy_id="est-a"), equity="8000")
+    b = Maquina(e=estrategia(strategy_id="est-b"), equity="8000")
+    a.comprada(1000, precio_locate="0.15")
+    b.paso(1000.0, qty=1000)
+    acciones = b.paso(1001.0, ret=slret(1, "0.15", 10_000), locates={(X, "est-a"): a.loc, (X, "est-b"): b.loc})
+    assert tipos_de(acciones) == ["locate_inquire"] and b.loc.estado == ESTADO_BUSCANDO
+
+
+def test_decision_50_oferta_que_no_cabe_por_lo_pagado_se_rechaza_y_corta() -> None:
+    """Decisión 50: una oferta (ruta tipo 1) que ya no cabe con lo pagado → Reject, parada y disparo del corte."""
+    m = Maquina(equity="1000")
+    compra = m.comprada(1200)                                           # 24 $ previstos (cabían con 0 pagado)
+    m.gasto = D("10")                                                   # entretanto se pagaron 10 $ en otro ticker
+    acciones = m.paso(1002.0, orden=slorder(80, "Offered", 1200, 0, "0.02", compra.token))
+    assert acciones[0] == LocateOferta(80, False)
+    assert L.ANOTACION_TOPE_GLOBAL in tipos_de(acciones) and m.loc.estado == ESTADO_PARADO
+
+
+def test_decision_50_con_el_corte_no_se_consulta_ni_se_compra() -> None:
+    """Decisión 50: con `corte_dia` ninguna pareja consulta ni compra (ni las nuevas del radar)."""
+    m = Maquina()
+    assert m.paso(1000.0, qty=1200, corte_dia=True) == [] and m.loc is None
+    m.paso(1000.0, qty=1200)
+    assert m.paso(1010.0, corte_dia=True) == []
+    assert m.paso(1011.0, ret=slret(1, "0.01", 5000), corte_dia=True) == []
+
+
+@pytest.mark.parametrize("estado_das, localizadas, tipos, estado_final, gasto", [
+    pytest.param("Located", 1200, ["locate_estado", "Consultar", "Desprogramar"], ESTADO_LOCALIZADO, D("24"),
+                 id="servida-antes-del-cancel-se-cobra-sin-buscar"),
+    pytest.param("Canceled", 0, ["locate_estado", "Desprogramar"], ESTADO_PARADO, D("0"), id="cancelada-sin-aviso"),
+    pytest.param("Rejected", 0, ["locate_estado", "Desprogramar"], ESTADO_PARADO, D("0"), id="rechazada-sin-aviso"),
+    pytest.param("Pending", 0, ["locate_estado"], "Pending", D("0"), id="pending-se-anota-con-id"),
+])
+def test_decision_50_compra_en_vuelo_tras_el_corte(estado_das: str, localizadas: int, tipos: list, estado_final: str,
+                                                   gasto: Decimal) -> None:
+    """Decisión 50: la `%SLOrder` de una compra en vuelo cuando se cortó el día: Located se cobra (sin buscar el resto),
+    un fallo deja la pareja parada SIN aviso (el aviso del corte es único), Pending se anota (el decisor la cancela)."""
+    m = Maquina()
+    compra = m.comprada(1500, precio_locate="0.02", tamano=1200)        # parcial posible: pide 1.200 de 1.500
+    acciones = m.paso(1002.0, orden=slorder(70, estado_das, 1200, localizadas, "0.02", compra.token), corte_dia=True)
+    assert tipos_de(acciones) == tipos
+    assert not any(isinstance(a, (Avisar, LocateInquire)) for a in acciones)
+    assert m.loc.estado == estado_final and m.gasto == gasto
+    if estado_das == "Pending":
+        assert m.loc.id_das == 70
+
+
+def test_decision_50_oferta_en_vuelo_tras_el_corte_se_rechaza() -> None:
+    m = Maquina()
+    compra = m.comprada(1200)
+    acciones = m.paso(1002.0, orden=slorder(80, "Offered", 1200, 0, "0.02", compra.token), corte_dia=True)
+    assert acciones[0] == LocateOferta(80, False) and m.loc.estado == ESTADO_PARADO
 
 
 def test_maquina_tope_justo_en_el_limite_compra() -> None:

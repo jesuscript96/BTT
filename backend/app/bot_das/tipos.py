@@ -38,7 +38,7 @@ from typing import Any, Optional
 STOP_LIMITE_PCT = Decimal("50")                 # R-C-01 v4 (Jaume 29-sep, stop único): UN stop por nivel, disparo en L, límite L + 50 %
 STOP_PROTECCION_PCT = Decimal("25")             # R-C-10 (4): 20-30 % para posiciones desconocidas
 STOP_MARGEN_BAJO_LIMIT_UP_PCT = Decimal("1.5")  # R-F-02: 1-2 % bajo la banda
-ENTRADA_AGREGAR_S = 60                          # R-B-01 v3: hasta 60 s agregando en el punto medio
+ENTRADA_AGREGAR_S = 15                          # R-B-01 v3 / decisión 56 (Jaume 1-oct): 15 s agregando en el punto medio
 ENTRADA_TOPE_CAIDA_BID_PCT = Decimal("3")       # R-B-01 v3: no cruzar si el bid cayó > 3 %
 ENTRADA_CRUCE_BAJO_BID_PCT = Decimal("0.5")     # R-B-01 v3: cruzar a bid × (1 − 0,5 %)
 ENTRADA_CADUCIDAD_S = 60                        # R-B-04
@@ -809,6 +809,9 @@ class EstadoBot:                   # TODO lo que el decisor sabe. Se reconstruye
     # Jaume 29-sep: (ticker, strategy_id) → id de la PRIMERA señal principal del día que llegó a los locates (la
     # única oportunidad de entrada; las siguientes se pierden salvo reentrada legítima). Anotación «senal_principal».
     senales_principales: dict[tuple[str, str], str] = field(default_factory=dict)
+    # Decisión 50 (Jaume 1-oct): la primera compra de locates que no cabe en el tope del día (o lo pagado lo alcanza)
+    # corta las compras de locates de TODOS los tickers hasta el cambio de día. Anotación «locates_tope_global».
+    locates_tope_dia: bool = False
 
 
 # ── referencia de Massive y niveles de stop (ajuste (a) del orquestador) ─
@@ -911,6 +914,12 @@ class LocateComprar(Accion):
 class LocateOferta(Accion):
     id_das: int
     aceptar: bool
+
+
+@dataclass(frozen=True)
+class LocateCancelar(Accion):      # decisión 50 (Jaume 1-oct): «SLCANCELORDER id» de una compra Pending/Waiting
+    id_das: int
+    motivo: str = ""
 
 
 @dataclass(frozen=True)

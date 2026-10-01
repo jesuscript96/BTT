@@ -876,7 +876,7 @@ def test_locate_inquire_y_compra_tipo_0(libro, emp):
     assert (msgs[1].localizadas, msgs[1].abiertas, msgs[1].token) == (250, 50, 326800001)
     assert libro.locates()[0]["localizadas"] == 250
     (avail,) = parsear(emp.recibir(f"SLAvailQuery {CUENTA} ABCD"))
-    assert isinstance(avail, MsgSLAvail) and avail.disponibles == 0
+    assert isinstance(avail, MsgSLAvail) and avail.disponibles == 250    # decisión 55: lo localizado y sin usar
     (reuse,) = parsear(emp.recibir("SLReuseQuery ABCD"))
     assert isinstance(reuse, MsgSLReuse) and reuse.reutilizable is True
     cargos = parsear(emp.recibir("SLRouteMinCharge ALLROUTE"))
@@ -884,6 +884,29 @@ def test_locate_inquire_y_compra_tipo_0(libro, emp):
     assert {c.ruta: c.minimo for c in cargos}["LOC3"] == D("2.5")
     listado = parsear(emp.recibir("GET LOCATES"))
     assert (listado[0].nombre, listado[-1].nombre, listado[1].estado) == ("#SLOrder", "#SLOrderEnd", "Located")
+
+
+@pytest.mark.parametrize("reutilizable, esperado", [
+    pytest.param(True, [300, 200, 300], id="reutilizable-cuenta-solo-lo-corto-ahora"),
+    pytest.param(False, [300, 200, 200], id="un-solo-uso-cuenta-todo-lo-vendido-hoy"),
+])
+def test_decision_55_slavailquery_contesta_lo_localizado_y_sin_usar(libro, emp, reutilizable, esperado):
+    """Decisión 55 (Jaume 1-oct): `$SLAvailQueryRet` = lo localizado (también lo sembrado) menos lo usado: con locate
+    reutilizable, lo corto AHORA; de un solo uso, todo lo vendido en corto hoy."""
+    libro.configurar_locate("ABCD", reutilizable=reutilizable)
+    libro.sembrar_locate("ABCD", 300)
+    libro.cotizar("ABCD", D("2.49"), D("2.51"), D("2.50"))
+
+    def avail() -> int:
+        (m,) = parsear(emp.recibir(f"SLAvailQuery {CUENTA} ABCD"))
+        return m.disponibles
+
+    vistos = [avail()]
+    emp.recibir("NEWORDER 126800001 SS ABCD SAGEPRO 100 2.49 TIF=DAY+")  # corto 100
+    vistos.append(avail())
+    emp.recibir("NEWORDER 126800002 B ABCD SAGEPRO 100 2.51 TIF=DAY+")   # se cubre
+    vistos.append(avail())
+    assert vistos == esperado
 
 
 def test_locate_tipo_1_ofrece_y_se_acepta_o_rechaza(libro, emp):

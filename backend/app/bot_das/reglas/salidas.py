@@ -920,10 +920,12 @@ def comprobar_limbo_tp(lote: Lote, orden: Orden) -> Optional[Avisar]:
     if restante <= 0:
         return None
     precio = "?" if orden.precio is None else str(orden.precio)
+    # Decisión 52 (Jaume 1-oct): el limbo con resto se dice «SALIDA PARCIAL» (salieron, faltan y el stop cubre el resto)
     return Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"limbo:{lote.id}:{orden.token}",
-                  texto=(f"limbo: {_h(lote.ticker)} · {_h(lote.estrategia)}: la orden de cruce del TP (token "
-                         f"{orden.token}, límite {_h(precio)}) no ha llenado {restante} acciones tras perseguir el "
-                         f"ask (decisión 13). No se persigue más; mandan los stops residentes (R-D-03 v2)"))
+                  texto=(f"SALIDA PARCIAL (limbo) {_h(lote.ticker)} · {_h(lote.estrategia)}: de la orden de cruce del "
+                         f"TP (token {orden.token}, límite {_h(precio)}) salieron {max(int(orden.llenas), 0)} de "
+                         f"{orden.qty}; faltan {restante} tras perseguir el ask (decisión 13). No se persigue más; el "
+                         f"stop sigue cubriendo el resto (R-D-03 v2)"))
 
 
 # ── prioridad en la misma tanda (R-D-07, D13) ────────────────────────────
@@ -1459,9 +1461,11 @@ def _cierre_total_en_curso(lote: Lote, vivas: list[Orden]) -> bool:
 
 
 def _aviso_limbo(lote: Lote, resto: int, causa: str, techo: Decimal) -> Avisar:
+    # Decisión 52 (Jaume 1-oct): «SALIDA PARCIAL»: faltan `resto` y el stop sigue cubriéndolas
     return Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"limbo:{lote.id}",
-                  texto=(f"limbo: {_h(lote.ticker)} · {_h(lote.estrategia)}: el resto del TP ({resto} acciones) no se "
-                         f"cruza: {_h(causa)}; techo {techo} %. No se persigue; mandan los stops residentes (R-D-03 v2)"))
+                  texto=(f"SALIDA PARCIAL (limbo) {_h(lote.ticker)} · {_h(lote.estrategia)}: el resto del TP ({resto} "
+                         f"acciones) no se cruza: {_h(causa)}; techo {techo} %. Faltan {resto}; no se persigue; el stop "
+                         f"sigue cubriendo el resto (R-D-03 v2)"))
 
 
 def _h(valor: Any) -> str:

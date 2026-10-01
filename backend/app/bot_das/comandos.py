@@ -598,6 +598,8 @@ def _resp_estado(estado: EstadoBot, cfg: Config, mercado: Any, ahora: float) -> 
         incidentes.append(f"órdenes ajenas en DAS: {len(estado.ordenes_ajenas)}")
     if estado.locates_deshabilitados:
         incidentes.append("locates deshabilitados")
+    if getattr(estado, "locates_tope_dia", False):
+        incidentes.append("tope de locates del día alcanzado")          # decisión 50 (Jaume 1-oct)
     filas.append(_esc("Incidentes: " + ("; ".join(incidentes) if incidentes else "ninguno")))
     filas.append(_esc(f"Última reconciliación: {_edad(estado.reconciliacion_ok_en, ahora)}"))
     return "\n".join(_limitar(filas))
@@ -671,6 +673,8 @@ def _resp_locates(estado: EstadoBot, cfg: Config) -> str:
         filas.append(_esc(f"Gasto: {_usd(estado.gasto_locates_dia)} (tope sin calcular: falta equity)"))
     if estado.locates_deshabilitados:
         filas.append("LOCATES DESHABILITADOS")
+    if getattr(estado, "locates_tope_dia", False):
+        filas.append("TOPE DEL DÍA ALCANZADO: no se compran más locates hoy (decisión 50)")
     return "\n".join(_limitar(filas))
 
 

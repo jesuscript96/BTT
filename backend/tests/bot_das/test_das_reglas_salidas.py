@@ -1206,7 +1206,10 @@ def test_D2_13_programa_y_comprobacion_del_limbo_del_tp():
     viva = _orden(token=55, proposito=Proposito.TP_CRUCE, qty=100, lvqty=60, llenas=40, precio="10.10")
     aviso = salidas.comprobar_limbo_tp(lote, viva)
     assert aviso is not None and aviso.nivel is Nivel.AVISO and aviso.clave == "limbo:L1:55"
-    assert "60 acciones" in aviso.texto and "No se persigue" in aviso.texto
+    assert "No se persigue" in aviso.texto
+    # decisión 52 (Jaume 1-oct): «SALIDA PARCIAL»: cuántas salieron, cuántas faltan y que el stop cubre el resto
+    assert aviso.texto.startswith("SALIDA PARCIAL (limbo)") and "salieron 40 de 100" in aviso.texto
+    assert "faltan 60" in aviso.texto and "el stop sigue cubriendo el resto" in aviso.texto
     assert salidas.comprobar_limbo_tp(lote, _orden(token=55, estado=EstadoOrden.EXECUTED)) is None
     assert salidas.comprobar_limbo_tp(lote, _orden(token=55, qty=100, llenas=100)) is None
     cfg = _config({"tp_parcial": {"limbo_comprobar_s": 3}})

@@ -258,6 +258,7 @@ class LibroSimulado:
         self._pos: dict[str, dict[str, Any]] = {}
         self._locates: dict[int, dict[str, Any]] = {}
         self._cfg_locates: dict[str, dict[str, Any]] = {}
+        self._vendido_corto: dict[str, int] = {}        # decisión 55: lo vendido en corto hoy (locate de un solo uso)
         self._min_charge: dict[str, Decimal] = {RUTA_LOCATE_SIMULADA: Decimal("0")}
         self._sig_orden = PRIMER_ID_ORDEN
         self._sig_trade = PRIMER_ID_TRADE
@@ -552,7 +553,38 @@ class LibroSimulado:
             pos["tipo"] = 2
         elif nueva < 0:
             pos["tipo"] = 3
+        if lado == "SS":
+            self._vendido_corto[ticker] = self._vendido_corto.get(ticker, 0) + qty
         return pl
+
+    def disponibles_locate(self, ticker: str) -> int:
+        """Decisión 55 (Jaume 1-oct): lo que contesta `SLAvailQuery`: acciones localizadas (Located) y NO usadas.
+
+        Locate reutilizable (lo normal en DAS): lo localizado menos lo que hay
+        corto AHORA; de un solo uso: menos todo lo vendido en corto hoy. Nunca
+        negativo. Así la sombra y los tests ven el inventario como lo vería DAS.
+        """
+        with self.cerrojo:
+            total = sum(int(loc["localizadas"]) for loc in self._locates.values() if loc["ticker"] == ticker)
+            if self._cfg_locate(ticker)["reutilizable"]:
+                usado = max(-int(self._pos.get(ticker, {}).get("neta", 0)), 0)
+            else:
+                usado = self._vendido_corto.get(ticker, 0)
+            return max(total - usado, 0)
+
+    def sembrar_locate(self, ticker: str, localizadas: int, precio: Decimal = Decimal("0")) -> None:
+        """Un locate ya Located antes de empezar (tests y replay que siembran el inventario del bot a mano): cuenta en
+        `SLAvailQuery` como lo comprado por SLNEWORDER, sin emitir ningún `%SLOrder`."""
+        ticker = _palabra("ticker", ticker)
+        if type(localizadas) is not int or localizadas < 0:
+            raise ValueError(f"localizadas debe ser int ≥ 0: {localizadas!r}")
+        with self.cerrojo:
+            cfg = self._cfg_locate(ticker)
+            loc = {"id": self._sig_locate, "ticker": ticker, "pedidas": localizadas, "abiertas": 0,
+                   "localizadas": localizadas, "precio": precio, "estado": "Located", "ruta": cfg["ruta"],
+                   "hora": "00:00:00", "token": None}
+            self._sig_locate += 1
+            self._locates[loc["id"]] = loc
 
     def _no_realizado(self, ticker: str) -> Decimal:
         pos = self._pos.get(ticker)
@@ -1054,10 +1086,15 @@ class Emparejador:
         return [f"$SLReuseQueryRet {p[1]} {'Yes' if cfg['reutilizable'] else 'No'}"]
 
     def _sl_avail(self, p: list[str]) -> list[str]:
-        """«SLAvailQuery Account Symbol» → `$SLAvailQueryRet Account Symbol N` (L1796-1809)."""
+        """«SLAvailQuery Account Symbol» → `$SLAvailQueryRet Account Symbol N` (L1796-1809).
+
+        Decisión 55 (Jaume 1-oct): N = lo localizado y no usado de la cuenta
+        (`LibroSimulado.disponibles_locate`), como el DAS real («available
+        locate shares to short»), no lo que la ruta aún puede ofrecer.
+        """
         if len(p) != 3:
             raise _ComandoMalo("SLAvailQuery mal formado")
-        return [f"$SLAvailQueryRet {p[1]} {p[2]} {self._libro._cfg_locate(p[2])['disponibles']}"]
+        return [f"$SLAvailQueryRet {p[1]} {p[2]} {self._libro.disponibles_locate(p[2])}"]
 
     def _sl_min_charge(self, p: list[str]) -> list[str]:
         """«SLRouteMinCharge Route|ALLROUTE» → `SLRouteMinChargeRet Route minimo` (L1823-1838; sin `$`, como el ejemplo)."""

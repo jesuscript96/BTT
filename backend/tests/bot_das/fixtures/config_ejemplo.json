@@ -5,7 +5,7 @@
   "generado_por": "fixture:tests/bot_das",
   "motor_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "estrategias_hash": "sha256:2fbf7294b1c4ab42568ff343fe0ab12db9a2954c8e5e3b3d0f08b55554b57bc6",
-  "sha256": "9ba1f45ef298fc57687c9158add115eecbac8c99ea55eb165422ce7116d9dbbe",
+  "sha256": "976d499b06923402d842c29adda1311ef9a746b24b92644f5421f8c2b01313dd",
   "fase": "sombra",
   "vigilando": true,
   "pausar_entradas": false,
@@ -29,7 +29,7 @@
     "espera_intento_s": 10
   },
   "entrada": {
-    "agregar_s": 60,
+    "agregar_s": 15,
     "nivel": "punto_medio_redondeo_arriba",
     "post_only": true,
     "tope_caida_bid_pct": 3.0,

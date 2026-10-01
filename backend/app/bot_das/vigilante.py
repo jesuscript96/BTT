@@ -242,7 +242,8 @@ EVENTO_DESCARTE = "descarte"              # (EVENTO_DESCARTE, OrdenDescartada): 
 
 # Registros de los diarios que cambian lo que ve el vigilante (lotes, pausas/BS, locates, fase).
 TIPOS_RELEVANTES = frozenset({"arranque", "config", "lote", "pausa", "reanudar", "bs", "bs_informe", "comando",
-                              "locate_intencion", "locate_estado", "locates_deshabilitar"})
+                              "locate_intencion", "locate_estado", "locates_deshabilitar",
+                              "locates_tope_global"})                  # decisión 50 (Jaume 1-oct)
 _TIPOS_LOCATE = ("locate_intencion", "locate_estado")
 _MARCADORES_VOLCADO = frozenset({"#POSEND", "#OrderEnd"})
 _ESTADOS_VIVOS = frozenset({EstadoOrden.SENDING, EstadoOrden.ACCEPTED, EstadoOrden.PARTIAL, EstadoOrden.HOLD,
@@ -1194,7 +1195,8 @@ class VigilanteDAS:
             compras_locate=[r for r in self._registros if r.tipo in _TIPOS_LOCATE],
             equity=self._equity_ejecutor(ahora), descubierta_desde=dict(self._descubierta_desde), limit_up=limit_up,
             pendientes=[orden for orden, _ in self._pend_nuevas.values()], estados_ticker=estados,
-            locates_deshabilitados=estado.locates_deshabilitados, anotado=dict(self._firmas_vigilancia))
+            locates_deshabilitados=estado.locates_deshabilitados, anotado=dict(self._firmas_vigilancia),
+            locates_tope_dia=estado.locates_tope_dia)            # decisión 50 (Jaume 1-oct)
 
     def _ordenes_vista(self, ahora: float) -> dict[int, MsgOrden]:
         """El libro con lo pendiente aplicado: un CANCEL enviado cuenta como hecho y un REPLACE con su cantidad nueva."""

@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "9ba1f45ef298fc57687c9158add115eecbac8c99ea55eb165422ce7116d9dbbe"   # Jaume 30-sep: B20 bis null + TP persigue
+SHA_FIXTURE = "976d499b06923402d842c29adda1311ef9a746b24b92644f5421f8c2b01313dd"   # Jaume 1-oct: entrada.agregar_s 15 (decisión 56)
 RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 

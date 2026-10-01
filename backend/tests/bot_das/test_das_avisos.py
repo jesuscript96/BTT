@@ -1049,6 +1049,21 @@ def test_texto_fill_con_estrategia_que_no_esta_en_la_config(cfg):
     assert "Vieja" in texto_fill(lote, _fill(), cfg, Fase.REAL)
 
 
+@pytest.mark.parametrize(("estado", "llenas", "parcial"), [
+    pytest.param(EstadoLote.ABIERTO, 600, True, id="terminada-con-menos-de-lo-pedido"),
+    pytest.param(EstadoLote.ABIERTO, 1000, False, id="terminada-entera"),
+    pytest.param(EstadoLote.ABRIENDO, 600, False, id="aun-agregando"),
+])
+def test_decision_52_texto_fill_dice_entrada_parcial_con_las_que_faltan(cfg, estado, llenas, parcial):
+    """Decisión 52 (Jaume 1-oct): la entrada TERMINADA con llenas < pedidas se dice «ENTRADA PARCIAL» con las que faltan."""
+    texto = texto_fill(replace(_lote(), estado=estado, llenas=llenas), _fill(), cfg, Fase.SOMBRA)
+    assert ("ENTRADA PARCIAL" in texto) is parcial
+    if parcial:
+        assert "600 de 1.000" in texto and "faltan 400" in texto
+    else:
+        assert f"Lote: {llenas if llenas < 1000 else '1.000'}/1.000" in texto
+
+
 @pytest.mark.parametrize(("precio", "texto"), [
     pytest.param(None, "—", id="sin-precio"),
     pytest.param(Decimal("1234.5"), "1.234,50", id="miles"),

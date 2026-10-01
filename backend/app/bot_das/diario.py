@@ -174,6 +174,7 @@ CASOS_ADOPTA_DAS = frozenset({5, 6})       # reconciliación: caso 5 (plana en D
 MOTIVO_INTERVENCION_HUMANA = "intervención humana"   # = reconciliacion.MOTIVO_INTERVENCION_HUMANA (R-M-03 por ticker)
 FASES_LOCATE = ("A", "B", "C", "C_piramide", "D", "P")   # = locates.FASES (Jaume 29-sep; «P»: decisión 47, 30-sep)
 TIPO_SENAL_PRINCIPAL = "senal_principal"             # Jaume 29-sep: la PRIMERA señal principal del día por pareja
+TIPO_LOCATES_TOPE_GLOBAL = "locates_tope_global"     # = locates.ANOTACION_TOPE_GLOBAL (decisión 50, Jaume 1-oct)
 _PROPOSITOS_STOP_V3 = ("stop_principal", "stop_emergencia")   # diarios de antes del stop único (Jaume 29-sep)
 _PROPOSITOS_VETO_STOP = frozenset({         # R-F-03 (G1A-18): salidas que activan el veto de reentrada tras un halt
     Proposito.STOP.value, Proposito.STOP_PROTECCION.value, *_PROPOSITOS_STOP_V3,
@@ -1546,7 +1547,8 @@ def reconstruir(registros: Iterable[Registro], hoy: date,
     corrección 2); version_stops (sube con cada fill, injerto §8.6);
     ultimo_fill_en; ultimo_seq_token (máximo de EJECUTOR y EJECUTOR_LOCATE;
     por origen en `ultimo_seq_por_origen`); locates, gasto_locates_dia
-    (R-H-03) y locates_deshabilitados (`locates_deshabilitar`, R-H-02);
+    (R-H-03), locates_deshabilitados (`locates_deshabilitar`, R-H-02) y el
+    corte del tope de locates del día (`locates_tope_global`, decisión 50);
     la fase de cada locate y la primera señal principal por pareja
     (`senal_principal`, Jaume 29-sep);
     neta_das (`pos`) y el caso 6 (`discrepancia`); pausas por ticker y
@@ -1607,6 +1609,8 @@ def reconstruir(registros: Iterable[Registro], hoy: date,
             _aplicar_locate_estado(estado, registro, hoy)
         elif tipo == "locates_deshabilitar":
             estado.locates_deshabilitados = True
+        elif tipo == TIPO_LOCATES_TOPE_GLOBAL:
+            estado.locates_tope_dia = True              # decisión 50 (Jaume 1-oct): el corte del día sobrevive al reinicio
         elif tipo == TIPO_SENAL_PRINCIPAL:
             _aplicar_senal_principal(estado, registro)
         elif tipo == TIPO_AJENAS_TRATADAS:

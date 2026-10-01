@@ -96,6 +96,7 @@ from app.bot_das.tipos import (
     Aviso,
     Avisar,
     Config,
+    EstadoLote,
     Fase,
     Fill,
     Grupo,
@@ -722,10 +723,15 @@ def texto_fill(lote: Lote, fill: Fill, cfg: Config, fase: Fase) -> str:
     nombre = estrategia.name if estrategia is not None else (lote.estrategia or lote.strategy_id)
     lado = _LADO_LEGIBLE.get(fill.lado, fill.lado)
     simulado = " · <i>SIMULADO</i>" if fill.simulado else ""
+    # Decisión 52 (Jaume 1-oct): la entrada TERMINADA con menos de lo pedido se dice «ENTRADA PARCIAL», con las que faltan
+    parcial = lote.estado is not EstadoLote.ABRIENDO and 0 < lote.llenas < lote.pedidas
+    cabeza = (f"⚠️ <b>ENTRADA PARCIAL</b>: {formatear_numero(lote.llenas, 0)} de {formatear_numero(lote.pedidas, 0)} "
+              f"(faltan {formatear_numero(lote.pedidas - lote.llenas, 0)})" if parcial
+              else f"Lote: {formatear_numero(lote.llenas, 0)}/{formatear_numero(lote.pedidas, 0)}")
     lineas = [
         f"{prefijo_fase(fase)} ✅ <b>FILL</b> <b>{escapar_html(fill.ticker)}</b> · {escapar_html(lado)} "
         f"<b>{formatear_numero(fill.qty, 0)}</b> @ <b>{formatear_precio(fill.precio)}</b>{simulado}",
-        f"Lote: {formatear_numero(lote.llenas, 0)}/{formatear_numero(lote.pedidas, 0)} · "
+        f"{cabeza} · "
         f"medio {formatear_precio(lote.precio_medio)} · 🔴 stop {formatear_precio(lote.nivel_stop)} · {escapar_html(lote.estado.value)}",
         f"<i>— {escapar_html(nombre)} · {escapar_html(lote.direccion)} · {escapar_html(fill.ruta)} · {escapar_html(fill.hora)} —</i>",
     ]

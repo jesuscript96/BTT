@@ -194,3 +194,15 @@ Format: GET SymStatus Symbol
 Format: GET LDLU Symbol
 # caso: real_respuestas_pegadas | DAS real (01-oct): tres respuestas pegadas SIN salto de línea entre ellas: desconocido, nunca excepción
 GET SymStatus failed, please subscribe level1 data 1stly.GET LDLU failed, please subscribe level1 data 1stly.Format: GET SymStatus Symbol
+# caso: real_slreuse_si | DAS real (01-oct): «SLReuseQuery AAPL» → reutilizable
+$SLReuseQueryRet AAPL Yes
+# caso: real_slreuse_all_no_1 | DAS real (01-oct): «SLReuseQuery ALL» → una línea por símbolo NO reutilizable (159 ese día), sin marcador de fin
+$SLReuseQueryRet BTCT No
+# caso: real_slreuse_all_no_2 | DAS real (01-oct): segunda línea de la misma respuesta a «SLReuseQuery ALL»
+$SLReuseQueryRet CONL No
+# caso: real_slavail | DAS real (01-oct): «SLAvailQuery <cuenta> AAPL» (cuenta sustituida por la ficticia)
+$SLAvailQueryRet CUENTA_PRUEBA AAPL 0
+# caso: real_slmincharge_1 | DAS real (01-oct): «SLRouteMinCharge ALLROUTE» → una línea por ruta, CON $
+$SLRouteMinChargeRet TESTSL 0
+# caso: real_slmincharge_2 | DAS real (01-oct): segunda línea de la misma respuesta
+$SLRouteMinChargeRet SAGE 0

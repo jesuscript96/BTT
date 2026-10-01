@@ -302,6 +302,13 @@ ESPERADOS: dict[str, tuple[str, type, dict]] = {
     "real_formato_symstatus": ("DAS-real-01oct-5.8", MsgDesconocido, dict(palabra="Format:")),
     "real_formato_ldlu": ("DAS-real-01oct-5.8", MsgDesconocido, dict(palabra="Format:")),
     "real_respuestas_pegadas": ("DAS-real-01oct-5.15", MsgDesconocido, dict(palabra="GET")),
+    # decisión 55 (Jaume 1-oct): respuestas reales de locates del DAS de Jaume (solo lectura, cuenta ficticia)
+    "real_slreuse_si": ("DAS-real-01oct-L1818", MsgSLReuse, dict(ticker="AAPL", reutilizable=True)),
+    "real_slreuse_all_no_1": ("DAS-real-01oct-L1818", MsgSLReuse, dict(ticker="BTCT", reutilizable=False)),
+    "real_slreuse_all_no_2": ("DAS-real-01oct-L1818", MsgSLReuse, dict(ticker="CONL", reutilizable=False)),
+    "real_slavail": ("DAS-real-01oct-L1804", MsgSLAvail, dict(cuenta=CUENTA, ticker="AAPL", disponibles=0)),
+    "real_slmincharge_1": ("DAS-real-01oct-L1833", MsgSLMinCharge, dict(ruta="TESTSL", minimo=D("0"))),
+    "real_slmincharge_2": ("DAS-real-01oct-L1833", MsgSLMinCharge, dict(ruta="SAGE", minimo=D("0"))),
 }
 CASOS_MULTILINEA = {"intmsg"}
 

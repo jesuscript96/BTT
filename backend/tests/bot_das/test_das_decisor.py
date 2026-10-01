@@ -101,11 +101,13 @@ from app.bot_das.tipos import (
     InvalidarSerie,
     Lado,
     Locate,
+    LocateCancelar,
     LocateComprar,
     LocateInquire,
     LocateOferta,
     Lote,
     Mensaje,
+    MsgSLAvail,
     Nivel,
     Orden,
     OrdenDescartada,
@@ -322,6 +324,8 @@ class Banco:
             self._a_das(protocolo.cmd_sl_neworder(a.ticker, a.qty, a.ruta, a.token))
         elif isinstance(a, LocateOferta):
             self._a_das(protocolo.cmd_sl_offer(a.id_das, a.aceptar))
+        elif isinstance(a, LocateCancelar):
+            self._a_das(protocolo.cmd_sl_cancel(a.id_das))
         elif isinstance(a, Suscribir):
             self.canal.enviar(protocolo.cmd_sb(a.ticker) if a.alta else protocolo.cmd_unsb(a.ticker))
             if a.alta and self.das_contesta and self.libro.cotizacion(a.ticker) is not None:
@@ -403,6 +407,7 @@ class Banco:
         for ticker, sid, n in locates:
             self.estado.locates[(ticker, sid)] = Locate(ticker=ticker, strategy_id=sid, pedidas=n, localizadas=n,
                                                         estado="Located")
+            self.libro.sembrar_locate(ticker, n)          # decisión 55: DAS sabe lo que el bot tiene localizado
         if reconciliar:
             self.avanzar(0)
             assert not self.estado.modo_degradado, self.estado.modo_degradado
@@ -571,7 +576,7 @@ def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
         ("Anotar", "metrica"),
         ("Anotar", "intento"),
         ("EnviarOrden", "SS", "LMT", 100, D("3.45"), None, "entrada_agregar", "SAGEREB", True, None),
-        ("Programar", T_CRUCE, 60.0),
+        ("Programar", T_CRUCE, 15.0),          # decisión 56: 15 s agregando
         ("Anotar", "locate_estado"),                 # Jaume 29-sep: dentro → fase C
         ("Anotar", "metrica"),
     ]
@@ -705,9 +710,9 @@ def test_f1_el_resto_se_cruza_solo_con_el_canceled_cuadrado(banco: Banco) -> Non
     b.senal(evento())
     agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
     id_das = b.orden(agregar.token).id_das
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 59, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 14, tzinfo=ET))
     b.das_contesta = False                                              # la cancelación no llega al DAS falso
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 0, 200_000, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 15, 200_000, tzinfo=ET))
     assert [c.token for c in acciones_de(b.historial, Cancelar)] == [agregar.token]
     b.das_contesta = True
     b.cotizar(TICKER, "3.44", "3.46", "3.45")
@@ -724,7 +729,7 @@ def test_f1_cruce_sin_llenar_un_reintento_y_se_queda_lo_llenado(banco: Banco) ->
     b = banco
     b.senal(evento())
     b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_bid=0)               # nadie compra: ni agregando ni cruzando
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 0, 500_000, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 15, 500_000, tzinfo=ET))
     b.cotizar(TICKER, "3.43", "3.45", "3.44", tam_bid=0)
     b.avanzar(5)
     cruces = b.enviadas(Proposito.ENTRADA_CRUCE)
@@ -746,7 +751,7 @@ def test_f1_bid_caido_mas_del_tope_no_se_cruza(banco: Banco) -> None:
     """R-B-01 v3 paso 3: si al vencer el bid cayó más del 3 % desde el de la señal, no se cruza; se avisa y se cierra."""
     b = banco
     b.senal(evento())
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 59, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 14, tzinfo=ET))
     b.cotizar(TICKER, "3.30", "3.32", "3.31")                           # 3,30 < 3,44 · 0,97 = 3,3368
     b.avanzar(2)
     assert not b.enviadas(Proposito.ENTRADA_CRUCE)
@@ -760,9 +765,9 @@ def test_f1_cancelacion_sin_confirmar_cierra_y_un_fill_tardio_revive_el_lote(ban
     b.senal(evento())
     agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
     id_das = b.orden(agregar.token).id_das
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 59, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 14, tzinfo=ET))
     b.das_contesta = False
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 4, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 19, tzinfo=ET))
     lote_id = lote_de(evento())
     assert b.pos().intento is None and b.pos().lotes[lote_id].estado is EstadoLote.CANCELADO
     assert any(isinstance(a, Avisar) and a.clave == f"cancel_sin_confirmar:{TICKER}" for a in b.historial)
@@ -2544,6 +2549,8 @@ def test_decision_48_replace_del_stop_rechazado_con_la_salida_del_halt_viva_se_c
     b.cotizar(TICKER, "3.44", "3.46", "3.45", tam_ask=0)
     _salida_motor(b, salida())
     assert [o.qty for o in b.enviadas(Proposito.TP_AGREGAR)] == [50]
+    # decisión 54 (E1, Jaume 1-oct): al parar se intenta cancelar el TP; aquí DAS NO lo deja (sigue vivo y cuenta)
+    b.libro.rechazar_siguiente("Cannot cancel during halt", accion="CancelRej")
     b.libro.rechazar_siguiente("Replace blocked", accion="ReplaceRej")
     marca = b.marca()
     b.libro.halt(TICKER, "H", "09:31:00")
@@ -2615,7 +2622,7 @@ def test_g1a_05_g1a_13_halt_que_deja_plano_detecta_la_reapertura_y_la_senal_guar
     segunda = [o for o in b.enviadas(Proposito.ENTRADA_AGREGAR) if o.token != primera.token]
     assert [o.qty for o in segunda] == [50]
     vence = b.temporizadores[f"cruce:{TICKER}"][0]
-    assert vence - b.ahora() > 50                                       # agrega ~60 s, no cruza al instante
+    assert vence - b.ahora() > 10                                       # agrega ~15 s (decisión 56), no cruza al instante
 
 
 def test_g1a_08_g1b_12_sigue_x_levanta_el_veto_del_cisne_negro(banco: Banco) -> None:
@@ -2709,7 +2716,7 @@ def test_d1_05_g1b_19_cruce_al_tick_permisivo_no_da_falso_aviso_b13(cfg: Config,
     b.preparar(cotizaciones=((TICKER, "1.34", "1.36", "1.35"),))
     b.simstatus()
     b.senal(evento(precio=1.35, stop=1.60))
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 59, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 14, tzinfo=ET))
     b.cotizar(TICKER, "1.30", "1.32", "1.31", tam_bid=0)
     b.avanzar(1.5)
     cruce = b.enviadas(Proposito.ENTRADA_CRUCE)
@@ -2918,9 +2925,9 @@ def test_g1a_15_fill_tardio_de_una_entrada_cerrada_va_a_su_lote_no_al_intento_nu
     b.senal(evento())
     agregar = b.enviadas(Proposito.ENTRADA_AGREGAR)[0]
     id_das = b.orden(agregar.token).id_das
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 59, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 14, tzinfo=ET))
     b.das_contesta = False
-    b.avanzar_hasta(datetime(2026, 9, 25, 9, 31, 4, tzinfo=ET))
+    b.avanzar_hasta(datetime(2026, 9, 25, 9, 30, 19, tzinfo=ET))
     lote_a = lote_de(evento())
     assert b.pos().intento is None and b.pos().lotes[lote_a].estado is EstadoLote.CANCELADO
     b.das_contesta = True

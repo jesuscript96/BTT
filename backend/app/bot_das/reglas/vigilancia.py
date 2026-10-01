@@ -166,6 +166,7 @@ class Foto:
     locates_deshabilitados: bool = False
     anotado: dict[str, str] = field(default_factory=dict)   # E2c-04: firma de lo último anotado por ticker (la devuelve
     #                                                         `comprobar_con_firmas`; el proceso la trae a la foto siguiente)
+    locates_tope_dia: bool = False  # decisión 50 (Jaume 1-oct): el ejecutor ya cortó las compras por el tope del día
 
 
 @dataclass
@@ -625,7 +626,10 @@ def _locates(foto: Foto, cfg: Any, hoy: date) -> list[Accion]:
         datos["repetidas"] = repetidas
     tope_pct = _pct(_bloque(cfg, "locates").get("tope_gasto_pct_cuenta"), LOCATES_TOPE_GASTO_PCT)
     gasto = _precio(foto.gasto_locates) or _D("0")
-    if foto.equity is not None:
+    # Decisión 50 (Jaume 1-oct): si el ejecutor ya CORTÓ el día por el tope (locates_tope_global), un gasto algo por
+    # encima es el de una compra que DAS ya había servido antes de cancelarla (se contabiliza): no es un descontrol y la
+    # red de R-H-03 no repite el aviso máximo. La de R-H-02 (compra repetida no pedida) sigue igual.
+    if foto.equity is not None and not foto.locates_tope_dia:
         tope = foto.equity * tope_pct / _CIEN
         if gasto > tope:
             motivos.append("R-H-03")

@@ -28,7 +28,12 @@ EP-9) como funciones PURAS:
     `LocateInquire` cada 3 s → con `%SLRET` tipo 1 y EV a favor y bajo el tope
     → `locate_intencion` + `LocateComprar` → comprando → `%SLOrder` Pending /
     Waiting / Offered / Located → hecho, o parcial y sigue buscando el resto
-    (R-H-04). Hora límite → parado; `AlreadyShortable` → no_hace_falta.
+    (R-H-04; decisión 51, Jaume 1-oct: sin tope de tiempo, hasta que acabe la
+    fase). Hora límite → parado; `AlreadyShortable` → no_hace_falta.
+  * Decisión 50 (Jaume 1-oct), tope GLOBAL: la primera compra que no cabe en
+    el tope con lo YA PAGADO devuelve `Anotar("locates_tope_global")`; el
+    decisor corta entonces las compras de TODOS los tickers el resto del día
+    (`corte_dia`) y cancela las que estén en vuelo.
   * `tope_superado` (R-H-03), `compra_repetida` (R-H-02), `asignar_a_lote`
     (E9), `caducados` (R-H-05), `tras_reentrada` (EP-9) y el reductor
     `aplicar_anotaciones` + `gasto_de` con los que el decisor lleva el estado.
@@ -114,7 +119,6 @@ from app.services.locates_gate import ev_fijo_para_precio
 
 # ── constantes del módulo ─────────────────────────────────────────────
 PAQUETE = 100                                   # H6: los locates van en paquetes de 100
-PARCIAL_BUSCAR_MAX_S = 60.0                     # R-H-04 con tope (ensayo 28-sep): tras un parcial, el resto se busca 60 s
 RUTA_INQUIRE_DEFECTO = "ALLROUTEWTTYPE1"        # R-H-01; ALLROUTE crea órdenes Offered (§5.22)
 
 ESTADO_BUSCANDO = "buscando"                    # consultando precio cada 3 s (R-H-01)
@@ -152,7 +156,8 @@ ANOTACION_ESTADO = "locate_estado"
 ANOTACION_CADUCADOS = "locates_caducados"
 TIPOS_ANOTACION = (ANOTACION_INQUIRE, ANOTACION_INTENCION, ANOTACION_ESTADO)
 
-CLAVE_AVISO_TOPE = "locates_tope"
+CLAVE_AVISO_TOPE = "locates_tope"              # decisión 50: el aviso ÚNICO del corte lo da el decisor con esta clave
+ANOTACION_TOPE_GLOBAL = "locates_tope_global"   # decisión 50 (Jaume 1-oct): el corte del día; `diario.reconstruir` lo rehace
 COMPRA_SIN_RESPUESTA_S = 30.0                   # E2-04: tiempo máximo en «comprando» sin %SLOrder antes de avisar
 
 _NOTA_YA_SHORTABLE = "alreadyshortable"
@@ -524,7 +529,7 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
                    ahora_et: Optional[datetime] = None,
                    locates: Optional[Mapping[tuple[str, str], Locate]] = None,
                    tope_a_tiro_pct: Union[Decimal, int, float, str, None] = None,
-                   en_uso_vivo: int = 0) -> list[Accion]:
+                   en_uso_vivo: int = 0, corte_dia: bool = False) -> list[Accion]:
     """R-H-01..R-H-04 + H6 + EP-9, manual L1648-1838: el siguiente paso de la máquina de un (ticker, estrategia).
 
     Entradas: `loc` (None = aún no hay; entonces `qty` = acciones de
@@ -580,12 +585,23 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
     `loc.precio_senal` · (1 − `tope_a_tiro_pct`/100), el MISMO 3 % de
     R-B-01, `entrada.tope_caida_bid_pct`) y compensa (EV + regla marginal); si
     no (o sin tamaño, fallo de la ruta, tope, oferta rechazada) → «parado»
-    para todo el día en esa pareja. En esas fases no rige el tope de 60 s del
-    parcial. `en_uso_vivo` = locates de la pareja que usan lotes VIVOS (lo pasa
-    el decisor): cuentan como cubiertos, así la búsqueda de las pirámides
-    (fase C) no vuelve a comprar lo que ya usa la entrada.
+    para todo el día en esa pareja. `en_uso_vivo` = locates de la pareja que
+    usan lotes VIVOS (lo pasa el decisor): cuentan como cubiertos, así la
+    búsqueda de las pirámides (fase C) no vuelve a comprar lo que ya usa la
+    entrada.
+
+    Decisión 51 (Jaume 1-oct): tras un Located PARCIAL el resto (`necesarias −
+    localizadas`) se sigue buscando con el protocolo de la fase (misma cadencia
+    y mismas condiciones de fin, que aplica el decisor), sin el tope de 60 s
+    del ensayo del 28-sep. Decisión 50 (Jaume 1-oct): tope GLOBAL del día. Si
+    una compra no cabe en el tope con lo YA PAGADO (`gasto_dia`), la pareja
+    queda parada y sale `Anotar("locates_tope_global")` (sin aviso: el aviso
+    ÚNICO lo da el decisor al cortar). Con `corte_dia` (el corte ya está
+    hecho) no se consulta ni se compra nada; de una compra en vuelo solo se
+    contabiliza el Located (el dinero ya se gastó, sin buscar el resto), una
+    oferta se rechaza y un fallo de la ruta deja la pareja parada SIN aviso.
     """
-    if deshabilitado:
+    if deshabilitado or (corte_dia and orden is None):
         return []
     _exigir_ticker(ticker)
     _exigir_int(en_uso_vivo, "en_uso_vivo")
@@ -606,7 +622,8 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
         raise ValueError(f"tope «a tiro» fuera de [0, 100]: {tope_a_tiro_pct!r}")
     ctx = _Contexto(loc=loc, e=e, ticker=ticker, precio=precio, ahora=ahora, cfg=cfg, gasto_dia=gasto_dia,
                     equity=equity, tokens=tokens, minimo_cargo=minimo_cargo, fuera_de_hora=fuera_de_hora,
-                    gasto_en_curso=en_curso, tope_a_tiro=tope_tiro, en_uso=max(0, en_uso_vivo))
+                    gasto_en_curso=en_curso, tope_a_tiro=tope_tiro, en_uso=max(0, en_uso_vivo),
+                    corte=bool(corte_dia))
     if orden is not None:
         return _tras_orden(ctx, orden)
     if loc.estado == ESTADO_COMPRANDO and ret is not None:
@@ -629,14 +646,9 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
                     Desprogramar(ctx.clave)]
     if ret is not None:
         return _tras_ret(ctx, ret)
-    if (loc.localizadas > 0 and loc.comprado_en is not None and not ctx.intento_unico
-            and ahora - loc.comprado_en > PARCIAL_BUSCAR_MAX_S):
-        # Ensayo 28-sep (R-H-04 con tope): un parcial ya cobrado no busca el resto para siempre. La ruta dio 800 de
-        # 8.772 y el bot consultó cada 3 s durante horas (903 consultas). Pasado el tope se opera con lo localizado;
-        # el siguiente radar (que llega solo) vuelve a pedir si de verdad falta.
-        return [_anotar_estado(ctx, ESTADO_LOCALIZADO, motivo=(f"parcial aceptado: {PARCIAL_BUSCAR_MAX_S:g} s buscando "
-                                                                 f"el resto sin oferta; se opera con lo localizado (R-H-04)")),
-                Desprogramar(ctx.clave)]
+    # Decisión 51 (Jaume 1-oct): un parcial ya cobrado sigue buscando el resto con la cadencia de la fase y SIN tope de
+    # tiempo (el de 60 s del ensayo del 28-sep se quitó): el fin lo ponen las condiciones de la fase, que aplica el
+    # decisor (ventana de entradas, 30 min fuera del radar, entrada hecha sin pirámides pendientes, tope global…).
     return _consultar_si_toca(ctx)
 
 
@@ -734,6 +746,14 @@ class _Contexto:
     gasto_en_curso: Decimal = _CERO                    # E2-02: previsto de las compras en curso de los demás
     tope_a_tiro: Decimal = Decimal("3")                # Jaume 29-sep: el 3 % de R-B-01 (entrada.tope_caida_bid_pct)
     en_uso: int = 0                                    # Jaume 29-sep: locates de la pareja que usan lotes vivos
+    corte: bool = False                                # decisión 50 (Jaume 1-oct): el tope del día ya cortó las compras
+
+    def tope_por_lo_pagado(self, coste_nuevo: Decimal) -> bool:
+        """Decisión 50: ¿la compra no cabe en el tope con lo YA PAGADO (sin contar las compras en curso)? Sin equity
+        legible → False (no se corta el día por no saber la cuenta: `_tope` lo trata como hasta ahora)."""
+        if self.equity is None or self.equity <= 0:
+            return False
+        return tope_superado(self.gasto_dia, coste_nuevo, self.equity, self.cfg.tope_pct)
 
     @property
     def clave(self) -> str:
@@ -842,6 +862,8 @@ def _tras_ret(ctx: _Contexto, ret: MsgSLRet) -> list[Accion]:
     if not ver["entra"]:
         return _sin_compra(ctx, datos)
     if tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
+        if ctx.tope_por_lo_pagado(ver["coste_nuevo"]):
+            return _tope(ctx, datos, ver["coste_nuevo"])     # decisión 50: corte global (también en el intento único)
         if ctx.intento_unico:
             return _sin_compra(ctx, {**datos, "motivo": "tope de gasto en locates (R-H-03)"})
         return _tope(ctx, datos, ver["coste_nuevo"])
@@ -924,6 +946,8 @@ def _tras_orden(ctx: _Contexto, orden: MsgSLOrder) -> list[Accion]:
     if not _mismo_ticker(orden.ticker, ctx.ticker) or not _es_nuestra(loc, orden):
         return []
     estado_das = _ESTADOS_DAS_CANONICOS.get(orden.estado.strip().lower())
+    if ctx.corte and loc.estado in ESTADOS_EN_CURSO:
+        return _tras_orden_en_corte(ctx, orden, estado_das)
     if loc.estado not in ESTADOS_EN_CURSO:
         # Compra ya cerrada: lo del id conocido es duplicado o tardío; de otro id propio solo cuenta un Located (dinero gastado).
         if orden.id == loc.id_das or estado_das != ESTADO_LOCALIZADO:
@@ -945,6 +969,40 @@ def _tras_orden(ctx: _Contexto, orden: MsgSLOrder) -> list[Accion]:
             cobro = [a for a in _localizado(ctx, orden, seguir_buscando=False) if not isinstance(a, Desprogramar)]
             return cobro + _parar(ctx, orden, estado_das)
         return _parar(ctx, orden, estado_das)
+    return [Anotar(ANOTACION_ESTADO, _datos(ctx, id_das=orden.id, estado_das=orden.estado,
+                                           motivo="estado de %SLOrder desconocido: se registra sin cambiar"))]
+
+
+def _tras_orden_en_corte(ctx: _Contexto, orden: MsgSLOrder, estado_das: Optional[str]) -> list[Accion]:
+    """Decisión 50 (Jaume 1-oct): `%SLOrder` de una compra que estaba EN VUELO cuando se cortó el tope del día.
+
+    Pending/Waiting → se anota con su id (el decisor manda `SLCANCELORDER`);
+    Offered → `Reject` y parado; Located → se contabiliza (el dinero ya se
+    gastó) SIN buscar el resto; Canceled/Rejected/Closed/Declined → parado SIN
+    aviso (el aviso del corte es UNO y lo da el decisor), cobrando lo que
+    llegara a localizar.
+    """
+    loc = ctx.loc
+    motivo = "corte del tope de locates del día (decisión 50)"
+    if estado_das in (ESTADO_PENDIENTE, ESTADO_ESPERANDO):
+        if loc.estado == estado_das and loc.id_das == orden.id:
+            return []
+        return [_anotar_estado(ctx, estado_das, id_das=orden.id)]
+    if estado_das == ESTADO_OFRECIDO:
+        if loc.estado == ESTADO_OFRECIDO and loc.id_das == orden.id:
+            return []                                  # la oferta aceptada antes del corte: la rechaza el decisor
+        return [LocateOferta(orden.id, False),
+                _anotar_estado(ctx, ESTADO_PARADO, id_das=orden.id, motivo=f"oferta rechazada: {motivo}"),
+                Desprogramar(ctx.clave)]
+    if estado_das == ESTADO_LOCALIZADO:
+        return _localizado(ctx, orden, seguir_buscando=False)
+    if estado_das in ESTADOS_FALLO_DAS:
+        cobro: list[Accion] = []
+        if orden.localizadas > 0:
+            cobro = [a for a in _localizado(ctx, orden, seguir_buscando=False) if not isinstance(a, Desprogramar)]
+        return cobro + [_anotar_estado(ctx, ESTADO_PARADO, id_das=orden.id, estado_das=estado_das,
+                                       motivo=f"%SLOrder {estado_das}: {motivo}", notas=orden.notas),
+                        Desprogramar(ctx.clave)]
     return [Anotar(ANOTACION_ESTADO, _datos(ctx, id_das=orden.id, estado_das=orden.estado,
                                            motivo="estado de %SLOrder desconocido: se registra sin cambiar"))]
 
@@ -975,6 +1033,10 @@ def _oferta(ctx: _Contexto, orden: MsgSLOrder) -> list[Accion]:
             motivo = "la oferta pide más acciones de las decididas"
         elif tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
             motivo = "tope de gasto en locates (R-H-03)"
+            if ctx.tope_por_lo_pagado(ver["coste_nuevo"]):
+                # decisión 50 (Jaume 1-oct): con lo YA PAGADO no cabe → se rechaza y se corta el día (lo hace el decisor)
+                return [LocateOferta(orden.id, False)] + _tope(ctx, {**datos, "id_das": orden.id},
+                                                                 ver["coste_nuevo"])
     if motivo is None:
         return [_anotar_estado(ctx, ESTADO_OFRECIDO, **{**datos, "id_das": orden.id, "precio_accion": orden.precio}),
                 LocateOferta(orden.id, True)]
@@ -1057,12 +1119,14 @@ def _rechazo_sigue_buscando(ctx: _Contexto, orden: MsgSLOrder, estado_das: str) 
 
 
 def _tope(ctx: _Contexto, datos: dict, coste_nuevo: Decimal) -> list[Accion]:
-    """R-H-03: no se compra. E2-06: UN aviso por locate, no uno por minuto.
+    """R-H-03: no se compra.
 
     Sin equity legible → se anota y se sigue buscando (la cuenta puede llegar;
     sin aviso). Tope superado con el gasto YA PAGADO (`gasto_dia`, que solo
-    sube) → «parado» + `Desprogramar` + `Avisar(2)`: la máquina deja de
-    consultar y el aviso no se repite cada 60 s. Superado solo por el coste
+    sube) → decisión 50 (Jaume 1-oct): «parado» + `Desprogramar` +
+    `Anotar("locates_tope_global")`: el decisor corta las compras de TODOS los
+    tickers el resto del día, cancela las que estén en vuelo y da UN aviso
+    (antes, E2-06, era un aviso por pareja). Superado solo por el coste
     previsto de otras compras EN CURSO (E2-02) → se anota sin aviso y se
     sigue buscando: si alguna falla, el gasto baja y esta puede comprar.
     """
@@ -1071,14 +1135,17 @@ def _tope(ctx: _Contexto, datos: dict, coste_nuevo: Decimal) -> list[Accion]:
     if not tope_superado(ctx.gasto_dia, coste_nuevo, ctx.equity, ctx.cfg.tope_pct):
         return [Anotar(ANOTACION_INQUIRE, {**datos, "gasto_en_curso_otros": ctx.gasto_en_curso, "motivo": (
             "tope de gasto en locates (R-H-03) contando las compras en curso (E2-02): se espera")})]
-    texto = (f"Tope de gasto en locates alcanzado ({ctx.cfg.tope_pct} % de la cuenta): no se compra el locate de "
-             f"{_esc(ctx.ticker)} ({_esc(ctx.e.name)}) y se deja de buscar para esa estrategia hoy (R-H-03).")
     # `locate_estado` NO lleva `coste_total`/`coste_nuevo`: el reductor (y el diario) los tomarían como gasto pagado.
-    return [_anotar_estado(ctx, ESTADO_PARADO, motivo="tope de gasto en locates (R-H-03)", ruta=datos.get("ruta"),
-                           precio_accion=datos.get("precio_accion"), coste_nuevo_previsto=coste_nuevo,
-                           gasto_dia=ctx.gasto_dia),
+    return [_anotar_estado(ctx, ESTADO_PARADO, motivo="tope de gasto en locates (R-H-03, decisión 50)",
+                           ruta=datos.get("ruta"), precio_accion=datos.get("precio_accion"),
+                           coste_nuevo_previsto=coste_nuevo, gasto_dia=ctx.gasto_dia),
             Desprogramar(ctx.clave),
-            Avisar(Nivel.AVISO, Grupo.B, texto, clave=CLAVE_AVISO_TOPE)]
+            Anotar(ANOTACION_TOPE_GLOBAL, {"ticker": ctx.ticker, "strategy_id": ctx.loc.strategy_id,
+                                           "gasto_dia": ctx.gasto_dia, "coste_nuevo_previsto": coste_nuevo,
+                                           "equity": ctx.equity, "tope_pct": ctx.cfg.tope_pct,
+                                           "tope": ctx.equity * ctx.cfg.tope_pct / _CIEN,
+                                           "motivo": "la compra no cabe en el tope con lo ya pagado",
+                                           "regla": "R-H-03 / decisión 50 (Jaume 1-oct)"})]
 
 
 # ── piezas ────────────────────────────────────────────────────────────
