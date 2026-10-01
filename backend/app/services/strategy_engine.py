@@ -982,14 +982,23 @@ def compile_strategy_def(strategy_def: dict) -> dict:
         for _r in _raw_sched:
             if not isinstance(_r, dict):
                 continue
+            # Modo de disparo: "hour" (defecto) = una evaluación a la hora;
+            # "when" = sin hora, dispara en la primera vela con posición en la
+            # que la condición sea verdad (una vez por operación).
+            _trigger = str(_r.get("trigger") or "hour").strip().lower()
+            if _trigger not in ("hour", "when"):
+                _trigger = "hour"
             _hour = str(_r.get("hour") or "").strip()
-            try:
-                _hh, _mm = _hour.split(":")[:2]
-                _h, _m = int(_hh), int(_mm)
-                assert 0 <= _h <= 23 and 0 <= _m <= 59
-            except Exception:
-                logger.warning(f"[SCHEDULED_EXITS] hora inválida {_hour!r}: regla ignorada")
-                continue
+            if _trigger == "when":
+                _h, _m = 0, 0  # sin hora: se activa al entrar
+            else:
+                try:
+                    _hh, _mm = _hour.split(":")[:2]
+                    _h, _m = int(_hh), int(_mm)
+                    assert 0 <= _h <= 23 and 0 <= _m <= 59
+                except Exception:
+                    logger.warning(f"[SCHEDULED_EXITS] hora inválida {_hour!r}: regla ignorada")
+                    continue
             _root = _r.get("condition") or {}
             if isinstance(_root, dict) and _root.get("conditions"):
                 _normalize_tree(_root)
@@ -1006,9 +1015,51 @@ def compile_strategy_def(strategy_def: dict) -> dict:
                 _soff = float(_r.get("stop_offset_pct", 0.0))
             except (TypeError, ValueError):
                 _soff = 0.0
+
+            # ── JUEGOS (solo modo "when") ──
+            # Exigen UNA comparación simple con umbral numérico y comparador
+            # > / >= (es lo que la UI ofrece); cualquier otra forma -> warning
+            # y juego ignorado (la regla base sigue valiendo).
+            def _num_juego(key):
+                try:
+                    _v = float(_r.get(key))
+                except (TypeError, ValueError):
+                    return None
+                return _v if _v == _v and _v > 0 else None
+
+            _j1 = _num_juego("juego_cumplida_pct")
+            _j2d = _num_juego("juego_desde_pct")
+            _j2r = _num_juego("juego_recorrido_pct")
+            if _j2d is not None and _j2r is None:
+                _j2d = None  # recorrido sin «desde» no tiene sentido
+            if _trigger != "when":
+                _j1 = _j2d = _j2r = None
+            _root_estricto = None
+            if _j1 or _j2d:
+                _conds0 = (_root.get("conditions") or [None])[0]
+                _forma_ok = (
+                    isinstance(_conds0, dict)
+                    and _conds0.get("type") == "indicator_comparison"
+                    and isinstance(_conds0.get("target"), (int, float))
+                    and str(_conds0.get("comparator")) in ("GREATER_THAN", "GREATER_THAN_OR_EQUAL")
+                )
+                if not _forma_ok:
+                    logger.warning(
+                        "[SCHEDULED_EXITS] el juego requiere UNA comparación simple "
+                        "con umbral numérico y comparador > / >=: juego ignorado")
+                    _j1 = _j2d = _j2r = None
+                elif _j1:
+                    import copy as _copy
+                    _root_estricto = _copy.deepcopy(_root)
+                    _root_estricto["conditions"][0]["target"] = float(_conds0["target"]) + _j1
+
             sched_rules.append({
                 "hour_min": (_h, _m), "root_condition": _root, "action": _action,
                 "close_frac": _cpct / 100.0, "stop_offset": _soff,
+                "trigger": _trigger,
+                "juego_cumplida": _j1,
+                "juego_desde": _j2d, "juego_recorrido": _j2r,
+                "root_condition_estricto": _root_estricto,
             })
 
     compiled = {
@@ -1452,17 +1503,39 @@ def translate_strategy(
 
     # SALIDAS PROGRAMADAS CONDICIONALES: condición de cada regla por vela.
     # Misma maquinaria que entrada/salida (misma caché de indicadores).
+    # Con juego: `cond_estricto` (Juego 1, árbol clonado con umbral + juego) y
+    # `src` (Juego 2, SERIE de la fuente para que el simulador calcule
+    # entrada + recorrido — el umbral depende de la vela de arme y no puede
+    # precomputarse como árbol).
     sched_out = []
     for _sr in compiled.get("scheduled_exits") or []:
         _cond = _evaluate_condition_group(
             _sr["root_condition"], df, "1m", daily_stats, entry_cache
         ) if _sr["root_condition"].get("conditions") else pd.Series(True, index=df.index)
+        _cond_estricto = None
+        if _sr.get("root_condition_estricto"):
+            _cond_estricto = _evaluate_condition_group(
+                _sr["root_condition_estricto"], df, "1m", daily_stats, entry_cache
+            ).astype(bool)
+        _src = None
+        if _sr.get("juego_desde") is not None:
+            _c0 = (_sr["root_condition"].get("conditions") or [None])[0]
+            if isinstance(_c0, dict):
+                _src_serie = _compute_from_config(
+                    _c0.get("source") or {}, df, daily_stats, entry_cache)
+                _src = np.asarray(_src_serie, dtype=np.float64)
         sched_out.append({
             "cond": _cond.astype(bool),
+            "cond_estricto": _cond_estricto,
+            "src": _src,
             "hour_min": _sr["hour_min"],
             "action": _sr["action"],
             "close_frac": _sr["close_frac"],
             "stop_offset": _sr["stop_offset"],
+            "trigger": _sr.get("trigger", "hour"),
+            "juego_cumplida": _sr.get("juego_cumplida"),
+            "juego_desde": _sr.get("juego_desde"),
+            "juego_recorrido": _sr.get("juego_recorrido"),
         })
 
     return {

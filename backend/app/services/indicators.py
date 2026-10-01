@@ -1524,11 +1524,18 @@ def _ap_session_started(df: pd.DataFrame, ap_session: str | None) -> np.ndarray:
     """Máscara "la sesión de referencia ya ha empezado", para Previous max/min.
 
     ap.RTH arranca a las 09:30, ap.AM a las 16:00 y ap.PM (defecto) desde la
-    primera barra del frame.
+    primera barra del frame. ap.PM_ONLY (2026-10-01, «% Fade» de salidas
+    programadas) es una ventana CERRADA: solo velas de premercado 04:00-09:29,
+    SIN pegajosidad — tras la apertura la máscara vuelve a False y el máximo
+    queda congelado en el PMH (el fmax.accumulate del caller conserva el
+    último valor a través de los NaN).
     """
     timestamps = pd.to_datetime(df["timestamp"])
     hours = timestamps.dt.hour.values
     minutes = timestamps.dt.minute.values
+    if ap_session == "ap.PM_ONLY":
+        mins = hours * 60 + minutes
+        return (mins >= 240) & (mins < 570)
     if ap_session == "ap.RTH":
         start_mask = (hours > 9) | ((hours == 9) & (minutes >= 30))
     elif ap_session == "ap.AM":

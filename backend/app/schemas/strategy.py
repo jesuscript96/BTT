@@ -330,7 +330,7 @@ class IndicatorConfig(BaseModel):
     ichimoku_line: Optional[str] = None          # "Tenkan", "Kijun", "Senkou A", "Senkou B", "Chikou"
     min_af: Optional[float] = None               # Parabolic SAR min acceleration factor
     max_af: Optional[float] = None               # Parabolic SAR max acceleration factor
-    ap_session: Optional[Literal["ap.PM", "ap.RTH", "ap.AM"]] = None
+    ap_session: Optional[Literal["ap.PM", "ap.RTH", "ap.AM", "ap.PM_ONLY"]] = None
     elapsed_minutes: Optional[int] = None
     pivot_window: Optional[int] = None
     tri_lookback: Optional[int] = None
@@ -555,10 +555,33 @@ class RiskManagement(BaseModel):
     scheduled_exits: Optional[List['ScheduledExitRule']] = Field(default_factory=list)
 
 class ScheduledExitRule(BaseModel):
-    # "HH:MM" (reloj local del frame, igual que los parciales HOUR:HH:MM)
+    # "HH:MM" (reloj local del frame, igual que los parciales HOUR:HH:MM).
+    # En modo "when" NO se usa (ver trigger).
     hour: str
+    # MODO DE DISPARO (2026-10-01):
+    #   "hour" (defecto) = como siempre: UNA evaluación en la primera vela >=
+    #     hour con posición abierta.
+    #   "when" = SIN hora: se activa al entrar y dispara en la PRIMERA vela con
+    #     posición en la que la condición sea verdad, UNA sola vez por operación.
+    trigger: Optional[Literal['hour', 'when']] = 'hour'
     # Árbol de condiciones (None/{} = dispara siempre a la hora)
     condition: Optional[ConditionGroup] = None
+    # JUEGO 1 «si al entrar ya va cumplida» (solo when, comparador > / >= y
+    # umbral numérico): si en la PRIMERA vela que la regla evalúa para la
+    # operación la condición ya es verdad, NO dispara: exige umbral + este %.
+    # Se desarma cuando la condición vuelve a ser falsa (el fade reancla) y
+    # entonces dispara al umbral normal.
+    juego_cumplida_pct: Optional[float] = None
+    # JUEGO 2 «si al entrar va cerca, sin llegar al umbral» (solo when, mismos
+    # requisitos de forma):
+    #   juego_desde_pct      se arma si al entrar la fuente va >= este nivel
+    #                        (y la condición base aún NO es verdad).
+    #   juego_recorrido_pct  exige como mínimo este RECORRIDO desde el valor
+    #                        de entrada: dispara cuando fuente >= max(umbral,
+    #                        fuente_entrada + recorrido). Desarme: fuente baja
+    #                        de juego_desde_pct -> dispara al umbral normal.
+    juego_desde_pct: Optional[float] = None
+    juego_recorrido_pct: Optional[float] = None
     action: Optional[Literal['close_pct', 'move_stop', 'none']] = 'none'
     # % del TAMAÑO RESTANTE a cerrar (1-100; 100 = cerrar todo lo que quede)
     close_pct: Optional[float] = 100.0
