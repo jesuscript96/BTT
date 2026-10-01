@@ -16,6 +16,7 @@ from app.services.indicators import (
     _linear_regression, _consecutive_count,
     _hammer, _shooting_star, _pivot_points, _safe_float,
     _pico_enumerado,
+    days_since_first_day_valor, DAYS_SINCE_IPO_NAME,
 )
 
 logger = logging.getLogger("backtester.strategy_engine")
@@ -129,6 +130,10 @@ def _ri_yesterday_high(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return np.full(len(c), _safe_float(ds.get("yesterday_high", ds.get("lag_rth_high_1", np.nan))))
 def _ri_yesterday_low(c, h, l, o, v, p, p2, p3, sd, m, ds):
     return np.full(len(c), _safe_float(ds.get("yesterday_low", ds.get("lag_rth_low_1", np.nan))))
+def _ri_days_since_ipo(c, h, l, o, v, p, p2, p3, sd, m, ds):
+    # "Dias desde IPO (lago)": constante diaria days_since_first_day (6.1).
+    # Mismo fallback NaN + aviso una vez que la via clasica (indicators.py).
+    return np.full(len(c), days_since_first_day_valor(ds))
 def _pm_running_native(vals, mins, which):
     """Réplica numpy de indicators._pm_running_series: acumulado causal del
     premarket (04:00-09:29). None si no hay minutos o no hay barras PM (el
@@ -331,6 +336,7 @@ _RAW_INDICATOR_DISPATCH = {
     "Yesterday Open": _ri_yesterday_open,
     "Yesterday Close": _ri_yesterday_close, "Previous Close": _ri_yesterday_close,
     "Yesterday High": _ri_yesterday_high, "Yesterday Low": _ri_yesterday_low,
+    DAYS_SINCE_IPO_NAME: _ri_days_since_ipo,
     # "Current Open" = open de la barra actual (definición de producto, Jaume
     # 2026-07-07); antes era un alias erróneo de Day Open (RTH open constante).
     "Day Open": _ri_day_open, "Current Open": _ri_open,

@@ -36,6 +36,30 @@ def _safe_float(val) -> float:
         return np.nan
 
 
+# -- "Dias desde IPO (lago)" (2026-10-01) ------------------------------------
+# Constante diaria de la fila de qualifying `days_since_first_day` (filtro de
+# universo 6.1): dias NATURALES desde el primer dia del ticker en el lago.
+# Proxy de IPO, no la IPO real: el lago empieza en 2019, lo listado antes llega
+# con la edad truncada ALTA (nunca entra por error en "< N dias"). Dia 0 =
+# primer dia. Sin dato -> NaN -> cualquier comparacion evalua False: la regla
+# no dispara (fail-safe) y se avisa una vez por proceso.
+DAYS_SINCE_IPO_NAME = "Dias desde IPO (lago)"
+_DIAS_IPO_WARNED = False
+
+
+def days_since_first_day_valor(ds: dict | None) -> float:
+    global _DIAS_IPO_WARNED
+    v = _safe_float((ds or {}).get("days_since_first_day", np.nan))
+    if pd.isna(v) and not _DIAS_IPO_WARNED:
+        _DIAS_IPO_WARNED = True
+        logger.warning(
+            "[DIAS_IPO] la fila de qualifying llega sin 'days_since_first_day': "
+            "las condiciones 'Dias desde IPO (lago)' NO dispararán. Revisa la "
+            "via de datos (needs_days_since_first_day en fetch_qualifying_data)."
+        )
+    return v
+
+
 # -- Tabla diaria de "Overhead last X days" ---------------------------------
 # Velas DIARIAS de sesion regular (09:30-16:00), en un parquet APARTE que genera
 # `backend/scripts/construir_daily_overhead.py`. NO forma parte del lago ni lo
@@ -2318,6 +2342,8 @@ def _compute_raw(
                      min_r_squared, min_pivots)
 
     # --- Fallback: legacy if/elif chain for uncommon indicators ---
+    if name == DAYS_SINCE_IPO_NAME:
+        return pd.Series(days_since_first_day_valor(ds), index=close.index)
     if name == "Close":
         return close
     if name == "Open":

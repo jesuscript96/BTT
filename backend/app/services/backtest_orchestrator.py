@@ -188,6 +188,21 @@ def sanitize_floats(obj):
     return obj
 
 
+def _necesita_dias_ipo(definition) -> bool:
+    """True si la estrategia usa el indicador «Dias desde IPO (lago)» en
+    CUALQUIER arbol de condiciones (entrada, salida, salidas programadas,
+    piramides, scalping, pasos). Busqueda por nombre sobre el JSON serializado:
+    el nombre del indicador es la clave del operando en todos los arboles, y
+    así no hay que recorrer cada formato de arbol a mano. Sirve para pedirle a
+    la via de datos que GARANTICE la columna `days_since_first_day`
+    (needs_days_since_first_day en fetch_qualifying_data)."""
+    from app.services.indicators import DAYS_SINCE_IPO_NAME
+    try:
+        return DAYS_SINCE_IPO_NAME in json.dumps(definition or {}, default=str)
+    except Exception:
+        return False
+
+
 def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
     # on_progress: optional callback(current, total, percent) used by the async
     # job runner (F3) to mirror progress into Redis keyed by job_id. When None
@@ -261,6 +276,10 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         strategy_def = strategy["definition"]
         preconditions = strategy_def.get("postgap_preconditions", [])
         apply_day = strategy_def.get("apply_day", "gap_day")
+        # «Dias desde IPO (lago)» en alguna condicion -> la via de datos tiene
+        # que garantizar `days_since_first_day` (y ampliar la lectura GCS al
+        # lago completo, o las edades salen truncadas/falsas).
+        _usa_dias_ipo = _necesita_dias_ipo(strategy_def)
 
         # Modelos avanzados: se valida AQUI, antes de cargar un solo dato.
         # Una configuracion imposible (fechas solapadas, sin features) tiene que
@@ -286,11 +305,12 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
         # ── PHASE 1: qualifying data (from local cache — fast) ──
         t_fetch = time.time()
         qualifying = fetch_qualifying_data(
-            req.dataset_id, 
-            req.start_date, 
-            req.end_date, 
-            preconditions=preconditions, 
-            apply_day=apply_day
+            req.dataset_id,
+            req.start_date,
+            req.end_date,
+            preconditions=preconditions,
+            apply_day=apply_day,
+            needs_days_since_first_day=_usa_dias_ipo,
         )
 
         if qualifying is None or qualifying.empty:
@@ -350,7 +370,10 @@ def run_backtest_orchestrator(req: BacktestRequest, on_progress=None) -> dict:
                     None,
                     None,
                     preconditions=None,
-                    apply_day='gap_day'
+                    apply_day='gap_day',
+                    # Mismo flag que la llamada principal: comparten cache y
+                    # asi no se lanza una segunda query GCS sin ampliar.
+                    needs_days_since_first_day=_usa_dias_ipo,
                 )
                 if base_qualifying is not None and not base_qualifying.empty:
                     pairs_to_insert = base_qualifying[['ticker', 'date']].drop_duplicates()

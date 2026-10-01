@@ -498,7 +498,7 @@ def get_saved_queries_df() -> pd.DataFrame:
 
 # ---- WARM: qualifying query (runs directly on GCS) -----------------------
 
-def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {}, preconditions: list = None) -> pd.DataFrame:
+def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {}, preconditions: list = None, needs_days_since_first_day: bool = False) -> pd.DataFrame:
     """
     Run the qualifying query directly on GCS with glob-optimized paths.
     """
@@ -523,9 +523,12 @@ def query_qualifying_gcs(years: set[int], where_clause: str, filters: dict = {},
     # PRIMERA FECHA REAL si el scan ve todo el historial — leer por años daría
     # "días desde el 1 de enero del primer año leído" (falsos <30d en enero).
     # Se amplía la lectura a TODO el lago (2019 en adelante, sin acotar meses);
-    # el RESULTADO sigue acotado por hive_pred/where. Solo pasa cuando la regla
-    # lo usa: el coste extra se paga una vez por backtest que filtre por él.
-    if DAYS_SINCE_FIRST_DAY_ALIAS in where_clause and years:
+    # el RESULTADO sigue acotado por hive_pred/where. Dos disparadores: la regla
+    # de universo lo usa (alias en el WHERE) o la ESTRATEGIA usa el indicador
+    # "Dias desde IPO (lago)" en alguna condición (flag del orquestador) — sin
+    # el flag, una acción listada antes del rango leído saldría con una edad
+    # diminuta y una salida condicional la excluiría como IPO siendo vieja.
+    if (needs_days_since_first_day or DAYS_SINCE_FIRST_DAY_ALIAS in where_clause) and years:
         read_years = set(range(2019, max(years) + 1))
         read_filters = {k: v for k, v in filters.items()
                         if k not in ("start_date", "date_from")}

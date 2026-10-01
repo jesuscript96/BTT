@@ -25,7 +25,9 @@ from app.db.gcs_cache import (
     iter_intraday_groups_streamed,
     fetch_intraday_batch,
 )
-from app.services.qualifying_windows import stage2_prev_day_lag1_selects
+from app.services.qualifying_windows import (
+    stage2_prev_day_lag1_selects, DAYS_SINCE_FIRST_DAY_ALIAS,
+)
 from app.redis_client import get_redis
 
 logger = logging.getLogger("backtester.data")
@@ -645,6 +647,7 @@ def _qualifying_cache_key(
     req_end_date: str | None,
     preconditions: list | None,
     apply_day: str,
+    needs_days_since_first_day: bool = False,
 ) -> str:
     """md5 of the resolved filters + every parameter that changes the result."""
     # Canonicalize preconditions order-independently (list of dicts).
@@ -659,6 +662,11 @@ def _qualifying_cache_key(
             "end": req_end_date,
             "apply_day": apply_day,
             "preconditions": precond_canon,
+            # El flag cambia el RESULTADO (garantiza la columna
+            # days_since_first_day en las vias materializada/GCS): tiene que
+            # participar en la clave o una cache escrita sin el serviria un df
+            # sin columna a un backtest que la necesita.
+            "needs_days_since_first_day": needs_days_since_first_day,
         },
         sort_keys=True,
         default=str,
@@ -831,6 +839,7 @@ def fetch_qualifying_data(
     preconditions: list = None,
     apply_day: str = 'gap_day',
     filtros: dict | None = None,
+    needs_days_since_first_day: bool = False,
 ) -> pd.DataFrame:
     """Cached wrapper around the qualifying computation.
 
@@ -841,6 +850,12 @@ def fetch_qualifying_data(
     no hace falta ni quiero cargar ningun dataset aqui».
 
     Sin `filtros` el comportamiento es EXACTAMENTE el de siempre.
+
+    `needs_days_since_first_day` (2026-10-01): True cuando la ESTRATEGIA usa el
+    indicador «Dias desde IPO (lago)» (filtro 6.1) en alguna condicion — no
+    basta con que el WHERE del universo lo referencie. Garantiza que la columna
+    llegue al motor en TODAS las vias (hot cache desactivado, alias al vuelo en
+    el parquet materializado, lectura GCS ampliada a 2019+).
 
     On a Redis hit returns the cached DataFrame; otherwise computes via
     `_fetch_qualifying_data_uncached` and caches the result (when <20 MB).
@@ -858,6 +873,7 @@ def fetch_qualifying_data(
             cache_key = _qualifying_cache_key(
                 dataset_id, key_filters, req_start_date,
                 req_end_date, preconditions, apply_day,
+                needs_days_since_first_day,
             )
     except Exception as e:
         logger.warning(f"[CACHE] qualifying key build failed: {e}")
@@ -895,6 +911,7 @@ def fetch_qualifying_data(
         preconditions=preconditions,
         apply_day=apply_day,
         filtros=filtros,
+        needs_days_since_first_day=needs_days_since_first_day,
     )
 
     # Write-through: measure the REAL serialized size, then Redis (small) or the
@@ -931,6 +948,7 @@ def _fetch_qualifying_data_uncached(
     preconditions: list = None,
     apply_day: str = 'gap_day',
     filtros: dict | None = None,
+    needs_days_since_first_day: bool = False,
 ) -> pd.DataFrame:
     """
     Fetch qualifying rows from daily_metrics via hot cache RAM or direct GCS query.
@@ -954,7 +972,10 @@ def _fetch_qualifying_data_uncached(
         return pd.DataFrame()
 
     has_custom_rules = len(filters.get("rules", [])) > 0
-    use_hot_cache = (apply_day in ('gap_day', 'gap_1_day', 'gap_2_day')) and (not preconditions)
+    # El hot cache RAM (parquet prefiltrado por gap) NO lleva
+    # days_since_first_day: si la estrategia usa "Dias desde IPO (lago)", se
+    # salta y se va a una via autoritativa que si pueda calcularla.
+    use_hot_cache = (apply_day in ('gap_day', 'gap_1_day', 'gap_2_day')) and (not preconditions) and (not needs_days_since_first_day)
 
     if provider == "local" and (has_custom_rules or not use_hot_cache):
         from app.database import get_db_connection
@@ -1020,6 +1041,10 @@ def _fetch_qualifying_data_uncached(
                         _candidatas = (
                             {t for t in _tokens if _re.match(r"^(?:lag|lead)_", t)}
                             | (_tokens & set(window_alias_to_expr()))
+                            # La estrategia usa "Dias desde IPO (lago)" aunque el
+                            # WHERE no la referencie: el alias se calcula AL VUELO
+                            # sobre el glob completo (lago entero -> MIN real).
+                            | ({DAYS_SINCE_FIRST_DAY_ALIAS} if needs_days_since_first_day else set())
                         )
                         # lag_gappers_prev_1 necesita DOS niveles (cuenta por
                         # fecha y luego LAG por ticker): envoltorio propio ANTES
@@ -1414,7 +1439,8 @@ def _fetch_qualifying_data_uncached(
     where_clause = _build_where_clause(filters)
 
     # Run qualifying query directly on GCS passing preconditions
-    df = query_qualifying_gcs(years, where_clause, filters, preconditions=preconditions)
+    df = query_qualifying_gcs(years, where_clause, filters, preconditions=preconditions,
+                              needs_days_since_first_day=needs_days_since_first_day)
 
     if df.empty:
         return df
