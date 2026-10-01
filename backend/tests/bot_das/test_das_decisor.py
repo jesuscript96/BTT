@@ -4509,6 +4509,27 @@ def test_ticker_pausado_no_gasta_en_locates_hasta_sigue(cfg: Config, tmp_path: P
     assert [c.qty for c in _compras(b)] == [100]
 
 
+def test_ticker_que_das_no_cotiza_no_gasta_en_locates_hasta_que_cotiza(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 1-oct (A7): un ticker del radar que DAS no devuelve (no contratado) no consulta ni compra locates, ni en
+    los 5 s previos al SIN_SIMBOLO ni después, por muchas filas del radar que lleguen; cuando DAS lo cotiza, busca."""
+    b = Banco(_cfg_ventana_larga(cfg), tmp_path)
+    b.preparar(locates=())
+
+    def radar() -> None:
+        b.procesar(SenalRecibida(Senal(clase="radar", ticker="ZZZ", id=None, precio_radar=D("3.45"),
+                                       estimacion=[_fila(100.0)], recibida_en=b.ahora())))
+    for _ in range(4):
+        radar()
+        b.avanzar(3)
+    assert b.estado.posiciones["ZZZ"].estado is EstadoTicker.SIN_SIMBOLO
+    assert not [c for c in _consultas(b) if c.ticker == "ZZZ"] and not [c for c in _compras(b) if c.ticker == "ZZZ"]
+    b.cotizar("ZZZ", "3.44", "3.46", "3.45")
+    radar()
+    b.avanzar(1)
+    assert b.estado.posiciones["ZZZ"].estado is EstadoTicker.NORMAL
+    assert [c for c in _consultas(b) + _compras(b) if c.ticker == "ZZZ"]
+
+
 # ── D8 (Jaume 30-sep): las salidas parciales van por PROPORCIÓN de nuestra posición ──
 def _abrir_60(b: Banco) -> None:
     """Entramos con 60 (nuestro tamaño) aunque el backtest vaya con 100."""

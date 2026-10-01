@@ -547,6 +547,7 @@ class Decisor:
         self._resumen_enviado: Optional[date] = None
         self._ajenas_anotadas: set[int] = set()
         self._sin_simbolo_avisado: set[str] = set()
+        self._radar_pendiente: dict[str, list] = {}       # Jaume 1-oct (A7): filas del radar a la espera de la 1.ª `$Quote`
         self._prealerta_en: dict[tuple[str, str], float] = {}
         self._rutas_avisadas: set[str] = set()
         self._reuso_consultado: set[str] = set()
@@ -2725,13 +2726,21 @@ class Decisor:
             self._radar_precio[ticker] = precio
         self._pedir_ficha(ticker)                           # G1A-03: la precarga la trae; aquí nunca red
         filas = [f for f in (s.estimacion or []) if isinstance(f, dict)]
+        if self._sin_cotizacion_das(ticker):
+            self._radar_pendiente[ticker] = filas           # Jaume 1-oct (A7): espera a la primera `$Quote` de DAS
+        else:
+            self._radar_pendiente.pop(ticker, None)
+        acciones = self._locates_del_radar(ticker, filas)
+        return acciones + self._armar_simstatus()           # E1-03 / G1A-05: el radar suscrito también se vigila
+
+    def _locates_del_radar(self, ticker: str, filas: list) -> list[Accion]:
         acciones: list[Accion] = []
         for sid in sorted({str(f.get("strategy_id")) for f in filas if f.get("strategy_id")}):
             e = self._estrategia(sid)
             if e is None or not e.ejecutar:
                 continue
             acciones += self._paso_locate(ticker, e, estimacion=filas)
-        return acciones + self._armar_simstatus()           # E1-03 / G1A-05: el radar suscrito también se vigila
+        return acciones
 
     def _senal_hidratado(self, s: Senal) -> list[Accion]:
         if isinstance(s.ticker, str) and s.ticker:
@@ -4293,6 +4302,9 @@ class Decisor:
             pos.desde = self._ahora
             self._sin_simbolo_avisado.discard(ticker)
             acciones.append(Anotar("reanudar", {"ticker": ticker, "motivo": "A7: DAS ya cotiza el símbolo"}))
+        if ticker in self._radar_pendiente and not self._sin_cotizacion_das(ticker):
+            # Jaume 1-oct (A7): la fila del radar que esperaba a la primera cotización de DAS busca ahora sus locates
+            acciones += self._locates_del_radar(ticker, self._radar_pendiente.pop(ticker))
         if pos is not None and pos.neta < 0 and cot is not None:
             # Jaume 29-sep (stop único): el precio por encima del límite del primer stop es cisne negro (F7); ya no hay
             # «principal rebasado» que reasignar al nivel de arriba ni al ask (sería perseguir al precio, R-G-01)
@@ -4475,7 +4487,17 @@ class Decisor:
         if self._locates_deshabilitado():
             return True
         pos = self._estado.posiciones.get(ticker)
-        return pos is not None and (pos.pausado_por_humano or pos.estado is EstadoTicker.CONTROL_HUMANO)
+        if pos is not None and (pos.pausado_por_humano or pos.estado in (EstadoTicker.CONTROL_HUMANO,
+                                                                         EstadoTicker.SIN_SIMBOLO)):
+            return True
+        return self._sin_cotizacion_das(ticker)
+
+    def _sin_cotizacion_das(self, ticker: str) -> bool:
+        """Jaume 1-oct (A7): sin NINGUNA cotización de DAS del ticker (no lo tenemos contratado, o aún no ha llegado la
+        primera `$Quote`) no se consulta ni se compra: el precio del radar no basta para gastar en locates. La fila del
+        radar queda pendiente (`_radar_pendiente`) y busca en cuanto DAS lo cotiza."""
+        cot = self._cot(ticker)
+        return cot is None or cot.actualizada_en is None
 
     def _precio_locate(self, ticker: str) -> Optional[Decimal]:
         cot = self._cot(ticker)
