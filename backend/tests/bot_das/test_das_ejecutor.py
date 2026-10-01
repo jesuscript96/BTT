@@ -552,6 +552,33 @@ def test_f11_sin_das_al_arrancar_arranca_degradado_y_reconecta_por_plan(montar) 
     assert "das" not in m.e.decisor.estado.modo_degradado
 
 
+def test_login_rechazado_no_programa_reconexion_y_avisa_una_vez(montar) -> None:
+    """DAS real (01-oct): con «ERROR:INVALID PASSWORD» el cliente cierra la sesión; el ejecutor NO programa la
+    reconexión (una clave mala en bucle bloquea el usuario en DAS): `das_reconectar_parado` en el diario, un único
+    aviso 3 del decisor y el bot como con DAS caído (modo «das»)."""
+    from app.bot_das.tipos import MsgLogin
+    m = montar()
+    m.pasos(2)
+    assert m.cliente.conexiones == 1
+    m.cliente.login_rechazado = "INVALID PASSWORD"                   # lo que deja ClienteDAS antes de avisar
+    m.cliente.conectado = False
+    m.e.buzon.al_mensaje(MsgLogin(cruda="ERROR:INVALID PASSWORD", ok=False, motivo="INVALID PASSWORD"))
+    m.e.buzon.al_estado(False, "DAS rechazó el LOGIN: INVALID PASSWORD; no se reintenta")
+    m.pasos(3)
+    for _ in range(3):                                              # pasan los 2/4/8 s del plan: nada
+        m.reloj.avanzar(10.0)
+        m.pasos(2, espera_s=0.02)
+    assert m.cliente.conexiones == 1
+    assert not de_tipo(m.regs(), "das_reconectar")
+    parado = de_tipo(m.regs(), "das_reconectar_parado")
+    assert len(parado) == 1 and parado[0].datos["motivo"] == "DAS rechazó el LOGIN: INVALID PASSWORD"
+    login = [a for a in m.avisos.avisos if a.clave == "das_logon:LOGIN"]
+    assert len(login) == 1 and login[0].nivel is Nivel.MAXIMO and login[0].grupo is Grupo.B
+    assert not [a for a in m.avisos.avisos if (a.clave or "").startswith("das_caido")]
+    assert "das" in m.e.decisor.estado.modo_degradado and not m.e.decisor.estado.das_conectado
+    assert CLAVE_DAS not in json.dumps([r.datos for r in m.regs()], default=str)
+
+
 # ═══════════════════════════ 3. ejecutar(): write-ahead y política de disco ══
 def test_m6_orden_intencion_en_disco_antes_del_envio_y_enviada_despues(montar, dir_bot: Path) -> None:
     """M6 / riesgo 3: cuando el cliente recibe la línea, `orden_intencion` (fsync) YA está en el fichero; `orden_enviada` después."""
@@ -1427,7 +1454,7 @@ def test_canario_entrada_fills_stops_residentes_el_stop_dispara_y_limpieza(vivo)
     v.paso_hasta(lambda: len(v.stops_vivos()) == 1, "el stop único residente")
     assert v.libro.posiciones() == {TICKER: -100}
     (stop,) = v.stops_vivos()
-    assert (stop["qty"], stop["ruta"]) == (100, "STOP")
+    assert (stop["qty"], stop["ruta"]) == (100, "SMAT")
     assert stop["precio"] == stop["stop"] * D("1.5")                                # R-C-01 v4: límite L + 50 %
     assert v.e.decisor.estado.posiciones[TICKER].neta_fills == -100
     v.sim.cotizar(TICKER, stop["stop"] + D("0.05"), stop["stop"] + D("0.10"),

@@ -333,7 +333,7 @@ def test_mensajes_das_conservan_cruda_y_son_inmutables():
     for clase in MensajeDAS.__subclasses__():
         assert clase.__dataclass_params__.frozen
         assert dataclasses.fields(clase)[0].name == "cruda"
-    assert len(MensajeDAS.__subclasses__()) == 24
+    assert len(MensajeDAS.__subclasses__()) == 25                 # + MsgLogin (respuesta real al LOGIN, 01-oct)
     act = MsgOrderAct(cruda="%OrderAct 56 Accept SS XYZ 1200 3.45 SAGEREB 09:31:02  100269001", id=56, accion="Accept",
                       lado="SS", ticker="XYZ", qty=1200, precio=D("3.45"), ruta="SAGEREB", hora="09:31:02", notas="",
                       token=100_269_001)

@@ -1,10 +1,15 @@
 """Comprobación de DAS real el PRIMER DÍA (§3.27, §10 «lo que NO se puede probar sin DAS real», lote H).
 
 QUÉ HACE
-  `python -m app.bot_das.herramientas.comprobar_das` recorre los 10 pasos de
+  `python -m app.bot_das.herramientas.comprobar_das` conecta, ESPERA el
+  resultado del LOGIN («#LOGIN SUCCESSED» o «ERROR:INVALID PASSWORD», DAS
+  real 01-oct; si no llega el «SUCCESSED» en `ESPERA_LOGIN_S` lo dice y sale
+  con `CODIGO_ERROR` sin ejecutar ningún paso) y recorre los 10 pasos de
   §3.27 contra el DAS de verdad, UNO A UNO y con confirmación por consola:
-  1 rutas (`GET RouteStatus`), 2 `GET SymStatus`/`GET LDLU` con y sin
-  símbolo, 3 el `%ORDER` crudo de un STOPLMTP (y la ZONA HORARIA de DAS,
+  1 rutas (`GET RouteStatus`), 2 `SB X Lv1` y después `GET SymStatus X` /
+  `GET LDLU X` (en el DAS real solo contestan con símbolo y suscrito; la
+  forma sin símbolo se manda al final solo para registrar su «Format: …»),
+  3 el `%ORDER` crudo de un STOPLMTP (y la ZONA HORARIA de DAS,
   L0-05: si su hora no casa con ET se aborta), 4 si un `REPLACE` de cantidad
   conserva el pre/post, 5 PostOnly en SAGEREB y SMAT, 6 el BP que retiene
   el stop (único desde el 29-sep), 7 qué llega por una conexión watch y si una segunda
@@ -88,6 +93,7 @@ from app.bot_das.tipos import (
     MsgConexion,
     MsgIssueStatus,
     MsgLDLU,
+    MsgLogin,
     MsgMarcador,
     MsgOrden,
     MsgOrderAct,
@@ -107,12 +113,13 @@ CODIGO_ERROR = 1
 CODIGO_BOT_ENCENDIDO = 3
 CODIGO_ENTORNO = 5
 
-RUTAS_TABLA = ("SAGEREB", "SAGEPRO", "EDGA", "MIAX", "STOP", "SMAT", "OPEN")   # §3.27 paso 1 (TABLA-RUTAS)
+RUTAS_TABLA = ("SAGEREB", "SAGEPRO", "EDGA", "MIAX", "SMAT", "OPEN")   # §3.27 paso 1 (TABLA-RUTAS)
 RUTAS_POST_ONLY = ("SAGEREB", "SMAT")                                          # paso 5
 RUTA_INQUIRE = "ALLROUTEWTTYPE1"                                               # R-H-01 (no es mutante)
 RUTA_MIN_CHARGE = "ALLROUTE"
 QTY_INQUIRE = 100
 ESPERA_RESPUESTA_S = 3.0          # cuánto se escucha tras cada comando
+ESPERA_LOGIN_S = 5.0              # plazo para «#LOGIN SUCCESSED» / «ERROR:…» tras conectar (DAS real 01-oct)
 ESPERA_WATCH_S = 10.0             # paso 7: escucha de la conexión watch
 DISPARO_SOBRE_ASK_PCT = Decimal("50")    # stops canario: lejos del mercado (no deben dispararse)
 LIMITE_BAJO_BID_PCT = Decimal("30")      # PostOnly canario: lejos del mercado (no debe llenarse)
@@ -139,9 +146,10 @@ class PasoComprobacion:
 PASOS: tuple[PasoComprobacion, ...] = (
     PasoComprobacion(1, "Rutas habilitadas", False,
                      "GET RouteStatus → lista de rutas y aviso de las de la tabla que falten "
-                     "(SAGEREB, SAGEPRO, EDGA, MIAX, STOP/SMAT, OPEN)."),
+                     "(SAGEREB, SAGEPRO, EDGA, MIAX, SMAT, OPEN)."),
     PasoComprobacion(2, "GET SymStatus / GET LDLU con y sin símbolo", False,
-                     "Qué contesta DAS a cada forma (§5.8) → valor propuesto de tecnicos.get_con_simbolo."),
+                     "SB X Lv1 y después GET SymStatus X / GET LDLU X (con símbolo y suscrito); al final, sin símbolo "
+                     "solo para registrar el «Format: …» (§5.8) → valor propuesto de tecnicos.get_con_simbolo."),
     PasoComprobacion(3, "%ORDER crudo de un STOPLMTP", True,
                      "NEWORDER B STOPLMTP de 1 acción lejos del mercado → línea %ORDER CRUDA (propuesta para "
                      "fixtures/lineas_das.txt), valor propuesto de stops.tipo_esperado_en_order (riesgo 1), qué es "
@@ -302,19 +310,39 @@ class Comprobador:
         self._registrar(1, [comando], mensajes, conclusion)
 
     def _paso_2(self) -> None:
+        """§5.8 con lo visto en el DAS real (01-oct): `GET SymStatus X` / `GET LDLU X` SOLO contestan con el símbolo ya
+        suscrito (sin `SB` dicen «GET SymStatus failed, please subscribe level1 data 1stly.») y sin símbolo contestan
+        «Format: GET SymStatus Symbol». Orden: SB → con símbolo → sin símbolo (solo para registrarlo) → UNSB."""
         ticker = self._ticker()
-        comandos = [protocolo.cmd_get("SymStatus", ticker), protocolo.cmd_get("LDLU", ticker)]
-        con = [m for c in comandos for m in self._enviar(c)]
         sb = protocolo.cmd_sb(ticker)
+        al_suscribir = self._enviar(sb)
+        con_cmds = [protocolo.cmd_get("SymStatus", ticker), protocolo.cmd_get("LDLU", ticker)]
+        con = [m for c in con_cmds for m in self._enviar(c)]
         sin_cmds = [protocolo.cmd_get("SymStatus"), protocolo.cmd_get("LDLU")]
-        sin = self._enviar(sb) + [m for c in sin_cmds for m in self._enviar(c)]
-        self._enviar(protocolo.cmd_unsb(ticker))
-        responde = any(isinstance(m, (MsgIssueStatus, MsgLDLU)) and m.ticker.upper() == ticker for m in con)
-        responde_sin = any(isinstance(m, (MsgIssueStatus, MsgLDLU)) and m.ticker.upper() == ticker for m in sin)
-        conclusion = (f"con símbolo: {'contesta' if responde else 'NO contesta'}; sin símbolo (con SB): "
-                      f"{'contesta' if responde_sin else 'NO contesta'} → propuesta tecnicos.get_con_simbolo = "
-                      f"{'true' if responde else 'false'} (§5.8)")
-        self._registrar(2, comandos + [sb] + sin_cmds, con + sin, conclusion)
+        sin = [m for c in sin_cmds for m in self._enviar(c)]
+        unsb = protocolo.cmd_unsb(ticker)
+        self._enviar(unsb, espera_s=0.5)
+
+        def contesta(mensajes: list) -> bool:
+            return any(isinstance(m, (MsgIssueStatus, MsgLDLU)) and m.ticker.upper() == ticker for m in mensajes)
+
+        responde, responde_sin = contesta(con), contesta(sin)
+        ldlu_al_suscribir = any(isinstance(m, MsgLDLU) and m.ticker.upper() == ticker for m in al_suscribir)
+        formato_sin = any("FORMAT:" in str(m.cruda).upper() for m in sin if isinstance(m, MensajeDAS))
+        if formato_sin and not responde_sin:
+            texto_sin = "contesta «Format: …» (no vale sin símbolo)"
+        else:
+            texto_sin = "contesta" if responde_sin else "NO contesta"
+        if responde:
+            propuesta = "true"
+        elif responde_sin:
+            propuesta = "false"
+        else:
+            propuesta = "sin decidir (ninguna forma contesta: revisar a mano)"
+        conclusion = (f"tras {sb} ($LDLU al suscribir: {'sí' if ldlu_al_suscribir else 'no'}): con símbolo "
+                      f"{'contesta' if responde else 'NO contesta'}; sin símbolo {texto_sin} → propuesta "
+                      f"tecnicos.get_con_simbolo = {propuesta} (§5.8)")
+        self._registrar(2, [sb] + con_cmds + sin_cmds + [unsb], al_suscribir + con + sin, conclusion)
 
     def _paso_3(self) -> None:
         if not self._consola.confirmar_canario("El paso 3 manda UNA orden STOPLMTP real de 1 acción."):
@@ -327,7 +355,7 @@ class Comprobador:
             return
         disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
         limite = precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True)
-        ruta = str(self._rutas_cfg.get("stop") or "STOP")
+        ruta = str(self._rutas_cfg.get("stop") or "SMAT")
         orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
                            tipo=TipoOrden.STOP_LIMITE_PP, precio=limite, stop=disparo,
                            proposito=Proposito.STOP)
@@ -425,7 +453,7 @@ class Comprobador:
             return
         antes = self._enviar(protocolo.cmd_get("BP"))
         disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
-        ruta = str(self._rutas_cfg.get("stop") or "STOP")
+        ruta = str(self._rutas_cfg.get("stop") or "SMAT")
         mensajes = list(antes)
         ids: list[int] = []
         comandos = [protocolo.cmd_get("BP")]
@@ -478,7 +506,7 @@ class Comprobador:
         try:
             entra = segunda.conectar()
             mensajes = _sacar(cola_2, ESPERA_RESPUESTA_S)
-            logon = dict(segunda.logon)
+            logon = {**dict(segunda.logon), "LOGIN": getattr(segunda, "login", None)}
             if entra and self._canario and self._consola.confirmar_canario(
                     "7c: ¿mandar por la SEGUNDA conexión un STOPLMTP de 1 acción (y cancelarlo)?"):
                 segunda.cerrar()
@@ -500,7 +528,7 @@ class Comprobador:
             return False
         disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
         orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker,
-                           ruta=str(self._rutas_cfg.get("stop") or "STOP"), qty=1, tipo=TipoOrden.STOP_LIMITE_PP,
+                           ruta=str(self._rutas_cfg.get("stop") or "SMAT"), qty=1, tipo=TipoOrden.STOP_LIMITE_PP,
                            stop=disparo, precio=precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True),
                            proposito=Proposito.STOP)
         self._envio_canario = True                    # G2-07: si el eco llega tarde, el barrido la encuentra
@@ -715,6 +743,36 @@ def _sacar(cola: "queue.Queue[Any]", espera_s: float) -> list[MensajeDAS]:
             salida.append(item)
 
 
+def esperar_login(cola: "queue.Queue[Any]", plazo_s: float) -> tuple[Optional[MsgLogin], list[MensajeDAS]]:
+    """El `MsgLogin` que llegue a `cola` en `plazo_s` (DAS real 01-oct) y todo lo leído hasta él; (None, …) si no llega.
+
+    Se para en el PRIMER resultado: lo que venga detrás (el volcado) se queda
+    en la cola para quien la lea después.
+    """
+    fin = time.monotonic() + max(plazo_s, 0.0)
+    vistos: list[MensajeDAS] = []
+    while True:
+        restante = fin - time.monotonic()
+        try:
+            item = cola.get(timeout=restante) if restante > 0 else cola.get_nowait()
+        except queue.Empty:
+            return None, vistos
+        if not isinstance(item, MensajeDAS):
+            continue                                     # estados de conexión
+        vistos.append(item)
+        if isinstance(item, MsgLogin):
+            return item, vistos
+
+
+def texto_login_fallido(login: Optional[MsgLogin]) -> str:
+    """Lo que se dice por consola cuando el LOGIN no se confirma (sin la clave: solo el texto de DAS)."""
+    if login is None:
+        return (f"DAS no confirmó el LOGIN («#LOGIN SUCCESSED») en {ESPERA_LOGIN_S:g} s: no se ejecuta ningún paso "
+                f"(¿DAS abierto, con la API habilitada y el usuario correcto?)")
+    return (f"DAS rechazó el LOGIN: {login.motivo}. Revisar DAS_USUARIO / DAS_CLAVE / DAS_CUENTA en el .env; no se "
+            f"ejecuta ningún paso y no se reintenta (una clave mala repetida puede bloquear el usuario)")
+
+
 def _espera_respuesta() -> float:
     """`ESPERA_RESPUESTA_S` leído en la llamada (los tests lo acortan)."""
     return float(ESPERA_RESPUESTA_S)
@@ -772,6 +830,8 @@ def _rechazo(mensajes: list, token: Optional[int]) -> str:
             return f"RECHAZADA ({m.accion}): «{m.notas}»"
         if isinstance(m, MsgConexion):
             return f"conexión: {m.servidor} {m.evento}"
+        if isinstance(m, MsgLogin) and not m.ok:
+            return f"DAS rechazó el LOGIN: {m.motivo}"
     return "sin respuesta de DAS"
 
 
@@ -820,7 +880,8 @@ def main(argv: Optional[Sequence[str]] = None, consola: Optional[Consola] = None
     """`python -m app.bot_das.herramientas.comprobar_das [--ayuda] [--pasos 1,2] [--config ruta]` (§3.27).
 
     `--ayuda` imprime los pasos y sale (0) sin leer el entorno ni abrir red.
-    Códigos: 0 hecho, 1 DAS no conecta, 3 bot encendido, 5 entorno
+    Códigos: 0 hecho, 1 DAS no conecta o no confirma el LOGIN (rechazo o
+    sin «#LOGIN SUCCESSED» en `ESPERA_LOGIN_S`), 3 bot encendido, 5 entorno
     incompleto o pasos mal escritos.
     """
     consola = consola or Consola()
@@ -885,6 +946,14 @@ def main(argv: Optional[Sequence[str]] = None, consola: Optional[Consola] = None
         try:
             if not cliente.conectar():
                 consola.decir("comprobar_das: DAS no acepta la conexión (¿abierto y con LOGIN hecho?)")
+                return CODIGO_ERROR
+            login, vistos = esperar_login(cola, ESPERA_LOGIN_S)
+            if login is None or not login.ok:
+                texto = texto_login_fallido(login)
+                diario.anotar("comprobacion_das", paso=0, comando=["LOGIN …"],
+                              respuesta_cruda=[filtro.limpiar(protocolo.redactar(m.cruda)) for m in vistos],
+                              conclusion=filtro.limpiar(texto))
+                consola.decir(f"comprobar_das: {texto}")
                 return CODIGO_ERROR
             _sacar(cola, ESPERA_RESPUESTA_S)             # el volcado del LOGIN
             comprobador = Comprobador(cliente, cola, reloj, diario, informe, consola, canario, rutas_cfg,

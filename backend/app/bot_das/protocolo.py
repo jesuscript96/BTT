@@ -40,6 +40,15 @@ LAS TRAMPAS.
   * El signo de `Quantity` en cortos no está documentado (§5.12):
     `normalizar_pos` usa `abs()` y el `Type == 3` para dar la neta SIGNADA;
     vale con signo positivo o negativo.
+  * El resultado del LOGIN NO está en el manual; se vio en el DAS real
+    (01-oct): tras conectar llegan «#Welcome to DAS Command API» y «#Please
+    login to continue.» (informativos) y, tras el LOGIN, «#LOGIN SUCCESSED»
+    (sic) → `MsgLogin(ok=True)` o «ERROR:INVALID PASSWORD» → `MsgLogin(ok=
+    False)`. Toda línea `ERROR:<texto>` que llegue ANTES de un «#LOGIN
+    SUCCESSED» en el mismo `Parser` se toma como rechazo del LOGIN (con la
+    clave mal DAS aún contesta a consultas generales, pero no da cuenta ni
+    cotizaciones); después, un `ERROR:` es `MsgDesconocido` como antes.
+    `reiniciar_login()` vuelve al estado «sin respuesta» (sesión nueva).
   * `parsear` NUNCA lanza: lo que no cuadra es `MsgDesconocido` con la línea
     cruda dentro (frontera de mensaje). Un precio no numérico en un `%ORDER`
     o `%OrderAct` de una orden MKT («just for reference for non limit orders»,
@@ -74,6 +83,7 @@ from app.bot_das.tipos import (
     MsgIntMsg,
     MsgIssueStatus,
     MsgLDLU,
+    MsgLogin,
     MsgMarcador,
     MsgOrden,
     MsgOrderAct,
@@ -144,10 +154,17 @@ _BLOQUE_POR_MARCADOR: dict[str, tuple[bool, Optional[str]]] = {   # (cambia el b
     "#buyingpower": (False, None),
 }
 _INFORMATIVOS = frozenset({"ECHO", "CLIENT", "$TOPLST", "$LV2"})   # §5.25, L1361-1370, L1536-1557
+# Resultado del LOGIN (no documentado; DAS real 01-oct): «#LOGIN SUCCESSED» (sic) o «ERROR:INVALID PASSWORD».
+PALABRA_LOGIN = "#LOGIN"
+PREFIJO_LOGIN_OK = "SUCCE"                     # SUCCESSED (lo visto), SUCCEEDED, SUCCESS, SUCCESSFUL
+PREFIJO_ERROR = "ERROR:"
+_LOGIN_KO = ("FAIL", "INVALID", "DENIED", "REJECT")   # «#LOGIN FAILED» y parecidos: rechazo (lo conservador)
 
 # ── GET: conjunto CERRADO de nombres (§4.1). Se admiten en cualquier capitalización y salen con la del manual ──
 GET_CON_ARGUMENTO_OBLIGATORIO = ("SHORTINFO",)                 # L1005-1010
-GET_CON_ARGUMENTO_OPCIONAL = ("LDLU", "SymStatus")             # §5.8: el símbolo es una presunción (comprobar_das paso 2)
+# §5.8: en el DAS real (01-oct) SOLO contestan con símbolo y con el símbolo ya suscrito (`SB X Lv1`); sin símbolo
+# devuelven «Format: GET SymStatus Symbol». Se sigue admitiendo sin símbolo (tecnicos.get_con_simbolo false).
+GET_CON_ARGUMENTO_OPCIONAL = ("LDLU", "SymStatus")
 GET_SIN_ARGUMENTO = ("BP", "AccountInfo", "POSITIONS", "ORDERS", "TRADES", "LOCATES", "RouteStatus", "INTMSGS")
 COMANDOS_SUELTOS = ("POSREFRESH", "ECHO", "CLIENT")             # L326-330, L1459-1471
 CANALES_SB = ("Lv1", "tms", "Lv2")                             # L1172-1247 (DAYCHART/MINCHART/TopList no se usan, R-A-06)
@@ -413,6 +430,11 @@ class Parser:
         self._cuenta = cuenta.strip() if isinstance(cuenta, str) and cuenta.strip() else None
         self._bloque: Optional[str] = None
         self._intmsg: dict[str, str] = {}
+        self._login_ok = False                     # se vio «#LOGIN SUCCESSED»: un `ERROR:` posterior ya no es del LOGIN
+
+    def reiniciar_login(self) -> None:
+        """Sesión nueva (el cliente reconecta con el mismo Parser): el próximo `ERROR:` vuelve a ser el del LOGIN."""
+        self._login_ok = False
 
     @property
     def en_bloque(self) -> Optional[str]:
@@ -459,6 +481,9 @@ class Parser:
             return MsgConexion(cruda=cruda, servidor=conexion[0], evento=conexion[1])
         palabra = texto.split(None, 1)[0]
         clave = palabra.upper()
+        login = self._login(cruda, texto, clave)
+        if login is not None:
+            return login
         manejador = _MANEJADORES.get(clave)
         if manejador is not None:
             return manejador(self, cruda, texto)
@@ -467,6 +492,29 @@ class Parser:
         if clave.startswith("#") or clave in _INFORMATIVOS:
             return MsgInformativo(cruda=cruda, palabra=palabra)
         return MsgDesconocido(cruda=cruda, palabra=palabra)
+
+    def _login(self, cruda: str, texto: str, clave: str) -> Optional[MsgLogin]:
+        """Resultado del LOGIN (DAS real 01-oct, no está en el manual) o None si la línea no lo es.
+
+        «#LOGIN SUCCESSED» → ok; «#LOGIN» con FAIL/INVALID/DENIED/REJECT → no
+        ok; «ERROR:<texto>» sin un «#LOGIN SUCCESSED» antes en este Parser →
+        no ok con <texto> de motivo (lo conservador: el cliente no reintenta).
+        Otro «#LOGIN …» sigue siendo informativo.
+        """
+        if clave == PALABRA_LOGIN:
+            resto = texto[len(PALABRA_LOGIN):].strip()
+            motivo = resto.upper()
+            if motivo.startswith(PREFIJO_LOGIN_OK):
+                self._login_ok = True
+                return MsgLogin(cruda=cruda, ok=True, motivo=resto)
+            if any(x in motivo for x in _LOGIN_KO):
+                self._login_ok = False
+                return MsgLogin(cruda=cruda, ok=False, motivo=resto)
+            return None
+        if texto[:len(PREFIJO_ERROR)].upper() == PREFIJO_ERROR and not self._login_ok:
+            motivo = texto[len(PREFIJO_ERROR):].strip() or "ERROR"
+            return MsgLogin(cruda=cruda, ok=False, motivo=motivo)
+        return None
 
     def _marcador(self, cruda: str, nombre: str) -> MsgMarcador:
         cambia, bloque = _BLOQUE_POR_MARCADOR[nombre]

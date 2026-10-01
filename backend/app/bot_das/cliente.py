@@ -49,9 +49,17 @@ LAS TRAMPAS.
     y se avisa; `enviar` sin conexión descarta y avisa (el primer descarte
     de cada caída). Así nada viejo sale al reconectar ANTES de la
     reconciliación completa (R-J-02.5, F12).
-  * DAS no confirma el LOGIN con un «ok» documentado (§1): `conectar` es
-    True si el socket abrió y el LOGIN salió; `logon` se rellena después con
-    las líneas `#OrderServer/#QuoteServer` (§5.26).
+  * El manual no documenta la respuesta al LOGIN, pero el DAS real (01-oct)
+    contesta «#LOGIN SUCCESSED» o «ERROR:INVALID PASSWORD» (`MsgLogin`).
+    `conectar` sigue siendo True si el socket abrió y el LOGIN salió; el
+    resultado llega después en `login` (None/True/False) y, como siempre,
+    por `al_mensaje`. `logon` se rellena con las líneas `#OrderServer/
+    #QuoteServer` (§5.26), que el DAS real no mandó al conectar.
+  * LOGIN RECHAZADO: el cliente cierra la sesión (`al_estado(False, «DAS
+    rechazó el LOGIN: …»)`), anota el motivo en `login_rechazado` y
+    `conectar()` devuelve False SIN abrir socket ni mandar otro LOGIN hasta
+    que alguien llame a `rearmar_login()` (o se reinicie el proceso):
+    reintentar una clave mala en bucle puede BLOQUEAR el usuario en DAS.
   * `al_estado(True, …)` se llama ANTES de arrancar el lector: en la cola
     del ejecutor el «conectado» va siempre delante de la primera línea del
     volcado. `al_estado(False, …)` solo en una caída real, una vez por
@@ -97,6 +105,7 @@ from app.bot_das.tipos import (
     LOCATES_INQUIRE_S,
     MensajeDAS,
     MsgConexion,
+    MsgLogin,
     MsgOrden,
     MsgOrderAct,
     OrdenDescartada,
@@ -123,6 +132,7 @@ TOPE_IDS_CONOCIDOS = 50_000         # id_das → ticker que aprende el lector (A
 MOTIVO_VERSION = "descartada por versión"
 MOTIVO_COLA_LLENA = "descartada por versión (cola de salida llena)"
 MOTIVO_SESION = "descartada: la conexión con DAS terminó antes de enviarla"
+TEXTO_LOGIN_RECHAZADO = "DAS rechazó el LOGIN"     # cabeza del motivo de al_estado(False) y del log (sin la clave)
 
 # ── variables de entorno (leídas en la llamada, nunca al importar) ────
 ENV_HOST = "DAS_API_HOST"
@@ -410,6 +420,8 @@ class ClienteDAS:
         self._sesion: Optional[_Sesion] = None
         self._numero = 0
         self._logon: dict[str, Optional[bool]] = {s: None for s in SERVIDORES_LOGON}
+        self._login: Optional[bool] = None                  # MsgLogin de ESTA sesión: None = aún sin respuesta
+        self._login_rechazado: Optional[str] = None         # motivo de DAS; mientras haya uno, conectar() no manda LOGIN
         self._ultimo_recibido_en: Optional[float] = None
         self._descartadas = 0
         self._deduplicadas = 0          # ensayo 28-sep: GET idénticos que ya esperaban en la cola (no se repiten)
@@ -435,6 +447,31 @@ class ClienteDAS:
         """{"OrderServer": True/False/None, "QuoteServer": …} por las líneas `MsgConexion` de esta sesión (§5.26)."""
         with self._cond:
             return dict(self._logon)
+
+    @property
+    def login(self) -> Optional[bool]:
+        """Resultado del LOGIN de la sesión actual (`MsgLogin`): None sin respuesta aún, True aceptado, False rechazado."""
+        with self._cond:
+            return self._login
+
+    @property
+    def login_rechazado(self) -> Optional[str]:
+        """Motivo de DAS («INVALID PASSWORD») si rechazó el LOGIN; mientras no sea None NO se reconecta (`rearmar_login`)."""
+        with self._cond:
+            return self._login_rechazado
+
+    def rearmar_login(self) -> None:
+        """Quita el candado del LOGIN rechazado: el próximo `conectar()` vuelve a mandar el MISMO LOGIN.
+
+        Las credenciales del cliente no cambian: solo tiene sentido si lo que
+        falló se arregló en DAS. Con una clave nueva en el `.env` hay que
+        reiniciar el proceso (lo que hace el supervisor al relanzarlo).
+        """
+        with self._cond:
+            anterior, self._login_rechazado = self._login_rechazado, None
+        if anterior is not None:
+            logger.warning("LOGIN rearmado a mano (antes: %s): el próximo conectar() lo vuelve a intentar",
+                           redactar(anterior))
 
     @property
     def hilos_vivos(self) -> bool:
@@ -493,17 +530,23 @@ class ClienteDAS:
     def conectar(self) -> bool:
         """Abre el socket, manda el LOGIN y arranca `das-emisor` y `das-lector`. NUNCA lanza (R-J-02).
 
-        True si el socket abrió y el LOGIN salió (no hay «login OK»
-        documentado, §1; el resultado real llega en `logon`). False si no se
-        pudo: no llama a `al_estado` (no hubo transición) y el ejecutor
-        reprograma con `PlanReconexion`. Si ya está conectado devuelve True
-        sin hacer nada.
+        True si el socket abrió y el LOGIN salió (el «#LOGIN SUCCESSED» o el
+        rechazo llegan después, en `login`). False si no se pudo: no llama a
+        `al_estado` (no hubo transición) y el ejecutor reprograma con
+        `PlanReconexion`. Si ya está conectado devuelve True sin hacer nada.
+        Con el LOGIN rechazado (`login_rechazado`) devuelve False SIN abrir
+        socket: no se repite una clave mala (riesgo de bloqueo del usuario).
         """
         with self._cerrojo_ciclo:
             with self._cond:
                 anterior = self._sesion
                 if anterior is not None and anterior.viva:
                     return True
+                rechazado = self._login_rechazado
+            if rechazado is not None:
+                logger.warning("DAS %s:%s: no se reconecta: %s: %s; hace falta rearmar_login() o reiniciar el "
+                               "proceso", self._host, self._puerto, TEXTO_LOGIN_RECHAZADO, redactar(rechazado))
+                return False
             if anterior is not None:
                 self._unir(anterior)
             login = cmd_login(self._usuario, self._clave, self._cuenta, self._watch)
@@ -524,6 +567,7 @@ class ClienteDAS:
             logger.info("conectado a DAS %s:%s (%s): %s", self._host, self._puerto,
                         "watch" if self._watch else "normal", redactar(login))
             parser = self._parser_fijo or Parser(self._es_nuestro, watch=self._watch, cuenta=self._cuenta)
+            parser.reiniciar_login()                        # un parser fijo arrastraría el «#LOGIN SUCCESSED» de otra sesión
             with self._cond:
                 self._numero += 1
                 s = _Sesion(self._numero, sock, parser)
@@ -533,6 +577,7 @@ class ClienteDAS:
                 self._descartadas += viejas
                 self._sesion = s
                 self._logon = {srv: None for srv in SERVIDORES_LOGON}
+                self._login = None
                 self._sin_conexion = 0
             if viejas:
                 logger.warning("descartadas %d líneas de una sesión anterior", viejas)
@@ -708,6 +753,8 @@ class ClienteDAS:
                 cruda = bytes(s.buffer[:corte])
                 del s.buffer[:corte + 1]
                 self._entregar(s, cruda.rstrip(b"\r"))
+                if not s.viva:
+                    return                                  # LOGIN rechazado: lo que venga detrás ya no se entrega
             if len(s.buffer) > TOPE_LINEA_BYTES:
                 cruda = bytes(s.buffer)
                 s.buffer.clear()
@@ -725,10 +772,25 @@ class ClienteDAS:
                         self._logon[msg.servidor] = True
                     elif msg.evento in ("Logon:Failed", "Connect:Failed", "Missing heartbeat", "Lost Connection"):
                         self._logon[msg.servidor] = False
+        rechazo: Optional[str] = None
+        if isinstance(msg, MsgLogin):
+            with self._cond:
+                if self._sesion is s:
+                    self._login = bool(msg.ok)
+                    if not msg.ok:
+                        rechazo = str(msg.motivo) or "sin motivo"
+                        self._login_rechazado = rechazo     # ANTES de al_mensaje: quien lo procese ya lo ve
         try:
             self._al_mensaje(msg)
         except Exception as exc:  # noqa: BLE001 — frontera de callback: un al_mensaje que falla no deja sordo al lector (H-5)
             logger.error("al_mensaje falló con %s: %s", redactar(msg.cruda), redactar(f"{type(exc).__name__}: {exc}"))
+        if rechazo is not None:
+            # NO se reintenta (riesgo de bloqueo del usuario en DAS): la sesión se cierra como una caída y
+            # conectar() queda cerrado hasta rearmar_login() o reiniciar el proceso
+            # «LOGIN: motivo» y no «LOGIN (motivo)»: `redactar` taparía la segunda palabra tras «LOGIN » como una clave
+            logger.error("%s: %s. Revisar %s / %s / %s; no se reintenta", TEXTO_LOGIN_RECHAZADO, redactar(rechazo),
+                         ENV_USUARIO, ENV_CLAVE, ENV_CUENTA)
+            self._caida(s, f"{TEXTO_LOGIN_RECHAZADO}: {rechazo}; no se reintenta")
 
     def _cuerpo_emisor(self, s: _Sesion) -> None:
         """das-emisor: descarta lo obsoleto por serie, elige la primera línea que cabe en su cuota, sendall y anota.
@@ -1045,6 +1107,17 @@ class ClienteSombra:
     @property
     def logon(self) -> dict[str, Optional[bool]]:
         return self._real.logon
+
+    @property
+    def login(self) -> Optional[bool]:
+        return self._real.login
+
+    @property
+    def login_rechazado(self) -> Optional[str]:
+        return self._real.login_rechazado
+
+    def rearmar_login(self) -> None:
+        self._real.rearmar_login()
 
     @property
     def hilos_vivos(self) -> bool:

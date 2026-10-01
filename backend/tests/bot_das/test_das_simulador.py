@@ -1018,7 +1018,9 @@ def test_login_y_volcado(servidor, clientes, libro):
     libro.sembrar_posicion("ABCD", -100, D("2.5"))
     c = clientes()
     lineas = c.login()
-    msgs = parsear(lineas)
+    # como el DAS real (01-oct): saludo al conectar y «#LOGIN SUCCESSED» antes de los estados y el volcado
+    assert lineas[:3] == ["#Welcome to DAS Command API", "#Please login to continue.", "#LOGIN SUCCESSED"]
+    msgs = parsear(lineas[3:])
     assert [type(m) for m in msgs[:2]] == [MsgConexion, MsgConexion]
     assert [getattr(m, "nombre", None) for m in msgs[2:]] == [
         "#POS", None, "#POSEND", "#Order", "#OrderEnd", "#Trade", "#TradeEnd"]
@@ -1028,14 +1030,16 @@ def test_login_y_volcado(servidor, clientes, libro):
 
 
 def test_login_con_clave_mala_falla_y_se_ignora_lo_demas(servidor, clientes):
+    """Como el DAS real (01-oct): clave mala → «ERROR:INVALID PASSWORD» tras el saludo; lo demás no se contesta."""
     c = clientes()
+    esperado = ["#Welcome to DAS Command API", "#Please login to continue.", "ERROR:INVALID PASSWORD"]
     c.enviar(f"LOGIN prueba mala {CUENTA} 0")
-    c.esperar(lambda ls: ls == ["#OrderServer:Logon:Failed"])
+    c.esperar(lambda ls: ls == esperado)
     c.enviar("GET BP")
     c.enviar("ECHO")
     time.sleep(0.1)
     c._leer()
-    assert c.lineas == ["#OrderServer:Logon:Failed"]
+    assert c.lineas == esperado
     assert servidor.n_conexiones == 0
 
 

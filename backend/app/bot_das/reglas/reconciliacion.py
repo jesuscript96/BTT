@@ -153,7 +153,7 @@ _LADOS = {"B": Lado.COMPRA, "BUY": Lado.COMPRA, "S": Lado.VENTA, "SELL": Lado.VE
           "SS": Lado.CORTO, "SHRT": Lado.CORTO, "SHORT": Lado.CORTO}
 _BLOQUES_INICIO = {"#POS": "POS", "#Order": "Order", "#Trade": "Trade"}
 _BLOQUES_FIN = {"#POSEND": "POS", "#OrderEnd": "Order", "#TradeEnd": "Trade"}
-_RUTA_STOP_DEFECTO = "STOP"
+_RUTA_STOP_DEFECTO = "SMAT"   # DAS real (1-oct): no existe la ruta STOP; SMAT admite todos los tipos de stop
 
 
 @dataclass(frozen=True)

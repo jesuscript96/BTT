@@ -458,7 +458,13 @@ class MsgConexion(MensajeDAS):     # las 12 líneas de L1472-1490, comparadas EN
 
 
 @dataclass(frozen=True)
-class MsgMarcador(MensajeDAS):     # "#POS", "#POSEND", "#Order", "#OrderEnd", "#Trade", "#TradeEnd", "#SLOrder", "#SLOrderEnd", "#buyingpower"
+class MsgLogin(MensajeDAS):        # resultado del LOGIN (visto en DAS real 01-oct): «#LOGIN SUCCESSED» / «ERROR:<motivo>»
+    ok: bool
+    motivo: str                    # «SUCCESSED», «INVALID PASSWORD», …: el texto de DAS, NUNCA la clave
+
+
+@dataclass(frozen=True)
+class MsgMarcador(MensajeDAS):     # "#POS","#POSEND", "#Order", "#OrderEnd", "#Trade", "#TradeEnd", "#SLOrder", "#SLOrderEnd", "#buyingpower"
     nombre: str
 
 

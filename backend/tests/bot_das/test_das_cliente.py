@@ -55,6 +55,7 @@ from app.bot_das.tipos import (
     MsgConexion,
     MsgDesconocido,
     MsgInformativo,
+    MsgLogin,
     MsgMarcador,
     MsgOrden,
     MsgOrderAct,
@@ -396,8 +397,12 @@ def test_das_login_y_volcado(fabrica, sim, libro, reloj):
     assert sim.recibidas()[0] == f"LOGIN {USUARIO} {CLAVE} {CUENTA} 0"
     assert g.estados == [(True, f"conectado a {sim.direccion[0]}:{sim.direccion[1]}")]
     msgs = g.todos()
-    assert [(m.servidor, m.evento) for m in msgs[:2]] == [("OrderServer", "Logon:Successful"),
-                                                         ("QuoteServer", "Logon:Successful")]
+    # como el DAS real (01-oct): saludo, «#LOGIN SUCCESSED» y después los estados del manual y el volcado
+    assert [m.palabra for m in msgs[:2]] == ["#Welcome", "#Please"]
+    assert isinstance(msgs[2], MsgLogin) and msgs[2].ok is True and msgs[2].motivo == "SUCCESSED"
+    assert [(m.servidor, m.evento) for m in msgs[3:5]] == [("OrderServer", "Logon:Successful"),
+                                                          ("QuoteServer", "Logon:Successful")]
+    assert c.login is True and c.login_rechazado is None
     assert [m.nombre for m in msgs if isinstance(m, MsgMarcador)] == [
         "#POS", "#POSEND", "#Order", "#OrderEnd", "#Trade", "#TradeEnd"]
     pos = g.de_tipo(MsgPos)
@@ -418,11 +423,64 @@ def test_das_login_watch_recibe_formas_i(fabrica, sim, libro):
     assert c.watch is True
 
 
-def test_das_login_fallido_logon_false(fabrica):
+def test_das_login_rechazado_cierra_y_no_reintenta(fabrica, sim, caplog):
+    """DAS real (01-oct): con la clave mal llega «ERROR:INVALID PASSWORD». El cliente lo sabe (`login` False,
+    `login_rechazado`), cierra la sesión con `al_estado(False)` y NO vuelve a mandar el LOGIN (bloquearía el usuario)
+    hasta `rearmar_login()`. La clave no aparece en ningún log."""
+    clave_mala = "otra-clave-inventada-9183"
+    caplog.set_level(logging.DEBUG)
+    c, g = fabrica(clave=clave_mala)
+    assert c.conectar() is True                     # el socket abrió y el LOGIN salió: el resultado llega después
+    assert esperar(lambda: c.login is False and not c.conectado)
+    assert c.login_rechazado == "INVALID PASSWORD"
+    rechazos = [m for m in g.de_tipo(MsgLogin) if not m.ok]
+    assert len(rechazos) == 1 and rechazos[0].cruda == "ERROR:INVALID PASSWORD"
+    assert esperar(lambda: len(g.estados) == 2)
+    assert g.estados[1] == (False, "DAS rechazó el LOGIN: INVALID PASSWORD; no se reintenta")
+    assert c.logon == {"OrderServer": None, "QuoteServer": None}          # el DAS real no manda #OrderServer:…
+    logins = lambda: [x for x in sim.recibidas() if x.upper().startswith("LOGIN")]   # noqa: E731
+    # el plan de reconexión del ejecutor/vigilante llamaría a conectar(): ni socket ni LOGIN nuevo
+    for _ in range(3):
+        assert c.conectar() is False
+    time.sleep(0.2)
+    assert len(logins()) == 1 and len(g.estados) == 2 and not c.conectado
+    assert clave_mala not in caplog.text and "INVALID PASSWORD" in caplog.text
+    # rearmado a mano: vuelve a intentarlo UNA vez (y DAS lo vuelve a rechazar)
+    c.rearmar_login()
+    assert c.login_rechazado is None
+    assert c.conectar() is True
+    assert esperar(lambda: c.login_rechazado == "INVALID PASSWORD" and not c.conectado)
+    assert len(logins()) == 2
+
+
+def test_das_login_rechazado_no_entrega_lo_que_llega_detras(fabrica, sim):
+    """Tras el rechazo la sesión está cerrada: una línea que DAS mande pegada detrás ya no llega a `al_mensaje`."""
     c, g = fabrica(clave="otra-clave-inventada")
-    assert c.conectar() is True                     # el socket abrió: DAS no tiene «login OK» documentado (§1)
-    assert esperar(lambda: c.logon["OrderServer"] is False)
-    assert c.logon["QuoteServer"] is None
+    original = sim._login
+
+    def login_y_mas(conexion, p):
+        original(conexion, p)
+        sim._enviar(conexion, ["$RouteStatus SAGEREB Enabled"])        # DAS contesta lo general aun sin LOGIN
+    sim._login = login_y_mas
+    assert c.conectar() is True
+    assert esperar(lambda: c.login is False and not c.conectado)
+    time.sleep(0.1)
+    assert not [m for m in g.todos() if m.cruda.startswith("$RouteStatus")]
+
+
+def test_das_login_aceptado_en_una_sesion_no_tapa_el_rechazo_de_la_siguiente(fabrica, sim, reloj):
+    """Con un `Parser` fijo, el «#LOGIN SUCCESSED» de una sesión no hace que el `ERROR:` de la siguiente pase por
+    desconocido: `conectar` reinicia el estado del LOGIN del parser."""
+    from app.bot_das.protocolo import Parser
+    c, g = fabrica(parser=Parser(lambda t: True, cuenta=CUENTA))
+    assert c.conectar() is True
+    assert esperar(lambda: c.login is True)
+    sim._usuarios = {USUARIO: "ya-no-es-esta"}                          # la clave cambió en DAS
+    sim.cortar()
+    assert esperar(lambda: not c.conectado)
+    assert c.conectar() is True
+    assert esperar(lambda: c.login is False)
+    assert c.login_rechazado == "INVALID PASSWORD"
 
 
 def test_das_conectar_puerto_cerrado_devuelve_false(reloj):

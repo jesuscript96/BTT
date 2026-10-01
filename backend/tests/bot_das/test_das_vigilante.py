@@ -587,7 +587,7 @@ def test_r_c_07_plan_b_repone_el_par_en_menos_de_2_s_y_el_ejecutor_lo_adopta(
         assert repuesto_s < 2.0, f"el plan B tardó {repuesto_s:.2f} s"
         (stop,) = stops_vivos(libro)                                                  # uno solo, nunca dos
         assert (stop["lado"], stop["qty"], stop["stop"], stop["precio"], stop["ruta"]) == \
-            ("B", 100, D("4"), D("6"), "STOP")                                        # R-C-01 v4: L y L·1,50
+            ("B", 100, D("4"), D("6"), "SMAT")                                        # R-C-01 v4: L y L·1,50
         tokens_vigilante = {stop["token"]}
         assert all(descomponer(t)[0] is Origen.VIGILANTE for t in tokens_vigilante)   # quién la puso (R-C-07)
         assert m.abrir.llamadas == 1
@@ -858,6 +858,30 @@ def test_r_j_02_watch_caido_no_vigila_avisa_y_reconecta(montar, reloj: RelojSimu
     assert [r.datos["conectado"] for r in conexiones][-2:] == [False, True]
     escribir_latido_ejecutor(dir_bot, reloj.epoch() - 30)       # el ejecutor muere: el plan B sigue funcionando
     m.bombear(lambda: len(stops_vivos(libro)) == 1, "stop repuesto tras reconectar")
+
+
+def test_login_rechazado_en_el_watch_avisa_una_vez_y_no_reintenta(montar, reloj: RelojSimulado, dir_bot: Path,
+                                                                  libro: Any, simulador: Any) -> None:
+    """DAS real (01-oct): con la clave mal DAS contesta «ERROR:INVALID PASSWORD». El vigilante avisa 3 UNA vez, NO
+    reconecta el watch aunque el plan diga 0,05 s y NO abre la conexión de acción (cada una sería otro LOGIN con la
+    misma clave: riesgo de bloqueo del usuario). La clave no llega al diario."""
+    simulador._usuarios = {USUARIO: "la-clave-de-verdad-es-otra"}
+    libro.sembrar_posicion(TICKER, -100, D("3.45"))
+    escribir_diario_ejecutor(dir_bot, reloj)
+    escribir_latido_ejecutor(dir_bot, reloj.epoch() - 30)      # ejecutor muerto: el plan B querría enviar
+    m = montar(plan=PlanReconexion((0.05,), 0.05))
+    m.bombear(lambda: m.avisos.con_clave("vigilante_login_rechazado"), "aviso del LOGIN rechazado")
+    deadline = time.monotonic() + 0.6
+    while time.monotonic() < deadline:
+        m.pasadas(1)
+    aviso = m.avisos.con_clave("vigilante_login_rechazado")
+    assert len(aviso) == 1 and aviso[0].nivel is Nivel.MAXIMO
+    assert "DAS rechazó el LOGIN: INVALID PASSWORD" in aviso[0].texto and "no se reintenta" in aviso[0].texto
+    assert len([x for x in m.recibidas() if x.upper().startswith("LOGIN")]) == 1
+    assert m.abrir.llamadas == 0 and not neworders(m.recibidas())
+    assert len(de_tipo(m.regs(), "das_reconectar_parado")) == 1
+    assert [r.datos["ok"] for r in de_tipo(m.regs(), "das_login")] == [False]
+    assert CLAVE_DAS not in json.dumps([r.datos for r in m.regs()], default=str)
 
 
 def test_r_j_05_el_ping_solo_sale_con_watch_y_ejecutor_vivos(montar, reloj: RelojSimulado, dir_bot: Path) -> None:

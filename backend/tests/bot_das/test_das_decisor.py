@@ -599,7 +599,7 @@ def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
         ("Anotar", "fill"),
         ("Anotar", "lote"),
         ("Anotar", "stop_plan"),
-        ("EnviarOrden", "B", "STOPLMTP", 100, D("6.00"), D("4.00"), "stop", "STOP", False, "stops:XYZ"),   # R-C-01 v4
+        ("EnviarOrden", "B", "STOPLMTP", 100, D("6.00"), D("4.00"), "stop", "SMAT", False, "stops:XYZ"),   # R-C-01 v4
         ("Anotar", "lote"),
         ("Anotar", "intento_fin"),
         ("Programar", T_HORA_AGREGAR, segundos_hasta(eod - timedelta(seconds=60), ahora_et)),
@@ -633,7 +633,7 @@ def test_f1_secuencia_exacta_de_senal_a_stops(banco: Banco) -> None:
     assert b.canal.series_invalidadas == [("stops:XYZ", 1)]
     assert b.canal.invalida_antes_de_enviar("stops:XYZ", 1)                              # L0-01 / riesgo 7
     lineas_stop = [(linea, serie, version) for linea, serie, version in b.canal.lineas if "STOPLMTP" in linea]
-    assert lineas_stop == [(f"NEWORDER {stop.token} B XYZ STOP 100 STOPLMTP 4 6 TIF=DAY+", "stops:XYZ", 1)]
+    assert lineas_stop == [(f"NEWORDER {stop.token} B XYZ SMAT 100 STOPLMTP 4 6 TIF=DAY+", "stops:XYZ", 1)]
 
 
 @pytest.mark.parametrize("orden_mensajes", PERMUTACIONES, ids=["-".join(p) for p in PERMUTACIONES])
@@ -1415,6 +1415,46 @@ def test_f11_modo_degradado_bloquea_entradas_avisa_y_se_recupera(cfg: Config, tm
         b.disco_roto = False
     b.avanzar(11)
     assert modo not in b.estado.modo_degradado
+
+
+def test_login_rechazado_aviso_maximo_unico_y_queda_como_das_caido(cfg: Config, tmp_path: Path) -> None:
+    """DAS real (01-oct): «ERROR:INVALID PASSWORD» → aviso 3 al grupo B UNA sola vez (ni con un segundo rechazo, ni
+    con la `ConexionDAS(False)` que llega detrás, ni cada 5 min), modo degradado «das» y no se abre nada. El texto dice
+    qué revisar y que no se reintenta; nunca lleva la clave (solo el texto de DAS)."""
+    from app.bot_das.tipos import MsgLogin
+    b = Banco(cfg, tmp_path)
+    b.preparar()
+    marca = b.marca()
+    rechazo = MsgLogin(cruda="ERROR:INVALID PASSWORD", ok=False, motivo="INVALID PASSWORD")
+    tras = b.procesar(DeDAS(rechazo))
+    assert {k: anotaciones(tras, "das_login")[0].datos[k] for k in ("ok", "motivo")} == {"ok": False, "motivo": "INVALID PASSWORD"}
+    b.procesar(ConexionDAS(False, "DAS rechazó el LOGIN: INVALID PASSWORD; no se reintenta"))
+    b.procesar(DeDAS(rechazo))
+    b.avanzar(301, tic=10.0)
+    avisos_ = [a for a in b.desde(marca) if isinstance(a, Avisar)]
+    login = [a for a in avisos_ if a.clave == "das_logon:LOGIN"]
+    assert len(login) == 1 and login[0].nivel is Nivel.MAXIMO and login[0].grupo is Grupo.B
+    for trozo in ("DAS rechazó el LOGIN: INVALID PASSWORD", "DAS_USUARIO / DAS_CLAVE / DAS_CUENTA", ".env",
+                  "no se reintenta"):
+        assert trozo in login[0].texto
+    assert not [a for a in avisos_ if (a.clave or "").startswith("das_caido")]    # ni «DESCONECTADO» ni cada 5 min
+    assert "das" in b.estado.modo_degradado and b.estado.das_conectado is False
+    assert b.estado.das_logon["LOGIN"] is False
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    acciones = b.senal(evento(momento=momento_de(b.reloj.ahora())))
+    assert anotaciones(acciones, "senal_descartada")[0].datos["motivo"] == reglas_entrada.MOTIVO_DEGRADADO
+    assert not b.enviadas(Proposito.ENTRADA_AGREGAR)
+
+
+def test_login_aceptado_solo_al_diario_y_al_estado(cfg: Config, tmp_path: Path) -> None:
+    """«#LOGIN SUCCESSED» no avisa: queda en el diario y en `das_logon["LOGIN"]` (lo enseña /salud)."""
+    from app.bot_das.tipos import MsgLogin
+    b = Banco(cfg, tmp_path)
+    b.preparar()
+    tras = b.procesar(DeDAS(MsgLogin(cruda="#LOGIN SUCCESSED", ok=True, motivo="SUCCESSED")))
+    assert {k: anotaciones(tras, "das_login")[0].datos[k] for k in ("ok", "motivo")} == {"ok": True, "motivo": "SUCCESSED"}
+    assert not [a for a in tras if isinstance(a, Avisar)]
+    assert b.estado.das_logon["LOGIN"] is True and "das" not in b.estado.modo_degradado
 
 
 def test_f11_con_el_disco_roto_no_sale_la_entrada_pero_si_los_stops(banco: Banco) -> None:

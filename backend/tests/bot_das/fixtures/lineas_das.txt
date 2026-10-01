@@ -160,3 +160,37 @@ HOLA MUNDO 123
 %ORDER 7001 126800001 ABCD SS L 300
 # caso: trade_truncado | %TRADE con menos de 8 campos
 %TRADE 9001 ABCD SS
+# caso: real_bienvenida | DAS real (01-oct): primera línea nada más conectar, antes del LOGIN
+#Welcome to DAS Command API
+# caso: real_pide_login | DAS real (01-oct): segunda línea al conectar
+#Please login to continue.
+# caso: real_login_ok | DAS real (01-oct): LOGIN aceptado (sic, «SUCCESSED»); detrás llega el volcado
+#LOGIN SUCCESSED
+# caso: real_login_ko | DAS real (01-oct): LOGIN rechazado (llega en lugar de «#LOGIN SUCCESSED»)
+ERROR:INVALID PASSWORD
+# caso: real_symstatus | DAS real (01-oct): GET SymStatus AAPL con el símbolo suscrito
+$SymStatus AAPL SSR:N
+# caso: real_quote_completo | DAS real (01-oct): $Quote al suscribir, con tradesAllDay, RVOL y T con dos puntos
+$Quote AAPL A:329.04 Asz:2 B:329 Bsz:3 V:17986251 L:329.02 Hi:332.482 Lo:325.81 op:330.17 ycl:333.02 tcl:0 PE:Q VWAP:329.17 tradesAllDay:341068 RVOL:70 T:13:24:32
+# caso: real_quote_parche_ask | DAS real (01-oct): parche solo con el ask
+$Quote AAPL A:329.03 Asz:1
+# caso: real_quote_parche_volumen | DAS real (01-oct): parche de volumen, último y operaciones
+$Quote AAPL V:17987203 L:329.011 tradesAllDay:341086
+# caso: real_ldlu | DAS real (01-oct): llega solo al suscribir (SB AAPL Lv1) y con GET LDLU AAPL
+$LDLU AAPL 309.99 342.62
+# caso: real_shortinfo | DAS real (01-oct): $SHORTINFO de 8 campos (con RegSho)
+$SHORTINFO AAPL Y 1000000000 Y 0 0 N N
+# caso: real_bp | DAS real (01-oct): BP tras «#buyingpower bp,nbp»
+BP 40000.00 40000.00
+# caso: real_cabecera_accountinfo | DAS real (01-oct): cabecera antes de $AccountInfo (con DOS espacios dentro): informativa
+#ACCOUNTINFO OpenEQ CurrEQ RealizedPL  UnrealizedPL NetPL HTBCost SecFee FINRAFee ECNFee Commission
+# caso: real_accountinfo | DAS real (01-oct): $AccountInfo con 10 números
+$AccountInfo 10000.00 10000.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00 0.00
+# caso: real_symstatus_sin_sb | DAS real (01-oct): GET SymStatus X sin suscribir antes (SB X Lv1)
+GET SymStatus failed, please subscribe level1 data 1stly.
+# caso: real_formato_symstatus | DAS real (01-oct): GET SymStatus SIN símbolo
+Format: GET SymStatus Symbol
+# caso: real_formato_ldlu | DAS real (01-oct): GET LDLU SIN símbolo
+Format: GET LDLU Symbol
+# caso: real_respuestas_pegadas | DAS real (01-oct): tres respuestas pegadas SIN salto de línea entre ellas: desconocido, nunca excepción
+GET SymStatus failed, please subscribe level1 data 1stly.GET LDLU failed, please subscribe level1 data 1stly.Format: GET SymStatus Symbol

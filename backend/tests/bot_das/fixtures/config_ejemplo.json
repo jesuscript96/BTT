@@ -5,7 +5,7 @@
   "generado_por": "fixture:tests/bot_das",
   "motor_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "estrategias_hash": "sha256:2fbf7294b1c4ab42568ff343fe0ab12db9a2954c8e5e3b3d0f08b55554b57bc6",
-  "sha256": "2fb735cda5bd446384bec28a8151c464f23d1def1552e4f730623d64b6b21531",
+  "sha256": "9ba1f45ef298fc57687c9158add115eecbac8c99ea55eb165422ce7116d9dbbe",
   "fase": "sombra",
   "vigilando": true,
   "pausar_entradas": false,
@@ -79,7 +79,7 @@
     "comprobacion_s": 1,
     "debounce_s": 0.3,
     "tipo_esperado_en_order": null,
-    "ruta": "STOP"
+    "ruta": "SMAT"
   },
   "halts": {
     "k_max": 3,
@@ -115,7 +115,7 @@
       "lt_1_desde_0700": "EDGA",
       "lt_1_antes_0700": "MIAX"
     },
-    "stop": "STOP",
+    "stop": "SMAT",
     "halt": "OPEN"
   },
   "tecnicos": {

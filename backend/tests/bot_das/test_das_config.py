@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "2fb735cda5bd446384bec28a8151c464f23d1def1552e4f730623d64b6b21531"   # Jaume 30-sep: B20 bis null + TP persigue
+SHA_FIXTURE = "9ba1f45ef298fc57687c9158add115eecbac8c99ea55eb165422ce7116d9dbbe"   # Jaume 30-sep: B20 bis null + TP persigue
 RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 
@@ -120,7 +120,7 @@ def test_cargar_fixture_tal_cual(cfg):
     assert isinstance(cfg, Config)
     assert cfg.fase is Fase.SOMBRA and cfg.config_version == 1 and cfg.sha256 == SHA_FIXTURE
     assert cfg.cuenta_das == CUENTA and cfg.vigilando is True and cfg.pausar_entradas is False
-    assert cfg.stops["limite_pct"] == 50.0 and cfg.rutas["stop"] == "STOP"
+    assert cfg.stops["limite_pct"] == 50.0 and cfg.rutas["stop"] == "SMAT"
     assert not set(C.CLAVES_STOPS_V3) & set(cfg.stops)                  # Jaume 29-sep: sin el par de v3
     e = cfg.estrategias["prueba-1"]
     assert isinstance(e, EstrategiaConfig)

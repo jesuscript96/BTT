@@ -73,6 +73,10 @@ LAS TRAMPAS.
     llegue cualquier línea de esa orden.
     Con el watch caído no se vigila: el libro está viejo; se avisa (2) una
     vez por caída y se reconecta por plan (2/4/8/16/30 s, R-J-02).
+  * LOGIN RECHAZADO por DAS («ERROR:INVALID PASSWORD», DAS real 01-oct) en
+    el watch o en la conexión de acción: aviso 3 UNA vez y ni el watch se
+    reconecta ni se abre la de acción (una clave mala en bucle bloquea el
+    usuario en DAS) hasta reiniciar el proceso con el `.env` corregido.
   * Los diarios se siguen por bytes (tamaño leído + `diario.leer_texto` del
     trozo nuevo hasta el último salto de línea): `LectorDiario.seguir` relee
     y parsea el fichero entero cada segundo. Solo se guardan los registros que
@@ -148,6 +152,7 @@ from app.bot_das.tipos import (
     MsgConexion,
     MsgIssueStatus,
     MsgLDLU,
+    MsgLogin,
     MsgMarcador,
     MsgOrden,
     MsgOrderAct,
@@ -284,8 +289,8 @@ class ColaVigilante:
         self._cola.put((EVENTO_ESTADO_WATCH, bool(conectado), str(motivo)))
 
     def al_mensaje_accion(self, msg: MensajeDAS) -> None:
-        """Mensaje de la conexión de ACCIÓN: solo pasan los `%OrderAct` (rechazos y aceptaciones de lo que se envió)."""
-        if isinstance(msg, MsgOrderAct):
+        """Mensaje de la conexión de ACCIÓN: solo pasan los `%OrderAct` y el resultado del LOGIN (`MsgLogin`)."""
+        if isinstance(msg, (MsgOrderAct, MsgLogin)):
             self._cola.put((EVENTO_ACCION, msg))
             return
         with self._cerrojo:
@@ -719,6 +724,8 @@ class VigilanteDAS:
         # reconexión del watch (R-J-02)
         self._hilo_watch: Optional[threading.Thread] = None
         self._proximo_intento_watch = 0.0
+        self._login_rechazado: Optional[str] = None       # DAS rechazó el LOGIN (01-oct): ni watch ni acción vuelven a entrar
+        self._anotado_login_parado = False
         # bucle
         self._proxima_pasada = 0.0
         self._codigo: Optional[int] = None
@@ -937,7 +944,10 @@ class VigilanteDAS:
         elif etiqueta == EVENTO_ESTADO_WATCH:
             self._estado_watch(evento[1], evento[2])
         elif etiqueta == EVENTO_ACCION:
-            self._de_accion(evento[1])
+            if isinstance(evento[1], MsgLogin):
+                self._login(evento[1], "accion")
+            else:
+                self._de_accion(evento[1])
         elif etiqueta == EVENTO_ESTADO_ACCION:
             self._diario.anotar("das_conexion", conexion="accion", conectado=evento[1], motivo=evento[2])
         elif etiqueta == EVENTO_HILO:
@@ -982,6 +992,27 @@ class VigilanteDAS:
             if msg.evento in ("Logon:Failed", "Connect:Failed"):
                 self._avisar(Nivel.MAXIMO, f"EP-7: el LOGIN del vigilante (watch) falló en {msg.servidor}: "
                                            f"LOGIN/2FA a mano", "vigilante_login", ahora)
+        elif isinstance(msg, MsgLogin):
+            self._login(msg, "watch")
+
+    def _login(self, msg: MsgLogin, conexion: str) -> None:
+        """DAS real (01-oct): «#LOGIN SUCCESSED» / «ERROR:…». Rechazado → aviso 3 UNA vez y sin más LOGIN (watch ni acción).
+
+        El cliente ya cerró esa sesión y no reconecta; aquí se deja de pedir
+        el watch y de abrir la conexión de acción (cada una mandaría otro
+        LOGIN con la misma clave). Solo el texto de DAS, nunca la clave.
+        """
+        motivo = str(msg.motivo)
+        self._diario.anotar("das_login", conexion=conexion, ok=bool(msg.ok), motivo=motivo)
+        if msg.ok:
+            return
+        primero = self._login_rechazado is None
+        self._login_rechazado = motivo
+        if primero:
+            self._avisar(Nivel.MAXIMO, f"Vigilante: DAS rechazó el LOGIN: {mod_avisos.escapar_html(motivo)} (conexión "
+                                       f"{conexion}). Revisar DAS_USUARIO / DAS_CLAVE / DAS_CUENTA en el .env; no se "
+                                       f"reintenta. No vigila ni repone stops; los que ya estén en DAS siguen",
+                         "vigilante_login_rechazado", self._reloj.mono())
 
     def _de_orden(self, m: MsgOrden, ahora: float) -> None:
         self._ordenes[m.id] = m
@@ -1452,9 +1483,14 @@ class VigilanteDAS:
 
     # ── conexión de acción (corrección 16, riesgo 31) ──
     def _asegurar_accion(self) -> bool:
-        """True si hay una conexión normal con permiso de envío; si no, la abre en un hilo y la espera ≤ 1 s."""
+        """True si hay una conexión normal con permiso de envío; si no, la abre en un hilo y la espera ≤ 1 s.
+
+        Con el LOGIN rechazado (01-oct) no se abre: sería otro LOGIN con la misma clave mala.
+        """
         with self._cerrojo_accion:
             cliente = self._accion
+        if self._login_rechazado is not None and (cliente is None or not _conectado(cliente)):
+            return False
         if cliente is not None:
             if _conectado(cliente):
                 with self._cerrojo_accion:
@@ -1538,6 +1574,14 @@ class VigilanteDAS:
             return
         hilo = self._hilo_watch
         if hilo is not None and hilo.is_alive():
+            return
+        rechazado = self._login_rechazado or _login_rechazado(self._watch)
+        if rechazado is not None:
+            if not self._anotado_login_parado:       # una clave mala en bucle bloquearía el usuario en DAS
+                self._anotado_login_parado = True
+                self._diario.anotar("das_reconectar_parado", conexion="watch",
+                                    motivo=f"DAS rechazó el LOGIN: {rechazado}",
+                                    nota="no se reintenta: corregir el .env y reiniciar el vigilante", regla="R-J-02")
             return
         if time.monotonic() < self._proximo_intento_watch:
             return
@@ -1765,6 +1809,15 @@ def _orden_de(o: OrdenNueva, ahora: float) -> Orden:
 
 def _conectado(objeto: Any) -> bool:
     return _atributo_bool(objeto, "conectado", False)
+
+
+def _login_rechazado(objeto: Any) -> Optional[str]:
+    """`ClienteDAS.login_rechazado` (motivo de DAS) o None; un cliente sin el atributo o que lanza cuenta como «no»."""
+    try:
+        motivo = getattr(objeto, "login_rechazado", None)
+    except Exception:  # noqa: BLE001 — frontera: una propiedad que lanza no para la reconexión
+        return None
+    return motivo if isinstance(motivo, str) else None
 
 
 def _atributo_bool(objeto: Any, nombre: str, defecto: bool) -> bool:

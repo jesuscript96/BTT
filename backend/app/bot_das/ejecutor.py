@@ -53,7 +53,9 @@ LAS TRAMPAS.
   * La reconexión con DAS (R-J-02: 2/4/8/16 y luego 30 s) la lleva el
     ejecutor con `PlanReconexion`, en un hilo de un solo uso: un `connect`
     que tarde 5 s en el hilo principal pararía el latido y el supervisor
-    mataría al ejecutor por colgado (3 s).
+    mataría al ejecutor por colgado (3 s). Con el LOGIN RECHAZADO por DAS
+    (`cliente.login_rechazado`, DAS real 01-oct) NO se programa reconexión
+    (`das_reconectar_parado`): una clave mala en bucle bloquea el usuario.
   * Latido (injerto §8.11, riesgo 30): `Latido.tocar(todo_vivo)` solo escribe
     si los hilos CRÍTICOS viven (`das-lector` + `das-emisor`, la fuente de
     señales y `avisos-envio`). Un ejecutor sordo se ve «colgado» y el
@@ -1337,7 +1339,21 @@ class Ejecutor:
             return
         if self._conectado() or self._hilo_reconexion is not None or self._reconectar_en is not None:
             return
+        rechazado = self._login_rechazado()
+        if rechazado is not None:
+            # DAS rechazó el LOGIN (01-oct): reintentar una clave mala puede bloquear el usuario; el decisor ya avisó
+            self._diario.anotar("das_reconectar_parado", motivo=f"DAS rechazó el LOGIN: {rechazado}",
+                                nota="no se reintenta: corregir el .env y reiniciar el ejecutor", regla="R-J-02")
+            return
         self._programar_reconexion()
+
+    def _login_rechazado(self) -> Optional[str]:
+        """Motivo de DAS si rechazó el LOGIN (`ClienteDAS.login_rechazado`); None si no o si el cliente no lo sabe."""
+        try:
+            motivo = getattr(self._cliente, "login_rechazado", None)
+        except Exception:  # noqa: BLE001 — frontera: una propiedad rota del cliente no para la reconexión
+            return None
+        return motivo if isinstance(motivo, str) else None
 
     def _programar_reconexion(self) -> None:
         espera = self._plan.siguiente()
@@ -1385,6 +1401,8 @@ class Ejecutor:
         while self._decisor.estado.reconciliacion_ok_en is None:
             if self.paso(PASO_ARRANQUE_S) is not None:
                 return False
+            if self._login_rechazado() is not None:
+                return False                            # LOGIN rechazado: no llegará volcado; el aviso 3 ya salió
             if time.monotonic() >= limite:
                 self._diario.anotar("reconciliacion_pendiente", espera_s=self._espera_reconciliacion_s,
                                     regla="R-J-02.5")

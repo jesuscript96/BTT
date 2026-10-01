@@ -77,6 +77,7 @@ from app.bot_das.tipos import (
     MsgIntMsg,
     MsgIssueStatus,
     MsgLDLU,
+    MsgLogin,
     MsgMarcador,
     MsgOrden,
     MsgOrderAct,
@@ -275,6 +276,32 @@ ESPERADOS: dict[str, tuple[str, type, dict]] = {
     "basura": ("API-5.15", MsgDesconocido, dict(palabra="HOLA")),
     "order_truncada": ("API-5.15", MsgDesconocido, dict(palabra="%ORDER")),
     "trade_truncado": ("API-5.15", MsgDesconocido, dict(palabra="%TRADE")),
+    # ── líneas del DAS REAL (01-oct): la primera conexión de verdad ──
+    "real_bienvenida": ("DAS-real-01oct", MsgInformativo, dict(palabra="#Welcome")),
+    "real_pide_login": ("DAS-real-01oct", MsgInformativo, dict(palabra="#Please")),
+    "real_login_ok": ("DAS-real-01oct-login", MsgLogin, dict(ok=True, motivo="SUCCESSED")),
+    "real_login_ko": ("DAS-real-01oct-login", MsgLogin, dict(ok=False, motivo="INVALID PASSWORD")),
+    "real_symstatus": ("DAS-real-01oct", MsgIssueStatus, dict(ticker="AAPL", ssr=False, ta=None, tat=None)),
+    "real_quote_completo": ("DAS-real-01oct", MsgQuote, dict(ticker="AAPL", campos={
+        "A": "329.04", "Asz": "2", "B": "329", "Bsz": "3", "V": "17986251", "L": "329.02", "Hi": "332.482",
+        "Lo": "325.81", "op": "330.17", "ycl": "333.02", "tcl": "0", "PE": "Q", "VWAP": "329.17",
+        "tradesAllDay": "341068", "RVOL": "70", "T": "13:24:32"})),
+    "real_quote_parche_ask": ("DAS-real-01oct", MsgQuote, dict(ticker="AAPL", campos={"A": "329.03", "Asz": "1"})),
+    "real_quote_parche_volumen": ("DAS-real-01oct", MsgQuote, dict(
+        ticker="AAPL", campos={"V": "17987203", "L": "329.011", "tradesAllDay": "341086"})),
+    "real_ldlu": ("DAS-real-01oct", MsgLDLU, dict(ticker="AAPL", limit_down=D("309.99"), limit_up=D("342.62"))),
+    "real_shortinfo": ("DAS-real-01oct", MsgShortInfo, dict(
+        ticker="AAPL", shortable=True, short_size=1_000_000_000, marginable=True, tasa_larga=D("0"),
+        tasa_corta=D("0"), prohibido=False, reg_sho=False)),
+    "real_bp": ("DAS-real-01oct", MsgBP, dict(bp=D("40000.00"), bp_overnight=D("40000.00"))),
+    "real_cabecera_accountinfo": ("DAS-real-01oct", MsgInformativo, dict(palabra="#ACCOUNTINFO")),
+    "real_accountinfo": ("DAS-real-01oct", MsgAccountInfo, dict(
+        open_eq=D("10000.00"), curr_eq=D("10000.00"), realizado=D("0.00"), no_realizado=D("0.00"), net=D("0.00"),
+        htb=D("0.00"), sec=D("0.00"), finra=D("0.00"), ecn=D("0.00"), comision=D("0.00"))),
+    "real_symstatus_sin_sb": ("DAS-real-01oct-5.8", MsgDesconocido, dict(palabra="GET")),
+    "real_formato_symstatus": ("DAS-real-01oct-5.8", MsgDesconocido, dict(palabra="Format:")),
+    "real_formato_ldlu": ("DAS-real-01oct-5.8", MsgDesconocido, dict(palabra="Format:")),
+    "real_respuestas_pegadas": ("DAS-real-01oct-5.15", MsgDesconocido, dict(palabra="GET")),
 }
 CASOS_MULTILINEA = {"intmsg"}
 
@@ -420,6 +447,51 @@ def test_conexion_con_texto_de_mas_no_se_confunde():
     """API-5.26: comparación ENTERA; «Lost Connection now» no es la línea documentada."""
     msg = parsear("#OrderServer:Lost Connection now")
     assert type(msg) is MsgInformativo
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Resultado del LOGIN (DAS real 01-oct; no está en el manual)
+# ══════════════════════════════════════════════════════════════════════
+@pytest.mark.parametrize("linea, ok, motivo", [
+    pytest.param("#LOGIN SUCCESSED", True, "SUCCESSED", id="real-01oct-ok-sic"),
+    pytest.param("#login succeeded", True, "succeeded", id="ok-minusculas-y-bien-escrito"),
+    pytest.param("  #LOGIN SUCCESSFUL  ", True, "SUCCESSFUL", id="ok-con-espacios"),
+    pytest.param("ERROR:INVALID PASSWORD", False, "INVALID PASSWORD", id="real-01oct-clave-mala"),
+    pytest.param("ERROR: INVALID USER", False, "INVALID USER", id="error-generico-con-espacio"),
+    pytest.param("error:Account disabled", False, "Account disabled", id="error-minusculas"),
+    pytest.param("ERROR:", False, "ERROR", id="error-sin-texto"),
+    pytest.param("#LOGIN FAILED", False, "FAILED", id="login-failed"),
+])
+def test_resultado_del_login(linea, ok, motivo):
+    """DAS real (01-oct): «#LOGIN SUCCESSED» → aceptado; «ERROR:<texto>» (antes de un SUCCESSED) → rechazado."""
+    msg = Parser(es_nuestro).parsear(linea)
+    assert type(msg) is MsgLogin
+    assert (msg.ok, msg.motivo, msg.cruda) == (ok, motivo, linea.rstrip("\r\n"))
+
+
+def test_login_otro_texto_tras_login_es_informativo():
+    """Un «#LOGIN …» que no dice ni éxito ni fallo no se toma por resultado (queda informativo, como antes)."""
+    assert type(parsear("#LOGIN pending 2FA")) is MsgInformativo
+
+
+def test_error_tras_login_aceptado_ya_no_es_del_login_y_reiniciar_lo_rearma():
+    """Un `ERROR:` después del «#LOGIN SUCCESSED» de ese Parser es de otro comando (MsgDesconocido, como antes);
+    `reiniciar_login()` (sesión nueva) hace que el siguiente vuelva a contar como rechazo del LOGIN."""
+    parser = Parser(es_nuestro, cuenta=CUENTA)
+    assert type(parser.parsear("#Welcome to DAS Command API")) is MsgInformativo
+    assert parser.parsear("#LOGIN SUCCESSED").ok is True
+    tarde = parser.parsear("ERROR:INVALID PASSWORD")
+    assert type(tarde) is MsgDesconocido and tarde.palabra == "ERROR:INVALID"
+    parser.reiniciar_login()
+    rechazo = parser.parsear("ERROR:INVALID PASSWORD")
+    assert type(rechazo) is MsgLogin and rechazo.ok is False
+
+
+def test_login_rechazado_y_redactar_no_esconden_el_motivo():
+    """El motivo es el texto de DAS (nunca la clave) y `redactar` no lo tapa: no lleva «LOGIN <a> <b>»."""
+    msg = parsear("ERROR:INVALID PASSWORD")
+    assert redactar(f"DAS rechazó el LOGIN: {msg.motivo}; no se reintenta") == \
+        "DAS rechazó el LOGIN: INVALID PASSWORD; no se reintenta"
 
 
 @pytest.mark.parametrize("final, cruda", [

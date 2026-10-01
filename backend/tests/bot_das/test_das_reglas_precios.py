@@ -169,8 +169,8 @@ def test_tramo(precio, esperado):
     pytest.param("cruzar", D("0.45"), _hora(7, 0), "EDGA", id="cruzar-lt1-07:00->EDGA"),
     pytest.param("cruzar", D("0.45"), _hora(9, 30), "EDGA", id="cruzar-lt1-09:30->EDGA"),
     pytest.param("cruzar", D("0.45"), _hora(4, 0), "MIAX", id="cruzar-lt1-04:00->MIAX"),
-    pytest.param("stop", D("3.45"), _hora(9, 30), "STOP", id="stop->STOP-R-C-01"),
-    pytest.param("stop", D("0.45"), _hora(4, 30), "STOP", id="stop-penny->STOP"),
+    pytest.param("stop", D("3.45"), _hora(9, 30), "SMAT", id="stop->SMAT-R-C-01"),
+    pytest.param("stop", D("0.45"), _hora(4, 30), "SMAT", id="stop-penny->SMAT"),
     pytest.param("halt", D("3.45"), _hora(9, 30), "OPEN", id="halt->OPEN-EP-2"),
 ])
 def test_ruta(cfg_rutas, accion, precio, hora, esperado):

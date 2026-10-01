@@ -171,6 +171,7 @@ from app.bot_das.tipos import (
     MsgIntMsg,
     MsgIssueStatus,
     MsgLDLU,
+    MsgLogin,
     MsgOrden,
     MsgOrderAct,
     MsgPos,
@@ -543,6 +544,7 @@ class Decisor:
         self._accountinfo_pedido_en: Optional[float] = None
         self._feed_nivel = "ok"
         self._das_caido_desde: Optional[float] = None
+        self._login_rechazado: Optional[str] = None       # motivo de DAS (01-oct): el aviso 3 sale UNA vez y no se reconecta
         self._reconciliacion_avisada = False
         self._resumen_enviado: Optional[date] = None
         self._ajenas_anotadas: set[int] = set()
@@ -2818,6 +2820,8 @@ class Decisor:
             return self._msg_route(m)
         if isinstance(m, MsgConexion):
             return self._msg_conexion(m)
+        if isinstance(m, MsgLogin):
+            return self._msg_login(m)
         if isinstance(m, MsgIntMsg):
             texto = "; ".join(f"{k}={v}" for k, v in sorted(m.campos.items()))[:500]
             return [Anotar("intmsg", {"campos": dict(m.campos)}),
@@ -4273,6 +4277,36 @@ class Decisor:
             acciones.append(Avisar(Nivel.MAXIMO, Grupo.B, f"DAS: {avisos.escapar_html(m.servidor)} rechazó el LOGIN: "
                                                           f"hacer LOGIN/2FA a mano (EP-7)",
                                    clave=f"das_logon:{m.servidor}"))
+        return acciones
+
+    def _msg_login(self, m: MsgLogin) -> list[Accion]:
+        """DAS real (01-oct): «#LOGIN SUCCESSED» o «ERROR:INVALID PASSWORD». Rechazado → aviso 3 UNA vez y modo «das».
+
+        El cliente ya cerró la sesión y NO reintenta (una clave mala en bucle
+        puede bloquear el usuario en DAS): el bot queda como con DAS caído (no
+        abre nada; los stops que ya estén en DAS siguen), sin el recordatorio
+        cada 5 min porque no hay reconexión que esperar. La `ConexionDAS(False)`
+        que llega detrás ya no repite el aviso. Solo se escribe el texto de
+        DAS, nunca la clave.
+        """
+        estado = self._estado
+        motivo = str(m.motivo)
+        acciones: list[Accion] = [Anotar("das_login", {"ok": bool(m.ok), "motivo": motivo})]
+        if m.ok:
+            estado.das_logon["LOGIN"] = True
+            self._login_rechazado = None
+            return acciones
+        estado.das_logon["LOGIN"] = False
+        estado.das_conectado = False
+        if "das" not in estado.modo_degradado:
+            estado.modo_degradado.add("das")
+            acciones.append(Anotar("degradado", {"modo": "das", "activo": True, "motivo": "LOGIN rechazado"}))
+        if self._login_rechazado is None:
+            acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
+                                   f"DAS rechazó el LOGIN: {avisos.escapar_html(motivo)}. Revisar DAS_USUARIO / "
+                                   f"DAS_CLAVE / DAS_CUENTA en el .env; no se reintenta. No se abre nada; los stops "
+                                   f"que ya estén en DAS siguen", clave="das_logon:LOGIN"))
+        self._login_rechazado = motivo
         return acciones
 
     def _msg_quote(self, m: MsgQuote) -> list[Accion]:

@@ -1304,3 +1304,139 @@ def test_l0_05_con_das_en_et_no_aborta(dir_bot: Path, reloj: RelojSimulado, monk
     comprobador.ejecutar([3, 4])
     assert "= ET" in _conclusiones(dir_bot, 3)[0] and "ABORT" not in _conclusiones(dir_bot, 4)[0]
     assert [x for x in cliente.enviadas if x.startswith("REPLACE")]
+
+
+# ═══════════════════════════ 13. comprobar_das con lo visto en el DAS real (01-oct) ═══
+class DASRealPaso2:
+    """Contesta como el DAS real del 01-oct: `SB X Lv1` → `$Quote` + `$LDLU`; `GET SymStatus X` / `GET LDLU X` solo
+    con X suscrito (si no, «… failed, please subscribe level1 data 1stly.»); sin símbolo, «Format: …»."""
+
+    def __init__(self, cola: Any) -> None:
+        from app.bot_das.protocolo import Parser
+        self.cola = cola
+        self.parser = Parser(lambda t: True, cuenta=CUENTA_CD)
+        self.enviadas: list[str] = []
+        self.suscritos: set[str] = set()
+
+    def _responder(self, linea: str) -> list[str]:
+        p = linea.split()
+        if p[0] == "SB":
+            self.suscritos.add(p[1])
+            return [f"$Quote {p[1]} A:2.47 Asz:2 B:2.45 Bsz:3 V:100 L:2.46", f"$LDLU {p[1]} 2.20 2.70"]
+        if p[0] == "UNSB":
+            self.suscritos.discard(p[1])
+            return []
+        if p[:2] in (["GET", "SymStatus"], ["GET", "LDLU"]):
+            if len(p) == 2:
+                return [f"Format: GET {p[1]} Symbol"]
+            if p[2] not in self.suscritos:
+                return [f"GET {p[1]} failed, please subscribe level1 data 1stly."]
+            return [f"$SymStatus {p[2]} SSR:N"] if p[1] == "SymStatus" else [f"$LDLU {p[2]} 2.20 2.70"]
+        return []
+
+    def enviar(self, linea: str, serie: Optional[str] = None, version: int = 0) -> bool:
+        self.enviadas.append(linea)
+        for cruda in self._responder(linea):
+            self.cola.put(self.parser.parsear(cruda))
+        return True
+
+
+def test_paso_2_suscribe_primero_pregunta_con_simbolo_y_registra_el_format_sin_simbolo(
+        dir_bot: Path, reloj: RelojSimulado, monkeypatch: pytest.MonkeyPatch) -> None:
+    """DAS real (01-oct, §5.8): el paso 2 manda `SB X Lv1` ANTES de `GET SymStatus X` / `GET LDLU X`; la forma sin
+    símbolo va al final solo para registrar su «Format: …»; la propuesta es `get_con_simbolo = true`."""
+    import queue
+    from app.bot_das.herramientas import comprobar_das as cd
+    monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.01)
+    cola: "queue.Queue[Any]" = queue.Queue()
+    cliente = DASRealPaso2(cola)
+    diario = Diario(dir_bot / "diario", reloj, "supervisor", VERSION, Fase.SOMBRA)
+    diario.abrir_dia(reloj.hoy())
+    comprobador = cd.Comprobador(cliente, cola, reloj, diario, dir_bot / "informes" / "prueba.txt",
+                                 cd.Consola(entrada=_respuestas(), salida=[].append), False, {}, lambda t: t,
+                                 lambda **kw: pytest.fail("sin segunda conexión"))
+    assert comprobador.ejecutar([2]) == cd.CODIGO_OK
+    assert cliente.enviadas == [f"SB {TICKER_CD} Lv1", f"GET SymStatus {TICKER_CD}", f"GET LDLU {TICKER_CD}",
+                                "GET SymStatus", "GET LDLU", f"UNSB {TICKER_CD} Lv1"]
+    conclusion = _conclusiones(dir_bot, 2)[0]
+    assert "con símbolo contesta" in conclusion and "«Format: …»" in conclusion
+    assert "$LDLU al suscribir: sí" in conclusion
+    assert "tecnicos.get_con_simbolo = true" in conclusion
+    respuestas = [r for r in de_tipo(dir_bot, "comprobacion_das") if r["datos"]["paso"] == 2][0]["datos"]
+    assert "Format: GET SymStatus Symbol" in respuestas["respuesta_cruda"]
+
+
+def _registros_de_cualquier_dia(dir_bot: Path) -> list[dict]:
+    return [json.loads(linea) for ruta in sorted((dir_bot / "diario").glob("diario_supervisor_*.jsonl"))
+            for linea in ruta.read_text(encoding="utf-8").splitlines() if linea.strip()]
+
+
+def _main_contra_simulador(dir_bot: Path, monkeypatch: pytest.MonkeyPatch, simulador: Any, clave: str,
+                           espera_login_s: float = 2.0) -> tuple[int, list[str]]:
+    """`comprobar_das.main(["--pasos", "1"])` contra el simulador local con `clave`. Ni el `.env` real (dotenv sustituido
+    por uno que no carga nada) ni red de verdad; cualquier pregunta por consola es un fallo (no debe llegar a los pasos)."""
+    import types
+    from app.bot_das.cliente import ClienteDAS
+    from app.bot_das.herramientas import comprobar_das as cd
+    monkeypatch.setitem(sys.modules, "dotenv", types.SimpleNamespace(load_dotenv=lambda *a, **k: False))
+    monkeypatch.setattr(cd, "ESPERA_LOGIN_S", espera_login_s)
+    monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.05)
+    host, puerto = simulador.direccion
+
+    def desde_env(watch: bool, solo_lectura: bool, **kw: Any) -> ClienteDAS:
+        return ClienteDAS(host, puerto, "usuario_comprobar", clave, CUENTA_CD, watch, solo_lectura, timeout_s=1.0, **kw)
+
+    monkeypatch.setattr(cd.ClienteDAS, "desde_env", staticmethod(desde_env))
+    salida: list[str] = []
+    consola = cd.Consola(entrada=lambda p: pytest.fail(f"no debía preguntar nada: {p}"), salida=salida.append)
+    return cd.main(["--pasos", "1"], consola=consola), salida
+
+
+def test_comprobar_das_aborta_si_das_rechaza_el_login(dir_bot: Path, monkeypatch: pytest.MonkeyPatch,
+                                                      simulador: Any) -> None:
+    """DAS real (01-oct): con la clave mal DAS contesta «ERROR:INVALID PASSWORD» (y aun así responde a consultas
+    generales). La herramienta lo dice, sale con CODIGO_ERROR y NO ejecuta ningún paso ni repite el LOGIN."""
+    from app.bot_das.herramientas import comprobar_das as cd
+    simulador._usuarios = {"usuario_comprobar": "la-buena"}
+    clave_mala = "clave-mala-inventada-3307"
+    codigo, salida = _main_contra_simulador(dir_bot, monkeypatch, simulador, clave_mala)
+    assert codigo == cd.CODIGO_ERROR
+    texto = "\n".join(salida)
+    assert "DAS rechazó el LOGIN: INVALID PASSWORD" in texto and "DAS_CLAVE" in texto and clave_mala not in texto
+    recibidas = simulador.recibidas()
+    assert len(recibidas) == 1 and recibidas[0].startswith("LOGIN ")          # ni GET RouteStatus ni otro LOGIN
+    registro = [r for r in _registros_de_cualquier_dia(dir_bot) if r["tipo"] == "comprobacion_das"
+                and r["datos"]["paso"] == 0]                                # main usa el reloj REAL: el día de hoy
+    assert len(registro) == 1 and "ERROR:INVALID PASSWORD" in registro[0]["datos"]["respuesta_cruda"]
+    assert clave_mala not in json.dumps(registro)
+
+
+def test_comprobar_das_aborta_si_no_llega_login_successed(dir_bot: Path, monkeypatch: pytest.MonkeyPatch,
+                                                          simulador: Any) -> None:
+    """Si en `ESPERA_LOGIN_S` no llega «#LOGIN SUCCESSED» (ni rechazo), tampoco se ejecuta ningún paso."""
+    from app.bot_das.herramientas import comprobar_das as cd
+    simulador._login = lambda conexion, p: None                                  # DAS calla tras el LOGIN
+    codigo, salida = _main_contra_simulador(dir_bot, monkeypatch, simulador, "clave-inventada", espera_login_s=0.3)
+    assert codigo == cd.CODIGO_ERROR
+    assert "no confirmó el LOGIN" in "\n".join(salida)
+    assert [x.split()[0] for x in simulador.recibidas() if x != "QUIT"] == ["LOGIN"]       # QUIT: el cierre
+
+
+def test_comprobar_das_con_login_aceptado_sigue_a_los_pasos(dir_bot: Path, monkeypatch: pytest.MonkeyPatch,
+                                                            simulador: Any) -> None:
+    """Con «#LOGIN SUCCESSED» la herramienta sigue: el paso 1 pide confirmación (aquí «no») y termina con 0."""
+    from app.bot_das.herramientas import comprobar_das as cd
+    import types
+    from app.bot_das.cliente import ClienteDAS
+    monkeypatch.setitem(sys.modules, "dotenv", types.SimpleNamespace(load_dotenv=lambda *a, **k: False))
+    monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.05)
+    host, puerto = simulador.direccion
+    monkeypatch.setattr(cd.ClienteDAS, "desde_env", staticmethod(
+        lambda watch, solo_lectura, **kw: ClienteDAS(host, puerto, "u", "c", CUENTA_CD, watch, solo_lectura,
+                                                     timeout_s=1.0, **kw)))
+    preguntas: list[str] = []
+    salida: list[str] = []
+    consola = cd.Consola(entrada=lambda p: preguntas.append(p) or "n", salida=salida.append)
+    assert cd.main(["--pasos", "1"], consola=consola) == cd.CODIGO_OK
+    assert preguntas and "paso 1" in preguntas[0]
+    assert "saltado por la persona" in "\n".join(salida)

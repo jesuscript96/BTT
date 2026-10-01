@@ -11,8 +11,13 @@ QUÉ HACE. Tres piezas y un guion:
     llena lo que reposa. PURO salvo el reloj (la hora de cada línea). Lo usan
     `SimuladorDAS` y, en la fase sombra, `cliente.ClienteSombra` (R-O-03).
   * `SimuladorDAS`: servidor TCP en un hilo, en `127.0.0.1:0`, con N
-    conexiones normales y watch (último campo del LOGIN). Tras el LOGIN manda
-    el volcado `#POS…#POSEND`, `#Order…#OrderEnd`, `#Trade…#TradeEnd`; la
+    conexiones normales y watch (último campo del LOGIN). Como el DAS real
+    (01-oct): al conectar saluda («#Welcome to DAS Command API», «#Please
+    login to continue.»); un LOGIN bueno recibe «#LOGIN SUCCESSED» (sic), los
+    estados `#OrderServer/#QuoteServer:Logon:Successful` (del manual; el DAS
+    real no los mandó, se conservan por compatibilidad) y el volcado
+    `#POS…#POSEND`, `#Order…#OrderEnd`, `#Trade…#TradeEnd`; uno malo,
+    «ERROR:INVALID PASSWORD» y nada más (lo demás se ignora); la
     conexión watch recibe `%IORDER/%IPOS/%ITRADE` de todo; `SB/UNSB` reparten
     `$Quote`; `cortar` simula el EOF de R-J-02; `emitir`/`emitir_crudo`
     permiten inyectar líneas (enteras o a trozos) y `recibidas()` devuelve lo
@@ -116,6 +121,10 @@ NOTA_TIPO_NO_SIMULADO = "Order type not simulated"
 NOTA_NO_ABIERTA = "Order not open"
 NOTA_TIPO_REPLACE = "Replace type mismatch"
 NOTA_LOCATE_TIPO1 = "Route type 1 does not support inquire"
+# Saludo y respuestas al LOGIN COPIADOS del DAS real (01-oct; el manual no los documenta).
+BIENVENIDA = ("#Welcome to DAS Command API", "#Please login to continue.")
+LOGIN_ACEPTADO = "#LOGIN SUCCESSED"
+LOGIN_RECHAZADO = "ERROR:INVALID PASSWORD"
 
 # Encabezados de los volcados (manual L272-276, L343-346, L506, L1752-1755).
 CABECERA_POS = "#POS symb type qty avgcost initqty initprice Realized CreateTime Unrealized"
@@ -1419,6 +1428,8 @@ class SimuladorDAS:
     def _atender(self, c: _Conexion) -> None:
         buffer = b""
         try:
+            with self._cerrojo:
+                self._enviar(c, list(BIENVENIDA))            # el DAS real saluda nada más aceptar (01-oct)
             while c.viva and not self._parando.is_set():
                 try:
                     datos = c.sock.recv(4096)
@@ -1473,18 +1484,20 @@ class SimuladorDAS:
                 self._distribuir(self._emparejador.recibir(texto), c)
 
     def _login(self, c: _Conexion, p: list[str]) -> None:
-        """«LOGIN Trader Password Account 1/0» (L243-255): 1 = watch. Éxito → estados de conexión + volcado."""
+        """«LOGIN Trader Password Account 1/0» (L243-255): 1 = watch. Como el DAS real (01-oct): éxito → «#LOGIN
+        SUCCESSED» + estados de conexión + volcado; fallo → «ERROR:INVALID PASSWORD» (la conexión sigue abierta)."""
         ok = len(p) >= 4 and (self._usuarios is None or self._usuarios.get(p[1]) == p[2])
         with self._cerrojo:
             if not ok:
-                self._enviar(c, ["#OrderServer:Logon:Failed"])
+                self._enviar(c, [LOGIN_RECHAZADO])
                 return
             c.logueado = True
             c.watch = len(p) > 4 and p[4] == "1"
             volcado = self._emparejador.volcado()
             if c.watch:
                 volcado = [self._a_watch(x) or x for x in volcado]
-            self._enviar(c, ["#OrderServer:Logon:Successful", "#QuoteServer:Logon:Successful"] + volcado)
+            self._enviar(c, [LOGIN_ACEPTADO, "#OrderServer:Logon:Successful", "#QuoteServer:Logon:Successful"]
+                         + volcado)
 
     def _suscripcion(self, c: _Conexion, p: list[str], alta: bool) -> None:
         if len(p) < 2:
