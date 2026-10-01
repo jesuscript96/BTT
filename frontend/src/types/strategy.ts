@@ -396,22 +396,36 @@ export interface TrailingStopSettings {
 
 /** SALIDA PROGRAMADA CONDICIONAL (2026-09-28): «a las HH:MM, si se cumple
  *  la condición, haz una acción sobre la posición abierta». Varias reglas por
- *  estrategia, en orden. Tras SCHEDULED_EXITS_ENABLED (apagado por defecto). */
+ *  estrategia, en orden. Tras SCHEDULED_EXITS_ENABLED (apagado por defecto).
+ *  2026-10-01: modo "when" («en cuanto se cumpla», sin hora) + dos juegos
+ *  rellenables (ver ScheduledExitsBuilder). */
 export interface ScheduledExitRule {
-    /** "HH:MM" (reloj del frame, como los parciales HOUR:) */
+    /** "HH:MM" (reloj del frame, como los parciales HOUR:). Sin uso en "when". */
     hour: string;
+    /** "hour" (defecto) = una evaluación a la hora; "when" = dispara en la
+     *  primera vela con posición en la que la condición sea verdad. */
+    trigger?: 'hour' | 'when';
     /** Grupo AND con una condición de comparación de indicador. */
     condition?: {
         type: 'group';
         operator: 'AND' | 'OR';
         conditions: Array<{
             type: 'indicator_comparison';
-            source: { name: string };
+            source: { name: string; fade_ref?: string; ap_session?: string };
             comparator: string;
-            target: number | { name: string };
+            /** number | {name} | null — null solo con «% Fade»: umbral sin
+             *  rellenar todavía (el backend rechaza guardar hasta rellenarlo). */
+            target: number | { name: string } | null;
             timeframe: string;
         }>;
     } | null;
+    /** Juego 1: si al entrar ya va cumplida, exige umbral + este % (solo when). */
+    juego_cumplida_pct?: number;
+    /** Juego 2: se arma si al entrar la fuente va ≥ este nivel (y la condición
+     *  base aún no es verdad). */
+    juego_desde_pct?: number;
+    /** Juego 2: recorrido mínimo desde el valor de entrada. */
+    juego_recorrido_pct?: number;
     action: 'close_pct' | 'move_stop' | 'none';
     /** % del tamaño RESTANTE a cerrar (1-100). */
     close_pct?: number;

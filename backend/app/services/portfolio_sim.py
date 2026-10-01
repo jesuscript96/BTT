@@ -557,13 +557,33 @@ def simulate(
             _c = np.asarray(_sr.get("cond"), dtype=bool)
             if len(_c) != n:
                 continue  # desalineada con el frame: esa regla se ignora
+            _ce = None
+            if _sr.get("cond_estricto") is not None:
+                _ce = np.asarray(_sr["cond_estricto"], dtype=bool)
+                if len(_ce) != n:
+                    _ce = None
+            _ss = None
+            if _sr.get("src") is not None:
+                _ss = np.asarray(_sr["src"], dtype=np.float64)
+                if len(_ss) != n:
+                    _ss = None
             sched_rules.append({
                 "cond": _c, "hm": tuple(_sr.get("hour_min") or (0, 0)),
                 "action": _sr.get("action") or "none",
                 "close_frac": float(_sr.get("close_frac", 1.0) or 1.0),
                 "stop_offset": float(_sr.get("stop_offset", 0.0) or 0.0),
+                "trigger": str(_sr.get("trigger") or "hour"),
+                "juego_cumplida": float(_sr.get("juego_cumplida") or 0.0),
+                "juego_desde": float(_sr.get("juego_desde") or 0.0),
+                "juego_recorrido": float(_sr.get("juego_recorrido") or 0.0),
+                "cond_estricto": _ce, "src": _ss,
             })
     sched_fired = [False] * len(sched_rules)
+    # Estado del modo "when" por regla y OPERACION (se rearma en cada entrada,
+    # junto a sched_fired): si ya evaluó su primera vela, si lleva un juego
+    # armado y con qué valor de la fuente se armó (para el recorrido de J2).
+    sched_estado = [{"evaluada": False, "armada": False, "src_arm": 0.0}
+                    for _ in sched_rules]
     trail_extreme = 0.0
     mae = 0.0  # Maximum Adverse Excursion
     mfe = 0.0  # Maximum Favorable Excursion
@@ -1385,12 +1405,61 @@ def simulate(
                     for _sri, _sr in enumerate(sched_rules):
                         if sched_fired[_sri]:
                             continue
-                        _h, _m = _sr["hm"]
-                        if _dt.hour < _h or (_dt.hour == _h and _dt.minute < _m):
+                        if _sr["trigger"] == "when":
+                            # SIN hora: se activa al entrar. En su primera vela
+                            # con posición decide si arma un juego; dispara en
+                            # la primera vela en que su condición se cumpla
+                            # (con el juego armado, la exigida por el juego).
+                            _st = sched_estado[_sri]
+                            if not _st["evaluada"]:
+                                _st["evaluada"] = True
+                                _ci = bool(_sr["cond"][i])
+                                if _sr["juego_cumplida"] > 0.0 and _ci:
+                                    _st["armada"] = True  # J1: ya va cumplida
+                                elif (_sr["juego_desde"] > 0.0 and not _ci
+                                      and _sr["src"] is not None):
+                                    _svi = float(_sr["src"][i])
+                                    if _svi == _svi and _svi >= _sr["juego_desde"]:
+                                        _st["armada"] = True  # J2: va cerca
+                                        _st["src_arm"] = _svi
+                            if _st["armada"]:
+                                if _sr["juego_cumplida"] > 0.0:
+                                    # J1: exige umbral+juego; desarme si la
+                                    # condición se apaga (el fade reancla).
+                                    if not bool(_sr["cond"][i]):
+                                        _st["armada"] = False
+                                        _dispara = False
+                                    else:
+                                        _dispara = bool(_sr["cond_estricto"][i]) if _sr["cond_estricto"] is not None else False
+                                else:
+                                    # J2: exige entrada+recorrido (nunca menos
+                                    # que el umbral: eso ya lo pone cond);
+                                    # desarme si la fuente baja del «desde».
+                                    _sv = _sr["src"]
+                                    if _sv is None:
+                                        _st["armada"] = False
+                                        _dispara = bool(_sr["cond"][i])
+                                    else:
+                                        _svi = float(_sv[i])
+                                        if _svi == _svi and _svi < _sr["juego_desde"]:
+                                            _st["armada"] = False
+                                            _dispara = False
+                                        else:
+                                            _dispara = bool(_sr["cond"][i]) and _svi >= _st["src_arm"] + _sr["juego_recorrido"]
+                            else:
+                                _dispara = bool(_sr["cond"][i])
+                        else:
+                            _h, _m = _sr["hm"]
+                            if _dt.hour < _h or (_dt.hour == _h and _dt.minute < _m):
+                                continue
+                            sched_fired[_sri] = True  # se evalua UNA vez, aqui
+                            _dispara = bool(_sr["cond"][i])
+                        if not _dispara:
                             continue
-                        sched_fired[_sri] = True  # se evalua UNA vez, aqui
-                        if not bool(_sr["cond"][i]):
-                            continue
+                        # One-shot del modo when: se consume AL DISPARAR (el
+                        # modo hour ya lo marco en su rama; marcarlo aqui de
+                        # nuevo es idempotente).
+                        sched_fired[_sri] = True
                         if _sr["action"] == "close_pct":
                             _sched_size = min(size, size * _sr["close_frac"])
                             if _sched_size > 0:
@@ -2695,6 +2764,8 @@ def simulate(
                     pyr_exec = []
                     partial_tp_hits = [False] * len(partial_take_profits) if partial_take_profits else []
                     sched_fired = [False] * len(sched_rules)
+                    sched_estado = [{"evaluada": False, "armada": False, "src_arm": 0.0}
+                                    for _ in sched_rules]
                     total_trades += 1
                 else:
                     equity[i] = available_cash
