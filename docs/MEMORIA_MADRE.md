@@ -6994,3 +6994,14 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **Pendiente:** (1) look-ahead en RTH: no hay indicador de entrada «máx. del día vs cierre ayer (%)» (ver 24-bis); para cruces PMH basta «PM High Gap % ≥ X» en la vela de entrada. (2) Regenerar con `construir_gap_start.py` tras cada actualización del lago. (3) Commit/push: pendiente de OK de Álvaro.
 - **Código tocado:** construir_gap_start.py (nuevo), construir_gappers_activos.py (quitado el pivote), qualifying_windows.py (niveles), universoFiltros.ts, InlineStrategyBuilder.tsx, InlineDatasetBuilder.tsx, genetico/page.tsx. Bot y market_frame: INTACTOS.
 - **Estado:** HECHO, sin commit
+
+### [PARA JAUME · 2026-10-01 · INTEGRACIÓN] Índice de lo construido en `alvaro-rama-desarrollo` del 24-sep al 1-oct, con PRD para llevarlo a `staging`
+- **Reporta:** Claude Code (para Álvaro → Jaume/Jaime).
+- **Documento:** `docs/PRD_INTEGRACION_ALVARO_20260924_20261001.md` (orden de cherry-pick, flags, dependencias, tablas a generar, riesgos).
+- **Punto de partida:** `staging` tiene lo de Álvaro hasta el 23-sep (cherry-pick de Sailor). Esto es lo posterior.
+- **Fixes:** `cd180fa` vistas massive.* (creación de datasets rota) · `171d789` CHECKPOINT tras DDL de arranque (stall del WAL) · `75a6c95` ventanas al-vuelo en la vía materializada (hallazgo 16; requisito de los filtros nuevos).
+- **Filtros de universo (sin flag, inertes sin regla):** 1.6 Day Return víspera `f1e401b` · 3.2 Retorno 5 días `6c10158` · «si falta el dato: incluir» `3c97410` · 6.1 días desde 1er día en lago `aa1e814` · paquete Vol $ / Gappers / Mecha víspera `6e20d41` · «Hora de cruce de gap» `64e2000`→`68f3cdb`→`da0c76c` (requiere generar `gap_start.parquet` con `scripts/construir_gap_start.py`).
+- **Detrás de flag (OFF por defecto, no-regresión bit-idéntica):** indicador «Gappers activos» `18da9d7`+`b29a401` (`GAPPERS_ACTIVE_ENABLED`) · salida programada condicional `6785359`+`e2b047f` (`SCHEDULED_EXITS_ENABLED`; toca `portfolio_sim.py`, que también usa el bot) · **franja horaria propia por nivel de pirámide `96602b6` (`PYRAMID_LEVEL_WINDOWS_ENABLED`)** — sin entrada propia hasta hoy: `pyramiding.levels[].time_windows` sustituye (no intersecta) las horas de entrada para ese nivel; caso de uso 1B «entrar en PM, piramidar solo en RTH»; 422 si la franja es inválida; 16 tests, suite backend sin bot 1.434/0, tsc limpio.
+- **Zona del bot y `market_frame.py`:** ningún commit de la lista los toca (verificado con `git show --stat` uno a uno).
+- **Código tocado en esta entrada:** NINGUNO (solo docs: este índice + el PRD).
+- **Estado:** PENDIENTE de decisión de Jaume/Jaime.
