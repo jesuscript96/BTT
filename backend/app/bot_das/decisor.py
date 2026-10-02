@@ -6810,6 +6810,10 @@ class Decisor:
         pos = self._estado.posiciones.get(ticker)
         if pos is None:
             return []
+        if pos.estado is EstadoTicker.HALT or ticker in self._halt_en_curso:
+            # Jaume 2-oct: si el símbolo vuelve a pararse con la venta del exceso viva, no se persigue dentro del halt
+            # (no se acumulan órdenes): el mismo temporizador se aplaza y la persecución sigue al reabrir.
+            return self._aplazar_salida(pos, clave, datos, "halt")
         persecuciones = datos.get("persecuciones")
         return self._absorber(stops.verificar_venta_exceso(
             pos, self._ordenes_ticker(ticker), self._cot(ticker), self._tokens.siguiente, self._cfg, self._ahora_et,

@@ -115,10 +115,10 @@ def _pendiente_atascada(monkeypatch, tickers: set[str], servida: bool = False) -
 
 
 def _banco_tope(cfg: Config, tmp_path: Path) -> Banco:
-    """Dos tickers cotizados, ventana larga, cuenta de 1.000 $ (tope 3 % = 30 $) con 25 $ ya pagados hoy."""
+    """Dos tickers cotizados, ventana larga, cuenta de 1.500 $ (tope 2 % = 30 $; Jaume 2-oct) con 25 $ ya pagados hoy."""
     b = Banco(_cfg_ventana_larga(cfg), tmp_path)
     b.preparar(locates=(), cotizaciones=COTIZACIONES_DOS)
-    b.estado.cuenta.equity = D("1000")
+    b.estado.cuenta.equity = D("1500")
     b.estado.gasto_locates_dia = D("25")
     b.libro.configurar_locate(OTRO, precio=D("0.01"))                   # 100 · 0,01 = 1 $: cabe (25 + 1 ≤ 30)
     b.libro.configurar_locate(TICKER, precio=D("0.10"))                 # 100 · 0,10 = 10 $: con lo pagado NO cabe
@@ -184,7 +184,7 @@ def test_decision_50_lo_pagado_que_alcanza_el_tope_tambien_corta(cfg: Config, tm
     """Decisión 50: el Located que hace que lo PAGADO llegue al tope corta el día (aunque esa compra cupiera)."""
     b = Banco(_cfg_ventana_larga(cfg), tmp_path)
     b.preparar(locates=(), cotizaciones=COTIZACIONES_DOS)
-    b.estado.cuenta.equity = D("1000")
+    b.estado.cuenta.equity = D("1500")
     b.estado.gasto_locates_dia = D("20")
     b.libro.configurar_locate(TICKER, precio=D("0.10"))                 # 20 + 10 = 30 $: justo en el tope (cabe)
     _radar_de(b, [_fila(100.0)])
@@ -226,7 +226,7 @@ def test_decision_50_el_corte_sobrevive_al_reinicio_y_se_rearma_al_cambiar_de_di
     assert rehecho.locates_tope_dia is True
     b2 = Banco(_cfg_ventana_larga(cfg), tmp_path / "relanzado", estado=rehecho)
     b2.preparar(locates=(), cotizaciones=COTIZACIONES_DOS)
-    b2.estado.cuenta.equity = D("1000")
+    b2.estado.cuenta.equity = D("1500")
     _radar_de(b2, [_fila(100.0)], ticker=OTRO)
     b2.avanzar(5)
     assert not _consultas(b2) and not _compras(b2) and not _avisos(b2.historial, "locates_tope")

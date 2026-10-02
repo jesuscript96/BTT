@@ -210,7 +210,7 @@ def test_tick_de_y_al_tick_rechazan_no_finitos(precio):
     pytest.param("HALT_PRIMERA_VELA_MAX_PCT", D("6"), id="R-F-01/03/04-primera-vela-6%"),
     pytest.param("HALT_T1_SUBIDA_MAX_PCT", D("250"), id="R-F-05-T1-250%"),
     pytest.param("HALT_ENVIAR_ANTES_FIN_S", 60, id="R-F-01-OPEN-60s-antes"),
-    pytest.param("LOCATES_TOPE_GASTO_PCT", D("3"), id="R-H-03-tope-3%"),
+    pytest.param("LOCATES_TOPE_GASTO_PCT", D("2"), id="R-H-03-tope-2%"),
     pytest.param("LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT", D("30"), id="H6-ultimo-paquete-30%"),
     pytest.param("LOCATES_INQUIRE_S", 3.0, id="manual-L2000-inquire-3s"),
     pytest.param("MODO_SEGURIDAD_PRECIO_MIN", D("5"), id="R-I-04-precio-5$"),

@@ -438,8 +438,8 @@ def test_dos_located_mismo_dia_deshabilita_los_locates(cfg):
 
 
 @pytest.mark.parametrize("gasto,equity,deshabilita", [
-    pytest.param("301", "10000", True, id="R-H-03-gasto-supera-el-3pct"),
-    pytest.param("300", "10000", False, id="R-H-03-justo-el-3pct-no-supera"),
+    pytest.param("301", "15000", True, id="R-H-03-gasto-supera-el-2pct"),
+    pytest.param("300", "15000", False, id="R-H-03-justo-el-2pct-no-supera"),
     pytest.param("5000", None, False, id="R-H-03-sin-equity-no-se-evalua"),
 ])
 def test_tope_3pct_de_locates(cfg, gasto, equity, deshabilita):
@@ -455,11 +455,11 @@ def test_decision_50_con_el_corte_del_dia_hecho_el_gasto_por_encima_no_dispara_r
     """Decisión 50 (Jaume 1-oct): si el ejecutor ya cortó el día por el tope (`locates_tope_global`), un gasto algo por
     encima es una compra que DAS ya había servido antes de cancelarla: la red R-H-03 del vigilante no repite el aviso
     máximo. R-H-02 (compra repetida no pedida) sigue igual."""
-    f = foto(ordenes=(nivel_das(),), gasto="301", equity="10000", locates_tope_dia=True)
+    f = foto(ordenes=(nivel_das(),), gasto="301", equity="15000", locates_tope_dia=True)
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     assert not [a for a in de_tipo(acc, Anotar) if a.tipo == "locates_deshabilitar"]
     compras = (reg(1, "locate_intencion"), reg(2, "locate_estado", "Located", 5), reg(3, "locate_estado", "Located", 9))
-    f2 = foto(ordenes=(nivel_das(),), gasto="301", equity="10000", compras=compras, locates_tope_dia=True)
+    f2 = foto(ordenes=(nivel_das(),), gasto="301", equity="15000", compras=compras, locates_tope_dia=True)
     anotadas = [a for a in de_tipo(comprobar(f2, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True), Anotar)
                 if a.tipo == "locates_deshabilitar"]
     assert len(anotadas) == 1 and anotadas[0].datos["motivos"] == ["R-H-02"]

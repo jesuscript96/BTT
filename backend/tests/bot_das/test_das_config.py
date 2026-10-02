@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "976d499b06923402d842c29adda1311ef9a746b24b92644f5421f8c2b01313dd"   # Jaume 1-oct: entrada.agregar_s 15 (decisión 56)
+SHA_FIXTURE = "d10790fa5e89b8efce6a9c7fd97078267e51635b11f1dc9d8fcaf3f5b5c7078a"   # Jaume 1-oct: entrada.agregar_s 15 (decisión 56)
 RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 
@@ -897,7 +897,7 @@ def _nueva(*mutaciones) -> Config:
     (_mutar("pausar_entradas", True), "pausar_entradas", False, True, True),
     (_mutar("horario.encender", "04:00"), "horario.encender", "03:55", "04:00", True),
     (_mutar("lista_negra", ["ABC"]), "lista_negra", [], ["ABC"], True),
-    (_mutar("locates.tope_gasto_pct_cuenta", 2.0), "locates.tope_gasto_pct_cuenta", 3.0, 2.0, True),
+    (_mutar("locates.tope_gasto_pct_cuenta", 1.5), "locates.tope_gasto_pct_cuenta", 2.0, 1.5, True),
     (_mutar("alertas_grupo_a.prealerta_simple", True), "alertas_grupo_a.prealerta_simple", False, True, True),
     (_mutar("modo_seguridad.precio_min", 3.0), "modo_seguridad.precio_min", 5.0, 3.0, True),
     (_mutar("estrategias.0.riesgo_usd", 500), "estrategias.prueba-1.riesgo_usd", Decimal("300"), Decimal("500"), True),
@@ -960,7 +960,7 @@ def test_aplicar_con_bot_encendido_y_posiciones_acepta_C_y_rechaza_A():
     assert actual == copia_actual and nueva == copia_nueva                                # nada mutado
     assert C.diferencias(res, nueva) and all(not c for *_, c in C.diferencias(res, nueva))   # solo quedan [A]
     res.locates["tope_gasto_pct_cuenta"] = 0
-    assert actual.locates["tope_gasto_pct_cuenta"] == 3.0 and nueva.locates["tope_gasto_pct_cuenta"] == 2.5
+    assert actual.locates["tope_gasto_pct_cuenta"] == 2.0 and nueva.locates["tope_gasto_pct_cuenta"] == 2.5
 
 
 @pytest.mark.parametrize("encendido, posiciones, aplica_todo", [

@@ -3137,6 +3137,35 @@ def test_d2a_04_venta_del_exceso_que_no_llena_se_persigue_al_bid(cfg: Config, tm
     assert not anotaciones(b.historial, "temporizador_desconocido")
 
 
+def test_venta_del_exceso_no_se_persigue_dentro_de_un_halt_y_sigue_al_reabrir(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 2-oct: si el símbolo vuelve a pararse con la venta del exceso viva, la persecución NO manda nada dentro
+    del halt (no se acumulan órdenes): `exceso_verificar` se aplaza y, al reabrir, persigue el bid nuevo."""
+    b = Banco(cfg, tmp_path)
+    b.preparar()
+    abrir_posicion(b)
+    b.cotizar(TICKER, "3.44", "3.46", "3.45")
+    _salida_motor(b, salida(acciones=20.0))
+    b.cotizar(TICKER, "3.43", "3.45", "3.44")
+    lineas = b.das.tic()
+    b.das_contesta = False
+    b.dar(lineas)
+    b.das_contesta = True
+    b.cotizar(TICKER, "4.58", "4.60", "4.60", tam_bid=0)               # el stop (aún 100 en DAS) llena: larga 20
+    b.tic_das()
+    (venta,) = b.enviadas(Proposito.VENTA_EXCESO)
+    b.libro.halt(TICKER, "P", "09:27:00")
+    b.cotizar(TICKER, "4.50", "4.52", "4.51", tam_bid=0)
+    marca = b.marca()
+    b.avanzar(4)
+    assert not [r for r in b.desde(marca) if isinstance(r, Reemplazar) and r.token == venta.token]
+    assert any(a.datos.get("clave") == f"exceso_verificar:{TICKER}" and a.datos.get("motivo") == "halt"
+               for a in anotaciones(b.desde(marca), "salida_aplazada"))
+    b.libro.reabrir(TICKER, D("4.51"))
+    b.cotizar(TICKER, "4.50", "4.52", "4.51", tam_bid=0)
+    b.avanzar(3)
+    assert [r for r in b.historial if isinstance(r, Reemplazar) and r.token == venta.token]
+
+
 def test_d2a_07_cantidad_viva_con_lvqty_viejo_tras_el_execute() -> None:
     """D2a-07: el Execute sube `llenas` sin tocar un `lvqty` viejo → viva = min(lvqty, qty − llenas) (70, no 100)."""
     from app.bot_das.decisor import _qty_viva
