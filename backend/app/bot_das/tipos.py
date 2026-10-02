@@ -106,6 +106,9 @@ STOP_SIN_EJECUTAR_S = 5.0
 # una a +19 % «R081 Price Too Far Outside»): el respaldo PERSIGUE con límite = min(último × (1 + banda), techo),
 # techo = L × (1 + `stops.techo_pct`; si falta, `stops.limite_pct`). Defecto de `stops.banda_pct`:
 STOP_BANDA_PCT = Decimal("19")   # Jaume 2-oct noche: por SAGEPRO una límite a +19 % se acepta y llena (bróker: × 1,20)
+# Decisión 69 (Jaume 2-oct, «bot de emergencia escalonado»): ritmo MÍNIMO entre una orden/reprecio del escalado y el
+# siguiente (defecto de `stops.escalon_s`); el bot vigila por cotización, no por un temporizador lento
+STOP_ESCALON_S = 0.5
 # Decisión 66 (Jaume 2-oct): rutas de PRUEBAS de DAS (visto en real el 2-oct: «%SLRET … TESTSL»). Las de locates del
 # cuadro (`locates.rutas_excluidas`) se ignoran al elegir y comprar; las de órdenes no pueden estar en el cuadro.
 LOCATES_RUTAS_EXCLUIDAS: tuple[str, ...] = ("TESTSL",)

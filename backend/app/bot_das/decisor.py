@@ -133,6 +133,7 @@ from app.bot_das.tipos import (
     STOP_LIMITE_PCT,
     STOP_PROTECCION_PCT,
     STOP_BANDA_PCT,
+    STOP_ESCALON_S,
     STOP_SIN_EJECUTAR_S,
     Accion,
     Anotar,
@@ -272,6 +273,8 @@ T_ENTRADA_REAPERTURA = "entrada_reapertura"         # decisión 58: el primer mi
 T_REINICIO_HALT = "reinicio_halt"                   # decisión 63: plazo para resolver los halts rehechos del diario
 T_HIJA_ESPERA = "hija_espera"                       # decisión 64: madre de SMAT disparada sin hija todavía («…:<token>»)
 T_RESPALDO_PERSEGUIR = "respaldo_perseguir"         # decisión 65 bis: la compra de respaldo persigue («…:<token>»)
+T_ESCALON_PM = "escalon_pm"                         # decisión 70: el cierre del halt de PM escala («…:<token>»)
+T_CANCEL_HALT = "cancel_halt"                       # decisión 71 (a): verificar el CANCEL de una salida al parar («…:<token>»)
 TIPO_STOP_SIN_EJECUTAR = "stop_sin_ejecutar"        # decisión 65: = diario.TIPO_STOP_SIN_EJECUTAR (episodio consumido)
 TIPO_HALT_MEMORIA = "halt_memoria"                  # decisión 63: = diario.TIPO_HALT_MEMORIA (un test lo comprueba)
 _GLOBALES = frozenset({T_SIMSTATUS, T_BARRIDO, T_DAS_AVISO, T_DAS_RECONECTAR, T_FOTO, T_REINICIO_HALT})
@@ -322,6 +325,8 @@ HALT_GUARDADAS_MAX_S = 30.0      # decisión 54 (E3): plazo MÁXIMO de seguridad
 HALT_SILENCIO_ESTADO_S = 2.0     # decisión 57 (Jaume 2-oct): como mucho 2 s tras reabrir para conocer por DAS lo vivo
 ENTRADA_REAPERTURA_S = 60.0      # decisión 58 (Jaume 2-oct): el primer minuto tras reabrir para que la entrada llene
 HALT_CONTEXTO_REAPERTURA_S = 120.0   # decisión 57: quedar LARGA en los 2 min tras reabrir un halt avisa nivel MÁXIMO
+HALT_CANCEL_VERIFICAR_S = 2.0     # decisión 71 (a, Jaume 2-oct): el CANCEL de una salida al parar se verifica a los 2 s
+HALT_CANCEL_REINTENTOS = 2       # decisión 71 (a): como mucho 2 reintentos; después aviso MÁXIMO (cuenta como compra viva)
 REINICIO_HALT_ESPERA_S = 15.0    # decisión 63: plazo MÁXIMO tras arrancar para conocer por DAS el estado de un halt rehecho
 REINICIO_REAPERTURA_MAX_S = 120.0   # decisión 63: un reinicio «justo tras reabrir» retoma lo pendiente si reabrió hace ≤ 2 min
 HIJA_ESPERA_S = 2.0              # decisión 64: madre disparada sin hija → GET ORDERS a los 2 s; a la 2.ª vuelta, aviso 2
@@ -630,6 +635,13 @@ class Decisor:
         # reinicio la compra sigue viva en DAS (cuenta como compra) pero ya no persigue.
         self._respaldos: dict[int, dict] = {}
         self._respaldo_reenvio: set[int] = set()
+        # Decisión 70 (Jaume 2-oct): la compra de cierre de un halt de PREMERCADO que escala (por token: {ticker, techo,
+        # cambio_en, fuera}). En memoria, como la persecución del respaldo: tras un reinicio la orden sigue viva en DAS
+        # (cuenta como salida del halt) pero ya no escala.
+        self._escalada_pm: dict[int, dict] = {}
+        # Decisión 71 (a): cancelación VERIFICADA de las salidas en vuelo al parar (por token: {enviado, intento,
+        # no_abierta}). En memoria (un reinicio en pleno halt reconcilia lo vivo por DAS, decisión 63).
+        self._verif_cancel_halt: dict[int, dict] = {}
         self._minimo_cargo: dict[str, Decimal] = {}
         self._ficha_fallo_en: dict[str, float] = {}
         self._splits: Optional[tuple[date, set[str]]] = None
@@ -1245,6 +1257,23 @@ class Decisor:
                             self._respaldo_aceptado(o) or self._respaldos.get(o.token, {}).get("sin_stop")))))
                 + (int(retenida["qty"]) if retenida is not None else 0))   # decisiones 53/54: la salida RETENIDA
 
+    def _stops_fuera_en_bs(self, ticker: str) -> list[Accion]:
+        """Decisión 69 (6): en cisne negro el plan solo BAJA stops (R-G-03) y no descuenta la compra de emergencia; si
+        las compras de emergencia ACEPTADAS cubren ya todo lo corto, el stop (o su hija) se cancela aquí (si llenaran
+        los dos, la venta del exceso de siempre)."""
+        pos = self._estado.posiciones.get(ticker)
+        if pos is None or pos.neta >= 0 or not (pos.estado is EstadoTicker.BS or pos.bs is not None):
+            return []
+        cubre = sum(_qty_viva(x) for x in self._vivas(ticker)
+                    if x.proposito is Proposito.STOP_RESPALDO and self._respaldo_aceptado(x))
+        if cubre < abs(pos.neta):
+            return []
+        acciones: list[Accion] = []
+        for x in self._stops_vivos(ticker):
+            acciones += self._cancelar_orden(x, "decisión 69 (6): la compra de emergencia aceptada cubre lo corto; se "
+                                                "cancela el stop")
+        return acciones
+
     @staticmethod
     def _respaldo_aceptado(o: Orden) -> bool:
         """Decisión 65: DAS ya aceptó la compra de respaldo (Accepted/Partial…, con id) o ya llenó algo."""
@@ -1357,6 +1386,15 @@ class Decisor:
             intentos=intentos, primer_intento_en=primero)
         self._diario_rama.append(("orden", o.token))
 
+    def _con_pref_stop(self, a: EnviarOrden) -> EnviarOrden:
+        """Decisión 68 (Jaume 2-oct): con `stops.pref` en el cuadro, todo STOPLMTP de compra que sale lleva `Pref=<valor>`
+        (p. ej. SAGEPRO: la hija de SMAT sale por ahí). Sin la hoja (o null), nada cambia."""
+        o = a.orden
+        pref = stops.pref_stop(self._cfg.stops)
+        if pref is None or o.pref is not None or o.tipo is not TipoOrden.STOP_LIMITE_PP or o.lado is not Lado.COMPRA:
+            return a
+        return dataclasses.replace(a, orden=dataclasses.replace(o, pref=pref))
+
     def _absorber(self, acciones: Iterable[Accion]) -> list[Accion]:
         """Registra al momento lo que sale de las reglas: órdenes nuevas, cancelaciones y reemplazos pedidos.
 
@@ -1394,6 +1432,7 @@ class Decisor:
                 self._reemplazo_pedido_en[a.token] = self._ahora
             elif isinstance(a, EnviarOrden):
                 a = self._open_tras_k2(a)                     # decisión 59: salidas por OPEN tras el segundo halt
+                a = self._con_pref_stop(a)                    # decisión 68: «Pref=» del cuadro en el NEWORDER del stop
             lista.append(a)
         for a in lista:
             if isinstance(a, Anotar) and a.tipo == ANOTAR_CANCELAR_AL_TENER_ID:
@@ -1550,7 +1589,7 @@ class Decisor:
             acciones += [Anotar("stop_respaldo_aceptado", {"ticker": o.ticker, "token": o.token, "id": o.id_das,
                                                            "estado": o.estado.value, "llenas": o.llenas,
                                                            "regla": "decisión 65 (Jaume 2-oct)"})]
-            acciones += self._plan(o.ticker)
+            acciones += self._stops_fuera_en_bs(o.ticker) + self._plan(o.ticker)
         if paso_a_terminal:
             self._reemplazo_pedido.pop(o.token, None)
             if (o.estado is EstadoOrden.CANCELED and o.proposito in _PROP_STOP
@@ -3215,6 +3254,12 @@ class Decisor:
         acciones: list[Accion] = [Anotar("das_error_orden", {"comando": m.comando, "texto": m.texto,
                                                              "no_abierta": m.no_abierta, "en_vuelo": pendientes,
                                                              "cruda": m.cruda[:200], "regla": "decisión 64"})]
+        if m.no_abierta and m.comando == "CANCEL":
+            # decisión 71 (a): «order not open» confirma el CANCEL de una salida retirada al parar SOLO si es la única
+            # que se está verificando (DAS no dice de qué orden es); si no, decide el estado (GET ORDERS)
+            verificando = [t for t, v in self._verif_cancel_halt.items() if not v.get("no_abierta") and t in pendientes]
+            if len(verificando) == 1:
+                self._verif_cancel_halt[verificando[0]]["no_abierta"] = True
         if not m.no_abierta:
             acciones.append(Avisar(Nivel.AVISO, Grupo.B, f"DAS contestó «{avisos.escapar_html(m.cruda[:200])}» a un "
                                                          f"{m.comando}: se consulta GET ORDERS",
@@ -4338,7 +4383,46 @@ class Decisor:
                 "ticker": ticker, "token": o.token, "proposito": o.proposito.value, "qty_viva": _qty_viva(o),
                 "regla": "decisión 54 (E1, Jaume 1-oct)"}))
             acciones += self._cancelar_orden(o, "decisión 54 (E1): halt; se retira la salida en vuelo")
+            # decisión 71 (a) (Jaume 2-oct): el CANCEL se VERIFICA a los 2 s (reintentos acotados, nunca un bucle)
+            self._verif_cancel_halt[o.token] = {"enviado": self._ahora, "intento": 0, "no_abierta": False}
+            acciones.append(Programar(f"{T_CANCEL_HALT}:{o.token}", HALT_CANCEL_VERIFICAR_S,
+                                      {"token": o.token, "ticker": ticker}))
         return acciones
+
+    def _t_cancel_halt(self, clave: str, datos: dict) -> list[Accion]:
+        """Decisión 71 (a) (Jaume 2-oct): ¿confirmó DAS (Canceled, o «order not open») el CANCEL de la salida retirada al
+        parar? Sí (o la orden ya no está viva: llenó o terminó) → fuera. No → se repite el CANCEL (como mucho
+        `HALT_CANCEL_REINTENTOS` veces, cada `HALT_CANCEL_VERIFICAR_S`); agotados, aviso MÁXIMO y la orden sigue
+        contando como compra viva (`_comprando`): nada de lo que salga después suma con ella más que la posición."""
+        token = datos.get("token")
+        v = self._verif_cancel_halt.get(token) if isinstance(token, int) else None
+        if v is None:
+            return []
+        o = self._estado.ordenes.get(token)
+        if o is None or o.estado not in _VIVOS or _qty_viva(o) <= 0 or v.get("no_abierta"):
+            self._verif_cancel_halt.pop(token, None)
+            return [Anotar("halt_cancel_confirmado", {
+                "ticker": o.ticker if o is not None else datos.get("ticker"), "token": token,
+                "estado": o.estado.value if o is not None else None, "no_abierta": bool(v.get("no_abierta")),
+                "intentos": int(v["intento"]) + 1, "regla": "decisión 71 (a) (Jaume 2-oct)"})]
+        ticker = o.ticker
+        if int(v["intento"]) >= HALT_CANCEL_REINTENTOS:
+            self._verif_cancel_halt.pop(token, None)
+            return [Anotar("halt_cancel_sin_confirmar", {"ticker": ticker, "token": token, "qty_viva": _qty_viva(o),
+                                                         "intentos": int(v["intento"]) + 1,
+                                                         "regla": "decisión 71 (a) (Jaume 2-oct)"}),
+                    Avisar(Nivel.MAXIMO, Grupo.B,
+                           f"HALT {avisos.escapar(ticker)}: DAS NO confirma la cancelación de la salida {token} "
+                           f"({_qty_viva(o)} acciones, {avisos.escapar(o.proposito.value)}) tras "
+                           f"{int(v['intento']) + 1} intentos: se da por VIVA (cuenta como compra; nada sale encima de "
+                           f"ella). Revisar en DAS (decisión 71)", clave=f"halt_cancel_sin_confirmar:{ticker}:{token}")]
+        v["intento"] = int(v["intento"]) + 1
+        v["enviado"] = self._ahora
+        self._cancel_pedido.pop(token, None)           # el CANCEL anterior no contestó: se repite (uno, no un bucle)
+        return ([Anotar("halt_cancel_reintento", {"ticker": ticker, "token": token, "intento": v["intento"],
+                                                  "regla": "decisión 71 (a) (Jaume 2-oct)"})]
+                + self._cancelar_orden(o, f"decisión 71 (a): DAS no confirmó el CANCEL; reintento {v['intento']}")
+                + [Programar(f"{T_CANCEL_HALT}:{token}", HALT_CANCEL_VERIFICAR_S, {"token": token, "ticker": ticker})])
 
     def _encolar_retirada(self, pos: PosicionTicker, o: Orden, datos: dict) -> list[Accion]:
         """E1 → E3: la salida retirada al parar quedó cancelada; lo que le faltaba se reaplica al reabrir (o ya, si el
@@ -4597,6 +4681,9 @@ class Decisor:
                 return acciones
             orden = halts.orden_reapertura(pos, qty, cot, decision, self._cfg, self._tokens.siguiente(), self._ahora_et,
                                            simb=simb)
+            techo_esc: Optional[Decimal] = None
+            if decision == "cerrar_limite_pm":
+                orden, techo_esc = self._escalonar_pm(orden)          # decisión 70: escalón y techo × 3,5
 
             def al_enviar(o: OrdenNueva, decision: str = decision, franja: str = franja) -> list[Accion]:
                 extra: list[Accion] = []
@@ -4618,13 +4705,14 @@ class Decisor:
             if pos.estado is EstadoTicker.BS or pos.bs is not None:
                 # D4 (Jaume 28-sep) + R-G-03: en cisne negro el plan no baja los stops por la salida del halt; se envía
                 # como siempre (decisión 54: aquí no se retiene, ver BOT_DAS_ENTREGA.md)
-                acciones += self._plan(ticker) + self._absorber([EnviarOrden(orden)]) + al_enviar(orden)
+                acciones += (self._plan(ticker) + self._absorber([EnviarOrden(orden)]) + al_enviar(orden)
+                             + self._registrar_escalada_pm(orden, techo_esc))
             else:
                 # decisión 54 (E2, Jaume 1-oct): la salida NO sale hasta que DAS confirme la bajada del stop
                 acciones += self._retener_salida(ticker, orden, "halt", al_enviar,
                                                  lambda motivo: self._halt_sin_reduccion(ticker, "durante el halt",
                                                                                          motivo),
-                                                 datos={"decision": decision})
+                                                 datos={"decision": decision}, escalar_techo=techo_esc)
         elif decision == "control_humano":
             if ticker not in self._halt_humano_avisado:
                 self._halt_humano_avisado.add(ticker)
@@ -4712,7 +4800,8 @@ class Decisor:
 
     def _retener_salida(self, ticker: str, orden: OrdenNueva, motivo: str,
                         al_enviar: Callable[[OrdenNueva], list[Accion]],
-                        al_fallar: Callable[[str], list[Accion]], datos: Optional[dict] = None) -> list[Accion]:
+                        al_fallar: Callable[[str], list[Accion]], datos: Optional[dict] = None,
+                        escalar_techo: Optional[Decimal] = None) -> list[Accion]:
         """Decisiones 53/54: la salida `orden` NO sale hasta que DAS confirme que el stop bajó (o se retiró) por su cantidad.
 
         La cantidad queda RESERVADA en `_compras_cierre` (el plan baja el stop:
@@ -4731,7 +4820,8 @@ class Decisor:
                                                       "regla": "decisiones 53/54"})]
         self._reduccion_stop[ticker] = {"orden": orden, "qty": int(orden.qty), "motivo": motivo,
                                         "al_enviar": al_enviar, "al_fallar": al_fallar,
-                                        "stop_antes": self._qty_stops_vivos(ticker), "desde": self._ahora}
+                                        "stop_antes": self._qty_stops_vivos(ticker), "desde": self._ahora,
+                                        "escalar_techo": escalar_techo}        # decisión 70
         acciones: list[Accion] = [Anotar("reduccion_stop", {
             "ticker": ticker, "token": orden.token, "qty": orden.qty, "proposito": orden.proposito.value,
             "motivo": motivo, "stop_antes": self._reduccion_stop[ticker]["stop_antes"], **(datos or {}),
@@ -4769,6 +4859,13 @@ class Decisor:
                 + self._plan(ticker)
         if qty != orden.qty:
             orden = dataclasses.replace(orden, qty=qty)
+        techo_esc = r.get("escalar_techo")
+        if techo_esc is not None:
+            # decisión 70: el precio del escalón es el de AHORA (la confirmación del stop pudo tardar)
+            nuevo = self._precio_escalon_pm(ticker, techo_esc)
+            if nuevo is not None and nuevo != orden.precio:
+                orden = dataclasses.replace(orden, precio=nuevo,
+                                            ruta=precios.ruta(self._cfg.rutas, "cruzar", nuevo, self._ahora_et))
         if r["motivo"] == "bp":
             self._salidas_bp.add(orden.token)         # su cantidad sigue rebajando el stop mientras viva
         acciones.append(Anotar("reduccion_stop_confirmada", {
@@ -4778,6 +4875,7 @@ class Decisor:
         acciones += self._absorber([EnviarOrden(orden)])
         acciones += self._plan(ticker)                 # si la cantidad bajó, el stop sube lo que sobra
         acciones += r["al_enviar"](orden)
+        acciones += self._registrar_escalada_pm(orden, techo_esc)
         return acciones
 
     def _fallo_reduccion(self, ticker: str, motivo: str) -> list[Accion]:
@@ -5012,6 +5110,16 @@ class Decisor:
             vivas = [o for o in self._vivas(ticker)
                      if o.proposito in _PROP_CIERRE_HALT and o.lado is Lado.COMPRA and _qty_viva(o) > 0]
             en_techo = [o for o in vivas if o.tipo is TipoOrden.LIMITE and o.precio is not None and o.precio >= techo]
+            # decisión 70 (Jaume 2-oct): la compra escalonada no se cancela: sube AL techo y se queda puesta
+            subir = [o for o in vivas if o not in en_techo and o.token in self._escalada_pm and o.id_das is not None
+                     and o.token not in self._cancel_pedido and o.token not in self._reemplazo_pedido]
+            for o in subir:
+                self._escalada_pm[o.token]["fuera"] = True
+                acciones.append(Anotar("halt_pm_escalon_techo", {"ticker": ticker, "token": o.token, "de": o.precio,
+                                                                 "techo": techo, "regla": "decisiones 49/70"}))
+                acciones += self._reprecio_respaldo(o, techo, "decisión 70: el cierre del halt se queda en el techo "
+                                                              "del T1 (decisión 49)")
+            en_techo += subir
             baratas = [o for o in vivas if o not in en_techo]
             for o in baratas:
                 acciones += self._cancelar_orden(o, "decisión 49: la salida del halt ya no llena; se deja la compra "
@@ -5075,6 +5183,14 @@ class Decisor:
             return acciones + [Anotar("halt_reintento_omitido", {"ticker": ticker, "motivo": "modo degradado: "
                                                                  + ", ".join(sorted(degradados)),
                                                                  "regla": "G1B-01 / decisión 46"})]
+        escalando = [o for o in self._vivas(ticker) if o.token in self._escalada_pm and _qty_viva(o) > 0]
+        if escalando and self._escalonado():
+            # decisión 70: la compra de cierre escalonada ya está viva: sube su escalón con este precio (sin cancelar)
+            acciones.append(Anotar("halt_pm_escalando", {"ticker": ticker, "tokens": [o.token for o in escalando],
+                                                         "cuando": cuando, "regla": "decisión 70 (Jaume 2-oct)"}))
+            for o in escalando:
+                acciones += self._escalar_pm(o.token, forzar=True)
+            return acciones
         baratas = [o for o in self._vivas(ticker)
                    if o.proposito in _PROP_CIERRE_HALT and o.lado is Lado.COMPRA and _qty_viva(o) > 0
                    and o.tipo is TipoOrden.LIMITE and o.precio is not None and o.precio < precio]
@@ -5096,6 +5212,11 @@ class Decisor:
             return [Anotar("halt_reintento_omitido", {"ticker": ticker, "motivo": "las salidas vivas ya cubren la "
                                                       "posición (G1A-01)", "regla": regla})]
         orden = halts.orden_cierre_tope_pm(pos, qty, simb, self._cfg, self._tokens.siguiente(), self._ahora_et)
+        techo_esc: Optional[Decimal] = None
+        if regla == "decisión 46":
+            # decisión 70 (Jaume 2-oct): una límite EN el techo (parada × 3,5) la rechazaría el bróker (último × 1,20):
+            # sale a min(último × (1 + escalón), techo) y escala con el precio
+            orden, techo_esc = self._escalonar_pm(orden)
 
         def al_enviar(o: OrdenNueva) -> list[Accion]:
             self._halt_pm_cierre[ticker] = o.token
@@ -5108,11 +5229,100 @@ class Decisor:
                            clave=f"halt_pm_tope:{ticker}:{self._mercado.simbolo(ticker).tat}")]
 
         if pos.estado is EstadoTicker.BS or pos.bs is not None:
-            return self._plan(ticker) + self._absorber([EnviarOrden(orden)]) + al_enviar(orden)   # D4 / R-G-03
+            return (self._plan(ticker) + self._absorber([EnviarOrden(orden)]) + al_enviar(orden)   # D4 / R-G-03
+                    + self._registrar_escalada_pm(orden, techo_esc))
         # decisión 54 (E2, Jaume 1-oct): la compra al techo sale cuando DAS confirma que el stop bajó (aquí, a 0)
         return self._retener_salida(ticker, orden, "halt_tope_pm", al_enviar,
                                     lambda motivo: self._halt_sin_reduccion(ticker, cuando, motivo),
-                                    datos={"regla_halt": regla})
+                                    datos={"regla_halt": regla}, escalar_techo=techo_esc)
+
+    # ── decisión 70 (Jaume 2-oct): cierres de halt de PREMERCADO con el mismo escalado que la compra de emergencia ──
+    def _precio_escalon_pm(self, ticker: str, techo: Decimal) -> Optional[Decimal]:
+        """min(último × (1 + escalón del tramo y la sesión), techo); None sin `banda_tramos` o sin precio."""
+        base = self._base_escalon(ticker)
+        if base is None:
+            return None
+        pct = stops.pct_escalon(self._cfg.stops, base, self._es_rth())
+        if pct is None:
+            return None
+        return min(precios.con_techo(base, pct, arriba=True), techo)
+
+    def _escalonar_pm(self, orden: OrdenNueva) -> tuple[OrdenNueva, Optional[Decimal]]:
+        """Decisión 70: la compra LÍMITE de cierre de un halt de PREMERCADO (o extendido) sale a min(último × (1 +
+        escalón), techo) con techo = parada × (1 + `halts.t1_subida_max_cierre_pct`/100) (× 3,5) y escala después.
+        Devuelve (orden, techo); techo None = no escala (sin `stops.banda_tramos`, en RTH, sin techo del T1 —LULD o
+        sin parada— o sin precio): la orden de siempre."""
+        if (not self._escalonado() or self._es_rth() or orden.lado is not Lado.COMPRA
+                or orden.tipo is not TipoOrden.LIMITE):
+            return orden, None
+        techo = halts.precio_tope_t1(self._mercado.simbolo(orden.ticker), self._cfg.halts)
+        if techo is None:
+            return orden, None
+        precio = self._precio_escalon_pm(orden.ticker, techo)
+        if precio is None:
+            return orden, None
+        return dataclasses.replace(orden, precio=precio,
+                                   ruta=precios.ruta(self._cfg.rutas, "cruzar", precio, self._ahora_et)), techo
+
+    def _registrar_escalada_pm(self, orden: OrdenNueva, techo: Optional[Decimal]) -> list[Accion]:
+        if techo is None:
+            return []
+        self._escalada_pm[orden.token] = {"ticker": orden.ticker, "techo": techo, "cambio_en": self._ahora,
+                                          "fuera": False, "programado": False}
+        return [Anotar("halt_pm_escalon_inicio", {"ticker": orden.ticker, "token": orden.token, "precio": orden.precio,
+                                                  "techo": techo, "qty": orden.qty,
+                                                  "regla": "decisión 70 (Jaume 2-oct)"})]
+
+    def _escalar_pm(self, token: int, forzar: bool = False) -> list[Accion]:
+        """Decisión 70: el cierre del halt de premercado sube un escalón con el precio (REPLACE, solo hacia arriba, como
+        mucho cada `stops.escalon_s`; con el símbolo parado no se toca). Si el último o el ask pasan el techo del T1:
+        decisión 49 (la orden SUBE al techo y se queda puesta, stops fuera, control humano)."""
+        e = self._escalada_pm.get(token)
+        if e is None:
+            return []
+        o = self._estado.ordenes.get(token)
+        if o is None or o.estado not in _VIVOS or _qty_viva(o) <= 0:
+            self._escalada_pm.pop(token, None)
+            return []
+        if e.get("fuera"):
+            return []
+        ticker = o.ticker
+        if ticker in self._halt_en_curso or halts.es_halt(self._mercado.simbolo(ticker)):
+            return []
+        if o.id_das is None or o.token in self._reemplazo_pedido or o.token in self._cancel_pedido:
+            return []
+        pos = self._estado.posiciones.get(ticker)
+        if pos is None or pos.neta >= 0:
+            return []
+        espera = self._escalon_s() - (self._ahora - float(e["cambio_en"]))
+        if not forzar and espera > 1e-9:
+            if e.get("programado"):
+                return []
+            e["programado"] = True
+            return [Programar(f"{T_ESCALON_PM}:{token}", espera, {"token": token, "ticker": ticker})]
+        cot = self._cot(ticker)
+        techo = e["techo"]
+        if cot is not None and any(_es_precio(p) and p > techo for p in (cot.last, cot.ask)):
+            e["fuera"] = True
+            return [Anotar("halt_pm_escalon_sobre_techo", {"ticker": ticker, "token": token, "techo": techo,
+                                                           "last": cot.last, "ask": cot.ask,
+                                                           "regla": "decisiones 49/70"})] + self._techo_vivo_49(
+                pos, cot.last if _es_precio(cot.last) else cot.ask, "el escalón llegó al techo del T1 (decisión 70)")
+        nuevo = self._precio_escalon_pm(ticker, techo)
+        if nuevo is None or o.precio is None or nuevo <= o.precio:
+            return []
+        e["cambio_en"] = self._ahora
+        return [Anotar("halt_pm_escalon", {"ticker": ticker, "token": token, "de": o.precio, "a": nuevo,
+                                           "techo": techo, "qty": _qty_viva(o), "regla": "decisión 70 (Jaume 2-oct)"})
+                ] + self._reprecio_respaldo(o, nuevo, "decisión 70: el cierre del halt de PM sube un escalón")
+
+    def _t_escalon_pm(self, clave: str, datos: dict) -> list[Accion]:
+        token = datos.get("token")
+        e = self._escalada_pm.get(token) if isinstance(token, int) else None
+        if e is None:
+            return []
+        e["programado"] = False
+        return self._escalar_pm(token)
 
     def _halt_sin_reduccion(self, ticker: str, cuando: str, motivo: str) -> list[Accion]:
         """Decisión 54 (E2, Jaume 1-oct): DAS no deja bajar ni retirar el stop → la salida del halt NO sale; el stop se
@@ -5204,6 +5414,7 @@ class Decisor:
         # decisión 48 (Jaume 30-sep): en RTH el reintento ya no se capa al techo del T1 (solo en premercado)
         orden = halts.orden_reapertura(pos, qty, cot, "cerrar_limite_pm", self._cfg, self._tokens.siguiente(),
                                        self._ahora_et, simb=None if self._es_rth() else simb)
+        orden, techo_esc = self._escalonar_pm(orden)                  # decisión 70: en premercado, escalonada
 
         def al_enviar(o: OrdenNueva) -> list[Accion]:
             return [Anotar("halt_reintento", {"ticker": ticker, "qty": o.qty, "token": o.token, "regla": "EP-2"}),
@@ -5211,11 +5422,12 @@ class Decisor:
                               {"ticker": ticker, "reapertura": True})]
 
         if pos.estado is EstadoTicker.BS or pos.bs is not None:
-            return self._plan(ticker) + self._absorber([EnviarOrden(orden)]) + al_enviar(orden)   # D4 / R-G-03
+            return (self._plan(ticker) + self._absorber([EnviarOrden(orden)]) + al_enviar(orden)   # D4 / R-G-03
+                    + self._registrar_escalada_pm(orden, techo_esc))
         # decisión 54 (E2, Jaume 1-oct): tampoco al reabrir sale antes de que DAS confirme la bajada del stop
         return self._retener_salida(ticker, orden, "halt_reapertura", al_enviar,
                                     lambda motivo: self._halt_sin_reduccion(ticker, "al reabrir", motivo),
-                                    datos={"decision": decision})
+                                    datos={"decision": decision}, escalar_techo=techo_esc)
 
     def _t_halt_primera_vela(self, clave: str, datos: dict) -> list[Accion]:
         """R-F-01 esc. 2 / R-F-03 / R-F-04 (b): primera vela < 6 % y k < 3 → se levanta el veto y la señal guardada entra."""
@@ -6022,6 +6234,7 @@ class Decisor:
             # decisión 65 (c): con el stop disparado y el precio sobre SU límite (pero bajo el techo) el respaldo sale
             # ANTES de mirar el cisne negro, que con un respaldo vivo se mide contra el techo
             acciones += self._vigilar_sin_ejecutar(ticker)
+            acciones += self._escalar_ticker(ticker)        # decisiones 69/70: el escalón, con cada cotización
             if not sin_bs:
                 acciones += self._vigilar_bs(pos, cot)
             acciones += self._banda(pos, cot)
@@ -6091,7 +6304,7 @@ class Decisor:
             if pos.bs is not None:
                 pos.bs = cisne_negro.actualizar_maximo(pos.bs, cot.last)
             return []
-        niveles = self._niveles_primer_stop(pos)
+        niveles = originales = self._niveles_primer_stop(pos)
         if niveles is not None:
             # decisión 65 (c): entre el límite del stop y el techo del respaldo (`stops.techo_pct`) manda el respaldo;
             # el cisne negro es el precio por encima del TECHO (con el techo por defecto = límite, lo de siempre)
@@ -6099,6 +6312,7 @@ class Decisor:
         if niveles is None or not cisne_negro.se_activa(pos, niveles, self._ordenes_ticker(pos.ticker), cot,
                                                         self._cfg.stops):
             return []
+        techo_puesto = self._respaldo_al_techo(pos, originales)          # decisión 69 (5), antes del protocolo
         ticker = pos.ticker
         bs = cisne_negro.activar(pos, niveles, self._ahora, precio=cot.last)
         anterior = pos.estado
@@ -6117,7 +6331,45 @@ class Decisor:
         ]
         if pos.intento is not None:
             acciones += self._cancelar_intento(pos, MOTIVO_CIERRE)
-        return acciones
+        return acciones + techo_puesto
+
+    def _respaldo_al_techo(self, pos: PosicionTicker, niveles: Optional[NivelesStop]) -> list[Accion]:
+        """Decisión 69 (5) (Jaume 2-oct): el precio pasa del TECHO (cisne negro) y NO hay ninguna compra de emergencia
+        viva → se pone UNA compra límite EN el techo por lo que siga corto (si el precio vuelve, compra), con el stop
+        aún puesto (se cancela cuando DAS la acepte). Solo con `stops.respaldo` y `stops.techo_pct` en el cuadro (sin
+        `techo_pct` el techo es el propio límite del stop: lo de siempre, nada). Halt, control humano, pausa o DAS sin
+        reconciliar → nada (el aviso del cisne negro sale igual)."""
+        ticker = pos.ticker
+        if (niveles is None or not bool((self._cfg.stops or {}).get("respaldo", False)) or self._techo_pct() is None
+                or any(o.proposito is Proposito.STOP_RESPALDO for o in self._vivas(ticker))
+                or self._exclusion_sin_ejecutar(pos, ignorar_bs=True) is not None):
+            return []
+        techo = self._techo_respaldo(niveles)
+        qty = abs(pos.neta) - self._comprando(ticker)
+        if qty <= 0:
+            return []
+        orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker,
+                           ruta=precios.ruta(self._cfg.rutas, "cruzar", techo, self._ahora_et), qty=qty,
+                           tipo=TipoOrden.LIMITE, precio=techo, tif="DAY+", post_only=False,
+                           proposito=Proposito.STOP_RESPALDO, version=pos.version_stops)
+        self._respaldos[orden.token] = {"ticker": ticker, "banda": self._pct_stops("banda_pct", STOP_BANDA_PCT),
+                                        "techo": techo, "reintento": True, "sin_stop": False, "fuera": True,
+                                        "mitad": False, "cambio_en": self._ahora, "en_techo": True}
+        ep = self._sin_ejecutar.setdefault(ticker, {"desde": None, "llenas": self._llenas_stops(ticker),
+                                                    "hecho": False})
+        ep["hecho"] = True
+        ep["respaldos"] = int(ep.get("respaldos") or 0) + 1
+        return ([Anotar(TIPO_STOP_SIN_EJECUTAR, {"ticker": ticker, "fase": "respaldo", "motivo": "techo superado",
+                                                 "techo": techo, "qty": orden.qty, "token": orden.token,
+                                                 "ruta": orden.ruta, "precio": orden.precio, "neta": pos.neta,
+                                                 "regla": "decisión 69 (5) (Jaume 2-oct)"})]
+                + self._absorber([EnviarOrden(orden)])
+                + [Avisar(Nivel.MAXIMO, Grupo.B,
+                          f"🚨 {avisos.escapar(ticker)}: el precio pasó el TECHO {techo} de la compra de emergencia. Se "
+                          f"deja PUESTA una compra límite de {orden.qty} EN el techo {techo} por "
+                          f"{avisos.escapar(orden.ruta)} (si el precio vuelve, compra); el stop se cancela cuando DAS "
+                          f"la acepte. Cisne negro: decide el humano (decisión 69)",
+                          clave=f"stop_respaldo_techo:{ticker}:{orden.token}")])
 
     # ── decisión 65 (Jaume 2-oct): stop que NO se ejecuta dentro de su banda ──
     def _plazo_sin_ejecutar(self) -> Optional[float]:
@@ -6137,11 +6389,12 @@ class Decisor:
                        o.proposito in _PROP_STOP or (o.proposito is Proposito.DESCONOCIDA
                                                      and o.tipo is TipoOrden.STOP_LIMITE_PP)))
 
-    def _exclusion_sin_ejecutar(self, pos: PosicionTicker) -> Optional[str]:
+    def _exclusion_sin_ejecutar(self, pos: PosicionTicker, ignorar_bs: bool = False) -> Optional[str]:
         """Cuándo NO aplica la 65: halt (manda la 57), cisne negro (precio sobre el límite: aviso y humano), control
-        humano o pausa del humano en el ticker, DAS caído o sin reconciliar, o una reducción del stop ya en curso."""
+        humano o pausa del humano en el ticker, DAS caído o sin reconciliar, o una reducción del stop ya en curso.
+        `ignorar_bs`: la compra que se deja en el techo al declarar el cisne negro (decisión 69 (5))."""
         t = pos.ticker
-        if pos.estado is EstadoTicker.BS or pos.bs is not None:
+        if not ignorar_bs and (pos.estado is EstadoTicker.BS or pos.bs is not None):
             return "cisne negro"
         if (pos.estado is EstadoTicker.HALT or t in self._halt_en_curso or self._en_silencio(t)
                 or halts.es_halt(self._mercado.simbolo(t))):
@@ -6191,18 +6444,17 @@ class Decisor:
         vivos = [o for o in self._stops_vivos(ticker) if _qty_viva(o) > 0]
         respaldo_vivo = any(o.proposito is Proposito.STOP_RESPALDO for o in self._vivas(ticker))
         excluido = self._exclusion_sin_ejecutar(pos)
-        # (c) Jaume 2-oct noche: el stop YA disparó (hija viva o fills parciales) y el precio (ask; sin ask, el último)
-        # está POR ENCIMA de su límite con acciones sin llenar (el límite residente es corto y ya no llena), pero no
-        # del techo del respaldo → respaldo AL INSTANTE por el resto. Por encima del techo: cisne negro como siempre.
+        # (c) Jaume 2-oct noche / decisión 69 (3.1): el precio (ask; sin ask, el último) está POR ENCIMA del límite del
+        # stop con acciones sin cerrar (el límite residente es corto y ya no llena), pero no del techo → respaldo AL
+        # INSTANTE por el resto. Con el último ya en el disparo no se espera a que DAS dispare el stop (en real tardó
+        # de 7 a 40 s en saltar). Por encima del techo: cisne negro (y la compra puesta en el techo, 69 (5)).
         precio_c = cot.ask if cot is not None and _es_precio(cot.ask) else last
         techo = self._techo_respaldo(niveles)
-        sobre_limite = [o for o in vivos if (o.id_madre is not None or o.llenas > 0 or o.estado in (
-                            EstadoOrden.TRIGGERED, EstadoOrden.PARTIAL))
-                        and o.precio is not None and precio_c > o.precio]
+        sobre_limite = [o for o in vivos if o.precio is not None and precio_c > o.precio]
         if sobre_limite and precio_c <= techo and not respaldo_vivo and excluido is None:
             ep = self._sin_ejecutar.setdefault(ticker, {"desde": None, "llenas": llenas, "hecho": False})
             return self._respaldo_stop(pos, niveles, last, ep, motivo="precio sobre el límite del stop",
-                                       sobre_limite=(precio_c, sobre_limite[0].precio))
+                                       sobre_limite=(precio_c, min(o.precio for o in sobre_limite)))
         if plazo is None:
             return []
         # (b) el último en [disparo, techo): con el techo por defecto (= límite del stop) es la banda del stop
@@ -6224,20 +6476,55 @@ class Decisor:
             return defecto
         return precios.de_float(valor)
 
-    def _techo_respaldo(self, niveles: NivelesStop) -> Decimal:
-        """Decisión 65 bis: techo = L × (1 + `stops.techo_pct` / 100), redondeado arriba; sin `techo_pct`, el
-        `stops.limite_pct` del cuadro (no se supone que valga 50)."""
-        limite_pct = self._pct_stops("limite_pct", STOP_LIMITE_PCT)
-        return precios.con_techo(niveles.disparo, self._pct_stops("techo_pct", limite_pct), arriba=True)
+    def _techo_pct(self) -> Optional[Decimal]:
+        """`stops.techo_pct` del cuadro (número > 0) o None si falta."""
+        bloque = self._cfg.stops if isinstance(self._cfg.stops, dict) else {}
+        valor = bloque.get("techo_pct")
+        if valor is None or isinstance(valor, bool) or not isinstance(valor, (int, float, Decimal)) or valor <= 0:
+            return None
+        return precios.de_float(valor)
 
-    def _precio_respaldo(self, ticker: str, banda: Decimal, techo: Decimal) -> Optional[Decimal]:
-        """Decisión 65 bis: límite = min(último × (1 + banda / 100) redondeado arriba, techo); sin último, el ask."""
+    def _techo_respaldo(self, niveles: NivelesStop) -> Decimal:
+        """Decisión 69 (2) (Jaume 2-oct): techo = LÍMITE del stop × (1 + `stops.techo_pct` / 100), redondeado ABAJO
+        (ninguna orden del bot pasa de ahí): stop en 10 → límite 10,90 → techo 16,35. Antes (65 bis) se calculaba
+        sobre el DISPARO L. Sin `techo_pct`, lo de siempre: el límite del stop (`stops.limite_pct` sobre el disparo;
+        con `limite_tramos`, el límite del tramo): no se supone que valga 50."""
+        techo_pct = self._techo_pct()
+        if techo_pct is None:
+            if stops.CLAVE_LIMITE_TRAMOS in (self._cfg.stops or {}):
+                return niveles.limite
+            limite_pct = self._pct_stops("limite_pct", STOP_LIMITE_PCT)
+            return precios.con_techo(niveles.disparo, limite_pct, arriba=True)
+        return precios.redondear_abajo(niveles.limite * (Decimal(100) + techo_pct) / Decimal(100))
+
+    def _escalonado(self) -> bool:
+        """Decisiones 69/70: el cuadro trae `stops.banda_tramos` (escalón por sesión y tramo de precio)."""
+        return stops.escalonado(self._cfg.stops)
+
+    def _escalon_s(self) -> float:
+        """Decisión 69 (4): ritmo MÍNIMO entre una orden/reprecio del escalado y el siguiente (`stops.escalon_s`)."""
+        segundos = _segundos(self._cfg.stops, "escalon_s", STOP_ESCALON_S)
+        return segundos if segundos > 0 else STOP_ESCALON_S
+
+    def _base_escalon(self, ticker: str) -> Optional[Decimal]:
+        """El precio del momento del que parte el escalón: el último; sin último, el ask."""
         cot = self._cot(ticker)
-        base = cot.last if cot is not None and _es_precio(cot.last) else (
+        return cot.last if cot is not None and _es_precio(cot.last) else (
             cot.ask if cot is not None and _es_precio(cot.ask) else None)
+
+    def _precio_respaldo(self, ticker: str, banda: Decimal, techo: Decimal, mitad: bool = False) -> Optional[Decimal]:
+        """Decisión 65 bis / 69 (1): límite = min(último × (1 + escalón / 100) redondeado arriba, techo); sin último,
+        el ask. Con `stops.banda_tramos` el escalón es el del tramo del último y la sesión (RTH o extendido; `mitad` lo
+        parte en dos para el reintento por «precio demasiado lejos»); sin ella, `banda` (ya partida por quien llama)."""
+        base = self._base_escalon(ticker)
         if base is None:
             return None
-        return min(precios.con_techo(base, banda, arriba=True), techo)
+        pct = stops.pct_escalon(self._cfg.stops, base, self._es_rth())
+        if pct is None:
+            pct = banda
+        elif mitad:
+            pct = pct / 2
+        return min(precios.con_techo(base, pct, arriba=True), techo)
 
     def _respaldo_stop(self, pos: PosicionTicker, niveles: NivelesStop, last: Optional[Decimal], ep: dict,
                        sin_stop: bool = False, motivo: str = "",
@@ -6288,21 +6575,30 @@ class Decisor:
                            clave=f"stop_sin_ejecutar:{ticker}")] + acciones
         quita = ("no hay stop vivo que cancelar" if sin_stop
                  else "en cuanto DAS la acepte se cancela el stop")
+        pct = self._precio_pct_texto(ticker, banda)
         return ([Anotar(TIPO_STOP_SIN_EJECUTAR, {**datos, "qty": orden.qty, "token": orden.token, "ruta": orden.ruta,
-                                                 "precio": orden.precio}),
+                                                 "precio": orden.precio, "escalon_pct": pct}),
                  Avisar(Nivel.MAXIMO, Grupo.B,
                         f"{texto}. Se manda YA una COMPRA LÍMITE de respaldo de {orden.qty} a {orden.precio} (último + "
-                        f"{banda} %, techo {techo}) por {avisos.escapar(orden.ruta)} que persigue cada "
-                        f"{self._perseguir_cada():g} s hasta el techo; {quita} (decisión 65)",
+                        f"{pct} %, techo {techo}) por {avisos.escapar(orden.ruta)} que sube un escalón con el precio "
+                        f"(como mucho cada {self._escalon_s():g} s) y NUNCA pasa del techo; {quita} (decisiones 65/69)",
                         clave=f"stop_sin_ejecutar:{ticker}")]
                 + acciones)
 
+    def _precio_pct_texto(self, ticker: str, banda: Decimal, mitad: bool = False) -> Decimal:
+        """El escalón que se está usando (para avisos y diario): el del tramo con `banda_tramos`; si no, `banda`."""
+        base = self._base_escalon(ticker)
+        pct = stops.pct_escalon(self._cfg.stops, base, self._es_rth()) if base is not None else None
+        if pct is None:
+            return banda
+        return pct / 2 if mitad else pct
+
     def _enviar_respaldo(self, pos: PosicionTicker, banda: Decimal, techo: Decimal, reintento: bool,
-                         sin_stop: bool) -> tuple[list[Accion], Optional[OrdenNueva]]:
-        """La compra de respaldo (decisión 65 bis) por lo corto − otras compras vivas, con su persecución."""
+                         sin_stop: bool, mitad: bool = False) -> tuple[list[Accion], Optional[OrdenNueva]]:
+        """La compra de respaldo (decisiones 65 bis / 69) por lo corto − otras compras vivas, con su escalado."""
         ticker = pos.ticker
         qty = abs(pos.neta) - self._comprando(ticker)
-        precio = self._precio_respaldo(ticker, banda, techo)
+        precio = self._precio_respaldo(ticker, banda, techo, mitad=mitad)
         if qty <= 0 or precio is None:
             return [], None
         ruta = precios.ruta(self._cfg.rutas, "cruzar", precio, self._ahora_et)
@@ -6310,48 +6606,81 @@ class Decisor:
                            tipo=TipoOrden.LIMITE, precio=precio, tif="DAY+", post_only=False,
                            proposito=Proposito.STOP_RESPALDO, version=pos.version_stops)
         self._respaldos[orden.token] = {"ticker": ticker, "banda": banda, "techo": techo, "reintento": reintento,
-                                        "sin_stop": sin_stop, "fuera": False}
+                                        "sin_stop": sin_stop, "fuera": False, "mitad": mitad, "cambio_en": self._ahora}
         return (self._absorber([EnviarOrden(orden)])
-                + [Programar(f"{T_RESPALDO_PERSEGUIR}:{orden.token}", self._perseguir_cada(),
+                + [Programar(f"{T_RESPALDO_PERSEGUIR}:{orden.token}", self._escalon_s(),
                              {"token": orden.token, "ticker": ticker})]), orden
 
+    def _escalar_respaldo(self, token: int) -> list[Accion]:
+        """Decisión 69 (Jaume 2-oct, «bot de emergencia escalonado»): la compra de emergencia sube un ESCALÓN con el
+        precio: límite = min(último × (1 + escalón), techo), solo hacia arriba, como mucho cada `stops.escalon_s` (se
+        mira en cada cotización y con su temporizador). Si el último o el ask pasan el TECHO: no se sube más (aviso
+        MÁXIMO: cisne negro, decide el humano) pero la compra NO se cancela: se deja PUESTA con su límite EN el techo
+        (si el precio vuelve, compra). Nunca un límite por encima del techo."""
+        o = self._estado.ordenes.get(token)
+        r = self._respaldos.get(token)
+        if o is None or r is None or o.estado not in _VIVOS or _qty_viva(o) <= 0 or r.get("fuera"):
+            return []
+        if (o.id_das is None or o.token in self._reemplazo_pedido or o.token in self._cancel_pedido
+                or o.token in self._respaldo_reenvio):
+            return []
+        if self._ahora - float(r.get("cambio_en", float("-inf"))) < self._escalon_s() - 1e-9:
+            return []
+        cot = self._cot(o.ticker)
+        techo = r["techo"]
+        if cot is not None and any(_es_precio(p) and p > techo for p in (cot.last, cot.ask)):
+            r["fuera"] = True
+            acciones: list[Accion] = [
+                Anotar("stop_respaldo_techo", {"ticker": o.ticker, "token": o.token, "techo": techo, "last": cot.last,
+                                               "ask": cot.ask, "precio": o.precio, "regla": "decisión 69 (5)"}),
+                Avisar(Nivel.MAXIMO, Grupo.B,
+                       f"{avisos.escapar(o.ticker)}: el precio (último {cot.last}, ask {cot.ask}) superó el techo "
+                       f"{techo} de la compra de emergencia: NO se sube más; la compra de {_qty_viva(o)} se queda "
+                       f"PUESTA en el techo {techo} (si el precio vuelve, compra). Cisne negro: decide el humano "
+                       f"(decisión 69)", clave=f"stop_respaldo_techo:{o.ticker}:{o.token}")]
+            if o.precio is None or o.precio < techo:
+                r["cambio_en"] = self._ahora
+                acciones += self._reprecio_respaldo(o, techo, "decisión 69 (5): la compra de emergencia se deja en el "
+                                                              "techo")
+            return acciones
+        nuevo = self._precio_respaldo(o.ticker, r["banda"], techo, mitad=bool(r.get("mitad")))
+        if nuevo is None or o.precio is None or nuevo <= o.precio:
+            return []
+        r["cambio_en"] = self._ahora
+        return [Anotar("stop_respaldo_persigue", {"ticker": o.ticker, "token": o.token, "de": o.precio, "a": nuevo,
+                                                  "qty": _qty_viva(o), "techo": techo,
+                                                  "regla": "decisión 69 (escalón)"})] + self._reprecio_respaldo(
+            o, nuevo, "decisión 69: la compra de emergencia sube un escalón")
+
+    def _reprecio_respaldo(self, o: Orden, precio: Decimal, motivo: str) -> list[Accion]:
+        abierta = _qty_viva(o)
+        share = share_de_replace(abierta, max(int(o.llenas), 0), self._share_es_abierta())
+        return self._absorber([Reemplazar(id_das=o.id_das, token=o.token, qty=share, stop=None, precio=precio,
+                                          motivo=motivo)])
+
+    def _escalar_ticker(self, ticker: str) -> list[Accion]:
+        """Decisiones 69/70: con cada cotización del ticker, el escalón de sus compras de emergencia y de cierre de halt
+        de premercado (sin pausa: el ritmo lo pone `stops.escalon_s`)."""
+        acciones: list[Accion] = []
+        for token in [t for t, r in self._respaldos.items() if r.get("ticker") == ticker]:
+            acciones += self._escalar_respaldo(token)
+        for token in [t for t, e in self._escalada_pm.items() if e.get("ticker") == ticker]:
+            acciones += self._escalar_pm(token)
+        return acciones
+
     def _t_respaldo_perseguir(self, clave: str, datos: dict) -> list[Accion]:
-        """Decisión 65 bis: la compra de respaldo sube su límite a min(último × (1 + banda), techo) cada
-        `perseguir_ask_s` mientras quede resto. Si el último o el ask pasan el TECHO, no se persigue más (aviso
-        MÁXIMO: cisne negro, decide el humano); la compra queda viva a su último precio."""
+        """Decisiones 65 bis / 69: el temporizador del escalado de la compra de emergencia (cada `stops.escalon_s`,
+        además de cada cotización) mientras quede resto y no haya pasado el techo."""
         token = datos.get("token")
         o = self._estado.ordenes.get(token) if isinstance(token, int) else None
         r = self._respaldos.get(token) if isinstance(token, int) else None
         if o is None or r is None or o.estado not in _VIVOS or _qty_viva(o) <= 0:
             return []
-        siguiente = Programar(f"{T_RESPALDO_PERSEGUIR}:{o.token}", self._perseguir_cada(),
-                              {"token": o.token, "ticker": o.ticker})
-        if o.id_das is None or o.token in self._reemplazo_pedido or o.token in self._cancel_pedido:
-            return [siguiente]
-        cot = self._cot(o.ticker)
-        techo = r["techo"]
-        fuera = cot is not None and any(_es_precio(p) and p > techo for p in (cot.last, cot.ask))
-        if fuera:
-            if r["fuera"]:
-                return []
-            r["fuera"] = True
-            return [Anotar("stop_respaldo_techo", {"ticker": o.ticker, "token": o.token, "techo": techo,
-                                                   "last": cot.last, "ask": cot.ask, "precio": o.precio,
-                                                   "regla": "decisión 65 bis"}),
-                    Avisar(Nivel.MAXIMO, Grupo.B,
-                           f"{avisos.escapar(o.ticker)}: el precio (último {cot.last}, ask {cot.ask}) superó el techo "
-                           f"{techo} del respaldo: NO se persigue más; la compra de {_qty_viva(o)} queda viva a "
-                           f"{o.precio}. Cisne negro: decide el humano (decisión 65)",
-                           clave=f"stop_respaldo_techo:{o.ticker}:{o.token}")]
-        nuevo = self._precio_respaldo(o.ticker, r["banda"], techo)
-        if nuevo is None or o.precio is None or nuevo <= o.precio:
-            return [siguiente]
-        abierta = _qty_viva(o)
-        share = share_de_replace(abierta, max(int(o.llenas), 0), self._share_es_abierta())
-        return [Anotar("stop_respaldo_persigue", {"ticker": o.ticker, "token": o.token, "de": o.precio, "a": nuevo,
-                                                  "qty": abierta, "regla": "decisión 65 bis"})] + self._absorber([
-            Reemplazar(id_das=o.id_das, token=o.token, qty=share, stop=None, precio=nuevo,
-                       motivo="decisión 65 bis: el respaldo persigue al último")]) + [siguiente]
+        acciones = self._escalar_respaldo(o.token)
+        if r.get("fuera"):
+            return acciones
+        return acciones + [Programar(f"{T_RESPALDO_PERSEGUIR}:{o.token}", self._escalon_s(),
+                                     {"token": o.token, "ticker": o.ticker})]
 
     def _respaldo_otra_vez(self, o: Orden, r: Optional[dict], motivo: str, mitad: bool) -> list[Accion]:
         """Decisión 65 bis: otra compra de respaldo en lugar de `o` (REPLACE rechazado → cancelar y enviar; «precio
@@ -6360,8 +6689,10 @@ class Decisor:
         if pos is None or pos.neta >= 0 or r is None:
             return []
         banda = (r["banda"] / 2) if mitad else r["banda"]
+        mitad_ = bool(mitad or r.get("mitad"))
         acciones, orden = self._enviar_respaldo(pos, banda, r["techo"], reintento=bool(r["reintento"] or mitad),
-                                                sin_stop=bool(r["sin_stop"]))
+                                                sin_stop=bool(r["sin_stop"]), mitad=mitad_)
+        banda = self._precio_pct_texto(o.ticker, banda, mitad=mitad_)
         nota = [Anotar("stop_respaldo_reenvio", {"ticker": o.ticker, "token_anterior": o.token,
                                                  "token": orden.token if orden is not None else None,
                                                  "banda_pct": banda, "motivo": motivo, "regla": "decisión 65 bis"})]
@@ -7622,6 +7953,7 @@ class Decisor:
             T_HALT_GUARDADAS: self._t_halt_guardadas, T_HALT_SILENCIO: self._t_halt_silencio,
             T_ENTRADA_REAPERTURA: self._t_entrada_reapertura, T_REINICIO_HALT: self._t_reinicio_halt,
             T_HIJA_ESPERA: self._t_hija_espera, T_RESPALDO_PERSEGUIR: self._t_respaldo_perseguir,
+            T_ESCALON_PM: self._t_escalon_pm, T_CANCEL_HALT: self._t_cancel_halt,
         }
 
     def _ticker_de_temporizador(self, base: str, clave: str, datos: dict) -> Optional[str]:
@@ -7630,7 +7962,7 @@ class Decisor:
             return ticker
         resto = clave.split(":", 1)[1] if ":" in clave else ""
         if base in (T_REPLACE_VERIFICAR, T_PERSEGUIR_ASK, T_STOP_REINTENTO, T_REINTENTO_RECHAZO, T_LOCATE_RECOMPRAR,
-                    T_CRUCE_POSTONLY, T_HIJA_ESPERA, T_RESPALDO_PERSEGUIR):
+                    T_CRUCE_POSTONLY, T_HIJA_ESPERA, T_RESPALDO_PERSEGUIR, T_ESCALON_PM, T_CANCEL_HALT):
             try:
                 o = self._estado.ordenes.get(int(resto))
             except ValueError:
@@ -8405,6 +8737,20 @@ class Decisor:
             # siguiente reapertura (no se retira ni vuelven los stops); `halt_decidir` la vigila y repone si falta
             return [Anotar("halt_salida_se_queda", {"ticker": ticker, "motivo": "vuelve a estar parado",
                                                     "regla": "decisión 48 (Jaume 30-sep)"})]
+        if self._escalonado() and pos is not None and pos.neta < 0:
+            escalando = [o for o in self._vivas(ticker) if o.token in self._escalada_pm and _qty_viva(o) > 0
+                         and not self._escalada_pm[o.token].get("fuera")]
+            if escalando:
+                # decisión 70 (Jaume 2-oct): la compra de cierre escalonada NO se retira a los 2 s ni pasa a la 49:
+                # sigue subiendo con el precio hasta llenar o hasta el techo del T1 (entonces, 49)
+                if token_46 is not None:
+                    self._halt_pm_cierre[ticker] = token_46
+                acciones_esc: list[Accion] = [Anotar("halt_pm_escalando", {
+                    "ticker": ticker, "tokens": [o.token for o in escalando], "cuando": "2 s tras reabrir",
+                    "regla": "decisión 70 (Jaume 2-oct)"})]
+                for o in escalando:
+                    acciones_esc += self._escalar_pm(o.token, forzar=True)
+                return acciones_esc
         espera_46 = ticker in self._halt_pm_tope_espera
         self._halt_pm_tope_espera.discard(ticker)
         if datos.get("reapertura") and pos is not None and pos.neta < 0:
@@ -8483,7 +8829,8 @@ class Decisor:
             pct = _pct(self._cfg.stops, "proteccion_desconocidas_pct", STOP_PROTECCION_PCT)
             orden = stops.stop_proteccion(ticker, falta, True, ultimo, pct, self._tokens.siguiente(), self._ruta_stop(),
                                           pos.version_stops,
-                                          limite_pct=_pct(self._cfg.stops, stops.CLAVE_LIMITE_PCT, STOP_LIMITE_PCT))
+                                          limite_pct=_pct(self._cfg.stops, stops.CLAVE_LIMITE_PCT, STOP_LIMITE_PCT),
+                                          cfg_stops=self._cfg.stops)          # decisión 68: margen por tramo
             self._meta_orden[orden.token] = (intento, float(primero) if isinstance(primero, (int, float)) else self._ahora)
             return self._absorber([EnviarOrden(orden)])
         return self._plan(ticker)          # la orden nueva hereda la cuenta de intentos de su propósito (_stop_intentos)
@@ -9405,8 +9752,7 @@ class Decisor:
         no salió nada).
         """
         ticker = pos.ticker
-        limite = precios.con_techo(precio, _pct(self._cfg.stops, stops.CLAVE_LIMITE_PCT, STOP_LIMITE_PCT),
-                                   arriba=True)
+        limite = precios.con_techo(precio, stops.pct_limite(self._cfg.stops, precio), arriba=True)   # decisión 68
         vivas = self._vivas(ticker)
         propias = sorted((o for o in vivas if o.lado is Lado.COMPRA and o.tipo is TipoOrden.STOP_LIMITE_PP
                           and o.proposito is Proposito.STOP_PROTECCION and o.lote_id is None

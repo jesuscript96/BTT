@@ -172,6 +172,7 @@ from app.bot_das.tipos import (
     OrdenNueva,
     Origen,
     PedirAlSupervisor,
+    Proposito,
     Reemplazar,
     Registro,
     TipoOrden,
@@ -1237,7 +1238,9 @@ class VigilanteDAS:
             pendientes=[orden for orden, _ in self._pend_nuevas.values()], estados_ticker=estados,
             locates_deshabilitados=estado.locates_deshabilitados, anotado=dict(self._firmas_vigilancia),
             locates_tope_dia=estado.locates_tope_dia,            # decisión 50 (Jaume 1-oct)
-            parados=frozenset(self._parados), reabiertos=dict(self._reabierto_en))   # decisión 61 (Jaume 2-oct)
+            parados=frozenset(self._parados), reabiertos=dict(self._reabierto_en),   # decisión 61 (Jaume 2-oct)
+            # decisión 69 (8): las compras de emergencia del ejecutor (por su diario) no dejan la posición «descubierta»
+            respaldo_tokens=frozenset(t for t, o in estado.ordenes.items() if o.proposito is Proposito.STOP_RESPALDO))
 
     def _ordenes_vista(self, ahora: float) -> dict[int, MsgOrden]:
         """El libro con lo pendiente aplicado: un CANCEL enviado cuenta como hecho y un REPLACE con su cantidad nueva."""

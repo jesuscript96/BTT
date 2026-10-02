@@ -634,9 +634,10 @@ def test_65_bis_rechazada_por_el_broker_reintenta_con_media_banda_una_sola_vez(b
 
 
 def test_65_bis_persigue_al_ultimo_hasta_el_techo(cfg: Config, tmp_path: Path) -> None:
-    """La compra de respaldo sube a min(último × 1,08, techo) cada segundo; con `stops.techo_pct` 30 el techo es
-    5,20; si el último pasa el techo, aviso MÁXIMO y no se persigue más."""
-    b = Banco(cfg_con(cfg, stops={**cfg.stops, "techo_pct": 30, "banda_pct": 8}), tmp_path)
+    """La compra de respaldo sube a min(último × 1,08, techo) con el precio; decisión 69 (2): el techo se calcula sobre
+    el LÍMITE del stop (6,00 × 1,05 = 6,30; antes, sobre el disparo); si el último pasa el techo, aviso MÁXIMO, no se
+    sube más y la compra se QUEDA en el techo (adaptado el 2-oct: antes techo_pct 30 sobre el disparo = 5,20)."""
+    b = Banco(cfg_con(cfg, stops={**cfg.stops, "techo_pct": 5, "banda_pct": 8}), tmp_path)
     b.preparar()
     abrir_posicion(b)
     _disparar_sin_llenar(b)
@@ -646,19 +647,19 @@ def test_65_bis_persigue_al_ultimo_hasta_el_techo(cfg: Config, tmp_path: Path) -
     b.cotizar(TICKER, "4.55", "4.65", "4.60", tam_ask=0)
     b.avanzar(1.5)
     assert b.orden(r.token).precio == D("4.97")                          # 4,60 × 1,08 = 4,968 → 4,97
-    b.cotizar(TICKER, "4.85", "4.95", "4.90", tam_ask=0)
+    b.cotizar(TICKER, "5.85", "5.95", "5.90", tam_ask=0)
     b.avanzar(1.5)
-    assert b.orden(r.token).precio == D("5.20")                          # 4,90 × 1,08 = 5,29 → techo 5,20
+    assert b.orden(r.token).precio == D("6.30")                          # 5,90 × 1,08 = 6,37 → techo 6,30
     marca = b.marca()
-    b.cotizar(TICKER, "5.25", "5.35", "5.30", tam_ask=0)
+    b.cotizar(TICKER, "6.35", "6.45", "6.40", tam_ask=0)
     b.avanzar(3)
     assert _avisos(b.desde(marca), f"stop_respaldo_techo:{TICKER}")[0].nivel is Nivel.MAXIMO
     assert not [a for a in b.desde(marca) if isinstance(a, Reemplazar) and a.token == r.token]
-    assert b.orden(r.token).precio == D("5.20")
+    assert b.orden(r.token).precio == D("6.30") and b.orden(r.token).estado is EstadoOrden.ACCEPTED
 
 
 def _banco_limite_corto(cfg: Config, tmp_path: Path) -> Banco:
-    """Stop con límite +9 % (4,36) y techo del respaldo +50 % (6,00): lo que Jaume pondrá en producción."""
+    """Stop con límite +9 % (4,36) y techo +50 % SOBRE EL LÍMITE (decisión 69: 4,36 × 1,5 = 6,54)."""
     b = Banco(cfg_con(cfg, stops={**cfg.stops, "limite_pct": 9, "techo_pct": 50}), tmp_path)
     b.preparar()
     abrir_posicion(b)
@@ -667,8 +668,8 @@ def _banco_limite_corto(cfg: Config, tmp_path: Path) -> Banco:
 
 def test_65_c_stop_disparado_y_precio_sobre_su_limite_respaldo_al_instante(cfg: Config, tmp_path: Path) -> None:
     """(c) Jaume 2-oct noche: el stop (límite 4,36) dispara y el ask (4,50) está por encima de su límite con acciones
-    sin llenar → el respaldo sale AL INSTANTE (sin los 5 s) a min(4,45 × 1,19, 6,00) = 5,30; NO es cisne negro (el
-    techo es 6,00); al aceptarse, se cancela la hija del stop; con liquidez llena y queda plana."""
+    sin llenar → el respaldo sale AL INSTANTE (sin los 5 s) a min(4,45 × 1,19, 6,54) = 5,30; NO es cisne negro (el
+    techo es 6,54); al aceptarse, se cancela la hija del stop; con liquidez llena y queda plana."""
     b = _banco_limite_corto(cfg, tmp_path)
     o = _stop(b)
     assert o.precio == D("4.36")
@@ -686,12 +687,16 @@ def test_65_c_stop_disparado_y_precio_sobre_su_limite_respaldo_al_instante(cfg: 
     assert b.pos().neta_fills == 0
 
 
-def test_65_c_por_encima_del_techo_es_cisne_negro_sin_respaldo(cfg: Config, tmp_path: Path) -> None:
+def test_65_c_por_encima_del_techo_es_cisne_negro_y_compra_puesta_en_el_techo(cfg: Config, tmp_path: Path) -> None:
+    """Por encima del techo (6,54) es cisne negro; decisión 69 (5) (adaptado el 2-oct: antes, ninguna compra): sin
+    compra de emergencia viva se deja UNA compra límite EN el techo, que no sube más."""
     b = _banco_limite_corto(cfg, tmp_path)
-    b.cotizar(TICKER, "6.40", "6.50", "6.45", tam_ask=0)
+    b.cotizar(TICKER, "6.70", "6.80", "6.75", tam_ask=0)
     b.tic_das()
     b.avanzar(6)
-    assert b.pos().estado is EstadoTicker.BS and not _respaldos(b)
+    assert b.pos().estado is EstadoTicker.BS
+    (r,) = _respaldos(b)
+    assert (r.precio, r.qty) == (D("6.54"), 100) and b.orden(r.token).precio == D("6.54")
 
 
 def test_65_bis_hojas_del_cuadro() -> None:

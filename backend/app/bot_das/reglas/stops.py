@@ -237,6 +237,9 @@ COMANDO_POSICIONES = "GET POSITIONS"
 
 # ── porcentajes del bloque `stops` (R-C-01 v4, R-F-02) ──
 CLAVE_LIMITE_PCT = "limite_pct"                 # Jaume 29-sep (stop único): límite = L + limite_pct (defecto 50)
+CLAVE_LIMITE_TRAMOS = "limite_tramos"           # decisión 68 (Jaume 2-oct): [[precio_max, pct], …] por tramo de L
+CLAVE_BANDA_TRAMOS = "banda_tramos"             # decisión 69: [[precio_max, pct_extendido, pct_rth], …] del escalón
+CLAVE_PREF = "pref"                             # decisión 68: «Pref=<valor>» en el NEWORDER del stop (null = sin él)
 CLAVE_MARGEN_BANDA = "margen_bajo_limit_up_pct"
 
 # ── venta del exceso (R-C-11 b-3; D2a-04, PROVISIONAL: pregunta 1 a Jaume) ──
@@ -297,16 +300,91 @@ def niveles(L: Decimal, cfg_stops: Mapping, limit_up: Optional[Decimal] = None) 
     nivel = de_float(L)
     if nivel <= 0:
         raise ValueError(f"nivel de stop no positivo: {L!r}")
-    limite_pct = _pct(cfg_stops, CLAVE_LIMITE_PCT, STOP_LIMITE_PCT)
     margen = _pct(cfg_stops, CLAVE_MARGEN_BANDA, STOP_MARGEN_BAJO_LIMIT_UP_PCT)
     recorte = _recorte_banda(limit_up, margen)
     disparo = redondear_arriba(nivel)
     if recorte is not None and disparo > recorte[1]:
         recortado = recorte[1]
+        limite_pct = pct_limite(cfg_stops, recortado)            # decisión 68: el tramo lo decide el disparo
         return NivelesStop(disparo=_con_decimales_del_tick(recortado),
                            limite=_con_decimales_del_tick(con_techo(recortado, limite_pct, arriba=True)), bajo_banda=True)
+    limite_pct = pct_limite(cfg_stops, nivel)
     return NivelesStop(disparo=_con_decimales_del_tick(disparo),
                        limite=_con_decimales_del_tick(con_techo(nivel, limite_pct, arriba=True)), bajo_banda=False)
+
+
+# ── decisiones 68/69 (Jaume 2-oct): márgenes por TRAMO de precio ─────────
+def _tramos(cfg_stops: Any, clave: str, columnas: int) -> Optional[list[tuple[Optional[Decimal], tuple[Decimal, ...]]]]:
+    """La hoja `stops.<clave>` como [(precio_max o None, (pct, …)), …]; None si falta o no tiene la forma (el cuadro
+    lo valida al cargar: aquí, lo seguro es caer en la hoja de siempre)."""
+    if not isinstance(cfg_stops, Mapping):
+        return None
+    crudo = cfg_stops.get(clave)
+    if not isinstance(crudo, (list, tuple)) or not crudo:
+        return None
+    salida: list[tuple[Optional[Decimal], tuple[Decimal, ...]]] = []
+    for fila in crudo:
+        if not isinstance(fila, (list, tuple)) or len(fila) != columnas:
+            return None
+        try:
+            tope = None if fila[0] is None else de_float(fila[0])
+            pcts = tuple(de_float(x) for x in fila[1:])
+        except (TypeError, ValueError):
+            return None
+        if any(p <= 0 for p in pcts):
+            return None
+        salida.append((tope, pcts))
+    return salida
+
+
+def _del_tramo(tramos: list[tuple[Optional[Decimal], tuple[Decimal, ...]]], precio: Decimal) -> tuple[Decimal, ...]:
+    """El primer tramo cuyo `precio_max` (None = sin tope) alcanza `precio`; si ninguno, el último (el más alto)."""
+    for tope, pcts in tramos:
+        if tope is None or precio <= tope:
+            return pcts
+    return tramos[-1][1]
+
+
+def pct_limite(cfg_stops: Any, precio: Any) -> Decimal:
+    """Decisión 68 (Jaume 2-oct): el margen del límite del stop residente por TRAMO del disparo L.
+
+    `stops.limite_tramos` = [[precio_max, pct], …] ordenada (precio_max null =
+    sin tope); el tramo lo decide `precio` (el nivel de disparo). Sin la hoja,
+    `stops.limite_pct` como siempre (defecto `tipos.STOP_LIMITE_PCT`).
+    Producción: [[25, 9], [null, 2]] (≤ 25 $: +9 %, el máximo que ARCA llena
+    a la hija de SMAT; > 25 $: +2 %, ARCA corta al 5 %/3 %).
+    """
+    tramos = _tramos(cfg_stops, CLAVE_LIMITE_TRAMOS, 2)
+    if tramos is None:
+        return _pct(cfg_stops, CLAVE_LIMITE_PCT, STOP_LIMITE_PCT)
+    return _del_tramo(tramos, de_float(precio))[0]
+
+
+def escalonado(cfg_stops: Any) -> bool:
+    """Decisiones 69/70: ¿el cuadro trae `stops.banda_tramos` (escalón por sesión y tramo de precio)?"""
+    return _tramos(cfg_stops, CLAVE_BANDA_TRAMOS, 3) is not None
+
+
+def pct_escalon(cfg_stops: Any, precio: Any, rth: bool) -> Optional[Decimal]:
+    """Decisión 69 (Jaume 2-oct): el escalón de la compra de emergencia por TRAMO del último precio y por SESIÓN.
+
+    `stops.banda_tramos` = [[precio_max, pct_extendido, pct_rth], …]; RTH =
+    09:30-16:00 ET, lo demás extendido. Siempre por debajo del tope del bróker
+    («clearly erroneous»: 20/10 % hasta 25 $, 10/5 % hasta 50 $, 6/3 % por
+    encima). Producción: [[25, 19, 9], [50, 9, 4], [null, 5, 2]]. None sin la
+    hoja (el decisor usa `stops.banda_pct`, lo de antes).
+    """
+    tramos = _tramos(cfg_stops, CLAVE_BANDA_TRAMOS, 3)
+    if tramos is None:
+        return None
+    extendido, en_rth = _del_tramo(tramos, de_float(precio))
+    return en_rth if rth else extendido
+
+
+def pref_stop(cfg_stops: Any) -> Optional[str]:
+    """Decisión 68: `stops.pref` (texto o null): si tiene valor, el NEWORDER del stop lleva «Pref=<valor>»."""
+    valor = cfg_stops.get(CLAVE_PREF) if isinstance(cfg_stops, Mapping) else None
+    return valor.strip() if isinstance(valor, str) and valor.strip() else None
 
 
 # ── conjunto deseado (R-C-01 v4, R-C-06, R-C-07, R-B-03) ─────────────────
@@ -502,7 +580,8 @@ def plan(pos: PosicionTicker, vivas: list[Orden], cfg_stops: Mapping, limit_up: 
             if solo_bajar:
                 continue                                  # D2a-05: con las netas en desacuerdo no se crea nada
             lote = _lote_de_nivel(pos, d.nivel)
-            orden = _orden_stop(d, ticker, ruta_stop, tokens(), version, lote.id if lote is not None else None)
+            orden = _orden_stop(d, ticker, ruta_stop, tokens(), version, lote.id if lote is not None else None,
+                                pref=pref_stop(cfg_stops))
             nuevas.append(EnviarOrden(orden=orden, serie=serie))
             continue
         viva = _viva_pedida(o, en_vuelo)
@@ -676,7 +755,8 @@ def tipo_conserva_pp(tipo_das_crudo: Optional[str], patron_esperado: Optional[st
 
 # ── protección para posiciones desconocidas (R-C-10 caso 4) ─────────────
 def stop_proteccion(ticker: str, qty: int, es_corta: bool, last: Decimal, pct: Decimal, token: int,
-                    ruta: str, version: int, limite_pct: Optional[Decimal] = None) -> OrdenNueva:
+                    ruta: str, version: int, limite_pct: Optional[Decimal] = None,
+                    cfg_stops: Optional[Mapping] = None) -> OrdenNueva:
     """R-C-10 (4): UN stop de protección a `pct` % del último precio para una posición que el bot no reconoce.
 
     Corta → COMPRA STOPLMTP con disparo last·(1 + pct) redondeado arriba y
@@ -690,7 +770,10 @@ def stop_proteccion(ticker: str, qty: int, es_corta: bool, last: Decimal, pct: D
     Propósito STOP_PROTECCION, SIN lote (así `plan` no la toca nunca),
     `nivel` = disparo. Lanza ValueError si `last` no es un precio > 0, si
     `pct` o `limite_pct` son negativos (`precios.con_techo`) o si `qty` no es
-    int > 0 (`OrdenNueva`).
+    int > 0 (`OrdenNueva`). Decisión 68 (Jaume 2-oct): con `cfg_stops` el
+    margen sale de `pct_limite(cfg_stops, disparo)` (`stops.limite_tramos`
+    por tramo del disparo; sin ella, `stops.limite_pct`) y la orden lleva el
+    `Pref` de `stops.pref` si lo hay.
     """
     ultimo = de_float(last)
     margen = de_float(pct)
@@ -699,17 +782,22 @@ def stop_proteccion(ticker: str, qty: int, es_corta: bool, last: Decimal, pct: D
         raise ValueError(f"limite_pct no puede ser negativo: {ancho}")
     if es_corta:
         disparo = con_techo(ultimo, margen, arriba=True)
+        if cfg_stops is not None:
+            ancho = pct_limite(cfg_stops, disparo)
         limite = con_techo(disparo, ancho, arriba=True)
         lado = Lado.COMPRA
     else:
         disparo = con_techo(ultimo, margen, arriba=False)
+        if cfg_stops is not None:
+            ancho = pct_limite(cfg_stops, disparo)
         limite = con_techo(disparo, ancho, arriba=False) if ancho < _CIEN else Decimal("0")
         if limite <= 0:
             limite = tick_de(disparo)
         lado = Lado.VENTA
     return OrdenNueva(token=token, lado=lado, ticker=ticker, ruta=ruta, qty=qty, tipo=TipoOrden.STOP_LIMITE_PP,
                       precio=limite, stop=disparo, tif="DAY+", post_only=False, proposito=Proposito.STOP_PROTECCION,
-                      lote_id=None, nivel=disparo, version=version)
+                      lote_id=None, nivel=disparo, version=version,
+                      pref=pref_stop(cfg_stops) if cfg_stops is not None else None)
 
 
 # ── acciones cortas sin cobertura (R-C-03, plan B del vigilante) ─────────
@@ -1154,11 +1242,12 @@ def _nivelar_protecciones(pos: PosicionTicker, vivas: list[Orden], deseados: lis
     return acciones, False
 
 
-def _orden_stop(d: StopDeseado, ticker: str, ruta_stop: str, token: int, version: int, lote_id: Optional[str]) -> OrdenNueva:
-    """STOPLMTP de COMPRA por la ruta de stops con la versión del objetivo (§5 F2.1)."""
+def _orden_stop(d: StopDeseado, ticker: str, ruta_stop: str, token: int, version: int, lote_id: Optional[str],
+                pref: Optional[str] = None) -> OrdenNueva:
+    """STOPLMTP de COMPRA por la ruta de stops con la versión del objetivo (§5 F2.1); decisión 68: `Pref` del cuadro."""
     return OrdenNueva(token=token, lado=Lado.COMPRA, ticker=ticker, ruta=ruta_stop, qty=d.qty,
                       tipo=TipoOrden.STOP_LIMITE_PP, precio=d.limite, stop=d.disparo, tif="DAY+", post_only=False,
-                      proposito=d.proposito, lote_id=lote_id, nivel=d.nivel, version=version)
+                      proposito=d.proposito, lote_id=lote_id, nivel=d.nivel, version=version, pref=pref)
 
 
 def _reemplazo(o: Orden, qty: int, stop: Optional[Decimal], precio: Optional[Decimal], motivo: str, version: int,

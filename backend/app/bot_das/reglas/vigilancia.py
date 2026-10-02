@@ -87,7 +87,7 @@ from __future__ import annotations
 
 import html
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
@@ -121,6 +121,7 @@ from app.bot_das.tipos import (
     PedirAlSupervisor,
     PosicionTicker,
     Programar,
+    Proposito,
     Reemplazar,
     Registro,
     TipoOrden,
@@ -185,6 +186,10 @@ class Foto:
     # tickers PARADOS ahora (TA H/P/Q) y, de los que reabrieron, el monotónico de la reapertura (margen de gracia)
     parados: frozenset = frozenset()
     reabiertos: dict[str, float] = field(default_factory=dict)
+    # Decisión 69 (8) (Jaume 2-oct): tokens de las compras de EMERGENCIA del ejecutor (`Proposito.STOP_RESPALDO`, también
+    # la que queda puesta en el techo) según su diario: mientras una vive confirmada en DAS, lo que compra cuenta como
+    # cubierto (no se da la posición por «descubierta» ni se pone la protección encima)
+    respaldo_tokens: frozenset = frozenset()
 
 
 @dataclass
@@ -199,6 +204,7 @@ class _Vista:
     cot: Optional[Cotizacion]
     avg: Optional[Decimal]
     manual: int = 0                 # D10 (Jaume 30-sep): lo que cubren los stops VIVOS del humano en este ticker
+    emergencia: int = 0             # decisión 69 (8): lo que compran las compras de emergencia VIVAS confirmadas
 
 
 # ── API pública ──────────────────────────────────────────────────────────
@@ -402,8 +408,8 @@ def _filtrar_halt(vista: _Vista, reales: list[Accion]) -> tuple[list[Accion], li
     reducirlo, cancelar huérfanas o vender el exceso: nada (se retiene). Devuelve (lo que sale, lo retenido)."""
     sin_stop = 0
     if vista.neta < 0:
-        sin_stop = max(abs(vista.neta) - reconciliacion.cobertura(vista.vivas, vista.ticker, vista.neta) - vista.manual,
-                       0)
+        sin_stop = max(abs(vista.neta) - reconciliacion.cobertura(vista.vivas, vista.ticker, vista.neta) - vista.manual
+                       - vista.emergencia, 0)
     stops_nuevos = [a for a in reales if isinstance(a, EnviarOrden) and a.orden.lado is Lado.COMPRA
                     and a.orden.tipo is TipoOrden.STOP_LIMITE_PP]
     if not stops_nuevos or sum(a.orden.qty for a in stops_nuevos) > sin_stop:
@@ -465,6 +471,8 @@ def _vistas(foto: Foto, cfg_stops: Mapping, hoy: date) -> list[_Vista]:
         if m.estado in stops.ESTADOS_VIVOS:
             o = reconciliacion.orden_de_msg(m, hoy, None, cfg_stops)
             if o is not None:
+                if o.token in foto.respaldo_tokens and o.lado is Lado.COMPRA:
+                    o = replace(o, proposito=Proposito.STOP_RESPALDO)    # decisión 69 (8): la compra de emergencia
                 vivas.setdefault(o.ticker, []).append(o)
     for o in foto.pendientes:
         if isinstance(o, Orden) and o.token not in tokens_das and o.estado in stops.ESTADOS_VIVOS:
@@ -476,10 +484,14 @@ def _vistas(foto: Foto, cfg_stops: Mapping, hoy: date) -> list[_Vista]:
                  if isinstance(lote, Lote) and _lote_vivo(lote) and _nivel_valido(lote) is not None]
         pos = PosicionTicker(ticker=ticker, lotes={lote.id: lote for lote in lotes}, neta_fills=neta, neta_das=neta,
                              estado=foto.estados_ticker.get(ticker, EstadoTicker.NORMAL))
-        salida.append(_Vista(ticker=ticker, neta=neta, pos=pos, lotes=lotes, vivas=vivas.get(ticker, []),
+        propias = vivas.get(ticker, [])
+        emergencia = sum(max(int(o.qty) - int(o.llenas), 0) for o in propias
+                         if o.proposito is Proposito.STOP_RESPALDO and o.estado in stops.ESTADOS_CONFIRMADOS)
+        salida.append(_Vista(ticker=ticker, neta=neta, pos=pos, lotes=lotes, vivas=propias,
                              limit_up=_precio(foto.limit_up.get(ticker)), cot=foto.cotizaciones.get(ticker),
                              avg=_precio(foto.posiciones[ticker].avg),
-                             manual=reconciliacion.cobertura_manual(foto.ordenes.values(), ticker, neta, hoy, cfg_stops)))
+                             manual=reconciliacion.cobertura_manual(foto.ordenes.values(), ticker, neta, hoy, cfg_stops),
+                             emergencia=min(emergencia, abs(neta)) if neta < 0 else 0))
     return salida
 
 
@@ -488,10 +500,12 @@ def _descubiertas(vista: _Vista, cfg_stops: Mapping) -> int:
     if vista.neta == 0:
         return 0
     if vista.lotes:
-        return stops.descubiertas(vista.pos, vista.vivas, cfg_stops, vista.limit_up) if vista.neta < 0 else 0
+        # decisión 69 (8): la compra de emergencia viva cubre lo que compra (como la salida de un halt en el ejecutor)
+        return stops.descubiertas(vista.pos, vista.vivas, cfg_stops, vista.limit_up,
+                                  compras_cierre=vista.emergencia) if vista.neta < 0 else 0
     # D10 (Jaume 30-sep): sin lotes, el stop VIVO del humano también cubre (el bot se fía de él)
     return max(abs(vista.neta) - reconciliacion.cobertura(vista.vivas, vista.ticker, vista.neta, solo_confirmadas=True)
-               - vista.manual, 0)
+               - vista.manual - vista.emergencia, 0)
 
 
 def _token_prueba() -> int:
@@ -512,18 +526,19 @@ def _que_hacer(vista: _Vista, cfg: Any, cfg_stops: Mapping, tokens: Callable[[],
     """(lo que haría falta, lo que se hace AHORA, motivo). `propuesta` vacía = todo cuadra (no se anota nada)."""
     t, neta = vista.ticker, vista.neta
     if neta < 0 and vista.lotes:
-        prueba = stops.plan(vista.pos, vista.vivas, cfg_stops, vista.limit_up, _token_prueba, hora_et, ruta_stop, 0)
+        prueba = stops.plan(vista.pos, vista.vivas, cfg_stops, vista.limit_up, _token_prueba, hora_et, ruta_stop, 0,
+                            compras_cierre=vista.emergencia)                 # decisión 69 (8)
         propuesta = [a for a in prueba if isinstance(a, MUTANTES + (Avisar,))]
         if not propuesta:
             return [], [], ""
         if not actua:
             return propuesta, [], "ejecutor vivo y la posición no lleva descubierta el plazo del plan B"
         reales = _sin_temporizadores(stops.plan(vista.pos, vista.vivas, cfg_stops, vista.limit_up, tokens, hora_et,
-                                                ruta_stop, 0))
+                                                ruta_stop, 0, compras_cierre=vista.emergencia))
         return propuesta, reales, "R-C-07 plan B: el vigilante repone el stop de cada nivel"
     if neta != 0 and not vista.lotes:
-        falta = abs(neta) - reconciliacion.cobertura(vista.vivas, t, neta)
-        sobran = reconciliacion.huerfanas(vista.vivas, t, neta)
+        falta = abs(neta) - reconciliacion.cobertura(vista.vivas, t, neta) - vista.emergencia     # decisión 69 (8)
+        sobran = [o for o in reconciliacion.huerfanas(vista.vivas, t, neta) if o.proposito is not Proposito.STOP_RESPALDO]
         if vista.manual > 0 and falta > 0:
             return _con_stop_manual(vista, falta, sobran, actua, muerto)
         if falta <= 0 and not sobran:
@@ -617,7 +632,8 @@ def _proteccion(vista: _Vista, falta: int, cfg_stops: Mapping, tokens: Callable[
                        texto=f"R-C-10 (4): {t} tiene {falta} acciones sin stop y no hay precio: PONER LA PROTECCIÓN A MANO")]
     pct = _pct(cfg_stops.get("proteccion_desconocidas_pct"), STOP_PROTECCION_PCT)
     ancho = _pct(cfg_stops.get("limite_pct"), STOP_LIMITE_PCT)
-    orden = stops.stop_proteccion(t, falta, neta < 0, precio, pct, tokens(), ruta_stop, 0, limite_pct=ancho)
+    orden = stops.stop_proteccion(t, falta, neta < 0, precio, pct, tokens(), ruta_stop, 0, limite_pct=ancho,
+                                  cfg_stops=cfg_stops)                         # decisión 68: margen por tramo
     return [EnviarOrden(orden=orden)]
 
 

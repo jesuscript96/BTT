@@ -1,0 +1,17 @@
+{
+  "_comentario": "Decision 72 (Jaume 2-oct): SOLO las hojas del cuadro que en PRODUCCION difieren del fixture (tests/bot_das/fixtures/config_ejemplo.json). `python -m app.bot_das.config exportar` las aplica por defecto encima de los defaults (--sin-produccion para no hacerlo). Las claves que empiezan por _ se ignoran.",
+  "stops": {
+    "limite_tramos": [[25, 9], [null, 2]],
+    "banda_tramos": [[25, 19, 9], [50, 9, 4], [null, 5, 2]],
+    "techo_pct": 50,
+    "respaldo": true,
+    "escalon_s": 0.5,
+    "sin_ejecutar_s": 5,
+    "pref": null
+  },
+  "rutas": {
+    "cruzar": {
+      "lt_1_desde_0700": "MIAX"
+    }
+  }
+}

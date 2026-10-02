@@ -61,7 +61,7 @@ import urllib.request
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Mapping, Optional, Sequence
 
 from app.bot_das.cerrojo import HiloVigilado
 from app.bot_das.reloj import ET
@@ -169,7 +169,9 @@ def _niveles_de_definicion(definicion: Any) -> Any:
 # Tipos de hoja: "bool", "num" (finito), "num+" (> 0), "num0" (≥ 0), "num?" (null o num0),
 # "int0" (entero ≥ 0), "int+" (entero > 0), "str", "str?", "ruta" (texto no vacío),
 # "hhmm" (HH:MM estricto), "hhmm?", "lnum+" (lista no vacía de num+), "lstr" (lista de textos),
-# "riesgo" (objeto cuyas claves son de CRITERIOS_ALTO_RIESGO con valor num+; {} = nunca), ("enum", valores…).
+# "riesgo" (objeto cuyas claves son de CRITERIOS_ALTO_RIESGO con valor num+; {} = nunca), ("enum", valores…),
+# "tramos2"/"tramos3" (decisiones 68/69: lista no vacía de [precio_max, pct…] con precio_max num+ creciente y el
+# ÚLTIMO null = sin tope; los pct num+).
 _ESQUEMA_BLOQUES: dict[str, Any] = {
     "horario": {"tz": "ruta", "encender": "hhmm", "apagar": "hhmm?"},
     "modo_seguridad": {"activo": "bool", "precio_min": "num0", "acum_dollar_volume_min": "num0"},
@@ -196,7 +198,9 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
               "ventana_min": "num0", "subida_max_cierre_pct": "num+", "comprobacion_s": "num+",
               "debounce_s": "num0", "tipo_esperado_en_order": "str?", "ruta": "ruta",
               "replace_share_es_abierta": "bool", "sin_ejecutar_s": "num?", "banda_pct": "num+", "respaldo": "bool",
-              "techo_pct": "num+"},
+              "techo_pct": "num+",
+              # decisiones 68/69 (Jaume 2-oct): márgenes por TRAMO de precio, ritmo del escalón y Pref del stop
+              "limite_tramos": "tramos2", "banda_tramos": "tramos3", "escalon_s": "num+", "pref": "str?"},
     "halts": {"k_max": "int", "distancia_banda_k2_pct": "num0", "primera_vela_max_reentrada_pct": "num0",
               "primera_vela_max_senal_guardada_pct": "num0", "t1_subida_max_cierre_pct": "num+",
               "t12_min": "num+", "ruta_reapertura": "ruta", "enviar_antes_fin_halt_s": "num0",
@@ -248,7 +252,10 @@ _OPCIONALES: dict[str, Any] = {
 }
 # Hojas opcionales SIN defecto escrito: si faltan, el bot usa otra hoja (decisión 65 bis: `stops.techo_pct` ausente =
 # `stops.limite_pct`); si están, se validan con su tipo
-_OPCIONALES_SIN_DEFECTO = frozenset({"stops.techo_pct"})
+# Decisiones 68/69 (Jaume 2-oct): sin `limite_tramos` manda `limite_pct`; sin `banda_tramos`, `banda_pct` (y el cierre
+# de halt de premercado de siempre, decisión 70); sin `escalon_s`, 0,5 s; sin `pref` (o null), el stop no lleva Pref
+_OPCIONALES_SIN_DEFECTO = frozenset({"stops.techo_pct", "stops.limite_tramos", "stops.banda_tramos", "stops.escalon_s",
+                                     "stops.pref"})
 # Decisión 66 (Jaume 2-oct): hojas del cuadro con una ruta de ÓRDENES; ninguna puede ser una ruta de pruebas de DAS
 _HOJAS_RUTA_ORDENES = ("stops.ruta", "halts.ruta_reapertura")
 _ESQUEMA_RAIZ: dict[str, Any] = {
@@ -393,6 +400,29 @@ def _es_int(x: Any) -> bool:
     return isinstance(x, int) and not isinstance(x, bool)
 
 
+def _tramos_validos(x: Any, columnas: int) -> bool:
+    """Decisiones 68/69 (Jaume 2-oct): [[precio_max, pct, …], …]: precio_max num+ estrictamente creciente y el último
+    null (sin tope; ninguna otra fila null); cada pct num+."""
+    if not isinstance(x, list) or not x:
+        return False
+    previo = 0.0
+    for i, fila in enumerate(x):
+        if not isinstance(fila, list) or len(fila) != columnas:
+            return False
+        tope, pcts = fila[0], fila[1:]
+        if not all(_es_num(p) and p > 0 for p in pcts):
+            return False
+        ultima = i == len(x) - 1
+        if tope is None:
+            if not ultima:
+                return False
+        elif ultima or not (_es_num(tope) and tope > previo):
+            return False
+        else:
+            previo = tope
+    return True
+
+
 def _comprobar_hoja(ruta: str, tipo: Any, x: Any, errores: list[str]) -> None:
     if isinstance(tipo, tuple):                    # ("enum", valores…)
         if x not in tipo[1:]:
@@ -418,6 +448,8 @@ def _comprobar_hoja(ruta: str, tipo: Any, x: Any, errores: list[str]) -> None:
         "hex": lambda: isinstance(x, str) and _RE_HEX64.match(x) is not None,
         "riesgo": lambda: isinstance(x, dict) and all(k in CRITERIOS_ALTO_RIESGO and _es_num(v) and v > 0
                                                       for k, v in x.items()),
+        "tramos2": lambda: _tramos_validos(x, 2),
+        "tramos3": lambda: _tramos_validos(x, 3),
     }[tipo]()
     if not ok:
         errores.append(f"{ruta}: valor {x!r} no válido (se espera {tipo})")
@@ -1207,9 +1239,39 @@ def _fila_a_estrategia(fila: Any, plantilla: dict, previa: Optional[dict]) -> di
     }
 
 
+# Decisión 72 (Jaume 2-oct): las hojas que en PRODUCCIÓN difieren del fixture; `exportar` las pone encima de los
+# defaults salvo con --sin-produccion. Las claves que empiezan por «_» (comentarios) se ignoran.
+RUTA_CUADRO_PRODUCCION = Path(__file__).with_name("cuadro_produccion.json")
+
+
+def leer_cuadro_produccion(ruta: Optional[Path] = None) -> dict:
+    """Decisión 72: el fichero de las hojas de producción (por defecto `cuadro_produccion.json` junto a este módulo).
+    ConfigInvalida si no se puede leer o no es un objeto."""
+    return _leer_json(Path(ruta) if ruta is not None else RUTA_CUADRO_PRODUCCION)
+
+
+def aplicar_cuadro_produccion(base: dict, produccion: Mapping[str, Any]) -> dict:
+    """Decisión 72: una COPIA de `base` con las hojas de `produccion` encima (los objetos se mezclan hoja a hoja; una
+    lista o un valor sustituye entero; las claves «_…» se ignoran). No valida: lo hace quien firma."""
+    salida = copy.deepcopy(base)
+
+    def mezclar(destino: dict, origen: Mapping[str, Any]) -> None:
+        for clave, valor in origen.items():
+            if str(clave).startswith("_"):
+                continue
+            if isinstance(valor, Mapping) and isinstance(destino.get(clave), dict):
+                mezclar(destino[clave], valor)
+            else:
+                destino[clave] = copy.deepcopy(valor)
+
+    mezclar(salida, produccion)
+    return salida
+
+
 def exportar_desde_backend(url_base: str, destino: Path, defaults: Path, *, cuenta_das: Optional[str] = None,
                            base_motor: Optional[Path] = None, timeout_s: float = EXPORTAR_TIMEOUT_S,
-                           generado_por: str = "puente:bot-alerts/vigiladas") -> Optional[Config]:
+                           generado_por: str = "puente:bot-alerts/vigiladas",
+                           produccion: Optional[Path] = None) -> Optional[Config]:
     """PUENTE PROVISIONAL (§7, H-4, H-6, CM1): GET /api/bot-alerts/vigiladas + defaults → fichero del cuadro.
 
     Bloques globales: los de `defaults` (config_ejemplo.json). Por estrategia:
@@ -1224,8 +1286,13 @@ def exportar_desde_backend(url_base: str, destino: Path, defaults: Path, *, cuen
     Devuelve None si no se pudo preguntar al backend (no escribe nada); lanza
     ConfigInvalida si el resultado no valida (tampoco escribe). La Config
     devuelta lleva `cuenta_das` (o DAS_CUENTA del entorno, o "").
+    Decisión 72 (Jaume 2-oct): con `produccion` (la línea de comandos pasa
+    `cuadro_produccion.json` salvo --sin-produccion) sus hojas van encima de
+    los bloques globales de `defaults` antes de firmar y validar.
     """
     base_defaults = _leer_json(defaults)
+    if produccion is not None:
+        base_defaults = aplicar_cuadro_produccion(base_defaults, leer_cuadro_produccion(produccion))
     filas = _pedir_vigiladas(url_base, timeout_s)
     if filas is None:
         return None
@@ -1279,6 +1346,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     pe.add_argument("--url", default=None, help="raíz del backend (defecto: BOT_ALERTS_API o http://127.0.0.1:8010)")
     pe.add_argument("--destino", type=Path, default=None, help="defecto: BOT_DAS_DIR/config/bot_das_config.json")
     pe.add_argument("--defaults", type=Path, default=None, help="defecto: tests/bot_das/fixtures/config_ejemplo.json")
+    pe.add_argument("--produccion", type=Path, default=None,
+                    help="hojas de producción encima de los defaults (defecto: app/bot_das/cuadro_produccion.json)")
+    pe.add_argument("--sin-produccion", action="store_true",
+                    help="no aplicar las hojas de producción (decisión 72): el cuadro sale con los defaults tal cual")
     pv = sub.add_parser("validar", help="valida un fichero del cuadro y lista los avisos R-L-02")
     pv.add_argument("--ruta", type=Path, default=None, help="defecto: BOT_DAS_DIR/config/bot_das_config.json")
     ph = sub.add_parser("hash", help="imprime el motor_hash de este backend (H-6)")
@@ -1320,7 +1391,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     destino = args.destino or (_dir_bot() / "config" / NOMBRE_FICHERO_CONFIG)
     defaults = args.defaults or (_backend() / "tests" / "bot_das" / "fixtures" / "config_ejemplo.json")
     try:
-        cfg = exportar_desde_backend(url, destino, defaults)
+        produccion = None if args.sin_produccion else (args.produccion or RUTA_CUADRO_PRODUCCION)
+        cfg = exportar_desde_backend(url, destino, defaults, produccion=produccion)
     except (ConfigInvalida, OSError) as exc:
         print(f"ERROR: {exc}")
         return 1

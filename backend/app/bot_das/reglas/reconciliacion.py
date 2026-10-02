@@ -962,7 +962,7 @@ def _proteccion(ticker: str, falta: int, neta: int, cot: Optional[Cotizacion], a
                               f"protección: PONERLA A MANO"))]
     ancho = cfg_stops.get(stops.CLAVE_LIMITE_PCT)
     orden = stops.stop_proteccion(ticker, falta, neta < 0, precio, _pct_proteccion(cfg_stops), tokens(), ruta_stop, version,
-                                  limite_pct=ancho)
+                                  limite_pct=ancho, cfg_stops=cfg_stops)       # decisión 68: margen por tramo
     return [EnviarOrden(orden=orden)]
 
 

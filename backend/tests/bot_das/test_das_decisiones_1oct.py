@@ -470,17 +470,22 @@ def test_decision_54_e1_al_parar_se_cancela_la_salida_en_vuelo_una_sola_vez(banc
 
 
 @pytest.mark.sin_silencio
-def test_decision_54_e1_cancel_rechazado_sigue_contando_y_no_se_reintenta(banco: Banco) -> None:
+def test_decision_54_e1_cancel_rechazado_sigue_contando_tras_dos_reintentos(banco: Banco) -> None:
+    """Decisión 54 (E1) con la 71 (a) (Jaume 2-oct; adaptado: antes «no se reintenta»): DAS rechaza el CANCEL de la salida
+    en vuelo (las tres veces) → se reintenta como mucho DOS veces (a los 2 y 4 s), luego aviso MÁXIMO, y la orden sigue
+    contando como compra viva."""
     b = banco
     abrir_posicion(b)
     _tp_vivo(b)
     tp = b.enviadas(Proposito.TP_AGREGAR)[0]
-    b.libro.rechazar_siguiente("Cannot cancel during halt", accion="CancelRej")
+    for _ in range(3):
+        b.libro.rechazar_siguiente("Cannot cancel during halt", accion="CancelRej", token_o_orden=tp.token)
     marca = b.marca()
     b.libro.halt(TICKER, "H", "09:31:00")
     b.avanzar(30)
     tras = b.desde(marca)
-    assert [c.token for c in acciones_de(tras, Cancelar)].count(tp.token) == 1
+    assert [c.token for c in acciones_de(tras, Cancelar)].count(tp.token) == 3
+    assert [a for a in tras if getattr(a, "clave", None) == f"halt_cancel_sin_confirmar:{TICKER}:{tp.token}"]
     assert b.orden(tp.token).estado in (EstadoOrden.ACCEPTED, EstadoOrden.PARTIAL)
     assert [o.qty for o in b.enviadas(Proposito.HALT_OPEN, desde=marca)] == [50]   # el TP vivo cuenta
     assert _stops_vivos(b) + _vivas_compra(b, Proposito.HALT_OPEN, Proposito.TP_AGREGAR) <= 100 + 50
