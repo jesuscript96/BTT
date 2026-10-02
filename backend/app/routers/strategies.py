@@ -349,7 +349,11 @@ def list_strategies(user_id: Optional[str] = Depends(get_current_user_id)):
     try:
         rows = con.execute(
             f"SELECT id, name, description, created_at, updated_at, definition, in_incubator, tags "
-            f"FROM strategies WHERE 1=1{scope_sql} ORDER BY created_at DESC",
+            # Última MODIFICACIÓN primero (petición de Álvaro 2026-10-02): updated_at
+            # se refresca al guardar, renombrar o etiquetar, así que lo que acabas
+            # de tocar queda arriba en el desplegable del backtester. COALESCE por
+            # si una fila vieja nació sin updated_at: manda su created_at.
+            f"FROM strategies WHERE 1=1{scope_sql} ORDER BY COALESCE(updated_at, created_at) DESC",
             scope_params,
         ).fetchall()
     except Exception as e:
