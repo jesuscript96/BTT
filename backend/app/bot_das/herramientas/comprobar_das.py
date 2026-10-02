@@ -135,6 +135,13 @@ ESTADOS_VIVOS = frozenset({EstadoOrden.SENDING, EstadoOrden.ACCEPTED, EstadoOrde
                            EstadoOrden.TRIGGERED})
 
 
+def _limite_canario_pct(disparo: Decimal) -> Decimal:
+    """Margen del límite de los stops CANARIO: el de producción por tramo (decisión 68, Jaume 2-oct): +9 % hasta 25 $ y
+    +2 % por encima. Con +50 % (el valor de antes) DAS acepta el stop pero, si llegara a dispararse, el bróker rechaza
+    la compra (tope último × 1,20 en pre/post y × 1,10 en sesión) y la bolsa la cancela desde el +10 %."""
+    return Decimal("9") if disparo <= Decimal("25") else Decimal("2")
+
+
 @dataclass(frozen=True)
 class PasoComprobacion:
     """Un paso de §3.27 (`canario` = manda órdenes reales de 1 acción)."""
@@ -359,7 +366,7 @@ class Comprobador:
             self._registrar(3, [], [], f"sin cotización de {ticker}: no se manda nada")
             return
         disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
-        limite = precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True)
+        limite = precios.con_techo(disparo, _limite_canario_pct(disparo), arriba=True)
         ruta = str(self._rutas_cfg.get("stop") or "SMAT")
         orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
                            tipo=TipoOrden.STOP_LIMITE_PP, precio=limite, stop=disparo,
@@ -470,7 +477,7 @@ class Comprobador:
         for disparo, proposito in ((disparo, Proposito.STOP),):     # stop único (Jaume 29-sep, R-C-01 v4)
             orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=1,
                                tipo=TipoOrden.STOP_LIMITE_PP, stop=disparo,
-                               precio=precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True),
+                               precio=precios.con_techo(disparo, _limite_canario_pct(disparo), arriba=True),
                                proposito=proposito)
             comandos.append(protocolo.cmd_neworder(orden))
             recibidos = self._enviar(comandos[-1])
@@ -539,7 +546,7 @@ class Comprobador:
         disparo = precios.con_techo(ask, DISPARO_SOBRE_ASK_PCT, arriba=True)
         orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker,
                            ruta=str(self._rutas_cfg.get("stop") or "SMAT"), qty=1, tipo=TipoOrden.STOP_LIMITE_PP,
-                           stop=disparo, precio=precios.con_techo(disparo, STOP_LIMITE_PCT, arriba=True),
+                           stop=disparo, precio=precios.con_techo(disparo, _limite_canario_pct(disparo), arriba=True),
                            proposito=Proposito.STOP)
         self._envio_canario = True                    # G2-07: si el eco llega tarde, el barrido la encuentra
         cliente.enviar(protocolo.cmd_neworder(orden))

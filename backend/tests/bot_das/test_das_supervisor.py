@@ -1282,7 +1282,7 @@ def test_l0_05_d2a_10_paso_3_compara_la_hora_de_das_con_et_y_aborta_si_no_casa(d
 def test_paso_6_pone_un_solo_stop_con_el_limite_del_stop_unico_y_lo_cancela(dir_bot: Path, reloj: RelojSimulado,
                                                                             monkeypatch: pytest.MonkeyPatch) -> None:
     """Stop único (Jaume 29-sep, R-C-01 v4): el paso canario 6 mide el BP que retiene EL stop (uno, no el par de v3):
-    un STOPLMTP de 1 acción con disparo un 50 % sobre el ask y límite = disparo + 50 %, cancelado al acabar."""
+    un STOPLMTP de 1 acción con disparo un 50 % sobre el ask y límite = disparo + 9 % (margen de producción), cancelado al acabar."""
     from decimal import Decimal as Dec
     from app.bot_das.herramientas import comprobar_das as cd
     monkeypatch.setattr(cd, "ESPERA_RESPUESTA_S", 0.01)
@@ -1290,7 +1290,7 @@ def test_paso_6_pone_un_solo_stop_con_el_limite_del_stop_unico_y_lo_cancela(dir_
     comprobador.ejecutar([6])
     stops_ = [o for o in libro.ordenes() if o["tipo"] == "STOPLMTP"]
     assert len(stops_) == 1 and stops_[0]["estado"] == "Canceled"
-    assert (stops_[0]["stop"], stops_[0]["precio"]) == (Dec("3.71"), Dec("5.57"))   # ask 2,47 · 1,5 y · 1,5 al tick
+    assert (stops_[0]["stop"], stops_[0]["precio"]) == (Dec("3.71"), Dec("4.05"))   # ask 2,47 · 1,5 y +9 % (decisión 68: tramo ≤ 25 $)
     assert len([x for x in cliente.enviadas if x.startswith("NEWORDER")]) == 1
     conclusion = _conclusiones(dir_bot, 6)[0]
     assert "2 stops" not in conclusion and ("1 stop(s)" in conclusion or "sin #BP" in conclusion)
