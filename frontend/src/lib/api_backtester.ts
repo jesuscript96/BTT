@@ -119,6 +119,11 @@ export interface Strategy {
   // /data/strategies. Los derivados (premarket/rth/…) se calculan con
   // lib/strategyTags a partir de `definition`.
   tags?: string[];
+  // Última modificación (2026-10-02): la devuelve GET /strategies y se
+  // refresca al guardar/renombrar/etiquetar. La usa el bloque «Recientes»
+  // del selector del backtester.
+  updated_at?: string;
+  created_at?: string;
 }
 
 export interface TradeRecord {
