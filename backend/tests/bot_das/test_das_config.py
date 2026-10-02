@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "d10790fa5e89b8efce6a9c7fd97078267e51635b11f1dc9d8fcaf3f5b5c7078a"   # Jaume 1-oct: entrada.agregar_s 15 (decisión 56)
+SHA_FIXTURE = "bb2ce588a18ac2df19db9de1d0429d44d892c933cfe2b316b099898c81386cbe"   # Jaume 2-oct: locates.tope_gasto_dia_usd 250 (decisión 60)
 RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 
@@ -427,10 +427,12 @@ CASOS_INVALIDOS = [
     ("R-F-01 k_max negativo", [_mutar("halts.k_max", -1)], "k_max"),
     ("R-F-01 k_max bool", [_mutar("halts.k_max", True)], "k_max"),
     ("R-F-01 k_max float", [_mutar("halts.k_max", 2.5)], "k_max"),
-    ("R-H-03 tope 0", [_mutar("locates.tope_gasto_pct_cuenta", 0)], "tope_gasto_pct_cuenta"),
-    ("R-H-03 tope negativo", [_mutar("locates.tope_gasto_pct_cuenta", -1)], "tope_gasto_pct_cuenta"),
-    ("R-H-03 tope > 10", [_mutar("locates.tope_gasto_pct_cuenta", 10.5)], "tope_gasto_pct_cuenta"),
-    ("R-H-03 tope null", [_mutar("locates.tope_gasto_pct_cuenta", None)], "tope_gasto_pct_cuenta"),
+    ("R-H-03 tope 0", [_mutar("locates.tope_gasto_dia_usd", 0)], "tope_gasto_dia_usd"),          # decisión 60
+    ("R-H-03 tope negativo", [_mutar("locates.tope_gasto_dia_usd", -1)], "tope_gasto_dia_usd"),
+    ("R-H-03 tope texto", [_mutar("locates.tope_gasto_dia_usd", "250")], "tope_gasto_dia_usd"),
+    ("R-H-03 tope null", [_mutar("locates.tope_gasto_dia_usd", None)], "tope_gasto_dia_usd"),
+    ("decisión 57 silencio no bool", [_mutar("halts.silencio", 1)], "halts.silencio"),
+    ("decisión 59 open_tras_k2 no bool", [_mutar("halts.open_tras_k2", "si")], "halts.open_tras_k2"),
     ("R-L-01 encender H:MM", [_mutar("horario.encender", "3:55")], "horario.encender"),
     ("R-L-01 encender 24:00", [_mutar("horario.encender", "24:00")], "horario.encender"),
     ("R-L-01 apagar 25:00", [_mutar("horario.apagar", "25:00")], "horario.apagar"),
@@ -491,8 +493,10 @@ def test_validar_rechaza_cada_combinacion_imposible(mutaciones, esperado):
 
 
 @pytest.mark.parametrize("mutaciones", [
-    [_mutar("locates.tope_gasto_pct_cuenta", 10)],
-    [_mutar("locates.tope_gasto_pct_cuenta", 0.01)],
+    [_mutar("locates.tope_gasto_dia_usd", 10000)],
+    [_mutar("locates.tope_gasto_dia_usd", 0.01)],
+    [_mutar("locates.tope_gasto_pct_cuenta", 50)],          # decisión 60: la clave vieja (si la trae) se ignora
+    [_mutar("halts.silencio", False), _mutar("halts.open_tras_k2", False)],
     [_mutar("estrategias.0.ejecutar", False), _mutar("estrategias.0.riesgo_usd", 0)],
     [_mutar("estrategias.0.ejecutar", False), _mutar("estrategias.0.riesgo_usd", None)],
     [_mutar("horario.apagar", "20:00"), _mutar("locates.hora_limite_intentos", "10:30")],
@@ -502,7 +506,8 @@ def test_validar_rechaza_cada_combinacion_imposible(mutaciones, esperado):
     [_mutar("estrategias.0.definition.custom_end_time", "9:45")],
     [_mutar("entrada.distancia_max_ultimo_bid_pct", 5.0)],
     [_mutar("extra_desconocida", {"a": 1})],
-], ids=["R-H-03 tope 10 justo", "R-H-03 tope minimo", "CM2 riesgo 0 sin ejecutar", "CM2 riesgo null sin ejecutar",
+], ids=["R-H-03 tope 10000 $", "R-H-03 tope minimo", "decision 60 pct viejo ignorado",
+        "decisiones 57/59 halts en false", "CM2 riesgo 0 sin ejecutar", "CM2 riesgo null sin ejecutar",
         "R-L-01 horas validas", "R-O-03 fase real", "R-F-01 k_max 1", "§7 sin estrategias",
         "R-L-02 hora H:MM en definicion", "B20 bis encendida (decision 11: un numero la enciende)", "§7 clave extra tolerada"])
 def test_validar_acepta_limites_validos(mutaciones):
@@ -810,6 +815,10 @@ def test_DC_09_caliente_es_exactamente_lo_marcado_C_en_el_bloque_de_s7():
     bloque = _bloque_json_de_la_seccion_7(RUTA_DOC.read_text(encoding="utf-8"))
     marcadas = _rutas_marcadas(bloque, "[C]")
     assert len(marcadas) == 27
+    # Decisión 60 (Jaume 2-oct): el tope de locates pasó de % del equity a DÓLARES fijos; la hoja [C] se llama ahora
+    # `tope_gasto_dia_usd`. BOT_DAS_ARQUITECTURA.md §7 aún dice `tope_gasto_pct_cuenta` (no se tocó en esa tanda).
+    if "locates.tope_gasto_pct_cuenta" in marcadas:
+        marcadas = (set(marcadas) - {"locates.tope_gasto_pct_cuenta"}) | {"locates.tope_gasto_dia_usd"}
     assert "entrada.alto_riesgo_si" in marcadas, "R3-CFG-1: la línea de §7 lleva la marca [C]"
     assert C.CALIENTE == frozenset(marcadas)
     # y ninguna [A]/[T] se cuela en CALIENTE (los vecinos de las [C] siguen siendo en frío)
@@ -874,7 +883,7 @@ def test_caliente_es_exactamente_lo_marcado_C_en_el_documento():
     assert C.CALIENTE == frozenset({
         "vigilando", "pausar_entradas", "horario.tz", "horario.encender", "horario.apagar",
         "modo_seguridad.activo", "modo_seguridad.precio_min", "modo_seguridad.acum_dollar_volume_min",
-        "lista_negra", "entrada.alto_riesgo_si", "locates.tope_gasto_pct_cuenta", "locates.hora_limite_intentos",
+        "lista_negra", "entrada.alto_riesgo_si", "locates.tope_gasto_dia_usd", "locates.hora_limite_intentos",
         "alertas_grupo_a.activo", "alertas_grupo_a.prealerta_simple", "alertas_grupo_a.prealerta_freno_min",
         "alertas_grupo_a.prealerta_ticks",
         "estrategias.*.ejecutar", "estrategias.*.avisar_grupo_a", "estrategias.*.riesgo_usd",
@@ -897,7 +906,7 @@ def _nueva(*mutaciones) -> Config:
     (_mutar("pausar_entradas", True), "pausar_entradas", False, True, True),
     (_mutar("horario.encender", "04:00"), "horario.encender", "03:55", "04:00", True),
     (_mutar("lista_negra", ["ABC"]), "lista_negra", [], ["ABC"], True),
-    (_mutar("locates.tope_gasto_pct_cuenta", 1.5), "locates.tope_gasto_pct_cuenta", 2.0, 1.5, True),
+    (_mutar("locates.tope_gasto_dia_usd", 300), "locates.tope_gasto_dia_usd", 250, 300, True),
     (_mutar("alertas_grupo_a.prealerta_simple", True), "alertas_grupo_a.prealerta_simple", False, True, True),
     (_mutar("modo_seguridad.precio_min", 3.0), "modo_seguridad.precio_min", 5.0, 3.0, True),
     (_mutar("estrategias.0.riesgo_usd", 500), "estrategias.prueba-1.riesgo_usd", Decimal("300"), Decimal("500"), True),
@@ -946,21 +955,21 @@ def test_diferencias_bool_frente_a_entero_es_cambio():
 def test_aplicar_con_bot_encendido_y_posiciones_acepta_C_y_rechaza_A():
     actual = _cfg()
     nueva = _nueva(_mutar("estrategias.0.riesgo_usd", 450), _mutar("vigilando", False),
-                   _mutar("locates.tope_gasto_pct_cuenta", 2.5), _mutar("stops.limite_pct", 40.0),
+                   _mutar("locates.tope_gasto_dia_usd", 300), _mutar("stops.limite_pct", 40.0),
                    _mutar("estrategias.0.definition.custom_end_time", "12:00"), _mutar("fase", "real"))
     copia_actual, copia_nueva = copy.deepcopy(actual), copy.deepcopy(nueva)
     res, rechazadas = C.aplicar(actual, nueva, bot_encendido=True, hay_posiciones=True)
     assert sorted(rechazadas) == ["estrategias.prueba-1.definition_hash", "fase", "stops.limite_pct"]
     assert res.estrategias["prueba-1"].riesgo_usd == Decimal("450")
-    assert res.vigilando is False and res.locates["tope_gasto_pct_cuenta"] == 2.5
+    assert res.vigilando is False and res.locates["tope_gasto_dia_usd"] == 300
     assert res.stops["limite_pct"] == 50.0 and res.fase is Fase.SOMBRA
     assert res.estrategias["prueba-1"].hora_fin_sesion == "11:30"
     assert res.estrategias["prueba-1"].definition_hash == actual.estrategias["prueba-1"].definition_hash
     assert res.config_version == nueva.config_version and res.sha256 == nueva.sha256     # fichero procesado
     assert actual == copia_actual and nueva == copia_nueva                                # nada mutado
     assert C.diferencias(res, nueva) and all(not c for *_, c in C.diferencias(res, nueva))   # solo quedan [A]
-    res.locates["tope_gasto_pct_cuenta"] = 0
-    assert actual.locates["tope_gasto_pct_cuenta"] == 2.0 and nueva.locates["tope_gasto_pct_cuenta"] == 2.5
+    res.locates["tope_gasto_dia_usd"] = 0
+    assert actual.locates["tope_gasto_dia_usd"] == 250 and nueva.locates["tope_gasto_dia_usd"] == 300
 
 
 @pytest.mark.parametrize("encendido, posiciones, aplica_todo", [
@@ -1435,3 +1444,24 @@ def test_importar_no_carga_httpx_ni_pandas_ni_hilos():
                             timeout=60, env={**os.environ, "PYTHONPATH": str(BACKEND)})
     assert salida.returncode == 0, salida.stderr
     assert salida.stdout.split() == ["False", "False", "1"]
+
+
+# ── decisión 60 (Jaume 2-oct): tope de locates del día en DÓLARES fijos ──
+def test_decision_60_cuadro_viejo_con_el_pct_y_sin_dolares_carga_con_250():
+    """Un cuadro de antes del 2-oct (trae `tope_gasto_pct_cuenta` y no `tope_gasto_dia_usd`) carga: la clave vieja se
+    ignora y el tope es el defecto de tipos (250 $)."""
+    obj = _crudo()
+    del obj["locates"]["tope_gasto_dia_usd"]
+    obj["locates"]["tope_gasto_pct_cuenta"] = 3.0
+    _firmar(obj)
+    assert C.validar(obj) == []
+    cfg = _cfg(obj)
+    assert cfg.locates["tope_gasto_dia_usd"] == 250
+    from app.bot_das.reglas import locates as reglas_locates
+    assert reglas_locates.tope_dia_usd(cfg.locates) == Decimal("250")
+
+
+def test_decision_57_59_hojas_opcionales_de_halts_valen_true_por_defecto():
+    cfg = _cfg()
+    assert cfg.halts["silencio"] is True and cfg.halts["open_tras_k2"] is True
+    assert "silencio" not in _crudo()["halts"]          # el fixture no las trae: son opcionales

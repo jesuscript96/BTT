@@ -114,11 +114,18 @@ def _pendiente_atascada(monkeypatch, tickers: set[str], servida: bool = False) -
         monkeypatch.setattr(Emparejador, "_sl_cancel", cancelar)
 
 
+def _cfg_tope30(cfg: Config) -> Config:
+    """Decisión 60 (Jaume 2-oct): tope de locates del día en DÓLARES fijos del cuadro; aquí 30 $ (antes 2 % de 1.500 $)."""
+    base = _cfg_ventana_larga(cfg)
+    return dataclasses.replace(base, locates={**base.locates, "tope_gasto_dia_usd": 30})
+
+
 def _banco_tope(cfg: Config, tmp_path: Path) -> Banco:
-    """Dos tickers cotizados, ventana larga, cuenta de 1.500 $ (tope 2 % = 30 $; Jaume 2-oct) con 25 $ ya pagados hoy."""
-    b = Banco(_cfg_ventana_larga(cfg), tmp_path)
+    """Dos tickers cotizados, ventana larga, tope del día 30 $ (decisión 60: fijo, sin equity) con 25 $ ya pagados hoy.
+    El equity es enorme a propósito: el tope ya no depende de él."""
+    b = Banco(_cfg_tope30(cfg), tmp_path)
     b.preparar(locates=(), cotizaciones=COTIZACIONES_DOS)
-    b.estado.cuenta.equity = D("1500")
+    b.estado.cuenta.equity = D("1000000")
     b.estado.gasto_locates_dia = D("25")
     b.libro.configurar_locate(OTRO, precio=D("0.01"))                   # 100 · 0,01 = 1 $: cabe (25 + 1 ≤ 30)
     b.libro.configurar_locate(TICKER, precio=D("0.10"))                 # 100 · 0,10 = 10 $: con lo pagado NO cabe
@@ -127,7 +134,7 @@ def _banco_tope(cfg: Config, tmp_path: Path) -> Banco:
 
 def test_decision_50_el_primer_tope_corta_todos_los_tickers_cancela_lo_pendiente_y_avisa_una_vez(
         cfg: Config, tmp_path: Path, monkeypatch) -> None:
-    """Decisión 50 (Jaume 1-oct): la compra de XYZ no cabe en el 3 % con lo ya pagado → corte GENERAL del día: nadie más
+    """Decisión 50 (Jaume 1-oct): la compra de XYZ no cabe en el tope (30 $ fijos, decisión 60) con lo ya pagado → corte GENERAL del día: nadie más
     consulta ni compra (tampoco filas nuevas del radar), la compra Pending de ABC se cancela con SLCANCELORDER (sin
     aviso de fallo por pareja) y sale UN solo aviso nivel 2 con lo gastado, el tope y las compras canceladas."""
     _pendiente_atascada(monkeypatch, {OTRO})
@@ -151,7 +158,7 @@ def test_decision_50_el_primer_tope_corta_todos_los_tickers_cancela_lo_pendiente
     (aviso,) = _avisos(b.historial, "locates_tope")
     assert aviso.nivel is Nivel.AVISO
     assert "no se compran más locates hoy en ningún ticker" in aviso.texto and "canceladas 1" in aviso.texto
-    assert "25.00 $ de 30.00 $" in aviso.texto
+    assert "25.00 $ de 30.00 $ fijos del cuadro" in aviso.texto
     # (1) nadie vuelve a consultar: ni las parejas que había ni las filas nuevas del radar
     marca = b.marca()
     _radar_de(b, [_fila(100.0)])
@@ -182,9 +189,9 @@ def test_decision_50_la_compra_que_das_ya_habia_servido_se_contabiliza(cfg: Conf
 
 def test_decision_50_lo_pagado_que_alcanza_el_tope_tambien_corta(cfg: Config, tmp_path: Path) -> None:
     """Decisión 50: el Located que hace que lo PAGADO llegue al tope corta el día (aunque esa compra cupiera)."""
-    b = Banco(_cfg_ventana_larga(cfg), tmp_path)
+    b = Banco(_cfg_tope30(cfg), tmp_path)
     b.preparar(locates=(), cotizaciones=COTIZACIONES_DOS)
-    b.estado.cuenta.equity = D("1500")
+    b.estado.cuenta.equity = None                                       # decisión 60: sin equity también corta
     b.estado.gasto_locates_dia = D("20")
     b.libro.configurar_locate(TICKER, precio=D("0.10"))                 # 20 + 10 = 30 $: justo en el tope (cabe)
     _radar_de(b, [_fila(100.0)])
@@ -224,9 +231,9 @@ def test_decision_50_el_corte_sobrevive_al_reinicio_y_se_rearma_al_cambiar_de_di
     b.avanzar(1)
     rehecho = _reconstruir_anotado(b)
     assert rehecho.locates_tope_dia is True
-    b2 = Banco(_cfg_ventana_larga(cfg), tmp_path / "relanzado", estado=rehecho)
+    b2 = Banco(_cfg_tope30(cfg), tmp_path / "relanzado", estado=rehecho)
     b2.preparar(locates=(), cotizaciones=COTIZACIONES_DOS)
-    b2.estado.cuenta.equity = D("1500")
+    b2.estado.cuenta.equity = D("1000000")
     _radar_de(b2, [_fila(100.0)], ticker=OTRO)
     b2.avanzar(5)
     assert not _consultas(b2) and not _compras(b2) and not _avisos(b2.historial, "locates_tope")

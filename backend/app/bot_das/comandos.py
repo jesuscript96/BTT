@@ -84,6 +84,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from app.bot_das.cerrojo import HiloVigilado
 from app.bot_das.tipos import (
+    LOCATES_TOPE_GASTO_DIA_USD,
     Comando,
     Config,
     EstadoBot,
@@ -657,20 +658,18 @@ def _resp_ordenes(estado: EstadoBot, ahora: float) -> str:
 
 
 def _resp_locates(estado: EstadoBot, cfg: Config) -> str:
-    """/locates: comprados hoy, precio, usados o no y gasto frente al tope del 3 % (R-M-04, R-H-03)."""
+    """/locates: comprados hoy, precio, usados o no y gasto frente al tope del día en $ (R-M-04, R-H-03, decisión 60)."""
     filas = [_titulo("Locates de hoy")]
     for (ticker, sid), loc in sorted(estado.locates.items()):
         filas.append(_esc(f"{ticker} · {sid} · {loc.localizadas}/{loc.pedidas} a {loc.precio_accion} $/acc · "
                           f"coste {_usd(loc.coste)} · usadas {loc.usadas} · {loc.estado}"))
     if len(filas) == 1:
         filas.append("Ninguno")
-    pct = _decimal_o_none(cfg.locates.get("tope_gasto_pct_cuenta"))
-    equity = estado.cuenta.equity
-    if pct is not None and equity is not None:
-        tope = equity * pct / 100
-        filas.append(_esc(f"Gasto: {_usd(estado.gasto_locates_dia)} de {_usd(tope)} ({pct} % de {_usd(equity)})"))
-    else:
-        filas.append(_esc(f"Gasto: {_usd(estado.gasto_locates_dia)} (tope sin calcular: falta equity)"))
+    tope = _decimal_o_none(cfg.locates.get("tope_gasto_dia_usd"))
+    if tope is None or tope <= 0:
+        tope = LOCATES_TOPE_GASTO_DIA_USD
+    # decisión 60 (Jaume 2-oct): el tope del día son dólares fijos del cuadro, sin equity
+    filas.append(_esc(f"Gasto: {_usd(estado.gasto_locates_dia)} de {_usd(tope)} (tope fijo del día)"))
     if estado.locates_deshabilitados:
         filas.append("LOCATES DESHABILITADOS")
     if getattr(estado, "locates_tope_dia", False):

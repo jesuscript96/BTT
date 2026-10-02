@@ -13,7 +13,7 @@ conexión watch + los diarios) y devuelve las acciones del vigilante:
       stop VIVO del humano en el ticker, ninguna protección del bot (solo
       aviso 2 si no cubre toda la posición, `_con_stop_manual`);
   (d) R-H-02 (dos compras Located no pedidas del mismo ticker-estrategia-día)
-      y R-H-03 (gasto > 3 % del equity) → Avisar(3) + Anotar
+      y R-H-03 (gasto > tope del día en $, decisión 60) → Avisar(3) + Anotar
       («locates_deshabilitar»);
   (e) 2c: margen de mantenimiento de los cortos > equity·margen_aviso → Avisar(2);
   (f) R-C-08 (a): el precio pasó el límite del stop de un nivel sin fill →
@@ -68,10 +68,9 @@ LAS TRAMPAS.
     en `Foto.anotado`; se vuelve a anotar al cambiar o al actuar.
   * (d) no dispara si la foto ya dice `locates_deshabilitados` (no se repite
     cada segundo). Una segunda compra PEDIDA (un «locate_intencion» por
-    compra: parcial de R-H-04, reentrada de EP-9) no es repetida. Sin equity
-    no se evalúa el 3 % (el vigilante no puede pedir AccountInfo por watch):
-    la guarda del ejecutor (`locates.tope_superado`, equity None → True) ya
-    no compra.
+    compra: parcial de R-H-04, reentrada de EP-9) no es repetida. Decisión
+    60 (Jaume 2-oct): el tope de R-H-03 son dólares fijos del cuadro
+    (`locates.tope_gasto_dia_usd`), así que ya no hace falta el equity.
   * El margen de mantenimiento (2c) se calcula aquí con los tramos FINRA:
     `reglas.capital` es de otro lote y la regla de reparto (§12) prohíbe
     importarlo; el test compara las dos si existen.
@@ -88,7 +87,7 @@ from typing import Any, Optional
 from app.bot_das.reglas import reconciliacion, stops
 from app.bot_das.reglas.precios import de_float
 from app.bot_das.tipos import (
-    LOCATES_TOPE_GASTO_PCT,
+    LOCATES_TOPE_GASTO_DIA_USD,
     PLAN_B_DESCUBIERTA_S,
     PLAN_B_LATIDO_S,
     STOP_LIMITE_PCT,
@@ -624,25 +623,35 @@ def _locates(foto: Foto, cfg: Any, hoy: date) -> list[Accion]:
     if repetidas:
         motivos.append("R-H-02")
         datos["repetidas"] = repetidas
-    tope_pct = _pct(_bloque(cfg, "locates").get("tope_gasto_pct_cuenta"), LOCATES_TOPE_GASTO_PCT)
+    tope = _tope_usd(_bloque(cfg, "locates").get("tope_gasto_dia_usd"))
     gasto = _precio(foto.gasto_locates) or _D("0")
     # Decisión 50 (Jaume 1-oct): si el ejecutor ya CORTÓ el día por el tope (locates_tope_global), un gasto algo por
     # encima es el de una compra que DAS ya había servido antes de cancelarla (se contabiliza): no es un descontrol y la
     # red de R-H-03 no repite el aviso máximo. La de R-H-02 (compra repetida no pedida) sigue igual.
-    if foto.equity is not None and not foto.locates_tope_dia:
-        tope = foto.equity * tope_pct / _CIEN
-        if gasto > tope:
-            motivos.append("R-H-03")
-            datos.update({"gasto": str(gasto), "equity": str(foto.equity), "tope_pct": str(tope_pct), "tope": str(tope)})
+    # Decisión 60 (Jaume 2-oct): el tope son dólares fijos del cuadro (`locates.tope_gasto_dia_usd`), sin equity.
+    if not foto.locates_tope_dia and gasto > tope:
+        motivos.append("R-H-03")
+        datos.update({"gasto": str(gasto), "tope": str(tope)})
     if not motivos:
         return []
     texto = "; ".join(
         (f"R-H-02: compra de locate repetida no pedida en {', '.join(r['ticker'] + '/' + r['strategy_id'] for r in repetidas)}"
-         if m == "R-H-02" else f"R-H-03: gasto en locates {gasto} > {tope_pct} % del equity {foto.equity}")
+         if m == "R-H-02" else f"R-H-03: gasto en locates {gasto} $ > tope del día {tope} $")
         for m in motivos)
     return [Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave="vigilante_locates",
                    texto=f"{texto}. El vigilante DESHABILITA las compras de locates"),
             Anotar(TIPO_DESHABILITAR_LOCATES, {**datos, "motivos": motivos, "regla": "/".join(motivos)})]
+
+
+def _tope_usd(valor: Any) -> Decimal:
+    """Decisión 60: `locates.tope_gasto_dia_usd` (> 0) o el defecto de tipos (250 $)."""
+    if valor is None or isinstance(valor, bool):
+        return LOCATES_TOPE_GASTO_DIA_USD
+    try:
+        tope = de_float(valor)
+    except (ValueError, TypeError):
+        return LOCATES_TOPE_GASTO_DIA_USD
+    return tope if tope.is_finite() and tope > 0 else LOCATES_TOPE_GASTO_DIA_USD
 
 
 def _pct(valor: Any, defecto: Decimal) -> Decimal:

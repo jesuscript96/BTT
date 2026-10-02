@@ -65,7 +65,8 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 
 from app.bot_das.cerrojo import HiloVigilado
 from app.bot_das.reloj import ET
-from app.bot_das.tipos import PERSEGUIR_ASK_MAX, REPLACE_SHARE_ES_ABIERTA, Config, EstrategiaConfig, Fase
+from app.bot_das.tipos import (LOCATES_TOPE_GASTO_DIA_USD, PERSEGUIR_ASK_MAX, REPLACE_SHARE_ES_ABIERTA, Config,
+                               EstrategiaConfig, Fase)
 
 logger = logging.getLogger("btt.bot_das.config")
 
@@ -97,7 +98,7 @@ CALIENTE: frozenset[str] = frozenset({
     "modo_seguridad.activo", "modo_seguridad.precio_min", "modo_seguridad.acum_dollar_volume_min",
     "lista_negra",
     "entrada.alto_riesgo_si",
-    "locates.tope_gasto_pct_cuenta", "locates.hora_limite_intentos",
+    "locates.tope_gasto_dia_usd", "locates.hora_limite_intentos",
     "alertas_grupo_a.activo", "alertas_grupo_a.prealerta_simple",
     "alertas_grupo_a.prealerta_freno_min", "alertas_grupo_a.prealerta_ticks",
     "estrategias.*.ejecutar", "estrategias.*.avisar_grupo_a",
@@ -171,7 +172,7 @@ def _niveles_de_definicion(definicion: Any) -> Any:
 _ESQUEMA_BLOQUES: dict[str, Any] = {
     "horario": {"tz": "ruta", "encender": "hhmm", "apagar": "hhmm?"},
     "modo_seguridad": {"activo": "bool", "precio_min": "num0", "acum_dollar_volume_min": "num0"},
-    "locates": {"tope_gasto_pct_cuenta": "num", "hora_limite_intentos": "hhmm?",
+    "locates": {"tope_gasto_dia_usd": "num+", "hora_limite_intentos": "hhmm?",
                 "umbral_ultimo_paquete_pct": "num0", "inquiry_intervalo_s": "num+", "ruta_inquire": "ruta",
                 "espera_intento_s": "num+"},
     "entrada": {"agregar_s": "num0", "nivel": "ruta", "post_only": "bool", "tope_caida_bid_pct": "num0",
@@ -197,7 +198,7 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
     "halts": {"k_max": "int", "distancia_banda_k2_pct": "num0", "primera_vela_max_reentrada_pct": "num0",
               "primera_vela_max_senal_guardada_pct": "num0", "t1_subida_max_cierre_pct": "num+",
               "t12_min": "num+", "ruta_reapertura": "ruta", "enviar_antes_fin_halt_s": "num0",
-              "margen_limite_pm_pct": "num0"},
+              "margen_limite_pm_pct": "num0", "silencio": "bool", "open_tras_k2": "bool"},
     "exclusiones": {"spac_sic": "lstr", "ipo_dias": "int0", "split_del_dia": "bool",
                     "fuente_splits": ("enum",) + FUENTES_SPLITS,
                     "opa_banda": {"minutos": "num+", "rango_max_pct": "num0", "dolares_min": "num0"}},
@@ -233,6 +234,11 @@ _OPCIONALES: dict[str, Any] = {
     "entrada.alto_riesgo_si": {},                                 # D1-07: {} = ningún corto es de alto riesgo
     "salidas.tp_parcial.perseguir_ask_max": PERSEGUIR_ASK_MAX,     # decisión 13 (Jaume 30-sep): el TP persigue 3 veces
     "salidas.tp_parcial.perseguir_ask_s": 1,                      # decisión 13: cada 1 s (como salidas.por_hora)
+    # decisión 60 (Jaume 2-oct): tope de locates del día en DÓLARES fijos; `tope_gasto_pct_cuenta` ya no se usa (un
+    # cuadro viejo que la traiga carga y se ignora: el esquema no mira claves que no conoce)
+    "locates.tope_gasto_dia_usd": float(LOCATES_TOPE_GASTO_DIA_USD),
+    "halts.silencio": True,                                       # decisión 57 (Jaume 2-oct): nada se envía en un halt
+    "halts.open_tras_k2": True,                                   # decisión 59 (Jaume 2-oct): salidas por OPEN tras k2
 }
 _ESQUEMA_RAIZ: dict[str, Any] = {
     "schema_version": "int", "config_version": "int0", "generado_at": "str",
@@ -531,7 +537,7 @@ def validar(crudo: dict) -> list[str]:
     Comprueba: esquema (claves de §7 y su tipo), `schema_version`, `sha256` =
     hash_canonico(resto), `estrategias_hash` y cada `definition_hash`, y los
     rangos imposibles de §7: stops.limite_pct > 0 (R-C-01 v4), k_max ≥ 1
-    (R-F-01), tope_gasto_pct_cuenta ∈ (0, 10] (R-H-03), horas HH:MM, fase ∈
+    (R-F-01), tope_gasto_dia_usd > 0 (R-H-03, decisión 60), horas HH:MM, fase ∈
     Fase (R-O-03; «demo» ya no existe), riesgo_usd > 0 si ejecutar, rutas no
     vacías, tz = America/New_York. Trampa: booleanos no cuentan como números.
     Un cuadro con las claves del par de stops de v3 (`CLAVES_STOPS_V3`:
@@ -565,11 +571,6 @@ def validar(crudo: dict) -> list[str]:
     halts = crudo.get("halts")
     if isinstance(halts, dict) and _es_int(halts.get("k_max")) and halts["k_max"] < 1:
         errores.append(f"halts.k_max: {halts['k_max']} debe ser ≥ 1 (R-F-01)")
-    locates = crudo.get("locates")
-    if isinstance(locates, dict) and _es_num(locates.get("tope_gasto_pct_cuenta")):
-        t = locates["tope_gasto_pct_cuenta"]
-        if not 0 < t <= 10:
-            errores.append(f"locates.tope_gasto_pct_cuenta: {t} fuera de (0, 10] (R-H-03)")
 
     estrategias = crudo.get("estrategias")
     if not isinstance(estrategias, list):

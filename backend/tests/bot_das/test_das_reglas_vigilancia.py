@@ -438,17 +438,19 @@ def test_dos_located_mismo_dia_deshabilita_los_locates(cfg):
 
 
 @pytest.mark.parametrize("gasto,equity,deshabilita", [
-    pytest.param("301", "15000", True, id="R-H-03-gasto-supera-el-2pct"),
-    pytest.param("300", "15000", False, id="R-H-03-justo-el-2pct-no-supera"),
-    pytest.param("5000", None, False, id="R-H-03-sin-equity-no-se-evalua"),
+    pytest.param("250.01", "15000", True, id="R-H-03-gasto-supera-los-250"),
+    pytest.param("250", "15000", False, id="R-H-03-justo-250-no-supera"),
+    pytest.param("5000", None, True, id="R-H-03-sin-equity-tambien-se-evalua"),
+    pytest.param("300", "1000000", True, id="R-H-03-el-equity-ya-no-cuenta"),
 ])
-def test_tope_3pct_de_locates(cfg, gasto, equity, deshabilita):
+def test_tope_de_locates_en_dolares(cfg, gasto, equity, deshabilita):
+    """Decisión 60 (Jaume 2-oct): la red R-H-03 del vigilante compara con el tope FIJO del cuadro (250 $), sin equity."""
     f = foto(ordenes=(nivel_das(),), gasto=gasto, equity=equity)
     acc = comprobar(f, cfg, AHORA, TokensVigilante(), HORA, RUTA_STOP, True)
     anotadas = [a for a in de_tipo(acc, Anotar) if a.tipo == "locates_deshabilitar"]
     assert bool(anotadas) is deshabilita
     if deshabilita:
-        assert anotadas[0].datos["motivos"] == ["R-H-03"] and D(anotadas[0].datos["tope"]) == D("300")
+        assert anotadas[0].datos["motivos"] == ["R-H-03"] and D(anotadas[0].datos["tope"]) == D("250")
 
 
 def test_decision_50_con_el_corte_del_dia_hecho_el_gasto_por_encima_no_dispara_r_h_03(cfg):

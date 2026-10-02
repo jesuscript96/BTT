@@ -94,7 +94,7 @@ from app.bot_das.reglas.precios import de_float
 from app.bot_das.tipos import (
     ENTRADA_TOPE_CAIDA_BID_PCT,
     LOCATES_INQUIRE_S,
-    LOCATES_TOPE_GASTO_PCT,
+    LOCATES_TOPE_GASTO_DIA_USD,
     LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT,
     Accion,
     Anotar,
@@ -401,26 +401,33 @@ def veredicto_ev(e: EstrategiaConfig, precio: Decimal, qty: int, precio_accion_l
     }
 
 
-def tope_superado(gasto_dia: Decimal, coste_nuevo: Decimal, equity: Optional[Decimal],
-                  pct: Union[Decimal, int, float, str] = LOCATES_TOPE_GASTO_PCT) -> bool:
-    """R-H-03 (FIJADA 16-sep): ¿esta compra haría SUPERAR el pct (3 %) de la cuenta en gasto de locates del día?
+def tope_superado(gasto_dia: Decimal, coste_nuevo: Decimal,
+                  tope_usd: Union[Decimal, int, float, str] = LOCATES_TOPE_GASTO_DIA_USD) -> bool:
+    """R-H-03 / decisión 60 (Jaume 2-oct): ¿esta compra haría SUPERAR el tope del día en DÓLARES fijos?
 
-    `gasto_dia + coste_nuevo > equity · pct / 100` → True; justo en el tope se
-    permite («no se compra ningún locate que haga superar»). equity None o ≤ 0
-    → True (sin cuenta legible no se compra: R-K-03). ValueError con importes
-    negativos o no finitos o pct < 0.
+    `gasto_dia + coste_nuevo > tope_usd` → True; justo en el tope se permite
+    («no se compra ningún locate que haga superar»). El tope ya NO depende del
+    equity (antes: equity · pct / 100; sin equity legible no se compraba).
+    ValueError con importes negativos o no finitos o con un tope ≤ 0.
     """
     _exigir_decimal(gasto_dia, "gasto_dia")
     _exigir_decimal(coste_nuevo, "coste_nuevo")
-    tope_pct = de_float(pct)
-    if tope_pct < 0:
-        raise ValueError(f"tope de locates negativo: {pct!r}")
-    if equity is None:
-        return True
-    _exigir_decimal(equity, "equity", permitir_negativo=True)
-    if equity <= 0:
-        return True
-    return gasto_dia + coste_nuevo > equity * tope_pct / _CIEN
+    tope = de_float(tope_usd)
+    if not tope.is_finite() or tope <= 0:
+        raise ValueError(f"tope de locates del día no válido: {tope_usd!r}")
+    return gasto_dia + coste_nuevo > tope
+
+
+def tope_dia_usd(cfg_loc: Any) -> Decimal:
+    """Decisión 60 (Jaume 2-oct): `locates.tope_gasto_dia_usd` del cuadro (o el defecto de tipos, 250 $).
+
+    La clave vieja `tope_gasto_pct_cuenta` (un % del equity) ya no se usa: un
+    cuadro que aún la traiga carga y se ignora. Un valor imposible (≤ 0, no
+    numérico) vale el defecto: el cuadro ya lo rechaza al cargar.
+    """
+    valor = cfg_loc.get("tope_gasto_dia_usd") if isinstance(cfg_loc, Mapping) else None
+    tope = _decimal_positivo(valor)
+    return tope if tope is not None else LOCATES_TOPE_GASTO_DIA_USD
 
 
 def compra_repetida(locates: Mapping[tuple[str, str], Locate], ticker: str, strategy_id: str, *,
@@ -547,8 +554,8 @@ def siguiente_paso(loc: Optional[Locate], e: EstrategiaConfig, ticker: str, prec
     `veredicto_ev.entra` (coste TOTAL, `disponibles` = tamaño) y NOT
     `tope_superado` → `Anotar(locate_intencion)` (write-ahead, antes del
     envío) + `LocateComprar(X, paquetes·100, ruta del %SLRET, token)` +
-    `Desprogramar`; tope → anotar + `Avisar(2, clave "locates_tope")` si hay
-    equity. `%SLRET` 2 `AlreadyShortable` → no_hace_falta. `%SLOrder` propio:
+    `Desprogramar`; tope (decisión 60: `tope_gasto_dia_usd`, dólares fijos;
+    `equity` ya no se usa para el tope) → corte del día (decisión 50). `%SLRET` 2 `AlreadyShortable` → no_hace_falta. `%SLOrder` propio:
     Pending/Waiting → anotar; Offered → `LocateOferta(Accept)` solo si el EV y
     el tope siguen bien y la oferta no pasa de lo decidido, si no `Reject` y
     vuelve a buscando; Located → `Anotar(locate_estado Located, coste_nuevo,
@@ -699,7 +706,7 @@ def gasto_de(acciones: Iterable[Accion]) -> Decimal:
 # ── la máquina por dentro ─────────────────────────────────────────────
 @dataclasses.dataclass(frozen=True)
 class _ConfigLocates:
-    tope_pct: Decimal
+    tope_usd: Decimal
     umbral: Decimal
     intervalo_s: float
     ruta: str
@@ -710,9 +717,10 @@ class _ConfigLocates:
         """Bloque `locates` de §7 → valores validados (ValueError si alguno es imposible)."""
         if not isinstance(cfg_loc, Mapping):
             raise ValueError("cfg_loc debe ser el bloque «locates» de la configuración")
-        tope = _valor_decimal(cfg_loc.get("tope_gasto_pct_cuenta"), LOCATES_TOPE_GASTO_PCT)
-        if tope < 0:
-            raise ValueError(f"tope_gasto_pct_cuenta negativo: {tope}")
+        tope_crudo = cfg_loc.get("tope_gasto_dia_usd")
+        tope = _valor_decimal(tope_crudo, LOCATES_TOPE_GASTO_DIA_USD)
+        if not tope.is_finite() or tope <= 0:
+            raise ValueError(f"tope_gasto_dia_usd debe ser > 0: {tope_crudo!r}")
         umbral = _valor_decimal(cfg_loc.get("umbral_ultimo_paquete_pct"), LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT)
         if umbral < 0 or umbral > _CIEN:
             raise ValueError(f"umbral_ultimo_paquete_pct fuera de [0, 100]: {umbral}")
@@ -726,7 +734,7 @@ class _ConfigLocates:
         ruta = ruta.strip()
         if ruta.upper() == "ALLROUTE":
             raise ValueError("ruta_inquire ALLROUTE crea órdenes Offered en rutas tipo 1 (§5.22): usar ALLROUTEWTTYPE1")
-        return _ConfigLocates(tope_pct=tope, umbral=umbral, intervalo_s=intervalo, ruta=ruta,
+        return _ConfigLocates(tope_usd=tope, umbral=umbral, intervalo_s=intervalo, ruta=ruta,
                               hora_limite=_hora_limite(cfg_loc.get("hora_limite_intentos")))
 
 
@@ -749,11 +757,9 @@ class _Contexto:
     corte: bool = False                                # decisión 50 (Jaume 1-oct): el tope del día ya cortó las compras
 
     def tope_por_lo_pagado(self, coste_nuevo: Decimal) -> bool:
-        """Decisión 50: ¿la compra no cabe en el tope con lo YA PAGADO (sin contar las compras en curso)? Sin equity
-        legible → False (no se corta el día por no saber la cuenta: `_tope` lo trata como hasta ahora)."""
-        if self.equity is None or self.equity <= 0:
-            return False
-        return tope_superado(self.gasto_dia, coste_nuevo, self.equity, self.cfg.tope_pct)
+        """Decisión 50: ¿la compra no cabe en el tope con lo YA PAGADO (sin contar las compras en curso)? Decisión 60
+        (Jaume 2-oct): el tope son dólares fijos del cuadro; ya no hace falta el equity."""
+        return tope_superado(self.gasto_dia, coste_nuevo, self.cfg.tope_usd)
 
     @property
     def clave(self) -> str:
@@ -861,7 +867,7 @@ def _tras_ret(ctx: _Contexto, ret: MsgSLRet) -> list[Accion]:
     datos = _datos(ctx, ruta=ret.ruta, precio_accion=ret.precio, disponibles=ret.tamano, **_de_veredicto(ver))
     if not ver["entra"]:
         return _sin_compra(ctx, datos)
-    if tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
+    if tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.cfg.tope_usd):
         if ctx.tope_por_lo_pagado(ver["coste_nuevo"]):
             return _tope(ctx, datos, ver["coste_nuevo"])     # decisión 50: corte global (también en el intento único)
         if ctx.intento_unico:
@@ -1031,7 +1037,7 @@ def _oferta(ctx: _Contexto, orden: MsgSLOrder) -> list[Accion]:
             motivo = ver["motivo"] or "el EV no compensa el coste total"
         elif orden.pedidas > ver["qty_comprar"]:
             motivo = "la oferta pide más acciones de las decididas"
-        elif tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.equity, ctx.cfg.tope_pct):
+        elif tope_superado(ctx.gasto_tope, ver["coste_nuevo"], ctx.cfg.tope_usd):
             motivo = "tope de gasto en locates (R-H-03)"
             if ctx.tope_por_lo_pagado(ver["coste_nuevo"]):
                 # decisión 50 (Jaume 1-oct): con lo YA PAGADO no cabe → se rechaza y se corta el día (lo hace el decisor)
@@ -1121,18 +1127,16 @@ def _rechazo_sigue_buscando(ctx: _Contexto, orden: MsgSLOrder, estado_das: str) 
 def _tope(ctx: _Contexto, datos: dict, coste_nuevo: Decimal) -> list[Accion]:
     """R-H-03: no se compra.
 
-    Sin equity legible → se anota y se sigue buscando (la cuenta puede llegar;
-    sin aviso). Tope superado con el gasto YA PAGADO (`gasto_dia`, que solo
-    sube) → decisión 50 (Jaume 1-oct): «parado» + `Desprogramar` +
+    Decisión 60 (Jaume 2-oct): el tope son dólares fijos del cuadro
+    (`tope_gasto_dia_usd`); ya no depende del equity. Tope superado con el
+    gasto YA PAGADO (`gasto_dia`, que solo sube) → decisión 50 (Jaume 1-oct): «parado» + `Desprogramar` +
     `Anotar("locates_tope_global")`: el decisor corta las compras de TODOS los
     tickers el resto del día, cancela las que estén en vuelo y da UN aviso
     (antes, E2-06, era un aviso por pareja). Superado solo por el coste
     previsto de otras compras EN CURSO (E2-02) → se anota sin aviso y se
     sigue buscando: si alguna falla, el gasto baja y esta puede comprar.
     """
-    if ctx.equity is None or ctx.equity <= 0:
-        return [Anotar(ANOTACION_INQUIRE, {**datos, "motivo": "sin equity de la cuenta: no se compran locates (R-H-03)"})]
-    if not tope_superado(ctx.gasto_dia, coste_nuevo, ctx.equity, ctx.cfg.tope_pct):
+    if not tope_superado(ctx.gasto_dia, coste_nuevo, ctx.cfg.tope_usd):
         return [Anotar(ANOTACION_INQUIRE, {**datos, "gasto_en_curso_otros": ctx.gasto_en_curso, "motivo": (
             "tope de gasto en locates (R-H-03) contando las compras en curso (E2-02): se espera")})]
     # `locate_estado` NO lleva `coste_total`/`coste_nuevo`: el reductor (y el diario) los tomarían como gasto pagado.
@@ -1142,8 +1146,7 @@ def _tope(ctx: _Contexto, datos: dict, coste_nuevo: Decimal) -> list[Accion]:
             Desprogramar(ctx.clave),
             Anotar(ANOTACION_TOPE_GLOBAL, {"ticker": ctx.ticker, "strategy_id": ctx.loc.strategy_id,
                                            "gasto_dia": ctx.gasto_dia, "coste_nuevo_previsto": coste_nuevo,
-                                           "equity": ctx.equity, "tope_pct": ctx.cfg.tope_pct,
-                                           "tope": ctx.equity * ctx.cfg.tope_pct / _CIEN,
+                                           "tope": ctx.cfg.tope_usd,
                                            "motivo": "la compra no cabe en el tope con lo ya pagado",
                                            "regla": "R-H-03 / decisión 50 (Jaume 1-oct)"})]
 

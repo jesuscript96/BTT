@@ -267,7 +267,7 @@ def _cfg(estrategias=None, pausar=False) -> Config:
     return Config(
         schema_version=1, config_version=7, sha256="x", motor_hash="m", estrategias_hash="e", generado_at="g",
         fase=Fase.SOMBRA, vigilando=True, horario={}, modo_seguridad={"activo": False}, lista_negra=[],
-        pausar_entradas=pausar, locates={"tope_gasto_pct_cuenta": 3.0}, entrada={}, salidas={}, stops={}, halts={},
+        pausar_entradas=pausar, locates={"tope_gasto_dia_usd": 300.0}, entrada={}, salidas={}, stops={}, halts={},
         exclusiones={}, rutas={}, tecnicos={}, alertas_grupo_a={"activo": False}, estrategias=estrategias,
         cuenta_das="CUENTA_PRUEBA")
 
@@ -425,13 +425,13 @@ def test_consulta_ordenes(estado_ejemplo):
 def test_consulta_locates(estado_ejemplo):
     r = responder_consulta(_c("/locates"), estado_ejemplo, _cfg(), None, 1000.0)
     assert "ABC · prueba-1 · 100/100 a 0.02 $/acc · coste 2.00 $ · usadas 100" in r
-    assert "Gasto: 2.00 $ de 300.00 $ (3.0 % de 10 000.00 $)" in r
+    assert "Gasto: 2.00 $ de 300.00 $ (tope fijo del día)" in r          # decisión 60: dólares fijos, sin equity
 
 
 def test_consulta_locates_sin_equity(reloj):
     e = EstadoBot(fase=Fase.SOMBRA, dia=reloj.hoy(), locates_deshabilitados=True)
     r = responder_consulta(_c("/locates"), e, _cfg(), None, 1000.0)
-    assert "Ninguno" in r and "falta equity" in r and "DESHABILITADOS" in r
+    assert "Ninguno" in r and "de 300.00 $ (tope fijo del día)" in r and "DESHABILITADOS" in r
 
 
 def test_consulta_estrategias(estado_ejemplo):

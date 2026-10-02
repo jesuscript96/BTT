@@ -123,7 +123,6 @@ from app.bot_das.tipos import (
     ENTRADA_TOPE_CAIDA_BID_PCT,
     FEED_EMERGENCIA_S,
     FEED_PREALERTA_S,
-    LOCATES_TOPE_GASTO_PCT,
     PERSEGUIR_ASK_MAX,
     RECONCILIACION_CADUCA_S,
     REPLACE_SHARE_ES_ABIERTA,
@@ -5019,12 +5018,10 @@ class Decisor:
                 or not self._vigilando_efectivo() or self._diario_roto())
 
     # ── decisión 50 (Jaume 1-oct): tope GLOBAL de locates del día ───────
-    def _tope_locates(self) -> Optional[Decimal]:
-        """El tope del día en dólares (equity · `locates.tope_gasto_pct_cuenta` / 100), o None sin equity legible."""
-        equity = self._estado.cuenta.equity
-        if not _es_precio(equity):
-            return None
-        return equity * _pct(self._cfg.locates, "tope_gasto_pct_cuenta", LOCATES_TOPE_GASTO_PCT) / Decimal("100")
+    def _tope_locates(self) -> Decimal:
+        """El tope del día en DÓLARES fijos (`locates.tope_gasto_dia_usd`; decisión 60, Jaume 2-oct: ya no depende del
+        equity)."""
+        return locates.tope_dia_usd(self._cfg.locates)
 
     def _corte_locates(self, origen: dict) -> list[Accion]:
         """Decisión 50 (Jaume 1-oct): la PRIMERA compra que no cabe en el tope del día (o lo pagado lo alcanza) corta
@@ -5045,7 +5042,6 @@ class Decisor:
             return []
         estado.locates_tope_dia = True
         tope = self._tope_locates()
-        pct = _pct(self._cfg.locates, "tope_gasto_pct_cuenta", LOCATES_TOPE_GASTO_PCT)
         motivo = "tope de locates del día alcanzado (decisión 50, Jaume 1-oct)"
         retirar: list[Accion] = []
         parar: list[Accion] = []
@@ -5066,18 +5062,18 @@ class Decisor:
                 parar.append(self._anotar_locate(t, sid, {"estado": locates.ESTADO_PARADO, "motivo": motivo}))
         gasto = Decimal(estado.gasto_locates_dia)
         acciones: list[Accion] = [Anotar(locates.ANOTACION_TOPE_GLOBAL, {
-            **origen, "gasto_dia": gasto, "tope": tope, "tope_pct": pct, "equity": estado.cuenta.equity,
+            **origen, "gasto_dia": gasto, "tope": tope,
             "en_vuelo": en_vuelo, "regla": "R-H-03 / decisión 50 (Jaume 1-oct)"})]
         acciones += retirar + parar
         if self._una_vez_al_dia(CLAVE_AVISO_TOPE_DIA):
-            tope_txt = f"{tope.quantize(Decimal('0.01'))}" if tope is not None else "?"
+            tope_txt = f"{tope.quantize(Decimal('0.01'))}"
             causa = ""
             if origen.get("coste_nuevo_previsto") is not None and origen.get("ticker"):
                 causa = (f" (la compra de {Decimal(origen['coste_nuevo_previsto']).quantize(Decimal('0.01'))} $ de "
                          f"{avisos.escapar_html(str(origen['ticker']))} no cabía)")
             acciones.append(Avisar(Nivel.AVISO, Grupo.B,
                                    f"Tope de locates del día alcanzado ({gasto.quantize(Decimal('0.01'))} $ de "
-                                   f"{tope_txt} $, {pct} % de la cuenta){causa}: no se compran más locates hoy en "
+                                   f"{tope_txt} $ fijos del cuadro){causa}: no se compran más locates hoy en "
                                    f"ningún ticker; canceladas {len(en_vuelo)} compras pendientes (decisión 50)",
                                    clave=CLAVE_AVISO_TOPE_DIA))
         for t, sid in sorted(self._espera_locate):
@@ -5167,7 +5163,7 @@ class Decisor:
             tope = self._tope_locates()
             if disparo:
                 corte_acc = self._corte_locates(dict(disparo[0].datos))
-            elif pagado > 0 and tope is not None and estado.gasto_locates_dia >= tope:
+            elif pagado > 0 and estado.gasto_locates_dia >= tope:
                 corte_acc = self._corte_locates({"ticker": ticker, "strategy_id": sid,
                                                  "motivo": "lo pagado alcanza el tope del día"})
             if corte_acc:

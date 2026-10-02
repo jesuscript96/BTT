@@ -67,7 +67,7 @@ from app.bot_das.tokens import GeneradorTokens, descomponer
 D = Decimal
 HOY = date(2026, 9, 25)
 X = "XYZ"
-CFG = {"tope_gasto_pct_cuenta": 3.0, "hora_limite_intentos": None, "umbral_ultimo_paquete_pct": 30,
+CFG = {"tope_gasto_dia_usd": 3000.0, "hora_limite_intentos": None, "umbral_ultimo_paquete_pct": 30,
        "inquiry_intervalo_s": 3, "ruta_inquire": "ALLROUTEWTTYPE1"}
 CLAVE = f"locate_inquire:{X}:est-a"
 
@@ -109,6 +109,10 @@ class Maquina:
         self.precio = D(precio)
         self.equity = D(equity) if equity is not None else None
         self.cfg = dict(CFG if cfg is None else cfg)
+        if cfg is None and self.equity is not None:
+            # decisión 60 (Jaume 2-oct): el tope son dólares fijos; los casos de abajo se escribieron con «3 % del
+            # equity» y se conservan dando ese mismo importe en dólares (1.000 → 30 $, 8.000 → 240 $)
+            self.cfg["tope_gasto_dia_usd"] = float(self.equity * 3 / 100)
         self.gasto = D(gasto)
         self.tokens = GeneradorTokens(Origen.EJECUTOR_LOCATE, HOY)
         self.loc: Optional[Locate] = None
@@ -387,28 +391,29 @@ def test_veredicto_ya_localizadas_negativas() -> None:
         veredicto_ev(estrategia(), D("5"), 100, D("0.01"), D("0"), ya_localizadas=-1)
 
 
-# ── tope_superado (R-H-03) ────────────────────────────────────────────
-@pytest.mark.parametrize("gasto, coste, equity, pct, esperado", [
-    pytest.param("0", "300", "10000", D("3"), False, id="R-H-03-justo-en-el-tope-se-permite"),
-    pytest.param("0", "300.01", "10000", D("3"), True, id="R-H-03-un-centimo-de-mas"),
-    pytest.param("250", "60", "10000", D("3"), True, id="R-H-03-acumulado-del-dia"),
-    pytest.param("250", "50", "10000", 3.0, False, id="R-H-03-pct-float-del-json"),
-    pytest.param("0", "10", None, D("3"), True, id="R-H-03-sin-equity-no-se-compra"),
-    pytest.param("0", "10", "0", D("3"), True, id="R-H-03-equity-cero"),
-    pytest.param("0", "10", "-5", D("3"), True, id="R-H-03-equity-negativa"),
-    pytest.param("0", "0", "10000", D("0"), False, id="R-H-03-tope-0-y-coste-0"),
-    pytest.param("0", "1", "10000", "0", True, id="R-H-03-tope-0"),
+# ── tope_superado (R-H-03; decisión 60, Jaume 2-oct: dólares fijos) ──
+@pytest.mark.parametrize("gasto, coste, tope, esperado", [
+    pytest.param("0", "250", D("250"), False, id="R-H-03-justo-en-el-tope-se-permite"),
+    pytest.param("0", "250.01", D("250"), True, id="R-H-03-un-centimo-de-mas"),
+    pytest.param("200", "60", D("250"), True, id="R-H-03-acumulado-del-dia"),
+    pytest.param("200", "50", 250.0, False, id="R-H-03-tope-float-del-json"),
+    pytest.param("200", "60", None, True, id="R-H-03-defecto-250"),
+    pytest.param("0", "0", D("0.01"), False, id="R-H-03-coste-0"),
 ])
-def test_tope_superado(gasto: str, coste: str, equity: Optional[str], pct: Any, esperado: bool) -> None:
-    assert tope_superado(D(gasto), D(coste), D(equity) if equity is not None else None, pct) is esperado
+def test_tope_superado(gasto: str, coste: str, tope: Any, esperado: bool) -> None:
+    if tope is None:
+        assert tope_superado(D(gasto), D(coste)) is esperado
+    else:
+        assert tope_superado(D(gasto), D(coste), tope) is esperado
 
 
 @pytest.mark.parametrize("args", [
-    pytest.param((D("-1"), D("1"), D("100"), D("3")), id="gasto-negativo"),
-    pytest.param((D("0"), D("-1"), D("100"), D("3")), id="coste-negativo"),
-    pytest.param((D("0"), D("1"), D("100"), D("-3")), id="pct-negativo"),
-    pytest.param((0.0, D("1"), D("100"), D("3")), id="gasto-float"),
-    pytest.param((D("0"), D("1"), D("NaN"), D("3")), id="equity-NaN"),
+    pytest.param((D("-1"), D("1"), D("250")), id="gasto-negativo"),
+    pytest.param((D("0"), D("-1"), D("250")), id="coste-negativo"),
+    pytest.param((D("0"), D("1"), D("-3")), id="tope-negativo"),
+    pytest.param((D("0"), D("1"), D("0")), id="tope-0"),
+    pytest.param((0.0, D("1"), D("250")), id="gasto-float"),
+    pytest.param((D("0"), D("1"), D("NaN")), id="tope-NaN"),
 ])
 def test_tope_superado_invalido(args: tuple) -> None:
     with pytest.raises(ValueError):
@@ -1087,11 +1092,21 @@ def test_E2_02_gasto_comprometido_suma_pagado_y_en_curso() -> None:
     assert gasto_comprometido({}) == D("0")
 
 
-def test_maquina_sin_equity_no_compra_ni_avisa() -> None:
-    m = Maquina(equity=None)
+def test_decision_60_sin_equity_se_compra_igual_con_el_tope_en_dolares() -> None:
+    """Decisión 60 (Jaume 2-oct): el tope son dólares fijos del cuadro; sin equity legible ya se compra (antes no)."""
+    m = Maquina(equity=None, cfg={**CFG, "tope_gasto_dia_usd": 250})
     m.paso(1000.0, qty=1200)
     acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
-    assert tipos_de(acciones) == ["locate_inquire"] and "sin equity" in acciones[0].datos["motivo"]
+    assert "LocateComprar" in tipos_de(acciones)
+
+
+def test_decision_60_tope_fijo_en_dolares_corta_sin_mirar_el_equity() -> None:
+    """Decisión 60: con 240 $ pagados y un tope de 250 $, la compra de 24 $ no cabe aunque el equity sea enorme."""
+    m = Maquina(equity="10000000", cfg={**CFG, "tope_gasto_dia_usd": 250}, gasto="240")
+    m.paso(1000.0, qty=1200)
+    acciones = m.paso(1001.0, ret=slret(1, "0.02", 5000))
+    assert tipos_de(acciones) == ["locate_estado", "Desprogramar", L.ANOTACION_TOPE_GLOBAL]
+    assert acciones[2].datos["tope"] == D("250")
 
 
 def test_maquina_sin_precio_de_la_accion_no_compra() -> None:
@@ -1195,7 +1210,8 @@ def test_maquina_nada_que_localizar_deja_de_consultar() -> None:
     pytest.param({**CFG, "hora_limite_intentos": "9:00"}, id="hora-mal-formada"),
     pytest.param({**CFG, "hora_limite_intentos": "24:00"}, id="hora-fuera-de-rango"),
     pytest.param({**CFG, "umbral_ultimo_paquete_pct": 101}, id="umbral-fuera"),
-    pytest.param({**CFG, "tope_gasto_pct_cuenta": -1}, id="tope-negativo"),
+    pytest.param({**CFG, "tope_gasto_dia_usd": -1}, id="tope-negativo"),
+    pytest.param({**CFG, "tope_gasto_dia_usd": 0}, id="tope-0"),
     pytest.param({**CFG, "inquiry_intervalo_s": 0}, id="intervalo-0"),
     pytest.param(None, id="sin-bloque"),
 ])
