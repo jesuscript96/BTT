@@ -27,7 +27,7 @@
 | P1 | Franja horaria propia por nivel de pirámide | pirámide | `PYRAMID_LEVEL_WINDOWS_ENABLED` | `96602b6` | nulo con flag OFF / sin clave |
 | X2 | Operando «Días desde IPO (lago)» en salidas programadas | salida | `SCHEDULED_EXITS_ENABLED` (extiende X1) | `43b20a4` | nulo sin el operando; la garantía de columna (cache key + salto de hot cache + GCS 2019+) SOLO se activa si la estrategia lo usa |
 | X3 | Modo «En cuanto se cumpla» (sin hora) + fuente «% Fade» (PM / RTH / PM+RTH) + dos «juegos» | salida | `SCHEDULED_EXITS_ENABLED` (extiende X1) | `47a0263` | `trigger` ausente ≡ `hour` bit-idéntico; **toca `portfolio_sim.py` (compartido con el bot)** |
-| Q1 | Desplegable «cargar estrategia guardada» ordena por última modificación | UX | — | `fdef2c6` | bajo: cambia el ORDEN de `GET /strategies` (backtester, Baúl y tabla de estrategias ven lo recién tocado arriba) |
+| Q1 | Desplegable «cargar estrategia guardada»: lista plana por última modificación (sin bloques de sesión) | UX | — | `fdef2c6` → `468b6cd` | bajo: cambia el ORDEN de `GET /strategies` (backtester, Baúl y tabla de estrategias ven lo recién tocado arriba) |
 
 Dependencias: **F3 antes de U1-U6** (los filtros nuevos de Gap -1 rompían el
 backtest sobre el parquet bygap viejo sin F3 — hallazgo 16). **I1 antes de U6**
@@ -171,13 +171,18 @@ caliente, materializada) y en el catálogo único `frontend/src/lib/universoFilt
 
 ## 3-bis · UX menor sin flag
 
-### Q1 · `fdef2c6` — desplegable por última modificación
-- `GET /strategies` pasa de `ORDER BY created_at DESC` a
-  `COALESCE(updated_at, created_at) DESC`: en el desplegable del backtester
-  (dentro de cada grupo de sesión) queda arriba lo último que tocaste.
-  `updated_at` ya se refrescaba al guardar/renombrar/etiquetar.
-- Afecta también al Baúl y a la tabla de /strategies (mismo endpoint): ven el
-  mismo orden nuevo. Petición de Álvaro (2-oct).
+### Q1 · `fdef2c6` → `468b6cd` — desplegable por última modificación, lista plana
+- **Backend (`fdef2c6`):** `GET /strategies` pasa de `ORDER BY created_at
+  DESC` a `COALESCE(updated_at, created_at) DESC` (`updated_at` ya se
+  refrescaba al guardar/renombrar/etiquetar). Afecta a todos los consumidores
+  del endpoint (desplegable del backtester, Baúl, tabla de estrategias).
+- **Frontend (`468b6cd`):** el desplegable del backtester pasa a **lista plana
+  ordenada por última modificación, SIN bloques de sesión** (fuera
+  Premarket/RTH/Conjuntas/Otras — decisión de Álvaro: «quiero ver solo las
+  recientes todo el rato»; el chip de tags automáticos de cada fila sigue
+  mostrando en qué sesiones opera). `updated_at`/`created_at` añadidos al tipo
+  `Strategy` de `api_backtester.ts`; filas factorizadas en
+  `renderStrategyRow`.
 
 ## 4. Cómo integrarlo (propuesta; la decisión es vuestra)
 
