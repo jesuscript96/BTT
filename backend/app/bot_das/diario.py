@@ -174,6 +174,8 @@ CASOS_ADOPTA_DAS = frozenset({5, 6})       # reconciliación: caso 5 (plana en D
 MOTIVO_INTERVENCION_HUMANA = "intervención humana"   # = reconciliacion.MOTIVO_INTERVENCION_HUMANA (R-M-03 por ticker)
 FASES_LOCATE = ("A", "B", "C", "C_piramide", "D", "P")   # = locates.FASES (Jaume 29-sep; «P»: decisión 47, 30-sep)
 TIPO_SENAL_PRINCIPAL = "senal_principal"             # Jaume 29-sep: la PRIMERA señal principal del día por pareja
+TIPO_HALT_OPEN_RECHAZADA = "halt_open_rechazada"   # decisión 59 (Jaume 2-oct): DAS rechazó una salida por OPEN
+TIPO_HALT_SILENCIO_CIERRE = "halt_silencio_cierre"  # decisión 57 (Jaume 2-oct): la compra de cierre tras reabrir
 TIPO_LOCATES_TOPE_GLOBAL = "locates_tope_global"     # = locates.ANOTACION_TOPE_GLOBAL (decisión 50, Jaume 1-oct)
 _PROPOSITOS_STOP_V3 = ("stop_principal", "stop_emergencia")   # diarios de antes del stop único (Jaume 29-sep)
 _PROPOSITOS_VETO_STOP = frozenset({         # R-F-03 (G1A-18): salidas que activan el veto de reentrada tras un halt
@@ -1661,6 +1663,9 @@ class MemoriaDecisor:
     * `al_desactivar_por_arg`: /cerrar_y_reiniciar y /esperar_fin_dia
       confirmados, por el ARGUMENTO tal cual (nombre o strategy_id: lo
       resuelve el decisor con `_estrategia_por_arg`).
+    * `open_rechazada` (decisión 59, Jaume 2-oct): tickers en los que DAS
+      rechazó hoy una salida por OPEN con el mercado abierto
+      (`halt_open_rechazada`): ese día ya no vuelven a probar OPEN.
     """
 
     k_halts_up: dict[str, int] = dataclasses.field(default_factory=dict)
@@ -1671,6 +1676,7 @@ class MemoriaDecisor:
     override_modo_seguridad: Optional[bool] = None
     override_estrategia: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
     al_desactivar_por_arg: dict[str, str] = dataclasses.field(default_factory=dict)
+    open_rechazada: set[str] = dataclasses.field(default_factory=set)
 
 
 def _args_comando(datos: dict) -> list[str]:
@@ -1762,6 +1768,10 @@ def memoria_decisor(registros: Iterable[Registro], hoy: date) -> MemoriaDecisor:
         elif tipo == "halt_primera_vela" and ticker is not None:
             if datos.get("reentrada") is True:
                 memoria.reapertura_ok.add(ticker)
+        elif tipo == TIPO_HALT_OPEN_RECHAZADA and ticker is not None:
+            memoria.open_rechazada.add(ticker)          # decisión 59: ese ticker ya no prueba OPEN hoy
+        elif tipo == TIPO_HALT_SILENCIO_CIERRE and ticker is not None:
+            memoria.stop_hoy.add(ticker)                # decisión 57: el cierre tras reabrir cuenta para R-F-03
         elif tipo == "fill" and ticker is not None and datos.get("eco") is not True:
             proposito = _texto_o(datos.get("proposito"), None)
             token = _token_de_hoy(datos.get("token"), hoy)

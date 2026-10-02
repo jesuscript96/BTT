@@ -447,6 +447,7 @@ def _tp_vivo(b: Banco) -> None:
     assert [o.qty for o in b.enviadas(Proposito.TP_AGREGAR)] == [50]
 
 
+@pytest.mark.sin_silencio
 def test_decision_54_e1_al_parar_se_cancela_la_salida_en_vuelo_una_sola_vez(banco: Banco) -> None:
     """E1: al entrar en halt se intenta cancelar el TP vivo (no el stop); confirmado, fuera, y la salida del halt cubre
     la posición entera. Con CancelRej no se insiste durante el halt."""
@@ -468,6 +469,7 @@ def test_decision_54_e1_al_parar_se_cancela_la_salida_en_vuelo_una_sola_vez(banc
     assert _sin_compra_doble(b, 100)
 
 
+@pytest.mark.sin_silencio
 def test_decision_54_e1_cancel_rechazado_sigue_contando_y_no_se_reintenta(banco: Banco) -> None:
     b = banco
     abrir_posicion(b)
@@ -485,6 +487,7 @@ def test_decision_54_e1_cancel_rechazado_sigue_contando_y_no_se_reintenta(banco:
     assert _vivas_compra(b, Proposito.HALT_OPEN, Proposito.TP_AGREGAR) <= 100
 
 
+@pytest.mark.sin_silencio
 def test_decision_54_e2_la_salida_del_halt_espera_la_confirmacion_del_stop(banco: Banco) -> None:
     """E2: la MKT por OPEN no sale en la misma tanda que la retirada del stop: sale cuando DAS confirma el Canceled."""
     b = banco
@@ -502,6 +505,7 @@ def test_decision_54_e2_la_salida_del_halt_espera_la_confirmacion_del_stop(banco
     assert _sin_compra_doble(b, 100)
 
 
+@pytest.mark.sin_silencio
 def test_decision_54_e2_cancel_del_stop_rechazado_no_envia_la_salida_y_avisa_3(banco: Banco) -> None:
     """E2: si DAS no deja retirar el stop (CancelRej), NO sale la salida del halt; el stop queda como única protección,
     aviso 3 y no se insiste durante el halt."""
@@ -519,6 +523,7 @@ def test_decision_54_e2_cancel_del_stop_rechazado_no_envia_la_salida_y_avisa_3(b
     assert len([a for a in acciones_de(tras, Cancelar)]) == 1
 
 
+@pytest.mark.sin_silencio
 def test_decision_54_e2_replace_rechazado_pasa_a_cancel_y_si_tambien_se_rechaza_no_sale(banco: Banco) -> None:
     """E2 + decisión 48: TP de 50 vivo (CancelRej al parar) → la MKT sería de 50 y el stop baja a 50 con REPLACE;
     ReplaceRej → CANCEL; CancelRej → no sale nada, aviso 3 y el stop entero sigue."""
@@ -538,6 +543,7 @@ def test_decision_54_e2_replace_rechazado_pasa_a_cancel_y_si_tambien_se_rechaza_
     assert _stops_vivos(b) == 100
 
 
+@pytest.mark.sin_silencio
 def test_decision_54_e2_sin_confirmacion_en_el_plazo_no_sale(banco: Banco, monkeypatch) -> None:
     b = banco
     _a_halt(b)
@@ -605,6 +611,7 @@ def test_decision_54_e3_tp_previo_vivo_y_tp_guardado_no_sobrecubren(banco: Banco
                          Proposito.HALT_PM_LIMITE) <= 100
 
 
+@pytest.mark.sin_silencio
 def test_decision_54_e3_si_el_halt_ya_cerro_la_posicion_lo_guardado_se_descarta(banco: Banco) -> None:
     """E3: halt de noticia en RTH → MKT por OPEN de toda la posición; un TP del motor durante el halt se guarda y, al
     reabrir y llenar la OPEN, se descarta con anotación (no sale ninguna compra de más)."""

@@ -123,6 +123,7 @@ from app.bot_das.tipos import (
     ENTRADA_TOPE_CAIDA_BID_PCT,
     FEED_EMERGENCIA_S,
     FEED_PREALERTA_S,
+    HALT_K_MAX,
     PERSEGUIR_ASK_MAX,
     RECONCILIACION_CADUCA_S,
     REPLACE_SHARE_ES_ABIERTA,
@@ -261,6 +262,8 @@ T_LOCATE_SENAL = "locate_senal"                     # Jaume 29-sep: la señal es
 T_AVAIL_ESPERA = "avail_espera"                     # decisión 55: la compra espera el SLAvailQuery del ticker («…:X»)
 T_REDUCCION_STOP = "reduccion_stop"                 # decisiones 53/54: plazo de la reducción del stop («…:X»)
 T_HALT_GUARDADAS = "halt_guardadas"                 # decisión 54 (E3): plazo MÁXIMO de las salidas guardadas («…:X»)
+T_HALT_SILENCIO = "halt_silencio"                   # decisión 57: plazo MÁXIMO para conocer el estado tras reabrir («…:X»)
+T_ENTRADA_REAPERTURA = "entrada_reapertura"         # decisión 58: el primer minuto tras reabrir con la entrada viva («…:X»)
 _GLOBALES = frozenset({T_SIMSTATUS, T_BARRIDO, T_DAS_AVISO, T_DAS_RECONECTAR, T_FOTO})
 
 # ── constantes técnicas del decisor (no son reglas del libro: van anotadas en las desviaciones) ──
@@ -306,6 +309,9 @@ AVAIL_ESPERA_S = 2.0             # decisión 55 (Jaume 1-oct): la compra de loca
 AVAIL_FRESCO_S = 3.0             # decisión 55: una respuesta de SLAvailQuery de hace ≤ 3 s (sin Located después) vale
 REDUCCION_STOP_ESPERA_S = 4.0    # decisiones 53/54: plazo MÁXIMO para que DAS confirme la bajada (o retirada) del stop
 HALT_GUARDADAS_MAX_S = 30.0      # decisión 54 (E3): plazo MÁXIMO de seguridad de las salidas guardadas tras reabrir
+HALT_SILENCIO_ESTADO_S = 2.0     # decisión 57 (Jaume 2-oct): como mucho 2 s tras reabrir para conocer por DAS lo vivo
+ENTRADA_REAPERTURA_S = 60.0      # decisión 58 (Jaume 2-oct): el primer minuto tras reabrir para que la entrada llene
+HALT_CONTEXTO_REAPERTURA_S = 120.0   # decisión 57: quedar LARGA en los 2 min tras reabrir un halt avisa nivel MÁXIMO
 CLAVE_AVISO_TOPE_DIA = locates.CLAVE_AVISO_TOPE   # decisión 50: el aviso ÚNICO del corte de locates del día
 # D1-07: el «alto riesgo» de R-I-01 (tope corto 0,5 × equity) sale de `entrada.alto_riesgo_si` con capital.es_alto_riesgo
 
@@ -320,9 +326,10 @@ MOTIVO_BLOQUEO = "bloqueo"
 MOTIVO_RECHAZO = "rechazo"
 MOTIVO_SIN_CONFIRMAR = "sin_confirmar"
 MOTIVO_CANCELADA_DAS = "cancelada_por_das"
+MOTIVO_REAPERTURA_58 = "reapertura_58"         # decisión 58: el primer minuto tras reabrir pasó sin llenar la entrada
 _PESO_MOTIVO = {MOTIVO_SUMA: 1, MOTIVO_VENCER: 2, MOTIVO_CRUCE_ESPERA: 2, MOTIVO_PRIORIDAD: 3,
                 MOTIVO_CANCELADA_DAS: 4, MOTIVO_RECHAZO: 4, MOTIVO_SIN_CONFIRMAR: 4,
-                MOTIVO_BLOQUEO: 5, MOTIVO_CIERRE: 5, MOTIVO_HALT: 5}
+                MOTIVO_BLOQUEO: 5, MOTIVO_CIERRE: 5, MOTIVO_HALT: 5, MOTIVO_REAPERTURA_58: 3}
 _TEXTO_MOTIVO_CIERRE = {
     MOTIVO_HALT: "B18 / R-F-04 (a): halt con la entrada viva; se queda lo llenado",
     MOTIVO_CIERRE: "R-D-06: cierre pedido por el humano; se queda lo llenado",
@@ -351,6 +358,9 @@ _PROP_AVISO_SALIDA = _PROP_SALIDA | _PROP_STOP | frozenset({Proposito.VENTA_EXCE
 # cierre y reinicio). No las entradas; tampoco el cierre humano (con /cerrar el plan de stops está quieto) ni el halt.
 _PROP_SALIDA_BP = _PROP_SALIDA_LOTE
 _CONT_HALT = "halt"                                        # decisión 54 (E1): salida retirada al parar el símbolo
+_CONT_SILENCIO = "silencio"                                # decisión 59: OPEN retirada 2 s tras reabrir → se vuelve a mirar
+# Decisión 59 (Jaume 2-oct): salidas que tras reabrir del SEGUNDO halt en RTH salen a MERCADO por la ruta OPEN
+_PROP_SALIDA_OPEN_K2 = _PROP_SALIDA_LOTE | frozenset({Proposito.HALT_BANDA})
 _LADOS_COMPRA = frozenset({"B", "BUY"})
 _RE_HORA = re.compile(r"^\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*$")
 _MOTIVO_MANUAL = "órdenes canceladas a mano"           # /cancelar_ordenes (el diario lo guarda en la pausa)
@@ -566,6 +576,20 @@ class Decisor:
         self._salidas_halt: dict[str, dict[str, Senal]] = {}
         self._reanudar_halt: dict[str, list[dict]] = {}
         self._halt_reabierto_en: dict[str, float] = {}
+        # Decisión 57 (Jaume 2-oct): «halt en silencio». En memoria (como lo de la 54): tras un reinicio en pleno halt
+        # se pierde y decide la reconciliación con los stops residentes.
+        self._plan_silencio: set[str] = set()             # el plan de stops se dejó para la reapertura
+        self._halt_decision_silencio: dict[str, str] = {}  # la última decisión anotada (una anotación por cambio)
+        self._reapertura_silencio: dict[str, dict] = {}   # ticker → cierre pendiente de conocer el estado (≤ 2 s)
+        self._cierre_halt_pendiente: set[str] = set()     # la regla del halt dijo CERRAR: se retoma en cada reapertura
+        self._cierre_reapertura: set[int] = set()         # tokens de las compras de cierre tras reabrir (limbo nivel 3)
+        self._reapertura_ctx: dict[str, float] = {}       # ticker → momento de la última reapertura (larga → aviso 3)
+        # Decisión 58 (Jaume 2-oct): entrada a medio llenar que espera la reapertura (pausa LULD en RTH, k < k_max)
+        self._entrada_espera_58: dict[str, dict] = {}
+        # Decisión 59 (Jaume 2-oct): salidas por OPEN tras el segundo halt; la rechazada vuelve a su ruta (una vez)
+        self._open_k2: dict[int, OrdenNueva] = {}         # token → la orden ORIGINAL (por si DAS rechaza la OPEN)
+        self._open_k2_avisada: set[int] = set()
+        self._open_rechazada: set[str] = set()            # tickers que ya no prueban OPEN hoy (sale del diario)
         self._contar_disparados = False
         self._minimo_cargo: dict[str, Decimal] = {}
         self._ficha_fallo_en: dict[str, float] = {}
@@ -650,6 +674,9 @@ class Decisor:
             for ticker in getattr(memoria, campo, None) or ():
                 if isinstance(ticker, str) and ticker:
                     destino.add(ticker)
+        for ticker in getattr(memoria, "open_rechazada", None) or ():
+            if isinstance(ticker, str) and ticker:
+                self._open_rechazada.add(ticker)     # decisión 59: DAS ya rechazó hoy la OPEN con el mercado abierto
         for ticker, k in dict(getattr(memoria, "k_halts_up", None) or {}).items():
             if isinstance(ticker, str) and ticker and type(k) is int and k >= 0:
                 self._mercado.sembrar_k(ticker, k)
@@ -1146,8 +1173,10 @@ class Decisor:
         1 s, vuelven por lo que esa orden no cubre (y enteros con su Canceled).
         """
         retenida = self._reduccion_stop.get(ticker)
+        # decisión 59: la salida de la banda que va por OPEN tras k2 NO baja el stop (puede quedar esperando al cruce)
         return (sum(_qty_viva(o) for o in self._vivas(ticker)
-                    if o.lado is Lado.COMPRA and (o.proposito in _PROP_CIERRE_HALT or o.token in self._salidas_bp or (
+                    if o.lado is Lado.COMPRA and o.token not in self._open_k2
+                    and (o.proposito in _PROP_CIERRE_HALT or o.token in self._salidas_bp or (
                         o.proposito is Proposito.CIERRE_HUMANO and o.token in self._cancel_pedido
                         and ticker not in self._cierre_humano)))
                 + (int(retenida["qty"]) if retenida is not None else 0))   # decisiones 53/54: la salida RETENIDA
@@ -1157,7 +1186,7 @@ class Decisor:
         stop rechazado pasa a CANCEL. La salida que libera BP (decisión 53) no: su reducción rechazada no se insiste."""
         retenida = self._reduccion_stop.get(ticker)
         return (sum(_qty_viva(o) for o in self._vivas(ticker)
-                    if o.lado is Lado.COMPRA and o.proposito in _PROP_CIERRE_HALT)
+                    if o.lado is Lado.COMPRA and o.proposito in _PROP_CIERRE_HALT and o.token not in self._open_k2)
                 + (int(retenida["qty"]) if retenida is not None and retenida["motivo"] != "bp" else 0))
 
     def _pedidos_en_vuelo(self, ticker: str) -> dict[int, Optional[int]]:
@@ -1282,6 +1311,8 @@ class Decisor:
                                                              "regla": "riesgo 11 / D2a-05"}))
                     continue
                 self._reemplazo_pedido_en[a.token] = self._ahora
+            elif isinstance(a, EnviarOrden):
+                a = self._open_tras_k2(a)                     # decisión 59: salidas por OPEN tras el segundo halt
             lista.append(a)
         for a in lista:
             if isinstance(a, Anotar) and a.tipo == ANOTAR_CANCELAR_AL_TENER_ID:
@@ -1496,6 +1527,11 @@ class Decisor:
                 acciones += self._prioridad_al_ask(pos, lote, o, _proposito(datos.get("proposito"), Proposito.TP_CRUCE))
             elif tipo == _CONT_HALT:
                 acciones += self._encolar_retirada(pos, o, datos)          # decisión 54 (E1 → E3)
+            elif tipo == _CONT_SILENCIO and pos.neta < 0 and o.ticker not in self._halt_en_curso:
+                # decisiones 57/59: retirada la OPEN que no llenó en la reapertura, se cierra al ask lo que quede
+                self._reapertura_silencio[o.ticker] = {"decision": "cerrar_mercado", "era_luld": False,
+                                                       "desde": self._ahora}
+                acciones += self._cierre_silencio(o.ticker, final=True)
         if o.proposito in _PROP_AVISO_SALIDA and o.llenas > 0 and o.token not in self._salidas_avisadas:
             self._salidas_avisadas.add(o.token)
             acciones.append(self._aviso_salida(o))
@@ -1594,6 +1630,8 @@ class Decisor:
             acciones = self._filtrar_stops_bloqueados(ticker, acciones)
             acciones = [EnviarOrden(dataclasses.replace(a.orden, token=self._tokens.siguiente()), serie=a.serie)
                         if isinstance(a, EnviarOrden) and a.orden.token < 0 else a for a in acciones]
+        if self._en_silencio(ticker):
+            acciones = self._filtrar_silencio(ticker, acciones)
         acciones = self._absorber(acciones)
         if not acciones:
             return []
@@ -1601,9 +1639,58 @@ class Decisor:
                                      "neta_das": pos.neta_das, "acciones": len(acciones),
                                      "compras_cierre": self._compras_cierre(ticker)})] + acciones
 
+    # ── decisión 57 (Jaume 2-oct): «halt en silencio» ──────────────────
+    def _silencio(self) -> bool:
+        """`halts.silencio` del cuadro (defecto true): con el símbolo parado no se envía nada nuevo ni se toca el stop."""
+        valor = (self._cfg.halts or {}).get("silencio", True) if isinstance(self._cfg.halts, dict) else True
+        return valor if isinstance(valor, bool) else True
+
+    def _en_silencio(self, ticker: str) -> bool:
+        """¿Está ESTE símbolo parado con el silencio encendido?"""
+        if not self._silencio():
+            return False
+        pos = self._estado.posiciones.get(ticker)
+        return ticker in self._halt_en_curso or (pos is not None and pos.estado is EstadoTicker.HALT)
+
+    def _filtrar_silencio(self, ticker: str, acciones: list[Accion]) -> list[Accion]:
+        """Decisión 57: con el símbolo parado el stop residente NO se toca (ni REPLACE ni CANCEL): lo que el plan quiera
+        cambiar se deja para la reapertura (`_plan_silencio`).
+
+        Lo conservador: un stop NUEVO solo sale si cubre acciones que NO
+        tienen ninguno (nunca acciones cortas sin stop durante un halt) y no
+        pasa de ellas; si el plan quería sustituir un stop vivo por otro
+        (crear uno y cancelar el viejo) no sale nada: se queda el que hay.
+        """
+        cambios = [a for a in acciones if isinstance(a, (Reemplazar, Cancelar, CancelarTicker, EnviarOrden))
+                   or (isinstance(a, Programar) and a.clave.split(":", 1)[0] == T_REPLACE_VERIFICAR)]
+        if not cambios:
+            return acciones
+        pos = self._estado.posiciones.get(ticker)
+        descubiertas = max(abs(pos.neta) - self._qty_stops_vivos(ticker), 0) if pos is not None and pos.neta < 0 else 0
+        nuevas = [a for a in acciones if isinstance(a, EnviarOrden) and a.orden.proposito in _PROP_STOP]
+        if not nuevas or sum(a.orden.qty for a in nuevas) > descubiertas:
+            nuevas = []
+        quitadas = [a for a in cambios if a not in nuevas]
+        salida = [a for a in acciones if a not in quitadas]
+        if quitadas and ticker not in self._plan_silencio:          # una anotación por halt, no una por barrido
+            self._plan_silencio.add(ticker)
+            salida.append(Anotar("halt_silencio_stop_intacto", {
+                "ticker": ticker, "aplazadas": len(quitadas), "descubiertas": descubiertas,
+                "regla": "decisión 57 (Jaume 2-oct): en el halt el stop no se toca; el plan se rehace al reabrir"}))
+        if nuevas:
+            salida.append(Anotar("halt_silencio_stop_nuevo", {
+                "ticker": ticker, "tokens": [a.orden.token for a in nuevas], "qty": [a.orden.qty for a in nuevas],
+                "regla": "decisión 57: acciones sin ningún stop durante el halt; se pone (lo conservador)"}))
+        return salida
+
+    def _k_max_alcanzado(self, ticker: str) -> bool:
+        k_max = self._cfg.halts.get("k_max", HALT_K_MAX) if isinstance(self._cfg.halts, dict) else HALT_K_MAX
+        k_max = k_max if type(k_max) is int else HALT_K_MAX
+        return self._mercado.simbolo(ticker).k_halts_up >= k_max
+
     def _plan_propio(self, ticker: str) -> bool:
         """¿Los casos 2/3 de la reconciliación de este ticker los resuelve `_plan` (filtros, salida del halt, tokens)?"""
-        return (ticker in self._stops_diferidos_halt or self._compras_cierre(ticker) > 0
+        return (ticker in self._stops_diferidos_halt or self._compras_cierre(ticker) > 0 or self._en_silencio(ticker)
                 or any(clave[0] == ticker and hasta > self._ahora for clave, hasta in self._stop_bloqueo.items()))
 
     def _stop_bloqueado(self, ticker: str, proposito: Proposito, nivel: Optional[Decimal] = None) -> bool:
@@ -1731,6 +1818,9 @@ class Decisor:
                 and ticker not in self._reapertura_ok):
             return self._descartar(s, "R-F-03: stop y halt en el ticker; sin reentrada hasta una reapertura válida",
                                    avisar=True)
+        if ticker not in self._halt_en_curso and ticker in self._halt_hoy and self._k_max_alcanzado(ticker):
+            # Jaume 2-oct: tras el halt k_max (el tercero) no hay más entradas en ese ticker ese día
+            return self._descartar(s, "R-F-01: el ticker ya hizo el halt k_max hoy; no más entradas", avisar=True)
         principal = _tipo_evento(ev) == "entrada"
         if not principal and e is not None and entrada.es_piramide_add(ev):
             # decisión 47 (Jaume 30-sep): la entrada se perdió por locates (fase P) → la pirámide entra SIN base
@@ -2399,6 +2489,8 @@ class Decisor:
             return self._cerrar_intento(pos, f"{_TEXTO_MOTIVO_CIERRE[MOTIVO_BLOQUEO]} ({bloqueo})")
         # la espera de la cancelación ya se resolvió: su temporizador no debe tocar la orden NUEVA
         sin_espera: list[Accion] = [Desprogramar(f"{T_CANCEL_ESPERA}:{ticker}")]
+        if motivo == MOTIVO_REAPERTURA_58:
+            return sin_espera + self._cruce_tras_58(pos)       # decisión 58: el 3 % y el nivel sobre el último
         if motivo == MOTIVO_CRUCE_ESPERA or (motivo is None and intento.fase is FaseIntento.CRUZANDO):
             if intento.reintento_cruce == 0:
                 intento.reintento_cruce = 1
@@ -2839,6 +2931,9 @@ class Decisor:
         if ticker is not None and ticker in self._reduccion_stop:
             # decisiones 53/54: la salida retenida sale en cuanto DAS confirma la bajada del stop (sin esperas añadidas)
             acciones += self._proteger(ticker, "reduccion_stop", lambda: self._revisar_reduccion(ticker) or [])
+        if ticker is not None and ticker in self._reapertura_silencio:
+            # decisión 57: tras reabrir, el cierre sale en cuanto DAS deja conocer el estado de lo vivo (por eventos)
+            acciones += self._proteger(ticker, "halt_silencio", lambda: self._cierre_silencio(ticker, final=False))
         if ticker is not None and (self._salidas_halt.get(ticker) or self._reanudar_halt.get(ticker)):
             # decisión 54 (E3): las salidas guardadas en el halt se aplican en cuanto se conoce el estado de lo vivo
             acciones += self._proteger(ticker, "halt_guardadas", lambda: self._aplicar_guardadas(ticker))
@@ -3303,10 +3398,11 @@ class Decisor:
         preferidos = ([lote.id for lote in self._lotes_vivos(pos) if lote.nivel_stop == nivel]
                       if nivel is not None else [])
         acciones, cerrados = self._reducir_lotes(pos, fill.qty, preferidos, mas_alto_primero=True, precio=fill.precio)
-        acciones += self._absorber(self._filtrar_stops_bloqueados(ticker, stops.limpieza_tras_fill_stop(
-            pos, self._ordenes_ticker(ticker), self._cot(ticker), self._tokens.siguiente, self._cfg, self._ahora_et,
-            pos.version_stops, limit_up=limit_up,
-            compras_cierre=self._compras_cierre(ticker), pedidos_en_vuelo=self._pedidos_en_vuelo(ticker))))
+        acciones += self._exceso_tras_halt(ticker, self._absorber(self._filtrar_stops_bloqueados(
+            ticker, stops.limpieza_tras_fill_stop(
+                pos, self._ordenes_ticker(ticker), self._cot(ticker), self._tokens.siguiente, self._cfg, self._ahora_et,
+                pos.version_stops, limit_up=limit_up,
+                compras_cierre=self._compras_cierre(ticker), pedidos_en_vuelo=self._pedidos_en_vuelo(ticker)))))
         if pos.neta == 0:
             acciones += self._posicion_cerrada(pos, dentro_del_margen=(
                 de_nivel and (o.precio is None or fill.precio <= o.precio)))
@@ -3324,10 +3420,12 @@ class Decisor:
         self._refrescar_tp_pendiente(pos)
         acciones += self._revisar_cuadre(o)
         if pos.neta > 0:
-            acciones += self._absorber(self._filtrar_stops_bloqueados(pos.ticker, stops.limpieza_tras_fill_stop(
-                pos, self._ordenes_ticker(pos.ticker), self._cot(pos.ticker), self._tokens.siguiente, self._cfg,
-                self._ahora_et, pos.version_stops, limit_up=self._limit_up(pos.ticker),
-                compras_cierre=self._compras_cierre(pos.ticker), pedidos_en_vuelo=self._pedidos_en_vuelo(pos.ticker))))
+            acciones += self._exceso_tras_halt(pos.ticker, self._absorber(self._filtrar_stops_bloqueados(
+                pos.ticker, stops.limpieza_tras_fill_stop(
+                    pos, self._ordenes_ticker(pos.ticker), self._cot(pos.ticker), self._tokens.siguiente, self._cfg,
+                    self._ahora_et, pos.version_stops, limit_up=self._limit_up(pos.ticker),
+                    compras_cierre=self._compras_cierre(pos.ticker),
+                    pedidos_en_vuelo=self._pedidos_en_vuelo(pos.ticker)))))
             acciones += self._intento_con_lote_cerrado(pos, cerrados)
         elif pos.neta == 0:
             acciones += self._posicion_cerrada(pos, dentro_del_margen=False)
@@ -3429,6 +3527,7 @@ class Decisor:
         self._retirando_cierre.discard(ticker)
         self._cerrar_todo_enviar.pop(ticker, None)
         self._banda_enviada.discard(ticker)
+        self._cierre_halt_pendiente.discard(ticker)          # decisión 57: ya no queda nada que cerrar
         self._olvidar_rechazos_de_stop(ticker)
         self._stops_diferidos_halt.discard(ticker)
         pos.persecuciones_ask = 0
@@ -3530,6 +3629,10 @@ class Decisor:
         """F8 (R-B-07, R-C-03, EP-1): `rechazos.decidir` y su aplicación: pausa, token nuevo, entrada re-precio al libro."""
         pos = self._pos(o.ticker)
         ticker = o.ticker
+        original = self._open_k2.pop(o.token, None)
+        if (original is not None and not halts.es_halt(self._mercado.simbolo(ticker))
+                and ticker not in self._halt_en_curso):
+            return self._open_k2_rechazada(o, original)      # decisión 59: salvaguarda (DAS no acepta OPEN abierto)
         intento = pos.intento
         del_intento = intento is not None and o.token in (intento.token_agregar, intento.token_cruce)
         motivo_previo = self._motivo_cancel.get(ticker) if del_intento else None
@@ -3813,11 +3916,27 @@ class Decisor:
                            and not any(o.proposito in _PROP_ENTRADA for o in self._vivas(ticker))):
             return [Anotar("halt", {"ticker": ticker, "ta": simb.ta, "tat": simb.tat, "k": simb.k_halts_up,
                                     "sin_posicion": True})] + ldlu
-        acciones = self._absorber(halts.al_entrar_en_halt(pos, self._ordenes_ticker(ticker), simb, self._cot(ticker),
-                                                          franja))
+        espera_58 = self._aplica_58(pos, simb, franja)
+        vivas = self._ordenes_ticker(ticker)
+        if espera_58:
+            # decisión 58 (Jaume 2-oct): la entrada a medio llenar de una pausa LULD en RTH con k < k_max NO se cancela
+            del_intento = self._tokens_intento.get(ticker, set()) | {
+                t for t in (pos.intento.token_agregar, pos.intento.token_cruce) if t is not None}
+            vivas = [o for o in vivas if o.token not in del_intento]
+        acciones = self._absorber(halts.al_entrar_en_halt(pos, vivas, simb, self._cot(ticker), franja))
         acciones += self._retirar_salidas_halt(pos)          # decisión 54 (E1): también las salidas en vuelo
+        acciones += self._silencio_al_parar(ticker)          # decisión 57: un cierre pendiente espera otra reapertura
         if pos.intento is not None:
-            acciones += self._cancelar_intento(pos, MOTIVO_HALT)
+            if espera_58:
+                acciones += self._esperar_reapertura_58(pos, simb)
+            else:
+                if self._entrada_espera_58.pop(ticker, None) is not None:
+                    acciones += [Desprogramar(f"{T_ENTRADA_REAPERTURA}:{ticker}"),
+                                 Anotar("entrada_reapertura_fin", {
+                                     "ticker": ticker, "motivo": "otro halt que no es pausa LULD con k < k_max: se "
+                                                                 "cancela la entrada como siempre",
+                                     "regla": "decisión 58 (Jaume 2-oct)"})]
+                acciones += self._cancelar_intento(pos, MOTIVO_HALT)
         if pos.estado is EstadoTicker.NORMAL:
             pos.estado = EstadoTicker.HALT
             pos.motivo_estado = f"halt {simb.ta or ''}".strip()
@@ -3849,6 +3968,12 @@ class Decisor:
         for o in sorted(self._vivas(ticker), key=lambda x: x.token):
             if (o.lado is not Lado.COMPRA or o.proposito not in _PROP_SALIDA_LOTE or _qty_viva(o) <= 0
                     or o.token in self._cancel_pedido or o.token in self._retiradas_halt):
+                continue
+            if o.token in self._open_k2:
+                # decisión 59 (Jaume 2-oct): la salida a mercado por OPEN tras el segundo halt queda VIVA (no se toca):
+                # entra en el cruce de la reapertura
+                acciones.append(Anotar("halt_salida_open_se_queda", {
+                    "ticker": ticker, "token": o.token, "qty_viva": _qty_viva(o), "regla": "decisión 59 (Jaume 2-oct)"}))
                 continue
             self._retiradas_halt.add(o.token)
             if o.token not in self._continuacion:
@@ -4061,6 +4186,18 @@ class Decisor:
             if decision != "mantener":
                 acciones += self._halt_sin_orden(pos, decision, bloqueo, "durante el halt")
             acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", HALT_REDECIDIR_S, {"ticker": ticker}))
+            return acciones
+        if self._silencio() and decision in ("cerrar_mercado", "cerrar_limite_pm"):
+            # decisión 57 (Jaume 2-oct): con el símbolo parado no sale NADA (ni la MKT por OPEN ni la límite de PM) y el
+            # stop no se toca; la salida se decide y se envía AL REABRIR (`_al_reabrir`). Se vuelve a decidir (las
+            # 09:30 cambian la franja) por si la reapertura llega antes de decidir otra vez.
+            if self._halt_decision_silencio.get(ticker) != decision:
+                self._halt_decision_silencio[ticker] = decision
+                acciones.append(Anotar("halt_silencio", {
+                    "ticker": ticker, "decision": decision, "franja": franja,
+                    "regla": "decisión 57 (Jaume 2-oct): no se envía nada durante el halt; se cierra al reabrir"}))
+            acciones.append(Programar(f"{T_HALT_DECIDIR}:{ticker}", self._en_redecidir_halt(franja),
+                                      {"ticker": ticker}))
             return acciones
         degradados = self._estado.modo_degradado & {"reconciliacion", "das"}
         if degradados and decision in ("cerrar_mercado", "cerrar_limite_pm"):
@@ -4358,6 +4495,10 @@ class Decisor:
         cot = self._cot(ticker)
         precio = cot.last if cot is not None and cot.last is not None else simb.precio_parada
         decision = self._halt_decision.pop(ticker, None)
+        silencio = self._silencio()
+        self._halt_decision_silencio.pop(ticker, None)
+        # decisión 57: si el halt no llegó a decidirse, si era LULD lo dice el TA con el que paró (ya no es «P»)
+        era_luld_silencio = self._halt_luld.get(ticker, self._mercado.ta_ultimo_halt(ticker) == "P")
         era_luld = self._halt_luld.pop(ticker, halts.es_luld(simb))
         acciones: list[Accion] = [Anotar("halt_reapertura", {"ticker": ticker, "k": simb.k_halts_up, "precio": precio,
                                                              "decision": decision}),
@@ -4372,10 +4513,13 @@ class Decisor:
                                    f"REABRE {avisos.escapar_html(ticker)} · precio {precio} · k={simb.k_halts_up} · "
                                    f"posición {pos.neta:+d} · decisión: {avisos.escapar(decision or 'sin decisión')}",
                                    clave=f"reapertura:{ticker}:{simb.tat}"))
-            if ticker in self._stops_diferidos_halt:
+            if ticker in self._stops_diferidos_halt or ticker in self._plan_silencio:
                 self._stops_diferidos_halt.discard(ticker)
-                acciones.append(Anotar("stops_reponer_reapertura", {"ticker": ticker, "regla": "R-C-04 / G1B-14"}))
+                self._plan_silencio.discard(ticker)           # decisión 57: lo que el plan dejó para la reapertura
+                acciones.append(Anotar("stops_reponer_reapertura", {"ticker": ticker,
+                                                                    "regla": "R-C-04 / G1B-14 / decisión 57"}))
                 acciones += self._plan(ticker)
+            self._reapertura_ctx[ticker] = self._ahora
             decision_46: Optional[list[Accion]] = None
             if vigilado and pos.neta < 0 and not era_luld and self._franja().startswith("premercado"):
                 self._reapertura_pm[ticker] = (self._ahora + HALT_PM_REAPERTURA_VENTANA_S, precio)
@@ -4383,12 +4527,16 @@ class Decisor:
                     pos, cot.last if cot is not None and _es_precio(cot.last) else None, "al reabrir")
             if decision_46 is not None:
                 acciones += decision_46                 # decisión 46: ya lleva su verificación a los 2 s
+            elif silencio:
+                acciones += self._reabrir_en_silencio(pos, decision, era_luld_silencio)
             else:
                 if pos.neta < 0 and decision in ("cerrar_mercado", "cerrar_limite_pm"):
                     acciones += self._reintento_reapertura(pos, cot, decision, era_luld)
                 if pos.neta != 0 and any(o.proposito in _PROP_CIERRE_HALT for o in self._vivas(ticker)):
                     acciones.append(Programar(f"{T_HALT_CIERRE_VERIFICAR}:{ticker}", HALT_CIERRE_VERIFICAR_S,
                                               {"ticker": ticker, "reapertura": True}))     # R2-DEC-2: mira el tope T1
+        if pos is not None and ticker in self._entrada_espera_58:
+            acciones += self._entrada_58_al_reabrir(pos)
         if _es_precio(precio):
             acciones.append(Programar(f"{T_HALT_PRIMERA_VELA}:{ticker}", HALT_PRIMERA_VELA_S,
                                       {"ticker": ticker, "precio_reapertura": str(precio),
@@ -4739,6 +4887,403 @@ class Decisor:
                                             avisar=True)
         return acciones
 
+    # ═══ decisión 57 (Jaume 2-oct): «halt en silencio» — al parar nada nuevo; al reabrir, por eventos ═══
+    def _silencio_al_parar(self, ticker: str) -> list[Accion]:
+        """El símbolo (vuelve a) parar: un cierre de reapertura aún sin enviar se aplaza a la SIGUIENTE reapertura (el
+        protocolo del halt sigue: `_cierre_halt_pendiente`); la entrada de la 58 decide su propio camino en `_al_halt`."""
+        r = self._reapertura_silencio.pop(ticker, None)
+        if r is None:
+            return []
+        self._cierre_halt_pendiente.add(ticker)
+        return [Desprogramar(f"{T_HALT_SILENCIO}:{ticker}"),
+                Anotar("halt_silencio_vuelve_a_parar", {
+                    "ticker": ticker, "decision": r.get("decision"),
+                    "regla": "decisión 57 (Jaume 2-oct): silencio otra vez; se retoma en la siguiente reapertura"})]
+
+    def _decision_silencio(self, pos: PosicionTicker, decision: Optional[str], era_luld: bool) -> Optional[str]:
+        """Qué toca AL REABRIR con el silencio: «cerrar_mercado» (RTH), «cerrar_limite_pm» (premercado),
+        «control_humano» o None (mantener).
+
+        RTH: un halt que no es LULD (noticia `H`, también el de premercado que
+        sigue parado a las 09:30) cierra siempre (decisión 48); un cierre que ya
+        estaba en marcha y volvió a parar se retoma; si no, manda lo decidido
+        durante el halt (k, stop frente al precio de parada) o, si el halt no
+        llegó a decidirse, se decide ahora con el precio de PARADA.
+        """
+        ticker = pos.ticker
+        rth = self._es_rth()
+        cerrar = "cerrar_mercado" if rth else "cerrar_limite_pm"
+        if ticker in self._cierre_halt_pendiente:
+            return cerrar
+        if rth and not era_luld:
+            return "cerrar_mercado"
+        if decision is None:
+            simb = dataclasses.replace(self._mercado.simbolo(ticker), ta="P" if era_luld else "H")
+            decision = halts.decidir_reapertura(pos, simb, self._niveles_primer_stop(pos), None, dict(self._cfg.halts),
+                                                self._franja(), 0.0)
+        if decision in ("cerrar_mercado", "cerrar_limite_pm"):
+            return cerrar
+        return decision if decision == "control_humano" else None
+
+    def _reabrir_en_silencio(self, pos: PosicionTicker, decision: Optional[str], era_luld: bool) -> list[Accion]:
+        """Decisión 57: al reabrir se mira el estado REAL (posición y órdenes vivas según DAS) y, si la regla del halt
+        dice CERRAR y sigue corta, se cierra (`_cierre_silencio`: al instante si lo vivo ya se conoce; si no, con el
+        siguiente mensaje de DAS del ticker y como mucho a los 2 s). Plana: nada; larga: la venta del exceso de
+        siempre, con aviso MÁXIMO (`_exceso_tras_halt`)."""
+        ticker = pos.ticker
+        if pos.neta >= 0:
+            self._cierre_halt_pendiente.discard(ticker)
+            return [Anotar("halt_silencio_reapertura", {
+                "ticker": ticker, "neta": pos.neta, "decision": decision,
+                "motivo": "plana: nada que cerrar" if pos.neta == 0 else "LARGA: la venta del exceso (aviso máximo)",
+                "regla": "decisión 57 (Jaume 2-oct)"})]
+        que = self._decision_silencio(pos, decision, era_luld)
+        acciones: list[Accion] = [Anotar("halt_silencio_reapertura", {
+            "ticker": ticker, "neta": pos.neta, "decision_halt": decision, "decision": que, "era_luld": era_luld,
+            "franja": self._franja(), "comprando": self._comprando(ticker), "regla": "decisión 57 (Jaume 2-oct)"})]
+        if que == "control_humano":
+            return acciones + self._halt_control_humano(pos)
+        if que is None:
+            return acciones                                  # mantener: el stop residente sigue cubriendo
+        if self._entrada_espera_58.pop(ticker, None) is not None:
+            # Jaume 2-oct (aclaración): en un caso de CIERRE la entrada a medias NO se completa nunca: se retira (al
+            # cerrar, `_cierre_silencio`) y se cierra la posición REAL
+            acciones += [Desprogramar(f"{T_ENTRADA_REAPERTURA}:{ticker}"),
+                         Anotar("entrada_reapertura_fin", {"ticker": ticker, "motivo": "la regla del halt dice cerrar: "
+                                                           "la entrada a medias no se completa",
+                                                           "regla": "decisiones 57/58 (Jaume 2-oct)"})]
+        guardadas = self._salidas_halt.pop(ticker, {})
+        retiradas = self._reanudar_halt.pop(ticker, [])
+        if guardadas or retiradas:
+            acciones.append(Anotar("salida_guardada_halt_descartada", {
+                "ticker": ticker, "senales": [s.id for s in guardadas.values()],
+                "retiradas": [r.get("token") for r in retiradas],
+                "motivo": "el halt cierra la posición (decisión 57)", "regla": "decisión 54 (E3) / 57"}))
+        self._reapertura_silencio[ticker] = {"decision": que, "era_luld": era_luld, "desde": self._ahora}
+        acciones.append(Programar(f"{T_HALT_SILENCIO}:{ticker}", HALT_SILENCIO_ESTADO_S, {"ticker": ticker}))
+        return acciones + self._cierre_silencio(ticker, final=False)
+
+    def _halt_control_humano(self, pos: PosicionTicker) -> list[Accion]:
+        """R-F-05: control humano por el halt (sin precio de referencia, T1 sobre el tope): aviso máximo una vez."""
+        ticker = pos.ticker
+        acciones: list[Accion] = []
+        if ticker not in self._halt_humano_avisado:
+            self._halt_humano_avisado.add(ticker)
+            acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
+                                   f"HALT {avisos.escapar_html(ticker)}: CONTROL HUMANO (T1 &gt; 250 %, T12 o sin "
+                                   f"precio). Posición {pos.neta:+d}; stops residentes (R-F-05)",
+                                   clave=f"halt_humano:{ticker}"))
+        if pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT, EstadoTicker.PAUSADO):
+            pos.estado = EstadoTicker.CONTROL_HUMANO
+            pos.motivo_estado = "halt: control humano"
+            pos.desde = self._ahora
+            acciones.append(Anotar("pausa", {"ticker": ticker, "estado": EstadoTicker.CONTROL_HUMANO.value,
+                                             "motivo": "halt: control humano (R-F-05)"}))
+        return acciones
+
+    def _cierre_silencio(self, ticker: str, final: bool) -> list[Accion]:
+        """Decisión 57: el cierre tras reabrir. `final` = venció el plazo de 2 s (se actúa con lo que se sepa).
+
+        Plana o larga → nada (la larga la vende la limpieza de siempre). En
+        cisne negro LULD / control humano / manual → ninguna orden (R-G-01). En
+        PREMERCADO: el reintento de siempre (límite que cruza el ask con el
+        techo de parada · 3,5 y su verificación a 2 s, decisiones 46/49), solo
+        que ahora sale AL REABRIR. En RTH: compra por `corto − compras vivas −
+        stops que llenan a este precio` al ask con el techo del 3 % y la
+        persecución del TP (3 veces, sin la fase de 60 s en el punto medio);
+        el stop se queda puesto (no cuenta como compra de cierre) y lo bajan
+        los fills.
+        """
+        r = self._reapertura_silencio.get(ticker)
+        if r is None or ticker in self._halt_en_curso:
+            return []
+        pos = self._estado.posiciones.get(ticker)
+        if pos is None or pos.neta >= 0:
+            self._reapertura_silencio.pop(ticker, None)
+            self._cierre_halt_pendiente.discard(ticker)
+            return [Desprogramar(f"{T_HALT_SILENCIO}:{ticker}"),
+                    Anotar("halt_silencio_sin_cierre", {"ticker": ticker, "neta": pos.neta if pos is not None else 0,
+                                                        "motivo": "ya no está corta", "regla": "decisión 57"})]
+        decision = str(r.get("decision"))
+        bloqueo = self._bloqueo_decision_halt(pos, bool(r.get("era_luld")))
+        if bloqueo is not None:
+            self._reapertura_silencio.pop(ticker, None)
+            return [Desprogramar(f"{T_HALT_SILENCIO}:{ticker}")] + self._halt_sin_orden(pos, decision, bloqueo,
+                                                                                         "al reabrir")
+        retirar = self._retirar_entradas_reapertura(pos, r)
+        if retirar is not None and not final:
+            return retirar                                   # se cierra cuando DAS confirme la retirada (o a los 2 s)
+        degradados = self._estado.modo_degradado & {"reconciliacion", "das"}
+        cot = self._cot(ticker)
+        das_atrasado = pos.neta_das is not None and pos.neta_das != pos.neta_fills
+        if not final and (degradados or das_atrasado or not self._estado_conocido(ticker)
+                          or not _libro_utilizable(cot)):
+            return []                                        # se vuelve a mirar con el siguiente mensaje de DAS
+        if degradados or not _libro_utilizable(cot):
+            return self._cierre_silencio_imposible(pos, "modo degradado: " + ", ".join(sorted(degradados))
+                                                   if degradados else "sin libro de DAS")
+        if decision == "cerrar_limite_pm":
+            self._reapertura_silencio.pop(ticker, None)
+            return [Desprogramar(f"{T_HALT_SILENCIO}:{ticker}")] + self._reintento_reapertura(
+                pos, cot, decision, bool(r.get("era_luld")))
+        precio = cot.last if cot is not None and _es_precio(cot.last) else None
+        qty = abs(pos.neta) - self._comprando(ticker) - self._stops_que_llenarian(ticker, precio, pos.neta)
+        if qty <= 0:
+            if not final:
+                return []                                    # lo vivo cubre: se espera a ver si llena (≤ 2 s)
+            return self._cierre_silencio_cubierto(pos)
+        self._reapertura_silencio.pop(ticker, None)
+        self._cierre_halt_pendiente.add(ticker)
+        return [Desprogramar(f"{T_HALT_SILENCIO}:{ticker}")] + self._cerrar_al_ask_reapertura(pos, qty, final)
+
+    def _retirar_entradas_reapertura(self, pos: PosicionTicker, r: dict) -> Optional[list[Accion]]:
+        """Jaume 2-oct (aclaración de 57/58): en un CIERRE, una orden de entrada que siga viva (no se pudo cancelar en el
+        halt, o la de la 58) se cancela primero, ya con el mercado abierto, y el cierre espera a que DAS lo confirme: así
+        se cierra la posición REAL (si DAS la llenó, entera) y nunca se completa la entrada. None = no hay ninguna."""
+        ticker = pos.ticker
+        vivas = [o for o in self._vivas(ticker) if o.proposito in _PROP_ENTRADA and _qty_viva(o) > 0]
+        if not vivas:
+            return None
+        if r.get("entradas_retiradas"):
+            return []
+        r["entradas_retiradas"] = True
+        if pos.intento is not None and pos.intento.fase is not FaseIntento.TERMINADO:
+            self._poner_motivo(ticker, MOTIVO_HALT)          # con el Canceled se queda lo llenado: nunca se cruza
+        acciones: list[Accion] = [Anotar("halt_silencio_retira_entrada", {
+            "ticker": ticker, "tokens": [o.token for o in vivas], "neta": pos.neta,
+            "regla": "decisiones 57/58 (Jaume 2-oct): en un cierre la entrada a medias no se completa"})]
+        for o in vivas:
+            self._cancel_pedido.pop(o.token, None)           # el CANCEL del halt pudo quedar sin respuesta: se repite
+            acciones += self._cancelar_orden(o, "decisión 57: se cierra tras el halt; la entrada a medias no se "
+                                                "completa")
+        return acciones
+
+    def _cierre_silencio_cubierto(self, pos: PosicionTicker) -> list[Accion]:
+        """2 s tras reabrir, lo que queda corto lo cubren compras vivas: se dejan (cuentan como compra viva). Una salida
+        a mercado por OPEN (decisión 59) que sigue viva con el mercado ya abierto se retira y, con su Canceled, se
+        vuelve a mirar (al ask)."""
+        ticker = pos.ticker
+        acciones: list[Accion] = []
+        abiertas = [o for o in self._vivas(ticker) if o.token in self._open_k2 and _qty_viva(o) > 0]
+        for o in abiertas:
+            self._poner_continuacion(o.token, _CONT_SILENCIO, {"ticker": ticker})
+            acciones += self._cancelar_orden(o, "decisión 59: la salida por OPEN no llenó en la reapertura; se cierra "
+                                                "al ask (decisión 57)")
+        if not abiertas:
+            self._reapertura_silencio.pop(ticker, None)
+        return acciones + [Anotar("halt_silencio_cubierto", {
+            "ticker": ticker, "neta": pos.neta, "comprando": self._comprando(ticker),
+            "open_retiradas": [o.token for o in abiertas],
+            "regla": "decisión 57: las compras vivas cubren lo que queda corto"})]
+
+    def _cierre_silencio_imposible(self, pos: PosicionTicker, motivo: str) -> list[Accion]:
+        ticker = pos.ticker
+        self._reapertura_silencio.pop(ticker, None)
+        return [Anotar("halt_silencio_no_enviada", {"ticker": ticker, "neta": pos.neta, "motivo": motivo,
+                                                    "regla": "decisión 57"}),
+                Avisar(Nivel.MAXIMO, Grupo.B,
+                       f"REABRE {avisos.escapar(ticker)}: la regla del halt dice CERRAR y no se puede enviar "
+                       f"({avisos.escapar(motivo)}); el stop sigue cubriendo. Posición {pos.neta:+d} (decisión 57)",
+                       clave=f"halt_silencio_imposible:{ticker}")]
+
+    def _cerrar_al_ask_reapertura(self, pos: PosicionTicker, qty: int, final: bool) -> list[Accion]:
+        """Decisión 57: la compra de cierre tras reabrir en RTH, por lote (L más bajo primero), con el cruce del TP al
+        ask (techo 3 % sobre el último) y su persecución (3 veces). El stop NO baja antes: lo bajan los fills."""
+        ticker = pos.ticker
+        cot = self._cot(ticker)
+        self._stop_hoy.add(ticker)          # R-F-03 (G1A-18): el cierre del halt cuenta como salida por stop
+        acciones: list[Accion] = [Anotar("halt_silencio_cierre", {
+            "ticker": ticker, "qty": qty, "neta": pos.neta, "comprando": self._comprando(ticker),
+            "ask": cot.ask if cot is not None else None, "last": cot.last if cot is not None else None,
+            "plazo_vencido": final, "regla": "decisión 57 (Jaume 2-oct): al ask con la persecución del TP"})]
+        restante = qty
+        enviadas: list[int] = []
+        for lote in sorted(self._lotes_vivos(pos), key=lambda x: (x.nivel_stop or Decimal("0"), x.id)):
+            if restante <= 0:
+                break
+            n = min(self._libres(pos, lote), restante)
+            if n <= 0:
+                continue
+            orden, aviso = salidas.tp_al_vencer(lote, n, cot, self._cfg, self._tokens.siguiente, self._ahora_et)
+            if orden is not None:
+                self._cierre_reapertura.add(orden.token)
+                acciones += self._absorber([EnviarOrden(orden)])
+                acciones += self._seguimiento_salida(lote, orden, con_techo=True)
+                enviadas.append(orden.token)
+                restante -= n
+            if aviso is not None:
+                acciones.append(Avisar(Nivel.MAXIMO, aviso.grupo,
+                                       f"{aviso.texto} · tras reabrir el halt la posición debía cerrarse "
+                                       f"(decisión 57)", clave=aviso.clave))
+        if restante > 0:
+            acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
+                                   f"REABRE {avisos.escapar(ticker)}: la regla del halt dice CERRAR y quedan {restante} "
+                                   f"acciones sin compra de cierre (sin libro dentro del techo o sin lote); el stop "
+                                   f"sigue cubriéndolas. Posición {pos.neta:+d} (decisión 57)",
+                                   clave=f"halt_silencio_resto:{ticker}"))
+        if enviadas:
+            acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                   f"REABRE {avisos.escapar(ticker)}: se cierra {qty - restante} al ask (persecución "
+                                   f"del TP); el stop sigue puesto y lo bajan los fills (decisión 57)",
+                                   clave=f"halt_silencio_cierre:{ticker}:{self._mercado.simbolo(ticker).tat}"))
+        return acciones
+
+    def _t_halt_silencio(self, clave: str, datos: dict) -> list[Accion]:
+        """Decisión 57: plazo MÁXIMO (2 s) para conocer por DAS el estado de lo vivo tras reabrir: se actúa ya."""
+        ticker = str(datos.get("ticker") or clave.split(":", 1)[1])
+        return self._cierre_silencio(ticker, final=True)
+
+    def _en_contexto_reapertura(self, ticker: str) -> bool:
+        """Decisión 57: ¿estamos en la reapertura de un halt? (≤ 2 min desde que reabrió o con su cierre en marcha)."""
+        desde = self._reapertura_ctx.get(ticker)
+        return ticker in self._cierre_halt_pendiente or (desde is not None
+                                                         and self._ahora - desde <= HALT_CONTEXTO_REAPERTURA_S)
+
+    def _exceso_tras_halt(self, ticker: str, acciones: list[Accion]) -> list[Accion]:
+        """Decisión 57: la cuenta quedó LARGA tras reabrir un halt (stop y salida ejecutados, u orden pendiente que DAS
+        llenó): la venta del exceso es la de siempre pero el aviso sube a nivel MÁXIMO."""
+        if not self._en_contexto_reapertura(ticker):
+            return acciones
+        salida: list[Accion] = []
+        for a in acciones:
+            if (isinstance(a, Avisar) and a.nivel is not Nivel.MAXIMO
+                    and (a.clave or "").startswith(f"exceso:{ticker}")):
+                a = Avisar(Nivel.MAXIMO, a.grupo, f"{a.texto} · tras reabrir un halt (decisión 57)", a.clave)
+            salida.append(a)
+        return salida
+
+    # ═══ decisión 58 (Jaume 2-oct): entrada a medio llenar en una pausa LULD de RTH con k < k_max ═══
+    def _aplica_58(self, pos: PosicionTicker, simb: Any, franja: str) -> bool:
+        """¿La entrada viva se deja esperando la reapertura? Solo con el silencio, pausa LULD (`P`) en RTH, k < k_max,
+        algo ya llenado y una orden de entrada viva del intento."""
+        intento = pos.intento
+        if (not self._silencio() or not franja.startswith("RTH") or not halts.es_luld(simb) or intento is None
+                or intento.fase not in (FaseIntento.AGREGANDO, FaseIntento.CRUZANDO) or intento.llenas <= 0):
+            return False
+        k_max = self._cfg.halts.get("k_max", HALT_K_MAX) if isinstance(self._cfg.halts, dict) else HALT_K_MAX
+        k_max = k_max if type(k_max) is int else HALT_K_MAX
+        if simb.k_halts_up >= k_max:
+            return False
+        vivas = [self._estado.ordenes.get(t) for t in (intento.token_agregar, intento.token_cruce) if t is not None]
+        return any(o is not None and o.estado in _VIVOS and _qty_viva(o) > 0 for o in vivas)
+
+    def _esperar_reapertura_58(self, pos: PosicionTicker, simb: Any) -> list[Accion]:
+        ticker = pos.ticker
+        intento = pos.intento
+        self._entrada_espera_58[ticker] = {"desde": self._ahora, "k": simb.k_halts_up}
+        return [Desprogramar(f"{T_ENTRADA_REAPERTURA}:{ticker}"),
+                Anotar("entrada_espera_reapertura", {
+                    "ticker": ticker, "k": simb.k_halts_up, "llenas": intento.llenas if intento else None,
+                    "qty_total": intento.qty_total if intento else None,
+                    "regla": "decisión 58 (Jaume 2-oct): pausa LULD con k < k_max; la entrada no se cancela"}),
+                Avisar(Nivel.INFO, Grupo.B,
+                       f"{avisos.escapar(ticker)}: pausa LULD con la entrada a medio llenar "
+                       f"({intento.llenas if intento else '?'} de {intento.qty_total if intento else '?'}): la orden "
+                       f"se deja viva; al reabrir se mira el primer minuto (decisión 58)",
+                       clave=f"entrada_58:{ticker}:{simb.tat}")]
+
+    def _entrada_58_al_reabrir(self, pos: PosicionTicker) -> list[Accion]:
+        ticker = pos.ticker
+        intento = pos.intento
+        if intento is None or intento.fase is FaseIntento.TERMINADO:
+            self._entrada_espera_58.pop(ticker, None)
+            return []
+        self._entrada_espera_58[ticker]["reabre"] = self._ahora
+        return [Anotar("entrada_reapertura", {"ticker": ticker, "llenas": intento.llenas,
+                                              "qty_total": intento.qty_total, "espera_s": ENTRADA_REAPERTURA_S,
+                                              "regla": "decisión 58 (Jaume 2-oct)"}),
+                Programar(f"{T_ENTRADA_REAPERTURA}:{ticker}", ENTRADA_REAPERTURA_S, {"ticker": ticker})]
+
+    def _t_entrada_reapertura(self, clave: str, datos: dict) -> list[Accion]:
+        """Decisión 58: pasó el primer minuto tras reabrir. Si la entrada no llenó lo que faltaba se cancela (esperando
+        su confirmación; lo que llene entretanto cuenta) y, con el Canceled, `_avanzar_intento` cruza lo que falta si
+        se cumple el 3 % de siempre y el nivel de stop sigue por encima del último; si no, se queda lo llenado."""
+        ticker = str(datos.get("ticker") or clave.split(":", 1)[1])
+        if ticker in self._halt_en_curso:
+            return []                                        # volvió a parar: `_al_halt` ya decidió
+        r = self._entrada_espera_58.pop(ticker, None)
+        pos = self._estado.posiciones.get(ticker)
+        intento = pos.intento if pos is not None else None
+        if r is None or pos is None or intento is None or intento.fase is FaseIntento.TERMINADO:
+            return [Anotar("entrada_reapertura_fin", {"ticker": ticker, "motivo": "la entrada ya terminó",
+                                                      "regla": "decisión 58"})] if r is not None else []
+        self._soltar_cuadrados(intento)
+        acciones: list[Accion] = [Anotar("entrada_reapertura_fin", {
+            "ticker": ticker, "llenas": intento.llenas, "qty_total": intento.qty_total,
+            "motivo": "primer minuto sin llenar: se cancela la orden vieja y se mira el 3 %", "regla": "decisión 58"})]
+        if intento.token_agregar is None and intento.token_cruce is None:
+            self._poner_motivo(ticker, MOTIVO_REAPERTURA_58)
+            return acciones + self._avanzar_intento(pos)
+        return acciones + self._cancelar_intento(pos, MOTIVO_REAPERTURA_58)
+
+    def _cruce_tras_58(self, pos: PosicionTicker) -> list[Accion]:
+        """Decisión 58 (tras el Canceled): el nivel de stop debe seguir por encima del último; el 3 % del bid lo mira
+        `entrada.orden_cruce` (protocolo normal de cruce de la entrada, con su reintento)."""
+        intento = pos.intento
+        if intento is None:
+            return []
+        nivel = self._nivel_intento(pos)
+        cot = self._cot(pos.ticker)
+        last = cot.last if cot is not None and _es_precio(cot.last) else None
+        if nivel is None or last is None or nivel <= last:
+            return self._cerrar_intento(pos, "decisión 58: tras el primer minuto el nivel de stop ya no está por "
+                                             "encima del último; se queda lo llenado")
+        intento.reintento_cruce = 0
+        return [Anotar("entrada_reapertura_cruce", {"ticker": pos.ticker, "falta": intento.qty_total - intento.llenas,
+                                                    "nivel": nivel, "last": last, "regla": "decisión 58"})] \
+            + self._enviar_cruce(pos)
+
+    # ═══ decisión 59 (Jaume 2-oct): tras reabrir del SEGUNDO halt en RTH, salidas a MERCADO por OPEN ═══
+    def _ruta_open(self) -> str:
+        ruta = (self._cfg.halts or {}).get("ruta_reapertura") if isinstance(self._cfg.halts, dict) else None
+        if isinstance(ruta, str) and ruta.strip():
+            return ruta.strip()
+        return precios.ruta(self._cfg.rutas, "halt", Decimal("1"), self._ahora_et)
+
+    def _aplica_open_k2(self, ticker: str) -> bool:
+        halts_cfg = self._cfg.halts if isinstance(self._cfg.halts, dict) else {}
+        if halts_cfg.get("open_tras_k2", True) is not True or ticker in self._open_rechazada or not self._es_rth():
+            return False
+        simb = self._mercado.simbolo(ticker)
+        k_max = halts_cfg.get("k_max", HALT_K_MAX)
+        k_max = k_max if type(k_max) is int else HALT_K_MAX
+        return (k_max >= 2 and simb.k_halts_up == k_max - 1 and not halts.es_halt(simb)
+                and ticker not in self._halt_en_curso)
+
+    def _open_tras_k2(self, a: EnviarOrden) -> EnviarOrden:
+        """Decisión 59: toda SALIDA nueva (TP, salida del motor, hora, cerca de la banda…) del ticker tras reabrir del
+        segundo halt en RTH sale a MERCADO por la ruta OPEN (sin punto medio); la original se guarda por si DAS rechaza
+        la OPEN con el mercado abierto (`_open_k2_rechazada`)."""
+        o = a.orden
+        if (o.lado is not Lado.COMPRA or o.proposito not in _PROP_SALIDA_OPEN_K2 or o.token in self._open_k2
+                or o.token in self._estado.ordenes or not self._aplica_open_k2(o.ticker)):
+            return a
+        nueva = dataclasses.replace(o, tipo=TipoOrden.MERCADO, precio=None, stop=None, ruta=self._ruta_open(),
+                                    post_only=False, tif="DAY")
+        self._open_k2[o.token] = o
+        return EnviarOrden(nueva, serie=a.serie)
+
+    def _open_k2_rechazada(self, o: Orden, original: OrdenNueva) -> list[Accion]:
+        """Decisión 59 (SALVAGUARDA): DAS rechazó la salida por OPEN con el símbolo NO parado → se reenvía YA por su ruta
+        y su protocolo normales (una vez), aviso nivel 2 y el ticker no vuelve a probar OPEN en el día (diario:
+        `halt_open_rechazada`)."""
+        ticker = o.ticker
+        self._open_rechazada.add(ticker)
+        nueva = dataclasses.replace(original, token=self._tokens.siguiente())
+        acciones: list[Accion] = [Anotar("halt_open_rechazada", {
+            "ticker": ticker, "token": o.token, "token_nuevo": nueva.token, "notas": o.notas,
+            "proposito": original.proposito.value, "ruta": original.ruta, "regla": "decisión 59 (Jaume 2-oct)"})]
+        if self._una_vez_al_dia(f"open_rechazada:{ticker}"):
+            acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                   f"DAS no acepta OPEN con el mercado abierto en {avisos.escapar(ticker)}: se usa la "
+                                   f"ruta normal ({avisos.escapar(original.ruta)}) (decisión 59). DAS: "
+                                   f"«{avisos.escapar(str(o.notas or ''))[:120]}»", clave=f"open_rechazada:{ticker}"))
+        acciones += self._absorber([EnviarOrden(nueva)])
+        acciones += self._seguimiento_de_reintento(o, nueva)
+        if nueva.proposito in _PROP_CIERRE_HALT:
+            acciones += self._plan(ticker)                   # G1B-04: la salida de la banda baja el stop (como siempre)
+        return acciones
+
     def _msg_ldlu(self, m: MsgLDLU) -> list[Accion]:
         """R-F-02: bandas nuevas → el plan recorta los disparos bajo la banda (solo si cambió el limit up)."""
         antes = self._mercado.simbolo(m.ticker).limit_up
@@ -4887,6 +5432,7 @@ class Decisor:
                            tipo=TipoOrden.MERCADO, proposito=Proposito.HALT_BANDA)
         envio = self._absorber([EnviarOrden(orden)])
         reduccion = self._plan(ticker)                       # G1B-04: los stops bajan en qty ANTES de la MKT
+        por_open = orden.token in self._open_k2              # decisión 59: va por OPEN y el stop NO baja
         return ([Anotar("halt_banda", {"ticker": ticker, "k": simb.k_halts_up, "ask": cot.ask,
                                        "limit_up": simb.limit_up, "qty": qty, "regla": "R-F-01"})]
                 + reduccion + envio
@@ -4894,7 +5440,8 @@ class Decisor:
                    Avisar(Nivel.AVISO, Grupo.B, f"{avisos.escapar_html(ticker)}: k={simb.k_halts_up} y el ask {cot.ask} a "
                                                 f"≤ {self._cfg.halts.get('distancia_banda_k2_pct', 4)} % del limit up "
                                                 f"{simb.limit_up}: se sale a mercado ({qty}) antes del siguiente halt; "
-                                                f"los stops bajan a lo que no cubre (G1B-04)",
+                                                + ("por OPEN; el stop sigue entero (decisión 59)" if por_open else
+                                                   "los stops bajan a lo que no cubre (G1B-04)"),
                           clave=f"halt_banda:{ticker}")])
 
     def _es_rth(self) -> bool:
@@ -6122,7 +6669,8 @@ class Decisor:
             T_SALIDA_ESPERA: self._t_salida_espera, T_SLRET_VENTANA: self._t_slret_ventana,
             T_CIERRE_REPONER: self._t_cierre_reponer, T_LOCATE_SENAL: self._t_locate_senal,
             T_AVAIL_ESPERA: self._t_avail_espera, T_REDUCCION_STOP: self._t_reduccion_stop,
-            T_HALT_GUARDADAS: self._t_halt_guardadas,
+            T_HALT_GUARDADAS: self._t_halt_guardadas, T_HALT_SILENCIO: self._t_halt_silencio,
+            T_ENTRADA_REAPERTURA: self._t_entrada_reapertura,
         }
 
     def _ticker_de_temporizador(self, base: str, clave: str, datos: dict) -> Optional[str]:
@@ -6154,6 +6702,8 @@ class Decisor:
         if (pos is None or intento is None or intento.fase is FaseIntento.TERMINADO
                 or pos.ticker in self._intento_pausado or pos.ticker in self._intento_en_reintento):
             return []
+        if pos.ticker in self._entrada_espera_58:
+            return []                       # decisión 58: la entrada espera la reapertura y su primer minuto
         self._soltar_cuadrados(intento)
         if intento.token_agregar is not None or intento.token_cruce is not None:
             return self._cancelar_intento(pos, MOTIVO_VENCER)
@@ -6202,8 +6752,8 @@ class Decisor:
         """F1.8: el cruce no llenó entero en `cruce_espera_s` → cancelar; tras el Canceled, un reintento con el bid nuevo."""
         pos = self._pos_de(clave, datos)
         intento = pos.intento if pos is not None else None
-        if pos is None or intento is None or intento.token_cruce is None:
-            return []
+        if pos is None or intento is None or intento.token_cruce is None or pos.ticker in self._entrada_espera_58:
+            return []                       # decisión 58: con la entrada esperando la reapertura no se toca el cruce
         o = self._estado.ordenes.get(intento.token_cruce)
         if o is None or self._cuadrada(o):
             return []
@@ -6355,6 +6905,17 @@ class Decisor:
             # decisión 54 (E1): el TP se retiró al parar; lo que le faltaba lo reaplica la reapertura (E3), no este cruce
             return [Anotar("tp_cruce_omitido", {"ticker": pos.ticker, "token": o.token,
                                                 "motivo": "salida retirada en el halt (decisión 54)"})]
+        if o.estado in _VIVOS and _qty_viva(o) > 0 and o.token in self._open_k2:
+            # decisión 59: el TP salió a mercado por OPEN tras k2; no se cancela para cruzarlo (queda para el cruce)
+            acciones: list[Accion] = [Anotar("salida_open_viva", {"ticker": pos.ticker, "token": o.token,
+                                                                  "qty_viva": _qty_viva(o), "regla": "decisión 59"})]
+            if o.token not in self._open_k2_avisada:
+                self._open_k2_avisada.add(o.token)
+                acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                       f"{avisos.escapar(pos.ticker)}: la salida a mercado por OPEN (token {o.token}) "
+                                       f"sigue viva sin llenar con el mercado abierto ({_qty_viva(o)} acciones); el "
+                                       f"stop sigue cubriendo (decisión 59)", clave=f"open_viva:{o.token}"))
+            return acciones
         if o.estado in _VIVOS and _qty_viva(o) > 0:
             self._poner_continuacion(o.token, T_TP_CRUCE, {"lote_id": lote.id, "ticker": pos.ticker})
             return self._cancelar_orden(o, "R-D-03 v2: el TP no llenó agregando; se cruza el resto")
@@ -6429,6 +6990,10 @@ class Decisor:
         aviso = salidas.comprobar_limbo_tp(lote, o)
         if aviso is None:
             return []
+        if o.token in self._cierre_reapertura:
+            # decisión 57: la compra de cierre tras reabrir el halt no llenó tras perseguir: debía haberse cerrado
+            aviso = Avisar(Nivel.MAXIMO, aviso.grupo, f"{aviso.texto} · tras reabrir el halt la posición debía "
+                                                      f"cerrarse (decisión 57)", aviso.clave)
         return [aviso] + self._fin_salida_bp(o, "limbo")
 
     def _fin_salida_bp(self, o: Orden, motivo: str) -> list[Accion]:
@@ -6592,7 +7157,8 @@ class Decisor:
         """
         token = datos.get("token")
         o = self._estado.ordenes.get(token) if isinstance(token, int) else None
-        if o is None or o.estado not in _VIVOS or _qty_viva(o) <= 0:
+        if o is None or o.estado not in _VIVOS or _qty_viva(o) <= 0 or o.tipo is TipoOrden.MERCADO:
+            # decisión 59: una salida a MERCADO (por OPEN tras k2) no se persigue: no tiene precio que mover
             self._persecuciones.pop(token, None)
             return []
         guarda = self._puede_gestionar_salida(self._pos(o.ticker))
@@ -6884,6 +7450,11 @@ class Decisor:
         acciones: list[Accion] = []
         retirada_46 = False
         for o in self._vivas(ticker):
+            if o.proposito in _PROP_CIERRE_HALT and _qty_viva(o) > 0 and o.token in self._open_k2:
+                # decisión 59: la salida de la banda por OPEN tras k2 se queda viva (entra en el cruce si vuelve a parar)
+                acciones.append(Anotar("halt_salida_open_se_queda", {"ticker": ticker, "token": o.token,
+                                                                     "regla": "decisión 59 (Jaume 2-oct)"}))
+                continue
             if o.proposito in _PROP_CIERRE_HALT and _qty_viva(o) > 0:
                 retirada_46 = retirada_46 or o.token == token_46
                 acciones.append(Anotar("halt_salida_retirada", {"ticker": ticker, "token": o.token, "llenas": o.llenas,
@@ -7313,6 +7884,8 @@ class Decisor:
         self._salidas_halt.clear()
         self._reanudar_halt.clear()
         self._halt_reabierto_en.clear()
+        self._open_rechazada.clear()                        # decisión 59: «ese día»
+        self._open_k2_avisada.clear()
         estado.senales_principales.clear()                  # Jaume 29-sep: la «primera señal» es por día
         self._espera_locate.clear()
         self._intento_locate_hecho.clear()

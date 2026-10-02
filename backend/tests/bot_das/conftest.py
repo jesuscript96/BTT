@@ -44,6 +44,9 @@ def pytest_configure(config) -> None:
     """Registra el marcador `slow` (R-O-02: el replay de dias grabados) para que
     pytest no lo tome por una errata. Se puede excluir con `-m "not slow"`."""
     config.addinivalue_line("markers", "slow: replay de dias grabados reales (lento; se salta sin grabaciones)")
+    # Decisiones 57 y 59 (Jaume 2-oct): los tests que fijan el comportamiento ANTERIOR de los halts lo piden con marca
+    config.addinivalue_line("markers", "sin_silencio: la fixture cfg lleva halts.silencio = false (decisión 57)")
+    config.addinivalue_line("markers", "sin_open_k2: la fixture cfg lleva halts.open_tras_k2 = false (decisión 59)")
 INICIO_RELOJ = datetime(2026, 9, 25, 9, 30, tzinfo=ET)
 SUBCARPETAS_BOT = ("config", "diario", "estado", "cache", "logs")
 # Ningún test depende del .env real (R-Q-01): fuera credenciales, chat ids y banderas del bot.
@@ -77,10 +80,23 @@ def reloj() -> RelojSimulado:
 
 
 @pytest.fixture
-def cfg():
-    """config_ejemplo.json cargado con `config.cargar` (lote B); se salta si config.py aún no existe."""
+def cfg(request):
+    """config_ejemplo.json cargado con `config.cargar` (lote B); se salta si config.py aún no existe.
+
+    Decisiones 57/59 (Jaume 2-oct): con la marca `sin_silencio` el cuadro lleva `halts.silencio = false` (el halt
+    envía como antes del 2-oct) y con `sin_open_k2`, `halts.open_tras_k2 = false` (salidas por su ruta tras k2).
+    """
     config = pytest.importorskip("app.bot_das.config")
-    return config.cargar(RUTA_CONFIG_EJEMPLO, cuenta_das=CUENTA_DAS_PRUEBA)
+    c = config.cargar(RUTA_CONFIG_EJEMPLO, cuenta_das=CUENTA_DAS_PRUEBA)
+    cambios = {}
+    if request.node.get_closest_marker("sin_silencio") is not None:
+        cambios["silencio"] = False
+    if request.node.get_closest_marker("sin_open_k2") is not None:
+        cambios["open_tras_k2"] = False
+    if cambios:
+        import dataclasses
+        c = dataclasses.replace(c, halts={**c.halts, **cambios})
+    return c
 
 
 @pytest.fixture

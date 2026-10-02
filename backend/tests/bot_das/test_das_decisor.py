@@ -1085,6 +1085,7 @@ def test_f5_hora_agrega_va_al_ask_persigue_tres_veces_y_pasa_a_control_humano(cf
 
 
 # ═══════════════════════════ F6: halt ════════════════════════════════════
+@pytest.mark.sin_silencio
 def test_f6_halt_una_sola_mkt_por_open_aunque_se_repita_el_issuestatus(banco: Banco) -> None:
     """F6 / injerto §8.23: la MKT por OPEN sale una vez un minuto antes del fin; un $IssueStatus repetido no manda otra."""
     b = banco
@@ -1965,6 +1966,7 @@ def _a_halt(b: Banco, ta: str = "P", tat: str = "09:27:00", cot: tuple = ("4.04"
     assert b.pos().estado is EstadoTicker.HALT
 
 
+@pytest.mark.sin_silencio
 def test_g1a_01_g1b_04_halt_escenario_2_reabre_sobre_el_stop_sin_compra_doble(banco: Banco) -> None:
     """G1A-01 / G1B-04 / D2a-09 (decisión del director): la salida del halt por OPEN por Q acciones BAJA antes el stop
     único en Q (aquí se cancela: Q = toda la posición). Reabriendo POR ENCIMA de su disparo (escenario 2) la cuenta
@@ -1987,6 +1989,7 @@ def test_g1a_01_g1b_04_halt_escenario_2_reabre_sobre_el_stop_sin_compra_doble(ba
     assert not [a for a in anotaciones(b.historial, "incidente") if a.datos.get("tipo") == "cuenta_larga"]
 
 
+@pytest.mark.sin_silencio
 def test_g1a_01_salida_del_halt_rechazada_restaura_los_stops_y_avisa(banco: Banco) -> None:
     """G1A-01 (director): si la salida del halt recibe Send_Rej, `plan()` devuelve el stop único a la posición entera y
     se avisa nivel 2."""
@@ -2006,6 +2009,7 @@ def test_g1a_01_salida_del_halt_rechazada_restaura_los_stops_y_avisa(banco: Banc
     assert anotaciones(b.desde(marca), "halt_salida_sin_llenar")[0].datos["regla"] == "G1A-01"
 
 
+@pytest.mark.sin_silencio
 def test_g1a_01_salida_del_halt_sin_llenar_a_los_2_s_se_retira_y_vuelven_los_stops(banco: Banco) -> None:
     """G1A-01 (director): 2 s después de la reapertura, la salida del halt que no ha llenado se RETIRA y, con su
     Canceled, el stop único vuelve por lo que queda corto (aviso 2)."""
@@ -2053,6 +2057,7 @@ def test_g1a_04_halt_con_cisne_negro_no_manda_ordenes_y_avisa_3(banco: Banco) ->
     assert b.pos().neta_fills == -100 and b.pos().estado is EstadoTicker.BS
 
 
+@pytest.mark.sin_silencio
 def test_g1a_04b_halt_T1_T12_en_cisne_negro_sigue_el_protocolo_del_limite_pm(banco: Banco) -> None:
     """D4 (Jaume 28-sep): en premercado solo hay halts T1/T12 (`H`): con el cisne negro activo, el halt NO espera al humano,
     manda su protocolo (límite a parada × 3,5, R-F-05). El «cierra el humano» de G1A-04 queda para la pausa LULD (`P`)."""
@@ -2359,6 +2364,7 @@ def test_g1a_06_la_entrada_retenida_nunca_espera_mas_que_su_caducidad(cfg: Confi
     assert not [o for o in b.enviadas(Proposito.ENTRADA_AGREGAR) if o.lote_id and SID2 in o.lote_id]
 
 
+@pytest.mark.sin_silencio
 def test_g1a_02_g1b_05_halt_con_eod_no_compra_por_hora_y_nunca_queda_larga(cfg: Config, tmp_path: Path) -> None:
     """G1A-02 (a) / G1B-05 (director): el EOD vence DURANTE el halt: hora_agregar y hora_ask se aplazan (guarda HALT) en
     vez de comprar encima de la salida del halt; al reabrir la salida cierra la posición y no queda larga."""
@@ -2474,6 +2480,7 @@ def test_g1b_06_stop_en_una_posicion_que_no_es_del_bot_dice_por_que_no_pone_nada
     assert "no es del bot" in _respuesta(acciones)
 
 
+@pytest.mark.sin_silencio
 def test_decision_48_halt_h_en_rth_bajo_el_stop_sale_a_mercado_por_open_y_el_stop_a_0(banco: Banco) -> None:
     """Decisión 48 (Jaume 30-sep; antes E1-01/E1-09 «límite a parada · 3,5» y «reabre bajo el stop → mantener»): halt
     de noticia (H) en sesión, parado POR DEBAJO del stop (3,61 < 4,00) → MKT por OPEN por toda la posición; el stop se
@@ -2501,6 +2508,7 @@ def test_decision_48_halt_h_en_rth_bajo_el_stop_sale_a_mercado_por_open_y_el_sto
     assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
 
 
+@pytest.mark.sin_silencio
 def test_decision_48_vuelve_a_parar_antes_de_llenar_la_salida_sigue_y_se_repite_en_cada_reapertura(
         banco: Banco) -> None:
     """Decisión 48 (Jaume 30-sep): si vuelve a parar antes de que la MKT por OPEN llene, la salida viva NO se retira a
@@ -2538,6 +2546,7 @@ def test_decision_48_vuelve_a_parar_antes_de_llenar_la_salida_sigue_y_se_repite_
     assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
 
 
+@pytest.mark.sin_silencio
 def test_decision_48_replace_del_stop_rechazado_con_la_salida_del_halt_viva_se_cancela(banco: Banco) -> None:
     """Decisión 48 (Jaume 30-sep): con un TP de 50 vivo la MKT por OPEN es de 50 y el stop tiene que BAJAR a 50 con un
     REPLACE (con toda la posición cubierta el plan lo cancela directamente: nunca un REPLACE a 0). Si DAS rechaza ese
@@ -2565,6 +2574,7 @@ def test_decision_48_replace_del_stop_rechazado_con_la_salida_del_halt_viva_se_c
     assert _sin_compra_doble(b, 100)
 
 
+@pytest.mark.sin_silencio
 def test_decision_48_t1_en_rth_sobre_el_tope_cierra_a_mercado(cfg: Config, tmp_path: Path) -> None:
     """Decisión 48 (Jaume 30-sep; antes E1-02 «test_f6_t1_no_cierra_sin_tope»): en SESIÓN el tope del 250 % ya no se
     aplica a un halt H: la salida es una MKT por OPEN y, aunque reabra a +300 %, llena y la cuenta queda plana; ni
@@ -2942,6 +2952,7 @@ def test_g1a_15_fill_tardio_de_una_entrada_cerrada_va_a_su_lote_no_al_intento_nu
     assert lotes[lote_de(ev_b)].llenas == 0 and b.pos().intento.llenas == 0
 
 
+@pytest.mark.sin_silencio
 def test_g1a_18_g1b_18_veto_r_f_03_se_siembra_y_la_salida_del_halt_cuenta_como_stop(cfg: Config,
                                                                                     tmp_path: Path) -> None:
     """G1A-18 / G1B-18: el veto R-F-03 (stop + halt sin reapertura válida) sale de la memoria del diario tras un
@@ -3282,6 +3293,7 @@ def test_decision_39_el_decisor_ya_no_llama_al_ensanche_pm(cfg: Config, tmp_path
                                                                                                     "excepcion")
 
 
+@pytest.mark.sin_silencio
 def test_r_f_06_halt_de_premercado_que_reabre_en_rth_cambia_la_limite_pm_por_open(cfg: Config, tmp_path: Path) -> None:
     """R-F-06 (Jaume 29-sep): un halt H que empieza en premercado casi siempre reabre en RTH. La límite de PM (que no entra
     en el cruce de reapertura) se RETIRA al llegar RTH y sale la orden por OPEN (decisión 48: MKT, sin tope); los stops
@@ -3401,6 +3413,7 @@ def test_decision_46_reabre_dentro_del_limite_llena_el_stop_como_hoy(cfg: Config
                                                                                      "halt_pm_sobre_limite")
 
 
+@pytest.mark.sin_silencio
 def test_decision_48_halt_de_pm_con_mantener_que_sigue_a_las_0930_sale_a_mercado_por_open(cfg: Config,
                                                                                            tmp_path: Path) -> None:
     """Decisión 48 (Jaume 30-sep; antes «decisión 46 no aplica» y se quedaba en cisne negro): halt H de premercado con
@@ -3623,6 +3636,7 @@ def _enviar_banda(b: Banco) -> OrdenNueva:
     return banda[0]
 
 
+@pytest.mark.sin_open_k2
 def test_r2_dec_1_tp_sin_libres_por_una_halt_banda_viva_se_reprograma_y_cruza_al_retirarla(cfg: Config,
                                                                                            tmp_path: Path) -> None:
     """R2-DEC-1 (G1B-05 parcial, director): el TP sin libro vence con 0 acciones libres (una HALT_BANDA viva cubre toda
@@ -3677,6 +3691,7 @@ def test_r2_dec_1_sin_libres_60_s_avisa_2_y_sigue_mirando_cada_5_s(cfg: Config, 
     assert not b.enviadas(Proposito.TP_CRUCE) and b.pos().neta_fills == -100
 
 
+@pytest.mark.sin_open_k2
 def test_r2_dec_1_salida_del_motor_sin_libres_espera_y_sale_al_retirar_la_banda(cfg: Config, tmp_path: Path) -> None:
     """R2-DEC-1: la salida del motor que llega con 0 libres (la HALT_BANDA viva cubre la posición) no se omite: espera
     (se anota) y, retirada la banda, el TP agrega por lo que pide el evento."""
@@ -3693,6 +3708,7 @@ def test_r2_dec_1_salida_del_motor_sin_libres_espera_y_sale_al_retirar_la_banda(
     assert [o.qty for o in b.enviadas(Proposito.TP_AGREGAR)] == [50]
 
 
+@pytest.mark.sin_silencio
 def test_r2_dec_2_t1_con_last_viejo_y_primer_print_a_300_pct_en_rth_cierra_a_mercado(cfg: Config,
                                                                                      tmp_path: Path) -> None:
     """R2-DEC-2 (E1-02 parcial) tras la decisión 48 (Jaume 30-sep): en SESIÓN el tope del T1 ya no se mira ni al reabrir
@@ -3714,6 +3730,7 @@ def test_r2_dec_2_t1_con_last_viejo_y_primer_print_a_300_pct_en_rth_cierra_a_mer
     assert b.pos().neta_fills == 0 and not b.enviadas(Proposito.VENTA_EXCESO)
 
 
+@pytest.mark.sin_silencio
 def test_r2_dec_2_sin_superar_el_tope_la_verificacion_sigue_como_g1a_01(banco: Banco) -> None:
     """R2-DEC-2: con el primer print por debajo del tope, `halt_cierre_verificar` solo retira la salida que no llenó
     (G1A-01) y el ticker sigue NORMAL."""
