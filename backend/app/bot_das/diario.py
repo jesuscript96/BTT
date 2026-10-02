@@ -178,10 +178,13 @@ TIPO_HALT_OPEN_RECHAZADA = "halt_open_rechazada"   # decisión 59 (Jaume 2-oct):
 TIPO_HALT_SILENCIO_CIERRE = "halt_silencio_cierre"  # decisión 57 (Jaume 2-oct): la compra de cierre tras reabrir
 TIPO_HALT_MEMORIA = "halt_memoria"                  # decisión 63 (Jaume 2-oct): foto del estado del halt por ticker
 TIPO_LOCATES_TOPE_GLOBAL = "locates_tope_global"     # = locates.ANOTACION_TOPE_GLOBAL (decisión 50, Jaume 1-oct)
+TIPO_ORDEN_HIJA = "orden_hija"                       # decisión 64 (DAS real 2-oct): la hija de SMAT es la orden viva
+TIPO_STOP_SIN_EJECUTAR = "stop_sin_ejecutar"         # decisión 65 (Jaume 2-oct): respaldo del stop que no se ejecuta
 _PROPOSITOS_STOP_V3 = ("stop_principal", "stop_emergencia")   # diarios de antes del stop único (Jaume 29-sep)
 _PROPOSITOS_VETO_STOP = frozenset({         # R-F-03 (G1A-18): salidas que activan el veto de reentrada tras un halt
     Proposito.STOP.value, Proposito.STOP_PROTECCION.value, *_PROPOSITOS_STOP_V3,
     Proposito.HALT_OPEN.value, Proposito.HALT_PM_LIMITE.value, Proposito.HALT_BANDA.value,
+    Proposito.STOP_RESPALDO.value,          # decisión 65: el respaldo cierra como el stop que sustituye
 })
 _RUTA_MODO_SEGURIDAD = "modo_seguridad.activo"
 _CAMPOS_OVERRIDE_ESTRATEGIA = ("ejecutar", "al_desactivar")
@@ -938,9 +941,38 @@ def _orden_por_registro(estado: EstadoBot, datos: dict, hoy: date) -> Optional[O
 
 
 def _casar_id(estado: EstadoBot, orden: Orden, id_das: Optional[int]) -> None:
-    if id_das is not None:
-        orden.id_das = id_das
-        estado.id_a_token[id_das] = orden.token
+    """El id de DAS de la orden. Decisión 64 (DAS real 2-oct): una orden nunca vuelve a un id ANTERIOR (la madre de
+    SMAT o una hija vieja: DAS da ids crecientes); el id viejo sigue en `id_a_token` (sus fills cuentan)."""
+    if id_das is None:
+        return
+    estado.id_a_token.setdefault(id_das, orden.token)
+    if orden.id_das is not None and id_das < orden.id_das:
+        return
+    orden.id_das = id_das
+    estado.id_a_token[id_das] = orden.token
+
+
+def _id_anterior(orden: Orden, datos: dict) -> bool:
+    """Decisión 64: el registro habla de un id ANTERIOR de la orden (la madre de SMAT): no cambia su estado."""
+    id_das = _entero(datos.get("id", datos.get("id_das")))
+    return id_das is not None and orden.id_das is not None and id_das < orden.id_das
+
+
+def _aplicar_orden_hija(estado: EstadoBot, registro: Registro, hoy: date) -> None:
+    """`orden_hija` (decisión 64): la hija de SMAT pasa a ser la orden viva del token (id de la madre aparte)."""
+    datos = registro.datos
+    orden = _orden_por_registro(estado, {"token": datos.get("token"), "id": datos.get("id_hija")}, hoy)
+    id_hija = _entero(datos.get("id_hija"))
+    if orden is None or id_hija is None:
+        return
+    id_madre = _entero(datos.get("id_madre"))
+    if id_madre is not None:
+        orden.id_madre = id_madre
+        estado.id_a_token.setdefault(id_madre, orden.token)
+    orden.llenas_antes_hija = _entero_o(datos.get("llenas_antes"), orden.llenas_antes_hija)
+    if orden.id_das is None or id_hija >= orden.id_das:
+        orden.id_das = id_hija
+    estado.id_a_token[id_hija] = orden.token
 
 
 def _aplicar_orden_enviada(estado: EstadoBot, registro: Registro, hoy: date) -> None:
@@ -973,7 +1005,7 @@ def _aplicar_orden_estado(estado: EstadoBot, registro: Registro, hoy: date) -> N
     """`orden_estado` (`%ORDER`): último estado, qty (tras un REPLACE), lvqty/cxlqty, id y tipo crudo (§8, riesgo 1)."""
     datos = registro.datos
     orden = _orden_por_registro(estado, datos, hoy)
-    if orden is None:
+    if orden is None or _id_anterior(orden, datos):
         return
     _casar_id(estado, orden, _entero(datos.get("id", datos.get("id_das"))))
     orden.estado = _enum(EstadoOrden, datos.get("estado"), orden.estado)
@@ -1034,7 +1066,7 @@ def _aplicar_orden_act(estado: EstadoBot, registro: Registro, hoy: date,
     """
     datos = registro.datos
     orden = _orden_por_registro(estado, datos, hoy)
-    if orden is None:
+    if orden is None or _id_anterior(orden, datos):
         return
     _casar_id(estado, orden, _entero(datos.get("id", datos.get("id_das"))))
     accion = str(datos.get("accion", "")).strip()
@@ -1600,6 +1632,8 @@ def reconstruir(registros: Iterable[Registro], hoy: date,
             _aplicar_orden_estado(estado, registro, hoy)
         elif tipo == "orden_act":
             _aplicar_orden_act(estado, registro, hoy, reemplazos, replace_share_es_abierta)
+        elif tipo == TIPO_ORDEN_HIJA:
+            _aplicar_orden_hija(estado, registro, hoy)
         elif tipo == "fill":
             _aplicar_fill(estado, registro, hoy, libro)
         elif tipo == "pos":
@@ -1684,6 +1718,7 @@ class MemoriaDecisor:
     al_desactivar_por_arg: dict[str, str] = dataclasses.field(default_factory=dict)
     open_rechazada: set[str] = dataclasses.field(default_factory=set)
     halt_memoria: dict[str, dict] = dataclasses.field(default_factory=dict)
+    sin_ejecutar: set[str] = dataclasses.field(default_factory=set)   # decisión 65: episodio con el respaldo ya enviado
 
 
 def _args_comando(datos: dict) -> list[str]:
@@ -1784,6 +1819,11 @@ def memoria_decisor(registros: Iterable[Registro], hoy: date) -> MemoriaDecisor:
                 memoria.halt_memoria[ticker] = dict(datos)
             else:
                 memoria.halt_memoria.pop(ticker, None)
+        elif tipo == TIPO_STOP_SIN_EJECUTAR and ticker is not None:
+            if datos.get("fase") == "respaldo":         # decisión 65: una vez por episodio, también tras reiniciar
+                memoria.sin_ejecutar.add(ticker)
+            elif datos.get("fase") == "fin":
+                memoria.sin_ejecutar.discard(ticker)
         elif tipo == "fill" and ticker is not None and datos.get("eco") is not True:
             proposito = _texto_o(datos.get("proposito"), None)
             token = _token_de_hoy(datos.get("token"), hoy)

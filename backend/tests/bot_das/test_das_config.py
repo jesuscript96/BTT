@@ -39,7 +39,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "b9ba9a1ef135799e6e9800aecca91bd492da21860a791f50ba6604a46e8a9022"   # Jaume 2-oct: locates.tope_gasto_dia_usd 400 (decisión 60)
+# Jaume 2-oct: locates.tope_gasto_dia_usd 400 (decisión 60); noche: stops.tipo_esperado_en_order «^SLP» (DAS real «SLP:24»)
+SHA_FIXTURE = "5d121d1052a808e0b6e02912427878fa689cdc9ef31cf8b54553cb8fd2451bb4"
 RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 

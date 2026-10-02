@@ -99,6 +99,17 @@ COTIZACION_FRESCA_MAX_S = 5.0                   # D1-12: edad máx. de la cotiza
 REPLACE_SHARE_ES_ABIERTA = True                 # A-02: defecto de `stops.replace_share_es_abierta` (el canario de comprobar_das lo confirma)
 COLA_AVISOS_TOPE = 10_000
 COLA_SALIDA_TOPE = 1_000
+# Decisión 65 (Jaume 2-oct): stop que no se ejecuta dentro de su banda. Defecto de `stops.sin_ejecutar_s` (null o 0
+# lo apagan): el último lleva estos segundos SEGUIDOS en [disparo, límite) sin que el stop llene nada → respaldo
+STOP_SIN_EJECUTAR_S = 5.0
+# Decisión 65 bis (DAS real 2-oct: el bróker rechaza una compra > último × 1,20 «CF:LastTrade» y el mercado cancela
+# una a +19 % «R081 Price Too Far Outside»): el respaldo PERSIGUE con límite = min(último × (1 + banda), techo),
+# techo = L × (1 + `stops.techo_pct`; si falta, `stops.limite_pct`). Defecto de `stops.banda_pct`:
+STOP_BANDA_PCT = Decimal("19")   # Jaume 2-oct noche: por SAGEPRO una límite a +19 % se acepta y llena (bróker: × 1,20)
+# Decisión 66 (Jaume 2-oct): rutas de PRUEBAS de DAS (visto en real el 2-oct: «%SLRET … TESTSL»). Las de locates del
+# cuadro (`locates.rutas_excluidas`) se ignoran al elegir y comprar; las de órdenes no pueden estar en el cuadro.
+LOCATES_RUTAS_EXCLUIDAS: tuple[str, ...] = ("TESTSL",)
+RUTAS_PRUEBA_DAS = frozenset({"TEST", "TESTC", "TESTSL", "SAGETEST", "SAGETESTP"})
 
 
 # ── enumeraciones ──────────────────────────────────────────────────────
@@ -150,6 +161,7 @@ class Proposito(str, Enum):        # por qué existe una orden nuestra (va al di
     VENTA_EXCESO = "venta_exceso"
     CIERRE_HUMANO = "cierre_humano"
     CIERRE_REINICIO = "cierre_reinicio"            # R-E-03
+    STOP_RESPALDO = "stop_respaldo"                # decisión 65 (Jaume 2-oct): compra límite al techo del stop que no se ejecuta
     DESCONOCIDA = "desconocida"
 
 
@@ -503,6 +515,13 @@ class MsgInformativo(MensajeDAS):  # ECHO, CLIENT, $TopLst, $Lv2 y cualquier `#�
 
 
 @dataclass(frozen=True)
+class MsgErrorOrden(MensajeDAS):   # DAS real (2-oct): «CANCEL Error : order not open» (SIN id de orden; no está en el manual)
+    comando: str                   # "CANCEL" | "REPLACE" (el REPLACE análogo no se ha visto: se reconoce por si acaso)
+    texto: str                     # lo que sigue a «Error :» tal cual («order not open»)
+    no_abierta: bool               # el texto dice «not open»: la orden ya no está abierta (benigno: se refresca GET ORDERS)
+
+
+@dataclass(frozen=True)
 class MsgDesconocido(MensajeDAS):
     palabra: str
 
@@ -633,6 +652,11 @@ class Orden:                       # nuestra vista de una orden (token = clave; 
     version: int = 0
     intentos: int = 0
     primer_intento_en: float = 0.0
+    # Decisión 64 (DAS real 2-oct): por SMAT, DAS crea una orden HIJA con el MISMO token, otro id y `origoid` = la madre;
+    # la madre queda `Triggered` con lvqty 0. Con hija conocida, `id_das` es el de la HIJA (CANCEL/REPLACE van a ella) y
+    # aquí queda el de la madre (sus %ORDER ya no cambian esta orden). UNA `Orden` por token: nunca se cuentan dos.
+    id_madre: Optional[int] = None
+    llenas_antes_hija: int = 0      # decisión 64: lo llenado antes de nacer la hija vigente (su qty es lo que quedaba)
 
 
 @dataclass

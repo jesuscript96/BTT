@@ -83,6 +83,7 @@ from app.bot_das.tipos import (
     MsgIntMsg,
     MsgIssueStatus,
     MsgLDLU,
+    MsgErrorOrden,
     MsgLogin,
     MsgMarcador,
     MsgOrden,
@@ -174,6 +175,11 @@ _CANALES = {c.upper(): c for c in CANALES_SB}
 
 _RE_HORA = re.compile(r"\d{2}:\d{2}:\d{2}")
 _RE_ENTERO = re.compile(r"[+-]?\d+")
+# DAS real (2-oct): «CANCEL Error : order not open» (sin id). El REPLACE análogo no se ha visto: se reconoce igual.
+_COMANDOS_CON_ERROR = frozenset({"CANCEL", "REPLACE"})
+_RE_ERROR_ORDEN = re.compile(r"^\s*(CANCEL|REPLACE)\s+Error\s*:\s*(.*)$", re.IGNORECASE)
+_RE_NO_ABIERTA = re.compile(r"not\s+open", re.IGNORECASE)
+_RE_ACUSE_ORDER = re.compile(r"[A-Za-z]+ing", re.IGNORECASE)   # «#Order Replacing», «#Order Canceling», «#OrderSending»
 _RE_STINFOEX = re.compile(r"(\w+):\s*([\d.]+)%")                # §5.21: tolerante (ConcShr vs ConcShrt)
 # A-03: el LOGIN puede ir pegado a comillas, paréntesis, corchetes o «=» (repr, JSON, f-string con !r,
 # str(bytes), «cmd=LOGIN …»): basta con que delante no haya una letra o un dígito. La clave se tapa
@@ -487,7 +493,18 @@ class Parser:
         manejador = _MANEJADORES.get(clave)
         if manejador is not None:
             return manejador(self, cruda, texto)
+        if clave in _COMANDOS_CON_ERROR:
+            error = _RE_ERROR_ORDEN.match(texto)
+            if error is not None:
+                detalle = error.group(2).strip()
+                return MsgErrorOrden(cruda=cruda, comando=error.group(1).upper(), texto=detalle,
+                                     no_abierta=_RE_NO_ABIERTA.search(detalle) is not None)
         if clave in MARCADORES:
+            # DAS real (2-oct): «#Order Replacing» / «#Order Canceling» son acuses del comando, NO la cabecera del volcado
+            # («#Order id token …»): como marcador abrirían un bloque y vaciarían las órdenes de un barrido en curso
+            segunda = texto.split()[1] if len(texto.split()) > 1 else ""
+            if _RE_ACUSE_ORDER.fullmatch(segunda):
+                return MsgInformativo(cruda=cruda, palabra=palabra)
             return self._marcador(cruda, MARCADORES[clave])
         if clave.startswith("#") or clave in _INFORMATIVOS:
             return MsgInformativo(cruda=cruda, palabra=palabra)

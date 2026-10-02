@@ -456,8 +456,9 @@ def _vistas(foto: Foto, cfg_stops: Mapping, hoy: date) -> list[_Vista]:
     """Por ticker listado en las posiciones: neta de DAS, lotes vivos del diario y órdenes NUESTRAS vivas (+ pendientes)."""
     vivas: dict[str, list[Orden]] = {}
     tokens_das: set[int] = set()
-    for id_das in sorted(foto.ordenes):
-        m = foto.ordenes[id_das]
+    ordenes = reconciliacion.fusionar_madres_hijas(foto.ordenes)   # decisión 64: madre SMAT + hija = UNA orden
+    for id_das in sorted(ordenes):
+        m = ordenes[id_das]
         if reconciliacion.es_ajena(m, hoy):
             continue
         tokens_das.add(m.token)   # type: ignore[arg-type]

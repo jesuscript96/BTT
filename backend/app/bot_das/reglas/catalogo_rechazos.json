@@ -50,6 +50,17 @@
     "ejemplos": ["Symbol halted", "Trading is halted for this security", "LULD pause"]
   },
   {
+    "clave": "precio_demasiado_lejos",
+    "descripcion": "Compra límite demasiado lejos del último: el control de riesgo del bróker la rechaza (tope último × 1,20, «CF:LastTrade») o el mercado la cancela («R081 Price Too Far Outside»). Visto en real el 2-oct con la hija de un stop SMAT disparado (decisiones 64/65).",
+    "regex": "\\bCF\\s*:\\s*LastTrade\\b|price\\s+too\\s+far|too\\s+far\\s+outside|\\bR081\\b",
+    "accion": "ninguna",
+    "nivel": 2,
+    "fuente": "DAS real 2-oct (stops de 1 acción de SOFI por SMAT): «RT:CF:LastTrade 19.188000 20.000000 23.940000 …» (límite +50 %) y «RT:Ven: R081: Price Too Far Outside» (límite +19 %)",
+    "provisional": false,
+    "ejemplos": ["RT:CF:LastTrade 19.188000 20.000000 23.940000 15.970000 15.990000 ref#114796[Route#3066]",
+                 "RT:Ven: R081: Price Too Far Outside"]
+  },
+  {
     "clave": "precio_fuera_de_tick",
     "descripcion": "Precio fuera del incremento mínimo (regla 612: 0,01 $ ≥ 1 $, 0,0001 $ < 1 $).",
     "regex": "sub[\\s-]*penny|tick\\s+(?:size|increment)|invalid\\s+(?:price\\s+)?(?:increment|tick)|price\\s+(?:increment|variation)|minimum\\s+price\\s+variation|\\bMPV\\b|decimal\\s+places|too\\s+many\\s+decimals",

@@ -1409,7 +1409,9 @@ def test_R2_PER_2_DC_06_stop_lleno_en_parte_y_cisne_negro_cerrado_se_reconstruye
                   last=stop["stop"] + Decimal("0.01"), volumen=500_000, tamano_ask=50)
 
     def stop_sim() -> dict:
-        return next(o for o in v.libro.ordenes() if o["token"] == tok_stop)
+        # decisión 64 (DAS real 2-oct): el stop SMAT disparado es la HIJA (mismo token, id mayor); la madre queda
+        # Triggered con lvqty 0
+        return max((o for o in v.libro.ordenes() if o["token"] == tok_stop), key=lambda o: o["id"])
 
     v.paso_hasta(lambda: estado.posiciones[_TICKER_VIVO].neta_fills == -50, "fill parcial del stop")
     v.paso_hasta(lambda: stop_sim()["lvqty"] == 50, "el stop sigue vivo con 50")

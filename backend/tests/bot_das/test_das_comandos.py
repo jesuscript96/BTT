@@ -62,7 +62,8 @@ AUTORIZADOS = frozenset({JAUME, SOCIO})
 
 # ═══════════════════════════ parsear ═══════════════════════════════════
 def test_conjuntos_son_los_de_3_10():
-    assert CONSULTA == {"estado", "posiciones", "ordenes", "locates", "estrategias", "detalle", "salud", "log"}
+    assert CONSULTA == {"estado", "posiciones", "ordenes", "locates", "estrategias", "detalle", "salud", "log",
+                        "ayuda"}                                   # decisión 67 (Jaume 2-oct): /ayuda (alias /help)
     assert CON_SI == {"cerrar_todo", "cerrar", "cancelar_ordenes", "stop"}
     assert len(DOS_PASOS) == 15 and not (DOS_PASOS & CONSULTA) and not (DOS_PASOS & CON_SI)
     assert set(C.USO) == CONSULTA | DOS_PASOS | CON_SI | {"confirmar"}

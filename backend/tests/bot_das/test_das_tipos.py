@@ -290,11 +290,13 @@ def test_origenes_niveles_grupos():
 
 
 def test_propositos_y_clases_de_salida():
-    assert len(Proposito) == 17 and Proposito.DESCONOCIDA.value == "desconocida"
+    assert len(Proposito) == 18 and Proposito.DESCONOCIDA.value == "desconocida"
     assert {p.value for p in Proposito} == {                                  # R-C-01 v4: «stop» sustituye al par
         "entrada_agregar", "entrada_cruce", "stop", "stop_proteccion", "tp_agregar",
         "tp_cruce", "hora_agregar", "hora_ask", "salida_motor_agregar", "salida_motor_cruce", "halt_open",
-        "halt_pm_limite", "halt_banda", "venta_exceso", "cierre_humano", "cierre_reinicio", "desconocida"}
+        "halt_pm_limite", "halt_banda", "venta_exceso", "cierre_humano", "cierre_reinicio",
+        "stop_respaldo",                                                      # decisión 65 (Jaume 2-oct)
+        "desconocida"}
     assert {c.value for c in ClaseSalida} == {"tp", "hora", "eod", "stop", "stop_lote", "reduce", "motor", "halt",
                                               "bs", "daily_limit"}
     assert {e.value for e in EstadoTicker} == {"normal", "pausado", "cisne_negro", "sin_simbolo", "halt",
@@ -334,7 +336,7 @@ def test_mensajes_das_conservan_cruda_y_son_inmutables():
     for clase in MensajeDAS.__subclasses__():
         assert clase.__dataclass_params__.frozen
         assert dataclasses.fields(clase)[0].name == "cruda"
-    assert len(MensajeDAS.__subclasses__()) == 25                 # + MsgLogin (respuesta real al LOGIN, 01-oct)
+    assert len(MensajeDAS.__subclasses__()) == 26                 # + MsgLogin (01-oct) + MsgErrorOrden (DAS real 2-oct)
     act = MsgOrderAct(cruda="%OrderAct 56 Accept SS XYZ 1200 3.45 SAGEREB 09:31:02  100269001", id=56, accion="Accept",
                       lado="SS", ticker="XYZ", qty=1200, precio=D("3.45"), ruta="SAGEREB", hora="09:31:02", notas="",
                       token=100_269_001)
@@ -373,7 +375,8 @@ def test_lote_e_intento_defaults():
                               "pref", "proposito", "lote_id", "nivel", "version"], id="OrdenNueva"),
     pytest.param(Orden, ["token", "ticker", "lado", "tipo", "qty", "precio", "stop", "ruta", "proposito", "lote_id",
                          "nivel", "origen", "id_das", "estado", "lvqty", "llenas", "cxlqty", "tipo_das_crudo",
-                         "enviada_en", "ultima_act", "notas", "version", "intentos", "primer_intento_en"], id="Orden"),
+                         "enviada_en", "ultima_act", "notas", "version", "intentos", "primer_intento_en",
+                         "id_madre", "llenas_antes_hija"], id="Orden"),          # decisión 64 (SMAT madre/hija)
     pytest.param(Fill, ["id_trade", "token", "id_orden", "ticker", "lado", "qty", "precio", "ruta", "hora", "liq",
                         "ecn_fee", "simulado"], id="Fill"),
     pytest.param(Lote, ["id", "strategy_id", "estrategia", "ticker", "direccion", "pedidas", "llenas", "precio_medio",

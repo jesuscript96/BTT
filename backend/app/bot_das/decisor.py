@@ -128,9 +128,12 @@ from app.bot_das.tipos import (
     PERSEGUIR_ASK_MAX,
     RECONCILIACION_CADUCA_S,
     REPLACE_SHARE_ES_ABIERTA,
+    LOCATES_RUTAS_EXCLUIDAS,
     STOP_DEBOUNCE_S,
     STOP_LIMITE_PCT,
     STOP_PROTECCION_PCT,
+    STOP_BANDA_PCT,
+    STOP_SIN_EJECUTAR_S,
     Accion,
     Anotar,
     Avisar,
@@ -171,6 +174,7 @@ from app.bot_das.tipos import (
     MsgBP,
     MsgConexion,
     MsgDesconocido,
+    MsgErrorOrden,
     MsgInformativo,
     MsgIntMsg,
     MsgIssueStatus,
@@ -266,6 +270,9 @@ T_HALT_GUARDADAS = "halt_guardadas"                 # decisión 54 (E3): plazo M
 T_HALT_SILENCIO = "halt_silencio"                   # decisión 57: plazo MÁXIMO para conocer el estado tras reabrir («…:X»)
 T_ENTRADA_REAPERTURA = "entrada_reapertura"         # decisión 58: el primer minuto tras reabrir con la entrada viva («…:X»)
 T_REINICIO_HALT = "reinicio_halt"                   # decisión 63: plazo para resolver los halts rehechos del diario
+T_HIJA_ESPERA = "hija_espera"                       # decisión 64: madre de SMAT disparada sin hija todavía («…:<token>»)
+T_RESPALDO_PERSEGUIR = "respaldo_perseguir"         # decisión 65 bis: la compra de respaldo persigue («…:<token>»)
+TIPO_STOP_SIN_EJECUTAR = "stop_sin_ejecutar"        # decisión 65: = diario.TIPO_STOP_SIN_EJECUTAR (episodio consumido)
 TIPO_HALT_MEMORIA = "halt_memoria"                  # decisión 63: = diario.TIPO_HALT_MEMORIA (un test lo comprueba)
 _GLOBALES = frozenset({T_SIMSTATUS, T_BARRIDO, T_DAS_AVISO, T_DAS_RECONECTAR, T_FOTO, T_REINICIO_HALT})
 
@@ -317,6 +324,10 @@ ENTRADA_REAPERTURA_S = 60.0      # decisión 58 (Jaume 2-oct): el primer minuto 
 HALT_CONTEXTO_REAPERTURA_S = 120.0   # decisión 57: quedar LARGA en los 2 min tras reabrir un halt avisa nivel MÁXIMO
 REINICIO_HALT_ESPERA_S = 15.0    # decisión 63: plazo MÁXIMO tras arrancar para conocer por DAS el estado de un halt rehecho
 REINICIO_REAPERTURA_MAX_S = 120.0   # decisión 63: un reinicio «justo tras reabrir» retoma lo pendiente si reabrió hace ≤ 2 min
+HIJA_ESPERA_S = 2.0              # decisión 64: madre disparada sin hija → GET ORDERS a los 2 s; a la 2.ª vuelta, aviso 2
+ERROR_ORDEN_CONSULTA_S = 1.0     # decisión 64: «CANCEL Error : order not open» → GET ORDERS como mucho 1 vez por segundo
+STOP_CANCELADO_DAS_MAX = 3       # 2-oct (caso d, «RT:Cxl-by-Venue»): 3 cancelaciones de DAS del mismo stop en 60 s →
+STOP_CANCELADO_DAS_VENTANA_S = 60.0   # no se repone más (sin bucle de reenvíos por la misma ruta), aviso 3
 CLAVE_AVISO_TOPE_DIA = locates.CLAVE_AVISO_TOPE   # decisión 50: el aviso ÚNICO del corte de locates del día
 # D1-07: el «alto riesgo» de R-I-01 (tope corto 0,5 × equity) sale de `entrada.alto_riesgo_si` con capital.es_alto_riesgo
 
@@ -353,7 +364,7 @@ _PROP_SALIDA_LOTE = frozenset({Proposito.TP_AGREGAR, Proposito.TP_CRUCE, Proposi
                                Proposito.SALIDA_MOTOR_AGREGAR, Proposito.SALIDA_MOTOR_CRUCE,
                                Proposito.CIERRE_REINICIO})
 _PROP_SALIDA = _PROP_SALIDA_LOTE | frozenset({Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA,
-                                              Proposito.CIERRE_HUMANO})
+                                              Proposito.CIERRE_HUMANO, Proposito.STOP_RESPALDO})
 _PROP_HALT = frozenset({Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE})
 _PROP_CIERRE_HALT = frozenset({Proposito.HALT_OPEN, Proposito.HALT_PM_LIMITE, Proposito.HALT_BANDA})   # G1A-01
 _PROP_AGREGA_SALIDA = frozenset({Proposito.TP_AGREGAR, Proposito.HORA_AGREGAR, Proposito.SALIDA_MOTOR_AGREGAR,
@@ -603,6 +614,22 @@ class Decisor:
         self._reinicio_halt: dict[str, dict] = {}         # ticker → foto del diario aún por resolver tras el reinicio
         self._reinicio_halt_avisado: set[str] = set()
         self._contar_disparados = False
+        # Decisión 64 (DAS real 2-oct): madres de SMAT disparadas que esperan su hija (token), órdenes cuyo plan de stops
+        # espera a la hija (un REPLACE no se manda a una madre) y tickers a replanificar en cuanto llega
+        self._hija_espera: set[int] = set()
+        self._plan_tras_hija: set[int] = set()
+        self._replan_hija: set[str] = set()
+        self._error_orden_consultado_en: Optional[float] = None
+        self._stop_cancelados_das: dict[tuple[str, Proposito, Optional[Decimal]], list[float]] = {}
+        # Decisión 65 (Jaume 2-oct): stop que no se ejecuta dentro de su banda. Por ticker, el episodio en curso
+        # ({desde, llenas, hecho}); `hecho` = ya se mandó el respaldo (una vez por episodio, sobrevive al reinicio)
+        self._sin_ejecutar: dict[str, dict] = {}
+        self._respaldo_confirmado: set[int] = set()
+        # decisión 65 bis: por token de la compra de respaldo, su persecución ({ticker, banda, techo, reintento,
+        # sin_stop, fuera}); y los tokens que se cancelan para mandar otra (REPLACE rechazado). En memoria: tras un
+        # reinicio la compra sigue viva en DAS (cuenta como compra) pero ya no persigue.
+        self._respaldos: dict[int, dict] = {}
+        self._respaldo_reenvio: set[int] = set()
         self._minimo_cargo: dict[str, Decimal] = {}
         self._ficha_fallo_en: dict[str, float] = {}
         self._splits: Optional[tuple[date, set[str]]] = None
@@ -689,6 +716,10 @@ class Decisor:
         for ticker in getattr(memoria, "open_rechazada", None) or ():
             if isinstance(ticker, str) and ticker:
                 self._open_rechazada.add(ticker)     # decisión 59: DAS ya rechazó hoy la OPEN con el mercado abierto
+        for ticker in getattr(memoria, "sin_ejecutar", None) or ():
+            if isinstance(ticker, str) and ticker:
+                # decisión 65: el respaldo de este episodio ya salió: no se repite hasta que el precio baje del disparo
+                self._sin_ejecutar[ticker] = {"desde": None, "llenas": 0, "hecho": True}
         for ticker, k in dict(getattr(memoria, "k_halts_up", None) or {}).items():
             if isinstance(ticker, str) and ticker and type(k) is int and k >= 0:
                 self._mercado.sembrar_k(ticker, k)
@@ -970,6 +1001,12 @@ class Decisor:
                     salida.extend(self._finalizar(bloqueo))
                     continue
                 self._registrar_orden(a.orden)
+            elif isinstance(a, LocateComprar) and str(a.ruta).strip().upper() in self._rutas_locate_excluidas():
+                # decisión 66: nunca un SLNEWORDER por una ruta de pruebas (red final: la oferta ya se ignoró)
+                salida.extend(self._finalizar([
+                    Anotar("locate_ruta_excluida", {"ticker": a.ticker, "qty": a.qty, "ruta": a.ruta, "token": a.token,
+                                                    "regla": "decisión 66 (Jaume 2-oct)"})] + self._revertir_locate(a)))
+                continue
             elif isinstance(a, LocateComprar) and self._diario_roto():
                 salida.extend(self._finalizar([
                     Anotar("locate_bloqueado", {"ticker": a.ticker, "qty": a.qty, "token": a.token,
@@ -1196,12 +1233,23 @@ class Decisor:
         """
         retenida = self._reduccion_stop.get(ticker)
         # decisión 59: la salida de la banda que va por OPEN tras k2 NO baja el stop (puede quedar esperando al cruce)
+        # decisión 65: la compra de respaldo de un stop que no se ejecuta cuenta SOLO cuando DAS la ha aceptado (hasta
+        # entonces el stop sigue puesto entero: la posición no queda ni un instante sin cubrir); la de un stop MUERTO
+        # (64 bis) cuenta desde que sale: no hay stop que mantener y el plan no debe poner otro que moriría igual
         return (sum(_qty_viva(o) for o in self._vivas(ticker)
                     if o.lado is Lado.COMPRA and o.token not in self._open_k2
                     and (o.proposito in _PROP_CIERRE_HALT or o.token in self._salidas_bp or (
                         o.proposito is Proposito.CIERRE_HUMANO and o.token in self._cancel_pedido
-                        and ticker not in self._cierre_humano)))
+                        and ticker not in self._cierre_humano) or (
+                        o.proposito is Proposito.STOP_RESPALDO and (
+                            self._respaldo_aceptado(o) or self._respaldos.get(o.token, {}).get("sin_stop")))))
                 + (int(retenida["qty"]) if retenida is not None else 0))   # decisiones 53/54: la salida RETENIDA
+
+    @staticmethod
+    def _respaldo_aceptado(o: Orden) -> bool:
+        """Decisión 65: DAS ya aceptó la compra de respaldo (Accepted/Partial…, con id) o ya llenó algo."""
+        return o.id_das is not None and (o.estado in stops.ESTADOS_CONFIRMADOS or o.llenas > 0
+                                         or o.estado is EstadoOrden.EXECUTED)
 
     def _compras_cierre_halt(self, ticker: str) -> int:
         """Decisión 48: las compras de cierre de un HALT (vivas o retenidas esperando el stop): con ellas, un REPLACE del
@@ -1318,6 +1366,17 @@ class Decisor:
         lista = []
         al_tener_id: list[Anotar] = []
         for a in acciones:
+            if isinstance(a, (Reemplazar, Cancelar)):
+                # decisión 64: a una madre de SMAT disparada sin hija no se le manda nada (DAS: «order not open»): el
+                # CANCEL sale contra la hija en cuanto llegue y el plan se rehace entonces; a una HIJA, el REPLACE va
+                # como LÍMITE (ya no es un STOPLMTP: «REPLACE id share precio»)
+                diferida = self._a_la_hija(a)
+                if diferida is None:
+                    continue
+                if isinstance(diferida, Anotar):
+                    lista.append(diferida)
+                    continue
+                a = diferida
             if isinstance(a, Reemplazar):
                 # Ensayo 28-sep (DCOY 07:38): un REPLACE idéntico al que ya está en vuelo (misma cantidad, precio y
                 # disparo) no se repite. Sin esta guarda, cada barrido de 1 s reenviaba el mismo REPLACE mientras el
@@ -1350,6 +1409,12 @@ class Decisor:
                     if o.ticker == a.ticker and o.estado in _VIVOS:
                         self._pedir_cancel(o.token, a.motivo)
                         self._cancelar_al_aceptar.pop(o.token, None)
+                        if self._madre_sin_hija(o):
+                            # decisión 64: el CANCEL ALLSYMB no alcanza a la madre disparada (no está abierta) y su
+                            # hija aún no existe: se cancela en cuanto DAS la cree
+                            if o.token not in self._cancelar_al_aceptar:
+                                self._diario_rama.append(("al_aceptar", o.token))
+                            self._cancelar_al_aceptar[o.token] = a.motivo
             elif isinstance(a, Reemplazar):
                 o = self._estado.ordenes.get(a.token)
                 llenas = max(int(o.llenas), 0) if o is not None else 0
@@ -1364,6 +1429,37 @@ class Decisor:
         for a in al_tener_id:                                 # después del CancelarTicker de la misma tanda (no lo borra)
             lista += self._registrar_cancelar_al_tener_id(a)
         return lista
+
+    def _a_la_hija(self, a: Accion) -> Optional[Accion]:
+        """Decisión 64: un CANCEL o un REPLACE sobre la orden de un token con madre/hija de SMAT.
+
+        Madre disparada sin hija todavía → no sale nada (devuelve la anotación): el CANCEL queda para cuando llegue la
+        hija (`_cancelar_al_aceptar`) y el REPLACE se rehace con el plan de stops cuando llegue. Orden con hija →
+        el comando va contra el id de la HIJA y un REPLACE de stop pasa a ser de LÍMITE (sin disparo). Lo demás, igual.
+        """
+        token = a.token if a.token is not None else self._estado.id_a_token.get(a.id_das)
+        o = self._estado.ordenes.get(token) if token is not None else None
+        if o is None:
+            return a
+        if self._madre_sin_hija(o):
+            datos = {"token": o.token, "ticker": o.ticker, "id_madre": o.id_das, "motivo": a.motivo,
+                     "regla": "decisión 64: la madre disparada no está abierta; se espera a la hija"}
+            if isinstance(a, Cancelar):
+                if o.token not in self._cancelar_al_aceptar:
+                    self._diario_rama.append(("al_aceptar", o.token))
+                self._cancelar_al_aceptar[o.token] = a.motivo
+                return Anotar("cancel_esperando_hija", datos)
+            self._plan_tras_hija.add(o.token)
+            return Anotar("replace_esperando_hija", {**datos, "qty": a.qty})
+        if o.id_madre is None or o.id_das is None:
+            return a
+        if isinstance(a, Reemplazar):
+            precio = a.precio if a.precio is not None else o.precio
+            if precio is None:
+                return Anotar("replace_hija_sin_precio", {"token": o.token, "ticker": o.ticker, "qty": a.qty,
+                                                          "regla": "decisión 64: la hija es una límite sin precio"})
+            return dataclasses.replace(a, id_das=o.id_das, stop=None, precio=precio)
+        return dataclasses.replace(a, id_das=o.id_das) if a.id_das != o.id_das else a
 
     def _registrar_cancelar_al_tener_id(self, a: Anotar) -> list[Accion]:
         """R2-DEC-4 (R2-STOPS-1): `stops` pide cancelar una venta que aún no tiene id → al llegar su Accept (con id).
@@ -1442,14 +1538,35 @@ class Decisor:
         if o.proposito in _PROP_STOP and o.estado in stops.ESTADOS_CONFIRMADOS:
             # R-C-03: un stop aceptado cierra la cuenta de SU nivel (el stop sano de otro nivel no la borra)
             self._stop_intentos.pop(_clave_stop(o.ticker, o.proposito, o.nivel), None)
-        if o.estado in _VIVOS and o.id_das is not None and o.token in self._cancelar_al_aceptar:
+        if (o.estado in _VIVOS and o.id_das is not None and o.token in self._cancelar_al_aceptar
+                and not self._madre_sin_hija(o)):
             motivo = self._cancelar_al_aceptar.pop(o.token)
             acciones += self._absorber([Cancelar(id_das=o.id_das, token=o.token, motivo=motivo)])
+        if (o.proposito is Proposito.STOP_RESPALDO and o.token not in self._respaldo_confirmado
+                and self._respaldo_aceptado(o)):
+            # decisión 65 (Jaume 2-oct): DAS ACEPTÓ la compra de respaldo → ahora sí se cancela el stop que no se
+            # ejecuta (o su hija): el plan lo dimensiona descontando la compra aceptada (`_compras_cierre`)
+            self._respaldo_confirmado.add(o.token)
+            acciones += [Anotar("stop_respaldo_aceptado", {"ticker": o.ticker, "token": o.token, "id": o.id_das,
+                                                           "estado": o.estado.value, "llenas": o.llenas,
+                                                           "regla": "decisión 65 (Jaume 2-oct)"})]
+            acciones += self._plan(o.ticker)
         if paso_a_terminal:
             self._reemplazo_pedido.pop(o.token, None)
             if (o.estado is EstadoOrden.CANCELED and o.proposito in _PROP_STOP
                     and o.token not in self._cancel_pedido):
-                acciones += self._stop_cancelado_sin_pedir(o)
+                if o.id_madre is not None:
+                    # decisión 64 bis (DAS real 2-oct): la HIJA de un stop disparado la canceló el mercado («R081
+                    # Price Too Far Outside»): stop MUERTO → respaldo al instante (reponer el stop moriría igual)
+                    acciones += self._stop_muerto(o, o.notas or "hija cancelada por DAS/el mercado")
+                else:
+                    acciones += self._stop_cancelado_sin_pedir(o)
+            elif (o.estado is EstadoOrden.REJECTED and o.proposito in _PROP_STOP and o.id_madre is not None
+                  and o.token not in self._rechazos_tratados):
+                # decisión 64 bis: la HIJA la rechazó el bróker («CF:LastTrade»: tope último × 1,20): stop MUERTO; el
+                # Send_Rej (con el texto) llega después y ya no reintenta el stop (R-C-03 no aplica a una hija)
+                self._rechazos_tratados.add(o.token)
+                acciones += self._stop_muerto(o, o.notas or "hija rechazada por el bróker")
             pos = self._estado.posiciones.get(o.ticker)
             intento = pos.intento if pos is not None else None
             if (intento is not None and o.token in (intento.token_agregar, intento.token_cruce)
@@ -1465,6 +1582,33 @@ class Decisor:
         acciones: list[Accion] = []
         ticker = o.ticker
         pos = self._estado.posiciones.get(ticker)
+        if o.proposito is Proposito.STOP_RESPALDO:
+            self._respaldo_confirmado.discard(o.token)
+            # un Rejected lo resuelve `_rechazo` con el texto del Send_Rej (que en real llega DESPUÉS del %ORDER)
+            r = self._respaldos.get(o.token) if o.estado is EstadoOrden.REJECTED else self._respaldos.pop(o.token, None)
+            sin_pedir = o.estado is EstadoOrden.CANCELED and o.token not in self._cancel_pedido
+            if o.token in self._respaldo_reenvio:
+                # decisión 65 bis: DAS no dejó subir el límite (ReplaceRej): cancelada, sale otra al precio de ahora
+                self._respaldo_reenvio.discard(o.token)
+                if o.estado is not EstadoOrden.EXECUTED:
+                    return acciones + self._respaldo_otra_vez(o, r, "REPLACE rechazado: cancelar y enviar", False)
+            elif (sin_pedir and o.llenas < o.qty and r is not None and not r["reintento"]
+                  and (not str(o.notas).strip() or self._precio_lejos(o.notas))):
+                # decisión 65 bis: el mercado la canceló (en real «R081 Price Too Far Outside»; el motivo llega en el
+                # %OrderAct DESPUÉS del %ORDER): una vez, con la mitad de banda
+                return acciones + self._respaldo_otra_vez(o, r, f"cancelada por DAS «{o.notas}»", True)
+            if o.estado is not EstadoOrden.REJECTED and o.llenas < o.qty and pos is not None and pos.neta < 0:
+                # decisión 65: la compra de respaldo terminó con resto sin llenar → el stop vuelve (se repone o se
+                # nivela el que quede) por lo que siga corto
+                acciones += [Anotar("stop_respaldo_resto", {"ticker": ticker, "token": o.token, "estado": o.estado.value,
+                                                            "llenas": o.llenas, "qty": o.qty, "neta": pos.neta,
+                                                            "regla": "decisión 65 (Jaume 2-oct)"}),
+                             Avisar(Nivel.AVISO, Grupo.B,
+                                    f"{avisos.escapar(ticker)}: la compra de respaldo del stop terminó "
+                                    f"{avisos.escapar(o.estado.value)} con {o.llenas} de {o.qty}: se repone el stop "
+                                    f"por las {abs(pos.neta)} que siguen cortas (decisión 65)",
+                                    clave=f"stop_respaldo_resto:{ticker}:{o.token}")]
+                acciones += self._plan(ticker)
         if o.token in self._salidas_bp:
             # decisión 53 (Jaume 1-oct): terminó la salida que liberó BP: el stop vuelve a nivelarse con lo que quede
             self._salidas_bp.discard(o.token)
@@ -1603,23 +1747,38 @@ class Decisor:
         """
         pos = self._pos(o.ticker)
         en_halt = pos.estado is EstadoTicker.HALT or o.ticker in self._halt_en_curso
+        # 2-oct (caso d, «RT:Cxl-by-Venue»): DAS/el mercado puede cancelar la orden en el mismo segundo una y otra vez
+        # (EDGA antes de las 07:00). Sin tope, reponerla al momento sería un bucle de reenvíos por la misma ruta.
+        clave = _clave_stop(o.ticker, o.proposito, o.nivel)
+        veces = [t for t in self._stop_cancelados_das.get(clave, []) if self._ahora - t <= STOP_CANCELADO_DAS_VENTANA_S]
+        veces.append(self._ahora)
+        self._stop_cancelados_das[clave] = veces
+        repetido = len(veces) >= STOP_CANCELADO_DAS_MAX
         if pos.estado is EstadoTicker.BS:
             que = "en cisne negro NO se repone (R-G-03)"
         elif en_halt:
             que = "el símbolo está en HALT: se repone al reabrir (R-C-04)"
+        elif repetido:
+            que = (f"es la {len(veces)}.ª vez en {STOP_CANCELADO_DAS_VENTANA_S:g} s: NO se repone más (sin bucle de "
+                   f"reenvíos); PONER EL STOP A MANO")
         else:
             que = "se repone al momento (R-C-04)"
+        motivo_das = f" («{avisos.escapar(o.notas)}»)" if str(o.notas).strip() else ""
         acciones: list[Accion] = [
             Anotar("stop_cancelado_por_das", {"ticker": o.ticker, "token": o.token, "id_das": o.id_das,
-                                              "proposito": o.proposito.value, "halt": en_halt, "regla": "R-C-04"}),
-            Avisar(Nivel.AVISO, Grupo.B,
+                                              "proposito": o.proposito.value, "halt": en_halt, "notas": o.notas,
+                                              "veces": len(veces), "regla": "R-C-04"}),
+            Avisar(Nivel.MAXIMO if repetido else Nivel.AVISO, Grupo.B,
                    f"DAS canceló el stop {avisos.escapar(o.proposito.value)} de {avisos.escapar(o.ticker)} "
-                   f"(token {o.token}) sin que el bot lo pidiera; {que}",
+                   f"(token {o.token}){motivo_das} sin que el bot lo pidiera; {que}",
                    clave=f"stop_cancelado:{o.ticker}:{o.token}")]
         if pos.estado is EstadoTicker.BS:
             return acciones
         if en_halt:
             self._stops_diferidos_halt.add(o.ticker)
+            return acciones
+        if repetido:
+            self._stop_bloqueo[clave] = math.inf
             return acciones
         return acciones + self._plan(o.ticker)
 
@@ -2950,6 +3109,14 @@ class Decisor:
     def _de_das(self, m: MensajeDAS, simulado: bool) -> list[Accion]:
         ticker = self._ticker_de_msg(m)
         acciones = self._proteger(ticker, type(m).__name__, lambda: self._aplicar_das(m, simulado))
+        for t in sorted(self._replan_hija):
+            # decisión 64: el plan de stops que esperaba a la hija de SMAT (un REPLACE no se manda a la madre)
+            self._replan_hija.discard(t)
+            acciones += self._proteger(t, "plan_tras_hija", lambda t=t: self._plan(t))
+        if (ticker is not None and isinstance(m, (MsgOrden, MsgOrderAct))
+                and (pos_m := self._estado.posiciones.get(ticker)) is not None and pos_m.neta < 0):
+            # decisión 65 (c): en cuanto DAS dispara el stop (nace la hija) con el precio ya sobre su límite
+            acciones += self._proteger(ticker, "stop_sin_ejecutar", lambda: self._vigilar_sin_ejecutar(ticker))
         if ticker is not None and ticker in self._reduccion_stop:
             # decisiones 53/54: la salida retenida sale en cuanto DAS confirma la bajada del stop (sin esperas añadidas)
             acciones += self._proteger(ticker, "reduccion_stop", lambda: self._revisar_reduccion(ticker) or [])
@@ -3026,12 +3193,37 @@ class Decisor:
             return [Anotar("intmsg", {"campos": dict(m.campos)}),
                     Avisar(Nivel.AVISO, Grupo.B, f"Mensaje interno de DAS: {avisos.escapar_html(texto)}",
                            clave=f"intmsg:{hash(texto) & 0xFFFF}")] + self._cuota_inquire_das(texto)
+        if isinstance(m, MsgErrorOrden):
+            return self._msg_error_orden(m)
         if isinstance(m, MsgDesconocido):
             return ([Anotar("das_desconocido", {"palabra": m.palabra, "cruda": m.cruda[:200]})]
                     + self._cuota_inquire_das(m.cruda))
         if isinstance(m, MsgInformativo):
             return self._cuota_inquire_das(m.cruda)
         return []
+
+    def _msg_error_orden(self, m: MsgErrorOrden) -> list[Accion]:
+        """Decisión 64 (DAS real 2-oct): «CANCEL Error : order not open» (o un «REPLACE Error : …» análogo, no visto).
+
+        DAS no dice de qué orden es: la orden ya no está abierta (llenó, se canceló, o es la madre Triggered de SMAT).
+        Es BENIGNO: se anota y se refresca el estado con `GET ORDERS` (como mucho una vez por segundo); el CANCEL o el
+        REPLACE en vuelo NO se repiten (siguen apuntados como pedidos: ningún bucle de reintentos). Otro texto de error
+        se avisa nivel 2 (sin repetir en 60 s) y también se refresca.
+        """
+        pendientes = sorted(t for t in (self._cancel_pedido if m.comando == "CANCEL" else self._reemplazo_pedido)
+                            if (o := self._estado.ordenes.get(t)) is not None and o.estado in _VIVOS)
+        acciones: list[Accion] = [Anotar("das_error_orden", {"comando": m.comando, "texto": m.texto,
+                                                             "no_abierta": m.no_abierta, "en_vuelo": pendientes,
+                                                             "cruda": m.cruda[:200], "regla": "decisión 64"})]
+        if not m.no_abierta:
+            acciones.append(Avisar(Nivel.AVISO, Grupo.B, f"DAS contestó «{avisos.escapar_html(m.cruda[:200])}» a un "
+                                                         f"{m.comando}: se consulta GET ORDERS",
+                                   clave=f"das_error_orden:{m.comando}:{hash(m.texto) & 0xFFFF}"))
+        ultima = self._error_orden_consultado_en
+        if ultima is None or self._ahora - ultima >= ERROR_ORDEN_CONSULTA_S:
+            self._error_orden_consultado_en = self._ahora
+            acciones.append(Consultar(rechazos.COMANDO_ORDENES))
+        return acciones
 
     def _cuota_inquire_das(self, texto: Any, ticker: Optional[str] = None) -> list[Accion]:
         """Decisión 21 (Jaume 30-sep): la cuota de SLPRICEINQUIRE se lleva POR TICKER; si DAS la rechaza por su
@@ -3062,21 +3254,96 @@ class Decisor:
             o.id_das = id_das
             self._estado.id_a_token[id_das] = o.token
 
+    # ── decisión 64 (DAS real 2-oct): órdenes madre/hija de SMAT ──
+    def _madre_sin_hija(self, o: Orden) -> bool:
+        """La orden está DISPARADA en DAS sin acciones vivas propias (Triggered, lvqty 0: la madre de SMAT) y su hija aún
+        no ha llegado: cuenta UNA vez como viva (qty − llenas), pero no se le manda CANCEL ni REPLACE (DAS contesta
+        «order not open»): se espera el %ORDER de la hija."""
+        return (o.estado is EstadoOrden.TRIGGERED and o.lvqty <= 0 and o.id_madre is None and o.id_das is not None
+                and o.llenas < o.qty)
+
+    def _id_anterior(self, o: Orden, id_das: Optional[int]) -> bool:
+        """`id_das` es un id ANTERIOR de esta orden (la madre de SMAT o una hija vieja): DAS da ids crecientes y una
+        orden nunca vuelve a uno anterior. Sus mensajes no cambian el estado de la orden (salvo los fills)."""
+        return id_das is not None and o.id_das is not None and id_das < o.id_das
+
+    def _es_hija_nueva(self, o: Orden, id_das: Optional[int], origoid: Optional[int]) -> bool:
+        """`id_das` es una HIJA nueva de `o` (mismo token, id mayor). Por `%ORDER`, con `origoid` = el id vigente o el
+        de la madre; un `%ORDER` de id mayor con `origoid` 0 no es una hija (lo de siempre: se casa el id). Por
+        `%OrderAct` (`origoid` None, sin ese campo) basta el id mayor del mismo token: DAS no reutiliza tokens."""
+        if id_das is None or o.id_das is None or id_das <= o.id_das:
+            return False
+        if origoid is None:
+            return True
+        return origoid != 0 and origoid in (o.id_das, o.id_madre)
+
+    def _adoptar_hija(self, o: Orden, id_hija: int, cruda: str) -> list[Accion]:
+        """Decisión 64: la hija pasa a ser LA orden viva del token (CANCEL/REPLACE contra su id; sus fills cuentan para
+        el mismo token y lote). Una cancelación o un replanificado que esperaban a la hija salen en cuanto se conozca su
+        estado (`_tras_cambio_orden`)."""
+        anterior = o.id_das
+        if o.id_madre is None:
+            o.id_madre = anterior
+        o.id_das = id_hija
+        o.llenas_antes_hija = max(int(o.llenas), 0)    # la qty de la hija es lo que quedaba vivo al nacer
+        self._estado.id_a_token[id_hija] = o.token
+        self._hija_espera.discard(o.token)
+        acciones: list[Accion] = [
+            Desprogramar(f"{T_HIJA_ESPERA}:{o.token}"),
+            Anotar("orden_hija", {"token": o.token, "ticker": o.ticker, "id_madre": o.id_madre, "id_hija": id_hija,
+                                  "id_anterior": anterior, "llenas_antes": o.llenas_antes_hija,
+                                  "proposito": o.proposito.value, "cruda": cruda,
+                                  "regla": "decisión 64 (DAS real 2-oct): la hija de SMAT es la orden viva"})]
+        if o.token in self._plan_tras_hija:
+            self._plan_tras_hija.discard(o.token)
+            self._replan_hija.add(o.ticker)
+        return acciones
+
+    def _revivir_por_hija(self, o: Orden, m: MsgOrden) -> list[Accion]:
+        """Decisión 64 (lo no visto en real, lo conservador): DAS reenruta una hija que el mercado canceló y crea OTRA
+        con la orden ya dada por terminada → la orden vuelve a estar viva (puede comprar). Si el bot había pedido
+        cancelarla, se cancela también la nueva; si no, el plan nivela lo que sobre."""
+        antes = o.estado
+        o.estado = m.estado
+        o.cxlqty = max(int(m.cxlqty), 0)
+        acciones: list[Accion] = [
+            Anotar("orden_revivida", {"token": o.token, "ticker": o.ticker, "id": m.id, "antes": antes.value,
+                                      "estado": m.estado.value, "regla": "decisión 64"}),
+            Avisar(Nivel.AVISO, Grupo.B, f"{avisos.escapar(o.ticker)}: DAS creó otra hija ({m.id}) de la orden {o.token} "
+                                         f"({avisos.escapar(o.proposito.value)}) que ya estaba {antes.value}: vuelve a "
+                                         f"estar viva (decisión 64)", clave=f"orden_revivida:{o.token}:{m.id}")]
+        if o.token in self._cancel_pedido:
+            self._cancel_pedido.pop(o.token, None)
+            acciones += self._cancelar_orden(o, "decisión 64: la orden ya se había mandado cancelar")
+        return acciones
+
     def _msg_orderact(self, m: MsgOrderAct, simulado: bool) -> list[Accion]:
-        """F1.5 / F1.6 / F8 / injerto §8.7: cada acción de `%OrderAct` sobre NUESTRA orden."""
+        """F1.5 / F1.6 / F8 / injerto §8.7: cada acción de `%OrderAct` sobre NUESTRA orden.
+
+        Decisión 64: un acuse con un id ANTERIOR del token (la madre de SMAT) solo se anota (un Execute sí cuenta);
+        uno con un id MAYOR del mismo token es la HIJA de SMAT y pasa a ser la orden viva.
+        """
         o = self._orden_de(m.token, m.id)
         if o is None:
             o = self._adoptar_de_act(m)
             if o is None:
                 return []
-        self._casar_id(o, m.id)
-        o.ultima_act = self._ahora
         accion = str(m.accion).strip()
+        previas: list[Accion] = []
+        if self._id_anterior(o, m.id) and accion != "Execute":
+            return [Anotar("orden_act_anterior", {"token": o.token, "id": m.id, "id_vigente": o.id_das,
+                                                  "accion": accion, "notas": m.notas, "ticker": o.ticker,
+                                                  "cruda": m.cruda, "regla": "decisión 64"})]
+        if self._es_hija_nueva(o, m.id, None):
+            previas = self._adoptar_hija(o, m.id, m.cruda)
+        elif not self._id_anterior(o, m.id):
+            self._casar_id(o, m.id)
+        o.ultima_act = self._ahora
         datos = {"token": o.token, "id": m.id, "accion": accion, "qty": m.qty, "precio": m.precio, "notas": m.notas,
                  "ticker": o.ticker, "cruda": m.cruda}
         if accion == "Execute":
-            return [Anotar("orden_act", datos)] + self._execute(o, m, simulado)
-        acciones: list[Accion] = [Anotar("orden_act", datos)]
+            return previas + [Anotar("orden_act", datos)] + self._execute(o, m, simulado)
+        acciones: list[Accion] = previas + [Anotar("orden_act", datos)]
         if accion == "Accept":
             paso = False
             if o.estado is EstadoOrden.SENDING:
@@ -3087,15 +3354,37 @@ class Decisor:
             acciones += self._tras_cambio_orden(o, paso)
         elif accion == "Canceled":
             o.cxlqty = max(o.cxlqty, stops.cantidad_cancelada(m))
+            if str(m.notas).strip():
+                o.notas = str(m.notas).strip()        # DAS real (2-oct): «RT:Cxl-by-client» / «RT:Cxl-by-Venue»
             acciones += self._tras_cambio_orden(o, self._transicion(o, EstadoOrden.CANCELED))
         elif accion == "Send_Rej":
             o.notas = m.notas
-            self._transicion(o, EstadoOrden.REJECTED)
-            if o.token not in self._rechazos_tratados:
+            paso_rej = self._transicion(o, EstadoOrden.REJECTED)
+            if o.proposito in _PROP_STOP and o.id_madre is not None:
+                # decisión 64 bis: Send_Rej de la HIJA de un stop disparado → stop muerto (una vez), nunca R-C-03
+                if o.token not in self._rechazos_tratados:
+                    self._rechazos_tratados.add(o.token)
+                    acciones += self._stop_muerto(o, m.notas or "hija rechazada")
+                    if paso_rej:
+                        acciones += self._revisar_cuadre(o) + self._tras_terminal(o)
+                else:
+                    acciones.append(Anotar("stop_muerto_motivo", {"ticker": o.ticker, "token": o.token,
+                                                                  "notas": m.notas, "regla": "decisión 64 bis"}))
+            elif o.token not in self._rechazos_tratados:
                 self._rechazos_tratados.add(o.token)
                 acciones += self._rechazo(o)
                 acciones += self._revisar_cuadre(o)
                 acciones += self._tras_terminal(o)
+        elif (accion == "ReplaceRej" and o.proposito is Proposito.STOP_RESPALDO and o.estado in _VIVOS
+              and o.token in self._respaldos):
+            # decisión 65 bis: DAS no deja subir el límite del respaldo → cancelar y, con el Canceled, enviar otro
+            o.notas = m.notas
+            self._reemplazo_pedido.pop(o.token, None)
+            self._respaldo_reenvio.add(o.token)
+            acciones += [Anotar("stop_respaldo_replace_rej", {"ticker": o.ticker, "token": o.token, "notas": m.notas,
+                                                              "regla": "decisión 65 bis"})]
+            acciones += self._cancelar_orden(o, "decisión 65 bis: REPLACE del respaldo rechazado; se cancela y se "
+                                                "envía otro")
         elif accion in ("CancelRej", "ReplaceRej"):
             o.notas = m.notas
             if accion == "ReplaceRej":
@@ -3310,9 +3599,9 @@ class Decisor:
         ]
         if o.proposito in _PROP_ENTRADA:
             acciones += self._fill_entrada(pos, o, fill)
-        elif o.proposito in _PROP_STOP or (o.proposito is Proposito.DESCONOCIDA and o.lado is Lado.COMPRA
-                                           and o.tipo is TipoOrden.STOP_LIMITE_PP):
-            acciones += self._fill_stop(pos, o, fill)
+        elif o.proposito in _PROP_STOP or o.proposito is Proposito.STOP_RESPALDO or (
+                o.proposito is Proposito.DESCONOCIDA and o.lado is Lado.COMPRA and o.tipo is TipoOrden.STOP_LIMITE_PP):
+            acciones += self._fill_stop(pos, o, fill)       # decisión 65: el respaldo cierra como el stop que sustituye
         elif o.proposito is Proposito.VENTA_EXCESO:
             acciones += self._fill_exceso(pos, o, fill)
         else:
@@ -3427,7 +3716,7 @@ class Decisor:
                 compras_cierre=self._compras_cierre(ticker), pedidos_en_vuelo=self._pedidos_en_vuelo(ticker)))))
         if pos.neta == 0:
             acciones += self._posicion_cerrada(pos, dentro_del_margen=(
-                de_nivel and (o.precio is None or fill.precio <= o.precio)))
+                (de_nivel or o.proposito is Proposito.STOP_RESPALDO) and (o.precio is None or fill.precio <= o.precio)))
         elif pos.neta < 0:
             acciones += self._capar_salidas(pos)
             acciones += self._intento_con_lote_cerrado(pos, cerrados)
@@ -3572,6 +3861,8 @@ class Decisor:
             del self._stop_bloqueo[clave]
         for clave in [k for k in self._stop_intentos if k[0] == ticker]:
             del self._stop_intentos[clave]
+        for clave in [k for k in self._stop_cancelados_das if k[0] == ticker]:
+            del self._stop_cancelados_das[clave]
 
     def _capar_salidas(self, pos: PosicionTicker) -> list[Accion]:
         """R-C-07 / riesgo 6: las compras de salida vivas nunca suman más que lo que sigue corto (se cancelan las más nuevas)."""
@@ -3604,23 +3895,41 @@ class Decisor:
                 return []
             estado.ordenes[adoptada.token] = adoptada
             estado.id_a_token[m.id] = adoptada.token
+            if adoptada.id_madre is not None:
+                estado.id_a_token.setdefault(adoptada.id_madre, adoptada.token)   # decisión 64
             return [Anotar("orden_adoptada", {"token": adoptada.token, "id": m.id, "ticker": adoptada.ticker,
                                               "estado": m.estado.value, "tipo_das_crudo": m.tipo,
                                               "origen": adoptada.origen.value, "regla": "F13 / R-C-07"})]
+        if self._id_anterior(o, m.id):
+            # decisión 64: la madre de SMAT (Triggered, lvqty 0) o una hija vieja: no cambian la orden viva del token
+            return [Anotar("orden_madre", {"token": o.token, "id": m.id, "id_vigente": o.id_das, "ticker": o.ticker,
+                                           "estado": m.estado.value, "lvqty": m.lvqty, "cruda": m.cruda,
+                                           "regla": "decisión 64"})]
+        acciones: list[Accion] = []
+        if self._es_hija_nueva(o, m.id, m.origoid):
+            acciones += self._adoptar_hija(o, m.id, m.cruda)
+            if o.estado in _TERMINALES and m.estado in _VIVOS:
+                acciones += self._revivir_por_hija(o, m)
         antes = (o.id_das, o.estado, o.qty, o.lvqty, o.cxlqty, o.tipo_das_crudo)
         self._casar_id(o, m.id)
         paso = self._transicion(o, m.estado)
         if m.qty > 0 and o.estado not in _TERMINALES:
-            o.qty = max(m.qty, o.llenas)
+            o.qty = max(m.qty + o.llenas_antes_hija, o.llenas)    # decisión 64: + lo llenado antes de la hija
         o.lvqty = max(int(m.lvqty), 0)
         o.cxlqty = max(o.cxlqty, int(m.cxlqty))
         o.tipo_das_crudo = m.tipo
         o.ultima_act = self._ahora
-        acciones: list[Accion] = []
         if (o.id_das, o.estado, o.qty, o.lvqty, o.cxlqty, o.tipo_das_crudo) != antes:
             acciones.append(Anotar("orden_estado", {"token": o.token, "id": m.id, "ticker": o.ticker,
                                                     "estado": o.estado.value, "qty": o.qty, "lvqty": o.lvqty,
                                                     "cxlqty": o.cxlqty, "tipo_das_crudo": m.tipo, "cruda": m.cruda}))
+        if self._madre_sin_hija(o) and o.token not in self._hija_espera:
+            # decisión 64: disparada sin acciones vivas propias y sin hija todavía: se espera su %ORDER un instante
+            self._hija_espera.add(o.token)
+            acciones += [Anotar("orden_disparada_sin_hija", {"token": o.token, "id": o.id_das, "ticker": o.ticker,
+                                                             "proposito": o.proposito.value, "regla": "decisión 64"}),
+                         Programar(f"{T_HIJA_ESPERA}:{o.token}", HIJA_ESPERA_S,
+                                   {"token": o.token, "ticker": o.ticker, "n": 0})]
         acciones += self._tras_cambio_orden(o, paso)
         return acciones
 
@@ -3651,6 +3960,24 @@ class Decisor:
         """F8 (R-B-07, R-C-03, EP-1): `rechazos.decidir` y su aplicación: pausa, token nuevo, entrada re-precio al libro."""
         pos = self._pos(o.ticker)
         ticker = o.ticker
+        if o.proposito is Proposito.STOP_RESPALDO:
+            r = self._respaldos.pop(o.token, None)
+            if r is not None and not r["reintento"] and self._precio_lejos(o.notas):
+                # decisión 65 bis: «precio demasiado lejos» (en real «CF:LastTrade», tope último × 1,20) → una vez con
+                # la mitad de banda
+                return self._respaldo_otra_vez(o, r, f"rechazada «{o.notas}»", True)
+            sin_stop = r is not None and r["sin_stop"]
+            # decisión 65: DAS rechazó la compra de respaldo → el stop se queda como estaba (nunca se tocó: solo se
+            # cancela cuando DAS acepta la compra), sin más reintentos, y aviso
+            return [Anotar("stop_respaldo_rechazado", {"ticker": ticker, "token": o.token, "notas": o.notas,
+                                                       "sin_stop": sin_stop, "regla": "decisión 65 (Jaume 2-oct)"}),
+                    Avisar(Nivel.MAXIMO, Grupo.B,
+                           f"{avisos.escapar(ticker)}: DAS RECHAZÓ la compra de respaldo del stop "
+                           f"(«{avisos.escapar(o.notas)}»): "
+                           + ("la posición NO tiene stop vivo (estaba muerto): PONER A MANO" if sin_stop
+                              else "el stop se queda como estaba")
+                           + f". Posición {pos.neta:+d} (decisión 65)",
+                           clave=f"stop_respaldo_rechazado:{ticker}:{o.token}")]
         original = self._open_k2.pop(o.token, None)
         if (original is not None and not halts.es_halt(self._mercado.simbolo(ticker))
                 and ticker not in self._halt_en_curso):
@@ -4368,8 +4695,10 @@ class Decisor:
         if retenida is not None:
             total += int(retenida["qty"])
         if self._contar_disparados:
+            # decisión 64: un stop SMAT disparado es la madre Triggered o, con hija, la HIJA (con su estado de límite)
             total += sum(_qty_viva(o) for o in self._vivas(ticker)
-                         if o.lado is Lado.COMPRA and o.estado is EstadoOrden.TRIGGERED and o.proposito in _PROP_STOP)
+                         if o.lado is Lado.COMPRA and o.proposito in _PROP_STOP
+                         and (o.estado is EstadoOrden.TRIGGERED or o.id_madre is not None))
         return total
 
     # ── decisiones 53/54 (Jaume 1-oct): una salida que espera a que DAS confirme la bajada del stop ──
@@ -5690,6 +6019,9 @@ class Decisor:
             # «principal rebasado» que reasignar al nivel de arriba ni al ask (sería perseguir al precio, R-G-01)
             pm, sin_bs = self._vigilancia_halt_pm(pos, cot)          # decisión 46: primero el cierre al techo
             acciones += pm
+            # decisión 65 (c): con el stop disparado y el precio sobre SU límite (pero bajo el techo) el respaldo sale
+            # ANTES de mirar el cisne negro, que con un respaldo vivo se mide contra el techo
+            acciones += self._vigilar_sin_ejecutar(ticker)
             if not sin_bs:
                 acciones += self._vigilar_bs(pos, cot)
             acciones += self._banda(pos, cot)
@@ -5760,6 +6092,10 @@ class Decisor:
                 pos.bs = cisne_negro.actualizar_maximo(pos.bs, cot.last)
             return []
         niveles = self._niveles_primer_stop(pos)
+        if niveles is not None:
+            # decisión 65 (c): entre el límite del stop y el techo del respaldo (`stops.techo_pct`) manda el respaldo;
+            # el cisne negro es el precio por encima del TECHO (con el techo por defecto = límite, lo de siempre)
+            niveles = dataclasses.replace(niveles, limite=max(niveles.limite, self._techo_respaldo(niveles)))
         if niveles is None or not cisne_negro.se_activa(pos, niveles, self._ordenes_ticker(pos.ticker), cot,
                                                         self._cfg.stops):
             return []
@@ -5782,6 +6118,293 @@ class Decisor:
         if pos.intento is not None:
             acciones += self._cancelar_intento(pos, MOTIVO_CIERRE)
         return acciones
+
+    # ── decisión 65 (Jaume 2-oct): stop que NO se ejecuta dentro de su banda ──
+    def _plazo_sin_ejecutar(self) -> Optional[float]:
+        """`stops.sin_ejecutar_s` (defecto `tipos.STOP_SIN_EJECUTAR_S`, 5 s); null o 0 lo apagan (None)."""
+        bloque = self._cfg.stops if isinstance(self._cfg.stops, dict) else {}
+        if "sin_ejecutar_s" not in bloque:
+            return STOP_SIN_EJECUTAR_S
+        valor = bloque["sin_ejecutar_s"]
+        if valor is None or isinstance(valor, bool) or not isinstance(valor, (int, float, Decimal)) or valor <= 0:
+            return None
+        return float(valor)
+
+    def _llenas_stops(self, ticker: str) -> int:
+        """Lo que han llenado los stops del ticker (con sus hijas de SMAT): si avanza, el stop SÍ se está ejecutando."""
+        return sum(max(int(o.llenas), 0) for o in self._estado.ordenes.values()
+                   if o.ticker == ticker and o.lado is Lado.COMPRA and (
+                       o.proposito in _PROP_STOP or (o.proposito is Proposito.DESCONOCIDA
+                                                     and o.tipo is TipoOrden.STOP_LIMITE_PP)))
+
+    def _exclusion_sin_ejecutar(self, pos: PosicionTicker) -> Optional[str]:
+        """Cuándo NO aplica la 65: halt (manda la 57), cisne negro (precio sobre el límite: aviso y humano), control
+        humano o pausa del humano en el ticker, DAS caído o sin reconciliar, o una reducción del stop ya en curso."""
+        t = pos.ticker
+        if pos.estado is EstadoTicker.BS or pos.bs is not None:
+            return "cisne negro"
+        if (pos.estado is EstadoTicker.HALT or t in self._halt_en_curso or self._en_silencio(t)
+                or halts.es_halt(self._mercado.simbolo(t))):
+            return "halt"
+        if (pos.estado is EstadoTicker.CONTROL_HUMANO or t in self._manual or t in self._cierre_humano
+                or self._estado.control_humano):
+            return "control humano"
+        if pos.pausado_por_humano:
+            return "pausado por el humano"
+        if not self._estado.das_conectado or self._estado.modo_degradado & {"das", "reconciliacion"}:
+            return "DAS sin conexión o sin reconciliar"
+        if t in self._reduccion_stop:
+            return "reducción del stop en curso"
+        return None
+
+    def _fin_sin_ejecutar(self, ticker: str, motivo: str) -> list[Accion]:
+        """Fin del episodio (el precio volvió bajo el disparo o ya no hay corto): el siguiente es otro episodio."""
+        ep = self._sin_ejecutar.pop(ticker, None)
+        if ep is None or not ep.get("hecho"):
+            return []
+        return [Anotar(TIPO_STOP_SIN_EJECUTAR, {"ticker": ticker, "fase": "fin", "motivo": motivo,
+                                                "regla": "decisión 65 (Jaume 2-oct)"})]
+
+    def _vigilar_sin_ejecutar(self, ticker: str) -> list[Accion]:
+        """Decisión 65 (Jaume 2-oct): el ÚLTIMO lleva `stops.sin_ejecutar_s` (5 s) SEGUIDOS en [disparo, límite) del
+        primer stop, la posición sigue corta y los stops no han llenado NADA en ese tiempo → respaldo.
+
+        Un fill de un stop (o de su hija) reinicia la cuenta (los parciales avanzando no son este caso); salir de la
+        banda por arriba (cisne negro) o una exclusión la rompen; bajar del disparo cierra el episodio. Una sola vez
+        por episodio (`hecho`, también tras un reinicio: diario `stop_sin_ejecutar`).
+        """
+        pos = self._estado.posiciones.get(ticker)
+        if pos is None or pos.neta >= 0:
+            return self._fin_sin_ejecutar(ticker, "sin posición corta")
+        plazo = self._plazo_sin_ejecutar()
+        cot = self._cot(ticker)
+        last = cot.last if cot is not None else None
+        niveles = self._niveles_primer_stop(pos)
+        if niveles is None or not _es_precio(last):
+            return []
+        if last < niveles.disparo:
+            return self._fin_sin_ejecutar(ticker, "el precio volvió por debajo del disparo")
+        ep = self._sin_ejecutar.get(ticker)
+        if ep is not None and ep.get("hecho"):
+            return []
+        llenas = self._llenas_stops(ticker)
+        vivos = [o for o in self._stops_vivos(ticker) if _qty_viva(o) > 0]
+        respaldo_vivo = any(o.proposito is Proposito.STOP_RESPALDO for o in self._vivas(ticker))
+        excluido = self._exclusion_sin_ejecutar(pos)
+        # (c) Jaume 2-oct noche: el stop YA disparó (hija viva o fills parciales) y el precio (ask; sin ask, el último)
+        # está POR ENCIMA de su límite con acciones sin llenar (el límite residente es corto y ya no llena), pero no
+        # del techo del respaldo → respaldo AL INSTANTE por el resto. Por encima del techo: cisne negro como siempre.
+        precio_c = cot.ask if cot is not None and _es_precio(cot.ask) else last
+        techo = self._techo_respaldo(niveles)
+        sobre_limite = [o for o in vivos if (o.id_madre is not None or o.llenas > 0 or o.estado in (
+                            EstadoOrden.TRIGGERED, EstadoOrden.PARTIAL))
+                        and o.precio is not None and precio_c > o.precio]
+        if sobre_limite and precio_c <= techo and not respaldo_vivo and excluido is None:
+            ep = self._sin_ejecutar.setdefault(ticker, {"desde": None, "llenas": llenas, "hecho": False})
+            return self._respaldo_stop(pos, niveles, last, ep, motivo="precio sobre el límite del stop",
+                                       sobre_limite=(precio_c, sobre_limite[0].precio))
+        if plazo is None:
+            return []
+        # (b) el último en [disparo, techo): con el techo por defecto (= límite del stop) es la banda del stop
+        if last >= max(niveles.limite, techo) or not vivos or respaldo_vivo or excluido is not None:
+            if ep is not None:
+                ep["desde"] = None                                   # los 5 s tienen que ser SEGUIDOS
+            return []
+        if ep is None or ep.get("desde") is None or ep.get("llenas") != llenas:
+            self._sin_ejecutar[ticker] = {"desde": self._ahora, "llenas": llenas, "hecho": False}
+            return []
+        if self._ahora - float(ep["desde"]) < plazo - 1e-9:
+            return []
+        return self._respaldo_stop(pos, niveles, last, ep)
+
+    def _pct_stops(self, clave: str, defecto: Decimal) -> Decimal:
+        bloque = self._cfg.stops if isinstance(self._cfg.stops, dict) else {}
+        valor = bloque.get(clave)
+        if valor is None or isinstance(valor, bool) or not isinstance(valor, (int, float, Decimal)) or valor <= 0:
+            return defecto
+        return precios.de_float(valor)
+
+    def _techo_respaldo(self, niveles: NivelesStop) -> Decimal:
+        """Decisión 65 bis: techo = L × (1 + `stops.techo_pct` / 100), redondeado arriba; sin `techo_pct`, el
+        `stops.limite_pct` del cuadro (no se supone que valga 50)."""
+        limite_pct = self._pct_stops("limite_pct", STOP_LIMITE_PCT)
+        return precios.con_techo(niveles.disparo, self._pct_stops("techo_pct", limite_pct), arriba=True)
+
+    def _precio_respaldo(self, ticker: str, banda: Decimal, techo: Decimal) -> Optional[Decimal]:
+        """Decisión 65 bis: límite = min(último × (1 + banda / 100) redondeado arriba, techo); sin último, el ask."""
+        cot = self._cot(ticker)
+        base = cot.last if cot is not None and _es_precio(cot.last) else (
+            cot.ask if cot is not None and _es_precio(cot.ask) else None)
+        if base is None:
+            return None
+        return min(precios.con_techo(base, banda, arriba=True), techo)
+
+    def _respaldo_stop(self, pos: PosicionTicker, niveles: NivelesStop, last: Optional[Decimal], ep: dict,
+                       sin_stop: bool = False, motivo: str = "",
+                       sobre_limite: Optional[tuple[Decimal, Decimal]] = None) -> list[Accion]:
+        """Decisión 65 (Jaume 2-oct) con el bis de la tarde (DAS real: el bróker rechaza una compra > último × 1,20 y
+        el mercado cancela una a +19 %): aviso MÁXIMO y la COMPRA LÍMITE de respaldo YA, con el stop TODAVÍA puesto
+        (si sigue vivo): ruta normal de cruzar, límite = min(último × (1 + `stops.banda_pct`), techo) y PERSECUCIÓN
+        cada `perseguir_ask_s` (`_t_respaldo_perseguir`) mientras quede resto y el último/ask no pase el techo;
+        cantidad = corto − otras compras vivas (sin contar el stop). El stop se cancela cuando DAS ACEPTA la compra
+        (`_tras_cambio_orden` + `_compras_cierre`); con el stop MUERTO (`sin_stop`) la compra cuenta desde que sale.
+        Rechazada → el stop se queda y aviso; «precio demasiado lejos» → una vez con la mitad de banda; resto sin
+        llenar → el stop vuelve por lo que siga corto. Si llenan los dos, la venta del exceso."""
+        ticker = pos.ticker
+        ep["hecho"] = True
+        ep["respaldos"] = int(ep.get("respaldos") or 0) + 1
+        segundos = self._ahora - float(ep["desde"]) if ep.get("desde") is not None else 0.0
+        techo = self._techo_respaldo(niveles)
+        banda = self._pct_stops("banda_pct", STOP_BANDA_PCT)
+        if sin_stop:
+            texto = (f"🚨 El stop de {avisos.escapar(ticker)} está MUERTO ({avisos.escapar(motivo)}): DAS lo disparó y "
+                     f"su orden en el mercado ya no está viva; posición {pos.neta:+d}, último {last}")
+        elif sobre_limite is not None:
+            texto = (f"🚨 El stop de {avisos.escapar(ticker)} disparó y NO puede llenar: precio {sobre_limite[0]} por "
+                     f"encima de su límite {sobre_limite[1]}; posición {pos.neta:+d}")
+        else:
+            texto = (f"🚨 El stop de {avisos.escapar(ticker)} NO se está ejecutando: precio {last} ≥ disparo "
+                     f"{niveles.disparo} desde hace {segundos:.0f} s; posición {pos.neta:+d}")
+        datos = {"ticker": ticker, "fase": "respaldo", "last": last, "disparo": niveles.disparo, "techo": techo,
+                 "banda_pct": banda, "segundos": segundos, "neta": pos.neta, "sin_stop": sin_stop, "motivo": motivo,
+                 "otras_compras": self._comprando(ticker), "regla": "decisión 65 (Jaume 2-oct)"}
+        acciones, orden = self._enviar_respaldo(pos, banda, techo, reintento=False, sin_stop=sin_stop)
+        if orden is None:
+            que = ("otras compras vivas ya cubren lo corto" if abs(pos.neta) - self._comprando(ticker) <= 0
+                   else "sin precio de referencia")
+            return [Anotar(TIPO_STOP_SIN_EJECUTAR, {**datos, "qty": 0, "token": None, "sin_envio": que}),
+                    Avisar(Nivel.MAXIMO, Grupo.B, f"{texto}. No se manda respaldo ({que})"
+                                                  + ("; la posición NO tiene stop: PONER A MANO" if sin_stop else
+                                                     "; el stop sigue") + " (decisión 65)",
+                           clave=f"stop_sin_ejecutar:{ticker}")] + acciones
+        quita = ("no hay stop vivo que cancelar" if sin_stop
+                 else "en cuanto DAS la acepte se cancela el stop")
+        return ([Anotar(TIPO_STOP_SIN_EJECUTAR, {**datos, "qty": orden.qty, "token": orden.token, "ruta": orden.ruta,
+                                                 "precio": orden.precio}),
+                 Avisar(Nivel.MAXIMO, Grupo.B,
+                        f"{texto}. Se manda YA una COMPRA LÍMITE de respaldo de {orden.qty} a {orden.precio} (último + "
+                        f"{banda} %, techo {techo}) por {avisos.escapar(orden.ruta)} que persigue cada "
+                        f"{self._perseguir_cada():g} s hasta el techo; {quita} (decisión 65)",
+                        clave=f"stop_sin_ejecutar:{ticker}")]
+                + acciones)
+
+    def _enviar_respaldo(self, pos: PosicionTicker, banda: Decimal, techo: Decimal, reintento: bool,
+                         sin_stop: bool) -> tuple[list[Accion], Optional[OrdenNueva]]:
+        """La compra de respaldo (decisión 65 bis) por lo corto − otras compras vivas, con su persecución."""
+        ticker = pos.ticker
+        qty = abs(pos.neta) - self._comprando(ticker)
+        precio = self._precio_respaldo(ticker, banda, techo)
+        if qty <= 0 or precio is None:
+            return [], None
+        ruta = precios.ruta(self._cfg.rutas, "cruzar", precio, self._ahora_et)
+        orden = OrdenNueva(token=self._tokens.siguiente(), lado=Lado.COMPRA, ticker=ticker, ruta=ruta, qty=qty,
+                           tipo=TipoOrden.LIMITE, precio=precio, tif="DAY+", post_only=False,
+                           proposito=Proposito.STOP_RESPALDO, version=pos.version_stops)
+        self._respaldos[orden.token] = {"ticker": ticker, "banda": banda, "techo": techo, "reintento": reintento,
+                                        "sin_stop": sin_stop, "fuera": False}
+        return (self._absorber([EnviarOrden(orden)])
+                + [Programar(f"{T_RESPALDO_PERSEGUIR}:{orden.token}", self._perseguir_cada(),
+                             {"token": orden.token, "ticker": ticker})]), orden
+
+    def _t_respaldo_perseguir(self, clave: str, datos: dict) -> list[Accion]:
+        """Decisión 65 bis: la compra de respaldo sube su límite a min(último × (1 + banda), techo) cada
+        `perseguir_ask_s` mientras quede resto. Si el último o el ask pasan el TECHO, no se persigue más (aviso
+        MÁXIMO: cisne negro, decide el humano); la compra queda viva a su último precio."""
+        token = datos.get("token")
+        o = self._estado.ordenes.get(token) if isinstance(token, int) else None
+        r = self._respaldos.get(token) if isinstance(token, int) else None
+        if o is None or r is None or o.estado not in _VIVOS or _qty_viva(o) <= 0:
+            return []
+        siguiente = Programar(f"{T_RESPALDO_PERSEGUIR}:{o.token}", self._perseguir_cada(),
+                              {"token": o.token, "ticker": o.ticker})
+        if o.id_das is None or o.token in self._reemplazo_pedido or o.token in self._cancel_pedido:
+            return [siguiente]
+        cot = self._cot(o.ticker)
+        techo = r["techo"]
+        fuera = cot is not None and any(_es_precio(p) and p > techo for p in (cot.last, cot.ask))
+        if fuera:
+            if r["fuera"]:
+                return []
+            r["fuera"] = True
+            return [Anotar("stop_respaldo_techo", {"ticker": o.ticker, "token": o.token, "techo": techo,
+                                                   "last": cot.last, "ask": cot.ask, "precio": o.precio,
+                                                   "regla": "decisión 65 bis"}),
+                    Avisar(Nivel.MAXIMO, Grupo.B,
+                           f"{avisos.escapar(o.ticker)}: el precio (último {cot.last}, ask {cot.ask}) superó el techo "
+                           f"{techo} del respaldo: NO se persigue más; la compra de {_qty_viva(o)} queda viva a "
+                           f"{o.precio}. Cisne negro: decide el humano (decisión 65)",
+                           clave=f"stop_respaldo_techo:{o.ticker}:{o.token}")]
+        nuevo = self._precio_respaldo(o.ticker, r["banda"], techo)
+        if nuevo is None or o.precio is None or nuevo <= o.precio:
+            return [siguiente]
+        abierta = _qty_viva(o)
+        share = share_de_replace(abierta, max(int(o.llenas), 0), self._share_es_abierta())
+        return [Anotar("stop_respaldo_persigue", {"ticker": o.ticker, "token": o.token, "de": o.precio, "a": nuevo,
+                                                  "qty": abierta, "regla": "decisión 65 bis"})] + self._absorber([
+            Reemplazar(id_das=o.id_das, token=o.token, qty=share, stop=None, precio=nuevo,
+                       motivo="decisión 65 bis: el respaldo persigue al último")]) + [siguiente]
+
+    def _respaldo_otra_vez(self, o: Orden, r: Optional[dict], motivo: str, mitad: bool) -> list[Accion]:
+        """Decisión 65 bis: otra compra de respaldo en lugar de `o` (REPLACE rechazado → cancelar y enviar; «precio
+        demasiado lejos» → UNA vez con la mitad de banda), por lo que siga corto."""
+        pos = self._estado.posiciones.get(o.ticker)
+        if pos is None or pos.neta >= 0 or r is None:
+            return []
+        banda = (r["banda"] / 2) if mitad else r["banda"]
+        acciones, orden = self._enviar_respaldo(pos, banda, r["techo"], reintento=bool(r["reintento"] or mitad),
+                                                sin_stop=bool(r["sin_stop"]))
+        nota = [Anotar("stop_respaldo_reenvio", {"ticker": o.ticker, "token_anterior": o.token,
+                                                 "token": orden.token if orden is not None else None,
+                                                 "banda_pct": banda, "motivo": motivo, "regla": "decisión 65 bis"})]
+        if not mitad:
+            return nota + acciones
+        return nota + acciones + [Avisar(
+            Nivel.AVISO, Grupo.B,
+            f"{avisos.escapar(o.ticker)}: la compra de respaldo fue rechazada o cancelada por precio demasiado lejos "
+            f"(«{avisos.escapar(o.notas)}»): se reintenta YA con la mitad de banda ({banda} %)"
+            + (f" a {orden.precio}" if orden is not None else ": sin precio, no sale") + " (decisión 65)",
+            clave=f"stop_respaldo_mitad:{o.ticker}:{o.token}")]
+
+    def _precio_lejos(self, notas: Any) -> bool:
+        return rechazos.clasificar(str(notas or ""), self._catalogo).clave == "precio_demasiado_lejos"
+
+    def _stop_muerto(self, o: Orden, motivo: str) -> list[Accion]:
+        """Decisión 64 bis (DAS real 2-oct): la hija de un stop SMAT disparado terminó Rejected o Canceled SIN que el bot
+        lo pidiera (madre Triggered lvqty 0): el stop está MUERTO, ya no cuenta como vivo y se actúa AL INSTANTE con
+        el respaldo de la decisión 65 (sin esperar los 5 s). En cisne negro, halt, control humano o con el respaldo ya
+        gastado en el episodio: solo aviso MÁXIMO (la posición está sin stop: a mano)."""
+        ticker = o.ticker
+        pos = self._pos(ticker)
+        acciones: list[Accion] = [Anotar("stop_muerto", {"ticker": ticker, "token": o.token, "id_hija": o.id_das,
+                                                         "id_madre": o.id_madre, "estado": o.estado.value,
+                                                         "notas": motivo, "neta": pos.neta,
+                                                         "regla": "decisión 64 bis (DAS real 2-oct)"})]
+        if pos.neta >= 0:
+            return acciones
+        cot = self._cot(ticker)
+        last = cot.last if cot is not None and _es_precio(cot.last) else None
+        niveles = self._niveles_primer_stop(pos)
+        excluido = self._exclusion_sin_ejecutar(pos)
+        ep = self._sin_ejecutar.setdefault(ticker, {"desde": None, "llenas": self._llenas_stops(ticker),
+                                                     "hecho": False})
+        vivos_respaldo = [x for x in self._vivas(ticker) if x.proposito is Proposito.STOP_RESPALDO]
+        if vivos_respaldo:
+            # ya hay una compra de respaldo viva: ahora sin stop detrás, cuenta desde ya (aunque DAS no la haya aceptado)
+            for x in vivos_respaldo:
+                if x.token in self._respaldos:
+                    self._respaldos[x.token]["sin_stop"] = True
+            return acciones + [Anotar("stop_muerto_con_respaldo", {"ticker": ticker,
+                                                                   "tokens": [x.token for x in vivos_respaldo],
+                                                                   "regla": "decisión 64 bis"})]
+        no = (excluido if excluido is not None and excluido != "reducción del stop en curso" else
+              "el respaldo de este episodio ya se gastó" if int(ep.get("respaldos") or 0) >= 2 else
+              "sin nivel de stop calculable" if niveles is None else None)
+        if no is not None:
+            return acciones + [Avisar(Nivel.MAXIMO, Grupo.B,
+                                      f"🚨 El stop de {avisos.escapar(ticker)} está MUERTO ({avisos.escapar(motivo)}) y "
+                                      f"NO se manda respaldo ({no}): la posición {pos.neta:+d} queda SIN stop. PONER "
+                                      f"A MANO (decisión 64)", clave=f"stop_muerto:{ticker}:{o.token}")]
+        return acciones + self._respaldo_stop(pos, niveles, last, ep, sin_stop=True, motivo=motivo or "sin motivo")
 
     def _texto_informe(self, pos: PosicionTicker, niveles: Optional[NivelesStop] = None) -> str:
         if pos.bs is None:
@@ -6716,8 +7339,22 @@ class Decisor:
             return []
         return self._paso_locate(ticker, e)
 
+    def _rutas_locate_excluidas(self) -> frozenset[str]:
+        """Decisión 66 (Jaume 2-oct): `locates.rutas_excluidas` (defecto ["TESTSL"], la ruta DE PRUEBAS de DAS), en
+        mayúsculas; un valor que no es una lista de textos vale el defecto (lo conservador: nunca la de pruebas)."""
+        valor = (self._cfg.locates or {}).get("rutas_excluidas", LOCATES_RUTAS_EXCLUIDAS) \
+            if isinstance(self._cfg.locates, dict) else LOCATES_RUTAS_EXCLUIDAS
+        if not isinstance(valor, (list, tuple)) or not all(isinstance(r, str) for r in valor):
+            valor = LOCATES_RUTAS_EXCLUIDAS
+        return frozenset(r.strip().upper() for r in valor if r.strip())
+
     def _msg_slret(self, m: MsgSLRet) -> list[Accion]:
         cuota = self._cuota_inquire_das(m.notas, m.ticker) if m.tipo == 2 else []     # decisión 21
+        if str(m.ruta).strip().upper() in self._rutas_locate_excluidas():
+            # decisión 66: la oferta de una ruta de PRUEBAS (TESTSL) no se mira nunca, aunque sea la más barata
+            return cuota + [Anotar("slret_ruta_excluida", {"ticker": m.ticker, "tipo": m.tipo, "ruta": m.ruta,
+                                                           "precio": m.precio, "tamano": m.tamano,
+                                                           "regla": "decisión 66 (Jaume 2-oct)"})]
         return cuota + self._msg_slret_consulta(m)
 
     def _msg_slret_consulta(self, m: MsgSLRet) -> list[Accion]:
@@ -6975,6 +7612,7 @@ class Decisor:
             T_AVAIL_ESPERA: self._t_avail_espera, T_REDUCCION_STOP: self._t_reduccion_stop,
             T_HALT_GUARDADAS: self._t_halt_guardadas, T_HALT_SILENCIO: self._t_halt_silencio,
             T_ENTRADA_REAPERTURA: self._t_entrada_reapertura, T_REINICIO_HALT: self._t_reinicio_halt,
+            T_HIJA_ESPERA: self._t_hija_espera, T_RESPALDO_PERSEGUIR: self._t_respaldo_perseguir,
         }
 
     def _ticker_de_temporizador(self, base: str, clave: str, datos: dict) -> Optional[str]:
@@ -6983,7 +7621,7 @@ class Decisor:
             return ticker
         resto = clave.split(":", 1)[1] if ":" in clave else ""
         if base in (T_REPLACE_VERIFICAR, T_PERSEGUIR_ASK, T_STOP_REINTENTO, T_REINTENTO_RECHAZO, T_LOCATE_RECOMPRAR,
-                    T_CRUCE_POSTONLY):
+                    T_CRUCE_POSTONLY, T_HIJA_ESPERA, T_RESPALDO_PERSEGUIR):
             try:
                 o = self._estado.ordenes.get(int(resto))
             except ValueError:
@@ -7075,7 +7713,8 @@ class Decisor:
         if o is None or o.estado not in _VIVOS:
             self._verificaciones.pop(token, None)
             return []
-        patron = self._cfg.stops.get("tipo_esperado_en_order")
+        # decisión 64: la HIJA de un stop SMAT disparado es una límite («L»): su tipo no dice nada del pre/post
+        patron = None if o.id_madre is not None else self._cfg.stops.get("tipo_esperado_en_order")
         conserva = stops.tipo_conserva_pp(o.tipo_das_crudo, patron)
         if (conserva is False and o.tipo is TipoOrden.STOP_LIMITE_PP and o.stop is not None and o.precio is not None
                 and o.id_das is not None and _qty_viva(o) > 0):
@@ -7105,6 +7744,28 @@ class Decisor:
         if isinstance(objetivo, int) and _qty_viva(o) != objetivo and o.token not in self._reemplazo_pedido:
             return self._plan(o.ticker)
         return []
+
+    def _t_hija_espera(self, clave: str, datos: dict) -> list[Accion]:
+        """Decisión 64: la madre de SMAT sigue disparada sin hija. 1.ª vuelta: GET ORDERS y otra espera; 2.ª: aviso 2
+        (la orden se sigue contando UNA vez como viva; lo que esperaba a la hija, CANCEL o plan, sigue esperando)."""
+        token = datos.get("token")
+        o = self._estado.ordenes.get(token) if isinstance(token, int) else None
+        if o is None or not self._madre_sin_hija(o):
+            if isinstance(token, int):
+                self._hija_espera.discard(token)
+            return []
+        n = int(datos.get("n") or 0) + 1
+        acciones: list[Accion] = [Anotar("orden_hija_sin_ver", {"token": o.token, "id": o.id_das, "ticker": o.ticker,
+                                                                "vuelta": n, "regla": "decisión 64"}),
+                                  Consultar(rechazos.COMANDO_ORDENES)]
+        if n < 2:
+            return acciones + [Programar(f"{T_HIJA_ESPERA}:{o.token}", HIJA_ESPERA_S, {**datos, "n": n})]
+        return acciones + [Avisar(
+            Nivel.AVISO, Grupo.B,
+            f"{avisos.escapar(o.ticker)}: DAS dejó la orden {o.token} ({avisos.escapar(o.proposito.value)}, id {o.id_das}) "
+            f"disparada sin acciones vivas propias y sin orden hija visible tras {HIJA_ESPERA_S * n:g} s: se sigue "
+            f"contando como viva (no se le manda CANCEL ni REPLACE: DAS diría «order not open»). Mirar en DAS",
+            clave=f"hija_sin_ver:{o.token}")]
 
     def _aplazar_salida(self, pos: PosicionTicker, clave: str, datos: dict, motivo: str) -> list[Accion]:
         """G1A-02 / G1B-01: la salida por temporizador con la guarda cerrada NO se descarta: el mismo temporizador a 0,5 s.
@@ -7944,6 +8605,9 @@ class Decisor:
         acciones += self._proteger(None, "sin_simbolo", self._sin_simbolo)
         acciones += self._proteger(None, "resumen", self._resumen_diario)
         acciones += self._proteger(None, "slret_ventana", self._slret_tic)
+        for ticker in sorted(set(self._sin_ejecutar) | {t for t, p in self._estado.posiciones.items() if p.neta < 0}):
+            # decisión 65: los 5 s cuentan aunque no lleguen cotizaciones nuevas (el último sigue en la banda)
+            acciones += self._proteger(ticker, "stop_sin_ejecutar", lambda t=ticker: self._vigilar_sin_ejecutar(t))
         cada = _segundos(self._cfg.tecnicos, "foto_cada_s", FOTO_CADA_S)
         if self._ultima_foto_en is None or self._ahora - self._ultima_foto_en >= cada:
             self._ultima_foto_en = self._ahora
@@ -8250,6 +8914,10 @@ class Decisor:
         previa = comandos.respuesta_previa(c)
         if previa is not None:
             return [Anotar("comando", {**datos, "confirmado": False}), self._responder(previa)]
+        if c.requiere == comandos.REQUIERE_NADA and c.nombre == comandos.AYUDA:
+            # decisión 67 (Jaume 2-oct): la lista de comandos, partida en mensajes de ≤ 4.096 para Telegram
+            return ([Anotar("comando", {**datos, "confirmado": True})]
+                    + [self._responder(parte) for parte in comandos.partes_ayuda()])
         if c.requiere == comandos.REQUIERE_NADA and c.nombre in comandos.CONSULTA:
             lineas = None
             if c.nombre == "log" and self._lineas_log is not None:

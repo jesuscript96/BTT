@@ -206,3 +206,89 @@ $SLAvailQueryRet CUENTA_PRUEBA AAPL 0
 $SLRouteMinChargeRet TESTSL 0
 # caso: real_slmincharge_2 | DAS real (01-oct): segunda línea de la misma respuesta
 $SLRouteMinChargeRet SAGE 0
+# caso: real2_orderact_stop_sending | DAS real (2-oct, a): NEWORDER STOPLMTP por SMAT → acuse Sending (notas vacías: dos espacios)
+%OrderAct 2070 Sending Buy SOFI 1 24 SMAT 05:06:48  127599001
+# caso: real2_order_stop_sending | DAS real (2-oct, a): %ORDER del STOPLMTP: Type «SLP:24» (solo el disparo, sin espacio); price = el LÍMITE (36)
+%ORDER 2070 127599001 SOFI B SLP:24 1 1 0 36 SMAT Sending 05:06:48 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_order_stop_accepted | DAS real (2-oct, a): el STOPLMTP aceptado sin disparar (una sola orden por SMAT)
+%ORDER 2070 127599001 SOFI B SLP:24 1 1 0 36 SMAT Accepted 05:06:48 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_marca_ordersending | DAS real (2-oct): acuse «#OrderSending» del NEWORDER: informativo
+#OrderSending
+# caso: real2_marca_order_replacing | DAS real (2-oct): «#Order Replacing» es el acuse del REPLACE, NO la cabecera del volcado: informativo
+#Order Replacing
+# caso: real2_orderact_replacing | DAS real (2-oct, a): REPLACE 2070 2 STOPLMT 24 36 → acuse Replacing (conserva el id)
+%OrderAct 2070 Replacing Buy SOFI 2 24 SMAT 05:06:54  127599001
+# caso: real2_order_stop_replaced | DAS real (2-oct, a): tras el REPLACE, mismo id y mismo tipo «SLP:24» (conserva pre/post) con qty 2
+%ORDER 2070 127599001 SOFI B SLP:24 2 2 0 36 SMAT Accepted 05:06:54 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_orderact_replaced | DAS real (2-oct, a): acuse Replaced
+%OrderAct 2070 Replaced Buy SOFI 2 24 SMAT 05:06:54  127599001
+# caso: real2_marca_order_canceling | DAS real (2-oct): «#Order Canceling», acuse del CANCEL: informativo
+#Order Canceling
+# caso: real2_order_stop_canceled | DAS real (2-oct, a): CANCEL 2070 → Canceled con cxlqty 2
+%ORDER 2070 127599001 SOFI B SLP:24 2 0 2 36 SMAT Canceled 05:07:00 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_orderact_stop_canceled | DAS real (2-oct, a): acuse Canceled con notas «Canceled»
+%OrderAct 2070 Canceled Buy SOFI 2 24 SMAT 05:07:00 Canceled 127599001
+# caso: real2_order_smat_madre_accepted | DAS real (2-oct, b): límite PostOnly por SMAT: la MADRE aceptada
+%ORDER 2286 127599002 SOFI B L 1 1 0 11.19 SMAT Accepted 05:13:24 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_orderact_hija_sending | DAS real (2-oct, b): SMAT crea la HIJA (otro id, MISMO token) por ARCA
+%OrderAct 2287 Sending Buy SOFI 1 11.19 ARCA 05:13:24  127599002
+# caso: real2_order_hija_sending | DAS real (2-oct, b): %ORDER de la hija con origoid = id de la madre (2286)
+%ORDER 2287 127599002 SOFI B L 1 1 0 11.19 ARCA Sending 05:13:24 2286 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_order_madre_triggered | DAS real (2-oct, b): la madre queda Triggered con lvqty 0 (ya no se puede cancelar)
+%ORDER 2286 127599002 SOFI B L 1 0 0 11.19 SMAT Triggered 05:13:24 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_order_hija_accepted | DAS real (2-oct, b): la hija aceptada vuelve con TIF «DAY»
+%ORDER 2287 127599002 SOFI B L 1 1 0 11.19 ARCA Accepted 05:13:24 2286 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY N/A
+# caso: real2_orderact_hija_canceled | DAS real (2-oct, b): CANCEL 2287 (la hija) → Canceled «RT:Cxl-by-client»
+%OrderAct 2287 Canceled Buy SOFI 1 11.19 ARCA 05:13:27 RT:Cxl-by-client 127599002
+# caso: real2_order_hija_canceled | DAS real (2-oct, b): %ORDER de la hija cancelada
+%ORDER 2287 127599002 SOFI B L 1 0 1 11.19 ARCA Canceled 05:13:27 2286 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY N/A
+# caso: real2_cancel_error_no_abierta | DAS real (2-oct, b): CANCEL 2286 (la madre Triggered) → error SIN id (con un espacio al final)
+CANCEL Error : order not open 
+# caso: real2_order_sagepro_accepted_day | DAS real (2-oct, c): por SAGEPRO una sola orden; el Accepted vuelve con TIF «DAY» (se mandó DAY+)
+%ORDER 2839 127600720 SOFI B L 1 1 0 11.2 SAGEPRO Accepted 05:32:22 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY N/A
+# caso: real2_orderact_sagepro_canceled | DAS real (2-oct, c): cancelación por el cliente
+%OrderAct 2839 Canceled Buy SOFI 1 11.2 SAGEPRO 05:32:27 RT:Cxl-by-client 127600720
+# caso: real2_order_edga_accepted | DAS real (2-oct, d): EDGA antes de las 07:00 ET: aceptada (TIF DAY+)…
+%ORDER 2844 127600721 SOFI B L 1 1 0 11.2 EDGA Accepted 05:32:31 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_order_edga_canceled | DAS real (2-oct, d): …y cancelada por el mercado en el mismo segundo
+%ORDER 2844 127600721 SOFI B L 1 0 1 11.2 EDGA Canceled 05:32:31 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2_orderact_cxl_by_venue | DAS real (2-oct, d): el acuse dice «RT:Cxl-by-Venue»
+%OrderAct 2844 Canceled Buy SOFI 1 11.2 EDGA 05:32:31 RT:Cxl-by-Venue 127600721
+# caso: real2_order_sagepro_compra_accepted | DAS real (2-oct, e): compra por SAGEPRO que llena
+%ORDER 2850 127601100 SOFI B L 1 1 0 16.04 SAGEPRO Accepted 05:33:00 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY N/A
+# caso: real2_pos_larga | DAS real (2-oct, e): el %POS llega ANTES que el Execute (larga 1 @ 16.01)
+%POS SOFI 2 1 16.01 0 0 0 2026/10/02-05:33:00 -0.01
+# caso: real2_orderact_execute | DAS real (2-oct, e): Execute a 16.01 (mejor que el límite 16.04)
+%OrderAct 2850 Execute Buy SOFI 1 16.01 SAGEPRO 05:33:00  127601100
+# caso: real2_order_executed | DAS real (2-oct, e): %ORDER Executed (lvqty 0)
+%ORDER 2850 127601100 SOFI B L 1 0 0 16.04 SAGEPRO Executed 05:33:00 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY N/A
+# caso: real2_trade_compra | DAS real (2-oct, e): %TRADE de 11 campos de la compra
+%TRADE 3129 SOFI B 1 16.01 SAGEPRO 05:33:00 2850 - 0.00 0.00
+# caso: real2_pos_plana | DAS real (2-oct, e): tras vender, la posición plana sigue listada con qty 0
+%POS SOFI 2 0 0 0 0 -0.01 2026/10/02-05:33:00 0
+# caso: real2_trade_venta | DAS real (2-oct, e): %TRADE de la venta
+%TRADE 3138 SOFI S 1 16 SAGEPRO 05:33:11 2864 - 0.00 -0.01
+# caso: real2_slret_testsl | DAS real (2-oct, f): SLPRICEINQUIRE WHLR 100 ALLROUTEWTTYPE1 → oferta de la ruta DE PRUEBAS TESTSL
+%SLRET 1 WHLR 0.01 100 TESTSL  CUENTA_PRUEBA
+# caso: real2_slret_sage | DAS real (2-oct, f): …y la de SAGE (la buena)
+%SLRET 1 WHLR 0.00092 100 SAGE  CUENTA_PRUEBA
+# caso: real2g_stop_accepted | DAS real (2-oct tarde, g1): stop SMAT con límite +50 % aceptado
+%ORDER 4338 127604630 SOFI B SLP:15.96 1 1 0 23.94 SMAT Accepted 06:08:53 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2g_orderact_hija_sending | DAS real (2-oct tarde, g1): al dispararse, SMAT crea la hija por ARCA
+%OrderAct 4343 Sending Buy SOFI 1 23.94 ARCA 06:09:13  127604630
+# caso: real2g_order_hija_sending | DAS real (2-oct tarde, g1): %ORDER de la hija con origoid = madre
+%ORDER 4343 127604630 SOFI B L 1 1 0 23.94 ARCA Sending 06:09:13 4338 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2g_order_madre_triggered | DAS real (2-oct tarde, g1): la madre Triggered con lvqty 0 (para siempre)
+%ORDER 4338 127604630 SOFI B SLP:15.96 1 0 0 23.94 SMAT Triggered 06:09:13 0 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2g_order_hija_rejected | DAS real (2-oct tarde, g1): la hija RECHAZADA por el bróker (stop MUERTO)
+%ORDER 4343 127604630 SOFI B L 1 0 0 23.94 ARCA Rejected 06:09:13 4338 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY+ N/A
+# caso: real2g_orderact_hija_send_rej | DAS real (2-oct tarde, g1): el texto del control del bróker (tope último × 1,20)
+%OrderAct 4343 Send_Rej Buy SOFI 1 23.94 ARCA 06:09:13 RT:CF:LastTrade 19.188000 20.000000 23.940000 15.970000 15.990000 ref#114796[Route#3066] 127604630
+# caso: real2g_order_hija_accepted_19 | DAS real (2-oct tarde, g2): límite +19 %: la hija pasa el bróker…
+%ORDER 4410 127600120 SOFI B L 1 1 0 19 ARCA Accepted 06:11:29 4405 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY N/A
+# caso: real2g_order_hija_canceled_19 | DAS real (2-oct tarde, g2): …y la cancela el mercado en 1 s
+%ORDER 4410 127600120 SOFI B L 1 0 1 19 ARCA Canceled 06:11:30 4405 CUENTA_PRUEBA USR_PRUEBA CMDAPI DAY N/A
+# caso: real2g_orderact_r081 | DAS real (2-oct tarde, g2): el motivo llega en el %OrderAct DESPUÉS del %ORDER
+%OrderAct 4410 Canceled Buy SOFI 1 19 ARCA 06:11:30 RT:Ven: R081: Price Too Far Outside 127600120
+# caso: real2g_trade_hija | DAS real (2-oct tarde, g3): límite +9 %: la hija se ejecuta; el %TRADE lleva el id de la HIJA
+%TRADE 5029 SOFI B 1 15.96 ARCA 06:16:10 4713 - 0.00 0.00

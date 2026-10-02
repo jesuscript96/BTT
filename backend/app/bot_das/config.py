@@ -65,8 +65,9 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 
 from app.bot_das.cerrojo import HiloVigilado
 from app.bot_das.reloj import ET
-from app.bot_das.tipos import (LOCATES_TOPE_GASTO_DIA_USD, PERSEGUIR_ASK_MAX, REPLACE_SHARE_ES_ABIERTA, Config,
-                               EstrategiaConfig, Fase)
+from app.bot_das.tipos import (LOCATES_RUTAS_EXCLUIDAS, LOCATES_TOPE_GASTO_DIA_USD, PERSEGUIR_ASK_MAX,
+                               REPLACE_SHARE_ES_ABIERTA, RUTAS_PRUEBA_DAS, STOP_BANDA_PCT, STOP_SIN_EJECUTAR_S,
+                               Config, EstrategiaConfig, Fase)
 
 logger = logging.getLogger("btt.bot_das.config")
 
@@ -174,7 +175,7 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
     "modo_seguridad": {"activo": "bool", "precio_min": "num0", "acum_dollar_volume_min": "num0"},
     "locates": {"tope_gasto_dia_usd": "num+", "hora_limite_intentos": "hhmm?",
                 "umbral_ultimo_paquete_pct": "num0", "inquiry_intervalo_s": "num+", "ruta_inquire": "ruta",
-                "espera_intento_s": "num+"},
+                "espera_intento_s": "num+", "rutas_excluidas": "lstr"},
     "entrada": {"agregar_s": "num0", "nivel": "ruta", "post_only": "bool", "tope_caida_bid_pct": "num0",
                 "cruce_bajo_bid_pct": "num0", "cruce_espera_s": "num0", "caducidad_senal_s": "num+",
                 "distancia_max_ultimo_bid_pct": "num?", "retraso_max_senal_pct": "num?",
@@ -194,7 +195,8 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
               "margen_bajo_limit_up_pct": "num0", "reintentos": "int0", "separacion_reintentos_s": "num0",
               "ventana_min": "num0", "subida_max_cierre_pct": "num+", "comprobacion_s": "num+",
               "debounce_s": "num0", "tipo_esperado_en_order": "str?", "ruta": "ruta",
-              "replace_share_es_abierta": "bool"},
+              "replace_share_es_abierta": "bool", "sin_ejecutar_s": "num?", "banda_pct": "num+",
+              "techo_pct": "num+"},
     "halts": {"k_max": "int", "distancia_banda_k2_pct": "num0", "primera_vela_max_reentrada_pct": "num0",
               "primera_vela_max_senal_guardada_pct": "num0", "t1_subida_max_cierre_pct": "num+",
               "t12_min": "num+", "ruta_reapertura": "ruta", "enviar_antes_fin_halt_s": "num0",
@@ -239,7 +241,15 @@ _OPCIONALES: dict[str, Any] = {
     "locates.tope_gasto_dia_usd": float(LOCATES_TOPE_GASTO_DIA_USD),
     "halts.silencio": True,                                       # decisión 57 (Jaume 2-oct): nada se envía en un halt
     "halts.open_tras_k2": True,                                   # decisión 59 (Jaume 2-oct): salidas por OPEN tras k2
+    "stops.sin_ejecutar_s": STOP_SIN_EJECUTAR_S,                  # decisión 65 (Jaume 2-oct): null o 0 la apagan
+    "stops.banda_pct": float(STOP_BANDA_PCT),                     # decisión 65 bis: el respaldo persigue último + 19 %
+    "locates.rutas_excluidas": list(LOCATES_RUTAS_EXCLUIDAS),     # decisión 66 (Jaume 2-oct): rutas de pruebas fuera
 }
+# Hojas opcionales SIN defecto escrito: si faltan, el bot usa otra hoja (decisión 65 bis: `stops.techo_pct` ausente =
+# `stops.limite_pct`); si están, se validan con su tipo
+_OPCIONALES_SIN_DEFECTO = frozenset({"stops.techo_pct"})
+# Decisión 66 (Jaume 2-oct): hojas del cuadro con una ruta de ÓRDENES; ninguna puede ser una ruta de pruebas de DAS
+_HOJAS_RUTA_ORDENES = ("stops.ruta", "halts.ruta_reapertura")
 _ESQUEMA_RAIZ: dict[str, Any] = {
     "schema_version": "int", "config_version": "int0", "generado_at": "str",
     "motor_hash": "hash", "estrategias_hash": "hash", "sha256": "hex",
@@ -419,7 +429,7 @@ def _comprobar_bloque(prefijo: str, esquema: dict, valor: Any, errores: list[str
     for clave, tipo in esquema.items():
         ruta = f"{prefijo}.{clave}"
         if clave not in valor:
-            if ruta not in _OPCIONALES:
+            if ruta not in _OPCIONALES and ruta not in _OPCIONALES_SIN_DEFECTO:
                 errores.append(f"{ruta}: falta")
         elif isinstance(tipo, dict):
             _comprobar_bloque(ruta, tipo, valor[clave], errores)
@@ -571,6 +581,7 @@ def validar(crudo: dict) -> list[str]:
     halts = crudo.get("halts")
     if isinstance(halts, dict) and _es_int(halts.get("k_max")) and halts["k_max"] < 1:
         errores.append(f"halts.k_max: {halts['k_max']} debe ser ≥ 1 (R-F-01)")
+    errores.extend(_rutas_de_prueba(crudo))
 
     estrategias = crudo.get("estrategias")
     if not isinstance(estrategias, list):
@@ -596,6 +607,32 @@ def validar(crudo: dict) -> list[str]:
         else:
             if crudo["sha256"] != esperado:
                 errores.append("sha256: no casa con el contenido (fichero alterado o escrito a medias; H-4)")
+    return errores
+
+
+def _rutas_de_prueba(crudo: dict) -> list[str]:
+    """Decisión 66 (Jaume 2-oct): un cuadro con una ruta de PRUEBAS de DAS (TEST, TESTC, TESTSL, SAGETEST, SAGETESTP)
+    en `rutas.*`, `stops.ruta` o `halts.ruta_reapertura` NO carga: el bot mandaría órdenes que no son de verdad."""
+    errores: list[str] = []
+    candidatas: list[tuple[str, Any]] = []
+
+    def recorrer(prefijo: str, valor: Any) -> None:
+        if isinstance(valor, dict):
+            for k, v in valor.items():
+                recorrer(f"{prefijo}.{k}", v)
+        else:
+            candidatas.append((prefijo, valor))
+
+    recorrer("rutas", crudo.get("rutas"))
+    for hoja in _HOJAS_RUTA_ORDENES:
+        bloque, clave = hoja.split(".")
+        valor = crudo.get(bloque)
+        if isinstance(valor, dict) and clave in valor:
+            candidatas.append((hoja, valor[clave]))
+    for ruta, valor in candidatas:
+        if isinstance(valor, str) and valor.strip().upper() in RUTAS_PRUEBA_DAS:
+            errores.append(f"{ruta}: {valor!r} es una ruta de PRUEBAS de DAS ({', '.join(sorted(RUTAS_PRUEBA_DAS))}): "
+                           f"el bot no opera por ella (decisión 66)")
     return errores
 
 

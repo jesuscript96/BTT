@@ -73,6 +73,7 @@ from app.bot_das.tipos import (
     MsgBP,
     MsgConexion,
     MsgDesconocido,
+    MsgErrorOrden,
     MsgInformativo,
     MsgIntMsg,
     MsgIssueStatus,
@@ -312,13 +313,125 @@ ESPERADOS: dict[str, tuple[str, type, dict]] = {
 }
 CASOS_MULTILINEA = {"intmsg"}
 
+# ── líneas del DAS REAL del 2-oct (primeras órdenes de prueba, 1 acción de SOFI; cuenta y usuario ficticios). Sus
+# tokens son del 2-oct (día 275): se parsean con un Parser de ESE día para que el token salga como nuestro. Los de los
+# casos c-e (1276007xx, 127601100) se escribieron A MANO en la prueba: en el esquema del bot son del día 276, así que
+# el 2-oct NO son nuestros (token None y el número queda en las notas del %OrderAct): lo correcto (riesgo 2).
+HOY_REAL2 = date(2026, 10, 2)
+USR = "USR_PRUEBA"
+
+
+def _orden2(**k):
+    base = dict(ticker="SOFI", lado="B", cuenta=CUENTA, trader=USR, order_src="CMDAPI", pref="N/A", watch=False)
+    base.update(k)
+    return (MsgOrden, base)
+
+
+ESPERADOS_REAL2: dict[str, tuple[str, type, dict]] = {
+    "real2_orderact_stop_sending": ("DAS-real-02oct-a", *_act(
+        id=2070, accion="Sending", lado="B", ticker="SOFI", qty=1, precio=D("24"), ruta="SMAT", hora="05:06:48",
+        notas="", token=127599001)),
+    "real2_order_stop_sending": ("DAS-real-02oct-a-tipo-SLP", *_orden2(
+        id=2070, token=127599001, tipo="SLP:24", qty=1, lvqty=1, cxlqty=0, precio=D("36"), ruta="SMAT",
+        estado=EstadoOrden.SENDING, hora="05:06:48", origoid=0, tif="DAY+")),
+    "real2_order_stop_accepted": ("DAS-real-02oct-a", *_orden2(
+        id=2070, token=127599001, tipo="SLP:24", qty=1, lvqty=1, precio=D("36"), estado=EstadoOrden.ACCEPTED,
+        tif="DAY+")),
+    "real2_marca_ordersending": ("DAS-real-02oct", MsgInformativo, dict(palabra="#OrderSending")),
+    "real2_marca_order_replacing": ("DAS-real-02oct-no-es-volcado", MsgInformativo, dict(palabra="#Order")),
+    "real2_orderact_replacing": ("DAS-real-02oct-a", *_act(
+        id=2070, accion="Replacing", lado="B", qty=2, precio=D("24"), ruta="SMAT", notas="", token=127599001)),
+    "real2_order_stop_replaced": ("DAS-real-02oct-a-replace-conserva", *_orden2(
+        id=2070, token=127599001, tipo="SLP:24", qty=2, lvqty=2, cxlqty=0, precio=D("36"),
+        estado=EstadoOrden.ACCEPTED, hora="05:06:54")),
+    "real2_orderact_replaced": ("DAS-real-02oct-a", *_act(id=2070, accion="Replaced", qty=2, token=127599001)),
+    "real2_marca_order_canceling": ("DAS-real-02oct-no-es-volcado", MsgInformativo, dict(palabra="#Order")),
+    "real2_order_stop_canceled": ("DAS-real-02oct-a", *_orden2(
+        id=2070, token=127599001, tipo="SLP:24", qty=2, lvqty=0, cxlqty=2, estado=EstadoOrden.CANCELED)),
+    "real2_orderact_stop_canceled": ("DAS-real-02oct-a", *_act(
+        id=2070, accion="Canceled", qty=2, notas="Canceled", token=127599001)),
+    "real2_order_smat_madre_accepted": ("DAS-real-02oct-b", *_orden2(
+        id=2286, token=127599002, tipo="L", qty=1, lvqty=1, precio=D("11.19"), ruta="SMAT",
+        estado=EstadoOrden.ACCEPTED, origoid=0, tif="DAY+")),
+    "real2_orderact_hija_sending": ("DAS-real-02oct-b-hija", *_act(
+        id=2287, accion="Sending", lado="B", qty=1, precio=D("11.19"), ruta="ARCA", notas="", token=127599002)),
+    "real2_order_hija_sending": ("DAS-real-02oct-b-origoid", *_orden2(
+        id=2287, token=127599002, tipo="L", qty=1, lvqty=1, ruta="ARCA", estado=EstadoOrden.SENDING, origoid=2286,
+        tif="DAY+")),
+    "real2_order_madre_triggered": ("DAS-real-02oct-b-madre", *_orden2(
+        id=2286, token=127599002, qty=1, lvqty=0, cxlqty=0, ruta="SMAT", estado=EstadoOrden.TRIGGERED, origoid=0)),
+    "real2_order_hija_accepted": ("DAS-real-02oct-b-tif-day", *_orden2(
+        id=2287, token=127599002, lvqty=1, ruta="ARCA", estado=EstadoOrden.ACCEPTED, origoid=2286, tif="DAY")),
+    "real2_orderact_hija_canceled": ("DAS-real-02oct-b", *_act(
+        id=2287, accion="Canceled", ruta="ARCA", notas="RT:Cxl-by-client", token=127599002)),
+    "real2_order_hija_canceled": ("DAS-real-02oct-b", *_orden2(
+        id=2287, token=127599002, lvqty=0, cxlqty=1, ruta="ARCA", estado=EstadoOrden.CANCELED, origoid=2286)),
+    "real2_cancel_error_no_abierta": ("DAS-real-02oct-b-error", MsgErrorOrden, dict(
+        comando="CANCEL", texto="order not open", no_abierta=True)),
+    "real2_order_sagepro_accepted_day": ("DAS-real-02oct-c-tif-day", *_orden2(
+        id=2839, token=None, precio=D("11.2"), ruta="SAGEPRO", estado=EstadoOrden.ACCEPTED, tif="DAY")),
+    "real2_orderact_sagepro_canceled": ("DAS-real-02oct-c", *_act(
+        id=2839, accion="Canceled", ruta="SAGEPRO", notas="RT:Cxl-by-client 127600720", token=None)),
+    "real2_order_edga_accepted": ("DAS-real-02oct-d", *_orden2(
+        id=2844, token=None, ruta="EDGA", estado=EstadoOrden.ACCEPTED, tif="DAY+")),
+    "real2_order_edga_canceled": ("DAS-real-02oct-d", *_orden2(
+        id=2844, token=None, lvqty=0, cxlqty=1, ruta="EDGA", estado=EstadoOrden.CANCELED, tif="DAY+")),
+    "real2_orderact_cxl_by_venue": ("DAS-real-02oct-d-venue", *_act(
+        id=2844, accion="Canceled", ruta="EDGA", notas="RT:Cxl-by-Venue 127600721", token=None)),
+    "real2_order_sagepro_compra_accepted": ("DAS-real-02oct-e", *_orden2(
+        id=2850, token=None, precio=D("16.04"), ruta="SAGEPRO", estado=EstadoOrden.ACCEPTED, tif="DAY")),
+    "real2_pos_larga": ("DAS-real-02oct-e-pos-antes", MsgPos, dict(
+        ticker="SOFI", tipo=2, qty_cruda=1, neta=1, avg=D("16.01"), realizado=D("0"), creada="2026/10/02-05:33:00",
+        no_realizado=D("-0.01"))),
+    "real2_orderact_execute": ("DAS-real-02oct-e", *_act(
+        id=2850, accion="Execute", lado="B", qty=1, precio=D("16.01"), ruta="SAGEPRO", notas="127601100", token=None)),
+    "real2_order_executed": ("DAS-real-02oct-e", *_orden2(
+        id=2850, token=None, qty=1, lvqty=0, cxlqty=0, precio=D("16.04"), estado=EstadoOrden.EXECUTED)),
+    "real2_trade_compra": ("DAS-real-02oct-e", MsgTrade, dict(
+        id=3129, ticker="SOFI", lado="B", qty=1, precio=D("16.01"), ruta="SAGEPRO", id_orden=2850, liq="-",
+        ecn_fee=D("0.00"), pl=D("0.00"))),
+    "real2_pos_plana": ("DAS-real-02oct-e-plana-listada", MsgPos, dict(
+        ticker="SOFI", tipo=2, qty_cruda=0, neta=0, realizado=D("-0.01"), no_realizado=D("0"))),
+    "real2_trade_venta": ("DAS-real-02oct-e", MsgTrade, dict(
+        id=3138, lado="S", qty=1, precio=D("16"), id_orden=2864, pl=D("-0.01"))),
+    "real2_slret_testsl": ("DAS-real-02oct-f-ruta-pruebas", MsgSLRet, dict(
+        tipo=1, ticker="WHLR", precio=D("0.01"), tamano=100, ruta="TESTSL", notas="", cuenta=CUENTA)),
+    "real2_slret_sage": ("DAS-real-02oct-f", MsgSLRet, dict(
+        tipo=1, ticker="WHLR", precio=D("0.00092"), tamano=100, ruta="SAGE", notas="", cuenta=CUENTA)),
+    # (g) stops de 1 acción disparados por SMAT (tarde del 2-oct; tokens a mano: del día 276 → no nuestros)
+    "real2g_stop_accepted": ("DAS-real-02oct-g1", *_orden2(
+        id=4338, token=None, tipo="SLP:15.96", qty=1, lvqty=1, precio=D("23.94"), ruta="SMAT",
+        estado=EstadoOrden.ACCEPTED, origoid=0)),
+    "real2g_orderact_hija_sending": ("DAS-real-02oct-g1", *_act(
+        id=4343, accion="Sending", qty=1, precio=D("23.94"), ruta="ARCA", notas="127604630", token=None)),
+    "real2g_order_hija_sending": ("DAS-real-02oct-g1", *_orden2(
+        id=4343, tipo="L", ruta="ARCA", estado=EstadoOrden.SENDING, origoid=4338)),
+    "real2g_order_madre_triggered": ("DAS-real-02oct-g1", *_orden2(
+        id=4338, tipo="SLP:15.96", lvqty=0, ruta="SMAT", estado=EstadoOrden.TRIGGERED, origoid=0)),
+    "real2g_order_hija_rejected": ("DAS-real-02oct-g1-stop-muerto", *_orden2(
+        id=4343, lvqty=0, cxlqty=0, ruta="ARCA", estado=EstadoOrden.REJECTED, origoid=4338)),
+    "real2g_orderact_hija_send_rej": ("DAS-real-02oct-g1-CF-LastTrade", *_act(
+        id=4343, accion="Send_Rej", ruta="ARCA",
+        notas="RT:CF:LastTrade 19.188000 20.000000 23.940000 15.970000 15.990000 ref#114796[Route#3066] 127604630",
+        token=None)),
+    "real2g_order_hija_accepted_19": ("DAS-real-02oct-g2", *_orden2(
+        id=4410, precio=D("19"), ruta="ARCA", estado=EstadoOrden.ACCEPTED, origoid=4405, tif="DAY")),
+    "real2g_order_hija_canceled_19": ("DAS-real-02oct-g2", *_orden2(
+        id=4410, lvqty=0, cxlqty=1, ruta="ARCA", estado=EstadoOrden.CANCELED, origoid=4405)),
+    "real2g_orderact_r081": ("DAS-real-02oct-g2-R081", *_act(
+        id=4410, accion="Canceled", ruta="ARCA", notas="RT:Ven: R081: Price Too Far Outside 127600120", token=None)),
+    "real2g_trade_hija": ("DAS-real-02oct-g3", MsgTrade, dict(
+        id=5029, ticker="SOFI", lado="B", qty=1, precio=D("15.96"), ruta="ARCA", id_orden=4713)),
+}
+
 
 # ══════════════════════════════════════════════════════════════════════
 # El fichero de casos
 # ══════════════════════════════════════════════════════════════════════
 def test_fichero_de_casos_y_tabla_coinciden():
     """Cada caso del fichero tiene sus asertos aquí y viceversa (una línea nueva sin asertos no pasa en silencio)."""
-    assert set(CASOS) == set(ESPERADOS) | CASOS_MULTILINEA
+    assert not set(ESPERADOS) & set(ESPERADOS_REAL2)
+    assert set(CASOS) == set(ESPERADOS) | set(ESPERADOS_REAL2) | CASOS_MULTILINEA
     for caso, lineas in CASOS.items():
         esperado = 5 if caso == "intmsg" else 1
         assert len(lineas) == esperado, caso
@@ -350,6 +463,33 @@ def test_parse_de_cada_linea_del_fichero(caso):
         assert obtenido == valor, f"{caso}.{campo}: {obtenido!r} != {valor!r}"
         if isinstance(valor, Decimal):
             assert type(obtenido) is Decimal, f"{caso}.{campo} no es Decimal"
+
+
+@pytest.mark.parametrize("caso", sorted(ESPERADOS_REAL2))
+def test_parse_de_las_lineas_reales_del_2_oct(caso):
+    """DAS real (2-oct): cada línea se parsea con sus campos (tokens del 2-oct, nuestros ESE día)."""
+    _regla, clase, campos = ESPERADOS_REAL2[caso]
+    linea = CASOS[caso][0]
+    msg = Parser(lambda t: tokens.es_nuestro(t, HOY_REAL2), cuenta=CUENTA).parsear(linea)
+    assert type(msg) is clase, f"{caso}: {msg!r}"
+    assert msg.cruda == linea
+    for campo, valor in campos.items():
+        obtenido = getattr(msg, campo)
+        assert obtenido == valor, f"{caso}.{campo}: {obtenido!r} != {valor!r}"
+
+
+def test_real_2_oct_cancel_error_y_order_acuse_no_cambian_el_bloque():
+    """«#Order Replacing» / «#Order Canceling» no abren un bloque de volcado (un barrido en curso no pierde sus órdenes);
+    «#Order id token …» (la cabecera del manual) sí. «REPLACE Error : …» se reconoce igual que el del CANCEL."""
+    p = Parser(lambda t: tokens.es_nuestro(t, HOY_REAL2))
+    assert type(p.parsear("#Order Canceling")) is MsgInformativo and p.en_bloque is None
+    assert type(p.parsear(CASOS["marca_order"][0])) is MsgMarcador and p.en_bloque == "Order"
+    m = p.parsear("REPLACE Error : order not open")
+    assert type(m) is MsgErrorOrden and (m.comando, m.no_abierta) == ("REPLACE", True)
+    otro = p.parsear("cancel error: something else")
+    assert type(otro) is MsgErrorOrden and (otro.comando, otro.texto, otro.no_abierta) == ("CANCEL", "something else",
+                                                                                          False)
+    assert type(p.parsear("CANCEL 2286")) is MsgDesconocido      # el eco del comando (si lo hubiera) no es un error
 
 
 @pytest.mark.parametrize("caso", sorted(CASOS))

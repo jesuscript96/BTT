@@ -41,7 +41,8 @@ real (§10). El `Emparejador` es a la vez el motor de la sombra: los mutantes
 nunca salen al socket real y producen fills SIMULADOS con las mismas reglas.
 Las variantes NO documentadas del manual son parámetros para que el bot se
 pruebe con todas: `variante_order` (15/19 campos, §5.3), `tipo_stop_crudo`
-(«SLP: 2.97 2.99», §5.2), `replace_conserva_pp` (§5.6), `orden_mensajes`
+(«SLP:2.97» como el DAS real del 2-oct, o una plantilla, §5.2), `smat_hija`
+(madre Triggered + hija de SMAT, decisión 64), `replace_conserva_pp` (§5.6), `orden_mensajes`
 (las 6 permutaciones de `%OrderAct`/`%TRADE`/`%POS`, §5.12, riesgo 8) y
 `qty_corto_negativa` (signo de `%POS` en cortos, §5.12, riesgo 9).
 
@@ -83,7 +84,7 @@ import sys
 import threading
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from datetime import time as dtime
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal, InvalidOperation
@@ -103,7 +104,16 @@ RUTAS_SIMULADAS = ("SAGEREB", "SAGEPRO", "SAGEREBL", "MIAX", "EDGA", "SMAT", "ST
 RUTA_LOCATE_SIMULADA = "LOCSIM"
 PRECIO_LOCATE_SIMULADO = Decimal("0.01")
 LOCATES_DISPONIBLES_SIMULADOS = 1_000_000
-ORDEN_MENSAJES_DEFECTO = ("OrderAct", "TRADE", "POS")
+# DAS real (2-oct, caso e): el %POS llega ANTES que el Execute / %ORDER Executed / %TRADE de un fill
+ORDEN_MENSAJES_DEFECTO = ("POS", "OrderAct", "TRADE")
+# Decisión 64 (DAS real 2-oct): SMAT no ejecuta: deja la MADRE «Triggered» (lvqty 0) y crea una HIJA límite en un
+# mercado (ARCA en lo visto), mismo token, otro id, origoid = madre; un STOPLMTP por SMAT lo hace al DISPARARSE.
+RUTA_SMAT = "SMAT"
+RUTA_HIJA_SMAT = "ARCA"
+# DAS real (2-oct, caso c): por SAGEREB/SAGEPRO/MIAX el `Accepted` vuelve con TIF «DAY» aunque se envió «DAY+»
+PREFIJOS_RUTA_TIF_DAY = ("SAGE", "MIAX")
+# DAS real (2-oct): CANCEL de una orden que ya no está abierta (la madre Triggered de SMAT, una ejecutada…)
+LINEA_CANCEL_NO_ABIERTA = "CANCEL Error : order not open"
 OPEN_EN_HALT = ("aceptar", "rechazar")
 CORTES = ("todas", "normal", "watch")
 ACCIONES_RECHAZO = ("Send_Rej", "CancelRej", "ReplaceRej")
@@ -119,6 +129,7 @@ NOTA_POSTONLY_TIPO = "PostOnly only for limit orders"
 NOTA_OPEN_HALT = "OPEN route not available during halt"
 NOTA_TIPO_NO_SIMULADO = "Order type not simulated"
 NOTA_NO_ABIERTA = "Order not open"
+NOTA_PRECIO_LEJOS_MERCADO = "RT:Ven: R081: Price Too Far Outside"   # COPIADO del DAS real (2-oct)
 NOTA_TIPO_REPLACE = "Replace type mismatch"
 NOTA_LOCATE_TIPO1 = "Route type 1 does not support inquire"
 # Saludo y respuestas al LOGIN COPIADOS del DAS real (01-oct; el manual no los documenta).
@@ -227,6 +238,7 @@ class _OrdenSim:
     pp_perdido: bool = False     # REPLACE con replace_conserva_pp=False: DAS la convirtió en STOPLMT (§5.6)
     tope_llenado: Optional[int] = None
     hora: str = "00:00:00"
+    origoid: int = 0             # decisión 64: la HIJA de SMAT lleva el id de su madre (0 en las demás)
 
 
 class LibroSimulado:
@@ -484,7 +496,7 @@ class LibroSimulado:
                 "id": o.id, "token": o.token, "ticker": o.ticker, "lado": o.lado, "tipo": o.tipo, "qty": o.qty,
                 "lvqty": o.lvqty, "cxlqty": o.cxlqty, "llenas": o.llenas, "precio": o.precio, "stop": o.stop,
                 "ruta": o.ruta, "estado": o.estado, "tif": o.tif, "pref": o.pref, "post_only": o.post_only,
-                "disparada": o.disparada, "hora": o.hora,
+                "disparada": o.disparada, "hora": o.hora, "origoid": o.origoid,
             } for o in self._ordenes.values()]
 
     def posiciones(self) -> dict[str, int]:
@@ -611,12 +623,24 @@ class Emparejador:
     ("aceptar" | "rechazar"); `replace_share_es_abierta` (A-02: True →
     `share` de un REPLACE = nueva cantidad ABIERTA; False → TOTAL, llenas +
     abierta, y un `share ≤ llenas` se rechaza con `ReplaceRej`).
+
+    Lo REAL del 2-oct (DAS de Jaume, 1 acción de SOFI): el tipo de un
+    STOPLMTP es «SLP:<disparo>» (sin espacio) y el campo precio es el LÍMITE;
+    `smat_hija` (defecto True) hace que la ruta SMAT se comporte como en real
+    (decisión 64): una límite por SMAT deja la madre «Triggered» con lvqty 0
+    y crea al momento una HIJA límite por `RUTA_HIJA_SMAT` (mismo token, otro
+    id, origoid = madre, TIF «DAY»); un STOPLMTP por SMAT espera como una sola
+    orden y hace lo mismo AL DISPARARSE (la hija lleva el límite). El CANCEL
+    de una orden que ya no está abierta contesta «CANCEL Error : order not
+    open» (sin id); por SAGE*/MIAX el `Accepted` vuelve con TIF «DAY»; y el
+    `%POS` de un fill llega antes que el Execute (`ORDEN_MENSAJES_DEFECTO`).
     """
 
     def __init__(self, libro: LibroSimulado, reloj: Reloj, variante_order: int = 19, tipo_stop_crudo: str = "SLP",
                  replace_conserva_pp: bool = True, latencia_s: float = 0.0, qty_corto_negativa: bool = False,
                  orden_mensajes: tuple[str, ...] = ORDEN_MENSAJES_DEFECTO, open_en_halt: str = "aceptar",
-                 replace_share_es_abierta: bool = REPLACE_SHARE_ES_ABIERTA) -> None:
+                 replace_share_es_abierta: bool = REPLACE_SHARE_ES_ABIERTA, smat_hija: bool = True,
+                 tope_broker_pct: Optional[Decimal] = None, tope_mercado_pct: Optional[Decimal] = None) -> None:
         if not isinstance(libro, LibroSimulado):
             raise TypeError(f"libro debe ser un LibroSimulado: {libro!r}")
         if not callable(getattr(reloj, "ahora", None)):
@@ -650,6 +674,15 @@ class Emparejador:
         self.orden_mensajes = orden
         self.open_en_halt = open_en_halt
         self.replace_share_es_abierta = replace_share_es_abierta
+        self.smat_hija = bool(smat_hija)
+        # DAS real (2-oct, stops de SOFI): el control de riesgo del bróker rechaza una COMPRA límite por encima del
+        # último × 1,20 («RT:CF:LastTrade …») y el mercado cancela una a +19 % («RT:Ven: R081: Price Too Far
+        # Outside»; con +9 % llenó). None = sin tope (lo de siempre). Valen también para la hija de SMAT.
+        for nombre, valor in (("tope_broker_pct", tope_broker_pct), ("tope_mercado_pct", tope_mercado_pct)):
+            if valor is not None and (not isinstance(valor, Decimal) or not valor.is_finite() or valor <= 0):
+                raise ValueError(f"{nombre} debe ser un Decimal > 0 o None: {valor!r}")
+        self.tope_broker_pct = tope_broker_pct
+        self.tope_mercado_pct = tope_mercado_pct
         self._incidencias: list[str] = []
         self._manejadores = {
             "NEWORDER": self._neworder, "CANCEL": self._cancel, "REPLACE": self._replace,
@@ -762,9 +795,90 @@ class Emparejador:
         if motivo is not None:
             o.estado, o.lvqty = EstadoOrden.REJECTED.value, 0
             return salida + [self._orderact(o, "Send_Rej", o.qty, motivo), self._linea_orden(o)]
+        if self._es_smat(o):
+            # DAS real (2-oct, casos a y b): %ORDER Sending, %ORDER Accepted y el acuse; la límite crea su hija al momento
+            salida.append(self._linea_orden(o))
+            o.estado = EstadoOrden.ACCEPTED.value
+            salida += [self._linea_orden(o), self._orderact(o, "Accept", o.lvqty)]
+            if o.tipo != TipoOrden.STOP_LIMITE_PP.value:
+                return salida + self._crear_hija(o)
+            return salida + self._intentar_llenar(o, agresiva=True)
         o.estado = EstadoOrden.ACCEPTED.value
+        self._tif_aceptada(o)
         salida += [self._orderact(o, "Accept", o.lvqty), self._linea_orden(o)]
+        if self._tope(o, self.tope_mercado_pct) is not None:
+            return salida + self._cancelar_por_mercado(o)
         return salida + self._intentar_llenar(o, agresiva=True)
+
+    def _tope(self, o: _OrdenSim, pct: Optional[Decimal]) -> Optional[tuple[Decimal, Decimal]]:
+        """(tope, último) si `o` es una COMPRA límite por encima de último × (1 + pct/100); si no, None."""
+        if pct is None or o.lado != "B" or o.tipo != TipoOrden.LIMITE.value or o.precio is None:
+            return None
+        q = self._libro._quotes.get(o.ticker)
+        ultimo = q.get("last") if q is not None else None
+        if ultimo is None:
+            return None
+        tope = ultimo * (1 + pct / 100)
+        return (tope, ultimo) if o.precio > tope else None
+
+    def _nota_broker(self, o: _OrdenSim) -> Optional[str]:
+        """El rechazo REAL del bróker (2-oct) a una compra demasiado lejos del último."""
+        topes = self._tope(o, self.tope_broker_pct)
+        if topes is None:
+            return None
+        tope, ultimo = topes
+        return (f"RT:CF:LastTrade {tope:.6f} {tope:.6f} {o.precio:.6f} {ultimo:.6f} {ultimo:.6f} "
+                f"ref#0[Route#0]")
+
+    def _cancelar_por_mercado(self, o: _OrdenSim) -> list[str]:
+        """DAS real (2-oct): el mercado cancela la compra aceptada («RT:Ven: R081: Price Too Far Outside»)."""
+        o.hora = self._hora()
+        canceladas = o.lvqty
+        o.cxlqty += canceladas
+        o.lvqty = 0
+        o.estado = EstadoOrden.CANCELED.value
+        return [self._linea_orden(o), self._orderact(o, "Canceled", canceladas, NOTA_PRECIO_LEJOS_MERCADO)]
+
+    def _es_smat(self, o: _OrdenSim) -> bool:
+        return self.smat_hija and o.ruta.upper() == RUTA_SMAT and o.origoid == 0
+
+    @staticmethod
+    def _tif_aceptada(o: _OrdenSim) -> None:
+        """DAS real (2-oct, caso c): por SAGE*/MIAX (y la hija de SMAT) el `Accepted` vuelve con TIF «DAY» aunque se
+        mandó «DAY+»; por EDGA se queda «DAY+»."""
+        if o.tif.upper() == "DAY+" and o.ruta.upper().startswith(PREFIJOS_RUTA_TIF_DAY):
+            o.tif = "DAY"
+
+    def _crear_hija(self, madre: _OrdenSim) -> list[str]:
+        """Decisión 64 (DAS real 2-oct, caso b): la madre de SMAT pasa a «Triggered» con lvqty 0 y nace la HIJA límite
+        (mismo token, otro id, origoid = madre, ruta `RUTA_HIJA_SMAT`) con lo que la madre tenía vivo; se intenta llenar
+        al momento. Orden de líneas como en real: acuse Sending de la hija, %ORDER hija Sending, %ORDER madre
+        Triggered, %ORDER hija Accepted (TIF «DAY») y su acuse Accept."""
+        lib = self._libro
+        tipo = TipoOrden.MERCADO.value if madre.tipo == TipoOrden.MERCADO.value else TipoOrden.LIMITE.value
+        hija = _OrdenSim(id=lib._sig_orden, token=madre.token, ticker=madre.ticker, lado=madre.lado, tipo=tipo,
+                         qty=madre.lvqty, ruta=RUTA_HIJA_SMAT, tif=madre.tif, pref=None,
+                         post_only=madre.post_only and tipo == TipoOrden.LIMITE.value, precio=madre.precio, stop=None,
+                         lvqty=madre.lvqty, tope_llenado=madre.tope_llenado, hora=self._hora(), origoid=madre.id)
+        lib._sig_orden += 1
+        lib._ordenes[hija.id] = hija
+        salida = [self._orderact(hija, EstadoOrden.SENDING.value, hija.qty), self._linea_orden(hija)]
+        madre.estado = EstadoOrden.TRIGGERED.value
+        madre.lvqty = 0
+        madre.disparada = True
+        madre.hora = self._hora()
+        salida.append(self._linea_orden(madre))
+        broker = self._nota_broker(hija)
+        if broker is not None:
+            # DAS real (2-oct, caso 1): la hija RECHAZADA por el bróker; la madre se queda Triggered lv 0 para siempre
+            hija.estado, hija.lvqty = EstadoOrden.REJECTED.value, 0
+            return salida + [self._linea_orden(hija), self._orderact(hija, "Send_Rej", hija.qty, broker)]
+        hija.estado = EstadoOrden.ACCEPTED.value
+        hija.tif = "DAY"
+        salida += [self._linea_orden(hija), self._orderact(hija, "Accept", hija.lvqty)]
+        if self._tope(hija, self.tope_mercado_pct) is not None:
+            return salida + self._cancelar_por_mercado(hija)      # DAS real (2-oct, caso 2)
+        return salida + self._intentar_llenar(hija, agresiva=True)
 
     def _motivo_rechazo_nueva(self, o: _OrdenSim, no_simulado: bool) -> Optional[str]:
         """Por qué DAS rechazaría esta orden (o None). El rechazo del guion se consume solo con una orden por lo demás válida."""
@@ -782,6 +896,10 @@ class Emparejador:
         notas = self._libro._tomar_rechazo("Send_Rej", o)
         if notas is not None:
             return notas
+        if not self._es_smat(o):
+            broker = self._nota_broker(o)
+            if broker is not None:
+                return broker
         if self._libro.en_halt(o.ticker) and o.ruta.upper() == "OPEN" and self.open_en_halt == "rechazar":
             return NOTA_OPEN_HALT
         if o.post_only and self._cruzaria(o):
@@ -813,7 +931,9 @@ class Emparejador:
             if o is None:
                 raise _ComandoMalo(f"CANCEL de una orden desconocida {p[1]}")
             if o.estado not in _VIVAS:
-                return [self._orderact(o, "CancelRej", o.lvqty, NOTA_NO_ABIERTA)]
+                # DAS real (2-oct): la madre Triggered de SMAT (o una orden ya terminada) → «CANCEL Error : order not
+                # open», SIN id de orden ni %OrderAct
+                return [LINEA_CANCEL_NO_ABIERTA]
             objetivo = [o]
         else:
             raise _ComandoMalo("CANCEL mal formado")
@@ -902,6 +1022,10 @@ class Emparejador:
         notas = self._libro._tomar_rechazo("ReplaceRej", o)
         if notas is not None:
             return notas
+        if nuevo_tipo == TipoOrden.LIMITE.value and precio is not None:
+            broker = self._nota_broker(replace(o, precio=precio, tipo=nuevo_tipo))
+            if broker is not None:
+                return broker                           # el mismo control del bróker al subir el límite
         if o.post_only:
             q = self._libro._quotes.get(o.ticker)
             if q is not None and precio is not None and (
@@ -927,6 +1051,8 @@ class Emparejador:
             ultimo = q.get("last")
             if ultimo is None or not ((compra and ultimo >= o.stop) or (not compra and ultimo <= o.stop)):
                 return []
+            if self._es_smat(o):
+                return self._crear_hija(o)          # decisión 64: el stop SMAT disparado = madre Triggered + hija
             o.disparada = True
             agresiva = True
         toque = q["ask"] if compra else q["bid"]
@@ -1162,21 +1288,26 @@ class Emparejador:
         return [CABECERA_TRADE] + [self._linea_trade(t) for t in self._libro._trades] + ["#TradeEnd"]
 
     def _tipo_crudo(self, o: _OrdenSim) -> str:
-        """Campo Type de `%ORDER` (§5.2): «L», «MKT» o el del STOPLMTP según `tipo_stop_crudo` / `replace_conserva_pp`."""
+        """Campo Type de `%ORDER` (§5.2): «L», «MKT» o el del STOPLMTP según `tipo_stop_crudo` / `replace_conserva_pp`.
+
+        Formato REAL (DAS 2-oct): «SLP:<disparo>» sin espacio; el límite va en el campo precio. Con una plantilla
+        (`{stop}`/`{precio}`) se puede imitar otro formato (p. ej. el de la captura del socio, «SLP: {stop} {precio}»).
+        Un REPLACE que pierde el pre/post (`replace_conserva_pp=False`) enseña «SL:<disparo>».
+        """
         if o.tipo == TipoOrden.LIMITE.value:
             return "L"
         if o.tipo == TipoOrden.STOP_LIMITE_PP.value and o.stop is not None and o.precio is not None:
             prefijo = "SL" if o.pp_perdido else self.tipo_stop_crudo
             if "{" in prefijo:
                 return prefijo.format(stop=_num(o.stop), precio=_num(o.precio))
-            return f"{prefijo}: {_num(o.stop)} {_num(o.precio)}"
+            return f"{prefijo}:{_num(o.stop)}"
         return o.tipo
 
     def _linea_orden(self, o: _OrdenSim) -> str:
-        """`%ORDER` de 15 o 19 campos (L343-352, L930-932)."""
+        """`%ORDER` de 15 o 19 campos (L343-352, L930-932); origoid = la madre en la hija de SMAT (decisión 64)."""
         campos = [str(o.id), str(o.token), o.ticker, o.lado, self._tipo_crudo(o), str(o.qty), str(o.lvqty),
-                  str(o.cxlqty), _num(o.precio) if o.precio is not None else "0", o.ruta, o.estado, o.hora, "0",
-                  self._libro.cuenta, self._libro.trader]
+                  str(o.cxlqty), _num(o.precio) if o.precio is not None else "0", o.ruta, o.estado, o.hora,
+                  str(o.origoid), self._libro.cuenta, self._libro.trader]
         if self.variante_order == 19:
             campos += ["CMDAPI", o.tif, o.pref or "N/A"]
         return "%ORDER " + " ".join(campos)

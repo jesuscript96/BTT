@@ -102,7 +102,9 @@ from app.bot_das.tipos import (
 logger = logging.getLogger("btt.bot_das.comandos")
 
 # ── conjuntos de comandos (§3.10, R-M-04) ──────────────────────────────
-CONSULTA = frozenset({"estado", "posiciones", "ordenes", "locates", "estrategias", "detalle", "salud", "log"})
+AYUDA = "ayuda"                           # decisión 67 (Jaume 2-oct): /ayuda (alias /help) lista todos los comandos
+ALIAS = {"help": AYUDA}
+CONSULTA = frozenset({"estado", "posiciones", "ordenes", "locates", "estrategias", "detalle", "salud", "log", AYUDA})
 DOS_PASOS = frozenset({"pausar", "reanudar", "sigue", "modo_seguridad", "desactivar", "activar", "apagar", "encender",
                        "reanudar_ticker", "reanudar_todo", "parar_avisos", "reanudar_avisos", "control_humano",
                        "cerrar_y_reiniciar", "esperar_fin_dia"})
@@ -151,7 +153,57 @@ USO: dict[str, str] = {
     "cancelar_ordenes": "/cancelar_ordenes TICKER SI",
     "stop": "/stop TICKER PRECIO SI",
     "confirmar": "/confirmar ID",
+    "ayuda": "/ayuda (o /help)",
 }
+
+# ── decisión 67 (Jaume 2-oct): /ayuda ───────────────────────────────────
+# (grupo, [(comando, qué hace en una línea)]). Un test comprueba que aquí están TODOS los de `USO`.
+AYUDA_GRUPOS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
+    ("Consulta (no cambian nada)", (
+        ("estado", "Resumen del bot: fase, conexión con DAS, posiciones, pausas y salud."),
+        ("posiciones", "Posiciones abiertas por ticker, con sus lotes, precio medio y resultado del día."),
+        ("ordenes", "Órdenes vivas del bot en DAS."),
+        ("locates", "Locates del día: localizados, usados, lo gastado y el tope."),
+        ("estrategias", "Estrategias del cuadro: si ejecutan, riesgo, EV y ventana de entradas."),
+        ("detalle", "Todo lo que el bot sabe de una orden, un lote, un ticker o una estrategia."),
+        ("salud", "Salud técnica: DAS, feed de velas, reconciliación, disco y cola."),
+        ("log", "Las últimas N líneas del log del bot."),
+        ("ayuda", "Esta lista."),
+    )),
+    ("Pausas y reanudación", (
+        ("pausar", "Deja de abrir entradas nuevas (todo el bot o solo ese ticker); los stops y las salidas siguen."),
+        ("sigue", "Levanta las pausas y la intervención humana (con TICKER, también el veto tras un cisne negro)."),
+        ("reanudar", "Vuelve a abrir entradas (sin TICKER quita la pausa global; con TICKER, como /reanudar_ticker)."),
+        ("reanudar_ticker", "Quita la pausa y el control manual del ticker y vuelve a poner sus stops."),
+        ("reanudar_todo", "Reanuda todos los tickers (salvo los que están en cisne negro)."),
+        ("apagar", "El bot no abre nada y cancela las entradas en curso; los stops residentes y las salidas siguen."),
+        ("encender", "Vuelve a vigilar y a abrir entradas tras /apagar (antes reconcilia con DAS)."),
+        ("control_humano", "El bot no abre nada (en todo o en ese ticker); los stops siguen."),
+        ("modo_seguridad", "Enciende o apaga el modo de seguridad (filtro de precio mínimo y volumen)."),
+    )),
+    ("Estrategias", (
+        ("activar", "Activa una estrategia para que ejecute."),
+        ("desactivar", "Desactiva una estrategia; lo que tenga abierto sigue según su «al desactivar»."),
+        ("cerrar_y_reiniciar", "Cierra YA las posiciones de esa estrategia (como una salida por hora) y la deja "
+                               "lista para volver a entrar."),
+        ("esperar_fin_dia", "Al desactivarla, lo que tenga abierto sigue con sus reglas hasta el fin del día."),
+    )),
+    ("Órdenes y cierres", (
+        ("cerrar", "Cierra la posición del ticker (o N acciones) comprando; el stop baja antes."),
+        ("cerrar_todo", "Cierra TODAS las posiciones y cancela todas las órdenes del bot."),
+        ("cancelar_ordenes", "Cancela todas las órdenes del ticker y lo deja en control manual (sin stops del bot) "
+                             "hasta /reanudar TICKER."),
+        ("stop", "Pone o mueve el stop del ticker a ese precio."),
+        ("confirmar", "Confirma un comando de dos pasos con el código que dio el bot (caduca en 60 s)."),
+    )),
+    ("Avisos", (
+        ("parar_avisos", "Calla los avisos (de todo, de un ticker, o con BS solo los informes de su cisne negro)."),
+        ("reanudar_avisos", "Vuelve a mandar esos avisos."),
+    )),
+)
+_NOTA_HALT_AYUDA = ("Con el ticker en HALT, los que envían, cambian o cancelan órdenes (/cerrar, /cerrar_todo, /stop, "
+                    "/cancelar_ordenes, /cerrar_y_reiniciar y también /desactivar y /apagar cuando cierran o "
+                    "cancelan algo) piden además /confirmar ID con una advertencia (decisión 62).")
 
 API_TELEGRAM = "https://api.telegram.org"
 ESPERA_POLLING_S = 25                     # §3.10: long polling de 25 s
@@ -163,6 +215,7 @@ RONDA_MIN_S = 0.5                         # getUpdates que vuelve antes de esto 
 LOG_LINEAS_DEFECTO = 20
 LOG_LINEAS_MAX = 50
 FILAS_MAX = 40                            # filas por respuesta (Telegram corta a 4.096 unidades)
+AYUDA_MAX_UNIDADES = 3800                 # decisión 67: cada mensaje de /ayuda ≤ 3.800 (margen para el prefijo de fase)
 ARG_MAX_CARACTERES = 80
 CHAT_ID_CUADRO = 0                        # los botones del cuadro no tienen chat
 MASCARA = "*****"
@@ -205,6 +258,7 @@ def parsear(texto: str, chat_id: int, autorizados: frozenset[int], id_comando: s
         return None
     partes = limpio.split()
     nombre = partes[0][1:].split("@", 1)[0].lower()
+    nombre = ALIAS.get(nombre, nombre)                 # decisión 67: /help = /ayuda
     args = partes[1:]
     return _construir(nombre, args, chat_id, id_comando, limpio, desde_cuadro=False)
 
@@ -272,6 +326,8 @@ def _validar_args(nombre: str, args: list[str]) -> Optional[list[str]]:
     if nombre in ("estado", "posiciones", "ordenes", "locates", "estrategias", "salud",
                   "apagar", "encender", "reanudar_todo", "cerrar_todo"):
         return [] if n == 0 else None
+    if nombre == AYUDA:
+        return []                                      # decisión 67: lo que venga detrás no importa
     if nombre == "pausar":
         # Jaume 29-sep: «/pausar TICKER» pausa solo ese ticker (dos pasos, como «/pausar»). «SI» no es un ticker
         # aquí: «/pausar SI» es un error de escritura (R-M-04), no la pausa de un símbolo llamado SI.
@@ -454,8 +510,51 @@ def responder_consulta(c: Comando, estado: EstadoBot, cfg: Config, mercado: Any,
         return _resp_detalle(c.args[0] if c.args else "", estado, cfg, mercado)
     if c.nombre == "salud":
         return _resp_salud(estado, mercado, ahora)
+    if c.nombre == AYUDA:
+        return "\n\n".join(partes_ayuda())
     n = int(c.args[0]) if c.args else LOG_LINEAS_DEFECTO
     return _resp_log(n, lineas_log)
+
+
+def _como_se_confirma(nombre: str) -> str:
+    if nombre in CON_SI:
+        return " Pide «SI» al final."
+    if nombre in DOS_PASOS:
+        return " Pide /confirmar ID."
+    return ""
+
+
+def partes_ayuda(maximo: int = AYUDA_MAX_UNIDADES) -> list[str]:
+    """Decisión 67 (Jaume 2-oct): la respuesta de /ayuda (/help) en uno o varios mensajes de ≤ `maximo` unidades UTF-16.
+
+    Todos los comandos de `USO`, agrupados, cada uno con su uso, una línea de qué hace y si pide «SI» o /confirmar;
+    al final, la nota de los halts (decisión 62). Se parte por líneas (nunca dentro de una etiqueta HTML) para no
+    pasar del límite de Telegram (4.096 unidades; se deja margen para el prefijo de fase). No envía órdenes.
+    """
+    lineas = [_titulo("Comandos del bot (grupo B)")]
+    for grupo, comandos_grupo in AYUDA_GRUPOS:
+        lineas.append("")
+        lineas.append(_titulo(grupo))
+        for nombre, que in comandos_grupo:
+            lineas.append(f"• {_esc(USO.get(nombre, '/' + nombre))} — {_esc(que + _como_se_confirma(nombre))}")
+    lineas += ["", _esc(_NOTA_HALT_AYUDA)]
+    partes: list[str] = []
+    actual: list[str] = []
+    for linea in lineas:
+        candidato = "\n".join(actual + [linea])
+        if actual and _unidades(candidato) > maximo:
+            partes.append("\n".join(actual).strip("\n"))
+            actual = [linea]
+        else:
+            actual.append(linea)
+    if actual:
+        partes.append("\n".join(actual).strip("\n"))
+    return [p for p in partes if p]
+
+
+def _unidades(texto: str) -> int:
+    """Unidades UTF-16 (lo que cuenta Telegram: un emoji astral son 2)."""
+    return len(texto.encode("utf-16-le")) // 2
 
 
 def _esc(valor: Any) -> str:

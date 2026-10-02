@@ -188,6 +188,46 @@ class Discrepancia:
 
 
 # ── piezas compartidas con reglas.vigilancia ─────────────────────────────
+def es_hija_de(m: MsgOrden, madre: MsgOrden) -> bool:
+    """Decisión 64 (DAS real 2-oct, SMAT): `m` es la HIJA de `madre`: mismo token, otro id y `origoid` = id de la madre."""
+    return (m.token is not None and m.token == madre.token and m.id != madre.id and m.origoid == madre.id
+            and str(m.ticker).strip() == str(madre.ticker).strip())
+
+
+def fusionar_madres_hijas(ordenes: Any) -> dict[int, MsgOrden]:
+    """Decisión 64 (DAS real 2-oct): un `%ORDER` por orden LÓGICA. Una orden por SMAT deja la MADRE `Triggered` con lvqty 0
+    (no se puede cancelar: «order not open») y crea una HIJA (mismo token, otro id, `origoid` = madre) que es la viva.
+
+    Devuelve las órdenes por id SIN las madres que tienen hija listada; la hija sustituye a su madre con el TIPO de la
+    madre (un stop disparado conserva su «SLP:disparo» y así se sigue reconociendo como stop: su disparo sale del tipo
+    de la madre y el límite del precio de la hija, que es el mismo) y el resto de campos (id, estado, qty, lvqty, cxlqty,
+    ruta) de la hija. Con varias hijas (DAS reenruta una que el mercado canceló) manda la más NUEVA (id mayor). Una
+    madre `Triggered` sin hija listada se queda tal cual: es lo único que se sabe (cuenta una vez, nunca cero ni dos).
+    Admite un dict id → MsgOrden o un iterable de MsgOrden (lo que no es MsgOrden se ignora). Nunca lanza.
+    """
+    lista = list(ordenes.values()) if isinstance(ordenes, Mapping) else list(ordenes or ())
+    por_id = {m.id: m for m in lista if isinstance(m, MsgOrden)}
+    hijas_de: dict[int, list[MsgOrden]] = {}
+    for m in por_id.values():
+        madre = por_id.get(m.origoid) if m.origoid else None
+        if madre is not None and es_hija_de(m, madre):
+            hijas_de.setdefault(madre.id, []).append(m)
+    if not hijas_de:
+        return por_id
+    salida: dict[int, MsgOrden] = {}
+    absorbidas: set[int] = set()
+    for id_madre, hijas in hijas_de.items():
+        hijas.sort(key=lambda h: h.id)
+        absorbidas.add(id_madre)
+        absorbidas.update(h.id for h in hijas[:-1])
+        ultima = hijas[-1]
+        salida[ultima.id] = replace(ultima, tipo=por_id[id_madre].tipo)
+    for id_das, m in por_id.items():
+        if id_das not in absorbidas and id_das not in salida:
+            salida[id_das] = m
+    return dict(sorted(salida.items()))
+
+
 def es_ajena(m: MsgOrden, hoy: date) -> bool:
     """R-K-02 / R-M-03: una orden es AJENA si `orderSrc` existe y no es CMDAPI, o si su token no es nuestro HOY.
 
@@ -228,17 +268,21 @@ def orden_de_msg(m: MsgOrden, hoy: date, conocida: Optional[Orden] = None,
     lvqty = _entero_no_negativo(m.lvqty)
     cxlqty = _entero_no_negativo(m.cxlqty)
     parcial = m.estado in (EstadoOrden.PARTIAL, EstadoOrden.TRIGGERED) and lvqty > 0
+    # decisión 64: una HIJA de SMAT (origoid = id de su madre, mismo token) recuerda a su madre
+    madre = m.origoid if isinstance(m.origoid, int) and m.origoid > 0 and m.origoid != m.id else None
     if conocida is not None:
         llenas = conocida.llenas
         if parcial:
             llenas = max(llenas, qty - lvqty - cxlqty)
         return replace(conocida, id_das=m.id, estado=m.estado, qty=qty if qty > 0 else conocida.qty, lvqty=lvqty,
-                       cxlqty=cxlqty, llenas=max(llenas, 0), tipo_das_crudo=m.tipo)
+                       cxlqty=cxlqty, llenas=max(llenas, 0), tipo_das_crudo=m.tipo,
+                       id_madre=madre if madre is not None else conocida.id_madre)
     tipo, stop, limite = _tipo_y_precios(m, cfg_stops)
     return Orden(token=m.token, ticker=str(m.ticker).strip(), lado=lado, tipo=tipo, qty=qty,   # type: ignore[arg-type]
                  precio=limite, stop=stop, ruta=m.ruta, proposito=Proposito.DESCONOCIDA, lote_id=None, nivel=None,
                  origen=partes[0], id_das=m.id, estado=m.estado, lvqty=lvqty,
-                 llenas=max(qty - lvqty - cxlqty, 0) if parcial else 0, cxlqty=cxlqty, tipo_das_crudo=m.tipo)
+                 llenas=max(qty - lvqty - cxlqty, 0) if parcial else 0, cxlqty=cxlqty, tipo_das_crudo=m.tipo,
+                 id_madre=madre)
 
 
 def cobertura(vivas: Iterable[Any], ticker: str, neta: int, solo_confirmadas: bool = False) -> int:
@@ -277,7 +321,7 @@ def cobertura_manual(ordenes: Iterable[Any], ticker: str, neta: int, hoy: date,
         return 0
     lado = Lado.COMPRA if neta < 0 else Lado.VENTA
     total = 0
-    for m in ordenes:
+    for m in fusionar_madres_hijas(ordenes).values():     # decisión 64: un stop SMAT disparado cuenta UNA vez
         if not isinstance(m, MsgOrden) or str(m.ticker).strip() != ticker or m.estado not in stops.ESTADOS_VIVOS:
             continue
         if _LADOS.get(str(m.lado).strip().upper()) is not lado or not _es_tipo_stop(str(m.tipo), cfg_stops):
@@ -332,6 +376,7 @@ def comparar(estado: EstadoBot, pos_das: Mapping[str, MsgPos], ord_das: Mapping[
     """
     cfg_stops = _bloque_stops(cfg)
     ruta_prueba = _ruta_stop_de(cfg)
+    ord_das = fusionar_madres_hijas(ord_das)   # decisión 64: madre SMAT + hija = UNA orden (la hija, con el tipo de la madre)
     en_gracia = ahora is not None and estado.ultimo_fill_en is not None and ahora - estado.ultimo_fill_en < gracia_s
     vivas_por_ticker, ajenas_por_ticker = _vivas_y_ajenas(estado, ord_das, hoy, ahora, cfg_stops)
     tickers = set(pos_das) | set(ajenas_por_ticker) | set(vivas_por_ticker)
@@ -862,6 +907,8 @@ def _adoptar(estado: EstadoBot, vivas: Iterable[Orden]) -> None:
         estado.ordenes[o.token] = o
         if o.id_das is not None:
             estado.id_a_token[o.id_das] = o.token
+        if o.id_madre is not None:
+            estado.id_a_token.setdefault(o.id_madre, o.token)     # decisión 64: la madre de SMAT es del mismo token
 
 
 def _cancelar(ordenes: Iterable[Orden], motivo: str, ya: set[int]) -> list[Accion]:

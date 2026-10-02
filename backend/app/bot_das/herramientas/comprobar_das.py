@@ -63,6 +63,7 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import re
 import sys
 import time
 from collections import Counter
@@ -81,7 +82,7 @@ from app.bot_das.cerrojo import CerrojoInstancia
 from app.bot_das.cliente import ENV_PERMITIR_ORDENES, ClienteDAS
 from app.bot_das.diario import Diario
 from app.bot_das.mercado_das import MercadoDAS
-from app.bot_das.reglas import precios
+from app.bot_das.reglas import precios, reconciliacion
 from app.bot_das.reloj import Reloj
 from app.bot_das.tipos import (
     STOP_LIMITE_PCT,
@@ -288,9 +289,13 @@ class Comprobador:
         for m in mensajes:
             if isinstance(m, MsgOrden) and _es_token_canario(m.token, self._reloj.hoy()):
                 ultimas[m.id] = m
+        # decisión 64 (DAS real 2-oct): madre de SMAT + hija = UNA orden (la hija); una madre «Triggered» con lvqty 0
+        # no está abierta (DAS: «CANCEL Error : order not open»): no es un eco tardío que cancelar
+        ultimas = reconciliacion.fusionar_madres_hijas(ultimas)
         # una VENTA canario (la que cierra lo comprado en el paso 10) no se cancela nunca: dejaría la cuenta larga
         huerfanas = [m for m in ultimas.values()
                      if m.estado in ESTADOS_VIVOS and not str(m.lado).upper().startswith("S")
+                     and not (m.estado is EstadoOrden.TRIGGERED and m.lvqty <= 0)
                      and (conocidas or m.id not in self._vivas)]
         for m in huerfanas:
             respuesta = self._cancelar(m.id)
@@ -378,7 +383,8 @@ class Comprobador:
         else:
             campo_precio = f"el precio del %ORDER ({viva.precio}) no es ni el disparo {disparo} ni el límite {limite}"
         conclusion = (f"%ORDER crudo: {viva.cruda!r}; tipo leído «{viva.tipo}» → propuesta "
-                      f"stops.tipo_esperado_en_order = «{viva.tipo}»; {campo_precio}; añadir la línea a "
+                      f"stops.tipo_esperado_en_order = «{patron_tipo_stop(viva.tipo)}» (un PATRÓN: el tipo real lleva "
+                      f"el disparo, p. ej. «SLP:24»); {campo_precio}; añadir la línea a "
                       f"fixtures/lineas_das.txt con sus asertos (riesgo 1); {self._comprobar_zona(viva)}")
         self._registrar(3, [comando], mensajes, conclusion)
 
@@ -433,11 +439,15 @@ class Comprobador:
                                proposito=Proposito.TP_AGREGAR)
             comando = protocolo.cmd_neworder(orden)
             mensajes = self._enviar(comando)
-            viva = _orden_por_token(mensajes, orden.token)
+            # decisión 64 (DAS real 2-oct): por SMAT la madre queda «Triggered» (lvqty 0, no se puede cancelar) y la
+            # orden viva es la HIJA (mismo token, otro id, origoid = madre): se cancela la hija
+            viva = _orden_viva_por_token(mensajes, orden.token)
             if viva is not None:
                 self._vivas[viva.id] = f"PostOnly {ticker} {ruta} (paso 5)"
                 mensajes += self._cancelar(viva.id)
-                conclusion = f"{ruta}: ACEPTADA ({viva.estado.value}); cancelada"
+                hija = (f"; DAS creó la HIJA {viva.id} por {viva.ruta} (madre {viva.origoid} Triggered, no se cancela: "
+                        f"«order not open»)" if viva.origoid else "")
+                conclusion = f"{ruta}: ACEPTADA ({viva.estado.value}){hija}; cancelada"
             else:
                 conclusion = f"{ruta}: {_rechazo(mensajes, orden.token)}"
             self._registrar(5, [comando], mensajes, conclusion)
@@ -820,6 +830,23 @@ def _orden_por_token(mensajes: list, token: int) -> Optional[MsgOrden]:
         if isinstance(m, MsgOrden) and m.token == token:
             return m
     return None
+
+
+def _orden_viva_por_token(mensajes: list, token: int) -> Optional[MsgOrden]:
+    """Decisión 64: el último `%ORDER` de la orden LÓGICA del token: con madre e hija de SMAT, la HIJA (la madre queda
+    «Triggered» sin acciones vivas y DAS no deja cancelarla); sin hija, la orden tal cual."""
+    ultimas = {m.id: m for m in mensajes if isinstance(m, MsgOrden) and m.token == token}
+    if not ultimas:
+        return None
+    fusion = reconciliacion.fusionar_madres_hijas(ultimas)
+    return fusion[max(fusion)]
+
+
+def patron_tipo_stop(tipo: str) -> str:
+    """Paso 3: el PATRÓN de `stops.tipo_esperado_en_order` a partir del tipo leído («SLP:24» → «^SLP»): el tipo real
+    lleva el disparo dentro, así que el literal no casaría con otro stop. Sin letras delante, el literal escapado."""
+    m = re.match(r"\s*([A-Za-z]+)", str(tipo))
+    return f"^{m.group(1).upper()}" if m else re.escape(str(tipo))
 
 
 def _rechazo(mensajes: list, token: Optional[int]) -> str:

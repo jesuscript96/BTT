@@ -174,7 +174,8 @@ def test_catalogo_real_carga_y_esta_completo(catalogo: list[dict]) -> None:
     claves = [e["clave"] for e in catalogo]
     assert len(claves) == len(set(claves)) >= 10
     for e in catalogo:
-        assert e["provisional"] is True, "todo PROVISIONAL hasta el canario (fase H)"
+        # todo PROVISIONAL hasta el canario (fase H), salvo lo copiado del DAS real (2-oct: «precio_demasiado_lejos»)
+        assert e["provisional"] is True or "DAS real" in e["fuente"], e["clave"]
         assert e["fuente"].strip() and e["ejemplos"], e["clave"]
         assert e["accion"] in ACCIONES_TRATAMIENTO and e["nivel"] in (2, 3)
 

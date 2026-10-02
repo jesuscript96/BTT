@@ -238,8 +238,9 @@ def test_venta_limite_bajo_bid_se_llena_al_bid(libro, emp):
     libro.cotizar("ABCD", D("2.45"), D("2.47"), last=D("2.46"))
     lineas = emp.recibir(f"NEWORDER {T1} SS ABCD SAGEPRO 300 2.44 TIF=DAY+")
     msgs = parsear(lineas)
-    assert claves(lineas) == ["%OrderAct Sending", "%OrderAct Accept", "%ORDER", "%OrderAct Execute", "%ORDER",
-                              "%TRADE", "%POS"]
+    # DAS real (2-oct, caso e): el %POS llega ANTES que el Execute (orden por defecto del simulador)
+    assert claves(lineas) == ["%OrderAct Sending", "%OrderAct Accept", "%ORDER", "%POS", "%OrderAct Execute", "%ORDER",
+                              "%TRADE"]
     ejecucion = de_tipo(msgs, MsgOrderAct)[-1]
     assert (ejecucion.accion, ejecucion.lado, ejecucion.qty, ejecucion.precio, ejecucion.token) == (
         "Execute", "SS", 300, D("2.45"), T1)
@@ -349,7 +350,7 @@ def test_stoplmtp_compra_se_dispara_con_last_y_pasa_a_limite(libro, emp):
     libro.cotizar("ABCD", D("2.89"), D("2.91"), last=D("2.90"))
     msgs = parsear(emp.recibir(f"NEWORDER {T3} B ABCD STOP 300 STOPLMTP 2.97 2.99 TIF=DAY+"))
     o = ultima_orden(msgs)
-    assert (o.tipo, o.estado.value, o.precio) == ("SLP: 2.97 2.99", "Accepted", D("2.99"))
+    assert (o.tipo, o.estado.value, o.precio) == ("SLP:2.97", "Accepted", D("2.99"))   # DAS real (2-oct)
     libro.cotizar("ABCD", D("2.95"), D("2.96"), last=D("2.96"))
     assert emp.tic() == []
     assert orden(libro, o.id)["disparada"] is False
@@ -542,11 +543,11 @@ def test_cancel_allsymb_y_all(libro, emp):
     assert emp.recibir("CANCEL ALL") == []
 
 
-def test_cancel_de_orden_cerrada_da_cancelrej(libro, emp):
+def test_cancel_de_orden_cerrada_da_el_error_real(libro, emp):
+    """DAS real (2-oct): el CANCEL de una orden que ya no está abierta contesta «CANCEL Error : order not open» (sin id)."""
     libro.cotizar("ABCD", D("2.45"), D("2.47"))
     id_das = ultima_orden(parsear(emp.recibir(f"NEWORDER {T1} SS ABCD SAGEPRO 100 2.44 TIF=DAY+"))).id
-    (act,) = de_tipo(parsear(emp.recibir(f"CANCEL {id_das}")), MsgOrderAct)
-    assert (act.accion, act.notas) == ("CancelRej", "Order not open")
+    assert emp.recibir(f"CANCEL {id_das}") == [sd.LINEA_CANCEL_NO_ABIERTA] == ["CANCEL Error : order not open"]
 
 
 def test_replace_limite_cambia_cantidad_abierta_y_precio(libro, emp):
@@ -563,8 +564,8 @@ def test_replace_limite_cambia_cantidad_abierta_y_precio(libro, emp):
 
 
 @pytest.mark.parametrize("conserva, tipo_despues", [
-    pytest.param(True, "SLP: 3.05 3.1", id="5.6-replace-conserva-pre-post"),
-    pytest.param(False, "SL: 3.05 3.1", id="5.6-replace-pierde-pre-post"),
+    pytest.param(True, "SLP:3.05", id="5.6-replace-conserva-pre-post"),      # formato real (2-oct)
+    pytest.param(False, "SL:3.05", id="5.6-replace-pierde-pre-post"),
 ])
 def test_replace_stoplmtp_y_tipo_crudo(libro, reloj, conserva, tipo_despues):
     """§5.6 / 2h.8: REPLACE … STOPLMT sobre un STOPLMTP; con replace_conserva_pp=False el Type cambia (lo detecta tipo_conserva_pp)."""
@@ -728,14 +729,15 @@ def test_variante_order(libro, reloj, variante, datos, order_src):
     o = ultima_orden(parsear(lineas))
     assert (o.order_src, o.cuenta, o.trader, o.token) == (order_src, CUENTA, "TRPRUEBA", T1)
     if variante == 19:
-        assert (o.tif, o.pref) == ("DAY+", "ARCA")
+        assert (o.tif, o.pref) == ("DAY", "ARCA")      # DAS real (2-oct): por SAGE* el Accepted vuelve con «DAY»
     volcado = emp.volcado()
     assert volcado[2] == (sd.CABECERA_ORDER_19 if variante == 19 else sd.CABECERA_ORDER_15)
 
 
 @pytest.mark.parametrize("tipo_stop_crudo, esperado", [
-    pytest.param("SLP", "SLP: 2.97 2.99", id="5.2-captura-del-socio"),
-    pytest.param("StopLmtPP", "StopLmtPP: 2.97 2.99", id="5.2-otro-prefijo"),
+    pytest.param("SLP", "SLP:2.97", id="5.2-real-2-oct"),
+    pytest.param("SLP: {stop} {precio}", "SLP: 2.97 2.99", id="5.2-captura-del-socio"),
+    pytest.param("StopLmtPP", "StopLmtPP:2.97", id="5.2-otro-prefijo"),
     pytest.param("STOPLMTP {stop}/{precio} PP", "STOPLMTP 2.97/2.99 PP", id="5.2-plantilla"),
 ])
 def test_tipo_stop_crudo(libro, reloj, tipo_stop_crudo, esperado):
