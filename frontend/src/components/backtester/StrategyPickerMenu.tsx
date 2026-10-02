@@ -27,15 +27,8 @@ import {
   previewStrategyDeletion,
   type DeletionPreview,
 } from "@/lib/api_portfolio_lab";
-import { allTags, autoTags, sessionGroup, type SessionGroup } from "@/lib/strategyTags";
+import { allTags, autoTags } from "@/lib/strategyTags";
 import { TagChip, TagEditor } from "@/components/ui/TagEditor";
-
-const GROUP_ORDER: { key: SessionGroup; label: string }[] = [
-  { key: "premarket", label: "Premarket" },
-  { key: "rth", label: "RTH" },
-  { key: "conjunta", label: "Conjuntas (pre + RTH)" },
-  { key: "otras", label: "Otras" },
-];
 
 /** Ancho del popover: de verdad, no el del panel. Solo lo limita la ventana. */
 const POPOVER_W = 520;
@@ -187,21 +180,93 @@ export default function StrategyPickerMenu({
     s.name.toLowerCase().includes(query) ||
     allTags(defOf(s), s.tags).some((t) => t.toLowerCase().includes(query));
 
-  const porGrupo = useMemo(() => {
-    const visibles = strategies.filter(filtra);
-    const grupos = new Map<SessionGroup, Strategy[]>();
-    for (const s of visibles) {
-      const g = sessionGroup(defOf(s));
-      if (!grupos.has(g)) grupos.set(g, []);
-      grupos.get(g)!.push(s);
-    }
-    return grupos;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategies, query]);
-
   const compartidasFiltradas = sharedList.filter(
     (c) => !query || c.name.toLowerCase().includes(query),
   );
+
+  // ORDEN ÚNICO POR ÚLTIMA MODIFICACIÓN (2026-10-02, petición de Álvaro):
+  // lista PLANA, sin bloques de sesión (Premarket/RTH/Conjuntas quedaron
+  // fuera a petición suya — el chip de tags automáticos de cada fila sigue
+  // diciendo en qué sesiones opera). updated_at ya se refresca al guardar,
+  // renombrar o etiquetar; created_at como respaldo si faltara.
+  const ordenadas = useMemo(
+    () =>
+      [...strategies]
+        .filter(filtra)
+        .sort((a, b) =>
+          (b.updated_at ?? b.created_at ?? "").localeCompare(
+            a.updated_at ?? a.created_at ?? "",
+          ),
+        ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [strategies, query],
+  );
+
+  // Fila de una estrategia (confirmación de borrado / fila normal con tags y
+  // editor): la única lista del desplegable (orden por modificación).
+  const renderStrategyRow = (s: Strategy) =>
+    confirmId === s.id ? (
+      <ConfirmRow
+        key={s.id}
+        nombre={s.name}
+        preview={preview}
+        busy={deleting}
+        onCancel={() => { setConfirmId(null); setPreview(null); setDeleteError(null); }}
+        onConfirm={() => ejecutarBorrado(s)}
+      />
+    ) : (
+      <React.Fragment key={s.id}>
+        <PickerRow
+          label={s.name}
+          selected={s.id === selectedId && !isDraft}
+          onClick={() => seleccionar(s.id)}
+          actions={
+            <>
+              <RowAction
+                title="Etiquetas de organización"
+                onClick={() => { setEditingId(editingId === s.id ? null : s.id); setConfirmId(null); }}
+              >
+                <Pencil size={12} strokeWidth={1.8} />
+              </RowAction>
+              <RowAction
+                title="Borrar esta estrategia (con sus corridas)"
+                danger
+                onClick={() => pedirConfirmacion(s)}
+              >
+                <Trash2 size={12} strokeWidth={1.8} />
+              </RowAction>
+            </>
+          }
+        >
+          {(() => {
+            const autos = autoTags(defOf(s));
+            const todos = allTags(defOf(s), s.tags);
+            return (
+              <>
+                {todos.slice(0, 2).map((t) => (
+                  <TagChip key={t} label={t} auto={autos.includes(t)} maxLabelWidth={130} />
+                ))}
+                {todos.length > 2 && (
+                  <span style={{ fontSize: 9.5, fontFamily: "var(--color-ec-sans)", color: "var(--color-ec-text-secondary)", whiteSpace: "nowrap" }}>
+                    +{todos.length - 2}
+                  </span>
+                )}
+              </>
+            );
+          })()}
+        </PickerRow>
+        {editingId === s.id && (
+          <div style={{ padding: "6px 10px 8px", borderBottom: "0.5px solid var(--color-ec-border)" }}>
+            <TagEditor
+              tags={s.tags || []}
+              autoTags={autoTags(defOf(s))}
+              suggestions={sugerencias}
+              onSave={(next) => onTagsSaved(s, next)}
+            />
+          </div>
+        )}
+      </React.Fragment>
+    );
 
   // Sugerencias: todos los tags manuales que ya existen en otras estrategias.
   const sugerencias = useMemo(
@@ -275,79 +340,7 @@ export default function StrategyPickerMenu({
           />
         )}
 
-        {GROUP_ORDER.map(({ key, label }) => {
-          const items = porGrupo.get(key);
-          if (!items?.length) return null;
-          return (
-            <div key={key}>
-              <GroupLabel>{label}</GroupLabel>
-              {items.map((s) =>
-                confirmId === s.id ? (
-                  <ConfirmRow
-                    key={s.id}
-                    nombre={s.name}
-                    preview={preview}
-                    busy={deleting}
-                    onCancel={() => { setConfirmId(null); setPreview(null); setDeleteError(null); }}
-                    onConfirm={() => ejecutarBorrado(s)}
-                  />
-                ) : (
-                  <React.Fragment key={s.id}>
-                    <PickerRow
-                      label={s.name}
-                      selected={s.id === selectedId && !isDraft}
-                      onClick={() => seleccionar(s.id)}
-                      actions={
-                        <>
-                          <RowAction
-                            title="Etiquetas de organización"
-                            onClick={() => { setEditingId(editingId === s.id ? null : s.id); setConfirmId(null); }}
-                          >
-                            <Pencil size={12} strokeWidth={1.8} />
-                          </RowAction>
-                          <RowAction
-                            title="Borrar esta estrategia (con sus corridas)"
-                            danger
-                            onClick={() => pedirConfirmacion(s)}
-                          >
-                            <Trash2 size={12} strokeWidth={1.8} />
-                          </RowAction>
-                        </>
-                      }
-                    >
-                      {(() => {
-                        const autos = autoTags(defOf(s));
-                        const todos = allTags(defOf(s), s.tags);
-                        return (
-                          <>
-                            {todos.slice(0, 2).map((t) => (
-                              <TagChip key={t} label={t} auto={autos.includes(t)} maxLabelWidth={130} />
-                            ))}
-                            {todos.length > 2 && (
-                              <span style={{ fontSize: 9.5, fontFamily: "var(--color-ec-sans)", color: "var(--color-ec-text-secondary)", whiteSpace: "nowrap" }}>
-                                +{todos.length - 2}
-                              </span>
-                            )}
-                          </>
-                        );
-                      })()}
-                    </PickerRow>
-                    {editingId === s.id && (
-                      <div style={{ padding: "6px 10px 8px", borderBottom: "0.5px solid var(--color-ec-border)" }}>
-                        <TagEditor
-                          tags={s.tags || []}
-                          autoTags={autoTags(defOf(s))}
-                          suggestions={sugerencias}
-                          onSave={(next) => onTagsSaved(s, next)}
-                        />
-                      </div>
-                    )}
-                  </React.Fragment>
-                ),
-              )}
-            </div>
-          );
-        })}
+        {ordenadas.map((s) => renderStrategyRow(s))}
 
         {strategies.length === 0 && (
           <div style={{ padding: "10px 10px 12px", fontSize: 11, fontFamily: "var(--color-ec-sans)", color: "var(--color-ec-text-muted)" }}>
@@ -433,23 +426,6 @@ export default function StrategyPickerMenu({
   );
 }
 
-function GroupLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        fontSize: 8.5,
-        fontWeight: 700,
-        textTransform: "uppercase",
-        letterSpacing: "0.09em",
-        color: "var(--color-ec-text-muted)",
-        fontFamily: "var(--color-ec-sans)",
-        padding: "7px 10px 3px",
-      }}
-    >
-      {children}
-    </div>
-  );
-}
 
 function PickerRow({
   label,
