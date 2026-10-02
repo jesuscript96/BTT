@@ -6268,6 +6268,15 @@ class Decisor:
         datos = {"ticker": ticker, "fase": "respaldo", "last": last, "disparo": niveles.disparo, "techo": techo,
                  "banda_pct": banda, "segundos": segundos, "neta": pos.neta, "sin_stop": sin_stop, "motivo": motivo,
                  "otras_compras": self._comprando(ticker), "regla": "decisión 65 (Jaume 2-oct)"}
+        if not bool((self._cfg.stops or {}).get("respaldo", False)):
+            # Jaume 2-oct (noche): la compra de respaldo por escalones NO está aprobada (pendiente de valorar). Con
+            # `stops.respaldo` apagado (defecto) el bot SOLO avisa a nivel máximo y decide el humano; no envía nada.
+            return [Anotar(TIPO_STOP_SIN_EJECUTAR, {**datos, "qty": 0, "token": None,
+                                                    "sin_envio": "respaldo apagado (stops.respaldo=false)"}),
+                    Avisar(Nivel.MAXIMO, Grupo.B, f"{texto}. El bot NO compra por su cuenta (respaldo apagado): "
+                                                  + ("la posición NO tiene stop: PONER A MANO" if sin_stop
+                                                     else "revisar el stop y decidir a mano"),
+                           clave=f"stop_sin_ejecutar:{ticker}")]
         acciones, orden = self._enviar_respaldo(pos, banda, techo, reintento=False, sin_stop=sin_stop)
         if orden is None:
             que = ("otras compras vivas ya cubren lo corto" if abs(pos.neta) - self._comprando(ticker) <= 0

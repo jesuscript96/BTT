@@ -195,7 +195,7 @@ _ESQUEMA_BLOQUES: dict[str, Any] = {
               "margen_bajo_limit_up_pct": "num0", "reintentos": "int0", "separacion_reintentos_s": "num0",
               "ventana_min": "num0", "subida_max_cierre_pct": "num+", "comprobacion_s": "num+",
               "debounce_s": "num0", "tipo_esperado_en_order": "str?", "ruta": "ruta",
-              "replace_share_es_abierta": "bool", "sin_ejecutar_s": "num?", "banda_pct": "num+",
+              "replace_share_es_abierta": "bool", "sin_ejecutar_s": "num?", "banda_pct": "num+", "respaldo": "bool",
               "techo_pct": "num+"},
     "halts": {"k_max": "int", "distancia_banda_k2_pct": "num0", "primera_vela_max_reentrada_pct": "num0",
               "primera_vela_max_senal_guardada_pct": "num0", "t1_subida_max_cierre_pct": "num+",
@@ -242,6 +242,7 @@ _OPCIONALES: dict[str, Any] = {
     "halts.silencio": True,                                       # decisión 57 (Jaume 2-oct): nada se envía en un halt
     "halts.open_tras_k2": True,                                   # decisión 59 (Jaume 2-oct): salidas por OPEN tras k2
     "stops.sin_ejecutar_s": STOP_SIN_EJECUTAR_S,                  # decisión 65 (Jaume 2-oct): null o 0 la apagan
+    "stops.respaldo": False,                                     # Jaume 2-oct noche: la compra de respaldo (65) queda PENDIENTE de valorar: apagada
     "stops.banda_pct": float(STOP_BANDA_PCT),                     # decisión 65 bis: el respaldo persigue último + 19 %
     "locates.rutas_excluidas": list(LOCATES_RUTAS_EXCLUIDAS),     # decisión 66 (Jaume 2-oct): rutas de pruebas fuera
 }

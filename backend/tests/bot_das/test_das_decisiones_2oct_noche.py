@@ -127,6 +127,13 @@ def _registros(b: Banco) -> list[Registro]:
     return regs
 
 
+@pytest.fixture
+def cfg(cfg: Config) -> Config:
+    """Jaume 2-oct (noche): la compra de respaldo (decisión 65) queda PENDIENTE de valorar y va APAGADA por defecto
+    (`stops.respaldo` = false: solo aviso). Los tests de este módulo, que la describen, la encienden."""
+    return cfg_con(cfg, stops={**cfg.stops, "respaldo": True})
+
+
 # ═══════════════════════════════ el simulador hace lo real ═══════════════════════════════
 @pytest.fixture
 def emp() -> Emparejador:
@@ -439,6 +446,24 @@ def test_64_salida_cancelada_por_el_mercado_no_se_reenvia_en_bucle(banco: Banco)
 # ═══════════════════════════════ decisión 65: stop que no se ejecuta ═══════════════════════════════
 def _respaldos(b: Banco, desde: int = 0):
     return b.enviadas(Proposito.STOP_RESPALDO, desde=desde)
+
+
+def test_65_respaldo_apagado_por_defecto_solo_avisa_y_no_envia_nada(cfg: Config, tmp_path: Path) -> None:
+    """Jaume 2-oct (noche): con `stops.respaldo` apagado (el defecto del cuadro) el stop que no se ejecuta en 5 s
+    SOLO da el aviso máximo: ni compra de respaldo ni cancelación del stop; decide el humano."""
+    stops_ = {k: v for k, v in cfg.stops.items() if k != "respaldo"}
+    b = Banco(cfg_con(cfg, stops=stops_), tmp_path)
+    b.preparar()
+    abrir_posicion(b)
+    o = _stop(b)
+    _disparar_sin_llenar(b)
+    marca = b.marca()
+    b.avanzar(6)
+    assert not _respaldos(b)
+    (aviso,) = _avisos(b.desde(marca), f"stop_sin_ejecutar:{TICKER}")
+    assert aviso.nivel is Nivel.MAXIMO and "respaldo apagado" in aviso.texto
+    assert not [a for a in b.desde(marca) if isinstance(a, Cancelar) and a.token == o.token]
+    assert o.estado is not EstadoOrden.CANCELED
 
 
 def test_65_dispara_a_los_5_s_compra_con_el_stop_puesto_y_cancela_al_aceptar(banco: Banco) -> None:
