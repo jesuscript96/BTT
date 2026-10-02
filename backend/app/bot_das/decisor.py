@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import math
 import re
 import traceback
@@ -264,7 +265,9 @@ T_REDUCCION_STOP = "reduccion_stop"                 # decisiones 53/54: plazo de
 T_HALT_GUARDADAS = "halt_guardadas"                 # decisión 54 (E3): plazo MÁXIMO de las salidas guardadas («…:X»)
 T_HALT_SILENCIO = "halt_silencio"                   # decisión 57: plazo MÁXIMO para conocer el estado tras reabrir («…:X»)
 T_ENTRADA_REAPERTURA = "entrada_reapertura"         # decisión 58: el primer minuto tras reabrir con la entrada viva («…:X»)
-_GLOBALES = frozenset({T_SIMSTATUS, T_BARRIDO, T_DAS_AVISO, T_DAS_RECONECTAR, T_FOTO})
+T_REINICIO_HALT = "reinicio_halt"                   # decisión 63: plazo para resolver los halts rehechos del diario
+TIPO_HALT_MEMORIA = "halt_memoria"                  # decisión 63: = diario.TIPO_HALT_MEMORIA (un test lo comprueba)
+_GLOBALES = frozenset({T_SIMSTATUS, T_BARRIDO, T_DAS_AVISO, T_DAS_RECONECTAR, T_FOTO, T_REINICIO_HALT})
 
 # ── constantes técnicas del decisor (no son reglas del libro: van anotadas en las desviaciones) ──
 CANCEL_ESPERA_S = 0.5            # F1.7: GET ORDERS cada 0,5 s mientras la cancelación no se confirma
@@ -312,6 +315,8 @@ HALT_GUARDADAS_MAX_S = 30.0      # decisión 54 (E3): plazo MÁXIMO de seguridad
 HALT_SILENCIO_ESTADO_S = 2.0     # decisión 57 (Jaume 2-oct): como mucho 2 s tras reabrir para conocer por DAS lo vivo
 ENTRADA_REAPERTURA_S = 60.0      # decisión 58 (Jaume 2-oct): el primer minuto tras reabrir para que la entrada llene
 HALT_CONTEXTO_REAPERTURA_S = 120.0   # decisión 57: quedar LARGA en los 2 min tras reabrir un halt avisa nivel MÁXIMO
+REINICIO_HALT_ESPERA_S = 15.0    # decisión 63: plazo MÁXIMO tras arrancar para conocer por DAS el estado de un halt rehecho
+REINICIO_REAPERTURA_MAX_S = 120.0   # decisión 63: un reinicio «justo tras reabrir» retoma lo pendiente si reabrió hace ≤ 2 min
 CLAVE_AVISO_TOPE_DIA = locates.CLAVE_AVISO_TOPE   # decisión 50: el aviso ÚNICO del corte de locates del día
 # D1-07: el «alto riesgo» de R-I-01 (tope corto 0,5 × equity) sale de `entrada.alto_riesgo_si` con capital.es_alto_riesgo
 
@@ -590,6 +595,13 @@ class Decisor:
         self._open_k2: dict[int, OrdenNueva] = {}         # token → la orden ORIGINAL (por si DAS rechaza la OPEN)
         self._open_k2_avisada: set[int] = set()
         self._open_rechazada: set[str] = set()            # tickers que ya no prueban OPEN hoy (sale del diario)
+        # Decisión 62 (Jaume 2-oct): mientras se ejecuta un comando confirmado en halt, sus tickers no están «en silencio»
+        self._forzar_envio: set[str] = set()
+        # Decisión 63 (Jaume 2-oct): el estado de los halts sobrevive a un reinicio (diario `halt_memoria`)
+        self._memoria_halt_anotada: dict[str, str] = {}   # ticker → firma de la última foto anotada
+        self._reabierto_et: dict[str, datetime] = {}      # ticker → hora ET de la última reapertura
+        self._reinicio_halt: dict[str, dict] = {}         # ticker → foto del diario aún por resolver tras el reinicio
+        self._reinicio_halt_avisado: set[str] = set()
         self._contar_disparados = False
         self._minimo_cargo: dict[str, Decimal] = {}
         self._ficha_fallo_en: dict[str, float] = {}
@@ -680,6 +692,9 @@ class Decisor:
         for ticker, k in dict(getattr(memoria, "k_halts_up", None) or {}).items():
             if isinstance(ticker, str) and ticker and type(k) is int and k >= 0:
                 self._mercado.sembrar_k(ticker, k)
+        for ticker, foto_halt in dict(getattr(memoria, "halt_memoria", None) or {}).items():
+            if isinstance(ticker, str) and ticker and isinstance(foto_halt, dict) and foto_halt.get("activo") is True:
+                self._restaurar_halt(ticker, foto_halt)        # decisión 63: el halt sobrevive al reinicio
         override_ms = getattr(memoria, "override_modo_seguridad", None)
         if isinstance(override_ms, bool):
             self._override_modo_seguridad = override_ms
@@ -726,6 +741,12 @@ class Decisor:
         acciones.append(Programar(T_BARRIDO, 0.0, {"motivo": "arranque (F12)"}))
         acciones += self._armar_simstatus()
         acciones += self._avisos_sin_ev()
+        if self._reinicio_halt:
+            # decisión 63: lo rehecho del diario se resuelve con la reconciliación y el SymStatus; plazo de seguridad
+            acciones.append(Anotar("halt_reinicio", {"tickers": sorted(self._reinicio_halt),
+                                                     "regla": "decisión 63 (Jaume 2-oct)"}))
+            acciones.append(Programar(T_REINICIO_HALT, REINICIO_HALT_ESPERA_S, {}))
+        acciones += self._proteger(None, "halt_memoria", self._anotar_memoria_halt)
         self._diario_rama.clear()
         return self._finalizar_seguro(acciones)
 
@@ -767,6 +788,7 @@ class Decisor:
                                        lambda: self._orden_descartada(msg))
         else:
             acciones.append(Anotar("mensaje_desconocido", {"tipo": type(msg).__name__}))
+        acciones += self._proteger(None, "halt_memoria", self._anotar_memoria_halt)   # decisión 63
         self._diario_rama.clear()
         return self._finalizar_seguro(acciones)
 
@@ -1647,7 +1669,7 @@ class Decisor:
 
     def _en_silencio(self, ticker: str) -> bool:
         """¿Está ESTE símbolo parado con el silencio encendido?"""
-        if not self._silencio():
+        if not self._silencio() or ticker in self._forzar_envio:     # decisión 62: lo confirmó el humano
             return False
         pos = self._estado.posiciones.get(ticker)
         return ticker in self._halt_en_curso or (pos is not None and pos.estado is EstadoTicker.HALT)
@@ -3854,12 +3876,18 @@ class Decisor:
         cot = self._cot(ticker)
         franja = self._franja()
         transicion = self._mercado.marcar_halt(ticker, m, self._ahora_et, cot.last if cot is not None else None, franja)
+        previas: list[Accion] = []
+        if ticker in self._reinicio_halt:
+            # decisión 63: el primer estado de DAS tras un reinicio decide qué se hace con lo rehecho del diario
+            previas, seguir = self._reinicio_por_estado(ticker, transicion)
+            if not seguir:
+                return previas + self._liberar_entradas_simstatus(ticker)
         if transicion == "halt":
-            acciones = self._al_halt(ticker, franja)
+            acciones = previas + self._al_halt(ticker, franja)
         elif transicion == "reapertura":
-            acciones = self._al_reabrir(ticker)
+            acciones = previas + self._al_reabrir(ticker)
         else:
-            acciones = []
+            acciones = previas
             simb = self._mercado.simbolo(ticker)
             pos = self._estado.posiciones.get(ticker)
             if halts.es_halt(simb) and ticker in self._halt_en_curso and pos is not None and pos.neta != 0:
@@ -4042,8 +4070,8 @@ class Decisor:
         """
         if not (self._salidas_halt.get(ticker) or self._reanudar_halt.get(ticker)):
             return []
-        if ticker in self._halt_en_curso:
-            return []
+        if ticker in self._halt_en_curso or ticker in self._reinicio_halt:
+            return []                                        # decisión 63: tras un reinicio, antes se resuelve el estado
         pos = self._estado.posiciones.get(ticker)
         if pos is None or pos.neta >= 0:
             senales = self._salidas_halt.pop(ticker, {})
@@ -4486,6 +4514,8 @@ class Decisor:
         vigilado = ticker in self._halt_pm_vigilado
         self._halt_pm_vigilado.discard(ticker)
         self._halt_en_curso.discard(ticker)
+        self._reabierto_et[ticker] = self._ahora_et          # decisión 63: la hora de la reapertura va al diario
+        self._reinicio_halt.pop(ticker, None)                # una reapertura VISTA ya no es «de hora desconocida»
         self._halt_fin.pop(ticker, None)
         self._halt_decidir_programado.discard(ticker)
         self._halt_pm_a_open.discard(ticker)
@@ -4995,8 +5025,8 @@ class Decisor:
         los fills.
         """
         r = self._reapertura_silencio.get(ticker)
-        if r is None or ticker in self._halt_en_curso:
-            return []
+        if r is None or ticker in self._halt_en_curso or ticker in self._reinicio_halt:
+            return []                                        # decisión 63: tras un reinicio, antes se resuelve el estado
         pos = self._estado.posiciones.get(ticker)
         if pos is None or pos.neta >= 0:
             self._reapertura_silencio.pop(ticker, None)
@@ -5282,6 +5312,276 @@ class Decisor:
         acciones += self._seguimiento_de_reintento(o, nueva)
         if nueva.proposito in _PROP_CIERRE_HALT:
             acciones += self._plan(ticker)                   # G1B-04: la salida de la banda baja el stop (como siempre)
+        return acciones
+
+    # ═══ decisión 63 (Jaume 2-oct): el estado de los halts sobrevive a un reinicio ═══
+    def _tickers_memoria_halt(self) -> set[str]:
+        return (set(self._halt_en_curso) | set(self._cierre_halt_pendiente) | set(self._reapertura_silencio)
+                | {t for t, g in self._salidas_halt.items() if g} | {t for t, r in self._reanudar_halt.items() if r}
+                | set(self._entrada_espera_58) | set(self._halt_pm_vigilado) | set(self._reinicio_halt))
+
+    def _foto_halt(self, ticker: str) -> dict:
+        """Lo que hace falta para rehacer el halt de `ticker` tras un reinicio (todo serializable; sin monotónicos)."""
+        simb = self._mercado.simbolo(ticker)
+        en_halt = ticker in self._halt_en_curso
+        r = self._reapertura_silencio.get(ticker)
+        e58 = self._entrada_espera_58.get(ticker)
+        reabierto = self._reabierto_et.get(ticker)
+        decision = self._halt_decision.get(ticker) or self._halt_decision_silencio.get(ticker)
+        era_luld = self._halt_luld.get(ticker)
+        return {
+            "ticker": ticker, "activo": True, "en_halt": en_halt, "k": simb.k_halts_up,
+            "ta": self._mercado.ta_ultimo_halt(ticker),
+            "halt_desde": simb.halt_desde.isoformat() if en_halt and simb.halt_desde is not None else None,
+            "precio_parada": _txt(simb.precio_parada),
+            "era_luld": era_luld if isinstance(era_luld, bool) else None, "decision": decision,
+            "pm_vigilado": ticker in self._halt_pm_vigilado, "cierre_pendiente": ticker in self._cierre_halt_pendiente,
+            "reapertura": None if r is None else {"decision": r.get("decision"), "era_luld": bool(r.get("era_luld"))},
+            "reabierto_et": reabierto.isoformat() if reabierto is not None and not en_halt else None,
+            "retiradas": [{"lote_id": x.get("lote_id"), "resto": x.get("resto"), "proposito": x.get("proposito"),
+                           "token": x.get("token")} for x in self._reanudar_halt.get(ticker, [])],
+            "guardadas": [{"clave": clave, "senal_id": s.id, "evento": _evento_a_dict(s.evento)}
+                          for clave, s in sorted(self._salidas_halt.get(ticker, {}).items())],
+            "espera_58": None if e58 is None else {"k": e58.get("k"), "reabierta": "reabre" in e58},
+            "regla": "decisión 63 (Jaume 2-oct)",
+        }
+
+    def _anotar_memoria_halt(self) -> list[Accion]:
+        """Decisión 63: una foto `halt_memoria` por ticker CADA VEZ que cambia su estado de halt (y una con `activo:
+        false` cuando ya no queda nada): `diario.memoria_decisor` se queda con la última y `sembrar_memoria` la rehace."""
+        acciones: list[Accion] = []
+        vivos = self._tickers_memoria_halt()
+        for ticker in sorted(vivos):
+            foto = self._foto_halt(ticker)
+            firma = json.dumps(foto, sort_keys=True, default=str, ensure_ascii=False)
+            if self._memoria_halt_anotada.get(ticker) != firma:
+                self._memoria_halt_anotada[ticker] = firma
+                acciones.append(Anotar(TIPO_HALT_MEMORIA, foto))
+        for ticker in sorted(set(self._memoria_halt_anotada) - vivos):
+            del self._memoria_halt_anotada[ticker]
+            acciones.append(Anotar(TIPO_HALT_MEMORIA, {"ticker": ticker, "activo": False,
+                                                       "regla": "decisión 63 (Jaume 2-oct)"}))
+        return acciones
+
+    def _restaurar_halt(self, ticker: str, foto: dict) -> None:
+        """Decisión 63 (en `sembrar_memoria`): rehace lo que la foto del diario dice del halt de `ticker`. Nada se envía
+        aquí: lo pendiente queda retenido (`_reinicio_halt`) hasta conocer por DAS el estado real del símbolo y de lo vivo
+        (`_reinicio_por_estado`, `_reinicio_tras_reconciliar`) o hasta el plazo `REINICIO_HALT_ESPERA_S`."""
+        k = foto.get("k")
+        if type(k) is int and k >= 0:
+            self._mercado.sembrar_k(ticker, k)
+        decision = foto.get("decision")
+        if decision in ("mantener", "cerrar_mercado", "cerrar_limite_pm", "control_humano"):
+            self._halt_decision[ticker] = decision
+        if isinstance(foto.get("era_luld"), bool):
+            self._halt_luld[ticker] = foto["era_luld"]
+        if foto.get("pm_vigilado") is True:
+            self._halt_pm_vigilado.add(ticker)
+        if foto.get("cierre_pendiente") is True:
+            self._cierre_halt_pendiente.add(ticker)
+        retiradas = [dict(x) for x in foto.get("retiradas") or () if isinstance(x, dict)]
+        if retiradas:
+            self._reanudar_halt[ticker] = retiradas
+        guardadas: dict[str, Senal] = {}
+        for g in foto.get("guardadas") or ():
+            senal = _senal_de_guardada(ticker, g)
+            if senal is not None:
+                guardadas[str(g.get("clave"))] = senal
+        if guardadas:
+            self._salidas_halt[ticker] = guardadas
+        r = foto.get("reapertura")
+        if isinstance(r, dict) and r.get("decision") in ("cerrar_mercado", "cerrar_limite_pm"):
+            self._reapertura_silencio[ticker] = {"decision": r["decision"], "era_luld": bool(r.get("era_luld")),
+                                                 "desde": 0.0}
+        if foto.get("en_halt") is True:
+            self._halt_en_curso.add(ticker)
+            self._halt_hoy.add(ticker)
+            self._reapertura_ok.discard(ticker)
+            desde = _fecha_iso(foto.get("halt_desde")) or datetime.combine(self._estado.dia, datetime.min.time(), ET)
+            self._mercado.sembrar_halt(ticker, foto.get("ta"), desde, _decimal_o_none(foto.get("precio_parada")))
+            pos = self._estado.posiciones.get(ticker)
+            if pos is not None and pos.estado is EstadoTicker.NORMAL:
+                pos.estado = EstadoTicker.HALT
+                pos.motivo_estado = f"halt {foto.get('ta') or ''} (rehecho del diario)".strip()
+        else:
+            reabierto = _fecha_iso(foto.get("reabierto_et"))
+            if reabierto is not None:
+                self._reabierto_et[ticker] = reabierto
+        self._reinicio_halt[ticker] = dict(foto)
+
+    def _pendiente_halt(self, ticker: str, foto: dict) -> list[str]:
+        """Texto de lo que quedaba pendiente del halt según la foto del diario (para los avisos de la decisión 63)."""
+        partes: list[str] = []
+        r = foto.get("reapertura")
+        if isinstance(r, dict) or foto.get("cierre_pendiente") is True:
+            partes.append("cerrar al reabrir" if foto.get("en_halt") else "terminar el cierre de la reapertura")
+        elif foto.get("en_halt") and foto.get("decision"):
+            partes.append(f"regla del halt: {foto.get('decision')}")
+        if foto.get("guardadas"):
+            partes.append(f"{len(foto['guardadas'])} salida(s) del motor guardadas")
+        if foto.get("retiradas"):
+            partes.append(f"{len(foto['retiradas'])} salida(s) retiradas al parar")
+        if isinstance(foto.get("espera_58"), dict):
+            partes.append("entrada a medias (decisión 58): tras el reinicio no se completa, se queda lo llenado")
+        return partes
+
+    def _texto_stops(self, ticker: str) -> str:
+        vivos = [o for o in self._vivas(ticker) if o.proposito in _PROP_STOP and _qty_viva(o) > 0]
+        return ", ".join(f"{_qty_viva(o)} @ {o.stop}" for o in vivos) or "SIN STOP"
+
+    def _reinicio_por_estado(self, ticker: str, transicion: Optional[str]) -> tuple[list[Accion], bool]:
+        """Decisión 63: el primer `$IssueStatus` tras el reinicio de un ticker rehecho del diario. Devuelve (acciones,
+        ¿sigue el flujo normal de `_msg_issue_status`?)."""
+        foto = self._reinicio_halt[ticker]
+        simb = self._mercado.simbolo(ticker)
+        parado = halts.es_halt(simb)
+        pos = self._estado.posiciones.get(ticker)
+        neta = pos.neta if pos is not None else 0
+        if foto.get("en_halt") is True:
+            if transicion == "reapertura":
+                # el símbolo estaba parado al caer el bot y DAS ya dice que negocia: NO se sabe cuándo reabrió
+                self._reinicio_halt.pop(ticker, None)
+                if neta == 0 and not self._pendiente_halt(ticker, foto):
+                    return [Anotar("halt_reinicio_reabierto", {"ticker": ticker, "neta": 0,
+                                                               "regla": "decisión 63: plano, nada pendiente"})], True
+                return self._reinicio_sin_decidir(ticker, foto, "al volver, DAS dice que YA reabrió y no se sabe "
+                                                                "cuándo", cerrar_halt=True), False
+            if parado:
+                self._reinicio_halt.pop(ticker, None)
+                acciones: list[Accion] = [Anotar("halt_reinicio_retomado", {
+                    "ticker": ticker, "k": simb.k_halts_up, "ta": simb.ta, "neta": neta,
+                    "pendiente": self._pendiente_halt(ticker, foto), "regla": "decisión 63 (Jaume 2-oct)"})]
+                if neta != 0:
+                    pendiente = "; ".join(self._pendiente_halt(ticker, foto)) or "la regla se decide al reabrir"
+                    acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                                           f"{avisos.escapar(ticker)}: reinicio en pleno halt (k={simb.k_halts_up}): sigue "
+                                           f"parado; al reabrir: {avisos.escapar(pendiente)}. Posición {neta:+d}, stop "
+                                           f"{avisos.escapar(self._texto_stops(ticker))} (decisión 63)",
+                                           clave=f"halt_reinicio:{ticker}"))
+                return acciones, True
+            return [], True
+        # al caer el bot el símbolo ya había reabierto (cierre / salidas pendientes de la reapertura)
+        if transicion == "halt" or parado:
+            self._reinicio_halt.pop(ticker, None)        # volvió a parar: el protocolo del halt sigue (`_al_halt`)
+            return [Anotar("halt_reinicio_vuelve_a_parar", {"ticker": ticker, "neta": neta,
+                                                            "regla": "decisión 63 (Jaume 2-oct)"})], True
+        if "reconciliacion" in self._estado.modo_degradado:
+            return [], True                              # se retoma tras la reconciliación (`_reinicio_tras_reconciliar`)
+        return self._reinicio_reanudar(ticker), True
+
+    def _reinicio_tras_reconciliar(self, ticker: str) -> list[Accion]:
+        """Decisión 63: reconciliado lo vivo con DAS. Si el diario decía «ya reabierto» y DAS ya contestó que el símbolo
+        negocia, se retoma lo pendiente; si no, se espera al `$IssueStatus` (o al plazo)."""
+        foto = self._reinicio_halt.get(ticker)
+        if foto is None or foto.get("en_halt") is True or ticker not in self._simstatus_en:
+            return []
+        if halts.es_halt(self._mercado.simbolo(ticker)):
+            return []
+        return self._reinicio_reanudar(ticker)
+
+    def _reinicio_reanudar(self, ticker: str) -> list[Accion]:
+        """Decisión 63: reinicio «justo tras reabrir». Con lo vivo según DAS (reconciliado) se aplica lo mismo que sin
+        reiniciar: el cierre de la 57 (`_cierre_silencio`: descuenta las compras vivas, así que nunca duplica) y las
+        salidas guardadas (E3, `_aplicar_guardadas`). Si reabrió hace más de `REINICIO_REAPERTURA_MAX_S` o no se sabe
+        cuándo, lo conservador."""
+        foto = self._reinicio_halt.pop(ticker)
+        pos = self._estado.posiciones.get(ticker)
+        reabierto = self._reabierto_et.get(ticker)
+        edad = (self._ahora_et - reabierto).total_seconds() if reabierto is not None else None
+        if pos is None or pos.neta >= 0:
+            self._reapertura_silencio.pop(ticker, None)
+            self._cierre_halt_pendiente.discard(ticker)
+            self._salidas_halt.pop(ticker, None)
+            self._reanudar_halt.pop(ticker, None)
+            return [Anotar("halt_reinicio_sin_pendiente", {"ticker": ticker, "neta": pos.neta if pos else 0,
+                                                           "regla": "decisión 63: ya no está corta"})]
+        if edad is None or edad > REINICIO_REAPERTURA_MAX_S:
+            cuando = "no se sabe cuándo reabrió" if edad is None else f"reabrió hace {edad:.0f} s"
+            return self._reinicio_sin_decidir(ticker, foto, cuando)
+        acciones: list[Accion] = [Anotar("halt_reinicio_reanuda", {
+            "ticker": ticker, "neta": pos.neta, "reabierto_hace_s": round(edad, 1), "comprando": self._comprando(ticker),
+            "pendiente": self._pendiente_halt(ticker, foto), "regla": "decisión 63 (Jaume 2-oct)"})]
+        self._reapertura_ctx[ticker] = self._ahora
+        if ticker in self._reapertura_silencio or ticker in self._cierre_halt_pendiente:
+            r = self._reapertura_silencio.get(ticker) or {
+                "decision": "cerrar_mercado" if self._es_rth() else "cerrar_limite_pm",
+                "era_luld": bool(foto.get("era_luld"))}
+            r["desde"] = self._ahora
+            self._reapertura_silencio[ticker] = r
+            acciones.append(Programar(f"{T_HALT_SILENCIO}:{ticker}", HALT_SILENCIO_ESTADO_S, {"ticker": ticker}))
+            acciones += self._cierre_silencio(ticker, final=False)
+        if self._salidas_halt.get(ticker) or self._reanudar_halt.get(ticker):
+            self._halt_reabierto_en[ticker] = self._ahora
+            acciones.append(Programar(f"{T_HALT_GUARDADAS}:{ticker}", HALT_GUARDADAS_MAX_S, {"ticker": ticker}))
+            acciones += self._aplicar_guardadas(ticker)
+        pendiente = "; ".join(self._pendiente_halt(ticker, foto)) or "nada"
+        acciones.append(Avisar(Nivel.AVISO, Grupo.B,
+                               f"{avisos.escapar(ticker)}: reinicio justo tras reabrir el halt (hace {edad:.0f} s): se "
+                               f"retoma {avisos.escapar(pendiente)} con lo que DAS dice vivo. Posición {pos.neta:+d}, "
+                               f"stop {avisos.escapar(self._texto_stops(ticker))} (decisión 63)",
+                               clave=f"halt_reinicio:{ticker}"))
+        return acciones
+
+    def _reinicio_sin_decidir(self, ticker: str, foto: dict, motivo: str, cerrar_halt: bool = False) -> list[Accion]:
+        """Decisión 63, lo conservador: con lo rehecho no se puede decidir con seguridad → no se envía nada, el stop se
+        queda, el ticker pasa a CONTROL_HUMANO y aviso nivel 3 con la situación; /sigue X lo devuelve a la gestión
+        normal (sin el cierre del halt)."""
+        pendiente = self._pendiente_halt(ticker, foto)
+        self._reinicio_halt.pop(ticker, None)
+        self._reapertura_silencio.pop(ticker, None)
+        self._cierre_halt_pendiente.discard(ticker)
+        self._salidas_halt.pop(ticker, None)
+        self._reanudar_halt.pop(ticker, None)
+        self._entrada_espera_58.pop(ticker, None)
+        acciones: list[Accion] = []
+        if cerrar_halt:
+            self._halt_en_curso.discard(ticker)
+            self._halt_decision.pop(ticker, None)
+            self._halt_decision_silencio.pop(ticker, None)
+            self._halt_luld.pop(ticker, None)
+            self._halt_pm_vigilado.discard(ticker)
+            self._halt_decidir_programado.discard(ticker)
+            self._plan_silencio.discard(ticker)
+            self._reabierto_et[ticker] = self._ahora_et
+            acciones.append(Desprogramar(f"{T_HALT_DECIDIR}:{ticker}"))
+        pos = self._estado.posiciones.get(ticker)
+        neta = pos.neta if pos is not None else 0
+        acciones.append(Anotar("halt_reinicio_sin_decidir", {"ticker": ticker, "neta": neta, "motivo": motivo,
+                                                             "pendiente": pendiente, "stop": self._texto_stops(ticker),
+                                                             "regla": "decisión 63 (Jaume 2-oct): lo conservador"}))
+        if pos is not None and neta != 0 and pos.estado in (EstadoTicker.NORMAL, EstadoTicker.HALT):
+            pos.estado = EstadoTicker.CONTROL_HUMANO
+            pos.motivo_estado = "reinicio en pleno halt (decisión 63)"
+            pos.desde = self._ahora
+            acciones.append(Anotar("pausa", {"ticker": ticker, "estado": pos.estado.value,
+                                             "motivo": pos.motivo_estado}))
+        acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
+                               f"{avisos.escapar(ticker)}: reinicio en pleno halt; {avisos.escapar(motivo)}. Posición "
+                               f"{neta:+d}, stop {avisos.escapar(self._texto_stops(ticker))}; pendiente: "
+                               f"{avisos.escapar('; '.join(pendiente) or 'nada')}. El bot NO envía nada: decide el "
+                               f"humano o /sigue {avisos.escapar(ticker)} (decisión 63)",
+                               clave=f"halt_reinicio_humano:{ticker}"))
+        return acciones
+
+    def _t_reinicio_halt(self, clave: str, datos: dict) -> list[Accion]:
+        """Decisión 63: plazo de seguridad tras arrancar. Lo que siga sin resolver: si el diario lo daba por PARADO, sigue
+        parado en silencio (stop intacto) y se avisa una vez; si quedaba algo de una reapertura, lo conservador."""
+        acciones: list[Accion] = []
+        for ticker in sorted(self._reinicio_halt):
+            foto = self._reinicio_halt[ticker]
+            if foto.get("en_halt") is True:
+                if ticker in self._reinicio_halt_avisado:
+                    continue
+                self._reinicio_halt_avisado.add(ticker)
+                pos = self._estado.posiciones.get(ticker)
+                acciones.append(Avisar(Nivel.MAXIMO, Grupo.B,
+                                       f"{avisos.escapar(ticker)}: reinicio en pleno halt y DAS no ha dicho en "
+                                       f"{REINICIO_HALT_ESPERA_S:g} s el estado del símbolo: sigue como PARADO (no se "
+                                       f"envía nada, el stop no se toca). Posición {pos.neta if pos else 0:+d}, stop "
+                                       f"{avisos.escapar(self._texto_stops(ticker))} (decisión 63)",
+                                       clave=f"halt_reinicio_sin_estado:{ticker}"))
+                continue
+            acciones += self._reinicio_sin_decidir(ticker, foto, f"sin estado de DAS en {REINICIO_HALT_ESPERA_S:g} s")
         return acciones
 
     def _msg_ldlu(self, m: MsgLDLU) -> list[Accion]:
@@ -6615,6 +6915,10 @@ class Decisor:
         era_degradado = "reconciliacion" in estado.modo_degradado
         estado.reconciliacion_ok_en = self._ahora
         estado.modo_degradado.discard("reconciliacion")
+        for ticker in sorted(self._reinicio_halt):
+            # decisión 63: con lo vivo ya reconciliado con DAS, lo pendiente de una reapertura se retoma (si DAS dijo ya
+            # que el símbolo negocia)
+            acciones += self._proteger(ticker, "reinicio_halt", lambda t=ticker: self._reinicio_tras_reconciliar(t))
         if era_degradado and self._reconciliacion_avisada:
             self._reconciliacion_avisada = False
             acciones.append(Avisar(Nivel.INFO, Grupo.B, "Reconciliación con DAS recuperada (R-K-03)",
@@ -6670,7 +6974,7 @@ class Decisor:
             T_CIERRE_REPONER: self._t_cierre_reponer, T_LOCATE_SENAL: self._t_locate_senal,
             T_AVAIL_ESPERA: self._t_avail_espera, T_REDUCCION_STOP: self._t_reduccion_stop,
             T_HALT_GUARDADAS: self._t_halt_guardadas, T_HALT_SILENCIO: self._t_halt_silencio,
-            T_ENTRADA_REAPERTURA: self._t_entrada_reapertura,
+            T_ENTRADA_REAPERTURA: self._t_entrada_reapertura, T_REINICIO_HALT: self._t_reinicio_halt,
         }
 
     def _ticker_de_temporizador(self, base: str, clave: str, datos: dict) -> Optional[str]:
@@ -7886,6 +8190,10 @@ class Decisor:
         self._halt_reabierto_en.clear()
         self._open_rechazada.clear()                        # decisión 59: «ese día»
         self._open_k2_avisada.clear()
+        self._memoria_halt_anotada.clear()                  # decisión 63: el diario del día nuevo empieza sin fotos
+        self._reabierto_et.clear()
+        self._reinicio_halt.clear()
+        self._reinicio_halt_avisado.clear()
         estado.senales_principales.clear()                  # Jaume 29-sep: la «primera señal» es por día
         self._espera_locate.clear()
         self._intento_locate_hecho.clear()
@@ -7933,8 +8241,11 @@ class Decisor:
             if confirmado is None:
                 return [Anotar("comando", {**datos, "confirmado": False}),
                         self._responder("Confirmación inexistente, caducada o de otro chat: no hago nada")]
-            return self._ejecutar_comando(confirmado)
+            return self._ejecutar_con_halt(confirmado)
         if c.requiere == comandos.REQUIERE_CONFIRMACION:
+            parados = self._parados_del_comando(c)
+            if parados:
+                return self._pedir_confirmacion_halt(c, parados, datos)          # decisión 62: un paso con el aviso
             return [Anotar("comando", {**datos, "confirmado": False}), self._responder(self._confirmaciones.pedir(c))]
         previa = comandos.respuesta_previa(c)
         if previa is not None:
@@ -7950,9 +8261,69 @@ class Decisor:
             texto = comandos.responder_consulta(c, self._estado, self._cfg, self._mercado, self._ahora, lineas)
             return [Anotar("comando", {**datos, "confirmado": True}), self._responder(texto)]
         if c.requiere in (comandos.REQUIERE_SI, comandos.REQUIERE_CONFIRMADO):
-            return self._ejecutar_comando(c)
+            return self._ejecutar_con_halt(c)
         return [Anotar("comando", {**datos, "confirmado": False}),
                 self._responder(f"Comando no ejecutable ({avisos.escapar_html(c.requiere)})")]
+
+    # ── decisión 62 (Jaume 2-oct): comandos que mandan órdenes con el símbolo en HALT ──
+    def _parados_del_comando(self, c: Comando) -> list[str]:
+        """Tickers PARADOS ahora entre los que el comando tocaría con órdenes (enviar, modificar o cancelar). Vacío para
+        los comandos que no mandan órdenes (/estado, /pausar, /sigue…) o si ninguno está parado."""
+        n = c.nombre
+        args = [str(a) for a in c.args]
+        afectados: set[str] = set()
+        if n in ("cerrar", "cancelar_ordenes", "stop") and args:
+            afectados.add(args[0].upper())
+        elif n == "cerrar_todo":
+            for t, pos in self._estado.posiciones.items():
+                if pos.neta_fills != 0 or (pos.neta_das or 0) != 0 or self._vivas(t):
+                    afectados.add(t)
+        elif n in ("cerrar_y_reiniciar", "desactivar") and args:
+            e = self._estrategia_por_arg(args[0])
+            if e is not None and (n == "cerrar_y_reiniciar" or e.al_desactivar == salidas.AL_DESACTIVAR_REINICIAR):
+                afectados |= {lote.ticker for pos in self._estado.posiciones.values() for lote in self._lotes_vivos(pos)
+                              if lote.strategy_id == e.strategy_id}
+        elif n == "apagar":
+            afectados |= {t for t, pos in self._estado.posiciones.items() if pos.intento is not None}   # cancela entradas
+        return sorted(t for t in afectados if self._parado_ahora(t))
+
+    def _parado_ahora(self, ticker: str) -> bool:
+        pos = self._estado.posiciones.get(ticker)
+        return (ticker in self._halt_en_curso or halts.es_halt(self._mercado.simbolo(ticker))
+                or (pos is not None and pos.estado is EstadoTicker.HALT))
+
+    def _pedir_confirmacion_halt(self, c: Comando, parados: list[str], datos: dict) -> list[Accion]:
+        """Decisión 62: el comando NO se ejecuta; se contesta con la advertencia y se guarda para «/confirmar ID» (TTL de
+        siempre, 60 s, mismo chat, un solo uso). Lo confirmado sale aunque el símbolo siga parado."""
+        lista = ", ".join(parados)
+        protocolo_halt = (" (el bot, por protocolo, no envía nada hasta que reabra y entonces cierra solo)"
+                          if self._silencio() else "")
+        cuadro = (" Desde el cuadro no se puede confirmar: repítelo por Telegram." if c.chat_id == comandos.CHAT_ID_CUADRO
+                  else "")
+        texto = (f"⚠️ {avisos.escapar_html(lista)} {'está' if len(parados) == 1 else 'están'} en HALT. Dentro de un halt "
+                 f"las órdenes pueden quedarse amontonadas y ejecutarse todas de golpe al reabrir{protocolo_halt}."
+                 f"{cuadro} Si aun así quieres enviarla ahora:\n"
+                 + self._confirmaciones.pedir(dataclasses.replace(c, halt_confirmado=True)))
+        return [Anotar("comando", {**datos, "confirmado": False, "halt": parados,
+                                   "regla": "decisión 62 (Jaume 2-oct): en halt, confirmación extra"}),
+                self._responder(texto)]
+
+    def _ejecutar_con_halt(self, c: Comando) -> list[Accion]:
+        """Decisión 62: un comando que manda órdenes sobre un ticker PARADO pide antes «/confirmar ID»; confirmado, se
+        ejecuta y lo que mande sale aunque el ticker esté en halt (el «silencio» de la 57 no lo frena: lo pide el humano)."""
+        parados = self._parados_del_comando(c)
+        if parados and not c.halt_confirmado:
+            datos = {"nombre": c.nombre, "args": list(c.args), "chat_id": c.chat_id, "id": c.id, "requiere": c.requiere}
+            return self._pedir_confirmacion_halt(c, parados, datos)
+        if not parados or not c.halt_confirmado:
+            return self._ejecutar_comando(c)
+        self._forzar_envio = set(parados)
+        try:
+            acciones = self._ejecutar_comando(c)
+        finally:
+            self._forzar_envio = set()
+        return [Anotar("comando_halt_confirmado", {"nombre": c.nombre, "args": list(c.args), "tickers": parados,
+                                                   "regla": "decisión 62 (Jaume 2-oct)"})] + acciones
 
     def _responder(self, texto: str) -> Avisar:
         """Respuesta a un comando: nivel 1, grupo B, SIN clave (el dedupe de 60 s callaría una segunda consulta igual)."""
@@ -8669,6 +9040,61 @@ def _decimal_o_none(valor: Any) -> Optional[Decimal]:
         return Decimal(str(valor)) if valor is not None and str(valor) != "" else None
     except (ArithmeticError, ValueError):
         return None
+
+
+# ── decisión 63 (Jaume 2-oct): serializar lo guardado de un halt para el diario ──
+_PRIMITIVOS = (str, int, float, bool, type(None))
+
+
+def _fecha_iso(valor: Any) -> Optional[datetime]:
+    """Fecha ISO 8601 del diario → datetime con zona (ET si viene sin zona); None si no se entiende."""
+    if not isinstance(valor, str) or not valor.strip():
+        return None
+    try:
+        dt = datetime.fromisoformat(valor.strip())
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=ET) if dt.tzinfo is None else dt
+
+
+def _evento_a_dict(ev: Any) -> dict:
+    """Los campos PRIMITIVOS de un `Evento` (o `EventoLigero`, o cualquier objeto) para el diario; `momento` como texto.
+    Es lo que `fuente_senales.EventoLigero.desde_dict` vuelve a montar tras un reinicio."""
+    if ev is None:
+        return {}
+    if dataclasses.is_dataclass(ev) and not isinstance(ev, type):
+        crudo = {f.name: getattr(ev, f.name, None) for f in dataclasses.fields(ev)}
+    else:
+        crudo = dict(getattr(ev, "__dict__", {}) or {})
+    extra = crudo.pop("extra", None)
+    if isinstance(extra, dict):
+        crudo = {**{k: v for k, v in extra.items() if k not in crudo}, **crudo}
+    salida: dict[str, Any] = {}
+    for clave, valor in crudo.items():
+        if str(clave).startswith("_"):
+            continue
+        if clave == "momento" and valor is not None:
+            salida[clave] = str(valor)
+        elif isinstance(valor, _PRIMITIVOS):
+            salida[str(clave)] = valor
+        elif isinstance(valor, Decimal):
+            salida[str(clave)] = float(valor)
+    return salida
+
+
+def _senal_de_guardada(ticker: str, g: Any) -> Optional[Senal]:
+    """Decisión 63: la salida del motor guardada en el halt (E3), rehecha del diario como `Senal` con un `EventoLigero`
+    (los mismos campos que `Evento`). None si la foto no la describe."""
+    if not isinstance(g, dict) or not isinstance(g.get("evento"), dict) or not g["evento"]:
+        return None
+    from app.bot_das.fuente_senales import EventoLigero    # perezoso: el decisor no necesita la fuente para nada más
+    try:
+        evento = EventoLigero.desde_dict(dict(g["evento"]))
+    except (TypeError, ValueError):
+        return None
+    senal_id = g.get("senal_id")
+    return Senal(clase="evento", ticker=ticker, id=str(senal_id) if senal_id is not None else None, evento=evento,
+                 momento=getattr(evento, "momento", None), recuperada=True)
 
 
 def _proposito(valor: Any, defecto: Proposito) -> Proposito:

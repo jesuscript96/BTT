@@ -210,7 +210,7 @@ def test_tick_de_y_al_tick_rechazan_no_finitos(precio):
     pytest.param("HALT_PRIMERA_VELA_MAX_PCT", D("6"), id="R-F-01/03/04-primera-vela-6%"),
     pytest.param("HALT_T1_SUBIDA_MAX_PCT", D("250"), id="R-F-05-T1-250%"),
     pytest.param("HALT_ENVIAR_ANTES_FIN_S", 60, id="R-F-01-OPEN-60s-antes"),
-    pytest.param("LOCATES_TOPE_GASTO_DIA_USD", D("250"), id="R-H-03-tope-250$-decision-60"),
+    pytest.param("LOCATES_TOPE_GASTO_DIA_USD", D("400"), id="R-H-03-tope-400$-decision-60"),
     pytest.param("LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT", D("30"), id="H6-ultimo-paquete-30%"),
     pytest.param("LOCATES_INQUIRE_S", 3.0, id="manual-L2000-inquire-3s"),
     pytest.param("MODO_SEGURIDAD_PRECIO_MIN", D("5"), id="R-I-04-precio-5$"),
@@ -420,7 +420,8 @@ def test_lote_e_intento_defaults():
                  id="MsgOrden"),
     pytest.param(MsgTrade, ["cruda", "id", "ticker", "lado", "qty", "precio", "ruta", "hora", "id_orden", "liq", "ecn_fee",
                             "pl", "cuenta", "trader", "watch"], id="MsgTrade"),
-    pytest.param(Comando, ["nombre", "args", "chat_id", "requiere", "id", "texto"], id="Comando"),
+    pytest.param(Comando, ["nombre", "args", "chat_id", "requiere", "id", "texto", "halt_confirmado"],   # decisión 62
+                 id="Comando"),
     pytest.param(Registro, ["v", "seq", "t", "proceso", "tipo", "datos"], id="Registro"),
     pytest.param(Ficha, ["ticker", "list_date", "sic_code", "tipo", "market_cap", "nombre"], id="Ficha-ajuste-a"),
     pytest.param(NivelesStop, ["disparo", "limite", "bajo_banda"], id="NivelesStop-v4-stop-unico"),

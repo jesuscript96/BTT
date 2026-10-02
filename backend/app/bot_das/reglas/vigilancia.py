@@ -21,6 +21,14 @@ conexión watch + los diarios) y devuelve las acciones del vigilante:
       usa); con el ejecutor muerto, aviso 3 de cisne negro (R-G-01 v4);
   (g) corrección 16: si hay que enviar y `puede_enviar` es False → Avisar(3) +
       PedirAlSupervisor("relanzar ejecutor").
+  (h) decisión 61 (Jaume 2-oct), con `halts.silencio` (defecto true): con el
+      símbolo PARADO (`Foto.parados`, que el proceso saca de SU conexión) no
+      sale ninguna orden ni se toca un stop (`_filtrar_halt`): solo el stop
+      de acciones cortas SIN ningún stop vivo, como el ejecutor; lo retenido
+      se anota (`halt_retenidas`) y se avisa (2). Al reabrir, durante
+      `GRACIA_REAPERTURA_S` el plazo de «descubierta» no hace actuar al
+      vigilante (el ejecutor está cerrando según la 57); muerto el ejecutor,
+      todo como siempre. Los avisos no cambian.
 `debe_hacer_ping` es R-J-05. `descubiertas_por_ticker` y
 `actualizar_descubierta_desde` ayudan al proceso vigilante a llevar la cuenta
 de cuánto lleva cada posición descubierta.
@@ -104,6 +112,7 @@ from app.bot_das.tipos import (
     EstadoTicker,
     Grupo,
     InvalidarSerie,
+    Lado,
     Lote,
     MsgOrden,
     MsgPos,
@@ -114,6 +123,7 @@ from app.bot_das.tipos import (
     Programar,
     Reemplazar,
     Registro,
+    TipoOrden,
 )
 
 PETICION_RELANZAR_EJECUTOR = "relanzar ejecutor"     # corrección 16 / riesgo 31 (§3.25 g)
@@ -122,6 +132,11 @@ TIPO_DESHABILITAR_LOCATES = "locates_deshabilitar"   # §8: `reconstruir` pone l
 LOCATE_LOCATED = "Located"                           # estado de %SLOrder que cobra (manual L1722-1795)
 MARGEN_AVISO_DEFECTO = Decimal("0.8")                # §7 tecnicos.vigilante.margen_aviso
 MUTANTES = (EnviarOrden, Cancelar, Reemplazar, CancelarTicker)   # lo que necesita la conexión de acción
+# Decisión 61 (Jaume 2-oct): tras reabrir un halt, el vigilante no da una posición por descubierta (plan B por el
+# plazo) hasta pasado este margen: los 2 s que el ejecutor tiene para conocer lo vivo (decisión 57,
+# HALT_SILENCIO_ESTADO_S) + el cierre al ask con sus 3 persecuciones de 1 s (decisión 13) + 5 s de holgura.
+GRACIA_REAPERTURA_S = 2.0 + 3 * 1.0 + 5.0
+CLAVE_AVISO_HALT = "vigilante_halt"                 # decisión 61: aviso (2) de lo que el vigilante retiene en un halt
 
 _LOTE_MUERTO = (EstadoLote.CERRADO, EstadoLote.CANCELADO)
 _D = Decimal
@@ -166,6 +181,10 @@ class Foto:
     anotado: dict[str, str] = field(default_factory=dict)   # E2c-04: firma de lo último anotado por ticker (la devuelve
     #                                                         `comprobar_con_firmas`; el proceso la trae a la foto siguiente)
     locates_tope_dia: bool = False  # decisión 50 (Jaume 1-oct): el ejecutor ya cortó las compras por el tope del día
+    # Decisión 61 (Jaume 2-oct): lo que el vigilante sabe de los halts por SU conexión (`$IssueStatus`/`$SymStatus`):
+    # tickers PARADOS ahora (TA H/P/Q) y, de los que reabrieron, el monotónico de la reapertura (margen de gracia)
+    parados: frozenset = frozenset()
+    reabiertos: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -215,14 +234,23 @@ def comprobar_con_firmas(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[]
     plan_b_descubierta = _segundos(vig.get("plan_b_descubierta_s"), PLAN_B_DESCUBIERTA_S)
     hoy = hora_et.date()
     muerto = foto.latido_ejecutor_s is None or foto.latido_ejecutor_s > plan_b_latido
+    silencio = _silencio(cfg)
     salida: list[Accion] = []
     firmas: dict[str, str] = {}
     bloqueadas = False
     for vista in _vistas(foto, cfg_stops, hoy):
         desc = _descubiertas(vista, cfg_stops)
         desde = foto.descubierta_desde.get(vista.ticker)
-        actua = muerto or (desc > 0 and desde is not None and ahora - desde > plan_b_descubierta)
+        # Decisión 61: tras reabrir un halt el ejecutor está cerrando (decisión 57): no se da por descubierta antes de
+        # la gracia (con el ejecutor MUERTO nadie cierra: se actúa como siempre)
+        en_gracia = silencio and _en_gracia(foto, vista.ticker, ahora)
+        actua = muerto or (desc > 0 and desde is not None and ahora - desde > plan_b_descubierta and not en_gracia)
         propuesta, reales, motivo = _que_hacer(vista, cfg, cfg_stops, tokens, hora_et, ruta_stop, actua, muerto)
+        retenidas: list[Accion] = []
+        if silencio and vista.ticker in foto.parados and any(isinstance(a, MUTANTES) for a in reales):
+            reales, retenidas = _filtrar_halt(vista, reales)
+            motivo = (f"{motivo}; decisión 61: {vista.ticker} en HALT, el vigilante no envía nada salvo el stop de "
+                      f"acciones sin ningún stop")
         if propuesta:
             enviar = [a for a in reales if isinstance(a, MUTANTES)]
             bloqueo = bool(enviar) and not puede_enviar
@@ -235,11 +263,19 @@ def comprobar_con_firmas(foto: Foto, cfg: Any, ahora: float, tokens: Callable[[]
                 "ajustes": [_describir(a) for a in propuesta if isinstance(a, Reemplazar)],
                 "acciones": [_describir(a, con_token=True) for a in reales], "bloqueado": bloqueo,
                 "regla": "R-C-07 plan B / R-C-08"}
+            if retenidas:
+                datos["halt_retenidas"] = [_describir(a) for a in retenidas]     # decisión 61
             firma = _firma(datos)
             firmas[vista.ticker] = firma
             if any(isinstance(a, MUTANTES) for a in reales) or foto.anotado.get(vista.ticker) != firma:
                 salida.append(Anotar(TIPO_ANOTACION, {**datos, "firma": firma}))
             salida.extend(a for a in reales if not (bloqueo and isinstance(a, MUTANTES)))
+            if retenidas:
+                salida.append(Avisar(nivel=Nivel.AVISO, grupo=Grupo.B, clave=f"{CLAVE_AVISO_HALT}:{vista.ticker}",
+                                     texto=(f"Decisión 61: {_esc(vista.ticker)} está en HALT: el vigilante NO envía "
+                                            f"nada hasta que reabra ({len(retenidas)} órdenes retenidas: "
+                                            f"{_esc(', '.join(_describir(a) for a in retenidas))}); el stop residente "
+                                            f"sigue. Posición {vista.neta:+d}")))
         salida.extend(_avisos_precio(vista, foto, cfg_stops, muerto))
     if bloqueadas:
         salida.append(Avisar(nivel=Nivel.MAXIMO, grupo=Grupo.B, clave="vigilante_sin_envio",
@@ -345,6 +381,35 @@ def _bloque(cfg: Any, nombre: str, requerido: bool = False) -> Mapping:
     if requerido:
         raise ValueError(f"el bloque {nombre!r} de la config falta o no es un dict")
     return {}
+
+
+def _silencio(cfg: Any) -> bool:
+    """`halts.silencio` del cuadro (defecto true, decisión 57); un valor que no es bool cuenta como true (lo seguro)."""
+    valor = _bloque(cfg, "halts").get("silencio", True)
+    return valor if isinstance(valor, bool) else True
+
+
+def _en_gracia(foto: Foto, ticker: str, ahora: float) -> bool:
+    """Decisión 61: ¿el ticker reabrió hace menos de `GRACIA_REAPERTURA_S`? (el ejecutor lo está cerrando o mirando)."""
+    reabierto = foto.reabiertos.get(ticker)
+    return reabierto is not None and 0 <= ahora - reabierto < GRACIA_REAPERTURA_S
+
+
+def _filtrar_halt(vista: _Vista, reales: list[Accion]) -> tuple[list[Accion], list[Accion]]:
+    """Decisión 61 (Jaume 2-oct): con el símbolo PARADO el vigilante no envía órdenes nuevas ni toca stops. ÚNICA
+    excepción, la misma que el ejecutor (decisión 57): acciones CORTAS sin ningún stop vivo → sale el stop (o la
+    protección) para ellas, nunca por más acciones de las que no tienen ninguno. Sustituir un stop vivo por otro,
+    reducirlo, cancelar huérfanas o vender el exceso: nada (se retiene). Devuelve (lo que sale, lo retenido)."""
+    sin_stop = 0
+    if vista.neta < 0:
+        sin_stop = max(abs(vista.neta) - reconciliacion.cobertura(vista.vivas, vista.ticker, vista.neta) - vista.manual,
+                       0)
+    stops_nuevos = [a for a in reales if isinstance(a, EnviarOrden) and a.orden.lado is Lado.COMPRA
+                    and a.orden.tipo is TipoOrden.STOP_LIMITE_PP]
+    if not stops_nuevos or sum(a.orden.qty for a in stops_nuevos) > sin_stop:
+        stops_nuevos = []
+    retenidas = [a for a in reales if isinstance(a, MUTANTES) and a not in stops_nuevos]
+    return [a for a in reales if a not in retenidas], retenidas
 
 
 def _segundos(valor: Any, defecto: float) -> float:
@@ -644,7 +709,7 @@ def _locates(foto: Foto, cfg: Any, hoy: date) -> list[Accion]:
 
 
 def _tope_usd(valor: Any) -> Decimal:
-    """Decisión 60: `locates.tope_gasto_dia_usd` (> 0) o el defecto de tipos (250 $)."""
+    """Decisión 60: `locates.tope_gasto_dia_usd` (> 0) o el defecto de tipos (400 $)."""
     if valor is None or isinstance(valor, bool):
         return LOCATES_TOPE_GASTO_DIA_USD
     try:

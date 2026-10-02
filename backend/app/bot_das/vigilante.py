@@ -93,6 +93,13 @@ LAS TRAMPAS.
   * El ping nunca bloquea (hilo propio) y la URL (lleva el identificador del
     servicio) no se escribe en el log: `construir_desde_env` la añade a los
     secretos del `FiltroSecretos`.
+  * Decisión 61 (Jaume 2-oct): el vigilante sabe qué símbolo está PARADO por
+    su propia conexión: con `halts.silencio` pide `GET SymStatus X` por el
+    watch en cada pasada para los tickers con posición y aplica
+    `$IssueStatus`/`$SymStatus` con `MercadoDAS.marcar_halt` (y la reapertura
+    por prints de R2-DEC-3). Pasa a la foto `parados` y `reabiertos` (mono
+    de la reapertura); la regla está en `vigilancia.comprobar` (h). Las
+    transiciones se anotan como `halt_vigilante`.
   * Importar este módulo no abre red, no lee ficheros, no arranca hilos y no
     importa pandas.
 """
@@ -700,6 +707,9 @@ class VigilanteDAS:
         self._pend_replace: dict[int, tuple[int, float]] = {}
         self._estado_propias: dict[int, tuple] = {}
         self._netas_anotadas: dict[str, int] = {}
+        # decisión 61 (Jaume 2-oct): halts vistos por la conexión propia
+        self._parados: set[str] = set()
+        self._reabierto_en: dict[str, float] = {}
         # plan B y rechazos
         self._descubierta_desde: dict[str, float] = {}
         self._rechazos: dict[str, list[float]] = {}
@@ -982,8 +992,12 @@ class VigilanteDAS:
                                     neta=msg.neta, avg=msg.avg, cruda=msg.cruda)
         elif isinstance(msg, MsgOrden):
             self._de_orden(msg, ahora)
-        elif isinstance(msg, (MsgQuote, MsgIssueStatus, MsgLDLU, MsgShortInfo)):
-            self._mercado.aplicar(msg)
+        elif isinstance(msg, MsgIssueStatus):
+            self._estado_simbolo(msg, ahora)             # decisión 61: el vigilante sabe qué símbolo está parado
+        elif isinstance(msg, (MsgQuote, MsgLDLU, MsgShortInfo)):
+            ticker = self._mercado.aplicar(msg)
+            if isinstance(msg, MsgQuote) and ticker is not None and self._mercado.tomar_reapertura_q(ticker):
+                self._halt_transicion(ticker, "reapertura", ahora, "prints en TA:Q (R2-DEC-3)")
         elif isinstance(msg, MsgMarcador):
             if msg.nombre in _MARCADORES_VOLCADO:
                 self._fines_vistos.add(msg.nombre)
@@ -995,6 +1009,32 @@ class VigilanteDAS:
                                            f"LOGIN/2FA a mano", "vigilante_login", ahora)
         elif isinstance(msg, MsgLogin):
             self._login(msg, "watch")
+
+    def _estado_simbolo(self, msg: MsgIssueStatus, ahora: float) -> None:
+        """Decisión 61 (Jaume 2-oct): `$IssueStatus`/`$SymStatus` por la conexión PROPIA del vigilante (watch).
+
+        `MercadoDAS.marcar_halt` da la transición (halt / reapertura) con la
+        misma regla que el ejecutor (TA H/P/Q parado; Q reabre con T, sin TA o
+        por prints). El vigilante no cuenta k (franja vacía: no la necesita).
+        """
+        ticker = str(msg.ticker).strip().upper()
+        if not ticker:
+            return
+        transicion = self._mercado.marcar_halt(ticker, msg, self._reloj.ahora(), None, "")
+        if transicion is not None:
+            self._halt_transicion(ticker, transicion, ahora, f"TA {msg.ta or '—'}")
+
+    def _halt_transicion(self, ticker: str, transicion: str, ahora: float, motivo: str) -> None:
+        if transicion == "halt":
+            self._parados.add(ticker)
+            self._reabierto_en.pop(ticker, None)
+        elif transicion == "reapertura":
+            self._parados.discard(ticker)
+            self._reabierto_en[ticker] = ahora
+        else:
+            return
+        self._diario.anotar("halt_vigilante", ticker=ticker, transicion=transicion, motivo=motivo,
+                            regla="decisión 61 (Jaume 2-oct)")
 
     def _login(self, msg: MsgLogin, conexion: str) -> None:
         """DAS real (01-oct): «#LOGIN SUCCESSED» / «ERROR:…». Rechazado → aviso 3 UNA vez y sin más LOGIN (watch ni acción).
@@ -1196,7 +1236,8 @@ class VigilanteDAS:
             equity=self._equity_ejecutor(ahora), descubierta_desde=dict(self._descubierta_desde), limit_up=limit_up,
             pendientes=[orden for orden, _ in self._pend_nuevas.values()], estados_ticker=estados,
             locates_deshabilitados=estado.locates_deshabilitados, anotado=dict(self._firmas_vigilancia),
-            locates_tope_dia=estado.locates_tope_dia)            # decisión 50 (Jaume 1-oct)
+            locates_tope_dia=estado.locates_tope_dia,            # decisión 50 (Jaume 1-oct)
+            parados=frozenset(self._parados), reabiertos=dict(self._reabierto_en))   # decisión 61 (Jaume 2-oct)
 
     def _ordenes_vista(self, ahora: float) -> dict[int, MsgOrden]:
         """El libro con lo pendiente aplicado: un CANCEL enviado cuenta como hecho y un REPLACE con su cantidad nueva."""
@@ -1618,7 +1659,8 @@ class VigilanteDAS:
             logger.warning("[VIGILANTE] no salió por watch (%s): %s", type(exc).__name__, protocolo.redactar(linea))
 
     def _suscribir(self) -> None:
-        """R-C-08 (a): cotizaciones de DAS de los tickers con posición (Lv1) y su banda (GET LDLU, R-F-02)."""
+        """R-C-08 (a): cotizaciones de DAS de los tickers con posición (Lv1), su banda (GET LDLU, R-F-02) y, decisión 61,
+        su estado (GET SymStatus, halts)."""
         if not _conectado(self._watch):
             return
         tickers = [t for t, m in self._posiciones.items() if m.neta != 0]
@@ -1634,6 +1676,26 @@ class VigilanteDAS:
                 self._enviar_watch(protocolo.cmd_unsb(ticker))
             except ValueError:
                 logger.warning("[VIGILANTE] ticker imposible para desuscribir: %r", ticker)
+        for ticker in bajas:
+            self._parados.discard(ticker)            # sin posición el vigilante ya no lo mira
+        self._consultar_estado_simbolos(sorted(set(tickers)))
+
+    def _consultar_estado_simbolos(self, tickers: list[str]) -> None:
+        """Decisión 61 (Jaume 2-oct): con `halts.silencio`, `GET SymStatus X` por la conexión watch (una lectura) en cada
+        pasada (1 s) para los tickers con posición, como el ejecutor (F6.1): así el vigilante sabe por SU conexión si un
+        símbolo está parado. Con `tecnicos.get_con_simbolo` false, uno sin símbolo (COB-04)."""
+        halts_cfg = self._cfg.halts if isinstance(self._cfg.halts, dict) else {}
+        silencio = halts_cfg.get("silencio", True)
+        if silencio is False or not tickers:
+            return
+        if self._cfg.tecnicos.get("get_con_simbolo", True) is False:
+            self._enviar_watch(protocolo.cmd_get("SymStatus"))
+            return
+        for ticker in tickers:
+            try:
+                self._enviar_watch(protocolo.cmd_get("SymStatus", ticker))
+            except ValueError:
+                logger.warning("[VIGILANTE] ticker imposible para GET SymStatus: %r", ticker)
 
     # ── diarios ──
     def _leer_diarios(self, hoy: date) -> None:
@@ -1678,6 +1740,7 @@ class VigilanteDAS:
         self._tokens_rechazados.clear()
         self._descubierta_desde.clear()
         self._firmas_vigilancia.clear()
+        self._reabierto_en.clear()                  # decisión 61: un halt vivo (raro de un día a otro) lo dirá DAS
 
     # ── ejecutor, ventana, equity, supervisor, latido ──
     def _revisar_ejecutor(self, latido_ejecutor: Optional[float], ahora: float, dentro: bool) -> None:

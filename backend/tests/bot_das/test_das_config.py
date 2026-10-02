@@ -39,7 +39,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 RUTA_EJEMPLO = FIXTURES / "config_ejemplo.json"
 CUENTA = "CUENTA_PRUEBA"
 BACKEND = Path(__file__).resolve().parents[2]
-SHA_FIXTURE = "bb2ce588a18ac2df19db9de1d0429d44d892c933cfe2b316b099898c81386cbe"   # Jaume 2-oct: locates.tope_gasto_dia_usd 250 (decisión 60)
+SHA_FIXTURE = "b9ba9a1ef135799e6e9800aecca91bd492da21860a791f50ba6604a46e8a9022"   # Jaume 2-oct: locates.tope_gasto_dia_usd 400 (decisión 60)
 RUTA_ENSAYO = Path("D:/bot_senales/bot_ejecucion/ensayo/config/bot_das_config.json")   # fuera del repo: si no está, se salta
 
 
@@ -906,7 +906,7 @@ def _nueva(*mutaciones) -> Config:
     (_mutar("pausar_entradas", True), "pausar_entradas", False, True, True),
     (_mutar("horario.encender", "04:00"), "horario.encender", "03:55", "04:00", True),
     (_mutar("lista_negra", ["ABC"]), "lista_negra", [], ["ABC"], True),
-    (_mutar("locates.tope_gasto_dia_usd", 300), "locates.tope_gasto_dia_usd", 250, 300, True),
+    (_mutar("locates.tope_gasto_dia_usd", 300), "locates.tope_gasto_dia_usd", 400, 300, True),
     (_mutar("alertas_grupo_a.prealerta_simple", True), "alertas_grupo_a.prealerta_simple", False, True, True),
     (_mutar("modo_seguridad.precio_min", 3.0), "modo_seguridad.precio_min", 5.0, 3.0, True),
     (_mutar("estrategias.0.riesgo_usd", 500), "estrategias.prueba-1.riesgo_usd", Decimal("300"), Decimal("500"), True),
@@ -969,7 +969,7 @@ def test_aplicar_con_bot_encendido_y_posiciones_acepta_C_y_rechaza_A():
     assert actual == copia_actual and nueva == copia_nueva                                # nada mutado
     assert C.diferencias(res, nueva) and all(not c for *_, c in C.diferencias(res, nueva))   # solo quedan [A]
     res.locates["tope_gasto_dia_usd"] = 0
-    assert actual.locates["tope_gasto_dia_usd"] == 250 and nueva.locates["tope_gasto_dia_usd"] == 300
+    assert actual.locates["tope_gasto_dia_usd"] == 400 and nueva.locates["tope_gasto_dia_usd"] == 300
 
 
 @pytest.mark.parametrize("encendido, posiciones, aplica_todo", [
@@ -1447,18 +1447,18 @@ def test_importar_no_carga_httpx_ni_pandas_ni_hilos():
 
 
 # ── decisión 60 (Jaume 2-oct): tope de locates del día en DÓLARES fijos ──
-def test_decision_60_cuadro_viejo_con_el_pct_y_sin_dolares_carga_con_250():
+def test_decision_60_cuadro_viejo_con_el_pct_y_sin_dolares_carga_con_400():
     """Un cuadro de antes del 2-oct (trae `tope_gasto_pct_cuenta` y no `tope_gasto_dia_usd`) carga: la clave vieja se
-    ignora y el tope es el defecto de tipos (250 $)."""
+    ignora y el tope es el defecto de tipos (400 $, Jaume 2-oct)."""
     obj = _crudo()
     del obj["locates"]["tope_gasto_dia_usd"]
     obj["locates"]["tope_gasto_pct_cuenta"] = 3.0
     _firmar(obj)
     assert C.validar(obj) == []
     cfg = _cfg(obj)
-    assert cfg.locates["tope_gasto_dia_usd"] == 250
+    assert cfg.locates["tope_gasto_dia_usd"] == 400
     from app.bot_das.reglas import locates as reglas_locates
-    assert reglas_locates.tope_dia_usd(cfg.locates) == Decimal("250")
+    assert reglas_locates.tope_dia_usd(cfg.locates) == Decimal("400")
 
 
 def test_decision_57_59_hojas_opcionales_de_halts_valen_true_por_defecto():

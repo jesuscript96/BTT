@@ -56,7 +56,7 @@ HALT_DISTANCIA_BANDA_K2_PCT = Decimal("4")      # R-F-01: 3-5 %
 HALT_PRIMERA_VELA_MAX_PCT = Decimal("6")        # R-F-01 esc. 2 / R-F-03 / R-F-04
 HALT_T1_SUBIDA_MAX_PCT = Decimal("250")         # R-F-05
 HALT_ENVIAR_ANTES_FIN_S = 60                    # R-F-01 (22/24-sep)
-LOCATES_TOPE_GASTO_DIA_USD = Decimal("250")     # R-H-03 / decisión 60 (Jaume 2-oct): tope del día en DÓLARES fijos
+LOCATES_TOPE_GASTO_DIA_USD = Decimal("400")     # R-H-03 / decisión 60 (Jaume 2-oct): tope del día en DÓLARES fijos (400 $)
 LOCATES_UMBRAL_ULTIMO_PAQUETE_PCT = Decimal("30")  # H6
 LOCATES_INQUIRE_S = 3.0                         # manual L2000 (1 cada 3 s)
 MODO_SEGURIDAD_PRECIO_MIN = Decimal("5")        # R-I-04
@@ -1097,6 +1097,8 @@ class Comando:                     # comandos.py
     requiere: str
     id: str
     texto: str
+    # Decisión 62 (Jaume 2-oct): el humano ya confirmó con /confirmar que lo envía AUNQUE el símbolo esté en halt
+    halt_confirmado: bool = False
 
 
 @dataclass(frozen=True)

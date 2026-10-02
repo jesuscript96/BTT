@@ -397,7 +397,8 @@ def test_veredicto_ya_localizadas_negativas() -> None:
     pytest.param("0", "250.01", D("250"), True, id="R-H-03-un-centimo-de-mas"),
     pytest.param("200", "60", D("250"), True, id="R-H-03-acumulado-del-dia"),
     pytest.param("200", "50", 250.0, False, id="R-H-03-tope-float-del-json"),
-    pytest.param("200", "60", None, True, id="R-H-03-defecto-250"),
+    pytest.param("350", "60", None, True, id="R-H-03-defecto-400"),           # Jaume 2-oct: el defecto pasa a 400 $
+    pytest.param("200", "60", None, False, id="R-H-03-defecto-400-260-cabe"),
     pytest.param("0", "0", D("0.01"), False, id="R-H-03-coste-0"),
 ])
 def test_tope_superado(gasto: str, coste: str, tope: Any, esperado: bool) -> None:

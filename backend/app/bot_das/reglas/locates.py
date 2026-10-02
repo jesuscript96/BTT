@@ -419,7 +419,7 @@ def tope_superado(gasto_dia: Decimal, coste_nuevo: Decimal,
 
 
 def tope_dia_usd(cfg_loc: Any) -> Decimal:
-    """Decisión 60 (Jaume 2-oct): `locates.tope_gasto_dia_usd` del cuadro (o el defecto de tipos, 250 $).
+    """Decisión 60 (Jaume 2-oct): `locates.tope_gasto_dia_usd` del cuadro (o el defecto de tipos, 400 $).
 
     La clave vieja `tope_gasto_pct_cuenta` (un % del equity) ya no se usa: un
     cuadro que aún la traiga carga y se ignora. Un valor imposible (≤ 0, no

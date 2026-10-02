@@ -374,6 +374,24 @@ class MercadoDAS:
             simb.k_halts_up = k
         return simb.k_halts_up
 
+    def sembrar_halt(self, ticker: str, ta: Optional[str], halt_desde: datetime,
+                     precio_parada: Optional[Decimal] = None) -> None:
+        """Decisión 63 (Jaume 2-oct): tras un reinicio en pleno halt, el símbolo vuelve a estar PARADO como lo dejó el
+        diario (`halt_desde`, TA con el que paró y precio de parada) SIN contar otro halt: el primer `$IssueStatus` con
+        el símbolo aún parado no es una transición (k no sube dos veces) y el que llegue sin TA es la «reapertura».
+        No pisa un halt que este libro ya conozca."""
+        simb = self.simbolo(ticker)
+        if simb.halt_desde is not None:
+            return
+        simb.halt_desde = halt_desde
+        simb.orden_open_enviada = False
+        ta_n = _ta_normalizado(ta)
+        if ta_n in TA_PARADO:
+            simb.ta = ta_n
+            self._ta_halt[simb.ticker] = ta_n
+        if simb.precio_parada is None:
+            simb.precio_parada = _precio_o_none(precio_parada)
+
     def _inicio_halt(self, tat: Optional[str], ahora: datetime) -> datetime:
         ahora_et = ahora.replace(tzinfo=ET) if ahora.tzinfo is None else ahora.astimezone(ET)
         if tat:
