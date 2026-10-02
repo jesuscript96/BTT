@@ -1,4 +1,4 @@
-# PRD · Integración a `staging` de lo construido en `alvaro-rama-desarrollo` (24-sep → 1-oct-2026)
+# PRD · Integración a `staging` de lo construido en `alvaro-rama-desarrollo` (24-sep → 2-oct-2026)
 
 > **Para:** Jaume / Jaime (deciden qué entra en `staging` y cuándo).
 > **De:** Álvaro (redactado por Claude Code, 2026-10-01).
@@ -25,6 +25,9 @@
 | U5 | Paquete «estrategias nuevas»: Vol $ víspera · Gappers víspera · Mecha sup. víspera | universo | — | `6e20d41` | nulo sin la regla |
 | U6 | Filtro «Hora de cruce de gap» (tramo PMH/RTH + % + hora) | universo | — | `64e2000` → `68f3cdb` → `da0c76c` | nulo sin la regla |
 | P1 | Franja horaria propia por nivel de pirámide | pirámide | `PYRAMID_LEVEL_WINDOWS_ENABLED` | `96602b6` | nulo con flag OFF / sin clave |
+| X2 | Operando «Días desde IPO (lago)» en salidas programadas | salida | `SCHEDULED_EXITS_ENABLED` (extiende X1) | `43b20a4` | nulo sin el operando; la garantía de columna (cache key + salto de hot cache + GCS 2019+) SOLO se activa si la estrategia lo usa |
+| X3 | Modo «En cuanto se cumpla» (sin hora) + fuente «% Fade» (PM / RTH / PM+RTH) + dos «juegos» | salida | `SCHEDULED_EXITS_ENABLED` (extiende X1) | `47a0263` | `trigger` ausente ≡ `hour` bit-idéntico; **toca `portfolio_sim.py` (compartido con el bot)** |
+| Q1 | Desplegable «cargar estrategia guardada» ordena por última modificación | UX | — | `fdef2c6` | bajo: cambia el ORDEN de `GET /strategies` (backtester, Baúl y tabla de estrategias ven lo recién tocado arriba) |
 
 Dependencias: **F3 antes de U1-U6** (los filtros nuevos de Gap -1 rompían el
 backtest sobre el parquet bygap viejo sin F3 — hallazgo 16). **I1 antes de U6**
@@ -124,19 +127,74 @@ caliente, materializada) y en el catálogo único `frontend/src/lib/universoFilt
 - **Sin entrada propia en MEMORIA_MADRE hasta hoy** (la añade la entrada de
   integración del 1-oct).
 
+### X2 · Operando «Días desde IPO (lago)» en salidas programadas — extiende X1 · `43b20a4`
+- En cada regla del bloque X1, la fuente puede ser **«Días desde IPO (lago)»**
+  (`days_since_first_day`, el dato del 6.1/U4) con `< ≤ = > ≥` contra un nº de
+  días. El «=» solo se ofrece con este operando (los días son enteros).
+- **Garantía de la columna en las 4 vías de datos** (lo delicado): el
+  orquestador detecta el uso en cualquier árbol (`_necesita_dias_ipo`) y pasa
+  `needs_days_since_first_day=True` a `fetch_qualifying_data`: salta el hot
+  cache RAM, calcula el alias al-vuelo en la vía materializada y **amplía la
+  lectura GCS a 2019+ aunque el WHERE del universo no use el filtro** (sin
+  eso, un ticker listado antes del rango leído saldría con edad FALSA diminuta
+  y se gestionaría como IPO siendo viejo). La clave de caché del qualifying
+  incluye el flag → sin invalidación global (solo cambia para quien lo usa).
+- NaN sin dato → la regla NO dispara (fail-safe) + aviso una vez por proceso.
+- Toca: `schemas/strategy.py` (enum), `indicators.py`, `strategy_engine.py`,
+  `backtest_orchestrator.py`, `data_service.py`, `gcs_cache.py`,
+  `ScheduledExitsBuilder.tsx`. Tests: `test_sched_exit_dias_ipo.py` (9).
+- Detalle: `[FEATURE · 2026-10-01 · OPERANDO «DÍAS DESDE IPO (LAGO)»…]`.
+
+### X3 · «En cuanto se cumpla» + «% Fade» + juegos — extiende X1 · `47a0263`
+- Cada regla elige **«A las HH:MM»** (como X1, bit-idéntico — `trigger`
+  ausente o `'hour'`) o **«En cuanto se cumpla»** (sin hora): dispara en la
+  primera vela con posición en la que la condición sea verdad, una vez por
+  operación (one-shot consumido AL DISPARAR; un `add` de pirámide NO rearma,
+  una reentrada sí).
+- Fuente nueva **«% Fade»** con `fade_ref` (máximo previo / cruce VWAP) y
+  `ap_session`: «PM + RTH (desde 04:00)» = `ap.PM` existente · «Solo PM (hasta
+  la apertura)» = **`ap.PM_ONLY` NUEVO** (ventana cerrada 04:00-09:29, el PMH
+  congelado; ningún indicador existente envía ese valor → bit-idénticos) ·
+  «RTH (desde 09:30)» = `ap.RTH` existente.
+- **Dos juegos** rellenables (solo `when` + una comparación simple `>` / `>=`
+  con umbral numérico; si no, warning y se ignoran): J1 «si al entrar ya va
+  cumplida, exige umbral + J1» (desarme cuando la condición se apaga) y J2
+  «si entras cerca (≥ desde, < umbral), exige entrada + recorrido» (desarme
+  si la fuente baja del «desde»).
+- **OJO bot:** vuelve a tocar `portfolio_sim.py` (estado por regla
+  `sched_estado` + one-shot al disparar). El camino `hour` conserva el flujo
+  exacto de X1 (mismo marcaje temprano); sin `scheduled_exits` en la
+  estrategia, cero cambios. Toca además `schemas/strategy.py`,
+  `indicators.py` (`_ap_session_started`), `strategy_engine.py`,
+  `ScheduledExitsBuilder.tsx`. Tests: `test_sched_exit_when_juegos.py` (14).
+- Detalle: `[FEATURE · 2026-10-01 · MODO «EN CUANTO SE CUMPLA» + «% FADE»…]`.
+
+## 3-bis · UX menor sin flag
+
+### Q1 · `fdef2c6` — desplegable por última modificación
+- `GET /strategies` pasa de `ORDER BY created_at DESC` a
+  `COALESCE(updated_at, created_at) DESC`: en el desplegable del backtester
+  (dentro de cada grupo de sesión) queda arriba lo último que tocaste.
+  `updated_at` ya se refrescaba al guardar/renombrar/etiquetar.
+- Afecta también al Baúl y a la tabla de /strategies (mismo endpoint): ven el
+  mismo orden nuevo. Petición de Álvaro (2-oct).
+
 ## 4. Cómo integrarlo (propuesta; la decisión es vuestra)
 
 1. Cherry-pick en el orden de la tabla del §0 (F1, F2, F3, U1…U6, I1 antes de
-   U6, X1, P1). Los commits `docs(...)` intermedios no hacen falta: esta
-   memoria y este PRD ya los resumen.
-2. `.env` de producción: **no** hace falta ningún flag nuevo para F/U. I1, X1 y
-   P1 quedan apagados salvo que los encendáis.
+   U6, X1, **X2 y X3 inmediatamente después de X1** — lo extienden —, P1,
+   Q1 donde queráis). Los commits `docs(...)` intermedios no hacen falta:
+   esta memoria y este PRD ya los resumen.
+2. `.env` de producción: **no** hace falta ningún flag nuevo para F/U/Q1. I1,
+   X1 (con sus extensiones X2/X3) y P1 quedan apagados salvo que los encendáis.
 3. Tras la integración, generar las tablas en la máquina que sirva backtests:
    `python backend/scripts/construir_gap_start.py` (U6) y, si encendéis I1,
    `python backend/scripts/construir_gappers_activos.py`. Ambas se regeneran
-   tras cada actualización del lago.
+   tras cada actualización del lago. (X2 y X3 no generan tablas: usan el lago
+   y los indicadores existentes.)
 4. Comprobación mínima: `pytest backend/tests/test_gap_start_filtro.py
-   test_gappers_active.py` + la suite habitual; `npx tsc --noEmit`.
+   test_gappers_active.py test_scheduled_exits.py test_sched_exit_dias_ipo.py
+   test_sched_exit_when_juegos.py` + la suite habitual; `npx tsc --noEmit`.
 
 ## 5. Solo documentación (estudios), para contexto — no requieren integración
 
@@ -147,6 +205,10 @@ caliente, materializada) y en el catálogo único `frontend/src/lib/universoFilt
   (`INFORME_BLOQUE9_OVERHEAD_20260929.md`).
 - Estudio «Fogonazos vs stop de la 1B» (`PRD_ESTUDIO_FOGONAZOS_STOP_1B_20260930.md`
   + entrada `[ESTUDIO · 2026-10-01 · FOGONAZOS VS STOP 1B]`).
+- Validación A/B «1A - 4 4 4» vs «1B Sobri 3 B» (8 corridas, motor real, 2024-
+  2026): la candidata gana 2025 de calle pero NO pasa el multi-año — decisión
+  de Álvaro: no se incorpora. Entrada
+  `[ESTUDIO · 2026-10-02 · VALIDACIÓN A/B…]` (commit `b9a17f5`, docs).
 
 ## 6. Hallazgos abiertos de este periodo que conviene que conozcáis
 
