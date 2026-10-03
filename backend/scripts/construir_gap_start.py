@@ -45,7 +45,8 @@ import pandas as pd
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BACKEND)
 
-from app.services.qualifying_windows import GAP_START_LEVELS, gap_start_parquet_path  # noqa: E402
+from app.services.qualifying_windows import (  # noqa: E402
+    GAP_START_LEVELS, carpeta_mes_lago, gap_start_parquet_path)
 
 MIN_POB = min(GAP_START_LEVELS)
 
@@ -109,10 +110,7 @@ def main() -> int:
     print("[2/3] velas 1m por mes (AH víspera + PM + RTH) y cruces...", flush=True)
     cruces: list[pd.DataFrame] = []
     for ym in sorted(set(pob["ym_D"]) | set(pob["ym_prev"].dropna())):
-        anio, mes = ym[:4], ym[5:7].lstrip("0")
-        # El lago de Jaume particiona como month=01 y el de Álvaro como month=1.
-        if os.path.isdir(f"{d_1m}/year={anio}/month={ym[5:7]}"):
-            mes = ym[5:7]
+        carpeta_mes = carpeta_mes_lago(d_1m, ym[:4], ym[5:7])
         g_d = pares_d.get_group(ym) if ym in pares_d.groups else None
         g_ah = pares_ah.get_group(ym) if ym in pares_ah.groups else None
         tickers = sorted(set(g_d["ticker"] if g_d is not None else [])
@@ -126,7 +124,7 @@ def main() -> int:
         velas = con.execute(f"""
             SELECT ticker, CAST("timestamp" AS DATE) AS fecha,
                    hour("timestamp")*60+minute("timestamp") AS minuto, high
-            FROM read_parquet('{d_1m}/year={anio}/month={mes}/**/*.parquet')
+            FROM read_parquet('{carpeta_mes}/**/*.parquet')
             WHERE ticker IN ({tk_sql})
               AND CAST("timestamp" AS DATE) IN ({f_sql})
               AND ((hour("timestamp")*60+minute("timestamp")) BETWEEN 960 AND 1199

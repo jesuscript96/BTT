@@ -183,6 +183,21 @@ def gap_start_columns() -> list[str]:
     return [f"gap_start_min_{n}" for n in GAP_START_LEVELS]
 
 
+def carpeta_mes_lago(base: str, anio: str, mes2: str) -> str:
+    """Carpeta de un mes del lago local (`base/year=AAAA/month=MM`).
+
+    El formato oficial es el de dos cifras (`month=01`): asi lo escriben la
+    actualizacion diaria y gcs_cache. El lago de Alvaro lo tiene sin cero
+    (`month=1`); se acepta tambien para que los scripts que leen el lago
+    (construir_gap_start, construir_gappers_activos) sirvan en las dos maquinas.
+    """
+    import os
+    con_cero = f"{base}/year={anio}/month={mes2}"
+    if os.path.isdir(con_cero):
+        return con_cero
+    return f"{base}/year={anio}/month={mes2.lstrip('0')}"
+
+
 def gap_start_parquet_path() -> str:
     import os
     ruta = os.getenv("GAP_START_TABLE", "").strip()

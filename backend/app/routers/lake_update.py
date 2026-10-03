@@ -123,11 +123,63 @@ def _cerrar_actualizacion(meses: list[tuple[int, int]], max_anterior: str | None
     if cache["ficheros"]:
         partes.append(f"{cache['velas']:,} velas añadidas a la copia rapida")
 
+    # Tablas de Alvaro que salen del lago y se quedan viejas si no se rehacen:
+    # sin esto, el filtro «Hora de cruce de gap» no ve los dias nuevos. Antes
+    # de invalidar las caches, para que nadie guarde un qualifying con la vieja.
+    partes.extend(_reconstruir_tablas_gap())
+
     L.invalidar_caches_qualifying(_apunta)
 
     resumen = (f"Datos hasta {max_nuevo}. " if max_nuevo else "") + "; ".join(partes)
     _apunta(f"[FIN] {resumen}")
     return resumen
+
+
+def _reconstruir_tablas_gap() -> list[str]:
+    """Rehace gap_start.parquet (filtro «Hora de cruce de gap», ~12 min) y,
+    solo si ya existe, gappers_activos.parquet (indicador «Gappers activos»).
+
+    Los scripts escriben a .tmp y renombran: mientras corren, los backtests
+    siguen con la tabla anterior. Ningun fallo se propaga (como el resto del
+    cierre): se apunta en el log y en el resumen.
+    """
+    from app.services.qualifying_windows import gap_start_parquet_path
+
+    backend = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    python = os.path.join(backend, ".venv", "Scripts", "python.exe")
+    if not os.path.exists(python):
+        import sys
+        python = sys.executable
+    gappers = os.path.join(os.path.dirname(gap_start_parquet_path()), "gappers_activos.parquet")
+    tareas = [("Hora de cruce de gap", "construir_gap_start.py")]
+    if os.path.exists(gappers):
+        tareas.append(("Gappers activos", "construir_gappers_activos.py"))
+
+    partes = []
+    for nombre, script in tareas:
+        with _lock:
+            _estado["fase"] = f"Recalculando la tabla de «{nombre}»"
+        _apunta(f"[GAP] recalculando la tabla de «{nombre}»...")
+        try:
+            r = subprocess.run(
+                [python, "-u", os.path.join(backend, "scripts", script)],
+                cwd=os.path.dirname(backend), capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+                env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
+            )
+            ultima = (r.stdout.strip().splitlines() or [""])[-1]
+            if r.returncode == 0:
+                _apunta(f"[GAP] {nombre}: {ultima}")
+                partes.append(f"tabla «{nombre}» al dia")
+            else:
+                cola = (r.stdout + r.stderr).strip().splitlines()[-5:]
+                for linea in cola:
+                    _apunta(f"[GAP] {linea}")
+                partes.append(f"FALLO la tabla «{nombre}» (ver el log)")
+        except Exception as e:
+            _apunta(f"[GAP] {nombre}: {type(e).__name__}: {e}")
+            partes.append(f"FALLO la tabla «{nombre}» (ver el log)")
+    return partes
 
 
 def _corre(cmd: list[str], cwd: str) -> None:

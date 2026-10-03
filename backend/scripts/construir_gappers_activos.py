@@ -46,6 +46,7 @@ BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BACKEND)
 
 from app.services.gappers_active import GAPPERS_ACTIVE_LEVELS  # noqa: E402
+from app.services.qualifying_windows import carpeta_mes_lago  # noqa: E402
 
 MIN_POB = 20  # población = pmh_gap_pct >= mínimo nivel
 
@@ -111,7 +112,7 @@ def main() -> int:
           flush=True)
     cruces: list[pd.DataFrame] = []
     for ym in sorted(set(pob["ym_D"]) | set(pob["ym_prev"])):
-        anio, mes = ym[:4], ym[5:7].lstrip("0")
+        carpeta_mes = carpeta_mes_lago(d_1m, ym[:4], ym[5:7])
         # tickers y fechas a leer de ESTE mes
         g_pm = pares_pm.get_group(ym) if ym in pares_pm.groups else None
         g_ah = pares_ah.get_group(ym) if ym in pares_ah.groups else None
@@ -126,7 +127,7 @@ def main() -> int:
         velas = con.execute(f"""
             SELECT ticker, CAST("timestamp" AS DATE) AS fecha,
                    hour("timestamp")*60+minute("timestamp") AS minuto, high
-            FROM read_parquet('{d_1m}/year={anio}/month={mes}/**/*.parquet')
+            FROM read_parquet('{carpeta_mes}/**/*.parquet')
             WHERE ticker IN ({tk_sql})
               AND CAST("timestamp" AS DATE) IN ({f_sql})
               AND ((hour("timestamp")*60+minute("timestamp")) BETWEEN 960 AND 1199
