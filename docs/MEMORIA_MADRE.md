@@ -7055,3 +7055,16 @@ Push a `alvaro-rama-desarrollo`: autorización permanente. **`staging`: la IA NU
 - **A propósito, no es hueco:** el hallazgo «ticker NULL» del 28-ago salió de la MADRE por decisión de Álvaro (`aeef532` lo pasa a nota de equipo).
 - **Código tocado:** NINGUNO (solo esta entrada).
 - **Estado:** CERRADO (auditoría informativa; las entradas ESTUDIO de los 6 informes quedan ofertadas).
+
+### [INTEGRACIÓN · 2026-10-03 · SAILOR] Lo de Álvaro del 24-sep al 2-oct entra en `sailor` (menos Q1)
+- **Pide:** Jaume («adelante», 3-oct), tras analizarlo antes en una copia aparte.
+- **Qué entra (cherry-pick `-x`, autoría de Álvaro conservada, orden del PRD `docs/PRD_INTEGRACION_ALVARO_20260924_20261001.md`):** F1 `cd180fa` · F2 `171d789` · F3 `75a6c95` · U1 `f1e401b` · U2 `6c10158` · U3 `3c97410` · U4 `aa1e814` · I1 `18da9d7`+`b29a401` · X1 `6785359`+`e2b047f` · U5 `6e20d41` · U6 `64e2000`+`68f3cdb`+`da0c76c` · X2 `43b20a4` · X3 `47a0263` · P1 `96602b6`. Más el commit de documentación de staging `947c0a2` (estas 536 líneas de Álvaro y su PRD).
+- **Qué NO entra:** **Q1** (`fdef2c6` + `468b6cd`, el desplegable en lista plana por última modificación, sin bloques de sesión). Queda pendiente de que Jaume decida si lo quiere.
+- **Conflictos:** ninguno en código. Solo en documentos: en `MEMORIA_MADRE.md` se conserva la versión de sailor en cada cherry-pick, y las entradas de Álvaro llegan juntas con `947c0a2`; los informes `INFORME_BLOQUE*`/`INVESTIGACION_CRITERIOS_UNIVERSO.md` se toman tal cual los dejó Álvaro.
+- **Verificación:** antes de tocar sailor, misma secuencia en un worktree aparte con la suite completa de las dos versiones (base 7.169/0; integrada 7.253/11, mismos 11 fallos que tras integrar de verdad) y `tsc --noEmit` limpio.
+- **Los 11 fallos, explicados:**
+  - **9 de Álvaro** (`test_sched_exit_when_juegos.py` ×8, `test_sched_exit_dias_ipo.py` ×1): dan por hecho `SCHEDULED_EXITS_ENABLED=true` en `backend/.env` (el conftest lo carga). En la máquina de Álvaro está; en la de Jaume no. Con el flag: 32/32. No es un fallo del código; los tests deberían poner el flag con `monkeypatch`.
+  - **2 del bot de DAS** (`tests/bot_das/test_das_reglas_salidas.py`): X1 añade a `portfolio_sim` el `exit_reason` «Scheduled Exit», que el bot de DAS no tiene clasificado en `salidas.LITERALES_EXIT_REASON`. **PENDIENTE para el chat del bot de DAS (Jaume, 4-oct).**
+- **Para el bot (alertas y DAS):** ninguno recibe `scheduled_exits` ni las franjas por nivel de pirámide (se aplican en `backtest_signals`/`backtest_service`). Con los flags apagados no cambia nada; si algún día se encienden y una estrategia del bot los usa, backtest y bot divergirían en silencio.
+- **Para usarlo en la máquina de Jaume:** reiniciar el backend 8010 (routers nuevos); `python backend/scripts/construir_gap_start.py` para el filtro «Hora de cruce de gap»; los flags `GAPPERS_ACTIVE_ENABLED`, `SCHEDULED_EXITS_ENABLED`, `PYRAMID_LEVEL_WINDOWS_ENABLED` siguen apagados.
+- **Estado:** HECHO en `sailor-rama-desarrollo`, SIN subir.
