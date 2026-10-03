@@ -316,6 +316,9 @@ app.include_router(portfolio_lab.router, prefix="/api/portfolio-lab", tags=["Por
 # Cuadro de mandos del bot de alertas: gated por BOT_ALERTS_ENABLED (apagado por
 # defecto). Solo configuracion; el bot vive en su propio proceso y consulta aqui.
 app.include_router(bot_alerts.router, prefix="/api/bot-alerts", tags=["Bot Alertas"])
+# Pestaña «Ejecución» (bot de DAS): lee/escribe el fichero del cuadro en BOT_DAS_DIR. Mismo gate.
+from app.routers import bot_das as _bot_das
+app.include_router(_bot_das.router, prefix="/api/bot-das", tags=["Bot DAS"])
 # Apagado limpio del entorno local desde la UI. Gated por LOCAL_SHUTDOWN_ENABLED
 # (default OFF): en prod el status dice que no esta disponible, el boton no se
 # pinta y el POST responde 503.
