@@ -110,6 +110,9 @@ def main() -> int:
     cruces: list[pd.DataFrame] = []
     for ym in sorted(set(pob["ym_D"]) | set(pob["ym_prev"].dropna())):
         anio, mes = ym[:4], ym[5:7].lstrip("0")
+        # El lago de Jaume particiona como month=01 y el de Álvaro como month=1.
+        if os.path.isdir(f"{d_1m}/year={anio}/month={ym[5:7]}"):
+            mes = ym[5:7]
         g_d = pares_d.get_group(ym) if ym in pares_d.groups else None
         g_ah = pares_ah.get_group(ym) if ym in pares_ah.groups else None
         tickers = sorted(set(g_d["ticker"] if g_d is not None else [])
